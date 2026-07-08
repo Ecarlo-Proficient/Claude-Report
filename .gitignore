@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Secrets — never commit
+.env
+.env.secrets
+*.secrets
+
+# Data files inside the project folder are forbidden (per CLAUDE.md):
+# real costs/billed/loan/HR/vendor data must not live here.
+# Whitelist: vendor_aliases.json is a small lookup cache (no $/PII), keep it.
+*.xlsx
+*.xlsb
+*.xlsm
+*.csv
+*.parquet
+*.pickle
+*.pkl
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# Local state (timestamps) — Mac runs land here; Docker uses /data/state.
+# Tolerated but not tracked.
+automation-worker/state/
+
+# Generated reports — verify_*.py outputs should go to ~/Library/Logs/Proficient/
+automation-worker/reports/
+bill-tracker/reconciliations/
+
+# Synology tree dumps — now default to ~/Library/Logs/Proficient/synology/
+synology/synology_tree.md
+synology/synology_audit.md
+
+# Drawings / dashboards / docs that are deliverables, not source
+*.drawio
+*.html
+*.docx
+
+# Whitelisted exceptions (force-include critical files even though the patterns above match them)
+!bill-tracker/vendor_aliases.json
