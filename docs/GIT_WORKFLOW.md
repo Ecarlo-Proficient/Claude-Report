@@ -5,7 +5,7 @@ Plain-language reference for the commands you actually need: pulling, pushing to
 ## Branch roles
 
 - `main` — the released, stable branch. Every change must go through a pull request with 1 approving review and a passing `test` CI check. No direct pushes, no force pushes, no branch deletion — enforced even for repo admins.
-- `dev` — the working branch. Direct pushes are allowed (no PR/review required), but force pushes and deletion are still blocked, and CI still runs on every push.
+- `dev` — the working branch. Force pushes and deletion are blocked for everyone. Direct pushes only work for repo **admins**, and only as a rule *bypass* (GitHub prints a warning when this happens) — the required `test` status check can't exist yet for a commit that hasn't been pushed. Anyone without admin/bypass rights will have a direct push to `dev` rejected outright and must open a PR into `dev` instead (see "Feature branches" below) — no review is required on that PR, just a green CI check.
 
 ## One-time setup (new machine)
 
@@ -35,7 +35,7 @@ git pull origin dev
 
 ## Making changes on dev
 
-Direct pushes to `dev` are allowed.
+If you're a repo admin, you can push straight to `dev`. If you're not, skip to "Feature branches" below and PR into `dev` instead — a direct push will be rejected.
 
 ```bash
 git add -A
@@ -139,6 +139,7 @@ git pull origin main
 - Force-pushing to `main` or `dev` (`git push --force` is rejected).
 - Deleting `main` or `dev`.
 - Pushing directly to `main` — even for admins; it must go through a PR.
+- Pushing directly to `dev` if you're **not** a repo admin — open a PR into `dev` instead.
 - Merging a PR into `main` without 1 approval and a green `test` check.
 
 ## Cheat sheet
