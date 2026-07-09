@@ -2,6 +2,8 @@
 
 Export QuickBooks Online transactions to a flat xlsx table — one row per line item, with QBO account name as the Category column.
 
+Working on this repo across `dev`/`main`? See [`docs/GIT_WORKFLOW.md`](docs/GIT_WORKFLOW.md) for the exact pull/push/PR commands and what branch protection blocks.
+
 ## How the Keychain works
 
 All 4 QBO keys live inside **one** Keychain entry (service `automation-qbo`, label `credentials`) as an encrypted JSON blob. **One Touch ID prompt per script run unlocks everything.** After that first approval in a given process, keys are cached in memory — no re-prompting per key.
