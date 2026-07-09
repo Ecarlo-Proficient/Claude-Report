@@ -886,6 +886,42 @@ def parse_statement_sunbelt(full_text: str) -> Tuple[str, str, float, List[StmtL
     return "", stmt_date, amt_due, lines
 
 
+# ── Staple-vendor identity overrides ──────────────────────────────
+# A few big, recurring vendors are impossible to identify from the generic
+# body extraction alone: their name is either in a raster logo (no extractable
+# text), absent from the letter body, or sits below OUR OWN bill-to name so the
+# generic finder grabs "Proficient Concrete" instead. Left to the fuzzy
+# filename/first-word fallback they collide with unrelated QBO names
+# (BOB→'Bobby Tenison', COW→'COWBOY CHICKEN'). We hard-map any of a vendor's
+# stable in-text markers to its EXACT QBO display name, applied across every
+# template so it works regardless of which statement layout the vendor sends.
+#
+# Each entry: (exact QBO DisplayName, [lowercase marker substrings]).
+# A marker must be specific enough that it can only mean this vendor. To add a
+# staple: pick a token that always appears in its statements (an email domain,
+# a letterhead street address, a distinctive brand spelling) and its QBO name.
+_STAPLE_VENDORS: List[Tuple[str, List[str]]] = [
+    # Bobcat is a multi-dealership brand (QBO has several "Bobcat of ..."); the
+    # dealership logo is an image, but the code line ("Statement BOBNTXQ") and
+    # credit-manager email ("...@bobcatntx.com") carry the region as text.
+    ("Bobcat of North Texas", ["bobcatntx", "bobntx"]),
+    # Cowtown Redi Mix: one statement variant is a past-due letter that only
+    # shows its letterhead address; another is a QBO statement listing our own
+    # name as bill-to. Match the address or the brand spelling.
+    ("Cowtown Redi Mix Concrete", ["3400 bethlehem", "cowtown", "redi mix"]),
+]
+
+
+def _staple_vendor_override(full_text: str) -> str:
+    """Return the exact QBO name for a known staple vendor if any of its
+    markers appear in the statement text, else '' (no override)."""
+    t = full_text.lower()
+    for qbo_name, markers in _STAPLE_VENDORS:
+        if any(marker in t for marker in markers):
+            return qbo_name
+    return ""
+
+
 def parse_statement(path: Path) -> Tuple[str, str, float, List[StmtLine]]:
     """Returns (vendor_guess, stmt_date_YYYY-MM-DD, amount_due_total, lines).
     Dispatches by file extension first:
@@ -893,7 +929,11 @@ def parse_statement(path: Path) -> Tuple[str, str, float, List[StmtLine]]:
       • .png/.jpg/.jpeg/.tiff/.bmp/.heic → OCR to text, then run through PDF template detection
       • everything else → PDF text extraction + template detection
     For Excel/Image: vendor and stmt date may come back empty — caller fills
-    them from --vendor / --stmt-date or the fallback chain in process_pdf."""
+    them from --vendor / --stmt-date or the fallback chain in process_pdf.
+
+    On the text path, a known staple-vendor marker (see _STAPLE_VENDORS)
+    overrides whatever vendor the template parser extracted — the staple's exact
+    QBO name is more reliable than generic body/filename extraction."""
     ext = path.suffix.lower()
     if ext in (".xlsx", ".xls", ".xlsm"):
         return parse_statement_excel(path)
@@ -903,34 +943,41 @@ def parse_statement(path: Path) -> Tuple[str, str, float, List[StmtLine]]:
         full_text = _pdf_text(path)
     template = detect_template(full_text)
     if template == "qbo_customer_open_balance":
-        return parse_statement_qbo_customer_open_balance(full_text)
-    if template == "qbo_open_invoices":
-        return parse_statement_qbo_open_invoices(full_text)
-    if template == "qbo_statement":
-        return parse_statement_qbo_statement(full_text)
-    if template == "vendor_stmt_tabular":
-        return parse_statement_vendor_tabular(full_text)
-    if template == "vendor_stmt_columnar":
+        result = parse_statement_qbo_customer_open_balance(full_text)
+    elif template == "qbo_open_invoices":
+        result = parse_statement_qbo_open_invoices(full_text)
+    elif template == "qbo_statement":
+        result = parse_statement_qbo_statement(full_text)
+    elif template == "vendor_stmt_tabular":
+        result = parse_statement_vendor_tabular(full_text)
+    elif template == "vendor_stmt_columnar":
         # Columnar parser re-opens the PDF for positional extraction
         # (raw text loses row/column alignment in this layout)
-        return parse_statement_vendor_columnar(path)
-    if template == "vendor_stmt_whitecap":
-        return parse_statement_vendor_whitecap(full_text)
-    if template == "vendor_bobcat":
-        return parse_statement_bobcat(full_text)
-    if template == "vendor_bodin":
-        return parse_statement_bodin(full_text)
-    if template == "vendor_burnco":
-        return parse_statement_burnco(full_text)
-    if template == "vendor_cintas":
-        return parse_statement_cintas(full_text)
-    if template == "vendor_cowtown":
-        return parse_statement_cowtown(full_text)
-    if template == "vendor_sunbelt":
-        return parse_statement_sunbelt(full_text)
-    # No supported template detected — return empty so the caller surfaces
-    # the unsupported-template error with the full list of supported formats.
-    return "", "", 0.0, []
+        result = parse_statement_vendor_columnar(path)
+    elif template == "vendor_stmt_whitecap":
+        result = parse_statement_vendor_whitecap(full_text)
+    elif template == "vendor_bobcat":
+        result = parse_statement_bobcat(full_text)
+    elif template == "vendor_bodin":
+        result = parse_statement_bodin(full_text)
+    elif template == "vendor_burnco":
+        result = parse_statement_burnco(full_text)
+    elif template == "vendor_cintas":
+        result = parse_statement_cintas(full_text)
+    elif template == "vendor_cowtown":
+        result = parse_statement_cowtown(full_text)
+    elif template == "vendor_sunbelt":
+        result = parse_statement_sunbelt(full_text)
+    else:
+        # No supported template detected — return empty so the caller surfaces
+        # the unsupported-template error with the full list of supported formats.
+        return "", "", 0.0, []
+    # Staple-vendor identity wins over the parser's extracted vendor.
+    override = _staple_vendor_override(full_text)
+    if override:
+        _vendor, stmt_date, amt_due, lines = result
+        result = (override, stmt_date, amt_due, lines)
+    return result
 
 
 def _scan_excel_for_vendor(xlsx_path: Path) -> str:
@@ -1865,6 +1912,13 @@ def find_vendor_id(access: str, cid: str, vendor_name_hint: str) -> Tuple[str, s
             attempts.append((label, n))
             seen.add(n)
 
+    # Full precise name first — a parser that identifies the exact entity
+    # (e.g. 'Bobcat of North Texas') must beat the first-2-words reduction,
+    # since 'Bobcat of' alone collides with 'Bobcat of Midland'. Only worth a
+    # distinct attempt at 3+ tokens; at 1-2 tokens it equals the reductions
+    # below and dedup skips it.
+    if len(tokens) >= 3:
+        _add("full name", " ".join(tokens))
     if len(tokens) >= 2:
         _add("first 2 words", f"{tokens[0]} {tokens[1]}")
     _add("first word", tokens[0])
