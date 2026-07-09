@@ -33,15 +33,13 @@ from openpyxl import load_workbook
 from config import load_config
 from notion_client import NotionClient
 import qbo_client
+import paths
 
 
 # Reuse same default path the exporter uses.
-DEFAULT_EXPORT_PATH = Path(
-    os.getenv(
-        "INVOICE_EXPORT_PATH",
-        "/Users/sebas/Library/CloudStorage/OneDrive-ProficientConcrete,LLC/"
-        "Collections/Open_Invoices.xlsx",
-    )
+DEFAULT_EXPORT_PATH = paths.get_path(
+    "INVOICE_EXPORT_PATH",
+    paths.onedrive_base() / "Collections/Open_Invoices.xlsx",
 )
 
 PROJECT_NUM_RE = re.compile(r"\b((?:MFD|CP|RP)\d+(?:-FTW)?)\b", re.IGNORECASE)

@@ -41,13 +41,14 @@ except ImportError:
     sys.exit(1)
 
 import qbo_vault as kc
+import paths
 
 # Production only — no env selector.
 API_BASE = "https://quickbooks.api.intuit.com"
 
-DEFAULT_OUTPUT_DIR = Path(
-    "/Users/sebas/Library/CloudStorage/OneDrive-ProficientConcrete,LLC/"
-    "-Inbox- Project Report Exports"
+DEFAULT_OUTPUT_DIR = paths.get_path(
+    "ACB_EXPORT_INBOX_DIR",
+    paths.onedrive_base() / "-Inbox- Project Report Exports",
 )
 
 

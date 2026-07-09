@@ -120,6 +120,10 @@ This folder is a git repo pushed to a **private GitHub remote** shared with Ted'
 - Push sequence (complete, paste-ready):
   `git add -A` → `git commit -m "<what changed>"` → `git push`
 - Never commit `.env`, data files, logs, or venvs — `.gitignore` enforces this; don't override it.
+- **`docs/ARCHITECTURE.md` is the living system map (Mermaid — renders on GitHub).** Any commit
+  that adds/removes a script or changes a data flow must update the diagram in the same commit.
+  Include this in the end-of-session `git status` check: script changes without a diagram update
+  are an incomplete commit.
 - Eduardo's QBO auth uses a **separate Intuit app ("EC-Data Export")** in Ted's team workspace.
   Never authorize Ted's original app from any other machine — one connection per app+realm;
   re-auth kills the existing token and breaks Ted's production runs.

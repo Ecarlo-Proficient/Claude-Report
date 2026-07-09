@@ -62,14 +62,15 @@ except ImportError:
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import qbo_vault as kc
+import paths
 
 # ────────────────────────── constants ──────────────────────────
 
 API_BASE = "https://quickbooks.api.intuit.com"
 MINOR_VERSION = "70"
 
-DEFAULT_OUTPUT = Path.home() / "Documents" / "CompanyHealth" / "health_dashboard.xlsx"
-DEFAULT_OVERRIDES = Path.home() / "Documents" / "CompanyHealth" / "customer_overrides.xlsx"
+DEFAULT_OUTPUT = paths.companyhealth_dir() / "health_dashboard.xlsx"
+DEFAULT_OVERRIDES = paths.companyhealth_dir() / "customer_overrides.xlsx"
 
 # Aging bucket boundaries, in days — matches QBO's default Aged Receivables/Payables.
 AGING_BUCKETS = [

@@ -144,6 +144,8 @@ def _dim_if_dash(s: str) -> str:
 
 # ─────────────────────── config / paths ────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+import paths
 
 CP_ACTIVE_DIR = Path(os.getenv(
     "CP_ACTIVE_DIR",
@@ -153,12 +155,10 @@ CP_COMPLETED_DIR = Path(os.getenv(
     "CP_COMPLETED_DIR",
     str(CP_ACTIVE_DIR / "Completed Projects"),
 ))
-WIP_EXCEL_PATH = Path(os.getenv(
+WIP_EXCEL_PATH = paths.get_path(
     "WIP_EXCEL_PATH",
-    str(Path.home()
-        / "Library/CloudStorage/OneDrive-ProficientConcrete,LLC"
-        / "Company Files - WIP Report/WIP - MASTER new.xlsx"),
-))
+    paths.onedrive_base() / "Company Files - WIP Report/WIP - MASTER new.xlsx",
+)
 
 TEST_TAB = "Test - CP"  # write target — must be in ALLOWED_WRITE_SHEETS
 

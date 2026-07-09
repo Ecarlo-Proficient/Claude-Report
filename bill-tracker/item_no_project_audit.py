@@ -21,6 +21,7 @@ from pathlib import Path
 
 from qbo_bill_tracker import load_credentials, query_all, parse_date, get_project_num
 from job_coding_audit import iter_expense_lines, txn_link, txn_vendor, fetch_vendor_map
+import paths
 
 try:
     from openpyxl import Workbook
@@ -30,9 +31,10 @@ except ImportError:
     print("pip3 install --break-system-packages openpyxl")
     sys.exit(1)
 
-OUTDIR = (Path.home()
-          / "Library/CloudStorage/OneDrive-ProficientConcrete,LLC"
-          / "Works In Progress" / "QBO Audits")
+OUTDIR = paths.get_path(
+    "ACB_AUDIT_OUT_DIR",
+    paths.onedrive_base() / "Works In Progress" / "QBO Audits",
+)
 
 COLUMNS = [
     ("Bill Date", 12), ("Vendor", 28), ("Bill Ref #", 14), ("Bill Total", 13),

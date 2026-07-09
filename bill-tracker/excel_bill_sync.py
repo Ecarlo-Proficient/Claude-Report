@@ -51,6 +51,8 @@ BILL_TRACKER_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT))           # qbo_vault.py
 sys.path.insert(0, str(BILL_TRACKER_DIR))       # qbo_bill_tracker.py
 
+import paths
+
 
 # ─────────────────────── deps ───────────────────────
 
@@ -88,9 +90,9 @@ from bill_rows import (
 
 # ─────────────────────── constants ───────────────────────
 
-OUTPUT_PATH = Path(
-    "/Users/sebas/Library/CloudStorage/OneDrive-ProficientConcrete,LLC/"
-    "Automations-/Bill Tracker.xlsx"
+OUTPUT_PATH = paths.get_path(
+    "ACB_BILL_TRACKER_XLSX",
+    paths.onedrive_base() / "Automations-/Bill Tracker.xlsx",
 )
 BACKUP_RETENTION_DAYS = 14
 

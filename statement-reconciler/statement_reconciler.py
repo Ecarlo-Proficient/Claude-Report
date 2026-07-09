@@ -88,6 +88,7 @@ except ImportError:
     sys.exit(1)
 
 import qbo_vault as kc
+import paths
 
 # ───────────────────────── constants ─────────────────────────
 
@@ -111,10 +112,9 @@ def _is_approved(memo: str) -> bool:
     as approved. Empty/missing memo → approved (default)."""
     return not (memo or "").lstrip().lower().startswith(UNAPPROVED_TAG)
 
-OUTDIR_DEFAULT = (
-    Path.home()
-    / "Library/CloudStorage/OneDrive-ProficientConcrete,LLC"
-    / "Automations-/statement reconciles"
+OUTDIR_DEFAULT = paths.get_path(
+    "ACB_RECON_OUT_DIR",
+    paths.onedrive_base() / "Automations-/statement reconciles",
 )
 ALIAS_FILE = Path(__file__).resolve().parent / "vendor_aliases.json"
 CLERK_PERF_CSV = OUTDIR_DEFAULT / "clerk_performance.csv"

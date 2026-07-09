@@ -22,6 +22,7 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import os
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -31,14 +32,18 @@ from openpyxl.utils import get_column_letter
 
 from notion_client import NotionClient
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import paths
+
 
 log = logging.getLogger("automation_worker.export_xlsx")
 
-# Default file location — overrideable via INVOICE_EXPORT_PATH env var so
-# you can point this at Synology, OneDrive, Desktop, etc. without code change.
-DEFAULT_EXPORT_PATH = Path(
-    "/Users/sebas/Documents/Claude/Projects/Automate Concrete Business/"
-    "Open_Invoices.xlsx"
+# Default file location — overrideable via INVOICE_EXPORT_PATH (env or
+# machine.env) so you can point this at Synology, OneDrive, Desktop, etc.
+# without code change. Fallback = repo root (same location as before).
+DEFAULT_EXPORT_PATH = paths.get_path(
+    "INVOICE_EXPORT_PATH",
+    Path(__file__).resolve().parent.parent / "Open_Invoices.xlsx",
 )
 
 

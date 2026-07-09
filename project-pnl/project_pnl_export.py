@@ -70,6 +70,7 @@ except ImportError:
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import qbo_vault as kc
+import paths
 
 # ── terminal output (styled like sync-ar / sync-ap; Ted 2026-06-26) ──────────
 # Colors auto-disable when piped/redirected or NO_COLOR is set.
@@ -129,9 +130,9 @@ def ui_fail(text: str) -> None:
 API_BASE = "https://quickbooks.api.intuit.com"
 MINOR_VERSION = "70"
 
-DEFAULT_OUT = Path(
-    "/Users/sebas/Library/CloudStorage/OneDrive-ProficientConcrete,LLC/"
-    "Automations-/PROJECT P&Ls"
+DEFAULT_OUT = paths.get_path(
+    "ACB_PNL_OUT_DIR",
+    paths.onedrive_base() / "Automations-/PROJECT P&Ls",
 )
 # The WIP master lives in the project's wip/ folder; this script lives in its own
 # folder alongside it (Ted 2026-06-26 — moved out of wip/, it's not a WIP tool).

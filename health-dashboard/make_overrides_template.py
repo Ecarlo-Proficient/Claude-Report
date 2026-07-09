@@ -16,12 +16,16 @@ Usage:
   python3 make_overrides_template.py --out PATH # custom path
 """
 import argparse
+import sys
 from pathlib import Path
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
-DEFAULT_PATH = Path.home() / "Documents" / "CompanyHealth" / "customer_overrides.xlsx"
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import paths
+
+DEFAULT_PATH = paths.companyhealth_dir() / "customer_overrides.xlsx"
 
 HEADER_FILL = PatternFill("solid", fgColor="1F3A5F")
 HEADER_FONT = Font(bold=True, color="FFFFFF", name="Arial")

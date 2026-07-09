@@ -23,6 +23,9 @@ ENV/
 .env.secrets
 *.secrets
 
+# Per-machine path config — each machine keeps its own (see machine.env.example)
+machine.env
+
 # Data files inside the project folder are forbidden (per CLAUDE.md):
 # real costs/billed/loan/HR/vendor data must not live here.
 # Whitelist: vendor_aliases.json is a small lookup cache (no $/PII), keep it.
