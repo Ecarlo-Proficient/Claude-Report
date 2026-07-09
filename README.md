@@ -37,6 +37,23 @@ python3 setup_qbo.py
 python3 qbo_export.py
 ```
 
+## First time on a new machine (path setup)
+
+Output locations (OneDrive mirror, CompanyHealth folder) differ per machine, so
+they come from config, not code. On the owner's Mac the built-in defaults just
+work; on any other machine, set them once:
+
+```bash
+cp machine.env.example machine.env
+python3 paths.py
+```
+
+Edit `machine.env` to point the two roots at real folders on this machine, then
+re-run `python3 paths.py` — it prints where each path resolved from and flags any
+target that is missing or not writable (a `WILL FAIL` line means fix it before
+running a real script). `machine.env` is gitignored — it never leaves this Mac.
+Full detail: `machine.env.example` and `docs/ARCHITECTURE.md`.
+
 ## Everyday commands
 
 ```bash

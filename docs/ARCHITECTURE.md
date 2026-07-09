@@ -132,5 +132,8 @@ Everything else is read-only against QBO. All other "writes" land in Excel, Noti
   New machines copy `machine.env.example` → `machine.env` and point the two roots
   (`ACB_ONEDRIVE_BASE`, `ACB_COMPANYHEALTH_DIR`) at their own folders. Never hardcode a
   machine path in a script again — add a key through `paths.py` instead.
+  Run **`python3 paths.py`** to confirm config on a new machine: it prints where each
+  path resolved from and flags any target that is missing or not writable before you
+  run a real script.
 - Logs always go to `~/Library/Logs/` (external log dir per CLAUDE.md), never inside the repo.
 - Each developer has their own Intuit app + own Keychain vault. One app connection = one machine.
