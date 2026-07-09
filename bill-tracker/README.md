@@ -98,6 +98,31 @@ the script writes to a sidecar `Bill_Payment_Tracker.PENDING.xlsx`
 instead. Close the canonical file and the next run will overwrite it
 with fresh data.
 
+## Audits (read-only, one-off)
+
+Standalone catchers that share the tracker's QBO auth/paging. Each writes a
+plain xlsx to the OneDrive `QBO Audits` folder (override with `--out`) and
+never edits QBO. All accept an optional `since [until]` date window and
+`--dry-run`.
+
+| Script | Flags | Catches |
+|---|---|---|
+| `sub_bill_audit.py` | `[since] [until]` | Sub bills (memo starts "Sub") with a line missing a project # |
+| `item_no_project_audit.py` | `[since] [until]` | Item-based bill lines (job costs) missing a project # |
+| `duplicate_bill_audit.py` | `[since] [until]` | Same Bill Ref # entered on 2+ bills within one **vendor tree** (root + sub-vendors) — double-entry / double-pay risk |
+| `job_coding_audit.py` | `--job <code>` | Lines that mention a job but are coded to the wrong/missing project or a non-parent class |
+
+```bash
+python3 bill-tracker/duplicate_bill_audit.py                 # all bills
+python3 bill-tracker/duplicate_bill_audit.py 2026-01-01      # dated on/after
+python3 bill-tracker/duplicate_bill_audit.py --dry-run       # counts only
+```
+
+`duplicate_bill_audit.py` groups bills by (top-level vendor, ref #),
+case-insensitive and whitespace-trimmed; blank ref #s are skipped. Output is
+grouped by vendor tree with a `Same amount?` flag — matching totals across
+copies are the strongest double-entry signal.
+
 ## Scheduling — install once
 
 The launchd plist runs the wrapper Mon-Fri at 15:00 (3 PM, after
