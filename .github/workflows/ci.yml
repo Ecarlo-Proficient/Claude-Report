@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main, dev]
+  push:
+    branches: [dev]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest
+      - name: Run tests
+        run: |
+          if [ -d tests ] && find tests -name 'test_*.py' -o -name '*_test.py' | grep -q .; then
+            pytest tests
+          else
+            echo "No real pytest tests under tests/ yet — skipping until they exist."
+          fi
