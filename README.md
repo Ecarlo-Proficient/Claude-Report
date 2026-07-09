@@ -24,8 +24,11 @@ This tool is hardcoded to call QBO's production API (`quickbooks.api.intuit.com`
 
 ## Run order
 
+Replace `/ABSOLUTE/PATH/TO/Automate Concrete Business` below with your clone's
+location (run `pwd` inside the repo to get it) — it differs per machine.
+
 ```bash
-cd "/Users/sebas/Documents/Claude/Projects/Automate Concrete Business"
+cd "/ABSOLUTE/PATH/TO/Automate Concrete Business"
 
 # 1. install deps (one time)
 pip3 install --break-system-packages -r requirements.txt
@@ -171,6 +174,10 @@ hdiutil detach /Volumes/Health
 
 ## Schedule it
 
+The launchd and cron examples below use absolute paths (neither has a working
+directory) — replace `/ABSOLUTE/PATH/TO/Automate Concrete Business` with this
+machine's clone location before loading them.
+
 ### Mac (launchd is the modern choice; cron works too)
 
 Create `~/Library/LaunchAgents/com.proficient.qbo-health.plist`:
@@ -185,7 +192,7 @@ Create `~/Library/LaunchAgents/com.proficient.qbo-health.plist`:
   <key>ProgramArguments</key>
   <array>
     <string>/usr/bin/python3</string>
-    <string>/Users/sebas/Documents/Claude/Projects/Automate Concrete Business/qbo_health.py</string>
+    <string>/ABSOLUTE/PATH/TO/Automate Concrete Business/qbo_health.py</string>
   </array>
   <key>StartCalendarInterval</key>
   <dict>
@@ -207,7 +214,7 @@ Daily at 06:00. Touch ID will prompt the first time the agent fires after a rebo
 ### Or cron, if you prefer
 
 ```
-0 6 * * * cd "/Users/sebas/Documents/Claude/Projects/Automate Concrete Business" && /usr/bin/python3 qbo_health.py >> /tmp/qbo_health.log 2>&1
+0 6 * * * cd "/ABSOLUTE/PATH/TO/Automate Concrete Business" && /usr/bin/python3 qbo_health.py >> /tmp/qbo_health.log 2>&1
 ```
 
 ## Tuning overhead spike detection

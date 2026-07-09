@@ -40,8 +40,11 @@ restate them here. Business/strategic context lives in session memory, not in th
 - **bill-tracker/** — AP bills → matched to the GC invoice that authorizes payment → Excel
   (`~/Documents/CompanyHealth/Bill Tracker.xlsx`); launchd Mon–Fri 15:00. Also `statement_reconciler.py`
   (vendor statement PDF ↔ QBO open bills) and `job_coding_audit.py`.
-- **wip/** — `build_wip_master.py`, `wip_sync.py` (2 Notion WIP DBs MFD/RP-CP + snapshots; $25K job-borrow
-  Teams alert), `qbo_close_list.py` / `qbo_bulk_close.py` (**always exclude MFD — those close by hand**).
+- **wip/** — `qbo_close_list.py` / `qbo_bulk_close.py` (**always exclude MFD — those close by hand**).
+  WIP itself lives in **Excel on SharePoint**: the readers are `automation-worker/cp_wip_reader.py`
+  / `rp_wip_reader.py` (write the Test tab of `WIP - MASTER new.xlsx`; over/under-billing and
+  job-borrow are computed columns there). The old QBO→Notion WIP sync is **retired**
+  (`automation-worker/wip_sync.py` is a do-nothing stub — no $25K Teams alert anymore).
 - **debt-schedule/ + loan_sync.py** — QBO → `Equipment_Debt_Schedule_v2.xlsx`. Balance = QBO actual
   (no P/I split); QBO mapping gated by `CONFIRM=Y`; ledger idempotent by (TxnId, AcctId). Mac-only.
 - **health-dashboard/qbo_health.py** — local company-health xlsx; reuses `qbo_vault`; private path + chmod 600.
