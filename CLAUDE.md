@@ -104,3 +104,22 @@ restate them here. Business/strategic context lives in session memory, not in th
 - Python 3.9+; deps via `pip3 install --break-system-packages -r requirements.txt` (per subfolder).
 - Each subsystem keeps its own README, `requirements.txt`/venv, and `launchd/` plist where scheduled.
 - Build the core happy-path first; don't pre-add heartbeats/fallback monitors before the core is proven.
+
+---
+
+## Git / GitHub sync (this folder is a live repo — added 2026-07-09)
+
+This folder is a git repo pushed to a **private GitHub remote** shared with Ted's assistant
+(Eduardo), who develops from his own clone via branch → PR; Ted pulls and runs against QBO.
+
+- **Start of any session that will modify files: run `git pull` first** — Eduardo's merged PRs
+  may have changed things. Working on a stale copy creates divergence.
+- **End of any session where files in this folder changed: run `git status`, then PROMPT TED to
+  commit and push before wrapping up. Do not let a session end with unpushed changes without
+  explicitly asking.** Unpushed work is invisible to Eduardo and is how work gets overwritten.
+- Push sequence (complete, paste-ready):
+  `git add -A` → `git commit -m "<what changed>"` → `git push`
+- Never commit `.env`, data files, logs, or venvs — `.gitignore` enforces this; don't override it.
+- Eduardo's QBO auth uses a **separate Intuit app ("EC-Data Export")** in Ted's team workspace.
+  Never authorize Ted's original app from any other machine — one connection per app+realm;
+  re-auth kills the existing token and breaks Ted's production runs.

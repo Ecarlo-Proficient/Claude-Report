@@ -1,13 +1,14 @@
 # WIP Reader — Criteria & Status (by division)
 
 How each division's WIP is built, the exact rules the reader follows, and the
-open items. **CP is fully loading — contract price, change orders, ETC, and the
-QBO actuals all pull automatically. RP's active list + takeoff lookup work; RP
-contract/ETC is the next step. MFD hasn't started.**
+open items. **CP is fully loading — the latest draw (G702) drives contract price,
+change orders, billed, and retainage; the takeoff gives ETC; QBO gives costs.
+RP's active list + takeoff lookup work; RP contract/ETC is the next step. MFD
+hasn't started.**
 
 ---
 
-## CP — Commercial  ·  ✅ LOADING (contract + COs + ETC + QBO all working)
+## CP — Commercial  ·  ✅ LOADING (draw-based billing + takeoff ETC + QBO costs)
 
 ### Where projects come from
 Synology folders, one per project, named `CP#### - PROJECT NAME`:
@@ -17,39 +18,57 @@ Synology folders, one per project, named `CP#### - PROJECT NAME`:
 
 ### The read chain (per project)
 
-**1. Pick the takeoff file.** A takeoff is the `.xlsx` with **"takeoff"** in the
-filename. Auxiliary files (`Cost Codes.xlsx`, `Explanation OH.xlsx`, PDFs) are
-ignored.
-- One takeoff → use it.
-- Multiple takeoffs → only the ones tagged **`WIP`** in the filename, and sum
-  them (a project can have more than one scope, e.g. FDT + PAVING).
-- Multiple takeoffs, none tagged WIP → flag, leave blank.
+**The draw is the billing source of record** (Ted 2026-07-09). If a project has
+a draw (AIA **G702/G703** payment application), the **latest draw** — highest
+draw # — supplies Contract Price, Approved COs, Billed-to-Date, and Retainage.
+The takeoff is used only for the cost estimate (ETC); QBO only for costs. Before
+Draw #1 lands, the reader falls back to the takeoff proposal for contract/CO and
+QBO for billed/retainage.
 
-**2. Pick the proposal tab** (takeoffs carry several — dated versions, Commercial
-/ Residential / Alternative).
-- A tab marked **`FINAL`** → use it.
-- Only one proposal tab → use it.
-- Multiple, none marked FINAL → flag, leave blank.
+**1. Find the latest draw.** Look for a **`Draws`** (or `Draw`) folder in the
+project folder (`Drawings` is not a match). Inside it, the draw workbook lives
+either directly or in a numbered **`Draw #N`** subfolder. **Draw # is the
+sequence — highest wins.** Supplier Release subfolders are never opened. The
+winning file must actually contain a **G702** sheet.
+- No draw folder / no draw yet → skip to the takeoff proposal (step 5).
 
-**3. Contract Price.** Read off the chosen proposal tab, from **`GRAND TOTAL`,
-`SUB TOTAL`, or plain `TOTAL`** (templates use all three) — value in the cell to
-the right; if a label repeats, take the largest (the overall). `TOTAL SQFT` /
-`TOTAL YARDS` are ignored (exact-label match only).
+**2. Read the draw's G702** (mapping verified 2026-07-09 against CP585 Draws
+#1–#4):
 
-**4. Change Orders → Approved COs.** Summed from both places, additive:
-- In-takeoff `Change Order#N` sheets — from each sheet's `TOTAL:` cell.
-- A `Change Orders/` subfolder of standalone CO files.
-- **CO cost has no source yet** (the CO template has no cost cell), so Estimated
-  Total Costs stays at the base ETC (provisional) and is flagged.
+| WIP field | G702 source |
+|---|---|
+| **Contract Price** | Line 3 Contract Sum to Date (= Line 1 + Line 2) |
+| **Approved COs** | Line 2 Net change by Change Orders |
+| **Billed to Date** (gross) | Line 4 Total Completed & Stored to Date |
+| **Retainage Held** | **Line 4 − Line 6** (Total Earned Less Retainage) |
 
-**5. ETC (Estimated Total Costs).** From `Bid!AP1961` (evaluates the formula if
-the saved value is stale).
+**Retainage is computed as Line 4 − Line 6, never read from the labeled "Total
+Retainage" cell** — that cell is unreliable across draws (reads 0 or a
+mismatched figure); Line 4 − Line 6 ties to the 10% on Line 5a every draw.
 
-**6. QBO actuals** by project # (`CP####`):
-- **Billed to Date** = QBO income — **GROSS, includes retainage** (standard WIP).
-- **Retainage Held** = gross billed − net collectible (net excludes the
-  "Retainage Not Billed" memo invoices — the reclass to Retainage Receivable).
-- **Costs to Date** = COGS + Expenses.
+**3. ETC (Estimated Total Costs)** — from the takeoff **`Bid!AP1961`** (evaluates
+the formula if the saved value is stale). ETC always comes from the takeoff,
+draw or not.
+
+**4. Costs to Date** — from **QBO** by project # (COGS + Expenses). Draw-backed
+projects skip the QBO *billing* fetch entirely (billed/retainage come from the
+draw), so the QBO call only pulls costs.
+
+**5. Fallback — no draw yet (pre-Draw #1).** Contract/CO from the takeoff
+proposal, billed/retainage from QBO:
+- **Pick the takeoff file** — `.xlsx` with **"takeoff"** in the name (auxiliary
+  `Cost Codes.xlsx` / `Explanation OH.xlsx` / PDFs ignored). One → use it;
+  multiple → only the `WIP`-tagged one(s), summed; none tagged → flag.
+- **Pick the proposal tab** — a tab marked `FINAL`, else the only proposal tab,
+  else flag.
+- **Contract Price** — from `GRAND TOTAL`, `SUB TOTAL`, or plain `TOTAL` (largest
+  wins; `TOTAL SQFT`/`TOTAL YARDS` ignored).
+- **Approved COs** — in-takeoff `Change Order#N` sheets + a `Change Orders/`
+  subfolder, summed. CO cost has no source yet → ETC stays at base (provisional,
+  flagged).
+- **Billed to Date / Retainage Held** — QBO income (GROSS, incl retainage);
+  Retainage = gross − net collectible (net excludes "Retainage Not Billed" memo
+  invoices).
 
 **7. Derived WIP columns** written as live Excel formulas: Cost to Complete,
 Original Profit, Gross Profit %, % Complete, Revenues Earned, Profit Earned,
@@ -61,10 +80,18 @@ wrapped as an Excel table. Project name links to the Awarded Project folder
 (works on Mac).
 
 ### Flags you'll see (and what they mean)
-- **Multiple proposals, none marked FINAL** → estimator must mark the real one.
-- **Missing Grand/Sub Total** → the proposal has no total the reader recognizes.
+- **Draw #N: billed … retainage … contract …** → normal; the row's billing came
+  from that draw. Confirms which draw was used.
+- **No draw yet — contract from takeoff proposal** → pre-Draw#1; billing is from
+  QBO and contract from the proposal until the first draw lands.
+- **Draw #N unreadable / Draw G702 missing …** → open and save the draw in Excel
+  to refresh its cached values, then re-run.
+- **Multiple proposals, none marked FINAL** → estimator must mark the real one
+  (fallback path only).
+- **Missing Grand/Sub Total** → the proposal has no total the reader recognizes
+  (fallback path only).
 - **CO Rev without CO Cost** → Revised ETC is provisional (base ETC), pending a
-  CO cost cell in the template.
+  CO cost cell in the template (fallback path only).
 - **⚠ OVER BUDGET — Costs exceed ETC** → costs have passed the estimate.
 - **Multiple takeoffs — none tagged WIP** / **No takeoff file** → naming needs a fix.
 
@@ -128,6 +155,6 @@ is the same as CP. Flatwork (Schedule) is a separate, later pass.
 
 | Division | Find projects | Contract / ETC | Actuals (QBO) | Status |
 |---|---|---|---|---|
-| **CP** | ✅ Synology folders | ✅ FINAL proposal → GRAND/SUB/TOTAL + Bid!AP1961, COs summed | ✅ billed/costs/retainage | **Loading** |
+| **CP** | ✅ Synology folders | ✅ latest draw G702 (contract/CO/billed/retainage) + Bid!AP1961 ETC; takeoff proposal is the pre-Draw#1 fallback | ✅ costs (billed/retainage from draw) | **Loading** |
 | **RP** | ✅ Alpha (active) + Residential (takeoff by RP#) | 🟡 next step | ✅ available by RP# | **In progress** |
 | **MFD** | ⚠️ parent "Multi Family" | 🔴 source unknown | ✅ available by project # | **Not started** |

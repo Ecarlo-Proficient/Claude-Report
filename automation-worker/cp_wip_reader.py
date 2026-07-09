@@ -172,6 +172,17 @@ ETC_CELL = "AP1961"
 _CO_SHEET_RE = re.compile(r"^(CO|CHANGE\s*ORDER)[\s#-]*\d+$", re.IGNORECASE)
 _CO_FOLDER = "Change Orders"
 
+# Draw folder detection (Ted 2026-07-09): the WIP update for a CP project comes
+# from the LATEST draw (AIA G702/G703 payment application), not the takeoff.
+#   • Container folder is named 'Draw' or 'Draws' (inclusive), never 'Drawings'.
+#   • Draw # is the SEQUENCE — the highest draw # wins, read from the filename
+#     or the numbered 'Draw #N' subfolder.
+#   • If no draw folder / no draw yet → fall back to the takeoff proposal
+#     (Original Contract Price); once Draw #1 lands, use the draw instead.
+_DRAWS_FOLDER_RE = re.compile(r"^draws?\b", re.IGNORECASE)   # 'Draw' / 'Draws', not 'Drawings'
+_DRAW_NUM_RE = re.compile(r"draw\s*#?\s*(\d+)", re.IGNORECASE)  # 'Draw #4', 'DRAW#4', 'Draw 4'
+G702_SHEET = "G702"
+
 # Project # from folder name — e.g. "CP672 - FIRESTONE RED OAK" → "CP672"
 _CP_FOLDER_RE = re.compile(r"^(CP\d{3,4})\b", re.IGNORECASE)
 
@@ -216,6 +227,9 @@ class CpRow:
     included_takeoffs: List[Path] = field(default_factory=list)  # takeoff(s) summed into this row
     folder_path: Optional[Path] = None   # explicit folder for the project-name link
                                           # (RP sets this; CP falls back to takeoff_path.parent)
+    draw_num: Optional[int] = None       # latest draw # that sourced contract/billed/retainage
+                                          # (None = pre-Draw#1 → takeoff proposal + QBO instead)
+    draw_path: Optional[Path] = None     # the latest draw's G702/G703 workbook (audit trail)
 
     @property
     def contract_price(self) -> Optional[float]:
@@ -574,47 +588,48 @@ def _parse_one_takeoff(tk: Path):
     return contract, etc, co_total, flags
 
 
-def parse_takeoff(folder: Path, row: CpRow) -> None:
-    """Extract Contract Price + ETC into `row`, identifying takeoff files by
-    'takeoff' in the filename (Ted 2026-07-02):
-      - Project folders also hold AUXILIARY xlsx (Cost Codes.xlsx, Explanation
-        OH.xlsx, etc.). Only files whose name contains 'takeoff' are treated as
-        takeoffs; the rest are ignored so they don't trip the multi-file logic.
-      - ONE takeoff → use it (no tag needed).
-      - MULTIPLE takeoffs → include ONLY the 'WIP'-tagged one(s), and SUM them
-        (a project can have multiple scopes, e.g. FDT + PAVING, both tagged).
-      - Multiple takeoffs, none tagged 'WIP' → flag + leave blank (never guess).
-    Appends to row.status_flags on any failure; never raises."""
+def _select_takeoffs(folder: Path):
+    """Identify which takeoff file(s) to read in a project folder. Shared by
+    parse_takeoff (full contract+ETC read) and parse_takeoff_etc (ETC-only,
+    used when a draw supplies the contract). Rules (Ted 2026-07-02):
+      - Only files with 'takeoff' in the name are takeoffs; auxiliary xlsx
+        (Cost Codes, Explanation OH, …) are ignored. If none is named
+        'takeoff', fall back to the single non-auxiliary xlsx.
+      - ONE takeoff → use it; MULTIPLE → only the 'WIP'-tagged one(s), summed.
+      - Multiple, none tagged WIP → don't guess.
+    Returns (included_list, flag_or_None)."""
     xlsx_files = sorted([p for p in folder.iterdir()
                          if p.suffix.lower() in (".xlsx", ".xlsm")
                          and not p.name.startswith("~$")])
     if len(xlsx_files) == 0:
-        row.status_flags.append("No Takeoff")
-        return
-
-    # Takeoffs are named with 'takeoff'; everything else (Cost Codes,
-    # Explanation OH, …) is auxiliary and ignored.
+        return [], "No Takeoff"
     takeoffs = [p for p in xlsx_files if "takeoff" in p.name.lower()]
     if not takeoffs:
-        # No file named 'takeoff' — fall back to the non-auxiliary xlsx.
         non_aux = [p for p in xlsx_files if not _AUX_XLSX_RE.search(p.name)]
         if len(non_aux) == 1:
             takeoffs = non_aux
         else:
-            row.status_flags.append(
-                f"No takeoff file identified ({len(xlsx_files)} xlsx, none named "
-                f"'takeoff') — rename the takeoff to include 'takeoff'")
-            return
-
+            return [], (f"No takeoff file identified ({len(xlsx_files)} xlsx, none "
+                        f"named 'takeoff') — rename the takeoff to include 'takeoff'")
     if len(takeoffs) == 1:
-        included = takeoffs                          # single takeoff — tag not required
-    else:
-        included = [p for p in takeoffs if _WIP_TAG_RE.search(p.name)]
-        if not included:
-            row.status_flags.append(
-                f"Multiple takeoffs ({len(takeoffs)}) — none tagged 'WIP'; "
-                f"estimator must tag the one(s) to include")
-            return
+        return takeoffs, None
+    included = [p for p in takeoffs if _WIP_TAG_RE.search(p.name)]
+    if not included:
+        return [], (f"Multiple takeoffs ({len(takeoffs)}) — none tagged 'WIP'; "
+                    f"estimator must tag the one(s) to include")
+    return included, None
+
+
+def parse_takeoff(folder: Path, row: CpRow) -> None:
+    """Extract Contract Price + ETC into `row` from the takeoff. Used when the
+    project has NO draw yet (pre-Draw#1) — contract comes from the proposal
+    Grand/Sub Total, ETC from Bid!AP1961, COs from in-takeoff CO sheets.
+    Appends to row.status_flags on any failure; never raises."""
+    included, flag = _select_takeoffs(folder)
+    if flag:
+        row.status_flags.append(flag)
+    if not included:
+        return
 
     row.included_takeoffs = included
     row.takeoff_path = included[0]                  # hyperlink anchor
@@ -746,6 +761,224 @@ def parse_change_orders_folder(co_folder: Path, row: CpRow) -> None:
         )
 
 
+# ─────────────────────── ETC-only takeoff read (draw path) ────────
+def parse_takeoff_etc(folder: Path, row: CpRow) -> None:
+    """Read ONLY the ETC (Bid!AP1961) from the project's takeoff. Used when a
+    DRAW supplies contract/CO/billed/retainage but the cost estimate still
+    lives in the takeoff (Ted 2026-07-09: "ETC — still keep the takeoff
+    costs"). The proposal/contract/CO parsing is skipped, so a draw-backed row
+    isn't cluttered with contract-side takeoff flags. Never raises."""
+    included, flag = _select_takeoffs(folder)
+    if not included:
+        # Missing takeoff only matters for ETC now; keep the message specific.
+        row.status_flags.append(f"ETC: {flag}" if flag else "ETC: no takeoff")
+        return
+    if row.takeoff_path is None:
+        row.takeoff_path = included[0]
+    row.included_takeoffs = included
+
+    etc_total = 0.0
+    got_etc = False
+    multi = len(included) > 1
+    for tk in included:
+        try:
+            wb_data = load_workbook(tk, data_only=True)
+            wb_formula = load_workbook(tk, data_only=False)
+        except Exception as e:
+            row.status_flags.append(f"ETC read failed ({tk.name}): {type(e).__name__}")
+            continue
+        try:
+            bid_sheet = _resolve_sheet_name(wb_data, BID_SHEET)
+            prefix = f"{tk.name}: " if multi else ""
+            if not bid_sheet:
+                row.status_flags.append(prefix + "Missing Bid Sheet (ETC)")
+                continue
+            e = _read_number_smart(wb_data[bid_sheet], wb_formula[bid_sheet], ETC_CELL)
+            if e is None:
+                row.status_flags.append(prefix + f"Bad ETC ({ETC_CELL})")
+            else:
+                etc_total += e
+                got_etc = True
+        finally:
+            wb_data.close()
+            wb_formula.close()
+    if got_etc:
+        row.base_etc = etc_total
+
+
+# ─────────────────────── draw (G702/G703) read ────────────────────
+def _find_draws_folder(project_folder: Path) -> Optional[Path]:
+    """Return the project's draw container ('Draw'/'Draws', case-insensitive),
+    or None. 'Drawings' is excluded by the word-boundary in _DRAWS_FOLDER_RE."""
+    try:
+        for entry in project_folder.iterdir():
+            if entry.is_dir() and _DRAWS_FOLDER_RE.match(entry.name.strip()):
+                return entry
+    except OSError:
+        pass
+    return None
+
+
+def _draw_num_from_name(name: str) -> Optional[int]:
+    m = _DRAW_NUM_RE.search(name)
+    return int(m.group(1)) if m else None
+
+
+def _has_g702(xlsx: Path) -> bool:
+    """True if the workbook has a G702 sheet (payment-application front page).
+    read_only so it's a cheap header read, not a full parse."""
+    try:
+        wb = load_workbook(xlsx, read_only=True)
+        try:
+            return any(s.strip().lower() == G702_SHEET.lower() for s in wb.sheetnames)
+        finally:
+            wb.close()
+    except Exception:
+        return False
+
+
+def find_latest_draw(project_folder: Path):
+    """Locate the LATEST draw workbook for a project (Ted 2026-07-09: draw # is
+    the sequence — highest wins). Draw workbooks live in the 'Draws' container,
+    either directly or inside a numbered 'Draw #N' subfolder; if there's no
+    container, numbered draws directly under the project folder are also
+    accepted. Only numbered draw subfolders are descended into — the Supplier
+    Release folders (full of PDFs) are never opened. Returns (draw_num,
+    draw_file) or None (→ caller falls back to the takeoff proposal)."""
+    scan_root = _find_draws_folder(project_folder) or project_folder
+    candidates = []   # (draw_num, xlsx_path)
+    try:
+        entries = list(scan_root.iterdir())
+    except OSError:
+        return None
+    for entry in entries:
+        try:
+            if entry.is_file():
+                if entry.suffix.lower() in (".xlsx", ".xlsm") \
+                        and not entry.name.startswith("~$"):
+                    n = _draw_num_from_name(entry.name)
+                    if n is not None:
+                        candidates.append((n, entry))
+            elif entry.is_dir():
+                n = _draw_num_from_name(entry.name)      # numbered 'Draw #N' subfolder
+                if n is not None:
+                    for f in entry.iterdir():
+                        if f.is_file() and f.suffix.lower() in (".xlsx", ".xlsm") \
+                                and not f.name.startswith("~$"):
+                            fn = _draw_num_from_name(f.name)
+                            candidates.append((fn if fn is not None else n, f))
+        except OSError:
+            continue
+    if not candidates:
+        return None
+    # Highest draw # wins; require a real G702 so a stray xlsx can't win.
+    for n, f in sorted(candidates, key=lambda x: x[0], reverse=True):
+        if _has_g702(f):
+            return n, f
+    return None
+
+
+def _g702_value(ws, label_sub: str, max_scan: int = 14) -> Optional[float]:
+    """Find `label_sub` (case-insensitive substring) in the G702 label column
+    and read the first numeric value to its right (skipping '$'/blank cells).
+    G702 line labels sit in column A with the amount a few columns right."""
+    needle = label_sub.upper()
+    for r in range(1, ws.max_row + 1):
+        for c in range(1, ws.max_column + 1):
+            v = ws.cell(r, c).value
+            if v and needle in str(v).upper():
+                for off in range(1, max_scan + 1):
+                    raw = ws.cell(r, c + off).value
+                    num = _coerce_float(raw)
+                    if num is not None:
+                        return num
+                    if raw is None or str(raw).strip() in ("", "$", "USD", "-", "—"):
+                        continue
+                    break   # hit other text — stop scanning this label row
+    return None
+
+
+def read_draw_g702(draw_file: Path):
+    """Read the WIP inputs off a draw's G702 (AIA payment application).
+    Mapping (verified 2026-07-09 against CP585 Draws #1–#4):
+      Contract Price  = Line 3  Contract Sum to Date (= Line 1 + Line 2)
+      Approved COs    = Line 2  Net change by Change Orders
+      Billed (gross)  = Line 4  Total Completed & Stored to Date
+      Retainage       = Line 4 − Line 6  (Total Earned Less Retainage)
+    RETAINAGE IS NOT read from the labeled 'Total Retainage' cell — that cell
+    is unreliable across draws (0 / mismatched); Line 4 − Line 6 ties to the
+    10% on Line 5a every time. Returns (dict, flags); never raises."""
+    flags: List[str] = []
+    try:
+        wb = load_workbook(draw_file, data_only=True)
+    except Exception as e:
+        return None, [f"Draw read failed: {type(e).__name__}"]
+    try:
+        sheet = next((s for s in wb.sheetnames
+                      if s.strip().lower() == G702_SHEET.lower()), None)
+        if sheet is None:
+            return None, ["Draw has no G702 sheet"]
+        ws = wb[sheet]
+        orig   = _g702_value(ws, "ORIGINAL CONTRACT SUM")          # Line 1
+        net_co = _g702_value(ws, "NET CHANGE BY CHANGE ORDERS")    # Line 2
+        c2d    = _g702_value(ws, "CONTRACT SUM TO DATE")           # Line 3
+        billed = _g702_value(ws, "TOTAL COMPLETED")                # Line 4
+        earned = _g702_value(ws, "TOTAL EARNED LESS RETAINAGE")    # Line 6
+    finally:
+        wb.close()
+
+    # Contract: prefer Line 3; else reconstruct Line 1 + Line 2.
+    if c2d is None and orig is not None:
+        c2d = orig + (net_co or 0.0)
+    # Original contract (base) so contract_price property = base + CO = Line 3.
+    if orig is None and c2d is not None:
+        orig = c2d - (net_co or 0.0)
+    retainage = (billed - earned) if (billed is not None and earned is not None) else None
+
+    data = {
+        "orig_contract": orig, "net_co": net_co, "contract_to_date": c2d,
+        "billed": billed, "earned_less_retainage": earned, "retainage": retainage,
+    }
+    missing = [k for k in ("contract_to_date", "billed") if data[k] is None]
+    if missing:
+        flags.append(f"Draw G702 missing {', '.join(missing)} — open & save the "
+                     f"draw in Excel to refresh cached values")
+    return data, flags
+
+
+def parse_draw(project_folder: Path, row: CpRow) -> bool:
+    """If the project has a draw, read the LATEST one's G702 into `row`
+    (contract, CO, billed, retainage) and return True. ETC still comes from the
+    takeoff and costs from QBO — those are handled by the caller. Returns False
+    when there's no draw yet (caller falls back to the takeoff proposal)."""
+    found = find_latest_draw(project_folder)
+    if not found:
+        return False
+    draw_num, draw_file = found
+    row.draw_num = draw_num
+    row.draw_path = draw_file
+
+    data, flags = read_draw_g702(draw_file)
+    for f in flags:
+        row.status_flags.append(f"Draw #{draw_num}: {f}")
+    if data is None or data["contract_to_date"] is None or data["billed"] is None:
+        # A draw exists but is unreadable — do NOT fall through to takeoff/QBO
+        # for billing (that would silently mix sources). Flag for triage.
+        row.status_flags.append(
+            f"Draw #{draw_num} unreadable — contract/billed left blank for review")
+        return True
+
+    row.base_contract = data["orig_contract"]
+    row.co_revenue = data["net_co"]
+    row.billed_to_date = data["billed"]
+    row.retainage_held = data["retainage"]
+    row.status_flags.append(
+        f"Draw #{draw_num}: billed ${data['billed']:,.0f} (gross), "
+        f"retainage ${(data['retainage'] or 0):,.0f}, "
+        f"contract ${(data['contract_to_date'] or 0):,.0f}")
+    return True
+
+
 # ─────────────────────── folder scan ───────────────────────────────
 def _project_num_from_folder(folder: Path) -> Optional[str]:
     m = _CP_FOLDER_RE.match(folder.name)
@@ -789,17 +1022,25 @@ def scan_cp_folders(root: Path, is_completed: bool) -> List[CpRow]:
             costs_to_date=None,
         )
 
-        # Read the base takeoff (Contract Price + ETC).
-        parse_takeoff(entry, row)
-
-        # Scenario B: Change Orders/ sub-folder → sum standalone CO xlsx
-        # files and add to Contract Price (via the co_revenue property).
-        # ETC still comes from the main takeoff only — current CO template
-        # has no cost cell, so ETC growth from COs is deferred (see
-        # [[project-cp-wip-takeoff-extraction]] v2 options).
-        co_folder = entry / _CO_FOLDER
-        if co_folder.is_dir():
-            parse_change_orders_folder(co_folder, row)
+        # Draw-first (Ted 2026-07-09): if the project has a draw (AIA G702/G703
+        # payment application), the LATEST draw IS the WIP update — it supplies
+        # Contract Price, Approved COs, Billed-to-Date (gross), and Retainage
+        # Held. ETC still comes from the takeoff; Costs from QBO. Only before
+        # Draw #1 lands do we fall back to the takeoff proposal for contract/CO
+        # and QBO for billed/retainage.
+        if parse_draw(entry, row):
+            row.folder_path = entry                 # project-name link target
+            parse_takeoff_etc(entry, row)           # ETC (Bid!AP1961) only
+        else:
+            # No draw yet — takeoff proposal drives contract/CO; QBO drives
+            # billed/retainage (in enrich_with_qbo).
+            row.status_flags.append("No draw yet — contract from takeoff proposal")
+            parse_takeoff(entry, row)
+            # Scenario B: Change Orders/ sub-folder → sum standalone CO xlsx
+            # files and add to Contract Price (via the co_revenue property).
+            co_folder = entry / _CO_FOLDER
+            if co_folder.is_dir():
+                parse_change_orders_folder(co_folder, row)
 
         rows.append(row)
 
@@ -933,23 +1174,27 @@ def enrich_with_qbo(rows: List[CpRow]) -> None:
                 access, company_id, cust["id"], start_date, end_date
             )
             totals = pnl.extract_pl_totals(report_data)
-            # Billed to Date = GROSS billed, INCLUDING retainage — this is
-            # the standard WIP basis (Marcum/CFMA: job-to-date billing is
-            # "the total requisitioned by the customer, including retainage
-            # held"). Verified 2026-07-02. QBO P&L Total Income = gross
-            # billed (retainage invoices post to income; negative retainage
-            # lines post to Retainage Receivable on the balance sheet, so
-            # income is not reduced). We ALSO compute the net-collectible
-            # billed (retainage-receivable invoices excluded, via the
-            # JE-clearing check) and derive Retainage Held = gross − net.
-            gross_billed = float(totals.get("income", 0.0) or 0.0)
-            net_collectible = _fetch_billed_ex_retainage(
-                pnl, access, company_id, cust["id"]
-            )
-            row.billed_to_date = gross_billed
-            row.retainage_held = max(gross_billed - net_collectible, 0.0)
-            log.info("  %s billed(gross)=%.2f net-collectible=%.2f retainage-held=%.2f",
-                     row.project_num, gross_billed, net_collectible, row.retainage_held)
+            # Billed to Date + Retainage Held come from the DRAW when the
+            # project has one (Ted 2026-07-09: the latest G702 is the billing
+            # source of record). Only PRE-Draw#1 projects fall back to QBO for
+            # billing. This also saves the per-customer invoice fetch on
+            # draw-backed jobs.
+            if row.draw_num is None:
+                # QBO fallback (no draw yet). Billed = GROSS, incl retainage
+                # (Marcum/CFMA basis, verified 2026-07-02): QBO P&L Total Income
+                # is gross billed. Net-collectible excludes 'Retainage Not
+                # Billed' memo invoices; Retainage Held = gross − net.
+                gross_billed = float(totals.get("income", 0.0) or 0.0)
+                net_collectible = _fetch_billed_ex_retainage(
+                    pnl, access, company_id, cust["id"]
+                )
+                row.billed_to_date = gross_billed
+                row.retainage_held = max(gross_billed - net_collectible, 0.0)
+                log.info("  %s billed(gross)=%.2f net-collectible=%.2f retainage-held=%.2f (QBO)",
+                         row.project_num, gross_billed, net_collectible, row.retainage_held)
+            else:
+                log.info("  %s billed/retainage from Draw #%s — QBO billing skipped",
+                         row.project_num, row.draw_num)
             # Costs = COGS + Expenses. QBO Projects UI sums both; per GAAP
             # job costing, direct project spending is a project cost
             # regardless of which account category it lands in. Coding
@@ -1462,6 +1707,9 @@ def _print_rows_table(rows: List[CpRow], wip_path: Path, tab_name: str = TEST_TA
         print()
         print(_Term.color(_Term.DIM, "  Audit trail:"))
         for r in rows:
+            if r.draw_path:
+                print(_Term.color(_Term.DIM,
+                      f"    {r.project_num}  draw #{r.draw_num}:    {r.draw_path}"))
             if len(r.included_takeoffs) > 1:
                 print(_Term.color(_Term.DIM, f"    {r.project_num}  takeoffs (summed, {len(r.included_takeoffs)}):"))
                 for tk in r.included_takeoffs:
