@@ -11,6 +11,12 @@
     "qbo_name": "Bee Line Ready Mix",
     "saved": "2026-07-08"
   },
+  "bobcat of north texas": {
+    "pdf_name": "Bobcat of North Texas",
+    "qbo_id": "26748",
+    "qbo_name": "BOBCAT OF NORTH TEXAS",
+    "saved": "2026-07-09"
+  },
   "bodin": {
     "pdf_name": "BODIN",
     "qbo_id": "25339",
@@ -34,6 +40,12 @@
     "qbo_id": "25340",
     "qbo_name": "CMC CONSTRUCTION SERVICES",
     "saved": "2026-06-22"
+  },
+  "cowtown redi mix concrete": {
+    "pdf_name": "Cowtown Redi Mix Concrete",
+    "qbo_id": "25596",
+    "qbo_name": "COWTOWN REDI MIX CONCRETE",
+    "saved": "2026-07-09"
   },
   "estrada ready mix concrete, llc": {
     "pdf_name": "Estrada Ready Mix Concrete, LLC.",

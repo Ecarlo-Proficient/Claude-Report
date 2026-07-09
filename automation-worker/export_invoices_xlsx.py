@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
-import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -212,9 +211,9 @@ def export_open_invoices_xlsx(
     Pull open invoices from both trackers, write a single Excel file
     formatted for Eduardo's collections workflow. Returns the output path.
     """
-    target = output_path or Path(
-        os.getenv("INVOICE_EXPORT_PATH", str(DEFAULT_EXPORT_PATH))
-    )
+    # DEFAULT_EXPORT_PATH already resolved INVOICE_EXPORT_PATH via paths.get_path
+    # (env var > machine.env > repo default) — don't re-resolve it here.
+    target = output_path or DEFAULT_EXPORT_PATH
 
     # Office lock check — Excel creates a hidden '~$Open_Invoices.xlsx' file in
     # the same folder while someone has the workbook open (Eduardo on his side,

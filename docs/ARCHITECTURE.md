@@ -47,6 +47,7 @@ flowchart TB
         XLMIRROR["export_invoices_xlsx.py"]
         FIELDLOG["field_log_sync.py<br/>(checkbox-gated, UPDATE-only)"]
         PLANS["project_plans_sync.py"]
+        WIPXL["cp_wip_reader.py / rp_wip_reader.py<br/>(write ONLY the Test tab of WIP - MASTER new.xlsx)"]
         DOCTOR["doctor.py (diagnostics)"]
     end
     QBO --> INVSYNC
@@ -55,6 +56,7 @@ flowchart TB
     INVSYNC -- "MFD paid / short-pay cards" --> TEAMS
     NOTION --> FIELDLOG --> NOTION
     NOTION --> PLANS --> NOTION
+    QBO --> WIPXL --> ODRIVE
     NVAULT --> INVSYNC
     TVAULT --> INVSYNC
 
@@ -73,11 +75,8 @@ flowchart TB
     RECON -- "reconciliation xlsx" --> NAS
 
     subgraph WIP["wip/"]
-        WIPSYNC["build_wip_master.py / wip_sync.py<br/>(writes ONLY the Test tab)"]
         CLOSE["qbo_close_list.py / qbo_bulk_close.py<br/>(WRITER — gated, ALWAYS excludes MFD)"]
     end
-    QBO --> WIPSYNC --> ODRIVE
-    WIPSYNC -- "$25K job-borrow alert" --> TEAMS
     QBO <--> CLOSE
 
     subgraph FIN["Finance one-shots"]
