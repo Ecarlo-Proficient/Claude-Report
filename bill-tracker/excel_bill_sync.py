@@ -1893,6 +1893,20 @@ def _norm_ref(doc: str) -> str:
     return (doc or "").strip().upper()
 
 
+# Credit-card-fee bills reuse a generic label ("CC", "CC FEE", "MONTHLY CC FEE")
+# as their ref #, so the same label recurs across many unrelated bills and dates
+# — not real duplicates. A CC-marker ref only counts as a duplicate when the
+# copies also land on the SAME DAY (and same vendor), i.e. a genuine same-day
+# double entry. Ted 2026-07-10.
+_CC_REF_RE = re.compile(r"\bCC\b")
+
+
+def _is_cc_ref(ref_key: str) -> bool:
+    """True if a normalized ref # is a credit-card-fee marker (has 'CC' as a
+    standalone token)."""
+    return bool(_CC_REF_RE.search(ref_key))
+
+
 def _build_vendor_root(vendors: List[dict]) -> Dict[str, str]:
     """Map each vendor Id to its top-most ancestor Id by walking ParentRef
     (cycle-guarded). Root + every sub-vendor collapse to one tree key, so a
@@ -1953,12 +1967,17 @@ def _duplicate_bill_groups(
             "customer_name": r.get("customer_name") or "",
             "doc_key": doc_key,
         }
-    groups: Dict[Tuple[str, str], List[dict]] = defaultdict(list)
+    groups: Dict[Tuple[str, str, str], List[dict]] = defaultdict(list)
     for b in bills.values():
         # Fall back to vendor name when we have no id (defensive — a row should
         # always carry vendor_id, but never merge two vendors on an empty key).
         tree_key = b["root_id"] or ("NAME:" + b["vendor"].upper())
-        groups[(tree_key, b["doc_key"])].append(b)
+        # CC-fee markers only group within the same day (same-day double entry);
+        # a real ref # groups across all dates (date_part stays empty).
+        date_part = ""
+        if _is_cc_ref(b["doc_key"]):
+            date_part = b["bill_date"].isoformat() if b["bill_date"] else "NODATE"
+        groups[(tree_key, b["doc_key"], date_part)].append(b)
     out = [g for g in groups.values() if len(g) >= 2]
     for g in out:
         g.sort(key=lambda x: (x["bill_date"] or dt.date.min, x["bill_doc"]))
