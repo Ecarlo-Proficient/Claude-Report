@@ -16,7 +16,11 @@ jobs:
         with:
           python-version: '3.11'
       - name: Install dependencies
-        run: pip install -r requirements.txt pytest
+        run: pip install -r requirements.txt pytest ruff
+      - name: Syntax check (every .py file must parse)
+        run: python -m compileall -q .
+      - name: Critical lint (undefined names, unreachable code, bad comparisons)
+        run: ruff check --select E9,F63,F7,F82 .
       - name: Run tests
         run: |
           if [ -d tests ] && find tests -name 'test_*.py' -o -name '*_test.py' | grep -q .; then

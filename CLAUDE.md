@@ -115,30 +115,30 @@ restate them here. Business/strategic context lives in session memory, not in th
 This folder is a git repo pushed to a **private GitHub remote** shared with Ted's assistant
 (Eduardo), who develops from his own clone; Ted pulls and runs against QBO.
 
-**Branch model (two protected branches):**
+**Branch model (simplified 2026-07-10):**
 - **`main` — released, stable.** Every change reaches it through a PR with **1 approving review
   and a passing `test` CI check**. No direct pushes, no force pushes, no branch deletion —
   enforced even for repo admins. This is where Ted pulls production-ready code from.
-- **`dev` — the working branch.** All day-to-day work lands here first. Force pushes and deletion
-  are blocked for everyone. Two ways to land a change on `dev`:
-  - **Feature branch → PR into `dev`** (the default for everyone, including Eduardo). No review
-    required — just a green `test` CI check. This is the safe path; use it unless Ted explicitly
-    says to direct-push.
-  - **Direct push to `dev`** — only works for repo **admins** (Ted), and only as a protection-rule
-    *bypass* (GitHub prints a warning when it happens). Non-admins are rejected outright and must
-    open a PR. Don't direct-push on Ted's behalf without his say-so.
+- **`dev` — the working branch, direct-pushable by everyone** (Ted and Eduardo). Force pushes
+  and deletion are still blocked. No PR or pre-merge check is required to land on `dev`; the
+  `test` CI workflow runs on **every push to `dev`** and flags breakage after the fact (red ✗ on
+  the commit on GitHub). A red `dev` must be fixed before opening a release PR — `main` still
+  hard-requires the check. Feature branches + PRs into `dev` remain fine for larger or riskier
+  changes, just no longer mandatory.
 
 **Session flow:**
-- **Start of any session that will modify files: `git pull` on `dev` first** — Eduardo's merged
-  PRs may have changed things. Working on a stale copy creates divergence.
+- **Start of any session that will modify files: `git pull` on `dev` first** — Eduardo's pushes
+  may have changed things. Working on a stale copy creates divergence.
 - **End of any session where files changed: run `git status`, then PROMPT TED** to land the work
   before wrapping up. Do not let a session end with uncommitted/unpushed changes without explicitly
   asking. Unpushed work is invisible to Eduardo and is how work gets overwritten.
-- Feature-branch path (complete, paste-ready — the default):
-  `git switch -c <feature-branch> dev` → `git add -A` → `git commit -m "<what changed>"` →
-  `git push -u origin <feature-branch>` → open a PR into `dev` and wait for green CI.
+- Landing work on `dev` (complete, paste-ready — the default):
+  `git switch dev` → `git pull` → `git add -A` → `git commit -m "<what changed>"` → `git push`,
+  then check the commit shows a green ✓ on GitHub.
 - Releasing `dev` → `main`: open a PR from `dev` into `main`; it needs 1 approving review + passing
-  `test` CI before it can merge. Never try to push `main` directly — branch protection rejects it.
+  `test` CI before it can merge (the author can't approve their own PR — the other person reviews).
+  Never try to push `main` directly — branch protection rejects it. Auto-merge is enabled: you can
+  flag the release PR to merge itself once review + CI complete.
 - Never commit `.env`, data files, logs, or venvs — `.gitignore` enforces this; don't override it.
 - **`docs/ARCHITECTURE.md` is the living system map (Mermaid — renders on GitHub).** Any commit
   that adds/removes a script or changes a data flow must update the diagram in the same commit.
