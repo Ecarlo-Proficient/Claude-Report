@@ -1711,6 +1711,19 @@ AUDIT_UNCODED_CELL_FILL    = PatternFill(patternType="solid",
                                          fgColor=Color(rgb="FFFCE4D6"),
                                          bgColor=Color(rgb="FFFCE4D6"))
 
+# Age escalation on the Bill Date cell in the MISSING-project section. A blank
+# project # is tolerable while the job is still being identified, but a real
+# job cost shouldn't sit uncoded for long — the project is knowable within ~2
+# weeks. >15 days old → yellow, >30 days → red. (Ted 2026-07-10.)
+AUDIT_MISSING_AGE_YELLOW_DAYS = 15
+AUDIT_MISSING_AGE_RED_DAYS    = 30
+AUDIT_AGE_YELLOW_FILL = PatternFill(patternType="solid",
+                                    fgColor=Color(rgb="FFFFE699"),
+                                    bgColor=Color(rgb="FFFFE699"))
+AUDIT_AGE_RED_FILL    = PatternFill(patternType="solid",
+                                    fgColor=Color(rgb="FFFF9999"),
+                                    bgColor=Color(rgb="FFFF9999"))
+
 # Project-code pattern for the uncoded job-cost check (own constant so the
 # existing _audit_row_checks stays untouched).
 _UNCODED_PROJ_RE = re.compile(r"\b(MFD|CP|RP)\d+(?:-FTW)?\b", re.IGNORECASE)
@@ -2025,6 +2038,20 @@ def _audit_none_row(ws, row_idx: int) -> None:
     ws.row_dimensions[row_idx].outline_level = 1
 
 
+def _missing_project_age_fill(bill_date, today: dt.date) -> Optional[PatternFill]:
+    """Escalate the Bill Date cell of a MISSING-project line by age: yellow past
+    AUDIT_MISSING_AGE_YELLOW_DAYS, red past AUDIT_MISSING_AGE_RED_DAYS. A recent
+    bill (project still being identified) stays uncolored. None = no fill."""
+    if not isinstance(bill_date, dt.date):
+        return None
+    days_old = (today - bill_date).days
+    if days_old > AUDIT_MISSING_AGE_RED_DAYS:
+        return AUDIT_AGE_RED_FILL
+    if days_old > AUDIT_MISSING_AGE_YELLOW_DAYS:
+        return AUDIT_AGE_YELLOW_FILL
+    return None
+
+
 def build_audit_sheet(ws, rows: List[dict],
                       vendor_root: Optional[Dict[str, str]] = None,
                       vendor_map: Optional[Dict[str, str]] = None) -> int:
@@ -2201,6 +2228,11 @@ def build_audit_sheet(ws, rows: List[dict],
                 _qbo_link(r.get("bill_id", "")),
             ]
             _audit_write_row(ws, cur_row, values, AUDIT_UNCODED_CELL_FILL, level=1)
+            # Age-escalate the Bill Date cell (col 3): a project # left blank
+            # because it's unknown should be resolved within ~2 weeks.
+            age_fill = _missing_project_age_fill(r.get("bill_date"), today)
+            if age_fill is not None:
+                ws.cell(row=cur_row, column=3).fill = age_fill
             cur_row += 1
     cur_row += 1   # spacer row between sections
 
