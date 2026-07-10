@@ -22,6 +22,7 @@ USAGE
 from __future__ import annotations
 import argparse
 import datetime as dt
+import re
 import sys
 from pathlib import Path
 
@@ -83,11 +84,28 @@ def _norm_ref(doc):
     return (doc or "").strip().upper()
 
 
+# Credit-card-fee bills reuse a generic label ("CC", "CC FEE", "MONTHLY CC FEE")
+# as their ref #, so the same label recurs across many unrelated bills and dates
+# — not real duplicates. A CC-marker ref only counts as a duplicate when the
+# copies also land on the SAME DAY (and same vendor), i.e. a genuine same-day
+# double entry. Ted 2026-07-10.
+_CC_REF_RE = re.compile(r"\bCC\b")
+
+
+def _is_cc_ref(ref_key):
+    """True if a normalized ref # is a credit-card-fee marker (has 'CC' as a
+    standalone token)."""
+    return bool(_CC_REF_RE.search(ref_key))
+
+
 def build_rows(bills, id_to_name, id_to_root):
     """Group bills by (vendor tree root, normalized ref #); keep only groups
     with 2+ distinct bills. Returns display rows, group-numbered, sorted so a
-    tree's duplicate sets sit together."""
-    groups = {}  # (root_id, ref_key) -> list of bill dicts
+    tree's duplicate sets sit together.
+
+    CC-fee markers ('CC', 'CC FEE', …) are the exception: they only group
+    within the same day, so a reused CC label across dates isn't flagged."""
+    groups = {}  # (root_id, ref_key, date_part) -> list of bill dicts
     for b in bills:
         ref_key = _norm_ref(b.get("DocNumber"))
         if not ref_key:
@@ -95,10 +113,16 @@ def build_rows(bills, id_to_name, id_to_root):
         vref = b.get("VendorRef") or {}
         vid = vref.get("value") or ""
         root_id = id_to_root.get(vid, vid)
-        groups.setdefault((root_id, ref_key), []).append(b)
+        # CC-fee markers only group within the same day; a real ref # groups
+        # across all dates (date_part stays empty).
+        date_part = ""
+        if _is_cc_ref(ref_key):
+            bd = parse_date(b.get("TxnDate"))
+            date_part = bd.isoformat() if bd else "NODATE"
+        groups.setdefault((root_id, ref_key, date_part), []).append(b)
 
     dup_groups = []
-    for (root_id, ref_key), bs in groups.items():
+    for (root_id, ref_key, _date_part), bs in groups.items():
         # De-dupe by Bill Id in case the same record surfaced twice.
         by_id = {b.get("Id"): b for b in bs}
         if len(by_id) < 2:
