@@ -113,15 +113,32 @@ restate them here. Business/strategic context lives in session memory, not in th
 ## Git / GitHub sync (this folder is a live repo — added 2026-07-09)
 
 This folder is a git repo pushed to a **private GitHub remote** shared with Ted's assistant
-(Eduardo), who develops from his own clone via branch → PR; Ted pulls and runs against QBO.
+(Eduardo), who develops from his own clone; Ted pulls and runs against QBO.
 
-- **Start of any session that will modify files: run `git pull` first** — Eduardo's merged PRs
-  may have changed things. Working on a stale copy creates divergence.
-- **End of any session where files in this folder changed: run `git status`, then PROMPT TED to
-  commit and push before wrapping up. Do not let a session end with unpushed changes without
-  explicitly asking.** Unpushed work is invisible to Eduardo and is how work gets overwritten.
-- Push sequence (complete, paste-ready):
-  `git add -A` → `git commit -m "<what changed>"` → `git push`
+**Branch model (two protected branches):**
+- **`main` — released, stable.** Every change reaches it through a PR with **1 approving review
+  and a passing `test` CI check**. No direct pushes, no force pushes, no branch deletion —
+  enforced even for repo admins. This is where Ted pulls production-ready code from.
+- **`dev` — the working branch.** All day-to-day work lands here first. Force pushes and deletion
+  are blocked for everyone. Two ways to land a change on `dev`:
+  - **Feature branch → PR into `dev`** (the default for everyone, including Eduardo). No review
+    required — just a green `test` CI check. This is the safe path; use it unless Ted explicitly
+    says to direct-push.
+  - **Direct push to `dev`** — only works for repo **admins** (Ted), and only as a protection-rule
+    *bypass* (GitHub prints a warning when it happens). Non-admins are rejected outright and must
+    open a PR. Don't direct-push on Ted's behalf without his say-so.
+
+**Session flow:**
+- **Start of any session that will modify files: `git pull` on `dev` first** — Eduardo's merged
+  PRs may have changed things. Working on a stale copy creates divergence.
+- **End of any session where files changed: run `git status`, then PROMPT TED** to land the work
+  before wrapping up. Do not let a session end with uncommitted/unpushed changes without explicitly
+  asking. Unpushed work is invisible to Eduardo and is how work gets overwritten.
+- Feature-branch path (complete, paste-ready — the default):
+  `git switch -c <feature-branch> dev` → `git add -A` → `git commit -m "<what changed>"` →
+  `git push -u origin <feature-branch>` → open a PR into `dev` and wait for green CI.
+- Releasing `dev` → `main`: open a PR from `dev` into `main`; it needs 1 approving review + passing
+  `test` CI before it can merge. Never try to push `main` directly — branch protection rejects it.
 - Never commit `.env`, data files, logs, or venvs — `.gitignore` enforces this; don't override it.
 - **`docs/ARCHITECTURE.md` is the living system map (Mermaid — renders on GitHub).** Any commit
   that adds/removes a script or changes a data flow must update the diagram in the same commit.
