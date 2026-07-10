@@ -152,9 +152,11 @@ CF_LIEN_RELEASED = "92D050"      # green — lien RELEASED / satisfied (resolved
 # lien-notice date (15th of the 2nd month after the bill date — TX practice)
 # is approaching. A yellow→orange countdown. It NEVER goes red: red is reserved
 # for an actual FILED lien (a real legal event), not a "this is coming" warning.
-CF_TIMER_YELLOW = "FFF2CC"       # ≤ 30 days out — heads-up
-CF_TIMER_ORANGE = "FFD966"       # ≤ 15 days out — getting close
-CF_TIMER_HOT    = "ED7D31"       # ≤ 7 days / past — pay now (strong orange)
+# 2026-07-10 (Ted): old ramp was too soft — ≤30d was near-invisible and ≤15d
+# blended into the Notice Sent amber. Each step now one notch hotter.
+CF_TIMER_YELLOW = "FFD966"       # ≤ 30 days out — heads-up (clear gold)
+CF_TIMER_ORANGE = "ED7D31"       # ≤ 15 days out — getting close (strong orange)
+CF_TIMER_HOT    = "C55A11"       # ≤ 7 days / past — pay now (burnt orange)
 
 # Lien tag values (escalation order). "Outstanding" = NOTICE or FILED; a bill
 # being paid does NOT resolve a lien — only RELEASED does.
@@ -802,13 +804,13 @@ def _lien_legend(ws, start_col: int) -> None:
         (CF_LIEN_NOTICE,   LIEN_NOTICE,         "000000"),
         (CF_LIEN_FILED,    LIEN_FILED,          "FFFFFF"),
         (CF_LIEN_RELEASED, LIEN_RELEASED,       "000000"),
-        (CF_TIMER_YELLOW,  "notice ≤30d",       "000000"),
-        (CF_TIMER_ORANGE,  "≤15d",              "000000"),
-        (CF_TIMER_HOT,     "≤7d / past",        "FFFFFF"),
+        (CF_TIMER_YELLOW,  "notice due ≤30d",   "000000"),
+        (CF_TIMER_ORANGE,  "due ≤15d",          "FFFFFF"),
+        (CF_TIMER_HOT,     "due ≤7d / PAST",    "FFFFFF"),
     ]
     for i, (hex_color, text, font_hex) in enumerate(items):
         col = start_col + i
-        ws.column_dimensions[_col_letter(col)].width = 13
+        ws.column_dimensions[_col_letter(col)].width = 15
         c = ws.cell(row=1, column=col, value=text)
         c.alignment = Alignment(horizontal="center", vertical="center")
         if hex_color:
