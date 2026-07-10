@@ -1723,6 +1723,25 @@ AUDIT_BUCKET_FILL        = PatternFill(patternType="solid",
 AUDIT_BUCKET_FONT        = Font(name="Calibri", size=11, bold=True, color="1F3864")
 AUDIT_BUCKET_HEIGHT      = 20
 
+# Section 4 — duplicate bill # within a vendor tree (double-entry / double-pay
+# risk). Purple family so it reads as its own concern, distinct from the amber
+# approval section and blue data-entry section. Always rendered — even at zero,
+# the clerk sees the check ran and found nothing.
+AUDIT_SECTION_DUP_FILL   = PatternFill(patternType="solid",
+                                       fgColor=Color(rgb="FFB1A0C7"),
+                                       bgColor=Color(rgb="FFB1A0C7"))
+AUDIT_DUP_GROUP_FILL     = PatternFill(patternType="solid",
+                                       fgColor=Color(rgb="FFCCC0DA"),
+                                       bgColor=Color(rgb="FFCCC0DA"))
+AUDIT_DUP_CELL_FILL      = PatternFill(patternType="solid",
+                                       fgColor=Color(rgb="FFE4DFEC"),
+                                       bgColor=Color(rgb="FFE4DFEC"))
+
+# Shared cell-kind list for every audit data row (all sections use the same
+# 11-column AUDIT_HEADERS layout).
+AUDIT_ROW_KINDS = ["text", "text", "date", "text", "text", "text", "text",
+                   "text", "text", "text", "link"]
+
 # Aging buckets — most overdue first, so the clerk's eye lands on the worst
 # offenders. (label, lower_inclusive, upper_exclusive)
 AGING_BUCKETS: List[Tuple[str, int, int]] = [
@@ -1869,18 +1888,149 @@ def _uncoded_job_cost(r: dict) -> Optional[Tuple[str, str]]:
     return reason, (class_div or "(none)")
 
 
-def build_audit_sheet(ws, rows: List[dict]) -> int:
-    """Audit sheet — two sections:
-      1. Stale NOT APPROVED bills (bill-grain, deduped). Clerk should chase
-         approvals for any bill older than NOT_APPROVED_BUFFER_DAYS.
-      2. Data entry issues (line-grain). Empty Class, Class/division
-         mismatch, line-desc project mismatch, etc.
+def _norm_ref(doc: str) -> str:
+    """Normalize a bill ref # for duplicate matching: trim + uppercase."""
+    return (doc or "").strip().upper()
 
-    Both sections render with the same AUDIT_HEADERS column layout, separated
-    by colored section banners. Returns total flagged-entry count.
+
+def _build_vendor_root(vendors: List[dict]) -> Dict[str, str]:
+    """Map each vendor Id to its top-most ancestor Id by walking ParentRef
+    (cycle-guarded). Root + every sub-vendor collapse to one tree key, so a
+    duplicate ref # booked once to a parent and once to a sub-vendor is still
+    caught. A vendor with no parent maps to itself."""
+    parent: Dict[str, str] = {}
+    ids = set()
+    for v in vendors:
+        vid = v.get("Id")
+        if not vid:
+            continue
+        ids.add(vid)
+        pid = (v.get("ParentRef") or {}).get("value")
+        if pid and pid != vid:
+            parent[vid] = pid
+
+    def root_of(vid: str) -> str:
+        seen = set()
+        cur = vid
+        while cur in parent and cur not in seen:
+            seen.add(cur)
+            cur = parent[cur]
+        return cur
+
+    return {vid: root_of(vid) for vid in ids}
+
+
+def _duplicate_bill_groups(
+    rows: List[dict],
+    vendor_root: Optional[Dict[str, str]] = None,
+    vendor_map: Optional[Dict[str, str]] = None,
+) -> List[List[dict]]:
+    """Group bills (deduped by bill_id) by (vendor tree root, normalized ref #)
+    and return only the groups with 2+ distinct bills — the same ref # entered
+    more than once under one vendor tree. Blank ref #s are skipped (nothing to
+    compare). Groups sorted by tree name then ref #; bills within a group by
+    date."""
+    vendor_root = vendor_root or {}
+    vendor_map = vendor_map or {}
+    bills: Dict[str, dict] = {}
+    for r in rows:
+        bid = r.get("bill_id") or ""
+        if not bid or bid in bills:
+            continue
+        doc_key = _norm_ref(r.get("bill_doc"))
+        if not doc_key:
+            continue
+        vid = r.get("vendor_id") or ""
+        root_id = vendor_root.get(vid, vid)
+        bills[bid] = {
+            "bill_id": bid,
+            "bill_doc": r.get("bill_doc") or "",
+            "vendor": r.get("vendor") or "",
+            "root_id": root_id,
+            "root_name": vendor_map.get(root_id, "") or (r.get("vendor") or ""),
+            "bill_date": r.get("bill_date"),
+            "bill_total": float(r.get("bill_total") or 0),
+            "customer_name": r.get("customer_name") or "",
+            "doc_key": doc_key,
+        }
+    groups: Dict[Tuple[str, str], List[dict]] = defaultdict(list)
+    for b in bills.values():
+        # Fall back to vendor name when we have no id (defensive — a row should
+        # always carry vendor_id, but never merge two vendors on an empty key).
+        tree_key = b["root_id"] or ("NAME:" + b["vendor"].upper())
+        groups[(tree_key, b["doc_key"])].append(b)
+    out = [g for g in groups.values() if len(g) >= 2]
+    for g in out:
+        g.sort(key=lambda x: (x["bill_date"] or dt.date.min, x["bill_doc"]))
+    out.sort(key=lambda g: ((g[0]["root_name"] or g[0]["vendor"] or "").upper(),
+                            g[0]["doc_key"]))
+    return out
+
+
+def _audit_write_row(ws, row_idx: int, values: List, tint_fill: Optional[PatternFill],
+                     level: int) -> None:
+    """Write one 11-column audit data row, tint the Mismatch cell (col 10), and
+    place it at the given outline level so the section is collapsible."""
+    for c_i, (val, kind) in enumerate(zip(values, AUDIT_ROW_KINDS), start=1):
+        c = ws.cell(row=row_idx, column=c_i, value=val)
+        _format_data_cell(c, kind)
+    if tint_fill is not None:
+        ws.cell(row=row_idx, column=10).fill = tint_fill
+    ws.row_dimensions[row_idx].outline_level = level
+
+
+def _audit_sub_banner(ws, row_idx: int, text: str, fill: PatternFill,
+                      n_cols: int, level: int) -> None:
+    """Render a nested sub-group banner (aging bucket, duplicate group) at the
+    given outline level."""
+    ws.cell(row=row_idx, column=1, value=text)
+    ws.merge_cells(start_row=row_idx, start_column=1,
+                   end_row=row_idx, end_column=n_cols)
+    for c_i in range(1, n_cols + 1):
+        cell = ws.cell(row=row_idx, column=c_i)
+        cell.fill = fill
+        cell.font = AUDIT_BUCKET_FONT
+    ws.cell(row=row_idx, column=1).alignment = Alignment(
+        horizontal="left", vertical="center", indent=2
+    )
+    ws.row_dimensions[row_idx].height = AUDIT_BUCKET_HEIGHT
+    ws.row_dimensions[row_idx].outline_level = level
+
+
+def _audit_none_row(ws, row_idx: int) -> None:
+    """Placeholder row shown when a section has zero findings — the header still
+    renders so the clerk sees at a glance that the check ran and was clean."""
+    c = ws.cell(row=row_idx, column=1, value="✓ none")
+    c.font = Font(italic=True, color="808080")
+    c.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+    ws.row_dimensions[row_idx].outline_level = 1
+
+
+def build_audit_sheet(ws, rows: List[dict],
+                      vendor_root: Optional[Dict[str, str]] = None,
+                      vendor_map: Optional[Dict[str, str]] = None) -> int:
+    """Audit sheet — four sections, each under a collapsible outline group so
+    the clerk can collapse to the section banners and read the whole audit at a
+    glance:
+      1. Stale NOT APPROVED bills (bill-grain, deduped), sub-grouped by aging
+         bucket. Chase approvals for any bill older than NOT_APPROVED_BUFFER_DAYS.
+      2. Data entry issues (line-grain). Empty Class, Class/division mismatch,
+         line-desc project mismatch, etc.
+      3. Likely job cost missing a project (line-grain, high-confidence only).
+      4. Duplicate bill # within a vendor tree (bill-grain) — double-entry /
+         double-pay risk.
+
+    Every section renders its banner + count even at zero (a "✓ none" row),
+    so no check silently disappears. All sections share the AUDIT_HEADERS
+    column layout. Returns total flagged-entry count.
     """
     today = dt.date.today()
     n_cols = len(AUDIT_HEADERS)
+
+    # Outline grouping: banners are summaries that sit ABOVE their detail rows,
+    # so the collapse (+/−) control lands on the banner, not below the group.
+    ws.sheet_properties.outlinePr.summaryBelow = False
+    ws.sheet_properties.outlinePr.summaryRight = False
 
     # Header row
     for col_i, name in enumerate(AUDIT_HEADERS, 1):
@@ -1910,13 +2060,16 @@ def build_audit_sheet(ws, rows: List[dict]) -> int:
                                 x[0].get("bill_doc", "")))
     uncoded.sort(key=lambda x: ((x[0].get("vendor") or "").upper(),
                                 x[0].get("bill_doc", "")))
+    dup_groups = _duplicate_bill_groups(rows, vendor_root, vendor_map)
 
     print(f"  audit: {len(stale_bills)} stale, {len(flagged)} data-entry, "
-          f"{len(uncoded)} uncoded job-cost")
+          f"{len(uncoded)} uncoded job-cost, {len(dup_groups)} duplicate-ref group(s)")
 
-    if not stale_bills and not flagged and not uncoded:
-        ws.cell(row=2, column=1, value="✓ no audit issues detected").font = Font(italic=True)
-        return 0
+    # Amber tint for the Mismatch cell — matches the stale section banner.
+    stale_tint = PatternFill(patternType="solid",
+                             fgColor=Color(rgb="FFFFCC66"), bgColor=Color(rgb="FFFFCC66"))
+    data_tint = PatternFill(patternType="solid",
+                            fgColor=Color(rgb="FFFCE4E4"), bgColor=Color(rgb="FFFCE4E4"))
 
     cur_row = 2
 
@@ -1924,17 +2077,18 @@ def build_audit_sheet(ws, rows: List[dict]) -> int:
     # Sub-grouped by aging bucket (90+ → 60–90 → 30–60), vendor-first within
     # each bucket so the clerk works one vendor at a time without flipping
     # back and forth across the list.
-    if stale_bills:
-        _audit_section_banner(
-            ws, cur_row,
-            f"⚠  NOT APPROVED bills > {NOT_APPROVED_BUFFER_DAYS} days old  "
-            f"({len(stale_bills)} bill{'s' if len(stale_bills) != 1 else ''})",
-            AUDIT_SECTION_STALE_FILL,
-            n_cols,
-        )
+    _audit_section_banner(
+        ws, cur_row,
+        f"⚠  NOT APPROVED bills > {NOT_APPROVED_BUFFER_DAYS} days old  "
+        f"({len(stale_bills)} bill{'s' if len(stale_bills) != 1 else ''})",
+        AUDIT_SECTION_STALE_FILL,
+        n_cols,
+    )
+    cur_row += 1
+    if not stale_bills:
+        _audit_none_row(ws, cur_row)
         cur_row += 1
-
-        # Group by aging bucket
+    else:
         by_bucket: Dict[str, List[dict]] = defaultdict(list)
         for s in stale_bills:
             by_bucket[_aging_bucket_for(s["days_old"])].append(s)
@@ -1950,64 +2104,43 @@ def build_audit_sheet(ws, rows: List[dict]) -> int:
                 -x["days_old"],
                 x["bill_doc"],
             ))
-            # Bucket sub-banner
-            ws.cell(row=cur_row, column=1,
-                    value=f"   {bucket_label}  ({len(bucket_bills)} bill"
-                          f"{'s' if len(bucket_bills) != 1 else ''})")
-            ws.merge_cells(start_row=cur_row, start_column=1,
-                           end_row=cur_row, end_column=n_cols)
-            for c_i in range(1, n_cols + 1):
-                cell = ws.cell(row=cur_row, column=c_i)
-                cell.fill = AUDIT_BUCKET_FILL
-                cell.font = AUDIT_BUCKET_FONT
-            ws.cell(row=cur_row, column=1).alignment = Alignment(
-                horizontal="left", vertical="center", indent=2
+            _audit_sub_banner(
+                ws, cur_row,
+                f"   {bucket_label}  ({len(bucket_bills)} bill"
+                f"{'s' if len(bucket_bills) != 1 else ''})",
+                AUDIT_BUCKET_FILL, n_cols, level=1,
             )
-            ws.row_dimensions[cur_row].height = AUDIT_BUCKET_HEIGHT
             cur_row += 1
-
             for s in bucket_bills:
                 values = [
-                    s["bill_doc"],
-                    s["vendor"],
-                    s["bill_date"],
-                    s["customer_name"],
-                    s["project_num"] or "(none)",
-                    s["division"] or "(none)",
+                    s["bill_doc"], s["vendor"], s["bill_date"], s["customer_name"],
+                    s["project_num"] or "(none)", s["division"] or "(none)",
                     "",                       # class — bill-level, n/a
                     "NOT APPROVED",
                     "",                       # line desc — bill-level, n/a
                     f"NOT APPROVED — {s['days_old']} days old",
                     _qbo_link(s["bill_id"]),
                 ]
-                kinds = ["text", "text", "date", "text", "text", "text", "text",
-                         "text", "text", "text", "link"]
-                for c_i, (val, kind) in enumerate(zip(values, kinds), start=1):
-                    c = ws.cell(row=cur_row, column=c_i, value=val)
-                    _format_data_cell(c, kind)
-                # Tint Mismatch cell amber (same family as the section banner)
-                ws.cell(row=cur_row, column=10).fill = PatternFill(
-                    patternType="solid",
-                    fgColor=Color(rgb="FFFFCC66"), bgColor=Color(rgb="FFFFCC66"),
-                )
+                _audit_write_row(ws, cur_row, values, stale_tint, level=2)
                 cur_row += 1
-        cur_row += 1   # spacer row between sections
+    cur_row += 1   # spacer row between sections
 
     # ─── Section 2: Data entry issues ───
-    if flagged:
-        _audit_section_banner(
-            ws, cur_row,
-            f"Data entry issues  ({len(flagged)} flagged line"
-            f"{'s' if len(flagged) != 1 else ''})",
-            AUDIT_SECTION_DATA_FILL,
-            n_cols,
-        )
+    _audit_section_banner(
+        ws, cur_row,
+        f"Data entry issues  ({len(flagged)} flagged line"
+        f"{'s' if len(flagged) != 1 else ''})",
+        AUDIT_SECTION_DATA_FILL,
+        n_cols,
+    )
+    cur_row += 1
+    if not flagged:
+        _audit_none_row(ws, cur_row)
         cur_row += 1
+    else:
         for r, issues in flagged:
             values = [
-                r.get("bill_doc", ""),
-                r.get("vendor", ""),
-                r.get("bill_date"),
+                r.get("bill_doc", ""), r.get("vendor", ""), r.get("bill_date"),
                 r.get("customer_name", ""),
                 r.get("project_num", "") or "(none)",
                 r.get("division", "") or "(none)",
@@ -2017,36 +2150,28 @@ def build_audit_sheet(ws, rows: List[dict]) -> int:
                 " · ".join(issues),
                 _qbo_link(r.get("bill_id", "")),
             ]
-            kinds = ["text", "text", "date", "text", "text", "text", "text",
-                     "text", "text", "text", "link"]
-            for c_i, (val, kind) in enumerate(zip(values, kinds), start=1):
-                c = ws.cell(row=cur_row, column=c_i, value=val)
-                _format_data_cell(c, kind)
-            # Tint Mismatch cell pink (kept softer per 2026-06-04 palette)
-            ws.cell(row=cur_row, column=10).fill = PatternFill(
-                patternType="solid",
-                fgColor=Color(rgb="FFFCE4E4"), bgColor=Color(rgb="FFFCE4E4"),
-            )
+            _audit_write_row(ws, cur_row, values, data_tint, level=1)
             cur_row += 1
-        cur_row += 1   # spacer row between sections
+    cur_row += 1   # spacer row between sections
 
     # ─── Section 3: Uncoded JOB-COST lines (missing project) ───
     # Only high-confidence job-cost misses — overhead-only uncoded lines are
     # skipped so the audit isn't flooded (Ted 2026-06-18).
-    if uncoded:
-        _audit_section_banner(
-            ws, cur_row,
-            f"⛔  Likely job cost — MISSING project  ({len(uncoded)} line"
-            f"{'s' if len(uncoded) != 1 else ''})",
-            AUDIT_SECTION_UNCODED_FILL,
-            n_cols,
-        )
+    _audit_section_banner(
+        ws, cur_row,
+        f"⛔  Likely job cost — MISSING project  ({len(uncoded)} line"
+        f"{'s' if len(uncoded) != 1 else ''})",
+        AUDIT_SECTION_UNCODED_FILL,
+        n_cols,
+    )
+    cur_row += 1
+    if not uncoded:
+        _audit_none_row(ws, cur_row)
         cur_row += 1
+    else:
         for r, reason, division in uncoded:
             values = [
-                r.get("bill_doc", ""),
-                r.get("vendor", ""),
-                r.get("bill_date"),
+                r.get("bill_doc", ""), r.get("vendor", ""), r.get("bill_date"),
                 r.get("customer_name", "") or "(none)",
                 "(none)",                                  # Project # (parsed)
                 division,                                  # Division (implied by class)
@@ -2056,15 +2181,54 @@ def build_audit_sheet(ws, rows: List[dict]) -> int:
                 reason,
                 _qbo_link(r.get("bill_id", "")),
             ]
-            kinds = ["text", "text", "date", "text", "text", "text", "text",
-                     "text", "text", "text", "link"]
-            for c_i, (val, kind) in enumerate(zip(values, kinds), start=1):
-                c = ws.cell(row=cur_row, column=c_i, value=val)
-                _format_data_cell(c, kind)
-            ws.cell(row=cur_row, column=10).fill = AUDIT_UNCODED_CELL_FILL
+            _audit_write_row(ws, cur_row, values, AUDIT_UNCODED_CELL_FILL, level=1)
             cur_row += 1
+    cur_row += 1   # spacer row between sections
 
-    return len(stale_bills) + len(flagged) + len(uncoded)
+    # ─── Section 4: Duplicate bill # within a vendor tree ───
+    # Same ref # on 2+ bills under one vendor tree = double-entry / double-pay
+    # risk. Grouped per (tree, ref #); matching totals are the strongest signal.
+    n_dup_bills = sum(len(g) for g in dup_groups)
+    _audit_section_banner(
+        ws, cur_row,
+        f"🔁  Duplicate bill # in a vendor tree  ({len(dup_groups)} group"
+        f"{'s' if len(dup_groups) != 1 else ''})",
+        AUDIT_SECTION_DUP_FILL,
+        n_cols,
+    )
+    cur_row += 1
+    if not dup_groups:
+        _audit_none_row(ws, cur_row)
+        cur_row += 1
+    else:
+        for g in dup_groups:
+            totals = {round(b["bill_total"], 2) for b in g}
+            same_amt = len(totals) == 1
+            amt_note = (f"same amount ${next(iter(totals)):,.2f}" if same_amt
+                        else "AMOUNTS DIFFER")
+            root_name = g[0]["root_name"] or g[0]["vendor"]
+            _audit_sub_banner(
+                ws, cur_row,
+                f"   #{g[0]['bill_doc']}  ·  {root_name}  ·  {len(g)} bills  ·  {amt_note}",
+                AUDIT_DUP_GROUP_FILL, n_cols, level=1,
+            )
+            cur_row += 1
+            for b in g:
+                mismatch = ("Duplicate ref — same $ as its copies"
+                            if same_amt else "Duplicate ref — amount differs")
+                values = [
+                    b["bill_doc"], b["vendor"], b["bill_date"],
+                    b["customer_name"],
+                    "", "", "",               # project / division / class — n/a here
+                    "",                       # memo placeholder
+                    f"Bill total ${b['bill_total']:,.2f}",
+                    mismatch,
+                    _qbo_link(b["bill_id"]),
+                ]
+                _audit_write_row(ws, cur_row, values, AUDIT_DUP_CELL_FILL, level=2)
+                cur_row += 1
+
+    return len(stale_bills) + len(flagged) + len(uncoded) + n_dup_bills
 
 
 # ─────────────────────── main ───────────────────────
@@ -2089,6 +2253,7 @@ def main() -> int:
         v["Id"]: v.get("DisplayName") or v.get("CompanyName") or f"Vendor {v['Id']}"
         for v in vendors
     }
+    vendor_root = _build_vendor_root(vendors)   # id → top-most parent id, for the dup audit
     print(f"  {len(vendor_map)} vendors")
 
     print("→ building account + item maps …")
@@ -2223,7 +2388,8 @@ def main() -> int:
     n_rp  = build_division_sheet(ws_rp,  div_view_rows, "RP", edits)
     n_cp  = build_division_sheet(ws_cp,  div_view_rows, "CP", edits)
     build_liens_sheet(ws_liens)       # live FILTER view of tblBills (Lien set)
-    n_audit = build_audit_sheet(ws_audit, all_rows)
+    n_audit = build_audit_sheet(ws_audit, all_rows,
+                                vendor_root=vendor_root, vendor_map=vendor_map)
     print(f"  Bills: {n_bills} bills (open + paid since {PAID_CUTOFF_DATE})")
     print(f"  MFD: {n_mfd}  ·  RP: {n_rp}  ·  CP: {n_cp}  ·  "
           f"Liens: live view  ·  Inventory: {n_inv} lines  ·  Audit: {n_audit} flagged")
