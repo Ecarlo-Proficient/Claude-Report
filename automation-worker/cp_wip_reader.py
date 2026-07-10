@@ -11,8 +11,9 @@ Per-project extraction rules (locked 2026-06-30):
   Contract Price = cell immediately right of "GRAND TOTAL" on sheet
                    "Commercial Proposal"
   ETC            = cell AP1961 on sheet "Bid"
-  Change Orders  = flag-only in v1 (CO sheets detected but not summed;
-                   Change Orders/ sub-folder → flagged and skipped)
+  Change Orders  = from the draw only (G702 Line 2). A project with no draw
+                   yet has no approved COs, so takeoff CO sheets and the
+                   Change Orders/ sub-folder are NOT read.
 
 Failure modes never crash the run — they surface as a Status column value
 so Ted can triage from the Test - CP tab.
@@ -168,10 +169,6 @@ GRAND_TOTAL_LABEL = "GRAND TOTAL"
 BID_SHEET = "Bid"
 ETC_CELL = "AP1961"
 
-# CO sheet detection (case-insensitive)
-_CO_SHEET_RE = re.compile(r"^(CO|CHANGE\s*ORDER)[\s#-]*\d+$", re.IGNORECASE)
-_CO_FOLDER = "Change Orders"
-
 # Draw folder detection (Ted 2026-07-09): the WIP update for a CP project comes
 # from the LATEST draw (AIA G702/G703 payment application), not the takeoff.
 #   • Container folder is named 'Draw' or 'Draws' (inclusive), never 'Drawings'.
@@ -215,15 +212,20 @@ class CpRow:
     project_name: str                # from folder name after " - "
     is_completed: bool               # from Completed Projects/ subfolder
     base_contract: Optional[float]   # from Commercial Proposal Grand Total (audit)
-    co_revenue: Optional[float]      # sum of Change Orders/ xlsx TOTAL: cells
+    co_revenue: Optional[float]      # approved COs from the draw (G702 Line 2);
+                                     # None until Draw #1 (no draw ⇒ no COs yet)
     base_etc: Optional[float]        # from Bid!AP1961 (audit — pre-CO)
     billed_to_date: Optional[float]  # QBO P&L income = GROSS billed (incl retainage)
     costs_to_date: Optional[float]   # from QBO P&L COGS + Expenses
     retainage_held: Optional[float] = None  # gross billed − net collectible (retainage receivable)
-    status_flags: List[str] = field(default_factory=list)  # multiple can stack
+    status_flags: List[str] = field(default_factory=list)  # TRUE flags only: the script
+                                          # hit something it could not confirm as fact and a
+                                          # human must fix it (unreadable takeoff, QBO failure,
+                                          # ambiguous proposal). NOT business observations —
+                                          # the WIP report shows over-budget / CO $ itself.
+    notes: List[str] = field(default_factory=list)  # informational; the script IS certain
+                                          # (e.g. 'Draw #6…', 'No draw yet') — never a flag.
     takeoff_path: Optional[Path] = None   # audit trail: first included takeoff (hyperlink anchor)
-    co_folder_path: Optional[Path] = None # audit trail: Change Orders/ folder
-    co_details: List[str] = field(default_factory=list)  # per-CO audit list
     included_takeoffs: List[Path] = field(default_factory=list)  # takeoff(s) summed into this row
     folder_path: Optional[Path] = None   # explicit folder for the project-name link
                                           # (RP sets this; CP falls back to takeoff_path.parent)
@@ -249,11 +251,9 @@ class CpRow:
         it, just flag it."
 
         Property name kept as `co_cost_estimate` for column-mapping
-        stability; semantics are now "CO cost sourced from template" and
-        the value is None until sourcing exists.
-
-        This will start returning a real value when parse_change_orders_folder
-        gains a cost-cell extractor (blocked on template change)."""
+        stability; semantics are now "CO cost sourced from the draw/template"
+        and the value is None until such sourcing exists (blocked on a
+        template change that adds a CO cost line)."""
         return None
 
     @property
@@ -291,6 +291,11 @@ class CpRow:
             return "OK"
         return "; ".join(self.status_flags)
 
+    @property
+    def notes_text(self) -> str:
+        """Informational notes joined for the NOTES column (blank when none)."""
+        return "; ".join(self.notes)
+
 
 # ─────────────────────── takeoff parsing ───────────────────────────
 def _find_label_cells(ws, label: str) -> List[tuple]:
@@ -312,21 +317,6 @@ def _find_label_cells(ws, label: str) -> List[tuple]:
             if s == label_norm:
                 results.append((cell.row, cell.column))
     return results
-
-
-def _find_number_after_label(ws_data, ws_formula, label: str) -> Optional[float]:
-    """Find `label` on the sheet (case-insensitive), then scan rightward
-    from each match for a numeric value. Handles both:
-      - Multiple label occurrences (header + summary): tries each until
-        one yields a number.
-      - Merged label cells + separate currency-symbol cells: the right-
-        scan skips empty/currency cells (see _read_number_to_right).
-    Returns None if no match yields a number."""
-    for (r, c) in _find_label_cells(ws_data, label):
-        v = _read_number_to_right(ws_data, ws_formula, r, c)
-        if v is not None:
-            return v
-    return None
 
 
 def _resolve_sheet_name(wb, target: str) -> Optional[str]:
@@ -488,18 +478,6 @@ def _find_contract_total(ws_data, ws_formula):
     return best, best_label
 
 
-def _find_co_total(ws_data, ws_formula):
-    """Read a Change Order's total off a CO sheet/file. Templates label it
-    'CHANGE ORDER TOTAL' or plain 'TOTAL' (Ted 2026-07-02) — prefer
-    'CHANGE ORDER TOTAL' (avoids grabbing a line-item 'TOTAL:' column header),
-    fall back to 'TOTAL'. Returns the value or None."""
-    for label in ("CHANGE ORDER TOTAL", "TOTAL"):
-        v = _find_number_after_label(ws_data, ws_formula, label)
-        if v is not None:
-            return v
-    return None
-
-
 def _select_proposal_sheet(wb):
     """Pick which proposal tab to read the contract GRAND TOTAL from, when a
     takeoff has multiple proposal sheets (Ted 2026-07-02):
@@ -527,8 +505,9 @@ def _select_proposal_sheet(wb):
 
 def _parse_one_takeoff(tk: Path):
     """Read Contract Price (final proposal Grand Total) + ETC (Bid!AP1961)
-    + any in-takeoff Change Order sheets from ONE takeoff file.
-    Returns (contract, etc, co_total, flags). Never raises."""
+    from ONE takeoff file. Change Orders are NOT read here — approved COs only
+    ever come from a draw, and a no-draw project (the only caller of this path)
+    has no COs yet. Returns (contract, etc, flags). Never raises."""
     flags: List[str] = []
     # Two views: cached values (data_only) fast path + formulas (fallback for
     # cells saved without recalc). Random-access needed → not read_only.
@@ -536,10 +515,9 @@ def _parse_one_takeoff(tk: Path):
         wb_data    = load_workbook(tk, data_only=True)
         wb_formula = load_workbook(tk, data_only=False)
     except Exception as e:
-        return None, None, None, [f"Takeoff Read Failed: {type(e).__name__}"]
+        return None, None, [f"Takeoff Read Failed: {type(e).__name__}"]
 
     contract = etc = None
-    co_total = None
     try:
         prop_sheet, prop_flag = _select_proposal_sheet(wb_data)
         if prop_flag:
@@ -565,27 +543,10 @@ def _parse_one_takeoff(tk: Path):
             else:
                 etc = e
 
-        # Change Order sheets INSIDE the takeoff (Scenario A) — parse + SUM
-        # each sheet's 'TOTAL:' cell (same pattern as standalone CO files).
-        co_sheets = [s for s in wb_data.sheetnames if _CO_SHEET_RE.match(s.strip())]
-        if co_sheets:
-            parsed = []
-            running = 0.0
-            for cs in co_sheets:
-                amt = _find_co_total(wb_data[cs], wb_formula[cs])
-                if amt is not None:
-                    running += amt
-                    parsed.append(f"{cs} ${amt:,.2f}")
-                else:
-                    flags.append(f"CO sheet '{cs}': no TOTAL cell found — manual review")
-            if parsed:
-                co_total = running
-                flags.append(f"CO sheets in takeoff summed ({len(parsed)}): "
-                             f"{', '.join(parsed)}")
     finally:
         wb_data.close()
         wb_formula.close()
-    return contract, etc, co_total, flags
+    return contract, etc, flags
 
 
 def _select_takeoffs(folder: Path):
@@ -623,8 +584,9 @@ def _select_takeoffs(folder: Path):
 def parse_takeoff(folder: Path, row: CpRow) -> None:
     """Extract Contract Price + ETC into `row` from the takeoff. Used when the
     project has NO draw yet (pre-Draw#1) — contract comes from the proposal
-    Grand/Sub Total, ETC from Bid!AP1961, COs from in-takeoff CO sheets.
-    Appends to row.status_flags on any failure; never raises."""
+    Grand/Sub Total, ETC from Bid!AP1961. No COs are read: a project that
+    hasn't started billing has no approved change orders yet (COs come from a
+    draw). Appends to row.status_flags on any failure; never raises."""
     included, flag = _select_takeoffs(folder)
     if flag:
         row.status_flags.append(flag)
@@ -636,13 +598,11 @@ def parse_takeoff(folder: Path, row: CpRow) -> None:
 
     contract_total = 0.0
     etc_total = 0.0
-    co_total = 0.0
     got_contract = False
     got_etc = False
-    got_co = False
     multi = len(included) > 1
     for tk in included:
-        c, e, co, fflags = _parse_one_takeoff(tk)
+        c, e, fflags = _parse_one_takeoff(tk)
         prefix = f"{tk.name}: " if multi else ""
         for f in fflags:
             row.status_flags.append(prefix + f)
@@ -652,113 +612,14 @@ def parse_takeoff(folder: Path, row: CpRow) -> None:
         if e is not None:
             etc_total += e
             got_etc = True
-        if co is not None:
-            co_total += co
-            got_co = True
 
     row.base_contract = contract_total if got_contract else None
     row.base_etc = etc_total if got_etc else None
-    # In-takeoff CO sheets (Scenario A) → add to co_revenue (Scenario B folder
-    # COs, if any, are added on top by parse_change_orders_folder).
-    if got_co:
-        row.co_revenue = (row.co_revenue or 0.0) + co_total
 
     if multi:
-        row.status_flags.append(
+        row.notes.append(
             f"WIP takeoffs summed ({len(included)}): "
             f"{', '.join(p.name for p in included)}")
-
-
-# ─────────────────────── Scenario B: sum CO xlsx files ────────────
-def parse_change_orders_folder(co_folder: Path, row: CpRow) -> None:
-    """Sum all standalone CO xlsx files in the Change Orders/ sub-folder.
-
-    Each CO file has a plain 'TOTAL:' label with the CO amount immediately
-    one cell to the right (sample locked 2026-07-01 from CP672).
-
-    Populates row.co_revenue with the sum, row.co_details with a per-CO
-    audit list, and flags any per-file issues (missing TOTAL, unreadable
-    file, etc.) without aborting the sum."""
-    row.co_folder_path = co_folder
-
-    co_files = sorted([
-        p for p in co_folder.iterdir()
-        if p.is_file()
-        and p.suffix.lower() in (".xlsx", ".xlsm")
-        and not p.name.startswith("~$")   # Excel lockfiles
-    ])
-    if not co_files:
-        row.status_flags.append("CO Folder Empty")
-        return
-
-    total = 0.0
-    per_file_issues: List[str] = []
-    for co_file in co_files:
-        try:
-            wb_d = load_workbook(co_file, data_only=True)
-            wb_f = load_workbook(co_file, data_only=False)
-        except Exception as e:
-            per_file_issues.append(f"{co_file.name}: read failed ({type(e).__name__})")
-            continue
-
-        try:
-            # CO templates typically have TWO "TOTAL:" cells: one header
-            # label above the description table, and the summary at the
-            # bottom right. Also, the file may have multiple sheets (the
-            # actual CO sheet + a "BidScreen XL Drawing Data" metadata
-            # sheet). Scan every sheet, try every TOTAL: match, take the
-            # first that yields a number to the right.
-            amt = None
-            found_sheet = None
-            found_any_label = False
-            for sheet_name in wb_d.sheetnames:
-                ws_d = wb_d[sheet_name]
-                ws_f = wb_f[sheet_name]
-                if (_find_label_cells(ws_d, "CHANGE ORDER TOTAL")
-                        or _find_label_cells(ws_d, "TOTAL")):
-                    found_any_label = True
-                v = _find_co_total(ws_d, ws_f)   # CHANGE ORDER TOTAL, else TOTAL
-                if v is not None:
-                    amt = v
-                    found_sheet = sheet_name
-                    break
-
-            if amt is None:
-                if found_any_label:
-                    per_file_issues.append(f"{co_file.name}: TOTAL label found but no numeric value to the right")
-                else:
-                    per_file_issues.append(f"{co_file.name}: no TOTAL cell")
-                continue
-
-            total += amt
-            row.co_details.append(f"{co_file.name}: ${amt:,.2f}")
-        finally:
-            wb_d.close()
-            wb_f.close()
-
-    # Additive: preserve any in-takeoff CO sheets (Scenario A) already summed
-    # into co_revenue by parse_takeoff.
-    if row.co_details:
-        row.co_revenue = (row.co_revenue or 0.0) + total
-
-    n_ok = len(row.co_details)
-    if n_ok:
-        row.status_flags.append(
-            f"CO Summed ({n_ok} file(s), ${total:,.2f})"
-        )
-        # Ted 2026-07-02 (monitoring view): don't guess CO cost, but don't
-        # blank the row either. CO Cost stays empty; Revised ETC defaults to
-        # Original ETC so % / Earned / Over-Under still compute — flagged
-        # provisional so the CO-cost exclusion is disclosed. Real fix is
-        # upstream (estimators add a cost line to the CO template).
-        row.status_flags.append(
-            "% based on Original ETC — excludes CO cost (provisional; add CO cost line to template)"
-        )
-    if per_file_issues:
-        row.status_flags.append(
-            f"CO Read Issues: {'; '.join(per_file_issues[:3])}"
-            + ("..." if len(per_file_issues) > 3 else "")
-        )
 
 
 # ─────────────────────── ETC-only takeoff read (draw path) ────────
@@ -972,7 +833,7 @@ def parse_draw(project_folder: Path, row: CpRow) -> bool:
     row.co_revenue = data["net_co"]
     row.billed_to_date = data["billed"]
     row.retainage_held = data["retainage"]
-    row.status_flags.append(
+    row.notes.append(
         f"Draw #{draw_num}: billed ${data['billed']:,.0f} (gross), "
         f"retainage ${(data['retainage'] or 0):,.0f}, "
         f"contract ${(data['contract_to_date'] or 0):,.0f}")
@@ -1032,15 +893,12 @@ def scan_cp_folders(root: Path, is_completed: bool) -> List[CpRow]:
             row.folder_path = entry                 # project-name link target
             parse_takeoff_etc(entry, row)           # ETC (Bid!AP1961) only
         else:
-            # No draw yet — takeoff proposal drives contract/CO; QBO drives
-            # billed/retainage (in enrich_with_qbo).
-            row.status_flags.append("No draw yet — contract from takeoff proposal")
+            # No draw yet — takeoff proposal drives contract; QBO drives
+            # billed/retainage (in enrich_with_qbo). No COs: a project that
+            # hasn't started its first draw has no approved change orders yet,
+            # so the Change Orders/ sub-folder is intentionally not read.
+            row.notes.append("No draw yet — contract from takeoff proposal")
             parse_takeoff(entry, row)
-            # Scenario B: Change Orders/ sub-folder → sum standalone CO xlsx
-            # files and add to Contract Price (via the co_revenue property).
-            co_folder = entry / _CO_FOLDER
-            if co_folder.is_dir():
-                parse_change_orders_folder(co_folder, row)
 
         rows.append(row)
 
@@ -1205,17 +1063,11 @@ def enrich_with_qbo(rows: List[CpRow]) -> None:
                 (totals.get("cogs", 0.0) or 0.0)
                 + (totals.get("expenses", 0.0) or 0.0)
             )
-            # Loud over-budget signal (Ted 2026-07-02: "need signal loud
-            # and clear"). Costs exceeding the ETC shown = job is over its
-            # estimate → surface as an explicit flag, not just an implied
-            # >100% in the % column. % is left UNCAPPED on purpose so the
-            # overage stays visible. On provisional rows (CO w/o cost) the
-            # ETC is Original ETC, so this can fire on CO spend too — that's
-            # acceptable; the provisional flag sits right beside it.
-            if (row.etc not in (None, 0)
-                    and row.costs_to_date is not None
-                    and row.costs_to_date > row.etc):
-                row.status_flags.append("⚠ OVER BUDGET — Costs exceed ETC")
+            # Over-budget is NOT flagged: it's a business observation the WIP
+            # report surfaces itself (Costs > ETC, and the uncapped % column).
+            # Flags are reserved for things the script could not confirm as
+            # fact and a human must fix — not report readings. % stays UNCAPPED
+            # so the overage remains visible in the numbers.
         except Exception as e:
             row.status_flags.append(f"QBO P&L Failed: {type(e).__name__}")
 
@@ -1303,8 +1155,8 @@ def _apply_hyperlink(cell, target: Optional[Path], fragment: str = "") -> None:
 # complete, profit) → recognition (% , earned) → billing position (over/under,
 # left to bill) → profitability (GP%, future profit, job borrow). The four
 # yellow inputs (contract, cost, billed, costs) + retainage lead; everything
-# after is derived. Original/CO breakdown lives in the FLAGS ("CO Summed …"),
-# not as separate columns (kept clean per Ted 2026-07-02).
+# after is derived. Draw #/no-draw context lives in the NOTES column; FLAGS is
+# reserved for genuine script must-fix issues (kept clean per Ted 2026-07-02).
 COLS = [
     # ── Identifiers ──
     ("PROJECT #",                                       12, "project_num"),
@@ -1331,7 +1183,8 @@ COLS = [
     ("APPROVED COs",                                    14, "co_revenue"),
     ("RETAINAGE HELD",                                  14, "retainage_held"),
     ("LAST SYNCED",                                     18, "_last_synced"),
-    ("FLAGS",                                           50, "status"),   # after Sync (Ted 2026-07-02)
+    ("NOTES",                                            40, "notes_text"),  # informational (Draw #, no-draw)
+    ("FLAGS",                                           50, "status"),   # TRUE flags only — script must-fix
 ]
 
 
@@ -1654,28 +1507,35 @@ def _print_rows_table(rows: List[CpRow], wip_path: Path, tab_name: str = TEST_TA
             ]
             for label, val in rows_out:
                 print(f"    {label:<20} {_lpad(_dim_if_dash(val), 16)}")
+            if r.notes:
+                print(_Term.color(_Term.DIM, "    · " + "; ".join(r.notes)))
             if r.status_flags:
                 print(_Term.color(_Term.AMBER, "    ⚑ " + "; ".join(r.status_flags)))
             else:
-                print(_Term.color(_Term.GREEN, "    ✓ clean"))
+                print(_Term.color(_Term.GREEN, "    ✓ no flags"))
     else:
         # Compact table — the headline columns for scanning many jobs.
-        W_P, W_N, W_M, W_PC = 8, 24, 13, 6
+        # NOTES (informational: Draw #, no-draw) and FLAGS (true script must-fix
+        # issues) are kept in separate trailing columns.
+        W_P, W_N, W_M, W_PC, W_NOTE = 8, 24, 13, 6, 44
         SEP = _Term.color(_Term.DIM, " │ ")
         hdr = [
             _rpad("PROJECT", W_P), _rpad("NAME", W_N),
             _lpad("CONTRACT", W_M), _lpad("CO $", W_M), _lpad("ETC", W_M),
             _lpad("COSTS", W_M), _lpad("%", W_PC), _lpad("BILLED", W_M),
             _lpad("RETAIN", W_M), _lpad("OVER", W_M), _lpad("UNDER", W_M),
-            _lpad("BORROW", W_M), "FLAGS",
+            _lpad("BORROW", W_M), _rpad("NOTES", W_NOTE), "FLAGS",
         ]
         print()
         print(_Term.color(_Term.BOLD, "  " + SEP.join(hdr)))
-        print(_Term.color(_Term.DIM, "  " + "─" * 150))
+        print(_Term.color(_Term.DIM, "  " + "─" * 196))
         for r in rows:
             m = _wip_metrics(r)
             flag = (_Term.color(_Term.AMBER, "⚑ " + "; ".join(r.status_flags))
                     if r.status_flags else _Term.color(_Term.GREEN, "✓"))
+            note_txt = "; ".join(r.notes)
+            note = (_Term.color(_Term.DIM, _rpad(note_txt[:W_NOTE], W_NOTE))
+                    if note_txt else _rpad("", W_NOTE))
             name = _rpad(r.project_name[:W_N], W_N)
             if r.is_completed:
                 name = _Term.color(_Term.GREEN, name)
@@ -1691,7 +1551,7 @@ def _print_rows_table(rows: List[CpRow], wip_path: Path, tab_name: str = TEST_TA
                 _lpad(_dim_if_dash(_fmt_money(m["overbill"])), W_M),
                 _lpad(_dim_if_dash(_fmt_money(m["underbill"])), W_M),
                 _lpad(_dim_if_dash(_fmt_money(m["job_borrow"])), W_M),
-                flag,
+                note, flag,
             ]
             print("  " + SEP.join(cells))
 
@@ -1716,10 +1576,6 @@ def _print_rows_table(rows: List[CpRow], wip_path: Path, tab_name: str = TEST_TA
                     print(_Term.color(_Term.DIM, f"    {r.project_num}    · {tk.name}"))
             elif r.takeoff_path:
                 print(_Term.color(_Term.DIM, f"    {r.project_num}  takeoff:      {r.takeoff_path}"))
-            if r.co_folder_path:
-                print(_Term.color(_Term.DIM, f"    {r.project_num}  CO folder:    {r.co_folder_path}"))
-            for detail in r.co_details:
-                print(_Term.color(_Term.DIM, f"    {r.project_num}    · {detail}"))
 
 
 # ─────────────────────── orchestration ─────────────────────────────
