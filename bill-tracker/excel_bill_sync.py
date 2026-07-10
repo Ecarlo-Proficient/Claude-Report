@@ -154,12 +154,16 @@ CF_LIEN_RELEASED = "92D050"      # green — lien RELEASED / satisfied (resolved
 # for an actual FILED lien (a real legal event), not a "this is coming" warning.
 # 2026-07-10 (Ted): old ramp was too soft — ≤30d was near-invisible and ≤15d
 # blended into the Notice Sent amber. Each step now one notch hotter.
-CF_TIMER_YELLOW = "FFD966"       # ≤ 30 days out — heads-up (clear gold)
-CF_TIMER_ORANGE = "ED7D31"       # ≤ 15 days out — getting close (strong orange)
-CF_TIMER_HOT    = "C55A11"       # ≤ 7 days out — pay now (burnt orange)
-# 2026-07-10 (Ted): PAST the notice deadline is its own tier — a distinct dark
-# maroon, NOT red (red stays reserved for an actual FILED lien).
-CF_TIMER_PAST   = "800000"       # notice deadline already passed (maroon)
+# 2026-07-10 (Ted): these cells are SCRIPT-written (the countdown), so they read
+# as soft/tentative — PALE tints + grey italic text — vs the human lien tags,
+# which stay saturated + bold black. The tier still escalates gold→coral→rose;
+# the bucket text carries the exact window. PAST is a distinct rose (NOT red —
+# red stays reserved for an actual FILED lien).
+CF_TIMER_YELLOW = "FFF2CC"       # ≤ 30 days out — pale gold
+CF_TIMER_ORANGE = "FCE4D6"       # ≤ 15 days out — pale peach
+CF_TIMER_HOT    = "F8CBAD"       # ≤ 7 days out — pale coral
+CF_TIMER_PAST   = "E6B8B8"       # notice deadline passed — pale rose
+CF_TIMER_TEXT   = "808080"       # grey italic — signals "script-written, not a tag"
 
 # The Lien cell itself shows the countdown bucket as text (Ted 2026-07-10) so a
 # clerk reads the state without cross-referencing the key. These label strings
@@ -334,7 +338,8 @@ def _format_data_cell(c, kind: str) -> None:
 
 
 def _cf_fill_rule(formula: str, hex_color: str, bold: bool = False,
-                  stop_if_true: bool = False, font_color: str = "") -> Rule:
+                  stop_if_true: bool = False, font_color: str = "",
+                  italic: bool = False) -> Rule:
     """Build a properly-formed conditional-formatting Rule.
 
     openpyxl's PatternFill("solid", start_color=…) shortcut emits a dxf that
@@ -346,16 +351,18 @@ def _cf_fill_rule(formula: str, hex_color: str, bold: bool = False,
     the NOT APPROVED red rule so it wins over OK-TO-PAY green when a row could
     match both (NOT APPROVED bill that's also OK TO PAY = still don't pay).
 
-    `font_color` sets the dxf font color (e.g. white text on a dark fill).
+    `font_color` sets the dxf font color; `italic`/`bold` set the weight/style
+    (grey italic marks script-written text; bold black marks a human tag).
     """
     fill = PatternFill(
         patternType="solid",
         fgColor=Color(rgb=f"FF{hex_color}"),
         bgColor=Color(rgb=f"FF{hex_color}"),
     )
-    if bold or font_color:
+    if bold or font_color or italic:
         dxf = DifferentialStyle(
-            fill=fill, font=Font(bold=bold, color=(font_color or None)))
+            fill=fill,
+            font=Font(bold=bold, italic=italic, color=(font_color or None)))
     else:
         dxf = DifferentialStyle(fill=fill)
     return Rule(type="expression", formula=[formula], dxf=dxf, stopIfTrue=stop_if_true)
@@ -855,19 +862,21 @@ def _lien_legend(ws, start_col: int) -> None:
     """HORIZONTAL key for the Lien column, on the frozen header row (row 1) to
     the right of the table. A single row so AutoFilter (which hides data rows)
     can never fragment it (Ted 2026-06-18). Each cell is a colored swatch with
-    its label inside; tags first, then the supplier-notice timer gradient."""
-    # (hex fill or None, label, font hex)
+    its label inside. Human TAGS (bold black on a saturated fill) come first,
+    then the SCRIPT countdown (grey italic on a pale tint) — the same styling
+    the data cells get, so the key reads exactly like the column."""
+    # (hex fill or None, label, font hex, italic) — italic marks script-written.
     items = [
-        (None,             "LIEN KEY →",        "1F3864"),
-        (CF_LIEN_NOTICE,   LIEN_NOTICE,         "000000"),
-        (CF_LIEN_FILED,    LIEN_FILED,          "FFFFFF"),
-        (CF_LIEN_RELEASED, LIEN_RELEASED,       "000000"),
-        (CF_TIMER_YELLOW,  TIMER_LABEL_30,      "000000"),
-        (CF_TIMER_ORANGE,  TIMER_LABEL_15,      "FFFFFF"),
-        (CF_TIMER_HOT,     TIMER_LABEL_7,       "FFFFFF"),
-        (CF_TIMER_PAST,    TIMER_LABEL_PAST,    "FFFFFF"),
+        (None,             "LIEN KEY →",        "1F3864", False),
+        (CF_LIEN_NOTICE,   LIEN_NOTICE,         "000000", False),
+        (CF_LIEN_FILED,    LIEN_FILED,          "000000", False),
+        (CF_LIEN_RELEASED, LIEN_RELEASED,       "000000", False),
+        (CF_TIMER_YELLOW,  TIMER_LABEL_30,      CF_TIMER_TEXT, True),
+        (CF_TIMER_ORANGE,  TIMER_LABEL_15,      CF_TIMER_TEXT, True),
+        (CF_TIMER_HOT,     TIMER_LABEL_7,       CF_TIMER_TEXT, True),
+        (CF_TIMER_PAST,    TIMER_LABEL_PAST,    CF_TIMER_TEXT, True),
     ]
-    for i, (hex_color, text, font_hex) in enumerate(items):
+    for i, (hex_color, text, font_hex, italic) in enumerate(items):
         col = start_col + i
         ws.column_dimensions[_col_letter(col)].width = 20
         c = ws.cell(row=1, column=col, value=text)
@@ -876,7 +885,8 @@ def _lien_legend(ws, start_col: int) -> None:
             c.fill = PatternFill(patternType="solid",
                                  fgColor=Color(rgb=f"FF{hex_color}"),
                                  bgColor=Color(rgb=f"FF{hex_color}"))
-            c.font = Font(bold=True, size=10, color=font_hex)
+            # Tags read bold; script countdown reads grey italic (not bold).
+            c.font = Font(bold=not italic, italic=italic, size=10, color=font_hex)
         else:
             c.font = Font(bold=True, size=11, color=font_hex)
 
@@ -992,20 +1002,21 @@ def _finalize_sheet(ws, table_name: str, last_row: int,
         ws.conditional_formatting.add(lien_range,
             _cf_fill_rule(f'AND(${lien_letter}{fr}="{LIEN_RELEASED}",{unpaid})',
                           CF_LIEN_RELEASED, bold=True))
-        # Supplier-notice timer: the Lien cell now CARRIES the countdown bucket
-        # as text (written in _write_bill_row), so color it by matching that
-        # text. Dark fills (≤7d, PAST) get white text. maroon(past)→burnt→
-        # orange→gold. stop-if-true so the band below doesn't repaint them.
-        for label, color, white in (
-            (TIMER_LABEL_PAST, CF_TIMER_PAST,   True),
-            (TIMER_LABEL_7,    CF_TIMER_HOT,    True),
-            (TIMER_LABEL_15,   CF_TIMER_ORANGE, True),
-            (TIMER_LABEL_30,   CF_TIMER_YELLOW, False),
+        # Supplier-notice timer: the Lien cell CARRIES the countdown bucket as
+        # text (written in _write_bill_row), so color it by matching that text.
+        # Script-written → pale tint + GREY ITALIC (vs the human tags above,
+        # which are saturated + bold black). stop-if-true so the band below
+        # doesn't repaint them.
+        for label, color in (
+            (TIMER_LABEL_PAST, CF_TIMER_PAST),
+            (TIMER_LABEL_7,    CF_TIMER_HOT),
+            (TIMER_LABEL_15,   CF_TIMER_ORANGE),
+            (TIMER_LABEL_30,   CF_TIMER_YELLOW),
         ):
             ws.conditional_formatting.add(lien_range,
                 _cf_fill_rule(f'${lien_letter}{fr}="{label}"', color,
-                              bold=True, stop_if_true=True,
-                              font_color=("FFFFFF" if white else "")))
+                              italic=True, font_color=CF_TIMER_TEXT,
+                              stop_if_true=True))
 
     # ── Row-status band (added AFTER lien → lower CF priority) ──
     # (status_value, approved_value_or_None_for_any, color)
