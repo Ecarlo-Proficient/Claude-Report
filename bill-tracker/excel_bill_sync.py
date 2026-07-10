@@ -804,13 +804,13 @@ def _lien_legend(ws, start_col: int) -> None:
         (CF_LIEN_NOTICE,   LIEN_NOTICE,         "000000"),
         (CF_LIEN_FILED,    LIEN_FILED,          "FFFFFF"),
         (CF_LIEN_RELEASED, LIEN_RELEASED,       "000000"),
-        (CF_TIMER_YELLOW,  "notice due ≤30d",   "000000"),
-        (CF_TIMER_ORANGE,  "due ≤15d",          "FFFFFF"),
-        (CF_TIMER_HOT,     "due ≤7d / PAST",    "FFFFFF"),
+        (CF_TIMER_YELLOW,  "Notice Due In ≤30d", "000000"),
+        (CF_TIMER_ORANGE,  "Notice Due In ≤15d", "FFFFFF"),
+        (CF_TIMER_HOT,     "Notice Due In ≤7d / PAST", "FFFFFF"),
     ]
     for i, (hex_color, text, font_hex) in enumerate(items):
         col = start_col + i
-        ws.column_dimensions[_col_letter(col)].width = 15
+        ws.column_dimensions[_col_letter(col)].width = 20
         c = ws.cell(row=1, column=col, value=text)
         c.alignment = Alignment(horizontal="center", vertical="center")
         if hex_color:
