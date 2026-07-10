@@ -156,7 +156,19 @@ CF_LIEN_RELEASED = "92D050"      # green — lien RELEASED / satisfied (resolved
 # blended into the Notice Sent amber. Each step now one notch hotter.
 CF_TIMER_YELLOW = "FFD966"       # ≤ 30 days out — heads-up (clear gold)
 CF_TIMER_ORANGE = "ED7D31"       # ≤ 15 days out — getting close (strong orange)
-CF_TIMER_HOT    = "C55A11"       # ≤ 7 days / past — pay now (burnt orange)
+CF_TIMER_HOT    = "C55A11"       # ≤ 7 days out — pay now (burnt orange)
+# 2026-07-10 (Ted): PAST the notice deadline is its own tier — a distinct dark
+# maroon, NOT red (red stays reserved for an actual FILED lien).
+CF_TIMER_PAST   = "800000"       # notice deadline already passed (maroon)
+
+# The Lien cell itself shows the countdown bucket as text (Ted 2026-07-10) so a
+# clerk reads the state without cross-referencing the key. These label strings
+# are the single source of truth: written into the cell AND matched by the CF
+# rules that color it, so text and color can never disagree.
+TIMER_LABEL_30   = "Notice due in ≤30d"
+TIMER_LABEL_15   = "Notice due in ≤15d"
+TIMER_LABEL_7    = "Notice due in ≤7d"
+TIMER_LABEL_PAST = "Notice PAST due"
 
 # Lien tag values (escalation order). "Outstanding" = NOTICE or FILED; a bill
 # being paid does NOT resolve a lien — only RELEASED does.
@@ -322,7 +334,7 @@ def _format_data_cell(c, kind: str) -> None:
 
 
 def _cf_fill_rule(formula: str, hex_color: str, bold: bool = False,
-                  stop_if_true: bool = False) -> Rule:
+                  stop_if_true: bool = False, font_color: str = "") -> Rule:
     """Build a properly-formed conditional-formatting Rule.
 
     openpyxl's PatternFill("solid", start_color=…) shortcut emits a dxf that
@@ -333,14 +345,17 @@ def _cf_fill_rule(formula: str, hex_color: str, bold: bool = False,
     `stop_if_true=True` halts CF evaluation when this rule matches — used for
     the NOT APPROVED red rule so it wins over OK-TO-PAY green when a row could
     match both (NOT APPROVED bill that's also OK TO PAY = still don't pay).
+
+    `font_color` sets the dxf font color (e.g. white text on a dark fill).
     """
     fill = PatternFill(
         patternType="solid",
         fgColor=Color(rgb=f"FF{hex_color}"),
         bgColor=Color(rgb=f"FF{hex_color}"),
     )
-    if bold:
-        dxf = DifferentialStyle(fill=fill, font=Font(bold=True))
+    if bold or font_color:
+        dxf = DifferentialStyle(
+            fill=fill, font=Font(bold=bold, color=(font_color or None)))
     else:
         dxf = DifferentialStyle(fill=fill)
     return Rule(type="expression", formula=[formula], dxf=dxf, stopIfTrue=stop_if_true)
@@ -612,7 +627,11 @@ def _read_sheet_edits(ws) -> Dict[str, Dict[str, str]]:
             continue
         lien_val = ""
         if lien_i is not None and lien_i < len(row) and row[lien_i] is not None:
-            lien_val = row[lien_i]
+            # Only real tags are preserved — the notice-countdown text the sheet
+            # writes into blank Lien cells must NOT be carried forward as an edit
+            # (it's recomputed each build).
+            if row[lien_i] in LIEN_ALL:
+                lien_val = row[lien_i]
         out[str(key)] = {
             "Lien": lien_val,
             "Notes": (row[notes_i] if notes_i < len(row) and row[notes_i] is not None else ""),
@@ -733,6 +752,39 @@ def _apply_header(ws, hide_cols: Optional[List[int]] = None) -> None:
         ws.column_dimensions[_col_letter(col_i)].hidden = True
 
 
+def _notice_date(bill_date) -> Optional[dt.date]:
+    """Supplier lien-notice deadline: 15th of the 2nd month after the bill date
+    (TX practice). None if the bill date is missing/invalid."""
+    if not isinstance(bill_date, dt.date):
+        return None
+    total = bill_date.year * 12 + (bill_date.month - 1) + 2
+    y, m0 = divmod(total, 12)
+    return dt.date(y, m0 + 1, 15)
+
+
+def _notice_timer_label(bill_date, balance, lien_val: str,
+                        today: dt.date) -> Optional[str]:
+    """Bucket label for an UNPAID, UNTAGGED bill whose lien-notice deadline is
+    near or past. None when tagged, paid, no bill date, or >30 days out."""
+    if lien_val:
+        return None                       # a real tag wins over the countdown
+    if not (isinstance(balance, (int, float)) and balance > 0):
+        return None                       # paid → no notice risk
+    nd = _notice_date(bill_date)
+    if nd is None:
+        return None
+    days = (nd - today).days
+    if days < 0:
+        return TIMER_LABEL_PAST
+    if days <= 7:
+        return TIMER_LABEL_7
+    if days <= 15:
+        return TIMER_LABEL_15
+    if days <= 30:
+        return TIMER_LABEL_30
+    return None
+
+
 def _write_bill_row(ws, r_i: int, r: dict, edits: Dict[str, Dict[str, str]],
                     today: dt.date) -> None:
     """Render one bill-line row using the unified BILL_ROW_COLS layout.
@@ -749,6 +801,12 @@ def _write_bill_row(ws, r_i: int, r: dict, edits: Dict[str, Dict[str, str]],
     approved = bool(r.get("approved"))
     pipeline = display_status(r.get("auto_status", ""))
     lien_val = pres.get("Lien", "") or ""
+    # Untagged + unpaid + near the notice deadline → the cell shows the countdown
+    # bucket as text (colored by the matching CF rule). A real tag always wins;
+    # this computed text is never preserved (see _read_sheet_edits).
+    lien_display = lien_val or (
+        _notice_timer_label(r.get("bill_date"), r.get("bill_balance"),
+                            lien_val, today) or "")
 
     values: List[Any] = [
         _qbo_link(r.get("bill_id", "")),                         # 1  Open
@@ -767,7 +825,7 @@ def _write_bill_row(ws, r_i: int, r: dict, edits: Dict[str, Dict[str, str]],
         # ── STATUS & ACTION section ──
         pipeline,                                                # 13 Status
         approved_text(approved),                                 # 14 Approved
-        lien_val,                                                # 15 Lien
+        lien_display,                                            # 15 Lien (tag or countdown)
         pres.get("Notes", "") or "",                             # 16 Notes
         None,                                                    # 17 divider ┃
         # ── INVOICE section (verification only) ──
@@ -804,9 +862,10 @@ def _lien_legend(ws, start_col: int) -> None:
         (CF_LIEN_NOTICE,   LIEN_NOTICE,         "000000"),
         (CF_LIEN_FILED,    LIEN_FILED,          "FFFFFF"),
         (CF_LIEN_RELEASED, LIEN_RELEASED,       "000000"),
-        (CF_TIMER_YELLOW,  "Notice Due In ≤30d", "000000"),
-        (CF_TIMER_ORANGE,  "Notice Due In ≤15d", "FFFFFF"),
-        (CF_TIMER_HOT,     "Notice Due In ≤7d / PAST", "FFFFFF"),
+        (CF_TIMER_YELLOW,  TIMER_LABEL_30,      "000000"),
+        (CF_TIMER_ORANGE,  TIMER_LABEL_15,      "FFFFFF"),
+        (CF_TIMER_HOT,     TIMER_LABEL_7,       "FFFFFF"),
+        (CF_TIMER_PAST,    TIMER_LABEL_PAST,    "FFFFFF"),
     ]
     for i, (hex_color, text, font_hex) in enumerate(items):
         col = start_col + i
@@ -921,7 +980,6 @@ def _finalize_sheet(ws, table_name: str, last_row: int,
     # band fills it so the colored band stays continuous.
     if lien_editable:
         lien_range = f"{lien_letter}{DATA_START}:{lien_letter}{last_row}"
-        bd_letter = _col_letter(HEADERS.index("Bill Date") + 1)
         ob_letter = _col_letter(BILL_OPEN_BAL_COL_INDEX)
         unpaid = f"${ob_letter}{fr}>0"
         # Outstanding liens stay colored even when paid (lien outlives payment
@@ -934,14 +992,20 @@ def _finalize_sheet(ws, table_name: str, last_row: int,
         ws.conditional_formatting.add(lien_range,
             _cf_fill_rule(f'AND(${lien_letter}{fr}="{LIEN_RELEASED}",{unpaid})',
                           CF_LIEN_RELEASED, bold=True))
-        # Supplier-notice timer: blank Lien + unpaid + nearing the 15th of the
-        # 2nd month after the bill date. red→orange→yellow, stop-if-true.
-        notice = f"DATE(YEAR(${bd_letter}{fr}),MONTH(${bd_letter}{fr})+2,15)"
-        guard = f'${lien_letter}{fr}="",{unpaid}'
-        for days, color in ((7, CF_TIMER_HOT), (15, CF_TIMER_ORANGE), (30, CF_TIMER_YELLOW)):
+        # Supplier-notice timer: the Lien cell now CARRIES the countdown bucket
+        # as text (written in _write_bill_row), so color it by matching that
+        # text. Dark fills (≤7d, PAST) get white text. maroon(past)→burnt→
+        # orange→gold. stop-if-true so the band below doesn't repaint them.
+        for label, color, white in (
+            (TIMER_LABEL_PAST, CF_TIMER_PAST,   True),
+            (TIMER_LABEL_7,    CF_TIMER_HOT,    True),
+            (TIMER_LABEL_15,   CF_TIMER_ORANGE, True),
+            (TIMER_LABEL_30,   CF_TIMER_YELLOW, False),
+        ):
             ws.conditional_formatting.add(lien_range,
-                _cf_fill_rule(f'AND({guard},({notice}-TODAY())<={days})',
-                              color, stop_if_true=True))
+                _cf_fill_rule(f'${lien_letter}{fr}="{label}"', color,
+                              bold=True, stop_if_true=True,
+                              font_color=("FFFFFF" if white else "")))
 
     # ── Row-status band (added AFTER lien → lower CF priority) ──
     # (status_value, approved_value_or_None_for_any, color)
