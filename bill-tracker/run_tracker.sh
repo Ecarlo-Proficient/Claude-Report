@@ -7,7 +7,7 @@
 #
 # Used by:
 #   - manual runs from terminal (also via the `sync-ap` alias)
-#   - launchd schedule (com.proficient.billtracker.plist)
+#     (there is no scheduler — the launchd auto-run was scrapped)
 #
 # Output workbook:
 #   /Users/sebas/Library/CloudStorage/OneDrive-ProficientConcrete,LLC/Automations-/Bill Tracker.xlsx

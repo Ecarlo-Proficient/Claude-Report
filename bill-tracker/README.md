@@ -8,14 +8,14 @@ authorizes its payment, and writes a 4-sheet Excel report.
 | File | Purpose |
 |---|---|
 | `qbo_bill_tracker.py` | Main script — auth, fetch, match, write |
-| `run_tracker.sh` | Wrapper used by both manual runs and launchd |
-| `launchd/com.proficient.billtracker.plist` | macOS scheduler — Mon-Fri 15:00 |
+| `run_tracker.sh` | Wrapper for manual runs |
 | `probe_draw_period.py` | Diagnostic — confirms whether QBO API returns a custom field |
 | `read_private_note.py` | Diagnostic — reads PrivateNote on a single invoice |
 | `Bill_Payment_Tracker.xlsx` | Output (created on first run) |
-| `logs/run.log` | Run history (manual + scheduled) |
-| `logs/launchd_stdout.log` | Scheduled-run stdout |
-| `logs/launchd_stderr.log` | Scheduled-run stderr |
+| `logs/run.log` | Run history |
+
+**Runs are manual** — there is no scheduler. Run it from your desk when you
+want fresh data (see below). The old launchd auto-run was scrapped.
 
 ## Manual run
 
@@ -123,75 +123,11 @@ case-insensitive and whitespace-trimmed; blank ref #s are skipped. Output is
 grouped by vendor tree with a `Same amount?` flag — matching totals across
 copies are the strongest double-entry signal.
 
-## Scheduling — install once
+## Touch ID
 
-The launchd plist runs the wrapper Mon-Fri at 15:00 (3 PM, after
-checks have been deposited).
-
-### One-time install
-
-```bash
-PLIST=~/Library/LaunchAgents/com.proficient.billtracker.plist
-cp "/Users/sebas/Documents/Claude/Projects/Automate Concrete Business/bill-tracker/launchd/com.proficient.billtracker.plist" "$PLIST"
-launchctl load "$PLIST"
-```
-
-### Verify
-
-```bash
-launchctl list | grep billtracker        # should show the agent
-tail -f "/Users/sebas/Documents/Claude/Projects/Automate Concrete Business/bill-tracker/logs/run.log"
-```
-
-### Disable temporarily
-
-```bash
-launchctl unload ~/Library/LaunchAgents/com.proficient.billtracker.plist
-```
-
-### Re-enable
-
-```bash
-launchctl load ~/Library/LaunchAgents/com.proficient.billtracker.plist
-```
-
-### Uninstall
-
-```bash
-launchctl unload ~/Library/LaunchAgents/com.proficient.billtracker.plist
-rm ~/Library/LaunchAgents/com.proficient.billtracker.plist
-```
-
-## Touch ID and unattended runs
-
-The QBO Keychain entry (`automation-qbo`) was created with biometric
-ACL — every read prompts Touch ID. That's fine for manual runs, but a
-3 PM scheduled run with no one at the keyboard will **wait for Touch
-ID and time out**.
-
-You have two options for unattended scheduling:
-
-**(A) Be at the computer at 3 PM.** Easy if you're at your desk.
-
-**(B) Re-key the Keychain entry to allow specific binaries without
-prompting.** Run `setup_qbo.py` once with a flag (or rotate manually)
-and add Python and the bill tracker script to the trusted apps list:
-
-```bash
-# show current ACL
-security find-generic-password -a "$USER" -s automation-qbo -l credentials -g
-
-# wipe and re-add allowing python3 + bash to read without confirmation
-python3 setup_qbo.py --purge
-python3 setup_qbo.py
-# during setup, when prompted, answer that you want unattended access
-# (or run `security add-generic-password ... -A` manually — but that's
-#  less secure since ANY app can read)
-```
-
-For now, the safest path is **(A)** — start with manual + scheduled
-that may need approval, see how often you're not at your desk, then
-decide if (B) is worth the security trade-off.
+The QBO Keychain entry (`automation-qbo`) was created with a biometric
+ACL, so every run prompts Touch ID once. That's expected — the tracker is
+run manually from your desk, so someone is there to approve it.
 
 ## Running diagnostics
 

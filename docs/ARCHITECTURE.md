@@ -61,7 +61,7 @@ flowchart TB
     TVAULT --> INVSYNC
 
     subgraph BT["bill-tracker/"]
-        BILLS["qbo_bill_tracker.py<br/>(launchd Mon–Fri 15:00, alias: sync-ap)"]
+        BILLS["qbo_bill_tracker.py<br/>(manual run, alias: sync-ap)"]
         AUDIT["job_coding_audit.py + sub_bill_audit<br/>+ item_no_project_audit + duplicate_bill_audit"]
     end
     QBO --> BILLS --> ODRIVE
