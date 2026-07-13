@@ -37,7 +37,7 @@ from typing import Dict, List, Optional, Tuple
 import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-import qbo_vault as kc
+from shared import qbo_vault as kc
 
 API_BASE = "https://quickbooks.api.intuit.com"
 RATE_LIMIT_DELAY_S = 0.2  # 5 req/sec — well under QBO's 500/min/realm limit.

@@ -20,9 +20,9 @@ from typing import Any, Dict, List, Optional
 import requests
 
 
-# Allow `import qbo_vault` from project root (one level up from automation-worker/).
+# Repo root on sys.path so `shared/` (vault etc.) is importable.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-import qbo_vault as kc  # noqa: E402
+from shared import qbo_vault as kc  # noqa: E402
 
 
 log = logging.getLogger("automation_worker.qbo")

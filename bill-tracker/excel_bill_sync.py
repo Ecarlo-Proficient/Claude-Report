@@ -51,7 +51,7 @@ BILL_TRACKER_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT))           # qbo_vault.py
 sys.path.insert(0, str(BILL_TRACKER_DIR))       # qbo_bill_tracker.py
 
-import paths
+from shared import paths
 
 
 # ─────────────────────── deps ───────────────────────

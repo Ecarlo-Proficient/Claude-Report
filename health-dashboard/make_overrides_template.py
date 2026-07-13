@@ -23,7 +23,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-import paths
+from shared import paths
 
 DEFAULT_PATH = paths.companyhealth_dir() / "customer_overrides.xlsx"
 

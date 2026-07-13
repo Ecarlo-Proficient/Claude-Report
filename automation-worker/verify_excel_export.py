@@ -30,10 +30,13 @@ from typing import Dict, List, Tuple
 
 from openpyxl import load_workbook
 
+# Repo root on sys.path for shared/ (explicit — do NOT rely on qbo_client's insert).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from config import load_config
 from notion_client import NotionClient
 import qbo_client
-import paths
+from shared import paths
 
 
 # Reuse same default path the exporter uses.

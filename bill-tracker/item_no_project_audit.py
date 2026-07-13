@@ -19,9 +19,13 @@ import datetime as dt
 import sys
 from pathlib import Path
 
+# Repo root on sys.path for shared/ (explicit — do NOT rely on
+# qbo_bill_tracker's insert having run first).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from qbo_bill_tracker import load_credentials, query_all, parse_date, get_project_num
 from job_coding_audit import iter_expense_lines, txn_link, txn_vendor, fetch_vendor_map
-import paths
+from shared import paths
 
 try:
     from openpyxl import Workbook

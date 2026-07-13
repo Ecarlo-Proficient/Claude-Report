@@ -87,8 +87,8 @@ except ImportError:
     print("✗ pip3 install --break-system-packages openpyxl")
     sys.exit(1)
 
-import qbo_vault as kc
-import paths
+from shared import qbo_vault as kc
+from shared import paths
 
 # ───────────────────────── constants ─────────────────────────
 

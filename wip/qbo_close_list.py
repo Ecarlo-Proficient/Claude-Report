@@ -36,7 +36,7 @@ from typing import Dict, List, Optional, Set, Tuple
 import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-import qbo_vault as kc
+from shared import qbo_vault as kc
 
 API_BASE = "https://quickbooks.api.intuit.com"
 

@@ -24,8 +24,11 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-_ROOT = Path(__file__).resolve().parent
-_MACHINE_ENV = _ROOT / "machine.env"
+# machine.env lives at the REPO ROOT (one level above shared/) — same place
+# as machine.env.example. Machines with an existing machine.env keep working
+# across the 2026-07 restructure without touching it.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_MACHINE_ENV = _REPO_ROOT / "machine.env"
 
 
 def _load_machine_env() -> dict:

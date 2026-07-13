@@ -43,7 +43,6 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import importlib.util
 import logging
 import os
 import re
@@ -146,7 +145,8 @@ def _dim_if_dash(s: str) -> str:
 # ─────────────────────── config / paths ────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
-import paths
+from shared import paths
+from shared import qbo_api  # QBO helpers (formerly loaded from project-pnl by raw file path)
 
 CP_ACTIVE_DIR = Path(os.getenv(
     "CP_ACTIVE_DIR",
@@ -187,21 +187,8 @@ _CP_FOLDER_RE = re.compile(r"^(CP\d{3,4})\b", re.IGNORECASE)
 log = logging.getLogger("cp_wip_reader")
 
 
-# ─────────────────────── project-pnl reuse ─────────────────────────
-def _load_project_pnl_module():
-    """Load project-pnl/project_pnl_export.py despite its hyphenated folder
-    name (not a valid Python package). Uses importlib to bypass sys.path
-    identifier restrictions."""
-    path = PROJECT_ROOT / "project-pnl" / "project_pnl_export.py"
-    if not path.exists():
-        raise FileNotFoundError(
-            f"project-pnl module not at {path}. "
-            f"CP reader depends on project_pnl_export.py for QBO helpers."
-        )
-    spec = importlib.util.spec_from_file_location("project_pnl_export", path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+# QBO helpers come from shared/qbo_api.py (2026-07-13 restructure) — the old
+# importlib load of project-pnl/project_pnl_export.py is gone.
 
 
 # ─────────────────────── data models ───────────────────────────────
@@ -996,7 +983,7 @@ def enrich_with_qbo(rows: List[CpRow]) -> None:
     """Fetch QBO Billed/Costs per project and populate rows in-place.
     All-time window (start_date = 2019-01-01, end_date = today) — CP is
     slow-turn commercial work, worth the extra API cost. Never raises."""
-    pnl = _load_project_pnl_module()
+    pnl = qbo_api
     try:
         access, company_id = pnl.load_credentials()
     except SystemExit:

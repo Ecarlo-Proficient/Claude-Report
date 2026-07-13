@@ -32,7 +32,7 @@ from openpyxl.utils import get_column_letter
 from notion_client import NotionClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-import paths
+from shared import paths
 
 
 log = logging.getLogger("automation_worker.export_xlsx")
