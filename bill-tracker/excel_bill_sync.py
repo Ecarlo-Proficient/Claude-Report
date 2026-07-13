@@ -257,6 +257,8 @@ PAY_STATUS_COL_INDEX = HEADERS.index("Pay Status") + 1
 INVOICE_STATUS_COL_INDEX = HEADERS.index("Invoice Status") + 1
 APPROVED_COL_INDEX = HEADERS.index("Approved") + 1
 OPEN_COL_INDEX = HEADERS.index("Open") + 1
+ACCOUNT_COL_INDEX = HEADERS.index("Account") + 1
+LINE_DESC_COL_INDEX = HEADERS.index("Line Description") + 1
 
 # Per-sheet column widths — matches BILL → STATUS → INVOICE.
 COL_WIDTHS: Dict[int, float] = {
@@ -926,38 +928,32 @@ def _lien_legend(ws, start_col: int) -> None:
 
 
 def _rowcolor_legend(ws, start_col: int) -> None:
-    """Vertical key for the reconciliation ROW colors, stacked under the lien
-    key (row 1). Each entry = a color swatch + what that row tint means. Labels
-    merge across a few columns so the lien-key column widths stay untouched."""
+    """Horizontal key for the reconciliation ROW colors, on frozen ROW 2 to the
+    right of the table (row 1 holds the lien key). It MUST live on a header row:
+    AutoFilter hides DATA rows, so a legend placed in the body would vanish the
+    moment the user filters. Each cell is a colored swatch with its meaning
+    inside, mirroring the lien key one row above."""
+    # (hex fill or None, label, font hex)
     items = [
-        (CF_GREEN_READY,          "GC funded — pay the vendor now"),
-        (CF_YELLOW_AUDIT,         "Fronted — we paid, awaiting GC payment"),
-        (CF_RED_HOLD,             "Fronted — we paid, GC not invoiced"),
-        (CF_PEACH_PARTIAL,        "Partly funded (multi-project bill)"),
-        (CF_GRAY_DONE,            "Done — vendor paid + GC paid"),
-        (CF_PURPLE_NEEDS_PROJECT, "No project #"),
-        (None,                    "(no fill) normal pipeline — awaiting GC"),
+        (None,                    "ROW KEY →",             "1F3864"),
+        (CF_GREEN_READY,          "GC funded: pay now",    "000000"),
+        (CF_YELLOW_AUDIT,         "Fronted: awaiting pay", "000000"),
+        (CF_RED_HOLD,             "Fronted: not inv'd",    "000000"),
+        (CF_PEACH_PARTIAL,        "Partly funded",         "000000"),
+        (CF_GRAY_DONE,            "Done",                  "000000"),
+        (CF_PURPLE_NEEDS_PROJECT, "No project #",          "000000"),
+        (None,                    "Pipeline: awaiting GC", "1F3864"),
     ]
-    title = ws.cell(row=3, column=start_col, value="ROW COLOR KEY ↓")
-    title.font = Font(bold=True, size=10, color="1F3864")
-    for i, (hex_color, label) in enumerate(items):
-        r = 4 + i
-        sw = ws.cell(row=r, column=start_col)
+    for i, (hex_color, text, font_hex) in enumerate(items):
+        col = start_col + i
+        ws.column_dimensions[_col_letter(col)].width = 20
+        c = ws.cell(row=2, column=col, value=text)
+        c.alignment = Alignment(horizontal="center", vertical="center")
+        c.font = Font(bold=True, size=10, color=font_hex)
         if hex_color:
-            sw.fill = PatternFill(patternType="solid",
-                                  fgColor=Color(rgb=f"FF{hex_color}"),
-                                  bgColor=Color(rgb=f"FF{hex_color}"))
-        lab = ws.cell(row=r, column=start_col + 1, value=label)
-        ws.merge_cells(start_row=r, start_column=start_col + 1,
-                       end_row=r, end_column=start_col + 5)
-        lab.font = Font(size=10)
-        lab.alignment = Alignment(horizontal="left", vertical="center")
-    # Note the Approved cell tints red on its own when a bill is not approved.
-    note = ws.cell(row=4 + len(items) + 1, column=start_col,
-                   value="Approved cell turns red when a bill is NOT approved.")
-    ws.merge_cells(start_row=4 + len(items) + 1, start_column=start_col,
-                   end_row=4 + len(items) + 1, end_column=start_col + 5)
-    note.font = Font(size=9, italic=True, color="808080")
+            c.fill = PatternFill(patternType="solid",
+                                 fgColor=Color(rgb=f"FF{hex_color}"),
+                                 bgColor=Color(rgb=f"FF{hex_color}"))
 
 
 def _finalize_sheet(ws, table_name: str, last_row: int,
@@ -991,19 +987,22 @@ def _finalize_sheet(ws, table_name: str, last_row: int,
         showRowStripes=True, showColumnStripes=False,
     )
 
-    # Default view hides only FULLY-DONE bills (we paid the vendor AND the GC
-    # paid us) so the sheet stays uncluttered — but keeps everything actionable,
-    # including FRONTED bills (Bill paid + GC hasn't paid), which are the whole
-    # point of the two-status split. Physical row-hiding only (the Table already
-    # provides filter dropdowns); Excel trusts each row's hidden flag on open.
+    # Default view = the "what do we still owe" working set: Pay Status Unpaid /
+    # Partial paid (hide Bill paid). Set the AutoFilter funnel AND physically
+    # hide paid rows to match — Excel trusts each row's hidden flag on open and
+    # ignores the filter criteria until the user toggles it. A Bill-paid row with
+    # an OUTSTANDING lien stays visible (a lien outlives payment). To review paid
+    # / fronted bills, check "Bill paid" in the Pay Status filter — the row color
+    # + Invoice Status then flag the fronted ones.
     if hide_paid_default:
+        tbl.autoFilter = AutoFilter(ref=table_ref)
+        tbl.autoFilter.filterColumn = [
+            FilterColumn(colId=PAY_STATUS_COL_INDEX - 1,
+                         filters=Filters(filter=["Unpaid", "Partial paid"]))
+        ]
         for r in range(DATA_START, last_row + 1):
-            done = (ws.cell(row=r, column=PAY_STATUS_COL_INDEX).value == "Bill paid"
-                    and ws.cell(row=r, column=INVOICE_STATUS_COL_INDEX).value == "Invoice paid")
-            if not done:
+            if ws.cell(row=r, column=PAY_STATUS_COL_INDEX).value != "Bill paid":
                 continue
-            # A paid bill with an OUTSTANDING lien stays visible — a lien
-            # outlives payment until it's formally Released.
             if ws.cell(row=r, column=LIEN_COL_INDEX).value in LIEN_OUTSTANDING:
                 continue
             ws.row_dimensions[r].hidden = True
@@ -2218,7 +2217,10 @@ def main() -> int:
         ws_bills, bills_view_rows, BILLS_TABLE, edits,
         sort_key=_vendor_key,
         hide_paid_default=True,
-        hide_cols=[LINE_AMT_COL_INDEX],   # Bills hides Line Amount (= Bill Total at bill grain)
+        # Bills hides Line Amount (= Bill Total at bill grain) plus Account (H)
+        # and Line Description (I) — detail lives on Inventory; the bill-grain
+        # summary doesn't need them by default.
+        hide_cols=[ACCOUNT_COL_INDEX, LINE_DESC_COL_INDEX, LINE_AMT_COL_INDEX],
         inv_anchor_map=inv_anchor_map,    # hyperlink "(multiple)" → Inventory
         lien_editable=True,               # Bills is the only sheet with the Lien tag + dropdown
     )
