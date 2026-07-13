@@ -73,6 +73,7 @@ except ImportError:
     print("missing dependency. Run: pip3 install --break-system-packages openpyxl requests")
     sys.exit(1)
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from shared import qbo_vault as kc
 
 # ───────────────────────────  config  ───────────────────────────
@@ -80,7 +81,8 @@ from shared import qbo_vault as kc
 API_BASE = "https://quickbooks.api.intuit.com"
 
 # The automated debt schedule (single source of truth for terms).
-WORKBOOK = Path(__file__).resolve().parent / "debt-schedule" / "Equipment_Debt_Schedule_v2.xlsx"
+# loan_sync.py lives IN debt-schedule/ now — the workbook sits beside it.
+WORKBOOK = Path(__file__).resolve().parent / "Equipment_Debt_Schedule_v2.xlsx"
 
 # Which company this QBO login belongs to. Only rows tagged with this company are
 # synced (L&A Holdings is a SEPARATE QuickBooks file — run with --company "L&A Holdings"

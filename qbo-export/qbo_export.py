@@ -40,6 +40,7 @@ except ImportError:
     print("missing dependency. Run: pip3 install --break-system-packages openpyxl requests")
     sys.exit(1)
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from shared import qbo_vault as kc
 from shared import paths
 
