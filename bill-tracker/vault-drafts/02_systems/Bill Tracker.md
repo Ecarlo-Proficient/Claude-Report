@@ -6,7 +6,7 @@ created: 2026-04-28
 moved-to-systems: 2026-05-27
 source: QBO Enterprise
 output: /Users/sebas/Documents/CompanyHealth/Bill Tracker.xlsx
-schedule: Mon–Fri 15:00 via launchd
+schedule: manual (no scheduler — the launchd auto-run was scrapped)
 ---
 
 # Bill Tracker
@@ -113,9 +113,7 @@ bill-tracker/
 ├── excel_bill_sync.py          # main entry — 825 lines
 ├── bill_rows.py                # shared QBO → row-dict builder
 ├── qbo_bill_tracker.py         # QBO extraction layer
-├── run_tracker.sh              # launchd wrapper
-├── launchd/
-│   └── com.proficient.billtracker.plist   # Mon–Fri 15:00
+├── run_tracker.sh              # manual-run wrapper (sync-ap)
 ├── logs/
 │   └── run.log                 # tee'd output of each sync
 ├── _backups/                   # daily snapshots (14-day retention)
@@ -130,11 +128,8 @@ bill-tracker/
 bash "/Users/sebas/Documents/Claude/Projects/Automate Concrete Business/bill-tracker/run_tracker.sh"
 ```
 
-Touch ID prompts once for QBO Keychain unlock.
-
-### Schedule
-
-`launchctl load ~/Library/LaunchAgents/com.proficient.billtracker.plist` — runs the wrapper at 15:00 Mon-Fri.
+Touch ID prompts once for QBO Keychain unlock. Runs are manual — there is no
+scheduler (the launchd auto-run was scrapped).
 
 ### Backups
 

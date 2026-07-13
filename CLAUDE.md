@@ -38,8 +38,8 @@ restate them here. Business/strategic context lives in session memory, not in th
   schedules exist but some died after a macOS update → Ted runs `sync-ar` manually. Dockerized at
   **v1.0.0** for Synology (coexistence: `SKIP_EXCEL_EXPORT=1` so the Mac keeps the Excel mirror).
 - **bill-tracker/** — AP bills → matched to the GC invoice that authorizes payment → Excel
-  (`~/Documents/CompanyHealth/Bill Tracker.xlsx`); launchd Mon–Fri 15:00. Also `statement_reconciler.py`
-  (vendor statement PDF ↔ QBO open bills) and `job_coding_audit.py`.
+  (`~/Documents/CompanyHealth/Bill Tracker.xlsx`); **run manually** (the launchd auto-run was
+  scrapped). Also `statement_reconciler.py` (vendor statement PDF ↔ QBO open bills) and `job_coding_audit.py`.
 - **wip/** — `qbo_close_list.py` / `qbo_bulk_close.py` (**always exclude MFD — those close by hand**).
   WIP itself lives in **Excel on SharePoint**: the readers are `automation-worker/cp_wip_reader.py`
   / `rp_wip_reader.py` (write the Test tab of `WIP - MASTER new.xlsx`; over/under-billing and
