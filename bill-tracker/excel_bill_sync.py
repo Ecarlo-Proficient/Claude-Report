@@ -110,6 +110,7 @@ INVOICE_CUTOFF_DATE = "2024-01-01"
 
 QBO_BILL_URL_TEMPLATE = "https://qbo.intuit.com/app/bill?txnId={bill_id}"
 QBO_INVOICE_URL_TEMPLATE = "https://qbo.intuit.com/app/invoice?txnId={inv_id}"
+QBO_BILLPAYMENT_URL_TEMPLATE = "https://qbo.intuit.com/app/billpayment?txnId={pay_id}"
 
 # Muted palette — chrome is calm so the two CF signals can read at a glance.
 HEADER_FILL = PatternFill("solid", start_color="6E7E94")
@@ -882,6 +883,14 @@ def _write_bill_row(ws, r_i: int, r: dict, edits: Dict[str, Dict[str, str]],
             mi.hyperlink = QBO_INVOICE_URL_TEMPLATE.format(inv_id=inv_id)
             mi.font = Font(name="Calibri", size=11, color="0563C1", underline="single")
 
+    # Hyperlink the Pay Ref # cell → the QBO bill payment (latest, for a bill
+    # paid by several). Blank for CC (no ref text to click); '(multiple)' links
+    # to the most recent payment.
+    if _pm.get("pay_id") and (_pm.get("ref") or "").strip():
+        pr = ws.cell(row=r_i, column=HEADERS.index("Pay Ref #") + 1)
+        pr.hyperlink = QBO_BILLPAYMENT_URL_TEMPLATE.format(pay_id=_pm["pay_id"])
+        pr.font = Font(name="Calibri", size=11, color="0563C1", underline="single")
+
 
 def _lien_legend(ws, start_col: int) -> None:
     """HORIZONTAL key for the Lien column, on the frozen header row (row 1) to
@@ -1389,25 +1398,27 @@ def build_bill_payment_map(bill_payments: List[dict]) -> Dict[str, dict]:
     Checks show the check # (DocNumber); CC refs are left blank (a generic
     label is no lookup key -- pay date + vendor + amount locate it). A bill paid
     by more than one payment shows the latest date and '(multiple)'."""
-    acc: Dict[str, List[Tuple[Optional[dt.date], str, str]]] = defaultdict(list)
+    acc: Dict[str, List[Tuple[Optional[dt.date], str, str, str]]] = defaultdict(list)
     for bp in bill_payments:
         pay_date = parse_date(bp.get("TxnDate"))
         method = _bp_method(bp)
         ref = (bp.get("DocNumber") or "").strip() if method == "Check" else ""
+        pay_id = bp.get("Id", "") or ""
         for bid, _amt in _bp_linked_bills(bp):
-            acc[bid].append((pay_date, method, ref))
+            acc[bid].append((pay_date, method, ref, pay_id))
     out: Dict[str, dict] = {}
     for bid, lst in acc.items():
         lst.sort(key=lambda t: t[0] or dt.date.min)
         if len(lst) == 1:
-            d, m, rf = lst[0]
-            out[bid] = {"date": d, "method": m, "ref": rf}
+            d, m, rf, pid = lst[0]
+            out[bid] = {"date": d, "method": m, "ref": rf, "pay_id": pid}
         else:
             methods = {t[1] for t in lst}
             out[bid] = {
                 "date": lst[-1][0],
                 "method": methods.pop() if len(methods) == 1 else "(multiple)",
                 "ref": "(multiple)",
+                "pay_id": lst[-1][3],   # link the latest payment
             }
     return out
 
