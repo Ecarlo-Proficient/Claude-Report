@@ -31,6 +31,8 @@ from qbo_bill_tracker import (
     get_division,
     find_matching_invoice,
     compute_status,
+    compute_pay_status,
+    compute_invoice_status,
     parse_date,
     STATUS_PAID,
     STATUS_NO_PROJECT,
@@ -38,6 +40,7 @@ from qbo_bill_tracker import (
     STATUS_AWAITING_PAYMENT,
     STATUS_AWAITING_INVOICE,
     STATUS_PARTIAL_PAID,
+    STATUS_UNPAID,
 )
 
 
@@ -260,6 +263,11 @@ def build_rows(
             else:
                 auto_status = compute_status(bill, matched, division)
 
+            # Two-axis split (Ted 2026-07-13): pay = did WE pay the vendor;
+            # invoice = did the GC fund us (computed independent of payment).
+            pay_status = compute_pay_status(bill)
+            invoice_status = compute_invoice_status(matched, division)
+
             rows.append({
                 "key": f"{bill_id}-{line_id}",
                 "bill_id": bill_id,
@@ -289,6 +297,8 @@ def build_rows(
                 "customer_name": cust_name,
                 "class_name": class_name,
                 "auto_status": auto_status,
+                "pay_status": pay_status,
+                "invoice_status": invoice_status,
             })
     return rows
 
@@ -430,6 +440,24 @@ def _aggregate_bill_status(line_statuses: List[str]) -> str:
     if statuses == {STATUS_OK_TO_PAY}:
         return STATUS_OK_TO_PAY
     if STATUS_AWAITING_INVOICE in statuses:
+        return STATUS_AWAITING_INVOICE
+    return STATUS_AWAITING_PAYMENT
+
+
+def _aggregate_invoice_status(line_statuses: List[str]) -> str:
+    """Roll per-line AR (invoice) statuses into one bill-level label. Same shape
+    as _aggregate_bill_status but AR-only (never 'Bill paid' — that's the pay
+    axis): mixed funded/unfunded → Partial paid."""
+    s = {v for v in line_statuses if v}
+    if not s:
+        return STATUS_AWAITING_PAYMENT
+    if STATUS_NO_PROJECT in s:
+        return STATUS_NO_PROJECT
+    if s == {STATUS_OK_TO_PAY}:
+        return STATUS_OK_TO_PAY
+    if STATUS_OK_TO_PAY in s and len(s) > 1:
+        return STATUS_PARTIAL_PAID
+    if STATUS_AWAITING_INVOICE in s:
         return STATUS_AWAITING_INVOICE
     return STATUS_AWAITING_PAYMENT
 
@@ -580,6 +608,13 @@ def collapse_rows(line_rows: List[dict], grain: str = "bill") -> List[dict]:
             "customer_name": first.get("customer_name", ""),
             "class_name": class_name,
             "auto_status": agg_status,
+            # Pay status is bill-level (one balance) → same on every line.
+            # Invoice status is per-line (per matched invoice) → aggregate.
+            "pay_status": first.get("pay_status", ""),
+            "invoice_status": (
+                _aggregate_invoice_status([r.get("invoice_status") or "" for r in lines])
+                if grain == "bill" else first.get("invoice_status", "")
+            ),
             "is_multi_project": is_multi,
             "line_count": len(lines),
             "share": share,  # 1.0 for single-project; <1.0 for multi-project chunks

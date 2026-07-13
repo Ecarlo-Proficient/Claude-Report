@@ -84,6 +84,35 @@ STATUS_PAID = "Bill paid"
 # "is it fully funded" question is line-aggregated. Partial paid signals
 # "some lines funded, AP can decide to float the remainder or wait."
 STATUS_PARTIAL_PAID = "Partial paid"
+
+# 2026-07-13: the single Status split into two axes (Ted). PAY STATUS is the AP
+# side (did WE pay the vendor) from the bill balance; INVOICE STATUS is the AR
+# side (did the GC fund us) computed INDEPENDENTLY of payment, so a paid bill
+# still shows whether we've been reimbursed ("fronted").
+STATUS_UNPAID = "Unpaid"          # pay status: bill balance == full total
+
+
+def compute_pay_status(bill: dict) -> str:
+    """AP side — did we pay the vendor. From the bill balance alone."""
+    total = float(bill.get("TotalAmt") or 0)
+    bal = float(bill.get("Balance") or 0)
+    if bal == 0:
+        return STATUS_PAID              # "Bill paid"
+    if 0 < bal < total:
+        return STATUS_PARTIAL_PAID      # "Partial paid"
+    return STATUS_UNPAID                # "Unpaid"
+
+
+def compute_invoice_status(matched: Optional[dict], division: Optional[str]) -> str:
+    """AR side — has the GC funded this draw. Independent of the bill balance,
+    so it stays visible even after we've paid the vendor."""
+    if not division:
+        return STATUS_NO_PROJECT
+    if matched is None:
+        return STATUS_AWAITING_INVOICE
+    if float(matched.get("Balance") or 0) == 0:
+        return STATUS_OK_TO_PAY         # "Invoice paid"
+    return STATUS_AWAITING_PAYMENT
 OVERRIDE_VALUES = [STATUS_OK_TO_PAY, "ON HOLD", "REVIEW", "DISPUTED"]
 
 # Color fills
