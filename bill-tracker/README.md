@@ -20,7 +20,7 @@ want fresh data (see below). The old launchd auto-run was scrapped.
 ## Manual run
 
 ```bash
-cd "/Users/sebas/Documents/Claude/Projects/Automate Concrete Business"
+cd "/ABSOLUTE/PATH/TO/Automate Concrete Business"
 bill-tracker/run_tracker.sh
 ```
 

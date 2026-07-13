@@ -40,7 +40,7 @@ restate them here. Business/strategic context lives in session memory, not in th
 4. **One-offs live in `one-offs/`** and graduate by earning their own folder — never to the root.
 5. **`machine.env` stays at the repo root** (per-machine paths; gitignored). `shared/paths.py`
    resolves it there — new machines: `cp machine.env.example machine.env && python3 shared/paths.py`.
-6. **Field Log is GONE** (erased 2026-07-13, Ted's decision) — sync code, templates, config
+6. **Field Log is GONE** (erased 2026-07-13, the user's decision) — sync code, templates, config
    fields all removed. Don't rebuild it without an explicit ask.
 
 ## Subsystem map (detail in each README)
@@ -79,7 +79,7 @@ restate them here. Business/strategic context lives in session memory, not in th
 - **qbo-export/** — `qbo_export.py` one-row-per-line-item txn export → OneDrive
   `-Inbox- Project Report Exports`.
 - **one-offs/** — occasional / not-yet-developed tools. Currently: `qbo_recode_review.py`
-  (audit-gated job-cost recoder: `--export` xlsx → Ted audits with QBO-name dropdowns →
+  (audit-gated job-cost recoder: `--export` xlsx → the user audits with QBO-name dropdowns →
   `--apply` then `--apply --commit`; only `Approved=Y` rows; exact-spelling + stale-SyncToken +
   closed-period guards; `get_auth()` still an env stub).
 - **synology/** — file-tree audit. **Always pass `--exclude /Volumes/Proinfo/Items/`** (sensitive).
@@ -134,6 +134,16 @@ restate them here. Business/strategic context lives in session memory, not in th
 
 ## Conventions
 
+- **No personal names anywhere in the repo** — code, comments, docs, commit messages (swept
+  2026-07-13). People are roles: **"the user"** (owner — pulls, reviews, runs against QBO) and
+  **"the developer"** (develops from their own clone). Pre-sweep git history keeps old names —
+  left intentionally; rewriting shared history costs more than it's worth.
+- **No `/Users/<name>` paths in tracked files.** Shell wrappers self-locate via
+  `dirname "${BASH_SOURCE[0]}"`; Python derives paths from `__file__` / `shared/paths.py`;
+  launchd plists are TEMPLATES with `/ABSOLUTE/PATH/TO/...` placeholders and a documented
+  sed install one-liner (see the plist header comment).
+- **Vault drafts never live in this repo** — stage them in the AI working vault's
+  `drafts/vault-fills/` (outside the repo), mirroring the Main Vault structure.
 - Python 3.9+; deps via `pip3 install --break-system-packages -r requirements.txt` (per subfolder).
 - Each subsystem keeps its own README, `requirements.txt`/venv, and `launchd/` plist where scheduled.
 - Build the core happy-path first; don't pre-add heartbeats/fallback monitors before the core is proven.
@@ -142,14 +152,14 @@ restate them here. Business/strategic context lives in session memory, not in th
 
 ## Git / GitHub sync (this folder is a live repo — added 2026-07-09)
 
-This folder is a git repo pushed to a **private GitHub remote** shared with Ted's assistant
-(Eduardo), who develops from his own clone; Ted pulls and runs against QBO.
+This folder is a git repo pushed to a **private GitHub remote** shared with the user's assistant
+(the developer), who develops from his own clone; the user pulls and runs against QBO.
 
 **Branch model (simplified 2026-07-10):**
 - **`main` — released, stable.** Every change reaches it through a PR with **1 approving review
   and a passing `test` CI check**. No direct pushes, no force pushes, no branch deletion —
-  enforced even for repo admins. This is where Ted pulls production-ready code from.
-- **`dev` — the working branch, direct-pushable by everyone** (Ted and Eduardo). Force pushes
+  enforced even for repo admins. This is where the user pulls production-ready code from.
+- **`dev` — the working branch, direct-pushable by everyone** (the user and the developer). Force pushes
   and deletion are still blocked. No PR or pre-merge check is required to land on `dev`; the
   `test` CI workflow runs on **every push to `dev`** and flags breakage after the fact (red ✗ on
   the commit on GitHub). A red `dev` must be fixed before opening a release PR — `main` still
@@ -157,11 +167,11 @@ This folder is a git repo pushed to a **private GitHub remote** shared with Ted'
   changes, just no longer mandatory.
 
 **Session flow:**
-- **Start of any session that will modify files: `git pull` on `dev` first** — Eduardo's pushes
+- **Start of any session that will modify files: `git pull` on `dev` first** — the developer's pushes
   may have changed things. Working on a stale copy creates divergence.
-- **End of any session where files changed: run `git status`, then PROMPT TED** to land the work
+- **End of any session where files changed: run `git status`, then PROMPT THE USER** to land the work
   before wrapping up. Do not let a session end with uncommitted/unpushed changes without explicitly
-  asking. Unpushed work is invisible to Eduardo and is how work gets overwritten.
+  asking. Unpushed work is invisible to the developer and is how work gets overwritten.
 - Landing work on `dev` (complete, paste-ready — the default):
   `git switch dev` → `git pull` → `git add -A` → `git commit -m "<what changed>"` → `git push`,
   then check the commit shows a green ✓ on GitHub.
@@ -174,6 +184,6 @@ This folder is a git repo pushed to a **private GitHub remote** shared with Ted'
   that adds/removes a script or changes a data flow must update the diagram in the same commit.
   Include this in the end-of-session `git status` check: script changes without a diagram update
   are an incomplete commit.
-- Eduardo's QBO auth uses a **separate Intuit app ("EC-Data Export")** in Ted's team workspace.
-  Never authorize Ted's original app from any other machine — one connection per app+realm;
-  re-auth kills the existing token and breaks Ted's production runs.
+- The developer's QBO auth uses a **separate Intuit app ("EC-Data Export")** in the user's team workspace.
+  Never authorize the user's original app from any other machine — one connection per app+realm;
+  re-auth kills the existing token and breaks the user's production runs.

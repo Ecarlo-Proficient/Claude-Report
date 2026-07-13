@@ -2,7 +2,7 @@
 """
 rp_wip_reader.py — RP (Residential) WIP reader.
 
-ARCHITECTURE (Ted 2026-07-02), parallels CP:
+ARCHITECTURE (the user 2026-07-02), parallels CP:
   • ACTIVE PROJECTS come from the ALPHA LIST (the RP equivalent of CP's
     "Awarded Projects"): a job is active when COMPLETION < 100%.
   • The RESIDENTIAL folder tree is the TAKEOFF LOOKUP — for each active RP#,
@@ -10,7 +10,7 @@ ARCHITECTURE (Ted 2026-07-02), parallels CP:
     filename, fall back to matching the project's ADDRESS to an address folder.
 
 STEP 1 (this build): read Alpha → active RP#s, then locate each one's takeoff
-folder in Residential (RP# match, else address). Prints a table so Ted can
+folder in Residential (RP# match, else address). Prints a table so the user can
 audit the active list + whether every project's takeoff was found. Next steps:
 pick the right takeoff/proposal per RP#, then contract price + ETC.
 

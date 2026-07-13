@@ -23,11 +23,11 @@ The biggest share by file count and size (207k files / 292 GB pre-exclusion). Mi
 - `Carlos Guardado/` — Authorization Forms, MCP, PROJECTS
 - `Claudia García/` — CABLE ORDER (small)
 - `Daphne Gómez/` — empty at this depth
-- `Eduardo Rivera/` — empty at this depth
+- `the developer Rivera/` — empty at this depth
 - `Giselle Herrera/` — FORMS, lien letters, Oil Service Orders, OTHER, plus a "Hector- Do Not move/" subfolder
 - `Itzel Curiel/` — 2024, 2025, "not approved bills"
 - `Jonhy Ramírez/` — 3 TEST, CABLE ORDER
-- `Mayra Rojas/` — CC Receipts - Daphne, qbo export outputs (sebastian)
+- `Mayra Rojas/` — CC Receipts - Daphne, qbo export outputs (the user)
 - `Oscar Muñoz/` — INVOICES, SAFETY, STRESS LETTERS, William
 - `Rafael Domínguez/` — Certificates of Insurance, MFD REPORT
 - `Sandra Velez/` — Bills enter QBs, Invoice, Reimbursement Report, REPORTS to PRINT (+ 2025 version), SUB REPORTS TO ATTACH, To be Entered - QBs, Various
@@ -190,4 +190,4 @@ Despite living on a Proficient share, this folder is **shared between Proficient
 - Need to enumerate Residential customer folders → 509 of them; full tree only.
 - Anything that requires file-level detail (file names, sizes, dates) → re-run `synology_tree.py` without `--no-files` against the specific subtree only.
 
-The full tree lives at `/Users/sebas/Documents/Claude/Projects/Automate Concrete Business/synology/synology_tree.md`.
+The full tree lives at `/ABSOLUTE/PATH/TO/Automate Concrete Business/synology/synology_tree.md`.

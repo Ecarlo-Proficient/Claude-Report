@@ -1,6 +1,6 @@
 # Proficient Notion — Architecture Plan
 
-> **⚠️ Partially superseded as of 2026-04-28.** This doc describes a 4-tier data model with **Common Bid List** as a Tier 1 lookup database for clerks. That database was deleted 2026-04-28 — Ted decided clerks need direct Bid List access (they need bid amounts, lead status, etc. to do their jobs). The remaining tier separation is now just Bid List (everyone) + Field Log (super-restricted view, no financials). The Common Bid List sections below remain as historical context. The Field Log architecture and the Bid List → Field Log sync logic still apply.
+> **⚠️ Partially superseded as of 2026-04-28.** This doc describes a 4-tier data model with **Common Bid List** as a Tier 1 lookup database for clerks. That database was deleted 2026-04-28 — the user decided clerks need direct Bid List access (they need bid amounts, lead status, etc. to do their jobs). The remaining tier separation is now just Bid List (everyone) + Field Log (super-restricted view, no financials). The Common Bid List sections below remain as historical context. The Field Log architecture and the Bid List → Field Log sync logic still apply.
 >
 > **⚠️ Further superseded as of 2026-07-13.** The **Field Log flow was dropped entirely** — the Bid List → Field Log / Project Plans sync code and its templates were removed from the automation repo by decision. Field Log sections below are historical context only.
 
@@ -98,7 +98,7 @@ Three mechanisms, each with a clear job, no overlap.
 | **1 — Basic lookup** | Job Name, Project #, Address, City, Customer | All employees, Common Clerks (AP, PO, Sub Clerks). No plans. No financial. No sales. |
 | **2 — Field operational** | Tier 1 + phase status, dates, photos, plan file, super assignment, checklist progress | Superintendents, Field Clerk. **No bid amount, no customer pricing, no sales info.** |
 | **3 — Sales & financial** | Tier 1 + Tier 2 + bid amount, margins, customer pricing, invoice status, AR aging | Estimators, PMs, AR/AP staff |
-| **4 — Full** | Everything | Leadership (Ted) |
+| **4 — Full** | Everything | Leadership (the user) |
 
 Tiers are enforced at the **database level** in Notion, not the property level. Notion has no per-property permission. That means each tier's visible data must live in a database (or linked view) that only that tier's teamspaces can access.
 
@@ -235,7 +235,7 @@ This is a Notion-wide limitation — not fixed by Enterprise or any plan upgrade
 
 **Enforcement:** Supers have zero access to the Bid List database itself. Their Field Hub teamspace only contains Field Logs. Sensitive Bid List fields are simply never rolled up. No view toggle can expose them.
 
-**View strategy:** Personalized "My Jobs" page per super — Notion's current-user filter on the Superintendent rollup, so each super only sees their own phase rows. Estimators/PMs/Ted see everything by clearing the filter. This is clutter, not security (security is enforced by the teamspace boundary above).
+**View strategy:** Personalized "My Jobs" page per super — Notion's current-user filter on the Superintendent rollup, so each super only sees their own phase rows. Estimators/PMs/the user see everything by clearing the filter. This is clutter, not security (security is enforced by the teamspace boundary above).
 
 ---
 
@@ -275,11 +275,11 @@ This is a Notion-wide limitation — not fixed by Enterprise or any plan upgrade
 
 ---
 
-### 7. Leadership / Owner (Ted)
+### 7. Leadership / Owner (the user)
 
 **Purpose:** Full visibility across every other teamspace. Automatic owner access.
 
-**Users:** Ted, co-owners
+**Users:** the user, co-owners
 
 **Access:** Everything.
 
@@ -313,7 +313,7 @@ Columns show **what database access the role has**. "—" means zero access. Tie
 | PO Clerk | 1 | — (via Common Bid List — separate DB) | — | — | — | — |
 | Payroll Manager | off-spine | — | — | — | View | Full |
 | JRamirez (Project Clerk) | 2 | — | Full | — | — | — |
-| Ted (Owner) | 4 | Full | Full | Full | Full | Full |
+| The user (Owner) | 4 | Full | Full | Full | Full | Full |
 
 **Hard rules to preserve:**
 - Supers never see Bid Amount or sales info. If a sales figure needs to surface to the field, it's approved explicitly and rolled up to Field Log — not exposed wholesale via Bid List access.

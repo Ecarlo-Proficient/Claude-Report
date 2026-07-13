@@ -183,7 +183,7 @@ def _customer_display(cust: dict) -> Tuple[str, str]:
 
     QBO stores project/job info in various places across versions. The
     DisplayName is the most reliable canonical identifier — it matches how
-    Ted names projects in QBO."""
+    The user names projects in QBO."""
     name = cust.get("DisplayName") or cust.get("CompanyName") or f"Customer {cust.get('Id')}"
     return name, name
 

@@ -118,8 +118,8 @@ is left out.
 4. Open the resulting sheet and confirm Tier 1 / Tier 2 banners render and the
    ↗ Open links resolve to the right transactions.
 
-## Tuning note for Ted
+## Tuning note for the user
 If Tier 2 (overhead) is noisy because the sync window reaches far back, scope it
 to open bills only or to a recent date window — but keep Tier 1 (job-cost
-misses) covering everything. Flag this to Ted rather than dropping coverage
+misses) covering everything. Flag this to the user rather than dropping coverage
 silently.

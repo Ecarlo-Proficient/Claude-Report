@@ -10,7 +10,7 @@
 #     (there is no scheduler — the launchd auto-run was scrapped)
 #
 # Output workbook:
-#   /Users/sebas/Library/CloudStorage/OneDrive-ProficientConcrete,LLC/Automations-/Bill Tracker.xlsx
+#   ~/Library/CloudStorage/OneDrive-ProficientConcrete,LLC/Automations-/Bill Tracker.xlsx
 #
 # Logs live OUTSIDE the project folder (sync_view.py owns run.log):
 #   ~/Library/Logs/Proficient/bill-tracker/
@@ -21,7 +21,7 @@
 #   2026-06-18 — visual viewer (sync_view.py) added; logging moved into it.
 
 set -u
-DIR="/Users/sebas/Documents/Claude/Projects/Automate Concrete Business/bill-tracker"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # self-locating — works from any clone, any user
 cd "$DIR"
 
 # exec so the viewer's exit code propagates straight through to the caller.

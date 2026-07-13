@@ -67,7 +67,7 @@ RETAINAGE_NOT_BILLED_RE = re.compile(r"retainage\s+not\s+billed", re.IGNORECASE)
 RETAINAGE_RE = re.compile(r"\bretainage\b", re.IGNORECASE)
 SUB_RE = re.compile(r"\bsub\b", re.IGNORECASE)
 
-# Status values — plain-English pipeline state. Ted 2026-06-03: re-split
+# Status values — plain-English pipeline state. The user 2026-06-03: re-split
 # AWAITING into PAYMENT vs INVOICE because lumping them lost the signal:
 #   - "Awaiting Invoice" = we owe the bill, GC hasn't been billed yet
 #   - "Awaiting Payment" = we owe the bill, GC was billed but hasn't paid us
@@ -85,7 +85,7 @@ STATUS_PAID = "Bill paid"
 # "some lines funded, AP can decide to float the remainder or wait."
 STATUS_PARTIAL_PAID = "Partial paid"
 
-# 2026-07-13: the single Status split into two axes (Ted). PAY STATUS is the AP
+# 2026-07-13: the single Status split into two axes (the user). PAY STATUS is the AP
 # side (did WE pay the vendor) from the bill balance; INVOICE STATUS is the AR
 # side (did the GC fund us) computed INDEPENDENTLY of payment, so a paid bill
 # still shows whether we've been reimbursed ("fronted").
@@ -419,7 +419,7 @@ def get_line_customer_ref(line: dict) -> dict:
 
 _PUMP_RE = re.compile(r"\bpump", re.IGNORECASE)
 
-# RP amount-aware matching (Ted 2026-06-18). A concrete bill is our COST; the
+# RP amount-aware matching (the user 2026-06-18). A concrete bill is our COST; the
 # invoice is what we billed the GC for that scope, so the bill must not exceed
 # the invoice. Among same-project invoices within this forward window, keep
 # only those that COVER the bill amount and take the LARGEST; if none cover,
@@ -455,11 +455,11 @@ def find_matching_invoice(
     invoices and vice versa. RP projects can have several scoped invoices
     on the same house (Pump Charges, Foundation, Driveway, …); matching
     purely by date proximity puts pump bills on foundation invoices etc.
-    Ted 2026-06-04: only the pump case has burned us; broader scope
+    The user 2026-06-04: only the pump case has burned us; broader scope
     matching is deferred.
 
     `bill_amount` — the cost being attributed to this project (the line
-    amount). RP matching is amount-aware (Ted 2026-06-18): the bill must not
+    amount). RP matching is amount-aware (the user 2026-06-18): the bill must not
     exceed the invoice it's matched to, so we only consider invoices that
     COVER the bill amount and pick the largest. See `_RP_MATCH_FWD_DAYS`.
     """

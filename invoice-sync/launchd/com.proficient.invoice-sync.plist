@@ -2,13 +2,20 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <!-- TEMPLATE — launchd cannot expand variables. Install with the real
+         paths for this machine (run from the repo root):
+           sed -e "s|/ABSOLUTE/PATH/TO/Automate Concrete Business|$PWD|g" \
+               -e "s|/ABSOLUTE/PATH/TO/HOME|$HOME|g" \
+               invoice-sync/launchd/com.proficient.invoice-sync.plist \
+               > ~/Library/LaunchAgents/com.proficient.invoice-sync.plist
+    -->
     <key>Label</key>
     <string>com.proficient.invoice-sync</string>
 
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/sebas/Documents/Claude/Projects/Automate Concrete Business/invoice-sync/run_invoice_sync.sh</string>
+        <string>/ABSOLUTE/PATH/TO/Automate Concrete Business/invoice-sync/run_invoice_sync.sh</string>
     </array>
 
     <!-- Every 15 minutes (900 seconds) -->
@@ -23,8 +30,8 @@
     <false/>
 
     <key>StandardOutPath</key>
-    <string>/Users/sebas/Library/Logs/Proficient/automation-worker/invoice_sync.launchd.log</string>
+    <string>/ABSOLUTE/PATH/TO/HOME/Library/Logs/Proficient/automation-worker/invoice_sync.launchd.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/sebas/Library/Logs/Proficient/automation-worker/invoice_sync.launchd.err</string>
+    <string>/ABSOLUTE/PATH/TO/HOME/Library/Logs/Proficient/automation-worker/invoice_sync.launchd.err</string>
 </dict>
 </plist>

@@ -2,14 +2,14 @@
 Export Notion Invoice Trackers to a single Excel file.
 
 One-direction sync: Notion → Excel. The file is a read-only artifact for
-Eduardo's ad-hoc summing (select rows in Excel → see Sum in status bar) and
-copy-paste-to-email workflow. Eduardo NEVER edits the Excel file — every
+The developer's ad-hoc summing (select rows in Excel → see Sum in status bar) and
+copy-paste-to-email workflow. The developer NEVER edits the Excel file — every
 edit-worthy field (Quick Status, Next Follow-Up, Assignee, etc.) lives in
 Notion. This file is regenerated every sync run, so any edits made directly
 would be clobbered.
 
 Why this exists:
-  Notion can't sum arbitrary row selection (only filtered totals). Eduardo's
+  Notion can't sum arbitrary row selection (only filtered totals). The developer's
   workflow includes ad-hoc questions like "what do customer X's last 3
   invoices total?" — for that, Excel is the right tool. Notion is still the
   source of truth and the working surface for all human notes / status.
@@ -46,7 +46,7 @@ DEFAULT_EXPORT_PATH = paths.get_path(
 )
 
 
-# Column order matches Eduardo's preferred layout (he sorts/scans left-to-right
+# Column order matches the developer's preferred layout (he sorts/scans left-to-right
 # in this order: Division/Project # first for quick triage, then customer/invoice
 # detail, then $ columns, then status). PM, Quick Status, and QBO Link live only
 # in Notion — this Excel is a read-only summing sheet for the collections workflow.
@@ -209,15 +209,15 @@ def export_open_invoices_xlsx(
 ) -> Path:
     """
     Pull open invoices from both trackers, write a single Excel file
-    formatted for Eduardo's collections workflow. Returns the output path.
+    formatted for the developer's collections workflow. Returns the output path.
     """
     # DEFAULT_EXPORT_PATH already resolved INVOICE_EXPORT_PATH via paths.get_path
     # (env var > machine.env > repo default) — don't re-resolve it here.
     target = output_path or DEFAULT_EXPORT_PATH
 
     # Office lock check — Excel creates a hidden '~$Open_Invoices.xlsx' file in
-    # the same folder while someone has the workbook open (Eduardo on his side,
-    # Ted on his, doesn't matter — OneDrive syncs the lock to both machines).
+    # the same folder while someone has the workbook open (the developer on his side,
+    # The user on his, doesn't matter — OneDrive syncs the lock to both machines).
     # If we overwrite while Excel is open, his AutoSave will silently write the
     # stale buffer back on top of our update, losing the sync. Skip cleanly and
     # tell the operator to re-run once it's closed.

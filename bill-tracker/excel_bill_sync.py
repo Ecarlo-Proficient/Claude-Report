@@ -2,7 +2,7 @@
 """
 excel_bill_sync.py — daily QBO → xlsx AP bill tracker.
 
-Output: /Users/sebas/Documents/CompanyHealth/Bill Tracker.xlsx  (chmod 600)
+Output: ~/Documents/CompanyHealth/Bill Tracker.xlsx  (chmod 600)
 
 Five sheets, every one an Excel Table with AutoFilter on every column.
 Same column set across all five, sorted differently per sheet:
@@ -97,7 +97,7 @@ OUTPUT_PATH = paths.get_path(
 )
 BACKUP_RETENTION_DAYS = 14
 
-# Paid bills lookback. Per Ted 2026-05-27: trailing 12mo was too much; use
+# Paid bills lookback. Per the user 2026-05-27: trailing 12mo was too much; use
 # fixed YTD start date instead. Adjust here when crossing a fiscal year.
 PAID_CUTOFF_DATE = "2026-01-01"
 
@@ -125,7 +125,7 @@ ALIGN_RIGHT = Alignment(horizontal="right", vertical="center")
 #   BILL    = navy   (cool, identification)
 #   STATUS  = amber  (warm, action needed)
 #   INVOICE = green  (stable, verified data)
-# Ted 2026-06-04: swapped INVOICE and STATUS so green sits on Invoice.
+# The user 2026-06-04: swapped INVOICE and STATUS so green sits on Invoice.
 SUPRA_BILL_FILL    = PatternFill("solid", start_color="1F3864")  # deep navy
 SUPRA_STATUS_FILL  = PatternFill("solid", start_color="BF8F00")  # warm amber
 SUPRA_INVOICE_FILL = PatternFill("solid", start_color="375623")  # deep green
@@ -138,7 +138,7 @@ MONEY_FMT = '"$"#,##0.00;[Red]("$"#,##0.00);"-"'
 DATE_FMT = "m/d/yyyy"
 
 # Status × Approved row colors. Pay-cell green stacks on top.
-# Ted 2026-06-04: softened "hold" (red was too aggressive) and bumped
+# The user 2026-06-04: softened "hold" (red was too aggressive) and bumped
 # "partial" to a warmer amber-yellow so it reads as actionable.
 CF_GREEN_READY = "C6EFCE"        # Invoice paid + approved → pay the vendor
 CF_ORANGE_URGENT = "FFC299"      # Invoice paid + not approved → approve now
@@ -151,13 +151,13 @@ CF_LIEN_NOTICE = "FFC000"        # amber — lien NOTICE sent (escalation step 1
 CF_LIEN_FILED  = "FF0000"        # red — real LIEN filed (escalation step 2)
 CF_LIEN_RELEASED = "92D050"      # green — lien RELEASED / satisfied (resolved)
 
-# Lien-NOTICE timer (Ted 2026-06-18): an UNPAID, UNTAGGED bill whose supplier
+# Lien-NOTICE timer (the user 2026-06-18): an UNPAID, UNTAGGED bill whose supplier
 # lien-notice date (15th of the 2nd month after the bill date — TX practice)
 # is approaching. A yellow→orange countdown. It NEVER goes red: red is reserved
 # for an actual FILED lien (a real legal event), not a "this is coming" warning.
-# 2026-07-10 (Ted): old ramp was too soft — ≤30d was near-invisible and ≤15d
+# 2026-07-10 (the user): old ramp was too soft — ≤30d was near-invisible and ≤15d
 # blended into the Notice Sent amber. Each step now one notch hotter.
-# 2026-07-10 (Ted): these cells are SCRIPT-written (the countdown), so they read
+# 2026-07-10 (the user): these cells are SCRIPT-written (the countdown), so they read
 # as soft/tentative — PALE tints + grey italic text — vs the human lien tags,
 # which stay saturated + bold black. The tier still escalates gold→coral→rose;
 # the bucket text carries the exact window. PAST is a distinct rose (NOT red —
@@ -168,7 +168,7 @@ CF_TIMER_HOT    = "F8CBAD"       # ≤ 7 days out — pale coral
 CF_TIMER_PAST   = "E6B8B8"       # notice deadline passed — pale rose
 CF_TIMER_TEXT   = "808080"       # grey italic — signals "script-written, not a tag"
 
-# The Lien cell itself shows the countdown bucket as text (Ted 2026-07-10) so a
+# The Lien cell itself shows the countdown bucket as text (the user 2026-07-10) so a
 # clerk reads the state without cross-referencing the key. These label strings
 # are the single source of truth: written into the cell AND matched by the CF
 # rules that color it, so text and color can never disagree.
@@ -207,7 +207,7 @@ BILL_ROW_COLS: List[Tuple[str, str]] = [
     # 2026-06-04: Line Amount restored at col 9 — hidden on Bills (where at
     #   bill grain it equals Bill Total) but VISIBLE on Inventory (where
     #   it's the per-line dollar amount, the whole point of that sheet).
-    # 2026-07-13: reordered to the bill life-cycle read (Ted). One Status split
+    # 2026-07-13: reordered to the bill life-cycle read (the user). One Status split
     # into Pay Status (AP, "what's open") + Invoice Status (AR, "client paid?").
     # Client moved up into identity; Payment Date renamed GC Paid Date.
     ("Open",               "link"),      # 1  — tiny QBO bill link
@@ -897,7 +897,7 @@ def _write_bill_row(ws, r_i: int, r: dict, edits: Dict[str, Dict[str, str]],
 def _lien_legend(ws, start_col: int) -> None:
     """HORIZONTAL key for the Lien column, on the frozen header row (row 1) to
     the right of the table. A single row so AutoFilter (which hides data rows)
-    can never fragment it (Ted 2026-06-18). Each cell is a colored swatch with
+    can never fragment it (the user 2026-06-18). Each cell is a colored swatch with
     its label inside. Human TAGS (bold black on a saturated fill) come first,
     then the SCRIPT countdown (grey italic on a pale tint) — the same styling
     the data cells get, so the key reads exactly like the column."""
@@ -1035,7 +1035,7 @@ def _finalize_sheet(ws, table_name: str, last_row: int,
 
     # ── Lien column CF FIRST so it out-prioritizes the row-status band ──
     # The Lien cell sits inside the status section, so the row band would
-    # otherwise win and the lien color wouldn't show (Ted 2026-06-18). Adding
+    # otherwise win and the lien color wouldn't show (the user 2026-06-18). Adding
     # the lien rules before the row rules gives them higher CF priority: a lien
     # tag or an active timer paints the Lien cell; when neither applies, the row
     # band fills it so the colored band stays continuous.
@@ -1360,7 +1360,7 @@ def build_inventory_sheet(ws, line_rows: List[dict]
 # ─────────────────────── Bill payments (AP cash-out) ───────────────────────
 # Rather than a separate sheet, the payment that paid each bill is shown as
 # Pay Ref # / Pay Date / Pay Method columns on the Bills sheet, so the clerk can
-# just filter by check # or pay date (Ted 2026-07-13). No out-of-window bill
+# just filter by check # or pay date (the user 2026-07-13). No out-of-window bill
 # fetch and no second sheet — we only annotate bills already loaded. The map is
 # built once per run and read by _write_bill_row via this module global.
 _BILL_PAY_MAP: Dict[str, dict] = {}
@@ -1481,7 +1481,7 @@ AUDIT_SECTION_HEIGHT     = 24
 
 # Section 3 — uncoded JOB-COST lines (a real cost about to be left off a
 # project). Strong orange so it reads as the most actionable section. Overhead-
-# only uncoded lines are deliberately NOT shown (Ted 2026-06-18: they'd flood
+# only uncoded lines are deliberately NOT shown (the user 2026-06-18: they'd flood
 # the audit and are legitimately projectless). Sub bills are already excluded
 # upstream, so they don't reach here either.
 AUDIT_SECTION_UNCODED_FILL = PatternFill(patternType="solid",
@@ -1494,7 +1494,7 @@ AUDIT_UNCODED_CELL_FILL    = PatternFill(patternType="solid",
 # Age escalation on the Bill Date cell in the MISSING-project section. A blank
 # project # is tolerable while the job is still being identified, but a real
 # job cost shouldn't sit uncoded for long — the project is knowable within ~2
-# weeks. >15 days old → yellow, >30 days → red. (Ted 2026-07-10.)
+# weeks. >15 days old → yellow, >30 days → red. (the user 2026-07-10.)
 AUDIT_MISSING_AGE_YELLOW_DAYS = 15
 AUDIT_MISSING_AGE_RED_DAYS    = 30
 AUDIT_AGE_YELLOW_FILL = PatternFill(patternType="solid",
@@ -1654,7 +1654,7 @@ def _uncoded_job_cost(r: dict) -> Optional[Tuple[str, str]]:
       3. line description carries a project code (MFD/CP/RP####).
 
     Lines with no signal are treated as legitimate overhead and intentionally
-    NOT flagged — that's the "don't flood the audit" guardrail (Ted 2026-06-18).
+    NOT flagged — that's the "don't flood the audit" guardrail (the user 2026-06-18).
     """
     if (r.get("project_num") or "").strip():
         return None  # has a project — covered by _audit_row_checks, not here
@@ -1690,7 +1690,7 @@ def _norm_ref(doc: str) -> str:
 # as their ref #, so the same label recurs across many unrelated bills and dates
 # — not real duplicates. A CC-marker ref only counts as a duplicate when the
 # copies also land on the SAME DAY (and same vendor), i.e. a genuine same-day
-# double entry. Ted 2026-07-10.
+# double entry. The user 2026-07-10.
 _CC_REF_RE = re.compile(r"\bCC\b")
 
 
@@ -1982,7 +1982,7 @@ def build_audit_sheet(ws, rows: List[dict],
 
     # ─── Section 3: Uncoded JOB-COST lines (missing project) ───
     # Only high-confidence job-cost misses — overhead-only uncoded lines are
-    # skipped so the audit isn't flooded (Ted 2026-06-18).
+    # skipped so the audit isn't flooded (the user 2026-06-18).
     _audit_section_banner(
         ws, cur_row,
         f"⛔  Likely job cost — MISSING project  ({len(uncoded)} line"

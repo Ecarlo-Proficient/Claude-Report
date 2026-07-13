@@ -1,9 +1,9 @@
 """
 wip_excel_guard.py — hard-baked safety rail for writes to WIP - MASTER.xlsx.
 
-Ted's rule (2026-06-25): the script may only write to the "Test" sheet of
+The user's rule (2026-06-25): the script may only write to the "Test" sheet of
 the team's live WIP Excel file. Every other sheet (WIP Master, WIP - CP,
-WIP - MFD) is read-only at the code level until Ted explicitly graduates
+WIP - MFD) is read-only at the code level until the user explicitly graduates
 the script after verifying Test-sheet output is correct.
 
 How to use:
@@ -32,7 +32,7 @@ from openpyxl.workbook.workbook import Workbook
 # To graduate the script to write live tabs, the user must say so and we add
 # names here intentionally — never via config flag.
 #
-# 2026-06-30: expanded from {"Test"} to per-division test tabs. Ted chose one
+# 2026-06-30: expanded from {"Test"} to per-division test tabs. The user chose one
 # tab per division so each division's WIP can be sanity-checked independently
 # before any of them graduate to the live tabs (WIP - CP / WIP - MFD / WIP Master).
 ALLOWED_WRITE_SHEETS: frozenset[str] = frozenset({
@@ -56,7 +56,7 @@ def assert_write_allowed(sheet_name: str) -> None:
             f"Refusing to write to sheet {sheet_name!r}. "
             f"The WIP Excel script may only write to: {sorted(ALLOWED_WRITE_SHEETS)}. "
             f"This rule is baked in at code level — change it only by editing "
-            f"ALLOWED_WRITE_SHEETS in wip_excel_guard.py after Ted's explicit OK."
+            f"ALLOWED_WRITE_SHEETS in wip_excel_guard.py after the user's explicit OK."
         )
 
 

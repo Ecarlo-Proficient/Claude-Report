@@ -18,7 +18,7 @@ Categorizes each statement line into one of four buckets:
   ✗ MISSING_ON_STATEMENT — Bill exists open in QBO, but vendor doesn't
                             show it on the statement → stale unpaid bill
                             vendor may have credited / already received
-                            payment for; needs Ted's eyes.
+                            payment for; needs the user's eyes.
 
 Writes Excel report with Summary + one sheet per category to (see
 OUTDIR_DEFAULT below; override with --out):
@@ -1096,7 +1096,7 @@ def _xls_to_xlsx_temp(xls_path: Path) -> Path:
     except ImportError:
         sys.exit(_Term.color(_Term.R,
             "✗ Legacy .xls support needs xlrd. Install once into the venv:\n"
-            "    cd '/Users/sebas/Documents/Claude/Projects/Automate Concrete Business/bill-tracker'\n"
+            f"    cd '{Path(__file__).resolve().parent.parent / 'bill-tracker'}'\n"
             "    .venv/bin/python -m pip install 'xlrd<2'\n"
             "  (Pin to <2.0 — xlrd 2.0+ dropped .xls support for security reasons.)"))
     from openpyxl import Workbook
@@ -2532,7 +2532,7 @@ def _term_link(label: str, path: Path) -> str:
 def append_clerk_perf(rows: List["ReconRow"], vendor_name: str, stmt_date: str,
                       stmt_total: float) -> Optional[Path]:
     """Append one row to clerk_performance.csv. Focused on clerk-action metrics —
-    vendor-side issues (tax violations) are EXCLUDED since Ted reads those from QBO."""
+    vendor-side issues (tax violations) are EXCLUDED since the user reads those from QBO."""
     import csv as _csv
 
     by_cat: Dict[str, List["ReconRow"]] = {}

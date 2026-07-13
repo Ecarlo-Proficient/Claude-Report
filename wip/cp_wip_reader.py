@@ -16,7 +16,7 @@ Per-project extraction rules (locked 2026-06-30):
                    Change Orders/ sub-folder are NOT read.
 
 Failure modes never crash the run — they surface as a Status column value
-so Ted can triage from the Test - CP tab.
+so the user can triage from the Test - CP tab.
 
 Data sources:
   - Synology (READ-ONLY):
@@ -169,7 +169,7 @@ GRAND_TOTAL_LABEL = "GRAND TOTAL"
 BID_SHEET = "Bid"
 ETC_CELL = "AP1961"
 
-# Draw folder detection (Ted 2026-07-09): the WIP update for a CP project comes
+# Draw folder detection (the user 2026-07-09): the WIP update for a CP project comes
 # from the LATEST draw (AIA G702/G703 payment application), not the takeoff.
 #   • Container folder is named 'Draw' or 'Draws' (inclusive), never 'Drawings'.
 #   • Draw # is the SEQUENCE — the highest draw # wins, read from the filename
@@ -233,7 +233,7 @@ class CpRow:
     @property
     def co_cost_estimate(self) -> Optional[float]:
         """CO Cost is None until estimators add a real cost cell to the CO
-        template. No proxy — Ted's rule (2026-07-01): "no false numbers,
+        template. No proxy — the user's rule (2026-07-01): "no false numbers,
         don't populate if there is no source. If no CO costs, don't put
         it, just flag it."
 
@@ -248,7 +248,7 @@ class CpRow:
         """Revised ETC.
         - No COs → equals Base ETC (revised == base is truthful here).
         - COs present but no CO Cost data → defaults to Base ETC and the
-          row is flagged provisional (Ted 2026-07-02). This WIP is a
+          row is flagged provisional (the user 2026-07-02). This WIP is a
           MONITORING view, fully script-driven from takeoffs — no manual
           entry. Defaulting to Original ETC keeps the row alive and
           surfaces the over-budget signal (Costs > Original ETC) instead
@@ -448,7 +448,7 @@ _AUX_XLSX_RE = re.compile(r"cost\s*code|explanation", re.IGNORECASE)
 
 def _find_contract_total(ws_data, ws_formula):
     """Read the contract total off a proposal sheet. Templates are inconsistent
-    (Ted 2026-07-02) — the overall total is labeled 'GRAND TOTAL', 'SUB TOTAL',
+    (the user 2026-07-02) — the overall total is labeled 'GRAND TOTAL', 'SUB TOTAL',
     or just 'TOTAL'. Match is EXACT (normalized, colon-stripped) so 'TOTAL SQFT',
     'TOTAL YARDS', etc. are NOT caught — only cells that are exactly one of the
     three dollar-total labels. Collect every value from all three and take the
@@ -467,7 +467,7 @@ def _find_contract_total(ws_data, ws_formula):
 
 def _select_proposal_sheet(wb):
     """Pick which proposal tab to read the contract GRAND TOTAL from, when a
-    takeoff has multiple proposal sheets (Ted 2026-07-02):
+    takeoff has multiple proposal sheets (the user 2026-07-02):
       - a tab with 'final' in its name → the final proposal, use it;
       - else if exactly ONE proposal tab → use it;
       - else (multiple proposals, none marked FINAL) → don't guess, flag it.
@@ -539,7 +539,7 @@ def _parse_one_takeoff(tk: Path):
 def _select_takeoffs(folder: Path):
     """Identify which takeoff file(s) to read in a project folder. Shared by
     parse_takeoff (full contract+ETC read) and parse_takeoff_etc (ETC-only,
-    used when a draw supplies the contract). Rules (Ted 2026-07-02):
+    used when a draw supplies the contract). Rules (the user 2026-07-02):
       - Only files with 'takeoff' in the name are takeoffs; auxiliary xlsx
         (Cost Codes, Explanation OH, …) are ignored. If none is named
         'takeoff', fall back to the single non-auxiliary xlsx.
@@ -613,7 +613,7 @@ def parse_takeoff(folder: Path, row: CpRow) -> None:
 def parse_takeoff_etc(folder: Path, row: CpRow) -> None:
     """Read ONLY the ETC (Bid!AP1961) from the project's takeoff. Used when a
     DRAW supplies contract/CO/billed/retainage but the cost estimate still
-    lives in the takeoff (Ted 2026-07-09: "ETC — still keep the takeoff
+    lives in the takeoff (the user 2026-07-09: "ETC — still keep the takeoff
     costs"). The proposal/contract/CO parsing is skipped, so a draw-backed row
     isn't cluttered with contract-side takeoff flags. Never raises."""
     included, flag = _select_takeoffs(folder)
@@ -686,7 +686,7 @@ def _has_g702(xlsx: Path) -> bool:
 
 
 def find_latest_draw(project_folder: Path):
-    """Locate the LATEST draw workbook for a project (Ted 2026-07-09: draw # is
+    """Locate the LATEST draw workbook for a project (the user 2026-07-09: draw # is
     the sequence — highest wins). Draw workbooks live in the 'Draws' container,
     either directly or inside a numbered 'Draw #N' subfolder; if there's no
     container, numbered draws directly under the project folder are also
@@ -870,7 +870,7 @@ def scan_cp_folders(root: Path, is_completed: bool) -> List[CpRow]:
             costs_to_date=None,
         )
 
-        # Draw-first (Ted 2026-07-09): if the project has a draw (AIA G702/G703
+        # Draw-first (the user 2026-07-09): if the project has a draw (AIA G702/G703
         # payment application), the LATEST draw IS the WIP update — it supplies
         # Contract Price, Approved COs, Billed-to-Date (gross), and Retainage
         # Held. ETC still comes from the takeoff; Costs from QBO. Only before
@@ -924,7 +924,7 @@ def _is_retainage_receivable_invoice(inv: dict) -> bool:
     is retainage HELD (not collectible cash). It is excluded from Billed's
     net-collectible component and surfaces in the RETAINAGE HELD column.
 
-    Keyed on the 'Retainage Not Billed' memo — Ted's explicit tag for
+    Keyed on the 'Retainage Not Billed' memo — the user's explicit tag for
     retainage moved to (or awaiting) the Retainage Receivable account.
 
     CORRECTED 2026-07-02 (live run): an earlier version ALSO required a
@@ -1020,7 +1020,7 @@ def enrich_with_qbo(rows: List[CpRow]) -> None:
             )
             totals = pnl.extract_pl_totals(report_data)
             # Billed to Date + Retainage Held come from the DRAW when the
-            # project has one (Ted 2026-07-09: the latest G702 is the billing
+            # project has one (the user 2026-07-09: the latest G702 is the billing
             # source of record). Only PRE-Draw#1 projects fall back to QBO for
             # billing. This also saves the per-customer invoice fetch on
             # draw-backed jobs.
@@ -1062,7 +1062,7 @@ def enrich_with_qbo(rows: List[CpRow]) -> None:
 # ─────────────────────── Excel write (Test - CP only) ──────────────
 # Clean layout matching the team's WIP: light-gray bold header, thin grid
 # borders on every cell, light-yellow ONLY on sourced inputs, white calcs,
-# no green rows (Ted 2026-07-02 "make it clean and easy to read").
+# no green rows (the user 2026-07-02 "make it clean and easy to read").
 HDR_FILL = PatternFill("solid", fgColor="D9D9D9")        # light gray header
 HDR_FONT = Font(bold=True, color="000000", size=10)
 FLAG_FILL = PatternFill("solid", fgColor="FFF2CC")       # flag cell
@@ -1086,7 +1086,7 @@ _PCT_FIELDS = frozenset({"_pct_complete", "gross_profit_pct"})
 
 # SOURCED cells (raw numbers straight from the takeoff or QBO) get a yellow
 # fill so they're visually distinct from the white CALCULATED cells (Excel
-# formulas). Ted 2026-07-02: "yellow = metrics that have sources, calculations
+# formulas). The user 2026-07-02: "yellow = metrics that have sources, calculations
 # leave white." Identifier/metadata columns (project #, name, status, flags,
 # last synced) stay white — they're not metrics.
 _SOURCE_FIELDS = frozenset({
@@ -1143,7 +1143,7 @@ def _apply_hyperlink(cell, target: Optional[Path], fragment: str = "") -> None:
 # left to bill) → profitability (GP%, future profit, job borrow). The four
 # yellow inputs (contract, cost, billed, costs) + retainage lead; everything
 # after is derived. Draw #/no-draw context lives in the NOTES column; FLAGS is
-# reserved for genuine script must-fix issues (kept clean per Ted 2026-07-02).
+# reserved for genuine script must-fix issues (kept clean per the user 2026-07-02).
 COLS = [
     # ── Identifiers ──
     ("PROJECT #",                                       12, "project_num"),
@@ -1277,7 +1277,7 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
 
     # Never clobber a workbook that's open in Excel. Excel drops a
     # ~$<name> owner-lock file next to an open workbook (project-pnl
-    # safe_save pattern, Ted 2026-06-23). If present, skip with a clear
+    # safe_save pattern, the user 2026-06-23). If present, skip with a clear
     # message rather than writing underneath the open file — a
     # last-writer-wins save would silently lose the sync or the user's edits.
     lock = wip_path.with_name("~$" + wip_path.name)
@@ -1367,7 +1367,7 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                     cell.fill = FLAG_FILL
                     cell.font = FLAG_FONT
 
-            # PROJECT NAME → project (Awarded Project) folder. Ted 2026-07-02
+            # PROJECT NAME → project (Awarded Project) folder. The user 2026-07-02
             # wants this kept even though on Windows/OneDrive Excel rewrites the
             # macOS file:// link into a (broken) SharePoint URL — it works on his
             # Mac and he needs the trace point. (Number-cell links stay off.)

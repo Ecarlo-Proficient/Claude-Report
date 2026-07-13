@@ -17,4 +17,4 @@ occasional audits, experiments, and tools whose driver isn't built yet.
 
 | Script | Status |
 |---|---|
-| `qbo_recode_review.py` | Audit-gated job-cost recoder (export → Ted audits → apply). `get_auth()` is still an env-var stub — wire to `shared.qbo_vault` before real use. |
+| `qbo_recode_review.py` | Audit-gated job-cost recoder (export → the user audits → apply). `get_auth()` is still an env-var stub — wire to `shared.qbo_vault` before real use. |

@@ -9,7 +9,7 @@
 # Non-interactive (launchd schedule / piped / redirected to a file):
 #   run plain with a banner and tee to invoice_sync.log, same as before.
 set -u
-DIR="/Users/sebas/Documents/Claude/Projects/Automate Concrete Business/invoice-sync"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # self-locating — works from any clone, any user
 cd "$DIR"
 
 # stdout is a terminal → show the visual front-end.

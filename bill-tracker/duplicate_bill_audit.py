@@ -92,7 +92,7 @@ def _norm_ref(doc):
 # as their ref #, so the same label recurs across many unrelated bills and dates
 # — not real duplicates. A CC-marker ref only counts as a duplicate when the
 # copies also land on the SAME DAY (and same vendor), i.e. a genuine same-day
-# double entry. Ted 2026-07-10.
+# double entry. The user 2026-07-10.
 _CC_REF_RE = re.compile(r"\bCC\b")
 
 

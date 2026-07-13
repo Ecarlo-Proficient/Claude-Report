@@ -2,7 +2,7 @@
 """
 project_pnl_export.py — Generate per-project P&L workbooks from QBO.
 
-FINAL LAYOUT SPEC (Ted, 2026-06-05): TWO sheets, PLAIN formatting — white
+FINAL LAYOUT SPEC (the user, 2026-06-05): TWO sheets, PLAIN formatting — white
 sheet, black text, bold + indent + borders only. No fills, no hidden rows.
 
   Sheet "P&L"     LEFT (cols A–B): QBO's Project P&L line items verbatim,
@@ -77,7 +77,7 @@ from shared.qbo_api import (
     fetch_customer_invoices,
 )
 
-# ── terminal output (styled like sync-ar / sync-ap; Ted 2026-06-26) ──────────
+# ── terminal output (styled like sync-ar / sync-ap; the user 2026-06-26) ──────────
 # Colors auto-disable when piped/redirected or NO_COLOR is set.
 _TTY = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
 
@@ -137,17 +137,17 @@ DEFAULT_OUT = paths.get_path(
     paths.onedrive_base() / "Automations-/PROJECT P&Ls",
 )
 # The WIP master lives in the project's wip/ folder; this script lives in its own
-# folder alongside it (Ted 2026-06-26 — moved out of wip/, it's not a WIP tool).
+# folder alongside it (the user 2026-06-26 — moved out of wip/, it's not a WIP tool).
 DEFAULT_WIP_MASTER = (
     Path(__file__).resolve().parent.parent / "wip" / "WIP - MASTER - rebuilt.xlsx"
 )
-# Per-project home folder (Ted 2026-06-25): each P&L run creates <out>/<PROJ>/ and
+# Per-project home folder (the user 2026-06-25): each P&L run creates <out>/<PROJ>/ and
 # <out>/<PROJ>/rd-reports/ (skipped if they exist). The workbook lands in the
 # project folder; the PM drops draw-cost reports in rd-reports/, and the P&L auto
 # cross-checks each against QBO for the missed/underbilled total per draw.
 DRAW_REPORTS_SUBDIR = "rd-reports"
 
-# CP-only (Ted 2026-07-02): Commercial P&Ls drop into the awarded-project folder on
+# CP-only (the user 2026-07-02): Commercial P&Ls drop into the awarded-project folder on
 # the Common drive — <CP project folder>/Profit and Loss/ — mirroring where the WIP
 # report lives. If the drive isn't mounted (or no matching folder is found), fall
 # back to the OneDrive PROJECT P&Ls tree. MFD/RP are unaffected.
@@ -207,7 +207,7 @@ DRAW_NUM_RE = re.compile(r"Draw\s*#?\s*(\d{1,3})(?!\d)", re.IGNORECASE)
 
 
 def extract_draw_number(memo: str) -> Optional[int]:
-    """Read the draw # from an invoice memo (Ted 2026-06-09: use the memo's
+    """Read the draw # from an invoice memo (the user 2026-06-09: use the memo's
     number, never auto-assign). Returns None if no 'Draw N' is present."""
     if not memo:
         return None
@@ -215,7 +215,7 @@ def extract_draw_number(memo: str) -> Optional[int]:
     return int(m.group(1)) if m else None
 # Retainage detection: any of retainage/retainaged/retention (substring).
 RETAINAGE_RE = re.compile(r"retainag|retention", re.IGNORECASE)
-# The ONLY discriminator (Ted 2026-06-19): a retainage invoice is NOT BILLED iff
+# The ONLY discriminator (the user 2026-06-19): a retainage invoice is NOT BILLED iff
 # "not billed" appears ANYWHERE in its memo or any line description; otherwise
 # it's a real (billed) retainage draw — "City" or anything else is irrelevant.
 NOT_BILLED_RE = re.compile(r"not\s*billed", re.IGNORECASE)
@@ -224,7 +224,7 @@ RETAINAGE_NOT_BILLED_RE = re.compile(r"retainag.*not\s*billed", re.IGNORECASE)  
 
 def _is_retainage_not_billed(inv: dict) -> bool:
     """True if a raw QBO invoice is a 'retainage NOT billed' doc — retainage moved
-    to Retainage Receivable by JE, NOT earned revenue (Ted 2026-07-02). Signal:
+    to Retainage Receivable by JE, NOT earned revenue (the user 2026-07-02). Signal:
     both 'retainag/retention' AND 'not billed' appear in the memo or any line
     text. Used to keep these out of billed income on EVERY template (the Draw
     template routes them via __retainage; the RP template guards with this)."""
@@ -239,7 +239,7 @@ def _is_retainage_not_billed(inv: dict) -> bool:
 # (wrecking/demo labor) belongs to that job; a late non-wreck bill is suspect.
 WRECK_RE = re.compile(r"wreck", re.IGNORECASE)
 # SUB bills lag — a sub bill dated after the invoice is normal billing delay, so
-# it's INCLUDED, not flagged (Ted 2026-06-19). Subs are tagged "sub" in the memo.
+# it's INCLUDED, not flagged (the user 2026-06-19). Subs are tagged "sub" in the memo.
 SUB_RE = re.compile(r"\bsub\b|subcontract|sub\s*service", re.IGNORECASE)
 # A work PERIOD anywhere in the memo ("Period 3/13/2026 - 3/19/2026"), colon
 # optional. If the period STARTS on/before the invoice, the work predates the
@@ -251,7 +251,7 @@ PERIOD_ANYWHERE_RE = re.compile(
 # The tag exists for the separate Sub LOC tracker, not for P&L exclusion.
 
 # ─────────── styling ───────────
-# Sizes bumped 2026-05-28 — Ted: "make a bit bigger overall, it shows a
+# Sizes bumped 2026-05-28 — the user: "make a bit bigger overall, it shows a
 # little too small when first opened". Base font 12 with proportional bumps.
 BASE_SIZE = 12
 HDR_FILL = PatternFill("solid", fgColor="1F3A5F")
@@ -287,7 +287,7 @@ def _xml_clean(s):
     return _ILLEGAL_XML_RE.sub("", s)
 
 
-# ─────────── cost-code → name mapping (Ted 2026-06-09) ───────────
+# ─────────── cost-code → name mapping (the user 2026-06-09) ───────────
 # Proficient switched from category-named accounts to cost codes partway
 # through. A code = optional 2-letter JOB-TYPE prefix + a cost-code number.
 # We display the COST NAME (the account it lands in) so old category names
@@ -394,7 +394,7 @@ def _cost_code_value(raw, indent: int = 0, size: Optional[int] = None,
                      color: str = "000000"):
     """Build the cell value for an account label.
     If `raw` is a cost code, return Excel rich text with ONLY the code token
-    bold and the ' - Job Type Cost' description in normal weight (Ted
+    bold and the ' - Job Type Cost' description in normal weight (the user
     2026-06-09: "just the cost code bolded"). Otherwise return the plain
     indented string.
     """
@@ -446,7 +446,7 @@ def _cost_name_value(code, indent: int = 0, size: Optional[int] = None,
 
 
 # Cost CATEGORY = the account a cost lands in, merging cost codes by meaning
-# (Ted 2026-06-09): SL1/PV1/CS1… → "Concrete"; a real account name keeps
+# (the user 2026-06-09): SL1/PV1/CS1… → "Concrete"; a real account name keeps
 # itself. Used by the Draws sheet so there's ONE Concrete, ONE Labor, etc.
 _COST_NAME_ORDER = {name: i for i, name in enumerate(_COST_CODE_NAMES.values())}
 
@@ -539,7 +539,7 @@ def _proj_line_total(txn: dict, customer_id: str) -> float:
 
 def fetch_bill_payments(access: str, company_id: str,
                         start_date: str, end_date: str) -> List[dict]:
-    """BillPayment txns in the window = ACTUAL AP cash-out (Ted 2026-06-26 — bill
+    """BillPayment txns in the window = ACTUAL AP cash-out (the user 2026-06-26 — bill
     DATE is cost accrual; the PAYMENT date is when cash left). Each links to the
     Bill(s) it paid. Fetched company-wide then attributed to project bills."""
     where = f"TxnDate >= '{start_date}' AND TxnDate <= '{end_date}'"
@@ -604,7 +604,7 @@ def build_cashflow_events(bills: list, invoices: list, bill_payments: list,
                                    "ref": inv_by_id[lt["TxnId"]], "doc_id": lt["TxnId"],
                                    "page": "invoice", "amount": round(amt, 2)})
 
-    # Within a day, apply RECEIPTS before PAYMENTS (Ted 2026-06-26: "peak isn't
+    # Within a day, apply RECEIPTS before PAYMENTS (the user 2026-06-26: "peak isn't
     # peak if money comes in the same day"). Cash is fungible within a day, so the
     # deepest point can't be below the day's CLOSING balance — ordering in-before-
     # out makes min(running) equal the day-close trough, not a phantom intra-day dip.
@@ -750,7 +750,7 @@ def _resolve_one_date(ref: str, which: str, bad: str,
 def resolve_draw_period(memo: str, ref: str,
                         interactive: bool) -> Optional[Tuple[dt.date, dt.date]]:
     """Strict parse first; if a Period tag is present but a date is mistyped,
-    ask the user to confirm/correct it (Ted 2026-06-09) instead of silently
+    ask the user to confirm/correct it (the user 2026-06-09) instead of silently
     dropping the invoice to 'untagged'."""
     p = parse_draw_period(memo)
     if p:
@@ -812,11 +812,11 @@ def group_invoices_by_draw(invoices: List[dict],
                 "net_billed": 0.0, "invoice_count": 0, "invoices": []}
     # Standalone "retainage not billed" invoices — kept out of draw income but
     # collected for the Retainage breakdown at the bottom of the Draws sheet
-    # (Ted 2026-06-09: don't drop them).
+    # (the user 2026-06-09: don't drop them).
     retainage_block = {"invoices": [], "total": 0.0}
     # Standalone BILLED retainage invoices (a real retainage invoice with no
     # Period — "City Retainage" etc.) — these ARE billed; show them as their own
-    # retainage section, NOT lumped into "untagged" (Ted 2026-06-19).
+    # retainage section, NOT lumped into "untagged" (the user 2026-06-19).
     ret_billed_block = {"label": "Retainage billed",
                         "gross_income": 0.0, "retainage_held": 0.0,
                         "retainage_billed": 0.0,
@@ -825,7 +825,7 @@ def group_invoices_by_draw(invoices: List[dict],
     # Draw periods normally come from the invoice memo's "(Period: …)" tag. If a
     # project carries NONE, derive one draw per CALENDAR MONTH (1st→last day) from
     # the invoice DATE and bucket by date — same template, periods from dates
-    # instead of memos (Ted 2026-06-23).
+    # instead of memos (the user 2026-06-23).
     def _month_period(d: dt.date) -> Tuple[dt.date, dt.date]:
         first = d.replace(day=1)
         nxt = (first.replace(year=first.year + 1, month=1) if first.month == 12
@@ -873,7 +873,7 @@ def group_invoices_by_draw(invoices: List[dict],
 
         # ── STANDALONE RETAINAGE INVOICE = no real work (purely retainage).
         #   The ONLY thing that decides billed vs not-billed is whether
-        #   "not billed" appears ANYWHERE in the memo/descriptions (Ted
+        #   "not billed" appears ANYWHERE in the memo/descriptions (the user
         #   2026-06-19) — "City" or any other text is irrelevant.
         is_ret_inv = (abs(gross) <= 0.005 and total != 0
                       and (retainage > 0.005 or retainage_billed > 0.005
@@ -1085,7 +1085,7 @@ def load_wip_master(path: Path) -> Dict[str, dict]:
 
 def read_back_inputs(path: Path, sheet: str = "P&L") -> Dict[str, float]:
     """Read the user-typed yellow input cells (Contract Price / ETC) from a
-    PREVIOUSLY generated P&L so a re-sync preserves them (Ted 2026-06-23).
+    PREVIOUSLY generated P&L so a re-sync preserves them (the user 2026-06-23).
     Locates the cells by their label in column A; returns {} if not found."""
     out: Dict[str, float] = {}
     if not path.exists():
@@ -1119,7 +1119,7 @@ def safe_save(wb: Workbook, out_path: Path) -> Optional[Path]:
     """Write atomically and NEVER clobber a workbook that's open in Excel.
     Excel drops a `~$<name>` owner-lock file next to an open workbook; if that
     exists we skip and warn. Otherwise write to a temp file and os.replace() it
-    in (atomic) so a crash can't leave a half-written file (Ted 2026-06-23)."""
+    in (atomic) so a crash can't leave a half-written file (the user 2026-06-23)."""
     lock = out_path.with_name("~$" + out_path.name)
     if lock.exists():
         print(f"    ⚠ {out_path.name} looks OPEN in Excel — skipped to avoid "
@@ -1163,14 +1163,14 @@ def build_account_parent_map(accounts: List[dict]) -> Dict[str, str]:
 
 def build_account_type_map(accounts: List[dict]) -> Dict[str, str]:
     """Map account Id → AccountType ('Cost of Goods Sold', 'Expense', …) so a
-    bill line can be split COGS vs operating Expense (Ted 2026-06-22)."""
+    bill line can be split COGS vs operating Expense (the user 2026-06-22)."""
     return {a.get("Id"): (a.get("AccountType") or "")
             for a in accounts if a.get("Id")}
 
 
 def _order_sheets(wb: Workbook, order: List[str]) -> None:
     """Reorder worksheets to match `order`; unlisted sheets keep their order
-    at the end (Ted 2026-06-22 sheet ordering)."""
+    at the end (the user 2026-06-22 sheet ordering)."""
     idx = {name: i for i, name in enumerate(order)}
     wb._sheets.sort(key=lambda s: idx.get(s.title, len(order)))
 
@@ -1183,7 +1183,7 @@ def gather_transactions(
     item_account: Optional[Dict[str, str]] = None,
 ) -> dict:
     """
-    Every project transaction, for the Transactions sheet (Ted 2026-06-22 — show
+    Every project transaction, for the Transactions sheet (the user 2026-06-22 — show
     the PM where each P&L number comes from). Income split into BILLED INCOME /
     RETAINAGE WITHHELD / RETAINAGE BILLED per invoice; bills split COGS vs
     EXPENSE by account type and grouped by vendor (newest→old).
@@ -1196,7 +1196,7 @@ def gather_transactions(
     for k, grp in income_groups.items():
         if k == "__retainage":
             # "retainage not billed" = accumulated retainage moved to Retainage
-            # Receivable by journal entry. It is NOT billed income (Ted 2026-07-02:
+            # Receivable by journal entry. It is NOT billed income (the user 2026-07-02:
             # "it clearly says retainage not billed … paid by JE to move it to
             # retainage receivable"), so it stays OUT of the billed / withheld /
             # billed_ret sums entirely. It IS retainage owed, so the amount is
@@ -1226,7 +1226,7 @@ def gather_transactions(
     exp_accounts: Dict[str, float] = {}
 
     def take(txn, tx_type, vendor_field):
-        # ONE ROW PER LINE ITEM (Ted 2026-07-02): every cost line is shown even when
+        # ONE ROW PER LINE ITEM (the user 2026-07-02): every cost line is shown even when
         # multiple lines share the same bill ref# — costs must be seen, never summed
         # away. Only this project's lines are kept (OTHER-project lines on the same
         # bill are excluded). COGS vs Expense is decided by the line's ACCOUNT TYPE —
@@ -1316,7 +1316,7 @@ def bucket_costs_by_draw_window(
                "total": float,
                "vendors": { vendor: {"total": float, "txns": [...] } } } } } } }
 
-    parent → leaf (sub-account) → vendor → transactions, per Ted 2026-06-05:
+    parent → leaf (sub-account) → vendor → transactions, per the user 2026-06-05:
     "I need the SUB account listed... and group by vendor."
     Lines outside every window land under the special key "__outside".
     """
@@ -1360,7 +1360,7 @@ def bucket_costs_by_draw_window(
             # Leaf (sub-account) name: prefer Account entity Name; fall back
             # to last segment of a fully-qualified AccountRef.name.
             # Cost codes (CS1, SL6, ...) kept VERBATIM with job prefix; bolded
-            # at render so the code stands out (Ted 2026-06-09).
+            # at render so the code stands out (the user 2026-06-09).
             leaf = _xml_clean(
                 account_names.get(aid)
                 or (aref.get("name") or "").split(":")[-1].strip()
@@ -1405,7 +1405,7 @@ def gather_rp_costs(
     item_account: Optional[Dict[str, str]] = None,
 ) -> Tuple[dict, float, List[dict], List[dict]]:
     """
-    RESIDENTIAL (RP) cost gathering — no draw windows (Ted 2026-06-09).
+    RESIDENTIAL (RP) cost gathering — no draw windows (the user 2026-06-09).
     Every project bill/purchase line is either a JOB COST or goes to PENDING
     REVIEW:
       • line dated ON/BEFORE the invoice → job cost
@@ -1445,7 +1445,7 @@ def gather_rp_costs(
             item_id = (det.get("ItemRef") or {}).get("value")
             has_item = bool((det.get("ItemRef") or {}).get("name") or item_id)
             # Resolve item-based lines to their EXPENSE ACCOUNT, then read the
-            # ACCOUNT name (not the cost-code item) — Ted 2026-06-26. parent = the
+            # ACCOUNT name (not the cost-code item) — the user 2026-06-26. parent = the
             # immediate parent account, leaf = the sub-account, both from the FQN.
             aid = aref.get("value") or (item_account or {}).get(item_id)
             fqn = _xml_clean((account_fqn or {}).get(aid) or account_names.get(aid)
@@ -1462,7 +1462,7 @@ def gather_rp_costs(
                             and WRECK_RE.search(desc))
             # A late bill still BELONGS to the job when (a) it's a sub bill (subs
             # bill with a delay) or (b) its memo work PERIOD starts on/before the
-            # invoice (work predates the invoice) — Ted 2026-06-19.
+            # invoice (work predates the invoice) — the user 2026-06-19.
             text = f"{memo} {desc}"
             is_sub = bool(SUB_RE.search(text))
             pm = PERIOD_ANYWHERE_RE.search(text)
@@ -1526,7 +1526,7 @@ def inject_pending_pos(
 ) -> Tuple[float, int]:
     """
     An OPEN (unused) PO dated ON/BEFORE the invoice = a committed cost we're
-    still WAITING for the bill on (Ted 2026-06-19). Add those PO lines into the
+    still WAITING for the bill on (the user 2026-06-19). Add those PO lines into the
     job-cost groups as `po_pending` transactions (rendered YELLOW), so the cost
     shows in the P&L even though the final bill hasn't arrived. Returns
     (pending_total, count). Mutates job_groups in place.
@@ -1592,7 +1592,7 @@ def _write_meta_block(ws, proj: str, cust_info: dict, wip_info: dict,
                       note: Optional[str] = None) -> int:
     """
     Compact 2-line project header (title + one combined subtitle). Returns the
-    first content row (start_row + 2 — no blank gap; Ted 2026-06-09).
+    first content row (start_row + 2 — no blank gap; the user 2026-06-09).
     """
     division = _project_division(proj)
     # Prefer the fully-qualified 'Customer:Project' name (it already contains
@@ -1625,7 +1625,7 @@ def _write_meta_block(ws, proj: str, cust_info: dict, wip_info: dict,
     return start_row + 2
 
 
-# ── Sheet builders — PLAIN formatting (Ted 2026-06-05: white sheet, black ──
+# ── Sheet builders — PLAIN formatting (the user 2026-06-05: white sheet, black ──
 # ── text; bold + indent + borders; color sparingly — navy headers, red ⚠) ──
 
 TOP_BORDER = Border(top=Side(style="thin", color="000000"))
@@ -1639,9 +1639,9 @@ NAVY = "1F3A5F"
 RED = "C00000"
 GREEN = "008000"
 LINK = "0563C1"
-# Light fill for the top number row of a group, so it pops (Ted 2026-06-09).
+# Light fill for the top number row of a group, so it pops (the user 2026-06-09).
 ACCENT_FILL = PatternFill("solid", fgColor="DDEBF7")
-# Section bands for P&L grouping (Ted 2026-06-09, modeled on his example):
+# Section bands for P&L grouping (the user 2026-06-09, modeled on his example):
 INCOME_FILL = PatternFill("solid", fgColor="C6E0B4")   # green  — income
 COGS_FILL = PatternFill("solid", fgColor="FCE4D6")     # tan    — COGS
 GP_FILL = PatternFill("solid", fgColor="FFF2CC")       # yellow — gross profit
@@ -1672,7 +1672,7 @@ def build_sheet_transactions(
     tx: dict, as_of: str, realm: str = "",
 ) -> Dict[str, str]:
     """
-    TRANSACTIONS sheet — every invoice + bill behind the P&L (Ted 2026-06-22:
+    TRANSACTIONS sheet — every invoice + bill behind the P&L (the user 2026-06-22:
     show the PM where each number comes from, no plain numbers). INCOME split
     into Billed income / Retainage withheld / Retainage billed; BILLS split COGS
     vs Expense, grouped by vendor newest→old. Returns sheet-qualified cell refs
@@ -1735,7 +1735,7 @@ def build_sheet_transactions(
     refs: Dict[str, str] = {}
 
     # ── INCOME ──
-    # Gross → Retainage withheld → NET → Retainage billed (Ted 2026-07-02): billed
+    # Gross → Retainage withheld → NET → Retainage billed (the user 2026-07-02): billed
     # income is GROSS; the PM needs the NET total of each invoice too. Net = gross −
     # retainage withheld + retainage billed (= the invoice TotalAmt). Invoices with
     # no retainage line simply show 0 in the retainage columns.
@@ -1780,7 +1780,7 @@ def build_sheet_transactions(
 
     # ── RETAINAGE MOVED TO RECEIVABLE (not billed) ──
     # Shown for transparency but excluded from income — it's a JE move to
-    # Retainage Receivable, not a draw (Ted 2026-07-02). Rolled into Total
+    # Retainage Receivable, not a draw (the user 2026-07-02). Rolled into Total
     # Retainage on the P&L via refs["not_billed_ret"].
     if nb_rows:
         cell(r, 1, "RETAINAGE MOVED TO RECEIVABLE  (not billed — excluded from income)",
@@ -1813,7 +1813,7 @@ def build_sheet_transactions(
         r += 1
         # Ref# | Date | Description | Account | Amount — one row per bill+account.
         # Vendor rows show the total; the transactions collapse under them
-        # (Ted 2026-06-22: see totals first, expand only if needed).
+        # (the user 2026-06-22: see totals first, expand only if needed).
         for c, h in ((1, "Ref #"), (2, "Date"), (3, "Description"),
                      (4, "Account"), (5, "Amount")):
             hc = cell(r, c, h, bold=True, color=NAVY); hc.border = BOTTOM_BORDER
@@ -1823,7 +1823,7 @@ def build_sheet_transactions(
             cell(r, 1, "(none)", color="808080"); r += 1
         for vendor, lines in groups.items():
             vrow = r
-            # OPEN by default to match the per-draw sheets (Ted 2026-06-26); the
+            # OPEN by default to match the per-draw sheets (the user 2026-06-26); the
             # vendor name carries a bill count, and rows stay collapsible.
             cell(r, 1, f"{vendor}  ({len(lines)})", bold=True, fill=ACCENT_FILL)
             for c in range(2, 6):                   # bills use cols A–E only
@@ -1855,7 +1855,7 @@ def build_sheet_transactions(
         return tot
 
     # Simple full-width line separating INCOME (above) from COSTS (below) so the
-    # wider income columns don't bleed into the narrower bill rows (Ted 2026-07-02).
+    # wider income columns don't bleed into the narrower bill rows (the user 2026-07-02).
     for c in range(1, 8):
         ws.cell(row=r, column=c).border = Border(bottom=Side(style="medium", color=NAVY))
     r += 2
@@ -1874,7 +1874,7 @@ def build_sheet_transactions(
 
 
 def _find_amount_match(target: float, candidates: list, tol: float = 0.01) -> list:
-    """Transactions whose amount ≈ |target| (Ted 2026-06-26 — find what a recon gap
+    """Transactions whose amount ≈ |target| (the user 2026-06-26 — find what a recon gap
     equals, fast). De-duped, largest first."""
     target = round(abs(float(target)), 2)
     if target < 0.01 or not candidates:
@@ -1900,7 +1900,7 @@ def build_sheet_reconciliations(
     tx_totals: Optional[dict] = None, realm: str = "",
 ) -> None:
     """
-    RECONCILIATIONS sheet (Ted 2026-06-22) — the checks-and-balances. The P&L is
+    RECONCILIATIONS sheet (the user 2026-06-22) — the checks-and-balances. The P&L is
     built from the Transactions sheet; this sheet proves it ties to QuickBooks.
     COGS and Expenses are summed bill-by-bill, so any gap is a real
     coding/missing-bill error. Income gaps are usually retainage timing.
@@ -1973,7 +1973,7 @@ def build_sheet_reconciliations(
     ws.merge_cells(start_row=status_row, start_column=2, end_row=status_row, end_column=5)
     ws.row_dimensions[status_row].height = 24
 
-    # ── DIFFERENCE FINDER — for each gap, hunt a transaction equaling it (Ted
+    # ── DIFFERENCE FINDER — for each gap, hunt a transaction equaling it (the user
     #    2026-06-26: "I don't know why it's off by that amount — find it fast"). ──
     if tx_totals:
         tx_income = (tx_totals.get("billed", 0.0) or 0.0) + (tx_totals.get("billed_ret", 0.0) or 0.0)
@@ -2017,7 +2017,7 @@ def build_sheet_reconciliations(
                         "combination of bills, a partial payment, or retainage timing.")
                     note.font = Font(italic=True, size=SZ, color="595959"); r += 1
 
-    # ── AMOUNT MISMATCHES — bill # IS in QBO, amount differs (Ted 2026-06-26) ──
+    # ── AMOUNT MISMATCHES — bill # IS in QBO, amount differs (the user 2026-06-26) ──
     if mismatches:
         r += 2
         hc = _write_cell(ws, r, 1, "AMOUNT MISMATCHES — bill # in QBO, different $ (could be partial, tax, combined)")
@@ -2051,7 +2051,7 @@ def build_sheet_reconciliations(
             sc2.font = Font(size=SZ, color=LINK, underline="single")
             r += 1
 
-    # ── ORPHAN PM-REPORT LINES — final catcher (Ted 2026-06-26) ──
+    # ── ORPHAN PM-REPORT LINES — final catcher (the user 2026-06-26) ──
     # Costs a PM listed on a draw report that match NO QBO bill anywhere (typo,
     # wrong amount, or a cost never entered in QBO). Each links to its source file.
     if orphans:
@@ -2067,7 +2067,7 @@ def build_sheet_reconciliations(
             x = _write_cell(ws, r, c, h)
             x.font = Font(bold=True, size=SZ, color=NAVY); x.border = BOTTOM_BORDER
         r += 1
-        obyv = {}                                         # group by vendor (Ted 2026-06-26)
+        obyv = {}                                         # group by vendor (the user 2026-06-26)
         for o in orphans:
             obyv.setdefault(o.get("vendor") or "(no vendor)", []).append(o)
         for vend in sorted(obyv, key=lambda v: -sum(float(o["amount"] or 0) for o in obyv[v])):
@@ -2124,7 +2124,7 @@ def build_sheet_pl(
 ) -> None:
     """
     P&L sheet — every DERIVED figure is a live Excel FORMULA referencing its
-    source cells (Ted 2026-06-09), so the math is traceable: section subtotals
+    source cells (the user 2026-06-09), so the math is traceable: section subtotals
     are SUM() of their lines; Gross Profit = Income − COGS; NOI, Overhead,
     True Net Profit, the coverage columns, accumulating totals, Draw needed and
     Labor-paid are all formulas. Only the raw QBO line amounts are constants.
@@ -2171,7 +2171,7 @@ def build_sheet_pl(
         r += 1
         return used
 
-    # Income EXCLUDES retainage not billed (Ted 2026-06-09): QBO's income
+    # Income EXCLUDES retainage not billed (the user 2026-06-09): QBO's income
     # picks up standalone "retainage not billed" invoices, but that revenue
     # isn't truly billed/earned for this view — strip it so it cascades out
     # of Gross Profit / NOI / TRUE NET PROFIT.
@@ -2179,7 +2179,7 @@ def build_sheet_pl(
     hero_fill = PatternFill("solid", fgColor="1F3A5F")
 
     # ════════════════════════════════════════════════════════════════════
-    #  STORY LAYOUT (Ted 2026-06-22): ① WIP (beginning) → ② P&L facts →
+    #  STORY LAYOUT (the user 2026-06-22): ① WIP (beginning) → ② P&L facts →
     #  ③ Snapshot realized (MFD vs Company) → ④ Billing & Retainage →
     #  ⑤ Snapshot WITH retainage (end). Draw coverage table on the right.
     # ════════════════════════════════════════════════════════════════════
@@ -2189,7 +2189,7 @@ def build_sheet_pl(
     _THK = Side(style="medium", color=NAVY)
     # MFD gets the dual overhead view (MFD % on costs + Company % on revenue).
     # Non-MFD (CP) gets ONLY the company overhead — MFD is a different player and
-    # stays out of CP entirely (Ted 2026-07-02).
+    # stays out of CP entirely (the user 2026-07-02).
     show_mfd = alt_overhead_pct is not None
     _alt = alt_overhead_pct if alt_overhead_pct is not None else overhead_pct
     _aoh = _alt / 100.0
@@ -2226,7 +2226,7 @@ def build_sheet_pl(
 
     def snapshot(title, basis_label, inc_expr, gp_expr, costs, opex):
         nonlocal r
-        # SINGLE COLUMN (Ted 2026-06-22): shared facts once, then MFD block, then
+        # SINGLE COLUMN (the user 2026-06-22): shared facts once, then MFD block, then
         # COMPANY block STACKED below it — no separate column C (kills the empty
         # space). Only Overhead / Net Profit / Profit % differ between the two.
         t0 = sect_title(title)
@@ -2284,14 +2284,14 @@ def build_sheet_pl(
         Wcell = tx_refs['withheld']
         Bgross = f"{tx_refs['billed']}+{tx_refs['billed_ret']}"
         # retainage moved to receivable by JE — not billed income, but retainage
-        # OWED; folds into the retainage snapshots/total only (Ted 2026-07-02).
+        # OWED; folds into the retainage snapshots/total only (the user 2026-07-02).
         NBcell = tx_refs.get("not_billed_ret")
 
         # ── ① WIP / PROJECTION (beginning) — inputs as plain rows ──
         wtop = sect_title("① WIP / PROJECTION   (yellow = your input)")
         # Persist via the WIP MASTER (not the sheet): pull Revised first (incl
         # change orders), fall back to Original, then the mock key. Re-syncing
-        # always re-reads the master, so these never get lost (Ted 2026-06-23).
+        # always re-reads the master, so these never get lost (the user 2026-06-23).
         def _num(*keys):
             for k in keys:
                 v = wip_info.get(k)
@@ -2362,7 +2362,7 @@ def build_sheet_pl(
         costs = f"B{cogs_row}"
         opex = f"B{exp_row}"
 
-        # ── ③ SNAPSHOT — WITH RETAINAGE (project) FIRST (Ted 2026-06-22) ──
+        # ── ③ SNAPSHOT — WITH RETAINAGE (project) FIRST (the user 2026-06-22) ──
         _wr = f"{Wcell}+{NBcell}" if NBcell else Wcell
         inc_wr = f"B{income_row}+{_wr}"
         gp_wr = f"B{income_row}+{_wr}-B{cogs_row}"
@@ -2403,7 +2403,7 @@ def build_sheet_pl(
     # ── RIGHT SIDE: DRAW COVERAGE table (D–M) + ACCUMULATING COSTS (O–P) ──
     #   D Draw | E Period | F Draw Total | G Retained | H Net Billed |
     #   I Costs | J Gross Profit | K Coverage % | L Net Profit | M Net Cov %
-    #   Draw Total (F) + Retained (G) are COLLAPSED by default (Ted 2026-06-09)
+    #   Draw Total (F) + Retained (G) are COLLAPSED by default (the user 2026-06-09)
     #   — click the [+] above to expand. Vertical rule on the right of Net
     #   Billed (H) separates the BILLED side from the COSTS side.
     for col, w in (("D", 22), ("E", 19), ("F", 14), ("G", 13), ("H", 15),
@@ -2433,7 +2433,7 @@ def build_sheet_pl(
         cov_top = rc
         t = ws.cell(row=rc, column=4, value="DRAW COVERAGE")
         t.font = Font(bold=True, size=BASE_SIZE + 1, color=NAVY)
-        # ── two-tier header (Ted 2026-06-19): GROSS over (Gross Profit,
+        # ── two-tier header (the user 2026-06-19): GROSS over (Gross Profit,
         #    Coverage %); AFTER OVERHEAD over (Net Profit, Net Cov %) ──
         for c0, c1, txt in ((10, 11, "GROSS"), (12, 13, "AFTER OVERHEAD")):
             gb = ws.cell(row=rc, column=c0, value=txt)
@@ -2449,7 +2449,7 @@ def build_sheet_pl(
         _heads = ["Draw", "Period", "Draw Total", "Retained", "Net Billed",
                   "Costs", "Gross Profit", "Coverage %", "Net Profit", "Net Cov %"]
         if wip_contract_cell:
-            _heads.append("% Compl")   # cumulative billed ÷ contract (Ted 2026-06-22)
+            _heads.append("% Compl")   # cumulative billed ÷ contract (the user 2026-06-22)
         for ci, h in enumerate(_heads, start=4):
             hc = _write_cell(ws, rc, ci, h)
             hc.font = SUBHDR_FONT
@@ -2462,7 +2462,7 @@ def build_sheet_pl(
             pc, po = m["cost_pct"], m["oh_pct"]
             c = _write_cell(ws, rc, 4, name)
             if draw_anchors and name in draw_anchors:
-                # draw_anchors now maps draw name → its own SHEET (Ted 2026-06-26,
+                # draw_anchors now maps draw name → its own SHEET (the user 2026-06-26,
                 # one draw = one sheet); the P&L coverage table is the index.
                 c.hyperlink = f"#'{draw_anchors[name]}'!A1"
                 c.font = Font(size=BASE_SIZE - 1, color=LINK, underline="single")
@@ -2472,7 +2472,7 @@ def build_sheet_pl(
             ws.cell(row=rc, column=5).font = Font(size=BASE_SIZE - 1)
             # Draw Total (6) = Net Billed + retainage HELD (gross of withholding).
             # Retained (7) shows retainage on the draw — HELD (black) or, when the
-            # GC PAID retainage back, BILLED (green). NEVER red (Ted 2026-06-09).
+            # GC PAID retainage back, BILLED (green). NEVER red (the user 2026-06-09).
             retained = held + billed
             ret_clr = GREEN if billed > 0.005 else "000000"
             dt_ = _write_cell(ws, rc, 6, net + held); dt_.number_format = CURR_FMT
@@ -2532,7 +2532,7 @@ def build_sheet_pl(
             tpc.alignment = Alignment(horizontal="center")
 
         # ── vertical rules: after Costs (col 9) and between Coverage % and
-        #    Net Profit (after col 11), full table height (Ted 2026-06-19) ──
+        #    Net Profit (after col 11), full table height (the user 2026-06-19) ──
         for gr in range(cov_top, rc + 1):
             for col in (9, 11):
                 cur = ws.cell(row=gr, column=col).border
@@ -2658,7 +2658,7 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
                          matched_report, report_index, qbo_loc, period,
                          as_of, overhead_pct=11.0, realm="", alt_overhead_pct=None,
                          reports_relpath="rd-reports"):
-    """ONE SHEET PER DRAW = a TWO-PERSPECTIVE reconciliation (Ted 2026-06-26):
+    """ONE SHEET PER DRAW = a TWO-PERSPECTIVE reconciliation (the user 2026-06-26):
     the PM's version of the draw (their report, their costs, the profit they thought
     they had) SIDE BY SIDE with QBO truth (the director-revised period download).
     Same billed invoice on both sides, so the profit gap is purely the cost/period
@@ -2737,7 +2737,7 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
         else:
             pm_only.append(l)
     # The PM draw-report cross-check is the MFD workflow. CP (and any job with no PM
-    # reports) has nothing to cross-check, so there's no "missed by PM" (Ted 2026-07-02).
+    # reports) has nothing to cross-check, so there's no "missed by PM" (the user 2026-07-02).
     has_pm = bool(report_index)
     # true underbilling = QBO-only bills on NO report anywhere (only when PM reports exist)
     missed = [b for b in qbo_only if not report_index.get(keyb(b))] if has_pm else []
@@ -2814,7 +2814,7 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
     # ── BILL-LEVEL RECONCILIATION ──
     def detail(title, items, color, kind):
         """kind: 'qbo' rows are QBO bills; 'pm' rows are report lines. GROUPED BY
-        VENDOR (Ted 2026-06-26 — every transaction listing groups by vendor); every
+        VENDOR (the user 2026-06-26 — every transaction listing groups by vendor); every
         bill links (QBO deep-link for QBO rows, the source PM report for PM rows)."""
         nonlocal r
         tot = round(sum(i["amount"] for i in items), 2)
@@ -2890,7 +2890,7 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
 
 def build_sheet_next_draw_retainage(wb, proj, cust_info, wip_info, income_groups,
                                     draw_costs, as_of, realm=""):
-    """One sheet for everything that isn't a real draw (Ted 2026-06-26): costs
+    """One sheet for everything that isn't a real draw (the user 2026-06-26): costs
     OUTSIDE every draw window (accumulating toward the next draw), retainage billed,
     retainage not billed, and untagged invoices."""
     outside = draw_costs.get("__outside")
@@ -2944,7 +2944,7 @@ def build_sheet_next_draw_retainage(wb, proj, cust_info, wip_info, income_groups
         for i, h in enumerate(["Bill # / Vendor", "Date", "Cost", "Description", "", "Amount"], 1):
             hc = wc(r, i, h, bold=True, color=NAVY); hc.border = BOTTOM_BORDER
         r += 1
-        byv = {}                                          # group by vendor (Ted 2026-06-26)
+        byv = {}                                          # group by vendor (the user 2026-06-26)
         for b in _draw_flat_bills(outside):
             byv.setdefault(b["vendor"] or "(no vendor)", []).append(b)
         for vend in sorted(byv, key=lambda v: -sum(b["amount"] for b in byv[v])):
@@ -2998,7 +2998,7 @@ def build_sheet_next_draw_retainage(wb, proj, cust_info, wip_info, income_groups
 
 
 def build_sheet_cashflow(wb, proj, cust_info, wip_info, events, as_of, realm=""):
-    """CASH FLOW timeline (Ted 2026-06-26) — the FUNDING lens, not the profit lens.
+    """CASH FLOW timeline (the user 2026-06-26) — the FUNDING lens, not the profit lens.
     One row per ACTUAL payment: AP cash-out (when we paid suppliers/subs) and AR
     cash-in (when the GC's money landed), chronological, with a running balance.
     The lowest running balance is the PEAK CASH REQUIREMENT — how far in the hole
@@ -3125,7 +3125,7 @@ def build_sheet_pos(
     UNUSED (open / not yet billed) on TOP — that total is the BUFFER for the
     real-world gap where bills get entered after the report is pulled. USED
     (billed) below. PO info + matched Bill ref#/date/amount only — no account
-    detail (Ted 2026-06-09). Conditional color: amber for the buffer, red when
+    detail (the user 2026-06-09). Conditional color: amber for the buffer, red when
     a bill overran its PO.
     """
     ws = wb.create_sheet("POs")
@@ -3138,7 +3138,7 @@ def build_sheet_pos(
     BUFFER_FILL = PatternFill("solid", fgColor="FFF2CC")  # amber = buffer
 
     def _po_order(recs):
-        """Vendor A→Z, then PO date NEWEST→oldest (Ted 2026-06-09)."""
+        """Vendor A→Z, then PO date NEWEST→oldest (the user 2026-06-09)."""
         return sorted(recs, key=lambda x: (
             (x.get("vendor") or "").lower(),
             -((_parse_date(x.get("po_date")) or dt.date.min).toordinal())))
@@ -3254,7 +3254,7 @@ def build_sheet_pos(
 
 def _qbo_txn_url(tx_type: str, txn_id: str, realm: str) -> Optional[str]:
     """Deep link to a QBO transaction so the user can click straight to the
-    bill/expense to review it (Ted 2026-06-19). Uses the login deep-link form
+    bill/expense to review it (the user 2026-06-19). Uses the login deep-link form
     QBO itself returns, so it works regardless of the user's session."""
     if not txn_id or not realm:
         return None
@@ -3269,7 +3269,7 @@ def _qbo_txn_url(tx_type: str, txn_id: str, realm: str) -> Optional[str]:
 def _setup_print(ws, last_col: int, header_rows: int = 2) -> None:
     """Printer-friendly: landscape, scaled to ONE page wide (height flows to as
     many pages as needed), tight margins, print area = used cols, title rows
-    repeat on every page (Ted 2026-06-19)."""
+    repeat on every page (the user 2026-06-19)."""
     from openpyxl.worksheet.page import PageMargins
     from openpyxl.worksheet.properties import PageSetupProperties
     ws.page_setup.orientation = "landscape"
@@ -3291,7 +3291,7 @@ def build_sheet_job_rp(
     realm: str = "",
 ) -> None:
     """
-    RESIDENTIAL (RP) — the main "Job P&L" sheet (Ted 2026-06-19). Most important
+    RESIDENTIAL (RP) — the main "Job P&L" sheet (the user 2026-06-19). Most important
     info first: JOB PROFIT box pinned at the TOP (Billed, Costs, Gross Profit,
     Margin %, Markup %, Overhead, TRUE NET PROFIT — hero). Then the INVOICE, then
     the JOB COSTS transaction detail — ALWAYS shown here, broken out JOB TYPE →
@@ -3300,7 +3300,7 @@ def build_sheet_job_rp(
     before the invoice (bill pending) are tagged and highlighted YELLOW. Budget
     vs Actual lives on its OWN sheet, not here. Big (16pt) text, thick boxes.
     """
-    SZ = BASE_SIZE - 1            # body text — smaller, compact (Ted 2026-06-26)
+    SZ = BASE_SIZE - 1            # body text — smaller, compact (the user 2026-06-26)
     HSZ = BASE_SIZE + 1           # section headers / hero
     ws = wb.create_sheet("Job P&L")
     ws.sheet_view.showGridLines = False
@@ -3334,7 +3334,7 @@ def build_sheet_job_rp(
         _box(r0, r1, c0, c1, _THINB)
 
     last_col = 4
-    pcol = 2                       # JOB PROFIT values live in col B (Ted 2026-06-19)
+    pcol = 2                       # JOB PROFIT values live in col B (the user 2026-06-19)
 
     # ════════════ JOB PROFIT — compact card pinned at the very top (A:B) ═══
     ph = ws.cell(row=r, column=1, value="JOB PROFIT")
@@ -3346,7 +3346,7 @@ def build_sheet_job_rp(
     r += 1
 
     def profit_line(label, *, hero=False, color="000000", fill=None):
-        """Color-graded like the Draw P&L (Ted 2026-06-26): green income, tan
+        """Color-graded like the Draw P&L (the user 2026-06-26): green income, tan
         costs, yellow gross profit, gray overhead, navy hero for True Net Profit."""
         nonlocal r
         lc = _write_cell(ws, r, 1, label)
@@ -3377,7 +3377,7 @@ def build_sheet_job_rp(
     thick_box(prof_top, r - 1, 1, pcol)
     r += 1
 
-    # ════════════ WIP / PROJECTION (Ted 2026-06-26) ════════════
+    # ════════════ WIP / PROJECTION (the user 2026-06-26) ════════════
     #  Bid Proposal (the residential "contract") + ETC as yellow inputs; the rest
     #  is computed. Same idea as the Draw P&L ① WIP block.
     YEL = PatternFill("solid", fgColor="FFE699")
@@ -3462,7 +3462,7 @@ def build_sheet_job_rp(
     billed_row = r
     r += 2
 
-    # ════════════ JOB COSTS — BY ACCOUNT → VENDOR (Ted 2026-06-26) ════════════
+    # ════════════ JOB COSTS — BY ACCOUNT → VENDOR (the user 2026-06-26) ════════════
     #  Show the ACCOUNT (resolved from items, readable — not the cost code), then
     #  the VENDORS under it, then the bills (collapsed). A parent with ONE sub
     #  collapses to the sub name ("Subcontractor Expense: Labor" → "Labor"); a
@@ -3596,12 +3596,12 @@ def build_sheet_pending_rp(
     company_id: Optional[str] = None,
 ) -> None:
     """
-    RESIDENTIAL (RP) Pending Review — the data-quality net (Ted 2026-06-09).
+    RESIDENTIAL (RP) Pending Review — the data-quality net (the user 2026-06-09).
     EXCLUDED from job costs: bills after the invoice that aren't wreck labor,
     zero/negative lines, and uncategorized lines. Plus an informational
     DUPLICATE-REF list (those ARE still counted in costs — verify them).
     Each row shows the line DESCRIPTION and an "Open in QBO" link straight to
-    the bill (Ted 2026-06-19).
+    the bill (the user 2026-06-19).
     """
     SZ = BASE_SIZE - 1
     ws = wb.create_sheet("Pending Review")
@@ -3657,7 +3657,7 @@ def build_sheet_pending_rp(
 
     def grouped(items, amt_color):
         """Vendor header (count) → its rows; group headers leave col E blank so a
-        SUM over the range totals only bill rows (Ted 2026-06-26 — group by vendor)."""
+        SUM over the range totals only bill rows (the user 2026-06-26 — group by vendor)."""
         nonlocal r
         byv = {}
         for rec in items:
@@ -3715,7 +3715,7 @@ def generate_project_pnl(
     ui_proj(proj, f"{cust_info['name']}  ·  id {cust_info['id']}")
 
     # Residential uses a different template: no draws, expenses → invoice →
-    # profit, wreck-labor rule + Pending Review (Ted 2026-06-09).
+    # profit, wreck-labor rule + Pending Review (the user 2026-06-09).
     if _project_division(proj).startswith("Residential"):
         return generate_project_pnl_rp(
             access, company_id, proj, cust_info, wip_info,
@@ -3723,20 +3723,20 @@ def generate_project_pnl(
             dry_run=dry_run, overhead_pct=overhead_pct,
         )
 
-    # Each project gets ONE home folder named by its number (Ted 2026-06-25):
+    # Each project gets ONE home folder named by its number (the user 2026-06-25):
     #   <out>/MFD192/                    ← the P&L workbook lands here
     #   <out>/MFD192/rd-reports/         ← PM drops draw-cost reports here
     # Created on the first P&L run, skipped if it already exists.
     # rd-reports is the MFD draw-cost-report cross-check workflow ONLY — Commercial
-    # doesn't use it, so don't litter CP folders with it (Ted 2026-07-02). rd_dir
+    # doesn't use it, so don't litter CP folders with it (the user 2026-07-02). rd_dir
     # stays defined so index_pm_reports() just finds nothing for non-MFD.
     is_mfd = proj.upper().startswith("MFD")
     # Dual overhead view (MFD 9% on costs vs Company 11% on revenue) is MFD-only —
     # MFD is a different player. CP (and any non-MFD draw job) shows ONLY the company
-    # overhead; keep MFD out of it (Ted 2026-07-02). None => single company view.
+    # overhead; keep MFD out of it (the user 2026-07-02). None => single company view.
     _alt_oh = 9.0 if is_mfd else None
     # CP drops into the awarded-project folder on the Common drive; MFD stays in the
-    # OneDrive tree (Ted 2026-07-02).
+    # OneDrive tree (the user 2026-07-02).
     proj_dir, _cp_note = _resolve_project_out_dir(proj, out_dir)
     if _cp_note:
         ui_event(_cp_note, icon="⚑", color=_YEL)
@@ -3780,7 +3780,7 @@ def generate_project_pnl(
     parent_map = build_account_parent_map(accounts)
     account_names = {a.get("Id"): a.get("Name")
                      for a in accounts if a.get("Id")}
-    # Fully-qualified names for the Transactions/P&L account labels (Ted
+    # Fully-qualified names for the Transactions/P&L account labels (the user
     # 2026-06-22: "Job Materials: Rebar", not just "Rebar").
     account_fqn = {a.get("Id"): ((a.get("FullyQualifiedName") or a.get("Name") or "")
                                  .replace(":", ": "))
@@ -3825,7 +3825,7 @@ def generate_project_pnl(
     ui_event(f"{len(pos)} POs  ·  {len(po_unused)} open ${buf:,.0f} · "
              f"{len(po_used)} billed")
 
-    # Cash flow (Ted 2026-06-26): ACTUAL payment dates — AP out + AR in.
+    # Cash flow (the user 2026-06-26): ACTUAL payment dates — AP out + AR in.
     bill_pmts = fetch_bill_payments(access, company_id, bill_start, end_date)
     cust_pmts = fetch_customer_payments(access, company_id, bill_start, end_date)
     cash_events = build_cashflow_events(bills, invoices, bill_pmts, cust_pmts,
@@ -3844,7 +3844,7 @@ def generate_project_pnl(
     # Accumulating costs for the next draw = EXACTLY the costs that fell
     # outside every draw window (the Draws "Costs Outside Draw Windows"
     # block). Using the same set makes the P&L total tie to the Draws total
-    # and the ➜ link land on the matching detail (Ted 2026-06-09).
+    # and the ➜ link land on the matching detail (the user 2026-06-09).
     accum = None
     outside_acc = draw_costs.get("__outside")
     if outside_acc and (outside_acc.get("total") or outside_acc.get("groups")):
@@ -3863,13 +3863,13 @@ def generate_project_pnl(
     # .get — special buckets like __retainage have no "net_billed"
     net_billed = sum(g.get("net_billed", 0.0) for g in income_groups.values())
 
-    # Draw label comes from the invoice MEMO number first (Ted 2026-06-09).
+    # Draw label comes from the invoice MEMO number first (the user 2026-06-09).
     # If a memo has NO 'Draw N', DON'T fabricate a number — label that draw
     # by its month/year ("Draw – April 2026") and sort by date (tagged is
     # already chronological). Tell the operator in the terminal.
-    # Retainage-not-billed total (excluded from income per Ted 2026-06-09)
+    # Retainage-not-billed total (excluded from income per the user 2026-06-09)
     retainage_nb = (income_groups.get("__retainage") or {}).get("total", 0.0)
-    # Total retainage CALCULATED from the invoice data (Ted 2026-06-09 — the
+    # Total retainage CALCULATED from the invoice data (the user 2026-06-09 — the
     # left-side retainage must sum the draws' retainage + the other retainage
     # invoices, not just the not-billed piece the Balance Sheet showed):
     #   withheld on draws (held) + retainage billed back by GC + not yet billed.
@@ -3885,7 +3885,7 @@ def generate_project_pnl(
     # draw_rows = (name, period, net_billed, costs, retainage_held, retainage_billed)
     # retainage_held  = GC holding back (positive)        — Retained col, black
     # retainage_billed = GC paying retainage back (positive) — Retained col, green
-    # A draw that is ONLY retainage (no work) is NAMED "Retainage" (Ted 2026-06-09).
+    # A draw that is ONLY retainage (no work) is NAMED "Retainage" (the user 2026-06-09).
     draw_rows: List[Tuple[str, str, float, float, float, float]] = []
     for lbl in tagged:
         net = income_groups[lbl]["net_billed"]
@@ -3911,13 +3911,13 @@ def generate_project_pnl(
         ui_event(f"{name}  {_DIM}{lbl}{_RESET}  billed ${net:,.0f} · "
                  f"costs ${costs:,.0f} · coverage {cov_s}", icon="•", color=_CYAN)
 
-    # PM draw-report CAPTURE INDEX (Ted 2026-06-26): pool every report for this
+    # PM draw-report CAPTURE INDEX (the user 2026-06-26): pool every report for this
     # project; a bill is 'captured' if it's on ANY report (the draw period from QBO
     # is authoritative — report periods get readjusted). Per-draw underbilling and
     # the orphan list are computed from this index, not from report periods.
     report_index, parsed_reports = index_pm_reports(rd_dir, proj)
 
-    # ORPHANS (Ted 2026-06-26 — reconcile = final catcher): report lines whose
+    # ORPHANS (the user 2026-06-26 — reconcile = final catcher): report lines whose
     # bill#+amount match NO QBO bill anywhere on the project (PM typo / wrong amount
     # / cost not in QBO). Prior-period lines excluded (informational).
     _qbo_keys = set()
@@ -3931,7 +3931,7 @@ def generate_project_pnl(
             _qbo_by_num.setdefault(num, []).append(_b)
             _qbo_lines.append(_b)
     # A report line that doesn't EXACT-match QBO is either an AMOUNT MISMATCH (its
-    # bill # IS in QBO, different amount — Ted 2026-06-26) or a true ORPHAN (bill #
+    # bill # IS in QBO, different amount — the user 2026-06-26) or a true ORPHAN (bill #
     # not in QBO at all). Splitting them stops "in QBO, wrong amount" from being
     # mislabeled "not in QuickBooks".
     orphans, mismatches, _seen = [], [], set()
@@ -3967,7 +3967,7 @@ def generate_project_pnl(
         del wb[wb.sheetnames[0]]
 
     # Transactions sheet FIRST — its subtotal cells are the source the P&L's
-    # Income/Retainage/COGS SUM-link to (Ted 2026-06-22). Build it before the
+    # Income/Retainage/COGS SUM-link to (the user 2026-06-22). Build it before the
     # P&L so the cell refs exist.
     tx = gather_transactions(income_groups, bills, purchases, cust_info["id"],
                              parent_map, account_names=account_fqn,
@@ -3996,7 +3996,7 @@ def generate_project_pnl(
         mismatches=mismatches, candidates=diff_candidates, tx_totals=tx["tot"],
         realm=company_id)
 
-    # ONE SHEET PER DRAW (Ted 2026-06-26). Newest draw first. Each draw's name
+    # ONE SHEET PER DRAW (the user 2026-06-26). Newest draw first. Each draw's name
     # becomes its own sheet; draw_anchors maps name → sheet so the P&L coverage
     # table links to it. Match each draw to the PM-report cross-check whose period
     # best overlaps the draw window.
@@ -4087,13 +4087,13 @@ def generate_project_pnl(
         underbill_count=underbill_count,
     )
     # Order: P&L, then the fixed supporting sheets, then the (many) draw sheets
-    # LAST so they don't clutter the front (Ted 2026-06-26).
+    # LAST so they don't clutter the front (the user 2026-06-26).
     _order_sheets(wb, ["P&L", "Cash Flow",
                        *(["Next Draw + Retainage"] if leftover is not None else []),
                        "Transactions", "POs", "Reconciliations",
                        *draw_sheet_order])
 
-    # Color-code the tabs for navigation (Ted 2026-06-26).
+    # Color-code the tabs for navigation (the user 2026-06-26).
     _tabcolors = {"P&L": "1F3A5F", "Cash Flow": "C55A11",
                   "Next Draw + Retainage": "808080",
                   "Transactions": "548235", "POs": "808080",
@@ -4127,7 +4127,7 @@ def generate_project_pnl_rp(
     overhead_pct: float = 11.0,
 ) -> Optional[Path]:
     """
-    RESIDENTIAL "Job P&L" template — no draws, no retainage (Ted 2026-06-09).
+    RESIDENTIAL "Job P&L" template — no draws, no retainage (the user 2026-06-09).
     Sheets: Job P&L (JOB PROFIT → WIP/Projection → INVOICE → JOB COSTS account →
     vendor → bills), Cash Flow, Transactions, Pending Review, POs, Reconciliations.
     """
@@ -4135,7 +4135,7 @@ def generate_project_pnl_rp(
     invoices = fetch_customer_invoices(access, company_id, cust_info["id"])
     inv_info = []
     inv_dates = []
-    rp_not_billed = []          # retainage-not-billed JE docs — NOT income (Ted 2026-07-02)
+    rp_not_billed = []          # retainage-not-billed JE docs — NOT income (the user 2026-07-02)
     for inv in invoices:
         rec = {
             "doc_num": _xml_clean(inv.get("DocNumber", "") or inv.get("Id", "")),
@@ -4177,7 +4177,7 @@ def generate_project_pnl_rp(
     ui_event(f"{len(accounts)} accounts · {len(items)} items · "
              f"P&L income ${pl_totals['income']:,.0f}")
 
-    # Budget vs Actual was DROPPED (Ted 2026-06-19): QBO's Project cost-estimate
+    # Budget vs Actual was DROPPED (the user 2026-06-19): QBO's Project cost-estimate
     # feature isn't exposed by the Accounting API, so there's no cost-code budget
     # source. The dormant budget code was removed in the 2026-06-26 cleanup.
 
@@ -4216,7 +4216,7 @@ def generate_project_pnl_rp(
              f"${pend_total:,.0f} · {len(pending)} pending-review · "
              f"{len(dup_flags)} dup flags){_RESET}")
 
-    # Cash flow — same as the Draw template (Ted 2026-06-26): actual payment dates.
+    # Cash flow — same as the Draw template (the user 2026-06-26): actual payment dates.
     bill_pmts = fetch_bill_payments(access, company_id, bill_start, end_date)
     cust_pmts = fetch_customer_payments(access, company_id, bill_start, end_date)
     cash_events = build_cashflow_events(bills, invoices, bill_pmts, cust_pmts,
@@ -4236,7 +4236,7 @@ def generate_project_pnl_rp(
     build_sheet_job_rp(wb, proj, cust_info, wip_info, inv_info, job_groups,
                        job_total, billed_total, as_of, overhead_pct=overhead_pct,
                        realm=company_id)
-    # Transactions sheet — same traceability as the Draw template (Ted 2026-06-22).
+    # Transactions sheet — same traceability as the Draw template (the user 2026-06-22).
     # RP has no draws/retainage, so income is the invoices billed; bills split
     # COGS vs Expense by account type.
     rp_income_groups = {"__rp": {"invoices": [
@@ -4280,7 +4280,7 @@ def generate_project_pnl_rp(
     _order_sheets(wb, ["Job P&L", "Cash Flow", "Transactions",
                        "Pending Review", "POs", "Reconciliations"])
 
-    # Color-code the tabs to match the Draw template (Ted 2026-06-26).
+    # Color-code the tabs to match the Draw template (the user 2026-06-26).
     for _sn, _col in {"Job P&L": "1F3A5F", "Cash Flow": "C55A11",
                       "Transactions": "548235",
                       "Pending Review": "808080", "POs": "808080",
@@ -4288,7 +4288,7 @@ def generate_project_pnl_rp(
         if _sn in wb.sheetnames:
             wb[_sn].sheet_properties.tabColor = _col
 
-    # Folder + file named "RP#### - Customer" (Ted 2026-06-26). Customer = the top
+    # Folder + file named "RP#### - Customer" (the user 2026-06-26). Customer = the top
     # builder (first segment of the fully-qualified name, e.g. "Grand Homes").
     _fqn = cust_info.get("fully_qualified_name") or cust_info.get("name") or ""
     _client = (_fqn.split(":")[0].strip() if ":" in _fqn else (cust_info.get("name") or ""))
@@ -4334,14 +4334,14 @@ def _parse_report_period(text: str):
 
 
 def parse_pm_report(path: Path) -> dict:
-    """Parse a PM 'Cost By Vendor' / project-cost draw report (Ted 2026-06-23).
+    """Parse a PM 'Cost By Vendor' / project-cost draw report (the user 2026-06-23).
     Returns {project, period:(start,end), lines:[{vendor,num,date,account,desc,
     amount,prior}]}.
 
     QB exports these in MANY column layouts (6/7/9/15/16 cols; Amount in col F/G/H;
     optional 'Transaction type' column; sidecar tables to the right). So instead of
     hardcoding columns, DETECT them from the report's own header row — the row that
-    contains 'Date', 'Num', and 'Amount' (Ted 2026-06-25, after the parser silently
+    contains 'Date', 'Num', and 'Amount' (the user 2026-06-25, after the parser silently
     failed on every layout but MAYHILL and flagged real bills as 'missed')."""
     wb = openpyxl.load_workbook(str(path), data_only=True)
     ws = wb[wb.sheetnames[0]]
@@ -4521,7 +4521,7 @@ def cross_check_draw_report(access, company_id, report_path: Path,
     """Cross-check a PM draw-cost report against QBO. Flags MISSING (in QBO, not
     in the report — costs the PM didn't pull) and EXTRA (report lines with no QBO
     match — possible typo / wrong amount). Writes a standalone workbook so the
-    main P&L is never touched (Ted 2026-06-23). Match key = Bill# + line amount."""
+    main P&L is never touched (the user 2026-06-23). Match key = Bill# + line amount."""
     print(f"\n  Cross-checking {report_path.name} ...")
     rep = parse_pm_report(report_path)
     proj = rep["project"]
@@ -4620,7 +4620,7 @@ def cross_check_draw_report(access, company_id, report_path: Path,
 
 
 def index_pm_reports(reports_dir, proj: str):
-    """Pool ALL PM reports for this project into one capture index (Ted 2026-06-26).
+    """Pool ALL PM reports for this project into one capture index (the user 2026-06-26).
     The report's own header period is IGNORED — the director readjusts draw periods,
     so a bill is 'captured' if it appears on ANY report in the folder. Returns:
       index  : {(bill#, amount): {report filenames that list it}}

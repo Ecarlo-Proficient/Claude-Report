@@ -13,7 +13,7 @@ This doc sketches the flow shape and the exact field mapping per flow. Builders 
 | Create new row when source row is created | ✅ | ✅ |
 | Update existing row when source row is edited (match by Project #) | ❌ — no find-by-value action | ✅ — HTTP query → update page |
 | Backfill historical rows at setup | ❌ — automations only fire on future events | ⚠️ one-time CSV export + import still required on first setup, then flow handles forward |
-| Run on your M365 stack | n/a | ✅ — already in Ted's stack |
+| Run on your M365 stack | n/a | ✅ — already in the user's stack |
 
 Reference: `reference_notion_constraints.md`.
 
@@ -67,7 +67,7 @@ STEP 3 — Log the run (success count, error count) to a log Excel or Teams chan
 ```
 
 Notes:
-- 5-min interval is a reasonable default. Tighten to 1 min if Ted wants near-real-time; loosen to 15 min to reduce API calls.
+- 5-min interval is a reasonable default. Tighten to 1 min if the user wants near-real-time; loosen to 15 min to reduce API calls.
 - Notion API rate limit ~3 req/sec. Each changed row costs 2-3 requests. At 5-min cadence, a shop like Proficient won't hit the ceiling.
 - `Last edited time` trigger guarantees you don't miss an edit, but it also re-processes rows edited multiple times in the window. The upsert is idempotent, so re-processing is safe.
 - If a relation (e.g. Customer) is edited in the source, the target can't hold the relation (tier boundary) — flatten to text.
@@ -78,7 +78,7 @@ Notes:
 
 **Purpose:** give the Common clerks (AP Clerk, PO Clerk, Subcontractor Clerk) a read-only, trimmed view of every job with only basic identifying info. No sales, no bid amount, no plans, no financials.
 
-**Target DB:** Common Bid List (already exists — data source ID: TBD, Ted to provide).
+**Target DB:** Common Bid List (already exists — data source ID: TBD, the user to provide).
 
 **Field mapping (source Bid List → Common Bid List):**
 
@@ -224,11 +224,11 @@ Each one is a copy of the template flow with a different target DS ID and a diff
 
 - **Source row's Title (Project #) edited.** Title is the match key. If a super or PM renames the title, the flow will stop matching and create a duplicate on the next edit. **Mitigation:** lock title edits via permission (Bid List should be editable only by admins + estimators), and/or add a second stable identifier and match on that instead.
 - **Relation target renamed.** Flattening reads the related page's Name. If the Customer page is renamed, next sync will overwrite with the new name — usually fine, but note in change log.
-- **Rate limits** (HTTP 429). Notion allows ~3 req/sec. If Ted ever bulk-edits 50+ rows at once, the flow might 429. **Mitigation:** retry 3x with exponential backoff on 429, already standard in Power Automate HTTP action settings.
+- **Rate limits** (HTTP 429). Notion allows ~3 req/sec. If the user ever bulk-edits 50+ rows at once, the flow might 429. **Mitigation:** retry 3x with exponential backoff on 429, already standard in Power Automate HTTP action settings.
 - **Auth expires.** Internal integration secrets don't expire, but if the integration is removed from a DB, the flow will 401. **Mitigation:** log 401 separately and alert.
 
 ---
 
 ## Alternative if Power Automate feels heavy
 
-A Python script on Ted's existing setup running on Windows Task Scheduler can do the same thing. Same pseudocode above, just runs on local cron. No external subscription needed beyond what's already paid. Power Automate is the preferred choice because Ted already has M365 and it gives a visual flow + retry + logging out of the box, but if Power Automate licensing is ever an issue, the script fallback is a one-day port.
+A Python script on the user's existing setup running on Windows Task Scheduler can do the same thing. Same pseudocode above, just runs on local cron. No external subscription needed beyond what's already paid. Power Automate is the preferred choice because the user already has M365 and it gives a visual flow + retry + logging out of the box, but if Power Automate licensing is ever an issue, the script fallback is a one-day port.

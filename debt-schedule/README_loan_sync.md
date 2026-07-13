@@ -66,7 +66,7 @@ Until then, keep the two L&A balances current by hand.
 
 1. **Map loans to QBO accounts:**
    ```
-   cd "/Users/sebas/Documents/Claude/Projects/Automate Concrete Business"
+   cd "/ABSOLUTE/PATH/TO/Automate Concrete Business"
    python3 loan_sync.py --discover
    ```
    One Touch ID. Pulls your QBO liability accounts and writes a **`QBO Setup`**

@@ -49,7 +49,7 @@ from qbo_bill_tracker import (
 def display_status(auto_status: str, approved: bool = False) -> str:
     """Return the pipeline-status label as-is for the Status column.
 
-    Ted 2026-06-03: Approval moved to its own column, so Status is just the
+    The user 2026-06-03: Approval moved to its own column, so Status is just the
     pipeline state ("Awaiting Payment" / "Awaiting Invoice" / "Invoice paid" /
     "Bill paid" / "No project #"). The `approved` arg is kept (unused) so old
     callers don't break — pass it for forward-compat in case we re-merge
@@ -263,7 +263,7 @@ def build_rows(
             else:
                 auto_status = compute_status(bill, matched, division)
 
-            # Two-axis split (Ted 2026-07-13): pay = did WE pay the vendor;
+            # Two-axis split (the user 2026-07-13): pay = did WE pay the vendor;
             # invoice = did the GC fund us (computed independent of payment).
             pay_status = compute_pay_status(bill)
             invoice_status = compute_invoice_status(matched, division)
@@ -313,7 +313,7 @@ MULTI_MARKER = "(multiple)"
 def multi_project_bill_ids(line_rows: List[dict]) -> Set[str]:
     """Return the set of bill_ids whose lines code to 2+ distinct project_nums.
 
-    These are the "inventory" bills Ted described — one supplier ticket
+    These are the "inventory" bills the user described — one supplier ticket
     distributed across multiple jobs. They get displayed as a single summary
     row on the master Bills sheet AND line-level on the Inventory drill-down.
     Single-project bills aren't in this set.
@@ -344,7 +344,7 @@ def _agg_distinct_or_multi(values: List[str]) -> str:
 # common compounds "sales tax", "use tax" as standalone words in either the
 # line account or the line description. Word-boundary anchors on both ends
 # so "Texarkana", "Texas", "taxi" don't false-positive.
-# 2026-06-04: extended to "tax(es|able)?" after Ted hit clerks typing "TAXES"
+# 2026-06-04: extended to "tax(es|able)?" after the user hit clerks typing "TAXES"
 # (plural) on Martin Marietta yardage bills.
 TAX_RE = re.compile(
     r"\b(?:sales\s+tax(?:es|able)?|use\s+tax(?:es|able)?|tax(?:es|able)?)\b",
@@ -414,7 +414,7 @@ def _aggregate_bill_status(line_statuses: List[str]) -> str:
     For a multi-project bill, each line independently matched its own
     project's invoice — so the lines can carry DIFFERENT statuses. The Bills
     sheet shows one row per bill, so we need to collapse the set into one
-    label. Ted 2026-06-04: the "some paid, some not" mixed state becomes
+    label. The user 2026-06-04: the "some paid, some not" mixed state becomes
     `Partial paid`, surfacing the cash-position decision (float remaining
     out of operating, or wait for the last GC invoice to pay).
 

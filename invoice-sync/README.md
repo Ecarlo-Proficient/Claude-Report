@@ -43,7 +43,7 @@ That's a shell alias that runs `run_invoice_sync.sh`, which launches the viewer
 when you're in a terminal. To preview without changing anything:
 
 ```
-cd "/Users/sebas/Documents/Claude/Projects/Automate Concrete Business/invoice-sync"
+cd "/ABSOLUTE/PATH/TO/Automate Concrete Business/invoice-sync"
 python3 sync_view.py --dry-run
 ```
 
@@ -61,7 +61,7 @@ For a real run without the visual wrapper: `python3 run_invoice_sync.py`.
 ## If it breaks — first moves (in order)
 
 ```
-cd "/Users/sebas/Documents/Claude/Projects/Automate Concrete Business/invoice-sync"
+cd "/ABSOLUTE/PATH/TO/Automate Concrete Business/invoice-sync"
 python3 doctor.py
 ```
 
@@ -162,7 +162,7 @@ alongside this folder guide).
 ## First-time setup on a new Mac
 
 ```
-cd "/Users/sebas/Documents/Claude/Projects/Automate Concrete Business/invoice-sync"
+cd "/ABSOLUTE/PATH/TO/Automate Concrete Business/invoice-sync"
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
