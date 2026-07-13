@@ -78,6 +78,7 @@ except ImportError:
 
 from qbo_bill_tracker import (
     load_credentials, query_all, is_sub_bill, is_excluded_invoice,
+    parse_date,
     STATUS_OK_TO_PAY, STATUS_AWAITING_PAYMENT, STATUS_AWAITING_INVOICE,
     STATUS_PAID, STATUS_NO_PROJECT, STATUS_PARTIAL_PAID,
 )
@@ -127,6 +128,7 @@ ALIGN_RIGHT = Alignment(horizontal="right", vertical="center")
 SUPRA_BILL_FILL    = PatternFill("solid", start_color="1F3864")  # deep navy
 SUPRA_STATUS_FILL  = PatternFill("solid", start_color="BF8F00")  # warm amber
 SUPRA_INVOICE_FILL = PatternFill("solid", start_color="375623")  # deep green
+SUPRA_PAY_FILL     = PatternFill("solid", start_color="31849B")  # teal (AP cash-out)
 SUPRA_FONT         = Font(name="Calibri", size=12, bold=True,
                           color="FFFFFF", italic=False)
 SUPRA_HEIGHT       = 22
@@ -228,9 +230,13 @@ BILL_ROW_COLS: List[Tuple[str, str]] = [
     ("Matched Invoice",    "text"),      # 19 — # + memo (scope), for eyeballing the match
     ("Invoice Date",       "date"),      # 20
     ("Invoice Total",      "money"),     # 21
-    ("Payment Date",       "date"),      # 22
+    ("Payment Date",       "date"),      # 22 — INVOICE paid date (GC → us, money IN)
     ("Client",             "text"),      # 23 — GC/parent customer; filter by client
-    ("_Key",               "text"),      # 24 — hidden merge join key
+    # ── PAYMENT section (AP cash-OUT: the bill payment we cut) ──
+    ("Pay Ref #",          "text"),      # 24 — check # we paid with (blank for CC)
+    ("Pay Date",           "date"),      # 25 — when we paid the vendor
+    ("Pay Method",         "text"),      # 26 — Check / CC / (multiple)
+    ("_Key",               "text"),      # 27 — hidden merge join key
 ]
 LINE_AMT_COL_INDEX = next(i + 1 for i, (h, _) in enumerate(BILL_ROW_COLS) if h == "Line Amount")
 HEADERS = [h for h, _ in BILL_ROW_COLS]
@@ -264,7 +270,9 @@ COL_WIDTHS: Dict[int, float] = {
     # INVOICE section
     18: 10, 19: 60, 20: 11, 21: 12, 22: 12,          # Invoice # / Matched Inv / Inv Date / Inv Total / Pay Date
     23: 26,                                          # Client (GC / parent customer)
-    24: 14,                                          # _Key (hidden)
+    # PAYMENT section (AP cash-out)
+    24: 14, 25: 11, 26: 12,                          # Pay Ref # / Pay Date / Pay Method
+    27: 14,                                          # _Key (hidden)
 }
 
 
@@ -716,10 +724,15 @@ def _apply_header(ws, hide_cols: Optional[List[int]] = None) -> None:
     #   STATUS  = cols divider2+1 .. end (excluding hidden _Key)
     dividers = sorted(DIVIDER_COL_INDEXES)  # [11, 16] for current layout
     d1, d2 = dividers[0], dividers[1]
+    # The PAYMENT band (AP cash-out) sits at the end. It has no divider column
+    # of its own (that would break the 2-divider assumptions elsewhere) — the
+    # band-color change alone separates it from INVOICE INFO.
+    pay_from = HEADERS.index("Pay Ref #") + 1
     sections = [
         ("BILL INFO",          1,        d1 - 1,                     SUPRA_BILL_FILL),
         ("STATUS & ACTION",    d1 + 1,   d2 - 1,                     SUPRA_STATUS_FILL),
-        ("INVOICE INFO",       d2 + 1,   KEY_COL_INDEX - 1,          SUPRA_INVOICE_FILL),
+        ("INVOICE INFO",       d2 + 1,   pay_from - 1,               SUPRA_INVOICE_FILL),
+        ("PAYMENT",            pay_from, KEY_COL_INDEX - 1,          SUPRA_PAY_FILL),
     ]
     for label, c_from, c_to, fill in sections:
         ws.cell(row=1, column=c_from, value=label)
@@ -808,6 +821,8 @@ def _write_bill_row(ws, r_i: int, r: dict, edits: Dict[str, Dict[str, str]],
     approved = bool(r.get("approved"))
     pipeline = display_status(r.get("auto_status", ""))
     lien_val = pres.get("Lien", "") or ""
+    # AP cash-out: the payment(s) that paid this bill (set in main() for the run).
+    _pm = _BILL_PAY_MAP.get(r.get("bill_id", "") or "", {})
     # Untagged + unpaid + near the notice deadline → the cell shows the countdown
     # bucket as text (colored by the matching CF rule). A real tag always wins;
     # this computed text is never preserved (see _read_sheet_edits).
@@ -842,7 +857,11 @@ def _write_bill_row(ws, r_i: int, r: dict, edits: Dict[str, Dict[str, str]],
         r.get("inv_total"),                                      # 21
         r.get("payment_date"),                                   # 22
         r.get("gc_name", ""),                                    # 23 Client (GC/parent)
-        key,                                                     # 24 _Key
+        # ── PAYMENT section (AP cash-out) ──
+        _pm.get("ref", ""),                                      # 24 Pay Ref #
+        _pm.get("date"),                                         # 25 Pay Date
+        _pm.get("method", ""),                                   # 26 Pay Method
+        key,                                                     # 27 _Key
     ]
     for c_i, (val, kind) in enumerate(zip(values, KINDS), start=1):
         c = ws.cell(row=r_i, column=c_i, value=val)
@@ -1144,427 +1163,6 @@ def _vendor_key(r: dict) -> Tuple:
 # people about freshness.
 
 
-# ─────────────────────── Division sheets (MFD / RP / CP) ───────────────────────
-
-# Per-division sheet headers. 2026-06-03: Open moved to col A (tiny button)
-# to match the master Bills layout. Approved added so per-bill approval state
-# is visible at the line-item level.
-DIVISION_HEADERS = [
-    "Open",              # 1 (tiny QBO link)
-    "Vendor",            # 2
-    "Bill #",            # 3
-    "Bill Date",         # 4
-    "Bill Open Bal",     # 5
-    "Line Amount",       # 6
-    "Status",            # 7 (pipeline only)
-    "Approved",          # 8
-    "Lien",              # 9 (Notice Sent / Lien Filed — echoed from Bills)
-    "Account",           # 10
-    "Line Description",  # 11
-    "_Key",              # 12 hidden
-]
-DIVISION_KEY_COL_IDX = DIVISION_HEADERS.index("_Key") + 1
-# Subtotal label + value live at the rightmost visible columns of the banner
-# row so they sit at the END of the colored bar instead of cutting into the
-# middle of the label text. col (last visible) holds "Open balance: $X".
-DIVISION_LAST_VISIBLE_COL = DIVISION_KEY_COL_IDX - 1  # 10 (Line Description position)
-DIVISION_BANNER_LABEL_END_COL = DIVISION_LAST_VISIBLE_COL - 1  # 9 — last col of merged label
-
-# Banner row styling — Ted 2026-06-03: project + draw rows were too similar
-# to data rows; rebuild with high-contrast bands that scream "section break".
-# Color hierarchy: deep navy = project (chapter), warm amber = draw (sub-
-# chapter), soft pink = awaiting (warning). Increased row heights so the
-# bands hold the eye without being read.
-from openpyxl.styles import Border, Side  # local import — only used here
-
-PROJECT_BANNER_FILL = PatternFill(patternType="solid",
-                                  fgColor=Color(rgb="FF1F3864"),
-                                  bgColor=Color(rgb="FF1F3864"))
-PROJECT_BANNER_FONT = Font(name="Calibri", size=14, bold=True, color="FFFFFF")
-PROJECT_BANNER_HEIGHT = 26  # row height in points
-
-# Draw banner palette — 4-state by GC funding (Ted 2026-06-04):
-#   No invoice yet        → GREY    (nothing's happening on the AR side)
-#   Unpaid by GC          → PINK    (waiting on the money)
-#   Partial paid by GC    → YELLOW  (some cash in, some balance remaining)
-#   Paid by GC            → GREEN   (cash in, ready to disburse)
-# Detection: payment_date set + inv_balance ≈ 0 → paid; payment_date set +
-# inv_balance > 0 → partial; payment_date None → unpaid.
-
-# UNPAID — pink
-INVOICE_BANNER_FILL = PatternFill(patternType="solid",
-                                  fgColor=Color(rgb="FFF4B6B6"),
-                                  bgColor=Color(rgb="FFF4B6B6"))
-INVOICE_BANNER_FONT = Font(name="Calibri", size=12, bold=True, color="1F3864")
-INVOICE_BANNER_HEIGHT = 22
-
-# PARTIAL PAID — yellow (some funded, some still owed)
-INVOICE_PARTIAL_FILL = PatternFill(patternType="solid",
-                                   fgColor=Color(rgb="FFFFE699"),
-                                   bgColor=Color(rgb="FFFFE699"))
-INVOICE_PARTIAL_FONT = Font(name="Calibri", size=12, bold=True, color="1F3864")
-
-# PAID — green (cash is in, write checks)
-INVOICE_PAID_FILL = PatternFill(patternType="solid",
-                                fgColor=Color(rgb="FF548235"),
-                                bgColor=Color(rgb="FF548235"))
-INVOICE_PAID_FONT = Font(name="Calibri", size=12, bold=True, color="FFFFFF")
-
-# AWAITING (no invoice yet) — grey
-AWAITING_BANNER_FILL = PatternFill(patternType="solid",
-                                   fgColor=Color(rgb="FFA6A6A6"),
-                                   bgColor=Color(rgb="FFA6A6A6"))
-AWAITING_BANNER_FONT = Font(name="Calibri", size=12, bold=True, color="FFFFFF")
-AWAITING_BANNER_HEIGHT = 22
-
-# Threshold for "balance is effectively zero" — handles float precision and
-# tiny rounding residuals on QBO's invoice balance.
-INV_BALANCE_PAID_THRESHOLD = 0.01
-
-# Thick bottom border to slam-dunk the section break — used on project banner
-PROJECT_BANNER_BORDER = Border(bottom=Side(border_style="medium",
-                                           color="FF000000"))
-
-SUBTOTAL_FONT = Font(name="Calibri", size=11, bold=True)
-
-
-def _open_bal_label(amount: float) -> str:
-    """Format the 'AP Open Balance: $X.XX' label that sits at the end of every
-    division-sheet banner row (project, draw, awaiting, grand total).
-
-    This is an AP figure — the sum of unpaid *bill* balances (what we still
-    owe vendors) under that project/draw — NOT the invoice's AR open balance.
-    Labeled "AP Open Balance" explicitly (Ted 2026-06-18) so it can't be
-    misread as the GC's remaining balance on the draw.
-
-    Kept as a single formatted string (rather than a number-formatted money
-    cell) so we can prefix the literal label without juggling two cells per
-    banner row. Banner rows are display-only, so we don't lose anything by
-    serializing to text here.
-    """
-    return f"AP Open Balance:  ${amount:,.2f}"
-
-
-def _parse_invoice_memo(memo: str) -> Tuple[str, str]:
-    """Pull a memo apart into (draw_name, period_text).
-
-    Typical QBO invoice memo: 'MFD177 - Jefferson Merritt Park - February Draw
-    2026 (Period: 01/01/2026 - 01/31/2026)'
-
-    Returns: ('February Draw 2026', 'Period: 01/01/2026 - 01/31/2026')
-
-    The project # and project name are redundant on division sheets (project
-    banner is the row above) so we strip them. Period notation is kept since
-    it's the matching-correctness signal.
-    """
-    if not memo:
-        return ("", "")
-    period = ""
-    main = memo.strip()
-    # Trailing parenthesized chunk is the period info
-    m = re.search(r"\(([^)]+)\)\s*$", main)
-    if m:
-        period = m.group(1).strip()
-        main = main[: m.start()].strip()
-    # Drop project# and project-name prefix: split " - " up to 2 times
-    parts = main.split(" - ", 2)
-    if len(parts) >= 3:
-        draw_name = parts[2].strip()
-    elif len(parts) == 2:
-        draw_name = parts[1].strip()
-    else:
-        draw_name = main
-    return (draw_name, period)
-
-
-def _project_address(rows_in_proj: List[dict]) -> str:
-    """Extract a likely address string from the customer name on these rows.
-    QBO customer names look like 'Forestar:RP7234 - 507 STAFFORDSHIRE'. We
-    take the part after the project # token. Empty if not extractable."""
-    for r in rows_in_proj:
-        cust = r.get("customer_name", "") or ""
-        if ":" not in cust:
-            continue
-        after_colon = cust.split(":", 1)[1]
-        # Project # is at the start; strip it and any leading " - "
-        m = re.match(r"^[A-Z]+\d+(?:-FTW)?\s*-?\s*(.*)$", after_colon, re.IGNORECASE)
-        if m and m.group(1).strip():
-            return m.group(1).strip()
-    return ""
-
-
-def build_division_sheet(ws, rows: List[dict], division: str,
-                         edits: Optional[Dict[str, Dict[str, str]]] = None) -> int:
-    """Per-division view: open bills only for this division, grouped by
-    Project → (Awaiting invoice section) + Invoices → bills.
-
-    Read-only display. Pay/Notes edits happen on the master Bills sheet;
-    this view rebuilds from current data on each sync.
-    """
-    today = dt.date.today()
-    # Apply header row with banner styling (re-use the slate header)
-    for col_i, name in enumerate(DIVISION_HEADERS, 1):
-        c = ws.cell(row=1, column=col_i, value=name)
-        c.font = HEADER_FONT
-        c.fill = HEADER_FILL
-        c.alignment = ALIGN_CENTER
-    ws.freeze_panes = "A2"
-    ws.row_dimensions[1].height = 22
-    # Hide _Key
-    ws.column_dimensions[_col_letter(DIVISION_KEY_COL_IDX)].hidden = True
-    # Column widths — Open is a tiny button, banner subtotals live in
-    # Bill Open Bal (col 5). Status wider for "Awaiting Payment" etc.
-    widths = {1: 5, 2: 28, 3: 12, 4: 11, 5: 14, 6: 13,
-              7: 18, 8: 14, 9: 13, 10: 22, 11: 35, 12: 14}
-    for col, w in widths.items():
-        ws.column_dimensions[_col_letter(col)].width = w
-
-    # Filter to open bill chunks in this division. Show ALL open bills
-    # regardless of whether the GC has paid the invoice yet — Ted 2026-06-04
-    # needs visibility on bills that are still unpaid to vendors even
-    # though the invoice was paid (cash is in, vendor still needs check).
-    # The banner label (Paid m/d/yy vs Unpaid) makes the GC-payment state
-    # visible per invoice group.
-    #
-    # `rows` here is (bill, project)-grain — each row already represents
-    # one bill's chunk for one project (pro-rated for multi-project bills).
-    items = [
-        r for r in rows
-        if (r.get("division") or "").upper() == division.upper()
-        and r.get("auto_status") != STATUS_PAID
-        and (r.get("bill_balance") or 0) > 0
-    ]
-    if not items:
-        ws.cell(row=2, column=1, value=f"(no open {division} bills)").font = Font(italic=True)
-        return 0
-
-    # Group: project → invoice (or None for awaiting)
-    by_proj: Dict[str, Dict[Optional[str], List[dict]]] = defaultdict(lambda: defaultdict(list))
-    for r in items:
-        proj = r.get("project_num") or "(no project)"
-        inv_key = r.get("inv_id") or None  # None = no matched invoice yet
-        by_proj[proj][inv_key].append(r)
-
-    cur_row = 2
-    grand_open = 0.0
-
-    # Stable project order: prefer numeric sort within division code
-    def _proj_sort(p: str) -> Tuple:
-        m = re.match(r"^([A-Z]+)(\d+)", p)
-        if m:
-            return (m.group(1), int(m.group(2)))
-        return ("ZZ", 0, p)
-
-    for proj in sorted(by_proj.keys(), key=_proj_sort):
-        inv_buckets = by_proj[proj]
-        proj_rows = [r for bucket in inv_buckets.values() for r in bucket]
-        # Each row is one bill-chunk for this project — no more dedup needed
-        # (collapse_rows already pro-rated multi-project bills). Just sum.
-        proj_open = sum(float(r.get("bill_balance") or 0) for r in proj_rows)
-        grand_open += proj_open
-
-        # ─── Project banner row ───
-        # Layout: merge cols 1 .. label_end_col for the project name, then
-        # "Open balance: $X" at the rightmost visible col. Deep navy + 14pt
-        # white bold + 26pt row height + thick bottom border.
-        addr = _project_address(proj_rows)
-        banner = f"{proj}" + (f"  —  {addr}" if addr else "")
-        ws.cell(row=cur_row, column=1, value=banner)
-        ws.merge_cells(start_row=cur_row, start_column=1,
-                       end_row=cur_row, end_column=DIVISION_BANNER_LABEL_END_COL)
-        # Open balance label at the right edge of the bar
-        bo = ws.cell(row=cur_row, column=DIVISION_LAST_VISIBLE_COL,
-                     value=_open_bal_label(proj_open))
-        bo.alignment = ALIGN_RIGHT
-        for c_i in range(1, len(DIVISION_HEADERS) + 1):
-            cell = ws.cell(row=cur_row, column=c_i)
-            cell.fill = PROJECT_BANNER_FILL
-            cell.font = PROJECT_BANNER_FONT
-            cell.border = PROJECT_BANNER_BORDER
-        # Left-align the merged title cell explicitly
-        ws.cell(row=cur_row, column=1).alignment = Alignment(
-            horizontal="left", vertical="center", indent=1
-        )
-        # Right-align the open-balance cell explicitly (re-apply after the
-        # blanket banner-styling loop above replaced the font/alignment).
-        bo.alignment = Alignment(horizontal="right", vertical="center", indent=1)
-        ws.row_dimensions[cur_row].height = PROJECT_BANNER_HEIGHT
-        ws.row_dimensions[cur_row].outline_level = 0
-        cur_row += 1
-
-        # Inv groups: Awaiting first, then unpaid invoices newest→oldest.
-        # Use ordinal negation so a single ascending sort yields the right
-        # order:  awaiting(rank 0) → newest invoice (rank 1, -ord large)
-        # → oldest invoice (rank 1, -ord small).
-        def _inv_sort(k: Optional[str]) -> Tuple:
-            if k is None:
-                return (0, 0)  # awaiting first
-            sample = inv_buckets[k][0]
-            inv_date = sample.get("inv_date") or dt.date(1900, 1, 1)
-            return (1, -inv_date.toordinal())  # newest first within unpaid
-
-        for inv_key in sorted(inv_buckets.keys(), key=_inv_sort):
-            bucket = inv_buckets[inv_key]
-            # Each row in the bucket is one bill-chunk for this project →
-            # invoice. No dedup needed; just sum the pre-aggregated balances.
-            bucket_open = sum(float(r.get("bill_balance") or 0) for r in bucket)
-
-            # ─── Sub-banner row (Awaiting Invoice OR Invoice header) ───
-            # 4-state color routing by GC funding state (Ted 2026-06-04):
-            #   no invoice yet               → GREY
-            #   unpaid (no GC payment)       → PINK
-            #   partial paid (payment + bal) → YELLOW
-            #   paid (payment + ~0 balance)  → GREEN
-            is_awaiting = (inv_key is None)
-
-            if is_awaiting:
-                label = "⚠ Awaiting invoice"
-                banner_fill = AWAITING_BANNER_FILL
-                banner_font = AWAITING_BANNER_FONT
-                banner_height = AWAITING_BANNER_HEIGHT
-            else:
-                inv_sample = bucket[0]
-                inv_doc = inv_sample.get("inv_doc", "") or ""
-                inv_memo = inv_sample.get("inv_memo", "") or ""
-                inv_date = inv_sample.get("inv_date")
-                inv_total = inv_sample.get("inv_total")
-                inv_pay_date = inv_sample.get("payment_date")
-                inv_balance = float(inv_sample.get("inv_balance") or 0)
-
-                if not isinstance(inv_pay_date, dt.date):
-                    # No GC payment recorded → unpaid (pink)
-                    banner_fill = INVOICE_BANNER_FILL
-                    banner_font = INVOICE_BANNER_FONT
-                elif inv_balance > INV_BALANCE_PAID_THRESHOLD:
-                    # GC paid something but balance remains → partial (yellow)
-                    banner_fill = INVOICE_PARTIAL_FILL
-                    banner_font = INVOICE_PARTIAL_FONT
-                else:
-                    # GC paid in full → paid (green)
-                    banner_fill = INVOICE_PAID_FILL
-                    banner_font = INVOICE_PAID_FONT
-                banner_height = INVOICE_BANNER_HEIGHT
-                # Format per Ted 2026-06-01:
-                #   "{draw} - {m/d/yy} - ${amount} ({period}) | Paid {m/d/yy}"
-                draw_name, period_text = _parse_invoice_memo(inv_memo)
-                if not draw_name:
-                    draw_name = f"Invoice {inv_doc}"
-                inv_date_str = f"{inv_date:%-m/%-d/%y}" if isinstance(inv_date, dt.date) else ""
-                amt_str = f"${inv_total:,.0f}" if inv_total else ""
-                pay_str = (f"Paid {inv_pay_date:%-m/%-d/%y}"
-                           if isinstance(inv_pay_date, dt.date) else "Unpaid")
-                parts = [draw_name]
-                if inv_date_str:
-                    parts.append(inv_date_str)
-                if amt_str:
-                    parts.append(amt_str)
-                head = " - ".join(parts)
-                period_part = f" ({period_text})" if period_text else ""
-                label = f"{head}{period_part} | {pay_str}"
-
-            # ↗ link to the QBO invoice goes in col A (same as the bill rows'
-            # "Open" button); the label fills the merged cols 2..label_end.
-            # Awaiting rows have no invoice → no icon, label starts at col 1.
-            # Ted 2026-06-18.
-            if not is_awaiting and inv_key:
-                _inv_url = QBO_INVOICE_URL_TEMPLATE.format(inv_id=inv_key)
-                ws.cell(row=cur_row, column=1, value=f'=HYPERLINK("{_inv_url}","↗")')
-                ws.cell(row=cur_row, column=2, value=label)
-                ws.merge_cells(start_row=cur_row, start_column=2,
-                               end_row=cur_row, end_column=DIVISION_BANNER_LABEL_END_COL)
-                _label_col = 2
-            else:
-                ws.cell(row=cur_row, column=1, value=label)
-                ws.merge_cells(start_row=cur_row, start_column=1,
-                               end_row=cur_row, end_column=DIVISION_BANNER_LABEL_END_COL)
-                _label_col = 1
-            # "AP Open Balance: $X" at the right edge of the colored bar
-            sb = ws.cell(row=cur_row, column=DIVISION_LAST_VISIBLE_COL,
-                         value=_open_bal_label(bucket_open))
-            sb.alignment = ALIGN_RIGHT
-            for c_i in range(1, len(DIVISION_HEADERS) + 1):
-                cell = ws.cell(row=cur_row, column=c_i)
-                cell.fill = banner_fill
-                cell.font = banner_font
-            # Center the ↗ icon in col A (matches the bill "Open" button).
-            if _label_col == 2:
-                ws.cell(row=cur_row, column=1).alignment = Alignment(
-                    horizontal="center", vertical="center"
-                )
-            # Left-align label cell with indent so it doesn't sit flush
-            ws.cell(row=cur_row, column=_label_col).alignment = Alignment(
-                horizontal="left", vertical="center", indent=2
-            )
-            # Re-apply right-align to the open-balance cell after the
-            # blanket banner-styling loop reset it.
-            sb.alignment = Alignment(horizontal="right", vertical="center", indent=1)
-            ws.row_dimensions[cur_row].height = banner_height
-            ws.row_dimensions[cur_row].outline_level = 1
-            cur_row += 1
-
-            # ─── Bill rows (one per bill chunk for this project) ───
-            # Sort within bucket: vendor → bill date for stable reading.
-            bucket_sorted = sorted(
-                bucket,
-                key=lambda r: ((r.get("vendor") or "").upper(),
-                               r.get("bill_date") or dt.date(1900, 1, 1),
-                               r.get("bill_doc", "")),
-            )
-            for r in bucket_sorted:
-                approved = bool(r.get("approved"))
-                lien_val = ((edits or {}).get(r.get("key", ""), {}).get("Lien", "")
-                            or "")
-                values = [
-                    _qbo_link(r.get("bill_id", "")),                # Open
-                    r.get("vendor", ""),
-                    r.get("bill_doc", ""),
-                    r.get("bill_date"),
-                    r.get("bill_balance"),                          # chunk's share
-                    r.get("line_amount"),                           # chunk's line sum
-                    display_status(r.get("auto_status", "")),
-                    approved_text(approved),
-                    lien_val,                                       # Lien (echoed from Bills)
-                    r.get("account", ""),
-                    r.get("line_desc", ""),
-                    r.get("key", ""),
-                ]
-                kinds = ["link", "text", "text", "date", "money", "money",
-                         "text", "text", "text", "text", "text", "text"]
-                for c_i, (val, kind) in enumerate(zip(values, kinds), start=1):
-                    c = ws.cell(row=cur_row, column=c_i, value=val)
-                    _format_data_cell(c, kind)
-                # Color the Lien cell inline (division sheets carry no CF):
-                # amber = Notice Sent, red bold = Lien Filed, green = Released.
-                _lien_fill = {
-                    LIEN_NOTICE: (CF_LIEN_NOTICE, "000000"),
-                    LIEN_FILED: (CF_LIEN_FILED, "FFFFFF"),
-                    LIEN_RELEASED: (CF_LIEN_RELEASED, "000000"),
-                }.get(lien_val)
-                if _lien_fill:
-                    _hex, _font = _lien_fill
-                    lc = ws.cell(row=cur_row, column=9)
-                    lc.fill = PatternFill(patternType="solid", fgColor=Color(rgb=f"FF{_hex}"))
-                    lc.font = Font(bold=True, color=_font)
-                ws.row_dimensions[cur_row].outline_level = 2
-                cur_row += 1
-
-    # Grand total — same anchor as banner subtotals: label merged across
-    # cols 1..label_end_col, "Open balance: $X" at the rightmost visible col.
-    cur_row += 1
-    ws.cell(row=cur_row, column=1, value=f"GRAND TOTAL ({division})").font = SUBTOTAL_FONT
-    ws.merge_cells(start_row=cur_row, start_column=1,
-                   end_row=cur_row, end_column=DIVISION_BANNER_LABEL_END_COL)
-    gt = ws.cell(row=cur_row, column=DIVISION_LAST_VISIBLE_COL,
-                 value=_open_bal_label(grand_open))
-    gt.alignment = Alignment(horizontal="right", vertical="center", indent=1)
-    gt.font = SUBTOTAL_FONT
-
-    # Outline default: show projects + invoices, collapse bills (level 2)
-    ws.sheet_properties.outlinePr.summaryBelow = False
-
-    return len(items)
-
-
 # ─────────────────────── Liens sheet (live register of liened bills) ───────────────────────
 
 # A LIVE view, not a sync-time snapshot. Each row pulls from the Bills sheet
@@ -1720,6 +1318,71 @@ def build_inventory_sheet(ws, line_rows: List[dict]
     )
     return n, bill_id_to_row
 
+
+# ─────────────────────── Bill payments (AP cash-out) ───────────────────────
+# Rather than a separate sheet, the payment that paid each bill is shown as
+# Pay Ref # / Pay Date / Pay Method columns on the Bills sheet, so the clerk can
+# just filter by check # or pay date (Ted 2026-07-13). No out-of-window bill
+# fetch and no second sheet — we only annotate bills already loaded. The map is
+# built once per run and read by _write_bill_row via this module global.
+_BILL_PAY_MAP: Dict[str, dict] = {}
+
+
+def _bp_method(bp: dict) -> str:
+    """Normalize a BillPayment's PayType to a short label the clerk reads as
+    'which statement do I open'."""
+    pt = (bp.get("PayType") or "").strip().lower()
+    if pt == "check":
+        return "Check"
+    if pt in ("creditcard", "cc"):
+        return "CC"
+    if pt == "cash":
+        return "Cash"
+    return (bp.get("PayType") or "?")
+
+
+def _bp_linked_bills(bp: dict) -> List[Tuple[str, Optional[float]]]:
+    """Return [(bill_id, amount_applied)] for a BillPayment. QBO puts the link
+    either on each Line (with the applied Amount) or at the top level (no
+    amount). Line-level wins; top-level fills any gap with amount None."""
+    seen: Dict[str, Optional[float]] = {}
+    for ln in bp.get("Line") or []:
+        amt = float(ln.get("Amount") or 0)
+        for lk in ln.get("LinkedTxn") or []:
+            if lk.get("TxnType") == "Bill" and lk.get("TxnId"):
+                seen[lk["TxnId"]] = amt
+    for lk in bp.get("LinkedTxn") or []:
+        if lk.get("TxnType") == "Bill" and lk.get("TxnId") and lk["TxnId"] not in seen:
+            seen[lk["TxnId"]] = None
+    return list(seen.items())
+
+
+def build_bill_payment_map(bill_payments: List[dict]) -> Dict[str, dict]:
+    """Map each paid bill_id -> {ref, date, method} from its BillPayment(s).
+    Checks show the check # (DocNumber); CC refs are left blank (a generic
+    label is no lookup key -- pay date + vendor + amount locate it). A bill paid
+    by more than one payment shows the latest date and '(multiple)'."""
+    acc: Dict[str, List[Tuple[Optional[dt.date], str, str]]] = defaultdict(list)
+    for bp in bill_payments:
+        pay_date = parse_date(bp.get("TxnDate"))
+        method = _bp_method(bp)
+        ref = (bp.get("DocNumber") or "").strip() if method == "Check" else ""
+        for bid, _amt in _bp_linked_bills(bp):
+            acc[bid].append((pay_date, method, ref))
+    out: Dict[str, dict] = {}
+    for bid, lst in acc.items():
+        lst.sort(key=lambda t: t[0] or dt.date.min)
+        if len(lst) == 1:
+            d, m, rf = lst[0]
+            out[bid] = {"date": d, "method": m, "ref": rf}
+        else:
+            methods = {t[1] for t in lst}
+            out[bid] = {
+                "date": lst[-1][0],
+                "method": methods.pop() if len(methods) == 1 else "(multiple)",
+                "ref": "(multiple)",
+            }
+    return out
 
 # ─────────────────────── QBO Audit sheet ───────────────────────
 
@@ -2475,30 +2138,39 @@ def main() -> int:
     print("→ rotating backup …")
     rotate_backup(OUTPUT_PATH)
 
-    # Three derived row-sets from the line-level data:
+    # Two derived row-sets from the line-level data:
     #   • bills_view_rows  — bill-grain (one row per bill). Multi-project
     #                         bills show Project# = "(multiple)".
-    #   • div_view_rows    — (bill, project)-grain. One row per project chunk,
-    #                         pro-rated for multi-project bills.
     #   • all_rows         — line-level. Inventory + Audit sheets use this.
+    # (The per-division MFD/RP/CP grain was dropped 2026-07-13 — the Project #
+    # already lives on the Bills sheet and the division sheets went unused.)
     print("→ collapsing rows for display …")
     bills_view_rows = collapse_rows(all_rows, grain="bill")
-    div_view_rows   = collapse_rows(all_rows, grain="bill_project")
     n_multi = len(multi_project_bill_ids(all_rows))
-    print(f"  {len(bills_view_rows)} bills · {len(div_view_rows)} bill-project chunks "
-          f"· {n_multi} multi-project bills routed to Inventory")
+    print(f"  {len(bills_view_rows)} bills · "
+          f"{n_multi} multi-project bills routed to Inventory")
+
+    # Bill payments (AP cash-out) → Pay Ref #/Date/Method columns on the Bills
+    # sheet (no separate sheet, no out-of-window bill fetch — we only annotate
+    # bills already loaded). One BillPayment fetch since the cutoff, then a
+    # bill_id → payment map that _write_bill_row reads via the module global.
+    global _BILL_PAY_MAP
+    print(f"→ fetching bill payments since {PAID_CUTOFF_DATE} …")
+    bill_payments = query_all(qbo_access, qbo_cid, "BillPayment",
+                              where=f"TxnDate >= '{PAID_CUTOFF_DATE}'")
+    _BILL_PAY_MAP = build_bill_payment_map(bill_payments)
+    print(f"  {len(bill_payments)} bill payments → {len(_BILL_PAY_MAP)} bills annotated")
 
     print("→ building workbook …")
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     wb = Workbook()
     wb.remove(wb.active)
     ws_bills = wb.create_sheet("Bills")
-    ws_mfd   = wb.create_sheet("MFD")
-    ws_rp    = wb.create_sheet("RP")
-    ws_cp    = wb.create_sheet("CP")
     ws_liens = wb.create_sheet("Liens")
     ws_inv   = wb.create_sheet("Inventory")
     ws_audit = wb.create_sheet("QBO Audit")
+    # MFD/RP/CP division sheets removed 2026-07-13 (unused; Project # is on Bills).
+    # Bill payments show as Pay columns on Bills, not a separate sheet (2026-07-13).
 
     # Render order matters: build Inventory FIRST so we have the
     # {bill_id → row} anchor map to wire the Bills sheet hyperlinks.
@@ -2512,15 +2184,11 @@ def main() -> int:
         inv_anchor_map=inv_anchor_map,    # hyperlink "(multiple)" → Inventory
         lien_editable=True,               # Bills is the only sheet with the Lien tag + dropdown
     )
-    n_mfd = build_division_sheet(ws_mfd, div_view_rows, "MFD", edits)
-    n_rp  = build_division_sheet(ws_rp,  div_view_rows, "RP", edits)
-    n_cp  = build_division_sheet(ws_cp,  div_view_rows, "CP", edits)
     build_liens_sheet(ws_liens)       # live FILTER view of tblBills (Lien set)
     n_audit = build_audit_sheet(ws_audit, all_rows,
                                 vendor_root=vendor_root, vendor_map=vendor_map)
     print(f"  Bills: {n_bills} bills (open + paid since {PAID_CUTOFF_DATE})")
-    print(f"  MFD: {n_mfd}  ·  RP: {n_rp}  ·  CP: {n_cp}  ·  "
-          f"Liens: live view  ·  Inventory: {n_inv} lines  ·  Audit: {n_audit} flagged")
+    print(f"  Liens: live view  ·  Inventory: {n_inv} lines  ·  Audit: {n_audit} flagged")
 
     wb.save(OUTPUT_PATH)
     post_process_xlsx(OUTPUT_PATH)
