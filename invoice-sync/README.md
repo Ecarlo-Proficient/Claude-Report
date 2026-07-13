@@ -1,4 +1,10 @@
-# Automation Worker — Folder Guide & Onboarding
+# Invoice Sync — Folder Guide & Onboarding
+
+> **Renamed from `automation-worker/` in the 2026-07-13 restructure.** This
+> folder now holds exactly one tool: the QBO → Notion invoice sync (plus its
+> own config/clients/verifiers). The WIP readers moved to `../wip/`; shared
+> code (QBO vault, paths) moved to `../shared/`; the Field Log flow was
+> removed entirely.
 
 **Read this first.** This folder looks busy (20+ scripts), but most of them serve
 **one** live job: the **AR Invoice Sync** (QuickBooks → Notion). The rest are
@@ -37,7 +43,7 @@ That's a shell alias that runs `run_invoice_sync.sh`, which launches the viewer
 when you're in a terminal. To preview without changing anything:
 
 ```
-cd "/Users/sebas/Documents/Claude/Projects/Automate Concrete Business/automation-worker"
+cd "/Users/sebas/Documents/Claude/Projects/Automate Concrete Business/invoice-sync"
 python3 sync_view.py --dry-run
 ```
 
@@ -55,7 +61,7 @@ For a real run without the visual wrapper: `python3 run_invoice_sync.py`.
 ## If it breaks — first moves (in order)
 
 ```
-cd "/Users/sebas/Documents/Claude/Projects/Automate Concrete Business/automation-worker"
+cd "/Users/sebas/Documents/Claude/Projects/Automate Concrete Business/invoice-sync"
 python3 doctor.py
 ```
 
@@ -76,10 +82,9 @@ auth (see Troubleshooting in Part 2).
 
 - **Field Log sync** — **removed entirely (2026-07-13).** The Bid List → Field
   Log / Project Plans flow is gone from the codebase by decision.
-- **WIP → Notion** — retired. WIP now lives in Excel on SharePoint.
-
-So if someone points at `wip_sync.py` and asks "what runs this?" — the answer
-is **nothing, currently.**
+- **WIP → Notion** — retired. WIP now lives in Excel on SharePoint; the WIP
+  readers live in `../wip/` (they moved there 2026-07-13, and the old
+  `wip_sync.py` stub + its launchd plist were deleted).
 
 ---
 
@@ -110,7 +115,6 @@ you never run directly.** Only a handful are meant to be executed.
 | `doctor.py` | Preflight diagnostics (config, Notion secret, Notion auth, Notion DB reachability). |
 | `setup_keychain.py` | One-time: store the Notion secret + Teams webhook in Keychain. |
 | `test_teams_webhook.py` | Fire a fake Teams card to test webhook wiring. |
-| `wip_sync.py` | **Retired stub** — does nothing but explain the WIP pivot. |
 
 **Libraries — imported by the above, never run directly:**
 
@@ -125,7 +129,6 @@ you never run directly.** Only a handful are meant to be executed.
 | `version.py` | Version identity (Docker v1.0.0 / Mac mvN). |
 | `teams_notify.py` | Builds + posts Teams cards: MFD payments **and** failure alerts. |
 | `export_invoices_xlsx.py` | Writes the read-only `Open_Invoices.xlsx` mirror. |
-| `wip_excel_guard.py` | Safety rail that limits WIP Excel writes to the "Test" sheet (used by the root `wip/` tools). |
 
 ## Invoice sync — end to end
 
@@ -159,7 +162,7 @@ alongside this folder guide).
 ## First-time setup on a new Mac
 
 ```
-cd "/Users/sebas/Documents/Claude/Projects/Automate Concrete Business/automation-worker"
+cd "/Users/sebas/Documents/Claude/Projects/Automate Concrete Business/invoice-sync"
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
@@ -185,16 +188,6 @@ On first run macOS asks to allow Python to read the Keychain key — click
 
 - `verify_invoices.py` — QBO vs. Notion, invoice by invoice → markdown report in `reports/`.
 - `verify_excel_export.py` — confirms the OneDrive Excel mirror matches Notion + QBO.
-
-## Dormant / retired — don't let these confuse you
-
-- **Field Log flow** — **removed entirely 2026-07-13** (`field_log_sync.py`,
-  `project_plans_sync.py`, `verify_field_log.py` deleted, config fields dropped).
-  The Notion Field Log databases themselves are outside this repo.
-- **WIP** (`wip_sync.py`): a **stub** that just documents the pivot — the old
-  QBO→Notion WIP sync is retired; WIP now lives in Excel on SharePoint (the real
-  WIP tools are in the project's `../wip/` folder). `wip_excel_guard.py` is a
-  safety rail those Excel tools use.
 
 ## Gotchas worth knowing (the load-bearing ones)
 

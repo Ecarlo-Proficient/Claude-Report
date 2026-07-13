@@ -23,15 +23,26 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 
-# Project root = folder this file lives in
+# Project root = folder this file lives in (invoice-sync/)
 PROJECT_ROOT = Path(__file__).resolve().parent
 
-# Load .env (non-secret config) from project root
-load_dotenv(PROJECT_ROOT / ".env")
+# Pre-2026-07 layout: this folder was automation-worker/. A git pull renames
+# the tracked files but leaves untracked .env / state/ behind in the old
+# folder — fall back there so the sync keeps working until they're moved
+# (then delete the old folder).
+_LEGACY_DIR = PROJECT_ROOT.parent / "automation-worker"
+
+# Load .env (non-secret config) — new location first, legacy fallback.
+_ENV_FILE = PROJECT_ROOT / ".env"
+if not _ENV_FILE.exists() and (_LEGACY_DIR / ".env").exists():
+    _ENV_FILE = _LEGACY_DIR / ".env"
+load_dotenv(_ENV_FILE)
 
 # Pi-only secrets file. On Mac this file should NOT exist — Mac uses Keychain.
 # Kept separate from .env so backup / rsync rules can exclude it explicitly.
 _SECRETS_FILE = PROJECT_ROOT / ".env.secrets"
+if not _SECRETS_FILE.exists() and (_LEGACY_DIR / ".env.secrets").exists():
+    _SECRETS_FILE = _LEGACY_DIR / ".env.secrets"
 if _SECRETS_FILE.exists():
     load_dotenv(_SECRETS_FILE, override=True)
 
@@ -198,7 +209,13 @@ def load_config() -> Config:
     # State dir holds the sync watermark + CDC deletion watermark. Override with
     # STATE_DIR (Docker points this at a persistent volume, e.g. /data/state, so
     # the CDC changedSince watermark survives a container recreate).
-    state_dir = Path(os.getenv("STATE_DIR", str(PROJECT_ROOT / "state")))
+    # Legacy fallback: if state/ hasn't been moved out of automation-worker/
+    # yet, keep using it there — losing the CDC watermark would re-scan
+    # deletions from scratch.
+    _default_state = PROJECT_ROOT / "state"
+    if not _default_state.exists() and (_LEGACY_DIR / "state").exists():
+        _default_state = _LEGACY_DIR / "state"
+    state_dir = Path(os.getenv("STATE_DIR", str(_default_state)))
     # Logs live OUTSIDE the project folder (privacy: project folder is
     # AI-session-visible). Override with LOG_DIR env var (e.g. Docker).
     log_dir = Path(

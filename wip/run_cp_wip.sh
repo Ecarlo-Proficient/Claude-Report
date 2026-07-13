@@ -6,7 +6,7 @@
 # Interactive (a person ran it): the reader's own styled output is the viewer.
 # Non-interactive (piped / redirected): banner + tee to a rotating log.
 set -u
-DIR="/Users/sebas/Documents/Claude/Projects/Automate Concrete Business/automation-worker"
+DIR="/Users/sebas/Documents/Claude/Projects/Automate Concrete Business/wip"
 cd "$DIR"
 
 if [ -t 1 ]; then
