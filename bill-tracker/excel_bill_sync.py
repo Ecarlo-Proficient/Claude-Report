@@ -984,7 +984,10 @@ def _finalize_sheet(ws, table_name: str, last_row: int,
     tbl.tableStyleInfo = TableStyleInfo(
         name="TableStyleLight15",
         showFirstColumn=False, showLastColumn=False,
-        showRowStripes=True, showColumnStripes=False,
+        # Row stripes OFF: the table's cosmetic grey/white banding collided with
+        # grey = "Done" in the reconciliation colors. White by default now means
+        # "pipeline" (matches the legend); grey appears only on real done rows.
+        showRowStripes=False, showColumnStripes=False,
     )
 
     # Default view = the "what do we still owe" working set: Pay Status Unpaid /
