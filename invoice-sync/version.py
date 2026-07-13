@@ -20,8 +20,9 @@ from pathlib import Path
 # Mac-only lineage version — bump this on Mac-side-only changes (e.g. "mv2").
 MAC_VERSION = "mv1"
 
-# The true v1 release ships in Docker; the image sets APP_VERSION=1.0.0.
-DOCKER_DEFAULT = "1.0.0"
+# The release ships in Docker; the image bakes in APP_VERSION (1.1.0 = the
+# 2026-07 restructure: automation-worker/ → invoice-sync/, vault → shared/).
+DOCKER_DEFAULT = "1.1.0"
 
 
 def in_docker() -> bool:

@@ -1,5 +1,5 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# Dockerfile — automation-worker / invoice sync (Phase 1)
+# Dockerfile — invoice-sync (Phase 1)
 #
 # Phase 1 scope: QBO → Notion invoice sync only. Excel/OneDrive export is
 # disabled inside the container via SKIP_EXCEL_EXPORT=1 (the Mac side still
@@ -10,12 +10,13 @@
 # ─────────────────────────────────────────────────────────────────────────────
 FROM python:3.11-slim AS base
 
-# Container metadata. This image is the v1.0.0 "true release"; the Mac-only
-# runtime is the separate "mvN" lineage (see automation-worker/version.py).
+# Container metadata. v1.1.0 = the 2026-07 repo restructure (code identical,
+# paths renamed: automation-worker/ → invoice-sync/, vault → shared/). The
+# Mac-only runtime is the separate "mvN" lineage (see invoice-sync/version.py).
 LABEL org.opencontainers.image.title="invoice-sync"
 LABEL org.opencontainers.image.description="QBO → Notion invoice sync worker"
-LABEL org.opencontainers.image.source="automation-worker/"
-LABEL org.opencontainers.image.version="1.0.0"
+LABEL org.opencontainers.image.source="invoice-sync/"
+LABEL org.opencontainers.image.version="1.1.0"
 
 # Avoid Python bytecode and unbuffered stdout (logs flush immediately to docker logs)
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -40,12 +41,12 @@ RUN groupadd --gid ${APP_GID} app \
 WORKDIR /app
 
 # Install Python deps first (better layer caching)
-COPY automation-worker/requirements.txt /app/requirements.txt
+COPY invoice-sync/requirements.txt /app/requirements.txt
 RUN pip install -r /app/requirements.txt
 
-# Copy the cross-platform vault (project root) and the worker code
-COPY qbo_vault.py                /app/qbo_vault.py
-COPY automation-worker/          /app/automation-worker/
+# Copy the shared package (vault, paths, qbo_api) and the sync code
+COPY shared/                     /app/shared/
+COPY invoice-sync/               /app/invoice-sync/
 COPY docker/entrypoint.sh        /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
@@ -56,7 +57,7 @@ RUN mkdir -p /data/state \
  && chown -R app:app /app /data
 
 USER app
-WORKDIR /app/automation-worker
+WORKDIR /app/invoice-sync
 
 # Defaults — override per environment via .env file or docker-compose env vars.
 # INVOICE_EXPORT_PATH points at a volume-mounted folder that Synology Cloud Sync
@@ -65,7 +66,7 @@ WORKDIR /app/automation-worker
 # mirror during coexistence testing). Flip SKIP_EXCEL_EXPORT to "" once the
 # OneDrive bridge (Cloud Sync → /data/onedrive) is validated. INVOICE_EXPORT_PATH
 # is pre-staged for that day.
-ENV APP_VERSION=1.0.0 \
+ENV APP_VERSION=1.1.0 \
     QBO_SECRETS_FILE=/data/qbo_secrets.json \
     STATE_DIR=/data/state \
     SKIP_EXCEL_EXPORT=1 \
