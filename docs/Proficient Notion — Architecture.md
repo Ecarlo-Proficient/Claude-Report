@@ -1,6 +1,8 @@
 # Proficient Notion — Architecture Plan
 
 > **⚠️ Partially superseded as of 2026-04-28.** This doc describes a 4-tier data model with **Common Bid List** as a Tier 1 lookup database for clerks. That database was deleted 2026-04-28 — Ted decided clerks need direct Bid List access (they need bid amounts, lead status, etc. to do their jobs). The remaining tier separation is now just Bid List (everyone) + Field Log (super-restricted view, no financials). The Common Bid List sections below remain as historical context. The Field Log architecture and the Bid List → Field Log sync logic still apply.
+>
+> **⚠️ Further superseded as of 2026-07-13.** The **Field Log flow was dropped entirely** — the Bid List → Field Log / Project Plans sync code and its templates were removed from the automation repo by decision. Field Log sections below are historical context only.
 
 ## Design Journey — why we landed here
 

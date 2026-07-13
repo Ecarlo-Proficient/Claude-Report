@@ -39,10 +39,10 @@ def _check_config() -> Tuple[bool, Config]:
         _fail(f"Could not load config: {e}")
         return False, None  # type: ignore
 
-    _ok(f"Bid List DS ID: {cfg.bid_list_ds_id}")
-    _ok(f"RP Field Log DS ID: {cfg.rp_field_log_ds_id}")
-    _ok(f"CP Field Log DS ID: {cfg.cp_field_log_ds_id}")
-    _ok(f"Project Plans DS ID: {cfg.project_plans_ds_id}")
+    _ok(f"Invoice Res/Com DS ID: {cfg.invoice_res_com_ds_id}")
+    _ok(f"Invoice MFD DS ID: {cfg.invoice_mfd_ds_id}")
+    _ok(f"Customer List DS ID: {cfg.customer_list_ds_id}")
+    _ok(f"MFD Client List DS ID: {cfg.mfd_client_list_ds_id}")
     _ok(f"State dir: {cfg.state_dir}")
     _ok(f"Log dir: {cfg.log_dir}")
     _ok(f"Overlap seconds: {cfg.overlap_seconds}")
@@ -108,10 +108,10 @@ def main() -> int:
         return 1
 
     all_ok = True
-    all_ok &= _check_data_source(client, "Bid List", cfg.bid_list_ds_id)
-    all_ok &= _check_data_source(client, "RP Field Log", cfg.rp_field_log_ds_id)
-    all_ok &= _check_data_source(client, "CP Field Log", cfg.cp_field_log_ds_id)
-    all_ok &= _check_data_source(client, "Project Plans", cfg.project_plans_ds_id)
+    all_ok &= _check_data_source(client, "Invoice Tracker (Res/Com)", cfg.invoice_res_com_ds_id)
+    all_ok &= _check_data_source(client, "Invoice Tracker (MFD)", cfg.invoice_mfd_ds_id)
+    all_ok &= _check_data_source(client, "Customer List", cfg.customer_list_ds_id)
+    all_ok &= _check_data_source(client, "MFD Client List", cfg.mfd_client_list_ds_id)
 
     print()
     print("All checks passed." if all_ok else "Some checks failed.")

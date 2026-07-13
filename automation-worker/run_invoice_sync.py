@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-Invoice sync entrypoint — separate from sync.py because the cadence differs.
+Invoice sync entrypoint.
 
-sync.py runs the Bid List → Field Log flow every 5 min.
 run_invoice_sync.py runs the QBO → Invoice Tracker flow every 15 min
 (launchd: com.proficient.invoice-sync.plist).
 

@@ -74,12 +74,12 @@ auth (see Troubleshooting in Part 2).
 
 ## What this folder does NOT do anymore
 
-- **Field Log sync** — dormant. Its driver was removed; the files remain but
-  nothing runs them. (See "Dormant / retired" in Part 2.)
+- **Field Log sync** — **removed entirely (2026-07-13).** The Bid List → Field
+  Log / Project Plans flow is gone from the codebase by decision.
 - **WIP → Notion** — retired. WIP now lives in Excel on SharePoint.
 
-So if someone points at `field_log_sync.py` or `wip_sync.py` and asks "what runs
-this?" — the answer is **nothing, currently.**
+So if someone points at `wip_sync.py` and asks "what runs this?" — the answer
+is **nothing, currently.**
 
 ---
 
@@ -110,7 +110,6 @@ you never run directly.** Only a handful are meant to be executed.
 | `doctor.py` | Preflight diagnostics (config, Notion secret, Notion auth, Notion DB reachability). |
 | `setup_keychain.py` | One-time: store the Notion secret + Teams webhook in Keychain. |
 | `test_teams_webhook.py` | Fire a fake Teams card to test webhook wiring. |
-| `verify_field_log.py` | Read-only Field Log checker — **part of the dormant flow.** |
 | `wip_sync.py` | **Retired stub** — does nothing but explain the WIP pivot. |
 
 **Libraries — imported by the above, never run directly:**
@@ -126,8 +125,6 @@ you never run directly.** Only a handful are meant to be executed.
 | `version.py` | Version identity (Docker v1.0.0 / Mac mvN). |
 | `teams_notify.py` | Builds + posts Teams cards: MFD payments **and** failure alerts. |
 | `export_invoices_xlsx.py` | Writes the read-only `Open_Invoices.xlsx` mirror. |
-| `field_log_sync.py` | Field Log merge logic — **dormant flow** (only `verify_field_log.py` imports it now). |
-| `project_plans_sync.py` | Project Plans logic — **dormant, unused.** |
 | `wip_excel_guard.py` | Safety rail that limits WIP Excel writes to the "Test" sheet (used by the root `wip/` tools). |
 
 ## Invoice sync — end to end
@@ -188,16 +185,12 @@ On first run macOS asks to allow Python to read the Keychain key — click
 
 - `verify_invoices.py` — QBO vs. Notion, invoice by invoice → markdown report in `reports/`.
 - `verify_excel_export.py` — confirms the OneDrive Excel mirror matches Notion + QBO.
-- `verify_field_log.py` — Field Log consistency (part of the dormant flow).
 
 ## Dormant / retired — don't let these confuse you
 
-- **Field Log flow** (`field_log_sync.py`, `project_plans_sync.py`): used to sync
-  the Bid List into the RP/CP Field Logs and Project Plans on a 5-min cadence via
-  `sync.py`. **`sync.py` was deleted**, so nothing drives these now.
-  `field_log_sync.py` is still imported by the read-only `verify_field_log.py`;
-  `project_plans_sync.py` is unused. **Decision pending:** retire them or rebuild a
-  driver. Don't assume they run.
+- **Field Log flow** — **removed entirely 2026-07-13** (`field_log_sync.py`,
+  `project_plans_sync.py`, `verify_field_log.py` deleted, config fields dropped).
+  The Notion Field Log databases themselves are outside this repo.
 - **WIP** (`wip_sync.py`): a **stub** that just documents the pivot — the old
   QBO→Notion WIP sync is retired; WIP now lives in Excel on SharePoint (the real
   WIP tools are in the project's `../wip/` folder). `wip_excel_guard.py` is a

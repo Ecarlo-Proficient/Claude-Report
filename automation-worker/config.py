@@ -40,10 +40,6 @@ if _SECRETS_FILE.exists():
 class Config:
     # Notion
     notion_secret: str
-    bid_list_ds_id: str
-    rp_field_log_ds_id: str
-    cp_field_log_ds_id: str
-    project_plans_ds_id: str
 
     # Invoice tracker (QBO → Notion)
     invoice_res_com_ds_id: str
@@ -213,10 +209,6 @@ def load_config() -> Config:
 
     return Config(
         notion_secret=_get_notion_secret(),
-        bid_list_ds_id=_require_env("BID_LIST_DS_ID"),
-        rp_field_log_ds_id=_require_env("RP_FIELD_LOG_DS_ID"),
-        cp_field_log_ds_id=_require_env("CP_FIELD_LOG_DS_ID"),
-        project_plans_ds_id=_require_env("PROJECT_PLANS_DS_ID"),
         invoice_res_com_ds_id=_require_env("INVOICE_RES_COM_DS_ID"),
         invoice_mfd_ds_id=_require_env("INVOICE_MFD_DS_ID"),
         customer_list_ds_id=_require_env("CUSTOMER_LIST_DS_ID"),
