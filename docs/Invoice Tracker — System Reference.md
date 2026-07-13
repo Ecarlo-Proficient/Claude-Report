@@ -1,5 +1,10 @@
 # Invoice Tracker — System Reference
 
+> **2026-07-13 restructure:** the code folder was renamed `automation-worker/` → `invoice-sync/`
+> (shared vault/paths now live in `shared/`). The log directory keeps its historical name
+> (`~/Library/Logs/Proficient/automation-worker/`), as does the Keychain service
+> (`proficient-automation-worker`). Paths below reflect the new layout.
+
 System for tracking Proficient Concrete's open AR in Notion, mirrored from QuickBooks Online every 15 minutes. Replaces the prior Excel-based AR clerk workflow. Augments QBO data with collections-workflow layer (status, notes, follow-ups, ownership, litigation tracking).
 
 ---
@@ -69,7 +74,7 @@ Each invoice has a `Customer` relation populated by the sync. The sync resolves 
 
 On a full miss: the `Customer` relation stays empty, `Customer (raw)` text still populates, and the sync logs a red WARNING naming the unmatched customer and invoice. Add the customer to the right Notion list and the next sync auto-links it.
 
-### Code (`automation-worker/`)
+### Code (`invoice-sync/`)
 
 | File | Purpose |
 |---|---|
@@ -85,9 +90,9 @@ On a full miss: the `Customer` relation stays empty, `Customer (raw)` text still
 
 ### Scheduling
 
-**Current: manual.** Ted runs each sync by hand with the `sync-ar` shell alias (mirrors `sync-ap` for the bill tracker). The alias calls `automation-worker/run_invoice_sync.sh`.
+**Current: manual.** Ted runs each sync by hand with the `sync-ar` shell alias (mirrors `sync-ap` for the bill tracker). The alias calls `invoice-sync/run_invoice_sync.sh`.
 
-The `~/Library/LaunchAgents/com.proficient.invoice-sync.plist` LaunchAgent (fires every 900 s / 15 min) **is no longer running** — a macOS update broke it and a prior attempt to repair it failed. The plist still exists in `automation-worker/launchd/` and was repointed to the current log path on 2026-06-10 in case the schedule is revived. Until then, do not assume any automatic cadence — sync only happens when Ted runs `sync-ar`. The permanent fix is in **Open items / to-dos**.
+The `~/Library/LaunchAgents/com.proficient.invoice-sync.plist` LaunchAgent (fires every 900 s / 15 min) **is no longer running** — a macOS update broke it and a prior attempt to repair it failed. The plist still exists in `invoice-sync/launchd/` and was repointed to the current log path on 2026-06-10 in case the schedule is revived. Until then, do not assume any automatic cadence — sync only happens when Ted runs `sync-ar`. The permanent fix is in **Open items / to-dos**.
 
 ### Logs
 
@@ -189,7 +194,7 @@ Notion's parallel "Paid notification" automation still fires too — the Teams p
 2. Pick the template **"Post to a channel when a webhook request is received"** → **Next**.
 3. Confirm the team and channel → **Add workflow**.
 4. Copy the generated `https://prod-xx.westus.logic.azure.com:443/workflows/...` URL.
-5. Paste into `automation-worker/.env` (Mac) or `docker/.env.docker` (Synology):
+5. Paste into `invoice-sync/.env` (Mac) or `docker/.env.docker` (Synology):
 
 ```
 TEAMS_WEBHOOK_MFD_PAID=https://prod-xx.westus.logic.azure.com:443/workflows/...
@@ -199,7 +204,7 @@ The URL is tied to one specific channel and can't be guessed, but treat it like 
 
 **Payload shape:**
 
-The script POSTs a full **Adaptive Card** wrapped as `{type: "message", attachments: [{contentType: "application/vnd.microsoft.card.adaptive", content: {…}}]}`. The Workflow template's "Post card" action consumes this directly with no template editing. Green accent for paid, orange/yellow for short-pay; info only (no "Open in QuickBooks" button, per Ted). An earlier flat `{title, text, …}` JSON version was accepted with a 2xx but rendered nothing — that's why `teams_notify.py` sends the full card structure. Exact schema is in `automation-worker/teams_notify.py::notify_invoice_event()`; fire a safe test with `test_teams_webhook.py` after any URL rotation.
+The script POSTs a full **Adaptive Card** wrapped as `{type: "message", attachments: [{contentType: "application/vnd.microsoft.card.adaptive", content: {…}}]}`. The Workflow template's "Post card" action consumes this directly with no template editing. Green accent for paid, orange/yellow for short-pay; info only (no "Open in QuickBooks" button, per Ted). An earlier flat `{title, text, …}` JSON version was accepted with a 2xx but rendered nothing — that's why `teams_notify.py` sends the full card structure. Exact schema is in `invoice-sync/teams_notify.py::notify_invoice_event()`; fire a safe test with `test_teams_webhook.py` after any URL rotation.
 
 **No duplicate fires:** the flip sweep excludes already-paid invoices, and the short-pay path requires `prior_status == Unpaid`, so consecutive partial payments don't re-notify — only the first Unpaid → Partially Paid transition.
 
@@ -254,7 +259,7 @@ PM, Quick Status, and QBO Link live only in Notion. **Past Due** is a signed day
 
 ### Configuration
 
-`automation-worker/.env`:
+`invoice-sync/.env`:
 
 ```
 INVOICE_EXPORT_PATH=/Users/sebas/Library/CloudStorage/OneDrive-ProficientConcrete,LLC/Collections/Open_Invoices.xlsx
@@ -318,18 +323,18 @@ Colors and the bar auto-disable when output isn't a terminal (plain fallback).
 Generates a markdown audit report comparing live QBO open invoices to Notion state.
 
 ```bash
-cd "/Users/sebas/Documents/Claude/Projects/Automate Concrete Business/automation-worker"
+cd "/Users/sebas/Documents/Claude/Projects/Automate Concrete Business/invoice-sync"
 python3 verify_invoices.py --out "reports/audit-$(date +%Y-%m-%d).md"
 ```
 
-Saves to `automation-worker/reports/`. Report includes top-line numbers, match rate, and any drift.
+Saves to `invoice-sync/reports/`. Report includes top-line numbers, match rate, and any drift.
 
 ### Verify Excel mirror
 
 Three-way audit confirming the OneDrive Excel is a true mirror of Notion open invoices, and that Notion covers every routable QBO open invoice.
 
 ```bash
-cd "/Users/sebas/Documents/Claude/Projects/Automate Concrete Business/automation-worker"
+cd "/Users/sebas/Documents/Claude/Projects/Automate Concrete Business/invoice-sync"
 python3 verify_excel_export.py
 # or, save to file:
 python3 verify_excel_export.py --out "reports/excel-audit-$(date +%Y-%m-%d).md"
@@ -379,7 +384,7 @@ Where the worker runs today and where it's headed. **Update (2026-06-26): Docker
 **Operations / reliability**
 
 - [ ] **Run `pip-audit` on dependencies** (task #35) — quick win, do this week.
-- [ ] **Execute the App Support runtime move** — relocate `automation-worker/` to `~/Library/Application Support/proficient-automation/`, add the `sync-deploy` rsync alias, then re-enable launchd from there so sync stops depending on a manual `sync-ar` and survives macOS updates.
+- [ ] **Execute the App Support runtime move** — relocate `invoice-sync/` to `~/Library/Application Support/proficient-automation/`, add the `sync-deploy` rsync alias, then re-enable launchd from there so sync stops depending on a manual `sync-ar` and survives macOS updates.
 - [ ] **Stale-sync health alert** — notify Eduardo if `Last Synced` on any open invoice is more than 1 hour old. Catches silent sync failures (matters more now that runs are manual).
 
 **Feature / workflow**
@@ -425,7 +430,7 @@ Verdict: PASS. Every routable QBO open invoice is present in Notion. Re-runnable
 
 System owner: **Ted Cairo**. 
 Primary user: **Eduardo Rivera** (AR clerk).
-Code at: `/Users/sebas/Documents/Claude/Projects/Automate Concrete Business/automation-worker/`.
+Code at: `/Users/sebas/Documents/Claude/Projects/Automate Concrete Business/invoice-sync/`.
 For sync stops or audit failures: check `~/Library/Logs/Proficient/automation-worker/invoice_sync.log`, then re-run `verify_invoices.py`.
 
 ---

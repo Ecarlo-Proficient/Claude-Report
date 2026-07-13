@@ -15,7 +15,7 @@ restate them here. Business/strategic context lives in session memory, not in th
 2. **Never read, ask for, or hard-code secrets.** Auth is a single encrypted Keychain blob via
    `qbo_vault.py` (service `automation-qbo`, label `credentials`) — one Touch ID per run unlocks all
    keys. Notion/Teams get their own blobs (`automation-notion`, `automation-teams`). Use the setup
-   scripts (`setup_qbo.py`, `automation-worker/setup_keychain.py`) and metadata-only diagnostics.
+   scripts (`shared/setup_qbo.py`, `invoice-sync/setup_keychain.py`) and metadata-only diagnostics.
 3. **QBO is production-only.** No sandbox/env toggle. `quickbooks.api.intuit.com` is hardcoded by design.
 4. **Logs and data dumps go to `~/Library/Logs/Proficient/`** — never inside this folder (it's Claude-visible/synced).
 5. **Excel outputs are plain:** white/black only, no fills, no hidden rows, label + amount on the same row,
@@ -27,36 +27,66 @@ restate them here. Business/strategic context lives in session memory, not in th
 
 ---
 
+## Repo structure rules (binding — locked in 2026-07-13)
+
+1. **One folder = one tool.** A tool's scripts, verifiers, launchd plist, wrapper, and README
+   live together in its folder. The repo root holds NO loose Python, ever.
+2. **`shared/` is the ONLY importable common code** (underscore-named = a real package:
+   `qbo_vault.py`, `paths.py`, `qbo_api.py`, `setup_qbo.py`). Entry scripts bootstrap with
+   `sys.path.insert(0, <repo root>)` then `from shared import …`. That is the only path hack
+   allowed — one hack, one direction, one target.
+3. **Tools never import tools.** The moment a second tool needs a file, that file moves to
+   `shared/` — never a cross-folder import, never an importlib file-path load.
+4. **One-offs live in `one-offs/`** and graduate by earning their own folder — never to the root.
+5. **`machine.env` stays at the repo root** (per-machine paths; gitignored). `shared/paths.py`
+   resolves it there — new machines: `cp machine.env.example machine.env && python3 shared/paths.py`.
+6. **Field Log is GONE** (erased 2026-07-13, Ted's decision) — sync code, templates, config
+   fields all removed. Don't rebuild it without an explicit ask.
+
 ## Subsystem map (detail in each README)
 
-- **QBO export** (`qbo_vault.py`, `setup_qbo.py`, `qbo_export.py`) — one-row-per-line-item txn export →
-  OneDrive `-Inbox- Project Report Exports`. `setup_qbo.py --status/--test/--rotate/--purge`.
-- **automation-worker/** — Notion + AR. Bid List → RP/CP Field Logs and Project Plans (UPDATE-only,
-  gated by the `Send to Field Log` checkbox, ~5-min). Invoice sync (`run_invoice_sync.py`): QBO open
-  invoices → two Notion DBs (MFD isolated; Res/Com combined) routed by project-# prefix; sweeps paid;
-  archives QBO-deleted (CDC); posts MFD pay events to Teams. `doctor.py` for diagnostics. launchd
-  schedules exist but some died after a macOS update → Ted runs `sync-ar` manually. Dockerized at
-  **v1.0.0** for Synology (coexistence: `SKIP_EXCEL_EXPORT=1` so the Mac keeps the Excel mirror).
+- **shared/** — the common package: `qbo_vault.py` (Keychain blob, one Touch ID per run),
+  `paths.py` (per-machine path resolution), `qbo_api.py` (QBO auth + retrying GET, `query_all`,
+  report walkers, `PROJ_RE` — used by project-pnl and the WIP readers), `setup_qbo.py`
+  (`--status/--test/--rotate/--purge`).
+- **invoice-sync/** — the QBO → Notion AR invoice sync (was `automation-worker/`). Open invoices
+  → two Notion DBs (MFD isolated; Res/Com combined) routed by project-# prefix; sweeps paid;
+  archives QBO-deleted (CDC); posts MFD pay events to Teams. Manual via `sync-ar` (launchd plists
+  exist but are .disabled). Its config/clients (`config.py`, `qbo_client.py`, `notion_client.py`,
+  `teams_notify.py`, `logger.py`, `state.py`, `version.py`, `sync_view.py`, `doctor.py`,
+  `setup_keychain.py`) are tool-local — nothing else may import them. `.env` + `state/` live here
+  (legacy fallback reads `../automation-worker/` until old clones move them). Dockerized at
+  **v1.1.0** for Synology (`SKIP_EXCEL_EXPORT=1` so the Mac keeps the Excel mirror). Keychain
+  service (`proficient-automation-worker`) and log dir (`~/Library/Logs/Proficient/automation-worker/`)
+  keep their historical names on purpose.
 - **bill-tracker/** — AP bills → matched to the GC invoice that authorizes payment → Excel
-  (`~/Documents/CompanyHealth/Bill Tracker.xlsx`); **run manually** (the launchd auto-run was
-  scrapped). Also `statement_reconciler.py` (vendor statement PDF ↔ QBO open bills) and `job_coding_audit.py`.
-- **wip/** — `qbo_close_list.py` / `qbo_bulk_close.py` (**always exclude MFD — those close by hand**).
-  WIP itself lives in **Excel on SharePoint**: the readers are `automation-worker/cp_wip_reader.py`
-  / `rp_wip_reader.py` (write the Test tab of `WIP - MASTER new.xlsx`; over/under-billing and
-  job-borrow are computed columns there). The old QBO→Notion WIP sync is **retired**
-  (`automation-worker/wip_sync.py` is a do-nothing stub — no $25K Teams alert anymore).
-- **debt-schedule/ + loan_sync.py** — QBO → `Equipment_Debt_Schedule_v2.xlsx`. Balance = QBO actual
-  (no P/I split); QBO mapping gated by `CONFIRM=Y`; ledger idempotent by (TxnId, AcctId). Mac-only.
-- **health-dashboard/qbo_health.py** — local company-health xlsx; reuses `qbo_vault`; private path + chmod 600.
-- **project-pnl/project_pnl_export.py** — per-project P&L (CP/MFD + RP × budgeted/unbudgeted) → OneDrive
-  PROJECT P&Ls. Overhead shown as a final row at **11% of revenue**; cost-code → name mapping.
+  (`~/Documents/CompanyHealth/Bill Tracker.xlsx`); manual via `sync-ap` (launchd scrapped).
+  Plus 4 audit scripts (`job_coding_audit.py`, `sub_bill_audit.py`, `item_no_project_audit.py`,
+  `duplicate_bill_audit.py`).
+- **statement-reconciler/** — vendor statement PDF ↔ QBO open bills.
+- **wip/** — ALL WIP tooling. Readers: `cp_wip_reader.py` / `rp_wip_reader.py` write ONLY the
+  Test tabs of `WIP - MASTER new.xlsx` on SharePoint (guarded by `wip_excel_guard.py`);
+  over/under-billing and job-borrow are computed columns in Excel. Close scripts:
+  `qbo_close_list.py` / `qbo_bulk_close.py` (**always exclude MFD — those close by hand**).
+  The old QBO→Notion WIP sync is fully deleted (stub + plist gone 2026-07-13).
+- **project-pnl/** — per-project P&L (CP/MFD + RP × budgeted/unbudgeted) → OneDrive PROJECT
+  P&Ls. Overhead shown as a final row at **11% of revenue**; QBO helpers come from
+  `shared/qbo_api.py`.
+- **debt-schedule/** — `loan_sync.py` (QBO → `Equipment_Debt_Schedule_v2.xlsx`, beside it) +
+  workbook builders. Balance = QBO actual (no P/I split); QBO mapping gated by `CONFIRM=Y`;
+  ledger idempotent by (TxnId, AcctId). Mac-only.
+- **health-dashboard/** — `qbo_health.py` local company-health xlsx; private path + chmod 600.
+- **qbo-export/** — `qbo_export.py` one-row-per-line-item txn export → OneDrive
+  `-Inbox- Project Report Exports`.
+- **one-offs/** — occasional / not-yet-developed tools. Currently: `qbo_recode_review.py`
+  (audit-gated job-cost recoder: `--export` xlsx → Ted audits with QBO-name dropdowns →
+  `--apply` then `--apply --commit`; only `Approved=Y` rows; exact-spelling + stale-SyncToken +
+  closed-period guards; `get_auth()` still an env stub).
 - **synology/** — file-tree audit. **Always pass `--exclude /Volumes/Proinfo/Items/`** (sensitive).
-- **qbo_recode_review.py** — audit-gated job-cost recoder: `--export` xlsx → Ted audits with QBO-name
-  dropdowns → `--apply` (validate) then `--apply --commit`. Only `Approved=Y` rows; exact-spelling +
-  stale-SyncToken + closed-period guards.
-- **docs/** — Notion architecture, the Invoice Tracker system reference, Field Log stage templates.
-
----
+- **docker/** — the invoice-sync container package (build context = repo root; copies `shared/`
+  + `invoice-sync/`).
+- **docs/** — Notion architecture, the Invoice Tracker system reference, `ARCHITECTURE.md`
+  (the living diagram).
 
 ## QBO API gotchas (learned the hard way)
 

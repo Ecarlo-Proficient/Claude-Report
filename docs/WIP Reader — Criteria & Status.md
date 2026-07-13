@@ -98,11 +98,11 @@ wrapped as an Excel table. Project name links to the Awarded Project folder
 ### How to run
 Full sync (writes the `Test - CP` tab):
 ```
-python3 "/Users/sebas/Documents/Claude/Projects/Automate Concrete Business/automation-worker/cp_wip_reader.py"
+python3 "/Users/sebas/Documents/Claude/Projects/Automate Concrete Business/wip/cp_wip_reader.py"
 ```
 Fast takeoff-only audit (skips the slow QBO join — contract/CO/ETC only):
 ```
-python3 "/Users/sebas/Documents/Claude/Projects/Automate Concrete Business/automation-worker/cp_wip_reader.py" --dry-run --no-qbo
+python3 "/Users/sebas/Documents/Claude/Projects/Automate Concrete Business/wip/cp_wip_reader.py" --dry-run --no-qbo
 ```
 (Close the WIP file in Excel first, or the write safely skips.)
 
@@ -129,7 +129,7 @@ python3 "/Users/sebas/Documents/Claude/Projects/Automate Concrete Business/autom
 
 ### Run
 ```
-python3 "/Users/sebas/Documents/Claude/Projects/Automate Concrete Business/automation-worker/rp_wip_reader.py"
+python3 "/Users/sebas/Documents/Claude/Projects/Automate Concrete Business/wip/rp_wip_reader.py"
 ```
 
 ### Next step
