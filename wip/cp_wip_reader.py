@@ -190,6 +190,10 @@ log = logging.getLogger("cp_wip_reader")
 # QBO helpers come from shared/qbo_api.py (2026-07-13 restructure) — the old
 # importlib load of project-pnl/project_pnl_export.py is gone.
 
+# Realm (company id) captured by enrich_with_qbo so the Excel writer can build
+# QBO deep links (customer page / project P&L report) on the number cells.
+QBO_REALM = ""
+
 
 # ─────────────────────── data models ───────────────────────────────
 @dataclass
@@ -219,6 +223,8 @@ class CpRow:
     draw_num: Optional[int] = None       # latest draw # that sourced contract/billed/retainage
                                           # (None = pre-Draw#1 → takeoff proposal + QBO instead)
     draw_path: Optional[Path] = None     # the latest draw's G702/G703 workbook (audit trail)
+    qbo_customer_id: Optional[str] = None  # QBO customer id → deep links on Billed/Costs cells
+    needs_review: bool = False           # number doesn't look right / flagged → red font in Excel
 
     @property
     def contract_price(self) -> Optional[float]:
@@ -982,7 +988,10 @@ def _fetch_billed_ex_retainage(pnl, access: str, company_id: str,
 def enrich_with_qbo(rows: List[CpRow]) -> None:
     """Fetch QBO Billed/Costs per project and populate rows in-place.
     All-time window (start_date = 2019-01-01, end_date = today) — CP is
-    slow-turn commercial work, worth the extra API cost. Never raises."""
+    slow-turn commercial work, worth the extra API cost. Never raises.
+    Side effect: records the realm + per-row customer id so the Excel writer
+    can attach QBO deep links to the Billed/Costs cells."""
+    global QBO_REALM
     pnl = qbo_api
     try:
         access, company_id = pnl.load_credentials()
@@ -1005,6 +1014,7 @@ def enrich_with_qbo(rows: List[CpRow]) -> None:
             r.status_flags.append(f"QBO Customer Map Failed: {type(e).__name__}")
         return
 
+    QBO_REALM = company_id
     start_date = "2019-01-01"
     end_date = dt.date.today().isoformat()
 
@@ -1013,6 +1023,7 @@ def enrich_with_qbo(rows: List[CpRow]) -> None:
         if not cust:
             row.status_flags.append("QBO Not Found")
             continue
+        row.qbo_customer_id = cust["id"]
 
         try:
             report_data = pnl.fetch_project_pl(
@@ -1370,13 +1381,42 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
             # PROJECT NAME → project (Awarded Project) folder. The user 2026-07-02
             # wants this kept even though on Windows/OneDrive Excel rewrites the
             # macOS file:// link into a (broken) SharePoint URL — it works on his
-            # Mac and he needs the trace point. (Number-cell links stay off.)
+            # Mac and he needs the trace point.
             # Link target: explicit folder_path (RP) else the takeoff's parent (CP).
             link_folder = (row.folder_path if row.folder_path is not None
                            else (row.takeoff_path.parent if row.takeoff_path else None))
             if link_folder is not None:
                 _apply_hyperlink(ws.cell(row=i, column=col_idx["project_name"]),
                                  link_folder)
+
+            # Number-cell links (the user 2026-07-13: every number click-to-verify):
+            # Contract/COs → the draw workbook (takeoff pre-draw); ETC → takeoff;
+            # Billed/Retainage → QBO customer page (all invoices on one screen);
+            # Costs → QBO project-filtered P&L report.
+            _apply_hyperlink(ws.cell(row=i, column=col_idx["contract_price"]),
+                             row.draw_path or row.takeoff_path)
+            _apply_hyperlink(ws.cell(row=i, column=col_idx["co_revenue"]), row.draw_path)
+            _apply_hyperlink(ws.cell(row=i, column=col_idx["etc"]), row.takeoff_path)
+            if row.qbo_customer_id and QBO_REALM:
+                _cu = qbo_api.customer_url(row.qbo_customer_id, QBO_REALM)
+                _pu = qbo_api.project_pl_url(row.qbo_customer_id, QBO_REALM)
+                for _f, _u in (("billed_to_date", _cu), ("retainage_held", _cu),
+                               ("costs_to_date", _pu)):
+                    _c = ws.cell(row=i, column=col_idx[_f])
+                    if _u and _c.value not in (None, ""):
+                        _c.hyperlink = _u
+                        _c.font = LINK_FONT
+
+            # Review pass LAST so it wins over link styling: numbers that don't
+            # look right (row.needs_review) render RED (the user 2026-07-13);
+            # underline is kept where the cell carries a link.
+            if row.needs_review:
+                for _f in (_MONEY_FIELDS | _PCT_FIELDS):
+                    if _f in col_idx:
+                        _c = ws.cell(row=i, column=col_idx[_f])
+                        _c.font = Font(
+                            color="C00000",
+                            underline=("single" if _c.hyperlink else None))
 
         # Wrap the range in an Excel Table — gives filter/sort dropdowns and a
         # structured, clean look. Explicit gray header + borders above override
@@ -1637,6 +1677,11 @@ def main() -> int:
               _Term.color(_Term.DIM, f" ({elapsed:.1f}s)"))
     else:
         _section("Skipping QBO join (--no-qbo)")
+
+    # Flagged rows = the script couldn't verify a number → red in Excel
+    # (the user 2026-07-13: bad-looking numbers render red).
+    for row in rows:
+        row.needs_review = bool(row.status_flags)
 
     # ── Write / dry-run report ──
     try:

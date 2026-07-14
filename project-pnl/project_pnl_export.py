@@ -2121,6 +2121,7 @@ def build_sheet_pl(
     alt_overhead_pct: Optional[float] = None,
     underbill_total: float = 0.0,
     underbill_count: int = 0,
+    realm: str = "",
 ) -> None:
     """
     P&L sheet — every DERIVED figure is a live Excel FORMULA referencing its
@@ -2193,6 +2194,21 @@ def build_sheet_pl(
     show_mfd = alt_overhead_pct is not None
     _alt = alt_overhead_pct if alt_overhead_pct is not None else overhead_pct
     _aoh = _alt / 100.0
+
+    # QBO deep links (the user 2026-07-13): Billed totals → the customer page
+    # (all invoices on one screen); Costs totals → the project-filtered P&L
+    # report. Attached to the value cells, underlined so they read clickable.
+    _cust_url = _qbo_customer_url(cust_info.get("id", ""), realm)
+    _costs_url = _qbo_project_pl_url(cust_info.get("id", ""), realm)
+
+    def _qbo_link(rr: Optional[int], url: Optional[str]) -> None:
+        if not rr or not url:
+            return
+        c = ws.cell(row=rr, column=2)
+        c.hyperlink = url
+        f = c.font
+        c.font = Font(bold=f.bold, size=f.size or BASE_SIZE,
+                      color=f.color, underline="single")
 
     def box(top_row, bot_row, c0=1, c1=2):
         for rr in range(top_row, bot_row + 1):
@@ -2278,6 +2294,7 @@ def build_sheet_pl(
 
     if not tx_refs:
         income_row = row("Income", income, bold=True, fill=INCOME_FILL)
+        _qbo_link(income_row, _cust_url)
         wip_contract_cell = None
     else:
         Binc = f"{tx_refs['billed']}-{tx_refs['withheld']}+{tx_refs['billed_ret']}"
@@ -2315,7 +2332,8 @@ def build_sheet_pl(
         ctd_row = row("Costs to Date", None)
         pc_row = row("% Complete (cost-based)", None, fmt=PCT_FMT, bold=True, color=NAVY)
         earn_row = row("Earned Revenue (contract × %)", None)
-        row("Billed to Date", formula=f"={Bgross}")
+        bd_row = row("Billed to Date", formula=f"={Bgross}")
+        _qbo_link(bd_row, _cust_url)
         row("Over / (Under) Billing",
             formula=f'=IF({e_ref}=0,"",({Bgross})-B{earn_row})', color="C0504D")
         ctc_row = row("Cost to Complete (remaining)", None)
@@ -2331,8 +2349,10 @@ def build_sheet_pl(
         ftop = sect_title("② PROFIT & LOSS TOTALS")
         income_row = row("Income (less retainage)", formula=f"={Binc}",
                          bold=True, size=BASE_SIZE + 1, color="375623", fill=INCOME_FILL)
+        _qbo_link(income_row, _cust_url)
         cogs_row = acct_lines("Cost of Goods Sold", tx_refs.get("cogs_accts") or [],
                               "Total Cost of Goods Sold", COGS_FILL)
+        _qbo_link(cogs_row, _costs_url)
         gp_row = row("Gross Profit", formula=f"=B{income_row}-B{cogs_row}",
                      bold=True, border=TOP_BORDER, fill=GP_FILL)
         row("Gross Profit %", formula=f'=IF(B{income_row}=0,"",B{gp_row}/B{income_row})',
@@ -2358,6 +2378,7 @@ def build_sheet_pl(
             cc = ws.cell(row=rr, column=2, value=frm)
             cc.number_format = fmt
             cc.font = Font(bold=isb, size=BASE_SIZE, color=NAVY if isb else "000000")
+        _qbo_link(ctd_row, _costs_url)
 
         costs = f"B{cogs_row}"
         opex = f"B{exp_row}"
@@ -2378,6 +2399,7 @@ def build_sheet_pl(
         # ── ⑤ BILLING & RETAINAGE (to date) ──
         btop = sect_title("⑤ BILLING & RETAINAGE (to date)")
         gb_row = row("Billed to Date (gross)", formula=f"={Bgross}", indent=1)
+        _qbo_link(gb_row, _cust_url)
         row("Retainage billed", formula=f"={tx_refs['billed_ret']}", indent=1, color=GREEN)
         lw_row = row("less: Retainage Withheld", formula=f"=-{Wcell}", indent=1)
         row("Net Billed (to AR)", formula=f"=B{gb_row}+B{lw_row}", indent=1,
@@ -3266,6 +3288,32 @@ def _qbo_txn_url(tx_type: str, txn_id: str, realm: str) -> Optional[str]:
             f"{quote(f'{page}?txnId={txn_id}')}&deeplinkcompanyid={realm}")
 
 
+def _qbo_customer_url(customer_id: str, realm: str) -> Optional[str]:
+    """Deep link to the QBO customer page for the project — every invoice and
+    payment on one screen (the user 2026-07-13: Billed totals must be
+    click-to-verify). Same login deep-link form as _qbo_txn_url so it works
+    regardless of the user's session."""
+    if not customer_id or not realm:
+        return None
+    from urllib.parse import quote
+    return (f"https://qbo.intuit.com/app/login?pagereq="
+            f"{quote(f'customerdetail?nameId={customer_id}')}"
+            f"&deeplinkcompanyid={realm}")
+
+
+def _qbo_project_pl_url(customer_id: str, realm: str) -> Optional[str]:
+    """Deep link to the QBO P&L report filtered to the project customer —
+    billed AND costs in one drillable report (the user 2026-07-13: Costs
+    totals must be click-to-verify). QBO web occasionally ignores the URL
+    filter params and opens the report unfiltered — still lands on the P&L."""
+    if not customer_id or not realm:
+        return None
+    from urllib.parse import quote
+    return (f"https://qbo.intuit.com/app/login?pagereq="
+            f"{quote(f'report?rptId=PANDL&customer={customer_id}&date_macro=alldates')}"
+            f"&deeplinkcompanyid={realm}")
+
+
 def _setup_print(ws, last_col: int, header_rows: int = 2) -> None:
     """Printer-friendly: landscape, scaled to ONE page wide (height flows to as
     many pages as needed), tight margins, print area = used cols, title rows
@@ -3374,6 +3422,15 @@ def build_sheet_job_rp(
                                  color="C0504D", fill=SECT_FILL)
     tnp_vc, tnp_pr = profit_line("TRUE NET PROFIT", hero=True)
     tnppct_vc, _ = profit_line("True Net Profit %", hero=True)
+    # QBO deep links (the user 2026-07-13): Billed → the customer page (all
+    # invoices on one screen); Job Costs → the project-filtered P&L report.
+    for _vc, _u in ((billed_vc, _qbo_customer_url(cust_info.get("id", ""), realm)),
+                    (costs_vc, _qbo_project_pl_url(cust_info.get("id", ""), realm))):
+        if _u:
+            _vc.hyperlink = _u
+            _f = _vc.font
+            _vc.font = Font(bold=_f.bold, size=_f.size, color=_f.color,
+                            underline="single")
     thick_box(prof_top, r - 1, 1, pcol)
     r += 1
 
@@ -4084,7 +4141,7 @@ def generate_project_pnl(
         draw_anchors=draw_anchors, retainage_nb=retainage_nb,
         retainage_billed_total=ret_billed_total, tx_refs=tx_refs,
         alt_overhead_pct=_alt_oh, underbill_total=underbill_total,
-        underbill_count=underbill_count,
+        underbill_count=underbill_count, realm=company_id,
     )
     # Order: P&L, then the fixed supporting sheets, then the (many) draw sheets
     # LAST so they don't clutter the front (the user 2026-06-26).

@@ -287,3 +287,29 @@ def fetch_customer_invoices(access: str, company_id: str, customer_id: str) -> L
         access, company_id, "Invoice",
         where=f"CustomerRef = '{customer_id}'",
     )
+
+
+# ────────────────────────── QBO deep links ─────────────────────────
+# Login deep-link form (works regardless of the user's session) — same shape
+# project-pnl uses for transaction links. Billed totals link to the customer
+# page (every invoice/payment on one screen); Costs totals link to the
+# project-filtered P&L report (the user 2026-07-13: numbers click-to-verify).
+
+def customer_url(customer_id: str, realm: str) -> Optional[str]:
+    if not customer_id or not realm:
+        return None
+    from urllib.parse import quote
+    return (f"https://qbo.intuit.com/app/login?pagereq="
+            f"{quote(f'customerdetail?nameId={customer_id}')}"
+            f"&deeplinkcompanyid={realm}")
+
+
+def project_pl_url(customer_id: str, realm: str) -> Optional[str]:
+    """QBO web occasionally ignores the URL filter params and opens the report
+    unfiltered — still lands on the P&L."""
+    if not customer_id or not realm:
+        return None
+    from urllib.parse import quote
+    return (f"https://qbo.intuit.com/app/login?pagereq="
+            f"{quote(f'report?rptId=PANDL&customer={customer_id}&date_macro=alldates')}"
+            f"&deeplinkcompanyid={realm}")
