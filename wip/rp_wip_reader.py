@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import json
 import os
 import re
 import sys
@@ -118,7 +119,7 @@ def read_general_list(path: Path):
                 continue
             comp = ws.cell(r, COL_COMPLETION).value
             rec = {
-                "job": job, "source": sheet,
+                "job": job, "source": sheet, "gl_row": r,
                 "completion": comp if isinstance(comp, (int, float)) else None,
                 "house": ws.cell(r, COL_HOUSE).value,
                 "street": ws.cell(r, COL_STREET).value,
@@ -292,14 +293,14 @@ def build_lines(records, rp_to_folders, addr_folders):
             etc = ((rec["slab_cost"] or 0) + (rec["flat_cost"] or 0)) or None
             row = _mk(rec["job"], contract, etc)
             row.notes.append("CP standalone (never -FTW)")
-            rows.append((row, rec["completion"]))
+            rows.append((row, rec["completion"], rec))
             continue
 
         rows.append((_mk(rec["job"], rec["slab_bid"], rec["slab_cost"]),
-                     rec["completion"]))
+                     rec["completion"], rec))
         if rec["flat_bid"] or rec["flat_cost"]:
             rows.append((_mk(rec["job"] + "-FTW", rec["flat_bid"],
-                             rec["flat_cost"]), rec["completion"]))
+                             rec["flat_cost"]), rec["completion"], rec))
     return rows
 
 
@@ -309,18 +310,18 @@ def enrich_with_qbo(pairs) -> None:
     try:
         access, company_id = qbo_api.load_credentials()
     except Exception as e:
-        for row, _ in pairs:
+        for row, *_ in pairs:
             row.status_flags.append(f"QBO Auth Failed: {type(e).__name__}")
         return
     try:
         proj_map = qbo_api.build_project_customer_map(access, company_id)
     except Exception as e:
-        for row, _ in pairs:
+        for row, *_ in pairs:
             row.status_flags.append(f"QBO Customer Map Failed: {type(e).__name__}")
         return
     CP.QBO_REALM = company_id
     start, end = "2019-01-01", dt.date.today().isoformat()
-    for n, (row, _comp) in enumerate(pairs, 1):
+    for n, (row, *_rest) in enumerate(pairs, 1):
         cust = proj_map.get(row.project_num)
         if not cust:
             if row.base_contract:
@@ -376,8 +377,8 @@ def main() -> int:
     pairs = build_lines(records, rp_to_folders, addr_folders)
     if args.project:
         pf = args.project.upper()
-        pairs = [(r, c) for r, c in pairs
-                 if r.project_num == pf or r.project_num == f"{pf}-FTW"]
+        pairs = [t for t in pairs
+                 if t[0].project_num in (pf, f"{pf}-FTW")]
     print(f"  Lines (slab + -FTW + CP standalone): {len(pairs)}")
     if not pairs:
         print("  No RP lines to process — exiting")
@@ -386,16 +387,52 @@ def main() -> int:
     if not args.no_qbo:
         print("  Enriching with QBO Billed/Costs …")
         enrich_with_qbo(pairs)
-    for row, comp in pairs:
+    for row, comp, _rec in pairs:
         _classify(row, comp)
 
-    rows = [r for r, _ in pairs]
+    # FTW backlog → its own section at the BOTTOM of the tab (the user
+    # 2026-07-14): flatwork bid together with the slab but not poured yet —
+    # effectively unwon-but-expected work (~95% follows the slab). Not an
+    # error state, so no red; invoiced under RP#-FTW when the pour lands.
+    main_rows, backlog = [], []
+    for row, comp, _rec in pairs:
+        if row.project_num.endswith("-FTW") and not row.billed_to_date:
+            row.needs_review = False
+            backlog.append(row)
+        else:
+            main_rows.append(row)
+    rows = main_rows + backlog              # for counts/logs
     n_red = sum(1 for r in rows if r.needs_review)
-    print(f"  Review (red): {n_red} line(s)")
+    print(f"  Review (red): {n_red} line(s) · FTW backlog: {len(backlog)}")
+
+    # Justification dump — one record per line so every WIP verdict can be
+    # backed up job-by-job with the ops manager (the user 2026-07-14): where
+    # it was found in the General List, completion, contract, QBO billed,
+    # and the rule that produced the status.
+    dump = []
+    for row, comp, rec in pairs:
+        dump.append({
+            "line": row.project_num,
+            "section": ("FTW BACKLOG" if row in backlog else "MAIN"),
+            "gl_sheet": rec["source"], "gl_row": rec.get("gl_row"),
+            "completion": comp,
+            "contract": row.base_contract, "etc": row.base_etc,
+            "billed": row.billed_to_date, "costs": row.costs_to_date,
+            "status": "Closed" if row.is_completed else "Active",
+            "red": row.needs_review,
+            "notes": list(row.notes), "flags": list(row.status_flags),
+        })
+    log_dir = Path.home() / "Library" / "Logs" / "Proficient" / "wip"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    (log_dir / "rp_wip_lines.json").write_text(json.dumps(dump, indent=1))
 
     try:
-        wrote = CP.write_test_cp(rows, CP.WIP_EXCEL_PATH,
-                                 dry_run=args.dry_run, tab_name="Test - RP")
+        wrote = CP.write_test_cp(
+            main_rows, CP.WIP_EXCEL_PATH,
+            dry_run=args.dry_run, tab_name="Test - RP",
+            appendix=("FTW BACKLOG — flatwork bid with the slab, NOT poured "
+                      "yet (expected wins; invoice under RP#-FTW when poured)",
+                      backlog))
     except CP.WipWriteDenied as e:
         print(f"  ✗ Guard blocked write: {e}")
         return 2

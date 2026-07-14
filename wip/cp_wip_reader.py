@@ -50,7 +50,7 @@ import sys
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 # Silence known-benign noise BEFORE importing openpyxl / requests.
 # 1. openpyxl warns on cross-sheet INDIRECT() print areas (harmless — we're
@@ -1269,11 +1269,17 @@ def _row_display_value(row: CpRow, field_name: str, sync_ts: str):
 
 
 def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
-                  tab_name: str = TEST_TAB) -> bool:
+                  tab_name: str = TEST_TAB,
+                  appendix: Optional[Tuple[str, List[CpRow]]] = None) -> bool:
     """Write rows to the given WIP tab (default 'Test - CP'; RP passes
     'Test - RP'). Same structure/formatting for every division. Guarded by
     wip_excel_guard. Returns True if written, False if skipped (dry-run, or the
-    file is open in Excel)."""
+    file is open in Excel).
+
+    `appendix` = (section title, rows): written BELOW the main table under a
+    gray band — RP uses it for the FTW backlog (bid with the slab, not poured
+    yet; the user 2026-07-14: separated at the bottom, they read as expected
+    wins rather than in-progress jobs)."""
     assert_write_allowed(tab_name)  # tripwire before we even open the workbook
 
     if dry_run:
@@ -1313,7 +1319,9 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
         # clear here to guarantee a clean slate.
         prior_max_row = ws.max_row or 0
         prior_max_col = ws.max_column or 0
-        for r in range(1, max(prior_max_row, len(rows) + 1) + 1):
+        n_total = len(rows) + ((len(appendix[1]) + 2)
+                               if appendix and appendix[1] else 0)
+        for r in range(1, max(prior_max_row, n_total + 1) + 1):
             for c in range(1, max(prior_max_col, len(COLS)) + 1):
                 cell = ws.cell(row=r, column=c)
                 cell.value = None
@@ -1344,7 +1352,7 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
             for i, (_, _, field) in enumerate(COLS)
         }
 
-        for i, row in enumerate(rows, start=2):
+        def _emit(i: int, row: CpRow) -> None:
             # Invariant guard: if CO Cost is populated but CO Revenue is
             # not, refuse to write the CO Cost. That's either a bug or a
             # corrupted state, and quietly writing a made-up cost would
@@ -1418,6 +1426,9 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                             color="C00000",
                             underline=("single" if _c.hyperlink else None))
 
+        for i, row in enumerate(rows, start=2):
+            _emit(i, row)
+
         # Wrap the range in an Excel Table — gives filter/sort dropdowns and a
         # structured, clean look. Explicit gray header + borders above override
         # the table style, so it stays clean (no row stripes).
@@ -1431,6 +1442,22 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
             name="TableStyleLight1", showFirstColumn=False, showLastColumn=False,
             showRowStripes=False, showColumnStripes=False)
         ws.add_table(table)
+
+        # Appendix section BELOW the table (outside it, so its rows don't
+        # pollute the table's filters): gray band title, then the same row
+        # rendering as the main block.
+        if appendix and appendix[1]:
+            sect_title, ap_rows = appendix
+            band = len(rows) + 3            # one blank spacer row under the table
+            for c in range(1, len(COLS) + 1):
+                bc = ws.cell(row=band, column=c)
+                bc.fill = HDR_FILL
+                bc.border = CELL_BORDER
+            t = ws.cell(row=band, column=1, value=sect_title)
+            t.font = HDR_FONT
+            ws.row_dimensions[band].height = 22
+            for k, row in enumerate(ap_rows, start=band + 1):
+                _emit(k, row)
 
         # Atomic write — save to a temp file then os.replace() so a crash
         # or interruption can't leave a half-written WIP (safe_save pattern).
