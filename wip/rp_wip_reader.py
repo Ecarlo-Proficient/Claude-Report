@@ -234,7 +234,11 @@ def _classify(row: CP.CpRow, completion) -> None:
         row.needs_review = True
     elif B >= K * (1 - _FULL_TOL):
         if c100:
+            # The done-rule (RP manager): 100% complete AND fully billed →
+            # STATUS reads 'Closed' (the user 2026-07-14: STATUS was hardcoded
+            # Active for every line; it must derive from this rule).
             row.notes.append("CLOSED — fully billed + 100%")
+            row.is_completed = True
         else:
             row.notes.append("Fully billed but list <100% — update completion")
             row.needs_review = True
