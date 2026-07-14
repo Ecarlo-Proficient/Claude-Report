@@ -92,12 +92,14 @@ flowchart LR
 
     QBO[("QBO\nbills + invoices")]:::src
     NAS[("Synology NAS\nvendor statement PDFs")]:::src
+    GL[("General List xlsx\nSynology · READ-ONLY")]:::src
     BT["excel_bill_sync.py\n+ 4 audit scripts"]:::tool
     SR["statement_reconciler.py"]:::tool
     BX[("Bill Tracker.xlsx\n~/Documents/CompanyHealth")]:::out
     RX[("reconciliation xlsx\n→ back to NAS")]:::out
 
     QBO --> BT --> BX
+    GL -- "RP draw matching" --> BT
     QBO --> SR
     NAS --> SR --> RX
 ```
@@ -114,6 +116,7 @@ flowchart LR
     classDef gate fill:#f3e0d3,stroke:#B9541E,color:#7c2d12
 
     FOLDERS[("Project folders\ntakeoffs · draws (G702)")]:::src
+    GL[("General List xlsx\nAlpha + Small Jobs — READ-ONLY\nRP/CP prices AI–AL · completion Z")]:::src
     QBO[("QBO\nvia shared/qbo_api")]:::src
     READERS["cp_wip_reader.py / rp_wip_reader.py\nguarded by wip_excel_guard.py"]:::tool
     TEST[("WIP - MASTER new.xlsx\nTest tabs ONLY (SharePoint)")]:::out
@@ -121,11 +124,18 @@ flowchart LR
     QW[("QBO WRITE — gated\nCONFIRM=Y · MFD always excluded")]:::gate
 
     FOLDERS --> READERS
+    GL -->|"RP: contract/ETC per line"| READERS
     QBO --> READERS --> TEST
     QBO --> CLOSE --> QW
 ```
 
 Over/under-billing and job-borrow are computed columns in Excel, not in these scripts.
+RP v2 (2026-07-13): the General List is the RP source — each RP job auto-splits into
+`RP####` (slab) + `RP####-FTW` (flatwork) lines; CP jobs in the list stay standalone.
+Number cells carry links (draw/takeoff/General List files; QBO customer page for Billed,
+project P&L report for Costs — deep-link helpers in `shared/qbo_api.py`); rows whose
+numbers don't reconcile render red (`needs_review`), including any QBO billed/costs
+activity on a line with no contract in the list.
 
 ---
 

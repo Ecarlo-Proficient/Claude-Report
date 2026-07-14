@@ -126,7 +126,7 @@ def _self_check() -> None:
     _print_root("Company-health folder", "ACB_COMPANYHEALTH_DIR", companyhealth_dir())
 
     print("\nPer-file overrides (optional — unset means the script's own default):")
-    for key in ("INVOICE_EXPORT_PATH", "WIP_EXCEL_PATH"):
+    for key in ("INVOICE_EXPORT_PATH", "WIP_EXCEL_PATH", "ACB_GENERAL_LIST_XLSX"):
         val = os.environ.get(key) or _MACHINE.get(key)
         if val:
             print(f"  {key} = {val}  (source: {_source(key)})")

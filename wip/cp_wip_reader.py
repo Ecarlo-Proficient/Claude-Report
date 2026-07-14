@@ -50,7 +50,7 @@ import sys
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 # Silence known-benign noise BEFORE importing openpyxl / requests.
 # 1. openpyxl warns on cross-sheet INDIRECT() print areas (harmless — we're
@@ -190,6 +190,10 @@ log = logging.getLogger("cp_wip_reader")
 # QBO helpers come from shared/qbo_api.py (2026-07-13 restructure) — the old
 # importlib load of project-pnl/project_pnl_export.py is gone.
 
+# Realm (company id) captured by enrich_with_qbo so the Excel writer can build
+# QBO deep links (customer page / project P&L report) on the number cells.
+QBO_REALM = ""
+
 
 # ─────────────────────── data models ───────────────────────────────
 @dataclass
@@ -219,6 +223,11 @@ class CpRow:
     draw_num: Optional[int] = None       # latest draw # that sourced contract/billed/retainage
                                           # (None = pre-Draw#1 → takeoff proposal + QBO instead)
     draw_path: Optional[Path] = None     # the latest draw's G702/G703 workbook (audit trail)
+    qbo_customer_id: Optional[str] = None  # QBO customer id → deep links on Billed/Costs cells
+    needs_review: bool = False           # number doesn't look right / flagged → red font in Excel
+    client: Optional[str] = None         # builder/client display name (RP tab)
+    home_type: Optional[str] = None      # 'Tract' / 'Custom' (RP tab)
+    why_link: Optional[str] = None       # path to the run's justification JSON (temp WHY column)
 
     @property
     def contract_price(self) -> Optional[float]:
@@ -982,7 +991,10 @@ def _fetch_billed_ex_retainage(pnl, access: str, company_id: str,
 def enrich_with_qbo(rows: List[CpRow]) -> None:
     """Fetch QBO Billed/Costs per project and populate rows in-place.
     All-time window (start_date = 2019-01-01, end_date = today) — CP is
-    slow-turn commercial work, worth the extra API cost. Never raises."""
+    slow-turn commercial work, worth the extra API cost. Never raises.
+    Side effect: records the realm + per-row customer id so the Excel writer
+    can attach QBO deep links to the Billed/Costs cells."""
+    global QBO_REALM
     pnl = qbo_api
     try:
         access, company_id = pnl.load_credentials()
@@ -1005,6 +1017,7 @@ def enrich_with_qbo(rows: List[CpRow]) -> None:
             r.status_flags.append(f"QBO Customer Map Failed: {type(e).__name__}")
         return
 
+    QBO_REALM = company_id
     start_date = "2019-01-01"
     end_date = dt.date.today().isoformat()
 
@@ -1013,6 +1026,7 @@ def enrich_with_qbo(rows: List[CpRow]) -> None:
         if not cust:
             row.status_flags.append("QBO Not Found")
             continue
+        row.qbo_customer_id = cust["id"]
 
         try:
             report_data = pnl.fetch_project_pl(
@@ -1252,18 +1266,28 @@ def _row_display_value(row: CpRow, field_name: str, sync_ts: str):
     (formula fields are written via _build_formula, never here)."""
     if field_name == "_active_status":
         return "Closed" if row.is_completed else "Active"
+    if field_name == "why_link":
+        return "why ⇗" if row.why_link else None
     if field_name == "_last_synced":
         return sync_ts
     return getattr(row, field_name, None)
 
 
 def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
-                  tab_name: str = TEST_TAB) -> bool:
+                  tab_name: str = TEST_TAB,
+                  appendix: Optional[Tuple[str, List[CpRow]]] = None,
+                  cols: Optional[List] = None) -> bool:
     """Write rows to the given WIP tab (default 'Test - CP'; RP passes
     'Test - RP'). Same structure/formatting for every division. Guarded by
     wip_excel_guard. Returns True if written, False if skipped (dry-run, or the
-    file is open in Excel)."""
+    file is open in Excel).
+
+    `appendix` = (section title, rows): written BELOW the main table under a
+    gray band — RP uses it for the FTW backlog (bid with the slab, not poured
+    yet; the user 2026-07-14: separated at the bottom, they read as expected
+    wins rather than in-progress jobs)."""
     assert_write_allowed(tab_name)  # tripwire before we even open the workbook
+    cols_ = cols or COLS
 
     if dry_run:
         _print_rows_table(rows, wip_path, tab_name)
@@ -1302,8 +1326,10 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
         # clear here to guarantee a clean slate.
         prior_max_row = ws.max_row or 0
         prior_max_col = ws.max_column or 0
-        for r in range(1, max(prior_max_row, len(rows) + 1) + 1):
-            for c in range(1, max(prior_max_col, len(COLS)) + 1):
+        n_total = len(rows) + ((len(appendix[1]) + 2)
+                               if appendix and appendix[1] else 0)
+        for r in range(1, max(prior_max_row, n_total + 1) + 1):
+            for c in range(1, max(prior_max_col, len(cols_)) + 1):
                 cell = ws.cell(row=r, column=c)
                 cell.value = None
                 cell.hyperlink = None
@@ -1312,7 +1338,7 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
             ws.delete_rows(1, prior_max_row)
 
         # Header row — gray, bold, centered + wrapped, bordered.
-        for c, (label, width, _key) in enumerate(COLS, start=1):
+        for c, (label, width, _key) in enumerate(cols_, start=1):
             cell = ws.cell(row=1, column=c, value=label)
             cell.fill = HDR_FILL
             cell.font = HDR_FONT
@@ -1327,13 +1353,13 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
 
         # Column indices for hyperlink attachment (1-based like openpyxl)
         # + column LETTERS for building cross-cell formulas.
-        col_idx = {field: i + 1 for i, (_, _, field) in enumerate(COLS)}
+        col_idx = {field: i + 1 for i, (_, _, field) in enumerate(cols_)}
         col_letter_by_field = {
             field: get_column_letter(i + 1)
-            for i, (_, _, field) in enumerate(COLS)
+            for i, (_, _, field) in enumerate(cols_)
         }
 
-        for i, row in enumerate(rows, start=2):
+        def _emit(i: int, row: CpRow) -> None:
             # Invariant guard: if CO Cost is populated but CO Revenue is
             # not, refuse to write the CO Cost. That's either a bug or a
             # corrupted state, and quietly writing a made-up cost would
@@ -1346,7 +1372,7 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                 )
                 row.status_flags.append("Data integrity: CO Cost without CO Rev — dropped")
 
-            for c, (_label, _width, field_name) in enumerate(COLS, start=1):
+            for c, (_label, _width, field_name) in enumerate(cols_, start=1):
                 if field_name in FORMULA_FIELDS:
                     # Derived cell — write an Excel formula referencing
                     # the input cells in the same row. Excel evaluates on
@@ -1370,7 +1396,7 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
             # PROJECT NAME → project (Awarded Project) folder. The user 2026-07-02
             # wants this kept even though on Windows/OneDrive Excel rewrites the
             # macOS file:// link into a (broken) SharePoint URL — it works on his
-            # Mac and he needs the trace point. (Number-cell links stay off.)
+            # Mac and he needs the trace point.
             # Link target: explicit folder_path (RP) else the takeoff's parent (CP).
             link_folder = (row.folder_path if row.folder_path is not None
                            else (row.takeoff_path.parent if row.takeoff_path else None))
@@ -1378,11 +1404,49 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                 _apply_hyperlink(ws.cell(row=i, column=col_idx["project_name"]),
                                  link_folder)
 
+            # Number-cell links (the user 2026-07-13: every number click-to-verify):
+            # Contract/COs → the draw workbook (takeoff pre-draw); ETC → takeoff;
+            # Billed/Retainage → QBO customer page (all invoices on one screen);
+            # Costs → QBO project-filtered P&L report.
+            for _f, _tgt in (("contract_price", row.draw_path or row.takeoff_path),
+                             ("co_revenue", row.draw_path),
+                             ("etc", row.takeoff_path)):
+                if _f in col_idx:
+                    _apply_hyperlink(ws.cell(row=i, column=col_idx[_f]), _tgt)
+            if "why_link" in col_idx and row.why_link:
+                _apply_hyperlink(ws.cell(row=i, column=col_idx["why_link"]),
+                                 Path(row.why_link))
+            if row.qbo_customer_id and QBO_REALM:
+                _cu = qbo_api.customer_url(row.qbo_customer_id, QBO_REALM)
+                _pu = qbo_api.project_pl_url(row.qbo_customer_id, QBO_REALM)
+                for _f, _u in (("billed_to_date", _cu), ("retainage_held", _cu),
+                               ("costs_to_date", _pu)):
+                    if _f not in col_idx:
+                        continue
+                    _c = ws.cell(row=i, column=col_idx[_f])
+                    if _u and _c.value not in (None, ""):
+                        _c.hyperlink = _u
+                        _c.font = LINK_FONT
+
+            # Review pass LAST so it wins over link styling: numbers that don't
+            # look right (row.needs_review) render RED (the user 2026-07-13);
+            # underline is kept where the cell carries a link.
+            if row.needs_review:
+                for _f in (_MONEY_FIELDS | _PCT_FIELDS):
+                    if _f in col_idx:
+                        _c = ws.cell(row=i, column=col_idx[_f])
+                        _c.font = Font(
+                            color="C00000",
+                            underline=("single" if _c.hyperlink else None))
+
+        for i, row in enumerate(rows, start=2):
+            _emit(i, row)
+
         # Wrap the range in an Excel Table — gives filter/sort dropdowns and a
         # structured, clean look. Explicit gray header + borders above override
         # the table style, so it stays clean (no row stripes).
         last_row = len(rows) + 1
-        last_col = get_column_letter(len(COLS))
+        last_col = get_column_letter(len(cols_))
         for tname in list(ws.tables):
             del ws.tables[tname]          # drop any prior run's table first
         tbl_name = re.sub(r"[^A-Za-z0-9]", "", tab_name) or "WIP"  # unique per tab
@@ -1391,6 +1455,22 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
             name="TableStyleLight1", showFirstColumn=False, showLastColumn=False,
             showRowStripes=False, showColumnStripes=False)
         ws.add_table(table)
+
+        # Appendix section BELOW the table (outside it, so its rows don't
+        # pollute the table's filters): gray band title, then the same row
+        # rendering as the main block.
+        if appendix and appendix[1]:
+            sect_title, ap_rows = appendix
+            band = len(rows) + 3            # one blank spacer row under the table
+            for c in range(1, len(cols_) + 1):
+                bc = ws.cell(row=band, column=c)
+                bc.fill = HDR_FILL
+                bc.border = CELL_BORDER
+            t = ws.cell(row=band, column=1, value=sect_title)
+            t.font = HDR_FONT
+            ws.row_dimensions[band].height = 22
+            for k, row in enumerate(ap_rows, start=band + 1):
+                _emit(k, row)
 
         # Atomic write — save to a temp file then os.replace() so a crash
         # or interruption can't leave a half-written WIP (safe_save pattern).
@@ -1637,6 +1717,11 @@ def main() -> int:
               _Term.color(_Term.DIM, f" ({elapsed:.1f}s)"))
     else:
         _section("Skipping QBO join (--no-qbo)")
+
+    # Flagged rows = the script couldn't verify a number → red in Excel
+    # (the user 2026-07-13: bad-looking numbers render red).
+    for row in rows:
+        row.needs_review = bool(row.status_flags)
 
     # ── Write / dry-run report ──
     try:
