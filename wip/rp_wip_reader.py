@@ -131,12 +131,71 @@ def read_general_list(path: Path):
             }
             has_price = any(rec[k] for k in
                             ("slab_bid", "slab_cost", "flat_bid", "flat_cost"))
-            is_active = rec["completion"] is not None and rec["completion"] < 0.999
-            if has_price or is_active:
+            # PRICED ONLY (the user 2026-07-14): a job with no price for any
+            # scope was SKIPPED on purpose ("unless we put the contract price
+            # there just to be done") — it does not enter the WIP. Kills the
+            # bloat of empty slab lines from Small Jobs / legacy Alpha rows.
+            if has_price:
                 seen.add(job)
                 out.append(rec)
     wb.close()
     return out, missing_sheets
+
+
+# ─────────────────── Today's schedule: flatwork crews ──────────────
+SCHEDULE_DIR = Path(os.getenv(
+    "RP_SCHEDULE_DIR", "/Volumes/Common/OPERATIONS/SCHEDULE"))
+_SCHED_FILE_RE = re.compile(r"Schedule (\d{1,2})-(\d{1,2})-(\d{2})\.xlsx$",
+                            re.IGNORECASE)
+
+
+def read_schedule_flatwork(sched_dir: Path):
+    """Latest daily schedule → the set of normalized ADDRESSES whose crew
+    description mentions flatwork (the user 2026-07-14: anything on the
+    schedule under Flatwork is won and being worked — never backlog).
+    Returns (set_of_norm_addresses, schedule_label) — empty set if the
+    schedule can't be found/read (backlog rule then falls back to $-only)."""
+    best = None
+    try:
+        for year_dir in sched_dir.iterdir():
+            if not (year_dir.is_dir() and year_dir.name.isdigit()):
+                continue
+            for month_dir in year_dir.iterdir():
+                if not month_dir.is_dir():
+                    continue
+                for f in month_dir.iterdir():
+                    m = _SCHED_FILE_RE.search(f.name)
+                    if m:
+                        mo, dy, yy = (int(g) for g in m.groups())
+                        key = (2000 + yy, mo, dy)
+                        if best is None or key > best[0]:
+                            best = (key, f)
+    except OSError:
+        return set(), None
+    if best is None:
+        return set(), None
+    _key, path = best
+    label = f"{_key[1]}-{_key[2]}-{_key[0] % 100:02d}"
+    addrs = set()
+    try:
+        wb = load_workbook(path, data_only=True, read_only=True)
+        sheet = next((s for s in wb.sheetnames
+                      if s.strip().lower() == "daily schedule"), wb.sheetnames[0])
+        ws = wb[sheet]
+        for row in ws.iter_rows(min_row=1, max_row=200):
+            vals = [str(getattr(c, "value", "") or "") for c in row[:8]]
+            desc = " ".join(vals).upper()
+            if "FLATWORK" in desc or re.search(r"\bFTW\b", desc):
+                # address is the first street-looking cell in the row
+                for v in vals:
+                    vn = _norm(v)
+                    if re.match(r"^\d+[A-Z0-9 ,.'-]+$", vn) and len(vn) > 8:
+                        addrs.add(vn)
+                        break
+        wb.close()
+    except Exception:
+        return set(), None
+    return addrs, label
 
 
 # ─────────────────── Residential: folder lookup ────────────────────
@@ -296,8 +355,13 @@ def build_lines(records, rp_to_folders, addr_folders):
             rows.append((row, rec["completion"], rec))
             continue
 
-        rows.append((_mk(rec["job"], rec["slab_bid"], rec["slab_cost"]),
-                     rec["completion"], rec))
+        # A line exists ONLY for a scope that has pricing (the user
+        # 2026-07-14): Small Jobs entries are usually flatwork-only — the
+        # clerk confirmed what is real by pricing it. No slab price → no
+        # slab line (e.g. RP5542: take only the -FTW line).
+        if rec["slab_bid"] or rec["slab_cost"]:
+            rows.append((_mk(rec["job"], rec["slab_bid"], rec["slab_cost"]),
+                         rec["completion"], rec))
         if rec["flat_bid"] or rec["flat_cost"]:
             rows.append((_mk(rec["job"] + "-FTW", rec["flat_bid"],
                              rec["flat_cost"]), rec["completion"], rec))
@@ -394,13 +458,31 @@ def main() -> int:
     # 2026-07-14): flatwork bid together with the slab but not poured yet —
     # effectively unwon-but-expected work (~95% follows the slab). Not an
     # error state, so no red; invoiced under RP#-FTW when the pour lands.
+    sched_addrs, sched_label = read_schedule_flatwork(SCHEDULE_DIR)
+    if sched_label:
+        print(f"  Schedule check: {sched_label} — "
+              f"{len(sched_addrs)} flatwork address(es)")
     main_rows, backlog = [], []
-    for row, comp, _rec in pairs:
-        if row.project_num.endswith("-FTW") and not row.billed_to_date:
-            row.needs_review = False
-            backlog.append(row)
-        else:
+    for row, comp, rec in pairs:
+        if not row.project_num.endswith("-FTW"):
             main_rows.append(row)
+            continue
+        addr_n = _norm(f"{rec['house'] or ''} {rec['street'] or ''}")
+        on_sched = bool(addr_n) and any(
+            addr_n == a or a.startswith(addr_n) or addr_n.startswith(a)
+            for a in sched_addrs)
+        has_activity = bool(row.billed_to_date) or bool(row.costs_to_date)
+        # WON + WORKING when there is ANY QBO activity (billed OR costs —
+        # the user 2026-07-14: "how can this be a backlog if there are
+        # costs? we won it!") or the job is on today's flatwork schedule.
+        if has_activity or on_sched:
+            if on_sched:
+                row.notes.append(
+                    f"On the {sched_label} schedule — flatwork crew")
+            main_rows.append(row)
+        else:
+            row.needs_review = False   # expected pre-pour state, not an error
+            backlog.append(row)
     rows = main_rows + backlog              # for counts/logs
     n_red = sum(1 for r in rows if r.needs_review)
     print(f"  Review (red): {n_red} line(s) · FTW backlog: {len(backlog)}")
