@@ -49,6 +49,18 @@ from openpyxl import load_workbook
 import cp_wip_reader as CP
 from shared import qbo_api
 
+def _rp_cols():
+    drop = {"co_revenue", "retainage_held"}
+    cols = [("WHY (TEMP)", 8, "why_link")]
+    for label, width, field in CP.COLS:
+        if field in drop:
+            continue
+        cols.append((label, width, field))
+        if field == "project_name":
+            cols.append(("TYPE", 9, "home_type"))
+            cols.append(("CLIENT", 18, "client"))
+    return cols
+
 ALPHA_PATH = Path(os.getenv(
     "RP_ALPHA_PATH",
     "/Volumes/Common/OPERATIONS/GENERAL LIST/LISTA GENERAL AÑO 2026.xlsx",
@@ -68,6 +80,17 @@ COL_SLAB_BID, COL_SLAB_COST, COL_FLAT_BID, COL_FLAT_COST = 35, 36, 37, 38
 # CP jobs live here because the RP team runs them (standalone, never split).
 _JOB_RE = re.compile(r"^(RP\d{4}|CP\d{3,4})\b", re.IGNORECASE)
 _RP_RE = re.compile(r"RP\d{4}(?:-[A-Za-z]{2,6})?(?!\d)", re.IGNORECASE)
+
+# Home type (the user 2026-07-14): tract = production builders (repeat volume
+# work) — everyone else is custom. Edit these sets as builders come and go.
+TRACT_CLIENTS = {"GRAND HOMES", "WILLIAM RYAN HOMES",
+                 "DALLAS AREA HABITAT FOR HUMANITY"}
+TRACT_CODES = {"GRAND", "WRYAN", "DAHH"}
+
+# RP tab column layout (the user 2026-07-14): TYPE + CLIENT after the name;
+# no Approved COs / Retainage (those are draw-model columns — CP only);
+# temp WHY column links each row to the run's justification JSON dump.
+RP_COLS = None   # built after CP import below
 
 # Fully billed tolerance — within half a percent of contract counts as billed
 # out (retainage/rounding noise).
@@ -121,6 +144,7 @@ def read_general_list(path: Path):
             rec = {
                 "job": job, "source": sheet, "gl_row": r,
                 "completion": comp if isinstance(comp, (int, float)) else None,
+                "builder": ws.cell(r, 2).value,
                 "house": ws.cell(r, COL_HOUSE).value,
                 "street": ws.cell(r, COL_STREET).value,
                 "city": ws.cell(r, COL_CITY).value,
@@ -344,6 +368,17 @@ def build_lines(records, rp_to_folders, addr_folders):
             row.takeoff_path = ALPHA_PATH      # Contract/ETC cells link → the List
             if rec["source"] == SMALL_SHEET:
                 row.notes.append("Small Jobs list")
+            # CLIENT = the Residential client folder (full name) when found,
+            # else the GL builder code. TYPE = Tract for production builders.
+            if folder is not None:
+                cname = (folder.name if _norm(folder.parent.name) == "RESIDENTIAL"
+                         else folder.parent.name)
+            else:
+                cname = str(rec.get("builder") or "") or None
+            row.client = cname
+            code = _norm(rec.get("builder"))
+            row.home_type = ("Tract" if (_norm(cname) in TRACT_CLIENTS
+                                         or code in TRACT_CODES) else "Custom")
             return row
 
         if rec["job"].startswith("CP"):
@@ -501,12 +536,22 @@ def main() -> int:
             "contract": row.base_contract, "etc": row.base_etc,
             "billed": row.billed_to_date, "costs": row.costs_to_date,
             "status": "Closed" if row.is_completed else "Active",
+            "client": row.client, "home_type": row.home_type,
             "red": row.needs_review,
             "notes": list(row.notes), "flags": list(row.status_flags),
         })
     log_dir = Path.home() / "Library" / "Logs" / "Proficient" / "wip"
     log_dir.mkdir(parents=True, exist_ok=True)
-    (log_dir / "rp_wip_lines.json").write_text(json.dumps(dump, indent=1))
+    dump_path = log_dir / "rp_wip_lines.json"
+    dump_path.write_text(json.dumps(dump, indent=1))
+    for row, _comp, _rec in pairs:
+        row.why_link = str(dump_path)
+        # Red must explain itself in NOTES (the user 2026-07-14) — flags carry
+        # the must-fix reason; mirror it so the notes column reads standalone.
+        if row.needs_review:
+            reason = "; ".join(row.status_flags) or (row.notes[-1] if row.notes else "")
+            if reason and f"RED: {reason}" not in row.notes:
+                row.notes.append(f"RED: {reason}")
 
     try:
         wrote = CP.write_test_cp(
@@ -514,7 +559,8 @@ def main() -> int:
             dry_run=args.dry_run, tab_name="Test - RP",
             appendix=("FTW BACKLOG — flatwork bid with the slab, NOT poured "
                       "yet (expected wins; invoice under RP#-FTW when poured)",
-                      backlog))
+                      backlog),
+            cols=_rp_cols())
     except CP.WipWriteDenied as e:
         print(f"  ✗ Guard blocked write: {e}")
         return 2

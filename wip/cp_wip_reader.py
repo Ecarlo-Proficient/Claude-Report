@@ -225,6 +225,9 @@ class CpRow:
     draw_path: Optional[Path] = None     # the latest draw's G702/G703 workbook (audit trail)
     qbo_customer_id: Optional[str] = None  # QBO customer id → deep links on Billed/Costs cells
     needs_review: bool = False           # number doesn't look right / flagged → red font in Excel
+    client: Optional[str] = None         # builder/client display name (RP tab)
+    home_type: Optional[str] = None      # 'Tract' / 'Custom' (RP tab)
+    why_link: Optional[str] = None       # path to the run's justification JSON (temp WHY column)
 
     @property
     def contract_price(self) -> Optional[float]:
@@ -1263,6 +1266,8 @@ def _row_display_value(row: CpRow, field_name: str, sync_ts: str):
     (formula fields are written via _build_formula, never here)."""
     if field_name == "_active_status":
         return "Closed" if row.is_completed else "Active"
+    if field_name == "why_link":
+        return "why ⇗" if row.why_link else None
     if field_name == "_last_synced":
         return sync_ts
     return getattr(row, field_name, None)
@@ -1270,7 +1275,8 @@ def _row_display_value(row: CpRow, field_name: str, sync_ts: str):
 
 def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                   tab_name: str = TEST_TAB,
-                  appendix: Optional[Tuple[str, List[CpRow]]] = None) -> bool:
+                  appendix: Optional[Tuple[str, List[CpRow]]] = None,
+                  cols: Optional[List] = None) -> bool:
     """Write rows to the given WIP tab (default 'Test - CP'; RP passes
     'Test - RP'). Same structure/formatting for every division. Guarded by
     wip_excel_guard. Returns True if written, False if skipped (dry-run, or the
@@ -1281,6 +1287,7 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
     yet; the user 2026-07-14: separated at the bottom, they read as expected
     wins rather than in-progress jobs)."""
     assert_write_allowed(tab_name)  # tripwire before we even open the workbook
+    cols_ = cols or COLS
 
     if dry_run:
         _print_rows_table(rows, wip_path, tab_name)
@@ -1322,7 +1329,7 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
         n_total = len(rows) + ((len(appendix[1]) + 2)
                                if appendix and appendix[1] else 0)
         for r in range(1, max(prior_max_row, n_total + 1) + 1):
-            for c in range(1, max(prior_max_col, len(COLS)) + 1):
+            for c in range(1, max(prior_max_col, len(cols_)) + 1):
                 cell = ws.cell(row=r, column=c)
                 cell.value = None
                 cell.hyperlink = None
@@ -1331,7 +1338,7 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
             ws.delete_rows(1, prior_max_row)
 
         # Header row — gray, bold, centered + wrapped, bordered.
-        for c, (label, width, _key) in enumerate(COLS, start=1):
+        for c, (label, width, _key) in enumerate(cols_, start=1):
             cell = ws.cell(row=1, column=c, value=label)
             cell.fill = HDR_FILL
             cell.font = HDR_FONT
@@ -1346,10 +1353,10 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
 
         # Column indices for hyperlink attachment (1-based like openpyxl)
         # + column LETTERS for building cross-cell formulas.
-        col_idx = {field: i + 1 for i, (_, _, field) in enumerate(COLS)}
+        col_idx = {field: i + 1 for i, (_, _, field) in enumerate(cols_)}
         col_letter_by_field = {
             field: get_column_letter(i + 1)
-            for i, (_, _, field) in enumerate(COLS)
+            for i, (_, _, field) in enumerate(cols_)
         }
 
         def _emit(i: int, row: CpRow) -> None:
@@ -1365,7 +1372,7 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                 )
                 row.status_flags.append("Data integrity: CO Cost without CO Rev — dropped")
 
-            for c, (_label, _width, field_name) in enumerate(COLS, start=1):
+            for c, (_label, _width, field_name) in enumerate(cols_, start=1):
                 if field_name in FORMULA_FIELDS:
                     # Derived cell — write an Excel formula referencing
                     # the input cells in the same row. Excel evaluates on
@@ -1401,15 +1408,21 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
             # Contract/COs → the draw workbook (takeoff pre-draw); ETC → takeoff;
             # Billed/Retainage → QBO customer page (all invoices on one screen);
             # Costs → QBO project-filtered P&L report.
-            _apply_hyperlink(ws.cell(row=i, column=col_idx["contract_price"]),
-                             row.draw_path or row.takeoff_path)
-            _apply_hyperlink(ws.cell(row=i, column=col_idx["co_revenue"]), row.draw_path)
-            _apply_hyperlink(ws.cell(row=i, column=col_idx["etc"]), row.takeoff_path)
+            for _f, _tgt in (("contract_price", row.draw_path or row.takeoff_path),
+                             ("co_revenue", row.draw_path),
+                             ("etc", row.takeoff_path)):
+                if _f in col_idx:
+                    _apply_hyperlink(ws.cell(row=i, column=col_idx[_f]), _tgt)
+            if "why_link" in col_idx and row.why_link:
+                _apply_hyperlink(ws.cell(row=i, column=col_idx["why_link"]),
+                                 Path(row.why_link))
             if row.qbo_customer_id and QBO_REALM:
                 _cu = qbo_api.customer_url(row.qbo_customer_id, QBO_REALM)
                 _pu = qbo_api.project_pl_url(row.qbo_customer_id, QBO_REALM)
                 for _f, _u in (("billed_to_date", _cu), ("retainage_held", _cu),
                                ("costs_to_date", _pu)):
+                    if _f not in col_idx:
+                        continue
                     _c = ws.cell(row=i, column=col_idx[_f])
                     if _u and _c.value not in (None, ""):
                         _c.hyperlink = _u
@@ -1433,7 +1446,7 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
         # structured, clean look. Explicit gray header + borders above override
         # the table style, so it stays clean (no row stripes).
         last_row = len(rows) + 1
-        last_col = get_column_letter(len(COLS))
+        last_col = get_column_letter(len(cols_))
         for tname in list(ws.tables):
             del ws.tables[tname]          # drop any prior run's table first
         tbl_name = re.sub(r"[^A-Za-z0-9]", "", tab_name) or "WIP"  # unique per tab
@@ -1449,7 +1462,7 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
         if appendix and appendix[1]:
             sect_title, ap_rows = appendix
             band = len(rows) + 3            # one blank spacer row under the table
-            for c in range(1, len(COLS) + 1):
+            for c in range(1, len(cols_) + 1):
                 bc = ws.cell(row=band, column=c)
                 bc.fill = HDR_FILL
                 bc.border = CELL_BORDER
