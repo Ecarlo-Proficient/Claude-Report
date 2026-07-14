@@ -81,12 +81,14 @@ from qbo_bill_tracker import (
     parse_date,
     STATUS_OK_TO_PAY, STATUS_AWAITING_PAYMENT, STATUS_AWAITING_INVOICE,
     STATUS_PAID, STATUS_NO_PROJECT, STATUS_PARTIAL_PAID,
+    MATCH_BASIS_DRAW, MATCH_BASIS_FINAL,
 )
 from bill_rows import (
     build_account_maps, build_po_map, build_payment_map, build_rows,
     approved_text,
     collapse_rows, multi_project_bill_ids, MULTI_MARKER,
 )
+from general_list import load_contracts
 
 
 # ─────────────────────── constants ───────────────────────
@@ -310,17 +312,25 @@ def _qbo_link(bill_id: str) -> str:
     return f'=HYPERLINK("{url}","↗")'
 
 
-def _invoice_cell(inv_doc: str, inv_memo: str) -> str:
+def _invoice_cell(inv_doc: str, inv_memo: str, match_basis: str = "") -> str:
     """Format Invoice # together with the invoice's PrivateNote (draw memo)
     so the AP team can eyeball whether the QBO match is correct. No truncation
     — column is wide enough, and clipping the period notation defeats the
-    purpose of showing the memo at all."""
+    purpose of showing the memo at all.
+
+    `match_basis` prefixes a per-row signal when General List RP draw semantics
+    applied: [DRAW] = the next draw authorizes this bill; [FULLY BILLED] = job
+    is 100% billed, matched to the last draw."""
     if not inv_doc:
         return ""
+    prefix = ""
+    if match_basis == MATCH_BASIS_DRAW:
+        prefix = "[DRAW] "
+    elif match_basis == MATCH_BASIS_FINAL:
+        prefix = "[FULLY BILLED] "
     memo = (inv_memo or "").strip()
-    if not memo:
-        return inv_doc
-    return f"{inv_doc} — {memo}"
+    body = inv_doc if not memo else f"{inv_doc} — {memo}"
+    return prefix + body
 
 
 def _esc_col(name: str) -> str:
@@ -862,7 +872,7 @@ def _write_bill_row(ws, r_i: int, r: dict, edits: Dict[str, Dict[str, str]],
         # ── CLIENT PAYMENT · AR ──
         r.get("invoice_status", ""),                             # 19 Invoice Status (AR)
         r.get("inv_doc", ""),                                    # 20 Invoice # (→ link)
-        _invoice_cell(r.get("inv_doc", ""), r.get("inv_memo", "")),  # 21 Matched Invoice (# + memo)
+        _invoice_cell(r.get("inv_doc", ""), r.get("inv_memo", ""), r.get("match_basis", "")),  # 21 Matched Invoice
         r.get("inv_date"),                                       # 22
         r.get("inv_total"),                                      # 23
         r.get("payment_date"),                                   # 24 GC Paid Date (money IN)
@@ -2130,14 +2140,23 @@ def main() -> int:
         if cv:
             invoices_by_customer[cv].append(inv)
 
+    # General List (READ-ONLY) → RP draw semantics. None (share unmounted / file
+    # unreadable) degrades RP matching to today's amount-cover-only behavior.
+    print("→ loading General List (read-only) …")
+    gl_contracts = load_contracts()
+    if gl_contracts is None:
+        print("  ⚠ General List unavailable — RP matching degraded to amount-cover only")
+    else:
+        print(f"  {len(gl_contracts)} RP contract entries")
+
     print("→ building rows …")
     open_rows = build_rows(
         open_bills, invoices_by_customer, vendor_map, account_map, item_map, po_map,
-        payment_map=payment_map,
+        payment_map=payment_map, gl_contracts=gl_contracts,
     )
     paid_rows = build_rows(
         paid_bills, invoices_by_customer, vendor_map, account_map, item_map, po_map,
-        payment_map=payment_map,
+        payment_map=payment_map, gl_contracts=gl_contracts,
     )
     all_rows = open_rows + paid_rows
     print(f"  {len(open_rows)} open + {len(paid_rows)} paid = {len(all_rows)} total")
@@ -2154,6 +2173,9 @@ def main() -> int:
     print("→ by division:")
     for d, n in sorted(by_division.items()):
         print(f"    {d}: {n}")
+    n_draw = sum(1 for r in all_rows if r.get("match_basis") == MATCH_BASIS_DRAW)
+    n_final = sum(1 for r in all_rows if r.get("match_basis") == MATCH_BASIS_FINAL)
+    print(f"→ RP draw semantics: {n_draw} draw-matched · {n_final} fully-billed")
 
     if args.limit > 0:
         print(f"→ --limit {args.limit}: capping row sets")

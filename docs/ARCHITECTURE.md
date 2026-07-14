@@ -92,12 +92,14 @@ flowchart LR
 
     QBO[("QBO\nbills + invoices")]:::src
     NAS[("Synology NAS\nvendor statement PDFs")]:::src
+    GL[("General List xlsx\nSynology · READ-ONLY")]:::src
     BT["excel_bill_sync.py\n+ 4 audit scripts"]:::tool
     SR["statement_reconciler.py"]:::tool
     BX[("Bill Tracker.xlsx\n~/Documents/CompanyHealth")]:::out
     RX[("reconciliation xlsx\n→ back to NAS")]:::out
 
     QBO --> BT --> BX
+    GL -- "RP draw matching" --> BT
     QBO --> SR
     NAS --> SR --> RX
 ```

@@ -29,7 +29,7 @@ from qbo_bill_tracker import (
     get_line_customer_ref,
     get_project_num,
     get_division,
-    find_matching_invoice,
+    find_matching_invoice_ex,
     compute_status,
     compute_pay_status,
     compute_invoice_status,
@@ -180,6 +180,7 @@ def build_rows(
     item_map: Dict[str, str],
     po_map: Dict[str, str],
     payment_map: Optional[Dict[str, dt.date]] = None,
+    gl_contracts: Optional[Dict[str, float]] = None,
 ) -> List[dict]:
     """One row per bill line. Includes BOTH Item lines (Bill Type=COGS) AND
     Account lines (Bill Type=Other). Lines without project # → Status=NO PROJECT #
@@ -226,13 +227,15 @@ def build_rows(
                 class_name = bill_class
 
             matched: Optional[dict] = None
+            match_basis = ""
             if cust_id and division:
                 # Concatenate description + account so the RP pump filter can
                 # detect pump bills regardless of which field carries the cue.
                 bill_text = f"{line_desc}  {account_name}"
-                matched = find_matching_invoice(
+                matched, match_basis = find_matching_invoice_ex(
                     bill_date, division, cust_id, invoices_by_customer,
                     bill_text=bill_text, bill_amount=line_amt,
+                    project_num=project_num, gl_contracts=gl_contracts,
                 )
 
             inv_doc = ""
@@ -299,6 +302,7 @@ def build_rows(
                 "auto_status": auto_status,
                 "pay_status": pay_status,
                 "invoice_status": invoice_status,
+                "match_basis": match_basis,
             })
     return rows
 
@@ -614,6 +618,11 @@ def collapse_rows(line_rows: List[dict], grain: str = "bill") -> List[dict]:
             "invoice_status": (
                 _aggregate_invoice_status([r.get("invoice_status") or "" for r in lines])
                 if grain == "bill" else first.get("invoice_status", "")
+            ),
+            # match_basis is per-line (per matched invoice) → aggregate like account.
+            "match_basis": (
+                _agg_distinct_or_multi([r.get("match_basis") or "" for r in lines])
+                if grain == "bill" else first.get("match_basis", "")
             ),
             "is_multi_project": is_multi,
             "line_count": len(lines),

@@ -426,6 +426,14 @@ _PUMP_RE = re.compile(r"\bpump", re.IGNORECASE)
 # leave unmatched (→ Awaiting Invoice) rather than pin it to a too-small one.
 _RP_MATCH_FWD_DAYS = 60          # invoice TxnDate must be within 60 days AFTER the bill
 _RP_COVER_TOLERANCE = 0.01       # 1-cent slack so an exact-equal invoice still covers
+_RP_FULL_TOLERANCE = 0.01        # billed within a penny of the contract == fully billed
+
+# match_basis — which rule authorized a bill's matched invoice. Surfaced on the
+# Bills sheet so AP can see WHY a status applies (2026-07-13, RP draw semantics).
+MATCH_BASIS_COVER = "cover"      # invoice covers the bill amount (today's behavior)
+MATCH_BASIS_DRAW = "draw"        # RP partial-billed: the NEXT draw authorizes the bill
+MATCH_BASIS_FINAL = "final"      # RP fully-billed: attach a late bill to the LAST draw
+MATCH_BASIS_PERIOD = "period"    # MFD/CP: bill date falls inside the invoice's draw period
 
 
 def _invoice_scope(inv: dict) -> str:
@@ -440,37 +448,68 @@ def _invoice_scope(inv: dict) -> str:
     return parts[1].strip() if len(parts) == 2 else memo
 
 
-def find_matching_invoice(
+def rp_billed_total(customer_id: str,
+                    invoices_by_customer: Dict[str, List[dict]]) -> float:
+    """Total invoiced (sum of TotalAmt) for a project's QBO customer. The pool
+    is already retainage-excluded and TxnDate ≥ INVOICE_CUTOFF_DATE (filtered by
+    the caller), so any undercount only makes the 'full' test more conservative
+    (degrades toward today's stricter behavior)."""
+    return sum(float(inv.get("TotalAmt") or 0)
+               for inv in invoices_by_customer.get(customer_id, []))
+
+
+def rp_gl_state(project_num: Optional[str], customer_id: str,
+                invoices_by_customer: Dict[str, List[dict]],
+                gl_contracts: Optional[Dict[str, float]]) -> Optional[str]:
+    """How far a signed RP contract has been billed:
+      None       — no General List / no contract on file → keep today's behavior
+      'unbilled' — contract exists, nothing billed yet (no draw exists)
+      'partial'  — some billed, under the contract  → existing invoices are draws
+      'full'     — billed to (≈) the contract total → billing complete
+    """
+    if not gl_contracts or not project_num:
+        return None
+    contract = gl_contracts.get(project_num.upper())
+    if contract is None or contract <= 0:
+        return None
+    billed = rp_billed_total(customer_id, invoices_by_customer)
+    if billed <= _RP_COVER_TOLERANCE:
+        return "unbilled"
+    if billed >= contract - _RP_FULL_TOLERANCE:
+        return "full"
+    return "partial"
+
+
+def find_matching_invoice_ex(
     bill_date: dt.date,
     division: str,
     customer_id: str,
     invoices_by_customer: Dict[str, List[dict]],
     bill_text: str = "",
     bill_amount: float = 0.0,
-) -> Optional[dict]:
-    """Apply division-specific matching rules. Return matched invoice or None.
+    project_num: Optional[str] = None,
+    gl_contracts: Optional[Dict[str, float]] = None,
+) -> Tuple[Optional[dict], str]:
+    """Division-specific matching. Returns (matched_invoice_or_None, match_basis).
 
-    `bill_text` — bill description + account name concatenated, used by the
-    RP branch to keep pump-truck bills from being matched to non-pump
-    invoices and vice versa. RP projects can have several scoped invoices
-    on the same house (Pump Charges, Foundation, Driveway, …); matching
-    purely by date proximity puts pump bills on foundation invoices etc.
-    The user 2026-06-04: only the pump case has burned us; broader scope
-    matching is deferred.
+    `bill_text` — bill description + account name, so the RP pump filter keeps
+    pump-truck bills off non-pump invoices and vice versa.
 
-    `bill_amount` — the cost being attributed to this project (the line
-    amount). RP matching is amount-aware (the user 2026-06-18): the bill must not
-    exceed the invoice it's matched to, so we only consider invoices that
-    COVER the bill amount and pick the largest. See `_RP_MATCH_FWD_DAYS`.
+    `bill_amount` — the cost attributed to this project (line amount); the RP
+    COVER pass requires the invoice to cover it.
+
+    `project_num` + `gl_contracts` — General List draw semantics (2026-07-13).
+    RP jobs bill at completion, so an early cost's authorizing invoice is the
+    NEXT draw (an invoice dated on/after the bill), amount-cover waived. Applied
+    only when the GL shows a contract and QBO shows partial billing; `gl_contracts
+    is None` (share unmounted) degrades to exactly the cover-only behavior.
     """
     candidates = invoices_by_customer.get(customer_id, [])
     if not candidates:
-        return None
+        return None, ""
 
     if division == "RP":
-        # Two-way pump filter: pump bill ↔ pump invoice; non-pump bill ↔
-        # non-pump invoice. Only applied when there's any pump invoice for
-        # this customer — otherwise we'd over-filter ourselves to no match.
+        # Two-way pump filter (unchanged): pump bill ↔ pump invoice.
         bill_is_pump = bool(_PUMP_RE.search(bill_text or ""))
         any_pump_inv = any(_PUMP_RE.search(_invoice_scope(inv)) for inv in candidates)
         if any_pump_inv:
@@ -479,34 +518,54 @@ def find_matching_invoice(
                 if bool(_PUMP_RE.search(_invoice_scope(inv))) == bill_is_pump
             ]
             if not candidates:
-                return None
+                return None, ""
 
-        # Date window: invoice on/after the bill, within the forward window.
+        # 1) COVER pass (unchanged) — within the 60-day forward window, the
+        #    largest invoice that covers the bill amount. Strict superset: every
+        #    bill that matches today still matches here first.
         window_end = bill_date + dt.timedelta(days=_RP_MATCH_FWD_DAYS)
-        eligible = []
-        for inv in candidates:
-            d = parse_date(inv.get("TxnDate"))
-            if d is not None and bill_date <= d <= window_end:
-                eligible.append(inv)
-        if not eligible:
-            return None
-
-        # Amount-aware: a bill (our cost) must not exceed the invoice (what we
-        # billed the GC for that scope). Keep only invoices that COVER the bill
-        # amount; among those take the LARGEST. If none cover, leave unmatched
-        # so it surfaces as Awaiting Invoice instead of pinning to a too-small
-        # invoice (e.g. $2,703 concrete cost wrongly stuck on a $246 invoice).
+        eligible = [
+            inv for inv in candidates
+            if (d := parse_date(inv.get("TxnDate"))) is not None
+            and bill_date <= d <= window_end
+        ]
         covering = [
             inv for inv in eligible
             if float(inv.get("TotalAmt") or 0) >= bill_amount - _RP_COVER_TOLERANCE
         ]
-        if not covering:
-            return None
-        covering.sort(key=lambda inv: (
-            -float(inv.get("TotalAmt") or 0),                             # largest first
-            abs(((parse_date(inv.get("TxnDate")) or bill_date) - bill_date).days),  # then closest date
-        ))
-        return covering[0]
+        if covering:
+            covering.sort(key=lambda inv: (
+                -float(inv.get("TotalAmt") or 0),
+                abs(((parse_date(inv.get("TxnDate")) or bill_date) - bill_date).days),
+            ))
+            return covering[0], MATCH_BASIS_COVER
+
+        # 2) Draw semantics from the General List.
+        state = rp_gl_state(project_num, customer_id, invoices_by_customer, gl_contracts)
+        if state == "partial":
+            # The NEXT draw: earliest invoice dated ON/AFTER the bill (a draw
+            # dated before the cost can't have captured it). No forward cap —
+            # await the next draw however long it takes. Cover waived.
+            forward = sorted(
+                ((d, inv) for inv in candidates
+                 if (d := parse_date(inv.get("TxnDate"))) is not None and d >= bill_date),
+                key=lambda t: t[0],
+            )
+            if forward:
+                return forward[0][1], MATCH_BASIS_DRAW
+            return None, ""            # no next draw yet → stay Awaiting Invoice
+        if state == "full":
+            # Fully billed → no next draw; a late cost attaches to the LAST draw.
+            dated = sorted(
+                ((d, inv) for inv in candidates
+                 if (d := parse_date(inv.get("TxnDate"))) is not None),
+                key=lambda t: t[0],
+            )
+            if dated:
+                return dated[-1][1], MATCH_BASIS_FINAL
+            return None, ""
+        # state None / 'unbilled' → today's behavior (cover already failed).
+        return None, ""
 
     if division in ("MFD", "CP"):
         for inv in candidates:
@@ -515,10 +574,27 @@ def find_matching_invoice(
                 continue
             start, end = period
             if start <= bill_date <= end:
-                return inv
-        return None
+                return inv, MATCH_BASIS_PERIOD
+        return None, ""
 
-    return None
+    return None, ""
+
+
+def find_matching_invoice(
+    bill_date: dt.date,
+    division: str,
+    customer_id: str,
+    invoices_by_customer: Dict[str, List[dict]],
+    bill_text: str = "",
+    bill_amount: float = 0.0,
+) -> Optional[dict]:
+    """Back-compat wrapper for callers predating draw semantics (this module's
+    own build_rows). Returns just the invoice."""
+    inv, _ = find_matching_invoice_ex(
+        bill_date, division, customer_id, invoices_by_customer,
+        bill_text=bill_text, bill_amount=bill_amount,
+    )
+    return inv
 
 
 def compute_status(bill: dict, matched: Optional[dict], division: Optional[str]) -> str:
