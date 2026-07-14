@@ -71,6 +71,8 @@ _RP_RE = re.compile(r"RP\d{4}(?:-[A-Za-z]{2,6})?(?!\d)", re.IGNORECASE)
 # Fully billed tolerance — within half a percent of contract counts as billed
 # out (retainage/rounding noise).
 _FULL_TOL = 0.005
+_VARIANCE_CLOSE = 1000.0   # 100% + billed within $1K of contract → Closed w/ variance
+                           # (the user 2026-07-14 materiality rule; covers WRH's 1.5% fee)
 
 
 def _norm(s) -> str:
@@ -250,8 +252,18 @@ def _classify(row: CP.CpRow, completion) -> None:
             row.notes.append("Not billed yet")
     else:
         if c100:
-            row.notes.append(f"100% but only ${B:,.0f} billed — bill the rest")
-            row.needs_review = True
+            gap = K - B
+            if gap <= _VARIANCE_CLOSE:
+                # Materiality rule (the user 2026-07-14): 100% + billed within
+                # $1K of contract = close with a documented small variance
+                # (builder fee like WRH's 1.5%, or an approved write-down) —
+                # amber note, NOT red. Over the threshold: chase the billing.
+                row.notes.append(
+                    f"CLOSED — small variance ${gap:,.0f} (fee/write-down)")
+                row.is_completed = True
+            else:
+                row.notes.append(f"100% but only ${B:,.0f} billed — bill the rest")
+                row.needs_review = True
         else:
             row.notes.append("Partially billed — treat as draw")
 
