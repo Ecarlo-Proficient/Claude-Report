@@ -227,7 +227,8 @@ class CpRow:
     needs_review: bool = False           # number doesn't look right / flagged → red font in Excel
     client: Optional[str] = None         # builder/client display name (RP tab)
     home_type: Optional[str] = None      # 'Tract' / 'Custom' (RP tab)
-    why_link: Optional[str] = None       # path to the run's justification JSON (temp WHY column)
+    why_link: Optional[str] = None       # path to the justification workbook (temp WHY column)
+    why_fragment: Optional[str] = None   # "#'SHEET'!A<row>" — jump straight to this line's row
 
     @property
     def contract_price(self) -> Optional[float]:
@@ -1416,7 +1417,8 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                     _apply_hyperlink(ws.cell(row=i, column=col_idx[_f]), _tgt)
             if "why_link" in col_idx and row.why_link:
                 _apply_hyperlink(ws.cell(row=i, column=col_idx["why_link"]),
-                                 Path(row.why_link))
+                                 Path(row.why_link),
+                                 row.why_fragment or "")
             if row.qbo_customer_id and QBO_REALM:
                 _cu = qbo_api.customer_url(row.qbo_customer_id, QBO_REALM)
                 _pu = qbo_api.project_pl_url(row.qbo_customer_id, QBO_REALM)

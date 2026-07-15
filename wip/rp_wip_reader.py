@@ -498,7 +498,7 @@ def write_justification(pairs, backlog, out_path: Path) -> None:
     lock = out_path.with_name("~$" + out_path.name)
     if lock.exists():
         print(f"  ⚠ {out_path.name} open in Excel — justification not refreshed")
-        return
+        return None
     wb = Workbook()
     ws = wb.active
     ws.title = "JUSTIFICATION"
@@ -522,8 +522,10 @@ def write_justification(pairs, backlog, out_path: Path) -> None:
     ordered = sorted(pairs, key=lambda t: (id(t[0]) in backlog_set,
                                            not t[0].is_completed,
                                            t[0].project_num))
+    line_rows = {}
     for row, comp, rec in ordered:
         in_bk = id(row) in backlog_set
+        line_rows[row.project_num] = ws.max_row + 1
         ws.append([("FTW BACKLOG" if in_bk else "MAIN"), row.project_num,
                    row.home_type, row.client,
                    ("Alpha" if "Alpha" in rec["source"] else "Small Jobs"),
@@ -551,6 +553,7 @@ def write_justification(pairs, backlog, out_path: Path) -> None:
     ws.freeze_panes = "A4"
     wb.save(out_path)
     print(f"  ✓ Justification → {out_path}")
+    return line_rows
 
 
 
@@ -643,9 +646,13 @@ def main() -> int:
     justify_path = Path(os.getenv(
         "RP_JUSTIFY_XLSX",
         str(Path.home() / "Downloads" / "RP WIP - Justification.xlsx")))
-    write_justification(pairs, backlog, justify_path)
+    just_rows = write_justification(pairs, backlog, justify_path) or {}
     for row, _comp, _rec in pairs:
         row.why_link = str(justify_path)
+        jr = just_rows.get(row.project_num)
+        # Jump straight to THIS line's row in the workbook (the user
+        # 2026-07-15), not just the file.
+        row.why_fragment = CP._sheet_fragment("JUSTIFICATION", f"A{jr}") if jr else None
         # Red must explain itself in NOTES (the user 2026-07-14) — flags carry
         # the must-fix reason; mirror it so the notes column reads standalone.
         if row.needs_review:
