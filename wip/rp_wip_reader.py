@@ -34,7 +34,6 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import json
 import os
 import re
 import sys
@@ -440,6 +439,108 @@ def enrich_with_qbo(pairs) -> None:
 
 
 # ─────────────────────────── main ──────────────────────────────────
+# ─────────────────── justification workbook ────────────────────────
+def write_justification(pairs, backlog, out_path: Path) -> None:
+    """One row per WIP line, ops-manager-readable: GL source row, completion,
+    contract, QBO billed/costs, status and the sentence that defends it
+    (the user 2026-07-14: every job must be justifiable one-by-one)."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    GL_FILL = PatternFill("solid", fgColor="D9D9D9")
+    GOOD = Font(color="006100", bold=True)
+    BAD = Font(color="9C0006", bold=True)
+    thin = Side(style="thin", color="000000")
+    BORDER = Border(left=thin, right=thin, top=thin, bottom=thin)
+    CUR = '"$"#,##0.00_);[Red]("$"#,##0.00)'
+
+    def sentence(row, comp, rec, in_backlog):
+        K, b = row.base_contract, row.billed_to_date
+        cs = f"{comp * 100:.0f}%" if isinstance(comp, (int, float)) else "no %"
+        sheet = "Alpha" if "Alpha" in rec["source"] else "Small Jobs"
+        src = f"General List '{sheet}' row {rec['gl_row']}"
+        if in_backlog:
+            return (f"{src}: flatwork bid ${K:,.0f} entered with the slab — "
+                    f"$0 billed AND $0 costs under -FTW, not on the schedule "
+                    f"→ true backlog (expected win; bills when poured).")
+        if row.is_completed:
+            gap = (K - b) if (K and b is not None) else None
+            if gap is not None and abs(gap) < K * _FULL_TOL:
+                return (f"{src}: {cs} complete; contract ${K:,.2f}; QBO billed "
+                        f"${b:,.2f} — EQUAL → done-rule met (100% + fully "
+                        f"billed) → CLOSED.")
+            return (f"{src}: {cs} complete; contract ${K:,.2f}; QBO billed "
+                    f"${b:,.2f} — ${gap:,.0f} under (≤$1K materiality) → "
+                    f"CLOSED with small variance (builder fee / write-down).")
+        why = "; ".join(row.status_flags or row.notes or ["in progress"])
+        base = f"{src}: {cs} complete"
+        if K:
+            base += f"; contract ${K:,.0f}"
+        if b is not None:
+            base += f"; billed ${b:,.0f}"
+        if row.costs_to_date:
+            base += f"; QBO costs ${row.costs_to_date:,.0f} (working)"
+        return f"{base} → {why}"
+
+    # Never clobber the workbook while it is open in Excel.
+    lock = out_path.with_name("~$" + out_path.name)
+    if lock.exists():
+        print(f"  ⚠ {out_path.name} open in Excel — justification not refreshed")
+        return
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "JUSTIFICATION"
+    ws["A1"] = ("RP WIP — LINE-BY-LINE JUSTIFICATION (regenerated every run). "
+                "Source: General List (Alpha + Small Jobs) → QBO per line → "
+                "Test - RP. Priced scopes only.")
+    ws["A1"].font = Font(bold=True)
+    ws.append([])
+    HDR = ["SECTION", "LINE", "TYPE", "CLIENT", "GL SHEET", "GL ROW",
+           "% COMPLETE", "CONTRACT $", "QBO BILLED $", "QBO COSTS $",
+           "STATUS", "RED?", "JUSTIFICATION"]
+    ws.append(HDR)
+    for c in range(1, len(HDR) + 1):
+        cell = ws.cell(3, c)
+        cell.font = Font(bold=True)
+        cell.fill = GL_FILL
+        cell.alignment = Alignment(horizontal="center", vertical="center",
+                                   wrap_text=True)
+        cell.border = BORDER
+    backlog_set = {id(r) for r in backlog}
+    ordered = sorted(pairs, key=lambda t: (id(t[0]) in backlog_set,
+                                           not t[0].is_completed,
+                                           t[0].project_num))
+    for row, comp, rec in ordered:
+        in_bk = id(row) in backlog_set
+        ws.append([("FTW BACKLOG" if in_bk else "MAIN"), row.project_num,
+                   row.home_type, row.client,
+                   ("Alpha" if "Alpha" in rec["source"] else "Small Jobs"),
+                   rec["gl_row"],
+                   (comp if isinstance(comp, (int, float)) else None),
+                   row.base_contract, row.billed_to_date, row.costs_to_date,
+                   ("Closed" if row.is_completed else "Active"),
+                   ("RED" if row.needs_review else ""),
+                   sentence(row, comp, rec, in_bk)])
+        r = ws.max_row
+        for cc in range(1, len(HDR) + 1):
+            ws.cell(r, cc).border = BORDER
+            ws.cell(r, cc).alignment = Alignment(vertical="top",
+                                                 wrap_text=(cc == len(HDR)))
+        ws.cell(r, 7).number_format = "0%"
+        for cc in (8, 9, 10):
+            ws.cell(r, cc).number_format = CUR
+        if row.is_completed:
+            ws.cell(r, 11).font = GOOD
+        if row.needs_review:
+            ws.cell(r, 12).font = BAD
+    for col, w in zip("ABCDEFGHIJKLM",
+                      (13, 12, 8, 20, 10, 7, 11, 13, 13, 13, 9, 6, 92)):
+        ws.column_dimensions[col].width = w
+    ws.freeze_panes = "A4"
+    wb.save(out_path)
+    print(f"  ✓ Justification → {out_path}")
+
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="RP WIP — General List (Alpha + Small Jobs) → slab/-FTW "
@@ -522,30 +623,16 @@ def main() -> int:
     n_red = sum(1 for r in rows if r.needs_review)
     print(f"  Review (red): {n_red} line(s) · FTW backlog: {len(backlog)}")
 
-    # Justification dump — one record per line so every WIP verdict can be
-    # backed up job-by-job with the ops manager (the user 2026-07-14): where
-    # it was found in the General List, completion, contract, QBO billed,
-    # and the rule that produced the status.
-    dump = []
-    for row, comp, rec in pairs:
-        dump.append({
-            "line": row.project_num,
-            "section": ("FTW BACKLOG" if row in backlog else "MAIN"),
-            "gl_sheet": rec["source"], "gl_row": rec.get("gl_row"),
-            "completion": comp,
-            "contract": row.base_contract, "etc": row.base_etc,
-            "billed": row.billed_to_date, "costs": row.costs_to_date,
-            "status": "Closed" if row.is_completed else "Active",
-            "client": row.client, "home_type": row.home_type,
-            "red": row.needs_review,
-            "notes": list(row.notes), "flags": list(row.status_flags),
-        })
-    log_dir = Path.home() / "Library" / "Logs" / "Proficient" / "wip"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    dump_path = log_dir / "rp_wip_lines.json"
-    dump_path.write_text(json.dumps(dump, indent=1))
+    # Justification workbook (the user 2026-07-15: no JSON, human-readable,
+    # in Downloads) — one row per line: where it was found in the General
+    # List, completion, contract, QBO billed/costs, and the rule behind the
+    # status. The WHY (TEMP) column links here. Overwritten every run.
+    justify_path = Path(os.getenv(
+        "RP_JUSTIFY_XLSX",
+        str(Path.home() / "Downloads" / "RP WIP - Justification.xlsx")))
+    write_justification(pairs, backlog, justify_path)
     for row, _comp, _rec in pairs:
-        row.why_link = str(dump_path)
+        row.why_link = str(justify_path)
         # Red must explain itself in NOTES (the user 2026-07-14) — flags carry
         # the must-fix reason; mirror it so the notes column reads standalone.
         if row.needs_review:
@@ -560,7 +647,7 @@ def main() -> int:
             appendix=("FTW BACKLOG — flatwork bid with the slab, NOT poured "
                       "yet (expected wins; invoice under RP#-FTW when poured)",
                       backlog),
-            cols=_rp_cols())
+            cols=_rp_cols(), default_filter_active=True)
     except CP.WipWriteDenied as e:
         print(f"  ✗ Guard blocked write: {e}")
         return 2
