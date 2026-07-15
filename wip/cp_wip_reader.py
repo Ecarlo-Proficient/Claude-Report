@@ -1328,8 +1328,8 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
         # clear here to guarantee a clean slate.
         prior_max_row = ws.max_row or 0
         prior_max_col = ws.max_column or 0
-        n_total = len(rows) + ((len(appendix[1]) + 2)
-                               if appendix and appendix[1] else 0)
+        _sects = ([appendix] if isinstance(appendix, tuple) else (appendix or []))
+        n_total = len(rows) + sum(len(a[1]) + 3 for a in _sects if a[1])
         for r in range(1, max(prior_max_row, n_total + 1) + 1):
             for c in range(1, max(prior_max_col, len(cols_)) + 1):
                 cell = ws.cell(row=r, column=c)
@@ -1475,9 +1475,12 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
         # Appendix section BELOW the table (outside it, so its rows don't
         # pollute the table's filters): gray band title, then the same row
         # rendering as the main block.
-        if appendix and appendix[1]:
-            sect_title, ap_rows = appendix
-            band = len(rows) + 3            # one blank spacer row under the table
+        sections = ([appendix] if isinstance(appendix, tuple) else (appendix or []))
+        next_row = len(rows) + 3            # one blank spacer row under the table
+        for sect_title, ap_rows in sections:
+            if not ap_rows:
+                continue
+            band = next_row
             for c in range(1, len(cols_) + 1):
                 bc = ws.cell(row=band, column=c)
                 bc.fill = HDR_FILL
@@ -1487,6 +1490,7 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
             ws.row_dimensions[band].height = 22
             for k, row in enumerate(ap_rows, start=band + 1):
                 _emit(k, row)
+            next_row = band + len(ap_rows) + 2
 
         # Atomic write — save to a temp file then os.replace() so a crash
         # or interruption can't leave a half-written WIP (safe_save pattern).
