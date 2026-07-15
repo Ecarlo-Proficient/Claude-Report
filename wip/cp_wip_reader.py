@@ -1276,7 +1276,8 @@ def _row_display_value(row: CpRow, field_name: str, sync_ts: str):
 def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                   tab_name: str = TEST_TAB,
                   appendix: Optional[Tuple[str, List[CpRow]]] = None,
-                  cols: Optional[List] = None) -> bool:
+                  cols: Optional[List] = None,
+                  default_filter_active: bool = False) -> bool:
     """Write rows to the given WIP tab (default 'Test - CP'; RP passes
     'Test - RP'). Same structure/formatting for every division. Guarded by
     wip_excel_guard. Returns True if written, False if skipped (dry-run, or the
@@ -1454,6 +1455,19 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
         table.tableStyleInfo = TableStyleInfo(
             name="TableStyleLight1", showFirstColumn=False, showLastColumn=False,
             showRowStripes=False, showColumnStripes=False)
+        if default_filter_active and "_active_status" in col_idx:
+            # Default view = Active only (the user 2026-07-14): apply the
+            # STATUS filter on the table AND hide the Closed rows — Excel
+            # shows them again with one filter click.
+            from openpyxl.worksheet.filters import (AutoFilter, FilterColumn,
+                                                     Filters)
+            fc = FilterColumn(colId=col_idx["_active_status"] - 1,
+                              filters=Filters(filter=["Active"]))
+            table.autoFilter = AutoFilter(ref=f"A1:{last_col}{last_row}",
+                                          filterColumn=[fc])
+            for i, row in enumerate(rows, start=2):
+                if row.is_completed:
+                    ws.row_dimensions[i].hidden = True
         ws.add_table(table)
 
         # Appendix section BELOW the table (outside it, so its rows don't

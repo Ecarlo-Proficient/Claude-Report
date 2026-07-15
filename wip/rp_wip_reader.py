@@ -355,6 +355,18 @@ def build_lines(records, rp_to_folders, addr_folders):
     """General List records → CpRow lines. RP splits slab/-FTW; CP stays one
     standalone line (never -FTW — the user 2026-07-13)."""
     rows = []
+    # Learn builder-code → full client name from every record whose folder
+    # DID resolve (the user 2026-07-14: 'MARVE' leaking through = a job with
+    # no folder match fell back to the GL code; siblings know the real name).
+    code_names = {}
+    for rec in records:
+        folders = sorted(rp_to_folders.get(rec["job"], ()),
+                         key=lambda f: (f.parent.name, f.name))
+        folder = folders[0] if folders else match_by_address(rec, addr_folders)
+        if folder is not None and rec.get("builder"):
+            cname = (folder.name if _norm(folder.parent.name) == "RESIDENTIAL"
+                     else folder.parent.name)
+            code_names.setdefault(_norm(rec["builder"]), cname)
     for rec in sorted(records, key=lambda x: x["job"]):
         name = _norm(f"{rec['house'] or ''} {rec['street'] or ''}") or rec["job"]
         folders = sorted(rp_to_folders.get(rec["job"], ()),
@@ -373,7 +385,8 @@ def build_lines(records, rp_to_folders, addr_folders):
                 cname = (folder.name if _norm(folder.parent.name) == "RESIDENTIAL"
                          else folder.parent.name)
             else:
-                cname = str(rec.get("builder") or "") or None
+                code = _norm(rec.get("builder"))
+                cname = code_names.get(code) or (str(rec.get("builder") or "") or None)
             row.client = cname
             code = _norm(rec.get("builder"))
             row.home_type = ("Tract" if (_norm(cname) in TRACT_CLIENTS
