@@ -27,6 +27,7 @@ import base64
 import datetime as dt
 import re
 import sys
+import time
 import traceback
 from collections import defaultdict
 from pathlib import Path
@@ -197,16 +198,37 @@ def load_credentials() -> Tuple[str, str]:
     basic = base64.b64encode(
         f"{creds['QBO_CLIENT_ID']}:{creds['QBO_CLIENT_SECRET']}".encode()
     ).decode()
-    r = requests.post(
-        "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
-        headers={
-            "Authorization": f"Basic {basic}",
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Accept": "application/json",
-        },
-        data={"grant_type": "refresh_token", "refresh_token": creds["QBO_REFRESH_TOKEN"]},
-        timeout=30,
-    )
+    # Retry the bearer refresh on transient network/Intuit blips. The OAuth
+    # endpoint occasionally times out its TLS handshake; a single POST used to
+    # crash the whole run (Ted 2026-07-15). Retry timeouts/connection errors +
+    # 5xx; a real 4xx (e.g. an expired refresh token) fails fast, no retry.
+    r = None
+    last = ""
+    for attempt in range(4):                    # 1 try + 3 retries
+        try:
+            r = requests.post(
+                "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
+                headers={
+                    "Authorization": f"Basic {basic}",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Accept": "application/json",
+                },
+                data={"grant_type": "refresh_token",
+                      "refresh_token": creds["QBO_REFRESH_TOKEN"]},
+                timeout=30,
+            )
+            if r.status_code < 500:
+                break                           # 200 or a real 4xx — done
+            last = f"status={r.status_code}"
+        except requests.exceptions.RequestException as e:
+            last = type(e).__name__
+            r = None
+        if attempt < 3:
+            time.sleep((attempt + 1) * 3)       # 3s, 6s, 9s
+    if r is None:
+        print(f"✗ token refresh failed after retries — {last} "
+              "(network/Intuit timeout; just run it again)")
+        sys.exit(1)
     if r.status_code != 200:
         print(f"✗ token refresh status={r.status_code} body={r.text[:300]}")
         sys.exit(1)
