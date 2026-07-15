@@ -36,7 +36,8 @@ from openpyxl.workbook.workbook import Workbook
 # tab per division so each division's WIP can be sanity-checked independently
 # before any of them graduate to the live tabs (WIP - CP / WIP - MFD / WIP Master).
 ALLOWED_WRITE_SHEETS: frozenset[str] = frozenset({
-    "Test",         # legacy single-division sandbox — kept so existing tests pass
+    "Test",
+    "Test-Master",         # legacy single-division sandbox — kept so existing tests pass
     "Test - CP",    # Commercial test tab
     "Test - RP",    # Residential test tab
     "Test - MFD",   # Multi-Family test tab

@@ -229,6 +229,8 @@ class CpRow:
     home_type: Optional[str] = None      # 'Tract' / 'Custom' (RP tab)
     why_link: Optional[str] = None       # path to the justification workbook (temp WHY column)
     why_fragment: Optional[str] = None   # "#'SHEET'!A<row>" — jump straight to this line's row
+    src_link: Optional[str] = None       # source workbook the numbers came from (PROJECT # cell link)
+    src_fragment: Optional[str] = None   # "#'SHEET'!C<row>" — exact source row (the user 2026-07-15)
 
     @property
     def contract_price(self) -> Optional[float]:
@@ -1415,6 +1417,9 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                              ("etc", row.takeoff_path)):
                 if _f in col_idx:
                     _apply_hyperlink(ws.cell(row=i, column=col_idx[_f]), _tgt)
+            if row.src_link:
+                _apply_hyperlink(ws.cell(row=i, column=col_idx["project_num"]),
+                                 Path(row.src_link), row.src_fragment or "")
             if "why_link" in col_idx and row.why_link:
                 _apply_hyperlink(ws.cell(row=i, column=col_idx["why_link"]),
                                  Path(row.why_link),

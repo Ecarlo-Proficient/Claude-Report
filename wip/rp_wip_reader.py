@@ -377,6 +377,10 @@ def build_lines(records, rp_to_folders, addr_folders):
             row = CP.CpRow(line_num, name, False, contract, None, etc, None, None)
             row.folder_path = folder
             row.takeoff_path = ALPHA_PATH      # Contract/ETC cells link → the List
+            # PROJECT # → the exact General List row it came from (the user
+            # 2026-07-15: click the number, land where the data lives).
+            row.src_link = str(ALPHA_PATH)
+            row.src_fragment = CP._sheet_fragment(rec["source"], f"C{rec['gl_row']}")
             if rec["source"] == SMALL_SHEET:
                 row.notes.append("Small Jobs list")
             # CLIENT = the Residential client folder (full name) when found,

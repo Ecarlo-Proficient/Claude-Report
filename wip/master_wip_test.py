@@ -46,6 +46,8 @@ def read_mfd_from_master(wip_path: Path):
                        RP._money(ws.cell(r, MCOL_ETC).value), None, None)
         row.client = "Multi Family"
         row.takeoff_path = wip_path          # contract/ETC link → the master tab
+        row.src_link = str(wip_path)
+        row.src_fragment = CP._sheet_fragment(MASTER_SHEET, f"A{r}")
         row.notes.append(f"Contract/ETC from '{MASTER_SHEET}' row {r}")
         rows.append(row)
     wb.close()
@@ -53,14 +55,17 @@ def read_mfd_from_master(wip_path: Path):
 
 
 def master_cols():
-    """Full CP layout + TYPE/CLIENT after the name (RP fills them; MFD sets
-    client; CP leaves blank) + the temp WHY column for RP lines."""
-    cols = [("WHY (TEMP)", 8, "why_link")]
+    """CP layout minus the division-only columns (the user 2026-07-15:
+    Approved COs / Retainage / NOTES live in the division sheets, and the
+    master needs neither CLIENT nor the WHY column) + TYPE after the name."""
+    drop = {"co_revenue", "retainage_held", "notes_text"}
+    cols = []
     for label, width, field in CP.COLS:
+        if field in drop:
+            continue
         cols.append((label, width, field))
         if field == "project_name":
             cols.append(("TYPE", 9, "home_type"))
-            cols.append(("CLIENT", 18, "client"))
     return cols
 
 
@@ -115,8 +120,11 @@ def main() -> int:
                 ftw_backlog.append(row)
         elif row.home_type == "Tract":
             slabs_tract.append(row)
+        elif row.project_num.startswith("CP"):
+            cp_rows.append(row)              # CP-standalone GL jobs (e.g. CP865)
+                                             # belong with CP (the user 2026-07-15)
         else:
-            slabs_custom.append(row)         # incl. CP-standalone GL jobs (RP-run)
+            slabs_custom.append(row)
 
     # RP justification + WHY row-jump links (same workbook as the RP tab uses)
     justify_path = Path.home() / "Downloads" / "RP WIP - Justification.xlsx"
@@ -137,7 +145,7 @@ def main() -> int:
     try:
         wrote = CP.write_test_cp(
             mfd_rows + cp_rows, CP.WIP_EXCEL_PATH,
-            dry_run=args.dry_run, tab_name="Test",
+            dry_run=args.dry_run, tab_name="Test-Master",
             appendix=[("RP SLABS — CUSTOM", slabs_custom),
                       ("RP SLABS — TRACT", slabs_tract),
                       ("FTW — ACTIVE (won / working)", ftw_active),
@@ -153,8 +161,22 @@ def main() -> int:
     total = (len(mfd_rows) + len(cp_rows) + len(slabs_custom)
              + len(slabs_tract) + len(ftw_active) + len(ftw_backlog))
     if not args.dry_run and wrote:
-        print(f"  ✓ Wrote {total} line(s) to 'Test'")
+        print(f"  ✓ Wrote {total} line(s) to 'Test-Master'")
+        _drop_stale_test_tab()
     return 0
+
+
+def _drop_stale_test_tab() -> None:
+    """Remove the superseded 'Test' tab (renamed to 'Test-Master' — the user
+    2026-07-15). Only ever deletes 'Test'; guard-checked; live tabs untouched."""
+    from openpyxl import load_workbook as _lw
+    CP.assert_write_allowed("Test")
+    wb = _lw(CP.WIP_EXCEL_PATH)
+    if "Test" in wb.sheetnames:
+        del wb["Test"]
+        wb.save(CP.WIP_EXCEL_PATH)
+        print("  ✓ removed superseded 'Test' tab")
+    wb.close()
 
 
 if __name__ == "__main__":
