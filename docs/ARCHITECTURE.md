@@ -123,9 +123,13 @@ flowchart LR
     CLOSE["qbo_close_list.py →\nqbo_bulk_close.py"]:::tool
     QW[("QBO WRITE — gated\nCONFIRM=Y · MFD always excluded")]:::gate
 
+    MASTER["master_wip_test.py\nunified: MFD + CP + RP sections"]:::tool
+
     FOLDERS --> READERS
     GL -->|"RP: contract/ETC per line"| READERS
     QBO --> READERS --> TEST
+    READERS -.->|"reused by"| MASTER
+    TEST -->|"MFD pricing from 'WIP Master' tab"| MASTER --> TEST
     QBO --> CLOSE --> QW
 ```
 
