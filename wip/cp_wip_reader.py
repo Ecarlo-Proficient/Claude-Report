@@ -231,6 +231,7 @@ class CpRow:
     why_fragment: Optional[str] = None   # "#'SHEET'!A<row>" — jump straight to this line's row
     src_link: Optional[str] = None       # source workbook the numbers came from (PROJECT # cell link)
     src_fragment: Optional[str] = None   # "#'SHEET'!C<row>" — exact source row (the user 2026-07-15)
+    section: Optional[str] = None        # master-sheet grouping (SECTION column)
 
     @property
     def contract_price(self) -> Optional[float]:
@@ -1511,7 +1512,59 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
         log.info("Wrote %d rows to %s in %s", len(rows), tab_name, wip_path)
     finally:
         wb.close()
+    _qc_check(wip_path, tab_name, expected_rows=len(rows) + sum(
+        len(a[1]) for a in ([appendix] if isinstance(appendix, tuple)
+                            else (appendix or [])) if a[1]),
+              active_only=default_filter_active)
     return True
+
+
+def _qc_check(wip_path: Path, tab_name: str, expected_rows: int,
+              active_only: bool) -> None:
+    """Visual QC after EVERY write (the user 2026-07-15): re-open the saved
+    file and verify what the reader believes matches what Excel will show.
+    Never raises — prints ✓/⚠ lines so a bad write is loud, not silent."""
+    try:
+        wb = load_workbook(wip_path)
+        ws = wb[tab_name]
+        hix = {ws.cell(1, c).value: c for c in range(1, ws.max_column + 1)}
+        pcol = hix.get("PROJECT #")
+        scol = hix.get("STATUS")
+        n = vis_closed = links = 0
+        last_data = 1
+        for r in range(2, ws.max_row + 1):
+            j = ws.cell(r, pcol).value if pcol else None
+            if not j:
+                continue
+            n += 1
+            last_data = r
+            if ws.cell(r, pcol).hyperlink or ws.cell(r, 2).hyperlink:
+                links += 1
+            if (scol and ws.cell(r, scol).value == "Closed"
+                    and not ws.row_dimensions[r].hidden):
+                vis_closed += 1
+        tbl_ok = True
+        if ws.tables:
+            ref = list(ws.tables.values())[0].ref            # e.g. A1:U130
+            tbl_end = int(re.findall(r"(\d+)$", ref)[0])
+            tbl_ok = tbl_end >= last_data
+        wb.close()
+        probs = []
+        if n != expected_rows:
+            probs.append(f"rows {n} ≠ expected {expected_rows}")
+        if active_only and vis_closed:
+            probs.append(f"{vis_closed} Closed row(s) VISIBLE in an active view")
+        if not tbl_ok:
+            probs.append("table does not span all data rows")
+        if links == 0 and n:
+            probs.append("no source links found")
+        if probs:
+            print(_Term.color(_Term.AMBER, "  ⚠ QC: " + " · ".join(probs)))
+        else:
+            print(_Term.color(_Term.GREEN,
+                  f"  ✓ QC: {n} rows · closed hidden · table spans all · links ok"))
+    except Exception as e:                                    # QC must never kill a run
+        print(_Term.color(_Term.AMBER, f"  ⚠ QC check failed to run: {e}"))
 
 
 # ─────────────────────── pretty run report ────────────────────────

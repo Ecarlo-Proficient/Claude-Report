@@ -57,9 +57,11 @@ def read_mfd_from_master(wip_path: Path):
 def master_cols():
     """CP layout minus the division-only columns (the user 2026-07-15:
     Approved COs / Retainage / NOTES live in the division sheets, and the
-    master needs neither CLIENT nor the WHY column) + TYPE after the name."""
+    master needs neither CLIENT nor the WHY column). SECTION column first so
+    ONE table spans every division (band rows broke the table's filters —
+    the user 2026-07-15), then TYPE after the name."""
     drop = {"co_revenue", "retainage_held", "notes_text"}
-    cols = []
+    cols = [("SECTION", 15, "section")]
     for label, width, field in CP.COLS:
         if field in drop:
             continue
@@ -142,16 +144,20 @@ def main() -> int:
           f"RP custom {len(slabs_custom)} · tract {len(slabs_tract)} · "
           f"FTW {len(ftw_active)} · backlog {len(ftw_backlog)}")
 
+    for rows_, sect in ((mfd_rows, "MFD"), (cp_rows, "CP"),
+                        (slabs_custom, "RP SLAB — CUSTOM"),
+                        (slabs_tract, "RP SLAB — TRACT"),
+                        (ftw_active, "FTW — ACTIVE"),
+                        (ftw_backlog, "FTW BACKLOG")):
+        for row in rows_:
+            row.section = sect
+    all_rows = (mfd_rows + cp_rows + slabs_custom + slabs_tract
+                + ftw_active + ftw_backlog)
     try:
         wrote = CP.write_test_cp(
-            mfd_rows + cp_rows, CP.WIP_EXCEL_PATH,
+            all_rows, CP.WIP_EXCEL_PATH,
             dry_run=args.dry_run, tab_name="Test-Master",
-            appendix=[("RP SLABS — CUSTOM", slabs_custom),
-                      ("RP SLABS — TRACT", slabs_tract),
-                      ("FTW — ACTIVE (won / working)", ftw_active),
-                      ("FTW BACKLOG — bid with the slab, NOT poured yet "
-                       "(expected wins)", ftw_backlog)],
-            cols=master_cols())
+            cols=master_cols(), default_filter_active=True)
     except CP.WipWriteDenied as e:
         print(f"  ✗ Guard blocked write: {e}")
         return 2
