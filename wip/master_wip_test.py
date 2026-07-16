@@ -154,11 +154,16 @@ def main() -> int:
             row.section = sect
     all_rows = (mfd_rows + cp_rows + slabs_custom + slabs_tract
                 + ftw_active + ftw_backlog)
+    import datetime as dt
     try:
         wrote = CP.write_test_cp(
             all_rows, CP.WIP_EXCEL_PATH,
             dry_run=args.dry_run, tab_name="Test-Master",
-            cols=master_cols(), default_filter_active=True)
+            cols=master_cols(), default_filter_active=True,
+            # Banner + logo space + TOTALS/cash-flow (the user 2026-07-16).
+            # The logo image floats over the banner rows and survives syncs.
+            title=f"WIP REPORT as of {dt.date.today():%B %d, %Y}",
+            summary=True)
     except CP.WipWriteDenied as e:
         print(f"  ✗ Guard blocked write: {e}")
         return 2

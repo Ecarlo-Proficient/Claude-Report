@@ -27,6 +27,8 @@ _cost_code_label() / _cost_code_value().
 
 USAGE
     python3 project_pnl_export.py MFD177 MFD325 CP672 CP745
+    python3 project_pnl_export.py active cp          # every Active CP project
+    python3 project_pnl_export.py active rp mfd      # Active RP + MFD batch
     python3 project_pnl_export.py --out "/path/to/folder" MFD177
     python3 project_pnl_export.py --dry-run MFD177
 
@@ -5008,10 +5010,31 @@ def index_pm_reports(reports_dir, proj: str):
     return index, parsed
 
 
+def expand_active_projects(tokens: List[str],
+                           wip_master: Dict[str, dict]) -> Tuple[List[str], bool]:
+    """`ACTIVE [CP|RP|MFD ...]` → every Active project of those divisions from
+    the WIP master (Test-Master STATUS), so ONE run refreshes a whole division
+    (the user 2026-07-16: `project-pnl active cp`). No division token = all
+    three. Non-keyword tokens still pass through, so `active cp MFD177` works.
+    Returns (projects, expanded?)."""
+    toks = [t.strip().upper() for t in tokens]
+    if "ACTIVE" not in toks:
+        return toks, False
+    divs = {t for t in toks if t in ("CP", "RP", "MFD")} or {"CP", "RP", "MFD"}
+    extras = [t for t in toks if t not in ("ACTIVE", "CP", "RP", "MFD")]
+    matched = sorted(
+        p for p, info in wip_master.items()
+        if str(info.get("status") or "").strip().lower() == "active"
+        and any(p.startswith(d) for d in divs))
+    return matched + [e for e in extras if e not in matched], True
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Generate per-project P&L workbooks from QBO")
     ap.add_argument("projects", nargs="+",
-                    help="Project numbers (e.g. MFD177 CP672) — OR drag/drop a "
+                    help="Project numbers (e.g. MFD177 CP672), or `active` plus "
+                         "divisions (`active cp`, `active rp mfd`) to batch every "
+                         "Active project from the WIP master — OR drag/drop a "
                          "PM draw-cost .xlsx report to cross-check it vs QBO")
     ap.add_argument("--out", default=str(DEFAULT_OUT),
                     help=f"Output folder (default: {DEFAULT_OUT})")
@@ -5038,7 +5061,18 @@ def main() -> int:
     # Prompt to fix mistyped period dates only when attached to a terminal.
     interactive = (not args.no_prompt) and sys.stdin.isatty()
 
+    # WIP master loads BEFORE auth: `active <division>` expands from it, and
+    # it's a local file read — no Touch ID needed to know the batch.
+    wip_master = load_wip_master(Path(args.wip_master).expanduser())
+    projects, was_expanded = expand_active_projects(projects, wip_master)
+    if was_expanded and not projects:
+        print(f"  ✗ `active` found no Active projects in the WIP master "
+              f"({args.wip_master}) — is the Test-Master tab current?")
+        return 1
+
     ui_banner("Project P&L Export")
+    if was_expanded:
+        ui_cfg("Active batch", f"{len(projects)} project(s) from the WIP master")
     ui_cfg("Projects", ", ".join(projects) or "(none)")
     if report_files:
         ui_cfg("Cross-check", ", ".join(f.name for f in report_files))
@@ -5054,7 +5088,6 @@ def main() -> int:
     ui_step("Connected to QBO", f"company {company_id}")
     cust_map = build_project_customer_map(access, company_id)
     ui_step("Project → customer map", f"{len(cust_map)} projects")
-    wip_master = load_wip_master(Path(args.wip_master).expanduser())
     ui_step("WIP master loaded", f"{len(wip_master)} rows")
 
     as_of = dt.datetime.now().strftime("%Y-%m-%d %I:%M %p")  # 12-hour + AM/PM

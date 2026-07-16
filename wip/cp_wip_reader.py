@@ -68,7 +68,7 @@ except Exception:
 from openpyxl import load_workbook
 from openpyxl.comments import Comment
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-from openpyxl.utils import get_column_letter
+from openpyxl.utils import column_index_from_string, get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
 from wip_excel_guard import (
@@ -1013,6 +1013,11 @@ COLS = [
     # ── Identifiers ──
     ("PROJECT #",                                       12, "project_num"),
     ("PROJECT NAME",                                    30, "project_name"),
+    # Link columns (the user 2026-07-16): the # and name cells are PLAIN so
+    # they can be selected/copied without Excel following a link — the
+    # folder + data-source links live in their own two columns instead.
+    ("PROJECT FOLDER",                                  12, "_folder_link"),
+    ("DATA SOURCE",                                     11, "_source_link"),
     ("STATUS",                                          10, "_active_status"),
     # ── Inputs (yellow) — the 4 core WIP inputs, matching the team sheet ──
     ("TOTAL CONTRACT PRICE",                            16, "contract_price"),   # Original + COs
@@ -1025,8 +1030,10 @@ COLS = [
     ("PERCENT COMPLETE",                                11, "_pct_complete"),
     ("REVENUES EARNED TO DATE",                         16, "_earned_revenue"),
     ("PROFIT EARNED TO DATE",                           15, "profit_earned"),
-    ("BILLINGS IN EXCESS OF EARNED REV. (OVERBILLINGS)", 20, "overbillings"),
-    ("EARN. REV. IN EXCESS OF BILLINGS (UNDERBILLINGS)", 20, "underbillings"),
+    # Short names (the user 2026-07-16): the long "BILLINGS IN EXCESS OF…"
+    # labels kept getting clipped every sync — width now fits the numbers.
+    ("OVERBILLINGS",                                    14, "overbillings"),
+    ("UNDERBILLINGS",                                   14, "underbillings"),
     ("LEFT TO BILL",                                    14, "left_to_bill"),
     ("GROSS PROFIT %",                                  12, "gross_profit_pct"),
     ("FUTURE PROFIT TO EARN",                           15, "future_profit"),
@@ -1119,16 +1126,117 @@ def _row_display_value(row: CpRow, field_name: str, sync_ts: str):
         return "Closed" if row.is_completed else "Active"
     if field_name == "why_link":
         return "why ⇗" if row.why_link else None
+    if field_name == "_folder_link":
+        return "folder ⇗" if (row.folder_path or row.takeoff_path) else None
+    if field_name == "_source_link":
+        return "source ⇗" if row.src_link else None
     if field_name == "_last_synced":
         return sync_ts
+    if field_name == "status":
+        # RED numbers must explain themselves (the user 2026-07-16): a red
+        # row with no script flag showed "OK" — surface the classify reason
+        # here instead (tabs without a NOTES column had nowhere else).
+        if row.status_flags:
+            return "; ".join(row.status_flags)
+        if row.needs_review:
+            red = next((n[len("RED: "):] for n in row.notes
+                        if n.startswith("RED: ")), None)
+            return red or (row.notes[-1] if row.notes else "needs review")
+        return "OK"
     return getattr(row, field_name, None)
+
+
+def _find_header_row(ws) -> Optional[int]:
+    """Locate the table header row (the one holding 'PROJECT #') in the first
+    few rows — row 1 on plain tabs, below the title banner on branded ones."""
+    for r in range(1, min(ws.max_row or 0, 10) + 1):
+        for c in range(1, (ws.max_column or 0) + 1):
+            if ws.cell(r, c).value == "PROJECT #":
+                return r
+    return None
+
+
+def _write_summary(ws, cols_, col_letter_by_field, data_start: int,
+                   last_row: int, start_row: int) -> None:
+    """WIP-master-style TOTALS row + FUTURE WIP CASH FLOW block (the user
+    2026-07-16), written BELOW the table/appendix.
+
+    TOTALS uses SUBTOTAL(109, …) over the table's data rows — it counts only
+    VISIBLE rows, so filtering the table (e.g. hiding FTW BACKLOG or Closed)
+    re-totals live. The cash-flow block derives everything from the TOTALS
+    cells:  rev left = contract − earned · GP left = rev left − CTC ·
+    net under/(over) = under − over · cash flow = GP left + net under."""
+    L = col_letter_by_field.get
+    tot = start_row
+
+    # ── TOTALS row ──
+    _sum_fields = [f for f in (
+        "contract_price", "etc", "billed_to_date", "costs_to_date",
+        "cost_to_complete", "original_profit", "_earned_revenue",
+        "profit_earned", "overbillings", "underbillings", "left_to_bill",
+        "future_profit", "job_borrow", "co_revenue", "retainage_held")
+        if L(f)]
+    for c in range(1, len(cols_) + 1):
+        cell = ws.cell(row=tot, column=c)
+        cell.fill = HDR_FILL
+        cell.font = HDR_FONT
+        cell.border = CELL_BORDER
+    ws.cell(row=tot, column=1, value="TOTALS")
+    for f in _sum_fields:
+        cell = ws.cell(row=tot, column=column_index_from_string(L(f)))
+        cell.value = f"=SUBTOTAL(109,{L(f)}{data_start}:{L(f)}{last_row})"
+        cell.number_format = CURRENCY_FMT
+    if L("_pct_complete") and L("costs_to_date") and L("etc"):
+        c = ws.cell(row=tot, column=column_index_from_string(L("_pct_complete")))
+        c.value = (f'=IF({L("etc")}{tot}=0,"",'
+                   f'{L("costs_to_date")}{tot}/{L("etc")}{tot})')
+        c.number_format = "0.0%"
+    if L("gross_profit_pct") and L("original_profit") and L("contract_price"):
+        c = ws.cell(row=tot, column=column_index_from_string(L("gross_profit_pct")))
+        c.value = (f'=IF({L("contract_price")}{tot}=0,"",'
+                   f'{L("original_profit")}{tot}/{L("contract_price")}{tot})')
+        c.number_format = "0.0%"
+
+    # ── FUTURE WIP CASH FLOW block ──
+    vcol = column_index_from_string(L("contract_price") or "E")     # amounts stack in one column
+    vL = get_column_letter(vcol)
+    r0 = tot + 2
+    lines = [
+        ("FUTURE WIP CASH FLOW", None, True),
+        ("TOTAL CONTRACT PRICE", f"={L('contract_price')}{tot}", False),
+        ("REVENUE EARNED TO DATE", f"={L('_earned_revenue')}{tot}", False),
+        ("REVENUE LEFT TO EARN", f"={vL}{r0 + 1}-{vL}{r0 + 2}", False),
+        ("COST TO COMPLETE", f"={L('cost_to_complete')}{tot}", False),
+        ("G.P. LEFT TO EARN", f"={vL}{r0 + 3}-{vL}{r0 + 4}", False),
+        ("+/- NET UNDER/(OVERBILLINGS)",
+         f"={L('underbillings')}{tot}-{L('overbillings')}{tot}", False),
+        ("FUTURE WIP CASH FLOW", f"={vL}{r0 + 5}+{vL}{r0 + 6}", True),
+    ]
+    for k, (label, formula, bold) in enumerate(lines):
+        r = r0 + k
+        lc = ws.cell(row=r, column=1, value=label)
+        lc.font = Font(bold=True) if bold else Font()
+        lc.border = CELL_BORDER
+        if formula:
+            vc = ws.cell(row=r, column=vcol, value=formula)
+            vc.number_format = CURRENCY_FMT
+            vc.border = CELL_BORDER
+            if bold:
+                vc.font = Font(bold=True)
+    # G.P. LEFT TO EARN margin % (of revenue left to earn) beside the amount
+    pc = ws.cell(row=r0 + 5, column=vcol + 1)
+    pc.value = f'=IF({vL}{r0 + 3}=0,"",{vL}{r0 + 5}/{vL}{r0 + 3})'
+    pc.number_format = "0.00%"
+    pc.border = CELL_BORDER
 
 
 def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                   tab_name: str = TEST_TAB,
                   appendix: Optional[Tuple[str, List[CpRow]]] = None,
                   cols: Optional[List] = None,
-                  default_filter_active: bool = False) -> bool:
+                  default_filter_active: bool = False,
+                  title: Optional[str] = None,
+                  summary: bool = False) -> bool:
     """Write rows to the given WIP tab (default 'Test - CP'; RP passes
     'Test - RP'). Same structure/formatting for every division. Guarded by
     wip_excel_guard. Returns True if written, False if skipped (dry-run, or the
@@ -1137,7 +1245,14 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
     `appendix` = (section title, rows): written BELOW the main table under a
     gray band — RP uses it for the FTW backlog (bid with the slab, not poured
     yet; the user 2026-07-14: separated at the bottom, they read as expected
-    wins rather than in-progress jobs)."""
+    wins rather than in-progress jobs).
+
+    `title` (the user 2026-07-16): report banner across the top ("WIP REPORT
+    as of …") with the two banner rows reserved as logo space — embedded
+    images (the logo) survive every sync (openpyxl round-trips them; the
+    rewrite only touches cells). `summary` adds the WIP-master-style TOTALS
+    row under the table (live SUBTOTALs — they follow the table filter) plus
+    the FUTURE WIP CASH FLOW block derived from it."""
     assert_write_allowed(tab_name)  # tripwire before we even open the workbook
     cols_ = cols or COLS
 
@@ -1177,10 +1292,13 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
         # the same project/column after the rewrite. A comment whose project
         # left the tab is PRINTED, never silently dropped.
         saved_comments = {}
-        hdr_labels = {c: ws.cell(1, c).value for c in range(1, (ws.max_column or 0) + 1)}
+        prior_hdr = _find_header_row(ws)
+        hdr_labels = ({c: ws.cell(prior_hdr, c).value
+                       for c in range(1, (ws.max_column or 0) + 1)}
+                      if prior_hdr else {})
         pnum_col = next((c for c, v in hdr_labels.items() if v == "PROJECT #"), None)
         if pnum_col:
-            for r in range(2, (ws.max_row or 0) + 1):
+            for r in range(prior_hdr + 1, (ws.max_row or 0) + 1):
                 pnum = ws.cell(r, pnum_col).value
                 if not pnum:
                     continue
@@ -1195,10 +1313,16 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
         # openpyxl's delete_rows sometimes leaves formatting or hyperlinks
         # behind on cells that were populated before — belt-and-suspenders
         # clear here to guarantee a clean slate.
+        # Merged cells (a prior run's title banner) must be unmerged before
+        # the clear — writing to a MergedCell raises in openpyxl.
+        for rng in list(ws.merged_cells.ranges):
+            ws.unmerge_cells(str(rng))
         prior_max_row = ws.max_row or 0
         prior_max_col = ws.max_column or 0
+        off = 2 if title else 0             # banner rows above the header
         _sects = ([appendix] if isinstance(appendix, tuple) else (appendix or []))
-        n_total = len(rows) + sum(len(a[1]) + 3 for a in _sects if a[1])
+        n_total = (off + len(rows) + sum(len(a[1]) + 3 for a in _sects if a[1])
+                   + (14 if summary else 0))
         for r in range(1, max(prior_max_row, n_total + 1) + 1):
             for c in range(1, max(prior_max_col, len(cols_)) + 1):
                 cell = ws.cell(row=r, column=c)
@@ -1208,18 +1332,36 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                 cell.comment = None   # harvested above; stale ones must not linger
         if prior_max_row > 0:
             ws.delete_rows(1, prior_max_row)
+        # Reset stale hidden flags — rows shift between runs, and a hidden
+        # flag left on the wrong row would silently hide live data.
+        for _rd in ws.row_dimensions.values():
+            _rd.hidden = False
+
+        # Title banner (the user 2026-07-16): "WIP REPORT as of …" across the
+        # table width, two tall rows that double as the logo's parking space
+        # (the logo image floats over the cells — the rewrite never touches
+        # it, so it stays put run after run).
+        hdr_row = 1 + off
+        if title:
+            ws.merge_cells(start_row=1, start_column=1,
+                           end_row=2, end_column=len(cols_))
+            t = ws.cell(row=1, column=1, value=title)
+            t.font = Font(bold=True, size=18)
+            t.alignment = Alignment(horizontal="center", vertical="center")
+            ws.row_dimensions[1].height = 34
+            ws.row_dimensions[2].height = 34
 
         # Header row — gray, bold, centered + wrapped, bordered.
         for c, (label, width, _key) in enumerate(cols_, start=1):
-            cell = ws.cell(row=1, column=c, value=label)
+            cell = ws.cell(row=hdr_row, column=c, value=label)
             cell.fill = HDR_FILL
             cell.font = HDR_FONT
             cell.alignment = Alignment(horizontal="center", vertical="center",
                                        wrap_text=True)
             cell.border = CELL_BORDER
             ws.column_dimensions[get_column_letter(c)].width = width
-        ws.row_dimensions[1].height = 30
-        ws.freeze_panes = "A2"
+        ws.row_dimensions[hdr_row].height = 30
+        ws.freeze_panes = f"A{hdr_row + 1}"
 
         sync_ts = dt.datetime.now().strftime("%Y-%m-%d %H:%M")
 
@@ -1261,20 +1403,26 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                 # Yellow = sourced input (raw from takeoff / QBO); white = calc.
                 if field_name in _SOURCE_FIELDS:
                     cell.fill = INPUT_FILL
-                elif field_name == "status" and row.status_flags:
+                elif field_name == "status" and (row.status_flags
+                                                 or row.needs_review):
                     cell.fill = FLAG_FILL
                     cell.font = FLAG_FONT
 
-            # PROJECT NAME → project (Awarded Project) folder. The user 2026-07-02
-            # wants this kept even though on Windows/OneDrive Excel rewrites the
-            # macOS file:// link into a (broken) SharePoint URL — it works on his
-            # Mac and he needs the trace point.
-            # Link target: explicit folder_path (RP) else the takeoff's parent (CP).
+            # PROJECT FOLDER → project (Awarded Project) folder; DATA SOURCE →
+            # where the numbers came from (GL row / master tab / takeoff). The
+            # user 2026-07-16: links moved OFF the # and name cells into their
+            # own columns so the identifiers can be selected/copied without
+            # Excel navigating away. (file:// links still get rewritten by
+            # Windows/OneDrive Excel — kept for the Mac, the trace point.)
+            # Folder target: explicit folder_path (RP) else takeoff's parent (CP).
             link_folder = (row.folder_path if row.folder_path is not None
                            else (row.takeoff_path.parent if row.takeoff_path else None))
-            if link_folder is not None:
-                _apply_hyperlink(ws.cell(row=i, column=col_idx["project_name"]),
+            if "_folder_link" in col_idx:
+                _apply_hyperlink(ws.cell(row=i, column=col_idx["_folder_link"]),
                                  link_folder)
+            if "_source_link" in col_idx and row.src_link:
+                _apply_hyperlink(ws.cell(row=i, column=col_idx["_source_link"]),
+                                 Path(row.src_link), row.src_fragment or "")
 
             # Number-cell links (the user 2026-07-13: every number click-to-verify):
             # Contract/COs → the draw workbook (takeoff pre-draw); ETC → takeoff;
@@ -1285,9 +1433,6 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                              ("etc", row.takeoff_path)):
                 if _f in col_idx:
                     _apply_hyperlink(ws.cell(row=i, column=col_idx[_f]), _tgt)
-            if row.src_link:
-                _apply_hyperlink(ws.cell(row=i, column=col_idx["project_num"]),
-                                 Path(row.src_link), row.src_fragment or "")
             if "why_link" in col_idx and row.why_link:
                 _apply_hyperlink(ws.cell(row=i, column=col_idx["why_link"]),
                                  Path(row.why_link),
@@ -1315,20 +1460,22 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                             color="C00000",
                             underline=("single" if _c.hyperlink else None))
 
+        data_start = hdr_row + 1
         written_rows = {}                   # PROJECT # → sheet row (for comments)
-        for i, row in enumerate(rows, start=2):
+        for i, row in enumerate(rows, start=data_start):
             _emit(i, row)
             written_rows[row.project_num] = i
 
         # Wrap the range in an Excel Table — gives filter/sort dropdowns and a
         # structured, clean look. Explicit gray header + borders above override
         # the table style, so it stays clean (no row stripes).
-        last_row = len(rows) + 1
+        last_row = len(rows) + hdr_row
         last_col = get_column_letter(len(cols_))
         for tname in list(ws.tables):
             del ws.tables[tname]          # drop any prior run's table first
         tbl_name = re.sub(r"[^A-Za-z0-9]", "", tab_name) or "WIP"  # unique per tab
-        table = Table(displayName=tbl_name, ref=f"A1:{last_col}{last_row}")
+        table = Table(displayName=tbl_name,
+                      ref=f"A{hdr_row}:{last_col}{last_row}")
         table.tableStyleInfo = TableStyleInfo(
             name="TableStyleLight1", showFirstColumn=False, showLastColumn=False,
             showRowStripes=False, showColumnStripes=False)
@@ -1340,9 +1487,9 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                                                      Filters)
             fc = FilterColumn(colId=col_idx["_active_status"] - 1,
                               filters=Filters(filter=["Active"]))
-            table.autoFilter = AutoFilter(ref=f"A1:{last_col}{last_row}",
+            table.autoFilter = AutoFilter(ref=f"A{hdr_row}:{last_col}{last_row}",
                                           filterColumn=[fc])
-            for i, row in enumerate(rows, start=2):
+            for i, row in enumerate(rows, start=data_start):
                 if row.is_completed:
                     ws.row_dimensions[i].hidden = True
         ws.add_table(table)
@@ -1351,7 +1498,7 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
         # pollute the table's filters): gray band title, then the same row
         # rendering as the main block.
         sections = ([appendix] if isinstance(appendix, tuple) else (appendix or []))
-        next_row = len(rows) + 3            # one blank spacer row under the table
+        next_row = last_row + 2             # one blank spacer row under the table
         for sect_title, ap_rows in sections:
             if not ap_rows:
                 continue
@@ -1367,6 +1514,10 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                 _emit(k, row)
                 written_rows[row.project_num] = k
             next_row = band + len(ap_rows) + 2
+
+        if summary:
+            _write_summary(ws, cols_, col_letter_by_field, data_start,
+                           last_row, next_row)
 
         # Re-attach the harvested user comments to their project/column.
         col_by_label = {label: c for c, (label, _w, _f) in enumerate(cols_, start=1)}
@@ -1408,18 +1559,21 @@ def _qc_check(wip_path: Path, tab_name: str, expected_rows: int,
     try:
         wb = load_workbook(wip_path)
         ws = wb[tab_name]
-        hix = {ws.cell(1, c).value: c for c in range(1, ws.max_column + 1)}
+        hdr = _find_header_row(ws) or 1     # header sits below any title banner
+        hix = {ws.cell(hdr, c).value: c for c in range(1, ws.max_column + 1)}
         pcol = hix.get("PROJECT #")
         scol = hix.get("STATUS")
+        lcols = [c for lbl, c in hix.items()
+                 if lbl in ("PROJECT FOLDER", "DATA SOURCE")]
         n = vis_closed = links = 0
-        last_data = 1
-        for r in range(2, ws.max_row + 1):
+        last_data = hdr
+        for r in range(hdr + 1, ws.max_row + 1):
             j = ws.cell(r, pcol).value if pcol else None
             if not j:
                 continue
             n += 1
             last_data = r
-            if ws.cell(r, pcol).hyperlink or ws.cell(r, 2).hyperlink:
+            if any(ws.cell(r, c).hyperlink for c in lcols):
                 links += 1
             if (scol and ws.cell(r, scol).value == "Closed"
                     and not ws.row_dimensions[r].hidden):
