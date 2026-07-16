@@ -55,12 +55,13 @@ def read_mfd_from_master(wip_path: Path):
 
 
 def master_cols():
-    """CP layout minus the division-only columns (the user 2026-07-15:
-    Approved COs / Retainage / NOTES live in the division sheets, and the
-    master needs neither CLIENT nor the WHY column). SECTION column first so
-    ONE table spans every division (band rows broke the table's filters —
-    the user 2026-07-15), then TYPE after the name."""
-    drop = {"co_revenue", "retainage_held", "notes_text"}
+    """CP layout minus the division-only columns (Retainage / NOTES live in
+    the division sheets; the master needs neither CLIENT nor the WHY column).
+    SECTION column first so ONE table spans every division (band rows broke
+    the table's filters — the user 2026-07-15), then TYPE after the name.
+    APPROVED COs kept (the user 2026-07-16): project-pnl reads Test-Master
+    for Contract/ETC/COs/STATUS — original contract = total − COs."""
+    drop = {"retainage_held", "notes_text"}
     cols = [("SECTION", 15, "section")]
     for label, width, field in CP.COLS:
         if field in drop:

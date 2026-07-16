@@ -1172,8 +1172,14 @@ def read_back_inputs(path: Path, sheet: str = "P&L") -> Dict[str, float]:
     if sheet not in wb.sheetnames:
         return out
     ws = wb[sheet]
-    wanted = {"contract price": "contract",
-              "estimated total cost (etc)": "etc"}
+    # New labels (2026-07-16 WIP v2) + legacy ones so old sheets still carry
+    # their typed values forward. CO cost is a manual input until the CO
+    # template grows a cost line.
+    wanted = {"original contract price": "contract",
+              "contract price": "contract",                    # legacy label
+              "original etc (estimated total cost)": "etc",
+              "estimated total cost (etc)": "etc",             # legacy label
+              "co costs (estimated)": "co_cost"}
     for r in range(1, min(ws.max_row, 80) + 1):
         lbl = str(ws.cell(row=r, column=1).value or "").strip().lower()
         key = wanted.get(lbl)
@@ -2268,7 +2274,7 @@ def build_sheet_pl(
     wb: Workbook, proj: str, cust_info: dict, wip_info: dict,
     pl_data: dict, totals: Dict[str, float],
     net_billed: float, retainage_held: float,
-    as_of: str, overhead_pct: float = 11.0,
+    as_of: str, overhead_pct: float = 10.0,
     pl_cutoff: Optional[str] = None,
     accum: Optional[dict] = None,
     draw_rows: Optional[List[Tuple[str, str, float, float, float, float]]] = None,
@@ -2471,11 +2477,12 @@ def build_sheet_pl(
         # this adds the held retainage back in (the user 2026-07-15).
         Btot = f"{Bgross}+{NBcell}" if NBcell else Bgross
 
-        # ── ① WIP / PROJECTION (beginning) — inputs as plain rows ──
+        # ── ① WIP / PROJECTION (rebuilt 2026-07-16, mock approved by the user):
+        #    the BID story first (Original → Change Orders → Revised), the
+        #    projection with its profit/overhead split, then the QBO ACTUALS
+        #    band. Yellow inputs persist via read-back; auto-fill comes from
+        #    the WIP master (typed value still wins on re-sync).
         wtop = sect_title("① WIP / PROJECTION   (yellow = your input)")
-        # Persist via the WIP MASTER (not the sheet): pull Revised first (incl
-        # change orders), fall back to Original, then the mock key. Re-syncing
-        # always re-reads the master, so these never get lost (the user 2026-06-23).
         def _num(*keys):
             for k in keys:
                 v = wip_info.get(k)
@@ -2485,24 +2492,69 @@ def build_sheet_pl(
                 except (TypeError, ValueError):
                     pass
             return None
-        # read-back (typed in the prior sheet) wins, then WIP master Revised/Original
-        _ctr = _num("contract_saved", "revised_contract", "original_contract", "contract")
-        _etc = _num("etc_saved", "revised_etc", "original_etc", "etc")
-        k_row = row("Contract Price", _ctr, bold=True)
-        etc_in = row("Estimated Total Cost (ETC)", _etc, bold=True)
-        for rr in (k_row, etc_in):
+        # ORIGINAL numbers are the inputs (before change orders). When the
+        # master only carries the revised total, original = revised − COs.
+        _cos = _num("change_orders")
+        _rev_ctr = _num("revised_contract", "contract")
+        _ctr = _num("contract_saved", "original_contract")
+        if _ctr is None and _rev_ctr is not None:
+            _ctr = round(_rev_ctr - (_cos or 0.0), 2)
+        _etc = _num("etc_saved", "original_etc", "revised_etc", "etc")
+        _co_cost = _num("co_cost_saved")
+        k_row = row("Original Contract Price", _ctr, bold=True)
+        etc_in = row("Original ETC (Estimated Total Cost)", _etc, bold=True)
+        co_row = row("Change Orders (approved, from draw)", _cos, color=GREEN)
+        coc_row = row("CO Costs (estimated)", _co_cost,
+                      color=("000000" if _co_cost else "C0504D"))
+        # yellow inputs: the originals + CO cost (no QBO source yet — pending
+        # the CO-template cost line; type it here and it survives re-syncs)
+        for rr in (k_row, etc_in, coc_row):
             cc = ws.cell(row=rr, column=2)
             cc.fill = YEL
             cc.border = Border(left=_HAIR, right=_HAIR, top=_HAIR, bottom=_HAIR)
-        c_ref = f"$B${k_row}"
-        e_ref = f"$B${etc_in}"
+        rev_ctr_row = row("Revised Contract Price",
+                          formula=f"=B{k_row}+B{co_row}", bold=True,
+                          border=TOP_BORDER)
+        rev_etc_row = row("Revised ETC", formula=f"=B{etc_in}+B{coc_row}",
+                          bold=True)
+        # everything downstream measures against the REVISED numbers
+        c_ref = f"$B${rev_ctr_row}"
+        e_ref = f"$B${rev_etc_row}"
         # 'Closed' in the WIP master (Test-Master STATUS) forces the close-out
         # view (the user 2026-07-16): % Complete = 100%, Cost to Complete = 0,
         # Earned = full contract. Closing a job in the WIP master closes it
         # here — no manual ETC massaging.
         wip_closed = str(wip_info.get("status") or "").strip().lower() in (
             "closed", "complete", "completed", "done")
+
+        # ── projection + the profit/overhead split (the user 2026-07-16) ──
+        pp_row = row("Projected Profit at Completion", formula=f"={c_ref}-{e_ref}",
+                     bold=True, border=TOP_BORDER)
+        row("Projected Margin %", formula=f'=IF({c_ref}=0,"",B{pp_row}/{c_ref})',
+            fmt=PCT_FMT, bold=True, color=NAVY)
+        poh_row = row(f"less: Overhead ({overhead_pct:.0f}% of revenue)",
+                      formula=f"=-{oh}*{c_ref}", indent=1, color="595959")
+        pnp_row = row("Projected NET Profit", formula=f"=B{pp_row}+B{poh_row}",
+                      indent=1, bold=True, color=GREEN)
+        row("Projected Net Margin %",
+            formula=f'=IF({c_ref}=0,"",B{pnp_row}/{c_ref})',
+            fmt=PCT_FMT, indent=1, bold=True, color=GREEN)
+
+        # ── ACTUALS — QBO to date: billed first, then costs, then overhead
+        #    sitting on top of the REAL profit ($ and %) — the user 2026-07-16 ──
+        row("ACTUALS — QBO to date", None, bold=True, color="FFFFFF",
+            fill=hero_fill)
+        bd_row = row("Billed to Date", formula=f"={Btot}", bold=True)
+        _qbo_link(bd_row, _cust_url)
         ctd_row = row("Costs to Date", None)
+        aoh_row = row(f"less: Overhead ({overhead_pct:.0f}% of billed)",
+                      formula=f"=-{oh}*B{bd_row}", indent=1, color="595959")
+        rnp_row = row("REAL Net Profit (to date)",
+                      formula=f"=B{bd_row}-B{ctd_row}+B{aoh_row}",
+                      bold=True, border=TOP_BORDER)
+        row("REAL Net Profit %",
+            formula=f'=IF(B{bd_row}=0,"",B{rnp_row}/B{bd_row})',
+            fmt=PCT_FMT, bold=True)
         # Two progress metrics (the user 2026-07-16): cost-based drives Earned
         # Revenue and reads >100% when costs blow past ETC (red = over budget,
         # never capped — the overage IS the signal); % Billed is billing
@@ -2512,15 +2564,9 @@ def build_sheet_pl(
             formula=f'=IF({c_ref}=0,"",({Btot})/{c_ref})',
             fmt=PCT_FMT, bold=True, color=NAVY)
         earn_row = row("Earned Revenue (contract × %)", None)
-        bd_row = row("Billed to Date", formula=f"={Btot}")
-        _qbo_link(bd_row, _cust_url)
         row("Over / (Under) Billing",
             formula=f'=IF({e_ref}=0,"",({Btot})-B{earn_row})', color="C0504D")
         ctc_row = row("Cost to Complete (remaining)", None)
-        pp_row = row("Projected Profit at Completion", formula=f"={c_ref}-{e_ref}",
-                     bold=True, border=TOP_BORDER)
-        row("Projected Margin %", formula=f'=IF({c_ref}=0,"",B{pp_row}/{c_ref})',
-            fmt=PCT_FMT, bold=True, color=NAVY)
         if wip_closed:
             row("closed per WIP master — % complete forced to 100%", None,
                 size=BASE_SIZE - 2, color="595959")
@@ -2656,8 +2702,12 @@ def build_sheet_pl(
         t = ws.cell(row=rc, column=4, value="DRAW COVERAGE")
         t.font = Font(bold=True, size=BASE_SIZE + 1, color=NAVY)
         # ── two-tier header (the user 2026-06-19): GROSS over (Gross Profit,
-        #    Coverage %); AFTER OVERHEAD over (Net Profit, Net Cov %) ──
-        for c0, c1, txt in ((10, 11, "GROSS"), (12, 13, "AFTER OVERHEAD")):
+        #    Coverage %); AFTER OVERHEAD over (Net Profit, Net Cov %). The %
+        #    lives IN the header (the user 2026-07-16), and MFD jobs use the
+        #    MFD 9%-on-costs model here instead of %-of-revenue.
+        _ao_hdr = (f"AFTER OVERHEAD — MFD {_alt:.0f}% on costs" if show_mfd
+                   else f"AFTER OVERHEAD — {overhead_pct:.0f}% of revenue")
+        for c0, c1, txt in ((10, 11, "GROSS"), (12, 13, _ao_hdr)):
             gb = ws.cell(row=rc, column=c0, value=txt)
             gb.font = Font(bold=True, size=BASE_SIZE - 1, color=NAVY)
             gb.alignment = Alignment(horizontal="center")
@@ -2709,8 +2759,12 @@ def build_sheet_pl(
             fmls = [
                 (10, f"=H{rc}-I{rc}", CURR_FMT, _clr(pc)),
                 (11, f'=IF(I{rc}=0,"",H{rc}/I{rc})', '0.0%', _clr(pc)),
-                (12, f"=H{rc}*{one_minus_oh}-I{rc}", CURR_FMT, _clr(po)),
-                (13, f'=IF(I{rc}=0,"",H{rc}/(I{rc}/{one_minus_oh}))', '0.0%', _clr(po)),
+                # MFD nets overhead on COSTS (9%); company nets on REVENUE.
+                (12, (f"=H{rc}-I{rc}*{1 + _aoh}" if show_mfd
+                      else f"=H{rc}*{one_minus_oh}-I{rc}"), CURR_FMT, _clr(po)),
+                (13, (f'=IF(I{rc}=0,"",H{rc}/(I{rc}*{1 + _aoh}))' if show_mfd
+                      else f'=IF(I{rc}=0,"",H{rc}/(I{rc}/{one_minus_oh}))'),
+                 '0.0%', _clr(po)),
             ]
             for col, f, nf, clr in fmls:
                 cell = ws.cell(row=rc, column=col, value=f)
@@ -2737,8 +2791,11 @@ def build_sheet_pl(
                 (9, f"=SUM(I{first_draw_row}:I{last_draw_row})", CURR_FMT, COST_TXT),
                 (10, f"=H{rc}-I{rc}", CURR_FMT, "000000"),
                 (11, f'=IF(I{rc}=0,"",H{rc}/I{rc})', '0.0%', "000000"),
-                (12, f"=H{rc}*{one_minus_oh}-I{rc}", CURR_FMT, "000000"),
-                (13, f'=IF(I{rc}=0,"",H{rc}/(I{rc}/{one_minus_oh}))', '0.0%', "000000")):
+                (12, (f"=H{rc}-I{rc}*{1 + _aoh}" if show_mfd
+                      else f"=H{rc}*{one_minus_oh}-I{rc}"), CURR_FMT, "000000"),
+                (13, (f'=IF(I{rc}=0,"",H{rc}/(I{rc}*{1 + _aoh}))' if show_mfd
+                      else f'=IF(I{rc}=0,"",H{rc}/(I{rc}/{one_minus_oh}))'),
+                 '0.0%', "000000")):
             cell = ws.cell(row=rc, column=col, value=f)
             cell.number_format = nf
             cell.font = Font(bold=True, size=BASE_SIZE - 1, color=clr)
@@ -2854,8 +2911,12 @@ def build_sheet_pl(
                  "door, awaiting the next draw)", italic=True, color="595959",
                  size=BASE_SIZE - 2)
         side("Draw needed (costs + overhead)",
-             formula=f"=P{tot_row}/{one_minus_oh}", bold=True, color=NAVY)
-        side(f"(= costs ÷ {one_minus_oh}; break-even only, no profit margin)",
+             formula=(f"=P{tot_row}*{round(1 + _aoh, 4)}" if show_mfd
+                      else f"=P{tot_row}/{one_minus_oh}"),
+             bold=True, color=NAVY)
+        side((f"(= costs × {round(1 + _aoh, 4)} — MFD {_alt:.0f}% on costs; "
+              f"break-even only, no profit margin)") if show_mfd else
+             f"(= costs ÷ {one_minus_oh}; break-even only, no profit margin)",
              italic=True, color="595959", size=BASE_SIZE - 2)
 
 
@@ -2878,7 +2939,7 @@ def _draw_flat_bills(draw_cost: dict) -> list:
 def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
                          net, costs, held, billed, invoices, draw_cost,
                          matched_report, report_index, qbo_loc, period,
-                         as_of, overhead_pct=11.0, realm="", alt_overhead_pct=None,
+                         as_of, overhead_pct=10.0, realm="", alt_overhead_pct=None,
                          reports_relpath="rd-reports"):
     """ONE SHEET PER DRAW = a TWO-PERSPECTIVE reconciliation (the user 2026-06-26):
     the PM's version of the draw (their report, their costs, the profit they thought
@@ -3567,7 +3628,7 @@ def _setup_print(ws, last_col: int, header_rows: int = 2) -> None:
 def build_sheet_job_rp(
     wb: Workbook, proj: str, cust_info: dict, wip_info: dict,
     invoices: List[dict], job_groups: dict, job_total: float,
-    billed_total: float, as_of: str, overhead_pct: float = 11.0,
+    billed_total: float, as_of: str, overhead_pct: float = 10.0,
     realm: str = "",
 ) -> None:
     """
@@ -3998,7 +4059,7 @@ def generate_project_pnl(
     out_dir: Path,
     as_of: str,
     dry_run: bool = False,
-    overhead_pct: float = 11.0,
+    overhead_pct: float = 10.0,
     interactive: bool = False,
 ) -> Optional[Path]:
     ui_proj(proj, f"{cust_info['name']}  ·  id {cust_info['id']}")
@@ -4020,7 +4081,7 @@ def generate_project_pnl(
     # doesn't use it, so don't litter CP folders with it (the user 2026-07-02). rd_dir
     # stays defined so index_pm_reports() just finds nothing for non-MFD.
     is_mfd = proj.upper().startswith("MFD")
-    # Dual overhead view (MFD 9% on costs vs Company 11% on revenue) is MFD-only —
+    # Dual overhead view (MFD 9% on costs vs Company 10% on revenue) is MFD-only —
     # MFD is a different player. CP (and any non-MFD draw job) shows ONLY the company
     # overhead; keep MFD out of it (the user 2026-07-02). None => single company view.
     _alt_oh = 9.0 if is_mfd else None
@@ -4366,12 +4427,15 @@ def generate_project_pnl(
 
     build_sheet_pos(wb, proj, cust_info, wip_info, po_unused, po_used, as_of, realm=company_id)
     build_sheet_cashflow(wb, proj, cust_info, wip_info, cash_events, as_of, realm=company_id)
-    # Preserve Contract Price / ETC typed into the PRIOR sheet across syncs.
+    # Preserve Contract Price / ETC / CO Costs typed into the PRIOR sheet
+    # across syncs (CO cost is manual until the CO template has a cost line).
     _saved = read_back_inputs(proj_dir / f"Project_PnL_{proj}.xlsx")
     if _saved.get("contract") is not None:
         wip_info["contract_saved"] = _saved["contract"]
     if _saved.get("etc") is not None:
         wip_info["etc_saved"] = _saved["etc"]
+    if _saved.get("co_cost") is not None:
+        wip_info["co_cost_saved"] = _saved["co_cost"]
     build_sheet_pl(
         wb, proj, cust_info, wip_info, pl_data, pl_totals,
         net_billed, ret_withheld_total, as_of, overhead_pct=overhead_pct,
@@ -4419,7 +4483,7 @@ def generate_project_pnl_rp(
     out_dir: Path,
     as_of: str,
     dry_run: bool = False,
-    overhead_pct: float = 11.0,
+    overhead_pct: float = 10.0,
 ) -> Optional[Path]:
     """
     RESIDENTIAL "Job P&L" template — no draws, no retainage (the user 2026-06-09).
@@ -4956,8 +5020,8 @@ def main() -> int:
     ap.add_argument("--wip-master", default=str(DEFAULT_WIP_MASTER),
                     help="Path to WIP master .xlsx for Contract/ETC lookup")
     ap.add_argument("--dry-run", action="store_true")
-    ap.add_argument("--overhead-pct", type=float, default=11.0,
-                    help="Company overhead as %% of revenue (default 11.0). "
+    ap.add_argument("--overhead-pct", type=float, default=10.0,
+                    help="Company overhead as %% of revenue (default 10.0, the user 2026-07-16). "
                          "Drives Overhead Allocation + True Net Profit rows.")
     ap.add_argument("--no-prompt", action="store_true",
                     help="Don't pause to ask about mistyped invoice period "

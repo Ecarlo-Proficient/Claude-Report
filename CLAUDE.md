@@ -70,8 +70,8 @@ restate them here. Business/strategic context lives in session memory, not in th
   `qbo_close_list.py` / `qbo_bulk_close.py` (**always exclude MFD — those close by hand**).
   The old QBO→Notion WIP sync is fully deleted (stub + plist gone 2026-07-13).
 - **project-pnl/** — per-project P&L (CP/MFD + RP × budgeted/unbudgeted) → OneDrive PROJECT
-  P&Ls. Overhead shown as a final row at **11% of revenue**; QBO helpers come from
-  `shared/qbo_api.py`.
+  P&Ls. Overhead shown as a final row at **10% of revenue** (was 11%, the user 2026-07-16;
+  MFD alt view stays 9% on costs); QBO helpers come from `shared/qbo_api.py`.
 - **debt-schedule/** — `loan_sync.py` (QBO → `Equipment_Debt_Schedule_v2.xlsx`, beside it) +
   workbook builders. Balance = QBO actual (no P/I split); QBO mapping gated by `CONFIRM=Y`;
   ledger idempotent by (TxnId, AcctId). Mac-only.

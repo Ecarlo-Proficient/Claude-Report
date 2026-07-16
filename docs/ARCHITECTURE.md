@@ -169,7 +169,7 @@ flowchart LR
     P5[("QBO WRITE — gated\nxlsx audit · Approved=Y · --commit")]:::gate
 
     QBO --> PNL --> P1
-    WIPM -->|"Contract/ETC/STATUS auto-pull\n(typed override still wins)"| PNL
+    WIPM -->|"Contract/ETC/COs/STATUS auto-pull\n(typed override still wins)"| PNL
     QBO --> LOAN --> P2
     QBO --> HEALTH --> P3
     QBO --> EXP --> P4
@@ -208,8 +208,10 @@ CP draw discovery + G702 parsing moved to **`shared/draws.py`** (shared with
 `wip/cp_wip_reader.py` — tools never import tools).
 
 project-pnl reads the WIP master's **Test-Master** tab (the readers' unified MFD+CP+RP
-table) to pre-fill Contract Price / ETC and honor a **Closed** status (WIP close-out:
-% complete forced to 100%). Its Transactions sheet groups job costs
+table) to pre-fill **Original Contract / ETC + Approved COs** (original = total − COs;
+revised rows are live formulas) and honor a **Closed** status (WIP close-out: % complete
+forced to 100%). Company overhead default is **10% of revenue** (MFD alt: 9% on costs —
+also drives the MFD draw-coverage columns). Its Transactions sheet groups job costs
 **concrete → labor → materials** via `shared/cost_lines.py` — non-labor bill lines
 combine per (bill × account); labor lines are never combined.
 
