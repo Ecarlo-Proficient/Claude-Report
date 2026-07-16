@@ -255,6 +255,48 @@ PERIOD_ANYWHERE_RE = re.compile(
 # NOTE: sub bills ("sub" in PrivateNote) are INCLUDED in all cost figures.
 # The tag exists for the separate Sub LOC tracker, not for P&L exclusion.
 
+# ─────────── cost-memo display cleaning (the user 2026-07-16) ───────────
+# Cost memos carry project identification the report doesn't need — the
+# project # ("CP672"), the address ("E OVILLA RD"), and the GC/project name
+# ("MADEWELL COMPANIES", "FIRESTONE RED OAK"). Show only the actual item.
+# Segments are split on "-"; a segment is DROPPED when it is a project-#
+# token, looks like an address (street-suffix word), is company-ish
+# (COMPANIES/LLC/…), or shares a significant word with the customer/project
+# name. Sub bills: the "Sub Service: Period" label goes, the DATES stay.
+_PROJ_TOKEN_RE = re.compile(r"\b(?:MFD|CP|RP)\s?\d+(?:-FTW)?\b[.,]?", re.IGNORECASE)
+_SUBSVC_LABEL_RE = re.compile(r"\bsub\s*service\s*:?\s*(?:period)?\s*:?\s*",
+                              re.IGNORECASE)
+_STREETISH_RE = re.compile(
+    r"\b(?:RD|ROAD|ST|STREET|BLVD|AVE|AVENUE|LN|LANE|DR|DRIVE|HWY|PKWY|CT|WAY)\b\.?",
+    re.IGNORECASE)
+_COMPANYISH_RE = re.compile(
+    r"\b(?:COMPANIES|COMPANY|CONSTRUCTION|BUILDERS|LLC|INC|CORP)\b\.?",
+    re.IGNORECASE)
+_TEXT_SEG_SPLIT_RE = re.compile(r"\s+[-–—]\s+")
+
+
+def _project_name_words(cust_name: str) -> frozenset:
+    """Significant words (≥4 letters) of 'Parent:Proj# Project Name' — used to
+    recognize project/GC-name segments in memos regardless of spelling drift."""
+    return frozenset(w for w in re.findall(r"[A-Za-z]{4,}", (cust_name or "").upper()))
+
+
+def _clean_cost_text(text: str, known_words: frozenset = frozenset()) -> str:
+    """Strip project identification from a cost memo/description, keep the item."""
+    t = _SUBSVC_LABEL_RE.sub("", text or "")
+    t = _PROJ_TOKEN_RE.sub("", t)
+    kept = []
+    for seg in _TEXT_SEG_SPLIT_RE.split(t):
+        s = seg.strip(" ,-–—")
+        if not s:
+            continue
+        seg_words = {w for w in re.findall(r"[A-Za-z]{4,}", s.upper())}
+        if (_STREETISH_RE.search(s) or _COMPANYISH_RE.search(s)
+                or (known_words and seg_words & known_words)):
+            continue
+        kept.append(s)
+    return " - ".join(kept)
+
 # ─────────── styling ───────────
 # Sizes bumped 2026-05-28 — the user: "make a bit bigger overall, it shows a
 # little too small when first opened". Base font 12 with proportional bumps.
@@ -1871,11 +1913,15 @@ def build_sheet_transactions(
         refs["not_billed_ret"] = f"Transactions!E{r}"
         r += 2
 
+    _known_words = _project_name_words(cust_info.get("name", ""))
+
     def _memo_text(ln):
         """Col C = bill memo (PrivateNote) first, line description appended when
-        it adds info (the user 2026-07-15 — 'make sure to include the memo')."""
-        memo = (ln.get("memo") or "").strip()
-        desc = (ln.get("desc") or "").strip()
+        it adds info (the user 2026-07-15 — 'make sure to include the memo').
+        Both are CLEANED of project #/address/GC-name noise (the user 2026-07-16
+        — 'only what the actual item is'); sub bills keep their period dates."""
+        memo = _clean_cost_text((ln.get("memo") or "").strip(), _known_words)
+        desc = _clean_cost_text((ln.get("desc") or "").strip(), _known_words)
         if memo and desc and desc.lower() not in memo.lower():
             return f"{memo} — {desc}"
         return memo or desc
@@ -2847,6 +2893,7 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
     ws = wb.create_sheet(sheet_name)
     ws.sheet_view.showGridLines = False
     ws.sheet_view.zoomScale = 110
+    _known_words = _project_name_words(cust_info.get("name", ""))
     for col, w in (("A", 26), ("B", 20), ("C", 22), ("D", 16), ("E", 38), ("F", 3)):
         ws.column_dimensions[col].width = w
 
@@ -3040,7 +3087,7 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
                                              RED, None)
                 wc(r, 1, str(i["num"]) or "(no #)", indent=1, link=blink)
                 wdate(r, 2, i.get("date", ""))
-                wc(r, 3, i.get("desc", ""))
+                wc(r, 3, _clean_cost_text(i.get("desc", ""), _known_words))
                 wc(r, 4, i["amount"], fmt=CURR_FMT, color=color)
                 wc(r, 5, note, color=ncol, link=nlink)
                 r += 1
@@ -3114,6 +3161,7 @@ def build_sheet_next_draw_retainage(wb, proj, cust_info, wip_info, income_groups
             ws.cell(row=row, column=c).fill = fill
 
     r = _write_meta_block(ws, proj, cust_info, wip_info, as_of)
+    _known_words = _project_name_words(cust_info.get("name", ""))
 
     disregarded = draw_costs.get("__disregarded")
     if outside and (outside.get("total") or outside.get("groups")):
@@ -3140,7 +3188,8 @@ def build_sheet_next_draw_retainage(wb, proj, cust_info, wip_info, income_groups
                                                 else x["date"]) or dt.date.min, reverse=True):
                 wc(r, 1, b["num"] or "(no #)", indent=1,
                    link=_qbo_txn_url(b["tx_type"], b["txn_id"], realm))
-                wdate(r, 2, b["date"]); wc(r, 3, b["cat"]); wc(r, 4, b["desc"])
+                wdate(r, 2, b["date"]); wc(r, 3, b["cat"])
+                wc(r, 4, _clean_cost_text(b["desc"], _known_words))
                 wc(r, 6, b["amount"], fmt=CURR_FMT)
                 r += 1
         wc(r, 1, "Total accumulating", bold=True)

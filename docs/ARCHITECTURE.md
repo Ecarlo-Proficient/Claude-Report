@@ -23,6 +23,7 @@ shared/                the ONLY importable common code
 ├─ paths.py            per-machine output paths (machine.env at REPO ROOT)
 ├─ qbo_api.py          QBO auth + retrying GET, query_all, P&L walkers, PROJ_RE
 ├─ cost_lines.py       cost-line category (Concrete/Labor/Materials) + bill-line combine
+├─ draws.py            CP draw (AIA G702/G703) discovery + parsing (wip ↔ health)
 └─ setup_qbo.py        vault admin CLI (--status/--test/--rotate/--purge)
 
 invoice-sync/          QBO → Notion AR sync + Teams cards   (was automation-worker/)
