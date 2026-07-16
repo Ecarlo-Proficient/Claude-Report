@@ -13,6 +13,9 @@ MODEL (locked 2026-07-10, built 2026-07-13):
     pre-bid and assumed to follow the slab; RP####-FTW is its own standalone
     QBO project. CP#### jobs in the list are STANDALONE (never -FTW): one
     line, contract=AI+AK, ETC=AJ+AL, billed under the plain CP#.
+  • POUR FLATWORK (col AF) = "OTHER" ⇒ another contractor won the flatwork
+    (the user 2026-07-16): that scope NEVER enters the WIP — no -FTW line
+    (and no flat $ in a CP standalone sum), even when prices were entered.
   • QBO enrich per line (read-only GET): Billed = P&L income of the line's
     own customer; Costs = COGS + expenses. A job is DONE when 100% complete
     AND billed = contract (the RP manager's rule — billing is the truth).
@@ -74,6 +77,10 @@ RP_ROOT = Path(os.getenv(
 # General List column map (1-based), header row 4, data from row 6.
 COL_JOB, COL_HOUSE, COL_STREET, COL_CITY, COL_COMPLETION = 3, 4, 5, 6, 26
 COL_SLAB_BID, COL_SLAB_COST, COL_FLAT_BID, COL_FLAT_COST = 35, 36, 37, 38
+# AF = POUR FLATWORK: a date (we poured it), blank (not yet), or "OTHER" —
+# someone ELSE won the flatwork (the user 2026-07-16) → that scope is NOT
+# ours: no -FTW line, even when flatwork prices were entered on the row.
+COL_POUR_FLAT = 32
 
 # RP#### (with optional suffix like -FTW already in the list) or CP#### —
 # CP jobs live here because the RP team runs them (standalone, never split).
@@ -140,8 +147,10 @@ def read_general_list(path: Path):
             if job in seen:
                 continue
             comp = ws.cell(r, COL_COMPLETION).value
+            pour_flat = ws.cell(r, COL_POUR_FLAT).value
             rec = {
                 "job": job, "source": sheet, "gl_row": r,
+                "flat_other": "OTHER" in str(pour_flat or "").upper(),
                 "completion": comp if isinstance(comp, (int, float)) else None,
                 "builder": ws.cell(r, 2).value,
                 "house": ws.cell(r, COL_HOUSE).value,
@@ -397,12 +406,23 @@ def build_lines(records, rp_to_folders, addr_folders):
                                          or code in TRACT_CODES) else "Custom")
             return row
 
+        # POUR FLATWORK = OTHER (list col AF): the flatwork went to another
+        # contractor (the user 2026-07-16) — the flatwork scope never enters
+        # the WIP, priced or not. The slab line (if priced) is still ours.
+        flat_other = rec.get("flat_other")
+
         if rec["job"].startswith("CP"):
             # CP standalone: whole contract on one line, bills under CP#.
-            contract = ((rec["slab_bid"] or 0) + (rec["flat_bid"] or 0)) or None
-            etc = ((rec["slab_cost"] or 0) + (rec["flat_cost"] or 0)) or None
+            contract = ((rec["slab_bid"] or 0)
+                        + (0 if flat_other else (rec["flat_bid"] or 0))) or None
+            etc = ((rec["slab_cost"] or 0)
+                   + (0 if flat_other else (rec["flat_cost"] or 0))) or None
+            if contract is None and etc is None:
+                continue            # only scope was flatwork and OTHER won it
             row = _mk(rec["job"], contract, etc)
             row.notes.append("CP standalone (never -FTW)")
+            if flat_other:
+                row.notes.append("Flatwork = OTHER on the list — excluded")
             rows.append((row, rec["completion"], rec))
             continue
 
@@ -411,9 +431,11 @@ def build_lines(records, rp_to_folders, addr_folders):
         # clerk confirmed what is real by pricing it. No slab price → no
         # slab line (e.g. RP5542: take only the -FTW line).
         if rec["slab_bid"] or rec["slab_cost"]:
-            rows.append((_mk(rec["job"], rec["slab_bid"], rec["slab_cost"]),
-                         rec["completion"], rec))
-        if rec["flat_bid"] or rec["flat_cost"]:
+            row = _mk(rec["job"], rec["slab_bid"], rec["slab_cost"])
+            if flat_other:
+                row.notes.append("Flatwork = OTHER on the list — no -FTW line")
+            rows.append((row, rec["completion"], rec))
+        if (rec["flat_bid"] or rec["flat_cost"]) and not flat_other:
             rows.append((_mk(rec["job"] + "-FTW", rec["flat_bid"],
                              rec["flat_cost"]), rec["completion"], rec))
     return rows
@@ -595,6 +617,11 @@ def main() -> int:
         print(f"  ⚠ Residential root not found: {root} — no folder links")
 
     pairs = build_lines(records, rp_to_folders, addr_folders)
+    n_other = sum(1 for rec in records
+                  if rec.get("flat_other") and (rec["flat_bid"] or rec["flat_cost"]))
+    if n_other:
+        print(f"  POUR FLATWORK = OTHER: {n_other} priced flatwork scope(s) "
+              f"excluded (won by another contractor)")
     if args.project:
         pf = args.project.upper()
         pairs = [t for t in pairs

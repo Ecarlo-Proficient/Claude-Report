@@ -66,6 +66,7 @@ except Exception:
     pass
 
 from openpyxl import load_workbook
+from openpyxl.comments import Comment
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
@@ -169,16 +170,15 @@ GRAND_TOTAL_LABEL = "GRAND TOTAL"
 BID_SHEET = "Bid"
 ETC_CELL = "AP1961"
 
-# Draw folder detection (the user 2026-07-09): the WIP update for a CP project comes
-# from the LATEST draw (AIA G702/G703 payment application), not the takeoff.
-#   • Container folder is named 'Draw' or 'Draws' (inclusive), never 'Drawings'.
-#   • Draw # is the SEQUENCE — the highest draw # wins, read from the filename
-#     or the numbered 'Draw #N' subfolder.
-#   • If no draw folder / no draw yet → fall back to the takeoff proposal
-#     (Original Contract Price); once Draw #1 lands, use the draw instead.
-_DRAWS_FOLDER_RE = re.compile(r"^draws?\b", re.IGNORECASE)   # 'Draw' / 'Draws', not 'Drawings'
-_DRAW_NUM_RE = re.compile(r"draw\s*#?\s*(\d+)", re.IGNORECASE)  # 'Draw #4', 'DRAW#4', 'Draw 4'
-G702_SHEET = "G702"
+# Draw discovery + G702 parsing moved to shared/draws.py (2026-07-16) — the
+# money-bleeds health report needed it too (repo rule: tools never import
+# tools; common code lives in shared/). Aliased to keep local call sites.
+from shared.draws import (                                    # noqa: E402
+    G702_SHEET,
+    coerce_float as _coerce_float,
+    find_latest_draw,
+    read_draw_g702,
+)
 
 # Project # from folder name — e.g. "CP672 - FIRESTONE RED OAK" → "CP672"
 _CP_FOLDER_RE = re.compile(r"^(CP\d{3,4})\b", re.IGNORECASE)
@@ -368,20 +368,6 @@ def _read_number_to_right(ws_data, ws_formula, row: int, start_col: int,
         # Non-numeric text (like a next-row label) — bail.
         return None
     return None
-
-
-def _coerce_float(v) -> Optional[float]:
-    if v is None or v == "":
-        return None
-    if isinstance(v, (int, float)):
-        return float(v)
-    s = str(v).strip().replace(",", "").replace("$", "")
-    if not s:
-        return None
-    try:
-        return float(s)
-    except ValueError:
-        return None
 
 
 # ─────────────────────── formula-safe cell reader ────────────────
@@ -668,145 +654,6 @@ def parse_takeoff_etc(folder: Path, row: CpRow) -> None:
 
 
 # ─────────────────────── draw (G702/G703) read ────────────────────
-def _find_draws_folder(project_folder: Path) -> Optional[Path]:
-    """Return the project's draw container ('Draw'/'Draws', case-insensitive),
-    or None. 'Drawings' is excluded by the word-boundary in _DRAWS_FOLDER_RE."""
-    try:
-        for entry in project_folder.iterdir():
-            if entry.is_dir() and _DRAWS_FOLDER_RE.match(entry.name.strip()):
-                return entry
-    except OSError:
-        pass
-    return None
-
-
-def _draw_num_from_name(name: str) -> Optional[int]:
-    m = _DRAW_NUM_RE.search(name)
-    return int(m.group(1)) if m else None
-
-
-def _has_g702(xlsx: Path) -> bool:
-    """True if the workbook has a G702 sheet (payment-application front page).
-    read_only so it's a cheap header read, not a full parse."""
-    try:
-        wb = load_workbook(xlsx, read_only=True)
-        try:
-            return any(s.strip().lower() == G702_SHEET.lower() for s in wb.sheetnames)
-        finally:
-            wb.close()
-    except Exception:
-        return False
-
-
-def find_latest_draw(project_folder: Path):
-    """Locate the LATEST draw workbook for a project (the user 2026-07-09: draw # is
-    the sequence — highest wins). Draw workbooks live in the 'Draws' container,
-    either directly or inside a numbered 'Draw #N' subfolder; if there's no
-    container, numbered draws directly under the project folder are also
-    accepted. Only numbered draw subfolders are descended into — the Supplier
-    Release folders (full of PDFs) are never opened. Returns (draw_num,
-    draw_file) or None (→ caller falls back to the takeoff proposal)."""
-    scan_root = _find_draws_folder(project_folder) or project_folder
-    candidates = []   # (draw_num, xlsx_path)
-    try:
-        entries = list(scan_root.iterdir())
-    except OSError:
-        return None
-    for entry in entries:
-        try:
-            if entry.is_file():
-                if entry.suffix.lower() in (".xlsx", ".xlsm") \
-                        and not entry.name.startswith("~$"):
-                    n = _draw_num_from_name(entry.name)
-                    if n is not None:
-                        candidates.append((n, entry))
-            elif entry.is_dir():
-                n = _draw_num_from_name(entry.name)      # numbered 'Draw #N' subfolder
-                if n is not None:
-                    for f in entry.iterdir():
-                        if f.is_file() and f.suffix.lower() in (".xlsx", ".xlsm") \
-                                and not f.name.startswith("~$"):
-                            fn = _draw_num_from_name(f.name)
-                            candidates.append((fn if fn is not None else n, f))
-        except OSError:
-            continue
-    if not candidates:
-        return None
-    # Highest draw # wins; require a real G702 so a stray xlsx can't win.
-    for n, f in sorted(candidates, key=lambda x: x[0], reverse=True):
-        if _has_g702(f):
-            return n, f
-    return None
-
-
-def _g702_value(ws, label_sub: str, max_scan: int = 14) -> Optional[float]:
-    """Find `label_sub` (case-insensitive substring) in the G702 label column
-    and read the first numeric value to its right (skipping '$'/blank cells).
-    G702 line labels sit in column A with the amount a few columns right."""
-    needle = label_sub.upper()
-    for r in range(1, ws.max_row + 1):
-        for c in range(1, ws.max_column + 1):
-            v = ws.cell(r, c).value
-            if v and needle in str(v).upper():
-                for off in range(1, max_scan + 1):
-                    raw = ws.cell(r, c + off).value
-                    num = _coerce_float(raw)
-                    if num is not None:
-                        return num
-                    if raw is None or str(raw).strip() in ("", "$", "USD", "-", "—"):
-                        continue
-                    break   # hit other text — stop scanning this label row
-    return None
-
-
-def read_draw_g702(draw_file: Path):
-    """Read the WIP inputs off a draw's G702 (AIA payment application).
-    Mapping (verified 2026-07-09 against CP585 Draws #1–#4):
-      Contract Price  = Line 3  Contract Sum to Date (= Line 1 + Line 2)
-      Approved COs    = Line 2  Net change by Change Orders
-      Billed (gross)  = Line 4  Total Completed & Stored to Date
-      Retainage       = Line 4 − Line 6  (Total Earned Less Retainage)
-    RETAINAGE IS NOT read from the labeled 'Total Retainage' cell — that cell
-    is unreliable across draws (0 / mismatched); Line 4 − Line 6 ties to the
-    10% on Line 5a every time. Returns (dict, flags); never raises."""
-    flags: List[str] = []
-    try:
-        wb = load_workbook(draw_file, data_only=True)
-    except Exception as e:
-        return None, [f"Draw read failed: {type(e).__name__}"]
-    try:
-        sheet = next((s for s in wb.sheetnames
-                      if s.strip().lower() == G702_SHEET.lower()), None)
-        if sheet is None:
-            return None, ["Draw has no G702 sheet"]
-        ws = wb[sheet]
-        orig   = _g702_value(ws, "ORIGINAL CONTRACT SUM")          # Line 1
-        net_co = _g702_value(ws, "NET CHANGE BY CHANGE ORDERS")    # Line 2
-        c2d    = _g702_value(ws, "CONTRACT SUM TO DATE")           # Line 3
-        billed = _g702_value(ws, "TOTAL COMPLETED")                # Line 4
-        earned = _g702_value(ws, "TOTAL EARNED LESS RETAINAGE")    # Line 6
-    finally:
-        wb.close()
-
-    # Contract: prefer Line 3; else reconstruct Line 1 + Line 2.
-    if c2d is None and orig is not None:
-        c2d = orig + (net_co or 0.0)
-    # Original contract (base) so contract_price property = base + CO = Line 3.
-    if orig is None and c2d is not None:
-        orig = c2d - (net_co or 0.0)
-    retainage = (billed - earned) if (billed is not None and earned is not None) else None
-
-    data = {
-        "orig_contract": orig, "net_co": net_co, "contract_to_date": c2d,
-        "billed": billed, "earned_less_retainage": earned, "retainage": retainage,
-    }
-    missing = [k for k in ("contract_to_date", "billed") if data[k] is None]
-    if missing:
-        flags.append(f"Draw G702 missing {', '.join(missing)} — open & save the "
-                     f"draw in Excel to refresh cached values")
-    return data, flags
-
-
 def parse_draw(project_folder: Path, row: CpRow) -> bool:
     """If the project has a draw, read the LATEST one's G702 into `row`
     (contract, CO, billed, retainage) and return True. ETC still comes from the
@@ -1323,6 +1170,25 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
         ws = wb[tab_name]
         assert_write_allowed(ws.title)  # belt + suspenders
 
+        # PRESERVE USER CELL COMMENTS across the full-replace (the user
+        # 2026-07-16: review notes typed on cells — e.g. "add the missing
+        # $5k" on a contract price — must survive every sync). Harvest them
+        # keyed by (PROJECT #, header label) before the wipe; re-attach to
+        # the same project/column after the rewrite. A comment whose project
+        # left the tab is PRINTED, never silently dropped.
+        saved_comments = {}
+        hdr_labels = {c: ws.cell(1, c).value for c in range(1, (ws.max_column or 0) + 1)}
+        pnum_col = next((c for c, v in hdr_labels.items() if v == "PROJECT #"), None)
+        if pnum_col:
+            for r in range(2, (ws.max_row or 0) + 1):
+                pnum = ws.cell(r, pnum_col).value
+                if not pnum:
+                    continue
+                for c, label in hdr_labels.items():
+                    cm = ws.cell(r, c).comment
+                    if cm and label:
+                        saved_comments[(str(pnum).strip(), label)] = (cm.text, cm.author)
+
         # Full replace: clear existing rows AND explicitly wipe every cell
         # attribute (value, hyperlink, number_format, fill, font) up to the
         # prior extent so leftovers can't leak into new rows.
@@ -1339,6 +1205,7 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                 cell.value = None
                 cell.hyperlink = None
                 cell.number_format = "General"
+                cell.comment = None   # harvested above; stale ones must not linger
         if prior_max_row > 0:
             ws.delete_rows(1, prior_max_row)
 
@@ -1448,8 +1315,10 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                             color="C00000",
                             underline=("single" if _c.hyperlink else None))
 
+        written_rows = {}                   # PROJECT # → sheet row (for comments)
         for i, row in enumerate(rows, start=2):
             _emit(i, row)
+            written_rows[row.project_num] = i
 
         # Wrap the range in an Excel Table — gives filter/sort dropdowns and a
         # structured, clean look. Explicit gray header + borders above override
@@ -1496,7 +1365,19 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
             ws.row_dimensions[band].height = 22
             for k, row in enumerate(ap_rows, start=band + 1):
                 _emit(k, row)
+                written_rows[row.project_num] = k
             next_row = band + len(ap_rows) + 2
+
+        # Re-attach the harvested user comments to their project/column.
+        col_by_label = {label: c for c, (label, _w, _f) in enumerate(cols_, start=1)}
+        for (pnum, label), (text, author) in saved_comments.items():
+            r, c = written_rows.get(pnum), col_by_label.get(label)
+            if r and c:
+                ws.cell(row=r, column=c).comment = Comment(text, author or "")
+            else:
+                print(_Term.color(_Term.AMBER,
+                      f"  ⚠ comment on {pnum} / {label} has no row this run "
+                      f"(line left the tab) — text was: {text!r}"))
 
         # Atomic write — save to a temp file then os.replace() so a crash
         # or interruption can't leave a half-written WIP (safe_save pattern).
