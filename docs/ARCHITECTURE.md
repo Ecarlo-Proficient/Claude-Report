@@ -9,9 +9,9 @@
 > picture (open it in a browser after pulling). Refresh it when structure meaningfully changes;
 > THIS file is the always-current source of truth.
 
-Last updated: 2026-07-13 (**the restructure**: `shared/` package created; `automation-worker/`
-split into `invoice-sync/` + WIP readers joined `wip/`; Field Log subsystem erased; loose root
-scripts rehomed; Docker → v1.1.0)
+Last updated: 2026-07-16 (project-pnl now auto-pulls Contract/ETC/STATUS from the WIP
+master's Test-Master tab; new `shared/cost_lines.py` powers the Transactions sheet's
+concrete → labor → materials grouping + per-(bill × account) combining)
 
 ---
 
@@ -22,6 +22,7 @@ shared/                the ONLY importable common code
 ├─ qbo_vault.py        QBO Keychain blob — one Touch ID unlocks all keys
 ├─ paths.py            per-machine output paths (machine.env at REPO ROOT)
 ├─ qbo_api.py          QBO auth + retrying GET, query_all, P&L walkers, PROJ_RE
+├─ cost_lines.py       cost-line category (Concrete/Labor/Materials) + bill-line combine
 └─ setup_qbo.py        vault admin CLI (--status/--test/--rotate/--purge)
 
 invoice-sync/          QBO → Notion AR sync + Teams cards   (was automation-worker/)
@@ -153,6 +154,7 @@ flowchart LR
     classDef gate fill:#f3e0d3,stroke:#B9541E,color:#7c2d12
 
     QBO[("QBO")]:::src
+    WIPM[("WIP - MASTER new.xlsx\nTest-Master tab (SharePoint)")]:::src
     PNL["project-pnl/\nproject_pnl_export.py"]:::tool
     LOAN["debt-schedule/\nloan_sync.py"]:::tool
     HEALTH["health-dashboard/\nqbo_health.py"]:::tool
@@ -166,11 +168,49 @@ flowchart LR
     P5[("QBO WRITE — gated\nxlsx audit · Approved=Y · --commit")]:::gate
 
     QBO --> PNL --> P1
+    WIPM -->|"Contract/ETC/STATUS auto-pull\n(typed override still wins)"| PNL
     QBO --> LOAN --> P2
     QBO --> HEALTH --> P3
     QBO --> EXP --> P4
     QBO --> RECODE --> P5
 ```
+
+### Money Bleeds — company-health exceptions (2026-07-16)
+
+```mermaid
+flowchart LR
+    classDef src fill:#dbe6f0,stroke:#4A6B8A,color:#1f2937
+    classDef tool fill:#f6f5f1,stroke:#4b5563,color:#1f2937
+    classDef out fill:#dfeae2,stroke:#3E7A5C,color:#1f2937
+
+    QBO[("QBO invoices\nvia shared/qbo_api")]:::src
+    WM[("WIP - MASTER new.xlsx\n'WIP Master' tab (MFD actives)\n'Test - RP' tab (RP classify)")]:::src
+    MFDV[("Multi Family volume\n…/&lt;client&gt;/&lt;MFD#&gt;/PM MISC/DRAWS")]:::src
+    CPV[("Common volume\nCP project folders → latest draw G702\nvia shared/draws.py")]:::src
+    MB["health-dashboard/\nmoney_bleeds.py"]:::tool
+    OUT[("Money Bleeds.xlsx\n~/Documents/CompanyHealth\nprivate · chmod 600")]:::out
+
+    QBO --> MB
+    WM --> MB
+    MFDV --> MB
+    CPV --> MB
+    MB --> OUT
+```
+
+Three exception checks, all read-only: **draws with no invoice** (MFD: latest numbered
+draw folder vs latest QBO invoice date; CP: latest draw's G702 earned-less-retainage vs
+cumulative QBO invoiced), the **Texas lien-notice clock** on every open invoice
+(commercial 15th-of-3rd-month, residential 15th-of-2nd; work month defaults to invoice
+month − 1 — conservative; retainage listed on its own statutory track), and **RP
+wrap-up** (100% in the General List but not fully billed, read from the Test - RP tab).
+CP draw discovery + G702 parsing moved to **`shared/draws.py`** (shared with
+`wip/cp_wip_reader.py` — tools never import tools).
+
+project-pnl reads the WIP master's **Test-Master** tab (the readers' unified MFD+CP+RP
+table) to pre-fill Contract Price / ETC and honor a **Closed** status (WIP close-out:
+% complete forced to 100%). Its Transactions sheet groups job costs
+**concrete → labor → materials** via `shared/cost_lines.py` — non-labor bill lines
+combine per (bill × account); labor lines are never combined.
 
 ---
 

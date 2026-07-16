@@ -1,10 +1,49 @@
-# Company Health Dashboard (`qbo_health.py`)
+# Company Health (`money_bleeds.py` + legacy `qbo_health.py`)
 
 > Commands below run from the repo root. Uses the shared QBO vault
 > (`shared/qbo_vault.py`) — one Touch ID per run.
 
+## Money Bleeds (`money_bleeds.py`) — the current company-health report
 
-Multi-sheet local Excel dashboard built from live QBO data — designed to answer **"where should I be looking today?"** at a glance. Reuses the same Keychain blob as the transaction export: one Touch ID per run.
+The KPI dashboard was retired as "doing too much / not accurate enough"
+(2026-07-16). Company health is now an **exceptions report**: a short list of
+things that are provably wrong and cost money.
+
+```bash
+python3 health-dashboard/money_bleeds.py
+python3 health-dashboard/money_bleeds.py --out /path/x.xlsx
+```
+
+Output: `~/Documents/CompanyHealth/Money Bleeds.xlsx` (chmod 600). Read-only
+against QBO, the WIP workbook, and both volumes. Hard-fails up front if the
+`Multi Family` / `Common` volumes aren't mounted or the WIP workbook isn't
+synced.
+
+| Sheet | Bleed it catches |
+|-------|------------------|
+| **Dashboard** | $ totals per bleed + the assumptions used |
+| **Draws MFD** | Active MFD projects (from the 'WIP Master' tab) whose **latest** numbered draw folder (`…/PM MISC/DRAWS/N- MONTH YEAR DRAW`) has no QBO invoice in/after the draw month. Latest draw only — history is assumed billed; this is the future-case tripwire. |
+| **Draws CP** | CP projects whose latest draw's G702 earned-less-retainage exceeds cumulative QBO invoiced — a draw that never became an invoice. Draw discovery/G702 parsing: `shared/draws.py`. |
+| **Lien Clock** | Every open construction invoice with its Texas lien-notice deadline (commercial CP/MFD = 15th of the 3rd month after the work month; residential RP = 15th of the 2nd). Parent customer shown per project row. Sorted by days left: PAST / URGENT ≤15d / WATCH ≤45d. |
+| **Lien Retainage** | Retainage invoices — separate statutory track (§ 53.057, completion-based), never mixed into the monthly clock. |
+| **Leases (excluded)** | Equipment-lease / note-payment invoices to subs — not construction income, so they carry no lien clock. Listed so the money doesn't silently disappear from the report. |
+| **RP Wrap-Up** | SLAB lines 100% complete in the General List but not fully billed (waiting on punch). FTW lines are ignored — the list's 100% column is slab-only. Read from the WIP workbook's `Test - RP` tab, so run the WIP readers first. |
+
+**The lien clock's work-month rule.** Texas deadlines run from the month the
+work was performed. Here work month = **invoice month**, by the user's ruling
+(2026-07-16): RP invoices go out the day the job finishes, and draws bill
+their own work month. Deadlines roll **backward** off weekends (holidays not
+modeled). The report is a tripwire, not legal advice — verify the actual work
+period before sending any notice.
+
+Formatting note: this workbook uses color (status fills, red row washes) at
+the user's explicit request — it is exempt from the repo's plain-Excel rule.
+
+---
+
+## Legacy: KPI dashboard (`qbo_health.py`)
+
+Multi-sheet local Excel dashboard built from live QBO data — designed to answer **"where should I be looking today?"** at a glance. Reuses the same Keychain blob as the transaction export: one Touch ID per run. **Superseded by Money Bleeds** — kept runnable for the hard-fact sheets (AR/AP aging, cash) until formally retired.
 
 ## Run
 

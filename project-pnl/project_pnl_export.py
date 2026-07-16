@@ -36,8 +36,9 @@ OPTIONS
                        Automations-/PROJECT P&Ls
     --start-date     P&L start date (default: 2020-01-01)
     --end-date       P&L end date (default: today)
-    --wip-master     Path to WIP master .xlsx for Contract/ETC lookup
-                     (default: ../wip/WIP - MASTER - rebuilt.xlsx)
+    --wip-master     Path to WIP master .xlsx for Contract/ETC/STATUS lookup
+                     (default: the SharePoint 'WIP - MASTER new.xlsx' via
+                     WIP_EXCEL_PATH / ACB_ONEDRIVE_BASE; reads the Test-Master tab)
     --dry-run        Print what would be written, don't save files.
 
 DEPENDENCIES
@@ -76,6 +77,7 @@ from shared.qbo_api import (
     fetch_project_pl, _walk_pl_rows, extract_pl_totals,
     fetch_customer_invoices,
 )
+from shared.cost_lines import line_category, combine_bill_lines, CATEGORY_ORDER
 
 # ── terminal output (styled like sync-ar / sync-ap; the user 2026-06-26) ──────────
 # Colors auto-disable when piped/redirected or NO_COLOR is set.
@@ -136,10 +138,13 @@ DEFAULT_OUT = paths.get_path(
     "ACB_PNL_OUT_DIR",
     paths.onedrive_base() / "Automations-/PROJECT P&Ls",
 )
-# The WIP master lives in the project's wip/ folder; this script lives in its own
-# folder alongside it (the user 2026-06-26 — moved out of wip/, it's not a WIP tool).
-DEFAULT_WIP_MASTER = (
-    Path(__file__).resolve().parent.parent / "wip" / "WIP - MASTER - rebuilt.xlsx"
+# The WIP master is the SharePoint workbook the wip/ readers maintain (Test-Master
+# tab = the unified MFD+CP+RP table). Same key + default as cp_wip_reader.py, so
+# one machine.env override moves both tools (the user 2026-07-16 — auto-pull
+# Contract/ETC instead of leaving the yellow cells blank).
+DEFAULT_WIP_MASTER = paths.get_path(
+    "WIP_EXCEL_PATH",
+    paths.onedrive_base() / "Company Files - WIP Report" / "WIP - MASTER new.xlsx",
 )
 # Per-project home folder (the user 2026-06-25): each P&L run creates <out>/<PROJ>/ and
 # <out>/<PROJ>/rd-reports/ (skipped if they exist). The workbook lands in the
@@ -448,7 +453,11 @@ def _cost_name_value(code, indent: int = 0, size: Optional[int] = None,
 # Cost CATEGORY = the account a cost lands in, merging cost codes by meaning
 # (the user 2026-06-09): SL1/PV1/CS1… → "Concrete"; a real account name keeps
 # itself. Used by the Draws sheet so there's ONE Concrete, ONE Labor, etc.
-_COST_NAME_ORDER = {name: i for i, name in enumerate(_COST_CODE_NAMES.values())}
+# Order = biggest money movers first (the user 2026-07-15): Concrete, then
+# Labor, then the material/other codes in their original order.
+_COST_NAME_ORDER = {name: i for i, name in enumerate(
+    ["Concrete", "Labor"]
+    + [n for n in _COST_CODE_NAMES.values() if n not in ("Concrete", "Labor")])}
 
 
 def _cost_category(leaf):
@@ -1031,7 +1040,18 @@ def fetch_retainage_held(
 # ────────────────────────── WIP master lookup ──────────────────────────
 
 def load_wip_master(path: Path) -> Dict[str, dict]:
-    """Return { project#: {contract, etc, description, ...} } from WIP master."""
+    """Return { project#: {revised_contract, revised_etc, status, ...} } from the
+    WIP master workbook.
+
+    Two schemas are understood (the user 2026-07-16 — auto-pull Contract/ETC):
+      - NEW: the readers' 'Test-Master' tab (unified MFD+CP+RP) — headers
+        'TOTAL CONTRACT PRICE' / 'ESTIMATED TOTAL COSTS' / 'STATUS'. When this
+        tab exists it is the ONLY one read (the workbook's live tabs have their
+        own layouts and must not shadow it).
+      - LEGACY: any tab whose name contains 'wip' with the original
+        'Original/Revised Contract Price' / 'Original/Revised ETC' headers.
+    Both feed the same keys the P&L templates already consume via
+    _num("contract_saved","revised_contract","original_contract","contract")."""
     out: Dict[str, dict] = {}
     if not path.exists():
         return out
@@ -1039,9 +1059,10 @@ def load_wip_master(path: Path) -> Dict[str, dict]:
         wb = openpyxl.load_workbook(str(path), data_only=True)
     except Exception:
         return out
-    for sheet_name in wb.sheetnames:
-        if "wip" not in sheet_name.lower():
-            continue
+    # Prefer the unified Test-Master tab; else fall back to legacy 'wip' tabs.
+    sheet_names = (["Test-Master"] if "Test-Master" in wb.sheetnames
+                   else [s for s in wb.sheetnames if "wip" in s.lower()])
+    for sheet_name in sheet_names:
         ws = wb[sheet_name]
         # Find header row (look for "Project #")
         header_row = None
@@ -1063,22 +1084,34 @@ def load_wip_master(path: Path) -> Dict[str, dict]:
             if not proj_cell:
                 continue
             proj = str(proj_cell).strip().upper()
+            # Skip repeated header rows / band rows (appendix blocks re-emit
+            # the header; a project # always contains a digit).
+            if proj == "PROJECT #" or not any(ch.isdigit() for ch in proj):
+                continue
 
-            def get(col_name):
-                idx = col_idx_map.get(col_name.lower())
-                if idx is None:
-                    return None
-                return ws.cell(row=r, column=idx).value
+            def get(*col_names):
+                for col_name in col_names:
+                    idx = col_idx_map.get(col_name.lower())
+                    if idx is not None:
+                        v = ws.cell(row=r, column=idx).value
+                        if v not in (None, ""):
+                            return v
+                return None
 
             out[proj] = {
-                "description": get("Project Description"),
+                "description": get("Project Description", "PROJECT NAME"),
                 "customer_gc": get("Customer / GC"),
                 "original_contract": get("Original Contract Price"),
-                "change_orders": get("Change Orders"),
-                "revised_contract": get("Revised Contract Price"),
+                "change_orders": get("Change Orders", "APPROVED COs"),
+                # Test-Master's TOTAL CONTRACT PRICE = base + approved COs — that
+                # IS the revised contract, so it feeds the same precedence slot.
+                "revised_contract": get("Revised Contract Price",
+                                        "TOTAL CONTRACT PRICE"),
                 "original_etc": get("Original ETC"),
-                "revised_etc": get("Revised ETC"),
+                "revised_etc": get("Revised ETC", "ESTIMATED TOTAL COSTS"),
                 "super": get("Super"),
+                # 'Closed' drives the WIP close-out (% forced to 100%).
+                "status": get("STATUS"),
             }
     return out
 
@@ -1259,6 +1292,7 @@ def gather_transactions(
                 is_cogs = True   # unknown → treat as job cost (COGS)
             rec = {"ref": ref, "txn_id": txn_id, "tx_type": tx_type,
                    "date": date, "desc": _xml_clean((ln.get("Description") or memo or "").strip()),
+                   "memo": memo,   # bill PrivateNote — its own column on the sheet
                    "account": name, "amount": amt}
             if is_cogs:
                 cogs.setdefault(vendor, []).append(rec)
@@ -1325,16 +1359,34 @@ def bucket_costs_by_draw_window(
         lbl: {"total": 0.0, "groups": {}} for lbl, _, _ in draw_periods
     }
     outside: dict = {"total": 0.0, "groups": {}}
+    # Anchor at the FIRST period-tagged draw (the user 2026-07-16): history
+    # dated before it is the pre-period-tagging era ("us not doing the new
+    # process in the past") — it must NOT pour into the accumulating/next-draw
+    # view and cloud the P&L. Disregarded here means "not in the draw views";
+    # the P&L ② totals and the Transactions sheet still carry every dollar.
+    anchor = min((s for _, s, _ in draw_periods), default=None)
+    disregarded: dict = {"total": 0.0, "count": 0,
+                         "anchor": anchor.isoformat() if anchor else None}
 
-    def bucket_for(txn_date: Optional[dt.date]) -> dict:
+    def bucket_for(txn_date: Optional[dt.date]) -> Optional[dict]:
         if txn_date:
             for lbl, s, e in draw_periods:
                 if s <= txn_date <= e:
                     return out[lbl]
+            if anchor and txn_date < anchor:
+                return None                    # pre-period history — disregard
         return outside
 
     def assign(txn: dict, tx_type: str, vendor_field: str) -> None:
         target = bucket_for(_parse_date(txn.get("TxnDate", "")))
+        if target is None:                     # pre-anchor history — count, skip
+            for ln in txn.get("Line") or []:
+                det = (ln.get("AccountBasedExpenseLineDetail")
+                       or ln.get("ItemBasedExpenseLineDetail") or {})
+                if (det.get("CustomerRef") or {}).get("value") == customer_id:
+                    disregarded["total"] += float(ln.get("Amount", 0) or 0)
+                    disregarded["count"] += 1
+            return
         vendor = _xml_clean(((txn.get(vendor_field) or {}).get("name") or "(no vendor)").strip())
         doc_num = _xml_clean(str(txn.get("DocNumber") or txn.get("Id") or ""))
         memo = _xml_clean((txn.get("PrivateNote") or "").strip())
@@ -1391,6 +1443,8 @@ def bucket_costs_by_draw_window(
 
     if outside["total"] or outside["groups"]:
         out["__outside"] = outside
+    if disregarded["count"]:
+        out["__disregarded"] = disregarded
     return out
 
 
@@ -1739,10 +1793,22 @@ def build_sheet_transactions(
     # income is GROSS; the PM needs the NET total of each invoice too. Net = gross −
     # retainage withheld + retainage billed (= the invoice TotalAmt). Invoices with
     # no retainage line simply show 0 in the retainage columns.
-    cell(r, 1, "INCOME  (invoices)", bold=True, size=BASE_SIZE, color=NAVY,
-         fill=INCOME_FILL)
+    # Purposeful color (the user 2026-07-15): navy section headers with white
+    # text replace the pastel banners; categories get subtle tints below.
+    SECTION_HDR = PatternFill("solid", fgColor=NAVY)
+    CAT_FILLS = {"Concrete": PatternFill("solid", fgColor="E8EEF7"),   # light blue
+                 "Labor": PatternFill("solid", fgColor="F7EFE1"),      # light tan
+                 "Materials": PatternFill("solid", fgColor="F2F2F2")}  # light gray
+    CAT_LABELS = {
+        "Concrete": "CONCRETE",
+        "Labor": "LABOR   (every line — subs paid weekly, never combined)",
+        "Materials": "MATERIALS   (rebar · lumber · aggregates · pump · equipment)",
+    }
+
+    cell(r, 1, "INCOME  (invoices)", bold=True, size=BASE_SIZE, color="FFFFFF",
+         fill=SECTION_HDR)
     for c in range(2, 8):
-        ws.cell(row=r, column=c).fill = INCOME_FILL
+        ws.cell(row=r, column=c).fill = SECTION_HDR
     r += 1
     for c, h in ((1, "Inv #"), (2, "Date"), (3, "Memo"),
                  (4, "Gross income"), (5, "Retainage withheld"),
@@ -1784,9 +1850,9 @@ def build_sheet_transactions(
     # Retainage on the P&L via refs["not_billed_ret"].
     if nb_rows:
         cell(r, 1, "RETAINAGE MOVED TO RECEIVABLE  (not billed — excluded from income)",
-             bold=True, size=SZ, color=NAVY, fill=SECT_FILL)
+             bold=True, size=SZ, color="FFFFFF", fill=SECTION_HDR)
         for c in range(2, 8):
-            ws.cell(row=r, column=c).fill = SECT_FILL
+            ws.cell(row=r, column=c).fill = SECTION_HDR
         r += 1
         nb_start = r
         for inv in nb_rows:
@@ -1805,50 +1871,96 @@ def build_sheet_transactions(
         refs["not_billed_ret"] = f"Transactions!E{r}"
         r += 2
 
-    def bills_block(title, groups, fill):
+    def _memo_text(ln):
+        """Col C = bill memo (PrivateNote) first, line description appended when
+        it adds info (the user 2026-07-15 — 'make sure to include the memo')."""
+        memo = (ln.get("memo") or "").strip()
+        desc = (ln.get("desc") or "").strip()
+        if memo and desc and desc.lower() not in memo.lower():
+            return f"{memo} — {desc}"
+        return memo or desc
+
+    def _vendor_lines(vendor, lines):
+        """Vendor row (bold, SUM in E) + its line rows (collapsible). The
+        vendor row carries NO account in col D, so the P&L's per-account
+        SUMIF only ever matches the line rows. Returns the vendor row #."""
         nonlocal r
-        bh = cell(r, 1, title, bold=True, size=BASE_SIZE, color=NAVY, fill=fill)
-        for c in range(2, 6):                       # bills use cols A–E only
-            ws.cell(row=r, column=c).fill = fill
+        vrow = r
+        cell(r, 1, f"{vendor}  ({len(lines)})", bold=True)
         r += 1
-        # Ref# | Date | Description | Account | Amount — one row per bill+account.
-        # Vendor rows show the total; the transactions collapse under them
-        # (the user 2026-06-22: see totals first, expand only if needed).
-        for c, h in ((1, "Ref #"), (2, "Date"), (3, "Description"),
+        lstart = r
+        for ln in lines:
+            rc = idcell(r, 1, ln.get("ref", ""), indent=True)
+            url = _qbo_txn_url(ln.get("tx_type", ""), ln.get("txn_id", ""), realm)
+            if url:
+                rc.hyperlink = url
+                rc.font = Font(size=SZ, color=LINK, underline="single")
+            ddate(r, 2, ln.get("date", ""))
+            cell(r, 3, _memo_text(ln))
+            cell(r, 4, ln.get("account", ""))
+            cell(r, 5, float(ln.get("amount", 0) or 0), fmt=CURR_FMT)
+            ws.row_dimensions[r].outline_level = 1   # collapsible, open default
+            r += 1
+        vt = ws.cell(row=vrow, column=5,
+                     value=f"=SUM(E{lstart}:E{r-1})" if r > lstart else 0)
+        vt.number_format = CURR_FMT
+        vt.font = Font(bold=True, size=SZ)
+        return vrow
+
+    def bills_block(title, groups, categories=False):
+        """Render a bills section.
+
+        categories=True (COGS): CONCRETE → LABOR → MATERIALS bands (biggest
+        money movers first, the user 2026-07-15), vendors by size inside each,
+        non-labor lines combined per (bill × account), labor never combined.
+        TOTAL sums the category-subtotal cells; subtotals sum vendor rows;
+        vendor rows sum line rows — each dollar counted exactly once.
+
+        categories=False (EXPENSES): vendor grouping as before, same columns.
+        """
+        nonlocal r
+        cell(r, 1, title, bold=True, size=BASE_SIZE, color="FFFFFF",
+             fill=SECTION_HDR)
+        for c in range(2, 6):                       # bills use cols A–E only
+            ws.cell(row=r, column=c).fill = SECTION_HDR
+        r += 1
+        for c, h in ((1, "Ref #"), (2, "Date"), (3, "Memo"),
                      (4, "Account"), (5, "Amount")):
             hc = cell(r, c, h, bold=True, color=NAVY); hc.border = BOTTOM_BORDER
         r += 1
-        vtot_rows = []
+        anchor_rows = []    # rows whose E cells the TOTAL row sums
         if not groups:
             cell(r, 1, "(none)", color="808080"); r += 1
-        for vendor, lines in groups.items():
-            vrow = r
-            # OPEN by default to match the per-draw sheets (the user 2026-06-26); the
-            # vendor name carries a bill count, and rows stay collapsible.
-            cell(r, 1, f"{vendor}  ({len(lines)})", bold=True, fill=ACCENT_FILL)
-            for c in range(2, 6):                   # bills use cols A–E only
-                ws.cell(row=r, column=c).fill = ACCENT_FILL
-            r += 1
-            lstart = r
-            for ln in lines:
-                rc = idcell(r, 1, ln.get("ref", ""), indent=True)
-                url = _qbo_txn_url(ln.get("tx_type", ""), ln.get("txn_id", ""), realm)
-                if url:
-                    rc.hyperlink = url
-                    rc.font = Font(size=SZ, color=LINK, underline="single")
-                ddate(r, 2, ln.get("date", ""))
-                cell(r, 3, ln.get("desc", ""))
-                cell(r, 4, ln.get("account", ""))
-                cell(r, 5, float(ln.get("amount", 0) or 0), fmt=CURR_FMT)
-                ws.row_dimensions[r].outline_level = 1   # collapsible, open default
+        elif categories:
+            # combine first (non-labor, per bill × account), then bucket by category
+            by_cat: Dict[str, Dict[str, list]] = {}
+            for vendor, lines in groups.items():
+                for ln in combine_bill_lines(lines):
+                    by_cat.setdefault(line_category(ln.get("account")), {}) \
+                          .setdefault(vendor, []).append(ln)
+            for cat in sorted(by_cat, key=lambda c_: CATEGORY_ORDER.get(c_, 99)):
+                cfill = CAT_FILLS.get(cat)
+                cell(r, 1, CAT_LABELS.get(cat, cat.upper()), bold=True,
+                     color=NAVY, fill=cfill)
+                for c in range(2, 6):
+                    ws.cell(row=r, column=c).fill = cfill
                 r += 1
-            vt = ws.cell(row=vrow, column=5,
-                         value=f"=SUM(E{lstart}:E{r-1})" if r > lstart else 0)
-            vt.number_format = CURR_FMT; vt.font = Font(bold=True, size=SZ)
-            vt.fill = ACCENT_FILL
-            vtot_rows.append(vrow)
+                vmap = by_cat[cat]
+                vend_rows = [
+                    _vendor_lines(v, vmap[v])
+                    for v in sorted(vmap, key=lambda v: -sum(
+                        float(x.get("amount", 0) or 0) for x in vmap[v]))
+                ]
+                cell(r, 1, f"Subtotal — {cat}", bold=True, border=TOP_BORDER)
+                cell(r, 5, "=" + "+".join(f"E{v}" for v in vend_rows),
+                     bold=True, fmt=CURR_FMT, border=TOP_BORDER)
+                anchor_rows.append(r)
+                r += 1
+        else:
+            for vendor, lines in groups.items():
+                anchor_rows.append(_vendor_lines(vendor, combine_bill_lines(lines)))
         cell(r, 1, "TOTAL " + title.split("—")[0].strip(), bold=True, border=TOP_BORDER)
-        f = ("=" + "+".join(f"E{v}" for v in vtot_rows)) if vtot_rows else "=0"
+        f = ("=" + "+".join(f"E{v}" for v in anchor_rows)) if anchor_rows else "=0"
         cell(r, 5, f, bold=True, fmt=CURR_FMT, border=TOP_BORDER)
         tot = r
         r += 2
@@ -1859,9 +1971,10 @@ def build_sheet_transactions(
     for c in range(1, 8):
         ws.cell(row=r, column=c).border = Border(bottom=Side(style="medium", color=NAVY))
     r += 2
-    cogs_tot = bills_block("COGS — bills (job costs)", tx["cogs"], COGS_FILL)
+    cogs_tot = bills_block("COGS — JOB COSTS  (concrete → labor → materials)",
+                           tx["cogs"], categories=True)
     refs["cogs"] = f"Transactions!E{cogs_tot}"
-    exp_tot = bills_block("EXPENSES — bills (non-COGS)", tx["exp"], SECT_FILL)
+    exp_tot = bills_block("EXPENSES — bills (non-COGS)", tx["exp"])
     refs["exp"] = f"Transactions!E{exp_tot}"
     # for the P&L's per-account SUMIF mirror (account col D, amount col E)
     refs["acct_col"] = "Transactions!$D:$D"
@@ -2180,9 +2293,9 @@ def build_sheet_pl(
     hero_fill = PatternFill("solid", fgColor="1F3A5F")
 
     # ════════════════════════════════════════════════════════════════════
-    #  STORY LAYOUT (the user 2026-06-22): ① WIP (beginning) → ② P&L facts →
-    #  ③ Snapshot realized (MFD vs Company) → ④ Billing & Retainage →
-    #  ⑤ Snapshot WITH retainage (end). Draw coverage table on the right.
+    #  STORY LAYOUT (the user 2026-07-16): ① WIP (beginning) → ② P&L TOTALS
+    #  incl. retainage (the true totals) → ③ Snapshot REALIZED net-billed
+    #  (MFD vs Company) → ④ Billing & Retainage. Draw coverage table right.
     # ════════════════════════════════════════════════════════════════════
     ws.column_dimensions["C"].width = 3   # thin gap before the coverage table
     grp_fill = PatternFill("solid", fgColor="DDEBF7")
@@ -2282,11 +2395,14 @@ def build_sheet_pl(
         if show_mfd:
             mfd_np = f"({gp_expr})-{_aoh}*{costs}"
             subhdr(f"MFD — {_alt:.0f}% on costs")
-            line("less: Overhead", f"=-{_aoh}*{costs}")
+            line(f"less: Overhead ({_alt:.0f}% on costs)", f"=-{_aoh}*{costs}")
             line("NET PROFIT", f"={mfd_np}", hero=True)
             line("Profit %", f'=IF({costs}=0,"",({mfd_np})/{costs})', pct=True, hero=True)
             subhdr(f"COMPANY — {overhead_pct:.0f}% on revenue")
-        line("less: Overhead", f"=-{opex}-{oh}*({inc_expr})")
+        # % spelled out on the row itself (the user 2026-07-16: "so we can see
+        # what % we're working with")
+        line(f"less: Overhead ({overhead_pct:.0f}% of revenue + direct opex)",
+             f"=-{opex}-{oh}*({inc_expr})")
         line("NET PROFIT", f"={co_np}", hero=True)
         line("Profit %", f'=IF(({inc_expr})=0,"",({co_np})/({inc_expr}))', pct=True, hero=True)
         box(t0, r - 1)
@@ -2303,6 +2419,11 @@ def build_sheet_pl(
         # retainage moved to receivable by JE — not billed income, but retainage
         # OWED; folds into the retainage snapshots/total only (the user 2026-07-02).
         NBcell = tx_refs.get("not_billed_ret")
+        # WIP "Billed to Date" wants GROSS contract billing incl. retainage held:
+        # billed + billed_ret + not_billed_ret. On invoice-line-retainage jobs NBcell
+        # is empty and Bgross already = gross; on CP "moved to receivable by JE" jobs
+        # this adds the held retainage back in (the user 2026-07-15).
+        Btot = f"{Bgross}+{NBcell}" if NBcell else Bgross
 
         # ── ① WIP / PROJECTION (beginning) — inputs as plain rows ──
         wtop = sect_title("① WIP / PROJECTION   (yellow = your input)")
@@ -2329,25 +2450,49 @@ def build_sheet_pl(
             cc.border = Border(left=_HAIR, right=_HAIR, top=_HAIR, bottom=_HAIR)
         c_ref = f"$B${k_row}"
         e_ref = f"$B${etc_in}"
+        # 'Closed' in the WIP master (Test-Master STATUS) forces the close-out
+        # view (the user 2026-07-16): % Complete = 100%, Cost to Complete = 0,
+        # Earned = full contract. Closing a job in the WIP master closes it
+        # here — no manual ETC massaging.
+        wip_closed = str(wip_info.get("status") or "").strip().lower() in (
+            "closed", "complete", "completed", "done")
         ctd_row = row("Costs to Date", None)
-        pc_row = row("% Complete (cost-based)", None, fmt=PCT_FMT, bold=True, color=NAVY)
+        # Two progress metrics (the user 2026-07-16): cost-based drives Earned
+        # Revenue and reads >100% when costs blow past ETC (red = over budget,
+        # never capped — the overage IS the signal); % Billed is billing
+        # progress against the contract (retainage-inclusive Btot).
+        pc_row = row("% Complete (cost ÷ ETC)", None, fmt=PCT_FMT, bold=True, color=NAVY)
+        row("% Billed (billed ÷ contract)",
+            formula=f'=IF({c_ref}=0,"",({Btot})/{c_ref})',
+            fmt=PCT_FMT, bold=True, color=NAVY)
         earn_row = row("Earned Revenue (contract × %)", None)
-        bd_row = row("Billed to Date", formula=f"={Bgross}")
+        bd_row = row("Billed to Date", formula=f"={Btot}")
         _qbo_link(bd_row, _cust_url)
         row("Over / (Under) Billing",
-            formula=f'=IF({e_ref}=0,"",({Bgross})-B{earn_row})', color="C0504D")
+            formula=f'=IF({e_ref}=0,"",({Btot})-B{earn_row})', color="C0504D")
         ctc_row = row("Cost to Complete (remaining)", None)
         pp_row = row("Projected Profit at Completion", formula=f"={c_ref}-{e_ref}",
                      bold=True, border=TOP_BORDER)
         row("Projected Margin %", formula=f'=IF({c_ref}=0,"",B{pp_row}/{c_ref})',
             fmt=PCT_FMT, bold=True, color=NAVY)
+        if wip_closed:
+            row("closed per WIP master — % complete forced to 100%", None,
+                size=BASE_SIZE - 2, color="595959")
         box(wtop, r - 1)
+        # over-budget flag: cost-based % complete turns red past 100%
+        ws.conditional_formatting.add(
+            f"B{pc_row}",
+            CellIsRule(operator="greaterThan", formula=["1"],
+                       font=Font(bold=True, color="C00000")))
         wip_contract_cell = c_ref
         r += 1
 
-        # ── ② PROFIT & LOSS TOTALS ──
+        # ── ② PROFIT & LOSS TOTALS — TRUE totals, retainage included (the
+        #    user 2026-07-16): income = gross work billed + retainage billed
+        #    back + retainage receivable (JE) = the same Btot as ① Billed to
+        #    Date. The realized/net view lives in ③.
         ftop = sect_title("② PROFIT & LOSS TOTALS")
-        income_row = row("Income (less retainage)", formula=f"={Binc}",
+        income_row = row("Income (incl. retainage)", formula=f"={Btot}",
                          bold=True, size=BASE_SIZE + 1, color="375623", fill=INCOME_FILL)
         _qbo_link(income_row, _cust_url)
         cogs_row = acct_lines("Cost of Goods Sold", tx_refs.get("cogs_accts") or [],
@@ -2369,12 +2514,22 @@ def build_sheet_pl(
         box(ftop, r - 1)
         r += 1
 
-        # fill WIP cells now that COGS is known
-        for rr, frm, fmt, isb in (
+        # fill WIP cells now that COGS is known. A 'Closed' WIP-master status
+        # overrides the cost-based math: the job is done, so % = 100%, Earned =
+        # full contract, nothing left to spend (the user 2026-07-16).
+        if wip_closed:
+            _wip_fills = (
+                (ctd_row, f"=B{cogs_row}", CURR_FMT, False),
+                (pc_row, 1.0, PCT_FMT, True),
+                (earn_row, f"={c_ref}", CURR_FMT, False),
+                (ctc_row, 0.0, CURR_FMT, False))
+        else:
+            _wip_fills = (
                 (ctd_row, f"=B{cogs_row}", CURR_FMT, False),
                 (pc_row, f'=IF({e_ref}=0,"",B{cogs_row}/{e_ref})', PCT_FMT, True),
                 (earn_row, f'=IF({e_ref}=0,"",{c_ref}*B{cogs_row}/{e_ref})', CURR_FMT, False),
-                (ctc_row, f"={e_ref}-B{cogs_row}", CURR_FMT, False)):
+                (ctc_row, f"={e_ref}-B{cogs_row}", CURR_FMT, False))
+        for rr, frm, fmt, isb in _wip_fills:
             cc = ws.cell(row=rr, column=2, value=frm)
             cc.number_format = fmt
             cc.font = Font(bold=isb, size=BASE_SIZE, color=NAVY if isb else "000000")
@@ -2383,33 +2538,32 @@ def build_sheet_pl(
         costs = f"B{cogs_row}"
         opex = f"B{exp_row}"
 
-        # ── ③ SNAPSHOT — WITH RETAINAGE (project) FIRST (the user 2026-06-22) ──
-        _wr = f"{Wcell}+{NBcell}" if NBcell else Wcell
-        inc_wr = f"B{income_row}+{_wr}"
-        gp_wr = f"B{income_row}+{_wr}-B{cogs_row}"
-        snapshot("③ SNAPSHOT — WITH RETAINAGE (project)", "Includes retainage owed",
-                 inc_wr, gp_wr, costs, opex)
+        # ── ③ SNAPSHOT — REALIZED (net billed) — the cash-billed view, less
+        #    retainage (the user 2026-07-16: ② is the true totals WITH
+        #    retainage; ③ answers "what did we bill in cash"). The old
+        #    with-retainage snapshot is gone — ② already answers it.
+        _snap3 = ("③ SNAPSHOT — MFD vs COMPANY (realized, net billed)" if show_mfd
+                  else "③ SNAPSHOT — REALIZED (net billed, less retainage)")
+        snapshot(_snap3, "Realized — billed in cash, less retainage",
+                 f"{Binc}", f"({Binc})-{costs}", costs, opex)
 
-        # ── ④ SNAPSHOT — REALIZED (less retainage) ──
-        _snap4 = ("④ SNAPSHOT — MFD vs COMPANY (realized)" if show_mfd
-                  else "④ SNAPSHOT — REALIZED (less retainage)")
-        snapshot(_snap4, "Realized — less retainage",
-                 f"B{income_row}", f"B{gp_row}", costs, opex)
-
-        # ── ⑤ BILLING & RETAINAGE (to date) ──
-        btop = sect_title("⑤ BILLING & RETAINAGE (to date)")
-        gb_row = row("Billed to Date (gross)", formula=f"={Bgross}", indent=1)
+        # ── ④ BILLING & RETAINAGE (to date) ──
+        btop = sect_title("④ BILLING & RETAINAGE (to date)")
+        gb_row = row("Billed to Date (gross, incl. retainage)", formula=f"={Btot}",
+                     indent=1)
         _qbo_link(gb_row, _cust_url)
-        row("Retainage billed", formula=f"={tx_refs['billed_ret']}", indent=1, color=GREEN)
-        lw_row = row("less: Retainage Withheld", formula=f"=-{Wcell}", indent=1)
-        row("Net Billed (to AR)", formula=f"=B{gb_row}+B{lw_row}", indent=1,
+        # ONE receivable row (the user 2026-07-16: withheld-on-draws and
+        # moved-to-receivable-by-JE are the same money owed to us — two booking
+        # styles, one bucket).
+        _rec = f"{Wcell}+{NBcell}" if NBcell else Wcell
+        rec_row = row("less: Retainage receivable (withheld + not billed)",
+                      formula=f"=-({_rec})", indent=1, color="C0504D")
+        row("Net Billed (to AR)", formula=f"=B{gb_row}+B{rec_row}", indent=1,
             bold=True, border=TOP_BORDER)
-        if NBcell:
-            row("Retainage receivable (not billed, by JE)", formula=f"={NBcell}",
-                indent=1, color="C0504D")
-        _tot_ret = (f"=-B{lw_row}+{tx_refs['billed_ret']}+{NBcell}" if NBcell
-                    else f"=-B{lw_row}+{tx_refs['billed_ret']}")
-        row("Total retainage", formula=_tot_ret, indent=1,
+        row("Retainage billed (returned by GC)", formula=f"={tx_refs['billed_ret']}",
+            indent=1, color=GREEN)
+        row("Total retainage (all-time)",
+            formula=f"=({_rec})+{tx_refs['billed_ret']}", indent=1,
             bold=True, border=TOP_BORDER, color=NAVY)
         if underbill_total > 0:
             ur = row(f"⚠ Underbilling risk — bills missed by PM "
@@ -2961,8 +3115,15 @@ def build_sheet_next_draw_retainage(wb, proj, cust_info, wip_info, income_groups
 
     r = _write_meta_block(ws, proj, cust_info, wip_info, as_of)
 
+    disregarded = draw_costs.get("__disregarded")
     if outside and (outside.get("total") or outside.get("groups")):
         band(r, "NEXT DRAW — costs since the last draw (accumulating)"); r += 1
+        if disregarded:
+            wc(r, 1, f"history before {disregarded.get('anchor') or 'the first tagged period'} "
+                     f"disregarded here ({disregarded['count']} lines, "
+                     f"${disregarded['total']:,.0f}) — pre-period process; "
+                     f"still in P&L totals / Transactions", color="595959")
+            r += 1
         for i, h in enumerate(["Bill # / Vendor", "Date", "Cost", "Description", "", "Amount"], 1):
             hc = wc(r, i, h, bold=True, color=NAVY); hc.border = BOTTOM_BORDER
         r += 1
@@ -3013,7 +3174,29 @@ def build_sheet_next_draw_retainage(wb, proj, cust_info, wip_info, income_groups
     if ret and ret.get("invoices"):
         invoice_section(ret, "RETAINAGE NOT BILLED", NAVY)
     if untag and untag.get("invoices"):
-        invoice_section(untag, "UNTAGGED INVOICES (no Period in PrivateNote)", NAVY)
+        # Pre-anchor untagged invoices are the pre-period-tagging era — roll
+        # them into ONE line instead of itemizing (the user 2026-07-16: they
+        # cloud the P&L; the Transactions sheet still lists each one).
+        _anch = _parse_date((disregarded or {}).get("anchor") or "")
+        if _anch:
+            cur = [i for i in untag["invoices"]
+                   if (_parse_date(i.get("date", "")) or dt.date.max) >= _anch]
+            old = [i for i in untag["invoices"]
+                   if (_parse_date(i.get("date", "")) or dt.date.max) < _anch]
+        else:
+            cur, old = untag["invoices"], []
+        if cur:
+            cur_grp = dict(untag)
+            cur_grp["invoices"] = cur
+            cur_grp["net_billed"] = sum(float(i.get("amount", 0) or 0) for i in cur)
+            invoice_section(cur_grp, "UNTAGGED INVOICES (no Period in PrivateNote)", NAVY)
+        if old:
+            band(r, "PRE-PERIOD HISTORY (before the first tagged draw)"); r += 1
+            wc(r, 1, f"{len(old)} invoice(s) before {(disregarded or {}).get('anchor')} "
+                     f"— pre-period process, see Transactions", color="595959")
+            wc(r, 6, round(sum(float(i.get('amount', 0) or 0) for i in old), 2),
+               fmt=CURR_FMT, color="595959")
+            r += 2
 
     _setup_print(ws, 6)
     return ws
@@ -3916,6 +4099,12 @@ def generate_project_pnl(
             "total": outside_acc.get("total", 0.0),
         }
         print(f"      accumulating (outside draw windows) = {accum['total']:,.2f}")
+    _dis = draw_costs.get("__disregarded")
+    if _dis:
+        _anch = _dis.get("anchor") or ""
+        ui_event(f"pre-period history disregarded from draw views: "
+                 f"{_dis['count']} cost line(s) ${_dis['total']:,.0f} before {_anch} "
+                 f"(still in P&L totals/Transactions)", icon="⚑", color=_YEL)
 
     # .get — special buckets like __retainage have no "net_billed"
     net_billed = sum(g.get("net_billed", 0.0) for g in income_groups.values())
