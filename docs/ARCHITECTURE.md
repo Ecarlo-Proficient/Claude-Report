@@ -156,6 +156,7 @@ flowchart LR
 
     QBO[("QBO")]:::src
     WIPM[("WIP - MASTER new.xlsx\nTest-Master tab (SharePoint)")]:::src
+    TKO[("Takeoffs (Synology)\nCP 'Cost Code' sheet · RP 'Cost Gral'")]:::src
     PNL["project-pnl/\nproject_pnl_export.py"]:::tool
     LOAN["debt-schedule/\nloan_sync.py"]:::tool
     HEALTH["health-dashboard/\nqbo_health.py"]:::tool
@@ -170,6 +171,7 @@ flowchart LR
 
     QBO --> PNL --> P1
     WIPM -->|"Contract/ETC/COs/STATUS auto-pull\n(typed override still wins)"| PNL
+    TKO -->|"cost-code BUDGET\n(Budget vs Actual sheet)"| PNL
     QBO --> LOAN --> P2
     QBO --> HEALTH --> P3
     QBO --> EXP --> P4
@@ -213,7 +215,12 @@ revised rows are live formulas) and honor a **Closed** status (WIP close-out: % 
 forced to 100%). Company overhead default is **10% of revenue** (MFD alt: 9% on costs —
 also drives the MFD draw-coverage columns). Its Transactions sheet groups job costs
 **concrete → labor → materials** via `shared/cost_lines.py` — non-labor bill lines
-combine per (bill × account); labor lines are never combined.
+combine per (bill × account); labor lines are never combined. The **Budget vs Actual**
+sheet (CP + RP) joins the takeoff's cost-code budget (CP: the 'Cost Code(s)' sheet;
+RP: 'Cost Gral', FW codes → the -FTW project) against QBO cost-code actuals — jobs
+with change orders carry a "may be inaccurate" banner until the CO template ships its
+cost line. Sheet order: P&L · Transactions · Budget vs Actual · Next Draw · draws ·
+POs · Reconciliations · Cash Flow.
 
 ---
 

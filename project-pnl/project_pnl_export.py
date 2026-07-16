@@ -53,6 +53,11 @@ import datetime as dt
 import os
 import re
 import sys
+import warnings
+
+# RP takeoffs carry INDIRECT() print areas openpyxl can't keep — harmless
+# (read-only budget pull), silence the noise (same as the WIP readers).
+warnings.filterwarnings("ignore", message="Print area cannot be set to Defined name.*")
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -2549,10 +2554,13 @@ def build_sheet_pl(
         bd_row = row("Billed to Date", formula=f"={Btot}", bold=True)
         _qbo_link(bd_row, _cust_url)
         ctd_row = row("Costs to Date", None)
+        gpa_row = row("Gross Profit (to date)",
+                      formula=f"=B{bd_row}-B{ctd_row}",
+                      bold=True, border=TOP_BORDER)
         aoh_row = row(f"less: Overhead ({overhead_pct:.0f}% of billed)",
                       formula=f"=-{oh}*B{bd_row}", indent=1, color="595959")
         rnp_row = row("REAL Net Profit (to date)",
-                      formula=f"=B{bd_row}-B{ctd_row}+B{aoh_row}",
+                      formula=f"=B{gpa_row}+B{aoh_row}",
                       bold=True, border=TOP_BORDER)
         row("REAL Net Profit %",
             formula=f'=IF(B{bd_row}=0,"",B{rnp_row}/B{bd_row})',
@@ -3176,20 +3184,17 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
 
 def build_sheet_next_draw_retainage(wb, proj, cust_info, wip_info, income_groups,
                                     draw_costs, as_of, realm=""):
-    """One sheet for everything that isn't a real draw (the user 2026-06-26): costs
-    OUTSIDE every draw window (accumulating toward the next draw), retainage billed,
-    retainage not billed, and untagged invoices."""
+    """Costs OUTSIDE every draw window (accumulating toward the next draw) +
+    untagged invoices. Retainage blocks were REMOVED (the user 2026-07-16 —
+    that story already lives on the Transactions sheet)."""
     outside = draw_costs.get("__outside")
-    retb = income_groups.get("__retainage_billed")
-    ret = income_groups.get("__retainage")
     untag = income_groups.get("__untagged")
     has = ((outside and (outside.get("total") or outside.get("groups")))
-           or (retb and retb.get("invoices")) or (ret and ret.get("invoices"))
            or (untag and untag.get("invoices")))
     if not has:
         return None
 
-    ws = wb.create_sheet("Next Draw + Retainage")
+    ws = wb.create_sheet("Next Draw")
     ws.sheet_view.showGridLines = False
     ws.sheet_view.zoomScale = 110
     for col, w in (("A", 16), ("B", 12), ("C", 24), ("D", 16), ("E", 40), ("F", 14)):
@@ -3281,10 +3286,6 @@ def build_sheet_next_draw_retainage(wb, proj, cust_info, wip_info, income_groups
             ws.cell(row=r, column=cc).border = TOP_BORDER
         r += 2
 
-    if retb and retb.get("invoices"):
-        invoice_section(retb, "RETAINAGE BILLED", GREEN)
-    if ret and ret.get("invoices"):
-        invoice_section(ret, "RETAINAGE NOT BILLED", NAVY)
     if untag and untag.get("invoices"):
         # Pre-anchor untagged invoices are the pre-period-tagging era — roll
         # them into ONE line instead of itemizing (the user 2026-07-16: they
@@ -3312,6 +3313,331 @@ def build_sheet_next_draw_retainage(wb, proj, cust_info, wip_info, income_groups
 
     _setup_print(ws, 6)
     return ws
+
+
+# ────────────────────────── Budget vs Actual (the user 2026-07-16) ──────────────────────────
+
+# CP takeoff discovery mirrors wip/cp_wip_reader.py's locked convention (tools
+# never import tools, so the ~20 lines live here too): project folder under
+# the Awarded-Projects root (active, then Completed Projects/), takeoff = the
+# 'takeoff'-named xlsx in the folder ROOT; several takeoffs → the 'WIP'-tagged
+# ones, summed. Budget = the 'Cost Code(s)' sheet: col A = code, col C = $.
+_CP_ACTIVE_DIR = Path(os.getenv(
+    "CP_ACTIVE_DIR",
+    "/Volumes/Common/CURRENT PROJECTS/Awarded Projects Commercial projects"))
+_AUX_XLSX_RE = re.compile(r"cost\s*code|explanation", re.IGNORECASE)
+_WIP_TAG_RE = re.compile(r"\bwip\b", re.IGNORECASE)
+
+
+def _find_cp_takeoffs(proj: str) -> List[Path]:
+    roots = [_CP_ACTIVE_DIR, _CP_ACTIVE_DIR / "Completed Projects"]
+    folder = None
+    for root in roots:
+        try:
+            for d in sorted(root.iterdir()):
+                if d.is_dir() and d.name.upper().startswith(proj.upper()):
+                    folder = d
+                    break
+        except OSError:
+            continue
+        if folder:
+            break
+    if not folder:
+        return []
+    xl = [f for f in folder.iterdir()
+          if f.suffix.lower() in (".xlsx", ".xlsm")
+          and not f.name.startswith("~$")]
+    takeoffs = [f for f in xl if "takeoff" in f.name.lower()]
+    if not takeoffs:
+        cands = [f for f in xl if not _AUX_XLSX_RE.search(f.name)]
+        return cands if len(cands) == 1 else []
+    if len(takeoffs) == 1:
+        return takeoffs
+    wip_tagged = [f for f in takeoffs if _WIP_TAG_RE.search(f.name)]
+    return wip_tagged  # several with none tagged → don't guess
+
+
+def _read_cost_code_sheet(path: Path, sheet_hint: str) -> Dict[str, float]:
+    """Cost-code budget rows from ONE workbook sheet whose name contains
+    `sheet_hint`: col A = cost code, col C = cached budget $. Stops at the
+    first non-code row (total rows etc.); skips zero and uncached rows."""
+    out: Dict[str, float] = {}
+    try:
+        wb = openpyxl.load_workbook(str(path), read_only=True, data_only=True)
+    except Exception:
+        return out
+    target = None
+    for nm in wb.sheetnames:
+        if sheet_hint in nm.strip().lower():
+            target = nm
+            break
+    if not target:
+        wb.close()
+        return out
+    ws = wb[target]
+    for row_vals in ws.iter_rows(min_row=2, max_col=3, values_only=True):
+        code = str(row_vals[0] or "").strip().upper()
+        if not code or not _is_cost_code(code):
+            break                        # data ends (blank / total row)
+        v = row_vals[2]
+        try:
+            amt = float(v)
+        except (TypeError, ValueError):
+            continue                     # stale formula cache → skip, no guess
+        if abs(amt) > 0.005:
+            out[code] = out.get(code, 0.0) + round(amt, 2)
+    wb.close()
+    return out
+
+
+def load_cp_budget(proj: str) -> Tuple[Dict[str, float], str]:
+    """CP budget by cost code from the takeoff 'Cost Code(s)' sheet.
+    Returns ({code: $}, source-note); empty dict when no takeoff/sheet."""
+    budget: Dict[str, float] = {}
+    names = []
+    for tk in _find_cp_takeoffs(proj):
+        part = _read_cost_code_sheet(tk, "cost code")
+        if part:
+            names.append(tk.name)
+            for k, v in part.items():
+                budget[k] = budget.get(k, 0.0) + v
+    return budget, " + ".join(names)
+
+
+# RP takeoffs live under client/address folders; the budget is the takeoff's
+# 'Cost Gral' sheet (the last visible tab; older takeoff vintages don't have
+# it — then there's no budget to show). Codes col A (trailing spaces!), qty
+# col C (0/1), amount col D. FW codes belong to the -FTW project; SL/PR (and
+# the rest) to the slab project — mirrors the WIP master's RP#/RP#-FTW split.
+_RP_ROOT = Path(os.getenv("RP_ROOT", "/Volumes/Common/CURRENT PROJECTS/Residential"))
+_RP_SKIP_RE = re.compile(r"flatwork|invoice|estimate|measure", re.IGNORECASE)
+
+
+_RP_FILE_RE = re.compile(r"^(RP\d{4})_", re.IGNORECASE)
+_rp_index_cache: Optional[Dict[str, List[Path]]] = None
+
+
+def _rp_takeoff_index() -> Dict[str, List[Path]]:
+    """ONE walk of the Residential tree (client/ + client/address/) → RP# →
+    candidate takeoff files. Parallel scandir (the NAS is slow serially —
+    same trick as rp_wip_reader) and cached for the process, so an
+    `active rp` batch scans once, not 74 times."""
+    global _rp_index_cache
+    if _rp_index_cache is not None:
+        return _rp_index_cache
+    from concurrent.futures import ThreadPoolExecutor
+    index: Dict[str, List[Path]] = {}
+
+    def _scan(folder: Path):
+        files: List[Path] = []
+        subdirs: List[Path] = []
+        try:
+            with os.scandir(folder) as it:
+                for e in it:
+                    if e.is_dir(follow_symlinks=False):
+                        subdirs.append(Path(e.path))
+                    elif e.is_file(follow_symlinks=False):
+                        files.append(Path(e.path))
+        except OSError:
+            pass
+        return files, subdirs
+
+    try:
+        clients = [d for d in _RP_ROOT.iterdir() if d.is_dir()]
+    except OSError:
+        clients = []
+    all_files: List[Path] = []
+    with ThreadPoolExecutor(max_workers=24) as ex:
+        level1 = list(ex.map(_scan, clients))
+        addr_dirs = [d for _, subs in level1 for d in subs]
+        all_files.extend(f for fs, _ in level1 for f in fs)
+        for fs, _ in ex.map(_scan, addr_dirs):
+            all_files.extend(fs)
+    for f in all_files:
+        if (f.suffix.lower() in (".xlsm", ".xlsx")
+                and not f.name.startswith("~$")
+                and not _RP_SKIP_RE.search(f.name)):
+            mm = _RP_FILE_RE.match(f.name)
+            if mm:
+                index.setdefault(mm.group(1).upper(), []).append(f)
+    _rp_index_cache = index
+    return index
+
+
+def _find_rp_takeoff(proj: str) -> Optional[Path]:
+    base = proj.upper().replace("-FTW", "")
+    cands = _rp_takeoff_index().get(base) or []
+    if not cands:
+        return None
+    # the current takeoff is the "UPDATED" one; else the plainest name
+    return sorted(cands, key=lambda f: (0 if "UPDATED" in f.name.upper() else 1,
+                                        len(f.name)))[0]
+
+
+def load_rp_budget(proj: str) -> Tuple[Dict[str, float], str]:
+    """RP budget by cost code from the takeoff's 'Cost Gral' sheet, filtered
+    to the project's side of the RP#/RP#-FTW split."""
+    tk = _find_rp_takeoff(proj)
+    if not tk:
+        return {}, ""
+    out: Dict[str, float] = {}
+    try:
+        wb = openpyxl.load_workbook(str(tk), read_only=True, data_only=True)
+    except Exception:
+        return {}, ""
+    target = next((nm for nm in wb.sheetnames
+                   if "cost" in nm.lower() and "gral" in nm.lower()), None)
+    if not target:
+        wb.close()
+        return {}, ""
+    is_ftw = proj.upper().endswith("-FTW")
+    for row_vals in wb[target].iter_rows(min_row=2, max_col=4, values_only=True):
+        code = str(row_vals[0] or "").strip().upper()
+        if not code or not _is_cost_code(code):
+            continue                      # section totals / headers interleave
+        if code.startswith("FW") != is_ftw:
+            continue                      # FW ↔ -FTW project; SL/PR ↔ slab
+        try:
+            qty = float(row_vals[2]) if row_vals[2] is not None else 1.0
+            amt = float(row_vals[3])
+        except (TypeError, ValueError):
+            continue                      # '#N/A' cache etc. — skip, no guess
+        eff = round(amt * (qty if qty in (0.0, 1.0) else 1.0), 2)
+        if abs(eff) > 0.005:
+            out[code] = out.get(code, 0.0) + eff
+    wb.close()
+    return out, tk.name
+
+def costs_by_code(bills: List[dict], purchases: List[dict], customer_id: str,
+                  parent_map: Dict[str, str],
+                  account_names: Optional[Dict[str, str]] = None,
+                  item_account: Optional[Dict[str, str]] = None) -> Dict[str, float]:
+    """ALL of this project's cost lines aggregated by their cost-code leaf —
+    the same account/item resolution the accumulating-costs block uses.
+    Non-code accounts keep their name (they land in the 'not budgeted' rows)."""
+    account_names = account_names or {}
+    item_account = item_account or {}
+    out: Dict[str, float] = {}
+    for txn in list(bills) + list(purchases):
+        for ln in txn.get("Line") or []:
+            det = (ln.get("AccountBasedExpenseLineDetail")
+                   or ln.get("ItemBasedExpenseLineDetail") or {})
+            if (det.get("CustomerRef") or {}).get("value") != customer_id:
+                continue
+            amt = float(ln.get("Amount", 0) or 0)
+            if abs(amt) < 0.005:
+                continue
+            aref = det.get("AccountRef") or {}
+            aid = aref.get("value")
+            if not aid:
+                aid = item_account.get((det.get("ItemRef") or {}).get("value"))
+            leaf = _xml_clean(
+                account_names.get(aid)
+                or (aref.get("name") or "").split(":")[-1].strip()
+                or (det.get("ItemRef") or {}).get("name")
+                or "(unclassified)")
+            out[leaf] = out.get(leaf, 0.0) + amt
+    return {k: round(v, 2) for k, v in out.items()}
+
+
+def build_sheet_budget_vs_actual(wb, proj, cust_info, wip_info,
+                                 budget: Dict[str, float],
+                                 actuals: Dict[str, float],
+                                 as_of: str, co_flag: bool = False,
+                                 budget_source: str = "") -> Optional[str]:
+    """BUDGET (takeoff cost codes) vs ACTUAL (QBO cost-code totals) per line.
+    CP budget = the takeoff's Cost Code sheet; RP budget = the takeoff's last
+    sheet. Jobs WITH change orders get a warning banner: CO costs aren't in
+    the budget (CO-template cost line pending), so variances may read hot
+    (the user 2026-07-16). Returns the sheet name, or None when no budget."""
+    if not budget:
+        return None
+    ws = wb.create_sheet("Budget vs Actual")
+    ws.sheet_view.showGridLines = False
+    ws.sheet_view.zoomScale = 110
+    for col, w in (("A", 42), ("B", 16), ("C", 16), ("D", 16), ("E", 10)):
+        ws.column_dimensions[col].width = w
+
+    r = _write_meta_block(ws, proj, cust_info, wip_info, as_of)
+    if budget_source:
+        src = ws.cell(row=r, column=1, value=f"Budget source: {budget_source}")
+        src.font = Font(italic=True, size=BASE_SIZE - 2, color="595959")
+        r += 1
+    if co_flag:
+        warn = ws.cell(row=r, column=1, value=(
+            "⚠ MAY BE INACCURATE — this job has change orders; CO costs are "
+            "NOT in the budget (CO-template cost line pending), so actuals "
+            "can exceed budget for CO work"))
+        warn.font = Font(bold=True, size=BASE_SIZE - 1, color="9C5700")
+        for cc in range(1, 6):
+            ws.cell(row=r, column=cc).fill = PatternFill("solid", fgColor="FFF2CC")
+        r += 1
+    r += 1
+
+    hdr = ws.cell(row=r, column=1, value="BUDGET vs ACTUAL — by cost code")
+    hdr.font = Font(bold=True, size=BASE_SIZE, color="FFFFFF")
+    for cc in range(1, 6):
+        ws.cell(row=r, column=cc).fill = PatternFill("solid", fgColor=NAVY)
+    r += 1
+    for c, h in ((1, "Cost Code"), (2, "Budget"), (3, "Actual (QBO)"),
+                 (4, "Variance"), (5, "Used %")):
+        hc = ws.cell(row=r, column=c, value=h)
+        hc.font = Font(bold=True, size=BASE_SIZE - 1, color=NAVY)
+        hc.border = BOTTOM_BORDER
+        if c > 1:
+            hc.alignment = Alignment(horizontal="right" if c < 5 else "center")
+    r += 1
+
+    # Row set = union; codes in Cost-Code-Sheet order, non-code actuals last.
+    codes = sorted(set(budget) | set(actuals), key=_cost_code_sort_key)
+    first = r
+    for code in codes:
+        b = budget.get(code)
+        a = actuals.get(code, 0.0)
+        lc = ws.cell(row=r, column=1, value=_cost_code_label(code))
+        lc.font = Font(size=BASE_SIZE - 1,
+                       color="000000" if b is not None else "9C5700")
+        if b is not None:
+            bc = ws.cell(row=r, column=2, value=round(b, 2))
+            bc.number_format = CURR_FMT
+            bc.font = Font(size=BASE_SIZE - 1)
+        else:
+            nb = ws.cell(row=r, column=2, value="not budgeted")
+            nb.font = Font(italic=True, size=BASE_SIZE - 2, color="9C5700")
+            nb.alignment = Alignment(horizontal="right")
+        ac = ws.cell(row=r, column=3, value=round(a, 2))
+        ac.number_format = CURR_FMT
+        ac.font = Font(size=BASE_SIZE - 1)
+        vc = ws.cell(row=r, column=4, value=f"=B{r}-C{r}" if b is not None else None)
+        vc.number_format = CURR_FMT
+        vc.font = Font(size=BASE_SIZE - 1)
+        pc = ws.cell(row=r, column=5,
+                     value=(f'=IF(B{r}=0,"",C{r}/B{r})' if b is not None else None))
+        pc.number_format = "0%"
+        pc.font = Font(size=BASE_SIZE - 1)
+        pc.alignment = Alignment(horizontal="center")
+        r += 1
+    last = r - 1
+    tl = ws.cell(row=r, column=1, value="TOTAL")
+    tl.font = Font(bold=True, size=BASE_SIZE - 1)
+    tl.border = TOP_BORDER
+    for c, f, fmt in ((2, f"=SUM(B{first}:B{last})", CURR_FMT),
+                      (3, f"=SUM(C{first}:C{last})", CURR_FMT),
+                      (4, f"=B{r}-C{r}", CURR_FMT),
+                      (5, f'=IF(B{r}=0,"",C{r}/B{r})', "0%")):
+        tc = ws.cell(row=r, column=c, value=f)
+        tc.number_format = fmt
+        tc.font = Font(bold=True, size=BASE_SIZE - 1)
+        tc.border = TOP_BORDER
+        if c == 5:
+            tc.alignment = Alignment(horizontal="center")
+    # over-budget flag: Used % turns red past 100%
+    ws.conditional_formatting.add(
+        f"E{first}:E{r}",
+        CellIsRule(operator="greaterThan", formula=["1"],
+                   font=Font(bold=True, color="C00000")))
+    _setup_print(ws, 5)
+    return ws.title
 
 
 def build_sheet_cashflow(wb, proj, cust_info, wip_info, events, as_of, realm=""):
@@ -4374,7 +4700,7 @@ def generate_project_pnl(
     _lbl_to_name = {lbl: nm for nm, lbl, *_ in draw_rows}
     qbo_loc: Dict[tuple, str] = {}
     for _lbl, _dc in draw_costs.items():
-        _loc = ("Next Draw + Retainage" if str(_lbl).startswith("__")
+        _loc = ("Next Draw" if str(_lbl).startswith("__")
                 else _lbl_to_name.get(_lbl, _lbl))
         for _b in _draw_flat_bills(_dc):
             qbo_loc.setdefault((str(_b["num"]).strip(), round(float(_b["amount"]), 2)), _loc)
@@ -4429,6 +4755,28 @@ def generate_project_pnl(
 
     build_sheet_pos(wb, proj, cust_info, wip_info, po_unused, po_used, as_of, realm=company_id)
     build_sheet_cashflow(wb, proj, cust_info, wip_info, cash_events, as_of, realm=company_id)
+    # Budget vs Actual (the user 2026-07-16): CP budget = the takeoff's Cost
+    # Code sheet; actuals = QBO cost-code totals. MFD has no takeoff → skipped.
+    if not is_mfd:
+        _bud, _bud_src = load_cp_budget(proj)
+        if _bud:
+            _cof = False
+            try:
+                _cof = bool(float(wip_info.get("change_orders") or 0))
+            except (TypeError, ValueError):
+                pass
+            _acts = costs_by_code(bills, purchases, cust_info["id"], parent_map,
+                                  account_names=account_names,
+                                  item_account=item_account)
+            build_sheet_budget_vs_actual(
+                wb, proj, cust_info, wip_info, _bud, _acts, as_of,
+                co_flag=_cof, budget_source=_bud_src)
+            ui_event(f"Budget vs Actual: {len(_bud)} budgeted codes "
+                     f"(${sum(_bud.values()):,.0f}) from {_bud_src}"
+                     + ("  ⚑ CO flag" if _cof else ""))
+        else:
+            ui_event("no takeoff cost-code budget found — Budget vs Actual "
+                     "skipped", icon="⚑", color=_YEL)
     # Preserve Contract Price / ETC / CO Costs typed into the PRIOR sheet
     # across syncs (CO cost is manual until the CO template has a cost line).
     _saved = read_back_inputs(proj_dir / f"Project_PnL_{proj}.xlsx")
@@ -4447,16 +4795,17 @@ def generate_project_pnl(
         alt_overhead_pct=_alt_oh, underbill_total=underbill_total,
         underbill_count=underbill_count, realm=company_id,
     )
-    # Order: P&L, then the fixed supporting sheets, then the (many) draw sheets
-    # LAST so they don't clutter the front (the user 2026-06-26).
-    _order_sheets(wb, ["P&L", "Cash Flow",
-                       *(["Next Draw + Retainage"] if leftover is not None else []),
-                       "Transactions", "POs", "Reconciliations",
-                       *draw_sheet_order])
+    # Order (the user 2026-07-16): P&L, Transactions, Budget vs Actual,
+    # Next Draw, the draw sheets, POs, Reconciliations; Cash Flow trails.
+    _order_sheets(wb, ["P&L", "Transactions", "Budget vs Actual",
+                       *(["Next Draw"] if leftover is not None else []),
+                       *draw_sheet_order,
+                       "POs", "Reconciliations", "Cash Flow"])
 
     # Color-code the tabs for navigation (the user 2026-06-26).
     _tabcolors = {"P&L": "1F3A5F", "Cash Flow": "C55A11",
-                  "Next Draw + Retainage": "808080",
+                  "Next Draw": "808080",
+                  "Budget vs Actual": "BF8F00",
                   "Transactions": "548235", "POs": "808080",
                   "Reconciliations": "808080"}
     for _sn, _col in _tabcolors.items():
@@ -4638,12 +4987,33 @@ def generate_project_pnl_rp(
                            company_id=company_id)
     build_sheet_pos(wb, proj, cust_info, wip_info, po_unused, po_used, as_of, realm=company_id)
     build_sheet_cashflow(wb, proj, cust_info, wip_info, cash_events, as_of, realm=company_id)
-    _order_sheets(wb, ["Job P&L", "Cash Flow", "Transactions",
-                       "Pending Review", "POs", "Reconciliations"])
+    # Budget vs Actual (the user 2026-07-16): RP budget = the takeoff's Cost
+    # Gral sheet (FW codes → the -FTW project; SL/PR → the slab project).
+    _bud, _bud_src = load_rp_budget(proj)
+    if _bud:
+        _cof = False
+        try:
+            _cof = bool(float(wip_info.get("change_orders") or 0))
+        except (TypeError, ValueError):
+            pass
+        _acts = costs_by_code(bills, purchases, cust_info["id"], parent_map,
+                              account_names=account_names,
+                              item_account=item_account)
+        build_sheet_budget_vs_actual(
+            wb, proj, cust_info, wip_info, _bud, _acts, as_of,
+            co_flag=_cof, budget_source=_bud_src)
+        ui_event(f"Budget vs Actual: {len(_bud)} budgeted codes "
+                 f"(${sum(_bud.values()):,.0f}) from {_bud_src}"
+                 + ("  ⚑ CO flag" if _cof else ""))
+    else:
+        ui_event("no takeoff Cost Gral budget found — Budget vs Actual "
+                 "skipped", icon="⚑", color=_YEL)
+    _order_sheets(wb, ["Job P&L", "Transactions", "Budget vs Actual",
+                       "Pending Review", "POs", "Reconciliations", "Cash Flow"])
 
     # Color-code the tabs to match the Draw template (the user 2026-06-26).
     for _sn, _col in {"Job P&L": "1F3A5F", "Cash Flow": "C55A11",
-                      "Transactions": "548235",
+                      "Transactions": "548235", "Budget vs Actual": "BF8F00",
                       "Pending Review": "808080", "POs": "808080",
                       "Reconciliations": "808080"}.items():
         if _sn in wb.sheetnames:
