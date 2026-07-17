@@ -102,6 +102,14 @@ restate them here. Business/strategic context lives in session memory, not in th
   Draw Period field is unreachable — use **PrivateNote** as the workaround.
 - **Bills carry the project # in memo / PrivateNote** (not a period tag); subs are flagged by `"sub"` in
   the bill memo.
+- **Cost codes live in the QBO ITEM name, NOT the account.** An item-based expense line
+  (`ItemBasedExpenseLineDetail`) carries an `ItemRef` whose `name` is our cost code (SL1, PV6, CS1…)
+  and has NO line-level `AccountRef`; an account-based line resolves to its account
+  (`Job Materials: Concrete`, `Subcontractors Expense: Labor`). To key costs BY cost code (accumulating
+  costs, Budget vs Actual) use the one resolver **`cost_leaf(det, account_names)`** in
+  `project-pnl/project_pnl_export.py` — account name → `AccountRef.name` tail → **`ItemRef.name` (the
+  cost code)** → fallback. NEVER resolve the item to its posting account for cost-code work — that
+  collapses every SL#/PV# into one account and breaks the join to the takeoff budget.
 - **Claude's QBO connector P&L (for analysis) caps at 100 rows and doubles monthly totals, and name-keyed
   maps collide on duplicate account names** — use the id-keyed row tree (direct children, exclude
   TOTAL-type rows). The repo's own `qbo_export.py` hits the API directly and isn't subject to this.

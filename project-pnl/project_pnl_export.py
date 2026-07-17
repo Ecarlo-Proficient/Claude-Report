@@ -466,6 +466,31 @@ def _cost_code_value(raw, indent: int = 0, size: Optional[int] = None,
     return pad + full
 
 
+def cost_leaf(det: dict, account_names: Dict[str, str],
+              fallback: str = "(unclassified)") -> str:
+    """THE cost-code / account a QBO expense LINE lands in — the single
+    authoritative resolver (the user 2026-07-17). Used by the accumulating-
+    costs buckets, the draw-window buckets, and Budget vs Actual, so every
+    cost figure keyed by cost code ties.
+
+    QBO API pin: OUR cost codes live in the ITEM name (`ItemRef.name`), NOT the
+    account. An item-based expense line carries `ItemBasedExpenseLineDetail`
+    with an `ItemRef` and NO line-level `AccountRef`, so it resolves to the
+    item = the cost code (SL1, PV6, CS1…). An account-based line resolves to
+    its account name (e.g. 'Job Materials: Concrete'). NEVER resolve the item
+    to its posting account here — that discards the cost code and collapses
+    every SL#/PV# into one account. Resolution order:
+        AccountRef account name → AccountRef.name last segment →
+        ItemRef.name (the cost code) → fallback."""
+    aref = det.get("AccountRef") or {}
+    aid = aref.get("value")
+    return _xml_clean(
+        account_names.get(aid)
+        or (aref.get("name") or "").split(":")[-1].strip()
+        or (det.get("ItemRef") or {}).get("name")
+        or fallback)
+
+
 def _split_code(name):
     """Return (PREFIX_or_None, NUM_or_None) for a cost code, else (None, None)."""
     if isinstance(name, str):
@@ -1464,16 +1489,11 @@ def bucket_costs_by_draw_window(
                 or (det.get("ItemRef") or {}).get("name")
                 or "(Other)"
             )
-            # Leaf (sub-account) name: prefer Account entity Name; fall back
-            # to last segment of a fully-qualified AccountRef.name.
-            # Cost codes (CS1, SL6, ...) kept VERBATIM with job prefix; bolded
-            # at render so the code stands out (the user 2026-06-09).
-            leaf = _xml_clean(
-                account_names.get(aid)
-                or (aref.get("name") or "").split(":")[-1].strip()
-                or (det.get("ItemRef") or {}).get("name")
-                or parent
-            )
+            # Leaf = the cost code (item name) or account — via the ONE shared
+            # resolver so this ties to costs_by_code / Budget vs Actual. Cost
+            # codes (CS1, SL6, ...) kept VERBATIM; bolded at render (the user
+            # 2026-06-09).
+            leaf = cost_leaf(det, account_names, fallback=parent)
             pg = target["groups"].setdefault(parent, {"total": 0.0, "subs": {}})
             lg = pg["subs"].setdefault(leaf, {"total": 0.0, "vendors": {}})
             vg = lg["vendors"].setdefault(vendor, {"total": 0.0, "txns": []})
@@ -3527,13 +3547,12 @@ def load_rp_budget(proj: str) -> Tuple[Dict[str, float], str]:
 
 def costs_by_code(bills: List[dict], purchases: List[dict], customer_id: str,
                   parent_map: Dict[str, str],
-                  account_names: Optional[Dict[str, str]] = None,
-                  item_account: Optional[Dict[str, str]] = None) -> Dict[str, float]:
-    """ALL of this project's cost lines aggregated by their cost-code leaf —
-    the same account/item resolution the accumulating-costs block uses.
-    Non-code accounts keep their name (they land in the 'not budgeted' rows)."""
+                  account_names: Optional[Dict[str, str]] = None) -> Dict[str, float]:
+    """ALL of this project's cost lines aggregated by their cost-code leaf via
+    the shared `cost_leaf()` resolver — IDENTICAL keys to the accumulating-costs
+    block, so item-based lines land on their cost code (SL1, PV6…) and join the
+    takeoff budget. Non-code accounts keep their name → 'not budgeted' rows."""
     account_names = account_names or {}
-    item_account = item_account or {}
     out: Dict[str, float] = {}
     for txn in list(bills) + list(purchases):
         for ln in txn.get("Line") or []:
@@ -3544,15 +3563,7 @@ def costs_by_code(bills: List[dict], purchases: List[dict], customer_id: str,
             amt = float(ln.get("Amount", 0) or 0)
             if abs(amt) < 0.005:
                 continue
-            aref = det.get("AccountRef") or {}
-            aid = aref.get("value")
-            if not aid:
-                aid = item_account.get((det.get("ItemRef") or {}).get("value"))
-            leaf = _xml_clean(
-                account_names.get(aid)
-                or (aref.get("name") or "").split(":")[-1].strip()
-                or (det.get("ItemRef") or {}).get("name")
-                or "(unclassified)")
+            leaf = cost_leaf(det, account_names)
             out[leaf] = out.get(leaf, 0.0) + amt
     return {k: round(v, 2) for k, v in out.items()}
 
@@ -4783,8 +4794,7 @@ def generate_project_pnl(
             except (TypeError, ValueError):
                 pass
             _acts = costs_by_code(bills, purchases, cust_info["id"], parent_map,
-                                  account_names=account_names,
-                                  item_account=item_account)
+                                  account_names=account_names)
             build_sheet_budget_vs_actual(
                 wb, proj, cust_info, wip_info, _bud, _acts, as_of,
                 co_flag=_cof, budget_source=_bud_src)
@@ -5014,8 +5024,7 @@ def generate_project_pnl_rp(
         except (TypeError, ValueError):
             pass
         _acts = costs_by_code(bills, purchases, cust_info["id"], parent_map,
-                              account_names=account_names,
-                              item_account=item_account)
+                              account_names=account_names)
         build_sheet_budget_vs_actual(
             wb, proj, cust_info, wip_info, _bud, _acts, as_of,
             co_flag=_cof, budget_source=_bud_src)
