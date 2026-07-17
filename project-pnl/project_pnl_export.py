@@ -3767,8 +3767,12 @@ def build_sheet_budget_vs_actual(wb, proj, cust_info, wip_info,
     tl = ws.cell(row=r, column=1, value="TOTAL")
     tl.font = Font(bold=True, size=BASE_SIZE - 1)
     tl.border = TOP_BORDER
-    _sum_b = ("=" + "+".join(f"B{cr}" for cr in code_rows)) if code_rows else "=0"
-    _sum_c = ("=" + "+".join(f"C{cr}" for cr in code_rows)) if code_rows else "=0"
+    # SUM (not a + chain) over the explicit code-row cells: it skips the
+    # transaction rows (their col B holds a DATE, col C an amount) AND ignores
+    # the "not budgeted" TEXT in some B cells — a + chain #VALUE!-errors on that
+    # text (the user 2026-07-17).
+    _sum_b = ("=SUM(" + ",".join(f"B{cr}" for cr in code_rows) + ")") if code_rows else "=0"
+    _sum_c = ("=SUM(" + ",".join(f"C{cr}" for cr in code_rows) + ")") if code_rows else "=0"
     for c, f, fmt in ((2, _sum_b, CURR_FMT), (3, _sum_c, CURR_FMT),
                       (4, f"=B{r}-C{r}", CURR_FMT),
                       (5, f'=IF(B{r}=0,"",C{r}/B{r})', "0%")):
