@@ -263,19 +263,30 @@ def _cost_sheet_totals(ws):
     """Parse 'JobTread Cost Gral' in BOTH layouts:
       A) code rows (SL#/PR#/FW# in col A, qty col C, unit cost col D)
       B) banded rows (SLAB/PIERS/FLATWORK in col A, items col B)
-    Returns {'SL': x, 'PR': y, 'FW': z} of Σ(qty × cost)."""
-    tot = {"SL": 0.0, "PR": 0.0, "FW": 0.0}
+
+    THE NUMBER THAT COUNTS is the template's OWN subtotal cell at the foot
+    of each band — NOT Σ(qty × cost) of the visible items. RP5542 FLATWORK:
+    items sum to $47,758 but D33 (the blue subtotal the clerk keys into the
+    General List) is $88,858 — its formula pulls from the Flatwork takeoff
+    sheet beyond these rows (the user 2026-07-17). Items are kept only as
+    the fallback when the subtotal cell errors (#N/A) + a mismatch check.
+
+    Returns {'SL'|'PR'|'FW': {'sub': float|None, 'cell': 'D33'|None,
+                              'items': float}}."""
+    bands = {k: {"sub": None, "cell": None, "items": 0.0}
+             for k in ("SL", "PR", "FW")}
     band = None
     for row in ws.iter_rows(min_row=1, max_row=min(ws.max_row, 200)):
         a = _norm(row[0].value if len(row) > 0 else "")
         b = _norm(row[1].value if len(row) > 1 else "")
         qty = row[2].value if len(row) > 2 else None
-        cost = row[3].value if len(row) > 3 else None
+        cost_cell = row[3] if len(row) > 3 else None
+        cost = cost_cell.value if cost_cell is not None else None
         m = re.match(r"^(SL|PR|FW)\d", a)
         if m:                                           # layout A code row
-            band = None
+            band = m.group(1)
             try:
-                tot[m.group(1)] += float(qty or 0) * float(cost or 0)
+                bands[band]["items"] += float(qty or 0) * float(cost or 0)
             except (TypeError, ValueError):
                 pass
             continue
@@ -287,15 +298,25 @@ def _cost_sheet_totals(ws):
             band = "FW"
         if band and b and b not in ("DESCRIPTION",):    # layout B item row
             try:
-                tot[band] += float(qty or 0) * float(cost or 0)
+                bands[band]["items"] += float(qty or 0) * float(cost or 0)
             except (TypeError, ValueError):
                 pass
-    return tot
+            continue
+        # Band-foot subtotal: no code, no item label, a value in the COST
+        # column — the template's own total (first one after the band wins).
+        if band and not a and not b and cost is not None \
+                and bands[band]["sub"] is None and bands[band]["cell"] is None:
+            bands[band]["cell"] = cost_cell.coordinate
+            if isinstance(cost, (int, float)):
+                bands[band]["sub"] = float(cost)
+            # strings like '#N/A' leave sub=None → items fallback
+    return bands
 
 
 def find_takeoff_etc(folder: Path, job: str, scope: str, desc: str):
-    """Best takeoff .xlsm for the scope → ETC from its cost sheet.
-    Returns (path, etc, note)."""
+    """Best takeoff .xlsm for the scope → ETC from its cost sheet's own
+    subtotal cells. Returns (path, etc, note, fragment) — note names the
+    sheet + cells the number came from; fragment jump-links there."""
     cands = []
     try:
         for f in folder.iterdir():
@@ -305,9 +326,9 @@ def find_takeoff_etc(folder: Path, job: str, scope: str, desc: str):
             if n.startswith(job) or job in n:
                 cands.append(f)
     except OSError:
-        return None, None, "folder unreadable"
+        return None, None, "folder unreadable", None
     if not cands:
-        return None, None, "no takeoff in folder"
+        return None, None, "no takeoff in folder", None
     cands.sort(key=lambda f: (_score_name(_norm(f.name), scope, desc),
                               f.stat().st_mtime), reverse=True)
     for f in cands[:4]:
@@ -319,19 +340,36 @@ def find_takeoff_etc(folder: Path, job: str, scope: str, desc: str):
         if sheet is None:
             wb.close()
             continue
-        tot = _cost_sheet_totals(wb[sheet])
+        bands = _cost_sheet_totals(wb[sheet])
         wb.close()
         # A SIDE-SCOPE takeoff (its name matches the schedule description —
         # fence, pool house, caps…) is a whole little job of its own: its
         # entire cost sheet IS the scope's ETC. Only the BASE takeoff splits
         # slab (SL+PR) vs flatwork (FW) bands.
         if _desc_tokens(desc) & set(_norm(f.name).split()):
-            etc = tot["SL"] + tot["PR"] + tot["FW"]
+            keys = ("SL", "PR", "FW")
         else:
-            etc = (tot["FW"] if scope == "ftw" else tot["SL"] + tot["PR"])
+            keys = ("FW",) if scope == "ftw" else ("SL", "PR")
+        etc, cells, notes = 0.0, [], []
+        for k in keys:
+            b = bands[k]
+            if b["sub"] is not None:
+                etc += b["sub"]
+                cells.append(b["cell"])
+            elif b["items"]:
+                etc += b["items"]
+                cells.append(f"{k} items (subtotal cell "
+                             f"{b['cell'] or 'missing'} unreadable)")
+            if (b["sub"] is not None and b["items"]
+                    and abs(b["sub"] - b["items"]) > 1):
+                notes.append(f"{k} subtotal ${b['sub']:,.0f} ≠ item rows "
+                             f"${b['items']:,.0f} — template pulls extra scope")
         if etc:
-            return f, round(etc, 2), None
-    return cands[0], None, "takeoff has no cost sheet (older template?)"
+            src = f"'{sheet}' {' + '.join(cells)}"
+            note = "; ".join([src] + notes)
+            frag = f"#'{sheet}'!{next((c for c in cells if re.match(r'^[A-Z]+[0-9]+$', c)), 'A1')}"
+            return f, round(etc, 2), note, frag
+    return cands[0], None, "takeoff has no cost sheet (older template?)", None
 
 
 # ─────────────────────────── report ────────────────────────────────
@@ -431,7 +469,8 @@ def write_report(items, sched_label, out_path: Path) -> None:
                    d_k, d_e,
                    ((it["proposal"].name + (f"  [{it['p_note']}]" if it["p_note"] else ""))
                     if it["proposal"] else it["p_note"]),
-                   (it["takeoff"].name if it["takeoff"] else it["t_note"]),
+                   ((it["takeoff"].name + (f"  [{it['t_note']}]" if it["t_note"] else ""))
+                    if it["takeoff"] else it["t_note"]),
                    needs])
         r = ws.max_row
         for cc in range(1, len(HDR) + 1):
@@ -457,7 +496,9 @@ def write_report(items, sched_label, out_path: Path) -> None:
         for cc in (10, 15):
             _link(ws.cell(r, cc), it.get("proposal"))
         for cc in (11, 16):
-            _link(ws.cell(r, cc), it.get("takeoff"))
+            # Jump to the exact subtotal cell the ETC came from (the user
+            # 2026-07-17: "list the sheet and cell and take me there").
+            _link(ws.cell(r, cc), it.get("takeoff"), it.get("t_frag") or "")
         # Distinct groups: NEW rows banded orange in col A; big deltas amber
         # + bold red so a changed number can't be missed.
         if it["group"].startswith("NEW"):
@@ -543,6 +584,7 @@ def main() -> int:
         prop = tkoff = None
         new_k = new_e = None
         p_note = t_note = ""
+        t_frag = None
         if folder is not None:
             prop, new_k, p_note = find_proposal(folder, scope, s["desc"])
             if new_k is None:
@@ -552,7 +594,8 @@ def main() -> int:
                 if bk is not None:
                     prop, new_k = bf, bk
                     p_note = bnote
-            tkoff, new_e, t_note = find_takeoff_etc(folder, job, scope, s["desc"])
+            tkoff, new_e, t_note, t_frag = find_takeoff_etc(
+                folder, job, scope, s["desc"])
         else:
             p_note = t_note = "no project folder found"
 
@@ -581,7 +624,7 @@ def main() -> int:
             "gl_etc": gl_e or None, "new_contract": new_k, "new_etc": new_e,
             "proposal": prop, "p_note": p_note, "takeoff": tkoff,
             "t_note": t_note, "needs": "; ".join(needs),
-            "folder": folder,
+            "folder": folder, "t_frag": t_frag,
             "gl_sheet": rec["source"] if rec else None,
             "gl_row": rec["gl_row"] if rec else None,
         })
