@@ -1401,6 +1401,7 @@ def gather_transactions(
             "billed": sum(i["billed"] for i in income),
             "withheld": sum(i["withheld"] for i in income),
             "billed_ret": sum(i["billed_ret"] for i in income),
+            "not_billed_ret": sum(i.get("not_billed_ret", 0.0) for i in income),
             "cogs": sum(r["amount"] for v in cogs.values() for r in v),
             "exp": sum(r["amount"] for v in exp.values() for r in v),
         },
@@ -2137,12 +2138,18 @@ def build_sheet_reconciliations(
         r += 1
         return rr
 
-    inc_row = recon("Income (gross billed)", qbo_income,
-                    f"={tx_refs['billed']}+{tx_refs['billed_ret']}")
+    # Income ties to QBO on the RETAINAGE-INCLUSIVE figure (= P&L ② "Income
+    # (incl. retainage)" = Btot): QBO income picks up the "retainage not billed"
+    # JE invoice, so the Transactions side must include it too or it falsely
+    # flags off by the not-billed retainage (the user 2026-07-17).
+    _tx_income = f"{tx_refs['billed']}+{tx_refs['billed_ret']}"
+    if tx_refs.get("not_billed_ret"):
+        _tx_income += f"+{tx_refs['not_billed_ret']}"
+    inc_row = recon("Income (incl. retainage)", qbo_income, f"={_tx_income}")
     if has_retainage:
         note = ws.cell(row=r, column=1, value=(
-            "    note: income differences are usually retainage timing "
-            "(withheld / not-yet-billed) — see Transactions & Draws"))
+            "    note: matches P&L ② Income (incl. retainage); a gap here means a "
+            "billed/retainage invoice is miscoded or missing — see Transactions"))
         note.font = Font(italic=True, size=BASE_SIZE - 2, color="595959")
         r += 1
     cogs_row = recon("Cost of Goods Sold", qbo_cogs, f"={tx_refs['cogs']}")
@@ -2168,8 +2175,10 @@ def build_sheet_reconciliations(
     # ── DIFFERENCE FINDER — for each gap, hunt a transaction equaling it (the user
     #    2026-06-26: "I don't know why it's off by that amount — find it fast"). ──
     if tx_totals:
-        tx_income = (tx_totals.get("billed", 0.0) or 0.0) + (tx_totals.get("billed_ret", 0.0) or 0.0)
-        gaps = [("Income (gross billed)", round(tx_income - (qbo_income or 0.0), 2)),
+        tx_income = ((tx_totals.get("billed", 0.0) or 0.0)
+                     + (tx_totals.get("billed_ret", 0.0) or 0.0)
+                     + (tx_totals.get("not_billed_ret", 0.0) or 0.0))
+        gaps = [("Income (incl. retainage)", round(tx_income - (qbo_income or 0.0), 2)),
                 ("Cost of Goods Sold", round((tx_totals.get("cogs", 0.0) or 0.0) - (qbo_cogs or 0.0), 2)),
                 ("Operating Expenses", round((tx_totals.get("exp", 0.0) or 0.0) - (qbo_exp or 0.0), 2))]
         gaps = [(lbl, d) for lbl, d in gaps if abs(d) >= 1.0]
