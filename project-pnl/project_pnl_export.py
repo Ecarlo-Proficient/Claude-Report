@@ -3556,14 +3556,25 @@ def load_rp_budget(proj: str) -> Tuple[Dict[str, float], str]:
 
 def costs_by_code(bills: List[dict], purchases: List[dict], customer_id: str,
                   parent_map: Dict[str, str],
-                  account_names: Optional[Dict[str, str]] = None) -> Dict[str, float]:
-    """ALL of this project's cost lines aggregated by their cost-code leaf via
-    the shared `cost_leaf()` resolver — IDENTICAL keys to the accumulating-costs
+                  account_names: Optional[Dict[str, str]] = None) -> Dict[str, dict]:
+    """ALL of this project's cost lines grouped by their cost-code leaf via the
+    shared `cost_leaf()` resolver — IDENTICAL keys to the accumulating-costs
     block, so item-based lines land on their cost code (SL1, PV6…) and join the
-    takeoff budget. Non-code accounts keep their name → 'not budgeted' rows."""
+    takeoff budget. Non-code accounts keep their name → 'not budgeted' rows.
+
+    Returns { code: {"total": float, "txns": [ {ref, vendor, date, amount,
+    txn_id, tx_type, memo, desc} ]} } so Budget vs Actual can list each
+    transaction under its code with a QBO deep-link (the user 2026-07-17)."""
     account_names = account_names or {}
-    out: Dict[str, float] = {}
-    for txn in list(bills) + list(purchases):
+    out: Dict[str, dict] = {}
+    sources = ([(b, "Bill", "VendorRef") for b in bills]
+               + [(p, "Expense", "EntityRef") for p in purchases])
+    for txn, tx_type, vfield in sources:
+        vendor = _xml_clean(((txn.get(vfield) or {}).get("name") or "(no vendor)").strip())
+        ref = _xml_clean(str(txn.get("DocNumber") or txn.get("Id") or ""))
+        date = txn.get("TxnDate", "")
+        txn_id = txn.get("Id", "")
+        memo = _xml_clean((txn.get("PrivateNote") or "").strip())
         for ln in txn.get("Line") or []:
             det = (ln.get("AccountBasedExpenseLineDetail")
                    or ln.get("ItemBasedExpenseLineDetail") or {})
@@ -3573,27 +3584,37 @@ def costs_by_code(bills: List[dict], purchases: List[dict], customer_id: str,
             if abs(amt) < 0.005:
                 continue
             leaf = cost_leaf(det, account_names)
-            out[leaf] = out.get(leaf, 0.0) + amt
-    return {k: round(v, 2) for k, v in out.items()}
+            g = out.setdefault(leaf, {"total": 0.0, "txns": []})
+            g["total"] += amt
+            g["txns"].append({
+                "ref": ref, "vendor": vendor, "date": date, "amount": amt,
+                "txn_id": txn_id, "tx_type": tx_type, "memo": memo,
+                "desc": _xml_clean((ln.get("Description") or "").strip())})
+    for g in out.values():
+        g["total"] = round(g["total"], 2)
+    return out
 
 
 def build_sheet_budget_vs_actual(wb, proj, cust_info, wip_info,
                                  budget: Dict[str, float],
-                                 actuals: Dict[str, float],
+                                 actuals: Dict[str, dict],
                                  as_of: str, co_flag: bool = False,
-                                 budget_source: str = "") -> Optional[str]:
-    """BUDGET (takeoff cost codes) vs ACTUAL (QBO cost-code totals) per line.
-    CP budget = the takeoff's Cost Code sheet; RP budget = the takeoff's last
-    sheet. Jobs WITH change orders get a warning banner: CO costs aren't in
-    the budget (CO-template cost line pending), so variances may read hot
-    (the user 2026-07-16). Returns the sheet name, or None when no budget."""
+                                 budget_source: str = "", realm: str = "") -> Optional[str]:
+    """BUDGET (takeoff cost codes) vs ACTUAL (QBO cost-code totals) per line,
+    with EVERY actual transaction listed under its code for audit — name /
+    date / amount / QBO link (the user 2026-07-17). CP budget = the takeoff's
+    Cost Code sheet; RP budget = the takeoff's last sheet. Jobs WITH change
+    orders get a warning banner (CO costs aren't in the budget). Returns the
+    sheet name, or None when no budget."""
     if not budget:
         return None
     ws = wb.create_sheet("Budget vs Actual")
     ws.sheet_view.showGridLines = False
     ws.sheet_view.zoomScale = 110
-    for col, w in (("A", 42), ("B", 16), ("C", 16), ("D", 16), ("E", 10)):
+    ws.sheet_properties.outlinePr.summaryBelow = False   # code row sits ABOVE its txns
+    for col, w in (("A", 48), ("B", 16), ("C", 16), ("D", 16), ("E", 10)):
         ws.column_dimensions[col].width = w
+    known = _project_name_words(cust_info.get("name", ""))
 
     r = _write_meta_block(ws, proj, cust_info, wip_info, as_of)
     if budget_source:
@@ -3609,15 +3630,20 @@ def build_sheet_budget_vs_actual(wb, proj, cust_info, wip_info,
         for cc in range(1, 6):
             ws.cell(row=r, column=cc).fill = PatternFill("solid", fgColor="FFF2CC")
         r += 1
-    r += 1
+    tip = ws.cell(row=r, column=1, value=(
+        "Each cost code expands to its bills — click the ± in the margin; the "
+        "QBO ↗ button opens the bill."))
+    tip.font = Font(italic=True, size=BASE_SIZE - 2, color="595959")
+    r += 2
 
     hdr = ws.cell(row=r, column=1, value="BUDGET vs ACTUAL — by cost code")
     hdr.font = Font(bold=True, size=BASE_SIZE, color="FFFFFF")
     for cc in range(1, 6):
         ws.cell(row=r, column=cc).fill = PatternFill("solid", fgColor=NAVY)
     r += 1
-    for c, h in ((1, "Cost Code"), (2, "Budget"), (3, "Actual (QBO)"),
-                 (4, "Variance"), (5, "Used %")):
+    for c, h in ((1, "Cost Code  /  transaction"), (2, "Budget  /  date"),
+                 (3, "Actual (QBO)  /  amount"), (4, "Variance  /  link"),
+                 (5, "Used %")):
         hc = ws.cell(row=r, column=c, value=h)
         hc.font = Font(bold=True, size=BASE_SIZE - 1, color=NAVY)
         hc.border = BOTTOM_BORDER
@@ -3627,39 +3653,70 @@ def build_sheet_budget_vs_actual(wb, proj, cust_info, wip_info,
 
     # Row set = union; codes in Cost-Code-Sheet order, non-code actuals last.
     codes = sorted(set(budget) | set(actuals), key=_cost_code_sort_key)
-    first = r
+    code_rows = []                       # only these feed the TOTAL (no double-count)
     for code in codes:
         b = budget.get(code)
-        a = actuals.get(code, 0.0)
+        grp = actuals.get(code) or {}
+        a = grp.get("total", 0.0)
+        code_row = r
+        code_rows.append(code_row)
         lc = ws.cell(row=r, column=1, value=_cost_code_label(code))
-        lc.font = Font(size=BASE_SIZE - 1,
+        lc.font = Font(bold=True, size=BASE_SIZE - 1,
                        color="000000" if b is not None else "9C5700")
         if b is not None:
             bc = ws.cell(row=r, column=2, value=round(b, 2))
             bc.number_format = CURR_FMT
-            bc.font = Font(size=BASE_SIZE - 1)
+            bc.font = Font(bold=True, size=BASE_SIZE - 1)
         else:
             nb = ws.cell(row=r, column=2, value="not budgeted")
             nb.font = Font(italic=True, size=BASE_SIZE - 2, color="9C5700")
             nb.alignment = Alignment(horizontal="right")
         ac = ws.cell(row=r, column=3, value=round(a, 2))
         ac.number_format = CURR_FMT
-        ac.font = Font(size=BASE_SIZE - 1)
+        ac.font = Font(bold=True, size=BASE_SIZE - 1)
         vc = ws.cell(row=r, column=4, value=f"=B{r}-C{r}" if b is not None else None)
         vc.number_format = CURR_FMT
-        vc.font = Font(size=BASE_SIZE - 1)
+        vc.font = Font(bold=True, size=BASE_SIZE - 1)
         pc = ws.cell(row=r, column=5,
                      value=(f'=IF(B{r}=0,"",C{r}/B{r})' if b is not None else None))
         pc.number_format = "0%"
-        pc.font = Font(size=BASE_SIZE - 1)
+        pc.font = Font(bold=True, size=BASE_SIZE - 1)
         pc.alignment = Alignment(horizontal="center")
         r += 1
-    last = r - 1
+        # ── transactions under the code: A name · B date · C amount · D link ──
+        for t in sorted(grp.get("txns", []),
+                        key=lambda x: (_parse_date(x.get("date", "")) or dt.date.min,
+                                       abs(float(x.get("amount", 0) or 0))),
+                        reverse=True):
+            nm = _clean_cost_text(t.get("desc") or t.get("memo") or "", known)
+            label = f"    #{t.get('ref', '')}  {t.get('vendor', '')}"
+            if nm:
+                label += f" — {nm}"
+            nc = ws.cell(row=r, column=1, value=label)
+            nc.font = Font(size=BASE_SIZE - 2, color="404040")
+            dv = _parse_date(t.get("date", ""))
+            dc = ws.cell(row=r, column=2, value=dv or t.get("date", ""))
+            if dv:
+                dc.number_format = "mm/dd/yyyy"
+            dc.font = Font(size=BASE_SIZE - 2, color="404040")
+            dc.alignment = Alignment(horizontal="right")
+            amc = ws.cell(row=r, column=3, value=round(float(t.get("amount", 0) or 0), 2))
+            amc.number_format = CURR_FMT
+            amc.font = Font(size=BASE_SIZE - 2, color="404040")
+            url = _qbo_txn_url(t.get("tx_type", ""), t.get("txn_id", ""), realm)
+            lk = ws.cell(row=r, column=4, value="QBO ↗" if url else "")
+            if url:
+                lk.hyperlink = url
+                lk.font = Font(size=BASE_SIZE - 2, color=LINK, underline="single", bold=True)
+            lk.alignment = Alignment(horizontal="center")
+            ws.row_dimensions[r].outline_level = 1     # collapsible under the code
+            r += 1
     tl = ws.cell(row=r, column=1, value="TOTAL")
     tl.font = Font(bold=True, size=BASE_SIZE - 1)
     tl.border = TOP_BORDER
-    for c, f, fmt in ((2, f"=SUM(B{first}:B{last})", CURR_FMT),
-                      (3, f"=SUM(C{first}:C{last})", CURR_FMT),
+    _sum_b = ("=" + "+".join(f"B{cr}" for cr in code_rows)) if code_rows else "=0"
+    _sum_c = ("=" + "+".join(f"C{cr}" for cr in code_rows)) if code_rows else "=0"
+    for c, f, fmt in ((2, _sum_b, CURR_FMT), (3, _sum_c, CURR_FMT),
                       (4, f"=B{r}-C{r}", CURR_FMT),
                       (5, f'=IF(B{r}=0,"",C{r}/B{r})', "0%")):
         tc = ws.cell(row=r, column=c, value=f)
@@ -3668,11 +3725,12 @@ def build_sheet_budget_vs_actual(wb, proj, cust_info, wip_info,
         tc.border = TOP_BORDER
         if c == 5:
             tc.alignment = Alignment(horizontal="center")
-    # over-budget flag: Used % turns red past 100%
-    ws.conditional_formatting.add(
-        f"E{first}:E{r}",
-        CellIsRule(operator="greaterThan", formula=["1"],
-                   font=Font(bold=True, color="C00000")))
+    # over-budget flag: Used % turns red past 100% (only the code rows carry E)
+    if code_rows:
+        ws.conditional_formatting.add(
+            f"E{code_rows[0]}:E{r}",
+            CellIsRule(operator="greaterThan", formula=["1"],
+                       font=Font(bold=True, color="C00000")))
     _setup_print(ws, 5)
     return ws.title
 
@@ -4806,7 +4864,7 @@ def generate_project_pnl(
                                   account_names=account_names)
             build_sheet_budget_vs_actual(
                 wb, proj, cust_info, wip_info, _bud, _acts, as_of,
-                co_flag=_cof, budget_source=_bud_src)
+                co_flag=_cof, budget_source=_bud_src, realm=company_id)
             ui_event(f"Budget vs Actual: {len(_bud)} budgeted codes "
                      f"(${sum(_bud.values()):,.0f}) from {_bud_src}"
                      + ("  ⚑ CO flag" if _cof else ""))
@@ -5036,7 +5094,7 @@ def generate_project_pnl_rp(
                               account_names=account_names)
         build_sheet_budget_vs_actual(
             wb, proj, cust_info, wip_info, _bud, _acts, as_of,
-            co_flag=_cof, budget_source=_bud_src)
+            co_flag=_cof, budget_source=_bud_src, realm=company_id)
         ui_event(f"Budget vs Actual: {len(_bud)} budgeted codes "
                  f"(${sum(_bud.values()):,.0f}) from {_bud_src}"
                  + ("  ⚑ CO flag" if _cof else ""))
