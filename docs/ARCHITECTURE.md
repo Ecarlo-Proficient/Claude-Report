@@ -162,12 +162,14 @@ flowchart LR
     HEALTH["health-dashboard/\nqbo_health.py"]:::tool
     EXP["qbo-export/\nqbo_export.py"]:::tool
     RECODE["one-offs/\nqbo_recode_review.py"]:::tool
+    LOANS["one-offs/\nloans_to_subs_audit.py"]:::tool
 
     P1[("OneDrive\nPROJECT P&Ls")]:::out
     P2[("Equipment_Debt_Schedule_v2.xlsx\nbeside the script")]:::out
     P3[("health xlsx\nprivate · chmod 600")]:::out
     P4[("OneDrive\n-Inbox- Project Report Exports")]:::out
     P5[("QBO WRITE — gated\nxlsx audit · Approved=Y · --commit")]:::gate
+    P7[("OneDrive QBO Audits xlsx\n+ QBO WRITE — gated\nConfirm Sub-Account · --commit")]:::gate
 
     QBO --> PNL --> P1
     WIPM -->|"Contract/ETC/COs/STATUS auto-pull\n(typed override still wins)"| PNL
@@ -176,6 +178,7 @@ flowchart LR
     QBO --> HEALTH --> P3
     QBO --> EXP --> P4
     QBO --> RECODE --> P5
+    QBO --> LOANS --> P7
 ```
 
 ### Money Bleeds — company-health exceptions (2026-07-16)
@@ -229,6 +232,7 @@ POs · Reconciliations · Cash Flow.
 | Script | What it writes | Gate |
 |---|---|---|
 | `one-offs/qbo_recode_review.py --apply` | line Customer:Project + Class on job-cost lines | xlsx audit, `Approved=Y` rows only, then `--commit` |
+| `one-offs/loans_to_subs_audit.py --apply` | line `AccountRef` (parent `Loans to Sub-Contractors` → per-sub sub-account) on Bill/Purchase/VendorCredit | xlsx audit, `Confirm Sub-Account` filled, then `--commit`; skips stale-SyncToken / closed-period / not-still-on-parent |
 | `wip/qbo_bulk_close.py` | closes customers/projects | `CONFIRM=Y`; always excludes MFD (manual close) |
 
 Everything else is read-only against QBO. All other "writes" land in Excel, Notion, or Teams.

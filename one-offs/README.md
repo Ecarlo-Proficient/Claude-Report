@@ -18,3 +18,4 @@ occasional audits, experiments, and tools whose driver isn't built yet.
 | Script | Status |
 |---|---|
 | `qbo_recode_review.py` | Audit-gated job-cost recoder (export → the user audits → apply). `get_auth()` is still an env-var stub — wire to `shared.qbo_vault` before real use. |
+| `loans_to_subs_audit.py` | Audit-gated reclass of the `Loans to Sub-Contractors` **parent** account into per-sub sub-accounts. Default run = read-only export (GL parent lines + suggested sub + `Confirm Sub-Account` dropdown + locked Entity/Txn Id/Line Id/SyncToken columns). `--apply` reads the confirmed workbook and moves each line's `AccountRef` to the sub; dry-run by default, writes only on `--commit`. Guards: exact sub name→id, stale SyncToken, closed-period, line-still-on-parent. Auths via `shared.qbo_api.load_credentials()` (one Touch ID). |
