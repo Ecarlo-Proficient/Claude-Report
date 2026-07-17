@@ -493,8 +493,13 @@ def write_report(items, sched_label, out_path: Path) -> None:
         for cc in (8, 9):
             _link(ws.cell(r, cc), RP.ALPHA_PATH if it.get("gl_row") else None,
                   gl_frag)
-        for cc in (10, 15):
-            _link(ws.cell(r, cc), it.get("proposal"))
+        # NEW CONTRACT $ opens the PDF itself; the PROPOSAL FILE column
+        # opens the FOLDER so the PDF can be grabbed/attached (the user
+        # 2026-07-17 — a plain file link can't make Finder pre-select the
+        # file, so the cell text carries the exact filename to look for).
+        _link(ws.cell(r, 10), it.get("proposal"))
+        _link(ws.cell(r, 15),
+              it["proposal"].parent if it.get("proposal") else None)
         for cc in (11, 16):
             # Jump to the exact subtotal cell the ETC came from (the user
             # 2026-07-17: "list the sheet and cell and take me there").
