@@ -2503,13 +2503,30 @@ def build_sheet_pl(
         # master only carries the revised total, original = revised − COs.
         _cos = _num("change_orders")
         _rev_ctr = _num("revised_contract", "contract")
-        _ctr = _num("contract_saved", "original_contract")
-        if _ctr is None and _rev_ctr is not None:
-            _ctr = round(_rev_ctr - (_cos or 0.0), 2)
-        _etc = _num("etc_saved", "original_etc", "revised_etc", "etc")
+        # what the WIP master WOULD supply (before any typed override), so we
+        # can flag a hand-entered value that no longer matches (the user 2026-07-16)
+        _wip_ctr = _num("original_contract")
+        if _wip_ctr is None and _rev_ctr is not None:
+            _wip_ctr = round(_rev_ctr - (_cos or 0.0), 2)
+        _wip_etc = _num("original_etc", "revised_etc")
+        _typed_ctr = _num("contract_saved")
+        _typed_etc = _num("etc_saved")
+        _ctr = _typed_ctr if _typed_ctr is not None else _wip_ctr
+        _etc = _typed_etc if _typed_etc is not None else _wip_etc
         _co_cost = _num("co_cost_saved")
+
+        def _mismatch(typed, wip):
+            return (typed is not None and wip is not None
+                    and abs(typed - wip) > 1.0)
+
         k_row = row("Original Contract Price", _ctr, bold=True)
+        if _mismatch(_typed_ctr, _wip_ctr):
+            row(f"⚑ typed — differs from WIP master (${_wip_ctr:,.0f})", None,
+                indent=1, size=BASE_SIZE - 2, color="9C5700")
         etc_in = row("Original ETC (Estimated Total Cost)", _etc, bold=True)
+        if _mismatch(_typed_etc, _wip_etc):
+            row(f"⚑ typed — differs from WIP master (${_wip_etc:,.0f})", None,
+                indent=1, size=BASE_SIZE - 2, color="9C5700")
         co_row = row("Change Orders (approved, from draw)", _cos, color=GREEN)
         coc_row = row("CO Costs (estimated)", _co_cost,
                       color=("000000" if _co_cost else "C0504D"))
