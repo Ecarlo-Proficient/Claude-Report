@@ -335,9 +335,49 @@ def find_takeoff_etc(folder: Path, job: str, scope: str, desc: str):
 
 
 # ─────────────────────────── report ────────────────────────────────
+# Implied gross-margin sanity band for the NEW numbers (the user 2026-07-17,
+# RP5542-FTW: contract $91K vs takeoff ETC $48K = 47.6% GP — "ETC way too
+# low"). RP jobs run ~10–25% GP; outside the band the pair is mismatched
+# (wrong scope file, stale takeoff, or missing cost sections).
+_GP_HI = 0.35     # above → ETC too low vs the contract
+_GP_LO = 0.05     # below → margin too thin (ETC too high / contract too low)
+
+
+def margin_flag(contract, etc):
+    """(gp_pct, flag_text) for a contract/ETC pair — flag None when sane."""
+    if not contract or etc is None:
+        return None, None
+    gp = (contract - etc) / contract
+    if gp > _GP_HI:
+        return gp, (f"ETC WAY TOO LOW — implied GP {gp * 100:.0f}% "
+                    f"(RP runs ~10–25%): scope mismatch or stale takeoff")
+    if gp < 0:
+        return gp, f"ETC EXCEEDS contract (GP {gp * 100:.0f}%) — check the pair"
+    if gp < _GP_LO:
+        return gp, (f"margin too thin — implied GP {gp * 100:.0f}%: "
+                    f"ETC too high or contract too low")
+    return gp, None
+
+
+def _link(cell, target, fragment: str = ""):
+    """file:// hyperlink + blue underline; no-op when target is None."""
+    from openpyxl.styles import Font
+    if target is None or cell.value in (None, ""):
+        return
+    try:
+        cell.hyperlink = Path(target).as_uri() + fragment
+    except (ValueError, OSError):
+        return
+    cell.font = Font(color="0563C1", underline="single")
+
+
 def write_report(items, sched_label, out_path: Path) -> None:
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     GRAY = PatternFill("solid", fgColor="D9D9D9")
+    YELLOW = PatternFill("solid", fgColor="FFF2CC")   # General List numbers
+    GREEN = PatternFill("solid", fgColor="E2EFDA")    # proposal/takeoff numbers
+    AMBER = PatternFill("solid", fgColor="FCE4D6")    # significant deltas
+    NEW_F = PatternFill("solid", fgColor="F8CBAD")    # NEW group band
     BAD = Font(color="9C0006", bold=True)
     GOOD = Font(color="006100", bold=True)
     thin = Side(style="thin", color="000000")
@@ -351,15 +391,15 @@ def write_report(items, sched_label, out_path: Path) -> None:
     ws = wb.active
     ws.title = "PREVIEW"
     ws["A1"] = (f"SCHEDULE-DRIVEN RP WIP — PREVIEW ONLY (schedule "
-                f"{sched_label}; the WIP master was NOT touched). Contract = "
-                f"bid proposal PDF · ETC = takeoff cost sheet (last sheet).")
+                f"{sched_label}; the WIP master was NOT touched). "
+                f"YELLOW = General List numbers · GREEN = bid proposal / "
+                f"takeoff numbers · every number links to its source.")
     ws["A1"].font = Font(bold=True)
     ws.append([])
     HDR = ["GROUP", "WIP LINE", "SCHEDULE SECTION", "SCHEDULE DESC",
            "ADDRESS", "BUILDER", "IN GEN. LIST?", "GL CONTRACT $", "GL ETC $",
-           "NEW CONTRACT $ (proposal)", "PROPOSAL FILE",
-           "NEW ETC $ (takeoff)", "TAKEOFF FILE",
-           "Δ CONTRACT", "Δ ETC", "NEEDS"]
+           "NEW CONTRACT $ (proposal)", "NEW ETC $ (takeoff)", "NEW GP %",
+           "Δ CONTRACT", "Δ ETC", "PROPOSAL FILE", "TAKEOFF FILE", "NEEDS"]
     ws.append(HDR)
     for c in range(1, len(HDR) + 1):
         cell = ws.cell(3, c)
@@ -368,6 +408,12 @@ def write_report(items, sched_label, out_path: Path) -> None:
         cell.alignment = Alignment(horizontal="center", vertical="center",
                                    wrap_text=True)
         cell.border = BORDER
+    # Header tint mirrors the data: GL columns yellow, source columns green.
+    for c in (8, 9):
+        ws.cell(3, c).fill = YELLOW
+    for c in (10, 11, 12):
+        ws.cell(3, c).fill = GREEN
+
     order = {"NEW — not in WIP": 0, "CHANGED": 1, "MATCHES": 2}
     for it in sorted(items, key=lambda x: (order.get(x["group"], 3),
                                            x["line"])):
@@ -375,33 +421,65 @@ def write_report(items, sched_label, out_path: Path) -> None:
                if it["new_contract"] is not None and it["gl_contract"] else None)
         d_e = (it["new_etc"] - it["gl_etc"]
                if it["new_etc"] is not None and it["gl_etc"] else None)
+        gp, gp_flag = margin_flag(it["new_contract"], it["new_etc"])
+        needs = "; ".join(x for x in (it["needs"], gp_flag) if x)
         ws.append([it["group"], it["line"], it["section"], it["desc"],
                    it["address"], it["builder"],
                    ("yes" if it["in_gl"] else "NO"),
                    it["gl_contract"], it["gl_etc"],
-                   it["new_contract"],
+                   it["new_contract"], it["new_etc"], gp,
+                   d_k, d_e,
                    ((it["proposal"].name + (f"  [{it['p_note']}]" if it["p_note"] else ""))
                     if it["proposal"] else it["p_note"]),
-                   it["new_etc"],
                    (it["takeoff"].name if it["takeoff"] else it["t_note"]),
-                   d_k, d_e, it["needs"]])
+                   needs])
         r = ws.max_row
         for cc in range(1, len(HDR) + 1):
             ws.cell(r, cc).border = BORDER
             ws.cell(r, cc).alignment = Alignment(
-                vertical="top", wrap_text=(cc in (4, 11, 13, 16)))
-        for cc in (8, 9, 10, 12, 14, 15):
+                vertical="top", wrap_text=(cc in (4, 15, 16, 17)))
+        for cc in (8, 9, 10, 11, 13, 14):
             ws.cell(r, cc).number_format = CUR
+        ws.cell(r, 12).number_format = "0.0%"
+        # Source-colored numbers: GL yellow · proposal/takeoff green.
+        for cc in (8, 9):
+            ws.cell(r, cc).fill = YELLOW
+        for cc in (10, 11, 12):
+            ws.cell(r, cc).fill = GREEN
+        # Links: line → folder · GL $ → its General List row · new numbers +
+        # file columns → the exact proposal PDF / takeoff workbook.
+        _link(ws.cell(r, 2), it.get("folder"))
+        gl_frag = (f"#'{it['gl_sheet']}'!C{it['gl_row']}"
+                   if it.get("gl_row") else "")
+        for cc in (8, 9):
+            _link(ws.cell(r, cc), RP.ALPHA_PATH if it.get("gl_row") else None,
+                  gl_frag)
+        for cc in (10, 15):
+            _link(ws.cell(r, cc), it.get("proposal"))
+        for cc in (11, 16):
+            _link(ws.cell(r, cc), it.get("takeoff"))
+        # Distinct groups: NEW rows banded orange in col A; big deltas amber
+        # + bold red so a changed number can't be missed.
         if it["group"].startswith("NEW"):
+            ws.cell(r, 1).fill = NEW_F
             ws.cell(r, 1).font = BAD
-        elif it["group"] == "MATCHES":
+        elif it["group"] == "CHANGED":
+            ws.cell(r, 1).font = Font(color="BF6000", bold=True)
+        else:
             ws.cell(r, 1).font = GOOD
+        for cc, dv, base in ((13, d_k, it["gl_contract"]),
+                             (14, d_e, it["gl_etc"])):
+            if dv is not None and base and abs(dv) > max(100, 0.01 * base):
+                ws.cell(r, cc).fill = AMBER
+                ws.cell(r, cc).font = BAD
+        if gp is not None and gp_flag:
+            ws.cell(r, 12).font = BAD
         if not it["in_gl"]:
             ws.cell(r, 7).font = BAD
-        if it["needs"]:
-            ws.cell(r, 16).font = BAD
-    widths = (16, 12, 15, 30, 22, 20, 9, 13, 13, 14, 30, 13, 30, 12, 12, 34)
-    for col, w in zip("ABCDEFGHIJKLMNOP", widths):
+        if needs:
+            ws.cell(r, 17).font = BAD
+    widths = (16, 12, 15, 28, 22, 20, 9, 13, 13, 14, 13, 9, 12, 12, 30, 30, 40)
+    for col, w in zip("ABCDEFGHIJKLMNOPQ", widths):
         ws.column_dimensions[col].width = w
     ws.freeze_panes = "A4"
     wb.save(out_path)
@@ -503,6 +581,9 @@ def main() -> int:
             "gl_etc": gl_e or None, "new_contract": new_k, "new_etc": new_e,
             "proposal": prop, "p_note": p_note, "takeoff": tkoff,
             "t_note": t_note, "needs": "; ".join(needs),
+            "folder": folder,
+            "gl_sheet": rec["source"] if rec else None,
+            "gl_row": rec["gl_row"] if rec else None,
         })
 
     n_new = sum(1 for i in items if i["group"].startswith("NEW"))
