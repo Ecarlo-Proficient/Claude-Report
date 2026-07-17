@@ -397,6 +397,28 @@ _COST_NUM_ORDER = {n: i for i, n in enumerate(
     ["1", "2", "3", "4", "5", "51", "52", "6", "7", "8", "9"])}
 
 
+# Job-type band colors (the user 2026-07-17) — one soft tint per prefix so the
+# Budget vs Actual cost-code rows group visually by trade (Slab, Paving, …).
+_JOB_BAND_HEX = {
+    "SL": "DDEBF7",   # Slab — blue
+    "PV": "E2EFDA",   # Paving — green
+    "FW": "FCE4D6",   # Flatwork (Residential) — peach
+    "PR": "E4DFEC",   # Piers — lavender
+    "WL": "D6EAE6",   # Walls — teal
+    "CS": "FFF6D5",   # Commercial Sidewalks — yellow
+    "MS": "F2DEDE",   # Miscellaneous — rose
+}
+_JOB_BAND_DEFAULT = "ECECEC"   # non-prefixed / unclassified codes — gray
+
+
+def _cost_band_fill(code) -> PatternFill:
+    """Soft job-type band fill for a cost-code row (Budget vs Actual)."""
+    pfx, _num = _split_code(code)
+    return PatternFill("solid",
+                       fgColor=_JOB_BAND_HEX.get((pfx or "").upper(),
+                                                 _JOB_BAND_DEFAULT))
+
+
 def _cost_code_sort_key(name):
     """Sort key matching the Cost Code Sheet: prefix order, then cost number.
     Cost codes sort first (grouped by job type); non-codes go last,
@@ -3723,6 +3745,11 @@ def build_sheet_budget_vs_actual(wb, proj, cust_info, wip_info,
         pc.number_format = "0%"
         pc.font = Font(bold=True, size=BASE_SIZE - 1)
         pc.alignment = Alignment(horizontal="center")
+        # job-type band across the code row so trades group visually (the user
+        # 2026-07-17). Transaction rows below stay white for contrast.
+        _band = _cost_band_fill(code)
+        for cc in range(1, 6):
+            ws.cell(row=code_row, column=cc).fill = _band
         r += 1
         # ── transactions under the code: A name · B date · C amount · D link ──
         for t in sorted(grp.get("txns", []),
