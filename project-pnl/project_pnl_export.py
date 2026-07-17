@@ -1715,6 +1715,31 @@ def _project_division(proj: str) -> str:
     return "Unknown"
 
 
+def _expected_class(proj: str) -> str:
+    """The QBO Class a project's cost lines SHOULD carry (spelled out — the
+    class-reconciliation check; see the QBO gotcha in CLAUDE.md)."""
+    p = (proj or "").upper()
+    if p.startswith("MFD"):
+        return "Multi Family"
+    if p.startswith("CP"):
+        return "Commercial"
+    if p.startswith("RP"):
+        return "Residential"
+    return ""
+
+
+def _normalize_class(s: str) -> str:
+    """Collapse a QBO class name to its top segment, lower/space-normalized,
+    so 'Commercial:Sitework ' == 'commercial' (the user 2026-07-17)."""
+    return re.sub(r"\s+", " ", (s or "").split(":")[0].strip().lower())
+
+
+def _class_ok(actual: str, expected: str) -> bool:
+    """True when the line's class matches the project's expected division class.
+    A blank class is NOT ok — it's flagged so it gets a real class."""
+    return bool(actual) and _normalize_class(actual) == _normalize_class(expected)
+
+
 def _write_meta_block(ws, proj: str, cust_info: dict, wip_info: dict,
                       as_of: str, start_row: int = 1,
                       start_date: Optional[str] = None,
@@ -3584,11 +3609,16 @@ def costs_by_code(bills: List[dict], purchases: List[dict], customer_id: str,
             if abs(amt) < 0.005:
                 continue
             leaf = cost_leaf(det, account_names)
+            # Class (Residential / Commercial / Multi Family) for the class-
+            # reconciliation check — line ClassRef first, then the txn's.
+            cls = ((det.get("ClassRef") or ln.get("ClassRef")
+                    or txn.get("ClassRef") or {}).get("name") or "")
             g = out.setdefault(leaf, {"total": 0.0, "txns": []})
             g["total"] += amt
             g["txns"].append({
                 "ref": ref, "vendor": vendor, "date": date, "amount": amt,
                 "txn_id": txn_id, "tx_type": tx_type, "memo": memo,
+                "class": _xml_clean(cls),
                 "desc": _xml_clean((ln.get("Description") or "").strip())})
     for g in out.values():
         g["total"] = round(g["total"], 2)
@@ -3615,11 +3645,22 @@ def build_sheet_budget_vs_actual(wb, proj, cust_info, wip_info,
     for col, w in (("A", 48), ("B", 16), ("C", 16), ("D", 16), ("E", 10)):
         ws.column_dimensions[col].width = w
     known = _project_name_words(cust_info.get("name", ""))
+    exp_cls = _expected_class(proj)
+    n_class_flags = sum(1 for g in actuals.values() for t in g.get("txns", [])
+                        if not _class_ok(t.get("class"), exp_cls))
 
     r = _write_meta_block(ws, proj, cust_info, wip_info, as_of)
     if budget_source:
         src = ws.cell(row=r, column=1, value=f"Budget source: {budget_source}")
         src.font = Font(italic=True, size=BASE_SIZE - 2, color="595959")
+        r += 1
+    if n_class_flags:
+        cf = ws.cell(row=r, column=1, value=(
+            f"⚑ CLASS CHECK: {n_class_flags} transaction(s) are not classed "
+            f"'{exp_cls}' — flagged red in the last column; fix the Class in QBO"))
+        cf.font = Font(bold=True, size=BASE_SIZE - 1, color="C00000")
+        for cc in range(1, 6):
+            ws.cell(row=r, column=cc).fill = PatternFill("solid", fgColor="FCE4D6")
         r += 1
     if co_flag:
         warn = ws.cell(row=r, column=1, value=(
@@ -3709,6 +3750,18 @@ def build_sheet_budget_vs_actual(wb, proj, cust_info, wip_info,
                 lk.hyperlink = url
                 lk.font = Font(size=BASE_SIZE - 2, color=LINK, underline="single", bold=True)
             lk.alignment = Alignment(horizontal="center")
+            # class reconciliation: flag a line whose class ≠ the division class
+            _cls = t.get("class")
+            if not _class_ok(_cls, exp_cls):
+                fc = ws.cell(row=r, column=5,
+                             value=f"⚑ {_cls}" if _cls else "⚑ no class")
+                fc.font = Font(size=BASE_SIZE - 2, bold=True,
+                               color="C00000" if _cls else "9C5700")
+                # tint the whole transaction row so it's easy to spot
+                for cc in range(1, 6):
+                    if not ws.cell(row=r, column=cc).fill.patternType:
+                        ws.cell(row=r, column=cc).fill = PatternFill(
+                            "solid", fgColor="FDECEA")
             ws.row_dimensions[r].outline_level = 1     # collapsible under the code
             r += 1
     tl = ws.cell(row=r, column=1, value="TOTAL")
@@ -4865,9 +4918,12 @@ def generate_project_pnl(
             build_sheet_budget_vs_actual(
                 wb, proj, cust_info, wip_info, _bud, _acts, as_of,
                 co_flag=_cof, budget_source=_bud_src, realm=company_id)
+            _ncf = sum(1 for g in _acts.values() for t in g.get("txns", [])
+                       if not _class_ok(t.get("class"), _expected_class(proj)))
             ui_event(f"Budget vs Actual: {len(_bud)} budgeted codes "
                      f"(${sum(_bud.values()):,.0f}) from {_bud_src}"
-                     + ("  ⚑ CO flag" if _cof else ""))
+                     + ("  ⚑ CO flag" if _cof else "")
+                     + (f"  ⚑ {_ncf} class flag(s)" if _ncf else ""))
         else:
             ui_event("no takeoff cost-code budget found — Budget vs Actual "
                      "skipped", icon="⚑", color=_YEL)
@@ -5095,9 +5151,12 @@ def generate_project_pnl_rp(
         build_sheet_budget_vs_actual(
             wb, proj, cust_info, wip_info, _bud, _acts, as_of,
             co_flag=_cof, budget_source=_bud_src, realm=company_id)
+        _ncf = sum(1 for g in _acts.values() for t in g.get("txns", [])
+                   if not _class_ok(t.get("class"), _expected_class(proj)))
         ui_event(f"Budget vs Actual: {len(_bud)} budgeted codes "
                  f"(${sum(_bud.values()):,.0f}) from {_bud_src}"
-                 + ("  ⚑ CO flag" if _cof else ""))
+                 + ("  ⚑ CO flag" if _cof else "")
+                 + (f"  ⚑ {_ncf} class flag(s)" if _ncf else ""))
     else:
         ui_event("no takeoff Cost Gral budget found — Budget vs Actual "
                  "skipped", icon="⚑", color=_YEL)
