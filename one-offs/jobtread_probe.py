@@ -5,14 +5,16 @@ jobtread_probe.py — can we read project budgets out of JobTread? (the user
 JobTread — where the takeoff's 'JobTread Cost Gral' numbers are entered —
 has a real public API. This probe answers whether it can be our ETC source.)
 
-READ-ONLY against JobTread. Auth is a grant key in its OWN Keychain blob
-(service 'automation-jobtread' — same isolation pattern as QBO/Notion/Teams;
-a bad key here can never touch the other vaults).
+READ-ONLY against JobTread. Auth is the JT_GRANT_KEY entry in the SHARED
+key library (shared/qbo_vault.py, Keychain service 'automation-qbo' — the
+user 2026-07-17: every key lives in the one blob, one place to track,
+one Touch ID per run).
 
 One-time setup (the key is typed into a hidden prompt, never chat/argv):
   In JobTread: Settings → Integrations → JobTread API → New Grant Key
-  (read access is enough), then:
-      python3 jobtread_probe.py --setup
+  (read access is enough), then EITHER:
+      python3 ../shared/setup_qbo.py --rotate JT_GRANT_KEY
+      python3 jobtread_probe.py --setup          (same thing, shorter)
 
 Probe (discovery — prints what the API exposes, step by step):
   python3 jobtread_probe.py                 # who am I + org + a few jobs
@@ -21,47 +23,38 @@ Probe (discovery — prints what the API exposes, step by step):
 from __future__ import annotations
 
 import argparse
-import base64
 import getpass
 import json
-import os
-import subprocess
 import sys
 import urllib.request
+from pathlib import Path
 
-SERVICE = "automation-jobtread"
-LABEL = "credentials"
-ACCOUNT = os.environ.get("USER") or "user"
+_REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_REPO))
+
+from shared import qbo_vault
+
 API_URL = "https://api.jobtread.com/pave"
 
 
-def _sec(*args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(["/usr/bin/security", *args],
-                          capture_output=True, text=True)
-
-
 def store_key() -> None:
+    """Hidden prompt → JT_GRANT_KEY in the shared key library (one blob)."""
     key = getpass.getpass("JobTread grant key (hidden): ").strip()
     if not key:
         print("empty — nothing stored")
         sys.exit(1)
-    blob = base64.b64encode(json.dumps({"JT_GRANT_KEY": key}).encode()).decode()
-    _sec("delete-generic-password", "-a", ACCOUNT, "-s", SERVICE, "-l", LABEL)
-    r = _sec("add-generic-password", "-a", ACCOUNT, "-s", SERVICE, "-l", LABEL,
-             "-w", blob, "-T", "")
-    if r.returncode != 0:
-        print("keychain write failed:", r.stderr.strip())
-        sys.exit(1)
-    print("✓ stored in Keychain (service automation-jobtread)")
+    qbo_vault.put("JT_GRANT_KEY", key)
+    print("✓ stored as JT_GRANT_KEY in the shared key library "
+          "(Keychain service automation-qbo)")
 
 
 def load_key() -> str:
-    r = _sec("find-generic-password", "-a", ACCOUNT, "-s", SERVICE,
-             "-l", LABEL, "-w")
-    if r.returncode != 0:
-        print("No JobTread key stored — run:  python3 jobtread_probe.py --setup")
+    try:
+        return qbo_vault.get("JT_GRANT_KEY")
+    except qbo_vault.SecretsError:
+        print("No JobTread key in the library — run:  "
+              "python3 jobtread_probe.py --setup")
         sys.exit(1)
-    return json.loads(base64.b64decode(r.stdout.strip()))["JT_GRANT_KEY"]
 
 
 def pave(key: str, query: dict) -> dict:

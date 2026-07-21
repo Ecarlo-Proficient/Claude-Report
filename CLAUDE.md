@@ -14,8 +14,11 @@ restate them here. Business/strategic context lives in session memory, not in th
 1. **QBO is the source of truth.** Never guess costs-to-date or billed-to-date; pull and verify against QBO.
 2. **Never read, ask for, or hard-code secrets.** Auth is a single encrypted Keychain blob via
    `qbo_vault.py` (service `automation-qbo`, label `credentials`) — one Touch ID per run unlocks all
-   keys. Notion/Teams get their own blobs (`automation-notion`, `automation-teams`). Use the setup
-   scripts (`shared/setup_qbo.py`, `invoice-sync/setup_keychain.py`) and metadata-only diagnostics.
+   keys. **That blob is THE key library (the user 2026-07-17): every new integration's key goes in it**
+   (QBO keys + `JT_GRANT_KEY` for JobTread so far) — never create a new per-service blob. Notion/Teams
+   blobs (`automation-notion`, `automation-teams`) predate the rule and stay as historical exceptions.
+   Use the setup scripts (`shared/setup_qbo.py` — `--rotate <KEY>` adds/updates any library key —
+   `invoice-sync/setup_keychain.py`) and metadata-only diagnostics.
 3. **QBO is production-only.** No sandbox/env toggle. `quickbooks.api.intuit.com` is hardcoded by design.
 4. **Logs and data dumps go to `~/Library/Logs/Proficient/`** — never inside this folder (it's Claude-visible/synced).
 5. **Excel outputs are plain:** white/black only, no fills, no hidden rows, label + amount on the same row,

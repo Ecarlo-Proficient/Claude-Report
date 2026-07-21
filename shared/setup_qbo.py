@@ -82,6 +82,14 @@ SPECS = [
         "opaque string — format varies",
         20, 500, None,
     ),
+    # Non-QBO keys in the same blob — the vault is the company key LIBRARY
+    # (the user 2026-07-17): one place, one Touch ID. Blank = skip on setup.
+    KeySpec(
+        "JT_GRANT_KEY",
+        "JobTread > Settings > Integrations > JobTread API > New Grant Key (read access)",
+        "opaque alphanumeric string",
+        10, 200, None,
+    ),
 ]
 
 

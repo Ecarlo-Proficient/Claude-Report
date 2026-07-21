@@ -23,11 +23,13 @@ DESIGN (macOS)
   in memory. Subsequent get() calls hit the cache — zero extra Keychain
   interaction.
 
-ISOLATION
-  This vault stores QBO keys ONLY. When Notion is added later, it gets
-  its OWN vault (service='automation-notion') — totally separate blob,
-  separate Touch ID approval. A bad rotation in one service can never
-  corrupt another.
+ISOLATION → LIBRARY (the user 2026-07-17)
+  Original design: one blob per service. REVISED by the user: this blob
+  (service 'automation-qbo') is now THE key library — every new
+  integration's key lives here (JT_GRANT_KEY = JobTread joined
+  2026-07-17), one place to track them all, one Touch ID per run.
+  The Notion/Teams/invoice-sync blobs predate the decision and stay
+  where they are (historical exceptions, not the pattern).
 
 Public API (identical across platforms):
   get_all()   -> dict[str, str]    # one Touch ID on Mac; reads env+file on Linux
@@ -60,6 +62,7 @@ KNOWN_KEYS: List[str] = [
     "QBO_CLIENT_SECRET",
     "QBO_COMPANY_ID",
     "QBO_REFRESH_TOKEN",
+    "JT_GRANT_KEY",       # JobTread Pave API grant key (read-only grant)
 ]
 
 # Platform routing. Mac uses Keychain; Linux uses env vars + file persistence.
