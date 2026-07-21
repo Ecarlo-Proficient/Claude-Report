@@ -45,6 +45,13 @@ restate them here. Business/strategic context lives in session memory, not in th
    resolves it there — new machines: `cp machine.env.example machine.env && python3 shared/paths.py`.
 6. **Field Log is GONE** (erased 2026-07-13, the user's decision) — sync code, templates, config
    fields all removed. Don't rebuild it without an explicit ask.
+7. **`STATUS.md` beside a tool's README is its shared progression record** (the user 2026-07-21):
+   TO DO · IN PROGRESS · DONE/FINALIZED · OPEN ISSUES, so either side (the user's sessions or the
+   developer's) can pick up where the other left off. Update it in the SAME commit as any change
+   to that tool — a tool change without its STATUS.md update is an incomplete commit (same standard
+   as the ARCHITECTURE.md rule). **Scope filter (binding):** only what pertains to the tool itself —
+   business/management findings, dollar exposures, and owner-only analyses NEVER go in a STATUS.md
+   or anywhere else in this repo; those live in the user's local vault only.
 
 ## Subsystem map (detail in each README)
 
