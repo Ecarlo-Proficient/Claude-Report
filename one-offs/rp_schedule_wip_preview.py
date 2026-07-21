@@ -271,28 +271,61 @@ def _cost_sheet_totals(ws):
 
 
 def find_takeoff_etc(folder: Path, job: str, scope: str, desc: str):
-    """Best takeoff .xlsm for the scope → ETC from its cost sheet's own
-    subtotal cells. Returns (path, etc, note, fragment) — note names the
-    sheet + cells the number came from; fragment jump-links there."""
+    """Best takeoff for the scope → BUDGET from its cost sheet's own
+    subtotal cells. Returns (path, budget, note, fragment) — note names the
+    sheet + cells the number came from; fragment jump-links there.
+
+    COMMERCIAL TAKEOFF WINS for slab scope (the user 2026-07-21, RP6586):
+    when the CP PM helps on an RP job he uses the CP template — a workbook
+    with a 'BID' sheet, budget in AP1948 (AP1961 in some revisions). Those
+    files may not carry the RP# in the name ('Peninsula Takeoff …'), so any
+    *takeoff*-named workbook is a candidate, and a found BID sheet beats the
+    residential 'JobTread Cost Gral' (which holds partial garbage on those
+    jobs)."""
     cands = []
     try:
         for f in folder.iterdir():
             if f.suffix.lower() not in (".xlsm", ".xlsx"):
                 continue
+            if f.name.startswith("~$"):
+                continue
             n = _norm(f.name)
-            if n.startswith(job) or job in n:
+            if n.startswith(job) or job in n or "TAKEOFF" in n:
                 cands.append(f)
     except OSError:
         return None, None, "folder unreadable", None
     if not cands:
-        return None, None, "no takeoff in folder", None
+        return None, None, "No budget takeoff in this folder — add it", None
     cands.sort(key=lambda f: (_score_name(_norm(f.name), scope, desc),
                               f.stat().st_mtime), reverse=True)
+
+    if scope != "ftw":
+        for f in cands[:6]:
+            try:
+                wb = load_workbook(f, data_only=True, read_only=True)
+            except Exception:
+                continue
+            bid = next((s for s in wb.sheetnames if _norm(s) == "BID"), None)
+            if bid is None:
+                wb.close()
+                continue
+            ws = wb[bid]
+            for ref in ("AP1948", "AP1961"):
+                v = ws[ref].value
+                if isinstance(v, (int, float)) and v:
+                    wb.close()
+                    return (f, round(float(v), 2),
+                            f"Commercial Takeoff '{bid}' {ref}",
+                            f"#'{bid}'!{ref}")
+            wb.close()
+
+    found_takeoff = False
     for f in cands[:4]:
         try:
             wb = load_workbook(f, data_only=True, read_only=True)
         except Exception:
             continue
+        found_takeoff = True
         sheet = next((s for s in wb.sheetnames if "COST GRAL" in _norm(s)), None)
         if sheet is None:
             wb.close()
@@ -326,38 +359,49 @@ def find_takeoff_etc(folder: Path, job: str, scope: str, desc: str):
             note = "; ".join([src] + notes)
             frag = f"#'{sheet}'!{next((c for c in cells if re.match(r'^[A-Z]+[0-9]+$', c)), 'A1')}"
             return f, round(etc, 2), note, frag
-    return cands[0], None, "takeoff has no cost sheet (older template?)", None
+    return (cands[0], None,
+            ("Missing 'JobTread Cost Gral' sheet — add the budget sheet to "
+             "the takeoff" if found_takeoff
+             else "No budget takeoff in this folder — add it"), None)
 
 
 # ─────────────────────────── report ────────────────────────────────
 # Implied gross-margin sanity band for the NEW numbers (the user 2026-07-17,
-# RP5542-FTW: contract $91K vs takeoff ETC $48K = 47.6% GP — "ETC way too
+# RP5542-FTW: contract $91K vs takeoff budget $48K = 47.6% GP — "way too
 # low"). RP jobs run ~10–25% GP; outside the band the pair is mismatched
 # (wrong scope file, stale takeoff, or missing cost sections).
-_GP_HI = 0.35     # above → ETC too low vs the contract
-_GP_LO = 0.05     # below → margin too thin (ETC too high / contract too low)
+_GP_HI = 0.35     # above → budget too low vs the contract
+_GP_LO = 0.05     # below → margin too thin (budget too high / contract too low)
 
 
-def margin_flag(contract, etc):
-    """(gp_pct, flag_text) for a contract/ETC pair — flag None when sane."""
-    if not contract or etc is None:
+def margin_flag(contract, budget):
+    """(gp_pct, instructions) for a contract/budget pair — None when sane.
+    Instructions are estimator to-dos (the user 2026-07-21), one per line;
+    _needs_rich colors them BLUE (budget side) / ORANGE (proposal side)."""
+    if not contract or budget is None:
         return None, None
-    gp = (contract - etc) / contract
+    gp = (contract - budget) / contract
     if gp > _GP_HI:
-        return gp, (f"ETC WAY TOO LOW — implied GP {gp * 100:.0f}% "
-                    f"(RP runs ~10–25%): scope mismatch or stale takeoff")
+        return gp, (f"Budget way too low vs contract (implied GP "
+                    f"{gp * 100:.0f}%; RP runs ~10–25%) — find the real "
+                    f"budget takeoff sheet for this scope")
     if gp < 0:
-        return gp, f"ETC EXCEEDS contract (GP {gp * 100:.0f}%) — check the pair"
+        return gp, (f"Contract below budget (GP {gp * 100:.0f}%) — "
+                    f"export/confirm the latest bid proposal PDF sent to "
+                    f"the client\n"
+                    f"Also confirm the budget takeoff isn't carrying "
+                    f"extra scope")
     if gp < _GP_LO:
-        return gp, (f"margin too thin — implied GP {gp * 100:.0f}%: "
-                    f"ETC too high or contract too low")
+        return gp, (f"Margin too thin (GP {gp * 100:.0f}%) — verify the "
+                    f"budget takeoff against the contract")
     return gp, None
 
 
 def _needs_rich(needs: str):
-    """NEEDS as color-coded rich text (the user 2026-07-21): BLUE = cost/ETC
-    issue, ORANGE = contract/bid-proposal issue, red = everything else
-    (missing from the list, no folder…). One cell, per-segment colors."""
+    """NEEDS as color-coded rich text, ONE ITEM PER LINE (the user
+    2026-07-21): ORANGE = bid-proposal/contract actions (AR), BLUE =
+    budget/takeoff actions (JR), red = everything else (not in the list,
+    no folder…)."""
     if not needs:
         return None
     from openpyxl.cell.rich_text import CellRichText, TextBlock
@@ -365,17 +409,21 @@ def _needs_rich(needs: str):
     BLUE = InlineFont(color="0070C0", b=True)
     ORANGE = InlineFont(color="ED7D31", b=True)
     RED = InlineFont(color="9C0006", b=True)
-    parts = [p.strip() for p in needs.split(";") if p.strip()]
+    parts = [p.strip() for p in re.split(r"[;\n]", needs) if p.strip()]
     blocks = []
     for i, p in enumerate(parts):
         u = p.upper()
-        if "ETC" in u or "COST" in u or "TAKEOFF" in u or "MARGIN" in u:
-            f = BLUE
-        elif "PROPOSAL" in u or "CONTRACT" in u or "BID" in u:
+        # PROPOSAL is checked FIRST: mixed sentences ("contract below
+        # budget — export the bid proposal…") are AR's action, and every AR
+        # item names the proposal PDF explicitly.
+        if "PROPOSAL" in u:
             f = ORANGE
+        elif ("BUDGET" in u or "TAKEOFF" in u or "COST" in u or "SHEET" in u
+                or "MARGIN" in u or "ETC" in u):
+            f = BLUE
         else:
             f = RED
-        blocks.append(TextBlock(f, p + ("; " if i < len(parts) - 1 else "")))
+        blocks.append(TextBlock(f, p + ("\n" if i < len(parts) - 1 else "")))
     return CellRichText(*blocks)
 
 
@@ -389,6 +437,27 @@ def _breadcrumb(path: Path) -> str:
         if p.upper() == "CURRENT PROJECTS":
             return " > ".join(parts[i:])
     return " > ".join(parts[-4:])
+
+
+def _breadcrumb_rich(path: Path, note: str = ""):
+    """Breadcrumb with the FILENAME bolded (the user 2026-07-21: the folder
+    link can't pre-select the file, so the cell itself must make obvious
+    which file the number was read from). Optional note renders as a gray
+    second line (e.g. the takeoff sheet + cell)."""
+    from openpyxl.cell.rich_text import CellRichText, TextBlock
+    from openpyxl.cell.text import InlineFont
+    LINKISH = InlineFont(color="0563C1", u="single")
+    FILE = InlineFont(color="0563C1", u="single", b=True)
+    NOTE = InlineFont(color="595959", i=True)
+    crumb = _breadcrumb(path)
+    head, _sep, fname = crumb.rpartition(" > ")
+    blocks = []
+    if head:
+        blocks.append(TextBlock(LINKISH, head + " > "))
+    blocks.append(TextBlock(FILE, fname or crumb))
+    if note:
+        blocks.append(TextBlock(NOTE, f"\n[{note}]"))
+    return CellRichText(*blocks)
 
 
 def _link(cell, target, fragment: str = ""):
@@ -425,14 +494,23 @@ def write_report(items, sched_label, out_path: Path) -> None:
     ws["A1"] = (f"SCHEDULE-DRIVEN RP WIP — PREVIEW ONLY (schedule "
                 f"{sched_label}; the WIP master was NOT touched). "
                 f"YELLOW = General List numbers · GREEN = bid proposal / "
-                f"takeoff numbers · NEEDS: BLUE = cost/ETC issue, ORANGE = "
-                f"contract/proposal issue · every number links to its source.")
+                f"takeoff numbers · every number links to its source.")
     ws["A1"].font = Font(bold=True)
     ws.append([])
+    # NEEDS legend — who owns which color (the user 2026-07-21).
+    from openpyxl.cell.rich_text import CellRichText, TextBlock
+    from openpyxl.cell.text import InlineFont
+    ws["A2"] = CellRichText(
+        TextBlock(InlineFont(color="ED7D31", b=True, sz=12),
+                  "ORANGE = AR — bid proposal / contract actions"),
+        TextBlock(InlineFont(b=True, sz=12), "      "),
+        TextBlock(InlineFont(color="0070C0", b=True, sz=12),
+                  "BLUE = JR — budget takeoff actions"))
     HDR = ["GROUP", "WIP LINE", "WORK DESC",
-           "ADDRESS", "BUILDER", "IN GEN. LIST?", "GL CONTRACT $", "GL ETC $",
-           "NEW CONTRACT $ (proposal)", "NEW ETC $ (takeoff)", "NEW GP %",
-           "Δ CONTRACT", "Δ ETC", "PROPOSAL PDF", "TAKEOFF FILE", "NEEDS"]
+           "ADDRESS", "BUILDER", "IN GEN. LIST?", "GL CONTRACT $",
+           "GL BUDGET $",
+           "NEW CONTRACT $ (proposal)", "NEW BUDGET $ (takeoff)", "NEW GP %",
+           "Δ CONTRACT", "Δ BUDGET", "PROPOSAL PDF", "TAKEOFF FILE", "NEEDS"]
     ws.append(HDR)
     for c in range(1, len(HDR) + 1):
         cell = ws.cell(3, c)
@@ -462,8 +540,9 @@ def write_report(items, sched_label, out_path: Path) -> None:
                    it["gl_contract"], it["gl_etc"],
                    it["new_contract"], it["new_etc"], gp,
                    d_k, d_e,
-                   (_breadcrumb(it["proposal"]) if it["proposal"] else it["p_note"]),
-                   ((_breadcrumb(it["takeoff"]) + (f"  [{it['t_note']}]" if it["t_note"] else ""))
+                   (_breadcrumb_rich(it["proposal"]) if it["proposal"]
+                    else it["p_note"]),
+                   (_breadcrumb_rich(it["takeoff"], it["t_note"] or "")
                     if it["takeoff"] else it["t_note"]),
                    _needs_rich(needs)])
         r = ws.max_row
@@ -613,9 +692,10 @@ def main() -> int:
                 needs.append("not in General List" if job not in gl_jobs
                              else "in GL but unpriced")
         if new_k is None:
-            needs.append("no priced bid proposal PDF")
+            needs.append("Export/find the bid proposal PDF that was sent "
+                         "to the client → drop it in this project's folder")
         if new_e is None:
-            needs.append("no takeoff cost")
+            needs.append(t_note or "no budget takeoff")
         if not in_wip:
             group = "NEW — not in WIP"
         elif ((new_k is not None and gl_k and abs(new_k - gl_k) > max(100, 0.01 * gl_k))

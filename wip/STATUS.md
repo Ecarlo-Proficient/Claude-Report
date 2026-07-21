@@ -4,7 +4,7 @@
 > (CLAUDE.md/AGENTS.md structure rule 7). Tool matters only — no business
 > findings, no dollar exposures, no owner-only analysis.
 
-Last updated: 2026-07-21
+Last updated: 2026-07-21 (pm)
 
 ## DONE / FINALIZED
 
@@ -33,9 +33,15 @@ Last updated: 2026-07-21
   ETC = takeoff cost sheet's own subtotal cells (side-scope files whole-sheet,
   base files SL+PR vs FW; items-vs-subtotal mismatches flagged). Output: one
   audit xlsx in Downloads (NEW / CHANGED / MATCHES vs the GL), yellow = GL
-  numbers, green = source-doc numbers, NEEDS color-coded (blue = cost/ETC,
-  orange = contract/proposal), $ cells open the source, file cells open the
-  folder with a `CURRENT PROJECTS > …` breadcrumb for Windows users.
+  numbers, green = source-doc numbers. Estimator-facing (2026-07-21 pm):
+  "Budget" wording throughout (not ETC); NEEDS items are one-per-line
+  instructions color-coded ORANGE = bid-proposal/contract actions (AR) and
+  BLUE = budget-takeoff actions (JR), legend on row 2; $ cells open the
+  source, file cells open the folder with a `CURRENT PROJECTS > …`
+  breadcrumb (filename bolded) for Windows users. Commercial-takeoff
+  fallback: a workbook with a 'BID' sheet (CP PM template, budget in
+  AP1948/AP1961) wins over 'JobTread Cost Gral' for slab scope — RP6586
+  pattern, incl. takeoffs not named with the RP#.
   **NOT wired into rp_wip_reader yet — awaiting the user's approval.**
 - **JobTread as a budget source — verified, not wired**: Pave API grant key in
   the shared vault (`JT_GRANT_KEY`); schema proven (`one-offs/jobtread_probe.py`):
