@@ -491,13 +491,16 @@ def write_report(items, sched_label, out_path: Path) -> None:
         # opens the FOLDER so the PDF can be grabbed/attached (the user
         # 2026-07-17 — a plain file link can't make Finder pre-select the
         # file, so the cell text carries the exact filename to look for).
+        # Division of labor (the user 2026-07-21): the $ columns (I/J) OPEN
+        # the source — proposal PDF / takeoff at its exact subtotal cell —
+        # while the file columns (N/O) open the FOLDER, breadcrumb text
+        # naming the file to grab (Finder can't pre-select via hyperlink).
         _link(ws.cell(r, 9), it.get("proposal"))
+        _link(ws.cell(r, 10), it.get("takeoff"), it.get("t_frag") or "")
         _link(ws.cell(r, 14),
               it["proposal"].parent if it.get("proposal") else None)
-        for cc in (10, 15):
-            # Jump to the exact subtotal cell the ETC came from (the user
-            # 2026-07-17: "list the sheet and cell and take me there").
-            _link(ws.cell(r, cc), it.get("takeoff"), it.get("t_frag") or "")
+        _link(ws.cell(r, 15),
+              it["takeoff"].parent if it.get("takeoff") else None)
         # Distinct groups: NEW rows banded orange in col A; big deltas amber
         # + bold red so a changed number can't be missed.
         if it["group"].startswith("NEW"):
