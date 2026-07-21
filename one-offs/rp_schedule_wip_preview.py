@@ -215,49 +215,6 @@ def find_proposal(folder: Path, scope: str, desc: str):
     return cands[0], None, "proposal found but no SUB TOTAL text (unpriced?)"
 
 
-def bid_from_takeoff(folder: Path, job: str, scope: str, desc: str):
-    """Fallback contract when no priced proposal PDF exists: the takeoff's
-    own Bid sheets (the proposal PDFs are printed FROM these). Slab → 'Bid
-    Post Tension' SUB TOTAL (verified = QBO billed on 22 jobs); flatwork →
-    'Bid Flatwork', else ANY Bid sheet of a FLATWORK-named takeoff (the
-    estimators reuse sheets — trust the SUB TOTAL). Returns (path, amount,
-    note)."""
-    cands = []
-    try:
-        for f in folder.iterdir():
-            if f.suffix.lower() not in (".xlsm", ".xlsx"):
-                continue
-            if job in _norm(f.name):
-                cands.append(f)
-    except OSError:
-        return None, None, "folder unreadable"
-    cands.sort(key=lambda f: (_score_name(_norm(f.name), scope, desc),
-                              f.stat().st_mtime), reverse=True)
-    for f in cands[:4]:
-        try:
-            wb = load_workbook(f, data_only=True, read_only=True)
-        except Exception:
-            continue
-        bid_sheets = [s for s in wb.sheetnames if _norm(s).startswith("BID")]
-        if scope == "ftw":
-            pref = ([s for s in bid_sheets if "FLATWORK" in _norm(s)]
-                    + ([s for s in bid_sheets if "FLATWORK" not in _norm(s)]
-                       if "FLATWORK" in _norm(f.name) else []))
-        else:
-            pref = [s for s in bid_sheets if "POST TENSION" in _norm(s)]
-        for sname in pref:
-            ws = wb[sname]
-            for row in ws.iter_rows(min_row=1, max_row=min(ws.max_row, 80)):
-                for i, c in enumerate(row[:12]):
-                    if "SUB TOTAL" in _norm(c.value):
-                        for c2 in row[i + 1:i + 5]:
-                            if isinstance(c2.value, (int, float)) and c2.value:
-                                wb.close()
-                                return f, float(c2.value), f"takeoff '{sname}'"
-        wb.close()
-    return None, None, "no bid sheet subtotal either"
-
-
 # ─────────────────── takeoff last sheet → ETC ──────────────────────
 def _cost_sheet_totals(ws):
     """Parse 'JobTread Cost Gral' in BOTH layouts:
@@ -397,6 +354,31 @@ def margin_flag(contract, etc):
     return gp, None
 
 
+def _needs_rich(needs: str):
+    """NEEDS as color-coded rich text (the user 2026-07-21): BLUE = cost/ETC
+    issue, ORANGE = contract/bid-proposal issue, red = everything else
+    (missing from the list, no folder…). One cell, per-segment colors."""
+    if not needs:
+        return None
+    from openpyxl.cell.rich_text import CellRichText, TextBlock
+    from openpyxl.cell.text import InlineFont
+    BLUE = InlineFont(color="0070C0", b=True)
+    ORANGE = InlineFont(color="ED7D31", b=True)
+    RED = InlineFont(color="9C0006", b=True)
+    parts = [p.strip() for p in needs.split(";") if p.strip()]
+    blocks = []
+    for i, p in enumerate(parts):
+        u = p.upper()
+        if "ETC" in u or "COST" in u or "TAKEOFF" in u or "MARGIN" in u:
+            f = BLUE
+        elif "PROPOSAL" in u or "CONTRACT" in u or "BID" in u:
+            f = ORANGE
+        else:
+            f = RED
+        blocks.append(TextBlock(f, p + ("; " if i < len(parts) - 1 else "")))
+    return CellRichText(*blocks)
+
+
 def _link(cell, target, fragment: str = ""):
     """file:// hyperlink + blue underline; no-op when target is None."""
     from openpyxl.styles import Font
@@ -431,13 +413,14 @@ def write_report(items, sched_label, out_path: Path) -> None:
     ws["A1"] = (f"SCHEDULE-DRIVEN RP WIP — PREVIEW ONLY (schedule "
                 f"{sched_label}; the WIP master was NOT touched). "
                 f"YELLOW = General List numbers · GREEN = bid proposal / "
-                f"takeoff numbers · every number links to its source.")
+                f"takeoff numbers · NEEDS: BLUE = cost/ETC issue, ORANGE = "
+                f"contract/proposal issue · every number links to its source.")
     ws["A1"].font = Font(bold=True)
     ws.append([])
-    HDR = ["GROUP", "WIP LINE", "SCHEDULE SECTION", "SCHEDULE DESC",
+    HDR = ["GROUP", "WIP LINE", "WORK DESC",
            "ADDRESS", "BUILDER", "IN GEN. LIST?", "GL CONTRACT $", "GL ETC $",
            "NEW CONTRACT $ (proposal)", "NEW ETC $ (takeoff)", "NEW GP %",
-           "Δ CONTRACT", "Δ ETC", "PROPOSAL FILE", "TAKEOFF FILE", "NEEDS"]
+           "Δ CONTRACT", "Δ ETC", "PROPOSAL PDF", "TAKEOFF FILE", "NEEDS"]
     ws.append(HDR)
     for c in range(1, len(HDR) + 1):
         cell = ws.cell(3, c)
@@ -447,9 +430,9 @@ def write_report(items, sched_label, out_path: Path) -> None:
                                    wrap_text=True)
         cell.border = BORDER
     # Header tint mirrors the data: GL columns yellow, source columns green.
-    for c in (8, 9):
+    for c in (7, 8):
         ws.cell(3, c).fill = YELLOW
-    for c in (10, 11, 12):
+    for c in (9, 10, 11):
         ws.cell(3, c).fill = GREEN
 
     order = {"NEW — not in WIP": 0, "CHANGED": 1, "MATCHES": 2}
@@ -461,46 +444,45 @@ def write_report(items, sched_label, out_path: Path) -> None:
                if it["new_etc"] is not None and it["gl_etc"] else None)
         gp, gp_flag = margin_flag(it["new_contract"], it["new_etc"])
         needs = "; ".join(x for x in (it["needs"], gp_flag) if x)
-        ws.append([it["group"], it["line"], it["section"], it["desc"],
+        ws.append([it["group"], it["line"], it["desc"],
                    it["address"], it["builder"],
                    ("yes" if it["in_gl"] else "NO"),
                    it["gl_contract"], it["gl_etc"],
                    it["new_contract"], it["new_etc"], gp,
                    d_k, d_e,
-                   ((it["proposal"].name + (f"  [{it['p_note']}]" if it["p_note"] else ""))
-                    if it["proposal"] else it["p_note"]),
+                   (it["proposal"].name if it["proposal"] else it["p_note"]),
                    ((it["takeoff"].name + (f"  [{it['t_note']}]" if it["t_note"] else ""))
                     if it["takeoff"] else it["t_note"]),
-                   needs])
+                   _needs_rich(needs)])
         r = ws.max_row
         for cc in range(1, len(HDR) + 1):
             ws.cell(r, cc).border = BORDER
             ws.cell(r, cc).alignment = Alignment(
-                vertical="top", wrap_text=(cc in (4, 15, 16, 17)))
-        for cc in (8, 9, 10, 11, 13, 14):
+                vertical="top", wrap_text=(cc in (3, 14, 15, 16)))
+        for cc in (7, 8, 9, 10, 12, 13):
             ws.cell(r, cc).number_format = CUR
-        ws.cell(r, 12).number_format = "0.0%"
+        ws.cell(r, 11).number_format = "0.0%"
         # Source-colored numbers: GL yellow · proposal/takeoff green.
-        for cc in (8, 9):
+        for cc in (7, 8):
             ws.cell(r, cc).fill = YELLOW
-        for cc in (10, 11, 12):
+        for cc in (9, 10, 11):
             ws.cell(r, cc).fill = GREEN
         # Links: line → folder · GL $ → its General List row · new numbers +
         # file columns → the exact proposal PDF / takeoff workbook.
         _link(ws.cell(r, 2), it.get("folder"))
         gl_frag = (f"#'{it['gl_sheet']}'!C{it['gl_row']}"
                    if it.get("gl_row") else "")
-        for cc in (8, 9):
+        for cc in (7, 8):
             _link(ws.cell(r, cc), RP.ALPHA_PATH if it.get("gl_row") else None,
                   gl_frag)
-        # NEW CONTRACT $ opens the PDF itself; the PROPOSAL FILE column
+        # NEW CONTRACT $ opens the PDF itself; the PROPOSAL PDF column
         # opens the FOLDER so the PDF can be grabbed/attached (the user
         # 2026-07-17 — a plain file link can't make Finder pre-select the
         # file, so the cell text carries the exact filename to look for).
-        _link(ws.cell(r, 10), it.get("proposal"))
-        _link(ws.cell(r, 15),
+        _link(ws.cell(r, 9), it.get("proposal"))
+        _link(ws.cell(r, 14),
               it["proposal"].parent if it.get("proposal") else None)
-        for cc in (11, 16):
+        for cc in (10, 15):
             # Jump to the exact subtotal cell the ETC came from (the user
             # 2026-07-17: "list the sheet and cell and take me there").
             _link(ws.cell(r, cc), it.get("takeoff"), it.get("t_frag") or "")
@@ -513,19 +495,17 @@ def write_report(items, sched_label, out_path: Path) -> None:
             ws.cell(r, 1).font = Font(color="BF6000", bold=True)
         else:
             ws.cell(r, 1).font = GOOD
-        for cc, dv, base in ((13, d_k, it["gl_contract"]),
-                             (14, d_e, it["gl_etc"])):
+        for cc, dv, base in ((12, d_k, it["gl_contract"]),
+                             (13, d_e, it["gl_etc"])):
             if dv is not None and base and abs(dv) > max(100, 0.01 * base):
                 ws.cell(r, cc).fill = AMBER
                 ws.cell(r, cc).font = BAD
         if gp is not None and gp_flag:
-            ws.cell(r, 12).font = BAD
+            ws.cell(r, 11).font = BAD
         if not it["in_gl"]:
-            ws.cell(r, 7).font = BAD
-        if needs:
-            ws.cell(r, 17).font = BAD
-    widths = (16, 12, 15, 28, 22, 20, 9, 13, 13, 14, 13, 9, 12, 12, 30, 30, 40)
-    for col, w in zip("ABCDEFGHIJKLMNOPQ", widths):
+            ws.cell(r, 6).font = BAD
+    widths = (16, 12, 28, 22, 20, 9, 13, 13, 14, 13, 9, 12, 12, 30, 30, 42)
+    for col, w in zip("ABCDEFGHIJKLMNOP", widths):
         ws.column_dimensions[col].width = w
     ws.freeze_panes = "A4"
     wb.save(out_path)
@@ -600,14 +580,11 @@ def main() -> int:
         p_note = t_note = ""
         t_frag = None
         if folder is not None:
+            # PDF ONLY for the contract (the user 2026-07-21): the signed
+            # proposal is the one legitimate contract source — no takeoff
+            # bid-sheet substitution. Missing/unpriced PDF = a NEEDS flag,
+            # not a fallback number.
             prop, new_k, p_note = find_proposal(folder, scope, s["desc"])
-            if new_k is None:
-                # No priced proposal PDF → the takeoff's own Bid sheet (the
-                # PDF is printed from it; slab subtotal QBO-verified).
-                bf, bk, bnote = bid_from_takeoff(folder, job, scope, s["desc"])
-                if bk is not None:
-                    prop, new_k = bf, bk
-                    p_note = bnote
             tkoff, new_e, t_note, t_frag = find_takeoff_etc(
                 folder, job, scope, s["desc"])
         else:
@@ -621,7 +598,7 @@ def main() -> int:
                 needs.append("not in General List" if job not in gl_jobs
                              else "in GL but unpriced")
         if new_k is None:
-            needs.append("no priced proposal")
+            needs.append("no priced bid proposal PDF")
         if new_e is None:
             needs.append("no takeoff cost")
         if not in_wip:
