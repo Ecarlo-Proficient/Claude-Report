@@ -379,6 +379,18 @@ def _needs_rich(needs: str):
     return CellRichText(*blocks)
 
 
+def _breadcrumb(path: Path) -> str:
+    """Human-navigable path text starting at CURRENT PROJECTS (the user
+    2026-07-21): the file:// links die on Windows/OneDrive, so estimators
+    need a breadcrumb they can walk in Explorer — 'CURRENT PROJECTS >
+    Residential > <client> > <address> > <file>'. Mac links stay attached."""
+    parts = list(path.parts)
+    for i, p in enumerate(parts):
+        if p.upper() == "CURRENT PROJECTS":
+            return " > ".join(parts[i:])
+    return " > ".join(parts[-4:])
+
+
 def _link(cell, target, fragment: str = ""):
     """file:// hyperlink + blue underline; no-op when target is None."""
     from openpyxl.styles import Font
@@ -450,8 +462,8 @@ def write_report(items, sched_label, out_path: Path) -> None:
                    it["gl_contract"], it["gl_etc"],
                    it["new_contract"], it["new_etc"], gp,
                    d_k, d_e,
-                   (it["proposal"].name if it["proposal"] else it["p_note"]),
-                   ((it["takeoff"].name + (f"  [{it['t_note']}]" if it["t_note"] else ""))
+                   (_breadcrumb(it["proposal"]) if it["proposal"] else it["p_note"]),
+                   ((_breadcrumb(it["takeoff"]) + (f"  [{it['t_note']}]" if it["t_note"] else ""))
                     if it["takeoff"] else it["t_note"]),
                    _needs_rich(needs)])
         r = ws.max_row
