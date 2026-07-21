@@ -535,16 +535,25 @@ def write_report(items, sched_label, out_path: Path) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--project", help="filter to one job #")
+    ap.add_argument("--schedule", help="use this schedule file instead of the latest")
     args = ap.parse_args()
 
     print("\n  RP WIP — schedule-driven method PREVIEW (read-only)")
     print("  " + "─" * 62)
-    best = latest_schedule(RP.SCHEDULE_DIR)
-    if best is None:
-        print("  ✗ no schedule file found")
-        return 1
-    (_k, sched_path) = best
-    label = f"{_k[1]}-{_k[2]}-{_k[0] % 100:02d}"
+    if args.schedule:
+        sched_path = Path(args.schedule)
+        if not sched_path.exists():
+            print(f"  ✗ schedule not found: {sched_path}")
+            return 1
+        m = RP._SCHED_FILE_RE.search(sched_path.name)
+        label = "-".join(m.groups()) if m else sched_path.stem
+    else:
+        best = latest_schedule(RP.SCHEDULE_DIR)
+        if best is None:
+            print("  ✗ no schedule file found")
+            return 1
+        (_k, sched_path) = best
+        label = f"{_k[1]}-{_k[2]}-{_k[0] % 100:02d}"
     print(f"  schedule: {sched_path.name}")
     sched = read_main_schedule(sched_path)
     if args.project:
