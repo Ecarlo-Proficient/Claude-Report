@@ -101,37 +101,42 @@ def main() -> int:
         print("\nNext: python3 jobtread_probe.py --job RP####")
         return 0
 
-    print(f"\n③ job search: {args.job}")
+    print(f"\n③ job lookup: {args.job}")
     r = pave(key, {"organization": {"$": {"id": org_id}, "jobs": {
-        "$": {"size": 5, "where": {"and": [["name", "like", f"%{args.job}%"]]}},
+        "$": {"size": 5, "where": {"and": [["number", "=", args.job.upper()]]}},
         "nodes": {"id": {}, "name": {}, "number": {}}}}})
     jobs = r.get("organization", {}).get("jobs", {}).get("nodes", []) or []
-    print(json.dumps(jobs, indent=2)[:800])
+    if not jobs:
+        r = pave(key, {"organization": {"$": {"id": org_id}, "jobs": {
+            "$": {"size": 5,
+                  "where": {"and": [["name", "like", f"%{args.job}%"]]}},
+            "nodes": {"id": {}, "name": {}, "number": {}}}}})
+        jobs = r.get("organization", {}).get("jobs", {}).get("nodes", []) or []
+    print(json.dumps(jobs, indent=2)[:600])
     if not jobs:
         print("  no match — try part of the address instead of the RP#")
         return 1
     jid = jobs[0]["id"]
 
-    print("\n④ cost/budget data on that job — trying the documented shapes")
-    for label, q in (
-        ("costItems", {"job": {"$": {"id": jid}, "costItems": {
-            "$": {"size": 50},
-            "nodes": {"name": {}, "costCode": {"name": {}},
-                      "unitCost": {}, "quantity": {}, "total": {}}}}}),
-        ("estimates/documents", {"job": {"$": {"id": jid}, "documents": {
-            "$": {"size": 10},
-            "nodes": {"id": {}, "name": {}, "type": {}, "total": {}}}}}),
-        ("budget rollup", {"job": {"$": {"id": jid},
-                                   "estimatedCostTotal": {},
-                                   "actualCostTotal": {},
-                                   "estimatedPriceTotal": {}}}),
-    ):
-        try:
-            r = pave(key, q)
-            print(f"\n  ── {label}:")
-            print(json.dumps(r.get("job"), indent=2)[:1200])
-        except Exception as e:
-            print(f"\n  ── {label}: ✗ {e}")
+    # SCHEMA (verified 2026-07-17 against RP7552: the approved customerOrder
+    # 'Proposal RP7552-1' price/cost == the General List contract/ETC to the
+    # penny): job.documents type 'customerOrder' (Proposal/Selections) carry
+    # price = CONTRACT and cost = BUDGET(ETC); 'vendorBill' docs are actuals
+    # (QBO stays the actuals truth). costItems DOUBLE-COUNT across documents
+    # — sum documents, not items.
+    print("\n④ documents (customerOrder = the budget+contract pair)")
+    r = pave(key, {"job": {"$": {"id": jid}, "documents": {"$": {"size": 50},
+        "nodes": {"fullName": {}, "type": {}, "status": {},
+                  "cost": {}, "price": {}, "createdAt": {}}}}})
+    docs = r.get("job", {}).get("documents", {}).get("nodes", []) or []
+    k = e = 0.0
+    for d in sorted(docs, key=lambda x: (x["type"], str(x["createdAt"]))):
+        print(f"  {d['type']:14} {str(d['status']):10} "
+              f"{str(d['fullName'])[:40]:40} cost={d['cost']} price={d['price']}")
+        if d["type"] == "customerOrder" and d["status"] == "approved":
+            k += float(d["price"] or 0)
+            e += float(d["cost"] or 0)
+    print(f"\n  APPROVED customerOrders → CONTRACT ${k:,.2f} · BUDGET/ETC ${e:,.2f}")
     return 0
 
 
