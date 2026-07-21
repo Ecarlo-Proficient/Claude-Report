@@ -984,18 +984,26 @@ def _apply_hyperlink(cell, target: Optional[Path], fragment: str = "") -> None:
     **Never attaches a hyperlink to a cell whose value is None.** openpyxl's
     behavior in that case is to display the hyperlink URL as the cell text,
     which produces confusing "why is there a URL in this blank cell?"
-    output. If the cell is empty, there's nothing to click anyway."""
+    output. If the cell is empty, there's nothing to click anyway.
+
+    The sheet/cell jump goes in the hyperlink's `location` ATTRIBUTE, never
+    appended to the URI (2026-07-21): a fragment like #'Small Jobs'!C7 puts
+    raw spaces into the .rels target URI — invalid XML that makes Excel
+    demand a repair on open."""
+    from openpyxl.worksheet.hyperlink import Hyperlink
     if target is None:
         return
     if cell.value is None or cell.value == "":
         return
     try:
-        uri = target.as_uri() + fragment
+        uri = target.as_uri()
     except (ValueError, OSError):
         # Path can't be converted to URI (unusual on macOS/Linux) — skip
         # rather than crash the whole run.
         return
-    cell.hyperlink = uri
+    loc = fragment.lstrip("#") if fragment else None
+    cell.hyperlink = Hyperlink(ref=cell.coordinate, target=uri,
+                               location=loc or None)
     cell.font = LINK_FONT
 
 # Full standard construction-WIP column set. Formulas verified 2026-07-02

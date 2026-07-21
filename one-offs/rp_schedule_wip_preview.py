@@ -461,14 +461,23 @@ def _breadcrumb_rich(path: Path, note: str = ""):
 
 
 def _link(cell, target, fragment: str = ""):
-    """file:// hyperlink + blue underline; no-op when target is None."""
+    """file:// hyperlink + blue underline; no-op when target is None.
+
+    The sheet/cell jump goes in the hyperlink's `location` ATTRIBUTE, not
+    appended to the URI (the user 2026-07-21): a fragment like
+    #'JobTread Cost Gral'!D11 puts raw spaces in the .rels target URI —
+    invalid XML that makes Excel demand a repair on open."""
     from openpyxl.styles import Font
+    from openpyxl.worksheet.hyperlink import Hyperlink
     if target is None or cell.value in (None, ""):
         return
     try:
-        cell.hyperlink = Path(target).as_uri() + fragment
+        uri = Path(target).as_uri()
     except (ValueError, OSError):
         return
+    loc = fragment.lstrip("#") if fragment else None
+    cell.hyperlink = Hyperlink(ref=cell.coordinate, target=uri,
+                               location=loc or None)
     cell.font = Font(color="0563C1", underline="single")
 
 
