@@ -468,19 +468,18 @@ def write_report(items, sched_label, out_path: Path) -> None:
     wb = Workbook()
     ws = wb.active
     ws.title = "PREVIEW"
-    ORANGE_BOX = PatternFill("solid", fgColor="FDE9D9")  # AR paste box (pale)
-    BLUE_BOX = PatternFill("solid", fgColor="DEEAF6")    # JR paste box (pale)
     ws["A1"] = (f"SCHEDULE-DRIVEN RP WIP — PREVIEW ONLY (schedule "
                 f"{sched_label}; the WIP master was NOT touched). "
-                f"YELLOW = General List numbers · GREEN = bid proposal / "
+                f"YELLOW = General Lista numbers · GREEN = bid proposal / "
                 f"takeoff numbers · every number links to its source. "
-                f"If we grabbed the WRONG file (or it says missing), paste "
-                f"the correct full file path in your PASTE column.")
+                f"If we grabbed the WRONG file (or it says missing), delete "
+                f"what's in the PROPOSAL PDF / TAKEOFF FILE box and paste the "
+                f"correct full file path there.")
     ws["A1"].font = Font(bold=True)
     ws.append([])
     # Legend — two plain single-font cells (NO rich text anywhere in this
     # workbook: Mac Excel rejects openpyxl's multi-run inline strings with a
-    # 'String properties' repair). AR and JR also get their own columns.
+    # 'String properties' repair). AR and JR each read their own column.
     ORANGE_F = Font(color="ED7D31", bold=True, size=12)
     BLUE_F = Font(color="0070C0", bold=True, size=12)
     ws["A2"] = "ORANGE = AR — bid proposal / contract actions"
@@ -488,12 +487,11 @@ def write_report(items, sched_label, out_path: Path) -> None:
     ws["H2"] = "BLUE = JR — budget takeoff actions"
     ws["H2"].font = BLUE_F
     HDR = ["GROUP", "WIP LINE", "WORK DESC",
-           "ADDRESS", "BUILDER", "IN GEN. LIST?", "GL CONTRACT $",
-           "GL BUDGET $",
+           "ADDRESS", "BUILDER", "IN GENERAL LISTA?",
+           "General Lista CONTRACT $", "General Lista BUDGET $",
            "NEW CONTRACT $ (proposal)", "NEW BUDGET $ (takeoff)", "NEW GP %",
-           "Δ CONTRACT", "Δ BUDGET", "PROPOSAL PDF", "TAKEOFF FILE",
-           "AR — PROPOSAL / CONTRACT", "AR: PASTE CORRECT PROPOSAL PATH HERE",
-           "JR — BUDGET / TAKEOFF", "JR: PASTE CORRECT TAKEOFF PATH HERE"]
+           "PROPOSAL PDF", "TAKEOFF FILE",
+           "AR — PROPOSAL / CONTRACT", "JR — BUDGET / TAKEOFF"]
     ws.append(HDR)
     for c in range(1, len(HDR) + 1):
         cell = ws.cell(3, c)
@@ -502,26 +500,18 @@ def write_report(items, sched_label, out_path: Path) -> None:
         cell.alignment = Alignment(horizontal="center", vertical="center",
                                    wrap_text=True)
         cell.border = BORDER
-    # Header tint mirrors the data: GL columns yellow, source columns green,
-    # the two owner columns carry their owner's color, and each owner's
-    # PASTE box is that owner's pale shade (the user 2026-07-22: AR/JR type
-    # the correct path there when we grabbed the wrong file).
+    # Header tint: General Lista columns yellow, source columns green, the
+    # two owner columns carry their owner's color.
     for c in (7, 8):
         ws.cell(3, c).fill = YELLOW
     for c in (9, 10, 11):
         ws.cell(3, c).fill = GREEN
-    ws.cell(3, 16).font = ORANGE_F
-    ws.cell(3, 17).fill = ORANGE_BOX
-    ws.cell(3, 18).font = BLUE_F
-    ws.cell(3, 19).fill = BLUE_BOX
+    ws.cell(3, 14).font = ORANGE_F
+    ws.cell(3, 15).font = BLUE_F
 
     order = {"NEW — not in WIP": 0, "CHANGED": 1, "MATCHES": 2}
     for it in sorted(items, key=lambda x: (order.get(x["group"], 3),
                                            x["line"])):
-        d_k = (it["new_contract"] - it["gl_contract"]
-               if it["new_contract"] is not None and it["gl_contract"] else None)
-        d_e = (it["new_etc"] - it["gl_etc"]
-               if it["new_etc"] is not None and it["gl_etc"] else None)
         gp, gp_flag = margin_flag(it["new_contract"], it["new_etc"])
         needs = "; ".join(x for x in (it["needs"], gp_flag) if x)
         ar_needs, jr_needs = _split_needs(needs)
@@ -530,54 +520,46 @@ def write_report(items, sched_label, out_path: Path) -> None:
                    ("yes" if it["in_gl"] else "NO"),
                    it["gl_contract"], it["gl_etc"],
                    it["new_contract"], it["new_etc"], gp,
-                   d_k, d_e,
                    (_breadcrumb(it["proposal"]) if it["proposal"]
                     else it["p_note"]),
                    ((_breadcrumb(it["takeoff"])
                      + (f"\n[{it['t_note']}]" if it["t_note"] else ""))
                     if it["takeoff"] else it["t_note"]),
-                   ar_needs, None, jr_needs, None])   # None = empty paste box
+                   ar_needs, jr_needs])
         r = ws.max_row
         for cc in range(1, len(HDR) + 1):
             ws.cell(r, cc).border = BORDER
             ws.cell(r, cc).alignment = Alignment(
-                vertical="top", wrap_text=(cc in (3, 14, 15, 16, 17, 18, 19)))
-        for cc in (7, 8, 9, 10, 12, 13):
+                vertical="top", wrap_text=(cc in (3, 12, 13, 14, 15)))
+        for cc in (7, 8, 9, 10):
             ws.cell(r, cc).number_format = CUR
         ws.cell(r, 11).number_format = "0.0%"
-        # Source-colored numbers: GL yellow · proposal/takeoff green.
+        # Source-colored numbers: General Lista yellow · proposal/takeoff green.
         for cc in (7, 8):
             ws.cell(r, cc).fill = YELLOW
         for cc in (9, 10, 11):
             ws.cell(r, cc).fill = GREEN
-        # Owner NEEDS columns carry the owner's font color; the PASTE boxes
-        # get the owner's pale fill so it reads as 'type here' (left empty).
-        if ws.cell(r, 16).value:
-            ws.cell(r, 16).font = Font(color="ED7D31", bold=True)
-        if ws.cell(r, 18).value:
-            ws.cell(r, 18).font = Font(color="0070C0", bold=True)
-        ws.cell(r, 17).fill = ORANGE_BOX
-        ws.cell(r, 19).fill = BLUE_BOX
-        # Links: line → folder · GL $ → its General List row · new numbers +
-        # file columns → the exact proposal PDF / takeoff workbook.
+        # Owner NEEDS columns carry the owner's font color.
+        if ws.cell(r, 14).value:
+            ws.cell(r, 14).font = Font(color="ED7D31", bold=True)
+        if ws.cell(r, 15).value:
+            ws.cell(r, 15).font = Font(color="0070C0", bold=True)
+        # Links: line → folder · General Lista $ → its list row · new numbers
+        # → the exact proposal PDF / takeoff cell; file columns → the folder
+        # (they delete the path and paste the correct one in the same box).
         _link(ws.cell(r, 2), it.get("folder"))
         gl_frag = (f"#'{it['gl_sheet']}'!C{it['gl_row']}"
                    if it.get("gl_row") else "")
         for cc in (7, 8):
             _link(ws.cell(r, cc), RP.ALPHA_PATH if it.get("gl_row") else None,
                   gl_frag)
-        # NEW CONTRACT $ / NEW BUDGET $ (I/J) OPEN the source — proposal PDF /
-        # takeoff at its exact subtotal cell; the file columns (N/O) open the
-        # FOLDER, the breadcrumb text naming the file to grab (the user
-        # 2026-07-21 — Finder can't pre-select a file via a hyperlink).
         _link(ws.cell(r, 9), it.get("proposal"))
         _link(ws.cell(r, 10), it.get("takeoff"), it.get("t_frag") or "")
-        _link(ws.cell(r, 14),
+        _link(ws.cell(r, 12),
               it["proposal"].parent if it.get("proposal") else None)
-        _link(ws.cell(r, 15),
+        _link(ws.cell(r, 13),
               it["takeoff"].parent if it.get("takeoff") else None)
-        # Distinct groups: NEW rows banded orange in col A; big deltas amber
-        # + bold red so a changed number can't be missed.
+        # GROUP color: NEW banded orange, CHANGED amber-text, MATCHES green.
         if it["group"].startswith("NEW"):
             ws.cell(r, 1).fill = NEW_F
             ws.cell(r, 1).font = BAD
@@ -585,18 +567,12 @@ def write_report(items, sched_label, out_path: Path) -> None:
             ws.cell(r, 1).font = Font(color="BF6000", bold=True)
         else:
             ws.cell(r, 1).font = GOOD
-        for cc, dv, base in ((12, d_k, it["gl_contract"]),
-                             (13, d_e, it["gl_etc"])):
-            if dv is not None and base and abs(dv) > max(100, 0.01 * base):
-                ws.cell(r, cc).fill = AMBER
-                ws.cell(r, cc).font = BAD
         if gp is not None and gp_flag:
             ws.cell(r, 11).font = BAD
         if not it["in_gl"]:
             ws.cell(r, 6).font = BAD
-    widths = (16, 12, 26, 22, 20, 9, 13, 13, 14, 13, 9, 12, 12, 30, 30,
-              32, 30, 32, 30)
-    for col, w in zip("ABCDEFGHIJKLMNOPQRS", widths):
+    widths = (16, 12, 26, 22, 20, 11, 15, 15, 14, 13, 9, 34, 34, 32, 32)
+    for col, w in zip("ABCDEFGHIJKLMNO", widths):
         ws.column_dimensions[col].width = w
     ws.freeze_panes = "A4"
     wb.save(out_path)

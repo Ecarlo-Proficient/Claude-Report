@@ -47,9 +47,10 @@ Last updated: 2026-07-21 (pm)
   instructions color-coded ORANGE = bid-proposal/contract actions (AR) and
   BLUE = budget-takeoff actions (JR), legend on row 2; $ cells open the
   source, file cells open the folder with a `CURRENT PROJECTS > …`
-  breadcrumb for Windows users; each owner also has an editable pale
-  PASTE box to type the correct full path when the tool grabbed the
-  wrong file (the user 2026-07-22). Commercial-takeoff
+  breadcrumb for Windows users. AR/JR fix a wrong/missing file by
+  editing the PROPOSAL PDF / TAKEOFF FILE cell in place — delete it, paste
+  the correct path (the user 2026-07-22). GL is labeled 'General Lista';
+  Δ CONTRACT/Δ BUDGET columns dropped as clutter. Commercial-takeoff
   fallback: a workbook with a 'BID' sheet (CP PM template, budget in
   AP1948/AP1961) wins over 'JobTread Cost Gral' for slab scope — RP6586
   pattern, incl. takeoffs not named with the RP#.
