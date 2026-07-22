@@ -468,10 +468,14 @@ def write_report(items, sched_label, out_path: Path) -> None:
     wb = Workbook()
     ws = wb.active
     ws.title = "PREVIEW"
+    ORANGE_BOX = PatternFill("solid", fgColor="FDE9D9")  # AR paste box (pale)
+    BLUE_BOX = PatternFill("solid", fgColor="DEEAF6")    # JR paste box (pale)
     ws["A1"] = (f"SCHEDULE-DRIVEN RP WIP — PREVIEW ONLY (schedule "
                 f"{sched_label}; the WIP master was NOT touched). "
                 f"YELLOW = General List numbers · GREEN = bid proposal / "
-                f"takeoff numbers · every number links to its source.")
+                f"takeoff numbers · every number links to its source. "
+                f"If we grabbed the WRONG file (or it says missing), paste "
+                f"the correct full file path in your PASTE column.")
     ws["A1"].font = Font(bold=True)
     ws.append([])
     # Legend — two plain single-font cells (NO rich text anywhere in this
@@ -488,7 +492,8 @@ def write_report(items, sched_label, out_path: Path) -> None:
            "GL BUDGET $",
            "NEW CONTRACT $ (proposal)", "NEW BUDGET $ (takeoff)", "NEW GP %",
            "Δ CONTRACT", "Δ BUDGET", "PROPOSAL PDF", "TAKEOFF FILE",
-           "AR — PROPOSAL / CONTRACT", "JR — BUDGET / TAKEOFF"]
+           "AR — PROPOSAL / CONTRACT", "AR: PASTE CORRECT PROPOSAL PATH HERE",
+           "JR — BUDGET / TAKEOFF", "JR: PASTE CORRECT TAKEOFF PATH HERE"]
     ws.append(HDR)
     for c in range(1, len(HDR) + 1):
         cell = ws.cell(3, c)
@@ -498,13 +503,17 @@ def write_report(items, sched_label, out_path: Path) -> None:
                                    wrap_text=True)
         cell.border = BORDER
     # Header tint mirrors the data: GL columns yellow, source columns green,
-    # and the two owner columns carry their owner's color.
+    # the two owner columns carry their owner's color, and each owner's
+    # PASTE box is that owner's pale shade (the user 2026-07-22: AR/JR type
+    # the correct path there when we grabbed the wrong file).
     for c in (7, 8):
         ws.cell(3, c).fill = YELLOW
     for c in (9, 10, 11):
         ws.cell(3, c).fill = GREEN
     ws.cell(3, 16).font = ORANGE_F
-    ws.cell(3, 17).font = BLUE_F
+    ws.cell(3, 17).fill = ORANGE_BOX
+    ws.cell(3, 18).font = BLUE_F
+    ws.cell(3, 19).fill = BLUE_BOX
 
     order = {"NEW — not in WIP": 0, "CHANGED": 1, "MATCHES": 2}
     for it in sorted(items, key=lambda x: (order.get(x["group"], 3),
@@ -527,12 +536,12 @@ def write_report(items, sched_label, out_path: Path) -> None:
                    ((_breadcrumb(it["takeoff"])
                      + (f"\n[{it['t_note']}]" if it["t_note"] else ""))
                     if it["takeoff"] else it["t_note"]),
-                   ar_needs, jr_needs])
+                   ar_needs, None, jr_needs, None])   # None = empty paste box
         r = ws.max_row
         for cc in range(1, len(HDR) + 1):
             ws.cell(r, cc).border = BORDER
             ws.cell(r, cc).alignment = Alignment(
-                vertical="top", wrap_text=(cc in (3, 14, 15, 16, 17)))
+                vertical="top", wrap_text=(cc in (3, 14, 15, 16, 17, 18, 19)))
         for cc in (7, 8, 9, 10, 12, 13):
             ws.cell(r, cc).number_format = CUR
         ws.cell(r, 11).number_format = "0.0%"
@@ -541,11 +550,14 @@ def write_report(items, sched_label, out_path: Path) -> None:
             ws.cell(r, cc).fill = YELLOW
         for cc in (9, 10, 11):
             ws.cell(r, cc).fill = GREEN
-        # Owner columns carry the owner's font color.
+        # Owner NEEDS columns carry the owner's font color; the PASTE boxes
+        # get the owner's pale fill so it reads as 'type here' (left empty).
         if ws.cell(r, 16).value:
             ws.cell(r, 16).font = Font(color="ED7D31", bold=True)
-        if ws.cell(r, 17).value:
-            ws.cell(r, 17).font = Font(color="0070C0", bold=True)
+        if ws.cell(r, 18).value:
+            ws.cell(r, 18).font = Font(color="0070C0", bold=True)
+        ws.cell(r, 17).fill = ORANGE_BOX
+        ws.cell(r, 19).fill = BLUE_BOX
         # Links: line → folder · GL $ → its General List row · new numbers +
         # file columns → the exact proposal PDF / takeoff workbook.
         _link(ws.cell(r, 2), it.get("folder"))
@@ -582,8 +594,9 @@ def write_report(items, sched_label, out_path: Path) -> None:
             ws.cell(r, 11).font = BAD
         if not it["in_gl"]:
             ws.cell(r, 6).font = BAD
-    widths = (16, 12, 26, 22, 20, 9, 13, 13, 14, 13, 9, 12, 12, 30, 30, 34, 34)
-    for col, w in zip("ABCDEFGHIJKLMNOPQ", widths):
+    widths = (16, 12, 26, 22, 20, 9, 13, 13, 14, 13, 9, 12, 12, 30, 30,
+              32, 30, 32, 30)
+    for col, w in zip("ABCDEFGHIJKLMNOPQRS", widths):
         ws.column_dimensions[col].width = w
     ws.freeze_panes = "A4"
     wb.save(out_path)
