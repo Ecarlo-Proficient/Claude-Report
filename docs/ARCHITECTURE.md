@@ -188,8 +188,10 @@ MFD/CP reimburse per `(project, month)` — the sub's work month (from the bill 
 `Period …`) against the draw's month (from the invoice memo's `Draw #N (Period …)`),
 so a May draw can't offset June sub costs; RP invoices are lump per scope → matched by
 project. Chronological FIFO; a same-period GC draw arriving first is genuine prefunding.
-Output `~/Documents/CompanyHealth/Sub LOC Report.xlsx` (chmod 600): peak running
-balance = the LOC truly needed, plus the average draw→repay float.
+Output `~/Documents/CompanyHealth/Sub LOC Report.xlsx` (chmod 600): Summary (company
+peak = LOC truly needed + avg draw→repay float), **By Division** KPI (per-division peak /
+float / outstanding), Ledger (each draw stamped with its reimbursing invoice + client-paid
+date), Per-Project.
 
 ### Money Bleeds — company-health exceptions (2026-07-16)
 

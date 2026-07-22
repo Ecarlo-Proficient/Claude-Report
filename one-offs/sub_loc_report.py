@@ -113,6 +113,17 @@ def _month_of(d: Optional[dt.date]) -> Optional[str]:
     return f"{d.year:04d}-{d.month:02d}" if d else None
 
 
+def _division_of(project: str) -> str:
+    p = (project or "").upper()
+    if p.startswith("MFD"):
+        return "MFD"
+    if p.startswith("CP"):
+        return "CP"
+    if p.startswith("RP"):
+        return "RP"
+    return "Other"
+
+
 # ────────────────────────── QBO pulls ──────────────────────────
 
 def _line_project(line: dt) -> Optional[str]:
@@ -263,6 +274,10 @@ def run_fifo(draws: List[dict], repays: List[dict]) -> Tuple[List[dict], dict]:
     applied_total = prefunded_total = 0.0
     bal = peak = 0.0
     peak_date = None
+    div: Dict[str, dict] = defaultdict(
+        lambda: {"drawn": 0.0, "prefunded": 0.0, "repaid": 0.0, "wl": 0.0,
+                 "wa": 0.0, "n_draws": 0, "outstanding": 0.0,
+                 "peak": 0.0, "peak_date": None})
 
     for e in merged:
         p = bucket(e)
@@ -275,7 +290,8 @@ def run_fifo(draws: List[dict], repays: List[dict]) -> Tuple[List[dict], dict]:
             note = f"prefunded ${use_pre:,.0f}" if use_pre > eps else ""
             ev = {"date": e["date"], "type": "DRAW", "project": e["project"],
                   "party": e["party"], "out": amt, "inn": 0.0, "lag": None,
-                  "note": note, "balance": bal, "reimb": []}
+                  "note": note, "balance": bal, "reimb": [],
+                  "loc_delta": loc_part if loc_part > eps else 0.0}
             if loc_part > eps:
                 # node carries a ref to its ledger row so repayments can stamp
                 # the reimbursing invoice + client-paid date back onto the draw
@@ -283,6 +299,10 @@ def run_fifo(draws: List[dict], repays: List[dict]) -> Tuple[List[dict], dict]:
                 bal += loc_part
             ev["balance"] = bal
             events.append(ev)
+            dv = div[_division_of(e["project"])]
+            dv["drawn"] += amt
+            dv["prefunded"] += use_pre
+            dv["n_draws"] += 1
         else:
             R = e["amount"]
             applied_here = 0.0
@@ -301,6 +321,10 @@ def run_fifo(draws: List[dict], repays: List[dict]) -> Tuple[List[dict], dict]:
                     first_lag = days
                 # stamp the reimbursing invoice + client-paid date on the draw
                 node["ev"]["reimb"].append((e.get("invoice", ""), e["date"]))
+                dv = div[_division_of(e["project"])]
+                dv["repaid"] += take
+                dv["wl"] += take * days
+                dv["wa"] += take
                 if node["remaining"] <= eps:
                     q.pop(0)
             bal -= applied_here
@@ -310,7 +334,8 @@ def run_fifo(draws: List[dict], repays: List[dict]) -> Tuple[List[dict], dict]:
             events.append({"date": e["date"], "type": "REPAY", "project": e["project"],
                            "party": e["party"], "out": 0.0, "inn": applied_here,
                            "lag": first_lag, "note": note, "balance": bal,
-                           "invoice": e.get("invoice", ""), "reimb": []})
+                           "invoice": e.get("invoice", ""), "reimb": [],
+                           "loc_delta": -applied_here})
         if bal > peak:
             peak, peak_date = bal, e["date"]
 
@@ -318,6 +343,29 @@ def run_fifo(draws: List[dict], repays: List[dict]) -> Tuple[List[dict], dict]:
     outstanding = sum(n["remaining"] for q in queues.values() for n in q)
     wl = sum(a * days for a, days in lags)
     wa = sum(a for a, _ in lags)
+
+    # per-division outstanding (from the remaining FIFO queues)
+    for (proj, _per), q in queues.items():
+        div[_division_of(proj)]["outstanding"] += sum(n["remaining"] for n in q)
+    # per-division peak = high-water of that division's own running balance
+    dbal: Dict[str, float] = defaultdict(float)
+    for e in events:                          # events are in date order
+        dv = div[_division_of(e["project"])]
+        dbal_key = _division_of(e["project"])
+        dbal[dbal_key] += e["loc_delta"]
+        if dbal[dbal_key] > dv["peak"]:
+            dv["peak"] = dbal[dbal_key]
+            dv["peak_date"] = e["date"]
+    divisions = {}
+    for name, a in div.items():
+        divisions[name] = {
+            "peak": a["peak"], "peak_date": a["peak_date"],
+            "drawn": a["drawn"], "prefunded": a["prefunded"],
+            "repaid": a["repaid"], "outstanding": a["outstanding"],
+            "n_draws": a["n_draws"],
+            "avg_lag": (a["wl"] / a["wa"]) if a["wa"] else 0.0,
+        }
+
     summary = {
         "n_draws": len(draws), "n_repay_chunks": len(lags),
         "total_drawn": total_drawn, "total_repaid": applied_total,
@@ -326,6 +374,7 @@ def run_fifo(draws: List[dict], repays: List[dict]) -> Tuple[List[dict], dict]:
         "avg_lag": (wl / wa) if wa else 0.0,
         "avg_draw": (total_drawn / len(draws)) if draws else 0.0,
         "avg_repay": (applied_total / len(lags)) if lags else 0.0,
+        "divisions": divisions,
     }
     return events, summary
 
@@ -374,6 +423,68 @@ def _hdr(ws, headers, widths):
     for i, w in enumerate(widths):
         ws.column_dimensions[get_column_letter(i + 1)].width = w
     ws.freeze_panes = "A2"
+
+
+_DIV_COLOR = {"MFD": "305496", "CP": "1F6B4C", "RP": "7030A0", "Other": "808080"}
+
+
+def _write_division_kpi(wb, divisions: dict) -> None:
+    """Per-division LOC KPI — judge the LOC need by division at a glance."""
+    ws = wb.create_sheet("By Division")
+    ws.sheet_view.showGridLines = False
+    _hdr(ws, ["DIVISION", "PEAK LOC NEEDED $", "PEAK DATE", "DRAWN $",
+              "PREFUNDED $", "REPAID $", "OUTSTANDING $", "AVG FLOAT (days)",
+              "# DRAWS"],
+         [11, 18, 13, 15, 14, 14, 15, 16, 9])
+    order = sorted(divisions.items(), key=lambda kv: -kv[1]["peak"])
+    for i, (name, d) in enumerate(order):
+        ws.append([name, round(d["peak"]),
+                   d["peak_date"].isoformat() if d["peak_date"] else "—",
+                   round(d["drawn"]), round(d["prefunded"]), round(d["repaid"]),
+                   round(d["outstanding"]), round(d["avg_lag"], 1), d["n_draws"]])
+        r = ws.max_row
+        for c in range(1, 10):
+            ws.cell(r, c).border = _BORDER
+            if i % 2:
+                ws.cell(r, c).fill = _ZEBRA
+        dc = ws.cell(r, 1)
+        dc.fill = PatternFill("solid", fgColor=_DIV_COLOR.get(name, "808080"))
+        dc.font = Font(bold=True, color="FFFFFF")
+        for c in (2, 4, 5, 6, 7):
+            ws.cell(r, c).number_format = CUR
+        ws.cell(r, 2).font = Font(bold=True)
+        if d["outstanding"] > 0:
+            ws.cell(r, 7).font = Font(bold=True, color="9C0006")
+    last = ws.max_row
+    # total row
+    if order:
+        ws.append(["TOTAL", round(sum(d["peak"] for _, d in order)), "",
+                   round(sum(d["drawn"] for _, d in order)),
+                   round(sum(d["prefunded"] for _, d in order)),
+                   round(sum(d["repaid"] for _, d in order)),
+                   round(sum(d["outstanding"] for _, d in order)), "",
+                   sum(d["n_draws"] for _, d in order)])
+        tr = ws.max_row
+        for c in range(1, 10):
+            ws.cell(tr, c).fill = PatternFill("solid", fgColor="D9E1F2")
+            ws.cell(tr, c).border = _BORDER
+            ws.cell(tr, c).font = Font(bold=True)
+        for c in (2, 4, 5, 6, 7):
+            ws.cell(tr, c).number_format = CUR
+        # note: the sum of per-division peaks ≥ the company peak (peaks can fall
+        # on different days) — it's an upper bound if each division held its own
+        # LOC. The company-wide peak is on the Summary sheet.
+    for col in (2, 7):     # data bars on peak + outstanding
+        ws.conditional_formatting.add(
+            f"{get_column_letter(col)}2:{get_column_letter(col)}{last}",
+            DataBarRule(start_type="num", start_value=0, end_type="max",
+                        color="F8696B" if col == 7 else "8EAADB", showValue=True))
+    ws.append([])
+    ws.append(["Note: division peaks can fall on different days, so they sum to "
+               "an upper bound (each division on its own LOC). The single "
+               "company-wide LOC need is on the Summary sheet."])
+    ws.cell(ws.max_row, 1).font = Font(italic=True, color="808080")
+    ws.sheet_properties.tabColor = "305496"
 
 
 def write_workbook(out: Path, events, summary, projects, start, today):
@@ -429,6 +540,9 @@ def write_workbook(out: Path, events, summary, projects, start, today):
     line("# draws", summary["n_draws"], money=False)
     line("# repayment chunks", summary["n_repay_chunks"], money=False)
     s.sheet_properties.tabColor = "1F3864"
+
+    # ── By Division (KPI) ──
+    _write_division_kpi(wb, summary.get("divisions") or {})
 
     # ── Ledger (running balance) ──
     lg = wb.create_sheet("Ledger")
