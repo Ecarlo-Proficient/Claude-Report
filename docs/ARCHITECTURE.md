@@ -217,6 +217,12 @@ flowchart LR
     MB --> OUT
 ```
 
+**`health-dashboard/company_dashboard.py`** (read-only, no QBO) — the consolidation
+target: reads the tracker workbooks in `~/Documents/CompanyHealth/` (Money Bleeds,
+Sub LOC today) and renders one self-contained `Company Dashboard.html` — KPI tiles, the
+Sub LOC by-division bars, and a freshness badge per source. The Excels are the data
+layer; the HTML reads all of them.
+
 Read-only exception checks: **draws with no invoice** (MFD: latest numbered draw folder
 vs latest QBO invoice date; CP: latest draw's G702 earned-less-retainage vs cumulative
 QBO invoiced), the **Texas lien-notice clock** on every open construction invoice

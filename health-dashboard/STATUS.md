@@ -31,10 +31,19 @@ exposures or business analysis here (those live in the owner's vault).
 - **`qbo_health.py`** (legacy KPI dashboard) still present, superseded — decide
   whether to retire or keep for its AR/AP-aging + cash sheets.
 
+## DONE (cont.)
+- **`company_dashboard.py`** — consolidated HTML view. Reads the tracker
+  workbooks (Money Bleeds, Sub LOC) and emits one self-contained
+  `Company Dashboard.html` (chmod 600): Money Bleeds KPI tiles, Sub LOC peak +
+  by-division bars, per-source freshness badges. No QBO/Touch ID. First step of
+  the "one dashboard reading all trackers" goal.
+
 ## TO DO (requested, not yet built)
+- Fold more sources into `company_dashboard.py`: cash/AR-AP aging (health_dashboard),
+  WIP highlights, Bill Tracker detail. Currently MB + LOC only.
 - Fold the legacy hard-fact sheets (AR/AP aging, cash) into the watchboard.
 - Auto morning refresh (launchd on this Mac) + a routine that reads the
-  workbook and messages a summary. Needs the Touch-ID/volume constraints solved.
+  workbook/HTML and messages a summary. Needs the Touch-ID/volume constraints solved.
 - **Bid List reconciliation** (Notion Bid List ↔ `Bid List
   Residential-Commercial.xlsx`, match on project #): needs a SHARED Notion
   client for headless runs (the interactive MCP won't run under a scheduler).

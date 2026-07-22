@@ -3,6 +3,23 @@
 > Commands below run from the repo root. Uses the shared QBO vault
 > (`shared/qbo_vault.py`) — one Touch ID per run.
 
+## Company Dashboard (`company_dashboard.py`) — one HTML view of everything
+
+Reads the tracker workbooks (the data layer) and renders ONE self-contained
+HTML page — no QBO calls, no Touch ID, no server, offline. Regenerate the
+trackers first, then run this.
+
+```bash
+python3 health-dashboard/company_dashboard.py --open
+```
+
+Output: `~/Documents/CompanyHealth/Company Dashboard.html` (chmod 600). Shows
+the Money Bleeds KPI tiles, the Sub LOC peak + by-division bars, and a
+freshness badge per source workbook (red if a tracker is >7 days stale).
+Reads `Money Bleeds.xlsx` + `Sub LOC Report.xlsx` today; Bill Tracker /
+health_dashboard show freshness only until folded in. This is the start of the
+consolidation goal (one dashboard reading all trackers).
+
 ## Money Bleeds (`money_bleeds.py`) — the current company-health report
 
 The KPI dashboard was retired as "doing too much / not accurate enough"
