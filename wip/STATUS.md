@@ -16,11 +16,15 @@ Last updated: 2026-07-21 (pm)
   text; folder + data-source links moved to their own PROJECT FOLDER /
   DATA SOURCE columns. OVERBILLINGS/UNDERBILLINGS headers shortened to fit.
   FLAGS states the classify reason on red rows (never "OK" on red).
-- **Hyperlink fragments ride the `location` attribute** (2026-07-21): sheet
-  jumps like `#'Small Jobs'!C7` used to be appended to the file URI, putting
-  raw spaces in the .rels target — invalid XML, Excel demanded a repair on
-  open. `_apply_hyperlink` (and the preview's `_link`) now write the URI
-  clean and the jump as `location=`.
+- **Excel 'repair on open' eliminated — no rich text, clean links** (2026-07-21):
+  two causes, both fixed & verified by opening in Mac Excel (no dialog, no
+  'Repaired' title). (1) Hyperlink sheet-jumps (`'Small Jobs'!C7`) were
+  appended to the file URI, putting raw spaces in the .rels target — invalid
+  XML; `_apply_hyperlink`/`_link` now write a clean URI + the jump as
+  `location=`. (2) openpyxl's multi-run inline rich text ('String properties'
+  repair) is gone: the preview carries NO rich text at all — AR (orange) and
+  JR (blue) NEEDS are now SEPARATE single-font columns, the legend is two
+  plain cells, breadcrumbs are plain hyperlinked text.
 - **User cell comments survive every sync** (2026-07-16): harvested by
   (PROJECT #, header) before the full-replace, re-attached after; a comment
   whose line left the tab prints loudly instead of vanishing.

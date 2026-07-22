@@ -377,7 +377,7 @@ _GP_LO = 0.05     # below → margin too thin (budget too high / contract too lo
 def margin_flag(contract, budget):
     """(gp_pct, instructions) for a contract/budget pair — None when sane.
     Instructions are estimator to-dos (the user 2026-07-21), one per line;
-    _needs_rich colors them BLUE (budget side) / ORANGE (proposal side)."""
+    `_split_needs` routes them to the AR (proposal) or JR (budget) column."""
     if not contract or budget is None:
         return None, None
     gp = (contract - budget) / contract
@@ -397,34 +397,23 @@ def margin_flag(contract, budget):
     return gp, None
 
 
-def _needs_rich(needs: str):
-    """NEEDS as color-coded rich text, ONE ITEM PER LINE (the user
-    2026-07-21): ORANGE = bid-proposal/contract actions (AR), BLUE =
-    budget/takeoff actions (JR), red = everything else (not in the list,
-    no folder…)."""
-    if not needs:
-        return None
-    from openpyxl.cell.rich_text import CellRichText, TextBlock
-    from openpyxl.cell.text import InlineFont
-    BLUE = InlineFont(color="0070C0", b=True)
-    ORANGE = InlineFont(color="ED7D31", b=True)
-    RED = InlineFont(color="9C0006", b=True)
-    parts = [p.strip() for p in re.split(r"[;\n]", needs) if p.strip()]
-    blocks = []
-    for i, p in enumerate(parts):
+def _split_needs(needs: str):
+    """Route each NEEDS instruction to (AR text, JR text) — the user
+    2026-07-21 wants owners in SEPARATE COLUMNS, not colored runs in one
+    cell. AR (Accounts/estimator) = anything about the bid proposal PDF;
+    JR = budget/takeoff/sheet/folder work; pure GL-status notes are dropped
+    (the GROUP + 'IN GEN. LIST?' columns already say that).
+
+    Separate single-font columns replace the old rich-text cell entirely —
+    Mac Excel rejected openpyxl's multi-run inline strings ('String
+    properties' repair), so the report now carries NO rich text at all."""
+    ar, jr = [], []
+    for p in (p.strip() for p in re.split(r"[;\n]", needs or "") if p.strip()):
         u = p.upper()
-        # PROPOSAL is checked FIRST: mixed sentences ("contract below
-        # budget — export the bid proposal…") are AR's action, and every AR
-        # item names the proposal PDF explicitly.
-        if "PROPOSAL" in u:
-            f = ORANGE
-        elif ("BUDGET" in u or "TAKEOFF" in u or "COST" in u or "SHEET" in u
-                or "MARGIN" in u or "ETC" in u):
-            f = BLUE
-        else:
-            f = RED
-        blocks.append(TextBlock(f, p + ("\n" if i < len(parts) - 1 else "")))
-    return CellRichText(*blocks)
+        if "GENERAL LIST" in u or "IN GL" in u or "UNPRICED" in u:
+            continue
+        (ar if "PROPOSAL" in u else jr).append(p)
+    return "\n".join(ar), "\n".join(jr)
 
 
 def _breadcrumb(path: Path) -> str:
@@ -437,27 +426,6 @@ def _breadcrumb(path: Path) -> str:
         if p.upper() == "CURRENT PROJECTS":
             return " > ".join(parts[i:])
     return " > ".join(parts[-4:])
-
-
-def _breadcrumb_rich(path: Path, note: str = ""):
-    """Breadcrumb with the FILENAME bolded (the user 2026-07-21: the folder
-    link can't pre-select the file, so the cell itself must make obvious
-    which file the number was read from). Optional note renders as a gray
-    second line (e.g. the takeoff sheet + cell)."""
-    from openpyxl.cell.rich_text import CellRichText, TextBlock
-    from openpyxl.cell.text import InlineFont
-    LINKISH = InlineFont(color="0563C1", u="single")
-    FILE = InlineFont(color="0563C1", u="single", b=True)
-    NOTE = InlineFont(color="595959", i=True)
-    crumb = _breadcrumb(path)
-    head, _sep, fname = crumb.rpartition(" > ")
-    blocks = []
-    if head:
-        blocks.append(TextBlock(LINKISH, head + " > "))
-    blocks.append(TextBlock(FILE, fname or crumb))
-    if note:
-        blocks.append(TextBlock(NOTE, f"\n[{note}]"))
-    return CellRichText(*blocks)
 
 
 def _link(cell, target, fragment: str = ""):
@@ -506,23 +474,21 @@ def write_report(items, sched_label, out_path: Path) -> None:
                 f"takeoff numbers · every number links to its source.")
     ws["A1"].font = Font(bold=True)
     ws.append([])
-    # NEEDS legend — who owns which color (the user 2026-07-21).
-    from openpyxl.cell.rich_text import CellRichText, TextBlock
-    from openpyxl.cell.text import InlineFont
-    # EVERY run must carry a color: Mac Excel treats a color-less rPr as
-    # corrupt and demands a repair on open (found 2026-07-21 by bisection —
-    # a single <rPr><b/><sz/></rPr> spacer run broke the whole workbook).
-    ws["A2"] = CellRichText(
-        TextBlock(InlineFont(color="ED7D31", b=True, sz=12),
-                  "ORANGE = AR — bid proposal / contract actions"),
-        TextBlock(InlineFont(color="000000", b=True, sz=12), "      "),
-        TextBlock(InlineFont(color="0070C0", b=True, sz=12),
-                  "BLUE = JR — budget takeoff actions"))
+    # Legend — two plain single-font cells (NO rich text anywhere in this
+    # workbook: Mac Excel rejects openpyxl's multi-run inline strings with a
+    # 'String properties' repair). AR and JR also get their own columns.
+    ORANGE_F = Font(color="ED7D31", bold=True, size=12)
+    BLUE_F = Font(color="0070C0", bold=True, size=12)
+    ws["A2"] = "ORANGE = AR — bid proposal / contract actions"
+    ws["A2"].font = ORANGE_F
+    ws["H2"] = "BLUE = JR — budget takeoff actions"
+    ws["H2"].font = BLUE_F
     HDR = ["GROUP", "WIP LINE", "WORK DESC",
            "ADDRESS", "BUILDER", "IN GEN. LIST?", "GL CONTRACT $",
            "GL BUDGET $",
            "NEW CONTRACT $ (proposal)", "NEW BUDGET $ (takeoff)", "NEW GP %",
-           "Δ CONTRACT", "Δ BUDGET", "PROPOSAL PDF", "TAKEOFF FILE", "NEEDS"]
+           "Δ CONTRACT", "Δ BUDGET", "PROPOSAL PDF", "TAKEOFF FILE",
+           "AR — PROPOSAL / CONTRACT", "JR — BUDGET / TAKEOFF"]
     ws.append(HDR)
     for c in range(1, len(HDR) + 1):
         cell = ws.cell(3, c)
@@ -531,11 +497,14 @@ def write_report(items, sched_label, out_path: Path) -> None:
         cell.alignment = Alignment(horizontal="center", vertical="center",
                                    wrap_text=True)
         cell.border = BORDER
-    # Header tint mirrors the data: GL columns yellow, source columns green.
+    # Header tint mirrors the data: GL columns yellow, source columns green,
+    # and the two owner columns carry their owner's color.
     for c in (7, 8):
         ws.cell(3, c).fill = YELLOW
     for c in (9, 10, 11):
         ws.cell(3, c).fill = GREEN
+    ws.cell(3, 16).font = ORANGE_F
+    ws.cell(3, 17).font = BLUE_F
 
     order = {"NEW — not in WIP": 0, "CHANGED": 1, "MATCHES": 2}
     for it in sorted(items, key=lambda x: (order.get(x["group"], 3),
@@ -546,22 +515,24 @@ def write_report(items, sched_label, out_path: Path) -> None:
                if it["new_etc"] is not None and it["gl_etc"] else None)
         gp, gp_flag = margin_flag(it["new_contract"], it["new_etc"])
         needs = "; ".join(x for x in (it["needs"], gp_flag) if x)
+        ar_needs, jr_needs = _split_needs(needs)
         ws.append([it["group"], it["line"], it["desc"],
                    it["address"], it["builder"],
                    ("yes" if it["in_gl"] else "NO"),
                    it["gl_contract"], it["gl_etc"],
                    it["new_contract"], it["new_etc"], gp,
                    d_k, d_e,
-                   (_breadcrumb_rich(it["proposal"]) if it["proposal"]
+                   (_breadcrumb(it["proposal"]) if it["proposal"]
                     else it["p_note"]),
-                   (_breadcrumb_rich(it["takeoff"], it["t_note"] or "")
+                   ((_breadcrumb(it["takeoff"])
+                     + (f"\n[{it['t_note']}]" if it["t_note"] else ""))
                     if it["takeoff"] else it["t_note"]),
-                   _needs_rich(needs)])
+                   ar_needs, jr_needs])
         r = ws.max_row
         for cc in range(1, len(HDR) + 1):
             ws.cell(r, cc).border = BORDER
             ws.cell(r, cc).alignment = Alignment(
-                vertical="top", wrap_text=(cc in (3, 14, 15, 16)))
+                vertical="top", wrap_text=(cc in (3, 14, 15, 16, 17)))
         for cc in (7, 8, 9, 10, 12, 13):
             ws.cell(r, cc).number_format = CUR
         ws.cell(r, 11).number_format = "0.0%"
@@ -570,6 +541,11 @@ def write_report(items, sched_label, out_path: Path) -> None:
             ws.cell(r, cc).fill = YELLOW
         for cc in (9, 10, 11):
             ws.cell(r, cc).fill = GREEN
+        # Owner columns carry the owner's font color.
+        if ws.cell(r, 16).value:
+            ws.cell(r, 16).font = Font(color="ED7D31", bold=True)
+        if ws.cell(r, 17).value:
+            ws.cell(r, 17).font = Font(color="0070C0", bold=True)
         # Links: line → folder · GL $ → its General List row · new numbers +
         # file columns → the exact proposal PDF / takeoff workbook.
         _link(ws.cell(r, 2), it.get("folder"))
@@ -578,14 +554,10 @@ def write_report(items, sched_label, out_path: Path) -> None:
         for cc in (7, 8):
             _link(ws.cell(r, cc), RP.ALPHA_PATH if it.get("gl_row") else None,
                   gl_frag)
-        # NEW CONTRACT $ opens the PDF itself; the PROPOSAL PDF column
-        # opens the FOLDER so the PDF can be grabbed/attached (the user
-        # 2026-07-17 — a plain file link can't make Finder pre-select the
-        # file, so the cell text carries the exact filename to look for).
-        # Division of labor (the user 2026-07-21): the $ columns (I/J) OPEN
-        # the source — proposal PDF / takeoff at its exact subtotal cell —
-        # while the file columns (N/O) open the FOLDER, breadcrumb text
-        # naming the file to grab (Finder can't pre-select via hyperlink).
+        # NEW CONTRACT $ / NEW BUDGET $ (I/J) OPEN the source — proposal PDF /
+        # takeoff at its exact subtotal cell; the file columns (N/O) open the
+        # FOLDER, the breadcrumb text naming the file to grab (the user
+        # 2026-07-21 — Finder can't pre-select a file via a hyperlink).
         _link(ws.cell(r, 9), it.get("proposal"))
         _link(ws.cell(r, 10), it.get("takeoff"), it.get("t_frag") or "")
         _link(ws.cell(r, 14),
@@ -610,8 +582,8 @@ def write_report(items, sched_label, out_path: Path) -> None:
             ws.cell(r, 11).font = BAD
         if not it["in_gl"]:
             ws.cell(r, 6).font = BAD
-    widths = (16, 12, 28, 22, 20, 9, 13, 13, 14, 13, 9, 12, 12, 30, 30, 42)
-    for col, w in zip("ABCDEFGHIJKLMNOP", widths):
+    widths = (16, 12, 26, 22, 20, 9, 13, 13, 14, 13, 9, 12, 12, 30, 30, 34, 34)
+    for col, w in zip("ABCDEFGHIJKLMNOPQ", widths):
         ws.column_dimensions[col].width = w
     ws.freeze_panes = "A4"
     wb.save(out_path)
