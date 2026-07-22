@@ -509,10 +509,13 @@ def write_report(items, sched_label, out_path: Path) -> None:
     # NEEDS legend — who owns which color (the user 2026-07-21).
     from openpyxl.cell.rich_text import CellRichText, TextBlock
     from openpyxl.cell.text import InlineFont
+    # EVERY run must carry a color: Mac Excel treats a color-less rPr as
+    # corrupt and demands a repair on open (found 2026-07-21 by bisection —
+    # a single <rPr><b/><sz/></rPr> spacer run broke the whole workbook).
     ws["A2"] = CellRichText(
         TextBlock(InlineFont(color="ED7D31", b=True, sz=12),
                   "ORANGE = AR — bid proposal / contract actions"),
-        TextBlock(InlineFont(b=True, sz=12), "      "),
+        TextBlock(InlineFont(color="000000", b=True, sz=12), "      "),
         TextBlock(InlineFont(color="0070C0", b=True, sz=12),
                   "BLUE = JR — budget takeoff actions"))
     HDR = ["GROUP", "WIP LINE", "WORK DESC",
