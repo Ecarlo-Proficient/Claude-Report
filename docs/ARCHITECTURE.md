@@ -181,6 +181,16 @@ flowchart LR
     QBO --> LOANS --> P7
 ```
 
+**`one-offs/sub_loc_report.py`** (read-only) — subcontractor line-of-credit float
+model. Sub bills (memo ~ "sub") paid → LOC draws (BillPayment date, allocated across
+each bill's line projects); client Payments → repayments. Matched **by draw period**:
+MFD/CP reimburse per `(project, month)` — the sub's work month (from the bill memo's
+`Period …`) against the draw's month (from the invoice memo's `Draw #N (Period …)`),
+so a May draw can't offset June sub costs; RP invoices are lump per scope → matched by
+project. Chronological FIFO; a same-period GC draw arriving first is genuine prefunding.
+Output `~/Documents/CompanyHealth/Sub LOC Report.xlsx` (chmod 600): peak running
+balance = the LOC truly needed, plus the average draw→repay float.
+
 ### Money Bleeds — company-health exceptions (2026-07-16)
 
 ```mermaid
@@ -189,10 +199,11 @@ flowchart LR
     classDef tool fill:#f6f5f1,stroke:#4b5563,color:#1f2937
     classDef out fill:#dfeae2,stroke:#3E7A5C,color:#1f2937
 
-    QBO[("QBO invoices\nvia shared/qbo_api")]:::src
+    QBO[("QBO invoices + PurchaseOrders\nvia shared/qbo_api")]:::src
     WM[("WIP - MASTER new.xlsx\n'WIP Master' tab (MFD actives)\n'Test - RP' tab (RP classify)")]:::src
     MFDV[("Multi Family volume\n…/&lt;client&gt;/&lt;MFD#&gt;/PM MISC/DRAWS")]:::src
     CPV[("Common volume\nCP project folders → latest draw G702\nvia shared/draws.py")]:::src
+    BT[("Bill Tracker.xlsx\nAP bills ↔ GC invoice (sync-ap)\nread-only")]:::src
     MB["health-dashboard/\nmoney_bleeds.py"]:::tool
     OUT[("Money Bleeds.xlsx\n~/Documents/CompanyHealth\nprivate · chmod 600")]:::out
 
@@ -200,17 +211,22 @@ flowchart LR
     WM --> MB
     MFDV --> MB
     CPV --> MB
+    BT --> MB
     MB --> OUT
 ```
 
-Three exception checks, all read-only: **draws with no invoice** (MFD: latest numbered
-draw folder vs latest QBO invoice date; CP: latest draw's G702 earned-less-retainage vs
-cumulative QBO invoiced), the **Texas lien-notice clock** on every open invoice
-(commercial 15th-of-3rd-month, residential 15th-of-2nd; work month defaults to invoice
-month − 1 — conservative; retainage listed on its own statutory track), and **RP
-wrap-up** (100% in the General List but not fully billed, read from the Test - RP tab).
-CP draw discovery + G702 parsing moved to **`shared/draws.py`** (shared with
-`wip/cp_wip_reader.py` — tools never import tools).
+Read-only exception checks: **draws with no invoice** (MFD: latest numbered draw folder
+vs latest QBO invoice date; CP: latest draw's G702 earned-less-retainage vs cumulative
+QBO invoiced), the **Texas lien-notice clock** on every open construction invoice
+(commercial 15th-of-3rd-month, residential 15th-of-2nd; work month = invoice month;
+OK rows hidden; retainage + equipment-lease/note invoices split off their own sheets),
+**RP wrap-up** (slab lines 100% in the General List but not fully billed, from the
+Test - RP tab), **unused POs** (open QBO purchase orders ≥30 days old with no bill
+linked), and **open bills (AP)** (read from the Bill Tracker, never recomputed —
+grouped by AR state × the sub's lien clock). CP draw discovery + G702 parsing live in
+**`shared/draws.py`** (shared with `wip/cp_wip_reader.py` — tools never import tools).
+The rich Excel (grouped bands, data bars, color scales, colored tabs) is a deliberate
+exception to the plain-Excel rule — the user asked for an at-a-glance watchboard.
 
 project-pnl reads the WIP master's **Test-Master** tab (the readers' unified MFD+CP+RP
 table) to pre-fill **Original Contract / ETC + Approved COs** (original = total − COs;

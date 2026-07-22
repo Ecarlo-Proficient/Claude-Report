@@ -28,6 +28,8 @@ synced.
 | **Lien Retainage** | Retainage invoices — separate statutory track (§ 53.057, completion-based), never mixed into the monthly clock. |
 | **Leases (excluded)** | Equipment-lease / note-payment invoices to subs — not construction income, so they carry no lien clock. Listed so the money doesn't silently disappear from the report. |
 | **RP Wrap-Up** | SLAB lines 100% complete in the General List but not fully billed (waiting on punch). FTW lines are ignored — the list's 100% column is slab-only. Read from the WIP workbook's `Test - RP` tab, so run the WIP readers first. |
+| **Unused POs 30d+** | Open QBO purchase orders ≥30 days old with **no bill linked** — money committed on paper that never got a bill (missing bill, or a dead order to close). Ready-mix blanket POs to concrete suppliers may be intentionally open — amber, not red. `POStatus` isn't queryable in QBO, so POs are pulled in full and filtered in Python. |
+| **Open Bills (AP)** | Open (unpaid-to-sub) bills that need money to go out, **read from the Bill Tracker** (`~/Documents/CompanyHealth/Bill Tracker.xlsx` — `sync-ap` owns the bill↔GC-invoice matching; we only re-bucket). Grouped by AR state — **paid by client** / **client hasn't paid us** / **no invoice issued yet** — each split into *coming up for the sub's lien* (pay before the deadline) vs *not yet due* (clear by this month's 15th). The sub who billed us can lien us if unpaid; their deadline runs from the bill's work month (RP 15th-of-2nd, CP/MFD 15th-of-3rd). Dashboard surfaces the Bill Tracker's own sync date — run `sync-ap` for fresh AP. |
 
 **The lien clock's work-month rule.** Texas deadlines run from the month the
 work was performed. Here work month = **invoice month**, by the user's ruling
