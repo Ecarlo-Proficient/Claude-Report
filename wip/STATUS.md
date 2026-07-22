@@ -91,3 +91,10 @@ Last updated: 2026-07-21 (pm)
   takeoff anywhere (pricing exists in no readable source).
 - Excel cannot gate hyperlinks behind ctrl/cmd-click (asked 2026-07-16;
   answered with the plain-text identifier columns + click-and-hold).
+
+## SIDE TOOL — JobTread coverage (2026-07-22)
+- `one-offs/rp_jobtread_coverage.py` — read-only estimator to-do: every schedule-active
+  job × JobTread status (MISSING / NEEDS PROPOSAL / COVERED, with contract+budget on the
+  covered ones) → ~/Downloads/RP JobTread Coverage.xlsx. Nothing pushed. First run
+  (schedule 7-22): 15 covered (23%) · 17 needs proposal · 33 missing. Closing this list =
+  closing the JobTread coverage gap (the sole requirement for JT-as-pricing-source).
