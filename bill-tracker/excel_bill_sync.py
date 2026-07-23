@@ -824,6 +824,23 @@ def _notice_timer_label(bill_date, balance, lien_val: str,
     return None
 
 
+def _pay_status_display(base: str, gc_paid_date, our_pay_date) -> str:
+    """Tag a paid bill with the cash-flow timing: 'Bill paid (fronted)' when we
+    paid the vendor before the GC paid us (we floated our own cash — including
+    when the GC hasn't paid at all yet), or 'Bill paid (collected)' when the GC
+    funded us first. Falls back to the plain 'Bill paid' when we can't tell (no
+    recorded pay date). Non-paid statuses pass through unchanged. Prefix stays
+    'Bill paid' so the CF rules + the hide-paid filter still match on it."""
+    if base != "Bill paid":
+        return base
+    if not isinstance(gc_paid_date, dt.date):
+        return "Bill paid (fronted)"          # GC hasn't paid us → still floating
+    if not isinstance(our_pay_date, dt.date):
+        return base                           # unknown when we paid → leave plain
+    return ("Bill paid (fronted)" if our_pay_date < gc_paid_date
+            else "Bill paid (collected)")
+
+
 def _write_bill_row(ws, r_i: int, r: dict, edits: Dict[str, Dict[str, str]],
                     today: dt.date) -> None:
     """Render one bill-line row using the unified BILL_ROW_COLS layout.
@@ -841,6 +858,10 @@ def _write_bill_row(ws, r_i: int, r: dict, edits: Dict[str, Dict[str, str]],
     lien_val = pres.get("Lien", "") or ""
     # AP cash-out: the payment(s) that paid this bill (set in main() for the run).
     _pm = _BILL_PAY_MAP.get(r.get("bill_id", "") or "", {})
+    # A paid bill tags whether we FRONTED (paid the vendor before the GC paid us
+    # → floated our own cash) or paid after we COLLECTED.
+    pay_status_val = _pay_status_display(
+        r.get("pay_status", ""), r.get("payment_date"), _pm.get("date"))
     # Untagged + unpaid + near the notice deadline → the cell shows the countdown
     # bucket as text (colored by the matching CF rule). A real tag always wins;
     # this computed text is never preserved (see _read_sheet_edits).
@@ -862,7 +883,7 @@ def _write_bill_row(ws, r_i: int, r: dict, edits: Dict[str, Dict[str, str]],
         r.get("line_amount"),                                    # 10 Line Amount
         r.get("bill_total"),                                     # 11 Bill Total
         r.get("bill_balance"),                                   # 12 Bill Open Bal
-        r.get("pay_status", ""),                                 # 13 Pay Status (AP)
+        pay_status_val,                                          # 13 Pay Status (AP)
         None,                                                    # 14 divider │
         # ── OUR HANDLING ──
         approved_text(approved),                                 # 15 Approved
@@ -1014,7 +1035,8 @@ def _finalize_sheet(ws, table_name: str, last_row: int,
                          filters=Filters(filter=["Unpaid", "Partial paid"]))
         ]
         for r in range(DATA_START, last_row + 1):
-            if ws.cell(row=r, column=PAY_STATUS_COL_INDEX).value != "Bill paid":
+            # Pay Status is "Bill paid" or "Bill paid (fronted)/(collected)".
+            if not str(ws.cell(row=r, column=PAY_STATUS_COL_INDEX).value or "").startswith("Bill paid"):
                 continue
             if ws.cell(row=r, column=LIEN_COL_INDEX).value in LIEN_OUTSTANDING:
                 continue
@@ -1091,14 +1113,17 @@ def _finalize_sheet(ws, table_name: str, last_row: int,
     # The combinations are mutually exclusive (a row has exactly one Pay×Invoice
     # pair), so rule order doesn't affect correctness.
     bill_open = f'OR(${pay_letter}{fr}="Unpaid",${pay_letter}{fr}="Partial paid")'
+    # Pay Status now carries a (fronted)/(collected) suffix on paid bills, so
+    # match on the "Bill paid" PREFIX rather than the exact string.
+    paid = f'LEFT(${pay_letter}{fr},9)="Bill paid"'
     cf_rules: List[Tuple[str, str]] = [
         # No project # (data issue) wins regardless of the other axis.
         (f'${inv_letter}{fr}="No project #"',                            CF_PURPLE_NEEDS_PROJECT),
         # Fronted — we paid the vendor, GC hasn't reimbursed us.
-        (f'AND(${pay_letter}{fr}="Bill paid",${inv_letter}{fr}="Awaiting Payment")', CF_YELLOW_AUDIT),
-        (f'AND(${pay_letter}{fr}="Bill paid",${inv_letter}{fr}="Awaiting Invoice")', CF_RED_HOLD),
+        (f'AND({paid},${inv_letter}{fr}="Awaiting Payment")',           CF_YELLOW_AUDIT),
+        (f'AND({paid},${inv_letter}{fr}="Awaiting Invoice")',           CF_RED_HOLD),
         # Done — vendor paid AND GC paid.
-        (f'AND(${pay_letter}{fr}="Bill paid",${inv_letter}{fr}="Invoice paid")',     CF_GRAY_DONE),
+        (f'AND({paid},${inv_letter}{fr}="Invoice paid")',               CF_GRAY_DONE),
         # GC funded, vendor bill still open → pay now.
         (f'AND({bill_open},${inv_letter}{fr}="Invoice paid")',           CF_GREEN_READY),
         # Partly funded across a multi-project bill → decide float or wait.
