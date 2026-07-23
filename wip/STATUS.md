@@ -31,6 +31,11 @@ Last updated: 2026-07-21 (pm)
 - **General List AF = OTHER excludes the flatwork scope** (2026-07-16): POUR
   FLATWORK col AF "OTHER" ⇒ another contractor won it — no -FTW line even when
   priced, no flat $ in CP-standalone sums; slab line stays with a note.
+- **`master_wip_test --rp-existing-only`** (2026-07-22): MFD (WIP Master tab)
+  and CP (folder scan) refresh billed/costs fully from QBO; RP is locked to
+  PROJECT #s already on Test-Master so a sync updates their numbers without
+  adding new RP jobs from the General List. `existing_project_nums()` reads
+  the tab first.
 - **RP done-rule + FTW backlog model** (2026-07-14, unchanged): billing is the
   truth; backlog = -FTW with no QBO activity and not on today's schedule.
 
