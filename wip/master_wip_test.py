@@ -72,9 +72,41 @@ def master_cols():
     return cols
 
 
+def existing_project_nums(wip_path: Path, tab_name: str = "Test-Master"):
+    """PROJECT #s already on the Test-Master tab (read-only). Used to lock
+    the RP refresh to jobs that are ALREADY in the report (the user
+    2026-07-22: 'RP just the projects already in the WIP report … don't
+    add')."""
+    from openpyxl import load_workbook
+    if not wip_path.exists():
+        return set()
+    wb = load_workbook(wip_path, data_only=True, read_only=True)
+    if tab_name not in wb.sheetnames:
+        wb.close()
+        return set()
+    ws = wb[tab_name]
+    hdr = next((r for r in range(1, 8)
+                for c in range(1, (ws.max_column or 0) + 1)
+                if ws.cell(r, c).value == "PROJECT #"), None)
+    nums = set()
+    if hdr:
+        pcol = next(c for c in range(1, ws.max_column + 1)
+                    if ws.cell(hdr, c).value == "PROJECT #")
+        for r in range(hdr + 1, ws.max_row + 1):
+            v = ws.cell(r, pcol).value
+            if v and str(v).strip().upper() != "PROJECT #":
+                nums.add(str(v).strip().upper())
+    wb.close()
+    return nums
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--rp-existing-only", action="store_true",
+                    help="RP: refresh only the project #s already in "
+                         "Test-Master — never add new RP jobs (the user "
+                         "2026-07-22)")
     args = ap.parse_args()
 
     print("\n  UNIFIED WIP — MFD → CP → RP → 'Test' tab")
@@ -94,7 +126,14 @@ def main() -> int:
     if RP.RP_ROOT.exists():
         rp_to_folders, addr_folders = RP.index_residential(RP.RP_ROOT)
     pairs = RP.build_lines(records, rp_to_folders, addr_folders)
-    print(f"  RP lines from the General List: {len(pairs)}")
+    if args.rp_existing_only:
+        keep = existing_project_nums(CP.WIP_EXCEL_PATH)
+        before = len(pairs)
+        pairs = [t for t in pairs if t[0].project_num in keep]
+        print(f"  RP locked to existing Test-Master lines: {len(pairs)} kept "
+              f"of {before} (no new RP jobs added)")
+    else:
+        print(f"  RP lines from the General List: {len(pairs)}")
 
     # ── ONE QBO pass across everything ──
     print("  Enriching with QBO Billed/Costs (all divisions) …")
