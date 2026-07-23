@@ -11,6 +11,7 @@ Public API:
 from __future__ import annotations
 
 import base64
+import time
 import logging
 import sys
 from dataclasses import dataclass
@@ -69,16 +70,38 @@ def load_qbo_credentials() -> QBOCredentials:
     basic = base64.b64encode(
         f"{creds['QBO_CLIENT_ID']}:{creds['QBO_CLIENT_SECRET']}".encode()
     ).decode()
-    r = requests.post(
-        "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
-        headers={
-            "Authorization": f"Basic {basic}",
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Accept": "application/json",
-        },
-        data={"grant_type": "refresh_token", "refresh_token": creds["QBO_REFRESH_TOKEN"]},
-        timeout=30,
-    )
+    # Retry the bearer refresh on transient network/Intuit blips — the OAuth
+    # endpoint occasionally times out its TLS handshake and a single POST would
+    # crash the sync (Ted 2026-07-15). Retry timeouts/connection errors + 5xx;
+    # a real 4xx (e.g. an expired refresh token) fails fast.
+    r = None
+    last = ""
+    for attempt in range(4):                    # 1 try + 3 retries
+        try:
+            r = requests.post(
+                "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
+                headers={
+                    "Authorization": f"Basic {basic}",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Accept": "application/json",
+                },
+                data={"grant_type": "refresh_token",
+                      "refresh_token": creds["QBO_REFRESH_TOKEN"]},
+                timeout=30,
+            )
+            if r.status_code < 500:
+                break
+            last = f"status={r.status_code}"
+        except requests.exceptions.RequestException as e:
+            last = type(e).__name__
+            r = None
+        if attempt < 3:
+            time.sleep((attempt + 1) * 3)       # 3s, 6s, 9s
+    if r is None:
+        raise QBOError(
+            f"QBO token refresh failed after retries — {last} "
+            "(network/Intuit timeout; retry the sync)"
+        )
     if r.status_code != 200:
         raise QBOError(
             f"QBO token refresh failed status={r.status_code} body={r.text[:300]}"
