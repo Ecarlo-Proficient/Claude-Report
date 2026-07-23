@@ -39,8 +39,12 @@ exposures or business analysis here (those live in the owner's vault).
   the "one dashboard reading all trackers" goal.
 
 ## TO DO (requested, not yet built)
-- Fold more sources into `company_dashboard.py`: cash/AR-AP aging (health_dashboard),
-  WIP highlights, Bill Tracker detail. Currently MB + LOC only.
+- Fold more sources into `company_dashboard.py`: WIP highlights, Bill Tracker detail.
+  (Cash + AR/AP aging from health_dashboard now folded in — 2026-07-17.)
+- **Money-out check register / uncashed checks**: QBO API exposes check payments
+  (check #, payee, amount, bank) but NOT cleared/reconciled status — "uncashed" can't
+  be auto-derived. Pending the user's call on the source (self-reconciled register vs a
+  bank-register file).
 - Fold the legacy hard-fact sheets (AR/AP aging, cash) into the watchboard.
 - Auto morning refresh (launchd on this Mac) + a routine that reads the
   workbook/HTML and messages a summary. Needs the Touch-ID/volume constraints solved.

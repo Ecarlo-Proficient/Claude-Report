@@ -148,6 +148,61 @@ def _find(summary: dict, needle: str) -> Optional[Any]:
     return None
 
 
+BUCKET_ORDER = ["Current", "1-30", "31-60", "61-90", "90+"]
+
+
+def read_health(path: Path) -> dict:
+    """Cash total + per-account and AR/AP grand totals + aging buckets from the
+    legacy health_dashboard.xlsx (qbo_health.py output). Carries its own
+    'generated' date — this workbook is often stale, so the dashboard dates it."""
+    out: Dict[str, Any] = {"generated": None, "cash_total": None, "accounts": [],
+                           "ar_total": None, "ar_buckets": {},
+                           "ap_total": None, "ap_buckets": {}}
+    if not path.exists():
+        return out
+    wb = load_workbook(path, read_only=True, data_only=True)
+    if "_Meta" in wb.sheetnames:
+        for row in wb["_Meta"].iter_rows(values_only=True):
+            if row and str(row[0]).strip() == "Generated" and len(row) > 1:
+                try:
+                    out["generated"] = dt.datetime.fromisoformat(str(row[1]))
+                except ValueError:
+                    pass
+    if "Cash" in wb.sheetnames:
+        tot = 0.0
+        for row in wb["Cash"].iter_rows(min_row=2, values_only=True):
+            name, bal = (row[0] if row else None), (_num(row[3]) if len(row) > 3 else None)
+            if name and bal is not None:
+                out["accounts"].append((str(name), bal))
+                tot += bal
+        out["cash_total"] = tot
+    for sheet, tkey, bkey in (("AR Aging", "ar_total", "ar_buckets"),
+                              ("AP Aging", "ap_total", "ap_buckets")):
+        if sheet not in wb.sheetnames:
+            continue
+        ws = wb[sheet]
+        it = ws.iter_rows(values_only=True)
+        hdr = list(next(it))
+        hi = {n: i for i, n in enumerate(hdr)}
+        bi, bal_i = hi.get("Bucket"), hi.get("Balance")
+        name_i = hi.get("Customer", hi.get("Vendor"))
+        buckets: Dict[str, float] = {}
+        for row in it:
+            nm = str(row[name_i] or "") if name_i is not None else ""
+            if nm.startswith("━"):
+                continue
+            if "GRAND TOTAL" in nm:
+                out[tkey] = _num(row[bal_i]) or 0
+                continue
+            b = row[bi] if bi is not None else None
+            v = _num(row[bal_i]) if bal_i is not None else None
+            if b and v:
+                buckets[str(b)] = buckets.get(str(b), 0) + v
+        out[bkey] = buckets
+    wb.close()
+    return out
+
+
 # ────────────────────────── HTML render ──────────────────────────
 
 def _money(v) -> str:
@@ -194,7 +249,61 @@ def _division_bars(divs: List[dict]) -> str:
     return "".join(rows)
 
 
-def render(cards, loc, sources) -> str:
+def _bucket_bars(buckets: dict, worst_first=True) -> str:
+    if not buckets:
+        return "<p class='muted'>—</p>"
+    mx = max(buckets.values(), default=1) or 1
+    # older buckets redder
+    shade = {"Current": "#1F6B4C", "1-30": "#7F9F3F", "31-60": "#BF8F00",
+             "61-90": "#D2691E", "90+": "#C00000"}
+    rows = []
+    for b in BUCKET_ORDER:
+        v = buckets.get(b, 0)
+        if not v:
+            continue
+        w = max(2, round(100 * v / mx))
+        col = shade.get(b, "#808080")
+        rows.append(f'''<div class="bar-row bkt">
+          <div class="bar-name" style="color:{col}">{b}</div>
+          <div class="bar-track"><div class="bar-fill" style="width:{w}%;background:{col}">
+            <span>${v:,.0f}</span></div></div></div>''')
+    return "".join(rows)
+
+
+def _health_section(h: dict) -> str:
+    if not h.get("generated") and h.get("cash_total") is None:
+        return "<p class='muted'>No health_dashboard.xlsx — run qbo_health.py.</p>"
+    gen = h.get("generated")
+    age = (dt.datetime.now() - gen).days if gen else None
+    stale = age is not None and age > STALE_DAYS
+    asof = (f'<span class="asof {"stale" if stale else ""}">as of '
+            f'{gen:%Y-%m-%d} ({age}d old)</span>' if gen else "")
+    warn = ('<p class="warnbar">⚠ This cash/aging snapshot is stale — run '
+            'qbo_health.py to refresh.</p>' if stale else "")
+    cash = h.get("cash_total")
+    cash_cls = "red" if (cash is not None and cash < 0) else "info"
+    top = sorted([a for a in h.get("accounts", [])], key=lambda x: x[1])[:3]
+    top_html = "".join(f'<div class="acct"><span>{html.escape(n)}</span>'
+                       f'<span>{_money(b)}</span></div>' for n, b in top)
+    return f'''<h2>Cash &amp; Aging {asof}</h2>{warn}
+      <div class="grid">
+        <div class="tile {cash_cls}"><div class="count">{_money(cash)}</div>
+          <div class="label">Total cash (all bank accounts)</div>
+          <div class="detail">{top_html}</div></div>
+        <div class="tile info"><div class="count">{_money(h.get("ar_total"))}</div>
+          <div class="label">Accounts Receivable</div>
+          <div class="detail">money owed to us</div></div>
+        <div class="tile amber"><div class="count">{_money(h.get("ap_total"))}</div>
+          <div class="label">Accounts Payable</div>
+          <div class="detail">money we owe</div></div>
+      </div>
+      <div class="two-col">
+        <div><h3 class="sec">AR aging</h3>{_bucket_bars(h.get("ar_buckets", {}))}</div>
+        <div><h3 class="sec">AP aging</h3>{_bucket_bars(h.get("ap_buckets", {}))}</div>
+      </div>'''
+
+
+def render(cards, loc, health, sources) -> str:
     now = dt.datetime.now()
     # group Money Bleeds cards by section
     sections: Dict[str, List[dict]] = {}
@@ -268,6 +377,16 @@ def render(cards, loc, sources) -> str:
     font-weight:600; min-width:40px; }}
   .bar-meta {{ font-size:12px; color:var(--muted); }}
   .muted {{ color:var(--muted); }}
+  .asof {{ font-size:12px; font-weight:400; text-transform:none; letter-spacing:0;
+    color:var(--muted); margin-left:8px; }}
+  .asof.stale {{ color:var(--red); font-weight:600; }}
+  .warnbar {{ background:rgba(192,0,0,.12); color:var(--red); padding:8px 12px;
+    border-radius:8px; font-size:13px; margin:0 0 12px; }}
+  .acct {{ display:flex; justify-content:space-between; gap:10px; font-size:11px;
+    margin-top:3px; }}
+  .two-col {{ display:grid; grid-template-columns:1fr 1fr; gap:24px; margin-top:6px; }}
+  @media (max-width:720px) {{ .two-col {{ grid-template-columns:1fr; }} }}
+  .bar-row.bkt {{ grid-template-columns:60px 1fr; }}
   footer {{ max-width:1180px; margin:0 auto; padding:0 28px 40px; }}
   .badge {{ display:inline-block; font-size:11px; padding:4px 9px; border-radius:20px;
     margin:3px 4px 0 0; background:rgba(128,128,128,.15); color:var(--muted); }}
@@ -281,6 +400,7 @@ def render(cards, loc, sources) -> str:
     ~/Documents/CompanyHealth · regenerate those first for fresh numbers</div>
 </header>
 <main>
+  {_health_section(health)}
   <h2>Money Bleeds</h2>
   {mb_html}
   <h2>Subcontractor LOC</h2>
@@ -308,8 +428,11 @@ def main() -> int:
     loc = read_sub_loc(LOC_PATH)
     print(f"  Sub LOC: peak={_find(loc['summary'], 'LOC you truly need')} · "
           f"{len(loc['divisions'])} division(s)")
+    health = read_health(HEALTH_PATH)
+    print(f"  Cash/Aging: cash={health.get('cash_total')} AR={health.get('ar_total')} "
+          f"AP={health.get('ap_total')} (as of {health.get('generated')})")
 
-    htmlout = render(cards, loc, [MB_PATH, LOC_PATH, BILL_PATH, HEALTH_PATH])
+    htmlout = render(cards, loc, health, [MB_PATH, LOC_PATH, BILL_PATH, HEALTH_PATH])
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(htmlout, encoding="utf-8")
     os.chmod(args.out, stat.S_IRUSR | stat.S_IWUSR)

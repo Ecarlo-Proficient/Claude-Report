@@ -14,11 +14,12 @@ python3 health-dashboard/company_dashboard.py --open
 ```
 
 Output: `~/Documents/CompanyHealth/Company Dashboard.html` (chmod 600). Shows
-the Money Bleeds KPI tiles, the Sub LOC peak + by-division bars, and a
-freshness badge per source workbook (red if a tracker is >7 days stale).
-Reads `Money Bleeds.xlsx` + `Sub LOC Report.xlsx` today; Bill Tracker /
-health_dashboard show freshness only until folded in. This is the start of the
-consolidation goal (one dashboard reading all trackers).
+the Money Bleeds KPI tiles, the Sub LOC peak + by-division bars, a
+**Cash & Aging** section (total cash, AR/AP totals + aging-bucket bars, folded in from
+`health_dashboard.xlsx` with its own as-of date + a stale warning), and a freshness
+badge per source workbook (red if a tracker is >7 days stale). Reads `Money Bleeds.xlsx`
++ `Sub LOC Report.xlsx` + `health_dashboard.xlsx` today; Bill Tracker shows freshness
+only. This is the consolidation goal (one dashboard reading all trackers).
 
 ## Money Bleeds (`money_bleeds.py`) — the current company-health report
 
