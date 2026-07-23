@@ -41,10 +41,10 @@ exposures or business analysis here (those live in the owner's vault).
 ## TO DO (requested, not yet built)
 - Fold more sources into `company_dashboard.py`: WIP highlights, Bill Tracker detail.
   (Cash + AR/AP aging from health_dashboard now folded in — 2026-07-17.)
-- **Money-out check register / uncashed checks**: QBO API exposes check payments
-  (check #, payee, amount, bank) but NOT cleared/reconciled status — "uncashed" can't
-  be auto-derived. Pending the user's call on the source (self-reconciled register vs a
-  bank-register file).
+- ~~Money-out check register~~ DONE — `one-offs/money_out_register.py` builds a
+  stateful, self-reconciled register (user-owned CLEARED? column, marks preserved across
+  runs); company_dashboard surfaces the aged->30d unmarked checks as the chase list. QBO
+  still can't auto-detect cleared status — that's why the flag is manual.
 - Fold the legacy hard-fact sheets (AR/AP aging, cash) into the watchboard.
 - Auto morning refresh (launchd on this Mac) + a routine that reads the
   workbook/HTML and messages a summary. Needs the Touch-ID/volume constraints solved.

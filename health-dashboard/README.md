@@ -18,8 +18,9 @@ the Money Bleeds KPI tiles, the Sub LOC peak + by-division bars, a
 **Cash & Aging** section (total cash, AR/AP totals + aging-bucket bars, folded in from
 `health_dashboard.xlsx` with its own as-of date + a stale warning), and a freshness
 badge per source workbook (red if a tracker is >7 days stale). Reads `Money Bleeds.xlsx`
-+ `Sub LOC Report.xlsx` + `health_dashboard.xlsx` today; Bill Tracker shows freshness
-only. This is the consolidation goal (one dashboard reading all trackers).
++ `Sub LOC Report.xlsx` + `health_dashboard.xlsx` + `Money Out Register.xlsx` (uncashed
+checks aged >30d) today; Bill Tracker shows freshness only. This is the consolidation
+goal (one dashboard reading all trackers).
 
 ## Money Bleeds (`money_bleeds.py`) — the current company-health report
 

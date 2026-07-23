@@ -42,6 +42,7 @@ MB_PATH = CH / "Money Bleeds.xlsx"
 LOC_PATH = CH / "Sub LOC Report.xlsx"
 BILL_PATH = CH / "Bill Tracker.xlsx"
 HEALTH_PATH = CH / "health_dashboard.xlsx"
+MOR_PATH = CH / "Money Out Register.xlsx"
 OUT_PATH = CH / "Company Dashboard.html"
 STALE_DAYS = 7
 
@@ -146,6 +147,32 @@ def _find(summary: dict, needle: str) -> Optional[Any]:
         if needle.lower() in k.lower():
             return v
     return None
+
+
+def read_money_out(path: Path) -> dict:
+    """Uncashed-check KPIs from the Money Out Register's Summary sheet."""
+    out: Dict[str, Any] = {}
+    if not path.exists():
+        return out
+    try:
+        wb = load_workbook(path, read_only=True, data_only=True)
+    except Exception:
+        return out
+    if "Summary" in wb.sheetnames:
+        for row in wb["Summary"].iter_rows(min_row=3, values_only=True):
+            lbl = str(row[1]).strip() if len(row) > 1 and row[1] else ""
+            val = row[2] if len(row) > 2 else None
+            lo = lbl.lower()
+            if "aged > 30" in lo and "$" in lbl:
+                out["aged_total"] = _num(val)
+            elif "aged > 30" in lo:
+                out["aged_count"] = _num(val)
+            elif lo.startswith("unmarked checks"):
+                out["unmarked_count"] = _num(val)
+            elif lo.startswith("unmarked $"):
+                out["unmarked_total"] = _num(val)
+    wb.close()
+    return out
 
 
 BUCKET_ORDER = ["Current", "1-30", "31-60", "61-90", "90+"]
@@ -303,7 +330,20 @@ def _health_section(h: dict) -> str:
       </div>'''
 
 
-def render(cards, loc, health, sources) -> str:
+def _money_out_tile(mor: dict) -> str:
+    if not mor:
+        return ""
+    ac = int(mor.get("aged_count") or 0)
+    return f'''<div class="grid"><div class="tile {'red' if ac else 'ok'}">
+      <div class="count">{ac}</div>
+      <div class="label">Uncashed checks aged &gt;30d — chase list</div>
+      <div class="amt">{_money(mor.get("aged_total"))}</div>
+      <div class="detail">{int(mor.get("unmarked_count") or 0)} unmarked total
+        ({_money(mor.get("unmarked_total"))}) · mark cleared in the Money Out
+        Register as checks clear</div></div></div>'''
+
+
+def render(cards, loc, health, mor, sources) -> str:
     now = dt.datetime.now()
     # group Money Bleeds cards by section
     sections: Dict[str, List[dict]] = {}
@@ -401,6 +441,7 @@ def render(cards, loc, health, sources) -> str:
 </header>
 <main>
   {_health_section(health)}
+  {_money_out_tile(mor)}
   <h2>Money Bleeds</h2>
   {mb_html}
   <h2>Subcontractor LOC</h2>
@@ -431,8 +472,11 @@ def main() -> int:
     health = read_health(HEALTH_PATH)
     print(f"  Cash/Aging: cash={health.get('cash_total')} AR={health.get('ar_total')} "
           f"AP={health.get('ap_total')} (as of {health.get('generated')})")
+    mor = read_money_out(MOR_PATH)
+    print(f"  Money Out: aged>30d checks={mor.get('aged_count')} ${mor.get('aged_total')}")
 
-    htmlout = render(cards, loc, health, [MB_PATH, LOC_PATH, BILL_PATH, HEALTH_PATH])
+    htmlout = render(cards, loc, health, mor,
+                     [MB_PATH, LOC_PATH, MOR_PATH, BILL_PATH, HEALTH_PATH])
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(htmlout, encoding="utf-8")
     os.chmod(args.out, stat.S_IRUSR | stat.S_IWUSR)

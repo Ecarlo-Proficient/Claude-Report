@@ -181,6 +181,14 @@ flowchart LR
     QBO --> LOANS --> P7
 ```
 
+**`one-offs/money_out_register.py`** (read-only QBO) — check register for tracking
+uncashed / outstanding checks. QBO exposes every check written (BillPayment Check +
+Purchase Check: check #, payee, amount, bank) but NOT cleared status, so the register
+carries a user-owned `CLEARED?` (Y/N) column and is STATEFUL — a refresh preserves your
+marks (merged by txn id) and prunes long-cleared checks. Output `~/Documents/CompanyHealth/
+Money Out Register.xlsx` (chmod 600); the aged-&gt;30-days unmarked checks are the chase
+list, surfaced on the company dashboard.
+
 **`one-offs/sub_loc_report.py`** (read-only) — subcontractor line-of-credit float
 model. Sub bills (memo ~ "sub") paid → LOC draws (BillPayment date, allocated across
 each bill's line projects); client Payments → repayments. Matched **by draw period**:
