@@ -13,14 +13,21 @@ trackers first, then run this.
 python3 health-dashboard/company_dashboard.py --open
 ```
 
-Output: `~/Documents/CompanyHealth/Company Dashboard.html` (chmod 600). Shows
-the Money Bleeds KPI tiles, the Sub LOC peak + by-division bars, a
-**Cash & Aging** section (total cash, AR/AP totals + aging-bucket bars, folded in from
-`health_dashboard.xlsx` with its own as-of date + a stale warning), and a freshness
-badge per source workbook (red if a tracker is >7 days stale). Reads `Money Bleeds.xlsx`
-+ `Sub LOC Report.xlsx` + `health_dashboard.xlsx` + `Money Out Register.xlsx` (uncashed
-checks aged >30d) today; Bill Tracker shows freshness only. This is the consolidation
-goal (one dashboard reading all trackers).
+Output: `~/Documents/CompanyHealth/Company Dashboard.html` (chmod 600). Organised
+as **MONEY IN / MONEY OUT / POSITION** (the user 2026-07-17) — grouped tables with a
+few hero numbers per section, not repetitive boxes. Colour is semantic: money owed to us
+(AR, backlog, retainage) green; money out (AP, POs, checks, LOC) amber/red; position
+flags red when bad (runway <8 wks, coverage <1, cash <0). Reads:
+- **Money Bleeds** — lien clock, draws-not-invoiced, unused POs, open AP buckets
+- **Sub LOC** — peak + by-division bars
+- **Money Out Register** — checks **unreconciled** >30d (QBO can't confirm cashed;
+  it's the not-yet-marked-cleared list — see money_out_register.py)
+- **health_dashboard** — cash (bank, excl. credit cards), runway, AR/AP + aging,
+  retainage, gross/net margin, coverage, top-customer concentration (dated + stale-warned)
+- **WIP master Test-Master** — active-project unbilled backlog + over/under-billing
+
+Each source gets a freshness badge (red if >7 days stale). Next: fold all these into ONE
+`Company Tracker.xlsx` that the HTML breaks down.
 
 ## Money Bleeds (`money_bleeds.py`) — the current company-health report
 

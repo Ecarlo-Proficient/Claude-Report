@@ -226,10 +226,13 @@ flowchart LR
 ```
 
 **`health-dashboard/company_dashboard.py`** (read-only, no QBO) — the consolidation
-target: reads the tracker workbooks in `~/Documents/CompanyHealth/` (Money Bleeds,
-Sub LOC today) and renders one self-contained `Company Dashboard.html` — KPI tiles, the
-Sub LOC by-division bars, and a freshness badge per source. The Excels are the data
-layer; the HTML reads all of them.
+target: reads the tracker workbooks (Money Bleeds, Sub LOC, Money Out Register,
+health_dashboard, WIP master Test-Master) and renders one self-contained
+`Company Dashboard.html`, organised **MONEY IN / MONEY OUT / POSITION** with grouped
+tables + hero numbers and semantic colour (AR green, money-out amber/red, position flags
+red). Folds in WIP unbilled backlog + over/under-billing, cash/runway/margins/coverage
+from health_dashboard, and the unreconciled-check chase list. Freshness badge per source.
+The Excels are the data layer; the HTML reads all of them. Next: one `Company Tracker.xlsx`.
 
 Read-only exception checks: **draws with no invoice** (MFD: latest numbered draw folder
 vs latest QBO invoice date; CP: latest draw's G702 earned-less-retainage vs cumulative

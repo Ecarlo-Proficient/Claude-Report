@@ -39,8 +39,10 @@ exposures or business analysis here (those live in the owner's vault).
   the "one dashboard reading all trackers" goal.
 
 ## TO DO (requested, not yet built)
-- Fold more sources into `company_dashboard.py`: WIP highlights, Bill Tracker detail.
-  (Cash + AR/AP aging from health_dashboard now folded in — 2026-07-17.)
+- **One `Company Tracker.xlsx`** — fold every tracker into a single workbook (Money In /
+  Money Out / Position tabs) that the HTML breaks down (the user wants one file, not many).
+  Next focused build.
+- Bill Tracker detail into the dashboard (currently freshness-badge only).
 - ~~Money-out check register~~ DONE — `one-offs/money_out_register.py` builds a
   stateful, self-reconciled register (user-owned CLEARED? column, marks preserved across
   runs); company_dashboard surfaces the aged->30d unmarked checks as the chase list. QBO
