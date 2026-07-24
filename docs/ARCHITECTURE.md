@@ -181,6 +181,14 @@ flowchart LR
     QBO --> LOANS --> P7
 ```
 
+**`one-offs/schedule_report.py`** (read-only) — weekly crew-schedule stage Gantt. Reads
+the daily crew schedules (`…/OPERATIONS/SCHEDULE/<yr>/<month>/Schedule M-D-YY.xlsx`,
+'Daily Schedule' tab) for the latest Mon–Fri week → one row per job (address + builder),
+one column per day, each cell the STAGE that day (Pour / Wreck / Forms / Cables / …)
+coloured by stage — showing current stage and how it moved through the week. Pricing
+matched best-effort from the WIP master (RP project #/contract by address). Output
+`~/Documents/CompanyHealth/Weekly Schedule.xlsx` + `Weekly Schedule.html` (chmod 600).
+
 **`one-offs/money_out_register.py`** (read-only QBO) — check register for tracking
 uncashed / outstanding checks. QBO exposes every check written (BillPayment Check +
 Purchase Check: check #, payee, amount, bank) but NOT cleared status, so the register
