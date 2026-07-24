@@ -36,6 +36,12 @@ Last updated: 2026-07-21 (pm)
   PROJECT #s already on Test-Master so a sync updates their numbers without
   adding new RP jobs from the General List. `existing_project_nums()` reads
   the tab first.
+- **`rp_schedule_wip_preview --commit`** (2026-07-23): splits schedule-active jobs —
+  READY (contract+budget both known) are written to the **'Test - RP'** tab as the new
+  RP WIP report (QBO-enriched, banner + TOTALS/cash-flow, FTW backlog appendix); MISSING
+  (lacking contract and/or budget) go to a clean ~/Downloads/RP WIP - Missing.xlsx so the
+  gaps are obvious. RP7535 budget taken from the General Lista (GL_ETC_JOBS). 7-23 run:
+  READY 35 · MISSING 31 · backlog 38. Verified on a scratch WIP copy before the prod write.
 - **RP done-rule + FTW backlog model** (2026-07-14, unchanged): billing is the
   truth; backlog = -FTW with no QBO activity and not on today's schedule.
 
