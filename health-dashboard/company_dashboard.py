@@ -45,7 +45,10 @@ MB_PATH = CH / "Money Bleeds.xlsx"
 LOC_PATH = CH / "Sub LOC Report.xlsx"
 MOR_PATH = CH / "Money Out Register.xlsx"
 HEALTH_PATH = CH / "health_dashboard.xlsx"
-BILL_PATH = CH / "Bill Tracker.xlsx"
+# canonical Bill Tracker lives in OneDrive/Automations- (bill-tracker writes it
+# there) — not the stale CompanyHealth copy (the user 2026-07-24)
+BILL_PATH = paths.get_path(
+    "ACB_BILL_TRACKER_XLSX", paths.onedrive_base() / "Automations-/Bill Tracker.xlsx")
 WIP_PATH = paths.get_path(
     "WIP_EXCEL_PATH",
     paths.onedrive_base() / "Company Files - WIP Report/WIP - MASTER new.xlsx")
