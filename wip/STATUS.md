@@ -94,6 +94,18 @@ Last updated: 2026-07-21 (pm)
   takeoff; estimator review needed per orange/blue NEEDS flags.
 - `-FTW` scopes on the flatwork schedule with no flatwork-named proposal PDF or
   takeoff anywhere (pricing exists in no readable source).
+- **Team fixes round 1 (RP WIP Fixes.xlsx, 2026-07-22)** — the estimator/OM worked every
+  preview row. Findings that reshape the RP model:
+  (a) TRACT builders (Camden, most Grand Homes, Dallas Area Habitat) have NO bid proposal —
+      contract+cost come from **P.O.'s**. The 'no proposal PDF' flag is a FALSE ALARM for
+      tract; tract needs a PO-based price source (JobTread won't cover them either).
+  (b) Missing 'JobTread Cost Gral' budget sheet is the #1 data gap (~16 jobs) — blocks both
+      takeoff extraction and JobTread coverage. Top cleanup item.
+  (c) Some prices are un-fileable by design: budget-in-head, priced-by-sibling-street,
+      per-sqft, or 20%-profit allocation.
+  (d) RP7083 split across two customers in the books — will scramble billed/costs.
+  Validation: ~16 negative/low-margin flags → 'Takeoff formulas updated' (real errors caught).
+  The AR/JR columns + edit-path-in-place workflow were used exactly as designed.
 - Excel cannot gate hyperlinks behind ctrl/cmd-click (asked 2026-07-16;
   answered with the plain-text identifier columns + click-and-hold).
 
