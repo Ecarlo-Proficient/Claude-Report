@@ -60,6 +60,15 @@ Last updated: 2026-07-21 (pm)
   AP1948/AP1961) wins over 'JobTread Cost Gral' for slab scope — RP6586
   pattern, incl. takeoffs not named with the RP#.
   **NOT wired into rp_wip_reader yet — awaiting the user's approval.**
+  Round-2 (2026-07-22): (a) team-corrected file paths harvested to
+  `one-offs/rp_source_overrides.json` (30 jobs; Windows I:/Z: → /Volumes/Common;
+  fixes wrong folders/builders/typos) — overrides win over the folder guess;
+  (b) TRACT builders (Camden/Grand Homes/Habitat) no longer false-flag 'no
+  proposal' — contract from P.O.'s / General Lista; (c) CLEANUP CHECKLIST sheet
+  lists takeoffs missing the 'JobTread Cost Gral' sheet (17). Two General-Lista
+  cross-checks added: RED 'in General Lista, not on schedule' (0 today — all 27
+  in-progress slabs are scheduled) and 'FTW BACKLOG (GL, not scheduled)' (38) +
+  'FLATWORK TAKEN BY OTHER' (AF=OTHER).
 - **JobTread as a budget source — verified, not wired**: Pave API grant key in
   the shared vault (`JT_GRANT_KEY`); schema proven (`one-offs/jobtread_probe.py`):
   approved `customerOrder` document → price = CONTRACT, cost = ETC; line names

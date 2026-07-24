@@ -26,6 +26,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import sys
@@ -58,6 +59,26 @@ _SUBTOTAL_RE = re.compile(r"(?:SUB\s*)?TOTAL\s*:?\s*\$\s*([\d,]+(?:\.\d{1,2})?)"
 _SIDE_TOKENS = {"POOL", "CASITA", "CABANA", "FENCE", "CAPS", "FLATWORK",
                 "RETAINING", "COURTYARD", "WALL", "PATIO", "DRIVEWAY",
                 "FOOTINGS", "FOOTER", "PAVING"}
+
+# Team-corrected source paths (RP WIP Fixes.xlsx → rp_source_overrides.json,
+# 2026-07-22): WIP-LINE → {proposal, takeoff} Mac paths that OVERRIDE the
+# folder guess. The team fixed wrong folders, wrong builders, and typos, so
+# these win over any automatic file match.
+_OVR_PATH = Path(__file__).resolve().parent / "rp_source_overrides.json"
+try:
+    OVERRIDES = json.loads(_OVR_PATH.read_text()) if _OVR_PATH.exists() else {}
+except Exception:
+    OVERRIDES = {}
+
+# TRACT volume builders (the team 2026-07-22): NO bid proposal — contract +
+# cost come from P.O.'s / a builder price list. Don't false-flag 'no proposal';
+# take the General Lista price as the contract.
+TRACT_TOKENS = ("CAMDEN", "GRAND HOMES", "HABITAT", "HABITART", "WILLIAM RYAN")
+
+
+def _is_tract(builder: str) -> bool:
+    b = _norm(builder)
+    return any(t in b for t in TRACT_TOKENS)
 
 
 def _norm(s) -> str:
@@ -428,6 +449,75 @@ def _breadcrumb(path: Path) -> str:
     return " > ".join(parts[-4:])
 
 
+# ── extraction from a SPECIFIC file (used by team-corrected overrides) ──
+def pdf_subtotal(path: Path):
+    """Last 'SUB TOTAL: $…' in a specific proposal PDF, or None."""
+    import pdfplumber
+    try:
+        with pdfplumber.open(path) as pdf:
+            txt = "\n".join(pg.extract_text() or "" for pg in pdf.pages)
+    except Exception:
+        return None
+    hits = _SUBTOTAL_RE.findall(txt)
+    return float(hits[-1].replace(",", "")) if hits else None
+
+
+def takeoff_budget_from(f: Path, scope: str, desc: str):
+    """Budget from a SPECIFIC takeoff file → (budget, note, fragment). Tries
+    the commercial 'BID' sheet (AP1948/AP1961) for slab scope, then the
+    residential 'JobTread Cost Gral' bands."""
+    try:
+        wb = load_workbook(f, data_only=True, read_only=True)
+    except Exception:
+        return None, "takeoff unreadable", None
+    if scope != "ftw":
+        bid = next((s for s in wb.sheetnames if _norm(s) == "BID"), None)
+        if bid is not None:
+            ws = wb[bid]
+            for ref in ("AP1948", "AP1961"):
+                v = ws[ref].value
+                if isinstance(v, (int, float)) and v:
+                    wb.close()
+                    return round(float(v), 2), f"'{bid}' {ref}", f"#'{bid}'!{ref}"
+    sheet = next((s for s in wb.sheetnames if "COST GRAL" in _norm(s)), None)
+    if sheet is None:
+        wb.close()
+        return (None, "Missing 'JobTread Cost Gral' sheet — add the budget "
+                "sheet to the takeoff", None)
+    bands = _cost_sheet_totals(wb[sheet])
+    wb.close()
+    if _desc_tokens(desc) & set(_norm(f.name).split()):
+        keys = ("SL", "PR", "FW")
+    else:
+        keys = ("FW",) if scope == "ftw" else ("SL", "PR")
+    budget, cells = 0.0, []
+    for k in keys:
+        b = bands[k]
+        if b["sub"] is not None:
+            budget += b["sub"]
+            cells.append(b["cell"])
+        elif b["items"]:
+            budget += b["items"]
+            cells.append(f"{k} items")
+    if budget:
+        frag = (f"#'{sheet}'!"
+                + next((c for c in cells if re.match(r'^[A-Z]+[0-9]+$', c)), "A1"))
+        return round(budget, 2), f"'{sheet}' {' + '.join(cells)}", frag
+    return (None, "Missing 'JobTread Cost Gral' sheet — add the budget sheet "
+            "to the takeoff", None)
+
+
+def _blank_item(**kw):
+    """Full item dict with defaults so cross-check rows (from the General
+    Lista) carry every key the writer reads."""
+    base = dict(group="", line="", section="", desc="", address="", builder="",
+                in_gl=False, gl_contract=None, gl_etc=None, new_contract=None,
+                new_etc=None, proposal=None, p_note="", takeoff=None, t_note="",
+                needs="", folder=None, t_frag=None, gl_sheet=None, gl_row=None)
+    base.update(kw)
+    return base
+
+
 def _link(cell, target, fragment: str = ""):
     """file:// hyperlink + blue underline; no-op when target is None.
 
@@ -509,8 +599,10 @@ def write_report(items, sched_label, out_path: Path) -> None:
     ws.cell(3, 14).font = ORANGE_F
     ws.cell(3, 15).font = BLUE_F
 
-    order = {"NEW — not in WIP": 0, "CHANGED": 1, "MATCHES": 2}
-    for it in sorted(items, key=lambda x: (order.get(x["group"], 3),
+    order = {"⚠ IN GENERAL LISTA, NOT ON SCHEDULE": 0, "NEW — not in WIP": 1,
+             "CHANGED": 2, "MATCHES": 3, "FTW BACKLOG (GL, not scheduled)": 4,
+             "FLATWORK TAKEN BY OTHER": 5}
+    for it in sorted(items, key=lambda x: (order.get(x["group"], 6),
                                            x["line"])):
         gp, gp_flag = margin_flag(it["new_contract"], it["new_etc"])
         needs = "; ".join(x for x in (it["needs"], gp_flag) if x)
@@ -559,14 +651,22 @@ def write_report(items, sched_label, out_path: Path) -> None:
               it["proposal"].parent if it.get("proposal") else None)
         _link(ws.cell(r, 13),
               it["takeoff"].parent if it.get("takeoff") else None)
-        # GROUP color: NEW banded orange, CHANGED amber-text, MATCHES green.
-        if it["group"].startswith("NEW"):
+        # GROUP color: RED-flag not-on-schedule = red fill; NEW banded orange;
+        # CHANGED amber-text; MATCHES green; FTW backlog / OTHER neutral-band.
+        RED_FILL = PatternFill("solid", fgColor="F4CCCC")
+        if it["group"].startswith("⚠"):
+            ws.cell(r, 1).fill = RED_FILL
+            ws.cell(r, 1).font = BAD
+        elif it["group"].startswith("NEW"):
             ws.cell(r, 1).fill = NEW_F
             ws.cell(r, 1).font = BAD
         elif it["group"] == "CHANGED":
             ws.cell(r, 1).font = Font(color="BF6000", bold=True)
-        else:
+        elif it["group"] == "MATCHES":
             ws.cell(r, 1).font = GOOD
+        else:                      # FTW backlog / taken by OTHER
+            ws.cell(r, 1).fill = GRAY
+            ws.cell(r, 1).font = Font(bold=True)
         if gp is not None and gp_flag:
             ws.cell(r, 11).font = BAD
         if not it["in_gl"]:
@@ -575,6 +675,46 @@ def write_report(items, sched_label, out_path: Path) -> None:
     for col, w in zip("ABCDEFGHIJKLMNO", widths):
         ws.column_dimensions[col].width = w
     ws.freeze_panes = "A4"
+
+    # ── second sheet: budget-sheet CLEANUP CHECKLIST (the user 2026-07-22) ──
+    # Every takeoff missing its 'JobTread Cost Gral' sheet (or with no takeoff
+    # at all) — the #1 data gap the team surfaced. Add the sheet → the budget
+    # extracts automatically next run.
+    cw = wb.create_sheet("CLEANUP CHECKLIST")
+    cw["A1"] = ("BUDGET-SHEET CLEANUP — takeoffs missing the 'JobTread Cost "
+                "Gral' sheet (or no takeoff file). Add the sheet to the takeoff "
+                "and the budget reads automatically.")
+    cw["A1"].font = Font(bold=True)
+    cw.append([])
+    ch = ["JOB #", "BUILDER", "ISSUE", "TAKEOFF FILE / FOLDER"]
+    cw.append(ch)
+    for c in range(1, len(ch) + 1):
+        cell = cw.cell(3, c)
+        cell.font = Font(bold=True)
+        cell.fill = GRAY
+        cell.border = BORDER
+        cell.alignment = Alignment(horizontal="center", wrap_text=True)
+    seen = set()
+    for it in sorted(items, key=lambda x: (x["builder"], x["line"])):
+        tn = it["t_note"] or ""
+        # Genuine misses ONLY — a SUCCESSFUL extraction's note also names the
+        # 'Cost Gral' sheet, so match the miss phrasing, not any mention.
+        miss = ("Missing 'JobTread Cost Gral'" in tn
+                or "No budget takeoff" in tn or "takeoff unreadable" in tn)
+        if miss and it["line"] not in seen:
+            seen.add(it["line"])
+            where = (_breadcrumb(it["takeoff"]) if it["takeoff"]
+                     else (_breadcrumb(it["folder"]) if it["folder"] else "—"))
+            cw.append([it["line"], it["builder"], tn, where])
+            rr = cw.max_row
+            for cc in range(1, len(ch) + 1):
+                cw.cell(rr, cc).border = BORDER
+                cw.cell(rr, cc).alignment = Alignment(vertical="top",
+                                                      wrap_text=True)
+    for col, w in zip("ABCD", (14, 24, 50, 58)):
+        cw.column_dimensions[col].width = w
+    cw.freeze_panes = "A4"
+
     wb.save(out_path)
     print(f"  ✓ Preview → {out_path}")
 
@@ -646,26 +786,44 @@ def main() -> int:
         new_k = new_e = None
         p_note = t_note = ""
         t_frag = None
+        ov = OVERRIDES.get(line, {})
+        # Team-pinned files WIN (RP WIP Fixes.xlsx corrected wrong folders,
+        # wrong builders and typos — trust the human over the folder guess).
+        if ov.get("proposal"):
+            prop = Path(ov["proposal"])
+            new_k = pdf_subtotal(prop)
+            p_note = ("team-pinned" if new_k is not None
+                      else "team-pinned (price list — no SUB TOTAL)")
+        if ov.get("takeoff"):
+            tkoff = Path(ov["takeoff"])
+            new_e, t_note, t_frag = takeoff_budget_from(tkoff, scope, s["desc"])
+        # Folder search fills whatever the override didn't supply.
         if folder is not None:
-            # PDF ONLY for the contract (the user 2026-07-21): the signed
-            # proposal is the one legitimate contract source — no takeoff
-            # bid-sheet substitution. Missing/unpriced PDF = a NEEDS flag,
-            # not a fallback number.
-            prop, new_k, p_note = find_proposal(folder, scope, s["desc"])
-            tkoff, new_e, t_note, t_frag = find_takeoff_etc(
-                folder, job, scope, s["desc"])
-        else:
+            if prop is None:
+                prop, new_k, p_note = find_proposal(folder, scope, s["desc"])
+            if tkoff is None:
+                tkoff, new_e, t_note, t_frag = find_takeoff_etc(
+                    folder, job, scope, s["desc"])
+        elif prop is None and tkoff is None:
             p_note = t_note = "no project folder found"
 
+        # TRACT builders (Camden, Grand Homes, Habitat…): NO bid proposal —
+        # contract comes from P.O.'s / a builder price list. Take the General
+        # Lista price as the contract; never false-flag 'no proposal'.
+        tract = _is_tract(s["builder"])
+        if tract and new_k is None:
+            p_note = "Tract — contract from P.O.'s / builder price list"
+            if gl_k:
+                new_k = gl_k
+
         needs = []
-        if not s.get("job"):
-            needs.append("no job #")
-        if not in_wip:
-            if not rec:
-                needs.append("not in General List" if job not in gl_jobs
-                             else "in GL but unpriced")
+        if not in_wip and not tract and not rec:
+            needs.append("not in General List" if job not in gl_jobs
+                         else "in GL but unpriced")
         if new_k is None:
-            needs.append("Export/find the bid proposal PDF that was sent "
+            needs.append("Tract — enter contract from P.O.'s / price list"
+                         if tract else
+                         "Export/find the bid proposal PDF that was sent "
                          "to the client → drop it in this project's folder")
         if new_e is None:
             needs.append(t_note or "no budget takeoff")
@@ -676,22 +834,69 @@ def main() -> int:
             group = "CHANGED"
         else:
             group = "MATCHES"
-        items.append({
-            "group": group, "line": line, "section": s["section"],
-            "desc": s["desc"], "address": s["address"], "builder": s["builder"],
-            "in_gl": job in gl_jobs, "gl_contract": gl_k or None,
-            "gl_etc": gl_e or None, "new_contract": new_k, "new_etc": new_e,
-            "proposal": prop, "p_note": p_note, "takeoff": tkoff,
-            "t_note": t_note, "needs": "; ".join(needs),
-            "folder": folder, "t_frag": t_frag,
-            "gl_sheet": rec["source"] if rec else None,
-            "gl_row": rec["gl_row"] if rec else None,
-        })
+        items.append(_blank_item(
+            group=group, line=line, section=s["section"], desc=s["desc"],
+            address=s["address"], builder=s["builder"],
+            in_gl=(job in gl_jobs), gl_contract=gl_k or None, gl_etc=gl_e or None,
+            new_contract=new_k, new_etc=new_e, proposal=prop, p_note=p_note,
+            takeoff=tkoff, t_note=t_note, needs="; ".join(needs), folder=folder,
+            t_frag=t_frag, gl_sheet=(rec["source"] if rec else None),
+            gl_row=(rec["gl_row"] if rec else None)))
+
+    # ── General Lista cross-checks (the user 2026-07-22) ──
+    #   (1) A GL job in progress but NOT on the schedule → RED: every active
+    #       job must be on the schedule.
+    #   (2) Flatwork from the GL: AF=OTHER = won by another contractor
+    #       (excluded); otherwise a priced -FTW not on today's schedule = the
+    #       backlog the schedule can't show (expected, not scheduled yet).
+    sched_bases = {s["job"] for s in sched}
+    sched_ftw = {s["job"] for s in sched if s["scope"] == "ftw"}
+    n_notsched = n_backlog = n_other = 0
+    for rec in records:
+        job = rec["job"]
+        if job.startswith("CP"):
+            continue
+        comp = rec.get("completion")
+        in_progress = comp is None or (isinstance(comp, (int, float)) and comp < 0.999)
+        if (rec["slab_bid"] or rec["slab_cost"]) and in_progress \
+                and job not in sched_bases:
+            n_notsched += 1
+            items.append(_blank_item(
+                group="⚠ IN GENERAL LISTA, NOT ON SCHEDULE", line=job,
+                section="—", desc="in progress on the list, missing from the schedule",
+                builder=str(rec.get("builder") or ""), in_gl=True,
+                gl_contract=rec["slab_bid"], gl_etc=rec["slab_cost"],
+                needs="All active jobs must be on the schedule — add it, or "
+                      "mark it complete if it's done",
+                gl_sheet=rec["source"], gl_row=rec["gl_row"]))
+        if rec["flat_bid"] or rec["flat_cost"]:
+            if rec.get("flat_other"):
+                n_other += 1
+                items.append(_blank_item(
+                    group="FLATWORK TAKEN BY OTHER", line=f"{job}-FTW",
+                    section="OTHER",
+                    desc="AF=OTHER — flatwork won by another contractor",
+                    builder=str(rec.get("builder") or ""), in_gl=True,
+                    gl_contract=rec["flat_bid"], gl_etc=rec["flat_cost"],
+                    needs="Excluded — another contractor won the flatwork",
+                    gl_sheet=rec["source"], gl_row=rec["gl_row"]))
+            elif job not in sched_ftw:
+                n_backlog += 1
+                items.append(_blank_item(
+                    group="FTW BACKLOG (GL, not scheduled)", line=f"{job}-FTW",
+                    section="BACKLOG",
+                    desc="flatwork bid, not yet on the schedule",
+                    builder=str(rec.get("builder") or ""), in_gl=True,
+                    gl_contract=rec["flat_bid"], gl_etc=rec["flat_cost"],
+                    needs="Backlog — expected flatwork, not scheduled yet",
+                    gl_sheet=rec["source"], gl_row=rec["gl_row"]))
 
     n_new = sum(1 for i in items if i["group"].startswith("NEW"))
     n_chg = sum(1 for i in items if i["group"] == "CHANGED")
-    print(f"  NEW (schedule→WIP lag): {n_new} · CHANGED: {n_chg} · "
-          f"MATCHES: {len(items) - n_new - n_chg}")
+    n_match = sum(1 for i in items if i["group"] == "MATCHES")
+    print(f"  Schedule-active: NEW {n_new} · CHANGED {n_chg} · MATCHES {n_match}")
+    print(f"  ⚠ GL active NOT on schedule: {n_notsched} · "
+          f"FTW backlog (GL): {n_backlog} · FTW taken by OTHER: {n_other}")
     out = Path(os.getenv("RP_SCHED_PREVIEW_XLSX",
                str(Path.home() / "Downloads"
                    / "RP WIP - Schedule Method Preview.xlsx")))
