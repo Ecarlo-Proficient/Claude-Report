@@ -238,8 +238,9 @@ def main() -> int:
         print("  ✗ no schedule files found for the target week")
         return 3
     print(f"  week: {week[0][0]} → {week[-1][0]} ({len(week)} day file(s))")
-    pmap = build_price_map(WIP_PATH)
-    print(f"  price map: {len(pmap)} addresses from the WIP master")
+    pmap = build_price_map()
+    print(f"  price map: {len(pmap['by_addr'])} addresses "
+          f"(General List + WIP master), {len(pmap['by_proj'])} priced projects")
     model = build_model(week, pmap)
     matched = sum(1 for j in model["jobs"] if j["contract"] is not None)
     print(f"  {len(model['jobs'])} jobs · {matched} price-matched")

@@ -182,9 +182,13 @@ flowchart LR
 ```
 
 **`one-offs/schedule_report.py`** (read-only) — standalone weekly crew-schedule stage
-Gantt. The model logic lives in **`shared/schedule.py`** (daily-schedule discovery/parse,
-address→pricing match from the WIP master, job×day×stage model, stage→colour) — shared
-with company_tracker, which folds the same Gantt into the one workbook + dashboard. Reads
+Gantt. The model logic lives in **`shared/schedule.py`** (current-week discovery/parse,
+address→pricing match, job×day×stage model, stage→colour) — shared with company_tracker,
+which folds the same Gantt into the one workbook + dashboard. Pricing is broadened: the
+**General List** resolves address→project# across all jobs (+ bid prices on the priced
+sheets) and the **WIP master** overlays clean active contracts, with a project#→contract
+cross-lookup and range/token-overlap fuzzy matching. Week anchors on today (next week's
+pre-loaded schedule doesn't hijack it). Reads
 `…/OPERATIONS/SCHEDULE/<yr>/<month>/Schedule M-D-YY.xlsx` for the latest Mon–Fri week →
 one row per job, one column per day, each cell the STAGE that day (Pour / Wreck / Forms /
 …) coloured by stage. Output `~/Documents/CompanyHealth/Weekly Schedule.xlsx` +
