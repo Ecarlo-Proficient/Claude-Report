@@ -38,6 +38,7 @@ from openpyxl import load_workbook
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from shared import paths
+from shared import schedule as sched
 
 CH = paths.companyhealth_dir()
 MB_PATH = CH / "Money Bleeds.xlsx"
@@ -424,7 +425,40 @@ def _section(sec) -> str:
     </section>'''
 
 
-def render(sections, health, sources) -> str:
+def _schedule_html(model) -> str:
+    """Weekly stage Gantt as a full-width section (empty string if no data)."""
+    if not model or not model.get("jobs"):
+        return ""
+    dates = model["dates"]
+    legend = "".join(f'<span class="chip" style="background:#{c}">{html.escape(n)}</span> '
+                     for n, c in sched.legend())
+    day_hdr = "".join(f"<th>{d.strftime('%a<br>%m/%d')}</th>" for d in dates)
+    rows = ""
+    for j in model["jobs"]:
+        cells = ""
+        for d in dates:
+            if d in j["days"]:
+                cat, color = sched.stage_cat(j["days"][d])
+                cells += (f'<td class="gcell" style="background:#{color}" '
+                          f'title="{html.escape(j["days"][d])}">{html.escape(cat)}</td>')
+            else:
+                cells += '<td class="gcell empty"></td>'
+        price = f"${j['contract']:,.0f}" if isinstance(j.get("contract"), (int, float)) else "—"
+        rows += (f'<tr><td class="proj">{html.escape(j["proj"])}</td>'
+                 f'<td class="addr">{html.escape(j["address"])}'
+                 f'<span class="bld">{html.escape(j["builder"])}</span></td>'
+                 f'<td class="price">{price}</td>{cells}</tr>')
+    span = f"{dates[0]:%b %d} – {dates[-1]:%b %d}" if dates else "—"
+    return f'''<section class="sec sched">
+      <h2>Weekly Schedule — stage Gantt · week of {span} · {len(model["jobs"])} jobs</h2>
+      <div class="legend">{legend}</div>
+      <div class="gwrap"><table class="gantt"><thead><tr>
+        <th>Project #</th><th>Address / Builder</th><th>Contract</th>{day_hdr}
+      </tr></thead><tbody>{rows}</tbody></table></div>
+    </section>'''
+
+
+def render(sections, health, sources, schedule=None) -> str:
     now = dt.datetime.now()
     gen = health.get("generated")
     hage = (now - gen).days if gen else None
@@ -432,7 +466,7 @@ def render(sections, health, sources) -> str:
     asof = (f'<span class="asof {"bad" if hstale else ""}">cash / AR-AP / margins '
             f'as of {gen:%Y-%m-%d}{" — STALE, run qbo_health.py" if hstale else ""}'
             f'</span>' if gen else "")
-    body = "".join(_section(s) for s in sections)
+    body = "".join(_section(s) for s in sections) + _schedule_html(schedule)
     badges = " ".join(_fresh_badge(p) for p in sources)
     return f'''<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -459,6 +493,23 @@ def render(sections, health, sources) -> str:
   .sec.in {{ border-top-color:var(--green); }}
   .sec.out {{ border-top-color:var(--red); }}
   .sec.pos {{ border-top-color:var(--navy); grid-column:1 / -1; }}
+  .sec.sched {{ border-top-color:#305496; grid-column:1 / -1; }}
+  .legend {{ margin-bottom:10px; }}
+  .chip {{ display:inline-block; color:#fff; font-size:10.5px; font-weight:700;
+    padding:2px 8px; border-radius:20px; margin:2px 3px 0 0; }}
+  .gwrap {{ overflow-x:auto; }}
+  table.gantt {{ width:100%; border-collapse:collapse; font-size:12.5px; }}
+  table.gantt th {{ background:var(--navy); color:#fff; padding:6px 7px;
+    text-align:center; font-size:11px; }}
+  table.gantt th:nth-child(-n+2) {{ text-align:left; }}
+  table.gantt td {{ padding:6px 7px; border-bottom:1px solid var(--line); }}
+  td.proj {{ font-weight:700; color:var(--muted); white-space:nowrap; }}
+  td.addr {{ font-weight:600; }}
+  td.addr .bld {{ display:block; font-size:10.5px; color:var(--muted); font-weight:400; }}
+  td.price {{ text-align:right; font-weight:700; white-space:nowrap;
+    font-variant-numeric:tabular-nums; }}
+  td.gcell {{ text-align:center; color:#fff; font-size:10.5px; font-weight:700; }}
+  td.gcell.empty {{ background:transparent; }}
   .sec h2 {{ margin:2px 0 12px; font-size:14px; letter-spacing:.04em;
     text-transform:uppercase; color:var(--muted); }}
   .heroes {{ display:flex; gap:26px; flex-wrap:wrap; margin-bottom:12px;
@@ -529,8 +580,10 @@ def main() -> int:
           f"WIP active {wip['count']} · cash {hk(health, 'Bank total')}")
 
     sections = build_sections(cards, loc, mor, health, wip)
+    schedule = sched.build_model()
     htmlout = render(sections, health,
-                     [MB_PATH, LOC_PATH, MOR_PATH, HEALTH_PATH, WIP_PATH, BILL_PATH])
+                     [MB_PATH, LOC_PATH, MOR_PATH, HEALTH_PATH, WIP_PATH, BILL_PATH],
+                     schedule)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(htmlout, encoding="utf-8")
     os.chmod(args.out, stat.S_IRUSR | stat.S_IWUSR)

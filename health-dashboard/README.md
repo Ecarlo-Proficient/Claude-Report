@@ -10,11 +10,13 @@ python3 health-dashboard/company_tracker.py --open
 ```
 
 Folds every tracker into a single **`Company Tracker.xlsx`** (chmod 600) — a **Summary**
-tab with the whole story plus **Money In / Money Out / Position** tabs (metric tables,
-hero numbers, aging + LOC-by-division data bars, semantic colour) — and renders the
-`Company Dashboard.html` from the **same metric model** (`company_dashboard.build_sections`)
-so the workbook and the page can never disagree. One command → one workbook + one
-dashboard. This is the "one solid workbook a HTML breaks down" goal. Regenerate the source
+tab with the whole story, **Money In / Money Out / Position** tabs (metric tables, hero
+numbers, aging + LOC-by-division data bars, semantic colour), and a **Weekly Schedule**
+stage-Gantt tab (via `shared/schedule.py` — job × day, cell coloured by stage) — and
+renders the `Company Dashboard.html` (with the Gantt section) from the **same model**
+(`company_dashboard.build_sections` + `shared.schedule.build_model`) so the workbook and
+page can never disagree. One command → one workbook + one dashboard. The schedule tab is
+skipped gracefully if the schedule volume isn't mounted. This is the "one solid workbook a HTML breaks down" goal. Regenerate the source
 trackers first; no QBO/Touch ID.
 
 ## Company Dashboard (`company_dashboard.py`) — HTML renderer + shared readers

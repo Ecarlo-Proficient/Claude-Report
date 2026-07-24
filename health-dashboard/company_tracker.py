@@ -39,6 +39,7 @@ from openpyxl.utils import get_column_letter
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from shared import paths
+from shared import schedule as sched
 import company_dashboard as cd    # same tool (health-dashboard/) — shared readers + model
 
 CH = paths.companyhealth_dir()
@@ -142,7 +143,58 @@ def _section_to_sheet(ws, sec, standalone):
         ws.sheet_properties.tabColor = band_color
 
 
-def build_workbook(path: Path, sections, health) -> None:
+def _write_schedule_tab(wb, model) -> None:
+    """Weekly stage Gantt as a tab: job × day, cell coloured by stage."""
+    if not model or not model.get("jobs"):
+        return
+    ws = wb.create_sheet("Weekly Schedule")
+    ws.sheet_view.showGridLines = False
+    dates = model["dates"]
+    hdr = ["PROJECT #", "ADDRESS", "BUILDER", "CONTRACT $", "CURRENT STAGE"] + \
+          [d.strftime("%a %m/%d") for d in dates]
+    ws.append(hdr)
+    for c in range(1, len(hdr) + 1):
+        cell = ws.cell(1, c)
+        cell.font = _WHITE
+        cell.fill = _NAVY
+        cell.border = _BORDER
+        cell.alignment = Alignment(vertical="center", horizontal="center", wrap_text=True)
+    for i, w in enumerate([11, 30, 26, 13, 14] + [12] * len(dates)):
+        ws.column_dimensions[get_column_letter(i + 1)].width = w
+    ws.freeze_panes = "F2"
+    for i, j in enumerate(model["jobs"]):
+        row = [j["proj"], j["address"], j["builder"], j["contract"],
+               sched.stage_cat(j["current"])[0] if j["current"] else ""]
+        for d in dates:
+            row.append(sched.stage_cat(j["days"][d])[0] if d in j["days"] else "")
+        ws.append(row)
+        r = ws.max_row
+        for c in range(1, 6):
+            ws.cell(r, c).border = _BORDER
+            if i % 2:
+                ws.cell(r, c).fill = _ZEBRA
+        ws.cell(r, 4).number_format = CUR
+        for k, d in enumerate(dates):
+            cell = ws.cell(r, 6 + k)
+            cell.border = _BORDER
+            cell.alignment = Alignment(horizontal="center")
+            if d in j["days"]:
+                cell.fill = PatternFill("solid", fgColor=sched.stage_cat(j["days"][d])[1])
+                cell.font = Font(bold=True, color="FFFFFF", size=9)
+    ws.auto_filter.ref = f"A1:E{ws.max_row}"
+    ws.append([])
+    ws.append(["Legend:"])
+    lr = ws.max_row
+    ws.cell(lr, 1).font = Font(bold=True)
+    for col, (name, color) in enumerate(sched.legend(), start=2):
+        cc = ws.cell(lr, col, name)
+        cc.fill = PatternFill("solid", fgColor=color)
+        cc.font = Font(bold=True, color="FFFFFF", size=9)
+        cc.alignment = Alignment(horizontal="center")
+    ws.sheet_properties.tabColor = "305496"
+
+
+def build_workbook(path: Path, sections, health, schedule=None) -> None:
     wb = Workbook()
 
     # Summary tab — the whole story
@@ -170,6 +222,8 @@ def build_workbook(path: Path, sections, health) -> None:
     for sec, tab in zip(sections, ("Money In", "Money Out", "Position")):
         _section_to_sheet(wb.create_sheet(tab), sec, standalone=True)
 
+    _write_schedule_tab(wb, schedule)
+
     s.sheet_properties.tabColor = "1F3864"
     path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(path)
@@ -194,11 +248,14 @@ def main() -> int:
           f"WIP active {wip['count']} · cash {cd.hk(health, 'Bank total')}")
 
     sections = cd.build_sections(cards, loc, mor, health, wip)   # ONE model
-    build_workbook(args.xlsx, sections, health)
+    schedule = sched.build_model()
+    print(f"  schedule: {len(schedule['jobs'])} jobs" if schedule["jobs"]
+          else "  schedule: none (volume not mounted / no files) — tab skipped")
+    build_workbook(args.xlsx, sections, health, schedule)
     print(f"  ✓ {args.xlsx}")
 
     sources = [cd.MB_PATH, cd.LOC_PATH, cd.MOR_PATH, cd.HEALTH_PATH, cd.WIP_PATH, cd.BILL_PATH]
-    args.html.write_text(cd.render(sections, health, sources), encoding="utf-8")
+    args.html.write_text(cd.render(sections, health, sources, schedule), encoding="utf-8")
     os.chmod(args.html, stat.S_IRUSR | stat.S_IWUSR)
     print(f"  ✓ {args.html}")
     if args.open:

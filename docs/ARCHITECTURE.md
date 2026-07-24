@@ -181,13 +181,14 @@ flowchart LR
     QBO --> LOANS --> P7
 ```
 
-**`one-offs/schedule_report.py`** (read-only) — weekly crew-schedule stage Gantt. Reads
-the daily crew schedules (`…/OPERATIONS/SCHEDULE/<yr>/<month>/Schedule M-D-YY.xlsx`,
-'Daily Schedule' tab) for the latest Mon–Fri week → one row per job (address + builder),
-one column per day, each cell the STAGE that day (Pour / Wreck / Forms / Cables / …)
-coloured by stage — showing current stage and how it moved through the week. Pricing
-matched best-effort from the WIP master (RP project #/contract by address). Output
-`~/Documents/CompanyHealth/Weekly Schedule.xlsx` + `Weekly Schedule.html` (chmod 600).
+**`one-offs/schedule_report.py`** (read-only) — standalone weekly crew-schedule stage
+Gantt. The model logic lives in **`shared/schedule.py`** (daily-schedule discovery/parse,
+address→pricing match from the WIP master, job×day×stage model, stage→colour) — shared
+with company_tracker, which folds the same Gantt into the one workbook + dashboard. Reads
+`…/OPERATIONS/SCHEDULE/<yr>/<month>/Schedule M-D-YY.xlsx` for the latest Mon–Fri week →
+one row per job, one column per day, each cell the STAGE that day (Pour / Wreck / Forms /
+…) coloured by stage. Output `~/Documents/CompanyHealth/Weekly Schedule.xlsx` +
+`Weekly Schedule.html` (chmod 600).
 
 **`one-offs/money_out_register.py`** (read-only QBO) — check register for tracking
 uncashed / outstanding checks. QBO exposes every check written (BillPayment Check +
@@ -239,9 +240,10 @@ the consolidation. `company_dashboard.py` holds the shared readers and `build_se
 workbooks (Money Bleeds, Sub LOC, Money Out Register, health_dashboard, WIP master
 Test-Master): AR/backlog/retainage/lien in; AP/POs/checks/LOC/burn out; cash/runway/
 coverage/margins/over-under position. `company_tracker.py` folds that model into a single
-**`Company Tracker.xlsx`** (Summary + Money In/Out/Position tabs, hero numbers, aging +
-LOC data bars, semantic colour) AND renders `Company Dashboard.html` from the same model,
-so the workbook and page never disagree. The source Excels are the data layer; this is the
+**`Company Tracker.xlsx`** (Summary + Money In/Out/Position tabs + a **Weekly Schedule**
+Gantt tab via `shared/schedule.py`, hero numbers, aging + LOC data bars, semantic colour)
+AND renders `Company Dashboard.html` (with the Gantt section) from the same model, so the
+workbook and page never disagree. The source Excels are the data layer; this is the
 one-workbook-a-HTML-breaks-down deliverable.
 
 Read-only exception checks: **draws with no invoice** (MFD: latest numbered draw folder
