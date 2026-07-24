@@ -38,6 +38,7 @@ sys.path.insert(0, str(_REPO / "wip"))
 
 from openpyxl import Workbook, load_workbook
 
+import cp_wip_reader as CP
 import rp_wip_reader as RP
 
 MAIN_SHEET = "Main Schedule"
@@ -79,6 +80,11 @@ TRACT_TOKENS = ("CAMDEN", "GRAND HOMES", "HABITAT", "HABITART", "WILLIAM RYAN")
 def _is_tract(builder: str) -> bool:
     b = _norm(builder)
     return any(t in b for t in TRACT_TOKENS)
+
+
+# Jobs whose BUDGET comes from the General Lista, not the takeoff (per the
+# user, case-by-case). RP7535 (2026-07-23).
+GL_ETC_JOBS = {"RP7535"}
 
 
 def _norm(s) -> str:
@@ -719,10 +725,112 @@ def write_report(items, sched_label, out_path: Path) -> None:
     print(f"  ✓ Preview → {out_path}")
 
 
+# ─────────── commit READY → Test - RP · MISSING → Downloads ───────────
+def _cprow_from_item(it):
+    """Build a WIP CpRow from a schedule item. Contract/budget prefer the
+    extracted numbers, falling back to the General Lista (backlog rows carry
+    only GL numbers)."""
+    contract = (it["new_contract"] if it["new_contract"] is not None
+                else it["gl_contract"])
+    etc = it["new_etc"] if it["new_etc"] is not None else it["gl_etc"]
+    row = CP.CpRow(it["line"], it["address"] or it["line"], False,
+                   contract, None, etc, None, None)
+    row.folder_path = it.get("folder")
+    if it.get("takeoff"):
+        row.takeoff_path = it["takeoff"]
+    row.client = it["builder"] or None
+    row.home_type = "Tract" if _is_tract(it["builder"]) else "Custom"
+    return row
+
+
+def commit_to_test_rp(ready, backlog, label):
+    """Write the READY schedule jobs (contract + budget known) to the
+    'Test - RP' tab as the new RP WIP report, QBO-enriched, with the General
+    Lista FTW backlog as an appendix. Production write — guarded/QC'd by
+    write_test_cp."""
+    main_rows = [_cprow_from_item(it) for it in ready]
+    bk_rows = [_cprow_from_item(it) for it in backlog]
+    pairs = [(r, None, None) for r in main_rows + bk_rows]
+    print("  Enriching READY + backlog with QBO Billed/Costs …")
+    RP.enrich_with_qbo(pairs)
+    for r in main_rows:
+        RP._classify(r, None)
+    for r in bk_rows:
+        RP._classify(r, None)
+        r.needs_review = False            # backlog = expected, not an error
+    return CP.write_test_cp(
+        main_rows, CP.WIP_EXCEL_PATH, tab_name="Test - RP",
+        appendix=("FTW BACKLOG — flatwork bid in the General Lista, not yet "
+                  "on the schedule (expected wins)", bk_rows),
+        cols=RP._rp_cols(), default_filter_active=True,
+        title=f"RP WIP REPORT — schedule-driven, as of {label}", summary=True)
+
+
+def write_missing(missing, label, out_path: Path):
+    """The clean 'what's still missing' list — schedule-active jobs that lack
+    a contract and/or a budget. Single-font, no rich text."""
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    GRAY = PatternFill("solid", fgColor="D9D9D9")
+    RED = PatternFill("solid", fgColor="F4CCCC")
+    thin = Side(style="thin", color="000000")
+    BORDER = Border(left=thin, right=thin, top=thin, bottom=thin)
+    lock = out_path.with_name("~$" + out_path.name)
+    if lock.exists():
+        raise SystemExit(f"{out_path.name} is open in Excel — close it first")
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "MISSING"
+    ws["A1"] = (f"RP WIP — WHAT'S MISSING (schedule {label}). The READY jobs "
+                f"were written to the 'Test - RP' tab; these still lack a "
+                f"contract and/or a budget. ORANGE = AR (proposal/contract), "
+                f"BLUE = JR (budget/takeoff).")
+    ws["A1"].font = Font(bold=True)
+    ws.append([])
+    HDR = ["JOB #", "WORK DESC", "ADDRESS", "BUILDER", "MISSING",
+           "AR — PROPOSAL / CONTRACT", "JR — BUDGET / TAKEOFF",
+           "PROPOSAL PDF", "TAKEOFF FILE"]
+    ws.append(HDR)
+    for c in range(1, len(HDR) + 1):
+        cell = ws.cell(3, c)
+        cell.font = Font(bold=True)
+        cell.fill = GRAY
+        cell.border = BORDER
+        cell.alignment = Alignment(horizontal="center", wrap_text=True)
+    for it in sorted(missing, key=lambda x: (x["builder"], x["line"])):
+        gap = []
+        if it["new_contract"] is None:
+            gap.append("CONTRACT")
+        if it["new_etc"] is None:
+            gap.append("BUDGET")
+        ar, jr = _split_needs(it["needs"])
+        ws.append([it["line"], it["desc"], it["address"], it["builder"],
+                   " + ".join(gap), ar, jr,
+                   (_breadcrumb(it["proposal"]) if it["proposal"] else it["p_note"]),
+                   (_breadcrumb(it["takeoff"]) if it["takeoff"] else it["t_note"])])
+        r = ws.max_row
+        for cc in range(1, len(HDR) + 1):
+            ws.cell(r, cc).border = BORDER
+            ws.cell(r, cc).alignment = Alignment(vertical="top", wrap_text=True)
+        ws.cell(r, 5).fill = RED
+        ws.cell(r, 5).font = Font(color="9C0006", bold=True)
+        if ws.cell(r, 6).value:
+            ws.cell(r, 6).font = Font(color="ED7D31", bold=True)
+        if ws.cell(r, 7).value:
+            ws.cell(r, 7).font = Font(color="0070C0", bold=True)
+    for col, w in zip("ABCDEFGHI", (12, 24, 22, 22, 16, 40, 40, 34, 34)):
+        ws.column_dimensions[col].width = w
+    ws.freeze_panes = "A4"
+    wb.save(out_path)
+    print(f"  ✓ Missing list → {out_path}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--project", help="filter to one job #")
     ap.add_argument("--schedule", help="use this schedule file instead of the latest")
+    ap.add_argument("--commit", action="store_true",
+                    help="write READY jobs (contract+budget known) to the "
+                         "'Test - RP' WIP tab; emit only the MISSING list")
     args = ap.parse_args()
 
     print("\n  RP WIP — schedule-driven method PREVIEW (read-only)")
@@ -815,6 +923,10 @@ def main() -> int:
             p_note = "Tract — contract from P.O.'s / builder price list"
             if gl_k:
                 new_k = gl_k
+        # Per-job budget-from-General-Lista override (RP7535, the user 2026-07-23).
+        if line in GL_ETC_JOBS and gl_e:
+            new_e = gl_e
+            t_note = "Budget from the General Lista (per the user)"
 
         needs = []
         if not in_wip and not tract and not rec:
@@ -897,6 +1009,33 @@ def main() -> int:
     print(f"  Schedule-active: NEW {n_new} · CHANGED {n_chg} · MATCHES {n_match}")
     print(f"  ⚠ GL active NOT on schedule: {n_notsched} · "
           f"FTW backlog (GL): {n_backlog} · FTW taken by OTHER: {n_other}")
+
+    if args.commit:
+        # Split the schedule-active jobs (exclude the GL cross-check rows):
+        # READY = contract AND budget known → the RP WIP; MISSING = the gap.
+        xcheck = {"⚠ IN GENERAL LISTA, NOT ON SCHEDULE",
+                  "FTW BACKLOG (GL, not scheduled)", "FLATWORK TAKEN BY OTHER"}
+        active = [i for i in items if i["group"] not in xcheck]
+        backlog = [i for i in items
+                   if i["group"] == "FTW BACKLOG (GL, not scheduled)"]
+        ready = [i for i in active
+                 if i["new_contract"] is not None and i["new_etc"] is not None]
+        missing = [i for i in active
+                   if i["new_contract"] is None or i["new_etc"] is None]
+        print(f"  COMMIT: READY {len(ready)} → 'Test - RP' · "
+              f"MISSING {len(missing)} → Downloads · backlog {len(backlog)}")
+        try:
+            wrote = commit_to_test_rp(ready, backlog, label)
+        except CP.WipWriteDenied as e:
+            print(f"  ✗ Guard blocked write: {e}")
+            return 2
+        if wrote:
+            print("  ✓ READY jobs written to the 'Test - RP' WIP tab")
+        miss_out = Path(os.getenv("RP_MISSING_XLSX",
+                   str(Path.home() / "Downloads" / "RP WIP - Missing.xlsx")))
+        write_missing(missing, label, miss_out)
+        return 0
+
     out = Path(os.getenv("RP_SCHED_PREVIEW_XLSX",
                str(Path.home() / "Downloads"
                    / "RP WIP - Schedule Method Preview.xlsx")))
