@@ -301,27 +301,130 @@ def _bar(buckets: dict) -> str:
     return out
 
 
-def _section(title, tone, heroes, rows, extra="") -> str:
-    """tone: in | out | pos. heroes: [(label,value,cls)]. rows: [(metric,value,
-    detail,valcls)]."""
+AGE_COLOR = {"Current": "#1F6B4C", "1-30": "#7F9F3F", "31-60": "#BF8F00",
+             "61-90": "#D2691E", "90+": "#C00000"}
+DIV_COLOR = {"MFD": "#305496", "CP": "#1F6B4C", "RP": "#7030A0"}
+
+
+def build_sections(cards, loc, mor, health, wip) -> list:
+    """The single source of truth for the Money In / Money Out / Position
+    metric model — consumed by BOTH the HTML dashboard and the Company Tracker
+    workbook so they never diverge. Each section: {title, tone, heroes:[(lbl,
+    val_str, cls)], rows:[(metric, val_str, detail, cls)], bars:[(header,
+    [(label, value_number, color, sublabel)])]}."""
+    ar, ap = hk(health, "Total AR"), hk(health, "Total AP")
+    retain, cash = hk(health, "Retainage Receivable"), hk(health, "Bank total")
+    runway, gm = hk(health, "Runway at current burn"), hk(health, "Current Gross Margin")
+    nm, burn = hk(health, "Net margin after overhead"), hk(health, "Weekly burn")
+    cov = (ar / ap) if (_num(ar) and _num(ap)) else None
+    ar60, ap60 = hk(health, "AR aged 60+"), hk(health, "AP aged 60+")
+
+    def age_bars(bk):
+        return [(b, bk.get(b, 0), AGE_COLOR.get(b, "#888"), "")
+                for b in AGING if bk.get(b)]
+
+    def div_bars():
+        return [(d["name"], d["peak"], DIV_COLOR.get(d["name"], "#888"), f"{d['float']:.0f}d")
+                for d in sorted(loc["divisions"], key=lambda x: -x["peak"])]
+
+    lien_past = mb(cards, "past deadline")
+    cp_draw = mb(cards, "under-invoiced")
+    rp_wait = mb(cards, "waiting on punch")
+    money_in = {
+        "title": "Money In — owed to us / to bill", "tone": "in",
+        "heroes": [("Accounts Receivable", _money(ar), "g"),
+                   ("Unbilled backlog", _money(wip["left_to_bill"]), "g"),
+                   ("Retainage", _money(retain), "g")],
+        "rows": [
+            ("Accounts Receivable", _money(ar), (f"aged 60+ {_money(ar60)}" if ar60 else "money owed to us"), "g"),
+            ("Unbilled backlog (WIP active)", _money(wip["left_to_bill"]), f"{wip['count']} active jobs · contract {_money(wip['contract'])}", "g"),
+            ("Underbilled / job borrow (WIP)", _money(wip["under"]), "earned but not yet billed", "g"),
+            ("Retainage receivable", _money(retain), "held by clients until close", "g"),
+            ("Lien deadline PAST", _money(lien_past["amount"]), f"{lien_past['count']} invoices — no lien backup", "r" if lien_past["count"] else "g"),
+            ("CP draws billed, not invoiced", _money(cp_draw["amount"]), f"{cp_draw['count']} project(s)", "r" if cp_draw["count"] else "g"),
+            ("RP slabs 100% waiting to bill", str(rp_wait["count"]), "wrap up to get paid", "a" if rp_wait["count"] else "g")],
+        "bars": [("AR aging", age_bars(health.get("ar_buckets", {})))],
+    }
+
+    ap_pay = mb(cards, "client hasn't paid")
+    ap_noinv = mb(cards, "no invoice issued")
+    ap_now = mb(cards, "lien coming up")
+    unused_po = mb(cards, "unused pos")
+    loc_peak = loc_val(loc, "LOC you truly need")
+    money_out = {
+        "title": "Money Out — we owe / committed", "tone": "out",
+        "heroes": [(_money(ap), _money(ap), "r"),
+                   ("Sub LOC peak", _money(loc_peak), "a"),
+                   ("Unused POs", _money(unused_po["amount"]), "a")],
+        "rows": [
+            ("Accounts Payable", _money(ap), (f"aged 60+ {_money(ap60)}" if ap60 else "money we owe"), "r"),
+            ("Bills to pay NOW (paid by client + lien due)", _money(ap_now["amount"]), f"{ap_now['count']} bills — money in, sub can lien us", "r" if ap_now["count"] else "g"),
+            ("Bills — client hasn't paid us", _money(ap_pay["amount"]), f"{ap_pay['count']} bills, collect from GC first", "a"),
+            ("Bills — no GC invoice issued yet", _money(ap_noinv["amount"]), f"{ap_noinv['count']} bills, bill the GC", "a"),
+            ("Unused POs ≥30 days", _money(unused_po["amount"]), f"{unused_po['count']} open POs, no bill (ready-mix blankets may be intentional)", "a"),
+            ("Unreconciled checks >30 days", _money(mor.get("aged_total")), f"{int(mor.get('aged_count') or 0)} checks NOT marked cleared (QBO can't confirm cashed)", "a" if (mor.get("aged_count") or 0) else "g"),
+            ("Sub LOC peak needed", _money(loc_peak), "high-water to float sub payments", "a"),
+            ("Weekly sub/vendor burn", _money(burn), "recurring outflow", "a")],
+        "bars": [("AP aging", age_bars(health.get("ap_buckets", {}))),
+                 ("Sub LOC peak by division", div_bars())],
+    }
+
+    over_under = (wip["over"] or 0) - (wip["under"] or 0)
+    runway_bad = _num(runway) is not None and runway < 8
+    cov_bad = _num(cov) is not None and cov < 1
+    rn = f"{_num(runway):.1f} weeks" if _num(runway) is not None else "—"
+    position = {
+        "title": "Position — where we stand", "tone": "pos",
+        "heroes": [(_money(cash), _money(cash), "r" if (_num(cash) or 0) < 0 else "n"),
+                   ("Runway", (f"{_num(runway):.1f} wk" if _num(runway) is not None else "—"), "r" if runway_bad else "n"),
+                   ("Gross margin", _pct(gm), "n")],
+        "rows": [
+            ("Cash (bank, excl. credit cards)", _money(cash), "spendable now", "r" if (_num(cash) or 0) < 0 else "n"),
+            ("Runway at current burn", rn, "weeks of cash left" + (" — TIGHT" if runway_bad else ""), "r" if runway_bad else "n"),
+            ("Coverage — AR vs AP", (f"{_num(cov):.2f}" if _num(cov) is not None else "—"), "AR ÷ AP; <1 = inflows don't cover outflows", "r" if cov_bad else "n"),
+            ("Over / under-billing net (WIP)", _money(over_under), ("overbilled — liability" if over_under > 0 else "underbilled — bill it"), "a" if over_under > 0 else "g"),
+            ("Gross margin %", _pct(gm), "revenue − direct cost", "n"),
+            ("Net margin after overhead (YTD)", _pct(nm), "the real bottom line", "r" if (_num(nm) or 0) < 0.02 else "n"),
+            ("Top-customer concentration", _pct(health.get("concentration")), str(health.get("top_customer") or ""), "a" if (_num(health.get("concentration")) or 0) > 0.25 else "n")],
+        "bars": [],
+    }
+    return [money_in, money_out, position]
+
+
+def _bars_html(bars) -> str:
+    out = ""
+    for header, items in bars:
+        rows = ""
+        mx = max((v for _, v, _, _ in items), default=1) or 1
+        for label, val, color, sub in items:
+            w = max(3, round(100 * val / mx))
+            txt = f"${val:,.0f}" + (f" · {sub}" if sub else "")
+            rows += (f'<div class="agerow"><span class="agelbl">{html.escape(label)}</span>'
+                     f'<span class="agetrack"><span class="agefill" '
+                     f'style="width:{w}%;background:{color}">{txt}</span></span></div>')
+        out += f'<div class="aging"><div class="agehd">{html.escape(header)}</div>{rows}</div>'
+    return out
+
+
+def _section(sec) -> str:
     hero_html = "".join(
-        f'<div class="hero {cls}"><div class="hv">{val}</div>'
+        f'<div class="hero {cls}"><div class="hv">{html.escape(str(val))}</div>'
         f'<div class="hl">{html.escape(lbl)}</div></div>'
-        for lbl, val, cls in heroes)
+        for lbl, val, cls in sec["heroes"])
     row_html = "".join(
         f'<tr><td class="m">{html.escape(m)}</td>'
-        f'<td class="v {vcls}">{val}</td>'
-        f'<td class="d">{det}</td></tr>'
-        for m, val, det, vcls in rows)
-    return f'''<section class="sec {tone}">
-      <h2>{html.escape(title)}</h2>
+        f'<td class="v {vcls}">{html.escape(str(val))}</td>'
+        f'<td class="d">{html.escape(det)}</td></tr>'
+        for m, val, det, vcls in sec["rows"])
+    return f'''<section class="sec {sec['tone']}">
+      <h2>{html.escape(sec['title'])}</h2>
       <div class="heroes">{hero_html}</div>
       <table class="metrics"><tbody>{row_html}</tbody></table>
-      {extra}
+      {_bars_html(sec.get('bars', []))}
     </section>'''
 
 
-def render(cards, loc, mor, health, wip, sources) -> str:
+def render(sections, health, sources) -> str:
     now = dt.datetime.now()
     gen = health.get("generated")
     hage = (now - gen).days if gen else None
@@ -329,82 +432,7 @@ def render(cards, loc, mor, health, wip, sources) -> str:
     asof = (f'<span class="asof {"bad" if hstale else ""}">cash / AR-AP / margins '
             f'as of {gen:%Y-%m-%d}{" — STALE, run qbo_health.py" if hstale else ""}'
             f'</span>' if gen else "")
-
-    ar = hk(health, "Total AR")
-    ap = hk(health, "Total AP")
-    retain = hk(health, "Retainage Receivable")
-    cash = hk(health, "Bank total")
-    runway = hk(health, "Runway at current burn")
-    gm = hk(health, "Current Gross Margin")
-    nm = hk(health, "Net margin after overhead")
-    burn = hk(health, "Weekly burn")
-    cov = (ar / ap) if (_num(ar) and _num(ap)) else None
-
-    # ---- MONEY IN ----
-    lien_past = mb(cards, "past deadline")
-    cp_draw = mb(cards, "under-invoiced")
-    rp_wait = mb(cards, "waiting on punch")
-    money_in = _section(
-        "Money In — owed to us / to bill", "in",
-        [(f"{_money(ar)}", _money(ar), "g"),
-         (f"Unbilled backlog {_money(wip['left_to_bill'])}", _money(wip["left_to_bill"]), "g"),
-         (f"Retainage {_money(retain)}", _money(retain), "g")],
-        [("Accounts Receivable", _money(ar), f"aged 60+ {_money(hk(health,'AR aged 60+') or '')}"[:60] if hk(health,'AR aged 60+') else "money owed to us", "g"),
-         ("Unbilled backlog (WIP active)", _money(wip["left_to_bill"]), f"{wip['count']} active jobs · contract {_money(wip['contract'])}", "g"),
-         ("Underbilled / job borrow (WIP)", _money(wip["under"]), "earned but not yet billed", "g"),
-         ("Retainage receivable", _money(retain), "held by clients until close", "g"),
-         ("Lien deadline PAST", _money(lien_past["amount"]), f"{lien_past['count']} invoices — money with no lien backup", "r" if lien_past["count"] else "g"),
-         ("CP draws billed, not invoiced", _money(cp_draw["amount"]), f"{cp_draw['count']} project(s)", "r" if cp_draw["count"] else "g"),
-         ("RP slabs 100% waiting to bill", str(rp_wait["count"]), "wrap up to get paid", "a" if rp_wait["count"] else "g")],
-        extra=f'<div class="aging"><div class="agehd">AR aging</div>{_bar(health.get("ar_buckets", {}))}</div>')
-
-    # ---- MONEY OUT ----
-    ap_pay = mb(cards, "client hasn't paid")
-    ap_noinv = mb(cards, "no invoice issued")
-    ap_now = mb(cards, "lien coming up")
-    unused_po = mb(cards, "unused pos")
-    loc_peak = loc_val(loc, "LOC you truly need")
-    div_bars = "".join(
-        f'<div class="agerow"><span class="agelbl">{html.escape(d["name"])}</span>'
-        f'<span class="agetrack"><span class="agefill" style="width:'
-        f'{max(3, round(100*d["peak"]/(max((x["peak"] for x in loc["divisions"]), default=1) or 1)))}%;'
-        f'background:{ {"MFD":"#305496","CP":"#1F6B4C","RP":"#7030A0"}.get(d["name"],"#888") }">'
-        f'${d["peak"]:,.0f} · {d["float"]:.0f}d</span></span></div>'
-        for d in sorted(loc["divisions"], key=lambda x: -x["peak"]))
-    money_out = _section(
-        "Money Out — we owe / committed", "out",
-        [(_money(ap), _money(ap), "r"),
-         (_money(loc_peak), _money(loc_peak), "a"),
-         (_money(unused_po["amount"]), _money(unused_po["amount"]), "a")],
-        [("Accounts Payable", _money(ap), f"aged 60+ {_money(hk(health,'AP aged 60+') or '')}"[:60] if hk(health,'AP aged 60+') else "money we owe", "r"),
-         ("Bills to pay NOW (paid by client + lien due)", _money(ap_now["amount"]), f"{ap_now['count']} bills — money in, sub can lien us", "r" if ap_now["count"] else "g"),
-         ("Bills — client hasn't paid us", _money(ap_pay["amount"]), f"{ap_pay['count']} bills, collect from GC first", "a"),
-         ("Bills — no GC invoice issued yet", _money(ap_noinv["amount"]), f"{ap_noinv['count']} bills, bill the GC", "a"),
-         ("Unused POs ≥30 days", _money(unused_po["amount"]), f"{unused_po['count']} open POs, no bill (ready-mix blankets may be intentional)", "a"),
-         ("Unreconciled checks >30 days", _money(mor.get("aged_total")), f"{int(mor.get('aged_count') or 0)} checks NOT marked cleared (QBO can't confirm cashed — mark them in the register)", "a" if (mor.get("aged_count") or 0) else "g"),
-         ("Sub LOC peak needed", _money(loc_peak), "high-water to float sub payments", "a"),
-         ("Weekly sub/vendor burn", _money(burn), "recurring outflow", "a")],
-        extra=(f'<div class="aging"><div class="agehd">AP aging</div>{_bar(health.get("ap_buckets", {}))}</div>'
-               f'<div class="aging"><div class="agehd">Sub LOC peak by division</div>{div_bars}</div>'))
-
-    # ---- POSITION ----
-    over_under = (wip["over"] or 0) - (wip["under"] or 0)
-    runway_bad = _num(runway) is not None and runway < 8
-    cov_bad = _num(cov) is not None and cov < 1
-    position = _section(
-        "Position — where we stand", "pos",
-        [(_money(cash), _money(cash), "r" if (_num(cash) or 0) < 0 else "n"),
-         (f"{_num(runway):.1f} wk" if _num(runway) is not None else "—",
-          f"{_num(runway):.1f} wk" if _num(runway) is not None else "—", "r" if runway_bad else "n"),
-         (_pct(gm), _pct(gm), "n")],
-        [("Cash (bank, excl. credit cards)", _money(cash), "spendable now", "r" if (_num(cash) or 0) < 0 else "n"),
-         ("Runway at current burn", f"{_num(runway):.1f} weeks" if _num(runway) is not None else "—", "weeks of cash left" + (" — TIGHT" if runway_bad else ""), "r" if runway_bad else "n"),
-         ("Coverage — AR vs AP", f"{_num(cov):.2f}" if _num(cov) is not None else "—", "AR ÷ AP; <1 = inflows don't cover outflows", "r" if cov_bad else "n"),
-         ("Over / under-billing net (WIP)", _money(over_under), ("overbilled — liability" if over_under > 0 else "underbilled — bill it"), "a" if over_under > 0 else "g"),
-         ("Gross margin %", _pct(gm), "revenue − direct cost", "n"),
-         ("Net margin after overhead (YTD)", _pct(nm), "the real bottom line", "r" if (_num(nm) or 0) < 0.02 else "n"),
-         ("Top-customer concentration", _pct(health.get("concentration")), html.escape(str(health.get("top_customer") or "")), "a" if (_num(health.get("concentration")) or 0) > 0.25 else "n")])
-
+    body = "".join(_section(s) for s in sections)
     badges = " ".join(_fresh_badge(p) for p in sources)
     return f'''<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -475,9 +503,7 @@ def render(cards, loc, mor, health, wip, sources) -> str:
   <div class="sub">Generated {now:%Y-%m-%d %H:%M} · {asof}</div>
 </header>
 <main>
-  {money_in}
-  {money_out}
-  {position}
+  {body}
 </main>
 <footer>
   <h3>Sources &amp; freshness</h3>
@@ -502,7 +528,8 @@ def main() -> int:
     print(f"  MB cards {len(cards)} · LOC div {len(loc['divisions'])} · "
           f"WIP active {wip['count']} · cash {hk(health, 'Bank total')}")
 
-    htmlout = render(cards, loc, mor, health, wip,
+    sections = build_sections(cards, loc, mor, health, wip)
+    htmlout = render(sections, health,
                      [MB_PATH, LOC_PATH, MOR_PATH, HEALTH_PATH, WIP_PATH, BILL_PATH])
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(htmlout, encoding="utf-8")

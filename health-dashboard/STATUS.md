@@ -38,11 +38,17 @@ exposures or business analysis here (those live in the owner's vault).
   by-division bars, per-source freshness badges. No QBO/Touch ID. First step of
   the "one dashboard reading all trackers" goal.
 
+## DONE (cont.)
+- **`company_tracker.py`** — the ONE consolidated workbook (Summary + Money In / Money Out
+  / Position tabs) + the HTML, both from one metric model (`company_dashboard.build_sections`).
+  Reads all source trackers; Company Tracker.xlsx + Company Dashboard.html, chmod 600.
+
 ## TO DO (requested, not yet built)
-- **One `Company Tracker.xlsx`** — fold every tracker into a single workbook (Money In /
-  Money Out / Position tabs) that the HTML breaks down (the user wants one file, not many).
-  Next focused build.
+- Pull transaction-level detail (lien chase list, checks >30d, top over/under jobs) into
+  Company Tracker.xlsx as drill-down tabs — currently summary/metric level.
 - Bill Tracker detail into the dashboard (currently freshness-badge only).
+- Morning auto-refresh (launchd runs the source trackers → company_tracker) once the
+  Touch-ID / volume-mount constraints are solved.
 - ~~Money-out check register~~ DONE — `one-offs/money_out_register.py` builds a
   stateful, self-reconciled register (user-owned CLEARED? column, marks preserved across
   runs); company_dashboard surfaces the aged->30d unmarked checks as the chase list. QBO

@@ -3,7 +3,21 @@
 > Commands below run from the repo root. Uses the shared QBO vault
 > (`shared/qbo_vault.py`) — one Touch ID per run.
 
-## Company Dashboard (`company_dashboard.py`) — one HTML view of everything
+## Company Tracker (`company_tracker.py`) — the ONE workbook + its HTML
+
+```bash
+python3 health-dashboard/company_tracker.py --open
+```
+
+Folds every tracker into a single **`Company Tracker.xlsx`** (chmod 600) — a **Summary**
+tab with the whole story plus **Money In / Money Out / Position** tabs (metric tables,
+hero numbers, aging + LOC-by-division data bars, semantic colour) — and renders the
+`Company Dashboard.html` from the **same metric model** (`company_dashboard.build_sections`)
+so the workbook and the page can never disagree. One command → one workbook + one
+dashboard. This is the "one solid workbook a HTML breaks down" goal. Regenerate the source
+trackers first; no QBO/Touch ID.
+
+## Company Dashboard (`company_dashboard.py`) — HTML renderer + shared readers
 
 Reads the tracker workbooks (the data layer) and renders ONE self-contained
 HTML page — no QBO calls, no Touch ID, no server, offline. Regenerate the
