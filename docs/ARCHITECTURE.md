@@ -278,6 +278,43 @@ POs · Reconciliations · Cash Flow.
 
 ---
 
+### JobTread migration tools (read-only unless noted)
+
+**`one-offs/jobtread_migration_setup.py`** (read-only) — the "what do we still need to
+add to JobTread" workbook. Two tabs: **Active Jobs to Add** (jobs on the daily schedule
+with no JobTread job) and **Bidding to Add** (Notion **Bid List** RP rows whose
+`Lead Status` is not terminal — not Sold / Lost / GC Not Awarded / No Response / No
+Opportunity — and not already in JobTread). Reads the schedule, JobTread (full job
+sweep), and Notion via the invoice-sync integration token (Keychain
+`proficient-automation-worker/notion`). Output `~/Downloads/JobTread Migration Setup.xlsx`.
+Overlaps `rp_jobtread_coverage.py` on the schedule half — coverage answers *does it have
+an approved proposal*, this answers *does it exist at all* + the bid pipeline.
+
+**`one-offs/jobtread_bloat_report.py`** (read-only QBO + JobTread) — open JobTread jobs
+vs reality. Per open job, joins QBO (last invoice date, AR balance) + the daily schedule:
+`CLOSE — paid & idle` (AR ≈ $0, idle > 90d, unscheduled), `CLOSE? — no QBO, stale`
+(no invoices, created > 120d, unscheduled), `DONE? unpaid` (idle but money owed — an AR
+chase, not bloat), `ACTIVE`/`NEW`. `-FTW` jobs fall back to the base project's QBO record
+(flatwork often bills under the base #). Output
+`~/Downloads/JobTread Bloat - Close Candidates.xlsx`.
+
+**`one-offs/jobtread_close_jobs.py`** (**writes to JobTread**, audit-gated) — closes the
+approved bloat. `--export` turns the bloat report into an APPROVE workbook with a
+`CLOSE? (Y/N)` column (pre-filled Y only for the high-confidence bucket); the user edits it;
+`--apply` dry-runs; `--apply --commit` performs it. **A job is closed by setting
+`closedOn`** (its `status` is not directly settable) — verified reversible: clearing
+`closedOn` restores the prior status, so `--reopen` is a true undo. Nothing is ever
+deleted. MFD excluded by default. Every change logged before/after to
+`~/Library/Logs/Proficient/jobtread_close_*.jsonl`.
+
+**`one-offs/cable_calculator.py`** (read-only) — the PT-cable cut-list + cost engine
+lifted out of the RP takeoff's hidden `'0'` sheet, mapped cell-for-cell and validated
+against 64 active takeoffs (count, LF, every cut-list row and cost tie exactly). Inputs
+live in **two** INFORMATION blocks (`I/K/M` 25-69 and `N/P/R` 24-69); cost rows are found
+**by label** ("Cable take off" / "Per cable") because their row and rate vary per file.
+The takeoff only sorts+sums typed pairs — it derives nothing — so this is a verification
+harness for the JobTread migration, not an estimator tool.
+
 ## Who writes to QBO (the short list)
 
 | Script | What it writes | Gate |
@@ -286,7 +323,18 @@ POs · Reconciliations · Cash Flow.
 | `one-offs/loans_to_subs_audit.py --apply` | line `AccountRef` (parent `Loans to Sub-Contractors` → per-sub sub-account) on Bill/Purchase/VendorCredit | xlsx audit, `Confirm Sub-Account` filled, then `--commit`; skips stale-SyncToken / closed-period / not-still-on-parent |
 | `wip/qbo_bulk_close.py` | closes customers/projects | `CONFIRM=Y`; always excludes MFD (manual close) |
 
-Everything else is read-only against QBO. All other "writes" land in Excel, Notion, or Teams.
+Everything else is read-only against QBO. All other "writes" land in Excel, Notion, Teams,
+or JobTread.
+
+## Who writes to JobTread
+
+| Script | What it writes | Gate |
+|---|---|---|
+| `one-offs/jobtread_close_jobs.py --apply` | a job's `closedOn` date (= closes it; clearing it reopens) | xlsx audit, `CLOSE?=Y` rows only, then `--commit`; excludes MFD; never deletes; `--reopen` undoes |
+
+The JobTread grant key (`JT_GRANT_KEY`, shared vault) has **write** access — grants carry
+no read/write scope, they inherit the user's permissions. Verified 2026-07-27 by a
+create → read-back → delete round-trip on the CP000 placeholder job.
 
 ---
 
