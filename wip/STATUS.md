@@ -42,6 +42,8 @@ Last updated: 2026-07-21 (pm)
   (lacking contract and/or budget) go to a clean ~/Downloads/RP WIP - Missing.xlsx so the
   gaps are obvious. RP7535 budget taken from the General Lista (GL_ETC_JOBS). 7-23 run:
   READY 35 · MISSING 31 · backlog 38. Verified on a scratch WIP copy before the prod write.
+  Missing list also surfaces the RED 'in General Lista, in progress, NOT on schedule'
+  jobs at the top (was silently dropped in --commit; RP7613 caught 2026-07-24).
 - **RP done-rule + FTW backlog model** (2026-07-14, unchanged): billing is the
   truth; backlog = -FTW with no QBO activity and not on today's schedule.
 

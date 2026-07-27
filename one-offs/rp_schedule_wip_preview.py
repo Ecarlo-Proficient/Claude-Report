@@ -766,9 +766,12 @@ def commit_to_test_rp(ready, backlog, label):
         title=f"RP WIP REPORT — schedule-driven, as of {label}", summary=True)
 
 
-def write_missing(missing, label, out_path: Path):
-    """The clean 'what's still missing' list — schedule-active jobs that lack
-    a contract and/or a budget. Single-font, no rich text."""
+def write_missing(missing, not_scheduled, label, out_path: Path):
+    """The 'what's still missing' list. TWO gaps, both surfaced:
+      • not_scheduled — General Lista jobs in progress but NOT on the schedule
+        (the user's red flag: all active jobs must be scheduled). Top, red.
+      • missing — schedule-active jobs that lack a contract and/or budget.
+    Single-font, no rich text."""
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     GRAY = PatternFill("solid", fgColor="D9D9D9")
     RED = PatternFill("solid", fgColor="F4CCCC")
@@ -781,9 +784,10 @@ def write_missing(missing, label, out_path: Path):
     ws = wb.active
     ws.title = "MISSING"
     ws["A1"] = (f"RP WIP — WHAT'S MISSING (schedule {label}). The READY jobs "
-                f"were written to the 'Test - RP' tab; these still lack a "
-                f"contract and/or a budget. ORANGE = AR (proposal/contract), "
-                f"BLUE = JR (budget/takeoff).")
+                f"went to the 'Test - RP' tab. RED = in the General Lista, in "
+                f"progress, but NOT on the schedule (must be scheduled). Below "
+                f"that = schedule jobs missing a contract/budget "
+                f"(ORANGE=AR, BLUE=JR).")
     ws["A1"].font = Font(bold=True)
     ws.append([])
     HDR = ["JOB #", "WORK DESC", "ADDRESS", "BUILDER", "MISSING",
@@ -796,6 +800,28 @@ def write_missing(missing, label, out_path: Path):
         cell.fill = GRAY
         cell.border = BORDER
         cell.alignment = Alignment(horizontal="center", wrap_text=True)
+
+    def _emit(job, desc, addr, builder, gap, ar, jr, prop, take, red_row=False):
+        ws.append([job, desc, addr, builder, gap, ar, jr, prop, take])
+        r = ws.max_row
+        for cc in range(1, len(HDR) + 1):
+            ws.cell(r, cc).border = BORDER
+            ws.cell(r, cc).alignment = Alignment(vertical="top", wrap_text=True)
+        ws.cell(r, 5).fill = RED
+        ws.cell(r, 5).font = Font(color="9C0006", bold=True)
+        if red_row:
+            for cc in range(1, 5):
+                ws.cell(r, cc).fill = RED
+        if ws.cell(r, 6).value:
+            ws.cell(r, 6).font = Font(color="ED7D31", bold=True)
+        if ws.cell(r, 7).value:
+            ws.cell(r, 7).font = Font(color="0070C0", bold=True)
+
+    # ① RED — General Lista, in progress, NOT on the schedule.
+    for it in sorted(not_scheduled, key=lambda x: (x["builder"], x["line"])):
+        _emit(it["line"], it["desc"], it["address"], it["builder"],
+              "⚠ NOT ON SCHEDULE", it["needs"], "", "", "", red_row=True)
+    # ② schedule jobs missing a contract and/or a budget.
     for it in sorted(missing, key=lambda x: (x["builder"], x["line"])):
         gap = []
         if it["new_contract"] is None:
@@ -803,25 +829,17 @@ def write_missing(missing, label, out_path: Path):
         if it["new_etc"] is None:
             gap.append("BUDGET")
         ar, jr = _split_needs(it["needs"])
-        ws.append([it["line"], it["desc"], it["address"], it["builder"],
-                   " + ".join(gap), ar, jr,
-                   (_breadcrumb(it["proposal"]) if it["proposal"] else it["p_note"]),
-                   (_breadcrumb(it["takeoff"]) if it["takeoff"] else it["t_note"])])
-        r = ws.max_row
-        for cc in range(1, len(HDR) + 1):
-            ws.cell(r, cc).border = BORDER
-            ws.cell(r, cc).alignment = Alignment(vertical="top", wrap_text=True)
-        ws.cell(r, 5).fill = RED
-        ws.cell(r, 5).font = Font(color="9C0006", bold=True)
-        if ws.cell(r, 6).value:
-            ws.cell(r, 6).font = Font(color="ED7D31", bold=True)
-        if ws.cell(r, 7).value:
-            ws.cell(r, 7).font = Font(color="0070C0", bold=True)
+        _emit(it["line"], it["desc"], it["address"], it["builder"],
+              " + ".join(gap), ar, jr,
+              (_breadcrumb(it["proposal"]) if it["proposal"] else it["p_note"]),
+              (_breadcrumb(it["takeoff"]) if it["takeoff"] else it["t_note"]))
     for col, w in zip("ABCDEFGHI", (12, 24, 22, 22, 16, 40, 40, 34, 34)):
         ws.column_dimensions[col].width = w
     ws.freeze_panes = "A4"
     wb.save(out_path)
-    print(f"  ✓ Missing list → {out_path}")
+    print(f"  ✓ Missing list → {out_path}  "
+          f"(⚠ not-on-schedule {len(not_scheduled)} · "
+          f"missing price {len(missing)})")
 
 
 def main() -> int:
@@ -1022,8 +1040,11 @@ def main() -> int:
                  if i["new_contract"] is not None and i["new_etc"] is not None]
         missing = [i for i in active
                    if i["new_contract"] is None or i["new_etc"] is None]
+        not_sched = [i for i in items
+                     if i["group"] == "⚠ IN GENERAL LISTA, NOT ON SCHEDULE"]
         print(f"  COMMIT: READY {len(ready)} → 'Test - RP' · "
-              f"MISSING {len(missing)} → Downloads · backlog {len(backlog)}")
+              f"MISSING {len(missing)} + not-on-schedule {len(not_sched)} → "
+              f"Downloads · backlog {len(backlog)}")
         try:
             wrote = commit_to_test_rp(ready, backlog, label)
         except CP.WipWriteDenied as e:
@@ -1033,7 +1054,7 @@ def main() -> int:
             print("  ✓ READY jobs written to the 'Test - RP' WIP tab")
         miss_out = Path(os.getenv("RP_MISSING_XLSX",
                    str(Path.home() / "Downloads" / "RP WIP - Missing.xlsx")))
-        write_missing(missing, label, miss_out)
+        write_missing(missing, not_sched, label, miss_out)
         return 0
 
     out = Path(os.getenv("RP_SCHED_PREVIEW_XLSX",
