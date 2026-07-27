@@ -44,6 +44,11 @@ Last updated: 2026-07-21 (pm)
   READY 35 · MISSING 31 · backlog 38. Verified on a scratch WIP copy before the prod write.
   Missing list also surfaces the RED 'in General Lista, in progress, NOT on schedule'
   jobs at the top (was silently dropped in --commit; RP7613 caught 2026-07-24).
+  Consolidated to ONE Downloads file 'RP WIP.xlsx' (the user 2026-07-24): sheet
+  'WIP (AUDIT)' = jobs in the WIP with original contract / budget / billed / costs to
+  date, $ cells link to the source file, FROM columns to its folder; sheet 'MISSING' =
+  the red not-on-schedule catch + schedule jobs missing contract/budget. Retired the
+  separate Missing + Justification downloads.
 - **RP done-rule + FTW backlog model** (2026-07-14, unchanged): billing is the
   truth; backlog = -FTW with no QBO activity and not on today's schedule.
 
