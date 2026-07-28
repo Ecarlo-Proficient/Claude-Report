@@ -71,7 +71,10 @@ def _num(v) -> Optional[float]:
 
 def _money(v) -> str:
     n = _num(v)
-    return f"${n:,.0f}" if n is not None else (html.escape(str(v)) if v else "—")
+    if n is None:
+        return html.escape(str(v)) if v else "—"
+    # sign before the currency symbol: -$512,316, never $-512,316
+    return f"-${abs(n):,.0f}" if n < 0 else f"${n:,.0f}"
 
 
 # ────────────────────────── source readers ──────────────────────────
@@ -107,6 +110,31 @@ def mb(cards: dict, needle: str) -> dict:
         if needle.lower() in k:
             return v
     return {"count": 0, "amount": None}
+
+
+def read_rp_billing(path: Path) -> List[dict]:
+    """'RP Billing Status' rows from Money Bleeds.xlsx (money_bleeds computes it
+    — it needs QBO; this stays a pure reader)."""
+    rows: List[dict] = []
+    if not path.exists():
+        return rows
+    wb = load_workbook(path, read_only=True, data_only=True)
+    if "RP Billing Status" not in wb.sheetnames:
+        wb.close()
+        return rows
+    for r in wb["RP Billing Status"].iter_rows(min_row=2, values_only=True):
+        if not r or len(r) < 9:
+            continue
+        status = str(r[0] or "").strip()
+        if status not in ("INVOICE NOW", "backlog"):
+            continue                      # band / subtotal / footnote row
+        rows.append({"status": status, "proj": str(r[1] or ""),
+                     "scope": str(r[2] or ""), "addr": str(r[3] or ""),
+                     "builder": str(r[4] or ""), "bid": _num(r[5]) or 0,
+                     "billed": _num(r[6]) or 0, "gap": _num(r[7]) or 0,
+                     "days": r[8] if isinstance(r[8], (int, float)) else None})
+    wb.close()
+    return rows
 
 
 def read_sub_loc(path: Path) -> dict:
@@ -260,12 +288,29 @@ def read_wip(path: Path) -> dict:
         if str(ws.cell(r, H.get("STATUS", 7)).value or "").strip().lower() != "active":
             continue
         out["count"] += 1
-        out["contract"] += col(r, "TOTAL CONTRACT PRICE")
-        out["billed"] += col(r, "BILLED TO DATE")
-        out["left_to_bill"] += col(r, "LEFT TO BILL")
-        out["over"] += col(r, "OVERBILLINGS")
-        out["under"] += col(r, "UNDERBILLINGS")
-        out["job_borrow"] += col(r, "PURE JOB BORROW")
+        contract = col(r, "TOTAL CONTRACT PRICE")
+        billed = col(r, "BILLED TO DATE")
+        etc = col(r, "ESTIMATED TOTAL COSTS")
+        costs = col(r, "COSTS TO DATE")
+        out["contract"] += contract
+        out["billed"] += billed
+        # LEFT TO BILL / OVER / UNDERBILLINGS are FORMULA columns in the WIP
+        # workbook. The WIP readers write that tab with openpyxl, which stores
+        # no cached formula result, so data_only reads them as blank — they
+        # silently totalled $0 (the user 2026-07-28, spotted on the dashboard).
+        # Recompute from the literal columns using the standing finance rules:
+        #   % complete = costs ÷ ETC · earned = contract × % · over/under = billed − earned
+        ltb = col(r, "LEFT TO BILL") or max(contract - billed, 0)
+        over = col(r, "OVERBILLINGS")
+        under = col(r, "UNDERBILLINGS")
+        if not (over or under) and etc > 0 and contract:
+            earned = contract * min(costs / etc, 1.0)
+            delta = billed - earned
+            over, under = max(delta, 0), max(-delta, 0)
+        out["left_to_bill"] += ltb
+        out["over"] += over
+        out["under"] += under
+        out["job_borrow"] += col(r, "PURE JOB BORROW") or under
     wb.close()
     return out
 
@@ -322,6 +367,7 @@ def build_sections(cards, loc, mor, health, wip) -> list:
     nm, burn = hk(health, "Net margin after overhead"), hk(health, "Weekly burn")
     cov = (ar / ap) if (_num(ar) and _num(ap)) else None
     ar60, ap60 = hk(health, "AR aged 60+"), hk(health, "AP aged 60+")
+    gen = health.get("generated")
 
     def age_bars(bk):
         return [(b, bk.get(b, 0), AGE_COLOR.get(b, "#888"), "")
@@ -333,7 +379,7 @@ def build_sections(cards, loc, mor, health, wip) -> list:
 
     lien_past = mb(cards, "past deadline")
     cp_draw = mb(cards, "under-invoiced")
-    rp_wait = mb(cards, "waiting on punch")
+    rp_wait = mb(cards, "poured, not billed")
     money_in = {
         "title": "Money In — owed to us / to bill", "tone": "in",
         "heroes": [("Accounts Receivable", _money(ar), "g"),
@@ -346,7 +392,7 @@ def build_sections(cards, loc, mor, health, wip) -> list:
             ("Retainage receivable", _money(retain), "held by clients until close", "g"),
             ("Lien deadline PAST", _money(lien_past["amount"]), f"{lien_past['count']} invoices — no lien backup", "r" if lien_past["count"] else "g"),
             ("CP draws billed, not invoiced", _money(cp_draw["amount"]), f"{cp_draw['count']} project(s)", "r" if cp_draw["count"] else "g"),
-            ("RP slabs 100% waiting to bill", str(rp_wait["count"]), "wrap up to get paid", "a" if rp_wait["count"] else "g")],
+            ("RP poured, not billed", _money(rp_wait["amount"]), f"{rp_wait['count']} scope(s) — concrete down, invoice it", "r" if rp_wait["count"] else "g")],
         "bars": [("AR aging", age_bars(health.get("ar_buckets", {})))],
     }
 
@@ -383,8 +429,16 @@ def build_sections(cards, loc, mor, health, wip) -> list:
                    ("Runway", (f"{_num(runway):.1f} wk" if _num(runway) is not None else "—"), "r" if runway_bad else "n"),
                    ("Gross margin", _pct(gm), "n")],
         "rows": [
-            ("Cash (bank, excl. credit cards)", _money(cash), "spendable now", "r" if (_num(cash) or 0) < 0 else "n"),
-            ("Runway at current burn", rn, "weeks of cash left" + (" — TIGHT" if runway_bad else ""), "r" if runway_bad else "n"),
+            # QBO's bank feed is broken, so balances only move when the owner
+            # manually uploads — cash/runway carry their OWN as-of stamp so a
+            # between-upload number is never read as live (the user 2026-07-28).
+            ("Cash (bank, excl. credit cards)", _money(cash),
+             f"spendable now · as of {gen:%b %d %-I:%M %p}" if gen else "spendable now",
+             "r" if (_num(cash) or 0) < 0 else "n"),
+            ("Runway at current burn", rn,
+             ("weeks of cash left" + (" — TIGHT" if runway_bad else ""))
+             + (f" · as of {gen:%b %d %-I:%M %p}" if gen else ""),
+             "r" if runway_bad else "n"),
             ("Coverage — AR vs AP", (f"{_num(cov):.2f}" if _num(cov) is not None else "—"), "AR ÷ AP; <1 = inflows don't cover outflows", "r" if cov_bad else "n"),
             ("Over / under-billing net (WIP)", _money(over_under), ("overbilled — liability" if over_under > 0 else "underbilled — bill it"), "a" if over_under > 0 else "g"),
             ("Gross margin %", _pct(gm), "revenue − direct cost", "n"),
@@ -429,35 +483,63 @@ def _section(sec) -> str:
 
 
 def _schedule_html(model) -> str:
-    """Weekly stage Gantt as a full-width section (empty string if no data)."""
-    if not model or not model.get("jobs"):
+    """All RP projects grouped by the stage they are currently in (the user
+    2026-07-28: "just show me the stages of all RP projects"). Replaces the old
+    week-grid Gantt, which only showed jobs on this week's crew sheet."""
+    rows = (model or {}).get("rows") or []
+    if not rows:
         return ""
-    dates = model["dates"]
-    legend = "".join(f'<span class="chip" style="background:#{c}">{html.escape(n)}</span> '
-                     for n, c in sched.legend())
-    day_hdr = "".join(f"<th>{d.strftime('%a<br>%m/%d')}</th>" for d in dates)
-    rows = ""
-    for j in model["jobs"]:
-        cells = ""
-        for d in dates:
-            if d in j["days"]:
-                cat, color = sched.stage_cat(j["days"][d])
-                cells += (f'<td class="gcell" style="background:#{color}" '
-                          f'title="{html.escape(j["days"][d])}">{html.escape(cat)}</td>')
-            else:
-                cells += '<td class="gcell empty"></td>'
-        price = f"${j['contract']:,.0f}" if isinstance(j.get("contract"), (int, float)) else "—"
-        rows += (f'<tr><td class="proj">{html.escape(j["proj"])}</td>'
-                 f'<td class="addr">{html.escape(j["address"])}'
-                 f'<span class="bld">{html.escape(j["builder"])}</span></td>'
-                 f'<td class="price">{price}</td>{cells}</tr>')
-    span = f"{dates[0]:%b %d} – {dates[-1]:%b %d}" if dates else "—"
+    # ONE table, grouped by stage. Deliberately not a card grid: CSS grid ties
+    # every card in a row to the tallest one, so a 42-row stage beside a 2-row
+    # stage blew the layout out and clipped content (the user 2026-07-28).
+    groups: Dict[str, List[dict]] = {}
+    for r in rows:
+        groups.setdefault(r["stage_cat"], []).append(r)
+    order = sorted(groups.items(), key=lambda kv: (min(x["days_ago"] for x in kv[1]),
+                                                   -len(kv[1])))
+    # Collapsed by default (the user 2026-07-28: "grouped by default to make it
+    # less long") — each stage is a <details> summarising count + contracted $.
+    grand = sum(x["contract"] for x in rows
+                if isinstance(x.get("contract"), (int, float)))
+    blocks = ""
+    for cat, items in order:
+        color = items[0]["stage_color"]
+        total = sum(x["contract"] for x in items
+                    if isinstance(x.get("contract"), (int, float)))
+        body = ""
+        for r in sorted(items, key=lambda x: (-(x["in_progress"] or 0), x["proj"])):
+            price = (f"${r['contract']:,.0f}"
+                     if isinstance(r.get("contract"), (int, float)) else "—")
+            d = r["days_ago"]
+            when = ("scheduled ahead" if d < 0 else "today" if d == 0
+                    else "yesterday" if d == 1 else f"{d} days ago")
+            ip = r.get("in_progress")
+            ip_txt = ("—" if ip is None else
+                      f"{ip}+" if r.get("in_progress_capped") else str(ip))
+            ip_cls = " long" if (ip or 0) >= 30 else ""
+            body += (f'<tr><td class="proj">{html.escape(r["proj"])}</td>'
+                     f'<td class="addr">{html.escape(r["address"])}</td>'
+                     f'<td class="bldr">{html.escape(r["builder"] or "")}</td>'
+                     f'<td class="price">{price}</td>'
+                     f'<td class="days{ip_cls}">{ip_txt}</td>'
+                     f'<td class="when">{when}<span class="sub">'
+                     f'{html.escape(r["stage"][:44])}</span></td></tr>')
+        blocks += (
+            f'<details class="stage"><summary>'
+            f'<span class="chip" style="background:#{color}">{html.escape(cat)}</span>'
+            f'<b>{len(items)}</b> job(s)'
+            + (f'<span class="gsum">{_money(total)} contracted</span>' if total else '')
+            + f'</summary><table class="rpstage"><thead><tr>'
+            f'<th>RP #</th><th>Address</th><th>Builder</th><th>Contract</th>'
+            f'<th title="days since the job first appeared on a schedule">In progress</th>'
+            f'<th>Last update</th></tr></thead><tbody>{body}</tbody></table></details>')
     return f'''<section class="sec sched">
-      <h2>Weekly Schedule — stage Gantt · week of {span} · {len(model["jobs"])} jobs</h2>
-      <div class="legend">{legend}</div>
-      <div class="gwrap"><table class="gantt"><thead><tr>
-        <th>Project #</th><th>Address / Builder</th><th>Contract</th>{day_hdr}
-      </tr></thead><tbody>{rows}</tbody></table></div>
+      <h2>RP Projects — current stage · {len(rows)} jobs ·
+        {_money(grand)} contracted · last {model.get("weeks_back", 6)} weeks</h2>
+      <p class="hint">Click a stage to expand. “In progress” = days since the job
+        first appeared on a schedule ({model.get("weeks_back", 6)}-week window;
+        “+” means it started before that).</p>
+      {blocks}
     </section>'''
 
 
@@ -500,6 +582,38 @@ def render(sections, health, sources, schedule=None) -> str:
   .legend {{ margin-bottom:10px; }}
   .chip {{ display:inline-block; color:#fff; font-size:10.5px; font-weight:700;
     padding:2px 8px; border-radius:20px; margin:2px 3px 0 0; }}
+  table.rpstage {{ width:100%; border-collapse:collapse; font-size:12.5px;
+    table-layout:auto; }}
+  table.rpstage thead th {{ background:var(--navy); color:#fff; font-size:11px;
+    text-transform:uppercase; letter-spacing:.04em; padding:7px 9px;
+    text-align:left; position:sticky; top:0; z-index:1; }}
+  table.rpstage thead th:nth-child(4) {{ text-align:right; }}
+  table.rpstage thead th:nth-child(5) {{ text-align:right; }}
+  table.rpstage td {{ padding:6px 9px; border-bottom:1px solid var(--line);
+    vertical-align:top; }}
+  details.stage {{ border:1px solid var(--line); border-radius:8px;
+    margin-bottom:8px; overflow:hidden; }}
+  details.stage summary {{ cursor:pointer; padding:8px 11px; font-size:12.5px;
+    background:rgba(120,130,150,.08); display:flex; align-items:center;
+    gap:6px; user-select:none; }}
+  details.stage summary::-webkit-details-marker {{ display:none; }}
+  details.stage summary::before {{ content:"▸"; color:var(--muted);
+    font-size:11px; width:11px; }}
+  details.stage[open] summary::before {{ content:"▾"; }}
+  details.stage summary b {{ margin-left:2px; }}
+  .gsum {{ margin-left:auto; color:var(--muted); font-variant-numeric:tabular-nums; }}
+  .hint {{ font-size:11.5px; color:var(--muted); margin:0 0 10px; }}
+  td.days {{ text-align:right; font-variant-numeric:tabular-nums;
+    white-space:nowrap; }}
+  td.days.long {{ color:var(--amber); font-weight:700; }}
+  td.proj {{ font-weight:700; color:var(--muted); white-space:nowrap; }}
+  td.addr {{ font-weight:600; }}
+  td.bldr {{ color:var(--muted); font-size:11.5px; }}
+  td.price {{ text-align:right; font-weight:700; white-space:nowrap;
+    font-variant-numeric:tabular-nums; }}
+  td.when {{ text-align:right; color:var(--muted); font-size:11.5px;
+    white-space:nowrap; }}
+  td.when .sub {{ display:block; font-size:10.5px; opacity:.75; }}
   .gwrap {{ overflow-x:auto; }}
   table.gantt {{ width:100%; border-collapse:collapse; font-size:12.5px; }}
   table.gantt th {{ background:var(--navy); color:#fff; padding:6px 7px;
@@ -583,7 +697,7 @@ def main() -> int:
           f"WIP active {wip['count']} · cash {hk(health, 'Bank total')}")
 
     sections = build_sections(cards, loc, mor, health, wip)
-    schedule = sched.build_model()
+    schedule = sched.build_rp_stages()
     htmlout = render(sections, health,
                      [MB_PATH, LOC_PATH, MOR_PATH, HEALTH_PATH, WIP_PATH, BILL_PATH],
                      schedule)

@@ -245,7 +245,7 @@ workbooks (Money Bleeds, Sub LOC, Money Out Register, health_dashboard, WIP mast
 Test-Master): AR/backlog/retainage/lien in; AP/POs/checks/LOC/burn out; cash/runway/
 coverage/margins/over-under position. `company_tracker.py` folds that model into a single
 **`Company Tracker.xlsx`** (Summary + Money In/Out/Position tabs + a **Weekly Schedule**
-Gantt tab via `shared/schedule.py`, hero numbers, aging + LOC data bars, semantic colour)
+Gantt tab via `shared/schedule.py`, an **RP Billing Status** tab via `shared/rp_billing.py`, hero numbers, aging + LOC data bars, semantic colour)
 AND renders `Company Dashboard.html` (with the Gantt section) from the same model, so the
 workbook and page never disagree. The source Excels are the data layer; this is the
 one-workbook-a-HTML-breaks-down deliverable.

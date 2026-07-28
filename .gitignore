@@ -60,3 +60,5 @@ synology/synology_audit.md
 
 # Whitelisted exceptions (force-include critical files even though the patterns above match them)
 !bill-tracker/vendor_aliases.json
+.preview/
+.claude/launch.json

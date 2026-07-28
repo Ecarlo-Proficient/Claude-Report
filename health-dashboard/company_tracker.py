@@ -194,7 +194,78 @@ def _write_schedule_tab(wb, model) -> None:
     ws.sheet_properties.tabColor = "305496"
 
 
-def build_workbook(path: Path, sections, health, schedule=None) -> None:
+def _write_rp_billing_tab(wb, rows) -> None:
+    """RP Billing Status detail — poured & unbilled vs backlog (the user
+    2026-07-28). Computed by money_bleeds (needs QBO); folded in here so it
+    lives in the ONE workbook rather than its own file."""
+    if not rows:
+        return
+    ws = wb.create_sheet("RP Billing Status")
+    ws.sheet_view.showGridLines = False
+    hdr = ["PROJECT #", "SCOPE", "ADDRESS", "BUILDER", "BID $", "BILLED $",
+           "DUE $", "DAYS SINCE POUR"]
+    ws.append(hdr)
+    for c in range(1, len(hdr) + 1):
+        cell = ws.cell(1, c)
+        cell.font = _WHITE
+        cell.fill = _NAVY
+        cell.border = _BORDER
+        cell.alignment = Alignment(vertical="center", horizontal="center", wrap_text=True)
+    for i, w in enumerate([11, 7, 30, 24, 13, 13, 13, 15]):
+        ws.column_dimensions[get_column_letter(i + 1)].width = w
+    ws.freeze_panes = "A2"
+    for status, label, color in (
+            ("INVOICE NOW", "POURED — NOT BILLED · INVOICE NOW", "C00000"),
+            ("backlog", "NOT POURED — BACKLOG (not owed)", "7F7F7F")):
+        items = [r for r in rows if r["status"] == status]
+        if not items:
+            continue
+        ws.append([f"  {label}   —   {len(items)} scope(s)   —   "
+                   f"${sum(r['gap'] for r in items):,.0f}"] + [""] * 7)
+        br = ws.max_row
+        ws.merge_cells(start_row=br, start_column=1, end_row=br, end_column=8)
+        ws.cell(br, 1).fill = PatternFill("solid", fgColor=color)
+        ws.cell(br, 1).font = Font(bold=True, color="FFFFFF", size=11)
+        ws.row_dimensions[br].height = 20
+        first = ws.max_row + 1
+        for i, r in enumerate(items):
+            ws.append([r["proj"], r["scope"], r["addr"], r["builder"],
+                       r["bid"], r["billed"], r["gap"],
+                       r["days"] if r["days"] is not None else ""])
+            rr = ws.max_row
+            for c in range(1, 9):
+                ws.cell(rr, c).border = _BORDER
+                if i % 2:
+                    ws.cell(rr, c).fill = _ZEBRA
+            for c in (5, 6, 7):
+                ws.cell(rr, c).number_format = CUR
+            if status == "INVOICE NOW":
+                ws.cell(rr, 7).font = Font(bold=True, color="9C0006")
+            ws.row_dimensions[rr].outlineLevel = 1
+        last = ws.max_row
+        if last >= first:
+            ws.conditional_formatting.add(
+                f"G{first}:G{last}",
+                DataBarRule(start_type="num", start_value=0, end_type="max",
+                            color="F8696B" if status == "INVOICE NOW" else "BFBFBF",
+                            showValue=True))
+        ws.append([""] * 4 + ["", "subtotal", sum(r["gap"] for r in items), ""])
+        sr = ws.max_row
+        for c in range(1, 9):
+            ws.cell(sr, c).fill = PatternFill("solid", fgColor="D9E1F2")
+            ws.cell(sr, c).border = _BORDER
+            ws.cell(sr, c).font = Font(bold=True)
+        ws.cell(sr, 7).number_format = CUR
+    ws.auto_filter.ref = f"A1:H{ws.max_row}"
+    ws.append([])
+    ws.append(["Poured = the crew schedule shows this scope reaching pour/wreck/"
+               "stress/punch. Slab vs flatwork from the stage text; billing per "
+               "scope (RP#### vs RP####-FTW). Small gaps (builder fee) ignored."])
+    ws.cell(ws.max_row, 1).font = Font(italic=True, color="808080")
+    ws.sheet_properties.tabColor = "7030A0"
+
+
+def build_workbook(path: Path, sections, health, schedule=None, rp_rows=None) -> None:
     wb = Workbook()
 
     # Summary tab — the whole story
@@ -222,6 +293,7 @@ def build_workbook(path: Path, sections, health, schedule=None) -> None:
     for sec, tab in zip(sections, ("Money In", "Money Out", "Position")):
         _section_to_sheet(wb.create_sheet(tab), sec, standalone=True)
 
+    _write_rp_billing_tab(wb, rp_rows or [])
     _write_schedule_tab(wb, schedule)
 
     s.sheet_properties.tabColor = "1F3864"
@@ -248,14 +320,18 @@ def main() -> int:
           f"WIP active {wip['count']} · cash {cd.hk(health, 'Bank total')}")
 
     sections = cd.build_sections(cards, loc, mor, health, wip)   # ONE model
-    schedule = sched.build_model()
-    print(f"  schedule: {len(schedule['jobs'])} jobs" if schedule["jobs"]
+    schedule = sched.build_model()          # week grid → Excel Gantt tab
+    rp_stages = sched.build_rp_stages()     # all-RP stage view → HTML
+    print(f"  schedule: {len(schedule['jobs'])} jobs this week · "
+          f"{len(rp_stages['rows'])} RP projects staged" if schedule["jobs"]
           else "  schedule: none (volume not mounted / no files) — tab skipped")
-    build_workbook(args.xlsx, sections, health, schedule)
+    rp_rows = cd.read_rp_billing(cd.MB_PATH)
+    print(f"  RP billing rows: {len(rp_rows)}")
+    build_workbook(args.xlsx, sections, health, schedule, rp_rows)
     print(f"  ✓ {args.xlsx}")
 
     sources = [cd.MB_PATH, cd.LOC_PATH, cd.MOR_PATH, cd.HEALTH_PATH, cd.WIP_PATH, cd.BILL_PATH]
-    args.html.write_text(cd.render(sections, health, sources, schedule), encoding="utf-8")
+    args.html.write_text(cd.render(sections, health, sources, rp_stages), encoding="utf-8")
     os.chmod(args.html, stat.S_IRUSR | stat.S_IWUSR)
     print(f"  ✓ {args.html}")
     if args.open:

@@ -43,6 +43,10 @@ exposures or business analysis here (those live in the owner's vault).
   / Position tabs) + the HTML, both from one metric model (`company_dashboard.build_sections`).
   Reads all source trackers; Company Tracker.xlsx + Company Dashboard.html, chmod 600.
 
+- **RP Billing Status** (2026-07-28) — `shared/rp_billing.py`; poured-but-unbilled vs
+  backlog, folded into Company Tracker.xlsx as its own tab. Replaced the old "RP slabs
+  waiting on punch" check (it measured the wrong thing and returned 0).
+
 ## TO DO (requested, not yet built)
 - Pull transaction-level detail (lien chase list, checks >30d, top over/under jobs) into
   Company Tracker.xlsx as drill-down tabs — currently summary/metric level.

@@ -52,6 +52,12 @@ _STAGE_RULES = [
     ("punch", ("Punch", "7F7F7F")),
     ("set up", ("Set up", "9E480E")), ("setup", ("Set up", "9E480E")),
     ("pad", ("Pads", "9E480E")), ("patio", ("Pads", "9E480E")),
+    # observed in the Main Schedule (the user 2026-07-28) — 'make up' is the
+    # ready-to-build queue; the rest are demo/repair scopes
+    ("make up", ("Make-up", "C55A11")), ("makeup", ("Make-up", "C55A11")),
+    ("pier", ("Piers", "2F5597")), ("footing", ("Piers", "2F5597")),
+    ("demo", ("Demo/Repair", "833C00")), ("saw", ("Demo/Repair", "833C00")),
+    ("cut joint", ("Demo/Repair", "833C00")), ("patch", ("Demo/Repair", "833C00")),
 ]
 _DEFAULT_STAGE = ("Other", "404040")
 
@@ -263,10 +269,31 @@ def _with_price(hit: dict, by_proj: Dict[str, float]) -> dict:
     return hit
 
 
+# Street-type words are typed inconsistently between the schedule and the
+# General List (the same job appears as "6057 KEMROCK ROAD" and "6057 KEMROCK
+# DR"), so they are DROPPED from the comparison rather than normalised — the
+# house number + street NAME is the reliable key (the user 2026-07-28).
+_STREET_TYPES = {"DR", "ST", "AVE", "LN", "RD", "CT", "BLVD", "CIR", "PL",
+                 "TRL", "PKWY", "HWY", "TER", "CV", "RCH", "WAY", "LOOP",
+                 "PASS", "PATH", "RUN", "ROW", "BEND", "CROSSING", "XING"}
+
+
+def _addr_core(key: str) -> Tuple[str, frozenset]:
+    """'6057 KEMROCK RD' → ('6057', {'KEMROCK'}). Drops street types and any
+    trailing descriptors so '5801 BOSTON LN GYM ADDITION' still matches
+    '5801 BOSTON LANE'."""
+    toks = key.split()
+    if not toks:
+        return "", frozenset()
+    house = toks[0].split("-")[0]                 # '420-422' → '420'
+    words = {t for t in toks[1:] if t not in _STREET_TYPES and not t.isdigit()}
+    return house, frozenset(words)
+
+
 def match_price(address: str, pmap: dict) -> dict:
-    """Exact → house-number range → house# + street token-overlap fuzzy, then a
-    project#→contract cross-lookup so a matched job shows a price even if its own
-    address row had none."""
+    """Exact → house# + street-name core (street types ignored) → best
+    token-overlap, then a project#→contract cross-lookup so a matched job shows
+    a price even if its own address row had none."""
     by_addr = pmap.get("by_addr", {})
     by_proj = pmap.get("by_proj", {})
     miss = {"proj": "", "contract": None, "name": ""}
@@ -275,32 +302,183 @@ def match_price(address: str, pmap: dict) -> dict:
         return miss
     if key in by_addr:
         return _with_price(by_addr[key], by_proj)
-    toks = key.split()
-    # house-number range (e.g. "420-422 ESA PARK" → "420 ESA PARK")
-    if toks and "-" in toks[0]:
-        alt = " ".join([toks[0].split("-")[0]] + toks[1:])
-        if alt in by_addr:
-            return _with_price(by_addr[alt], by_proj)
-    # fuzzy: same house number + majority street-token overlap
-    if len(toks) >= 2:
-        house, street = toks[0], set(toks[1:])
-        best, best_score = None, 0.0
-        for k, v in by_addr.items():
-            kt = k.split()
-            if not kt or kt[0] != house:
-                continue
-            ks = set(kt[1:])
-            if not ks:
-                continue
-            j = len(street & ks) / len(street | ks)
-            if j > best_score:
-                best, best_score = v, j
-        if best and best_score >= 0.6:
-            return _with_price(best, by_proj)
+    house, words = _addr_core(key)
+    if not house or not words:
+        return miss
+    best, best_score = None, 0.0
+    for k, v in by_addr.items():
+        kh, kw = _addr_core(k)
+        if kh != house or not kw:
+            continue
+        # the shorter side drives the score, so extra descriptors on either
+        # side ("GYM ADDITION") don't sink an otherwise exact street match
+        overlap = len(words & kw) / min(len(words), len(kw))
+        if overlap > best_score:
+            best, best_score = v, overlap
+    if best and best_score >= 0.75:
+        return _with_price(best, by_proj)
     return miss
 
 
 # ────────────────────────── model ──────────────────────────
+
+_MAIN_SHEET = "Main Schedule"
+# Main Schedule layout (1-based): A super, B PROJECT #, C address, D city,
+# E builder, F description/stage, G date, H crew. Section bands ('WRECK AND
+# CLEAN', 'FLATWORK', '… PUNCH LIST') and repeated header rows are skipped.
+_MS_SUPER, _MS_PROJ, _MS_ADDR, _MS_CITY, _MS_BUILDER, _MS_STAGE, _MS_DATE, _MS_CREW = range(8)
+
+
+def parse_main_schedule(path: Path) -> List[dict]:
+    """'Main Schedule' tab → the full job pipeline.
+
+    Columns are located dynamically, because the layout CHANGED mid-2026: older
+    files run NAME | ADDRESS | CITY | BUILDER | DESCRIPTION with **no project #
+    column**, while newer ones insert PROJECT # as column B. Parsing the old
+    files by address (proj left blank, resolved later from newer sightings) is
+    what lets "in progress" reach back past the column change — otherwise every
+    job looks like it started the week the column appeared (the user 2026-07-28).
+    """
+    try:
+        wb = load_workbook(path, read_only=True, data_only=True)
+    except Exception:
+        return []
+    sheet = next((s for s in wb.sheetnames if s.strip().lower() == _MAIN_SHEET.lower()),
+                 None)
+    if sheet is None:
+        wb.close()
+        return []
+    rows = list(wb[sheet].iter_rows(values_only=True))
+    wb.close()
+
+    # locate a header row and map the columns we need by name
+    cols: Dict[str, int] = {}
+    for row in rows[:12]:
+        names = {str(c).strip().upper(): i for i, c in enumerate(row) if c}
+        if "ADDRESS" in names and "DESCRIPTION" in names:
+            cols = names
+            break
+    if not cols:
+        return []
+    c_addr = cols["ADDRESS"]
+    c_stage = cols["DESCRIPTION"]
+    c_city = cols.get("CITY")
+    c_bldr = cols.get("BUILDER")
+    c_crew = cols.get("CREW")
+    c_name = cols.get("NAME", 0)
+
+    out = []
+    for row in rows:
+        if not row or len(row) <= max(c_addr, c_stage):
+            continue
+        addr = str(row[c_addr] or "").strip()
+        if not addr or addr.upper() == "ADDRESS":
+            continue                        # header repeat / section band
+        # project # lives in its own column on newer files; find it anywhere
+        proj = ""
+        for c in row:
+            m = _JOB_RE.match(str(c).strip()) if c else None
+            if m:
+                proj = m.group(1).upper()
+                break
+        out.append({
+            "proj": proj,
+            "address": addr,
+            "city": str(row[c_city] or "").strip() if c_city is not None and len(row) > c_city else "",
+            "builder": str(row[c_bldr] or "").strip() if c_bldr is not None and len(row) > c_bldr else "",
+            "stage": str(row[c_stage] or "").strip(),
+            "crew": str(row[c_crew] or "").strip() if c_crew is not None and len(row) > c_crew else "",
+            "super": str(row[c_name] or "").strip() if len(row) > c_name else "",
+        })
+    return out
+
+
+def recent_files(weeks_back: int = 6) -> List[Tuple[dt.date, Path]]:
+    """Every schedule file within the last `weeks_back` weeks, oldest first."""
+    cutoff = dt.date.today() - dt.timedelta(weeks=weeks_back)
+    found: List[Tuple[dt.date, Path]] = []
+    if not SCHEDULE_DIR.is_dir():
+        return found
+    for p in SCHEDULE_DIR.rglob("Schedule *.xlsx"):
+        m = _FILE_RE.search(p.name)
+        if not m or p.name.startswith("~$"):
+            continue
+        try:
+            d = dt.date(2000 + int(m.group(3)), int(m.group(1)), int(m.group(2)))
+        except ValueError:
+            continue
+        if d >= cutoff:
+            found.append((d, p))
+    return sorted(found)
+
+
+def build_rp_stages(weeks_back: int = 10,
+                    pmap: Optional[Dict[str, dict]] = None) -> dict:
+    """Every RP project and the stage it is currently in (the user 2026-07-28:
+    "just show me the stages of all RP projects").
+
+    Source is the Schedule file's **Main Schedule** tab, which carries the
+    project # alongside the address and stage — NOT the General List, which
+    misses jobs. Walks the schedule files oldest→newest across `weeks_back`
+    weeks so each later day UPDATES the job's stage; the newest sighting wins.
+    Pricing is the only thing still looked up externally (General List / WIP).
+    """
+    if pmap is None:
+        pmap = build_price_map()
+    files = recent_files(weeks_back)
+    parsed = [(d, parse_main_schedule(p)) for d, p in files]   # oldest → newest
+
+    # Older files carry no project # column, so build address → project # from
+    # every sighting that HAS one, then use it to attribute the older,
+    # address-only rows. Without this, "in progress" restarts at the date the
+    # project-# column was introduced.
+    addr_to_proj: Dict[str, str] = {}
+    for _d, rws in parsed:
+        for r in rws:
+            if r["proj"]:
+                addr_to_proj.setdefault(_norm_addr(r["address"]), r["proj"])
+
+    latest: Dict[str, dict] = {}                 # PROJECT # → newest sighting
+    first_seen: Dict[str, dt.date] = {}          # PROJECT # → oldest sighting
+    for d, rws in parsed:                        # oldest → newest, later wins
+        for row in rws:
+            if not row["stage"]:
+                continue
+            proj = row["proj"] or addr_to_proj.get(_norm_addr(row["address"]), "")
+            if not proj:
+                continue
+            first_seen.setdefault(proj, d)
+            if row["proj"]:                      # only trust fully-keyed rows
+                latest[proj] = {**row, "date": d}
+    earliest = files[0][0] if files else None
+    today = dt.date.today()
+    rows = []
+    for proj, s in latest.items():
+        if not proj.upper().startswith("RP"):
+            continue                              # RP projects only
+        cat, color = stage_cat(s["stage"])
+        pr = match_price(s["address"], pmap)
+        contract = pr["contract"]
+        if contract is None:                      # fall back to the project # itself
+            contract = pmap.get("by_proj", {}).get(proj)
+        fs = first_seen.get(proj)
+        # "in progress" = days since the job FIRST showed up on a schedule in
+        # the scanned window. If that first sighting is the oldest file we read,
+        # the job predates the window, so the figure is a floor (shown as "45+").
+        in_progress = (today - fs).days if fs else None
+        rows.append({
+            "proj": proj, "address": s["address"], "builder": s["builder"],
+            "city": s["city"], "crew": s["crew"], "super": s.get("super", ""),
+            "contract": contract,
+            "stage": s["stage"], "stage_cat": cat, "stage_color": color,
+            "last_seen": s["date"], "days_ago": (today - s["date"]).days,
+            "first_seen": fs, "in_progress": in_progress,
+            "in_progress_capped": bool(fs and earliest and fs <= earliest),
+        })
+    rows.sort(key=lambda r: (r["days_ago"], r["proj"]))
+    return {"rows": rows, "weeks_back": weeks_back, "files": len(files),
+            "generated": dt.datetime.now()}
+
 
 def build_model(week: Optional[List[Tuple[dt.date, Path]]] = None,
                 pmap: Optional[Dict[str, dict]] = None) -> dict:

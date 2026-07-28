@@ -62,6 +62,7 @@ from shared import paths
 from shared import qbo_api
 from shared import draws
 from shared.qbo_cache import QboCache
+from shared import rp_billing
 
 # ────────────────────────── config / paths ──────────────────────────
 
@@ -919,9 +920,8 @@ def _write_open_bills(wb, bills: List[dict], synced: str) -> None:
 def write_workbook(out: Path,
                    mfd: List[dict], cp: List[dict],
                    lien: List[dict], reten: List[dict], leases: List[dict],
-                   wrapup: List[dict], pos: List[dict],
-                   bills: List[dict], bills_synced: str,
-                   rp_synced: str) -> None:
+                   rp: dict, pos: List[dict],
+                   bills: List[dict], bills_synced: str) -> None:
     wb = Workbook()
     dash = wb.active
     dash.title = "Dashboard"
@@ -1021,25 +1021,41 @@ def write_workbook(out: Path,
                   sum(r["balance"] for r in leases))
     _finish(ws, 6)
 
-    # ── RP Wrap-Up ──
-    ws = _sheet(wb, "RP Wrap-Up", ["PROJECT #", "PROJECT NAME", "CLIENT",
-                                   "CONTRACT $", "BILLED $", "LEFT TO BILL $",
-                                   "WHY"],
-                [12, 26, 24, 14, 14, 15, 58])
-    first = ws.max_row + 1
-    for i, r in enumerate(wrapup):
-        ws.append([r["project"], r["name"], r["client"], r["contract"],
-                   r["billed"], r["left"], r["note"]])
-        _zebra(ws, 7, i, money_cols=(4, 5, 6))
-        ws.cell(ws.max_row, 6).font = _RED_FONT
-    last = ws.max_row
-    _data_bar(ws, 6, first, last, color="F8696B")
-    if wrapup:
-        _subtotal(ws, 7, 3, "Total left to bill", 6,
-                  sum(r["left"] for r in wrapup))
-    _finish(ws, 7)
+    # ── RP Billing Status (poured & unbilled vs backlog) ──
+    ws = _sheet(wb, "RP Billing Status",
+                ["STATUS", "PROJECT #", "SCOPE", "ADDRESS", "BUILDER",
+                 "BID $", "BILLED $", "DUE $", "DAYS SINCE POUR"],
+                [13, 11, 7, 30, 24, 13, 13, 13, 15])
+    for band, items, color, note in (
+            ("POURED — NOT BILLED · INVOICE NOW", rp["invoice_now"], "C00000",
+             "concrete is down; this is real underbilling"),
+            ("NOT POURED — BACKLOG (not owed)", rp["backlog"], "7F7F7F",
+             "work still to come — excluded from underbilling")):
+        if not items:
+            continue
+        _band_row(ws, 9, f"  {band}   —   {len(items)} scope(s)   —   "
+                         f"${sum(r['gap'] for r in items):,.0f}   ·   {note}", color)
+        first = ws.max_row + 1
+        for i, r in enumerate(items):
+            ws.append(["INVOICE NOW" if r["poured"] else "backlog",
+                       r["proj"], r["scope"], r["addr"], r["builder"],
+                       r["bid"], r["billed"], r["gap"],
+                       r["days"] if r["days"] is not None else ""])
+            _zebra(ws, 9, i, money_cols=(6, 7, 8), status_col=1,
+                   status="URGENT" if r["poured"] else "")
+            ws.row_dimensions[ws.max_row].outlineLevel = 1
+        _data_bar(ws, 8, first, ws.max_row,
+                  color="F8696B" if items is rp["invoice_now"] else "BFBFBF")
+        _subtotal(ws, 9, 5, "subtotal", 8, sum(r["gap"] for r in items))
+    _finish(ws, 9)
+    ws.append([])
+    ws.append([f"Poured = the crew schedule shows this scope reaching "
+               f"pour/wreck/stress/punch within the last {rp['weeks_back']} weeks. "
+               f"Slab vs flatwork read from the stage text; billing compared per "
+               f"scope (RP#### vs RP####-FTW). Gaps under ${rp_billing.FEE_TOLERANCE:,.0f} "
+               f"are treated as billed out (builder fee / rounding)."])
+    ws.cell(ws.max_row, 1).font = Font(italic=True, color="808080")
 
-    # ── Unused POs (data bar $, color-scale age) ──
     ws = _sheet(wb, "Unused POs 30d+", ["P.O. #", "PO DATE", "AGE (days)",
                                         "VENDOR", "PROJECT #", "AMOUNT $",
                                         "MEMO"],
@@ -1061,14 +1077,14 @@ def write_workbook(out: Path,
     _write_open_bills(wb, bills, bills_synced)
 
     # ── Dashboard — colored KPI cards ──
-    _build_dashboard(dash, mfd, cp, lien, reten, leases, wrapup, pos, bills,
-                     rp_synced, bills_synced)
+    _build_dashboard(dash, mfd, cp, lien, reten, leases, rp, pos, bills,
+                     bills_synced)
 
     # tab colors so the sheet ribbon reads at a glance
     for name, color in (("Draws MFD", C_NAVY), ("Draws CP", "1F6B4C"),
                         ("Lien Clock", "C00000"), ("Lien Retainage", "548235"),
                         ("Leases (excluded)", "808080"),
-                        ("RP Wrap-Up", "7030A0"), ("Unused POs 30d+", "BF8F00")):
+                        ("RP Billing Status", "7030A0"), ("Unused POs 30d+", "BF8F00")):
         wb[name].sheet_properties.tabColor = color
     dash.sheet_properties.tabColor = C_NAVY
 
@@ -1077,8 +1093,8 @@ def write_workbook(out: Path,
     os.chmod(out, stat.S_IRUSR | stat.S_IWUSR)   # 600 — owner-only
 
 
-def _build_dashboard(dash, mfd, cp, lien, reten, leases, wrapup, pos, bills,
-                     rp_synced: str, bills_synced: str) -> None:
+def _build_dashboard(dash, mfd, cp, lien, reten, leases, rp, pos, bills,
+                     bills_synced: str) -> None:
     mfd_red = [r for r in mfd if r["verdict"] == "RED"]
     mfd_rev = [r for r in mfd if r["verdict"] in ("REVIEW", "PENDING")]
     cp_red = [r for r in cp if r["verdict"] == "RED"]
@@ -1101,8 +1117,8 @@ def _build_dashboard(dash, mfd, cp, lien, reten, leases, wrapup, pos, bills,
         dash.cell(1, c).fill = _HDR_FILL
     dash.row_dimensions[1].height = 34
     dash.append(["", f"Generated {dt.datetime.now():%Y-%m-%d %H:%M}  ·  lien clock "
-                 f"runs from the invoice month  ·  RP from '{RP_TEST_SHEET}' "
-                 f"(slab only), synced {rp_synced or 'unknown'}"])
+                 f"runs from the invoice month  ·  RP billing from pour evidence "
+                 f"in the crew schedules"])
     dash.cell(2, 2).font = Font(italic=True, color="595959")
     dash.merge_cells("B2:D2")
 
@@ -1160,8 +1176,9 @@ def _build_dashboard(dash, mfd, cp, lien, reten, leases, wrapup, pos, bills,
 
     dash.append([])
     header("CASH TO CHASE", "7030A0")
-    card("c", "7030A0", f"RP slabs 100% waiting on punch: {len(wrapup)}", len(wrapup),
-         sum(r["left"] for r in wrapup), "wrap up to get paid", bool(wrapup))
+    card("c", "7030A0", f"RP poured, not billed: {len(rp['invoice_now'])}",
+         len(rp["invoice_now"]), rp["due_total"],
+         "concrete is down — invoice it (backlog excluded)", bool(rp["invoice_now"]))
     card("c", "BF8F00", f"Unused POs ≥30 days: {len(pos)}", len(pos),
          sum(r["amount"] for r in pos),
          "open POs, no bill (ready-mix blanket POs may be intentional)", bool(pos))
@@ -1239,9 +1256,18 @@ def main() -> int:
           f"{past} PAST, {urgent} URGENT · {len(reten)} retainage (own track) "
           f"· {len(leases)} lease/note excluded")
 
-    print("  3.  RP wrap-up (slabs 100%, waiting on punch) …")
-    wrapup, rp_synced = check_rp_wrapup(WIP_EXCEL_PATH)
-    print(f"      {len(wrapup)} slab(s), ${sum(r['left'] for r in wrapup):,.0f} left to bill")
+    print("  3.  RP billing status (poured vs backlog) …")
+
+    def _billed_for(key):
+        cust = proj_map.get(key)
+        if not cust:
+            return None
+        return sum(float(i.get("TotalAmt") or 0)
+                   for i in qc.invoices_for_customer(cust["id"]))
+
+    rp = rp_billing.build(_billed_for)
+    print(f"      INVOICE NOW {len(rp['invoice_now'])} scope(s) = ${rp['due_total']:,.0f}"
+          f"  ·  backlog {len(rp['backlog'])} = ${rp['backlog_total']:,.0f}")
 
     print("  4.  Unused POs ≥30 days old …")
     pos = check_unused_pos(qc)
@@ -1253,8 +1279,8 @@ def main() -> int:
     print(f"      {len(bills)} open bill(s), ${sum(b['open'] for b in bills):,.0f} to go out "
           f"(${paid_out:,.0f} already funded by clients) · tracker synced {bills_synced}")
 
-    write_workbook(args.out, mfd, cp, lien, reten, leases, wrapup, pos,
-                   bills, bills_synced, rp_synced)
+    write_workbook(args.out, mfd, cp, lien, reten, leases, rp, pos,
+                   bills, bills_synced)
     print(f"\n  ✓ {args.out}  (chmod 600)")
     return 0
 
