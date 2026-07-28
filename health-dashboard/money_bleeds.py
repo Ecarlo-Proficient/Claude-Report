@@ -61,6 +61,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from shared import paths
 from shared import qbo_api
 from shared import draws
+from shared.qbo_cache import QboCache
 
 # ────────────────────────── config / paths ──────────────────────────
 
@@ -313,7 +314,7 @@ def latest_mfd_draw(draws_dir: Path) -> Optional[Tuple[int, dt.date, str]]:
     return best
 
 
-def check_mfd_draws(access: str, company_id: str,
+def check_mfd_draws(qc: QboCache,
                     proj_map: Dict[str, dict]) -> List[Dict[str, Any]]:
     """One row per active MFD project: latest draw folder vs latest QBO
     invoice date. PASS = latest invoice lands in/after the draw month
@@ -349,7 +350,7 @@ def check_mfd_draws(access: str, company_id: str,
             row["verdict"] = "RED"
             row["detail"] = "No QBO project customer matches this project #"
             continue
-        invs = qbo_api.fetch_customer_invoices(access, company_id, cust["id"])
+        invs = qc.invoices_for_customer(cust["id"])
         last = max((_parse_date(i.get("TxnDate")) for i in invs
                     if _parse_date(i.get("TxnDate"))), default=None)
         row["last_invoice"] = last
@@ -369,7 +370,7 @@ def check_mfd_draws(access: str, company_id: str,
 
 # ────────────────── check 1b — CP draws vs invoices ────────────────
 
-def check_cp_draws(access: str, company_id: str,
+def check_cp_draws(qc: QboCache,
                    proj_map: Dict[str, dict]) -> List[Dict[str, Any]]:
     """One row per active CP project folder that has a draw: G702
     earned-less-retainage (cumulative, what should be invoiced) vs the sum
@@ -407,7 +408,7 @@ def check_cp_draws(access: str, company_id: str,
             row["verdict"] = "RED"
             row["detail"] = "No QBO project customer matches this project #"
             continue
-        invs = qbo_api.fetch_customer_invoices(access, company_id, cust["id"])
+        invs = qc.invoices_for_customer(cust["id"])
         invoiced = sum(float(i.get("TotalAmt") or 0) for i in invs)
         row["invoiced"] = invoiced
 
@@ -424,7 +425,7 @@ def check_cp_draws(access: str, company_id: str,
 
 # ────────────────── check 2 — lien clock on open invoices ───────────
 
-def check_lien_clock(access: str, company_id: str,
+def check_lien_clock(qc: QboCache,
                      proj_map: Dict[str, dict]) -> Tuple[
         List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
     """Every open invoice → notice deadline + days left. Work month =
@@ -434,7 +435,7 @@ def check_lien_clock(access: str, company_id: str,
     equipment-lease/note invoices aren't construction income at all."""
     today = _today()
     monthly, retainage, leases = [], [], []
-    for inv in qbo_api.query_all(access, company_id, "Invoice", "Balance > '0'"):
+    for inv in qc.open_invoices():
         txn = _parse_date(inv.get("TxnDate"))
         if txn is None:
             continue
@@ -488,13 +489,13 @@ def check_lien_clock(access: str, company_id: str,
 PO_STALE_DAYS = 30
 
 
-def check_unused_pos(access: str, company_id: str) -> List[Dict[str, Any]]:
+def check_unused_pos(qc: QboCache) -> List[Dict[str, Any]]:
     """Open QBO purchase orders with NO bill linked, aged ≥30 days — money
     committed on paper that never got used (or a bill that never got entered
     against it). Newest first within the flagged set, by value."""
     today = _today()
     rows = []
-    for po in qbo_api.query_all(access, company_id, "PurchaseOrder"):
+    for po in qc.purchase_orders():
         if po.get("POStatus") != "Open":   # POStatus isn't queryable — filter here
             continue
         if po.get("LinkedTxn"):            # a bill/other txn already references it
@@ -595,7 +596,20 @@ def read_open_bills(path: Path) -> Tuple[List[Dict[str, Any]], str]:
         wb.close()
         return [], synced
 
+    # The Bill Tracker renames columns as it evolves ("Payment Date" → "GC Paid
+    # Date", "Status" → "Pay Status" on 2026-07-28). Accept known aliases so a
+    # rename degrades to nothing worse than a blank, never a silent $0 bucket.
+    ALIASES = {
+        "Payment Date": ("Payment Date", "GC Paid Date"),
+        "Status": ("Status", "Pay Status", "Invoice Status"),
+        "Matched Invoice": ("Matched Invoice", "Invoice #"),
+    }
+
     def cell(row, name):
+        for cand in ALIASES.get(name, (name,)):
+            i = idx.get(cand)
+            if i is not None and i < len(row) and row[i] not in (None, ""):
+                return row[i]
         i = idx.get(name)
         return row[i] if i is not None and i < len(row) else None
 
@@ -1201,22 +1215,24 @@ def main() -> int:
             print(f"  ✗ {p}")
         return 2
 
-    access, company_id = qbo_api.load_credentials()
+    # one QBO session + one pull per entity for the whole run (the user
+    # 2026-07-24) — invoices/POs are downloaded once and shared by every check
+    qc = QboCache(verbose=True)
     print("  QBO project-customer map …")
-    proj_map = qbo_api.build_project_customer_map(access, company_id)
+    proj_map = qc.project_customer_map()
 
     print("  1a. MFD draws vs invoices …")
-    mfd = check_mfd_draws(access, company_id, proj_map)
+    mfd = check_mfd_draws(qc, proj_map)
     print(f"      {len(mfd)} active MFD project(s), "
           f"{sum(1 for r in mfd if r['verdict'] == 'RED')} RED")
 
     print("  1b. CP draws vs invoices …")
-    cp = check_cp_draws(access, company_id, proj_map)
+    cp = check_cp_draws(qc, proj_map)
     print(f"      {len(cp)} CP project(s) with draws, "
           f"{sum(1 for r in cp if r['verdict'] == 'RED')} RED")
 
     print("  2.  Lien clock (work month = invoice month) …")
-    lien, reten, leases = check_lien_clock(access, company_id, proj_map)
+    lien, reten, leases = check_lien_clock(qc, proj_map)
     past = sum(1 for r in lien if r["status"] == "PAST")
     urgent = sum(1 for r in lien if r["status"] == "URGENT")
     print(f"      {len(lien)} open invoice(s) on the clock — "
@@ -1228,7 +1244,7 @@ def main() -> int:
     print(f"      {len(wrapup)} slab(s), ${sum(r['left'] for r in wrapup):,.0f} left to bill")
 
     print("  4.  Unused POs ≥30 days old …")
-    pos = check_unused_pos(access, company_id)
+    pos = check_unused_pos(qc)
     print(f"      {len(pos)} open PO(s), ${sum(r['amount'] for r in pos):,.0f} committed with no bill")
 
     print("  5.  Open bills (AP) from the Bill Tracker …")
