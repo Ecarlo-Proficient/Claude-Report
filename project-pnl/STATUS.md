@@ -18,15 +18,21 @@ manual close), RP (no draws — expenses → invoice → profit).
   view. Rows = that trade's cost codes (`*6` labor, `*1` concrete), columns =
   draw windows, each code expands to the bills behind it (amount in the draw
   column it landed in, so the code row is the sum of the rows beneath).
-  Sales tax has its OWN column (per code and per bill) — never in the budget
-  comparison, since the takeoff budget is pre-tax — rolling into a
-  'total incl. sales tax' that ties to QBO. Concrete adds a horizontal
+  Each draw is a **QTY · RATE · TOTAL** group under one merged header
+  carrying the period, with a thick rule down both sides of the group. QTY
+  and RATE only count quantity-bearing lines — a lump bill booked as
+  "1 × $8,901.84" is a price, not a quantity, and would wreck the blended
+  rate; TOTAL still carries every dollar. SALES TAX and FUEL SURCHARGE are
+  their own columns and are folded onto the bill row they came from (joined
+  by bill #), never into the budget comparison — the takeoff budget is
+  pre-tax. Fuel is empty on every job today and the sheet says why (AP folds
+  it into the rate). BUDGET / BALANCE $ / BALANCE % sit together on the LEFT
+  and the bills open collapsed, so the sheet shows no blank cells at rest
+  (the user's call, 2026-07-29). Bill rows lead with the QBO bill # — that's
+  the identifier, not the date. Font 12, uniform row height, long
+  descriptions clip rather than grow the row. Concrete adds a horizontal
   yards / $/yd strip vs the takeoff's implied rate, with no-yardage lump
-  bills excluded and named. Layout rules (the user 2026-07-29): uniform row
-  height (long descriptions clip, never grow the row), DESCRIPTION beside
-  ITEM, draw headers carry their period in the same cell, the non-draw
-  buckets (outside / actual / tax) get their own header colors, and the QBO
-  column shows the BILL NUMBER as the link.
+  bills excluded and listed by bill #.
 - **Contract price + approved COs from the G702** (CP, 2026-07-29) — the
   signed pay application beats the WIP master AND any hand-typed cell; the
   P&L prints the source on the contract line itself, and that cell is no
@@ -34,6 +40,12 @@ manual close), RP (no draws — expenses → invoice → profit).
   (handles the legacy .xls template whose sheets are named 'A'/'B', which the
   existing `G702`-sheet reader can't see). **Needs `xlrd`** — without it the
   run warns and falls back to the WIP master.
+- **Draw sheets lead with a horizontal KPI strip** (the user 2026-07-29):
+  income → retainage held → net draw → costs → gross profit → gross margin %
+  → overhead → REAL net profit → REAL net %, in big type, profit cells
+  colored by sign via conditional formatting, and the strip is the freeze
+  pane so everything below scrolls under it. MFD keeps its PM-vs-QBO
+  comparison as a second strip. Replaces the old vertical summary box.
 - Overhead: 10% of revenue (MFD alt view 9% on costs).
 
 ## OPEN ISSUES
