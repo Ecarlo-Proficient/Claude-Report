@@ -18,12 +18,19 @@ manual close), RP (no draws — expenses → invoice → profit).
   view. Rows = that trade's cost codes (`*6` labor, `*1` concrete), columns =
   draw windows, each code expands to the bills behind it (amount in the draw
   column it landed in, so the code row is the sum of the rows beneath).
-  Sales tax pulled out of the comparison and summed at the bottom with its
-  contributing lines. Concrete adds yards + $/yd vs the takeoff's implied
-  rate, with no-yardage lump bills excluded and named.
+  Sales tax has its OWN column (per code and per bill) — never in the budget
+  comparison, since the takeoff budget is pre-tax — rolling into a
+  'total incl. sales tax' that ties to QBO. Concrete adds a horizontal
+  yards / $/yd strip vs the takeoff's implied rate, with no-yardage lump
+  bills excluded and named. Layout rules (the user 2026-07-29): uniform row
+  height (long descriptions clip, never grow the row), DESCRIPTION beside
+  ITEM, draw headers carry their period in the same cell, the non-draw
+  buckets (outside / actual / tax) get their own header colors, and the QBO
+  column shows the BILL NUMBER as the link.
 - **Contract price + approved COs from the G702** (CP, 2026-07-29) — the
   signed pay application beats the WIP master AND any hand-typed cell; the
-  P&L prints the source line. Reader is `shared/draws.py::read_pay_app`
+  P&L prints the source on the contract line itself, and that cell is no
+  longer a yellow input (yellow means the user typed it). Reader is `shared/draws.py::read_pay_app`
   (handles the legacy .xls template whose sheets are named 'A'/'B', which the
   existing `G702`-sheet reader can't see). **Needs `xlrd`** — without it the
   run warns and falls back to the WIP master.
