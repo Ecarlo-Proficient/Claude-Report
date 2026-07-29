@@ -31,7 +31,7 @@ import argparse
 import os
 import re
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parent.parent
@@ -176,6 +176,55 @@ def main() -> int:
     act = qbo_activity(access, cid)
     print(f"    {len(act)} QBO projects with activity")
 
+    # CONTRACT per line — needed for "did we bill the FULL amount?"
+    print("  General Lista: contract per line …")
+    contracts = {}
+    try:
+        for rec in RP.read_general_list(RP.ALPHA_PATH)[0]:
+            jb = rec["job"]
+            if rec.get("slab_bid"):
+                contracts[jb] = float(rec["slab_bid"])
+            if rec.get("flat_bid") and not rec.get("flat_other"):
+                contracts[f"{jb}-FTW"] = float(rec["flat_bid"])
+    except Exception as e:
+        print(f"    ⚠ General Lista unreadable ({type(e).__name__}) — "
+              "contracts unknown, nothing will qualify to close")
+    print(f"    {len(contracts)} lines with a contract")
+
+    # COST ACTIVITY in the last 3 months, only for lines that could qualify
+    # (unscheduled + fully billed + pre-2026) — a windowed P&L per project.
+    cutoff = TODAY - timedelta(days=92)
+    cust_map = qbo_api.build_project_customer_map(access, cid)
+    cand = []
+    for j in open_jobs:
+        n = (j.get("number") or "").upper()
+        if not n or n == "CP000" or _base(n) in sched_bases:
+            continue
+        a = act.get(n)
+        k_ = contracts.get(n)
+        if not a or not a["n"] or not k_ or k_ <= 0:
+            continue
+        if a["billed"] < k_ - max(1.0, k_ * 0.005):
+            continue
+        if a["last"] is None or a["last"].year >= 2026:
+            continue
+        cand.append(n)
+    print(f"  QBO: 3-month cost check on {len(cand)} candidate(s) …")
+    recent_costs = {}
+    for i, n in enumerate(cand, 1):
+        c = cust_map.get(n)
+        if not c:
+            continue
+        try:
+            pl = qbo_api.fetch_project_pl(access, cid, c["id"],
+                                          cutoff.isoformat(), TODAY.isoformat())
+            t = qbo_api.extract_pl_totals(pl)
+            recent_costs[n] = (t.get("cogs") or 0.0) + (t.get("expenses") or 0.0)
+        except Exception:
+            recent_costs[n] = 0.0
+        if i % 25 == 0:
+            print(f"    …{i}/{len(cand)}")
+
     # classify every open JobTread job
     rows = []
     for j in open_jobs:
@@ -188,40 +237,46 @@ def main() -> int:
         created = _pdate(j.get("createdAt"))
         created_age = (TODAY - created).days if created else None
 
-        # -FTW flatwork often bills under the BASE project, so the -FTW's own
-        # QBO customer can exist with $0. Prefer whichever record actually has
-        # invoices (exact first, then base for -FTW) before falling back.
-        exact = act.get(num)
-        base_rec = act.get(_base(num)) if _base(num) != num else None
-        if exact and exact["n"]:
-            a, qmatch = exact, "exact"
-        elif base_rec and base_rec["n"]:
-            a, qmatch = base_rec, "base (-FTW)"
-        elif exact:
-            a, qmatch = exact, "exact (no inv)"
-        elif base_rec:
-            a, qmatch = base_rec, "base (no inv)"
-        else:
-            a, qmatch = None, "—"
+        # EXACT match only. The old -FTW→base fallback attributed the BASE
+        # project's billing to the -FTW line, so an -FTW that was never
+        # invoiced read as "paid & idle" (RP7431-FTW: 0 invoices of its own,
+        # base RP7431 had $21,722 — the user 2026-07-30). A close decision must
+        # judge each line on its OWN billing.
+        a = act.get(num)
+        qmatch = "exact" if a else "—"
         billed = a["billed"] if a else 0.0
         balance = a["balance"] if a else 0.0
         last = a["last"] if a else None
         idle = (TODAY - last).days if last else None
 
+        # ── THE CLOSE RULE (the user 2026-07-30) — all four must hold ──
+        #   1. billed the FULL contract amount
+        #   2. last billing date is BEFORE 2026
+        #   3. no cost activity in the last 3 months
+        #   4. not on the schedule
+        contract = contracts.get(num)
+        billed = a["billed"] if a else 0.0
+        full = (contract is not None and contract > 0
+                and billed >= contract - max(1.0, contract * 0.005))
+        pre2026 = (last is not None and last.year < 2026)
+        recent_cost = recent_costs.get(num, 0.0) > 1.0
+
         if scheduled:
-            verdict, rank = "ACTIVE — on schedule", 5
-        elif a and a["n"]:                      # has QBO invoices
-            if idle is not None and idle > IDLE and balance <= EPS:
-                verdict, rank = "CLOSE — paid & idle", 0
-            elif idle is not None and idle > IDLE and balance > EPS:
-                verdict, rank = "DONE? unpaid (AR open)", 2
-            else:
-                verdict, rank = "ACTIVE — billed recently", 5
-        else:                                    # no QBO invoices
-            if created_age is not None and created_age > STALE:
-                verdict, rank = "CLOSE? — no QBO, stale", 1
-            else:
-                verdict, rank = "NEW — no bill yet", 4
+            verdict, rank = "KEEP — on the schedule", 5
+        elif not a or not a["n"]:
+            verdict, rank = "KEEP — never invoiced (not bloat, a gap)", 3
+        elif contract is None or contract <= 0:
+            verdict, rank = f"KEEP — no contract on file (billed ${billed:,.0f})", 3
+        elif not full:
+            verdict, rank = (f"KEEP — under-billed ${contract - billed:,.0f} of "
+                             f"${contract:,.0f}"), 2
+        elif not pre2026:
+            verdict, rank = (f"KEEP — billed in {last.year}, not pre-2026"), 4
+        elif recent_cost:
+            verdict, rank = (f"KEEP — ${recent_costs[num]:,.0f} of costs in the "
+                             "last 3 months"), 2
+        else:
+            verdict, rank = "CLOSE — billed in full · pre-2026 · no recent cost · unscheduled", 0
 
         rows.append({
             "job": num, "div": div, "status": j.get("status") or "",
@@ -230,7 +285,9 @@ def main() -> int:
             "idle": idle if idle is not None else "",
             "created": created.isoformat() if created else "",
             "created_age": created_age if created_age is not None else "",
-            "qmatch": qmatch, "sched": "Yes" if scheduled else "",
+            "qmatch": qmatch, "sched": scheduled,
+            "contract": contract, "full": full, "pre2026": pre2026,
+            "recent_cost": recent_costs.get(num),
             "verdict": verdict, "rank": rank,
         })
 
@@ -245,9 +302,7 @@ def main() -> int:
     print("\n  VERDICTS (open JobTread jobs):")
     for v, n in sorted(vc.items(), key=lambda x: -x[1]):
         print(f"    {n:4}  {v}")
-    print(f"  → {len(close)} clean-up candidates "
-          f"({vc['CLOSE — paid & idle']} paid+idle, "
-          f"{vc['CLOSE? — no QBO, stale']} stale shells)")
+    print(f"  → {len(close)} job(s) meet ALL FOUR close tests")
 
     # workbook
     out = Path(os.getenv(
@@ -259,26 +314,31 @@ def main() -> int:
     wb = Workbook()
     wb.remove(wb.active)
 
-    hdr = ["JOB #", "DIV", "JT STATUS", "JT NAME", "VERDICT", "QBO BILLED $",
-           "AR BALANCE $", "LAST INVOICE", "DAYS IDLE", "CREATED", "QBO MATCH"]
+    hdr = ["JOB #", "DIV", "JT STATUS", "JT NAME", "VERDICT", "CONTRACT $",
+           "QBO BILLED $", "BILLED FULL?", "LAST INVOICE", "PRE-2026?",
+           "COSTS LAST 3 MO $", "ON SCHEDULE?", "AR BALANCE $", "CREATED"]
 
     def torow(r):
         return [r["job"], r["div"], r["status"], r["name"], r["verdict"],
-                r["billed"], r["balance"], r["last"], r["idle"], r["created"],
-                r["qmatch"]]
+                r.get("contract"), r["billed"],
+                "YES" if r.get("full") else "no", r["last"],
+                "YES" if r.get("pre2026") else "no",
+                r.get("recent_cost"), "YES" if r["sched"] else "no",
+                r["balance"], r["created"]]
 
     _add_sheet(
         wb, "Close Candidates",
-        f"CLOSE CANDIDATES — {len(close)} open JobTread jobs that look DONE in "
-        f"real life (paid & idle >{IDLE}d, or no QBO activity & created >{STALE}d; "
-        "none on the current schedule). Review, then bulk-close in JobTread.",
+        f"CLOSE CANDIDATES — {len(close)} job(s) meeting ALL FOUR tests "
+        "(the user 2026-07-30): billed the FULL contract · last billed BEFORE 2026 · "
+        "no cost activity in the last 3 months · not on the schedule. Each line is "
+        "judged on its OWN QBO billing — no -FTW→base roll-up.",
         hdr, [torow(r) for r in close],
         (14, 6, 10, 30, 24, 15, 15, 13, 10, 12, 10), money_cols=(6, 7))
 
     _add_sheet(
         wb, "All Open (evidence)",
-        f"ALL {len(rows)} OPEN JOBTREAD JOBS with the QBO/schedule evidence + "
-        "verdict. Sorted: close candidates first (most idle on top).",
+        f"ALL {len(rows)} OPEN JOBTREAD JOBS with the evidence behind each verdict. "
+        "KEEP reasons say exactly which test failed.",
         hdr, [torow(r) for r in rows],
         (14, 6, 10, 30, 24, 15, 15, 13, 10, 12, 10), money_cols=(6, 7))
 

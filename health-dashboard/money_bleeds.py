@@ -66,7 +66,7 @@ from shared import rp_billing
 
 # ────────────────────────── config / paths ──────────────────────────
 
-DEFAULT_OUTPUT = paths.companyhealth_dir() / "Money Bleeds.xlsx"
+DEFAULT_OUTPUT = paths.companyhealth_sources_dir() / "Money Bleeds.xlsx"
 
 WIP_EXCEL_PATH = paths.get_path(
     "WIP_EXCEL_PATH",
@@ -1029,6 +1029,8 @@ def write_workbook(out: Path,
     for band, items, color, note in (
             ("POURED — NOT BILLED · INVOICE NOW", rp["invoice_now"], "C00000",
              "concrete is down; this is real underbilling"),
+            ("DRAW / PHASE-BILLED — judged by the draw schedule", rp.get("draw_based", []),
+             "BF8F00", "billing follows draws, not pour — NOT underbilling"),
             ("NOT POURED — BACKLOG (not owed)", rp["backlog"], "7F7F7F",
              "work still to come — excluded from underbilling")):
         if not items:
@@ -1037,7 +1039,8 @@ def write_workbook(out: Path,
                          f"${sum(r['gap'] for r in items):,.0f}   ·   {note}", color)
         first = ws.max_row + 1
         for i, r in enumerate(items):
-            ws.append(["INVOICE NOW" if r["poured"] else "backlog",
+            ws.append([("draw-based" if r.get("why") else
+                        ("INVOICE NOW" if r["poured"] else "backlog")),
                        r["proj"], r["scope"], r["addr"], r["builder"],
                        r["bid"], r["billed"], r["gap"],
                        r["days"] if r["days"] is not None else ""])
@@ -1267,7 +1270,8 @@ def main() -> int:
 
     rp = rp_billing.build(_billed_for)
     print(f"      INVOICE NOW {len(rp['invoice_now'])} scope(s) = ${rp['due_total']:,.0f}"
-          f"  ·  backlog {len(rp['backlog'])} = ${rp['backlog_total']:,.0f}")
+          f"  ·  backlog {len(rp['backlog'])} = ${rp['backlog_total']:,.0f}"
+          f"  ·  draw-based {len(rp.get('draw_based', []))} = ${rp.get('draw_total', 0):,.0f}")
 
     print("  4.  Unused POs ≥30 days old …")
     pos = check_unused_pos(qc)

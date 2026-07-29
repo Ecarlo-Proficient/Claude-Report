@@ -43,6 +43,19 @@ _JOB_RE = re.compile(r"^(RP\d{4})\b", re.I)
 FEE_TOLERANCE = 600.0
 LOOKBACK_WEEKS = 14
 
+# A few RP jobs are billed by DRAW / phase (piers → foundation → flatwork, with
+# their own invoices and change orders) instead of one invoice at completion —
+# RP6533 is one (the user 2026-07-28). For these, "poured but unbilled" is the
+# WRONG test: billing follows the draw schedule, so a poured slab can be
+# correctly unbilled. They're reported in their own bucket, never as
+# underbilling. Add project numbers here as they come up.
+DRAW_BASED = {"RP6533"}
+
+# Typical RP slab bids run ~$25–50K. A much larger contract is usually a
+# phase-billed job, so anything above this that ISN'T already in DRAW_BASED is
+# surfaced for review rather than silently counted as underbilling.
+DRAW_BASED_REVIEW_OVER = 120_000.0
+
 
 def _f(v) -> float:
     try:
@@ -132,6 +145,7 @@ def build(billed_for: Callable[[str], Optional[float]],
     today = dt.date.today()
     invoice_now: List[dict] = []
     backlog: List[dict] = []
+    draw_based: List[dict] = []
 
     for proj, v in sorted(bids.items()):
         h = hist.get(proj, {})
@@ -153,11 +167,23 @@ def build(billed_for: Callable[[str], Optional[float]],
                 "days": (today - last).days if last else None,
                 "in_qbo": billed is not None,
             }
-            (invoice_now if poured else backlog).append(row)
+            # draw/phase-billed jobs are judged by their draw schedule, not by
+            # pour evidence — keep them out of the underbilling number
+            if proj in DRAW_BASED:
+                row["why"] = "draw/phase-billed — bill by draw, not pour"
+                draw_based.append(row)
+            elif poured and bid >= DRAW_BASED_REVIEW_OVER:
+                row["why"] = (f"contract over ${DRAW_BASED_REVIEW_OVER:,.0f} — "
+                              "confirm whether this job bills by draw")
+                draw_based.append(row)
+            else:
+                (invoice_now if poured else backlog).append(row)
 
-    invoice_now.sort(key=lambda r: -r["gap"])
-    backlog.sort(key=lambda r: -r["gap"])
+    for lst in (invoice_now, backlog, draw_based):
+        lst.sort(key=lambda r: -r["gap"])
     return {"invoice_now": invoice_now, "backlog": backlog,
+            "draw_based": draw_based,
             "weeks_back": weeks_back, "generated": dt.datetime.now(),
             "due_total": sum(r["gap"] for r in invoice_now),
-            "backlog_total": sum(r["gap"] for r in backlog)}
+            "backlog_total": sum(r["gap"] for r in backlog),
+            "draw_total": sum(r["gap"] for r in draw_based)}

@@ -216,6 +216,7 @@ def _write_rp_billing_tab(wb, rows) -> None:
     ws.freeze_panes = "A2"
     for status, label, color in (
             ("INVOICE NOW", "POURED — NOT BILLED · INVOICE NOW", "C00000"),
+            ("draw-based", "DRAW / PHASE-BILLED — bill by draw, not pour", "BF8F00"),
             ("backlog", "NOT POURED — BACKLOG (not owed)", "7F7F7F")):
         items = [r for r in rows if r["status"] == status]
         if not items:

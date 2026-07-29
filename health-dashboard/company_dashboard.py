@@ -41,10 +41,11 @@ from shared import paths
 from shared import schedule as sched
 
 CH = paths.companyhealth_dir()
-MB_PATH = CH / "Money Bleeds.xlsx"
-LOC_PATH = CH / "Sub LOC Report.xlsx"
-MOR_PATH = CH / "Money Out Register.xlsx"
-HEALTH_PATH = CH / "health_dashboard.xlsx"
+SRC = paths.companyhealth_sources_dir()      # data layer, out of the top level
+MB_PATH = SRC / "Money Bleeds.xlsx"
+LOC_PATH = SRC / "Sub LOC Report.xlsx"
+MOR_PATH = SRC / "Money Out Register.xlsx"
+HEALTH_PATH = SRC / "health_dashboard.xlsx"
 # canonical Bill Tracker lives in OneDrive/Automations- (bill-tracker writes it
 # there) — not the stale CompanyHealth copy (the user 2026-07-24)
 BILL_PATH = paths.get_path(
@@ -126,7 +127,7 @@ def read_rp_billing(path: Path) -> List[dict]:
         if not r or len(r) < 9:
             continue
         status = str(r[0] or "").strip()
-        if status not in ("INVOICE NOW", "backlog"):
+        if status not in ("INVOICE NOW", "backlog", "draw-based"):
             continue                      # band / subtotal / footnote row
         rows.append({"status": status, "proj": str(r[1] or ""),
                      "scope": str(r[2] or ""), "addr": str(r[3] or ""),

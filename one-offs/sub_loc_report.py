@@ -53,7 +53,7 @@ from shared import qbo_api
 from shared import paths
 
 SUB_RE = re.compile(r"\bsub\b", re.IGNORECASE)     # same as bill-tracker
-DEFAULT_OUTPUT = paths.companyhealth_dir() / "Sub LOC Report.xlsx"
+DEFAULT_OUTPUT = paths.companyhealth_sources_dir() / "Sub LOC Report.xlsx"
 # pull bills/invoices this far back so txns paid inside the window are covered
 LOOKBACK_MONTHS = 9
 

@@ -40,7 +40,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from shared import qbo_api
 from shared import paths
 
-DEFAULT_OUTPUT = paths.companyhealth_dir() / "Money Out Register.xlsx"
+DEFAULT_OUTPUT = paths.companyhealth_sources_dir() / "Money Out Register.xlsx"
 PULL_DAYS = 45           # how far back to pull checks (recent = plausibly uncashed)
 PRUNE_CLEARED_DAYS = 45  # drop checks marked cleared older than this
 SHEET = "Register"

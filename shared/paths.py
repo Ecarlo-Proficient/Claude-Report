@@ -72,8 +72,22 @@ def onedrive_base() -> Path:
 
 
 def companyhealth_dir() -> Path:
-    """Local (non-synced) company-health folder. Override: ACB_COMPANYHEALTH_DIR."""
+    """Local (non-synced) company-health folder. Override: ACB_COMPANYHEALTH_DIR.
+    Holds only the two things the owner opens — Company Tracker.xlsx and
+    Company Dashboard.html; the workbooks that feed them live in _sources/."""
     return get_path("ACB_COMPANYHEALTH_DIR", _DEFAULT_COMPANYHEALTH)
+
+
+def companyhealth_sources_dir() -> Path:
+    """Where the intermediate tracker workbooks live (the data layer the one
+    workbook reads). Kept out of the top level so only the deliverables show
+    (the user 2026-07-28). Created on demand."""
+    d = companyhealth_dir() / "_sources"
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+    return d
 
 
 # ── Self-check (`python3 paths.py`) ────────────────────────────────────────

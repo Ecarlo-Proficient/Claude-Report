@@ -69,7 +69,7 @@ from shared import paths
 API_BASE = "https://quickbooks.api.intuit.com"
 MINOR_VERSION = "70"
 
-DEFAULT_OUTPUT = paths.companyhealth_dir() / "health_dashboard.xlsx"
+DEFAULT_OUTPUT = paths.companyhealth_sources_dir() / "health_dashboard.xlsx"
 DEFAULT_OVERRIDES = paths.companyhealth_dir() / "customer_overrides.xlsx"
 
 # Aging bucket boundaries, in days — matches QBO's default Aged Receivables/Payables.
