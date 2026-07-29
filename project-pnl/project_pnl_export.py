@@ -1806,7 +1806,7 @@ def _write_meta_block(ws, proj: str, cust_info: dict, wip_info: dict,
     if note:
         sub_parts.append(note)
     sub_cell = ws.cell(row=start_row + 1, column=1, value="   ·   ".join(sub_parts))
-    sub_cell.font = Font(italic=True, size=11, color="595959")
+    sub_cell.font = Font(italic=True, size=BASE_SIZE, color="595959")
     ws.merge_cells(start_row=start_row + 1, start_column=1, end_row=start_row + 1, end_column=8)
 
     return start_row + 2
@@ -3085,7 +3085,7 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
         ws.column_dimensions[col].width = w
 
     def _font(bold=False, color="000000", size=None, under=False):
-        return Font(bold=bold, size=size or (BASE_SIZE - 1), color=color,
+        return Font(bold=bold, size=size or BASE_SIZE, color=color,
                     underline=("single" if under else None))
 
     def wc(row, col, val, *, bold=False, color="000000", fmt=None, fill=None,
@@ -3172,20 +3172,21 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
                    if alt_overhead_pct is not None
                    else (overhead_pct / 100.0) * rev, 2)
         npf = round(gp - oh, 2)
-        cells = [("INCOME\nbilled this draw", rev, CURR_FMT, False),
-                 ("RETAINAGE\nheld back", -abs(held), CURR_FMT, False),
-                 ("NET DRAW\ncash to collect", round(rev - abs(held), 2), CURR_FMT, False),
-                 ("COSTS\n" + f"{n_bills} bills", costs_val, CURR_FMT, False),
-                 ("GROSS PROFIT\nincome − costs", gp, CURR_FMT, True),
+        KPI_FMT = '"$"#,##0;[Red]-"$"#,##0'
+        cells = [("INCOME\nbilled this draw", rev, KPI_FMT, False),
+                 ("RETAINAGE\nheld back", -abs(held), KPI_FMT, False),
+                 ("NET DRAW\ncash to collect", round(rev - abs(held), 2), KPI_FMT, False),
+                 ("COSTS\n" + f"{n_bills} bills", costs_val, KPI_FMT, False),
+                 ("GROSS PROFIT\nincome − costs", gp, KPI_FMT, True),
                  ("GROSS MARGIN %", (gp / rev if rev else 0), "0.0%", True),
-                 (_oh_label, -oh, CURR_FMT, False),
-                 ("REAL NET PROFIT", npf, CURR_FMT, True),
+                 (_oh_label, -oh, KPI_FMT, False),
+                 ("REAL NET PROFIT", npf, KPI_FMT, True),
                  ("REAL NET %", (npf / rev if rev else 0), "0.0%", True)]
         band(r, 1, 10, f"{title}   ·   {periodtxt}")
         r += 1
         for col, (label, _v, _f, _s) in zip(KPI_COLS, cells):
             c = ws.cell(row=r, column=col, value=label)
-            c.font = Font(bold=True, size=BASE_SIZE - 1, color="FFFFFF")
+            c.font = Font(bold=True, size=BASE_SIZE, color="FFFFFF")
             c.fill = PatternFill("solid", fgColor="44546A")
             c.alignment = Alignment(horizontal="center", vertical="center",
                                     wrap_text=True)
@@ -3836,6 +3837,11 @@ def code_costs_by_draw(
 # SL1/PV1/CS1/MS1 = concrete). The PM and ops manager track these two by
 # scrutiny — materials are bought as packages (the user 2026-07-29).
 _FOCUS_NUM = {"Labor": "6", "Concrete": "1"}
+# The P&L COGS line each trade's grand total must equal — the scoreboard says
+# so explicitly, which is what makes the roll-up auditable (the user 2026-07-29
+# "where is that adding up to?").
+_FOCUS_TIE = {"Labor": "Subcontractors Expense: Labor",
+              "Concrete": "Job Materials: Concrete"}
 # A concrete line only counts toward YARDS when it was actually bought by the
 # yard. Lump vendor bills (qty 1 × $8,901.84) would wreck the $/yd math, so
 # they're carried in their own bucket and named on the sheet.
@@ -3889,18 +3895,22 @@ def build_sheet_labor_concrete(
     yards: Tuple[float, Dict[str, float], str] = (0.0, {}, ""),
     budget_source: str = "", realm: str = "",
 ) -> Optional[str]:
-    """LABOR / CONCRETE budget vs actual, per draw — the PM + ops manager's main
-    view (the user 2026-07-29). Rows are the takeoff's cost codes for that
-    trade; each draw is a QTY · RATE · TOTAL group so you see not just what a
-    draw cost but how much was bought and at what rate. Every code expands
-    (outline ±, collapsed on open) to the bills behind it, each bill carrying
-    its own sales tax and fuel surcharge on ITS row.
+    """LABOR / CONCRETE — TWO blocks at different altitudes (the user
+    2026-07-29: 'the metrics are a top-level data point'; one grid trying to be
+    both is what produced the empty cells and hidden rows).
 
-    Budget / balance sit together on the LEFT (the user 2026-07-29): balance is
-    a code-level idea, so keeping it out of the draw region stops the bill rows
-    from reading as half-empty. Tax and fuel never enter the budget comparison
-    — the takeoff budget is pre-tax. Returns the sheet name, or None when the
-    trade has no budget and no cost."""
+    SCOREBOARD (top, frozen): one row per cost code — budget, actual, balance,
+    then the total per draw. Every cell populated. Concrete adds the sales-tax
+    roll-up and the yards/$-per-yd strip, and the grand total names the P&L
+    line it ties to.
+
+    LEDGER (below, fully expanded): every bill — QBO # first (the user's
+    identifier), then date, vendor, description, qty, rate, amount, its own
+    tax (folded onto the bill row by bill #), and WHICH draw it landed in as a
+    label. A bill belongs to exactly one draw, so a label column beats a draw
+    matrix that guarantees blank cells on every row. Tax/fuel columns appear
+    only on a trade that has such lines (labor subs bill neither).
+    Returns the sheet name, or None when the trade has no budget and no cost."""
     num = _FOCUS_NUM[kind]
     codes = sorted(
         {c for c in budget if _split_code(c)[1] == num}
@@ -3917,277 +3927,293 @@ def build_sheet_labor_concrete(
         col_keys.append((_BEFORE_KEY, "Before draw 1"))
     col_keys += list(draw_cols)
     if any(_grp(c)["draws"].get(_AFTER_KEY) for c in codes):
-        col_keys.append((_AFTER_KEY, "Outside draw windows"))
+        col_keys.append((_AFTER_KEY, "Outside draw\nwindows"))
+    draw_name = {k: h.split("\n")[0] for k, h in col_keys}
+    draw_name[_BEFORE_KEY] = "Before draw 1"
+    draw_name[_AFTER_KEY] = "Outside windows"
+
+    has_tax = any(_grp(c)["tax"] for c in codes)
+    has_fuel = any(_grp(c)["fuel"] for c in codes)
+    tie_line = _FOCUS_TIE.get(kind, "")
 
     ws = wb.create_sheet(kind)
     ws.sheet_view.showGridLines = False
     ws.sheet_view.zoomScale = 100
-    SZ = BASE_SIZE                                   # 12 everywhere (the user)
-    c_item, c_vend, c_desc, c_bud, c_bal, c_pct = 1, 2, 3, 4, 5, 6
-    c_first = 7
-    NSUB = 3                                         # QTY · RATE · TOTAL
-    c_act = c_first + len(col_keys) * NSUB
-    c_fuel, c_tax = c_act + 1, c_act + 2
-    widths = [(c_item, 22), (c_vend, 26), (c_desc, 44), (c_bud, 15),
-              (c_bal, 15), (c_pct, 12), (c_act, 16), (c_fuel, 15), (c_tax, 14)]
-    for i in range(len(col_keys)):
-        b = c_first + i * NSUB
-        widths += [(b, 11), (b + 1, 12), (b + 2, 15)]
-    for col, w in widths:
+    SZ = BASE_SIZE                                    # flat 12 — no 11pt anywhere
+    ROW_H = 17
+
+    # Shared column widths serve both blocks: A item/QBO#, B budget/date,
+    # C actual/vendor, D balance/description, E bal%/qty, F../draws + rate,
+    # amount, tax, draw-label.
+    n_draws = len(col_keys)
+    sb_tax = 6 + n_draws                     # scoreboard TAX col (after draws)
+    sb_fuel = sb_tax + (1 if has_tax else 0)
+    sb_incl = sb_fuel + (1 if has_fuel else 0)
+    widths = {1: 34, 2: 16, 3: 22, 4: 42, 5: 12}
+    for i in range(n_draws):
+        widths[6 + i] = 15
+    if has_tax:
+        widths[sb_tax] = 14
+    if has_fuel:
+        widths[sb_fuel] = 14
+    if has_tax or has_fuel:
+        widths[sb_incl] = 17
+    # ledger fixed columns (overlap the same sheet columns)
+    L_QBO, L_DATE, L_VEND, L_DESC, L_QTY, L_RATE, L_AMT = 1, 2, 3, 4, 5, 6, 7
+    L_TAX = 8 if has_tax else 0
+    L_FUEL = (9 if has_tax else 8) if has_fuel else 0
+    L_DRAW = max(L_AMT, L_TAX, L_FUEL) + 1
+    for col, w in ((L_QTY, 12), (L_RATE, 13), (L_AMT, 15), (L_DRAW, 15)):
+        widths[col] = max(widths.get(col, 0), w)
+    if L_TAX:
+        widths[L_TAX] = max(widths.get(L_TAX, 0), 13)
+    if L_FUEL:
+        widths[L_FUEL] = max(widths.get(L_FUEL, 0), 13)
+    for col, w in widths.items():
         ws.column_dimensions[get_column_letter(col)].width = w
 
     r = _write_meta_block(ws, proj, cust_info, wip_info, as_of)
     sub = ws.cell(row=r, column=1, value=(
-        f"{kind.upper()} BUDGET vs ACTUAL BY DRAW — budget from the takeoff cost "
-        f"codes; actual from QBO. Sales tax and fuel surcharge sit on the bill "
-        f"they came from and stay OUT of the budget comparison."))
+        f"{kind.upper()} — SCOREBOARD (budget vs actual by cost code and draw), "
+        f"then the LEDGER: every bill, fully expanded."))
     sub.font = Font(bold=True, size=SZ, color="1F3A5F")
     r += 1
     if budget_source:
         src = ws.cell(row=r, column=1, value=f"Budget source: {budget_source}")
         src.font = Font(italic=True, size=SZ, color="595959")
         r += 1
-    tip = ws.cell(row=r, column=1, value=(
-        "Cost codes are collapsed — click the ± in the left margin to open a "
-        "code and see every bill behind it, with its QBO bill # first."))
-    tip.font = Font(italic=True, size=SZ, color="595959")
-    r += 1
-    if not any(_grp(c).get("fuel") for c in codes):
-        fw = ws.cell(row=r, column=1, value=(
-            "⚑ FUEL SURCHARGE is empty because nothing on this job is coded as "
-            "one — AP folds the surcharge into the per-yard rate. The column "
-            "fills itself once those bills are entered as their own line."))
-        fw.font = Font(bold=True, size=SZ, color="9C5700")
-        r += 1
     r += 1
 
-    # ── two-row header: each draw spans QTY · RATE · TOTAL ──
-    F_DRAW, F_OUT = HDR_FILL, PatternFill("solid", fgColor="7F7F7F")
-    F_ACT = PatternFill("solid", fgColor="375623")
-    F_TAX = PatternFill("solid", fgColor="7F6000")
-    F_FUEL = PatternFill("solid", fgColor="8E5B2E")
-    h1, h2 = r, r + 1
-
-    def _flat(text, col, fill):
-        ws.merge_cells(start_row=h1, start_column=col, end_row=h2, end_column=col)
-        c = ws.cell(row=h1, column=col, value=text)
-        c.font = HDR_FONT
+    # ───────────────────────── SCOREBOARD ─────────────────────────
+    F_DRAW = HDR_FILL
+    F_OUT = PatternFill("solid", fgColor="7F7F7F")
+    F_TAXF = PatternFill("solid", fgColor="7F6000")
+    hdr = r
+    heads = ([("ITEM (cost code)", 1, F_DRAW), ("BUDGET", 2, F_DRAW),
+              ("ACTUAL" + (" (ex-tax)" if has_tax else ""), 3, F_DRAW),
+              ("BALANCE $", 4, F_DRAW), ("BALANCE %", 5, F_DRAW)]
+             + [(h, 6 + i, F_OUT if k in (_BEFORE_KEY, _AFTER_KEY) else F_DRAW)
+                for i, (k, h) in enumerate(col_keys)])
+    if has_tax:
+        heads.append(("SALES TAX", sb_tax, F_TAXF))
+    if has_fuel:
+        heads.append(("FUEL SURCHARGE", sb_fuel, F_TAXF))
+    if has_tax or has_fuel:
+        heads.append(("ACTUAL INCL.", sb_incl, F_TAXF))
+    for text, col, fill in heads:
+        c = ws.cell(row=hdr, column=col, value=text)
+        c.font = Font(bold=True, color="FFFFFF", size=SZ)
+        c.fill = fill
         c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        for rr in (h1, h2):
-            ws.cell(row=rr, column=col).fill = fill
-            ws.cell(row=rr, column=col).border = THIN_BORDER
+        c.border = THIN_BORDER
+    ws.row_dimensions[hdr].height = 34
+    r += 1
 
-    for text, col in (("ITEM / QBO #", c_item), ("VENDOR", c_vend),
-                      ("DESCRIPTION", c_desc), ("BUDGET", c_bud),
-                      ("BALANCE $", c_bal), ("BALANCE %", c_pct)):
-        _flat(text, col, F_DRAW)
-    _flat("ACTUAL TO DATE", c_act, F_ACT)
-    _flat("FUEL SURCHARGE", c_fuel, F_FUEL)
-    _flat("SALES TAX", c_tax, F_TAX)
-
-    for i, (key, head) in enumerate(col_keys):
-        b = c_first + i * NSUB
-        fill = F_OUT if key in (_BEFORE_KEY, _AFTER_KEY) else F_DRAW
-        ws.merge_cells(start_row=h1, start_column=b, end_row=h1, end_column=b + 2)
-        top = ws.cell(row=h1, column=b, value=head.replace("\n", "  —  "))
-        top.font = HDR_FONT
-        top.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        for j, sub_h in enumerate(("QTY", "RATE", "TOTAL")):
-            c = ws.cell(row=h2, column=b + j, value=sub_h)
-            c.font = Font(bold=True, color="FFFFFF", size=SZ - 1)
-            c.alignment = Alignment(horizontal="center", vertical="center")
-        for j in range(NSUB):
-            for rr in (h1, h2):
-                ws.cell(row=rr, column=b + j).fill = fill
-    ws.row_dimensions[h1].height = 30
-    ws.row_dimensions[h2].height = 18
-    r = h2 + 1
-
-    ROW_H = 17
-    known = _project_name_words(cust_info.get("name", ""))
-    bucket_at = {k: c_first + i * NSUB for i, (k, _h) in enumerate(col_keys)}
-
-    def _thick_edges(row_i: int) -> None:
-        """A thick rule down both sides of every draw group (the user)."""
-        for i in range(len(col_keys)):
-            b = c_first + i * NSUB
-            for col, side in ((b, "left"), (b + NSUB - 1, "right")):
-                cur = ws.cell(row=row_i, column=col).border
-                ws.cell(row=row_i, column=col).border = Border(
-                    left=_THICK if side == "left" else cur.left,
-                    right=_THICK if side == "right" else cur.right,
-                    top=cur.top, bottom=cur.bottom)
-
-    for rr in (h1, h2):
-        _thick_edges(rr)
-
-    first_data = r
-    ws.sheet_properties.outlinePr.summaryBelow = False   # code row ABOVE its bills
-    code_rows: List[int] = []
-
+    first_code = r
     for code in codes:
         g = _grp(code)
         band = _cost_band_fill(code)
-        lc = ws.cell(row=r, column=c_item, value=_cost_code_label(code))
-        lc.font = Font(bold=True, size=SZ)
-        bc = ws.cell(row=r, column=c_bud, value=round(budget.get(code, 0.0), 2))
-        bc.number_format = CURR_FMT
-        merged = _merge_bill_lines(g["lines"])
+        ws.cell(row=r, column=1, value=_cost_code_label(code)
+                ).font = Font(bold=True, size=SZ)
+        bcell = ws.cell(row=r, column=2, value=round(budget.get(code, 0.0), 2))
+        bcell.number_format = CURR_FMT
+        bcell.font = Font(size=SZ)
         for i, (key, _h) in enumerate(col_keys):
-            b = c_first + i * NSUB
-            tot = round(g["draws"].get(key, 0.0), 2)
-            # Only lines that carry a REAL quantity feed QTY/RATE — a lump bill
-            # entered as "1 × $8,901.84" is a price, not a quantity, and would
-            # wreck the blended rate. TOTAL still carries every dollar.
-            qlines = [l for l in merged
-                      if l["draw"] == key and _is_yard_line(l)]
-            qty = round(sum(l["qty"] for l in qlines), 2)
-            qamt = round(sum(l["amount"] for l in qlines), 2)
-            qc = ws.cell(row=r, column=b, value=qty or None)
-            qc.number_format = "#,##0.00"
-            rc = ws.cell(row=r, column=b + 1,
-                         value=(round(qamt / qty, 2) if qty else None))
-            rc.number_format = '"$"#,##0.00'
-            tc2 = ws.cell(row=r, column=b + 2, value=tot)
-            tc2.number_format = CURR_FMT
-            tc2.font = Font(bold=True, size=SZ)
-        ac = ws.cell(row=r, column=c_act, value="=" + "+".join(
-            f"{get_column_letter(c_first + i * NSUB + 2)}{r}"
-            for i in range(len(col_keys))))
+            c = ws.cell(row=r, column=6 + i,
+                        value=round(g["draws"].get(key, 0.0), 2))
+            c.number_format = CURR_FMT
+            c.font = Font(size=SZ)
+        ac = ws.cell(row=r, column=3, value="=" + "+".join(
+            f"{get_column_letter(6 + i)}{r}" for i in range(n_draws)))
         ac.number_format = CURR_FMT
         ac.font = Font(bold=True, size=SZ)
-        fc = ws.cell(row=r, column=c_fuel, value=round(sum(g.get("fuel", {}).values()), 2))
-        fc.number_format = CURR_FMT
-        txc = ws.cell(row=r, column=c_tax, value=round(sum(g["tax"].values()), 2))
-        txc.number_format = CURR_FMT
-        L_bud, L_act, L_bal = (get_column_letter(c_bud), get_column_letter(c_act),
-                               get_column_letter(c_bal))
-        blc = ws.cell(row=r, column=c_bal, value=f"={L_bud}{r}-{L_act}{r}")
+        blc = ws.cell(row=r, column=4, value=f"=B{r}-C{r}")
         blc.number_format = CURR_FMT
         blc.font = Font(bold=True, size=SZ)
-        pc = ws.cell(row=r, column=c_pct,
-                     value=f'=IF({L_bud}{r}=0,"",{L_bal}{r}/{L_bud}{r})')
+        pc = ws.cell(row=r, column=5, value=f'=IF(B{r}=0,"",D{r}/B{r})')
         pc.number_format = PCT_FMT
         pc.font = Font(bold=True, size=SZ)
-        for col in range(c_item, c_tax + 1):
+        if has_tax:
+            tcell = ws.cell(row=r, column=sb_tax,
+                            value=round(sum(g["tax"].values()), 2))
+            tcell.number_format = CURR_FMT
+            tcell.font = Font(size=SZ)
+        if has_fuel:
+            fcell = ws.cell(row=r, column=sb_fuel,
+                            value=round(sum(g["fuel"].values()), 2))
+            fcell.number_format = CURR_FMT
+            fcell.font = Font(size=SZ)
+        if has_tax or has_fuel:
+            parts = [f"C{r}"] + ([f"{get_column_letter(sb_tax)}{r}"] if has_tax else []) \
+                    + ([f"{get_column_letter(sb_fuel)}{r}"] if has_fuel else [])
+            ic = ws.cell(row=r, column=sb_incl, value="=" + "+".join(parts))
+            ic.number_format = CURR_FMT
+            ic.font = Font(size=SZ)
+        last_sb = sb_incl if (has_tax or has_fuel) else 5 + n_draws
+        for col in range(1, last_sb + 1):
             cell = ws.cell(row=r, column=col)
             cell.fill = band
             cell.border = THIN_BORDER
-        _thick_edges(r)
+            if cell.font is None or cell.font.size is None:
+                cell.font = Font(size=SZ)
         ws.row_dimensions[r].height = ROW_H
-        code_rows.append(r)
+        r += 1
+    last_code = r - 1
+
+    tot = r
+    ws.cell(row=tot, column=1, value=f"TOTAL {kind.upper()}").font = TOTAL_FONT
+    last_sb = sb_incl if (has_tax or has_fuel) else 5 + n_draws
+    for col in range(1, last_sb + 1):
+        cell = ws.cell(row=tot, column=col)
+        cell.fill = TOTAL_FILL
+        cell.font = TOTAL_FONT
+        cell.border = THIN_BORDER
+    for col in ([2, 3] + [6 + i for i in range(n_draws)]
+                + ([sb_tax] if has_tax else [])
+                + ([sb_fuel] if has_fuel else [])
+                + ([sb_incl] if (has_tax or has_fuel) else [])):
+        L = get_column_letter(col)
+        c = ws.cell(row=tot, column=col, value=f"=SUM({L}{first_code}:{L}{last_code})")
+        c.number_format = CURR_FMT
+    ws.cell(row=tot, column=4, value=f"=B{tot}-C{tot}").number_format = CURR_FMT
+    ws.cell(row=tot, column=5,
+            value=f'=IF(B{tot}=0,"",D{tot}/B{tot})').number_format = PCT_FMT
+    ws.row_dimensions[tot].height = ROW_H
+    r += 1
+    if tie_line:
+        tie_val_col = get_column_letter(sb_incl if (has_tax or has_fuel) else 3)
+        note = ws.cell(row=r, column=1, value=(
+            f"{tie_val_col}{tot} ties to the P&L cost line "
+            f"'{tie_line}'" + (" (actual + tax)" if has_tax else "")))
+        note.font = Font(italic=True, size=SZ, color="595959")
         r += 1
 
+    red = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+    for col in (4, 5):
+        L = get_column_letter(col)
+        ws.conditional_formatting.add(
+            f"{L}{first_code}:{L}{tot}",
+            CellIsRule(operator="lessThan", formula=["0"],
+                       fill=red, font=Font(color="9C0006", bold=True)))
+
+    if not has_fuel:
+        fw = ws.cell(row=r, column=1, value=(
+            "⚑ No fuel-surcharge lines exist on this job in QBO — AP folds the "
+            "surcharge into the per-yard rate. A FUEL column appears here the "
+            "moment those bills are entered as their own line."
+            if kind == "Concrete" else
+            "No sales-tax or fuel-surcharge lines on this trade — columns omitted."))
+        fw.font = Font(italic=True, size=SZ,
+                       color="9C5700" if kind == "Concrete" else "595959")
+        r += 1
+
+    known = _project_name_words(cust_info.get("name", ""))
+    if kind == "Concrete":
+        r = _yards_strip(ws, r + 1, codes, code_costs, budget, yards, SZ, ROW_H)
+
+    # Scoreboard (and strip) stay pinned; the ledger scrolls under them.
+    ws.freeze_panes = ws.cell(row=r + 1, column=1)
+    r += 2
+
+    # ───────────────────────── LEDGER ─────────────────────────
+    lh = ws.cell(row=r, column=1, value=(
+        "LEDGER — every bill; the DRAW column says which draw window the bill "
+        "date fell in"))
+    lh.font = Font(bold=True, size=SZ, color="1F3A5F")
+    r += 1
+    led_heads = [("QBO #", L_QBO), ("DATE", L_DATE), ("VENDOR", L_VEND),
+                 ("DESCRIPTION", L_DESC), ("QTY", L_QTY), ("RATE", L_RATE),
+                 ("AMOUNT", L_AMT)]
+    if L_TAX:
+        led_heads.append(("SALES TAX", L_TAX))
+    if L_FUEL:
+        led_heads.append(("FUEL", L_FUEL))
+    led_heads.append(("DRAW", L_DRAW))
+    for text, col in led_heads:
+        c = ws.cell(row=r, column=col, value=text)
+        c.font = Font(bold=True, color="FFFFFF", size=SZ)
+        c.fill = HDR_FILL
+        c.alignment = Alignment(horizontal="center", vertical="center")
+        c.border = THIN_BORDER
+    ws.row_dimensions[r].height = ROW_H + 3
+    r += 1
+
+    for code in codes:
+        g = _grp(code)
+        merged = _merge_bill_lines(g["lines"])
+        if not merged:
+            continue
+        band = _cost_band_fill(code)
+        bc = ws.cell(row=r, column=1, value=_cost_code_label(code))
+        bc.font = Font(bold=True, size=SZ)
+        sub_amt = round(sum(l["amount"] for l in merged), 2)
+        sc = ws.cell(row=r, column=L_AMT, value=sub_amt)
+        sc.number_format = CURR_FMT
+        sc.font = Font(bold=True, size=SZ)
+        if L_TAX:
+            stx = ws.cell(row=r, column=L_TAX,
+                          value=round(sum(l.get("tax", 0) for l in merged), 2))
+            stx.number_format = CURR_FMT
+            stx.font = Font(bold=True, size=SZ)
+        if L_FUEL:
+            sfl = ws.cell(row=r, column=L_FUEL,
+                          value=round(sum(l.get("fuel", 0) for l in merged), 2))
+            sfl.number_format = CURR_FMT
+            sfl.font = Font(bold=True, size=SZ)
+        for col in range(1, L_DRAW + 1):
+            ws.cell(row=r, column=col).fill = band
+            ws.cell(row=r, column=col).border = THIN_BORDER
+        ws.row_dimensions[r].height = ROW_H
+        r += 1
         for ln in merged:
-            # QBO bill # leads the row — that's the identifier, not the date.
             url = _qbo_txn_url(ln["tx_type"], ln["txn_id"], realm)
-            idc = ws.cell(row=r, column=c_item,
+            idc = ws.cell(row=r, column=L_QBO,
                           value=ln["doc"] or ln["txn_id"] or "(no #)")
             if url:
                 idc.hyperlink = url
                 idc.font = Font(color="0563C1", underline="single", size=SZ)
             else:
-                idc.font = Font(size=SZ, color="404040")
-            ws.cell(row=r, column=c_vend, value=ln["vendor"])
-            ws.cell(row=r, column=c_desc,
-                    value=_clean_cost_text(ln["desc"], known) or ln["desc"])
-            b = bucket_at.get(ln["draw"])
-            if b and ln["amount"]:
-                if ln["qty"]:
-                    ws.cell(row=r, column=b,
-                            value=ln["qty"]).number_format = "#,##0.00"
-                if ln["rate"]:
-                    ws.cell(row=r, column=b + 1,
-                            value=ln["rate"]).number_format = '"$"#,##0.00'
-                ws.cell(row=r, column=b + 2,
-                        value=ln["amount"]).number_format = CURR_FMT
-            if ln.get("fuel"):
-                ws.cell(row=r, column=c_fuel,
-                        value=ln["fuel"]).number_format = CURR_FMT
-            if ln.get("tax"):
-                ws.cell(row=r, column=c_tax,
+                idc.font = Font(size=SZ)
+            ws.cell(row=r, column=L_DATE, value=ln["date"]).font = Font(size=SZ)
+            ws.cell(row=r, column=L_VEND, value=ln["vendor"]).font = Font(size=SZ)
+            dc = ws.cell(row=r, column=L_DESC,
+                         value=_clean_cost_text(ln["desc"], known) or ln["desc"])
+            dc.font = Font(size=SZ)
+            dc.alignment = Alignment(vertical="center")   # clips, never grows
+            if ln["qty"]:
+                ws.cell(row=r, column=L_QTY,
+                        value=ln["qty"]).number_format = "#,##0.00"
+            if ln["rate"]:
+                ws.cell(row=r, column=L_RATE,
+                        value=ln["rate"]).number_format = '"$"#,##0.00'
+            amt_c = ws.cell(row=r, column=L_AMT, value=ln["amount"])
+            amt_c.number_format = CURR_FMT
+            if L_TAX and ln.get("tax"):
+                ws.cell(row=r, column=L_TAX,
                         value=ln["tax"]).number_format = CURR_FMT
-            for cc2 in range(c_vend, c_tax + 1):
-                ws.cell(row=r, column=cc2).font = Font(size=SZ, color="404040")
-            ws.cell(row=r, column=c_desc).alignment = Alignment(vertical="center")
-            _thick_edges(r)
+            if L_FUEL and ln.get("fuel"):
+                ws.cell(row=r, column=L_FUEL,
+                        value=ln["fuel"]).number_format = CURR_FMT
+            ws.cell(row=r, column=L_DRAW,
+                    value=draw_name.get(ln["draw"], ln["draw"])).font = Font(size=SZ)
+            for col in (L_QTY, L_RATE, L_AMT, L_TAX, L_FUEL):
+                if col:
+                    ws.cell(row=r, column=col).font = Font(size=SZ)
             ws.row_dimensions[r].height = ROW_H
-            ws.row_dimensions[r].outlineLevel = 1
-            ws.row_dimensions[r].hidden = True          # collapsed on open
             r += 1
-
-    tot_row = r
-    ws.cell(row=tot_row, column=c_item, value=f"TOTAL {kind.upper()}").font = TOTAL_FONT
-    for col in range(c_item, c_tax + 1):
-        cell = ws.cell(row=tot_row, column=col)
-        cell.fill = TOTAL_FILL
-        cell.font = TOTAL_FONT
-        cell.border = THIN_BORDER
-    sum_cols = ([c_bud, c_act, c_fuel, c_tax]
-                + [c_first + i * NSUB + j
-                   for i in range(len(col_keys)) for j in (0, 2)])
-    for col in sum_cols:
-        L = get_column_letter(col)
-        cell = ws.cell(row=tot_row, column=col,
-                       value="=SUM(" + ",".join(f"{L}{cr}" for cr in code_rows) + ")")
-        cell.number_format = "#,##0.00" if (col - c_first) % NSUB == 0 and col >= c_first else CURR_FMT
-    for i in range(len(col_keys)):                       # blended rate per draw
-        b = c_first + i * NSUB
-        Lq = get_column_letter(b)
-        rate_cells = ",".join(f"{Lq}{cr}*{get_column_letter(b + 1)}{cr}"
-                              for cr in code_rows)
-        cell = ws.cell(row=tot_row, column=b + 1,
-                       value=f'=IF({Lq}{tot_row}=0,"",SUM({rate_cells})/{Lq}{tot_row})')
-        cell.number_format = '"$"#,##0.00'
-    L_bud, L_act, L_bal = (get_column_letter(c_bud), get_column_letter(c_act),
-                           get_column_letter(c_bal))
-    ws.cell(row=tot_row, column=c_bal,
-            value=f"={L_bud}{tot_row}-{L_act}{tot_row}").number_format = CURR_FMT
-    ws.cell(row=tot_row, column=c_pct, value=(
-        f'=IF({L_bud}{tot_row}=0,"",{L_bal}{tot_row}/{L_bud}{tot_row})'
-    )).number_format = PCT_FMT
-    _thick_edges(tot_row)
-    ws.row_dimensions[tot_row].height = ROW_H
-    r += 1
-
-    red = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
-    for col in (c_bal, c_pct):
-        L = get_column_letter(col)
-        ws.conditional_formatting.add(
-            " ".join(f"{L}{cr}" for cr in code_rows + [tot_row]),
-            CellIsRule(operator="lessThan", formula=["0"],
-                       fill=red, font=Font(color="9C0006", bold=True)))
-
-    L_fuel, L_tax = get_column_letter(c_fuel), get_column_letter(c_tax)
-    gt = ws.cell(row=r, column=c_item,
-                 value=f"TOTAL INCL. TAX + FUEL (ties to QBO)")
-    gt.font = TOTAL_FONT
-    cell = ws.cell(row=r, column=c_act,
-                   value=f"={L_act}{tot_row}+{L_fuel}{tot_row}+{L_tax}{tot_row}")
-    cell.number_format = CURR_FMT
-    cell.font = TOTAL_FONT
-    ws.row_dimensions[r].height = ROW_H
-    r += 2
-
-    if kind == "Concrete":
-        r = _write_yards_block(ws, r, codes, code_costs, budget, yards, known,
-                               c_item, c_vend, c_desc, c_bud, ROW_H, SZ, realm)
-
-    ws.freeze_panes = ws.cell(row=h2 + 1, column=c_bud)
-    _setup_print(ws, c_tax)
+    _setup_print(ws, L_DRAW)
     return ws.title
 
 
-def _write_yards_block(ws, r: int, codes: List[str], code_costs: Dict[str, dict],
-                       budget: Dict[str, float],
-                       yards: Tuple[float, Dict[str, float], str],
-                       known, c_item: int, c_vend: int, c_desc: int, c_bud: int,
-                       row_h: int, sz: int, realm: str) -> int:
-    """Yards + $/yd laid out ACROSS, not down (the user 2026-07-29) — the
+def _yards_strip(ws, r: int, codes: List[str], code_costs: Dict[str, dict],
+                 budget: Dict[str, float],
+                 yards: Tuple[float, Dict[str, float], str],
+                 sz: int, row_h: int) -> int:
+    """Concrete's yards / $-per-yd comparison as ONE horizontal strip — the
     takeoff's implied rate (concrete $ ÷ CONCRETE YARDS total) against what QBO
-    actually paid per yard, ex-tax. Lump vendor bills with no yardage are
-    excluded from the rate and named by BILL #, so the rate is never quietly
-    wrong and the exceptions are traceable."""
+    actually paid per yard, ex-tax. Lump bills with no yardage are excluded
+    from the rate (they'd fake the $/yd) and flagged with their total; they're
+    fully visible in the ledger below. Returns the next row."""
     bud_yards, _rows, _src = yards
     lines = [ln for c in codes for ln in (code_costs.get(c) or {}).get("lines", [])]
     yard_lines = [ln for ln in lines if _is_yard_line(ln)]
@@ -4199,75 +4225,37 @@ def _write_yards_block(ws, r: int, codes: List[str], code_costs: Dict[str, dict]
     rate_b = round(bud_dollars / bud_yards, 2) if bud_yards else 0.0
     rate_a = round(act_dollars / act_yards, 2) if act_yards else 0.0
 
-    hc = ws.cell(row=r, column=c_item, value="YARDS & RATE  (takeoff vs QBO, ex-tax)")
-    hc.font = Font(bold=True, size=sz, color="1F3A5F")
-    ws.row_dimensions[r].height = row_h
-    r += 1
-    cells = [("Budget yards", bud_yards, "#,##0.00"),
-             ("Budget $", bud_dollars, CURR_FMT),
-             ("Budget $/yd", rate_b, '"$"#,##0.00'),
-             ("Actual yards", act_yards, "#,##0.00"),
-             ("Actual $ ex-tax", act_dollars, CURR_FMT),
-             ("Actual $/yd", rate_a, '"$"#,##0.00'),
-             ("Var $/yd", round(rate_b - rate_a, 2), '"$"#,##0.00'),
-             ("Var yards", round(act_yards - bud_yards, 2), "#,##0.00")]
+    cells = [("BUDGET YARDS", bud_yards, "#,##0.00"),
+             ("BUDGET $/YD (implied)", rate_b, '"$"#,##0.00'),
+             ("ACTUAL YARDS", act_yards, "#,##0.00"),
+             ("ACTUAL $/YD paid", rate_a, '"$"#,##0.00'),
+             ("VAR $/YD", round(rate_b - rate_a, 2), '"$"#,##0.00'),
+             ("VAR YARDS", round(act_yards - bud_yards, 2), "#,##0.00")]
     for i, (label, _v, _f) in enumerate(cells):
-        c = ws.cell(row=r, column=c_item + i, value=label)
-        c.font = Font(bold=True, size=sz - 1, color="FFFFFF")
-        c.fill = PatternFill("solid", fgColor="1F3A5F")
+        c = ws.cell(row=r, column=1 + i, value=label)
+        c.font = Font(bold=True, size=sz, color="FFFFFF")
+        c.fill = PatternFill("solid", fgColor="44546A")
         c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         c.border = THIN_BORDER
-    ws.row_dimensions[r].height = row_h + 10
+    ws.row_dimensions[r].height = row_h + 12
     r += 1
     for i, (_l, value, fmt) in enumerate(cells):
-        c = ws.cell(row=r, column=c_item + i, value=value)
+        c = ws.cell(row=r, column=1 + i, value=value)
         c.number_format = fmt
-        c.font = Font(bold=True, size=sz)
+        c.font = Font(bold=True, size=sz + 2)
+        c.alignment = Alignment(horizontal="center")
         c.border = THIN_BORDER
-    ws.row_dimensions[r].height = row_h
-    r += 2
-
+    ws.row_dimensions[r].height = row_h + 4
+    r += 1
     if lump:
-        w = ws.cell(row=r, column=c_item,
-                    value=f"⚑ {len(lump)} bill line(s) with no yardage")
-        w.font = Font(bold=True, size=sz, color="9C5700")
-        n = ws.cell(row=r, column=c_desc, value=(
-            "lump vendor bills with no yards on the line — excluded from the "
-            "$/yd figures above, but included in the totals"))
-        n.font = Font(italic=True, size=sz, color="595959")
-        v = ws.cell(row=r, column=c_bud, value=round(sum(l["amount"] for l in lump), 2))
-        v.number_format = CURR_FMT
-        v.font = Font(bold=True, size=sz, color="9C5700")
+        w = ws.cell(row=r, column=1, value=(
+            f"⚑ {len(lump)} bill line(s) carry no yardage "
+            f"(${sum(l['amount'] for l in lump):,.2f}) — in every total, "
+            f"excluded from $/yd; see them in the ledger below"))
+        w.font = Font(italic=True, size=sz, color="9C5700")
         ws.row_dimensions[r].height = row_h
         r += 1
-        for c, h in ((c_item, "QBO #"), (c_vend, "VENDOR"),
-                     (c_desc, "DESCRIPTION"), (c_bud, "AMOUNT")):
-            hc2 = ws.cell(row=r, column=c, value=h)
-            hc2.font = Font(bold=True, size=sz - 1, color="FFFFFF")
-            hc2.fill = PatternFill("solid", fgColor="7F7F7F")
-            hc2.alignment = Alignment(horizontal="center")
-        ws.row_dimensions[r].height = row_h
-        r += 1
-        for ln in sorted(lump, key=lambda x: str(x.get("doc") or "")):
-            url = _qbo_txn_url(ln["tx_type"], ln["txn_id"], realm)
-            idc = ws.cell(row=r, column=c_item,
-                          value=ln["doc"] or ln["txn_id"] or "(no #)")
-            if url:
-                idc.hyperlink = url
-                idc.font = Font(color="0563C1", underline="single", size=sz)
-            else:
-                idc.font = Font(size=sz, color="595959")
-            ws.cell(row=r, column=c_vend, value=ln["vendor"]
-                    ).font = Font(size=sz, color="595959")
-            ws.cell(row=r, column=c_desc,
-                    value=_clean_cost_text(ln["desc"], known) or ln["desc"]
-                    ).font = Font(size=sz, color="595959")
-            cell = ws.cell(row=r, column=c_bud, value=ln["amount"])
-            cell.number_format = CURR_FMT
-            cell.font = Font(size=sz, color="595959")
-            ws.row_dimensions[r].height = row_h
-            r += 1
-    return r + 1
+    return r
 
 
 def build_sheet_budget_vs_actual(wb, proj, cust_info, wip_info,

@@ -14,25 +14,26 @@ manual close), RP (no draws — expenses → invoice → profit).
 - **Budget vs Actual** (CP + RP) — takeoff cost-code budget vs QBO cost-code
   actuals, every transaction listed under its code with a QBO link, job-type
   color bands, class-mismatch flags.
-- **Labor + Concrete sheets** (CP, 2026-07-29) — the PM/ops manager's main
-  view. Rows = that trade's cost codes (`*6` labor, `*1` concrete), columns =
-  draw windows, each code expands to the bills behind it (amount in the draw
-  column it landed in, so the code row is the sum of the rows beneath).
-  Each draw is a **QTY · RATE · TOTAL** group under one merged header
-  carrying the period, with a thick rule down both sides of the group. QTY
-  and RATE only count quantity-bearing lines — a lump bill booked as
-  "1 × $8,901.84" is a price, not a quantity, and would wreck the blended
-  rate; TOTAL still carries every dollar. SALES TAX and FUEL SURCHARGE are
-  their own columns and are folded onto the bill row they came from (joined
-  by bill #), never into the budget comparison — the takeoff budget is
-  pre-tax. Fuel is empty on every job today and the sheet says why (AP folds
-  it into the rate). BUDGET / BALANCE $ / BALANCE % sit together on the LEFT
-  and the bills open collapsed, so the sheet shows no blank cells at rest
-  (the user's call, 2026-07-29). Bill rows lead with the QBO bill # — that's
-  the identifier, not the date. Font 12, uniform row height, long
-  descriptions clip rather than grow the row. Concrete adds a horizontal
-  yards / $/yd strip vs the takeoff's implied rate, with no-yardage lump
-  bills excluded and listed by bill #.
+- **Labor + Concrete sheets** (CP, reworked 2026-07-29 pm) — two blocks at
+  different altitudes, per the user: metrics are a top-level data point, and
+  one grid trying to be scoreboard AND ledger is what produced empty cells
+  and hidden rows.
+  **SCOREBOARD** (frozen top): one row per cost code — BUDGET · ACTUAL ·
+  BALANCE $ · BALANCE % · one total per draw (header carries the period);
+  over-budget red. Concrete adds SALES TAX and ACTUAL INCL. columns, and the
+  grand total names the P&L line it ties to ('Job Materials: Concrete' /
+  'Subcontractors Expense: Labor'). Concrete also gets the horizontal
+  yards/$-per-yd strip (takeoff implied vs paid, lump bills excluded from the
+  rate and flagged).
+  **LEDGER** (below, fully expanded, nothing collapsed): QBO # (linked,
+  the user's identifier) · DATE · VENDOR · DESCRIPTION · QTY · RATE ·
+  AMOUNT · [SALES TAX] · DRAW label. A bill lands in exactly one draw, so a
+  label column replaces the per-draw matrix that guaranteed blank cells on
+  every bill row. Tax folds onto the bill row it came from (joined by bill
+  #). Tax/fuel columns appear ONLY on a trade that has such lines — labor
+  subs bill neither (auto-omit, disclosed). No fuel lines exist anywhere yet
+  (AP folds the surcharge into the rate); Concrete says so on the sheet.
+  Font 12 flat; uniform row heights; descriptions clip, never grow the row.
 - **Contract price + approved COs from the G702** (CP, 2026-07-29) — the
   signed pay application beats the WIP master AND any hand-typed cell; the
   P&L prints the source on the contract line itself, and that cell is no
@@ -42,10 +43,10 @@ manual close), RP (no draws — expenses → invoice → profit).
   run warns and falls back to the WIP master.
 - **Draw sheets lead with a horizontal KPI strip** (the user 2026-07-29):
   income → retainage held → net draw → costs → gross profit → gross margin %
-  → overhead → REAL net profit → REAL net %, in big type, profit cells
-  colored by sign via conditional formatting, and the strip is the freeze
-  pane so everything below scrolls under it. MFD keeps its PM-vs-QBO
-  comparison as a second strip. Replaces the old vertical summary box.
+  → overhead → REAL net profit → REAL net %, big type, $-formatted, profit
+  cells colored by sign, and the strip is the freeze pane. MFD keeps its
+  PM-vs-QBO comparison as a second strip. Replaces the old vertical summary
+  box. Draw-sheet body font is 12 (was 11).
 - Overhead: 10% of revenue (MFD alt view 9% on costs).
 
 ## OPEN ISSUES
