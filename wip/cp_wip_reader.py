@@ -928,15 +928,25 @@ def enrich_with_qbo(rows: List[CpRow]) -> None:
 # Clean layout matching the team's WIP: light-gray bold header, thin grid
 # borders on every cell, light-yellow ONLY on sourced inputs, white calcs,
 # no green rows (the user 2026-07-02 "make it clean and easy to read").
+# Font + number formats MATCH the real 'WIP Master' sheet (the user
+# 2026-07-29: same font, size, formatting as the master): Tahoma 8
+# throughout, no-cents currency, 0.00% percents.
+MASTER_FONT_NAME = "Tahoma"
+MASTER_FONT_SIZE = 8
 HDR_FILL = PatternFill("solid", fgColor="D9D9D9")        # light gray header
-HDR_FONT = Font(bold=True, color="000000", size=10)
+HDR_FONT = Font(name=MASTER_FONT_NAME, size=MASTER_FONT_SIZE,
+                bold=True, color="000000")
+DATA_FONT = Font(name=MASTER_FONT_NAME, size=MASTER_FONT_SIZE)
 FLAG_FILL = PatternFill("solid", fgColor="FFF2CC")       # flag cell
-FLAG_FONT = Font(italic=True, color="7F6000", size=9)
+FLAG_FONT = Font(name=MASTER_FONT_NAME, size=MASTER_FONT_SIZE,
+                 italic=True, color="7F6000")
 INPUT_FILL = PatternFill("solid", fgColor="FFFF99")      # light yellow — SOURCED inputs
-LINK_FONT = Font(color="0563C1", underline="single")     # Excel link (project name only)
+LINK_FONT = Font(name=MASTER_FONT_NAME, size=MASTER_FONT_SIZE,
+                 color="0563C1", underline="single")     # Excel link
 _SIDE = Side(style="thin", color="BFBFBF")
 CELL_BORDER = Border(left=_SIDE, right=_SIDE, top=_SIDE, bottom=_SIDE)
-CURRENCY_FMT = '"$"#,##0.00_);[Red]("$"#,##0.00)'
+CURRENCY_FMT = '"$"#,##0_);[Red]\\("$"#,##0\\)'          # verbatim from 'WIP Master'
+PCT_FMT = "0.00%"                                        # verbatim from 'WIP Master'
 
 # Which fields render as currency vs percent (drives number_format in the write
 # loop). Everything money-valued is currency; the two ratios are percent.
@@ -1198,12 +1208,12 @@ def _write_summary(ws, cols_, col_letter_by_field, data_start: int,
         c = ws.cell(row=tot, column=column_index_from_string(L("_pct_complete")))
         c.value = (f'=IF({L("etc")}{tot}=0,"",'
                    f'{L("costs_to_date")}{tot}/{L("etc")}{tot})')
-        c.number_format = "0.0%"
+        c.number_format = PCT_FMT
     if L("gross_profit_pct") and L("original_profit") and L("contract_price"):
         c = ws.cell(row=tot, column=column_index_from_string(L("gross_profit_pct")))
         c.value = (f'=IF({L("contract_price")}{tot}=0,"",'
                    f'{L("original_profit")}{tot}/{L("contract_price")}{tot})')
-        c.number_format = "0.0%"
+        c.number_format = PCT_FMT
 
     # ── FUTURE WIP CASH FLOW block ──
     vcol = column_index_from_string(L("contract_price") or "E")     # amounts stack in one column
@@ -1220,21 +1230,22 @@ def _write_summary(ws, cols_, col_letter_by_field, data_start: int,
          f"={L('underbillings')}{tot}-{L('overbillings')}{tot}", False),
         ("FUTURE WIP CASH FLOW", f"={vL}{r0 + 5}+{vL}{r0 + 6}", True),
     ]
+    _bold = Font(name=MASTER_FONT_NAME, size=MASTER_FONT_SIZE, bold=True)
     for k, (label, formula, bold) in enumerate(lines):
         r = r0 + k
         lc = ws.cell(row=r, column=1, value=label)
-        lc.font = Font(bold=True) if bold else Font()
+        lc.font = _bold if bold else DATA_FONT
         lc.border = CELL_BORDER
         if formula:
             vc = ws.cell(row=r, column=vcol, value=formula)
             vc.number_format = CURRENCY_FMT
             vc.border = CELL_BORDER
-            if bold:
-                vc.font = Font(bold=True)
+            vc.font = _bold if bold else DATA_FONT
     # G.P. LEFT TO EARN margin % (of revenue left to earn) beside the amount
     pc = ws.cell(row=r0 + 5, column=vcol + 1)
     pc.value = f'=IF({vL}{r0 + 3}=0,"",{vL}{r0 + 5}/{vL}{r0 + 3})'
-    pc.number_format = "0.00%"
+    pc.number_format = PCT_FMT
+    pc.font = DATA_FONT
     pc.border = CELL_BORDER
 
 
@@ -1244,7 +1255,8 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                   cols: Optional[List] = None,
                   default_filter_active: bool = False,
                   title: Optional[str] = None,
-                  summary: bool = False) -> bool:
+                  summary: bool = False,
+                  qbo_links_only: bool = False) -> bool:
     """Write rows to the given WIP tab (default 'Test - CP'; RP passes
     'Test - RP'). Same structure/formatting for every division. Guarded by
     wip_excel_guard. Returns True if written, False if skipped (dry-run, or the
@@ -1260,7 +1272,11 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
     images (the logo) survive every sync (openpyxl round-trips them; the
     rewrite only touches cells). `summary` adds the WIP-master-style TOTALS
     row under the table (live SUBTOTALs — they follow the table filter) plus
-    the FUTURE WIP CASH FLOW block derived from it."""
+    the FUTURE WIP CASH FLOW block derived from it.
+
+    `qbo_links_only` (the user 2026-07-29): suppress every file:// hyperlink
+    (Synology folders, takeoffs, draws, source workbooks, WHY) — the only
+    links on the report are the QBO deep links on the Billed/Costs cells."""
     assert_write_allowed(tab_name)  # tripwire before we even open the workbook
     cols_ = cols or COLS
 
@@ -1354,7 +1370,7 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
             ws.merge_cells(start_row=1, start_column=1,
                            end_row=2, end_column=len(cols_))
             t = ws.cell(row=1, column=1, value=title)
-            t.font = Font(bold=True, size=18)
+            t.font = Font(name=MASTER_FONT_NAME, bold=True, size=18)
             t.alignment = Alignment(horizontal="center", vertical="center")
             ws.row_dimensions[1].height = 34
             ws.row_dimensions[2].height = 34
@@ -1404,10 +1420,11 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                     val = _row_display_value(row, field_name, sync_ts)
                 cell = ws.cell(row=i, column=c, value=val)
                 cell.border = CELL_BORDER
+                cell.font = DATA_FONT          # master-sheet Tahoma 8 baseline
                 if field_name in _MONEY_FIELDS:
                     cell.number_format = CURRENCY_FMT
                 elif field_name in _PCT_FIELDS:
-                    cell.number_format = "0.0%"
+                    cell.number_format = PCT_FMT
                 # Yellow = sourced input (raw from takeoff / QBO); white = calc.
                 if field_name in _SOURCE_FIELDS:
                     cell.fill = INPUT_FILL
@@ -1423,28 +1440,29 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
             # Excel navigating away. (file:// links still get rewritten by
             # Windows/OneDrive Excel — kept for the Mac, the trace point.)
             # Folder target: explicit folder_path (RP) else takeoff's parent (CP).
-            link_folder = (row.folder_path if row.folder_path is not None
-                           else (row.takeoff_path.parent if row.takeoff_path else None))
-            if "_folder_link" in col_idx:
-                _apply_hyperlink(ws.cell(row=i, column=col_idx["_folder_link"]),
-                                 link_folder)
-            if "_source_link" in col_idx and row.src_link:
-                _apply_hyperlink(ws.cell(row=i, column=col_idx["_source_link"]),
-                                 Path(row.src_link), row.src_fragment or "")
+            if not qbo_links_only:
+                link_folder = (row.folder_path if row.folder_path is not None
+                               else (row.takeoff_path.parent if row.takeoff_path else None))
+                if "_folder_link" in col_idx:
+                    _apply_hyperlink(ws.cell(row=i, column=col_idx["_folder_link"]),
+                                     link_folder)
+                if "_source_link" in col_idx and row.src_link:
+                    _apply_hyperlink(ws.cell(row=i, column=col_idx["_source_link"]),
+                                     Path(row.src_link), row.src_fragment or "")
 
-            # Number-cell links (the user 2026-07-13: every number click-to-verify):
-            # Contract/COs → the draw workbook (takeoff pre-draw); ETC → takeoff;
-            # Billed/Retainage → QBO customer page (all invoices on one screen);
-            # Costs → QBO project-filtered P&L report.
-            for _f, _tgt in (("contract_price", row.draw_path or row.takeoff_path),
-                             ("co_revenue", row.draw_path),
-                             ("etc", row.takeoff_path)):
-                if _f in col_idx:
-                    _apply_hyperlink(ws.cell(row=i, column=col_idx[_f]), _tgt)
-            if "why_link" in col_idx and row.why_link:
-                _apply_hyperlink(ws.cell(row=i, column=col_idx["why_link"]),
-                                 Path(row.why_link),
-                                 row.why_fragment or "")
+                # Number-cell links (the user 2026-07-13: every number click-to-verify):
+                # Contract/COs → the draw workbook (takeoff pre-draw); ETC → takeoff;
+                # Billed/Retainage → QBO customer page (all invoices on one screen);
+                # Costs → QBO project-filtered P&L report.
+                for _f, _tgt in (("contract_price", row.draw_path or row.takeoff_path),
+                                 ("co_revenue", row.draw_path),
+                                 ("etc", row.takeoff_path)):
+                    if _f in col_idx:
+                        _apply_hyperlink(ws.cell(row=i, column=col_idx[_f]), _tgt)
+                if "why_link" in col_idx and row.why_link:
+                    _apply_hyperlink(ws.cell(row=i, column=col_idx["why_link"]),
+                                     Path(row.why_link),
+                                     row.why_fragment or "")
             if row.qbo_customer_id and QBO_REALM:
                 _cu = qbo_api.customer_url(row.qbo_customer_id, QBO_REALM)
                 _pu = qbo_api.project_pl_url(row.qbo_customer_id, QBO_REALM)
@@ -1465,6 +1483,7 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                     if _f in col_idx:
                         _c = ws.cell(row=i, column=col_idx[_f])
                         _c.font = Font(
+                            name=MASTER_FONT_NAME, size=MASTER_FONT_SIZE,
                             color="C00000",
                             underline=("single" if _c.hyperlink else None))
 
@@ -1599,7 +1618,9 @@ def _qc_check(wip_path: Path, tab_name: str, expected_rows: int,
             probs.append(f"{vis_closed} Closed row(s) VISIBLE in an active view")
         if not tbl_ok:
             probs.append("table does not span all data rows")
-        if links == 0 and n:
+        if lcols and links == 0 and n:
+            # Only meaningful when the layout HAS link columns — the master
+            # tab dropped them (qbo_links_only, the user 2026-07-29).
             probs.append("no source links found")
         if probs:
             print(_Term.color(_Term.AMBER, "  ⚠ QC: " + " · ".join(probs)))

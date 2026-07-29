@@ -4,9 +4,27 @@
 > (CLAUDE.md/AGENTS.md structure rule 7). Tool matters only — no business
 > findings, no dollar exposures, no owner-only analysis.
 
-Last updated: 2026-07-21 (pm)
+Last updated: 2026-07-29
 
 ## DONE / FINALIZED
+
+- **`master_wip_test --rp-from-file <xlsx>`** (2026-07-29): the RP section of
+  Test-Master comes from the owner's verified RP WIP workbook ('RP WIP' sheet)
+  instead of the General List pipeline. Sections map from the file's band rows
+  (main table → RP SLAB / FTW — ACTIVE by suffix; DROPPED, UNBILLED;
+  FTW — OFF-SCHEDULE (COSTS); FTW BACKLOG). CP lines in the file are EXCLUDED
+  (CP comes from the folder scan). Duplicate job lines dedupe to the first
+  copy — flagged red when the copies disagree. Billed/Costs still refresh
+  from QBO per line (file value survives only a failed lookup); the locked
+  backlog rule applies post-QBO (any activity ⇒ out of FTW BACKLOG).
+- **Test tabs match the real 'WIP Master' formatting** (2026-07-29): Tahoma 8
+  everywhere (headers, data, TOTALS, cash-flow), master currency format
+  `"$"#,##0_);[Red]("$"#,##0)` (no cents), `0.00%` percents.
+- **Master tab links: QBO-only** (2026-07-29): `write_test_cp(qbo_links_only=True)`
+  suppresses every file:// link (Synology folders/takeoffs/draws/source/WHY);
+  PROJECT FOLDER + DATA SOURCE columns dropped from the master layout. The only
+  hyperlinks on the report are Billed → QBO customer page and Costs → QBO
+  project P&L. Division tabs (Test - CP / Test - RP) keep the full link set.
 
 - **Test-Master is the deliverable WIP report** (2026-07-16): "WIP REPORT as of
   <date>" banner, rows 1–2 reserved as logo space (embedded images survive every

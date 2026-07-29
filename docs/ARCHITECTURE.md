@@ -126,11 +126,13 @@ flowchart LR
     QW[("QBO WRITE — gated\nCONFIRM=Y · MFD always excluded")]:::gate
 
     MASTER["master_wip_test.py\nunified: MFD + CP + RP sections"]:::tool
+    RPFIX[("Owner's RP WIP workbook\n'RP WIP' sheet — verified lines")]:::src
 
     FOLDERS --> READERS
     GL -->|"RP: contract/ETC per line"| READERS
     QBO --> READERS --> TEST
     READERS -.->|"reused by"| MASTER
+    RPFIX -->|"--rp-from-file: RP contract/ETC/CO\n(CP lines excluded)"| MASTER
     TEST -->|"MFD pricing from 'WIP Master' tab"| MASTER --> TEST
     QBO --> CLOSE --> QW
 ```
@@ -138,10 +140,14 @@ flowchart LR
 Over/under-billing and job-borrow are computed columns in Excel, not in these scripts.
 RP v2 (2026-07-13): the General List is the RP source — each RP job auto-splits into
 `RP####` (slab) + `RP####-FTW` (flatwork) lines; CP jobs in the list stay standalone.
-Number cells carry links (draw/takeoff/General List files; QBO customer page for Billed,
-project P&L report for Costs — deep-link helpers in `shared/qbo_api.py`); rows whose
-numbers don't reconcile render red (`needs_review`), including any QBO billed/costs
-activity on a line with no contract in the list.
+`master_wip_test --rp-from-file <xlsx>` (2026-07-29) replaces the GL pipeline for the
+RP section with the owner's verified RP WIP workbook (sections from its band rows,
+duplicates deduped, CP lines excluded); billed/costs still refresh from QBO per line.
+Test tabs are styled to match the real 'WIP Master' sheet (Tahoma 8, no-cents
+currency). The master tab is written `qbo_links_only`: NO file/Synology links — the
+only hyperlinks are the QBO deep links on Billed (customer page) and Costs (project
+P&L report), helpers in `shared/qbo_api.py`. Division tabs keep the full link set;
+rows whose numbers don't reconcile render red (`needs_review`).
 
 ---
 
