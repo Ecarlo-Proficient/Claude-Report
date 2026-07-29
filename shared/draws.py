@@ -178,3 +178,166 @@ def read_draw_g702(draw_file: Path):
         flags.append(f"Draw G702 missing {', '.join(missing)} — open & save the "
                      f"draw in Excel to refresh cached values")
     return data, flags
+
+
+# ── legacy .xls pay applications (the user 2026-07-29) ───────────────────────
+# The readers above expect a modern draw workbook with a literal 'G702' sheet.
+# Plenty of jobs still bill on the old AIA template saved as legacy .xls, whose
+# sheets are named 'A' (G702 front page) and 'B' (G703 continuation) — e.g.
+# CP745's 'Proficient Concrete - 3 - Pay App.xls'. project-pnl takes the CP
+# CONTRACT PRICE and APPROVED COs from that document rather than from the draw
+# invoices, so the reader lives here where any tool can reach it.
+PAY_APP_RE = re.compile(r"pay\s*app", re.IGNORECASE)
+# (key, label fragment) — the first row carrying the fragment wins, and the
+# value is the RIGHTMOST numeric cell on that row (the G702 puts its dollars in
+# the far-right column, with the label and a lone '$' to its left).
+PAY_APP_FIELDS = (
+    ("original_contract", "original contract sum"),
+    ("co_net",            "net change by change order"),
+    ("contract_to_date",  "contract sum to date"),
+    ("completed_to_date", "total completed"),
+    ("retainage",         "retainage"),
+    ("earned_to_date",    "total earned"),
+    ("previous_apps",     "less: previous application"),
+    ("current_due",       "current payment due"),
+    ("balance_to_finish", "balance to finish"),
+)
+
+
+def sheet_rows(path: Path, index: int) -> List[list]:
+    """One sheet as plain value lists — reads legacy .xls (xlrd) and .xlsx
+    (openpyxl) the same way. Empty list when unreadable or absent."""
+    if path.suffix.lower() == ".xls":
+        try:
+            import xlrd                                   # legacy BIFF only
+        except ImportError:
+            return []
+        try:
+            book = xlrd.open_workbook(str(path))
+            if index >= book.nsheets:
+                return []
+            sh = book.sheet_by_index(index)
+            return [[sh.cell_value(r, c) for c in range(sh.ncols)]
+                    for r in range(sh.nrows)]
+        except Exception:
+            return []
+    try:
+        wb = load_workbook(str(path), read_only=True, data_only=True)
+        names = wb.sheetnames
+        if index >= len(names):
+            wb.close()
+            return []
+        rows = [list(r) for r in wb[names[index]].iter_rows(values_only=True)]
+        wb.close()
+        return rows
+    except Exception:
+        return []
+
+
+def _row_label(cells: list) -> str:
+    parts = [str(c) for c in cells if isinstance(c, str) and c.strip()]
+    return re.sub(r"[.\s]+", " ", " ".join(parts)).strip().lower()
+
+
+def _rightmost_number(cells: list) -> Optional[float]:
+    for v in reversed(cells):
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            return float(v)
+        if isinstance(v, str):
+            n = coerce_float(v)
+            if n is not None:
+                return n
+    return None
+
+
+def parse_g703_rows(rows: List[list]) -> List[dict]:
+    """G703 continuation sheet → schedule-of-values lines. A data row carries a
+    numeric ITEM in col A and a description in col B; the 'TOTAL' row ends it.
+    Cols: A item · B description · C scheduled · D previous · E this app ·
+    F stored · G completed-to-date · H % · I balance · J retainage."""
+    out: List[dict] = []
+    for cells in rows:
+        if len(cells) < 3:
+            continue
+        a, b = cells[0], cells[1]
+        if isinstance(b, str) and b.strip().upper() == "TOTAL":
+            break
+        if not isinstance(a, (int, float)) or isinstance(a, bool):
+            continue
+        desc = str(b or "").strip()
+        if not desc:
+            continue
+
+        def num(i):
+            v = cells[i] if i < len(cells) else None
+            return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else 0.0
+
+        out.append({
+            "item": int(a), "desc": desc,
+            "scheduled": round(num(2), 2), "previous": round(num(3), 2),
+            "this_app": round(num(4), 2), "stored": round(num(5), 2),
+            "completed": round(num(6), 2), "balance": round(num(8), 2),
+            "retainage": round(num(9), 2),
+        })
+    return out
+
+
+def find_pay_app(project_folder: Path) -> Optional[Tuple[int, Path]]:
+    """(draw #, path) of the HIGHEST-numbered '*Pay App*' workbook under the
+    project's draw folder, or None."""
+    draws = find_draws_folder(project_folder)
+    if draws is None:
+        return None
+    cands: List[Tuple[int, float, Path]] = []
+    try:
+        for d in draws.iterdir():
+            files, n = [], 0
+            if d.is_dir():
+                n = draw_num_from_name(d.name) or 0
+                try:
+                    files = [f for f in d.iterdir() if f.is_file()]
+                except OSError:
+                    continue
+            elif d.is_file():
+                files = [d]
+                n = draw_num_from_name(d.name) or 0
+            for f in files:
+                if (f.suffix.lower() in (".xls", ".xlsx", ".xlsm")
+                        and PAY_APP_RE.search(f.name)
+                        and not f.name.startswith("~$")):
+                    cands.append((draw_num_from_name(f.name) or n,
+                                  f.stat().st_mtime, f))
+    except OSError:
+        return None
+    if not cands:
+        return None
+    n, _mt, path = max(cands)
+    return n, path
+
+
+def read_pay_app(project_folder: Path) -> dict:
+    """CONTRACT PRICE + APPROVED COs (and the G703 schedule of values) from the
+    project's latest signed pay application. Returns {} when there is no pay
+    app, and {"error": …} when one exists but can't be read — so callers can
+    say so instead of silently falling back to another source."""
+    found = find_pay_app(project_folder)
+    if not found:
+        return {}
+    draw_no, path = found
+    rows = sheet_rows(path, 0)
+    if not rows:
+        return {"error": "pay app unreadable (legacy .xls needs xlrd installed)",
+                "source": path.name, "draw_no": draw_no}
+    out: dict = {"source": path.name, "draw_no": draw_no, "path": str(path)}
+    for cells in rows:
+        text = _row_label(cells)
+        if not text:
+            continue
+        for key, frag in PAY_APP_FIELDS:
+            if key in out or frag not in text:
+                continue
+            val = _rightmost_number(cells)
+            if val is not None:
+                out[key] = round(val, 2)
+    out["sov"] = parse_g703_rows(sheet_rows(path, 1))
+    return out

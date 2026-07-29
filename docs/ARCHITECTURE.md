@@ -9,9 +9,9 @@
 > picture (open it in a browser after pulling). Refresh it when structure meaningfully changes;
 > THIS file is the always-current source of truth.
 
-Last updated: 2026-07-16 (project-pnl now auto-pulls Contract/ETC/STATUS from the WIP
-master's Test-Master tab; new `shared/cost_lines.py` powers the Transactions sheet's
-concrete → labor → materials grouping + per-(bill × account) combining)
+Last updated: 2026-07-29 (project-pnl: CP contract price + approved COs now come from the
+signed G702 pay application via `shared/draws.py`, not the draw invoices; new Labor and
+Concrete budget-vs-actual-by-draw sheets with the bills nested under each cost code)
 
 ---
 
@@ -156,7 +156,8 @@ flowchart LR
 
     QBO[("QBO")]:::src
     WIPM[("WIP - MASTER new.xlsx\nTest-Master tab (SharePoint)")]:::src
-    TKO[("Takeoffs (Synology)\nCP 'Cost Code' sheet · RP 'Cost Gral'")]:::src
+    TKO[("Takeoffs (Synology)\nCP 'Cost Code' · 'CONCRETE YARDS' · RP 'Cost Gral'")]:::src
+    G702[("Pay applications (Synology)\n<CP job>/Draws/Draw #N/*Pay App.xls")]:::src
     PNL["project-pnl/\nproject_pnl_export.py"]:::tool
     LOAN["debt-schedule/\nloan_sync.py"]:::tool
     HEALTH["health-dashboard/\nqbo_health.py"]:::tool
@@ -173,7 +174,8 @@ flowchart LR
 
     QBO --> PNL --> P1
     WIPM -->|"Contract/ETC/COs/STATUS auto-pull\n(typed override still wins)"| PNL
-    TKO -->|"cost-code BUDGET\n(Budget vs Actual sheet)"| PNL
+    TKO -->|"cost-code BUDGET + concrete yards\n(Budget vs Actual · Labor · Concrete)"| PNL
+    G702 -->|"CONTRACT + approved COs\n(shared/draws.py — beats the WIP master)"| PNL
     QBO --> LOAN --> P2
     QBO --> HEALTH --> P3
     QBO --> EXP --> P4
@@ -270,6 +272,16 @@ forced to 100%). Company overhead default is **10% of revenue** (MFD alt: 9% on 
 also drives the MFD draw-coverage columns). Its Transactions sheet groups job costs
 **concrete → labor → materials** via `shared/cost_lines.py` — non-labor bill lines
 combine per (bill × account); labor lines are never combined. The **Budget vs Actual**
+**Labor** and **Concrete** sheets (CP) are the PM/ops manager's main view (the user
+2026-07-29): rows are that trade's cost codes (`*6` labor, `*1` concrete), columns are the
+draw windows, and every code expands (outline ±) to the bills behind it with the amount in
+the draw column it landed in — so a code row is visibly the sum of the rows beneath it.
+Sales tax is billed on its own vendor line and is pulled OUT of the comparison (the takeoff
+budget is pre-tax), then summed at the bottom with each contributing line; Concrete adds
+yards and $/yd against the takeoff's implied rate, excluding lump vendor bills that carry
+no yardage. CP **contract price and approved COs come from the latest G702 pay application**
+(`shared/draws.py` `read_pay_app` — legacy .xls needs `xlrd`), overriding both the WIP
+master and any hand-typed cell; the P&L names the source. The **Budget vs Actual**
 sheet (CP + RP) joins the takeoff's cost-code budget (CP: the 'Cost Code(s)' sheet;
 RP: 'Cost Gral', FW codes → the -FTW project) against QBO cost-code actuals — jobs
 with change orders carry a "may be inaccurate" banner until the CO template ships its

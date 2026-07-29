@@ -10,6 +10,13 @@ sheet, black text, bold + indent + borders only. No fills, no hidden rows.
                   Retainage. RIGHT (cols D–J): ACCUMULATING COSTS — NEXT DRAW
                   (sorted by Cost Code Sheet order), then the DRAW COVERAGE
                   table beneath it.
+  Sheet "Labor" / "Concrete"
+                  BUDGET vs ACTUAL BY DRAW for the two trades the PM and ops
+                  manager track by scrutiny (the user 2026-07-29) — rows are
+                  the takeoff's cost codes, columns are the draw windows, and
+                  each code expands (outline ±) to the bills behind it. Sales
+                  tax is pulled out of the comparison and summed at the bottom;
+                  Concrete adds yards and $/yd vs the takeoff's implied rate.
   Sheet "Draws"   DETAIL ONLY (cols A–E): COSTS OUTSIDE DRAW WINDOWS first
                   (collapsed, sum on the header, click + to expand), then ONE
                   BLOCK PER DRAW newest-first (invoices, then costs grouped
@@ -44,7 +51,9 @@ OPTIONS
     --dry-run        Print what would be written, don't save files.
 
 DEPENDENCIES
-    pip3 install --break-system-packages openpyxl requests
+    pip3 install --break-system-packages openpyxl requests xlrd
+    (xlrd reads the legacy .xls G702 pay applications; without it the contract
+     price falls back to the WIP master and the run says so.)
 """
 from __future__ import annotations
 
@@ -77,6 +86,7 @@ except ImportError:
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from shared import paths
+from shared.draws import read_pay_app
 from shared.qbo_api import (
     API_BASE, MINOR_VERSION, PROJ_RE,
     load_credentials, _api_get, query_all, report,
@@ -2595,15 +2605,25 @@ def build_sheet_pl(
             return (typed is not None and wip is not None
                     and abs(typed - wip) > 1.0)
 
+        _g702_src = wip_info.get("contract_g702")
         k_row = row("Original Contract Price", _ctr, bold=True)
-        if _mismatch(_typed_ctr, _wip_ctr):
+        if _g702_src:
+            row(f"source: {_g702_src}", None, indent=1,
+                size=BASE_SIZE - 2, color="595959")
+            _ovr = wip_info.get("contract_g702_typed")
+            if _ovr is not None:
+                row(f"⚑ a typed ${_ovr:,.0f} was overridden by the G702", None,
+                    indent=1, size=BASE_SIZE - 2, color="9C5700")
+        elif _mismatch(_typed_ctr, _wip_ctr):
             row(f"⚑ typed — differs from WIP master (${_wip_ctr:,.0f})", None,
                 indent=1, size=BASE_SIZE - 2, color="9C5700")
         etc_in = row("Original ETC (Estimated Total Cost)", _etc, bold=True)
         if _mismatch(_typed_etc, _wip_etc):
             row(f"⚑ typed — differs from WIP master (${_wip_etc:,.0f})", None,
                 indent=1, size=BASE_SIZE - 2, color="9C5700")
-        co_row = row("Change Orders (approved, from draw)", _cos, color=GREEN)
+        co_row = row("Change Orders (approved, per G702)" if _g702_src
+                     else "Change Orders (approved, from draw)",
+                     _cos, color=GREEN)
         coc_row = row("CO Costs (estimated)", _co_cost,
                       color=("000000" if _co_cost else "C0504D"))
         # yellow inputs: the originals + CO cost (no QBO source yet — pending
@@ -3497,6 +3517,74 @@ def load_cp_budget(proj: str) -> Tuple[Dict[str, float], str]:
     return budget, " + ".join(names)
 
 
+# ───────── CP concrete yards + G702 pay application (the user 2026-07-29) ─────────
+
+def _read_yards_sheet(path: Path) -> Tuple[float, Dict[str, float]]:
+    """The takeoff's 'CONCRETE YARDS' sheet → (total_yards, {deliverable: yards}).
+    Col A = deliverable, col C = yards, a 'TOTALS' row closes the block.
+
+    The takeoff does NOT split yards by cost code — the deliverable rows roll
+    into the SL/PV/CS/MS families in ways only the estimator knows (CP745 moves
+    $1,733.79 of concrete from the foundation group into paving). So the TOTAL
+    is the only figure a $/yd comparison may lean on; per-family yards are
+    deliberately NOT inferred."""
+    total, rows = 0.0, {}
+    try:
+        wb = openpyxl.load_workbook(str(path), read_only=True, data_only=True)
+    except Exception:
+        return 0.0, {}
+    target = next((n for n in wb.sheetnames
+                   if "concrete yards" in n.strip().lower()), None)
+    if not target:
+        wb.close()
+        return 0.0, {}
+    ws = wb[target]
+    for vals in ws.iter_rows(min_row=1, max_col=3, values_only=True):
+        label = str(vals[0] or "").strip()
+        if not label:
+            continue
+        if label.upper().startswith("TOTAL"):
+            try:
+                total = round(float(vals[2]), 2)
+            except (TypeError, ValueError):
+                pass
+            break
+        try:
+            y = float(vals[2])
+        except (TypeError, ValueError):
+            continue
+        if abs(y) > 0.005:
+            rows[label] = round(y, 2)
+    wb.close()
+    return (total or round(sum(rows.values()), 2)), rows
+
+
+def load_cp_concrete_yards(proj: str) -> Tuple[float, Dict[str, float], str]:
+    """Budget concrete YARDS from the takeoff → (total, {deliverable: yards}, source)."""
+    for tk in _find_cp_takeoffs(proj):
+        total, rows = _read_yards_sheet(tk)
+        if total:
+            return total, rows, tk.name
+    return 0.0, {}, ""
+
+
+# The G702 is what the GC certifies, so CONTRACT PRICE and APPROVED CHANGE
+# ORDERS come from the signed pay application — NOT from the draw invoices
+# (the user 2026-07-29). Discovery + parsing live in shared/draws.py (repo
+# rule: tools never import tools), which also owns the modern 'G702'-sheet
+# readers used by the WIP reader and health-dashboard.
+
+
+def load_g702(proj: str) -> Dict[str, object]:
+    """CONTRACT PRICE + APPROVED COs from this CP project's latest signed pay
+    application. {} when there's no awarded folder or no pay app; {"error": …}
+    when one exists but can't be read."""
+    folder = _find_awarded_cp_folder(CP_AWARDED_BASE, proj)
+    if folder is None:
+        return {}
+    return read_pay_app(folder)
+
+
 # RP takeoffs live under client/address folders; the budget is the takeoff's
 # 'Cost Gral' sheet (the last visible tab; older takeoff vintages don't have
 # it — then there's no budget to show). Codes col A (trailing spaces!), qty
@@ -3645,6 +3733,422 @@ def costs_by_code(bills: List[dict], purchases: List[dict], customer_id: str,
     for g in out.values():
         g["total"] = round(g["total"], 2)
     return out
+
+
+# Ready-mix and rebar vendors bill sales tax on its OWN line ("TAXES"), so it
+# has to come out of budget-vs-actual and be shown as its own sum — otherwise
+# it silently inflates the actual against a takeoff budget that is pre-tax
+# (the user 2026-07-29).
+_TAX_LINE_RE = re.compile(r"\btax(es)?\b", re.IGNORECASE)
+_BEFORE_KEY, _AFTER_KEY = "__before", "__after"
+
+
+def code_costs_by_draw(
+    bills: List[dict], purchases: List[dict], customer_id: str,
+    draw_periods: List[Tuple[str, dt.date, dt.date]],
+    account_names: Optional[Dict[str, str]] = None,
+) -> Dict[str, dict]:
+    """Every project cost LINE keyed by COST CODE **and** draw window, keeping
+    each line's qty/rate so the Concrete sheet can do yards and $/yd, and
+    tagging tax lines (the user 2026-07-29).
+
+    Returns { code: {"draws": {key: $}, "tax": {key: $}, "lines": [ … ]} } where
+    key is a draw label, "__before" (dated before the first draw window — the
+    pre-tagging era) or "__after" (past the last window — accumulating toward
+    the next draw). Non-tax and tax dollars are kept apart so every column of
+    the Labor/Concrete grid ties to the sum of its lines."""
+    account_names = account_names or {}
+    anchor = min((s for _, s, _ in draw_periods), default=None)
+
+    def window_for(d: Optional[dt.date]) -> str:
+        if not d:
+            return _AFTER_KEY
+        for lbl, s, e in draw_periods:
+            if s <= d <= e:
+                return lbl
+        if anchor and d < anchor:
+            return _BEFORE_KEY
+        return _AFTER_KEY
+
+    out: Dict[str, dict] = {}
+    sources = ([(b, "Bill", "VendorRef") for b in bills]
+               + [(p, "Expense", "EntityRef") for p in purchases])
+    for txn, tx_type, vfield in sources:
+        vendor = _xml_clean(((txn.get(vfield) or {}).get("name") or "(no vendor)").strip())
+        date = txn.get("TxnDate", "")
+        key = window_for(_parse_date(date))
+        for ln in txn.get("Line") or []:
+            det = (ln.get("AccountBasedExpenseLineDetail")
+                   or ln.get("ItemBasedExpenseLineDetail") or {})
+            if (det.get("CustomerRef") or {}).get("value") != customer_id:
+                continue
+            amt = float(ln.get("Amount", 0) or 0)
+            if abs(amt) < 0.005:
+                continue
+            desc = _xml_clean((ln.get("Description") or "").strip())
+            is_tax = bool(_TAX_LINE_RE.search(desc))
+            leaf = cost_leaf(det, account_names)
+            g = out.setdefault(leaf, {"draws": {}, "tax": {}, "lines": []})
+            bucket = g["tax"] if is_tax else g["draws"]
+            bucket[key] = round(bucket.get(key, 0.0) + amt, 2)
+
+            def _f(v):
+                try:
+                    return float(v)
+                except (TypeError, ValueError):
+                    return None
+
+            g["lines"].append({
+                "date": date, "vendor": vendor, "desc": desc, "draw": key,
+                "amount": round(amt, 2), "is_tax": is_tax,
+                "qty": _f(det.get("Qty")), "rate": _f(det.get("UnitPrice")),
+                "doc": _xml_clean(str(txn.get("DocNumber") or "")),
+                "txn_id": txn.get("Id", ""), "tx_type": tx_type,
+            })
+    return out
+
+
+# Which cost-code NUMBER each focus sheet tracks (SL6/PV6/CS6/MS6 = labor,
+# SL1/PV1/CS1/MS1 = concrete). The PM and ops manager track these two by
+# scrutiny — materials are bought as packages (the user 2026-07-29).
+_FOCUS_NUM = {"Labor": "6", "Concrete": "1"}
+# A concrete line only counts toward YARDS when it was actually bought by the
+# yard. Lump vendor bills (qty 1 × $8,901.84) would wreck the $/yd math, so
+# they're carried in their own bucket and named on the sheet.
+_YARD_DESC_RE = re.compile(r"\byd|yard", re.IGNORECASE)
+
+
+def _is_yard_line(ln: dict) -> bool:
+    q = ln.get("qty")
+    if ln.get("is_tax") or not q or q <= 1:
+        return False
+    return bool(_YARD_DESC_RE.search(ln.get("desc") or "")) or q >= 5
+
+
+def build_sheet_labor_concrete(
+    wb, kind: str, proj: str, cust_info: dict, wip_info: dict,
+    budget: Dict[str, float], code_costs: Dict[str, dict],
+    draw_cols: List[Tuple[str, str]], as_of: str,
+    yards: Tuple[float, Dict[str, float], str] = (0.0, {}, ""),
+    budget_source: str = "", realm: str = "",
+) -> Optional[str]:
+    """LABOR / CONCRETE budget vs actual, per draw — the PM + ops manager's main
+    view (the user 2026-07-29). Rows are the takeoff's cost codes for that
+    trade; columns are the draw windows, so you see WHICH draw moved the
+    number. Tax is pulled out of the comparison and summed at the bottom; the
+    Concrete sheet adds yards and $/yd against the takeoff's implied rate.
+    Every transaction behind these numbers is on the '<kind> Detail' sheet.
+    Returns the sheet name, or None when this trade has no budget and no cost."""
+    num = _FOCUS_NUM[kind]
+    codes = sorted(
+        {c for c in budget if _split_code(c)[1] == num}
+        | {c for c in code_costs if _split_code(c)[1] == num},
+        key=_cost_code_sort_key)
+    if not codes:
+        return None
+
+    # Columns: BEFORE (only when it carries money) · every draw · AFTER
+    col_keys: List[Tuple[str, str]] = []
+    if any(g["draws"].get(_BEFORE_KEY) or g["tax"].get(_BEFORE_KEY)
+           for c in codes for g in [code_costs.get(c, {"draws": {}, "tax": {}})]):
+        col_keys.append((_BEFORE_KEY, "Before draw 1"))
+    col_keys += list(draw_cols)
+    if any(g["draws"].get(_AFTER_KEY) or g["tax"].get(_AFTER_KEY)
+           for c in codes for g in [code_costs.get(c, {"draws": {}, "tax": {}})]):
+        col_keys.append((_AFTER_KEY, "Outside draw windows"))
+
+    ws = wb.create_sheet(kind)
+    ws.sheet_view.showGridLines = False
+    ws.sheet_view.zoomScale = 110
+    c_item, c_bud = 1, 2
+    c_first = 3
+    c_last_draw = c_first + len(col_keys) - 1
+    c_act, c_bal, c_pct = c_last_draw + 1, c_last_draw + 2, c_last_draw + 3
+    c_qty, c_rate, c_desc, c_link = c_pct + 1, c_pct + 2, c_pct + 3, c_pct + 4
+    # 46 wide so the longest label ("Budget yards (takeoff CONCRETE YARDS
+    # total)") reads in full — column B holds a number on those rows, so text
+    # can't spill and anything longer would be cut off on screen.
+    ws.column_dimensions[get_column_letter(c_item)].width = 46
+    ws.column_dimensions[get_column_letter(c_bud)].width = 15
+    for i in range(len(col_keys)):
+        ws.column_dimensions[get_column_letter(c_first + i)].width = 15
+    ws.column_dimensions[get_column_letter(c_act)].width = 16
+    ws.column_dimensions[get_column_letter(c_bal)].width = 15
+    ws.column_dimensions[get_column_letter(c_pct)].width = 13
+    for col, w in ((c_qty, 11), (c_rate, 12), (c_desc, 58), (c_link, 9)):
+        ws.column_dimensions[get_column_letter(col)].width = w
+
+    r = _write_meta_block(ws, proj, cust_info, wip_info, as_of)
+    sub = ws.cell(row=r, column=1, value=(
+        f"{kind.upper()} BUDGET vs ACTUAL BY DRAW — budget from the takeoff cost "
+        f"codes; actual from QBO, tax excluded (summed below)"))
+    sub.font = Font(bold=True, size=BASE_SIZE, color="1F3A5F")
+    r += 1
+    if budget_source:
+        s = ws.cell(row=r, column=1, value=f"Budget source: {budget_source}")
+        s.font = Font(italic=True, size=BASE_SIZE - 2, color="595959")
+        r += 1
+    tip = ws.cell(row=r, column=1, value=(
+        "Each cost code expands to the bills behind it — click the ± in the "
+        "left margin. Every bill sits in the column of the draw it landed in, "
+        "so each code row is the sum of the rows beneath it; sales tax is "
+        "listed on its own at the bottom."))
+    tip.font = Font(italic=True, size=BASE_SIZE - 2, color="595959")
+    r += 2
+
+    hdr_row = r
+    heads = ([("ITEM (cost code)", c_item), ("BUDGET", c_bud)]
+             + [(h, c_first + i) for i, (_k, h) in enumerate(col_keys)]
+             + [("ACTUAL TO DATE", c_act), ("BALANCE $", c_bal),
+                ("BALANCE %", c_pct), ("QTY", c_qty), ("RATE", c_rate),
+                ("DESCRIPTION", c_desc), ("QBO", c_link)])
+    for text, col in heads:
+        c = ws.cell(row=hdr_row, column=col, value=text)
+        c.font = HDR_FONT
+        c.fill = HDR_FILL
+        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        c.border = THIN_BORDER
+    ws.row_dimensions[hdr_row].height = 34
+    r += 1
+
+    first_data = r
+    ws.sheet_properties.outlinePr.summaryBelow = False   # code row ABOVE its bills
+    code_rows: List[int] = []
+    draw_col = {k: c_first + i for i, (k, _h) in enumerate(col_keys)}
+    known = _project_name_words(cust_info.get("name", ""))
+    tax_by_col: Dict[str, float] = {}
+    for code in codes:
+        g = code_costs.get(code) or {"draws": {}, "tax": {}, "lines": []}
+        band = _cost_band_fill(code)
+        lc = ws.cell(row=r, column=c_item, value=_cost_code_label(code))
+        lc.font = Font(bold=True, size=BASE_SIZE)
+        bc = ws.cell(row=r, column=c_bud, value=round(budget.get(code, 0.0), 2))
+        bc.number_format = CURR_FMT
+        for i, (key, _h) in enumerate(col_keys):
+            cc = ws.cell(row=r, column=c_first + i,
+                         value=round(g["draws"].get(key, 0.0), 2))
+            cc.number_format = CURR_FMT
+            tax_by_col[key] = round(tax_by_col.get(key, 0.0)
+                                    + g["tax"].get(key, 0.0), 2)
+        # Explicit addition, not SUM(C:F) — a range sum that skips the BUDGET
+        # cell beside it makes Excel paint a green "omits adjacent cells"
+        # triangle on every row, which reads as an error on a PM's report.
+        ac = ws.cell(row=r, column=c_act, value="=" + "+".join(
+            f"{get_column_letter(c_first + i)}{r}" for i in range(len(col_keys))))
+        ac.number_format = CURR_FMT
+        ac.font = Font(bold=True, size=BASE_SIZE)
+        blc = ws.cell(row=r, column=c_bal,
+                      value=f"={get_column_letter(c_bud)}{r}-{get_column_letter(c_act)}{r}")
+        blc.number_format = CURR_FMT
+        pc = ws.cell(row=r, column=c_pct, value=(
+            f'=IF({get_column_letter(c_bud)}{r}=0,"",'
+            f'{get_column_letter(c_bal)}{r}/{get_column_letter(c_bud)}{r})'))
+        pc.number_format = PCT_FMT
+        for col in range(c_item, c_link + 1):
+            cell = ws.cell(row=r, column=col)
+            cell.fill = band
+            cell.border = THIN_BORDER
+        code_rows.append(r)
+        r += 1
+        # The bills themselves, nested under their code (click the ± in the
+        # margin to collapse). Each amount lands in the draw column it belongs
+        # to, so a code row is visibly the sum of the rows beneath it. Tax
+        # lines are NOT here — they'd break that footing; they get their own
+        # block at the bottom (the user 2026-07-29).
+        for ln in sorted((l for l in g["lines"] if not l["is_tax"]),
+                         key=lambda x: (x["date"], -abs(x["amount"]))):
+            ws.cell(row=r, column=c_item,
+                    value=f"    {ln['date']}   {ln['vendor']}")
+            col = draw_col.get(ln["draw"])
+            if col:
+                cell = ws.cell(row=r, column=col, value=ln["amount"])
+                cell.number_format = CURR_FMT
+            if ln["qty"] is not None:
+                ws.cell(row=r, column=c_qty, value=ln["qty"]).number_format = "#,##0.00"
+            if ln["rate"] is not None:
+                ws.cell(row=r, column=c_rate,
+                        value=ln["rate"]).number_format = '"$"#,##0.00'
+            dc = ws.cell(row=r, column=c_desc,
+                         value=_clean_cost_text(ln["desc"], known) or ln["desc"])
+            dc.alignment = Alignment(wrap_text=True, vertical="top")
+            url = _qbo_txn_url(ln["tx_type"], ln["txn_id"], realm)
+            if url:
+                lk = ws.cell(row=r, column=c_link, value="open \u2197")
+                lk.hyperlink = url
+                lk.font = Font(color="0563C1", underline="single", size=BASE_SIZE - 2)
+            for cc2 in range(c_item, c_link + 1):
+                cell = ws.cell(row=r, column=cc2)
+                if cell.font is None or not cell.font.underline:
+                    cell.font = Font(size=BASE_SIZE - 1, color="404040")
+            ws.row_dimensions[r].outlineLevel = 1
+            r += 1
+    last_data = r - 1
+
+    tot_row = r
+    tc = ws.cell(row=tot_row, column=c_item, value=f"TOTAL {kind.upper()}")
+    for col in range(c_item, c_link + 1):
+        cell = ws.cell(row=tot_row, column=col)
+        cell.fill = TOTAL_FILL
+        cell.font = TOTAL_FONT
+        cell.border = THIN_BORDER
+    for col in list(range(c_bud, c_act + 1)):
+        L = get_column_letter(col)
+        cell = ws.cell(row=tot_row, column=col,
+                       value="=SUM(" + ",".join(f"{L}{cr}" for cr in code_rows) + ")")
+        cell.number_format = CURR_FMT
+    ws.cell(row=tot_row, column=c_bal,
+            value=f"={get_column_letter(c_bud)}{tot_row}-{get_column_letter(c_act)}{tot_row}"
+            ).number_format = CURR_FMT
+    ws.cell(row=tot_row, column=c_pct, value=(
+        f'=IF({get_column_letter(c_bud)}{tot_row}=0,"",'
+        f'{get_column_letter(c_bal)}{tot_row}/{get_column_letter(c_bud)}{tot_row})'
+    )).number_format = PCT_FMT
+    tc.font = TOTAL_FONT
+    r += 1
+
+    # Over-budget goes red — the whole point of the sheet.
+    red = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+    for col in (c_bal, c_pct):
+        L = get_column_letter(col)
+        ws.conditional_formatting.add(
+            " ".join(f"{L}{cr}" for cr in code_rows + [tot_row]),
+            CellIsRule(operator="lessThan", formula=["0"],
+                       fill=red, font=Font(color="9C0006", bold=True)))
+
+    tax_total = round(sum(tax_by_col.values()), 2)
+    if tax_total:
+        tax_row = r
+        tr = ws.cell(row=r, column=c_item, value="Sales tax billed on its own line (not above)")
+        tr.font = Font(italic=True, size=BASE_SIZE - 1)
+        for i, (key, _h) in enumerate(col_keys):
+            cell = ws.cell(row=r, column=c_first + i, value=tax_by_col.get(key, 0.0))
+            cell.number_format = CURR_FMT
+            cell.font = Font(italic=True, size=BASE_SIZE - 1)
+        cell = ws.cell(row=r, column=c_act, value=tax_total)
+        cell.number_format = CURR_FMT
+        cell.font = Font(italic=True, size=BASE_SIZE - 1)
+        r += 1
+        for ln in sorted((l for c in codes
+                          for l in (code_costs.get(c) or {}).get("lines", [])
+                          if l["is_tax"]), key=lambda x: x["date"]):
+            ws.cell(row=r, column=c_item,
+                    value=f"    {ln['date']}   {ln['vendor']}")
+            col = draw_col.get(ln["draw"])
+            if col:
+                tc2 = ws.cell(row=r, column=col, value=ln["amount"])
+                tc2.number_format = CURR_FMT
+            dc = ws.cell(row=r, column=c_desc,
+                         value=_clean_cost_text(ln["desc"], known) or ln["desc"])
+            dc.alignment = Alignment(wrap_text=True, vertical="top")
+            url = _qbo_txn_url(ln["tx_type"], ln["txn_id"], realm)
+            if url:
+                lk = ws.cell(row=r, column=c_link, value="open \u2197")
+                lk.hyperlink = url
+                lk.font = Font(color="0563C1", underline="single", size=BASE_SIZE - 2)
+            for cc2 in range(c_item, c_desc + 1):
+                ws.cell(row=r, column=cc2).font = Font(italic=True,
+                                                       size=BASE_SIZE - 1,
+                                                       color="7F6000")
+            ws.row_dimensions[r].outlineLevel = 1
+            r += 1
+        gt = ws.cell(row=r, column=c_item, value=f"TOTAL {kind.upper()} INCL. TAX (ties to QBO)")
+        gt.font = TOTAL_FONT
+        cell = ws.cell(row=r, column=c_act,
+                       value=f"={get_column_letter(c_act)}{tot_row}"
+                             f"+{get_column_letter(c_act)}{tax_row}")
+        cell.number_format = CURR_FMT
+        cell.font = TOTAL_FONT
+        r += 1
+    r += 1
+
+    if kind == "Concrete":
+        r = _write_yards_block(ws, r, codes, code_costs, budget, yards,
+                               c_item, c_bud, c_act)
+
+    ws.freeze_panes = ws.cell(row=hdr_row + 1, column=2)
+    _setup_print(ws, c_link)
+    return ws.title
+
+
+def _write_yards_block(ws, r: int, codes: List[str], code_costs: Dict[str, dict],
+                       budget: Dict[str, float],
+                       yards: Tuple[float, Dict[str, float], str],
+                       c_item: int, c_bud: int, c_act: int) -> int:
+    """Yards + $/yd: the takeoff's implied rate (concrete $ ÷ CONCRETE YARDS
+    total) against what QBO actually paid per yard, ex-tax. Lump vendor bills
+    that carry no yardage are excluded from the rate and named, so the rate is
+    never quietly wrong."""
+    bud_yards, _rows, _src = yards
+    lines = [ln for c in codes for ln in (code_costs.get(c) or {}).get("lines", [])]
+    yard_lines = [ln for ln in lines if _is_yard_line(ln)]
+    lump = [ln for ln in lines if not ln["is_tax"] and not _is_yard_line(ln)]
+    act_yards = round(sum(ln["qty"] for ln in yard_lines), 2)
+    act_yard_dollars = round(sum(ln["amount"] for ln in yard_lines), 2)
+    bud_dollars = round(sum(budget.get(c, 0.0) for c in codes), 2)
+
+    hc = ws.cell(row=r, column=c_item, value="YARDS & RATE  (takeoff vs QBO, ex-tax)")
+    hc.font = Font(bold=True, size=BASE_SIZE, color="1F3A5F")
+    hc.fill = SUBHDR_FILL
+    for col in range(c_item, c_act + 1):
+        ws.cell(row=r, column=col).fill = SUBHDR_FILL
+    r += 1
+
+    def line(label, value, fmt=CURR_FMT, bold=False, note=""):
+        nonlocal r
+        c = ws.cell(row=r, column=c_item, value=label)
+        c.font = Font(bold=bold, size=BASE_SIZE)
+        v = ws.cell(row=r, column=c_bud, value=value)
+        v.number_format = fmt
+        v.font = Font(bold=bold, size=BASE_SIZE)
+        if note:
+            n = ws.cell(row=r, column=c_bud + 1, value=note)
+            n.font = Font(italic=True, size=BASE_SIZE - 2, color="595959")
+        r += 1
+
+    line("Budget yards (takeoff CONCRETE YARDS total)", bud_yards, "#,##0.00")
+    line("Budget concrete $ (cost codes)", bud_dollars)
+    line("Budget $/yd (implied)", round(bud_dollars / bud_yards, 2) if bud_yards else 0,
+         '"$"#,##0.00', bold=True)
+    line("Actual yards bought (yard-quantified lines)", act_yards, "#,##0.00")
+    line("Actual concrete $ on those lines (ex-tax)", act_yard_dollars)
+    line("Actual $/yd paid", round(act_yard_dollars / act_yards, 2) if act_yards else 0,
+         '"$"#,##0.00', bold=True)
+    if bud_yards and act_yards:
+        line("Variance $/yd (budget − actual)",
+             round(bud_dollars / bud_yards - act_yard_dollars / act_yards, 2),
+             '"$"#,##0.00', bold=True)
+        line("Variance yards (actual − budget)", round(act_yards - bud_yards, 2),
+             "#,##0.00", bold=True)
+    if lump:
+        r += 1
+        w = ws.cell(row=r, column=c_item,
+                    value=f"⚑ {len(lump)} line(s) with no yardage")
+        w.font = Font(bold=True, size=BASE_SIZE - 1, color="9C5700")
+        v = ws.cell(row=r, column=c_bud, value=round(sum(l["amount"] for l in lump), 2))
+        v.number_format = CURR_FMT
+        v.font = Font(bold=True, size=BASE_SIZE - 1, color="9C5700")
+        r += 1
+        # Explanation on its own row — column B is empty here, so the sentence
+        # can run past column A instead of being clipped.
+        ws.cell(row=r, column=c_item, value=(
+            "lump vendor bills with no yards on the line — excluded from the "
+            "$/yd figures above, but included in the totals")
+        ).font = Font(italic=True, size=BASE_SIZE - 2, color="595959")
+        r += 1
+        for ln in sorted(lump, key=lambda x: x["date"]):
+            # date + vendor fits column A; the description goes in the first
+            # draw column, which is empty on these rows.
+            ws.cell(row=r, column=c_item,
+                    value=f"    {ln['date']}  {ln['vendor'][:28]}"
+                    ).font = Font(size=BASE_SIZE - 2, color="595959")
+            cell = ws.cell(row=r, column=c_bud, value=ln["amount"])
+            cell.number_format = CURR_FMT
+            cell.font = Font(size=BASE_SIZE - 2, color="595959")
+            ws.cell(row=r, column=c_bud + 1, value=ln["desc"]
+                    ).font = Font(size=BASE_SIZE - 2, color="595959")
+            r += 1
+    return r + 1
+
 
 
 def build_sheet_budget_vs_actual(wb, proj, cust_info, wip_info,
@@ -4958,6 +5462,34 @@ def generate_project_pnl(
         else:
             ui_event("no takeoff cost-code budget found — Budget vs Actual "
                      "skipped", icon="⚑", color=_YEL)
+
+        # LABOR + CONCRETE, per draw — the PM/ops manager's main view (the user
+        # 2026-07-29). Materials come as packages; these two are what gets
+        # tracked line by line, so each gets a grid sheet and a detail sheet.
+        _cc = code_costs_by_draw(bills, purchases, cust_info["id"],
+                                 draw_periods, account_names=account_names)
+        _yards = load_cp_concrete_yards(proj)
+        # Columns are headed by the DRAW NUMBER, not the period dates (the
+        # user 2026-07-29 — the takeoff template's WEEK columns become draws).
+        _dnames = {lbl: nm for nm, lbl, *_rest in draw_rows}
+        _dcols = [(l, _dnames.get(l, l)) for l, _s, _e in draw_periods]
+        for _kind in ("Labor", "Concrete"):
+            _nm = build_sheet_labor_concrete(
+                wb, _kind, proj, cust_info, wip_info, _bud, _cc,
+                _dcols, as_of, yards=_yards,
+                budget_source=_bud_src, realm=company_id)
+            if _nm:
+                _n = _FOCUS_NUM[_kind]
+                _b = sum(v for k, v in _bud.items() if _split_code(k)[1] == _n)
+                _a = sum(sum(g["draws"].values())
+                         for k, g in _cc.items() if _split_code(k)[1] == _n)
+                _t = sum(sum(g["tax"].values())
+                         for k, g in _cc.items() if _split_code(k)[1] == _n)
+                ui_event(f"{_kind}: budget ${_b:,.0f} · actual ${_a:,.0f} "
+                         f"({_a - _b:+,.0f})"
+                         + (f" · tax ${_t:,.0f} shown separately" if _t else ""),
+                         icon="▪", color=(_YEL if _a > _b else _CYAN))
+
     # Preserve Contract Price / ETC / CO Costs typed into the PRIOR sheet
     # across syncs (CO cost is manual until the CO template has a cost line).
     _saved = read_back_inputs(proj_dir / f"Project_PnL_{proj}.xlsx")
@@ -4967,6 +5499,32 @@ def generate_project_pnl(
         wip_info["etc_saved"] = _saved["etc"]
     if _saved.get("co_cost") is not None:
         wip_info["co_cost_saved"] = _saved["co_cost"]
+    # CONTRACT PRICE + APPROVED COs come from the SIGNED G702 pay application,
+    # not from the draw invoices and not from a hand-typed cell (the user
+    # 2026-07-29) — the G702 is the document the GC certifies. The WIP master
+    # stays the fallback for jobs with no pay app on the drive yet.
+    if not is_mfd:
+        _g702 = load_g702(proj)
+        if _g702.get("error"):
+            ui_warn(f"G702 {_g702.get('source')}: {_g702['error']} — "
+                    f"contract falls back to the WIP master")
+        elif _g702.get("original_contract") is not None:
+            _typed = wip_info.pop("contract_saved", None)
+            wip_info["original_contract"] = _g702["original_contract"]
+            wip_info["change_orders"] = _g702.get("co_net") or 0.0
+            if _g702.get("contract_to_date") is not None:
+                wip_info["revised_contract"] = _g702["contract_to_date"]
+            wip_info["contract_g702"] = f"G702 pay app, Draw #{_g702['draw_no']}"
+            if (_typed is not None
+                    and abs(float(_typed) - _g702["original_contract"]) > 1.0):
+                wip_info["contract_g702_typed"] = float(_typed)
+            ui_event(f"contract per G702 (Draw #{_g702['draw_no']}): "
+                     f"${_g702['original_contract']:,.0f} + COs "
+                     f"${_g702.get('co_net') or 0:,.0f} = "
+                     f"${_g702.get('contract_to_date') or 0:,.0f}"
+                     + (f"  ⚑ overrode typed ${_typed:,.0f}"
+                        if wip_info.get("contract_g702_typed") else ""),
+                     icon="§", color=_CYAN)
     build_sheet_pl(
         wb, proj, cust_info, wip_info, pl_data, pl_totals,
         net_billed, ret_withheld_total, as_of, overhead_pct=overhead_pct,
@@ -4976,9 +5534,12 @@ def generate_project_pnl(
         alt_overhead_pct=_alt_oh, underbill_total=underbill_total,
         underbill_count=underbill_count, realm=company_id,
     )
-    # Order (the user 2026-07-16): P&L, Transactions, Budget vs Actual,
-    # Next Draw, the draw sheets, POs, Reconciliations; Cash Flow trails.
-    _order_sheets(wb, ["P&L", "Transactions", "Budget vs Actual",
+    # Order (the user 2026-07-16; Labor/Concrete first among the analysis tabs
+    # 2026-07-29 — they're the PM/ops manager's main view): P&L, Transactions,
+    # Labor, Concrete, their detail, Budget vs Actual, Next Draw, the draw
+    # sheets, POs, Reconciliations; Cash Flow trails.
+    _order_sheets(wb, ["P&L", "Transactions",
+                       "Labor", "Concrete", "Budget vs Actual",
                        *(["Next Draw"] if leftover is not None else []),
                        *draw_sheet_order,
                        "POs", "Reconciliations", "Cash Flow"])
@@ -4986,6 +5547,7 @@ def generate_project_pnl(
     # Color-code the tabs for navigation (the user 2026-06-26).
     _tabcolors = {"P&L": "1F3A5F", "Cash Flow": "C55A11",
                   "Next Draw": "808080",
+                  "Labor": "7030A0", "Concrete": "7030A0",
                   "Budget vs Actual": "BF8F00",
                   "Transactions": "548235", "POs": "808080",
                   "Reconciliations": "808080"}
