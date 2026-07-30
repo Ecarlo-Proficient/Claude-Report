@@ -270,8 +270,8 @@ def _with_price(hit: dict, by_proj: Dict[str, float]) -> dict:
 
 
 # Street-type words are typed inconsistently between the schedule and the
-# General List (the same job appears as "6057 KEMROCK ROAD" and "6057 KEMROCK
-# DR"), so they are DROPPED from the comparison rather than normalised — the
+# General List (the same job appears as "1234 OAKWOOD PARKWAY" and "1234
+# OAKWOOD PKWY"), so they are DROPPED from the comparison rather than normalised — the
 # house number + street NAME is the reliable key (the user 2026-07-28).
 _STREET_TYPES = {"DR", "ST", "AVE", "LN", "RD", "CT", "BLVD", "CIR", "PL",
                  "TRL", "PKWY", "HWY", "TER", "CV", "RCH", "WAY", "LOOP",
@@ -279,9 +279,9 @@ _STREET_TYPES = {"DR", "ST", "AVE", "LN", "RD", "CT", "BLVD", "CIR", "PL",
 
 
 def _addr_core(key: str) -> Tuple[str, frozenset]:
-    """'6057 KEMROCK RD' → ('6057', {'KEMROCK'}). Drops street types and any
-    trailing descriptors so '5801 BOSTON LN GYM ADDITION' still matches
-    '5801 BOSTON LANE'."""
+    """'1234 OAKWOOD RD' → ('1234', {'OAKWOOD'}). Drops street types and any
+    trailing descriptors so '1234 OAKWOOD PKWY GYM ADDITION' still matches
+    '1234 OAKWOOD PARKWAY'."""
     toks = key.split()
     if not toks:
         return "", frozenset()
