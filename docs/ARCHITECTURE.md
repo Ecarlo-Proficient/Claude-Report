@@ -335,6 +335,33 @@ live in **two** INFORMATION blocks (`I/K/M` 25-69 and `N/P/R` 24-69); cost rows 
 The takeoff only sorts+sums typed pairs — it derives nothing — so this is a verification
 harness for the JobTread migration, not an estimator tool.
 
+
+**`one-offs/rp_wip_update.py`** (read-only sources, writes the OWNER'S file) — the RP WIP is
+no longer a generated report; it is the owner's working file in OneDrive
+(`RP WIP TO FIX_Final.xlsx`, sheet `RP WIP`). This OPENS that file and refreshes only the
+machine columns (SCHEDULE ✓/✗, QBO billed/costs, GP%), appending schedule lines it doesn't
+have. **The owner's colour marks are authoritative and are never overwritten** — theme 9
+(orange) = ops manager must verify, `00B050` = verified, `FF0000` = he changed it. Dry run
+by default; `--commit` writes back to OneDrive.
+
+**`one-offs/jobtread_schedule_writer.py`** (**writes to JobTread**, audit-gated) — the daily
+Excel schedule → JobTread dated tasks, using the estimator's own stage names (Wreck/Clean,
+Set Forms, Trench, Grade/Backout, Drill Piers, Pour, Tension Cables). UPSERTs by (job, task
+name): existing task → update dates only if changed; none → create. Never deletes, never
+touches an unmapped task. Dry run by default.
+
+**`one-offs/rp_wip_simple.py`** (read-only, writes the WIP master's `Test - RP` tab) — the
+stripped-down RP WIP: contract · ETC · billed · costs · GP%, plus SCHEDULE / GENERAL LISTA
+marks and an ACTION column. ETC is computed from the takeoff's **cost code rows**, never the
+pier subtotal cell (that cell means slab+piers on some takeoffs and piers-only on others);
+FW is never added to a non-FTW ETC. Sections: CP-on-RP-schedule, dropped-but-unbilled,
+⚠ FTW-with-costs (not backlog), FTW backlog. **Writes no `file://` hyperlinks** — Excel
+resolves those through ScopedBookmarkAgent at load and beachballs on a network share.
+
+**Schedule file choice (all four tools):** `shared/schedule.schedule_on_or_before()` — never
+reads a schedule dated in the future. The team pre-loads tomorrow's board, and a plain
+"highest filename wins" pick silently jumps to it. `--as-of YYYY-MM-DD` overrides.
+
 ## Who writes to QBO (the short list)
 
 | Script | What it writes | Gate |
@@ -351,6 +378,14 @@ or JobTread.
 | Script | What it writes | Gate |
 |---|---|---|
 | `one-offs/jobtread_close_jobs.py --apply` | a job's `closedOn` date (= closes it; clearing it reopens) | xlsx audit, `CLOSE?=Y` rows only, then `--commit`; excludes MFD; never deletes; `--reopen` undoes |
+| `one-offs/jobtread_schedule_writer.py --commit` | task name + start/end date + task type on a job | dry run by default; upsert only, never deletes |
+
+**What the JobTread API CANNOT do** (verified 2026-07-29/30, do not build on these):
+`createDocument` (proposals/COs/invoices) is rejected outright — *"A job location name or
+address is required"* even on jobs with a complete location. `updateCostItem(costCodeId)` on a
+QBO-synced bill **returns success and changes nothing**. Bill UPDATES sync in neither
+direction; the QBO push fires on **approval**, so corrections are free while `draft`/`pending`
+and brutal once approved+paid. JobTread is the operational shell — QBO stays the cost truth.
 
 The JobTread grant key (`JT_GRANT_KEY`, shared vault) has **write** access — grants carry
 no read/write scope, they inherit the user's permissions. Verified 2026-07-27 by a
