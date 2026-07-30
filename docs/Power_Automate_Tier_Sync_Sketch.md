@@ -108,7 +108,7 @@ Notes:
 
 ## Flow #2 — Bid List → AR Project Summary
 
-**Purpose:** give the AR team (Ana AP/AR, MRojas, ERivera Collections) a project roster they can attach Open Invoices against. They need enough to identify the job and the customer, plus the billed / collected state — but not the bid amount until after the sale.
+**Purpose:** give the AR team (the AP/AR specialist, the bill clerk, the collections clerk) a project roster they can attach Open Invoices against. They need enough to identify the job and the customer, plus the billed / collected state — but not the bid amount until after the sale.
 
 **Target DB:** AR Project Summary (new — create it first using the schema below, then set up this flow).
 

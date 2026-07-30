@@ -64,14 +64,13 @@ manual close), RP (no draws — expenses → invoice → profit).
   folder under the awarded-projects root. Blocked on a decision: teach the
   reader the second template, or have the estimators convert those jobs.
   CP910 carries its codes on a `COST QB` sheet — possible lead.
-- **CP745 labor budget is short $3,735** — the takeoff's Labor Report totals
-  $82,937.80 but the QBO budget import carries $79,202.80; bollards ($2,375)
-  and the dumpster beam ($1,360) never made it into the cost codes.
-- **Concrete $/yd budget looks high** — CP745's implied rate is $168.12/yd
-  (cost-code $ ÷ takeoff yards) against $100.42/yd actually paid. The
-  takeoff's CONCRETE report totals $143,718.72 vs $139,674.34 in the cost
-  codes ($4,044.38 of curb + bollards never coded), so the two bases differ.
-  Worth confirming with the estimators what the CONCRETE report is measuring.
+- **Two CP745 budget-gap findings** — (a) the labor budget imported into QBO
+  runs short of the takeoff's Labor Report (bollards + the dumpster beam never
+  made it into the cost codes); (b) the implied concrete $/yd from cost codes
+  runs well above the rate actually paid (curb + bollards never coded, so the
+  two bases differ). Worth confirming with the estimators what the CONCRETE
+  report is measuring. Dollar detail lives in the owner's vault — scrubbed
+  from the repo 2026-07-30 per the STATUS scope filter.
 - **Fuel surcharge is not reported** (the user 2026-07-29) — AP clerks folded
   it into the per-yard rate instead of coding it separately. Deliberately
   omitted until AP re-enters those bills correctly.

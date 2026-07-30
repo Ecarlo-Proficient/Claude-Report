@@ -8,8 +8,8 @@ The trap this module exists to avoid: the General List's completion % certifies
 the SLAB only, and each job carries TWO priced scopes (slab + flatwork) billed
 to two QBO projects (`RP####` and `RP####-FTW`). Comparing slab completion
 against slab+flatwork bid overstates underbilling by counting flatwork that was
-never poured — measured 2026-07-28: $216K "underbilled" was really $2.5K of
-builder-fee rounding plus $222K of unbuilt flatwork.
+never poured — measured 2026-07-28: nearly all of the apparent RP underbilling
+was unbuilt flatwork plus builder-fee rounding, not real slab underbilling.
 
 So "done" is not taken from a completion column at all. A scope counts as
 POURED only when the crew schedule shows it reaching pour/wreck/stress/punch,

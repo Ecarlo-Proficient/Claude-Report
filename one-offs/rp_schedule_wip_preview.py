@@ -205,9 +205,9 @@ def find_proposal(folder: Path, scope: str, desc: str):
 
     FTW scope only accepts PDFs whose NAME says flatwork (or matches the
     schedule description) — the base proposal is the SLAB contract, and
-    silently returning it would overstate the -FTW line (RP5542: $397K
-    house bid vs the real flatwork scope). No such PDF → caller falls back
-    to the takeoff's bid sheets."""
+    silently returning it would grossly overstate the -FTW line (the whole
+    house-slab bid vs the far smaller flatwork scope — seen on RP5542). No
+    such PDF → caller falls back to the takeoff's bid sheets."""
     import pdfplumber
     cands = []
     try:
@@ -250,8 +250,8 @@ def _cost_sheet_totals(ws):
 
     THE NUMBER THAT COUNTS is the template's OWN subtotal cell at the foot
     of each band — NOT Σ(qty × cost) of the visible items. RP5542 FLATWORK:
-    items sum to $47,758 but D33 (the blue subtotal the clerk keys into the
-    General List) is $88,858 — its formula pulls from the Flatwork takeoff
+    the visible items sum to barely half of D33 (the blue subtotal the clerk
+    keys into the General List) — its formula pulls from the Flatwork takeoff
     sheet beyond these rows (the user 2026-07-17). Items are kept only as
     the fallback when the subtotal cell errors (#N/A) + a mismatch check.
 

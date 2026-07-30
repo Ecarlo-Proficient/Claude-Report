@@ -406,8 +406,8 @@ Where the worker runs today and where it's headed. **Update (2026-06-26): Docker
 | ↳ routable (with project #) | 128 |
 | ↳ unroutable (equipment lease etc.) | 33 |
 | Notion invoices in trackers | 136 |
-| Open balance — routable | $4,443,347.89 |
-| Open balance — unroutable | $124,121.61 |
+| Open balance — routable | *(redacted 2026-07-30 — dollar totals don't belong in the repo; pull live via `sync-ar` / QBO)* |
+| Open balance — unroutable | *(redacted 2026-07-30)* |
 | Routable match rate | **100.0%** |
 
 Verdict: PASS. Every routable QBO open invoice is present in Notion. Re-runnable anytime via `verify_invoices.py`.

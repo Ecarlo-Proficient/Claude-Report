@@ -244,8 +244,9 @@ def main() -> int:
 
         # EXACT match only. The old -FTW→base fallback attributed the BASE
         # project's billing to the -FTW line, so an -FTW that was never
-        # invoiced read as "paid & idle" (RP7431-FTW: 0 invoices of its own,
-        # base RP7431 had $21,722 — the user 2026-07-30). A close decision must
+        # invoiced read as "paid & idle" (RP7431-FTW: 0 invoices of its own
+        # while base RP7431 carried real billing — the user 2026-07-30). A
+        # close decision must
         # judge each line on its OWN billing.
         a = act.get(num)
         qmatch = "exact" if a else "—"

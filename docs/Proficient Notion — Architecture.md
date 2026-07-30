@@ -177,9 +177,9 @@ This is a Notion-wide limitation — not fixed by Enterprise or any plan upgrade
 **Purpose:** Invoice issuance, collections, and tying Bid Amount to actual billed.
 
 **Users:**
-- MRojas — High-Tier Clerk
-- ERivera — Collections
-- Ana — AP/AR Specialist
+- The bill clerk — High-Tier Clerk
+- The collections clerk
+- The AP/AR specialist
 
 **Databases:**
 - **Open Invoices** (owned here)
@@ -219,7 +219,7 @@ This is a Notion-wide limitation — not fixed by Enterprise or any plan upgrade
 - Superintendents
 - Estimators (cross-access from Tier 3)
 - Project Managers (cross-access from Tier 3)
-- JRamirez — High-Tier Project Clerk
+- The project clerk — High-Tier Project Clerk
 
 **Databases:**
 - **Field Logs** (RP Field Log, CP Field Log — owned here)
@@ -308,11 +308,11 @@ Columns show **what database access the role has**. "—" means zero access. Tie
 | Superintendent | 2 | — | Own jobs only (Tier 2 rollups only — no bid amount, no sales) | — | — | — |
 | Estimator | 3 | Full | Full | — | View | — |
 | Project Manager | 3 | Full | Full | — | View | — |
-| AP/AR (MRojas, ERivera, Ana) | 3 | — (via AR Project Summary — separate DB) | — | Full | — | — |
+| AP/AR (the bill clerk, the collections clerk, the AP/AR specialist) | 3 | — (via AR Project Summary — separate DB) | — | Full | — | — |
 | Sub Clerk | 1 | — (via Common Bid List — separate DB) | — | — | Full | — |
 | PO Clerk | 1 | — (via Common Bid List — separate DB) | — | — | — | — |
 | Payroll Manager | off-spine | — | — | — | View | Full |
-| JRamirez (Project Clerk) | 2 | — | Full | — | — | — |
+| The project clerk | 2 | — | Full | — | — | — |
 | The user (Owner) | 4 | Full | Full | Full | Full | Full |
 
 **Hard rules to preserve:**

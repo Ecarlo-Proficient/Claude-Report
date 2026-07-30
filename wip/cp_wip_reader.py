@@ -789,7 +789,7 @@ def _is_retainage_receivable_invoice(inv: dict) -> bool:
 
     CORRECTED 2026-07-02 (live run): an earlier version ALSO required a
     Journal Entry on the invoice's LinkedTxn. That left retainage held
-    understated ($2,179.50 instead of $31,094.80 on CP672) because the JE
+    understated by an order of magnitude on CP672 because the JE
     that reclasses AR → Retainage Receivable is applied to the invoice via a
     PAYMENT (the "Payment on 12/31/25" that carries the JE credit) — so the
     JE never appears directly in Invoice.LinkedTxn and the check missed it.

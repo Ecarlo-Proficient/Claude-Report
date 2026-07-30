@@ -161,3 +161,9 @@ Last updated: 2026-07-29
   covered ones) → ~/Downloads/RP JobTread Coverage.xlsx. Nothing pushed. First run
   (schedule 7-22): 15 covered (23%) · 17 needs proposal · 33 missing. Closing this list =
   closing the JobTread coverage gap (the sole requirement for JT-as-pricing-source).
+
+## NOTES
+
+- 2026-07-30 — data-risk scrub: real dollar figures removed from code comments
+  (`cp_wip_reader.py` retainage note) — no behavior change; the dollar detail
+  lives in the owner's vault, per the STATUS scope filter.
