@@ -33,7 +33,13 @@ manual close), RP (no draws — expenses → invoice → profit).
   #). Tax/fuel columns appear ONLY on a trade that has such lines — labor
   subs bill neither (auto-omit, disclosed). No fuel lines exist anywhere yet
   (AP folds the surcharge into the rate); Concrete says so on the sheet.
-  Font 12 flat; uniform row heights; descriptions clip, never grow the row.
+  Font 12 flat; uniform row heights. DESCRIPTION is the ledger's LAST
+  column and spills right over empty space — scoreboard and ledger share
+  physical columns, so a wide mid-table description column was inflating
+  BALANCE $ above it (the user 2026-07-29). Draw headers are wide enough for
+  the full period. NO BUDGET → NO SHEET: with the takeoff unreadable (e.g.
+  Common drive unmounted) the sheets are skipped with a warning, because a
+  scoreboard of $0 budgets reads as wildly over budget.
 - **Contract price + approved COs from the G702** (CP, 2026-07-29) — the
   signed pay application beats the WIP master AND any hand-typed cell; the
   P&L prints the source on the contract line itself, and that cell is no

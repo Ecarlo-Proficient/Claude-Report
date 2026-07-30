@@ -3949,21 +3949,24 @@ def build_sheet_labor_concrete(
     sb_tax = 6 + n_draws                     # scoreboard TAX col (after draws)
     sb_fuel = sb_tax + (1 if has_tax else 0)
     sb_incl = sb_fuel + (1 if has_fuel else 0)
-    widths = {1: 34, 2: 16, 3: 22, 4: 42, 5: 12}
+    widths = {1: 34, 2: 16, 3: 20, 4: 16, 5: 12}
     for i in range(n_draws):
-        widths[6 + i] = 15
+        widths[6 + i] = 18                   # fits "01/26/26–02/25/26" unclipped
     if has_tax:
         widths[sb_tax] = 14
     if has_fuel:
         widths[sb_fuel] = 14
     if has_tax or has_fuel:
         widths[sb_incl] = 17
-    # ledger fixed columns (overlap the same sheet columns)
-    L_QBO, L_DATE, L_VEND, L_DESC, L_QTY, L_RATE, L_AMT = 1, 2, 3, 4, 5, 6, 7
-    L_TAX = 8 if has_tax else 0
-    L_FUEL = (9 if has_tax else 8) if has_fuel else 0
+    # ledger fixed columns (overlap the same sheet columns); DESCRIPTION is
+    # LAST so it can spill right over empty cells instead of owning a width
+    L_QBO, L_DATE, L_VEND, L_QTY, L_RATE, L_AMT = 1, 2, 3, 4, 5, 6
+    L_TAX = 7 if has_tax else 0
+    L_FUEL = (8 if has_tax else 7) if has_fuel else 0
     L_DRAW = max(L_AMT, L_TAX, L_FUEL) + 1
-    for col, w in ((L_QTY, 12), (L_RATE, 13), (L_AMT, 15), (L_DRAW, 15)):
+    L_DESC = L_DRAW + 1
+    for col, w in ((L_QTY, 12), (L_RATE, 13), (L_AMT, 15), (L_DRAW, 16),
+                   (L_DESC, 24)):
         widths[col] = max(widths.get(col, 0), w)
     if L_TAX:
         widths[L_TAX] = max(widths.get(L_TAX, 0), 13)
@@ -4122,18 +4125,18 @@ def build_sheet_labor_concrete(
     lh.font = Font(bold=True, size=SZ, color="1F3A5F")
     r += 1
     led_heads = [("QBO #", L_QBO), ("DATE", L_DATE), ("VENDOR", L_VEND),
-                 ("DESCRIPTION", L_DESC), ("QTY", L_QTY), ("RATE", L_RATE),
-                 ("AMOUNT", L_AMT)]
+                 ("QTY", L_QTY), ("RATE", L_RATE), ("AMOUNT", L_AMT)]
     if L_TAX:
         led_heads.append(("SALES TAX", L_TAX))
     if L_FUEL:
         led_heads.append(("FUEL", L_FUEL))
-    led_heads.append(("DRAW", L_DRAW))
+    led_heads += [("DRAW", L_DRAW), ("DESCRIPTION", L_DESC)]
     for text, col in led_heads:
         c = ws.cell(row=r, column=col, value=text)
         c.font = Font(bold=True, color="FFFFFF", size=SZ)
         c.fill = HDR_FILL
-        c.alignment = Alignment(horizontal="center", vertical="center")
+        c.alignment = Alignment(horizontal=("left" if col == L_DESC else "center"),
+                                vertical="center")
         c.border = THIN_BORDER
     ws.row_dimensions[r].height = ROW_H + 3
     r += 1
@@ -4160,7 +4163,7 @@ def build_sheet_labor_concrete(
                           value=round(sum(l.get("fuel", 0) for l in merged), 2))
             sfl.number_format = CURR_FMT
             sfl.font = Font(bold=True, size=SZ)
-        for col in range(1, L_DRAW + 1):
+        for col in range(1, L_DESC + 1):
             ws.cell(row=r, column=col).fill = band
             ws.cell(row=r, column=col).border = THIN_BORDER
         ws.row_dimensions[r].height = ROW_H
@@ -4178,8 +4181,7 @@ def build_sheet_labor_concrete(
             ws.cell(row=r, column=L_VEND, value=ln["vendor"]).font = Font(size=SZ)
             dc = ws.cell(row=r, column=L_DESC,
                          value=_clean_cost_text(ln["desc"], known) or ln["desc"])
-            dc.font = Font(size=SZ)
-            dc.alignment = Alignment(vertical="center")   # clips, never grows
+            dc.font = Font(size=SZ)                # last column — spills right
             if ln["qty"]:
                 ws.cell(row=r, column=L_QTY,
                         value=ln["qty"]).number_format = "#,##0.00"
@@ -4201,7 +4203,7 @@ def build_sheet_labor_concrete(
                     ws.cell(row=r, column=col).font = Font(size=SZ)
             ws.row_dimensions[r].height = ROW_H
             r += 1
-    _setup_print(ws, L_DRAW)
+    _setup_print(ws, L_DESC)
     return ws.title
 
 
@@ -5572,7 +5574,12 @@ def generate_project_pnl(
 
         # LABOR + CONCRETE, per draw — the PM/ops manager's main view (the user
         # 2026-07-29). Materials come as packages; these two are what gets
-        # tracked line by line, so each gets a grid sheet and a detail sheet.
+        # tracked line by line. NO BUDGET → NO SHEET: a scoreboard whose every
+        # BUDGET cell is $0 (takeoff unreadable, or the Common drive not
+        # mounted) reads as "wildly over budget", which is worse than absent.
+        if not _bud:
+            ui_warn("Labor/Concrete sheets skipped — no takeoff budget "
+                    "(is the Common drive mounted?)")
         _cc = code_costs_by_draw(bills, purchases, cust_info["id"],
                                  draw_periods, account_names=account_names)
         _yards = load_cp_concrete_yards(proj)
@@ -5582,7 +5589,7 @@ def generate_project_pnl(
         _dcols = [(l, f"{_dnames.get(l, l)}\n"
                       f"{_s.strftime('%m/%d/%y')}–{_e.strftime('%m/%d/%y')}")
                   for l, _s, _e in draw_periods]
-        for _kind in ("Labor", "Concrete"):
+        for _kind in ("Labor", "Concrete") if _bud else ():
             _nm = build_sheet_labor_concrete(
                 wb, _kind, proj, cust_info, wip_info, _bud, _cc,
                 _dcols, as_of, yards=_yards,
