@@ -509,3 +509,46 @@ def build_model(week: Optional[List[Tuple[dt.date, Path]]] = None,
     dates = [d for d, _ in week]
     ordered = sorted(jobs.values(), key=lambda j: (-len(j["days"]), j["address"]))
     return {"dates": dates, "jobs": ordered}
+
+# ── choosing WHICH schedule file to read ────────────────────────────
+_SCHED_NAME_RE = re.compile(r"Schedule (\d{1,2})-(\d{1,2})-(\d{2})\.xlsx$",
+                            re.IGNORECASE)
+
+
+def all_schedule_files(sched_dir: Path = None):
+    """[(date, path)] for every 'Schedule M-D-YY.xlsx', oldest → newest."""
+    root = Path(sched_dir or SCHEDULE_DIR)
+    out = []
+    if not root.exists():
+        return out
+    for year_dir in root.iterdir():
+        if not (year_dir.is_dir() and year_dir.name.isdigit()):
+            continue
+        for month_dir in year_dir.iterdir():
+            if not month_dir.is_dir():
+                continue
+            for f in month_dir.iterdir():
+                m = _SCHED_NAME_RE.search(f.name)
+                if m:
+                    mo, dy, yy = (int(g) for g in m.groups())
+                    try:
+                        out.append((dt.date(2000 + yy, mo, dy), f))
+                    except ValueError:
+                        pass
+    return sorted(out)
+
+
+def schedule_on_or_before(as_of: Optional[dt.date] = None,
+                          sched_dir: Path = None):
+    """The newest schedule file dated ON OR BEFORE `as_of` (default: today).
+
+    NEVER returns a FUTURE-dated file. The team pre-loads tomorrow's board, so
+    a plain "highest filename wins" pick silently jumps to tomorrow the moment
+    that file lands — which is how a 7-29 run started reading 7-30 and would
+    have written tomorrow's dates into JobTread (the user 2026-07-29).
+
+    Returns (date, path) or None.
+    """
+    cap = as_of or dt.date.today()
+    files = [(d, p) for d, p in all_schedule_files(sched_dir) if d <= cap]
+    return files[-1] if files else None

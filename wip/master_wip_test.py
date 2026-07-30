@@ -61,9 +61,10 @@ def master_cols():
     the table's filters — the user 2026-07-15), then TYPE after the name.
     APPROVED COs kept (the user 2026-07-16): project-pnl reads Test-Master
     for Contract/ETC/COs/STATUS — original contract = total − COs.
-    PROJECT FOLDER / DATA SOURCE dropped (the user 2026-07-29): no Synology
-    links on the report — the only links are QBO on Billed/Costs."""
-    drop = {"retainage_held", "notes_text", "_folder_link", "_source_link"}
+    PROJECT FOLDER / DATA SOURCE are gone from CP.COLS itself (the user
+    2026-07-29): no file links anywhere — the only links are QBO on
+    Billed/Costs."""
+    drop = {"retainage_held", "notes_text"}
     cols = [("SECTION", 15, "section")]
     for label, width, field in CP.COLS:
         if field in drop:
@@ -205,6 +206,13 @@ def main() -> int:
     print(f"  MFD from '{MASTER_SHEET}': {len(mfd_rows)} job(s)")
 
     # ── CP (live folder scan, ACTIVE only — the unified sheet is a WIP) ──
+    if not CP.CP_ACTIVE_DIR.exists():
+        # Tripwire (2026-07-29): an unmounted Synology once produced a WIP
+        # with ZERO CP lines — a gutted report is worse than no report.
+        print(f"  ✗ CP root unreachable: {CP.CP_ACTIVE_DIR}\n"
+              f"    (Synology unmounted?) Refusing to write a WIP report "
+              f"without its CP section — reconnect the volume and re-run.")
+        return 4
     cp_rows = CP.scan_cp_folders(CP.CP_ACTIVE_DIR, is_completed=False)
     print(f"  CP active folders: {len(cp_rows)} project(s)")
 
@@ -344,6 +352,24 @@ def main() -> int:
     if not args.dry_run and wrote:
         print(f"  ✓ Wrote {total} line(s) to 'Test-Master'")
         _drop_stale_test_tab()
+
+    # With --rp-from-file, 'Test - RP' becomes the SAME rows in the SAME
+    # master layout (the user 2026-07-29: revised contract/ETC consistent
+    # across the board) — one RP truth, two views.
+    if args.rp_from_file:
+        rp_view = [r for r in all_rows if r.section not in ("MFD", "CP")]
+        try:
+            wrote_rp = CP.write_test_cp(
+                rp_view, CP.WIP_EXCEL_PATH,
+                dry_run=args.dry_run, tab_name="Test - RP",
+                cols=master_cols(), default_filter_active=True,
+                title=f"RP WIP REPORT as of {dt.date.today():%B %d, %Y}",
+                summary=True, qbo_links_only=True)
+            if not args.dry_run and wrote_rp:
+                print(f"  ✓ Wrote {len(rp_view)} RP line(s) to 'Test - RP'")
+        except CP.WipWriteDenied as e:
+            print(f"  ✗ Guard blocked the 'Test - RP' write: {e}")
+            return 2
     return 0
 
 

@@ -144,10 +144,12 @@ RP v2 (2026-07-13): the General List is the RP source — each RP job auto-split
 RP section with the owner's verified RP WIP workbook (sections from its band rows,
 duplicates deduped, CP lines excluded); billed/costs still refresh from QBO per line.
 Test tabs are styled to match the real 'WIP Master' sheet (Tahoma 8, no-cents
-currency). The master tab is written `qbo_links_only`: NO file/Synology links — the
-only hyperlinks are the QBO deep links on Billed (customer page) and Costs (project
-P&L report), helpers in `shared/qbo_api.py`. Division tabs keep the full link set;
-rows whose numbers don't reconcile render red (`needs_review`).
+currency). `qbo_links_only` is the DEFAULT for every tab (2026-07-29): NO
+file/Synology links anywhere — the only hyperlinks are the QBO deep links on Billed
+(customer page) and Costs (project P&L report), helpers in `shared/qbo_api.py`.
+`--rp-from-file` also rewrites 'Test - RP' with the same RP rows in the master
+layout (revised contract/ETC across the board); rows whose numbers don't reconcile
+render red (`needs_review`).
 
 ---
 

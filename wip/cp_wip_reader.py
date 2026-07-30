@@ -1031,11 +1031,9 @@ COLS = [
     # ── Identifiers ──
     ("PROJECT #",                                       12, "project_num"),
     ("PROJECT NAME",                                    30, "project_name"),
-    # Link columns (the user 2026-07-16): the # and name cells are PLAIN so
-    # they can be selected/copied without Excel following a link — the
-    # folder + data-source links live in their own two columns instead.
-    ("PROJECT FOLDER",                                  12, "_folder_link"),
-    ("DATA SOURCE",                                     11, "_source_link"),
+    # PROJECT FOLDER / DATA SOURCE link columns REMOVED (the user 2026-07-29:
+    # file hyperlinks weigh the workbook down — the only links anywhere are
+    # the QBO deep links on Billed/Costs).
     ("STATUS",                                          10, "_active_status"),
     # ── Inputs (yellow) — the 4 core WIP inputs, matching the team sheet ──
     ("TOTAL CONTRACT PRICE",                            16, "contract_price"),   # Original + COs
@@ -1256,7 +1254,7 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                   default_filter_active: bool = False,
                   title: Optional[str] = None,
                   summary: bool = False,
-                  qbo_links_only: bool = False) -> bool:
+                  qbo_links_only: bool = True) -> bool:
     """Write rows to the given WIP tab (default 'Test - CP'; RP passes
     'Test - RP'). Same structure/formatting for every division. Guarded by
     wip_excel_guard. Returns True if written, False if skipped (dry-run, or the
@@ -1274,9 +1272,11 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
     row under the table (live SUBTOTALs — they follow the table filter) plus
     the FUTURE WIP CASH FLOW block derived from it.
 
-    `qbo_links_only` (the user 2026-07-29): suppress every file:// hyperlink
-    (Synology folders, takeoffs, draws, source workbooks, WHY) — the only
-    links on the report are the QBO deep links on the Billed/Costs cells."""
+    `qbo_links_only` (the user 2026-07-29, now the DEFAULT — file hyperlinks
+    weigh the workbook down): suppress every file:// hyperlink (Synology
+    folders, takeoffs, draws, source workbooks, WHY) — the only links on the
+    report are the QBO deep links on the Billed/Costs cells. Pass False to
+    restore the full click-to-verify link set."""
     assert_write_allowed(tab_name)  # tripwire before we even open the workbook
     cols_ = cols or COLS
 

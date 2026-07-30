@@ -20,11 +20,17 @@ Last updated: 2026-07-29
 - **Test tabs match the real 'WIP Master' formatting** (2026-07-29): Tahoma 8
   everywhere (headers, data, TOTALS, cash-flow), master currency format
   `"$"#,##0_);[Red]("$"#,##0)` (no cents), `0.00%` percents.
-- **Master tab links: QBO-only** (2026-07-29): `write_test_cp(qbo_links_only=True)`
-  suppresses every file:// link (Synology folders/takeoffs/draws/source/WHY);
-  PROJECT FOLDER + DATA SOURCE columns dropped from the master layout. The only
-  hyperlinks on the report are Billed → QBO customer page and Costs → QBO
-  project P&L. Division tabs (Test - CP / Test - RP) keep the full link set.
+- **QBO-only links are now the DEFAULT everywhere** (2026-07-29 pm, the user:
+  file hyperlinks weigh the workbook down): `write_test_cp(qbo_links_only=True)`
+  is the default; PROJECT FOLDER + DATA SOURCE columns removed from CP.COLS
+  itself. The only hyperlinks on any test tab are Billed → QBO customer page
+  and Costs → QBO project P&L. Pass `qbo_links_only=False` to restore the
+  full click-to-verify link set.
+- **'Test - RP' = the RP rows of Test-Master, same layout** (2026-07-29 pm):
+  with `--rp-from-file`, master_wip_test also writes the RP rows to
+  'Test - RP' in the master column set — revised TOTAL CONTRACT PRICE
+  (contract + COs) and ESTIMATED TOTAL COSTS on every row, consistent across
+  the board. Supersedes the rp_wip_simple layout on that tab.
 
 - **Test-Master is the deliverable WIP report** (2026-07-16): "WIP REPORT as of
   <date>" banner, rows 1–2 reserved as logo space (embedded images survive every

@@ -28,6 +28,7 @@ Usage
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import os
 import re
 import sys
@@ -43,6 +44,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, Side
 
 from shared import qbo_vault, qbo_api
+from shared import schedule as SCHED
 import rp_wip_reader as RP
 import rp_schedule_wip_preview as P
 import rp_jobtread_coverage as C   # pave(), ORG_ID
@@ -138,6 +140,7 @@ def _add_sheet(wb, title, subtitle, header, rows, widths, money_cols=()):
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--as-of", help="treat this date as today (YYYY-MM-DD); never reads a schedule dated after it")
     ap.add_argument("--schedule", help="schedule xlsx (default: latest)")
     ap.add_argument("--idle-days", type=int, default=90,
                     help="days since last invoice to count as idle (default 90)")
@@ -153,7 +156,9 @@ def main() -> int:
     if args.schedule:
         sched_path = Path(args.schedule)
     else:
-        best = P.latest_schedule(RP.SCHEDULE_DIR)
+        _cap = (dt.date.fromisoformat(args.as_of) if getattr(args, 'as_of', None)
+                else None)
+        best = SCHED.schedule_on_or_before(_cap)
         if best is None:
             print("  ✗ no schedule file found")
             return 1
