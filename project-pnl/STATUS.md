@@ -31,7 +31,14 @@ manual close), RP (no draws — expenses → invoice → profit).
   FILE, not the QBO bill page (the user 2026-07-31): QBO's attachment URLs
   expire in minutes, so the exporter downloads each scan into `attachments/`
   beside the workbook and links the local copy (offline, no QBO login);
-  bills with no attachment keep the QBO bill link. Downloads are idempotent.
+  bills with no attachment keep the QBO https link. Downloads are idempotent.
+  **The attachment link is a runtime `=HYPERLINK()` formula, not a stored
+  target** (the user 2026-07-31): a stored file link gets rewritten by
+  whichever platform saves next — the repo's old file:// wound — while
+  `CELL("filename")` rebuilds the path at click time as the opening machine
+  sees it (`/Volumes/…` Mac, `\\server\…` Windows), so ONE link serves both.
+  Requires opening the workbook from the share (an emailed copy has no
+  attachments/ beside it). Multi-scan bills link the folder, "(N files)".
   The company-wide Attachable sweep (~10 min) is cached for 7 days in
   ~/Library/Logs/Proficient/project-pnl/ — attachments uploaded since the
   cache was built appear after the TTL, or delete the cache file to re-sweep.
