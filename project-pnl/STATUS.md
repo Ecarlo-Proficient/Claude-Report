@@ -27,7 +27,15 @@ manual close), RP (no draws — expenses → invoice → profit).
   rate and flagged).
   **LEDGER** (below, fully expanded, nothing collapsed): QBO # (linked,
   the user's identifier) · DATE · VENDOR · DESCRIPTION · QTY · RATE ·
-  AMOUNT · [SALES TAX] · DRAW label. A bill lands in exactly one draw, so a
+  AMOUNT · [SALES TAX] · DRAW label. The QBO # link opens the UPLOADED BILL
+  FILE, not the QBO bill page (the user 2026-07-31): QBO's attachment URLs
+  expire in minutes, so the exporter downloads each scan into `attachments/`
+  beside the workbook and links the local copy (offline, no QBO login);
+  bills with no attachment keep the QBO bill link. Downloads are idempotent.
+  The company-wide Attachable sweep (~10 min) is cached for 7 days in
+  ~/Library/Logs/Proficient/project-pnl/ — attachments uploaded since the
+  cache was built appear after the TTL, or delete the cache file to re-sweep.
+  Downloads always fetch a fresh TempDownloadUri per file (one GET each). A bill lands in exactly one draw, so a
   label column replaces the per-draw matrix that guaranteed blank cells on
   every bill row. Tax folds onto the bill row it came from (joined by bill
   #). Tax/fuel columns appear ONLY on a trade that has such lines — labor

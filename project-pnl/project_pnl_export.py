@@ -59,9 +59,11 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import json
 import os
 import re
 import sys
+import time
 import warnings
 
 # RP takeoffs carry INDIRECT() print areas openpyxl can't keep — harmless
@@ -3917,6 +3919,7 @@ def build_sheet_labor_concrete(
     draw_cols: List[Tuple[str, str]], as_of: str,
     yards: Tuple[float, Dict[str, float], str] = (0.0, {}, ""),
     budget_source: str = "", realm: str = "",
+    att_links: Optional[Dict[str, str]] = None,
 ) -> Optional[str]:
     """LABOR / CONCRETE — TWO blocks at different altitudes (the user
     2026-07-29: 'the metrics are a top-level data point'; one grid trying to be
@@ -4144,7 +4147,8 @@ def build_sheet_labor_concrete(
     # ───────────────────────── LEDGER ─────────────────────────
     lh = ws.cell(row=r, column=1, value=(
         "LEDGER — every bill; the DRAW column says which draw window the bill "
-        "date fell in"))
+        "date fell in. QBO # opens the uploaded bill file (attachments/ beside "
+        "this workbook) when one is attached; otherwise the QBO bill page."))
     lh.font = Font(bold=True, size=SZ, color="1F3A5F")
     r += 1
     led_heads = [("QBO #", L_QBO), ("DATE", L_DATE), ("VENDOR", L_VEND),
@@ -4192,7 +4196,10 @@ def build_sheet_labor_concrete(
         ws.row_dimensions[r].height = ROW_H
         r += 1
         for ln in merged:
-            url = _qbo_txn_url(ln["tx_type"], ln["txn_id"], realm)
+            # The uploaded bill file when QBO has one (the user 2026-07-31 —
+            # "just want the straight attachment"); the QBO bill page otherwise.
+            url = ((att_links or {}).get(ln["txn_id"])
+                   or _qbo_txn_url(ln["tx_type"], ln["txn_id"], realm))
             idc = ws.cell(row=r, column=L_QBO,
                           value=ln["doc"] or ln["txn_id"] or "(no #)")
             if url:
@@ -4708,6 +4715,123 @@ def build_sheet_pos(
             italic=True, size=BASE_SIZE - 1, color="808080")
         r += 1
     _setup_print(ws, 8)
+
+
+_FNAME_SAFE_RE = re.compile(r"[^A-Za-z0-9._ -]+")
+_attachable_index_cache: Optional[Dict[Tuple[str, str], List[dict]]] = None
+# The Attachable sweep walks EVERY scan AP ever uploaded (~10 min of paging),
+# so the index persists to disk for a week (logs dir per the repo rule — never
+# inside the repo). TempDownloadUri expires in minutes and is NOT cached; a
+# download re-reads its attachable by id for a fresh link. Attachments
+# uploaded since the cache was built are invisible until it expires — delete
+# the file (or wait out the TTL) to pick them up sooner.
+_ATT_CACHE_TTL_S = 7 * 24 * 3600
+
+
+def _att_cache_file(company_id: str) -> Path:
+    d = Path.home() / "Library/Logs/Proficient/project-pnl"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / f"attachable_index_{company_id}.json"
+
+
+def _load_attachable_index(access: str, company_id: str
+                           ) -> Dict[Tuple[str, str], List[dict]]:
+    """(entity type, txn id) → [attachable {Id, FileName}] — from the disk
+    cache when fresh, else a full sweep (then cached)."""
+    global _attachable_index_cache
+    if _attachable_index_cache is not None:
+        return _attachable_index_cache
+    cache = _att_cache_file(company_id)
+    try:
+        if cache.exists() and time.time() - cache.stat().st_mtime < _ATT_CACHE_TTL_S:
+            raw = json.loads(cache.read_text())
+            by_key: Dict[Tuple[str, str], List[dict]] = {}
+            for item in raw["items"]:
+                for etype, evalue in item["refs"]:
+                    by_key.setdefault((etype, evalue), []).append(
+                        {"Id": item["id"], "FileName": item["file"]})
+            _attachable_index_cache = by_key
+            ui_event(f"attachment index: cached "
+                     f"({dt.datetime.fromtimestamp(cache.stat().st_mtime):%m/%d %H:%M}"
+                     f", {len(raw['items'])} files) — delete the cache file to re-sweep",
+                     icon="·")
+            return by_key
+    except Exception:
+        pass                                   # unreadable cache → re-sweep
+    by_key = {}
+    items = []
+    for a in query_all(access, company_id, "Attachable"):
+        if not a.get("FileName"):
+            continue                           # a bare note, not a file
+        refs = [((r.get("EntityRef") or {}).get("type"),
+                 (r.get("EntityRef") or {}).get("value"))
+                for r in a.get("AttachableRef") or []]
+        refs = [x for x in refs if x[0] and x[1]]
+        if not refs:
+            continue
+        items.append({"id": a["Id"], "file": a["FileName"], "refs": refs})
+        for key in refs:
+            by_key.setdefault(key, []).append(
+                {"Id": a["Id"], "FileName": a["FileName"]})
+    try:
+        cache.write_text(json.dumps({"fetched": dt.datetime.now().isoformat(),
+                                     "items": items}))
+    except OSError:
+        pass
+    _attachable_index_cache = by_key
+    return by_key
+
+
+def fetch_txn_attachments(access: str, company_id: str,
+                          txns: List[Tuple[str, str, str]],
+                          dest: Path) -> Dict[str, str]:
+    """Download each transaction's QBO ATTACHMENT (the uploaded bill scan) into
+    `dest` and return {txn_id: relative link}. The user 2026-07-31: the ledger
+    link should open the uploaded file itself, not the QBO bill page — but QBO
+    only serves attachments through TempDownloadUri links that EXPIRE in
+    minutes, so a workbook can't link them directly. We pull the file at
+    export time instead; the cell links the local copy (works offline, no QBO
+    login), and bills with no attachment keep the QBO bill link.
+
+    txns: (txn_id, tx_type 'Bill'/'Expense', doc#). Idempotent — a file whose
+    name is already in dest is not re-downloaded. The company-wide Attachable
+    sweep (every scan AP ever uploaded) is paged and slow, so it runs ONCE per
+    process and is reused across a batch run's projects."""
+    try:
+        by_key = _load_attachable_index(access, company_id)
+    except Exception as e:
+        ui_warn(f"attachment sweep failed ({e}) — ledger keeps QBO bill links")
+        return {}
+    out: Dict[str, str] = {}
+    n_dl = 0
+    for txn_id, tx_type, doc in txns:
+        etype = "Purchase" if tx_type == "Expense" else "Bill"
+        for a in by_key.get((etype, txn_id), []):
+            fname = _FNAME_SAFE_RE.sub("_", a["FileName"]).strip() or "attachment"
+            prefix = _FNAME_SAFE_RE.sub("_", str(doc or txn_id)).strip()
+            name = f"{prefix}_{fname}" if not fname.startswith(prefix) else fname
+            path = dest / name
+            if not path.exists():
+                # TempDownloadUri expires in minutes — always fetch a fresh
+                # one by re-reading the attachable (one cheap GET per file).
+                try:
+                    fresh = _api_get(f"/v3/company/{company_id}/attachable/"
+                                     f"{a['Id']}", access)
+                    uri = (fresh.get("Attachable") or {}).get("TempDownloadUri")
+                    if not uri:
+                        continue
+                    resp = requests.get(uri, timeout=60)
+                    resp.raise_for_status()
+                    dest.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(resp.content)
+                    n_dl += 1
+                except Exception:
+                    continue               # this one keeps its QBO bill link
+            out.setdefault(txn_id, f"{dest.name}/{name}")
+    if out:
+        ui_event(f"bill attachments: {len(out)} transaction(s) linked to the "
+                 f"uploaded file ({n_dl} newly downloaded) → {dest.name}/")
+    return out
 
 
 def _qbo_txn_url(tx_type: str, txn_id: str, realm: str) -> Optional[str]:
@@ -5612,11 +5736,22 @@ def generate_project_pnl(
         _dcols = [(l, f"{_dnames.get(l, l)}\n"
                       f"{_s.strftime('%m/%d/%y')}–{_e.strftime('%m/%d/%y')}")
                   for l, _s, _e in draw_periods]
+        _atts: Dict[str, str] = {}
+        if _bud and not dry_run:
+            _seen = set()
+            _txns = []
+            for _g in _cc.values():
+                for _l in _g["lines"]:
+                    if _l["txn_id"] and _l["txn_id"] not in _seen:
+                        _seen.add(_l["txn_id"])
+                        _txns.append((_l["txn_id"], _l["tx_type"], _l["doc"]))
+            _atts = fetch_txn_attachments(access, company_id, _txns,
+                                          proj_dir / "attachments")
         for _kind in ("Labor", "Concrete") if _bud else ():
             _nm = build_sheet_labor_concrete(
                 wb, _kind, proj, cust_info, wip_info, _bud, _cc,
                 _dcols, as_of, yards=_yards,
-                budget_source=_bud_src, realm=company_id)
+                budget_source=_bud_src, realm=company_id, att_links=_atts)
             if _nm:
                 _n = _FOCUS_NUM[_kind]
                 _b = sum(v for k, v in _bud.items() if _split_code(k)[1] == _n)
