@@ -3460,19 +3460,19 @@ _AUX_XLSX_RE = re.compile(r"cost\s*code|explanation", re.IGNORECASE)
 _WIP_TAG_RE = re.compile(r"\bwip\b", re.IGNORECASE)
 
 
-def _find_cp_takeoffs(proj: str) -> List[Path]:
-    roots = [_CP_ACTIVE_DIR, _CP_ACTIVE_DIR / "Completed Projects"]
-    folder = None
-    for root in roots:
+def _find_cp_folder(proj: str) -> Optional[Path]:
+    for root in (_CP_ACTIVE_DIR, _CP_ACTIVE_DIR / "Completed Projects"):
         try:
             for d in sorted(root.iterdir()):
                 if d.is_dir() and d.name.upper().startswith(proj.upper()):
-                    folder = d
-                    break
+                    return d
         except OSError:
             continue
-        if folder:
-            break
+    return None
+
+
+def _find_cp_takeoffs(proj: str) -> List[Path]:
+    folder = _find_cp_folder(proj)
     if not folder:
         return []
     xl = [f for f in folder.iterdir()
@@ -3497,33 +3497,38 @@ def _read_cost_code_sheet(path: Path, sheet_hint: str) -> Dict[str, float]:
         wb = openpyxl.load_workbook(str(path), read_only=True, data_only=True)
     except Exception:
         return out
-    target = None
-    for nm in wb.sheetnames:
-        if sheet_hint in nm.strip().lower():
-            target = nm
+    # Several sheets can carry the hint ('Cost Codes V2' + the old descriptive
+    # 'Cost Codes' in one workbook — CP831). V2 first, then first sheet that
+    # actually yields codes wins; a descriptive sheet yields nothing and falls
+    # through (the user 2026-07-31).
+    matches = [nm for nm in wb.sheetnames if sheet_hint in nm.strip().lower()]
+    matches.sort(key=lambda nm: (0 if "v2" in nm.lower() else 1))
+    for target in matches:
+        ws = wb[target]
+        for row_vals in ws.iter_rows(min_row=2, max_col=3, values_only=True):
+            code = str(row_vals[0] or "").strip().upper()
+            if not code or not _is_cost_code(code):
+                break                    # data ends (blank / total row)
+            v = row_vals[2]
+            try:
+                amt = float(v)
+            except (TypeError, ValueError):
+                continue                 # stale formula cache → skip, no guess
+            if abs(amt) > 0.005:
+                out[code] = out.get(code, 0.0) + round(amt, 2)
+        if out:
             break
-    if not target:
-        wb.close()
-        return out
-    ws = wb[target]
-    for row_vals in ws.iter_rows(min_row=2, max_col=3, values_only=True):
-        code = str(row_vals[0] or "").strip().upper()
-        if not code or not _is_cost_code(code):
-            break                        # data ends (blank / total row)
-        v = row_vals[2]
-        try:
-            amt = float(v)
-        except (TypeError, ValueError):
-            continue                     # stale formula cache → skip, no guess
-        if abs(amt) > 0.005:
-            out[code] = out.get(code, 0.0) + round(amt, 2)
     wb.close()
     return out
 
 
 def load_cp_budget(proj: str) -> Tuple[Dict[str, float], str]:
-    """CP budget by cost code from the takeoff 'Cost Code(s)' sheet.
-    Returns ({code: $}, source-note); empty dict when no takeoff/sheet."""
+    """CP budget by cost code. Two homes (the user 2026-07-31):
+      1. the takeoff's 'Cost Code(s)' sheet (col A = code, col C = $), else
+      2. a 'Cost Codes*.xlsx' in the project folder ROOT — the newer takeoffs
+         keep the coded budget there on a 'Cost Codes V2' sheet, and the
+         takeoff's own 'Cost Codes' sheet is descriptive (no codes).
+    Returns ({code: $}, source-note); empty dict when neither exists."""
     budget: Dict[str, float] = {}
     names = []
     for tk in _find_cp_takeoffs(proj):
@@ -3532,6 +3537,24 @@ def load_cp_budget(proj: str) -> Tuple[Dict[str, float], str]:
             names.append(tk.name)
             for k, v in part.items():
                 budget[k] = budget.get(k, 0.0) + v
+    if not budget:
+        folder = _find_cp_folder(proj)
+        if folder is not None:
+            try:
+                cc_books = sorted(
+                    f for f in folder.iterdir()
+                    if f.is_file() and f.suffix.lower() in (".xlsx", ".xlsm")
+                    and not f.name.startswith("~$")
+                    and re.match(r"cost\s*codes?", f.name, re.IGNORECASE))
+            except OSError:
+                cc_books = []
+            for f in cc_books:
+                part = _read_cost_code_sheet(f, "cost code")
+                if part:
+                    names.append(f.name)
+                    for k, v in part.items():
+                        budget[k] = budget.get(k, 0.0) + v
+                    break                # one budget book per job — don't sum copies
     return budget, " + ".join(names)
 
 

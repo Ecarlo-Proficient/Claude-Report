@@ -57,13 +57,16 @@ manual close), RP (no draws — expenses → invoice → profit).
 
 ## OPEN ISSUES
 
-- **Only 3 of 17 Active CP jobs have a readable cost-code budget** (CP585,
-  CP672, CP745). Of the rest: 9 use a descriptive `Cost Codes` sheet
-  (`DRILLED PIERS / Concrete / Rebar / Labor` down col A — no SL#/PV# codes,
-  so nothing joins to QBO), 4 have no cost-code sheet at all, 1 (CP865) has no
-  folder under the awarded-projects root. Blocked on a decision: teach the
-  reader the second template, or have the estimators convert those jobs.
-  CP910 carries its codes on a `COST QB` sheet — possible lead.
+- **6 of 17 Active CP jobs now have a readable cost-code budget.** The newer
+  jobs keep the coded budget in a ROOT `Cost Codes.xlsx` on a `Cost Codes V2`
+  sheet (same col A = code / col C = $ layout) — the reader learned that as a
+  fallback 2026-07-31 (the takeoff's own sheet still wins when coded). Reads
+  now: CP585, CP672, CP745 (takeoff) + CP785, CP831, CP961 (root workbook).
+  **11 still have NO `Cost Codes.xlsx` in their folder root** — per the user
+  every job should have one, so this is a work-list for the estimators:
+  CP765, CP783, CP790, CP794, CP800, CP803, CP821, CP861, CP885, CP910,
+  CP961→done, CP865 (no folder at all). The moment the file lands in a
+  folder, the P&L picks it up with no code change.
 - **Two CP745 budget-gap findings** — (a) the labor budget imported into QBO
   runs short of the takeoff's Labor Report (bollards + the dumpster beam never
   made it into the cost codes); (b) the implied concrete $/yd from cost codes
