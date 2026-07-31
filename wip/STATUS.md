@@ -51,6 +51,16 @@ Last updated: 2026-07-29
   text; folder + data-source links moved to their own PROJECT FOLDER /
   DATA SOURCE columns. OVERBILLINGS/UNDERBILLINGS headers shortened to fit.
   FLAGS states the classify reason on red rows (never "OK" on red).
+- **Excel 'repair on open' — THIRD cause found & fixed: stale sheet AutoFilter**
+  (2026-07-31): a worksheet-level `<autoFilter>` cannot coexist with the Table's
+  own filter — Excel calls the workbook damaged. 'Test - RP' still carried
+  `A2:L69` from the old 12-column rp_wip_simple layout; the cell wipe in
+  `write_test_cp` never reset it, and openpyxl re-derived the hidden
+  `_xlnm._FilterDatabase` defined name from it on every save. Fix:
+  `ws.auto_filter.ref = None` before the write (kills both), plus a `_qc_check`
+  tripwire that fails loudly if the two ever coexist again. Verified on the
+  saved file: no sheet AutoFilter, no `_FilterDatabase`, table headers match
+  their tableColumn names, no merge overlaps, no rich text (inline strings).
 - **Excel 'repair on open' eliminated — no rich text, clean links** (2026-07-21):
   two causes, both fixed & verified by opening in Mac Excel (no dialog, no
   'Repaired' title). (1) Hyperlink sheet-jumps (`'Small Jobs'!C7`) were

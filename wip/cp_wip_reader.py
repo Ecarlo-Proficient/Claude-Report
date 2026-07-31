@@ -1317,6 +1317,14 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
         ws = wb[tab_name]
         assert_write_allowed(ws.title)  # belt + suspenders
 
+        # A SHEET-level AutoFilter cannot coexist with the Table's own filter:
+        # Excel calls the workbook damaged ("We found a problem with some
+        # content…") and repairs it on open. A previous tool's filter survives
+        # the cell wipe — 'Test - RP' still carried A2:L69 from the old
+        # 12-column layout (2026-07-31). Clearing the ref also drops the
+        # hidden _xlnm._FilterDatabase defined name openpyxl derives from it.
+        ws.auto_filter.ref = None
+
         # PRESERVE USER CELL COMMENTS across the full-replace (the user
         # 2026-07-16: review notes typed on cells — e.g. "add the missing
         # $5k" on a contract price — must survive every sync). Harvest them
@@ -1636,8 +1644,15 @@ def _qc_check(wip_path: Path, tab_name: str, expected_rows: int,
             ref = list(ws.tables.values())[0].ref            # e.g. A1:U130
             tbl_end = int(re.findall(r"(\d+)$", ref)[0])
             tbl_ok = tbl_end >= last_data
+        # Excel "repair on open" tripwire (2026-07-31): a sheet-level
+        # AutoFilter alongside the Table's own filter makes Excel declare the
+        # workbook damaged. Loud here beats a repair dialog on the user's desk.
+        sheet_filter = ws.auto_filter.ref if ws.tables else None
         wb.close()
         probs = []
+        if sheet_filter:
+            probs.append(f"sheet AutoFilter {sheet_filter} coexists with the "
+                         f"table filter — Excel will demand a repair")
         if n != expected_rows:
             probs.append(f"rows {n} ≠ expected {expected_rows}")
         if active_only and vis_closed:
