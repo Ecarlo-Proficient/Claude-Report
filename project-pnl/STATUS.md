@@ -42,8 +42,11 @@ manual close), RP (no draws — expenses → invoice → profit).
   by saving in Excel and re-reading the sheet rels). Windows resolves the
   same relative target against the share path it opened from — pending one
   estimator click test. Requires opening the workbook from the share (an
-  emailed copy has no attachments/ beside it). Multi-scan bills link the
-  folder, "(N files)".
+  emailed copy has no attachments/ beside it). Multi-scan bills download
+  into their OWN `attachments/<bill #>/` subfolder and the "(N files)" cell
+  opens that folder — not the whole attachments library (the user
+  2026-07-31); single scans stay flat and open directly. Legacy flat files
+  are moved into the subfolder on the next run, not re-downloaded.
   The company-wide Attachable sweep (~10 min) is cached for 7 days in
   ~/Library/Logs/Proficient/project-pnl/ — attachments uploaded since the
   cache was built appear after the TTL, or delete the cache file to re-sweep.

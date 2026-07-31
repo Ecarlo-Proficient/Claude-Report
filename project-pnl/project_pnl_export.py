@@ -4148,8 +4148,8 @@ def build_sheet_labor_concrete(
     lh = ws.cell(row=r, column=1, value=(
         "LEDGER — every bill; the DRAW column says which draw window the bill "
         "date fell in. QBO # opens the uploaded bill file (attachments/ beside "
-        "this workbook); '(N files)' opens the folder — the bill's scans share "
-        "its number prefix. No attachment → the QBO bill page."))
+        "this workbook); '(N files)' opens that bill's own scan folder. "
+        "No attachment → the QBO bill page."))
     lh.font = Font(bold=True, size=SZ, color="1F3A5F")
     r += 1
     led_heads = [("QBO #", L_QBO), ("DATE", L_DATE), ("VENDOR", L_VEND),
@@ -4819,36 +4819,49 @@ def fetch_txn_attachments(access: str, company_id: str,
     n_dl = 0
     for txn_id, tx_type, doc in txns:
         etype = "Purchase" if tx_type == "Expense" else "Bill"
+        attachables = by_key.get((etype, txn_id), [])
+        multi = len(attachables) > 1
+        prefix = _FNAME_SAFE_RE.sub("_", str(doc or txn_id)).strip()
+        # A bill with SEVERAL scans gets its OWN subfolder (the user
+        # 2026-07-31 — the folder link must show that bill's files, not the
+        # whole attachments library); a single scan stays flat and the cell
+        # opens it directly.
+        tdir = dest / prefix if multi else dest
         got: List[str] = []
-        for a in by_key.get((etype, txn_id), []):
+        for a in attachables:
             fname = _FNAME_SAFE_RE.sub("_", a["FileName"]).strip() or "attachment"
-            prefix = _FNAME_SAFE_RE.sub("_", str(doc or txn_id)).strip()
-            name = f"{prefix}_{fname}" if not fname.startswith(prefix) else fname
-            path = dest / name
+            name = (fname if multi
+                    else (f"{prefix}_{fname}" if not fname.startswith(prefix)
+                          else fname))
+            path = tdir / name
             if not path.exists():
-                # TempDownloadUri expires in minutes — always fetch a fresh
-                # one by re-reading the attachable (one cheap GET per file).
-                try:
-                    fresh = _api_get(f"/v3/company/{company_id}/attachable/"
-                                     f"{a['Id']}", access)
-                    uri = (fresh.get("Attachable") or {}).get("TempDownloadUri")
-                    if not uri:
-                        continue
-                    resp = requests.get(uri, timeout=60)
-                    resp.raise_for_status()
-                    dest.mkdir(parents=True, exist_ok=True)
-                    path.write_bytes(resp.content)
-                    n_dl += 1
-                except Exception:
-                    continue               # this one keeps its QBO bill link
+                legacy = dest / (f"{prefix}_{fname}"
+                                 if not fname.startswith(prefix) else fname)
+                if multi and legacy.exists():
+                    # already downloaded flat by the earlier layout — move it
+                    tdir.mkdir(parents=True, exist_ok=True)
+                    legacy.rename(path)
+                else:
+                    # TempDownloadUri expires in minutes — always fetch a
+                    # fresh one by re-reading the attachable (one GET each).
+                    try:
+                        fresh = _api_get(f"/v3/company/{company_id}/attachable/"
+                                         f"{a['Id']}", access)
+                        uri = (fresh.get("Attachable") or {}).get("TempDownloadUri")
+                        if not uri:
+                            continue
+                        resp = requests.get(uri, timeout=60)
+                        resp.raise_for_status()
+                        tdir.mkdir(parents=True, exist_ok=True)
+                        path.write_bytes(resp.content)
+                        n_dl += 1
+                    except Exception:
+                        continue           # this one keeps its QBO bill link
             got.append(name)
         if got:
-            # One hyperlink per cell: a single scan links the FILE; several
-            # scans link the attachments FOLDER (they share the bill-number
-            # prefix, so they sit together) and the cell says how many
-            # (the user 2026-07-31).
             out[txn_id] = {
-                "link": (f"{dest.name}/{got[0]}" if len(got) == 1 else dest.name),
+                "link": (f"{dest.name}/{prefix}" if multi
+                         else f"{dest.name}/{got[0]}"),
                 "n": len(got)}
     if out:
         multi = sum(1 for v in out.values() if v["n"] > 1)
