@@ -119,55 +119,63 @@ def _sheet_subtotal(ws):
 
 
 def takeoff_etc(tk_path, scope):
-    """ETC from the takeoff's cost sheet — computed from the CODE ROWS, never
-    from the pier subtotal cell (the user + estimator 2026-07-29).
+    """ETC from the takeoff's cost sheet.
 
-    WHY NOT THE SUBTOTAL CELLS: the estimator's model is that the piers
-    subtotal (r18) is the FOUNDATION sub total — slab + piers combined, so a
-    slab with no piers just shows zeros and you read the slab line. That is
-    true in some takeoffs (RP7482: D18 = SUM(D10:D17) = slab + piers) but NOT
-    others (RP7470: D18 = SUM(D11:D17) = piers only). Reading r10 + r18 would
-    DOUBLE-COUNT the slab wherever the combined convention is used. And r10
-    itself sometimes carries a manual adder (RP7470: =SUM(D2:D9)+5370) that
-    must be kept. So:
+    THE RULE (the user 2026-07-30): **the PIERS line (row 18) IS the sub total.**
+    Read it — but ALWAYS verify by reading its FORMULA first, because the
+    template ships two conventions and they mean different things:
 
-        slab band     = the value of D10   (its own subtotal, adders included)
-        piers         = Σ of the PR CODE ROWS D11:D17   (convention-immune)
-        flatwork band = the value of D27
-        non-FTW ETC   = slab + piers        FTW ETC = flatwork
-        **FW IS NEVER ADDED TO A NON-FTW ETC**
+        D18 = SUM(D10:D17)  → range starts at the SLAB SUBTOTAL, so row 18 is
+                              the FOUNDATION total (slab + piers) → ETC = D18
+        D18 = SUM(D11:D17)  → range starts at PR1, so row 18 is piers ONLY
+                              → ETC = D10 + D18
 
-    If any PR code row is #N/A the pier cost is UNKNOWN — piers are excluded
-    and the row is flagged, rather than adding a partial figure.
-    (RP7518 → 90,947.46, which is the owner-confirmed true ETC.)
+    Taking row 18 without reading the formula double-counts the slab on every
+    takeoff using the first convention (verified: RP7482 combined,
+    RP7470 piers-only). If row 18 is #N/A the pier cost is unknown — fall back
+    to D10 + the numeric PR code rows and flag it.
+
+    D10 is read as a VALUE, never recomputed: it sometimes carries a manual
+    adder the estimator typed in (nuance cost with no cost code) that must be
+    kept. FW is NEVER added to a non-FTW ETC — flatwork is its own line.
 
     Returns (etc, notes, detail)."""
     from openpyxl import load_workbook as _lw
     try:
         wb = _lw(tk_path, data_only=True)
+        wbf = _lw(tk_path, data_only=False)
     except Exception:
         return None, ["takeoff unreadable"], {}
     try:
         sheet = next((n for n in wb.sheetnames if "cost gral" in n.lower()), None)
         if sheet is None:
             return None, ["no 'Cost Gral' sheet in the takeoff"], {}
-        ws = wb[sheet]
+        ws, wsf = wb[sheet], wbf[sheet]
         slab = ws["D10"].value
         flat = ws["D27"].value
+        sub18 = ws["D18"].value                 # the PIERS line = the sub total
+        f18 = str(wsf["D18"].value or "")       # ...verified by its formula
         pr_cells = [ws.cell(r, 4).value for r in range(11, 18)]
     finally:
         wb.close()
+        wbf.close()
 
     notes = []
     pr_na = [c for c in pr_cells if isinstance(c, str) and c.strip()]
-    piers = sum(c for c in pr_cells if isinstance(c, (int, float)))
+    piers_rows = sum(c for c in pr_cells if isinstance(c, (int, float)))
 
-    # Split the pier band into GENUINE pier work vs non-pier site work that
-    # merely LIVES on the Piers takeoff sheet (the user 2026-07-29).
-    # 'Tie wire', 'Scrape lot', 'Reset forms SQFT' are real slab-site costs
-    # filed on that sheet, so they ride along on the PR codes. They are REAL
-    # money — count them (option 3) — but flag the miscoding instead of
-    # burying it, and never let them read as pier work.
+    # Which convention is row 18 using? Read the formula, don't assume.
+    compact = f18.replace(" ", "").upper()
+    if "D10:D17" in compact:
+        conv = "combined"        # row 18 already includes the slab subtotal
+    elif "D11:D17" in compact:
+        conv = "piers-only"
+    else:
+        conv = "unknown"
+
+    # Split the pier band: genuine pier work vs non-pier site work that merely
+    # LIVES on the Piers takeoff sheet (tie wire / scrape lot / reset forms).
+    # Those are REAL costs — they stay counted; the split only drives flags.
     genuine = nonpier = 0.0
     try:
         wb2 = _lw(tk_path, data_only=True)
@@ -184,8 +192,10 @@ def takeoff_etc(tk_path, scope):
         wb2.close()
     except Exception:
         pass
-    detail = {"slab": slab, "piers": piers, "flat": flat, "pr_na": len(pr_na),
-              "pier_genuine": round(genuine, 2), "pier_nonpier": round(nonpier, 2)}
+    detail = {"slab": slab, "piers": piers_rows, "flat": flat,
+              "pr_na": len(pr_na), "sub18": sub18, "d18_formula": f18,
+              "convention": conv, "pier_genuine": round(genuine, 2),
+              "pier_nonpier": round(nonpier, 2)}
 
     if scope == "ftw":
         if not isinstance(flat, (int, float)):
@@ -194,15 +204,32 @@ def takeoff_etc(tk_path, scope):
 
     if not isinstance(slab, (int, float)):
         return None, ["⚠ slab subtotal is #N/A — fix the takeoff"], detail
-    etc = float(slab)
-    etc += piers                      # option 3 — count the real money
+
+    # Take the PIERS line as the sub total, per its verified formula.
+    if isinstance(sub18, (int, float)) and conv != "unknown":
+        etc = float(sub18) if conv == "combined" else float(slab) + float(sub18)
+        # cross-check against the code rows; disagreement means the range was
+        # edited or a cell was hand-typed
+        expect = float(slab) + piers_rows
+        if abs(etc - expect) > 1.0:
+            notes.append(f"⚠ row 18 ({conv}, {f18}) gives ${etc:,.0f} but the code "
+                         f"rows give ${expect:,.0f} — verify the takeoff")
+    else:
+        etc = float(slab) + piers_rows
+        if isinstance(sub18, str) and sub18.strip():
+            notes.append(f"⚠ piers sub total is {sub18} — used the code rows "
+                         f"instead (${piers_rows:,.0f} of piers counted)")
+        elif conv == "unknown" and f18:
+            notes.append(f"⚠ unrecognised piers sub-total formula {f18} — "
+                         "used the code rows instead")
+
     if pr_na:
         notes.append(f"⚠ {len(pr_na)} pier cost row(s) are #N/A — pier cost is "
-                     f"INCOMPLETE (${piers:,.0f} counted, rest unknown) — fix the takeoff")
+                     f"INCOMPLETE — fix the takeoff")
     if nonpier:
-        notes.append(f"note: ${nonpier:,.0f} of the pier band is NOT pier work "
+        notes.append(f"note: ${nonpier:,.0f} of the pier band is site work "
                      "(tie wire / scrape lot / reset forms live on the Piers "
-                     "takeoff sheet) — counted, but miscoded as PR")
+                     "takeoff sheet) — counted, as expected")
     return round(etc, 2), notes, detail
 
 
