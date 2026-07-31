@@ -53,6 +53,7 @@ _WHITE = Font(bold=True, color="FFFFFF")
 _THIN = Side(style="thin", color="D0D7E5")
 _BORDER = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
 TONE = {                                   # (band fill, value font color)
+    "be":  ("7030A0", "1C2430"),
     "in":  ("1F6B4C", "1F6B4C"),
     "out": ("C00000", "9C0006"),
     "pos": ("1F3864", "1C2430"),
@@ -291,7 +292,7 @@ def build_workbook(path: Path, sections, health, schedule=None, rp_rows=None) ->
         _section_to_sheet(s, sec, standalone=False)
 
     # one tab per section
-    for sec, tab in zip(sections, ("Money In", "Money Out", "Position")):
+    for sec, tab in zip(sections, ("Money In", "Money Out", "Position", "Break-Even")):
         _section_to_sheet(wb.create_sheet(tab), sec, standalone=True)
 
     _write_rp_billing_tab(wb, rp_rows or [])

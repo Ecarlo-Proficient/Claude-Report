@@ -39,6 +39,7 @@ from openpyxl import load_workbook
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from shared import paths
 from shared import schedule as sched
+from shared import breakeven as be
 
 CH = paths.companyhealth_dir()
 SRC = paths.companyhealth_sources_dir()      # data layer, out of the top level
@@ -447,7 +448,23 @@ def build_sections(cards, loc, mor, health, wip) -> list:
             ("Top-customer concentration", _pct(health.get("concentration")), str(health.get("top_customer") or ""), "a" if (_num(health.get("concentration")) or 0) > 0.25 else "n")],
         "bars": [],
     }
-    return [money_in, money_out, position]
+    sections = [money_in, money_out, position]
+    # Break-even: how much we must SELL and COLLECT to cover overhead
+    bx = be.build(HEALTH_PATH, as_of=gen, backlog=wip.get("left_to_bill", 0.0),
+                  ar=_num(ar) or 0.0, retainage=_num(retain) or 0.0)
+    if bx.get("ok"):
+        cov = bx["backlog_coverage_months"]
+        sections.append({
+            "title": "Break-Even — what we must sell & collect", "tone": "be",
+            "heroes": [("Break-even / month", _money(bx["breakeven_month"]), "n"),
+                       ("Break-even / week", _money(bx["breakeven_week"]), "n"),
+                       ("Backlog covers", f"{cov:.1f} mo",
+                        "g" if cov >= 3 else "a")],
+            "rows": be.rows_for_display(bx),
+            "bars": [],
+            "note": bx["caveat"],
+        })
+    return sections
 
 
 def _bars_html(bars) -> str:
@@ -479,6 +496,7 @@ def _section(sec) -> str:
       <h2>{html.escape(sec['title'])}</h2>
       <div class="heroes">{hero_html}</div>
       <table class="metrics"><tbody>{row_html}</tbody></table>
+      {f'<p class="hint">{html.escape(sec["note"])}</p>' if sec.get("note") else ""}
       {_bars_html(sec.get('bars', []))}
     </section>'''
 
@@ -580,6 +598,7 @@ def render(sections, health, sources, schedule=None) -> str:
   .sec.out {{ border-top-color:var(--red); }}
   .sec.pos {{ border-top-color:var(--navy); grid-column:1 / -1; }}
   .sec.sched {{ border-top-color:#305496; grid-column:1 / -1; }}
+  .sec.be {{ border-top-color:#7030A0; grid-column:1 / -1; }}
   .legend {{ margin-bottom:10px; }}
   .chip {{ display:inline-block; color:#fff; font-size:10.5px; font-weight:700;
     padding:2px 8px; border-radius:20px; margin:2px 3px 0 0; }}
