@@ -1164,8 +1164,9 @@ def _row_display_value(row: CpRow, field_name: str, sync_ts: str):
 
 def _find_header_row(ws) -> Optional[int]:
     """Locate the table header row (the one holding 'PROJECT #') in the first
-    few rows — row 1 on plain tabs, below the title banner on branded ones."""
-    for r in range(1, min(ws.max_row or 0, 10) + 1):
+    few rows — row 1 on plain tabs, below the title banner (and any legend
+    block) on branded ones."""
+    for r in range(1, min(ws.max_row or 0, 15) + 1):
         for c in range(1, (ws.max_column or 0) + 1):
             if ws.cell(r, c).value == "PROJECT #":
                 return r
@@ -1254,7 +1255,8 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                   default_filter_active: bool = False,
                   title: Optional[str] = None,
                   summary: bool = False,
-                  qbo_links_only: bool = True) -> bool:
+                  qbo_links_only: bool = True,
+                  legend: Optional[List] = None) -> bool:
     """Write rows to the given WIP tab (default 'Test - CP'; RP passes
     'Test - RP'). Same structure/formatting for every division. Guarded by
     wip_excel_guard. Returns True if written, False if skipped (dry-run, or the
@@ -1276,7 +1278,13 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
     weigh the workbook down): suppress every file:// hyperlink (Synology
     folders, takeoffs, draws, source workbooks, WHY) — the only links on the
     report are the QBO deep links on the Billed/Costs cells. Pass False to
-    restore the full click-to-verify link set."""
+    restore the full click-to-verify link set.
+
+    `legend` (the user 2026-07-31): rows of (text, font_rgb_or_None, bold)
+    rendered under the banner, one plain single-font cell per row (rich text
+    is banned — it corrupts the workbook). Rows carrying `cell_marks`
+    ({field: rgb}) get the owner's colour re-applied to those cells — his
+    verified/changed/verify-me marks survive the sync."""
     assert_write_allowed(tab_name)  # tripwire before we even open the workbook
     cols_ = cols or COLS
 
@@ -1343,7 +1351,8 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
             ws.unmerge_cells(str(rng))
         prior_max_row = ws.max_row or 0
         prior_max_col = ws.max_column or 0
-        off = 2 if title else 0             # banner rows above the header
+        off = (2 if title else 0) + (len(legend) if legend else 0)
+        # banner + legend rows above the header
         _sects = ([appendix] if isinstance(appendix, tuple) else (appendix or []))
         n_total = (off + len(rows) + sum(len(a[1]) + 3 for a in _sects if a[1])
                    + (14 if summary else 0))
@@ -1374,6 +1383,12 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
             t.alignment = Alignment(horizontal="center", vertical="center")
             ws.row_dimensions[1].height = 34
             ws.row_dimensions[2].height = 34
+        if legend:
+            lr0 = 3 if title else 1
+            for k, (txt, rgb, bold) in enumerate(legend):
+                lc = ws.cell(row=lr0 + k, column=1, value=txt)
+                lc.font = Font(name=MASTER_FONT_NAME, size=MASTER_FONT_SIZE,
+                               color=(rgb or "000000"), bold=bold)
 
         # Header row — gray, bold, centered + wrapped, bordered.
         for c, (label, width, _key) in enumerate(cols_, start=1):
@@ -1486,6 +1501,17 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                             name=MASTER_FONT_NAME, size=MASTER_FONT_SIZE,
                             color="C00000",
                             underline=("single" if _c.hyperlink else None))
+
+            # The owner's colour marks are applied LAST — they outrank link
+            # and review styling (the user 2026-07-31: "keep all the notes
+            # and colors since they mean something").
+            for _f, _rgb in (getattr(row, "cell_marks", None) or {}).items():
+                if _f in col_idx:
+                    _c = ws.cell(row=i, column=col_idx[_f])
+                    _c.font = Font(
+                        name=MASTER_FONT_NAME, size=MASTER_FONT_SIZE,
+                        color=_rgb, bold=True,
+                        underline=("single" if _c.hyperlink else None))
 
         data_start = hdr_row + 1
         written_rows = {}                   # PROJECT # → sheet row (for comments)

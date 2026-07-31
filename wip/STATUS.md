@@ -31,6 +31,17 @@ Last updated: 2026-07-29
   'Test - RP' in the master column set — revised TOTAL CONTRACT PRICE
   (contract + COs) and ESTIMATED TOTAL COSTS on every row, consistent across
   the board. Supersedes the rp_wip_simple layout on that tab.
+- **'Test - RP' typed + legend + owner marks** (2026-07-31): the RP source is
+  the owner's LIVE OneDrive file (`RP WIP TO FIX_Final.xlsx`); every row gets
+  a TYPE column (GOOD / FTW WITH COSTS / DROPPED OFF SCHEDULE / FTW BACKLOG,
+  from the file's bands; backlog reclasses to FTW WITH COSTS on QBO activity)
+  with a legend block under the banner (types + colour meanings, single-font
+  cells — no rich text). The owner's ACTION notes land in NOTES; his colour
+  marks (green=verified / red=changed / orange=verify) are re-applied to the
+  $ cells on BOTH RP-carrying tabs, and an owner-marked Billed/Costs value
+  survives the QBO refresh (`qbo_protect`). BUILDER column restored.
+  `write_test_cp` grew `legend=` and per-row `cell_marks` support;
+  `_find_header_row` scans 15 rows (legend pushes the header down).
 
 - **Test-Master is the deliverable WIP report** (2026-07-16): "WIP REPORT as of
   <date>" banner, rows 1–2 reserved as logo space (embedded images survive every

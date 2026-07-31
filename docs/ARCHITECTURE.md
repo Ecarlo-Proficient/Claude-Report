@@ -148,8 +148,11 @@ currency). `qbo_links_only` is the DEFAULT for every tab (2026-07-29): NO
 file/Synology links anywhere — the only hyperlinks are the QBO deep links on Billed
 (customer page) and Costs (project P&L report), helpers in `shared/qbo_api.py`.
 `--rp-from-file` also rewrites 'Test - RP' with the same RP rows in the master
-layout (revised contract/ETC across the board); rows whose numbers don't reconcile
-render red (`needs_review`).
+layout (revised contract/ETC across the board) plus a TYPE column (GOOD /
+FTW WITH COSTS / DROPPED OFF SCHEDULE / FTW BACKLOG) with a legend block, the
+owner's ACTION notes in NOTES, and his colour marks (green verified / red changed /
+orange verify) re-applied to the $ cells — marked Billed/Costs values survive the
+QBO refresh. Rows whose numbers don't reconcile render red (`needs_review`).
 
 ---
 

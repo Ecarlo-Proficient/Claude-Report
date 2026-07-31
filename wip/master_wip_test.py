@@ -76,16 +76,38 @@ def master_cols():
 
 
 # The owner's fixed RP WIP ('RP WIP' sheet) — band rows partition the lines.
-# Band substring → SECTION on the master (None = excluded: CP jobs belong to
-# the CP folder scan, never the RP section — the user 2026-07-29).
+# Band substring → (SECTION on the master, TYPE on Test - RP). None = excluded:
+# CP jobs belong to the CP folder scan, never the RP section (the user
+# 2026-07-29). TYPE wording is the user's (2026-07-31): the top section is
+# just GOOD; the other three bands are their own types.
 _RP_FILE_BANDS = (
-    ("CP JOBS",                 None),
-    ("DROPPED OFF THE SCHEDULE", "RP — DROPPED, UNBILLED"),
-    ("FTW WITH COSTS",          "FTW — OFF-SCHEDULE (COSTS)"),
-    ("FTW BACKLOG",             "FTW BACKLOG"),
+    ("CP JOBS",                  None),
+    ("DROPPED OFF THE SCHEDULE", ("RP — DROPPED, UNBILLED", "DROPPED OFF SCHEDULE")),
+    ("FTW WITH COSTS",           ("FTW — OFF-SCHEDULE (COSTS)", "FTW WITH COSTS")),
+    ("FTW BACKLOG",              ("FTW BACKLOG", "FTW BACKLOG")),
 )
 _RP_FILE_COL = {"job": 1, "addr": 2, "builder": 3, "contract": 4, "etc": 5,
-                "billed": 6, "costs": 7, "co": 12}
+                "billed": 6, "costs": 7, "action": 11, "co": 12}
+
+# The owner's colour contract (rp_wip_update.py, the user 2026-07-30) — his
+# font-colour marks are authoritative and must SURVIVE into the test tabs
+# (the user 2026-07-31: "keep all the notes and colors since they mean
+# something"). theme 9 = the workbook's orange → written as literal orange.
+_OWNER_RGB = {"00B050": "00B050",     # green — the owner verified this number
+              "FF0000": "FF0000"}     # red   — the owner changed this number
+_OWNER_ORANGE = "ED7D31"              # theme 9 — ops manager must verify
+
+
+def _owner_mark(cell):
+    """The owner's colour on this cell ('00B050' / 'FF0000' / orange), or None."""
+    col = cell.font.color if cell.font else None
+    if col is None:
+        return None
+    rgb = getattr(col, "rgb", None)
+    if isinstance(rgb, str) and rgb[-6:].upper() in _OWNER_RGB:
+        return _OWNER_RGB[rgb[-6:].upper()]
+    th = getattr(col, "theme", None)
+    return _OWNER_ORANGE if th == 9 else None
 
 
 def read_rp_from_file(xlsx_path: Path):
@@ -145,8 +167,24 @@ def read_rp_from_file(xlsx_path: Path):
             RP._money(ws.cell(r, C["billed"]).value),
             RP._money(ws.cell(r, C["costs"]).value))
         row.client = str(ws.cell(r, C["builder"]).value or "").strip() or None
-        row.section = section or (
-            "FTW — ACTIVE" if job.endswith("-FTW") else "RP SLAB")
+        if section:
+            row.section, row.rp_type = section
+        else:
+            row.section = ("FTW — ACTIVE" if job.endswith("-FTW") else "RP SLAB")
+            row.rp_type = "GOOD"
+        # The owner's notes + colour marks travel with the row (the user
+        # 2026-07-31). A red/green/orange mark on Billed/Costs also means
+        # HIS number stands — the QBO refresh must not overwrite it.
+        row.action_note = str(ws.cell(r, C["action"]).value or "").strip() or None
+        row.cell_marks, row.qbo_protect = {}, {}
+        for fld, ccol in (("contract_price", "contract"), ("etc", "etc"),
+                          ("billed_to_date", "billed"), ("costs_to_date", "costs"),
+                          ("action_note", "action")):
+            mark = _owner_mark(ws.cell(r, C[ccol]))
+            if mark:
+                row.cell_marks[fld] = mark
+                if fld in ("billed_to_date", "costs_to_date"):
+                    row.qbo_protect[fld] = getattr(row, fld)
         seen[job] = row
         rows.append(row)
     wb.close()
@@ -259,16 +297,29 @@ def main() -> int:
         # (2) backlog lines never render red — no QBO project is their
         #     normal state, not a must-fix.
         rp_rows = [t[0] for t in pairs]
-        order = ["RP SLAB", "FTW — ACTIVE", "RP — DROPPED, UNBILLED",
-                 "FTW — OFF-SCHEDULE (COSTS)", "FTW BACKLOG"]
+        order = ["RP SLAB", "FTW — ACTIVE",
+                 "FTW — OFF-SCHEDULE (COSTS)", "RP — DROPPED, UNBILLED",
+                 "FTW BACKLOG"]
         for row in rp_rows:
+            # Owner-marked Billed/Costs stand — undo the QBO overwrite (his
+            # red/green/orange means he settled that number).
+            for fld, val in (getattr(row, "qbo_protect", None) or {}).items():
+                if getattr(row, fld) != val:
+                    print(f"    ⚠ {row.project_num}: {fld} kept at the owner's "
+                          f"marked value (QBO refresh discarded)")
+                    setattr(row, fld, val)
             if (row.section == "FTW BACKLOG"
                     and (row.billed_to_date or row.costs_to_date)):
                 row.section = "FTW — OFF-SCHEDULE (COSTS)"
+                row.rp_type = "FTW WITH COSTS"
                 print(f"    ⚠ {row.project_num}: QBO shows activity — "
                       f"reclassed out of FTW BACKLOG")
             row.needs_review = (bool(row.status_flags)
                                 and row.section != "FTW BACKLOG")
+            if row.project_num == "RP6901":     # the user 2026-07-31: invoiced?
+                print(f"    ► RP6901 check: QBO billed = "
+                      f"{row.billed_to_date or 0:,.2f} · costs = "
+                      f"{row.costs_to_date or 0:,.2f}")
         rp_sorted = [r for s in order for r in rp_rows if r.section == s]
         all_rows = mfd_rows + cp_rows + rp_sorted
         counts = " · ".join(
@@ -353,18 +404,43 @@ def main() -> int:
         print(f"  ✓ Wrote {total} line(s) to 'Test-Master'")
         _drop_stale_test_tab()
 
-    # With --rp-from-file, 'Test - RP' becomes the SAME rows in the SAME
-    # master layout (the user 2026-07-29: revised contract/ETC consistent
-    # across the board) — one RP truth, two views.
+    # With --rp-from-file, 'Test - RP' becomes the SAME rows in the master
+    # formatting, PLUS the user's 2026-07-31 asks: a TYPE column that
+    # describes every row (GOOD / FTW WITH COSTS / DROPPED OFF SCHEDULE /
+    # FTW BACKLOG), a legend on top explaining the types and the owner's
+    # colours, the BUILDER, and the owner's notes carried in NOTES.
     if args.rp_from_file:
-        rp_view = [r for r in all_rows if r.section not in ("MFD", "CP")]
+        type_order = ["GOOD", "FTW WITH COSTS", "DROPPED OFF SCHEDULE",
+                      "FTW BACKLOG"]
+        rp_view = [r for t in type_order for r in all_rows
+                   if r.section not in ("MFD", "CP")
+                   and getattr(r, "rp_type", None) == t]
+        rp_cols = [("TYPE", 20, "rp_type")]
+        for label, width, field in master_cols():
+            if field in ("section", "home_type"):
+                continue
+            if field == "status":                     # NOTES right before FLAGS
+                rp_cols.append(("NOTES", 46, "action_note"))
+            rp_cols.append((label, width, field))
+            if field == "project_name":
+                rp_cols.append(("BUILDER", 24, "client"))
+        legend = [
+            ("LEGEND — TYPE:", None, True),
+            ("GOOD — active work (scheduled / in the General Lista); the top section of the owner's file", None, False),
+            ("FTW WITH COSTS — flatwork started off-schedule (has costs) — belongs on the schedule", None, False),
+            ("DROPPED OFF SCHEDULE — left the schedule with money still on the table", None, False),
+            ("FTW BACKLOG — flatwork priced with the slab, no costs or billing yet (expected wins)", None, False),
+            ("COLORS:  GREEN = the owner verified this number", "00B050", True),
+            ("RED = the owner changed this number", "FF0000", True),
+            ("ORANGE = ops manager must verify", "ED7D31", True),
+        ]
         try:
             wrote_rp = CP.write_test_cp(
                 rp_view, CP.WIP_EXCEL_PATH,
                 dry_run=args.dry_run, tab_name="Test - RP",
-                cols=master_cols(), default_filter_active=True,
+                cols=rp_cols, default_filter_active=True,
                 title=f"RP WIP REPORT as of {dt.date.today():%B %d, %Y}",
-                summary=True, qbo_links_only=True)
+                summary=True, qbo_links_only=True, legend=legend)
             if not args.dry_run and wrote_rp:
                 print(f"  ✓ Wrote {len(rp_view)} RP line(s) to 'Test - RP'")
         except CP.WipWriteDenied as e:
