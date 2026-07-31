@@ -87,7 +87,7 @@ _RP_FILE_BANDS = (
     ("FTW BACKLOG",              ("FTW BACKLOG", "FTW BACKLOG")),
 )
 _RP_FILE_COL = {"job": 1, "addr": 2, "builder": 3, "contract": 4, "etc": 5,
-                "billed": 6, "costs": 7, "action": 11, "co": 12}
+                "billed": 6, "costs": 7, "sched": 9, "action": 11, "co": 12}
 
 # The owner's colour contract (rp_wip_update.py, the user 2026-07-30) — his
 # font-colour marks are authoritative and must SURVIVE into the test tabs
@@ -96,6 +96,22 @@ _RP_FILE_COL = {"job": 1, "addr": 2, "builder": 3, "contract": 4, "etc": 5,
 _OWNER_RGB = {"00B050": "00B050",     # green — the owner verified this number
               "FF0000": "FF0000"}     # red   — the owner changed this number
 _OWNER_ORANGE = "ED7D31"              # theme 9 — ops manager must verify
+
+
+def _rp_category(row) -> str:
+    """The row's TYPE for a line from the owner's top section, decided AFTER
+    the QBO pass (the user 2026-07-31: "rp7234-ftw is not good … there are no
+    costs" — the top band alone doesn't make a job good).
+
+    GOOD means work is actually underway: QBO shows costs or billing.
+    Anything with no money moved yet is NOT STARTED when it's still on the
+    schedule, and — for flatwork — plain backlog when it isn't (the locked
+    FTW backlog rule: no activity AND not scheduled)."""
+    if row.billed_to_date or row.costs_to_date:
+        return "GOOD"
+    if getattr(row, "on_schedule", False):
+        return "NOT STARTED"
+    return "FTW BACKLOG" if row.project_num.endswith("-FTW") else "NOT STARTED"
 
 
 def _owner_mark(cell):
@@ -167,11 +183,19 @@ def read_rp_from_file(xlsx_path: Path):
             RP._money(ws.cell(r, C["billed"]).value),
             RP._money(ws.cell(r, C["costs"]).value))
         row.client = str(ws.cell(r, C["builder"]).value or "").strip() or None
+        # TYPE = Tract / Custom (the user 2026-07-31 — it must not disappear
+        # from the RP view). Same rule as the GL pipeline: production builders
+        # (by name OR by the General-Lista code) are Tract, everyone else is
+        # Custom.
+        _b = RP._norm(row.client)
+        row.home_type = ("Tract" if (_b in RP.TRACT_CLIENTS
+                                     or _b in RP.TRACT_CODES) else "Custom")
+        row.on_schedule = str(ws.cell(r, C["sched"]).value or "").strip() == "✓"
         if section:
             row.section, row.rp_type = section
         else:
             row.section = ("FTW — ACTIVE" if job.endswith("-FTW") else "RP SLAB")
-            row.rp_type = "GOOD"
+            row.rp_type = None          # decided after QBO — see _rp_category()
         # The owner's notes + colour marks travel with the row (the user
         # 2026-07-31). A red/green/orange mark on Billed/Costs also means
         # HIS number stands — the QBO refresh must not overwrite it.
@@ -314,6 +338,14 @@ def main() -> int:
                 row.rp_type = "FTW WITH COSTS"
                 print(f"    ⚠ {row.project_num}: QBO shows activity — "
                       f"reclassed out of FTW BACKLOG")
+            if row.rp_type is None:            # owner's top section
+                row.rp_type = _rp_category(row)
+                if row.rp_type != "GOOD":
+                    print(f"    • {row.project_num}: no costs/billing → "
+                          f"{row.rp_type} (was in the top section)")
+            # A line with no budget can't be measured — say so in NOTES.
+            if row.base_etc is None:
+                row.status_flags.append("No budget (ETC) on the RP file")
             row.needs_review = (bool(row.status_flags)
                                 and row.section != "FTW BACKLOG")
             if row.project_num == "RP6901":     # the user 2026-07-31: invoiced?
@@ -388,7 +420,7 @@ def main() -> int:
             cols=master_cols(), default_filter_active=True,
             # Banner + logo space + TOTALS/cash-flow (the user 2026-07-16).
             # The logo image floats over the banner rows and survives syncs.
-            title=f"WIP REPORT as of {dt.date.today():%B %d, %Y}",
+            title="WIP REPORT",
             summary=True,
             # The user 2026-07-29: the ONLY links on the report are the QBO
             # deep links on Billed/Costs — no Synology/file links.
@@ -410,26 +442,27 @@ def main() -> int:
     # FTW BACKLOG), a legend on top explaining the types and the owner's
     # colours, the BUILDER, and the owner's notes carried in NOTES.
     if args.rp_from_file:
-        type_order = ["GOOD", "FTW WITH COSTS", "DROPPED OFF SCHEDULE",
-                      "FTW BACKLOG"]
+        type_order = ["GOOD", "NOT STARTED", "FTW WITH COSTS",
+                      "DROPPED OFF SCHEDULE", "FTW BACKLOG"]
         rp_view = [r for t in type_order for r in all_rows
                    if r.section not in ("MFD", "CP")
                    and getattr(r, "rp_type", None) == t]
-        rp_cols = [("TYPE", 20, "rp_type")]
+        # CATEGORY describes the row; TYPE stays Tract/Custom exactly as on
+        # the master layout (the user 2026-07-31).
+        rp_cols = [("CATEGORY", 20, "rp_type")]
         for label, width, field in master_cols():
-            if field in ("section", "home_type"):
+            if field == "section":
                 continue
-            if field == "status":                     # NOTES right before FLAGS
-                rp_cols.append(("NOTES", 46, "action_note"))
             rp_cols.append((label, width, field))
-            if field == "project_name":
+            if field == "home_type":
                 rp_cols.append(("BUILDER", 24, "client"))
         legend = [
-            ("LEGEND — TYPE:", None, True),
-            ("GOOD — active work (scheduled / in the General Lista); the top section of the owner's file", None, False),
+            ("LEGEND — CATEGORY:", None, True),
+            ("GOOD — work is underway: QBO shows costs and/or billing", None, False),
+            ("NOT STARTED — on the schedule / priced, but no costs and no billing yet", None, False),
             ("FTW WITH COSTS — flatwork started off-schedule (has costs) — belongs on the schedule", None, False),
             ("DROPPED OFF SCHEDULE — left the schedule with money still on the table", None, False),
-            ("FTW BACKLOG — flatwork priced with the slab, no costs or billing yet (expected wins)", None, False),
+            ("FTW BACKLOG — flatwork priced with the slab, no activity and not scheduled (expected wins)", None, False),
             ("COLORS:  GREEN = the owner verified this number", "00B050", True),
             ("RED = the owner changed this number", "FF0000", True),
             ("ORANGE = ops manager must verify", "ED7D31", True),
@@ -439,7 +472,7 @@ def main() -> int:
                 rp_view, CP.WIP_EXCEL_PATH,
                 dry_run=args.dry_run, tab_name="Test - RP",
                 cols=rp_cols, default_filter_active=True,
-                title=f"RP WIP REPORT as of {dt.date.today():%B %d, %Y}",
+                title="RP WIP REPORT",
                 summary=True, qbo_links_only=True, legend=legend)
             if not args.dry_run and wrote_rp:
                 print(f"  ✓ Wrote {len(rp_view)} RP line(s) to 'Test - RP'")

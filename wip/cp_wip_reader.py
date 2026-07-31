@@ -163,6 +163,7 @@ WIP_EXCEL_PATH = paths.get_path(
 )
 
 TEST_TAB = "Test - CP"  # write target — must be in ALLOWED_WRITE_SHEETS
+MASTER_TITLE_SHEET = "WIP Master"   # read-only: the formatting reference sheet
 
 # Cell anchors on the takeoff (locked)
 PROPOSAL_SHEET = "Commercial Proposal"
@@ -945,6 +946,9 @@ LINK_FONT = Font(name=MASTER_FONT_NAME, size=MASTER_FONT_SIZE,
                  color="0563C1", underline="single")     # Excel link
 _SIDE = Side(style="thin", color="BFBFBF")
 CELL_BORDER = Border(left=_SIDE, right=_SIDE, top=_SIDE, bottom=_SIDE)
+# Title block, copied cell-for-cell from the real 'WIP Master' sheet.
+TITLE_FONT = Font(name=MASTER_FONT_NAME, size=MASTER_FONT_SIZE, bold=True)
+_MEDIUM = Side(style="medium", color="000000")
 CURRENCY_FMT = '"$"#,##0_);[Red]\\("$"#,##0\\)'          # verbatim from 'WIP Master'
 PCT_FMT = "0.00%"                                        # verbatim from 'WIP Master'
 
@@ -1058,8 +1062,12 @@ COLS = [
     ("APPROVED COs",                                    14, "co_revenue"),
     ("RETAINAGE HELD",                                  14, "retainage_held"),
     ("LAST SYNCED",                                     18, "_last_synced"),
-    ("NOTES",                                            40, "notes_text"),  # informational (Draw #, no-draw)
-    ("FLAGS",                                           50, "status"),   # TRUE flags only — script must-fix
+    # ONE commentary column (the user 2026-07-31: "stick to one" — NOTES and
+    # FLAGS were two columns saying overlapping things). Informational notes
+    # (Draw #, no-draw, the owner's ACTION text) and genuine script must-fix
+    # flags now share this cell; the cell turns yellow/italic when it carries
+    # a flag.
+    ("NOTES",                                           60, "_notes_all"),
 ]
 
 
@@ -1148,6 +1156,20 @@ def _row_display_value(row: CpRow, field_name: str, sync_ts: str):
         return "source ⇗" if row.src_link else None
     if field_name == "_last_synced":
         return sync_ts
+    if field_name == "_notes_all":
+        # ONE commentary cell: the owner's ACTION text, the script's
+        # informational notes, then any genuine must-fix flag. De-duplicated,
+        # order preserved.
+        parts, seen = [], set()
+        for p in ([getattr(row, "action_note", None)] + list(row.notes)
+                  + list(row.status_flags)):
+            p = (p or "").strip()
+            if p.startswith("RED: "):
+                p = p[len("RED: "):]
+            if p and p not in seen:
+                seen.add(p)
+                parts.append(p)
+        return " · ".join(parts) or None
     if field_name == "status":
         # RED numbers must explain themselves (the user 2026-07-16): a red
         # row with no script flag showed "OK" — surface the classify reason
@@ -1160,6 +1182,18 @@ def _row_display_value(row: CpRow, field_name: str, sync_ts: str):
             return red or (row.notes[-1] if row.notes else "needs review")
         return "OK"
     return getattr(row, field_name, None)
+
+
+def _master_title_prefix(wb) -> str:
+    """The company/report prefix from the real 'WIP Master' title cell (B1),
+    e.g. 'PROFICIENT CONCRETE, LLC' out of '<company> - WIP REPORT'. Read at
+    RUNTIME so the test tabs inherit the owner's own wording (and so no
+    company name is hard-coded in this repo). '' when unreadable."""
+    try:
+        v = wb[MASTER_TITLE_SHEET].cell(row=1, column=2).value
+    except (KeyError, AttributeError):
+        return ""
+    return str(v).split(" - ")[0].strip() if v else ""
 
 
 def _find_header_row(ws) -> Optional[int]:
@@ -1384,13 +1418,22 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
         # it, so it stays put run after run).
         hdr_row = 1 + off
         if title:
-            ws.merge_cells(start_row=1, start_column=1,
-                           end_row=2, end_column=len(cols_))
-            t = ws.cell(row=1, column=1, value=title)
-            t.font = Font(name=MASTER_FONT_NAME, bold=True, size=18)
-            t.alignment = Alignment(horizontal="center", vertical="center")
-            ws.row_dimensions[1].height = 34
-            ws.row_dimensions[2].height = 34
+            # TITLE BLOCK — copied from the real 'WIP Master' sheet and
+            # BINDING (the user 2026-07-31: "keep the same format as the
+            # original WIP Master sheet"). B1 = company + report name,
+            # B2 = REPORT DATE, both Tahoma 8 bold and LEFT-aligned, a medium
+            # rule above row 1 and below row 2. No merge-and-center, no
+            # oversized font, no custom row heights. Do not redesign this.
+            prefix = _master_title_prefix(wb)
+            ws.cell(row=1, column=2,
+                    value=f"{prefix} - {title}" if prefix else title
+                    ).font = TITLE_FONT
+            ws.cell(row=2, column=2,
+                    value=f"REPORT DATE: {dt.date.today():%b %d, %Y}".upper()
+                    ).font = TITLE_FONT
+            for c in range(1, len(cols_) + 1):
+                ws.cell(row=1, column=c).border = Border(top=_MEDIUM)
+                ws.cell(row=2, column=c).border = Border(bottom=_MEDIUM)
         if legend:
             lr0 = 3 if title else 1
             for k, (txt, rgb, bold) in enumerate(legend):
@@ -1451,8 +1494,8 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                 # Yellow = sourced input (raw from takeoff / QBO); white = calc.
                 if field_name in _SOURCE_FIELDS:
                     cell.fill = INPUT_FILL
-                elif field_name == "status" and (row.status_flags
-                                                 or row.needs_review):
+                elif field_name in ("status", "_notes_all") and (
+                        row.status_flags or row.needs_review):
                     cell.fill = FLAG_FILL
                     cell.font = FLAG_FONT
 
@@ -1629,6 +1672,13 @@ def _qc_check(wip_path: Path, tab_name: str, expected_rows: int,
         n = vis_closed = links = 0
         last_data = hdr
         for r in range(hdr + 1, ws.max_row + 1):
+            # The summary block (TOTALS + FUTURE WIP CASH FLOW) is written
+            # below the data in column 1 — on a tab whose first column IS
+            # 'PROJECT #' its labels would otherwise be miscounted as data
+            # rows. Everything from TOTALS down is the summary; stop there.
+            first = ws.cell(r, 1).value
+            if isinstance(first, str) and first.strip() == "TOTALS":
+                break
             j = ws.cell(r, pcol).value if pcol else None
             if not j:
                 continue
@@ -1908,7 +1958,11 @@ def main() -> int:
 
     # ── Write / dry-run report ──
     try:
-        wrote = write_test_cp(rows, WIP_EXCEL_PATH, dry_run=args.dry_run)
+        # Active-only default view (the user 2026-07-31: "don't want to see
+        # Closed on default open") — same as the master tab.
+        wrote = write_test_cp(rows, WIP_EXCEL_PATH, dry_run=args.dry_run,
+                              default_filter_active=True,
+                              title="CP WIP REPORT", summary=True)
     except WipWriteDenied as e:
         print(_Term.color(_Term.RED, f"  ✗ Guard blocked write: {e}"))
         return 2

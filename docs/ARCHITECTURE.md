@@ -143,13 +143,17 @@ RP v2 (2026-07-13): the General List is the RP source — each RP job auto-split
 `master_wip_test --rp-from-file <xlsx>` (2026-07-29) replaces the GL pipeline for the
 RP section with the owner's verified RP WIP workbook (sections from its band rows,
 duplicates deduped, CP lines excluded); billed/costs still refresh from QBO per line.
-Test tabs are styled to match the real 'WIP Master' sheet (Tahoma 8, no-cents
-currency). `qbo_links_only` is the DEFAULT for every tab (2026-07-29): NO
+Test tabs are styled to match the real 'WIP Master' sheet — **frozen, see CLAUDE.md
+rail 5a**: Tahoma 8, no-cents currency, and its two-line left-aligned title block
+(company prefix read from `WIP Master`!B1 at runtime; no merge-and-center banner).
+ONE commentary column (`NOTES` = owner's ACTION text · script notes · must-fix flags);
+`TYPE` is Tract/Custom only. All tabs open Active-only. `qbo_links_only` is the DEFAULT for every tab (2026-07-29): NO
 file/Synology links anywhere — the only hyperlinks are the QBO deep links on Billed
 (customer page) and Costs (project P&L report), helpers in `shared/qbo_api.py`.
 `--rp-from-file` also rewrites 'Test - RP' with the same RP rows in the master
-layout (revised contract/ETC across the board) plus a TYPE column (GOOD /
-FTW WITH COSTS / DROPPED OFF SCHEDULE / FTW BACKLOG) with a legend block, the
+layout (revised contract/ETC across the board) plus a CATEGORY column decided from
+the DATA — GOOD only when QBO shows costs/billing, else NOT STARTED (still on the
+schedule) or FTW BACKLOG — with a legend block, the
 owner's ACTION notes in NOTES, and his colour marks (green verified / red changed /
 orange verify) re-applied to the $ cells — marked Billed/Costs values survive the
 QBO refresh. Rows whose numbers don't reconcile render red (`needs_review`).

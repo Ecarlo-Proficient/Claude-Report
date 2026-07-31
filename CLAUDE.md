@@ -23,6 +23,22 @@ restate them here. Business/strategic context lives in session memory, not in th
 4. **Logs and data dumps go to `~/Library/Logs/Proficient/`** — never inside this folder (it's Claude-visible/synced).
 5. **Excel outputs are plain:** white/black only, no fills, no hidden rows, label + amount on the same row,
    split into separate sheets rather than crowding one. (Binding — don't re-litigate.)
+5a. **WIP REPORT FORMATTING IS FROZEN (binding, the user 2026-07-31 — "you cannot keep messing with
+   formatting").** Every Test tab in `WIP - MASTER new.xlsx` must look like the **original `WIP Master`
+   sheet**. That sheet is the ONLY reference — read it, copy it, never invent:
+   - **Font:** Tahoma 8 everywhere (headers bold, data regular). No Calibri, no size bumps.
+   - **Numbers:** `"$"#,##0_);[Red]("$"#,##0)` (no cents) · percents `0.00%`.
+   - **Title block:** B1 = `<company> - <REPORT NAME>`, B2 = `REPORT DATE: <MON DD, YYYY>`, both bold
+     and LEFT-aligned, medium rule above row 1 and below row 2. **NO merge-and-center, no big banner
+     font, no custom row heights.** The company prefix is read from `WIP Master`!B1 at runtime —
+     never hard-code it here.
+   - **Header row:** gray `D9D9D9` fill, bold, centered, wrapped, thin borders; freeze below it.
+   - **Columns:** ONE commentary column (`NOTES`) — never a NOTES *and* a FLAGS column.
+     `TYPE` means Tract/Custom and must never be repurposed.
+   - **Links:** QBO deep links on Billed/Costs only — no file/Synology hyperlinks (they bloat the file).
+   - **Default view:** Active only; Closed rows filtered AND hidden on open.
+   A formatting change to these tabs needs the user's explicit say-so first. Restyling on your own
+   initiative is a defect, not an improvement.
 6. **Shell commands must be complete and copy-paste-ready, with NO inline `#` comments** (they break zsh paste).
    Put explanations in prose outside the code block.
 7. **Never overwrite a data file or write to QBO without an explicit confirm/dry-run gate.** Writers

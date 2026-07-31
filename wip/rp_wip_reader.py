@@ -90,7 +90,10 @@ _RP_RE = re.compile(r"RP\d{4}(?:-[A-Za-z]{2,6})?(?!\d)", re.IGNORECASE)
 # Home type (the user 2026-07-14): tract = production builders (repeat volume
 # work) — everyone else is custom. Edit these sets as builders come and go.
 TRACT_CLIENTS = {"GRAND HOMES", "WILLIAM RYAN HOMES",
-                 "DALLAS AREA HABITAT FOR HUMANITY"}
+                 "DALLAS AREA HABITAT FOR HUMANITY",
+                 # Camden — named by the team as a tract builder in the
+                 # 2026-07-22 review (STATUS.md, "Team fixes round 1").
+                 "CAMDEN HOMES"}
 TRACT_CODES = {"GRAND", "WRYAN", "DAHH"}
 
 # RP tab column layout (the user 2026-07-14): TYPE + CLIENT after the name;

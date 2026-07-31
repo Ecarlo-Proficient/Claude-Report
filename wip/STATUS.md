@@ -8,6 +8,31 @@ Last updated: 2026-07-29
 
 ## DONE / FINALIZED
 
+- **WIP TAB FORMATTING IS FROZEN** (2026-07-31, the user: "you cannot keep
+  messing with formatting") — the original `WIP Master` sheet is the ONLY
+  reference; read it, copy it, never invent. Title block is now its two-line
+  LEFT-aligned form (B1 `<company> - <REPORT NAME>` read from `WIP Master`!B1
+  at runtime, B2 `REPORT DATE: …`, medium rule above/below) — the
+  merge-and-center 18pt banner is GONE. Full rule: repo CLAUDE.md rail 5a.
+  Changing these tabs' look needs the user's explicit ask first.
+- **One commentary column** (2026-07-31): NOTES and FLAGS merged into a single
+  `NOTES` column (`_notes_all` = the owner's ACTION text · script notes ·
+  must-fix flags, de-duplicated; yellow/italic when it carries a flag) on
+  every tab.
+- **RP TYPE (Tract/Custom) restored** (2026-07-31): `read_rp_from_file` derives
+  it from the builder against `TRACT_CLIENTS`/`TRACT_CODES` (the file carries
+  both full names and GL codes); CAMDEN HOMES added to `TRACT_CLIENTS` per the
+  team's 2026-07-22 finding. The row-description column is now `CATEGORY`, so
+  `TYPE` keeps its Tract/Custom meaning.
+- **CATEGORY is decided from the DATA, not the band** (2026-07-31, the user:
+  "rp7234-ftw is not good … there are no costs"): GOOD requires QBO costs or
+  billing; no activity + on the schedule = NOT STARTED; no activity + not
+  scheduled (FTW) = FTW BACKLOG. A line with no ETC gets a "No budget (ETC)"
+  note.
+- **Test - CP opens Active-only** (2026-07-31): `cp_wip_reader` now writes with
+  `default_filter_active=True` (+ title block and TOTALS block, like the other
+  tabs) so Closed rows are filtered and hidden on open.
+
 - **`master_wip_test --rp-from-file <xlsx>`** (2026-07-29): the RP section of
   Test-Master comes from the owner's verified RP WIP workbook ('RP WIP' sheet)
   instead of the General List pipeline. Sections map from the file's band rows
