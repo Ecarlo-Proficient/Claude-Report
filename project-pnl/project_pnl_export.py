@@ -3919,7 +3919,7 @@ def build_sheet_labor_concrete(
     draw_cols: List[Tuple[str, str]], as_of: str,
     yards: Tuple[float, Dict[str, float], str] = (0.0, {}, ""),
     budget_source: str = "", realm: str = "",
-    att_links: Optional[Dict[str, str]] = None,
+    att_links: Optional[Dict[str, dict]] = None,
 ) -> Optional[str]:
     """LABOR / CONCRETE — TWO blocks at different altitudes (the user
     2026-07-29: 'the metrics are a top-level data point'; one grid trying to be
@@ -4200,18 +4200,32 @@ def build_sheet_labor_concrete(
             # The uploaded bill file when QBO has one (the user 2026-07-31 —
             # "just want the straight attachment"); the QBO bill page
             # otherwise. Several scans → the attachments folder, count shown.
+            # ONE link for Mac AND Windows (the user 2026-07-31): a STORED
+            # file target gets rewritten by whichever platform saves next
+            # (the repo's old file:// wound — rp_wip_simple / cp_wip_reader),
+            # so the cell holds a =HYPERLINK() formula instead. CELL(
+            # "filename") is the workbook's path AS THE OPENING MACHINE SEES
+            # IT (/Volumes/… on Mac, \\server\… on Windows), the formula
+            # appends attachments/<file> at CLICK time, and a formula is
+            # never touched on save. Windows tolerates the forward slash.
             _att = (att_links or {}).get(ln["txn_id"])
-            url = (_att["link"] if _att
-                   else _qbo_txn_url(ln["tx_type"], ln["txn_id"], realm))
-            _lbl = str(ln["doc"] or ln["txn_id"] or "(no #)")
+            _lbl = str(ln["doc"] or ln["txn_id"] or "(no #)").replace('"', "")
             if _att and _att["n"] > 1:
                 _lbl += f"  ({_att['n']} files)"
-            idc = ws.cell(row=r, column=L_QBO, value=_lbl)
-            if url:
-                idc.hyperlink = url
+            if _att:
+                base = ('LEFT(CELL("filename",A1),'
+                        'FIND("[",CELL("filename",A1))-1)')
+                idc = ws.cell(row=r, column=L_QBO, value=(
+                    f'=HYPERLINK({base}&"{_att["link"]}","{_lbl}")'))
                 idc.font = Font(color="0563C1", underline="single", size=SZ)
             else:
-                idc.font = Font(size=SZ)
+                idc = ws.cell(row=r, column=L_QBO, value=_lbl)
+                url = _qbo_txn_url(ln["tx_type"], ln["txn_id"], realm)
+                if url:
+                    idc.hyperlink = url
+                    idc.font = Font(color="0563C1", underline="single", size=SZ)
+                else:
+                    idc.font = Font(size=SZ)
             ws.cell(row=r, column=L_DATE, value=ln["date"]).font = Font(size=SZ)
             ws.cell(row=r, column=L_VEND, value=ln["vendor"]).font = Font(size=SZ)
             dc = ws.cell(row=r, column=L_DESC,
