@@ -4148,7 +4148,8 @@ def build_sheet_labor_concrete(
     lh = ws.cell(row=r, column=1, value=(
         "LEDGER — every bill; the DRAW column says which draw window the bill "
         "date fell in. QBO # opens the uploaded bill file (attachments/ beside "
-        "this workbook) when one is attached; otherwise the QBO bill page."))
+        "this workbook); '(N files)' opens the folder — the bill's scans share "
+        "its number prefix. No attachment → the QBO bill page."))
     lh.font = Font(bold=True, size=SZ, color="1F3A5F")
     r += 1
     led_heads = [("QBO #", L_QBO), ("DATE", L_DATE), ("VENDOR", L_VEND),
@@ -4197,11 +4198,15 @@ def build_sheet_labor_concrete(
         r += 1
         for ln in merged:
             # The uploaded bill file when QBO has one (the user 2026-07-31 —
-            # "just want the straight attachment"); the QBO bill page otherwise.
-            url = ((att_links or {}).get(ln["txn_id"])
-                   or _qbo_txn_url(ln["tx_type"], ln["txn_id"], realm))
-            idc = ws.cell(row=r, column=L_QBO,
-                          value=ln["doc"] or ln["txn_id"] or "(no #)")
+            # "just want the straight attachment"); the QBO bill page
+            # otherwise. Several scans → the attachments folder, count shown.
+            _att = (att_links or {}).get(ln["txn_id"])
+            url = (_att["link"] if _att
+                   else _qbo_txn_url(ln["tx_type"], ln["txn_id"], realm))
+            _lbl = str(ln["doc"] or ln["txn_id"] or "(no #)")
+            if _att and _att["n"] > 1:
+                _lbl += f"  ({_att['n']} files)"
+            idc = ws.cell(row=r, column=L_QBO, value=_lbl)
             if url:
                 idc.hyperlink = url
                 idc.font = Font(color="0563C1", underline="single", size=SZ)
@@ -4802,10 +4807,11 @@ def fetch_txn_attachments(access: str, company_id: str,
     except Exception as e:
         ui_warn(f"attachment sweep failed ({e}) — ledger keeps QBO bill links")
         return {}
-    out: Dict[str, str] = {}
+    out: Dict[str, dict] = {}
     n_dl = 0
     for txn_id, tx_type, doc in txns:
         etype = "Purchase" if tx_type == "Expense" else "Bill"
+        got: List[str] = []
         for a in by_key.get((etype, txn_id), []):
             fname = _FNAME_SAFE_RE.sub("_", a["FileName"]).strip() or "attachment"
             prefix = _FNAME_SAFE_RE.sub("_", str(doc or txn_id)).strip()
@@ -4827,10 +4833,21 @@ def fetch_txn_attachments(access: str, company_id: str,
                     n_dl += 1
                 except Exception:
                     continue               # this one keeps its QBO bill link
-            out.setdefault(txn_id, f"{dest.name}/{name}")
+            got.append(name)
+        if got:
+            # One hyperlink per cell: a single scan links the FILE; several
+            # scans link the attachments FOLDER (they share the bill-number
+            # prefix, so they sit together) and the cell says how many
+            # (the user 2026-07-31).
+            out[txn_id] = {
+                "link": (f"{dest.name}/{got[0]}" if len(got) == 1 else dest.name),
+                "n": len(got)}
     if out:
-        ui_event(f"bill attachments: {len(out)} transaction(s) linked to the "
-                 f"uploaded file ({n_dl} newly downloaded) → {dest.name}/")
+        multi = sum(1 for v in out.values() if v["n"] > 1)
+        ui_event(f"bill attachments: {len(out)} transaction(s) linked "
+                 f"({n_dl} newly downloaded"
+                 + (f", {multi} with multiple scans → folder link" if multi else "")
+                 + f") → {dest.name}/")
     return out
 
 
