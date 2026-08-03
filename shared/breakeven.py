@@ -161,6 +161,69 @@ def build(health_path: Path, as_of: Optional[dt.datetime] = None,
     }
 
 
+def audit_rows(m: dict, source: Optional[Path] = None) -> list:
+    """[(item, value, where_it_came_from)] — the full trail behind every
+    break-even figure, so the numbers can be checked against QBO by hand
+    (the user 2026-08-03: "I need to audit the numbers but can't find them").
+    """
+    if not m.get("ok"):
+        return []
+    src = (f"{source.parent.name}/{source.name}" if source else "health_dashboard.xlsx")
+    pl = f"{src} → 'P&L' sheet → 'Year to Date (current year)' block"
+    gm_pct = m["gm"] * 100
+
+    def money(v):
+        return f"-${abs(v):,.0f}" if v < 0 else f"${v:,.0f}"
+
+    return [
+        ("── INPUTS (all from QBO via qbo_health) ──", "", ""),
+        ("Revenue YTD", money(m["income_ytd"]), pl + " → 'Total Income'"),
+        ("Direct job costs YTD (COGS)", money(m["income_ytd"] - m["gross_profit_ytd"]),
+         pl + " → 'Total Cost of Goods Sold'"),
+        ("Gross profit YTD", money(m["gross_profit_ytd"]),
+         pl + " → 'Total Gross Profit'"),
+        ("Overhead YTD (operating expenses)", money(m["overhead_ytd"]),
+         pl + " → 'Total Expenses'"),
+        ("Net operating income YTD",
+         money(m["net_operating_ytd"] or 0), pl + " → 'Total Net Operating Income'"),
+        ("Period covered", f"Jan 1 → {m['as_of']:%b %d, %Y}",
+         f"{m['days']} days = {m['months']:.2f} months = {m['weeks']:.1f} weeks"),
+        ("── DERIVED (the formulas) ──", "", ""),
+        ("Gross margin %", f"{gm_pct:.2f}%",
+         f"{money(m['gross_profit_ytd'])} gross profit ÷ {money(m['income_ytd'])} revenue"),
+        ("Overhead per month", money(m["overhead_month"]),
+         f"{money(m['overhead_ytd'])} ÷ {m['months']:.2f} months"),
+        ("Overhead per week", money(m["overhead_week"]),
+         f"{money(m['overhead_ytd'])} ÷ {m['weeks']:.1f} weeks"),
+        ("BREAK-EVEN sales / month", money(m["breakeven_month"]),
+         f"{money(m['overhead_month'])} overhead ÷ {gm_pct:.2f}% gross margin"),
+        ("BREAK-EVEN sales / week", money(m["breakeven_week"]),
+         f"{money(m['overhead_week'])} overhead ÷ {gm_pct:.2f}% gross margin"),
+        ("Revenue per $1 of overhead",
+         f"${m['revenue_per_overhead_dollar']:,.2f}", f"1 ÷ {gm_pct:.2f}%"),
+        ("Actual run rate / month", money(m["run_rate_month"]),
+         f"{money(m['income_ytd'])} ÷ {m['months']:.2f} months"),
+        ("Coverage ratio", f"{m['coverage_ratio']:.2f}×",
+         f"{money(m['run_rate_month'])} run rate ÷ {money(m['breakeven_month'])} break-even"),
+        ("Margin of safety", f"{m['margin_of_safety']*100:.0f}%",
+         "(run rate − break-even) ÷ run rate"),
+        ("Backlog coverage", f"{m['backlog_coverage_months']:.1f} months",
+         f"{money(m['backlog'])} backlog ÷ {money(m['breakeven_month'])} monthly break-even"),
+        ("  ↳ backlog source", "", "WIP master 'Test-Master' tab → LEFT TO BILL, "
+                                   "Active rows (computed: contract − billed)"),
+        ("AR coverage", f"{m['ar_coverage_months']:.1f} months",
+         f"{money(m['ar'])} AR ÷ monthly break-even  ·  AR from the AR Aging sheet"),
+        ("── PRIOR YEAR (same YTD window) ──", "", ""),
+        ("Prior-year gross margin",
+         f"{m['prior_gm']*100:.2f}%" if m.get("prior_gm") else "—",
+         pl.replace("current year", "prior year")),
+        ("Prior-year net operating income",
+         money(m["prior_net_operating"]) if m.get("prior_net_operating") is not None else "—",
+         "same block → 'Total Net Operating Income'"),
+        ("── CAVEAT ──", "", m["caveat"]),
+    ]
+
+
 def rows_for_display(m: dict) -> list:
     """[(metric, value_str, detail, class)] — same shape the tracker/dashboard
     metric tables use. class: g good · r bad · a warn · n neutral."""

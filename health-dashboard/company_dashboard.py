@@ -463,6 +463,7 @@ def build_sections(cards, loc, mor, health, wip) -> list:
             "rows": be.rows_for_display(bx),
             "bars": [],
             "note": bx["caveat"],
+            "audit": be.audit_rows(bx, HEALTH_PATH),
         })
     return sections
 

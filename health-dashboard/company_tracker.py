@@ -40,6 +40,8 @@ from openpyxl.utils import get_column_letter
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from shared import paths
 from shared import schedule as sched
+from shared import recurring as rec
+import json
 import company_dashboard as cd    # same tool (health-dashboard/) — shared readers + model
 
 CH = paths.companyhealth_dir()
@@ -183,16 +185,139 @@ def _write_schedule_tab(wb, model) -> None:
                 cell.fill = PatternFill("solid", fgColor=sched.stage_cat(j["days"][d])[1])
                 cell.font = Font(bold=True, color="FFFFFF", size=9)
     ws.auto_filter.ref = f"A1:E{ws.max_row}"
-    ws.append([])
-    ws.append(["Legend:"])
-    lr = ws.max_row
-    ws.cell(lr, 1).font = Font(bold=True)
-    for col, (name, color) in enumerate(sched.legend(), start=2):
-        cc = ws.cell(lr, col, name)
+    # legend runs DOWN a column to the right of the grid — laid across the
+    # narrow day columns it truncated the labels (the user 2026-08-03)
+    lc = 6 + len(dates) + 1
+    ws.column_dimensions[get_column_letter(lc)].width = 18
+    ws.cell(1, lc, "LEGEND").font = Font(bold=True)
+    for i, (name, color) in enumerate(sched.legend(), start=2):
+        cc = ws.cell(i, lc, name)
         cc.fill = PatternFill("solid", fgColor=color)
         cc.font = Font(bold=True, color="FFFFFF", size=9)
-        cc.alignment = Alignment(horizontal="center")
+        cc.alignment = Alignment(horizontal="left", indent=1)
+        cc.border = _BORDER
     ws.sheet_properties.tabColor = "305496"
+
+
+NOTES_FILE = paths.companyhealth_sources_dir() / "recurring_notes.json"
+
+
+def _load_notes() -> dict:
+    """The owner's annotations, kept in a sidecar so regenerating the workbook
+    never wipes them (the user 2026-08-03: "I let you know what really happened
+    and you update")."""
+    try:
+        return json.loads(NOTES_FILE.read_text())
+    except Exception:
+        return {}
+
+
+def _write_recurring_tab(wb, model) -> None:
+    """Every recurring obligation in front of the owner: what we count, when it
+    was last paid, what CHANGED / STOPPED, and their own note."""
+    if not model:
+        return
+    notes = _load_notes()
+    ws = wb.create_sheet("Recurring & Debt")
+    ws.sheet_view.showGridLines = False
+    hdr = ["STATUS", "OBLIGATION", "TYPE", "PER MONTH $", "PRIOR $",
+           "LAST PAID", "BALANCE $", "WHAT CHANGED", "YOUR NOTE (edit me)"]
+    ws.append(hdr)
+    for c in range(1, len(hdr) + 1):
+        cell = ws.cell(1, c)
+        cell.font = _WHITE
+        cell.fill = _NAVY
+        cell.border = _BORDER
+        cell.alignment = Alignment(vertical="center", horizontal="center", wrap_text=True)
+    for i, w in enumerate([11, 36, 10, 14, 13, 12, 14, 38, 34]):
+        ws.column_dimensions[get_column_letter(i + 1)].width = w
+    ws.freeze_panes = "A2"
+    SC = {"CHANGED": "FFEB9C", "STOPPED": "FFC7CE", "NEW": "C6EFCE"}
+
+    def block(label, rows, color):
+        if not rows:
+            return
+        ws.append([f"  {label}   —   {len(rows)} item(s)   —   "
+                   f"${sum(r['last_amount'] for r in rows):,.0f}/month"] + [""] * 8)
+        br = ws.max_row
+        ws.merge_cells(start_row=br, start_column=1, end_row=br, end_column=9)
+        ws.cell(br, 1).fill = PatternFill("solid", fgColor=color)
+        ws.cell(br, 1).font = Font(bold=True, color="FFFFFF", size=11)
+        ws.row_dimensions[br].height = 20
+        for i, r in enumerate(rows):
+            ws.append([r["status"], r["name"], r.get("kind", "debt"),
+                       r["last_amount"], r.get("prior_amount", 0),
+                       r.get("last_month", ""), r.get("balance_now", ""),
+                       r.get("note", "") + (" · fees already in overhead"
+                                            if r.get("fees_booked") else ""),
+                       notes.get(r["name"], "")])
+            rr = ws.max_row
+            for c in range(1, 10):
+                ws.cell(rr, c).border = _BORDER
+                if i % 2:
+                    ws.cell(rr, c).fill = _ZEBRA
+            for c in (4, 5, 7):
+                ws.cell(rr, c).number_format = CUR
+            if r["status"] in SC:
+                ws.cell(rr, 1).fill = PatternFill("solid", fgColor=SC[r["status"]])
+                ws.cell(rr, 1).font = Font(bold=True)
+            ws.cell(rr, 9).fill = PatternFill("solid", fgColor="FFFDE7")
+
+    alerts = [r for r in model["alerts"]]
+    refi = model.get("refinancing", [])
+    block("⚠ NEEDS YOUR REVIEW — changed, stopped, or new", alerts, "C00000")
+    block("FIXED OVERHEAD — steady", [r for r in model["overhead"]
+                                      if r["kind"] == "fixed" and r not in alerts], "1F6B4C")
+    block("DEBT SERVICE — steady", [r for r in model["debt"]
+                                    if r not in alerts and r["status"] != "STOPPED"], "305496")
+    block("MCA / REFINANCING — balance moves by JE, NOT a cash payment "
+          "(fees already in overhead) — tell us the real ACH amount", refi, "BF8F00")
+    block("VARIABLE / one-off — excluded from the fixed nut",
+          [r for r in model["overhead"] if r["kind"] == "variable" and r not in alerts], "7F7F7F")
+    ws.auto_filter.ref = f"A1:I{ws.max_row}"
+    ws.append([])
+    ws.append([f"Fixed overhead ${model['fixed_overhead_month']:,.0f}/mo  +  "
+               f"debt service ${model['debt_service_month']:,.0f}/mo  =  "
+               f"${model['total_monthly_obligation']:,.0f}/mo total obligation. "
+               f"Debt payment = the month-over-month drop in the liability balance "
+               f"(interest isn't booked until the CPA's year-end JE, so the whole "
+               f"payment lands there). MCA/refinancing rows are EXCLUDED — a new "
+               f"advance pays off the prior one via the CPA's JE, so the balance "
+               f"delta isn't cash. Type your corrections in the last column — "
+               f"they are preserved across runs."])
+    ws.cell(ws.max_row, 1).font = Font(italic=True, color="808080")
+    ws.sheet_properties.tabColor = "C55A11"
+
+
+def _write_breakeven_audit(ws, audit) -> None:
+    """Append the full audit trail under the Break-Even metrics so every figure
+    can be traced back to its QBO source and re-derived by hand."""
+    if not audit:
+        return
+    ws.append([])
+    ws.append(["AUDIT TRAIL — where every number comes from"])
+    r = ws.max_row
+    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=3)
+    ws.cell(r, 1).fill = PatternFill("solid", fgColor="7030A0")
+    ws.cell(r, 1).font = Font(bold=True, color="FFFFFF", size=11)
+    ws.row_dimensions[r].height = 20
+    for item, val, where in audit:
+        ws.append([item, val, where])
+        rr = ws.max_row
+        if item.startswith("──"):
+            for c in range(1, 4):
+                ws.cell(rr, c).fill = PatternFill("solid", fgColor="EDE7F6")
+            ws.cell(rr, 1).font = Font(bold=True, color="4A3AA7")
+        else:
+            ws.cell(rr, 1).font = Font(bold=True)
+            ws.cell(rr, 2).alignment = Alignment(horizontal="right")
+            ws.cell(rr, 2).font = Font(bold=True)
+            ws.cell(rr, 3).font = Font(color="6B7280", size=9)
+        for c in range(1, 4):
+            ws.cell(rr, c).border = _BORDER
+            ws.cell(rr, c).alignment = Alignment(
+                horizontal="right" if c == 2 else "left",
+                vertical="top", wrap_text=(c == 3))
 
 
 def _write_rp_billing_tab(wb, rows) -> None:
@@ -267,7 +392,8 @@ def _write_rp_billing_tab(wb, rows) -> None:
     ws.sheet_properties.tabColor = "7030A0"
 
 
-def build_workbook(path: Path, sections, health, schedule=None, rp_rows=None) -> None:
+def build_workbook(path: Path, sections, health, schedule=None, rp_rows=None,
+                   recurring_model=None) -> None:
     wb = Workbook()
 
     # Summary tab — the whole story
@@ -293,8 +419,12 @@ def build_workbook(path: Path, sections, health, schedule=None, rp_rows=None) ->
 
     # one tab per section
     for sec, tab in zip(sections, ("Money In", "Money Out", "Position", "Break-Even")):
-        _section_to_sheet(wb.create_sheet(tab), sec, standalone=True)
+        ws = wb.create_sheet(tab)
+        _section_to_sheet(ws, sec, standalone=True)
+        if sec.get("audit"):
+            _write_breakeven_audit(ws, sec["audit"])
 
+    _write_recurring_tab(wb, recurring_model)
     _write_rp_billing_tab(wb, rp_rows or [])
     _write_schedule_tab(wb, schedule)
 
@@ -329,7 +459,16 @@ def main() -> int:
           else "  schedule: none (volume not mounted / no files) — tab skipped")
     rp_rows = cd.read_rp_billing(cd.MB_PATH)
     print(f"  RP billing rows: {len(rp_rows)}")
-    build_workbook(args.xlsx, sections, health, schedule, rp_rows)
+    recurring_model = None
+    try:
+        from shared.qbo_cache import QboCache
+        recurring_model = rec.build(QboCache())
+        print(f"  recurring: {len(recurring_model['overhead'])} overhead + "
+              f"{len(recurring_model['debt'])} debt · "
+              f"{len(recurring_model['alerts'])} need review")
+    except Exception as e:
+        print(f"  recurring: skipped ({type(e).__name__}) — needs QBO")
+    build_workbook(args.xlsx, sections, health, schedule, rp_rows, recurring_model)
     print(f"  ✓ {args.xlsx}")
 
     sources = [cd.MB_PATH, cd.LOC_PATH, cd.MOR_PATH, cd.HEALTH_PATH, cd.WIP_PATH, cd.BILL_PATH]

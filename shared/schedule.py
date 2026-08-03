@@ -61,6 +61,33 @@ _STAGE_RULES = [
 ]
 _DEFAULT_STAGE = ("Other", "404040")
 
+# The Main Schedule groups jobs under SECTION headers, and those sections ARE
+# the pipeline stage the office works from (the user 2026-08-03: jobs under
+# "Grade and Backout / Trenched" were missing from the stage list). The
+# DESCRIPTION column is the specific task within that stage, so classifying by
+# description alone scattered one section across four invented buckets.
+_SECTION_RULES = [
+    ("wreck", ("Wreck & Clean", "305496")),
+    ("flatwork", ("Flatwork", "BF8F00")),
+    ("grade", ("Grade & Backout", "548235")), ("backout", ("Grade & Backout", "548235")),
+    ("form", ("Form Set", "2F5597")),
+    ("punch", ("Punch List", "7F7F7F")),
+    ("pour", ("Pour", "C00000")),
+]
+
+
+def section_cat(section: str) -> Tuple[str, str]:
+    """Section header → (stage label, colour). Falls back to the raw section
+    name so a NEW section the office adds shows up as itself, never dropped."""
+    lo = (section or "").lower()
+    for kw, cat in _SECTION_RULES:
+        if kw in lo:
+            return cat
+    clean = (section or "").strip()
+    if clean:
+        return (clean[:28].title(), "404040")
+    return _DEFAULT_STAGE
+
 
 def stage_cat(desc: str) -> Tuple[str, str]:
     lo = (desc or "").lower()
@@ -368,12 +395,17 @@ def parse_main_schedule(path: Path) -> List[dict]:
     c_name = cols.get("NAME", 0)
 
     out = []
+    section = ""
     for row in rows:
         if not row or len(row) <= max(c_addr, c_stage):
             continue
         addr = str(row[c_addr] or "").strip()
+        first = str(row[c_name] or "").strip() if len(row) > c_name else ""
         if not addr or addr.upper() == "ADDRESS":
-            continue                        # header repeat / section band
+            # a lone label in the first column is a SECTION header
+            if first and first.upper() not in ("NAME", "SUPERINTENDENT"):
+                section = first
+            continue
         # project # lives in its own column on newer files; find it anywhere
         proj = ""
         for c in row:
@@ -383,6 +415,7 @@ def parse_main_schedule(path: Path) -> List[dict]:
                 break
         out.append({
             "proj": proj,
+            "section": section,
             "address": addr,
             "city": str(row[c_city] or "").strip() if c_city is not None and len(row) > c_city else "",
             "builder": str(row[c_bldr] or "").strip() if c_bldr is not None and len(row) > c_bldr else "",
@@ -456,7 +489,10 @@ def build_rp_stages(weeks_back: int = 10,
     for proj, s in latest.items():
         if not proj.upper().startswith("RP"):
             continue                              # RP projects only
-        cat, color = stage_cat(s["stage"])
+        # group by the schedule SECTION (the real pipeline stage); the
+        # description stays as the task detail (the user 2026-08-03)
+        cat, color = section_cat(s.get("section", "")) if s.get("section") \
+            else stage_cat(s["stage"])
         pr = match_price(s["address"], pmap)
         contract = pr["contract"]
         if contract is None:                      # fall back to the project # itself
@@ -470,7 +506,8 @@ def build_rp_stages(weeks_back: int = 10,
             "proj": proj, "address": s["address"], "builder": s["builder"],
             "city": s["city"], "crew": s["crew"], "super": s.get("super", ""),
             "contract": contract,
-            "stage": s["stage"], "stage_cat": cat, "stage_color": color,
+            "stage": s["stage"], "section": s.get("section", ""),
+            "stage_cat": cat, "stage_color": color,
             "last_seen": s["date"], "days_ago": (today - s["date"]).days,
             "first_seen": fs, "in_progress": in_progress,
             "in_progress_capped": bool(fs and earliest and fs <= earliest),
