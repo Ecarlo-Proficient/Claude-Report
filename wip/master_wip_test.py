@@ -85,8 +85,14 @@ def master_cols():
     for Contract/ETC/COs/STATUS — original contract = total − COs.
     PROJECT FOLDER / DATA SOURCE are gone from CP.COLS itself (the user
     2026-07-29): no file links anywhere — the only links are QBO on
-    Billed/Costs."""
-    drop = {"retainage_held", "notes_text"}
+    Billed/Costs.
+
+    Test-Master is the FINISHED report (the user 2026-08-03): no NOTES column
+    (working commentary belongs on the division tabs) and no LAST SYNCED — the
+    report date on row 2 already says when it was built. Both stay on
+    'Test - CP' / 'Test - RP', which are the working views (and which
+    money_bleeds reads)."""
+    drop = {"retainage_held", "notes_text", "_last_synced", "_notes_all"}
     cols = [("SECTION", 15, "section")]
     for label, width, field in CP.COLS:
         if field in drop:
@@ -500,6 +506,10 @@ def main() -> int:
             rp_cols.append((label, width, field))
             if field == "home_type":
                 rp_cols.append(("BUILDER", 24, "client"))
+        # 'Test - RP' is a WORKING tab, so it keeps the commentary and the sync
+        # stamp that Test-Master drops (money_bleeds reads both from here).
+        rp_cols += [("LAST SYNCED", 18, "_last_synced"),
+                    ("NOTES", 60, "_notes_all")]
         legend = [
             ("LEGEND — CATEGORY (what each row's TYPE means):", None, True),
             ("GOOD — work is underway: QBO shows costs and/or billing", None, False),

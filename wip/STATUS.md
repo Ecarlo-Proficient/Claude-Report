@@ -319,3 +319,20 @@ percent complete, earned revenue and profit on ~$16.8M of MFD contract. The
 reader now falls back to evaluating the sheet's own divisor formula; recovered
 values match the pre-loss figures exactly. Any future WIP-Master-sourced cell
 that is a formula needs the same treatment.
+
+## 2026-08-03 (pm 4) — Test-Master is the finished report
+
+- **LEFT TO BILL joined the BILLING box** — it is a billing position, not its
+  own section, so the thick rule after UNDERBILLINGS is gone and the next one
+  opens at FUTURE PROFIT TO EARN. `_COL_GROUPS` lost the POSITION group.
+- **Test-Master drops LAST SYNCED and NOTES** (the user 2026-08-03: the master
+  "should be the final visually perfected wip report as is"). The report date
+  on row 2 already carries the timestamp. BOTH stay on 'Test - CP' and
+  'Test - RP', which are the working views — and `money_bleeds` reads both of
+  them from 'Test - RP', so removing them there would break it.
+- **Known/accepted notes are muted, not shown** (`_MUTED_NOTE_RE`): the first
+  is "proposal quotes PIERS but no PR cost in the takeoff" — pier costs sit in
+  the Piers takeoff sheet's overall costs and were never broken out per code,
+  so it is a description of how the takeoffs are built, not a finding. Add to
+  that regex when another accepted condition is identified; genuine takeoff
+  errors (e.g. "pier cost row(s) are #N/A") are NOT muted.

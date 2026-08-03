@@ -1082,7 +1082,6 @@ COLS = [
     ("OVERBILLINGS",                                    14, "overbillings"),       # O = MAX(N-L,0)
     ("UNDERBILLINGS",                                   14, "underbillings"),      # P = MAX(L-N,0)
     ("RETAINAGE HELD",                                  14, "retainage_held"),     # Q
-    # ── POSITION ──
     ("LEFT TO BILL",                                    14, "left_to_bill"),       # R = C-N
     # ── ANALYSIS ──
     ("FUTURE PROFIT TO EARN",                           15, "future_profit"),      # S = G-M
@@ -1104,8 +1103,9 @@ _COL_GROUPS = [
     ("PROFIT",   "original_profit"),
     ("COSTS",    "costs_to_date"),
     ("EARNED",   "_earned_revenue"),
+    # LEFT TO BILL sits INSIDE the billing box (the user 2026-08-03) — it is a
+    # billing position, not a separate section.
     ("BILLING",  "billed_to_date"),
-    ("POSITION", "left_to_bill"),
     ("ANALYSIS", "future_profit"),
 ]
 
@@ -1241,6 +1241,8 @@ def _row_display_value(row: CpRow, field_name: str, sync_ts: str):
                 for lead in ("RED:", "note:", "NOTE:"):
                     if seg.startswith(lead):
                         seg = seg[len(lead):].strip()
+                if _MUTED_NOTE_RE.search(seg):
+                    continue                  # known/accepted — not a finding
                 key = re.sub(r"\s+", " ", seg).lower()
                 if seg and key not in seen:
                     seen.add(key)
@@ -1269,6 +1271,13 @@ AUDIT_XLSX = Path.home() / "Downloads" / "WIP Changes.xlsx"
 # Note segments the SCRIPT writes. Anything else in a NOTES cell was typed by
 # a human and is carried forward across the full-replace (the user
 # 2026-07-31: "be sure to preserve any notes").
+# Notes for KNOWN, ACCEPTED conditions — suppressed rather than shown, because
+# they describe how the takeoffs are built, not something anyone will act on.
+# "proposal quotes PIERS but no PR cost": pier costs sit inside the Piers
+# takeoff sheet's overall costs and were never broken out per code (the user
+# 2026-08-03: "i don't need to see that").
+_MUTED_NOTE_RE = re.compile(r"quotes\s+PIERS\s+but\s+no\s+PR\s+cost", re.I)
+
 _SCRIPT_NOTE_RE = re.compile(
     r"^(Draw #|No draw yet|QBO |No QBO project|Duplicate line in the RP file|"
     r"No budget \(ETC\)|Contract/ETC from |Data integrity:|On the .* schedule|"
