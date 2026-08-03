@@ -252,3 +252,38 @@ Last updated: 2026-07-29
   owner edits (RP, `notes_from_source=True`) are excluded from the
   carry-forward — otherwise deleting a note from his RP file would put it
   straight back. Carry-forward still protects hand-typed CP/MFD notes.
+
+## 2026-08-03 (pm 2) — report layout brought up to the owner's reference WIP
+
+The owner supplied a reference WIP (another GC's) and asked for that level of
+finish. Delivered, WITHOUT renaming any header (five tools read this tab by
+header name — `shared/schedule.py`, `shared/breakeven.py`,
+`health-dashboard/company_dashboard.py`, `money_bleeds.py`,
+`project-pnl/project_pnl_export.py`):
+
+- **Columns grouped and reordered** CONTRACT → BUDGET → COSTS → PROFIT →
+  BILLING → REMAINING → ANALYSIS (`_COL_GROUPS`). New `ORIGINAL CONTRACT`
+  (A) and `PERCENT BILLED` (K) columns; `APPROVED COs` (B) now sits directly
+  after the contract it changes, with `TOTAL CONTRACT PRICE` (C = A+B) next.
+  A medium vertical rule opens each group so they read as boxes.
+- **COLUMN GUIDE block at the bottom** — every money column with its letter and
+  derivation (C = A+B, G = F÷D, …), grouped like the columns.
+- **Legends moved to the BOTTOM** (`legend=` now renders under the report, not
+  above the header) — keeps the header at row 3 where the readers expect it.
+- **Cash-flow block reformatted**: label merged across A:B, amount across C:D
+  immediately beside it, every cell bordered, title bar filled. Previously the
+  amounts sat in the contract column, stranded far from their labels with no
+  rules at all.
+- **Divisions spelled out** in SECTION: `Multi-Family`, `Commercial`,
+  `Residential — Slab / Flatwork / Flatwork (off-schedule) / Dropped, Unbilled
+  / Flatwork Backlog` (`_SECTION_LABEL`).
+- **NOT DONE — the group header BAND across the top.** `shared/schedule.py`
+  finds the header by scanning rows 1–5 for any cell containing "CONTRACT"; a
+  band row saying CONTRACT would hijack that and silently break the schedule
+  linkage (and company_dashboard). Adding the band needs those readers to
+  match `PROJECT #` exactly first — do that before revisiting.
+
+### Fixed here
+- `money_bleeds.check_rp_wrapup` read 'Test - RP' headers from **row 1**, so it
+  silently returned nothing once that tab gained a title block. It now finds
+  the header row (scans rows 1–15 for `PROJECT #`).

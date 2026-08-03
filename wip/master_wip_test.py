@@ -98,6 +98,19 @@ _OWNER_RGB = {"00B050": "00B050",     # green — the owner verified this number
 _OWNER_ORANGE = "ED7D31"              # theme 9 — ops manager must verify
 
 
+# Divisions are SPELLED OUT on the report (the user 2026-08-03) — the codes
+# are internal shorthand, not something a reader of the WIP should decode.
+_SECTION_LABEL = {
+    "MFD": "Multi-Family",
+    "CP": "Commercial",
+    "RP SLAB": "Residential — Slab",
+    "FTW — ACTIVE": "Residential — Flatwork",
+    "FTW — OFF-SCHEDULE (COSTS)": "Residential — Flatwork (off-schedule)",
+    "RP — DROPPED, UNBILLED": "Residential — Dropped, Unbilled",
+    "FTW BACKLOG": "Residential — Flatwork Backlog",
+}
+
+
 def _rp_category(row) -> str:
     """The row's TYPE for a line from the owner's top section, decided AFTER
     the QBO pass (the user 2026-07-31: "rp7234-ftw is not good … there are no
@@ -413,6 +426,10 @@ def main() -> int:
                 row.section = sect
         all_rows = (mfd_rows + cp_rows + slabs_custom + slabs_tract
                     + ftw_active + ftw_backlog)
+    # SECTION shows the division spelled out, not the internal code.
+    for row in all_rows:
+        row.section = _SECTION_LABEL.get(row.section, row.section)
+
     import datetime as dt
     try:
         wrote = CP.write_test_cp(
@@ -450,7 +467,7 @@ def main() -> int:
         type_order = ["GOOD", "NOT STARTED", "FTW WITH COSTS",
                       "DROPPED OFF SCHEDULE", "FTW BACKLOG"]
         rp_view = [r for t in type_order for r in all_rows
-                   if r.section not in ("MFD", "CP")
+                   if r.section not in ("Multi-Family", "Commercial")
                    and getattr(r, "rp_type", None) == t]
         # CATEGORY describes the row; TYPE stays Tract/Custom exactly as on
         # the master layout (the user 2026-07-31).
@@ -462,7 +479,7 @@ def main() -> int:
             if field == "home_type":
                 rp_cols.append(("BUILDER", 24, "client"))
         legend = [
-            ("LEGEND — CATEGORY:", None, True),
+            ("LEGEND — CATEGORY (what each row's TYPE means):", None, True),
             ("GOOD — work is underway: QBO shows costs and/or billing", None, False),
             ("NOT STARTED — on the schedule / priced, but no costs and no billing yet", None, False),
             ("FTW WITH COSTS — flatwork started off-schedule (has costs) — belongs on the schedule", None, False),

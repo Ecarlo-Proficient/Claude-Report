@@ -949,6 +949,8 @@ CELL_BORDER = Border(left=_SIDE, right=_SIDE, top=_SIDE, bottom=_SIDE)
 # Title block, copied cell-for-cell from the real 'WIP Master' sheet.
 TITLE_FONT = Font(name=MASTER_FONT_NAME, size=MASTER_FONT_SIZE, bold=True)
 _MEDIUM = Side(style="medium", color="000000")
+# Opens a column group: medium rule on the left, thin elsewhere.
+_GROUP_BORDER = Border(left=_MEDIUM, right=_SIDE, top=_SIDE, bottom=_SIDE)
 CURRENCY_FMT = '"$"#,##0_);[Red]\\("$"#,##0\\)'          # verbatim from 'WIP Master'
 PCT_FMT = "0.00%"                                        # verbatim from 'WIP Master'
 
@@ -961,7 +963,7 @@ _MONEY_FIELDS = frozenset({
     "billed_to_date", "retainage_held", "left_to_bill", "overbillings",
     "underbillings", "job_borrow",
 })
-_PCT_FIELDS = frozenset({"_pct_complete", "gross_profit_pct"})
+_PCT_FIELDS = frozenset({"_pct_complete", "gross_profit_pct", "_pct_billed"})
 
 # SOURCED cells (raw numbers straight from the takeoff or QBO) get a yellow
 # fill so they're visually distinct from the white CALCULATED cells (Excel
@@ -1039,28 +1041,38 @@ COLS = [
     # file hyperlinks weigh the workbook down — the only links anywhere are
     # the QBO deep links on Billed/Costs).
     ("STATUS",                                          10, "_active_status"),
-    # ── Inputs (yellow) — the 4 core WIP inputs, matching the team sheet ──
-    ("TOTAL CONTRACT PRICE",                            16, "contract_price"),   # Original + COs
-    ("ESTIMATED TOTAL COSTS",                           16, "etc"),              # Revised ETC
-    ("BILLED TO DATE",                                  15, "billed_to_date"),   # gross (incl retainage)
-    ("COSTS TO DATE",                                   15, "costs_to_date"),
-    # ── Derived story (white) ──
-    ("COST TO COMPLETE",                                14, "cost_to_complete"),
-    ("ORIGINAL PROFIT",                                 14, "original_profit"),
-    ("PERCENT COMPLETE",                                11, "_pct_complete"),
-    ("REVENUES EARNED TO DATE",                         16, "_earned_revenue"),
-    ("PROFIT EARNED TO DATE",                           15, "profit_earned"),
-    # Short names (the user 2026-07-16): the long "BILLINGS IN EXCESS OF…"
-    # labels kept getting clipped every sync — width now fits the numbers.
-    ("OVERBILLINGS",                                    14, "overbillings"),
-    ("UNDERBILLINGS",                                   14, "underbillings"),
-    ("LEFT TO BILL",                                    14, "left_to_bill"),
-    ("GROSS PROFIT %",                                  12, "gross_profit_pct"),
-    ("FUTURE PROFIT TO EARN",                           15, "future_profit"),
-    ("PURE JOB BORROW",                                 14, "job_borrow"),
-    # ── Trailing cross-check / reference (yellow, sourced) ──
-    ("APPROVED COs",                                    14, "co_revenue"),
-    ("RETAINAGE HELD",                                  14, "retainage_held"),
+    # Columns are GROUPED left→right the way a WIP schedule reads (the user
+    # 2026-08-03): CONTRACT → BUDGET → COSTS → PROFIT → BILLING → REMAINING →
+    # ANALYSIS. `_COL_GROUPS` below maps each group to its first field so the
+    # writer can draw a vertical rule at every boundary and print a column
+    # guide at the bottom. Header NAMES are the 'WIP Master' vocabulary and
+    # must not be renamed — five other tools read this tab by header name.
+    # ── CONTRACT ── (approved COs sit right after the contract they change)
+    ("ORIGINAL CONTRACT",                               15, "base_contract"),    # A
+    ("APPROVED COs",                                    14, "co_revenue"),       # B
+    ("TOTAL CONTRACT PRICE",                            16, "contract_price"),   # C = A+B
+    # ── BUDGET ──
+    ("ESTIMATED TOTAL COSTS",                           16, "etc"),              # D
+    ("ORIGINAL PROFIT",                                 14, "original_profit"),  # E = C-D
+    # ── COSTS ──
+    ("COSTS TO DATE",                                   15, "costs_to_date"),    # F
+    ("PERCENT COMPLETE",                                11, "_pct_complete"),    # G = F/D
+    # ── PROFIT ──
+    ("PROFIT EARNED TO DATE",                           15, "profit_earned"),    # H = E*G
+    ("REVENUES EARNED TO DATE",                         16, "_earned_revenue"),  # I = C*G
+    # ── BILLING ──
+    ("BILLED TO DATE",                                  15, "billed_to_date"),   # J (gross, incl retainage)
+    ("PERCENT BILLED",                                  11, "_pct_billed"),      # K = J/C
+    ("OVERBILLINGS",                                    14, "overbillings"),     # L
+    ("UNDERBILLINGS",                                   14, "underbillings"),    # M
+    ("RETAINAGE HELD",                                  14, "retainage_held"),   # N
+    # ── REMAINING ──
+    ("COST TO COMPLETE",                                14, "cost_to_complete"), # O = D-F
+    ("LEFT TO BILL",                                    14, "left_to_bill"),     # P = C-J
+    # ── ANALYSIS ──
+    ("GROSS PROFIT %",                                  12, "gross_profit_pct"), # Q = E/C
+    ("FUTURE PROFIT TO EARN",                           15, "future_profit"),    # R = E-H
+    ("PURE JOB BORROW",                                 14, "job_borrow"),       # S
     ("LAST SYNCED",                                     18, "_last_synced"),
     # ONE commentary column (the user 2026-07-31: "stick to one" — NOTES and
     # FLAGS were two columns saying overlapping things). Informational notes
@@ -1069,6 +1081,43 @@ COLS = [
     # a flag.
     ("NOTES",                                           60, "_notes_all"),
 ]
+
+# Column groups → (group label, first field of the group). Drives the vertical
+# rule between groups and the COLUMN GUIDE block at the bottom of the sheet.
+_COL_GROUPS = [
+    ("CONTRACT",  "base_contract"),
+    ("BUDGET",    "etc"),
+    ("COSTS",     "costs_to_date"),
+    ("PROFIT",    "profit_earned"),
+    ("BILLING",   "billed_to_date"),
+    ("REMAINING", "cost_to_complete"),
+    ("ANALYSIS",  "gross_profit_pct"),
+]
+
+# Column guide printed at the bottom: field → (letter, what it does). Mirrors
+# the reference WIP the user supplied — every column says how it is derived so
+# anyone reading the report can follow the maths (the user 2026-08-03).
+_COL_LETTERS = {
+    "base_contract": ("A", "original contract, before change orders"),
+    "co_revenue": ("B", "approved change orders"),
+    "contract_price": ("C", "C = A + B  (total contract price)"),
+    "etc": ("D", "estimated total costs — the budget"),
+    "original_profit": ("E", "E = C − D"),
+    "costs_to_date": ("F", "job costs booked in QBO"),
+    "_pct_complete": ("G", "G = F ÷ D"),
+    "profit_earned": ("H", "H = E × G"),
+    "_earned_revenue": ("I", "I = C × G"),
+    "billed_to_date": ("J", "gross billed, retainage included"),
+    "_pct_billed": ("K", "K = J ÷ C"),
+    "overbillings": ("L", "L = MAX(J − I, 0)  billed ahead of earned"),
+    "underbillings": ("M", "M = MAX(I − J, 0)  earned ahead of billed"),
+    "retainage_held": ("N", "gross billed − net collectible"),
+    "cost_to_complete": ("O", "O = D − F"),
+    "left_to_bill": ("P", "P = C − J"),
+    "gross_profit_pct": ("Q", "Q = E ÷ C"),
+    "future_profit": ("R", "R = E − H"),
+    "job_borrow": ("S", "S = MAX(O − P, 0)  cash this job borrows"),
+}
 
 
 # Fields written as Excel FORMULAS (not static values) so any input change
@@ -1088,6 +1137,7 @@ FORMULA_FIELDS: frozenset = frozenset({
     "left_to_bill",      # LEFT TO BILL      = Revised Contract − Billed
     "overbillings",      # OVERBILLINGS      = MAX(Billed − Earned, 0)
     "underbillings",     # UNDERBILLINGS     = MAX(Earned − Billed, 0)
+    "_pct_billed",       # PERCENT BILLED    = Billed / Total Contract
     "job_borrow",        # PURE JOB BORROW   = MAX(Cost to Complete − Left to Bill, 0)
 })
 
@@ -1121,6 +1171,8 @@ def _build_formula(field_name: str, row_num: int,
         return f'=IF(OR({I}="",{K}=""),"",{I}-{K})'
     if field_name == "_pct_complete":
         return f'=IF(OR({K}="",{I}="",{I}=0),"",{K}/{I})'
+    if field_name == "_pct_billed":
+        return f'=IF(OR({J}="",{F}="",{F}=0),"",{J}/{F})'
     if field_name == "_earned_revenue":
         return f'=IF(OR({F}="",{K}="",{I}="",{I}=0),"",{F}*{K}/{I})'
     if field_name == "profit_earned":
@@ -1465,8 +1517,12 @@ def _write_summary(ws, cols_, col_letter_by_field, data_start: int,
         c.number_format = PCT_FMT
 
     # ── FUTURE WIP CASH FLOW block ──
-    vcol = column_index_from_string(L("contract_price") or "E")     # amounts stack in one column
-    vL = get_column_letter(vcol)
+    # Label and amount sit SIDE BY SIDE in a bordered box (the user
+    # 2026-08-03: "why is numbers far from this? where are the dividers and
+    # lines?"). Label spans cols A:B, the amount C:D, so nothing is stranded
+    # halfway across the sheet.
+    _bold = Font(name=MASTER_FONT_NAME, size=MASTER_FONT_SIZE, bold=True)
+    vcol, vL = 3, get_column_letter(3)
     r0 = tot + 2
     lines = [
         ("FUTURE WIP CASH FLOW", None, True),
@@ -1479,23 +1535,83 @@ def _write_summary(ws, cols_, col_letter_by_field, data_start: int,
          f"={L('underbillings')}{tot}-{L('overbillings')}{tot}", False),
         ("FUTURE WIP CASH FLOW", f"={vL}{r0 + 5}+{vL}{r0 + 6}", True),
     ]
-    _bold = Font(name=MASTER_FONT_NAME, size=MASTER_FONT_SIZE, bold=True)
     for k, (label, formula, bold) in enumerate(lines):
         r = r0 + k
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=2)
+        ws.merge_cells(start_row=r, start_column=3, end_row=r, end_column=4)
         lc = ws.cell(row=r, column=1, value=label)
         lc.font = _bold if bold else DATA_FONT
-        lc.border = CELL_BORDER
+        lc.alignment = Alignment(horizontal="left", vertical="center")
+        vc = ws.cell(row=r, column=vcol)
         if formula:
-            vc = ws.cell(row=r, column=vcol, value=formula)
+            vc.value = formula
             vc.number_format = CURRENCY_FMT
-            vc.border = CELL_BORDER
             vc.font = _bold if bold else DATA_FONT
-    # G.P. LEFT TO EARN margin % (of revenue left to earn) beside the amount
-    pc = ws.cell(row=r0 + 5, column=vcol + 1)
-    pc.value = f'=IF({vL}{r0 + 3}=0,"",{vL}{r0 + 5}/{vL}{r0 + 3})'
+            vc.alignment = Alignment(horizontal="right", vertical="center")
+        if label == "FUTURE WIP CASH FLOW" and formula is None:
+            for c in range(1, 5):                     # block title bar
+                ws.cell(row=r, column=c).fill = HDR_FILL
+        for c in range(1, 5):                         # box every cell
+            ws.cell(row=r, column=c).border = CELL_BORDER
+    # G.P. LEFT TO EARN margin % (of revenue left to earn), labelled so the
+    # stray percentage isn't a mystery number floating beside the block.
+    pr = r0 + 5
+    pc = ws.cell(row=pr, column=5,
+                 value=f'=IF({vL}{r0 + 3}=0,"",{vL}{r0 + 5}/{vL}{r0 + 3})')
     pc.number_format = PCT_FMT
     pc.font = DATA_FONT
+    pc.alignment = Alignment(horizontal="right")
     pc.border = CELL_BORDER
+    lbl = ws.cell(row=pr, column=6, value="of revenue left to earn")
+    lbl.font = Font(name=MASTER_FONT_NAME, size=MASTER_FONT_SIZE, italic=True)
+    return r0 + len(lines)          # first free row under the block
+
+
+def _write_bottom_notes(ws, cols_, start_row: int,
+                        legend: Optional[List]) -> None:
+    """The reference blocks that live UNDER the report (the user 2026-08-03:
+    "put the rp legend in the bottom of the sheet"):
+
+      COLUMN GUIDE — every money column, its letter and how it is derived, in
+      the same CONTRACT/BUDGET/COSTS/… groups as the columns themselves, so a
+      reader can follow the maths without asking.
+      LEGEND — the caller's own rows (RP categories, colour meanings).
+
+    Plain single-font cells throughout — inline rich text corrupts the file."""
+    _bold = Font(name=MASTER_FONT_NAME, size=MASTER_FONT_SIZE, bold=True)
+    fields = [f for _l, _w, f in cols_]
+    group_of = {}
+    for gname, first in _COL_GROUPS:
+        if first in fields:
+            group_of[first] = gname
+    r = start_row + 1
+    ws.cell(row=r, column=1, value="COLUMN GUIDE").font = _bold
+    for c in range(1, 5):
+        ws.cell(row=r, column=c).fill = HDR_FILL
+        ws.cell(row=r, column=c).border = CELL_BORDER
+    r += 1
+    for label, _w, field in cols_:
+        if field not in _COL_LETTERS:
+            continue
+        if field in group_of:                       # group heading
+            gc = ws.cell(row=r, column=1, value=f"── {group_of[field]} ──")
+            gc.font = _bold
+            r += 1
+        letter, how = _COL_LETTERS[field]
+        ws.cell(row=r, column=1, value=letter).font = _bold
+        ws.cell(row=r, column=2, value=label).font = DATA_FONT
+        ws.merge_cells(start_row=r, start_column=3, end_row=r, end_column=7)
+        ws.cell(row=r, column=3, value=how).font = DATA_FONT
+        for c in range(1, 8):
+            ws.cell(row=r, column=c).border = CELL_BORDER
+        r += 1
+    if legend:
+        r += 1
+        for txt, rgb, bold in legend:
+            lc = ws.cell(row=r, column=1, value=txt)
+            lc.font = Font(name=MASTER_FONT_NAME, size=MASTER_FONT_SIZE,
+                           color=(rgb or "000000"), bold=bold)
+            r += 1
 
 
 def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
@@ -1618,11 +1734,13 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
             ws.unmerge_cells(str(rng))
         prior_max_row = ws.max_row or 0
         prior_max_col = ws.max_column or 0
-        off = (2 if title else 0) + (len(legend) if legend else 0)
-        # banner + legend rows above the header
+        off = 2 if title else 0      # banner rows above the header; the legend
+                                     # lives at the BOTTOM (the user 2026-08-03)
         _sects = ([appendix] if isinstance(appendix, tuple) else (appendix or []))
         n_total = (off + len(rows) + sum(len(a[1]) + 3 for a in _sects if a[1])
-                   + (14 if summary else 0))
+                   + (14 if summary else 0)
+                   + len(_COL_LETTERS) + len(_COL_GROUPS) + 4
+                   + (len(legend) + 2 if legend else 0))
         for r in range(1, max(prior_max_row, n_total + 1) + 1):
             for c in range(1, max(prior_max_col, len(cols_)) + 1):
                 cell = ws.cell(row=r, column=c)
@@ -1663,21 +1781,20 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
             for c in range(1, len(cols_) + 1):
                 ws.cell(row=1, column=c).border = Border(top=_MEDIUM)
                 ws.cell(row=2, column=c).border = Border(bottom=_MEDIUM)
-        if legend:
-            lr0 = 3 if title else 1
-            for k, (txt, rgb, bold) in enumerate(legend):
-                lc = ws.cell(row=lr0 + k, column=1, value=txt)
-                lc.font = Font(name=MASTER_FONT_NAME, size=MASTER_FONT_SIZE,
-                               color=(rgb or "000000"), bold=bold)
 
-        # Header row — gray, bold, centered + wrapped, bordered.
+        # Header row — gray, bold, centered + wrapped, bordered. A MEDIUM
+        # vertical rule opens each column group (CONTRACT / BUDGET / COSTS /
+        # PROFIT / BILLING / REMAINING / ANALYSIS) so the groups read as boxes
+        # the way the owner's reference WIP does (the user 2026-08-03).
+        _group_starts = {f for _g, f in _COL_GROUPS}
         for c, (label, width, _key) in enumerate(cols_, start=1):
             cell = ws.cell(row=hdr_row, column=c, value=label)
             cell.fill = HDR_FILL
             cell.font = HDR_FONT
             cell.alignment = Alignment(horizontal="center", vertical="center",
                                        wrap_text=True)
-            cell.border = CELL_BORDER
+            cell.border = (_GROUP_BORDER if _key in _group_starts
+                           else CELL_BORDER)
             ws.column_dimensions[get_column_letter(c)].width = width
         ws.row_dimensions[hdr_row].height = 30
         ws.freeze_panes = f"A{hdr_row + 1}"
@@ -1725,7 +1842,8 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                 else:
                     val = _row_display_value(row, field_name, sync_ts)
                 cell = ws.cell(row=i, column=c, value=val)
-                cell.border = CELL_BORDER
+                cell.border = (_GROUP_BORDER if field_name in _group_starts
+                               else CELL_BORDER)
                 cell.font = DATA_FONT          # master-sheet Tahoma 8 baseline
                 if field_name in _MONEY_FIELDS:
                     cell.number_format = CURRENCY_FMT
@@ -1860,8 +1978,9 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
             next_row = band + len(ap_rows) + 2
 
         if summary:
-            _write_summary(ws, cols_, col_letter_by_field, data_start,
-                           last_row, next_row)
+            next_row = _write_summary(ws, cols_, col_letter_by_field,
+                                      data_start, last_row, next_row)
+        _write_bottom_notes(ws, cols_, next_row, legend)
 
         # Re-attach the harvested user comments to their project/column.
         col_by_label = {label: c for c, (label, _w, _f) in enumerate(cols_, start=1)}

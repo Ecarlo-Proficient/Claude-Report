@@ -659,7 +659,17 @@ def check_rp_wrapup(wip_path: Path) -> Tuple[List[Dict[str, Any]], str]:
     isn't used (the user 2026-07-16). Returns (rows, synced)."""
     wb = load_workbook(wip_path, data_only=True, read_only=True)
     ws = wb[RP_TEST_SHEET]
-    hdr = {str(ws.cell(1, c).value or "").strip().upper(): c
+    # FIND the header row — never assume row 1 (2026-08-03). The tab grew a
+    # title block, so the header sits below it and a hard-coded row 1 read
+    # silently returned nothing at all.
+    hdr_row = next((r for r in range(1, 16)
+                    if any(str(ws.cell(r, c).value or "").strip().upper()
+                           == "PROJECT #"
+                           for c in range(1, (ws.max_column or 0) + 1))), None)
+    if hdr_row is None:
+        wb.close()
+        return [], ""
+    hdr = {str(ws.cell(hdr_row, c).value or "").strip().upper(): c
            for c in range(1, ws.max_column + 1)}
 
     def col(r, label):
@@ -667,7 +677,7 @@ def check_rp_wrapup(wip_path: Path) -> Tuple[List[Dict[str, Any]], str]:
         return ws.cell(r, c).value if c else None
 
     rows, synced = [], ""
-    for r in range(2, ws.max_row + 1):
+    for r in range(hdr_row + 1, ws.max_row + 1):
         proj = col(r, "PROJECT #")
         if not proj:
             continue
