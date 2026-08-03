@@ -34,6 +34,9 @@ project-pnl/           per-project P&L workbooks → OneDrive
 debt-schedule/         equipment debt workbook + loan_sync (writes beside itself)
 health-dashboard/      local company-health xlsx (private, chmod 600)
 qbo-export/            one-row-per-line-item txn export → OneDrive inbox
+job-auditor/           DESIGN + prototypes: audits proposal scope vs takeoff cost
+                       bands on the live job folders (read-only; proposes, never
+                       applies) — see its SPEC.md / STATUS.md
 one-offs/              occasional / not-yet-developed tools (never the repo root)
 synology/              NAS file-tree audit (always --exclude the sensitive path)
 docker/                invoice-sync container package (v1.1.0)
