@@ -963,7 +963,7 @@ _MONEY_FIELDS = frozenset({
     "billed_to_date", "retainage_held", "left_to_bill", "overbillings",
     "underbillings", "job_borrow",
 })
-_PCT_FIELDS = frozenset({"_pct_complete", "gross_profit_pct", "_pct_billed"})
+_PCT_FIELDS = frozenset({"_pct_complete", "gross_profit_pct"})
 
 # SOURCED cells (raw numbers straight from the takeoff or QBO) get a yellow
 # fill so they're visually distinct from the white CALCULATED cells (Excel
@@ -971,7 +971,10 @@ _PCT_FIELDS = frozenset({"_pct_complete", "gross_profit_pct", "_pct_billed"})
 # leave white." Identifier/metadata columns (project #, name, status, flags,
 # last synced) stay white — they're not metrics.
 _SOURCE_FIELDS = frozenset({
+    "base_contract",     # ORIGINAL CONTRACT
     "contract_price",    # TOTAL CONTRACT PRICE (Original + COs)
+    "base_etc",          # ORIGINAL ESTIMATED COST
+    "co_cost_estimate",  # CO COSTS — yellow + EMPTY = an input nobody filled
     "etc",               # ESTIMATED TOTAL COSTS (Revised ETC)
     "billed_to_date",    # QBO (gross income)
     "costs_to_date",     # QBO
@@ -1047,32 +1050,43 @@ COLS = [
     # writer can draw a vertical rule at every boundary and print a column
     # guide at the bottom. Header NAMES are the 'WIP Master' vocabulary and
     # must not be renamed — five other tools read this tab by header name.
-    # ── CONTRACT ── (approved COs sit right after the contract they change)
-    ("ORIGINAL CONTRACT",                               15, "base_contract"),    # A
-    ("APPROVED COs",                                    14, "co_revenue"),       # B
-    ("TOTAL CONTRACT PRICE",                            16, "contract_price"),   # C = A+B
+    # A change order moves BOTH sides — the contract AND the budget. The two
+    # trios below mirror each other on purpose (researched 2026-08-03; Dean
+    # Dorton lists "adding the change order to the contract amount but not
+    # adjusting the project's cost budget" as a top WIP mistake). CO COSTS has
+    # no source yet, so it sits EMPTY — a blank yellow input cell says
+    # "nobody has costed this CO" more plainly than any flag would.
+    # NOTE: 'TOTAL CONTRACT PRICE' IS the revised contract and 'ESTIMATED
+    # TOTAL COSTS' IS the revised estimated cost. Those two names are read by
+    # five other tools and must not be renamed.
+    # ── CONTRACT ──
+    ("ORIGINAL CONTRACT",                               15, "base_contract"),      # A
+    ("APPROVED COs",                                    14, "co_revenue"),         # B
+    ("TOTAL CONTRACT PRICE",                            16, "contract_price"),     # C = A+B
     # ── BUDGET ──
-    ("ESTIMATED TOTAL COSTS",                           16, "etc"),              # D
-    ("ORIGINAL PROFIT",                                 14, "original_profit"),  # E = C-D
-    # ── COSTS ──
-    ("COSTS TO DATE",                                   15, "costs_to_date"),    # F
-    ("PERCENT COMPLETE",                                11, "_pct_complete"),    # G = F/D
+    ("ORIGINAL ESTIMATED COST",                         16, "base_etc"),           # D
+    ("CO COSTS",                                        13, "co_cost_estimate"),   # E
+    ("ESTIMATED TOTAL COSTS",                           16, "etc"),                # F = D+E
     # ── PROFIT ──
-    ("PROFIT EARNED TO DATE",                           15, "profit_earned"),    # H = E*G
-    ("REVENUES EARNED TO DATE",                         16, "_earned_revenue"),  # I = C*G
+    ("ORIGINAL PROFIT",                                 14, "original_profit"),    # G = C-F
+    ("GROSS PROFIT %",                                  12, "gross_profit_pct"),   # H = G/C
+    # ── COSTS ──
+    ("COSTS TO DATE",                                   15, "costs_to_date"),      # I
+    ("COST TO COMPLETE",                                14, "cost_to_complete"),   # J = F-I
+    ("PERCENT COMPLETE",                                11, "_pct_complete"),      # K = I/F
+    # ── EARNED ──
+    ("REVENUES EARNED TO DATE",                         16, "_earned_revenue"),    # L = C*K
+    ("PROFIT EARNED TO DATE",                           15, "profit_earned"),      # M = G*K
     # ── BILLING ──
-    ("BILLED TO DATE",                                  15, "billed_to_date"),   # J (gross, incl retainage)
-    ("PERCENT BILLED",                                  11, "_pct_billed"),      # K = J/C
-    ("OVERBILLINGS",                                    14, "overbillings"),     # L
-    ("UNDERBILLINGS",                                   14, "underbillings"),    # M
-    ("RETAINAGE HELD",                                  14, "retainage_held"),   # N
-    # ── REMAINING ──
-    ("COST TO COMPLETE",                                14, "cost_to_complete"), # O = D-F
-    ("LEFT TO BILL",                                    14, "left_to_bill"),     # P = C-J
+    ("BILLED TO DATE",                                  15, "billed_to_date"),     # N (gross, incl retainage)
+    ("OVERBILLINGS",                                    14, "overbillings"),       # O = MAX(N-L,0)
+    ("UNDERBILLINGS",                                   14, "underbillings"),      # P = MAX(L-N,0)
+    ("RETAINAGE HELD",                                  14, "retainage_held"),     # Q
+    # ── POSITION ──
+    ("LEFT TO BILL",                                    14, "left_to_bill"),       # R = C-N
     # ── ANALYSIS ──
-    ("GROSS PROFIT %",                                  12, "gross_profit_pct"), # Q = E/C
-    ("FUTURE PROFIT TO EARN",                           15, "future_profit"),    # R = E-H
-    ("PURE JOB BORROW",                                 14, "job_borrow"),       # S
+    ("FUTURE PROFIT TO EARN",                           15, "future_profit"),      # S = G-M
+    ("PURE JOB BORROW",                                 14, "job_borrow"),         # T
     ("LAST SYNCED",                                     18, "_last_synced"),
     # ONE commentary column (the user 2026-07-31: "stick to one" — NOTES and
     # FLAGS were two columns saying overlapping things). Informational notes
@@ -1085,13 +1099,14 @@ COLS = [
 # Column groups → (group label, first field of the group). Drives the vertical
 # rule between groups and the COLUMN GUIDE block at the bottom of the sheet.
 _COL_GROUPS = [
-    ("CONTRACT",  "base_contract"),
-    ("BUDGET",    "etc"),
-    ("COSTS",     "costs_to_date"),
-    ("PROFIT",    "profit_earned"),
-    ("BILLING",   "billed_to_date"),
-    ("REMAINING", "cost_to_complete"),
-    ("ANALYSIS",  "gross_profit_pct"),
+    ("CONTRACT", "base_contract"),
+    ("BUDGET",   "base_etc"),
+    ("PROFIT",   "original_profit"),
+    ("COSTS",    "costs_to_date"),
+    ("EARNED",   "_earned_revenue"),
+    ("BILLING",  "billed_to_date"),
+    ("POSITION", "left_to_bill"),
+    ("ANALYSIS", "future_profit"),
 ]
 
 # Column guide printed at the bottom: field → (letter, what it does). Mirrors
@@ -1100,23 +1115,25 @@ _COL_GROUPS = [
 _COL_LETTERS = {
     "base_contract": ("A", "original contract, before change orders"),
     "co_revenue": ("B", "approved change orders"),
-    "contract_price": ("C", "C = A + B  (total contract price)"),
-    "etc": ("D", "estimated total costs — the budget"),
-    "original_profit": ("E", "E = C − D"),
-    "costs_to_date": ("F", "job costs booked in QBO"),
-    "_pct_complete": ("G", "G = F ÷ D"),
-    "profit_earned": ("H", "H = E × G"),
-    "_earned_revenue": ("I", "I = C × G"),
-    "billed_to_date": ("J", "gross billed, retainage included"),
-    "_pct_billed": ("K", "K = J ÷ C"),
-    "overbillings": ("L", "L = MAX(J − I, 0)  billed ahead of earned"),
-    "underbillings": ("M", "M = MAX(I − J, 0)  earned ahead of billed"),
-    "retainage_held": ("N", "gross billed − net collectible"),
-    "cost_to_complete": ("O", "O = D − F"),
-    "left_to_bill": ("P", "P = C − J"),
-    "gross_profit_pct": ("Q", "Q = E ÷ C"),
-    "future_profit": ("R", "R = E − H"),
-    "job_borrow": ("S", "S = MAX(O − P, 0)  cash this job borrows"),
+    "contract_price": ("C", "C = A + B   the REVISED contract"),
+    "base_etc": ("D", "original estimated cost — the bid budget"),
+    "co_cost_estimate": ("E", "cost of the approved change orders "
+                              "(blank = the CO has not been costed)"),
+    "etc": ("F", "F = D + E   the REVISED estimated cost"),
+    "original_profit": ("G", "G = C − F"),
+    "gross_profit_pct": ("H", "H = G ÷ C"),
+    "costs_to_date": ("I", "job costs booked in QBO"),
+    "cost_to_complete": ("J", "J = F − I"),
+    "_pct_complete": ("K", "K = I ÷ F"),
+    "_earned_revenue": ("L", "L = C × K"),
+    "profit_earned": ("M", "M = G × K"),
+    "billed_to_date": ("N", "gross billed, retainage included"),
+    "overbillings": ("O", "O = MAX(N − L, 0)  billed ahead of earned"),
+    "underbillings": ("P", "P = MAX(L − N, 0)  earned ahead of billed"),
+    "retainage_held": ("Q", "gross billed − net collectible"),
+    "left_to_bill": ("R", "R = C − N"),
+    "future_profit": ("S", "S = G − M"),
+    "job_borrow": ("T", "T = MAX(J − R, 0)  cash this job borrows"),
 }
 
 
@@ -1137,7 +1154,6 @@ FORMULA_FIELDS: frozenset = frozenset({
     "left_to_bill",      # LEFT TO BILL      = Revised Contract − Billed
     "overbillings",      # OVERBILLINGS      = MAX(Billed − Earned, 0)
     "underbillings",     # UNDERBILLINGS     = MAX(Earned − Billed, 0)
-    "_pct_billed",       # PERCENT BILLED    = Billed / Total Contract
     "job_borrow",        # PURE JOB BORROW   = MAX(Cost to Complete − Left to Bill, 0)
 })
 
@@ -1171,8 +1187,6 @@ def _build_formula(field_name: str, row_num: int,
         return f'=IF(OR({I}="",{K}=""),"",{I}-{K})'
     if field_name == "_pct_complete":
         return f'=IF(OR({K}="",{I}="",{I}=0),"",{K}/{I})'
-    if field_name == "_pct_billed":
-        return f'=IF(OR({J}="",{F}="",{F}=0),"",{J}/{F})'
     if field_name == "_earned_revenue":
         return f'=IF(OR({F}="",{K}="",{I}="",{I}=0),"",{F}*{K}/{I})'
     if field_name == "profit_earned":

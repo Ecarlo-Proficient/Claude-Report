@@ -287,3 +287,35 @@ header name — `shared/schedule.py`, `shared/breakeven.py`,
 - `money_bleeds.check_rp_wrapup` read 'Test - RP' headers from **row 1**, so it
   silently returned nothing once that tab gained a title block. It now finds
   the header row (scans rows 1–15 for `PROJECT #`).
+
+## 2026-08-03 (pm 3) — symmetric contract/budget columns; MFD budget-loss bug
+
+Researched the real WIP standard (Foundation Software, surety template,
+Northstar, Dean Dorton). A change order moves BOTH sides, so the columns now
+mirror each other:
+
+    ORIGINAL CONTRACT A · APPROVED COs B · TOTAL CONTRACT PRICE C = A+B
+    ORIGINAL ESTIMATED COST D · CO COSTS E · ESTIMATED TOTAL COSTS F = D+E
+
+`TOTAL CONTRACT PRICE` IS the revised contract and `ESTIMATED TOTAL COSTS` IS
+the revised estimated cost — those names are read by five other tools and must
+never be renamed. Order follows the researched standard: CONTRACT → BUDGET →
+PROFIT → COSTS → EARNED → BILLING → POSITION → ANALYSIS. `PERCENT BILLED` was
+dropped (it appears in no standard; it was invented here).
+
+**CO COSTS has no source and is written EMPTY on purpose** (the user
+2026-08-03: "the empty cell is loud enough" — no flag). It is styled as a
+yellow INPUT cell, so a blank reads as "nobody costed this CO". Five jobs
+currently carry approved COs with no CO cost, which overstates their profit;
+closing that needs a cost line on the CO template, or a PM cost-to-complete
+re-forecast (the industry answer, which also absorbs overruns).
+
+### Bug the change audit caught on its first live run
+`read_mfd_from_master` read the ETC cell with `data_only=True`. That cell is a
+FORMULA on 'WIP Master' (`=(E4/1.17)` — contract ÷ markup), and **openpyxl
+strips every cached formula result workbook-wide on save**, so from our first
+write onwards MFD's entire budget read as None — silently blanking the budget,
+percent complete, earned revenue and profit on ~$16.8M of MFD contract. The
+reader now falls back to evaluating the sheet's own divisor formula; recovered
+values match the pre-loss figures exactly. Any future WIP-Master-sourced cell
+that is a formula needs the same treatment.

@@ -16,6 +16,7 @@ Usage:  python3 master_wip_test.py [--dry-run]
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -29,21 +30,41 @@ MASTER_SHEET = "WIP Master"
 MCOL_PROJ, MCOL_NAME, MCOL_CONTRACT, MCOL_ETC = 1, 2, 5, 6
 
 
+_MFD_ETC_FORMULA = re.compile(r"^=\(?\s*E(\d+)\s*/\s*([0-9.]+)\s*\)?$", re.I)
+
+
 def read_mfd_from_master(wip_path: Path):
     """MFD#### rows from the 'WIP Master' tab — the master sheet IS the MFD
     source for active jobs and pricing (the user 2026-07-15). Billed/Costs
-    come from QBO, not from the tab."""
+    come from QBO, not from the tab.
+
+    The ETC cell is a FORMULA on that sheet (`=(E4/1.17)` — contract ÷ markup),
+    and openpyxl drops every cached formula result workbook-wide each time it
+    saves. So after our first write the cached value is gone and a plain
+    data_only read returns None — which silently blanked MFD's entire budget
+    (caught by the change audit, 2026-08-03). Read the cached value, and when
+    it is missing evaluate the sheet's own divisor formula instead."""
     wb = load_workbook(wip_path, data_only=True, read_only=True)
-    ws = wb[MASTER_SHEET]
+    fwb = load_workbook(wip_path, data_only=False, read_only=True)
+    ws, fws = wb[MASTER_SHEET], fwb[MASTER_SHEET]
     rows = []
     for r in range(4, ws.max_row + 1):
         proj = ws.cell(r, MCOL_PROJ).value
         if not proj or not str(proj).strip().upper().startswith("MFD"):
             continue
         proj = str(proj).strip().upper()
+        contract = RP._money(ws.cell(r, MCOL_CONTRACT).value)
+        etc = RP._money(ws.cell(r, MCOL_ETC).value)
+        if etc is None and contract:
+            m = _MFD_ETC_FORMULA.match(
+                str(fws.cell(r, MCOL_ETC).value or "").replace(" ", ""))
+            if m and float(m.group(2)):
+                etc = contract / float(m.group(2))
+                print(f"    · {proj}: ETC recomputed from "
+                      f"'{MASTER_SHEET}'!F{r} ({fws.cell(r, MCOL_ETC).value}) "
+                      f"— Excel's cached value was stripped")
         row = CP.CpRow(proj, str(ws.cell(r, MCOL_NAME).value or proj), False,
-                       RP._money(ws.cell(r, MCOL_CONTRACT).value), None,
-                       RP._money(ws.cell(r, MCOL_ETC).value), None, None)
+                       contract, None, etc, None, None)
         row.client = "Multi Family"
         row.takeoff_path = wip_path          # contract/ETC link → the master tab
         row.src_link = str(wip_path)
@@ -51,6 +72,7 @@ def read_mfd_from_master(wip_path: Path):
         row.notes.append(f"Contract/ETC from '{MASTER_SHEET}' row {r}")
         rows.append(row)
     wb.close()
+    fwb.close()
     return rows
 
 
