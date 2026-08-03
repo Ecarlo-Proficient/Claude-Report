@@ -85,6 +85,18 @@ the user's explicit request — it is exempt from the repo's plain-Excel rule.
 
 ---
 
+## Month-end closes — `qbo_health.py --as-of`
+
+```bash
+python3 health-dashboard/qbo_health.py --as-of 2026-07-31
+```
+
+Anchors EVERY window in the report (MTD, YTD, prior-year, aging, burn, recurring)
+to that date instead of today, so a month-end close is reproducible — re-running
+on the 3rd reproduces the July close exactly rather than quietly folding in the
+first days of August. The `_Meta` sheet records the as-of date, and a live run
+records `<today> (live run)` so the two can never be confused.
+
 ## Legacy: KPI dashboard (`qbo_health.py`)
 
 Multi-sheet local Excel dashboard built from live QBO data — designed to answer **"where should I be looking today?"** at a glance. Reuses the same Keychain blob as the transaction export: one Touch ID per run. **Superseded by Money Bleeds** — kept runnable for the hard-fact sheets (AR/AP aging, cash) until formally retired.
