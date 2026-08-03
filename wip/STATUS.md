@@ -336,3 +336,33 @@ that is a formula needs the same treatment.
   so it is a description of how the takeoffs are built, not a finding. Add to
   that regex when another accepted condition is identified; genuine takeoff
   errors (e.g. "pier cost row(s) are #N/A") are NOT muted.
+
+## 2026-08-03 (pm 5) — owner edits auto-colour, survive syncs; Test-Master locked
+
+The owner edits the WIP directly. Three guarantees, all verified end-to-end
+(edit → sync → sync → still there):
+
+- **Auto-colour on edit, with no macro.** Every editable input is mirrored into
+  a HIDDEN baseline column (`«base» <field>`) holding what the DATA SOURCES
+  say. Excel conditional formatting reddens any cell that differs from its
+  baseline, so the cell colours itself the instant he types. `_OVERRIDE_FIELDS`
+  lists the mirrored inputs.
+- **His value wins and keeps winning.** `read_owner_edits()` uses the SAME
+  comparison Excel used to colour the cell, so "what he sees marked" and "what
+  the script keeps" can never drift. The baseline must stay the SOURCE value —
+  baselining to his override made the cell match next run, the red cleared and
+  the script silently restored the source value (found by testing two
+  consecutive syncs, not one). Overrides are limited to sourced inputs; every
+  derived column is an Excel formula off them, so `ORIGINAL CONTRACT` +
+  `APPROVED COs` and `ORIGINAL ESTIMATED COST` + `CO COSTS` stay consistent.
+  This also gives `CO COSTS` its first real source: the owner typing it.
+- **Notes and comments never lost.** Cell comments were already harvested and
+  re-attached. NOTES now has exact provenance: the baseline stores the
+  SCRIPT-generated text only (captured before his lines are folded back in), so
+  anything else in the cell is his and is carried. A note deleted at its source
+  stays deleted (it was in the baseline) — the old `notes_from_source` blanket
+  skip is gone, since it discarded his RP notes wholesale.
+- **Test-Master is protected** (`protect=True`): it is a read-only roll-up of
+  the CP/RP tabs and the WIP Master MFD section. No password — Review ▸
+  Unprotect Sheet is one click — and filtering, sorting and selection stay on.
+  The working tabs ('Test - CP', 'Test - RP') stay editable.

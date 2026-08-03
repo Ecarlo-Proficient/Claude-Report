@@ -474,7 +474,10 @@ def main() -> int:
             # The change audit runs HERE — Test-Master carries all three
             # divisions, so one report covers MFD + CP + RP (the user
             # 2026-07-31: "I need to always audit these things").
-            audit=True, audit_xlsx=CP.AUDIT_XLSX)
+            audit=True, audit_xlsx=CP.AUDIT_XLSX,
+            # Read-only roll-up of the CP/RP tabs + the WIP Master MFD
+            # section — locked so it can't be typed into by accident.
+            protect=True)
     except CP.WipWriteDenied as e:
         print(f"  ✗ Guard blocked write: {e}")
         return 2

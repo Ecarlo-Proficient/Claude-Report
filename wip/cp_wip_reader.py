@@ -233,6 +233,7 @@ class CpRow:
     src_link: Optional[str] = None       # source workbook the numbers came from (PROJECT # cell link)
     src_fragment: Optional[str] = None   # "#'SHEET'!C<row>" — exact source row (the user 2026-07-15)
     section: Optional[str] = None        # master-sheet grouping (SECTION column)
+    co_cost_override: Optional[float] = None  # owner typed a CO cost onto the WIP
 
     @property
     def contract_price(self) -> Optional[float]:
@@ -254,8 +255,13 @@ class CpRow:
         Property name kept as `co_cost_estimate` for column-mapping
         stability; semantics are now "CO cost sourced from the draw/template"
         and the value is None until such sourcing exists (blocked on a
-        template change that adds a CO cost line)."""
-        return None
+        template change that adds a CO cost line).
+
+        EXCEPTION (2026-08-03): if the owner types a CO cost straight onto the
+        WIP, that override is carried in `co_cost_override` and wins — it is a
+        real number from the person who owns the estimate, and until the CO
+        template carries a cost line it is the only source there is."""
+        return self.co_cost_override
 
     @property
     def etc(self) -> Optional[float]:
@@ -1284,6 +1290,110 @@ _SCRIPT_NOTE_RE = re.compile(
     r"% based on Original ETC|RED: )", re.IGNORECASE)
 
 
+# ─────────── owner edits: baseline + auto-colour (2026-08-03) ──────────
+# The owner edits the WIP directly and wants three things: the cell to colour
+# ITSELF the moment he changes it, his value to survive the next sync, and his
+# notes/comments never to be lost.
+#
+# Mechanism: every editable input is mirrored into a HIDDEN column holding
+# exactly what the script last wrote (the "baseline"). Excel conditional
+# formatting compares the live cell to its baseline — differ ⇒ red. That runs
+# inside Excel with no macro, so it fires the instant he types. On the next
+# sync the same comparison tells the script which cells he overrode, and those
+# values are carried forward instead of being overwritten.
+#
+# Overrides are limited to the SOURCED inputs. Everything else on the sheet is
+# an Excel formula off these, so an override flows through the whole row and
+# the arithmetic stays consistent.
+_OVERRIDE_FIELDS = (
+    "base_contract", "co_revenue", "base_etc", "co_cost_estimate",
+    "billed_to_date", "costs_to_date", "retainage_held",
+)
+_BASE_PREFIX = "«base» "          # hidden baseline column header prefix
+EDIT_FILL = PatternFill("solid", fgColor="FFC7CE")   # Excel's standard "bad"
+EDIT_FONT = Font(name=MASTER_FONT_NAME, size=MASTER_FONT_SIZE,
+                 color="FF0000", bold=True)          # red = the owner changed it
+
+
+def _apply_edit_formatting(ws, cols_, hdr_row: int, first_row: int,
+                           last_row: int, src_by_row: Dict[int, dict]) -> int:
+    """Mirror each editable input into a hidden baseline column and add the
+    conditional-format rule that reddens any cell differing from it.
+
+    The baseline holds what the DATA SOURCES say — never the owner's override.
+    If it held the override, the cell would match its baseline on the next run,
+    the red would clear and the script would quietly put the source value back.
+    Keeping the source in the baseline means an override stays marked and stays
+    honoured until the source itself catches up with it.
+
+    Returns the first column index used by the baseline block."""
+    from openpyxl.formatting.rule import FormulaRule
+    if last_row < first_row:
+        return len(cols_) + 1
+    base_col = len(cols_) + 2                   # one spacer column
+    idx = {f: i + 1 for i, (_l, _w, f) in enumerate(cols_)}
+    n = 0
+    for field in _OVERRIDE_FIELDS + ("_notes_all",):
+        c = idx.get(field)
+        if not c:
+            continue
+        bcol = base_col + n
+        n += 1
+        bL, cL = get_column_letter(bcol), get_column_letter(c)
+        ws.cell(hdr_row, bcol, f"{_BASE_PREFIX}{field}").font = DATA_FONT
+        for r in range(first_row, last_row + 1):
+            ws.cell(r, bcol, (src_by_row.get(r) or {}).get(field))
+        ws.column_dimensions[bL].hidden = True
+        if field == "_notes_all":
+            continue                    # notes are preserved, not reddened
+        ws.conditional_formatting.add(
+            f"{cL}{first_row}:{cL}{last_row}",
+            FormulaRule(formula=[f"{cL}{first_row}<>{bL}{first_row}"],
+                        fill=EDIT_FILL, font=EDIT_FONT, stopIfTrue=False))
+    return base_col
+
+
+def read_owner_edits(ws, hdr_row: Optional[int]) -> Dict[str, dict]:
+    """Cells the owner changed since the last sync: {project #: {field: value}}.
+    A cell differing from its hidden baseline IS an owner edit — that is the
+    same test Excel used to colour it red, so what the script preserves and
+    what he sees marked are always the same set."""
+    if not hdr_row:
+        return {}
+    idx = {ws.cell(hdr_row, c).value: c
+           for c in range(1, (ws.max_column or 0) + 1)}
+    pcol = idx.get("PROJECT #")
+    if not pcol:
+        return {}
+    label_of = {f: l for l, _w, f in COLS}
+    pairs = []
+    for f in _OVERRIDE_FIELDS:
+        bcol = idx.get(f"{_BASE_PREFIX}{f}")
+        ccol = idx.get(label_of.get(f))
+        if bcol and ccol:
+            pairs.append((f, bcol, ccol))
+    if not pairs:
+        return {}
+    out = {}
+    for r in range(hdr_row + 1, (ws.max_row or 0) + 1):
+        first = ws.cell(r, 1).value
+        if isinstance(first, str) and first.strip() == "TOTALS":
+            break
+        pnum = ws.cell(r, pcol).value
+        if not pnum:
+            continue
+        for field, bcol, ccol in pairs:
+            cur, base = ws.cell(r, ccol).value, ws.cell(r, bcol).value
+            if isinstance(cur, str) and cur.startswith("="):
+                continue                       # a formula, not a typed value
+            cn, bn = _num(cur), _num(base)
+            if cn is None and bn is None:
+                continue
+            if cn is None or bn is None or abs(cn - bn) >= 0.01:
+                out.setdefault(str(pnum).strip().upper(), {})[field] = cn
+    return out
+
+
 def _division(pnum: str) -> str:
     """MFD / CP / RP from the project number (RP7234-FTW → RP)."""
     p = (pnum or "").strip().upper()
@@ -1647,7 +1757,8 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                   qbo_links_only: bool = True,
                   legend: Optional[List] = None,
                   audit: bool = False,
-                  audit_xlsx: Optional[Path] = None) -> bool:
+                  audit_xlsx: Optional[Path] = None,
+                  protect: bool = False) -> bool:
     """Write rows to the given WIP tab (default 'Test - CP'; RP passes
     'Test - RP'). Same structure/formatting for every division. Guarded by
     wip_excel_guard. Returns True if written, False if skipped (dry-run, or the
@@ -1715,6 +1826,10 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
         # 12-column layout (2026-07-31). Clearing the ref also drops the
         # hidden _xlnm._FilterDatabase defined name openpyxl derives from it.
         ws.auto_filter.ref = None
+        # Conditional formatting is re-added below; without this reset the
+        # rules would pile up one duplicate set per sync.
+        from openpyxl.formatting.formatting import ConditionalFormattingList
+        ws.conditional_formatting = ConditionalFormattingList()
 
         # PRESERVE USER CELL COMMENTS across the full-replace (the user
         # 2026-07-16: review notes typed on cells — e.g. "add the missing
@@ -1727,10 +1842,55 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
         # Baseline for the change audit + the owner's typed NOTES, both read
         # off the sheet BEFORE it is wiped (the user 2026-07-31).
         prior_state = _snapshot_tab(ws, prior_hdr)
+        # Owner edits: any input differing from its hidden baseline. Same test
+        # Excel used to redden the cell, so "what he sees marked" and "what the
+        # script keeps" can never drift apart.
+        owner_edits = read_owner_edits(ws, prior_hdr)
+        # NOTES he typed = whatever the prior cell holds that the script did
+        # NOT write last time (exact provenance from the baseline column, so a
+        # note deleted at its source stays deleted instead of resurrecting).
+        _bidx = ({ws.cell(prior_hdr, c).value: c
+                  for c in range(1, (ws.max_column or 0) + 1)}
+                 if prior_hdr else {})
+        _nb = _bidx.get(f"{_BASE_PREFIX}_notes_all")
+        _pcol = _bidx.get("PROJECT #")
+        _script_notes = {}
+        if _nb and _pcol:
+            for r in range(prior_hdr + 1, (ws.max_row or 0) + 1):
+                v = ws.cell(r, _pcol).value
+                if v:
+                    _script_notes[str(v).strip().upper()] = {
+                        s.strip() for s in
+                        str(ws.cell(r, _nb).value or "").split(" · ") if s.strip()}
         for _p, _s in prior_state.items():
-            keep = [seg.strip() for seg in _s["notes"].split(" · ")
-                    if seg.strip() and not _SCRIPT_NOTE_RE.match(seg.strip())]
-            _s["manual_notes"] = keep
+            known = _script_notes.get(_p)
+            # Exact provenance: we know precisely what the script wrote last
+            # time, so anything else in the cell was typed by a human.
+            _s["notes_exact"] = known is not None
+            _s["manual_notes"] = [
+                seg.strip() for seg in _s["notes"].split(" · ")
+                if seg.strip()
+                and (seg.strip() not in known if known is not None
+                     else not _SCRIPT_NOTE_RE.match(seg.strip()))]
+        if owner_edits:
+            print(_Term.color(_Term.AMBER,
+                  f"  ✎ {len(owner_edits)} job(s) carry cell edits you made on "
+                  f"'{tab_name}' — keeping your values:"))
+            for _p, _f in sorted(owner_edits.items()):
+                print(f"      {_p}: " + ", ".join(
+                    f"{k}={'blank' if v is None else format(v, ',.0f')}"
+                    for k, v in _f.items()))
+        _sect_rows = [r for _t, ap in ([appendix] if isinstance(appendix, tuple)
+                                       else (appendix or []))
+                      for r in (ap or [])]
+        for row in list(rows) + _sect_rows:
+            # Snapshot what the SOURCES say BEFORE any override is applied —
+            # this is what goes in the baseline column.
+            row.src_vals = {f: getattr(row, f, None) for f in _OVERRIDE_FIELDS}
+            for _f, _v in (owner_edits.get(row.project_num.strip().upper())
+                           or {}).items():
+                setattr(row, "co_cost_override" if _f == "co_cost_estimate"
+                        else _f, _v)
         hdr_labels = ({c: ws.cell(prior_hdr, c).value
                        for c in range(1, (ws.max_column or 0) + 1)}
                       if prior_hdr else {})
@@ -1832,16 +1992,27 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
             for i, (_, _, field) in enumerate(cols_)
         }
 
+        src_by_row: Dict[int, dict] = {}
+
         def _emit(i: int, row: CpRow) -> None:
+            # Baseline for NOTES = what the SCRIPT generates, before the
+            # owner's own lines are folded back in. Otherwise his note would
+            # look script-written next run and get dropped.
+            src_by_row[i] = dict(getattr(row, "src_vals", None) or {})
+            src_by_row[i]["_notes_all"] = _row_display_value(
+                row, "_notes_all", sync_ts)
             # Re-attach any NOTES text a human typed on this job's row last
             # time (script segments regenerate themselves; only human text is
             # carried) — the user 2026-07-31: "be sure to preserve any notes".
-            # SKIPPED when the row's notes come from a source file the owner
-            # edits (RP): that file is authoritative, and carrying its text
-            # forward would resurrect a note he had just deleted from it.
-            if not getattr(row, "notes_from_source", False):
-                for _seg in (prior_state.get(row.project_num.strip().upper(), {})
-                             .get("manual_notes") or []):
+            # With a baseline column we know EXACTLY what the script wrote last
+            # time, so a note deleted at its source can't resurrect (it was in
+            # the baseline) and a note he typed here is always kept. Only when
+            # that provenance is missing do we fall back to skipping
+            # file-sourced rows.
+            _st = prior_state.get(row.project_num.strip().upper(), {})
+            if _st.get("notes_exact") or not getattr(row, "notes_from_source",
+                                                     False):
+                for _seg in _st.get("manual_notes") or []:
                     if _seg not in row.notes:
                         row.notes.append(_seg)
             # Invariant guard: if CO Cost is populated but CO Revenue is
@@ -2000,10 +2171,30 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                 written_rows[row.project_num] = k
             next_row = band + len(ap_rows) + 2
 
+        # Baseline mirror + the auto-colour rule (must run BEFORE the summary,
+        # so it sees only real data rows).
+        _apply_edit_formatting(ws, cols_, hdr_row, data_start, last_row,
+                               src_by_row)
+
         if summary:
             next_row = _write_summary(ws, cols_, col_letter_by_field,
                                       data_start, last_row, next_row)
         _write_bottom_notes(ws, cols_, next_row, legend)
+
+        # LOCK the finished report (the user 2026-08-03: Test-Master "should be
+        # locked by default because it's a read only" roll-up of the CP/RP tabs
+        # and the WIP Master MFD section). No password — Review ▸ Unprotect
+        # Sheet is one click — so this stops accidental typing, it doesn't take
+        # the sheet away. Filtering, sorting and selecting stay enabled.
+        if protect:
+            ws.protection.sheet = True         # no password: one-click unprotect
+            ws.protection.autoFilter = False   # False = still allowed
+            ws.protection.sort = False
+            ws.protection.selectLockedCells = False
+            ws.protection.selectUnlockedCells = False
+            ws.protection.formatCells = False
+            ws.protection.formatColumns = False
+            ws.protection.formatRows = False
 
         # Re-attach the harvested user comments to their project/column.
         col_by_label = {label: c for c, (label, _w, _f) in enumerate(cols_, start=1)}
