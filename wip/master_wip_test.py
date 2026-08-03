@@ -200,6 +200,7 @@ def read_rp_from_file(xlsx_path: Path):
         # 2026-07-31). A red/green/orange mark on Billed/Costs also means
         # HIS number stands — the QBO refresh must not overwrite it.
         row.action_note = str(ws.cell(r, C["action"]).value or "").strip() or None
+        row.notes_from_source = True     # his file is authoritative for NOTES
         row.cell_marks, row.qbo_protect = {}, {}
         for fld, ccol in (("contract_price", "contract"), ("etc", "etc"),
                           ("billed_to_date", "billed"), ("costs_to_date", "costs"),

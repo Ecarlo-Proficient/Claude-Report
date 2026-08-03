@@ -1158,17 +1158,27 @@ def _row_display_value(row: CpRow, field_name: str, sync_ts: str):
         return sync_ts
     if field_name == "_notes_all":
         # ONE commentary cell: the owner's ACTION text, the script's
-        # informational notes, then any genuine must-fix flag. De-duplicated,
-        # order preserved.
+        # informational notes, then any genuine must-fix flag.
+        #
+        # De-duplication is per SEGMENT, not per string (2026-08-03): the
+        # owner's ACTION text arrives as one string that already contains
+        # ' · ' separators, so whole-string matching let the same sentence
+        # come back twice. Split everything to segments first, compare on a
+        # normalised key, and keep the FIRST wording seen — the message is
+        # never reworded, only the redundant 'note:' label is dropped (the
+        # column is already called NOTES).
         parts, seen = [], set()
-        for p in ([getattr(row, "action_note", None)] + list(row.notes)
-                  + list(row.status_flags)):
-            p = (p or "").strip()
-            if p.startswith("RED: "):
-                p = p[len("RED: "):]
-            if p and p not in seen:
-                seen.add(p)
-                parts.append(p)
+        for chunk in ([getattr(row, "action_note", None)] + list(row.notes)
+                      + list(row.status_flags)):
+            for seg in str(chunk or "").split(" · "):
+                seg = seg.strip()
+                for lead in ("RED:", "note:", "NOTE:"):
+                    if seg.startswith(lead):
+                        seg = seg[len(lead):].strip()
+                key = re.sub(r"\s+", " ", seg).lower()
+                if seg and key not in seen:
+                    seen.add(key)
+                    parts.append(seg)
         return " · ".join(parts) or None
     if field_name == "status":
         # RED numbers must explain themselves (the user 2026-07-16): a red
@@ -1624,8 +1634,12 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
             ws.delete_rows(1, prior_max_row)
         # Reset stale hidden flags — rows shift between runs, and a hidden
         # flag left on the wrong row would silently hide live data.
+        # Row HEIGHTS reset too (2026-08-03): the header/banner moves between
+        # layouts, and a leftover 30pt height on what is now a blank or legend
+        # row shows up as a random tall gap.
         for _rd in ws.row_dimensions.values():
             _rd.hidden = False
+            _rd.height = None
 
         # Title banner (the user 2026-07-16): "WIP REPORT as of …" across the
         # table width, two tall rows that double as the logo's parking space
@@ -1682,10 +1696,14 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
             # Re-attach any NOTES text a human typed on this job's row last
             # time (script segments regenerate themselves; only human text is
             # carried) — the user 2026-07-31: "be sure to preserve any notes".
-            for _seg in (prior_state.get(row.project_num.strip().upper(), {})
-                         .get("manual_notes") or []):
-                if _seg not in row.notes:
-                    row.notes.append(_seg)
+            # SKIPPED when the row's notes come from a source file the owner
+            # edits (RP): that file is authoritative, and carrying its text
+            # forward would resurrect a note he had just deleted from it.
+            if not getattr(row, "notes_from_source", False):
+                for _seg in (prior_state.get(row.project_num.strip().upper(), {})
+                             .get("manual_notes") or []):
+                    if _seg not in row.notes:
+                        row.notes.append(_seg)
             # Invariant guard: if CO Cost is populated but CO Revenue is
             # not, refuse to write the CO Cost. That's either a bug or a
             # corrupted state, and quietly writing a made-up cost would

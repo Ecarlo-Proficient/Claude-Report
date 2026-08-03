@@ -234,3 +234,21 @@ Last updated: 2026-07-29
 - 2026-07-30 — data-risk scrub: real dollar figures removed from code comments
   (`cp_wip_reader.py` retainage note) — no behavior change; the dollar detail
   lives in the owner's vault, per the STATUS scope filter.
+
+## FIXED 2026-08-03 (pm) — layout + NOTES defects the owner caught
+
+- **Stale row HEIGHTS** left tall blank rows: the header/banner row moves
+  between layouts (Test - CP row 1 kept 30pt from when it WAS the header;
+  Test - RP row 1 kept the retired banner's 34pt and row 11 the old header's
+  30pt). The rewrite reset `hidden` but never `height`. Now both reset, so
+  only the current header row carries a height.
+- **NOTES duplicated every sync**: the owner's ACTION text is ONE string that
+  already contains ' · ', while the carried-forward prior cell was split into
+  segments — whole-string de-dup never matched, so each sentence came back
+  twice. De-dup is now per SEGMENT on a whitespace/case-normalised key.
+  The redundant leading `note:` label is dropped (the column is called NOTES);
+  wording is otherwise never altered.
+- **Notes no longer resurrect**: rows whose NOTES come from a source file the
+  owner edits (RP, `notes_from_source=True`) are excluded from the
+  carry-forward — otherwise deleting a note from his RP file would put it
+  straight back. Carry-forward still protects hand-typed CP/MFD notes.
