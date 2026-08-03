@@ -8,6 +8,27 @@ Last updated: 2026-07-29
 
 ## DONE / FINALIZED
 
+- **DIVISION SOURCES OF TRUTH (the user 2026-07-31 — binding):**
+  - **CP** — the G702 **draws** in each project folder (latest draw = contract,
+    billed, retainage). Folder scan finds them; QBO only fills pre-Draw-#1 jobs.
+  - **MFD** — whatever is on the **`WIP Master` tab** (contract col E, ETC col F).
+  - **RP** — the **Schedule** derives the active jobs; the estimators' final
+    numbers for that snapshot live in the owner's
+    `OneDrive/RP WIP TO FIX_Final.xlsx` ('RP WIP' sheet), read via
+    `--rp-from-file`. Billed/Costs always re-pulled from QBO.
+- **CHANGE AUDIT ON EVERY SYNC (the user 2026-07-31 — never optional):** each
+  run prints, **split by division**, (1) jobs added, (2) jobs removed,
+  (3) ORIGINAL contract/ETC changes, (4) REVISED contract/ETC changes — and
+  writes the same to `~/Downloads/WIP Changes.xlsx` (one file, overwritten in
+  place). Baseline = the tab's own previous contents, read before the wipe, so
+  it reflects what the owner last saw. Original contract = TOTAL CONTRACT PRICE
+  − APPROVED COs; original ETC == revised ETC until CO costs have a source.
+  Run on the Test-Master write (it carries all three divisions).
+- **Owner-typed NOTES survive the sync** (2026-07-31): NOTES segments that
+  don't match the script's own note/flag vocabulary (`_SCRIPT_NOTE_RE`) are
+  harvested before the full-replace and re-attached to the same job, alongside
+  the existing cell-comment preservation.
+
 - **WIP TAB FORMATTING IS FROZEN** (2026-07-31, the user: "you cannot keep
   messing with formatting") — the original `WIP Master` sheet is the ONLY
   reference; read it, copy it, never invent. Title block is now its two-line

@@ -1184,6 +1184,212 @@ def _row_display_value(row: CpRow, field_name: str, sync_ts: str):
     return getattr(row, field_name, None)
 
 
+# ───────────────── change audit (the user 2026-07-31) ─────────────
+# Every sync must state, per division, what moved: jobs added, jobs removed,
+# original contract/ETC changes, revised contract/ETC changes. The owner
+# audits this on every run — it is never optional and never summarised away.
+AUDIT_XLSX = Path.home() / "Downloads" / "WIP Changes.xlsx"
+
+# Note segments the SCRIPT writes. Anything else in a NOTES cell was typed by
+# a human and is carried forward across the full-replace (the user
+# 2026-07-31: "be sure to preserve any notes").
+_SCRIPT_NOTE_RE = re.compile(
+    r"^(Draw #|No draw yet|QBO |No QBO project|Duplicate line in the RP file|"
+    r"No budget \(ETC\)|Contract/ETC from |Data integrity:|On the .* schedule|"
+    r"% based on Original ETC|RED: )", re.IGNORECASE)
+
+
+def _division(pnum: str) -> str:
+    """MFD / CP / RP from the project number (RP7234-FTW → RP)."""
+    p = (pnum or "").strip().upper()
+    for d in ("MFD", "CP", "RP"):
+        if p.startswith(d):
+            return d
+    return "OTHER"
+
+
+def _num(v):
+    """Cell → float, or None (formulas/blanks/text read back as None)."""
+    return float(v) if isinstance(v, (int, float)) else None
+
+
+def _snapshot_tab(ws, hdr_row: Optional[int]) -> Dict[str, dict]:
+    """The tab as it stands BEFORE the rewrite: per project #, the numbers the
+    audit compares against plus its NOTES text. Read straight off the sheet so
+    the baseline is what the owner last saw, not what any script remembers."""
+    if not hdr_row:
+        return {}
+    idx = {ws.cell(hdr_row, c).value: c
+           for c in range(1, (ws.max_column or 0) + 1)}
+    pcol = idx.get("PROJECT #")
+    if not pcol:
+        return {}
+    prior = {}
+    for r in range(hdr_row + 1, (ws.max_row or 0) + 1):
+        first = ws.cell(r, 1).value
+        if isinstance(first, str) and first.strip() == "TOTALS":
+            break                       # summary block — not data
+        pnum = ws.cell(r, pcol).value
+        if not pnum or not str(pnum).strip():
+            continue
+        def val(label):
+            c = idx.get(label)
+            return _num(ws.cell(r, c).value) if c else None
+        cos = val("APPROVED COs") or 0.0
+        rev_k = val("TOTAL CONTRACT PRICE")
+        etc = val("ESTIMATED TOTAL COSTS")
+        ncol = idx.get("NOTES")
+        prior[str(pnum).strip().upper()] = {
+            "name": ws.cell(r, idx["PROJECT NAME"]).value if idx.get("PROJECT NAME") else None,
+            "rev_contract": rev_k,
+            "orig_contract": (rev_k - cos) if rev_k is not None else None,
+            "rev_etc": etc,
+            "orig_etc": etc,      # identical until CO costs have a source
+            "notes": (str(ws.cell(r, ncol).value).strip()
+                      if ncol and ws.cell(r, ncol).value else ""),
+        }
+    return prior
+
+
+def _changed(old, new) -> bool:
+    if old is None and new is None:
+        return False
+    if old is None or new is None:
+        return True
+    return abs(float(old) - float(new)) >= 0.01
+
+
+def audit_changes(prior: Dict[str, dict], rows: List["CpRow"]) -> Dict[str, dict]:
+    """Diff the incoming rows against the tab's previous state, split by
+    division. Returns {division: {added/removed/orig/revised}}."""
+    out = {}
+    def bucket(d):
+        return out.setdefault(d, {"added": [], "removed": [],
+                                  "orig": [], "revised": []})
+    seen = set()
+    for row in rows:
+        p = row.project_num.strip().upper()
+        seen.add(p)
+        b = bucket(_division(p))
+        was = prior.get(p)
+        if was is None:
+            b["added"].append((p, row.project_name, row.contract_price, row.etc))
+            continue
+        for key, label, old, new in (
+                ("orig", "ORIGINAL CONTRACT", was["orig_contract"], row.base_contract),
+                ("orig", "ORIGINAL ETC",      was["orig_etc"],      row.base_etc),
+                ("revised", "REVISED CONTRACT", was["rev_contract"], row.contract_price),
+                ("revised", "REVISED ETC",      was["rev_etc"],      row.etc)):
+            if _changed(old, new):
+                b[key].append((p, row.project_name, label, old, new))
+    for p, was in prior.items():
+        if p not in seen:
+            bucket(_division(p))["removed"].append(
+                (p, was.get("name"), was.get("rev_contract"), was.get("rev_etc")))
+    return out
+
+
+def _fmt(v) -> str:
+    return "—" if v is None else f"${v:,.0f}"
+
+
+def print_audit(audit: Dict[str, dict], tab_name: str) -> None:
+    """The always-on change report. Loud, per division, never summarised away."""
+    print()
+    print(_Term.color(_Term.BOLD, f"  WIP CHANGE AUDIT — {tab_name}"))
+    print("  " + "=" * 66)
+    if not audit:
+        print("  (no previous data on this tab — this run sets the baseline)")
+        return
+    total = 0
+    for div in ("MFD", "CP", "RP", "OTHER"):
+        b = audit.get(div)
+        if not b or not any(b.values()):
+            continue
+        n = sum(len(v) for v in b.values())
+        total += n
+        print(_Term.color(_Term.BOLD + _Term.CYAN, f"\n  ── {div} ──"))
+        for job, name, k, e in b["added"]:
+            print(f"    + NEW      {job:<14} {str(name or '')[:30]:<30} "
+                  f"contract {_fmt(k)} · ETC {_fmt(e)}")
+        for job, name, k, e in b["removed"]:
+            print(f"    − REMOVED  {job:<14} {str(name or '')[:30]:<30} "
+                  f"was contract {_fmt(k)} · ETC {_fmt(e)}")
+        for tag, key in (("ORIGINAL", "orig"), ("REVISED", "revised")):
+            for job, name, label, old, new in b[key]:
+                delta = (new or 0) - (old or 0)
+                print(f"    ~ {label:<17} {job:<14} {_fmt(old)} → {_fmt(new)} "
+                      f"({'+' if delta >= 0 else '−'}{_fmt(abs(delta))[1:]})")
+        if not any(b.values()):
+            print("    no changes")
+    if total == 0:
+        print("  No changes in any division since the last sync.")
+    print()
+
+
+def write_audit_xlsx(audit: Dict[str, dict], tab_name: str,
+                     out_path: Path = AUDIT_XLSX) -> Optional[Path]:
+    """One flat, plain sheet of every change so the owner can audit later.
+    Overwrites the SAME file each run (never a v2). Skipped if it's open."""
+    from openpyxl import Workbook
+    if out_path.with_name("~$" + out_path.name).exists():
+        print(_Term.color(_Term.AMBER,
+              f"  ⚠ {out_path.name} is open in Excel — change file not written"))
+        return None
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "CHANGES"
+    ws.cell(1, 2, f"WIP CHANGES - {tab_name}").font = TITLE_FONT
+    ws.cell(2, 2, f"REPORT DATE: {dt.date.today():%b %d, %Y}".upper()).font = TITLE_FONT
+    hdr = ["DIVISION", "CHANGE", "JOB #", "JOB NAME", "FIELD", "OLD", "NEW", "CHANGE $"]
+    for c, h in enumerate(hdr, start=1):
+        cell = ws.cell(4, c, h)
+        cell.font = HDR_FONT
+        cell.fill = HDR_FILL
+        cell.border = CELL_BORDER
+        cell.alignment = Alignment(horizontal="center", wrap_text=True)
+    widths = (10, 12, 16, 34, 20, 16, 16, 16)
+    for c, w in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(c)].width = w
+    r = 5
+    for div in ("MFD", "CP", "RP", "OTHER"):
+        b = audit.get(div)
+        if not b:
+            continue
+        for job, name, k, e in b["added"]:
+            for c, v in enumerate([div, "NEW JOB", job, name, "CONTRACT",
+                                   None, k, k], start=1):
+                ws.cell(r, c, v)
+            r += 1
+            for c, v in enumerate([div, "NEW JOB", job, name, "ETC",
+                                   None, e, e], start=1):
+                ws.cell(r, c, v)
+            r += 1
+        for job, name, k, e in b["removed"]:
+            for c, v in enumerate([div, "REMOVED", job, name, "CONTRACT / ETC", k, None, None], start=1):
+                ws.cell(r, c, v)
+            r += 1
+        for key, tag in (("orig", "ORIGINAL"), ("revised", "REVISED")):
+            for job, name, label, old, new in b[key]:
+                delta = (new or 0) - (old or 0)
+                for c, v in enumerate([div, tag + " CHANGE", job, name, label,
+                                       old, new, delta], start=1):
+                    ws.cell(r, c, v)
+                r += 1
+    for rr in range(5, r):
+        for c in range(1, len(hdr) + 1):
+            cell = ws.cell(rr, c)
+            cell.font = DATA_FONT
+            cell.border = CELL_BORDER
+            if c >= 6:
+                cell.number_format = CURRENCY_FMT
+    if r == 5:
+        ws.cell(5, 1, "No changes since the last sync.").font = DATA_FONT
+    ws.freeze_panes = "A5"
+    wb.save(out_path)
+    return out_path
+
+
 def _master_title_prefix(wb) -> str:
     """The company/report prefix from the real 'WIP Master' title cell (B1),
     e.g. 'PROFICIENT CONCRETE, LLC' out of '<company> - WIP REPORT'. Read at
@@ -1290,7 +1496,9 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                   title: Optional[str] = None,
                   summary: bool = False,
                   qbo_links_only: bool = True,
-                  legend: Optional[List] = None) -> bool:
+                  legend: Optional[List] = None,
+                  audit: bool = False,
+                  audit_xlsx: Optional[Path] = None) -> bool:
     """Write rows to the given WIP tab (default 'Test - CP'; RP passes
     'Test - RP'). Same structure/formatting for every division. Guarded by
     wip_excel_guard. Returns True if written, False if skipped (dry-run, or the
@@ -1367,6 +1575,13 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
         # left the tab is PRINTED, never silently dropped.
         saved_comments = {}
         prior_hdr = _find_header_row(ws)
+        # Baseline for the change audit + the owner's typed NOTES, both read
+        # off the sheet BEFORE it is wiped (the user 2026-07-31).
+        prior_state = _snapshot_tab(ws, prior_hdr)
+        for _p, _s in prior_state.items():
+            keep = [seg.strip() for seg in _s["notes"].split(" · ")
+                    if seg.strip() and not _SCRIPT_NOTE_RE.match(seg.strip())]
+            _s["manual_notes"] = keep
         hdr_labels = ({c: ws.cell(prior_hdr, c).value
                        for c in range(1, (ws.max_column or 0) + 1)}
                       if prior_hdr else {})
@@ -1464,6 +1679,13 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
         }
 
         def _emit(i: int, row: CpRow) -> None:
+            # Re-attach any NOTES text a human typed on this job's row last
+            # time (script segments regenerate themselves; only human text is
+            # carried) — the user 2026-07-31: "be sure to preserve any notes".
+            for _seg in (prior_state.get(row.project_num.strip().upper(), {})
+                         .get("manual_notes") or []):
+                if _seg not in row.notes:
+                    row.notes.append(_seg)
             # Invariant guard: if CO Cost is populated but CO Revenue is
             # not, refuse to write the CO Cost. That's either a bug or a
             # corrupted state, and quietly writing a made-up cost would
@@ -1646,6 +1868,16 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                       wip_path.name, e, tmp.name)
             raise
         log.info("Wrote %d rows to %s in %s", len(rows), tab_name, wip_path)
+        if audit:
+            _sections = ([appendix] if isinstance(appendix, tuple)
+                         else (appendix or []))
+            _all = list(rows) + [r for _t, ap in _sections for r in (ap or [])]
+            _audit = audit_changes(prior_state, _all)
+            print_audit(_audit, tab_name)
+            if audit_xlsx is not None:
+                _p = write_audit_xlsx(_audit, tab_name, audit_xlsx)
+                if _p:
+                    print(_Term.color(_Term.DIM, f"  change file → {_p}"))
     finally:
         wb.close()
     _qc_check(wip_path, tab_name, expected_rows=len(rows) + sum(

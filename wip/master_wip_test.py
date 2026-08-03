@@ -424,7 +424,11 @@ def main() -> int:
             summary=True,
             # The user 2026-07-29: the ONLY links on the report are the QBO
             # deep links on Billed/Costs — no Synology/file links.
-            qbo_links_only=True)
+            qbo_links_only=True,
+            # The change audit runs HERE — Test-Master carries all three
+            # divisions, so one report covers MFD + CP + RP (the user
+            # 2026-07-31: "I need to always audit these things").
+            audit=True, audit_xlsx=CP.AUDIT_XLSX)
     except CP.WipWriteDenied as e:
         print(f"  ✗ Guard blocked write: {e}")
         return 2
