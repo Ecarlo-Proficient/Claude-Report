@@ -160,9 +160,10 @@ restate them here. Business/strategic context lives in session memory, not in th
 
 - **Synology `/Volumes/Proinfo/Items/` is off-limits** — never tree-extract or output its filenames;
   pass it via `--exclude` on every Synology run.
-- **Obsidian Main Vault is read-only** (`~/Library/Mobile Documents/com~apple~CloudDocs/Documents/Main Vault`
-  — note the global CLAUDE.md path is stale). Draft vault content into `AI Brain_Vault/drafts/vault-fills/`
-  mirroring vault structure; never write into the Main Vault.
+- **The Obsidian Main Vault is RETIRED** (merged into `AI Brain_Vault/` 2026-08-04). Do not read
+  it, write to it, or re-create the `drafts/vault-fills/` staging folder — there is nothing to
+  stage for. Business context goes straight into the vault; the process registry is
+  `AI Brain_Vault/02_processes/`.
 - **Scope is this company only.** Don't reference affiliated entities (pump co., custom homes, etc.) in
   outputs, and keep artifact titles/filenames neutral (no company name).
 
@@ -178,8 +179,9 @@ restate them here. Business/strategic context lives in session memory, not in th
   `dirname "${BASH_SOURCE[0]}"`; Python derives paths from `__file__` / `shared/paths.py`;
   launchd plists are TEMPLATES with `/ABSOLUTE/PATH/TO/...` placeholders and a documented
   sed install one-liner (see the plist header comment).
-- **Vault drafts never live in this repo** — stage them in the AI working vault's
-  `drafts/vault-fills/` (outside the repo), mirroring the Main Vault structure.
+- **Business/vault content never lives in this repo** — it goes in `AI Brain_Vault/` (outside the
+  repo). Names never appear anywhere here: people are role handles, and the name↔handle roster is
+  `AI Brain_Vault/01_company/ROSTER.md`, which is gitignored.
 - Python 3.9+; deps via `pip3 install --break-system-packages -r requirements.txt` (per subfolder).
 - Each subsystem keeps its own README, `requirements.txt`/venv, and `launchd/` plist where scheduled.
 - Build the core happy-path first; don't pre-add heartbeats/fallback monitors before the core is proven.
