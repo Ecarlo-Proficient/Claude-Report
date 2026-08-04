@@ -115,6 +115,26 @@ def _draw_workbooks(draw_folder: Path, max_depth: int = 3):
     return out
 
 
+# A draw can be re-cut without changing its number — the revision sits in the
+# same 'Draw #N' folder beside the original it replaces, and the ORIGINAL is
+# dead paper the moment it does. Caught on CP765 draw #4 (the user 2026-08-04):
+# 'Revised LP Draw Excel #4' backed a $13,552 change order out of the original,
+# and reading the superseded file invented a $13,552 shortfall against a QBO
+# invoice that was in fact correct to the dollar.
+_REVISED_RE = re.compile(r"revis", re.IGNORECASE)          # Revised / Revision
+
+
+def _supersedes(path: Path) -> Tuple[int, float]:
+    """Tie-break key WITHIN one draw number: a revised workbook beats the
+    original, and among equals the newest file wins. Without this the winner
+    is filesystem iteration order — i.e. arbitrary."""
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        mtime = 0.0
+    return (1 if _REVISED_RE.search(path.name) else 0), mtime
+
+
 def find_latest_draw(project_folder: Path) -> Optional[Tuple[int, Path]]:
     """Locate the LATEST draw workbook for a project (the user 2026-07-09: draw # is
     the sequence — highest wins). Draw workbooks live in the 'Draws' container,
@@ -148,7 +168,9 @@ def find_latest_draw(project_folder: Path) -> Optional[Tuple[int, Path]]:
     if not candidates:
         return None
     # Highest draw # wins; require a real G702 so a stray xlsx can't win.
-    for n, f in sorted(candidates, key=lambda x: x[0], reverse=True):
+    # Within one draw #, _supersedes() breaks the tie — see CP765 draw #4.
+    for n, f in sorted(candidates,
+                       key=lambda x: (x[0],) + _supersedes(x[1]), reverse=True):
         if has_g702(f):
             return n, f
     return None

@@ -497,6 +497,29 @@ just an old one.
 - Re-checked every CP job: all still resolve, several now to a deeper (correct)
   draw. CP861 is on draw #5 and the audit recorded the correction.
 
+### CP765 — a REVISED draw sits beside the original it replaces (2026-08-04)
+Second stale-draw failure the same day, different cause: **two workbooks for the
+SAME draw number** in one folder. `Draw #4/` holds both `Draw Excel #4` and
+`Revised LP Draw Excel #4`. Draw # tied, so the winner fell out of filesystem
+iteration order — arbitrary — and the superseded original won:
+
+    original draw #4   net CO $79,752   billed $529,054
+    revised  draw #4   net CO $66,200   billed $515,502   ← the live one
+
+The revision backs a **$13,552** change order out. Reading the dead file invented
+a $13,552 shortfall against QBO invoice 34288, whose cumulative $515,502 ties to
+the revised draw **to the dollar** (the user 2026-08-04 — flagged the file and
+the invoice).
+
+- `_supersedes()` now breaks ties WITHIN a draw number in `shared/draws.py`:
+  a name matching `revis` (Revised/Revision) beats the original, then newest
+  mtime. `has_g702()` still gates every candidate.
+- CP765 is the only project whose chosen workbook changes. **Its WIP row moves
+  when the reader next runs**: contract $635,578 → $622,026, CO $79,752 →
+  $66,200, billed $529,054 → $515,502. Numbers going DOWN here is the correction,
+  not a regression.
+- Money Bleeds `Draws CP` goes 1 RED → 0 RED as a result.
+
 ### CP800 — both takeoffs ARE summed; FDT has no cost in it
 `_select_takeoffs` already includes and sums both (`FDT TAKEOFF - WIP.xlsx` +
 `PAVING TAKEOFF - WIP.xlsx`) — both contracts add into the row. The ETC is

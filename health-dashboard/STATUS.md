@@ -22,6 +22,13 @@ exposures or business analysis here (those live in the owner's vault).
   repo's plain-Excel rule.
 - Draw discovery + G702 parsing extracted to `shared/draws.py` (shared with
   `wip/cp_wip_reader.py`).
+- **Revised draws supersede originals** (the user 2026-08-04). CP765 filed
+  `Revised LP Draw Excel #4` beside `Draw Excel #4` — same draw number, so the
+  winner fell out of filesystem order and the dead original won, inventing a
+  $13,552 shortfall against an invoice that was correct to the dollar.
+  `shared/draws._supersedes()` now ranks `revis*` over the original, then newest
+  mtime. CP765 is the only project whose file changes; `Draws CP` went 1 RED →
+  0 RED, and CP765's WIP row moves too (see `wip/STATUS.md`).
 - **MFD built-vs-staged draw detection** (the user 2026-08-04). MFD draws are
   PDFs — no G702, so no amount to match. `mfd_draw_documents()` reads the draw
   folder and calls it BUILT only if it holds a pay application; the lien-release
