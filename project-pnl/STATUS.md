@@ -64,7 +64,13 @@ manual close), RP (no draws — expenses → invoice → profit).
   other color convention survives too. A mark whose bill changed in QBO
   (amount/date edited) no longer matches and the run flags it — deliberate:
   a changed bill needs re-confirmation. Scoreboard band fills are excluded
-  (only rows with a real DATE are read).
+  (only rows with a real DATE are read). **INVARIANT (binding): the script
+  never writes a direct cell fill on a dated bill row** — that is the whole
+  ownership model: colors are never interpreted or matched, so the
+  estimator's palette can be anything; script coloring on data rows must use
+  CONDITIONAL FORMATTING (a separate xlsx layer readback cannot see).
+  Limits: a white fill is not a mark; a single painted cell is read as a
+  row mark and re-applied to the whole row.
   Font 12 flat; uniform row heights. DESCRIPTION is the ledger's LAST
   column and spills right over empty space — scoreboard and ledger share
   physical columns, so a wide mid-table description column was inflating

@@ -4310,6 +4310,13 @@ def build_sheet_labor_concrete(
             # Re-apply the estimator's row mark from the previous version —
             # green = the PM confirmed this bill (the user 2026-07-31). The
             # exact color is preserved, so other conventions survive too.
+            #
+            # INVARIANT (binding): the script must NEVER write a direct cell
+            # fill on a dated bill row — that is what makes every fill on
+            # such a row human-owned, regardless of color. Script coloring
+            # on data rows goes through CONDITIONAL FORMATTING instead (a
+            # separate xlsx layer the mark readback cannot see). Breaking
+            # this turns script decoration into phantom "PM confirmations".
             _mk = (marks or {}).get(
                 (str(ln["doc"] or ln["txn_id"] or "(no #)").strip(),
                  str(ln["date"]).strip(), str(ln["vendor"]).strip(),
