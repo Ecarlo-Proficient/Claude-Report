@@ -103,163 +103,6 @@ def master_cols():
     return cols
 
 
-# The owner's fixed RP WIP ('RP WIP' sheet) — band rows partition the lines.
-# Band substring → (SECTION on the master, TYPE on Test - RP). None = excluded:
-# CP jobs belong to the CP folder scan, never the RP section (the user
-# 2026-07-29). TYPE wording is the user's (2026-07-31): the top section is
-# just GOOD; the other three bands are their own types.
-_RP_FILE_BANDS = (
-    ("CP JOBS",                  None),
-    ("DROPPED OFF THE SCHEDULE", ("RP — DROPPED, UNBILLED", "DROPPED OFF SCHEDULE")),
-    ("FTW WITH COSTS",           ("FTW — OFF-SCHEDULE (COSTS)", "FTW WITH COSTS")),
-    ("FTW BACKLOG",              ("FTW BACKLOG", "FTW BACKLOG")),
-)
-_RP_FILE_COL = {"job": 1, "addr": 2, "builder": 3, "contract": 4, "etc": 5,
-                "billed": 6, "costs": 7, "sched": 9, "action": 11, "co": 12}
-
-# The owner's colour contract (rp_wip_update.py, the user 2026-07-30) — his
-# font-colour marks are authoritative and must SURVIVE into the test tabs
-# (the user 2026-07-31: "keep all the notes and colors since they mean
-# something"). theme 9 = the workbook's orange → written as literal orange.
-_OWNER_RGB = {"00B050": "00B050",     # green — the owner verified this number
-              "FF0000": "FF0000"}     # red   — the owner changed this number
-_OWNER_ORANGE = "ED7D31"              # theme 9 — ops manager must verify
-
-
-# Divisions are SPELLED OUT on the report (the user 2026-08-03) — the codes
-# are internal shorthand, not something a reader of the WIP should decode.
-_SECTION_LABEL = {
-    "MFD": "Multi-Family",
-    "CP": "Commercial",
-    "RP SLAB": "Residential — Slab",
-    "FTW — ACTIVE": "Residential — Flatwork",
-    "FTW — OFF-SCHEDULE (COSTS)": "Residential — Flatwork (off-schedule)",
-    "RP — DROPPED, UNBILLED": "Residential — Dropped, Unbilled",
-    "FTW BACKLOG": "Residential — Flatwork Backlog",
-}
-
-
-def _rp_category(row) -> str:
-    """The row's TYPE for a line from the owner's top section, decided AFTER
-    the QBO pass (the user 2026-07-31: "rp7234-ftw is not good … there are no
-    costs" — the top band alone doesn't make a job good).
-
-    GOOD means work is actually underway: QBO shows costs or billing.
-    Anything with no money moved yet is NOT STARTED when it's still on the
-    schedule, and — for flatwork — plain backlog when it isn't (the locked
-    FTW backlog rule: no activity AND not scheduled)."""
-    if row.billed_to_date or row.costs_to_date:
-        return "GOOD"
-    if getattr(row, "on_schedule", False):
-        return "NOT STARTED"
-    return "FTW BACKLOG" if row.project_num.endswith("-FTW") else "NOT STARTED"
-
-
-def _owner_mark(cell):
-    """The owner's colour on this cell ('00B050' / 'FF0000' / orange), or None."""
-    col = cell.font.color if cell.font else None
-    if col is None:
-        return None
-    rgb = getattr(col, "rgb", None)
-    if isinstance(rgb, str) and rgb[-6:].upper() in _OWNER_RGB:
-        return _OWNER_RGB[rgb[-6:].upper()]
-    th = getattr(col, "theme", None)
-    return _OWNER_ORANGE if th == 9 else None
-
-
-def read_rp_from_file(xlsx_path: Path):
-    """RP rows from the owner's verified RP WIP workbook (the user 2026-07-29:
-    'for RP, use this excel'). His contract/ETC/CO values are taken as-is —
-    the file IS the RP source of record. Billed/Costs are pre-seeded from the
-    file, then refreshed from QBO (QBO wins; the file value only survives a
-    failed lookup). CP-numbered lines are EXCLUDED (they belong to the CP
-    folder scan). Sections come from the file's band rows; lines above the
-    first band split RP SLAB vs FTW — ACTIVE by the -FTW suffix."""
-    import re as _re
-    wb = load_workbook(xlsx_path, data_only=True, read_only=True)
-    ws = wb["RP WIP"]
-    C = _RP_FILE_COL
-    rows, section, skipped_cp = [], "", []
-    seen = {}                                          # project # → first row
-    for r in range(3, ws.max_row + 1):
-        raw = ws.cell(r, C["job"]).value
-        if raw is None or not str(raw).strip():
-            continue
-        job = str(raw).strip().upper()
-        if not _re.match(r"^(RP|CP)\d", job):          # band row → new section
-            band = str(raw)
-            for key, sect in _RP_FILE_BANDS:
-                if key in band:
-                    section = sect
-                    break
-            continue
-        if job.startswith("CP"):
-            skipped_cp.append(job)
-            continue
-        if section is None:                            # inside an excluded band
-            skipped_cp.append(job)
-            continue
-        contract = RP._money(ws.cell(r, C["contract"]).value)
-        etc = RP._money(ws.cell(r, C["etc"]).value)
-        if job in seen:
-            # The file lists the line twice (e.g. under two warning bands).
-            # One WIP line per job — keep the FIRST (fuller) copy; if the
-            # duplicate carries DIFFERENT numbers, flag it red so a human
-            # settles which contract/ETC is real.
-            first = seen[job]
-            if (contract, etc) != (first.base_contract, first.base_etc):
-                first.status_flags.append(
-                    f"Duplicate line in the RP file with different numbers "
-                    f"(row {r}: contract {contract}, ETC {etc}) — verify")
-            print(f"    ⚠ {job}: duplicate line in the RP file (row {r}) — "
-                  f"kept the first copy"
-                  + ("" if (contract, etc) == (first.base_contract, first.base_etc)
-                     else " (NUMBERS DIFFER — flagged)"))
-            continue
-        row = CP.CpRow(
-            job, str(ws.cell(r, C["addr"]).value or job).strip(), False,
-            contract,
-            RP._money(ws.cell(r, C["co"]).value),
-            etc,
-            RP._money(ws.cell(r, C["billed"]).value),
-            RP._money(ws.cell(r, C["costs"]).value))
-        row.client = str(ws.cell(r, C["builder"]).value or "").strip() or None
-        # TYPE = Tract / Custom (the user 2026-07-31 — it must not disappear
-        # from the RP view). Same rule as the GL pipeline: production builders
-        # (by name OR by the General-Lista code) are Tract, everyone else is
-        # Custom.
-        _b = RP._norm(row.client)
-        row.home_type = ("Tract" if (_b in RP.TRACT_CLIENTS
-                                     or _b in RP.TRACT_CODES) else "Custom")
-        row.on_schedule = str(ws.cell(r, C["sched"]).value or "").strip() == "✓"
-        if section:
-            row.section, row.rp_type = section
-        else:
-            row.section = ("FTW — ACTIVE" if job.endswith("-FTW") else "RP SLAB")
-            row.rp_type = None          # decided after QBO — see _rp_category()
-        # The owner's notes + colour marks travel with the row (the user
-        # 2026-07-31). A red/green/orange mark on Billed/Costs also means
-        # HIS number stands — the QBO refresh must not overwrite it.
-        row.action_note = str(ws.cell(r, C["action"]).value or "").strip() or None
-        row.notes_from_source = True     # his file is authoritative for NOTES
-        row.cell_marks, row.qbo_protect = {}, {}
-        for fld, ccol in (("contract_price", "contract"), ("etc", "etc"),
-                          ("billed_to_date", "billed"), ("costs_to_date", "costs"),
-                          ("action_note", "action")):
-            mark = _owner_mark(ws.cell(r, C[ccol]))
-            if mark:
-                row.cell_marks[fld] = mark
-                if fld in ("billed_to_date", "costs_to_date"):
-                    row.qbo_protect[fld] = getattr(row, fld)
-        seen[job] = row
-        rows.append(row)
-    wb.close()
-    if skipped_cp:
-        print(f"  RP file: excluded {len(skipped_cp)} CP/band line(s): "
-              f"{', '.join(skipped_cp)}")
-    return rows
-
-
 def existing_project_nums(wip_path: Path, tab_name: str = "Test-Master"):
     """PROJECT #s already on the Test-Master tab (read-only). Used to lock
     the RP refresh to jobs that are ALREADY in the report (the user
@@ -327,7 +170,7 @@ def main() -> int:
         if not rp_file.exists():
             print(f"  ✗ RP file not found: {rp_file}")
             return 3
-        rp_rows = read_rp_from_file(rp_file)
+        rp_rows = RP.read_rp_from_file(rp_file)
         pairs = [(row,) for row in rp_rows]     # RP.enrich_with_qbo unpacks row-first
         print(f"  RP lines from {rp_file.name!r}: {len(rp_rows)}")
     else:
@@ -357,44 +200,12 @@ def main() -> int:
         row.section = "CP"
 
     if args.rp_from_file:
-        # Sections came from the file's bands. Two post-QBO touches:
-        # (1) FTW backlog rule (LOCKED, the user 2026-07-25): a backlog line
-        #     with ANY costs/billing after the QBO pass is NOT backlog.
-        # (2) backlog lines never render red — no QBO project is their
-        #     normal state, not a must-fix.
-        rp_rows = [t[0] for t in pairs]
-        order = ["RP SLAB", "FTW — ACTIVE",
-                 "FTW — OFF-SCHEDULE (COSTS)", "RP — DROPPED, UNBILLED",
-                 "FTW BACKLOG"]
-        for row in rp_rows:
-            # Owner-marked Billed/Costs stand — undo the QBO overwrite (his
-            # red/green/orange means he settled that number).
-            for fld, val in (getattr(row, "qbo_protect", None) or {}).items():
-                if getattr(row, fld) != val:
-                    print(f"    ⚠ {row.project_num}: {fld} kept at the owner's "
-                          f"marked value (QBO refresh discarded)")
-                    setattr(row, fld, val)
-            if (row.section == "FTW BACKLOG"
-                    and (row.billed_to_date or row.costs_to_date)):
-                row.section = "FTW — OFF-SCHEDULE (COSTS)"
-                row.rp_type = "FTW WITH COSTS"
-                print(f"    ⚠ {row.project_num}: QBO shows activity — "
-                      f"reclassed out of FTW BACKLOG")
-            if row.rp_type is None:            # owner's top section
-                row.rp_type = _rp_category(row)
-                if row.rp_type != "GOOD":
-                    print(f"    • {row.project_num}: no costs/billing → "
-                          f"{row.rp_type} (was in the top section)")
-            # A line with no budget can't be measured — say so in NOTES.
-            if row.base_etc is None:
-                row.status_flags.append("No budget (ETC) on the RP file")
-            row.needs_review = (bool(row.status_flags)
-                                and row.section != "FTW BACKLOG")
-            if row.project_num == "RP6901":     # the user 2026-07-31: invoiced?
-                print(f"    ► RP6901 check: QBO billed = "
-                      f"{row.billed_to_date or 0:,.2f} · costs = "
-                      f"{row.costs_to_date or 0:,.2f}")
-        rp_sorted = [r for s in order for r in rp_rows if r.section == s]
+        # Sections came from the file's bands; the post-QBO pass lives in
+        # rp_wip_reader so this script and a standalone RP run classify
+        # identically.
+        rp_sorted = RP.classify_from_file([t[0] for t in pairs])
+        order = ["RP SLAB", "FTW — ACTIVE", "FTW — OFF-SCHEDULE (COSTS)",
+                 "RP — DROPPED, UNBILLED", "FTW BACKLOG"]
         all_rows = mfd_rows + cp_rows + rp_sorted
         counts = " · ".join(
             f"{s} {sum(1 for r in rp_sorted if r.section == s)}"
@@ -456,7 +267,7 @@ def main() -> int:
                     + ftw_active + ftw_backlog)
     # SECTION shows the division spelled out, not the internal code.
     for row in all_rows:
-        row.section = _SECTION_LABEL.get(row.section, row.section)
+        row.section = RP.SECTION_LABEL.get(row.section, row.section)
 
     import datetime as dt
     try:
@@ -489,50 +300,12 @@ def main() -> int:
         print(f"  ✓ Wrote {total} line(s) to 'Test-Master'")
         _drop_stale_test_tab()
 
-    # With --rp-from-file, 'Test - RP' becomes the SAME rows in the master
-    # formatting, PLUS the user's 2026-07-31 asks: a TYPE column that
-    # describes every row (GOOD / FTW WITH COSTS / DROPPED OFF SCHEDULE /
-    # FTW BACKLOG), a legend on top explaining the types and the owner's
-    # colours, the BUILDER, and the owner's notes carried in NOTES.
+    # 'Test - RP' is written by rp_wip_reader.write_rp_tab — the single
+    # writer of that tab, so a standalone RP run and this unified run can
+    # never produce different layouts (they did, on 2026-08-04).
     if args.rp_from_file:
-        type_order = ["GOOD", "NOT STARTED", "FTW WITH COSTS",
-                      "DROPPED OFF SCHEDULE", "FTW BACKLOG"]
-        rp_view = [r for t in type_order for r in all_rows
-                   if r.section not in ("Multi-Family", "Commercial")
-                   and getattr(r, "rp_type", None) == t]
-        # CATEGORY describes the row; TYPE stays Tract/Custom exactly as on
-        # the master layout (the user 2026-07-31).
-        rp_cols = [("CATEGORY", 20, "rp_type")]
-        for label, width, field in master_cols():
-            if field == "section":
-                continue
-            rp_cols.append((label, width, field))
-            if field == "home_type":
-                rp_cols.append(("BUILDER", 24, "client"))
-        # 'Test - RP' is a WORKING tab, so it keeps the commentary and the sync
-        # stamp that Test-Master drops (money_bleeds reads both from here).
-        rp_cols += [("LAST SYNCED", 18, "_last_synced"),
-                    ("NOTES", 60, "_notes_all")]
-        legend = [
-            ("LEGEND — CATEGORY (what each row's TYPE means):", None, True),
-            ("GOOD — work is underway: QBO shows costs and/or billing", None, False),
-            ("NOT STARTED — on the schedule / priced, but no costs and no billing yet", None, False),
-            ("FTW WITH COSTS — flatwork started off-schedule (has costs) — belongs on the schedule", None, False),
-            ("DROPPED OFF SCHEDULE — left the schedule with money still on the table", None, False),
-            ("FTW BACKLOG — flatwork priced with the slab, no activity and not scheduled (expected wins)", None, False),
-            ("COLORS:  GREEN = the owner verified this number", "00B050", True),
-            ("RED = the owner changed this number", "FF0000", True),
-            ("ORANGE = ops manager must verify", "ED7D31", True),
-        ]
         try:
-            wrote_rp = CP.write_test_cp(
-                rp_view, CP.WIP_EXCEL_PATH,
-                dry_run=args.dry_run, tab_name="Test - RP",
-                cols=rp_cols, default_filter_active=True,
-                title="RP WIP REPORT",
-                summary=True, qbo_links_only=True, legend=legend)
-            if not args.dry_run and wrote_rp:
-                print(f"  ✓ Wrote {len(rp_view)} RP line(s) to 'Test - RP'")
+            RP.write_rp_tab(rp_sorted, dry_run=args.dry_run)
         except CP.WipWriteDenied as e:
             print(f"  ✗ Guard blocked the 'Test - RP' write: {e}")
             return 2

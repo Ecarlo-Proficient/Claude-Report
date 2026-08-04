@@ -437,3 +437,31 @@ caught it on the very next run:
 - **A section subtotal is never the contract.** That dirt PDF's only figure was
   `Eartwork Total: $56,544` with no overall `TOTAL:` line. `grand_total()` now
   returns None when it finds only qualified section totals.
+
+## 2026-08-04 (later) — per-division runs restored: ONE RP implementation
+
+The per-division split is deliberate (run one division on its own), but RP's
+reader was on the WRONG SOURCE — the General List, not the estimators' verified
+file — so it could not be used daily and was clobbering `Test - RP`. Realigning
+its columns fixed the FORMAT only; the DATA source was still wrong.
+
+Fixed by moving the RP source-of-truth logic OUT of `master_wip_test` and INTO
+`rp_wip_reader`, where it belongs, so there is exactly one implementation:
+- `RP_WIP_FILE` — the owner's file, resolved via `shared/paths` (env-overridable).
+- `read_rp_from_file()`, `classify_from_file()`, `rp_tab_cols()`,
+  `RP_TAB_LEGEND`, `write_rp_tab()`, `SECTION_LABEL`, `_rp_category`,
+  `_owner_mark` — all now live in `rp_wip_reader`.
+- `master_wip_test` calls those; `write_rp_tab()` is the ONLY writer of
+  'Test - RP', so a standalone RP run and the unified run cannot drift.
+- `rp_wip_reader.py` now DEFAULTS to the owner's file. The General List
+  pipeline is still there behind `--general-list` for inspecting the legacy
+  path; `--file <xlsx>` overrides the source.
+
+**Verified:** ran both entry points back to back and diffed 'Test - RP'
+cell-for-cell (162 rows × every column) — IDENTICAL apart from the LAST SYNCED
+timestamp.
+
+Daily commands (either shape works now):
+  `master_wip_test.py --rp-from-file <xlsx>` + `cp_wip_reader.py`   (all tabs + audit)
+  or per division: `cp_wip_reader.py` / `rp_wip_reader.py`
+Only `master_wip_test` writes Test-Master and runs the change audit.
