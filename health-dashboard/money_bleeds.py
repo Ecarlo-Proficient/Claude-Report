@@ -290,14 +290,56 @@ def find_mfd_draws_folder(project_folder: Path) -> Optional[Path]:
     return None
 
 
-def latest_mfd_draw(draws_dir: Path) -> Optional[Tuple[int, dt.date, str]]:
-    """Highest-numbered non-empty 'N- MONTH YEAR DRAW' folder →
-    (draw_num, first-of-draw-month, folder name)."""
-    best = None
+# An MFD draw folder holds the pay application AND the lien releases that ride
+# along with it. The releases are named for what they are ('Conditional Release
+# … August Draw 2026'), so the release test runs FIRST — otherwise a release
+# carrying the word 'Draw' would masquerade as the draw itself.
+_MFD_RELEASE_RE = re.compile(r"release|waiver|lien", re.IGNORECASE)
+_MFD_DRAWDOC_RE = re.compile(r"draw|pay\s*app", re.IGNORECASE)
+
+
+def mfd_draw_documents(draw_folder: Path) -> List[str]:
+    """The pay-application PDFs inside a draw folder (recursing, because a job
+    billing several contracts files one draw per contract subfolder).
+
+    MFD draws are PDFs — there is no G702 to read an amount off, so the
+    presence of the draw document IS the signal that the draw was actually
+    built and sent. A folder holding only conditional/unconditional releases
+    is a placeholder opened ahead of the billing, not money we can invoice."""
+    docs: List[str] = []
+    try:
+        entries = list(draw_folder.rglob("*"))
+    except OSError:
+        return docs
+    for f in entries:
+        try:
+            if not f.is_file() or f.suffix.lower() != ".pdf":
+                continue
+        except OSError:
+            continue
+        if _MFD_RELEASE_RE.search(f.name):
+            continue
+        if _MFD_DRAWDOC_RE.search(f.name):
+            docs.append(f.name)
+    return sorted(docs)
+
+
+def scan_mfd_draws(draws_dir: Path):
+    """(built, staged) for a project's DRAWS folder.
+
+    built  = highest-numbered draw folder that holds a pay application —
+             the latest real draw, and the only one we test for an invoice.
+    staged = a higher-numbered folder that exists but holds no draw document
+             yet (placeholder opened ahead of the work). Reported, never
+             judged: there is nothing to invoice until the draw is built.
+
+    Deliberately only the latest draw of each kind — older draws are left
+    alone because the pre-2026 folders don't follow this naming."""
+    folders = []
     try:
         entries = list(draws_dir.iterdir())
     except OSError:
-        return None
+        return None, None
     for entry in entries:
         if not entry.is_dir():
             continue
@@ -305,26 +347,28 @@ def latest_mfd_draw(draws_dir: Path) -> Optional[Tuple[int, dt.date, str]]:
         if not parsed:
             continue
         num, month, year = parsed
-        try:                                     # empty folder = draw not built yet
-            if not any(entry.iterdir()):
-                continue
-        except OSError:
-            continue
-        if best is None or num > best[0]:
-            best = (num, dt.date(year, month, 1), entry.name.strip())
-    return best
+        folders.append((num, dt.date(year, month, 1), entry.name.strip(),
+                        mfd_draw_documents(entry)))
+    if not folders:
+        return None, None
+    folders.sort(key=lambda f: f[0])
+    built = next((f for f in reversed(folders) if f[3]), None)
+    top = folders[-1]
+    staged = top if (not top[3] and (built is None or top[0] > built[0])) else None
+    return built, staged
 
 
 def check_mfd_draws(qc: QboCache,
                     proj_map: Dict[str, dict]) -> List[Dict[str, Any]]:
-    """One row per active MFD project: latest draw folder vs latest QBO
-    invoice date. PASS = latest invoice lands in/after the draw month
-    (we're already billing draws — this is the future-case tripwire)."""
+    """One row per active MFD project: the latest BUILT draw (the folder
+    holding an actual pay application) vs latest QBO invoice date. PASS =
+    latest invoice lands in/after that draw's month. A higher-numbered
+    placeholder folder is reported in STAGED NEXT, never judged."""
     results = []
     today = _today()
     for proj, name in read_active_mfd(WIP_EXCEL_PATH):
         row = {"project": proj, "name": name, "draw": "", "draw_month": None,
-               "last_invoice": None, "verdict": "", "detail": ""}
+               "staged": "", "last_invoice": None, "verdict": "", "detail": ""}
         results.append(row)
 
         folder = find_mfd_project_folder(proj)
@@ -337,12 +381,17 @@ def check_mfd_draws(qc: QboCache,
             row["verdict"] = "REVIEW"
             row["detail"] = f"No DRAWS folder under {folder.name}"
             continue
-        latest = latest_mfd_draw(draws_dir)
-        if latest is None:
+        built, staged = scan_mfd_draws(draws_dir)
+        if staged is not None:
+            row["staged"] = f"{staged[2]} — folder only, no draw doc yet"
+        if built is None:
             row["verdict"] = "REVIEW"
-            row["detail"] = "DRAWS folder has no numbered draw subfolders"
+            row["detail"] = ("No built draw in the DRAWS folder — "
+                             + (f"{staged[2]} is staged but holds no pay application"
+                                if staged is not None
+                                else "no numbered draw subfolders"))
             continue
-        draw_num, draw_month, draw_label = latest
+        draw_num, draw_month, draw_label, draw_docs = built
         row["draw"] = draw_label
         row["draw_month"] = draw_month
 
@@ -356,16 +405,19 @@ def check_mfd_draws(qc: QboCache,
                     if _parse_date(i.get("TxnDate"))), default=None)
         row["last_invoice"] = last
 
+        docs = f"{len(draw_docs)} pay app(s)" if draw_docs else "pay app"
         if last is not None and last >= draw_month:
             row["verdict"] = "PASS"
-            row["detail"] = f"Draw {draw_num} invoiced ({last.isoformat()})"
+            row["detail"] = f"Draw {draw_num} ({docs}) invoiced ({last.isoformat()})"
         elif (draw_month.year, draw_month.month) == (today.year, today.month):
             row["verdict"] = "PENDING"
-            row["detail"] = f"Draw {draw_num} is current-month — invoice not in QBO yet"
+            row["detail"] = (f"Draw {draw_num} is built ({docs}) and is "
+                             f"current-month — invoice not in QBO yet")
         else:
             row["verdict"] = "RED"
-            row["detail"] = (f"Latest draw ({draw_label}) has NO QBO invoice — "
-                             f"last invoice {last.isoformat() if last else 'NEVER'}")
+            row["detail"] = (f"Draw {draw_num} ({draw_label}) is BUILT ({docs}) "
+                             f"but has NO QBO invoice — last invoice "
+                             f"{last.isoformat() if last else 'NEVER'}. INVOICE THIS.")
     return results
 
 
@@ -942,17 +994,18 @@ def write_workbook(out: Path,
     dash.title = "Dashboard"
 
     # ── Draws MFD ──
-    ws = _sheet(wb, "Draws MFD", ["PROJECT #", "PROJECT NAME", "LATEST DRAW",
-                                  "LAST QBO INVOICE", "VERDICT", "DETAIL"],
-                [11, 30, 26, 17, 11, 70])
+    ws = _sheet(wb, "Draws MFD", ["PROJECT #", "PROJECT NAME", "LATEST BUILT DRAW",
+                                  "STAGED NEXT", "LAST QBO INVOICE", "VERDICT",
+                                  "DETAIL"],
+                [11, 30, 26, 34, 17, 11, 70])
     first = ws.max_row + 1
     for i, r in enumerate(mfd):
-        ws.append([r["project"], r["name"], r["draw"],
+        ws.append([r["project"], r["name"], r["draw"], r.get("staged") or "—",
                    r["last_invoice"].isoformat() if r["last_invoice"] else "—",
                    r["verdict"], r["detail"]])
-        _zebra(ws, 6, i, status_col=5, status=r["verdict"])
-    _verdict_cf(ws, 5, first, ws.max_row)
-    _finish(ws, 6)
+        _zebra(ws, 7, i, status_col=6, status=r["verdict"])
+    _verdict_cf(ws, 6, first, ws.max_row)
+    _finish(ws, 7)
 
     # ── Draws CP (data bar on the un-invoiced gap) ──
     ws = _sheet(wb, "Draws CP", ["PROJECT #", "FOLDER", "DRAW #",

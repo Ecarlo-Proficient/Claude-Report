@@ -64,7 +64,7 @@ synced.
 | Sheet | Bleed it catches |
 |-------|------------------|
 | **Dashboard** | $ totals per bleed + the assumptions used |
-| **Draws MFD** | Active MFD projects (from the 'WIP Master' tab) whose **latest** numbered draw folder (`…/PM MISC/DRAWS/N- MONTH YEAR DRAW`) has no QBO invoice in/after the draw month. Latest draw only — history is assumed billed; this is the future-case tripwire. |
+| **Draws MFD** | Active MFD projects (from the 'WIP Master' tab) whose **latest BUILT** numbered draw folder (`…/PM MISC/DRAWS/N- MONTH YEAR DRAW`) has no QBO invoice in/after the draw month. MFD draws are PDFs — there is no G702 to read an amount off, so a folder counts as *built* only when it holds a pay-application PDF; the lien-release test runs first, so a `Conditional Release … August Draw 2026.pdf` never masquerades as the draw. A higher-numbered folder holding only releases is a placeholder opened ahead of the work: it appears in **STAGED NEXT** and is never judged, because there is nothing to invoice until the draw is built. Latest draw only — history is assumed billed, and the pre-2026 folders don't follow this naming. |
 | **Draws CP** | CP projects whose latest draw's G702 earned-less-retainage exceeds cumulative QBO invoiced — a draw that never became an invoice. Draw discovery/G702 parsing: `shared/draws.py`. |
 | **Lien Clock** | Every open construction invoice with its Texas lien-notice deadline (commercial CP/MFD = 15th of the 3rd month after the work month; residential RP = 15th of the 2nd). Parent customer shown per project row. Sorted by days left: PAST / URGENT ≤15d / WATCH ≤45d. |
 | **Lien Retainage** | Retainage invoices — separate statutory track (§ 53.057, completion-based), never mixed into the monthly clock. |

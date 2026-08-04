@@ -10,9 +10,9 @@ exposures or business analysis here (those live in the owner's vault).
   Dashboard (colored KPI cards), Draws MFD, Draws CP, Lien Clock (grouped by
   status), Lien Retainage, Leases (excluded), RP Wrap-Up, Unused POs 30d+,
   Open Bills (AP).
-- Checks: (1) draws billed-not-invoiced — MFD (latest draw folder vs latest
-  QBO invoice) + CP (latest G702 earned-less-retainage vs cumulative QBO
-  invoiced); (2) Texas lien-notice clock on open construction invoices
+- Checks: (1) draws billed-not-invoiced — MFD (latest BUILT draw folder vs
+  latest QBO invoice) + CP (latest G702 earned-less-retainage vs cumulative
+  QBO invoiced); (2) Texas lien-notice clock on open construction invoices
   (work month = invoice month; OK rows hidden; retainage + lease/note split
   off); (3) RP slab wrap-up from the Test - RP tab; (4) unused QBO POs ≥30d;
   (5) open bills (AP) read from the Bill Tracker, grouped by AR state × the
@@ -22,6 +22,16 @@ exposures or business analysis here (those live in the owner's vault).
   repo's plain-Excel rule.
 - Draw discovery + G702 parsing extracted to `shared/draws.py` (shared with
   `wip/cp_wip_reader.py`).
+- **MFD built-vs-staged draw detection** (the user 2026-08-04). MFD draws are
+  PDFs — no G702, so no amount to match. `mfd_draw_documents()` reads the draw
+  folder and calls it BUILT only if it holds a pay application; the lien-release
+  test runs first so a "Conditional Release … August Draw 2026.pdf" can't
+  masquerade as the draw. A higher-numbered folder with no pay application is a
+  placeholder — reported in the new `STAGED NEXT` column, never judged, because
+  there is nothing to invoice until the draw is built. Recurses so a job billing
+  several contracts (MFD192: Mayhill + Offsite) counts each contract's pay app.
+  Scope is deliberately the latest draw only — the user 2026-08-04, older folders
+  predate this naming and enumerating them all would break.
 
 ## OPEN ISSUES
 - **SMB volumes + Touch ID**: hard-fails unless `Multi Family` and `Common`
