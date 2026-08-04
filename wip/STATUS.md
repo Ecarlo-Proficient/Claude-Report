@@ -205,12 +205,19 @@ Last updated: 2026-07-29
   untouched and correct, which is what made it look like an RP-only table-range bug. It isn't —
   it is a **layout collision**: several tools can write `Test - RP`, each with its own column
   definition, and whichever runs last wins.
-  - Root fix in flight: `_rp_cols()` realigned to the standard `CP.COLS` set (keeps
+  - Format drift fixed: `_rp_cols()` realigned to the standard `CP.COLS` set (keeps
     `APPROVED COs`, drops the `WHY (TEMP)` file:// link the QBO-links-only rule disallows).
+  - **The script is still unsafe to run, and now for a worse reason (the user 2026-08-04).**
+    Run as `__main__` it resolves RP from `ALPHA_PATH` — the **General List** — while the
+    binding RP source of truth is the estimators' verified `RP WIP TO FIX_Final.xlsx`, which
+    only `master_wip_test --rp-from-file` reads. So it would overwrite verified numbers with
+    General-List ones **in a now-correct-looking format**: a silent data regression that shows
+    no visible symptom. Fixing the layout removed the warning sign, not the hazard.
+  - Removed from the vault's daily checklist entirely; the daily WIP command is
+    `master_wip_test.py --rp-from-file …` **plus** `cp_wip_reader.py` (the former does not write
+    `Test - CP`; the mandatory change audit only fires on the Test-Master write).
   - Still open: the two `one-offs/` scripts that also write this tab can regress it the same
     way. Retire them or point them at a scratch tab.
-  - **The daily checklist in the vault still names this script as the item-2 command**, so the
-    morning run reproduces the regression until the realignment lands.
 - **`_qc()` miscounts rows on any tab with a bottom legend** (found 2026-08-04). It counts every
   row with a value in the project column, so the COLUMN GUIDE block is counted as data — that is
   the `rows 135 ≠ expected 117` half of the RP warning, and it pushes `last_data` past the table
@@ -465,3 +472,40 @@ Daily commands (either shape works now):
   `master_wip_test.py --rp-from-file <xlsx>` + `cp_wip_reader.py`   (all tabs + audit)
   or per division: `cp_wip_reader.py` / `rp_wip_reader.py`
 Only `master_wip_test` writes Test-Master and runs the change audit.
+
+## 2026-08-04 — CP861 had no change orders: a STALE DRAW, not a dropped check
+
+The CO check was never removed. `co_revenue` still reads G702 line 2 from
+whatever draw is found — the bug was that the wrong draw was found.
+`find_latest_draw()` descended exactly ONE level into a numbered `Draw #N`
+folder. CP861 files its workbook a level deeper, under a per-company subfolder
+(ours and the GC's sit side by side), so draws #4 and #5 produced no candidate
+and the reader silently settled on **draw #3**:
+
+    draw #3 (what we read)  net CO $0        billed $410,520
+    draw #5 (actual latest) net CO $52,576   billed $605,426
+
+So the job was understated by **$52,576 of change orders and $194,906 of
+billing**, with nothing on the report to say so — the reader had a valid draw,
+just an old one.
+
+- `_draw_workbooks()` now walks DOWN to depth 3 inside a numbered draw folder,
+  skipping `DO NOT USE` / SUPERSEDED / OLD / ARCHIVE / VOID / BACKUP folders
+  (the team parks retired paperwork there — CP861 draw #5 has one). Shallowest
+  match ranks first, and `has_g702()` still gates every candidate, so the GC's
+  own spreadsheets can never win.
+- Re-checked every CP job: all still resolve, several now to a deeper (correct)
+  draw. CP861 is on draw #5 and the audit recorded the correction.
+
+### CP800 — both takeoffs ARE summed; FDT has no cost in it
+`_select_takeoffs` already includes and sums both (`FDT TAKEOFF - WIP.xlsx` +
+`PAVING TAKEOFF - WIP.xlsx`) — contract $288,012 + $3,569,340. The ETC is
+PAVING's alone because **FDT's cost cells are empty**: `BID!AP1948` and
+`BID!AP1961` are both literally 0, and no other cost roll-up exists in that
+file. Nothing to add until an estimator fills it; picking another number out of
+that workbook would be a guess.
+
+### shared/proposals: 'GRAND TOTAL' is the overall figure
+It was being classified as a section subtotal (the leading word looked like a
+scope), so a PDF whose total is labelled `GRAND TOTAL` returned nothing.
+`_OVERALL_WORDS` = GRAND / PROJECT / CONTRACT / OVERALL / BID.

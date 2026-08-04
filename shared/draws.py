@@ -71,6 +71,50 @@ def has_g702(xlsx: Path) -> bool:
         return False
 
 
+# Subfolders inside a draw that must never supply the workbook — the team
+# parks superseded paperwork in them.
+_DEAD_DIR_RE = re.compile(
+    r"DO ?NOT ?USE|SUPERSEDED|\bOLD\b|ARCHIVE|VOID|BACKUP", re.I)
+
+
+def _draw_workbooks(draw_folder: Path, max_depth: int = 3):
+    """Every candidate draw workbook inside a 'Draw #N' folder.
+
+    Walks DOWN, because the workbook is not always at the top of the draw
+    folder: the team often files it under a per-company subfolder (ours and the
+    GC's sit side by side). CP861's draws #4 and #5 did exactly that, so a
+    single-level scan found neither and the reader silently fell back to
+    draw #3 — costing $52,576 of change orders and $194,906 of billing on that
+    job (2026-08-04). 'DO NOT USE' style folders are skipped, and the caller
+    still requires `has_g702()`, so the GC's own spreadsheets can't win.
+    """
+    out = []
+
+    def walk(folder: Path, depth: int) -> None:
+        if depth > max_depth:
+            return
+        try:
+            entries = list(folder.iterdir())
+        except OSError:
+            return
+        for f in entries:
+            try:
+                if f.is_file():
+                    if (f.suffix.lower() in (".xlsx", ".xlsm")
+                            and not f.name.startswith("~$")):
+                        out.append(f)
+                elif f.is_dir() and not _DEAD_DIR_RE.search(f.name):
+                    walk(f, depth + 1)
+            except OSError:
+                continue
+
+    walk(draw_folder, 1)
+    # Shallowest first: a workbook filed at the top of the draw folder outranks
+    # one buried in a subfolder.
+    out.sort(key=lambda p: len(p.relative_to(draw_folder).parts))
+    return out
+
+
 def find_latest_draw(project_folder: Path) -> Optional[Tuple[int, Path]]:
     """Locate the LATEST draw workbook for a project (the user 2026-07-09: draw # is
     the sequence — highest wins). Draw workbooks live in the 'Draws' container,
@@ -96,11 +140,9 @@ def find_latest_draw(project_folder: Path) -> Optional[Tuple[int, Path]]:
             elif entry.is_dir():
                 n = draw_num_from_name(entry.name)      # numbered 'Draw #N' subfolder
                 if n is not None:
-                    for f in entry.iterdir():
-                        if f.is_file() and f.suffix.lower() in (".xlsx", ".xlsm") \
-                                and not f.name.startswith("~$"):
-                            fn = draw_num_from_name(f.name)
-                            candidates.append((fn if fn is not None else n, f))
+                    for f in _draw_workbooks(entry):
+                        fn = draw_num_from_name(f.name)
+                        candidates.append((fn if fn is not None else n, f))
         except OSError:
             continue
     if not candidates:

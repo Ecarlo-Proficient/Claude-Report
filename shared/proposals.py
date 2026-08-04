@@ -36,6 +36,9 @@ _TOTAL_PLAIN = re.compile(
 
 _SKIP_PDF = ("INVOICE", "DIAGRAM", "PLAN", "SUBMITTAL", "LIEN", "W-9", "COI")
 
+# Words that still mean "the whole proposal" when they sit in front of TOTAL.
+_OVERALL_WORDS = {"GRAND", "PROJECT", "CONTRACT", "OVERALL", "BID"}
+
 
 def _amount(raw: str) -> Optional[float]:
     try:
@@ -79,8 +82,11 @@ def grand_total(path: Path) -> Tuple[Optional[float], str]:
     if not hits:
         return None, "no 'TOTAL: $…' line in the PDF"
 
-    plain = [a for q, a in hits if not q]
-    parts = [a for q, a in hits if q]
+    # "GRAND TOTAL" / "PROJECT TOTAL" / "CONTRACT TOTAL" ARE the overall figure
+    # — the leading word is emphasis, not a scope. Only a real scope name
+    # ("Foundation", "Site", "Eartwork") makes it a section subtotal.
+    plain = [a for q, a in hits if not q or q.upper() in _OVERALL_WORDS]
+    parts = [a for q, a in hits if q and q.upper() not in _OVERALL_WORDS]
     if not plain:
         # ONLY section subtotals ('Eartwork Total', 'Foundation Total'). A
         # section is not the contract — returning the largest one silently cut
