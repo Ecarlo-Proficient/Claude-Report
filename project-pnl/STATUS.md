@@ -71,6 +71,12 @@ manual close), RP (no draws — expenses → invoice → profit).
   CONDITIONAL FORMATTING (a separate xlsx layer readback cannot see).
   Limits: a white fill is not a mark; a single painted cell is read as a
   row mark and re-applied to the whole row.
+  **Sheets arrive auto-fitted** (the user 2026-07-31): `_autofit` computes
+  what Excel's double-click would — every column sized to its longest
+  display line at font 12, wrapped header rows sized to their line count —
+  measured ONLY over the scoreboard, yards strip and ledger rows, never the
+  long note lines that spill by design (DESCRIPTION also excluded — it
+  spills). No more clipped draw periods.
   Font 12 flat; uniform row heights. DESCRIPTION is the ledger's LAST
   column and spills right over empty space — scoreboard and ledger share
   physical columns, so a wide mid-table description column was inflating

@@ -3973,6 +3973,54 @@ def _merge_bill_lines(lines: List[dict]) -> List[dict]:
     return sorted(out, key=lambda x: (x["date"], str(x.get("doc") or "")))
 
 
+def _autofit(ws, first_col: int, last_col: int, header_rows: List[int],
+             include: List[Tuple[int, int]],
+             skip_cols: Tuple[int, ...] = (), min_w: float = 9.0,
+             max_w: float = 46.0) -> None:
+    """What Excel's double-click autofit would do, computed at write time
+    (the user 2026-07-31 — the file must ARRIVE fitted; openpyxl has no
+    renderer, so widths are estimated from the longest display line).
+
+    Only rows inside the `include` (start, end) ranges are measured — the
+    long single-cell note lines (fuel warning, tie-out sentence, lump notes)
+    deliberately SPILL across columns and would otherwise blow their column
+    to max width. Width unit ≈ one '0' at Calibri 11; body font is 12, so
+    chars scale by 12/11 plus padding. Wrapped headers measure per-LINE and
+    the header row height is set from the deepest line count. Formula cells
+    display numbers, not formula text — estimated at 13 chars."""
+    SCALE, PAD = 12.0 / 11.0, 2.0
+
+    def _in(r):
+        return any(a <= r <= b for a, b in include)
+
+    deepest = {r: 1 for r in header_rows}
+    for col in range(first_col, last_col + 1):
+        if col in skip_cols:
+            continue
+        longest = 0
+        for row in ws.iter_rows(min_col=col, max_col=col):
+            cell = row[0]
+            v = cell.value
+            if v is None or not _in(cell.row):
+                continue
+            if isinstance(v, str):
+                if v.startswith("="):
+                    longest = max(longest, 13)
+                    continue
+                lines = v.split("\n")
+                longest = max(longest, max(len(l) for l in lines))
+                if cell.row in deepest and len(lines) > 1:
+                    deepest[cell.row] = max(deepest[cell.row], len(lines))
+            elif isinstance(v, (int, float)):
+                longest = max(longest, len(f"{v:,.2f}"))
+        if longest:
+            ws.column_dimensions[get_column_letter(col)].width = round(
+                min(max_w, max(min_w, longest * SCALE + PAD)), 1)
+    for r, n in deepest.items():
+        ws.row_dimensions[r].height = max(ws.row_dimensions[r].height or 0,
+                                          n * 19 + 5)
+
+
 def build_sheet_labor_concrete(
     wb, kind: str, proj: str, cust_info: dict, wip_info: dict,
     budget: Dict[str, float], code_costs: Dict[str, dict],
@@ -4198,7 +4246,13 @@ def build_sheet_labor_concrete(
         r += 1
 
     known = _project_name_words(cust_info.get("name", ""))
+    yards_rows: Optional[Tuple[int, int]] = None
     if kind == "Concrete":
+        # _yards_strip is called with r+1 and writes its LABEL row right at
+        # that row, values on the next — no title row (verified against the
+        # function, 2026-07-31; the old +2/+3 guess included the lump-note
+        # line and blew the ITEM column to max width).
+        yards_rows = (r + 1, r + 2)
         r = _yards_strip(ws, r + 1, codes, code_costs, budget, yards, SZ, ROW_H)
 
     # Scoreboard (and strip) stay pinned; the ledger scrolls under them.
@@ -4207,6 +4261,7 @@ def build_sheet_labor_concrete(
 
     # ───────────────────────── LEDGER ─────────────────────────
     n_marks_kept = [0]
+    r_ledger_hdr = r + 1                       # the QBO#/DATE/… header row
     lh = ws.cell(row=r, column=1, value=(
         "LEDGER — every bill; the DRAW column says which draw window the bill "
         "date fell in. QBO # opens the uploaded bill file (attachments/ beside "
@@ -4328,6 +4383,14 @@ def build_sheet_labor_concrete(
                 n_marks_kept[0] += 1
             ws.row_dimensions[r].height = ROW_H
             r += 1
+    # Deliver fitted: every column sized to its longest line, header rows to
+    # their line count. DESCRIPTION is excluded — it spills right by design.
+    # Measured rows: the scoreboard table, the yards strip, and the ledger —
+    # never the spilling note lines.
+    _ranges = [(hdr, tot), (r_ledger_hdr, ws.max_row)]
+    if yards_rows:
+        _ranges.append(yards_rows)
+    _autofit(ws, 1, L_DESC - 1, [hdr, r_ledger_hdr], _ranges)
     if n_marks_kept[0] or marks:
         kept, had = n_marks_kept[0], len(marks or {})
         ui_event(f"{kind}: {kept} PM-confirmed row mark(s) preserved"
