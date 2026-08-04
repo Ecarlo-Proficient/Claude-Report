@@ -689,7 +689,12 @@ def check_rp_wrapup(wip_path: Path) -> Tuple[List[Dict[str, Any]], str]:
         status = str(col(r, "STATUS") or "").strip()
         if "100% complete (list)" not in notes or status.lower() != "active":
             continue
-        contract = float(col(r, "TOTAL CONTRACT PRICE") or 0)
+        # TOTAL CONTRACT PRICE is a live formula on this tab (so the owner's
+        # edits add up in Excel), and an openpyxl-written formula has no cached
+        # value — fall back to its components, which are always plain numbers.
+        contract = float(col(r, "TOTAL CONTRACT PRICE")
+                         or (float(col(r, "ORIGINAL CONTRACT") or 0)
+                             + float(col(r, "APPROVED COs") or 0)))
         billed = float(col(r, "BILLED TO DATE") or 0)
         left = float(col(r, "LEFT TO BILL") or (contract - billed))
         if left <= 0:

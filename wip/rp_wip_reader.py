@@ -381,7 +381,10 @@ def write_rp_tab(rows, dry_run: bool = False) -> bool:
         view, CP.WIP_EXCEL_PATH, dry_run=dry_run, tab_name="Test - RP",
         cols=rp_tab_cols(), default_filter_active=True,
         title="RP WIP REPORT", summary=True, qbo_links_only=True,
-        legend=RP_TAB_LEGEND)
+        legend=RP_TAB_LEGEND,
+        # A working tab: the roll-ups are live formulas so an edited
+        # ORIGINAL COST / CO COST adds up on the spot.
+        live_formulas=True)
     if not dry_run and wrote:
         print(f"  ✓ Wrote {len(view)} RP line(s) to 'Test - RP'")
     return wrote

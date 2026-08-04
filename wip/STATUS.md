@@ -509,3 +509,27 @@ that workbook would be a guess.
 It was being classified as a section subtotal (the leading word looked like a
 scope), so a PDF whose total is labelled `GRAND TOTAL` returned nothing.
 `_OVERALL_WORDS` = GRAND / PROJECT / CONTRACT / OVERALL / BID.
+
+## 2026-08-04 — the two roll-ups are LIVE formulas on the tabs the owner edits
+
+`TOTAL CONTRACT PRICE` and `ESTIMATED TOTAL COSTS` were written as VALUES, so
+typing a CO cost into `CO COSTS` left the revised total unchanged until the next
+sync (the user: "etc total are not formulas so if i edit the og etc and the
+revised co etc it doesn't add up").
+
+They cannot simply become formulas everywhere: an openpyxl-written formula
+carries **no cached value**, so every `data_only=True` reader gets None — the
+same failure that blanked MFD's budget. Four tools read Test-Master that way
+(`shared/schedule`, `company_dashboard`, `money_bleeds`,
+`project_pnl_export`). So the behaviour is split by what the tab is FOR:
+
+- **Test - CP / Test - RP** (`live_formulas=True`) — the tabs he types into:
+  `C = IF(AND(A="",B=""),"",A+B)` and `F = IF(AND(D="",E=""),"",D+E)`. Edit an
+  input and the roll-up updates on the spot; both blank still renders blank,
+  not a false $0. Being calculated, they lose the yellow input fill.
+- **Test-Master** — values, unchanged. It is LOCKED, nobody types in it, and it
+  is the tab every other tool reads.
+- `money_bleeds.check_rp_wrapup` reads TOTAL CONTRACT PRICE off 'Test - RP', so
+  it gained a component fallback (ORIGINAL CONTRACT + APPROVED COs), mirroring
+  the one it already had for LEFT TO BILL. Verified: the fallback fires on all
+  110 RP rows and the check still reads the tab.

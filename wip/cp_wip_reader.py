@@ -1215,6 +1215,18 @@ FORMULA_FIELDS: frozenset = frozenset({
     "job_borrow",        # PURE JOB BORROW   = MAX(Cost to Complete − Left to Bill, 0)
 })
 
+# The two ROLL-UPS. They are normally written as VALUES because four tools read
+# this workbook with data_only=True, and an openpyxl-written formula carries no
+# cached value — it would read back as None and silently zero them (exactly how
+# MFD's budget went blank, 2026-08-03).
+#
+# On the tabs the owner EDITS they are written as live formulas instead (the
+# user 2026-08-04: "etc total are not formulas so if i edit the og etc and the
+# revised co etc it doesn't add up"), so typing a CO cost updates the revised
+# total on the spot. Test-Master keeps values: it is locked, nobody types into
+# it, and it is the tab every other tool reads.
+_LIVE_ROLLUP_FIELDS = frozenset({"contract_price", "etc"})
+
 
 def _build_formula(field_name: str, row_num: int,
                    col_letter_by_field: Dict[str, str]) -> str:
@@ -1237,6 +1249,12 @@ def _build_formula(field_name: str, row_num: int,
     PE = ref("profit_earned")      # Profit Earned to Date
     LTB = ref("left_to_bill")      # Left to Bill
 
+    if field_name == "contract_price":       # C = A + B (blank when both are)
+        A, B = ref("base_contract"), ref("co_revenue")
+        return f'=IF(AND({A}="",{B}=""),"",{A}+{B})'
+    if field_name == "etc":                  # F = D + E (blank when both are)
+        D, E = ref("base_etc"), ref("co_cost_estimate")
+        return f'=IF(AND({D}="",{E}=""),"",{D}+{E})'
     if field_name == "original_profit":
         return f'=IF(OR({F}="",{I}=""),"",{F}-{I})'
     if field_name == "gross_profit_pct":
@@ -1825,7 +1843,8 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                   legend: Optional[List] = None,
                   audit: bool = False,
                   audit_xlsx: Optional[Path] = None,
-                  protect: bool = False) -> bool:
+                  protect: bool = False,
+                  live_formulas: bool = False) -> bool:
     """Write rows to the given WIP tab (default 'Test - CP'; RP passes
     'Test - RP'). Same structure/formatting for every division. Guarded by
     wip_excel_guard. Returns True if written, False if skipped (dry-run, or the
@@ -2094,8 +2113,10 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                 )
                 row.status_flags.append("Data integrity: CO Cost without CO Rev — dropped")
 
+            _formula_now = (FORMULA_FIELDS | _LIVE_ROLLUP_FIELDS
+                            if live_formulas else FORMULA_FIELDS)
             for c, (_label, _width, field_name) in enumerate(cols_, start=1):
-                if field_name in FORMULA_FIELDS:
+                if field_name in _formula_now:
                     # Derived cell — write an Excel formula referencing
                     # the input cells in the same row. Excel evaluates on
                     # open/edit so any input change auto-recalculates.
@@ -2111,7 +2132,9 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                 elif field_name in _PCT_FIELDS:
                     cell.number_format = PCT_FMT
                 # Yellow = sourced input (raw from takeoff / QBO); white = calc.
-                if field_name in _SOURCE_FIELDS:
+                # A roll-up written as a live formula IS a calc — leave it white
+                # so the yellow still means "a number came from a source".
+                if field_name in _SOURCE_FIELDS and field_name not in _formula_now:
                     cell.fill = INPUT_FILL
                 elif field_name in ("status", "_notes_all") and (
                         row.status_flags or row.needs_review):
@@ -2612,7 +2635,9 @@ def main() -> int:
         # Closed on default open") — same as the master tab.
         wrote = write_test_cp(rows, WIP_EXCEL_PATH, dry_run=args.dry_run,
                               default_filter_active=True,
-                              title="CP WIP REPORT", summary=True)
+                              title="CP WIP REPORT", summary=True,
+                              # working tab → live roll-up formulas
+                              live_formulas=True)
     except WipWriteDenied as e:
         print(_Term.color(_Term.RED, f"  ✗ Guard blocked write: {e}"))
         return 2
