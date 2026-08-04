@@ -499,7 +499,7 @@ just an old one.
 
 ### CP800 — both takeoffs ARE summed; FDT has no cost in it
 `_select_takeoffs` already includes and sums both (`FDT TAKEOFF - WIP.xlsx` +
-`PAVING TAKEOFF - WIP.xlsx`) — contract $288,012 + $3,569,340. The ETC is
+`PAVING TAKEOFF - WIP.xlsx`) — both contracts add into the row. The ETC is
 PAVING's alone because **FDT's cost cells are empty**: `BID!AP1948` and
 `BID!AP1961` are both literally 0, and no other cost roll-up exists in that
 file. Nothing to add until an estimator fills it; picking another number out of
