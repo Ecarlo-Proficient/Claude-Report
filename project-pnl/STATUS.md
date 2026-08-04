@@ -56,6 +56,10 @@ manual close), RP (no draws — expenses → invoice → profit).
   #). Tax/fuel columns appear ONLY on a trade that has such lines — labor
   subs bill neither (auto-omit, disclosed). No fuel lines exist anywhere yet
   (AP folds the surcharge into the rate); Concrete says so on the sheet.
+  Martin Marietta bills it as "SERVICE CHARGE" — classified into the same
+  bucket (column reads FUEL / SVC CHARGE) and folded onto the bill's row,
+  so a ready-mix bill is ONE ledger line: qty · rate · amount · tax · svc
+  (the user 2026-08-01).
   **PM-confirmation marks survive re-syncs** (the user 2026-07-31): an
   estimator marks a ledger row GREEN when the PM confirms the bill; before
   each regeneration `read_back_ledger_marks` lifts every manual row fill

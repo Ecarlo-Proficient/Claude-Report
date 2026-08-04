@@ -3847,7 +3847,10 @@ _TAX_LINE_RE = re.compile(r"\btax(es)?\b", re.IGNORECASE)
 # into the per-yard rate, so this matches nothing on most jobs — the column is
 # there so the moment the clerks code it correctly it lands where it belongs
 # (the user 2026-07-29).
-_FUEL_LINE_RE = re.compile(r"fuel|surcharge|energy\s*fee", re.IGNORECASE)
+# Martin Marietta bills the surcharge as "SERVICE CHARGE" (the user
+# 2026-08-01) — same animal, same column, lumped with fuel.
+_FUEL_LINE_RE = re.compile(r"fuel|surcharge|energy\s*fee|service\s*charge",
+                           re.IGNORECASE)
 _BEFORE_KEY, _AFTER_KEY = "__before", "__after"
 
 
@@ -4135,7 +4138,7 @@ def build_sheet_labor_concrete(
     if has_tax:
         heads.append(("SALES TAX", sb_tax, F_TAXF))
     if has_fuel:
-        heads.append(("FUEL SURCHARGE", sb_fuel, F_TAXF))
+        heads.append(("FUEL / SVC CHARGE", sb_fuel, F_TAXF))
     if has_tax or has_fuel:
         heads.append(("ACTUAL INCL.", sb_incl, F_TAXF))
     for text, col, fill in heads:
@@ -4275,7 +4278,7 @@ def build_sheet_labor_concrete(
     if L_TAX:
         led_heads.append(("SALES TAX", L_TAX))
     if L_FUEL:
-        led_heads.append(("FUEL", L_FUEL))
+        led_heads.append(("FUEL/SVC", L_FUEL))
     led_heads += [("DRAW", L_DRAW), ("DESCRIPTION", L_DESC)]
     for text, col in led_heads:
         c = ws.cell(row=r, column=col, value=text)
