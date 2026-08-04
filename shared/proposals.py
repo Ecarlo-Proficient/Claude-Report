@@ -13,9 +13,9 @@ internal working file, and its template ships with several proposal tabs, so it
 can be ambiguous about which total is the contract. Order is therefore
 draw → proposal PDF → takeoff.
 
-Extraction is deliberately defensive: pdfplumber often breaks digits apart
-("$ 1 05,815.00" for $105,815.00), so whitespace inside a number is stripped
-before parsing.
+Extraction is deliberately defensive: pdfplumber often breaks digits apart —
+a total prints as "$ 1 23,456" with a stray space mid-number — so whitespace
+inside a number is stripped before parsing.
 """
 from __future__ import annotations
 
