@@ -407,3 +407,33 @@ tab: `master_wip_test --rp-from-file`, `rp_wip_reader`,
   was corrupted, but that was luck. Detection now skips the run and says so.
 - **STILL OPEN:** the two `one-offs/` RP writers can each still clobber the tab.
   Retire them or point them at a scratch sheet — owner's call.
+
+## 2026-08-04 — CP contract for a pre-draw job: PDF → takeoff
+
+`CP910` showed a blank contract: no first draw, and its takeoff has BOTH a
+Commercial and a Residential proposal tab, so `_select_proposal_sheet` saw two
+competing proposals and refused to guess. Source order for a no-draw CP job is
+now (the user 2026-08-04): **draw → signed proposal PDF → takeoff**.
+
+- **`shared/proposals.py`** (new, in `shared/` because CP and RP both need it —
+  tools never import tools): finds the folder's proposal PDF and reads its
+  overall total. pdfplumber splits digits ("$ 1 05,815.00"), so whitespace
+  inside a number is stripped before parsing.
+- **Residential proposal tabs are NEVER read for CP** (the user: "if CP use the
+  commercial 100%"), and with several non-final proposal tabs the Commercial
+  one wins outright. That alone un-blanks CP910's takeoff path.
+- **Cross-verified both ways:** agreement between PDF and Commercial tab is
+  stated in NOTES ("matches the Commercial Proposal tab ✓"); disagreement is a
+  must-fix flag naming both figures.
+
+### Two guards, both added after the change audit caught a regression
+The first cut of this dropped **CP783 from $364,032 to $56,544** — the audit
+caught it on the very next run:
+- **Several proposal PDFs ⇒ don't guess.** CP783 holds a main proposal, a
+  breakout, a dirt/utilities proposal and a revised dirt proposal. They are
+  different SCOPES, not revisions of one price, and "newest wins" picked the
+  $56k dirt scope. With more than one candidate the PDF path is abandoned and
+  the takeoff is used, with the candidates named in NOTES.
+- **A section subtotal is never the contract.** That dirt PDF's only figure was
+  `Eartwork Total: $56,544` with no overall `TOTAL:` line. `grand_total()` now
+  returns None when it finds only qualified section totals.

@@ -147,6 +147,7 @@ def _dim_if_dash(s: str) -> str:
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 from shared import paths
+from shared import proposals  # signed bid-proposal PDF → contract price
 from shared import qbo_api  # QBO helpers (formerly loaded from project-pnl by raw file path)
 
 CP_ACTIVE_DIR = Path(os.getenv(
@@ -452,6 +453,13 @@ _WIP_TAG_RE = re.compile(r"\bwip\b", re.IGNORECASE)
 _AUX_XLSX_RE = re.compile(r"cost\s*code|explanation", re.IGNORECASE)
 
 
+# Takeoff flags that only concern the CONTRACT figure — dropped when the
+# proposal PDF supplied it, so a pre-draw job doesn't carry a complaint about a
+# source we no longer needed.
+_CONTRACT_FLAG_RE = re.compile(
+    r"Grand/Sub Total|Contract Price|proposal (tab|sheet)", re.I)
+
+
 def _find_contract_total(ws_data, ws_formula):
     """Read the contract total off a proposal sheet. Templates are inconsistent
     (the user 2026-07-02) — the overall total is labeled 'GRAND TOTAL', 'SUB TOTAL',
@@ -478,22 +486,37 @@ def _select_proposal_sheet(wb):
       - else if exactly ONE proposal tab → use it;
       - else (multiple proposals, none marked FINAL) → don't guess, flag it.
     'Proposal' tabs = any sheet whose name contains 'proposal' (Commercial /
-    Residential / Alternative / '11.14.25 Proposal' …). Non-proposal tabs
-    (Bid, JMP Subcontract, Change Order#N, Cost Codes) are ignored here.
+    Alternative / '11.14.25 Proposal' …). Non-proposal tabs (Bid, JMP
+    Subcontract, Change Order#N, Cost Codes) are ignored here.
+
+    RESIDENTIAL PROPOSAL TABS ARE NEVER READ HERE (the user 2026-08-04:
+    "residential proposal is only used for RP, if CP use the commercial 100%").
+    The takeoff template ships with both tabs, so a CP job would otherwise look
+    like two competing proposals and get skipped — which is exactly why CP910
+    came through with a blank contract.
+
     Returns (sheet_name_or_None, flag_or_None)."""
-    proposals = [s for s in wb.sheetnames if "proposal" in s.lower()]
-    if not proposals:
+    prop_tabs = [s for s in wb.sheetnames if "proposal" in s.lower()]
+    if not prop_tabs:
         return None, "Missing Proposal Sheet"
-    finals = [s for s in proposals if "final" in s.lower()]
+    cp_tabs = [s for s in prop_tabs if "residential" not in s.lower()]
+    if not cp_tabs:
+        return None, ("Only a RESIDENTIAL proposal tab in a CP takeoff — "
+                      "commercial pricing belongs on the Commercial tab")
+    prop_tabs = cp_tabs
+    finals = [s for s in prop_tabs if "final" in s.lower()]
     if len(finals) == 1:
         return finals[0], None
     if len(finals) > 1:
         return finals[0], f"Multiple FINAL proposals — used '{finals[0]}'"
-    if len(proposals) == 1:
-        return proposals[0], None
-    return None, (f"Multiple proposals ({len(proposals)}), none marked FINAL — "
-                  f"mark the final one: {', '.join(proposals[:4])}"
-                  f"{'...' if len(proposals) > 4 else ''}")
+    if len(prop_tabs) == 1:
+        return prop_tabs[0], None
+    commercial = [s for s in prop_tabs if "commercial" in s.lower()]
+    if len(commercial) == 1:
+        return commercial[0], None          # CP ⇒ the Commercial tab, always
+    return None, (f"Multiple proposals ({len(prop_tabs)}), none marked FINAL — "
+                  f"mark the final one: {', '.join(prop_tabs[:4])}"
+                  f"{'...' if len(prop_tabs) > 4 else ''}")
 
 
 def _parse_one_takeoff(tk: Path):
@@ -606,8 +629,37 @@ def parse_takeoff(folder: Path, row: CpRow) -> None:
             etc_total += e
             got_etc = True
 
-    row.base_contract = contract_total if got_contract else None
+    takeoff_contract = contract_total if got_contract else None
     row.base_etc = etc_total if got_etc else None
+
+    # CONTRACT SOURCE ORDER for a pre-draw job (the user 2026-08-04):
+    # the signed proposal PDF FIRST, the takeoff only as a fallback. The PDF is
+    # the document the customer agreed to; the takeoff is an internal file whose
+    # template ships several proposal tabs, so it is often ambiguous — CP910 read
+    # as a blank contract for exactly that reason while its PDF said $105,815.
+    pdf_amt, pdf_note = proposals.contract_from_folder(folder)
+    if pdf_amt is not None:
+        row.base_contract = pdf_amt
+        # Cross-verify the two independent sources (the user 2026-08-04:
+        # "verify with pdf or vice versa"). Agreement is worth saying out loud;
+        # disagreement is a must-fix, because one of the two is stale.
+        if takeoff_contract is None:
+            row.notes.append(f"Contract from the {pdf_note}")
+        elif abs(takeoff_contract - pdf_amt) < 1:
+            row.notes.append(f"Contract from the {pdf_note} — "
+                             f"matches the Commercial Proposal tab ✓")
+        else:
+            row.status_flags.append(
+                f"Proposal PDF ${pdf_amt:,.0f} vs Commercial Proposal tab "
+                f"${takeoff_contract:,.0f} — they disagree, verify")
+            row.notes.append(f"Contract from the {pdf_note}")
+        # The takeoff's contract complaints are moot once the PDF answered.
+        row.status_flags = [f for f in row.status_flags
+                            if not _CONTRACT_FLAG_RE.search(f)]
+    else:
+        row.base_contract = takeoff_contract
+        if takeoff_contract is not None:
+            row.notes.append(f"Contract from the takeoff — {pdf_note}")
 
     if multi:
         row.notes.append(
