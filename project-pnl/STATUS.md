@@ -56,6 +56,15 @@ manual close), RP (no draws — expenses → invoice → profit).
   #). Tax/fuel columns appear ONLY on a trade that has such lines — labor
   subs bill neither (auto-omit, disclosed). No fuel lines exist anywhere yet
   (AP folds the surcharge into the rate); Concrete says so on the sheet.
+  **PM-confirmation marks survive re-syncs** (the user 2026-07-31): an
+  estimator marks a ledger row GREEN when the PM confirms the bill; before
+  each regeneration `read_back_ledger_marks` lifts every manual row fill
+  from the prior workbook (keyed bill # + date + vendor + amount) and the
+  builder re-applies the exact color — so green means confirmed, and any
+  other color convention survives too. A mark whose bill changed in QBO
+  (amount/date edited) no longer matches and the run flags it — deliberate:
+  a changed bill needs re-confirmation. Scoreboard band fills are excluded
+  (only rows with a real DATE are read).
   Font 12 flat; uniform row heights. DESCRIPTION is the ledger's LAST
   column and spills right over empty space — scoreboard and ledger share
   physical columns, so a wide mid-table description column was inflating

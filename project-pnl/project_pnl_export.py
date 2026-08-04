@@ -1224,6 +1224,66 @@ def load_wip_master(path: Path) -> Dict[str, dict]:
     return out
 
 
+_MARK_SUFFIX_RE = re.compile(r"\s*\(\d+ files\)\s*$")
+
+
+def read_back_ledger_marks(path: Path,
+                           sheets: Tuple[str, ...] = ("Labor", "Concrete")
+                           ) -> Dict[str, Dict[tuple, str]]:
+    """Manual row FILLS from the prior workbook's Labor/Concrete ledgers, so
+    they survive a re-sync (the user 2026-07-31: a GREEN row = the PM
+    confirmed that bill — crucial once this runs on routine). Same contract as
+    read_back_inputs: the file is regenerated, the human's input is not.
+
+    Bill rows are written with NO fill, so any solid fill on a row with a
+    DATE is the estimator's mark. Keyed by (bill #, date, vendor, amount) —
+    the color itself is preserved verbatim, so other color conventions keep
+    working too. Returns {sheet: {key: argb}}."""
+    out: Dict[str, Dict[tuple, str]] = {}
+    if not path.exists():
+        return out
+    try:
+        wb = openpyxl.load_workbook(str(path))
+    except Exception:
+        return out
+    for nm in sheets:
+        if nm not in wb.sheetnames:
+            continue
+        ws = wb[nm]
+        marks: Dict[tuple, str] = {}
+        for row in ws.iter_rows(min_col=1, max_col=9):
+            a, b, c, f = row[0], row[1], row[2], row[5]
+            # Only LEDGER BILL rows: col B must be an actual date. Scoreboard
+            # code rows carry band fills by design and col B holds the BUDGET
+            # number — without this check they'd read as phantom marks.
+            if not (a.value and re.match(r"\d{4}-\d{2}-\d{2}$",
+                                         str(b.value or "").strip())):
+                continue
+            argb = None
+            for cell in row:
+                fl = cell.fill
+                if (fl is not None and fl.patternType == "solid"
+                        and fl.fgColor is not None
+                        and isinstance(fl.fgColor.rgb, str)):
+                    rgb = fl.fgColor.rgb.upper()
+                    if rgb not in ("00000000", "FFFFFFFF"):
+                        argb = rgb
+                        break
+            if not argb:
+                continue
+            try:
+                amt = round(float(f.value), 2)
+            except (TypeError, ValueError):
+                continue
+            key = (_MARK_SUFFIX_RE.sub("", str(a.value)).strip(),
+                   str(b.value).strip(), str(c.value or "").strip(), amt)
+            marks[key] = argb
+        if marks:
+            out[nm] = marks
+    wb.close()
+    return out
+
+
 def read_back_inputs(path: Path, sheet: str = "P&L") -> Dict[str, float]:
     """Read the user-typed yellow input cells (Contract Price / ETC) from a
     PREVIOUSLY generated P&L so a re-sync preserves them (the user 2026-06-23).
@@ -3920,6 +3980,7 @@ def build_sheet_labor_concrete(
     yards: Tuple[float, Dict[str, float], str] = (0.0, {}, ""),
     budget_source: str = "", realm: str = "",
     att_links: Optional[Dict[str, dict]] = None,
+    marks: Optional[Dict[tuple, str]] = None,
 ) -> Optional[str]:
     """LABOR / CONCRETE — TWO blocks at different altitudes (the user
     2026-07-29: 'the metrics are a top-level data point'; one grid trying to be
@@ -4145,11 +4206,13 @@ def build_sheet_labor_concrete(
     r += 2
 
     # ───────────────────────── LEDGER ─────────────────────────
+    n_marks_kept = [0]
     lh = ws.cell(row=r, column=1, value=(
         "LEDGER — every bill; the DRAW column says which draw window the bill "
         "date fell in. QBO # opens the uploaded bill file (attachments/ beside "
         "this workbook); '(N files)' opens that bill's own scan folder. "
-        "No attachment → the QBO bill page."))
+        "No attachment → the QBO bill page. MARK A ROW GREEN when the PM "
+        "confirms the bill — the mark survives every re-sync."))
     lh.font = Font(bold=True, size=SZ, color="1F3A5F")
     r += 1
     led_heads = [("QBO #", L_QBO), ("DATE", L_DATE), ("VENDOR", L_VEND),
@@ -4244,8 +4307,26 @@ def build_sheet_labor_concrete(
             for col in (L_QTY, L_RATE, L_AMT, L_TAX, L_FUEL):
                 if col:
                     ws.cell(row=r, column=col).font = Font(size=SZ)
+            # Re-apply the estimator's row mark from the previous version —
+            # green = the PM confirmed this bill (the user 2026-07-31). The
+            # exact color is preserved, so other conventions survive too.
+            _mk = (marks or {}).get(
+                (str(ln["doc"] or ln["txn_id"] or "(no #)").strip(),
+                 str(ln["date"]).strip(), str(ln["vendor"]).strip(),
+                 round(float(ln["amount"]), 2)))
+            if _mk:
+                _mfill = PatternFill("solid", fgColor=_mk)
+                for col in range(1, L_DESC + 1):
+                    ws.cell(row=r, column=col).fill = _mfill
+                n_marks_kept[0] += 1
             ws.row_dimensions[r].height = ROW_H
             r += 1
+    if n_marks_kept[0] or marks:
+        kept, had = n_marks_kept[0], len(marks or {})
+        ui_event(f"{kind}: {kept} PM-confirmed row mark(s) preserved"
+                 + (f"  ⚑ {had - kept} mark(s) no longer match a row"
+                    if had > kept else ""),
+                 icon="·", color=(_YEL if had > kept else ""))
     _setup_print(ws, L_DESC)
     return ws.title
 
@@ -5785,11 +5866,14 @@ def generate_project_pnl(
                         _txns.append((_l["txn_id"], _l["tx_type"], _l["doc"]))
             _atts = fetch_txn_attachments(access, company_id, _txns,
                                           proj_dir / "attachments")
+        _marks = (read_back_ledger_marks(proj_dir / f"Project_PnL_{proj}.xlsx")
+                  if _bud else {})
         for _kind in ("Labor", "Concrete") if _bud else ():
             _nm = build_sheet_labor_concrete(
                 wb, _kind, proj, cust_info, wip_info, _bud, _cc,
                 _dcols, as_of, yards=_yards,
-                budget_source=_bud_src, realm=company_id, att_links=_atts)
+                budget_source=_bud_src, realm=company_id, att_links=_atts,
+                marks=_marks.get(_kind))
             if _nm:
                 _n = _FOCUS_NUM[_kind]
                 _b = sum(v for k, v in _bud.items() if _split_code(k)[1] == _n)
