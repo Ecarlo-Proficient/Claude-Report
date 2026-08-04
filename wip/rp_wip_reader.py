@@ -52,15 +52,28 @@ import cp_wip_reader as CP
 from shared import qbo_api
 
 def _rp_cols():
-    drop = {"co_revenue", "retainage_held"}
-    cols = [("WHY (TEMP)", 8, "why_link")]
+    """RP column set — the SAME standard every other Test tab uses.
+
+    It must stay aligned (2026-08-03): this tool and
+    `master_wip_test --rp-from-file` both write 'Test - RP', so a layout that
+    drifts here silently regresses the tab the moment anyone runs this script.
+    That is exactly what happened — a run of this reader replaced the
+    master-aligned tab with a header-on-row-1 layout that had no APPROVED COs
+    column at all.
+
+    APPROVED COs is kept (a change order is half the contract story), and the
+    old WHY (TEMP) column is gone — it was a file:// link into a Downloads
+    workbook, which the QBO-links-only rule no longer allows.
+    """
+    drop = {"retainage_held"}
+    cols = []
     for label, width, field in CP.COLS:
         if field in drop:
             continue
         cols.append((label, width, field))
         if field == "project_name":
             cols.append(("TYPE", 9, "home_type"))
-            cols.append(("CLIENT", 18, "client"))
+            cols.append(("BUILDER", 18, "client"))
     return cols
 
 ALPHA_PATH = Path(os.getenv(

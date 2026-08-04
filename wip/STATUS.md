@@ -198,6 +198,24 @@ Last updated: 2026-07-29
 
 ## OPEN ISSUES
 
+- **Running `rp_wip_reader.py` standalone REGRESSES `Test - RP` (2026-08-04).** A daily-list run
+  of this reader rewrote the tab in its own older layout — header back on **row 1**, `WHY (TEMP)`
+  and `CLIENT` columns returned, **no `APPROVED COs` column at all**, no title block, and the
+  `TestRP` table ref left at `A1:Z90`. `Test - CP` (`A3:Y51`) and `Test-Master` (`A3:X132`) were
+  untouched and correct, which is what made it look like an RP-only table-range bug. It isn't —
+  it is a **layout collision**: several tools can write `Test - RP`, each with its own column
+  definition, and whichever runs last wins.
+  - Root fix in flight: `_rp_cols()` realigned to the standard `CP.COLS` set (keeps
+    `APPROVED COs`, drops the `WHY (TEMP)` file:// link the QBO-links-only rule disallows).
+  - Still open: the two `one-offs/` scripts that also write this tab can regress it the same
+    way. Retire them or point them at a scratch tab.
+  - **The daily checklist in the vault still names this script as the item-2 command**, so the
+    morning run reproduces the regression until the realignment lands.
+- **`_qc()` miscounts rows on any tab with a bottom legend** (found 2026-08-04). It counts every
+  row with a value in the project column, so the COLUMN GUIDE block is counted as data — that is
+  the `rows 135 ≠ expected 117` half of the RP warning, and it pushes `last_data` past the table
+  end so the span check fails independently of the real layout problem. Stop the count at the
+  first blank row after the data block, or exclude the guide range explicitly.
 - Schedule→General List lag is real and recurring (26 schedule-active lines
   missing from the WIP as of the 7-20-26 schedule run; was 20 on 7-17-26).
   Process owner needed for entering new jobs in the GL (or the schedule method
@@ -366,3 +384,26 @@ The owner edits the WIP directly. Three guarantees, all verified end-to-end
   the CP/RP tabs and the WIP Master MFD section. No password — Review ▸
   Unprotect Sheet is one click — and filtering, sorting and selection stay on.
   The working tabs ('Test - CP', 'Test - RP') stay editable.
+
+## 2026-08-03 (pm 6) — 'Test - RP' has FOUR possible writers; two guards added
+
+A run of `rp_wip_reader.py` overwrote 'Test - RP' with its own stale layout —
+header back on row 1, `WHY (TEMP)` + `CLIENT` columns, **no APPROVED COs column
+at all**, legend gone. The edit-tracking machinery still applied (it lives in
+the shared writer), but the tab's format regressed. Four tools can write that
+tab: `master_wip_test --rp-from-file`, `rp_wip_reader`,
+`one-offs/rp_schedule_wip_preview` and `one-offs/rp_wip_simple` — last run wins.
+
+- **`_rp_cols()` realigned** to the standard set: keeps `APPROVED COs` (a change
+  order is half the contract story), drops `WHY (TEMP)` (a file:// link into a
+  Downloads workbook, which the QBO-links-only rule no longer allows), and
+  labels the client column `BUILDER` like every other tab. Running the reader
+  can no longer regress the format.
+- **Baseline TRUST CHECK in `read_owner_edits()`**: the baselines are believed
+  only when the tab was last written by the SAME layout. After a foreign write
+  the numbers under our headers came from another pipeline, so every difference
+  looked like an owner edit — the restore run reported **28 phantom edits** and
+  applied them as overrides. They happened to match source values so nothing
+  was corrupted, but that was luck. Detection now skips the run and says so.
+- **STILL OPEN:** the two `one-offs/` RP writers can each still clobber the tab.
+  Retire them or point them at a scratch sheet — owner's call.

@@ -1353,7 +1353,8 @@ def _apply_edit_formatting(ws, cols_, hdr_row: int, first_row: int,
     return base_col
 
 
-def read_owner_edits(ws, hdr_row: Optional[int]) -> Dict[str, dict]:
+def read_owner_edits(ws, hdr_row: Optional[int],
+                     cols_: Optional[List] = None) -> Dict[str, dict]:
     """Cells the owner changed since the last sync: {project #: {field: value}}.
     A cell differing from its hidden baseline IS an owner edit — that is the
     same test Excel used to colour it red, so what the script preserves and
@@ -1372,6 +1373,20 @@ def read_owner_edits(ws, hdr_row: Optional[int]) -> Dict[str, dict]:
         ccol = idx.get(label_of.get(f))
         if bcol and ccol:
             pairs.append((f, bcol, ccol))
+    # TRUST CHECK (2026-08-03): only believe the baselines if the tab was last
+    # written by THIS layout. Several tools write these tabs, and after a
+    # foreign write the numbers sitting under our headers came from a different
+    # pipeline — every difference would then look like an owner edit and get
+    # locked in as one. Seen for real: a run of rp_wip_reader left 'Test - RP'
+    # in its own layout and the next sync reported 28 phantom edits.
+    if cols_ is not None:
+        want = {f for _l, _w, f in cols_ if f in _OVERRIDE_FIELDS}
+        if want - {f for f, _b, _c in pairs}:
+            print(_Term.color(_Term.AMBER,
+                  "  ⚠ this tab was last written by a DIFFERENT layout — its "
+                  "baselines aren't ours, so edit detection is skipped for "
+                  "this run (your next edits will track normally)"))
+            return {}
     if not pairs:
         return {}
     out = {}
@@ -1845,7 +1860,7 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
         # Owner edits: any input differing from its hidden baseline. Same test
         # Excel used to redden the cell, so "what he sees marked" and "what the
         # script keeps" can never drift apart.
-        owner_edits = read_owner_edits(ws, prior_hdr)
+        owner_edits = read_owner_edits(ws, prior_hdr, cols_)
         # NOTES he typed = whatever the prior cell holds that the script did
         # NOT write last time (exact provenance from the baseline column, so a
         # note deleted at its source stays deleted instead of resurrecting).
