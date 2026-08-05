@@ -80,7 +80,12 @@ manual close), RP (no draws — expenses → invoice → profit).
   display line at font 12, wrapped header rows sized to their line count —
   measured ONLY over the scoreboard, yards strip and ledger rows, never the
   long note lines that spill by design (DESCRIPTION also excluded — it
-  spills). No more clipped draw periods.
+  spills). No more clipped draw periods. 2026-08-04 layout pass (the user):
+  NO freeze pane; money cells in accounting $ format (ACC_FMT — $ pinned
+  left, zeros as "-", red parens); the tie-note and columns-omitted filler
+  lines removed; Concrete's yards/$-per-yd strip parked TOP-RIGHT beside the
+  title (cols J+, rows 1-2, lump note beneath) instead of a band between
+  scoreboard and ledger.
   Font 12 flat; uniform row heights. DESCRIPTION is the ledger's LAST
   column and spills right over empty space — scoreboard and ledger share
   physical columns, so a wide mid-table description column was inflating
