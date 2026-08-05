@@ -36,6 +36,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from notion_client import NotionClient
+from draw_chain import DrawChains
 from aging_sheet import (
     SHEET_TITLE as AGING_SHEET_TITLE,
     load_vendor_bill_map,
@@ -205,6 +206,7 @@ def _aging_record(
     customer_title_cache: Dict[str, str],
     today: dt.date,
     vendor_map: Optional[Dict[str, Any]],
+    chains: Optional[Any] = None,
 ) -> dict:
     """Flatten one Notion invoice page into the dict the aging tab consumes.
 
@@ -217,8 +219,8 @@ def _aging_record(
     due_date = _date_value(props.get("Due Date"))
     division = _select_name(props.get("Division")) or division_label
     invoice_num = _text(props.get("Invoice #"))
-    vendor_status, vendor_bills, vendor_amount = vendor_cells(
-        division, invoice_num, vendor_map
+    prev_draw, vendor_status, vendor_bills, vendor_amount, this_amount = vendor_cells(
+        division, invoice_num, vendor_map, chains
     )
 
     return {
@@ -240,9 +242,11 @@ def _aging_record(
         # "Waiting vendor unconditional"). That's the Notes the owner wants.
         "notes": _text(props.get("Quick Status")),
         "last_action": _date_value(props.get("Last Action Date")),
+        "prev_draw": prev_draw,
         "vendor_status": vendor_status,
         "vendor_bills": vendor_bills,
         "vendor_amount": vendor_amount,
+        "this_draw_amount": this_amount,
     }
 
 
@@ -250,12 +254,29 @@ def _is_litigation(page: dict) -> bool:
     return bool(((page.get("properties") or {}).get("Litigation") or {}).get("checkbox"))
 
 
+OPEN_STATUSES = ("Unpaid", "Partially Paid")
+
+
+def _status_name(page: dict) -> str:
+    return _select_name((page.get("properties") or {}).get("Status"))
+
+
+def _all_invoices(notion: NotionClient, ds_id: str) -> List[dict]:
+    """Every invoice in a tracker, any status.
+
+    The AR Aging tab needs the PAID ones too: an open draw's predecessor is
+    almost always already paid, and a draw chain built from open invoices alone
+    would be blind exactly where it has to see (see draw_chain.py). The Open
+    Invoices tab still shows only the open ones — filtered below.
+    """
+    return list(notion.query_data_source(ds_id, page_size=100))
+
+
 def _open_invoices(notion: NotionClient, ds_id: str) -> List[dict]:
     """Pull non-Paid invoices from a tracker."""
     filter_body = {
         "or": [
-            {"property": "Status", "select": {"equals": "Unpaid"}},
-            {"property": "Status", "select": {"equals": "Partially Paid"}},
+            {"property": "Status", "select": {"equals": s}} for s in OPEN_STATUSES
         ]
     }
     return list(notion.query_data_source(ds_id, filter_body=filter_body, page_size=100))
@@ -302,12 +323,16 @@ def export_open_invoices_xlsx(
     res_com_titles = _build_customer_title_cache(notion, customer_list_ds_id)
     mfd_titles = _build_customer_title_cache(notion, mfd_client_list_ds_id)
 
-    log.info("Pulling open invoices from Notion…")
-    res_com_pages = _open_invoices(notion, res_com_ds_id)
-    mfd_pages = _open_invoices(notion, mfd_ds_id)
+    log.info("Pulling invoices from Notion…")
+    # One pull per tracker covering EVERY status: the open subset feeds both
+    # tabs, the full set builds the draw chains (paid predecessors included).
+    res_com_all = _all_invoices(notion, res_com_ds_id)
+    mfd_all = _all_invoices(notion, mfd_ds_id)
+    res_com_pages = [p for p in res_com_all if _status_name(p) in OPEN_STATUSES]
+    mfd_pages = [p for p in mfd_all if _status_name(p) in OPEN_STATUSES]
     log.info(
-        "Export: %d Res/Com + %d MFD open invoices",
-        len(res_com_pages), len(mfd_pages),
+        "Export: %d Res/Com + %d MFD open (of %d + %d total)",
+        len(res_com_pages), len(mfd_pages), len(res_com_all), len(mfd_all),
     )
 
     today = dt.date.today()
@@ -364,6 +389,23 @@ def export_open_invoices_xlsx(
     # ── Tab 2: AR Aging ──
     # Built from the SAME page lists as tab 1 — no second Notion round-trip.
     vendor_map, vendor_as_of = load_vendor_bill_map()
+
+    # Draw chains come from EVERY invoice — litigation ones included. They are
+    # excluded from the aging rows, but an excluded invoice is still a real link
+    # in its project's draw sequence and dropping it would silently make the
+    # draw before it look like the immediate predecessor.
+    chains = DrawChains()
+    for page in res_com_all + mfd_all:
+        props = page.get("properties") or {}
+        chains.add(
+            invoice_num=_text(props.get("Invoice #")),
+            project_num=_text(props.get("Project #")),
+            memo=_text(props.get("Memo")),
+            invoice_date=_date_value(props.get("Date")),
+            is_paid=_select_name(props.get("Status")) == "Paid",
+        )
+    chains.finalize()
+
     aging_records: List[dict] = []
     litigation_excluded = 0
     for pages, label, cache in (
@@ -376,7 +418,9 @@ def export_open_invoices_xlsx(
             if _is_litigation(page):
                 litigation_excluded += 1
                 continue
-            aging_records.append(_aging_record(page, label, cache, today, vendor_map))
+            aging_records.append(
+                _aging_record(page, label, cache, today, vendor_map, chains)
+            )
 
     aging_ws = wb.create_sheet(AGING_SHEET_TITLE)
     build_aging_sheet(

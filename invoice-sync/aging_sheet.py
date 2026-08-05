@@ -12,11 +12,19 @@ Why this exists (the user 2026-08-05):
 What this tab shows that QBO's own aging does NOT:
     1. **Notes** — the collections clerk's running note on each invoice
        (Notion `Quick Status`) plus the date they last touched it.
-    2. **Vendor status** — for MFD and CP, whether we still owe subs/suppliers
-       on the draw period that invoice covers. An invoice we are chasing while
-       our own vendors are unpaid is a different collection conversation than
-       one where we already fronted the money. Sourced from the bill-tracker's
-       Excel output (see `load_vendor_bill_map`).
+    2. **Why the draw isn't funded yet** — for MFD and CP, the state of the
+       PREVIOUS draw. The funding is a chain (the user 2026-08-05): the GC funds
+       draw N, we pay draw N's vendor bills, those vendors issue unconditional
+       waivers, and the GC needs the waivers before releasing draw N+1. So an
+       unpaid draw is rarely about its own bills — it's about whether the one
+       before it is cleared. `draw_chain.py` builds the sequence;
+       `load_vendor_bill_map` reads what's still owed, from the bill-tracker's
+       output file.
+
+       The verdict splits the two very different holds: `PAY BILLS → unlock`
+       (previous draw funded, our vendors still owed — **ours** to fix) versus
+       `Waiting GC on prev` (previous draw not funded either — upstream of us).
+       `This Draw $ Open` keeps the older same-draw figure alongside it.
 
 Rules baked in:
     - **Litigation invoices are excluded** (the `Litigation` checkbox in both
@@ -43,6 +51,8 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
+import draw_chain
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from shared import paths
 
@@ -59,16 +69,34 @@ BILL_TRACKER_PATH = paths.get_path(
     paths.onedrive_base() / "Automations-" / "Bill Tracker.xlsx",
 )
 
-# Vendor status literals (the user's wording: the status is "Vendor Unpaid Bills").
-VENDOR_UNPAID = "Vendor Unpaid Bills"
-VENDOR_CLEAR = "Vendors Paid"
-VENDOR_NA = "n/a"       # RP — the draw-period match doesn't apply, see below
-VENDOR_UNKNOWN = "?"    # bill tracker file missing / unreadable
+# Previous-draw verdicts. The funding chain (the user 2026-08-05): the GC funds
+# draw N, we pay draw N's vendor bills, the vendors issue unconditional waivers,
+# and the GC needs those waivers before funding draw N+1. So for an unpaid draw
+# the question is never "are THIS draw's bills paid" — it's whether the PREVIOUS
+# draw is cleared. These are a small fixed set so the column filters to two
+# clicks; counts and dollars live in their own columns.
+PREV_BLOCKED = "PAY BILLS → unlock"   # prev draw funded, our vendors still owed — WE are the blocker
+PREV_WAITING_GC = "Waiting GC on prev"  # prev draw itself unpaid — blocker is upstream of us
+PREV_CLEAR = "Clear"                  # prev draw funded and its vendors paid
+PREV_FIRST = "First draw"             # nothing before it to gate funding
+PREV_NOT_DRAW = "Not a draw"          # retainage / turnkey one-offs — no chain
+PREV_MULTI = "Multi-contract"         # parallel contracts, bills unattributable (see draw_chain)
+VENDOR_NA = "n/a"                     # RP — no draws at all
+VENDOR_UNKNOWN = "?"                  # bill tracker file missing / unreadable
 
-# Divisions where a bill line is matched to the invoice that authorizes paying
-# it via the DRAW PERIOD (bill-tracker README, "How matching works"). RP matches
-# on "earliest invoice on/after bill date", which is not a draw-period statement,
-# so the vendor column is left blank for RP rather than implying a match.
+# Verdicts with no previous draw to report on. The count/$ cells under them are
+# not "zero", they are unanswerable — so the whole block greys out. The verdict
+# text itself survives (see _grey_out_vendor_block: it only fills EMPTY cells),
+# which keeps "Multi-contract" and "First draw" readable while making clear
+# there is no number beside them.
+NO_CHAIN_VERDICTS = (
+    VENDOR_NA, PREV_NOT_DRAW, PREV_MULTI, PREV_FIRST, VENDOR_UNKNOWN,
+)
+
+# The divisions that bill in draws at all. Bill lines are matched to the invoice
+# authorising their payment via the DRAW PERIOD here (bill-tracker README, "How
+# matching works"). RP matches on "earliest invoice on/after bill date" — not a
+# draw period, and RP has no draw chain to walk — so the whole block is n/a.
 DRAW_DIVISIONS = ("MFD", "CP")
 
 # (header, width, number_format)
@@ -86,9 +114,11 @@ COLUMNS: List[Tuple[str, int, Optional[str]]] = [
     ("61-90",            14, '"$"#,##0.00'),
     ("90+",              14, '"$"#,##0.00'),
     ("Total Open",       15, '"$"#,##0.00'),
-    ("Vendor Status",    20, None),
-    ("Open Bills",        9, "0"),
-    ("Vendor $ Open",    15, '"$"#,##0.00'),
+    ("Prev Draw",        11, None),
+    ("Prev Draw Status", 19, None),
+    ("Prev Bills Open",   9, "0"),
+    ("Prev $ Open",      15, '"$"#,##0.00'),
+    ("This Draw $ Open", 15, '"$"#,##0.00'),
     ("Notes",            46, None),
     ("Last Action",      12, "mm/dd/yyyy"),
 ]
@@ -96,12 +126,12 @@ COLUMNS: List[Tuple[str, int, Optional[str]]] = [
 # 0-based positions used when writing rows (kept in sync with COLUMNS above).
 C_LABEL, C_DIV, C_PROJ, C_INV, C_DATE, C_DUE, C_DPD = range(7)
 C_CURRENT, C_1_30, C_31_60, C_61_90, C_90 = range(7, 12)
-C_TOTAL, C_VSTATUS, C_VBILLS, C_VAMT, C_NOTES, C_ACTION = range(12, 18)
+C_TOTAL, C_PREV, C_VSTATUS, C_VBILLS, C_VAMT, C_THIS, C_NOTES, C_ACTION = range(12, 20)
 
 BUCKET_COLS = (C_CURRENT, C_1_30, C_31_60, C_61_90, C_90)
 
-# Vendor columns — the block that is meaningless for RP and gets greyed out.
-VENDOR_COLS = (C_VSTATUS, C_VBILLS, C_VAMT)
+# The previous-draw block — greyed out wherever there is no chain to read.
+VENDOR_COLS = (C_PREV, C_VSTATUS, C_VBILLS, C_VAMT)
 
 _THIN = Side(style="thin", color="000000")
 _MEDIUM = Side(style="medium", color="000000")
@@ -142,6 +172,8 @@ _NA_FILL = PatternFill("solid", fgColor="D9D9D9")
 _NA_FONT = Font(color="808080", italic=True)
 
 _UNPAID_FONT = Font(bold=True, color="C00000")
+_BLOCKED_FILL = PatternFill("solid", fgColor="F8DDDA")  # the one row-level call to action
+_WAITING_FONT = Font(color="B06000")                    # blocked upstream — not ours to fix
 _CLEAR_FONT = Font(color="2E7D32")
 _OVERDUE_FONT = Font(bold=True, color="C00000")
 
@@ -267,26 +299,67 @@ def load_vendor_bill_map(
         return None, None
 
 
+def _open_bills_for(
+    invoice_num: str, vendor_map: Optional[Dict[str, Tuple[float, int, int]]]
+) -> Tuple[Optional[int], Optional[float]]:
+    """(open bill count, open $) still owed against one invoice's draw period."""
+    if vendor_map is None:
+        return None, None
+    hit = vendor_map.get(str(invoice_num).strip())
+    if not hit:
+        return None, None
+    amount, bills, _vendors = hit
+    return bills, amount
+
+
 def vendor_cells(
     division: str,
     invoice_num: str,
     vendor_map: Optional[Dict[str, Tuple[float, int, int]]],
-) -> Tuple[str, Optional[int], Optional[float]]:
-    """(status text, open bill count, open $) for one invoice's Vendor columns.
+    chains: Optional[Any] = None,
+) -> Tuple[str, str, Optional[int], Optional[float], Optional[float]]:
+    """The previous-draw block for one invoice.
 
-    The status string is one of a small fixed set on purpose — the bill count
-    lives in its own column so the Vendor Status autofilter stays a two-item
-    dropdown instead of one entry per distinct count.
+    Returns (prev draw label, verdict, prev open bill count, prev open $,
+    this draw's own open $).
+
+    The verdict separates the two very different reasons a draw sits unpaid:
+
+      * `PAY BILLS → unlock` — the previous draw WAS funded, but our vendors on
+        it are still owed, so no unconditional waivers exist and the GC won't
+        release this draw. **We** are the blocker, and the fix is ours.
+      * `Waiting GC on prev` — the previous draw hasn't been funded either, so
+        we couldn't have paid those vendors yet. The blocker is upstream.
+
+    Collapsing those into one "unpaid bills" flag (as the first cut of this tab
+    did) hides which of the two you're looking at, and they lead to opposite
+    actions.
     """
+    this_bills, this_amount = _open_bills_for(invoice_num, vendor_map)
     if division not in DRAW_DIVISIONS:
-        return VENDOR_NA, None, None
+        return "", VENDOR_NA, None, None, None
+    if chains is None:
+        return "", VENDOR_UNKNOWN, None, None, this_amount
+
+    outcome, prev = chains.previous_draw(invoice_num)
+    if outcome == draw_chain.CHAIN_NOT_A_DRAW:
+        return "", PREV_NOT_DRAW, None, None, this_amount
+    if outcome == draw_chain.CHAIN_MULTI_CONTRACT:
+        return "", PREV_MULTI, None, None, this_amount
+    if outcome == draw_chain.CHAIN_FIRST_DRAW or prev is None:
+        return "", PREV_FIRST, None, None, this_amount
+
+    prev_num = prev["invoice_num"]
     if vendor_map is None:
-        return VENDOR_UNKNOWN, None, None
-    hit = vendor_map.get(str(invoice_num).strip())
-    if not hit:
-        return VENDOR_CLEAR, None, None
-    amount, bills, _vendors = hit
-    return VENDOR_UNPAID, bills, amount
+        return prev_num, VENDOR_UNKNOWN, None, None, this_amount
+
+    prev_bills, prev_amount = _open_bills_for(prev_num, vendor_map)
+    if not prev["is_paid"]:
+        # Show the bills anyway — they're what we'll owe once it does fund.
+        return prev_num, PREV_WAITING_GC, prev_bills, prev_amount, this_amount
+    if prev_bills:
+        return prev_num, PREV_BLOCKED, prev_bills, prev_amount, this_amount
+    return prev_num, PREV_CLEAR, None, None, this_amount
 
 
 # ─────────────────────── sheet build ───────────────────────
@@ -404,10 +477,12 @@ def build_aging_sheet(
     grand = [0.0] * len(BUCKET_COLS)
     grand_vendor = 0.0
     grand_bills = 0
+    grand_this = 0.0
     for rec in invoices:
         grand[bucket_index(rec["days_past_due"])] += rec["open_balance"] or 0.0
         grand_vendor += rec["vendor_amount"] or 0.0
         grand_bills += rec["vendor_bills"] or 0
+        grand_this += rec["this_draw_amount"] or 0.0
 
     row_num = header_row + 1
     total_row: List[Any] = [""] * len(COLUMNS)
@@ -417,6 +492,7 @@ def build_aging_sheet(
     total_row[C_TOTAL] = sum(grand)
     total_row[C_VBILLS] = grand_bills or None
     total_row[C_VAMT] = grand_vendor or None
+    total_row[C_THIS] = grand_this or None
     _write_row(ws, row_num, total_row, bold=True, fill=_GRAND_FILL)
     for offset in range(len(COLUMNS)):
         ws.cell(row=row_num, column=offset + 1).border = Border(bottom=_THIN)
@@ -434,10 +510,12 @@ def build_aging_sheet(
         buckets = [0.0] * len(BUCKET_COLS)
         vendor_sum = 0.0
         vendor_bills = 0
+        this_sum = 0.0
         for rec in records:
             buckets[bucket_index(rec["days_past_due"])] += rec["open_balance"] or 0.0
             vendor_sum += rec["vendor_amount"] or 0.0
             vendor_bills += rec["vendor_bills"] or 0
+            this_sum += rec["this_draw_amount"] or 0.0
 
         # A parent row carries a Division so the Division filter keeps the whole
         # group visible; clients that span divisions say so instead of picking one.
@@ -453,6 +531,7 @@ def build_aging_sheet(
         summary[C_TOTAL] = sum(buckets)
         summary[C_VBILLS] = vendor_bills or None
         summary[C_VAMT] = vendor_sum or None
+        summary[C_THIS] = this_sum or None
         _write_row(ws, row_num, summary, bold=True, fill=_PARENT_FILL)
         for offset in range(len(COLUMNS)):
             ws.cell(row=row_num, column=offset + 1).border = Border(top=_THIN)
@@ -477,9 +556,11 @@ def build_aging_sheet(
             detail[C_DPD] = rec["days_past_due"] if rec["days_past_due"] is not None else ""
             detail[BUCKET_COLS[bucket_index(rec["days_past_due"])]] = rec["open_balance"]
             detail[C_TOTAL] = rec["open_balance"]
+            detail[C_PREV] = rec["prev_draw"]
             detail[C_VSTATUS] = rec["vendor_status"]
             detail[C_VBILLS] = rec["vendor_bills"]
             detail[C_VAMT] = rec["vendor_amount"]
+            detail[C_THIS] = rec["this_draw_amount"]
             detail[C_NOTES] = rec["notes"]
             detail[C_ACTION] = rec["last_action"]
             _write_row(ws, row_num, detail, bold=False)
@@ -494,14 +575,20 @@ def build_aging_sheet(
             if isinstance(days, int) and days > 30:
                 ws.cell(row=row_num, column=C_DPD + 1).font = _OVERDUE_FONT
 
-            if rec["division"] in DRAW_DIVISIONS:
-                status_cell = ws.cell(row=row_num, column=C_VSTATUS + 1)
-                if rec["vendor_status"] == VENDOR_UNPAID:
-                    status_cell.font = _UNPAID_FONT
-                elif rec["vendor_status"] == VENDOR_CLEAR:
-                    status_cell.font = _CLEAR_FONT
-            else:
+            verdict = rec["vendor_status"]
+            if verdict in NO_CHAIN_VERDICTS:
                 _grey_out_vendor_block(ws, row_num)
+            else:
+                status_cell = ws.cell(row=row_num, column=C_VSTATUS + 1)
+                if verdict == PREV_BLOCKED:
+                    # The one verdict that is ours to act on — pay these, get
+                    # the waivers, unlock this draw.
+                    status_cell.font = _UNPAID_FONT
+                    status_cell.fill = _BLOCKED_FILL
+                elif verdict == PREV_WAITING_GC:
+                    status_cell.font = _WAITING_FONT
+                elif verdict == PREV_CLEAR:
+                    status_cell.font = _CLEAR_FONT
 
             ws.row_dimensions[row_num].outlineLevel = 1
             ws.row_dimensions[row_num].hidden = True  # collapsed by default
@@ -519,14 +606,22 @@ def build_aging_sheet(
         cell = ws.cell(row=legend_row, column=BUCKET_COLS[slot] + 1, value=name)
         cell.fill = BUCKET_CELL_FILLS[slot]
         cell.alignment = Alignment(horizontal="center")
-    na_cell = ws.cell(row=legend_row, column=C_VSTATUS + 1, value="n/a = RP, no draw period")
+    blocked_cell = ws.cell(row=legend_row, column=C_VSTATUS + 1, value=PREV_BLOCKED)
+    blocked_cell.fill = _BLOCKED_FILL
+    blocked_cell.font = _UNPAID_FONT
+    na_cell = ws.cell(row=legend_row, column=C_VBILLS + 1, value="n/a")
     na_cell.fill = _NA_FILL
     na_cell.font = _NA_FONT
-    ws.cell(
-        row=legend_row + 1,
-        column=1,
-        value="Aged by due date. Vendor columns apply to CP and MFD only — RP bills match on bill date, not a draw period, so there is nothing to report there.",
-    ).font = Font(italic=True, color="808080")
+    na_cell.alignment = Alignment(horizontal="center")
+
+    for offset, text in enumerate((
+        f"Aged by due date.  ·  '{PREV_BLOCKED}' = the previous draw was funded but our vendors on it are still owed — no unconditional waivers, so the GC won't release this draw. That one is ours to fix.",
+        f"'{PREV_WAITING_GC}' = the previous draw hasn't been funded either, so the hold-up is upstream of us.  ·  '{PREV_CLEAR}' = previous draw funded and its vendors paid.",
+        f"'{PREV_MULTI}' = the project runs parallel contracts and bills carry a project #, not a contract, so the previous draw can't be identified yet.  ·  'n/a' = RP, which doesn't bill in draws.",
+    )):
+        ws.cell(row=legend_row + 1 + offset, column=1, value=text).font = Font(
+            italic=True, color="808080"
+        )
 
     ws.sheet_properties.outlinePr.summaryBelow = False
     ws.sheet_properties.outlinePr.applyStyles = False

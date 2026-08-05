@@ -41,10 +41,20 @@ mirror. Update this in the SAME commit as any change to this tool.
     blank read as "not looked up yet" when it means "nothing to look up".
     Applied to all-RP client summary rows too, or an RP-only client looked like
     it had cleared its vendors.
-  - `Vendor Status` / `Open Bills` / `Vendor $ Open` — MFD/CP only. Read from
-    the bill-tracker's `Bill Tracker.xlsx` output file (never its code — repo
-    rule 3, tools never import tools), deduped to bill grain because that
-    sheet is line-level and repeats `Bill Open Bal` on every line of a bill.
+  - **`Prev Draw` / `Prev Draw Status` / `Prev Bills Open` / `Prev $ Open`
+    (2026-08-05) — the PREVIOUS draw, not this one.** The funding chain: the GC
+    funds draw N → we pay draw N's vendor bills → those vendors issue
+    unconditional waivers → the GC releases draw N+1. So an unpaid draw is
+    gated by its predecessor, and the verdict separates the two holds:
+    `PAY BILLS → unlock` (prev draw funded, our vendors still owed — **ours** to
+    fix, red) vs `Waiting GC on prev` (prev draw unfunded too — upstream).
+    Chain built by `draw_chain.py`; `Prev Draw` names the invoice used so a bad
+    pick is visible rather than hidden. `This Draw $ Open` keeps the original
+    same-draw figure alongside.
+  - Bill data read from the bill-tracker's `Bill Tracker.xlsx` output file
+    (never its code — repo rule 3, tools never import tools), deduped to bill
+    grain because that sheet is line-level and repeats `Bill Open Bal` on
+    every line of a bill.
 
 ## IN PROGRESS
 
@@ -69,9 +79,27 @@ mirror. Update this in the SAME commit as any change to this tool.
   "⚠ VENDOR COLUMNS ARE N HOURS OLD". A missing/unreadable file yields `?` per
   invoice rather than a false "Vendors Paid". AR never auto-runs AP — a sync
   with hidden side effects is worse than a stale column that announces itself.
-- **RP has no vendor column by design.** The bill-tracker matches RP bills on
-  "earliest invoice on/after bill date", which is not a draw-period statement,
-  so an RP flag there would imply a match the data doesn't support. Left blank.
+- **RP has no previous-draw block by design.** RP doesn't bill in draws, and
+  the bill-tracker matches RP bills on "earliest invoice on/after bill date" —
+  not a draw period. Rendered as a grey `n/a` block.
+- **MFD192 and CP861 report `Multi-contract` instead of a previous draw.**
+  MFD192 runs three contracts in parallel (base, HUDSONWOOD, OFFSITE) and CP861
+  carries two different jobs (a 7-Eleven and a BP) under one project #; their
+  draws interleave by date. **Bills carry a project #, not a contract**, so
+  which bills belong to which contract can't be determined — the user
+  2026-08-05: *"MFD192 - oddball, i have no definite way to see what bills
+  belong to which contract yet."* Reported as unattributable rather than split
+  on a guess. If bills ever become contract-attributable, `draw_chain.py`
+  already keys chains by (project, contract) and only the guard needs removing.
+- **Draw sequencing is memo-parsed, which is the fragile part.** `draw_chain.py`
+  strips the draw designator to identify the contract, and the memos are not
+  uniform: `May Draw 2026`, `Draw #2`, `Draw # 6`, `Draw #3 December 2024`,
+  `March 2025 Draw`, `- Retainage - Draw #5`, and periods written both
+  `(Period: …)` and `- Period:…`. All are covered and unit-checked against live
+  memos; a new spelling would show up as a project splitting into phantom
+  contracts. Invoices whose memo names no draw (retainage releases, turnkey
+  flatwork) are excluded from chains — MFD177's `City Retainage` sits between
+  two draws by date and would otherwise be picked as "the previous draw".
 - **Zero-balance rows survive** into the aging tab when Notion still has an
   invoice marked Unpaid with a $0 open balance (QBO/Notion drift between syncs).
   Kept deliberately — the row is visible drift the collections clerk should

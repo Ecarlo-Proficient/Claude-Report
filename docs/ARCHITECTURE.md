@@ -68,7 +68,7 @@ flowchart LR
     MFD[("Notion\nMFD Invoice DB")]:::out
     RES[("Notion\nRes/Com Invoice DB")]:::out
     TEAMS[("Teams\nMFD paid / short-pay cards")]:::out
-    XL["export_invoices_xlsx.py\n+ aging_sheet.py"]:::tool
+    XL["export_invoices_xlsx.py\n+ aging_sheet.py\n+ draw_chain.py"]:::tool
     BTX[("Bill Tracker.xlsx\nOneDrive · READ-ONLY")]:::src
     OD[("OneDrive\nOpen_Invoices.xlsx\ntab 1 Open Invoices\ntab 2 AR Aging")]:::out
 
@@ -91,8 +91,18 @@ buckets aged by due date, all three divisions in one filterable table, invoices
 grouped under the parent client and collapsed by default, the collections
 clerk's Notion `Quick Status` note carried across, and litigation invoices
 excluded. It **reads** `Bill Tracker.xlsx` (the AP tool's output file, never its
-code — repo rule 3) to flag MFD/CP invoices whose draw period still has unpaid
-vendor bills.
+code — repo rule 3) for what is still owed to vendors.
+
+**The MFD/CP draw-funding chain** is what those vendor columns actually answer.
+The GC funds draw N → we pay draw N's vendor bills → those vendors issue
+unconditional waivers → the GC releases draw N+1. So an unpaid draw is gated by
+its **predecessor**, not by its own bills. `draw_chain.py` orders each project's
+draws (excluding non-draw invoices like retainage releases, and keying by
+contract so parallel contracts don't interleave), and the verdict separates
+`PAY BILLS → unlock` — prev draw funded but our vendors still owed, ours to fix
+— from `Waiting GC on prev`, where the hold-up is upstream. Projects running
+parallel contracts report `Multi-contract` rather than a guess, because bills
+carry a project #, not a contract.
 
 > **Run order: AP → AR.** That read is the only edge between the two pipelines,
 > and it makes AR downstream of AP. `sync-all` runs **the bill tracker first,
