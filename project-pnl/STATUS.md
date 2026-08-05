@@ -40,8 +40,9 @@ manual close), RP (no draws — expenses → invoice → profit).
   a ONE-TIME macOS "Grant File Access" per file — that's the click friction,
   not a broken link) and **survives a Mac Excel save unrewritten** (verified
   by saving in Excel and re-reading the sheet rels). Windows resolves the
-  same relative target against the share path it opened from — pending one
-  estimator click test. Requires opening the workbook from the share (an
+  same relative target against the share path it opened from — **CONFIRMED
+  working by an estimator on Windows, 2026-08-05**. Cross-platform question
+  closed. Requires opening the workbook from the share (an
   emailed copy has no attachments/ beside it). Multi-scan bills download
   into their OWN `attachments/<bill #>/` subfolder and the "(N files)" cell
   opens that folder — not the whole attachments library (the user
