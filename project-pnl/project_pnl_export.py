@@ -1024,6 +1024,7 @@ def group_invoices_by_draw(invoices: List[dict],
         inv_entry = {
             "doc_num": _xml_clean(inv.get("DocNumber", "") or inv.get("Id", "")),
             "id": inv.get("Id", ""),          # for the QBO invoice deep link
+            "balance": float(inv.get("Balance", 0) or 0),   # 0 = PAID
             "date": inv.get("TxnDate", ""),
             "memo": _xml_clean(pn),
             "amount": total,
@@ -1425,6 +1426,7 @@ def gather_transactions(
                 "doc": inv.get("doc_num", ""), "id": inv.get("id", ""),
                 "date": inv.get("date", ""),
                 "memo": inv.get("memo", ""),
+                "balance": float(inv.get("balance", 0) or 0),
                 "billed": float(inv.get("gross", 0) or 0),
                 "withheld": float(inv.get("retainage", 0) or 0),
                 "billed_ret": float(inv.get("retainage_billed", 0) or 0)})
@@ -1921,7 +1923,7 @@ def _cov(net: float, costs: float, overhead_pct: float):
 
 def build_sheet_transactions(
     wb: Workbook, proj: str, cust_info: dict, wip_info: dict,
-    tx: dict, as_of: str, realm: str = "",
+    tx: dict, as_of: str, realm: str = "", paid_map: Optional[dict] = None,
 ) -> Dict[str, str]:
     """
     TRANSACTIONS sheet — every invoice + bill behind the P&L (the user 2026-06-22:
@@ -1936,7 +1938,7 @@ def build_sheet_transactions(
     ws.sheet_view.zoomScale = 100
     ws.sheet_properties.outlinePr.summaryBelow = False  # +/- sits on vendor row
     for col, w in (("A", 18), ("B", 15), ("C", 44), ("D", 18),
-                   ("E", 18), ("F", 18), ("G", 18)):
+                   ("E", 18), ("F", 18), ("G", 18), ("H", 11)):
         ws.column_dimensions[col].width = w
     r = _write_meta_block(ws, proj, cust_info, wip_info, as_of)
     leg = ws.cell(row=r, column=1, value=(
@@ -2005,12 +2007,12 @@ def build_sheet_transactions(
 
     cell(r, 1, "INCOME  (invoices)", bold=True, size=BASE_SIZE, color="FFFFFF",
          fill=SECTION_HDR)
-    for c in range(2, 8):
+    for c in range(2, 9):
         ws.cell(row=r, column=c).fill = SECTION_HDR
     r += 1
     for c, h in ((1, "Inv #"), (2, "Date"), (3, "Memo"),
                  (4, "Gross income"), (5, "Retainage withheld"),
-                 (6, "Net"), (7, "Retainage billed")):
+                 (6, "Net"), (7, "Retainage billed"), (8, "Paid?")):
         hc = cell(r, c, h, bold=True, color=NAVY); hc.border = BOTTOM_BORDER
     r += 1
     istart = r
@@ -2031,6 +2033,10 @@ def build_sheet_transactions(
         cell(r, 5, float(inv.get("withheld", 0) or 0), fmt=CURR_FMT, color="C0504D")
         cell(r, 6, f"=D{r}-E{r}+G{r}", bold=True, fmt=CURR_FMT)     # NET = TotalAmt
         cell(r, 7, float(inv.get("billed_ret", 0) or 0), fmt=CURR_FMT, color=GREEN)
+        # AR payment state (the user 2026-08-05): Balance 0 = collected.
+        _pd = float(inv.get("balance", 0) or 0) <= 0.005
+        cell(r, 8, "PAID" if _pd else "UNPAID", bold=True,
+             color=(GREEN if _pd else "C00000"))
         r += 1
     cell(r, 1, "TOTAL INCOME", bold=True, border=TOP_BORDER)
     for c in (4, 5, 6, 7):
@@ -2101,6 +2107,11 @@ def build_sheet_transactions(
             cell(r, 3, _memo_text(ln))
             cell(r, 4, ln.get("account", ""))
             cell(r, 5, float(ln.get("amount", 0) or 0), fmt=CURR_FMT)
+            if paid_map is not None:
+                _pd = paid_map.get(ln.get("txn_id"))
+                if _pd is not None:
+                    cell(r, 6, "PAID" if _pd else "UNPAID", bold=True,
+                         color=(GREEN if _pd else "C00000"))
             ws.row_dimensions[r].outline_level = 1   # collapsible, open default
             r += 1
         vt = ws.cell(row=vrow, column=5,
@@ -2123,11 +2134,11 @@ def build_sheet_transactions(
         nonlocal r
         cell(r, 1, title, bold=True, size=BASE_SIZE, color="FFFFFF",
              fill=SECTION_HDR)
-        for c in range(2, 6):                       # bills use cols A–E only
+        for c in range(2, 7):                       # bills use cols A–F
             ws.cell(row=r, column=c).fill = SECTION_HDR
         r += 1
         for c, h in ((1, "Ref #"), (2, "Date"), (3, "Memo"),
-                     (4, "Account"), (5, "Amount")):
+                     (4, "Account"), (5, "Amount"), (6, "Paid?")):
             hc = cell(r, c, h, bold=True, color=NAVY); hc.border = BOTTOM_BORDER
         r += 1
         anchor_rows = []    # rows whose E cells the TOTAL row sums
@@ -3129,7 +3140,7 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
                          net, costs, held, billed, invoices, draw_cost,
                          matched_report, report_index, qbo_loc, period,
                          as_of, overhead_pct=10.0, realm="", alt_overhead_pct=None,
-                         reports_relpath="rd-reports"):
+                         reports_relpath="rd-reports", paid_map=None):
     """ONE SHEET PER DRAW = a TWO-PERSPECTIVE reconciliation (the user 2026-06-26):
     the PM's version of the draw (their report, their costs, the profit they thought
     they had) SIDE BY SIDE with QBO truth (the director-revised period download).
@@ -3146,7 +3157,8 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
     _known_words = _project_name_words(cust_info.get("name", ""))
     # C carries bill descriptions (was 22 and clipped most of them); E is the
     # short "where / status" note, so the width moves from E to C.
-    for col, w in (("A", 26), ("B", 20), ("C", 34), ("D", 16), ("E", 30), ("F", 3)):
+    for col, w in (("A", 26), ("B", 20), ("C", 34), ("D", 16), ("E", 30),
+                   ("F", 11)):
         ws.column_dimensions[col].width = w
 
     def _font(bold=False, color="000000", size=None, under=False):
@@ -3184,7 +3196,12 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
         return (str(x.get("num", "")).strip(), round(float(x.get("amount", 0) or 0), 2))
 
     r = _write_meta_block(ws, proj, cust_info, wip_info, as_of)
-    wc(r, 1, f"{name}  —  {lbl}", bold=True, color=NAVY, size=BASE_SIZE + 3)
+    # PAID / UNPAID leads the title (the user 2026-08-05): the draw is PAID
+    # when every invoice in it has a zero open balance in QBO.
+    _inv_paid = bool(invoices) and all(
+        float(i.get("balance", 0) or 0) <= 0.005 for i in invoices)
+    wc(r, 1, f"{'PAID' if _inv_paid else 'UNPAID'} {name}  —  {lbl}",
+       bold=True, color=(GREEN if _inv_paid else RED), size=BASE_SIZE + 3)
     r += 2
 
     # ── data ──
@@ -3308,14 +3325,14 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
         bill links (QBO deep-link for QBO rows, the source PM report for PM rows)."""
         nonlocal r
         tot = round(sum(i["amount"] for i in items), 2)
-        band(r, 1, 5, f"{title}", fill=(WARN_FILL if color == RED else SUBHDR_FILL))
+        band(r, 1, 6, f"{title}", fill=(WARN_FILL if color == RED else SUBHDR_FILL))
         ws.cell(row=r, column=1).font = _font(bold=True, color=(RED if color == RED else NAVY))
         ws.cell(row=r, column=5).value = tot
         ws.cell(row=r, column=5).number_format = CURR_FMT
         ws.cell(row=r, column=5).font = _font(bold=True, color=(RED if color == RED else NAVY))
         r += 1
         for c, h in ((1, "Bill # / Vendor"), (2, "Date"), (3, "Description"),
-                     (4, "Amount"), (5, "Where / status")):
+                     (4, "Amount"), (5, "Where / status"), (6, "Paid?")):
             wc(r, c, h, bold=True, color=NAVY).border = BOTTOM_BORDER
         r += 1
         byv = {}
@@ -3357,6 +3374,13 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
                 wc(r, 3, _clean_cost_text(i.get("desc", ""), _known_words))
                 wc(r, 4, i["amount"], fmt=CURR_FMT, color=color)
                 wc(r, 5, note, color=ncol, link=nlink)
+                # AP payment state (the user 2026-08-05); PM report lines have
+                # no QBO bill to check.
+                if kind != "pm" and paid_map is not None:
+                    _pd = paid_map.get(i.get("txn_id"))
+                    if _pd is not None:
+                        wc(r, 6, "PAID" if _pd else "UNPAID", bold=True,
+                           color=(GREEN if _pd else RED))
                 r += 1
         r += 1
 
@@ -5536,6 +5560,8 @@ def generate_project_pnl(
 
     invoices = fetch_customer_invoices(access, company_id, cust_info["id"])
     income_groups = group_invoices_by_draw(invoices, interactive=interactive)
+    # AR/AP payment state (the user 2026-08-05): invoice/bill Balance == 0 is
+    # PAID. Purchases (checks/CC) are paid by nature.
     # Exclude ALL special buckets (__untagged, __retainage, …) — only real
     # draw groups have a "period".
     tagged = [l for l in income_groups if not l.startswith("__")]
@@ -5600,6 +5626,9 @@ def generate_project_pnl(
     bills, purchases = fetch_customer_bills_and_purchases(
         access, company_id, cust_info["id"], bill_start, end_date,
     )
+    paid_map = {b.get("Id"): float(b.get("Balance", 0) or 0) <= 0.005
+                for b in bills}
+    paid_map.update({pch.get("Id"): True for pch in purchases})
     ui_event(f"{len(bills)} bills · {len(purchases)} purchases  "
              f"{_DIM}(from {bill_start}){_RESET}")
 
@@ -5765,6 +5794,7 @@ def generate_project_pnl(
                              parent_map, account_names=account_fqn,
                              acct_type=acct_type, item_account=item_account)
     tx_refs = build_sheet_transactions(wb, proj, cust_info, wip_info, tx, as_of,
+                                       paid_map=paid_map,
                                        realm=company_id)
     qbo_exp = pl_totals.get("gross_profit", 0.0) - pl_totals.get("net_ordinary_income", 0.0)
     # Candidate pool for the difference-finder: every project cost line + invoice
@@ -5841,7 +5871,7 @@ def generate_project_pnl(
             _match_report(income_groups[lbl]["period"]), report_index, qbo_loc,
             income_groups[lbl]["period"], as_of, overhead_pct=overhead_pct,
             realm=company_id, alt_overhead_pct=_alt_oh,
-            reports_relpath=DRAW_REPORTS_SUBDIR)
+            reports_relpath=DRAW_REPORTS_SUBDIR, paid_map=paid_map)
         underbill_total += m_tot
         underbill_count += m_cnt
         draw_anchors[nm] = sn
@@ -6089,6 +6119,9 @@ def generate_project_pnl_rp(
     bills, purchases = fetch_customer_bills_and_purchases(
         access, company_id, cust_info["id"], bill_start, end_date,
     )
+    paid_map = {b.get("Id"): float(b.get("Balance", 0) or 0) <= 0.005
+                for b in bills}
+    paid_map.update({pch.get("Id"): True for pch in purchases})
     ui_event(f"{len(bills)} bills · {len(purchases)} purchases  "
              f"{_DIM}(from {bill_start}){_RESET}")
 
@@ -6153,6 +6186,7 @@ def generate_project_pnl_rp(
                              parent_map, account_names=account_fqn,
                              acct_type=acct_type, item_account=item_account)
     tx_refs = build_sheet_transactions(wb, proj, cust_info, wip_info, tx, as_of,
+                                       paid_map=paid_map,
                                        realm=company_id)
     qbo_exp = pl_totals.get("gross_profit", 0.0) - pl_totals.get("net_ordinary_income", 0.0)
     # Difference-finder candidates (same as Draw template): cost lines + invoices.
@@ -6430,6 +6464,9 @@ def _qbo_project_cost_lines(access, company_id, customer_id, start, end) -> list
     """Fetch + build cost lines for the standalone cross-check."""
     bills, purchases = fetch_customer_bills_and_purchases(
         access, company_id, customer_id, start, end)
+    paid_map = {b.get("Id"): float(b.get("Balance", 0) or 0) <= 0.005
+                for b in bills}
+    paid_map.update({pch.get("Id"): True for pch in purchases})
     accounts = query_all(access, company_id, "Account")
     anames = {a.get("Id"): a.get("Name") for a in accounts if a.get("Id")}
     items = query_all(access, company_id, "Item")

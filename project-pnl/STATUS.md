@@ -100,6 +100,12 @@ manual close), RP (no draws — expenses → invoice → profit).
   (handles the legacy .xls template whose sheets are named 'A'/'B', which the
   existing `G702`-sheet reader can't see). **Needs `xlrd`** — without it the
   run warns and falls back to the WIP master.
+- **Payment state everywhere it's asked** (the user 2026-08-05): each draw
+  sheet's title leads with PAID (green) / UNPAID (red) — PAID when every
+  invoice in the draw has a zero open Balance in QBO. The draw bill tables
+  and the Transactions sheet (income rows AND every bill line) carry a
+  "Paid?" column from the same Balance test; purchases count as paid by
+  nature. PM-report rows have no QBO bill and show nothing.
 - **Draw sheets lead with a horizontal KPI strip** (the user 2026-07-29):
   income → retainage held → net draw → costs → gross profit → gross margin %
   → overhead → REAL net profit → REAL net %, big type, $-formatted, profit
