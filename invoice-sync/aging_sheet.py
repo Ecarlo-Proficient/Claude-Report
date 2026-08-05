@@ -39,7 +39,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from openpyxl.styles import Alignment, Border, Font, Side
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
@@ -62,7 +62,7 @@ BILL_TRACKER_PATH = paths.get_path(
 # Vendor status literals (the user's wording: the status is "Vendor Unpaid Bills").
 VENDOR_UNPAID = "Vendor Unpaid Bills"
 VENDOR_CLEAR = "Vendors Paid"
-VENDOR_NA = ""          # RP — the draw-period match doesn't apply, see below
+VENDOR_NA = "n/a"       # RP — the draw-period match doesn't apply, see below
 VENDOR_UNKNOWN = "?"    # bill tracker file missing / unreadable
 
 # Divisions where a bill line is matched to the invoice that authorizes paying
@@ -100,8 +100,50 @@ C_TOTAL, C_VSTATUS, C_VBILLS, C_VAMT, C_NOTES, C_ACTION = range(12, 18)
 
 BUCKET_COLS = (C_CURRENT, C_1_30, C_31_60, C_61_90, C_90)
 
+# Vendor columns — the block that is meaningless for RP and gets greyed out.
+VENDOR_COLS = (C_VSTATUS, C_VBILLS, C_VAMT)
+
 _THIN = Side(style="thin", color="000000")
 _MEDIUM = Side(style="medium", color="000000")
+
+
+# ─────────────────────── palette ───────────────────────
+# Colour is here to answer "how bad is this" without reading a number, so it
+# only ever encodes AGE (the five buckets) and STATE (vendors, dead cells).
+# Nothing decorative gets a fill.
+
+_HEADER_FILL = PatternFill("solid", fgColor="1F4E78")   # matches the Open Invoices tab
+_HEADER_FONT = Font(bold=True, color="FFFFFF")
+
+# Bucket headers, green → red as the money ages. White bold text on all five.
+BUCKET_HEADER_FILLS = (
+    PatternFill("solid", fgColor="2E7D32"),   # Current — not yet due
+    PatternFill("solid", fgColor="7CB342"),   # 1-30
+    PatternFill("solid", fgColor="D68910"),   # 31-60
+    PatternFill("solid", fgColor="C0552B"),   # 61-90
+    PatternFill("solid", fgColor="922B21"),   # 90+
+)
+# Light tint of the same hue for the ONE cell in each row that holds the amount.
+# Scanning down the sheet, colour drifting rightward = money getting older.
+BUCKET_CELL_FILLS = (
+    PatternFill("solid", fgColor="E8F5E9"),
+    PatternFill("solid", fgColor="F1F8E9"),
+    PatternFill("solid", fgColor="FDF2E0"),
+    PatternFill("solid", fgColor="FAE7E0"),
+    PatternFill("solid", fgColor="F8DDDA"),
+)
+
+_GRAND_FILL = PatternFill("solid", fgColor="BFD3E6")    # the all-clients roll-up
+_PARENT_FILL = PatternFill("solid", fgColor="DCE6F1")   # each client summary row
+
+# Dead cells: the vendor block on RP rows. Grey fill, darker grey text — reads
+# as "nothing to see here" without looking like missing data. (the user)
+_NA_FILL = PatternFill("solid", fgColor="D9D9D9")
+_NA_FONT = Font(color="808080", italic=True)
+
+_UNPAID_FONT = Font(bold=True, color="C00000")
+_CLEAR_FONT = Font(color="2E7D32")
+_OVERDUE_FONT = Font(bold=True, color="C00000")
 
 
 # ─────────────────────── aging ───────────────────────
@@ -249,7 +291,14 @@ def vendor_cells(
 
 # ─────────────────────── sheet build ───────────────────────
 
-def _write_row(ws: Worksheet, row_num: int, values: List[Any], *, bold: bool) -> None:
+def _write_row(
+    ws: Worksheet,
+    row_num: int,
+    values: List[Any],
+    *,
+    bold: bool,
+    fill: Optional[PatternFill] = None,
+) -> None:
     for offset, value in enumerate(values):
         cell = ws.cell(row=row_num, column=offset + 1, value=value)
         number_format = COLUMNS[offset][2]
@@ -257,9 +306,28 @@ def _write_row(ws: Worksheet, row_num: int, values: List[Any], *, bold: bool) ->
             cell.number_format = number_format
         if bold:
             cell.font = Font(bold=True)
+        if fill:
+            cell.fill = fill
     ws.cell(row=row_num, column=C_NOTES + 1).alignment = Alignment(
         horizontal="left", vertical="top", wrap_text=True
     )
+
+
+def _grey_out_vendor_block(ws: Worksheet, row_num: int) -> None:
+    """Mark the three vendor cells as not-applicable on an RP row.
+
+    RP bills match on bill date rather than a draw period, so there is no vendor
+    answer to give here — and a blank would read as "not looked up yet". Grey
+    fill with darker grey text says the cell is intentionally dead. (the user)
+    """
+    for offset in VENDOR_COLS:
+        cell = ws.cell(row=row_num, column=offset + 1)
+        if cell.value in (None, ""):
+            cell.value = VENDOR_NA
+        cell.number_format = "General"  # else "n/a" fights the $ / 0 formats
+        cell.fill = _NA_FILL
+        cell.font = _NA_FONT
+        cell.alignment = Alignment(horizontal="center")
 
 
 def build_aging_sheet(
@@ -315,7 +383,15 @@ def build_aging_sheet(
     header_row = 4
     for offset, (name, width, _) in enumerate(COLUMNS, start=1):
         cell = ws.cell(row=header_row, column=offset, value=name)
-        cell.font = Font(bold=True)
+        cell.font = _HEADER_FONT
+        # The five bucket headers run green→red so the severity scale is legible
+        # from the header alone; everything else takes the standard blue.
+        zero_based = offset - 1
+        cell.fill = (
+            BUCKET_HEADER_FILLS[BUCKET_COLS.index(zero_based)]
+            if zero_based in BUCKET_COLS
+            else _HEADER_FILL
+        )
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         cell.border = Border(bottom=_MEDIUM)
         ws.column_dimensions[get_column_letter(offset)].width = width
@@ -341,7 +417,7 @@ def build_aging_sheet(
     total_row[C_TOTAL] = sum(grand)
     total_row[C_VBILLS] = grand_bills or None
     total_row[C_VAMT] = grand_vendor or None
-    _write_row(ws, row_num, total_row, bold=True)
+    _write_row(ws, row_num, total_row, bold=True, fill=_GRAND_FILL)
     for offset in range(len(COLUMNS)):
         ws.cell(row=row_num, column=offset + 1).border = Border(bottom=_THIN)
     row_num += 1
@@ -377,14 +453,22 @@ def build_aging_sheet(
         summary[C_TOTAL] = sum(buckets)
         summary[C_VBILLS] = vendor_bills or None
         summary[C_VAMT] = vendor_sum or None
-        _write_row(ws, row_num, summary, bold=True)
+        _write_row(ws, row_num, summary, bold=True, fill=_PARENT_FILL)
         for offset in range(len(COLUMNS)):
             ws.cell(row=row_num, column=offset + 1).border = Border(top=_THIN)
+        # A client with no MFD/CP work has no vendor answer either — grey the
+        # block on the summary row too, or an all-RP client reads as "clear".
+        if not any(r["division"] in DRAW_DIVISIONS for r in records):
+            _grey_out_vendor_block(ws, row_num)
         row_num += 1
 
         for rec in records:
             detail: List[Any] = [""] * len(COLUMNS)
-            detail[C_LABEL] = f"    {rec['memo'] or rec['project_num'] or ''}"[:120]
+            # QBO memos carry hard line breaks ("… Draw 2026\n(Period: …)").
+            # Left raw they render as one run-on line or a stray box, since this
+            # column doesn't wrap — collapse to single-spaced text.
+            label = " ".join((rec["memo"] or rec["project_num"] or "").split())
+            detail[C_LABEL] = f"    {label}"[:120]
             detail[C_DIV] = rec["division"]
             detail[C_PROJ] = rec["project_num"]
             detail[C_INV] = rec["invoice_num"]
@@ -400,16 +484,52 @@ def build_aging_sheet(
             detail[C_ACTION] = rec["last_action"]
             _write_row(ws, row_num, detail, bold=False)
 
+            # Tint only the ONE bucket cell carrying this invoice's balance, so
+            # colour drifting rightward down the page = money getting older.
+            slot = bucket_index(rec["days_past_due"])
+            ws.cell(row=row_num, column=BUCKET_COLS[slot] + 1).fill = BUCKET_CELL_FILLS[slot]
+
             # >30 days overdue reads as red, same cue as the Open Invoices tab.
             days = rec["days_past_due"]
             if isinstance(days, int) and days > 30:
-                ws.cell(row=row_num, column=C_DPD + 1).font = Font(bold=True, color="C00000")
+                ws.cell(row=row_num, column=C_DPD + 1).font = _OVERDUE_FONT
+
+            if rec["division"] in DRAW_DIVISIONS:
+                status_cell = ws.cell(row=row_num, column=C_VSTATUS + 1)
+                if rec["vendor_status"] == VENDOR_UNPAID:
+                    status_cell.font = _UNPAID_FONT
+                elif rec["vendor_status"] == VENDOR_CLEAR:
+                    status_cell.font = _CLEAR_FONT
+            else:
+                _grey_out_vendor_block(ws, row_num)
 
             ws.row_dimensions[row_num].outlineLevel = 1
             ws.row_dimensions[row_num].hidden = True  # collapsed by default
             row_num += 1
 
+    # Legend, below the data so it never pushes the numbers down. Colour that
+    # needs explaining is colour that failed, but the grey block is a deliberate
+    # "don't read this" and that one is worth spelling out.
+    last_data_row = row_num - 1
+    legend_row = row_num + 1
+    ws.cell(row=legend_row, column=1, value="KEY").font = Font(bold=True)
+    for slot, (name, _w, _f) in enumerate(
+        COLUMNS[BUCKET_COLS[0]:BUCKET_COLS[-1] + 1]
+    ):
+        cell = ws.cell(row=legend_row, column=BUCKET_COLS[slot] + 1, value=name)
+        cell.fill = BUCKET_CELL_FILLS[slot]
+        cell.alignment = Alignment(horizontal="center")
+    na_cell = ws.cell(row=legend_row, column=C_VSTATUS + 1, value="n/a = RP, no draw period")
+    na_cell.fill = _NA_FILL
+    na_cell.font = _NA_FONT
+    ws.cell(
+        row=legend_row + 1,
+        column=1,
+        value="Aged by due date. Vendor columns apply to CP and MFD only — RP bills match on bill date, not a draw period, so there is nothing to report there.",
+    ).font = Font(italic=True, color="808080")
+
     ws.sheet_properties.outlinePr.summaryBelow = False
     ws.sheet_properties.outlinePr.applyStyles = False
-    ws.auto_filter.ref = f"A{header_row}:{get_column_letter(len(COLUMNS))}{row_num - 1}"
+    # Filter spans the header + data only — never the legend rows below it.
+    ws.auto_filter.ref = f"A{header_row}:{get_column_letter(len(COLUMNS))}{last_data_row}"
     ws.sheet_view.showGridLines = True
