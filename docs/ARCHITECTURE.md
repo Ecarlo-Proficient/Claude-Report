@@ -92,8 +92,17 @@ grouped under the parent client and collapsed by default, the collections
 clerk's Notion `Quick Status` note carried across, and litigation invoices
 excluded. It **reads** `Bill Tracker.xlsx` (the AP tool's output file, never its
 code — repo rule 3) to flag MFD/CP invoices whose draw period still has unpaid
-vendor bills. That column is only as fresh as the last `sync-ap`; the tab prints
-the tracker's timestamp in its subtitle and shows `?` if the file is missing.
+vendor bills.
+
+> **Run order: AP → AR.** That read is the only edge between the two pipelines,
+> and it makes AR downstream of AP. `sync-all` runs **the bill tracker first,
+> then the invoice sync** (~5 min total: AP ≈ 3.5 min, AR ≈ 1-2 min) — it was
+> AR-then-AP until 2026-08-05, which would leave the vendor columns reporting
+> the previous AP run. **This is a DAG, not a cycle:** the bill tracker pulls its
+> bills *and* its invoices straight from QBO and never reads Notion or
+> `Open_Invoices.xlsx`. AR never triggers AP; if the tracker is stale the tab
+> subtitle turns red and the run logs a warning, and a missing file yields `?`
+> rather than a false "Vendors Paid".
 
 ---
 

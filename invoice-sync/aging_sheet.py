@@ -127,6 +127,16 @@ def bucket_index(days_past_due: Optional[int]) -> int:
 
 # ─────────────────── vendor bills (bill tracker) ───────────────────
 
+def _humanize_age(stamp: dt.datetime) -> str:
+    """'3 hours' / '2 days' — for telling the reader how old the vendor data is."""
+    delta = dt.datetime.now() - stamp
+    hours = delta.days * 24 + delta.seconds // 3600
+    if hours < 1:
+        return "under an hour"
+    if hours < 48:
+        return f"{hours} hour{'s' if hours != 1 else ''}"
+    return f"{delta.days} days"
+
 def load_vendor_bill_map(
     path: Path = BILL_TRACKER_PATH,
 ) -> Tuple[Optional[Dict[str, Tuple[float, int, int]]], Optional[dt.datetime]]:
@@ -199,6 +209,16 @@ def load_vendor_bill_map(
             "Vendor bills: %d MFD/CP invoices still carry unpaid bills (tracker as of %s)",
             len(result), as_of.strftime("%Y-%m-%d %H:%M"),
         )
+        # AR runs after AP by design (`sync-all`). A tracker older than today
+        # means that order was broken — say so at run time instead of letting a
+        # day-old vendor column pass for current.
+        if as_of.date() < dt.date.today():
+            log.warning(
+                "Bill Tracker is from %s, not today — the Vendor columns are "
+                "%s old. Run `sync-ap` (or `sync-all`, which runs AP first) "
+                "to refresh them.",
+                as_of.strftime("%b %d"), _humanize_age(as_of),
+            )
         return result, as_of
     except Exception as e:
         log.warning("Could not read Bill Tracker (%s): %s", path, e)
@@ -272,14 +292,25 @@ def build_aging_sheet(
 
     # ── title block ──
     ws.cell(row=1, column=1, value=f"AR AGING — as of {today.strftime('%b %d, %Y').upper()}").font = Font(bold=True)
-    if vendor_as_of:
-        vendor_note = f"Vendor bill status from Bill Tracker as of {vendor_as_of.strftime('%b %d, %Y %I:%M %p')}"
+    # The vendor columns have a different clock from everything else on this tab:
+    # they come from the AP tool's last run, not from this one. Say which, in
+    # plain words, so nobody reads a day-old vendor figure as current.
+    if vendor_as_of is None:
+        vendor_note = "Vendor bill status UNAVAILABLE — run `sync-ap`, then re-run this"
+    elif vendor_as_of.date() < today:
+        vendor_note = (
+            f"⚠ VENDOR COLUMNS ARE {_humanize_age(vendor_as_of).upper()} OLD "
+            f"(Bill Tracker last run {vendor_as_of.strftime('%b %d, %I:%M %p')}) — "
+            f"run `sync-all`, which runs AP before AR"
+        )
     else:
-        vendor_note = "Vendor bill status UNAVAILABLE — run `sync-ap` to refresh Bill Tracker.xlsx"
+        vendor_note = f"Vendor bill status current as of {vendor_as_of.strftime('%b %d, %I:%M %p')}"
     subtitle = (
         f"{len(invoices)} open invoices · litigation excluded ({litigation_excluded}) · {vendor_note}"
     )
-    ws.cell(row=2, column=1, value=subtitle)
+    cell = ws.cell(row=2, column=1, value=subtitle)
+    if vendor_as_of is None or vendor_as_of.date() < today:
+        cell.font = Font(bold=True, color="C00000")
 
     header_row = 4
     for offset, (name, width, _) in enumerate(COLUMNS, start=1):

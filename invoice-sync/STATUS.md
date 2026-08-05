@@ -45,11 +45,19 @@ mirror. Update this in the SAME commit as any change to this tool.
 
 ## OPEN ISSUES
 
-- **`Vendor Status` freshness is bounded by `sync-ap`, not `sync-ar`.** The
-  aging tab reads whatever `Bill Tracker.xlsx` last contained; its timestamp is
-  printed in the tab subtitle, and the column shows `?` when the file is
-  missing or unreadable rather than falsely reporting vendors paid. Run
-  `sync-ap` before `sync-ar` when the vendor column needs to be current.
+- **RUN ORDER: AP BEFORE AR (2026-08-05).** The aging tab's vendor columns read
+  `Bill Tracker.xlsx`, so `sync-ap` must finish before `sync-ar` or those
+  columns silently report the *previous* AP run. `sync-all` in `~/.zshrc` was
+  written AR-then-AP back when the two were independent; it has been swapped to
+  **AP → AR** and is now the command to use daily (~5 min: AP ≈ 3.5 min,
+  AR ≈ 1-2 min). **There is no cycle** — AP pulls its bills *and* its invoices
+  straight from QBO and never reads Notion or `Open_Invoices.xlsx`, so the
+  dependency is one-way.
+- **Staleness is surfaced, not assumed.** If the tracker predates today,
+  `aging_sheet.py` logs a warning and the tab subtitle turns red with
+  "⚠ VENDOR COLUMNS ARE N HOURS OLD". A missing/unreadable file yields `?` per
+  invoice rather than a false "Vendors Paid". AR never auto-runs AP — a sync
+  with hidden side effects is worse than a stale column that announces itself.
 - **RP has no vendor column by design.** The bill-tracker matches RP bills on
   "earliest invoice on/after bill date", which is not a draw-period statement,
   so an RP flag there would imply a match the data doesn't support. Left blank.
