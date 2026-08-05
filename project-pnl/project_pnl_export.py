@@ -952,6 +952,15 @@ def group_invoices_by_draw(invoices: List[dict],
                else first.replace(month=first.month + 1))
         return (first, nxt - dt.timedelta(days=1))
 
+    # VOIDED invoices are QBO noise, not draws (the user 2026-08-05, MFD192's
+    # two voided $0 retainage invoices cluttering the untagged block): QBO
+    # zeroes a voided invoice and prefixes its memo "Voided - ". Dropped
+    # everywhere — a voided invoice never belongs on a P&L.
+    invoices = [inv for inv in invoices
+                if not (abs(float(inv.get("TotalAmt", 0) or 0)) < 0.005
+                        and str(inv.get("PrivateNote") or "")
+                        .strip().lower().startswith("voided"))]
+
     any_period = any(
         resolve_draw_period(inv.get("PrivateNote", "") or "",
                             inv.get("DocNumber", "") or "", False)

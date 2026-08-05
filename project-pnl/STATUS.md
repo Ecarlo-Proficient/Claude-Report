@@ -113,6 +113,12 @@ manual close), RP (no draws — expenses → invoice → profit).
   cells colored by sign, and the strip is the freeze pane. MFD keeps its
   PM-vs-QBO comparison as a second strip. Replaces the old vertical summary
   box. Draw-sheet body font is 12 (was 11).
+- **Voided invoices are dropped everywhere** (the user 2026-08-05, found on
+  MFD192): QBO zeroes a voided invoice and prefixes the memo "Voided - ";
+  those never belong on a P&L and used to clutter the untagged block. Note:
+  MFD192's three contracts (main / HUDSONWOOD / OFFSITE) already combine
+  into one draw per month by shared period tag — verified with the user, no
+  structural change was needed.
 - Overhead: 10% of revenue (MFD alt view 9% on costs).
 
 ## OPEN ISSUES
