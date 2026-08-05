@@ -14,6 +14,12 @@ Why this exists:
   invoices total?" — for that, Excel is the right tool. Notion is still the
   source of truth and the working surface for all human notes / status.
 
+Two tabs:
+  1. "Open Invoices" — the flat row-per-invoice list (the original sheet).
+  2. "AR Aging"      — QBO-style aging buckets rolled up by parent client,
+                       with the collections clerk's notes and MFD/CP vendor
+                       bill status. See aging_sheet.py for the why.
+
 Run via run_invoice_sync.py after the main sync completes. Errors here
 don't affect the QBO→Notion sync (caught and logged separately).
 """
@@ -30,6 +36,12 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from notion_client import NotionClient
+from aging_sheet import (
+    SHEET_TITLE as AGING_SHEET_TITLE,
+    load_vendor_bill_map,
+    vendor_cells,
+    build_aging_sheet,
+)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from shared import paths
@@ -187,6 +199,57 @@ def _row_for(
     ]
 
 
+def _aging_record(
+    page: dict,
+    division_label: str,
+    customer_title_cache: Dict[str, str],
+    today: dt.date,
+    vendor_map: Optional[Dict[str, Any]],
+) -> dict:
+    """Flatten one Notion invoice page into the dict the aging tab consumes.
+
+    Kept separate from `_row_for` on purpose: the Open Invoices tab is a
+    faithful mirror of the tracker, while the aging tab is a derived view with
+    its own fields (parent client, computed days-past-due, vendor status).
+    """
+    props = page.get("properties") or {}
+
+    due_date = _date_value(props.get("Due Date"))
+    division = _select_name(props.get("Division")) or division_label
+    invoice_num = _text(props.get("Invoice #"))
+    vendor_status, vendor_bills, vendor_amount = vendor_cells(
+        division, invoice_num, vendor_map
+    )
+
+    return {
+        # The relation resolves to the PARENT customer (e.g. the GC), while
+        # "Customer (raw)" is the project-level child ("MFD177 - MERRITT PARK").
+        # Grouping needs the parent, so the raw name is only a last resort.
+        "parent": _relation_first_title(props.get("Customer"), customer_title_cache)
+        or _text(props.get("Customer (raw)")),
+        "division": division,
+        "project_num": _text(props.get("Project #")),
+        "invoice_num": invoice_num,
+        "invoice_date": _date_value(props.get("Date")),
+        "due_date": due_date,
+        "days_past_due": (today - due_date).days if due_date else None,
+        "open_balance": _number(props.get("Open balance")) or 0.0,
+        "memo": _text(props.get("Memo")),
+        # "Quick Status" is where the collections clerk writes what's actually
+        # happening on the invoice ("1st reminder", "Lien Notice Sent",
+        # "Waiting vendor unconditional"). That's the Notes the owner wants.
+        "notes": _text(props.get("Quick Status")),
+        "last_action": _date_value(props.get("Last Action Date")),
+        "vendor_status": vendor_status,
+        "vendor_bills": vendor_bills,
+        "vendor_amount": vendor_amount,
+    }
+
+
+def _is_litigation(page: dict) -> bool:
+    return bool(((page.get("properties") or {}).get("Litigation") or {}).get("checkbox"))
+
+
 def _open_invoices(notion: NotionClient, ds_id: str) -> List[dict]:
     """Pull non-Paid invoices from a tracker."""
     filter_body = {
@@ -297,6 +360,36 @@ def export_open_invoices_xlsx(
 
     # Auto-filter on the header
     ws.auto_filter.ref = f"A1:{get_column_letter(len(COLUMNS))}{row_num - 1}"
+
+    # ── Tab 2: AR Aging ──
+    # Built from the SAME page lists as tab 1 — no second Notion round-trip.
+    vendor_map, vendor_as_of = load_vendor_bill_map()
+    aging_records: List[dict] = []
+    litigation_excluded = 0
+    for pages, label, cache in (
+        (res_com_pages, "RP/CP", res_com_titles),
+        (mfd_pages, "MFD", mfd_titles),
+    ):
+        for page in pages:
+            # Litigation invoices are legal work, not collections work — leaving
+            # them in would inflate every aging bucket the owner reads. (the user)
+            if _is_litigation(page):
+                litigation_excluded += 1
+                continue
+            aging_records.append(_aging_record(page, label, cache, today, vendor_map))
+
+    aging_ws = wb.create_sheet(AGING_SHEET_TITLE)
+    build_aging_sheet(
+        aging_ws,
+        aging_records,
+        today=today,
+        litigation_excluded=litigation_excluded,
+        vendor_as_of=vendor_as_of,
+    )
+    log.info(
+        "AR Aging tab: %d invoices (%d litigation excluded)",
+        len(aging_records), litigation_excluded,
+    )
 
     # Write
     target.parent.mkdir(parents=True, exist_ok=True)

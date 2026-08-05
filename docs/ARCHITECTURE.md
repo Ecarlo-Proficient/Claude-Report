@@ -68,8 +68,9 @@ flowchart LR
     MFD[("Notion\nMFD Invoice DB")]:::out
     RES[("Notion\nRes/Com Invoice DB")]:::out
     TEAMS[("Teams\nMFD paid / short-pay cards")]:::out
-    XL["export_invoices_xlsx.py"]:::tool
-    OD[("OneDrive\nOpen_Invoices.xlsx mirror")]:::out
+    XL["export_invoices_xlsx.py\n+ aging_sheet.py"]:::tool
+    BTX[("Bill Tracker.xlsx\nOneDrive · READ-ONLY")]:::src
+    OD[("OneDrive\nOpen_Invoices.xlsx\ntab 1 Open Invoices\ntab 2 AR Aging")]:::out
 
     QBO --> SYNC
     SYNC -- "route by project-# prefix" --> MFD
@@ -77,11 +78,22 @@ flowchart LR
     SYNC -- "sweep paid · archive QBO-deleted" --> MFD
     SYNC --> TEAMS
     SYNC --> XL --> OD
+    BTX -- "MFD/CP vendor unpaid-bill status" --> XL
 ```
 
 Support cast (same folder): `doctor.py` diagnostics · `verify_invoices.py` /
 `verify_excel_export.py` read-only audits · `sync_view.py` visual runner ·
 `setup_keychain.py` Notion/Teams secrets.
+
+**The AR Aging tab** (`aging_sheet.py`, added 2026-08-05) is the owner's
+at-a-glance collections view: QBO-style Current / 1-30 / 31-60 / 61-90 / 90+
+buckets aged by due date, all three divisions in one filterable table, invoices
+grouped under the parent client and collapsed by default, the collections
+clerk's Notion `Quick Status` note carried across, and litigation invoices
+excluded. It **reads** `Bill Tracker.xlsx` (the AP tool's output file, never its
+code — repo rule 3) to flag MFD/CP invoices whose draw period still has unpaid
+vendor bills. That column is only as fresh as the last `sync-ap`; the tab prints
+the tracker's timestamp in its subtitle and shows `?` if the file is missing.
 
 ---
 
@@ -100,7 +112,7 @@ flowchart LR
     GL[("General List xlsx\nSynology · READ-ONLY")]:::src
     BT["excel_bill_sync.py\n+ 4 audit scripts"]:::tool
     SR["statement_reconciler.py"]:::tool
-    BX[("Bill Tracker.xlsx\n~/Documents/CompanyHealth")]:::out
+    BX[("Bill Tracker.xlsx\nOneDrive/Automations-")]:::out
     RX[("reconciliation xlsx\n→ back to NAS")]:::out
 
     QBO --> BT --> BX

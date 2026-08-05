@@ -128,7 +128,8 @@ you never run directly.** Only a handful are meant to be executed.
 | `state.py` | Tiny JSON store for "last run" watermarks (used by the CDC pass). |
 | `version.py` | Version identity (Docker v1.0.0 / Mac mvN). |
 | `teams_notify.py` | Builds + posts Teams cards: MFD payments **and** failure alerts. |
-| `export_invoices_xlsx.py` | Writes the read-only `Open_Invoices.xlsx` mirror. |
+| `export_invoices_xlsx.py` | Writes the read-only `Open_Invoices.xlsx` mirror (2 tabs). |
+| `aging_sheet.py` | Builds the **AR Aging** tab of that workbook — see below. |
 
 ## Invoice sync — end to end
 
@@ -197,6 +198,8 @@ On first run macOS asks to allow Python to read the Keychain key — click
 - **CDC lookback caps at 30 days** — deletions older than that aren't reported; persist `state/` so the watermark survives restarts.
 - **Notion has no row-level security** — MFD is isolated by being a *separate database*, not a filter. Keep the two trackers separate.
 - **Excel mirror is one-way and overwrites** — never edit `Open_Invoices.xlsx` by hand; an open-file guard skips the write while it's open.
+- **`Open_Invoices.xlsx` has two tabs.** `Open Invoices` is the flat mirror. `AR Aging` (added 2026-08-05) is the owner's collections view: Current / 1-30 / 31-60 / 61-90 / 90+ buckets aged **by due date**, RP + CP + MFD together with a `Division` filter, invoices grouped under the parent client and **collapsed by default**, the collections clerk's `Quick Status` as Notes, and **litigation invoices excluded**.
+- **The aging tab's `Vendor Status` column comes from `Bill Tracker.xlsx`, not from QBO.** It flags MFD/CP invoices whose draw period still carries unpaid vendor bills, so it is only as fresh as the last `sync-ap` — run that first when the column matters. The tab prints the tracker's timestamp; a missing file shows `?`, never a false "Vendors Paid". RP is intentionally blank (RP bills match on bill date, not on a draw period).
 - **Logs/state live outside this folder** — don't add a `logs/` dir here.
 
 ## Troubleshooting
