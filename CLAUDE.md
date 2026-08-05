@@ -23,6 +23,11 @@ restate them here. Business/strategic context lives in session memory, not in th
 4. **Logs and data dumps go to `~/Library/Logs/Proficient/`** — never inside this folder (it's Claude-visible/synced).
 5. **Excel outputs are plain:** white/black only, no fills, no hidden rows, label + amount on the same row,
    split into separate sheets rather than crowding one. (Binding — don't re-litigate.)
+   **Named exception — the `AR Aging` tab of `Open_Invoices.xlsx` (the user 2026-08-05, "add more
+   color").** Colour and collapsed rows were asked for there explicitly: green→red aging buckets,
+   blue client banding, red/green vendor status, and a grey `n/a` block on RP vendor cells. Colour
+   on that tab encodes age or state only — never decoration. **Do not restyle it back to plain**;
+   it is the one place the owner overrode this rule on purpose. Every other Excel output stays plain.
 5a. **WIP REPORT FORMATTING IS FROZEN (binding, the user 2026-07-31 — "you cannot keep messing with
    formatting").** Every Test tab in `WIP - MASTER new.xlsx` must look like the **original `WIP Master`
    sheet**. That sheet is the ONLY reference — read it, copy it, never invent:

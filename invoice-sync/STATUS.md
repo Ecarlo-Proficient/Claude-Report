@@ -30,6 +30,17 @@ mirror. Update this in the SAME commit as any change to this tool.
   - **Litigation invoices excluded** (the `Litigation` checkbox on both
     trackers) — legal work, not collections work, and leaving them in inflates
     every bucket. The count of what was dropped prints in the subtitle.
+  - **Colour (2026-08-05, the user's explicit ask — a named exception to the
+    repo's plain-Excel rule, see CLAUDE.md rule 5).** It encodes age or state
+    only: bucket headers green→red; each detail row tints the one bucket cell
+    holding its balance, so colour drifting rightward = money getting older;
+    blue banding on client summary + all-clients rows; `Vendor Unpaid Bills`
+    red, `Vendors Paid` green. A KEY row and a one-line note sit below the data.
+    **Do not restyle this tab back to plain.**
+  - **RP vendor cells read `n/a` on grey with darker grey italic text** — a
+    blank read as "not looked up yet" when it means "nothing to look up".
+    Applied to all-RP client summary rows too, or an RP-only client looked like
+    it had cleared its vendors.
   - `Vendor Status` / `Open Bills` / `Vendor $ Open` — MFD/CP only. Read from
     the bill-tracker's `Bill Tracker.xlsx` output file (never its code — repo
     rule 3, tools never import tools), deduped to bill grain because that
