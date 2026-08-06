@@ -22,7 +22,8 @@ from pathlib import Path
 
 from openpyxl import load_workbook
 
-import cp_wip_reader as CP
+import cp_wip_reader as CP        # CP READER: folder scan / draws
+import wip_writer as W            # the shared report ENGINE
 import rp_wip_reader as RP
 
 MASTER_SHEET = "WIP Master"
@@ -63,12 +64,12 @@ def read_mfd_from_master(wip_path: Path):
                 print(f"    · {proj}: ETC recomputed from "
                       f"'{MASTER_SHEET}'!F{r} ({fws.cell(r, MCOL_ETC).value}) "
                       f"— Excel's cached value was stripped")
-        row = CP.CpRow(proj, str(ws.cell(r, MCOL_NAME).value or proj), False,
+        row = W.CpRow(proj, str(ws.cell(r, MCOL_NAME).value or proj), False,
                        contract, None, etc, None, None)
         row.client = "Multi Family"
         row.takeoff_path = wip_path          # contract/ETC link → the master tab
         row.src_link = str(wip_path)
-        row.src_fragment = CP._sheet_fragment(MASTER_SHEET, f"A{r}")
+        row.src_fragment = W._sheet_fragment(MASTER_SHEET, f"A{r}")
         row.notes.append(f"Contract/ETC from '{MASTER_SHEET}' row {r}")
         rows.append(row)
     wb.close()
@@ -83,7 +84,7 @@ def master_cols():
     the table's filters — the user 2026-07-15), then TYPE after the name.
     APPROVED COs kept (the user 2026-07-16): project-pnl reads Test-Master
     for Contract/ETC/COs/STATUS — original contract = total − COs.
-    PROJECT FOLDER / DATA SOURCE are gone from CP.COLS itself (the user
+    PROJECT FOLDER / DATA SOURCE are gone from W.COLS itself (the user
     2026-07-29): no file links anywhere — the only links are QBO on
     Billed/Costs.
 
@@ -94,7 +95,7 @@ def master_cols():
     money_bleeds reads)."""
     drop = {"retainage_held", "notes_text", "_last_synced", "_notes_all"}
     cols = [("SECTION", 15, "section")]
-    for label, width, field in CP.COLS:
+    for label, width, field in W.COLS:
         if field in drop:
             continue
         cols.append((label, width, field))
@@ -149,7 +150,7 @@ def main() -> int:
     print("  " + "─" * 60)
 
     # ── MFD (master sheet) ──
-    mfd_rows = read_mfd_from_master(CP.WIP_EXCEL_PATH)
+    mfd_rows = read_mfd_from_master(W.WIP_EXCEL_PATH)
     print(f"  MFD from '{MASTER_SHEET}': {len(mfd_rows)} job(s)")
 
     # ── CP (live folder scan, ACTIVE only — the unified sheet is a WIP) ──
@@ -180,7 +181,7 @@ def main() -> int:
             rp_to_folders, addr_folders = RP.index_residential(RP.RP_ROOT)
         pairs = RP.build_lines(records, rp_to_folders, addr_folders)
         if args.rp_existing_only:
-            keep = existing_project_nums(CP.WIP_EXCEL_PATH)
+            keep = existing_project_nums(W.WIP_EXCEL_PATH)
             before = len(pairs)
             pairs = [t for t in pairs if t[0].project_num in keep]
             print(f"  RP locked to existing Test-Master lines: {len(pairs)} kept "
@@ -245,7 +246,7 @@ def main() -> int:
         for row, _comp, _rec in pairs:
             row.why_link = str(justify_path)
             jr = just_rows.get(row.project_num)
-            row.why_fragment = CP._sheet_fragment("JUSTIFICATION", f"A{jr}") if jr else None
+            row.why_fragment = W._sheet_fragment("JUSTIFICATION", f"A{jr}") if jr else None
             if row.needs_review:
                 reason = "; ".join(row.status_flags) or (row.notes[-1] if row.notes else "")
                 if reason and f"RED: {reason}" not in row.notes:
@@ -271,8 +272,8 @@ def main() -> int:
 
     import datetime as dt
     try:
-        wrote = CP.write_test_cp(
-            all_rows, CP.WIP_EXCEL_PATH,
+        wrote = W.write_test_cp(
+            all_rows, W.WIP_EXCEL_PATH,
             dry_run=args.dry_run, tab_name="Test-Master",
             cols=master_cols(), default_filter_active=True,
             # Banner + logo space + TOTALS/cash-flow (the user 2026-07-16).
@@ -285,11 +286,11 @@ def main() -> int:
             # The change audit runs HERE — Test-Master carries all three
             # divisions, so one report covers MFD + CP + RP (the user
             # 2026-07-31: "I need to always audit these things").
-            audit=True, audit_xlsx=CP.AUDIT_XLSX,
+            audit=True, audit_xlsx=W.AUDIT_XLSX,
             # Read-only roll-up of the CP/RP tabs + the WIP Master MFD
             # section — locked so it can't be typed into by accident.
             protect=True)
-    except CP.WipWriteDenied as e:
+    except W.WipWriteDenied as e:
         print(f"  ✗ Guard blocked write: {e}")
         return 2
     except FileNotFoundError as e:
@@ -306,7 +307,7 @@ def main() -> int:
     if args.rp_from_file:
         try:
             RP.write_rp_tab(rp_sorted, dry_run=args.dry_run)
-        except CP.WipWriteDenied as e:
+        except W.WipWriteDenied as e:
             print(f"  ✗ Guard blocked the 'Test - RP' write: {e}")
             return 2
     return 0
@@ -316,11 +317,11 @@ def _drop_stale_test_tab() -> None:
     """Remove the superseded 'Test' tab (renamed to 'Test-Master' — the user
     2026-07-15). Only ever deletes 'Test'; guard-checked; live tabs untouched."""
     from openpyxl import load_workbook as _lw
-    CP.assert_write_allowed("Test")
-    wb = _lw(CP.WIP_EXCEL_PATH)
+    W.assert_write_allowed("Test")
+    wb = _lw(W.WIP_EXCEL_PATH)
     if "Test" in wb.sheetnames:
         del wb["Test"]
-        wb.save(CP.WIP_EXCEL_PATH)
+        wb.save(W.WIP_EXCEL_PATH)
         print("  ✓ removed superseded 'Test' tab")
     wb.close()
 

@@ -54,7 +54,7 @@ from shared import schedule as SCHED
 import rp_wip_reader as RP
 import rp_schedule_wip_preview as P
 import wip_excel_guard as GUARD
-import cp_wip_reader as CP
+import wip_writer as W  # shared report engine (was cp_wip_reader)
 
 TAB = "Test - RP"
 CHECK = "✓"
@@ -830,7 +830,7 @@ def main() -> int:
 
     # production write ------------------------------------------------
     GUARD.assert_write_allowed(TAB)
-    path = CP.WIP_EXCEL_PATH
+    path = W.WIP_EXCEL_PATH
     lock = Path(path).with_name("~$" + Path(path).name)
     if lock.exists():
         raise SystemExit("The WIP master is open in Excel — close it first")

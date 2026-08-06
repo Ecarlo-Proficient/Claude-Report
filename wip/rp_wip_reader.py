@@ -46,9 +46,9 @@ from pathlib import Path
 
 from openpyxl import load_workbook
 
-# Reuse the CP writer so RP gets the exact same WIP structure/formatting/links,
-# just written to the 'Test - RP' tab. Intra-folder import (allowed).
-import cp_wip_reader as CP
+# The shared report engine — same formatting/writer for every division.
+# RP is a reader; it imports the engine, never another reader (2026-08-04).
+import wip_writer as W
 from shared import paths, qbo_api
 
 def _rp_cols():
@@ -67,7 +67,7 @@ def _rp_cols():
     """
     drop = {"retainage_held"}
     cols = []
-    for label, width, field in CP.COLS:
+    for label, width, field in W.COLS:
         if field in drop:
             continue
         cols.append((label, width, field))
@@ -258,7 +258,7 @@ def read_rp_from_file(xlsx_path: Path):
                   + ("" if (contract, etc) == (first.base_contract, first.base_etc)
                      else " (NUMBERS DIFFER — flagged)"))
             continue
-        row = CP.CpRow(
+        row = W.CpRow(
             job, str(ws.cell(r, C["addr"]).value or job).strip(), False,
             contract,
             _money(ws.cell(r, C["co"]).value),
@@ -346,7 +346,7 @@ def rp_tab_cols():
     commentary and the sync stamp (money_bleeds reads both from here)."""
     drop = {"retainage_held", "notes_text", "_last_synced", "_notes_all"}
     cols = [("CATEGORY", 20, "rp_type")]
-    for label, width, field in CP.COLS:
+    for label, width, field in W.COLS:
         if field in drop:
             continue
         cols.append((label, width, field))
@@ -377,8 +377,8 @@ def write_rp_tab(rows, dry_run: bool = False) -> bool:
                   "DROPPED OFF SCHEDULE", "FTW BACKLOG"]
     view = [r for t in type_order for r in rows
             if getattr(r, "rp_type", None) == t]
-    wrote = CP.write_test_cp(
-        view, CP.WIP_EXCEL_PATH, dry_run=dry_run, tab_name="Test - RP",
+    wrote = W.write_test_cp(
+        view, W.WIP_EXCEL_PATH, dry_run=dry_run, tab_name="Test - RP",
         cols=rp_tab_cols(), default_filter_active=True,
         title="RP WIP REPORT", summary=True, qbo_links_only=True,
         legend=RP_TAB_LEGEND,
@@ -565,7 +565,7 @@ def match_by_address(rec, addr_folders):
 
 
 # ─────────────────── line building + classification ────────────────
-def _classify(row: CP.CpRow, completion) -> None:
+def _classify(row: W.CpRow, completion) -> None:
     """The RP done-rule (billing is the truth): appends notes/flags and sets
     needs_review (→ RED numbers in Excel) in-place."""
     K = row.base_contract
@@ -656,13 +656,13 @@ def build_lines(records, rp_to_folders, addr_folders):
         folder = folders[0] if folders else match_by_address(rec, addr_folders)
 
         def _mk(line_num, contract, etc):
-            row = CP.CpRow(line_num, name, False, contract, None, etc, None, None)
+            row = W.CpRow(line_num, name, False, contract, None, etc, None, None)
             row.folder_path = folder
             row.takeoff_path = ALPHA_PATH      # Contract/ETC cells link → the List
             # PROJECT # → the exact General List row it came from (the user
             # 2026-07-15: click the number, land where the data lives).
             row.src_link = str(ALPHA_PATH)
-            row.src_fragment = CP._sheet_fragment(rec["source"], f"C{rec['gl_row']}")
+            row.src_fragment = W._sheet_fragment(rec["source"], f"C{rec['gl_row']}")
             if rec["source"] == SMALL_SHEET:
                 row.notes.append("Small Jobs list")
             # CLIENT = the Residential client folder (full name) when found,
@@ -716,7 +716,7 @@ def build_lines(records, rp_to_folders, addr_folders):
 
 def enrich_with_qbo(pairs) -> None:
     """Billed (P&L income) + Costs (COGS+expenses) per LINE customer —
-    read-only GETs. Sets CP.QBO_REALM so the writer builds QBO deep links."""
+    read-only GETs. Sets W.QBO_REALM so the writer builds QBO deep links."""
     try:
         access, company_id = qbo_api.load_credentials()
     except Exception as e:
@@ -729,7 +729,7 @@ def enrich_with_qbo(pairs) -> None:
         for row, *_ in pairs:
             row.status_flags.append(f"QBO Customer Map Failed: {type(e).__name__}")
         return
-    CP.QBO_REALM = company_id
+    W.QBO_REALM = company_id
     start, end = "2019-01-01", dt.date.today().isoformat()
     for n, (row, *_rest) in enumerate(pairs, 1):
         cust = proj_map.get(row.project_num)
@@ -898,7 +898,7 @@ def main() -> int:
         rows = classify_from_file(rows)
         try:
             write_rp_tab(rows, dry_run=args.dry_run)
-        except CP.WipWriteDenied as e:
+        except W.WipWriteDenied as e:
             print(f"  ✗ Guard blocked write: {e}")
             return 2
         return 0
@@ -992,7 +992,7 @@ def main() -> int:
         jr = just_rows.get(row.project_num)
         # Jump straight to THIS line's row in the workbook (the user
         # 2026-07-15), not just the file.
-        row.why_fragment = CP._sheet_fragment("JUSTIFICATION", f"A{jr}") if jr else None
+        row.why_fragment = W._sheet_fragment("JUSTIFICATION", f"A{jr}") if jr else None
         # Red must explain itself in NOTES (the user 2026-07-14) — flags carry
         # the must-fix reason; mirror it so the notes column reads standalone.
         if row.needs_review:
@@ -1001,14 +1001,14 @@ def main() -> int:
                 row.notes.append(f"RED: {reason}")
 
     try:
-        wrote = CP.write_test_cp(
-            main_rows, CP.WIP_EXCEL_PATH,
+        wrote = W.write_test_cp(
+            main_rows, W.WIP_EXCEL_PATH,
             dry_run=args.dry_run, tab_name="Test - RP",
             appendix=("FTW BACKLOG — flatwork bid with the slab, NOT poured "
                       "yet (expected wins; invoice under RP#-FTW when poured)",
                       backlog),
             cols=_rp_cols(), default_filter_active=True)
-    except CP.WipWriteDenied as e:
+    except W.WipWriteDenied as e:
         print(f"  ✗ Guard blocked write: {e}")
         return 2
     except FileNotFoundError as e:

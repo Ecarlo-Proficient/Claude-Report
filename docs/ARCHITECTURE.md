@@ -9,9 +9,10 @@
 > picture (open it in a browser after pulling). Refresh it when structure meaningfully changes;
 > THIS file is the always-current source of truth.
 
-Last updated: 2026-07-29 (project-pnl: CP contract price + approved COs now come from the
-signed G702 pay application via `shared/draws.py`, not the draw invoices; new Labor and
-Concrete budget-vs-actual-by-draw sheets with the bills nested under each cost code)
+Last updated: 2026-08-06 (bill-tracker: FULL pull incl. subs → subs to the QBO Audit sheet,
+which gains an FW-misplacement + sub-missing-project section and folds in the retired
+duplicate/item-no-project/sub-bill audit scripts; cost codes captured audit-only. project-pnl:
+"Open Project in QBO" header link → project home page on all three templates)
 
 ---
 
@@ -27,9 +28,9 @@ shared/                the ONLY importable common code
 └─ setup_qbo.py        vault admin CLI (--status/--test/--rotate/--purge)
 
 invoice-sync/          QBO → Notion AR sync + Teams cards   (was automation-worker/)
-bill-tracker/          AP bills → Excel tracker + 4 audit scripts
+bill-tracker/          AP bills (FULL pull incl. subs) → Excel tracker + QBO Audit sheet (6 checks) + job_coding_audit drill
 statement-reconciler/  vendor statement PDFs ↔ QBO open bills
-wip/                   ALL WIP tooling: CP/RP readers + gated close scripts
+wip/                   ALL WIP tooling: wip_writer.py (shared engine) + CP/RP readers + close scripts
 project-pnl/           per-project P&L workbooks → OneDrive
 debt-schedule/         equipment debt workbook + loan_sync (writes beside itself)
 health-dashboard/      local company-health xlsx (private, chmod 600)
@@ -126,19 +127,27 @@ flowchart LR
     classDef tool fill:#f6f5f1,stroke:#4b5563,color:#1f2937
     classDef out fill:#dfeae2,stroke:#3E7A5C,color:#1f2937
 
-    QBO[("QBO\nbills + invoices")]:::src
+    QBO[("QBO\nALL bills (incl. subs) + invoices")]:::src
     NAS[("Synology NAS\nvendor statement PDFs")]:::src
     GL[("General List xlsx\nSynology · READ-ONLY")]:::src
-    BT["excel_bill_sync.py\n+ 4 audit scripts"]:::tool
+    BT["excel_bill_sync.py\nBills/Inventory/Liens + QBO Audit (6 checks)"]:::tool
+    JCA["job_coding_audit.py\non-demand per-job drill"]:::tool
     SR["statement_reconciler.py"]:::tool
-    BX[("Bill Tracker.xlsx\nOneDrive/Automations-")]:::out
+    BX[("Bill Tracker.xlsx\nOneDrive/Automations-\ndisplay = non-sub · audit = incl. subs")]:::out
     RX[("reconciliation xlsx\n→ back to NAS")]:::out
 
     QBO --> BT --> BX
+    QBO -. "audit-job" .-> JCA
     GL -- "RP draw matching" --> BT
     QBO --> SR
     NAS --> SR --> RX
 ```
+
+Full pull (2026-08-06): the tracker pulls every bill incl. subs. Subs are kept off the
+Bills/Inventory/Liens sheets but flow to the **QBO Audit** sheet (6 sections). The old
+`duplicate_bill_audit` / `item_no_project_audit` / `sub_bill_audit` scripts were folded
+into that sheet and retired; `job_coding_audit.py` remains as the interactive `audit-job`
+drill. Cost codes (QBO Item name) are captured for the audit only — never a display column.
 
 ---
 
@@ -152,24 +161,38 @@ flowchart LR
     classDef gate fill:#f3e0d3,stroke:#B9541E,color:#7c2d12
 
     FOLDERS[("Project folders\ntakeoffs · draws (G702)")]:::src
-    GL[("General List xlsx\nAlpha + Small Jobs — READ-ONLY\nRP/CP prices AI–AL · completion Z")]:::src
+    GL[("General List xlsx\nAlpha + Small Jobs — READ-ONLY")]:::src
     QBO[("QBO\nvia shared/qbo_api")]:::src
-    READERS["cp_wip_reader.py / rp_wip_reader.py\nguarded by wip_excel_guard.py"]:::tool
+    RPFIX[("Owner's RP WIP workbook\n'RP WIP' sheet — verified lines")]:::src
+    WMTAB[("'WIP Master' tab\nMFD contract/ETC")]:::src
+
+    ENGINE["wip_writer.py\nthe SHARED report ENGINE:\nCpRow · COLS · write_test_cp ·\nformatting · change audit ·\nedit-tracking · QC\n(guarded by wip_excel_guard.py)"]:::tool
+    CPR["cp_wip_reader.py\nCP READER: folder scan / draws /\nproposal PDF → 'Test - CP'"]:::tool
+    RPR["rp_wip_reader.py\nRP READER: owner's file → 'Test - RP'"]:::tool
+    MASTER["master_wip_test.py\nORCHESTRATOR: MFD + CP + RP → 'Test-Master'\n(+ change audit)"]:::tool
     TEST[("WIP - MASTER new.xlsx\nTest tabs ONLY (SharePoint)")]:::out
     CLOSE["qbo_close_list.py →\nqbo_bulk_close.py"]:::tool
     QW[("QBO WRITE — gated\nCONFIRM=Y · MFD always excluded")]:::gate
 
-    MASTER["master_wip_test.py\nunified: MFD + CP + RP sections"]:::tool
-    RPFIX[("Owner's RP WIP workbook\n'RP WIP' sheet — verified lines")]:::src
-
-    FOLDERS --> READERS
-    GL -->|"RP: contract/ETC per line"| READERS
-    QBO --> READERS --> TEST
-    READERS -.->|"reused by"| MASTER
-    RPFIX -->|"--rp-from-file: RP contract/ETC/CO\n(CP lines excluded)"| MASTER
-    TEST -->|"MFD pricing from 'WIP Master' tab"| MASTER --> TEST
+    FOLDERS --> CPR
+    RPFIX --> RPR
+    QBO --> CPR & RPR & MASTER
+    WMTAB --> MASTER
+    CPR -.->|"scan reused by"| MASTER
+    RPR -.->|"classify/write reused by"| MASTER
+    CPR & RPR & MASTER ==>|"import the engine"| ENGINE
+    ENGINE --> TEST
     QBO --> CLOSE --> QW
 ```
+
+**The three readers import ONE engine (`wip_writer.py`), never each other** (2026-08-04).
+`wip_writer` owns everything that turns `CpRow`s into a formatted, audited, edit-tracked
+tab — `CpRow`, `COLS`, `write_test_cp`, the change audit, the QC check. The readers only
+gather their division's numbers: `cp_wip_reader` (CP folder scan / draws / proposal PDF),
+`rp_wip_reader` (the owner's RP file), and `master_wip_test` (MFD off the 'WIP Master' tab,
+and orchestrates all three). This replaced the old shape where the engine lived inside
+`cp_wip_reader` and every tool did `import cp_wip_reader` — a tool importing a tool, which
+buried MFD/RP logic in a file named "cp" and let the layout drift.
 
 Over/under-billing and job-borrow are computed columns in Excel, not in these scripts.
 RP v2 (2026-07-13): the General List is the RP source — each RP job auto-splits into

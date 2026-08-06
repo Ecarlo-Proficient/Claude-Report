@@ -556,3 +556,37 @@ same failure that blanked MFD's budget. Four tools read Test-Master that way
   it gained a component fallback (ORIGINAL CONTRACT + APPROVED COs), mirroring
   the one it already had for LEFT TO BILL. Verified: the fallback fires on all
   110 RP rows and the check still reads the tab.
+
+## 2026-08-04 — the SHARED ENGINE split out of cp_wip_reader → wip_writer.py
+
+Pure structural cleanup, NO behaviour change. The report engine — CpRow,
+COLS, write_test_cp, all formatting, the change audit, the owner-edit
+baselines, the QC check — used to live inside `cp_wip_reader.py`, so every
+division tool did `import cp_wip_reader as CP` to reach it. That is a tool
+importing a tool (repo rule forbids it), it buried MFD/RP logic in a file
+named "cp", and it let the layout drift (a stray rp_wip_reader run once
+regressed the tab).
+
+- **`wip/wip_writer.py` (NEW)** — the engine, its own honest home. Pure output
+  machinery: it never reads a division's source. Owns `QBO_REALM` (a reader's
+  enrich sets `wip_writer.QBO_REALM`).
+- **`cp_wip_reader.py`** — now ONLY the CP reader (folder scan / draws /
+  proposal PDF). Imports the model + helpers from wip_writer; calls the writer
+  as `W.write_test_cp`. It does NOT re-export the writer, so no tool can reach
+  the writer through cp_wip_reader again — the shortcut that caused the tangle
+  is structurally closed.
+- **`rp_wip_reader.py`** — imports `wip_writer`, no longer `cp_wip_reader`. A
+  reader importing the engine, never another reader.
+- **`master_wip_test.py`** — the orchestrator; imports the engine (`W`) for the
+  writer/audit AND `cp_wip_reader` (`CP`) for the folder scan. Legitimate: it
+  is the orchestrator, not a peer tool.
+- Two one-offs (`rp_wip_simple`, `rp_schedule_wip_preview`) repointed to
+  `wip_writer`. Only `master` still imports `cp_wip_reader`.
+
+VERIFIED behaviour-preserving: snapshotted all three tabs (value/formula/number
+format/fill/font per cell) before, regenerated after, diffed — Test-Master and
+Test - RP are byte-identical (0 differing cells). pyflakes: no undefined names,
+no unused imports across all four files. Runtime NameErrors the compiler
+couldn't see (ALLOWED_WRITE_SHEETS, get_column_letter) were caught by the
+regenerate run and fixed. Test - CP re-run pending a Synology remount (the
+share dropped mid-verify); its output flows through the same proven engine.

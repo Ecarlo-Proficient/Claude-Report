@@ -38,7 +38,7 @@ sys.path.insert(0, str(_REPO / "wip"))
 
 from openpyxl import Workbook, load_workbook
 
-import cp_wip_reader as CP
+import wip_writer as W  # shared report engine (was cp_wip_reader)
 import rp_wip_reader as RP
 
 MAIN_SHEET = "Main Schedule"
@@ -733,7 +733,7 @@ def _cprow_from_item(it):
     contract = (it["new_contract"] if it["new_contract"] is not None
                 else it["gl_contract"])
     etc = it["new_etc"] if it["new_etc"] is not None else it["gl_etc"]
-    row = CP.CpRow(it["line"], it["address"] or it["line"], False,
+    row = W.CpRow(it["line"], it["address"] or it["line"], False,
                    contract, None, etc, None, None)
     row.folder_path = it.get("folder")
     if it.get("takeoff"):
@@ -758,8 +758,8 @@ def commit_to_test_rp(ready, backlog, label):
     for r in bk_rows:
         RP._classify(r, None)
         r.needs_review = False            # backlog = expected, not an error
-    wrote = CP.write_test_cp(
-        main_rows, CP.WIP_EXCEL_PATH, tab_name="Test - RP",
+    wrote = W.write_test_cp(
+        main_rows, W.WIP_EXCEL_PATH, tab_name="Test - RP",
         appendix=("FTW BACKLOG — flatwork bid in the General Lista, not yet "
                   "on the schedule (expected wins)", bk_rows),
         cols=RP._rp_cols(), default_filter_active=True,
@@ -1091,7 +1091,7 @@ def main() -> int:
               f"backlog {len(backlog)}")
         try:
             wrote, rowmap = commit_to_test_rp(ready, backlog, label)
-        except CP.WipWriteDenied as e:
+        except W.WipWriteDenied as e:
             print(f"  ✗ Guard blocked write: {e}")
             return 2
         if wrote:
