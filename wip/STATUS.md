@@ -588,5 +588,6 @@ format/fill/font per cell) before, regenerated after, diffed — Test-Master and
 Test - RP are byte-identical (0 differing cells). pyflakes: no undefined names,
 no unused imports across all four files. Runtime NameErrors the compiler
 couldn't see (ALLOWED_WRITE_SHEETS, get_column_letter) were caught by the
-regenerate run and fixed. Test - CP re-run pending a Synology remount (the
-share dropped mid-verify); its output flows through the same proven engine.
+regenerate run and fixed. Test - CP verified after the share remounted: header at row 3, full
+symmetric column set (incl. CP-only RETAINAGE HELD) + the «base»
+edit-tracking columns, no corruption triggers on any tab.
