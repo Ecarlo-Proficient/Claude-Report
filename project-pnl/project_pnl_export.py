@@ -2485,6 +2485,15 @@ def build_sheet_pl(
     meta_note = (f"P&L through {pl_cutoff} (last draw period end)"
                  if pl_cutoff else None)
     r = _write_meta_block(ws, proj, cust_info, wip_info, as_of, note=meta_note)
+    # Header shortcut (the user 2026-08-06): one "Open Project in QBO" link in the
+    # free top-right header cell → the project HOME page (customerdetail), distinct
+    # from the per-figure Billed/Costs links below. Stored hyperlink (never
+    # =HYPERLINK(), which fails in Mac Excel).
+    _home_url = _qbo_customer_url(cust_info.get("id", ""), realm)
+    if _home_url:
+        _hc = ws.cell(row=2, column=9, value="Open Project in QBO  ↗")
+        _hc.hyperlink = _home_url
+        _hc.font = Font(size=BASE_SIZE, color="0563C1", underline="single")
 
     def row(label: str, amt=None, *, formula=None, bold=False, indent=0,
             border=None, fmt=CURR_FMT, color="000000", fill=None,
@@ -5120,6 +5129,13 @@ def build_sheet_job_rp(
         ws.column_dimensions[col].width = w
 
     r = _write_meta_block(ws, proj, cust_info, wip_info, as_of)
+    # Header shortcut (the user 2026-08-06): "Open Project in QBO" → project HOME
+    # page, in the free header cell to the right of the 4-col RP layout.
+    _home_url = _qbo_customer_url(cust_info.get("id", ""), realm)
+    if _home_url:
+        _hc = ws.cell(row=2, column=5, value="Open Project in QBO  ↗")
+        _hc.hyperlink = _home_url
+        _hc.font = Font(size=BASE_SIZE, color="0563C1", underline="single")
     r += 1
 
     HERO = PatternFill("solid", fgColor="1F3A5F")

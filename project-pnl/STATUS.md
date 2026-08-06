@@ -14,6 +14,13 @@ manual close), RP (no draws — expenses → invoice → profit).
 - **Budget vs Actual** (CP + RP) — takeoff cost-code budget vs QBO cost-code
   actuals, every transaction listed under its code with a QBO link, job-type
   color bands, class-mismatch flags.
+- **QBO deep links (2026-08-06).** Every transaction row already deep-links to its
+  QBO txn (Transactions, draws, Next Draw, Budget vs Actual, Labor/Concrete, POs,
+  RP Job P&L, Pending Review, Reconciliations). Added a header **"Open Project in
+  QBO"** link → the project HOME page (`customerdetail` via `_qbo_customer_url`,
+  NOT the P&L report) on the CP/MFD `P&L` sheet (**I2**) and the RP `Job P&L`
+  (**E2**), distinct from the per-figure Billed/Costs links. Stored
+  `cell.hyperlink`, never `=HYPERLINK()`.
 - **Labor + Concrete sheets** (CP, reworked 2026-07-29 pm) — two blocks at
   different altitudes, per the user: metrics are a top-level data point, and
   one grid trying to be scoreboard AND ledger is what produced empty cells
