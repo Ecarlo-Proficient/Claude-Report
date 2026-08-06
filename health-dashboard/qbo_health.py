@@ -3915,7 +3915,7 @@ def main() -> int:
     print("━" * 60)
 
     access, company_id = load_credentials()
-    print(f"  ✓ authenticated  (company={company_id})")
+    print("  ✓ authenticated.")   # never echo the company_id / realm
 
     print(f"  → loading override annotations...")
     overrides = load_overrides(overrides_path)

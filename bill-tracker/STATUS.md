@@ -27,6 +27,12 @@ no business findings, dollar exposures, or owner analyses (those live in the own
   `sub_bill_audit.py` retired — folded into the QBO Audit sheet. `job_coding_audit.py` kept as
   the interactive per-job drill (`audit-job` alias) and shared helper lib.
 
+- **No realm in the terminal (2026-08-06, owner).** The auth step printed
+  `ok. company_id=<realm>`; removed — it now just prints `ok.`, consistent with `sync-ar`
+  (which never echoes the realm). Swept the same leak out of `qbo_bill_tracker.py`,
+  `qbo-export`, `health-dashboard`, and `wip/qbo_bulk_close.py`. **Rule: never echo the QBO
+  company_id / realm to stdout or a tee'd log.**
+
 ## OPEN ISSUES
 
 - **Parity check pending a live run.** The folded sections should reproduce the retired

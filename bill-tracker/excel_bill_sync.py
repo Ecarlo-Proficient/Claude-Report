@@ -2130,7 +2130,7 @@ def main() -> int:
 
     print("→ authenticating to QBO (Touch ID) …")
     qbo_access, qbo_cid = load_credentials()
-    print(f"  ok. company_id={qbo_cid}")
+    print("  ok.")   # never echo the company_id / realm (consistent with sync-ar)
 
     print("→ fetching vendors …")
     vendors = query_all(qbo_access, qbo_cid, "Vendor")

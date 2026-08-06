@@ -994,7 +994,7 @@ def main() -> int:
     # 2) auth
     print("→ authenticating to QBO (Touch ID) …")
     access, cid = load_credentials()
-    print(f"  ok. company_id={cid}")
+    print("  ok.")   # never echo the company_id / realm (consistent with sync-ar)
 
     # 3) reference data
     print("→ fetching vendors …")

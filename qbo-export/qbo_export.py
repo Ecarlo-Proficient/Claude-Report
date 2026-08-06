@@ -413,7 +413,7 @@ def main() -> int:
     print("━" * 60)
 
     access, company_id = load_credentials()
-    print(f"  ✓ authenticated  (company={company_id})")
+    print("  ✓ authenticated.")   # never echo the company_id / realm
 
     if args.all:
         print(f"  → pulling ALL transactions (no date filter)")

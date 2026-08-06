@@ -187,7 +187,7 @@ def main() -> int:
     # ── Auth ─────────────────────────────────────────────────────────────────
     print("\n  Authenticating to QBO (Touch ID)...")
     access, company_id = load_credentials()
-    print(f"  ok — company {company_id}")
+    print("  ok.")   # never echo the company_id / realm
 
     # ── Process ──────────────────────────────────────────────────────────────
     results = []
