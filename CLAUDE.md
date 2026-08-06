@@ -91,9 +91,14 @@ restate them here. Business/strategic context lives in session memory, not in th
   service (`proficient-automation-worker`) and log dir (`~/Library/Logs/Proficient/automation-worker/`)
   keep their historical names on purpose.
 - **bill-tracker/** — AP bills → matched to the GC invoice that authorizes payment → Excel
-  (`~/Documents/CompanyHealth/Bill Tracker.xlsx`); manual via `sync-ap` (launchd scrapped).
-  Plus 4 audit scripts (`job_coding_audit.py`, `sub_bill_audit.py`, `item_no_project_audit.py`,
-  `duplicate_bill_audit.py`).
+  (`Bill Tracker.xlsx` on OneDrive `Automations-/`); manual via `sync-ap` (launchd scrapped).
+  **FULL pull incl. subs (2026-08-06):** every bill is fetched; subs are kept off the
+  Bills/Inventory/Liens display sheets but flow to the **QBO Audit** sheet, which now has 6
+  sections (stale-not-approved · data-entry · uncoded job cost · duplicate ref · **FW code on
+  a CP/MFD/base-RP slab** · **sub bill missing project**). Cost codes (QBO Item name) are
+  captured for the audit only, never a display column. The old `sub_bill_audit.py`,
+  `item_no_project_audit.py`, `duplicate_bill_audit.py` were folded into that sheet and
+  retired; `job_coding_audit.py` remains as the interactive `audit-job` per-job drill.
 - **statement-reconciler/** — vendor statement PDF ↔ QBO open bills.
 - **wip/** — ALL WIP tooling. Readers: `cp_wip_reader.py` / `rp_wip_reader.py` write ONLY the
   Test tabs of `WIP - MASTER new.xlsx` on SharePoint (guarded by `wip_excel_guard.py`);

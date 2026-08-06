@@ -8,8 +8,9 @@ to any destination here — just QBO fetch + line-level row assembly.
 Row dict shape (keys consumed by downstream sinks):
     key, bill_id, line_id, bill_date, vendor, bill_doc, po_num,
     bill_total, bill_balance, division, project_num, bill_type, account,
-    line_amount, line_desc, inv_doc, inv_id, inv_date, inv_total,
+    cost_code, line_amount, line_desc, inv_doc, inv_id, inv_date, inv_total,
     inv_balance, payment_date, auto_status, approved
+    (cost_code = raw QBO Item name; audit-only, never shown on display sheets)
 
 Collapse helpers (2026-06-04):
     collapse_rows(line_rows, grain) — roll up line-level rows into bill-grain
@@ -172,6 +173,21 @@ def line_account_and_type(
     return ("", "")
 
 
+def line_cost_code(line: dict) -> str:
+    """Return the raw QBO Item name — our cost code (SL1 / PV6 / FW2 …) — for an
+    item-based expense line; '' for an account-based line.
+
+    Cost codes live in the QBO ITEM, never the posting account (repo CLAUDE.md).
+    line_account_and_type() deliberately collapses the item to its expense
+    account for the visible Account column; this keeps the raw code for the QBO
+    Audit sheet ONLY — it is never shown on the Bills/Inventory sheets.
+    """
+    if line.get("DetailType") == "ItemBasedExpenseLineDetail":
+        item_ref = (line.get("ItemBasedExpenseLineDetail") or {}).get("ItemRef") or {}
+        return (item_ref.get("name") or "").strip()
+    return ""
+
+
 def build_rows(
     bills: List[dict],
     invoices_by_customer: Dict[str, List[dict]],
@@ -214,6 +230,9 @@ def build_rows(
             division = get_division(project_num)
 
             account_name, bill_type = line_account_and_type(line, account_map, item_map)
+            # Raw cost code (QBO Item name) — kept for the audit only, never
+            # shown on the display sheets. '' for account-based lines.
+            cost_code = line_cost_code(line)
 
             # ClassRef can live on the line (preferred — bills can split across
             # divisions) or on the bill itself (older QBO setups). Try line first.
@@ -286,6 +305,7 @@ def build_rows(
                 "project_num": project_num or "",
                 "bill_type": bill_type,
                 "account": account_name,
+                "cost_code": cost_code,
                 "line_amount": line_amt,
                 "line_desc": line_desc,
                 "inv_doc": inv_doc,

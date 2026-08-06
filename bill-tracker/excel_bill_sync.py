@@ -1517,8 +1517,8 @@ AUDIT_SECTION_HEIGHT     = 24
 # Section 3 — uncoded JOB-COST lines (a real cost about to be left off a
 # project). Strong orange so it reads as the most actionable section. Overhead-
 # only uncoded lines are deliberately NOT shown (the user 2026-06-18: they'd flood
-# the audit and are legitimately projectless). Sub bills are already excluded
-# upstream, so they don't reach here either.
+# the audit and are legitimately projectless). Sub bills are handled by their own
+# section (6) — this section runs on the non-sub display population only.
 AUDIT_SECTION_UNCODED_FILL = PatternFill(patternType="solid",
                                          fgColor=Color(rgb="FFF4B183"),
                                          bgColor=Color(rgb="FFF4B183"))
@@ -1564,6 +1564,31 @@ AUDIT_DUP_GROUP_FILL     = PatternFill(patternType="solid",
 AUDIT_DUP_CELL_FILL      = PatternFill(patternType="solid",
                                        fgColor=Color(rgb="FFE4DFEC"),
                                        bgColor=Color(rgb="FFE4DFEC"))
+
+# Section 5 — FW (flatwork) cost code on a job where it doesn't belong: any CP
+# or MFD job, or a base RP#### slab (FW is legitimate ONLY on the -FTW project).
+# Red family — a coding error to fix at the source. Fed by the FULL bill
+# population incl. subs (the user 2026-08-06).
+AUDIT_SECTION_FW_FILL = PatternFill(patternType="solid",
+                                    fgColor=Color(rgb="FFE59090"),
+                                    bgColor=Color(rgb="FFE59090"))
+AUDIT_FW_CELL_FILL    = PatternFill(patternType="solid",
+                                    fgColor=Color(rgb="FFFCE4E4"),
+                                    bgColor=Color(rgb="FFFCE4E4"))
+
+# Section 6 — SUB bills missing a project # (the sub_bill_audit check, folded in
+# 2026-08-06). Subs are off the display sheets, but a sub line with no project #
+# is a real coding gap. Teal family so it reads as its own concern.
+AUDIT_SECTION_SUB_FILL = PatternFill(patternType="solid",
+                                     fgColor=Color(rgb="FF8FBFBF"),
+                                     bgColor=Color(rgb="FF8FBFBF"))
+AUDIT_SUB_CELL_FILL    = PatternFill(patternType="solid",
+                                     fgColor=Color(rgb="FFE2F0F0"),
+                                     bgColor=Color(rgb="FFE2F0F0"))
+
+# FW (flatwork) cost-code prefix: item name whose leaf starts with FW + a digit
+# (FW1, FW-2, FW 6, FW52 …). Cost codes live in the QBO Item name, not the account.
+_FW_CODE_RE = re.compile(r"^FW\s*-?\s*\d", re.IGNORECASE)
 
 # Shared cell-kind list for every audit data row (all sections use the same
 # 11-column AUDIT_HEADERS layout).
@@ -1714,6 +1739,35 @@ def _uncoded_job_cost(r: dict) -> Optional[Tuple[str, str]]:
     if hints:
         reason += " — " + ", ".join(hints)
     return reason, (class_div or "(none)")
+
+
+def _fw_cost_code(cost_code: str) -> bool:
+    """True if a cost code (raw QBO Item name) is an FW / flatwork code. Takes
+    the leaf after the last ':' so a hierarchical item name still matches."""
+    leaf = (cost_code or "").split(":")[-1].strip()
+    return bool(_FW_CODE_RE.match(leaf))
+
+
+def _fw_misplaced(r: dict) -> Optional[str]:
+    """FW (flatwork) cost code on a job where it doesn't belong. FW is legitimate
+    ONLY on -FTW projects; it is a miscode on any CP job, any MFD job, or a base
+    RP#### slab (the user 2026-08-06). Division/slab are read from the project #,
+    never the Class field. Returns a reason string, or None.
+
+    Lines with no project # are out of scope here — they surface in the
+    missing-project sections instead."""
+    if not _fw_cost_code(r.get("cost_code") or ""):
+        return None
+    proj = (r.get("project_num") or "").strip().upper()
+    div = (r.get("division") or "").strip().upper()
+    if not div:
+        return None
+    code = (r.get("cost_code") or "").split(":")[-1].strip().upper()
+    if div in ("CP", "MFD"):
+        return f"FW code {code} on a {div} job ({proj}) — flatwork belongs to RP"
+    if div == "RP" and not proj.endswith("-FTW"):
+        return f"FW code {code} on RP slab {proj} — FW belongs on the -FTW project"
+    return None
 
 
 def _norm_ref(doc: str) -> str:
@@ -1870,7 +1924,7 @@ def _missing_project_age_fill(bill_date, today: dt.date) -> Optional[PatternFill
 def build_audit_sheet(ws, rows: List[dict],
                       vendor_root: Optional[Dict[str, str]] = None,
                       vendor_map: Optional[Dict[str, str]] = None) -> int:
-    """Audit sheet — four sections, each under a collapsible outline group so
+    """Audit sheet — six sections, each under a collapsible outline group so
     the clerk can collapse to the section banners and read the whole audit at a
     glance:
       1. Stale NOT APPROVED bills (bill-grain, deduped), sub-grouped by aging
@@ -1880,9 +1934,17 @@ def build_audit_sheet(ws, rows: List[dict],
       3. Likely job cost missing a project (line-grain, high-confidence only).
       4. Duplicate bill # within a vendor tree (bill-grain) — double-entry /
          double-pay risk.
+      5. FW (flatwork) cost code on a CP / MFD / base-RP-slab job — a miscode
+         (FW belongs to RP, only ever on the -FTW project).
+      6. SUB bill line missing a project #.
 
-    Every section renders its banner + count even at zero (a "✓ none" row),
-    so no check silently disappears. All sections share the AUDIT_HEADERS
+    `rows` is the FULL population incl. sub bills. Sections 1–3 keep their exact
+    non-sub behavior (subs filtered out below); duplicates (4) and FW (5) scan
+    the whole population; the sub section (6) is subs only. Sections 4–6 fold in
+    what the standalone duplicate_bill_audit / item_no_project_audit /
+    sub_bill_audit scripts used to do (the user 2026-08-06 — one workbook, one
+    tool). Every section renders its banner + count even at zero (a "✓ none"
+    row), so no check silently disappears. All sections share the AUDIT_HEADERS
     column layout. Returns total flagged-entry count.
     """
     today = dt.date.today()
@@ -1906,11 +1968,16 @@ def build_audit_sheet(ws, rows: List[dict],
     for col, w in widths.items():
         ws.column_dimensions[_col_letter(col)].width = w
 
+    # Split the population: sections 1–3 keep their exact non-sub behavior;
+    # duplicates + FW scan the full population; the sub section is subs only.
+    display_rows = [r for r in rows if not r.get("is_sub")]
+    sub_rows     = [r for r in rows if r.get("is_sub")]
+
     # Collect all sections' work
-    stale_bills = _stale_not_approved_bills(rows, today)
+    stale_bills = _stale_not_approved_bills(display_rows, today)
     flagged: List[Tuple[dict, List[str]]] = []
     uncoded: List[Tuple[dict, str, str]] = []   # (row, reason, division)
-    for r in rows:
+    for r in display_rows:
         issues = _audit_row_checks(r)
         if issues:
             flagged.append((r, issues))
@@ -1921,10 +1988,27 @@ def build_audit_sheet(ws, rows: List[dict],
                                 x[0].get("bill_doc", "")))
     uncoded.sort(key=lambda x: ((x[0].get("vendor") or "").upper(),
                                 x[0].get("bill_doc", "")))
+    # Duplicates scan the FULL population incl. subs (subsumes duplicate_bill_audit).
     dup_groups = _duplicate_bill_groups(rows, vendor_root, vendor_map)
 
+    # Section 5 — FW cost code on a CP/MFD/base-RP job (full population incl. subs).
+    fw_flags: List[Tuple[dict, str]] = []
+    for r in rows:
+        reason = _fw_misplaced(r)
+        if reason:
+            fw_flags.append((r, reason))
+    fw_flags.sort(key=lambda x: ((x[0].get("division") or ""),
+                                 (x[0].get("project_num") or ""),
+                                 (x[0].get("vendor") or "").upper()))
+
+    # Section 6 — SUB bills missing a project # (subsumes sub_bill_audit).
+    sub_missing = [r for r in sub_rows if not (r.get("project_num") or "").strip()]
+    sub_missing.sort(key=lambda r: ((r.get("vendor") or "").upper(),
+                                    r.get("bill_doc", "")))
+
     print(f"  audit: {len(stale_bills)} stale, {len(flagged)} data-entry, "
-          f"{len(uncoded)} uncoded job-cost, {len(dup_groups)} duplicate-ref group(s)")
+          f"{len(uncoded)} uncoded job-cost, {len(dup_groups)} duplicate-ref group(s), "
+          f"{len(fw_flags)} FW-misplaced, {len(sub_missing)} sub missing-project")
 
     # Amber tint for the Mismatch cell — matches the stale section banner.
     stale_tint = PatternFill(patternType="solid",
@@ -2093,8 +2177,74 @@ def build_audit_sheet(ws, rows: List[dict],
                 ]
                 _audit_write_row(ws, cur_row, values, AUDIT_DUP_CELL_FILL, level=2)
                 cur_row += 1
+    cur_row += 1   # spacer row between sections
 
-    return len(stale_bills) + len(flagged) + len(uncoded) + n_dup_bills
+    # ─── Section 5: FW (flatwork) cost code where it doesn't belong ───
+    # FW on any CP/MFD job or a base RP#### slab — flatwork belongs to RP and
+    # only ever on the -FTW project. Scans the full population incl. subs.
+    _audit_section_banner(
+        ws, cur_row,
+        f"🚫  FW code on a CP / MFD / RP-slab job  ({len(fw_flags)} line"
+        f"{'s' if len(fw_flags) != 1 else ''})",
+        AUDIT_SECTION_FW_FILL,
+        n_cols,
+    )
+    cur_row += 1
+    if not fw_flags:
+        _audit_none_row(ws, cur_row)
+        cur_row += 1
+    else:
+        for r, reason in fw_flags:
+            values = [
+                r.get("bill_doc", ""), r.get("vendor", ""), r.get("bill_date"),
+                r.get("customer_name", "") or "(none)",
+                r.get("project_num", "") or "(none)",
+                r.get("division", "") or "(none)",
+                r.get("class_name", "") or "(empty)",
+                "SUB" if r.get("is_sub") else "",
+                r.get("line_desc", ""),
+                reason,
+                _qbo_link(r.get("bill_id", "")),
+            ]
+            _audit_write_row(ws, cur_row, values, AUDIT_FW_CELL_FILL, level=1)
+            cur_row += 1
+    cur_row += 1   # spacer row between sections
+
+    # ─── Section 6: SUB bills missing a project # ───
+    # Subs are off the display sheets; a sub line with no project # is still a
+    # real coding gap (folded in from sub_bill_audit, the user 2026-08-06).
+    _audit_section_banner(
+        ws, cur_row,
+        f"🧾  SUB bill line — MISSING project  ({len(sub_missing)} line"
+        f"{'s' if len(sub_missing) != 1 else ''})",
+        AUDIT_SECTION_SUB_FILL,
+        n_cols,
+    )
+    cur_row += 1
+    if not sub_missing:
+        _audit_none_row(ws, cur_row)
+        cur_row += 1
+    else:
+        for r in sub_missing:
+            values = [
+                r.get("bill_doc", ""), r.get("vendor", ""), r.get("bill_date"),
+                r.get("customer_name", "") or "(none)",
+                "(none)",
+                "(none)",
+                r.get("class_name", "") or "(empty)",
+                "SUB",
+                r.get("line_desc", ""),
+                "Sub bill line has no project #",
+                _qbo_link(r.get("bill_id", "")),
+            ]
+            _audit_write_row(ws, cur_row, values, AUDIT_SUB_CELL_FILL, level=1)
+            age_fill = _missing_project_age_fill(r.get("bill_date"), today)
+            if age_fill is not None:
+                ws.cell(row=cur_row, column=3).fill = age_fill
+            cur_row += 1
+
+    return (len(stale_bills) + len(flagged) + len(uncoded) + n_dup_bills
+            + len(fw_flags) + len(sub_missing))
 
 
 # ─────────────────────── main ───────────────────────
@@ -2134,12 +2284,13 @@ def main() -> int:
     payment_map = build_payment_map(qbo_access, qbo_cid)
     print(f"  {len(payment_map)} invoices with payment dates")
 
-    # Open bills — any date, Balance > 0
+    # Open bills — any date, Balance > 0. FULL pull incl. sub bills: subs are
+    # filtered out of the Bills/Inventory display sheets below but flow to the
+    # QBO Audit sheet (the user 2026-08-06 — the tracker now pulls every bill;
+    # sub findings surface in the audit, never on the display sheets).
     print("→ fetching OPEN bills (Balance > 0) …")
     open_bills = query_all(qbo_access, qbo_cid, "Bill", where="Balance > '0'")
-    n0 = len(open_bills)
-    open_bills = [b for b in open_bills if not is_sub_bill(b)]
-    print(f"  {n0} → {len(open_bills)} after sub exclusion")
+    print(f"  {len(open_bills)} open bills")
 
     # Paid bills since cutoff — for ledger sheets
     print(f"→ fetching PAID bills since {PAID_CUTOFF_DATE} (Balance = 0) …")
@@ -2147,9 +2298,12 @@ def main() -> int:
         qbo_access, qbo_cid, "Bill",
         where=f"Balance = '0' AND TxnDate >= '{PAID_CUTOFF_DATE}'",
     )
-    n0 = len(paid_bills)
-    paid_bills = [b for b in paid_bills if not is_sub_bill(b)]
-    print(f"  {n0} → {len(paid_bills)} after sub exclusion")
+    print(f"  {len(paid_bills)} paid bills")
+
+    # Sub-bill ids (memo contains 'sub') — marked per row so subs reach the
+    # audit only. Bills/Inventory exclude them; the audit sheet includes them.
+    sub_ids = {b.get("Id", "") for b in (open_bills + paid_bills) if is_sub_bill(b)}
+    print(f"  {len(sub_ids)} sub bills → audit only (excluded from Bills/Inventory)")
 
     print(f"→ fetching invoices since {INVOICE_CUTOFF_DATE} …")
     invoices_raw = query_all(
@@ -2184,28 +2338,36 @@ def main() -> int:
         payment_map=payment_map, gl_contracts=gl_contracts,
     )
     all_rows = open_rows + paid_rows
-    print(f"  {len(open_rows)} open + {len(paid_rows)} paid = {len(all_rows)} total")
+    # Mark sub-bill lines. all_rows (incl. subs) → QBO Audit sheet;
+    # display_rows (subs removed) → Bills / Inventory / Liens, unchanged.
+    for r in all_rows:
+        r["is_sub"] = r.get("bill_id", "") in sub_ids
+    display_rows = [r for r in all_rows if not r["is_sub"]]
+    n_sub_rows = len(all_rows) - len(display_rows)
+    print(f"  {len(open_rows)} open + {len(paid_rows)} paid = {len(all_rows)} line rows "
+          f"({len(display_rows)} display · {n_sub_rows} sub lines audit-only)")
 
-    # status / division breakdowns
+    # status / division breakdowns — over the display population (subs were
+    # never counted on the display sheets, so these stay comparable run-to-run).
     breakdown: Dict[str, int] = defaultdict(int)
     by_division: Dict[str, int] = defaultdict(int)
-    for r in all_rows:
+    for r in display_rows:
         breakdown[r["auto_status"]] += 1
         by_division[r.get("division") or "(none)"] += 1
-    print("→ status breakdown (all rows):")
+    print("→ status breakdown (display rows):")
     for s, n in sorted(breakdown.items(), key=lambda x: -x[1]):
         print(f"    {s}: {n}")
     print("→ by division:")
     for d, n in sorted(by_division.items()):
         print(f"    {d}: {n}")
-    n_draw = sum(1 for r in all_rows if r.get("match_basis") == MATCH_BASIS_DRAW)
-    n_final = sum(1 for r in all_rows if r.get("match_basis") == MATCH_BASIS_FINAL)
+    n_draw = sum(1 for r in display_rows if r.get("match_basis") == MATCH_BASIS_DRAW)
+    n_final = sum(1 for r in display_rows if r.get("match_basis") == MATCH_BASIS_FINAL)
     print(f"→ RP draw semantics: {n_draw} draw-matched · {n_final} fully-billed")
 
     if args.limit > 0:
         print(f"→ --limit {args.limit}: capping row sets")
-        open_rows = open_rows[: args.limit]
         all_rows = all_rows[: args.limit]
+        display_rows = [r for r in all_rows if not r["is_sub"]]
 
     if args.dry_run:
         elapsed = (dt.datetime.now() - started).total_seconds()
@@ -2232,8 +2394,8 @@ def main() -> int:
     # (The per-division MFD/RP/CP grain was dropped 2026-07-13 — the Project #
     # already lives on the Bills sheet and the division sheets went unused.)
     print("→ collapsing rows for display …")
-    bills_view_rows = collapse_rows(all_rows, grain="bill")
-    n_multi = len(multi_project_bill_ids(all_rows))
+    bills_view_rows = collapse_rows(display_rows, grain="bill")
+    n_multi = len(multi_project_bill_ids(display_rows))
     print(f"  {len(bills_view_rows)} bills · "
           f"{n_multi} multi-project bills routed to Inventory")
 
@@ -2261,7 +2423,8 @@ def main() -> int:
 
     # Render order matters: build Inventory FIRST so we have the
     # {bill_id → row} anchor map to wire the Bills sheet hyperlinks.
-    n_inv, inv_anchor_map = build_inventory_sheet(ws_inv, all_rows)
+    # Display sheets use display_rows (subs excluded); the audit uses all_rows.
+    n_inv, inv_anchor_map = build_inventory_sheet(ws_inv, display_rows)
 
     n_bills, _ = _render_rows(
         ws_bills, bills_view_rows, BILLS_TABLE, edits,
