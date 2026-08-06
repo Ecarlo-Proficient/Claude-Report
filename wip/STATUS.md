@@ -591,3 +591,19 @@ couldn't see (ALLOWED_WRITE_SHEETS, get_column_letter) were caught by the
 regenerate run and fixed. Test - CP verified after the share remounted: header at row 3, full
 symmetric column set (incl. CP-only RETAINAGE HELD) + the «base»
 edit-tracking columns, no corruption triggers on any tab.
+
+## 2026-08-06 — RP reader resolves columns BY HEADER (owner rearranges his file)
+
+The owner added JOBTREAD + STATUS columns to `RP WIP TO FIX_Final.xlsx` (next to
+GENERAL LIST), which shifted ACTION/CO right. `read_rp_from_file` read by FIXED
+column position, so a column move silently misaligned contract/ETC/action — the
+same fragility that has now bitten twice. Fixed: `_resolve_rp_cols()` locates
+each field BY HEADER NAME (row 2, case-insensitive, fixed-position fallback),
+so future column adds/moves in the owner's file no longer break the sync.
+Verified: the reader auto-resolves ACTION→13, CO→14 on the new layout and parses
+all 119 lines (110 + 9 new jobs).
+
+Note: the JOBTREAD (✓ in JobTread / ✗ not) and STATUS (Needs ETC · Pull ETC from
+JobTread · Add JT proposal · Add to JobTread · Ready) columns are an estimator
+aid the reader ignores; they are a point-in-time snapshot, refreshed by re-running
+the build, not live.

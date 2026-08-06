@@ -156,8 +156,38 @@ _RP_FILE_BANDS = (
     ("FTW WITH COSTS",           ("FTW — OFF-SCHEDULE (COSTS)", "FTW WITH COSTS")),
     ("FTW BACKLOG",              ("FTW BACKLOG", "FTW BACKLOG")),
 )
+# Fallback fixed positions. The owner rearranges his file (he added JOBTREAD +
+# STATUS columns 2026-08-06, which shifted ACTION/CO right), so the reader
+# resolves columns BY HEADER NAME first (see _resolve_rp_cols) and only falls
+# back to these positions when a header isn't found. Header-driven lookup means
+# a future column move no longer breaks the sync.
 _RP_FILE_COL = {"job": 1, "addr": 2, "builder": 3, "contract": 4, "etc": 5,
                 "billed": 6, "costs": 7, "sched": 9, "action": 11, "co": 12}
+
+# field → the header text(s) that identify its column on the 'RP WIP' sheet
+# (header row 2; matched case-insensitively, first word-substring wins).
+_RP_HEADER = {
+    "job": ("JOB #",), "addr": ("ADDRESS",), "builder": ("BUILDER",),
+    "contract": ("CONTRACT $",), "etc": ("ETC $",),
+    "billed": ("BILLED TO DATE",), "costs": ("COSTS TO DATE",),
+    "sched": ("SCHEDULE",), "action": ("ACTION",), "co": ("CO $",),
+}
+
+
+def _resolve_rp_cols(ws, hdr_row: int = 2):
+    """Column index per field, located BY HEADER NAME with a fixed-position
+    fallback — so the owner adding/moving columns can't misalign the read."""
+    labels = {str(ws.cell(hdr_row, c).value or "").strip().upper(): c
+              for c in range(1, (ws.max_column or 0) + 1)}
+    out = dict(_RP_FILE_COL)
+    for field, names in _RP_HEADER.items():
+        for nm in names:
+            c = next((col for lbl, col in labels.items()
+                      if lbl == nm.upper() or lbl.startswith(nm.upper())), None)
+            if c:
+                out[field] = c
+                break
+    return out
 
 # The owner's colour contract (rp_wip_update.py, the user 2026-07-30) — his
 # font-colour marks are authoritative and must SURVIVE into the test tabs
@@ -218,9 +248,9 @@ def read_rp_from_file(xlsx_path: Path):
     folder scan). Sections come from the file's band rows; lines above the
     first band split RP SLAB vs FTW — ACTIVE by the -FTW suffix."""
     import re as _re
-    wb = load_workbook(xlsx_path, data_only=True, read_only=True)
+    wb = load_workbook(xlsx_path, data_only=True)
     ws = wb["RP WIP"]
-    C = _RP_FILE_COL
+    C = _resolve_rp_cols(ws)          # by header name; fixed-position fallback
     rows, section, skipped_cp = [], "", []
     seen = {}                                          # project # → first row
     for r in range(3, ws.max_row + 1):
