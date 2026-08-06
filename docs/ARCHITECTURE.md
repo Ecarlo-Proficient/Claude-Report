@@ -130,7 +130,7 @@ flowchart LR
     QBO[("QBO\nALL bills (incl. subs) + invoices")]:::src
     NAS[("Synology NAS\nvendor statement PDFs")]:::src
     GL[("General List xlsx\nSynology · READ-ONLY")]:::src
-    BT["excel_bill_sync.py\nBills/Inventory/Liens + QBO Audit (6 checks)"]:::tool
+    BT["excel_bill_sync.py\nBills/Inventory/Liens + 6 Audit- Table sheets"]:::tool
     JCA["job_coding_audit.py\non-demand per-job drill"]:::tool
     SR["statement_reconciler.py"]:::tool
     BX[("Bill Tracker.xlsx\nOneDrive/Automations-\ndisplay = non-sub · audit = incl. subs")]:::out
@@ -144,10 +144,12 @@ flowchart LR
 ```
 
 Full pull (2026-08-06): the tracker pulls every bill incl. subs. Subs are kept off the
-Bills/Inventory/Liens sheets but flow to the **QBO Audit** sheet (6 sections). The old
-`duplicate_bill_audit` / `item_no_project_audit` / `sub_bill_audit` scripts were folded
-into that sheet and retired; `job_coding_audit.py` remains as the interactive `audit-job`
-drill. Cost codes (QBO Item name) are captured for the audit only — never a display column.
+Bills/Inventory/Liens sheets but flow to the audit, now **six `Audit - …` sheets**, each a
+proper Excel Table (filter/sort): Not Approved · Data Entry · Missing Project · Duplicates ·
+**FW Misplaced** · Sub No Project. The old `duplicate_bill_audit` / `item_no_project_audit`
+/ `sub_bill_audit` scripts were folded in and retired; `job_coding_audit.py` remains as the
+interactive `audit-job` drill. Cost codes (QBO Item name) are captured for the audit only —
+never a display column.
 
 ---
 

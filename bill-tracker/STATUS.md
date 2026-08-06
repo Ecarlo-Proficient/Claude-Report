@@ -12,9 +12,17 @@ no business findings, dollar exposures, or owner analyses (those live in the own
   `display_rows` for Bills/Inventory/Liens; the audit sheet gets the full population.
 - **Cost code capture (2026-08-06).** `bill_rows.line_cost_code()` keeps the raw QBO Item
   name (`SL1`/`FW2`…) on each row as `cost_code`, audit-only — no display column added.
-- **QBO Audit sheet = 6 sections (2026-08-06).** Added §5 FW-misplacement (FW on CP/MFD/base
+- **QBO Audit = 6 sections (2026-08-06).** Added §5 FW-misplacement (FW on CP/MFD/base
   RP#### slab; legit only on `-FTW`) and §6 SUB bill missing project. §4 duplicates widened
   to the full population incl. subs.
+- **Audit → one Excel Table per section (2026-08-06).** The single collapsible "QBO Audit"
+  banner sheet is replaced by six **`Audit - …`** sheets (Not Approved · Data Entry · Missing
+  Project · Duplicates · FW Misplaced · Sub No Project), each a proper Table (filter/sort on
+  every column) — banners can't live inside a table. `build_audit_sheets()` +
+  `_audit_table_sheet()`. Passes `validate_xlsx` (opens clean in Excel). Empty sections render
+  a valid one-row table. NOTE: the old banner helpers/constants
+  (`_audit_section_banner`, `AUDIT_HEADERS`, `AUDIT_SECTION_*_FILL`, …) are now dead code —
+  prune in a follow-up.
 - **Audit consolidation (2026-08-06).** `duplicate_bill_audit.py`, `item_no_project_audit.py`,
   `sub_bill_audit.py` retired — folded into the QBO Audit sheet. `job_coding_audit.py` kept as
   the interactive per-job drill (`audit-job` alias) and shared helper lib.

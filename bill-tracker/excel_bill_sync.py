@@ -1921,52 +1921,73 @@ def _missing_project_age_fill(bill_date, today: dt.date) -> Optional[PatternFill
     return None
 
 
-def build_audit_sheet(ws, rows: List[dict],
-                      vendor_root: Optional[Dict[str, str]] = None,
-                      vendor_map: Optional[Dict[str, str]] = None) -> int:
-    """Audit sheet — six sections, each under a collapsible outline group so
-    the clerk can collapse to the section banners and read the whole audit at a
-    glance:
-      1. Stale NOT APPROVED bills (bill-grain, deduped), sub-grouped by aging
-         bucket. Chase approvals for any bill older than NOT_APPROVED_BUFFER_DAYS.
-      2. Data entry issues (line-grain). Empty Class, Class/division mismatch,
-         line-desc project mismatch, etc.
-      3. Likely job cost missing a project (line-grain, high-confidence only).
-      4. Duplicate bill # within a vendor tree (bill-grain) — double-entry /
-         double-pay risk.
-      5. FW (flatwork) cost code on a CP / MFD / base-RP-slab job — a miscode
-         (FW belongs to RP, only ever on the -FTW project).
-      6. SUB bill line missing a project #.
-
-    `rows` is the FULL population incl. sub bills. Sections 1–3 keep their exact
-    non-sub behavior (subs filtered out below); duplicates (4) and FW (5) scan
-    the whole population; the sub section (6) is subs only. Sections 4–6 fold in
-    what the standalone duplicate_bill_audit / item_no_project_audit /
-    sub_bill_audit scripts used to do (the user 2026-08-06 — one workbook, one
-    tool). Every section renders its banner + count even at zero (a "✓ none"
-    row), so no check silently disappears. All sections share the AUDIT_HEADERS
-    column layout. Returns total flagged-entry count.
+def _audit_table_sheet(wb, sheet_name: str, table_name: str,
+                       headers: List[str], col_kinds: List[str],
+                       data_rows: List[list], widths: List[int]) -> int:
+    """Create one audit section as its OWN sheet, wrapped in a proper Excel Table
+    (AutoFilter + sort on every column). `col_kinds` formats each column
+    (text/date/money/flag/link); a 'link' column's value is a bill_id, rendered as
+    a QBO ↗ hyperlink button. An empty section still yields a valid one-row table
+    ('✓ none found'). Table headers must be unique per table (validate_xlsx check C).
     """
-    today = dt.date.today()
-    n_cols = len(AUDIT_HEADERS)
-
-    # Outline grouping: banners are summaries that sit ABOVE their detail rows,
-    # so the collapse (+/−) control lands on the banner, not below the group.
-    ws.sheet_properties.outlinePr.summaryBelow = False
-    ws.sheet_properties.outlinePr.summaryRight = False
-
-    # Header row
-    for col_i, name in enumerate(AUDIT_HEADERS, 1):
-        c = ws.cell(row=1, column=col_i, value=name)
-        c.font = HEADER_FONT
-        c.fill = HEADER_FILL
-        c.alignment = ALIGN_CENTER
+    ws = wb.create_sheet(sheet_name)
+    ws.sheet_view.showGridLines = False
+    for c_i, name in enumerate(headers, 1):
+        hc = ws.cell(row=1, column=c_i, value=name)
+        hc.font = HEADER_FONT
+        hc.fill = HEADER_FILL
+        hc.alignment = ALIGN_CENTER
     ws.freeze_panes = "A2"
     ws.row_dimensions[1].height = 22
-    widths = {1: 12, 2: 28, 3: 11, 4: 40, 5: 12, 6: 9, 7: 14,
-              8: 40, 9: 35, 10: 50, 11: 9}
-    for col, w in widths.items():
-        ws.column_dimensions[_col_letter(col)].width = w
+    for c_i, w in enumerate(widths, 1):
+        ws.column_dimensions[_col_letter(c_i)].width = w
+
+    if not data_rows:
+        nc = ws.cell(row=2, column=1, value="✓ none found")
+        nc.font = Font(name="Calibri", size=11, italic=True, color="808080")
+        last_row = 2
+    else:
+        r = 2
+        for vals in data_rows:
+            for c_i, (val, kind) in enumerate(zip(vals, col_kinds), 1):
+                if kind == "link":
+                    link = _qbo_link(val)
+                    c = ws.cell(row=r, column=c_i, value=link or None)
+                    _format_data_cell(c, "link")
+                else:
+                    c = ws.cell(row=r, column=c_i, value=val)
+                    _format_data_cell(c, kind)
+            r += 1
+        last_row = r - 1
+
+    ref = f"A1:{_col_letter(len(headers))}{last_row}"
+    tbl = Table(displayName=table_name, ref=ref)
+    tbl.tableStyleInfo = TableStyleInfo(
+        name="TableStyleMedium2", showFirstColumn=False,
+        showLastColumn=False, showRowStripes=True, showColumnStripes=False)
+    ws.add_table(tbl)
+    return len(data_rows)
+
+
+def build_audit_sheets(wb, rows: List[dict],
+                       vendor_root: Optional[Dict[str, str]] = None,
+                       vendor_map: Optional[Dict[str, str]] = None) -> int:
+    """QBO audit — ONE sheet per section, each a proper Excel Table (the user
+    2026-08-06: filterable/sortable, no merged banners). Sheets (prefix 'Audit - '):
+      1. Not Approved      — stale NOT APPROVED bills (bill-grain).
+      2. Data Entry        — empty/mismatched Class, line-desc project mismatch.
+      3. Missing Project   — likely job cost with no project # (non-sub).
+      4. Duplicates        — same bill # within a vendor tree (full population).
+      5. FW Misplaced      — FW cost code on a CP / MFD / base-RP#### slab.
+      6. Sub No Project    — a sub bill line with no project #.
+
+    `rows` is the FULL population incl. sub bills. Sections 1–3 keep their exact
+    non-sub behavior; duplicates (4) and FW (5) scan the whole population; the sub
+    section (6) is subs only. Sections 4–6 fold in what the standalone
+    duplicate_bill_audit / item_no_project_audit / sub_bill_audit scripts did.
+    Returns the total flagged-entry count.
+    """
+    today = dt.date.today()
 
     # Split the population: sections 1–3 keep their exact non-sub behavior;
     # duplicates + FW scan the full population; the sub section is subs only.
@@ -1991,7 +2012,7 @@ def build_audit_sheet(ws, rows: List[dict],
     # Duplicates scan the FULL population incl. subs (subsumes duplicate_bill_audit).
     dup_groups = _duplicate_bill_groups(rows, vendor_root, vendor_map)
 
-    # Section 5 — FW cost code on a CP/MFD/base-RP job (full population incl. subs).
+    # FW cost code on a CP/MFD/base-RP job (full population incl. subs).
     fw_flags: List[Tuple[dict, str]] = []
     for r in rows:
         reason = _fw_misplaced(r)
@@ -2001,7 +2022,7 @@ def build_audit_sheet(ws, rows: List[dict],
                                  (x[0].get("project_num") or ""),
                                  (x[0].get("vendor") or "").upper()))
 
-    # Section 6 — SUB bills missing a project # (subsumes sub_bill_audit).
+    # SUB bills missing a project # (subsumes sub_bill_audit).
     sub_missing = [r for r in sub_rows if not (r.get("project_num") or "").strip()]
     sub_missing.sort(key=lambda r: ((r.get("vendor") or "").upper(),
                                     r.get("bill_doc", "")))
@@ -2010,241 +2031,89 @@ def build_audit_sheet(ws, rows: List[dict],
           f"{len(uncoded)} uncoded job-cost, {len(dup_groups)} duplicate-ref group(s), "
           f"{len(fw_flags)} FW-misplaced, {len(sub_missing)} sub missing-project")
 
-    # Amber tint for the Mismatch cell — matches the stale section banner.
-    stale_tint = PatternFill(patternType="solid",
-                             fgColor=Color(rgb="FFFFCC66"), bgColor=Color(rgb="FFFFCC66"))
-    data_tint = PatternFill(patternType="solid",
-                            fgColor=Color(rgb="FFFCE4E4"), bgColor=Color(rgb="FFFCE4E4"))
-
-    cur_row = 2
-
-    # ─── Section 1: Stale NOT APPROVED bills ───
-    # Sub-grouped by aging bucket (90+ → 60–90 → 30–60), vendor-first within
-    # each bucket so the clerk works one vendor at a time without flipping
-    # back and forth across the list.
-    _audit_section_banner(
-        ws, cur_row,
-        f"⚠  NOT APPROVED bills > {NOT_APPROVED_BUFFER_DAYS} days old  "
-        f"({len(stale_bills)} bill{'s' if len(stale_bills) != 1 else ''})",
-        AUDIT_SECTION_STALE_FILL,
-        n_cols,
+    # ── One Table sheet per section ─────────────────────────────────────
+    _audit_table_sheet(
+        wb, "Audit - Not Approved", "tblAuditNotApproved",
+        ["Bill #", "Vendor", "Bill Date", "Customer/Project", "Project #",
+         "Division", "Aging", "Days Old", "Open"],
+        ["text", "text", "date", "text", "text", "text", "text", "flag", "link"],
+        [[s["bill_doc"], s["vendor"], s["bill_date"], s["customer_name"],
+          s["project_num"] or "(none)", s["division"] or "(none)",
+          _aging_bucket_for(s["days_old"]), s["days_old"], s["bill_id"]]
+         for s in stale_bills],
+        [12, 28, 11, 40, 12, 10, 12, 9, 7],
     )
-    cur_row += 1
-    if not stale_bills:
-        _audit_none_row(ws, cur_row)
-        cur_row += 1
-    else:
-        by_bucket: Dict[str, List[dict]] = defaultdict(list)
-        for s in stale_bills:
-            by_bucket[_aging_bucket_for(s["days_old"])].append(s)
-
-        # Render buckets in canonical order (most overdue first)
-        for bucket_label, _, _ in AGING_BUCKETS:
-            bucket_bills = by_bucket.get(bucket_label, [])
-            if not bucket_bills:
-                continue
-            # Vendor-first within bucket; oldest first for a vendor's own group
-            bucket_bills.sort(key=lambda x: (
-                (x["vendor"] or "").upper(),
-                -x["days_old"],
-                x["bill_doc"],
-            ))
-            _audit_sub_banner(
-                ws, cur_row,
-                f"   {bucket_label}  ({len(bucket_bills)} bill"
-                f"{'s' if len(bucket_bills) != 1 else ''})",
-                AUDIT_BUCKET_FILL, n_cols, level=1,
-            )
-            cur_row += 1
-            for s in bucket_bills:
-                values = [
-                    s["bill_doc"], s["vendor"], s["bill_date"], s["customer_name"],
-                    s["project_num"] or "(none)", s["division"] or "(none)",
-                    "",                       # class — bill-level, n/a
-                    "NOT APPROVED",
-                    "",                       # line desc — bill-level, n/a
-                    f"NOT APPROVED — {s['days_old']} days old",
-                    _qbo_link(s["bill_id"]),
-                ]
-                _audit_write_row(ws, cur_row, values, stale_tint, level=2)
-                cur_row += 1
-    cur_row += 1   # spacer row between sections
-
-    # ─── Section 2: Data entry issues ───
-    _audit_section_banner(
-        ws, cur_row,
-        f"Data entry issues  ({len(flagged)} flagged line"
-        f"{'s' if len(flagged) != 1 else ''})",
-        AUDIT_SECTION_DATA_FILL,
-        n_cols,
+    _audit_table_sheet(
+        wb, "Audit - Data Entry", "tblAuditDataEntry",
+        ["Bill #", "Vendor", "Bill Date", "Customer/Project", "Project #",
+         "Division", "Class field (QBO)", "Line Description", "Issue", "Open"],
+        ["text", "text", "date", "text", "text", "text", "text", "text",
+         "text", "link"],
+        [[r.get("bill_doc", ""), r.get("vendor", ""), r.get("bill_date"),
+          r.get("customer_name", ""), r.get("project_num", "") or "(none)",
+          r.get("division", "") or "(none)", r.get("class_name", "") or "(empty)",
+          r.get("line_desc", ""), " · ".join(issues), r.get("bill_id", "")]
+         for r, issues in flagged],
+        [12, 28, 11, 40, 12, 10, 16, 40, 35, 7],
     )
-    cur_row += 1
-    if not flagged:
-        _audit_none_row(ws, cur_row)
-        cur_row += 1
-    else:
-        for r, issues in flagged:
-            values = [
-                r.get("bill_doc", ""), r.get("vendor", ""), r.get("bill_date"),
-                r.get("customer_name", ""),
-                r.get("project_num", "") or "(none)",
-                r.get("division", "") or "(none)",
-                r.get("class_name", "") or "(empty)",
-                "",                       # memo placeholder
-                r.get("line_desc", ""),
-                " · ".join(issues),
-                _qbo_link(r.get("bill_id", "")),
-            ]
-            _audit_write_row(ws, cur_row, values, data_tint, level=1)
-            cur_row += 1
-    cur_row += 1   # spacer row between sections
-
-    # ─── Section 3: Uncoded JOB-COST lines (missing project) ───
-    # Only high-confidence job-cost misses — overhead-only uncoded lines are
-    # skipped so the audit isn't flooded (the user 2026-06-18).
-    _audit_section_banner(
-        ws, cur_row,
-        f"⛔  Likely job cost — MISSING project  ({len(uncoded)} line"
-        f"{'s' if len(uncoded) != 1 else ''})",
-        AUDIT_SECTION_UNCODED_FILL,
-        n_cols,
+    _audit_table_sheet(
+        wb, "Audit - Missing Project", "tblAuditMissingProject",
+        ["Bill #", "Vendor", "Bill Date", "Customer/Project", "Division",
+         "Class field (QBO)", "Line Description", "Reason", "Open"],
+        ["text", "text", "date", "text", "text", "text", "text", "text", "link"],
+        [[r.get("bill_doc", ""), r.get("vendor", ""), r.get("bill_date"),
+          r.get("customer_name", "") or "(none)", division,
+          r.get("class_name", "") or "(empty)", r.get("line_desc", ""),
+          reason, r.get("bill_id", "")]
+         for r, reason, division in uncoded],
+        [12, 28, 11, 40, 10, 16, 40, 45, 7],
     )
-    cur_row += 1
-    if not uncoded:
-        _audit_none_row(ws, cur_row)
-        cur_row += 1
-    else:
-        for r, reason, division in uncoded:
-            values = [
-                r.get("bill_doc", ""), r.get("vendor", ""), r.get("bill_date"),
-                r.get("customer_name", "") or "(none)",
-                "(none)",                                  # Project # (parsed)
-                division,                                  # Division (implied by class)
-                r.get("class_name", "") or "(empty)",
-                "",                                        # memo placeholder
-                r.get("line_desc", ""),
-                reason,
-                _qbo_link(r.get("bill_id", "")),
-            ]
-            _audit_write_row(ws, cur_row, values, AUDIT_UNCODED_CELL_FILL, level=1)
-            # Age-escalate the Bill Date cell (col 3): a project # left blank
-            # because it's unknown should be resolved within ~2 weeks.
-            age_fill = _missing_project_age_fill(r.get("bill_date"), today)
-            if age_fill is not None:
-                ws.cell(row=cur_row, column=3).fill = age_fill
-            cur_row += 1
-    cur_row += 1   # spacer row between sections
-
-    # ─── Section 4: Duplicate bill # within a vendor tree ───
-    # Same ref # on 2+ bills under one vendor tree = double-entry / double-pay
-    # risk. Grouped per (tree, ref #); matching totals are the strongest signal.
-    n_dup_bills = sum(len(g) for g in dup_groups)
-    _audit_section_banner(
-        ws, cur_row,
-        f"🔁  Duplicate bill # in a vendor tree  ({len(dup_groups)} group"
-        f"{'s' if len(dup_groups) != 1 else ''})",
-        AUDIT_SECTION_DUP_FILL,
-        n_cols,
+    # Duplicates — flatten groups to rows, a "Same Amount?" flag per group.
+    dup_data = []
+    for g in dup_groups:
+        same_amt = len({round(b["bill_total"], 2) for b in g}) == 1
+        flag = "YES — same $" if same_amt else "NO — amounts differ"
+        for b in g:
+            dup_data.append([
+                b["bill_doc"], b["vendor"], b["bill_date"], b["customer_name"],
+                b["root_name"] or b["vendor"], round(float(b["bill_total"]), 2),
+                flag, b["bill_id"]])
+    _audit_table_sheet(
+        wb, "Audit - Duplicates", "tblAuditDuplicates",
+        ["Ref #", "Vendor", "Bill Date", "Customer/Project", "Vendor Tree",
+         "Bill Total", "Same Amount?", "Open"],
+        ["text", "text", "date", "text", "text", "money", "text", "link"],
+        dup_data,
+        [14, 28, 11, 40, 28, 14, 18, 7],
     )
-    cur_row += 1
-    if not dup_groups:
-        _audit_none_row(ws, cur_row)
-        cur_row += 1
-    else:
-        for g in dup_groups:
-            totals = {round(b["bill_total"], 2) for b in g}
-            same_amt = len(totals) == 1
-            amt_note = (f"same amount ${next(iter(totals)):,.2f}" if same_amt
-                        else "AMOUNTS DIFFER")
-            root_name = g[0]["root_name"] or g[0]["vendor"]
-            _audit_sub_banner(
-                ws, cur_row,
-                f"   #{g[0]['bill_doc']}  ·  {root_name}  ·  {len(g)} bills  ·  {amt_note}",
-                AUDIT_DUP_GROUP_FILL, n_cols, level=1,
-            )
-            cur_row += 1
-            for b in g:
-                mismatch = ("Duplicate ref — same $ as its copies"
-                            if same_amt else "Duplicate ref — amount differs")
-                values = [
-                    b["bill_doc"], b["vendor"], b["bill_date"],
-                    b["customer_name"],
-                    "", "", "",               # project / division / class — n/a here
-                    "",                       # memo placeholder
-                    f"Bill total ${b['bill_total']:,.2f}",
-                    mismatch,
-                    _qbo_link(b["bill_id"]),
-                ]
-                _audit_write_row(ws, cur_row, values, AUDIT_DUP_CELL_FILL, level=2)
-                cur_row += 1
-    cur_row += 1   # spacer row between sections
-
-    # ─── Section 5: FW (flatwork) cost code where it doesn't belong ───
-    # FW on any CP/MFD job or a base RP#### slab — flatwork belongs to RP and
-    # only ever on the -FTW project. Scans the full population incl. subs.
-    _audit_section_banner(
-        ws, cur_row,
-        f"🚫  FW code on a CP / MFD / RP-slab job  ({len(fw_flags)} line"
-        f"{'s' if len(fw_flags) != 1 else ''})",
-        AUDIT_SECTION_FW_FILL,
-        n_cols,
+    _audit_table_sheet(
+        wb, "Audit - FW Misplaced", "tblAuditFW",
+        ["Bill #", "Vendor", "Bill Date", "Customer/Project", "Project #",
+         "Division", "Cost Code", "Sub?", "Line Description", "Reason", "Open"],
+        ["text", "text", "date", "text", "text", "text", "text", "text",
+         "text", "text", "link"],
+        [[r.get("bill_doc", ""), r.get("vendor", ""), r.get("bill_date"),
+          r.get("customer_name", "") or "(none)",
+          r.get("project_num", "") or "(none)", r.get("division", "") or "(none)",
+          r.get("cost_code", ""), "SUB" if r.get("is_sub") else "",
+          r.get("line_desc", ""), reason, r.get("bill_id", "")]
+         for r, reason in fw_flags],
+        [12, 28, 11, 40, 12, 10, 12, 7, 36, 44, 7],
     )
-    cur_row += 1
-    if not fw_flags:
-        _audit_none_row(ws, cur_row)
-        cur_row += 1
-    else:
-        for r, reason in fw_flags:
-            values = [
-                r.get("bill_doc", ""), r.get("vendor", ""), r.get("bill_date"),
-                r.get("customer_name", "") or "(none)",
-                r.get("project_num", "") or "(none)",
-                r.get("division", "") or "(none)",
-                r.get("class_name", "") or "(empty)",
-                "SUB" if r.get("is_sub") else "",
-                r.get("line_desc", ""),
-                reason,
-                _qbo_link(r.get("bill_id", "")),
-            ]
-            _audit_write_row(ws, cur_row, values, AUDIT_FW_CELL_FILL, level=1)
-            cur_row += 1
-    cur_row += 1   # spacer row between sections
-
-    # ─── Section 6: SUB bills missing a project # ───
-    # Subs are off the display sheets; a sub line with no project # is still a
-    # real coding gap (folded in from sub_bill_audit, the user 2026-08-06).
-    _audit_section_banner(
-        ws, cur_row,
-        f"🧾  SUB bill line — MISSING project  ({len(sub_missing)} line"
-        f"{'s' if len(sub_missing) != 1 else ''})",
-        AUDIT_SECTION_SUB_FILL,
-        n_cols,
+    _audit_table_sheet(
+        wb, "Audit - Sub No Project", "tblAuditSubNoProject",
+        ["Bill #", "Vendor", "Bill Date", "Customer/Project", "Cost Code",
+         "Line Description", "Open"],
+        ["text", "text", "date", "text", "text", "text", "link"],
+        [[r.get("bill_doc", ""), r.get("vendor", ""), r.get("bill_date"),
+          r.get("customer_name", "") or "(none)", r.get("cost_code", ""),
+          r.get("line_desc", ""), r.get("bill_id", "")]
+         for r in sub_missing],
+        [12, 28, 11, 40, 12, 44, 7],
     )
-    cur_row += 1
-    if not sub_missing:
-        _audit_none_row(ws, cur_row)
-        cur_row += 1
-    else:
-        for r in sub_missing:
-            values = [
-                r.get("bill_doc", ""), r.get("vendor", ""), r.get("bill_date"),
-                r.get("customer_name", "") or "(none)",
-                "(none)",
-                "(none)",
-                r.get("class_name", "") or "(empty)",
-                "SUB",
-                r.get("line_desc", ""),
-                "Sub bill line has no project #",
-                _qbo_link(r.get("bill_id", "")),
-            ]
-            _audit_write_row(ws, cur_row, values, AUDIT_SUB_CELL_FILL, level=1)
-            age_fill = _missing_project_age_fill(r.get("bill_date"), today)
-            if age_fill is not None:
-                ws.cell(row=cur_row, column=3).fill = age_fill
-            cur_row += 1
 
-    return (len(stale_bills) + len(flagged) + len(uncoded) + n_dup_bills
-            + len(fw_flags) + len(sub_missing))
+    return (len(stale_bills) + len(flagged) + len(uncoded)
+            + sum(len(g) for g in dup_groups) + len(fw_flags) + len(sub_missing))
 
 
 # ─────────────────────── main ───────────────────────
@@ -2417,7 +2286,8 @@ def main() -> int:
     ws_bills = wb.create_sheet("Bills")
     ws_liens = wb.create_sheet("Liens")
     ws_inv   = wb.create_sheet("Inventory")
-    ws_audit = wb.create_sheet("QBO Audit")
+    # The audit is now one Excel Table per section (build_audit_sheets), each on
+    # its own "Audit - …" sheet — created after the display sheets, below.
     # MFD/RP/CP division sheets removed 2026-07-13 (unused; Project # is on Bills).
     # Bill payments show as Pay columns on Bills, not a separate sheet (2026-07-13).
 
@@ -2438,8 +2308,8 @@ def main() -> int:
         lien_editable=True,               # Bills is the only sheet with the Lien tag + dropdown
     )
     build_liens_sheet(ws_liens)       # live FILTER view of tblBills (Lien set)
-    n_audit = build_audit_sheet(ws_audit, all_rows,
-                                vendor_root=vendor_root, vendor_map=vendor_map)
+    n_audit = build_audit_sheets(wb, all_rows,
+                                 vendor_root=vendor_root, vendor_map=vendor_map)
     print(f"  Bills: {n_bills} bills (open + paid since {PAID_CUTOFF_DATE})")
     print(f"  Liens: live view  ·  Inventory: {n_inv} lines  ·  Audit: {n_audit} flagged")
 

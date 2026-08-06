@@ -50,37 +50,39 @@ the audit only; they are **never** shown as a column on the display sheets.
 |---|---|---|
 | `Bills` | bill | one row per bill; multi-project bills show `(multiple)`, drill to Inventory |
 | `Inventory` | line | per-line drill-down for multi-project bills |
-| `QBO Audit` | mixed | six collapsible sections — see below |
 | `Liens` | — | live Excel FILTER over the Bills table (Lien set) |
+| `Audit - …` (×6) | mixed | one proper Excel Table per audit section — see below |
 
 `Lien` and `Notes` on the Bills sheet are user-editable and **preserved** across runs
 (keyed by `Bill.Id-Line.Id`).
 
-## QBO Audit sheet — six sections
+## The audit — one Excel Table per section (the user 2026-08-06)
 
-Each renders its banner + count even at zero (a `✓ none` row), so no check silently
-disappears. All share one 11-column layout; every data row deep-links to the bill in QBO.
+Each section is its own **`Audit - …` sheet** wrapped in a proper Excel Table, so every
+column filters and sorts natively (banners can't live inside a table — that's why they're
+separate sheets). Every data row deep-links to the bill in QBO via the `Open` column. An
+empty section still renders a valid one-row table (`✓ none found`).
 
-1. **Stale NOT APPROVED bills** — aged past `NOT_APPROVED_BUFFER_DAYS`, bucketed by age.
-2. **Data entry issues** — empty/mismatched Class, line-desc project mismatch.
-3. **Likely job cost — MISSING project** — high-confidence uncoded job costs (non-sub).
-4. **Duplicate bill #** in a vendor tree — double-entry / double-pay risk (all bills).
-5. **FW code on a CP / MFD / RP-slab job** — flatwork miscode. FW is legitimate ONLY on
-   the `-FTW` project; it is flagged on any CP job, any MFD job, or a base `RP####` slab.
-   Division/slab are read from the project #, never the Class field.
-6. **SUB bill line — MISSING project** — a sub bill line with no project #.
+| Sheet | Catches |
+|---|---|
+| `Audit - Not Approved` | Stale NOT APPROVED bills aged past `NOT_APPROVED_BUFFER_DAYS` (Aging + Days Old columns) |
+| `Audit - Data Entry` | Empty/mismatched Class, line-desc project mismatch |
+| `Audit - Missing Project` | High-confidence uncoded job costs with no project # (non-sub) |
+| `Audit - Duplicates` | Same bill # within a vendor tree — double-entry / double-pay risk (all bills) |
+| `Audit - FW Misplaced` | **FW flatwork code on any CP job, MFD job, or base `RP####` slab** — legit only on `-FTW`; division/slab from the project #, never Class. Has Cost Code + Sub? columns |
+| `Audit - Sub No Project` | A sub bill line with no project # |
 
-Sections 4–6 fold in what the standalone `duplicate_bill_audit.py`,
-`item_no_project_audit.py`, and `sub_bill_audit.py` scripts used to do — they were
-retired 2026-08-06 (one tool, one workbook). History note: the audit covers the
-tracker's population (open + paid-since-`PAID_CUTOFF_DATE`); the retired scripts could
-scan all-time, so pre-cutoff **paid** bills are out of the audit's window.
+The last three fold in what the standalone `duplicate_bill_audit.py`,
+`item_no_project_audit.py`, and `sub_bill_audit.py` scripts used to do — retired 2026-08-06
+(one tool, one workbook). History note: the audit covers the tracker's population (open +
+paid-since-`PAID_CUTOFF_DATE`); the retired scripts could scan all-time, so pre-cutoff
+**paid** bills are out of the audit's window.
 
 ## Audits — the remaining standalone drill
 
 `job_coding_audit.py` stays as an on-demand, per-job investigation (via the `audit-job`
-shell alias) — a different workflow from the always-on QBO Audit sheet. It writes a
-plain xlsx and never edits QBO.
+shell alias) — a different workflow from the always-on `Audit - …` table sheets. It writes
+a plain xlsx and never edits QBO.
 
 | Script | Flags | Catches |
 |---|---|---|
