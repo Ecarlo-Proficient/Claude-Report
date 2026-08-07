@@ -717,3 +717,20 @@ Meeting-prep QC (the user 2026-08-07):
 
 ETC takeoff fallback now fills 9 of 11 (RP6766-FTW resolved a takeoff this run);
 2 still blank (RP7234-FTW, RP6901 — no cost sheet in the folder).
+
+## 2026-08-07 — Test-Master: home type in TYPE + two more bank drops
+
+- **Custom/Tract folded into the residential TYPE** (the user 2026-08-07: "add
+  custom/tract before slab"): the bank label now reads "Residential — Custom —
+  Slab" / "Residential — Tract — Slab" (and Flatwork). Done in the bank_rows
+  relabel loop from `row.home_type`; MFD/CP unchanged. TYPE width 22 → 32.
+- **RP6586 and CP585 dropped from the bank report** (added to
+  `_BANK_EXCLUDE_JOBS` with RP6901). They remain on the working Test - RP /
+  Test - CP tabs. Test-Master now 93 rows.
+
+## OPEN ISSUES
+- **RP6901-FTW still on Test-Master** with broken numbers (billed $46,662 on an
+  $8,342 contract, cost 4.6× ETC, 465% "complete"). RP6901 (slab) is excluded
+  but the -FTW twin is a distinct project # — exclude it too if the owner agrees.
+- RP-file duplicate lines flagged: RP6938-FTW (numbers differ) and RP6858-FTW.
+- RP7234-FTW still blank ETC (no takeoff cost sheet).

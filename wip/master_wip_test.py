@@ -97,7 +97,9 @@ def master_cols():
             "home_type",              # Tract/Custom — dropped for the bank report
             "base_contract", "co_revenue",       # collapse to TOTAL CONTRACT PRICE
             "base_etc", "co_cost_estimate"}      # collapse to ESTIMATED TOTAL COSTS
-    cols = [("TYPE", 22, "section")]   # the division, renamed from SECTION
+    cols = [("TYPE", 32, "section")]   # division + home type (Residential —
+    #                                    Custom — Slab); wide enough for the
+    #                                    longest folded label (the user 2026-08-07)
     for label, width, field in W.COLS:
         if field in drop:
             continue
@@ -118,9 +120,9 @@ _BANK_EXCLUDE = {"FTW — OFF-SCHEDULE (COSTS)", "FTW BACKLOG",
                  "RP — DROPPED, UNBILLED"}
 
 # Specific jobs kept OFF the bank report — billed out / done (the user
-# 2026-08-06: "drop rp6901, already billed out"). They still appear on the
-# working 'Test - RP' tab.
-_BANK_EXCLUDE_JOBS = {"RP6901"}
+# 2026-08-06: "drop rp6901, already billed out"; 2026-08-07: also RP6586 and
+# CP585). They still appear on the working 'Test - RP' / 'Test - CP' tabs.
+_BANK_EXCLUDE_JOBS = {"RP6901", "RP6586", "CP585"}
 
 
 def existing_project_nums(wip_path: Path, tab_name: str = "Test-Master"):
@@ -295,7 +297,14 @@ def main() -> int:
                  and not r.is_completed
                  and r.project_num.upper() not in _BANK_EXCLUDE_JOBS]
     for row in bank_rows:                         # division → spelled-out label
-        row.section = RP.SECTION_LABEL.get(row.section, row.section)
+        label = RP.SECTION_LABEL.get(row.section, row.section)
+        # Fold the home type into the residential TYPE, before the scope word
+        # (the user 2026-08-07: "add custom/tract before slab to indicate what
+        # type of home it is") → "Residential — Custom — Slab".
+        ht = getattr(row, "home_type", None)
+        if ht in ("Tract", "Custom") and label.startswith("Residential — "):
+            label = label.replace("Residential — ", f"Residential — {ht} — ", 1)
+        row.section = label
 
     import datetime as dt
     try:
