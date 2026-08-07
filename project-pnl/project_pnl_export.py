@@ -5133,7 +5133,10 @@ def build_sheet_job_rp(
     # page, in the free header cell to the right of the 4-col RP layout.
     _home_url = _qbo_customer_url(cust_info.get("id", ""), realm)
     if _home_url:
-        _hc = ws.cell(row=2, column=5, value="Open Project in QBO  ↗")
+        # Column 9, NOT 5: the meta block merges A2:H2 (subtitle), and writing
+        # into a merged cell raises 'MergedCell.value is read-only' — the CP/MFD
+        # template already dodges this by using I2 (fixed 2026-08-06).
+        _hc = ws.cell(row=2, column=9, value="Open Project in QBO  ↗")
         _hc.hyperlink = _home_url
         _hc.font = Font(size=BASE_SIZE, color="0563C1", underline="single")
     r += 1
@@ -6708,7 +6711,7 @@ def main() -> int:
 
     print(f"\n  {_DIM}Authenticating to QBO (Touch ID)…{_RESET}")
     access, company_id = load_credentials()
-    ui_step("Connected to QBO", f"company {company_id}")
+    ui_step("Connected to QBO")
     cust_map = build_project_customer_map(access, company_id)
     ui_step("Project → customer map", f"{len(cust_map)} projects")
     ui_step("WIP master loaded", f"{len(wip_master)} rows")
@@ -6740,6 +6743,9 @@ def main() -> int:
                 generated.append(path)
         except Exception as e:
             ui_fail(f"{proj}: {e}")
+            if os.getenv("ACB_DEBUG"):
+                import traceback
+                traceback.print_exc()
 
     for rf in report_files:
         try:

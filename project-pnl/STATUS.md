@@ -128,6 +128,13 @@ manual close), RP (no draws — expenses → invoice → profit).
   structural change was needed.
 - Overhead: 10% of revenue (MFD alt view 9% on costs).
 
+- **RP template fixed 2026-08-06**: the "Open Project in QBO" header link
+  (added 7fa2b40) wrote E2 on the RP Job P&L — inside the meta block's A2:H2
+  subtitle merge → 'MergedCell.value is read-only' crash on every RP run.
+  Moved to I2, matching the CP/MFD template. Also: the run no longer echoes
+  the QBO company/realm id (same convention as cc2035f), and ACB_DEBUG=1 now
+  prints full tracebacks behind the per-project ✗ lines.
+
 ## OPEN ISSUES
 
 - **6 of 17 Active CP jobs now have a readable cost-code budget.** The newer
