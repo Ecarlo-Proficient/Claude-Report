@@ -699,3 +699,21 @@ blank + flagged** because their folder has only a proposal / no cost sheet
   re-run this session — regenerate it to pick up the 8 filled RP ETCs.
 - 3 RP jobs need a `JobTread Cost Gral` budget sheet added to their takeoff before
   their ETC can be read.
+
+## 2026-08-07 — Test - RP: marks moved to the end + stale columns cleaned
+
+Meeting-prep QC (the user 2026-08-07):
+- **SCHEDULE / GENERAL LIST / JOBTREAD moved to the VERY END** of Test - RP
+  (after LEFT TO BILL), not after STATUS — `rp_tab_cols` appends them last.
+- **Orphan tiny columns cleaned.** A narrower rewrite (the lean Test - RP, and
+  the plain Test-Master) left old column widths floating to the right of the
+  data — Test - RP had AF–AI (width 4–7), Test-Master had W–AA (one at width
+  60). New `wip_writer._clear_stale_columns(ws, last_used)` drops every column
+  dimension past the last real column on every tab; the spacer between the data
+  and the hidden `«base»` baseline block is now hidden too. The `«base»` columns
+  themselves are the edit-tracking baseline (hidden by design) — left as-is.
+- QC verified: Test - RP / Test-Master / Test - CP all clean past their last
+  column; `«base»` block + spacer hidden; workbook reopens without repair.
+
+ETC takeoff fallback now fills 9 of 11 (RP6766-FTW resolved a takeoff this run);
+2 still blank (RP7234-FTW, RP6901 — no cost sheet in the folder).

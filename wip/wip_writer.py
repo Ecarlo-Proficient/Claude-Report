@@ -679,7 +679,22 @@ def _apply_edit_formatting(ws, cols_, hdr_row: int, first_row: int,
             f"{cL}{first_row}:{cL}{last_row}",
             FormulaRule(formula=[f"{cL}{first_row}<>{bL}{first_row}"],
                         fill=EDIT_FILL, font=EDIT_FONT, stopIfTrue=False))
-    return base_col
+    # The spacer between the visible table and the hidden baseline block is
+    # hidden too, so the tab ends cleanly at its last real column (the user
+    # 2026-08-07). Stale widths further right are cleared by the caller.
+    ws.column_dimensions[get_column_letter(len(cols_) + 1)].hidden = True
+    return base_col + n - 1 if n else len(cols_)
+
+
+def _clear_stale_columns(ws, last_used: int) -> None:
+    """Drop column widths / hidden flags to the RIGHT of last_used. When a tab
+    is rewritten NARROWER than a previous run (e.g. the lean 'Test - RP'), the
+    old layout's column dimensions linger as orphan tiny columns — this removes
+    them so the sheet has nothing floating past its data (the user 2026-08-07:
+    'a lot of columns hidden aka width is tiny')."""
+    for L in [c for c in list(ws.column_dimensions.keys())
+              if column_index_from_string(c) > last_used]:
+        del ws.column_dimensions[L]
 
 
 def read_owner_edits(ws, hdr_row: Optional[int],
@@ -1549,8 +1564,11 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
         # the locked deliverable, never edited, so edit-tracking is pointless
         # and its conditional formatting would add colour back.
         if not plain_report:
-            _apply_edit_formatting(ws, cols_, hdr_row, data_start, last_row,
-                                   src_by_row)
+            base_last = _apply_edit_formatting(ws, cols_, hdr_row, data_start,
+                                               last_row, src_by_row)
+            _clear_stale_columns(ws, base_last)
+        else:
+            _clear_stale_columns(ws, len(cols_))
 
         # Flag unusually high margins (the user 2026-08-07: highlight any
         # GROSS PROFIT % over 30% — too good to be true usually means a

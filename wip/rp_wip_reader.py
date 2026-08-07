@@ -455,11 +455,11 @@ def rp_tab_cols():
     """'Test - RP' columns — the LEAN working view (the user 2026-08-07: "make
     Test - RP leaner so I can just spot the project numbers more easily").
 
-    Identity + the three "where is it at?" marks from the owner's file
-    (SCHEDULE / GENERAL LIST / JOBTREAD) up front, then the core WIP numbers.
-    DROPPED vs the full layout: REVENUES/PROFIT EARNED, OVER/UNDERBILLINGS,
-    FUTURE PROFIT, PURE JOB BORROW, LAST SYNCED (the row-2 report date is the
-    sync date), and NOTES."""
+    Identity + core WIP numbers, then the three "where is it at?" marks from
+    the owner's file (SCHEDULE / GENERAL LIST / JOBTREAD) at the VERY END (the
+    user 2026-08-07). DROPPED vs the full layout: REVENUES/PROFIT EARNED,
+    OVER/UNDERBILLINGS, FUTURE PROFIT, PURE JOB BORROW, LAST SYNCED (the row-2
+    report date is the sync date), and NOTES."""
     drop = {"retainage_held", "notes_text", "_last_synced", "_notes_all",
             "_earned_revenue", "profit_earned", "overbillings", "underbillings",
             "future_profit", "job_borrow"}
@@ -471,10 +471,11 @@ def rp_tab_cols():
         if field == "project_name":
             cols.append(("TYPE", 9, "home_type"))
             cols.append(("BUILDER", 24, "client"))
-        if field == "_active_status":          # after STATUS, before the money
-            cols.append(("SCHEDULE", 11, "sched_mark"))
-            cols.append(("GENERAL LIST", 13, "gl_mark"))
-            cols.append(("JOBTREAD", 11, "jt_mark"))
+    # The three status marks trail the money columns (the user 2026-08-07: put
+    # Schedule / GL / JobTread "at the very end").
+    cols.append(("SCHEDULE", 11, "sched_mark"))
+    cols.append(("GENERAL LIST", 13, "gl_mark"))
+    cols.append(("JOBTREAD", 11, "jt_mark"))
     return cols
 
 
