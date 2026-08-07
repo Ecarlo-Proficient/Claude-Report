@@ -540,6 +540,10 @@ def _row_display_value(row: CpRow, field_name: str, sync_ts: str):
     (formula fields are written via _build_formula, never here)."""
     if field_name == "_active_status":
         return "Closed" if row.is_completed else "Active"
+    if field_name == "_bonded":
+        # Bank-report BONDED column — "N" on every job (none bonded; the user
+        # 2026-08-06). A per-job bonded source would replace the constant.
+        return "N"
     if field_name == "why_link":
         return "why ⇗" if row.why_link else None
     if field_name == "_folder_link":

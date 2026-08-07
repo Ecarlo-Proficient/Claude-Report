@@ -101,6 +101,12 @@ def master_cols():
     for label, width, field in W.COLS:
         if field in drop:
             continue
+        if field == "_active_status":
+            # The bank report carries only active WIP (closed jobs are excluded
+            # outright), so the STATUS column is repurposed as BONDED — "N" on
+            # every job (none are bonded) — the user 2026-08-06.
+            cols.append(("BONDED", 10, "_bonded"))
+            continue
         cols.append((label, width, field))
     return cols
 
@@ -110,6 +116,11 @@ def master_cols():
 # backlog, no dropped/unbilled. These are the raw section keys (pre-label).
 _BANK_EXCLUDE = {"FTW — OFF-SCHEDULE (COSTS)", "FTW BACKLOG",
                  "RP — DROPPED, UNBILLED"}
+
+# Specific jobs kept OFF the bank report — billed out / done (the user
+# 2026-08-06: "drop rp6901, already billed out"). They still appear on the
+# working 'Test - RP' tab.
+_BANK_EXCLUDE_JOBS = {"RP6901"}
 
 
 def existing_project_nums(wip_path: Path, tab_name: str = "Test-Master"):
@@ -276,9 +287,13 @@ def main() -> int:
                     + ftw_active + ftw_backlog)
     # SECTION shows the division spelled out, not the internal code.
     # Bank-facing Test-Master shows only clean ACTIVE WIP — no off-schedule,
-    # backlog, or dropped/unbilled (the user 2026-08-06). Those rows stay on
+    # backlog, or dropped/unbilled sections, no CLOSED jobs, and no jobs the
+    # owner has called done (RP6901) — the user 2026-08-06. Those rows stay on
     # the working 'Test - RP' tab (rp_sorted), just not on the bank report.
-    bank_rows = [r for r in all_rows if r.section not in _BANK_EXCLUDE]
+    bank_rows = [r for r in all_rows
+                 if r.section not in _BANK_EXCLUDE
+                 and not r.is_completed
+                 and r.project_num.upper() not in _BANK_EXCLUDE_JOBS]
     for row in bank_rows:                         # division → spelled-out label
         row.section = RP.SECTION_LABEL.get(row.section, row.section)
 
@@ -287,7 +302,9 @@ def main() -> int:
         wrote = W.write_test_cp(
             bank_rows, W.WIP_EXCEL_PATH,
             dry_run=args.dry_run, tab_name="Test-Master",
-            cols=master_cols(), default_filter_active=True,
+            # No STATUS/active filter — closed jobs are excluded outright, so
+            # every row on the bank report is active by construction.
+            cols=master_cols(), default_filter_active=False,
             title="WIP REPORT",
             summary=True,
             qbo_links_only=True,

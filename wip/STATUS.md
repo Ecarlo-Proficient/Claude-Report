@@ -631,3 +631,16 @@ REMOVED block in the change audit.
 Working tabs unchanged: 'Test - CP' and 'Test - RP' keep colours, the CO
 columns, edit-tracking, and every section. Verified: Test-Master data cells
 have ZERO coloured fonts / fills; Test - RP still has its 588 coloured cells.
+
+## 2026-08-06 (later) — bank report: BONDED column, closed jobs excluded
+
+- The Test-Master STATUS column is now **BONDED** = "N" on every job (the user
+  2026-08-06). The bank report carries only active WIP, so the old Active/Closed
+  STATUS was redundant; the slot now shows bonding, "N" for all (none bonded —
+  a per-job source would replace the constant).
+- Closed jobs are excluded from the bank report OUTRIGHT (not just filter-hidden)
+  and `default_filter_active=False` — every row is active by construction.
+- `_BANK_EXCLUDE_JOBS = {"RP6901"}` — billed out / done, dropped from the bank
+  report (the user: "already billed out"). It stays on the working 'Test - RP'.
+  Test-Master 96 → 95 rows. Verified: BONDED = {'N'} across all jobs, RP6901
+  absent from Test-Master but present on Test - RP.
