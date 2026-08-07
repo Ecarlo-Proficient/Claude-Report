@@ -487,7 +487,12 @@ def _build_formula(field_name: str, row_num: int,
     blank output (never a false zero or #DIV/0), matching the Python
     None-cascades."""
     def ref(f: str) -> str:
-        return col_letter_by_field[f] + str(row_num)
+        # Tolerant of a LEAN layout that drops some columns (Test - RP, the
+        # user 2026-08-07): these refs are computed eagerly for readability, so
+        # a missing column must not KeyError. The formulas that are actually
+        # RETURNED never reference a column their tab dropped.
+        cl = col_letter_by_field.get(f)
+        return f"{cl}{row_num}" if cl else "#REF!"
 
     F  = ref("contract_price")     # Total Contract Price (value)
     I  = ref("etc")                # Estimated Total Costs (value)
@@ -989,6 +994,12 @@ def _write_summary(ws, cols_, col_letter_by_field, data_start: int,
         c.number_format = PCT_FMT
 
     # ── FUTURE WIP CASH FLOW block ──
+    # Needs the earned-revenue + over/under-billing columns. A LEAN layout
+    # (Test - RP, the user 2026-08-07) drops them, so skip the block there —
+    # the TOTALS row above is enough. Returns the first free row.
+    if not all(L(f) for f in ("_earned_revenue", "underbillings",
+                              "overbillings", "cost_to_complete")):
+        return tot + 2
     # Label and amount sit SIDE BY SIDE in a bordered box (the user
     # 2026-08-03: "why is numbers far from this? where are the dividers and
     # lines?"). Label spans cols A:B, the amount C:D, so nothing is stranded
@@ -1099,7 +1110,8 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                   audit_xlsx: Optional[Path] = None,
                   protect: bool = False,
                   live_formulas: bool = False,
-                  plain_report: bool = False) -> bool:
+                  plain_report: bool = False,
+                  gp_highlight_over: Optional[float] = None) -> bool:
     """Write rows to the given WIP tab (default 'Test - CP'; RP passes
     'Test - RP'). Same structure/formatting for every division. Guarded by
     wip_excel_guard. Returns True if written, False if skipped (dry-run, or the
@@ -1539,6 +1551,19 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
         if not plain_report:
             _apply_edit_formatting(ws, cols_, hdr_row, data_start, last_row,
                                    src_by_row)
+
+        # Flag unusually high margins (the user 2026-08-07: highlight any
+        # GROSS PROFIT % over 30% — too good to be true usually means a
+        # missing cost). Amber fill via conditional formatting.
+        if (gp_highlight_over is not None and "gross_profit_pct" in col_idx
+                and last_row >= data_start):
+            from openpyxl.formatting.rule import CellIsRule
+            _gcl = get_column_letter(col_idx["gross_profit_pct"])
+            ws.conditional_formatting.add(
+                f"{_gcl}{data_start}:{_gcl}{last_row}",
+                CellIsRule(operator="greaterThan",
+                           formula=[str(gp_highlight_over)],
+                           fill=PatternFill("solid", fgColor="FFC7CE")))
 
         if summary:
             next_row = _write_summary(ws, cols_, col_letter_by_field,

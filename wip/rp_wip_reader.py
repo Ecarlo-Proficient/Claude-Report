@@ -162,7 +162,8 @@ _RP_FILE_BANDS = (
 # back to these positions when a header isn't found. Header-driven lookup means
 # a future column move no longer breaks the sync.
 _RP_FILE_COL = {"job": 1, "addr": 2, "builder": 3, "contract": 4, "etc": 5,
-                "billed": 6, "costs": 7, "sched": 9, "action": 11, "co": 12}
+                "billed": 6, "costs": 7, "sched": 9, "gl": 10, "jt": 11,
+                "action": 13, "co": 14}
 
 # field → the header text(s) that identify its column on the 'RP WIP' sheet
 # (header row 2; matched case-insensitively, first word-substring wins).
@@ -170,7 +171,8 @@ _RP_HEADER = {
     "job": ("JOB #",), "addr": ("ADDRESS",), "builder": ("BUILDER",),
     "contract": ("CONTRACT $",), "etc": ("ETC $",),
     "billed": ("BILLED TO DATE",), "costs": ("COSTS TO DATE",),
-    "sched": ("SCHEDULE",), "action": ("ACTION",), "co": ("CO $",),
+    "sched": ("SCHEDULE",), "gl": ("GENERAL LIST",), "jt": ("JOBTREAD",),
+    "action": ("ACTION",), "co": ("CO $",),
 }
 
 
@@ -323,6 +325,15 @@ def read_rp_from_file(xlsx_path: Path):
                 row.cell_marks[fld] = mark
                 if fld in ("billed_to_date", "costs_to_date"):
                     row.qbo_protect[fld] = getattr(row, fld)
+        # The "where is it at?" marks carried straight from the file: SCHEDULE /
+        # GENERAL LIST / JOBTREAD (the user 2026-08-07). ✓ renders green, ✗ red,
+        # so Test - RP shows at a glance where each project stands.
+        for attr, ccol in (("sched_mark", "sched"), ("gl_mark", "gl"),
+                           ("jt_mark", "jt")):
+            mk = str(ws.cell(r, C[ccol]).value or "").strip() if C.get(ccol) else ""
+            setattr(row, attr, mk or None)
+            if mk in ("✓", "✗"):
+                row.cell_marks[attr] = "006100" if mk == "✓" else "9C0006"
         seen[job] = row
         rows.append(row)
     wb.close()
@@ -369,12 +380,17 @@ def classify_from_file(rows):
 
 
 def rp_tab_cols():
-    """'Test - RP' columns — the master standard plus the RP-only extras.
+    """'Test - RP' columns — the LEAN working view (the user 2026-08-07: "make
+    Test - RP leaner so I can just spot the project numbers more easily").
 
-    CATEGORY describes the row; TYPE stays Tract/Custom exactly as on the
-    master layout. This is a WORKING tab, so unlike Test-Master it keeps the
-    commentary and the sync stamp (money_bleeds reads both from here)."""
-    drop = {"retainage_held", "notes_text", "_last_synced", "_notes_all"}
+    Identity + the three "where is it at?" marks from the owner's file
+    (SCHEDULE / GENERAL LIST / JOBTREAD) up front, then the core WIP numbers.
+    DROPPED vs the full layout: REVENUES/PROFIT EARNED, OVER/UNDERBILLINGS,
+    FUTURE PROFIT, PURE JOB BORROW, LAST SYNCED (the row-2 report date is the
+    sync date), and NOTES."""
+    drop = {"retainage_held", "notes_text", "_last_synced", "_notes_all",
+            "_earned_revenue", "profit_earned", "overbillings", "underbillings",
+            "future_profit", "job_borrow"}
     cols = [("CATEGORY", 20, "rp_type")]
     for label, width, field in W.COLS:
         if field in drop:
@@ -383,8 +399,11 @@ def rp_tab_cols():
         if field == "project_name":
             cols.append(("TYPE", 9, "home_type"))
             cols.append(("BUILDER", 24, "client"))
-    return cols + [("LAST SYNCED", 18, "_last_synced"),
-                   ("NOTES", 60, "_notes_all")]
+        if field == "_active_status":          # after STATUS, before the money
+            cols.append(("SCHEDULE", 11, "sched_mark"))
+            cols.append(("GENERAL LIST", 13, "gl_mark"))
+            cols.append(("JOBTREAD", 11, "jt_mark"))
+    return cols
 
 
 RP_TAB_LEGEND = [
@@ -414,7 +433,10 @@ def write_rp_tab(rows, dry_run: bool = False) -> bool:
         legend=RP_TAB_LEGEND,
         # A working tab: the roll-ups are live formulas so an edited
         # ORIGINAL COST / CO COST adds up on the spot.
-        live_formulas=True)
+        live_formulas=True,
+        # Highlight GP% over 30% (the user 2026-08-07) — a red flag for a
+        # missing cost.
+        gp_highlight_over=0.30)
     if not dry_run and wrote:
         print(f"  ✓ Wrote {len(view)} RP line(s) to 'Test - RP'")
     return wrote

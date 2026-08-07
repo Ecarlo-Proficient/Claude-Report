@@ -728,7 +728,15 @@ def check_rp_wrapup(wip_path: Path) -> Tuple[List[Dict[str, Any]], str]:
         c = hdr.get(label)
         return ws.cell(r, c).value if c else None
 
-    rows, synced = [], ""
+    # LAST SYNCED left the lean 'Test - RP' layout (2026-08-07); fall back to
+    # the report date on the title row (B2: "REPORT DATE: …").
+    synced = ""
+    for rr in range(1, hdr_row):
+        v = str(ws.cell(rr, 2).value or "")
+        if "REPORT DATE" in v.upper():
+            synced = v.split(":", 1)[-1].strip()
+            break
+    rows = []
     for r in range(hdr_row + 1, ws.max_row + 1):
         proj = col(r, "PROJECT #")
         if not proj:

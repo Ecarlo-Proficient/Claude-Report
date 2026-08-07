@@ -644,3 +644,25 @@ have ZERO coloured fonts / fills; Test - RP still has its 588 coloured cells.
   report (the user: "already billed out"). It stays on the working 'Test - RP'.
   Test-Master 96 → 95 rows. Verified: BONDED = {'N'} across all jobs, RP6901
   absent from Test-Master but present on Test - RP.
+
+## 2026-08-07 — Test - RP is the LEAN "where is it at?" working view
+
+The owner wants Test - RP leaner so project numbers are easy to spot (2026-08-07):
+- **Dropped** REVENUES/PROFIT EARNED, OVER/UNDERBILLINGS, FUTURE PROFIT, PURE
+  JOB BORROW, LAST SYNCED (the row-2 report date IS the sync date), and NOTES.
+- **Added** three "where is it at?" columns pulled straight from the owner's
+  RP file — SCHEDULE / GENERAL LIST / JOBTREAD (✓ green / ✗ red) — placed right
+  after STATUS. `read_rp_from_file` reads the `gl`/`jt` marks; `_resolve_rp_cols`
+  gained GENERAL LIST + JOBTREAD headers.
+- **GP% over 30% is conditional-formatted** amber (`gp_highlight_over=0.30` →
+  CellIsRule on the GROSS PROFIT % column) — a too-good margin usually means a
+  missing cost.
+
+Two lean-layout robustness fixes in the shared writer (a dropped column must
+not crash): `_build_formula`'s eager refs use `.get` → `#REF!` for a missing
+column (the RETURNED formulas never reference a dropped column); `_write_summary`
+skips the FUTURE WIP CASH FLOW block when its earned/billing columns are absent
+(TOTALS row still written). `money_bleeds.check_rp_wrapup` falls back to the
+row-2 REPORT DATE now that LAST SYNCED left the tab.
+
+Isolated to Test - RP: Test-Master (bank) and Test - CP unaffected.
