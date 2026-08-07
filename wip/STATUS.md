@@ -607,3 +607,27 @@ Note: the JOBTREAD (✓ in JobTread / ✗ not) and STATUS (Needs ETC · Pull ETC
 JobTread · Add JT proposal · Add to JobTread · Ready) columns are an estimator
 aid the reader ignores; they are a point-in-time snapshot, refreshed by re-running
 the build, not live.
+
+## 2026-08-06 — Test-Master is the clean BANK report (`plain_report`)
+
+Test-Master is what the owner sends to banks, so it is now the lean, plain view
+(the user 2026-08-06). `write_test_cp(plain_report=True)`, used ONLY for the
+Test-Master write, drops everything colour/working-tool: no coloured fonts (no
+red review, no blue links, no owner green/red marks), no QBO hyperlinks, no
+yellow input fills, no medium group rules, no edit-tracking baselines, no bottom
+COLUMN GUIDE. Kept: grey header, thin grid, TOTALS + cash-flow summary.
+
+`master_cols()` for the bank report: the first column is the **division**,
+labelled **TYPE** (was SECTION); the old Tract/Custom TYPE is dropped; the
+change-order breakout is collapsed to one **TOTAL CONTRACT PRICE** + one
+**ESTIMATED TOTAL COSTS** (ORIGINAL/CO columns gone). 19 columns.
+
+`_BANK_EXCLUDE`: the bank report shows only clean active WIP — the
+`FTW — OFF-SCHEDULE (COSTS)`, `FTW BACKLOG`, and `RP — DROPPED, UNBILLED`
+sections are filtered OUT of Test-Master (they stay on the working 'Test - RP'
+tab). Test-Master went 138 → 96 rows; the excluded rows show as a one-time
+REMOVED block in the change audit.
+
+Working tabs unchanged: 'Test - CP' and 'Test - RP' keep colours, the CO
+columns, edit-tracking, and every section. Verified: Test-Master data cells
+have ZERO coloured fonts / fills; Test - RP still has its 588 coloured cells.

@@ -1094,7 +1094,8 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                   audit: bool = False,
                   audit_xlsx: Optional[Path] = None,
                   protect: bool = False,
-                  live_formulas: bool = False) -> bool:
+                  live_formulas: bool = False,
+                  plain_report: bool = False) -> bool:
     """Write rows to the given WIP tab (default 'Test - CP'; RP passes
     'Test - RP'). Same structure/formatting for every division. Guarded by
     wip_excel_guard. Returns True if written, False if skipped (dry-run, or the
@@ -1122,7 +1123,14 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
     rendered under the banner, one plain single-font cell per row (rich text
     is banned — it corrupts the workbook). Rows carrying `cell_marks`
     ({field: rgb}) get the owner's colour re-applied to those cells — his
-    verified/changed/verify-me marks survive the sync."""
+    verified/changed/verify-me marks survive the sync.
+
+    `plain_report` (the user 2026-08-06): the clean look for the bank-facing
+    Test-Master. Everything colour/working-tool is dropped — no coloured fonts
+    (no red review, no blue links), no QBO hyperlinks, no yellow input fills,
+    no medium group rules, no edit-tracking baselines, no bottom column guide.
+    Kept: the grey header, the thin grid, and the TOTALS + cash-flow summary a
+    bank wants. Working tabs (Test - CP / Test - RP) leave this False."""
     assert_write_allowed(tab_name)  # tripwire before we even open the workbook
     cols_ = cols or COLS
 
@@ -1305,7 +1313,7 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
         # vertical rule opens each column group (CONTRACT / BUDGET / COSTS /
         # PROFIT / BILLING / REMAINING / ANALYSIS) so the groups read as boxes
         # the way the owner's reference WIP does (the user 2026-08-03).
-        _group_starts = {f for _g, f in _COL_GROUPS}
+        _group_starts = set() if plain_report else {f for _g, f in _COL_GROUPS}
         for c, (label, width, _key) in enumerate(cols_, start=1):
             cell = ws.cell(row=hdr_row, column=c, value=label)
             cell.fill = HDR_FILL
@@ -1374,8 +1382,9 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                 else:
                     val = _row_display_value(row, field_name, sync_ts)
                 cell = ws.cell(row=i, column=c, value=val)
-                cell.border = (_GROUP_BORDER if field_name in _group_starts
-                               else CELL_BORDER)
+                cell.border = (CELL_BORDER if plain_report else
+                               (_GROUP_BORDER if field_name in _group_starts
+                                else CELL_BORDER))
                 cell.font = DATA_FONT          # master-sheet Tahoma 8 baseline
                 if field_name in _MONEY_FIELDS:
                     cell.number_format = CURRENCY_FMT
@@ -1384,7 +1393,9 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                 # Yellow = sourced input (raw from takeoff / QBO); white = calc.
                 # A roll-up written as a live formula IS a calc — leave it white
                 # so the yellow still means "a number came from a source".
-                if field_name in _SOURCE_FIELDS and field_name not in _formula_now:
+                if plain_report:
+                    pass                       # bank report: no fills at all
+                elif field_name in _SOURCE_FIELDS and field_name not in _formula_now:
                     cell.fill = INPUT_FILL
                 elif field_name in ("status", "_notes_all") and (
                         row.status_flags or row.needs_review):
@@ -1421,7 +1432,9 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                     _apply_hyperlink(ws.cell(row=i, column=col_idx["why_link"]),
                                      Path(row.why_link),
                                      row.why_fragment or "")
-            if row.qbo_customer_id and QBO_REALM:
+            # QBO deep links on Billed/Costs — suppressed on the bank report
+            # (internal links a bank can't use, and blue = font colour).
+            if row.qbo_customer_id and QBO_REALM and not plain_report:
                 _cu = qbo_api.customer_url(row.qbo_customer_id, QBO_REALM)
                 _pu = qbo_api.project_pl_url(row.qbo_customer_id, QBO_REALM)
                 for _f, _u in (("billed_to_date", _cu), ("retainage_held", _cu),
@@ -1435,8 +1448,9 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
 
             # Review pass LAST so it wins over link styling: numbers that don't
             # look right (row.needs_review) render RED (the user 2026-07-13);
-            # underline is kept where the cell carries a link.
-            if row.needs_review:
+            # underline is kept where the cell carries a link. Skipped on the
+            # bank report — no coloured fonts there.
+            if row.needs_review and not plain_report:
                 for _f in (_MONEY_FIELDS | _PCT_FIELDS):
                     if _f in col_idx:
                         _c = ws.cell(row=i, column=col_idx[_f])
@@ -1447,8 +1461,11 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
 
             # The owner's colour marks are applied LAST — they outrank link
             # and review styling (the user 2026-07-31: "keep all the notes
-            # and colors since they mean something").
-            for _f, _rgb in (getattr(row, "cell_marks", None) or {}).items():
+            # and colors since they mean something"). Suppressed on the bank
+            # report: his verified/changed marks are an internal working aid,
+            # not something the bank should see (the user 2026-08-06).
+            for _f, _rgb in ({} if plain_report else
+                             (getattr(row, "cell_marks", None) or {})).items():
                 if _f in col_idx:
                     _c = ws.cell(row=i, column=col_idx[_f])
                     _c.font = Font(
@@ -1512,14 +1529,20 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
             next_row = band + len(ap_rows) + 2
 
         # Baseline mirror + the auto-colour rule (must run BEFORE the summary,
-        # so it sees only real data rows).
-        _apply_edit_formatting(ws, cols_, hdr_row, data_start, last_row,
-                               src_by_row)
+        # so it sees only real data rows). Skipped on the bank report — it is
+        # the locked deliverable, never edited, so edit-tracking is pointless
+        # and its conditional formatting would add colour back.
+        if not plain_report:
+            _apply_edit_formatting(ws, cols_, hdr_row, data_start, last_row,
+                                   src_by_row)
 
         if summary:
             next_row = _write_summary(ws, cols_, col_letter_by_field,
                                       data_start, last_row, next_row)
-        _write_bottom_notes(ws, cols_, next_row, legend)
+        # The COLUMN GUIDE / legend block is a working-tab aid; the bank report
+        # omits it (banks read a WIP without a key).
+        if not plain_report:
+            _write_bottom_notes(ws, cols_, next_row, legend)
 
         # LOCK the finished report (the user 2026-08-03: Test-Master "should be
         # locked by default because it's a read only" roll-up of the CP/RP tabs

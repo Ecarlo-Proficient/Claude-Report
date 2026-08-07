@@ -78,30 +78,38 @@ def read_mfd_from_master(wip_path: Path):
 
 
 def master_cols():
-    """CP layout minus the division-only columns (Retainage / NOTES live in
-    the division sheets; the master needs neither CLIENT nor the WHY column).
-    SECTION column first so ONE table spans every division (band rows broke
-    the table's filters — the user 2026-07-15), then TYPE after the name.
-    APPROVED COs kept (the user 2026-07-16): project-pnl reads Test-Master
-    for Contract/ETC/COs/STATUS — original contract = total − COs.
-    PROJECT FOLDER / DATA SOURCE are gone from W.COLS itself (the user
-    2026-07-29): no file links anywhere — the only links are QBO on
-    Billed/Costs.
+    """Column set for the bank-facing Test-Master report.
 
-    Test-Master is the FINISHED report (the user 2026-08-03): no NOTES column
-    (working commentary belongs on the division tabs) and no LAST SYNCED — the
-    report date on row 2 already says when it was built. Both stay on
-    'Test - CP' / 'Test - RP', which are the working views (and which
-    money_bleeds reads)."""
-    drop = {"retainage_held", "notes_text", "_last_synced", "_notes_all"}
-    cols = [("SECTION", 15, "section")]
+    Test-Master is the FINISHED WIP the owner sends to banks (the user
+    2026-08-06), so it is the LEAN view:
+    - The first column is the division, labelled **TYPE** (the user: "why not
+      call it Section Type") — Multi-Family / Commercial / Residential — Slab /
+      Residential — Flatwork.
+    - The old Tract/Custom TYPE column is DROPPED (mostly empty, internal).
+    - The change-order breakout is DROPPED — one **TOTAL CONTRACT PRICE** and
+      one **ESTIMATED TOTAL COSTS**, not the ORIGINAL/CO/REVISED trios (the
+      user: "just make it on Contract Price and One ETC").
+    - No RETAINAGE / NOTES / LAST SYNCED (those live on the working tabs, which
+      money_bleeds reads).
+    project-pnl reads this tab for Contract/ETC/STATUS — those names are kept.
+    """
+    drop = {"retainage_held", "notes_text", "_last_synced", "_notes_all",
+            "home_type",              # Tract/Custom — dropped for the bank report
+            "base_contract", "co_revenue",       # collapse to TOTAL CONTRACT PRICE
+            "base_etc", "co_cost_estimate"}      # collapse to ESTIMATED TOTAL COSTS
+    cols = [("TYPE", 22, "section")]   # the division, renamed from SECTION
     for label, width, field in W.COLS:
         if field in drop:
             continue
         cols.append((label, width, field))
-        if field == "project_name":
-            cols.append(("TYPE", 9, "home_type"))
     return cols
+
+
+# Sections that DON'T belong on the bank-facing Test-Master (the user
+# 2026-08-06): only clean active WIP goes to banks — no off-schedule, no
+# backlog, no dropped/unbilled. These are the raw section keys (pre-label).
+_BANK_EXCLUDE = {"FTW — OFF-SCHEDULE (COSTS)", "FTW BACKLOG",
+                 "RP — DROPPED, UNBILLED"}
 
 
 def existing_project_nums(wip_path: Path, tab_name: str = "Test-Master"):
@@ -267,36 +275,38 @@ def main() -> int:
         all_rows = (mfd_rows + cp_rows + slabs_custom + slabs_tract
                     + ftw_active + ftw_backlog)
     # SECTION shows the division spelled out, not the internal code.
-    for row in all_rows:
+    # Bank-facing Test-Master shows only clean ACTIVE WIP — no off-schedule,
+    # backlog, or dropped/unbilled (the user 2026-08-06). Those rows stay on
+    # the working 'Test - RP' tab (rp_sorted), just not on the bank report.
+    bank_rows = [r for r in all_rows if r.section not in _BANK_EXCLUDE]
+    for row in bank_rows:                         # division → spelled-out label
         row.section = RP.SECTION_LABEL.get(row.section, row.section)
 
     import datetime as dt
     try:
         wrote = W.write_test_cp(
-            all_rows, W.WIP_EXCEL_PATH,
+            bank_rows, W.WIP_EXCEL_PATH,
             dry_run=args.dry_run, tab_name="Test-Master",
             cols=master_cols(), default_filter_active=True,
-            # Banner + logo space + TOTALS/cash-flow (the user 2026-07-16).
-            # The logo image floats over the banner rows and survives syncs.
             title="WIP REPORT",
             summary=True,
-            # The user 2026-07-29: the ONLY links on the report are the QBO
-            # deep links on Billed/Costs — no Synology/file links.
             qbo_links_only=True,
             # The change audit runs HERE — Test-Master carries all three
             # divisions, so one report covers MFD + CP + RP (the user
             # 2026-07-31: "I need to always audit these things").
             audit=True, audit_xlsx=W.AUDIT_XLSX,
-            # Read-only roll-up of the CP/RP tabs + the WIP Master MFD
-            # section — locked so it can't be typed into by accident.
-            protect=True)
+            # Read-only roll-up — locked so it can't be typed into by accident.
+            protect=True,
+            # The finished bank report: clean, no colour/links/edit-tracking
+            # (the user 2026-08-06).
+            plain_report=True)
     except W.WipWriteDenied as e:
         print(f"  ✗ Guard blocked write: {e}")
         return 2
     except FileNotFoundError as e:
         print(f"  ✗ {e}")
         return 3
-    total = len(all_rows)
+    total = len(bank_rows)
     if not args.dry_run and wrote:
         print(f"  ✓ Wrote {total} line(s) to 'Test-Master'")
         _drop_stale_test_tab()
