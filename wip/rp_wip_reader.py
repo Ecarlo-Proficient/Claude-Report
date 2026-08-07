@@ -50,6 +50,7 @@ from openpyxl import load_workbook
 # RP is a reader; it imports the engine, never another reader (2026-08-04).
 import wip_writer as W
 from shared import paths, qbo_api
+from shared.takeoff_etc import find_takeoff_etc
 
 def _rp_cols():
     """RP column set — the SAME standard every other Test tab uses.
@@ -198,6 +199,9 @@ def _resolve_rp_cols(ws, hdr_row: int = 2):
 _OWNER_RGB = {"00B050": "00B050",     # green — the owner verified this number
               "FF0000": "FF0000"}     # red   — the owner changed this number
 _OWNER_ORANGE = "ED7D31"              # theme 9 — ops manager must verify
+# ETC provenance (the user 2026-08-07): where each budget number came from.
+_ETC_TAKEOFF_ORANGE = "ED7D31"        # machine-read from the takeoff → verify
+_ETC_MANUAL_BLUE = "0070C0"           # estimator typed it in the RP WIP file
 
 
 # Divisions are SPELLED OUT on the report (the user 2026-08-03) — the codes
@@ -317,7 +321,7 @@ def read_rp_from_file(xlsx_path: Path):
         row.action_note = str(ws.cell(r, C["action"]).value or "").strip() or None
         row.notes_from_source = True     # his file is authoritative for NOTES
         row.cell_marks, row.qbo_protect = {}, {}
-        for fld, ccol in (("contract_price", "contract"), ("etc", "etc"),
+        for fld, ccol in (("contract_price", "contract"),
                           ("billed_to_date", "billed"), ("costs_to_date", "costs"),
                           ("action_note", "action")):
             mark = _owner_mark(ws.cell(r, C[ccol]))
@@ -325,6 +329,12 @@ def read_rp_from_file(xlsx_path: Path):
                 row.cell_marks[fld] = mark
                 if fld in ("billed_to_date", "costs_to_date"):
                     row.qbo_protect[fld] = getattr(row, fld)
+        # ETC provenance colour (the user 2026-08-07): a budget the estimator
+        # typed into the RP WIP file is BLUE. A blank cell gets no mark now —
+        # classify_from_file may fill it from the takeoff and paint it ORANGE.
+        if etc is not None:
+            row.cell_marks["base_etc"] = _ETC_MANUAL_BLUE   # writer col key
+            row.etc_source = "estimator"
         # The "where is it at?" marks carried straight from the file: SCHEDULE /
         # GENERAL LIST / JOBTREAD (the user 2026-08-07). ✓ renders green, ✗ red,
         # so Test - RP shows at a glance where each project stands.
@@ -344,6 +354,63 @@ def read_rp_from_file(xlsx_path: Path):
 
 
 
+def fill_missing_etc_from_takeoff(rows, root: Path = None):
+    """Blank ETC → pull the budget from the job's takeoff (the user 2026-08-07:
+    "if it's empty ok try to find it"). The estimator's manual entry ALWAYS
+    wins — this runs only where the RP file left ETC blank. Uses the same
+    verified extractor the schedule preview uses (shared.takeoff_etc); folder
+    resolution is this module's own index_residential / match_by_address.
+
+    A recovered budget is a MACHINE GUESS, not a confirmed number: it fills
+    base_etc, paints the ETC cell ORANGE ('verify'), and notes the source
+    sheet. A job whose folder has no takeoff cost sheet stays blank — the
+    caller flags it. Does nothing (no expensive folder walk) when nothing is
+    blank or the Residential volume is not mounted."""
+    empties = [r for r in rows if r.base_etc is None]
+    if not empties:
+        return
+    root = root or RP_ROOT
+    if not root.exists():
+        print(f"  ⚠ ETC fallback skipped — Residential root not mounted "
+              f"({root}); {len(empties)} blank ETC left as-is")
+        return
+    print(f"  ETC fallback: {len(empties)} blank ETC — checking takeoffs …")
+    rp_to_folders, addr_folders = index_residential(root)
+    filled = 0
+    for row in empties:
+        job = row.project_num
+        base = job[:-4] if job.endswith("-FTW") else job
+        scope = "ftw" if job.endswith("-FTW") else "slab"
+        folders = sorted(rp_to_folders.get(base, ()),
+                         key=lambda f: (f.parent.name, f.name))
+        folder = folders[0] if folders else None
+        if folder is None and row.project_name:
+            parts = row.project_name.split(None, 1)
+            folder = match_by_address(
+                {"house": parts[0] if parts else "",
+                 "street": parts[1] if len(parts) > 1 else row.project_name},
+                addr_folders)
+        if folder is None:
+            row.notes.append("ETC blank — no project folder found for the takeoff")
+            continue
+        tk, etc, note, _frag = find_takeoff_etc(folder, base, scope, "")
+        if etc:
+            row.base_etc = round(float(etc), 2)
+            row.etc_source = "takeoff"
+            if getattr(row, "cell_marks", None) is None:
+                row.cell_marks = {}
+            row.cell_marks["base_etc"] = _ETC_TAKEOFF_ORANGE   # writer col key
+            row.notes.append(
+                f"ETC ${etc:,.0f} read from takeoff '{Path(tk).name}' "
+                f"({note}) — VERIFY")
+            print(f"    • {job}: ETC ${etc:,.0f} from takeoff — orange (verify)")
+            filled += 1
+        else:
+            row.notes.append(f"ETC blank — {note}")
+    print(f"  ETC fallback: filled {filled} of {len(empties)} from takeoffs "
+          f"({len(empties) - filled} still blank — no cost sheet)")
+
+
 def classify_from_file(rows):
     """Post-QBO pass over rows from the owner's file → rows in report order.
 
@@ -352,9 +419,12 @@ def classify_from_file(rows):
         backlog.  (3) The top section's CATEGORY is decided from the DATA, not
         from the band it sat in.  (4) Backlog lines never render red — having
         no QBO project is their normal state, not a must-fix.
+    (5) A blank ETC is filled from the takeoff first (orange), then whatever
+        is still blank is flagged.
     """
     order = ["RP SLAB", "FTW — ACTIVE", "FTW — OFF-SCHEDULE (COSTS)",
              "RP — DROPPED, UNBILLED", "FTW BACKLOG"]
+    fill_missing_etc_from_takeoff(rows)
     for row in rows:
         for fld, val in (getattr(row, "qbo_protect", None) or {}).items():
             if getattr(row, fld) != val:
@@ -373,7 +443,9 @@ def classify_from_file(rows):
                 print(f"    • {row.project_num}: no costs/billing → "
                       f"{row.rp_type} (was in the top section)")
         if row.base_etc is None:
-            row.status_flags.append("No budget (ETC) on the RP file")
+            row.status_flags.append(
+                "No budget (ETC) — blank in the RP file and no takeoff cost "
+                "sheet to read it from")
         row.needs_review = (bool(row.status_flags)
                             and row.section != "FTW BACKLOG")
     return [r for s in order for r in rows if r.section == s]
@@ -416,6 +488,8 @@ RP_TAB_LEGEND = [
     ("COLORS:  GREEN = the owner verified this number", "00B050", True),
     ("RED = the owner changed this number", "FF0000", True),
     ("ORANGE = ops manager must verify", "ED7D31", True),
+    ("ETC in BLUE = the estimator's manual budget from the RP WIP file", "0070C0", True),
+    ("ETC in ORANGE = read from the job's takeoff — VERIFY it", "ED7D31", True),
 ]
 
 

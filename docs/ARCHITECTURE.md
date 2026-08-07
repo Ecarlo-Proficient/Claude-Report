@@ -25,6 +25,7 @@ shared/                the ONLY importable common code
 ├─ qbo_api.py          QBO auth + retrying GET, query_all, P&L walkers, PROJ_RE
 ├─ cost_lines.py       cost-line category (Concrete/Labor/Materials) + bill-line combine
 ├─ draws.py            CP draw (AIA G702/G703) discovery + parsing (wip ↔ health)
+├─ takeoff_etc.py      blank ETC → takeoff cost sheet (rp_wip_reader ↔ schedule preview)
 └─ setup_qbo.py        vault admin CLI (--status/--test/--rotate/--purge)
 
 invoice-sync/          QBO → Notion AR sync + Teams cards   (was automation-worker/)
@@ -167,6 +168,7 @@ flowchart LR
     QBO[("QBO\nvia shared/qbo_api")]:::src
     RPFIX[("Owner's RP WIP workbook\n'RP WIP' sheet — verified lines")]:::src
     WMTAB[("'WIP Master' tab\nMFD contract/ETC")]:::src
+    TKETC["shared/takeoff_etc.py\nfind_takeoff_etc: blank ETC → takeoff\ncost sheet (SL+PR / FW / BID)"]:::tool
 
     ENGINE["wip_writer.py\nthe SHARED report ENGINE:\nCpRow · COLS · write_test_cp ·\nformatting · change audit ·\nedit-tracking · QC\n(guarded by wip_excel_guard.py)"]:::tool
     CPR["cp_wip_reader.py\nCP READER: folder scan / draws /\nproposal PDF → 'Test - CP'"]:::tool
@@ -178,6 +180,8 @@ flowchart LR
 
     FOLDERS --> CPR
     RPFIX --> RPR
+    FOLDERS --> TKETC
+    TKETC -.->|"blank ETC only\n(estimator entry wins)"| RPR
     QBO --> CPR & RPR & MASTER
     WMTAB --> MASTER
     CPR -.->|"scan reused by"| MASTER
@@ -202,6 +206,16 @@ RP v2 (2026-07-13): the General List is the RP source — each RP job auto-split
 `master_wip_test --rp-from-file <xlsx>` (2026-07-29) replaces the GL pipeline for the
 RP section with the owner's verified RP WIP workbook (sections from its band rows,
 duplicates deduped, CP lines excluded); billed/costs still refresh from QBO per line.
+
+**Blank ETC → takeoff fallback (2026-08-07).** When the estimator left an ETC cell
+blank in the RP file, `rp_wip_reader.classify_from_file` calls
+`shared/takeoff_etc.find_takeoff_etc` (moved out of `one-offs/rp_schedule_wip_preview`
+the moment a second tool needed it — the verified SL+PR / FW / commercial-BID extractor)
+to read the budget from the job's takeoff cost sheet. The estimator's manual entry always
+wins — the fallback runs only on blanks. Provenance is colour-coded on 'Test - RP' (font):
+**BLUE** = estimator's manual entry, **ORANGE** = machine-read from the takeoff (verify).
+A job whose folder has no takeoff cost sheet stays blank and is flagged. Both this reader
+and `master_wip_test` go through `classify_from_file`, so the fallback applies identically.
 Test tabs are styled to match the real 'WIP Master' sheet — **frozen, see CLAUDE.md
 rail 5a**: Tahoma 8, no-cents currency, and its two-line left-aligned title block
 (company prefix read from `WIP Master`!B1 at runtime; no merge-and-center banner).

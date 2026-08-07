@@ -666,3 +666,36 @@ skips the FUTURE WIP CASH FLOW block when its earned/billing columns are absent
 row-2 REPORT DATE now that LAST SYNCED left the tab.
 
 Isolated to Test - RP: Test-Master (bank) and Test - CP unaffected.
+
+## 2026-08-07 — Blank ETC now falls back to the takeoff (orange), manual = blue
+
+Follow-up to the lean Test - RP. The GP%>30% highlight can't flag the rows that
+matter most — a blank ETC makes ORIGINAL PROFIT (and so GP%) compute to blank,
+so a missing-budget job never trips the rule. Fixed at the source:
+
+- **`shared/takeoff_etc.py` (new).** The verified takeoff→ETC extractor
+  (`find_takeoff_etc` + `_cost_sheet_totals` + name-scoring helpers) MOVED out of
+  `one-offs/rp_schedule_wip_preview.py` the moment the WIP reader needed it — the
+  one-off now re-imports the same names from shared (so `P.find_takeoff_etc` /
+  `P._norm` still resolve for the job-auditor prototypes). No logic change.
+- **`rp_wip_reader.classify_from_file`** calls `fill_missing_etc_from_takeoff`
+  first: for every row the estimator left ETC blank, it resolves the job folder
+  (this module's own `index_residential` / `match_by_address`) and reads the
+  budget from the takeoff cost sheet (SL+PR slab / FW flatwork / commercial BID).
+  The estimator's manual entry ALWAYS wins — the fallback runs only on blanks.
+- **ETC provenance colour on 'Test - RP' (font):** BLUE `0070C0` = estimator's
+  manual entry, ORANGE `ED7D31` = machine-read from the takeoff (verify). Legend
+  updated. Test-Master (bank report) suppresses these marks as before.
+- Field key is `base_etc` (the writer column), not `etc` — the old owner ETC
+  mark used `etc` and had been a silent no-op.
+
+Live result on the 11 blank ETCs: **8 filled from takeoffs** (RP7507 $247,988,
+RP7612 $111,160, RP7610, RP7621, RP7623, RP7622, RP7607, RP7118-FTW); **3 stay
+blank + flagged** because their folder has only a proposal / no cost sheet
+(RP7234-FTW, RP6766-FTW, RP6901 — a budget sheet must be added to the takeoff).
+
+## OPEN ISSUES
+- Test-Master carries the same fallback (shared `classify_from_file`) but was not
+  re-run this session — regenerate it to pick up the 8 filled RP ETCs.
+- 3 RP jobs need a `JobTread Cost Gral` budget sheet added to their takeoff before
+  their ETC can be read.
