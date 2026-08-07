@@ -1356,6 +1356,16 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
             ws.column_dimensions[get_column_letter(c)].width = width
         ws.row_dimensions[hdr_row].height = 30
         ws.freeze_panes = f"A{hdr_row + 1}"
+        # Force a SINGLE valid selection on the frozen view. A reused tab can
+        # carry stale sheet-view selections (a spurious `topRight` with no
+        # vertical split, or duplicate `bottomLeft`) that survive the cell wipe
+        # exactly like the old auto-filter did — Excel then repairs the sheet
+        # "View" ("Repaired Records: View from /xl/worksheets/sheetN.xml", the
+        # user 2026-08-07). A top-only freeze has one bottomLeft pane.
+        from openpyxl.worksheet.views import Selection
+        _fc = f"A{hdr_row + 1}"
+        ws.sheet_view.selection = [
+            Selection(pane="bottomLeft", activeCell=_fc, sqref=_fc)]
 
         sync_ts = dt.datetime.now().strftime("%Y-%m-%d %H:%M")
 

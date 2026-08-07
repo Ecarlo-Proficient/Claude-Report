@@ -734,3 +734,18 @@ ETC takeoff fallback now fills 9 of 11 (RP6766-FTW resolved a takeoff this run);
   but the -FTW twin is a distinct project # — exclude it too if the owner agrees.
 - RP-file duplicate lines flagged: RP6938-FTW (numbers differ) and RP6858-FTW.
 - RP7234-FTW still blank ETC (no takeoff cost sheet).
+
+## 2026-08-07 — Fix: frozen-pane view corruption ("Repaired Records: View")
+
+Excel repaired 'Test - RP' on open ("Repaired Records: View from
+/xl/worksheets/sheet11.xml"). Cause: the reused tab accumulated INVALID
+sheet-view selections — a spurious `topRight` (no vertical split) plus a
+duplicate `bottomLeft` — that survived the cell wipe exactly like the stale
+auto-filter the writer already clears. `write_test_cp` now forces a single
+valid `bottomLeft` selection right after `freeze_panes`, so every tab writes a
+clean view. The live file was repaired in place surgically (only the offending
+`<selection>` XML rewritten; all other bytes preserved) and passed a full
+corruption sweep (view / rich-text / merges / tables / style+dxf indices).
+
+Note: the 'custom XML no longer supported' Excel notice is a pre-existing,
+benign SharePoint leftover in the source workbook — not corruption.
