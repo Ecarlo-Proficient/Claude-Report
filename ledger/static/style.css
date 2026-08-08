@@ -74,6 +74,8 @@ body {
 }
 .btn:hover { background: var(--row-hover); border-color: var(--accent); }
 .btn.icon { padding: 7px 10px; font-size: 1em; }
+.btn.small { padding: 4px 10px; font-size: .82em; }
+.btn[hidden] { display: none; }
 
 /* ── Layout ────────────────────────────────────────────────────────────── */
 .wrap { max-width: var(--maxw); margin: 0 auto; padding: 20px; display: flex; flex-direction: column; gap: 18px; }
@@ -99,6 +101,29 @@ body {
 .kpi .k-label { color: var(--text-dim); font-size: .78em; text-transform: uppercase; letter-spacing: .04em; }
 .kpi .k-value { font-size: 1.5em; font-weight: 700; margin-top: 4px; letter-spacing: -.02em; }
 .kpi .k-sub { color: var(--text-dim); font-size: .78em; margin-top: 2px; }
+
+/* ── Attention chips ───────────────────────────────────────────────────── */
+.attn-row { display: flex; flex-wrap: wrap; gap: 10px; padding: 8px 18px 18px; }
+.attn {
+  display: flex; flex-direction: column; gap: 2px; cursor: pointer;
+  border: 1px solid var(--border); border-left: 3px solid var(--accent);
+  border-radius: 10px; padding: 10px 14px; min-width: 150px; background: var(--surface-2);
+  transition: border-color .12s, background .12s;
+}
+.attn:hover { background: var(--row-hover); }
+.attn.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+.attn.warn { border-left-color: var(--neg); }
+.attn .a-count { font-size: 1.35em; font-weight: 700; letter-spacing: -.02em; }
+.attn .a-label { font-size: .82em; color: var(--text-dim); }
+.attn .a-sub { font-size: .78em; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.attn.none { opacity: .55; cursor: default; border-left-color: var(--border); }
+
+/* ── % complete bar (in the projects table) ────────────────────────────── */
+.bar { position: relative; display: inline-block; min-width: 68px; text-align: right; }
+.bar .bar-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) 30%, transparent); z-index: 0; }
+.bar .bar-fill.over { background: color-mix(in srgb, var(--neg) 32%, transparent); }
+.bar .bar-txt { position: relative; z-index: 1; padding: 0 4px; }
 
 /* ── Filters ───────────────────────────────────────────────────────────── */
 .filters { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 18px 14px; align-items: center; }

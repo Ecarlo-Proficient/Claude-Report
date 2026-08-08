@@ -32,6 +32,15 @@
       <div class="kpi-row" id="kpiRow"></div>
     </section>
 
+    <!-- ── Needs attention ──────────────────────────────────────────── -->
+    <section class="widget" id="widget-attention">
+      <div class="widget-head">
+        <h2>Needs attention</h2>
+        <button class="btn small" id="btnClearRule" hidden>Clear filter</button>
+      </div>
+      <div class="attn-row" id="attnRow"></div>
+    </section>
+
     <!-- ── Division rollup ──────────────────────────────────────────── -->
     <section class="widget" id="widget-divisions">
       <div class="widget-head"><h2>By division</h2></div>
@@ -128,6 +137,7 @@
       <div class="set-group">
         <h3>Widgets</h3>
         <label class="chk"><input type="checkbox" id="wKpis"> Portfolio KPIs</label>
+        <label class="chk"><input type="checkbox" id="wAttention"> Needs attention</label>
         <label class="chk"><input type="checkbox" id="wDivisions"> Division rollup</label>
         <label class="chk"><input type="checkbox" id="wProjects"> Projects table</label>
       </div>

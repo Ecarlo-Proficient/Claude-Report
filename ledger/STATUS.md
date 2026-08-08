@@ -23,6 +23,11 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     toggles, per-column visibility — saved per person in `localStorage`.
   - Read-only on the DB; binds 127.0.0.1 only; stdlib server (no Flask). No new dependencies.
   - Verified live in the browser (light + dark), 170 projects, detail + settings + sort all working.
+- **"Needs attention" widget** (generic, data-driven exposure rules — not stored findings):
+  Underbilled / Overbilled / Over budget (costs>ETC) / Borrowing cash. Each chip shows a count +
+  subtotal and click-filters the projects table (composes with the dropdown filters); "Clear filter"
+  resets it. Toggleable like the other widgets. Table cues: % complete as an inline bar (red past
+  100%), pure-job-borrow in red, underbillings in green. Verified live (Underbilled → 10 rows).
   - NOTE: the app-preview sandbox can't run this server (it needs the DB + `shared/` outside
     `.preview`); run it directly with `python3 ledger/dashboard.py`. A `.claude/launch.json` entry
     (`ledger-dashboard`) exists but launch.json is untracked/local.

@@ -280,8 +280,9 @@ the portfolio rollup that's rebuilt in Excel today becomes one query.
 
 **The dashboard (`dashboard.py` + `static/`)** is the browser UI over that query — a stdlib web
 server (no Flask) that reads the ledger **read-only** and binds to `127.0.0.1` only. It serves
-portfolio KPIs, the division rollup, and a searchable / filterable / sortable projects table with
-click-into-job detail, click-to-copy cells, and CSV export. A **Customize** panel (theme, accent,
+portfolio KPIs, a **Needs-attention** widget (generic exposure rules — underbilled / overbilled /
+over-budget / borrowing-cash — that click-filter the table), the division rollup, and a searchable /
+filterable / sortable projects table with click-into-job detail, click-to-copy cells, and CSV export. A **Customize** panel (theme, accent,
 font, text size, density, width, widget + column visibility) is saved per person in `localStorage`.
 Run it with `python3 ledger/dashboard.py` (the preview sandbox can't — it needs the DB + `shared/`
 outside `.preview`). This is Rung 1 of turning the terminal DB into a platform; Postgres + a shared

@@ -35,9 +35,26 @@ const LS_KEY = "proficient-ledger-settings-v1";
 const DEFAULTS = {
   theme: "auto", accent: "#3E7A5C", font: "system", fontSize: 14,
   density: "comfortable", width: "full",
-  widgets: { kpis: true, divisions: true, projects: true },
+  widgets: { kpis: true, attention: true, divisions: true, projects: true },
   columns: COLUMNS.filter(c => c.always || c.def).map(c => c.key),
 };
+
+// Generic, data-driven exposure rules (applied to whatever data is loaded).
+const RULES = [
+  { key: "underbilled", label: "Underbilled", warn: false,
+    hint: "earned ahead of billed — could invoice",
+    test: r => num(r.underbillings) > 0, amt: r => num(r.underbillings) },
+  { key: "overbilled", label: "Overbilled", warn: false,
+    hint: "billed ahead of earned",
+    test: r => num(r.overbillings) > 0, amt: r => num(r.overbillings) },
+  { key: "overbudget", label: "Over budget", warn: true,
+    hint: "costs to date exceed ETC",
+    test: r => num(r.estimated_total_costs) > 0 && num(r.costs_to_date) > num(r.estimated_total_costs),
+    amt: r => num(r.costs_to_date) - num(r.estimated_total_costs) },
+  { key: "borrow", label: "Borrowing cash", warn: true,
+    hint: "pure job borrow > 0",
+    test: r => num(r.pure_job_borrow) > 0, amt: r => num(r.pure_job_borrow) },
+];
 let settings = loadSettings();
 
 function loadSettings() {
@@ -68,6 +85,7 @@ function applySettings() {
   root.style.setProperty("--maxw", settings.width === "boxed" ? "1180px" : "100%");
   // widgets
   $("#widget-kpis").hidden      = !settings.widgets.kpis;
+  $("#widget-attention").hidden = !settings.widgets.attention;
   $("#widget-divisions").hidden = !settings.widgets.divisions;
   $("#widget-projects").hidden  = !settings.widgets.projects;
 }
@@ -101,6 +119,7 @@ let ALL = [];
 let meta = {};
 let sortKey = "total_contract_price";
 let sortDir = -1;   // -1 desc, 1 asc
+let activeRule = null;   // key of a RULES entry currently filtering the table
 
 // ── Load ──────────────────────────────────────────────────────────────────
 async function load() {
@@ -145,7 +164,9 @@ function currentFilters() {
 }
 function filtered() {
   const f = currentFilters();
+  const rule = activeRule ? RULES.find(x => x.key === activeRule) : null;
   let rows = ALL.filter(r => {
+    if (rule && !rule.test(r)) return false;
     if (f.division && r.division !== f.division) return false;
     if (f.status && r.status !== f.status) return false;
     if (f.category && r.rp_category !== f.category) return false;
@@ -177,7 +198,29 @@ function cmpVal(a, b, type) {
 function visibleColumns() {
   return COLUMNS.filter(c => c.always || settings.columns.includes(c.key));
 }
-function render() { renderKPIs(); renderDivisions(); renderProjects(); }
+function render() { renderKPIs(); renderAttention(); renderDivisions(); renderProjects(); }
+
+function renderAttention() {
+  const row = $("#attnRow"); row.innerHTML = "";
+  for (const rule of RULES) {
+    const hits = ALL.filter(rule.test);
+    const total = hits.reduce((t, r) => t + rule.amt(r), 0);
+    const el = document.createElement("div");
+    el.className = "attn" + (rule.warn ? " warn" : "") + (activeRule === rule.key ? " active" : "") + (hits.length ? "" : " none");
+    el.innerHTML = `<span class="a-count"></span><span class="a-label"></span><span class="a-sub"></span>`;
+    el.querySelector(".a-count").textContent = hits.length;
+    el.querySelector(".a-label").textContent = rule.label;
+    el.querySelector(".a-sub").textContent = hits.length ? money(total) : rule.hint;
+    el.title = rule.hint + (hits.length ? " — click to filter the table" : "");
+    if (hits.length) el.onclick = () => {
+      activeRule = activeRule === rule.key ? null : rule.key;
+      renderAttention(); renderProjects();
+      $("#btnClearRule").hidden = !activeRule;
+    };
+    row.appendChild(el);
+  }
+  $("#btnClearRule").hidden = !activeRule;
+}
 
 function renderKPIs() {
   const rows = ALL;
@@ -263,15 +306,32 @@ function renderProjects() {
 // ── cell builders ─────────────────────────────────────────────────────────
 function cellFor(col, value) {
   if (col.type === "status") return statusPill(value);
+  if (col.key === "percent_complete") return pctBar(col, value);
   const span = document.createElement("span");
   span.className = "cell";
   span.textContent = fmt(col, value);
-  if (col.type === "money" && isNum(Number(value)) && value !== null && value !== "") {
-    if (Number(value) < 0) span.classList.add("neg");
-  }
+  const n = Number(value);
+  const hasNum = value !== null && value !== "" && !Number.isNaN(n);
+  if (col.type === "money" && hasNum && n < 0) span.classList.add("neg");
+  if (col.key === "pure_job_borrow" && hasNum && n > 0) span.classList.add("neg");
+  if (col.key === "underbillings" && hasNum && n > 0) span.classList.add("pos");
   span.title = "Click to copy";
   span.onclick = (e) => { e.stopPropagation(); copy(String(raw(col, value))); };
   return span;
+}
+function pctBar(col, value) {
+  const wrap = document.createElement("span");
+  wrap.className = "cell bar";
+  const n = Number(value);
+  const has = value !== null && value !== "" && !Number.isNaN(n);
+  const fill = document.createElement("span");
+  fill.className = "bar-fill" + (has && n > 1 ? " over" : "");
+  fill.style.width = (has ? Math.max(0, Math.min(100, n * 100)) : 0) + "%";
+  const txt = document.createElement("span"); txt.className = "bar-txt"; txt.textContent = fmt(col, value);
+  wrap.appendChild(fill); wrap.appendChild(txt);
+  wrap.title = "Click to copy";
+  wrap.onclick = (e) => { e.stopPropagation(); copy(String(raw(col, value))); };
+  return wrap;
 }
 function statusPill(v) {
   const s = document.createElement("span");
@@ -376,6 +436,7 @@ function syncSettingsUI() {
   $("#setDensity").value = settings.density;
   $("#setWidth").value = settings.width;
   $("#wKpis").checked = settings.widgets.kpis;
+  $("#wAttention").checked = settings.widgets.attention;
   $("#wDivisions").checked = settings.widgets.divisions;
   $("#wProjects").checked = settings.widgets.projects;
   const cc = $("#colChooser"); cc.innerHTML = "";
@@ -403,6 +464,7 @@ function wireSettings() {
   on("#setDensity", "change", e => { settings.density = e.target.value; saveSettings(); applySettings(); });
   on("#setWidth", "change", e => { settings.width = e.target.value; saveSettings(); applySettings(); });
   on("#wKpis", "change", e => { settings.widgets.kpis = e.target.checked; saveSettings(); applySettings(); });
+  on("#wAttention", "change", e => { settings.widgets.attention = e.target.checked; saveSettings(); applySettings(); });
   on("#wDivisions", "change", e => { settings.widgets.divisions = e.target.checked; saveSettings(); applySettings(); });
   on("#wProjects", "change", e => { settings.widgets.projects = e.target.checked; saveSettings(); applySettings(); });
   on("#btnReset", "click", () => { settings = structuredClone(DEFAULTS); saveSettings(); applySettings(); syncSettingsUI(); render(); toast("Reset to defaults"); });
@@ -417,6 +479,7 @@ function init() {
     $(sel).addEventListener("input", renderProjects));
   $("#btnExport").onclick = exportCSV;
   $("#btnRefresh").onclick = load;
+  $("#btnClearRule").onclick = () => { activeRule = null; renderAttention(); renderProjects(); };
   $("#btnSettings").onclick = () => openPanel("#settings");
   $("#btnCloseSettings").onclick = closePanels;
   $("#btnCloseDetail").onclick = closePanels;
