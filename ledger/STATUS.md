@@ -68,8 +68,15 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   *billed* margin, never actual-cost margin). Budget burn (cost ÷ ETC), margin-to-date (billed −
   cost) + margin %, and subs-share as toggleable columns; a portfolio "Margins & burn" widget
   (stats + an over-budget watchlist ordered by burn, worst first); and a "Margin (QBO actual)"
-  group in each job's detail. The over-budget list (burn > 1) surfaces mostly `-FTW` flatwork jobs
-  that blew their small budgets, plus a couple of CP jobs. Verified live.
+  group in each job's detail. Verified live.
+- **Budget-adherence rule (`isOverBudget`)** — the ONE thing the dashboard flags "over budget" with,
+  encoding the owner/ops-manager ruling: **flatwork (`-FTW`) budgets are a soft reference, not a
+  strict target like slab** (flatwork = sub sent, charged by labor). A `-FTW` job is flagged over
+  budget only when its size (max contract/ETC) ≥ ~$15k; slab / CP / MFD stay strict. Used by the
+  "Over budget" attention chip and the Margins over-budget watchlist — cut the over-budget list from
+  the raw burn>1 count down to the genuinely-actionable jobs (small flatwork false-alarms removed,
+  big flatwork + slab + CP kept). Threshold `FTW_BUDGET_FLOOR` is a documented judgment knob. Apply
+  the same tolerance when `budget_line` (budget-vs-actual by code) is built.
 
 ## IN PROGRESS
 - (none)

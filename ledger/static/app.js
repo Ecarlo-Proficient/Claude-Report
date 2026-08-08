@@ -63,6 +63,24 @@ const LIEN_CLASS = {
   "Notice due in ≤30d": "d30", "Notice Sent": "info", "Lien Filed": "info",
 };
 
+// Budget adherence — the ONE rule the whole dashboard flags "over budget" with.
+// Flatwork (-FTW) budgets are a SOFT reference, not a strict target: the ops
+// manager just sends a sub and charges by the labor it took (flatwork is simple
+// next to slab), so the estimator's FTW budget is a starting point, not a
+// must-hit number the way slab is — EXCEPT on a big flatwork job (~$15k+), which
+// does need to hold its budget. Slab / CP / MFD stay strict.
+const FTW_BUDGET_FLOOR = 15000;
+function budgetCost(r) { return r.costs_loaded != null ? r.costs_loaded : r.costs_to_date; }
+function isOverBudget(r) {
+  const etc = num(r.estimated_total_costs);
+  if (!(etc > 0) || num(budgetCost(r)) <= etc) return false;
+  if (r.is_ftw) {                                  // flatwork: soft budget…
+    const size = Math.max(num(r.total_contract_price), etc);
+    if (size < FTW_BUDGET_FLOOR) return false;     // …unless it's a big flatwork job
+  }
+  return true;
+}
+
 // Generic, data-driven exposure rules (applied to whatever data is loaded).
 const RULES = [
   { key: "underbilled", label: "Underbilled", warn: false,
@@ -72,9 +90,9 @@ const RULES = [
     hint: "billed ahead of earned",
     test: r => num(r.overbillings) > 0, amt: r => num(r.overbillings) },
   { key: "overbudget", label: "Over budget", warn: true,
-    hint: "costs to date exceed ETC",
-    test: r => num(r.estimated_total_costs) > 0 && num(r.costs_to_date) > num(r.estimated_total_costs),
-    amt: r => num(r.costs_to_date) - num(r.estimated_total_costs) },
+    hint: "cost over ETC (flatwork budgets soft under $15k)",
+    test: isOverBudget,
+    amt: r => num(budgetCost(r)) - num(r.estimated_total_costs) },
   { key: "borrow", label: "Borrowing cash", warn: true,
     hint: "pure job borrow > 0",
     test: r => num(r.pure_job_borrow) > 0, amt: r => num(r.pure_job_borrow) },
@@ -239,13 +257,13 @@ function renderMargins() {
   const billed = loaded.reduce((t, r) => t + num(r.billed_to_date), 0);
   const subs = loaded.reduce((t, r) => t + num(r.sub_costs), 0);
   const margin = billed - cost;
-  const overBudget = loaded.filter(r => r.budget_burn != null && r.budget_burn > 1).length;
+  const overBudget = loaded.filter(isOverBudget).length;
   $("#marginNote").textContent = loaded.length ? `(${loaded.length} jobs with QBO costs)` : "(no cost data — run load_costs.py)";
   const stats = [
     ["Margin to date", money(margin), "billed − QBO cost"],
     ["Portfolio margin %", billed ? (margin / billed * 100).toFixed(1) + "%" : "—", "of billed"],
     ["Subs share", cost ? (subs / cost * 100).toFixed(0) + "%" : "—", "of QBO cost"],
-    ["Over budget", String(overBudget), "QBO cost > ETC"],
+    ["Over budget", String(overBudget), "cost > ETC (flatwork soft <$15k)"],
   ];
   const sr = $("#marginStats"); sr.innerHTML = "";
   for (const [label, value, sub] of stats) {
@@ -256,10 +274,10 @@ function renderMargins() {
     el.querySelector(".k-sub").textContent = sub;
     sr.appendChild(el);
   }
-  // OVER-BUDGET jobs — cost already past the full ETC (unambiguous, unlike early
-  // negative margin). Sorted worst-first.
+  // OVER-BUDGET jobs — cost past the full ETC, with the flatwork-budget tolerance
+  // applied (small -FTW jobs excluded; slab / CP / MFD / big flatwork kept). Worst first.
   const watch = loaded
-    .filter(r => r.budget_burn != null && r.budget_burn > 1)
+    .filter(isOverBudget)
     .sort((a, b) => b.budget_burn - a.budget_burn).slice(0, 10);
   const cols = [["Project", "left"], ["Name", "left"], ["Burn", "right"], ["QBO Cost", "right"], ["ETC", "right"]];
   const thead = $("#marginTable thead"), tbody = $("#marginTable tbody");
