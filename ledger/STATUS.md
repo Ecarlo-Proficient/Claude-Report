@@ -53,15 +53,20 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     pipeline OFFLINE** (fabricated txns → codes resolved → cost_line written → reconciles $25k=$25k).
     Reconciles loaded cost vs `wip_snapshot.costs_to_date` per project after each load.
   - CLAUDE.md updated (cost_leaf now in shared/qbo_costs; ledger subsystem bullet added).
-  - **NOT yet run against live QBO** — needs the owner's Touch ID. Build + offline proof done.
+  - **Run against live QBO 2026-08-08** (owner, `--active`): cost_line populated across active
+    projects; **90 of 96 active projects with a WIP cost reconcile within 5%** of
+    wip_snapshot.costs_to_date. Residual = per-job attribution differences (a handful of RP/CP
+    jobs where QBO-sourced cost ≠ the WIP figure) — surfaced to the owner for review; specific
+    dollar findings stay OUT of the repo (scope rule).
 
 ## IN PROGRESS
 - (none)
 
 ## TO DO
-- **Run `load_costs.py --active`** against live QBO (owner Touch ID) — watch cost_line land + reconcile.
 - **Dashboard cost-code drill** — a "Cost by code" panel / detail section reading `v_cost_by_code`
-  (deferred until real cost data exists to verify it against).
+  (real cost data now EXISTS in the ledger, so this can be built + verified against it).
+- **Investigate the ~6 active reconcile mismatches** (QBO cost ≠ WIP figure, e.g. RP6901/RP6440):
+  likely a base/-FTW split or a stale WIP cost — owner review; keep dollar specifics out of the repo.
 - `budget_line` from the takeoff/ETC extractor by cost code (`shared/takeoff_etc.py` is project-total
   today — needs per-code) → enables budget-vs-actual from the spine.
 - `billing_event` from `invoice-sync` (draw period from PrivateNote).
