@@ -30,14 +30,30 @@ const COLUMNS = [
   { key: "original_profit",       label: "Orig. Profit",  type: "money" },
   { key: "costs_loaded",          label: "QBO Costs",     type: "money" },
   { key: "sub_costs",             label: "Subs (QBO)",    type: "money" },
+  { key: "budget_burn",           label: "Budget Burn",   type: "pct" },
+  { key: "qbo_margin",            label: "Margin (QBO)",  type: "money" },
+  { key: "qbo_margin_pct",        label: "Margin %",      type: "pct" },
+  { key: "subs_pct",              label: "Subs %",        type: "pct" },
 ];
+
+// Derived per-job metrics from the REAL QBO costs — computed once at load time.
+// Only for jobs that actually have costs loaded; others stay null (blank).
+// margin here = billed − QBO cost (a billed-basis margin-to-date, labeled as such).
+function deriveMetrics(r) {
+  const cost = r.costs_loaded, etc = r.estimated_total_costs, billed = r.billed_to_date, subs = r.sub_costs;
+  const has = cost !== null && cost !== undefined;
+  r.budget_burn   = has && etc ? cost / etc : null;
+  r.qbo_margin    = has && billed != null ? billed - cost : null;
+  r.qbo_margin_pct = (r.qbo_margin != null && billed) ? r.qbo_margin / billed : null;
+  r.subs_pct      = has && cost && subs != null ? subs / cost : null;
+}
 
 // ── Settings ──────────────────────────────────────────────────────────────
 const LS_KEY = "proficient-ledger-settings-v1";
 const DEFAULTS = {
   theme: "auto", accent: "#3E7A5C", font: "system", fontSize: 14,
   density: "comfortable", width: "full",
-  widgets: { kpis: true, attention: true, ap: true, costs: true, divisions: true, projects: true },
+  widgets: { kpis: true, attention: true, ap: true, costs: true, margins: true, divisions: true, projects: true },
   columns: COLUMNS.filter(c => c.always || c.def).map(c => c.key),
 };
 
@@ -96,6 +112,7 @@ function applySettings() {
   $("#widget-attention").hidden = !settings.widgets.attention;
   $("#widget-ap").hidden        = !settings.widgets.ap;
   $("#widget-costs").hidden     = !settings.widgets.costs;
+  $("#widget-margins").hidden   = !settings.widgets.margins;
   $("#widget-divisions").hidden = !settings.widgets.divisions;
   $("#widget-projects").hidden  = !settings.widgets.projects;
 }
@@ -141,6 +158,7 @@ async function load() {
   if (data.error) return showError(data.error);
   $("#errorBanner").hidden = true;
   ALL = data.projects || [];
+  ALL.forEach(deriveMetrics);
   AP = data.ap || { summary: {}, lien_watch: [], by_project: {} };
   COST = data.cost || { by_code: [], by_project_code: {}, by_project: {}, loaded_total: 0 };
   meta = data.meta || {};
@@ -212,7 +230,57 @@ function cmpVal(a, b, type) {
 function visibleColumns() {
   return COLUMNS.filter(c => c.always || settings.columns.includes(c.key));
 }
-function render() { renderKPIs(); renderAttention(); renderAP(); renderCosts(); renderDivisions(); renderProjects(); }
+function render() { renderKPIs(); renderAttention(); renderAP(); renderCosts(); renderMargins(); renderDivisions(); renderProjects(); }
+
+function renderMargins() {
+  // portfolio, over jobs that actually have QBO costs loaded
+  const loaded = ALL.filter(r => r.costs_loaded != null);
+  const cost = loaded.reduce((t, r) => t + num(r.costs_loaded), 0);
+  const billed = loaded.reduce((t, r) => t + num(r.billed_to_date), 0);
+  const subs = loaded.reduce((t, r) => t + num(r.sub_costs), 0);
+  const margin = billed - cost;
+  const overBudget = loaded.filter(r => r.budget_burn != null && r.budget_burn > 1).length;
+  $("#marginNote").textContent = loaded.length ? `(${loaded.length} jobs with QBO costs)` : "(no cost data — run load_costs.py)";
+  const stats = [
+    ["Margin to date", money(margin), "billed − QBO cost"],
+    ["Portfolio margin %", billed ? (margin / billed * 100).toFixed(1) + "%" : "—", "of billed"],
+    ["Subs share", cost ? (subs / cost * 100).toFixed(0) + "%" : "—", "of QBO cost"],
+    ["Over budget", String(overBudget), "QBO cost > ETC"],
+  ];
+  const sr = $("#marginStats"); sr.innerHTML = "";
+  for (const [label, value, sub] of stats) {
+    const el = document.createElement("div"); el.className = "kpi";
+    el.innerHTML = `<div class="k-label"></div><div class="k-value"></div><div class="k-sub"></div>`;
+    el.querySelector(".k-label").textContent = label;
+    el.querySelector(".k-value").textContent = value;
+    el.querySelector(".k-sub").textContent = sub;
+    sr.appendChild(el);
+  }
+  // OVER-BUDGET jobs — cost already past the full ETC (unambiguous, unlike early
+  // negative margin). Sorted worst-first.
+  const watch = loaded
+    .filter(r => r.budget_burn != null && r.budget_burn > 1)
+    .sort((a, b) => b.budget_burn - a.budget_burn).slice(0, 10);
+  const cols = [["Project", "left"], ["Name", "left"], ["Burn", "right"], ["QBO Cost", "right"], ["ETC", "right"]];
+  const thead = $("#marginTable thead"), tbody = $("#marginTable tbody");
+  thead.innerHTML = ""; tbody.innerHTML = "";
+  const htr = document.createElement("tr");
+  for (const [c, al] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
+  thead.appendChild(htr);
+  for (const r of watch) {
+    const tr = document.createElement("tr");
+    tr.onclick = (e) => { if (!e.target.closest(".cell")) openDetail(r); };
+    tr.appendChild(leftText(r.project_no));
+    tr.appendChild(leftText(r.project_name || ""));
+    const bt = document.createElement("td");
+    const bS = document.createElement("span"); bS.className = "cell neg"; bS.textContent = pct(r.budget_burn);
+    bS.title = "Click to copy"; bS.onclick = (e) => { e.stopPropagation(); copy(String(r.budget_burn)); };
+    bt.appendChild(bS); tr.appendChild(bt);
+    const cv = document.createElement("td"); cv.appendChild(moneyCell(r.costs_loaded)); tr.appendChild(cv);
+    const ev = document.createElement("td"); ev.appendChild(moneyCell(r.estimated_total_costs)); tr.appendChild(ev);
+    tbody.appendChild(tr);
+  }
+}
 
 function renderCosts() {
   const codes = COST.by_code || [];
@@ -399,6 +467,8 @@ function cellFor(col, value) {
   if (col.type === "money" && hasNum && n < 0) span.classList.add("neg");
   if (col.key === "pure_job_borrow" && hasNum && n > 0) span.classList.add("neg");
   if (col.key === "underbillings" && hasNum && n > 0) span.classList.add("pos");
+  if (col.key === "budget_burn" && hasNum && n > 1) span.classList.add("neg");
+  if (col.key === "qbo_margin_pct" && hasNum && n < 0.05) span.classList.add("neg");
   span.title = "Click to copy";
   span.onclick = (e) => { e.stopPropagation(); copy(String(raw(col, value))); };
   return span;
@@ -502,6 +572,23 @@ function openDetail(r) {
     }
     body.appendChild(g);
   }
+  if (r.costs_loaded != null) {
+    const g = document.createElement("div"); g.className = "dgroup";
+    const h = document.createElement("h4"); h.textContent = "Margin (QBO actual)"; g.appendChild(h);
+    const mrows = [
+      ["Budget burn (cost ÷ ETC)", pct(r.budget_burn)],
+      ["Margin to date (billed − cost)", money(r.qbo_margin)],
+      ["Margin %", pct(r.qbo_margin_pct)],
+      ["Subs share of cost", pct(r.subs_pct)],
+    ];
+    for (const [label, val] of mrows) {
+      const row = document.createElement("div"); row.className = "drow";
+      const dk = document.createElement("span"); dk.className = "dk"; dk.textContent = label;
+      const dv = document.createElement("span"); dv.className = "dv"; dv.textContent = val; dv.title = "Click to copy"; dv.onclick = () => copy(val);
+      row.appendChild(dk); row.appendChild(dv); g.appendChild(row);
+    }
+    body.appendChild(g);
+  }
   if (r.notes) {
     const g = document.createElement("div"); g.className = "dgroup";
     const h = document.createElement("h4"); h.textContent = "Notes"; g.appendChild(h);
@@ -564,6 +651,7 @@ function syncSettingsUI() {
   $("#wAttention").checked = settings.widgets.attention;
   $("#wAp").checked = settings.widgets.ap;
   $("#wCosts").checked = settings.widgets.costs;
+  $("#wMargins").checked = settings.widgets.margins;
   $("#wDivisions").checked = settings.widgets.divisions;
   $("#wProjects").checked = settings.widgets.projects;
   const cc = $("#colChooser"); cc.innerHTML = "";
@@ -594,6 +682,7 @@ function wireSettings() {
   on("#wAttention", "change", e => { settings.widgets.attention = e.target.checked; saveSettings(); applySettings(); });
   on("#wAp", "change", e => { settings.widgets.ap = e.target.checked; saveSettings(); applySettings(); });
   on("#wCosts", "change", e => { settings.widgets.costs = e.target.checked; saveSettings(); applySettings(); });
+  on("#wMargins", "change", e => { settings.widgets.margins = e.target.checked; saveSettings(); applySettings(); });
   on("#wDivisions", "change", e => { settings.widgets.divisions = e.target.checked; saveSettings(); applySettings(); });
   on("#wProjects", "change", e => { settings.widgets.projects = e.target.checked; saveSettings(); applySettings(); });
   on("#btnReset", "click", () => { settings = structuredClone(DEFAULTS); saveSettings(); applySettings(); syncSettingsUI(); render(); toast("Reset to defaults"); });

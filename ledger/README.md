@@ -122,6 +122,9 @@ on the network). What it shows:
 - **Costs by code** — the QBO cost ledger by cost code (portfolio table + a per-job breakdown in the
   detail panel showing loaded vs subs vs WIP costs_to_date — the reconciliation, in the UI). Plus
   toggleable **QBO Costs / Subs** columns in the projects table.
+- **Margins & burn** — real margin from the QBO costs: budget burn (cost ÷ ETC), margin-to-date
+  (billed − cost), margin %, subs-share — as a widget (with an over-budget watchlist), toggleable
+  columns, and a per-job detail group. The margin the WIP never showed.
 - **By division** — the CP / RP / MFD rollup.
 - **Projects** — searchable, filterable (division / status / category / active-only), sortable;
   click any row for the full job detail (Contract / Budget / Costs / Earned / Billing / Notes).

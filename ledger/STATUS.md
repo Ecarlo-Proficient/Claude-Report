@@ -64,6 +64,12 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   column pair, and a **"Costs (QBO, by code)"** group in each job's detail showing total loaded /
   subs / WIP costs_to_date (the reconciliation) + the full code breakdown. Verified live — the
   biggest MFD job loads within ~0.3% of its WIP costs_to_date; portfolio spans ~80 cost codes.
+- **Margins & burn** — derived from the loaded QBO costs (client-side; the WIP only ever showed
+  *billed* margin, never actual-cost margin). Budget burn (cost ÷ ETC), margin-to-date (billed −
+  cost) + margin %, and subs-share as toggleable columns; a portfolio "Margins & burn" widget
+  (stats + an over-budget watchlist ordered by burn, worst first); and a "Margin (QBO actual)"
+  group in each job's detail. The over-budget list (burn > 1) surfaces mostly `-FTW` flatwork jobs
+  that blew their small budgets, plus a couple of CP jobs. Verified live.
 
 ## IN PROGRESS
 - (none)
