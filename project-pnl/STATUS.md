@@ -8,6 +8,10 @@ manual close), RP (no draws — expenses → invoice → profit).
 
 ## DONE / FINALIZED
 
+- **`cost_leaf` moved to `shared/qbo_costs.py`** (2026-08-08) — the ledger's `load_costs.py` needs
+  the SAME cost-code resolver, so it graduated to shared/. This tool imports it back
+  (`from shared.qbo_costs import cost_leaf`); byte-compatible, no behavior change (imports + compiles
+  clean, verified). Do not re-add a local copy.
 - **P&L + Transactions + Draws + POs + Cash Flow + Reconciliations** sheets.
 - **Batch mode** — `project-pnl active cp|rp|mfd` regenerates every Active
   project of a division (Active = the WIP master's Test-Master STATUS).

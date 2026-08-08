@@ -78,8 +78,9 @@ restate them here. Business/strategic context lives in session memory, not in th
 
 - **shared/** — the common package: `qbo_vault.py` (Keychain blob, one Touch ID per run),
   `paths.py` (per-machine path resolution), `qbo_api.py` (QBO auth + retrying GET, `query_all`,
-  report walkers, `PROJ_RE` — used by project-pnl and the WIP readers), `setup_qbo.py`
-  (`--status/--test/--rotate/--purge`).
+  report walkers, `PROJ_RE` — used by project-pnl and the WIP readers), `qbo_costs.py` (the ONE
+  cost-code resolver `cost_leaf` + the `iter_cost_lines` pull-and-resolve engine — shared by
+  project-pnl and the ledger's `load_costs.py`), `setup_qbo.py` (`--status/--test/--rotate/--purge`).
 - **invoice-sync/** — the QBO → Notion AR invoice sync (was `automation-worker/`). Open invoices
   → two Notion DBs (MFD isolated; Res/Com combined) routed by project-# prefix; sweeps paid;
   archives QBO-deleted (CDC); posts MFD pay events to Teams. Manual via `sync-ar` (launchd plists
@@ -105,6 +106,15 @@ restate them here. Business/strategic context lives in session memory, not in th
   over/under-billing and job-borrow are computed columns in Excel. Close scripts:
   `qbo_close_list.py` / `qbo_bulk_close.py` (**always exclude MFD — those close by hand**).
   The old QBO→Notion WIP sync is fully deleted (stub + plist gone 2026-07-13).
+- **ledger/** — the canonical project database (Phase 1 of "own the spine, keep the systems as
+  peripherals"). `schema.sql` = the portable spine (SQLite + Postgres): `project` · `cost_code` ·
+  `budget_line` · `cost_line` · `billing_event` · `wip_snapshot` · `ap_bill_line` + views.
+  Loaders (read-only on their sources, idempotent): `load_wip_master.py` (WIP master Test tabs →
+  project + wip_snapshot), `load_bill_tracker.py` (Bill Tracker → `ap_bill_line`, AP + lien clock —
+  NOT cost truth, subs excluded), `load_costs.py` (QBO pull via `shared/qbo_costs` → complete
+  `cost_line` by cost code, incl. subs; reconciles to wip_snapshot). `dashboard.py` + `static/` =
+  a local READ-ONLY web UI (127.0.0.1) with a Customize panel. DB lives OUTSIDE the repo
+  (`~/Library/Application Support/Proficient/ledger.sqlite3`; override `ACB_LEDGER_DB`).
 - **project-pnl/** — per-project P&L (CP/MFD + RP × budgeted/unbudgeted) → OneDrive PROJECT
   P&Ls. Overhead shown as a final row at **10% of revenue** (was 11%, the user 2026-07-16;
   MFD alt view stays 9% on costs); QBO helpers come from `shared/qbo_api.py`. Batch mode:
@@ -143,9 +153,12 @@ restate them here. Business/strategic context lives in session memory, not in th
   and has NO line-level `AccountRef`; an account-based line resolves to its account
   (`Job Materials: Concrete`, `Subcontractors Expense: Labor`). To key costs BY cost code (accumulating
   costs, Budget vs Actual) use the one resolver **`cost_leaf(det, account_names)`** in
-  `project-pnl/project_pnl_export.py` — account name → `AccountRef.name` tail → **`ItemRef.name` (the
-  cost code)** → fallback. NEVER resolve the item to its posting account for cost-code work — that
-  collapses every SL#/PV# into one account and breaks the join to the takeoff budget.
+  **`shared/qbo_costs.py`** (moved out of project-pnl 2026-08-08 when the ledger's `load_costs.py`
+  needed the SAME resolver; project-pnl imports it back) — account name → `AccountRef.name` tail →
+  **`ItemRef.name` (the cost code)** → fallback. NEVER resolve the item to its posting account for
+  cost-code work — that collapses every SL#/PV# into one account and breaks the join to the takeoff
+  budget. `shared/qbo_costs.py` also has `is_cost_code`, `cost_code_meta`, and the
+  `iter_cost_lines` / `cost_lines_from_txns` pull-and-resolve engine both tools share.
 - **Claude's QBO connector P&L (for analysis) caps at 100 rows and doubles monthly totals, and name-keyed
   maps collide on duplicate account names** — use the id-keyed row tree (direct children, exclude
   TOTAL-type rows). The repo's own `qbo_export.py` hits the API directly and isn't subject to this.

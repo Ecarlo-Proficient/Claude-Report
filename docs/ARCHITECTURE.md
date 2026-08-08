@@ -9,7 +9,12 @@
 > picture (open it in a browser after pulling). Refresh it when structure meaningfully changes;
 > THIS file is the always-current source of truth.
 
-Last updated: 2026-08-08 (ledger/: new — the canonical project database. schema.sql defines the
+Last updated: 2026-08-08 (ledger/ cont'd: shared/qbo_costs.py — cost_leaf MOVED out of project-pnl
+(imported back, byte-compatible) so the ledger shares the ONE cost-code resolver; load_costs.py pulls
+QBO Bills+Purchases → complete cost_line by cost code incl. subs, reconciles to wip_snapshot,
+--selftest proves it offline. cost_line fleshed out + v_cost_by_project/v_cost_by_code views.
+CLAUDE.md updated (cost_leaf location + ledger subsystem bullet). — earlier same day —
+ledger/: new — the canonical project database. schema.sql defines the
 6-table spine [project · cost_code · budget_line · cost_line · billing_event · wip_snapshot],
 portable across SQLite and Postgres; load_wip_master.py lands the final WIP master Test tabs into
 project + wip_snapshot, read-only on Excel, idempotent. load_bill_tracker.py adds an AP + lien feed
@@ -30,6 +35,7 @@ shared/                the ONLY importable common code
 ├─ qbo_vault.py        QBO Keychain blob — one Touch ID unlocks all keys
 ├─ paths.py            per-machine output paths (machine.env at REPO ROOT)
 ├─ qbo_api.py          QBO auth + retrying GET, query_all, P&L walkers, PROJ_RE
+├─ qbo_costs.py        cost_leaf (the ONE cost-code resolver) + iter_cost_lines — shared w/ ledger
 ├─ cost_lines.py       cost-line category (Concrete/Labor/Materials) + bill-line combine
 ├─ draws.py            CP draw (AIA G702/G703) discovery + parsing (wip ↔ health)
 ├─ takeoff_etc.py      blank ETC → takeoff cost sheet (rp_wip_reader ↔ schedule preview)
@@ -39,7 +45,7 @@ invoice-sync/          QBO → Notion AR sync + Teams cards   (was automation-wo
 bill-tracker/          AP bills (FULL pull incl. subs) → Excel tracker + QBO Audit sheet (6 checks) + job_coding_audit drill
 statement-reconciler/  vendor statement PDFs ↔ QBO open bills
 wip/                   ALL WIP tooling: wip_writer.py (shared engine) + CP/RP readers + close scripts
-ledger/                the canonical project database (schema.sql spine + WIP-master loader) — Phase 1
+ledger/                canonical project DB: schema.sql spine + loaders (WIP · Bill Tracker · costs) + dashboard
 project-pnl/           per-project P&L workbooks → OneDrive
 debt-schedule/         equipment debt workbook + loan_sync (writes beside itself)
 health-dashboard/      local company-health xlsx (private, chmod 600)
@@ -258,16 +264,25 @@ flowchart LR
     DB[("ledger.sqlite3\nproject + wip_snapshot + ap_bill_line\n→ v_wip_latest · v_ap_by_project")]:::out
     DASH["dashboard.py + static/\nlocal web UI (READ-ONLY, 127.0.0.1)\nKPIs · attention · AP & liens ·\ndivision rollup · projects · detail · CSV"]:::tool
     BROWSER[("Browser\nhttp://127.0.0.1:8787")]:::out
-    QBOCONN["qbo-export (Phase 2)\ntrue SL/PV cost code + Txn ID + subs"]:::future
+    QBO[("QBO\nBills + Purchases\n(read-only pull, Touch ID)")]:::src
+    QCOSTS["shared/qbo_costs.py\ncost_leaf + iter_cost_lines\n(the ONE resolver — shared with project-pnl)"]:::tool
+    COSTLOAD["load_costs.py\ncost_line by cost code · incl. subs ·\nreconciles to wip_snapshot · --selftest"]:::tool
+    FUTURE["later: budget_line (takeoff by code)\n· billing_event (AR / draws)"]:::future
 
     TEST --> LOADER
     BT --> APLOAD
+    QBO --> COSTLOAD
+    QCOSTS -.->|"cost_leaf"| COSTLOAD
     SCHEMA -.->|"applied on connect"| LOADER
     LOADER ==>|"project · wip_snapshot"| DB
     APLOAD ==>|"ap_bill_line"| DB
+    COSTLOAD ==>|"cost_line · cost_code"| DB
     DB ==>|"read-only"| DASH --> BROWSER
-    QBOCONN -.->|"Phase 2: cost_code · budget_line ·\ncost_line · billing_event"| DB
+    FUTURE -.-> DB
 ```
+
+`shared/qbo_costs.py` is the same `cost_leaf` resolver **project-pnl** uses (moved there 2026-08-08
+so a second tool could share it), so cost-code figures tie between the ledger and the P&L export.
 
 **The idea:** own the spine, keep the systems as peripherals. QBO stays the books,
 JobTread stays the ops shell, Excel goes back to being an export — but the reconciled
@@ -303,10 +318,16 @@ as the dashboard's **AP & liens** widget (open-AP stats + a lien watchlist order
 an AP line in each job's detail. Full-replace by `source` each run; `project_no` is a soft link
 (no FK), so off-WIP/closed jobs are kept.
 
-**Phase 2 (not built): complete costs from `qbo-export`** fill the granular `cost_code` /
-`budget_line` / `cost_line` / `billing_event` tables — true SL/PV cost codes (not a QBO item-name
-string) with real Txn IDs and subs included, so over/under-billing and budget-vs-actual compute
-from the spine instead of Excel columns. (Bill Tracker can't source this — subs are excluded.)
+**Complete costs (`load_costs.py` → `cost_line`, built; awaiting the first live pull).** Pulls QBO
+Bills + Purchases and writes one `cost_line` per expense line — attributed to a project by its line
+`CustomerRef`, keyed to the cost code by `shared/qbo_costs.cost_leaf` (the SAME resolver project-pnl
+uses, moved to `shared/` so the two can't drift). Subs are included, and it **reconciles** to
+`wip_snapshot.costs_to_date` per project. `--selftest` proves the whole pipeline offline (no QBO);
+a real load needs one Touch ID. Scoped full-replace by `source='qbo'` (idempotent, drops deleted
+txns). This is what Bill Tracker couldn't be — the complete, cost-code-keyed cost ledger.
+
+**Still later:** `budget_line` (takeoff budget by cost code → budget-vs-actual from the spine) and
+`billing_event` (AR / draws). Once both exist, over/under-billing computes from the spine, not Excel.
 
 ---
 

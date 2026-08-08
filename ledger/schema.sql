@@ -60,17 +60,26 @@ CREATE TABLE IF NOT EXISTS budget_line (
 );
 
 
--- ── cost_line : actual spend from QBO bills (append-only, idempotent) ────────
--- Keyed by (bill id, line id) so re-running a connector can never double-count.
--- This is the (TxnId, ...) idempotency rule promoted from convention to schema.
+-- ── cost_line : actual spend from QBO, ONE ROW PER expense line ─────────────
+-- The COMPLETE cost ledger (incl. subs), keyed by cost code via shared/qbo_costs
+-- cost_leaf() — the same resolver project-pnl uses, so the two can't drift.
+-- Keyed by (txn id, line id) so re-running can never double-count. Filled by
+-- ledger/load_costs.py from a QBO pull. cost_code is set only for coded lines
+-- (SL/PV/…); account-based lines carry `account` with cost_code NULL.
 CREATE TABLE IF NOT EXISTS cost_line (
-    qbo_txn_id      TEXT NOT NULL,               -- QBO Bill Id
-    qbo_line_id     TEXT NOT NULL,               -- line within the bill
+    qbo_txn_id      TEXT NOT NULL,               -- QBO Bill / Purchase Id
+    qbo_line_id     TEXT NOT NULL,               -- line within the txn
+    txn_type        TEXT,                        -- 'Bill' | 'Expense'
     project_no      TEXT NOT NULL REFERENCES project(project_no),
     cost_code       TEXT REFERENCES cost_code(code),  -- via cost_leaf(); NULL = account-based line
+    account         TEXT,                        -- resolved account/category name
     amount          NUMERIC NOT NULL,
     txn_date        TEXT,
     is_sub          INTEGER NOT NULL DEFAULT 0,
+    vendor          TEXT,
+    description     TEXT,
+    source          TEXT NOT NULL DEFAULT 'qbo',
+    loaded_at       TEXT NOT NULL,
     PRIMARY KEY (qbo_txn_id, qbo_line_id)
 );
 
@@ -160,6 +169,27 @@ SELECT project_no,
        SUM(COALESCE(line_amount,0))                                AS billed_amount
 FROM ap_bill_line
 GROUP BY project_no;
+
+-- ── v_cost_by_project : loaded QBO cost per project (reconcile vs WIP) ──────
+DROP VIEW IF EXISTS v_cost_by_project;
+CREATE VIEW v_cost_by_project AS
+SELECT project_no,
+       SUM(amount)                                  AS costs_loaded,
+       SUM(CASE WHEN is_sub = 1 THEN amount ELSE 0 END) AS sub_costs,
+       COUNT(*)                                      AS lines
+FROM cost_line
+GROUP BY project_no;
+
+-- ── v_cost_by_code : per-project cost-code drill (budget-vs-actual base) ────
+DROP VIEW IF EXISTS v_cost_by_code;
+CREATE VIEW v_cost_by_code AS
+SELECT project_no,
+       COALESCE(cost_code, account, '(unclassified)') AS code,
+       cost_code,
+       SUM(amount)                                    AS actual,
+       COUNT(*)                                       AS lines
+FROM cost_line
+GROUP BY project_no, COALESCE(cost_code, account, '(unclassified)');
 
 -- ── v_wip_latest : each project joined to its most-recent snapshot ──────────
 -- The "one pane of glass" query. This is the thing currently rebuilt in Excel

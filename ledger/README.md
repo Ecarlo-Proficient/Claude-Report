@@ -17,7 +17,11 @@ so you can watch your actual data live in a database instead of a spreadsheet.
 | `schema.sql` | The whole 6-table spine. **Portable — runs on SQLite and PostgreSQL unchanged.** |
 | `load_wip_master.py` | Reads the FINAL WIP master (the Test tabs) → fills `project` + `wip_snapshot`. |
 | `load_bill_tracker.py` | Reads `Bill Tracker.xlsx` (Bills + Inventory) → fills `ap_bill_line` (AP + liens). |
+| `load_costs.py` | QBO pull → `cost_line` by cost code (incl. subs), via `shared/qbo_costs`. |
 | `dashboard.py` | Local web dashboard over the ledger — the browser UI (read-only). |
+
+The cost engine itself lives in **`shared/qbo_costs.py`** (`cost_leaf` + `iter_cost_lines`) — the
+SAME resolver project-pnl uses, so the ledger and the P&L can never drift.
 | `static/` | The dashboard front-end (`index.html`, `style.css`, `app.js`) — no build step. |
 | `requirements.txt` | `openpyxl` (SQLite + the web server are stdlib — nothing else to install). |
 
@@ -27,19 +31,21 @@ so you can watch your actual data live in a database instead of a spreadsheet.
 project          the aggregate root — one row per job. project_no is THE join key.
 cost_code        job-type prefix + number, a first-class dimension (not a QBO item-name string)
 budget_line      the plan: ETC by cost code
-cost_line        actual spend from QBO bills (append-only, idempotent by bill+line id)
+cost_line        COMPLETE spend, one row per QBO expense line, keyed by cost code (incl. subs)
 billing_event    AR invoices / draws (append-only, idempotent by invoice id)
 wip_snapshot     the COMPUTED WIP position — one row per (project, report_date)
 ap_bill_line     vendor bills from Bill Tracker — AP pay status + the lien clock (NOT cost truth)
 v_wip_latest     view: each project joined to its most-recent snapshot
 v_ap_by_project  view: open AP + bill counts per project
+v_cost_by_project view: loaded QBO cost per project (reconcile vs WIP)
+v_cost_by_code   view: per-project cost-code drill (budget-vs-actual base)
 ```
 
 **What fills what:**
 - `project`, `wip_snapshot` ← `load_wip_master.py` (**today** — from the WIP master sheet)
 - `ap_bill_line` ← `load_bill_tracker.py` (**today** — from Bill Tracker.xlsx)
-- `cost_code`, `budget_line`, `cost_line`, `billing_event` ← the QBO connectors (**Phase 2**,
-  one connector at a time — not built yet)
+- `cost_line` + `cost_code` ← `load_costs.py` (**today** — one QBO pull, incl. subs)
+- `budget_line`, `billing_event` ← later (takeoff-by-code budget; AR/draws)
 
 ## Run it
 
@@ -76,6 +82,30 @@ pay status, and the Texas lien clock per bill. Read-only on Excel; each run **fu
 > from a `qbo-export` pull. What this feed uniquely adds is **AP pay status + lien deadlines** the
 > WIP snapshot lacks. The dashboard surfaces it as the **AP & liens** widget (open AP, a lien
 > watchlist ordered by urgency) and an AP line in each job's detail.
+
+## Costs — complete, by cost code (QBO)
+
+```bash
+cd "/Users/sebas/Documents/Claude/Projects/Automate Concrete Business" && python3 ledger/load_costs.py --selftest
+```
+```bash
+cd "/Users/sebas/Documents/Claude/Projects/Automate Concrete Business" && python3 ledger/load_costs.py --active --show 20
+```
+
+`load_costs.py` pulls QBO expense transactions (Bills + Purchases) and writes one `cost_line` per
+expense line — attributed to a project by its line `CustomerRef`, keyed to the cost code by the
+shared `cost_leaf()` resolver. This is the **complete** cost source (subs included), and it
+**reconciles** to `wip_snapshot.costs_to_date` (printed per project after the load).
+
+- **`--selftest`** runs the whole pipeline **offline** on a throwaway DB — no QBO, no touch to your
+  real ledger. Run it any time to prove the wiring.
+- A real load needs **one Touch ID** (QBO read-only). Scope with `--active`, `--division cp|rp|mfd`,
+  `--project MFD177 CP800`, or `--since 2025-01-01`. `--dry-run` pulls + reconciles without writing.
+- Idempotent: a scoped full-replace of `source='qbo'` cost_line for the target projects each run
+  (mirrors QBO, drops deleted txns).
+
+The cost engine (`shared/qbo_costs.py`) is shared with project-pnl, so cost-code figures tie between
+the ledger and the P&L export by construction.
 
 ## The dashboard (browser UI)
 

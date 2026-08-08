@@ -41,18 +41,30 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     per job), so it can't state job cost. Job cost stays in wip_snapshot; complete cost_line waits
     for the qbo-export pull. 284 AP project#s are off-WIP (closed/older) — kept, no FK on project_no.
 
+- **`shared/qbo_costs.py` + `load_costs.py`** — complete cost load, by cost code, incl. subs.
+  - `cost_leaf` MOVED out of project-pnl into `shared/qbo_costs.py` (project-pnl imports it back —
+    byte-compatible, compiles clean). The ONE resolver both tools share, so they can't drift.
+    Engine adds `is_cost_code`, `cost_code_meta`, `build_account_map`, `pull_expense_txns`,
+    `cost_lines_from_txns` (network-free, unit-testable), `iter_cost_lines`.
+  - `schema.sql`: `cost_line` fleshed out (txn_type, account, vendor, description, source, loaded_at)
+    + `v_cost_by_project` / `v_cost_by_code` views.
+  - `load_costs.py`: pulls QBO Bills + Purchases → `cost_line` keyed by cost code; scoped full-replace
+    (idempotent); `--active/--division/--project/--since/--dry-run`; **`--selftest` proves the whole
+    pipeline OFFLINE** (fabricated txns → codes resolved → cost_line written → reconciles $25k=$25k).
+    Reconciles loaded cost vs `wip_snapshot.costs_to_date` per project after each load.
+  - CLAUDE.md updated (cost_leaf now in shared/qbo_costs; ledger subsystem bullet added).
+  - **NOT yet run against live QBO** — needs the owner's Touch ID. Build + offline proof done.
+
 ## IN PROGRESS
 - (none)
 
 ## TO DO
-- **Phase 2 connectors** fill the granular COST tables — one at a time, no rewrites of the existing
-  tools' outputs:
-  - `cost_code` + `cost_line` from **`qbo-export`** (true SL/PV cost code + real Txn ID + subs) —
-    the complete cost source. (Bill Tracker can't do this; see above.)
-  - `budget_line` from the takeoff/ETC extractor (`shared/takeoff_etc.py`).
-  - `billing_event` from `invoice-sync` (draw period from PrivateNote).
-- Once granular tables exist, add computed WIP views (over/under-billing, budget-vs-actual by
-  cost code) so those numbers come from the spine, not Excel columns.
+- **Run `load_costs.py --active`** against live QBO (owner Touch ID) — watch cost_line land + reconcile.
+- **Dashboard cost-code drill** — a "Cost by code" panel / detail section reading `v_cost_by_code`
+  (deferred until real cost data exists to verify it against).
+- `budget_line` from the takeoff/ETC extractor by cost code (`shared/takeoff_etc.py` is project-total
+  today — needs per-code) → enables budget-vs-actual from the spine.
+- `billing_event` from `invoice-sync` (draw period from PrivateNote).
 - Postgres deployment decision (Synology container vs. small cloud box) — schema is ready either way.
 - Optional: a read-only dashboard over `v_wip_latest` (Phase 3) — DB first, UI later.
 

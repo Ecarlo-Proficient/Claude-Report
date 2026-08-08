@@ -97,6 +97,9 @@ from shared.qbo_api import (
     fetch_customer_invoices,
 )
 from shared.cost_lines import line_category, combine_bill_lines, CATEGORY_ORDER
+# cost_leaf moved to shared/ (2026-08-08) — the ledger's load_costs.py needs the
+# SAME resolver, so it can never drift from this tool's cost buckets.
+from shared.qbo_costs import cost_leaf
 
 # ── terminal output (styled like sync-ar / sync-ap; the user 2026-06-26) ──────────
 # Colors auto-disable when piped/redirected or NO_COLOR is set.
@@ -503,29 +506,8 @@ def _cost_code_value(raw, indent: int = 0, size: Optional[int] = None,
     return pad + full
 
 
-def cost_leaf(det: dict, account_names: Dict[str, str],
-              fallback: str = "(unclassified)") -> str:
-    """THE cost-code / account a QBO expense LINE lands in — the single
-    authoritative resolver (the user 2026-07-17). Used by the accumulating-
-    costs buckets, the draw-window buckets, and Budget vs Actual, so every
-    cost figure keyed by cost code ties.
-
-    QBO API pin: OUR cost codes live in the ITEM name (`ItemRef.name`), NOT the
-    account. An item-based expense line carries `ItemBasedExpenseLineDetail`
-    with an `ItemRef` and NO line-level `AccountRef`, so it resolves to the
-    item = the cost code (SL1, PV6, CS1…). An account-based line resolves to
-    its account name (e.g. 'Job Materials: Concrete'). NEVER resolve the item
-    to its posting account here — that discards the cost code and collapses
-    every SL#/PV# into one account. Resolution order:
-        AccountRef account name → AccountRef.name last segment →
-        ItemRef.name (the cost code) → fallback."""
-    aref = det.get("AccountRef") or {}
-    aid = aref.get("value")
-    return _xml_clean(
-        account_names.get(aid)
-        or (aref.get("name") or "").split(":")[-1].strip()
-        or (det.get("ItemRef") or {}).get("name")
-        or fallback)
+# cost_leaf now lives in shared/qbo_costs.py (imported above) — the single
+# resolver shared with the ledger. Do not re-add a local copy here.
 
 
 def _split_code(name):
