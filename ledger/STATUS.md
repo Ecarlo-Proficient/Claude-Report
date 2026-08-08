@@ -32,13 +32,23 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     `.preview`); run it directly with `python3 ledger/dashboard.py`. A `.claude/launch.json` entry
     (`ledger-dashboard`) exists but launch.json is untracked/local.
 
+- **`ap_bill_line` + `load_bill_tracker.py`** — AP + lien feed from `Bill Tracker.xlsx`
+  (Bills + Inventory display sheets → 2,814 lines, $5.0M open AP, 448 on the lien clock).
+  - Read-only on Excel; full-replace by `source='bill_tracker'` (idempotent, mirrors the file).
+  - `v_ap_by_project` view; dashboard **AP & liens** widget (open-AP stats + lien watchlist ordered
+    by urgency, red past-due pills) + AP line in each job's detail. Verified live.
+  - **Deliberately NOT cost_line:** Bill Tracker excludes subs (measured 25–98% short of WIP cost
+    per job), so it can't state job cost. Job cost stays in wip_snapshot; complete cost_line waits
+    for the qbo-export pull. 284 AP project#s are off-WIP (closed/older) — kept, no FK on project_no.
+
 ## IN PROGRESS
 - (none)
 
 ## TO DO
-- **Phase 2 connectors** fill the granular tables — one at a time, no rewrites of the existing
+- **Phase 2 connectors** fill the granular COST tables — one at a time, no rewrites of the existing
   tools' outputs:
-  - `cost_code` + `cost_line` from `bill-tracker` (cost code via `cost_leaf()`; append-only by bill+line id).
+  - `cost_code` + `cost_line` from **`qbo-export`** (true SL/PV cost code + real Txn ID + subs) —
+    the complete cost source. (Bill Tracker can't do this; see above.)
   - `budget_line` from the takeoff/ETC extractor (`shared/takeoff_etc.py`).
   - `billing_event` from `invoice-sync` (draw period from PrivateNote).
 - Once granular tables exist, add computed WIP views (over/under-billing, budget-vs-actual by

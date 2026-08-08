@@ -49,6 +49,42 @@ CONTENT_TYPES = {
     ".svg": "image/svg+xml",
 }
 
+# lien states that put a bill on the action watchlist, most-urgent first
+LIEN_RANK = {
+    "Notice PAST due": 0, "Notice due in ≤7d": 1, "Notice due in ≤15d": 2,
+    "Notice due in ≤30d": 3, "Notice Sent": 4, "Lien Filed": 5,
+}
+
+
+def _fetch_ap(con) -> dict:
+    """AP + lien view from ap_bill_line; empty (not an error) if the table is absent."""
+    ap = {"summary": {"open_balance": 0, "open_lines": 0, "watch_count": 0},
+          "lien_watch": [], "by_project": {}}
+    try:
+        rows = con.execute(
+            "SELECT project_no, division, vendor, bill_ref, open_balance, lien_status "
+            "FROM ap_bill_line").fetchall()
+    except sqlite3.OperationalError:
+        return ap
+    open_bal, open_lines, watch = 0.0, 0, []
+    for r in rows:
+        ob = r["open_balance"] or 0
+        if ob > 0:
+            open_bal += ob
+            open_lines += 1
+        if r["lien_status"] in LIEN_RANK:
+            watch.append(dict(r))
+    watch.sort(key=lambda r: (LIEN_RANK[r["lien_status"]], -(r["open_balance"] or 0)))
+    by_project = {}
+    for r in con.execute("SELECT project_no, open_lines, open_balance FROM v_ap_by_project "
+                         "WHERE COALESCE(open_balance,0) > 0"):
+        if r["project_no"]:
+            by_project[r["project_no"]] = {"open_lines": r["open_lines"], "open_balance": r["open_balance"]}
+    ap["summary"] = {"open_balance": open_bal, "open_lines": open_lines, "watch_count": len(watch)}
+    ap["lien_watch"] = watch[:200]
+    ap["by_project"] = by_project
+    return ap
+
 
 def _connect(db_path: Path) -> sqlite3.Connection:
     """Open the ledger READ-ONLY. New connection per request (SQLite + threads)."""
@@ -77,6 +113,7 @@ def fetch_data(db_path: Path) -> dict:
         got = cur.fetchone()
         if got:
             loaded_at = got[0]
+        ap = _fetch_ap(con)
     except sqlite3.OperationalError as e:
         con.close()
         return {"error": f"Ledger schema not found ({e}). Run the loader first."}
@@ -89,6 +126,7 @@ def fetch_data(db_path: Path) -> dict:
             "project_count": pcount,
         },
         "projects": rows,
+        "ap": ap,
     }
 
 

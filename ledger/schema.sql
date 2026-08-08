@@ -123,6 +123,44 @@ CREATE TABLE IF NOT EXISTS wip_snapshot (
 );
 
 
+-- ── ap_bill_line : vendor bills from Bill Tracker (AP + lien tracking) ───────
+-- This is NOT the cost ledger. Bill Tracker's display sheets EXCLUDE subs, so it
+-- cannot state a job's true cost (subs are most of it — that lives in wip_snapshot
+-- and, later, the QBO-complete cost_line). What it uniquely carries is AP pay
+-- status and the Texas lien clock per bill. project_no is a SOFT link (no FK): AP
+-- tracks every bill, including jobs not in the WIP-derived project table. Loaded by
+-- a full replace each run (source = 'bill_tracker'), so it mirrors the current file.
+CREATE TABLE IF NOT EXISTS ap_bill_line (
+    line_uid      TEXT PRIMARY KEY,   -- 'bt:<sheet>:<excel_row>' — stable within a file version
+    project_no    TEXT,               -- soft link to project(project_no); may be NULL / off-WIP
+    division      TEXT,
+    vendor        TEXT,
+    bill_ref      TEXT,               -- vendor Bill #
+    bill_date     TEXT,
+    account       TEXT,               -- QBO account/category (NOT the SL/PV cost code)
+    description   TEXT,
+    line_amount   NUMERIC,
+    bill_total    NUMERIC,
+    open_balance  NUMERIC,
+    pay_status    TEXT,
+    approved      TEXT,
+    lien_status   TEXT,               -- 'Notice due in ≤15d' / 'Notice PAST due' / ...
+    source_sheet  TEXT,               -- Bills | Inventory
+    source        TEXT NOT NULL DEFAULT 'bill_tracker',
+    loaded_at     TEXT NOT NULL
+);
+
+-- ── v_ap_by_project : open AP + bill counts per project ─────────────────────
+DROP VIEW IF EXISTS v_ap_by_project;
+CREATE VIEW v_ap_by_project AS
+SELECT project_no,
+       COUNT(*)                                                    AS bill_lines,
+       SUM(CASE WHEN COALESCE(open_balance,0) > 0 THEN 1 ELSE 0 END) AS open_lines,
+       SUM(COALESCE(open_balance,0))                               AS open_balance,
+       SUM(COALESCE(line_amount,0))                                AS billed_amount
+FROM ap_bill_line
+GROUP BY project_no;
+
 -- ── v_wip_latest : each project joined to its most-recent snapshot ──────────
 -- The "one pane of glass" query. This is the thing currently rebuilt in Excel
 -- every month — here it is one definition, computed once.

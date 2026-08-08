@@ -35,8 +35,14 @@ const LS_KEY = "proficient-ledger-settings-v1";
 const DEFAULTS = {
   theme: "auto", accent: "#3E7A5C", font: "system", fontSize: 14,
   density: "comfortable", width: "full",
-  widgets: { kpis: true, attention: true, divisions: true, projects: true },
+  widgets: { kpis: true, attention: true, ap: true, divisions: true, projects: true },
   columns: COLUMNS.filter(c => c.always || c.def).map(c => c.key),
+};
+
+// Lien state → urgency css class (most urgent first), for the AP watchlist.
+const LIEN_CLASS = {
+  "Notice PAST due": "past", "Notice due in ≤7d": "d7", "Notice due in ≤15d": "d15",
+  "Notice due in ≤30d": "d30", "Notice Sent": "info", "Lien Filed": "info",
 };
 
 // Generic, data-driven exposure rules (applied to whatever data is loaded).
@@ -86,6 +92,7 @@ function applySettings() {
   // widgets
   $("#widget-kpis").hidden      = !settings.widgets.kpis;
   $("#widget-attention").hidden = !settings.widgets.attention;
+  $("#widget-ap").hidden        = !settings.widgets.ap;
   $("#widget-divisions").hidden = !settings.widgets.divisions;
   $("#widget-projects").hidden  = !settings.widgets.projects;
 }
@@ -116,6 +123,7 @@ function raw(col, v) {
 
 // ── State ─────────────────────────────────────────────────────────────────
 let ALL = [];
+let AP = { summary: {}, lien_watch: [], by_project: {} };
 let meta = {};
 let sortKey = "total_contract_price";
 let sortDir = -1;   // -1 desc, 1 asc
@@ -129,6 +137,7 @@ async function load() {
   if (data.error) return showError(data.error);
   $("#errorBanner").hidden = true;
   ALL = data.projects || [];
+  AP = data.ap || { summary: {}, lien_watch: [], by_project: {} };
   meta = data.meta || {};
   $("#metaLine").textContent =
     `${meta.project_count} projects · report ${meta.report_date || "—"}` +
@@ -198,7 +207,47 @@ function cmpVal(a, b, type) {
 function visibleColumns() {
   return COLUMNS.filter(c => c.always || settings.columns.includes(c.key));
 }
-function render() { renderKPIs(); renderAttention(); renderDivisions(); renderProjects(); }
+function render() { renderKPIs(); renderAttention(); renderAP(); renderDivisions(); renderProjects(); }
+
+function renderAP() {
+  const s = AP.summary || {};
+  const stats = [
+    ["Open AP", money(s.open_balance || 0), `${s.open_lines || 0} open bills`],
+    ["Lien deadlines", String(s.watch_count || 0), "bills on the clock"],
+    ["Past due", String((AP.lien_watch || []).filter(r => r.lien_status === "Notice PAST due").length), "notice past due"],
+  ];
+  const sr = $("#apStats"); sr.innerHTML = "";
+  for (const [label, value, sub] of stats) {
+    const el = document.createElement("div"); el.className = "kpi";
+    el.innerHTML = `<div class="k-label"></div><div class="k-value"></div><div class="k-sub"></div>`;
+    el.querySelector(".k-label").textContent = label;
+    el.querySelector(".k-value").textContent = value;
+    el.querySelector(".k-sub").textContent = sub;
+    sr.appendChild(el);
+  }
+  const watch = AP.lien_watch || [];
+  $("#apCount").textContent = watch.length ? `(${watch.length} on the lien clock)` : "";
+  const cols = [["Lien", "left"], ["Project", "left"], ["Vendor", "left"], ["Bill #", "left"], ["Open Bal", "right"]];
+  const thead = $("#lienTable thead"), tbody = $("#lienTable tbody");
+  thead.innerHTML = ""; tbody.innerHTML = "";
+  const htr = document.createElement("tr");
+  for (const [c, al] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
+  thead.appendChild(htr);
+  const known = new Set(ALL.map(r => r.project_no));
+  for (const r of watch.slice(0, 60)) {
+    const tr = document.createElement("tr");
+    if (r.project_no && known.has(r.project_no)) tr.onclick = (e) => { if (!e.target.closest(".cell")) openDetail(ALL.find(x => x.project_no === r.project_no)); };
+    const lienTd = document.createElement("td"); lienTd.className = "left";
+    const pill = document.createElement("span"); pill.className = "lien " + (LIEN_CLASS[r.lien_status] || "info"); pill.textContent = r.lien_status;
+    lienTd.appendChild(pill); tr.appendChild(lienTd);
+    tr.appendChild(leftText(r.project_no || "—"));
+    tr.appendChild(leftText(r.vendor || "—"));
+    tr.appendChild(leftText(r.bill_ref || "—"));
+    const ob = document.createElement("td"); ob.appendChild(moneyCell(r.open_balance)); tr.appendChild(ob);
+    tbody.appendChild(tr);
+  }
+}
+function leftText(v) { const td = document.createElement("td"); td.className = "left"; const s = document.createElement("span"); s.textContent = v; td.appendChild(s); return td; }
 
 function renderAttention() {
   const row = $("#attnRow"); row.innerHTML = "";
@@ -377,6 +426,19 @@ function openDetail(r) {
     }
     body.appendChild(g);
   }
+  const ap = AP.by_project && AP.by_project[r.project_no];
+  if (ap) {
+    const g = document.createElement("div"); g.className = "dgroup";
+    const h = document.createElement("h4"); h.textContent = "AP / Liens (Bill Tracker)"; g.appendChild(h);
+    for (const [label, val] of [["Open AP balance", money(ap.open_balance)], ["Open bills", String(ap.open_lines)]]) {
+      const row = document.createElement("div"); row.className = "drow";
+      const dk = document.createElement("span"); dk.className = "dk"; dk.textContent = label;
+      const dv = document.createElement("span"); dv.className = "dv"; dv.textContent = val;
+      dv.title = "Click to copy"; dv.onclick = () => copy(val);
+      row.appendChild(dk); row.appendChild(dv); g.appendChild(row);
+    }
+    body.appendChild(g);
+  }
   if (r.notes) {
     const g = document.createElement("div"); g.className = "dgroup";
     const h = document.createElement("h4"); h.textContent = "Notes"; g.appendChild(h);
@@ -437,6 +499,7 @@ function syncSettingsUI() {
   $("#setWidth").value = settings.width;
   $("#wKpis").checked = settings.widgets.kpis;
   $("#wAttention").checked = settings.widgets.attention;
+  $("#wAp").checked = settings.widgets.ap;
   $("#wDivisions").checked = settings.widgets.divisions;
   $("#wProjects").checked = settings.widgets.projects;
   const cc = $("#colChooser"); cc.innerHTML = "";
@@ -465,6 +528,7 @@ function wireSettings() {
   on("#setWidth", "change", e => { settings.width = e.target.value; saveSettings(); applySettings(); });
   on("#wKpis", "change", e => { settings.widgets.kpis = e.target.checked; saveSettings(); applySettings(); });
   on("#wAttention", "change", e => { settings.widgets.attention = e.target.checked; saveSettings(); applySettings(); });
+  on("#wAp", "change", e => { settings.widgets.ap = e.target.checked; saveSettings(); applySettings(); });
   on("#wDivisions", "change", e => { settings.widgets.divisions = e.target.checked; saveSettings(); applySettings(); });
   on("#wProjects", "change", e => { settings.widgets.projects = e.target.checked; saveSettings(); applySettings(); });
   on("#btnReset", "click", () => { settings = structuredClone(DEFAULTS); saveSettings(); applySettings(); syncSettingsUI(); render(); toast("Reset to defaults"); });

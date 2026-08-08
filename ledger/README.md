@@ -16,6 +16,7 @@ so you can watch your actual data live in a database instead of a spreadsheet.
 |------|-----------|
 | `schema.sql` | The whole 6-table spine. **Portable — runs on SQLite and PostgreSQL unchanged.** |
 | `load_wip_master.py` | Reads the FINAL WIP master (the Test tabs) → fills `project` + `wip_snapshot`. |
+| `load_bill_tracker.py` | Reads `Bill Tracker.xlsx` (Bills + Inventory) → fills `ap_bill_line` (AP + liens). |
 | `dashboard.py` | Local web dashboard over the ledger — the browser UI (read-only). |
 | `static/` | The dashboard front-end (`index.html`, `style.css`, `app.js`) — no build step. |
 | `requirements.txt` | `openpyxl` (SQLite + the web server are stdlib — nothing else to install). |
@@ -29,11 +30,14 @@ budget_line      the plan: ETC by cost code
 cost_line        actual spend from QBO bills (append-only, idempotent by bill+line id)
 billing_event    AR invoices / draws (append-only, idempotent by invoice id)
 wip_snapshot     the COMPUTED WIP position — one row per (project, report_date)
+ap_bill_line     vendor bills from Bill Tracker — AP pay status + the lien clock (NOT cost truth)
 v_wip_latest     view: each project joined to its most-recent snapshot
+v_ap_by_project  view: open AP + bill counts per project
 ```
 
 **What fills what:**
 - `project`, `wip_snapshot` ← `load_wip_master.py` (**today** — from the WIP master sheet)
+- `ap_bill_line` ← `load_bill_tracker.py` (**today** — from Bill Tracker.xlsx)
 - `cost_code`, `budget_line`, `cost_line`, `billing_event` ← the QBO connectors (**Phase 2**,
   one connector at a time — not built yet)
 
@@ -54,6 +58,24 @@ python3 ledger/load_wip_master.py --show 8
 Each project is read from its richest tab exactly once — CP from `Test - CP`, RP from
 `Test - RP`, MFD from `Test-Master` (MFD has no own tab). Rows are filtered to real project
 numbers (`^(MFD|CP|RP)\d+(-FTW)?$`), so every legend / totals / section-break row drops out.
+
+## AP & liens (Bill Tracker)
+
+```bash
+cd "/Users/sebas/Documents/Claude/Projects/Automate Concrete Business" && python3 ledger/load_bill_tracker.py --show 8
+```
+
+Reads the line-level `Bills` + `Inventory` sheets of `Bill Tracker.xlsx` (override with
+`ACB_BILL_TRACKER_XLSX`) into `ap_bill_line` — vendor, project, account, amount, open balance,
+pay status, and the Texas lien clock per bill. Read-only on Excel; each run **full-replaces**
+`source='bill_tracker'` so it mirrors the current file.
+
+> **Not the cost ledger.** Bill Tracker's display sheets EXCLUDE subs, and for a sub-based labor
+> company subs are most of the cost — measured 25–98% short of the QBO WIP truth per job. Job cost
+> stays in `wip_snapshot`; the complete `cost_line` (incl. subs + true SL/PV cost codes) comes later
+> from a `qbo-export` pull. What this feed uniquely adds is **AP pay status + lien deadlines** the
+> WIP snapshot lacks. The dashboard surfaces it as the **AP & liens** widget (open AP, a lien
+> watchlist ordered by urgency) and an AP line in each job's detail.
 
 ## The dashboard (browser UI)
 

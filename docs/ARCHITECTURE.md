@@ -12,9 +12,11 @@
 Last updated: 2026-08-08 (ledger/: new — the canonical project database. schema.sql defines the
 6-table spine [project · cost_code · budget_line · cost_line · billing_event · wip_snapshot],
 portable across SQLite and Postgres; load_wip_master.py lands the final WIP master Test tabs into
-project + wip_snapshot, read-only on Excel, idempotent. dashboard.py + static/ add a local
-read-only web UI (KPIs · division rollup · projects table · job detail · copy/CSV · Customize panel).
-Phase 1 of "own the spine, keep the systems as peripherals." bill-tracker: FULL pull incl. subs → subs to the QBO Audit sheet, which gains an
+project + wip_snapshot, read-only on Excel, idempotent. load_bill_tracker.py adds an AP + lien feed
+(ap_bill_line) from Bill Tracker.xlsx — deliberately NOT cost truth (subs excluded). dashboard.py +
+static/ add a local read-only web UI (KPIs · Needs-attention · AP & liens · division rollup ·
+projects · job detail · copy/CSV · Customize panel). Phase 1 of "own the spine, keep the systems as
+peripherals." bill-tracker: FULL pull incl. subs → subs to the QBO Audit sheet, which gains an
 FW-misplacement + sub-missing-project section and folds in the retired
 duplicate/item-no-project/sub-bill audit scripts; cost codes captured audit-only. project-pnl:
 "Open Project in QBO" header link → project home page on all three templates)
@@ -249,16 +251,20 @@ flowchart LR
     classDef future fill:#efeaf3,stroke:#6b5b95,color:#312e40
 
     TEST[("WIP - MASTER new.xlsx\nTest tabs — the FINAL WIP\n(read-only source)")]:::src
-    SCHEMA["schema.sql\n6-table spine: project · cost_code ·\nbudget_line · cost_line · billing_event ·\nwip_snapshot  (SQLite + Postgres)"]:::tool
+    BT[("Bill Tracker.xlsx\nBills + Inventory\n(read-only source)")]:::src
+    SCHEMA["schema.sql\nspine: project · cost_code · budget_line ·\ncost_line · billing_event · wip_snapshot ·\nap_bill_line  (SQLite + Postgres)"]:::tool
     LOADER["load_wip_master.py\nCP←Test-CP · RP←Test-RP · MFD←Test-Master\nfilter to real project #s · idempotent upsert"]:::tool
-    DB[("ledger.sqlite3\nproject + wip_snapshot filled\n→ v_wip_latest view")]:::out
-    DASH["dashboard.py + static/\nlocal web UI (READ-ONLY, 127.0.0.1)\nKPIs · division rollup · projects ·\ndetail · copy · CSV · Customize panel"]:::tool
+    APLOAD["load_bill_tracker.py\nAP pay status + lien clock → ap_bill_line\n(NOT cost truth — subs excluded)"]:::tool
+    DB[("ledger.sqlite3\nproject + wip_snapshot + ap_bill_line\n→ v_wip_latest · v_ap_by_project")]:::out
+    DASH["dashboard.py + static/\nlocal web UI (READ-ONLY, 127.0.0.1)\nKPIs · attention · AP & liens ·\ndivision rollup · projects · detail · CSV"]:::tool
     BROWSER[("Browser\nhttp://127.0.0.1:8787")]:::out
-    QBOCONN["QBO connectors (Phase 2)\nbill-tracker · invoice-sync · WIP readers"]:::future
+    QBOCONN["qbo-export (Phase 2)\ntrue SL/PV cost code + Txn ID + subs"]:::future
 
     TEST --> LOADER
+    BT --> APLOAD
     SCHEMA -.->|"applied on connect"| LOADER
     LOADER ==>|"project · wip_snapshot"| DB
+    APLOAD ==>|"ap_bill_line"| DB
     DB ==>|"read-only"| DASH --> BROWSER
     QBOCONN -.->|"Phase 2: cost_code · budget_line ·\ncost_line · billing_event"| DB
 ```
@@ -288,10 +294,19 @@ Run it with `python3 ledger/dashboard.py` (the preview sandbox can't — it need
 outside `.preview`). This is Rung 1 of turning the terminal DB into a platform; Postgres + a shared
 server is Rung 2, when a second person needs to log in.
 
-**Phase 2 (not built): the QBO connectors** (`bill-tracker`, `invoice-sync`, the WIP
-readers) fill the granular `cost_code` / `budget_line` / `cost_line` / `billing_event`
-tables — cost codes become a real dimension instead of a QBO item-name string, and
-over/under-billing is computed from the spine instead of Excel columns.
+**AP + liens (`load_bill_tracker.py` → `ap_bill_line`).** The line-level `Bills`/`Inventory`
+sheets of `Bill Tracker.xlsx` load into `ap_bill_line` — vendor, project, account, open balance,
+pay status, and the Texas lien clock per bill. This is **not** the cost ledger: Bill Tracker's
+display sheets exclude subs, so it runs 25–98% short of the QBO WIP cost per job (measured). Job
+cost stays in `wip_snapshot`; what this uniquely adds is AP pay status + lien deadlines, surfaced
+as the dashboard's **AP & liens** widget (open-AP stats + a lien watchlist ordered by urgency) and
+an AP line in each job's detail. Full-replace by `source` each run; `project_no` is a soft link
+(no FK), so off-WIP/closed jobs are kept.
+
+**Phase 2 (not built): complete costs from `qbo-export`** fill the granular `cost_code` /
+`budget_line` / `cost_line` / `billing_event` tables — true SL/PV cost codes (not a QBO item-name
+string) with real Txn IDs and subs included, so over/under-billing and budget-vs-actual compute
+from the spine instead of Excel columns. (Bill Tracker can't source this — subs are excluded.)
 
 ---
 

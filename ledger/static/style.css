@@ -118,6 +118,16 @@ body {
 .attn .a-sub { font-size: .78em; color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .attn.none { opacity: .55; cursor: default; border-left-color: var(--border); }
 
+/* ── Lien urgency pills ────────────────────────────────────────────────── */
+.lien { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: .8em; white-space: nowrap;
+  border: 1px solid var(--border); }
+.lien.past, .lien.d7 { color: #fff; background: var(--neg); border-color: var(--neg); }
+.lien.d15 { color: var(--neg); border-color: color-mix(in srgb, var(--neg) 45%, var(--border));
+  background: color-mix(in srgb, var(--neg) 12%, transparent); }
+.lien.d30 { color: var(--text); border-color: color-mix(in srgb, #b8860b 55%, var(--border));
+  background: color-mix(in srgb, #b8860b 14%, transparent); }
+.lien.info { color: var(--text-dim); }
+
 /* ── % complete bar (in the projects table) ────────────────────────────── */
 .bar { position: relative; display: inline-block; min-width: 68px; text-align: right; }
 .bar .bar-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px;
