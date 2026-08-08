@@ -86,6 +86,35 @@ def _fetch_ap(con) -> dict:
     return ap
 
 
+def _fetch_costs(con) -> dict:
+    """QBO cost rollups from cost_line; empty (not an error) if unloaded."""
+    out = {"by_code": [], "by_project_code": {}, "by_project": {}, "loaded_total": 0}
+    try:
+        bp = {r["project_no"]: {"costs_loaded": r["costs_loaded"], "sub_costs": r["sub_costs"],
+                                "lines": r["lines"]}
+              for r in con.execute("SELECT project_no, costs_loaded, sub_costs, lines "
+                                   "FROM v_cost_by_project")}
+    except sqlite3.OperationalError:
+        return out
+    out["by_project"] = bp
+    out["loaded_total"] = sum((v["costs_loaded"] or 0) for v in bp.values())
+    # portfolio, by cost code (join the friendly description)
+    for r in con.execute(
+            "SELECT vc.code, vc.cost_code, cc.description, SUM(vc.actual) actual, SUM(vc.lines) lines "
+            "FROM v_cost_by_code vc LEFT JOIN cost_code cc ON cc.code = vc.cost_code "
+            "GROUP BY vc.code, vc.cost_code, cc.description ORDER BY actual DESC"):
+        out["by_code"].append({"code": r["code"], "cost_code": r["cost_code"],
+                               "description": r["description"], "actual": r["actual"], "lines": r["lines"]})
+    # per-project, by cost code (for the job detail drill)
+    pc: dict = {}
+    for r in con.execute("SELECT project_no, code, cost_code, actual, lines "
+                         "FROM v_cost_by_code ORDER BY actual DESC"):
+        pc.setdefault(r["project_no"], []).append(
+            {"code": r["code"], "cost_code": r["cost_code"], "actual": r["actual"], "lines": r["lines"]})
+    out["by_project_code"] = pc
+    return out
+
+
 def _connect(db_path: Path) -> sqlite3.Connection:
     """Open the ledger READ-ONLY. New connection per request (SQLite + threads)."""
     con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
@@ -114,10 +143,15 @@ def fetch_data(db_path: Path) -> dict:
         if got:
             loaded_at = got[0]
         ap = _fetch_ap(con)
+        costs = _fetch_costs(con)
     except sqlite3.OperationalError as e:
         con.close()
         return {"error": f"Ledger schema not found ({e}). Run the loader first."}
     con.close()
+    for r in rows:  # attach QBO cost rollup onto each project row
+        cp = costs["by_project"].get(r["project_no"])
+        r["costs_loaded"] = cp["costs_loaded"] if cp else None
+        r["sub_costs"] = cp["sub_costs"] if cp else None
     return {
         "meta": {
             "db_path": str(db_path),
@@ -127,6 +161,7 @@ def fetch_data(db_path: Path) -> dict:
         },
         "projects": rows,
         "ap": ap,
+        "cost": costs,
     }
 
 

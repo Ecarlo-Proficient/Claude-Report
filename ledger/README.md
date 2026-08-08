@@ -118,6 +118,10 @@ change the port). It reads the ledger **read-only** and binds to `127.0.0.1` onl
 on the network). What it shows:
 
 - **Portfolio KPIs** — total contract, costs, billed, left-to-bill, net over/(under), active jobs.
+- **Needs attention / AP & liens** — exposure chips and the lien watchlist.
+- **Costs by code** — the QBO cost ledger by cost code (portfolio table + a per-job breakdown in the
+  detail panel showing loaded vs subs vs WIP costs_to_date — the reconciliation, in the UI). Plus
+  toggleable **QBO Costs / Subs** columns in the projects table.
 - **By division** — the CP / RP / MFD rollup.
 - **Projects** — searchable, filterable (division / status / category / active-only), sortable;
   click any row for the full job detail (Contract / Budget / Costs / Earned / Billing / Notes).

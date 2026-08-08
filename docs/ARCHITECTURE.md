@@ -262,7 +262,7 @@ flowchart LR
     LOADER["load_wip_master.py\nCP←Test-CP · RP←Test-RP · MFD←Test-Master\nfilter to real project #s · idempotent upsert"]:::tool
     APLOAD["load_bill_tracker.py\nAP pay status + lien clock → ap_bill_line\n(NOT cost truth — subs excluded)"]:::tool
     DB[("ledger.sqlite3\nproject + wip_snapshot + ap_bill_line\n→ v_wip_latest · v_ap_by_project")]:::out
-    DASH["dashboard.py + static/\nlocal web UI (READ-ONLY, 127.0.0.1)\nKPIs · attention · AP & liens ·\ndivision rollup · projects · detail · CSV"]:::tool
+    DASH["dashboard.py + static/\nlocal web UI (READ-ONLY, 127.0.0.1)\nKPIs · attention · AP & liens · costs by code ·\ndivision rollup · projects · detail · CSV"]:::tool
     BROWSER[("Browser\nhttp://127.0.0.1:8787")]:::out
     QBO[("QBO\nBills + Purchases\n(read-only pull, Touch ID)")]:::src
     QCOSTS["shared/qbo_costs.py\ncost_leaf + iter_cost_lines\n(the ONE resolver — shared with project-pnl)"]:::tool

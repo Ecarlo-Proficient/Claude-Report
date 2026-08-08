@@ -58,13 +58,17 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     wip_snapshot.costs_to_date. Residual = per-job attribution differences (a handful of RP/CP
     jobs where QBO-sourced cost ≠ the WIP figure) — surfaced to the owner for review; specific
     dollar findings stay OUT of the repo (scope rule).
+- **Dashboard cost-code drill** — `/api/data` now carries a `cost` section (`_fetch_costs`):
+  portfolio by-code, per-project by-code, and per-project rollup attached to each project row.
+  New **"Costs by code"** widget (portfolio table with % bars), a **QBO Costs / Subs** toggleable
+  column pair, and a **"Costs (QBO, by code)"** group in each job's detail showing total loaded /
+  subs / WIP costs_to_date (the reconciliation) + the full code breakdown. Verified live (MFD177:
+  $7,326,179 loaded vs $7,306,900 WIP = 0.3%; portfolio $18.6M · 82 codes).
 
 ## IN PROGRESS
 - (none)
 
 ## TO DO
-- **Dashboard cost-code drill** — a "Cost by code" panel / detail section reading `v_cost_by_code`
-  (real cost data now EXISTS in the ledger, so this can be built + verified against it).
 - **Investigate the ~6 active reconcile mismatches** (QBO cost ≠ WIP figure, e.g. RP6901/RP6440):
   likely a base/-FTW split or a stale WIP cost — owner review; keep dollar specifics out of the repo.
 - `budget_line` from the takeoff/ETC extractor by cost code (`shared/takeoff_etc.py` is project-total

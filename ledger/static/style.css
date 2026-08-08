@@ -118,6 +118,12 @@ body {
 .attn .a-sub { font-size: .78em; color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .attn.none { opacity: .55; cursor: default; border-left-color: var(--border); }
 
+/* ── Cost-code chip ────────────────────────────────────────────────────── */
+.codechip { display: inline-block; padding: 1px 8px; border-radius: 6px; font-weight: 700;
+  font-variant-numeric: tabular-nums; font-size: .86em; letter-spacing: .01em;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+  background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--text); }
+
 /* ── Lien urgency pills ────────────────────────────────────────────────── */
 .lien { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: .8em; white-space: nowrap;
   border: 1px solid var(--border); }

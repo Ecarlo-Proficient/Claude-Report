@@ -28,6 +28,8 @@ const COLUMNS = [
   { key: "retainage_held",        label: "Retainage",     type: "money" },
   { key: "gross_profit_pct",      label: "GP %",          type: "pct" },
   { key: "original_profit",       label: "Orig. Profit",  type: "money" },
+  { key: "costs_loaded",          label: "QBO Costs",     type: "money" },
+  { key: "sub_costs",             label: "Subs (QBO)",    type: "money" },
 ];
 
 // ── Settings ──────────────────────────────────────────────────────────────
@@ -35,7 +37,7 @@ const LS_KEY = "proficient-ledger-settings-v1";
 const DEFAULTS = {
   theme: "auto", accent: "#3E7A5C", font: "system", fontSize: 14,
   density: "comfortable", width: "full",
-  widgets: { kpis: true, attention: true, ap: true, divisions: true, projects: true },
+  widgets: { kpis: true, attention: true, ap: true, costs: true, divisions: true, projects: true },
   columns: COLUMNS.filter(c => c.always || c.def).map(c => c.key),
 };
 
@@ -93,6 +95,7 @@ function applySettings() {
   $("#widget-kpis").hidden      = !settings.widgets.kpis;
   $("#widget-attention").hidden = !settings.widgets.attention;
   $("#widget-ap").hidden        = !settings.widgets.ap;
+  $("#widget-costs").hidden     = !settings.widgets.costs;
   $("#widget-divisions").hidden = !settings.widgets.divisions;
   $("#widget-projects").hidden  = !settings.widgets.projects;
 }
@@ -124,6 +127,7 @@ function raw(col, v) {
 // ── State ─────────────────────────────────────────────────────────────────
 let ALL = [];
 let AP = { summary: {}, lien_watch: [], by_project: {} };
+let COST = { by_code: [], by_project_code: {}, by_project: {}, loaded_total: 0 };
 let meta = {};
 let sortKey = "total_contract_price";
 let sortDir = -1;   // -1 desc, 1 asc
@@ -138,6 +142,7 @@ async function load() {
   $("#errorBanner").hidden = true;
   ALL = data.projects || [];
   AP = data.ap || { summary: {}, lien_watch: [], by_project: {} };
+  COST = data.cost || { by_code: [], by_project_code: {}, by_project: {}, loaded_total: 0 };
   meta = data.meta || {};
   $("#metaLine").textContent =
     `${meta.project_count} projects · report ${meta.report_date || "—"}` +
@@ -207,7 +212,37 @@ function cmpVal(a, b, type) {
 function visibleColumns() {
   return COLUMNS.filter(c => c.always || settings.columns.includes(c.key));
 }
-function render() { renderKPIs(); renderAttention(); renderAP(); renderDivisions(); renderProjects(); }
+function render() { renderKPIs(); renderAttention(); renderAP(); renderCosts(); renderDivisions(); renderProjects(); }
+
+function renderCosts() {
+  const codes = COST.by_code || [];
+  const total = COST.loaded_total || codes.reduce((t, c) => t + (c.actual || 0), 0);
+  $("#costCount").textContent = total ? `($${Math.round(total).toLocaleString()} loaded · ${codes.length} codes)` : "(no cost data — run load_costs.py)";
+  const cols = [["Code", "left"], ["Cost name", "left"], ["Actual", "right"], ["% of total", "right"], ["Lines", "right"]];
+  const thead = $("#costTable thead"), tbody = $("#costTable tbody");
+  thead.innerHTML = ""; tbody.innerHTML = "";
+  const htr = document.createElement("tr");
+  for (const [c, al] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
+  thead.appendChild(htr);
+  const max = codes.reduce((m, c) => Math.max(m, c.actual || 0), 0) || 1;
+  for (const c of codes.slice(0, 40)) {
+    const tr = document.createElement("tr");
+    const codeTd = document.createElement("td"); codeTd.className = "left";
+    const chip = document.createElement("span"); chip.className = "codechip"; chip.textContent = c.code;
+    codeTd.appendChild(chip); tr.appendChild(codeTd);
+    tr.appendChild(leftText(c.description || (c.cost_code ? "" : "(account)")));
+    const actTd = document.createElement("td");
+    const bar = document.createElement("span"); bar.className = "cell bar";
+    const fill = document.createElement("span"); fill.className = "bar-fill"; fill.style.width = ((c.actual || 0) / max * 100) + "%";
+    const txt = document.createElement("span"); txt.className = "bar-txt"; txt.textContent = money(c.actual);
+    bar.appendChild(fill); bar.appendChild(txt); bar.title = "Click to copy"; bar.onclick = () => copy(String(Math.round(c.actual || 0)));
+    actTd.appendChild(bar); tr.appendChild(actTd);
+    tr.appendChild(rightText(total ? ((c.actual || 0) / total * 100).toFixed(1) + "%" : "—"));
+    tr.appendChild(rightText(String(c.lines || 0)));
+    tbody.appendChild(tr);
+  }
+}
+function rightText(v) { const td = document.createElement("td"); const s = document.createElement("span"); s.textContent = v; td.appendChild(s); return td; }
 
 function renderAP() {
   const s = AP.summary || {};
@@ -439,6 +474,34 @@ function openDetail(r) {
     }
     body.appendChild(g);
   }
+  const cbp = COST.by_project_code && COST.by_project_code[r.project_no];
+  const cload = COST.by_project && COST.by_project[r.project_no];
+  if (cbp && cbp.length) {
+    const g = document.createElement("div"); g.className = "dgroup";
+    const h = document.createElement("h4"); h.textContent = "Costs (QBO, by code)"; g.appendChild(h);
+    const summary = [];
+    if (cload) {
+      summary.push(["Total loaded", money(cload.costs_loaded)]);
+      if (cload.sub_costs) summary.push(["of which subs", money(cload.sub_costs)]);
+      if (r.costs_to_date != null) summary.push(["WIP costs_to_date", money(r.costs_to_date)]);
+    }
+    for (const [label, val] of summary) {
+      const row = document.createElement("div"); row.className = "drow";
+      const dk = document.createElement("span"); dk.className = "dk"; dk.textContent = label;
+      const dv = document.createElement("span"); dv.className = "dv"; dv.textContent = val; dv.title = "Click to copy"; dv.onclick = () => copy(val);
+      row.appendChild(dk); row.appendChild(dv); g.appendChild(row);
+    }
+    for (const c of cbp) {
+      const row = document.createElement("div"); row.className = "drow";
+      const dk = document.createElement("span"); dk.className = "dk";
+      const chip = document.createElement("span"); chip.className = "codechip"; chip.textContent = c.code;
+      dk.appendChild(chip); if (c.lines > 1) dk.appendChild(document.createTextNode(` ·${c.lines}`));
+      const dv = document.createElement("span"); dv.className = "dv"; dv.textContent = money(c.actual);
+      dv.title = "Click to copy"; dv.onclick = () => copy(String(Math.round(c.actual || 0)));
+      row.appendChild(dk); row.appendChild(dv); g.appendChild(row);
+    }
+    body.appendChild(g);
+  }
   if (r.notes) {
     const g = document.createElement("div"); g.className = "dgroup";
     const h = document.createElement("h4"); h.textContent = "Notes"; g.appendChild(h);
@@ -500,6 +563,7 @@ function syncSettingsUI() {
   $("#wKpis").checked = settings.widgets.kpis;
   $("#wAttention").checked = settings.widgets.attention;
   $("#wAp").checked = settings.widgets.ap;
+  $("#wCosts").checked = settings.widgets.costs;
   $("#wDivisions").checked = settings.widgets.divisions;
   $("#wProjects").checked = settings.widgets.projects;
   const cc = $("#colChooser"); cc.innerHTML = "";
@@ -529,6 +593,7 @@ function wireSettings() {
   on("#wKpis", "change", e => { settings.widgets.kpis = e.target.checked; saveSettings(); applySettings(); });
   on("#wAttention", "change", e => { settings.widgets.attention = e.target.checked; saveSettings(); applySettings(); });
   on("#wAp", "change", e => { settings.widgets.ap = e.target.checked; saveSettings(); applySettings(); });
+  on("#wCosts", "change", e => { settings.widgets.costs = e.target.checked; saveSettings(); applySettings(); });
   on("#wDivisions", "change", e => { settings.widgets.divisions = e.target.checked; saveSettings(); applySettings(); });
   on("#wProjects", "change", e => { settings.widgets.projects = e.target.checked; saveSettings(); applySettings(); });
   on("#btnReset", "click", () => { settings = structuredClone(DEFAULTS); saveSettings(); applySettings(); syncSettingsUI(); render(); toast("Reset to defaults"); });
