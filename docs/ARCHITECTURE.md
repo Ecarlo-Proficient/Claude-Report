@@ -9,8 +9,12 @@
 > picture (open it in a browser after pulling). Refresh it when structure meaningfully changes;
 > THIS file is the always-current source of truth.
 
-Last updated: 2026-08-06 (bill-tracker: FULL pull incl. subs → subs to the QBO Audit sheet,
-which gains an FW-misplacement + sub-missing-project section and folds in the retired
+Last updated: 2026-08-08 (ledger/: new — the canonical project database. schema.sql defines the
+6-table spine [project · cost_code · budget_line · cost_line · billing_event · wip_snapshot],
+portable across SQLite and Postgres; load_wip_master.py lands the final WIP master Test tabs into
+project + wip_snapshot, read-only on Excel, idempotent. Phase 1 of "own the spine, keep the systems
+as peripherals." bill-tracker: FULL pull incl. subs → subs to the QBO Audit sheet, which gains an
+FW-misplacement + sub-missing-project section and folds in the retired
 duplicate/item-no-project/sub-bill audit scripts; cost codes captured audit-only. project-pnl:
 "Open Project in QBO" header link → project home page on all three templates)
 
@@ -32,6 +36,7 @@ invoice-sync/          QBO → Notion AR sync + Teams cards   (was automation-wo
 bill-tracker/          AP bills (FULL pull incl. subs) → Excel tracker + QBO Audit sheet (6 checks) + job_coding_audit drill
 statement-reconciler/  vendor statement PDFs ↔ QBO open bills
 wip/                   ALL WIP tooling: wip_writer.py (shared engine) + CP/RP readers + close scripts
+ledger/                the canonical project database (schema.sql spine + WIP-master loader) — Phase 1
 project-pnl/           per-project P&L workbooks → OneDrive
 debt-schedule/         equipment debt workbook + loan_sync (writes beside itself)
 health-dashboard/      local company-health xlsx (private, chmod 600)
@@ -230,6 +235,49 @@ schedule) or FTW BACKLOG — with a legend block, the
 owner's ACTION notes in NOTES, and his colour marks (green verified / red changed /
 orange verify) re-applied to the $ cells — marked Billed/Costs values survive the
 QBO refresh. Rows whose numbers don't reconcile render red (`needs_review`).
+
+---
+
+## Ledger — the canonical project database (`ledger/`, Phase 1)
+
+```mermaid
+flowchart LR
+    classDef src fill:#dbe6f0,stroke:#4A6B8A,color:#1f2937
+    classDef tool fill:#f6f5f1,stroke:#4b5563,color:#1f2937
+    classDef out fill:#dfeae2,stroke:#3E7A5C,color:#1f2937
+    classDef future fill:#efeaf3,stroke:#6b5b95,color:#312e40
+
+    TEST[("WIP - MASTER new.xlsx\nTest tabs — the FINAL WIP\n(read-only source)")]:::src
+    SCHEMA["schema.sql\n6-table spine: project · cost_code ·\nbudget_line · cost_line · billing_event ·\nwip_snapshot  (SQLite + Postgres)"]:::tool
+    LOADER["load_wip_master.py\nCP←Test-CP · RP←Test-RP · MFD←Test-Master\nfilter to real project #s · idempotent upsert"]:::tool
+    DB[("ledger.sqlite3\nproject + wip_snapshot filled\n→ v_wip_latest view")]:::out
+    QBOCONN["QBO connectors (Phase 2)\nbill-tracker · invoice-sync · WIP readers"]:::future
+
+    TEST --> LOADER
+    SCHEMA -.->|"applied on connect"| LOADER
+    LOADER ==>|"project · wip_snapshot"| DB
+    QBOCONN -.->|"Phase 2: cost_code · budget_line ·\ncost_line · billing_event"| DB
+```
+
+**The idea:** own the spine, keep the systems as peripherals. QBO stays the books,
+JobTread stays the ops shell, Excel goes back to being an export — but the reconciled
+shape of a JOB lives in `ledger/`, in one place we own. `schema.sql` is the whole
+6-table spine and is **portable across SQLite (the zero-install spike) and Postgres
+(the real deploy) unchanged** — natural keys only, ISO-text timestamps, 0/1 booleans,
+`ON CONFLICT` upserts.
+
+**Phase 1 (done): `load_wip_master.py`** reads the FINAL WIP master (the Test tabs) and
+lands `project` + `wip_snapshot` — no QBO generation, the sheet is the source. Each project
+is read from its richest tab exactly once (CP←`Test - CP`, RP←`Test - RP`, MFD←`Test-Master`),
+rows filtered to real project #s (`^(MFD|CP|RP)\d+(-FTW)?$`) so every legend/total/section row
+drops out. Excel is opened **read-only**; upserts are idempotent by `project_no` /
+`(project_no, report_date)`. `v_wip_latest` joins each project to its most-recent snapshot —
+the portfolio rollup that's rebuilt in Excel today becomes one query.
+
+**Phase 2 (not built): the QBO connectors** (`bill-tracker`, `invoice-sync`, the WIP
+readers) fill the granular `cost_code` / `budget_line` / `cost_line` / `billing_event`
+tables — cost codes become a real dimension instead of a QBO item-name string, and
+over/under-billing is computed from the spine instead of Excel columns.
 
 ---
 
