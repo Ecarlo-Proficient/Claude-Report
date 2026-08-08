@@ -1,0 +1,429 @@
+/* ── Ledger dashboard front-end ──────────────────────────────────────────────
+   Vanilla JS, no build step, no external libraries. Fetches /api/data and
+   renders KPIs + division rollup + a searchable/sortable projects table with a
+   click-into-job detail panel. Appearance is customizable and saved per person
+   in localStorage.
+--------------------------------------------------------------------------- */
+"use strict";
+
+const $  = (sel, el = document) => el.querySelector(sel);
+const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
+
+// ── Column catalog ────────────────────────────────────────────────────────
+const COLUMNS = [
+  { key: "project_no",            label: "Project #",     type: "text",   align: "left", always: true },
+  { key: "division",              label: "Division",      type: "text",   align: "left", def: true },
+  { key: "project_name",          label: "Name",          type: "text",   align: "left", def: true },
+  { key: "status",                label: "Status",        type: "status", align: "left", def: true },
+  { key: "rp_category",           label: "Category",      type: "text",   align: "left" },
+  { key: "builder_or_gc",         label: "Builder / GC",  type: "text",   align: "left" },
+  { key: "total_contract_price",  label: "Contract",      type: "money",  def: true },
+  { key: "estimated_total_costs", label: "ETC",           type: "money",  def: true },
+  { key: "costs_to_date",         label: "Costs",         type: "money",  def: true },
+  { key: "percent_complete",      label: "% Complete",    type: "pct",    def: true },
+  { key: "billed_to_date",        label: "Billed",        type: "money",  def: true },
+  { key: "left_to_bill",          label: "Left to Bill",  type: "money",  def: true },
+  { key: "overbillings",          label: "Over",          type: "money" },
+  { key: "underbillings",         label: "Under",         type: "money" },
+  { key: "retainage_held",        label: "Retainage",     type: "money" },
+  { key: "gross_profit_pct",      label: "GP %",          type: "pct" },
+  { key: "original_profit",       label: "Orig. Profit",  type: "money" },
+];
+
+// ── Settings ──────────────────────────────────────────────────────────────
+const LS_KEY = "proficient-ledger-settings-v1";
+const DEFAULTS = {
+  theme: "auto", accent: "#3E7A5C", font: "system", fontSize: 14,
+  density: "comfortable", width: "full",
+  widgets: { kpis: true, divisions: true, projects: true },
+  columns: COLUMNS.filter(c => c.always || c.def).map(c => c.key),
+};
+let settings = loadSettings();
+
+function loadSettings() {
+  try {
+    const s = JSON.parse(localStorage.getItem(LS_KEY));
+    if (!s) return structuredClone(DEFAULTS);
+    return { ...structuredClone(DEFAULTS), ...s,
+             widgets: { ...DEFAULTS.widgets, ...(s.widgets || {}) },
+             columns: Array.isArray(s.columns) && s.columns.length ? s.columns : DEFAULTS.columns };
+  } catch { return structuredClone(DEFAULTS); }
+}
+function saveSettings() { localStorage.setItem(LS_KEY, JSON.stringify(settings)); }
+
+const FONTS = { system: "var(--font-system)", inter: "var(--font-inter)",
+                serif: "var(--font-serif)", mono: "var(--font-mono)" };
+
+function applySettings() {
+  const root = document.documentElement;
+  // theme
+  const dark = settings.theme === "dark" ||
+    (settings.theme === "auto" && matchMedia("(prefers-color-scheme: dark)").matches);
+  root.setAttribute("data-theme", dark ? "dark" : "light");
+  // typographic + layout vars
+  root.style.setProperty("--font", FONTS[settings.font] || FONTS.system);
+  root.style.setProperty("--fs", settings.fontSize + "px");
+  root.style.setProperty("--accent", settings.accent);
+  root.style.setProperty("--row-pad", settings.density === "compact" ? "5px 10px" : "10px 12px");
+  root.style.setProperty("--maxw", settings.width === "boxed" ? "1180px" : "100%");
+  // widgets
+  $("#widget-kpis").hidden      = !settings.widgets.kpis;
+  $("#widget-divisions").hidden = !settings.widgets.divisions;
+  $("#widget-projects").hidden  = !settings.widgets.projects;
+}
+
+// ── Formatting ────────────────────────────────────────────────────────────
+const isNum = v => typeof v === "number" && !Number.isNaN(v);
+function money(v) {
+  if (v === null || v === undefined || v === "") return "—";
+  const n = Number(v); if (Number.isNaN(n)) return "—";
+  const s = "$" + Math.round(Math.abs(n)).toLocaleString();
+  return n < 0 ? "-" + s : s;
+}
+function pct(v) {
+  if (v === null || v === undefined || v === "") return "—";
+  const n = Number(v); if (Number.isNaN(n)) return "—";
+  return (n * 100).toFixed(1) + "%";
+}
+function fmt(col, v) {
+  if (col.type === "money") return money(v);
+  if (col.type === "pct")   return pct(v);
+  return (v === null || v === undefined || v === "") ? "—" : String(v);
+}
+// raw value for copy / CSV (numbers stay numeric so they paste clean into Excel)
+function raw(col, v) {
+  if (v === null || v === undefined) return "";
+  return (col.type === "money" || col.type === "pct") && isNum(Number(v)) && v !== "" ? Number(v) : String(v);
+}
+
+// ── State ─────────────────────────────────────────────────────────────────
+let ALL = [];
+let meta = {};
+let sortKey = "total_contract_price";
+let sortDir = -1;   // -1 desc, 1 asc
+
+// ── Load ──────────────────────────────────────────────────────────────────
+async function load() {
+  let data;
+  try { data = await (await fetch("/api/data")).json(); }
+  catch (e) { return showError("Could not reach the server: " + e); }
+  if (data.error) return showError(data.error);
+  $("#errorBanner").hidden = true;
+  ALL = data.projects || [];
+  meta = data.meta || {};
+  $("#metaLine").textContent =
+    `${meta.project_count} projects · report ${meta.report_date || "—"}` +
+    (meta.loaded_at ? ` · loaded ${meta.loaded_at}` : "");
+  buildFilterOptions();
+  render();
+}
+function showError(msg) {
+  const b = $("#errorBanner"); b.hidden = false; b.textContent = msg;
+  $("#metaLine").textContent = "not loaded";
+}
+
+// ── Filters ───────────────────────────────────────────────────────────────
+function buildFilterOptions() {
+  fillSelect("#fDivision", uniq(ALL.map(r => r.division)));
+  fillSelect("#fStatus",   uniq(ALL.map(r => r.status)));
+  fillSelect("#fCategory", uniq(ALL.map(r => r.rp_category)));
+}
+const uniq = arr => [...new Set(arr.filter(Boolean))].sort();
+function fillSelect(sel, values) {
+  const el = $(sel); const keep = el.firstElementChild;
+  el.innerHTML = ""; el.appendChild(keep);
+  for (const v of values) { const o = document.createElement("option"); o.value = v; o.textContent = v; el.appendChild(o); }
+}
+function currentFilters() {
+  return {
+    q: $("#search").value.trim().toLowerCase(),
+    division: $("#fDivision").value,
+    status: $("#fStatus").value,
+    category: $("#fCategory").value,
+    activeOnly: $("#fActive").checked,
+  };
+}
+function filtered() {
+  const f = currentFilters();
+  let rows = ALL.filter(r => {
+    if (f.division && r.division !== f.division) return false;
+    if (f.status && r.status !== f.status) return false;
+    if (f.category && r.rp_category !== f.category) return false;
+    if (f.activeOnly && (r.status || "").toLowerCase() !== "active") return false;
+    if (f.q) {
+      const hay = [r.project_no, r.project_name, r.builder_or_gc].filter(Boolean).join(" ").toLowerCase();
+      if (!hay.includes(f.q)) return false;
+    }
+    return true;
+  });
+  const col = COLUMNS.find(c => c.key === sortKey) || COLUMNS[0];
+  rows.sort((a, b) => {
+    const av = a[sortKey], bv = b[sortKey];
+    const na = av === null || av === undefined || av === "";
+    const nb = bv === null || bv === undefined || bv === "";
+    if (na && nb) return 0;
+    if (na) return 1;   // nulls ALWAYS last, regardless of sort direction
+    if (nb) return -1;
+    return cmpVal(av, bv, col.type) * sortDir;
+  });
+  return rows;
+}
+function cmpVal(a, b, type) {
+  if (type === "money" || type === "pct") return Number(a) - Number(b);
+  return String(a).localeCompare(String(b));
+}
+
+// ── Render ────────────────────────────────────────────────────────────────
+function visibleColumns() {
+  return COLUMNS.filter(c => c.always || settings.columns.includes(c.key));
+}
+function render() { renderKPIs(); renderDivisions(); renderProjects(); }
+
+function renderKPIs() {
+  const rows = ALL;
+  const sum = k => rows.reduce((t, r) => t + (isNum(r[k]) ? r[k] : Number(r[k]) || 0), 0);
+  const contract = sum("total_contract_price"), costs = sum("costs_to_date"),
+        billed = sum("billed_to_date"), left = sum("left_to_bill"),
+        over = sum("overbillings"), under = sum("underbillings"),
+        active = rows.filter(r => (r.status || "").toLowerCase() === "active").length;
+  const net = over - under;
+  const cards = [
+    ["Total Contract", money(contract), `${rows.length} jobs`],
+    ["Costs to Date", money(costs), contract ? `${(costs / contract * 100).toFixed(0)}% of contract` : ""],
+    ["Billed to Date", money(billed), contract ? `${(billed / contract * 100).toFixed(0)}% of contract` : ""],
+    ["Left to Bill", money(left), ""],
+    ["Net Over/(Under)", money(net), net >= 0 ? "overbilled" : "underbilled"],
+    ["Active Jobs", String(active), `of ${rows.length}`],
+  ];
+  const row = $("#kpiRow"); row.innerHTML = "";
+  for (const [label, value, sub] of cards) {
+    const el = document.createElement("div"); el.className = "kpi";
+    el.innerHTML = `<div class="k-label"></div><div class="k-value"></div><div class="k-sub"></div>`;
+    el.querySelector(".k-label").textContent = label;
+    el.querySelector(".k-value").textContent = value;
+    el.querySelector(".k-sub").textContent = sub;
+    row.appendChild(el);
+  }
+}
+
+function renderDivisions() {
+  const groups = {};
+  for (const r of ALL) {
+    const d = r.division || "—";
+    const g = groups[d] || (groups[d] = { jobs: 0, contract: 0, costs: 0, billed: 0, over: 0, under: 0 });
+    g.jobs++; g.contract += num(r.total_contract_price); g.costs += num(r.costs_to_date);
+    g.billed += num(r.billed_to_date); g.over += num(r.overbillings); g.under += num(r.underbillings);
+  }
+  const cols = ["Division", "Jobs", "Contract", "Costs", "Billed", "Over", "Under"];
+  const thead = $("#divTable thead"), tbody = $("#divTable tbody");
+  thead.innerHTML = ""; tbody.innerHTML = "";
+  const htr = document.createElement("tr");
+  cols.forEach((c, i) => { const th = document.createElement("th"); th.textContent = c; if (i === 0) th.className = "left"; htr.appendChild(th); });
+  thead.appendChild(htr);
+  const order = Object.keys(groups).sort((a, b) => groups[b].contract - groups[a].contract);
+  for (const d of order) {
+    const g = groups[d];
+    addRow(tbody, [textCell(d, true), textCell(String(g.jobs)), moneyCell(g.contract),
+      moneyCell(g.costs), moneyCell(g.billed), moneyCell(g.over), moneyCell(g.under)]);
+  }
+}
+const num = v => (isNum(v) ? v : Number(v) || 0);
+
+function renderProjects() {
+  const rows = filtered();
+  $("#projCount").textContent = `(${rows.length})`;
+  const cols = visibleColumns();
+  const thead = $("#projTable thead"), tbody = $("#projTable tbody");
+  thead.innerHTML = ""; tbody.innerHTML = "";
+  // header
+  const htr = document.createElement("tr");
+  for (const c of cols) {
+    const th = document.createElement("th");
+    if (c.align === "left") th.className = "left";
+    th.textContent = c.label;
+    if (sortKey === c.key) { const a = document.createElement("span"); a.className = "arrow"; a.textContent = sortDir === 1 ? " ▲" : " ▼"; th.appendChild(a); }
+    th.onclick = () => { if (sortKey === c.key) sortDir = -sortDir; else { sortKey = c.key; sortDir = c.type === "text" || c.type === "status" ? 1 : -1; } renderProjects(); };
+    htr.appendChild(th);
+  }
+  thead.appendChild(htr);
+  // body
+  for (const r of rows) {
+    const tr = document.createElement("tr");
+    tr.onclick = (e) => { if (!e.target.closest(".cell")) openDetail(r); };
+    for (const c of cols) {
+      const td = document.createElement("td");
+      if (c.align === "left") td.className = "left";
+      td.appendChild(cellFor(c, r[c.key]));
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+}
+
+// ── cell builders ─────────────────────────────────────────────────────────
+function cellFor(col, value) {
+  if (col.type === "status") return statusPill(value);
+  const span = document.createElement("span");
+  span.className = "cell";
+  span.textContent = fmt(col, value);
+  if (col.type === "money" && isNum(Number(value)) && value !== null && value !== "") {
+    if (Number(value) < 0) span.classList.add("neg");
+  }
+  span.title = "Click to copy";
+  span.onclick = (e) => { e.stopPropagation(); copy(String(raw(col, value))); };
+  return span;
+}
+function statusPill(v) {
+  const s = document.createElement("span");
+  s.className = "pill " + (v || "").toLowerCase();
+  s.textContent = v || "—";
+  return s;
+}
+function textCell(v, left) { const s = document.createElement("span"); s.textContent = v; const w = document.createElement("span"); w.appendChild(s); return w; }
+function moneyCell(v) { const s = document.createElement("span"); s.className = "cell"; s.textContent = money(v); s.onclick = () => copy(String(Math.round(num(v)))); s.title = "Click to copy"; return s; }
+function addRow(tbody, cells) { const tr = document.createElement("tr"); cells.forEach((c, i) => { const td = document.createElement("td"); if (i === 0) td.className = "left"; td.appendChild(c); tr.appendChild(td); }); tbody.appendChild(tr); }
+
+// ── Detail panel ──────────────────────────────────────────────────────────
+const DETAIL_GROUPS = [
+  ["Identity", [["division", "Division", "text"], ["project_type", "Type", "text"], ["builder_or_gc", "Builder / GC", "text"], ["rp_category", "Category", "text"], ["status", "Status", "text"], ["report_date", "Report date", "text"]]],
+  ["Contract", [["original_contract", "Original contract", "money"], ["approved_cos", "Approved COs", "money"], ["total_contract_price", "Total contract price", "money"]]],
+  ["Budget", [["original_estimated_cost", "Original estimated cost", "money"], ["co_costs", "CO costs", "money"], ["estimated_total_costs", "Estimated total costs (ETC)", "money"], ["original_profit", "Original profit", "money"], ["gross_profit_pct", "Gross profit %", "pct"]]],
+  ["Costs", [["costs_to_date", "Costs to date", "money"], ["cost_to_complete", "Cost to complete", "money"], ["percent_complete", "Percent complete", "pct"]]],
+  ["Earned", [["revenues_earned_to_date", "Revenues earned", "money"], ["profit_earned_to_date", "Profit earned", "money"]]],
+  ["Billing", [["billed_to_date", "Billed to date", "money"], ["overbillings", "Overbillings", "money"], ["underbillings", "Underbillings", "money"], ["retainage_held", "Retainage held", "money"], ["left_to_bill", "Left to bill", "money"], ["future_profit_to_earn", "Future profit to earn", "money"], ["pure_job_borrow", "Pure job borrow", "money"]]],
+  ["Cross-checks", [["mark_schedule", "Schedule", "text"], ["mark_general_list", "General list", "text"], ["mark_jobtread", "JobTread", "text"]]],
+];
+let detailRow = null;
+
+function openDetail(r) {
+  detailRow = r;
+  $("#detailTitle").textContent = `${r.project_no} — ${r.project_name || ""}`;
+  $("#detailSub").textContent = `${r.division || ""}${r.source_tab ? " · " + r.source_tab : ""}`;
+  const body = $("#detailBody"); body.innerHTML = "";
+  const typ = k => ({ money: "money", pct: "pct" }[k] ? { type: k } : { type: "text" });
+  for (const [title, fields] of DETAIL_GROUPS) {
+    const rows = fields.filter(([k]) => r[k] !== null && r[k] !== undefined && r[k] !== "");
+    if (!rows.length) continue;
+    const g = document.createElement("div"); g.className = "dgroup";
+    const h = document.createElement("h4"); h.textContent = title; g.appendChild(h);
+    for (const [k, label, type] of rows) {
+      const row = document.createElement("div"); row.className = "drow";
+      const dk = document.createElement("span"); dk.className = "dk"; dk.textContent = label;
+      const dv = document.createElement("span"); dv.className = "dv";
+      dv.textContent = fmt({ type }, r[k]);
+      dv.title = "Click to copy";
+      dv.onclick = () => copy(String(raw({ type }, r[k])));
+      row.appendChild(dk); row.appendChild(dv); g.appendChild(row);
+    }
+    body.appendChild(g);
+  }
+  if (r.notes) {
+    const g = document.createElement("div"); g.className = "dgroup";
+    const h = document.createElement("h4"); h.textContent = "Notes"; g.appendChild(h);
+    const n = document.createElement("div"); n.className = "dnote"; n.textContent = r.notes; g.appendChild(n);
+    body.appendChild(g);
+  }
+  openPanel("#detail");
+}
+function detailAsText() {
+  if (!detailRow) return "";
+  const r = detailRow; const lines = [`${r.project_no} — ${r.project_name || ""}`];
+  for (const [title, fields] of DETAIL_GROUPS) {
+    const present = fields.filter(([k]) => r[k] !== null && r[k] !== undefined && r[k] !== "");
+    if (!present.length) continue;
+    lines.push("", title.toUpperCase());
+    for (const [k, label, type] of present) lines.push(`  ${label}: ${fmt({ type }, r[k])}`);
+  }
+  if (r.notes) lines.push("", "NOTES", "  " + r.notes);
+  return lines.join("\n");
+}
+
+// ── Panels ────────────────────────────────────────────────────────────────
+function openPanel(sel) { $("#overlay").hidden = false; $(sel).hidden = false; }
+function closePanels() { $("#overlay").hidden = true; $("#detail").hidden = true; $("#settings").hidden = true; }
+
+// ── Copy + CSV + toast ────────────────────────────────────────────────────
+let toastTimer = null;
+function toast(msg) {
+  const t = $("#toast"); t.textContent = msg; t.hidden = false;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.hidden = true), 1400);
+}
+async function copy(text) {
+  try { await navigator.clipboard.writeText(text); toast("Copied: " + text.slice(0, 40)); }
+  catch { const ta = document.createElement("textarea"); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove(); toast("Copied"); }
+}
+function exportCSV() {
+  const cols = visibleColumns();
+  const rows = filtered();
+  const esc = v => { const s = String(v ?? ""); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const head = cols.map(c => esc(c.label)).join(",");
+  const body = rows.map(r => cols.map(c => esc(raw(c, r[c.key]))).join(",")).join("\n");
+  const blob = new Blob([head + "\n" + body], { type: "text/csv" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `ledger_${meta.report_date || "export"}.csv`;
+  a.click(); URL.revokeObjectURL(a.href);
+  toast(`Exported ${rows.length} rows`);
+}
+
+// ── Settings UI ───────────────────────────────────────────────────────────
+function syncSettingsUI() {
+  $("#setTheme").value = settings.theme;
+  $("#setAccent").value = settings.accent;
+  $("#setFont").value = settings.font;
+  $("#setFontSize").value = settings.fontSize;
+  $("#fsVal").textContent = settings.fontSize + "px";
+  $("#setDensity").value = settings.density;
+  $("#setWidth").value = settings.width;
+  $("#wKpis").checked = settings.widgets.kpis;
+  $("#wDivisions").checked = settings.widgets.divisions;
+  $("#wProjects").checked = settings.widgets.projects;
+  const cc = $("#colChooser"); cc.innerHTML = "";
+  for (const c of COLUMNS) {
+    const lab = document.createElement("label");
+    const cb = document.createElement("input"); cb.type = "checkbox";
+    cb.checked = c.always || settings.columns.includes(c.key);
+    cb.disabled = !!c.always;
+    cb.onchange = () => {
+      const set = new Set(settings.columns);
+      cb.checked ? set.add(c.key) : set.delete(c.key);
+      settings.columns = COLUMNS.filter(x => set.has(x.key) || x.always).map(x => x.key);
+      saveSettings(); renderProjects();
+    };
+    lab.appendChild(cb); lab.appendChild(document.createTextNode(" " + c.label));
+    cc.appendChild(lab);
+  }
+}
+function wireSettings() {
+  const on = (sel, ev, fn) => $(sel).addEventListener(ev, fn);
+  on("#setTheme", "change", e => { settings.theme = e.target.value; saveSettings(); applySettings(); });
+  on("#setAccent", "input", e => { settings.accent = e.target.value; saveSettings(); applySettings(); });
+  on("#setFont", "change", e => { settings.font = e.target.value; saveSettings(); applySettings(); });
+  on("#setFontSize", "input", e => { settings.fontSize = +e.target.value; $("#fsVal").textContent = settings.fontSize + "px"; saveSettings(); applySettings(); });
+  on("#setDensity", "change", e => { settings.density = e.target.value; saveSettings(); applySettings(); });
+  on("#setWidth", "change", e => { settings.width = e.target.value; saveSettings(); applySettings(); });
+  on("#wKpis", "change", e => { settings.widgets.kpis = e.target.checked; saveSettings(); applySettings(); });
+  on("#wDivisions", "change", e => { settings.widgets.divisions = e.target.checked; saveSettings(); applySettings(); });
+  on("#wProjects", "change", e => { settings.widgets.projects = e.target.checked; saveSettings(); applySettings(); });
+  on("#btnReset", "click", () => { settings = structuredClone(DEFAULTS); saveSettings(); applySettings(); syncSettingsUI(); render(); toast("Reset to defaults"); });
+}
+
+// ── Wire up ───────────────────────────────────────────────────────────────
+function init() {
+  applySettings();
+  syncSettingsUI();
+  wireSettings();
+  ["#search", "#fDivision", "#fStatus", "#fCategory", "#fActive"].forEach(sel =>
+    $(sel).addEventListener("input", renderProjects));
+  $("#btnExport").onclick = exportCSV;
+  $("#btnRefresh").onclick = load;
+  $("#btnSettings").onclick = () => openPanel("#settings");
+  $("#btnCloseSettings").onclick = closePanels;
+  $("#btnCloseDetail").onclick = closePanels;
+  $("#btnCopyDetail").onclick = () => copy(detailAsText());
+  $("#overlay").onclick = closePanels;
+  document.addEventListener("keydown", e => { if (e.key === "Escape") closePanels(); });
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { if (settings.theme === "auto") applySettings(); });
+  load();
+}
+init();

@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Proficient Ledger</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <!-- ── Top bar ─────────────────────────────────────────────────────── -->
+  <header class="topbar">
+    <div class="brand">
+      <span class="dot"></span>
+      <div>
+        <div class="brand-title">Project Ledger</div>
+        <div class="brand-sub" id="metaLine">loading…</div>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <button class="btn" id="btnExport" title="Export the current table to CSV">Export CSV</button>
+      <button class="btn" id="btnRefresh" title="Reload data">Refresh</button>
+      <button class="btn icon" id="btnSettings" title="Customize">⚙</button>
+    </div>
+  </header>
+
+  <main class="wrap" id="wrap">
+    <div id="errorBanner" class="error-banner" hidden></div>
+
+    <!-- ── KPI widgets ──────────────────────────────────────────────── -->
+    <section class="widget" id="widget-kpis">
+      <div class="widget-head"><h2>Portfolio</h2></div>
+      <div class="kpi-row" id="kpiRow"></div>
+    </section>
+
+    <!-- ── Division rollup ──────────────────────────────────────────── -->
+    <section class="widget" id="widget-divisions">
+      <div class="widget-head"><h2>By division</h2></div>
+      <div class="table-scroll">
+        <table class="grid" id="divTable">
+          <thead></thead><tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ── Projects ─────────────────────────────────────────────────── -->
+    <section class="widget" id="widget-projects">
+      <div class="widget-head">
+        <h2>Projects <span class="count" id="projCount"></span></h2>
+      </div>
+      <div class="filters">
+        <input type="search" id="search" placeholder="Search project #, name, builder…" autocomplete="off">
+        <select id="fDivision"><option value="">All divisions</option></select>
+        <select id="fStatus"><option value="">All statuses</option></select>
+        <select id="fCategory"><option value="">All categories</option></select>
+        <label class="chk"><input type="checkbox" id="fActive"> Active only</label>
+      </div>
+      <div class="table-scroll">
+        <table class="grid clickable" id="projTable">
+          <thead></thead><tbody></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <!-- ── Detail slide-over ──────────────────────────────────────────── -->
+  <div class="overlay" id="overlay" hidden></div>
+  <aside class="panel panel-right" id="detail" hidden>
+    <div class="panel-head">
+      <div>
+        <div class="panel-title" id="detailTitle">—</div>
+        <div class="panel-sub" id="detailSub"></div>
+      </div>
+      <div class="panel-head-actions">
+        <button class="btn" id="btnCopyDetail" title="Copy this job as text">Copy</button>
+        <button class="btn icon" id="btnCloseDetail" title="Close">✕</button>
+      </div>
+    </div>
+    <div class="panel-body" id="detailBody"></div>
+  </aside>
+
+  <!-- ── Settings slide-over ────────────────────────────────────────── -->
+  <aside class="panel panel-right" id="settings" hidden>
+    <div class="panel-head">
+      <div class="panel-title">Customize</div>
+      <div class="panel-head-actions">
+        <button class="btn" id="btnReset" title="Reset to defaults">Reset</button>
+        <button class="btn icon" id="btnCloseSettings" title="Close">✕</button>
+      </div>
+    </div>
+    <div class="panel-body" id="settingsBody">
+      <div class="set-group">
+        <h3>Appearance</h3>
+        <label class="set-row">Theme
+          <select id="setTheme">
+            <option value="auto">Auto (system)</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+        </label>
+        <label class="set-row">Accent
+          <input type="color" id="setAccent">
+        </label>
+        <label class="set-row">Font
+          <select id="setFont">
+            <option value="system">System</option>
+            <option value="inter">Grotesque sans</option>
+            <option value="serif">Serif</option>
+            <option value="mono">Monospace</option>
+          </select>
+        </label>
+        <label class="set-row">Text size <span class="val" id="fsVal"></span>
+          <input type="range" id="setFontSize" min="11" max="20" step="1">
+        </label>
+        <label class="set-row">Density
+          <select id="setDensity">
+            <option value="comfortable">Comfortable</option>
+            <option value="compact">Compact</option>
+          </select>
+        </label>
+        <label class="set-row">Width
+          <select id="setWidth">
+            <option value="full">Full width</option>
+            <option value="boxed">Boxed</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="set-group">
+        <h3>Widgets</h3>
+        <label class="chk"><input type="checkbox" id="wKpis"> Portfolio KPIs</label>
+        <label class="chk"><input type="checkbox" id="wDivisions"> Division rollup</label>
+        <label class="chk"><input type="checkbox" id="wProjects"> Projects table</label>
+      </div>
+
+      <div class="set-group">
+        <h3>Table columns</h3>
+        <div id="colChooser" class="col-chooser"></div>
+      </div>
+    </div>
+  </aside>
+
+  <div class="toast" id="toast" hidden></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

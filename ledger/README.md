@@ -16,7 +16,9 @@ so you can watch your actual data live in a database instead of a spreadsheet.
 |------|-----------|
 | `schema.sql` | The whole 6-table spine. **Portable — runs on SQLite and PostgreSQL unchanged.** |
 | `load_wip_master.py` | Reads the FINAL WIP master (the Test tabs) → fills `project` + `wip_snapshot`. |
-| `requirements.txt` | `openpyxl` (SQLite is stdlib — nothing else to install). |
+| `dashboard.py` | Local web dashboard over the ledger — the browser UI (read-only). |
+| `static/` | The dashboard front-end (`index.html`, `style.css`, `app.js`) — no build step. |
+| `requirements.txt` | `openpyxl` (SQLite + the web server are stdlib — nothing else to install). |
 
 ## The schema (6 tables + 1 view)
 
@@ -52,6 +54,26 @@ python3 ledger/load_wip_master.py --show 8
 Each project is read from its richest tab exactly once — CP from `Test - CP`, RP from
 `Test - RP`, MFD from `Test-Master` (MFD has no own tab). Rows are filtered to real project
 numbers (`^(MFD|CP|RP)\d+(-FTW)?$`), so every legend / totals / section-break row drops out.
+
+## The dashboard (browser UI)
+
+```bash
+cd "/Users/sebas/Documents/Claude/Projects/Automate Concrete Business" && python3 ledger/dashboard.py
+```
+
+Opens `http://127.0.0.1:8787` in your browser (add `--no-open` to skip that, `--port N` to
+change the port). It reads the ledger **read-only** and binds to `127.0.0.1` only (not exposed
+on the network). What it shows:
+
+- **Portfolio KPIs** — total contract, costs, billed, left-to-bill, net over/(under), active jobs.
+- **By division** — the CP / RP / MFD rollup.
+- **Projects** — searchable, filterable (division / status / category / active-only), sortable;
+  click any row for the full job detail (Contract / Budget / Costs / Earned / Billing / Notes).
+- **Copy & export** — click any number to copy it; **Export CSV** downloads the current view.
+- **Customize** (⚙) — theme (auto/light/dark), accent color, font, text size, density, width,
+  which widgets show, and which table columns show. Saved per person in the browser.
+
+The dashboard is a view. It never writes the database or the Excel sheet.
 
 ## Safety
 

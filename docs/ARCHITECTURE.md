@@ -12,8 +12,9 @@
 Last updated: 2026-08-08 (ledger/: new — the canonical project database. schema.sql defines the
 6-table spine [project · cost_code · budget_line · cost_line · billing_event · wip_snapshot],
 portable across SQLite and Postgres; load_wip_master.py lands the final WIP master Test tabs into
-project + wip_snapshot, read-only on Excel, idempotent. Phase 1 of "own the spine, keep the systems
-as peripherals." bill-tracker: FULL pull incl. subs → subs to the QBO Audit sheet, which gains an
+project + wip_snapshot, read-only on Excel, idempotent. dashboard.py + static/ add a local
+read-only web UI (KPIs · division rollup · projects table · job detail · copy/CSV · Customize panel).
+Phase 1 of "own the spine, keep the systems as peripherals." bill-tracker: FULL pull incl. subs → subs to the QBO Audit sheet, which gains an
 FW-misplacement + sub-missing-project section and folds in the retired
 duplicate/item-no-project/sub-bill audit scripts; cost codes captured audit-only. project-pnl:
 "Open Project in QBO" header link → project home page on all three templates)
@@ -251,11 +252,14 @@ flowchart LR
     SCHEMA["schema.sql\n6-table spine: project · cost_code ·\nbudget_line · cost_line · billing_event ·\nwip_snapshot  (SQLite + Postgres)"]:::tool
     LOADER["load_wip_master.py\nCP←Test-CP · RP←Test-RP · MFD←Test-Master\nfilter to real project #s · idempotent upsert"]:::tool
     DB[("ledger.sqlite3\nproject + wip_snapshot filled\n→ v_wip_latest view")]:::out
+    DASH["dashboard.py + static/\nlocal web UI (READ-ONLY, 127.0.0.1)\nKPIs · division rollup · projects ·\ndetail · copy · CSV · Customize panel"]:::tool
+    BROWSER[("Browser\nhttp://127.0.0.1:8787")]:::out
     QBOCONN["QBO connectors (Phase 2)\nbill-tracker · invoice-sync · WIP readers"]:::future
 
     TEST --> LOADER
     SCHEMA -.->|"applied on connect"| LOADER
     LOADER ==>|"project · wip_snapshot"| DB
+    DB ==>|"read-only"| DASH --> BROWSER
     QBOCONN -.->|"Phase 2: cost_code · budget_line ·\ncost_line · billing_event"| DB
 ```
 
@@ -273,6 +277,15 @@ rows filtered to real project #s (`^(MFD|CP|RP)\d+(-FTW)?$`) so every legend/tot
 drops out. Excel is opened **read-only**; upserts are idempotent by `project_no` /
 `(project_no, report_date)`. `v_wip_latest` joins each project to its most-recent snapshot —
 the portfolio rollup that's rebuilt in Excel today becomes one query.
+
+**The dashboard (`dashboard.py` + `static/`)** is the browser UI over that query — a stdlib web
+server (no Flask) that reads the ledger **read-only** and binds to `127.0.0.1` only. It serves
+portfolio KPIs, the division rollup, and a searchable / filterable / sortable projects table with
+click-into-job detail, click-to-copy cells, and CSV export. A **Customize** panel (theme, accent,
+font, text size, density, width, widget + column visibility) is saved per person in `localStorage`.
+Run it with `python3 ledger/dashboard.py` (the preview sandbox can't — it needs the DB + `shared/`
+outside `.preview`). This is Rung 1 of turning the terminal DB into a platform; Postgres + a shared
+server is Rung 2, when a second person needs to log in.
 
 **Phase 2 (not built): the QBO connectors** (`bill-tracker`, `invoice-sync`, the WIP
 readers) fill the granular `cost_code` / `budget_line` / `cost_line` / `billing_event`

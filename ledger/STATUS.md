@@ -16,6 +16,16 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   Multi Family 3), report date parsed, re-run leaves 0 duplicate snapshot keys, `v_wip_latest`
   and division/category rollups query correctly.
 - `docs/ARCHITECTURE.md` updated (new "Ledger" section + folder map + folder-map diagram).
+- **`dashboard.py` + `static/`** — local web dashboard over the ledger (Phase-1 UI / "Rung 1").
+  - Portfolio KPIs, division rollup, searchable/filterable/sortable projects table, click-into-job
+    detail, click-to-copy cells, CSV export.
+  - **Customize panel:** theme (auto/light/dark), accent, font, text size, density, width, widget
+    toggles, per-column visibility — saved per person in `localStorage`.
+  - Read-only on the DB; binds 127.0.0.1 only; stdlib server (no Flask). No new dependencies.
+  - Verified live in the browser (light + dark), 170 projects, detail + settings + sort all working.
+  - NOTE: the app-preview sandbox can't run this server (it needs the DB + `shared/` outside
+    `.preview`); run it directly with `python3 ledger/dashboard.py`. A `.claude/launch.json` entry
+    (`ledger-dashboard`) exists but launch.json is untracked/local.
 
 ## IN PROGRESS
 - (none)

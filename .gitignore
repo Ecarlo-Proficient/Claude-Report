@@ -60,6 +60,8 @@ synology/synology_audit.md
 
 # Whitelisted exceptions (force-include critical files even though the patterns above match them)
 !bill-tracker/vendor_aliases.json
+# ledger dashboard front-end is SOURCE, not a generated *.html report:
+!ledger/static/*.html
 .preview/
 .claude/launch.json
 
