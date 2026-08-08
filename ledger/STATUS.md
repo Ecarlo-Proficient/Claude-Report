@@ -62,8 +62,8 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   portfolio by-code, per-project by-code, and per-project rollup attached to each project row.
   New **"Costs by code"** widget (portfolio table with % bars), a **QBO Costs / Subs** toggleable
   column pair, and a **"Costs (QBO, by code)"** group in each job's detail showing total loaded /
-  subs / WIP costs_to_date (the reconciliation) + the full code breakdown. Verified live (MFD177:
-  $7,326,179 loaded vs $7,306,900 WIP = 0.3%; portfolio $18.6M · 82 codes).
+  subs / WIP costs_to_date (the reconciliation) + the full code breakdown. Verified live — the
+  biggest MFD job loads within ~0.3% of its WIP costs_to_date; portfolio spans ~80 cost codes.
 
 ## IN PROGRESS
 - (none)
