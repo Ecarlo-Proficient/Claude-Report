@@ -68,6 +68,12 @@ FIELD_HEADERS = {
     "pay_status":   "Pay Status",
     "approved":     "Approved",
     "lien_status":  "Lien",
+    "matched_invoice": "Matched Invoice",
+    "invoice_status":  "Invoice Status",
+    "invoice_no":      "Invoice #",
+    "gc_paid_date":    "GC Paid Date",
+    "pay_date":        "Pay Date",
+    "bt_key":          "_Key",
 }
 
 # lien states that put a bill on the action watchlist, most-urgent first
@@ -159,13 +165,20 @@ def load(excel_path: Path, db_path: Path, dry_run: bool, show: int):
     con = sqlite3.connect(db_path)
     con.execute("PRAGMA foreign_keys = ON;")
     con.executescript(SCHEMA_SQL.read_text(encoding="utf-8"))
+    # migrate ap_bill_line if it predates the draw/invoice columns — its rows are
+    # reloaded from Excel in THIS run, so a drop + recreate is lossless.
+    have = {r[1] for r in con.execute("PRAGMA table_info(ap_bill_line)")}
+    if "matched_invoice" not in have:
+        con.execute("DROP TABLE ap_bill_line")
+        con.executescript(SCHEMA_SQL.read_text(encoding="utf-8"))
     now = dt.datetime.now().isoformat(timespec="seconds")
 
     # full replace: this feed always mirrors the current file
     con.execute("DELETE FROM ap_bill_line WHERE source = 'bill_tracker'")
     cols = ["line_uid", "project_no", "division", "vendor", "bill_ref", "bill_date",
             "account", "description", "line_amount", "bill_total", "open_balance",
-            "pay_status", "approved", "lien_status", "source_sheet", "loaded_at"]
+            "pay_status", "approved", "lien_status", "matched_invoice", "invoice_status",
+            "invoice_no", "gc_paid_date", "pay_date", "bt_key", "source_sheet", "loaded_at"]
     ph = ", ".join(f":{c}" for c in cols)
     for r in records:
         r["loaded_at"] = now

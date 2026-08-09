@@ -26,6 +26,7 @@
   <nav class="tabs" id="tabbar">
     <button class="tab" data-tabbtn="overview">Overview</button>
     <button class="tab" data-tabbtn="costs">Costs</button>
+    <button class="tab" data-tabbtn="draws">Draws</button>
     <button class="tab" data-tabbtn="liens">Liens</button>
     <button class="tab" data-tabbtn="vendors">Vendors</button>
   </nav>
@@ -116,6 +117,17 @@
         </div>
       </section>
     </div><!-- /tab: costs -->
+
+    <!-- ══════════════ TAB: DRAWS (race-through worklist) ══════════════ -->
+    <div class="tab-page" data-tab="draws" hidden>
+      <section class="widget">
+        <div class="widget-head"><h2>Draw race-through <span class="count" id="drawsNote"></span></h2></div>
+        <div class="kpi-row" id="drawsStats"></div>
+        <p class="hint">Fund the draw → pay vendors → mark each <b>unconditional waiver</b> as it comes
+          in → when all are in, turn it in to unlock the next draw. Check the box when a waiver is in hand.</p>
+      </section>
+      <div id="drawList"></div>
+    </div><!-- /tab: draws -->
 
     <!-- ══════════════ TAB: LIENS (collections worklist) ══════════════ -->
     <div class="tab-page" data-tab="liens" hidden>

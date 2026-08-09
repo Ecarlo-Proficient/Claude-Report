@@ -168,6 +168,12 @@ tr.cost-sub .sub-name { color: var(--text-dim); }
 .lien.d30 { color: var(--text); border-color: color-mix(in srgb, #b8860b 55%, var(--border));
   background: color-mix(in srgb, #b8860b 14%, transparent); }
 .lien.info { color: var(--text-dim); }
+.lien.ready { color: #fff; background: var(--pos); border-color: var(--pos); }
+
+/* ── Draws (race-through) ──────────────────────────────────────────────── */
+.draw-head { align-items: flex-start; }
+.draw-head .panel-sub { font-variant-numeric: tabular-nums; }
+.hint { margin: 4px 18px 14px; color: var(--text-dim); font-size: .88em; line-height: 1.5; }
 
 /* ── % complete bar (in the projects table) ────────────────────────────── */
 .bar { position: relative; display: inline-block; min-width: 68px; text-align: right; }

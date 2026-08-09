@@ -170,6 +170,7 @@ function raw(col, v) {
 let ALL = [];
 let AP = { summary: {}, lien_watch: [], by_project: {} };
 let COST = { by_code: [], by_project_code: {}, by_project: {}, by_cost_type: [], by_vendor: [], loaded_total: 0 };
+let DRAWS = { draws: [], total: 0 };
 let costCollapsed = new Set();   // collapsed cost-type parents in the Costs widget
 
 // ── Tabs ────────────────────────────────────────────────────────────────────
@@ -198,6 +199,7 @@ async function load() {
   ALL.forEach(deriveMetrics);
   AP = data.ap || { summary: {}, lien_watch: [], by_project: {} };
   COST = data.cost || { by_code: [], by_project_code: {}, by_project: {}, by_cost_type: [], by_vendor: [], loaded_total: 0 };
+  DRAWS = data.draws || { draws: [], total: 0 };
   meta = data.meta || {};
   $("#metaLine").textContent =
     `${meta.project_count} projects · report ${meta.report_date || "—"}` +
@@ -269,7 +271,91 @@ function visibleColumns() {
 }
 function render() {
   renderKPIs(); renderAttention(); renderCosts(); renderMargins(); renderDivisions();
-  renderProjects(); renderLiens(); renderVendors();
+  renderProjects(); renderLiens(); renderVendors(); renderDraws();
+}
+
+const DRAW_STAGE_CLASS = {
+  "Fund in — pay vendors": "d7", "Paid — collect waivers": "d15",
+  "Awaiting GC funding": "info", "Ready to turn in": "ready",
+};
+function renderDraws() {
+  const draws = DRAWS.draws || [];
+  $("#drawsNote").textContent = draws.length
+    ? `(${draws.length} shown of ${DRAWS.total} · most recent first)`
+    : "(no draw data — run load_bill_tracker.py)";
+  const ready = draws.filter(d => d.stage === "Ready to turn in").length;
+  const collect = draws.filter(d => d.stage === "Paid — collect waivers").length;
+  const paying = draws.filter(d => d.stage === "Fund in — pay vendors").length;
+  const stats = [
+    ["Ready to turn in", String(ready), "all paid + waivers in"],
+    ["Collect waivers", String(collect), "paid, waivers pending"],
+    ["Pay vendors", String(paying), "funded, unpaid bills"],
+  ];
+  const sr = $("#drawsStats"); sr.innerHTML = "";
+  for (const [label, value, sub] of stats) {
+    const el = document.createElement("div"); el.className = "kpi";
+    el.innerHTML = `<div class="k-label"></div><div class="k-value"></div><div class="k-sub"></div>`;
+    el.querySelector(".k-label").textContent = label;
+    el.querySelector(".k-value").textContent = value;
+    el.querySelector(".k-sub").textContent = sub;
+    sr.appendChild(el);
+  }
+  const box = $("#drawList"); box.innerHTML = "";
+  for (const d of draws) {
+    const sec = document.createElement("section"); sec.className = "widget draw";
+    const head = document.createElement("div"); head.className = "widget-head draw-head";
+    const left = document.createElement("div");
+    const h = document.createElement("h2"); h.textContent = d.label || d.matched_invoice; left.appendChild(h);
+    const meta2 = document.createElement("div"); meta2.className = "panel-sub";
+    meta2.textContent = `${money(d.total)} · ${d.n} bills · ${d.paid}/${d.n} paid · ${d.waivers}/${d.n} waivers`;
+    left.appendChild(meta2); head.appendChild(left);
+    const pill = document.createElement("span"); pill.className = "lien " + (DRAW_STAGE_CLASS[d.stage] || "info"); pill.textContent = d.stage;
+    head.appendChild(pill); sec.appendChild(head);
+    const scroll = document.createElement("div"); scroll.className = "table-scroll";
+    const table = document.createElement("table"); table.className = "grid";
+    const thead = document.createElement("thead"), tbody = document.createElement("tbody");
+    const cols = [["Vendor", "left"], ["Bill #", "left"], ["Amount", "right"], ["Paid", "left"], ["GC funded", "left"], ["Waiver in hand", "left"]];
+    const htr = document.createElement("tr");
+    for (const [c, al] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
+    thead.appendChild(htr);
+    for (const b of d.bills) {
+      const tr = document.createElement("tr");
+      tr.appendChild(leftText(b.vendor || "—"));
+      tr.appendChild(leftText(b.bill_ref || "—"));
+      const av = document.createElement("td"); av.appendChild(moneyCell(b.amount)); tr.appendChild(av);
+      tr.appendChild(leftText(b.pay_date ? "✓ " + b.pay_date : "—"));
+      tr.appendChild(leftText(b.gc_paid ? "✓ " + b.gc_paid : "—"));
+      const wtd = document.createElement("td"); wtd.className = "left";
+      const lab = document.createElement("label"); lab.className = "chk";
+      const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = !!b.waiver;
+      cb.onchange = () => setWaiver(d, b, cb);
+      lab.appendChild(cb); lab.appendChild(document.createTextNode(b.waiver ? " in hand" : " mark"));
+      wtd.appendChild(lab); tr.appendChild(wtd);
+      tbody.appendChild(tr);
+    }
+    table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table);
+    sec.appendChild(scroll); box.appendChild(sec);
+  }
+}
+async function setWaiver(draw, bill, cb) {
+  const received = cb.checked;
+  try {
+    const res = await fetch("/api/waiver", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ matched_invoice: draw.matched_invoice, vendor: bill.vendor, bill_ref: bill.bill_ref, received }),
+    });
+    const j = await res.json();
+    if (!j.ok) throw new Error(j.error || "write failed");
+    bill.waiver = received;                       // update local state
+    draw.waivers = draw.bills.filter(b => b.waiver).length;
+    if (draw.stage !== "Ready to turn in" && draw.funded && draw.paid === draw.n && draw.waivers === draw.n) draw.stage = "Ready to turn in";
+    else if (draw.waivers < draw.n && draw.paid === draw.n && draw.funded) draw.stage = "Paid — collect waivers";
+    toast(received ? "Waiver marked in hand" : "Waiver cleared");
+    renderDraws();
+  } catch (e) {
+    cb.checked = !received;                        // revert on failure
+    toast("Could not save: " + e.message);
+  }
 }
 
 function renderMargins() {

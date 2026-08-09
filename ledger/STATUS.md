@@ -106,14 +106,20 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   so the ledger opens from the same private cockpit as Company Dashboard + Tracker. Tool code stays
   in the repo; only the front-door launcher sits in CompanyHealth.
 
+- **Draws tab — the draw race-through + the waiver input (owner).** `load_bill_tracker.py` now also
+  captures `matched_invoice` / `invoice_status` / `gc_paid_date` / `pay_date` / `bt_key` (ap_bill_line
+  migrated in place — rows reload from Excel, lossless). `dashboard.py _fetch_draws` rolls bills up BY
+  DRAW (dedup lines → bills), computes the stage — **Awaiting GC funding → Fund in, pay vendors →
+  Paid, collect waivers → Ready to turn in** — sorted worklist, 40 most-recent shown of 337. The
+  **Draws** tab renders each draw with its bills and a **waiver checkbox** per bill.
+- **The ledger's FIRST write surface: `waiver` table + `POST /api/waiver`.** The one place the app
+  writes — the owner marks "unconditional waiver in hand." Everything else stays read-only (`mode=ro`);
+  the waiver write opens a scoped writable connection, binds 127.0.0.1 only, keyed by
+  hash(matched_invoice+vendor+bill) so it survives Bill Tracker reloads. Verified end-to-end: UI
+  checkbox → POST → DB persisted (received + timestamp), reverts on failure.
+
 ## IN PROGRESS
-- **Draw-unlock tracker (owner request — "race through" the draw cycle).** Bill Tracker already has
-  the spine: `Matched Invoice` links each bill to its draw (334 distinct draws), plus `Invoice
-  Status` pipeline (Invoice paid / Awaiting Invoice / Awaiting Payment / Partial), `GC Paid Date`,
-  `Pay Date`. GAP: (1) a draw-LEVEL rollup view (fund → pay vendor → collect unconditional waiver →
-  turn in → next draw) — buildable read-only; (2) the **unconditional-waiver-received** step is NOT
-  robustly tracked (lien col tracks the NOTICE clock; "✓ Released" only 9 rows). Deciding: derive
-  waiver state from existing fields, or add one small tracked input. See session notes.
+- (none)
 
 ## TO DO
 - **Investigate the ~6 active reconcile mismatches** (QBO cost ≠ WIP figure, e.g. RP6901/RP6440):

@@ -154,9 +154,30 @@ CREATE TABLE IF NOT EXISTS ap_bill_line (
     pay_status    TEXT,
     approved      TEXT,
     lien_status   TEXT,               -- 'Notice due in ≤15d' / 'Notice PAST due' / ...
+    matched_invoice TEXT,             -- the DRAW this bill is on (AR invoice it authorizes)
+    invoice_status  TEXT,             -- Bill Tracker pipeline: Invoice paid / Awaiting Invoice / ...
+    invoice_no      TEXT,
+    gc_paid_date    TEXT,             -- when the client/GC funded that draw
+    pay_date        TEXT,             -- when we paid the vendor
+    bt_key          TEXT,             -- Bill Tracker _Key (stable-ish bill id)
     source_sheet  TEXT,               -- Bills | Inventory
     source        TEXT NOT NULL DEFAULT 'bill_tracker',
     loaded_at     TEXT NOT NULL
+);
+
+-- ── waiver : the ONE owner input — unconditional waiver received per bill ────
+-- The ledger is read-only EVERYWHERE ELSE; this is the single writable surface
+-- (owner marks "waiver in hand" so a draw can be turned in to unlock the next).
+-- Keyed by (draw, vendor, bill) so it survives ap_bill_line reloads.
+CREATE TABLE IF NOT EXISTS waiver (
+    waiver_key      TEXT PRIMARY KEY,  -- hash of matched_invoice + vendor + bill_ref
+    matched_invoice TEXT,
+    vendor          TEXT,
+    bill_ref        TEXT,
+    received        INTEGER NOT NULL DEFAULT 0,
+    received_date   TEXT,
+    note            TEXT,
+    updated_at      TEXT NOT NULL
 );
 
 -- ── v_ap_by_project : open AP + bill counts per project ─────────────────────

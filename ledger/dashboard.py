@@ -22,6 +22,8 @@ USAGE
 from __future__ import annotations
 
 import argparse
+import datetime as _dt
+import hashlib
 import json
 import sqlite3
 import sys
@@ -152,6 +154,67 @@ def _fetch_costs(con) -> dict:
     return out
 
 
+def _waiver_key(mi, vendor, bill_ref) -> str:
+    """Deterministic key for a bill's waiver — survives ap_bill_line reloads."""
+    raw = f"{mi or ''}|{vendor or ''}|{bill_ref or ''}"
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+
+
+# race-through stages, in worklist priority (most actionable first)
+_STAGE_ORDER = {"Fund in — pay vendors": 0, "Paid — collect waivers": 1,
+                "Awaiting GC funding": 2, "Ready to turn in": 3}
+
+
+def _fetch_draws(con, limit: int = 40) -> dict:
+    """Roll AP bills up BY DRAW (matched invoice) → the race-through pipeline,
+    joined to the owner's waiver marks. Empty (not an error) if not loaded."""
+    try:
+        rows = con.execute(
+            "SELECT matched_invoice mi, project_no, division, vendor, bill_ref, "
+            "MAX(bill_total) amount, MAX(open_balance) open_bal, pay_status, invoice_status, "
+            "MAX(gc_paid_date) gc, MAX(pay_date) pd, MAX(bill_date) bd "
+            "FROM ap_bill_line WHERE matched_invoice IS NOT NULL AND matched_invoice <> '' "
+            "GROUP BY matched_invoice, vendor, bill_ref").fetchall()
+    except sqlite3.OperationalError:
+        return {"draws": [], "total": 0}
+    wmap = {w["waiver_key"]: w["received"] for w in con.execute("SELECT waiver_key, received FROM waiver")}
+    draws: dict = {}
+    for r in rows:
+        d = draws.setdefault(r["mi"], {"matched_invoice": r["mi"], "project_no": r["project_no"],
+                                       "division": r["division"], "bills": []})
+        wk = _waiver_key(r["mi"], r["vendor"], r["bill_ref"])
+        d["bills"].append({
+            "vendor": r["vendor"], "bill_ref": r["bill_ref"], "amount": r["amount"] or 0,
+            "open": r["open_bal"] or 0, "pay_status": r["pay_status"], "invoice_status": r["invoice_status"],
+            "gc_paid": r["gc"], "pay_date": r["pd"], "bill_date": r["bd"],
+            "waiver_key": wk, "waiver": bool(wmap.get(wk, 0)),
+        })
+    out = []
+    for mi, d in draws.items():
+        bills = d["bills"]
+        n = len(bills)
+        paid = sum(1 for b in bills if b["pay_date"])
+        funded = any(b["gc_paid"] for b in bills)
+        waivers = sum(1 for b in bills if b["waiver"])
+        if not funded:
+            stage = "Awaiting GC funding"
+        elif paid < n:
+            stage = "Fund in — pay vendors"
+        elif waivers < n:
+            stage = "Paid — collect waivers"
+        else:
+            stage = "Ready to turn in"
+        d.update({
+            "label": (mi or "").split("\n")[0].strip(), "n": n, "paid": paid, "funded": funded,
+            "waivers": waivers, "total": sum(b["amount"] for b in bills), "stage": stage,
+            "recency": max([(b["gc_paid"] or b["pay_date"] or b["bill_date"] or "") for b in bills] or [""]),
+        })
+        out.append(d)
+    out.sort(key=lambda d: d["recency"], reverse=True)
+    out.sort(key=lambda d: _STAGE_ORDER.get(d["stage"], 9))
+    return {"draws": out[:limit], "total": len(out)}
+
+
 def _connect(db_path: Path) -> sqlite3.Connection:
     """Open the ledger READ-ONLY. New connection per request (SQLite + threads)."""
     con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
@@ -181,6 +244,7 @@ def fetch_data(db_path: Path) -> dict:
             loaded_at = got[0]
         ap = _fetch_ap(con)
         costs = _fetch_costs(con)
+        draws = _fetch_draws(con)
     except sqlite3.OperationalError as e:
         con.close()
         return {"error": f"Ledger schema not found ({e}). Run the loader first."}
@@ -199,6 +263,7 @@ def fetch_data(db_path: Path) -> dict:
         "projects": rows,
         "ap": ap,
         "cost": costs,
+        "draws": draws,
     }
 
 
@@ -241,6 +306,41 @@ class Handler(BaseHTTPRequestHandler):
             self._static(path[len("/static/"):])
         else:
             self._send(404, b"not found", "text/plain; charset=utf-8")
+
+    def do_POST(self):
+        # The ONLY write path in the whole app — the owner's waiver marks.
+        if self.path.split("?", 1)[0] == "/api/waiver":
+            self._set_waiver()
+        else:
+            self._send(404, b"not found", "text/plain; charset=utf-8")
+
+    def _set_waiver(self):
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except (ValueError, json.JSONDecodeError):
+            return self._json({"error": "bad request"}, 400)
+        mi, vendor, bill = body.get("matched_invoice"), body.get("vendor"), body.get("bill_ref")
+        received = 1 if body.get("received") else 0
+        if not mi:
+            return self._json({"error": "matched_invoice required"}, 400)
+        key = _waiver_key(mi, vendor, bill)
+        now = _dt.datetime.now().isoformat(timespec="seconds")
+        try:
+            con = sqlite3.connect(self.db_path)          # WRITABLE (the one write surface)
+            con.execute("CREATE TABLE IF NOT EXISTS waiver (waiver_key TEXT PRIMARY KEY, "
+                        "matched_invoice TEXT, vendor TEXT, bill_ref TEXT, received INTEGER NOT NULL "
+                        "DEFAULT 0, received_date TEXT, note TEXT, updated_at TEXT NOT NULL)")
+            con.execute(
+                "INSERT INTO waiver (waiver_key, matched_invoice, vendor, bill_ref, received, "
+                "received_date, updated_at) VALUES (?,?,?,?,?,?,?) "
+                "ON CONFLICT(waiver_key) DO UPDATE SET received=excluded.received, "
+                "received_date=excluded.received_date, updated_at=excluded.updated_at",
+                (key, mi, vendor, bill, received, now if received else None, now))
+            con.commit(); con.close()
+        except sqlite3.OperationalError as e:
+            return self._json({"error": f"write failed: {e}"}, 500)
+        self._json({"ok": True, "received": bool(received), "waiver_key": key})
 
 
 def main():
