@@ -77,8 +77,16 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     wip 170, ap 2814, cost 6009). `v_sales_by_rep` for the outreach rep = 141 worked / 112 contacted
     / 12 interested; touch-log dates parse (e.g. "Quote sent 07/15/26" → 2026-07-15).
   - `docs/ARCHITECTURE.md` + README + CLAUDE.md ledger bullet updated in the same commit.
-  - OPEN: no dashboard surface yet — a **Sales tab** over `v_sales_pipeline`/`v_sales_by_rep`/
-    `sales_touch` is the next rung. Not joined to `project` yet (leads→jobs downstream).
+  - Not joined to `project` yet (leads→jobs downstream).
+
+- **Dashboard Sales tab** (2026-08-09) — `/api/data` now carries a `sales` section (`_fetch_sales`):
+  pipeline funnel, activity-by-rep (last-editor attribution; the invoice-sync bot relabeled
+  "Automation (sync)" via `_rep_label`), warm-account cards with each account's full touch log +
+  a stale flag (>21d), and a searchable/filterable all-customers table linking out to Notion. New
+  **Sales** tab in `index.html` + `renderSales()` in `app.js` (reuses the existing kpi/bar/table
+  helpers, no new deps) + warm-card CSS. **Verified live** against the loaded DB (622 customers /
+  168 touches): pipeline, rep table, all 30 warm accounts with touch logs, and the customer table
+  all render in the browser (dark + light). Read-only — the tab never writes; edits stay in Notion.
 - **Dashboard cost-code drill** — `/api/data` now carries a `cost` section (`_fetch_costs`):
   portfolio by-code, per-project by-code, and per-project rollup attached to each project row.
   New **"Costs by code"** widget (portfolio table with % bars), a **QBO Costs / Subs** toggleable

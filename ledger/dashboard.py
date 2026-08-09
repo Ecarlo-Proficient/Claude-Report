@@ -313,6 +313,59 @@ def _fetch_draws(con, limit: int = 100) -> dict:
     return {"draws": out[:limit], "total": len(out)}
 
 
+# sales pipeline stages in funnel order
+_SALES_ORDER = {"Lead": 0, "Follow up": 1, "Contacted": 2, "Interested": 3,
+                "No response": 4, "Closed - Won": 5, "Closed - Lost": 6, "(none)": 7}
+
+
+def _rep_label(name):
+    """Display label for an editor. Notion bot integrations come through as a bare
+    id (e.g. the invoice-sync bot on Closed-Won rows) — show that as automation, not
+    a cryptic UUID. Real people keep their name; emails keep their email."""
+    if not name:
+        return "(unknown)"
+    if re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", name):
+        return "Automation (sync)"
+    return name
+
+
+def _fetch_sales(con) -> dict:
+    """CRM / sales pipeline from customer + sales_touch; empty (not an error) if
+    load_customers.py hasn't run. Read-only, like every other feed."""
+    out = {"pipeline": [], "by_rep": [], "warm": [], "customers": [],
+           "totals": {"customers": 0, "touches": 0, "interested": 0}}
+    try:
+        pipe = [dict(r) for r in con.execute(
+            "SELECT sales_status, customers, touches FROM v_sales_pipeline")]
+    except sqlite3.OperationalError:
+        return out
+    pipe.sort(key=lambda r: _SALES_ORDER.get(r["sales_status"], 9))
+    out["pipeline"] = pipe
+    out["by_rep"] = []
+    for r in con.execute("SELECT rep, worked, contacted, interested, won FROM v_sales_by_rep ORDER BY worked DESC"):
+        d = dict(r); d["rep"] = _rep_label(d["rep"]); out["by_rep"].append(d)
+    # touch logs grouped by customer (for the warm-account drill)
+    touches: dict = {}
+    for r in con.execute("SELECT customer_key, touch_date, note FROM sales_touch ORDER BY customer_key, seq"):
+        touches.setdefault(r["customer_key"], []).append({"date": r["touch_date"], "note": r["note"]})
+    for r in con.execute(
+            "SELECT customer_key, name, division, last_contacted, last_edited_by, notion_url "
+            "FROM customer WHERE sales_status = 'Interested' ORDER BY last_contacted DESC"):
+        d = dict(r)
+        d["last_edited_by"] = _rep_label(d["last_edited_by"])
+        d["touches"] = touches.get(r["customer_key"], [])
+        out["warm"].append(d)
+    out["customers"] = []
+    for r in con.execute("SELECT name, division, sales_status, last_contacted, last_edited_by, n_touches, notion_url "
+                         "FROM customer ORDER BY last_contacted DESC"):
+        d = dict(r); d["last_edited_by"] = _rep_label(d["last_edited_by"]); out["customers"].append(d)
+    tot = con.execute(
+        "SELECT COUNT(*) c, COALESCE(SUM(n_touches),0) t, "
+        "SUM(CASE WHEN sales_status='Interested' THEN 1 ELSE 0 END) i FROM customer").fetchone()
+    out["totals"] = {"customers": tot["c"], "touches": tot["t"], "interested": tot["i"]}
+    return out
+
+
 def _connect(db_path: Path) -> sqlite3.Connection:
     """Open the ledger READ-ONLY. New connection per request (SQLite + threads)."""
     con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
@@ -343,6 +396,7 @@ def fetch_data(db_path: Path) -> dict:
         ap = _fetch_ap(con)
         costs = _fetch_costs(con)
         draws = _fetch_draws(con)
+        sales = _fetch_sales(con)
         actions = _fetch_actions(con)
         freshness = _freshness(con)
     except sqlite3.OperationalError as e:
@@ -368,6 +422,7 @@ def fetch_data(db_path: Path) -> dict:
         "ap": ap,
         "cost": costs,
         "draws": draws,
+        "sales": sales,
     }
 
 

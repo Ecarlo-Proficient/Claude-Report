@@ -160,6 +160,10 @@ on the network). What it shows:
   (billed − cost), margin %, subs-share — as a widget (with an over-budget watchlist), toggleable
   columns, and a per-job detail group. The margin the WIP never showed.
 - **By division** — the CP / RP / MFD rollup.
+- **Sales** (CRM pipeline, read-only from the Notion Customer List) — pipeline funnel, activity by
+  rep (last-editor attribution), warm-account cards with each account's full touch log, and a
+  searchable/filterable all-customers table that links out to Notion. Edits stay in Notion; the tab
+  never writes.
 - **Projects** — searchable, filterable (division / status / category / active-only), sortable;
   click any row for the full job detail (Contract / Budget / Costs / Earned / Billing / Notes).
 - **Copy & export** — click any number to copy it; **Export CSV** downloads the current view.

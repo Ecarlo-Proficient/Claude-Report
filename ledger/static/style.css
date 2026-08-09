@@ -312,3 +312,17 @@ td .cell:hover { background: color-mix(in srgb, var(--accent) 16%, transparent);
   font-size: .9em; z-index: 60; box-shadow: var(--shadow);
 }
 .toast[hidden] { display: none; }
+
+/* ── Sales / CRM: warm-account cards ─────────────────────────────────────── */
+.warm-acct { border: 1px solid var(--border); border-left: 3px solid var(--accent);
+  border-radius: 10px; padding: 10px 14px; margin: 0 18px 10px; background: var(--surface); }
+.warm-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 12px; }
+.warm-name { font-weight: 600; }
+.warm-when { font-size: .82em; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.warm-when.stale { color: #d97706; }
+.warm-by { font-size: .8em; color: var(--text-dim); margin-left: auto; }
+.warm-link { font-size: .8em; color: var(--accent); text-decoration: none; }
+.warm-link:hover { text-decoration: underline; }
+.warm-log { margin: 8px 0 2px; padding-left: 18px; font-size: .88em; line-height: 1.55; }
+.warm-log .d { color: var(--text-dim); font-variant-numeric: tabular-nums; margin-right: 6px; }
+.warm-log .warm-empty { list-style: none; margin-left: -18px; color: var(--text-dim); font-style: italic; }

@@ -30,6 +30,7 @@
     <button class="tab" data-tabbtn="draws">Draws</button>
     <button class="tab" data-tabbtn="liens">Liens</button>
     <button class="tab" data-tabbtn="vendors">Vendors</button>
+    <button class="tab" data-tabbtn="sales">Sales</button>
   </nav>
 
   <main class="wrap" id="wrap">
@@ -191,6 +192,43 @@
         </div>
       </section>
     </div><!-- /tab: vendors -->
+
+    <!-- ══════════════ TAB: SALES (CRM pipeline — read-only from Notion) ══════════════ -->
+    <div class="tab-page" data-tab="sales" hidden>
+      <section class="widget">
+        <div class="widget-head"><h2>Sales pipeline <span class="count" id="salesNote"></span></h2></div>
+        <div class="kpi-row" id="salesStats"></div>
+        <p class="hint">Read-only from the Notion Customer List (loaded by <code>load_customers.py</code>).
+          Attribution is Notion's own “Last edited by”. Update statuses/notes in Notion, not here.</p>
+      </section>
+      <section class="widget">
+        <div class="widget-head"><h2>Pipeline <span class="count">— customers by stage</span></h2></div>
+        <div class="table-scroll">
+          <table class="grid clickable" id="salesFunnel"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+      <section class="widget">
+        <div class="widget-head"><h2>Activity by rep <span class="count">— who worked what (by last editor)</span></h2></div>
+        <div class="table-scroll">
+          <table class="grid" id="salesRepTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+      <section class="widget">
+        <div class="widget-head"><h2>Warm accounts <span class="count" id="salesWarmNote"></span></h2></div>
+        <div id="salesWarm"></div>
+      </section>
+      <section class="widget">
+        <div class="widget-head"><h2>All customers <span class="count" id="salesCustNote"></span></h2></div>
+        <div class="filters">
+          <input type="search" id="salesSearch" placeholder="Search client, contact, rep…" autocomplete="off">
+          <select id="salesStage"><option value="">All stages</option></select>
+          <select id="salesDivision"><option value="">All divisions</option></select>
+        </div>
+        <div class="table-scroll">
+          <table class="grid clickable" id="salesTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </div><!-- /tab: sales -->
 
   </main>
 

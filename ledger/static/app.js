@@ -171,6 +171,7 @@ let ALL = [];
 let AP = { summary: {}, lien_watch: [], by_project: {} };
 let COST = { by_code: [], by_project_code: {}, by_project: {}, by_cost_type: [], by_vendor: [], loaded_total: 0 };
 let DRAWS = { draws: [], total: 0 };
+let SALES = { pipeline: [], by_rep: [], warm: [], customers: [], totals: {} };
 let costCollapsed = new Set();   // collapsed cost-type parents (default: all collapsed)
 let drawsCollapsed = new Set();  // collapsed draw cards (default: all collapsed)
 
@@ -202,6 +203,7 @@ async function load(isAuto) {
   AP = data.ap || { summary: {}, lien_watch: [], by_project: {} };
   COST = data.cost || { by_code: [], by_project_code: {}, by_project: {}, by_cost_type: [], by_vendor: [], loaded_total: 0 };
   DRAWS = data.draws || { draws: [], total: 0 };
+  SALES = data.sales || { pipeline: [], by_rep: [], warm: [], customers: [], totals: {} };
   // Big-picture first: collapse everything by default; the user expands to zoom in.
   // On a live auto-refresh, preserve what the user has already expanded.
   if (!isAuto) {
@@ -225,6 +227,8 @@ function buildFilterOptions() {
   fillSelect("#fDivision", uniq(ALL.map(r => r.division)));
   fillSelect("#fStatus",   uniq(ALL.map(r => r.status)));
   fillSelect("#fCategory", uniq(ALL.map(r => r.rp_category)));
+  if ($("#salesStage")) fillSelect("#salesStage", uniq((SALES.customers || []).map(c => c.sales_status)));
+  if ($("#salesDivision")) fillSelect("#salesDivision", uniq((SALES.customers || []).map(c => c.division)));
 }
 const uniq = arr => [...new Set(arr.filter(Boolean))].sort();
 function fillSelect(sel, values) {
@@ -280,7 +284,7 @@ function visibleColumns() {
 function render() {
   renderHome();
   renderKPIs(); renderAttention(); renderCosts(); renderMargins(); renderDivisions();
-  renderProjects(); renderLiens(); renderVendors(); renderDraws();
+  renderProjects(); renderLiens(); renderVendors(); renderDraws(); renderSales();
 }
 
 function timeAgo(iso) {
@@ -772,6 +776,141 @@ function renderVendors() {
 }
 function leftText(v) { const td = document.createElement("td"); td.className = "left"; const s = document.createElement("span"); s.textContent = v; td.appendChild(s); return td; }
 
+// ── Sales / CRM (read-only from the Notion Customer List) ───────────────────
+function daysAgo(iso) {
+  if (!iso) return null;
+  const t = Date.parse(iso.length <= 10 ? iso + "T00:00:00" : iso);
+  return isNaN(t) ? null : Math.floor((Date.now() - t) / 864e5);
+}
+function buildHead(tableSel, cols) {
+  const thead = $(tableSel + " thead"); thead.innerHTML = "";
+  const htr = document.createElement("tr");
+  for (const [c, al] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
+  thead.appendChild(htr);
+  return $(tableSel + " tbody");
+}
+function renderSales() {
+  const S = SALES || {}, t = S.totals || {};
+  const loaded = (S.customers || []).length > 0;
+  $("#salesNote").textContent = loaded
+    ? `(${t.customers || 0} customers · ${t.touches || 0} touches logged)`
+    : "(no CRM data — run load_customers.py)";
+
+  // ── KPI stats ──
+  const worked = (S.by_rep || []).reduce((m, r) => m + (r.worked || 0), 0);
+  const stats = [
+    ["Customers", String(t.customers || 0), "in the list"],
+    ["Interested", String(t.interested || 0), "warm — closest to a win"],
+    ["Touches logged", String(t.touches || 0), "interaction-log lines"],
+    ["Worked", String(worked), "have a last-editor"],
+  ];
+  const sr = $("#salesStats"); sr.innerHTML = "";
+  for (const [label, value, sub] of stats) {
+    const el = document.createElement("div"); el.className = "kpi";
+    el.innerHTML = `<div class="k-label"></div><div class="k-value"></div><div class="k-sub"></div>`;
+    el.querySelector(".k-label").textContent = label;
+    el.querySelector(".k-value").textContent = value;
+    el.querySelector(".k-sub").textContent = sub;
+    sr.appendChild(el);
+  }
+
+  // ── pipeline funnel (click a stage → filter the customer table) ──
+  const pipe = S.pipeline || [];
+  const maxc = pipe.reduce((m, p) => Math.max(m, p.customers || 0), 0) || 1;
+  let tb = buildHead("#salesFunnel", [["Stage", "left"], ["Customers", "left"], ["Touches", "right"]]);
+  tb.innerHTML = "";
+  for (const p of pipe) {
+    const tr = document.createElement("tr");
+    tr.appendChild(leftText(p.sales_status));
+    const st = document.createElement("td");
+    const bar = document.createElement("span"); bar.className = "cell bar";
+    const fill = document.createElement("span"); fill.className = "bar-fill"; fill.style.width = ((p.customers || 0) / maxc * 100) + "%";
+    const txt = document.createElement("span"); txt.className = "bar-txt"; txt.textContent = p.customers || 0;
+    bar.appendChild(fill); bar.appendChild(txt); bar.title = "Filter customers by this stage";
+    bar.onclick = () => { $("#salesStage").value = p.sales_status; renderSales(); $("#salesTable").scrollIntoView({ behavior: "smooth", block: "start" }); };
+    st.appendChild(bar); tr.appendChild(st);
+    tr.appendChild(rightText(String(p.touches || 0)));
+    tb.appendChild(tr);
+  }
+
+  // ── activity by rep ──
+  tb = buildHead("#salesRepTable", [["Rep", "left"], ["Worked", "right"], ["Contacted", "right"], ["Interested", "right"], ["Won", "right"]]);
+  tb.innerHTML = "";
+  for (const r of (S.by_rep || [])) {
+    const tr = document.createElement("tr");
+    tr.appendChild(leftText(r.rep));
+    tr.appendChild(rightText(String(r.worked || 0)));
+    tr.appendChild(rightText(String(r.contacted || 0)));
+    tr.appendChild(rightText(String(r.interested || 0)));
+    tr.appendChild(rightText(String(r.won || 0)));
+    tb.appendChild(tr);
+  }
+
+  // ── warm accounts with their touch log ──
+  const warm = S.warm || [];
+  $("#salesWarmNote").textContent = warm.length ? `(${warm.length} interested)` : "";
+  const box = $("#salesWarm"); box.innerHTML = "";
+  if (!warm.length) {
+    const p = document.createElement("p"); p.className = "hint"; p.textContent = "No accounts in the Interested stage.";
+    box.appendChild(p);
+  }
+  for (const a of warm) {
+    const card = document.createElement("div"); card.className = "warm-acct";
+    const head = document.createElement("div"); head.className = "warm-head";
+    const nm = document.createElement("span"); nm.className = "warm-name"; nm.textContent = a.name; head.appendChild(nm);
+    if (a.division) { const dv = document.createElement("span"); dv.className = "vtype"; dv.textContent = a.division; head.appendChild(dv); }
+    const d = daysAgo(a.last_contacted);
+    const when = document.createElement("span"); when.className = "warm-when" + (d !== null && d > 21 ? " stale" : "");
+    when.textContent = a.last_contacted ? `last ${a.last_contacted}${d !== null ? ` · ${d}d ago` : ""}` : "no contact date";
+    head.appendChild(when);
+    if (a.last_edited_by) { const by = document.createElement("span"); by.className = "warm-by"; by.textContent = a.last_edited_by; head.appendChild(by); }
+    if (a.notion_url) { const lk = document.createElement("a"); lk.className = "warm-link"; lk.href = a.notion_url; lk.target = "_blank"; lk.rel = "noopener"; lk.textContent = "Notion ↗"; head.appendChild(lk); }
+    card.appendChild(head);
+    const ul = document.createElement("ul"); ul.className = "warm-log";
+    if ((a.touches || []).length) {
+      for (const tch of a.touches) {
+        const li = document.createElement("li");
+        if (tch.date) { const dspan = document.createElement("span"); dspan.className = "d"; dspan.textContent = tch.date; li.appendChild(dspan); }
+        li.appendChild(document.createTextNode(tch.note));
+        ul.appendChild(li);
+      }
+    } else {
+      const li = document.createElement("li"); li.className = "warm-empty"; li.textContent = "No notes logged yet."; ul.appendChild(li);
+    }
+    card.appendChild(ul);
+    box.appendChild(card);
+  }
+
+  // ── all-customers table (search + stage + division filters) ──
+  const q = ($("#salesSearch") ? $("#salesSearch").value : "").trim().toLowerCase();
+  const stage = $("#salesStage") ? $("#salesStage").value : "";
+  const div = $("#salesDivision") ? $("#salesDivision").value : "";
+  let rows = S.customers || [];
+  if (stage) rows = rows.filter(c => c.sales_status === stage);
+  if (div) rows = rows.filter(c => (c.division || "") === div);
+  if (q) rows = rows.filter(c => [c.name, c.last_edited_by, c.sales_status, c.division].filter(Boolean).join(" ").toLowerCase().includes(q));
+  $("#salesCustNote").textContent = (S.customers || []).length ? `(${rows.length} shown)` : "";
+  tb = buildHead("#salesTable", [["Client", "left"], ["Division", "left"], ["Stage", "left"], ["Last contacted", "left"], ["Worked by", "left"], ["Touches", "right"]]);
+  tb.innerHTML = "";
+  for (const c of rows.slice(0, 400)) {
+    const tr = document.createElement("tr");
+    if (c.notion_url) tr.onclick = () => window.open(c.notion_url, "_blank", "noopener");
+    tr.appendChild(leftText(c.name));
+    tr.appendChild(leftText(c.division || "—"));
+    tr.appendChild(leftText(c.sales_status || "—"));
+    tr.appendChild(leftText(c.last_contacted || "—"));
+    tr.appendChild(leftText(c.last_edited_by || "—"));
+    tr.appendChild(rightText(String(c.n_touches || 0)));
+    tb.appendChild(tr);
+  }
+  if (!rows.length) {
+    const tr = document.createElement("tr"); const td = document.createElement("td");
+    td.colSpan = 6; td.className = "left"; td.style.color = "var(--text-dim)";
+    td.textContent = (S.customers || []).length ? "No customers match this filter." : "No CRM data — run load_customers.py.";
+    tr.appendChild(td); tb.appendChild(tr);
+  }
+}
+
 function renderAttention() {
   const row = $("#attnRow"); row.innerHTML = "";
   for (const rule of RULES) {
@@ -1190,6 +1329,7 @@ function init() {
   ["#drawSearch", "#drawDivision"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderDraws); });
   { const el = $("#vendorSearch"); if (el) el.addEventListener("input", renderVendors); }
   { const el = $("#lienSearch"); if (el) el.addEventListener("input", renderLiens); }
+  ["#salesSearch", "#salesStage", "#salesDivision"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderSales); });
   { const el = $("#btnClearLien"); if (el) el.onclick = () => { activeLien = null; renderLiens(); }; }
   { const el = $("#homeDivision"); if (el) el.addEventListener("input", renderHome); }
   $("#btnExport").onclick = exportCSV;

@@ -264,7 +264,7 @@ flowchart LR
     LOADER["load_wip_master.py\nCP←Test-CP · RP←Test-RP · MFD←Test-Master\nfilter to real project #s · idempotent upsert"]:::tool
     APLOAD["load_bill_tracker.py\nAP pay status + lien clock → ap_bill_line\n(NOT cost truth — subs excluded)"]:::tool
     DB[("ledger.sqlite3\nproject + wip_snapshot + ap_bill_line\n→ v_wip_latest · v_ap_by_project")]:::out
-    DASH["dashboard.py + static/\nlocal web UI (127.0.0.1) — READ-ONLY except one write.\nTabs: Overview · Costs (code→jobs pivot) · Draws\n(race-through) · Liens · Vendors · margins/markup"]:::tool
+    DASH["dashboard.py + static/\nlocal web UI (127.0.0.1) — READ-ONLY except one write.\nTabs: My view · Overview · Costs (code→jobs pivot) · Draws\n(race-through) · Liens · Vendors · Sales (CRM pipeline)"]:::tool
     BROWSER[("Browser\nhttp://127.0.0.1:8787")]:::out
     QBO[("QBO\nBills + Purchases\n(read-only pull, Touch ID)")]:::src
     QCOSTS["shared/qbo_costs.py\ncost_leaf + iter_cost_lines\n(the ONE resolver — shared with project-pnl)"]:::tool
@@ -359,7 +359,10 @@ leads become jobs downstream — but it puts sales activity in the same database
 
 **Still later:** `budget_line` (takeoff budget by cost code → budget-vs-actual from the spine) and
 `billing_event` (AR / draws). Once both exist, over/under-billing computes from the spine, not Excel.
-A dashboard **Sales** tab over `v_sales_pipeline` / `v_sales_by_rep` / `sales_touch` is the next rung.
+The dashboard **Sales tab** (built 2026-08-09) surfaces this read-only via `_fetch_sales` →
+`v_sales_pipeline` / `v_sales_by_rep` / `sales_touch`: pipeline funnel, activity by rep (last-editor
+attribution, the invoice-sync bot shown as "Automation (sync)"), warm-account cards with each
+account's full touch log, and a searchable/filterable all-customers table linking out to Notion.
 
 ---
 
