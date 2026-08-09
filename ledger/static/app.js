@@ -309,6 +309,7 @@ function renderCosts() {
   $("#costCount").textContent = total
     ? `($${Math.round(total).toLocaleString()} · cost type ▸ job type)`
     : "(no cost data — run load_costs.py)";
+  renderCostMix(groups, total);
   const cols = [["Cost type  ▸  job type", "left"], ["Code", "left"], ["Actual", "right"], ["% of total", "right"], ["Lines", "right"]];
   const thead = $("#costTable thead"), tbody = $("#costTable tbody");
   thead.innerHTML = ""; tbody.innerHTML = "";
@@ -351,6 +352,32 @@ function renderCosts() {
   }
 }
 function rightText(v) { const td = document.createElement("td"); const s = document.createElement("span"); s.textContent = v; td.appendChild(s); return td; }
+
+// Cost mix — "how much each cost type takes, % wise" as one proportional bar + legend.
+const MIX_PALETTE = ["#4A6B8A", "#3E7A5C", "#B9541E", "#6b5b95", "#b8860b", "#1f7a4d",
+                     "#B4341E", "#4478a0", "#7a5c3e", "#5c8a6b", "#8a4a6b", "#997a3d"];
+function renderCostMix(groups, total) {
+  const box = $("#costMix"); box.innerHTML = "";
+  if (!total || !groups.length) return;
+  const bar = document.createElement("div"); bar.className = "mixbar";
+  const legend = document.createElement("div"); legend.className = "mixlegend";
+  groups.forEach((g, i) => {
+    const p = (g.actual || 0) / total * 100;
+    const color = MIX_PALETTE[i % MIX_PALETTE.length];
+    const seg = document.createElement("span"); seg.className = "mixseg";
+    seg.style.width = p + "%"; seg.style.background = color;
+    seg.title = `${g.parent}: ${p.toFixed(1)}% (${money(g.actual)})`;
+    bar.appendChild(seg);
+    if (i < 7 && p >= 0.5) {
+      const key = document.createElement("span"); key.className = "mixkey";
+      const dot = document.createElement("span"); dot.className = "mixdot"; dot.style.background = color;
+      key.appendChild(dot);
+      key.appendChild(document.createTextNode(`${g.parent} ${p.toFixed(1)}%`));
+      legend.appendChild(key);
+    }
+  });
+  box.appendChild(bar); box.appendChild(legend);
+}
 
 function renderAP() {
   const s = AP.summary || {};

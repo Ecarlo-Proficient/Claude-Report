@@ -41,22 +41,12 @@
       <div class="attn-row" id="attnRow"></div>
     </section>
 
-    <!-- ── AP & liens ───────────────────────────────────────────────── -->
-    <section class="widget" id="widget-ap">
-      <div class="widget-head">
-        <h2>AP &amp; liens <span class="count" id="apCount"></span></h2>
-      </div>
-      <div class="kpi-row" id="apStats"></div>
-      <div class="table-scroll">
-        <table class="grid clickable" id="lienTable"><thead></thead><tbody></tbody></table>
-      </div>
-    </section>
-
-    <!-- ── Costs by code (QBO) ──────────────────────────────────────── -->
+    <!-- ── Costs by code (QBO) — cost mix + grouped tree ────────────── -->
     <section class="widget" id="widget-costs">
       <div class="widget-head">
         <h2>Costs by code <span class="count" id="costCount"></span></h2>
       </div>
+      <div class="costmix" id="costMix"></div>
       <div class="table-scroll">
         <table class="grid" id="costTable"><thead></thead><tbody></tbody></table>
       </div>
@@ -80,6 +70,17 @@
         <table class="grid" id="divTable">
           <thead></thead><tbody></tbody>
         </table>
+      </div>
+    </section>
+
+    <!-- ── AP & liens (bills — kept lower on purpose, not on top) ────── -->
+    <section class="widget" id="widget-ap">
+      <div class="widget-head">
+        <h2>AP &amp; liens <span class="count" id="apCount"></span></h2>
+      </div>
+      <div class="kpi-row" id="apStats"></div>
+      <div class="table-scroll">
+        <table class="grid clickable" id="lienTable"><thead></thead><tbody></tbody></table>
       </div>
     </section>
 

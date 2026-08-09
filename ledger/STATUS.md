@@ -71,6 +71,10 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   via `shared/qbo_costs.job_type_name` + `cost_code_meta`. Verified live. **This mirrors an intended
   QBO restructure** (today QBO cost codes are standalone items routing to categories) — that future
   change is an owner/ops decision, tracked in the vault, not here.
+- **Layout: metrics up, bills down (owner).** Widget order is now KPIs → attention → costs → margins
+  → division → **AP & liens (bills) moved to position 6, off the top** → projects. The Costs widget
+  leads with a **cost-mix** proportional bar + legend (how much each cost type takes, % wise —
+  Concrete/Labor/Rebar… as one glance) above the grouped tree.
 - **Margins & burn** — derived from the loaded QBO costs (client-side; the WIP only ever showed
   *billed* margin, never actual-cost margin). Budget burn (cost ÷ ETC), margin-to-date (billed −
   cost) + margin %, and subs-share as toggleable columns; a portfolio "Margins & burn" widget
