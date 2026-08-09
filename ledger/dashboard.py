@@ -112,6 +112,31 @@ def _fetch_costs(con) -> dict:
         pc.setdefault(r["project_no"], []).append(
             {"code": r["code"], "cost_code": r["cost_code"], "actual": r["actual"], "lines": r["lines"]})
     out["by_project_code"] = pc
+
+    # grouped: cost TYPE = parent, job TYPE = sub — the JobTread model (material
+    # links to ONE cost-type parent; the job-type sub shows cost-to-budget).
+    from shared.qbo_costs import cost_code_meta, job_type_name
+    groups: dict = {}
+    for c in out["by_code"]:
+        if c["cost_code"]:
+            m = cost_code_meta(c["cost_code"])
+            parent = m["description"] or c["cost_code"]
+            sub = job_type_name(m["prefix"]) or (m["prefix"] or "—")
+        else:                                   # account-based line: no job-type split
+            parent = c["code"]
+            sub = "(account)"
+        g = groups.setdefault(parent, {"parent": parent, "actual": 0, "lines": 0, "subs": {}})
+        g["actual"] += c["actual"] or 0
+        g["lines"] += c["lines"] or 0
+        s = g["subs"].setdefault(sub, {"sub": sub, "code": c["cost_code"], "actual": 0, "lines": 0})
+        s["actual"] += c["actual"] or 0
+        s["lines"] += c["lines"] or 0
+    by_type = []
+    for g in groups.values():
+        g["subs"] = sorted(g["subs"].values(), key=lambda s: -(s["actual"] or 0))
+        by_type.append(g)
+    by_type.sort(key=lambda g: -(g["actual"] or 0))
+    out["by_cost_type"] = by_type
     return out
 
 

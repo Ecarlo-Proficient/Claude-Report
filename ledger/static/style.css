@@ -118,6 +118,14 @@ body {
 .attn .a-sub { font-size: .78em; color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .attn.none { opacity: .55; cursor: default; border-left-color: var(--border); }
 
+/* ── Cost type ▸ job type (grouped cost table) ─────────────────────────── */
+tr.cost-parent { cursor: pointer; }
+tr.cost-parent > td { border-top: 1px solid var(--border); }
+tr.cost-parent .tw { font-weight: 700; letter-spacing: -.01em; }
+tr.cost-parent:hover { background: var(--row-hover); }
+tr.cost-sub > td:first-child { padding-left: 26px; }
+tr.cost-sub .sub-name { color: var(--text-dim); }
+
 /* ── Cost-code chip ────────────────────────────────────────────────────── */
 .codechip { display: inline-block; padding: 1px 8px; border-radius: 6px; font-weight: 700;
   font-variant-numeric: tabular-nums; font-size: .86em; letter-spacing: .01em;

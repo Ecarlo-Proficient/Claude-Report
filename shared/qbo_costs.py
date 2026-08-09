@@ -88,6 +88,12 @@ def cost_code_meta(code: str) -> dict:
             "description": _COST_CODE_NAMES.get(num)}
 
 
+def job_type_name(prefix: str) -> Optional[str]:
+    """'SL' → 'Slab'. The job-type PREFIX name — the sub under a cost-type parent
+    (the JobTread model: material → one cost-type parent, job-type as the sub)."""
+    return _JOB_TYPE_NAMES.get((prefix or "").upper())
+
+
 # ── QBO pull ────────────────────────────────────────────────────────────────
 
 def build_account_map(access: str, company_id: str) -> Dict[str, str]:

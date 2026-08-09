@@ -162,7 +162,8 @@ function raw(col, v) {
 // ── State ─────────────────────────────────────────────────────────────────
 let ALL = [];
 let AP = { summary: {}, lien_watch: [], by_project: {} };
-let COST = { by_code: [], by_project_code: {}, by_project: {}, loaded_total: 0 };
+let COST = { by_code: [], by_project_code: {}, by_project: {}, by_cost_type: [], loaded_total: 0 };
+let costCollapsed = new Set();   // collapsed cost-type parents in the Costs widget
 let meta = {};
 let sortKey = "total_contract_price";
 let sortDir = -1;   // -1 desc, 1 asc
@@ -178,7 +179,7 @@ async function load() {
   ALL = data.projects || [];
   ALL.forEach(deriveMetrics);
   AP = data.ap || { summary: {}, lien_watch: [], by_project: {} };
-  COST = data.cost || { by_code: [], by_project_code: {}, by_project: {}, loaded_total: 0 };
+  COST = data.cost || { by_code: [], by_project_code: {}, by_project: {}, by_cost_type: [], loaded_total: 0 };
   meta = data.meta || {};
   $("#metaLine").textContent =
     `${meta.project_count} projects · report ${meta.report_date || "—"}` +
@@ -301,31 +302,52 @@ function renderMargins() {
 }
 
 function renderCosts() {
-  const codes = COST.by_code || [];
-  const total = COST.loaded_total || codes.reduce((t, c) => t + (c.actual || 0), 0);
-  $("#costCount").textContent = total ? `($${Math.round(total).toLocaleString()} loaded · ${codes.length} codes)` : "(no cost data — run load_costs.py)";
-  const cols = [["Code", "left"], ["Cost name", "left"], ["Actual", "right"], ["% of total", "right"], ["Lines", "right"]];
+  // Grouped: cost TYPE (parent) → job TYPE (sub) — the JobTread model. Material
+  // rolls to ONE cost-type parent; the job-type sub shows the split for budget.
+  const groups = COST.by_cost_type || [];
+  const total = COST.loaded_total || groups.reduce((t, g) => t + (g.actual || 0), 0);
+  $("#costCount").textContent = total
+    ? `($${Math.round(total).toLocaleString()} · cost type ▸ job type)`
+    : "(no cost data — run load_costs.py)";
+  const cols = [["Cost type  ▸  job type", "left"], ["Code", "left"], ["Actual", "right"], ["% of total", "right"], ["Lines", "right"]];
   const thead = $("#costTable thead"), tbody = $("#costTable tbody");
   thead.innerHTML = ""; tbody.innerHTML = "";
   const htr = document.createElement("tr");
   for (const [c, al] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
   thead.appendChild(htr);
-  const max = codes.reduce((m, c) => Math.max(m, c.actual || 0), 0) || 1;
-  for (const c of codes.slice(0, 40)) {
-    const tr = document.createElement("tr");
-    const codeTd = document.createElement("td"); codeTd.className = "left";
-    const chip = document.createElement("span"); chip.className = "codechip"; chip.textContent = c.code;
-    codeTd.appendChild(chip); tr.appendChild(codeTd);
-    tr.appendChild(leftText(c.description || (c.cost_code ? "" : "(account)")));
-    const actTd = document.createElement("td");
+  const max = groups.reduce((m, g) => Math.max(m, g.actual || 0), 0) || 1;
+  for (const g of groups) {
+    const collapsed = costCollapsed.has(g.parent);
+    // ── parent row: the cost TYPE (material) ──
+    const ptr = document.createElement("tr"); ptr.className = "cost-parent";
+    const nameTd = document.createElement("td"); nameTd.className = "left";
+    const tw = document.createElement("span"); tw.className = "tw"; tw.textContent = (collapsed ? "▸ " : "▾ ") + g.parent;
+    nameTd.appendChild(tw); ptr.appendChild(nameTd);
+    ptr.appendChild(leftText(""));
+    const at = document.createElement("td");
     const bar = document.createElement("span"); bar.className = "cell bar";
-    const fill = document.createElement("span"); fill.className = "bar-fill"; fill.style.width = ((c.actual || 0) / max * 100) + "%";
-    const txt = document.createElement("span"); txt.className = "bar-txt"; txt.textContent = money(c.actual);
-    bar.appendChild(fill); bar.appendChild(txt); bar.title = "Click to copy"; bar.onclick = () => copy(String(Math.round(c.actual || 0)));
-    actTd.appendChild(bar); tr.appendChild(actTd);
-    tr.appendChild(rightText(total ? ((c.actual || 0) / total * 100).toFixed(1) + "%" : "—"));
-    tr.appendChild(rightText(String(c.lines || 0)));
-    tbody.appendChild(tr);
+    const fill = document.createElement("span"); fill.className = "bar-fill"; fill.style.width = ((g.actual || 0) / max * 100) + "%";
+    const txt = document.createElement("span"); txt.className = "bar-txt"; txt.textContent = money(g.actual);
+    bar.appendChild(fill); bar.appendChild(txt); bar.title = "Click to copy"; bar.onclick = (e) => { e.stopPropagation(); copy(String(Math.round(g.actual || 0))); };
+    at.appendChild(bar); ptr.appendChild(at);
+    ptr.appendChild(rightText(total ? ((g.actual || 0) / total * 100).toFixed(1) + "%" : "—"));
+    ptr.appendChild(rightText(String(g.lines || 0)));
+    ptr.onclick = (e) => { if (!e.target.closest(".cell")) { collapsed ? costCollapsed.delete(g.parent) : costCollapsed.add(g.parent); renderCosts(); } };
+    tbody.appendChild(ptr);
+    // ── sub rows: the job TYPE split ──
+    if (!collapsed) for (const s of g.subs) {
+      const str = document.createElement("tr"); str.className = "cost-sub";
+      const sn = document.createElement("td"); sn.className = "left";
+      const si = document.createElement("span"); si.className = "sub-name"; si.textContent = s.sub; sn.appendChild(si); str.appendChild(sn);
+      const ct = document.createElement("td"); ct.className = "left";
+      if (s.code) { const chip = document.createElement("span"); chip.className = "codechip"; chip.textContent = s.code; ct.appendChild(chip); }
+      else ct.appendChild(document.createTextNode("—"));
+      str.appendChild(ct);
+      const av = document.createElement("td"); av.appendChild(moneyCell(s.actual)); str.appendChild(av);
+      str.appendChild(rightText(total ? ((s.actual || 0) / total * 100).toFixed(1) + "%" : "—"));
+      str.appendChild(rightText(String(s.lines || 0)));
+      tbody.appendChild(str);
+    }
   }
 }
 function rightText(v) { const td = document.createElement("td"); const s = document.createElement("span"); s.textContent = v; td.appendChild(s); return td; }

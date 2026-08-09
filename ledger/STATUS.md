@@ -64,6 +64,13 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   column pair, and a **"Costs (QBO, by code)"** group in each job's detail showing total loaded /
   subs / WIP costs_to_date (the reconciliation) + the full code breakdown. Verified live — the
   biggest MFD job loads within ~0.3% of its WIP costs_to_date; portfolio spans ~80 cost codes.
+- **Costs by code grouped as cost TYPE (parent) → job TYPE (sub)** — the JobTread model: the number
+  meaning (Concrete/Labor/Rebar…) is the parent that ALL material rolls up to, the prefix
+  (Slab/Paving/Flatwork…) is the collapsible sub, with the cost code shown. Account-based lines land
+  under their cost-type parent as an "(account)" sub. Grouping computed server-side in `_fetch_costs`
+  via `shared/qbo_costs.job_type_name` + `cost_code_meta`. Verified live. **This mirrors an intended
+  QBO restructure** (today QBO cost codes are standalone items routing to categories) — that future
+  change is an owner/ops decision, tracked in the vault, not here.
 - **Margins & burn** — derived from the loaded QBO costs (client-side; the WIP only ever showed
   *billed* margin, never actual-cost margin). Budget burn (cost ÷ ETC), margin-to-date (billed −
   cost) + margin %, and subs-share as toggleable columns; a portfolio "Margins & burn" widget
