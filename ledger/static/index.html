@@ -24,6 +24,7 @@
   </header>
 
   <nav class="tabs" id="tabbar">
+    <button class="tab" data-tabbtn="home">My view</button>
     <button class="tab" data-tabbtn="overview">Overview</button>
     <button class="tab" data-tabbtn="costs">Costs</button>
     <button class="tab" data-tabbtn="draws">Draws</button>
@@ -33,6 +34,27 @@
 
   <main class="wrap" id="wrap">
     <div id="errorBanner" class="error-banner" hidden></div>
+
+    <!-- ══════════════ TAB: MY VIEW (home / default) ══════════════ -->
+    <div class="tab-page" data-tab="home" hidden>
+      <section class="widget">
+        <div class="widget-head"><h2>Data freshness <span class="count" id="homeFreshNote"></span></h2></div>
+        <div class="fresh-row" id="homeFresh"></div>
+      </section>
+      <section class="widget">
+        <div class="widget-head"><h2>Action items <span class="count">— click to jump in</span></h2></div>
+        <div class="action-row" id="homeActions"></div>
+      </section>
+      <section class="widget">
+        <div class="widget-head">
+          <h2>Working on <span class="count" id="homeWorkingNote"></span></h2>
+          <select id="homeDivision"><option value="">All divisions</option></select>
+        </div>
+        <div class="table-scroll">
+          <table class="grid clickable" id="homeWorkingTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </div><!-- /tab: home -->
 
     <!-- ══════════════ TAB: OVERVIEW ══════════════ -->
     <div class="tab-page" data-tab="overview">
@@ -124,7 +146,16 @@
         <div class="widget-head"><h2>Draw race-through <span class="count" id="drawsNote"></span></h2></div>
         <div class="kpi-row" id="drawsStats"></div>
         <p class="hint">Fund the draw → pay vendors → mark each <b>unconditional waiver</b> as it comes
-          in → when all are in, turn it in to unlock the next draw. Check the box when a waiver is in hand.</p>
+          in → when all are in, turn it in to unlock the next draw. Check the box when a waiver is in hand.
+          <br><b>RP is excluded</b> — residential bills at completion / milestones, not formal draws.</p>
+        <div class="filters">
+          <input type="search" id="drawSearch" placeholder="Search draw, project, vendor…" autocomplete="off">
+          <select id="drawDivision">
+            <option value="">All divisions</option>
+            <option value="MFD">Multi Family</option>
+            <option value="CP">Commercial</option>
+          </select>
+        </div>
       </section>
       <div id="drawList"></div>
     </div><!-- /tab: draws -->
@@ -142,6 +173,7 @@
     <div class="tab-page" data-tab="vendors" hidden>
       <section class="widget">
         <div class="widget-head"><h2>Vendor spend <span class="count" id="vendorsNote"></span></h2></div>
+        <div class="filters"><input type="search" id="vendorSearch" placeholder="Search vendor…" autocomplete="off"></div>
         <div class="table-scroll">
           <table class="grid clickable" id="vendorTable"><thead></thead><tbody></tbody></table>
         </div>

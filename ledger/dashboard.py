@@ -150,7 +150,54 @@ def _fetch_costs(con) -> dict:
             "GROUP BY vendor ORDER BY spend DESC"):
         vend.append({"vendor": r["vendor"], "spend": r["spend"], "lines": r["lines"],
                      "jobs": r["jobs"], "sub_spend": r["sub_spend"]})
+    # vendor TYPE — Sub (labor) vs Supplier: <material> — from each vendor's cost mix.
+    mix: dict = {}
+    for r in con.execute("SELECT vendor, cost_code, account, SUM(amount) amt FROM cost_line "
+                         "WHERE vendor IS NOT NULL AND vendor <> '' GROUP BY vendor, cost_code, account"):
+        parent = cost_code_meta(r["cost_code"])["description"] if r["cost_code"] else None
+        parent = parent or r["account"] or "Materials"
+        mix.setdefault(r["vendor"], {})
+        mix[r["vendor"]][parent] = mix[r["vendor"]].get(parent, 0) + (r["amt"] or 0)
+    for v in vend:
+        spend = v["spend"] or 0
+        sub_share = (v["sub_spend"] or 0) / spend if spend else 0
+        vm = mix.get(v["vendor"], {})
+        top = max(vm, key=vm.get) if vm else None
+        v["vtype"] = "Sub" if sub_share >= 0.5 else (f"Supplier: {top}" if top else "Supplier")
     out["by_vendor"] = vend
+    return out
+
+
+def _freshness(con) -> dict:
+    """When each feed last landed (ledger loaded_at) + when each SOURCE sync wrote
+    its file (mtime) — the owner's "is my data current?" strip."""
+    import os
+    out = {"ledger": {}, "sources": {}}
+    for tbl, key in (("wip_snapshot", "WIP"), ("ap_bill_line", "AP (Bill Tracker)"),
+                     ("cost_line", "Costs (QBO)")):
+        try:
+            r = con.execute(f"SELECT MAX(loaded_at) FROM {tbl}").fetchone()
+            out["ledger"][key] = r[0] if r and r[0] else None
+        except sqlite3.OperationalError:
+            out["ledger"][key] = None
+
+    def mtime(p):
+        try:
+            return _dt.datetime.fromtimestamp(os.path.getmtime(str(p))).isoformat(timespec="minutes")
+        except OSError:
+            return None
+
+    ob = paths.onedrive_base()
+    bt = paths.get_path("ACB_BILL_TRACKER_XLSX", ob / "Automations-/Bill Tracker.xlsx")
+    wm = paths.get_path("WIP_EXCEL_PATH", ob / "Company Files - WIP Report/WIP - MASTER new.xlsx")
+    out["sources"]["sync-ap"] = mtime(bt)
+    out["sources"]["WIP master"] = mtime(wm)
+    for cand in (ob / "Automations-/Open_Invoices.xlsx", ob / "Open_Invoices.xlsx",
+                 ob / "Automations-/Collections/Open_Invoices.xlsx"):
+        m = mtime(cand)
+        if m:
+            out["sources"]["sync-ar"] = m
+            break
     return out
 
 
@@ -174,6 +221,8 @@ def _fetch_draws(con, limit: int = 40) -> dict:
             "MAX(bill_total) amount, MAX(open_balance) open_bal, pay_status, invoice_status, "
             "MAX(gc_paid_date) gc, MAX(pay_date) pd, MAX(bill_date) bd "
             "FROM ap_bill_line WHERE matched_invoice IS NOT NULL AND matched_invoice <> '' "
+            # RP isn't draws — RP bills at completion / milestones, not formal draws (owner).
+            "AND COALESCE(project_no,'') NOT LIKE 'RP%' AND matched_invoice NOT LIKE '%— RP%' "
             "GROUP BY matched_invoice, vendor, bill_ref").fetchall()
     except sqlite3.OperationalError:
         return {"draws": [], "total": 0}
@@ -245,6 +294,7 @@ def fetch_data(db_path: Path) -> dict:
         ap = _fetch_ap(con)
         costs = _fetch_costs(con)
         draws = _fetch_draws(con)
+        freshness = _freshness(con)
     except sqlite3.OperationalError as e:
         con.close()
         return {"error": f"Ledger schema not found ({e}). Run the loader first."}
@@ -259,6 +309,7 @@ def fetch_data(db_path: Path) -> dict:
             "report_date": report_date,
             "loaded_at": loaded_at,
             "project_count": pcount,
+            "freshness": freshness,
         },
         "projects": rows,
         "ap": ap,

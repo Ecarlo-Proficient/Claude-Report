@@ -175,6 +175,29 @@ tr.cost-sub .sub-name { color: var(--text-dim); }
 .draw-head .panel-sub { font-variant-numeric: tabular-nums; }
 .hint { margin: 4px 18px 14px; color: var(--text-dim); font-size: .88em; line-height: 1.5; }
 
+/* ── Vendor type pill ──────────────────────────────────────────────────── */
+.vtype { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: .8em; white-space: nowrap;
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text-dim); }
+.vtype.sub { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
+/* ── Home / My view ────────────────────────────────────────────────────── */
+.fresh-row { display: flex; flex-wrap: wrap; gap: 10px; padding: 6px 18px 16px; }
+.fresh { border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; min-width: 150px; background: var(--surface-2); }
+.fresh .f-label { font-size: .78em; color: var(--text-dim); text-transform: uppercase; letter-spacing: .04em; }
+.fresh .f-when { font-size: 1.05em; font-weight: 600; margin-top: 3px; }
+.fresh .f-ago { font-size: .8em; color: var(--text-dim); margin-top: 1px; }
+.fresh.stale { border-color: color-mix(in srgb, #b8860b 55%, var(--border)); }
+.action-row { display: flex; flex-wrap: wrap; gap: 10px; padding: 6px 18px 18px; }
+.action { display: flex; flex-direction: column; gap: 2px; cursor: pointer; min-width: 150px;
+  border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 10px;
+  padding: 10px 14px; background: var(--surface-2); transition: background .12s; }
+.action:hover { background: var(--row-hover); }
+.action.warn { border-left-color: var(--neg); }
+.action.none { opacity: .5; cursor: default; border-left-color: var(--border); }
+.action .a-n { font-size: 1.35em; font-weight: 700; }
+.action .a-lab { font-size: .82em; color: var(--text-dim); }
+
 /* ── % complete bar (in the projects table) ────────────────────────────── */
 .bar { position: relative; display: inline-block; min-width: 68px; text-align: right; }
 .bar .bar-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px;

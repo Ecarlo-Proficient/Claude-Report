@@ -171,7 +171,8 @@ let ALL = [];
 let AP = { summary: {}, lien_watch: [], by_project: {} };
 let COST = { by_code: [], by_project_code: {}, by_project: {}, by_cost_type: [], by_vendor: [], loaded_total: 0 };
 let DRAWS = { draws: [], total: 0 };
-let costCollapsed = new Set();   // collapsed cost-type parents in the Costs widget
+let costCollapsed = new Set();   // collapsed cost-type parents (default: all collapsed)
+let drawsCollapsed = new Set();  // collapsed draw cards (default: all collapsed)
 
 // ── Tabs ────────────────────────────────────────────────────────────────────
 let activeTab = "overview";
@@ -189,7 +190,7 @@ let sortDir = -1;   // -1 desc, 1 asc
 let activeRule = null;   // key of a RULES entry currently filtering the table
 
 // ── Load ──────────────────────────────────────────────────────────────────
-async function load() {
+async function load(isAuto) {
   let data;
   try { data = await (await fetch("/api/data")).json(); }
   catch (e) { return showError("Could not reach the server: " + e); }
@@ -200,6 +201,12 @@ async function load() {
   AP = data.ap || { summary: {}, lien_watch: [], by_project: {} };
   COST = data.cost || { by_code: [], by_project_code: {}, by_project: {}, by_cost_type: [], by_vendor: [], loaded_total: 0 };
   DRAWS = data.draws || { draws: [], total: 0 };
+  // Big-picture first: collapse everything by default; the user expands to zoom in.
+  // On a live auto-refresh, preserve what the user has already expanded.
+  if (!isAuto) {
+    costCollapsed = new Set((COST.by_cost_type || []).map(g => g.parent));
+    drawsCollapsed = new Set((DRAWS.draws || []).map(d => d.matched_invoice));
+  }
   meta = data.meta || {};
   $("#metaLine").textContent =
     `${meta.project_count} projects · report ${meta.report_date || "—"}` +
@@ -270,8 +277,89 @@ function visibleColumns() {
   return COLUMNS.filter(c => c.always || settings.columns.includes(c.key));
 }
 function render() {
+  renderHome();
   renderKPIs(); renderAttention(); renderCosts(); renderMargins(); renderDivisions();
   renderProjects(); renderLiens(); renderVendors(); renderDraws();
+}
+
+function timeAgo(iso) {
+  if (!iso) return "not found";
+  const t = Date.parse(iso.length <= 16 ? iso + ":00" : iso);
+  if (isNaN(t)) return iso;
+  const mins = Math.floor((Date.now() - t) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return mins + "m ago";
+  const hrs = Math.floor(mins / 60); if (hrs < 24) return hrs + "h ago";
+  return Math.floor(hrs / 24) + "d ago";
+}
+function renderHome() {
+  // ── data freshness ──
+  const fr = meta.freshness || { ledger: {}, sources: {} };
+  const items = [
+    ["sync-ap (AP bills)", (fr.sources || {})["sync-ap"]],
+    ["sync-ar (AR)", (fr.sources || {})["sync-ar"]],
+    ["WIP master", (fr.sources || {})["WIP master"]],
+    ["Costs loaded (QBO)", (fr.ledger || {})["Costs (QBO)"]],
+  ];
+  const box = $("#homeFresh"); box.innerHTML = "";
+  for (const [label, when] of items) {
+    const el = document.createElement("div"); el.className = "fresh";
+    if (when) { const t = Date.parse(when.length <= 16 ? when + ":00" : when); if (!isNaN(t) && (Date.now() - t) > 2 * 864e5) el.classList.add("stale"); }
+    el.innerHTML = `<div class="f-label"></div><div class="f-when"></div><div class="f-ago"></div>`;
+    el.querySelector(".f-label").textContent = label;
+    el.querySelector(".f-when").textContent = when ? when.replace("T", " ") : "—";
+    el.querySelector(".f-ago").textContent = timeAgo(when);
+    box.appendChild(el);
+  }
+  // ── action items (click → jump to the work) ──
+  const pastDue = (AP.lien_watch || []).filter(r => r.lien_status === "Notice PAST due").length;
+  const dueSoon = (AP.lien_watch || []).filter(r => r.lien_status === "Notice due in ≤7d").length;
+  const readyDraws = (DRAWS.draws || []).filter(d => d.stage === "Ready to turn in").length;
+  const collectDraws = (DRAWS.draws || []).filter(d => d.stage === "Paid — collect waivers").length;
+  const overB = ALL.filter(isOverBudget).length;
+  const underB = ALL.filter(r => num(r.underbillings) > 0).length;
+  const goRule = (key) => { setTab("overview"); activeRule = key; renderAttention(); renderProjects(); $("#btnClearRule").hidden = false; window.scrollTo(0, 0); };
+  const acts = [
+    ["Liens past due", pastDue, true, () => setTab("liens")],
+    ["Lien due ≤7d", dueSoon, true, () => setTab("liens")],
+    ["Draws: collect waivers", collectDraws, false, () => setTab("draws")],
+    ["Draws ready to turn in", readyDraws, false, () => setTab("draws")],
+    ["Over budget", overB, true, () => goRule("overbudget")],
+    ["Underbilled (can invoice)", underB, false, () => goRule("underbilled")],
+  ];
+  const ar = $("#homeActions"); ar.innerHTML = "";
+  for (const [label, n, warn, go] of acts) {
+    const el = document.createElement("div"); el.className = "action" + (warn && n ? " warn" : "") + (n ? "" : " none");
+    el.innerHTML = `<span class="a-n"></span><span class="a-lab"></span>`;
+    el.querySelector(".a-n").textContent = n;
+    el.querySelector(".a-lab").textContent = label;
+    if (n) el.onclick = go;
+    ar.appendChild(el);
+  }
+  // ── working on (active projects) ──
+  const sel = $("#homeDivision");
+  if (sel && sel.options.length <= 1) for (const d of uniq(ALL.map(r => r.division))) { const o = document.createElement("option"); o.value = d; o.textContent = d; sel.appendChild(o); }
+  const div = sel ? sel.value : "";
+  const active = ALL.filter(r => (r.status || "").toLowerCase() === "active" && (!div || r.division === div))
+    .sort((a, b) => num(b.total_contract_price) - num(a.total_contract_price));
+  $("#homeWorkingNote").textContent = `(${active.length} active)`;
+  const cols = [["Project", "left"], ["Division", "left"], ["Name", "left"], ["Contract", "right"], ["% Complete", "right"], ["Costs", "right"]];
+  const thead = $("#homeWorkingTable thead"), tbody = $("#homeWorkingTable tbody");
+  thead.innerHTML = ""; tbody.innerHTML = "";
+  const htr = document.createElement("tr");
+  for (const [c, al] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
+  thead.appendChild(htr);
+  for (const r of active.slice(0, 60)) {
+    const tr = document.createElement("tr");
+    tr.onclick = (e) => { if (!e.target.closest(".cell")) openDetail(r); };
+    tr.appendChild(leftText(r.project_no));
+    tr.appendChild(leftText(r.division || ""));
+    tr.appendChild(leftText(r.project_name || ""));
+    const cc = document.createElement("td"); cc.appendChild(cellFor({ key: "total_contract_price", type: "money" }, r.total_contract_price)); tr.appendChild(cc);
+    const pc = document.createElement("td"); pc.appendChild(cellFor({ key: "percent_complete", type: "pct" }, r.percent_complete)); tr.appendChild(pc);
+    const co = document.createElement("td"); co.appendChild(cellFor({ key: "costs_to_date", type: "money" }, r.costs_to_date)); tr.appendChild(co);
+    tbody.appendChild(tr);
+  }
 }
 
 const DRAW_STAGE_CLASS = {
@@ -279,17 +367,25 @@ const DRAW_STAGE_CLASS = {
   "Awaiting GC funding": "info", "Ready to turn in": "ready",
 };
 function renderDraws() {
-  const draws = DRAWS.draws || [];
-  $("#drawsNote").textContent = draws.length
-    ? `(${draws.length} shown of ${DRAWS.total} · most recent first)`
+  const f = { q: ($("#drawSearch") ? $("#drawSearch").value : "").trim().toLowerCase(),
+              div: $("#drawDivision") ? $("#drawDivision").value : "" };
+  const all = (DRAWS.draws || []).filter(d => {
+    if (f.div && !String(d.project_no || "").toUpperCase().startsWith(f.div)
+              && !(d.label || "").toUpperCase().includes("— " + f.div)) return false;
+    if (f.q) {
+      const hay = [d.label, d.project_no].concat((d.bills || []).map(b => b.vendor))
+        .filter(Boolean).join(" ").toLowerCase();
+      if (!hay.includes(f.q)) return false;
+    }
+    return true;
+  });
+  $("#drawsNote").textContent = (DRAWS.draws || []).length
+    ? `(${all.length} shown of ${DRAWS.total} · most recent first)`
     : "(no draw data — run load_bill_tracker.py)";
-  const ready = draws.filter(d => d.stage === "Ready to turn in").length;
-  const collect = draws.filter(d => d.stage === "Paid — collect waivers").length;
-  const paying = draws.filter(d => d.stage === "Fund in — pay vendors").length;
   const stats = [
-    ["Ready to turn in", String(ready), "all paid + waivers in"],
-    ["Collect waivers", String(collect), "paid, waivers pending"],
-    ["Pay vendors", String(paying), "funded, unpaid bills"],
+    ["Ready to turn in", String(all.filter(d => d.stage === "Ready to turn in").length), "all paid + waivers in"],
+    ["Collect waivers", String(all.filter(d => d.stage === "Paid — collect waivers").length), "paid, waivers pending"],
+    ["Pay vendors", String(all.filter(d => d.stage === "Fund in — pay vendors").length), "funded, unpaid bills"],
   ];
   const sr = $("#drawsStats"); sr.innerHTML = "";
   for (const [label, value, sub] of stats) {
@@ -301,40 +397,45 @@ function renderDraws() {
     sr.appendChild(el);
   }
   const box = $("#drawList"); box.innerHTML = "";
-  for (const d of draws) {
+  for (const d of all) {
+    const collapsed = drawsCollapsed.has(d.matched_invoice);
     const sec = document.createElement("section"); sec.className = "widget draw";
-    const head = document.createElement("div"); head.className = "widget-head draw-head";
+    const head = document.createElement("div"); head.className = "widget-head draw-head"; head.style.cursor = "pointer";
+    head.onclick = () => { collapsed ? drawsCollapsed.delete(d.matched_invoice) : drawsCollapsed.add(d.matched_invoice); renderDraws(); };
     const left = document.createElement("div");
-    const h = document.createElement("h2"); h.textContent = d.label || d.matched_invoice; left.appendChild(h);
+    const h = document.createElement("h2"); h.textContent = (collapsed ? "▸ " : "▾ ") + (d.label || d.matched_invoice); left.appendChild(h);
     const meta2 = document.createElement("div"); meta2.className = "panel-sub";
     meta2.textContent = `${money(d.total)} · ${d.n} bills · ${d.paid}/${d.n} paid · ${d.waivers}/${d.n} waivers`;
     left.appendChild(meta2); head.appendChild(left);
     const pill = document.createElement("span"); pill.className = "lien " + (DRAW_STAGE_CLASS[d.stage] || "info"); pill.textContent = d.stage;
     head.appendChild(pill); sec.appendChild(head);
-    const scroll = document.createElement("div"); scroll.className = "table-scroll";
-    const table = document.createElement("table"); table.className = "grid";
-    const thead = document.createElement("thead"), tbody = document.createElement("tbody");
-    const cols = [["Vendor", "left"], ["Bill #", "left"], ["Amount", "right"], ["Paid", "left"], ["GC funded", "left"], ["Waiver in hand", "left"]];
-    const htr = document.createElement("tr");
-    for (const [c, al] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
-    thead.appendChild(htr);
-    for (const b of d.bills) {
-      const tr = document.createElement("tr");
-      tr.appendChild(leftText(b.vendor || "—"));
-      tr.appendChild(leftText(b.bill_ref || "—"));
-      const av = document.createElement("td"); av.appendChild(moneyCell(b.amount)); tr.appendChild(av);
-      tr.appendChild(leftText(b.pay_date ? "✓ " + b.pay_date : "—"));
-      tr.appendChild(leftText(b.gc_paid ? "✓ " + b.gc_paid : "—"));
-      const wtd = document.createElement("td"); wtd.className = "left";
-      const lab = document.createElement("label"); lab.className = "chk";
-      const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = !!b.waiver;
-      cb.onchange = () => setWaiver(d, b, cb);
-      lab.appendChild(cb); lab.appendChild(document.createTextNode(b.waiver ? " in hand" : " mark"));
-      wtd.appendChild(lab); tr.appendChild(wtd);
-      tbody.appendChild(tr);
+    if (!collapsed) {
+      const scroll = document.createElement("div"); scroll.className = "table-scroll";
+      const table = document.createElement("table"); table.className = "grid";
+      const thead = document.createElement("thead"), tbody = document.createElement("tbody");
+      const cols = [["Vendor", "left"], ["Bill #", "left"], ["Amount", "right"], ["Paid", "left"], ["GC funded", "left"], ["Waiver in hand", "left"]];
+      const htr = document.createElement("tr");
+      for (const [c, al] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
+      thead.appendChild(htr);
+      for (const b of d.bills) {
+        const tr = document.createElement("tr");
+        tr.appendChild(leftText(b.vendor || "—"));
+        tr.appendChild(leftText(b.bill_ref || "—"));
+        const av = document.createElement("td"); av.appendChild(moneyCell(b.amount)); tr.appendChild(av);
+        tr.appendChild(leftText(b.pay_date ? "✓ " + b.pay_date : "—"));
+        tr.appendChild(leftText(b.gc_paid ? "✓ " + b.gc_paid : "—"));
+        const wtd = document.createElement("td"); wtd.className = "left";
+        const lab = document.createElement("label"); lab.className = "chk";
+        const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = !!b.waiver;
+        cb.onchange = () => setWaiver(d, b, cb);
+        lab.appendChild(cb); lab.appendChild(document.createTextNode(b.waiver ? " in hand" : " mark"));
+        wtd.appendChild(lab); tr.appendChild(wtd);
+        tbody.appendChild(tr);
+      }
+      table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table);
+      sec.appendChild(scroll);
     }
-    table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table);
-    sec.appendChild(scroll); box.appendChild(sec);
+    box.appendChild(sec);
   }
 }
 async function setWaiver(draw, bill, cb) {
@@ -583,21 +684,26 @@ function renderLiens() {
 }
 
 function renderVendors() {
-  const vends = COST.by_vendor || [];
+  const q = ($("#vendorSearch") ? $("#vendorSearch").value : "").trim().toLowerCase();
+  let vends = COST.by_vendor || [];
+  if (q) vends = vends.filter(v => (v.vendor || "").toLowerCase().includes(q));
   const totalSpend = vends.reduce((t, v) => t + (v.spend || 0), 0);
-  $("#vendorsNote").textContent = vends.length
+  $("#vendorsNote").textContent = (COST.by_vendor || []).length
     ? `(${vends.length} vendors · $${Math.round(totalSpend).toLocaleString()})`
     : "(no cost data — run load_costs.py)";
-  const cols = [["Vendor", "left"], ["Spend", "right"], ["Jobs", "right"], ["Lines", "right"], ["of which subs", "right"]];
+  const cols = [["Vendor", "left"], ["Type", "left"], ["Spend", "right"], ["Jobs", "right"], ["Lines", "right"]];
   const thead = $("#vendorTable thead"), tbody = $("#vendorTable tbody");
   thead.innerHTML = ""; tbody.innerHTML = "";
   const htr = document.createElement("tr");
   for (const [c, al] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
   thead.appendChild(htr);
   const max = vends.reduce((m, v) => Math.max(m, v.spend || 0), 0) || 1;
-  for (const v of vends.slice(0, 100)) {
+  for (const v of vends.slice(0, 150)) {
     const tr = document.createElement("tr");
     tr.appendChild(leftText(v.vendor));
+    const ty = document.createElement("td"); ty.className = "left";
+    const pill = document.createElement("span"); pill.className = "vtype" + (v.vtype === "Sub" ? " sub" : "");
+    pill.textContent = v.vtype || "—"; ty.appendChild(pill); tr.appendChild(ty);
     const st = document.createElement("td");
     const bar = document.createElement("span"); bar.className = "cell bar";
     const fill = document.createElement("span"); fill.className = "bar-fill"; fill.style.width = ((v.spend || 0) / max * 100) + "%";
@@ -606,7 +712,6 @@ function renderVendors() {
     st.appendChild(bar); tr.appendChild(st);
     tr.appendChild(rightText(String(v.jobs || 0)));
     tr.appendChild(rightText(String(v.lines || 0)));
-    tr.appendChild(rightText(v.sub_spend ? money(v.sub_spend) : "—"));
     tbody.appendChild(tr);
   }
 }
@@ -678,9 +783,24 @@ function renderDivisions() {
   const order = Object.keys(groups).sort((a, b) => groups[b].contract - groups[a].contract);
   for (const d of order) {
     const g = groups[d];
-    addRow(tbody, [textCell(d, true), textCell(String(g.jobs)), moneyCell(g.contract),
-      moneyCell(g.costs), moneyCell(g.billed), moneyCell(g.over), moneyCell(g.under)]);
+    const tr = document.createElement("tr");
+    tr.style.cursor = "pointer";
+    tr.title = "Show this division's active projects";
+    tr.onclick = (e) => { if (!e.target.closest(".cell")) drillDivision(d); };
+    [textCell(d, true), textCell(String(g.jobs)), moneyCell(g.contract), moneyCell(g.costs),
+     moneyCell(g.billed), moneyCell(g.over), moneyCell(g.under)].forEach((c, i) => {
+      const td = document.createElement("td"); if (i === 0) td.className = "left"; td.appendChild(c); tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
   }
+}
+// Big-picture → zoom: click a division rollup row → its active projects.
+function drillDivision(div) {
+  $("#fDivision").value = div;
+  $("#fActive").checked = true;
+  renderProjects();
+  $("#widget-projects").scrollIntoView({ behavior: "smooth", block: "start" });
+  toast(`${div} — active projects`);
 }
 const num = v => (isNum(v) ? v : Number(v) || 0);
 
@@ -956,14 +1076,18 @@ function init() {
   wireSettings();
   ["#search", "#fDivision", "#fStatus", "#fCategory", "#fActive"].forEach(sel =>
     $(sel).addEventListener("input", renderProjects));
+  ["#drawSearch", "#drawDivision"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderDraws); });
+  { const el = $("#vendorSearch"); if (el) el.addEventListener("input", renderVendors); }
+  { const el = $("#homeDivision"); if (el) el.addEventListener("input", renderHome); }
   $("#btnExport").onclick = exportCSV;
   $("#btnRefresh").onclick = load;
   $("#btnClearRule").onclick = () => { activeRule = null; renderAttention(); renderProjects(); };
   $("#btnSettings").onclick = () => openPanel("#settings");
   $$(".tab").forEach(b => { b.onclick = () => setTab(b.dataset.tabbtn); });
-  let savedTab = "overview";
-  try { savedTab = localStorage.getItem("proficient-ledger-tab") || "overview"; } catch { /* ignore */ }
+  let savedTab = "home";
+  try { savedTab = localStorage.getItem("proficient-ledger-tab") || "home"; } catch { /* ignore */ }
   setTab(savedTab);
+  setInterval(() => load(true), 90000);   // live: soft auto-refresh (preserves expand state + tab)
   $("#btnCloseSettings").onclick = closePanels;
   $("#btnCloseDetail").onclick = closePanels;
   $("#btnCopyDetail").onclick = () => copy(detailAsText());

@@ -118,6 +118,22 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   hash(matched_invoice+vendor+bill) so it survives Bill Tracker reloads. Verified end-to-end: UI
   checkbox → POST → DB persisted (received + timestamp), reverts on failure.
 
+- **"My view" home tab (default) + big-picture→zoom UX pass (owner).**
+  - **My view** (default landing): a **data-freshness** strip (sync-ap / sync-ar / WIP-master file
+    mtimes + ledger loaded_at, via `_freshness`), clickable **action items** (liens past-due / due-≤7d,
+    draws collect-waivers / ready, over-budget, underbilled → each jumps to the right tab+filter), and
+    **Working on** = active projects with a division filter. (sync-ar mtime shows "not found" until the
+    Open_Invoices path is confirmed.)
+  - **Collapse everything by default** — cost tree parents + draw cards start collapsed; expand to zoom.
+    Preserved across the live auto-refresh.
+  - **Search** on Draws (draw/project/vendor) and Vendors; **division filter** on Draws (MFD/CP only).
+  - **Division drill**: click a By-division rollup row → that division's active projects.
+  - **Live**: soft auto-refresh every 90s (preserves expand state + active tab).
+  - **Vendor TYPE** column (replaces the subs-$ column): "Sub" vs "Supplier: <material>" (Concrete /
+    Rebar / …), derived from each vendor's cost mix.
+  - **RP is not draws** — the Draws rollup excludes RP (residential bills at completion/milestones, not
+    formal draws): 337 → 49 draws (MFD/CP only). Owner ruling.
+
 ## IN PROGRESS
 - (none)
 
