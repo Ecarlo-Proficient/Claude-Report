@@ -77,6 +77,24 @@ body {
 .btn.small { padding: 4px 10px; font-size: .82em; }
 .btn[hidden] { display: none; }
 
+/* ── Tabs ──────────────────────────────────────────────────────────────── */
+.tabs {
+  position: sticky; top: 0; z-index: 15;
+  display: flex; gap: 2px; padding: 0 20px;
+  background: var(--surface); border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+.topbar { position: static; }   /* tabs take the sticky slot; header scrolls */
+.tab {
+  font: inherit; font-size: .95em; cursor: pointer; white-space: nowrap;
+  padding: 13px 18px; border: none; background: none; color: var(--text-dim);
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.tab:hover { color: var(--text); }
+.tab.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+.tab-page { display: flex; flex-direction: column; gap: 18px; }
+.tab-page[hidden] { display: none; }
+
 /* ── Layout ────────────────────────────────────────────────────────────── */
 .wrap { max-width: var(--maxw); margin: 0 auto; padding: 20px; display: flex; flex-direction: column; gap: 18px; }
 

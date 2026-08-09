@@ -81,7 +81,7 @@ def _fetch_ap(con) -> dict:
         if r["project_no"]:
             by_project[r["project_no"]] = {"open_lines": r["open_lines"], "open_balance": r["open_balance"]}
     ap["summary"] = {"open_balance": open_bal, "open_lines": open_lines, "watch_count": len(watch)}
-    ap["lien_watch"] = watch[:200]
+    ap["lien_watch"] = watch[:500]   # full worklist for the Liens page
     ap["by_project"] = by_project
     return ap
 
@@ -137,6 +137,18 @@ def _fetch_costs(con) -> dict:
         by_type.append(g)
     by_type.sort(key=lambda g: -(g["actual"] or 0))
     out["by_cost_type"] = by_type
+
+    # by vendor — the Vendors page (who we pay the most, subs vs suppliers)
+    vend = []
+    for r in con.execute(
+            "SELECT vendor, SUM(amount) spend, COUNT(*) lines, "
+            "COUNT(DISTINCT project_no) jobs, "
+            "SUM(CASE WHEN is_sub=1 THEN amount ELSE 0 END) sub_spend "
+            "FROM cost_line WHERE vendor IS NOT NULL AND vendor <> '' "
+            "GROUP BY vendor ORDER BY spend DESC"):
+        vend.append({"vendor": r["vendor"], "spend": r["spend"], "lines": r["lines"],
+                     "jobs": r["jobs"], "sub_spend": r["sub_spend"]})
+    out["by_vendor"] = vend
     return out
 
 

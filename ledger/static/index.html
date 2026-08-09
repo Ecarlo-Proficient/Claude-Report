@@ -23,8 +23,18 @@
     </div>
   </header>
 
+  <nav class="tabs" id="tabbar">
+    <button class="tab" data-tabbtn="overview">Overview</button>
+    <button class="tab" data-tabbtn="costs">Costs</button>
+    <button class="tab" data-tabbtn="liens">Liens</button>
+    <button class="tab" data-tabbtn="vendors">Vendors</button>
+  </nav>
+
   <main class="wrap" id="wrap">
     <div id="errorBanner" class="error-banner" hidden></div>
+
+    <!-- ══════════════ TAB: OVERVIEW ══════════════ -->
+    <div class="tab-page" data-tab="overview">
 
     <!-- ── KPI widgets ──────────────────────────────────────────────── -->
     <section class="widget" id="widget-kpis">
@@ -41,15 +51,12 @@
       <div class="attn-row" id="attnRow"></div>
     </section>
 
-    <!-- ── Costs by code (QBO) — cost mix + grouped tree ────────────── -->
+    <!-- ── Cost mix (summary bar; full tree + pivot live on the Costs tab) ── -->
     <section class="widget" id="widget-costs">
       <div class="widget-head">
-        <h2>Costs by code <span class="count" id="costCount"></span></h2>
+        <h2>Cost mix <span class="count" id="costCount"></span></h2>
       </div>
       <div class="costmix" id="costMix"></div>
-      <div class="table-scroll">
-        <table class="grid" id="costTable"><thead></thead><tbody></tbody></table>
-      </div>
     </section>
 
     <!-- ── Margins & burn (from QBO costs) ──────────────────────────── -->
@@ -73,17 +80,6 @@
       </div>
     </section>
 
-    <!-- ── AP & liens (bills — kept lower on purpose, not on top) ────── -->
-    <section class="widget" id="widget-ap">
-      <div class="widget-head">
-        <h2>AP &amp; liens <span class="count" id="apCount"></span></h2>
-      </div>
-      <div class="kpi-row" id="apStats"></div>
-      <div class="table-scroll">
-        <table class="grid clickable" id="lienTable"><thead></thead><tbody></tbody></table>
-      </div>
-    </section>
-
     <!-- ── Projects ─────────────────────────────────────────────────── -->
     <section class="widget" id="widget-projects">
       <div class="widget-head">
@@ -102,6 +98,44 @@
         </table>
       </div>
     </section>
+
+    </div><!-- /tab: overview -->
+
+    <!-- ══════════════ TAB: COSTS (pivot — code → jobs) ══════════════ -->
+    <div class="tab-page" data-tab="costs" hidden>
+      <section class="widget">
+        <div class="widget-head"><h2>Cost type ▸ job type <span class="count">— click a code to see every job that spent it</span></h2></div>
+        <div class="table-scroll">
+          <table class="grid clickable" id="costTreeTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+      <section class="widget" id="codeJobsWidget" hidden>
+        <div class="widget-head"><h2 id="codeJobsTitle">Jobs</h2></div>
+        <div class="table-scroll">
+          <table class="grid clickable" id="codeJobsTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </div><!-- /tab: costs -->
+
+    <!-- ══════════════ TAB: LIENS (collections worklist) ══════════════ -->
+    <div class="tab-page" data-tab="liens" hidden>
+      <section class="widget">
+        <div class="widget-head"><h2>AP &amp; lien clock <span class="count" id="liensNote"></span></h2></div>
+        <div class="kpi-row" id="liensStats"></div>
+      </section>
+      <div id="lienBuckets"></div>
+    </div><!-- /tab: liens -->
+
+    <!-- ══════════════ TAB: VENDORS (spend) ══════════════ -->
+    <div class="tab-page" data-tab="vendors" hidden>
+      <section class="widget">
+        <div class="widget-head"><h2>Vendor spend <span class="count" id="vendorsNote"></span></h2></div>
+        <div class="table-scroll">
+          <table class="grid clickable" id="vendorTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </div><!-- /tab: vendors -->
+
   </main>
 
   <!-- ── Detail slide-over ──────────────────────────────────────────── -->
@@ -171,8 +205,7 @@
         <h3>Widgets</h3>
         <label class="chk"><input type="checkbox" id="wKpis"> Portfolio KPIs</label>
         <label class="chk"><input type="checkbox" id="wAttention"> Needs attention</label>
-        <label class="chk"><input type="checkbox" id="wAp"> AP &amp; liens</label>
-        <label class="chk"><input type="checkbox" id="wCosts"> Costs by code</label>
+        <label class="chk"><input type="checkbox" id="wCosts"> Cost mix</label>
         <label class="chk"><input type="checkbox" id="wMargins"> Margins &amp; burn</label>
         <label class="chk"><input type="checkbox" id="wDivisions"> Division rollup</label>
         <label class="chk"><input type="checkbox" id="wProjects"> Projects table</label>

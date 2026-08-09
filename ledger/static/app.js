@@ -31,8 +31,10 @@ const COLUMNS = [
   { key: "costs_loaded",          label: "QBO Costs",     type: "money" },
   { key: "sub_costs",             label: "Subs (QBO)",    type: "money" },
   { key: "budget_burn",           label: "Budget Burn",   type: "pct" },
-  { key: "qbo_margin",            label: "Margin (QBO)",  type: "money" },
-  { key: "qbo_margin_pct",        label: "Margin %",      type: "pct" },
+  { key: "markup_pct",            label: "Markup %",      type: "pct" },
+  { key: "margin_pct",            label: "Margin %",      type: "pct" },
+  { key: "qbo_margin",            label: "Margin $ (QBO)", type: "money" },
+  { key: "actual_markup_pct",     label: "Actual Markup %", type: "pct" },
   { key: "subs_pct",              label: "Subs %",        type: "pct" },
 ];
 
@@ -40,12 +42,18 @@ const COLUMNS = [
 // Only for jobs that actually have costs loaded; others stay null (blank).
 // margin here = billed − QBO cost (a billed-basis margin-to-date, labeled as such).
 function deriveMetrics(r) {
-  const cost = r.costs_loaded, etc = r.estimated_total_costs, billed = r.billed_to_date, subs = r.sub_costs;
+  const cost = r.costs_loaded, etc = r.estimated_total_costs, billed = r.billed_to_date,
+        subs = r.sub_costs, contract = r.total_contract_price;
   const has = cost !== null && cost !== undefined;
   r.budget_burn   = has && etc ? cost / etc : null;
   r.qbo_margin    = has && billed != null ? billed - cost : null;
   r.qbo_margin_pct = (r.qbo_margin != null && billed) ? r.qbo_margin / billed : null;
   r.subs_pct      = has && cost && subs != null ? subs / cost : null;
+  // PLANNED markup (on cost) vs PLANNED margin (on revenue) — never the same number.
+  r.markup_pct    = (etc && contract != null) ? (contract - etc) / etc : null;
+  r.margin_pct    = (contract && contract !== 0) ? ((contract - num(etc)) / contract) : null;
+  // ACTUAL markup from real QBO cost (how much we marked the true cost up).
+  r.actual_markup_pct = (has && cost) ? (billed - cost) / cost : null;
 }
 
 // ── Settings ──────────────────────────────────────────────────────────────
@@ -128,7 +136,6 @@ function applySettings() {
   // widgets
   $("#widget-kpis").hidden      = !settings.widgets.kpis;
   $("#widget-attention").hidden = !settings.widgets.attention;
-  $("#widget-ap").hidden        = !settings.widgets.ap;
   $("#widget-costs").hidden     = !settings.widgets.costs;
   $("#widget-margins").hidden   = !settings.widgets.margins;
   $("#widget-divisions").hidden = !settings.widgets.divisions;
@@ -162,8 +169,19 @@ function raw(col, v) {
 // ── State ─────────────────────────────────────────────────────────────────
 let ALL = [];
 let AP = { summary: {}, lien_watch: [], by_project: {} };
-let COST = { by_code: [], by_project_code: {}, by_project: {}, by_cost_type: [], loaded_total: 0 };
+let COST = { by_code: [], by_project_code: {}, by_project: {}, by_cost_type: [], by_vendor: [], loaded_total: 0 };
 let costCollapsed = new Set();   // collapsed cost-type parents in the Costs widget
+
+// ── Tabs ────────────────────────────────────────────────────────────────────
+let activeTab = "overview";
+function setTab(t) {
+  activeTab = t;
+  try { localStorage.setItem("proficient-ledger-tab", t); } catch { /* ignore */ }
+  $$(".tab-page").forEach(p => { p.hidden = p.dataset.tab !== t; });
+  $$(".tab").forEach(b => b.classList.toggle("active", b.dataset.tabbtn === t));
+  window.scrollTo(0, 0);
+}
+const nameOf = pn => (ALL.find(r => r.project_no === pn) || {}).project_name || "";
 let meta = {};
 let sortKey = "total_contract_price";
 let sortDir = -1;   // -1 desc, 1 asc
@@ -179,7 +197,7 @@ async function load() {
   ALL = data.projects || [];
   ALL.forEach(deriveMetrics);
   AP = data.ap || { summary: {}, lien_watch: [], by_project: {} };
-  COST = data.cost || { by_code: [], by_project_code: {}, by_project: {}, by_cost_type: [], loaded_total: 0 };
+  COST = data.cost || { by_code: [], by_project_code: {}, by_project: {}, by_cost_type: [], by_vendor: [], loaded_total: 0 };
   meta = data.meta || {};
   $("#metaLine").textContent =
     `${meta.project_count} projects · report ${meta.report_date || "—"}` +
@@ -249,7 +267,10 @@ function cmpVal(a, b, type) {
 function visibleColumns() {
   return COLUMNS.filter(c => c.always || settings.columns.includes(c.key));
 }
-function render() { renderKPIs(); renderAttention(); renderAP(); renderCosts(); renderMargins(); renderDivisions(); renderProjects(); }
+function render() {
+  renderKPIs(); renderAttention(); renderCosts(); renderMargins(); renderDivisions();
+  renderProjects(); renderLiens(); renderVendors();
+}
 
 function renderMargins() {
   // portfolio, over jobs that actually have QBO costs loaded
@@ -259,10 +280,15 @@ function renderMargins() {
   const subs = loaded.reduce((t, r) => t + num(r.sub_costs), 0);
   const margin = billed - cost;
   const overBudget = loaded.filter(isOverBudget).length;
+  const cSum = loaded.reduce((t, r) => t + num(r.total_contract_price), 0);
+  const eSum = loaded.reduce((t, r) => t + num(r.estimated_total_costs), 0);
+  const pct1 = (n, d) => d ? (n / d * 100).toFixed(1) + "%" : "—";
   $("#marginNote").textContent = loaded.length ? `(${loaded.length} jobs with QBO costs)` : "(no cost data — run load_costs.py)";
   const stats = [
+    ["Planned markup", pct1(cSum - eSum, eSum), "contract vs ETC (on cost)"],
+    ["Planned margin", pct1(cSum - eSum, cSum), "GP ÷ contract"],
+    ["Actual markup", pct1(billed - cost, cost), "billed ÷ QBO cost"],
     ["Margin to date", money(margin), "billed − QBO cost"],
-    ["Portfolio margin %", billed ? (margin / billed * 100).toFixed(1) + "%" : "—", "of billed"],
     ["Subs share", cost ? (subs / cost * 100).toFixed(0) + "%" : "—", "of QBO cost"],
     ["Over budget", String(overBudget), "cost > ETC (flatwork soft <$15k)"],
   ];
@@ -307,11 +333,12 @@ function renderCosts() {
   const groups = COST.by_cost_type || [];
   const total = COST.loaded_total || groups.reduce((t, g) => t + (g.actual || 0), 0);
   $("#costCount").textContent = total
-    ? `($${Math.round(total).toLocaleString()} · cost type ▸ job type)`
+    ? `($${Math.round(total).toLocaleString()} · where the money goes)`
     : "(no cost data — run load_costs.py)";
   renderCostMix(groups, total);
   const cols = [["Cost type  ▸  job type", "left"], ["Code", "left"], ["Actual", "right"], ["% of total", "right"], ["Lines", "right"]];
-  const thead = $("#costTable thead"), tbody = $("#costTable tbody");
+  const thead = $("#costTreeTable thead"), tbody = $("#costTreeTable tbody");
+  if (!thead) return;
   thead.innerHTML = ""; tbody.innerHTML = "";
   const htr = document.createElement("tr");
   for (const [c, al] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
@@ -338,6 +365,7 @@ function renderCosts() {
     // ── sub rows: the job TYPE split ──
     if (!collapsed) for (const s of g.subs) {
       const str = document.createElement("tr"); str.className = "cost-sub";
+      if (s.code) str.onclick = (e) => { if (!e.target.closest(".cell")) showCodeJobs(s.code, `${g.parent} ▸ ${s.sub}`); };
       const sn = document.createElement("td"); sn.className = "left";
       const si = document.createElement("span"); si.className = "sub-name"; si.textContent = s.sub; sn.appendChild(si); str.appendChild(sn);
       const ct = document.createElement("td"); ct.className = "left";
@@ -379,14 +407,49 @@ function renderCostMix(groups, total) {
   box.appendChild(bar); box.appendChild(legend);
 }
 
-function renderAP() {
+// Cost-code pivot: click a code in the tree → every job that spent on it.
+function showCodeJobs(code, label) {
+  if (!code) return;
+  const rows = [];
+  for (const [proj, codes] of Object.entries(COST.by_project_code || {}))
+    for (const c of codes) if (c.cost_code === code) rows.push({ project: proj, actual: c.actual, lines: c.lines });
+  rows.sort((a, b) => (b.actual || 0) - (a.actual || 0));
+  const tot = rows.reduce((t, r) => t + (r.actual || 0), 0);
+  $("#codeJobsTitle").textContent = `${label} (${code}) — ${money(tot)} across ${rows.length} job${rows.length === 1 ? "" : "s"}`;
+  const cols = [["Project", "left"], ["Name", "left"], ["Amount", "right"], ["% of code", "right"], ["Lines", "right"]];
+  const thead = $("#codeJobsTable thead"), tbody = $("#codeJobsTable tbody");
+  thead.innerHTML = ""; tbody.innerHTML = "";
+  const htr = document.createElement("tr");
+  for (const [c, al] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
+  thead.appendChild(htr);
+  const known = new Set(ALL.map(r => r.project_no));
+  for (const r of rows) {
+    const tr = document.createElement("tr");
+    if (known.has(r.project)) tr.onclick = (e) => { if (!e.target.closest(".cell")) openDetail(ALL.find(x => x.project_no === r.project)); };
+    tr.appendChild(leftText(r.project));
+    tr.appendChild(leftText(nameOf(r.project)));
+    const av = document.createElement("td"); av.appendChild(moneyCell(r.actual)); tr.appendChild(av);
+    tr.appendChild(rightText(tot ? ((r.actual || 0) / tot * 100).toFixed(1) + "%" : "—"));
+    tr.appendChild(rightText(String(r.lines || 0)));
+    tbody.appendChild(tr);
+  }
+  $("#codeJobsWidget").hidden = false;
+  $("#codeJobsWidget").scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+const LIEN_ORDER = ["Notice PAST due", "Notice due in ≤7d", "Notice due in ≤15d",
+                    "Notice due in ≤30d", "Notice Sent", "Lien Filed"];
+function renderLiens() {
   const s = AP.summary || {};
+  const watch = AP.lien_watch || [];
+  $("#liensNote").textContent = watch.length ? `(${watch.length} bills on the clock)` : "(no AP data — run load_bill_tracker.py)";
+  const pastDue = watch.filter(r => r.lien_status === "Notice PAST due");
   const stats = [
     ["Open AP", money(s.open_balance || 0), `${s.open_lines || 0} open bills`],
-    ["Lien deadlines", String(s.watch_count || 0), "bills on the clock"],
-    ["Past due", String((AP.lien_watch || []).filter(r => r.lien_status === "Notice PAST due").length), "notice past due"],
+    ["On the lien clock", String(s.watch_count || 0), "need action"],
+    ["Past due", String(pastDue.length), money(pastDue.reduce((t, r) => t + num(r.open_balance), 0)) + " open"],
   ];
-  const sr = $("#apStats"); sr.innerHTML = "";
+  const sr = $("#liensStats"); sr.innerHTML = "";
   for (const [label, value, sub] of stats) {
     const el = document.createElement("div"); el.className = "kpi";
     el.innerHTML = `<div class="k-label"></div><div class="k-value"></div><div class="k-sub"></div>`;
@@ -395,25 +458,69 @@ function renderAP() {
     el.querySelector(".k-sub").textContent = sub;
     sr.appendChild(el);
   }
-  const watch = AP.lien_watch || [];
-  $("#apCount").textContent = watch.length ? `(${watch.length} on the lien clock)` : "";
-  const cols = [["Lien", "left"], ["Project", "left"], ["Vendor", "left"], ["Bill #", "left"], ["Open Bal", "right"]];
-  const thead = $("#lienTable thead"), tbody = $("#lienTable tbody");
+  const box = $("#lienBuckets"); box.innerHTML = "";
+  const byStatus = {};
+  for (const r of watch) (byStatus[r.lien_status] || (byStatus[r.lien_status] = [])).push(r);
+  const known = new Set(ALL.map(r => r.project_no));
+  for (const status of LIEN_ORDER) {
+    const rows = byStatus[status];
+    if (!rows || !rows.length) continue;
+    rows.sort((a, b) => num(b.open_balance) - num(a.open_balance));
+    const totalOpen = rows.reduce((t, r) => t + num(r.open_balance), 0);
+    const sec = document.createElement("section"); sec.className = "widget";
+    const head = document.createElement("div"); head.className = "widget-head";
+    const h = document.createElement("h2");
+    const pill = document.createElement("span"); pill.className = "lien " + (LIEN_CLASS[status] || "info"); pill.textContent = status;
+    h.appendChild(pill);
+    const cnt = document.createElement("span"); cnt.className = "count"; cnt.textContent = ` ${rows.length} bills · ${money(totalOpen)} open`;
+    h.appendChild(cnt); head.appendChild(h); sec.appendChild(head);
+    const scroll = document.createElement("div"); scroll.className = "table-scroll";
+    const table = document.createElement("table"); table.className = "grid clickable";
+    const thead = document.createElement("thead"), tbody = document.createElement("tbody");
+    const cols = [["Project", "left"], ["Name", "left"], ["Vendor", "left"], ["Bill #", "left"], ["Open Bal", "right"]];
+    const htr = document.createElement("tr");
+    for (const [c, al] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
+    thead.appendChild(htr);
+    for (const r of rows) {
+      const tr = document.createElement("tr");
+      if (r.project_no && known.has(r.project_no)) tr.onclick = (e) => { if (!e.target.closest(".cell")) openDetail(ALL.find(x => x.project_no === r.project_no)); };
+      tr.appendChild(leftText(r.project_no || "—"));
+      tr.appendChild(leftText(nameOf(r.project_no)));
+      tr.appendChild(leftText(r.vendor || "—"));
+      tr.appendChild(leftText(r.bill_ref || "—"));
+      const ob = document.createElement("td"); ob.appendChild(moneyCell(r.open_balance)); tr.appendChild(ob);
+      tbody.appendChild(tr);
+    }
+    table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table);
+    sec.appendChild(scroll); box.appendChild(sec);
+  }
+}
+
+function renderVendors() {
+  const vends = COST.by_vendor || [];
+  const totalSpend = vends.reduce((t, v) => t + (v.spend || 0), 0);
+  $("#vendorsNote").textContent = vends.length
+    ? `(${vends.length} vendors · $${Math.round(totalSpend).toLocaleString()})`
+    : "(no cost data — run load_costs.py)";
+  const cols = [["Vendor", "left"], ["Spend", "right"], ["Jobs", "right"], ["Lines", "right"], ["of which subs", "right"]];
+  const thead = $("#vendorTable thead"), tbody = $("#vendorTable tbody");
   thead.innerHTML = ""; tbody.innerHTML = "";
   const htr = document.createElement("tr");
   for (const [c, al] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
   thead.appendChild(htr);
-  const known = new Set(ALL.map(r => r.project_no));
-  for (const r of watch.slice(0, 60)) {
+  const max = vends.reduce((m, v) => Math.max(m, v.spend || 0), 0) || 1;
+  for (const v of vends.slice(0, 100)) {
     const tr = document.createElement("tr");
-    if (r.project_no && known.has(r.project_no)) tr.onclick = (e) => { if (!e.target.closest(".cell")) openDetail(ALL.find(x => x.project_no === r.project_no)); };
-    const lienTd = document.createElement("td"); lienTd.className = "left";
-    const pill = document.createElement("span"); pill.className = "lien " + (LIEN_CLASS[r.lien_status] || "info"); pill.textContent = r.lien_status;
-    lienTd.appendChild(pill); tr.appendChild(lienTd);
-    tr.appendChild(leftText(r.project_no || "—"));
-    tr.appendChild(leftText(r.vendor || "—"));
-    tr.appendChild(leftText(r.bill_ref || "—"));
-    const ob = document.createElement("td"); ob.appendChild(moneyCell(r.open_balance)); tr.appendChild(ob);
+    tr.appendChild(leftText(v.vendor));
+    const st = document.createElement("td");
+    const bar = document.createElement("span"); bar.className = "cell bar";
+    const fill = document.createElement("span"); fill.className = "bar-fill"; fill.style.width = ((v.spend || 0) / max * 100) + "%";
+    const txt = document.createElement("span"); txt.className = "bar-txt"; txt.textContent = money(v.spend);
+    bar.appendChild(fill); bar.appendChild(txt); bar.title = "Click to copy"; bar.onclick = () => copy(String(Math.round(v.spend || 0)));
+    st.appendChild(bar); tr.appendChild(st);
+    tr.appendChild(rightText(String(v.jobs || 0)));
+    tr.appendChild(rightText(String(v.lines || 0)));
+    tr.appendChild(rightText(v.sub_spend ? money(v.sub_spend) : "—"));
     tbody.appendChild(tr);
   }
 }
@@ -643,9 +750,12 @@ function openDetail(r) {
     const g = document.createElement("div"); g.className = "dgroup";
     const h = document.createElement("h4"); h.textContent = "Margin (QBO actual)"; g.appendChild(h);
     const mrows = [
+      ["Planned markup (contract ÷ ETC)", pct(r.markup_pct)],
+      ["Planned margin (GP ÷ contract)", pct(r.margin_pct)],
       ["Budget burn (cost ÷ ETC)", pct(r.budget_burn)],
+      ["Actual markup (billed ÷ QBO cost)", pct(r.actual_markup_pct)],
       ["Margin to date (billed − cost)", money(r.qbo_margin)],
-      ["Margin %", pct(r.qbo_margin_pct)],
+      ["Margin % of billed", pct(r.qbo_margin_pct)],
       ["Subs share of cost", pct(r.subs_pct)],
     ];
     for (const [label, val] of mrows) {
@@ -716,7 +826,6 @@ function syncSettingsUI() {
   $("#setWidth").value = settings.width;
   $("#wKpis").checked = settings.widgets.kpis;
   $("#wAttention").checked = settings.widgets.attention;
-  $("#wAp").checked = settings.widgets.ap;
   $("#wCosts").checked = settings.widgets.costs;
   $("#wMargins").checked = settings.widgets.margins;
   $("#wDivisions").checked = settings.widgets.divisions;
@@ -747,7 +856,6 @@ function wireSettings() {
   on("#setWidth", "change", e => { settings.width = e.target.value; saveSettings(); applySettings(); });
   on("#wKpis", "change", e => { settings.widgets.kpis = e.target.checked; saveSettings(); applySettings(); });
   on("#wAttention", "change", e => { settings.widgets.attention = e.target.checked; saveSettings(); applySettings(); });
-  on("#wAp", "change", e => { settings.widgets.ap = e.target.checked; saveSettings(); applySettings(); });
   on("#wCosts", "change", e => { settings.widgets.costs = e.target.checked; saveSettings(); applySettings(); });
   on("#wMargins", "change", e => { settings.widgets.margins = e.target.checked; saveSettings(); applySettings(); });
   on("#wDivisions", "change", e => { settings.widgets.divisions = e.target.checked; saveSettings(); applySettings(); });
@@ -766,6 +874,10 @@ function init() {
   $("#btnRefresh").onclick = load;
   $("#btnClearRule").onclick = () => { activeRule = null; renderAttention(); renderProjects(); };
   $("#btnSettings").onclick = () => openPanel("#settings");
+  $$(".tab").forEach(b => { b.onclick = () => setTab(b.dataset.tabbtn); });
+  let savedTab = "overview";
+  try { savedTab = localStorage.getItem("proficient-ledger-tab") || "overview"; } catch { /* ignore */ }
+  setTab(savedTab);
   $("#btnCloseSettings").onclick = closePanels;
   $("#btnCloseDetail").onclick = closePanels;
   $("#btnCopyDetail").onclick = () => copy(detailAsText());

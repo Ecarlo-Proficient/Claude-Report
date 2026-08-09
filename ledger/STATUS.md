@@ -75,6 +75,17 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   → division → **AP & liens (bills) moved to position 6, off the top** → projects. The Costs widget
   leads with a **cost-mix** proportional bar + legend (how much each cost type takes, % wise —
   Concrete/Labor/Rebar… as one glance) above the grouped tree.
+- **Multi-tab app (owner: "deliberate tabs only a page would contain").** A tab bar splits the app
+  into **Overview** (the glance: KPIs · attention · cost-mix · margins · division · projects) plus
+  three deep pages: **Costs** (the cost-type→job-type tree + a **code→jobs pivot** — click a code,
+  see every job that spent on it), **Liens** (the full collections worklist — every bill on the
+  clock grouped into urgency buckets Past-due/≤7d/≤15d/≤30d/…, not a top-N teaser), and **Vendors**
+  (spend by vendor, jobs, of-which-subs — from `cost_line.vendor`; new `by_vendor` in the API).
+  Active tab persists in localStorage; bills now live only on the Liens tab.
+- **Markup + margin (owner).** Derived per job: **planned markup** (contract÷ETC, on cost),
+  **planned margin** (GP÷contract, on revenue), **actual markup** (billed÷QBO cost) — as toggleable
+  columns, in the Margins widget stats, and in each job's detail. Markup and margin are kept
+  distinct on purpose (markup on cost ≠ margin on revenue).
 - **Margins & burn** — derived from the loaded QBO costs (client-side; the WIP only ever showed
   *billed* margin, never actual-cost margin). Budget burn (cost ÷ ETC), margin-to-date (billed −
   cost) + margin %, and subs-share as toggleable columns; a portfolio "Margins & burn" widget
