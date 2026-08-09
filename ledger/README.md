@@ -167,8 +167,10 @@ on the network). What it shows:
 - **Projects** — searchable, filterable (division / status / category / active-only), sortable;
   click any row for the full job detail (Contract / Budget / Costs / Earned / Billing / Notes).
 - **Copy & export** — click any number to copy it; **Export CSV** downloads the current view.
-- **Customize** (⚙) — theme (auto/light/dark), accent color, font, text size, density, width,
-  which widgets show, and which table columns show. Saved per person in the browser.
+- **Customize** (⚙) — theme (auto/light/dark), accent color, font, text size, density, width
+  (**boxed by default**), which widgets show, and which table columns show. Saved per person in the
+  browser; **Set as default** snapshots the current view as the baseline that Reset (and a fresh
+  browser) restores to.
 
 The dashboard is a view. It never writes the database or the Excel sheet.
 

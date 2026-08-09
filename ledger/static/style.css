@@ -326,3 +326,9 @@ td .cell:hover { background: color-mix(in srgb, var(--accent) 16%, transparent);
 .warm-log { margin: 8px 0 2px; padding-left: 18px; font-size: .88em; line-height: 1.55; }
 .warm-log .d { color: var(--text-dim); font-variant-numeric: tabular-nums; margin-right: 6px; }
 .warm-log .warm-empty { list-style: none; margin-left: -18px; color: var(--text-dim); font-style: italic; }
+
+/* ── QoL: clickable KPI tiles + inline row links ─────────────────────────── */
+.kpi.clickable { cursor: pointer; transition: border-color .12s, background .12s; }
+.kpi.clickable:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
+.row-link { color: var(--accent); text-decoration: none; }
+.row-link:hover { text-decoration: underline; }

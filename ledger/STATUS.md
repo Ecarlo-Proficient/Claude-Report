@@ -87,6 +87,13 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   helpers, no new deps) + warm-card CSS. **Verified live** against the loaded DB (622 customers /
   168 touches): pipeline, rep table, all 30 warm accounts with touch logs, and the customer table
   all render in the browser (dark + light). Read-only — the tab never writes; edits stay in Notion.
+  - QoL (2026-08-09): **Set as default** button + **boxed default** — `baseDefaults()` baseline the
+    user snapshots via "Set as default"; Reset + fresh browsers restore to it (shipped default width
+    now `boxed`). **Automation accounts kept out of the sales scoreboard** — Notion bots (bare UUID)
+    and any name in `ACB_SALES_AUTOMATION_REPS` (machine.env, gitignored — no names in the repo) are
+    excluded from Activity-by-rep and shown as "Automation" in the customer table (fixes the raw-UUID
+    + the import-account-as-rep). Clickable KPI tiles + pipeline rows → filter the customer table;
+    client names are Notion links. Verified live: reps = 5 real people, Interested tile → 30 shown.
 - **Dashboard cost-code drill** — `/api/data` now carries a `cost` section (`_fetch_costs`):
   portfolio by-code, per-project by-code, and per-project rollup attached to each project row.
   New **"Costs by code"** widget (portfolio table with % bars), a **QBO Costs / Subs** toggleable

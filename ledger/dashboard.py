@@ -318,15 +318,23 @@ _SALES_ORDER = {"Lead": 0, "Follow up": 1, "Contacted": 2, "Interested": 3,
                 "No response": 4, "Closed - Won": 5, "Closed - Lost": 6, "(none)": 7}
 
 
+# Non-sales accounts to keep OUT of the sales-rep view: Notion integration bots
+# (they arrive as a bare UUID) plus any account named in ACB_SALES_AUTOMATION_REPS
+# (machine.env, gitignored — so real names never enter the repo). These create /
+# import records but do no outreach, so crediting them as a "rep" is misleading.
+_UUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+_AUTOMATION_REPS = {s.strip() for s in (paths.get("ACB_SALES_AUTOMATION_REPS", "") or "").split(",") if s.strip()}
+
+
+def _is_automation(name) -> bool:
+    return bool(name) and (_UUID_RE.fullmatch(name) is not None or name in _AUTOMATION_REPS)
+
+
 def _rep_label(name):
-    """Display label for an editor. Notion bot integrations come through as a bare
-    id (e.g. the invoice-sync bot on Closed-Won rows) — show that as automation, not
-    a cryptic UUID. Real people keep their name; emails keep their email."""
+    """Display label for an editor: automation → 'Automation'; real people/emails kept."""
     if not name:
         return "(unknown)"
-    if re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", name):
-        return "Automation (sync)"
-    return name
+    return "Automation" if _is_automation(name) else name
 
 
 def _fetch_sales(con) -> dict:
@@ -343,7 +351,9 @@ def _fetch_sales(con) -> dict:
     out["pipeline"] = pipe
     out["by_rep"] = []
     for r in con.execute("SELECT rep, worked, contacted, interested, won FROM v_sales_by_rep ORDER BY worked DESC"):
-        d = dict(r); d["rep"] = _rep_label(d["rep"]); out["by_rep"].append(d)
+        if _is_automation(r["rep"]):   # keep automation / import accounts out of the sales scoreboard
+            continue
+        out["by_rep"].append(dict(r))
     # touch logs grouped by customer (for the warm-account drill)
     touches: dict = {}
     for r in con.execute("SELECT customer_key, touch_date, note FROM sales_touch ORDER BY customer_key, seq"):

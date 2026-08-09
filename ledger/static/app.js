@@ -60,7 +60,7 @@ function deriveMetrics(r) {
 const LS_KEY = "proficient-ledger-settings-v1";
 const DEFAULTS = {
   theme: "auto", accent: "#3E7A5C", font: "system", fontSize: 14,
-  density: "comfortable", width: "full",
+  density: "comfortable", width: "boxed",
   widgets: { kpis: true, attention: true, ap: true, costs: true, margins: true, divisions: true, projects: true },
   columns: COLUMNS.filter(c => c.always || c.def).map(c => c.key),
 };
@@ -107,14 +107,27 @@ const RULES = [
 ];
 let settings = loadSettings();
 
+const LS_DEF = "proficient-ledger-defaults-v1";   // the user's saved "default view" baseline
+function baseDefaults() {
+  // What Reset returns to, and what a fresh browser opens with: the user's own
+  // saved default (via "Set as default") if present, else the shipped DEFAULTS.
+  try {
+    const d = JSON.parse(localStorage.getItem(LS_DEF));
+    if (d) return { ...structuredClone(DEFAULTS), ...d,
+                    widgets: { ...DEFAULTS.widgets, ...(d.widgets || {}) },
+                    columns: Array.isArray(d.columns) && d.columns.length ? d.columns : DEFAULTS.columns };
+  } catch { /* ignore */ }
+  return structuredClone(DEFAULTS);
+}
 function loadSettings() {
+  const base = baseDefaults();
   try {
     const s = JSON.parse(localStorage.getItem(LS_KEY));
-    if (!s) return structuredClone(DEFAULTS);
-    return { ...structuredClone(DEFAULTS), ...s,
-             widgets: { ...DEFAULTS.widgets, ...(s.widgets || {}) },
-             columns: Array.isArray(s.columns) && s.columns.length ? s.columns : DEFAULTS.columns };
-  } catch { return structuredClone(DEFAULTS); }
+    if (!s) return base;
+    return { ...base, ...s,
+             widgets: { ...base.widgets, ...(s.widgets || {}) },
+             columns: Array.isArray(s.columns) && s.columns.length ? s.columns : base.columns };
+  } catch { return base; }
 }
 function saveSettings() { localStorage.setItem(LS_KEY, JSON.stringify(settings)); }
 
@@ -789,6 +802,12 @@ function buildHead(tableSel, cols) {
   thead.appendChild(htr);
   return $(tableSel + " tbody");
 }
+function setSalesFilter(stage, div) {
+  if ($("#salesStage")) $("#salesStage").value = stage;
+  if ($("#salesDivision")) $("#salesDivision").value = div;
+  renderSales();
+  const t = $("#salesTable"); if (t) t.scrollIntoView({ behavior: "smooth", block: "start" });
+}
 function renderSales() {
   const S = SALES || {}, t = S.totals || {};
   const loaded = (S.customers || []).length > 0;
@@ -796,21 +815,21 @@ function renderSales() {
     ? `(${t.customers || 0} customers · ${t.touches || 0} touches logged)`
     : "(no CRM data — run load_customers.py)";
 
-  // ── KPI stats ──
-  const worked = (S.by_rep || []).reduce((m, r) => m + (r.worked || 0), 0);
+  // ── KPI stats (clickable → filter/jump) ──
   const stats = [
-    ["Customers", String(t.customers || 0), "in the list"],
-    ["Interested", String(t.interested || 0), "warm — closest to a win"],
-    ["Touches logged", String(t.touches || 0), "interaction-log lines"],
-    ["Worked", String(worked), "have a last-editor"],
+    ["Customers", String(t.customers || 0), "in the list — click to clear filters", () => setSalesFilter("", "")],
+    ["Interested", String(t.interested || 0), "warm — click to see them", () => setSalesFilter("Interested", "")],
+    ["Touches logged", String(t.touches || 0), "interaction-log lines", null],
+    ["Sales reps", String((S.by_rep || []).length), "working the list", () => { const el = $("#salesRepTable"); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); }],
   ];
   const sr = $("#salesStats"); sr.innerHTML = "";
-  for (const [label, value, sub] of stats) {
-    const el = document.createElement("div"); el.className = "kpi";
+  for (const [label, value, sub, onClick] of stats) {
+    const el = document.createElement("div"); el.className = "kpi" + (onClick ? " clickable" : "");
     el.innerHTML = `<div class="k-label"></div><div class="k-value"></div><div class="k-sub"></div>`;
     el.querySelector(".k-label").textContent = label;
     el.querySelector(".k-value").textContent = value;
     el.querySelector(".k-sub").textContent = sub;
+    if (onClick) { el.onclick = onClick; el.title = "Click to filter"; }
     sr.appendChild(el);
   }
 
@@ -821,13 +840,14 @@ function renderSales() {
   tb.innerHTML = "";
   for (const p of pipe) {
     const tr = document.createElement("tr");
+    tr.title = "Click to filter customers by this stage";
+    tr.onclick = () => setSalesFilter(p.sales_status, $("#salesDivision") ? $("#salesDivision").value : "");
     tr.appendChild(leftText(p.sales_status));
     const st = document.createElement("td");
     const bar = document.createElement("span"); bar.className = "cell bar";
     const fill = document.createElement("span"); fill.className = "bar-fill"; fill.style.width = ((p.customers || 0) / maxc * 100) + "%";
     const txt = document.createElement("span"); txt.className = "bar-txt"; txt.textContent = p.customers || 0;
-    bar.appendChild(fill); bar.appendChild(txt); bar.title = "Filter customers by this stage";
-    bar.onclick = () => { $("#salesStage").value = p.sales_status; renderSales(); $("#salesTable").scrollIntoView({ behavior: "smooth", block: "start" }); };
+    bar.appendChild(fill); bar.appendChild(txt);
     st.appendChild(bar); tr.appendChild(st);
     tr.appendChild(rightText(String(p.touches || 0)));
     tb.appendChild(tr);
@@ -894,8 +914,14 @@ function renderSales() {
   tb.innerHTML = "";
   for (const c of rows.slice(0, 400)) {
     const tr = document.createElement("tr");
-    if (c.notion_url) tr.onclick = () => window.open(c.notion_url, "_blank", "noopener");
-    tr.appendChild(leftText(c.name));
+    if (c.notion_url) { tr.onclick = () => window.open(c.notion_url, "_blank", "noopener"); tr.title = "Open in Notion"; }
+    const nameTd = document.createElement("td"); nameTd.className = "left";
+    if (c.notion_url) {
+      const a = document.createElement("a"); a.className = "row-link"; a.href = c.notion_url; a.target = "_blank"; a.rel = "noopener";
+      a.textContent = c.name; a.onclick = (e) => e.stopPropagation();
+      nameTd.appendChild(a);
+    } else { const s = document.createElement("span"); s.textContent = c.name; nameTd.appendChild(s); }
+    tr.appendChild(nameTd);
     tr.appendChild(leftText(c.division || "—"));
     tr.appendChild(leftText(c.sales_status || "—"));
     tr.appendChild(leftText(c.last_contacted || "—"));
@@ -1316,7 +1342,8 @@ function wireSettings() {
   on("#wMargins", "change", e => { settings.widgets.margins = e.target.checked; saveSettings(); applySettings(); });
   on("#wDivisions", "change", e => { settings.widgets.divisions = e.target.checked; saveSettings(); applySettings(); });
   on("#wProjects", "change", e => { settings.widgets.projects = e.target.checked; saveSettings(); applySettings(); });
-  on("#btnReset", "click", () => { settings = structuredClone(DEFAULTS); saveSettings(); applySettings(); syncSettingsUI(); render(); toast("Reset to defaults"); });
+  on("#btnReset", "click", () => { settings = baseDefaults(); saveSettings(); applySettings(); syncSettingsUI(); render(); toast("Reset to your default"); });
+  on("#btnSetDefault", "click", () => { localStorage.setItem(LS_DEF, JSON.stringify(settings)); toast("Saved as your default view"); });
 }
 
 // ── Wire up ───────────────────────────────────────────────────────────────
