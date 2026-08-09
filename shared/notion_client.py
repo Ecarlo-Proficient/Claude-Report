@@ -110,6 +110,19 @@ class NotionClient:
     def retrieve_page(self, page_id: str) -> dict:
         return self._request("GET", f"/pages/{page_id}")
 
+    def block_children(self, block_id: str, page_size: int = 100) -> Iterator[dict]:
+        """Yield the child blocks of a page/block (its body content), paginated.
+        Used by load_customers.py to read the 'History of interactions' notes."""
+        start = None
+        while True:
+            q = f"?page_size={page_size}" + (f"&start_cursor={start}" if start else "")
+            data = self._request("GET", f"/blocks/{block_id}/children{q}")
+            for block in data.get("results", []):
+                yield block
+            if not data.get("has_more"):
+                return
+            start = data.get("next_cursor")
+
     def create_page(self, ds_id: str, properties: dict, children: Optional[list] = None) -> dict:
         body = {"parent": {"type": "data_source_id", "data_source_id": ds_id}, "properties": properties}
         if children:

@@ -18,6 +18,7 @@ so you can watch your actual data live in a database instead of a spreadsheet.
 | `load_wip_master.py` | Reads the FINAL WIP master (the Test tabs) → fills `project` + `wip_snapshot`. |
 | `load_bill_tracker.py` | Reads `Bill Tracker.xlsx` (Bills + Inventory) → fills `ap_bill_line` (AP + liens). |
 | `load_costs.py` | QBO pull → `cost_line` by cost code (incl. subs), via `shared/qbo_costs`. |
+| `load_customers.py` | Notion "Customer List" → `customer` + `sales_touch` (CRM leads/clients + outreach touch log, read-only). |
 | `dashboard.py` | Local web dashboard over the ledger — the browser UI (read-only). |
 
 The cost engine itself lives in **`shared/qbo_costs.py`** (`cost_leaf` + `iter_cost_lines`) — the
@@ -35,16 +36,21 @@ cost_line        COMPLETE spend, one row per QBO expense line, keyed by cost cod
 billing_event    AR invoices / draws (append-only, idempotent by invoice id)
 wip_snapshot     the COMPUTED WIP position — one row per (project, report_date)
 ap_bill_line     vendor bills from Bill Tracker — AP pay status + the lien clock (NOT cost truth)
+customer         CRM master — one row per Notion Customer List page (identity + pipeline stage + created/last-edited-by)
+sales_touch      outreach touch log — one row per "History of interactions" line (date parsed when present)
 v_wip_latest     view: each project joined to its most-recent snapshot
 v_ap_by_project  view: open AP + bill counts per project
 v_cost_by_project view: loaded QBO cost per project (reconcile vs WIP)
 v_cost_by_code   view: per-project cost-code drill (budget-vs-actual base)
+v_sales_pipeline view: customer counts by pipeline stage
+v_sales_by_rep   view: outreach activity by last editor (per-rep attribution)
 ```
 
 **What fills what:**
 - `project`, `wip_snapshot` ← `load_wip_master.py` (**today** — from the WIP master sheet)
 - `ap_bill_line` ← `load_bill_tracker.py` (**today** — from Bill Tracker.xlsx)
 - `cost_line` + `cost_code` ← `load_costs.py` (**today** — one QBO pull, incl. subs)
+- `customer` + `sales_touch` ← `load_customers.py` (**today** — from the Notion Customer List)
 - `budget_line`, `billing_event` ← later (takeoff-by-code budget; AR/draws)
 
 ## Run it
@@ -106,6 +112,34 @@ shared `cost_leaf()` resolver. This is the **complete** cost source (subs includ
 
 The cost engine (`shared/qbo_costs.py`) is shared with project-pnl, so cost-code figures tie between
 the ledger and the P&L export by construction.
+
+## CRM — customers & sales pipeline (Notion)
+
+```bash
+cd "/Users/sebas/Documents/Claude/Projects/Automate Concrete Business" && python3 ledger/load_customers.py --selftest
+```
+```bash
+cd "/Users/sebas/Documents/Claude/Projects/Automate Concrete Business" && python3 ledger/load_customers.py --dry-run --show 10
+```
+
+`load_customers.py` reads the Notion **Customer List** (read-only) into `customer` (one row per
+lead/client: identity, current pipeline stage, and Notion's own **Created by** / **Last edited by**
+system fields — who sourced it / who worked it last, the honest per-rep attribution with no manual
+Owner property to maintain) and `sales_touch` (one row per "History of interactions" line in the page
+body — the outreach touch log, with the date parsed when the line carries one). `v_sales_pipeline` and
+`v_sales_by_rep` make "what has the outreach rep done" a query. This is the pre-project (CRM) half of
+"own the spine": leads become jobs downstream, but sales activity now lives in the same database as WIP.
+
+- **`--selftest`** runs the whole parse+load **offline** on a throwaway DB — no Notion, no touch to
+  your real ledger. Run it to prove the wiring.
+- Idempotent: a full-replace of `source='notion_customer_list'` (customer + sales_touch) each run,
+  mirroring the current list. `--dry-run` pulls + reports without writing; `--show N` prints the warm
+  (Interested) accounts with their last touches.
+- By default the touch-log body is fetched only for **worked** rows (status past `Lead`/`Follow up`);
+  `--all-notes` fetches every page's body.
+- **Setup:** `ACB_CUSTOMER_LIST_DS_ID` in `machine.env` (the Customer List data-source id), and the
+  Notion integration (Keychain `proficient-automation-worker/notion`, the same token `sync_actions.py`
+  uses) must have the Customer List shared with it.
 
 ## The dashboard (browser UI)
 

@@ -58,6 +58,27 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     wip_snapshot.costs_to_date. Residual = per-job attribution differences (a handful of RP/CP
     jobs where QBO-sourced cost ≠ the WIP figure) — surfaced to the owner for review; specific
     dollar findings stay OUT of the repo (scope rule).
+
+- **`customer` + `sales_touch` + `load_customers.py`** — the CRM / sales-pipeline fold (2026-08-09).
+  - `schema.sql`: `customer` (one row per Notion Customer List page — identity + pipeline stage +
+    Notion `Created by` / `Last edited by` = who sourced / who worked it last, the honest per-rep
+    attribution, NO manual Owner property) and `sales_touch` (one row per "History of interactions"
+    body line, touch_date parsed) + `v_sales_pipeline` / `v_sales_by_rep` views. Portable (no
+    SQLite-only date funcs in views).
+  - `shared/notion_client.py`: added `block_children()` (page-body reader) — the shared client now
+    reads bodies, not just query/create/update.
+  - `load_customers.py`: reads the Customer List **read-only** via `shared.notion_client`; parses
+    props + the touch log; idempotent full-replace by `source='notion_customer_list'`;
+    `--dry-run/--show/--limit/--all-notes`; **`--selftest` proves parse+load OFFLINE** (no Notion).
+    Body fetched only for worked rows (status past Lead/Follow up) by default.
+  - `machine.env`: `ACB_CUSTOMER_LIST_DS_ID` added (local, gitignored). Auth reuses the shared
+    Notion token (Keychain `proficient-automation-worker/notion`) — verified it can read the list.
+  - **Run live 2026-08-09:** 622 customers + 168 touches landed; spine untouched (project 170,
+    wip 170, ap 2814, cost 6009). `v_sales_by_rep` for the outreach rep = 141 worked / 112 contacted
+    / 12 interested; touch-log dates parse (e.g. "Quote sent 07/15/26" → 2026-07-15).
+  - `docs/ARCHITECTURE.md` + README + CLAUDE.md ledger bullet updated in the same commit.
+  - OPEN: no dashboard surface yet — a **Sales tab** over `v_sales_pipeline`/`v_sales_by_rep`/
+    `sales_touch` is the next rung. Not joined to `project` yet (leads→jobs downstream).
 - **Dashboard cost-code drill** — `/api/data` now carries a `cost` section (`_fetch_costs`):
   portfolio by-code, per-project by-code, and per-project rollup attached to each project row.
   New **"Costs by code"** widget (portfolio table with % bars), a **QBO Costs / Subs** toggleable
@@ -78,9 +99,9 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
 - **Multi-tab app (owner: "deliberate tabs only a page would contain").** A tab bar splits the app
   into **Overview** (the glance: KPIs · attention · cost-mix · margins · division · projects) plus
   three deep pages: **Costs** (the cost-type→job-type tree + a **code→jobs pivot** — click a code,
-  see every job that spent on it), **Liens** (the full collections worklist — every bill on the
-  clock grouped into urgency buckets Past-due/≤7d/≤15d/≤30d/…, not a top-N teaser), and **Vendors**
-  (spend by vendor, jobs, of-which-subs — from `cost_line.vendor`; new `by_vendor` in the API).
+  see every job that spent on it), **Liens** (the full collections worklist — see the redesign below),
+  and **Vendors** (spend by vendor, jobs, of-which-subs — from `cost_line.vendor`; new `by_vendor`
+  in the API).
   Active tab persists in localStorage; bills now live only on the Liens tab.
 - **Markup + margin (owner).** Derived per job: **planned markup** (contract÷ETC, on cost),
   **planned margin** (GP÷contract, on revenue), **actual markup** (billed÷QBO cost) — as toggleable
@@ -149,6 +170,42 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   - Proof page created via the connected workspace (CP585 Draw #4). **Demo data to clean up:** the
     CP585 draw's 2 waivers were test-marked to make it "ready"; uncheck them (and delete/close the
     demo Notion page) — they are not real.
+
+- **Liens tab redesign — clickable stage tiles → one filtered table (owner).** Replaced the stacked
+  per-status bucket sections with **clickable stage widgets** ("All on the clock" + Past-due / ≤7d /
+  ≤15d / ≤30d / Notice-sent / Lien-filed, each count + $ open, urgency-coloured edge) that filter a
+  **single table below** (the `.attn`-tile pattern, mirroring Overview's "Needs attention"). Columns
+  reordered to the owner's spec — **CP # · Draw # · Name/Address · Invoice # · Amount** — with Vendor
+  trailing and urgency shown as the row's left edge so **CP # stays first**. Invoice # (the vendor
+  bill_ref) is a mono chip and Amount is bold — the two the owner said "get lost". Added a search box
+  (CP #/draw/name/vendor/invoice). Backend: `_fetch_ap` now also selects `matched_invoice` +
+  `invoice_no`; front-end derives Draw # from `invoice_no` (falls back to parsing the draw label) and
+  Name from the WIP name (falls back to the draw label). Row-click still opens the job detail. No new
+  scripts / data-flow (same `ap_bill_line` → dashboard), so ARCHITECTURE.md unchanged. Verified live:
+  header order, tile filtering (Past-due → 110 rows all past-due), search (7 SUNRISE rows), row-click
+  detail, no console errors.
+- **P&L link — job detail ↔ project-pnl (owner picked A+B: "open + generate, show when last pulled").**
+  New `shared/pnl_paths.py` resolves a project's `Project_PnL_<proj>.xlsx` with the SAME rules
+  project-pnl writes with (CP → Common-drive awarded folder's `Profit and Loss/`, else OneDrive
+  `PROJECT P&Ls/<proj>/`) and returns `{exists, path, mtime, note}` — `mtime` = the **"last pulled"**
+  time. Dashboard endpoints (all guarded by `_PROJ_RE`): **`GET /api/pnl`** (find + mtime),
+  **`POST /api/pnl/open`** (macOS `open` on the resolved workbook — only ever `Project_PnL_<proj>.xlsx`),
+  **`POST /api/pnl/generate`** (runs `project-pnl/run_pnl.sh <proj>` as a **subprocess**, not an import —
+  gated behind a `confirm` flag; logs to `~/Library/Logs/Proficient/ledger-pnl/`), **`GET /api/pnl/status`**
+  (running/done/error + elapsed; a daemon thread reaps the process). Job detail shows a **P&L
+  (project-pnl)** group: *Last pulled <ago · timestamp>* + **Open** + **Generate / Refresh** (confirm
+  dialog warns about the QBO pull + Touch ID). Generate is the ONE place the dashboard triggers a QBO
+  pull + a file write — QBO stays read-only inside project-pnl; the .xlsx write is the gated action.
+  Verified live: find (MFD325 → mtime; CP745 → "not generated yet" + CP note), the `confirm`-required
+  gate (400 without it), status idle, and the panel rendering both states. **Generate's first LIVE run
+  is owner-driven** (Touch ID on the Mac) — the non-QBO plumbing is verified; the QBO run was not
+  triggered from here.
+  - **Follow-up — dedupe the resolver:** project-pnl still has its own
+    `_resolve_project_out_dir`/`_find_awarded_cp_folder`; it should import `shared/pnl_paths.py`
+    (same move as `cost_leaf`→`shared/qbo_costs.py`). Deferred to avoid editing the 326 KB export
+    script while a concurrent session is in `shared/`.
+  - **Not built — option C** (project-pnl reads cost_line from the ledger instead of re-pulling QBO,
+    the "own-the-spine" data-source refactor). Still the strategic direction; larger, separate job.
 
 ## IN PROGRESS
 - (none)

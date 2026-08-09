@@ -40,6 +40,7 @@ shared/                the ONLY importable common code
 ├─ cost_lines.py       cost-line category (Concrete/Labor/Materials) + bill-line combine
 ├─ draws.py            CP draw (AIA G702/G703) discovery + parsing (wip ↔ health)
 ├─ takeoff_etc.py      blank ETC → takeoff cost sheet (rp_wip_reader ↔ schedule preview)
+├─ pnl_paths.py        resolve a project's P&L workbook + "last pulled" mtime (ledger ↔ project-pnl)
 └─ setup_qbo.py        vault admin CLI (--status/--test/--rotate/--purge)
 
 invoice-sync/          QBO → Notion AR sync + Teams cards   (was automation-worker/)
@@ -259,7 +260,7 @@ flowchart LR
 
     TEST[("WIP - MASTER new.xlsx\nTest tabs — the FINAL WIP\n(read-only source)")]:::src
     BT[("Bill Tracker.xlsx\nBills + Inventory\n(read-only source)")]:::src
-    SCHEMA["schema.sql\nspine: project · cost_code · budget_line ·\ncost_line · billing_event · wip_snapshot ·\nap_bill_line  (SQLite + Postgres)"]:::tool
+    SCHEMA["schema.sql\nspine: project · cost_code · budget_line ·\ncost_line · billing_event · wip_snapshot ·\nap_bill_line · customer · sales_touch  (SQLite + Postgres)"]:::tool
     LOADER["load_wip_master.py\nCP←Test-CP · RP←Test-RP · MFD←Test-Master\nfilter to real project #s · idempotent upsert"]:::tool
     APLOAD["load_bill_tracker.py\nAP pay status + lien clock → ap_bill_line\n(NOT cost truth — subs excluded)"]:::tool
     DB[("ledger.sqlite3\nproject + wip_snapshot + ap_bill_line\n→ v_wip_latest · v_ap_by_project")]:::out
@@ -284,6 +285,9 @@ flowchart LR
     NOTION[("Notion 'Ledger Actions' DB\nthe folder-memory per action")]:::out
     DB --> SYNCACT --> NOTION
     NOTION -.->|"Status readback"| DB
+    NCL[("Notion 'Customer List'\nCRM leads/clients + touch notes\n(read-only source)")]:::src
+    CUSTLOAD["load_customers.py\ncustomer + sales_touch (CRM)\nnotes → touch log · created/last-edited-by\nread-only · --selftest"]:::tool
+    NCL --> CUSTLOAD ==>|"customer · sales_touch"| DB
     FUTURE -.-> DB
 ```
 
@@ -315,6 +319,15 @@ Run it with `python3 ledger/dashboard.py` (the preview sandbox can't — it need
 outside `.preview`). This is Rung 1 of turning the terminal DB into a platform; Postgres + a shared
 server is Rung 2, when a second person needs to log in.
 
+The **Liens** tab is a single filtered worklist: clickable stage tiles (Past-due / ≤7d / ≤15d / ≤30d /
+Notice-sent / Lien-filed) filter one table keyed **CP # · Draw # · Name/Address · Invoice # · Amount**.
+The job-detail panel links to **project-pnl**: `shared/pnl_paths.py` finds the project's
+`Project_PnL_<proj>.xlsx` (+ its "last pulled" mtime); the dashboard can **open** it (`open`) or
+**generate/refresh** it by shelling out to `project-pnl/run_pnl.sh` (a subprocess — tools never import
+tools — gated behind a `confirm`; QBO stays read-only, only the .xlsx is written). This is the ledger's
+first reach OUT to a peripheral tool; the "own the spine" inverse (project-pnl reading `cost_line` from
+the ledger) is still ahead.
+
 **AP + liens (`load_bill_tracker.py` → `ap_bill_line`).** The line-level `Bills`/`Inventory`
 sheets of `Bill Tracker.xlsx` load into `ap_bill_line` — vendor, project, account, open balance,
 pay status, and the Texas lien clock per bill. This is **not** the cost ledger: Bill Tracker's
@@ -332,8 +345,21 @@ uses, moved to `shared/` so the two can't drift). Subs are included, and it **re
 a real load needs one Touch ID. Scoped full-replace by `source='qbo'` (idempotent, drops deleted
 txns). This is what Bill Tracker couldn't be — the complete, cost-code-keyed cost ledger.
 
+**CRM / sales pipeline (`load_customers.py` → `customer` + `sales_touch`).** The pre-project spine:
+the ledger owns the client/lead master too, not just the job. Reads the Notion "Customer List" data
+source **read-only** and lands one `customer` row per page (identity + current pipeline stage +
+Notion's own `Created by` / `Last edited by` system fields = who sourced it / who worked it last —
+honest per-rep attribution with no manual Owner property to maintain) plus one `sales_touch` row per
+"History of interactions" line in the page body (the outreach touch log, date parsed when present).
+`v_sales_pipeline` (counts by stage) and `v_sales_by_rep` (activity by last editor) turn "what has the
+outreach rep done" into a query instead of a scraped spreadsheet. Idempotent full-replace by
+`source='notion_customer_list'`; `--selftest` proves the parse+load offline (no Notion). Auth reuses
+the shared `NotionClient` token (the same one `sync_actions.py` uses). Not yet joined to `project` —
+leads become jobs downstream — but it puts sales activity in the same database as the WIP.
+
 **Still later:** `budget_line` (takeoff budget by cost code → budget-vs-actual from the spine) and
 `billing_event` (AR / draws). Once both exist, over/under-billing computes from the spine, not Excel.
+A dashboard **Sales** tab over `v_sales_pipeline` / `v_sales_by_rep` / `sales_touch` is the next rung.
 
 ---
 

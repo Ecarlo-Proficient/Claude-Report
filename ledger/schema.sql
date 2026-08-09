@@ -246,3 +246,69 @@ JOIN project p ON p.project_no = s.project_no
 WHERE s.report_date = (
     SELECT MAX(x.report_date) FROM wip_snapshot x WHERE x.project_no = s.project_no
 );
+
+
+-- ============================================================================
+-- CRM / SALES PIPELINE — the pre-project spine (leads → clients)
+-- The ledger owns the customer master too, not just the job. QBO/JobTread/Excel
+-- still run the job; Notion's "Customer List" is just the outreach feed. Filled by
+-- load_customers.py (read-only on Notion, idempotent full-replace).
+-- ============================================================================
+
+-- ── customer : one row per Notion "Customer List" page ──────────────────────
+-- Identity + current pipeline stage + who sourced it (created_by) and who last
+-- worked it (last_edited_by — the honest per-rep attribution, from Notion's own
+-- system fields, no manual Owner property to maintain). customer_key = the Notion
+-- page id (dashless), stable across reloads.
+CREATE TABLE IF NOT EXISTS customer (
+    customer_key     TEXT PRIMARY KEY,
+    name             TEXT NOT NULL,
+    division         TEXT,               -- Residential | Commercial | Multi-Family (joined if multi)
+    main_status      TEXT,               -- Active | Qualified | Pending Approval | Inactive
+    sales_status     TEXT,               -- Lead | Follow up | Contacted | Interested | No response | Closed - Won | Closed - Lost
+    last_contacted   TEXT,               -- ISO date
+    follow_up_date   TEXT,               -- ISO date
+    referral         TEXT,               -- multi-select, joined with ', '
+    primary_contact  TEXT,
+    primary_email    TEXT,
+    primary_phone    TEXT,
+    created_by       TEXT,               -- who sourced the record  (Notion "Created by")
+    last_edited_by   TEXT,               -- who worked it last       (Notion "Last edited by") = rep attribution
+    last_edited_time TEXT,               -- ISO datetime
+    n_touches        INTEGER NOT NULL DEFAULT 0,  -- interaction-log lines parsed from the page body
+    notion_url       TEXT,
+    source           TEXT NOT NULL DEFAULT 'notion_customer_list',
+    loaded_at        TEXT NOT NULL
+);
+
+-- ── sales_touch : one row per "History of interactions" log line ────────────
+-- The outreach touch log lifted out of the Notion page body into queryable rows.
+-- seq preserves on-page order; touch_date is parsed when the line carries a date.
+-- Wholly owned by load_customers.py (full-replaced each run).
+CREATE TABLE IF NOT EXISTS sales_touch (
+    customer_key    TEXT NOT NULL REFERENCES customer(customer_key),
+    seq             INTEGER NOT NULL,
+    touch_date      TEXT,               -- ISO date if the line carried one, else NULL
+    note            TEXT NOT NULL,
+    PRIMARY KEY (customer_key, seq)
+);
+
+-- ── v_sales_pipeline : customer counts by pipeline stage ────────────────────
+DROP VIEW IF EXISTS v_sales_pipeline;
+CREATE VIEW v_sales_pipeline AS
+SELECT COALESCE(sales_status, '(none)') AS sales_status,
+       COUNT(*)                          AS customers,
+       SUM(n_touches)                    AS touches
+FROM customer
+GROUP BY COALESCE(sales_status, '(none)');
+
+-- ── v_sales_by_rep : who worked what — attribution by last editor ───────────
+DROP VIEW IF EXISTS v_sales_by_rep;
+CREATE VIEW v_sales_by_rep AS
+SELECT COALESCE(last_edited_by, '(unknown)')                          AS rep,
+       COUNT(*)                                                       AS worked,
+       SUM(CASE WHEN sales_status = 'Contacted'    THEN 1 ELSE 0 END) AS contacted,
+       SUM(CASE WHEN sales_status = 'Interested'   THEN 1 ELSE 0 END) AS interested,
+       SUM(CASE WHEN sales_status = 'Closed - Won' THEN 1 ELSE 0 END) AS won
+FROM customer
+GROUP BY COALESCE(last_edited_by, '(unknown)');

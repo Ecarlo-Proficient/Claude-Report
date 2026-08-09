@@ -111,10 +111,13 @@ restate them here. Business/strategic context lives in session memory, not in th
 - **ledger/** — the canonical project database (Phase 1 of "own the spine, keep the systems as
   peripherals"). `schema.sql` = the portable spine (SQLite + Postgres): `project` · `cost_code` ·
   `budget_line` · `cost_line` · `billing_event` · `wip_snapshot` · `ap_bill_line` · `waiver` ·
-  `action` + views. Loaders (read-only on their sources, idempotent): `load_wip_master.py` (WIP
-  master Test tabs → project + wip_snapshot), `load_bill_tracker.py` (Bill Tracker → `ap_bill_line`,
-  AP + lien clock + draw/invoice cols — NOT cost truth, subs excluded), `load_costs.py` (QBO pull via
-  `shared/qbo_costs` → complete `cost_line` by cost code, incl. subs; reconciles to wip_snapshot).
+  `action` · `customer` · `sales_touch` + views. Loaders (read-only on their sources, idempotent):
+  `load_wip_master.py` (WIP master Test tabs → project + wip_snapshot), `load_bill_tracker.py`
+  (Bill Tracker → `ap_bill_line`, AP + lien clock + draw/invoice cols — NOT cost truth, subs
+  excluded), `load_costs.py` (QBO pull via `shared/qbo_costs` → complete `cost_line` by cost code,
+  incl. subs; reconciles to wip_snapshot), `load_customers.py` (Notion Customer List → `customer` +
+  `sales_touch`: CRM leads/clients + outreach touch log, per-rep attribution via Notion
+  Created/Last-edited-by, needs `ACB_CUSTOMER_LIST_DS_ID`; read-only, `--selftest`).
   `sync_actions.py` mirrors action items (draws-ready MVP) to the Notion "Ledger Actions" DB via
   `shared/notion_client` (needs `ACB_ACTIONS_DS_ID` + the DB shared with the "Automation Integrator"
   integration). `dashboard.py` + `static/` = a local web UI (127.0.0.1) — tabs (My view · Overview ·
