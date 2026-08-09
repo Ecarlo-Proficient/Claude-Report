@@ -80,7 +80,9 @@ restate them here. Business/strategic context lives in session memory, not in th
   `paths.py` (per-machine path resolution), `qbo_api.py` (QBO auth + retrying GET, `query_all`,
   report walkers, `PROJ_RE` — used by project-pnl and the WIP readers), `qbo_costs.py` (the ONE
   cost-code resolver `cost_leaf` + the `iter_cost_lines` pull-and-resolve engine — shared by
-  project-pnl and the ledger's `load_costs.py`), `setup_qbo.py` (`--status/--test/--rotate/--purge`).
+  project-pnl and the ledger's `load_costs.py`), `notion_client.py` (thin Notion API client —
+  create/query/update pages; used by `ledger/sync_actions.py`; invoice-sync keeps its own tool-local
+  copy on purpose), `setup_qbo.py` (`--status/--test/--rotate/--purge`).
 - **invoice-sync/** — the QBO → Notion AR invoice sync (was `automation-worker/`). Open invoices
   → two Notion DBs (MFD isolated; Res/Com combined) routed by project-# prefix; sweeps paid;
   archives QBO-deleted (CDC); posts MFD pay events to Teams. Manual via `sync-ar` (launchd plists
@@ -108,13 +110,17 @@ restate them here. Business/strategic context lives in session memory, not in th
   The old QBO→Notion WIP sync is fully deleted (stub + plist gone 2026-07-13).
 - **ledger/** — the canonical project database (Phase 1 of "own the spine, keep the systems as
   peripherals"). `schema.sql` = the portable spine (SQLite + Postgres): `project` · `cost_code` ·
-  `budget_line` · `cost_line` · `billing_event` · `wip_snapshot` · `ap_bill_line` + views.
-  Loaders (read-only on their sources, idempotent): `load_wip_master.py` (WIP master Test tabs →
-  project + wip_snapshot), `load_bill_tracker.py` (Bill Tracker → `ap_bill_line`, AP + lien clock —
-  NOT cost truth, subs excluded), `load_costs.py` (QBO pull via `shared/qbo_costs` → complete
-  `cost_line` by cost code, incl. subs; reconciles to wip_snapshot). `dashboard.py` + `static/` =
-  a local READ-ONLY web UI (127.0.0.1) with a Customize panel. DB lives OUTSIDE the repo
-  (`~/Library/Application Support/Proficient/ledger.sqlite3`; override `ACB_LEDGER_DB`).
+  `budget_line` · `cost_line` · `billing_event` · `wip_snapshot` · `ap_bill_line` · `waiver` ·
+  `action` + views. Loaders (read-only on their sources, idempotent): `load_wip_master.py` (WIP
+  master Test tabs → project + wip_snapshot), `load_bill_tracker.py` (Bill Tracker → `ap_bill_line`,
+  AP + lien clock + draw/invoice cols — NOT cost truth, subs excluded), `load_costs.py` (QBO pull via
+  `shared/qbo_costs` → complete `cost_line` by cost code, incl. subs; reconciles to wip_snapshot).
+  `sync_actions.py` mirrors action items (draws-ready MVP) to the Notion "Ledger Actions" DB via
+  `shared/notion_client` (needs `ACB_ACTIONS_DS_ID` + the DB shared with the "Automation Integrator"
+  integration). `dashboard.py` + `static/` = a local web UI (127.0.0.1) — tabs (My view · Overview ·
+  Costs · Draws · Liens · Vendors), READ-ONLY except the ONE write (the owner's waiver mark →
+  `waiver`); `open_ledger.command` launcher (co-located in `~/Documents/CompanyHealth/`). DB lives
+  OUTSIDE the repo (`~/Library/Application Support/Proficient/ledger.sqlite3`; override `ACB_LEDGER_DB`).
 - **project-pnl/** — per-project P&L (CP/MFD + RP × budgeted/unbudgeted) → OneDrive PROJECT
   P&Ls. Overhead shown as a final row at **10% of revenue** (was 11%, the user 2026-07-16;
   MFD alt view stays 9% on costs); QBO helpers come from `shared/qbo_api.py`. Batch mode:
