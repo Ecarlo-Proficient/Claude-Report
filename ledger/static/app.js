@@ -188,6 +188,7 @@ let meta = {};
 let sortKey = "total_contract_price";
 let sortDir = -1;   // -1 desc, 1 asc
 let activeRule = null;   // key of a RULES entry currently filtering the table
+let activeLien = null;   // lien stage currently filtering the Liens table (null = all)
 
 // ── Load ──────────────────────────────────────────────────────────────────
 async function load(isAuto) {
@@ -633,11 +634,32 @@ function showCodeJobs(code, label) {
 
 const LIEN_ORDER = ["Notice PAST due", "Notice due in ≤7d", "Notice due in ≤15d",
                     "Notice due in ≤30d", "Notice Sent", "Lien Filed"];
+// Short tile labels for the clickable stage widgets (full status = pill / tooltip).
+const LIEN_SHORT = {
+  "Notice PAST due": "Past due", "Notice due in ≤7d": "Due ≤7d",
+  "Notice due in ≤15d": "Due ≤15d", "Notice due in ≤30d": "Due ≤30d",
+  "Notice Sent": "Notice sent", "Lien Filed": "Lien filed",
+};
+
+// Pull the draw # and property name out of a matched_invoice label like
+// "34449 — CP745 - Firestone Forever…" → { draw:"34449", name:"Firestone…" }.
+// Used only as a fallback — invoice_no and the WIP name win when present.
+function splitDraw(mi) {
+  if (!mi) return { draw: "", name: "" };
+  const head = String(mi).split("\n")[0].trim();
+  const m = head.match(/^\s*([^—]*?)\s*—\s*(.*)$/);
+  if (!m) return { draw: head, name: "" };
+  const rest = m[2].trim();                       // "CP745 - Firestone Forever…"
+  const dash = rest.indexOf(" - ");
+  return { draw: m[1].trim(), name: dash >= 0 ? rest.slice(dash + 3).trim() : rest };
+}
+
 function renderLiens() {
   const s = AP.summary || {};
   const watch = AP.lien_watch || [];
   $("#liensNote").textContent = watch.length ? `(${watch.length} bills on the clock)` : "(no AP data — run load_bill_tracker.py)";
   const pastDue = watch.filter(r => r.lien_status === "Notice PAST due");
+  // ── summary KPIs ──
   const stats = [
     ["Open AP", money(s.open_balance || 0), `${s.open_lines || 0} open bills`],
     ["On the lien clock", String(s.watch_count || 0), "need action"],
@@ -652,41 +674,67 @@ function renderLiens() {
     el.querySelector(".k-sub").textContent = sub;
     sr.appendChild(el);
   }
-  const box = $("#lienBuckets"); box.innerHTML = "";
+  // ── clickable stage tiles (the widgets) → filter the one table below ──
   const byStatus = {};
   for (const r of watch) (byStatus[r.lien_status] || (byStatus[r.lien_status] = [])).push(r);
-  const known = new Set(ALL.map(r => r.project_no));
+  const filters = $("#lienFilters"); filters.innerHTML = "";
+  const tile = (key, label, n, open, cls, active) => {
+    const el = document.createElement("div");
+    el.className = "attn" + (cls ? " u-" + cls : "") + (active ? " active" : "") + (n ? "" : " none");
+    el.innerHTML = `<span class="a-count"></span><span class="a-label"></span><span class="a-sub"></span>`;
+    el.querySelector(".a-count").textContent = n;
+    el.querySelector(".a-label").textContent = label;
+    el.querySelector(".a-sub").textContent = money(open) + " open";
+    if (n || key === null) el.onclick = () => { activeLien = key; renderLiens(); };
+    filters.appendChild(el);
+  };
+  tile(null, "All on the clock", watch.length, watch.reduce((t, r) => t + num(r.open_balance), 0), "", activeLien === null);
   for (const status of LIEN_ORDER) {
-    const rows = byStatus[status];
-    if (!rows || !rows.length) continue;
-    rows.sort((a, b) => num(b.open_balance) - num(a.open_balance));
-    const totalOpen = rows.reduce((t, r) => t + num(r.open_balance), 0);
-    const sec = document.createElement("section"); sec.className = "widget";
-    const head = document.createElement("div"); head.className = "widget-head";
-    const h = document.createElement("h2");
-    const pill = document.createElement("span"); pill.className = "lien " + (LIEN_CLASS[status] || "info"); pill.textContent = status;
-    h.appendChild(pill);
-    const cnt = document.createElement("span"); cnt.className = "count"; cnt.textContent = ` ${rows.length} bills · ${money(totalOpen)} open`;
-    h.appendChild(cnt); head.appendChild(h); sec.appendChild(head);
-    const scroll = document.createElement("div"); scroll.className = "table-scroll";
-    const table = document.createElement("table"); table.className = "grid clickable";
-    const thead = document.createElement("thead"), tbody = document.createElement("tbody");
-    const cols = [["Project", "left"], ["Name", "left"], ["Vendor", "left"], ["Bill #", "left"], ["Open Bal", "right"]];
-    const htr = document.createElement("tr");
-    for (const [c, al] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
-    thead.appendChild(htr);
-    for (const r of rows) {
-      const tr = document.createElement("tr");
-      if (r.project_no && known.has(r.project_no)) tr.onclick = (e) => { if (!e.target.closest(".cell")) openDetail(ALL.find(x => x.project_no === r.project_no)); };
-      tr.appendChild(leftText(r.project_no || "—"));
-      tr.appendChild(leftText(nameOf(r.project_no)));
-      tr.appendChild(leftText(r.vendor || "—"));
-      tr.appendChild(leftText(r.bill_ref || "—"));
-      const ob = document.createElement("td"); ob.appendChild(moneyCell(r.open_balance)); tr.appendChild(ob);
-      tbody.appendChild(tr);
-    }
-    table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table);
-    sec.appendChild(scroll); box.appendChild(sec);
+    const rows = byStatus[status]; if (!rows || !rows.length) continue;
+    tile(status, LIEN_SHORT[status] || status, rows.length,
+         rows.reduce((t, r) => t + num(r.open_balance), 0), LIEN_CLASS[status] || "info", activeLien === status);
+  }
+  $("#btnClearLien").hidden = activeLien === null;
+
+  // ── the one table below — filtered by the active stage + the search box ──
+  const q = ($("#lienSearch") ? $("#lienSearch").value : "").trim().toLowerCase();
+  const known = new Set(ALL.map(r => r.project_no));
+  const base = activeLien ? (byStatus[activeLien] || []) : watch;
+  const enriched = base.map(r => {
+    const d = splitDraw(r.matched_invoice);
+    return { r, draw: r.invoice_no || d.draw || "", name: nameOf(r.project_no) || d.name || "" };
+  });
+  const shown = q ? enriched.filter(({ r, draw, name }) =>
+    [r.project_no, draw, name, r.vendor, r.bill_ref].filter(Boolean).join(" ").toLowerCase().includes(q)) : enriched;
+
+  // CP # · Draw # · Name/Address · Invoice # · Amount lead (owner's order); the
+  // vendor trails and urgency is the coloured row edge so CP # stays first.
+  const cols = [["CP #", "left"], ["Draw #", "left"], ["Name / Address", "left"],
+                ["Invoice #", "left"], ["Amount", "right"], ["Vendor", "left"]];
+  const thead = $("#lienTable thead"), tbody = $("#lienTable tbody");
+  thead.innerHTML = ""; tbody.innerHTML = "";
+  const htr = document.createElement("tr");
+  for (const [c, al] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
+  thead.appendChild(htr);
+  for (const { r, draw, name } of shown) {
+    const tr = document.createElement("tr");
+    tr.className = "lien-row u-" + (LIEN_CLASS[r.lien_status] || "info");
+    tr.title = r.lien_status || "";
+    if (r.project_no && known.has(r.project_no)) tr.onclick = (e) => { if (!e.target.closest(".cell")) openDetail(ALL.find(x => x.project_no === r.project_no)); };
+    tr.appendChild(leftText(r.project_no || "—"));
+    tr.appendChild(leftText(draw || "—"));
+    tr.appendChild(leftText(name || "—"));
+    const inv = document.createElement("td"); inv.className = "left";
+    const chip = document.createElement("span"); chip.className = "invno"; chip.textContent = r.bill_ref || "—"; inv.appendChild(chip); tr.appendChild(inv);
+    const amt = document.createElement("td"); const mc = moneyCell(r.open_balance); mc.classList.add("lien-amt"); amt.appendChild(mc); tr.appendChild(amt);
+    tr.appendChild(leftText(r.vendor || "—"));
+    tbody.appendChild(tr);
+  }
+  if (!shown.length) {
+    const tr = document.createElement("tr"); const td = document.createElement("td");
+    td.colSpan = cols.length; td.className = "left"; td.style.color = "var(--text-dim)";
+    td.textContent = watch.length ? "No bills match this stage / search." : "No AP data — run load_bill_tracker.py.";
+    tr.appendChild(td); tbody.appendChild(tr);
   }
 }
 
@@ -896,6 +944,61 @@ const DETAIL_GROUPS = [
 ];
 let detailRow = null;
 
+// P&L (project-pnl) link — shows when the workbook was last pulled, opens it, and
+// (on an explicit confirm) runs project-pnl to (re)generate it. The generate call is
+// the ONLY place the dashboard triggers a QBO pull + a file write; it is gated by a
+// confirm dialog here and a `confirm` flag the server also requires.
+function buildPnlGroup(proj) {
+  const g = document.createElement("div"); g.className = "dgroup";
+  const h = document.createElement("h4"); h.textContent = "P&L (project-pnl)"; g.appendChild(h);
+  const row = document.createElement("div"); row.className = "drow";
+  const dk = document.createElement("span"); dk.className = "dk"; dk.textContent = "Last pulled";
+  const dv = document.createElement("span"); dv.className = "dv"; dv.textContent = "checking…";
+  row.appendChild(dk); row.appendChild(dv); g.appendChild(row);
+  const acts = document.createElement("div"); acts.className = "pnl-actions";
+  const openBtn = document.createElement("button"); openBtn.className = "btn small"; openBtn.textContent = "Open"; openBtn.disabled = true;
+  const genBtn = document.createElement("button"); genBtn.className = "btn small"; genBtn.textContent = "Generate / Refresh";
+  acts.appendChild(openBtn); acts.appendChild(genBtn); g.appendChild(acts);
+  const msg = document.createElement("div"); msg.className = "pnl-msg"; g.appendChild(msg);
+
+  const refresh = () => fetch(`/api/pnl?proj=${encodeURIComponent(proj)}`).then(r => r.json()).then(d => {
+    if (d.error) { dv.textContent = "—"; return; }
+    if (d.exists) {
+      dv.textContent = `${timeAgo(d.mtime)} · ${(d.mtime || "").replace("T", " ")}`;
+      openBtn.disabled = false;
+      openBtn.onclick = () => fetch(`/api/pnl/open?proj=${encodeURIComponent(proj)}`, { method: "POST" })
+        .then(r => r.json()).then(x => toast(x.error ? x.error : "Opening P&L…"));
+    } else {
+      dv.textContent = "not generated yet"; openBtn.disabled = true;
+    }
+    msg.textContent = d.note || "";
+  }).catch(() => { dv.textContent = "unavailable"; });
+
+  genBtn.onclick = () => {
+    if (!confirm(`Generate the P&L for ${proj}?\n\nThis runs project-pnl against QBO — a Touch ID prompt will appear on this Mac — and can take a minute or two.`)) return;
+    genBtn.disabled = true; genBtn.textContent = "Generating…";
+    msg.textContent = "Running project-pnl — watch for the Touch ID prompt on this Mac.";
+    fetch(`/api/pnl/generate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ proj, confirm: true }) })
+      .then(r => r.json()).then(d => {
+        if (d.error) { msg.textContent = "Error: " + d.error; genBtn.disabled = false; genBtn.textContent = "Generate / Refresh"; return; }
+        pollPnl(proj, genBtn, msg, refresh);
+      }).catch(e => { msg.textContent = "Error: " + e; genBtn.disabled = false; genBtn.textContent = "Generate / Refresh"; });
+  };
+  refresh();
+  return g;
+}
+
+function pollPnl(proj, genBtn, msg, refresh) {
+  const finish = (t) => { msg.textContent = t; genBtn.disabled = false; genBtn.textContent = "Generate / Refresh"; refresh(); };
+  const tick = () => fetch(`/api/pnl/status?proj=${encodeURIComponent(proj)}`).then(r => r.json()).then(s => {
+    if (s.state === "running") { msg.textContent = `Generating… (${s.elapsed || 0}s) — Touch ID may be waiting.`; setTimeout(tick, 2000); }
+    else if (s.state === "done") { finish("Done — P&L refreshed."); }
+    else if (s.state === "error") { msg.textContent = "Failed: " + (s.detail || "see the log"); genBtn.disabled = false; genBtn.textContent = "Generate / Refresh"; }
+    else { finish(""); }
+  }).catch(() => setTimeout(tick, 3000));
+  setTimeout(tick, 1500);
+}
+
 function openDetail(r) {
   detailRow = r;
   $("#detailTitle").textContent = `${r.project_no} — ${r.project_name || ""}`;
@@ -918,6 +1021,7 @@ function openDetail(r) {
     }
     body.appendChild(g);
   }
+  body.appendChild(buildPnlGroup(r.project_no));
   const ap = AP.by_project && AP.by_project[r.project_no];
   if (ap) {
     const g = document.createElement("div"); g.className = "dgroup";
@@ -1085,6 +1189,8 @@ function init() {
     $(sel).addEventListener("input", renderProjects));
   ["#drawSearch", "#drawDivision"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderDraws); });
   { const el = $("#vendorSearch"); if (el) el.addEventListener("input", renderVendors); }
+  { const el = $("#lienSearch"); if (el) el.addEventListener("input", renderLiens); }
+  { const el = $("#btnClearLien"); if (el) el.onclick = () => { activeLien = null; renderLiens(); }; }
   { const el = $("#homeDivision"); if (el) el.addEventListener("input", renderHome); }
   $("#btnExport").onclick = exportCSV;
   $("#btnRefresh").onclick = load;

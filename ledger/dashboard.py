@@ -25,16 +25,20 @@ import argparse
 import datetime as _dt
 import hashlib
 import json
+import re
 import sqlite3
+import subprocess
 import sys
 import threading
+import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
-from shared import paths  # noqa: E402
+from shared import paths, pnl_paths  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 STATIC = HERE / "static"
@@ -51,6 +55,38 @@ CONTENT_TYPES = {
     ".svg": "image/svg+xml",
 }
 
+# ── P&L link (project-pnl) ──────────────────────────────────────────────────
+# The dashboard can OPEN an existing per-project P&L and, on an explicit owner
+# confirm, RUN project-pnl to (re)generate it. Generation shells out to the tool's
+# own CLI (run_pnl.sh) — a subprocess, never an import (tools never import tools).
+# QBO stays read-only inside project-pnl; the ONE data write (the .xlsx) is gated
+# behind the UI confirm + a confirm flag on the request. Logs land under
+# ~/Library/Logs/Proficient/ (never inside the repo).
+_PNL_DIR = PROJECT_ROOT / "project-pnl"
+_PNL_RUN = _PNL_DIR / "run_pnl.sh"
+_PNL_LOG_DIR = Path.home() / "Library" / "Logs" / "Proficient" / "ledger-pnl"
+_PROJ_RE = re.compile(r"^(MFD|CP|RP)\d+(-FTW)?$", re.IGNORECASE)
+_PNL_JOBS: dict = {}                 # proj -> {state, started, log, detail, proc, file}
+_PNL_LOCK = threading.Lock()
+
+
+def _pnl_wait(proj: str) -> None:
+    """Reap a generation subprocess and record its outcome (running → done/error)."""
+    j = _PNL_JOBS.get(proj)
+    if not j:
+        return
+    rc = j["proc"].wait()
+    try:
+        j["file"].close()
+    except OSError:
+        pass
+    with _PNL_LOCK:
+        j["state"] = "done" if rc == 0 else "error"
+        j["rc"] = rc
+        if rc != 0:
+            j["detail"] = f"exit {rc} — see {j['log']}"
+
+
 # lien states that put a bill on the action watchlist, most-urgent first
 LIEN_RANK = {
     "Notice PAST due": 0, "Notice due in ≤7d": 1, "Notice due in ≤15d": 2,
@@ -64,8 +100,8 @@ def _fetch_ap(con) -> dict:
           "lien_watch": [], "by_project": {}}
     try:
         rows = con.execute(
-            "SELECT project_no, division, vendor, bill_ref, open_balance, lien_status "
-            "FROM ap_bill_line").fetchall()
+            "SELECT project_no, division, vendor, bill_ref, open_balance, lien_status, "
+            "matched_invoice, invoice_no FROM ap_bill_line").fetchall()
     except sqlite3.OperationalError:
         return ap
     open_bal, open_lines, watch = 0.0, 0, []
@@ -362,6 +398,9 @@ class Handler(BaseHTTPRequestHandler):
         ctype = CONTENT_TYPES.get(target.suffix, "application/octet-stream")
         self._send(200, target.read_bytes(), ctype)
 
+    def _query(self) -> dict:
+        return {k: v[0] for k, v in parse_qs(urlparse(self.path).query).items()}
+
     def do_GET(self):
         path = self.path.split("?", 1)[0]
         if path == "/":
@@ -370,17 +409,94 @@ class Handler(BaseHTTPRequestHandler):
             self._json(fetch_data(self.db_path))
         elif path == "/api/health":
             self._json({"ok": True})
+        elif path == "/api/pnl":
+            self._pnl_find(self._query().get("proj", ""))
+        elif path == "/api/pnl/status":
+            self._pnl_status(self._query().get("proj", ""))
         elif path.startswith("/static/"):
             self._static(path[len("/static/"):])
         else:
             self._send(404, b"not found", "text/plain; charset=utf-8")
 
     def do_POST(self):
-        # The ONLY write path in the whole app — the owner's waiver marks.
-        if self.path.split("?", 1)[0] == "/api/waiver":
+        p = urlparse(self.path).path
+        if p == "/api/waiver":            # the ONE ledger write — the owner's waiver marks
             self._set_waiver()
+        elif p == "/api/pnl/open":        # open an existing P&L workbook (local `open`)
+            self._pnl_open(self._query().get("proj", ""))
+        elif p == "/api/pnl/generate":    # run project-pnl (gated by an explicit confirm)
+            self._pnl_generate()
         else:
             self._send(404, b"not found", "text/plain; charset=utf-8")
+
+    # ── P&L link handlers ───────────────────────────────────────────────────
+    def _pnl_find(self, proj: str):
+        proj = (proj or "").strip().upper()
+        if not _PROJ_RE.match(proj):
+            return self._json({"error": "bad or missing project"}, 400)
+        info = pnl_paths.find_pnl(proj)
+        j = _PNL_JOBS.get(proj)
+        info["job"] = j["state"] if j else "idle"
+        self._json(info)
+
+    def _pnl_status(self, proj: str):
+        proj = (proj or "").strip().upper()
+        j = _PNL_JOBS.get(proj)
+        if not j:
+            return self._json({"state": "idle"})
+        out = {"state": j["state"]}
+        if j["state"] == "running":
+            out["elapsed"] = int(time.time() - j["started"])
+        if j.get("detail"):
+            out["detail"] = j["detail"]
+        self._json(out)
+
+    def _pnl_open(self, proj: str):
+        proj = (proj or "").strip().upper()
+        if not _PROJ_RE.match(proj):
+            return self._json({"error": "bad project"}, 400)
+        info = pnl_paths.find_pnl(proj)
+        if not info.get("exists"):
+            return self._json({"error": "no P&L generated yet"}, 404)
+        path = Path(info["path"])
+        if path.name != f"Project_PnL_{proj}.xlsx":   # only ever open the resolved workbook
+            return self._json({"error": "unexpected file"}, 400)
+        try:
+            subprocess.Popen(["open", str(path)])     # macOS: open in Excel
+        except OSError as e:
+            return self._json({"error": f"open failed: {e}"}, 500)
+        self._json({"ok": True, "path": str(path)})
+
+    def _pnl_generate(self):
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except (ValueError, json.JSONDecodeError):
+            return self._json({"error": "bad request"}, 400)
+        proj = str(body.get("proj", "")).strip().upper()
+        if not _PROJ_RE.match(proj):
+            return self._json({"error": "bad or missing project"}, 400)
+        if not body.get("confirm"):                   # gate: no confirm, no run
+            return self._json({"error": "confirm required"}, 400)
+        if not _PNL_RUN.exists():
+            return self._json({"error": "project-pnl runner not found"}, 500)
+        with _PNL_LOCK:
+            j = _PNL_JOBS.get(proj)
+            if j and j["state"] == "running":
+                return self._json({"state": "running", "proj": proj, "already": True})
+            try:
+                _PNL_LOG_DIR.mkdir(parents=True, exist_ok=True)
+                f = open(_PNL_LOG_DIR / f"{proj}.log", "w")
+                proc = subprocess.Popen(
+                    ["/bin/bash", str(_PNL_RUN), proj],
+                    cwd=str(_PNL_DIR), stdout=f, stderr=subprocess.STDOUT)
+            except OSError as e:
+                return self._json({"error": f"spawn failed: {e}"}, 500)
+            _PNL_JOBS[proj] = {"state": "running", "started": time.time(),
+                               "log": str(_PNL_LOG_DIR / f"{proj}.log"),
+                               "proc": proc, "file": f}
+        threading.Thread(target=_pnl_wait, args=(proj,), daemon=True).start()
+        self._json({"state": "running", "proj": proj})
 
     def _set_waiver(self):
         try:

@@ -170,6 +170,26 @@ tr.cost-sub .sub-name { color: var(--text-dim); }
 .lien.info { color: var(--text-dim); }
 .lien.ready { color: #fff; background: var(--pos); border-color: var(--pos); }
 
+/* ── Liens worklist: stage tiles + row urgency edge + the two key columns ─── */
+/* Urgency accent, shared by the clickable stage tiles (.attn) and table rows. */
+.attn.u-past, .attn.u-d7 { border-left-color: var(--neg); }
+.attn.u-d15 { border-left-color: color-mix(in srgb, var(--neg) 55%, var(--border)); }
+.attn.u-d30 { border-left-color: color-mix(in srgb, #b8860b 65%, var(--border)); }
+.attn.u-info { border-left-color: var(--text-dim); }
+tr.lien-row > td:first-child { border-left: 3px solid transparent; }
+tr.lien-row.u-past > td:first-child, tr.lien-row.u-d7 > td:first-child { border-left-color: var(--neg); }
+tr.lien-row.u-d15 > td:first-child { border-left-color: color-mix(in srgb, var(--neg) 55%, var(--border)); }
+tr.lien-row.u-d30 > td:first-child { border-left-color: color-mix(in srgb, #b8860b 65%, var(--border)); }
+tr.lien-row.u-info > td:first-child { border-left-color: var(--text-dim); }
+/* The two the owner said get lost — make them stand out. */
+.invno { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em;
+  padding: 1px 7px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-2); }
+.cell.lien-amt { font-weight: 700; }
+
+/* ── P&L link (in the job-detail panel) ────────────────────────────────────── */
+.pnl-actions { display: flex; gap: 8px; margin: 8px 0 4px; }
+.pnl-msg { font-size: .8em; color: var(--text-dim); min-height: 1em; }
+
 /* ── Draws (race-through) ──────────────────────────────────────────────── */
 .draw-head { align-items: flex-start; }
 .draw-head .panel-sub { font-variant-numeric: tabular-nums; }

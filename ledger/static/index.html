@@ -166,7 +166,19 @@
         <div class="widget-head"><h2>AP &amp; lien clock <span class="count" id="liensNote"></span></h2></div>
         <div class="kpi-row" id="liensStats"></div>
       </section>
-      <div id="lienBuckets"></div>
+      <section class="widget">
+        <div class="widget-head">
+          <h2>On the lien clock <span class="count">— click a stage to filter the list</span></h2>
+          <button class="btn small" id="btnClearLien" hidden>Show all</button>
+        </div>
+        <div class="attn-row" id="lienFilters"></div>
+        <div class="filters">
+          <input type="search" id="lienSearch" placeholder="Search CP #, draw, name, vendor, invoice #…" autocomplete="off">
+        </div>
+        <div class="table-scroll">
+          <table class="grid clickable" id="lienTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
     </div><!-- /tab: liens -->
 
     <!-- ══════════════ TAB: VENDORS (spend) ══════════════ -->
