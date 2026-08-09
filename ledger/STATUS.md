@@ -100,8 +100,20 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   big flatwork + slab + CP kept). Threshold `FTW_BUDGET_FLOOR` is a documented judgment knob. Apply
   the same tolerance when `budget_line` (budget-vs-actual by code) is built.
 
+- **`open_ledger.command` launcher + CompanyHealth co-location (owner).** Double-click launcher
+  (self-locating) that starts the server if down, then opens the browser — one-click, no terminal.
+  A thin copy lives in the owner-private `~/Documents/CompanyHealth/` ("Open Project Ledger.command")
+  so the ledger opens from the same private cockpit as Company Dashboard + Tracker. Tool code stays
+  in the repo; only the front-door launcher sits in CompanyHealth.
+
 ## IN PROGRESS
-- (none)
+- **Draw-unlock tracker (owner request — "race through" the draw cycle).** Bill Tracker already has
+  the spine: `Matched Invoice` links each bill to its draw (334 distinct draws), plus `Invoice
+  Status` pipeline (Invoice paid / Awaiting Invoice / Awaiting Payment / Partial), `GC Paid Date`,
+  `Pay Date`. GAP: (1) a draw-LEVEL rollup view (fund → pay vendor → collect unconditional waiver →
+  turn in → next draw) — buildable read-only; (2) the **unconditional-waiver-received** step is NOT
+  robustly tracked (lien col tracks the NOTICE clock; "✓ Released" only 9 rows). Deciding: derive
+  waiver state from existing fields, or add one small tracked input. See session notes.
 
 ## TO DO
 - **Investigate the ~6 active reconcile mismatches** (QBO cost ≠ WIP figure, e.g. RP6901/RP6440):
