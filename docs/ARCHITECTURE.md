@@ -36,6 +36,7 @@ shared/                the ONLY importable common code
 ├─ paths.py            per-machine output paths (machine.env at REPO ROOT)
 ├─ qbo_api.py          QBO auth + retrying GET, query_all, P&L walkers, PROJ_RE
 ├─ qbo_costs.py        cost_leaf (the ONE cost-code resolver) + iter_cost_lines — shared w/ ledger
+├─ notion_client.py    thin Notion API client (create/query/update pages) — used by ledger/sync_actions
 ├─ cost_lines.py       cost-line category (Concrete/Labor/Materials) + bill-line combine
 ├─ draws.py            CP draw (AIA G702/G703) discovery + parsing (wip ↔ health)
 ├─ takeoff_etc.py      blank ETC → takeoff cost sheet (rp_wip_reader ↔ schedule preview)
@@ -279,6 +280,10 @@ flowchart LR
     COSTLOAD ==>|"cost_line · cost_code"| DB
     DB ==>|"read-only"| DASH --> BROWSER
     DASH -.->|"the ONE write: waiver mark"| DB
+    SYNCACT["sync_actions.py\naction items → Notion pages\n(shared/notion_client)"]:::tool
+    NOTION[("Notion 'Ledger Actions' DB\nthe folder-memory per action")]:::out
+    DB --> SYNCACT --> NOTION
+    NOTION -.->|"Status readback"| DB
     FUTURE -.-> DB
 ```
 

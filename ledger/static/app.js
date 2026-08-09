@@ -408,7 +408,14 @@ function renderDraws() {
     meta2.textContent = `${money(d.total)} · ${d.n} bills · ${d.paid}/${d.n} paid · ${d.waivers}/${d.n} waivers`;
     left.appendChild(meta2); head.appendChild(left);
     const pill = document.createElement("span"); pill.className = "lien " + (DRAW_STAGE_CLASS[d.stage] || "info"); pill.textContent = d.stage;
-    head.appendChild(pill); sec.appendChild(head);
+    head.appendChild(pill);
+    if (d.action && d.action.url) {
+      const a = document.createElement("a"); a.className = "notion-link"; a.href = d.action.url;
+      a.target = "_blank"; a.rel = "noopener"; a.textContent = "📄 Notion · " + (d.action.status || "Open");
+      a.onclick = (e) => e.stopPropagation();
+      head.appendChild(a);
+    }
+    sec.appendChild(head);
     if (!collapsed) {
       const scroll = document.createElement("div"); scroll.className = "table-scroll";
       const table = document.createElement("table"); table.className = "grid";

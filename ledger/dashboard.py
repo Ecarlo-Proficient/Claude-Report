@@ -201,18 +201,31 @@ def _freshness(con) -> dict:
     return out
 
 
+def _fetch_actions(con) -> dict:
+    """Map action_key → {url, status} from the `action` table (Notion mirror).
+    Empty (not an error) if sync_actions hasn't run."""
+    out: dict = {}
+    try:
+        for r in con.execute("SELECT action_key, status, notion_url FROM action"):
+            out[r["action_key"]] = {"status": r["status"], "url": r["notion_url"]}
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
 def _waiver_key(mi, vendor, bill_ref) -> str:
     """Deterministic key for a bill's waiver — survives ap_bill_line reloads."""
     raw = f"{mi or ''}|{vendor or ''}|{bill_ref or ''}"
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
 
 
-# race-through stages, in worklist priority (most actionable first)
-_STAGE_ORDER = {"Fund in — pay vendors": 0, "Paid — collect waivers": 1,
-                "Awaiting GC funding": 2, "Ready to turn in": 3}
+# race-through stages, in worklist priority — Ready-to-turn-in first (turn it in
+# NOW to unlock the next draw), then pay vendors, then collect waivers.
+_STAGE_ORDER = {"Ready to turn in": 0, "Fund in — pay vendors": 1,
+                "Paid — collect waivers": 2, "Awaiting GC funding": 3}
 
 
-def _fetch_draws(con, limit: int = 40) -> dict:
+def _fetch_draws(con, limit: int = 100) -> dict:
     """Roll AP bills up BY DRAW (matched invoice) → the race-through pipeline,
     joined to the owner's waiver marks. Empty (not an error) if not loaded."""
     try:
@@ -294,6 +307,7 @@ def fetch_data(db_path: Path) -> dict:
         ap = _fetch_ap(con)
         costs = _fetch_costs(con)
         draws = _fetch_draws(con)
+        actions = _fetch_actions(con)
         freshness = _freshness(con)
     except sqlite3.OperationalError as e:
         con.close()
@@ -303,6 +317,9 @@ def fetch_data(db_path: Path) -> dict:
         cp = costs["by_project"].get(r["project_no"])
         r["costs_loaded"] = cp["costs_loaded"] if cp else None
         r["sub_costs"] = cp["sub_costs"] if cp else None
+    for d in draws.get("draws", []):  # attach the Notion action link (if tracked)
+        inv = (d.get("matched_invoice") or "").split("—")[0].strip()
+        d["action"] = actions.get(f"draw:{inv}")
     return {
         "meta": {
             "db_path": str(db_path),

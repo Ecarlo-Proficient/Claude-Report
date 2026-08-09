@@ -212,6 +212,22 @@ SELECT project_no,
 FROM cost_line
 GROUP BY project_no, COALESCE(cost_code, account, '(unclassified)');
 
+-- ── action : ledger action items mirrored to Notion (the folder-memory link) ─
+-- sync_actions.py upserts a Notion page per action item and reads its Status
+-- back here; the dashboard shows the Notion link + status. The ledger stays the
+-- RADAR — the work/thread/done lives in the Notion page.
+CREATE TABLE IF NOT EXISTS action (
+    action_key      TEXT PRIMARY KEY,   -- 'draw:<invoice>' | 'lien:<proj>:<bill>' | 'overbudget:<proj>' | ...
+    type            TEXT,               -- draw | lien | overbudget | underbilled
+    project_no      TEXT,
+    title           TEXT,
+    amount          NUMERIC,
+    status          TEXT,               -- Open | Working | Done  (mirrored FROM Notion)
+    notion_page_id  TEXT,
+    notion_url      TEXT,
+    synced_at       TEXT
+);
+
 -- ── v_wip_latest : each project joined to its most-recent snapshot ──────────
 -- The "one pane of glass" query. This is the thing currently rebuilt in Excel
 -- every month — here it is one definition, computed once.

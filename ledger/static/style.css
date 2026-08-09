@@ -174,6 +174,9 @@ tr.cost-sub .sub-name { color: var(--text-dim); }
 .draw-head { align-items: flex-start; }
 .draw-head .panel-sub { font-variant-numeric: tabular-nums; }
 .hint { margin: 4px 18px 14px; color: var(--text-dim); font-size: .88em; line-height: 1.5; }
+.notion-link { font-size: .82em; padding: 2px 10px; border-radius: 999px; text-decoration: none;
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text); white-space: nowrap; }
+.notion-link:hover { border-color: var(--accent); }
 
 /* ── Vendor type pill ──────────────────────────────────────────────────── */
 .vtype { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: .8em; white-space: nowrap;

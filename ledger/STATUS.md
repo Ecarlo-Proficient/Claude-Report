@@ -134,6 +134,22 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   - **RP is not draws** — the Draws rollup excludes RP (residential bills at completion/milestones, not
     formal draws): 337 → 49 draws (MFD/CP only). Owner ruling.
 
+- **Notion link-out — action items → Notion pages (owner: "folder memory like Notion").**
+  MVP wired end-to-end for **draws ready to turn in**. `shared/notion_client.py` (the clean
+  invoice-sync client, graduated to shared — invoice-sync keeps its tool-local copy on purpose);
+  `ledger/sync_actions.py` finds ready draws (funded + all paid + all waivers) and upserts a page in
+  the Notion **"Ledger Actions"** DB keyed by a stable Action Key, reads Status back → the local
+  `action` table (new). The dashboard shows a **📄 Notion · <status>** link on tracked draws; the
+  ledger stays the RADAR, the thread/notes/done live in the Notion page. `--dry-run` proves it
+  offline. `ACB_ACTIONS_DS_ID` in machine.env (gitignored). Ledger stays read-only; Notion writes
+  are scoped to the Actions DB.
+  - **ONE manual step for the automated path:** share the "Ledger Actions" DB with the Notion
+    integration ("Automation Integrator") — open the DB → ••• → Connections → add it — so
+    `sync_actions.py` (keychain token) can write unattended. Until then the 404 is expected.
+  - Proof page created via the connected workspace (CP585 Draw #4). **Demo data to clean up:** the
+    CP585 draw's 2 waivers were test-marked to make it "ready"; uncheck them (and delete/close the
+    demo Notion page) — they are not real.
+
 ## IN PROGRESS
 - (none)
 
