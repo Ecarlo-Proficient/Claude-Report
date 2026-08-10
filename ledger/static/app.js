@@ -236,6 +236,19 @@ function showError(msg) {
   $("#metaLine").textContent = "not loaded";
 }
 
+// Manual "Refresh" — re-reads the ledger DB and re-renders, WITH feedback so it's
+// obvious it did something (the silent 90s auto-refresh does the same in the
+// background). It does NOT re-pull QBO/Excel — that's a sync (the loaders); the
+// "Data freshness" strip flags when a sync is worth running.
+async function manualRefresh() {
+  const btn = $("#btnRefresh"); const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = "Refreshing…";
+  try { await load(true); }                 // load(true) = keep what you've expanded
+  finally { btn.disabled = false; btn.textContent = orig; }
+  const when = (meta.loaded_at || "").replace("T", " ");
+  toast(when ? `Refreshed · ledger loaded ${when}` : "Refreshed");
+}
+
 // ── Filters ───────────────────────────────────────────────────────────────
 function buildFilterOptions() {
   fillSelect("#fDivision", uniq(ALL.map(r => r.division)));
@@ -1409,7 +1422,7 @@ function init() {
   { const el = $("#btnClearDrawStage"); if (el) el.onclick = () => { activeDrawStage = null; renderDraws(); }; }
   { const el = $("#homeDivision"); if (el) el.addEventListener("input", renderHome); }
   $("#btnExport").onclick = exportCSV;
-  $("#btnRefresh").onclick = load;
+  $("#btnRefresh").onclick = manualRefresh;
   $("#btnClearRule").onclick = () => { activeRule = null; renderAttention(); renderProjects(); };
   $("#btnSettings").onclick = () => openPanel("#settings");
   $$(".tab").forEach(b => { b.onclick = () => setTab(b.dataset.tabbtn); });
