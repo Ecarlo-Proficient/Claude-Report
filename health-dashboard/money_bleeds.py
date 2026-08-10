@@ -63,6 +63,7 @@ from shared import qbo_api
 from shared import draws
 from shared.qbo_cache import QboCache
 from shared import rp_billing
+from shared import lien_clock
 
 # ────────────────────────── config / paths ──────────────────────────
 
@@ -135,22 +136,22 @@ def _parse_mfd_draw_name(name: str) -> Optional[Tuple[int, int, int]]:
 
 _SKIP_DIRS = {"#recycle", "@eadir", "completed jobs", "z - non active or bidding"}
 
-# Lien clock (Texas Prop. Code Ch. 53, first-tier subcontractor):
-#   commercial notice = 15th of the 3rd month after the work month
-#   residential       = 15th of the 2nd month
-NOTICE_MONTHS = {"MFD": 3, "CP": 3, "RP": 2}
-URGENT_DAYS = 15
-WATCH_DAYS = 45
+# Lien clock (Texas Prop. Code Ch. 53, first-tier subcontractor) — the dates
+# themselves live in shared/lien_clock.py now that the AR Aging tab needs the
+# same maths (repo rule 3: the moment a second tool needs it, it moves to
+# shared/). This module stays the reference for BEHAVIOUR; re-exported here so
+# the rest of the file reads unchanged.
+NOTICE_MONTHS = lien_clock.NOTICE_MONTHS
+URGENT_DAYS = lien_clock.URGENT_DAYS
+WATCH_DAYS = lien_clock.WATCH_DAYS
 
-_RETAINAGE_RE = re.compile(r"retainage|retention|retenci[oó]n", re.IGNORECASE)
+_RETAINAGE_RE = lien_clock.RETAINAGE_RE
 
 # Equipment leases / note payments invoiced to subs are NOT construction
 # income (the user 2026-07-16) — no lien rights ride on them. Matched on
 # line items + descriptions ('Other Charges:Equipment Lease', 'Note
 # Principal Payment', 'Interest fee', 'Pump #14', 'Tractor #179', …).
-_NON_CONSTRUCTION_RE = re.compile(
-    r"equipment lease|monthly equipment|note principal|principal payment"
-    r"|interest (charge|fee)|lease payment", re.IGNORECASE)
+_NON_CONSTRUCTION_RE = lien_clock.NON_CONSTRUCTION_RE
 _EQUIP_ITEM_RE = re.compile(
     r"^(pump|tractor|truck|dump truck|trailer|excavator|other charges)\b",
     re.IGNORECASE)
@@ -164,23 +165,9 @@ def _today() -> dt.date:
     return dt.date.today()
 
 
-def _add_months(year: int, month: int, n: int) -> Tuple[int, int]:
-    m = month - 1 + n
-    return year + m // 12, m % 12 + 1
-
-
-def _roll_back_weekend(d: dt.date) -> dt.date:
-    """Statute rule: deadlines roll BACKWARD to the prior business day,
-    never forward. (Holidays not modeled — weekend-only.)"""
-    while d.weekday() >= 5:          # 5=Sat, 6=Sun
-        d -= dt.timedelta(days=1)
-    return d
-
-
-def notice_deadline(work_year: int, work_month: int, division: str) -> dt.date:
-    n = NOTICE_MONTHS.get(division, NOTICE_MONTHS["RP"])   # unknown → shorter clock
-    y, m = _add_months(work_year, work_month, n)
-    return _roll_back_weekend(dt.date(y, m, 15))
+_add_months = lien_clock.add_months
+_roll_back_weekend = lien_clock.roll_back_weekend
+notice_deadline = lien_clock.notice_deadline
 
 
 def _division(customer_name: str) -> str:

@@ -1,5 +1,5 @@
 """
-aging_sheet.py — the "AR Aging" tab of Open_Invoices.xlsx.
+aging_sheet.py — the per-division aging tabs of Open_Invoices.xlsx.
 
 Why this exists (the user 2026-08-05):
     Notion is good for reading ONE invoice page. It is bad at the thing the
@@ -12,7 +12,13 @@ Why this exists (the user 2026-08-05):
 What this tab shows that QBO's own aging does NOT:
     1. **Notes** — the collections clerk's running note on each invoice
        (Notion `Quick Status`) plus the date they last touched it.
-    2. **Why the draw isn't funded yet** — for MFD and CP, the state of the
+    2. **The lien clock** — the `Lien` column (which replaced Days Past Due,
+       the user 2026-08-10) gives the date a Ch. 53 notice must be MAILED by.
+       Days-past-due was already legible from which bucket the money sits in;
+       the lien deadline is not, and it is the one that EXPIRES. Dates come from
+       `shared/lien_clock.py`, shared with money_bleeds so both tools can never
+       drift apart on a statutory date.
+    3. **Why the draw isn't funded yet** — for MFD and CP, the state of the
        PREVIOUS draw. The funding is a chain (the user 2026-08-05): the GC funds
        draw N, we pay draw N's vendor bills, those vendors issue unconditional
        waivers, and the GC needs the waivers before releasing draw N+1. So an
@@ -55,12 +61,19 @@ import draw_chain
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from shared import paths
+from shared import lien_clock
 
 
 log = logging.getLogger("automation_worker.aging_sheet")
 
-SHEET_TITLE = "AR Aging"
-RP_SHEET_TITLE = "RP Aging"
+# One tab per division (the user 2026-08-10 — "keep cp and mfd separated").
+# (sheet name, division, title, columns to omit) — RP drops the whole
+# previous-draw block because RP doesn't bill in draws.
+DIVISION_TABS = (
+    ("CP Aging", "CP", "CP AGING"),
+    ("MFD Aging", "MFD", "MFD AGING"),
+    ("RP Aging", "RP", "RP AGING"),
+)
 
 # Type sizes (the user 2026-08-05 — "make the font 12 to see it a bit bigger",
 # client rows 13). Client rows carry a point more because the sheet is read
@@ -111,14 +124,18 @@ NO_CHAIN_VERDICTS = (
 DRAW_DIVISIONS = ("MFD", "CP")
 
 # (header, width, number_format)
+# No Division column: each tab IS one division (the user 2026-08-10), so it
+# would repeat the tab name on every row.
 COLUMNS: List[Tuple[str, int, Optional[str]]] = [
     ("Client / Invoice", 34, None),
-    ("Division",          9, None),
     ("Project #",        13, None),
     ("Invoice #",        11, None),
     ("Date",             11, "mm/dd/yyyy"),
     ("Due Date",         11, "mm/dd/yyyy"),
-    ("Days Past Due",     9, '"+"0;-0;0'),
+    # Replaced Days Past Due (the user 2026-08-10). Days-past-due was already
+    # legible from the bucket the money sits in; the lien deadline is not, and
+    # it's the one that expires.
+    ("Lien",             22, None),
     ("Current",          14, '"$"#,##0.00'),
     ("1-30",             14, '"$"#,##0.00'),
     ("31-60",            14, '"$"#,##0.00'),
@@ -135,9 +152,9 @@ COLUMNS: List[Tuple[str, int, Optional[str]]] = [
 ]
 
 # 0-based positions used when writing rows (kept in sync with COLUMNS above).
-C_LABEL, C_DIV, C_PROJ, C_INV, C_DATE, C_DUE, C_DPD = range(7)
-C_CURRENT, C_1_30, C_31_60, C_61_90, C_90 = range(7, 12)
-C_TOTAL, C_PREV, C_VSTATUS, C_VBILLS, C_VAMT, C_THIS, C_NOTES, C_ACTION = range(12, 20)
+C_LABEL, C_PROJ, C_INV, C_DATE, C_DUE, C_LIEN = range(6)
+C_CURRENT, C_1_30, C_31_60, C_61_90, C_90 = range(6, 11)
+C_TOTAL, C_PREV, C_VSTATUS, C_VBILLS, C_VAMT, C_THIS, C_NOTES, C_ACTION = range(11, 19)
 
 BUCKET_COLS = (C_CURRENT, C_1_30, C_31_60, C_61_90, C_90)
 
@@ -189,6 +206,12 @@ _NA_COLOR = "808080"
 
 _BLOCKED_FILL = PatternFill("solid", fgColor="F8DDDA")  # the one row-level call to action
 _LINK_COLOR = "0563C1"                                  # Excel's own hyperlink blue
+
+# Lien deadlines are the only HARD expiry on this sheet — miss one and the right
+# is gone, not merely late. Past due gets the only reversed-out cell here.
+_LIEN_PAST_FILL = PatternFill("solid", fgColor="922B21")
+_LIEN_URGENT_FILL = PatternFill("solid", fgColor="F8DDDA")
+_LIEN_WATCH_FILL = PatternFill("solid", fgColor="FDF2E0")
 
 
 # ─────────────────────── aging ───────────────────────
@@ -613,14 +636,8 @@ def build_aging_sheet(
             vendor_bills += rec["vendor_bills"] or 0
             this_sum += rec["this_draw_amount"] or 0.0
 
-        # A parent row carries a Division so the Division filter keeps the whole
-        # group visible; clients that span divisions say so instead of picking one.
-        divisions = sorted({r["division"] for r in records if r["division"]})
-        division_label = divisions[0] if len(divisions) == 1 else "(mixed)"
-
         summary: List[Any] = [""] * len(COLUMNS)
         summary[C_LABEL] = parent
-        summary[C_DIV] = division_label
         summary[C_INV] = f"{len(records)} inv"
         for logical, amount in zip(BUCKET_COLS, buckets):
             summary[logical] = amount or None
@@ -646,12 +663,11 @@ def build_aging_sheet(
             # column doesn't wrap — collapse to single-spaced text.
             label = " ".join((rec["memo"] or rec["project_num"] or "").split())
             detail[C_LABEL] = f"    {label}"[:120]
-            detail[C_DIV] = rec["division"]
             detail[C_PROJ] = rec["project_num"]
             detail[C_INV] = rec["invoice_num"]
             detail[C_DATE] = rec["invoice_date"]
             detail[C_DUE] = rec["due_date"]
-            detail[C_DPD] = rec["days_past_due"] if rec["days_past_due"] is not None else ""
+            detail[C_LIEN] = rec["lien"].label
             detail[BUCKET_COLS[bucket_index(rec["days_past_due"])]] = rec["open_balance"]
             detail[C_TOTAL] = rec["open_balance"]
             detail[C_PREV] = rec["prev_draw"]
@@ -679,12 +695,26 @@ def build_aging_sheet(
                 row=row_num, column=grid.col(BUCKET_COLS[slot])
             ).fill = BUCKET_CELL_FILLS[slot]
 
-            # >30 days overdue reads as red, same cue as the Open Invoices tab.
-            days = rec["days_past_due"]
-            if isinstance(days, int) and days > 30:
-                dpd = grid.cell(ws, row_num, C_DPD)
-                if dpd is not None:
-                    dpd.font = Font(bold=True, color="C00000", size=BODY_PT)
+            # The lien cell carries the only hard expiry on this sheet, so it
+            # gets the strongest cue: a missed or imminent notice deadline is a
+            # right that disappears, not just money that is late.
+            lien_cell = grid.cell(ws, row_num, C_LIEN)
+            if lien_cell is not None:
+                state = rec["lien"].state
+                if state == lien_clock.STATE_PAST:
+                    lien_cell.font = Font(bold=True, color="FFFFFF", size=BODY_PT)
+                    lien_cell.fill = _LIEN_PAST_FILL
+                elif state == lien_clock.STATE_URGENT:
+                    lien_cell.font = Font(bold=True, color="922B21", size=BODY_PT)
+                    lien_cell.fill = _LIEN_URGENT_FILL
+                elif state == lien_clock.STATE_WATCH:
+                    lien_cell.font = Font(color="8A5A00", size=BODY_PT)
+                    lien_cell.fill = _LIEN_WATCH_FILL
+                elif state == lien_clock.STATE_SENT:
+                    lien_cell.font = Font(color="2E7D32", size=BODY_PT)
+                elif state == lien_clock.STATE_RETAINAGE:
+                    lien_cell.font = Font(color=_NA_COLOR, italic=True, size=BODY_PT)
+                    lien_cell.fill = _NA_FILL
 
             if shows_vendor_block:
                 verdict = rec["vendor_status"]
@@ -719,7 +749,20 @@ def build_aging_sheet(
         cell.font = Font(size=BODY_PT)
         cell.alignment = Alignment(horizontal="center")
 
-    notes: List[str] = ["Aged by due date. Invoice # links to the invoice in QBO."]
+    lien_legend = grid.cell(ws, legend_row, C_LIEN)
+    if lien_legend is not None:
+        lien_legend.value = "PAST DUE"
+        lien_legend.fill = _LIEN_PAST_FILL
+        lien_legend.font = Font(bold=True, color="FFFFFF", size=BODY_PT)
+        lien_legend.alignment = Alignment(horizontal="center")
+
+    notes: List[str] = [
+        "Aged by due date. Invoice # links to the invoice in QBO.",
+        "Lien = the date a notice must be MAILED by (Tex. Prop. Code Ch. 53, first-tier sub): "
+        "CP/MFD the 15th of the 3rd month after the work month, RP the 15th of the 2nd; "
+        "rolled BACK off weekends. Work month = invoice month. Retainage runs its own track and is not dated here.",
+        "The lien column is a deadline watchlist, not legal advice — confirm project type, parcel and owning entity before sending anything.",
+    ]
     if shows_vendor_block:
         blocked_cell = grid.cell(ws, legend_row, C_VSTATUS)
         blocked_cell.value = PREV_BLOCKED

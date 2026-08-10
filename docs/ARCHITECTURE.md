@@ -41,6 +41,7 @@ shared/                the ONLY importable common code
 ├─ draws.py            CP draw (AIA G702/G703) discovery + parsing (wip ↔ health)
 ├─ takeoff_etc.py      blank ETC → takeoff cost sheet (rp_wip_reader ↔ schedule preview)
 ├─ pnl_paths.py        resolve a project's P&L workbook + "last pulled" mtime (ledger ↔ project-pnl)
+├─ lien_clock.py       Texas Ch. 53 notice deadlines (money_bleeds ↔ invoice-sync aging)
 └─ setup_qbo.py        vault admin CLI (--status/--test/--rotate/--purge)
 
 invoice-sync/          QBO → Notion AR sync + Teams cards   (was automation-worker/)
@@ -86,9 +87,9 @@ flowchart LR
     MFD[("Notion\nMFD Invoice DB")]:::out
     RES[("Notion\nRes/Com Invoice DB")]:::out
     TEAMS[("Teams\nMFD paid / short-pay cards")]:::out
-    XL["export_invoices_xlsx.py\n+ aging_sheet.py\n+ draw_chain.py"]:::tool
+    XL["export_invoices_xlsx.py\n+ aging_sheet.py\n+ draw_chain.py\n+ shared/lien_clock.py"]:::tool
     BTX[("Bill Tracker.xlsx\nOneDrive · READ-ONLY")]:::src
-    OD[("OneDrive\nOpen_Invoices.xlsx\ntab 1 Open Invoices\ntab 2 AR Aging\ntab 3 RP Aging")]:::out
+    OD[("OneDrive\nOpen_Invoices.xlsx\nOpen Invoices\nCP · MFD · RP Aging")]:::out
 
     QBO --> SYNC
     SYNC -- "route by project-# prefix" --> MFD
@@ -103,11 +104,13 @@ Support cast (same folder): `doctor.py` diagnostics · `verify_invoices.py` /
 `verify_excel_export.py` read-only audits · `sync_view.py` visual runner ·
 `setup_keychain.py` Notion/Teams secrets.
 
-**The AR Aging tab** (`aging_sheet.py`, added 2026-08-05) is the owner's
-at-a-glance collections view: QBO-style Current / 1-30 / 31-60 / 61-90 / 90+
-buckets aged by due date, all three divisions in one filterable table, invoices
-grouped under the parent client and collapsed by default, the collections
-clerk's Notion `Quick Status` note carried across, and litigation invoices
+**The aging tabs** (`aging_sheet.py`, added 2026-08-05; split per division
+2026-08-10) are the owner's at-a-glance collections view: QBO-style Current /
+1-30 / 31-60 / 61-90 / 90+ buckets aged by due date, **one tab per division
+(`CP Aging` · `MFD Aging` · `RP Aging`, no Division column)**, invoices grouped
+under the parent client and collapsed by default, the invoice number linked into
+QBO, the collections clerk's Notion `Quick Status` note carried across, a
+**`Lien` column** giving the Ch. 53 notice deadline, and litigation invoices
 excluded. It **reads** `Bill Tracker.xlsx` (the AP tool's output file, never its
 code — repo rule 3) for what is still owed to vendors.
 

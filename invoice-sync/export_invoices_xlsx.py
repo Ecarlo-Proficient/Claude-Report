@@ -14,14 +14,13 @@ Why this exists:
   invoices total?" — for that, Excel is the right tool. Notion is still the
   source of truth and the working surface for all human notes / status.
 
-Three tabs:
+Tabs:
   1. "Open Invoices" — the flat row-per-invoice list (the original sheet).
-  2. "AR Aging"      — QBO-style aging buckets rolled up by parent client, with
-                       the collections clerk's notes and the MFD/CP previous-
-                       draw block. See aging_sheet.py for the why.
-  3. "RP Aging"      — the same view, RP only, with the previous-draw block
-                       dropped: RP doesn't bill in draws, so on the combined tab
-                       those columns are 36 rows of grey "n/a". (the user)
+  2. "CP Aging" / "MFD Aging" / "RP Aging" — QBO-style aging buckets rolled up
+     by parent client, one tab per division (the user 2026-08-10), each with the
+     lien-notice clock and the collections clerk's notes. CP and MFD also carry
+     the previous-draw block; RP drops it (RP doesn't bill in draws). There is
+     no Division column — the tab IS the division. See aging_sheet.py.
 
 Run via run_invoice_sync.py after the main sync completes. Errors here
 don't affect the QBO→Notion sync (caught and logged separately).
@@ -30,6 +29,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+from collections import defaultdict
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -41,8 +41,8 @@ from openpyxl.utils import get_column_letter
 from notion_client import NotionClient
 from draw_chain import DrawChains
 from aging_sheet import (
-    SHEET_TITLE as AGING_SHEET_TITLE,
-    RP_SHEET_TITLE,
+    DIVISION_TABS,
+    DRAW_DIVISIONS,
     RP_DROP_COLUMNS,
     load_vendor_bill_map,
     vendor_cells,
@@ -51,6 +51,7 @@ from aging_sheet import (
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from shared import paths
+from shared import lien_clock
 
 
 log = logging.getLogger("automation_worker.export_xlsx")
@@ -245,6 +246,14 @@ def _aging_record(
         # "Quick Status" is where the collections clerk writes what's actually
         # happening on the invoice ("1st reminder", "Lien Notice Sent",
         # "Waiting vendor unconditional"). That's the Notes the owner wants.
+        # Texas lien-notice clock, shared with money_bleeds via shared/lien_clock.
+        # Work month = invoice month (settled 2026-07-16). Retainage and an
+        # already-sent notice are read off the memo / clerk's note.
+        "lien": lien_clock.lien_state(
+            division, _date_value(props.get("Date")), today,
+            memo=_text(props.get("Memo")),
+            note=_text(props.get("Quick Status")),
+        ),
         "notes": _text(props.get("Quick Status")),
         "last_action": _date_value(props.get("Last Action Date")),
         # Deep link to the invoice in QBO, written by the sync. The aging tab
@@ -415,8 +424,7 @@ def export_open_invoices_xlsx(
     chains.finalize()
 
     aging_records: List[dict] = []
-    litigation_excluded = 0
-    rp_litigation_excluded = 0
+    litigation_excluded: Dict[str, int] = defaultdict(int)
     for pages, label, cache in (
         (res_com_pages, "RP/CP", res_com_titles),
         (mfd_pages, "MFD", mfd_titles),
@@ -425,40 +433,35 @@ def export_open_invoices_xlsx(
             # Litigation invoices are legal work, not collections work — leaving
             # them in would inflate every aging bucket the owner reads. (the user)
             if _is_litigation(page):
-                litigation_excluded += 1
-                if _select_name((page.get("properties") or {}).get("Division")) == "RP":
-                    rp_litigation_excluded += 1
+                litigation_excluded[
+                    _select_name((page.get("properties") or {}).get("Division")) or label
+                ] += 1
                 continue
             aging_records.append(
                 _aging_record(page, label, cache, today, vendor_map, chains)
             )
 
-    build_aging_sheet(
-        wb.create_sheet(AGING_SHEET_TITLE),
-        aging_records,
-        today=today,
-        litigation_excluded=litigation_excluded,
-        vendor_as_of=vendor_as_of,
-    )
-
-    # ── Tab 3: RP Aging ──
-    # RP doesn't bill in draws, so the whole previous-draw block is dead weight
-    # there — 34 rows of grey "n/a" on the combined tab. Same builder, RP rows
-    # only, those columns dropped. (the user 2026-08-05)
-    rp_records = [r for r in aging_records if r["division"] == "RP"]
-    build_aging_sheet(
-        wb.create_sheet(RP_SHEET_TITLE),
-        rp_records,
-        today=today,
-        litigation_excluded=rp_litigation_excluded,
-        vendor_as_of=vendor_as_of,
-        drop_columns=RP_DROP_COLUMNS,
-        title="RP AGING",
-        scope_note="RP only",
-    )
+    # One tab per division (the user 2026-08-10 — "keep cp and mfd separated").
+    # There is no Division column any more: the tab IS the division, so a column
+    # repeating it on every row earns nothing.
+    counts = []
+    for sheet_name, division, sheet_title in DIVISION_TABS:
+        rows = [r for r in aging_records if r["division"] == division]
+        build_aging_sheet(
+            wb.create_sheet(sheet_name),
+            rows,
+            today=today,
+            litigation_excluded=litigation_excluded.get(division, 0),
+            vendor_as_of=vendor_as_of,
+            # RP doesn't bill in draws, so the previous-draw block is dropped
+            # there rather than rendered as a column of grey "n/a".
+            drop_columns=RP_DROP_COLUMNS if division not in DRAW_DIVISIONS else (),
+            title=sheet_title,
+        )
+        counts.append(f"{sheet_name} {len(rows)}")
     log.info(
-        "AR Aging tab: %d invoices (%d litigation excluded) · RP Aging tab: %d",
-        len(aging_records), litigation_excluded, len(rp_records),
+        "Aging tabs: %s (%d litigation excluded)",
+        " · ".join(counts), sum(litigation_excluded.values()),
     )
 
     # Write

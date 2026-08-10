@@ -13,9 +13,18 @@ mirror. Update this in the SAME commit as any change to this tool.
 - **Excel mirror** — `export_invoices_xlsx.py` writes `Open_Invoices.xlsx` to
   OneDrive `Collections/`. Skips cleanly when Excel has the file open
   (`~$` lock check) so AutoSave can't clobber the update.
-- **AR Aging tab (2026-08-05)** — second sheet in the same workbook, built by
+- **Aging tabs (2026-08-05, split per division 2026-08-10)** — built by
   `aging_sheet.py`. The owner's ask: Notion reads fine one page at a time but
   can't be scanned as a hundred rows, so the aging view lives in Excel.
+  - **One tab per division: `CP Aging`, `MFD Aging`, `RP Aging`** (the user
+    2026-08-10 — "keep cp and mfd separated"). **No Division column** — the tab
+    is the division. The combined `AR Aging` tab is gone with it.
+  - **`Lien` column replaced `Days Past Due`** (the user 2026-08-10). Days past
+    due was already legible from which bucket the money sits in; the lien
+    deadline is not, and it is the one that EXPIRES. Shows the date a Ch. 53
+    notice must be MAILED by, with urgency banding: `PAST DUE` (reversed white
+    on dark red), `DUE <date> · Nd` (≤15 days), `<date> · Nd` (≤45), plain date
+    otherwise, `Notice sent`, and `Retainage — own track`.
   - Buckets Current / 1-30 / 31-60 / 61-90 / 90+, aged **by due date** (same
     rule `invoice_sync.py` uses for the Notion `Aging Bucket` select, and the
     same basis as QBO's AR aging).
@@ -76,6 +85,30 @@ mirror. Update this in the SAME commit as any change to this tool.
 - Nothing queued.
 
 ## OPEN ISSUES
+
+- **THE LIEN COLUMN IS A WATCHLIST, NOT LEGAL ADVICE — and its weakest link is
+  the work month.** Every Ch. 53 deadline runs from the month the labor was
+  furnished. The clock here uses the **invoice month**, which is the owner's
+  settled ruling (2026-07-16: RP invoices go out the day the job finishes,
+  draws bill their own work month; "never re-add a conservative offset" after
+  the first build produced month-early false alarms). **But MFD/CP draw memos
+  routinely state a period that starts in the PRIOR month** — e.g. MFD177 inv
+  34318, "May Draw 2026 (Period: 04/02/2026 - 05/01/2026)". Read as April work,
+  its notice deadline was Jul 15, not Aug 14. The stated period is sitting right
+  there in the memo and is not currently used. Raised with the owner 2026-08-10;
+  the ruling stands until they say otherwise.
+- **Retainage and lease exclusions are memo-text only here.** `money_bleeds`
+  detects both off QBO line items; this tab only has the Notion memo and the
+  clerk's note, so a retainage invoice whose memo doesn't say "retainage" gets a
+  monthly deadline it may not be governed by (one live row reads "Retaiange").
+  Equipment-lease/note invoices to subs — excluded from the clock by the
+  2026-07-16 ruling — are **not detectable at all** from memo text; none are in
+  the current open set, but that is luck, not a guarantee.
+- **"Notice sent" is inferred from the clerk's free-text `Quick Status`.** The
+  pattern is deliberately narrow (it must name the notice/affidavit, so
+  "waiting vendor unconditional" doesn't count), but the real record is the
+  Notion `Lien Tracker` (Admin) DB, which nothing feeds automatically. Wiring
+  that in would replace a heuristic with a fact.
 
 - **RUN ORDER: AP BEFORE AR (2026-08-05).** The aging tab's vendor columns read
   `Bill Tracker.xlsx`, so `sync-ap` must finish before `sync-ar` or those
