@@ -230,8 +230,8 @@ def _freshness(con) -> dict:
     wm = paths.get_path("WIP_EXCEL_PATH", ob / "Company Files - WIP Report/WIP - MASTER new.xlsx")
     out["sources"]["sync-ap"] = mtime(bt)
     out["sources"]["WIP master"] = mtime(wm)
-    for cand in (ob / "Automations-/Open_Invoices.xlsx", ob / "Open_Invoices.xlsx",
-                 ob / "Automations-/Collections/Open_Invoices.xlsx"):
+    for cand in (ob / "Collections/Open_Invoices.xlsx", ob / "Automations-/Open_Invoices.xlsx",
+                 ob / "Open_Invoices.xlsx", ob / "Automations-/Collections/Open_Invoices.xlsx"):
         m = mtime(cand)
         if m:
             out["sources"]["sync-ar"] = m

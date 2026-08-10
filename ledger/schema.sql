@@ -87,10 +87,18 @@ CREATE TABLE IF NOT EXISTS cost_line (
 -- ── billing_event : AR invoices / draws (append-only, idempotent) ───────────
 CREATE TABLE IF NOT EXISTS billing_event (
     qbo_txn_id      TEXT PRIMARY KEY,            -- QBO Invoice Id
-    project_no      TEXT NOT NULL REFERENCES project(project_no),
-    amount          NUMERIC NOT NULL,            -- gross billed
-    txn_date        TEXT,
-    draw_period     TEXT                         -- from PrivateNote (the QBO custom field is unreachable)
+    doc_number      TEXT,                        -- Invoice # (the draw's invoice_no — join key to ap_bill_line)
+    project_no      TEXT,                        -- from CustomerRef.name (soft link; AR invoices may be off-WIP)
+    division        TEXT,
+    customer        TEXT,                        -- the GC / client billed
+    memo            TEXT,                        -- invoice memo (the draw memo)
+    amount          NUMERIC,                     -- TotalAmt — gross billed = the NET the GC pays (money IN)
+    balance         NUMERIC,                     -- open balance (0 = the GC has paid this draw)
+    txn_date        TEXT,                        -- invoice date
+    status          TEXT,                        -- Paid | Open (derived from balance)
+    draw_period     TEXT,                        -- from PrivateNote (the QBO custom field is unreachable)
+    source          TEXT NOT NULL DEFAULT 'qbo_invoice',
+    loaded_at       TEXT NOT NULL
 );
 
 

@@ -47,7 +47,7 @@ invoice-sync/          QBO → Notion AR sync + Teams cards   (was automation-wo
 bill-tracker/          AP bills (FULL pull incl. subs) → Excel tracker + QBO Audit sheet (6 checks) + job_coding_audit drill
 statement-reconciler/  vendor statement PDFs ↔ QBO open bills
 wip/                   ALL WIP tooling: wip_writer.py (shared engine) + CP/RP readers + close scripts
-ledger/                canonical project DB: schema.sql spine + loaders (WIP · Bill Tracker · costs) + dashboard
+ledger/                canonical project DB: schema.sql spine + loaders (WIP · Bill Tracker · costs · AR invoices · customers) + dashboard
 project-pnl/           per-project P&L workbooks → OneDrive
 debt-schedule/         equipment debt workbook + loan_sync (writes beside itself)
 health-dashboard/      local company-health xlsx (private, chmod 600)
@@ -364,6 +364,15 @@ uses, moved to `shared/` so the two can't drift). Subs are included, and it **re
 `wip_snapshot.costs_to_date` per project. `--selftest` proves the whole pipeline offline (no QBO);
 a real load needs one Touch ID. Scoped full-replace by `source='qbo'` (idempotent, drops deleted
 txns). This is what Bill Tracker couldn't be — the complete, cost-code-keyed cost ledger.
+
+**AR invoices — the money IN (`load_invoices.py` → `billing_event`, built; awaiting the first live
+pull).** Pulls every QBO Invoice (the draws the GC pays YOU) and writes one `billing_event` per
+invoice — project from `CustomerRef`, and crucially the **Invoice # (DocNumber)**, which is the same
+number `ap_bill_line.invoice_no` carries, so the Draws view can put **billed-to-GC (in)** next to
+**paid-to-vendors (out)** on every draw. `TotalAmt` = the net billed; `Balance` 0 ⇒ the GC paid it.
+Open_Invoices.xlsx has only the still-open invoices (most draws are already GC-paid), so this needs
+QBO. Read-only against QBO; scoped full-replace by `source='qbo_invoice'`; `--selftest` proves the
+parse + the draw↔invoice join offline; a real load needs one Touch ID.
 
 **CRM / sales pipeline (`load_customers.py` → `customer` + `sales_touch`).** The pre-project spine:
 the ledger owns the client/lead master too, not just the job. Reads the Notion "Customer List" data

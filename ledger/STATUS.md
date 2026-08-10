@@ -273,6 +273,22 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   - **`% complete` bar** is now full-width (`.pct-bar`, min 130px) with a **visible track**, so the fill
     level is judgeable at a glance; over-100% caps full + red (163.1% reads clearly). Verified live.
 
+- **AR loader — the money IN (`load_invoices.py` → `billing_event`, built; awaiting first live pull).**
+  Owner wants the Draws view to show what the GC pays HIM (in) next to what he pays vendors (out).
+  That AR $ wasn't in the ledger (`billing_event` was empty; Open_Invoices.xlsx has only the still-open
+  invoices, and **31 of 49 board draws are already GC-paid** → amount only in QBO). New `load_invoices.py`
+  pulls every QBO Invoice → `billing_event`, keyed by **Invoice # (DocNumber)** = `ap_bill_line.invoice_no`,
+  so the draw ↔ invoice join is exact. `billing_event` schema fleshed out (doc_number, customer, memo,
+  amount=TotalAmt, balance, status Paid/Open, division, source, loaded_at); empty-table migration is a
+  safe drop+recreate. Read-only on QBO; scoped full-replace by `source='qbo_invoice'`; `--dry-run` shows
+  draw coverage; **`--selftest` proves parse + Paid/Open + the draw↔invoice join OFFLINE** (passes).
+  Also fixed the freshness **sync-ar path** (the file is `Collections/Open_Invoices.xlsx`, not the paths
+  it checked → "not found").
+  - **NEXT (owner picked "AR first, then the table"):** owner runs `python3 ledger/load_invoices.py`
+    once (Touch ID) to populate; then the **Draws tab redesign** — a table (Project # · Draw memo · net
+    amount(in) · invoice # · date · paid-to-vendors(out)), **green when fully done** (paid + all waivers),
+    click a draw → its bills collapse under it showing what's paid. `_fetch_draws` joins `billing_event`.
+
 ## IN PROGRESS
 - (none)
 
@@ -281,7 +297,6 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   likely a base/-FTW split or a stale WIP cost — owner review; keep dollar specifics out of the repo.
 - `budget_line` from the takeoff/ETC extractor by cost code (`shared/takeoff_etc.py` is project-total
   today — needs per-code) → enables budget-vs-actual from the spine.
-- `billing_event` from `invoice-sync` (draw period from PrivateNote).
 - Postgres deployment decision (Synology container vs. small cloud box) — schema is ready either way.
 - Optional: a read-only dashboard over `v_wip_latest` (Phase 3) — DB first, UI later.
 
