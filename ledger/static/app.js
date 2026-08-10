@@ -226,8 +226,8 @@ async function load(isAuto) {
   }
   meta = data.meta || {};
   $("#metaLine").textContent =
-    `${meta.project_count} projects · report ${meta.report_date || "—"}` +
-    (meta.loaded_at ? ` · loaded ${meta.loaded_at}` : "");
+    `${meta.project_count} projects · report ${meta.report_date ? fmtDate(meta.report_date) : "—"}` +
+    (meta.loaded_at ? ` · loaded ${fmtDate(meta.loaded_at, true)}` : "");
   buildFilterOptions();
   render();
 }
@@ -245,8 +245,7 @@ async function manualRefresh() {
   btn.disabled = true; btn.textContent = "Refreshing…";
   try { await load(true); }                 // load(true) = keep what you've expanded
   finally { btn.disabled = false; btn.textContent = orig; }
-  const when = (meta.loaded_at || "").replace("T", " ");
-  toast(when ? `Refreshed · ledger loaded ${when}` : "Refreshed");
+  toast(meta.loaded_at ? `Refreshed · ledger loaded ${fmtDate(meta.loaded_at, true)}` : "Refreshed");
 }
 
 // ── Filters ───────────────────────────────────────────────────────────────
@@ -325,6 +324,24 @@ function timeAgo(iso) {
   return Math.floor(hrs / 24) + "d ago";
 }
 
+// The owner's date format — NEVER year-first. Day-of-week, abbreviated month, then
+// day and year as digits (month-day-year): "Mon, Aug 10, 2026" (+ 12h time if asked).
+const _DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const _MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function fmtDate(v, withTime) {
+  if (!v) return "—";
+  const m = String(v).trim().match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?/);
+  if (!m) return String(v);                      // not an ISO date → leave as-is
+  const [, Y, Mo, D, H, Mi] = m;
+  const dt = new Date(+Y, +Mo - 1, +D);          // local — avoids the UTC off-by-one
+  let out = `${_DOW[dt.getDay()]}, ${_MON[+Mo - 1]} ${+D}, ${Y}`;
+  if (withTime && H != null) {
+    let hr = +H; const ap = hr >= 12 ? "PM" : "AM"; hr = hr % 12 || 12;
+    out += ` · ${hr}:${Mi} ${ap}`;
+  }
+  return out;
+}
+
 // Hours elapsed since `thenMs`, counting only Mon–Fri (weekends don't age the
 // data — nobody syncs on the weekend, so a Friday load isn't "stale" on Monday).
 // Steps day-by-day, adding only weekday slices. Used for the sync recommendation.
@@ -364,7 +381,7 @@ function renderHome() {
     if (stale) { el.classList.add("stale"); needSync++; }
     el.innerHTML = `<div class="f-label"></div><div class="f-when"></div><div class="f-ago"></div>`;
     el.querySelector(".f-label").textContent = label;
-    el.querySelector(".f-when").textContent = when ? when.replace("T", " ") : "—";
+    el.querySelector(".f-when").textContent = fmtDate(when, true);
     el.querySelector(".f-ago").textContent = timeAgo(when);
     if (stale) {
       const b = document.createElement("div"); b.className = "sync-rec"; b.textContent = "⟳ Sync recommended";
@@ -508,8 +525,8 @@ function renderDraws() {
         tr.appendChild(leftText(b.vendor || "—"));
         tr.appendChild(leftText(b.bill_ref || "—"));
         const av = document.createElement("td"); av.appendChild(moneyCell(b.amount)); tr.appendChild(av);
-        tr.appendChild(leftText(b.pay_date ? "✓ " + b.pay_date : "—"));
-        tr.appendChild(leftText(b.gc_paid ? "✓ " + b.gc_paid : "—"));
+        tr.appendChild(leftText(b.pay_date ? "✓ " + fmtDate(b.pay_date) : "—"));
+        tr.appendChild(leftText(b.gc_paid ? "✓ " + fmtDate(b.gc_paid) : "—"));
         const wtd = document.createElement("td"); wtd.className = "left";
         const lab = document.createElement("label"); lab.className = "chk";
         const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = !!b.waiver;
@@ -1136,7 +1153,7 @@ function cellFor(col, value) {
 }
 function pctBar(col, value) {
   const wrap = document.createElement("span");
-  wrap.className = "cell bar";
+  wrap.className = "cell bar pct-bar";
   const n = Number(value);
   const has = value !== null && value !== "" && !Number.isNaN(n);
   const fill = document.createElement("span");
@@ -1190,7 +1207,7 @@ function buildPnlGroup(proj) {
   const refresh = () => fetch(`/api/pnl?proj=${encodeURIComponent(proj)}`).then(r => r.json()).then(d => {
     if (d.error) { dv.textContent = "—"; return; }
     if (d.exists) {
-      dv.textContent = `${timeAgo(d.mtime)} · ${(d.mtime || "").replace("T", " ")}`;
+      dv.textContent = `${timeAgo(d.mtime)} · ${fmtDate(d.mtime, true)}`;
       openBtn.disabled = false;
       openBtn.onclick = () => fetch(`/api/pnl/open?proj=${encodeURIComponent(proj)}`, { method: "POST" })
         .then(r => r.json()).then(x => toast(x.error ? x.error : "Opening P&L…"));
@@ -1240,7 +1257,7 @@ function openDetail(r) {
       const row = document.createElement("div"); row.className = "drow";
       const dk = document.createElement("span"); dk.className = "dk"; dk.textContent = label;
       const dv = document.createElement("span"); dv.className = "dv";
-      dv.textContent = fmt({ type }, r[k]);
+      dv.textContent = k === "report_date" ? fmtDate(r[k]) : fmt({ type }, r[k]);
       dv.title = "Click to copy";
       dv.onclick = () => copy(String(raw({ type }, r[k])));
       row.appendChild(dk); row.appendChild(dv); g.appendChild(row);
@@ -1324,7 +1341,7 @@ function detailAsText() {
     const present = fields.filter(([k]) => r[k] !== null && r[k] !== undefined && r[k] !== "");
     if (!present.length) continue;
     lines.push("", title.toUpperCase());
-    for (const [k, label, type] of present) lines.push(`  ${label}: ${fmt({ type }, r[k])}`);
+    for (const [k, label, type] of present) lines.push(`  ${label}: ${k === "report_date" ? fmtDate(r[k]) : fmt({ type }, r[k])}`);
   }
   if (r.notes) lines.push("", "NOTES", "  " + r.notes);
   return lines.join("\n");

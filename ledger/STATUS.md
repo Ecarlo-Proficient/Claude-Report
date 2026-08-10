@@ -261,6 +261,18 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   `renderHome`, the waiver-toggle recompute) — display-only. Front-end only; verified live (Pay vendors
   → 49→15, active highlight, clearer pills, no console errors). New `kpi-click` CSS.
 
+- **Owner's date format everywhere + Refresh feedback + a judgeable % bar (owner QoL).**
+  - **Dates NEVER year-first** (binding owner preference): new `fmtDate(v, withTime)` renders every
+    displayed date as **weekday, abbr-month day, year** — "Mon, Aug 10, 2026" (+ 12h time) — applied to
+    the meta line (report/loaded), Data-freshness cards, P&L "last pulled", detail report_date, and the
+    draw pay/GC-funded cells. Parses ISO components into a LOCAL date (no `new Date("YYYY-MM-DD")` UTC
+    off-by-one). ISO stays only in filenames/keys. (Memory: dates-never-year-first.)
+  - **Refresh** now gives feedback (button → "Refreshing…", then a toast "Refreshed · ledger loaded
+    <date>") + honest tooltip — it re-reads the ledger instantly; it does NOT re-pull QBO (that's a
+    sync). Fixed the wiring (onclick had passed the MouseEvent as `isAuto`).
+  - **`% complete` bar** is now full-width (`.pct-bar`, min 130px) with a **visible track**, so the fill
+    level is judgeable at a glance; over-100% caps full + red (163.1% reads clearly). Verified live.
+
 ## IN PROGRESS
 - (none)
 

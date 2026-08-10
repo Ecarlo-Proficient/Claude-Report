@@ -235,6 +235,13 @@ tr.lien-row.u-info > td:first-child { border-left-color: var(--text-dim); }
   background: color-mix(in srgb, var(--accent) 30%, transparent); z-index: 0; }
 .bar .bar-fill.over { background: color-mix(in srgb, var(--neg) 32%, transparent); }
 .bar .bar-txt { position: relative; z-index: 1; padding: 0 4px; }
+/* % complete: full-width bar with a visible track, so the fill level (and how far
+   over 100%) is easy to judge at a glance. */
+.pct-bar { display: block; width: 100%; min-width: 130px; text-align: right;
+  border-radius: 4px; background: color-mix(in srgb, var(--text-dim) 16%, transparent); }
+.pct-bar .bar-fill { border-radius: 4px; background: color-mix(in srgb, var(--pos) 42%, transparent); }
+.pct-bar .bar-fill.over { background: color-mix(in srgb, var(--neg) 42%, transparent); }
+.pct-bar .bar-txt { padding: 0 6px; }
 
 /* ── Filters ───────────────────────────────────────────────────────────── */
 .filters { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 18px 14px; align-items: center; }
