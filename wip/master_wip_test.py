@@ -165,6 +165,13 @@ def main() -> int:
                          "'RP WIP' workbook instead of the General List "
                          "pipeline (the user 2026-07-29); CP lines in it are "
                          "excluded, billed/costs still refresh from QBO")
+    ap.add_argument("--audit", nargs="?", const="", metavar="XLSX",
+                    help="INSPECT-ONLY (the user 2026-08-07): run the full "
+                         "pipeline and write a pre-write audit workbook — every "
+                         "job's Δ vs the current report (ADDED/REMOVED/SAME) + "
+                         "reason, and CONTRACT/ETC with their source cell — then "
+                         "STOP without touching the WIP report. Optional path; "
+                         "defaults to ~/Downloads/WIP Audit.xlsx.")
     args = ap.parse_args()
 
     print("\n  UNIFIED WIP — MFD → CP → RP → 'Test' tab")
@@ -305,6 +312,35 @@ def main() -> int:
         if ht in ("Tract", "Custom") and label.startswith("Residential — "):
             label = label.replace("Residential — ", f"Residential — {ht} — ", 1)
         row.section = label
+
+    # ── --audit: inspect-before-write. Full pipeline already ran (QBO, ETC
+    #    fallback, classify); now emit the provenance/add-remove workbook and
+    #    STOP — the WIP report is not touched (the user 2026-08-07). ──
+    if args.audit is not None:
+        import wip_audit
+        from openpyxl import load_workbook
+        prior = {}
+        try:
+            _wb0 = load_workbook(W.WIP_EXCEL_PATH, data_only=True)
+            if "Test-Master" in _wb0.sheetnames:
+                _ws0 = _wb0["Test-Master"]
+                _hdr0 = next((r for r in range(1, 16) for c in range(1, 40)
+                              if _ws0.cell(r, c).value == "PROJECT #"), None)
+                prior = W._snapshot_tab(_ws0, _hdr0)
+            _wb0.close()
+        except FileNotFoundError:
+            pass
+        out = (Path(args.audit).expanduser() if args.audit
+               else Path.home() / "Downloads" / "WIP Audit.xlsx")
+        path = wip_audit.write_audit(bank_rows, prior, all_rows,
+                                     _BANK_EXCLUDE_JOBS, out, tab_name="Test-Master")
+        added = sum(1 for r in bank_rows if r.project_num.upper() not in prior)
+        removed = sum(1 for p in prior if p not in
+                      {r.project_num.upper() for r in bank_rows})
+        print(f"\n  ✓ AUDIT written (WIP report NOT touched) → {path}")
+        print(f"    {added} added · {removed} removed · "
+              f"{len(bank_rows)-added} unchanged — open it to inspect before writing")
+        return 0
 
     import datetime as dt
     try:

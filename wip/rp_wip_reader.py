@@ -302,6 +302,12 @@ def read_rp_from_file(xlsx_path: Path):
             _money(ws.cell(r, C["billed"]).value),
             _money(ws.cell(r, C["costs"]).value))
         row.client = str(ws.cell(r, C["builder"]).value or "").strip() or None
+        # Provenance for the --audit report (the user 2026-08-07: "I need to
+        # inspect where each non-QBO value comes from"). Cite the exact cell.
+        row.audit_contract_src = f"RP file 'RP WIP'!row {r} · CONTRACT $"
+        row.audit_etc_src = (f"RP file 'RP WIP'!row {r} · ETC $ (estimator)"
+                             if etc is not None else None)
+        row.audit_origin = f"RP file 'RP WIP' row {r}"
         # TYPE = Tract / Custom (the user 2026-07-31 — it must not disappear
         # from the RP view). Same rule as the GL pipeline: production builders
         # (by name OR by the General-Lista code) are Tract, everyone else is
@@ -400,12 +406,14 @@ def fill_missing_etc_from_takeoff(rows, root: Path = None):
             if getattr(row, "cell_marks", None) is None:
                 row.cell_marks = {}
             row.cell_marks["base_etc"] = _ETC_TAKEOFF_ORANGE   # writer col key
+            row.audit_etc_src = f"takeoff '{Path(tk).name}' · {note}"
             row.notes.append(
                 f"ETC ${etc:,.0f} read from takeoff '{Path(tk).name}' "
                 f"({note}) — VERIFY")
             print(f"    • {job}: ETC ${etc:,.0f} from takeoff — orange (verify)")
             filled += 1
         else:
+            row.audit_etc_src = f"BLANK — {note}"
             row.notes.append(f"ETC blank — {note}")
     print(f"  ETC fallback: filled {filled} of {len(empties)} from takeoffs "
           f"({len(empties) - filled} still blank — no cost sheet)")

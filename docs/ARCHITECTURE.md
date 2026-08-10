@@ -204,6 +204,8 @@ flowchart LR
     RPR -.->|"classify/write reused by"| MASTER
     CPR & RPR & MASTER ==>|"import the engine"| ENGINE
     ENGINE --> TEST
+    AUDIT["wip_audit.py\n--audit: pre-write provenance report\nadds/removes + reason · contract/ETC source"]:::out
+    MASTER -.->|"--audit (inspect, NO write)"| AUDIT
     QBO --> CLOSE --> QW
 ```
 
@@ -222,6 +224,15 @@ RP v2 (2026-07-13): the General List is the RP source — each RP job auto-split
 `master_wip_test --rp-from-file <xlsx>` (2026-07-29) replaces the GL pipeline for the
 RP section with the owner's verified RP WIP workbook (sections from its band rows,
 duplicates deduped, CP lines excluded); billed/costs still refresh from QBO per line.
+
+**Pre-write audit (`--audit`, 2026-08-07).** `master_wip_test --audit` runs the full
+pipeline (QBO, ETC fallback, classify) and writes `wip_audit.py`'s inspect-only workbook
+(`~/Downloads/WIP Audit.xlsx` by default) instead of touching the WIP report — one row per
+job with its Δ vs the current report (ADDED / REMOVED / SAME) + the reason, and CONTRACT /
+ETC with the exact source (owner's RP-file cell, takeoff file+cell, or blank). It answers
+"where did each non-QBO value come from, and why did this job appear/disappear" before any
+write. READ-ONLY on every source (safe even with the WIP file open). Provenance is captured
+at read time (`rp_wip_reader` tags each row's `audit_contract_src` / `audit_etc_src`).
 
 **Blank ETC → takeoff fallback (2026-08-07).** When the estimator left an ETC cell
 blank in the RP file, `rp_wip_reader.classify_from_file` calls

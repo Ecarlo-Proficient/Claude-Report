@@ -749,3 +749,29 @@ corruption sweep (view / rich-text / merges / tables / style+dxf indices).
 
 Note: the 'custom XML no longer supported' Excel notice is a pre-existing,
 benign SharePoint leftover in the source workbook — not corruption.
+
+## 2026-08-07 — Pre-write AUDIT (--audit): inspect before the WIP updates
+
+The owner wants to verify the non-QBO parts before the report is written —
+mainly the automatic add/remove-jobs logic, and where each contract/ETC comes
+from (QBO billed/costs are trusted). New:
+
+- **`wip/wip_audit.py`** (new, READ-ONLY): builds one plain workbook, one row
+  per job — Δ vs the current report (ADDED / REMOVED / SAME) + the reason, and
+  CONTRACT / ETC each with its source. Never touches the WIP file.
+- **`master_wip_test --audit [path]`**: runs the full pipeline, writes the audit
+  (`~/Downloads/WIP Audit.xlsx` default), and STOPS — no WIP write. Reads the
+  current Test-Master for the prior job set (`W._snapshot_tab`), so REMOVED jobs
+  say whether they hit a rule (`_BANK_EXCLUDE_JOBS`), left the source, or just
+  dropped off the bank cut. Safe even with the report open in Excel.
+- **Provenance captured at read time** in `rp_wip_reader`: each RP row now tags
+  `audit_contract_src` ("RP file 'RP WIP'!row N · CONTRACT $") and
+  `audit_etc_src` (estimator cell / takeoff file+cell / BLANK). CP/MFD fall back
+  to a source label by division.
+
+Verified with a synthetic set (ADDED/REMOVED-by-rule/left-source/SAME all render
+with correct reasons + source cells). A live run needs the Common volume mounted
+(CP folder scan) — it was unmounted at build time.
+
+Workflow going forward: `--audit` → owner inspects the workbook → approve → real
+run writes the report.
