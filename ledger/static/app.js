@@ -310,6 +310,25 @@ function timeAgo(iso) {
   const hrs = Math.floor(mins / 60); if (hrs < 24) return hrs + "h ago";
   return Math.floor(hrs / 24) + "d ago";
 }
+
+// Hours elapsed since `thenMs`, counting only Mon–Fri (weekends don't age the
+// data — nobody syncs on the weekend, so a Friday load isn't "stale" on Monday).
+// Steps day-by-day, adding only weekday slices. Used for the sync recommendation.
+function businessHoursSince(thenMs, nowMs) {
+  if (!(thenMs > 0) || nowMs <= thenMs) return 0;
+  let total = 0, cur = thenMs;
+  while (cur < nowMs) {
+    const d = new Date(cur);
+    const nextMidnight = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime();
+    const sliceEnd = Math.min(nextMidnight, nowMs);
+    const dow = d.getDay();                       // 0 Sun … 6 Sat
+    if (dow !== 0 && dow !== 6) total += sliceEnd - cur;
+    cur = sliceEnd;
+  }
+  return total / 3600e3;
+}
+const STALE_BUSINESS_H = 48;                       // > 2 business days → recommend a sync
+
 function renderHome() {
   // ── data freshness ──
   const fr = meta.freshness || { ledger: {}, sources: {} };
@@ -320,15 +339,28 @@ function renderHome() {
     ["Costs loaded (QBO)", (fr.ledger || {})["Costs (QBO)"]],
   ];
   const box = $("#homeFresh"); box.innerHTML = "";
+  let needSync = 0;
   for (const [label, when] of items) {
     const el = document.createElement("div"); el.className = "fresh";
-    if (when) { const t = Date.parse(when.length <= 16 ? when + ":00" : when); if (!isNaN(t) && (Date.now() - t) > 2 * 864e5) el.classList.add("stale"); }
+    let stale = false;
+    if (when) {
+      const t = Date.parse(when.length <= 16 ? when + ":00" : when);
+      if (!isNaN(t) && businessHoursSince(t, Date.now()) > STALE_BUSINESS_H) stale = true;
+    }
+    if (stale) { el.classList.add("stale"); needSync++; }
     el.innerHTML = `<div class="f-label"></div><div class="f-when"></div><div class="f-ago"></div>`;
     el.querySelector(".f-label").textContent = label;
     el.querySelector(".f-when").textContent = when ? when.replace("T", " ") : "—";
     el.querySelector(".f-ago").textContent = timeAgo(when);
+    if (stale) {
+      const b = document.createElement("div"); b.className = "sync-rec"; b.textContent = "⟳ Sync recommended";
+      el.appendChild(b);
+    }
     box.appendChild(el);
   }
+  const freshNote = $("#homeFreshNote");
+  if (freshNote) freshNote.textContent = needSync
+    ? `— ${needSync} recommended to sync (>48h, weekends aside)` : "— all current";
   // ── action items (click → jump to the work) ──
   const pastDue = (AP.lien_watch || []).filter(r => r.lien_status === "Notice PAST due").length;
   const dueSoon = (AP.lien_watch || []).filter(r => r.lien_status === "Notice due in ≤7d").length;

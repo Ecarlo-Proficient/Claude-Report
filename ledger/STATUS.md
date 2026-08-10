@@ -222,6 +222,24 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   - **Not built — option C** (project-pnl reads cost_line from the ledger instead of re-pulling QBO,
     the "own-the-spine" data-source refactor). Still the strategic direction; larger, separate job.
 
+- **Dock on/off switch — `build_ledger_app.command` (owner: on-demand, "no always-on anything").**
+  The owner rejected an always-on launchd agent. Instead a self-locating builder osacompiles a tiny
+  stay-open AppleScript applet → **`~/Applications/Project Ledger.app`**: launch → runs
+  `open_ledger.command` (start server if down + open browser); **the Dock icon present = ON, gone =
+  OFF** (the indicator); **Quit / log out / shut down → stops the server** (`on quit` → `pkill -f
+  ledger/dashboard.py`); an **`on idle` watchdog stops it on sleep** (a >90 s gap between 15–20 s idle
+  ticks = the Mac slept → stop + quit) and quits if the server dies (keeps the indicator honest).
+  Repo-rule clean: the tracked builder self-locates (no `/Users` path); the real path is baked into
+  the generated app on the owner's machine only. Never runs in the background. Verified: builds +
+  compiles, foreground/Dock-visible (no LSUIElement), launcher path baked, handlers present. First
+  GUI launch is the owner's.
+- **"Recommended to sync" freshness flag (owner, weekend-aware).** The My-view data-freshness cards now
+  flag a source with a **⟳ Sync recommended** badge (+ amber border, + a "N recommended to sync" note)
+  when it is stale **> 48 business-hours** — weekends don't age the data (a Friday load isn't "stale"
+  Monday). New client-side `businessHoursSince()` sums only Mon–Fri slices; threshold `STALE_BUSINESS_H
+  = 48`. Purely front-end (uses the existing `meta.freshness`); no server change. Verified: unit tests
+  (Fri→Mon = 16 business-h vs 64 raw → not flagged; Wed→Fri = 52 → flagged) + the badge/note render.
+
 ## IN PROGRESS
 - (none)
 

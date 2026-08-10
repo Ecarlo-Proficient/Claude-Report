@@ -339,6 +339,12 @@ tools — gated behind a `confirm`; QBO stays read-only, only the .xlsx is writt
 first reach OUT to a peripheral tool; the "own the spine" inverse (project-pnl reading `cost_line` from
 the ledger) is still ahead.
 
+**On/off, on demand (owner: no always-on).** The dashboard is launched, not resident. `open_ledger.command`
+starts it if down + opens the browser; `build_ledger_app.command` osacompiles a stay-open **Project
+Ledger.app** whose Dock icon IS the on/off indicator — Quit / logout / shutdown / sleep all stop the
+server (`pkill -f ledger/dashboard.py`). The My-view freshness strip flags a source **⟳ Sync recommended**
+when it's stale > 48 **business**-hours (`businessHoursSince` — weekends don't age the data).
+
 **AP + liens (`load_bill_tracker.py` → `ap_bill_line`).** The line-level `Bills`/`Inventory`
 sheets of `Bill Tracker.xlsx` load into `ap_bill_line` — vendor, project, account, open balance,
 pay status, and the Texas lien clock per bill. This is **not** the cost ledger: Bill Tracker's
