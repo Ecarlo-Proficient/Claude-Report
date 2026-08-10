@@ -116,6 +116,10 @@ body {
   border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px;
   background: var(--surface-2);
 }
+.kpi.kpi-click { cursor: pointer; transition: background .12s, outline-color .12s; outline: 2px solid transparent; outline-offset: -2px; }
+.kpi.kpi-click:hover { background: var(--row-hover); }
+.kpi.kpi-click.active { outline-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+.kpi.kpi-click.none { opacity: .5; cursor: default; }
 .kpi .k-label { color: var(--text-dim); font-size: .78em; text-transform: uppercase; letter-spacing: .04em; }
 .kpi .k-value { font-size: 1.5em; font-weight: 700; margin-top: 4px; letter-spacing: -.02em; }
 .kpi .k-sub { color: var(--text-dim); font-size: .78em; margin-top: 2px; }

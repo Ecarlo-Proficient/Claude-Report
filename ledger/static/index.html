@@ -144,10 +144,16 @@
     <!-- ══════════════ TAB: DRAWS (race-through worklist) ══════════════ -->
     <div class="tab-page" data-tab="draws" hidden>
       <section class="widget">
-        <div class="widget-head"><h2>Draw race-through <span class="count" id="drawsNote"></span></h2></div>
+        <div class="widget-head">
+          <h2>Draw race-through <span class="count" id="drawsNote"></span></h2>
+          <button class="btn small" id="btnClearDrawStage" hidden>Show all</button>
+        </div>
         <div class="kpi-row" id="drawsStats"></div>
-        <p class="hint">Fund the draw → pay vendors → mark each <b>unconditional waiver</b> as it comes
-          in → when all are in, turn it in to unlock the next draw. Check the box when a waiver is in hand.
+        <p class="hint"><b>The money flows one way:</b> the GC funds the draw (money <b>in</b> to you) →
+          you pay the vendors (money <b>out</b>) → each vendor sends an <b>unconditional waiver</b> →
+          when all are in, turn the draw in to unlock the next. So "vendors paid" = you paid them; a
+          draw is <b>Ready to turn in</b> once every bill is paid and every waiver is in hand.
+          Click a tile above to filter. Check the box when a waiver arrives.
           <br><b>RP is excluded</b> — residential bills at completion / milestones, not formal draws.</p>
         <div class="filters">
           <input type="search" id="drawSearch" placeholder="Search draw, project, vendor…" autocomplete="off">

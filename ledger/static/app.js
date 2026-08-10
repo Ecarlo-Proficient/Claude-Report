@@ -203,6 +203,7 @@ let sortKey = "total_contract_price";
 let sortDir = -1;   // -1 desc, 1 asc
 let activeRule = null;   // key of a RULES entry currently filtering the table
 let activeLien = null;   // lien stage currently filtering the Liens table (null = all)
+let activeDrawStage = null; // draw stage currently filtering the Draws list (null = all)
 
 // ── Load ──────────────────────────────────────────────────────────────────
 async function load(isAuto) {
@@ -416,6 +417,14 @@ const DRAW_STAGE_CLASS = {
   "Fund in — pay vendors": "d7", "Paid — collect waivers": "d15",
   "Awaiting GC funding": "info", "Ready to turn in": "ready",
 };
+// Clearer, direction-explicit pill text (who paid whom). Display only — the internal
+// stage keys above are unchanged (they're matched in several places).
+const DRAW_STAGE_LABEL = {
+  "Fund in — pay vendors": "GC funded → pay vendors",
+  "Paid — collect waivers": "Vendors paid → collect waivers",
+  "Awaiting GC funding": "Awaiting GC funding",
+  "Ready to turn in": "Ready to turn in",
+};
 function renderDraws() {
   const f = { q: ($("#drawSearch") ? $("#drawSearch").value : "").trim().toLowerCase(),
               div: $("#drawDivision") ? $("#drawDivision").value : "" };
@@ -429,25 +438,32 @@ function renderDraws() {
     }
     return true;
   });
+  const shown = activeDrawStage ? all.filter(d => d.stage === activeDrawStage) : all;
   $("#drawsNote").textContent = (DRAWS.draws || []).length
-    ? `(${all.length} shown of ${DRAWS.total} · most recent first)`
+    ? `(${shown.length} shown of ${DRAWS.total} · most recent first)`
     : "(no draw data — run load_bill_tracker.py)";
+  // Clickable stage tiles → filter the draw list. Counts come from `all` (all stages);
+  // subs spell out the money direction (GC pays us in → we pay vendors out → waivers).
   const stats = [
-    ["Ready to turn in", String(all.filter(d => d.stage === "Ready to turn in").length), "all paid + waivers in"],
-    ["Collect waivers", String(all.filter(d => d.stage === "Paid — collect waivers").length), "paid, waivers pending"],
-    ["Pay vendors", String(all.filter(d => d.stage === "Fund in — pay vendors").length), "funded, unpaid bills"],
+    ["Ready to turn in", "Ready to turn in", "all paid + waivers in"],
+    ["Collect waivers", "Paid — collect waivers", "vendors paid — waivers pending"],
+    ["Pay vendors", "Fund in — pay vendors", "GC funded — vendors not paid yet"],
   ];
   const sr = $("#drawsStats"); sr.innerHTML = "";
-  for (const [label, value, sub] of stats) {
-    const el = document.createElement("div"); el.className = "kpi";
+  for (const [label, stageKey, sub] of stats) {
+    const n = all.filter(d => d.stage === stageKey).length;
+    const el = document.createElement("div");
+    el.className = "kpi kpi-click" + (activeDrawStage === stageKey ? " active" : "") + (n ? "" : " none");
     el.innerHTML = `<div class="k-label"></div><div class="k-value"></div><div class="k-sub"></div>`;
     el.querySelector(".k-label").textContent = label;
-    el.querySelector(".k-value").textContent = value;
+    el.querySelector(".k-value").textContent = String(n);
     el.querySelector(".k-sub").textContent = sub;
+    if (n) el.onclick = () => { activeDrawStage = activeDrawStage === stageKey ? null : stageKey; renderDraws(); };
     sr.appendChild(el);
   }
+  { const cb = $("#btnClearDrawStage"); if (cb) cb.hidden = !activeDrawStage; }
   const box = $("#drawList"); box.innerHTML = "";
-  for (const d of all) {
+  for (const d of shown) {
     const collapsed = drawsCollapsed.has(d.matched_invoice);
     const sec = document.createElement("section"); sec.className = "widget draw";
     const head = document.createElement("div"); head.className = "widget-head draw-head"; head.style.cursor = "pointer";
@@ -457,7 +473,7 @@ function renderDraws() {
     const meta2 = document.createElement("div"); meta2.className = "panel-sub";
     meta2.textContent = `${money(d.total)} · ${d.n} bills · ${d.paid}/${d.n} paid · ${d.waivers}/${d.n} waivers`;
     left.appendChild(meta2); head.appendChild(left);
-    const pill = document.createElement("span"); pill.className = "lien " + (DRAW_STAGE_CLASS[d.stage] || "info"); pill.textContent = d.stage;
+    const pill = document.createElement("span"); pill.className = "lien " + (DRAW_STAGE_CLASS[d.stage] || "info"); pill.textContent = DRAW_STAGE_LABEL[d.stage] || d.stage;
     head.appendChild(pill);
     if (d.action && d.action.url) {
       const a = document.createElement("a"); a.className = "notion-link"; a.href = d.action.url;
@@ -1390,6 +1406,7 @@ function init() {
   { const el = $("#lienSearch"); if (el) el.addEventListener("input", renderLiens); }
   ["#salesSearch", "#salesStage", "#salesDivision"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderSales); });
   { const el = $("#btnClearLien"); if (el) el.onclick = () => { activeLien = null; renderLiens(); }; }
+  { const el = $("#btnClearDrawStage"); if (el) el.onclick = () => { activeDrawStage = null; renderDraws(); }; }
   { const el = $("#homeDivision"); if (el) el.addEventListener("input", renderHome); }
   $("#btnExport").onclick = exportCSV;
   $("#btnRefresh").onclick = load;

@@ -250,6 +250,17 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   = 48`. Purely front-end (uses the existing `meta.freshness`); no server change. Verified: unit tests
   (Fri→Mon = 16 business-h vs 64 raw → not flagged; Wed→Fri = 52 → flagged) + the badge/note render.
 
+- **Draws tab — clickable stage tiles + unambiguous "who paid whom" wording (owner).** The 3 stat
+  tiles (Ready to turn in / Collect waivers / Pay vendors) are now **clickable → filter the draw list**
+  by stage (toggle; "Show all" clears; active tile outlined), mirroring the Liens tab. The owner asked
+  what "Paid" meant — so pill text is now direction-explicit via a display map `DRAW_STAGE_LABEL`
+  ("Fund in — pay vendors" → **"GC funded → pay vendors"**, "Paid — collect waivers" → **"Vendors paid →
+  collect waivers"**), tile subs spell it out ("GC funded — vendors not paid yet" / "vendors paid —
+  waivers pending"), and the hint states the one-way flow (GC funds you IN → you pay vendors OUT →
+  waivers back). **Internal stage keys are unchanged** (matched in `_STAGE_ORDER`, `DRAW_STAGE_CLASS`,
+  `renderHome`, the waiver-toggle recompute) — display-only. Front-end only; verified live (Pay vendors
+  → 49→15, active highlight, clearer pills, no console errors). New `kpi-click` CSS.
+
 ## IN PROGRESS
 - (none)
 
