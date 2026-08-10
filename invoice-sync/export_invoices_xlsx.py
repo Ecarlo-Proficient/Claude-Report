@@ -14,11 +14,14 @@ Why this exists:
   invoices total?" — for that, Excel is the right tool. Notion is still the
   source of truth and the working surface for all human notes / status.
 
-Two tabs:
+Three tabs:
   1. "Open Invoices" — the flat row-per-invoice list (the original sheet).
-  2. "AR Aging"      — QBO-style aging buckets rolled up by parent client,
-                       with the collections clerk's notes and MFD/CP vendor
-                       bill status. See aging_sheet.py for the why.
+  2. "AR Aging"      — QBO-style aging buckets rolled up by parent client, with
+                       the collections clerk's notes and the MFD/CP previous-
+                       draw block. See aging_sheet.py for the why.
+  3. "RP Aging"      — the same view, RP only, with the previous-draw block
+                       dropped: RP doesn't bill in draws, so on the combined tab
+                       those columns are 36 rows of grey "n/a". (the user)
 
 Run via run_invoice_sync.py after the main sync completes. Errors here
 don't affect the QBO→Notion sync (caught and logged separately).
@@ -39,6 +42,8 @@ from notion_client import NotionClient
 from draw_chain import DrawChains
 from aging_sheet import (
     SHEET_TITLE as AGING_SHEET_TITLE,
+    RP_SHEET_TITLE,
+    RP_DROP_COLUMNS,
     load_vendor_bill_map,
     vendor_cells,
     build_aging_sheet,
@@ -242,6 +247,9 @@ def _aging_record(
         # "Waiting vendor unconditional"). That's the Notes the owner wants.
         "notes": _text(props.get("Quick Status")),
         "last_action": _date_value(props.get("Last Action Date")),
+        # Deep link to the invoice in QBO, written by the sync. The aging tab
+        # hangs it off the invoice number so the row is one click from source.
+        "qbo_link": _url(props.get("QBO Link")),
         "prev_draw": prev_draw,
         "vendor_status": vendor_status,
         "vendor_bills": vendor_bills,
@@ -408,6 +416,7 @@ def export_open_invoices_xlsx(
 
     aging_records: List[dict] = []
     litigation_excluded = 0
+    rp_litigation_excluded = 0
     for pages, label, cache in (
         (res_com_pages, "RP/CP", res_com_titles),
         (mfd_pages, "MFD", mfd_titles),
@@ -417,22 +426,39 @@ def export_open_invoices_xlsx(
             # them in would inflate every aging bucket the owner reads. (the user)
             if _is_litigation(page):
                 litigation_excluded += 1
+                if _select_name((page.get("properties") or {}).get("Division")) == "RP":
+                    rp_litigation_excluded += 1
                 continue
             aging_records.append(
                 _aging_record(page, label, cache, today, vendor_map, chains)
             )
 
-    aging_ws = wb.create_sheet(AGING_SHEET_TITLE)
     build_aging_sheet(
-        aging_ws,
+        wb.create_sheet(AGING_SHEET_TITLE),
         aging_records,
         today=today,
         litigation_excluded=litigation_excluded,
         vendor_as_of=vendor_as_of,
     )
+
+    # ── Tab 3: RP Aging ──
+    # RP doesn't bill in draws, so the whole previous-draw block is dead weight
+    # there — 34 rows of grey "n/a" on the combined tab. Same builder, RP rows
+    # only, those columns dropped. (the user 2026-08-05)
+    rp_records = [r for r in aging_records if r["division"] == "RP"]
+    build_aging_sheet(
+        wb.create_sheet(RP_SHEET_TITLE),
+        rp_records,
+        today=today,
+        litigation_excluded=rp_litigation_excluded,
+        vendor_as_of=vendor_as_of,
+        drop_columns=RP_DROP_COLUMNS,
+        title="RP AGING",
+        scope_note="RP only",
+    )
     log.info(
-        "AR Aging tab: %d invoices (%d litigation excluded)",
-        len(aging_records), litigation_excluded,
+        "AR Aging tab: %d invoices (%d litigation excluded) · RP Aging tab: %d",
+        len(aging_records), litigation_excluded, len(rp_records),
     )
 
     # Write

@@ -88,7 +88,7 @@ flowchart LR
     TEAMS[("Teams\nMFD paid / short-pay cards")]:::out
     XL["export_invoices_xlsx.py\n+ aging_sheet.py\n+ draw_chain.py"]:::tool
     BTX[("Bill Tracker.xlsx\nOneDrive · READ-ONLY")]:::src
-    OD[("OneDrive\nOpen_Invoices.xlsx\ntab 1 Open Invoices\ntab 2 AR Aging")]:::out
+    OD[("OneDrive\nOpen_Invoices.xlsx\ntab 1 Open Invoices\ntab 2 AR Aging\ntab 3 RP Aging")]:::out
 
     QBO --> SYNC
     SYNC -- "route by project-# prefix" --> MFD

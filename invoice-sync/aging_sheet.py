@@ -60,6 +60,17 @@ from shared import paths
 log = logging.getLogger("automation_worker.aging_sheet")
 
 SHEET_TITLE = "AR Aging"
+RP_SHEET_TITLE = "RP Aging"
+
+# Type sizes (the user 2026-08-05 — "make the font 12 to see it a bit bigger",
+# client rows 13). Client rows carry a point more because the sheet is read
+# COLLAPSED: the client name is the line that has to land first.
+BODY_PT = 12
+CLIENT_PT = 13
+TITLE_PT = 14
+# Widths are in characters of the default 11pt font; _autofit scales for 12pt.
+# The cap stops a long memo or note from creating a column you have to scroll.
+MAX_COL_WIDTH = 62
 
 # The bill-tracker's Excel output. Same env key the bill-tracker itself uses,
 # so a machine.env override moves both together. We read the FILE, not the
@@ -133,6 +144,11 @@ BUCKET_COLS = (C_CURRENT, C_1_30, C_31_60, C_61_90, C_90)
 # The previous-draw block — greyed out wherever there is no chain to read.
 VENDOR_COLS = (C_PREV, C_VSTATUS, C_VBILLS, C_VAMT)
 
+# Columns the RP tab omits (spreadsheet N through R): the whole previous-draw
+# block plus the same-draw figure. RP doesn't bill in draws, so on the combined
+# tab these are 34 rows of grey "n/a". (the user 2026-08-05)
+RP_DROP_COLUMNS = (C_PREV, C_VSTATUS, C_VBILLS, C_VAMT, C_THIS)
+
 _THIN = Side(style="thin", color="000000")
 _MEDIUM = Side(style="medium", color="000000")
 
@@ -166,16 +182,13 @@ BUCKET_CELL_FILLS = (
 _GRAND_FILL = PatternFill("solid", fgColor="BFD3E6")    # the all-clients roll-up
 _PARENT_FILL = PatternFill("solid", fgColor="DCE6F1")   # each client summary row
 
-# Dead cells: the vendor block on RP rows. Grey fill, darker grey text — reads
-# as "nothing to see here" without looking like missing data. (the user)
+# Dead cells: the previous-draw block where there's nothing to read. Grey fill,
+# darker grey text — "nothing to see here" without looking like missing data.
 _NA_FILL = PatternFill("solid", fgColor="D9D9D9")
-_NA_FONT = Font(color="808080", italic=True)
+_NA_COLOR = "808080"
 
-_UNPAID_FONT = Font(bold=True, color="C00000")
 _BLOCKED_FILL = PatternFill("solid", fgColor="F8DDDA")  # the one row-level call to action
-_WAITING_FONT = Font(color="B06000")                    # blocked upstream — not ours to fix
-_CLEAR_FONT = Font(color="2E7D32")
-_OVERDUE_FONT = Font(bold=True, color="C00000")
+_LINK_COLOR = "0563C1"                                  # Excel's own hyperlink blue
 
 
 # ─────────────────────── aging ───────────────────────
@@ -364,42 +377,107 @@ def vendor_cells(
 
 # ─────────────────────── sheet build ───────────────────────
 
+class _Grid:
+    """Maps logical column indices (the C_* constants) to physical ones.
+
+    A tab can drop columns — the RP view hides the whole previous-draw block,
+    which is meaningless there — but every row is still built at full width
+    against the C_* constants. This does the projection in one place so no
+    caller has to think about which physical column a field landed in.
+    """
+
+    def __init__(self, drop: Tuple[int, ...] = ()) -> None:
+        self.visible = [i for i in range(len(COLUMNS)) if i not in drop]
+        self._pos = {logical: n for n, logical in enumerate(self.visible)}
+
+    def __contains__(self, logical: int) -> bool:
+        return logical in self._pos
+
+    def col(self, logical: int) -> int:
+        """1-based physical column for a logical index."""
+        return self._pos[logical] + 1
+
+    def cell(self, ws: Worksheet, row: int, logical: int):
+        """The cell for a logical column, or None when that column is hidden."""
+        if logical not in self._pos:
+            return None
+        return ws.cell(row=row, column=self.col(logical))
+
+    @property
+    def width(self) -> int:
+        return len(self.visible)
+
+
+def _autofit(ws: Worksheet, grid: _Grid, last_row: int) -> None:
+    """Size every column to its widest cell, in the sheet's own font.
+
+    openpyxl has no real autofit — Excel computes widths at render time and
+    openpyxl never renders. Measuring the strings we wrote is the honest
+    approximation: character count scaled for the 12pt body (wider than the
+    11pt default the width unit assumes), plus padding for the filter arrow.
+    """
+    for logical in grid.visible:
+        name, floor_width, number_format = COLUMNS[logical]
+        letter = get_column_letter(grid.col(logical))
+        widest = len(name) + 3  # header text + room for the autofilter arrow
+        for row in range(5, last_row + 1):
+            value = ws.cell(row=row, column=grid.col(logical)).value
+            if value is None:
+                continue
+            if isinstance(value, dt.date):
+                rendered = 10                      # mm/dd/yyyy
+            elif isinstance(value, float) and number_format and "$" in number_format:
+                rendered = len(f"{value:,.2f}") + 2   # "$" plus separators
+            else:
+                rendered = len(str(value))
+            widest = max(widest, rendered)
+        width = max(floor_width, widest * BODY_PT / 11.0 + 1.5)
+        ws.column_dimensions[letter].width = min(width, MAX_COL_WIDTH)
+
+
 def _write_row(
     ws: Worksheet,
+    grid: _Grid,
     row_num: int,
     values: List[Any],
     *,
     bold: bool,
+    size: float = BODY_PT,
     fill: Optional[PatternFill] = None,
 ) -> None:
-    for offset, value in enumerate(values):
-        cell = ws.cell(row=row_num, column=offset + 1, value=value)
-        number_format = COLUMNS[offset][2]
+    for logical in grid.visible:
+        cell = ws.cell(row=row_num, column=grid.col(logical), value=values[logical])
+        number_format = COLUMNS[logical][2]
         if number_format:
             cell.number_format = number_format
-        if bold:
-            cell.font = Font(bold=True)
+        cell.font = Font(bold=bold, size=size)
         if fill:
             cell.fill = fill
-    ws.cell(row=row_num, column=C_NOTES + 1).alignment = Alignment(
-        horizontal="left", vertical="top", wrap_text=True
-    )
+    notes = grid.cell(ws, row_num, C_NOTES)
+    if notes is not None:
+        notes.alignment = Alignment(horizontal="left", vertical="top", wrap_text=True)
 
 
-def _grey_out_vendor_block(ws: Worksheet, row_num: int) -> None:
-    """Mark the three vendor cells as not-applicable on an RP row.
+def _grey_out_vendor_block(ws: Worksheet, grid: _Grid, row_num: int) -> None:
+    """Mark the previous-draw cells as not-applicable on this row.
 
-    RP bills match on bill date rather than a draw period, so there is no vendor
-    answer to give here — and a blank would read as "not looked up yet". Grey
-    fill with darker grey text says the cell is intentionally dead. (the user)
+    Used wherever there is no draw chain to read — RP (no draws at all), non-draw
+    invoices, first draws, and the multi-contract projects whose bills can't be
+    attributed. A blank would read as "not looked up yet"; grey fill with darker
+    grey text says the cell is intentionally dead. (the user)
+
+    Only EMPTY cells get the "n/a" text, so a verdict already written there
+    ("Multi-contract", "First draw") stays readable inside the grey block.
     """
-    for offset in VENDOR_COLS:
-        cell = ws.cell(row=row_num, column=offset + 1)
+    for logical in VENDOR_COLS:
+        cell = grid.cell(ws, row_num, logical)
+        if cell is None:
+            continue
         if cell.value in (None, ""):
             cell.value = VENDOR_NA
         cell.number_format = "General"  # else "n/a" fights the $ / 0 formats
         cell.fill = _NA_FILL
-        cell.font = _NA_FONT
+        cell.font = Font(color=_NA_COLOR, italic=True, size=BODY_PT)
         cell.alignment = Alignment(horizontal="center")
 
 
@@ -410,13 +488,14 @@ def build_aging_sheet(
     today: dt.date,
     litigation_excluded: int,
     vendor_as_of: Optional[dt.datetime] = None,
+    drop_columns: Tuple[int, ...] = (),
+    title: str = "AR AGING",
+    scope_note: str = "",
 ) -> None:
-    """Write the aging tab.
+    """Write an aging tab.
 
     `invoices` are plain dicts (built by export_invoices_xlsx._aging_record) so
-    this module stays free of Notion property plumbing:
-        parent, division, project_num, invoice_num, invoice_date, due_date,
-        open_balance, notes, last_action
+    this module stays free of Notion property plumbing.
 
     Layout: a header, an always-visible ALL CLIENTS total, then one bold summary
     row per parent client with its invoices grouped underneath and COLLAPSED
@@ -424,7 +503,14 @@ def build_aging_sheet(
     Summary-above-detail requires outlinePr.summaryBelow = False; without it
     Excel puts the collapse toggle on the row after the block and the grouping
     reads backwards.
+
+    `drop_columns` hides logical columns entirely — the RP tab passes the whole
+    previous-draw block, which has no meaning for a division that doesn't bill
+    in draws.
     """
+    grid = _Grid(drop_columns)
+    shows_vendor_block = C_VSTATUS in grid
+
     # Group by parent client. Unresolved relations fall back to a stable label
     # rather than being dropped — an invoice with no parent is still money owed.
     by_parent: Dict[str, List[dict]] = defaultdict(list)
@@ -432,43 +518,53 @@ def build_aging_sheet(
         by_parent[rec["parent"] or "(no client on file)"].append(rec)
 
     # ── title block ──
-    ws.cell(row=1, column=1, value=f"AR AGING — as of {today.strftime('%b %d, %Y').upper()}").font = Font(bold=True)
-    # The vendor columns have a different clock from everything else on this tab:
-    # they come from the AP tool's last run, not from this one. Say which, in
-    # plain words, so nobody reads a day-old vendor figure as current.
-    if vendor_as_of is None:
-        vendor_note = "Vendor bill status UNAVAILABLE — run `sync-ap`, then re-run this"
-    elif vendor_as_of.date() < today:
-        vendor_note = (
-            f"⚠ VENDOR COLUMNS ARE {_humanize_age(vendor_as_of).upper()} OLD "
-            f"(Bill Tracker last run {vendor_as_of.strftime('%b %d, %I:%M %p')}) — "
-            f"run `sync-all`, which runs AP before AR"
-        )
-    else:
-        vendor_note = f"Vendor bill status current as of {vendor_as_of.strftime('%b %d, %I:%M %p')}"
-    subtitle = (
-        f"{len(invoices)} open invoices · litigation excluded ({litigation_excluded}) · {vendor_note}"
+    ws.cell(
+        row=1, column=1,
+        value=f"{title} — as of {today.strftime('%b %d, %Y').upper()}",
+    ).font = Font(bold=True, size=TITLE_PT)
+
+    parts = [f"{len(invoices)} open invoices", f"litigation excluded ({litigation_excluded})"]
+    if scope_note:
+        parts.insert(0, scope_note)
+    stale = vendor_as_of is None or vendor_as_of.date() < today
+    if shows_vendor_block:
+        # The vendor columns have a different clock from everything else on this
+        # tab: they come from the AP tool's last run, not from this one. Say
+        # which, in plain words, so nobody reads a day-old figure as current.
+        if vendor_as_of is None:
+            parts.append("Vendor bill status UNAVAILABLE — run `sync-ap`, then re-run this")
+        elif vendor_as_of.date() < today:
+            parts.append(
+                f"⚠ VENDOR COLUMNS ARE {_humanize_age(vendor_as_of).upper()} OLD "
+                f"(Bill Tracker last run {vendor_as_of.strftime('%b %d, %I:%M %p')}) — "
+                f"run `sync-all`, which runs AP before AR"
+            )
+        else:
+            parts.append(
+                f"Vendor bill status current as of {vendor_as_of.strftime('%b %d, %I:%M %p')}"
+            )
+    subtitle_cell = ws.cell(row=2, column=1, value=" · ".join(parts))
+    subtitle_cell.font = (
+        Font(bold=True, color="C00000", size=BODY_PT)
+        if (shows_vendor_block and stale)
+        else Font(size=BODY_PT)
     )
-    cell = ws.cell(row=2, column=1, value=subtitle)
-    if vendor_as_of is None or vendor_as_of.date() < today:
-        cell.font = Font(bold=True, color="C00000")
 
     header_row = 4
-    for offset, (name, width, _) in enumerate(COLUMNS, start=1):
-        cell = ws.cell(row=header_row, column=offset, value=name)
-        cell.font = _HEADER_FONT
+    for logical in grid.visible:
+        name = COLUMNS[logical][0]
+        cell = ws.cell(row=header_row, column=grid.col(logical), value=name)
+        cell.font = Font(bold=True, color="FFFFFF", size=BODY_PT)
         # The five bucket headers run green→red so the severity scale is legible
         # from the header alone; everything else takes the standard blue.
-        zero_based = offset - 1
         cell.fill = (
-            BUCKET_HEADER_FILLS[BUCKET_COLS.index(zero_based)]
-            if zero_based in BUCKET_COLS
+            BUCKET_HEADER_FILLS[BUCKET_COLS.index(logical)]
+            if logical in BUCKET_COLS
             else _HEADER_FILL
         )
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         cell.border = Border(bottom=_MEDIUM)
-        ws.column_dimensions[get_column_letter(offset)].width = width
-    ws.row_dimensions[header_row].height = 26
+    ws.row_dimensions[header_row].height = 30
     ws.freeze_panes = ws.cell(row=header_row + 1, column=1)
 
     # ── grand total (always visible, never grouped) ──
@@ -487,15 +583,15 @@ def build_aging_sheet(
     row_num = header_row + 1
     total_row: List[Any] = [""] * len(COLUMNS)
     total_row[C_LABEL] = f"ALL CLIENTS ({len(by_parent)})"
-    for pos, amount in zip(BUCKET_COLS, grand):
-        total_row[pos] = amount or None
+    for logical, amount in zip(BUCKET_COLS, grand):
+        total_row[logical] = amount or None
     total_row[C_TOTAL] = sum(grand)
     total_row[C_VBILLS] = grand_bills or None
     total_row[C_VAMT] = grand_vendor or None
     total_row[C_THIS] = grand_this or None
-    _write_row(ws, row_num, total_row, bold=True, fill=_GRAND_FILL)
-    for offset in range(len(COLUMNS)):
-        ws.cell(row=row_num, column=offset + 1).border = Border(bottom=_THIN)
+    _write_row(ws, grid, row_num, total_row, bold=True, size=CLIENT_PT, fill=_GRAND_FILL)
+    for logical in grid.visible:
+        ws.cell(row=row_num, column=grid.col(logical)).border = Border(bottom=_THIN)
     row_num += 1
 
     # ── parent groups, biggest balance first ──
@@ -526,19 +622,21 @@ def build_aging_sheet(
         summary[C_LABEL] = parent
         summary[C_DIV] = division_label
         summary[C_INV] = f"{len(records)} inv"
-        for pos, amount in zip(BUCKET_COLS, buckets):
-            summary[pos] = amount or None
+        for logical, amount in zip(BUCKET_COLS, buckets):
+            summary[logical] = amount or None
         summary[C_TOTAL] = sum(buckets)
         summary[C_VBILLS] = vendor_bills or None
         summary[C_VAMT] = vendor_sum or None
         summary[C_THIS] = this_sum or None
-        _write_row(ws, row_num, summary, bold=True, fill=_PARENT_FILL)
-        for offset in range(len(COLUMNS)):
-            ws.cell(row=row_num, column=offset + 1).border = Border(top=_THIN)
+        # Client rows sit a point above the body — the owner reads this sheet
+        # collapsed, so the client name is the line that has to carry.
+        _write_row(ws, grid, row_num, summary, bold=True, size=CLIENT_PT, fill=_PARENT_FILL)
+        for logical in grid.visible:
+            ws.cell(row=row_num, column=grid.col(logical)).border = Border(top=_THIN)
         # A client with no MFD/CP work has no vendor answer either — grey the
         # block on the summary row too, or an all-RP client reads as "clear".
-        if not any(r["division"] in DRAW_DIVISIONS for r in records):
-            _grey_out_vendor_block(ws, row_num)
+        if shows_vendor_block and not any(r["division"] in DRAW_DIVISIONS for r in records):
+            _grey_out_vendor_block(ws, grid, row_num)
         row_num += 1
 
         for rec in records:
@@ -563,68 +661,95 @@ def build_aging_sheet(
             detail[C_THIS] = rec["this_draw_amount"]
             detail[C_NOTES] = rec["notes"]
             detail[C_ACTION] = rec["last_action"]
-            _write_row(ws, row_num, detail, bold=False)
+            _write_row(ws, grid, row_num, detail, bold=False)
+
+            # The invoice number opens the invoice in QBO. Putting the link on
+            # the number rather than in its own column keeps the sheet narrow
+            # and puts the click where the eye already is.
+            if rec.get("qbo_link"):
+                inv_cell = grid.cell(ws, row_num, C_INV)
+                if inv_cell is not None:
+                    inv_cell.hyperlink = rec["qbo_link"]
+                    inv_cell.font = Font(color=_LINK_COLOR, underline="single", size=BODY_PT)
 
             # Tint only the ONE bucket cell carrying this invoice's balance, so
             # colour drifting rightward down the page = money getting older.
             slot = bucket_index(rec["days_past_due"])
-            ws.cell(row=row_num, column=BUCKET_COLS[slot] + 1).fill = BUCKET_CELL_FILLS[slot]
+            ws.cell(
+                row=row_num, column=grid.col(BUCKET_COLS[slot])
+            ).fill = BUCKET_CELL_FILLS[slot]
 
             # >30 days overdue reads as red, same cue as the Open Invoices tab.
             days = rec["days_past_due"]
             if isinstance(days, int) and days > 30:
-                ws.cell(row=row_num, column=C_DPD + 1).font = _OVERDUE_FONT
+                dpd = grid.cell(ws, row_num, C_DPD)
+                if dpd is not None:
+                    dpd.font = Font(bold=True, color="C00000", size=BODY_PT)
 
-            verdict = rec["vendor_status"]
-            if verdict in NO_CHAIN_VERDICTS:
-                _grey_out_vendor_block(ws, row_num)
-            else:
-                status_cell = ws.cell(row=row_num, column=C_VSTATUS + 1)
-                if verdict == PREV_BLOCKED:
-                    # The one verdict that is ours to act on — pay these, get
-                    # the waivers, unlock this draw.
-                    status_cell.font = _UNPAID_FONT
-                    status_cell.fill = _BLOCKED_FILL
-                elif verdict == PREV_WAITING_GC:
-                    status_cell.font = _WAITING_FONT
-                elif verdict == PREV_CLEAR:
-                    status_cell.font = _CLEAR_FONT
+            if shows_vendor_block:
+                verdict = rec["vendor_status"]
+                if verdict in NO_CHAIN_VERDICTS:
+                    _grey_out_vendor_block(ws, grid, row_num)
+                else:
+                    status_cell = grid.cell(ws, row_num, C_VSTATUS)
+                    if verdict == PREV_BLOCKED:
+                        # The one verdict that is ours to act on — pay these,
+                        # get the waivers, unlock this draw.
+                        status_cell.font = Font(bold=True, color="C00000", size=BODY_PT)
+                        status_cell.fill = _BLOCKED_FILL
+                    elif verdict == PREV_WAITING_GC:
+                        status_cell.font = Font(color="B06000", size=BODY_PT)
+                    elif verdict == PREV_CLEAR:
+                        status_cell.font = Font(color="2E7D32", size=BODY_PT)
 
             ws.row_dimensions[row_num].outlineLevel = 1
             ws.row_dimensions[row_num].hidden = True  # collapsed by default
             row_num += 1
 
+    last_data_row = row_num - 1
+
     # Legend, below the data so it never pushes the numbers down. Colour that
     # needs explaining is colour that failed, but the grey block is a deliberate
     # "don't read this" and that one is worth spelling out.
-    last_data_row = row_num - 1
     legend_row = row_num + 1
-    ws.cell(row=legend_row, column=1, value="KEY").font = Font(bold=True)
-    for slot, (name, _w, _f) in enumerate(
-        COLUMNS[BUCKET_COLS[0]:BUCKET_COLS[-1] + 1]
-    ):
-        cell = ws.cell(row=legend_row, column=BUCKET_COLS[slot] + 1, value=name)
+    ws.cell(row=legend_row, column=1, value="KEY").font = Font(bold=True, size=BODY_PT)
+    for slot, logical in enumerate(BUCKET_COLS):
+        cell = ws.cell(row=legend_row, column=grid.col(logical), value=COLUMNS[logical][0])
         cell.fill = BUCKET_CELL_FILLS[slot]
+        cell.font = Font(size=BODY_PT)
         cell.alignment = Alignment(horizontal="center")
-    blocked_cell = ws.cell(row=legend_row, column=C_VSTATUS + 1, value=PREV_BLOCKED)
-    blocked_cell.fill = _BLOCKED_FILL
-    blocked_cell.font = _UNPAID_FONT
-    na_cell = ws.cell(row=legend_row, column=C_VBILLS + 1, value="n/a")
-    na_cell.fill = _NA_FILL
-    na_cell.font = _NA_FONT
-    na_cell.alignment = Alignment(horizontal="center")
 
-    for offset, text in enumerate((
-        f"Aged by due date.  ·  '{PREV_BLOCKED}' = the previous draw was funded but our vendors on it are still owed — no unconditional waivers, so the GC won't release this draw. That one is ours to fix.",
-        f"'{PREV_WAITING_GC}' = the previous draw hasn't been funded either, so the hold-up is upstream of us.  ·  '{PREV_CLEAR}' = previous draw funded and its vendors paid.",
-        f"'{PREV_MULTI}' = the project runs parallel contracts and bills carry a project #, not a contract, so the previous draw can't be identified yet.  ·  'n/a' = RP, which doesn't bill in draws.",
-    )):
+    notes: List[str] = ["Aged by due date. Invoice # links to the invoice in QBO."]
+    if shows_vendor_block:
+        blocked_cell = grid.cell(ws, legend_row, C_VSTATUS)
+        blocked_cell.value = PREV_BLOCKED
+        blocked_cell.fill = _BLOCKED_FILL
+        blocked_cell.font = Font(bold=True, color="C00000", size=BODY_PT)
+        na_cell = grid.cell(ws, legend_row, C_VBILLS)
+        na_cell.value = VENDOR_NA
+        na_cell.fill = _NA_FILL
+        na_cell.font = Font(color=_NA_COLOR, italic=True, size=BODY_PT)
+        na_cell.alignment = Alignment(horizontal="center")
+        notes += [
+            f"'{PREV_BLOCKED}' = the previous draw was funded but our vendors on it are still owed — no unconditional waivers, so the GC won't release this draw. That one is ours to fix.",
+            f"'{PREV_WAITING_GC}' = the previous draw hasn't been funded either, so the hold-up is upstream of us.  ·  '{PREV_CLEAR}' = previous draw funded and its vendors paid.",
+            f"'{PREV_MULTI}' = the project runs parallel contracts and bills carry a project #, not a contract, so the previous draw can't be identified yet.  ·  'n/a' = RP, which doesn't bill in draws.",
+        ]
+    else:
+        notes.append(
+            "RP doesn't bill in draws, so the previous-draw and vendor-bill columns are omitted here. "
+            "See the AR Aging tab for CP and MFD."
+        )
+    for offset, text in enumerate(notes):
         ws.cell(row=legend_row + 1 + offset, column=1, value=text).font = Font(
-            italic=True, color="808080"
+            italic=True, color=_NA_COLOR, size=BODY_PT
         )
 
     ws.sheet_properties.outlinePr.summaryBelow = False
     ws.sheet_properties.outlinePr.applyStyles = False
     # Filter spans the header + data only — never the legend rows below it.
-    ws.auto_filter.ref = f"A{header_row}:{get_column_letter(len(COLUMNS))}{last_data_row}"
+    ws.auto_filter.ref = (
+        f"A{header_row}:{get_column_letter(grid.width)}{last_data_row}"
+    )
+    _autofit(ws, grid, last_data_row)
     ws.sheet_view.showGridLines = True

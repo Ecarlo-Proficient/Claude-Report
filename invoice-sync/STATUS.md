@@ -30,6 +30,17 @@ mirror. Update this in the SAME commit as any change to this tool.
   - **Litigation invoices excluded** (the `Litigation` checkbox on both
     trackers) — legal work, not collections work, and leaving them in inflates
     every bucket. The count of what was dropped prints in the subtitle.
+  - **`Invoice #` is a hyperlink to the invoice in QBO** (Notion's `QBO Link`
+    url property, written by the sync). On the number rather than in its own
+    column — keeps the sheet narrow and puts the click where the eye already is.
+    A handful of MFD invoices have no link in Notion; those stay plain text.
+  - **Type sizes: body 12pt, client rows 13pt, title 14pt** (the user
+    2026-08-05). Client rows carry the extra point because the sheet is read
+    COLLAPSED — the client name is the line that has to land first. Column
+    widths are computed by `_autofit`, which measures the strings actually
+    written and scales for 12pt (openpyxl can't autofit: Excel sizes columns at
+    render time and openpyxl never renders). Capped at `MAX_COL_WIDTH` so a long
+    memo can't create a column you have to scroll past.
   - **Colour (2026-08-05, the user's explicit ask — a named exception to the
     repo's plain-Excel rule, see CLAUDE.md rule 5).** It encodes age or state
     only: bucket headers green→red; each detail row tints the one bucket cell
@@ -81,7 +92,12 @@ mirror. Update this in the SAME commit as any change to this tool.
   with hidden side effects is worse than a stale column that announces itself.
 - **RP has no previous-draw block by design.** RP doesn't bill in draws, and
   the bill-tracker matches RP bills on "earliest invoice on/after bill date" —
-  not a draw period. Rendered as a grey `n/a` block.
+  not a draw period. Rendered as a grey `n/a` block on the combined tab, and
+  **omitted entirely on the `RP Aging` tab** (the user 2026-08-05 — spreadsheet
+  columns N through R). Both tabs come from one `build_aging_sheet`; the RP one
+  passes `drop_columns=RP_DROP_COLUMNS` and `_Grid` handles the projection, so
+  rows are still built at full width against the `C_*` constants and no caller
+  has to know which physical column a field landed in.
 - **MFD192 and CP861 report `Multi-contract` instead of a previous draw.**
   MFD192 runs three contracts in parallel (base, HUDSONWOOD, OFFSITE) and CP861
   carries two different jobs (a 7-Eleven and a BP) under one project #; their
