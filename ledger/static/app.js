@@ -187,6 +187,7 @@ let DRAWS = { draws: [], total: 0 };
 let SALES = { pipeline: [], by_rep: [], warm: [], customers: [], totals: {} };
 let costCollapsed = new Set();   // collapsed cost-type parents (default: all collapsed)
 let drawsCollapsed = new Set();  // collapsed draw cards (default: all collapsed)
+let drawsExpanded = new Set();   // draws whose bills are expanded in the table (default: none)
 
 // ── Tabs ────────────────────────────────────────────────────────────────────
 let activeTab = "overview";
@@ -499,54 +500,82 @@ function renderDraws() {
     sr.appendChild(el);
   }
   { const cb = $("#btnClearDrawStage"); if (cb) cb.hidden = !activeDrawStage; }
+  // One row per draw (table). Click a row → its bills open underneath. Green = fully
+  // done (GC paid + every waiver in). "Billed (in)" = the GC pays you; "Paid out" = you
+  // pay the vendors — the money-in vs money-out the owner wanted at a glance.
   const box = $("#drawList"); box.innerHTML = "";
+  if (!shown.length) { box.innerHTML = '<p class="hint" style="padding:14px 18px">No draws match.</p>'; return; }
+  const scroll = document.createElement("div"); scroll.className = "table-scroll";
+  const table = document.createElement("table"); table.className = "grid draws-table";
+  const thead = document.createElement("thead"), tbody = document.createElement("tbody");
+  const cols = [["", "left"], ["Project #", "left"], ["Draw memo", "left"], ["Billed (in)", "right"],
+                ["Invoice #", "left"], ["Date", "left"], ["Paid out", "right"], ["Stage", "left"]];
+  const htr = document.createElement("tr");
+  for (const [c, al] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
+  thead.appendChild(htr);
   for (const d of shown) {
-    const collapsed = drawsCollapsed.has(d.matched_invoice);
-    const sec = document.createElement("section"); sec.className = "widget draw";
-    const head = document.createElement("div"); head.className = "widget-head draw-head"; head.style.cursor = "pointer";
-    head.onclick = () => { collapsed ? drawsCollapsed.delete(d.matched_invoice) : drawsCollapsed.add(d.matched_invoice); renderDraws(); };
-    const left = document.createElement("div");
-    const h = document.createElement("h2"); h.textContent = (collapsed ? "▸ " : "▾ ") + (d.label || d.matched_invoice); left.appendChild(h);
-    const meta2 = document.createElement("div"); meta2.className = "panel-sub";
-    meta2.textContent = `${money(d.total)} · ${d.n} bills · ${d.paid}/${d.n} paid · ${d.waivers}/${d.n} waivers`;
-    left.appendChild(meta2); head.appendChild(left);
-    const pill = document.createElement("span"); pill.className = "lien " + (DRAW_STAGE_CLASS[d.stage] || "info"); pill.textContent = DRAW_STAGE_LABEL[d.stage] || d.stage;
-    head.appendChild(pill);
-    if (d.action && d.action.url) {
-      const a = document.createElement("a"); a.className = "notion-link"; a.href = d.action.url;
-      a.target = "_blank"; a.rel = "noopener"; a.textContent = "📄 Notion · " + (d.action.status || "Open");
-      a.onclick = (e) => e.stopPropagation();
-      head.appendChild(a);
+    const done = d.stage === "Ready to turn in";
+    const open = drawsExpanded.has(d.matched_invoice);
+    const tr = document.createElement("tr"); tr.className = "draw-row" + (done ? " done" : "");
+    tr.style.cursor = "pointer";
+    tr.onclick = (e) => { if (e.target.closest(".cell") || e.target.closest("a")) return;
+      open ? drawsExpanded.delete(d.matched_invoice) : drawsExpanded.add(d.matched_invoice); renderDraws(); };
+    const cc = document.createElement("td"); cc.className = "left draw-caret"; cc.textContent = open ? "▾" : "▸"; tr.appendChild(cc);
+    tr.appendChild(leftText(d.project_no || "—"));
+    const memo = (d.label || "").replace(/^\s*\S+\s*—\s*/, "").trim() || d.label || "—";
+    tr.appendChild(leftText(memo));
+    const bt = document.createElement("td");
+    if (d.billed != null) { const mc = moneyCell(d.billed); mc.classList.add("draw-in"); bt.appendChild(mc);
+      if (d.ar_status && d.ar_status !== "Paid") { const s = document.createElement("span"); s.className = "ar-open"; s.textContent = " " + d.ar_status; bt.appendChild(s); } }
+    else bt.appendChild(document.createTextNode("—"));
+    tr.appendChild(bt);
+    tr.appendChild(leftText(d.invoice_no || "—"));
+    tr.appendChild(leftText(fmtDate(d.ar_date || d.recency)));
+    const ot = document.createElement("td"); const mo = moneyCell(d.total); mo.classList.add("draw-out"); ot.appendChild(mo);
+    const pc = document.createElement("span"); pc.className = "paidcnt"; pc.textContent = ` ${d.paid}/${d.n}`; ot.appendChild(pc); tr.appendChild(ot);
+    const st = document.createElement("td"); st.className = "left";
+    const pill = document.createElement("span"); pill.className = "lien " + (DRAW_STAGE_CLASS[d.stage] || "info"); pill.textContent = DRAW_STAGE_LABEL[d.stage] || d.stage; st.appendChild(pill);
+    if (d.action && d.action.url) { const a = document.createElement("a"); a.className = "notion-link"; a.href = d.action.url; a.target = "_blank"; a.rel = "noopener"; a.textContent = " 📄"; a.title = "Notion · " + (d.action.status || "Open"); st.appendChild(a); }
+    tr.appendChild(st);
+    tbody.appendChild(tr);
+    if (open) {
+      const br = document.createElement("tr"); br.className = "draw-bills-row";
+      const btd = document.createElement("td"); btd.colSpan = cols.length; btd.appendChild(buildBillsTable(d));
+      br.appendChild(btd); tbody.appendChild(br);
     }
-    sec.appendChild(head);
-    if (!collapsed) {
-      const scroll = document.createElement("div"); scroll.className = "table-scroll";
-      const table = document.createElement("table"); table.className = "grid";
-      const thead = document.createElement("thead"), tbody = document.createElement("tbody");
-      const cols = [["Vendor", "left"], ["Bill #", "left"], ["Amount", "right"], ["Paid", "left"], ["GC funded", "left"], ["Waiver in hand", "left"]];
-      const htr = document.createElement("tr");
-      for (const [c, al] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
-      thead.appendChild(htr);
-      for (const b of d.bills) {
-        const tr = document.createElement("tr");
-        tr.appendChild(leftText(b.vendor || "—"));
-        tr.appendChild(leftText(b.bill_ref || "—"));
-        const av = document.createElement("td"); av.appendChild(moneyCell(b.amount)); tr.appendChild(av);
-        tr.appendChild(leftText(b.pay_date ? "✓ " + fmtDate(b.pay_date) : "—"));
-        tr.appendChild(leftText(b.gc_paid ? "✓ " + fmtDate(b.gc_paid) : "—"));
-        const wtd = document.createElement("td"); wtd.className = "left";
-        const lab = document.createElement("label"); lab.className = "chk";
-        const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = !!b.waiver;
-        cb.onchange = () => setWaiver(d, b, cb);
-        lab.appendChild(cb); lab.appendChild(document.createTextNode(b.waiver ? " in hand" : " mark"));
-        wtd.appendChild(lab); tr.appendChild(wtd);
-        tbody.appendChild(tr);
-      }
-      table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table);
-      sec.appendChild(scroll);
-    }
-    box.appendChild(sec);
   }
+  table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table); box.appendChild(scroll);
+}
+
+function buildBillsTable(d) {
+  const wrap = document.createElement("div"); wrap.className = "bills-sub";
+  const cap = document.createElement("div"); cap.className = "bills-cap";
+  cap.textContent = `${d.n} bills · ${money(d.total)} to vendors · ${d.paid}/${d.n} paid · ${d.waivers}/${d.n} waivers in`;
+  wrap.appendChild(cap);
+  const scroll = document.createElement("div"); scroll.className = "table-scroll";
+  const table = document.createElement("table"); table.className = "grid";
+  const thead = document.createElement("thead"), tbody = document.createElement("tbody");
+  const cols = [["Vendor", "left"], ["Bill #", "left"], ["Amount", "right"], ["Paid", "left"], ["GC funded", "left"], ["Waiver in hand", "left"]];
+  const htr = document.createElement("tr");
+  for (const [c, al] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
+  thead.appendChild(htr);
+  for (const b of d.bills) {
+    const tr = document.createElement("tr");
+    tr.appendChild(leftText(b.vendor || "—"));
+    tr.appendChild(leftText(b.bill_ref || "—"));
+    const av = document.createElement("td"); av.appendChild(moneyCell(b.amount)); tr.appendChild(av);
+    tr.appendChild(leftText(b.pay_date ? "✓ " + fmtDate(b.pay_date) : "—"));
+    tr.appendChild(leftText(b.gc_paid ? "✓ " + fmtDate(b.gc_paid) : "—"));
+    const wtd = document.createElement("td"); wtd.className = "left";
+    const lab = document.createElement("label"); lab.className = "chk";
+    const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = !!b.waiver;
+    cb.onchange = () => setWaiver(d, b, cb);
+    lab.appendChild(cb); lab.appendChild(document.createTextNode(b.waiver ? " in hand" : " mark"));
+    wtd.appendChild(lab); tr.appendChild(wtd);
+    tbody.appendChild(tr);
+  }
+  table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table); wrap.appendChild(scroll);
+  return wrap;
 }
 async function setWaiver(draw, bill, cb) {
   const received = cb.checked;

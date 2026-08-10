@@ -270,7 +270,7 @@ def _fetch_draws(con, limit: int = 100) -> dict:
         rows = con.execute(
             "SELECT matched_invoice mi, project_no, division, vendor, bill_ref, "
             "MAX(bill_total) amount, MAX(open_balance) open_bal, pay_status, invoice_status, "
-            "MAX(gc_paid_date) gc, MAX(pay_date) pd, MAX(bill_date) bd "
+            "MAX(gc_paid_date) gc, MAX(pay_date) pd, MAX(bill_date) bd, MAX(invoice_no) invoice_no "
             "FROM ap_bill_line WHERE matched_invoice IS NOT NULL AND matched_invoice <> '' "
             # RP isn't draws — RP bills at completion / milestones, not formal draws (owner).
             "AND COALESCE(project_no,'') NOT LIKE 'RP%' AND matched_invoice NOT LIKE '%— RP%' "
@@ -278,10 +278,20 @@ def _fetch_draws(con, limit: int = 100) -> dict:
     except sqlite3.OperationalError:
         return {"draws": [], "total": 0}
     wmap = {w["waiver_key"]: w["received"] for w in con.execute("SELECT waiver_key, received FROM waiver")}
+    # AR side (money IN) from the Invoice Tracker load — joined by Invoice #.
+    bmap: dict = {}
+    try:
+        for b in con.execute("SELECT doc_number, amount, balance, status, txn_date, customer "
+                             "FROM billing_event WHERE doc_number IS NOT NULL"):
+            bmap[str(b["doc_number"])] = dict(b)
+    except sqlite3.OperationalError:
+        pass
     draws: dict = {}
     for r in rows:
         d = draws.setdefault(r["mi"], {"matched_invoice": r["mi"], "project_no": r["project_no"],
-                                       "division": r["division"], "bills": []})
+                                       "division": r["division"], "invoice_no": None, "bills": []})
+        if not d["invoice_no"] and r["invoice_no"]:
+            d["invoice_no"] = r["invoice_no"]
         wk = _waiver_key(r["mi"], r["vendor"], r["bill_ref"])
         d["bills"].append({
             "vendor": r["vendor"], "bill_ref": r["bill_ref"], "amount": r["amount"] or 0,
@@ -304,10 +314,18 @@ def _fetch_draws(con, limit: int = 100) -> dict:
             stage = "Paid — collect waivers"
         else:
             stage = "Ready to turn in"
+        ar = bmap.get(str(d.get("invoice_no") or ""))
         d.update({
             "label": (mi or "").split("\n")[0].strip(), "n": n, "paid": paid, "funded": funded,
             "waivers": waivers, "total": sum(b["amount"] for b in bills), "stage": stage,
             "recency": max([(b["gc_paid"] or b["pay_date"] or b["bill_date"] or "") for b in bills] or [""]),
+            # money IN (billed to GC) — from the Invoice Tracker, by Invoice #
+            "billed": (ar["amount"] if ar else None),          # net billed to the GC
+            "ar_open": (ar["balance"] if ar else None),        # GC still owes this much
+            "ar_status": (ar["status"] if ar else None),       # Paid | Partially Paid | Unpaid
+            "ar_date": (ar["txn_date"] if ar else None),       # invoice date
+            "customer": (ar["customer"] if ar else None),
+            "gc_paid_in": bool(ar and (ar.get("status") == "Paid" or (ar.get("balance") or 0) <= 0.005)),
         })
         out.append(d)
     out.sort(key=lambda d: d["recency"], reverse=True)

@@ -273,21 +273,26 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   - **`% complete` bar** is now full-width (`.pct-bar`, min 130px) with a **visible track**, so the fill
     level is judgeable at a glance; over-100% caps full + red (163.1% reads clearly). Verified live.
 
-- **AR loader — the money IN (`load_invoices.py` → `billing_event`, built; awaiting first live pull).**
-  Owner wants the Draws view to show what the GC pays HIM (in) next to what he pays vendors (out).
-  That AR $ wasn't in the ledger (`billing_event` was empty; Open_Invoices.xlsx has only the still-open
-  invoices, and **31 of 49 board draws are already GC-paid** → amount only in QBO). New `load_invoices.py`
-  pulls every QBO Invoice → `billing_event`, keyed by **Invoice # (DocNumber)** = `ap_bill_line.invoice_no`,
-  so the draw ↔ invoice join is exact. `billing_event` schema fleshed out (doc_number, customer, memo,
-  amount=TotalAmt, balance, status Paid/Open, division, source, loaded_at); empty-table migration is a
-  safe drop+recreate. Read-only on QBO; scoped full-replace by `source='qbo_invoice'`; `--dry-run` shows
-  draw coverage; **`--selftest` proves parse + Paid/Open + the draw↔invoice join OFFLINE** (passes).
-  Also fixed the freshness **sync-ar path** (the file is `Collections/Open_Invoices.xlsx`, not the paths
-  it checked → "not found").
-  - **NEXT (owner picked "AR first, then the table"):** owner runs `python3 ledger/load_invoices.py`
-    once (Touch ID) to populate; then the **Draws tab redesign** — a table (Project # · Draw memo · net
-    amount(in) · invoice # · date · paid-to-vendors(out)), **green when fully done** (paid + all waivers),
-    click a draw → its bills collapse under it showing what's paid. `_fetch_draws` joins `billing_event`.
+- **AR money-IN per draw + the Draws-tab table redesign (owner: "connect systems, don't re-pull QBO").**
+  Owner wanted the Draws view to show what the GC pays HIM (in) next to what he pays vendors (out) — and
+  corrected an initial QBO-pull approach: the **Invoice Tracker** (Notion, `invoice-sync`) already mirrors
+  every QBO invoice and keeps paid ones 12 months, so the ledger reads THAT, not QBO again.
+  `QBO → invoice-sync → Invoice Tracker (Notion) → ledger.billing_event`.
+  - **`load_invoices.py`** reads both Invoice Tracker DBs (Res/Com `265b…`, MFD `0f8e…`) via
+    `shared/notion_client` (the shared token — **no QBO, no Touch ID**) → `billing_event`, keyed by
+    **Invoice #** = `ap_bill_line.invoice_no`, so the draw↔invoice join is exact. `billing_event` schema
+    fleshed out (doc_number, project, division, customer, memo, amount=TotalAmt, balance, status
+    Unpaid/Partially Paid/Paid, source, loaded_at); empty-table migration = safe drop+recreate. Read-only
+    on Notion; full-replace by `source='invoice_tracker'`; `--dry-run` coverage; `--selftest` proves the
+    parse + status + draw↔invoice join OFFLINE. **Run live: 310 invoices → 41 of 49 draws matched;
+    $14.7M billed · $4.5M still open.** Also fixed the freshness sync-ar path (`Collections/Open_Invoices.xlsx`).
+  - **`_fetch_draws`** now joins `billing_event` by Invoice # → each draw carries `billed` (net in),
+    `ar_status`, `ar_open`, `ar_date`, `customer`.
+  - **Draws tab is now a TABLE** (`renderDraws` rewrite): one row per draw — **caret · Project # · Draw
+    memo · Billed (in, green) · Invoice # · Date · Paid out (+paid/N) · Stage** — **green row when fully
+    done** (Ready to turn in); **click a row → its bills open underneath** (vendor · bill # · amount ·
+    paid · GC-funded · waiver checkbox) with a caption. `drawsExpanded` state; waiver POST preserved.
+    Verified live: 49 rows, 41 with billed-in, expand works, dates month-first, no console errors.
 
 ## IN PROGRESS
 - (none)

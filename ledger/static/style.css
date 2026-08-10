@@ -202,6 +202,22 @@ tr.lien-row.u-info > td:first-child { border-left-color: var(--text-dim); }
   border: 1px solid var(--border); background: var(--surface-2); color: var(--text); white-space: nowrap; }
 .notion-link:hover { border-color: var(--accent); }
 
+/* ── Draws table (one row per draw; click → bills open underneath) ────────── */
+.draws-table td { vertical-align: middle; }
+.draw-row .draw-caret { color: var(--text-dim); width: 1.4em; text-align: center; }
+.draw-row:hover { background: var(--row-hover); }
+.draw-row.done { background: color-mix(in srgb, var(--pos) 13%, transparent); }
+.draw-row.done:hover { background: color-mix(in srgb, var(--pos) 20%, transparent); }
+.draw-row.done td:first-child { box-shadow: inset 3px 0 var(--pos); }
+.cell.draw-in { color: var(--pos); font-weight: 700; }      /* money IN (GC pays you) */
+.cell.draw-out { color: var(--text); }                       /* money OUT (you pay vendors) */
+.ar-open { color: #b8860b; font-size: .82em; font-weight: 600; }
+.paidcnt { color: var(--text-dim); font-size: .85em; font-variant-numeric: tabular-nums; }
+.draw-bills-row > td { padding: 0; background: var(--surface-2); }
+.bills-sub { padding: 6px 10px 12px 34px; }
+.bills-cap { color: var(--text-dim); font-size: .82em; padding: 4px 2px 8px; font-variant-numeric: tabular-nums; }
+.bills-sub table.grid { background: var(--surface); border-radius: 8px; }
+
 /* ── Vendor type pill ──────────────────────────────────────────────────── */
 .vtype { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: .8em; white-space: nowrap;
   border: 1px solid var(--border); background: var(--surface-2); color: var(--text-dim); }

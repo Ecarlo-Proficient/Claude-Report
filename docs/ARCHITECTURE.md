@@ -365,14 +365,17 @@ uses, moved to `shared/` so the two can't drift). Subs are included, and it **re
 a real load needs one Touch ID. Scoped full-replace by `source='qbo'` (idempotent, drops deleted
 txns). This is what Bill Tracker couldn't be — the complete, cost-code-keyed cost ledger.
 
-**AR invoices — the money IN (`load_invoices.py` → `billing_event`, built; awaiting the first live
-pull).** Pulls every QBO Invoice (the draws the GC pays YOU) and writes one `billing_event` per
-invoice — project from `CustomerRef`, and crucially the **Invoice # (DocNumber)**, which is the same
-number `ap_bill_line.invoice_no` carries, so the Draws view can put **billed-to-GC (in)** next to
-**paid-to-vendors (out)** on every draw. `TotalAmt` = the net billed; `Balance` 0 ⇒ the GC paid it.
-Open_Invoices.xlsx has only the still-open invoices (most draws are already GC-paid), so this needs
-QBO. Read-only against QBO; scoped full-replace by `source='qbo_invoice'`; `--selftest` proves the
-parse + the draw↔invoice join offline; a real load needs one Touch ID.
+**AR invoices — the money IN (`load_invoices.py` → `billing_event`).** Systems connect, they don't each
+re-pull QBO: `invoice-sync` already mirrors every QBO invoice into the **Invoice Tracker** Notion DBs
+(Res/Com + MFD, paid kept 12 months), so the ledger reads THAT via `shared/notion_client` (the shared
+token — no QBO, no Touch ID). Each invoice → one `billing_event`, keyed by the **Invoice #**, which is
+the same number `ap_bill_line.invoice_no` carries, so the Draws view puts **billed-to-GC (in)** next to
+**paid-to-vendors (out)** on every draw. `TotalAmt` = net billed; `Status`/`Balance` give Paid/Partially/
+Unpaid. Read-only on Notion; full-replace by `source='invoice_tracker'`; `--selftest` proves it offline.
+`dashboard.py::_fetch_draws` joins it by Invoice #; the **Draws tab is a table** — one row per draw
+(Project # · memo · billed-in · invoice # · date · paid-out · stage), green when fully done, click a row
+to open its bills.
+    QBO ──(invoice-sync)──▶ Invoice Tracker (Notion) ──(load_invoices.py)──▶ ledger.billing_event ──▶ Draws
 
 **CRM / sales pipeline (`load_customers.py` → `customer` + `sales_touch`).** The pre-project spine:
 the ledger owns the client/lead master too, not just the job. Reads the Notion "Customer List" data
