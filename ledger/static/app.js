@@ -401,19 +401,26 @@ function renderHome() {
   const underB = ALL.filter(r => num(r.underbillings) > 0).length;
   const goRule = (key) => { setTab("overview"); activeRule = key; renderAttention(); renderProjects(); $("#btnClearRule").hidden = false; window.scrollTo(0, 0); };
   const acts = [
-    ["Liens past due", pastDue, true, () => setTab("liens")],
-    ["Lien due ≤7d", dueSoon, true, () => setTab("liens")],
-    ["Draws: collect waivers", collectDraws, false, () => setTab("draws")],
-    ["Draws ready to turn in", readyDraws, false, () => setTab("draws")],
-    ["Over budget", overB, true, () => goRule("overbudget")],
-    ["Underbilled (can invoice)", underB, false, () => goRule("underbilled")],
+    ["Bills past lien date", pastDue, true, () => setTab("liens"),
+      "Unpaid bills YOU owe (AP) whose vendor/supplier lien-notice deadline has passed — they can lien the project. Pay to clear. This is money OUT, not your AR."],
+    ["Lien date in ≤7d", dueSoon, true, () => setTab("liens"),
+      "Unpaid bills you owe that are within 7 days of the vendor's lien-notice deadline."],
+    ["Draws: collect waivers", collectDraws, false, () => setTab("draws"),
+      "Draws where you've paid the vendors and are collecting their unconditional waivers."],
+    ["Draws ready to turn in", readyDraws, false, () => setTab("draws"),
+      "Draws fully paid with every waiver in hand — turn in to unlock the next draw."],
+    ["Over budget", overB, true, () => goRule("overbudget"),
+      "Jobs where cost-to-date has passed the ETC budget."],
+    ["Underbilled (can invoice)", underB, false, () => goRule("underbilled"),
+      "Jobs earning ahead of what's been billed — you could invoice more."],
   ];
   const ar = $("#homeActions"); ar.innerHTML = "";
-  for (const [label, n, warn, go] of acts) {
+  for (const [label, n, warn, go, tip] of acts) {
     const el = document.createElement("div"); el.className = "action" + (warn && n ? " warn" : "") + (n ? "" : " none");
     el.innerHTML = `<span class="a-n"></span><span class="a-lab"></span>`;
     el.querySelector(".a-n").textContent = n;
     el.querySelector(".a-lab").textContent = label;
+    if (tip) el.title = tip;
     if (n) el.onclick = go;
     ar.appendChild(el);
   }
