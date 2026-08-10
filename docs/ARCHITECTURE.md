@@ -340,10 +340,13 @@ first reach OUT to a peripheral tool; the "own the spine" inverse (project-pnl r
 the ledger) is still ahead.
 
 **On/off, on demand (owner: no always-on).** The dashboard is launched, not resident. `open_ledger.command`
-starts it if down + opens the browser; `build_ledger_app.command` osacompiles a stay-open **Project
-Ledger.app** whose Dock icon IS the on/off indicator — Quit / logout / shutdown / sleep all stop the
-server (`pkill -f ledger/dashboard.py`). The My-view freshness strip flags a source **⟳ Sync recommended**
-when it's stale > 48 **business**-hours (`businessHoursSince` — weekends don't age the data).
+starts it if down + opens the browser; **`ledger/app/`** is a real Cocoa app (`ledger_app.py`, PyObjC +
+py2app) built by `build_ledger_app.command` → **Project Ledger.app**. Its Dock icon IS the on/off
+indicator; it runs `dashboard.py` as a child and stops it on Quit / logout / shutdown / **real system
+sleep** (`NSWorkspaceWillSleepNotification`), all via `pkill -f ledger/dashboard.py`. `dashboard.py`
+gained `--background` (double-fork + setsid, so a launcher can't reap it) and clean SIGTERM shutdown.
+The My-view freshness strip flags a source **⟳ Sync recommended** when it's stale > 48 **business**-hours
+(`businessHoursSince` — weekends don't age the data).
 
 **AP + liens (`load_bill_tracker.py` → `ap_bill_line`).** The line-level `Bills`/`Inventory`
 sheets of `Bill Tracker.xlsx` load into `ap_bill_line` — vendor, project, account, open balance,

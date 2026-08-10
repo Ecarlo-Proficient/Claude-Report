@@ -68,3 +68,7 @@ synology/synology_audit.md
 # Owner-machine data — never tracked (data-risk scrub 2026-07-30)
 one-offs/rp_source_overrides.json
 synology/synology_reference_map.md
+ledger/app/build/
+ledger/app/dist/
+ledger/app/app_icon.icns
+ledger/app/__pycache__/

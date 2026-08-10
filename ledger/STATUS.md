@@ -222,17 +222,27 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   - **Not built — option C** (project-pnl reads cost_line from the ledger instead of re-pulling QBO,
     the "own-the-spine" data-source refactor). Still the strategic direction; larger, separate job.
 
-- **Dock on/off switch — `build_ledger_app.command` (owner: on-demand, "no always-on anything").**
-  The owner rejected an always-on launchd agent. Instead a self-locating builder osacompiles a tiny
-  stay-open AppleScript applet → **`~/Applications/Project Ledger.app`**: launch → runs
-  `open_ledger.command` (start server if down + open browser); **the Dock icon present = ON, gone =
-  OFF** (the indicator); **Quit / log out / shut down → stops the server** (`on quit` → `pkill -f
-  ledger/dashboard.py`); an **`on idle` watchdog stops it on sleep** (a >90 s gap between 15–20 s idle
-  ticks = the Mac slept → stop + quit) and quits if the server dies (keeps the indicator honest).
-  Repo-rule clean: the tracked builder self-locates (no `/Users` path); the real path is baked into
-  the generated app on the owner's machine only. Never runs in the background. Verified: builds +
-  compiles, foreground/Dock-visible (no LSUIElement), launcher path baked, handlers present. First
-  GUI launch is the owner's.
+- **Dock on/off switch — `Project Ledger.app` (owner: on-demand, "no always-on", real indicator + clean Quit).**
+  The owner rejected an always-on launchd agent and wanted a Dock indicator + one-click open + a clean
+  off switch. **`ledger/app/`** holds a real Cocoa app (`ledger_app.py` via **PyObjC + py2app**);
+  `build_ledger_app.command` installs the toolkit once, optionally makes an icon from `app_icon.png`,
+  and py2app-builds (alias mode) → **`~/Applications/Project Ledger.app`**. The app runs the SAME
+  `dashboard.py` server as a **child process**; its **Dock icon present = ON, gone = OFF** (the
+  indicator); **Cmd-Q / Quit / log out / shut down / real system sleep** all stop it cleanly
+  (`applicationShouldTerminate` + `NSWorkspaceWillSleepNotification` → `pkill -f ledger/dashboard.py`).
+  Repo path is baked via the plist `LSEnvironment` (works wherever the .app lives); the child is
+  spawned with a **cleaned env** (strip py2app's `PYTHONPATH`/`PYTHONHOME` so the server sees its own
+  site-packages, e.g. `requests`). Never runs at login.
+  - **Why not the simpler routes (learned the hard way):** an `osacompile` applet **can't stay open**
+    from the CLI (it quit instantly and killed the server); a hand-built foreground app **can't Quit
+    cleanly** (⌘Q hangs). A proper PyObjC/py2app Cocoa app is the only one that does **both**. Isolation-
+    tested each claim before building.
+  - **Server hardening (used by the app + the terminal launcher):** `dashboard.py --background`
+    double-forks + `setsid` (detaches so a launcher can't reap it; PPID→launchd), and it now quits
+    cleanly on **SIGTERM** (`signal.default_int_handler`). `open_ledger.command` uses `--background`.
+  - Verified live end-to-end: launch → server 200 + Dock name "Project Ledger" + browser opens; Quit →
+    app gone, server 000, child gone. Sleep-stop uses the documented sleep notification (not triggered
+    from here). Build artifacts (`ledger/app/{build,dist}`, `app_icon.icns`) are gitignored.
 - **"Recommended to sync" freshness flag (owner, weekend-aware).** The My-view data-freshness cards now
   flag a source with a **⟳ Sync recommended** badge (+ amber border, + a "N recommended to sync" note)
   when it is stale **> 48 business-hours** — weekends don't age the data (a Friday load isn't "stale"

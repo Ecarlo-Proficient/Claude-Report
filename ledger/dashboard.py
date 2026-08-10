@@ -25,7 +25,9 @@ import argparse
 import datetime as _dt
 import hashlib
 import json
+import os
 import re
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -592,12 +594,32 @@ class Handler(BaseHTTPRequestHandler):
         self._json({"ok": True, "received": bool(received), "waiver_key": key})
 
 
+def _daemonize():
+    """Double-fork + setsid so the server outlives whatever launched it. A GUI app's
+    `do shell script` (Project Ledger.app) reaps ordinary backgrounded children when it
+    returns; a process in its OWN session survives. stdout/stderr stay on whatever the
+    caller redirected (the launcher points them at a log)."""
+    if os.fork() > 0:
+        os._exit(0)                       # first parent exits → caller returns immediately
+    os.setsid()                           # new session, detached from the controlling group
+    if os.fork() > 0:
+        os._exit(0)                       # second parent exits → can't reacquire a terminal
+    devnull = os.open(os.devnull, os.O_RDWR)
+    os.dup2(devnull, 0)                   # stdin ← /dev/null (nothing keeps us tethered)
+
+
 def main():
     ap = argparse.ArgumentParser(description="Local web dashboard over the project ledger.")
     ap.add_argument("--db", type=Path, default=DEFAULT_DB, help="SQLite ledger to read.")
     ap.add_argument("--port", type=int, default=8787, help="Port (default 8787).")
     ap.add_argument("--no-open", action="store_true", help="Don't auto-open a browser.")
+    ap.add_argument("--background", action="store_true",
+                    help="Detach into a new session (daemonize) and serve in the background — "
+                         "so a GUI launcher (Project Ledger.app) can't reap it.")
     args = ap.parse_args()
+
+    if args.background:                   # detach BEFORE binding, so the grandchild owns the socket
+        _daemonize()
 
     Handler.db_path = args.db
     url = f"http://127.0.0.1:{args.port}"
@@ -610,6 +632,11 @@ def main():
         m = ready["meta"]
         print(f"Ledger: {m['project_count']} projects · report {m['report_date']} · {m['db_path']}")
     print(f"Dashboard: {url}   (Ctrl-C to stop)")
+
+    # Quit cleanly on SIGTERM too — when the server IS the app process (Project
+    # Ledger.app runs it in the foreground), Cmd-Q / Dock-Quit / logout sends SIGTERM.
+    # default_int_handler raises KeyboardInterrupt, same as Ctrl-C, so the handler below runs.
+    signal.signal(signal.SIGTERM, signal.default_int_handler)
 
     if not args.no_open:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
