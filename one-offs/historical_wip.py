@@ -155,7 +155,7 @@ def _write_tab(ws, title, subtitle, rows, out_labels, table_name):
     ws.freeze_panes = f"A{hdr+1}"
 
 
-RP_COLS = ["PROJECT", "ADDRESS", "BUILDER", "SCOPE", "CONTRACT (proposal)",
+RP_COLS = ["PROJECT", "ADDRESS", "BUILDER", "SCOPE", "CONTRACT", "CONTRACT SOURCE",
            "BILLED (as of date)", "COSTS (as of date)", "NOTES"]
 
 # schedule task-section title → the scope it implies. Punch-list sections are by
@@ -195,6 +195,84 @@ def _read_schedule_jobs(path: Path):
     return list(jobs.values())
 
 
+def _sheet_subtotal(ws):
+    """The 'SUB TOTAL' figure on a bid/takeoff sheet — value to the right of the
+    label (lifted from rp_wip_simple, the verified reader)."""
+    for row in ws.iter_rows(min_row=1, max_row=80, max_col=14):
+        for k, c in enumerate(row):
+            if isinstance(c.value, str) and "SUB TOTAL" in c.value.upper():
+                for v in row[k + 1:]:
+                    if isinstance(v.value, (int, float)) and v.value:
+                        return float(v.value)
+    return None
+
+
+def _deep_contract(folder, scope, desc):
+    """Dig the WHOLE project folder tree (the user 2026-08-08: 'go deeper in
+    folder roots, extract all you can to fill the gaps') for a contract number:
+    a proposal PDF 'SUB TOTAL' anywhere, else a takeoff .xlsm bid subtotal.
+    Returns (amount, source_note, saw_invoice)."""
+    from openpyxl import load_workbook as _lw
+    props, takeoffs, saw_invoice = [], [], False
+    try:
+        for root, dirs, files in os.walk(folder):
+            if len(Path(root).relative_to(folder).parts) > 2:
+                dirs[:] = []
+                continue
+            for fn in files:
+                if fn.startswith("~$"):
+                    continue
+                low = fn.lower()
+                p = Path(root) / fn
+                if "invoice" in low:
+                    saw_invoice = True
+                if low.endswith(".pdf") and ("proposal" in low or "bid" in low):
+                    props.append(p)
+                elif low.endswith((".xlsm", ".xlsx")) and (
+                        low.startswith("rp") or "takeoff" in low or "bid" in low):
+                    takeoffs.append(p)
+    except OSError:
+        return None, "folder tree unreadable", False
+    ftw = (scope == "ftw")
+
+    def _flat(n):
+        n = n.lower()
+        return "flatwork" in n or "ftw" in n
+
+    # Restrict to docs whose kind matches the scope (a flatwork line's contract
+    # is the flatwork proposal, not the slab one), then take the LARGEST subtotal
+    # — the main contract, not a small stair/repair add-on in the same folder.
+    best = None                                           # (amount, source)
+
+    def _consider(amt, src):
+        nonlocal best
+        if amt and (best is None or amt > best[0]):
+            best = (float(amt), src)
+
+    for p in sorted([x for x in props if _flat(x.name) == ftw] or props,
+                    key=lambda x: x.stat().st_mtime, reverse=True)[:8]:
+        _consider(P.pdf_subtotal(p), f"proposal '{p.name}'")
+    if best:
+        return best[0], best[1], saw_invoice
+    for p in sorted([x for x in takeoffs if _flat(x.name) == ftw] or takeoffs,
+                    key=lambda x: x.stat().st_mtime, reverse=True)[:8]:
+        try:
+            wb = _lw(p, data_only=True, read_only=True)
+            try:
+                cand = [s for s in wb.sheetnames
+                        if any(k in s.upper() for k in ("BID", "PROPOSAL", "POST TENSION"))]
+                for sn in (cand or wb.sheetnames[:2]):
+                    _consider(_sheet_subtotal(wb[sn]), f"takeoff '{p.name}' · sheet '{sn}'")
+            finally:
+                wb.close()
+        except Exception:
+            continue
+    if best:
+        return best[0], best[1], saw_invoice
+    return None, ("proposal/takeoff found but no SUB TOTAL" if (props or takeoffs)
+                  else "no proposal/takeoff in the folder tree"), saw_invoice
+
+
 def _pl_totals(access, cid, cust_id, end_iso):
     """QBO billed (income) + costs (COGS+expenses) for a project, dated on/before
     end_iso. Returns (billed, costs), or (None, '<err>') on failure."""
@@ -226,7 +304,7 @@ def build_rp(date_key, access, cid, proj_map, folders_idx):
         folder = RP.match_by_address(
             {"house": parts[0] if parts else "",
              "street": parts[1] if len(parts) > 1 else addr}, addr_folders)
-        rp_num, contract, note = None, None, ""
+        rp_num, contract, csrc, note = None, None, "", ""
         if folder is not None:
             # The RP# lives in the FILE names inside the address folder
             # (RP####_ADDRESS…), not the folder name itself.
@@ -238,9 +316,11 @@ def build_rp(date_key, access, cid, proj_map, folders_idx):
                         break
             except OSError:
                 pass
-            _pp, contract, note = P.find_proposal(
+            # DEEP dig the whole folder tree for the contract.
+            contract, csrc, saw_inv = _deep_contract(
                 folder, "slab" if scope == "wreck" else scope, j["desc"])
-            note = note or ""
+            if saw_inv:
+                note = "invoice on file"
             if rp_num is None:
                 note = (note + "; " if note else "") + "matched a folder but no RP# in its files"
         else:
@@ -253,15 +333,28 @@ def build_rp(date_key, access, cid, proj_map, folders_idx):
             if isinstance(costs, str):
                 note = (note + "; " if note else "") + costs
                 billed = costs = None
+            # LAST RESORT for a missing contract: what QBO ultimately invoiced
+            # (life of job). Flagged as an estimate, not the signed number.
+            if contract is None:
+                inv, _c = _pl_totals(access, cid, cust["id"], dt.date.today().isoformat())
+                if isinstance(inv, (int, float)) and inv:
+                    contract, csrc = inv, "≈ QBO invoiced (no proposal found)"
         elif rp_num:
             note = (note + "; " if note else "") + "no QBO project"
+        # A contract below what's already billed usually means the deep dig
+        # grabbed a small add-on proposal, not the main one — flag it.
+        if (isinstance(contract, (int, float)) and isinstance(billed, (int, float))
+                and billed > 1000 and contract < 0.9 * billed):
+            note = (note + "; " if note else "") + \
+                f"contract < billed (${contract:,.0f} vs ${billed:,.0f}) — verify"
         rows.append({
             "PROJECT": line or "(unmatched)", "ADDRESS": addr, "BUILDER": j["builder"],
-            "SCOPE": scope, "CONTRACT (proposal)": contract,
+            "SCOPE": scope, "CONTRACT": contract, "CONTRACT SOURCE": csrc,
             "BILLED (as of date)": billed, "COSTS (as of date)": costs, "NOTES": note,
         })
     matched = sum(1 for r in rows if r["PROJECT"] != "(unmatched)")
-    print(f"    RP: {len(jobs)} scheduled job(s) · {matched} matched to a project · "
+    with_k = sum(1 for r in rows if isinstance(r["CONTRACT"], (int, float)))
+    print(f"    RP: {len(jobs)} scheduled · {matched} matched · {with_k} with a contract · "
           f"{len(rows) - matched} unmatched → {sched_path.name}")
     return rows
 
@@ -278,7 +371,8 @@ def _write_rp_tab(ws, label, rows):
         cell.font = Font(name=FONT, size=8, bold=True)
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         cell.border = BORDER
-    widths = {"PROJECT": 15, "ADDRESS": 30, "BUILDER": 22, "SCOPE": 8, "NOTES": 40}
+    widths = {"PROJECT": 15, "ADDRESS": 30, "BUILDER": 22, "SCOPE": 8,
+              "CONTRACT SOURCE": 34, "NOTES": 34}
     for c, label_ in enumerate(RP_COLS, 1):
         ws.column_dimensions[ws.cell(hdr, c).column_letter].width = widths.get(label_, 16)
     for i, rec in enumerate(rows, hdr + 1):
@@ -286,9 +380,9 @@ def _write_rp_tab(ws, label, rows):
             cell = ws.cell(i, c, rec.get(label_))
             cell.font = Font(name=FONT, size=8)
             cell.border = BORDER
-            if label_ in ("CONTRACT (proposal)", "BILLED (as of date)", "COSTS (as of date)"):
+            if label_ in ("CONTRACT", "BILLED (as of date)", "COSTS (as of date)"):
                 cell.number_format = MONEY
-            if label_ in ("NOTES", "ADDRESS", "BUILDER"):
+            if label_ in ("NOTES", "ADDRESS", "BUILDER", "CONTRACT SOURCE"):
                 cell.alignment = Alignment(vertical="top", wrap_text=True)
     if rows:
         from openpyxl.utils import get_column_letter
