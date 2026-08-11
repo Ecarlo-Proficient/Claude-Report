@@ -325,6 +325,14 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     Invoice Tracker (`billing_event`, by Invoice #); a draw whose AR invoice isn't in the tracker shows
     "—" (e.g. Briarwood invoices 33942/34103 are absent from the tracker though older ones are present —
     a data-entry gap in the Invoice Tracker, not a recency cutoff). No QBO fallback by design (owner).
+  - **UI fit + readability polish (owner).** (a) The draws STAGE pill was clipping off the right edge —
+    the short label was reverted to **"Ready to turn in"** (the verbose "Paid — ready to turn in" pushed
+    the column out of view; the full text stays on hover). (b) The Sales **All-customers** table clipped
+    its last column (Touches) because long client names blew out col 1 — the Client name now truncates
+    (`#salesTable` col 1 `max-width:240px`, ellipsis), so all six columns fit. (c) Pipeline **bars were
+    near-invisible** (faint fill, sub-pixel for small counts) — added a **border** to `.bar .bar-fill`
+    (+`.over`) and a **7px min-width** on the funnel fill so counts like 1/2/9 show. (d) Sales dates
+    (customers table + warm list) now use `fmtDate` — no more ISO `2026-05-29`. Verified live both themes.
 
 ## IN PROGRESS
 - (none)

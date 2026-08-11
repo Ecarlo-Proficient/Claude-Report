@@ -226,6 +226,10 @@ tr.draw-group .g-sub { color: var(--text-dim); font-weight: 500; font-size: .85e
 /* Working-on table: truncate the long Name so all columns fit the boxed width. */
 #homeWorkingTable td:nth-child(3) span { display: inline-block; max-width: 280px; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+/* All-customers (Sales) table: cap the Client name so every column through Touches
+   stays in view (long client names otherwise blow out col 1 and clip Touches). */
+#salesTable td:nth-child(1) span, #salesTable td:nth-child(1) a { display: inline-block; max-width: 240px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
 .draw-bills-row > td { padding: 0; background: var(--surface-2); }
 .bills-sub { padding: 6px 10px 12px 34px; }
 .bills-cap { color: var(--text-dim); font-size: .82em; padding: 4px 2px 8px; font-variant-numeric: tabular-nums; }
@@ -260,9 +264,11 @@ tr.draw-group .g-sub { color: var(--text-dim); font-weight: 500; font-size: .85e
 
 /* ── % complete bar (in the projects table) ────────────────────────────── */
 .bar { position: relative; display: inline-block; min-width: 68px; text-align: right; }
-.bar .bar-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px;
-  background: color-mix(in srgb, var(--accent) 30%, transparent); z-index: 0; }
-.bar .bar-fill.over { background: color-mix(in srgb, var(--neg) 32%, transparent); }
+.bar .bar-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; box-sizing: border-box;
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 62%, transparent); z-index: 0; }
+.bar .bar-fill.over { background: color-mix(in srgb, var(--neg) 32%, transparent);
+  border-color: color-mix(in srgb, var(--neg) 62%, transparent); }
 .bar .bar-txt { position: relative; z-index: 1; padding: 0 4px; }
 /* % complete: full-width bar with a visible track, so the fill level (and how far
    over 100%) is easy to judge at a glance. */

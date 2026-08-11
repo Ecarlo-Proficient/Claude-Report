@@ -479,7 +479,7 @@ function qboLinkCell(text, url, title) {
 const DRAW_STAGE_SHORT = {
   "Fund in — pay vendors": "Pay vendors",
   "Awaiting GC funding": "Awaiting GC",
-  "Ready to turn in": "Paid — ready to turn in",
+  "Ready to turn in": "Ready to turn in",
 };
 function renderDraws() {
   const fv = sel => ($(sel) ? $(sel).value : "").trim().toLowerCase();
@@ -1015,6 +1015,7 @@ function renderSales() {
     const st = document.createElement("td");
     const bar = document.createElement("span"); bar.className = "cell bar";
     const fill = document.createElement("span"); fill.className = "bar-fill"; fill.style.width = ((p.customers || 0) / maxc * 100) + "%";
+    if (p.customers > 0) fill.style.minWidth = "7px";   // keep tiny counts (1, 2) visible
     const txt = document.createElement("span"); txt.className = "bar-txt"; txt.textContent = p.customers || 0;
     bar.appendChild(fill); bar.appendChild(txt);
     st.appendChild(bar); tr.appendChild(st);
@@ -1050,7 +1051,7 @@ function renderSales() {
     if (a.division) { const dv = document.createElement("span"); dv.className = "vtype"; dv.textContent = a.division; head.appendChild(dv); }
     const d = daysAgo(a.last_contacted);
     const when = document.createElement("span"); when.className = "warm-when" + (d !== null && d > 21 ? " stale" : "");
-    when.textContent = a.last_contacted ? `last ${a.last_contacted}${d !== null ? ` · ${d}d ago` : ""}` : "no contact date";
+    when.textContent = a.last_contacted ? `last ${fmtDate(a.last_contacted)}${d !== null ? ` · ${d}d ago` : ""}` : "no contact date";
     head.appendChild(when);
     if (a.last_edited_by) { const by = document.createElement("span"); by.className = "warm-by"; by.textContent = a.last_edited_by; head.appendChild(by); }
     if (a.notion_url) { const lk = document.createElement("a"); lk.className = "warm-link"; lk.href = a.notion_url; lk.target = "_blank"; lk.rel = "noopener"; lk.textContent = "Notion ↗"; head.appendChild(lk); }
@@ -1093,7 +1094,7 @@ function renderSales() {
     tr.appendChild(nameTd);
     tr.appendChild(leftText(c.division || "—"));
     tr.appendChild(leftText(c.sales_status || "—"));
-    tr.appendChild(leftText(c.last_contacted || "—"));
+    tr.appendChild(leftText(c.last_contacted ? fmtDate(c.last_contacted) : "—"));
     tr.appendChild(leftText(c.last_edited_by || "—"));
     tr.appendChild(rightText(String(c.n_touches || 0)));
     tb.appendChild(tr);
