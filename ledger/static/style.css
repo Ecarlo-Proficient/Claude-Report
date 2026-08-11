@@ -269,6 +269,12 @@ tr.draw-group .g-sub { color: var(--text-dim); font-weight: 500; font-size: .85e
   padding: 1px 8px; border-radius: 999px; color: #b8860b; white-space: nowrap;
   border: 1px solid color-mix(in srgb, #b8860b 55%, var(--border));
   background: color-mix(in srgb, #b8860b 12%, transparent); }
+/* in-app Resync progress */
+.sync-progress { padding: 0 18px 16px; }
+.sync-bar { height: 6px; border-radius: 999px; overflow: hidden; background: color-mix(in srgb, var(--text-dim) 16%, transparent); }
+.sync-bar-fill { height: 100%; width: 0; border-radius: 999px; background: var(--accent); transition: width .4s ease; }
+.sync-bar-fill.err { background: var(--neg); }
+.sync-step { font-size: .82em; color: var(--text-dim); margin-top: 6px; font-variant-numeric: tabular-nums; }
 .action-row { display: flex; flex-wrap: wrap; gap: 10px; padding: 6px 18px 18px; }
 .action { display: flex; flex-direction: column; gap: 2px; cursor: pointer; min-width: 150px;
   border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 10px;

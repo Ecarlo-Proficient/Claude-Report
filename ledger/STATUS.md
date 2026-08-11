@@ -372,12 +372,23 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     OneDrive** P&L folder fallback (moves a lot). `POST /api/job/open`. Reachable from the P&L tab via the
     row → detail (no per-row clutter). Verified: resolver returns the right paths, button renders.
 
+  - **In-app data sync — Phase 4 (owner: "full-fledged app, no terminal").** A **⟳ Resync** button in
+    the Data-freshness panel runs every ledger loader **from the UI** with a live **progress bar** —
+    no terminal. Backend: `_run_sync()` (background thread) runs the 5 loaders in order (WIP master →
+    QBO costs → Bill Tracker → Invoices → Customers) as subprocesses, recording per-step state;
+    `POST /api/sync` (confirm-gated, single-run lock), `GET /api/sync/status` (state · current step ·
+    elapsed) for the bar. WIP first (creates `project`); **QBO costs prompts Touch ID** on the Mac.
+    Front-end pauses the 90s auto-refresh while syncing (loaders drop/rebuild tables), reloads on done,
+    surfaces the failing step + points at `~/Library/Logs/Proficient/ledger-sync`. **"Last ran" is
+    plainly visible** — the freshness cards already show each source's timestamp + relative age.
+    Verified: state machine (happy + error paths, monkeypatched — no real QBO pull), endpoint gates,
+    button/bar render. The real full run is owner-triggered (Touch ID).
+
 ## IN PROGRESS
-- **In-app data sync — Phase 4 (owner: "full-fledged app, no terminal"):** a **Resync** button +
-  **progress bar** that runs the ledger loaders from the UI (generalize the `_PNL_JOBS` subprocess+poll
-  pattern), and a **plainly-visible "last ran"** per source (incl. the P&L). No more terminal
-  `sync-*` / `load_*` cmds. **THEN:** QC pass — correctness + an **app-wide Apple-aesthetic review**
-  (owner: one font, clutter-free, simple yet sophisticated — see [[ledger-ui-aesthetic]]).
+- **QC pass (the owner's final step):** (1) correctness QC of the whole super-database build (P&L math
+  vs project-pnl, portfolio totals, source-folder resolution, sync machinery); (2) an **app-wide
+  Apple-aesthetic review** of every tab — one font, clutter-free, color-to-encode, simple yet
+  sophisticated (see [[ledger-ui-aesthetic]]). Fix what the review finds.
 
 ## TO DO
 - **Investigate the ~6 active reconcile mismatches** (QBO cost ≠ WIP figure, e.g. RP6901/RP6440):

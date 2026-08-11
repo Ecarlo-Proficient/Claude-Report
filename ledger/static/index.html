@@ -40,8 +40,15 @@
     <!-- ══════════════ TAB: MY VIEW (home / default) ══════════════ -->
     <div class="tab-page" data-tab="home" hidden>
       <section class="widget">
-        <div class="widget-head"><h2>Data freshness <span class="count" id="homeFreshNote"></span></h2></div>
+        <div class="widget-head">
+          <h2>Data freshness <span class="count" id="homeFreshNote"></span></h2>
+          <button class="btn small" id="btnResync" title="Pull fresh data into the app — runs every loader. The QBO-costs step prompts Touch ID on this Mac. No terminal needed.">⟳&nbsp;Resync</button>
+        </div>
         <div class="fresh-row" id="homeFresh"></div>
+        <div class="sync-progress" id="syncProgress" hidden>
+          <div class="sync-bar"><div class="sync-bar-fill" id="syncBarFill"></div></div>
+          <div class="sync-step" id="syncStep"></div>
+        </div>
       </section>
       <section class="widget">
         <div class="widget-head"><h2>Action items <span class="count">— click to jump in</span></h2></div>

@@ -254,6 +254,52 @@ async function manualRefresh() {
   toast(meta.loaded_at ? `Refreshed · ledger loaded ${fmtDate(meta.loaded_at, true)}` : "Refreshed");
 }
 
+// ── In-app Resync — runs the ledger loaders from the UI (no terminal), with a live
+// progress bar. Pauses the silent auto-refresh while it runs (loaders drop/rebuild
+// tables). The QBO-costs step prompts Touch ID on this Mac.
+let syncing = false;
+async function startResync() {
+  const btn = $("#btnResync");
+  if (!confirm("Resync all data now?\n\nRuns every loader from the app — WIP master, QBO costs (a Touch ID prompt will appear on this Mac), Bill Tracker, Invoices, Customers. Takes a minute or two.")) return;
+  let res;
+  try { res = await (await fetch("/api/sync", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm: true }) })).json(); }
+  catch (e) { toast("Could not start sync: " + e); return; }
+  if (res.error) { toast(res.error); return; }
+  syncing = true; btn.disabled = true;
+  const prog = $("#syncProgress"), fill = $("#syncBarFill"), step = $("#syncStep");
+  prog.hidden = false; fill.classList.remove("err"); fill.style.width = "0%";
+  pollSync(res.steps || [], btn, prog, fill, step);
+}
+
+function pollSync(steps, btn, prog, fill, step) {
+  const total = steps.length || 1;
+  const tick = () => fetch("/api/sync/status").then(r => r.json()).then(s => {
+    const done = (s.steps || []).filter(x => x.state === "done").length;
+    const cur = (s.steps || [])[s.current];
+    fill.style.width = Math.round(done / total * 100) + "%";
+    if (s.state === "running") {
+      step.textContent = `${cur ? cur.label : "…"} — step ${Math.min(done + 1, total)} of ${total}${s.elapsed ? ` · ${s.elapsed}s` : ""}`;
+      setTimeout(tick, 1500);
+    } else if (s.state === "done") {
+      fill.style.width = "100%"; step.textContent = "Done — reloading the app…";
+      finishSync(btn, prog, "Resynced — data refreshed.", true);
+    } else if (s.state === "error") {
+      const bad = (s.steps || []).find(x => x.state === "error");
+      fill.classList.add("err");
+      step.textContent = `Failed at: ${bad ? bad.label : "a step"} — see the sync log (~/Library/Logs/Proficient/ledger-sync).`;
+      finishSync(btn, prog, "Sync failed — " + (bad ? bad.label : ""), false);
+    } else { finishSync(btn, prog, "", false); }
+  }).catch(() => setTimeout(tick, 2500));
+  setTimeout(tick, 800);
+}
+
+async function finishSync(btn, prog, msg, reload) {
+  syncing = false; btn.disabled = false;
+  if (reload) { try { await load(true); } catch { /* ignore */ } }
+  if (msg) toast(msg);
+  if (!msg.startsWith("Sync failed")) setTimeout(() => { prog.hidden = true; const f = $("#syncBarFill"); if (f) f.style.width = "0%"; }, 2600);
+}
+
 // ── Filters ───────────────────────────────────────────────────────────────
 function buildFilterOptions() {
   fillSelect("#fDivision", uniq(ALL.map(r => r.division)));
@@ -1768,13 +1814,14 @@ function init() {
   { const el = $("#homeDivision"); if (el) el.addEventListener("input", renderHome); }
   $("#btnExport").onclick = exportCSV;
   $("#btnRefresh").onclick = manualRefresh;
+  { const el = $("#btnResync"); if (el) el.onclick = startResync; }
   $("#btnClearRule").onclick = () => { activeRule = null; renderAttention(); renderProjects(); };
   $("#btnSettings").onclick = () => openPanel("#settings");
   $$(".tab").forEach(b => { b.onclick = () => setTab(b.dataset.tabbtn); });
   let savedTab = "home";
   try { savedTab = localStorage.getItem("proficient-ledger-tab") || "home"; } catch { /* ignore */ }
   setTab(savedTab);
-  setInterval(() => load(true), 90000);   // live: soft auto-refresh (preserves expand state + tab)
+  setInterval(() => { if (!syncing) load(true); }, 90000);   // live: soft auto-refresh (paused during a resync)
   $("#btnCloseSettings").onclick = closePanels;
   $("#btnCloseDetail").onclick = closePanels;
   $("#btnCopyDetail").onclick = () => copy(detailAsText());

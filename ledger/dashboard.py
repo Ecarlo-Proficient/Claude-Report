@@ -198,6 +198,59 @@ def _pnl_wait(proj: str) -> None:
             j["detail"] = f"exit {rc} — see {j['log']}"
 
 
+# ── in-app data sync ("Resync") — runs the ledger loaders FROM the UI, so the owner
+# never touches a terminal. Each step is one loader subprocess (same python, self-
+# bootstrapping); progress is polled by the front-end for a live bar. WIP first (it
+# creates the project table); 'QBO costs' shells to qbo_vault → a Touch ID prompt on
+# this Mac. Loaders are read-only on their sources and write only the ledger DB.
+_SYNC_LOG_DIR = Path.home() / "Library" / "Logs" / "Proficient" / "ledger-sync"
+_SYNC_STEPS = [
+    ("WIP master", "load_wip_master.py"),
+    ("QBO costs (Touch ID)", "load_costs.py"),
+    ("Bill Tracker — AP + liens", "load_bill_tracker.py"),
+    ("Invoices — AR", "load_invoices.py"),
+    ("Customers — CRM", "load_customers.py"),
+]
+_SYNC = {"state": "idle", "current": -1, "started": 0.0, "log": None,
+         "steps": [{"label": lbl, "state": "pending"} for lbl, _ in _SYNC_STEPS]}
+_SYNC_LOCK = threading.Lock()
+
+
+def _run_sync() -> None:
+    """Run every loader in order, recording per-step state for the progress bar."""
+    _SYNC_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    logpath = _SYNC_LOG_DIR / "sync.log"
+    with _SYNC_LOCK:
+        _SYNC["state"] = "running"
+        _SYNC["started"] = time.time()
+        _SYNC["log"] = str(logpath)
+        for st in _SYNC["steps"]:
+            st["state"] = "pending"
+    ok = True
+    with open(logpath, "w", encoding="utf-8") as logf:
+        for i, (label, script) in enumerate(_SYNC_STEPS):
+            with _SYNC_LOCK:
+                _SYNC["current"] = i
+                _SYNC["steps"][i]["state"] = "running"
+            logf.write(f"\n===== {label} ({script}) =====\n")
+            logf.flush()
+            try:
+                rc = subprocess.call([sys.executable, str(HERE / script)],
+                                     cwd=str(PROJECT_ROOT), stdout=logf,
+                                     stderr=subprocess.STDOUT)
+            except OSError as e:
+                logf.write(f"launch failed: {e}\n")
+                rc = 1
+            with _SYNC_LOCK:
+                _SYNC["steps"][i]["state"] = "done" if rc == 0 else "error"
+            if rc != 0:
+                ok = False
+                break
+    with _SYNC_LOCK:
+        _SYNC["state"] = "done" if ok else "error"
+        _SYNC["current"] = -1
+
+
 # lien states that put a bill on the action watchlist, most-urgent first
 LIEN_RANK = {
     "Notice PAST due": 0, "Notice due in ≤7d": 1, "Notice due in ≤15d": 2,
@@ -622,6 +675,8 @@ class Handler(BaseHTTPRequestHandler):
             self._pnl_portfolio()
         elif path == "/api/pnl/status":
             self._pnl_status(self._query().get("proj", ""))
+        elif path == "/api/sync/status":   # progress for the in-app Resync
+            self._sync_status()
         elif path.startswith("/static/"):
             self._static(path[len("/static/"):])
         else:
@@ -637,6 +692,8 @@ class Handler(BaseHTTPRequestHandler):
             self._job_open(self._query().get("proj", ""))
         elif p == "/api/pnl/generate":    # run project-pnl (gated by an explicit confirm)
             self._pnl_generate()
+        elif p == "/api/sync":            # in-app Resync: run the ledger loaders (gated)
+            self._sync_start()
         else:
             self._send(404, b"not found", "text/plain; charset=utf-8")
 
@@ -658,6 +715,29 @@ class Handler(BaseHTTPRequestHandler):
             self._json(_portfolio_pnl(con))
         finally:
             con.close()
+
+    # ── in-app Resync (run the loaders, no terminal) ────────────────────────
+    def _sync_status(self):
+        with _SYNC_LOCK:
+            out = {"state": _SYNC["state"], "current": _SYNC["current"],
+                   "steps": [dict(s) for s in _SYNC["steps"]]}
+            if _SYNC["state"] == "running":
+                out["elapsed"] = int(time.time() - _SYNC["started"])
+        self._json(out)
+
+    def _sync_start(self):
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except (ValueError, json.JSONDecodeError):
+            return self._json({"error": "bad request"}, 400)
+        if not body.get("confirm"):                   # gate: no confirm, no run
+            return self._json({"error": "confirm required"}, 400)
+        with _SYNC_LOCK:
+            if _SYNC["state"] == "running":
+                return self._json({"error": "a sync is already running", "running": True}, 409)
+        threading.Thread(target=_run_sync, daemon=True).start()
+        self._json({"ok": True, "steps": [lbl for lbl, _ in _SYNC_STEPS]})
 
     def _job_open(self, proj: str):
         """Open the SOURCE job folder on the file server (docs/takeoffs/photos) —
