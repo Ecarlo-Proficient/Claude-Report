@@ -463,6 +463,8 @@ const DRAW_STAGE_LABEL = {
   "Awaiting GC funding": "Awaiting GC funding",
   "Ready to turn in": "Ready to turn in",
 };
+// QBO deep link for an invoice (redirects to the right company when you're logged in).
+const qboInvoiceUrl = id => `https://app.qbo.intuit.com/app/invoice?txnId=${encodeURIComponent(id)}`;
 // Short pill text (keeps the table narrow); the full "who paid whom" is the tooltip.
 const DRAW_STAGE_SHORT = {
   "Fund in — pay vendors": "Pay vendors",
@@ -553,7 +555,14 @@ function renderDraws() {
       if (d.ar_status && d.ar_status !== "Paid") { const s = document.createElement("span"); s.className = "ar-open"; s.textContent = " " + d.ar_status; bt.appendChild(s); } }
     else bt.appendChild(document.createTextNode("—"));
     tr.appendChild(bt);
-    tr.appendChild(leftText(d.invoice_no || "—"));
+    const invtd = document.createElement("td"); invtd.className = "left";
+    if (d.invoice_no && d.ar_qbo_id) {
+      const a = document.createElement("a"); a.href = qboInvoiceUrl(d.ar_qbo_id);
+      a.target = "_blank"; a.rel = "noopener"; a.className = "qbo-link"; a.textContent = d.invoice_no;
+      a.title = "Open invoice in QuickBooks"; a.onclick = (e) => e.stopPropagation();
+      invtd.appendChild(a);
+    } else { const s = document.createElement("span"); s.textContent = d.invoice_no || "—"; invtd.appendChild(s); }
+    tr.appendChild(invtd);
     tr.appendChild(leftText(fmtDate(d.ar_date || d.recency)));
     const ot = document.createElement("td"); const mo = moneyCell(d.total); mo.classList.add("draw-out"); ot.appendChild(mo);
     const pc = document.createElement("span"); pc.className = "paidcnt"; pc.textContent = ` ${d.paid}/${d.n}`; ot.appendChild(pc); tr.appendChild(ot);

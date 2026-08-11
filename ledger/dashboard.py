@@ -281,7 +281,7 @@ def _fetch_draws(con, limit: int = 100) -> dict:
     # AR side (money IN) from the Invoice Tracker load — joined by Invoice #.
     bmap: dict = {}
     try:
-        for b in con.execute("SELECT doc_number, amount, balance, status, txn_date, customer "
+        for b in con.execute("SELECT doc_number, qbo_txn_id, amount, balance, status, txn_date, customer "
                              "FROM billing_event WHERE doc_number IS NOT NULL"):
             bmap[str(b["doc_number"])] = dict(b)
     except sqlite3.OperationalError:
@@ -324,6 +324,7 @@ def _fetch_draws(con, limit: int = 100) -> dict:
             "ar_open": (ar["balance"] if ar else None),        # GC still owes this much
             "ar_status": (ar["status"] if ar else None),       # Paid | Partially Paid | Unpaid
             "ar_date": (ar["txn_date"] if ar else None),       # invoice date
+            "ar_qbo_id": (ar["qbo_txn_id"] if ar else None),   # QBO Invoice Id → deep link
             "customer": (ar["customer"] if ar else None),
             "gc_paid_in": bool(ar and (ar.get("status") == "Paid" or (ar.get("balance") or 0) <= 0.005)),
         })

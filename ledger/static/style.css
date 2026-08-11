@@ -201,6 +201,8 @@ tr.lien-row.u-info > td:first-child { border-left-color: var(--text-dim); }
 .notion-link { font-size: .82em; padding: 2px 10px; border-radius: 999px; text-decoration: none;
   border: 1px solid var(--border); background: var(--surface-2); color: var(--text); white-space: nowrap; }
 .notion-link:hover { border-color: var(--accent); }
+a.qbo-link { color: var(--accent); text-decoration: none; font-variant-numeric: tabular-nums; }
+a.qbo-link:hover { text-decoration: underline; }
 
 /* ── Draws table (one row per draw; click → bills open underneath) ────────── */
 .draws-table td { vertical-align: middle; }

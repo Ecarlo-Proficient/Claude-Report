@@ -294,6 +294,19 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     paid · GC-funded · waiver checkbox) with a caption. `drawsExpanded` state; waiver POST preserved.
     Verified live: 49 rows, 41 with billed-in, expand works, dates month-first, no console errors.
 
+- **Draws/Liens UI polish batch (owner).** Draws **grouped by project #** (project header row with
+  name + N draws + $in/$out totals; dropped the redundant per-row Project # column; memo strips the
+  project #). Tables **fit the boxed width** (default is boxed — owner dislikes full width): Name/memo
+  columns truncate with ellipsis, and the draw **stage pill shows the short action** ("Pay vendors" /
+  "Collect waivers", full "GC funded → …" on hover) so the Stage column stops clipping. **Per-field
+  search boxes** on Draws (Project # · Vendor · Invoice # · Division) and Liens (CP # · Vendor · Invoice
+  # · Name/address) — a row must match every filled field (AND); Vendors/Sales stay single. **QBO deep
+  links on invoices:** the draws' Invoice # links to `app.qbo.intuit.com/app/invoice?txnId=<id>` (the
+  Invoice Id comes from the Invoice Tracker load, on `billing_event`). Verified live.
+  - **OPEN — QBO links on BILLS (AP):** the Bill Tracker export carries no QBO bill id, so AP bill lines
+    can't be deep-linked yet. Needs the QBO Bill Id added to the Bill Tracker export + `load_bill_tracker`
+    (a bill-tracker change) before the Liens/bill rows can link out.
+
 ## IN PROGRESS
 - (none)
 
