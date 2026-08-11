@@ -633,6 +633,8 @@ class Handler(BaseHTTPRequestHandler):
             self._set_waiver()
         elif p == "/api/pnl/open":        # open the P&L workbook (or ?folder=1 → its folder), cross-platform
             self._pnl_open(self._query().get("proj", ""), folder=self._query().get("folder") == "1")
+        elif p == "/api/job/open":        # open the SOURCE job folder (Synology CP/RP, OneDrive MFD)
+            self._job_open(self._query().get("proj", ""))
         elif p == "/api/pnl/generate":    # run project-pnl (gated by an explicit confirm)
             self._pnl_generate()
         else:
@@ -656,6 +658,30 @@ class Handler(BaseHTTPRequestHandler):
             self._json(_portfolio_pnl(con))
         finally:
             con.close()
+
+    def _job_open(self, proj: str):
+        """Open the SOURCE job folder on the file server (docs/takeoffs/photos) —
+        CP → the Synology awarded folder, RP → the builder folder, MFD → its OneDrive
+        folder as a fallback. Cross-platform via _os_open."""
+        proj = (proj or "").strip().upper()
+        if not _PROJ_RE.match(proj):
+            return self._json({"error": "bad project"}, 400)
+        con = _connect(self.db_path)
+        try:
+            r = con.execute("SELECT builder_or_gc FROM project WHERE project_no = ?", (proj,)).fetchone()
+        finally:
+            con.close()
+        folder, note = pnl_paths.job_folder(proj, r["builder_or_gc"] if r else None)
+        if folder is None:                            # MFD / unresolved → the P&L's folder (OneDrive)
+            info = pnl_paths.find_pnl(proj)
+            if info.get("exists"):
+                folder = Path(info["path"]).parent
+            else:
+                return self._json({"error": note or "no folder found"}, 404)
+        err = _os_open(str(folder))
+        if err:
+            return self._json({"error": err}, 500)
+        self._json({"ok": True, "path": str(folder), "note": note})
 
     def _pnl_find(self, proj: str):
         proj = (proj or "").strip().upper()

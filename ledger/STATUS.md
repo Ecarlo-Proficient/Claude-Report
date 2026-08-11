@@ -364,13 +364,20 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     on tab open (`renderPnl`), cache invalidated on reload; rows click → the job detail. Verified live,
     sort/filter/row-click work, no console errors.
 
+  - **Source-folder links — Phase 3 (owner: "put source links").** Each job's detail now has an
+    **Open job folder ↗** button (source docs/takeoffs/photos on the file server), cross-platform via
+    `_os_open`. New `shared/pnl_paths.job_folder(proj, builder)`: **CP → the Synology awarded folder**
+    (matched by #), **RP → the builder folder** under `…/Residential` (matched on `project.builder_or_gc`
+    — the exact address folder is inside; full match needs `rp_wip_reader`'s General-List index), **MFD →
+    OneDrive** P&L folder fallback (moves a lot). `POST /api/job/open`. Reachable from the P&L tab via the
+    row → detail (no per-row clutter). Verified: resolver returns the right paths, button renders.
+
 ## IN PROGRESS
-- **P&L super-database (Phase 3):** RP/CP **source-folder** links everywhere (CP `Awarded Projects
-  Commercial projects`, RP `Residential` address-matched via `rp_wip_reader`, MFD → OneDrive) via the
-  cross-platform `/api/pnl/open` mechanism.
-- **In-app data sync (owner: "full-fledged app, no terminal"):** a **Resync** button + **progress bar**
-  that runs the ledger loaders from the UI (generalize the `_PNL_JOBS` subprocess+poll pattern), and a
-  **plainly-visible "last ran"** per source (incl. the P&L). No more terminal `sync-*` / `load_*` cmds.
+- **In-app data sync — Phase 4 (owner: "full-fledged app, no terminal"):** a **Resync** button +
+  **progress bar** that runs the ledger loaders from the UI (generalize the `_PNL_JOBS` subprocess+poll
+  pattern), and a **plainly-visible "last ran"** per source (incl. the P&L). No more terminal
+  `sync-*` / `load_*` cmds. **THEN:** QC pass — correctness + an **app-wide Apple-aesthetic review**
+  (owner: one font, clutter-free, simple yet sophisticated — see [[ledger-ui-aesthetic]]).
 
 ## TO DO
 - **Investigate the ~6 active reconcile mismatches** (QBO cost ≠ WIP figure, e.g. RP6901/RP6440):

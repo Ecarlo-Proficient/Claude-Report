@@ -1511,7 +1511,15 @@ function buildPnlGroup(proj) {
     }
   }).catch(() => { pl.textContent = "P&L unavailable."; });
 
-  // ── detailed export (project-pnl Excel) — open / open folder / generate ──
+  // ── source job folder (Synology CP/RP · OneDrive MFD) — the owner's "source link" ──
+  const src = document.createElement("div"); src.className = "pnl-actions";
+  const jobBtn = document.createElement("button"); jobBtn.className = "btn small"; jobBtn.textContent = "Open job folder ↗";
+  jobBtn.title = "Open this job's folder on the file server (docs · takeoffs · photos)";
+  jobBtn.onclick = () => fetch(`/api/job/open?proj=${encodeURIComponent(proj)}`, { method: "POST" })
+    .then(r => r.json()).then(x => toast(x.error ? x.error : "Opening job folder…"));
+  src.appendChild(jobBtn); g.appendChild(src);
+
+  // ── detailed export (project-pnl Excel) — open / generate ──
   const cap2 = document.createElement("div"); cap2.className = "pnl-cap"; cap2.textContent = "Detailed export (project-pnl)"; g.appendChild(cap2);
   const row = document.createElement("div"); row.className = "drow";
   const dk = document.createElement("span"); dk.className = "dk"; dk.textContent = "Last pulled";
@@ -1519,22 +1527,19 @@ function buildPnlGroup(proj) {
   row.appendChild(dk); row.appendChild(dv); g.appendChild(row);
   const acts = document.createElement("div"); acts.className = "pnl-actions";
   const openBtn = document.createElement("button"); openBtn.className = "btn small"; openBtn.textContent = "Open Excel"; openBtn.disabled = true;
-  const folderBtn = document.createElement("button"); folderBtn.className = "btn small"; folderBtn.textContent = "Open folder"; folderBtn.disabled = true;
   const genBtn = document.createElement("button"); genBtn.className = "btn small"; genBtn.textContent = "Generate / Refresh";
-  acts.appendChild(openBtn); acts.appendChild(folderBtn); acts.appendChild(genBtn); g.appendChild(acts);
+  acts.appendChild(openBtn); acts.appendChild(genBtn); g.appendChild(acts);
   const msg = document.createElement("div"); msg.className = "pnl-msg"; g.appendChild(msg);
 
   const refresh = () => fetch(`/api/pnl?proj=${encodeURIComponent(proj)}`).then(r => r.json()).then(d => {
     if (d.error) { dv.textContent = "—"; return; }
     if (d.exists) {
       dv.textContent = `${timeAgo(d.mtime)} · ${fmtDate(d.mtime, true)}`;
-      openBtn.disabled = false; folderBtn.disabled = false;
+      openBtn.disabled = false;
       openBtn.onclick = () => fetch(`/api/pnl/open?proj=${encodeURIComponent(proj)}`, { method: "POST" })
         .then(r => r.json()).then(x => toast(x.error ? x.error : "Opening P&L…"));
-      folderBtn.onclick = () => fetch(`/api/pnl/open?proj=${encodeURIComponent(proj)}&folder=1`, { method: "POST" })
-        .then(r => r.json()).then(x => toast(x.error ? x.error : "Opening folder…"));
     } else {
-      dv.textContent = "not generated yet"; openBtn.disabled = true; folderBtn.disabled = true;
+      dv.textContent = "not generated yet"; openBtn.disabled = true;
     }
     msg.textContent = d.note || "";
   }).catch(() => { dv.textContent = "unavailable"; });

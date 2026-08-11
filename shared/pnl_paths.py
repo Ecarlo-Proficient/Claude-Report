@@ -35,6 +35,45 @@ CP_AWARDED_BASE = Path(os.environ.get(
 CP_PNL_SUBDIR = "Profit and Loss"
 PNL_FILE = "Project_PnL_{proj}.xlsx"
 
+# RP source jobs live under the Residential share, filed BY BUILDER then address
+# (same root rp_wip_reader.py uses). We can land on the builder folder reliably;
+# the exact job inside needs the General-List address index (rp_wip_reader).
+RP_SOURCE_BASE = Path(os.environ.get(
+    "RP_ROOT", "/Volumes/Common/CURRENT PROJECTS/Residential"))
+
+
+def job_folder(proj: str, builder: "str | None" = None):
+    """(folder, note) — the SOURCE job folder on the file server, or (None, note).
+
+    CP → the awarded-project folder (Synology Common drive, matched by #). RP →
+    best-effort match of the BUILDER's folder under Residential (the exact address
+    folder is inside). MFD moves a lot → no stable Synology source (None; the caller
+    falls back to the OneDrive P&L folder). `note` explains a miss for the UI.
+    """
+    pu = (proj or "").upper()
+    if pu.startswith("CP"):
+        try:
+            if not CP_AWARDED_BASE.is_dir():
+                return None, "Common drive not mounted"
+        except OSError:
+            return None, "Common drive not mounted"
+        f = _find_awarded_cp_folder(CP_AWARDED_BASE, proj)
+        return (f, None) if f else (None, f"no awarded folder for {proj}")
+    if pu.startswith("RP"):
+        try:
+            if not RP_SOURCE_BASE.is_dir():
+                return None, "Residential drive not mounted"
+        except OSError:
+            return None, "Residential drive not mounted"
+        if builder:
+            b = re.sub(r"[\s\-_,.]+", "", builder.upper())
+            if b:
+                for child in sorted(RP_SOURCE_BASE.iterdir()):
+                    if child.is_dir() and b in re.sub(r"[\s\-_,.]+", "", child.name.upper()):
+                        return child, "builder folder — the job is inside, by address"
+        return RP_SOURCE_BASE, "Residential root (builder folder not matched)"
+    return None, "MFD moves a lot → filed in OneDrive, not Synology"
+
 
 def pnl_out_dir() -> Path:
     """The default P&L output root (ACB_PNL_OUT_DIR or OneDrive 'PROJECT P&Ls')."""
