@@ -736,6 +736,14 @@ class Handler(BaseHTTPRequestHandler):
         with _SYNC_LOCK:
             if _SYNC["state"] == "running":
                 return self._json({"error": "a sync is already running", "running": True}, 409)
+            # claim it INSIDE the lock — otherwise a second POST could also see "idle"
+            # before the worker thread flips the state, and two loader pipelines would
+            # write the ledger at once (TOCTOU). This is the single authoritative claim.
+            _SYNC["state"] = "running"
+            _SYNC["started"] = time.time()
+            _SYNC["current"] = -1
+            for st in _SYNC["steps"]:
+                st["state"] = "pending"
         threading.Thread(target=_run_sync, daemon=True).start()
         self._json({"ok": True, "steps": [lbl for lbl, _ in _SYNC_STEPS]})
 

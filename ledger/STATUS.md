@@ -384,11 +384,21 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     Verified: state machine (happy + error paths, monkeypatched — no real QBO pull), endpoint gates,
     button/bar render. The real full run is owner-triggered (Touch ID).
 
+  - **QC pass — DONE (the owner's final step).** (a) **Aesthetic (all 8 tabs): pass** — one font,
+    color only encodes meaning, new views reuse `.kpi`/`.grid`/pills so they read native
+    ([[ledger-ui-aesthetic]]). (b) **P&L reconciliation: pass** — per-project detail = portfolio row =
+    company total (verified across CP/MFD/RP incl. the negative-margin jobs). (c) **Correctness review
+    (subagent)** found the per-row math clean + no injection/arbitrary-path; **3 real bugs FIXED:**
+    (1) `_sync_start` TOCTOU — now **claims `state="running"` inside the lock** so two POSTs can't launch
+    overlapping syncs; (2) `pollSync` retried forever on a down server — now **caps at 5 fails** +
+    re-enables the button + handles idle-mid-poll (server restart); (3) three different "active"
+    definitions — added **`isActive(r)` = status in (Active, blank)** used by the Overview KPI,
+    working-list, and active filter, so every "active" count now **agrees at 137 (MFD included)**, matching
+    `_portfolio_pnl`. Also a cosmetic empty-company net guard. Verified live, no JS errors.
+
 ## IN PROGRESS
-- **QC pass (the owner's final step):** (1) correctness QC of the whole super-database build (P&L math
-  vs project-pnl, portfolio totals, source-folder resolution, sync machinery); (2) an **app-wide
-  Apple-aesthetic review** of every tab — one font, clutter-free, color-to-encode, simple yet
-  sophisticated (see [[ledger-ui-aesthetic]]). Fix what the review finds.
+- (none) — the P&L super-database (per-project + portfolio P&L, source links, in-app sync) + its QC
+  pass are landed. Owner to trigger the first real **Resync** (prompts Touch ID at the QBO step).
 
 ## TO DO
 - **Investigate the ~6 active reconcile mismatches** (QBO cost ≠ WIP figure, e.g. RP6901/RP6440):
@@ -406,3 +416,10 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   be reconciled against a spine-computed WIP as a cross-check.
 - The RP tab has no retainage / over-under / earned columns (those are computed on the master);
   for RP those snapshot fields load as NULL by design.
+- **P&L active-scope (accepted, from the QC):** `_project_pnl`/`_pnl_pl` compute a P&L for ANY project
+  (so a Closed job's P&L is still openable), but `_portfolio_pnl` counts **active-only** (status Active
+  or blank/MFD). So "sum of every per-project P&L" won't equal the company total when a non-active job
+  still carries costs — intended (active-only company view), flagged so it isn't mistaken for drift.
+- **In-app Resync scope:** runs the ledger loaders (fresh QBO + Notion, re-reads the current WIP/Bill
+  Tracker Excel). The WIP master + `Bill Tracker.xlsx` are still produced by their own flows (the owner
+  / `sync-ap`); chaining those upstream syncs into the button is a possible future step.

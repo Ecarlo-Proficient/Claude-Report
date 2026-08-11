@@ -202,6 +202,10 @@ function setTab(t) {
 let PNL = null;                       // cached /api/pnl/portfolio result (invalidated on reload)
 let pnlSort = { key: "net", dir: 1 }; // net ascending = worst margin first
 const nameOf = pn => (ALL.find(r => r.project_no === pn) || {}).project_name || "";
+// A project is "active" if its WIP status is Active — OR blank, which only happens for
+// MFD (Test-Master carries no STATUS column, so its jobs are active by construction).
+// Matches _portfolio_pnl on the server so every "active" count agrees, MFD included.
+const isActive = r => ["", "active"].includes((r.status || "").toLowerCase());
 let meta = {};
 let sortKey = "total_contract_price";
 let sortDir = -1;   // -1 desc, 1 asc
@@ -273,7 +277,9 @@ async function startResync() {
 
 function pollSync(steps, btn, prog, fill, step) {
   const total = steps.length || 1;
+  let fails = 0;
   const tick = () => fetch("/api/sync/status").then(r => r.json()).then(s => {
+    fails = 0;
     const done = (s.steps || []).filter(x => x.state === "done").length;
     const cur = (s.steps || [])[s.current];
     fill.style.width = Math.round(done / total * 100) + "%";
@@ -288,8 +294,13 @@ function pollSync(steps, btn, prog, fill, step) {
       fill.classList.add("err");
       step.textContent = `Failed at: ${bad ? bad.label : "a step"} — see the sync log (~/Library/Logs/Proficient/ledger-sync).`;
       finishSync(btn, prog, "Sync failed — " + (bad ? bad.label : ""), false);
-    } else { finishSync(btn, prog, "", false); }
-  }).catch(() => setTimeout(tick, 2500));
+    } else {   // idle mid-poll → the app restarted; a loader may still be running in the background
+      finishSync(btn, prog, "Sync status lost (did the app restart?) — check Data freshness.", false);
+    }
+  }).catch(() => {   // server unreachable — cap the retries so the button can't hang disabled forever
+    if (++fails >= 5) { finishSync(btn, prog, "Lost contact with the app during sync — check Data freshness.", false); return; }
+    setTimeout(tick, 2500);
+  });
   setTimeout(tick, 800);
 }
 
@@ -331,7 +342,7 @@ function filtered() {
     if (f.division && r.division !== f.division) return false;
     if (f.status && r.status !== f.status) return false;
     if (f.category && r.rp_category !== f.category) return false;
-    if (f.activeOnly && (r.status || "").toLowerCase() !== "active") return false;
+    if (f.activeOnly && !isActive(r)) return false;
     if (f.q) {
       const hay = [r.project_no, r.project_name, r.builder_or_gc].filter(Boolean).join(" ").toLowerCase();
       if (!hay.includes(f.q)) return false;
@@ -477,7 +488,7 @@ function renderHome() {
   const sel = $("#homeDivision");
   if (sel && sel.options.length <= 1) for (const d of uniq(ALL.map(r => r.division))) { const o = document.createElement("option"); o.value = d; o.textContent = d; sel.appendChild(o); }
   const div = sel ? sel.value : "";
-  const active = ALL.filter(r => (r.status || "").toLowerCase() === "active" && (!div || r.division === div))
+  const active = ALL.filter(r => isActive(r) && (!div || r.division === div))
     .sort((a, b) => num(b.total_contract_price) - num(a.total_contract_price));
   $("#homeWorkingNote").textContent = `(${active.length} active)`;
   const cols = [["Project", "left"], ["Division", "left"], ["Name", "left"], ["Contract", "right"], ["% Complete", "right"], ["Costs", "right"]];
@@ -1290,7 +1301,7 @@ function renderPnl() {
 
   // company totals
   const tiles = [["Earned revenue", money(comp.earned)], ["Costs", money(comp.cost)],
-    ["Overhead", money(comp.overhead)], ["Net margin", `${money(comp.net)} · ${pctTxt(comp.net_pct)}`, comp.net >= 0 ? "pos" : "neg"],
+    ["Overhead", money(comp.overhead)], ["Net margin", `${money(comp.net)} · ${pctTxt(comp.net_pct)}`, comp.net == null ? "" : (comp.net >= 0 ? "pos" : "neg")],
     ["Billed (AR)", money(comp.billed)]];
   const tr = $("#pnlTotals"); tr.innerHTML = "";
   for (const [l, v, cls] of tiles) {
@@ -1372,7 +1383,7 @@ function renderKPIs() {
   const contract = sum("total_contract_price"), costs = sum("costs_to_date"),
         billed = sum("billed_to_date"), left = sum("left_to_bill"),
         over = sum("overbillings"), under = sum("underbillings"),
-        active = rows.filter(r => (r.status || "").toLowerCase() === "active").length;
+        active = rows.filter(isActive).length;
   const net = over - under;
   const cards = [
     ["Total Contract", money(contract), `${rows.length} jobs`],
