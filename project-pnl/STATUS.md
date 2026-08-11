@@ -139,6 +139,14 @@ manual close), RP (no draws — expenses → invoice → profit).
   the QBO company/realm id (same convention as cc2035f), and ACB_DEBUG=1 now
   prints full tracebacks behind the per-project ✗ lines.
 
+- **WIP master resilience (2026-08-07):** someone restructured the
+  Test-Master tab into a bonding-style report (TYPE/BONDED/PROFIT, no STATUS
+  column) outside the repo's readers — `active cp|rp` went blind and Closed
+  handling dark. `load_wip_master` now overlays STATUS from the per-division
+  `Test - CP` / `Test - RP` tabs when Test-Master carries none. NOTE: MFD
+  rows have no division tab, so MFD status is gone until Test-Master carries
+  STATUS again — `active mfd` will find nothing.
+
 ## OPEN ISSUES
 
 - **6 of 17 Active CP jobs now have a readable cost-code budget.** The newer

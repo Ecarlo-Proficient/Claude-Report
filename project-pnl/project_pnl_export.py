@@ -1216,6 +1216,33 @@ def load_wip_master(path: Path) -> Dict[str, dict]:
                 # 'Closed' drives the WIP close-out (% forced to 100%).
                 "status": get("STATUS"),
             }
+    # 2026-08-07: Test-Master was restructured (bonding-style: TYPE/BONDED/
+    # PROFIT, NO STATUS column) outside the repo's readers. The per-division
+    # 'Test - CP' / 'Test - RP' tabs still carry STATUS, so when Test-Master
+    # yields none, overlay it from there — otherwise `active cp|rp` finds
+    # nothing and Closed handling goes dark.
+    if out and not any(v.get("status") for v in out.values()):
+        for div_tab in ("Test - CP", "Test - RP"):
+            if div_tab not in wb.sheetnames:
+                continue
+            ws = wb[div_tab]
+            hdr_row = proj_idx = status_idx = None
+            for r in range(1, 8):
+                vals = {str(ws.cell(row=r, column=c).value or "").strip().upper(): c
+                        for c in range(1, 12)}
+                if "PROJECT #" in vals and "STATUS" in vals:
+                    hdr_row, proj_idx, status_idx = r, vals["PROJECT #"], vals["STATUS"]
+                    break
+            if hdr_row is None:
+                continue
+            for r in range(hdr_row + 1, ws.max_row + 1):
+                proj = str(ws.cell(row=r, column=proj_idx).value or "").strip().upper()
+                st = ws.cell(row=r, column=status_idx).value
+                if proj and any(ch.isdigit() for ch in proj) and st:
+                    if proj in out:
+                        out[proj]["status"] = st
+                    else:                     # project only on the division tab
+                        out[proj] = {"description": None, "status": st}
     return out
 
 
