@@ -196,8 +196,11 @@ function setTab(t) {
   try { localStorage.setItem("proficient-ledger-tab", t); } catch { /* ignore */ }
   $$(".tab-page").forEach(p => { p.hidden = p.dataset.tab !== t; });
   $$(".tab").forEach(b => b.classList.toggle("active", b.dataset.tabbtn === t));
+  if (t === "pnl") renderPnl();     // portfolio P&L is computed server-side, lazy-loaded
   window.scrollTo(0, 0);
 }
+let PNL = null;                       // cached /api/pnl/portfolio result (invalidated on reload)
+let pnlSort = { key: "net", dir: 1 }; // net ascending = worst margin first
 const nameOf = pn => (ALL.find(r => r.project_no === pn) || {}).project_name || "";
 let meta = {};
 let sortKey = "total_contract_price";
@@ -220,6 +223,7 @@ async function load(isAuto) {
   COST = data.cost || { by_code: [], by_project_code: {}, by_project: {}, by_cost_type: [], by_vendor: [], loaded_total: 0 };
   DRAWS = data.draws || { draws: [], total: 0 };
   SALES = data.sales || { pipeline: [], by_rep: [], warm: [], customers: [], totals: {} };
+  PNL = null;   // recompute the portfolio P&L on next open (data just changed)
   // Big-picture first: collapse everything by default; the user expands to zoom in.
   // On a live auto-refresh, preserve what the user has already expanded.
   if (!isAuto) {
@@ -1225,6 +1229,75 @@ function renderRepActivity() {
 // tiny DOM helper (local to the sales drill)
 function el2(tag, cls, txt) { const e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; }
 
+// Portfolio P&L tab — every active job's live P&L + division/company totals. Computed
+// server-side (/api/pnl/portfolio), lazy-loaded on first open, recomputed after a reload.
+function renderPnl() {
+  if (!PNL) {
+    const n = $("#pnlNote"); if (n) n.textContent = "computing…";
+    fetch("/api/pnl/portfolio").then(r => r.json()).then(d => { PNL = d.error ? { rows: [], by_division: [], company: {} } : d; renderPnl(); })
+      .catch(() => { const e = $("#pnlNote"); if (e) e.textContent = "unavailable"; });
+    return;
+  }
+  const rows = PNL.rows || [], divs = PNL.by_division || [], comp = PNL.company || {};
+  const pctTxt = p => (p == null ? "—" : (p * 100).toFixed(1) + "%");
+  $("#pnlNote").textContent = rows.length ? `(${rows.length} active jobs · ${money(comp.earned)} earned)` : "(no P&L data — load WIP + costs)";
+
+  // company totals
+  const tiles = [["Earned revenue", money(comp.earned)], ["Costs", money(comp.cost)],
+    ["Overhead", money(comp.overhead)], ["Net margin", `${money(comp.net)} · ${pctTxt(comp.net_pct)}`, comp.net >= 0 ? "pos" : "neg"],
+    ["Billed (AR)", money(comp.billed)]];
+  const tr = $("#pnlTotals"); tr.innerHTML = "";
+  for (const [l, v, cls] of tiles) {
+    const k = el2("div", "kpi" + (cls ? " pnl-kpi-" + cls : ""));
+    k.appendChild(el2("div", "k-label", l)); k.appendChild(el2("div", "k-value", v)); tr.appendChild(k);
+  }
+
+  // by division
+  let tb = buildHead("#pnlDivTable", [["Division", "left"], ["Jobs", "right"], ["Earned", "right"], ["Cost", "right"], ["Overhead", "right"], ["Net", "right"], ["Net %", "right"]]);
+  tb.innerHTML = "";
+  for (const d of divs) {
+    const row = document.createElement("tr");
+    row.appendChild(leftText(d.division)); row.appendChild(rightText(String(d.n)));
+    row.appendChild(rightText(money(d.earned))); row.appendChild(rightText(money(d.cost)));
+    row.appendChild(rightText(money(d.overhead))); row.appendChild(rightText(money(d.net)));
+    const pt = document.createElement("td"); pt.className = d.net >= 0 ? "pos" : "neg"; pt.textContent = pctTxt(d.net_pct); row.appendChild(pt);
+    tb.appendChild(row);
+  }
+
+  // by job — filterable + sortable (headers), click → detail
+  const fProj = ($("#pnlFProj") ? $("#pnlFProj").value : "").trim().toLowerCase();
+  const fDiv = $("#pnlFDivision") ? $("#pnlFDivision").value : "";
+  let shown = rows.filter(r => (!fProj || r.proj.toLowerCase().includes(fProj)) && (!fDiv || r.division === fDiv));
+  shown.sort((a, b) => { const k = pnlSort.key, av = a[k], bv = b[k];
+    if (av == null) return 1; if (bv == null) return -1;
+    return (av < bv ? -1 : av > bv ? 1 : 0) * pnlSort.dir; });
+  const cols = [["proj", "Project", "left"], ["division", "Division", "left"], ["contract", "Contract", "right"],
+    ["pct_complete", "%", "right"], ["earned", "Earned", "right"], ["cost", "Cost", "right"],
+    ["overhead", "Overhead", "right"], ["net", "Net", "right"], ["net_pct", "Net %", "right"]];
+  const thead = $("#pnlJobTable thead"), tbody = $("#pnlJobTable tbody"); thead.innerHTML = ""; tbody.innerHTML = "";
+  const htr = document.createElement("tr");
+  for (const [key, label, al] of cols) {
+    const th = document.createElement("th"); if (al === "left") th.className = "left";
+    th.textContent = label + (pnlSort.key === key ? (pnlSort.dir < 0 ? " ▾" : " ▴") : "");
+    th.style.cursor = "pointer";
+    th.onclick = () => { if (pnlSort.key === key) pnlSort.dir *= -1; else { pnlSort.key = key; pnlSort.dir = (key === "proj" || key === "division") ? 1 : -1; } renderPnl(); };
+    htr.appendChild(th);
+  }
+  thead.appendChild(htr);
+  const known = new Set(ALL.map(r => r.project_no));
+  for (const r of shown) {
+    const row = document.createElement("tr");
+    if (known.has(r.proj)) { row.onclick = () => openDetail(ALL.find(x => x.project_no === r.proj)); row.style.cursor = "pointer"; }
+    row.appendChild(leftText(r.proj)); row.appendChild(leftText(r.division));
+    row.appendChild(rightText(money(r.contract))); row.appendChild(rightText(((r.pct_complete || 0) * 100).toFixed(0) + "%"));
+    row.appendChild(rightText(money(r.earned))); row.appendChild(rightText(money(r.cost)));
+    row.appendChild(rightText(money(r.overhead))); row.appendChild(rightText(money(r.net)));
+    const pt = document.createElement("td"); pt.className = r.net >= 0 ? "pos" : "neg"; pt.textContent = pctTxt(r.net_pct); row.appendChild(pt);
+    tbody.appendChild(row);
+  }
+  if (!shown.length) { const row = document.createElement("tr"); const td = document.createElement("td"); td.colSpan = cols.length; td.className = "left"; td.style.color = "var(--text-dim)"; td.textContent = rows.length ? "No jobs match this filter." : "No P&L data yet."; row.appendChild(td); tbody.appendChild(row); }
+}
+
 function renderAttention() {
   const row = $("#attnRow"); row.innerHTML = "";
   for (const rule of RULES) {
@@ -1684,6 +1757,7 @@ function init() {
   { const el = $("#vendorSearch"); if (el) el.addEventListener("input", renderVendors); }
   ["#lienFProj", "#lienFVendor", "#lienFInv", "#lienFName"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderLiens); });
   ["#salesSearch", "#salesStage", "#salesDivision"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderSales); });
+  ["#pnlFProj", "#pnlFDivision"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderPnl); });
   { const el = $("#btnClearLien"); if (el) el.onclick = () => { activeLien = null; renderLiens(); }; }
   { const el = $("#btnClearDrawStage"); if (el) el.onclick = () => { activeDrawStage = null; renderDraws(); }; }
   { const el = $("#homeDivision"); if (el) el.addEventListener("input", renderHome); }

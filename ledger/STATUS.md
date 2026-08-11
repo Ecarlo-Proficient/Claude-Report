@@ -354,13 +354,23 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     (`open`/`os.startfile`/`xdg-open`) so the same dashboard works on Mac OR Windows; `_pnl_open` gained
     an **Open folder** action (`?folder=1`) — CP resolves onto the Synology Common drive, RP/MFD onto
     OneDrive, per `pnl_paths`. Verified live (CP800 net 2.8%, MFD 9%-on-costs), no console errors.
-    See [[ledger-super-database]] memory. **NEXT:** portfolio "P&L" tab; RP/CP **source**-folder links
-    (RP is address-matched under `/Volumes/Common/CURRENT PROJECTS/Residential` via `rp_wip_reader`).
+    See [[ledger-super-database]] memory.
+  - **Portfolio "P&L" tab — Phase 2 (owner).** New **P&L** tab (nav after Overview): company totals
+    (earned · cost · overhead · net% · billed), a **by-division** table, and a **by-job** table that's
+    sortable (click a header) + filterable (project # / division), **worst margin first** so the money
+    losers surface (RP6440 −53%, RP6901 −504% — the reconcile-mismatch jobs). `_portfolio_pnl(con)`
+    batches the same math as `_project_pnl` into 3 aggregate reads; **active = status Active OR NULL
+    (MFD)**, Closed/Complete excluded (137 jobs, company net ~7.5%). `GET /api/pnl/portfolio`, lazy-loaded
+    on tab open (`renderPnl`), cache invalidated on reload; rows click → the job detail. Verified live,
+    sort/filter/row-click work, no console errors.
 
 ## IN PROGRESS
-- **P&L super-database (Phase 2/3):** portfolio "P&L" tab (all active jobs + company/division totals);
-  Synology **source-folder** links everywhere (CP `Awarded Projects Commercial projects`, RP
-  `Residential` address-matched, MFD → OneDrive) via the cross-platform `/api/pnl/open` mechanism.
+- **P&L super-database (Phase 3):** RP/CP **source-folder** links everywhere (CP `Awarded Projects
+  Commercial projects`, RP `Residential` address-matched via `rp_wip_reader`, MFD → OneDrive) via the
+  cross-platform `/api/pnl/open` mechanism.
+- **In-app data sync (owner: "full-fledged app, no terminal"):** a **Resync** button + **progress bar**
+  that runs the ledger loaders from the UI (generalize the `_PNL_JOBS` subprocess+poll pattern), and a
+  **plainly-visible "last ran"** per source (incl. the P&L). No more terminal `sync-*` / `load_*` cmds.
 
 ## TO DO
 - **Investigate the ~6 active reconcile mismatches** (QBO cost ≠ WIP figure, e.g. RP6901/RP6440):

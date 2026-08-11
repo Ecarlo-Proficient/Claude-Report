@@ -204,6 +204,12 @@ tr.lien-row.u-info > td:first-child { border-left-color: var(--text-dim); }
 .pnl-code { display: flex; justify-content: space-between; gap: 10px; font-size: .86em; padding: 2px 0; font-variant-numeric: tabular-nums; }
 .pnl-code .pc-code { color: var(--text-dim); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .95em; }
 .pnl-code.uncoded .pc-code { color: var(--neg); }
+/* Portfolio P&L tab: margin coloring on totals + tables */
+.pnl-kpi-pos .k-value { color: var(--pos); }
+.pnl-kpi-neg .k-value { color: var(--neg); }
+#pnlDivTable td.pos, #pnlJobTable td.pos { color: var(--pos); font-variant-numeric: tabular-nums; }
+#pnlDivTable td.neg, #pnlJobTable td.neg { color: var(--neg); font-weight: 600; font-variant-numeric: tabular-nums; }
+#pnlJobTable th { user-select: none; white-space: nowrap; }
 
 /* ── Draws (race-through) ──────────────────────────────────────────────── */
 .draw-head { align-items: flex-start; }

@@ -133,6 +133,54 @@ def _project_pnl(con, proj: str) -> dict:
     }
 
 
+def _portfolio_pnl(con) -> dict:
+    """Company P&L: every ACTIVE job's live P&L + division and company totals.
+    Active = WIP status 'Active' OR NULL (MFD — Test-Master carries no STATUS column,
+    so its jobs are active by construction); Closed/Complete are excluded. Same
+    per-project math as _project_pnl, batched into 3 aggregate reads."""
+    wip = list(con.execute(
+        "SELECT project_no, division, status, total_contract_price tcp, percent_complete pc "
+        "FROM v_wip_latest"))
+    costs = {r["project_no"]: r["c"] for r in con.execute(
+        "SELECT project_no, COALESCE(SUM(amount),0) c FROM cost_line GROUP BY project_no")}
+    billed = {r["project_no"]: r["a"] for r in con.execute(
+        "SELECT project_no, COALESCE(SUM(amount),0) a FROM billing_event "
+        "WHERE project_no IS NOT NULL GROUP BY project_no")}
+    rows, div = [], {}
+    comp = {"earned": 0.0, "cost": 0.0, "overhead": 0.0, "net": 0.0, "billed": 0.0, "n": 0}
+    for w in wip:
+        st = (w["status"] or "").lower()
+        if st not in ("", "active"):                 # skip Closed / Complete
+            continue
+        p = w["project_no"]
+        division = w["division"] or ("Multi Family" if p.startswith("MFD")
+                   else "Commercial" if p.startswith("CP") else "Residential")
+        is_mfd = p.startswith("MFD") or division.lower().startswith("multi")
+        contract = w["tcp"] or 0
+        pc = w["pc"] or 0
+        earned = round(contract * pc, 2)
+        cost = costs.get(p, 0) or 0
+        oh = round((_OVERHEAD_MFD_COST * cost) if is_mfd else (_OVERHEAD_REV * earned), 2)
+        net = round(earned - cost - oh, 2)
+        b = billed.get(p, 0) or 0
+        rows.append({"proj": p, "division": division, "contract": contract,
+                     "pct_complete": pc, "earned": earned, "cost": cost,
+                     "overhead": oh, "net": net,
+                     "net_pct": (net / earned) if earned else None, "billed": b})
+        d = div.setdefault(division, {"division": division, "earned": 0.0, "cost": 0.0,
+                                      "overhead": 0.0, "net": 0.0, "billed": 0.0, "n": 0})
+        for k, v in (("earned", earned), ("cost", cost), ("overhead", oh), ("net", net), ("billed", b)):
+            d[k] += v
+            comp[k] += v
+        d["n"] += 1
+        comp["n"] += 1
+    for d in list(div.values()) + [comp]:
+        d["net_pct"] = (d["net"] / d["earned"]) if d["earned"] else None
+    rows.sort(key=lambda r: r["net"])                # worst margin first — the ones to watch
+    by_div = sorted(div.values(), key=lambda d: -d["earned"])
+    return {"rows": rows, "by_division": by_div, "company": comp}
+
+
 def _pnl_wait(proj: str) -> None:
     """Reap a generation subprocess and record its outcome (running → done/error)."""
     j = _PNL_JOBS.get(proj)
@@ -570,6 +618,8 @@ class Handler(BaseHTTPRequestHandler):
             self._pnl_find(self._query().get("proj", ""))
         elif path == "/api/pnl/pl":       # live computed P&L (numbers folded into the UI)
             self._pnl_pl(self._query().get("proj", ""))
+        elif path == "/api/pnl/portfolio":  # company P&L: every active job + totals
+            self._pnl_portfolio()
         elif path == "/api/pnl/status":
             self._pnl_status(self._query().get("proj", ""))
         elif path.startswith("/static/"):
@@ -597,6 +647,13 @@ class Handler(BaseHTTPRequestHandler):
         con = _connect(self.db_path)
         try:
             self._json(_project_pnl(con, proj))
+        finally:
+            con.close()
+
+    def _pnl_portfolio(self):
+        con = _connect(self.db_path)
+        try:
+            self._json(_portfolio_pnl(con))
         finally:
             con.close()
 
