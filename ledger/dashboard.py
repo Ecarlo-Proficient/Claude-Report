@@ -26,6 +26,7 @@ import datetime as _dt
 import hashlib
 import json
 import os
+import platform
 import re
 import signal
 import sqlite3
@@ -70,6 +71,66 @@ _PNL_LOG_DIR = Path.home() / "Library" / "Logs" / "Proficient" / "ledger-pnl"
 _PROJ_RE = re.compile(r"^(MFD|CP|RP)\d+(-FTW)?$", re.IGNORECASE)
 _PNL_JOBS: dict = {}                 # proj -> {state, started, log, detail, proc, file}
 _PNL_LOCK = threading.Lock()
+
+
+def _os_open(path: str):
+    """Open a file/folder in the host OS file manager. Cross-platform so the same
+    dashboard works on Mac OR Windows — the LOCAL server opens it with the native
+    command, so the browser never has to handle smb:// or \\\\server paths. Returns
+    None on success, an error string otherwise. Open-only — never executes."""
+    system = platform.system()
+    try:
+        if system == "Darwin":
+            subprocess.Popen(["open", path])           # Finder (Mac)
+        elif system == "Windows":
+            os.startfile(path)                         # Explorer (Windows)  # noqa: B606
+        else:
+            subprocess.Popen(["xdg-open", path])       # Linux desktops
+    except OSError as e:
+        return f"open failed: {e}"
+    return None
+
+
+# ── live P&L compute (folds project-pnl's numbers INTO the dashboard) ────────
+# Conventions match project-pnl/project_pnl_export.py so the two reconcile:
+# Earned Revenue = contract × %complete; costs = cost_line (QBO truth, incl subs);
+# Overhead = 10% of revenue (MFD alt = 9% of costs, the user 2026-07-16); net =
+# revenue − costs − overhead. Billed (AR) is shown alongside as the realized view.
+_OVERHEAD_REV = 0.10          # company: 10% of earned revenue
+_OVERHEAD_MFD_COST = 0.09     # MFD alt view: 9% of costs
+
+
+def _project_pnl(con, proj: str) -> dict:
+    """A live per-project P&L assembled from the ledger spine — no Excel needed."""
+    proj = (proj or "").strip().upper()
+    row = con.execute(
+        "SELECT project_no, division, total_contract_price tcp, percent_complete pc, "
+        "costs_to_date ctd, estimated_total_costs etc FROM v_wip_latest WHERE project_no = ?",
+        (proj,)).fetchone()
+    div = (row["division"] if row else None) or ("Multi Family" if proj.startswith("MFD")
+           else "Commercial" if proj.startswith("CP") else "Residential")
+    is_mfd = proj.startswith("MFD") or (div or "").lower().startswith("multi")
+    contract = (row["tcp"] if row else 0) or 0
+    pct = (row["pc"] if row else 0) or 0
+    earned = round(contract * pct, 2)
+    # costs from the QBO-complete cost_line (incl subs), itemized by cost code
+    cost = con.execute("SELECT COALESCE(SUM(amount),0) c FROM cost_line WHERE project_no = ?", (proj,)).fetchone()["c"] or 0
+    by_code = [dict(r) for r in con.execute(
+        "SELECT COALESCE(cost_code,'(uncoded)') code, COALESCE(SUM(amount),0) amount, "
+        "COUNT(*) lines, MAX(is_sub) is_sub FROM cost_line WHERE project_no = ? "
+        "GROUP BY COALESCE(cost_code,'(uncoded)') ORDER BY amount DESC", (proj,))]
+    billed = con.execute("SELECT COALESCE(SUM(amount),0) a FROM billing_event WHERE project_no = ?", (proj,)).fetchone()["a"] or 0
+    overhead = round((_OVERHEAD_MFD_COST * cost) if is_mfd else (_OVERHEAD_REV * earned), 2)
+    net = round(earned - cost - overhead, 2)
+    return {
+        "proj": proj, "division": div,
+        "contract": contract, "pct_complete": pct, "earned": earned, "billed": billed,
+        "cost": cost, "overhead": overhead,
+        "overhead_basis": "9% of costs (MFD)" if is_mfd else "10% of revenue",
+        "net": net, "net_pct": (net / earned) if earned else None,
+        "by_code": by_code,
+        "has_wip": row is not None,
+    }
 
 
 def _pnl_wait(proj: str) -> None:
@@ -507,6 +568,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": True})
         elif path == "/api/pnl":
             self._pnl_find(self._query().get("proj", ""))
+        elif path == "/api/pnl/pl":       # live computed P&L (numbers folded into the UI)
+            self._pnl_pl(self._query().get("proj", ""))
         elif path == "/api/pnl/status":
             self._pnl_status(self._query().get("proj", ""))
         elif path.startswith("/static/"):
@@ -518,14 +581,25 @@ class Handler(BaseHTTPRequestHandler):
         p = urlparse(self.path).path
         if p == "/api/waiver":            # the ONE ledger write — the owner's waiver marks
             self._set_waiver()
-        elif p == "/api/pnl/open":        # open an existing P&L workbook (local `open`)
-            self._pnl_open(self._query().get("proj", ""))
+        elif p == "/api/pnl/open":        # open the P&L workbook (or ?folder=1 → its folder), cross-platform
+            self._pnl_open(self._query().get("proj", ""), folder=self._query().get("folder") == "1")
         elif p == "/api/pnl/generate":    # run project-pnl (gated by an explicit confirm)
             self._pnl_generate()
         else:
             self._send(404, b"not found", "text/plain; charset=utf-8")
 
     # ── P&L link handlers ───────────────────────────────────────────────────
+    def _pnl_pl(self, proj: str):
+        """Live computed P&L for the job detail — the numbers, not just a link."""
+        proj = (proj or "").strip().upper()
+        if not _PROJ_RE.match(proj):
+            return self._json({"error": "bad or missing project"}, 400)
+        con = _connect(self.db_path)
+        try:
+            self._json(_project_pnl(con, proj))
+        finally:
+            con.close()
+
     def _pnl_find(self, proj: str):
         proj = (proj or "").strip().upper()
         if not _PROJ_RE.match(proj):
@@ -547,7 +621,11 @@ class Handler(BaseHTTPRequestHandler):
             out["detail"] = j["detail"]
         self._json(out)
 
-    def _pnl_open(self, proj: str):
+    def _pnl_open(self, proj: str, folder: bool = False):
+        """Open the project's P&L workbook (or its containing folder when folder=True)
+        in the host OS file manager. The LOCAL server opens it with the native command
+        so the same dashboard works on Mac or Windows — CP resolves onto the Synology
+        Common drive, RP/MFD onto OneDrive, per pnl_paths (the owner's convention)."""
         proj = (proj or "").strip().upper()
         if not _PROJ_RE.match(proj):
             return self._json({"error": "bad project"}, 400)
@@ -555,13 +633,13 @@ class Handler(BaseHTTPRequestHandler):
         if not info.get("exists"):
             return self._json({"error": "no P&L generated yet"}, 404)
         path = Path(info["path"])
-        if path.name != f"Project_PnL_{proj}.xlsx":   # only ever open the resolved workbook
+        if path.name != f"Project_PnL_{proj}.xlsx":   # only ever open the resolved workbook / its folder
             return self._json({"error": "unexpected file"}, 400)
-        try:
-            subprocess.Popen(["open", str(path)])     # macOS: open in Excel
-        except OSError as e:
-            return self._json({"error": f"open failed: {e}"}, 500)
-        self._json({"ok": True, "path": str(path)})
+        target = path.parent if folder else path
+        err = _os_open(str(target))
+        if err:
+            return self._json({"error": err}, 500)
+        self._json({"ok": True, "path": str(target)})
 
     def _pnl_generate(self):
         try:

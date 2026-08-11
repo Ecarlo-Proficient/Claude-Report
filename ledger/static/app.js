@@ -1403,26 +1403,65 @@ let detailRow = null;
 // confirm dialog here and a `confirm` flag the server also requires.
 function buildPnlGroup(proj) {
   const g = document.createElement("div"); g.className = "dgroup";
-  const h = document.createElement("h4"); h.textContent = "P&L (project-pnl)"; g.appendChild(h);
+  const h = document.createElement("h4"); h.textContent = "P&L"; g.appendChild(h);
+
+  // ── live computed P&L (folded in from the spine; reconciles with project-pnl) ──
+  const pl = document.createElement("div"); pl.className = "pnl-live"; pl.textContent = "computing…"; g.appendChild(pl);
+  fetch(`/api/pnl/pl?proj=${encodeURIComponent(proj)}`).then(r => r.json()).then(d => {
+    pl.innerHTML = "";
+    if (d.error) { pl.textContent = d.error; return; }
+    const rowP = (k, v, cls) => {
+      const r = document.createElement("div"); r.className = "drow" + (cls ? " " + cls : "");
+      const a = document.createElement("span"); a.className = "dk"; a.textContent = k;
+      const b = document.createElement("span"); b.className = "dv"; b.textContent = v;
+      r.appendChild(a); r.appendChild(b); pl.appendChild(r); return r;
+    };
+    if (!d.has_wip) rowP("Revenue basis", "no WIP snapshot", "pnl-sub");
+    rowP("Contract", money(d.contract));
+    rowP("% complete", ((d.pct_complete || 0) * 100).toFixed(1) + "%");
+    rowP("Earned revenue", money(d.earned));
+    rowP("Costs to date", money(d.cost));
+    rowP(`Overhead (${d.overhead_basis})`, "(" + money(d.overhead) + ")");
+    const nr = rowP("Net margin", `${money(d.net)} · ${d.net_pct == null ? "—" : (d.net_pct * 100).toFixed(1) + "%"}`, "pnl-net");
+    nr.classList.add(d.net >= 0 ? "pos" : "neg");
+    rowP("Billed to GC (AR)", money(d.billed), "pnl-sub");
+    if (d.by_code && d.by_code.length) {
+      const cap = document.createElement("div"); cap.className = "pnl-cap"; cap.textContent = "Costs by code"; pl.appendChild(cap);
+      const tbl = document.createElement("div"); tbl.className = "pnl-codes";
+      for (const c of d.by_code.slice(0, 10)) {
+        const r = document.createElement("div"); r.className = "pnl-code" + (c.code === "(uncoded)" ? " uncoded" : "");
+        const nm = document.createElement("span"); nm.className = "pc-code"; nm.textContent = c.code + (c.is_sub ? " · sub" : "");
+        const am = document.createElement("span"); am.className = "pc-amt"; am.textContent = money(c.amount);
+        r.appendChild(nm); r.appendChild(am); tbl.appendChild(r);
+      }
+      pl.appendChild(tbl);
+    }
+  }).catch(() => { pl.textContent = "P&L unavailable."; });
+
+  // ── detailed export (project-pnl Excel) — open / open folder / generate ──
+  const cap2 = document.createElement("div"); cap2.className = "pnl-cap"; cap2.textContent = "Detailed export (project-pnl)"; g.appendChild(cap2);
   const row = document.createElement("div"); row.className = "drow";
   const dk = document.createElement("span"); dk.className = "dk"; dk.textContent = "Last pulled";
   const dv = document.createElement("span"); dv.className = "dv"; dv.textContent = "checking…";
   row.appendChild(dk); row.appendChild(dv); g.appendChild(row);
   const acts = document.createElement("div"); acts.className = "pnl-actions";
-  const openBtn = document.createElement("button"); openBtn.className = "btn small"; openBtn.textContent = "Open"; openBtn.disabled = true;
+  const openBtn = document.createElement("button"); openBtn.className = "btn small"; openBtn.textContent = "Open Excel"; openBtn.disabled = true;
+  const folderBtn = document.createElement("button"); folderBtn.className = "btn small"; folderBtn.textContent = "Open folder"; folderBtn.disabled = true;
   const genBtn = document.createElement("button"); genBtn.className = "btn small"; genBtn.textContent = "Generate / Refresh";
-  acts.appendChild(openBtn); acts.appendChild(genBtn); g.appendChild(acts);
+  acts.appendChild(openBtn); acts.appendChild(folderBtn); acts.appendChild(genBtn); g.appendChild(acts);
   const msg = document.createElement("div"); msg.className = "pnl-msg"; g.appendChild(msg);
 
   const refresh = () => fetch(`/api/pnl?proj=${encodeURIComponent(proj)}`).then(r => r.json()).then(d => {
     if (d.error) { dv.textContent = "—"; return; }
     if (d.exists) {
       dv.textContent = `${timeAgo(d.mtime)} · ${fmtDate(d.mtime, true)}`;
-      openBtn.disabled = false;
+      openBtn.disabled = false; folderBtn.disabled = false;
       openBtn.onclick = () => fetch(`/api/pnl/open?proj=${encodeURIComponent(proj)}`, { method: "POST" })
         .then(r => r.json()).then(x => toast(x.error ? x.error : "Opening P&L…"));
+      folderBtn.onclick = () => fetch(`/api/pnl/open?proj=${encodeURIComponent(proj)}&folder=1`, { method: "POST" })
+        .then(r => r.json()).then(x => toast(x.error ? x.error : "Opening folder…"));
     } else {
-      dv.textContent = "not generated yet"; openBtn.disabled = true;
+      dv.textContent = "not generated yet"; openBtn.disabled = true; folderBtn.disabled = true;
     }
     msg.textContent = d.note || "";
   }).catch(() => { dv.textContent = "unavailable"; });

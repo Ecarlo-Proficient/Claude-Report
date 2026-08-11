@@ -190,9 +190,20 @@ tr.lien-row.u-info > td:first-child { border-left-color: var(--text-dim); }
   padding: 1px 7px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-2); }
 .cell.lien-amt { font-weight: 700; }
 
-/* ── P&L link (in the job-detail panel) ────────────────────────────────────── */
-.pnl-actions { display: flex; gap: 8px; margin: 8px 0 4px; }
+/* ── P&L (live numbers + the detailed-export link, in the job-detail panel) ── */
+.pnl-actions { display: flex; gap: 8px; margin: 8px 0 4px; flex-wrap: wrap; }
 .pnl-msg { font-size: .8em; color: var(--text-dim); min-height: 1em; }
+.pnl-live { margin: 2px 0 6px; }
+.pnl-net { border-top: 1px solid var(--border); margin-top: 3px; padding-top: 5px; font-weight: 700; }
+.pnl-net.pos .dv { color: var(--pos); }
+.pnl-net.neg .dv { color: var(--neg); }
+.pnl-live .drow.pnl-sub .dk, .pnl-live .drow.pnl-sub .dv { color: var(--text-dim); font-size: .92em; }
+.pnl-cap { font-size: .74em; text-transform: uppercase; letter-spacing: .04em; color: var(--text-dim);
+  margin: 12px 0 5px; padding-bottom: 3px; border-bottom: 1px solid var(--border); }
+.pnl-codes { display: flex; flex-direction: column; gap: 1px; }
+.pnl-code { display: flex; justify-content: space-between; gap: 10px; font-size: .86em; padding: 2px 0; font-variant-numeric: tabular-nums; }
+.pnl-code .pc-code { color: var(--text-dim); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .95em; }
+.pnl-code.uncoded .pc-code { color: var(--neg); }
 
 /* ── Draws (race-through) ──────────────────────────────────────────────── */
 .draw-head { align-items: flex-start; }

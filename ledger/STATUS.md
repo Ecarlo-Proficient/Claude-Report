@@ -343,9 +343,24 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     local dates) is client-side in `renderRepActivity()`. Rep is a **runtime value, never hard-coded** —
     the drill works for any rep and the code carries no personal names (names come live from Notion).
     Verified live: auto-features the outreach rep, weekly trend renders, rep-switch works, no console errors.
+  - **P&L folded INTO the dashboard — live compute (owner: "super database, one place").** The job
+    detail now SHOWS the P&L (was only a link out to the Excel): `_project_pnl(con, proj)` assembles it
+    from the spine — **Earned Revenue = contract × %complete** (WIP), **costs from `cost_line`** (QBO
+    truth, incl subs, itemized by cost code), **overhead 10% of revenue** (MFD alt = 9% of costs), net
+    margin + %; **billed (AR)** shown alongside. Conventions match `project_pnl_export.py` so they
+    reconcile. `GET /api/pnl/pl?proj=`; `buildPnlGroup` renders the numbers + a "Costs by code" list
+    (uncoded flagged red, subs marked) with the project-pnl **Excel demoted to "Detailed export"**.
+    **Cross-platform open (owner's "trick"):** `_os_open()` opens files/folders with the host OS command
+    (`open`/`os.startfile`/`xdg-open`) so the same dashboard works on Mac OR Windows; `_pnl_open` gained
+    an **Open folder** action (`?folder=1`) — CP resolves onto the Synology Common drive, RP/MFD onto
+    OneDrive, per `pnl_paths`. Verified live (CP800 net 2.8%, MFD 9%-on-costs), no console errors.
+    See [[ledger-super-database]] memory. **NEXT:** portfolio "P&L" tab; RP/CP **source**-folder links
+    (RP is address-matched under `/Volumes/Common/CURRENT PROJECTS/Residential` via `rp_wip_reader`).
 
 ## IN PROGRESS
-- (none)
+- **P&L super-database (Phase 2/3):** portfolio "P&L" tab (all active jobs + company/division totals);
+  Synology **source-folder** links everywhere (CP `Awarded Projects Commercial projects`, RP
+  `Residential` address-matched, MFD → OneDrive) via the cross-platform `/api/pnl/open` mechanism.
 
 ## TO DO
 - **Investigate the ~6 active reconcile mismatches** (QBO cost ≠ WIP figure, e.g. RP6901/RP6440):
