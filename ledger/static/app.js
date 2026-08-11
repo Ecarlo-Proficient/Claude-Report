@@ -471,16 +471,16 @@ const DRAW_STAGE_SHORT = {
   "Ready to turn in": "Ready to turn in",
 };
 function renderDraws() {
-  const f = { q: ($("#drawSearch") ? $("#drawSearch").value : "").trim().toLowerCase(),
-              div: $("#drawDivision") ? $("#drawDivision").value : "" };
-  const all = (DRAWS.draws || []).filter(d => {
-    if (f.div && !String(d.project_no || "").toUpperCase().startsWith(f.div)
-              && !(d.label || "").toUpperCase().includes("— " + f.div)) return false;
-    if (f.q) {
-      const hay = [d.label, d.project_no].concat((d.bills || []).map(b => b.vendor))
-        .filter(Boolean).join(" ").toLowerCase();
-      if (!hay.includes(f.q)) return false;
-    }
+  const fv = sel => ($(sel) ? $(sel).value : "").trim().toLowerCase();
+  const fProj = fv("#drawFProj"), fVend = fv("#drawFVendor"), fInv = fv("#drawFInv");
+  const div = $("#drawDivision") ? $("#drawDivision").value : "";
+  const all = (DRAWS.draws || []).filter(d => {                 // each filled field must match (AND)
+    if (div && !String(d.project_no || "").toUpperCase().startsWith(div)
+            && !(d.label || "").toUpperCase().includes("— " + div)) return false;
+    if (fProj && !String(d.project_no || "").toLowerCase().includes(fProj)
+              && !(d.label || "").toLowerCase().includes(fProj)) return false;
+    if (fInv && !String(d.invoice_no || "").toLowerCase().includes(fInv)) return false;
+    if (fVend && !(d.bills || []).some(b => (b.vendor || "").toLowerCase().includes(fVend))) return false;
     return true;
   });
   const shown = activeDrawStage ? all.filter(d => d.stage === activeDrawStage) : all;
@@ -851,16 +851,22 @@ function renderLiens() {
   }
   $("#btnClearLien").hidden = activeLien === null;
 
-  // ── the one table below — filtered by the active stage + the search box ──
-  const q = ($("#lienSearch") ? $("#lienSearch").value : "").trim().toLowerCase();
+  // ── the one table below — filtered by the active stage + the per-field boxes ──
+  const lv = sel => ($(sel) ? $(sel).value : "").trim().toLowerCase();
+  const qProj = lv("#lienFProj"), qVend = lv("#lienFVendor"), qInv = lv("#lienFInv"), qName = lv("#lienFName");
   const known = new Set(ALL.map(r => r.project_no));
   const base = activeLien ? (byStatus[activeLien] || []) : watch;
   const enriched = base.map(r => {
     const d = splitDraw(r.matched_invoice);
     return { r, draw: r.invoice_no || d.draw || "", name: nameOf(r.project_no) || d.name || "" };
   });
-  const shown = q ? enriched.filter(({ r, draw, name }) =>
-    [r.project_no, draw, name, r.vendor, r.bill_ref].filter(Boolean).join(" ").toLowerCase().includes(q)) : enriched;
+  const shown = enriched.filter(({ r, draw, name }) => {          // each filled field must match (AND)
+    if (qProj && !`${r.project_no || ""} ${draw}`.toLowerCase().includes(qProj)) return false;
+    if (qVend && !String(r.vendor || "").toLowerCase().includes(qVend)) return false;
+    if (qInv && !`${r.bill_ref || ""} ${draw}`.toLowerCase().includes(qInv)) return false;
+    if (qName && !String(name || "").toLowerCase().includes(qName)) return false;
+    return true;
+  });
 
   // CP # · Draw # · Name/Address · Invoice # · Amount lead (owner's order); the
   // vendor trails and urgency is the coloured row edge so CP # stays first.
@@ -1491,9 +1497,9 @@ function init() {
   wireSettings();
   ["#search", "#fDivision", "#fStatus", "#fCategory", "#fActive"].forEach(sel =>
     $(sel).addEventListener("input", renderProjects));
-  ["#drawSearch", "#drawDivision"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderDraws); });
+  ["#drawFProj", "#drawFVendor", "#drawFInv", "#drawDivision"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderDraws); });
   { const el = $("#vendorSearch"); if (el) el.addEventListener("input", renderVendors); }
-  { const el = $("#lienSearch"); if (el) el.addEventListener("input", renderLiens); }
+  ["#lienFProj", "#lienFVendor", "#lienFInv", "#lienFName"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderLiens); });
   ["#salesSearch", "#salesStage", "#salesDivision"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderSales); });
   { const el = $("#btnClearLien"); if (el) el.onclick = () => { activeLien = null; renderLiens(); }; }
   { const el = $("#btnClearDrawStage"); if (el) el.onclick = () => { activeDrawStage = null; renderDraws(); }; }

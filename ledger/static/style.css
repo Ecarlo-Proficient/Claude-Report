@@ -269,8 +269,12 @@ tr.draw-group .g-sub { color: var(--text-dim); font-weight: 500; font-size: .85e
 .pct-bar .bar-txt { padding: 0 6px; }
 
 /* ── Filters ───────────────────────────────────────────────────────────── */
-.filters { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 18px 14px; align-items: center; }
+.filters { display: flex; flex-wrap: wrap; gap: 8px 10px; padding: 4px 18px 14px; align-items: flex-end; }
 .filters input[type="search"] { flex: 1 1 240px; min-width: 180px; }
+/* Labeled per-field search boxes (Draws / Liens). */
+.fld { display: inline-flex; flex-direction: column; gap: 3px; }
+.fld > span { font-size: .68em; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: .04em; padding-left: 3px; }
+.fld input[type="search"] { flex: 0 1 auto; min-width: 118px; }
 .filters input, .filters select {
   font: inherit; font-size: .9em; padding: 7px 10px; border-radius: 8px;
   border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
