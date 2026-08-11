@@ -213,6 +213,15 @@ tr.lien-row.u-info > td:first-child { border-left-color: var(--text-dim); }
 .cell.draw-out { color: var(--text); }                       /* money OUT (you pay vendors) */
 .ar-open { color: #b8860b; font-size: .82em; font-weight: 600; }
 .paidcnt { color: var(--text-dim); font-size: .85em; font-variant-numeric: tabular-nums; }
+tr.draw-group > td { background: color-mix(in srgb, var(--accent) 8%, var(--surface-2));
+  border-top: 2px solid var(--border); padding: 9px 10px; }
+tr.draw-group .g-proj { font-weight: 800; font-size: .95em; letter-spacing: -.01em; }
+tr.draw-group .g-sub { color: var(--text-dim); font-weight: 500; font-size: .85em; }
+.draws-table tbody td:nth-child(2) span { display: inline-block; max-width: 320px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+/* Working-on table: truncate the long Name so all columns fit the boxed width. */
+#homeWorkingTable td:nth-child(3) span { display: inline-block; max-width: 280px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
 .draw-bills-row > td { padding: 0; background: var(--surface-2); }
 .bills-sub { padding: 6px 10px 12px 34px; }
 .bills-cap { color: var(--text-dim); font-size: .82em; padding: 4px 2px 8px; font-variant-numeric: tabular-nums; }

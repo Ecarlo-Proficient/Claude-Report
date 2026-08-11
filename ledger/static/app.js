@@ -505,15 +505,33 @@ function renderDraws() {
   // pay the vendors — the money-in vs money-out the owner wanted at a glance.
   const box = $("#drawList"); box.innerHTML = "";
   if (!shown.length) { box.innerHTML = '<p class="hint" style="padding:14px 18px">No draws match.</p>'; return; }
+  // Grouped by project #: sort by project, newest draw first within each project.
+  const grouped = [...shown].sort((a, b) =>
+    (a.project_no || "").localeCompare(b.project_no || "") ||
+    String(b.ar_date || b.recency || "").localeCompare(String(a.ar_date || a.recency || "")));
   const scroll = document.createElement("div"); scroll.className = "table-scroll";
   const table = document.createElement("table"); table.className = "grid draws-table";
   const thead = document.createElement("thead"), tbody = document.createElement("tbody");
-  const cols = [["", "left"], ["Project #", "left"], ["Draw memo", "left"], ["Billed (in)", "right"],
+  const cols = [["", "left"], ["Draw memo", "left"], ["Billed (in)", "right"],
                 ["Invoice #", "left"], ["Date", "left"], ["Paid out", "right"], ["Stage", "left"]];
   const htr = document.createElement("tr");
   for (const [c, al] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
   thead.appendChild(htr);
-  for (const d of shown) {
+  let curProj = null;
+  for (const d of grouped) {
+    if (d.project_no !== curProj) {                       // project group header
+      curProj = d.project_no;
+      const g = grouped.filter(x => x.project_no === curProj);
+      const gIn = g.reduce((t, x) => t + (x.billed || 0), 0);
+      const gOut = g.reduce((t, x) => t + (x.total || 0), 0);
+      const gtr = document.createElement("tr"); gtr.className = "draw-group";
+      const gtd = document.createElement("td"); gtd.colSpan = cols.length;
+      const sp = document.createElement("span"); sp.className = "g-proj"; sp.textContent = curProj || "—";
+      const sub = document.createElement("span"); sub.className = "g-sub";
+      const nm = nameOf(curProj);
+      sub.textContent = `${nm ? " · " + nm : ""} · ${g.length} draw${g.length > 1 ? "s" : ""} · ${money(gIn)} in / ${money(gOut)} out`;
+      gtd.appendChild(sp); gtd.appendChild(sub); gtr.appendChild(gtd); tbody.appendChild(gtr);
+    }
     const done = d.stage === "Ready to turn in";
     const open = drawsExpanded.has(d.matched_invoice);
     const tr = document.createElement("tr"); tr.className = "draw-row" + (done ? " done" : "");
@@ -521,8 +539,7 @@ function renderDraws() {
     tr.onclick = (e) => { if (e.target.closest(".cell") || e.target.closest("a")) return;
       open ? drawsExpanded.delete(d.matched_invoice) : drawsExpanded.add(d.matched_invoice); renderDraws(); };
     const cc = document.createElement("td"); cc.className = "left draw-caret"; cc.textContent = open ? "▾" : "▸"; tr.appendChild(cc);
-    tr.appendChild(leftText(d.project_no || "—"));
-    const memo = (d.label || "").replace(/^\s*\S+\s*—\s*/, "").trim() || d.label || "—";
+    const memo = (d.label || "").replace(/^\s*\S+\s*—\s*/, "").replace(/^\s*(MFD|CP|RP)\d+(-FTW)?\s*-\s*/i, "").trim() || d.label || "—";
     tr.appendChild(leftText(memo));
     const bt = document.createElement("td");
     if (d.billed != null) { const mc = moneyCell(d.billed); mc.classList.add("draw-in"); bt.appendChild(mc);
