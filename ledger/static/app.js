@@ -465,6 +465,20 @@ const DRAW_STAGE_LABEL = {
 };
 // QBO deep link for an invoice (redirects to the right company when you're logged in).
 const qboInvoiceUrl = id => `https://app.qbo.intuit.com/app/invoice?txnId=${encodeURIComponent(id)}`;
+// A left-aligned <td> whose text opens a QBO deep link in a new tab when `url` is
+// set; a plain cell otherwise. Used for bill/invoice numbers across the tables.
+function qboLinkCell(text, url, title) {
+  const td = document.createElement("td"); td.className = "left";
+  const label = text || "—";
+  if (url) {
+    const a = document.createElement("a");
+    a.href = url; a.target = "_blank"; a.rel = "noopener"; a.className = "qbo-link";
+    a.textContent = label; if (title) a.title = title;
+    a.onclick = e => e.stopPropagation();
+    td.appendChild(a);
+  } else { td.textContent = label; }
+  return td;
+}
 // Short pill text (keeps the table narrow); the full "who paid whom" is the tooltip.
 const DRAW_STAGE_SHORT = {
   "Fund in — pay vendors": "Pay vendors",
@@ -595,7 +609,7 @@ function buildBillsTable(d) {
   for (const b of d.bills) {
     const tr = document.createElement("tr");
     tr.appendChild(leftText(b.vendor || "—"));
-    tr.appendChild(leftText(b.bill_ref || "—"));
+    tr.appendChild(qboLinkCell(b.bill_ref, b.qbo_link, "Open this bill in QuickBooks"));
     const av = document.createElement("td"); av.appendChild(moneyCell(b.amount)); tr.appendChild(av);
     tr.appendChild(leftText(b.pay_date ? "✓ " + fmtDate(b.pay_date) : "—"));
     tr.appendChild(leftText(b.gc_paid ? "✓ " + fmtDate(b.gc_paid) : "—"));
@@ -895,7 +909,16 @@ function renderLiens() {
     tr.appendChild(leftText(draw || "—"));
     tr.appendChild(leftText(name || "—"));
     const inv = document.createElement("td"); inv.className = "left";
-    const chip = document.createElement("span"); chip.className = "invno"; chip.textContent = r.bill_ref || "—"; inv.appendChild(chip); tr.appendChild(inv);
+    let chip;
+    if (r.qbo_link) {
+      chip = document.createElement("a");
+      chip.href = r.qbo_link; chip.target = "_blank"; chip.rel = "noopener";
+      chip.title = "Open this bill in QuickBooks"; chip.onclick = (e) => e.stopPropagation();
+      chip.className = "invno qbo-link";
+    } else {
+      chip = document.createElement("span"); chip.className = "invno";
+    }
+    chip.textContent = r.bill_ref || "—"; inv.appendChild(chip); tr.appendChild(inv);
     const amt = document.createElement("td"); const mc = moneyCell(r.open_balance); mc.classList.add("lien-amt"); amt.appendChild(mc); tr.appendChild(amt);
     tr.appendChild(leftText(r.vendor || "—"));
     tbody.appendChild(tr);

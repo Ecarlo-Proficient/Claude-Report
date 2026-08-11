@@ -203,6 +203,8 @@ tr.lien-row.u-info > td:first-child { border-left-color: var(--text-dim); }
 .notion-link:hover { border-color: var(--accent); }
 a.qbo-link { color: var(--accent); text-decoration: none; font-variant-numeric: tabular-nums; }
 a.qbo-link:hover { text-decoration: underline; }
+/* the bill-# chip when it's a QBO link: accent border on hover, no underline inside the pill */
+a.invno.qbo-link:hover { border-color: var(--accent); text-decoration: none; }
 
 /* ── Draws table (one row per draw; click → bills open underneath) ────────── */
 .draws-table td { vertical-align: middle; }

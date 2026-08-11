@@ -103,7 +103,7 @@ def _fetch_ap(con) -> dict:
     try:
         rows = con.execute(
             "SELECT project_no, division, vendor, bill_ref, open_balance, lien_status, "
-            "matched_invoice, invoice_no FROM ap_bill_line").fetchall()
+            "matched_invoice, invoice_no, qbo_link FROM ap_bill_line").fetchall()
     except sqlite3.OperationalError:
         return ap
     open_bal, open_lines, watch = 0.0, 0, []
@@ -270,7 +270,8 @@ def _fetch_draws(con, limit: int = 100) -> dict:
         rows = con.execute(
             "SELECT matched_invoice mi, project_no, division, vendor, bill_ref, "
             "MAX(bill_total) amount, MAX(open_balance) open_bal, pay_status, invoice_status, "
-            "MAX(gc_paid_date) gc, MAX(pay_date) pd, MAX(bill_date) bd, MAX(invoice_no) invoice_no "
+            "MAX(gc_paid_date) gc, MAX(pay_date) pd, MAX(bill_date) bd, MAX(invoice_no) invoice_no, "
+            "MAX(qbo_link) qbo_link "
             "FROM ap_bill_line WHERE matched_invoice IS NOT NULL AND matched_invoice <> '' "
             # RP isn't draws — RP bills at completion / milestones, not formal draws (owner).
             "AND COALESCE(project_no,'') NOT LIKE 'RP%' AND matched_invoice NOT LIKE '%— RP%' "
@@ -296,7 +297,7 @@ def _fetch_draws(con, limit: int = 100) -> dict:
         d["bills"].append({
             "vendor": r["vendor"], "bill_ref": r["bill_ref"], "amount": r["amount"] or 0,
             "open": r["open_bal"] or 0, "pay_status": r["pay_status"], "invoice_status": r["invoice_status"],
-            "gc_paid": r["gc"], "pay_date": r["pd"], "bill_date": r["bd"],
+            "gc_paid": r["gc"], "pay_date": r["pd"], "bill_date": r["bd"], "qbo_link": r["qbo_link"],
             "waiver_key": wk, "waiver": bool(wmap.get(wk, 0)),
         })
     out = []

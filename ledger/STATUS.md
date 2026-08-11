@@ -303,9 +303,14 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   # · Name/address) — a row must match every filled field (AND); Vendors/Sales stay single. **QBO deep
   links on invoices:** the draws' Invoice # links to `app.qbo.intuit.com/app/invoice?txnId=<id>` (the
   Invoice Id comes from the Invoice Tracker load, on `billing_event`). Verified live.
-  - **OPEN — QBO links on BILLS (AP):** the Bill Tracker export carries no QBO bill id, so AP bill lines
-    can't be deep-linked yet. Needs the QBO Bill Id added to the Bill Tracker export + `load_bill_tracker`
-    (a bill-tracker change) before the Liens/bill rows can link out.
+  - **QBO deep links on BILLS (AP) — DONE.** The earlier "no bill id" assumption was wrong: the Bill
+    Tracker's **"Open" column is `=HYPERLINK("…/app/bill?txnId=<id>","↗")`** for every bill. `data_only`
+    reads only the cached "↗" glyph, so `load_bill_tracker` now does a **second read-only, formula pass**
+    (`read_bill_links`, scanning each row for `app/bill?txnId=`) and stores the link in the new
+    `ap_bill_line.qbo_link` column (migration drops+recreates on the missing column; matched **2825/2825**).
+    `_fetch_ap` and `_fetch_draws` carry `qbo_link`; the Liens **Invoice #** chip (448/448) and the draw
+    **Bill #** cell are now `app/bill` links (new-tab, click-stops-row-expand). A shared `qboLinkCell()`
+    helper + `a.invno.qbo-link` hover style. Verified live on both tabs, no console errors.
 
 ## IN PROGRESS
 - (none)

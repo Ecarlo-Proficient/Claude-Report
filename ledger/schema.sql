@@ -168,6 +168,7 @@ CREATE TABLE IF NOT EXISTS ap_bill_line (
     gc_paid_date    TEXT,             -- when the client/GC funded that draw
     pay_date        TEXT,             -- when we paid the vendor
     bt_key          TEXT,             -- Bill Tracker _Key (stable-ish bill id)
+    qbo_link        TEXT,             -- QBO deep link to the bill (from the "Open" ↗ =HYPERLINK column)
     source_sheet  TEXT,               -- Bills | Inventory
     source        TEXT NOT NULL DEFAULT 'bill_tracker',
     loaded_at     TEXT NOT NULL

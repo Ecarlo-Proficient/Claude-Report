@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import re
 import sqlite3
 import sys
 from pathlib import Path
@@ -52,6 +53,11 @@ DEFAULT_EXCEL = paths.get_path(
 
 SHEETS = ("Bills", "Inventory")   # the line-level display sheets
 HEADER_ROW = 2                    # row 1 is the grouped banner; real headers are row 2
+
+# The "Open" column carries `=HYPERLINK("…/app/bill?txnId=<id>","↗")` — a QBO deep
+# link to the bill. data_only reads the cached "↗" glyph, so we re-open for formulas.
+QBO_BILL_RE = re.compile(r"app/bill\?txnId=(\d+)", re.I)
+QBO_BILL_URL = "https://qbo.intuit.com/app/bill?txnId={}"
 
 # canonical field -> Bill Tracker header label
 FIELD_HEADERS = {
@@ -130,6 +136,25 @@ def read_sheet(ws):
         yield excel_row, rec
 
 
+def read_bill_links(ws):
+    """Map line_uid -> QBO bill deep link, read from each row's =HYPERLINK() formula.
+
+    Needs a workbook opened data_only=False (the cached value is only the "↗" glyph).
+    Scans the whole row for the app/bill?txnId= pattern so it never depends on the
+    "Open" column staying in a fixed position.
+    """
+    links = {}
+    for excel_row, row in enumerate(ws.iter_rows(min_row=HEADER_ROW + 1), start=HEADER_ROW + 1):
+        for cell in row:
+            v = cell.value
+            if isinstance(v, str) and "app/bill?txnId=" in v:
+                m = QBO_BILL_RE.search(v)
+                if m:
+                    links[f"bt:{ws.title}:{excel_row}"] = QBO_BILL_URL.format(m.group(1))
+                break
+    return links
+
+
 def load(excel_path: Path, db_path: Path, dry_run: bool, show: int):
     if not excel_path.exists():
         sys.exit(f"ERROR: Bill Tracker not found: {excel_path}\n"
@@ -150,6 +175,18 @@ def load(excel_path: Path, db_path: Path, dry_run: bool, show: int):
         print(f"  {name:<10} -> {n:>5} bill lines")
     wb.close()
 
+    # second pass (formulas only): attach each bill's QBO deep link from the "Open"
+    # ↗ =HYPERLINK() cell — the cached value in the pass above is just the glyph.
+    wbf = load_workbook(excel_path, read_only=True, data_only=False)
+    links = {}
+    for name in SHEETS:
+        if name in wbf.sheetnames:
+            links.update(read_bill_links(wbf[name]))
+    wbf.close()
+    for r in records:
+        r["qbo_link"] = links.get(r["line_uid"])
+    print(f"  QBO bill links matched: {sum(1 for r in records if r.get('qbo_link'))}/{len(records)}")
+
     open_total = sum(r["open_balance"] or 0 for r in records)
     watch = [r for r in records if (r["lien_status"] in LIEN_RANK)]
     with_proj = sum(1 for r in records if r["project_no"])
@@ -168,7 +205,7 @@ def load(excel_path: Path, db_path: Path, dry_run: bool, show: int):
     # migrate ap_bill_line if it predates the draw/invoice columns — its rows are
     # reloaded from Excel in THIS run, so a drop + recreate is lossless.
     have = {r[1] for r in con.execute("PRAGMA table_info(ap_bill_line)")}
-    if "matched_invoice" not in have:
+    if "matched_invoice" not in have or "qbo_link" not in have:
         con.execute("DROP TABLE ap_bill_line")
         con.executescript(SCHEMA_SQL.read_text(encoding="utf-8"))
     now = dt.datetime.now().isoformat(timespec="seconds")
@@ -178,7 +215,8 @@ def load(excel_path: Path, db_path: Path, dry_run: bool, show: int):
     cols = ["line_uid", "project_no", "division", "vendor", "bill_ref", "bill_date",
             "account", "description", "line_amount", "bill_total", "open_balance",
             "pay_status", "approved", "lien_status", "matched_invoice", "invoice_status",
-            "invoice_no", "gc_paid_date", "pay_date", "bt_key", "source_sheet", "loaded_at"]
+            "invoice_no", "gc_paid_date", "pay_date", "bt_key", "qbo_link",
+            "source_sheet", "loaded_at"]
     ph = ", ".join(f":{c}" for c in cols)
     for r in records:
         r["loaded_at"] = now
