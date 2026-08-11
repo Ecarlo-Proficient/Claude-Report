@@ -146,7 +146,8 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   captures `matched_invoice` / `invoice_status` / `gc_paid_date` / `pay_date` / `bt_key` (ap_bill_line
   migrated in place — rows reload from Excel, lossless). `dashboard.py _fetch_draws` rolls bills up BY
   DRAW (dedup lines → bills), computes the stage — **Awaiting GC funding → Fund in, pay vendors →
-  Paid, collect waivers → Ready to turn in** — sorted worklist, 40 most-recent shown of 337. The
+  Ready to turn in** (green once every bill is paid; see the later entry — the collect-waivers stage
+  was removed) — sorted worklist, 40 most-recent shown of 337. The
   **Draws** tab renders each draw with its bills and a **waiver checkbox** per bill.
 - **The ledger's FIRST write surface: `waiver` table + `POST /api/waiver`.** The one place the app
   writes — the owner marks "unconditional waiver in hand." Everything else stays read-only (`mode=ro`);
@@ -311,6 +312,19 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     `_fetch_ap` and `_fetch_draws` carry `qbo_link`; the Liens **Invoice #** chip (448/448) and the draw
     **Bill #** cell are now `app/bill` links (new-tab, click-stops-row-expand). A shared `qboLinkCell()`
     helper + `a.invno.qbo-link` hover style. Verified live on both tabs, no console errors.
+  - **Draw "done" is now PAID, not paid+waivers (owner).** The `waiver` table is empty (the owner
+    doesn't mark waivers in-tool), so the old `waivers == n` gate made **"Ready to turn in" (green)
+    unreachable** — every fully-paid draw sat on amber **"Paid — collect waivers"** forever. Per the
+    owner ("don't say collect waiver if all bills have been paid, just make it green"), the stage is
+    now **`paid == n` → green "Ready to turn in"** and the "Paid — collect waivers" stage is **removed**
+    (backend stage logic + `_STAGE_ORDER`; frontend `DRAW_STAGE_CLASS/LABEL/SHORT`, the 3 stat tiles
+    now **Ready to turn in · Pay vendors · Awaiting GC**, the My-view action item, and the explainer).
+    Per-bill **waiver checkboxes stay** (they persist to `waiver` and update the expanded caption for
+    the owner's records) but **no longer gate the color**. Live: 18 ready / 15 pay / 16 awaiting = 49.
+  - **NOTE — money-IN blank on some draws is a source gap, not a bug.** Billed-(in) comes from the
+    Invoice Tracker (`billing_event`, by Invoice #); a draw whose AR invoice isn't in the tracker shows
+    "—" (e.g. Briarwood invoices 33942/34103 are absent from the tracker though older ones are present —
+    a data-entry gap in the Invoice Tracker, not a recency cutoff). No QBO fallback by design (owner).
 
 ## IN PROGRESS
 - (none)

@@ -257,10 +257,12 @@ def _waiver_key(mi, vendor, bill_ref) -> str:
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
 
 
-# race-through stages, in worklist priority — Ready-to-turn-in first (turn it in
-# NOW to unlock the next draw), then pay vendors, then collect waivers.
+# race-through stages, in worklist priority — Ready-to-turn-in first (all bills
+# paid → turn it in to unlock the next draw), then pay vendors, then awaiting GC.
+# A draw is "done" (green) the moment every bill is PAID; unconditional waivers are
+# tracked per bill (the checkboxes) for the owner's records but no longer gate green.
 _STAGE_ORDER = {"Ready to turn in": 0, "Fund in — pay vendors": 1,
-                "Paid — collect waivers": 2, "Awaiting GC funding": 3}
+                "Awaiting GC funding": 2}
 
 
 def _fetch_draws(con, limit: int = 100) -> dict:
@@ -311,9 +313,7 @@ def _fetch_draws(con, limit: int = 100) -> dict:
             stage = "Awaiting GC funding"
         elif paid < n:
             stage = "Fund in — pay vendors"
-        elif waivers < n:
-            stage = "Paid — collect waivers"
-        else:
+        else:                              # every bill paid → done (green), waivers aside
             stage = "Ready to turn in"
         ar = bmap.get(str(d.get("invoice_no") or ""))
         d.update({

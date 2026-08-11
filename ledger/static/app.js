@@ -397,7 +397,6 @@ function renderHome() {
   const pastDue = (AP.lien_watch || []).filter(r => r.lien_status === "Notice PAST due").length;
   const dueSoon = (AP.lien_watch || []).filter(r => r.lien_status === "Notice due in ≤7d").length;
   const readyDraws = (DRAWS.draws || []).filter(d => d.stage === "Ready to turn in").length;
-  const collectDraws = (DRAWS.draws || []).filter(d => d.stage === "Paid — collect waivers").length;
   const overB = ALL.filter(isOverBudget).length;
   const underB = ALL.filter(r => num(r.underbillings) > 0).length;
   const goRule = (key) => { setTab("overview"); activeRule = key; renderAttention(); renderProjects(); $("#btnClearRule").hidden = false; window.scrollTo(0, 0); };
@@ -406,10 +405,8 @@ function renderHome() {
       "Unpaid bills YOU owe (AP) whose vendor/supplier lien-notice deadline has passed — they can lien the project. Pay to clear. This is money OUT, not your AR."],
     ["Lien date in ≤7d", dueSoon, true, () => setTab("liens"),
       "Unpaid bills you owe that are within 7 days of the vendor's lien-notice deadline."],
-    ["Draws: collect waivers", collectDraws, false, () => setTab("draws"),
-      "Draws where you've paid the vendors and are collecting their unconditional waivers."],
     ["Draws ready to turn in", readyDraws, false, () => setTab("draws"),
-      "Draws fully paid with every waiver in hand — turn in to unlock the next draw."],
+      "Draws with every bill paid — turn in to unlock the next draw."],
     ["Over budget", overB, true, () => goRule("overbudget"),
       "Jobs where cost-to-date has passed the ETC budget."],
     ["Underbilled (can invoice)", underB, false, () => goRule("underbilled"),
@@ -452,16 +449,15 @@ function renderHome() {
 }
 
 const DRAW_STAGE_CLASS = {
-  "Fund in — pay vendors": "d7", "Paid — collect waivers": "d15",
+  "Fund in — pay vendors": "d7",
   "Awaiting GC funding": "info", "Ready to turn in": "ready",
 };
 // Clearer, direction-explicit pill text (who paid whom). Display only — the internal
 // stage keys above are unchanged (they're matched in several places).
 const DRAW_STAGE_LABEL = {
   "Fund in — pay vendors": "GC funded → pay vendors",
-  "Paid — collect waivers": "Vendors paid → collect waivers",
   "Awaiting GC funding": "Awaiting GC funding",
-  "Ready to turn in": "Ready to turn in",
+  "Ready to turn in": "All bills paid → ready to turn in",
 };
 // QBO deep link for an invoice (redirects to the right company when you're logged in).
 const qboInvoiceUrl = id => `https://app.qbo.intuit.com/app/invoice?txnId=${encodeURIComponent(id)}`;
@@ -482,9 +478,8 @@ function qboLinkCell(text, url, title) {
 // Short pill text (keeps the table narrow); the full "who paid whom" is the tooltip.
 const DRAW_STAGE_SHORT = {
   "Fund in — pay vendors": "Pay vendors",
-  "Paid — collect waivers": "Collect waivers",
   "Awaiting GC funding": "Awaiting GC",
-  "Ready to turn in": "Ready to turn in",
+  "Ready to turn in": "Paid — ready to turn in",
 };
 function renderDraws() {
   const fv = sel => ($(sel) ? $(sel).value : "").trim().toLowerCase();
@@ -506,9 +501,9 @@ function renderDraws() {
   // Clickable stage tiles → filter the draw list. Counts come from `all` (all stages);
   // subs spell out the money direction (GC pays us in → we pay vendors out → waivers).
   const stats = [
-    ["Ready to turn in", "Ready to turn in", "all paid + waivers in"],
-    ["Collect waivers", "Paid — collect waivers", "vendors paid — waivers pending"],
+    ["Ready to turn in", "Ready to turn in", "all bills paid — turn it in"],
     ["Pay vendors", "Fund in — pay vendors", "GC funded — vendors not paid yet"],
+    ["Awaiting GC", "Awaiting GC funding", "not funded by the GC yet"],
   ];
   const sr = $("#drawsStats"); sr.innerHTML = "";
   for (const [label, stageKey, sub] of stats) {
@@ -523,9 +518,9 @@ function renderDraws() {
     sr.appendChild(el);
   }
   { const cb = $("#btnClearDrawStage"); if (cb) cb.hidden = !activeDrawStage; }
-  // One row per draw (table). Click a row → its bills open underneath. Green = fully
-  // done (GC paid + every waiver in). "Billed (in)" = the GC pays you; "Paid out" = you
-  // pay the vendors — the money-in vs money-out the owner wanted at a glance.
+  // One row per draw (table). Click a row → its bills open underneath. Green = done =
+  // every bill PAID (waivers are tracked per bill but don't gate the color). "Billed
+  // (in)" = the GC pays you; "Paid out" = you pay vendors — money-in vs money-out.
   const box = $("#drawList"); box.innerHTML = "";
   if (!shown.length) { box.innerHTML = '<p class="hint" style="padding:14px 18px">No draws match.</p>'; return; }
   // Grouped by project #: sort by project, newest draw first within each project.
@@ -634,9 +629,7 @@ async function setWaiver(draw, bill, cb) {
     const j = await res.json();
     if (!j.ok) throw new Error(j.error || "write failed");
     bill.waiver = received;                       // update local state
-    draw.waivers = draw.bills.filter(b => b.waiver).length;
-    if (draw.stage !== "Ready to turn in" && draw.funded && draw.paid === draw.n && draw.waivers === draw.n) draw.stage = "Ready to turn in";
-    else if (draw.waivers < draw.n && draw.paid === draw.n && draw.funded) draw.stage = "Paid — collect waivers";
+    draw.waivers = draw.bills.filter(b => b.waiver).length;   // caption only — doesn't gate the stage
     toast(received ? "Waiver marked in hand" : "Waiver cleared");
     renderDraws();
   } catch (e) {
