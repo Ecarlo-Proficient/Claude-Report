@@ -43,6 +43,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 from shared import paths
 from shared import qbo_api
+from shared.xlsx_verify import assert_clean
 
 from wip_excel_guard import (
     ALLOWED_WRITE_SHEETS,
@@ -1631,6 +1632,15 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
         # or interruption can't leave a half-written WIP (safe_save pattern).
         tmp = wip_path.with_name(wip_path.name + ".tmp")
         wb.save(str(tmp))
+        # Corruption gate (the user 2026-08-08): verify the freshly-written temp
+        # against the Excel-repair checklist BEFORE swapping it in. If it would
+        # trip "we found a problem with some content", raise and leave the good
+        # file untouched — a bad WIP never reaches the owner.
+        try:
+            assert_clean(tmp)
+        except ValueError:
+            tmp.unlink(missing_ok=True)
+            raise
         try:
             os.replace(str(tmp), str(wip_path))
         except OSError as e:

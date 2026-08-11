@@ -40,6 +40,7 @@ shared/                the ONLY importable common code
 ├─ cost_lines.py       cost-line category (Concrete/Labor/Materials) + bill-line combine
 ├─ draws.py            CP draw (AIA G702/G703) discovery + parsing (wip ↔ health)
 ├─ takeoff_etc.py      blank ETC → takeoff cost sheet (rp_wip_reader ↔ schedule preview)
+├─ xlsx_verify.py      Excel-corruption gate: every xlsx writer calls assert_clean before handing over
 ├─ pnl_paths.py        resolve a project's P&L workbook + "last pulled" mtime (ledger ↔ project-pnl)
 ├─ lien_clock.py       Texas Ch. 53 notice deadlines (money_bleeds ↔ invoice-sync aging)
 └─ setup_qbo.py        vault admin CLI (--status/--test/--rotate/--purge)
