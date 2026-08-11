@@ -12,13 +12,20 @@ one `billing_event` per invoice keyed by **Invoice #** — the same number
 next to paid-to-vendors (money OUT) on every draw.
 
     QBO ──(invoice-sync)──▶ Invoice Tracker (Notion) ──(this)──▶ ledger.billing_event
+                       └────────────── GAP FALLBACK (this, QBO) ──────────┘
+
+The tracker is authoritative and covers the open + recent invoices. A handful of
+OLDER draws were never entered there, so their draw shows no "billed (in)". The GAP
+FALLBACK closes exactly those holes: after loading Notion, it finds CP/MFD draw
+invoice #s with no billing_event match and pulls ONLY those from QBO by DocNumber
+(source='qbo_fallback'). Tracker first; QBO fills only what it lacks (owner 2026-08-11).
 
 SAFETY
-    * Read-only on Notion; writes only the local ledger. Scoped full-replace of
-      source='invoice_tracker' billing_event (idempotent; a re-run mirrors Notion).
-    * No QBO, no Touch ID — just the Notion token.
-    * --dry-run reads + reports draw coverage WITHOUT writing.
-    * --selftest runs the whole pipeline offline on a throwaway DB (no Notion).
+    * Read-only on Notion AND QBO; writes only the local ledger. Scoped full-replace
+      of each source ('invoice_tracker', 'qbo_fallback') — idempotent; a re-run mirrors.
+    * The gap fallback authenticates to QBO → ONE Touch ID on this Mac. Skip with
+      --no-qbo (Notion-only). --selftest stays fully offline (no Notion, no QBO).
+    * --dry-run reads + reports draw coverage + the gap count WITHOUT writing or pulling QBO.
 
 USAGE
     python3 ledger/load_invoices.py --selftest     # offline proof, no Notion
@@ -161,6 +168,77 @@ def write_events(con, records: list[dict], now: str) -> int:
     return len(records)
 
 
+def _invoice_from_qbo(inv: dict) -> dict:
+    """One raw QBO Invoice → a billing_event record (source='qbo_fallback')."""
+    total = _num(inv.get("TotalAmt"))
+    bal = _num(inv.get("Balance"))
+    if bal is None:
+        status = None
+    elif bal <= 0.005:
+        status = "Paid"
+    elif total and bal < total - 0.005:
+        status = "Partially Paid"
+    else:
+        status = "Unpaid"
+    cust = (inv.get("CustomerRef") or {}).get("name")
+    memo = inv.get("PrivateNote") or (inv.get("CustomerMemo") or {}).get("value")
+    proj = _extract_proj(cust) or _extract_proj(memo)
+    doc = inv.get("DocNumber")
+    return {
+        "qbo_txn_id": str(inv.get("Id") or doc),
+        "doc_number": (str(doc).strip() if doc else None),
+        "project_no": proj,
+        "division": _division_for(proj),
+        "customer": cust,
+        "memo": memo,
+        "amount": total,
+        "balance": bal,
+        "txn_date": inv.get("TxnDate"),
+        "status": status,
+        "draw_period": None,
+        "source": "qbo_fallback",
+    }
+
+
+def fill_gaps_from_qbo(con, now: str, dry_run: bool, batch: int = 25) -> int:
+    """Fill the ONE thing the Invoice Tracker can't: draws whose AR invoice was never
+    entered there. Find CP/MFD draw invoice_nos with no billing_event match, pull ONLY
+    those from QBO by DocNumber, and land them as source='qbo_fallback'. The tracker
+    stays authoritative (loaded first); QBO fills only the holes. Returns rows filled."""
+    gaps = [r[0] for r in con.execute(
+        "SELECT DISTINCT a.invoice_no FROM ap_bill_line a "
+        "LEFT JOIN billing_event b ON b.doc_number = a.invoice_no "
+        "WHERE a.invoice_no GLOB '[0-9]*' AND b.doc_number IS NULL "
+        "  AND COALESCE(a.project_no,'') NOT LIKE 'RP%' AND a.matched_invoice NOT LIKE '%— RP%'")]
+    if not gaps:
+        print("QBO fallback: no gaps — every CP/MFD draw is covered by the Invoice Tracker.")
+        return 0
+    print(f"QBO fallback: {len(gaps)} draw invoices missing from the tracker.")
+    if dry_run:
+        print("  --dry-run: not pulling QBO.")
+        return 0
+    from shared.qbo_api import load_credentials, query_all
+    access, company_id = load_credentials()
+    print("  authenticated.")                     # never echo the realm/company id (owner 2026-08-06)
+    recs: list[dict] = []
+    for i in range(0, len(gaps), batch):
+        inlist = ", ".join("'" + d.replace("'", "") + "'" for d in gaps[i:i + batch])
+        for inv in query_all(access, company_id, "Invoice", f"DocNumber IN ({inlist})"):
+            recs.append(_invoice_from_qbo(inv))
+    con.execute("DELETE FROM billing_event WHERE source='qbo_fallback'")
+    ph = ", ".join(f":{c}" for c in _COLS)
+    for r in recs:
+        row = {**r, "loaded_at": now}
+        con.execute(f"INSERT OR REPLACE INTO billing_event ({', '.join(_COLS)}) VALUES ({ph})",
+                    {c: row.get(c) for c in _COLS})
+    con.commit()
+    got = {r["doc_number"] for r in recs if r["doc_number"]}
+    still = [g for g in gaps if g not in got]
+    print(f"  filled {len(got)} of {len(gaps)} gap invoices from QBO"
+          + (f" · {len(still)} still unmatched (voided/deleted in QBO?): {', '.join(still[:8])}" if still else ""))
+    return len(got)
+
+
 def _draw_coverage(con, show: int) -> None:
     row = con.execute(
         "SELECT COUNT(DISTINCT a.invoice_no) draws, COUNT(DISTINCT b.doc_number) matched "
@@ -180,7 +258,7 @@ def _draw_coverage(con, show: int) -> None:
                   f"${(r[3] or 0):>12,.0f}  open ${(r[4] or 0):>10,.0f}")
 
 
-def run(db_path: Path, dry_run: bool, show: int) -> None:
+def run(db_path: Path, dry_run: bool, show: int, no_qbo: bool = False) -> None:
     con = _connect(db_path)
     from shared.notion_client import NotionClient
     nc = NotionClient()
@@ -205,6 +283,8 @@ def run(db_path: Path, dry_run: bool, show: int) -> None:
                 tmp.execute("INSERT INTO ap_bill_line (line_uid, project_no, invoice_no, matched_invoice, source, loaded_at) "
                             "VALUES (?,?,?,?,'copy','t')", tuple(r))
             write_events(tmp, records, "preview")
+            if not no_qbo:
+                fill_gaps_from_qbo(tmp, "preview", dry_run=True)   # reports the gap count only
             _draw_coverage(tmp, show)
             tmp.close()
         con.close()
@@ -213,6 +293,8 @@ def run(db_path: Path, dry_run: bool, show: int) -> None:
     now = dt.datetime.now().isoformat(timespec="seconds")
     n = write_events(con, records, now)
     print(f"Wrote {n} billing_event rows → {db_path}")
+    if not no_qbo:
+        fill_gaps_from_qbo(con, now, dry_run=False)               # QBO fills the tracker's holes
     _draw_coverage(con, show)
     con.close()
 
@@ -267,13 +349,15 @@ def main() -> int:
     ap.add_argument("--db", type=Path, default=DEFAULT_DB)
     ap.add_argument("--dry-run", action="store_true", help="Read + coverage; write nothing.")
     ap.add_argument("--show", type=int, default=12, help="Sample rows to print.")
+    ap.add_argument("--no-qbo", action="store_true",
+                    help="Skip the QBO gap-fallback (Notion-only; no Touch ID).")
     ap.add_argument("--selftest", action="store_true", help="Offline pipeline proof (no Notion).")
     args = ap.parse_args()
 
     if args.selftest:
         _selftest()
         return 0
-    run(args.db, args.dry_run, args.show)
+    run(args.db, args.dry_run, args.show, args.no_qbo)
     return 0
 
 

@@ -592,7 +592,7 @@ function renderDraws() {
   const scroll = document.createElement("div"); scroll.className = "table-scroll";
   const table = document.createElement("table"); table.className = "grid draws-table";
   const thead = document.createElement("thead"), tbody = document.createElement("tbody");
-  const cols = [["", "left"], ["Draw memo", "left"], ["Billed (in)", "right"],
+  const cols = [["", "left"], ["Draw memo", "left"], ["Billed (in)", "right"], ["Status", "left"],
                 ["Invoice #", "left"], ["Date", "left"], ["Paid out", "right"], ["Stage", "left"]];
   const htr = document.createElement("tr");
   for (const [c, al] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
@@ -622,10 +622,14 @@ function renderDraws() {
     const memo = (d.label || "").replace(/^\s*\S+\s*—\s*/, "").replace(/^\s*(MFD|CP|RP)\d+(-FTW)?\s*-\s*/i, "").trim() || d.label || "—";
     tr.appendChild(leftText(memo));
     const bt = document.createElement("td");
-    if (d.billed != null) { const mc = moneyCell(d.billed); mc.classList.add("draw-in"); bt.appendChild(mc);
-      if (d.ar_status && d.ar_status !== "Paid") { const s = document.createElement("span"); s.className = "ar-open"; s.textContent = " " + d.ar_status; bt.appendChild(s); } }
+    if (d.billed != null) { const mc = moneyCell(d.billed); mc.classList.add("draw-in"); bt.appendChild(mc); }
     else bt.appendChild(document.createTextNode("—"));
     tr.appendChild(bt);
+    // AR pay status — its own column (green Paid / amber still-owed), not crammed onto the amount
+    const stt = document.createElement("td"); stt.className = "left";
+    if (d.ar_status) { const s = document.createElement("span"); s.className = d.ar_status === "Paid" ? "ar-paid" : "ar-open"; s.textContent = d.ar_status; stt.appendChild(s); }
+    else stt.appendChild(document.createTextNode("—"));
+    tr.appendChild(stt);
     const invtd = document.createElement("td"); invtd.className = "left";
     if (d.invoice_no && d.ar_qbo_id) {
       const a = document.createElement("a"); a.href = qboInvoiceUrl(d.ar_qbo_id);

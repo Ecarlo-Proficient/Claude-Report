@@ -372,10 +372,12 @@ txns). This is what Bill Tracker couldn't be — the complete, cost-code-keyed c
 **AR invoices — the money IN (`load_invoices.py` → `billing_event`).** Systems connect, they don't each
 re-pull QBO: `invoice-sync` already mirrors every QBO invoice into the **Invoice Tracker** Notion DBs
 (Res/Com + MFD, paid kept 12 months), so the ledger reads THAT via `shared/notion_client` (the shared
-token — no QBO, no Touch ID). Each invoice → one `billing_event`, keyed by the **Invoice #**, which is
+token). Each invoice → one `billing_event`, keyed by the **Invoice #**, which is
 the same number `ap_bill_line.invoice_no` carries, so the Draws view puts **billed-to-GC (in)** next to
 **paid-to-vendors (out)** on every draw. `TotalAmt` = net billed; `Status`/`Balance` give Paid/Partially/
-Unpaid. Read-only on Notion; full-replace by `source='invoice_tracker'`; `--selftest` proves it offline.
+Unpaid. A **QBO gap-fallback** then fills ONLY the CP/MFD draws whose invoice was never entered in the
+tracker — `fill_gaps_from_qbo` pulls just those by `DocNumber` (`source='qbo_fallback'`, ONE Touch ID;
+skip with `--no-qbo`). Read-only on Notion + QBO; full-replace per source; `--selftest` proves it offline.
 `dashboard.py::_fetch_draws` joins it by Invoice #; the **Draws tab is a table** — one row per draw
 (Project # · memo · billed-in · invoice # · date · paid-out · stage), green when fully done, click a row
 to open its bills.

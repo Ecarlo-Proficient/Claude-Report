@@ -396,9 +396,21 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     working-list, and active filter, so every "active" count now **agrees at 137 (MFD included)**, matching
     `_portfolio_pnl`. Also a cosmetic empty-company net guard. Verified live, no JS errors.
 
+  - **Draws: AR pay status is its own column + QBO gap-fallback (owner).** (a) The **Status** column
+    (Paid green / Unpaid · Partially Paid amber) was split out of the Billed-(in) cell — the amount no
+    longer has the status crammed onto it. (b) **QBO gap-fallback** — a handful of older CP/MFD draws
+    (8 now; matches "41 of 49 draws matched") had no billed-in because their AR invoice was never entered
+    in the Invoice Tracker (NOT swept — the tracker keeps paid invoices). `load_invoices.fill_gaps_from_qbo`
+    finds those gaps and pulls ONLY them from QBO by `DocNumber` (`source='qbo_fallback'`), so the tracker
+    stays authoritative and QBO fills only its holes (owner's pick over manual entry). Adds **one Touch ID**
+    to `load_invoices` (skip with `--no-qbo`); `--dry-run` reports the gap count without pulling; `--selftest`
+    stays offline. Verified: mapping (Paid/Partial/Unpaid + project extract), gap-finder = 8, selftest, dry-run.
+    The real fill is owner-triggered (Touch ID) via Resync or `load_invoices`.
+
 ## IN PROGRESS
-- (none) — the P&L super-database (per-project + portfolio P&L, source links, in-app sync) + its QC
-  pass are landed. Owner to trigger the first real **Resync** (prompts Touch ID at the QBO step).
+- (none) — the P&L super-database (per-project + portfolio P&L, source links, in-app sync, QC) is landed,
+  plus the draws Status column + QBO gap-fallback. Owner to trigger the first real **Resync** (Touch ID)
+  — now two QBO steps in a sync (costs + the invoices gap-fallback).
 
 ## TO DO
 - **Investigate the ~6 active reconcile mismatches** (QBO cost ≠ WIP figure, e.g. RP6901/RP6440):

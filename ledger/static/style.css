@@ -232,7 +232,8 @@ a.invno.qbo-link:hover { border-color: var(--accent); text-decoration: none; }
 .draw-row.done td:first-child { box-shadow: inset 3px 0 var(--pos); }
 .cell.draw-in { color: var(--pos); font-weight: 700; }      /* money IN (GC pays you) */
 .cell.draw-out { color: var(--text); }                       /* money OUT (you pay vendors) */
-.ar-open { color: #b8860b; font-size: .82em; font-weight: 600; }
+.ar-open { color: #b8860b; font-size: .82em; font-weight: 600; }   /* Unpaid / Partially Paid — GC still owes */
+.ar-paid { color: var(--pos); font-size: .82em; font-weight: 600; }  /* Paid */
 .paidcnt { color: var(--text-dim); font-size: .85em; font-variant-numeric: tabular-nums; }
 tr.draw-group > td { background: color-mix(in srgb, var(--accent) 8%, var(--surface-2));
   border-top: 2px solid var(--border); padding: 9px 10px; }
