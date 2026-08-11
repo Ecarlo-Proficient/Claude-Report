@@ -333,6 +333,16 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     near-invisible** (faint fill, sub-pixel for small counts) — added a **border** to `.bar .bar-fill`
     (+`.over`) and a **7px min-width** on the funnel fill so counts like 1/2/9 show. (d) Sales dates
     (customers table + warm list) now use `fmtDate` — no more ISO `2026-05-29`. Verified live both themes.
+  - **Per-rep activity drill on the Sales tab (owner: "Devan report — weekly/daily").** Click a rep in
+    "Activity by rep" → a drill (defaults to the busiest-by-touches rep, i.e. the outreach person) with:
+    This-week/Last-week/Today/All-time touch tiles (with a vs-last-week trend), a **12-week touch
+    timeline** (bordered bars — surfaces the drop-off), a **recent-touch log** (dated notes), **follow-ups
+    due**, **going stale (21d+ no contact)**, and their **pipeline by stage**. Backend: `_fetch_sales`
+    now sends `touch_log` (every dated touch joined to its customer, rep = `_rep_label(last_edited_by)`)
+    and enriches `customers` with `follow_up_date` + `main_status`; all bucketing (Monday-anchored weeks,
+    local dates) is client-side in `renderRepActivity()`. Rep is a **runtime value, never hard-coded** —
+    the drill works for any rep and the code carries no personal names (names come live from Notion).
+    Verified live: auto-features the outreach rep, weekly trend renders, rep-switch works, no console errors.
 
 ## IN PROGRESS
 - (none)

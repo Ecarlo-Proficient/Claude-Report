@@ -362,7 +362,7 @@ def _rep_label(name):
 def _fetch_sales(con) -> dict:
     """CRM / sales pipeline from customer + sales_touch; empty (not an error) if
     load_customers.py hasn't run. Read-only, like every other feed."""
-    out = {"pipeline": [], "by_rep": [], "warm": [], "customers": [],
+    out = {"pipeline": [], "by_rep": [], "warm": [], "customers": [], "touch_log": [],
            "totals": {"customers": 0, "touches": 0, "interested": 0}}
     try:
         pipe = [dict(r) for r in con.execute(
@@ -388,9 +388,18 @@ def _fetch_sales(con) -> dict:
         d["touches"] = touches.get(r["customer_key"], [])
         out["warm"].append(d)
     out["customers"] = []
-    for r in con.execute("SELECT name, division, sales_status, last_contacted, last_edited_by, n_touches, notion_url "
+    for r in con.execute("SELECT name, division, sales_status, main_status, last_contacted, "
+                         "follow_up_date, last_edited_by, n_touches, notion_url "
                          "FROM customer ORDER BY last_contacted DESC"):
         d = dict(r); d["last_edited_by"] = _rep_label(d["last_edited_by"]); out["customers"].append(d)
+    # full dated touch log with rep attribution (feeds the per-rep activity drill:
+    # weekly/daily timeline + recent-touch list). Rep = the customer's last editor.
+    for r in con.execute(
+            "SELECT t.touch_date date, t.note, c.name customer, c.division, "
+            "c.sales_status stage, c.last_edited_by "
+            "FROM sales_touch t JOIN customer c ON c.customer_key = t.customer_key "
+            "WHERE t.touch_date IS NOT NULL ORDER BY t.touch_date"):
+        d = dict(r); d["rep"] = _rep_label(d.pop("last_edited_by")); out["touch_log"].append(d)
     tot = con.execute(
         "SELECT COUNT(*) c, COALESCE(SUM(n_touches),0) t, "
         "SUM(CASE WHEN sales_status='Interested' THEN 1 ELSE 0 END) i FROM customer").fetchone()

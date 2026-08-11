@@ -381,6 +381,42 @@ td .cell:hover { background: color-mix(in srgb, var(--accent) 16%, transparent);
 .warm-log .d { color: var(--text-dim); font-variant-numeric: tabular-nums; margin-right: 6px; }
 .warm-log .warm-empty { list-style: none; margin-left: -18px; color: var(--text-dim); font-style: italic; }
 
+/* ── Sales / CRM: per-rep activity drill ─────────────────────────────────── */
+#salesRepTable tbody tr.rep-active { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+#salesRepTable tbody tr.rep-active td:first-child { box-shadow: inset 3px 0 0 var(--accent); font-weight: 600; }
+#repActivity { padding: 0 18px 6px; }
+.rep-head { display: flex; align-items: baseline; gap: 12px; margin: 2px 0 12px; }
+.rep-head h3 { font-size: 1.2em; font-weight: 700; }
+.rep-sub { color: var(--text-dim); font-size: .86em; font-variant-numeric: tabular-nums; }
+.rep-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 26px; margin-top: 14px; }
+@media (max-width: 900px) { .rep-cols { grid-template-columns: 1fr; } }
+.rep-col h4 { font-size: .82em; text-transform: uppercase; letter-spacing: .04em; color: var(--text-dim);
+  margin: 16px 0 7px; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+.rep-col h4:first-child { margin-top: 4px; }
+/* weekly touch bars */
+.rep-weeks { display: flex; flex-direction: column; gap: 3px; }
+.rep-week { display: grid; grid-template-columns: 92px 1fr 28px; align-items: center; gap: 8px; font-size: .84em; }
+.rw-lab { color: var(--text-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rw-bar { position: relative; height: 15px; border-radius: 3px; background: color-mix(in srgb, var(--text-dim) 12%, transparent); }
+.rw-bar .bar-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; box-sizing: border-box;
+  background: color-mix(in srgb, var(--accent) 34%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 62%, transparent); }
+.rw-val { text-align: right; font-variant-numeric: tabular-nums; }
+/* recent-touch log */
+.rep-log { display: flex; flex-direction: column; }
+.rep-touch { display: grid; grid-template-columns: 60px 1fr; gap: 10px; padding: 5px 0; border-bottom: 1px solid var(--border); font-size: .86em; }
+.rt-date { color: var(--text-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rt-body { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.rt-cust { font-weight: 600; }
+.rt-note { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* follow-ups / stale / pipeline lists */
+.rep-list { display: flex; flex-direction: column; }
+.rep-item { display: flex; justify-content: space-between; gap: 10px; padding: 4px 0; border-bottom: 1px solid var(--border); font-size: .86em; }
+.ri-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+a.ri-name { color: var(--accent); text-decoration: none; }
+a.ri-name:hover { text-decoration: underline; }
+.ri-meta { color: var(--text-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
 /* ── QoL: clickable KPI tiles + inline row links ─────────────────────────── */
 .kpi.clickable { cursor: pointer; transition: border-color .12s, background .12s; }
 .kpi.clickable:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }

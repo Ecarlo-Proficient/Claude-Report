@@ -205,6 +205,7 @@ let sortDir = -1;   // -1 desc, 1 asc
 let activeRule = null;   // key of a RULES entry currently filtering the table
 let activeLien = null;   // lien stage currently filtering the Liens table (null = all)
 let activeDrawStage = null; // draw stage currently filtering the Draws list (null = all)
+let activeRep = null;    // rep whose activity drill is shown (null = auto: the outreach rep)
 
 // ── Load ──────────────────────────────────────────────────────────────────
 async function load(isAuto) {
@@ -1028,6 +1029,9 @@ function renderSales() {
   tb.innerHTML = "";
   for (const r of (S.by_rep || [])) {
     const tr = document.createElement("tr");
+    if (r.rep === activeRep) tr.className = "rep-active";
+    tr.title = "Click for this rep's daily/weekly activity";
+    tr.onclick = () => { activeRep = r.rep; renderSales(); };
     tr.appendChild(leftText(r.rep));
     tr.appendChild(rightText(String(r.worked || 0)));
     tr.appendChild(rightText(String(r.contacted || 0)));
@@ -1035,6 +1039,7 @@ function renderSales() {
     tr.appendChild(rightText(String(r.won || 0)));
     tb.appendChild(tr);
   }
+  renderRepActivity();
 
   // ── warm accounts with their touch log ──
   const warm = S.warm || [];
@@ -1106,6 +1111,119 @@ function renderSales() {
     tr.appendChild(td); tb.appendChild(tr);
   }
 }
+
+// Per-rep activity drill (defaults to the outreach rep = most touches). Everything is
+// derived from the live payload; the rep is a runtime value, never hard-coded.
+function renderRepActivity() {
+  const box = $("#repActivity"); if (!box) return;
+  const S = SALES || {};
+  const log = S.touch_log || [], custs = S.customers || [], reps = S.by_rep || [];
+  // auto-pick the busiest-by-touches rep if none is selected (or the selection is gone)
+  if (!activeRep || !reps.some(r => r.rep === activeRep)) {
+    const cnt = {}; for (const t of log) cnt[t.rep] = (cnt[t.rep] || 0) + 1;
+    const ranked = reps.map(r => r.rep).filter(r => cnt[r]).sort((a, b) => cnt[b] - cnt[a]);
+    activeRep = ranked[0] || (reps[0] && reps[0].rep) || null;
+  }
+  const note = $("#repActNote"); box.innerHTML = "";
+  if (!activeRep) { if (note) note.textContent = ""; box.appendChild(el2("p", "hint", "No rep activity — run load_customers.py.")); return; }
+  const rep = activeRep;
+  if (note) note.textContent = `— ${rep} · daily & weekly`;
+  const mine = log.filter(t => t.rep === rep);
+  const myc = custs.filter(c => c.last_edited_by === rep);
+
+  // local date helpers (Monday-anchored weeks, no UTC drift)
+  const monday = s => { const m = String(s || "").match(/^(\d{4})-(\d{2})-(\d{2})/); if (!m) return null;
+    const d = new Date(+m[1], +m[2] - 1, +m[3]); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); d.setHours(0, 0, 0, 0); return d; };
+  const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const todayStr = ymd(today), thisMon = monday(todayStr), thisMonStr = ymd(thisMon);
+  const lastMon = new Date(thisMon); lastMon.setDate(lastMon.getDate() - 7); const lastMonStr = ymd(lastMon);
+  const wk = t => { const md = monday(t.date); return md ? ymd(md) : null; };
+  const thisWeek = mine.filter(t => wk(t) === thisMonStr).length;
+  const lastWeek = mine.filter(t => wk(t) === lastMonStr).length;
+  const todayN = mine.filter(t => t.date === todayStr).length;
+  const wins = myc.filter(c => c.sales_status === "Closed - Won").length;
+  const lastActive = mine.length ? mine.map(t => t.date).sort().slice(-1)[0] : null;
+
+  // header
+  const head = el2("div", "rep-head"); const h = el2("div");
+  h.appendChild(el2("h3", null, rep));
+  h.appendChild(el2("span", "rep-sub", `${mine.length} touches · ${myc.length} customers · ${wins} won · last active ${lastActive ? fmtDate(lastActive) : "—"}`));
+  head.appendChild(h); box.appendChild(head);
+
+  // summary tiles
+  const trend = lastWeek ? Math.round((thisWeek - lastWeek) / lastWeek * 100) : null;
+  const kr = el2("div", "kpi-row");
+  [["This week", String(thisWeek), trend == null ? "touches logged" : `${trend >= 0 ? "▲" : "▼"} ${Math.abs(trend)}% vs last week`],
+   ["Last week", String(lastWeek), "touches logged"],
+   ["Today", String(todayN), "touches logged"],
+   ["All-time", String(mine.length), "touches logged"]].forEach(([l, v, s]) => {
+    const k = el2("div", "kpi"); k.appendChild(el2("div", "k-label", l)); k.appendChild(el2("div", "k-value", v)); k.appendChild(el2("div", "k-sub", s)); kr.appendChild(k);
+  });
+  box.appendChild(kr);
+
+  const cols = el2("div", "rep-cols"); const left = el2("div", "rep-col"), right = el2("div", "rep-col");
+  cols.appendChild(left); cols.appendChild(right); box.appendChild(cols);
+
+  // WEEKLY timeline — last 12 weeks including zero weeks (so a drop-off shows)
+  left.appendChild(el2("h4", null, "Weekly touches — last 12 weeks"));
+  const weeks = []; for (let i = 11; i >= 0; i--) { const d = new Date(thisMon); d.setDate(d.getDate() - i * 7); weeks.push(ymd(d)); }
+  const wc = {}; for (const t of mine) { const k = wk(t); if (k) wc[k] = (wc[k] || 0) + 1; }
+  const wmax = Math.max(1, ...weeks.map(w => wc[w] || 0));
+  const wt = el2("div", "rep-weeks");
+  for (const w of weeks) {
+    const n = wc[w] || 0; const row = el2("div", "rep-week");
+    row.appendChild(el2("span", "rw-lab", fmtDate(w).replace(/^\w+, /, "")));
+    const bar = el2("span", "rw-bar"); const fill = el2("span", "bar-fill"); fill.style.width = (n / wmax * 100) + "%"; if (n > 0) fill.style.minWidth = "7px";
+    bar.appendChild(fill); row.appendChild(bar); row.appendChild(el2("span", "rw-val", String(n)));
+    wt.appendChild(row);
+  }
+  left.appendChild(wt);
+
+  // RECENT touches (what was actually done)
+  left.appendChild(el2("h4", null, "Recent touches"));
+  const rlog = el2("div", "rep-log");
+  const recent = [...mine].sort((a, b) => a.date < b.date ? 1 : -1).slice(0, 15);
+  if (!recent.length) rlog.appendChild(el2("p", "hint", "No touches logged."));
+  for (const t of recent) {
+    const line = el2("div", "rep-touch");
+    line.appendChild(el2("span", "rt-date", fmtDate(t.date).replace(/^\w+, /, "").replace(/, \d{4}$/, "")));
+    const body = el2("span", "rt-body"); body.appendChild(el2("span", "rt-cust", t.customer || "—"));
+    if (t.note) body.appendChild(el2("span", "rt-note", t.note));
+    line.appendChild(body); rlog.appendChild(line);
+  }
+  left.appendChild(rlog);
+
+  const open = c => c.sales_status && c.sales_status.indexOf("Closed") !== 0;
+  const itemName = c => { if (c.notion_url) { const a = el2("a", "ri-name", c.name); a.href = c.notion_url; a.target = "_blank"; a.rel = "noopener"; return a; } return el2("span", "ri-name", c.name); };
+
+  // FOLLOW-UPS due (open + follow_up_date on/before today)
+  right.appendChild(el2("h4", null, "Follow-ups due"));
+  const due = myc.filter(c => open(c) && c.follow_up_date && c.follow_up_date <= todayStr).sort((a, b) => a.follow_up_date < b.follow_up_date ? -1 : 1);
+  const dueBox = el2("div", "rep-list");
+  if (!due.length) dueBox.appendChild(el2("p", "hint", "Nothing due."));
+  for (const c of due.slice(0, 10)) { const li = el2("div", "rep-item"); li.appendChild(itemName(c)); li.appendChild(el2("span", "ri-meta", `${fmtDate(c.follow_up_date).replace(/^\w+, /, "")} · ${c.sales_status}`)); dueBox.appendChild(li); }
+  right.appendChild(dueBox);
+
+  // GOING STALE (open + no contact in 21+ days)
+  right.appendChild(el2("h4", null, "Going stale — 21d+ no contact"));
+  const stale = myc.filter(c => open(c) && c.last_contacted && daysAgo(c.last_contacted) > 21).sort((a, b) => daysAgo(b.last_contacted) - daysAgo(a.last_contacted));
+  const staleBox = el2("div", "rep-list");
+  if (!stale.length) staleBox.appendChild(el2("p", "hint", "Nothing stale."));
+  for (const c of stale.slice(0, 10)) { const li = el2("div", "rep-item"); li.appendChild(itemName(c)); li.appendChild(el2("span", "ri-meta", `${daysAgo(c.last_contacted)}d · ${c.sales_status}`)); staleBox.appendChild(li); }
+  right.appendChild(staleBox);
+
+  // PIPELINE (their customers by stage)
+  right.appendChild(el2("h4", null, "Their pipeline"));
+  const byStage = {}; for (const c of myc) { const s = c.sales_status || "(none)"; byStage[s] = (byStage[s] || 0) + 1; }
+  const pipeBox = el2("div", "rep-list");
+  ["Lead", "Follow up", "Contacted", "Interested", "No response", "Closed - Won", "Closed - Lost", "(none)"].filter(s => byStage[s]).forEach(s => {
+    const li = el2("div", "rep-item"); li.appendChild(el2("span", "ri-name", s)); li.appendChild(el2("span", "ri-meta", String(byStage[s]))); pipeBox.appendChild(li);
+  });
+  right.appendChild(pipeBox);
+}
+// tiny DOM helper (local to the sales drill)
+function el2(tag, cls, txt) { const e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; }
 
 function renderAttention() {
   const row = $("#attnRow"); row.innerHTML = "";
