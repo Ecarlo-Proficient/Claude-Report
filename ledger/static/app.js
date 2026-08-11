@@ -463,6 +463,13 @@ const DRAW_STAGE_LABEL = {
   "Awaiting GC funding": "Awaiting GC funding",
   "Ready to turn in": "Ready to turn in",
 };
+// Short pill text (keeps the table narrow); the full "who paid whom" is the tooltip.
+const DRAW_STAGE_SHORT = {
+  "Fund in — pay vendors": "Pay vendors",
+  "Paid — collect waivers": "Collect waivers",
+  "Awaiting GC funding": "Awaiting GC",
+  "Ready to turn in": "Ready to turn in",
+};
 function renderDraws() {
   const f = { q: ($("#drawSearch") ? $("#drawSearch").value : "").trim().toLowerCase(),
               div: $("#drawDivision") ? $("#drawDivision").value : "" };
@@ -551,7 +558,7 @@ function renderDraws() {
     const ot = document.createElement("td"); const mo = moneyCell(d.total); mo.classList.add("draw-out"); ot.appendChild(mo);
     const pc = document.createElement("span"); pc.className = "paidcnt"; pc.textContent = ` ${d.paid}/${d.n}`; ot.appendChild(pc); tr.appendChild(ot);
     const st = document.createElement("td"); st.className = "left";
-    const pill = document.createElement("span"); pill.className = "lien " + (DRAW_STAGE_CLASS[d.stage] || "info"); pill.textContent = DRAW_STAGE_LABEL[d.stage] || d.stage; st.appendChild(pill);
+    const pill = document.createElement("span"); pill.className = "lien " + (DRAW_STAGE_CLASS[d.stage] || "info"); pill.textContent = DRAW_STAGE_SHORT[d.stage] || DRAW_STAGE_LABEL[d.stage] || d.stage; pill.title = DRAW_STAGE_LABEL[d.stage] || d.stage; st.appendChild(pill);
     if (d.action && d.action.url) { const a = document.createElement("a"); a.className = "notion-link"; a.href = d.action.url; a.target = "_blank"; a.rel = "noopener"; a.textContent = " 📄"; a.title = "Notion · " + (d.action.status || "Open"); st.appendChild(a); }
     tr.appendChild(st);
     tbody.appendChild(tr);
