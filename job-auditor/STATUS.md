@@ -4,7 +4,7 @@
 > (CLAUDE.md/AGENTS.md structure rule 7). Tool matters only — no business
 > findings, no dollar exposures, no owner-only analysis.
 
-Last updated: 2026-07-28
+Last updated: 2026-08-11
 
 ## DONE / FINALIZED
 
@@ -32,17 +32,25 @@ Last updated: 2026-07-28
   output. Required now: **reconciliation gate**, **fixture first**,
   **signal-quality line**, **trace to the source sheet**.
 
-- **VERIFIED (2026-07-28): our ETC reader mis-reads the cost-sheet variant.**
+- **VERIFIED (2026-08-11): our ETC reader mis-reads the cost-sheet variant.**
   The `Cost Gral` sheet has **two scopes, not three bands** — FOUNDATION
   (slab + piers, its SUB TOTAL summing from the slab subtotal down) and
   FLATWORK (its own scope). No piers ⇒ pier rows read 0 and you read the slab
   subtotal. Our `ETC = SL_sub + PR_sub` double-counts the slab on that variant.
   **The workbooks are correct; the bug is ours. Never edit the takeoffs.**
-- **Both variants are live** — sweep of the active board: 21 CUMULATIVE
-  (reader double-counts), 14 BAND_ONLY (reader correct by accident), 21
-  unclassified, 10 skipped. **Wrong on 19 of 35 classifiable jobs, in both
-  directions** — overstating where the subtotal reads, understating where it is
-  `#N/A` (band dropped, piers lost). Classification is rule 1.
+- **Both variants are live** — sweep of the live board (`Schedule 8-11-26`):
+  **32 CUMULATIVE** (reader double-counts), **5 BAND_ONLY**, 23 unclassified,
+  10 skipped. Wrong on 32 of 37 classifiable jobs, in both directions —
+  overstating where the subtotal reads, understating where it is `#N/A` (band
+  dropped, piers lost). Classification is rule 1.
+- **THE VARIANT IS NOT STABLE PER JOB — it flips as workbooks are edited.**
+  Nine jobs changed variant in 13 days, one of them reversing. **Never cache a
+  classification; read it every run.** This also promotes change detection
+  (`SPEC.md` §7) from Phase 4 nicety to essential.
+- **An earlier pass silently read a two-week-old schedule off a stale network
+  mount** and looked healthy the whole time. **Every run must pin the input
+  version** (schedule filename + mtime) in its output, or a stale answer is
+  indistinguishable from a current one.
 - **An earlier verdict ("the formula is one row too tall — intentional
   rejected") was WRONG and is retracted.** It was defended with four checks
   that were all equally consistent with the opposite conclusion. **A test that

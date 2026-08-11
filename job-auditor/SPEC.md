@@ -39,14 +39,19 @@ vs takeoff). Costs-to-date belong to the existing WIP tools.
 
 ---
 
-## 2. Measured baseline — 2026-07-28, live board
+## 2. Measured baseline — 2026-08-11, live board
 
-48 active slab lines, 45 auditable. Hit rates only here; **exposures and the job list live in
-the vault** (`tasks/2026-07-28_job-auditor.md`), per the repo scope filter.
+Run against the live board (`Schedule 8-11-26`). Hit rates only here; **exposures and the job
+list live in the vault** (`tasks/2026-08-11_job-auditor.md`), per the repo scope filter.
+
+**Pin the input version in every output.** An earlier pass read a two-week-old schedule off a
+stale network mount, reported no error, and looked completely healthy while answering questions
+about a board that no longer existed. Every run must record the schedule filename and mtime.
 
 | Rule | Hit rate | Verdict |
 |---|---:|---|
-| **Reader mis-reads the cost-sheet variant → ETC wrong in both directions** | 19/35 classifiable | **VERIFIED. Highest value found.** 21 sheets are cumulative (reader double-counts the slab), 14 band-only (reader correct). Defect is in OUR code, not the workbooks. |
+| **Reader mis-reads the cost-sheet variant → ETC wrong in both directions** | 32/37 classifiable | **VERIFIED. Highest value found.** 32 cumulative (reader double-counts the slab) vs 5 band-only. Defect is in OUR code, not the workbooks. 23 more unclassified. |
+| **The variant FLIPS as workbooks are edited** | 9 jobs in 13 days | **Classification must be read every run and never cached.** One flip silently moves a job's ETC by a whole slab. |
 | Hand-typed constants appended to a subtotal formula | 3/56 | Real; invisible to anyone reading the sheet. |
 | Sold pier line vs PR cost band — cost exceeds revenue | 2/14 reconciled | **Was an artifact of the formula bug above**, not a margin problem. Rule 2 must run after rule 1. |
 | **Cost band with no sold line — REAL cost, misfiled onto the Piers sheet** | 4/45 | **Verified: site lines (tie wire / scrape lot / reset forms) feed `PR3`/`PR6`.** Reattribute; never drop. |
@@ -112,9 +117,11 @@ Ordered by measured value:
        CUMULATIVE  (range starts at the slab subtotal row)  → ETC = PR_sub alone
        BAND_ONLY   (range starts at the first pier row)     → ETC = SL_sub + PR_sub
 
-   **Both variants are live** — the sweep found a roughly 60/40 split, so neither can be
-   assumed. Classification is the rule; it is also the prerequisite for every value-level rule,
-   which otherwise reports a mis-read input as a business problem.
+   **Both variants are live and a job MOVES BETWEEN THEM.** The current board runs ~32:5 toward
+   cumulative, but nine jobs flipped variant in 13 days — including one reversing from cumulative
+   to band-only. **Never cache a classification and never carry one forward from a prior run.**
+   Classification is the rule, and it is the prerequisite for every value-level rule, which
+   otherwise reports a mis-read input as a business problem.
 
    Two follow-ons: an `#N/A` subtotal on a cumulative sheet makes the reader drop the band and
    *lose* the piers (understating), and hand-typed constants appended to a subtotal
@@ -230,7 +237,9 @@ don't reconcile and need the grammar extended.
 
 **Phase 3 — rules 4–5** (scope presence both directions).
 
-**Phase 4 — change detection** (§7), then schedule it.
+**Phase 4 — change detection** (§7), then schedule it. **Promoted from nicety to essential:**
+because a job's variant flips as its workbook is edited, the interesting event is the change
+itself — a silent flip moves that job's ETC by a whole slab with nothing in any report to say so.
 
 ---
 
