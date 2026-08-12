@@ -206,12 +206,15 @@ BILL_ROW_COLS: List[Tuple[str, str]] = [
     # (header, kind) — kind controls number_format / alignment / font
     # 2026-06-03: dropped Days Open / Bucket / Bill Type. Moved Open to col A.
     # 2026-06-04: full reorder — BILL → STATUS → INVOICE.
-    # 2026-06-04: Line Amount restored at col 9 — hidden on Bills (where at
-    #   bill grain it equals Bill Total) but VISIBLE on Inventory (where
-    #   it's the per-line dollar amount, the whole point of that sheet).
+    # 2026-06-04: Line Amount restored — hidden on Bills (where at bill grain it
+    #   equals Bill Total) but VISIBLE on Inventory (where it's the per-line
+    #   dollar amount, the whole point of that sheet).
     # 2026-07-13: reordered to the bill life-cycle read (the user). One Status split
     # into Pay Status (AP, "what's open") + Invoice Status (AR, "client paid?").
-    # Client moved up into identity; Payment Date renamed GC Paid Date.
+    # Payment Date renamed GC Paid Date.
+    # 2026-08-12: Client moved into the AR section, right BEFORE Matched Invoice,
+    #   and Invoice # moved to right AFTER Matched Invoice (the user) — so the AR
+    #   read is Invoice Status · Client · Matched Invoice · Invoice #.
     ("Open",               "link"),      # 1  — tiny QBO bill link
     # ── THE BILL — what's open ──
     ("Vendor",             "text"),      # 2
@@ -219,23 +222,23 @@ BILL_ROW_COLS: List[Tuple[str, str]] = [
     ("Bill Date",          "date"),      # 4
     ("Project #",          "text"),      # 5
     ("Division",           "text"),      # 6
-    ("Client",             "text"),      # 7  — GC/parent customer (identity; filter by client)
-    ("Account",            "text"),      # 8
-    ("Line Description",   "text"),      # 9
-    ("Line Amount",        "money"),     # 10 — hidden on Bills, shown on Inventory
-    ("Bill Total",         "money"),     # 11 — original bill amount
-    ("Bill Open Bal",      "money"),     # 12 — what's still owed the vendor
-    ("Pay Status",         "text"),      # 13 — AP: Unpaid / Partial paid / Bill paid
-    ("│",                  "div"),       # 14 — divider bill | handling
+    ("Account",            "text"),      # 7
+    ("Line Description",   "text"),      # 8
+    ("Line Amount",        "money"),     # 9  — hidden on Bills, shown on Inventory
+    ("Bill Total",         "money"),     # 10 — original bill amount
+    ("Bill Open Bal",      "money"),     # 11 — what's still owed the vendor
+    ("Pay Status",         "text"),      # 12 — AP: Unpaid / Partial paid / Bill paid
+    ("│",                  "div"),       # 13 — divider bill | handling
     # ── OUR HANDLING ──
-    ("Approved",           "text"),      # 15 — "approved" / "not approved"
-    ("Lien",               "text"),      # 16 — Notice Sent / Lien Filed; hidden on Inventory
-    ("Notes",              "text"),      # 17
-    ("┃",                  "div"),       # 18 — divider handling | client-payment
+    ("Approved",           "text"),      # 14 — "approved" / "not approved"
+    ("Lien",               "text"),      # 15 — Notice Sent / Lien Filed; hidden on Inventory
+    ("Notes",              "text"),      # 16
+    ("┃",                  "div"),       # 17 — divider handling | client-payment
     # ── CLIENT PAYMENT · AR ──
-    ("Invoice Status",     "text"),      # 19 — AR: Awaiting Invoice / Awaiting Payment / Invoice paid / No project #
-    ("Invoice #",          "text"),      # 20 — just the # → QBO link
-    ("Matched Invoice",    "text"),      # 21 — # + memo (scope), for eyeballing the match
+    ("Invoice Status",     "text"),      # 18 — AR: Awaiting Invoice / Awaiting Payment / Invoice paid / No project #
+    ("Client",             "text"),      # 19 — GC/parent customer (sits by the match to eyeball it)
+    ("Matched Invoice",    "text"),      # 20 — # + memo (scope), for eyeballing the match
+    ("Invoice #",          "text"),      # 21 — just the # → QBO link
     ("Invoice Date",       "date"),      # 22
     ("Invoice Total",      "money"),     # 23
     ("GC Paid Date",       "date"),      # 24 — when the GC paid the invoice (money IN)
@@ -269,18 +272,19 @@ COL_WIDTHS: Dict[int, float] = {
     2: 28,                                           # Vendor
     3: 12, 4: 11,                                    # Bill # / Bill Date
     5: 11, 6: 8,                                     # Project # / Division
-    7: 26, 8: 22,                                    # Client / Account
-    9: 35,                                           # Line Description
-    10: 13,                                          # Line Amount (Inventory only)
-    11: 13, 12: 13,                                  # Bill Total / Bill Open Bal
-    13: 13,                                          # Pay Status
-    14: 1.5,                                         # divider │
+    7: 22,                                           # Account
+    8: 35,                                           # Line Description
+    9: 13,                                           # Line Amount (Inventory only)
+    10: 13, 11: 13,                                  # Bill Total / Bill Open Bal
+    12: 13,                                          # Pay Status
+    13: 1.5,                                         # divider │
     # OUR HANDLING
-    15: 14, 16: 15, 17: 28,                          # Approved / Lien / Notes
-    18: 1.5,                                         # divider ┃
+    14: 14, 15: 15, 16: 28,                          # Approved / Lien / Notes
+    17: 1.5,                                         # divider ┃
     # CLIENT PAYMENT · AR
-    19: 16,                                          # Invoice Status
-    20: 10, 21: 60, 22: 11, 23: 12, 24: 12,          # Invoice # / Matched Inv / Inv Date / Inv Total / GC Paid Date
+    18: 16,                                          # Invoice Status
+    19: 26,                                          # Client (sits by the match)
+    20: 60, 21: 10, 22: 11, 23: 12, 24: 12,          # Matched Inv / Invoice # / Inv Date / Inv Total / GC Paid Date
     # HOW WE PAID (AP cash-out)
     25: 14, 26: 11, 27: 12,                          # Pay Ref # / Pay Date / Pay Method
     28: 14,                                          # _Key (hidden)
@@ -877,23 +881,23 @@ def _write_bill_row(ws, r_i: int, r: dict, edits: Dict[str, Dict[str, str]],
         r.get("bill_date"),                                      # 4
         r.get("project_num", ""),                                # 5
         r.get("division", ""),                                   # 6
-        r.get("gc_name", ""),                                    # 7  Client (GC/parent)
-        r.get("account", ""),                                    # 8
-        r.get("line_desc", ""),                                  # 9
-        r.get("line_amount"),                                    # 10 Line Amount
-        r.get("bill_total"),                                     # 11 Bill Total
-        r.get("bill_balance"),                                   # 12 Bill Open Bal
-        pay_status_val,                                          # 13 Pay Status (AP)
-        None,                                                    # 14 divider │
+        r.get("account", ""),                                    # 7  Account
+        r.get("line_desc", ""),                                  # 8  Line Description
+        r.get("line_amount"),                                    # 9  Line Amount
+        r.get("bill_total"),                                     # 10 Bill Total
+        r.get("bill_balance"),                                   # 11 Bill Open Bal
+        pay_status_val,                                          # 12 Pay Status (AP)
+        None,                                                    # 13 divider │
         # ── OUR HANDLING ──
-        approved_text(approved),                                 # 15 Approved
-        lien_display,                                            # 16 Lien (tag or countdown)
-        pres.get("Notes", "") or "",                             # 17 Notes
-        None,                                                    # 18 divider ┃
+        approved_text(approved),                                 # 14 Approved
+        lien_display,                                            # 15 Lien (tag or countdown)
+        pres.get("Notes", "") or "",                             # 16 Notes
+        None,                                                    # 17 divider ┃
         # ── CLIENT PAYMENT · AR ──
-        r.get("invoice_status", ""),                             # 19 Invoice Status (AR)
-        r.get("inv_doc", ""),                                    # 20 Invoice # (→ link)
-        _invoice_cell(r.get("inv_doc", ""), r.get("inv_memo", ""), r.get("match_basis", "")),  # 21 Matched Invoice
+        r.get("invoice_status", ""),                             # 18 Invoice Status (AR)
+        r.get("gc_name", ""),                                    # 19 Client (GC/parent, by the match)
+        _invoice_cell(r.get("inv_doc", ""), r.get("inv_memo", ""), r.get("match_basis", "")),  # 20 Matched Invoice
+        r.get("inv_doc", ""),                                    # 21 Invoice # (→ link)
         r.get("inv_date"),                                       # 22
         r.get("inv_total"),                                      # 23
         r.get("payment_date"),                                   # 24 GC Paid Date (money IN)
@@ -959,14 +963,14 @@ def _lien_legend(ws, start_col: int) -> None:
 
 
 def _rowcolor_legend(ws, start_col: int) -> None:
-    """Horizontal key for the reconciliation ROW colors, on frozen ROW 2 to the
+    """Horizontal key for the reconciliation status-cell colors, on frozen ROW 2 to the
     right of the table (row 1 holds the lien key). It MUST live on a header row:
     AutoFilter hides DATA rows, so a legend placed in the body would vanish the
     moment the user filters. Each cell is a colored swatch with its meaning
     inside, mirroring the lien key one row above."""
     # (hex fill or None, label, font hex)
     items = [
-        (None,                    "ROW KEY →",             "1F3864"),
+        (None,                    "STATUS KEY →",          "1F3864"),
         (CF_GREEN_READY,          "GC funded: pay now",    "000000"),
         (CF_YELLOW_AUDIT,         "Fronted: awaiting pay", "000000"),
         (CF_RED_HOLD,             "Fronted: not inv'd",    "000000"),
@@ -1043,19 +1047,11 @@ def _finalize_sheet(ws, table_name: str, last_row: int,
             ws.row_dimensions[r].hidden = True
     ws.add_table(tbl)
 
-    # Universal CF — color the row band by RECONCILIATION (Pay Status × Invoice
-    # Status): fronted / funded / done / pipeline. Approval left the row color —
-    # it tints only its own cell now (below).
-    # CF ranges EXCLUDE divider columns so the dark bands don't get wiped.
-    # Section split = [1..d1-1] [d1+1..d2-1] [d2+1..end]
-    dividers = sorted(DIVIDER_COL_INDEXES)
-    d1, d2 = dividers[0], dividers[1]
-    last_col = _col_letter(len(HEADERS))
-    section_ranges = " ".join([
-        f"A{DATA_START}:{_col_letter(d1 - 1)}{last_row}",
-        f"{_col_letter(d1 + 1)}{DATA_START}:{_col_letter(d2 - 1)}{last_row}",
-        f"{_col_letter(d2 + 1)}{DATA_START}:{last_col}{last_row}",
-    ])
+    # Universal CF — color by RECONCILIATION (Pay Status × Invoice Status):
+    # fronted / funded / done / pipeline. The color paints ONLY the Invoice
+    # Status cell now, never the whole row (the user 2026-08-12) — Lien and
+    # Approved likewise tint just their own cell. No cell is colored by another
+    # cell's status, so the sheet reads cell-by-cell instead of as banded rows.
     pay_letter = _col_letter(PAY_STATUS_COL_INDEX)
     inv_letter = _col_letter(INVOICE_STATUS_COL_INDEX)
     approved_letter = _col_letter(APPROVED_COL_INDEX)
@@ -1065,12 +1061,11 @@ def _finalize_sheet(ws, table_name: str, last_row: int,
     # in $-prefixed formulas point at the first DATA row, not the header.
     fr = DATA_START
 
-    # ── Lien column CF FIRST so it out-prioritizes the row-status band ──
-    # The Lien cell sits inside the status section, so the row band would
-    # otherwise win and the lien color wouldn't show (the user 2026-06-18). Adding
-    # the lien rules before the row rules gives them higher CF priority: a lien
-    # tag or an active timer paints the Lien cell; when neither applies, the row
-    # band fills it so the colored band stays continuous.
+    # ── Lien column CF (its own cell only) ──
+    # A lien tag or an active supplier-notice timer paints just the Lien cell.
+    # No row band overlaps it any more (colors are cell-scoped, the user
+    # 2026-08-12), so the Lien cell stays uncolored when neither a tag nor a
+    # timer applies.
     if lien_editable:
         lien_range = f"{lien_letter}{DATA_START}:{lien_letter}{last_row}"
         ob_letter = _col_letter(BILL_OPEN_BAL_COL_INDEX)
@@ -1101,17 +1096,21 @@ def _finalize_sheet(ws, table_name: str, last_row: int,
                               italic=True, font_color=CF_TIMER_TEXT,
                               stop_if_true=True))
 
-    # ── Approved-cell tint (high priority, its own cell only) ──
-    # Approval left the row color; a "not approved" bill now flags red in just
-    # the Approved cell. Added before the row band so it wins on that cell.
+    # ── Approved-cell tint (its own cell only, never the row) ──
+    # "approved" → green, "not approved" → red — both painted on the Approved
+    # cell alone (the user 2026-08-12). Exact-match so "approved" doesn't also
+    # fire on "not approved".
     approved_range = f"{approved_letter}{DATA_START}:{approved_letter}{last_row}"
     ws.conditional_formatting.add(approved_range,
         _cf_fill_rule(f'${approved_letter}{fr}="not approved"', CF_RED_HOLD, bold=True))
+    ws.conditional_formatting.add(approved_range,
+        _cf_fill_rule(f'${approved_letter}{fr}="approved"', CF_GREEN_READY))
 
-    # ── Row-status band: RECONCILIATION (Pay Status × Invoice Status) ──
-    # Added AFTER lien + approved so those out-prioritize it on their cells.
-    # The combinations are mutually exclusive (a row has exactly one Pay×Invoice
+    # ── Invoice-Status cell: RECONCILIATION (Pay Status × Invoice Status) ──
+    # Paints ONLY the Invoice Status cell (was the whole-row band). The
+    # combinations are mutually exclusive (a row has exactly one Pay×Invoice
     # pair), so rule order doesn't affect correctness.
+    inv_range = f"{inv_letter}{DATA_START}:{inv_letter}{last_row}"
     bill_open = f'OR(${pay_letter}{fr}="Unpaid",${pay_letter}{fr}="Partial paid")'
     # Pay Status now carries a (fronted)/(collected) suffix on paid bills, so
     # match on the "Bill paid" PREFIX rather than the exact string.
@@ -1131,7 +1130,7 @@ def _finalize_sheet(ws, table_name: str, last_row: int,
         # Everything else (bill open + awaiting GC) → no tint, normal pipeline.
     ]
     for formula, color in cf_rules:
-        ws.conditional_formatting.add(section_ranges, _cf_fill_rule(formula, color))
+        ws.conditional_formatting.add(inv_range, _cf_fill_rule(formula, color))
 
     # Lien legend (horizontal, frozen row 1) + dropdown. The lien CF rules
     # themselves were added ABOVE the row-status loop so they out-prioritize
@@ -1152,8 +1151,8 @@ def _finalize_sheet(ws, table_name: str, last_row: int,
 
     # Repaint divider columns dark on every data row (Tables zebra-stripe
     # overrides per-cell fills otherwise; setting on each row is reliable).
-    # The CF section_ranges above EXCLUDE divider columns so this fill
-    # survives even when the row is tinted by status CF.
+    # Status CF is cell-scoped and never touches a divider column, so this fill
+    # survives on every row.
     for r_i in range(DATA_START, last_row + 1):
         for c_i in DIVIDER_COL_INDEXES:
             ws.cell(row=r_i, column=c_i).fill = DIVIDER_FILL
@@ -1979,7 +1978,8 @@ def build_audit_sheets(wb, rows: List[dict],
       3. Missing Project   — likely job cost with no project # (non-sub).
       4. Duplicates        — same bill # within a vendor tree (full population).
       5. FW Misplaced      — FW cost code on a CP / MFD / base-RP#### slab.
-      6. Sub No Project    — a sub bill line with no project #.
+      6. Sub No Project    — a sub cost-code (item) line with no project #
+                             (account-based category lines are excluded).
 
     `rows` is the FULL population incl. sub bills. Sections 1–3 keep their exact
     non-sub behavior; duplicates (4) and FW (5) scan the whole population; the sub
@@ -2022,8 +2022,14 @@ def build_audit_sheets(wb, rows: List[dict],
                                  (x[0].get("project_num") or ""),
                                  (x[0].get("vendor") or "").upper()))
 
-    # SUB bills missing a project # (subsumes sub_bill_audit).
-    sub_missing = [r for r in sub_rows if not (r.get("project_num") or "").strip()]
+    # SUB bills missing a project # (subsumes sub_bill_audit). Cost-code items
+    # ONLY — an item/COGS line carries a real cost code (SL1, PV6…). Account-based
+    # category lines (reimbursements, fees, overhead) are out of scope here: they
+    # have no cost code and aren't job cost to chase onto a project (the user
+    # 2026-08-12).
+    sub_missing = [r for r in sub_rows
+                   if not (r.get("project_num") or "").strip()
+                   and r.get("bill_type") == "COGS"]
     sub_missing.sort(key=lambda r: ((r.get("vendor") or "").upper(),
                                     r.get("bill_doc", "")))
 

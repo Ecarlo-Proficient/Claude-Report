@@ -70,7 +70,7 @@ empty section still renders a valid one-row table (`✓ none found`).
 | `Audit - Missing Project` | High-confidence uncoded job costs with no project # (non-sub) |
 | `Audit - Duplicates` | Same bill # within a vendor tree — double-entry / double-pay risk (all bills) |
 | `Audit - FW Misplaced` | **FW flatwork code on any CP job, MFD job, or base `RP####` slab** — legit only on `-FTW`; division/slab from the project #, never Class. Has Cost Code + Sub? columns |
-| `Audit - Sub No Project` | A sub bill line with no project # |
+| `Audit - Sub No Project` | A sub **cost-code (item) line** with no project # — account-based category lines (reimbursements, fees, overhead) are excluded |
 
 The last three fold in what the standalone `duplicate_bill_audit.py`,
 `item_no_project_audit.py`, and `sub_bill_audit.py` scripts used to do — retired 2026-08-06
