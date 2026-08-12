@@ -191,14 +191,25 @@ QBO_CUSTOMER_OPEN_BAL_SIG = re.compile(
 )
 QBO_AS_OF_RE = re.compile(
     r"As\s+of\s+([A-Za-z]+\s+\d{1,2},?\s+\d{4})", re.I)
+# Matches EVERY transaction row in a Customer Open Balance report, not just
+# invoices. Credit Memos and Payments carry NEGATIVE amounts (leading "-" or
+# parentheses) and Payments have no due-date column — both must be parsed so
+# the line-sum ties to the report's grand total. (Before 2026-08-12 only
+# "Invoice" rows matched, so credits/payments were dropped, the line-sum came
+# out too HIGH by the credit total, and every statement carrying a credit
+# falsely failed the tie-out.) The due-date group is optional; the amount group
+# accepts a sign or parentheses.
 QBO_CUSTOMER_OPEN_BAL_LINE_RE = re.compile(
     r"""^\s*
-    Invoice\s+
+    (?P<type>(?:Invoice|Credit(?:\s+Me\w*)?|Payment|Discount|Journal|
+                 Deposit|Sales\s+Receipt|Check|Bill\s+Pmt|Transfer)
+             (?:\s*\.\.\.)?)\s+        # QBO truncates a narrow Type cell to "...":
+                                       #   "Credit ..." and "Credit Me..." both seen
     (?P<date>\d{1,2}/\d{1,2}/\d{2,4})\s+
     (?P<num>\S+)\s+
-    (?P<memo>.+?)\s+
-    (?P<due>\d{1,2}/\d{1,2}/\d{2,4})\s+
-    (?P<amount>[\d,]+\.\d{2})\s*$""",
+    (?P<memo>.+?)
+    (?:\s+(?P<due>\d{1,2}/\d{1,2}/\d{2,4}))?\s+
+    (?P<amount>\(?-?[\d,]+\.\d{2}\)?)\s*$""",
     re.VERBOSE | re.MULTILINE,
 )
 QBO_GRAND_TOTAL_RE = re.compile(r"^\s*TOTAL\s+([\d,]+\.\d{2})\s*$", re.MULTILINE)
@@ -529,6 +540,7 @@ TEMPLATE_LABELS = {
     "vendor_cintas":             "Vendor Statement, Cintas (PDF — Date | Sold-To | Reference | Amount Due | Due Date)",
     "vendor_cowtown":            "Vendor Statement, past-due letter (PDF — Job | Inv. No. | Inv. Date | Due Date | Inv. Amount | Balance)",
     "vendor_sunbelt":            "Vendor Statement, Sunbelt Rentals (PDF — Date | Invoice | Job Description | Amount Due)",
+    "vendor_croell":             "Vendor Statement, Croell Inc (PDF — Date | Cd | Invoice | Description | Amount | Balance doubled register/remittance layout)",
 }
 
 
@@ -564,6 +576,10 @@ def detect_template(text: str) -> str:
         return "vendor_cowtown"
     if SUNBELT_SIG.search(text):
         return "vendor_sunbelt"
+    # Croell Inc — doubled register/remittance header; must beat the generic
+    # tabular/columnar sigs (its "Finance Charge" wording trips columnar).
+    if CROELL_SIG.search(text):
+        return "vendor_croell"
     # Vendor tabular statement (Date Invoice Due Date Amount ... Balance header)
     if VENDOR_STMT_TABULAR_SIG.search(text):
         return "vendor_stmt_tabular"
@@ -626,6 +642,20 @@ def _find_qbo_statement_vendor(text: str) -> str:
     return ""
 
 
+def _paren_amount(raw: str) -> float:
+    """Parse a money token that may be negative via a leading '-' OR parentheses.
+    Credits/payments on statements print either way, and both must net out.
+        '(1,483.03)' -> -1483.03 · '-491.73' -> -491.73 · '75.00' -> 75.00"""
+    s = raw.strip()
+    neg = s.startswith("(") and s.endswith(")")
+    s = s.strip("()").replace(",", "").replace("$", "").strip()
+    try:
+        v = float(s)
+    except ValueError:
+        return 0.0
+    return -v if neg else v
+
+
 def parse_statement_qbo_customer_open_balance(full_text: str) -> Tuple[str, str, float, List[StmtLine]]:
     """Parse a QuickBooks Customer Open Balance report into the common shape."""
     vendor = _find_qbo_report_vendor(full_text)
@@ -659,9 +689,25 @@ def parse_statement_qbo_customer_open_balance(full_text: str) -> Tuple[str, str,
         stripped = line.strip()
         if not stripped:
             continue
-        # Sub-customer header? (caps-leading line, not Invoice/Total/header)
+        # Transaction row FIRST (Invoice / Credit Memo / Payment / ...). Checked
+        # before the sub-customer test because a Payment row has no due-date
+        # column and would otherwise satisfy the caps-leading header pattern,
+        # getting swallowed as a bogus sub-customer instead of counted.
+        inv_m = QBO_CUSTOMER_OPEN_BAL_LINE_RE.match(line)
+        if inv_m:
+            memo = inv_m.group("memo").strip()
+            # Truncated memos: QBO shows "..." when memo is cut off
+            memo = memo.rstrip(".").strip() if memo.endswith("...") else memo
+            lines.append(StmtLine(
+                date=_norm_date(inv_m.group("date")),
+                ref=inv_m.group("num").strip(),
+                amount=_paren_amount(inv_m.group("amount")),
+                po=current_subcust, address=memo))
+            continue
+        # Sub-customer header? (caps-leading line, not a txn/total/header)
         sub_m = QBO_SUBCUST_RE.match(line)
-        if sub_m and not stripped.startswith(("Invoice", "Total", "TOTAL", "Type", "Accrual", "Cash")):
+        if sub_m and not stripped.startswith(
+                ("Invoice", "Credit", "Payment", "Total", "TOTAL", "Type", "Accrual", "Cash")):
             cand = sub_m.group(1).strip().rstrip(".").strip()
             # Filter out the parent customer header (our own company).
             # Keep sub-customers with the parent name + suffix ("... - Other", etc.).
@@ -671,17 +717,6 @@ def parse_statement_qbo_customer_open_balance(full_text: str) -> Tuple[str, str,
                 continue
             current_subcust = cand
             continue
-        # Invoice row?
-        inv_m = QBO_CUSTOMER_OPEN_BAL_LINE_RE.match(line)
-        if inv_m:
-            date_str = _norm_date(inv_m.group("date"))
-            num = inv_m.group("num").strip()
-            memo = inv_m.group("memo").strip()
-            amount = float(inv_m.group("amount").replace(",", ""))
-            # Truncated memos: QBO shows "..." when memo is cut off
-            memo = memo.rstrip(".").strip() if memo.endswith("...") else memo
-            lines.append(StmtLine(date=date_str, ref=num, amount=amount,
-                                  po=current_subcust, address=memo))
     return vendor, stmt_date, amt_due, lines
 
 
@@ -755,6 +790,34 @@ BURNCO_SIG  = re.compile(r"Delivery Address\s+PO Number\s+Type", re.I)
 CINTAS_SIG  = re.compile(r"DATE\s+SOLD-TO\s+DESCRIPTION\s+REFERENCE\s+AMOUNT DUE\s+DUE DATE", re.I)
 COWTOWN_SIG = re.compile(r"Inv\.\s*No\.\s+Inv\.\s*Date\s+Due Date", re.I)
 SUNBELT_SIG = re.compile(r"DATE\s+INVOICE\s+JOB\s+DESCRIPTION\s+AMOUNT\s+DUE", re.I)
+
+# ── Template: Croell Inc statement (added 2026-08-12) ─────────────────
+# pdfplumber merges the left register and the right remittance stub onto one
+# physical line, so each data row reads:
+#   <date> <cd> <invoice> <description> <amount> <balance> <due date> \
+#       <invoice-dup> <cd-dup> <amount-dup>
+# We take the FIRST amount (the left "Amount" column) and ignore the duplicated
+# remittance fields. Credits print in parentheses -> negative, so the line-sum
+# nets to Balance Due. Cd codes seen: I=Invoice, F=Finance Charge.
+# The doubled header is an unmistakable signature (checked before the generic
+# tabular/columnar sigs, which the "Finance Charge" wording would otherwise trip).
+CROELL_SIG = re.compile(
+    r"Date\s+Cd\s+Invoice\s+Description\s+Amount\s+Balance\s+"
+    r"Date\s+Due\s+Invoice\s+Cd\s+Amount", re.I)
+CROELL_ROW_RE = re.compile(
+    r"""^\s*
+    (?P<date>\d{1,2}/\d{1,2}/\d{4})\s+
+    (?P<cd>[A-Z])\s+
+    (?P<num>\d+)\s+
+    (?P<desc>.+?)\s+
+    (?P<amount>\(?-?[\d,]+\.\d{2}\)?)\s+
+    (?P<balance>\(?-?[\d,]+\.\d{2}\)?)\s+
+    (?P<duedate>\d{1,2}/\d{1,2}/\d{4})\s+
+    (?P<num2>\d+)\s+
+    (?P<cd2>[A-Z])\s+
+    (?P<amount2>\(?-?[\d,]+\.\d{2}\)?)\s*$""",
+    re.VERBOSE | re.MULTILINE,
+)
 
 
 def _grab(pattern: str, text: str) -> str:
@@ -886,6 +949,35 @@ def parse_statement_sunbelt(full_text: str) -> Tuple[str, str, float, List[StmtL
     return "", stmt_date, amt_due, lines
 
 
+def parse_statement_croell(full_text: str) -> Tuple[str, str, float, List[StmtLine]]:
+    """Parse a Croell Inc statement (doubled register/remittance layout).
+    Takes the left 'Amount' column; credits in parentheses become negatives so
+    the line-sum nets to Balance Due."""
+    vendor = "Croell Inc"
+    # The "Statement Date" header row is doubled and the value sits on the NEXT
+    # line ("... Page\n08/08/2026 08/08/2026 ..."), so grab the first date there.
+    stmt_date = _norm_date(
+        _grab(r"Statement\s+Date[^\n]*\n\s*(\d{1,2}/\d{1,2}/\d{4})", full_text))
+
+    # Balance Due = rightmost value on the aging footer — the last line that is
+    # nothing but money tokens (Current / 1-30 / 31-60 / Over 60 / Bal Due).
+    amt_due = 0.0
+    money_line = re.compile(r"^\s*(?:\(?-?[\d,]+\.\d{2}\)?\s+){2,}\(?-?[\d,]+\.\d{2}\)?\s*$")
+    for ln in reversed(full_text.splitlines()):
+        if money_line.match(ln):
+            amt_due = _paren_amount(re.findall(r"\(?-?[\d,]+\.\d{2}\)?", ln)[-1])
+            break
+
+    lines: List[StmtLine] = []
+    for m in CROELL_ROW_RE.finditer(full_text):
+        lines.append(StmtLine(date=_norm_date(m.group("date")), ref=m.group("num"),
+                              amount=_paren_amount(m.group("amount")),
+                              address=m.group("desc").strip()))
+    if not amt_due:
+        amt_due = round(sum(l.amount for l in lines), 2)
+    return vendor, stmt_date, amt_due, lines
+
+
 # ── Staple-vendor identity overrides ──────────────────────────────
 # A few big, recurring vendors are impossible to identify from the generic
 # body extraction alone: their name is either in a raster logo (no extractable
@@ -968,6 +1060,8 @@ def parse_statement(path: Path) -> Tuple[str, str, float, List[StmtLine]]:
         result = parse_statement_cowtown(full_text)
     elif template == "vendor_sunbelt":
         result = parse_statement_sunbelt(full_text)
+    elif template == "vendor_croell":
+        result = parse_statement_croell(full_text)
     else:
         # No supported template detected — return empty so the caller surfaces
         # the unsupported-template error with the full list of supported formats.
