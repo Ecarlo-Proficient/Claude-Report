@@ -371,6 +371,17 @@ Run it with `python3 ledger/dashboard.py` (the preview sandbox can't — it need
 outside `.preview`). This is Rung 1 of turning the terminal DB into a platform; Postgres + a shared
 server is Rung 2, when a second person needs to log in.
 
+**Now also the CONTROL PLANE (2026-08-12).** Beyond reading, the dashboard runs the data pipelines
+FROM the UI so the owner never touches a terminal. The **Console** tab is a **pipeline registry**
+(`_pipelines()` / `_resolve_steps`): each pipeline = producer(s) + loader, run as **subprocesses**
+(tools never IMPORT tools). The **Resync** (My view) runs the LOADERS ONLY (`reload` - read-only,
+incremental 90-day cost pull); a Console **Run** also fires the real **producer** (`run_invoice_sync`
+for AR -> Notion/Teams, `qbo_bill_tracker` for AP -> Excel; Touch ID). **WIP** loads the current draft;
+generating a new **draft WIP** (the `wip/` readers -> Test tabs for PM review) is a separate,
+confirm-gated action, never in a refresh. `POST /api/sync {pipeline}`, `GET /api/pipelines`,
+`/api/sync/status` for the progress bar. Still one DB write surface (the waiver); the P&L is computed
+live and the QBO deep links are company-scoped (see the invoice-sync note).
+
 The **Liens** tab is a single filtered worklist: clickable stage tiles (Past-due / ≤7d / ≤15d / ≤30d /
 Notice-sent / Lien-filed) filter one table keyed **CP # · Draw # · Name/Address · Invoice # · Amount**.
 The job-detail panel links to **project-pnl**: `shared/pnl_paths.py` finds the project's

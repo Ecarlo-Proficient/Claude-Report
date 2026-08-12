@@ -444,12 +444,24 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     with last-run + logs, and runs any one or the whole chain from the UI (generalize `_SYNC_STEPS` into
     a tool registry). See [[ledger-super-database]].
 
+  - **Ledger as the CONSOLE / control plane - Phase B DONE (owner: "we aren't managing them via the
+    ledger").** New **Console tab**: the sync engine is now a **pipeline registry** (`_pipelines()` +
+    `_resolve_steps`) instead of a hardcoded loader list. Each pipeline = producer(s) + loader; a card
+    shows its steps (producers flagged amber), last-run, and a **Run** button. Keys: **reload** (the
+    My-view Resync - LOADERS ONLY, read-only, the safe default), **all** (Full refresh - producers too),
+    per-pipeline (`ar`/`ap`/`costs`/`crm`/`wip`), and **wip-draft**. Run scope per the owner: **AR**
+    (`run_invoice_sync`) and **AP** (`qbo_bill_tracker`) run the full chain incl. the real producer;
+    **Costs/CRM** are loader-only; **WIP** loads the current draft, and generating a new **draft WIP for
+    PM review** (the readers -> Test tabs) is a **separate, confirm-gated** button, kept OUT of any
+    refresh. The run machinery (`runPipeline`/`pollSync`/`finishSync`) is parameterized so My-view + the
+    Console reuse it; `GET /api/pipelines`, `POST /api/sync {pipeline}`. Verified: resolution
+    (reload=no producers, all=+producers, wip-draft separate), endpoints, UI renders, no console errors.
+    **Producers fire REAL syncs (Notion/Teams/Excel + Touch ID) - owner validates those with a real click.**
+    NEXT: per-run log viewer in the UI; parallelize independent Notion loads; collapse the two QBO Touch IDs.
+
 ## IN PROGRESS
-- **Ledger as the CONSOLE (control plane) - Phase B (owner: "we aren't managing them via the ledger").**
-  A tools/pipelines view: every script listed with last-run + status + logs, run any one or the full
-  chain (fresh source -> fresh ledger) from the UI. Scope = the ledger data pipeline first (the 5 loaders
-  + upstream AR sync / AP sync / WIP readers). Generalize the `_SYNC_STEPS`/`_run_sync` engine into a
-  registry. Also possible: parallelize the independent Notion loads; collapse the two QBO Touch IDs.
+- (none) - super-database + Console (control plane) landed. Owner to validate the producer Runs (AR/AP)
+  and the draft-WIP button with a real click (they fire real syncs + Touch ID).
 
 ## TO DO
 - **Investigate the ~6 active reconcile mismatches** (QBO cost ≠ WIP figure, e.g. RP6901/RP6440):

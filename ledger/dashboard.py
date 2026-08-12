@@ -198,58 +198,81 @@ def _pnl_wait(proj: str) -> None:
             j["detail"] = f"exit {rc} — see {j['log']}"
 
 
-# ── in-app data sync ("Resync") — runs the ledger loaders FROM the UI, so the owner
-# never touches a terminal. Each step is one loader subprocess (same python, self-
-# bootstrapping); progress is polled by the front-end for a live bar. WIP first (it
-# creates the project table); 'QBO costs' shells to qbo_vault → a Touch ID prompt on
-# this Mac. Loaders are read-only on their sources and write only the ledger DB.
+# ── the ledger's CONTROL PLANE: a pipeline registry ────────────────────────
+# Each pipeline is an ordered list of steps run as subprocesses (tools never IMPORT
+# tools - repo rule). `script` is repo-relative; `side: True` marks a PRODUCER with
+# real writes (QBO/Notion/Teams/Excel) vs a read-only loader. The default Resync
+# ("reload") runs the LOADERS ONLY - read the current sources into the ledger, fast +
+# read-only. "all" (Full refresh) also runs the producers. The WIP DRAFT generators
+# (the readers write Test tabs for PM review, then it's implemented) are a SEPARATE,
+# confirm-gated action, never in a refresh. 'QBO costs' pulls the last 90 days
+# incrementally (Touch ID). WIP loads first (it creates the project table).
 _SYNC_LOG_DIR = Path.home() / "Library" / "Logs" / "Proficient" / "ledger-sync"
-_SYNC_STEPS = [
-    ("WIP master", "load_wip_master.py"),
-    ("QBO costs (90d, Touch ID)", "load_costs.py"),
-    ("Bill Tracker - AP + liens", "load_bill_tracker.py"),
-    ("Invoices - AR", "load_invoices.py"),
-    ("Customers - CRM", "load_customers.py"),
-]
-# Per-step extra args. The Resync pulls costs INCREMENTALLY - only the last ~90 days,
-# merged so older cost lines are kept (WHERE TxnDate >= since shrinks the QBO pull from
-# minutes to seconds). --active scopes it to open jobs. Run a full `load_costs` (no
-# --since) occasionally to reap QBO deletions + backfill history older than the window.
 _SYNC_COST_WINDOW_DAYS = 90
 
 
-def _sync_args(script: str):
-    if script == "load_costs.py":
-        since = (_dt.date.today() - _dt.timedelta(days=_SYNC_COST_WINDOW_DAYS)).isoformat()
-        return ["--active", "--since", since]
-    return []
-_SYNC = {"state": "idle", "current": -1, "started": 0.0, "log": None,
-         "steps": [{"label": lbl, "state": "pending"} for lbl, _ in _SYNC_STEPS]}
+def _pipelines():
+    """Built fresh each call so the cost --since window stays current."""
+    since = (_dt.date.today() - _dt.timedelta(days=_SYNC_COST_WINDOW_DAYS)).isoformat()
+    return [
+        {"key": "wip", "label": "WIP master", "steps": [
+            {"label": "Load current WIP -> ledger", "script": "ledger/load_wip_master.py", "args": []},
+        ], "draft": {"label": "Generate DRAFT WIP (Test tabs, for PM review)", "steps": [
+            {"label": "Draft CP WIP", "script": "wip/cp_wip_reader.py", "args": [], "side": True},
+            {"label": "Draft RP WIP", "script": "wip/rp_wip_reader.py", "args": [], "side": True},
+        ]}},
+        {"key": "costs", "label": "Costs (QBO, 90d)", "steps": [
+            {"label": "Pull costs (90d, Touch ID)", "script": "ledger/load_costs.py", "args": ["--active", "--since", since]},
+        ]},
+        {"key": "ap", "label": "AP - bills + liens", "steps": [
+            {"label": "Sync bills (QBO -> Bill Tracker.xlsx)", "script": "bill-tracker/qbo_bill_tracker.py", "args": [], "side": True},
+            {"label": "Load bills -> ledger", "script": "ledger/load_bill_tracker.py", "args": []},
+        ]},
+        {"key": "ar", "label": "AR - invoices / draws", "steps": [
+            {"label": "Sync invoices (QBO -> Notion + Teams)", "script": "invoice-sync/run_invoice_sync.py", "args": [], "side": True},
+            {"label": "Load invoices -> ledger", "script": "ledger/load_invoices.py", "args": []},
+        ]},
+        {"key": "crm", "label": "CRM - customers", "steps": [
+            {"label": "Pull customers (Notion)", "script": "ledger/load_customers.py", "args": []},
+        ]},
+    ]
+
+
+def _resolve_steps(pipeline_key):
+    """Ordered steps for: a pipeline key (its full chain) - 'reload' (every loader, the
+    safe default Resync) - 'all' (every full chain incl producers) - 'wip-draft'."""
+    pls = _pipelines()
+    if pipeline_key == "reload":
+        return [s for p in pls for s in p["steps"] if not s.get("side")]
+    if pipeline_key == "all":
+        return [s for p in pls for s in p["steps"]]
+    if pipeline_key == "wip-draft":
+        return next((p["draft"]["steps"] for p in pls if p["key"] == "wip" and p.get("draft")), [])
+    return next((p["steps"] for p in pls if p["key"] == pipeline_key), [])
+
+
+_SYNC = {"state": "idle", "current": -1, "started": 0.0, "log": None, "pipeline": None, "steps": []}
 _SYNC_LOCK = threading.Lock()
 
 
-def _run_sync() -> None:
-    """Run every loader in order, recording per-step state for the progress bar."""
+def _run_sync(steps) -> None:
+    """Run the resolved steps in order, recording per-step state for the progress bar.
+    State was claimed under the lock by _sync_start; this just executes + finalizes."""
     _SYNC_LOG_DIR.mkdir(parents=True, exist_ok=True)
     logpath = _SYNC_LOG_DIR / "sync.log"
     with _SYNC_LOCK:
-        _SYNC["state"] = "running"
-        _SYNC["started"] = time.time()
         _SYNC["log"] = str(logpath)
-        for st in _SYNC["steps"]:
-            st["state"] = "pending"
     ok = True
     with open(logpath, "w", encoding="utf-8") as logf:
-        for i, (label, script) in enumerate(_SYNC_STEPS):
+        for i, step in enumerate(steps):
             with _SYNC_LOCK:
                 _SYNC["current"] = i
                 _SYNC["steps"][i]["state"] = "running"
-            logf.write(f"\n===== {label} ({script}) =====\n")
+            logf.write(f"\n===== {step['label']} ({step['script']}) =====\n")
             logf.flush()
             try:
-                rc = subprocess.call([sys.executable, str(HERE / script)] + _sync_args(script),
-                                     cwd=str(PROJECT_ROOT), stdout=logf,
-                                     stderr=subprocess.STDOUT)
+                rc = subprocess.call([sys.executable, str(PROJECT_ROOT / step["script"])] + step.get("args", []),
+                                     cwd=str(PROJECT_ROOT), stdout=logf, stderr=subprocess.STDOUT)
             except OSError as e:
                 logf.write(f"launch failed: {e}\n")
                 rc = 1
@@ -693,8 +716,10 @@ class Handler(BaseHTTPRequestHandler):
             self._pnl_portfolio()
         elif path == "/api/pnl/status":
             self._pnl_status(self._query().get("proj", ""))
-        elif path == "/api/sync/status":   # progress for the in-app Resync
+        elif path == "/api/sync/status":   # progress for the in-app Resync / Console runs
             self._sync_status()
+        elif path == "/api/pipelines":     # the Console registry (pipelines + their steps)
+            self._pipelines_list()
         elif path.startswith("/static/"):
             self._static(path[len("/static/"):])
         else:
@@ -734,10 +759,21 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             con.close()
 
-    # ── in-app Resync (run the loaders, no terminal) ────────────────────────
+    # ── in-app Console: run any pipeline (or the safe loaders-only reload) ────
+    def _pipelines_list(self):
+        out = []
+        for p in _pipelines():
+            out.append({
+                "key": p["key"], "label": p["label"],
+                "steps": [{"label": s["label"], "side": bool(s.get("side"))} for s in p["steps"]],
+                "has_producer": any(s.get("side") for s in p["steps"]),
+                "draft": ({"label": p["draft"]["label"]} if p.get("draft") else None),
+            })
+        self._json({"pipelines": out})
+
     def _sync_status(self):
         with _SYNC_LOCK:
-            out = {"state": _SYNC["state"], "current": _SYNC["current"],
+            out = {"state": _SYNC["state"], "current": _SYNC["current"], "pipeline": _SYNC["pipeline"],
                    "steps": [dict(s) for s in _SYNC["steps"]]}
             if _SYNC["state"] == "running":
                 out["elapsed"] = int(time.time() - _SYNC["started"])
@@ -751,19 +787,22 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": "bad request"}, 400)
         if not body.get("confirm"):                   # gate: no confirm, no run
             return self._json({"error": "confirm required"}, 400)
+        pipeline = str(body.get("pipeline") or "reload")   # default = safe loaders-only reload
+        steps = _resolve_steps(pipeline)
+        if not steps:
+            return self._json({"error": f"unknown pipeline '{pipeline}'"}, 400)
         with _SYNC_LOCK:
             if _SYNC["state"] == "running":
                 return self._json({"error": "a sync is already running", "running": True}, 409)
-            # claim it INSIDE the lock — otherwise a second POST could also see "idle"
-            # before the worker thread flips the state, and two loader pipelines would
-            # write the ledger at once (TOCTOU). This is the single authoritative claim.
+            # claim it INSIDE the lock so a second POST can't also see "idle" and launch
+            # a second run that writes the ledger at once (TOCTOU). Single authoritative claim.
             _SYNC["state"] = "running"
             _SYNC["started"] = time.time()
             _SYNC["current"] = -1
-            for st in _SYNC["steps"]:
-                st["state"] = "pending"
-        threading.Thread(target=_run_sync, daemon=True).start()
-        self._json({"ok": True, "steps": [lbl for lbl, _ in _SYNC_STEPS]})
+            _SYNC["pipeline"] = pipeline
+            _SYNC["steps"] = [{"label": s["label"], "state": "pending"} for s in steps]
+        threading.Thread(target=_run_sync, args=(steps,), daemon=True).start()
+        self._json({"ok": True, "pipeline": pipeline, "steps": [s["label"] for s in steps]})
 
     def _job_open(self, proj: str):
         """Open the SOURCE job folder on the file server (docs/takeoffs/photos) —

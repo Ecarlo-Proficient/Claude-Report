@@ -198,6 +198,7 @@ function setTab(t) {
   $$(".tab-page").forEach(p => { p.hidden = p.dataset.tab !== t; });
   $$(".tab").forEach(b => b.classList.toggle("active", b.dataset.tabbtn === t));
   if (t === "pnl") renderPnl();     // portfolio P&L is computed server-side, lazy-loaded
+  if (t === "console") renderConsole();
   if (typeof _csClear === "function") _csClear();   // drop any cell selection when the tab changes
   window.scrollTo(0, 0);
 }
@@ -260,24 +261,32 @@ async function manualRefresh() {
   toast(meta.loaded_at ? `Refreshed · ledger loaded ${fmtDate(meta.loaded_at, true)}` : "Refreshed");
 }
 
-// ── In-app Resync — runs the ledger loaders from the UI (no terminal), with a live
-// progress bar. Pauses the silent auto-refresh while it runs (loaders drop/rebuild
-// tables). The QBO-costs step prompts Touch ID on this Mac.
+// ── In-app runs: the Console (and My-view Resync) run a pipeline via the sync engine,
+// with a live progress bar. Pauses the silent auto-refresh while running (loaders
+// drop/rebuild tables). Producer steps + QBO costs prompt Touch ID on this Mac.
 let syncing = false;
-async function startResync() {
-  const btn = $("#btnResync");
-  if (!confirm("Resync all data now?\n\nRuns every loader from the app — WIP master, QBO costs (a Touch ID prompt will appear on this Mac), Bill Tracker, Invoices, Customers. Takes a minute or two.")) return;
+// Run a pipeline key ('reload' = safe loaders-only default, 'all' = full chain incl
+// producers, 'ar'/'ap'/'costs'/'crm'/'wip', 'wip-draft'), driving the given progress
+// elements. `els` = { btn, prog, fill, step }.
+async function runPipeline(pipeline, confirmMsg, els) {
+  if (confirmMsg && !confirm(confirmMsg)) return;
   let res;
-  try { res = await (await fetch("/api/sync", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm: true }) })).json(); }
-  catch (e) { toast("Could not start sync: " + e); return; }
+  try { res = await (await fetch("/api/sync", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pipeline, confirm: true }) })).json(); }
+  catch (e) { toast("Could not start: " + e); return; }
   if (res.error) { toast(res.error); return; }
-  syncing = true; btn.disabled = true;
-  const prog = $("#syncProgress"), fill = $("#syncBarFill"), step = $("#syncStep");
-  prog.hidden = false; fill.classList.remove("err"); fill.style.width = "0%";
-  pollSync(res.steps || [], btn, prog, fill, step);
+  syncing = true; if (els.btn) els.btn.disabled = true;
+  els.prog.hidden = false; els.fill.classList.remove("err"); els.fill.style.width = "0%";
+  pollSync(res.steps || [], els);
 }
 
-function pollSync(steps, btn, prog, fill, step) {
+async function startResync() {
+  runPipeline("reload",
+    "Reload all data now?\n\nRuns every loader (WIP, QBO costs [Touch ID], Bill Tracker, Invoices, Customers) and reads the current sources into the ledger. Read-only on the sources; takes about a minute.",
+    { btn: $("#btnResync"), prog: $("#syncProgress"), fill: $("#syncBarFill"), step: $("#syncStep") });
+}
+
+function pollSync(steps, els) {
+  const { btn, prog, fill, step } = els;
   const total = steps.length || 1;
   let fails = 0;
   const tick = () => fetch("/api/sync/status").then(r => r.json()).then(s => {
@@ -286,31 +295,80 @@ function pollSync(steps, btn, prog, fill, step) {
     const cur = (s.steps || [])[s.current];
     fill.style.width = Math.round(done / total * 100) + "%";
     if (s.state === "running") {
-      step.textContent = `${cur ? cur.label : "…"} — step ${Math.min(done + 1, total)} of ${total}${s.elapsed ? ` · ${s.elapsed}s` : ""}`;
+      step.textContent = `${cur ? cur.label : "..."} - step ${Math.min(done + 1, total)} of ${total}${s.elapsed ? ` - ${s.elapsed}s` : ""}`;
       setTimeout(tick, 1500);
     } else if (s.state === "done") {
-      fill.style.width = "100%"; step.textContent = "Done — reloading the app…";
-      finishSync(btn, prog, "Resynced — data refreshed.", true);
+      fill.style.width = "100%"; step.textContent = "Done - reloading the app...";
+      finishSync(els, "Done - data refreshed.", true);
     } else if (s.state === "error") {
       const bad = (s.steps || []).find(x => x.state === "error");
       fill.classList.add("err");
-      step.textContent = `Failed at: ${bad ? bad.label : "a step"} — see the sync log (~/Library/Logs/Proficient/ledger-sync).`;
-      finishSync(btn, prog, "Sync failed — " + (bad ? bad.label : ""), false);
-    } else {   // idle mid-poll → the app restarted; a loader may still be running in the background
-      finishSync(btn, prog, "Sync status lost (did the app restart?) — check Data freshness.", false);
+      step.textContent = `Failed at: ${bad ? bad.label : "a step"} - see the log (~/Library/Logs/Proficient/ledger-sync).`;
+      finishSync(els, "Run failed - " + (bad ? bad.label : ""), false);
+    } else {   // idle mid-poll: the app restarted; a step may still be running in the background
+      finishSync(els, "Status lost (did the app restart?) - check Data freshness.", false);
     }
-  }).catch(() => {   // server unreachable — cap the retries so the button can't hang disabled forever
-    if (++fails >= 5) { finishSync(btn, prog, "Lost contact with the app during sync — check Data freshness.", false); return; }
+  }).catch(() => {   // server unreachable - cap the retries so the button can't hang disabled forever
+    if (++fails >= 5) { finishSync(els, "Lost contact with the app - check Data freshness.", false); return; }
     setTimeout(tick, 2500);
   });
   setTimeout(tick, 800);
 }
 
-async function finishSync(btn, prog, msg, reload) {
-  syncing = false; btn.disabled = false;
-  if (reload) { try { await load(true); } catch { /* ignore */ } }
+async function finishSync(els, msg, reload) {
+  syncing = false; if (els.btn) els.btn.disabled = false;
+  if (reload) { try { await load(true); if (typeof renderConsole === "function" && activeTab === "console") renderConsole(); } catch { /* ignore */ } }
   if (msg) toast(msg);
-  if (!msg.startsWith("Sync failed")) setTimeout(() => { prog.hidden = true; const f = $("#syncBarFill"); if (f) f.style.width = "0%"; }, 2600);
+  if (!/(failed|lost|Lost)/.test(msg)) setTimeout(() => { els.prog.hidden = true; els.fill.style.width = "0%"; }, 2600);
+}
+
+// ── Console tab: the control plane. Lists each pipeline (from /api/pipelines) with its
+// steps, last-run, and a Run button (a pipeline's Run also fires its real producer).
+let PIPELINES = null;
+const _consoleEls = () => ({ prog: $("#consoleProgress"), fill: $("#consoleBarFill"), step: $("#consoleStep") });
+async function renderConsole() {
+  const box = $("#consoleList"); if (!box) return;
+  if (!PIPELINES) {
+    try { PIPELINES = (await (await fetch("/api/pipelines")).json()).pipelines || []; }
+    catch { box.textContent = "Console unavailable."; return; }
+  }
+  const fr = meta.freshness || { sources: {}, ledger: {} };
+  const lastRun = { ar: (fr.sources || {})["sync-ar"], ap: (fr.sources || {})["sync-ap"],
+    wip: (fr.sources || {})["WIP master"], costs: (fr.ledger || {})["Costs (QBO)"] };
+  box.innerHTML = "";
+  for (const p of PIPELINES) {
+    const card = document.createElement("div"); card.className = "pl-card";
+    const head = document.createElement("div"); head.className = "pl-head";
+    const nm = document.createElement("span"); nm.className = "pl-name"; nm.textContent = p.label; head.appendChild(nm);
+    const lr = lastRun[p.key];
+    const when = document.createElement("span"); when.className = "pl-when";
+    when.textContent = lr ? `last ${timeAgo(lr)}` : ""; if (lr) when.title = fmtDate(lr, true);
+    head.appendChild(when);
+    card.appendChild(head);
+    const steps = document.createElement("div"); steps.className = "pl-steps";
+    for (const s of p.steps) {
+      const chip = document.createElement("span"); chip.className = "pl-step" + (s.side ? " producer" : "");
+      chip.textContent = s.label + (s.side ? " · producer" : ""); steps.appendChild(chip);
+    }
+    card.appendChild(steps);
+    const acts = document.createElement("div"); acts.className = "pl-acts";
+    const runBtn = document.createElement("button"); runBtn.className = "btn small"; runBtn.textContent = "Run";
+    const sides = p.steps.filter(s => s.side).map(s => s.label);
+    const msg = sides.length
+      ? `Run the ${p.label} pipeline?\n\nThis fires a REAL sync (${sides.join(", ")}) - writes to the source (Notion / Teams / Excel) and prompts Touch ID - then loads it into the ledger.`
+      : `Run the ${p.label} loader?\n\nReads the current source into the ledger (read-only on the source).`;
+    runBtn.onclick = () => runPipeline(p.key, msg, { ..._consoleEls(), btn: runBtn });
+    acts.appendChild(runBtn);
+    if (p.draft) {
+      const dBtn = document.createElement("button"); dBtn.className = "btn small subtle"; dBtn.textContent = p.draft.label;
+      dBtn.onclick = () => runPipeline("wip-draft",
+        `${p.draft.label}?\n\nGenerates the DRAFT WIP (Test tabs) for PMs to review - it does NOT implement anything into the live report. Reads Excel + QBO; prompts Touch ID.`,
+        { ..._consoleEls(), btn: dBtn });
+      acts.appendChild(dBtn);
+    }
+    card.appendChild(acts);
+    box.appendChild(card);
+  }
 }
 
 // ── Filters ───────────────────────────────────────────────────────────────
@@ -1940,6 +1998,9 @@ function init() {
   $("#btnExport").onclick = exportCSV;
   $("#btnRefresh").onclick = manualRefresh;
   { const el = $("#btnResync"); if (el) el.onclick = startResync; }
+  { const el = $("#btnFullRefresh"); if (el) el.onclick = () => runPipeline("all",
+      "Full refresh - run EVERY pipeline?\n\nRuns the source producers (AR sync -> Notion/Teams, AP sync -> Bill Tracker.xlsx) AND the loaders, in order. Real writes; expect multiple Touch ID prompts; takes a few minutes.",
+      { ..._consoleEls(), btn: el }); }
   $("#btnClearRule").onclick = () => { activeRule = null; renderAttention(); renderProjects(); };
   $("#btnSettings").onclick = () => openPanel("#settings");
   $$(".tab").forEach(b => { b.onclick = () => setTab(b.dataset.tabbtn); });

@@ -277,6 +277,20 @@ tr.draw-group .g-sub { color: var(--text-dim); font-weight: 500; font-size: .85e
 .sync-bar-fill.err { background: var(--neg); }
 .sync-step { font-size: .82em; color: var(--text-dim); margin-top: 6px; font-variant-numeric: tabular-nums; }
 
+/* Console (control plane): one card per pipeline */
+#consoleList { display: flex; flex-direction: column; gap: 10px; padding: 4px 18px 12px; }
+.pl-card { border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; background: var(--surface-2); }
+.pl-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.pl-name { font-weight: 600; }
+.pl-when { font-size: .8em; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.pl-steps { display: flex; flex-wrap: wrap; gap: 6px; margin: 9px 0; }
+.pl-step { font-size: .78em; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text-dim); white-space: nowrap; }
+.pl-step.producer { color: #b8860b; border-color: color-mix(in srgb, #b8860b 45%, var(--border));
+  background: color-mix(in srgb, #b8860b 10%, transparent); }
+.pl-acts { display: flex; gap: 8px; }
+.btn.subtle { color: var(--text-dim); }
+
 /* Excel-style cell selection + running-sum bar */
 table.grid td.cell-sel { background: color-mix(in srgb, var(--accent) 20%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 60%, transparent); }
