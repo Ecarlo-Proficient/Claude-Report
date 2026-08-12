@@ -432,10 +432,24 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     end-to-end with a throwaway realm (payload read + rendered lien chip company-scoped + bare fallback);
     the real realm lands on the next Resync (`load_costs`). ARCHITECTURE.md updated.
 
+  - **Resync is fast now - incremental cost pull (owner: "the ledger takes a while to update").** The
+    Resync re-pulled the ENTIRE QBO cost history every time (all Bills + Purchases). `load_costs` gained
+    an **incremental** mode: with a `--since` window it **skips the scoped DELETE and only upserts** by
+    (txn,line), so a windowed pull adds/updates recent lines and **keeps older ones** (verified: a 2024
+    line survives incremental, and a full run - no `--since` - still drops+replaces to reap QBO deletions).
+    The Resync now runs `load_costs --active --since <90d>` (`WHERE TxnDate >= since` shrinks the QBO pull
+    from minutes to seconds). Run a full `load_costs` occasionally to backfill older-than-window + reap
+    deletions. **NEXT (owner's real point): the ledger as the CONSOLE / control plane** - a tools view
+    that lists every pipeline (the 5 loaders + their upstream producers: AR sync, AP sync, WIP readers)
+    with last-run + logs, and runs any one or the whole chain from the UI (generalize `_SYNC_STEPS` into
+    a tool registry). See [[ledger-super-database]].
+
 ## IN PROGRESS
-- (none) — the P&L super-database (per-project + portfolio P&L, source links, in-app sync, QC) is landed,
-  plus the draws Status column + QBO gap-fallback. Owner to trigger the first real **Resync** (Touch ID)
-  — now two QBO steps in a sync (costs + the invoices gap-fallback).
+- **Ledger as the CONSOLE (control plane) - Phase B (owner: "we aren't managing them via the ledger").**
+  A tools/pipelines view: every script listed with last-run + status + logs, run any one or the full
+  chain (fresh source -> fresh ledger) from the UI. Scope = the ledger data pipeline first (the 5 loaders
+  + upstream AR sync / AP sync / WIP readers). Generalize the `_SYNC_STEPS`/`_run_sync` engine into a
+  registry. Also possible: parallelize the independent Notion loads; collapse the two QBO Touch IDs.
 
 ## TO DO
 - **Investigate the ~6 active reconcile mismatches** (QBO cost ≠ WIP figure, e.g. RP6901/RP6440):

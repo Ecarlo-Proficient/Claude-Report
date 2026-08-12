@@ -206,11 +206,23 @@ def _pnl_wait(proj: str) -> None:
 _SYNC_LOG_DIR = Path.home() / "Library" / "Logs" / "Proficient" / "ledger-sync"
 _SYNC_STEPS = [
     ("WIP master", "load_wip_master.py"),
-    ("QBO costs (Touch ID)", "load_costs.py"),
-    ("Bill Tracker — AP + liens", "load_bill_tracker.py"),
-    ("Invoices — AR", "load_invoices.py"),
-    ("Customers — CRM", "load_customers.py"),
+    ("QBO costs (90d, Touch ID)", "load_costs.py"),
+    ("Bill Tracker - AP + liens", "load_bill_tracker.py"),
+    ("Invoices - AR", "load_invoices.py"),
+    ("Customers - CRM", "load_customers.py"),
 ]
+# Per-step extra args. The Resync pulls costs INCREMENTALLY - only the last ~90 days,
+# merged so older cost lines are kept (WHERE TxnDate >= since shrinks the QBO pull from
+# minutes to seconds). --active scopes it to open jobs. Run a full `load_costs` (no
+# --since) occasionally to reap QBO deletions + backfill history older than the window.
+_SYNC_COST_WINDOW_DAYS = 90
+
+
+def _sync_args(script: str):
+    if script == "load_costs.py":
+        since = (_dt.date.today() - _dt.timedelta(days=_SYNC_COST_WINDOW_DAYS)).isoformat()
+        return ["--active", "--since", since]
+    return []
 _SYNC = {"state": "idle", "current": -1, "started": 0.0, "log": None,
          "steps": [{"label": lbl, "state": "pending"} for lbl, _ in _SYNC_STEPS]}
 _SYNC_LOCK = threading.Lock()
@@ -235,7 +247,7 @@ def _run_sync() -> None:
             logf.write(f"\n===== {label} ({script}) =====\n")
             logf.flush()
             try:
-                rc = subprocess.call([sys.executable, str(HERE / script)],
+                rc = subprocess.call([sys.executable, str(HERE / script)] + _sync_args(script),
                                      cwd=str(PROJECT_ROOT), stdout=logf,
                                      stderr=subprocess.STDOUT)
             except OSError as e:

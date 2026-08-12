@@ -93,9 +93,15 @@ def target_projects(con, division: str | None, active: bool, projects: list[str]
     return out
 
 
-def write_cost_lines(con, records: list[dict], targets: set, now: str) -> dict:
-    """Scoped full-replace of source='qbo' cost_line for the target projects.
-    Upserts cost_code first (FK), then cost_line. Returns counts."""
+def write_cost_lines(con, records: list[dict], targets: set, now: str,
+                     incremental: bool = False) -> dict:
+    """Land source='qbo' cost_line for the target projects. Upserts cost_code first
+    (FK), then cost_line by (txn,line).
+
+    FULL (default): scoped-replace - DELETE the targets' qbo lines, then insert, so a
+    txn deleted in QBO drops out. INCREMENTAL (a `--since` window): SKIP the delete and
+    only upsert - recent lines add/update, OLDER lines are preserved (a windowed pull
+    can't see them). Run a full pull periodically to reap QBO deletions."""
     kept = [r for r in records if r["project_no"] in targets]
     # cost codes first (FK target)
     codes = {r["cost_code"] for r in kept if r["cost_code"]}
@@ -106,9 +112,10 @@ def write_cost_lines(con, records: list[dict], targets: set, now: str) -> dict:
             "ON CONFLICT(code) DO UPDATE SET prefix=excluded.prefix, description=excluded.description",
             m,
         )
-    # scoped replace so re-runs mirror QBO (and drop deleted txns)
+    # scoped replace so re-runs mirror QBO (and drop deleted txns) - but NOT when
+    # incremental: a windowed pull would then delete older lines it can't re-insert.
     ph = ",".join("?" for _ in targets)
-    if targets:
+    if targets and not incremental:
         con.execute(f"DELETE FROM cost_line WHERE source='qbo' AND project_no IN ({ph})", tuple(targets))
     cols = ["qbo_txn_id", "qbo_line_id", "txn_type", "project_no", "cost_code", "account",
             "amount", "txn_date", "is_sub", "vendor", "description", "source", "loaded_at"]
@@ -252,8 +259,9 @@ def run(db_path: Path, division, active, projects, since, dry_run, show):
         return
 
     now = dt.datetime.now().isoformat(timespec="seconds")
-    res = write_cost_lines(con, records, targets, now)
-    print(f"\nWrote {res['lines']} cost lines · {res['codes']} cost codes -> {db_path}")
+    res = write_cost_lines(con, records, targets, now, incremental=bool(since))
+    mode = f"incremental since {since}" if since else "full replace"
+    print(f"\nWrote {res['lines']} cost lines · {res['codes']} cost codes ({mode}) -> {db_path}")
     reconcile(con, targets, show)
     con.close()
 
