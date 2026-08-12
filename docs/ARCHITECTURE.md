@@ -122,6 +122,12 @@ what is still owed to vendors.
 form, not the bare `app/invoice?txnId=` — the bare link resolves the txnId inside
 whatever Intuit company the browser session is on and opens a *different*
 company's invoice. The realm comes from the loaded creds, never source/logs.
+**The ledger dashboard uses the same company-scoped form** (2026-08-12): the
+dashboard never touches QBO, so `load_costs.py` stashes the realm in a local
+`meta` table (`qbo_realm`, never printed) after it authenticates; the dashboard
+sends it in the payload and the front-end (`qboUrl` / `qboBillHref`) builds the
+`/app/login?pagereq=…&deeplinkcompanyid=<realm>` links for both invoice and bill
+deep links, falling back to the bare form until a sync has written the realm.
 
 **Excel Notes are a two-way status channel** (`notes_preserve.py`, 2026-08-11).
 The clerk writes collections Notes (legacy yellow sticky, author attached — **not**
@@ -149,6 +155,13 @@ contract so parallel contracts don't interleave), and the verdict separates
 — from `Waiting GC on prev`, where the hold-up is upstream. Projects running
 parallel contracts report `Multi-contract` rather than a guess, because bills
 carry a project #, not a contract.
+
+> The chain sees only invoices that passed through Notion's open-invoice sync, so
+> a paid `Draw #1` that was never synced is invisible. A later draw with no visible
+> predecessor now reports **`Prev not synced`** (only a provable `Draw #1` is
+> "First draw"), never a false "First draw" (fixed 2026-08-12). A QBO-assist that
+> pulls a draw project's historical invoices to resolve the true predecessor is the
+> planned next step, kept lean (only uncertain draw projects, never all invoices).
 
 > **Run order: AP → AR.** That read is the only edge between the two pipelines,
 > and it makes AR downstream of AP. `sync-all` runs **the bill tracker first,

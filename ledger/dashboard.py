@@ -602,6 +602,11 @@ def fetch_data(db_path: Path) -> dict:
         sales = _fetch_sales(con)
         actions = _fetch_actions(con)
         freshness = _freshness(con)
+        try:                                # realm for company-scoped QBO deep links (never logged)
+            _mr = con.execute("SELECT value FROM meta WHERE key='qbo_realm'").fetchone()
+            qbo_realm = _mr[0] if _mr else None
+        except sqlite3.OperationalError:
+            qbo_realm = None
     except sqlite3.OperationalError as e:
         con.close()
         return {"error": f"Ledger schema not found ({e}). Run the loader first."}
@@ -620,6 +625,7 @@ def fetch_data(db_path: Path) -> dict:
             "loaded_at": loaded_at,
             "project_count": pcount,
             "freshness": freshness,
+            "qbo_realm": qbo_realm,   # company-scopes the QBO deep links; None -> bare fallback
         },
         "projects": rows,
         "ap": ap,

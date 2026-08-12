@@ -523,8 +523,25 @@ const DRAW_STAGE_LABEL = {
   "Awaiting GC funding": "Awaiting GC funding",
   "Ready to turn in": "All bills paid → ready to turn in",
 };
-// QBO deep link for an invoice (redirects to the right company when you're logged in).
-const qboInvoiceUrl = id => `https://app.qbo.intuit.com/app/invoice?txnId=${encodeURIComponent(id)}`;
+// Company-scoped QBO deep link. The BARE app/invoice?txnId= form resolves the txn in
+// whatever Intuit company the browser is on - with more than one company logged in it
+// opens the WRONG company's txn. Routing through /app/login with deeplinkcompanyid pins
+// the company first (Intuit's own "copy link" form). Falls back to bare until the realm
+// loads (populated in the DB by load_costs; never printed). kind = 'invoice' | 'bill'.
+function qboUrl(kind, txnId) {
+  if (!txnId) return null;
+  const realm = meta && meta.qbo_realm;
+  if (realm) return `https://qbo.intuit.com/app/login?pagereq=${encodeURIComponent(kind + "?txnId=" + txnId)}&deeplinkcompanyid=${encodeURIComponent(realm)}`;
+  return `https://qbo.intuit.com/app/${kind}?txnId=${encodeURIComponent(txnId)}`;
+}
+const qboInvoiceUrl = id => qboUrl("invoice", id);
+// ap_bill_line.qbo_link holds a BARE bill URL (from the Bill Tracker's own hyperlink);
+// pull the txnId out and rebuild it company-scoped.
+function qboBillHref(link) {
+  if (!link) return null;
+  const m = String(link).match(/txnId=(\d+)/i);
+  return m ? qboUrl("bill", m[1]) : link;
+}
 // A left-aligned <td> whose text opens a QBO deep link in a new tab when `url` is
 // set; a plain cell otherwise. Used for bill/invoice numbers across the tables.
 function qboLinkCell(text, url, title) {
@@ -672,7 +689,7 @@ function buildBillsTable(d) {
   for (const b of d.bills) {
     const tr = document.createElement("tr");
     tr.appendChild(leftText(b.vendor || "—"));
-    tr.appendChild(qboLinkCell(b.bill_ref, b.qbo_link, "Open this bill in QuickBooks"));
+    tr.appendChild(qboLinkCell(b.bill_ref, qboBillHref(b.qbo_link), "Open this bill in QuickBooks"));
     tr.appendChild(leftText(fmtDate(b.bill_date)));
     const av = document.createElement("td"); av.appendChild(moneyCell(b.amount)); tr.appendChild(av);
     tr.appendChild(leftText(b.pay_date ? "✓ " + fmtDate(b.pay_date) : "—"));
@@ -974,7 +991,7 @@ function renderLiens() {
     let chip;
     if (r.qbo_link) {
       chip = document.createElement("a");
-      chip.href = r.qbo_link; chip.target = "_blank"; chip.rel = "noopener";
+      chip.href = qboBillHref(r.qbo_link); chip.target = "_blank"; chip.rel = "noopener";
       chip.title = "Open this bill in QuickBooks"; chip.onclick = (e) => e.stopPropagation();
       chip.className = "invno qbo-link";
     } else {

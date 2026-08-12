@@ -214,6 +214,12 @@ def run(db_path: Path, division, active, projects, since, dry_run, show):
     from shared.qbo_api import load_credentials, build_project_customer_map
     access, company_id = load_credentials()
     print("  authenticated.")  # never echo the realm/company id (owner 2026-08-06)
+    if not dry_run:            # stash the realm so the dashboard can build COMPANY-SCOPED
+        con.execute(           # QBO deep links (open the txn in the right Intuit company)
+            "INSERT INTO meta (key, value, loaded_at) VALUES ('qbo_realm', ?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value, loaded_at=excluded.loaded_at",
+            (company_id, dt.datetime.now().isoformat(timespec="seconds")))
+        con.commit()
 
     account_names = qc.build_account_map(access, company_id)
     proj_map = build_project_customer_map(access, company_id)

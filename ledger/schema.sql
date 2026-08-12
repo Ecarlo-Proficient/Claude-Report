@@ -321,3 +321,14 @@ SELECT COALESCE(last_edited_by, '(unknown)')                          AS rep,
        SUM(CASE WHEN sales_status = 'Closed - Won' THEN 1 ELSE 0 END) AS won
 FROM customer
 GROUP BY COALESCE(last_edited_by, '(unknown)');
+
+-- ── meta : tiny key/value for local runtime facts (NOT business data) ────────
+-- e.g. 'qbo_realm' = the company realm id, written by a loader that authenticates
+-- to QBO, so the dashboard can build COMPANY-SCOPED deep links (open the txn in the
+-- right Intuit company) without itself touching QBO/Keychain. Local DB only; the
+-- realm is never printed to a terminal or a log (owner rule).
+CREATE TABLE IF NOT EXISTS meta (
+    key        TEXT PRIMARY KEY,
+    value      TEXT,
+    loaded_at  TEXT
+);

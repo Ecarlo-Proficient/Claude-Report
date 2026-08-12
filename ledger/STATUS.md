@@ -422,6 +422,16 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     **Medium = 1500px** (between Boxed 1180 and Full 100%) in the Customize panel, and made it the new
     default - the owner wanted a width between boxed-narrow and full-wide ("chinese"). Verified live.
 
+  - **QBO deep links are company-scoped now (owner).** The bill/invoice links used the bare
+    `app/bill?txnId=` / `app/invoice?txnId=` form, which resolves the txn inside whatever Intuit company
+    the browser is on - a real "wrong company" risk with the affiliated entities. Matched invoice-sync's
+    fix: `load_costs` stashes the realm in a new local **`meta`** table (`qbo_realm`, **never printed**)
+    after it authenticates; `fetch_data` sends it in the payload; the front-end **`qboUrl(kind,txnId)`** /
+    **`qboBillHref(bareUrl)`** build the `/app/login?pagereq=…&deeplinkcompanyid=<realm>` form for invoice
+    AND bill links (liens chip + draw bills), falling back to bare until a sync writes the realm. Verified
+    end-to-end with a throwaway realm (payload read + rendered lien chip company-scoped + bare fallback);
+    the real realm lands on the next Resync (`load_costs`). ARCHITECTURE.md updated.
+
 ## IN PROGRESS
 - (none) — the P&L super-database (per-project + portfolio P&L, source links, in-app sync, QC) is landed,
   plus the draws Status column + QBO gap-fallback. Owner to trigger the first real **Resync** (Touch ID)
