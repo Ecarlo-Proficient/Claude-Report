@@ -197,6 +197,7 @@ function setTab(t) {
   $$(".tab-page").forEach(p => { p.hidden = p.dataset.tab !== t; });
   $$(".tab").forEach(b => b.classList.toggle("active", b.dataset.tabbtn === t));
   if (t === "pnl") renderPnl();     // portfolio P&L is computed server-side, lazy-loaded
+  if (typeof _csClear === "function") _csClear();   // drop any cell selection when the tab changes
   window.scrollTo(0, 0);
 }
 let PNL = null;                       // cached /api/pnl/portfolio result (invalidated on reload)
@@ -1813,6 +1814,96 @@ function wireSettings() {
 }
 
 // ── Wire up ───────────────────────────────────────────────────────────────
+// == Excel-style cell selection + running sum (click / drag / Cmd+click / Shift+click) ==
+// Select number cells across any table; a status bar (bottom-right) shows Sum / Count /
+// Avg, like Excel. Number cells only (dates, %, labels are skipped). Non-number cells
+// keep their normal click (open the row) and clear the selection.
+const _cs = { cells: new Set(), anchor: null, dragging: false, swallow: false, bar: null, sumText: "" };
+
+function _csNum(td) {
+  let t = (td.textContent || "").trim();
+  t = t.replace(/\s+\d+\/\d+$/, "");                     // drop a trailing "2/7" paid-count
+  if (!t || /[a-z]/i.test(t) || /%/.test(t)) return null; // letters (dates/labels) or percent -> not summable
+  const c = t.replace(/[$,\s]/g, "").replace(/^\((.*)\)$/, "-$1");   // ($123) -> -123
+  return /^-?\d+(\.\d+)?$/.test(c) ? parseFloat(c) : null;
+}
+function _csApply(list) {
+  _cs.cells.forEach(td => td.classList.remove("cell-sel"));
+  _cs.cells = new Set(list);
+  _cs.cells.forEach(td => td.classList.add("cell-sel"));
+}
+function _csToggle(td) { if (_cs.cells.has(td)) { _cs.cells.delete(td); td.classList.remove("cell-sel"); } else { _cs.cells.add(td); td.classList.add("cell-sel"); } }
+function _csClear() { _cs.cells.forEach(td => td.classList.remove("cell-sel")); _cs.cells.clear(); _cs.anchor = null; _csUpdate(); }
+
+function _csRange(a, b) {                                  // rectangular range within one table
+  const table = a.closest("table");
+  if (b.closest("table") !== table) return [b];
+  const rows = [...table.querySelectorAll("tr")];
+  const ra = rows.indexOf(a.parentElement), rb = rows.indexOf(b.parentElement);
+  const c0 = Math.min(a.cellIndex, b.cellIndex), c1 = Math.max(a.cellIndex, b.cellIndex);
+  const out = [];
+  for (let r = Math.min(ra, rb); r <= Math.max(ra, rb); r++) {
+    const cells = rows[r] ? rows[r].children : [];
+    for (let c = c0; c <= c1; c++) if (cells[c]) out.push(cells[c]);
+  }
+  return out;
+}
+
+function _csUpdate() {
+  if (!_cs.bar) return;
+  [..._cs.cells].forEach(td => { if (!td.isConnected) { _cs.cells.delete(td); } });   // drop cells lost to a re-render
+  const nums = [], money = [];
+  _cs.cells.forEach(td => { const n = _csNum(td); if (n !== null) { nums.push(n); money.push(/\$/.test(td.textContent || "")); } });
+  if (!nums.length) { _cs.bar.hidden = true; _cs.sumText = ""; return; }
+  const sum = nums.reduce((t, n) => t + n, 0), isMoney = money.every(Boolean);
+  const fmt = n => (isMoney ? "$" : "") + n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  _cs.sumText = fmt(sum);
+  _cs.bar.hidden = false;
+  _cs.bar.querySelector(".sb-sum").textContent = _cs.sumText;
+  _cs.bar.querySelector(".sb-meta").textContent = `Count ${nums.length} · Avg ${fmt(sum / nums.length)}`;
+}
+
+function initCellSelect() {
+  const bar = document.createElement("div"); bar.className = "sumbar"; bar.hidden = true;
+  bar.innerHTML = '<span class="sb-label">Σ</span><span class="sb-sum"></span>'
+    + '<span class="sb-meta"></span><button class="sb-copy" title="Copy the sum">Copy</button>'
+    + '<button class="sb-x" title="Clear (Esc)">✕</button>';
+  document.body.appendChild(bar); _cs.bar = bar;
+  bar.querySelector(".sb-x").onclick = _csClear;
+  bar.querySelector(".sb-copy").onclick = () => { if (_cs.sumText && navigator.clipboard) { navigator.clipboard.writeText(_cs.sumText); toast("Copied " + _cs.sumText); } };
+
+  const cellAt = e => { const td = e.target.closest("table.grid td"); return (td && !e.target.closest("a,button,input,label,select")) ? td : null; };
+
+  document.addEventListener("mousedown", e => {
+    const td = cellAt(e); if (!td) return;
+    const mod = e.metaKey || e.ctrlKey;
+    if (!mod && !e.shiftKey && _csNum(td) === null) return;   // plain click on a non-number -> leave it (row can open)
+    e.preventDefault();
+    if (e.shiftKey && _cs.anchor) _csApply(_csRange(_cs.anchor, td));
+    else if (mod) { _csToggle(td); _cs.anchor = td; }
+    else { _csApply([td]); _cs.anchor = td; _cs.dragging = true; }
+    _cs.swallow = true; _csUpdate();
+  }, true);
+
+  document.addEventListener("mouseover", e => {
+    if (!_cs.dragging || !_cs.anchor) return;
+    const td = e.target.closest("table.grid td"); if (!td) return;
+    _csApply(_csRange(_cs.anchor, td)); _csUpdate();
+  }, true);
+
+  document.addEventListener("mouseup", () => { _cs.dragging = false; }, true);
+
+  document.addEventListener("click", e => {
+    if (_cs.swallow) { _cs.swallow = false; e.stopPropagation(); e.preventDefault(); return; }   // a selecting click must not also open a row
+    if (_cs.cells.size && !e.target.closest(".sumbar")) _csClear();                              // click-away clears
+  }, true);
+
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape" && _cs.cells.size) _csClear();
+    else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "c" && _cs.sumText && navigator.clipboard && _cs.cells.size) navigator.clipboard.writeText(_cs.sumText);
+  });
+}
+
 function init() {
   applySettings();
   syncSettingsUI();
@@ -1836,6 +1927,7 @@ function init() {
   let savedTab = "home";
   try { savedTab = localStorage.getItem("proficient-ledger-tab") || "home"; } catch { /* ignore */ }
   setTab(savedTab);
+  initCellSelect();   // Excel-style click/drag cell selection + running-sum bar
   setInterval(() => { if (!syncing) load(true); }, 90000);   // live: soft auto-refresh (paused during a resync)
   $("#btnCloseSettings").onclick = closePanels;
   $("#btnCloseDetail").onclick = closePanels;

@@ -407,6 +407,16 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     stays offline. Verified: mapping (Paid/Partial/Unpaid + project extract), gap-finder = 8, selftest, dry-run.
     The real fill is owner-triggered (Touch ID) via Resync or `load_invoices`.
 
+  - **Excel-style cell selection + running sum (owner: "everyone here uses this").** Click a number
+    cell to select it; **drag** for a rectangular range, **Cmd/Ctrl+click** to add cells, **Shift+click**
+    to extend. A floating status bar (bottom-right, like Excel) shows **Sum / Count / Avg** with a Copy
+    button; Esc or a click-away clears. Number cells only (dates, %, labels, and the trailing "2/7"
+    paid-count are skipped); the `$` prefix shows only when every selected cell is money. Works across
+    every `.grid` table app-wide, survives re-renders (detached cells drop from the selection), and does
+    NOT hijack normal clicks - text cells still open the row. Pure front-end (`initCellSelect` in app.js
+    + `.sumbar`/`.cell-sel` CSS). Verified: sum reconciles, drag/Cmd/Shift/Esc/click-away all work, no
+    console errors.
+
 ## IN PROGRESS
 - (none) — the P&L super-database (per-project + portfolio P&L, source links, in-app sync, QC) is landed,
   plus the draws Status column + QBO gap-fallback. Owner to trigger the first real **Resync** (Touch ID)
