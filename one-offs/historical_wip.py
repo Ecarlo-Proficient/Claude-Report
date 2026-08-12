@@ -34,6 +34,7 @@ sys.path.insert(0, str(_REPO))
 sys.path.insert(0, str(_REPO / "wip"))
 sys.path.insert(0, str(_REPO / "one-offs"))
 from shared import qbo_api                                    # noqa: E402
+from shared.takeoff_etc import find_takeoff_etc               # noqa: E402
 from shared.xlsx_verify import assert_clean, safe_table_name  # noqa: E402
 import rp_wip_reader as RP                                    # noqa: E402
 import rp_schedule_wip_preview as P                           # noqa: E402  (schedule + proposal)
@@ -64,6 +65,13 @@ CP_COLS = [
     ("Total Retainage", "RETAINAGE"),
 ]
 MFD_COLS = CP_COLS  # same header names on the MFD tab
+
+# Output column order for the CP/MFD tabs: snapshot fields + the two we add
+# (the user 2026-08-08) — ETC (budget, from the takeoff) and QBO COSTS as of the
+# date. Costs are date-bounded so nothing after the report date is included.
+DIV_OUT = ["STATUS", "PROJECT", "CUSTOMER", "CONTRACT", "CHANGE ORDERS",
+           "REVISED CONTRACT", "ETC (budget)", "BILLED TO DATE",
+           "COSTS (as of date)", "% COMPLETE", "BALANCE TO FINISH", "RETAINAGE"]
 
 HDR_FILL = PatternFill("solid", fgColor="D9D9D9")
 _thin = Side(style="thin", color="000000")
@@ -121,10 +129,12 @@ def read_division(xlsb_path: Path, tab: str, colspec):
     return out, [o for _, o in colspec]
 
 
-def _write_tab(ws, title, subtitle, rows, out_labels, table_name):
+_MONEY_WORDS = ("CONTRACT", "ETC", "BILLED", "COSTS", "RETAINAGE", "BALANCE", "ORDERS")
+
+
+def _write_tab(ws, title, subtitle, rows, headers, table_name):
     ws.cell(1, 1, title).font = Font(name=FONT, size=11, bold=True)
     ws.cell(2, 1, subtitle).font = Font(name=FONT, size=8)
-    headers = ["STATUS"] + out_labels
     hdr = 4
     for c, label in enumerate(headers, 1):
         cell = ws.cell(hdr, c, label)
@@ -132,7 +142,8 @@ def _write_tab(ws, title, subtitle, rows, out_labels, table_name):
         cell.font = Font(name=FONT, size=8, bold=True)
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         cell.border = BORDER
-    widths = {"PROJECT": 26, "CUSTOMER": 22, "STATUS": 11}
+    widths = {"PROJECT": 26, "CUSTOMER": 22, "STATUS": 11, "ETC (budget)": 13,
+              "COSTS (as of date)": 14, "BILLED TO DATE": 14}
     for c, label in enumerate(headers, 1):
         ws.column_dimensions[ws.cell(hdr, c).column_letter].width = widths.get(label, 15)
     for i, rec in enumerate(rows, hdr + 1):
@@ -140,10 +151,10 @@ def _write_tab(ws, title, subtitle, rows, out_labels, table_name):
             cell = ws.cell(i, c, rec.get(label))
             cell.font = Font(name=FONT, size=8)
             cell.border = BORDER
-            if label in ("CONTRACT", "CHANGE ORDERS", "REVISED CONTRACT",
-                         "BILLED TO DATE", "RETAINAGE"):
+            up = label.upper()
+            if any(w in up for w in _MONEY_WORDS):
                 cell.number_format = MONEY
-            elif label == "% COMPLETE":
+            elif "%" in label or "COMPLETE" in up:
                 cell.number_format = PCT
     last = hdr + len(rows)
     if rows:
@@ -156,7 +167,7 @@ def _write_tab(ws, title, subtitle, rows, out_labels, table_name):
 
 
 RP_COLS = ["PROJECT", "ADDRESS", "BUILDER", "SCOPE", "CONTRACT", "CONTRACT SOURCE",
-           "BILLED (as of date)", "COSTS (as of date)", "NOTES"]
+           "ETC (budget)", "BILLED (as of date)", "COSTS (as of date)", "NOTES"]
 
 # schedule task-section title → the scope it implies. Punch-list sections are by
 # superintendent name (people) — skipped: not tracked, and we store no names.
@@ -304,7 +315,7 @@ def build_rp(date_key, access, cid, proj_map, folders_idx):
         folder = RP.match_by_address(
             {"house": parts[0] if parts else "",
              "street": parts[1] if len(parts) > 1 else addr}, addr_folders)
-        rp_num, contract, csrc, note = None, None, "", ""
+        rp_num, contract, csrc, note, etc = None, None, "", "", None
         if folder is not None:
             # The RP# lives in the FILE names inside the address folder
             # (RP####_ADDRESS…), not the folder name itself.
@@ -326,6 +337,13 @@ def build_rp(date_key, access, cid, proj_map, folders_idx):
         else:
             note = "unmatched address — verify job"
         line = f"{rp_num}-FTW" if (rp_num and scope == "ftw") else rp_num
+        # ETC (budget) from the takeoff cost sheet — needs the job # to find it.
+        if folder is not None and rp_num:
+            try:
+                _pp2, etc, _n2, _f2 = find_takeoff_etc(
+                    folder, rp_num, "slab" if scope == "wreck" else scope, j["desc"])
+            except Exception:
+                etc = None
         billed = costs = None
         cust = (proj_map.get(line) or proj_map.get(rp_num)) if rp_num else None
         if cust:
@@ -347,10 +365,18 @@ def build_rp(date_key, access, cid, proj_map, folders_idx):
                 and billed > 1000 and contract < 0.9 * billed):
             note = (note + "; " if note else "") + \
                 f"contract < billed (${contract:,.0f} vs ${billed:,.0f}) — verify"
+        # A takeoff ETC far below the contract is a broken/partial cost sheet
+        # (find_takeoff_etc picked a takeoff whose subtotal cell was unreadable).
+        # Drop it rather than show a wrong budget.
+        if (isinstance(etc, (int, float)) and isinstance(contract, (int, float))
+                and contract > 5000 and etc < 0.3 * contract):
+            note = (note + "; " if note else "") + f"takeoff ETC ${etc:,.0f} partial — dropped"
+            etc = None
         rows.append({
             "PROJECT": line or "(unmatched)", "ADDRESS": addr, "BUILDER": j["builder"],
             "SCOPE": scope, "CONTRACT": contract, "CONTRACT SOURCE": csrc,
-            "BILLED (as of date)": billed, "COSTS (as of date)": costs, "NOTES": note,
+            "ETC (budget)": etc, "BILLED (as of date)": billed,
+            "COSTS (as of date)": costs, "NOTES": note,
         })
     matched = sum(1 for r in rows if r["PROJECT"] != "(unmatched)")
     with_k = sum(1 for r in rows if isinstance(r["CONTRACT"], (int, float)))
@@ -380,7 +406,7 @@ def _write_rp_tab(ws, label, rows):
             cell = ws.cell(i, c, rec.get(label_))
             cell.font = Font(name=FONT, size=8)
             cell.border = BORDER
-            if label_ in ("CONTRACT", "BILLED (as of date)", "COSTS (as of date)"):
+            if label_ in ("CONTRACT", "ETC (budget)", "BILLED (as of date)", "COSTS (as of date)"):
                 cell.number_format = MONEY
             if label_ in ("NOTES", "ADDRESS", "BUILDER", "CONTRACT SOURCE"):
                 cell.alignment = Alignment(vertical="top", wrap_text=True)
@@ -393,25 +419,108 @@ def _write_rp_tab(ws, label, rows):
     ws.freeze_panes = f"A{hdr+1}"
 
 
-def build(date_key: str, out_dir: Path, qbo=None, folders_idx=None) -> Path:
+def _proj_key(division, proj):
+    """Snapshot PROJECT text → QBO project key. CP/RP carry their prefix; MFD
+    rows are just a number in the snapshot, so prepend 'MFD'."""
+    up = str(proj or "").upper()
+    if division == "MFD":
+        m = re.match(r"\s*(\d{2,4})", up)
+        return f"MFD{m.group(1)}" if m else None
+    m = qbo_api.PROJ_RE.search(up)
+    return m.group(1) if m else None
+
+
+def _qbo_cost_asof(pkey, end_iso, access, cid, proj_map, cache):
+    """QBO costs (COGS+expenses) for a project dated on/before end_iso, cached
+    so a project shared by phases is pulled once."""
+    if not pkey:
+        return None
+    ck = (pkey, end_iso)
+    if ck not in cache:
+        cust = proj_map.get(pkey)
+        val = None
+        if cust:
+            _b, c = _pl_totals(access, cid, cust["id"], end_iso)
+            val = c if isinstance(c, (int, float)) else None
+        cache[ck] = val
+    return cache[ck]
+
+
+def _index_cp_folders():
+    """CP# → project folder from the Commercial root (active + completed) for
+    reading the commercial takeoff's ETC. One shallow listing."""
+    import cp_wip_reader as CPR
+    idx = {}
+    for root in (CPR.CP_ACTIVE_DIR, CPR.CP_COMPLETED_DIR):
+        try:
+            for entry in root.iterdir():
+                if not entry.is_dir():
+                    continue
+                m = re.search(r"(CP\d{3,4})", entry.name.upper())
+                if m and m.group(1) not in idx:
+                    idx[m.group(1)] = entry
+        except OSError:
+            pass
+    return idx
+
+
+def _enrich_division(rows, division, end_iso, access, cid, proj_map, cost_cache, cp_folders):
+    """Add QBO COSTS (dated on/before end_iso) and ETC (from the takeoff) to the
+    snapshot rows. A QBO project shared by phases is credited once (first row).
+    MFD has no folder root on this volume, so MFD ETC stays blank."""
+    assigned = set()
+    for r in rows:
+        pkey = _proj_key(division, r.get("PROJECT"))
+        cost = _qbo_cost_asof(pkey, end_iso, access, cid, proj_map, cost_cache)
+        if pkey and pkey in assigned:
+            r["COSTS (as of date)"] = None            # phase — booked on the parent row
+        else:
+            r["COSTS (as of date)"] = cost
+            if pkey:
+                assigned.add(pkey)
+        etc = None
+        if division == "CP":
+            cpm = re.search(r"(CP\d{3,4})", str(r.get("PROJECT") or "").upper())
+            fol = cp_folders.get(cpm.group(1)) if cpm else None
+            if fol is not None:
+                try:
+                    _p, etc, _n, _f = find_takeoff_etc(fol, cpm.group(1), "slab", "")
+                except Exception:
+                    etc = None
+        rev = r.get("REVISED CONTRACT")
+        if (isinstance(etc, (int, float)) and isinstance(rev, (int, float))
+                and rev > 5000 and etc < 0.3 * rev):
+            etc = None                                # partial/broken cost sheet
+        r["ETC (budget)"] = etc
+
+
+def build(date_key: str, out_dir: Path, qbo=None, folders_idx=None,
+          cp_folders=None, cost_cache=None) -> Path:
     snap, label = DATES[date_key]
     xlsb = WIP_HISTORY / snap
     if not xlsb.exists():
         raise FileNotFoundError(f"snapshot not found: {xlsb}")
-    cp, cp_h = read_division(xlsb, "WIP - CP", CP_COLS)
-    mfd, mfd_h = read_division(xlsb, "WIP - MFD", MFD_COLS)
+    cp, _ = read_division(xlsb, "WIP - CP", CP_COLS)
+    mfd, _ = read_division(xlsb, "WIP - MFD", MFD_COLS)
     rp = []
     if qbo and folders_idx:
+        end_iso = SCHEDULES[date_key][1]
+        _enrich_division(cp, "CP", end_iso, qbo[0], qbo[1], qbo[2],
+                         cost_cache if cost_cache is not None else {}, cp_folders or {})
+        _enrich_division(mfd, "MFD", end_iso, qbo[0], qbo[1], qbo[2],
+                         cost_cache if cost_cache is not None else {}, cp_folders or {})
         rp = build_rp(date_key, qbo[0], qbo[1], qbo[2], folders_idx)
     seen = set()
     wb = Workbook()
     _write_tab(wb.active, f"WIP as of {label} — COMMERCIAL",
-               f"from snapshot '{snap}' · WIP - CP tab · billing-based (no cost column in source)",
-               cp, cp_h, safe_table_name("histCP", seen))
+               f"from snapshot '{snap}' · WIP - CP tab · ETC from the commercial takeoff · "
+               f"COSTS from QBO dated on/before {label}",
+               cp, DIV_OUT, safe_table_name("histCP", seen))
     wb.active.title = "CP"
     _write_tab(wb.create_sheet("MFD"), f"WIP as of {label} — MULTI-FAMILY",
-               f"from snapshot '{snap}' · WIP - MFD tab", mfd, mfd_h,
-               safe_table_name("histMFD", seen))
+               f"from snapshot '{snap}' · WIP - MFD tab · COSTS from QBO dated on/before "
+               f"{label} (phased jobs credited once) · ETC has no folder source for MFD",
+               mfd, DIV_OUT, safe_table_name("histMFD", seen))
     rp_ws = wb.create_sheet("RP")
     if qbo:
         _write_rp_tab(rp_ws, label, rp)
@@ -436,15 +545,18 @@ def main() -> int:
     out_dir = Path(args.out).expanduser()
     keys = list(DATES) if args.date == "all" else [args.date]
     print("\n  HISTORICAL WIP — MFD/CP (snapshots) + RP (schedule/proposal/QBO)")
-    qbo = folders_idx = None
+    qbo = folders_idx = cp_folders = None
+    cost_cache = {}
     if not args.skip_rp:
         access, cid = qbo_api.load_credentials()          # one Touch ID
         proj_map = qbo_api.build_project_customer_map(access, cid)
         qbo = (access, cid, proj_map)
         print("  indexing residential folders for proposals …")
         folders_idx = RP.index_residential(RP.RP_ROOT)
+        print("  indexing commercial folders for CP ETC …")
+        cp_folders = _index_cp_folders()
     for k in keys:
-        build(k, out_dir, qbo, folders_idx)
+        build(k, out_dir, qbo, folders_idx, cp_folders, cost_cache)
     return 0
 
 
