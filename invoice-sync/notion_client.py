@@ -147,6 +147,29 @@ class NotionClient:
     def update_page(self, page_id: str, properties: dict) -> dict:
         return self._request("PATCH", f"/pages/{page_id}", {"properties": properties})
 
+    def append_paragraph(self, page_id: str, text: str) -> dict:
+        """Append a paragraph block to a page's body.
+
+        Notion appends to the END of the body (there is no prepend). The invoice
+        pages this is used on carry only properties and an empty body, so the
+        first appended line IS the page's first line, and successive lines read as
+        a chronological status log. Used to keep a prior Quick Status when a note
+        replaces it (the user 2026-08-11). `text` is truncated to Notion's 2000-
+        char rich-text limit.
+        """
+        body = {
+            "children": [
+                {
+                    "object": "block",
+                    "type": "paragraph",
+                    "paragraph": {
+                        "rich_text": [{"type": "text", "text": {"content": text[:2000]}}]
+                    },
+                }
+            ]
+        }
+        return self._request("PATCH", f"/blocks/{page_id}/children", body)
+
     def archive_page(self, page_id: str) -> dict:
         """
         Soft-delete (archive) a page. Notion does not hard-delete via the API;

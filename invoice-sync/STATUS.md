@@ -7,6 +7,44 @@ mirror. Update this in the SAME commit as any change to this tool.
 
 ## DONE / FINALIZED
 
+- **Collections tab upgrades (2026-08-11, the user):**
+  - **QBO links fixed — company-scoped deep links.** `qbo_client.invoice_deep_link`
+    now builds Intuit's own `/app/login?pagereq=invoice%3FtxnId%3D<id>&deeplinkcompanyid=<realm>`
+    form. The old bare `app/invoice?txnId=` link carried no company, so with more
+    than one Intuit company on the login it opened a *different* company's
+    transaction — the "random invoice" the owner hit. Realm comes from the loaded
+    creds (never source/logs). Fixed at all writers: sync props, MFD Teams card,
+    paid-flip fallback, `resend_mfd_paid`. Notion + Excel + Teams all inherit it
+    on the next sync. **Verified** invoice 34431 → txnId 1313157 against the QBO API.
+  - **Aging tabs: `Open Balance` then `Total Amount`, with a per-row data bar.**
+    Open balance first, invoice total beside it; a blue data bar on Open Balance
+    scaled by FORMULA to that row's Total Amount cell, so its fill = open ÷ total
+    (full = untouched, short = partly collected). Summary + grand rows scale to
+    their own sums. `C_INVTOTAL` added to the grid; `total_amount` added to the
+    aging record (falls back to open balance so the bar never divides by zero).
+  - **Excel Notes are a two-way status channel** (`notes_preserve.py`). The clerk
+    writes **Notes** (legacy yellow sticky, author attached — NOT threaded
+    Comments, which openpyxl can't read; verified the live file has zero threaded
+    comments). Two scopes, both anchored on the Invoice # column: per-invoice on a
+    detail row, per-client on a summary `N inv` cell (covers all that client's open
+    invoices; a per-invoice Note wins its own row). Two modes:
+    - **PRESERVE (default)** — re-attach every Note verbatim so nothing is lost on
+      the rebuild. No Notion writes. Round-trip tested on the live file: 11
+      per-invoice + 3 per-client, exact.
+    - **ABSORB (default for sync-ar; `ABSORB_NOTES=0` disables; the user 2026-08-11)**
+      - a Note IS the status. Its text (stamped ` – Name, M/D`, en dash never em
+      dash) replaces the Notes column, the cell Note is dropped, and it's **pushed
+      to Notion `Quick Status`**; the prior Quick Status is archived (dated) to the
+      page body (the documented **Collection Log**). This is the first time the sync
+      writes a human-owned field: deliberate, and **idempotent** (absorb only emits
+      a change when text differs, so re-runs push nothing / no duplicate log lines).
+      **Safety: a Note absorbs only if its Notion push SUCCEEDS** - a failed push
+      keeps the cell Note (re-attached, never lost) and retries next sync.
+    - `preview_export.py` runs **absorb + dry-run** against a throwaway path
+      (seeded from the live file): shows the absorbed Notes column, the removed
+      cell Notes, and logs the exact `Quick Status old → new` it WOULD push —
+      writing nothing to Notion or the live file. Absorb + push verified by
+      round-trip and mock-client payload tests.
 - **QBO → Notion AR sync** — open invoices to two Notion DBs (MFD isolated;
   Res/Com combined) routed by project-# prefix; sweeps paid; archives
   QBO-deleted via CDC; posts MFD pay events to Teams. Manual via `sync-ar`.
@@ -78,11 +116,17 @@ mirror. Update this in the SAME commit as any change to this tool.
 
 ## IN PROGRESS
 
-- Nothing open.
+- **Absorb is LIVE by default (the user 2026-08-11).** `sync-ar` now absorbs Notes
+  and pushes Quick Status. Watch the FIRST live run: confirm the prior Quick Status
+  lands in the page Collection Log and the note text becomes Quick Status, and that
+  no push-failure warnings appear (which would mean Quick Status is not the rich_text
+  type this assumes). `python3 preview_export.py` is the always-safe dry-run preview.
+  `ABSORB_NOTES=0 sync-ar` falls back to preserve mode if needed.
 
 ## TO DO
 
-- Nothing queued.
+- Collection Log lines append oldest-first (Notion has no prepend). If the owner
+  wants newest-first, that needs a read-reorder-rewrite of the page body.
 
 ## OPEN ISSUES
 

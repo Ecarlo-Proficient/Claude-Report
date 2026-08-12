@@ -33,7 +33,7 @@ def _fetch(creds, doc_number: str):
     return rows[0] if rows else None
 
 
-def _event_for(inv: dict, doc_number: str, hierarchy: dict) -> dict:
+def _event_for(inv: dict, doc_number: str, hierarchy: dict, company_id: str) -> dict:
     raw = (inv.get("CustomerRef") or {}).get("name", "").strip()
     # PARENT customer (GC / developer), not the project-# sub-customer.
     customer = _resolve_parent_customer(inv, hierarchy) or raw
@@ -46,7 +46,7 @@ def _event_for(inv: dict, doc_number: str, hierarchy: dict) -> dict:
         customer=customer or "(unknown customer)",
         amount=float(inv.get("TotalAmt") or 0.0),
         project=project or "",
-        qbo_link=f"https://app.qbo.intuit.com/app/invoice?txnId={inv.get('Id')}",
+        qbo_link=qbo_client.invoice_deep_link(company_id, str(inv.get("Id") or "")),
         line_items=_positive_line_items(inv),
     )
 
@@ -75,7 +75,7 @@ def main() -> int:
             print(f"  {dn}: NOT found in QBO — skipped")
             rc = 1
             continue
-        event = _event_for(inv, dn, hierarchy)
+        event = _event_for(inv, dn, hierarchy, creds.company_id)
         billed = ", ".join(f"{li['description']} +${li['amount']:,.2f}"
                            for li in event["line_items"]) or "(no positive lines)"
         if args.dry_run:

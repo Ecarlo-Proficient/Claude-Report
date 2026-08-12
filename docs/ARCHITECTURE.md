@@ -88,7 +88,7 @@ flowchart LR
     MFD[("Notion\nMFD Invoice DB")]:::out
     RES[("Notion\nRes/Com Invoice DB")]:::out
     TEAMS[("Teams\nMFD paid / short-pay cards")]:::out
-    XL["export_invoices_xlsx.py\n+ aging_sheet.py\n+ draw_chain.py\n+ shared/lien_clock.py"]:::tool
+    XL["export_invoices_xlsx.py\n+ aging_sheet.py\n+ notes_preserve.py\n+ draw_chain.py\n+ shared/lien_clock.py"]:::tool
     BTX[("Bill Tracker.xlsx\nOneDrive · READ-ONLY")]:::src
     OD[("OneDrive\nOpen_Invoices.xlsx\nOpen Invoices\nCP · MFD · RP Aging")]:::out
 
@@ -111,9 +111,33 @@ Support cast (same folder): `doctor.py` diagnostics · `verify_invoices.py` /
 (`CP Aging` · `MFD Aging` · `RP Aging`, no Division column)**, invoices grouped
 under the parent client and collapsed by default, the invoice number linked into
 QBO, the collections clerk's Notion `Quick Status` note carried across, a
-**`Lien` column** giving the Ch. 53 notice deadline, and litigation invoices
-excluded. It **reads** `Bill Tracker.xlsx` (the AP tool's output file, never its
-code — repo rule 3) for what is still owed to vendors.
+**`Lien` column** giving the Ch. 53 notice deadline, an **`Open Balance` → `Total
+Amount`** pair with a per-row data bar (bar fill = open ÷ that invoice's total,
+the user 2026-08-11), and litigation invoices excluded. It **reads**
+`Bill Tracker.xlsx` (the AP tool's output file, never its code — repo rule 3) for
+what is still owed to vendors.
+
+**QBO deep links are company-scoped** (`qbo_client.invoice_deep_link`, fixed
+2026-08-11): Intuit's `/app/login?pagereq=invoice…&deeplinkcompanyid=<realm>`
+form, not the bare `app/invoice?txnId=` — the bare link resolves the txnId inside
+whatever Intuit company the browser session is on and opens a *different*
+company's invoice. The realm comes from the loaded creds, never source/logs.
+
+**Excel Notes are a two-way status channel** (`notes_preserve.py`, 2026-08-11).
+The clerk writes collections Notes (legacy yellow sticky, author attached — **not**
+threaded Comments, which openpyxl can't read) on the aging tabs: per-invoice on a
+detail row, or per-client on a summary `N inv` cell (covers all that client's open
+invoices; a per-invoice Note wins its own row). Two modes:
+- **Preserve (default):** read Notes off the current file **before** overwriting
+  and re-attach them verbatim. No Notion writes.
+- **Absorb (default for `sync-ar`; `ABSORB_NOTES=0` disables):** the Note IS the
+  status. Its text (stamped ` – Name, M/D`, en dash) replaces the Notes column, the
+  cell Note is dropped, and it's pushed to Notion **`Quick Status`**; the prior
+  status is archived (dated) to the page body, the documented **Collection Log**.
+  The one place the sync writes a human-owned field: idempotent, and a Note absorbs
+  only if its push succeeds (a failed push keeps the cell Note, never lost).
+  `preview_export.py` runs absorb as a **dry-run** (logs the exact `Quick Status
+  old -> new`, writes nothing) against a throwaway file.
 
 **The MFD/CP draw-funding chain** is what those vendor columns actually answer.
 The GC funds draw N → we pay draw N's vendor bills → those vendors issue

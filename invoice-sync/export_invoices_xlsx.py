@@ -40,6 +40,7 @@ from openpyxl.utils import get_column_letter
 
 from notion_client import NotionClient
 from draw_chain import DrawChains
+from notes_preserve import read_notes, reapply_notes, absorb_into_records, PreservedNotes
 from aging_sheet import (
     DIVISION_TABS,
     DRAW_DIVISIONS,
@@ -230,6 +231,9 @@ def _aging_record(
     )
 
     return {
+        # Page id so an absorbed note can be mirrored up to this invoice's Notion
+        # Quick Status without a second lookup.
+        "page_id": page.get("id"),
         # The relation resolves to the PARENT customer (e.g. the GC), while
         # "Customer (raw)" is the project-level child ("MFD177 - MERRITT PARK").
         # Grouping needs the parent, so the raw name is only a last resort.
@@ -242,6 +246,11 @@ def _aging_record(
         "due_date": due_date,
         "days_past_due": (today - due_date).days if due_date else None,
         "open_balance": _number(props.get("Open balance")) or 0.0,
+        # Original invoice total — the Open Balance data bar on the aging tab is
+        # scaled to this (bar fill = open ÷ total). Fall back to the open balance
+        # so the bar is a full cell rather than dividing by a missing/zero total.
+        "total_amount": _number(props.get("Total Amount"))
+        or (_number(props.get("Open balance")) or 0.0),
         "memo": _text(props.get("Memo")),
         # "Quick Status" is where the collections clerk writes what's actually
         # happening on the invoice ("1st reminder", "Lien Notice Sent",
@@ -299,6 +308,45 @@ def _open_invoices(notion: NotionClient, ds_id: str) -> List[dict]:
     return list(notion.query_data_source(ds_id, filter_body=filter_body, page_size=100))
 
 
+def _push_absorbed_notes(notion: NotionClient, plans: List[dict], today: dt.date) -> List[dict]:
+    """Mirror absorbed notes to Notion: archive the prior Quick Status to the page
+    body (the documented 'Collection Log'), then set Quick Status to the note text.
+
+    Returns the list of plans whose push FAILED, so the caller can keep those cell
+    Notes rather than dropping them (a failed push must never lose a note). Order of
+    ops per invoice matters: set Quick Status FIRST, then append the archive line,
+    so a mid-way failure can't leave the old status archived while Quick Status
+    still holds it (which a re-run would then double-archive).
+
+    Idempotent across runs: absorb only emits a plan when the note text differs from
+    the current Quick Status, so a re-run finds them equal and plans nothing.
+    """
+    pushed = 0
+    failed: List[dict] = []
+    for p in plans:
+        page_id = p.get("page_id")
+        if not page_id:
+            log.warning("Absorb push: %s has no Notion page id, kept as a cell Note.", p["invoice_num"])
+            failed.append(p)
+            continue
+        try:
+            notion.update_page(
+                page_id,
+                {"Quick Status": {"rich_text": [{"text": {"content": p["new_text"][:2000]}}]}},
+            )
+            old = (p.get("old_quick_status") or "").strip()
+            if old:
+                # Prior status to the Collection Log (page body), dated, so the
+                # page reads as a chronological status history.
+                notion.append_paragraph(page_id, f"{today.month}/{today.day}: {old}")
+            pushed += 1
+        except Exception as e:  # noqa: BLE001 — one bad page shouldn't sink the run
+            failed.append(p)
+            log.warning("Absorb push failed for invoice %s (cell Note kept): %s", p["invoice_num"], e)
+    log.info("Absorb push: %d Quick Status updated in Notion (%d kept as cell Notes).", pushed, len(failed))
+    return failed
+
+
 def export_open_invoices_xlsx(
     *,
     notion: NotionClient,
@@ -307,10 +355,26 @@ def export_open_invoices_xlsx(
     customer_list_ds_id: str,
     mfd_client_list_ds_id: str,
     output_path: Optional[Path] = None,
+    absorb_notes: bool = False,
+    apply_notion: bool = False,
 ) -> Path:
     """
     Pull open invoices from both trackers, write a single Excel file
     formatted for the developer's collections workflow. Returns the output path.
+
+    Notes handling (the clerk's Excel Notes on the aging tabs):
+      * absorb_notes=False (default) — PRESERVE: re-attach every cell Note to its
+        row so nothing typed in Excel is lost on the rebuild. Quick Status (from
+        Notion) still drives the Notes column. Safe: no Notion writes.
+      * absorb_notes=True — ABSORB (the user 2026-08-11): a cell Note IS the new
+        status. Its text (stamped `— Name, M/D`) replaces the Notes column and the
+        cell Note is dropped (not re-attached). A per-client Note lands on every
+        open invoice of that client; a per-invoice Note wins its own row.
+      * apply_notion — only meaningful with absorb_notes. False = dry-run: log
+        exactly what WOULD be written to Notion Quick Status, write nothing. True =
+        push the absorbed text up to Notion. Absorb without a Notion push would
+        lose the note on the next pull, so the live flow must pair them; the
+        preview runs absorb + dry-run against a throwaway file (live copy safe).
     """
     # DEFAULT_EXPORT_PATH already resolved INVOICE_EXPORT_PATH via paths.get_path
     # (env var > machine.env > repo default) — don't re-resolve it here.
@@ -335,6 +399,11 @@ def export_open_invoices_xlsx(
             lock_file.name,
         )
         return target
+
+    # Read the clerk's Excel Notes off the current file BEFORE we rebuild it, so
+    # they survive the overwrite (the user 2026-08-11). The file isn't locked
+    # here (checked above), so this is a clean read of the last-synced workbook.
+    preserved = read_notes(target)
 
     log.info("Loading Notion customer caches for export…")
     res_com_titles = _build_customer_title_cache(notion, customer_list_ds_id)
@@ -441,6 +510,38 @@ def export_open_invoices_xlsx(
                 _aging_record(page, label, cache, today, vendor_map, chains)
             )
 
+    # ── Notes: absorb the clerk's cell Notes as the new status, or preserve them ──
+    # Absorb rewrites the Notes column HERE (before the sheets are built) for the
+    # invoices whose Notion push succeeded; a failed push instead keeps the cell
+    # Note (collected in `keep`) so it is never lost. In preserve mode `keep` is
+    # unused and every cell Note is re-attached after the build.
+    keep = PreservedNotes({}, {})
+    if absorb_notes and preserved.total():
+        note_plans = absorb_into_records(preserved, aging_records, today)
+        log.info(
+            "Notes ABSORB: %d invoice row(s) take a cell Note as their status.",
+            len(note_plans),
+        )
+        for p in note_plans:
+            verb = "PUSH" if apply_notion else "would push (dry-run)"
+            log.info(
+                "  %s %s [%s] Quick Status: %r -> %r",
+                verb, p["invoice_num"], p["scope"], p["old_quick_status"], p["new_text"],
+            )
+        # Dry-run (preview) never writes Notion, so treat every plan as applied for
+        # the throwaway file; a real run only applies the ones that actually pushed.
+        failed = _push_absorbed_notes(notion, note_plans, today) if apply_notion else []
+        failed_plan_ids = {id(p) for p in failed}
+        for p in note_plans:
+            if id(p) in failed_plan_ids:
+                if p["scope"] == "invoice":
+                    keep.per_invoice[(p["sheet"], p["invoice_num"])] = p["saved"]
+                else:
+                    keep.per_client[(p["sheet"], p["client"])] = p["saved"]
+            else:
+                # Absorbed: the Note becomes this row's Notes column value.
+                p["rec"]["notes"] = p["new_text"]
+
     # One tab per division (the user 2026-08-10 — "keep cp and mfd separated").
     # There is no Division column any more: the tab IS the division, so a column
     # repeating it on every row earns nothing.
@@ -463,6 +564,20 @@ def export_open_invoices_xlsx(
         "Aging tabs: %s (%d litigation excluded)",
         " · ".join(counts), sum(litigation_excluded.values()),
     )
+
+    # Re-attach cell Notes:
+    #   ABSORB  → only those whose Notion push FAILED (kept so they're not lost);
+    #             absorbed Notes have become the Notes column value and are dropped.
+    #   PRESERVE → every cell Note, so nothing typed in Excel is lost on regen.
+    if absorb_notes:
+        if keep.total():
+            log.warning(
+                "%d note(s) could not push to Notion this run and were kept as cell "
+                "Notes (not lost); they'll retry next sync.", keep.total(),
+            )
+            reapply_notes(wb, keep)
+    elif preserved.total():
+        reapply_notes(wb, preserved)
 
     # Write
     target.parent.mkdir(parents=True, exist_ok=True)

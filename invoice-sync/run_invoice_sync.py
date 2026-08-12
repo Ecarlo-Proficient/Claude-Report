@@ -117,12 +117,22 @@ def main() -> int:
     else:
         try:
             log.info("---- Flow: export_open_invoices_xlsx ----")
+            # Collections Notes are a two-way status channel (the user 2026-08-11):
+            # a cell Note on the aging tab becomes that invoice's Quick Status
+            # (pushed to Notion, prior status archived to the page's Collection
+            # Log) and the cell Note is dropped. This is ON by default for sync-ar.
+            # A failed Notion push keeps that cell Note (never lost). Set
+            # ABSORB_NOTES=0 to fall back to preserve mode (re-attach Notes only, no
+            # Notion writes). `python3 preview_export.py` shows it as a dry-run.
+            absorb = _os.getenv("ABSORB_NOTES", "1").lower() not in ("0", "false", "no")
             export_open_invoices_xlsx(
                 notion=notion,
                 res_com_ds_id=config.invoice_res_com_ds_id,
                 mfd_ds_id=config.invoice_mfd_ds_id,
                 customer_list_ds_id=config.customer_list_ds_id,
                 mfd_client_list_ds_id=config.mfd_client_list_ds_id,
+                absorb_notes=absorb,
+                apply_notion=absorb,
             )
         except Exception as e:
             # Don't fail the whole run if Excel export hiccups —

@@ -43,6 +43,27 @@ class QBOCredentials:
     company_id: str
 
 
+def invoice_deep_link(company_id: str, txn_id: str) -> str:
+    """Company-scoped deep link to a QBO invoice — Intuit's own 'copy link' form.
+
+    The bare ``app.qbo.intuit.com/app/invoice?txnId=<id>`` link carries no company:
+    the browser resolves that txnId inside WHATEVER Intuit company the session is
+    currently on. With more than one Intuit company on the login, that silently
+    opens a different company's transaction — the "random invoice" symptom. Routing
+    through ``/app/login`` with ``deeplinkcompanyid`` pins the company first, then
+    opens the invoice. This is exactly the URL the QBO API returns in an invoice's
+    ``link`` field. ``company_id`` is passed in (from the loaded creds) so the realm
+    never lands in source or logs.
+    """
+    from urllib.parse import quote
+
+    pagereq = quote(f"invoice?txnId={txn_id}", safe="")
+    return (
+        f"https://qbo.intuit.com/app/login?pagereq={pagereq}"
+        f"&deeplinkcompanyid={company_id}"
+    )
+
+
 def load_qbo_credentials() -> QBOCredentials:
     """
     Refresh the QBO access token using the stored refresh token.

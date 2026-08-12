@@ -54,6 +54,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.formatting.rule import DataBarRule
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
@@ -141,7 +142,12 @@ COLUMNS: List[Tuple[str, int, Optional[str]]] = [
     ("31-60",            14, '"$"#,##0.00'),
     ("61-90",            14, '"$"#,##0.00'),
     ("90+",              14, '"$"#,##0.00'),
-    ("Total Open",       15, '"$"#,##0.00'),
+    # Open Balance first, then the invoice's original Total Amount, so the pair
+    # reads open→total left-to-right (the user 2026-08-11). A data bar on Open
+    # Balance is scaled to that row's Total Amount, so its fill = how much of the
+    # invoice is still open (full bar = untouched, short bar = partly collected).
+    ("Open Balance",     15, '"$"#,##0.00'),
+    ("Total Amount",     15, '"$"#,##0.00'),
     ("Prev Draw",        11, None),
     ("Prev Draw Status", 19, None),
     ("Prev Bills Open",   9, "0"),
@@ -154,7 +160,9 @@ COLUMNS: List[Tuple[str, int, Optional[str]]] = [
 # 0-based positions used when writing rows (kept in sync with COLUMNS above).
 C_LABEL, C_PROJ, C_INV, C_DATE, C_DUE, C_LIEN = range(6)
 C_CURRENT, C_1_30, C_31_60, C_61_90, C_90 = range(6, 11)
-C_TOTAL, C_PREV, C_VSTATUS, C_VBILLS, C_VAMT, C_THIS, C_NOTES, C_ACTION = range(11, 19)
+# C_TOTAL = Open Balance (kept name for the sum-of-buckets), C_INVTOTAL = the
+# invoice's original Total Amount that the Open Balance bar is scaled against.
+C_TOTAL, C_INVTOTAL, C_PREV, C_VSTATUS, C_VBILLS, C_VAMT, C_THIS, C_NOTES, C_ACTION = range(11, 20)
 
 BUCKET_COLS = (C_CURRENT, C_1_30, C_31_60, C_61_90, C_90)
 
@@ -597,11 +605,13 @@ def build_aging_sheet(
     grand_vendor = 0.0
     grand_bills = 0
     grand_this = 0.0
+    grand_invtotal = 0.0
     for rec in invoices:
         grand[bucket_index(rec["days_past_due"])] += rec["open_balance"] or 0.0
         grand_vendor += rec["vendor_amount"] or 0.0
         grand_bills += rec["vendor_bills"] or 0
         grand_this += rec["this_draw_amount"] or 0.0
+        grand_invtotal += rec["total_amount"] or 0.0
 
     row_num = header_row + 1
     total_row: List[Any] = [""] * len(COLUMNS)
@@ -609,6 +619,7 @@ def build_aging_sheet(
     for logical, amount in zip(BUCKET_COLS, grand):
         total_row[logical] = amount or None
     total_row[C_TOTAL] = sum(grand)
+    total_row[C_INVTOTAL] = grand_invtotal or None
     total_row[C_VBILLS] = grand_bills or None
     total_row[C_VAMT] = grand_vendor or None
     total_row[C_THIS] = grand_this or None
@@ -630,11 +641,13 @@ def build_aging_sheet(
         vendor_sum = 0.0
         vendor_bills = 0
         this_sum = 0.0
+        invtotal_sum = 0.0
         for rec in records:
             buckets[bucket_index(rec["days_past_due"])] += rec["open_balance"] or 0.0
             vendor_sum += rec["vendor_amount"] or 0.0
             vendor_bills += rec["vendor_bills"] or 0
             this_sum += rec["this_draw_amount"] or 0.0
+            invtotal_sum += rec["total_amount"] or 0.0
 
         summary: List[Any] = [""] * len(COLUMNS)
         summary[C_LABEL] = parent
@@ -642,6 +655,7 @@ def build_aging_sheet(
         for logical, amount in zip(BUCKET_COLS, buckets):
             summary[logical] = amount or None
         summary[C_TOTAL] = sum(buckets)
+        summary[C_INVTOTAL] = invtotal_sum or None
         summary[C_VBILLS] = vendor_bills or None
         summary[C_VAMT] = vendor_sum or None
         summary[C_THIS] = this_sum or None
@@ -670,6 +684,7 @@ def build_aging_sheet(
             detail[C_LIEN] = rec["lien"].label
             detail[BUCKET_COLS[bucket_index(rec["days_past_due"])]] = rec["open_balance"]
             detail[C_TOTAL] = rec["open_balance"]
+            detail[C_INVTOTAL] = rec["total_amount"]
             detail[C_PREV] = rec["prev_draw"]
             detail[C_VSTATUS] = rec["vendor_status"]
             detail[C_VBILLS] = rec["vendor_bills"]
@@ -737,6 +752,26 @@ def build_aging_sheet(
             row_num += 1
 
     last_data_row = row_num - 1
+
+    # Open Balance data bar, scaled per row to that row's Total Amount (the user
+    # 2026-08-11 — "a bar of how much open balance is to the total"). The bar max
+    # is a FORMULA pointing at the Total Amount cell on the same row (column
+    # absolute, row relative), so Excel adjusts it down every row: a fully-open
+    # invoice fills the cell, a partly-collected one shows a short bar. Applies
+    # to the grand row through the last invoice — summary rows scale to their
+    # client's own open/total, so the bars stay coherent when collapsed.
+    if C_INVTOTAL in grid and last_data_row >= header_row + 1:
+        open_col = get_column_letter(grid.col(C_TOTAL))
+        tot_col = get_column_letter(grid.col(C_INVTOTAL))
+        first = header_row + 1
+        bar_rule = DataBarRule(
+            start_type="num", start_value=0,
+            end_type="formula", end_value=f"${tot_col}{first}",
+            color="FF5B9BD5", showValue=True, minLength=0, maxLength=100,
+        )
+        ws.conditional_formatting.add(
+            f"{open_col}{first}:{open_col}{last_data_row}", bar_rule
+        )
 
     # Legend, below the data so it never pushes the numbers down. Colour that
     # needs explaining is colour that failed, but the grey block is a deliberate

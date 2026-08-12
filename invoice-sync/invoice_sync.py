@@ -694,6 +694,7 @@ def _build_synced_properties(
     rec: InvoiceRecord,
     customer_page_id: Optional[str],
     include_division: bool,
+    company_id: str,
 ) -> Dict[str, Any]:
     """
     Build the dict of Notion properties for the QBO-sourced fields ONLY.
@@ -702,7 +703,7 @@ def _build_synced_properties(
     """
     today_iso = dt.date.today().isoformat()
     aging_bucket = _compute_aging_bucket(rec.due_date)
-    qbo_link = f"https://app.qbo.intuit.com/app/invoice?txnId={rec.qbo_id}"
+    qbo_link = qbo_client.invoice_deep_link(company_id, rec.qbo_id)
     props: Dict[str, Any] = {
         "Invoice #": _ts_prop_title(rec.invoice_num),
         "Invoice ID": _ts_prop_rich_text(rec.qbo_id),
@@ -801,9 +802,10 @@ def _upsert_one(
     invoice_cache: Dict[str, InvoiceCacheEntry],
     summary: InvoiceSyncSummary,
     dry_run: bool,
+    company_id: str,
     teams_webhook_url: str = "",
 ) -> None:
-    props = _build_synced_properties(rec, customer_page_id, include_division)
+    props = _build_synced_properties(rec, customer_page_id, include_division, company_id)
     entry = invoice_cache.get(rec.qbo_id)
     existing_page_id = entry.page_id if entry else None
     prior_status = entry.prior_status if entry else ""
@@ -847,7 +849,7 @@ def _upsert_one(
         and rec.balance < prior_open_balance
     ):
         partial_amount = max(prior_open_balance - rec.balance, 0.0)
-        qbo_link = f"https://app.qbo.intuit.com/app/invoice?txnId={rec.qbo_id}"
+        qbo_link = qbo_client.invoice_deep_link(company_id, rec.qbo_id)
         notify_invoice_event(
             teams_webhook_url,
             event_type="short_pay",
@@ -1009,8 +1011,11 @@ def _flip_open_to_paid_when_qbo_no_longer_open(
                 customer = _rich_text(props.get("Customer (raw)")) or "(unknown customer)"
                 project = _rich_text(props.get("Project #")) or ""
                 total_amt = float((props.get("Total Amount") or {}).get("number") or 0.0)
-                qbo_link = (props.get("QBO Link") or {}).get("url") or \
-                    f"https://app.qbo.intuit.com/app/invoice?txnId={inv_id}"
+                qbo_link = (props.get("QBO Link") or {}).get("url") or (
+                    qbo_client.invoice_deep_link(qbo_creds.company_id, inv_id)
+                    if qbo_creds is not None
+                    else f"https://app.qbo.intuit.com/app/invoice?txnId={inv_id}"
+                )
 
                 # Pull the invoice from QBO for (a) its positive line items and
                 # (b) the resolved PARENT customer (the GC / developer, not the
@@ -1341,6 +1346,7 @@ def sync_qbo_invoices_to_notion(
                 invoice_cache=invoice_cache,
                 summary=summary,
                 dry_run=dry_run,
+                company_id=qbo.company_id,
                 teams_webhook_url=teams_webhook_mfd_paid,
             )
 

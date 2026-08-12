@@ -55,7 +55,7 @@ def main() -> int:
         customer="TEST CUSTOMER (webhook wiring test)",
         amount=8995.67,
         project="MFD999",
-        qbo_link="https://app.qbo.intuit.com/app/invoice?txnId=99999",
+        qbo_link="https://qbo.intuit.com/app/login?pagereq=invoice%3FtxnId%3D99999&deeplinkcompanyid=TESTREALM",
         line_items=[
             {"description": "Draw 5 - Slab & Foundation", "amount": 12345.67},
             {"description": "Retainage Billed", "amount": 650.00},
