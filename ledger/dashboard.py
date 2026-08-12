@@ -225,7 +225,7 @@ def _pipelines():
             {"label": "Pull costs (90d, Touch ID)", "script": "ledger/load_costs.py", "args": ["--active", "--since", since]},
         ]},
         {"key": "ap", "label": "AP - bills + liens", "steps": [
-            {"label": "Sync bills (QBO -> Bill Tracker.xlsx)", "script": "bill-tracker/qbo_bill_tracker.py", "args": [], "side": True},
+            {"label": "Sync bills (QBO -> Bill Tracker.xlsx)", "script": "bill-tracker/excel_bill_sync.py", "args": [], "side": True},
             {"label": "Load bills -> ledger", "script": "ledger/load_bill_tracker.py", "args": []},
         ]},
         {"key": "ar", "label": "AR - invoices / draws", "steps": [

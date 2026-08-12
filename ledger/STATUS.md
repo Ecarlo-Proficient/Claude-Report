@@ -466,6 +466,17 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     duplicate "P&L" heading is hidden. `pnlExpanded` Set. Verified: expands inline, side panel does NOT
     open, no console errors. (Other detail entry points still use the slide-over; only the P&L changed.)
 
+  - **FIX: Console AP producer pointed at the LEGACY script.** The Console's AP pipeline ran
+    `bill-tracker/qbo_bill_tracker.py`, which is legacy (writes `_legacy_bill_payment_tracker.xlsx`). The
+    real AP sync that produces the `Bill Tracker.xlsx` the ledger reads (OneDrive `Automations-/`) is
+    **`bill-tracker/excel_bill_sync.py`** (what `run_tracker.sh` runs). Fixed the AP producer to
+    `excel_bill_sync.py`. Caught by reading the code while building the cheat sheet.
+  - **Cheat sheet / FAQ (owner).** New `docs/CHEATSHEET.md` - a task-oriented "how do I run it" for every
+    tool from the terminal (leads with: most syncs are now one click in the Console). Worked example: the
+    **statement reconciler inbox sweep** - `python3 statement-reconciler/statement_reconciler.py --inbox`
+    scans the Synology **Accounting** share (`/Volumes/Accounting/Automations/Vendor Statements`), `--yes`
+    for unattended, single-file + `--vendor` forms too. Commands are repo-root-relative (no `/Users` paths).
+
 ## IN PROGRESS
 - (none) - super-database + Console (control plane) landed. Owner to validate the producer Runs (AR/AP)
   and the draft-WIP button with a real click (they fire real syncs + Touch ID).
