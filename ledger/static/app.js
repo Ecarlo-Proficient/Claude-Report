@@ -60,7 +60,7 @@ function deriveMetrics(r) {
 const LS_KEY = "proficient-ledger-settings-v1";
 const DEFAULTS = {
   theme: "auto", accent: "#3E7A5C", font: "system", fontSize: 14,
-  density: "comfortable", width: "boxed",
+  density: "comfortable", width: "medium",
   widgets: { kpis: true, attention: true, ap: true, costs: true, margins: true, divisions: true, projects: true },
   columns: COLUMNS.filter(c => c.always || c.def).map(c => c.key),
 };
@@ -145,7 +145,8 @@ function applySettings() {
   root.style.setProperty("--fs", settings.fontSize + "px");
   root.style.setProperty("--accent", settings.accent);
   root.style.setProperty("--row-pad", settings.density === "compact" ? "5px 10px" : "10px 12px");
-  root.style.setProperty("--maxw", settings.width === "boxed" ? "1180px" : "100%");
+  root.style.setProperty("--maxw", settings.width === "boxed" ? "1180px"
+    : settings.width === "medium" ? "1500px" : "100%");   // medium sits between boxed and full
   // widgets
   $("#widget-kpis").hidden      = !settings.widgets.kpis;
   $("#widget-attention").hidden = !settings.widgets.attention;
@@ -664,7 +665,7 @@ function buildBillsTable(d) {
   const scroll = document.createElement("div"); scroll.className = "table-scroll";
   const table = document.createElement("table"); table.className = "grid";
   const thead = document.createElement("thead"), tbody = document.createElement("tbody");
-  const cols = [["Vendor", "left"], ["Bill #", "left"], ["Amount", "right"], ["Paid", "left"], ["GC funded", "left"], ["Waiver in hand", "left"]];
+  const cols = [["Vendor", "left"], ["Bill #", "left"], ["Bill date", "left"], ["Amount", "right"], ["Paid", "left"], ["GC funded", "left"], ["Waiver in hand", "left"]];
   const htr = document.createElement("tr");
   for (const [c, al] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
   thead.appendChild(htr);
@@ -672,6 +673,7 @@ function buildBillsTable(d) {
     const tr = document.createElement("tr");
     tr.appendChild(leftText(b.vendor || "—"));
     tr.appendChild(qboLinkCell(b.bill_ref, b.qbo_link, "Open this bill in QuickBooks"));
+    tr.appendChild(leftText(fmtDate(b.bill_date)));
     const av = document.createElement("td"); av.appendChild(moneyCell(b.amount)); tr.appendChild(av);
     tr.appendChild(leftText(b.pay_date ? "✓ " + fmtDate(b.pay_date) : "—"));
     tr.appendChild(leftText(b.gc_paid ? "✓ " + fmtDate(b.gc_paid) : "—"));

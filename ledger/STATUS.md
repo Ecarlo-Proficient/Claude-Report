@@ -417,6 +417,11 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     + `.sumbar`/`.cell-sel` CSS). Verified: sum reconciles, drag/Cmd/Shift/Esc/click-away all work, no
     console errors.
 
+  - **Draws bills: Bill date column + a Medium width (owner).** The expanded per-draw bills table gained
+    a **Bill date** column (after Bill #, via `fmtDate(b.bill_date)`). Added a third width option
+    **Medium = 1500px** (between Boxed 1180 and Full 100%) in the Customize panel, and made it the new
+    default - the owner wanted a width between boxed-narrow and full-wide ("chinese"). Verified live.
+
 ## IN PROGRESS
 - (none) — the P&L super-database (per-project + portfolio P&L, source links, in-app sync, QC) is landed,
   plus the draws Status column + QBO gap-fallback. Owner to trigger the first real **Resync** (Touch ID)
