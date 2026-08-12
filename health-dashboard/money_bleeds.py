@@ -20,9 +20,9 @@ provably wrong and cost money (the user 2026-07-16):
        Work month = INVOICE month (the user 2026-07-16: the RP invoice date
        is the last day on the job / finished 100%, and draws are billed in
        their work month — always run the clock from the invoice month).
-       Deadlines roll BACKWARD off weekends (never forward). Retainage is a
-       separate statutory track (completion-based, § 53.057) — retainage
-       invoices are listed apart, not run through the monthly clock.
+       Deadlines roll BACKWARD off weekends (never forward). Retainage runs off
+       its OWN clock: notice due 30 days after the invoice date (the user
+       2026-08-12); listed apart, but now dated and banded like the rest.
        Equipment-lease / note-payment invoices to subs are NOT construction
        income — excluded from the clock, listed on their own sheet.
 
@@ -168,6 +168,7 @@ def _today() -> dt.date:
 _add_months = lien_clock.add_months
 _roll_back_weekend = lien_clock.roll_back_weekend
 notice_deadline = lien_clock.notice_deadline
+retainage_deadline = lien_clock.retainage_deadline
 
 
 def _division(customer_name: str) -> str:
@@ -502,8 +503,17 @@ def check_lien_clock(qc: QboCache,
             leases.append(row)
             continue
         if _is_retainage_invoice(inv):
-            row["note"] = ("Retainage — separate track (§ 53.057, keyed to "
-                           "completion, not the monthly clock)")
+            # Retainage notice is due 30 days after the invoice date (the user
+            # 2026-08-12, correcting the earlier completion-based "own track").
+            r_deadline = retainage_deadline(txn)
+            r_days = (r_deadline - today).days
+            row["deadline"] = r_deadline
+            row["days_left"] = r_days
+            row["status"] = ("PAST" if r_days < 0 else "URGENT" if r_days <= URGENT_DAYS
+                             else "WATCH" if r_days <= WATCH_DAYS else "OK")
+            row["note"] = (f"Retainage: notice due "
+                           f"{r_deadline.strftime('%b %d, %Y').replace(' 0', ' ')} "
+                           f"({r_days}d), 30 days after the invoice date")
             retainage.append(row)
             continue
         deadline = notice_deadline(txn.year, txn.month, div if div != "?" else "RP")
@@ -519,7 +529,7 @@ def check_lien_clock(qc: QboCache,
     # (the user 2026-07-17). Only PAST / URGENT / WATCH earn a line.
     monthly = [r for r in monthly if r["status"] != "OK"]
     monthly.sort(key=lambda r: r["days_left"])
-    retainage.sort(key=lambda r: r["txn_date"])
+    retainage.sort(key=lambda r: r["days_left"])
     leases.sort(key=lambda r: -r["balance"])
     return monthly, retainage, leases
 
@@ -1234,8 +1244,8 @@ def _build_dashboard(dash, mfd, cp, lien, reten, leases, rp, pos, bills,
          sum(r["balance"] for r in urgent), "notice must go out now", bool(urgent))
     card("l", "FFC000", f"WATCH (≤{WATCH_DAYS} days): {len(watch)}", len(watch),
          sum(r["balance"] for r in watch), "", False)
-    card("l", "548235", f"Retainage (own track): {len(reten)}", len(reten),
-         sum(r["balance"] for r in reten), "completion-based — not the monthly clock",
+    card("l", "548235", f"Retainage (30-day clock): {len(reten)}", len(reten),
+         sum(r["balance"] for r in reten), "notice due 30 days after invoice date",
          False)
     card("l", "808080", f"Lease/note excluded: {len(leases)}", len(leases),
          sum(r["balance"] for r in leases), "not construction income", False)
@@ -1319,7 +1329,7 @@ def main() -> int:
     past = sum(1 for r in lien if r["status"] == "PAST")
     urgent = sum(1 for r in lien if r["status"] == "URGENT")
     print(f"      {len(lien)} open invoice(s) on the clock — "
-          f"{past} PAST, {urgent} URGENT · {len(reten)} retainage (own track) "
+          f"{past} PAST, {urgent} URGENT · {len(reten)} retainage (30-day clock) "
           f"· {len(leases)} lease/note excluded")
 
     print("  3.  RP billing status (poured vs backlog) …")

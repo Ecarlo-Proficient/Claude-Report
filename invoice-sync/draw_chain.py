@@ -41,9 +41,15 @@ from typing import Dict, List, Optional, Tuple
 
 # Chain outcomes for a single invoice.
 CHAIN_NOT_A_DRAW = "not-a-draw"          # retainage, one-offs — nothing gates it
-CHAIN_FIRST_DRAW = "first-draw"          # nothing before it on this contract
+CHAIN_FIRST_DRAW = "first-draw"          # provably the first (Draw #1)
 CHAIN_MULTI_CONTRACT = "multi-contract"  # parallel contracts, bills unattributable
 CHAIN_HAS_PREV = "has-prev"
+# Earliest draw we can SEE, but NOT provably the first: a numbered draw past #1
+# whose predecessor never entered Notion (the open-invoice sync only ever created
+# pages for draws that were open while it was running; a Draw #1 paid before then
+# is invisible), or an unnumbered MFD draw where we can't confirm it's first. Was
+# mislabelled "First draw" until 2026-08-12.
+CHAIN_PREV_UNKNOWN = "prev-unknown"
 
 _MONTHS = (
     "january|february|march|april|may|june|july|august|september|october|"
@@ -92,10 +98,20 @@ def contract_label(memo: str, project_num: str = "") -> str:
     Rd - OFFSITE CONTRACT", while the base contract's July draw yields
     "2100 S. Mayhill Rd". Two different labels on one project # = parallel
     contracts.
+
+    Strips the draw and retainage tails REPEATEDLY, in either order: a
+    "…- Draw #8 - Retainage" memo has the retainage AFTER the draw, so a single
+    draw-then-retainage pass would leave "Draw #8" stuck in the label and split
+    the retainage draw off its own contract's chain (fixed 2026-08-12).
     """
-    head = _DRAW_TAIL.sub("", memo_head(memo, project_num))
-    head = _RETAINAGE_TAIL.sub("", head)
-    return head.strip(" -–—").upper()
+    head = memo_head(memo, project_num)
+    prev = None
+    while head != prev:
+        prev = head
+        head = _DRAW_TAIL.sub("", head)
+        head = _RETAINAGE_TAIL.sub("", head)
+        head = head.strip(" -–—")
+    return head.upper()
 
 
 def draw_number(memo: str) -> Optional[int]:
@@ -173,6 +189,13 @@ class DrawChains:
         for idx, row in enumerate(chain):
             if row["invoice_num"] == rec["invoice_num"]:
                 if idx == 0:
-                    return CHAIN_FIRST_DRAW, None
+                    return self._earliest_seen_outcome(rec), None
                 return CHAIN_HAS_PREV, chain[idx - 1]
-        return CHAIN_FIRST_DRAW, None
+        return self._earliest_seen_outcome(rec), None
+
+    @staticmethod
+    def _earliest_seen_outcome(rec: dict) -> str:
+        """Outcome for a draw with nothing before it in the chain. Only Draw #1 is
+        provably first; a numbered draw past #1 (predecessor never synced) or an
+        unnumbered draw is 'previous unknown', not 'first'. (the user 2026-08-12)"""
+        return CHAIN_FIRST_DRAW if rec.get("draw_no") == 1 else CHAIN_PREV_UNKNOWN

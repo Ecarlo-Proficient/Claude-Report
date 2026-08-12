@@ -103,7 +103,8 @@ BILL_TRACKER_PATH = paths.get_path(
 PREV_BLOCKED = "PAY BILLS → unlock"   # prev draw funded, our vendors still owed — WE are the blocker
 PREV_WAITING_GC = "Waiting GC on prev"  # prev draw itself unpaid — blocker is upstream of us
 PREV_CLEAR = "Clear"                  # prev draw funded and its vendors paid
-PREV_FIRST = "First draw"             # nothing before it to gate funding
+PREV_FIRST = "First draw"             # provably first (Draw #1), nothing gates it
+PREV_NOT_SYNCED = "Prev not synced"   # a later draw whose predecessor never entered Notion
 PREV_NOT_DRAW = "Not a draw"          # retainage / turnkey one-offs — no chain
 PREV_MULTI = "Multi-contract"         # parallel contracts, bills unattributable (see draw_chain)
 VENDOR_NA = "n/a"                     # RP — no draws at all
@@ -115,7 +116,7 @@ VENDOR_UNKNOWN = "?"                  # bill tracker file missing / unreadable
 # which keeps "Multi-contract" and "First draw" readable while making clear
 # there is no number beside them.
 NO_CHAIN_VERDICTS = (
-    VENDOR_NA, PREV_NOT_DRAW, PREV_MULTI, PREV_FIRST, VENDOR_UNKNOWN,
+    VENDOR_NA, PREV_NOT_DRAW, PREV_MULTI, PREV_FIRST, PREV_NOT_SYNCED, VENDOR_UNKNOWN,
 )
 
 # The divisions that bill in draws at all. Bill lines are matched to the invoice
@@ -206,6 +207,7 @@ BUCKET_CELL_FILLS = (
 
 _GRAND_FILL = PatternFill("solid", fgColor="BFD3E6")    # the all-clients roll-up
 _PARENT_FILL = PatternFill("solid", fgColor="DCE6F1")   # each client summary row
+_PROJECT_FILL = PatternFill("solid", fgColor="EDF3FA")  # a project sub-group row (lighter than client)
 
 # Dead cells: the previous-draw block where there's nothing to read. Grey fill,
 # darker grey text — "nothing to see here" without looking like missing data.
@@ -390,6 +392,8 @@ def vendor_cells(
         return "", PREV_NOT_DRAW, None, None, this_amount
     if outcome == draw_chain.CHAIN_MULTI_CONTRACT:
         return "", PREV_MULTI, None, None, this_amount
+    if outcome == draw_chain.CHAIN_PREV_UNKNOWN:
+        return "", PREV_NOT_SYNCED, None, None, this_amount
     if outcome == draw_chain.CHAIN_FIRST_DRAW or prev is None:
         return "", PREV_FIRST, None, None, this_amount
 
@@ -629,14 +633,10 @@ def build_aging_sheet(
     row_num += 1
 
     # ── parent groups, biggest balance first ──
-    def parent_total(records: List[dict]) -> float:
+    def open_total(records: List[dict]) -> float:
         return sum(r["open_balance"] or 0.0 for r in records)
 
-    for parent in sorted(by_parent, key=lambda p: parent_total(by_parent[p]), reverse=True):
-        records = sorted(
-            by_parent[parent],
-            key=lambda r: (r["due_date"] or dt.date.max, r["invoice_num"]),
-        )
+    def _sums(records: List[dict]):
         buckets = [0.0] * len(BUCKET_COLS)
         vendor_sum = 0.0
         vendor_bills = 0
@@ -648,10 +648,15 @@ def build_aging_sheet(
             vendor_bills += rec["vendor_bills"] or 0
             this_sum += rec["this_draw_amount"] or 0.0
             invtotal_sum += rec["total_amount"] or 0.0
+        return buckets, vendor_sum, vendor_bills, this_sum, invtotal_sum
 
+    def write_summary(label, inv_label, records, *, fill, size, level) -> None:
+        """A roll-up row (client at level 0, project sub-group at level 1)."""
+        nonlocal row_num
+        buckets, vendor_sum, vendor_bills, this_sum, invtotal_sum = _sums(records)
         summary: List[Any] = [""] * len(COLUMNS)
-        summary[C_LABEL] = parent
-        summary[C_INV] = f"{len(records)} inv"
+        summary[C_LABEL] = label
+        summary[C_INV] = inv_label
         for logical, amount in zip(BUCKET_COLS, buckets):
             summary[logical] = amount or None
         summary[C_TOTAL] = sum(buckets)
@@ -659,97 +664,123 @@ def build_aging_sheet(
         summary[C_VBILLS] = vendor_bills or None
         summary[C_VAMT] = vendor_sum or None
         summary[C_THIS] = this_sum or None
-        # Client rows sit a point above the body — the owner reads this sheet
-        # collapsed, so the client name is the line that has to carry.
-        _write_row(ws, grid, row_num, summary, bold=True, size=CLIENT_PT, fill=_PARENT_FILL)
+        _write_row(ws, grid, row_num, summary, bold=True, size=size, fill=fill)
         for logical in grid.visible:
             ws.cell(row=row_num, column=grid.col(logical)).border = Border(top=_THIN)
-        # A client with no MFD/CP work has no vendor answer either — grey the
-        # block on the summary row too, or an all-RP client reads as "clear".
+        # A group with no MFD/CP work has no vendor answer either — grey the
+        # block, or an all-RP group reads as "clear".
         if shows_vendor_block and not any(r["division"] in DRAW_DIVISIONS for r in records):
             _grey_out_vendor_block(ws, grid, row_num)
+        if level > 0:
+            ws.row_dimensions[row_num].outlineLevel = level
+            ws.row_dimensions[row_num].hidden = True  # collapsed by default
         row_num += 1
 
+    def write_detail(rec, level) -> None:
+        nonlocal row_num
+        detail: List[Any] = [""] * len(COLUMNS)
+        # QBO memos carry hard line breaks ("… Draw 2026\n(Period: …)").
+        # Left raw they render as one run-on line or a stray box, since this
+        # column doesn't wrap — collapse to single-spaced text.
+        label = " ".join((rec["memo"] or rec["project_num"] or "").split())
+        detail[C_LABEL] = f"    {label}"[:120]
+        detail[C_PROJ] = rec["project_num"]
+        detail[C_INV] = rec["invoice_num"]
+        detail[C_DATE] = rec["invoice_date"]
+        detail[C_DUE] = rec["due_date"]
+        detail[C_LIEN] = rec["lien"].label
+        detail[BUCKET_COLS[bucket_index(rec["days_past_due"])]] = rec["open_balance"]
+        detail[C_TOTAL] = rec["open_balance"]
+        detail[C_INVTOTAL] = rec["total_amount"]
+        detail[C_PREV] = rec["prev_draw"]
+        detail[C_VSTATUS] = rec["vendor_status"]
+        detail[C_VBILLS] = rec["vendor_bills"]
+        detail[C_VAMT] = rec["vendor_amount"]
+        detail[C_THIS] = rec["this_draw_amount"]
+        detail[C_NOTES] = rec["notes"]
+        detail[C_ACTION] = rec["last_action"]
+        _write_row(ws, grid, row_num, detail, bold=False)
+
+        # The invoice number opens the invoice in QBO. Putting the link on the
+        # number rather than in its own column keeps the sheet narrow and puts
+        # the click where the eye already is.
+        if rec.get("qbo_link"):
+            inv_cell = grid.cell(ws, row_num, C_INV)
+            if inv_cell is not None:
+                inv_cell.hyperlink = rec["qbo_link"]
+                inv_cell.font = Font(color=_LINK_COLOR, underline="single", size=BODY_PT)
+
+        # Tint only the ONE bucket cell carrying this invoice's balance, so
+        # colour drifting rightward down the page = money getting older.
+        slot = bucket_index(rec["days_past_due"])
+        ws.cell(row=row_num, column=grid.col(BUCKET_COLS[slot])).fill = BUCKET_CELL_FILLS[slot]
+
+        # The lien cell carries the only hard expiry on this sheet, so it gets
+        # the strongest cue: a missed or imminent notice deadline is a right
+        # that disappears, not just money that is late.
+        lien_cell = grid.cell(ws, row_num, C_LIEN)
+        if lien_cell is not None:
+            state = rec["lien"].state
+            if state == lien_clock.STATE_PAST:
+                lien_cell.font = Font(bold=True, color="FFFFFF", size=BODY_PT)
+                lien_cell.fill = _LIEN_PAST_FILL
+            elif state == lien_clock.STATE_URGENT:
+                lien_cell.font = Font(bold=True, color="922B21", size=BODY_PT)
+                lien_cell.fill = _LIEN_URGENT_FILL
+            elif state == lien_clock.STATE_WATCH:
+                lien_cell.font = Font(color="8A5A00", size=BODY_PT)
+                lien_cell.fill = _LIEN_WATCH_FILL
+            elif state == lien_clock.STATE_SENT:
+                lien_cell.font = Font(color="2E7D32", size=BODY_PT)
+
+        if shows_vendor_block:
+            verdict = rec["vendor_status"]
+            if verdict in NO_CHAIN_VERDICTS:
+                _grey_out_vendor_block(ws, grid, row_num)
+            else:
+                status_cell = grid.cell(ws, row_num, C_VSTATUS)
+                if verdict == PREV_BLOCKED:
+                    # The one verdict that is ours to act on — pay these, get
+                    # the waivers, unlock this draw.
+                    status_cell.font = Font(bold=True, color="C00000", size=BODY_PT)
+                    status_cell.fill = _BLOCKED_FILL
+                elif verdict == PREV_WAITING_GC:
+                    status_cell.font = Font(color="B06000", size=BODY_PT)
+                elif verdict == PREV_CLEAR:
+                    status_cell.font = Font(color="2E7D32", size=BODY_PT)
+
+        ws.row_dimensions[row_num].outlineLevel = level
+        ws.row_dimensions[row_num].hidden = True  # collapsed by default
+        row_num += 1
+
+    for parent in sorted(by_parent, key=lambda p: open_total(by_parent[p]), reverse=True):
+        records = sorted(
+            by_parent[parent],
+            key=lambda r: (r["due_date"] or dt.date.max, r["invoice_num"]),
+        )
+        # Client summary row (level 0, always visible) — the client name is the
+        # line that has to carry when the sheet is read collapsed.
+        write_summary(parent, f"{len(records)} inv", records,
+                      fill=_PARENT_FILL, size=CLIENT_PT, level=0)
+
+        # A client with more than one project gets a PROJECT sub-group under it
+        # (the user 2026-08-12: "see it based on client, then project"). A single-
+        # project client stays flat. Outline: client 0 → project 1 → invoice 2,
+        # or invoice 1 directly when there is no project layer.
+        by_project: Dict[str, List[dict]] = defaultdict(list)
         for rec in records:
-            detail: List[Any] = [""] * len(COLUMNS)
-            # QBO memos carry hard line breaks ("… Draw 2026\n(Period: …)").
-            # Left raw they render as one run-on line or a stray box, since this
-            # column doesn't wrap — collapse to single-spaced text.
-            label = " ".join((rec["memo"] or rec["project_num"] or "").split())
-            detail[C_LABEL] = f"    {label}"[:120]
-            detail[C_PROJ] = rec["project_num"]
-            detail[C_INV] = rec["invoice_num"]
-            detail[C_DATE] = rec["invoice_date"]
-            detail[C_DUE] = rec["due_date"]
-            detail[C_LIEN] = rec["lien"].label
-            detail[BUCKET_COLS[bucket_index(rec["days_past_due"])]] = rec["open_balance"]
-            detail[C_TOTAL] = rec["open_balance"]
-            detail[C_INVTOTAL] = rec["total_amount"]
-            detail[C_PREV] = rec["prev_draw"]
-            detail[C_VSTATUS] = rec["vendor_status"]
-            detail[C_VBILLS] = rec["vendor_bills"]
-            detail[C_VAMT] = rec["vendor_amount"]
-            detail[C_THIS] = rec["this_draw_amount"]
-            detail[C_NOTES] = rec["notes"]
-            detail[C_ACTION] = rec["last_action"]
-            _write_row(ws, grid, row_num, detail, bold=False)
+            by_project[rec["project_num"] or "(no project #)"].append(rec)
 
-            # The invoice number opens the invoice in QBO. Putting the link on
-            # the number rather than in its own column keeps the sheet narrow
-            # and puts the click where the eye already is.
-            if rec.get("qbo_link"):
-                inv_cell = grid.cell(ws, row_num, C_INV)
-                if inv_cell is not None:
-                    inv_cell.hyperlink = rec["qbo_link"]
-                    inv_cell.font = Font(color=_LINK_COLOR, underline="single", size=BODY_PT)
-
-            # Tint only the ONE bucket cell carrying this invoice's balance, so
-            # colour drifting rightward down the page = money getting older.
-            slot = bucket_index(rec["days_past_due"])
-            ws.cell(
-                row=row_num, column=grid.col(BUCKET_COLS[slot])
-            ).fill = BUCKET_CELL_FILLS[slot]
-
-            # The lien cell carries the only hard expiry on this sheet, so it
-            # gets the strongest cue: a missed or imminent notice deadline is a
-            # right that disappears, not just money that is late.
-            lien_cell = grid.cell(ws, row_num, C_LIEN)
-            if lien_cell is not None:
-                state = rec["lien"].state
-                if state == lien_clock.STATE_PAST:
-                    lien_cell.font = Font(bold=True, color="FFFFFF", size=BODY_PT)
-                    lien_cell.fill = _LIEN_PAST_FILL
-                elif state == lien_clock.STATE_URGENT:
-                    lien_cell.font = Font(bold=True, color="922B21", size=BODY_PT)
-                    lien_cell.fill = _LIEN_URGENT_FILL
-                elif state == lien_clock.STATE_WATCH:
-                    lien_cell.font = Font(color="8A5A00", size=BODY_PT)
-                    lien_cell.fill = _LIEN_WATCH_FILL
-                elif state == lien_clock.STATE_SENT:
-                    lien_cell.font = Font(color="2E7D32", size=BODY_PT)
-                elif state == lien_clock.STATE_RETAINAGE:
-                    lien_cell.font = Font(color=_NA_COLOR, italic=True, size=BODY_PT)
-                    lien_cell.fill = _NA_FILL
-
-            if shows_vendor_block:
-                verdict = rec["vendor_status"]
-                if verdict in NO_CHAIN_VERDICTS:
-                    _grey_out_vendor_block(ws, grid, row_num)
-                else:
-                    status_cell = grid.cell(ws, row_num, C_VSTATUS)
-                    if verdict == PREV_BLOCKED:
-                        # The one verdict that is ours to act on — pay these,
-                        # get the waivers, unlock this draw.
-                        status_cell.font = Font(bold=True, color="C00000", size=BODY_PT)
-                        status_cell.fill = _BLOCKED_FILL
-                    elif verdict == PREV_WAITING_GC:
-                        status_cell.font = Font(color="B06000", size=BODY_PT)
-                    elif verdict == PREV_CLEAR:
-                        status_cell.font = Font(color="2E7D32", size=BODY_PT)
-
-            ws.row_dimensions[row_num].outlineLevel = 1
-            ws.row_dimensions[row_num].hidden = True  # collapsed by default
-            row_num += 1
+        if len(by_project) > 1:
+            for proj in sorted(by_project, key=lambda p: open_total(by_project[p]), reverse=True):
+                precs = by_project[proj]
+                write_summary(f"  {proj}", f"{len(precs)} inv", precs,
+                              fill=_PROJECT_FILL, size=BODY_PT, level=1)
+                for rec in precs:
+                    write_detail(rec, level=2)
+        else:
+            for rec in records:
+                write_detail(rec, level=1)
 
     last_data_row = row_num - 1
 
@@ -795,8 +826,8 @@ def build_aging_sheet(
         "Aged by due date. Invoice # links to the invoice in QBO.",
         "Lien = the date a notice must be MAILED by (Tex. Prop. Code Ch. 53, first-tier sub): "
         "CP/MFD the 15th of the 3rd month after the work month, RP the 15th of the 2nd; "
-        "rolled BACK off weekends. Work month = invoice month. Retainage runs its own track and is not dated here.",
-        "The lien column is a deadline watchlist, not legal advice — confirm project type, parcel and owning entity before sending anything.",
+        "rolled BACK off weekends. Work month = invoice month. Retainage (marked RET) is due 30 days after the invoice date.",
+        "The lien column is a deadline watchlist, not legal advice; confirm project type, parcel and owning entity before sending anything.",
     ]
     if shows_vendor_block:
         blocked_cell = grid.cell(ws, legend_row, C_VSTATUS)

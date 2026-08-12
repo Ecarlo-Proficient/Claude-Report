@@ -25,12 +25,17 @@ conservative offset). RP invoices go out the day the job finishes; draws bill
 their own work month. The first build used an earlier month "to be safe" and
 produced month-early false alarms, which is why this is written down.
 
+Retainage
+---------
+    Retainage has its OWN deadline: the notice is due **30 days after the invoice
+    date** (the user 2026-08-12, correcting the earlier "own track, not dated"
+    treatment). § 53.057's retainage notice runs from completion, and the owner
+    invoices retainage at completion, so invoice date + 30 days is the date to
+    watch. Retainage is dated and banded like everything else here, just off a
+    different clock; its label carries a `RET` marker.
+
 What this clock does NOT cover
 ------------------------------
-    * **Retainage runs its own track** (§ 53.057 / § 53.052(d)), keyed to
-      completion rather than each work month — it can still be perfectable when
-      the progress billing is already time-barred. Flagged, never given a
-      monthly deadline.
     * **Equipment-lease / note-payment invoices to subs are not construction
       income** (the user 2026-07-16) and carry no lien rights. Detecting those
       needs QBO line items; a caller with only a memo cannot see them — see
@@ -48,6 +53,10 @@ from typing import NamedTuple, Optional, Tuple
 # Months after the work month in which notice is due, by division.
 NOTICE_MONTHS = {"MFD": 3, "CP": 3, "RP": 2}
 NOTICE_DAY = 15
+
+# Retainage runs off a different clock: notice due 30 days after the invoice date
+# (the user 2026-08-12). Invoiced at completion, so invoice date + 30 = § 53.057.
+RETAINAGE_NOTICE_DAYS = 30
 
 # Urgency bands (money_bleeds' values — keep them in step).
 URGENT_DAYS = 15
@@ -130,6 +139,25 @@ def _fmt(d: dt.date) -> str:
     return d.strftime("%b %d, %Y").replace(" 0", " ")
 
 
+def retainage_deadline(invoice_date: dt.date) -> dt.date:
+    """Notice deadline for a retainage invoice: 30 days after the invoice date."""
+    return invoice_date + dt.timedelta(days=RETAINAGE_NOTICE_DAYS)
+
+
+def _band(deadline: dt.date, today: dt.date, prefix: str = "") -> LienState:
+    """Urgency band + label for a deadline. `prefix` marks a non-standard clock
+    (e.g. 'RET' for retainage)."""
+    days = (deadline - today).days
+    p = f"{prefix} " if prefix else ""
+    if days < 0:
+        return LienState(STATE_PAST, deadline, days, f"{p}PAST DUE · {_fmt(deadline)}")
+    if days <= URGENT_DAYS:
+        return LienState(STATE_URGENT, deadline, days, f"{p}DUE {_fmt(deadline)} · {days}d")
+    if days <= WATCH_DAYS:
+        return LienState(STATE_WATCH, deadline, days, f"{p}{_fmt(deadline)} · {days}d")
+    return LienState(STATE_OK, deadline, days, f"{p}{_fmt(deadline)}")
+
+
 def lien_state(
     division: str,
     invoice_date: Optional[dt.date],
@@ -152,17 +180,10 @@ def lien_state(
         return LienState(STATE_SENT, None, None, "Notice sent")
 
     if is_retainage_text(memo, note):
-        # § 53.057 — keyed to completion, not to each work month. Giving this a
-        # monthly deadline would be wrong in both directions: a false alarm now,
-        # and a false "expired" later when it may still be perfectable.
-        return LienState(STATE_RETAINAGE, None, None, "Retainage — own track")
+        # Retainage notice is due 30 days after the invoice date (the user
+        # 2026-08-12). Dated and banded like everything else, off its own clock;
+        # the 'RET' prefix marks which clock it is.
+        return _band(retainage_deadline(invoice_date), today, prefix="RET")
 
     deadline = notice_deadline(invoice_date.year, invoice_date.month, division)
-    days = (deadline - today).days
-    if days < 0:
-        return LienState(STATE_PAST, deadline, days, f"PAST DUE · {_fmt(deadline)}")
-    if days <= URGENT_DAYS:
-        return LienState(STATE_URGENT, deadline, days, f"DUE {_fmt(deadline)} · {days}d")
-    if days <= WATCH_DAYS:
-        return LienState(STATE_WATCH, deadline, days, f"{_fmt(deadline)} · {days}d")
-    return LienState(STATE_OK, deadline, days, _fmt(deadline))
+    return _band(deadline, today)

@@ -7,6 +7,22 @@ mirror. Update this in the SAME commit as any change to this tool.
 
 ## DONE / FINALIZED
 
+- **Aging tab fixes (2026-08-12, the user):**
+  - **Client → project sub-grouping.** A client with more than one project now
+    gets a project sub-group row under it (outline: client 0 → project 1 → invoice
+    2); a single-project client stays flat (client 0 → invoice 1). "See it based
+    on client, then project." Roll-up sums + the Open/Total bar apply at each level.
+  - **"First draw" no longer over-claims.** The draw chain is built only from
+    invoices that passed through Notion's open-invoice sync, so a paid `Draw #1`
+    that was never synced is invisible and its `Draw #2` looked like idx-0 "first."
+    Now `CHAIN_FIRST_DRAW` fires ONLY when it's provably `Draw #1`; any other
+    earliest-seen draw returns `CHAIN_PREV_UNKNOWN` → verdict **"Prev not synced"**
+    (greyed, honest) instead of a false "First draw." Also fixed `contract_label`
+    to strip a trailing `- Retainage` AND the draw tail in either order, so a
+    `Draw #8 - Retainage` chains onto its base contract instead of splitting off.
+  - **Retainage is on the lien clock.** Notice due 30 days after the invoice date
+    (was "own track, undated"). See shared/lien_clock + the retainage memory. The
+    lien column shows `RET DUE <date> · Nd` etc.; money_bleeds updated to match.
 - **Collections tab upgrades (2026-08-11, the user):**
   - **QBO links fixed — company-scoped deep links.** `qbo_client.invoice_deep_link`
     now builds Intuit's own `/app/login?pagereq=invoice%3FtxnId%3D<id>&deeplinkcompanyid=<realm>`
