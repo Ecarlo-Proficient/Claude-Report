@@ -210,6 +210,11 @@ tr.lien-row.u-info > td:first-child { border-left-color: var(--text-dim); }
 #pnlDivTable td.pos, #pnlJobTable td.pos { color: var(--pos); font-variant-numeric: tabular-nums; }
 #pnlDivTable td.neg, #pnlJobTable td.neg { color: var(--neg); font-weight: 600; font-variant-numeric: tabular-nums; }
 #pnlJobTable th { user-select: none; white-space: nowrap; }
+/* P&L job expands inline (no side panel): the live P&L block sits under the row */
+#pnlJobTable tr.pnl-open > td { background: color-mix(in srgb, var(--accent) 9%, transparent); font-weight: 600; }
+td.pnl-expand { padding: 6px 18px 16px; background: var(--surface-2); }
+td.pnl-expand .dgroup { max-width: 720px; }
+td.pnl-expand .dgroup > h4:first-child { display: none; }   /* the row already says which job */
 
 /* ── Draws (race-through) ──────────────────────────────────────────────── */
 .draw-head { align-items: flex-start; }

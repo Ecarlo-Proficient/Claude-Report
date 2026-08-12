@@ -459,6 +459,13 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     **Producers fire REAL syncs (Notion/Teams/Excel + Touch ID) - owner validates those with a real click.**
     NEXT: per-run log viewer in the UI; parallelize independent Notion loads; collapse the two QBO Touch IDs.
 
+  - **P&L opens INLINE, not the side panel (owner: "turns the head unnaturally + dense info").** On the
+    P&L tab, clicking a job now **expands its live P&L under the row** (full width, room for the numbers)
+    instead of the right-side slide-over. Reuses `buildPnlGroup` (the same live compute + costs-by-code +
+    export/folder actions), constrained to a readable width; caret + highlight on the open row; the
+    duplicate "P&L" heading is hidden. `pnlExpanded` Set. Verified: expands inline, side panel does NOT
+    open, no console errors. (Other detail entry points still use the slide-over; only the P&L changed.)
+
 ## IN PROGRESS
 - (none) - super-database + Console (control plane) landed. Owner to validate the producer Runs (AR/AP)
   and the draft-WIP button with a real click (they fire real syncs + Touch ID).

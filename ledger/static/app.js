@@ -204,6 +204,7 @@ function setTab(t) {
 }
 let PNL = null;                       // cached /api/pnl/portfolio result (invalidated on reload)
 let pnlSort = { key: "net", dir: 1 }; // net ascending = worst margin first
+let pnlExpanded = new Set();          // P&L jobs expanded inline (instead of the side panel)
 const nameOf = pn => (ALL.find(r => r.project_no === pn) || {}).project_name || "";
 // A project is "active" if its WIP status is Active — OR blank, which only happens for
 // MFD (Test-Master carries no STATUS column, so its jobs are active by construction).
@@ -1426,13 +1427,25 @@ function renderPnl() {
   const known = new Set(ALL.map(r => r.project_no));
   for (const r of shown) {
     const row = document.createElement("tr");
-    if (known.has(r.proj)) { row.onclick = () => openDetail(ALL.find(x => x.project_no === r.proj)); row.style.cursor = "pointer"; }
-    row.appendChild(leftText(r.proj)); row.appendChild(leftText(r.division));
+    const open = pnlExpanded.has(r.proj);
+    if (known.has(r.proj)) {
+      row.style.cursor = "pointer"; if (open) row.className = "pnl-open";
+      // expand the P&L inline (full width, room for the dense numbers) - no side panel
+      row.onclick = (e) => { if (e.target.closest(".cell")) return; open ? pnlExpanded.delete(r.proj) : pnlExpanded.add(r.proj); renderPnl(); };
+    }
+    row.appendChild(leftText((known.has(r.proj) ? (open ? "▾ " : "▸ ") : "") + r.proj));
+    row.appendChild(leftText(r.division));
     row.appendChild(rightText(money(r.contract))); row.appendChild(rightText(((r.pct_complete || 0) * 100).toFixed(0) + "%"));
     row.appendChild(rightText(money(r.earned))); row.appendChild(rightText(money(r.cost)));
     row.appendChild(rightText(money(r.overhead))); row.appendChild(rightText(money(r.net)));
     const pt = document.createElement("td"); pt.className = r.net >= 0 ? "pos" : "neg"; pt.textContent = pctTxt(r.net_pct); row.appendChild(pt);
     tbody.appendChild(row);
+    if (open) {
+      const er = document.createElement("tr"); er.className = "pnl-expand-row";
+      const td = document.createElement("td"); td.colSpan = cols.length; td.className = "pnl-expand";
+      td.appendChild(buildPnlGroup(r.proj));
+      er.appendChild(td); tbody.appendChild(er);
+    }
   }
   if (!shown.length) { const row = document.createElement("tr"); const td = document.createElement("td"); td.colSpan = cols.length; td.className = "left"; td.style.color = "var(--text-dim)"; td.textContent = rows.length ? "No jobs match this filter." : "No P&L data yet."; row.appendChild(td); tbody.appendChild(row); }
 }
