@@ -385,7 +385,7 @@ def build_rp(date_key, access, cid, proj_map, folders_idx):
     return rows
 
 
-def _write_rp_tab(ws, label, rows):
+def _write_rp_tab(ws, label, rows, seen=None):
     ws.cell(1, 1, f"WIP as of {label} — RESIDENTIAL").font = Font(name=FONT, size=11, bold=True)
     ws.cell(2, 1, "STARTING POINT: active jobs = the schedule of the day, matched to the "
                   "project folder for RP# + bid proposal; billed/costs from QBO as of the date")\
@@ -413,7 +413,7 @@ def _write_rp_tab(ws, label, rows):
     if rows:
         from openpyxl.utils import get_column_letter
         ref = f"A{hdr}:{get_column_letter(len(RP_COLS))}{hdr+len(rows)}"
-        t = Table(displayName=safe_table_name("histRP", set()), ref=ref)
+        t = Table(displayName=safe_table_name("histRP", seen if seen is not None else set()), ref=ref)
         t.tableStyleInfo = TableStyleInfo(name="TableStyleLight1", showRowStripes=False)
         ws.tables.add(t)
     ws.freeze_panes = f"A{hdr+1}"
@@ -494,8 +494,8 @@ def _enrich_division(rows, division, end_iso, access, cid, proj_map, cost_cache,
         r["ETC (budget)"] = etc
 
 
-def build(date_key: str, out_dir: Path, qbo=None, folders_idx=None,
-          cp_folders=None, cost_cache=None) -> Path:
+def _gather(date_key, qbo, folders_idx, cp_folders, cost_cache):
+    """Read + enrich one date's three divisions. Returns (label, snap, cp, mfd, rp)."""
     snap, label = DATES[date_key]
     xlsb = WIP_HISTORY / snap
     if not xlsb.exists():
@@ -505,38 +505,37 @@ def build(date_key: str, out_dir: Path, qbo=None, folders_idx=None,
     rp = []
     if qbo and folders_idx:
         end_iso = SCHEDULES[date_key][1]
-        _enrich_division(cp, "CP", end_iso, qbo[0], qbo[1], qbo[2],
-                         cost_cache if cost_cache is not None else {}, cp_folders or {})
-        _enrich_division(mfd, "MFD", end_iso, qbo[0], qbo[1], qbo[2],
-                         cost_cache if cost_cache is not None else {}, cp_folders or {})
+        cc = cost_cache if cost_cache is not None else {}
+        _enrich_division(cp, "CP", end_iso, qbo[0], qbo[1], qbo[2], cc, cp_folders or {})
+        _enrich_division(mfd, "MFD", end_iso, qbo[0], qbo[1], qbo[2], cc, cp_folders or {})
         rp = build_rp(date_key, qbo[0], qbo[1], qbo[2], folders_idx)
-    seen = set()
-    wb = Workbook()
-    _write_tab(wb.active, f"WIP as of {label} — COMMERCIAL",
+    return label, snap, cp, mfd, rp
+
+
+def _add_date_tabs(wb, date_key, qbo, seen, gathered):
+    """Write one date's CP/MFD/RP tabs into `wb`, tab names suffixed by the date
+    (so both dates live in one file — the user 2026-08-08: 'combine into one')."""
+    label, snap, cp, mfd, rp = gathered
+    dk = date_key
+    _write_tab(wb.create_sheet(f"CP {dk}"), f"WIP as of {label} — COMMERCIAL",
                f"from snapshot '{snap}' · WIP - CP tab · ETC from the commercial takeoff · "
                f"COSTS from QBO dated on/before {label}",
-               cp, DIV_OUT, safe_table_name("histCP", seen))
-    wb.active.title = "CP"
-    _write_tab(wb.create_sheet("MFD"), f"WIP as of {label} — MULTI-FAMILY",
+               cp, DIV_OUT, safe_table_name(f"CP{dk}", seen))
+    _write_tab(wb.create_sheet(f"MFD {dk}"), f"WIP as of {label} — MULTI-FAMILY",
                f"from snapshot '{snap}' · WIP - MFD tab · COSTS from QBO dated on/before "
                f"{label} (phased jobs credited once) · ETC has no folder source for MFD",
-               mfd, DIV_OUT, safe_table_name("histMFD", seen))
-    rp_ws = wb.create_sheet("RP")
+               mfd, DIV_OUT, safe_table_name(f"MFD{dk}", seen))
+    rp_ws = wb.create_sheet(f"RP {dk}")
     if qbo:
-        _write_rp_tab(rp_ws, label, rp)
+        _write_rp_tab(rp_ws, label, rp, seen)
     else:
         rp_ws.cell(1, 1, f"WIP as of {label} — RESIDENTIAL").font = Font(name=FONT, size=11, bold=True)
         rp_ws.cell(3, 1, "run with QBO (no --skip-rp) to build this tab").font = Font(name=FONT, size=9, italic=True)
-    out = out_dir / f"WIP as of {date_key}.xlsx"
-    wb.save(out)
-    assert_clean(out)          # NEVER hand over a file that would trip Excel repair
-    print(f"  ✓ {date_key}: CP {len(cp)} · MFD {len(mfd)} · RP {len(rp)} · "
-          f"xlsx verified clean → {out}")
-    return out
+    return len(cp), len(mfd), len(rp)
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Point-in-time WIP as of a past date (MFD/CP snapshot + RP rebuilt).")
+    ap = argparse.ArgumentParser(description="Point-in-time WIP as of past dates → ONE workbook (MFD/CP snapshot + RP rebuilt).")
     ap.add_argument("--date", choices=list(DATES) + ["all"], default="all")
     ap.add_argument("--out", default=str(Path.home() / "Downloads"))
     ap.add_argument("--skip-rp", action="store_true",
@@ -544,7 +543,7 @@ def main() -> int:
     args = ap.parse_args()
     out_dir = Path(args.out).expanduser()
     keys = list(DATES) if args.date == "all" else [args.date]
-    print("\n  HISTORICAL WIP — MFD/CP (snapshots) + RP (schedule/proposal/QBO)")
+    print("\n  HISTORICAL WIP — MFD/CP (snapshots) + RP (schedule/proposal/QBO) → one file")
     qbo = folders_idx = cp_folders = None
     cost_cache = {}
     if not args.skip_rp:
@@ -555,8 +554,18 @@ def main() -> int:
         folders_idx = RP.index_residential(RP.RP_ROOT)
         print("  indexing commercial folders for CP ETC …")
         cp_folders = _index_cp_folders()
+    wb = Workbook()
+    wb.remove(wb.active)                                    # drop the default sheet
+    seen = set()
     for k in keys:
-        build(k, out_dir, qbo, folders_idx, cp_folders, cost_cache)
+        g = _gather(k, qbo, folders_idx, cp_folders, cost_cache)
+        nc, nm, nr = _add_date_tabs(wb, k, qbo, seen, g)
+        print(f"  {k}: CP {nc} · MFD {nm} · RP {nr}")
+    tag = " and ".join(keys) if len(keys) > 1 else keys[0]
+    out = out_dir / f"WIP historical - {tag}.xlsx"
+    wb.save(out)
+    assert_clean(out)          # NEVER hand over a file that would trip Excel repair
+    print(f"  ✓ combined workbook ({len(wb.sheetnames)} tabs) verified clean → {out}")
     return 0
 
 

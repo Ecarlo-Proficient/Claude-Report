@@ -41,21 +41,29 @@ def verify_xlsx(path) -> list:
     with zipfile.ZipFile(str(path)) as z:
         names = z.namelist()
 
-        # ── tables: valid displayName, clean columns ──
+        # ── tables: valid displayName, clean columns, UNIQUE names workbook-wide ──
+        all_table_names = []
         for n in names:
             if not _TABLE_RE.match(n):
                 continue
             x = z.read(n).decode("utf-8", "replace")
             m = re.search(r'displayName="([^"]*)"', x)
-            if m and not _VALID_TABLE_NAME.match(m.group(1)):
-                issues.append(f"{n}: invalid table name {m.group(1)!r} "
-                              f"(no spaces/commas/dashes; must start with a letter)")
+            if m:
+                all_table_names.append(m.group(1))
+                if not _VALID_TABLE_NAME.match(m.group(1)):
+                    issues.append(f"{n}: invalid table name {m.group(1)!r} "
+                                  f"(no spaces/commas/dashes; must start with a letter)")
             cols = re.findall(r'<tableColumn\b[^>]*\bname="([^"]*)"', x)
             if any(not c.strip() for c in cols):
                 issues.append(f"{n}: a table column has a blank name")
             dups = {c for c in cols if cols.count(c) > 1}
             if dups:
                 issues.append(f"{n}: duplicate table column name(s) {sorted(dups)}")
+        # A table displayName must be unique across the WHOLE workbook, or Excel
+        # (and openpyxl on re-read) rejects it — the combined-file bug, 2026-08-08.
+        dup_tables = {t for t in all_table_names if all_table_names.count(t) > 1}
+        if dup_tables:
+            issues.append(f"duplicate table name(s) across the workbook: {sorted(dup_tables)}")
 
         # ── styles: index ceilings ──
         ncx, ndxf = 10 ** 9, 0
