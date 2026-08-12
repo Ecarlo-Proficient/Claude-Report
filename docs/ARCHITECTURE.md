@@ -88,9 +88,9 @@ flowchart LR
     MFD[("Notion\nMFD Invoice DB")]:::out
     RES[("Notion\nRes/Com Invoice DB")]:::out
     TEAMS[("Teams\nMFD paid / short-pay cards")]:::out
-    XL["export_invoices_xlsx.py\n+ aging_sheet.py\n+ notes_preserve.py\n+ draw_chain.py\n+ shared/lien_clock.py"]:::tool
+    XL["export_invoices_xlsx.py\n+ aging_sheet.py\n+ notes_preserve.py\n+ cash_flow.py\n+ draw_chain.py\n+ shared/lien_clock.py"]:::tool
     BTX[("Bill Tracker.xlsx\nOneDrive · READ-ONLY")]:::src
-    OD[("OneDrive\nOpen_Invoices.xlsx\nOpen Invoices\nCP · MFD · RP Aging")]:::out
+    OD[("OneDrive\nOpen_Invoices.xlsx\nOpen Invoices\nCP · MFD · RP Aging\nCash Flow · Pay Calendar")]:::out
 
     QBO --> SYNC
     SYNC -- "route by project-# prefix" --> MFD
@@ -144,6 +144,13 @@ invoices; a per-invoice Note wins its own row). Two modes:
   only if its push succeeds (a failed push keeps the cell Note, never lost).
   `preview_export.py` runs absorb as a **dry-run** (logs the exact `Quick Status
   old -> new`, writes nothing) against a throwaway file.
+
+**A note-driven cash-flow forecast** (`cash_flow.py`, 2026-08-12) reads those same
+notes into two more tabs: **`Cash Flow`** (a weekly list of expected inflows with a
+running cumulative, plus a "promised, needs a date" review section) and **`Pay
+Calendar`** (a 6-week grid). `classify_note` keys on an inflow promise + a clear
+date; conditional / stale / undated promises go to review, and chases, disputes and
+"pay to <vendor>" outflows are excluded. Amounts are expected, not guaranteed.
 
 **The MFD/CP draw-funding chain** is what those vendor columns actually answer.
 The GC funds draw N → we pay draw N's vendor bills → those vendors issue

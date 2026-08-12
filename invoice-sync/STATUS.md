@@ -7,6 +7,22 @@ mirror. Update this in the SAME commit as any change to this tool.
 
 ## DONE / FINALIZED
 
+- **Cash-flow forecast from the notes (2026-08-12, the user)** — `cash_flow.py`,
+  two new tabs in Open_Invoices.xlsx built from the SAME notes the aging tabs
+  carry (absorb or preserve both feed it):
+  - **`Cash Flow`** — a weekly list (Mon-Sun) of expected inflows: date, client,
+    project, invoice, amount, running **cumulative**, and the source note. A
+    **"promised, needs a date"** review section below holds the conditional /
+    stale / no-date promises so nothing is dropped.
+  - **`Pay Calendar`** — a rolling 6-week grid with each day's expected total.
+  - The parser (`classify_note`) keys on an inflow **promise + a clear date**:
+    "payment promise 8/13" / "paying this friday" / "pick up check Friday" land on
+    the calendar; "if not paid by 8/14" (conditional), "1st week of Aug, no update"
+    (stale), "Payment Promise" (no date) go to review; and it EXCLUDES chases
+    ("send email asking for payment"), disputes, and outflows ("pay to Hope $158k").
+    Bare "today" is not a payment date (it marks when an action happened). The
+    ` – Name, M/D` stamp is stripped first so the sync date is never read as a
+    payment date. Every row shows its note; amounts are expected, not guaranteed.
 - **Aging tab fixes (2026-08-12, the user):**
   - **Client → project sub-grouping.** A client with more than one project now
     gets a project sub-group row under it (outline: client 0 → project 1 → invoice

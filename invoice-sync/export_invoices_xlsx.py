@@ -41,6 +41,7 @@ from openpyxl.utils import get_column_letter
 from notion_client import NotionClient
 from draw_chain import DrawChains
 from notes_preserve import read_notes, reapply_notes, absorb_into_records, PreservedNotes
+from cash_flow import build_cash_flow_sheets
 from aging_sheet import (
     DIVISION_TABS,
     DRAW_DIVISIONS,
@@ -564,6 +565,11 @@ def export_open_invoices_xlsx(
         "Aging tabs: %s (%d litigation excluded)",
         " · ".join(counts), sum(litigation_excluded.values()),
     )
+
+    # ── Cash-flow forecast (the user 2026-08-12) ── built from the SAME notes the
+    # aging tabs carry, so absorb/preserve both feed it. Two tabs: a weekly list
+    # and a month calendar grid; only clear dated promises land on them.
+    build_cash_flow_sheets(wb, aging_records, today)
 
     # Re-attach cell Notes:
     #   ABSORB  → only those whose Notion push FAILED (kept so they're not lost);
