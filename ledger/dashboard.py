@@ -296,7 +296,7 @@ LIEN_RANK = {
 def _fetch_ap(con) -> dict:
     """AP + lien view from ap_bill_line; empty (not an error) if the table is absent."""
     ap = {"summary": {"open_balance": 0, "open_lines": 0, "watch_count": 0},
-          "lien_watch": [], "by_project": {}}
+          "lien_watch": [], "by_project": {}, "bills": []}
     try:
         rows = con.execute(
             "SELECT project_no, division, vendor, bill_ref, open_balance, lien_status, "
@@ -320,6 +320,17 @@ def _fetch_ap(con) -> dict:
     ap["summary"] = {"open_balance": open_bal, "open_lines": open_lines, "watch_count": len(watch)}
     ap["lien_watch"] = watch[:500]   # full worklist for the Liens page
     ap["by_project"] = by_project
+    # Full bill list for the Bill Tracker tab (Notion-style views). Every row is one
+    # bill (open_balance is per-bill, safe to sum). Description is omitted to keep the
+    # payload lean; account carries the QBO category. Newest first (bill_date is ISO).
+    bills = []
+    for r in con.execute(
+        "SELECT project_no, division, vendor, bill_ref, bill_date, account, "
+        "line_amount, open_balance, pay_status, approved, invoice_status, lien_status, "
+        "matched_invoice, invoice_no, gc_paid_date, pay_date, qbo_link "
+        "FROM ap_bill_line ORDER BY bill_date DESC"):
+        bills.append(dict(r))
+    ap["bills"] = bills
     return ap
 
 

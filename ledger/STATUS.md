@@ -486,6 +486,22 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     New **Client** filter on the Draws tab - a name-substring match on the draw customer/label, so
     "Firestone" catches every Firestone job (CP672 / CP745 / CP961). Verified live, no console errors.
 
+  - **Bill Tracker rolled into the dashboard - a new `Bills` tab with Notion-style saved views (owner).**
+    The whole Bill Tracker (`ap_bill_line`, all 2,868 bills) now lives in the ledger. `_fetch_ap` gained a
+    full `bills` list (per-bill `open_balance`, safe to sum); the front end fronts it with **named views
+    instead of a filter panel** - each view = a predicate + default sort with a **live count** on its chip:
+    **Open AP** (761) · **GC-funded · unpaid · 2mo+** (168 - the owner's example: approved + `Invoice paid`
+    + still owed + bill ≥ 2 calendar months old = the pay-these-first / lien-risk list) · **Lien risk** (382)
+    · **To approve** (311) · **Awaiting invoice** (473) · **No project #** (401) · **All bills** (2,868).
+    Rows: division-tinted project chip (RP green / CP blue / MFD violet) · company-scoped QBO bill link ·
+    bill date + age · amount · open balance · status pills (pay · invoice · lien · not-approved-only, color
+    the only signal). **Group by** division/project/vendor/draw adds subtotalled headers; a division
+    split-bar shows where the view's open $ sits; money cells feed the existing select-and-sum bar. The
+    active view is remembered per person (`localStorage`). Row render capped at 1,500 with an honest note
+    (totals still cover the full set). Read-only over `ap_bill_line`; the file is still produced by
+    `excel_bill_sync.py` (`sync-ap`). Verified live against the loaded DB - all view counts, grouping,
+    search, QBO scoping, and the example view checked in-browser, no console errors.
+
 ## IN PROGRESS
 - (none) - super-database + Console (control plane) landed. Owner to validate the producer Runs (AR/AP)
   and the draft-WIP button with a real click (they fire real syncs + Touch ID).

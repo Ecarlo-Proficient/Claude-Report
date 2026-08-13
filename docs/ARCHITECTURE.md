@@ -323,7 +323,7 @@ flowchart LR
     LOADER["load_wip_master.py\nCP←Test-CP · RP←Test-RP · MFD←Test-Master\nfilter to real project #s · idempotent upsert"]:::tool
     APLOAD["load_bill_tracker.py\nAP pay status + lien clock → ap_bill_line\n(NOT cost truth — subs excluded)"]:::tool
     DB[("ledger.sqlite3\nproject + wip_snapshot + ap_bill_line\n→ v_wip_latest · v_ap_by_project")]:::out
-    DASH["dashboard.py + static/\nlocal web UI (127.0.0.1) — READ-ONLY except one write.\nTabs: My view · Overview · Costs (code→jobs pivot) · Draws\n(race-through) · Liens · Vendors · Sales (CRM pipeline)"]:::tool
+    DASH["dashboard.py + static/\nlocal web UI (127.0.0.1) - READ-ONLY except one write.\nTabs: My view · Overview · P&L · Costs · Draws · Bills\n(Notion-style saved views) · Liens · Vendors · Sales · Console"]:::tool
     BROWSER[("Browser\nhttp://127.0.0.1:8787")]:::out
     QBO[("QBO\nBills + Purchases\n(read-only pull, Touch ID)")]:::src
     QCOSTS["shared/qbo_costs.py\ncost_leaf + iter_cost_lines\n(the ONE resolver — shared with project-pnl)"]:::tool
@@ -377,6 +377,19 @@ font, text size, density, width, widget + column visibility) is saved per person
 Run it with `python3 ledger/dashboard.py` (the preview sandbox can't — it needs the DB + `shared/`
 outside `.preview`). This is Rung 1 of turning the terminal DB into a platform; Postgres + a shared
 server is Rung 2, when a second person needs to log in.
+
+**The Bills tab** rolls the whole Bill Tracker (`ap_bill_line`, every bill - one row per bill,
+`open_balance` per-bill so it sums cleanly) into the dashboard, fronted by **Notion-style saved
+views** instead of a filter panel: each view is a named preset (predicate + default sort) with a
+live count, and the owner picks a view rather than hand-assembling filters. Views: **Open AP**,
+**GC-funded · unpaid · 2mo+** (approved + the draw was paid + still owed + bill ≥ 2 calendar months
+old - the pay-these-first / lien-risk list), **Lien risk**, **To approve**, **Awaiting invoice**,
+**No project #**, **All bills**. Each row carries a division-tinted project chip, a company-scoped
+QBO bill link, bill date + age, amount, open balance, and status pills (pay · invoice · lien ·
+not-approved-only). A **Group by** (division / project / vendor / draw) adds subtotalled group
+headers, a division split-bar shows where the view's open money sits, and the money cells feed the
+same Excel-style select-and-sum bar as the rest of the app. Read-only over `ap_bill_line`; the
+Bill Tracker file itself is still produced by `excel_bill_sync.py` (`sync-ap`).
 
 **Now also the CONTROL PLANE (2026-08-12).** Beyond reading, the dashboard runs the data pipelines
 FROM the UI so the owner never touches a terminal. The **Console** tab is a **pipeline registry**

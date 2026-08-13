@@ -29,6 +29,7 @@
     <button class="tab" data-tabbtn="pnl">P&amp;L</button>
     <button class="tab" data-tabbtn="costs">Costs</button>
     <button class="tab" data-tabbtn="draws">Draws</button>
+    <button class="tab" data-tabbtn="bills">Bills</button>
     <button class="tab" data-tabbtn="liens">Liens</button>
     <button class="tab" data-tabbtn="vendors">Vendors</button>
     <button class="tab" data-tabbtn="sales">Sales</button>
@@ -207,6 +208,34 @@
       </section>
       <div id="drawList"></div>
     </div><!-- /tab: draws -->
+
+    <!-- ══════════════ TAB: BILLS (the full Bill Tracker, Notion-style views) ══════════════ -->
+    <div class="tab-page" data-tab="bills" hidden>
+      <section class="widget">
+        <div class="widget-head">
+          <h2>Bill Tracker <span class="count" id="billsNote"></span></h2>
+        </div>
+        <div class="bill-views" id="billViews"></div>
+        <p class="hint" id="billViewDesc"></p>
+        <div class="kpi-row" id="billsStats"></div>
+        <div class="billmix" id="billMix"></div>
+        <div class="filters">
+          <label class="fld"><span>Search</span><input type="search" id="billSearch" placeholder="Vendor, project #, bill #, name…" autocomplete="off"></label>
+          <label class="fld"><span>Group by</span>
+            <select id="billGroup">
+              <option value="none">None</option>
+              <option value="division">Division</option>
+              <option value="project_no">Project</option>
+              <option value="vendor">Vendor</option>
+              <option value="matched_invoice">Draw</option>
+            </select>
+          </label>
+        </div>
+        <div class="table-scroll">
+          <table class="grid" id="billTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </div><!-- /tab: bills -->
 
     <!-- ══════════════ TAB: LIENS (collections worklist) ══════════════ -->
     <div class="tab-page" data-tab="liens" hidden>

@@ -182,7 +182,8 @@ function raw(col, v) {
 
 // ── State ─────────────────────────────────────────────────────────────────
 let ALL = [];
-let AP = { summary: {}, lien_watch: [], by_project: {} };
+let AP = { summary: {}, lien_watch: [], by_project: {}, bills: [] };
+let BILLS = [];   // full ap_bill_line list for the Bill Tracker tab
 let COST = { by_code: [], by_project_code: {}, by_project: {}, by_cost_type: [], by_vendor: [], loaded_total: 0 };
 let DRAWS = { draws: [], total: 0 };
 let SALES = { pipeline: [], by_rep: [], warm: [], customers: [], totals: {} };
@@ -227,7 +228,8 @@ async function load(isAuto) {
   $("#errorBanner").hidden = true;
   ALL = data.projects || [];
   ALL.forEach(deriveMetrics);
-  AP = data.ap || { summary: {}, lien_watch: [], by_project: {} };
+  AP = data.ap || { summary: {}, lien_watch: [], by_project: {}, bills: [] };
+  BILLS = AP.bills || [];
   COST = data.cost || { by_code: [], by_project_code: {}, by_project: {}, by_cost_type: [], by_vendor: [], loaded_total: 0 };
   DRAWS = data.draws || { draws: [], total: 0 };
   SALES = data.sales || { pipeline: [], by_rep: [], warm: [], customers: [], totals: {} };
@@ -434,7 +436,7 @@ function visibleColumns() {
 function render() {
   renderHome();
   renderKPIs(); renderAttention(); renderCosts(); renderMargins(); renderDivisions();
-  renderProjects(); renderLiens(); renderVendors(); renderDraws(); renderSales();
+  renderProjects(); renderLiens(); renderVendors(); renderDraws(); renderBills(); renderSales();
 }
 
 function timeAgo(iso) {
@@ -1109,6 +1111,227 @@ function renderVendors() {
   }
 }
 function leftText(v) { const td = document.createElement("td"); td.className = "left"; const s = document.createElement("span"); s.textContent = v; td.appendChild(s); return td; }
+
+// ── Bill Tracker (the full ap_bill_line, fronted by Notion-style saved views) ──
+// A "view" is a named preset: a predicate + a default sort. The user picks a view
+// instead of hand-assembling filters. Counts on each chip are live off the data.
+let activeBillView = "open";
+const BILL_LIEN_RISK = new Set(["Notice PAST due", "Notice due in ≤7d", "Lien Filed"]);
+// Age helpers. bill_date is ISO (yyyy-mm-dd), so lexical order == chronological.
+function billYm(b) { const m = String(b.bill_date || "").match(/^(\d{4})-(\d{2})/); return m ? (+m[1]) * 12 + (+m[2] - 1) : null; }
+function billMonthsOld(b) { const ym = billYm(b); if (ym == null) return null; const n = new Date(); return (n.getFullYear() * 12 + n.getMonth()) - ym; }
+const bOpen = b => num(b.open_balance);
+const BILL_VIEWS = [
+  { id: "open", name: "Open AP",
+    desc: "Every bill we still owe money on - the working AP list, most owed first.",
+    pred: b => bOpen(b) > 0, sort: (a, b) => bOpen(b) - bOpen(a) },
+  { id: "paynow", name: "GC-funded · unpaid · 2mo+",
+    desc: "Approved bills where the GC already paid the draw, we still owe the vendor, and the bill is 2+ months old (June and back). Pay these first - the money's in and the lien clock is running. Oldest first.",
+    pred: b => (b.approved === "approved") && (b.invoice_status === "Invoice paid") && bOpen(b) > 0 && (billMonthsOld(b) >= 2),
+    sort: (a, b) => (billYm(a) ?? 1e9) - (billYm(b) ?? 1e9) },
+  { id: "lien", name: "Lien risk",
+    desc: "Open bills on the Texas lien clock - past due or due within 7 days. Clear these to protect the job.",
+    pred: b => BILL_LIEN_RISK.has(b.lien_status) && bOpen(b) > 0,
+    sort: (a, b) => (LIEN_ORDER.indexOf(a.lien_status) - LIEN_ORDER.indexOf(b.lien_status)) || (bOpen(b) - bOpen(a)) },
+  { id: "approve", name: "To approve",
+    desc: "Open bills not yet approved for payment - the approval queue.",
+    pred: b => b.approved !== "approved" && bOpen(b) > 0, sort: (a, b) => bOpen(b) - bOpen(a) },
+  { id: "awaiting", name: "Awaiting invoice",
+    desc: "Bills not yet on a draw - no AR invoice has gone out to authorize paying them.",
+    pred: b => b.invoice_status === "Awaiting Invoice", sort: (a, b) => bOpen(b) - bOpen(a) },
+  { id: "noproj", name: "No project #",
+    desc: "Bills with no project assigned - coding gaps to fix in QuickBooks.",
+    pred: b => !b.project_no || b.invoice_status === "No project #", sort: (a, b) => bOpen(b) - bOpen(a) },
+  { id: "all", name: "All bills",
+    desc: "Every bill in the tracker, newest first.",
+    pred: () => true, sort: (a, b) => String(b.bill_date || "").localeCompare(String(a.bill_date || "")) },
+];
+const BILL_ROW_CAP = 1500;   // render ceiling (noted in the header when hit) - keeps the DOM snappy
+function billView() { return BILL_VIEWS.find(v => v.id === activeBillView) || BILL_VIEWS[0]; }
+function divClass(d) { const s = String(d || "").toUpperCase(); return s === "RP" ? "rp" : s === "CP" ? "cp" : s === "MFD" ? "mfd" : ""; }
+function tagEl(text, cls, title) { const s = document.createElement("span"); s.className = "tag" + (cls ? " " + cls : ""); s.textContent = text; if (title) s.title = title; return s; }
+// Approval only shows the EXCEPTION (amber "Not approved"); approved is the silent norm.
+function apprTag(b) { return b.approved === "approved" ? null : tagEl("Not approved", "warn"); }
+function payTag(b) { const v = b.pay_status || ""; if (!v) return null;
+  if (/unpaid/i.test(v)) return tagEl("Unpaid", "warn");
+  if (/partial/i.test(v)) return tagEl("Partial", "warn");
+  if (/paid/i.test(v)) return tagEl("Paid", "ok", v);   // full text (fronted/collected) in the tooltip
+  return tagEl(v, "mute"); }
+const BILL_INV_CLASS = { "Invoice paid": "ok", "Awaiting Payment": "warn", "Awaiting Invoice": "mute", "No project #": "bad", "Partial paid": "warn" };
+function invTag(b) { const v = b.invoice_status || ""; if (!v) return null; return tagEl(v, BILL_INV_CLASS[v] || "mute"); }
+function lienTag(b) { const v = b.lien_status; if (!v || !LIEN_CLASS[v]) return null;
+  const s = document.createElement("span"); s.className = "lien " + (LIEN_CLASS[v] || "info");
+  s.textContent = LIEN_SHORT[v] || v; s.title = v; return s; }
+
+function billMatchesSearch(b, q) {
+  return `${b.vendor || ""} ${b.project_no || ""} ${b.bill_ref || ""} ${b.invoice_no || ""} ${b.account || ""} ${nameOf(b.project_no)}`.toLowerCase().includes(q);
+}
+function renderBills() {
+  const bills = BILLS || [];
+  // ── view chips (Notion-style saved views) with live counts ──
+  const vc = $("#billViews"); if (!vc) return;
+  vc.innerHTML = "";
+  for (const v of BILL_VIEWS) {
+    const n = bills.filter(v.pred).length;
+    const chip = document.createElement("button");
+    chip.className = "view-chip" + (v.id === activeBillView ? " active" : "");
+    const nm = document.createElement("span"); nm.className = "vc-name"; nm.textContent = v.name;
+    const ct = document.createElement("span"); ct.className = "vc-count"; ct.textContent = String(n);
+    chip.appendChild(nm); chip.appendChild(ct);
+    chip.onclick = () => { activeBillView = v.id; try { localStorage.setItem("proficient-ledger-billview", v.id); } catch { /* ignore */ } renderBills(); };
+    vc.appendChild(chip);
+  }
+  const view = billView();
+  $("#billViewDesc").textContent = view.desc;
+
+  // ── filter (view predicate + free-text search) then sort ──
+  const q = ($("#billSearch") ? $("#billSearch").value : "").trim().toLowerCase();
+  let rows = bills.filter(view.pred);
+  if (q) rows = rows.filter(b => billMatchesSearch(b, q));
+  if (view.sort) rows = [...rows].sort(view.sort);
+
+  $("#billsNote").textContent = bills.length
+    ? `(${rows.length.toLocaleString()} of ${bills.length.toLocaleString()} bills · from Bill Tracker.xlsx)`
+    : "(no AP data - run load_bill_tracker.py)";
+
+  // ── KPI strip for the active view ──
+  const openSum = rows.reduce((t, b) => t + bOpen(b), 0);
+  const billedSum = rows.reduce((t, b) => t + num(b.line_amount), 0);
+  const lienN = rows.filter(b => BILL_LIEN_RISK.has(b.lien_status)).length;
+  const stats = [
+    ["Bills", rows.length.toLocaleString(), view.name],
+    ["Open balance", money(openSum), "still owed to vendors"],
+    ["Bill total", money(billedSum), "sum of bill amounts"],
+    ["Lien risk", String(lienN), "on the clock"],
+  ];
+  const sr = $("#billsStats"); sr.innerHTML = "";
+  for (const [label, value, sub] of stats) {
+    const el = document.createElement("div"); el.className = "kpi";
+    el.innerHTML = `<div class="k-label"></div><div class="k-value"></div><div class="k-sub"></div>`;
+    el.querySelector(".k-label").textContent = label;
+    el.querySelector(".k-value").textContent = value;
+    el.querySelector(".k-sub").textContent = sub;
+    sr.appendChild(el);
+  }
+
+  // ── open-balance split bar by division (the view's money at a glance) ──
+  renderBillMix(rows, openSum);
+
+  // ── the table (optionally grouped, Notion-style, with subtotals) ──
+  const group = $("#billGroup") ? $("#billGroup").value : "none";
+  const thead = $("#billTable thead"), tbody = $("#billTable tbody");
+  thead.innerHTML = ""; tbody.innerHTML = "";
+  const cols = [["Vendor", "left"], ["Project", "left"], ["Bill #", "left"], ["Bill date", "left"],
+                ["Amount", "right"], ["Open", "right"], ["Status", "left"]];
+  const htr = document.createElement("tr");
+  for (const [c, al] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
+  thead.appendChild(htr);
+
+  if (!rows.length) {
+    const tr = document.createElement("tr"); const td = document.createElement("td");
+    td.colSpan = cols.length; td.className = "left"; td.style.color = "var(--text-dim)"; td.style.padding = "14px 12px";
+    td.textContent = bills.length ? "No bills match this view / search." : "No AP data - run load_bill_tracker.py.";
+    tr.appendChild(td); tbody.appendChild(tr); return;
+  }
+
+  let rendered = 0;
+  const pushRow = b => { if (rendered >= BILL_ROW_CAP) return false; tbody.appendChild(billRow(b, cols.length)); rendered++; return true; };
+  if (group === "none") {
+    for (const b of rows) { if (!pushRow(b)) break; }
+  } else {
+    const groups = {};
+    for (const b of rows) { const k = billGroupKey(b, group); (groups[k] || (groups[k] = [])).push(b); }
+    const order = Object.keys(groups).sort((a, b) =>
+      groups[b].reduce((t, x) => t + bOpen(x), 0) - groups[a].reduce((t, x) => t + bOpen(x), 0));
+    outer:
+    for (const k of order) {
+      const g = groups[k];
+      const gOpen = g.reduce((t, x) => t + bOpen(x), 0);
+      const gtr = document.createElement("tr"); gtr.className = "bill-group";
+      const gtd = document.createElement("td"); gtd.colSpan = cols.length;
+      const key = document.createElement("span"); key.className = "bg-key"; key.textContent = billGroupLabel(k, group);
+      const sub = document.createElement("span"); sub.className = "bg-sub";
+      sub.textContent = `  ·  ${g.length} bill${g.length > 1 ? "s" : ""}  ·  ${money(gOpen)} open`;
+      gtd.appendChild(key); gtd.appendChild(sub); gtr.appendChild(gtd); tbody.appendChild(gtr);
+      for (const b of g) { if (!pushRow(b)) break outer; }
+    }
+  }
+  if (rendered < rows.length) {
+    const tr = document.createElement("tr"); const td = document.createElement("td");
+    td.colSpan = cols.length; td.className = "left"; td.style.color = "var(--text-dim)"; td.style.padding = "10px 12px";
+    td.textContent = `Showing the first ${rendered.toLocaleString()} of ${rows.length.toLocaleString()} - narrow with a view, search, or grouping. (Totals above cover all ${rows.length.toLocaleString()}.)`;
+    tr.appendChild(td); tbody.appendChild(tr);
+  }
+}
+function billGroupKey(b, group) {
+  if (group === "division") return b.division || "–";
+  if (group === "project_no") return b.project_no || "–";
+  if (group === "vendor") return b.vendor || "–";
+  if (group === "matched_invoice") return b.invoice_no || b.matched_invoice || "–";
+  return "–";
+}
+function billGroupLabel(k, group) {
+  if (group === "project_no" && k !== "–") { const nm = nameOf(k); return nm ? `${k} · ${nm}` : k; }
+  if (group === "division") return k === "–" ? "No division" : k;
+  if (group === "matched_invoice") return k === "–" ? "No draw" : "Draw " + k;
+  return k;
+}
+function billRow(b, ncols) {
+  const tr = document.createElement("tr");
+  tr.className = "bill-row" + (BILL_LIEN_RISK.has(b.lien_status) ? " risk" : "");
+  // Vendor (bold, truncated)
+  const vtd = document.createElement("td"); vtd.className = "left";
+  const vs = document.createElement("span"); vs.className = "bill-vendor"; vs.textContent = b.vendor || "–"; vs.title = b.vendor || "";
+  vtd.appendChild(vs); tr.appendChild(vtd);
+  // Project (division chip + name)
+  const ptd = document.createElement("td"); ptd.className = "left";
+  if (b.project_no) {
+    const chip = document.createElement("span"); const dc = divClass(b.division);
+    chip.className = "divchip" + (dc ? " " + dc : ""); chip.textContent = b.project_no; ptd.appendChild(chip);
+    const nm = nameOf(b.project_no); if (nm) { const s = document.createElement("span"); s.className = "bill-name"; s.textContent = nm; ptd.appendChild(s); }
+  } else { ptd.appendChild(document.createTextNode("–")); }
+  tr.appendChild(ptd);
+  // Bill # (QBO deep link)
+  tr.appendChild(qboLinkCell(b.bill_ref, qboBillHref(b.qbo_link), "Open this bill in QuickBooks"));
+  // Bill date + age
+  const dtd = document.createElement("td"); dtd.className = "left";
+  const ds = document.createElement("span"); ds.textContent = fmtDate(b.bill_date); dtd.appendChild(ds);
+  const mo = billMonthsOld(b);
+  if (mo != null && mo >= 1) { const a = document.createElement("span"); a.className = "bill-age"; a.textContent = mo >= 2 ? `${mo}mo` : "1mo"; dtd.appendChild(a); }
+  tr.appendChild(dtd);
+  // Amount
+  const atd = document.createElement("td"); atd.appendChild(moneyCell(b.line_amount)); tr.appendChild(atd);
+  // Open balance
+  const otd = document.createElement("td"); const oc = moneyCell(b.open_balance);
+  oc.classList.add(bOpen(b) > 0 ? "open-amt" : "open-zero"); otd.appendChild(oc); tr.appendChild(otd);
+  // Status pills
+  const std = document.createElement("td"); std.className = "left status-cell";
+  for (const t of [payTag(b), invTag(b), lienTag(b), apprTag(b)]) if (t) std.appendChild(t);
+  if (!std.childNodes.length) std.appendChild(document.createTextNode("–"));
+  tr.appendChild(std);
+  return tr;
+}
+function renderBillMix(rows, openSum) {
+  const box = $("#billMix"); if (!box) return;
+  box.innerHTML = "";
+  if (!(openSum > 0)) { box.hidden = true; return; }
+  box.hidden = false;
+  const buckets = { rp: 0, cp: 0, mfd: 0, na: 0 };
+  for (const b of rows) { const o = bOpen(b); if (o <= 0) continue; const c = divClass(b.division); buckets[c || "na"] += o; }
+  const bar = document.createElement("div"); bar.className = "mixbar";
+  const legend = document.createElement("div"); legend.className = "mixlegend";
+  const parts = [["rp", "RP"], ["cp", "CP"], ["mfd", "MFD"], ["na", "No division"]];
+  for (const [cls, label] of parts) {
+    const v = buckets[cls]; if (v <= 0) continue;
+    const seg = document.createElement("div"); seg.className = "mixseg " + cls;
+    seg.style.width = (v / openSum * 100) + "%"; seg.title = `${label}: ${money(v)}`; bar.appendChild(seg);
+    const key = document.createElement("span"); key.className = "mixkey";
+    const dot = document.createElement("span"); dot.className = "mixdot";
+    dot.style.background = cls === "rp" ? "var(--accent)" : cls === "cp" ? "#3b6ea5" : cls === "mfd" ? "#8161b0" : "var(--text-dim)";
+    key.appendChild(dot); key.appendChild(document.createTextNode(`${label} ${money(v)}`)); legend.appendChild(key);
+  }
+  box.appendChild(bar); box.appendChild(legend);
+}
 
 // ── Sales / CRM (read-only from the Notion Customer List) ───────────────────
 function daysAgo(iso) {
@@ -2010,6 +2233,8 @@ function init() {
   ["#drawFClient", "#drawFProj", "#drawFVendor", "#drawFInv", "#drawDivision"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderDraws); });
   { const el = $("#vendorSearch"); if (el) el.addEventListener("input", renderVendors); }
   ["#lienFProj", "#lienFVendor", "#lienFInv", "#lienFName"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderLiens); });
+  ["#billSearch", "#billGroup"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderBills); });
+  try { const bv = localStorage.getItem("proficient-ledger-billview"); if (bv && BILL_VIEWS.some(v => v.id === bv)) activeBillView = bv; } catch { /* ignore */ }
   ["#salesSearch", "#salesStage", "#salesDivision"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderSales); });
   ["#pnlFProj", "#pnlFDivision"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderPnl); });
   { const el = $("#btnClearLien"); if (el) el.onclick = () => { activeLien = null; renderLiens(); }; }
