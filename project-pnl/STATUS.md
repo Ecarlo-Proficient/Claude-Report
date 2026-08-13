@@ -36,9 +36,13 @@ manual close), RP (no draws — expenses → invoice → profit).
   'Subcontractors Expense: Labor'). Concrete also gets the horizontal
   yards/$-per-yd strip (takeoff implied vs paid, lump bills excluded from the
   rate and flagged).
-  **LEDGER** (below, fully expanded, nothing collapsed): QBO # (linked,
-  the user's identifier) · DATE · VENDOR · DESCRIPTION · QTY · RATE ·
-  AMOUNT · [SALES TAX] · DRAW label. The QBO # link opens the UPLOADED BILL
+  **LEDGER** (below, fully expanded, nothing collapsed): **↗ (QBO bill
+  page)** · QBO # (linked to the SCAN, the user's identifier) · DATE ·
+  VENDOR · QTY · RATE · AMOUNT · [SALES TAX] · DRAW label · DESCRIPTION.
+  The ↗ first column is the direct QBO link (the user 2026-08-10 — it went
+  missing when QBO # became the attachment link). The mark readback is
+  HEADER-DRIVEN (finds the QBO #/DATE/VENDOR/AMOUNT columns by name), so it
+  reads both pre- and post-↗ layouts and survives future column moves. The QBO # link opens the UPLOADED BILL
   FILE, not the QBO bill page (the user 2026-07-31): QBO's attachment URLs
   expire in minutes, so the exporter downloads each scan into `attachments/`
   beside the workbook and links the local copy (offline, no QBO login);

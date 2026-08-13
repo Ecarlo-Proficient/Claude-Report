@@ -1272,12 +1272,27 @@ def read_back_ledger_marks(path: Path,
         if nm not in wb.sheetnames:
             continue
         ws = wb[nm]
+        # Column positions come from the LEDGER HEADER ROW, not fixed indices
+        # (2026-08-10: the ↗ column shifted everything right by one; header-
+        # driven reading handles both the old and new layouts).
+        cols = {}
+        for row in ws.iter_rows(min_col=1, max_col=12):
+            hdrs = {str(c.value or "").strip().upper(): c.column for c in row}
+            if "QBO #" in hdrs and "DATE" in hdrs and "AMOUNT" in hdrs:
+                cols = {"qbo": hdrs["QBO #"], "date": hdrs["DATE"],
+                        "vend": hdrs.get("VENDOR"), "amt": hdrs["AMOUNT"]}
+                break
+        if not cols:
+            continue
         marks: Dict[tuple, str] = {}
-        for row in ws.iter_rows(min_col=1, max_col=9):
-            a, b, c, f = row[0], row[1], row[2], row[5]
-            # Only LEDGER BILL rows: col B must be an actual date. Scoreboard
-            # code rows carry band fills by design and col B holds the BUDGET
-            # number — without this check they'd read as phantom marks.
+        for row in ws.iter_rows(min_col=1, max_col=max(cols.values())):
+            a = row[cols["qbo"] - 1]
+            b = row[cols["date"] - 1]
+            c = row[cols["vend"] - 1]
+            f = row[cols["amt"] - 1]
+            # Only LEDGER BILL rows: the DATE cell must be an actual date.
+            # Scoreboard code rows carry band fills by design — without this
+            # check they'd read as phantom marks.
             if not (a.value and re.match(r"\d{4}-\d{2}-\d{2}$",
                                          str(b.value or "").strip())):
                 continue
@@ -4151,10 +4166,13 @@ def build_sheet_labor_concrete(
     if has_tax or has_fuel:
         widths[sb_incl] = 17
     # ledger fixed columns (overlap the same sheet columns); DESCRIPTION is
-    # LAST so it can spill right over empty cells instead of owning a width
-    L_QBO, L_DATE, L_VEND, L_QTY, L_RATE, L_AMT = 1, 2, 3, 4, 5, 6
-    L_TAX = 7 if has_tax else 0
-    L_FUEL = (8 if has_tax else 7) if has_fuel else 0
+    # LAST so it can spill right over empty cells instead of owning a width.
+    # Col 1 is the QBO-page arrow (the user 2026-08-10: the bill # opens the
+    # SCAN, so the direct QBO link needed its own little column up front).
+    L_ARROW = 1
+    L_QBO, L_DATE, L_VEND, L_QTY, L_RATE, L_AMT = 2, 3, 4, 5, 6, 7
+    L_TAX = 8 if has_tax else 0
+    L_FUEL = (9 if has_tax else 8) if has_fuel else 0
     L_DRAW = max(L_AMT, L_TAX, L_FUEL) + 1
     L_DESC = L_DRAW + 1
     for col, w in ((L_QTY, 12), (L_RATE, 13), (L_AMT, 15), (L_DRAW, 16),
@@ -4304,7 +4322,8 @@ def build_sheet_labor_concrete(
         "confirms the bill — the mark survives every re-sync."))
     lh.font = Font(bold=True, size=SZ, color="1F3A5F")
     r += 1
-    led_heads = [("QBO #", L_QBO), ("DATE", L_DATE), ("VENDOR", L_VEND),
+    led_heads = [("↗", L_ARROW), ("QBO #", L_QBO), ("DATE", L_DATE),
+                 ("VENDOR", L_VEND),
                  ("QTY", L_QTY), ("RATE", L_RATE), ("AMOUNT", L_AMT)]
     if L_TAX:
         led_heads.append(("SALES TAX", L_TAX))
@@ -4349,6 +4368,15 @@ def build_sheet_labor_concrete(
         ws.row_dimensions[r].height = ROW_H
         r += 1
         for ln in merged:
+            # ↗ = the QBO bill page, always (the user 2026-08-10).
+            _qurl = _qbo_txn_url(ln["tx_type"], ln["txn_id"], realm)
+            arr = ws.cell(row=r, column=L_ARROW, value="↗")
+            arr.alignment = Alignment(horizontal="center")
+            if _qurl:
+                arr.hyperlink = _qurl
+                arr.font = Font(color="0563C1", underline="single", size=SZ)
+            else:
+                arr.font = Font(size=SZ, color="BFBFBF")
             # The uploaded bill file when QBO has one (the user 2026-07-31 —
             # "just want the straight attachment"); the QBO bill page
             # otherwise. Several scans → the attachments folder, count shown.
