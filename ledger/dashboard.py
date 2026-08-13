@@ -459,7 +459,7 @@ def _waiver_key(mi, vendor, bill_ref) -> str:
 # A draw is "done" (green) the moment every bill is PAID; unconditional waivers are
 # tracked per bill (the checkboxes) for the owner's records but no longer gate green.
 _STAGE_ORDER = {"Ready to turn in": 0, "Fund in — pay vendors": 1,
-                "Awaiting GC funding": 2}
+                "Awaiting GC funding": 2, "All paid": 3}
 
 
 def _fetch_draws(con, limit: int = 100) -> dict:
@@ -506,13 +506,16 @@ def _fetch_draws(con, limit: int = 100) -> dict:
         paid = sum(1 for b in bills if b["pay_date"])
         funded = any(b["gc_paid"] for b in bills)
         waivers = sum(1 for b in bills if b["waiver"])
+        ar = bmap.get(str(d.get("invoice_no") or ""))
+        gc_paid_in = bool(ar and (ar.get("status") == "Paid" or (ar.get("balance") or 0) <= 0.005))
         if not funded:
             stage = "Awaiting GC funding"
         elif paid < n:
             stage = "Fund in — pay vendors"
-        else:                              # every bill paid → done (green), waivers aside
+        elif gc_paid_in:                   # vendors paid AND the GC has paid our AR = fully settled
+            stage = "All paid"
+        else:                              # vendors paid, GC AR still open (we fronted it - collect)
             stage = "Ready to turn in"
-        ar = bmap.get(str(d.get("invoice_no") or ""))
         d.update({
             "label": (mi or "").split("\n")[0].strip(), "n": n, "paid": paid, "funded": funded,
             "waivers": waivers, "total": sum(b["amount"] for b in bills), "stage": stage,
@@ -524,7 +527,7 @@ def _fetch_draws(con, limit: int = 100) -> dict:
             "ar_date": (ar["txn_date"] if ar else None),       # invoice date
             "ar_qbo_id": (ar["qbo_txn_id"] if ar else None),   # QBO Invoice Id → deep link
             "customer": (ar["customer"] if ar else None),
-            "gc_paid_in": bool(ar and (ar.get("status") == "Paid" or (ar.get("balance") or 0) <= 0.005)),
+            "gc_paid_in": gc_paid_in,
         })
         out.append(d)
     out.sort(key=lambda d: d["recency"], reverse=True)

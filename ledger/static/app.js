@@ -573,14 +573,17 @@ function renderHome() {
 
 const DRAW_STAGE_CLASS = {
   "Fund in — pay vendors": "d7",
-  "Awaiting GC funding": "info", "Ready to turn in": "ready",
+  "Awaiting GC funding": "info",
+  "Ready to turn in": "d7",   // vendors paid, GC still owes -> amber (collect)
+  "All paid": "ready",        // GC paid + vendors paid -> green (done)
 };
 // Clearer, direction-explicit pill text (who paid whom). Display only — the internal
 // stage keys above are unchanged (they're matched in several places).
 const DRAW_STAGE_LABEL = {
   "Fund in — pay vendors": "GC funded → pay vendors",
   "Awaiting GC funding": "Awaiting GC funding",
-  "Ready to turn in": "All bills paid → ready to turn in",
+  "Ready to turn in": "Vendors paid → collect the rest from the GC",
+  "All paid": "All paid - the GC paid you and the vendors are paid",
 };
 // Company-scoped QBO deep link. The BARE app/invoice?txnId= form resolves the txn in
 // whatever Intuit company the browser is on - with more than one company logged in it
@@ -619,11 +622,12 @@ function qboLinkCell(text, url, title) {
 const DRAW_STAGE_SHORT = {
   "Fund in — pay vendors": "Pay vendors",
   "Awaiting GC funding": "Awaiting GC",
-  "Ready to turn in": "Ready to turn in",
+  "Ready to turn in": "Collect from GC",
+  "All paid": "All paid",
 };
 function renderDraws() {
   const fv = sel => ($(sel) ? $(sel).value : "").trim().toLowerCase();
-  const fProj = fv("#drawFProj"), fVend = fv("#drawFVendor"), fInv = fv("#drawFInv");
+  const fProj = fv("#drawFProj"), fVend = fv("#drawFVendor"), fInv = fv("#drawFInv"), fClient = fv("#drawFClient");
   const div = $("#drawDivision") ? $("#drawDivision").value : "";
   const all = (DRAWS.draws || []).filter(d => {                 // each filled field must match (AND)
     if (div && !String(d.project_no || "").toUpperCase().startsWith(div)
@@ -632,6 +636,8 @@ function renderDraws() {
               && !(d.label || "").toLowerCase().includes(fProj)) return false;
     if (fInv && !String(d.invoice_no || "").toLowerCase().includes(fInv)) return false;
     if (fVend && !(d.bills || []).some(b => (b.vendor || "").toLowerCase().includes(fVend))) return false;
+    // Client = the GC / project name (e.g. "Firestone" catches every Firestone job)
+    if (fClient && !(String(d.customer || "") + " " + (d.label || "")).toLowerCase().includes(fClient)) return false;
     return true;
   });
   const shown = activeDrawStage ? all.filter(d => d.stage === activeDrawStage) : all;
@@ -641,8 +647,9 @@ function renderDraws() {
   // Clickable stage tiles → filter the draw list. Counts come from `all` (all stages);
   // subs spell out the money direction (GC pays us in → we pay vendors out → waivers).
   const stats = [
-    ["Ready to turn in", "Ready to turn in", "all bills paid — turn it in"],
-    ["Pay vendors", "Fund in — pay vendors", "GC funded — vendors not paid yet"],
+    ["All paid", "All paid", "GC paid you + vendors paid"],
+    ["Collect from GC", "Ready to turn in", "vendors paid, GC still owes"],
+    ["Pay vendors", "Fund in — pay vendors", "GC funded, vendors not paid yet"],
     ["Awaiting GC", "Awaiting GC funding", "not funded by the GC yet"],
   ];
   const sr = $("#drawsStats"); sr.innerHTML = "";
@@ -690,7 +697,7 @@ function renderDraws() {
       sub.textContent = `${nm ? " · " + nm : ""} · ${g.length} draw${g.length > 1 ? "s" : ""} · ${money(gIn)} in / ${money(gOut)} out`;
       gtd.appendChild(sp); gtd.appendChild(sub); gtr.appendChild(gtd); tbody.appendChild(gtr);
     }
-    const done = d.stage === "Ready to turn in";
+    const done = d.stage === "All paid";   // green row only when fully settled (GC paid + vendors paid)
     const open = drawsExpanded.has(d.matched_invoice);
     const tr = document.createElement("tr"); tr.className = "draw-row" + (done ? " done" : "");
     tr.style.cursor = "pointer";
@@ -2000,7 +2007,7 @@ function init() {
   wireSettings();
   ["#search", "#fDivision", "#fStatus", "#fCategory", "#fActive"].forEach(sel =>
     $(sel).addEventListener("input", renderProjects));
-  ["#drawFProj", "#drawFVendor", "#drawFInv", "#drawDivision"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderDraws); });
+  ["#drawFClient", "#drawFProj", "#drawFVendor", "#drawFInv", "#drawDivision"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderDraws); });
   { const el = $("#vendorSearch"); if (el) el.addEventListener("input", renderVendors); }
   ["#lienFProj", "#lienFVendor", "#lienFInv", "#lienFName"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderLiens); });
   ["#salesSearch", "#salesStage", "#salesDivision"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderSales); });

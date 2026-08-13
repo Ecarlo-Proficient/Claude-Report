@@ -477,6 +477,15 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     scans the Synology **Accounting** share (`/Volumes/Accounting/Automations/Vendor Statements`), `--yes`
     for unattended, single-file + `--vendor` forms too. Commands are repo-root-relative (no `/Users` paths).
 
+  - **Draws: "All paid" stage + a Client filter (owner).** "Ready to turn in" was shown even when the GC
+    had ALREADY paid us AND vendors were paid - fully settled, nothing to turn in. Split the terminal
+    state on `gc_paid_in` (AR Paid / balance <= 0): **"All paid"** (green, done) when the GC has paid you
+    AND all vendors are paid; **"Collect from GC"** (amber, internal key still "Ready to turn in") when
+    vendors are paid but the GC's AR is still open (you fronted it). Live now: 17 All paid, 1 Collect from
+    GC (CP745, GC partially paid). Tiles + explainer updated; the **green row is now only "All paid."**
+    New **Client** filter on the Draws tab - a name-substring match on the draw customer/label, so
+    "Firestone" catches every Firestone job (CP672 / CP745 / CP961). Verified live, no console errors.
+
 ## IN PROGRESS
 - (none) - super-database + Console (control plane) landed. Owner to validate the producer Runs (AR/AP)
   and the draft-WIP button with a real click (they fire real syncs + Touch ID).

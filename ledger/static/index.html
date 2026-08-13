@@ -186,12 +186,13 @@
         </div>
         <div class="kpi-row" id="drawsStats"></div>
         <p class="hint"><b>The money flows one way:</b> the GC funds the draw (money <b>in</b> to you) →
-          you pay the vendors (money <b>out</b>) → turn the draw in to unlock the next. A draw goes
-          <b>green (Ready to turn in)</b> once <b>every bill is paid</b>. Unconditional waivers are
-          tracked per bill (check the box when one arrives) for your own records, but they don't hold
-          the draw back. Click a tile above to filter.
-          <br><b>RP is excluded</b> — residential bills at completion / milestones, not formal draws.</p>
+          you pay the vendors (money <b>out</b>) → the GC pays your draw invoice. A draw is
+          <b>green (All paid)</b> once the GC has paid you <b>and</b> every vendor is paid;
+          <b>Collect from GC</b> means you've paid the vendors but the GC still owes you.
+          Click a tile above to filter.
+          <br><b>RP is excluded</b> - residential bills at completion / milestones, not formal draws.</p>
         <div class="filters">
+          <label class="fld"><span>Client</span><input type="search" id="drawFClient" placeholder="Firestone" autocomplete="off"></label>
           <label class="fld"><span>Project #</span><input type="search" id="drawFProj" placeholder="CP745" autocomplete="off"></label>
           <label class="fld"><span>Vendor</span><input type="search" id="drawFVendor" placeholder="Burnco" autocomplete="off"></label>
           <label class="fld"><span>Invoice #</span><input type="search" id="drawFInv" placeholder="34449" autocomplete="off"></label>
