@@ -20,28 +20,36 @@ Categorizes each statement line into one of four buckets:
                             vendor may have credited / already received
                             payment for; needs the user's eyes.
 
-Writes Excel report with Summary + one sheet per category to (see
-OUTDIR_DEFAULT below; override with --out):
-  ~/Library/CloudStorage/OneDrive-ProficientConcrete,LLC/Automations-/statement reconciles/Statement_Reconciliation_<date>_<vendor>.xlsx
+Writes an Excel report (Summary + one sheet per category) named
+  Statement_Reconciliation_<date>_<vendor>.xlsx
+
+Manually-passed files get the SAME treatment as an --inbox sweep: each Excel
+lands in the Synology Reconciliations folder, and a source file that already
+lives in the Statement Inbox is archived to its DONE subfolder on success. If
+the Synology share isn't mounted, output falls back to OUTDIR_DEFAULT (below)
+and no file is moved. (--out is accepted but ignored in this mode.)
 
 SUPPORTED PDF TEMPLATES (auto-detected by report-type signature, never by vendor name)
   • QuickBooks Statement                 — vendor-issued statement with "INV #<num>. Due <date>" lines
   • QuickBooks Customer Open Balance     — QBO Customer Open Balance report, columnar
   • QuickBooks Open Invoices             — QBO Open Invoices report, columnar (4-col)
+  • Plus per-vendor layouts (White Cap, Bobcat, Bodin, BURNCO, Cintas, Cow Town,
+    Sunbelt, Croell) and generic tabular/columnar — see TEMPLATE_LABELS.
 
 USAGE
-  python3 statement_reconciler.py /path/to/statement.pdf
+  python3 statement_reconciler.py /path/to/statement.pdf            # inbox-style: Excel → Reconciliations, source → DONE if in inbox
   python3 statement_reconciler.py /path/to/statement.pdf --vendor "Exact QBO Display Name"
-  python3 statement_reconciler.py /path/to/statement.pdf --out /custom/path.xlsx
-  python3 statement_reconciler.py /path/to/statement.pdf --dry-run
-  python3 statement_reconciler.py /path/to/statement.pdf --yes    # skip prompts
+  python3 statement_reconciler.py /path/to/statement.pdf --dry-run  # reconcile + print, write/move nothing
+  python3 statement_reconciler.py /path/to/statement.pdf --yes      # skip prompts
+  python3 statement_reconciler.py --inbox                           # sweep the whole Statement Inbox
 
 INTERACTIVE FLOW
   Two Y/N prompts before any QBO call so a misread PDF never wastes API
   roundtrips:
     1. After parse → shows vendor / date / total / first+last line. Confirm.
     2. After QBO vendor lookup → shows matched vendor name. Confirm.
-  After completion, opens the Excel report automatically (macOS `open`).
+  Ends with an INBOX SUMMARY (reconciled / moved-to-DONE / left-for-a-human) and
+  a clickable link to the Reconciliations folder. Does not auto-open the Excel.
 
 DEPENDENCIES
   pip3 install --break-system-packages pdfplumber requests openpyxl
@@ -2979,14 +2987,22 @@ def process_pdf(pdf_path: Path, args: argparse.Namespace,
     return True, counts
 
 
-def _resolve_workflow_dirs(base: Path) -> Tuple[Path, Path, Path]:
+def _resolve_workflow_dirs(base: Path, strict: bool = True
+                           ) -> Tuple[Optional[Path], Optional[Path], Optional[Path]]:
     """Resolve (inbox, done, reconciliations) under `base`, tolerant of the
-    exact folder spelling/spacing. Exits with a clear message if the share
-    isn't mounted or the folders can't be found."""
+    exact folder spelling/spacing. With strict=True (the --inbox sweep) exits
+    with a clear message if the share isn't mounted or the folders can't be
+    found. With strict=False (a manually-passed file) returns (None, None, None)
+    instead, so the caller can fall back to the default output dir and skip the
+    DONE move rather than abort."""
+    def _bail(msg: str) -> Tuple[None, None, None]:
+        if strict:
+            sys.exit(_Term.color(_Term.R, msg))
+        return None, None, None
+
     if not base.exists():
-        sys.exit(_Term.color(_Term.R,
-            f"✗ not found: {base}\n"
-            "  Is the Synology share mounted? (Finder → Go → Connect to Server)"))
+        return _bail(f"✗ not found: {base}\n"
+                     "  Is the Synology share mounted? (Finder → Go → Connect to Server)")
     entries = [d for d in base.iterdir() if d.is_dir()]
 
     def _find(*needles: str) -> Optional[Path]:
@@ -3000,9 +3016,8 @@ def _resolve_workflow_dirs(base: Path) -> Tuple[Path, Path, Path]:
     recon = _find("reconciliation")
     if not inbox or not recon:
         found = ", ".join(sorted(d.name for d in entries)) or "(none)"
-        sys.exit(_Term.color(_Term.R,
-            f"✗ couldn't find the Inbox / Reconciliations folders under {base}\n"
-            f"  Folders present: {found}"))
+        return _bail(f"✗ couldn't find the Inbox / Reconciliations folders under {base}\n"
+                     f"  Folders present: {found}")
 
     done = None
     for d in inbox.iterdir():
@@ -3042,9 +3057,13 @@ def _unique_dest(dest_dir: Path, name: str) -> Path:
 
 
 def run_inbox(args: argparse.Namespace, access: str, cid: str,
-              done: Path, recon: Path, files: List[Path]) -> int:
-    """Reconcile each inbox file → Excel into `recon`; move source → `done` on
-    success. Failures are left in the inbox for a human. Returns exit code."""
+              inbox: Optional[Path], done: Optional[Path], recon: Path,
+              files: List[Path]) -> int:
+    """Reconcile each file → Excel into `recon` with the inbox presentation
+    ([i/N] header + INBOX SUMMARY). A source file that lives in `inbox` is moved
+    to `done` on success; a file passed from elsewhere is reconciled and left in
+    place. Failures are never moved. Used by both the --inbox sweep and manual
+    single/multi-file runs. Returns an exit code."""
     args.out = None
     args.out_dir = recon
     args.no_open = True
@@ -3054,7 +3073,10 @@ def run_inbox(args: argparse.Namespace, access: str, cid: str,
     # auto-skip unknowns (cached-only) so nothing is guessed with nobody watching.
     args.inbox_cached_only = args.yes
 
-    processed: List[str] = []
+    inbox_r = inbox.resolve() if inbox else None
+
+    moved: List[str] = []       # reconciled AND archived to DONE
+    kept: List[str] = []        # reconciled but left in place (not an inbox file)
     failed: List[Tuple[str, str]] = []
     for i, f in enumerate(files, 1):
         print(_Term.color(_Term.BOLD, f"\n[{i}/{len(files)}] {f.name}"))
@@ -3067,21 +3089,37 @@ def run_inbox(args: argparse.Namespace, access: str, cid: str,
         if not ok:
             failed.append((f.name, "skipped (see message above)"))
             continue
+        # Archive to DONE only when the source actually lives in the inbox — and
+        # never on a dry-run (nothing was written, so nothing should move).
+        in_inbox = (done is not None and inbox_r is not None
+                    and f.resolve().parent == inbox_r)
+        if args.dry_run or not in_inbox:
+            if not args.dry_run:
+                print(_Term.color(_Term.DIM, "    ✓ reconciled — left in place (not in inbox)"))
+            kept.append(f.name)
+            continue
         dest = _unique_dest(done, f.name)
         try:
             shutil.move(str(f), str(dest))
             print(_Term.color(_Term.G, f"    ✓ done → {dest.name}"))
+            moved.append(f.name)
         except Exception as e:
             _warn(f"reconciled but couldn't move to DONE: {e}")
-        processed.append(f.name)
+            kept.append(f.name)
 
     print()
     _hr()
     print(_Term.color(_Term.BOLD, "  INBOX SUMMARY"))
     _hr()
-    print(_Term.color(_Term.G, f"  Reconciled + moved to DONE:  {len(processed)}"))
+    if moved:
+        print(_Term.color(_Term.G, f"  Reconciled + moved to DONE:  {len(moved)}"))
+    if kept:
+        note = "reconciled (dry-run)" if args.dry_run else "reconciled, left in place"
+        print(_Term.color(_Term.G, f"  {note+':':28} {len(kept)}"))
+    if not moved and not kept:
+        print(_Term.color(_Term.DIM, "  Reconciled:                  0"))
     if failed:
-        print(_Term.color(_Term.R, f"  Left in inbox (need a human): {len(failed)}"))
+        print(_Term.color(_Term.R, f"  Left for a human:            {len(failed)}"))
         for name, why in failed:
             print(_Term.color(_Term.DIM, f"    · {name} — {why}"))
     print(f"\n  {_Term.color(_Term.BOLD, 'Excels:')} {_term_link(str(recon), recon)}")
@@ -3168,7 +3206,7 @@ def main() -> int:
         t0 = _phase("Authenticating to QBO (Touch ID may prompt)")
         access, cid = load_credentials()
         _done(t0, "Authenticated")
-        return run_inbox(args, access, cid, done, recon, files)
+        return run_inbox(args, access, cid, inbox, done, recon, files)
 
     if not args.pdf:
         p.error("Statement file path required (.pdf / .xlsx / .png) — or use --list-aliases / --forget-vendor.")
@@ -3178,65 +3216,39 @@ def main() -> int:
         if not pp.exists():
             sys.exit(_Term.color(_Term.R, f"✗ not found: {pp}"))
 
-    if len(pdf_paths) > 1 and args.out:
-        sys.exit(_Term.color(_Term.R, "✗ --out is single-PDF only; cannot use with multiple PDFs."))
+    # Manually-passed files get the SAME treatment as an --inbox sweep: each is
+    # reconciled, its Excel written to the Reconciliations folder, and — if the
+    # source actually lives in the inbox — the original archived to DONE. The run
+    # ends with the INBOX SUMMARY. The inbox workflow dirs are resolved leniently
+    # (strict=False): if the Synology share isn't mounted we fall back to the
+    # default output dir and simply skip the archive move.
+    if args.out:
+        _warn("--out is ignored in inbox-style single-file mode; "
+              "the Excel goes to the Reconciliations folder.")
+    base = args.inbox_root or INBOX_ROOT
+    inbox, done, recon = _resolve_workflow_dirs(base, strict=False)
+    if recon is None:
+        recon = OUTDIR_DEFAULT   # share not mounted → local default, no DONE move
 
-    # ── auth once for the whole batch ───────────────────────
     print(_Term.color(_Term.BOLD, "━" * min(60, _width())))
     if len(pdf_paths) == 1:
         print(_Term.color(_Term.BOLD, "  STATEMENT RECONCILER"))
     else:
-        print(_Term.color(_Term.BOLD, f"  STATEMENT RECONCILER  ·  BATCH ({len(pdf_paths)} PDFs)"))
+        print(_Term.color(_Term.BOLD, f"  STATEMENT RECONCILER  ·  {len(pdf_paths)} FILES"))
     print(_Term.color(_Term.BOLD, "━" * min(60, _width())))
+    print(f"  Out:   {recon}")
+    if done:
+        print(f"  Done:  {done}  (only files already in the inbox are moved)")
+    print()
+    if args.dry_run:
+        print(_Term.color(_Term.DIM,
+            "  (dry-run: reconciles and prints findings, but writes no Excel and moves nothing.)\n"))
+
     t0 = _phase("Authenticating to QBO (Touch ID may prompt)")
     access, cid = load_credentials()
     _done(t0, "Authenticated")
-    print()
 
-    # ── process each PDF ────────────────────────────────────
-    failures: List[str] = []
-    batch_counts: Dict[str, int] = {}
-    for i, pdf in enumerate(pdf_paths, 1):
-        if len(pdf_paths) > 1:
-            print(_Term.color(_Term.BOLD,
-                f"\n[{i}/{len(pdf_paths)}] ───────────────────────────────────────\n"))
-        try:
-            ok, counts = process_pdf(pdf, args, access, cid)
-        except Exception as e:
-            _fail(f"error processing {pdf.name}: {e}")
-            failures.append(pdf.name)
-            continue
-        if not ok:
-            failures.append(pdf.name)
-            continue
-        for k, v in counts.items():
-            batch_counts[k] = batch_counts.get(k, 0) + v
-
-    if len(pdf_paths) > 1:
-        print()
-        _hr()
-        print(_Term.color(_Term.BOLD, "  BATCH SUMMARY"))
-        _hr()
-        print(f"  Processed:  {len(pdf_paths) - len(failures)}/{len(pdf_paths)}")
-        if failures:
-            print(_Term.color(_Term.R, f"  Failures:   {', '.join(failures)}"))
-        for key, label, color in [
-            ("MATCHED",               "✓ Matched",                       _Term.G),
-            ("VENDOR_TAX_VIOLATION",  "⚠ Vendor tax violation",          _Term.Y),
-            ("CLERK_AMOUNT_MISMATCH", "⚠ Clerk amount mismatch",         _Term.Y),
-            ("LIKELY_VENDOR_LAG",     "⊙ Likely vendor lag",             _Term.B),
-            ("MISSING_IN_QBO",        "✗ Missing in QBO",                _Term.R),
-            ("MISSING_ON_STATEMENT",  "✗ Missing on Statement",          _Term.R),
-        ]:
-            n = batch_counts.get(key, 0)
-            print(_Term.color(color, f"  {label:38s} {n:3d}") if n > 0
-                  else _Term.color(_Term.DIM, f"  {label:38s} {n:3d}"))
-        _hr()
-        # Clickable folder link for the whole batch
-        print(f"\n  {_Term.color(_Term.BOLD, 'Outputs:')} {_term_link(str(OUTDIR_DEFAULT), OUTDIR_DEFAULT)}")
-        print(f"  {_Term.color(_Term.DIM, 'Tip: Cmd+Click the path above to open in Finder.')}\n")
-
-    return 0 if not failures else 1
+    return run_inbox(args, access, cid, inbox, done, recon, pdf_paths)
 
 
 
