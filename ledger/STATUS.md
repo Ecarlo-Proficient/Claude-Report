@@ -502,6 +502,26 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     `excel_bill_sync.py` (`sync-ap`). Verified live against the loaded DB - all view counts, grouping,
     search, QBO scoping, and the example view checked in-browser, no console errors.
 
+  - **Bills tab REDESIGN - Excel-dense, per-field filters (owner, 2026-08-14).** The views-only first
+    cut was "almost useless": too tall (KPI cards + description + split-bar ate the viewport, cut off
+    after ~7 rows), no default worth seeing, and a single search box instead of real filters. Reworked to
+    read like the workbook:
+    - **Default = open bills, grouped by Vendor A→Z, oldest bill first** (no config needed - that's the
+      owner's daily scroll: vendors alphabetical, oldest→newest, statuses visible).
+    - **Every field is its own filter dropdown** (Vendor · Division · Pay status · Invoice · Approved ·
+      Lien - `buildBillFilters` populates each from the data, `Any lien risk` shortcut), AND-combined, on
+      top of the quick-preset chips. The free-text search is GONE. A **Clear filters** button appears when
+      any is set.
+    - **Density:** the KPI cards, the view description, and the division split-bar were removed; a single
+      inline quick-stat (`$ open · N lien risk`) sits in the header. `.bills-grid` tightens padding and
+      keeps every row on ONE line - status is now compact **colored text** (Unpaid / No project / Due ≤7d
+      / Not appr), not stacked pills. ~2-3x the rows visible.
+    - **Group by** (Vendor default · None · Division · Project · Draw) orders groups **alphabetically**
+      (A→Z) with a per-group subtotal; **Sort** (Oldest · Newest · Vendor · Most owed · Biggest · Lien)
+      applies within groups. Money cells still feed the select-and-sum bar. Verified at **medium width
+      (1500px)** per the owner - all 7 columns fit, filters/sort/group/clear all exercised, no console
+      errors. Cap raised to 2,000 rows with the honest note.
+
 ## IN PROGRESS
 - (none) - super-database + Console (control plane) landed. Owner to validate the producer Runs (AR/AP)
   and the draft-WIP button with a real click (they fire real syncs + Touch ID).

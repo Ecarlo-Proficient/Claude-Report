@@ -209,30 +209,45 @@
       <div id="drawList"></div>
     </div><!-- /tab: draws -->
 
-    <!-- ══════════════ TAB: BILLS (the full Bill Tracker, Notion-style views) ══════════════ -->
+    <!-- ══════════════ TAB: BILLS (the full Bill Tracker - Excel-dense, per-field filters) ══════════════ -->
     <div class="tab-page" data-tab="bills" hidden>
       <section class="widget">
         <div class="widget-head">
           <h2>Bill Tracker <span class="count" id="billsNote"></span></h2>
+          <span class="count" id="billsQuickStat"></span>
         </div>
         <div class="bill-views" id="billViews"></div>
-        <p class="hint" id="billViewDesc"></p>
-        <div class="kpi-row" id="billsStats"></div>
-        <div class="billmix" id="billMix"></div>
-        <div class="filters">
-          <label class="fld"><span>Search</span><input type="search" id="billSearch" placeholder="Vendor, project #, bill #, name…" autocomplete="off"></label>
+        <div class="bill-filters" id="billFilters">
+          <label class="fld"><span>Vendor</span><select id="bfVendor"></select></label>
+          <label class="fld"><span>Division</span><select id="bfDivision"></select></label>
+          <label class="fld"><span>Pay status</span><select id="bfPay"></select></label>
+          <label class="fld"><span>Invoice</span><select id="bfInv"></select></label>
+          <label class="fld"><span>Approved</span><select id="bfAppr"></select></label>
+          <label class="fld"><span>Lien</span><select id="bfLien"></select></label>
+          <span class="bf-sep"></span>
           <label class="fld"><span>Group by</span>
             <select id="billGroup">
+              <option value="vendor">Vendor</option>
               <option value="none">None</option>
               <option value="division">Division</option>
               <option value="project_no">Project</option>
-              <option value="vendor">Vendor</option>
               <option value="matched_invoice">Draw</option>
             </select>
           </label>
+          <label class="fld"><span>Sort</span>
+            <select id="billSort">
+              <option value="oldest">Oldest first</option>
+              <option value="newest">Newest first</option>
+              <option value="vendor">Vendor A–Z</option>
+              <option value="owed">Most owed</option>
+              <option value="amount">Biggest bill</option>
+              <option value="lien">Lien urgency</option>
+            </select>
+          </label>
+          <button class="btn small" id="bfClear" hidden>Clear filters</button>
         </div>
-        <div class="table-scroll">
-          <table class="grid" id="billTable"><thead></thead><tbody></tbody></table>
+        <div class="table-scroll bills-scroll">
+          <table class="grid bills-grid" id="billTable"><thead></thead><tbody></tbody></table>
         </div>
       </section>
     </div><!-- /tab: bills -->

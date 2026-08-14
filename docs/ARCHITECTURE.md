@@ -379,16 +379,18 @@ outside `.preview`). This is Rung 1 of turning the terminal DB into a platform; 
 server is Rung 2, when a second person needs to log in.
 
 **The Bills tab** rolls the whole Bill Tracker (`ap_bill_line`, every bill - one row per bill,
-`open_balance` per-bill so it sums cleanly) into the dashboard, fronted by **Notion-style saved
-views** instead of a filter panel: each view is a named preset (predicate + default sort) with a
-live count, and the owner picks a view rather than hand-assembling filters. Views: **Open AP**,
-**GC-funded · unpaid · 2mo+** (approved + the draw was paid + still owed + bill ≥ 2 calendar months
-old - the pay-these-first / lien-risk list), **Lien risk**, **To approve**, **Awaiting invoice**,
-**No project #**, **All bills**. Each row carries a division-tinted project chip, a company-scoped
-QBO bill link, bill date + age, amount, open balance, and status pills (pay · invoice · lien ·
-not-approved-only). A **Group by** (division / project / vendor / draw) adds subtotalled group
-headers, a division split-bar shows where the view's open money sits, and the money cells feed the
-same Excel-style select-and-sum bar as the rest of the app. Read-only over `ap_bill_line`; the
+`open_balance` per-bill so it sums cleanly) into the dashboard as an **Excel-dense table you scroll
+like the workbook**. It opens with no configuration on the owner's daily view: **open bills, grouped
+by Vendor A→Z, oldest bill first**, statuses right there as compact colored text. Above the table,
+**quick-preset chips** (Open AP · GC-funded·unpaid·2mo+ [the pay-these-first / lien-risk list] · Lien
+risk · To approve · Awaiting invoice · No project # · All bills) set a base predicate, and **every
+field is its own filter dropdown** - Vendor · Division · Pay status · Invoice · Approved · Lien
+(each populated from the data, AND-combined, with a Clear button). **Group by** (Vendor default ·
+None · Division · Project · Draw) orders groups alphabetically with a per-group open subtotal, and
+**Sort** (Oldest · Newest · Vendor · Most owed · Biggest · Lien) orders within them. Each row: a
+division-tinted project chip, a company-scoped QBO bill link, bill date + age, amount, open balance,
+and single-line status text (pay · invoice · lien · not-approved-only, color the only signal). Money
+cells feed the same select-and-sum bar as the rest of the app. Read-only over `ap_bill_line`; the
 Bill Tracker file itself is still produced by `excel_bill_sync.py` (`sync-ap`).
 
 **Now also the CONTROL PLANE (2026-08-12).** Beyond reading, the dashboard runs the data pipelines
