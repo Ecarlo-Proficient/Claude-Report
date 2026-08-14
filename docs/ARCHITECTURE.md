@@ -112,8 +112,9 @@ Support cast (same folder): `doctor.py` diagnostics · `verify_invoices.py` /
 under the parent client and collapsed by default, the invoice number linked into
 QBO, the collections clerk's Notion `Quick Status` note carried across, a
 **`Lien` column** giving the Ch. 53 notice deadline, an **`Open Balance` → `Total
-Amount`** pair with a per-row data bar (bar fill = open ÷ that invoice's total,
-the user 2026-08-11), and litigation invoices excluded. It **reads**
+Amount`** pair where Open Balance is amber-flagged when it differs from the total
+(a partly-paid invoice), a stepped slate client→project→invoice hierarchy sorted
+alphabetically with a bottom TOTAL, and litigation invoices excluded. It **reads**
 `Bill Tracker.xlsx` (the AP tool's output file, never its code — repo rule 3) for
 what is still owed to vendors.
 

@@ -54,7 +54,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-from openpyxl.formatting.rule import DataBarRule
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
@@ -144,9 +143,9 @@ COLUMNS: List[Tuple[str, int, Optional[str]]] = [
     ("61-90",            14, '"$"#,##0.00'),
     ("90+",              14, '"$"#,##0.00'),
     # Open Balance first, then the invoice's original Total Amount, so the pair
-    # reads open→total left-to-right (the user 2026-08-11). A data bar on Open
-    # Balance is scaled to that row's Total Amount, so its fill = how much of the
-    # invoice is still open (full bar = untouched, short bar = partly collected).
+    # reads open→total left-to-right (the user 2026-08-11). Open Balance is
+    # amber-flagged when it differs from Total Amount, i.e. the invoice is partly
+    # paid (the user 2026-08-14, replacing an earlier data bar that hurt legibility).
     ("Open Balance",     15, '"$"#,##0.00'),
     ("Total Amount",     15, '"$"#,##0.00'),
     ("Prev Draw",        11, None),
@@ -216,6 +215,10 @@ _ON_LIGHT = "3F3F3F"      # text on the grey project band
 _ROW_TEXT = "333333"      # detail (invoice) rows
 _MEMO_TEXT = "595959"     # the memo label on a detail row (secondary)
 _HAIR = Side(style="thin", color="D9D9D9")              # quiet row separator
+# Open Balance ≠ Total Amount = the invoice is partly paid. Amber flag (Excel's
+# "Neutral" pair) replaces the per-row data bar (the user 2026-08-14).
+_PARTIAL_FILL = PatternFill("solid", fgColor="FFEB9C")
+_PARTIAL_TEXT = "9C6500"
 
 # Dead cells: the previous-draw block where there's nothing to read. Grey fill,
 # darker grey text — "nothing to see here" without looking like missing data.
@@ -502,6 +505,17 @@ def _write_row(
         notes.alignment = Alignment(horizontal="left", vertical="top", wrap_text=True)
 
 
+def _flag_partial(cell, open_v, total_v, *, bold: bool, size: float) -> None:
+    """Amber-flag an Open Balance cell when it doesn't equal the invoice total,
+    i.e. the invoice is partly paid (the user 2026-08-14, replacing the data bar).
+    Full-open invoices (open == total) get nothing, so only the exceptions stand out."""
+    if cell is None:
+        return
+    if round(open_v or 0.0, 2) != round(total_v or 0.0, 2):
+        cell.fill = _PARTIAL_FILL
+        cell.font = Font(bold=bold, size=size, color=_PARTIAL_TEXT)
+
+
 def _grey_out_vendor_block(ws: Worksheet, grid: _Grid, row_num: int) -> None:
     """Mark the previous-draw cells as not-applicable on this row.
 
@@ -640,9 +654,10 @@ def build_aging_sheet(
                fill=_GRAND_FILL, color=_ON_DARK)
     for logical in grid.visible:
         ws.cell(row=row_num, column=grid.col(logical)).border = Border(bottom=_HAIR)
+    ws.row_dimensions[row_num].height = 20
     row_num += 1
 
-    # ── parent groups, biggest balance first ──
+    # ── parent groups, alphabetical ──
     def open_total(records: List[dict]) -> float:
         return sum(r["open_balance"] or 0.0 for r in records)
 
@@ -686,6 +701,8 @@ def build_aging_sheet(
         if level > 0:
             ws.row_dimensions[row_num].outlineLevel = level
             ws.row_dimensions[row_num].hidden = True  # collapsed by default
+        else:
+            ws.row_dimensions[row_num].height = 20  # client header stands taller (the user 2026-08-14)
         row_num += 1
 
     def write_detail(rec, level) -> None:
@@ -766,11 +783,17 @@ def build_aging_sheet(
                 elif verdict == PREV_CLEAR:
                     status_cell.font = Font(color="2E7D32", size=BODY_PT)
 
+        # Amber-flag the Open Balance when the invoice is only partly paid.
+        _flag_partial(grid.cell(ws, row_num, C_TOTAL),
+                      rec["open_balance"], rec["total_amount"], bold=False, size=BODY_PT)
+
         ws.row_dimensions[row_num].outlineLevel = level
         ws.row_dimensions[row_num].hidden = True  # collapsed by default
         row_num += 1
 
-    for parent in sorted(by_parent, key=lambda p: open_total(by_parent[p]), reverse=True):
+    # Alphabetical by client, then by project # within a client (the user
+    # 2026-08-14) — a predictable order to scan, not biggest-balance-first.
+    for parent in sorted(by_parent, key=lambda p: (p or "").upper()):
         records = sorted(
             by_parent[parent],
             key=lambda r: (r["due_date"] or dt.date.max, r["invoice_num"]),
@@ -789,7 +812,7 @@ def build_aging_sheet(
             by_project[rec["project_num"] or "(no project #)"].append(rec)
 
         if len(by_project) > 1:
-            for proj in sorted(by_project, key=lambda p: open_total(by_project[p]), reverse=True):
+            for proj in sorted(by_project, key=lambda p: (p or "").upper()):
                 precs = by_project[proj]
                 write_summary(proj, f"{len(precs)} inv", precs,
                               fill=_PROJECT_FILL, size=BODY_PT, level=1, color=_ON_LIGHT)
@@ -801,25 +824,25 @@ def build_aging_sheet(
 
     last_data_row = row_num - 1
 
-    # Open Balance data bar, scaled per row to that row's Total Amount (the user
-    # 2026-08-11 — "a bar of how much open balance is to the total"). The bar max
-    # is a FORMULA pointing at the Total Amount cell on the same row (column
-    # absolute, row relative), so Excel adjusts it down every row: a fully-open
-    # invoice fills the cell, a partly-collected one shows a short bar. Applies
-    # to the grand row through the last invoice — summary rows scale to their
-    # client's own open/total, so the bars stay coherent when collapsed.
-    if C_INVTOTAL in grid and last_data_row >= header_row + 1:
-        open_col = get_column_letter(grid.col(C_TOTAL))
-        tot_col = get_column_letter(grid.col(C_INVTOTAL))
-        first = header_row + 1
-        bar_rule = DataBarRule(
-            start_type="num", start_value=0,
-            end_type="formula", end_value=f"${tot_col}{first}",
-            color="FF5B9BD5", showValue=True, minLength=0, maxLength=100,
-        )
-        ws.conditional_formatting.add(
-            f"{open_col}{first}:{open_col}{last_data_row}", bar_rule
-        )
+    # Bottom total (the user 2026-08-14 — "need a sum"): a footer that mirrors the
+    # ALL CLIENTS roll-up, so the number is there at the end of a long scroll too.
+    # It sits BELOW last_data_row, so it's outside the autofilter range and a
+    # filter can never hide it.
+    bottom_total: List[Any] = [""] * len(COLUMNS)
+    bottom_total[C_LABEL] = "TOTAL"
+    for logical, amount in zip(BUCKET_COLS, grand):
+        bottom_total[logical] = amount or None
+    bottom_total[C_TOTAL] = sum(grand)
+    bottom_total[C_INVTOTAL] = grand_invtotal or None
+    bottom_total[C_VBILLS] = grand_bills or None
+    bottom_total[C_VAMT] = grand_vendor or None
+    bottom_total[C_THIS] = grand_this or None
+    _write_row(ws, grid, row_num, bottom_total, bold=True, size=CLIENT_PT,
+               fill=_GRAND_FILL, color=_ON_DARK)
+    for logical in grid.visible:
+        ws.cell(row=row_num, column=grid.col(logical)).border = Border(top=_MEDIUM)
+    ws.row_dimensions[row_num].height = 20
+    row_num += 1
 
     # Legend, below the data so it never pushes the numbers down. Colour that
     # needs explaining is colour that failed, but the grey block is a deliberate

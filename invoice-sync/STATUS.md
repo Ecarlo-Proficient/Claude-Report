@@ -16,6 +16,13 @@ mirror. Update this in the SAME commit as any change to this tool.
   (not leading spaces), gridlines off, quiet `#D9D9D9` row rules, and secondary
   grey memo text. The Excel file was also renamed Open_Invoices.xlsx → Invoice
   Tracker.xlsx (INVOICE_EXPORT_PATH in the local .env).
+  - **Follow-ups same day:** the Open Balance **data bar was removed** (it hurt
+    number legibility) and replaced by an **amber flag** on the Open Balance cell
+    only when it differs from Total Amount (i.e. the invoice is partly paid), so
+    only the exceptions stand out. Clients now sort **alphabetically** (projects
+    too), client/total rows are **height 20**, and a **TOTAL sum row** sits at the
+    bottom (below the autofilter so a filter can't hide it) mirroring the top
+    ALL CLIENTS roll-up.
 - **Cash-flow forecast from the notes (2026-08-12, the user)** — `cash_flow.py`,
   two new tabs in Open_Invoices.xlsx built from the SAME notes the aging tabs
   carry (absorb or preserve both feed it):
