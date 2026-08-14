@@ -7,6 +7,15 @@ mirror. Update this in the SAME commit as any change to this tool.
 
 ## DONE / FINALIZED
 
+- **Aging tab visual hierarchy (2026-08-14, the user — "professional colors")** —
+  the client/project bands were near-identical pale blues, so projects read as
+  their own rows. Rebuilt as a high-contrast, stepped hierarchy where STRUCTURE is
+  carried by neutral bands + real indentation, leaving the saturated palette for
+  DATA (buckets/lien/vendor): all-clients `#333F50`, client `#44546A` (slate, white
+  text), project `#F2F2F2` (grey), invoice white — with real Excel indent 0/1/2
+  (not leading spaces), gridlines off, quiet `#D9D9D9` row rules, and secondary
+  grey memo text. The Excel file was also renamed Open_Invoices.xlsx → Invoice
+  Tracker.xlsx (INVOICE_EXPORT_PATH in the local .env).
 - **Cash-flow forecast from the notes (2026-08-12, the user)** — `cash_flow.py`,
   two new tabs in Open_Invoices.xlsx built from the SAME notes the aging tabs
   carry (absorb or preserve both feed it):

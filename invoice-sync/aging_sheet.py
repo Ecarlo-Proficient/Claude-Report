@@ -205,9 +205,17 @@ BUCKET_CELL_FILLS = (
     PatternFill("solid", fgColor="F8DDDA"),
 )
 
-_GRAND_FILL = PatternFill("solid", fgColor="BFD3E6")    # the all-clients roll-up
-_PARENT_FILL = PatternFill("solid", fgColor="DCE6F1")   # each client summary row
-_PROJECT_FILL = PatternFill("solid", fgColor="EDF3FA")  # a project sub-group row (lighter than client)
+# Hierarchy bands (the user 2026-08-14 — "professional colors"): structure gets a
+# quiet neutral so the saturated palette stays reserved for DATA. High-contrast at
+# every step: darkest→slate→grey→white, white text on the two dark bands.
+_GRAND_FILL = PatternFill("solid", fgColor="333F50")    # all-clients roll-up (darkest)
+_PARENT_FILL = PatternFill("solid", fgColor="44546A")   # client header — slate
+_PROJECT_FILL = PatternFill("solid", fgColor="F2F2F2")  # project sub-group — neutral grey
+_ON_DARK = "FFFFFF"       # text on the slate / dark-slate bands
+_ON_LIGHT = "3F3F3F"      # text on the grey project band
+_ROW_TEXT = "333333"      # detail (invoice) rows
+_MEMO_TEXT = "595959"     # the memo label on a detail row (secondary)
+_HAIR = Side(style="thin", color="D9D9D9")              # quiet row separator
 
 # Dead cells: the previous-draw block where there's nothing to read. Grey fill,
 # darker grey text — "nothing to see here" without looking like missing data.
@@ -479,13 +487,14 @@ def _write_row(
     bold: bool,
     size: float = BODY_PT,
     fill: Optional[PatternFill] = None,
+    color: str = "000000",
 ) -> None:
     for logical in grid.visible:
         cell = ws.cell(row=row_num, column=grid.col(logical), value=values[logical])
         number_format = COLUMNS[logical][2]
         if number_format:
             cell.number_format = number_format
-        cell.font = Font(bold=bold, size=size)
+        cell.font = Font(bold=bold, size=size, color=color)
         if fill:
             cell.fill = fill
     notes = grid.cell(ws, row_num, C_NOTES)
@@ -627,9 +636,10 @@ def build_aging_sheet(
     total_row[C_VBILLS] = grand_bills or None
     total_row[C_VAMT] = grand_vendor or None
     total_row[C_THIS] = grand_this or None
-    _write_row(ws, grid, row_num, total_row, bold=True, size=CLIENT_PT, fill=_GRAND_FILL)
+    _write_row(ws, grid, row_num, total_row, bold=True, size=CLIENT_PT,
+               fill=_GRAND_FILL, color=_ON_DARK)
     for logical in grid.visible:
-        ws.cell(row=row_num, column=grid.col(logical)).border = Border(bottom=_THIN)
+        ws.cell(row=row_num, column=grid.col(logical)).border = Border(bottom=_HAIR)
     row_num += 1
 
     # ── parent groups, biggest balance first ──
@@ -650,7 +660,7 @@ def build_aging_sheet(
             invtotal_sum += rec["total_amount"] or 0.0
         return buckets, vendor_sum, vendor_bills, this_sum, invtotal_sum
 
-    def write_summary(label, inv_label, records, *, fill, size, level) -> None:
+    def write_summary(label, inv_label, records, *, fill, size, level, color) -> None:
         """A roll-up row (client at level 0, project sub-group at level 1)."""
         nonlocal row_num
         buckets, vendor_sum, vendor_bills, this_sum, invtotal_sum = _sums(records)
@@ -664,9 +674,11 @@ def build_aging_sheet(
         summary[C_VBILLS] = vendor_bills or None
         summary[C_VAMT] = vendor_sum or None
         summary[C_THIS] = this_sum or None
-        _write_row(ws, grid, row_num, summary, bold=True, size=size, fill=fill)
+        _write_row(ws, grid, row_num, summary, bold=True, size=size, fill=fill, color=color)
+        # Real indentation carries the hierarchy: client 0, project 1.
+        grid.cell(ws, row_num, C_LABEL).alignment = Alignment(indent=level, vertical="center")
         for logical in grid.visible:
-            ws.cell(row=row_num, column=grid.col(logical)).border = Border(top=_THIN)
+            ws.cell(row=row_num, column=grid.col(logical)).border = Border(bottom=_HAIR)
         # A group with no MFD/CP work has no vendor answer either — grey the
         # block, or an all-RP group reads as "clear".
         if shows_vendor_block and not any(r["division"] in DRAW_DIVISIONS for r in records):
@@ -683,7 +695,7 @@ def build_aging_sheet(
         # Left raw they render as one run-on line or a stray box, since this
         # column doesn't wrap — collapse to single-spaced text.
         label = " ".join((rec["memo"] or rec["project_num"] or "").split())
-        detail[C_LABEL] = f"    {label}"[:120]
+        detail[C_LABEL] = label[:120]
         detail[C_PROJ] = rec["project_num"]
         detail[C_INV] = rec["invoice_num"]
         detail[C_DATE] = rec["invoice_date"]
@@ -699,7 +711,12 @@ def build_aging_sheet(
         detail[C_THIS] = rec["this_draw_amount"]
         detail[C_NOTES] = rec["notes"]
         detail[C_ACTION] = rec["last_action"]
-        _write_row(ws, grid, row_num, detail, bold=False)
+        _write_row(ws, grid, row_num, detail, bold=False, color=_ROW_TEXT)
+        # Indent matches the outline depth: 2 under a project, 1 under a single-
+        # project client. Memo reads as secondary (lighter grey).
+        label_cell = grid.cell(ws, row_num, C_LABEL)
+        label_cell.alignment = Alignment(indent=level, vertical="center")
+        label_cell.font = Font(size=BODY_PT, color=_MEMO_TEXT)
 
         # The invoice number opens the invoice in QBO. Putting the link on the
         # number rather than in its own column keeps the sheet narrow and puts
@@ -761,7 +778,7 @@ def build_aging_sheet(
         # Client summary row (level 0, always visible) — the client name is the
         # line that has to carry when the sheet is read collapsed.
         write_summary(parent, f"{len(records)} inv", records,
-                      fill=_PARENT_FILL, size=CLIENT_PT, level=0)
+                      fill=_PARENT_FILL, size=CLIENT_PT, level=0, color=_ON_DARK)
 
         # A client with more than one project gets a PROJECT sub-group under it
         # (the user 2026-08-12: "see it based on client, then project"). A single-
@@ -774,8 +791,8 @@ def build_aging_sheet(
         if len(by_project) > 1:
             for proj in sorted(by_project, key=lambda p: open_total(by_project[p]), reverse=True):
                 precs = by_project[proj]
-                write_summary(f"  {proj}", f"{len(precs)} inv", precs,
-                              fill=_PROJECT_FILL, size=BODY_PT, level=1)
+                write_summary(proj, f"{len(precs)} inv", precs,
+                              fill=_PROJECT_FILL, size=BODY_PT, level=1, color=_ON_LIGHT)
                 for rec in precs:
                     write_detail(rec, level=2)
         else:
@@ -861,4 +878,4 @@ def build_aging_sheet(
         f"A{header_row}:{get_column_letter(grid.width)}{last_data_row}"
     )
     _autofit(ws, grid, last_data_row)
-    ws.sheet_view.showGridLines = True
+    ws.sheet_view.showGridLines = False  # designed look; structure carried by fills/rules
