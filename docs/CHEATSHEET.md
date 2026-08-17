@@ -74,21 +74,39 @@ Open the dashboard:
 python3 ledger/dashboard.py
 ```
 
-Or double-click **Project Ledger.app** (the Dock app). Inside: the **Console** tab runs
-every pipeline; **Resync** (My view) reloads the ledger data; the **P&L** tab shows the
-live company + per-job P&L.
+Or double-click **Open Project Ledger.command** (in `~/Documents/CompanyHealth/`) or the
+Project Ledger Dock app. Inside: the **Console** tab runs every pipeline; **Resync**
+(My view) reloads the ledger data; the **P&L** tab shows the live company + per-job P&L.
 
-Refresh the ledger data from the terminal (loaders, read-only on the sources):
+### How a sync flows (fresh sync, in order)
+
+The dashboard reads a local SQLite DB (`~/Library/Application Support/Proficient/ledger.sqlite3`).
+**Producers** pull from QBO/Notion out to files/Notion; **loaders** read those into the DB;
+the app reads the DB. Order matters - WIP builds the `project` table everything else joins to.
+The DB is created automatically by the first loader (no setup step).
+
+1. **WIP → ledger** - `load_wip_master.py` builds the project spine + snapshots. **Runs first.**
+2. **Costs → ledger** - `load_costs.py --active` pulls QBO job costs by cost code (Touch ID).
+3. **AP** - `excel_bill_sync.py` (QBO → `Bill Tracker.xlsx`, Touch ID) → `load_bill_tracker.py` (→ the **Bills** tab).
+4. **AR** - `run_invoice_sync.py` (QBO → Notion + Teams, Touch ID) → `load_invoices.py` (→ the **Draws** tab).
+5. **CRM** - `load_customers.py` pulls the Notion Customer List (→ the **Sales** tab).
+
+**Full fresh sync** (producers + loaders, in order; stops on any failure; expect several Touch ID prompts):
 
 ```bash
-python3 ledger/load_wip_master.py
-python3 ledger/load_costs.py --active --since 2026-05-01
-python3 ledger/load_bill_tracker.py
-python3 ledger/load_invoices.py
-python3 ledger/load_customers.py
+python3 ledger/load_wip_master.py && python3 ledger/load_costs.py --active && python3 bill-tracker/excel_bill_sync.py && python3 ledger/load_bill_tracker.py && python3 invoice-sync/run_invoice_sync.py && python3 ledger/load_invoices.py && python3 ledger/load_customers.py
 ```
 
-For costs, drop `--since` to pull the full history (slower, but also reaps txns deleted in QBO).
+**Loaders-only reload** (fast, read-only - use when `Bill Tracker.xlsx` / Notion are already current; skips the two producers):
+
+```bash
+python3 ledger/load_wip_master.py && python3 ledger/load_costs.py --active --since 2026-05-16 && python3 ledger/load_bill_tracker.py && python3 ledger/load_invoices.py && python3 ledger/load_customers.py
+```
+
+The `--since` date makes the cost pull incremental (any date ~90 days back); drop it to pull the
+full history (slower, but also reaps txns deleted in QBO). In the app, **Console → Full refresh**
+is the full sync above and **Resync** (My view) is the loaders-only reload. `sync-ap`, `sync-ar`,
+and `sync-all` (AP→AR) are your shell aliases for just the producer steps.
 
 ---
 
