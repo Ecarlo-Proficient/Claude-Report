@@ -108,6 +108,39 @@ def verify_xlsx(path) -> list:
                 if int(d) >= ndxf:
                     issues.append(f"{n}: dxfId {d} ≥ dxf count {ndxf}")
                     break
+
+        # ── table range must stay WITHIN its sheet's used rows. A stale table
+        #    ref after a row insert/delete (ref points past the last row) is the
+        #    top "we found a problem with some content" cause — the 12-31 build
+        #    bug, 2026-08-17 (deleted 60 rows, table still said A3:R118). ──
+        sheet_maxrow = {}
+        for n in names:
+            if not _SHEET_RE.match(n):
+                continue
+            x = z.read(n).decode("utf-8", "replace")
+            dm = re.search(r'<dimension ref="[A-Z]+\d+:[A-Z]+(\d+)"', x)
+            if dm:
+                sheet_maxrow[n.split("/")[-1]] = int(dm.group(1))
+        for n in names:
+            sm = re.match(r"xl/worksheets/(sheet\d+\.xml)$", n)
+            rel = f"xl/worksheets/_rels/{sm.group(1)}.rels" if sm else None
+            if not sm or rel not in names:
+                continue
+            rx = z.read(rel).decode("utf-8", "replace")
+            smax = sheet_maxrow.get(sm.group(1))
+            for tgt in re.findall(r'Target="([^"]*tables/table\d+\.xml)"', rx):
+                tfn = "xl/tables/" + tgt.split("/")[-1]
+                if tfn not in names or smax is None:
+                    continue
+                tx = z.read(tfn).decode("utf-8", "replace")
+                rm = re.search(r'\bref="[A-Z]+\d+:[A-Z]+(\d+)"', tx)
+                nm = re.search(r'displayName="([^"]*)"', tx)
+                if rm and int(rm.group(1)) > smax:
+                    issues.append(
+                        f"{tfn}: table {nm.group(1) if nm else '?'!r} ref ends at "
+                        f"row {rm.group(1)} but sheet {sm.group(1)} has only {smax} "
+                        f"rows — stale table range after a row edit (fix the table "
+                        f"ref, or drop the table)")
     return issues
 
 

@@ -44,6 +44,15 @@ restate them here. Business/strategic context lives in session memory, not in th
    - **Default view:** Active only; Closed rows filtered AND hidden on open.
    A formatting change to these tabs needs the user's explicit say-so first. Restyling on your own
    initiative is a defect, not an improvement.
+5b. **NEVER hand the user an Excel file that hasn't passed `shared/xlsx_verify.assert_clean(path)` as its
+   LAST step** — this is the standing guard against Excel's "we found a problem with some content" repair
+   prompt (the user 2026-08-17: "same errors still producing"). **Before writing ANY Excel generator, read
+   the header of `shared/xlsx_verify.py`** — it is the hard-won list of what NOT to do. The recurring killer:
+   **an Excel Table whose `ref`/`autoFilter` still points past the last row after you insert/delete rows.**
+   openpyxl `delete_rows` does NOT adjust table ranges, merged cells, or formulas, and `copy_worksheet` does
+   NOT copy tables — so after any row surgery, reset every table's `ref` to its new data range (or drop the
+   table), fix merges/formulas by hand, then let `assert_clean` catch what you missed. Kill rich-text/multi-run
+   cells too. A repair prompt reaching the user is a defect, not a warning.
 6. **Shell commands must be complete and copy-paste-ready, with NO inline `#` comments** (they break zsh paste).
    Put explanations in prose outside the code block.
 7. **Never overwrite a data file or write to QBO without an explicit confirm/dry-run gate.** Writers
