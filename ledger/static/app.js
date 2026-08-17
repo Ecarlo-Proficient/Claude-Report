@@ -1117,7 +1117,15 @@ function leftText(v) { const td = document.createElement("td"); td.className = "
 // by vendor A→Z, oldest bill first. The chips are quick presets; every field below
 // is its own filter dropdown (not a search box). Group + sort are yours to change.
 let activeBillView = "open";
+let billsCollapsed = new Set();   // group keys the owner has collapsed (caret / Collapse-all)
+let billGroupKeys = [];           // group keys currently on screen (drives the Collapse/Expand-all button)
 const BILL_LIEN_RISK = new Set(["Notice PAST due", "Notice due in ≤7d", "Lien Filed"]);
+// Compact numeric date for the dense grid: MM/DD/YY (01/01/26). Still month-first (never
+// year-first). bill_date is ISO yyyy-mm-dd.
+function fmtDateShort(v) {
+  const m = String(v || "").trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[2]}/${m[3]}/${m[1].slice(2)}` : (v ? String(v) : "–");
+}
 // Age helpers. bill_date is ISO (yyyy-mm-dd), so lexical order == chronological.
 function billYm(b) { const m = String(b.bill_date || "").match(/^(\d{4})-(\d{2})/); return m ? (+m[1]) * 12 + (+m[2] - 1) : null; }
 function billMonthsOld(b) { const ym = billYm(b); if (ym == null) return null; const n = new Date(); return (n.getFullYear() * 12 + n.getMonth()) - ym; }
@@ -1146,6 +1154,12 @@ const BILL_INV_SHORT = { "Invoice paid": ["Inv paid", "st-ok"], "Awaiting Paymen
   "Awaiting Invoice": ["No invoice", "st-dim"], "No project #": ["No project", "st-bad"], "Partial paid": ["Partial", "st-warn"] };
 function invText(b) { const v = b.invoice_status || ""; if (!v) return null; const m = BILL_INV_SHORT[v] || [v, "st-dim"]; return stText(m[0], m[1], v); }
 function lienText(b) { const v = b.lien_status; if (!v || !LIEN_CLASS[v]) return null; return stText(LIEN_SHORT[v] || v, "st-lien-" + LIEN_CLASS[v], v); }
+// Approved gets its OWN column (Yes/No) - not merged - so a blank never hides a missing value.
+function apprText(b) { const v = b.approved || ""; if (!v) return null;
+  return v === "approved" ? stText("Yes", "st-ok", "Approved for payment") : stText("No", "st-warn", "Not approved for payment"); }
+// A dim placeholder for a genuinely empty status cell (so blank = "none for this bill", unambiguous).
+function dimDash() { const s = document.createElement("span"); s.className = "st-none"; s.textContent = "–"; return s; }
+function statusCell(node) { const td = document.createElement("td"); td.className = "left status-col"; td.appendChild(node || dimDash()); return td; }
 
 // ── the six per-field filter dropdowns (each a component, not a search box) ──
 const BILL_FILTERS = [
@@ -1226,44 +1240,55 @@ function renderBills() {
   $("#billsNote").textContent = bills.length ? `(${rows.length.toLocaleString()} of ${bills.length.toLocaleString()})` : "(no AP data - run load_bill_tracker.py)";
   { const qs = $("#billsQuickStat"); if (qs) qs.textContent = bills.length ? `${money(openSum)} open · ${lienN} lien risk` : ""; }
 
-  // table
+  // table. Each status is its OWN column (Paid / Invoice / Lien / Appr) so a blank in
+  // one never hides a missing value by being merged with the others.
   const group = $("#billGroup") ? $("#billGroup").value : "vendor";
   const thead = $("#billTable thead"), tbody = $("#billTable tbody");
   thead.innerHTML = ""; tbody.innerHTML = "";
-  const cols = [["Vendor", "left"], ["Project", "left"], ["Bill #", "left"], ["Date", "left"],
-                ["Amount", "right"], ["Open", "right"], ["Status", "left"]];
+  const cols = [["Vendor", "left", ""], ["Project", "left", ""], ["Bill #", "left", "Bill number - opens the bill in QuickBooks"],
+                ["Date", "left", "Bill date (MM/DD/YY)"], ["Amount", "right", "Bill amount"], ["Open", "right", "Open balance we still owe"],
+                ["Paid", "left", "Did we pay the vendor?"], ["Invoice", "left", "Was the AR invoice (draw) paid by the GC?"],
+                ["Lien", "left", "Texas lien-notice clock"], ["Appr", "left", "Approved for payment?"]];
   const htr = document.createElement("tr");
-  for (const [c, al] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
+  for (const [c, al, tip] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; if (tip) th.title = tip; htr.appendChild(th); }
   thead.appendChild(htr);
 
   if (!rows.length) {
     const tr = document.createElement("tr"); const td = document.createElement("td");
     td.colSpan = cols.length; td.className = "left"; td.style.color = "var(--text-dim)"; td.style.padding = "14px 12px";
     td.textContent = bills.length ? "No bills match these filters." : "No AP data - run load_bill_tracker.py.";
-    tr.appendChild(td); tbody.appendChild(tr); return;
+    tr.appendChild(td); tbody.appendChild(tr); billGroupKeys = []; updateBillCollapseBtn(group); return;
   }
 
   let rendered = 0;
-  const pushRow = b => { if (rendered >= BILL_ROW_CAP) return false; tbody.appendChild(billRow(b)); rendered++; return true; };
+  const pushRow = b => { if (rendered >= BILL_ROW_CAP) return false; tbody.appendChild(billRow(b, cols.length)); rendered++; return true; };
   if (group === "none") {
+    billGroupKeys = [];
     for (const b of rows) if (!pushRow(b)) break;
   } else {
     const groups = new Map();
     for (const b of rows) { const k = billGroupKey(b, group); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(b); }
     const order = [...groups.keys()].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));   // A→Z
+    billGroupKeys = order;
     outer:
     for (const k of order) {
       const g = groups.get(k);
+      const collapsed = billsCollapsed.has(k);
       const gOpen = g.reduce((t, x) => t + bOpen(x), 0);
-      const gtr = document.createElement("tr"); gtr.className = "bill-group";
+      const gtr = document.createElement("tr"); gtr.className = "bill-group"; gtr.style.cursor = "pointer";
+      gtr.title = collapsed ? "Click to expand" : "Click to collapse";
       const gtd = document.createElement("td"); gtd.colSpan = cols.length;
+      const caret = document.createElement("span"); caret.className = "bg-caret"; caret.textContent = collapsed ? "▸" : "▾";
       const key = document.createElement("span"); key.className = "bg-key"; key.textContent = billGroupLabel(k, group);
       const sub = document.createElement("span"); sub.className = "bg-sub";
       sub.textContent = `  ${g.length} bill${g.length > 1 ? "s" : ""} · ${money(gOpen)} open`;
-      gtd.appendChild(key); gtd.appendChild(sub); gtr.appendChild(gtd); tbody.appendChild(gtr);
-      for (const b of g) if (!pushRow(b)) break outer;
+      gtd.appendChild(caret); gtd.appendChild(key); gtd.appendChild(sub); gtr.appendChild(gtd);
+      gtr.onclick = () => { if (billsCollapsed.has(k)) billsCollapsed.delete(k); else billsCollapsed.add(k); renderBills(); };
+      tbody.appendChild(gtr);
+      if (!collapsed) for (const b of g) if (!pushRow(b)) break outer;
     }
   }
+  updateBillCollapseBtn(group);
   if (rendered < rows.length) {
     const tr = document.createElement("tr"); const td = document.createElement("td");
     td.colSpan = cols.length; td.className = "left"; td.style.color = "var(--text-dim)"; td.style.padding = "10px 12px";
@@ -1287,6 +1312,9 @@ function billGroupLabel(k, group) {
 function billRow(b) {
   const tr = document.createElement("tr");
   tr.className = "bill-row" + (BILL_LIEN_RISK.has(b.lien_status) ? " risk" : "");
+  tr.style.cursor = "pointer";
+  // Click the row (not a link / not a selectable money cell) → the invoice slides in on the right.
+  tr.onclick = (e) => { if (e.target.closest(".cell") || e.target.closest("a")) return; openBillDetail(b); };
   // Vendor
   const vtd = document.createElement("td"); vtd.className = "left";
   const vs = document.createElement("span"); vs.className = "bill-vendor"; vs.textContent = b.vendor || "–"; vs.title = b.vendor || "";
@@ -1301,9 +1329,9 @@ function billRow(b) {
   tr.appendChild(ptd);
   // Bill # (QBO deep link)
   tr.appendChild(qboLinkCell(b.bill_ref, qboBillHref(b.qbo_link), "Open this bill in QuickBooks"));
-  // Date + age (age badge only once a bill is 2+ months old)
+  // Date (MM/DD/YY) + age badge once a bill is 2+ months old
   const dtd = document.createElement("td"); dtd.className = "left bill-date";
-  const ds = document.createElement("span"); ds.textContent = fmtDate(b.bill_date); dtd.appendChild(ds);
+  const ds = document.createElement("span"); ds.textContent = fmtDateShort(b.bill_date); ds.title = fmtDate(b.bill_date); dtd.appendChild(ds);
   const mo = billMonthsOld(b);
   if (mo != null && mo >= 2) { const a = document.createElement("span"); a.className = "bill-age"; a.textContent = mo + "mo"; dtd.appendChild(a); }
   tr.appendChild(dtd);
@@ -1312,15 +1340,73 @@ function billRow(b) {
   // Open balance
   const otd = document.createElement("td"); const oc = moneyCell(b.open_balance);
   oc.classList.add(bOpen(b) > 0 ? "open-amt" : "open-zero"); otd.appendChild(oc); tr.appendChild(otd);
-  // Status (single line, colored text): pay · invoice · lien · not-approved-only
-  const std = document.createElement("td"); std.className = "left status-cell";
-  const parts = [payText(b), invText(b), lienText(b)];
-  if (b.approved !== "approved") parts.push(stText("Not appr", "st-warn", "Not approved for payment"));
-  let any = false;
-  for (const s of parts) if (s) { std.appendChild(s); any = true; }
-  if (!any) std.appendChild(document.createTextNode("–"));
-  tr.appendChild(std);
+  // Four SEPARATE status columns - Paid / Invoice / Lien / Appr (blank = none, unambiguous)
+  tr.appendChild(statusCell(payText(b)));
+  tr.appendChild(statusCell(invText(b)));
+  tr.appendChild(statusCell(lienText(b)));
+  tr.appendChild(statusCell(apprText(b)));
   return tr;
+}
+// Collapse/expand-all button label + visibility (grouped views only).
+function updateBillCollapseBtn(group) {
+  const cb = $("#bfCollapse"); if (!cb) return;
+  cb.hidden = (group === "none") || !billGroupKeys.length;
+  const allC = billGroupKeys.length && billGroupKeys.every(k => billsCollapsed.has(k));
+  cb.textContent = allC ? "Expand all" : "Collapse all";
+}
+function billToggleAll() {
+  const allC = billGroupKeys.length && billGroupKeys.every(k => billsCollapsed.has(k));
+  if (allC) billsCollapsed.clear(); else billGroupKeys.forEach(k => billsCollapsed.add(k));
+  renderBills();
+}
+// Click a bill row → the invoice slides in on the right: bill (money out) + its AR
+// invoice / draw (money in), with QuickBooks deep links to both.
+function openBillDetail(b) {
+  $("#billDetailTitle").textContent = b.vendor || "Bill";
+  const projLbl = b.project_no ? (nameOf(b.project_no) ? `${b.project_no} · ${nameOf(b.project_no)}` : b.project_no) : "No project";
+  $("#billDetailSub").textContent = `Bill ${b.bill_ref || "–"} · ${projLbl}`;
+  const body = $("#billDetailBody"); body.innerHTML = "";
+  const grp = (label) => { const g = document.createElement("div"); g.className = "dgroup";
+    const h = document.createElement("h4"); h.textContent = label; g.appendChild(h); body.appendChild(g); return g; };
+  const row = (g, k, v, cls) => { const r = document.createElement("div"); r.className = "drow";
+    const dk = document.createElement("span"); dk.className = "dk"; dk.textContent = k;
+    const dv = document.createElement("span"); dv.className = "dv" + (cls ? " " + cls : "");
+    if (v instanceof Node) dv.appendChild(v); else dv.textContent = (v == null || v === "") ? "–" : v;
+    r.appendChild(dk); r.appendChild(dv); g.appendChild(r); };
+  const linkBtn = (label, url) => { const a = document.createElement("a"); a.className = "btn"; a.href = url;
+    a.target = "_blank"; a.rel = "noopener"; a.textContent = label; return a; };
+
+  const gb = grp("Bill  ·  money out");
+  row(gb, "Vendor", b.vendor);
+  row(gb, "Bill #", b.bill_ref);
+  row(gb, "Bill date", fmtDate(b.bill_date));
+  row(gb, "Amount", money(b.line_amount));
+  row(gb, "Open balance", money(b.open_balance), bOpen(b) > 0 ? "neg" : "");
+  row(gb, "Paid the vendor?", b.pay_status);
+  row(gb, "Approved?", b.approved === "approved" ? "Yes" : (b.approved ? "No" : ""));
+  row(gb, "Lien clock", b.lien_status);
+  { const acts = document.createElement("div"); acts.className = "pnl-actions";
+    const bl = qboBillHref(b.qbo_link); if (bl) acts.appendChild(linkBtn("Open bill in QuickBooks ↗", bl));
+    if (acts.childNodes.length) gb.appendChild(acts); }
+
+  const gi = grp("Invoice / draw  ·  money in");
+  row(gi, "Invoice #", b.invoice_no);
+  const drawMemo = (b.matched_invoice || "").split("\n")[0].trim();
+  row(gi, "Draw", drawMemo || b.matched_invoice);
+  row(gi, "Invoice status", b.invoice_status);
+  if (b.inv_ar_status) row(gi, "GC paid the invoice?", b.inv_ar_status,
+    /paid/i.test(b.inv_ar_status) && !/unpaid|partial/i.test(b.inv_ar_status) ? "pos" : "neg");
+  if (b.inv_amount != null) row(gi, "Invoice amount", money(b.inv_amount));
+  if (b.inv_balance != null) row(gi, "GC still owes", money(b.inv_balance), (b.inv_balance || 0) > 0.005 ? "neg" : "pos");
+  if (b.gc_paid_date) row(gi, "GC funded", fmtDate(b.gc_paid_date));
+  { const acts = document.createElement("div"); acts.className = "pnl-actions";
+    if (b.inv_qbo_id) acts.appendChild(linkBtn("Open invoice in QuickBooks ↗", qboInvoiceUrl(b.inv_qbo_id)));
+    if (acts.childNodes.length) gi.appendChild(acts);
+    else { const p = document.createElement("p"); p.className = "hint"; p.style.margin = "2px 0 0";
+      p.textContent = b.invoice_no ? "Invoice not matched in the ledger yet - no direct link." : "No invoice on this bill yet.";
+      gi.appendChild(p); } }
+
+  openPanel("#billDetail");
 }
 
 // ── Sales / CRM (read-only from the Notion Customer List) ───────────────────
@@ -2048,7 +2134,7 @@ function detailAsText() {
 
 // ── Panels ────────────────────────────────────────────────────────────────
 function openPanel(sel) { $("#overlay").hidden = false; $(sel).hidden = false; }
-function closePanels() { $("#overlay").hidden = true; $("#detail").hidden = true; $("#settings").hidden = true; }
+function closePanels() { $("#overlay").hidden = true; $("#detail").hidden = true; $("#settings").hidden = true; { const bd = $("#billDetail"); if (bd) bd.hidden = true; } }
 
 // ── Copy + CSV + toast ────────────────────────────────────────────────────
 let toastTimer = null;
@@ -2223,8 +2309,11 @@ function init() {
   ["#drawFClient", "#drawFProj", "#drawFVendor", "#drawFInv", "#drawDivision"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderDraws); });
   { const el = $("#vendorSearch"); if (el) el.addEventListener("input", renderVendors); }
   ["#lienFProj", "#lienFVendor", "#lienFInv", "#lienFName"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderLiens); });
-  ["#bfVendor", "#bfDivision", "#bfPay", "#bfInv", "#bfAppr", "#bfLien", "#billGroup", "#billSort"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("change", renderBills); });
+  ["#bfVendor", "#bfDivision", "#bfPay", "#bfInv", "#bfAppr", "#bfLien", "#billSort"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("change", renderBills); });
+  { const el = $("#billGroup"); if (el) el.addEventListener("change", () => { billsCollapsed.clear(); renderBills(); }); }
   { const el = $("#bfClear"); if (el) el.onclick = billClearFilters; }
+  { const el = $("#bfCollapse"); if (el) el.onclick = billToggleAll; }
+  { const el = $("#btnCloseBillDetail"); if (el) el.onclick = closePanels; }
   try { const bv = localStorage.getItem("proficient-ledger-billview"); if (bv && BILL_VIEWS.some(v => v.id === bv)) activeBillView = bv; } catch { /* ignore */ }
   ["#salesSearch", "#salesStage", "#salesDivision"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderSales); });
   ["#pnlFProj", "#pnlFDivision"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderPnl); });

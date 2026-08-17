@@ -388,11 +388,16 @@ risk · To approve · Awaiting invoice · No project # · All bills) set a base 
 field is its own filter dropdown** - Vendor · Division · Pay status · Invoice · Approved · Lien
 (each populated from the data, AND-combined, with a Clear button). **Group by** (Vendor default ·
 None · Division · Project · Draw) orders groups alphabetically with a per-group open subtotal, and
-**Sort** (Oldest · Newest · Vendor · Most owed · Biggest · Lien) orders within them. Each row: a
-division-tinted project chip, a company-scoped QBO bill link, bill date + age, amount, open balance,
-and single-line status text (pay · invoice · lien · not-approved-only, color the only signal). Money
-cells feed the same select-and-sum bar as the rest of the app. Read-only over `ap_bill_line`; the
-Bill Tracker file itself is still produced by `excel_bill_sync.py` (`sync-ap`).
+**Sort** (Oldest · Newest · Vendor · Most owed · Biggest · Lien) orders within them; group headers
+carry a **collapse caret** and there is a **Collapse/Expand-all** button. Each row: a division-tinted
+project chip, a company-scoped QBO bill link, an `MM/DD/YY` date, amount, open balance, and **four
+separate status columns** - **Paid · Invoice · Lien · Appr** (one each, so a blank never hides a
+missing value by being merged). **Clicking a row slides in a right-hand panel** with the bill (money
+out) and its AR invoice / draw (money in) - real invoice pay status, amount, GC-still-owes, and
+**QuickBooks deep links to both the bill and the invoice**; `_fetch_ap` joins each bill to
+`billing_event` on Invoice # to attach `inv_qbo_id` / `inv_ar_status` / … for that panel. Money cells
+feed the same select-and-sum bar as the rest of the app. Read-only over `ap_bill_line`; the Bill
+Tracker file itself is still produced by `excel_bill_sync.py` (`sync-ap`).
 
 **Now also the CONTROL PLANE (2026-08-12).** Beyond reading, the dashboard runs the data pipelines
 FROM the UI so the owner never touches a terminal. The **Console** tab is a **pipeline registry**

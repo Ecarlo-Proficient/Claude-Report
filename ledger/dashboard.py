@@ -320,16 +320,34 @@ def _fetch_ap(con) -> dict:
     ap["summary"] = {"open_balance": open_bal, "open_lines": open_lines, "watch_count": len(watch)}
     ap["lien_watch"] = watch[:500]   # full worklist for the Liens page
     ap["by_project"] = by_project
-    # Full bill list for the Bill Tracker tab (Notion-style views). Every row is one
-    # bill (open_balance is per-bill, safe to sum). Description is omitted to keep the
-    # payload lean; account carries the QBO category. Newest first (bill_date is ISO).
+    # Full bill list for the Bill Tracker tab. Every row is one bill (open_balance is
+    # per-bill, safe to sum). Description is omitted to keep the payload lean; account
+    # carries the QBO category. Newest first (bill_date is ISO). Each bill is enriched
+    # with its AR invoice (from billing_event, joined on Invoice #) so the Bills tab can
+    # show the real invoice pay status and deep-link to the invoice in QuickBooks.
+    bmap = {}
+    try:
+        for be in con.execute("SELECT doc_number, qbo_txn_id, amount, balance, status, txn_date, customer "
+                              "FROM billing_event WHERE doc_number IS NOT NULL"):
+            bmap[str(be["doc_number"])] = dict(be)
+    except sqlite3.OperationalError:
+        pass
     bills = []
     for r in con.execute(
         "SELECT project_no, division, vendor, bill_ref, bill_date, account, "
         "line_amount, open_balance, pay_status, approved, invoice_status, lien_status, "
         "matched_invoice, invoice_no, gc_paid_date, pay_date, qbo_link "
         "FROM ap_bill_line ORDER BY bill_date DESC"):
-        bills.append(dict(r))
+        b = dict(r)
+        inv = bmap.get(str(b.get("invoice_no") or ""))
+        if inv:
+            b["inv_qbo_id"] = inv["qbo_txn_id"]      # QBO Invoice Id → company-scoped deep link
+            b["inv_ar_status"] = inv["status"]       # actual AR status: Paid | Partially Paid | Unpaid
+            b["inv_amount"] = inv["amount"]
+            b["inv_balance"] = inv["balance"]
+            b["inv_date"] = inv["txn_date"]
+            b["inv_customer"] = inv["customer"]
+        bills.append(b)
     ap["bills"] = bills
     return ap
 

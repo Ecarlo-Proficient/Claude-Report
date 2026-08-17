@@ -522,6 +522,26 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
       (1500px)** per the owner - all 7 columns fit, filters/sort/group/clear all exercised, no console
       errors. Cap raised to 2,000 rows with the honest note.
 
+  - **Bills tab: collapsible groups, split status columns, invoice slide-over (owner, 2026-08-17).**
+    Five follow-ups after the dense redesign:
+    - **Collapse/expand.** Each group header has a **caret** (▾/▸) and is click-to-toggle; a
+      **Collapse all / Expand all** button in the filter bar toggles every group at once (`billsCollapsed`
+      Set + `billGroupKeys`; the button hides when Group=None and resets when the grouping changes).
+    - **Each status is its OWN column** now - **Paid · Invoice · Lien · Appr** - not merged. The owner's
+      point: a merged cell hides a *missing* value; with one column each, a blank unambiguously means
+      "none for this bill" (dim `–`). Compact colored text per column; header tooltips explain each.
+    - **Invoice status column** shows whether the AR invoice/draw was paid (from `invoice_status`).
+    - **Row click → invoice slides in on the right** (`#billDetail` slide-over): a **Bill (money out)**
+      block + an **Invoice / draw (money in)** block with the real AR status, amount, GC-still-owes,
+      GC-funded date, and **QuickBooks deep links to BOTH the bill and the invoice** (company-scoped).
+      Needed a backend change: `_fetch_ap` now joins each bill to `billing_event` on Invoice # and
+      attaches `inv_qbo_id` / `inv_ar_status` / `inv_amount` / `inv_balance` / `inv_date` (works for RP
+      too, since billing_event is not RP-excluded). 1,595 of 2,891 bills carry an invoice link.
+    - **Date is `MM/DD/YY`** (01/01/26) in the grid via `fmtDateShort` - still month-first (obeys the
+      never-year-first rule); the detail panel keeps the readable weekday `fmtDate`. See
+      [[dates-never-year-first]]. Verified live at 1500px (10 columns, caret + collapse-all, both QBO
+      links open, real invoice status in the panel), no console errors.
+
 ## IN PROGRESS
 - (none) - super-database + Console (control plane) landed. Owner to validate the producer Runs (AR/AP)
   and the draft-WIP button with a real click (they fire real syncs + Touch ID).

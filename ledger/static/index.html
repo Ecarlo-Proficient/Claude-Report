@@ -244,6 +244,7 @@
               <option value="lien">Lien urgency</option>
             </select>
           </label>
+          <button class="btn small" id="bfCollapse">Collapse all</button>
           <button class="btn small" id="bfClear" hidden>Clear filters</button>
         </div>
         <div class="table-scroll bills-scroll">
@@ -367,6 +368,20 @@
       </div>
     </div>
     <div class="panel-body" id="detailBody"></div>
+  </aside>
+
+  <!-- ── Bill / invoice detail slide-over (opens from a Bills row) ───── -->
+  <aside class="panel panel-right" id="billDetail" hidden>
+    <div class="panel-head">
+      <div>
+        <div class="panel-title" id="billDetailTitle">–</div>
+        <div class="panel-sub" id="billDetailSub"></div>
+      </div>
+      <div class="panel-head-actions">
+        <button class="btn icon" id="btnCloseBillDetail" title="Close">✕</button>
+      </div>
+    </div>
+    <div class="panel-body" id="billDetailBody"></div>
   </aside>
 
   <!-- ── Settings slide-over ────────────────────────────────────────── -->

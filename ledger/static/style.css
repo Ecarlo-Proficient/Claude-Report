@@ -508,24 +508,29 @@ a.ri-name:hover { text-decoration: underline; }
 .bills-grid .bill-age { color: var(--text-dim); font-size: .82em; margin-left: 6px; }
 .bills-grid .cell.open-amt { font-weight: 700; }
 .bills-grid .cell.open-zero { color: var(--text-dim); }
+.bills-grid tbody tr.bill-row:hover { background: var(--row-hover); }
 /* Lien-risk rows: red edge (same visual language as the Liens tab). */
 tr.bill-row.risk > td:first-child { box-shadow: inset 3px 0 var(--neg); }
-/* Status column: compact colored text, single line (conditional-format feel). */
-.bills-grid td.status-cell { white-space: nowrap; }
-.bills-grid .st { margin-right: 9px; font-weight: 600; }
-.bills-grid .st:last-child { margin-right: 0; }
+/* Each status is its OWN column - compact colored text; a dim dash means "none". */
+.bills-grid td.status-col { white-space: nowrap; font-weight: 600; }
+.bills-grid .st { font-weight: 600; }
 .st-ok { color: var(--pos); }
 .st-warn { color: #b8860b; }
 .st-bad { color: var(--neg); }
 .st-dim { color: var(--text-dim); font-weight: 500; }
+.st-none { color: var(--text-dim); opacity: .45; font-weight: 400; }
 .st-lien-past, .st-lien-d7, .st-lien-d15 { color: var(--neg); }
 .st-lien-d30 { color: #b8860b; }
 .st-lien-info { color: var(--text-dim); }
-/* Group header rows (vendor A→Z by default) with a subtotal. */
+/* Group header rows (vendor A→Z by default): a collapse caret + a subtotal. */
 tr.bill-group > td { background: color-mix(in srgb, var(--accent) 8%, var(--surface-2));
   border-top: 2px solid var(--border); padding: 6px 10px; }
+tr.bill-group:hover > td { background: color-mix(in srgb, var(--accent) 13%, var(--surface-2)); }
+tr.bill-group .bg-caret { color: var(--text-dim); display: inline-block; width: 1.1em; }
 tr.bill-group .bg-key { font-weight: 800; font-size: .95em; letter-spacing: -.01em; }
 tr.bill-group .bg-sub { color: var(--text-dim); font-weight: 500; font-size: .85em; font-variant-numeric: tabular-nums; }
+/* Bill detail panel: give the QuickBooks link buttons room. */
+#billDetailBody .pnl-actions { margin: 10px 0 2px; }
 
 /* ── QoL: clickable KPI tiles + inline row links ─────────────────────────── */
 .kpi.clickable { cursor: pointer; transition: border-color .12s, background .12s; }
