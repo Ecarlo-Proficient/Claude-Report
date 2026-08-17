@@ -556,6 +556,17 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
       sortable cols), P&L/Costs/Sales (well-suited already), and the Liens free-text search boxes (typing
       a CP#/address beats a giant dropdown there). Verified both drills live, no console errors.
 
+  - **Bills grid: draggable column widths + wrap-when-squished (owner, 2026-08-17).** The grid is now
+    `table-layout: fixed` with a `<colgroup>`; each header carries a **resize grip** on its right divider
+    (visible border between headers) - drag it to set that column's width, which **persists per person**
+    (`localStorage` `proficient-ledger-billcols`, `startBillColResize` updates the `<col>` + table width
+    live, saves on mouseup). Cells now **wrap** (`white-space: normal; overflow-wrap: break-word`) so a
+    squished column reflows instead of clipping; the vendor/name ellipsis was dropped. **Specificity
+    gotcha (noted):** the base `table.grid td` rule (0,1,2) outranks `.bills-grid td` (0,1,1), so the
+    bills overrides had to be written `table.bills-grid td/th` or the base `white-space: nowrap` would
+    block wrapping. Verified live: drag resizes + saves, long vendor names wrap 1→3 lines at 60px, dense
+    single-line at defaults, no console errors.
+
 ## IN PROGRESS
 - (none) - super-database + Console (control plane) landed. Owner to validate the producer Runs (AR/AP)
   and the draft-WIP button with a real click (they fire real syncs + Touch ID).

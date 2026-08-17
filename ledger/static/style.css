@@ -499,20 +499,29 @@ a.ri-name:hover { text-decoration: underline; }
 .divchip.cp  { color: #3b6ea5; border-color: color-mix(in srgb, #3b6ea5 48%, var(--border)); background: color-mix(in srgb, #3b6ea5 10%, transparent); }
 .divchip.mfd { color: #8161b0; border-color: color-mix(in srgb, #8161b0 48%, var(--border)); background: color-mix(in srgb, #8161b0 10%, transparent); }
 
-/* The dense grid: tight rows, everything on one line so you scroll like the workbook. */
-.bills-grid { font-size: .9em; }
-.bills-grid th, .bills-grid td { padding: 3px 10px; }
-.bills-grid td { white-space: nowrap; }
-.bills-grid .bill-vendor { font-weight: 600; max-width: 200px; display: inline-block; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
-.bills-grid .bill-name { color: var(--text-dim); margin-left: 6px; max-width: 160px; display: inline-block; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
-.bills-grid .bill-age { color: var(--text-dim); font-size: .82em; margin-left: 6px; }
+/* The dense grid: tight rows, fixed layout so columns are exact + resizable. A squished
+   column WRAPS its text (overflow-wrap) instead of clipping - drag a divider to resize. */
+/* NB: selectors carry `table.` so they outrank the base `table.grid td` (same specificity,
+   later in source) - otherwise the base `white-space: nowrap` would block wrapping. */
+.bills-grid { font-size: .9em; table-layout: fixed; width: auto; }
+table.bills-grid th, table.bills-grid td { padding: 3px 10px; white-space: normal; overflow-wrap: break-word; vertical-align: top; }
+table.bills-grid thead th { cursor: default; border-right: 1px solid var(--border); position: relative; }
+table.bills-grid thead th:last-child { border-right: none; }
+/* Draggable grip sitting on each header's right divider. */
+table.bills-grid thead th .col-resize { position: absolute; top: 0; right: -4px; width: 9px; height: 100%; cursor: col-resize; z-index: 4; }
+table.bills-grid thead th .col-resize:hover { background: color-mix(in srgb, var(--accent) 45%, transparent); }
+body.col-resizing { cursor: col-resize; user-select: none; }
+body.col-resizing .bills-grid tbody tr:hover { background: transparent; }
+.bills-grid .bill-vendor { font-weight: 600; }
+.bills-grid .bill-name { color: var(--text-dim); margin-left: 6px; }
+.bills-grid .bill-age { color: var(--text-dim); font-size: .82em; margin-left: 6px; white-space: nowrap; }
 .bills-grid .cell.open-amt { font-weight: 700; }
 .bills-grid .cell.open-zero { color: var(--text-dim); }
 .bills-grid tbody tr.bill-row:hover { background: var(--row-hover); }
 /* Lien-risk rows: red edge (same visual language as the Liens tab). */
 tr.bill-row.risk > td:first-child { box-shadow: inset 3px 0 var(--neg); }
 /* Each status is its OWN column - compact colored text; a dim dash means "none". */
-.bills-grid td.status-col { white-space: nowrap; font-weight: 600; }
+.bills-grid td.status-col { font-weight: 600; }
 .bills-grid .st { font-weight: 600; }
 .st-ok { color: var(--pos); }
 .st-warn { color: #b8860b; }

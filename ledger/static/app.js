@@ -1136,6 +1136,30 @@ function fmtDateShort(v) {
   const m = String(v || "").trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
   return m ? `${m[2]}/${m[3]}/${m[1].slice(2)}` : (v ? String(v) : "–");
 }
+// Per-column widths for the Bills grid - drag the divider between headers to resize;
+// a squished column wraps its text instead of clipping. Widths persist per person.
+const BILL_COL_DEFAULTS = { "Vendor": 210, "Project": 300, "Bill #": 100, "Date": 110, "Amount": 100,
+  "Open": 100, "Paid": 90, "Invoice": 120, "Lien": 130, "Appr": 70 };
+function loadBillColWidths() {
+  try { return { ...BILL_COL_DEFAULTS, ...JSON.parse(localStorage.getItem("proficient-ledger-billcols") || "{}") }; }
+  catch { return { ...BILL_COL_DEFAULTS }; }
+}
+let billColW = loadBillColWidths();
+function saveBillColWidths() { try { localStorage.setItem("proficient-ledger-billcols", JSON.stringify(billColW)); } catch { /* ignore */ } }
+function startBillColResize(e, idx, label) {
+  e.preventDefault(); e.stopPropagation();
+  const table = $("#billTable"); const cg = table.querySelector("colgroup"); if (!cg) return;
+  const col = cg.children[idx]; const startX = e.clientX; const startW = parseFloat(col.style.width) || col.offsetWidth;
+  document.body.classList.add("col-resizing");
+  const onMove = (ev) => {
+    const w = Math.max(48, Math.round(startW + (ev.clientX - startX)));
+    col.style.width = w + "px"; billColW[label] = w;
+    let s = 0; for (const c of cg.children) s += parseFloat(c.style.width) || 0; table.style.width = s + "px";
+  };
+  const onUp = () => { document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp);
+    document.body.classList.remove("col-resizing"); saveBillColWidths(); };
+  document.addEventListener("mousemove", onMove); document.addEventListener("mouseup", onUp);
+}
 // Age helpers. bill_date is ISO (yyyy-mm-dd), so lexical order == chronological.
 function billYm(b) { const m = String(b.bill_date || "").match(/^(\d{4})-(\d{2})/); return m ? (+m[1]) * 12 + (+m[2] - 1) : null; }
 function billMonthsOld(b) { const ym = billYm(b); if (ym == null) return null; const n = new Date(); return (n.getFullYear() * 12 + n.getMonth()) - ym; }
@@ -1259,8 +1283,23 @@ function renderBills() {
                 ["Date", "left", "Bill date (MM/DD/YY)"], ["Amount", "right", "Bill amount"], ["Open", "right", "Open balance we still owe"],
                 ["Paid", "left", "Did we pay the vendor?"], ["Invoice", "left", "Was the AR invoice (draw) paid by the GC?"],
                 ["Lien", "left", "Texas lien-notice clock"], ["Appr", "left", "Approved for payment?"]];
+  // Fixed layout + a <colgroup> so column widths are exact and draggable; each header
+  // carries a resize grip on its right divider, and the table width tracks the sum.
+  const table = $("#billTable");
+  { const oldCg = table.querySelector("colgroup"); if (oldCg) oldCg.remove(); }
+  const colgroup = document.createElement("colgroup");
   const htr = document.createElement("tr");
-  for (const [c, al, tip] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; if (tip) th.title = tip; htr.appendChild(th); }
+  let wsum = 0;
+  cols.forEach(([c, al, tip], i) => {
+    const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; if (tip) th.title = tip;
+    const grip = document.createElement("div"); grip.className = "col-resize"; grip.title = "Drag to resize this column";
+    grip.addEventListener("mousedown", (e) => startBillColResize(e, i, c));
+    th.appendChild(grip); htr.appendChild(th);
+    const w = Math.max(48, billColW[c] || 100); const col = document.createElement("col"); col.style.width = w + "px";
+    colgroup.appendChild(col); wsum += w;
+  });
+  table.insertBefore(colgroup, table.firstChild);
+  table.style.width = wsum + "px";
   thead.appendChild(htr);
 
   if (!rows.length) {
