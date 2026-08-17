@@ -542,6 +542,20 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
       [[dates-never-year-first]]. Verified live at 1500px (10 columns, caret + collapse-all, both QBO
       links open, real invoice status in the panel), no console errors.
 
+  - **Reused the bill/invoice panel where it's a real win (owner said "apply where it's meaningful, not
+    bloat", 2026-08-17).** Two surgical drill-throughs, no new patterns invented:
+    - **Liens rows now open the bill/invoice slide-over** (was: the project detail). A lien IS a bill, so
+      from a past-due row you see the bill (paid? approved? open $), its invoice/draw (GC paid? still
+      owes?), and QBO links to BOTH - the collections decision in one place. `findBillForLien(r)` matches
+      the lien-watch row back to the full enriched `BILLS` entry (by QBO bill id, else vendor+bill#+inv#);
+      falls back to project detail if unmatched.
+    - **Vendors rows → the Bills tab, pre-filtered to that vendor** (`jumpToVendorBills`, All-bills view).
+      Spend ranking → "show me their bills." Only wired when the vendor actually has bills.
+    - **Deliberately left alone** (would be bloat): Draws (already grouped + inline bill expansion + stage
+      tiles + per-field filters), the Overview projects table (already has the detail panel + filters +
+      sortable cols), P&L/Costs/Sales (well-suited already), and the Liens free-text search boxes (typing
+      a CP#/address beats a giant dropdown there). Verified both drills live, no console errors.
+
 ## IN PROGRESS
 - (none) - super-database + Console (control plane) landed. Owner to validate the producer Runs (AR/AP)
   and the draft-WIP button with a real click (they fire real syncs + Touch ID).

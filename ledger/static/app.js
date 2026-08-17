@@ -1051,7 +1051,12 @@ function renderLiens() {
     const tr = document.createElement("tr");
     tr.className = "lien-row u-" + (LIEN_CLASS[r.lien_status] || "info");
     tr.title = r.lien_status || "";
-    if (r.project_no && known.has(r.project_no)) tr.onclick = (e) => { if (!e.target.closest(".cell")) openDetail(ALL.find(x => x.project_no === r.project_no)); };
+    tr.onclick = (e) => {                       // → the bill + its invoice/draw, with QBO links
+      if (e.target.closest(".cell") || e.target.closest("a")) return;
+      const fb = findBillForLien(r);
+      if (fb) openBillDetail(fb);
+      else if (r.project_no && known.has(r.project_no)) openDetail(ALL.find(x => x.project_no === r.project_no));
+    };
     tr.appendChild(leftText(r.project_no || "—"));
     tr.appendChild(leftText(draw || "—"));
     tr.appendChild(leftText(name || "—"));
@@ -1093,8 +1098,13 @@ function renderVendors() {
   for (const [c, al] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
   thead.appendChild(htr);
   const max = vends.reduce((m, v) => Math.max(m, v.spend || 0), 0) || 1;
+  const billVendors = new Set((BILLS || []).map(b => b.vendor));   // who has bills we can drill into
   for (const v of vends.slice(0, 150)) {
     const tr = document.createElement("tr");
+    if (billVendors.has(v.vendor)) {   // click the row → the Bills tab, filtered to this vendor
+      tr.classList.add("row-click"); tr.title = "See this vendor's bills";
+      tr.onclick = (e) => { if (e.target.closest(".cell")) return; jumpToVendorBills(v.vendor); };
+    }
     tr.appendChild(leftText(v.vendor));
     const ty = document.createElement("td"); ty.className = "left";
     const pill = document.createElement("span"); pill.className = "vtype" + (v.vtype === "Sub" ? " sub" : "");
@@ -1358,6 +1368,27 @@ function billToggleAll() {
   const allC = billGroupKeys.length && billGroupKeys.every(k => billsCollapsed.has(k));
   if (allC) billsCollapsed.clear(); else billGroupKeys.forEach(k => billsCollapsed.add(k));
   renderBills();
+}
+// Match a lien-worklist row back to its full bill in BILLS (which carries pay status,
+// approval, and the joined invoice fields) so a lien row can open the same rich panel.
+// Prefer the QBO bill id (unique); fall back to vendor + bill # + invoice #.
+function findBillForLien(r) {
+  const rt = String(r.qbo_link || "").match(/txnId=(\d+)/i);
+  return (BILLS || []).find(b => {
+    const bt = String(b.qbo_link || "").match(/txnId=(\d+)/i);
+    if (bt && rt) return bt[1] === rt[1];
+    return (b.vendor || "") === (r.vendor || "") && (b.bill_ref || "") === (r.bill_ref || "")
+        && (b.invoice_no || "") === (r.invoice_no || "");
+  });
+}
+// From the Vendors spend tab → the Bills tab, pre-filtered to that vendor (all their bills).
+function jumpToVendorBills(vendor) {
+  activeBillView = "all";
+  setTab("bills");
+  renderBills();                              // ensure the filter dropdowns are populated
+  const el = $("#bfVendor"); if (el) el.value = vendor;
+  renderBills();
+  window.scrollTo(0, 0);
 }
 // Click a bill row → the invoice slides in on the right: bill (money out) + its AR
 // invoice / draw (money in), with QuickBooks deep links to both.
