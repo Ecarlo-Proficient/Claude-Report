@@ -671,6 +671,16 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
       invoice-sync's AR Aging Excel now carries the **same "Lien status" column** beside its deadline
       clock - the site and the workbook read the one resolver, so they can't drift. See invoice-sync/STATUS.md.
 
+  - **Bills tab: collapse-by-default + scannable amounts (owner, 2026-08-18).** The Bills tab now opens
+    with every vendor group **collapsed** (like Costs/Draws - `load()` seeds `billsCollapsed` from the
+    current grouping; the group-by dropdown re-collapses under the new key). Each group header shows the
+    **open $ + bill count at the SAME size/weight as the vendor name**, right after it, so the amount reads
+    at a glance (was a small dim sub-line). Fixed a resulting bug: the "Showing N of M - narrow with a
+    filter" note keyed off `rendered < rows.length`, which collapse makes true, so it printed "Showing 0 of
+    6"; it now fires only when the 2000-row CAP actually truncated (a `capped` flag). Same header treatment
+    applied to the Open Invoices group rows for consistency. Layout note: the flex sits on an inner div,
+    not the `<td>` (flex on a `<td>` drops table-cell layout and collapses the colspan). Verified live.
+
 ## IN PROGRESS
 - **Lien-mark workbook mirror (Phase 2 above):** add the `bill_marks.resolve_lien` call to
   `bill-tracker/excel_bill_sync.py`'s Lien preservation once that file has no foreign uncommitted changes.

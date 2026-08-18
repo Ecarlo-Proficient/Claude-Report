@@ -556,6 +556,12 @@ tr.bill-group:hover > td { background: color-mix(in srgb, var(--accent) 13%, var
 tr.bill-group .bg-caret { color: var(--text-dim); display: inline-block; width: 1.1em; }
 tr.bill-group .bg-key { font-weight: 800; font-size: .95em; letter-spacing: -.01em; }
 tr.bill-group .bg-sub { color: var(--text-dim); font-weight: 500; font-size: .85em; font-variant-numeric: tabular-nums; }
+/* Group header: the vendor/client name, then the open $ + count RIGHT AFTER it at the SAME
+   size/weight (owner 2026-08-18) so the amount reads at a glance - anchored by the name on
+   the left so it's always visible, never scrolled off the right of this wide table. */
+tr.bill-group .bg-cell { display: flex; align-items: baseline; gap: 12px; }
+tr.bill-group .bg-amt { font-weight: 800; font-size: .95em; letter-spacing: -.01em; color: var(--text);
+  font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 /* ── Open Invoices (AR aging) ─────────────────────────────────────────────── */
 .ag-tile .a-count { font-variant-numeric: tabular-nums; }

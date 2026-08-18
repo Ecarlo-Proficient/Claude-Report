@@ -243,6 +243,9 @@ async function load(isAuto) {
   if (!isAuto) {
     costCollapsed = new Set((COST.by_cost_type || []).map(g => g.parent));
     drawsCollapsed = new Set((DRAWS.draws || []).map(d => d.matched_invoice));
+    // Bills open COLLAPSED by default (owner 2026-08-18) - scan vendor + amount, expand on demand.
+    const bgrp = $("#billGroup") ? $("#billGroup").value : "vendor";
+    billsCollapsed = bgrp === "none" ? new Set() : new Set((BILLS || []).map(b => billGroupKey(b, bgrp)));
   }
   meta = data.meta || {};
   $("#metaLine").textContent =
@@ -1325,8 +1328,8 @@ function renderBills() {
     tr.appendChild(td); tbody.appendChild(tr); billGroupKeys = []; updateBillCollapseBtn(group); return;
   }
 
-  let rendered = 0;
-  const pushRow = b => { if (rendered >= BILL_ROW_CAP) return false; tbody.appendChild(billRow(b, cols.length)); rendered++; return true; };
+  let rendered = 0, capped = false;
+  const pushRow = b => { if (rendered >= BILL_ROW_CAP) { capped = true; return false; } tbody.appendChild(billRow(b, cols.length)); rendered++; return true; };
   if (group === "none") {
     billGroupKeys = [];
     for (const b of rows) if (!pushRow(b)) break;
@@ -1343,18 +1346,27 @@ function renderBills() {
       const gtr = document.createElement("tr"); gtr.className = "bill-group"; gtr.style.cursor = "pointer";
       gtr.title = collapsed ? "Click to expand" : "Click to collapse";
       const gtd = document.createElement("td"); gtd.colSpan = cols.length;
+      // Flex lives on an inner div, NOT the td: display:flex on a <td> drops table-cell
+      // layout and the colspan collapses to content width.
+      const cell = document.createElement("div"); cell.className = "bg-cell";
+      const left = document.createElement("span"); left.className = "bg-left";
       const caret = document.createElement("span"); caret.className = "bg-caret"; caret.textContent = collapsed ? "▸" : "▾";
       const key = document.createElement("span"); key.className = "bg-key"; key.textContent = billGroupLabel(k, group);
-      const sub = document.createElement("span"); sub.className = "bg-sub";
-      sub.textContent = `  ${g.length} bill${g.length > 1 ? "s" : ""} · ${money(gOpen)} open`;
-      gtd.appendChild(caret); gtd.appendChild(key); gtd.appendChild(sub); gtr.appendChild(gtd);
+      left.appendChild(caret); left.appendChild(key);
+      // Open $ + bill count at the SAME size/weight as the vendor (owner 2026-08-18) so the
+      // amount is scannable down the collapsed list; right-aligned in the row.
+      const amt = document.createElement("span"); amt.className = "bg-amt";
+      amt.textContent = `${money(gOpen)} open · ${g.length} bill${g.length > 1 ? "s" : ""}`;
+      cell.appendChild(left); cell.appendChild(amt); gtd.appendChild(cell); gtr.appendChild(gtd);
       gtr.onclick = () => { if (billsCollapsed.has(k)) billsCollapsed.delete(k); else billsCollapsed.add(k); renderBills(); };
       tbody.appendChild(gtr);
       if (!collapsed) for (const b of g) if (!pushRow(b)) break outer;
     }
   }
   updateBillCollapseBtn(group);
-  if (rendered < rows.length) {
+  // Only when the 2000-row CAP actually truncated the render - never for rows merely
+  // hidden by a collapsed group (else "Showing 0 of N" fires on the collapse-by-default view).
+  if (capped) {
     const tr = document.createElement("tr"); const td = document.createElement("td");
     td.colSpan = cols.length; td.className = "left"; td.style.color = "var(--text-dim)"; td.style.padding = "10px 12px";
     td.textContent = `Showing ${rendered.toLocaleString()} of ${rows.length.toLocaleString()} - narrow with a filter. (Open total above covers all ${rows.length.toLocaleString()}.)`;
@@ -1718,11 +1730,14 @@ function renderOpenInvoices() {
     const gtr = document.createElement("tr"); gtr.className = "bill-group"; gtr.style.cursor = "pointer";
     gtr.title = collapsed ? "Click to expand" : "Click to collapse";
     const gtd = document.createElement("td"); gtd.colSpan = cols.length;
+    const cell = document.createElement("div"); cell.className = "bg-cell";   // flex on the div, not the td
+    const left = document.createElement("span"); left.className = "bg-left";
     const caret = document.createElement("span"); caret.className = "bg-caret"; caret.textContent = collapsed ? "▸" : "▾";
     const key = document.createElement("span"); key.className = "bg-key"; key.textContent = k;
-    const sub = document.createElement("span"); sub.className = "bg-sub";
-    sub.textContent = `  ${g.length} invoice${g.length > 1 ? "s" : ""} · ${money(gOpen)} open`;
-    gtd.appendChild(caret); gtd.appendChild(key); gtd.appendChild(sub); gtr.appendChild(gtd);
+    left.appendChild(caret); left.appendChild(key);
+    const amt = document.createElement("span"); amt.className = "bg-amt";
+    amt.textContent = `${money(gOpen)} open · ${g.length} invoice${g.length > 1 ? "s" : ""}`;
+    cell.appendChild(left); cell.appendChild(amt); gtd.appendChild(cell); gtr.appendChild(gtd);
     gtr.onclick = () => { if (invCollapsed.has(k)) invCollapsed.delete(k); else invCollapsed.add(k); renderOpenInvoices(); };
     tbody.appendChild(gtr);
     for (const i of g) {
@@ -2815,7 +2830,10 @@ function init() {
   { const el = $("#vendorSearch"); if (el) el.addEventListener("input", renderVendors); }
   ["#lienFProj", "#lienFVendor", "#lienFInv", "#lienFName"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderLiens); });
   ["#bfVendor", "#bfDivision", "#bfPay", "#bfInv", "#bfAppr", "#bfLien", "#billSort"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("change", renderBills); });
-  { const el = $("#billGroup"); if (el) el.addEventListener("change", () => { billsCollapsed.clear(); renderBills(); }); }
+  { const el = $("#billGroup"); if (el) el.addEventListener("change", () => {
+    const grp = el.value;   // re-collapse under the new grouping (collapse stays the default)
+    billsCollapsed = grp === "none" ? new Set() : new Set((BILLS || []).map(b => billGroupKey(b, grp)));
+    renderBills(); }); }
   { const el = $("#bfClear"); if (el) el.onclick = billClearFilters; }
   { const el = $("#bfCollapse"); if (el) el.onclick = billToggleAll; }
   ["#ifClient", "#ifProj"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderOpenInvoices); });
