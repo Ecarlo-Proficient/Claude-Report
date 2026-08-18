@@ -48,6 +48,10 @@ from shared import paths, pnl_paths, bill_marks  # noqa: E402
 HERE = Path(__file__).resolve().parent
 STATIC = HERE / "static"
 
+# Dashboard build version - shown in the top bar so the owner can confirm which build is
+# live. Bump on every user-visible release. 1.0.0 = Open Invoices tab + lien columns.
+LEDGER_VERSION = "1.0.0"
+
 DEFAULT_DB = paths.get_path(
     "ACB_LEDGER_DB",
     Path.home() / "Library" / "Application Support" / "Proficient" / "ledger.sqlite3",
@@ -807,6 +811,7 @@ def fetch_data(db_path: Path) -> dict:
     return {
         "meta": {
             "db_path": str(db_path),
+            "version": LEDGER_VERSION,
             "report_date": report_date,
             "loaded_at": loaded_at,
             "project_count": pcount,

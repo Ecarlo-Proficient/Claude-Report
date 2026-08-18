@@ -681,6 +681,14 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     applied to the Open Invoices group rows for consistency. Layout note: the flex sits on an inner div,
     not the `<td>` (flex on a `<td>` drops table-cell layout and collapses the colspan). Verified live.
 
+  - **Dashboard version badge (owner, 2026-08-18).** `dashboard.py` now carries `LEDGER_VERSION`
+    (surfaced in `meta.version`, rendered as a small `vX.Y.Z` pill beside the "Project Ledger" title) so
+    the owner can confirm which build is live. Bump on every user-visible release. **`1.0.0`** = the
+    Open Invoices tab + lien columns. Loaded live against the real ledger: 341 invoices, $5.27M open
+    aged across all five buckets. NOTE: the lien column came back blank because the automation
+    integration can't read the Lien Tracker DB yet (`NotionError`) - the owner shares that DB with the
+    integration to light it up (the loader degrades gracefully and says so).
+
 ## IN PROGRESS
 - **Lien-mark workbook mirror (Phase 2 above):** add the `bill_marks.resolve_lien` call to
   `bill-tracker/excel_bill_sync.py`'s Lien preservation once that file has no foreign uncommitted changes.

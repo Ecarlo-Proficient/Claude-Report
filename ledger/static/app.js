@@ -248,6 +248,7 @@ async function load(isAuto) {
     billsCollapsed = bgrp === "none" ? new Set() : new Set((BILLS || []).map(b => billGroupKey(b, bgrp)));
   }
   meta = data.meta || {};
+  { const v = $("#appVersion"); if (v) v.textContent = meta.version ? "v" + meta.version : ""; }
   $("#metaLine").textContent =
     `${meta.project_count} projects · report ${meta.report_date ? fmtDate(meta.report_date) : "—"}` +
     (meta.loaded_at ? ` · loaded ${fmtDate(meta.loaded_at, true)}` : "");

@@ -63,6 +63,9 @@ body {
 .brand { display: flex; align-items: center; gap: 12px; }
 .brand .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--accent); flex: none; }
 .brand-title { font-weight: 700; font-size: 1.05em; letter-spacing: -.01em; }
+.brand-ver { font-weight: 600; font-size: .68em; color: var(--text-dim); vertical-align: middle;
+  border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px; margin-left: 6px;
+  font-variant-numeric: tabular-nums; letter-spacing: 0; }
 .brand-sub { color: var(--text-dim); font-size: .82em; }
 .topbar-actions { display: flex; gap: 8px; }
 
