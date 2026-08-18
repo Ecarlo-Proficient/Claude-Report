@@ -634,6 +634,15 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
       without it a re-run on a pre-drill-down ledger crashed. Verified live on a DB copy (MFD300 → two draw
       groups Unpaid/Partially-Paid with sub bills + both QBO link kinds), no console errors. See [[sub-loc-model]].
 
+  - **Bills lien marks: STAGE + Save (owner, 2026-08-18).** The marks were auto-saving on every click (no
+    data loss - the owner's 8 Notice-Sent marks were all in `bill_mark`), but the owner expected the Save
+    workflow he'd designed. Now: a mark **stages** (optimistic on the panel + grid, nothing written); a
+    bottom-centre **Save bar** shows "N unsaved lien mark(s)" with **Save** (batch-POSTs to `/api/bill-mark`,
+    then reloads authoritative) and **Discard** (reverts). **`beforeunload` guards** leaving the page with
+    unsaved marks, and the 90s auto-refresh pauses while marks are pending so the optimistic view holds.
+    (The workbook mirror is still Phase 2, unchanged.) Verified live on a DB copy: stage → bar + leave-warn,
+    Save persists + clears, Discard reverts, no console errors.
+
 ## IN PROGRESS
 - **Lien-mark workbook mirror (Phase 2 above):** add the `bill_marks.resolve_lien` call to
   `bill-tracker/excel_bill_sync.py`'s Lien preservation once that file has no foreign uncommitted changes.

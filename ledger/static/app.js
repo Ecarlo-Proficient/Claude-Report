@@ -1442,20 +1442,44 @@ function jumpToVendorBills(vendor) {
   renderBills();
   window.scrollTo(0, 0);
 }
-// Set / clear a bill's lien tag from the panel. Writes the ledger overlay (instant),
-// then pulls the authoritative merged data and re-opens the panel on the fresh bill.
-async function setBillLien(b, lien) {
+// Lien marks are STAGED, then Saved (the owner marks several, then commits once). A mark
+// updates the panel + grid optimistically and shows the Save bar; nothing is written until
+// Save. Leaving the page (or Discard) is guarded so a marking session is never lost.
+const pendingBillMarks = new Map();   // bill_id -> {lien, prevLien, prevMarked}
+function setBillLien(b, lien) {
   if (!b.bill_id) { toast("This bill has no QBO bill link - can't mark it."); return; }
+  if (!pendingBillMarks.has(b.bill_id)) pendingBillMarks.set(b.bill_id, { prevLien: b.lien_status, prevMarked: b.lien_marked });
+  pendingBillMarks.get(b.bill_id).lien = lien;
+  b.lien_status = lien || "";        // optimistic; Save reconciles the computed value on clear
+  b.lien_marked = !!lien;
+  renderBillSaveBar(); renderBills(); openBillDetail(b);
+}
+function renderBillSaveBar() {
+  const bar = $("#billSaveBar"); if (!bar) return;
+  const n = pendingBillMarks.size; bar.hidden = n === 0;
+  if (n) $("#billSaveText").textContent = `${n} unsaved lien mark${n > 1 ? "s" : ""}`;
+}
+async function saveBillMarks() {
+  const entries = [...pendingBillMarks.entries()]; if (!entries.length) return;
+  const btn = $("#btnSaveBillMarks"); if (btn) { btn.disabled = true; btn.textContent = "Saving…"; }
   try {
-    const res = await fetch("/api/bill-mark", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ bill_id: b.bill_id, lien }) });
-    const j = await res.json();
-    if (!j.ok) throw new Error(j.error || "write failed");
-    toast(lien ? `Lien marked: ${lien === "✓ Released" ? "Released" : lien}` : "Lien mark cleared");
-    await load(true);                                       // authoritative state (merged server-side)
-    const fresh = (BILLS || []).find(x => x.bill_id === b.bill_id) || b;
-    openBillDetail(fresh);
-  } catch (e) { toast("Could not save: " + e.message); }
+    for (const [bill_id, p] of entries) {
+      const res = await fetch("/api/bill-mark", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bill_id, lien: p.lien || "" }) });
+      const j = await res.json(); if (!j.ok) throw new Error(j.error || "write failed");
+    }
+    pendingBillMarks.clear();
+    toast(`Saved ${entries.length} lien mark${entries.length > 1 ? "s" : ""}`);
+    await load(true);                                       // authoritative merged state
+  } catch (e) { toast("Save failed: " + e.message); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = "Save"; } renderBillSaveBar(); }
+}
+function discardBillMarks() {
+  for (const [bill_id, p] of pendingBillMarks) { const b = (BILLS || []).find(x => x.bill_id === bill_id);
+    if (b) { b.lien_status = p.prevLien; b.lien_marked = p.prevMarked; } }
+  pendingBillMarks.clear(); renderBillSaveBar(); renderBills();
+  const bd = $("#billDetail"); if (bd && !bd.hidden) closePanels();
+  toast("Discarded unsaved marks");
 }
 // Click a bill row → the invoice slides in on the right: bill (money out) + its AR
 // invoice / draw (money in), with QuickBooks deep links to both.
@@ -1501,8 +1525,10 @@ function openBillDetail(b) {
     }
     r.appendChild(dk); r.appendChild(dv); gb.appendChild(r); }
   if (b.bill_id) { const hint = document.createElement("p"); hint.className = "hint lien-mark-hint";
-    hint.textContent = b.lien_marked ? "Set on the site - writes to the workbook Lien cell on the next AP sync."
-      : "Sets the workbook's Lien tag - saved here now, mirrored on the next AP sync."; gb.appendChild(hint); }
+    hint.textContent = pendingBillMarks.has(b.bill_id)
+      ? "Unsaved - hit Save in the bar at the bottom to commit. It mirrors to the workbook on the next AP sync."
+      : "Pick a tag to stage it, then Save (bar appears at the bottom). Mirrors to the workbook on the next AP sync.";
+    gb.appendChild(hint); }
   { const acts = document.createElement("div"); acts.className = "pnl-actions";
     const bl = qboBillHref(b.qbo_link); if (bl) acts.appendChild(linkBtn("Open bill in QuickBooks ↗", bl));
     if (acts.childNodes.length) gb.appendChild(acts); }
@@ -2588,6 +2614,9 @@ function init() {
   { const el = $("#bfCollapse"); if (el) el.onclick = billToggleAll; }
   { const el = $("#btnCloseBillDetail"); if (el) el.onclick = closePanels; }
   { const el = $("#btnCloseSublocDetail"); if (el) el.onclick = closePanels; }
+  { const el = $("#btnSaveBillMarks"); if (el) el.onclick = saveBillMarks; }
+  { const el = $("#btnDiscardBillMarks"); if (el) el.onclick = discardBillMarks; }
+  window.addEventListener("beforeunload", (e) => { if (pendingBillMarks.size) { e.preventDefault(); e.returnValue = ""; } });
   $$(".sec-head").forEach(h => h.onclick = () => { const k = h.dataset.sec;
     if (sublocCollapsed.has(k)) sublocCollapsed.delete(k); else sublocCollapsed.add(k); applySublocSections(); });
   try { const bv = localStorage.getItem("proficient-ledger-billview"); if (bv && BILL_VIEWS.some(v => v.id === bv)) activeBillView = bv; } catch { /* ignore */ }
@@ -2609,7 +2638,7 @@ function init() {
   try { savedTab = localStorage.getItem("proficient-ledger-tab") || "home"; } catch { /* ignore */ }
   setTab(savedTab);
   initCellSelect();   // Excel-style click/drag cell selection + running-sum bar
-  setInterval(() => { if (!syncing) load(true); }, 90000);   // live: soft auto-refresh (paused during a resync)
+  setInterval(() => { if (!syncing && !pendingBillMarks.size) load(true); }, 90000);   // soft auto-refresh (paused during a resync or while lien marks are unsaved)
   $("#btnCloseSettings").onclick = closePanels;
   $("#btnCloseDetail").onclick = closePanels;
   $("#btnCopyDetail").onclick = () => copy(detailAsText());

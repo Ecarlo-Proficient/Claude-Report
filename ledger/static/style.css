@@ -303,6 +303,20 @@ table.grid td.cell-sel { background: color-mix(in srgb, var(--accent) 20%, trans
   padding: 9px 14px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border);
   box-shadow: 0 8px 26px rgba(0, 0, 0, .30); font-variant-numeric: tabular-nums; }
 .sumbar[hidden] { display: none; }
+/* Unsaved-lien-marks bar (Bills): stage marks, then Save. Bottom-center so it's obvious. */
+.savebar { position: fixed; left: 50%; transform: translateX(-50%); bottom: 20px; z-index: 60;
+  display: flex; align-items: center; gap: 12px; padding: 9px 12px 9px 16px; border-radius: 12px;
+  background: var(--surface); border: 1px solid color-mix(in srgb, #b8860b 60%, var(--border));
+  box-shadow: 0 8px 26px rgba(0, 0, 0, .30); }
+.savebar[hidden] { display: none; }
+.savebar .sb-warn { color: #b8860b; font-size: 1.05em; }
+.savebar .sb-text { font-weight: 600; font-variant-numeric: tabular-nums; }
+.savebar button { border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
+  border-radius: 8px; padding: 5px 14px; font: inherit; font-size: .9em; cursor: pointer; }
+.savebar button:hover { border-color: var(--accent); }
+.savebar button:disabled { opacity: .6; cursor: default; }
+.savebar .sb-save { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
+.savebar .sb-save:hover { filter: brightness(1.06); border-color: var(--accent); }
 .sumbar .sb-label { color: var(--accent); font-weight: 700; font-size: 1.05em; }
 .sumbar .sb-sum { font-weight: 700; font-size: 1.05em; letter-spacing: -.01em; }
 .sumbar .sb-meta { color: var(--text-dim); font-size: .84em; }

@@ -493,6 +493,14 @@
 
   <div class="toast" id="toast" hidden></div>
 
+  <!-- Unsaved lien marks (Bills) - stage then Save; warns before you leave -->
+  <div class="savebar" id="billSaveBar" hidden>
+    <span class="sb-warn">●</span>
+    <span class="sb-text" id="billSaveText"></span>
+    <button class="sb-save" id="btnSaveBillMarks">Save</button>
+    <button id="btnDiscardBillMarks">Discard</button>
+  </div>
+
   <script src="/static/app.js"></script>
 </body>
 </html>
