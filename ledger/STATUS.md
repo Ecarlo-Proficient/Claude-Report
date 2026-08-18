@@ -666,6 +666,10 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
       litigation): tiles + grand total reconcile, every filter/collapse works, QBO links company-scoped,
       no console errors, colors pass in both themes. Lien column needs the Lien Tracker DB shared with the
       automation integration to populate (blank until then). See [[open-invoices-tab-spec]].
+    - **Kept connected (owner follow-on):** the relation->Status logic was extracted to
+      **`shared/lien_status.py`** (repo rule: a file a second tool needs moves to shared/), and
+      invoice-sync's AR Aging Excel now carries the **same "Lien status" column** beside its deadline
+      clock - the site and the workbook read the one resolver, so they can't drift. See invoice-sync/STATUS.md.
 
 ## IN PROGRESS
 - **Lien-mark workbook mirror (Phase 2 above):** add the `bill_marks.resolve_lien` call to

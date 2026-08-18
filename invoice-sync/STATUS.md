@@ -162,6 +162,24 @@ mirror. Update this in the SAME commit as any change to this tool.
     grain because that sheet is line-level and repeats `Bill Open Bal` on
     every line of a bill.
 
+- **AR Aging tabs: new "Lien status" column (owner, 2026-08-18).** The AR Aging tabs already
+  had a **Lien** column, but that is the computed Texas notice CLOCK (`shared/lien_clock.py`, a
+  deadline). The dashboard's new Open Invoices Lien column shows the **Notion Lien Tracker
+  status** (Mailed / Lien filed / Ready to mail) instead - a different thing. To keep the workbook
+  and the site connected (owner: "so it matches, we don't want to make it disconnected"), a new
+  **"Lien status"** column now sits beside the clock, carrying that Notion status.
+  - `export_invoices_xlsx._load_lien_index(notion)` pulls the Lien Tracker once
+    (`LIEN_TRACKER_DS_ID`, override via env) and `_aging_record` resolves each invoice's `Lien`
+    relation to its status via the shared **`shared/lien_status.py`** resolver - the SAME code the
+    ledger uses, so the two can never drift. Resilient add-on: if the DB isn't shared with the
+    integration (or any read error) the column degrades to blank and the export still runs.
+  - `aging_sheet.py`: inserted the column at index 6 (after `Lien`); the bucket/vendor column
+    constants are symbolic `range()`s so everything downstream shifted cleanly. Verified on a
+    synthetic build - `Lien`@col6 + `Lien status`@col7, buckets still aligned, values render
+    (Mailed / Lien filed / Ready to mail), and **`xlsx_verify.assert_clean` PASSED** (no repair
+    prompt). The existing lien-clock column and its color coding are unchanged. Owner runs
+    `sync-ar` to see it populated live (needs the Lien Tracker DB shared with the integration).
+
 ## IN PROGRESS
 
 - **Absorb is LIVE by default (the user 2026-08-11).** `sync-ar` now absorbs Notes

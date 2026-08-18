@@ -477,8 +477,14 @@ it carries the matching **lien Status**. `dashboard.py::_fetch_open_invoices` th
 `invoice-sync/aging_sheet.py` - feeding the **Open Invoices tab**: an AR-aging grid (client-banded, the
 open balance tinted green→red in its one bucket column, a per-bucket grand total), bucket-tile +
 client / project / division / lien / litigation filters, and a QBO deep link on every Invoice #.
+The relation→Status resolution lives in **`shared/lien_status.py`** (the ONE resolver: index the Lien
+Tracker once, pick the most-escalated status per invoice), so it is shared - **invoice-sync's AR Aging
+Excel carries the same "Lien status" column** beside its deadline clock, and the workbook and the site
+can never disconnect (owner 2026-08-18). The clock (`shared/lien_clock.py`, a computed deadline) and the
+status (the Notion Lien Tracker, what's actually been done) are different columns on purpose.
     QBO ──(invoice-sync)──▶ Invoice Tracker (Notion) ──┐
-    Notion Lien Tracker ──(lien Status by relation) ───┴─(load_invoices.py)──▶ ledger.billing_event ──▶ Draws · Open Invoices
+    Notion Lien Tracker ──(shared/lien_status)─────────┼─(load_invoices.py)──▶ ledger.billing_event ──▶ Draws · Open Invoices
+                                                        └─(invoice-sync)──────▶ AR Aging Excel · "Lien status" column
 
 **CRM / sales pipeline (`load_customers.py` → `customer` + `sales_touch`).** The pre-project spine:
 the ledger owns the client/lead master too, not just the job. Reads the Notion "Customer List" data

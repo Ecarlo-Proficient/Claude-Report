@@ -91,7 +91,10 @@ restate them here. Business/strategic context lives in session memory, not in th
   cost-code resolver `cost_leaf` + the `iter_cost_lines` pull-and-resolve engine — shared by
   project-pnl and the ledger's `load_costs.py`), `notion_client.py` (thin Notion API client —
   create/query/update pages; used by `ledger/sync_actions.py`; invoice-sync keeps its own tool-local
-  copy on purpose), `setup_qbo.py` (`--status/--test/--rotate/--purge`).
+  copy on purpose), `lien_status.py` (the ONE Notion Lien Tracker -> Status resolver: index the
+  tracker once, most-escalated pick per invoice by its `Lien` relation; shared by the ledger's
+  `load_invoices.py` and invoice-sync's AR Aging Excel so the site and workbook never drift),
+  `setup_qbo.py` (`--status/--test/--rotate/--purge`).
 - **invoice-sync/** — the QBO → Notion AR invoice sync (was `automation-worker/`). Open invoices
   → two Notion DBs (MFD isolated; Res/Com combined) routed by project-# prefix; sweeps paid;
   archives QBO-deleted (CDC); posts MFD pay events to Teams. Manual via `sync-ar` (launchd plists

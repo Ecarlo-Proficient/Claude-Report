@@ -137,6 +137,10 @@ COLUMNS: List[Tuple[str, int, Optional[str]]] = [
     # legible from the bucket the money sits in; the lien deadline is not, and
     # it's the one that expires.
     ("Lien",             22, None),
+    # The Notion Lien Tracker status (Mailed / Lien filed / …) - the SAME value the
+    # dashboard's Open Invoices Lien column shows, kept beside the deadline clock so the
+    # workbook and the site never disconnect (the user 2026-08-18). Blank = no lien linked.
+    ("Lien status",      18, None),
     ("Current",          14, '"$"#,##0.00'),
     ("1-30",             14, '"$"#,##0.00'),
     ("31-60",            14, '"$"#,##0.00'),
@@ -158,11 +162,11 @@ COLUMNS: List[Tuple[str, int, Optional[str]]] = [
 ]
 
 # 0-based positions used when writing rows (kept in sync with COLUMNS above).
-C_LABEL, C_PROJ, C_INV, C_DATE, C_DUE, C_LIEN = range(6)
-C_CURRENT, C_1_30, C_31_60, C_61_90, C_90 = range(6, 11)
+C_LABEL, C_PROJ, C_INV, C_DATE, C_DUE, C_LIEN, C_LIENSTATUS = range(7)
+C_CURRENT, C_1_30, C_31_60, C_61_90, C_90 = range(7, 12)
 # C_TOTAL = Open Balance (kept name for the sum-of-buckets), C_INVTOTAL = the
 # invoice's original Total Amount that the Open Balance bar is scaled against.
-C_TOTAL, C_INVTOTAL, C_PREV, C_VSTATUS, C_VBILLS, C_VAMT, C_THIS, C_NOTES, C_ACTION = range(11, 20)
+C_TOTAL, C_INVTOTAL, C_PREV, C_VSTATUS, C_VBILLS, C_VAMT, C_THIS, C_NOTES, C_ACTION = range(12, 21)
 
 BUCKET_COLS = (C_CURRENT, C_1_30, C_31_60, C_61_90, C_90)
 
@@ -718,6 +722,7 @@ def build_aging_sheet(
         detail[C_DATE] = rec["invoice_date"]
         detail[C_DUE] = rec["due_date"]
         detail[C_LIEN] = rec["lien"].label
+        detail[C_LIENSTATUS] = rec.get("lien_status") or ""
         detail[BUCKET_COLS[bucket_index(rec["days_past_due"])]] = rec["open_balance"]
         detail[C_TOTAL] = rec["open_balance"]
         detail[C_INVTOTAL] = rec["total_amount"]

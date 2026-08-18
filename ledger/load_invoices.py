@@ -44,7 +44,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
-from shared import paths  # noqa: E402
+from shared import paths, lien_status as liens  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 SCHEMA_SQL = HERE / "schema.sql"
@@ -61,10 +61,6 @@ MFD_DS = paths.get("ACB_INVOICE_MFD_DS_ID") or "0f8e7cdf-16fe-4137-82e6-255e2ff4
 # Lien Tracker (Notion). Each invoice page carries a `Lien` relation back to this DB;
 # we resolve it to the lien's Status for the Open Invoices tab. Read-only.
 LIEN_DS = paths.get("ACB_LIEN_TRACKER_DS_ID") or "2c5b24f7-5585-80c5-b2d9-000bfcdaa084"
-
-# When an invoice has more than one related lien, show the most-escalated state.
-_LIEN_PRIORITY = ["Lien", "Mailed", "Ready to Mail", "In progress", "Ready to Review",
-                  "Not started", "Did Not Send", "Paid", "Closed"]
 
 _PROJ_RE = re.compile(r"(MFD|CP|RP)\s*(\d+)(-FTW)?", re.IGNORECASE)
 _DIV_PREFIX = {"MFD": "Multi Family", "CP": "Commercial", "RP": "Residential"}
@@ -103,8 +99,6 @@ def _prop(props: dict, name: str):
         return p.get("number")
     if t == "select":
         return (p.get("select") or {}).get("name")
-    if t == "status":
-        return (p.get("status") or {}).get("name")
     if t == "multi_select":
         names = [o.get("name") for o in (p.get("multi_select") or [])]
         return names[0] if names else None
@@ -118,27 +112,6 @@ def _prop(props: dict, name: str):
     return None
 
 
-def _relation_ids(props: dict, name: str) -> list[str]:
-    """Page ids a relation property points at (e.g. an invoice's `Lien` links)."""
-    p = props.get(name) or {}
-    if p.get("type") != "relation":
-        return []
-    return [r.get("id") for r in (p.get("relation") or []) if r.get("id")]
-
-
-def _pick_lien(ids: list[str], lien_by_page: dict) -> tuple:
-    """Given an invoice's related lien page ids, return (status, notice) for the
-    most-escalated related lien (or (None, None) if none/unknown)."""
-    hits = [lien_by_page[i] for i in ids if i in lien_by_page]
-    if not hits:
-        return (None, None)
-    def rank(h):
-        s = h.get("status")
-        return _LIEN_PRIORITY.index(s) if s in _LIEN_PRIORITY else len(_LIEN_PRIORITY)
-    best = min(hits, key=rank)
-    return (best.get("status"), best.get("notice"))
-
-
 def parse_invoice_page(page: dict, division_default: str | None = None,
                        lien_by_page: dict | None = None) -> dict | None:
     """One Invoice Tracker Notion page → a billing_event record."""
@@ -149,7 +122,7 @@ def parse_invoice_page(page: dict, division_default: str | None = None,
         return None
     proj = ((_prop(props, "Project #") or "").upper().strip() or None) \
         or _extract_proj(_prop(props, "Customer (raw)")) or _extract_proj(_prop(props, "Memo"))
-    lien_status, lien_notice = _pick_lien(_relation_ids(props, "Lien"), lien_by_page or {})
+    lien_stat, lien_notice = liens.for_invoice(props, lien_by_page or {})   # shared resolver
     return {
         "qbo_txn_id": str(inv_id or doc),
         "doc_number": (str(doc).strip() if doc else None),
@@ -165,7 +138,7 @@ def parse_invoice_page(page: dict, division_default: str | None = None,
         "net_terms": _prop(props, "Net Terms"),
         "aging_bucket": _prop(props, "Aging Bucket"),
         "litigation": 1 if _prop(props, "Litigation") else 0,
-        "lien_status": lien_status,
+        "lien_status": lien_stat,
         "lien_notice": lien_notice,
         "draw_period": None,
         "source": "invoice_tracker",
@@ -173,24 +146,16 @@ def parse_invoice_page(page: dict, division_default: str | None = None,
 
 
 def load_lien_index(nc, ds_id: str) -> dict:
-    """Query the Lien Tracker once → {lien_page_id: {status, notice}} so each invoice's
-    `Lien` relation resolves to a Status without a per-page fetch. The lien column is an
-    add-on: if the DB isn't shared with the integration (or any read error), degrade to an
-    empty index so the core invoice load still runs - the column just shows blank."""
-    idx: dict = {}
+    """Resilient wrapper over `shared.lien_status.index_from_pages`: query the Lien Tracker
+    once → {lien_page_id: {status, notice}}. The lien column is an add-on, so any read error
+    (or the DB not shared with the integration) degrades to an empty index and the core
+    invoice load still runs - the column just shows blank."""
     try:
-        pages = list(nc.query_data_source(ds_id))
+        return liens.index_from_pages(nc.query_data_source(ds_id))
     except Exception as e:  # noqa: BLE001 - never let the lien add-on break the AR load
         print(f"  Lien Tracker: not readable ({type(e).__name__}) - lien column will be blank. "
               "Share the Lien Tracker DB with the automation integration to enable it.")
         return {}
-    for page in pages:
-        pid = page.get("id")
-        if not pid:
-            continue
-        props = page.get("properties", {})
-        idx[pid] = {"status": _prop(props, "Status"), "notice": _prop(props, "Notice Type")}
-    return idx
 
 
 _COLS = ["qbo_txn_id", "doc_number", "project_no", "division", "customer", "memo",

@@ -54,6 +54,12 @@ from aging_sheet import (
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from shared import paths
 from shared import lien_clock
+from shared import lien_status as liens
+
+# The Notion Lien Tracker feeds the "Lien status" column so the Excel matches the
+# dashboard's Open Invoices Lien column (same source, never disconnected). An add-on:
+# if the DB isn't shared with the integration it degrades to blank. Override via env.
+LIEN_TRACKER_DS_ID = paths.get("LIEN_TRACKER_DS_ID") or "2c5b24f7-5585-80c5-b2d9-000bfcdaa084"
 
 
 log = logging.getLogger("automation_worker.export_xlsx")
@@ -215,6 +221,7 @@ def _aging_record(
     today: dt.date,
     vendor_map: Optional[Dict[str, Any]],
     chains: Optional[Any] = None,
+    lien_index: Optional[Dict[str, dict]] = None,
 ) -> dict:
     """Flatten one Notion invoice page into the dict the aging tab consumes.
 
@@ -264,6 +271,10 @@ def _aging_record(
             memo=_text(props.get("Memo")),
             note=_text(props.get("Quick Status")),
         ),
+        # Notion Lien Tracker status, resolved via the invoice's `Lien` relation - the SAME
+        # value the dashboard's Open Invoices Lien column shows, so the two never drift.
+        # Short label; blank when no lien row is linked to the invoice.
+        "lien_status": liens.short(liens.for_invoice(props, lien_index or {})[0]),
         "notes": _text(props.get("Quick Status")),
         "last_action": _date_value(props.get("Last Action Date")),
         # Deep link to the invoice in QBO, written by the sync. The aging tab
@@ -286,6 +297,19 @@ OPEN_STATUSES = ("Unpaid", "Partially Paid")
 
 def _status_name(page: dict) -> str:
     return _select_name((page.get("properties") or {}).get("Status"))
+
+
+def _load_lien_index(notion: NotionClient) -> Dict[str, dict]:
+    """Query the Notion Lien Tracker once -> {lien_page_id: {status, notice}} (via the
+    shared resolver, so the workbook and the dashboard can never drift). Resilient: any
+    read error - most likely the DB not shared with this integration - degrades to an
+    empty index so the export still runs and the Lien status column just shows blank."""
+    try:
+        return liens.index_from_pages(notion.query_data_source(LIEN_TRACKER_DS_ID, page_size=100))
+    except Exception as e:  # noqa: BLE001 - the lien column must never break the export
+        log.warning("Lien Tracker not readable (%s); Lien status column will be blank. "
+                    "Share the Lien Tracker DB with the integration to enable it.", type(e).__name__)
+        return {}
 
 
 def _all_invoices(notion: NotionClient, ds_id: str) -> List[dict]:
@@ -493,6 +517,10 @@ def export_open_invoices_xlsx(
         )
     chains.finalize()
 
+    # One Lien Tracker pull for the whole export (both tabs) - resolves each invoice's
+    # `Lien` relation to its Notion status, matching the dashboard's Lien column.
+    lien_index = _load_lien_index(notion)
+
     aging_records: List[dict] = []
     litigation_excluded: Dict[str, int] = defaultdict(int)
     for pages, label, cache in (
@@ -508,7 +536,7 @@ def export_open_invoices_xlsx(
                 ] += 1
                 continue
             aging_records.append(
-                _aging_record(page, label, cache, today, vendor_map, chains)
+                _aging_record(page, label, cache, today, vendor_map, chains, lien_index)
             )
 
     # ── Notes: absorb the clerk's cell Notes as the new status, or preserve them ──
