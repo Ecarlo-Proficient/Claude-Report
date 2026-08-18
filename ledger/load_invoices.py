@@ -44,7 +44,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
-from shared import paths, lien_status as liens  # noqa: E402
+from shared import paths, lien_status as liens, notion_customers as customers  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 SCHEMA_SQL = HERE / "schema.sql"
@@ -61,6 +61,11 @@ MFD_DS = paths.get("ACB_INVOICE_MFD_DS_ID") or "0f8e7cdf-16fe-4137-82e6-255e2ff4
 # Lien Tracker (Notion). Each invoice page carries a `Lien` relation back to this DB;
 # we resolve it to the lien's Status for the Open Invoices tab. Read-only.
 LIEN_DS = paths.get("ACB_LIEN_TRACKER_DS_ID") or "2c5b24f7-5585-80c5-b2d9-000bfcdaa084"
+# Customer-list data sources the invoice `Customer` relation points at, so the client column
+# shows the PARENT client (the GC), not the project-level `Customer (raw)` child. Res/Com and
+# MFD keep separate lists; both are read (merged) so every invoice resolves. Override via env.
+RESCOM_CUST_DS = paths.get("ACB_INVOICE_RESCOM_CUST_DS_ID") or "19db24f7-5585-81af-a4e1-000bbe22e6cc"
+MFD_CUST_DS = paths.get("ACB_INVOICE_MFD_CUST_DS_ID") or "34bb24f7-5585-80d3-94fa-000b847f04e2"
 
 _PROJ_RE = re.compile(r"(MFD|CP|RP)\s*(\d+)(-FTW)?", re.IGNORECASE)
 _DIV_PREFIX = {"MFD": "Multi Family", "CP": "Commercial", "RP": "Residential"}
@@ -113,7 +118,8 @@ def _prop(props: dict, name: str):
 
 
 def parse_invoice_page(page: dict, division_default: str | None = None,
-                       lien_by_page: dict | None = None) -> dict | None:
+                       lien_by_page: dict | None = None,
+                       cust_cache: dict | None = None) -> dict | None:
     """One Invoice Tracker Notion page → a billing_event record."""
     props = page.get("properties", {})
     inv_id = _prop(props, "Invoice ID")
@@ -123,12 +129,16 @@ def parse_invoice_page(page: dict, division_default: str | None = None,
     proj = ((_prop(props, "Project #") or "").upper().strip() or None) \
         or _extract_proj(_prop(props, "Customer (raw)")) or _extract_proj(_prop(props, "Memo"))
     lien_stat, lien_notice = liens.for_invoice(props, lien_by_page or {})   # shared resolver
+    # The PARENT client (the GC), resolved from the `Customer` relation; the raw name is the
+    # project-level child ("MFD177 - MERRITT PARK") and is only a fallback.
+    client = customers.relation_title(props.get("Customer"), cust_cache or {}) \
+        or _prop(props, "Customer (raw)")
     return {
         "qbo_txn_id": str(inv_id or doc),
         "doc_number": (str(doc).strip() if doc else None),
         "project_no": proj,
         "division": _division_for(proj) or division_default,
-        "customer": _prop(props, "Customer (raw)"),
+        "customer": client,
         "memo": _prop(props, "Memo"),
         "amount": _num(_prop(props, "Total Amount")),
         "balance": _num(_prop(props, "Open balance")),
@@ -156,6 +166,23 @@ def load_lien_index(nc, ds_id: str) -> dict:
         print(f"  Lien Tracker: not readable ({type(e).__name__}) - lien column will be blank. "
               "Share the Lien Tracker DB with the automation integration to enable it.")
         return {}
+
+
+def load_customer_titles(nc) -> dict:
+    """Merged {customer_page_id -> parent name} from the Res/Com + MFD customer lists the
+    invoice `Customer` relations point at (via `shared.notion_customers`). Resilient: a list
+    the token can't read is skipped and those invoices fall back to `Customer (raw)`, so the
+    load never breaks over the client-name nicety."""
+    cache: dict = {}
+    for label, ds in (("Res/Com", RESCOM_CUST_DS), ("MFD", MFD_CUST_DS)):
+        if not ds:
+            continue
+        try:
+            cache.update(customers.build_title_cache(nc.query_data_source(ds)))
+        except Exception as e:  # noqa: BLE001 - client name is a nicety, never break the load
+            print(f"  Customer list ({label}): not readable ({type(e).__name__}); "
+                  "those invoices show the project name until the DB is shared with the integration.")
+    return cache
 
 
 _COLS = ["qbo_txn_id", "doc_number", "project_no", "division", "customer", "memo",
@@ -309,13 +336,16 @@ def run(db_path: Path, dry_run: bool, show: int, no_qbo: bool = False) -> None:
     lien_by_page = load_lien_index(nc, LIEN_DS) if LIEN_DS else {}
     if lien_by_page:
         print(f"  Lien Tracker: {len(lien_by_page)} lien rows indexed")
+    cust_cache = load_customer_titles(nc)
+    if cust_cache:
+        print(f"  Customer lists: {len(cust_cache)} clients indexed (parent-name resolution)")
     records: list[dict] = []
     for label, ds_id, div_default in (("Res/Com", RESCOM_DS, None), ("MFD", MFD_DS, "Multi Family")):
         if not ds_id:
             print(f"  skip {label}: no data-source id"); continue
         n0 = len(records)
         for page in nc.query_data_source(ds_id):
-            rec = parse_invoice_page(page, div_default, lien_by_page)
+            rec = parse_invoice_page(page, div_default, lien_by_page, cust_cache)
             if rec:
                 records.append(rec)
         print(f"  Invoice Tracker ({label}): {len(records) - n0} invoices")
@@ -352,12 +382,13 @@ def run(db_path: Path, dry_run: bool, show: int, no_qbo: bool = False) -> None:
 def _selftest() -> None:
     """Offline: fabricate Invoice Tracker Notion pages, parse, write, prove the draw join."""
     def page(inv_id, num, proj, total, bal, status, date, memo, cust=None,
-             due=None, terms=None, bucket=None, litig=False, lien_ids=None):
+             due=None, terms=None, bucket=None, litig=False, lien_ids=None, cust_rel=None):
         props = {
             "Invoice ID": {"type": "rich_text", "rich_text": [{"plain_text": inv_id}]},
             "Invoice #": {"type": "title", "title": [{"plain_text": num}]},
             "Project #": {"type": "rich_text", "rich_text": [{"plain_text": proj}]},
             "Customer (raw)": {"type": "rich_text", "rich_text": [{"plain_text": cust or ""}]},
+            "Customer": {"type": "relation", "relation": ([{"id": cust_rel}] if cust_rel else [])},
             "Total Amount": {"type": "number", "number": total},
             "Open balance": {"type": "number", "number": bal},
             "Status": {"type": "select", "select": {"name": status}},
@@ -376,13 +407,17 @@ def _selftest() -> None:
         "L1": {"status": "Mailed", "notice": "RP Notice"},
         "L2": {"status": "Lien", "notice": "Affidavit of Lien Claimed"},
     }
+    # A fabricated customer title cache (the `Customer` relation resolves to the PARENT client).
+    cust_cache = {"CUST_FIRE": "Firestone Building Co"}
     pages = [
         page("5001", "34319", "MFD325", 78032.0, 0.0, "Paid", "2026-05-15", "Mesquite - Briarwood - May Draw 2026"),
         page("5002", "34535", "RP7470", 91578.90, 91578.90, "Unpaid", "2026-08-06", "315 Woolley - Aug Draw",
-             due="2026-09-05", terms="Net 30", bucket="Current", lien_ids=["L1", "L2"]),
-        page("5003", "34600", "MFD192", 200000.0, 50000.0, "Partially Paid", "2026-07-01", "Mayhill - July Draw"),
+             due="2026-09-05", terms="Net 30", bucket="Current", lien_ids=["L1", "L2"],
+             cust="RP7470 - 315 WOOLLEY", cust_rel="CUST_FIRE"),
+        page("5003", "34600", "MFD192", 200000.0, 50000.0, "Partially Paid", "2026-07-01", "Mayhill - July Draw",
+             cust="MFD192 - MAYHILL"),
     ]
-    records = [r for r in (parse_invoice_page(p, None, lien_by_page) for p in pages) if r]
+    records = [r for r in (parse_invoice_page(p, None, lien_by_page, cust_cache) for p in pages) if r]
     with tempfile.TemporaryDirectory() as d:
         con = _connect(Path(d) / "selftest.sqlite3")
         con.execute("INSERT INTO ap_bill_line (line_uid, project_no, invoice_no, matched_invoice, "
@@ -407,9 +442,14 @@ def _selftest() -> None:
         # Two related liens (Mailed + Lien) → most-escalated wins.
         assert ar == ("2026-09-05", "Net 30", "Lien", "Affidavit of Lien Claimed", 0), ar
         assert con.execute("SELECT lien_status FROM billing_event WHERE doc_number='34319'").fetchone()[0] is None
+
+        # Client = the PARENT (from the Customer relation), NOT the "Customer (raw)" project child.
+        assert con.execute("SELECT customer FROM billing_event WHERE doc_number='34535'").fetchone()[0] == "Firestone Building Co"
+        # No relation → falls back to the raw project-level name.
+        assert con.execute("SELECT customer FROM billing_event WHERE doc_number='34600'").fetchone()[0] == "MFD192 - MAYHILL"
         con.close()
     print("selftest OK: 3 Invoice Tracker pages parsed · project+division · Paid/Partially/Unpaid · "
-          "draw ↔ invoice join by Invoice # · due date + escalated lien status resolve.")
+          "draw ↔ invoice join by Invoice # · due date + escalated lien · parent-client resolve.")
 
 
 def main() -> int:

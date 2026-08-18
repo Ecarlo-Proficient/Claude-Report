@@ -55,6 +55,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from shared import paths
 from shared import lien_clock
 from shared import lien_status as liens
+from shared import notion_customers as customers
 
 # The Notion Lien Tracker feeds the "Lien status" column so the Excel matches the
 # dashboard's Open Invoices Lien column (same source, never disconnected). An add-on:
@@ -137,30 +138,10 @@ def _url(prop: dict) -> str:
     return (prop or {}).get("url") or ""
 
 
-def _relation_first_title(prop: dict, customer_title_cache: Dict[str, str]) -> str:
-    """For a relation property, return the first related page's title via cache."""
-    rels = (prop or {}).get("relation") or []
-    if not rels:
-        return ""
-    page_id = rels[0].get("id")
-    return customer_title_cache.get(page_id, "")
-
-
-def _build_customer_title_cache(
-    notion: NotionClient, customer_ds_id: str, title_prop: str = "Client"
-) -> Dict[str, str]:
-    """{page_id → display name} for all customers in a customer DB."""
-    cache: Dict[str, str] = {}
-    for page in notion.query_data_source(customer_ds_id, page_size=100):
-        page_id = page.get("id")
-        if not page_id:
-            continue
-        title_prop_data = (page.get("properties") or {}).get(title_prop) or {}
-        title_arr = title_prop_data.get("title") or []
-        name = "".join(t.get("plain_text", "") for t in title_arr).strip()
-        if name:
-            cache[page_id] = name
-    return cache
+def _build_customer_title_cache(notion: NotionClient, customer_ds_id: str) -> Dict[str, str]:
+    """{page_id -> display name} for a customer DB, via the shared resolver (so the Excel
+    and the ledger's Open Invoices tab name the parent client identically)."""
+    return customers.build_title_cache(notion.query_data_source(customer_ds_id, page_size=100))
 
 
 def _row_for(
@@ -172,10 +153,8 @@ def _row_for(
     """Build one Excel row from a Notion invoice page."""
     props = page.get("properties") or {}
 
-    # Customer — prefer the relation's resolved name, fall back to Customer (raw).
-    customer_relation_name = _relation_first_title(
-        props.get("Customer"), customer_title_cache
-    )
+    # Customer - prefer the relation's resolved parent name, fall back to Customer (raw).
+    customer_relation_name = customers.relation_title(props.get("Customer"), customer_title_cache)
     customer = customer_relation_name or _text(props.get("Customer (raw)"))
 
     invoice_num = _text(props.get("Invoice #"))
@@ -245,7 +224,7 @@ def _aging_record(
         # The relation resolves to the PARENT customer (e.g. the GC), while
         # "Customer (raw)" is the project-level child ("MFD177 - MERRITT PARK").
         # Grouping needs the parent, so the raw name is only a last resort.
-        "parent": _relation_first_title(props.get("Customer"), customer_title_cache)
+        "parent": customers.relation_title(props.get("Customer"), customer_title_cache)
         or _text(props.get("Customer (raw)")),
         "division": division,
         "project_num": _text(props.get("Project #")),

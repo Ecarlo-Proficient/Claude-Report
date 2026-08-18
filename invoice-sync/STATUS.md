@@ -180,6 +180,13 @@ mirror. Update this in the SAME commit as any change to this tool.
     prompt). The existing lien-clock column and its color coding are unchanged. Owner runs
     `sync-ar` to see it populated live (needs the Lien Tracker DB shared with the integration).
 
+- **Parent-client resolver moved to shared (2026-08-18).** `_build_customer_title_cache` +
+  `_relation_first_title` were the same logic the ledger's Open Invoices tab needed, so the resolver
+  moved to **`shared/notion_customers.py`** (repo rule: a file a second tool needs moves to shared/).
+  `export_invoices_xlsx` now calls `customers.build_title_cache` / `customers.relation_title`; behavior
+  unchanged (the Excel already showed the parent). The ledger uses the same code, so the workbook and
+  the dashboard name the client identically.
+
 ## IN PROGRESS
 
 - **Absorb is LIVE by default (the user 2026-08-11).** `sync-ar` now absorbs Notes

@@ -689,6 +689,16 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     integration can't read the Lien Tracker DB yet (`NotionError`) - the owner shares that DB with the
     integration to light it up (the loader degrades gracefully and says so).
 
+  - **v1.0.1 - Open Invoices client shows the parent GC (owner, 2026-08-18).** The Client column showed
+    the project-level `Customer (raw)` ("MFD177 - MERRITT PARK") instead of the parent client. Fixed:
+    `load_invoices` now resolves each invoice's `Customer` **relation** to the parent title via the new
+    shared **`shared/notion_customers.py`** (the ONE parent-client resolver, also used by invoice-sync's
+    Excel so both name the client identically - repo rule). Reads the Res/Com + MFD customer lists
+    (`ACB_INVOICE_RESCOM_CUST_DS_ID` `19db…` / `ACB_INVOICE_MFD_CUST_DS_ID` `34bb…`, override via env),
+    merges them, falls back to `Customer (raw)` when a relation doesn't resolve; a customer list the
+    token can't read is skipped (those invoices show the project name). Selftest extended. Loaded live:
+    all 98 open invoices now show a real client (51 distinct GCs, 0 project-shaped names).
+
 ## IN PROGRESS
 - **Lien-mark workbook mirror (Phase 2 above):** add the `bill_marks.resolve_lien` call to
   `bill-tracker/excel_bill_sync.py`'s Lien preservation once that file has no foreign uncommitted changes.

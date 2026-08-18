@@ -94,7 +94,9 @@ restate them here. Business/strategic context lives in session memory, not in th
   copy on purpose), `lien_status.py` (the ONE Notion Lien Tracker -> Status resolver: index the
   tracker once, most-escalated pick per invoice by its `Lien` relation; shared by the ledger's
   `load_invoices.py` and invoice-sync's AR Aging Excel so the site and workbook never drift),
-  `setup_qbo.py` (`--status/--test/--rotate/--purge`).
+  `notion_customers.py` (the ONE parent-client resolver: `{page_id -> title}` cache of a customer
+  DB + `relation_title`, so the invoice `Customer` relation resolves to the GC, not `Customer (raw)`;
+  shared by the same two so both name the client identically), `setup_qbo.py` (`--status/--test/--rotate/--purge`).
 - **invoice-sync/** — the QBO → Notion AR invoice sync (was `automation-worker/`). Open invoices
   → two Notion DBs (MFD isolated; Res/Com combined) routed by project-# prefix; sweeps paid;
   archives QBO-deleted (CDC); posts MFD pay events to Teams. Manual via `sync-ar` (launchd plists

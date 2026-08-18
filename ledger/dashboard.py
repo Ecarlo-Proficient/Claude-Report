@@ -49,8 +49,9 @@ HERE = Path(__file__).resolve().parent
 STATIC = HERE / "static"
 
 # Dashboard build version - shown in the top bar so the owner can confirm which build is
-# live. Bump on every user-visible release. 1.0.0 = Open Invoices tab + lien columns.
-LEDGER_VERSION = "1.0.0"
+# live. Bump on every user-visible release. 1.0.0 = Open Invoices tab + lien columns;
+# 1.0.1 = Open Invoices client shows the parent GC (not the project-level name).
+LEDGER_VERSION = "1.0.1"
 
 DEFAULT_DB = paths.get_path(
     "ACB_LEDGER_DB",

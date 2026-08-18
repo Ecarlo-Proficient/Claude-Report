@@ -477,6 +477,10 @@ it carries the matching **lien Status**. `dashboard.py::_fetch_open_invoices` th
 `invoice-sync/aging_sheet.py` - feeding the **Open Invoices tab**: an AR-aging grid (client-banded, the
 open balance tinted green→red in its one bucket column, a per-bucket grand total), bucket-tile +
 client / project / division / lien / litigation filters, and a QBO deep link on every Invoice #.
+The **client shown is the parent GC**, resolved from the invoice's `Customer` relation via
+**`shared/notion_customers.py`** (a `{page_id->title}` cache of the Res/Com + MFD customer lists);
+`Customer (raw)` (the project-level child, "MFD177 - MERRITT PARK") is only a fallback, and the SAME
+resolver names the client on the Excel so the two agree.
 The relation→Status resolution lives in **`shared/lien_status.py`** (the ONE resolver: index the Lien
 Tracker once, pick the most-escalated status per invoice), so it is shared - **invoice-sync's AR Aging
 Excel carries the same "Lien status" column** beside its deadline clock, and the workbook and the site
