@@ -174,8 +174,8 @@ CREATE TABLE IF NOT EXISTS ap_bill_line (
     loaded_at     TEXT NOT NULL
 );
 
--- ── waiver : the ONE owner input — unconditional waiver received per bill ────
--- The ledger is read-only EVERYWHERE ELSE; this is the single writable surface
+-- ── waiver : an owner input - unconditional waiver received per bill ─────────
+-- The ledger is read-only except the owner's own marks; this is one such surface
 -- (owner marks "waiver in hand" so a draw can be turned in to unlock the next).
 -- Keyed by (draw, vendor, bill) so it survives ap_bill_line reloads.
 CREATE TABLE IF NOT EXISTS waiver (
@@ -187,6 +187,17 @@ CREATE TABLE IF NOT EXISTS waiver (
     received_date   TEXT,
     note            TEXT,
     updated_at      TEXT NOT NULL
+);
+
+-- ── bill_mark : an owner input - the lien tag set on the dashboard per bill ───
+-- The other writable overlay (see shared/bill_marks.py). Keyed by the QBO bill id
+-- (= Bill Tracker's hidden _Key), so a mark survives ap_bill_line reloads AND joins
+-- cleanly back to the workbook: the dashboard writes it here instantly, and the next
+-- excel_bill_sync run mirrors it into the workbook's Lien cell. lien '' = cleared.
+CREATE TABLE IF NOT EXISTS bill_mark (
+    bill_id     TEXT PRIMARY KEY,      -- QBO bill TxnId (the workbook _Key)
+    lien        TEXT,                  -- 'Notice Sent' | 'Lien Filed' | '✓ Released' | '' (cleared)
+    updated_at  TEXT NOT NULL
 );
 
 -- ── v_ap_by_project : open AP + bill counts per project ─────────────────────

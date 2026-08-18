@@ -567,9 +567,32 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     block wrapping. Verified live: drag resizes + saves, long vendor names wrap 1→3 lines at 60px, dense
     single-line at defaults, no console errors.
 
+  - **Edit-back: lien marks from the site (owner, 2026-08-17). Phase 1 (overlay) DONE; Phase 2 (workbook
+    mirror) PENDING.** The owner wanted to mark a bill (e.g. "Notice Sent") on the website and have it
+    reflect in the workbook. Design chosen: **overlay + mirror on sync** (not a direct dashboard write to
+    the live OneDrive .xlsx - file-lock/corruption risk, and it'd fight the AP sync for ownership).
+    - **New writable overlay: `bill_mark`** (2nd write surface after `waiver`). Keyed by the **QBO bill id
+      (= the workbook's hidden `_Key`)** so a mark survives every `ap_bill_line` reload AND joins back to
+      the workbook. Lives in `shared/bill_marks.py` (the ONE module both the dashboard-writer and the
+      AP-reader use - no tool imports another tool). Absent-safe (no ledger → `{}`).
+    - **Dashboard:** `POST /api/bill-mark` `{bill_id, lien}` (lien ∈ Notice Sent / Lien Filed / ✓ Released,
+      or '' to clear); `_fetch_ap` merges marks over the loaded `lien_status` **instantly** (bills +
+      lien_watch) and exposes `bill_id` / `lien_marked`. The bill detail panel gained a **Mark lien**
+      control (3 buttons + clear); it POSTs, re-pulls authoritative data, re-opens. Works from the Liens
+      tab too (same panel). Verified live on a DB copy: mark → grid + panel + `bill_mark` row all update;
+      clear reverts; real ledger untouched; no console errors.
+    - **PENDING - Phase 2 (the workbook mirror):** `excel_bill_sync.py` must call
+      `bill_marks.read_lien_marks()` + `bill_marks.resolve_lien(...)` at its Lien-cell preservation step so
+      the mark lands in `Bill Tracker.xlsx` on the next `sync-ap` (then the existing `_Key` preservation
+      keeps it). NOT done yet because that file had **uncommitted changes from the other session** - editing
+      it would entangle their work (can't stage just my hunks). Do it once that file is clean. Until then
+      the mark is live on the site + persists, but the workbook won't show it. `resolve_lien` is already
+      written and unit-checked, so Phase 2 is a ~2-line call at one spot.
+
 ## IN PROGRESS
-- (none) - super-database + Console (control plane) landed. Owner to validate the producer Runs (AR/AP)
-  and the draft-WIP button with a real click (they fire real syncs + Touch ID).
+- **Lien-mark workbook mirror (Phase 2 above):** add the `bill_marks.resolve_lien` call to
+  `bill-tracker/excel_bill_sync.py`'s Lien preservation once that file has no foreign uncommitted changes.
+- Owner to validate the producer Runs (AR/AP) and the draft-WIP button with a real click (real syncs + Touch ID).
 
 ## TO DO
 - **Investigate the ~6 active reconcile mismatches** (QBO cost ≠ WIP figure, e.g. RP6901/RP6440):

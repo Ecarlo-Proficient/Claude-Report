@@ -540,6 +540,13 @@ tr.bill-group .bg-key { font-weight: 800; font-size: .95em; letter-spacing: -.01
 tr.bill-group .bg-sub { color: var(--text-dim); font-weight: 500; font-size: .85em; font-variant-numeric: tabular-nums; }
 /* Bill detail panel: give the QuickBooks link buttons room. */
 #billDetailBody .pnl-actions { margin: 10px 0 2px; }
+/* Lien-mark control (owner sets Notice Sent / Lien Filed / Released per bill). */
+.lien-mark-row { align-items: center; }
+.lien-mark-ctl { display: inline-flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.lien-mark-btn { padding: 3px 9px; }
+.lien-mark-btn.active { border-color: var(--accent); color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface)); font-weight: 600; }
+.lien-mark-hint { margin: 4px 0 2px; font-size: .8em; }
 
 /* ── QoL: clickable KPI tiles + inline row links ─────────────────────────── */
 .kpi.clickable { cursor: pointer; transition: border-color .12s, background .12s; }

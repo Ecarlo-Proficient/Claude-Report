@@ -1429,6 +1429,21 @@ function jumpToVendorBills(vendor) {
   renderBills();
   window.scrollTo(0, 0);
 }
+// Set / clear a bill's lien tag from the panel. Writes the ledger overlay (instant),
+// then pulls the authoritative merged data and re-opens the panel on the fresh bill.
+async function setBillLien(b, lien) {
+  if (!b.bill_id) { toast("This bill has no QBO bill link - can't mark it."); return; }
+  try {
+    const res = await fetch("/api/bill-mark", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ bill_id: b.bill_id, lien }) });
+    const j = await res.json();
+    if (!j.ok) throw new Error(j.error || "write failed");
+    toast(lien ? `Lien marked: ${lien === "✓ Released" ? "Released" : lien}` : "Lien mark cleared");
+    await load(true);                                       // authoritative state (merged server-side)
+    const fresh = (BILLS || []).find(x => x.bill_id === b.bill_id) || b;
+    openBillDetail(fresh);
+  } catch (e) { toast("Could not save: " + e.message); }
+}
 // Click a bill row → the invoice slides in on the right: bill (money out) + its AR
 // invoice / draw (money in), with QuickBooks deep links to both.
 function openBillDetail(b) {
@@ -1455,6 +1470,26 @@ function openBillDetail(b) {
   row(gb, "Paid the vendor?", b.pay_status);
   row(gb, "Approved?", b.approved === "approved" ? "Yes" : (b.approved ? "No" : ""));
   row(gb, "Lien clock", b.lien_status);
+  // Lien mark: the owner sets Notice Sent / Lien Filed / Released here. Saves to the ledger
+  // instantly and mirrors into the workbook's Lien cell on the next sync-ap.
+  { const r = document.createElement("div"); r.className = "drow lien-mark-row";
+    const dk = document.createElement("span"); dk.className = "dk"; dk.textContent = "Mark lien";
+    const dv = document.createElement("span"); dv.className = "dv lien-mark-ctl";
+    if (!b.bill_id) { const s = document.createElement("span"); s.className = "dim"; s.textContent = "no QBO bill link"; dv.appendChild(s); }
+    else {
+      for (const [label, val] of [["Notice Sent", "Notice Sent"], ["Lien Filed", "Lien Filed"], ["Released", "✓ Released"]]) {
+        const active = b.lien_marked && b.lien_status === val;
+        const btn = document.createElement("button");
+        btn.className = "btn small lien-mark-btn" + (active ? " active" : "");
+        btn.textContent = label; btn.title = active ? "Click to clear this mark" : ("Mark " + label);
+        btn.onclick = () => setBillLien(b, active ? "" : val);
+        dv.appendChild(btn);
+      }
+    }
+    r.appendChild(dk); r.appendChild(dv); gb.appendChild(r); }
+  if (b.bill_id) { const hint = document.createElement("p"); hint.className = "hint lien-mark-hint";
+    hint.textContent = b.lien_marked ? "Set on the site - writes to the workbook Lien cell on the next AP sync."
+      : "Sets the workbook's Lien tag - saved here now, mirrored on the next AP sync."; gb.appendChild(hint); }
   { const acts = document.createElement("div"); acts.className = "pnl-actions";
     const bl = qboBillHref(b.qbo_link); if (bl) acts.appendChild(linkBtn("Open bill in QuickBooks ↗", bl));
     if (acts.childNodes.length) gb.appendChild(acts); }

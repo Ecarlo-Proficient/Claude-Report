@@ -10,7 +10,9 @@ width, which widgets and which columns show — is customizable in the UI and
 saved in the browser (localStorage), per person.
 
 SAFETY
-  * The database is opened READ-ONLY (SQLite mode=ro) — the dashboard never writes.
+  * Reads open the database READ-ONLY (SQLite mode=ro). The ONLY writes are the owner's
+    own marks, each to its own tiny overlay table (never to the mirrored source tables):
+    waiver (draw waivers) and bill_mark (lien tags → mirrored to the workbook on sync-ap).
   * The server binds to 127.0.0.1 only — it is not exposed on the network.
 
 USAGE
@@ -41,7 +43,7 @@ from urllib.parse import parse_qs, urlparse
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
-from shared import paths, pnl_paths  # noqa: E402
+from shared import paths, pnl_paths, bill_marks  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 STATIC = HERE / "static"
@@ -303,14 +305,23 @@ def _fetch_ap(con) -> dict:
             "matched_invoice, invoice_no, qbo_link FROM ap_bill_line").fetchall()
     except sqlite3.OperationalError:
         return ap
+    # Site lien marks (Notice Sent / Lien Filed / Released) the owner set on the dashboard.
+    # They win over the computed/loaded lien_status INSTANTLY, before the next sync-ap mirrors
+    # them into the workbook. Keyed by QBO bill id (= the workbook's _Key). Absent-safe.
+    marks = bill_marks.read_lien_marks()
+    def _eff_lien(r):
+        bid = bill_marks.bill_id_from_link(r["qbo_link"])
+        tag = marks.get(bid) if bid else None
+        return tag if tag in bill_marks.LIEN_STATES else r["lien_status"]
     open_bal, open_lines, watch = 0.0, 0, []
     for r in rows:
         ob = r["open_balance"] or 0
         if ob > 0:
             open_bal += ob
             open_lines += 1
-        if r["lien_status"] in LIEN_RANK:
-            watch.append(dict(r))
+        d = dict(r); d["lien_status"] = _eff_lien(r)
+        if d["lien_status"] in LIEN_RANK:
+            watch.append(d)
     watch.sort(key=lambda r: (LIEN_RANK[r["lien_status"]], -(r["open_balance"] or 0)))
     by_project = {}
     for r in con.execute("SELECT project_no, open_lines, open_balance FROM v_ap_by_project "
@@ -339,6 +350,11 @@ def _fetch_ap(con) -> dict:
         "matched_invoice, invoice_no, gc_paid_date, pay_date, qbo_link "
         "FROM ap_bill_line ORDER BY bill_date DESC"):
         b = dict(r)
+        bid = bill_marks.bill_id_from_link(b.get("qbo_link"))
+        b["bill_id"] = bid                           # QBO bill id = workbook _Key; None → not markable
+        b["lien_marked"] = bool(bid and marks.get(bid))   # currently a site override (vs computed)
+        if bid and marks.get(bid) in bill_marks.LIEN_STATES:
+            b["lien_status"] = marks[bid]            # site mark wins until the next sync-ap
         inv = bmap.get(str(b.get("invoice_no") or ""))
         if inv:
             b["inv_qbo_id"] = inv["qbo_txn_id"]      # QBO Invoice Id → company-scoped deep link
@@ -759,8 +775,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         p = urlparse(self.path).path
-        if p == "/api/waiver":            # the ONE ledger write — the owner's waiver marks
+        if p == "/api/waiver":            # a ledger write - the owner's waiver marks
             self._set_waiver()
+        elif p == "/api/bill-mark":       # a ledger write - the owner's lien mark (mirrors to the workbook on sync-ap)
+            self._set_bill_mark()
         elif p == "/api/pnl/open":        # open the P&L workbook (or ?folder=1 → its folder), cross-platform
             self._pnl_open(self._query().get("proj", ""), folder=self._query().get("folder") == "1")
         elif p == "/api/job/open":        # open the SOURCE job folder (Synology CP/RP, OneDrive MFD)
@@ -959,6 +977,26 @@ class Handler(BaseHTTPRequestHandler):
         except sqlite3.OperationalError as e:
             return self._json({"error": f"write failed: {e}"}, 500)
         self._json({"ok": True, "received": bool(received), "waiver_key": key})
+
+    def _set_bill_mark(self):
+        """Set / clear a bill's lien tag (Notice Sent / Lien Filed / Released). Persists in the
+        ledger overlay instantly; the next sync-ap mirrors it into the workbook's Lien cell."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except (ValueError, json.JSONDecodeError):
+            return self._json({"error": "bad request"}, 400)
+        bill_id = str(body.get("bill_id") or "").strip()
+        lien = (body.get("lien") or "").strip()        # "" clears the mark
+        if not bill_id:
+            return self._json({"error": "bill_id required (this bill has no QBO bill link)"}, 400)
+        if lien and lien not in bill_marks.LIEN_STATES:
+            return self._json({"error": f"lien must be one of {bill_marks.LIEN_STATES} or empty"}, 400)
+        try:
+            bill_marks.set_lien_mark(bill_id, lien, _dt.datetime.now().isoformat(timespec="seconds"))
+        except sqlite3.OperationalError as e:
+            return self._json({"error": f"write failed: {e}"}, 500)
+        self._json({"ok": True, "bill_id": bill_id, "lien": lien})
 
 
 def _daemonize():

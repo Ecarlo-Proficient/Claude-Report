@@ -324,7 +324,7 @@ flowchart LR
     LOADER["load_wip_master.py\nCP←Test-CP · RP←Test-RP · MFD←Test-Master\nfilter to real project #s · idempotent upsert"]:::tool
     APLOAD["load_bill_tracker.py\nAP pay status + lien clock → ap_bill_line\n(NOT cost truth — subs excluded)"]:::tool
     DB[("ledger.sqlite3\nproject + wip_snapshot + ap_bill_line\n→ v_wip_latest · v_ap_by_project")]:::out
-    DASH["dashboard.py + static/\nlocal web UI (127.0.0.1) - READ-ONLY except one write.\nTabs: My view · Overview · P&L · Costs · Draws · Bills\n(Notion-style saved views) · Liens · Vendors · Sales · Console"]:::tool
+    DASH["dashboard.py + static/\nlocal web UI (127.0.0.1) - READ-ONLY except the owner's marks.\nTabs: My view · Overview · P&L · Costs · Draws · Bills\n(Notion-style saved views) · Liens · Vendors · Sales · Console"]:::tool
     BROWSER[("Browser\nhttp://127.0.0.1:8787")]:::out
     QBO[("QBO\nBills + Purchases\n(read-only pull, Touch ID)")]:::src
     QCOSTS["shared/qbo_costs.py\ncost_leaf + iter_cost_lines\n(the ONE resolver — shared with project-pnl)"]:::tool
@@ -340,7 +340,7 @@ flowchart LR
     APLOAD ==>|"ap_bill_line"| DB
     COSTLOAD ==>|"cost_line · cost_code"| DB
     DB ==>|"read-only"| DASH --> BROWSER
-    DASH -.->|"the ONE write: waiver mark"| DB
+    DASH -.->|"owner marks: waiver · lien tag (bill_mark) → mirrored to the workbook on next sync-ap"| DB
     SYNCACT["sync_actions.py\naction items → Notion pages\n(shared/notion_client)"]:::tool
     NOTION[("Notion 'Ledger Actions' DB\nthe folder-memory per action")]:::out
     DB --> SYNCACT --> NOTION
