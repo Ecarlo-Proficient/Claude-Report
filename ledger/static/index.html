@@ -300,17 +300,22 @@
         <div class="kpi-row" id="sublocStats"></div>
         <p class="hint" id="sublocHint"></p>
       </section>
+      <!-- By project FIRST (the priority) - click a row for its open subs grouped by draw -->
       <section class="widget">
-        <div class="widget-head"><h2>By division <span class="count">still fronted + the peak each hit</span></h2></div>
-        <div class="table-scroll"><table class="grid" id="sublocDivTable"><thead></thead><tbody></tbody></table></div>
+        <div class="widget-head"><h2>By project <span class="count">still fronted, most out first &middot; click a row for its open subs by draw</span></h2></div>
+        <div class="table-scroll"><table class="grid clickable" id="sublocProjTable"><thead></thead><tbody></tbody></table></div>
       </section>
-      <section class="widget">
-        <div class="widget-head"><h2>Repayment feed <span class="count">a client payment paid off these fronted subs (newest first)</span></h2></div>
-        <div class="table-scroll"><table class="grid" id="sublocFeedTable"><thead></thead><tbody></tbody></table></div>
+      <section class="widget" id="sublocFeedSection">
+        <div class="widget-head sec-head" data-sec="subfeed" title="Click to collapse / expand">
+          <h2><span class="sec-caret"></span> Repayment feed <span class="count">a client payment paid off these fronted subs</span></h2>
+        </div>
+        <div class="sec-body" id="sublocFeed"></div>
       </section>
-      <section class="widget">
-        <div class="widget-head"><h2>By project <span class="count">still fronted, most out first</span></h2></div>
-        <div class="table-scroll"><table class="grid" id="sublocProjTable"><thead></thead><tbody></tbody></table></div>
+      <section class="widget" id="sublocDivSection">
+        <div class="widget-head sec-head" data-sec="subdiv" title="Click to collapse / expand">
+          <h2><span class="sec-caret"></span> By division <span class="count">still fronted + the peak each hit</span></h2>
+        </div>
+        <div class="sec-body"><div class="table-scroll"><table class="grid" id="sublocDivTable"><thead></thead><tbody></tbody></table></div></div>
       </section>
     </div><!-- /tab: subloc -->
 
@@ -404,6 +409,20 @@
       </div>
     </div>
     <div class="panel-body" id="billDetailBody"></div>
+  </aside>
+
+  <!-- ── Sub-LOC project drill-over (open subs grouped by the draw they sit under) ── -->
+  <aside class="panel panel-right" id="sublocDetail" hidden>
+    <div class="panel-head">
+      <div>
+        <div class="panel-title" id="sublocDetailTitle">–</div>
+        <div class="panel-sub" id="sublocDetailSub"></div>
+      </div>
+      <div class="panel-head-actions">
+        <button class="btn icon" id="btnCloseSublocDetail" title="Close">✕</button>
+      </div>
+    </div>
+    <div class="panel-body" id="sublocDetailBody"></div>
   </aside>
 
   <!-- ── Settings slide-over ────────────────────────────────────────── -->

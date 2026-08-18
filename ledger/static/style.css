@@ -548,6 +548,20 @@ tr.bill-group .bg-sub { color: var(--text-dim); font-weight: 500; font-size: .85
   background: color-mix(in srgb, var(--accent) 14%, var(--surface)); font-weight: 600; }
 .lien-mark-hint { margin: 4px 0 2px; font-size: .8em; }
 
+/* ── Sub LOC: collapsible sections + the time-bucketed repayment feed ─────── */
+.sec-head { cursor: pointer; user-select: none; }
+.sec-head:hover h2 { color: var(--accent); }
+.sec-caret { color: var(--text-dim); display: inline-block; width: 1.05em; }
+.sec-body[hidden] { display: none; }
+.feed-bucket-head { display: flex; align-items: baseline; gap: 4px; padding: 9px 18px 5px; }
+.feed-bucket-head.clickable { cursor: pointer; user-select: none; }
+.feed-bucket-head .fb-caret { color: var(--text-dim); }
+.feed-bucket-head .fb-label { font-weight: 700; font-size: .9em; letter-spacing: -.01em; }
+.feed-bucket-head .fb-meta { color: var(--text-dim); font-size: .82em; font-variant-numeric: tabular-nums; }
+.feed-bucket-head.clickable:hover .fb-label { color: var(--accent); }
+/* the project drill-over: draw-group headers read as plain titles, not the tiny caps */
+#sublocDetailBody .dgroup h4 { text-transform: none; letter-spacing: 0; font-size: .92em; color: var(--text); }
+
 /* ── QoL: clickable KPI tiles + inline row links ─────────────────────────── */
 .kpi.clickable { cursor: pointer; transition: border-color .12s, background .12s; }
 .kpi.clickable:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }

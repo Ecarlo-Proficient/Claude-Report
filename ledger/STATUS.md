@@ -619,6 +619,21 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     Verified live: AR resolves to 2026-08-18T10:08 (this morning), all cards populated, no console errors.
     (AR data itself was never affected - `billing_event` had loaded fine; this was a display bug.)
 
+  - **Sub LOC tab refinements (owner, 2026-08-18).** Made the tab work the way the owner asked:
+    - **By project FIRST** (the priority), rows **clickable → a drill-over** showing that project's still-open
+      subs **grouped by the draw they sit under**, each draw's **status + billed/still-owed**, each sub bill
+      **linking to QuickBooks**, and an **"All transactions in QuickBooks"** link (the `customerdetail?nameId=`
+      page - the standard "everything under this customer/project" view, per the owner's research ask).
+    - **Repayment feed bucketed** This week / This month / **Prior months (collapsed)**; **By division**
+      collapses too (both default-collapsed to keep By-project front and centre).
+    - Engine (`shared/sub_loc.py`): draws now carry the **QBO bill id**, invoices carry **amount/balance/
+      status + the QBO customer id**, and `attach_open_by_project` builds the per-project open-subs-by-draw
+      structure. Loader stores it as `open_by_project` JSON on `sub_loc_run`; `_fetch_sub_loc` serves it.
+    - **Migration guard (caught in test):** `CREATE TABLE IF NOT EXISTS` won't add the new column to an
+      existing `sub_loc_run`, so the loader now `ALTER TABLE ... ADD COLUMN open_by_project` if missing -
+      without it a re-run on a pre-drill-down ledger crashed. Verified live on a DB copy (MFD300 → two draw
+      groups Unpaid/Partially-Paid with sub bills + both QBO link kinds), no console errors. See [[sub-loc-model]].
+
 ## IN PROGRESS
 - **Lien-mark workbook mirror (Phase 2 above):** add the `bill_marks.resolve_lien` call to
   `bill-tracker/excel_bill_sync.py`'s Lien preservation once that file has no foreign uncommitted changes.

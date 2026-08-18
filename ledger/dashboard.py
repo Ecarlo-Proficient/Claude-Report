@@ -665,17 +665,20 @@ def _fetch_sales(con) -> dict:
 def _fetch_sub_loc(con) -> dict:
     """Subcontractor LOC float from sub_loc_run / sub_loc_event; empty (not an error) if the
     loader hasn't run. summary.outstanding = fronted-but-uncollected NOW; peak = the LOC to size."""
-    out = {"summary": None, "divisions": {}, "projects": [], "events": []}
+    out = {"summary": None, "divisions": {}, "projects": [], "open_by_project": {}, "events": []}
     try:
         run = con.execute("SELECT * FROM sub_loc_run WHERE id=1").fetchone()
     except sqlite3.OperationalError:
         return out
     if not run:
         return out
-    out["summary"] = {k: run[k] for k in run.keys() if k not in ("divisions", "projects", "id")}
+    cols = run.keys()
+    out["summary"] = {k: run[k] for k in cols if k not in ("divisions", "projects", "open_by_project", "id")}
     try:
         out["divisions"] = json.loads(run["divisions"] or "{}")
         out["projects"] = json.loads(run["projects"] or "[]")
+        if "open_by_project" in cols:
+            out["open_by_project"] = json.loads(run["open_by_project"] or "{}")
     except (ValueError, TypeError):
         pass
     try:

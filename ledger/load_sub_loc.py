@@ -44,6 +44,12 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     con = sqlite3.connect(str(db_path))
     con.row_factory = sqlite3.Row
     con.executescript(SCHEMA_SQL.read_text(encoding="utf-8"))
+    # Migrate an existing sub_loc_run (CREATE TABLE IF NOT EXISTS won't add a new column):
+    # add open_by_project so a re-run on a ledger from before the drill-down doesn't crash.
+    have = {r[1] for r in con.execute("PRAGMA table_info(sub_loc_run)")}
+    if "open_by_project" not in have:
+        con.execute("ALTER TABLE sub_loc_run ADD COLUMN open_by_project TEXT")
+        con.commit()
     return con
 
 
@@ -68,17 +74,18 @@ def write(con: sqlite3.Connection, events, summary, projects, start, today) -> N
         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
     con.execute(
         "INSERT INTO sub_loc_run (id, window_start, window_end, peak, peak_date, outstanding, "
-        "total_drawn, total_repaid, prefunded, avg_lag, n_draws, divisions, projects, loaded_at) "
-        "VALUES (1,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+        "total_drawn, total_repaid, prefunded, avg_lag, n_draws, divisions, projects, open_by_project, loaded_at) "
+        "VALUES (1,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
         "ON CONFLICT(id) DO UPDATE SET window_start=excluded.window_start, window_end=excluded.window_end, "
         "peak=excluded.peak, peak_date=excluded.peak_date, outstanding=excluded.outstanding, "
         "total_drawn=excluded.total_drawn, total_repaid=excluded.total_repaid, prefunded=excluded.prefunded, "
         "avg_lag=excluded.avg_lag, n_draws=excluded.n_draws, divisions=excluded.divisions, "
-        "projects=excluded.projects, loaded_at=excluded.loaded_at",
+        "projects=excluded.projects, open_by_project=excluded.open_by_project, loaded_at=excluded.loaded_at",
         (_iso(start), _iso(today), summary["peak"], _iso(summary["peak_date"]), summary["outstanding"],
          summary["total_drawn"], summary["total_repaid"], summary["prefunded"], summary["avg_lag"],
          summary["n_draws"], json.dumps(summary["divisions"], default=str),
-         json.dumps(projects, default=str), now))
+         json.dumps(projects, default=str),
+         json.dumps(summary.get("open_by_project", {}), default=str), now))
     con.commit()
 
 
@@ -117,9 +124,21 @@ def selftest() -> int:
     repays = [
         {"date": D(2026, 6, 12), "project": "CP100", "party": "GC1", "amount": 80.0, "period": "2026-06", "invoice": "INV1"},
     ]
+    # carry a bill id on the draws so the drill-down (open subs by draw) can be checked
+    for i, d in enumerate(draws):
+        d["bill_id"] = f"900{i}"; d["bill_ref"] = f"B-{i}"
     events, summary = sl.run_fifo(draws, repays)
     assert abs(summary["peak"] - 150.0) < 1e-6, summary["peak"]
     assert abs(summary["outstanding"] - 70.0) < 1e-6, summary["outstanding"]
+    # the project drill-down: one CP100 group (2026-06 draw) with the still-open sub + bill id
+    inv_meta = {"i1": {"project": "CP100", "draw_month": "2026-06", "doc": "INV1",
+                       "total": 120.0, "balance": 50.0, "txn_date": "2026-06-10", "cust_id": "42"}}
+    sl.attach_open_by_project(summary, inv_meta)
+    obp = summary["open_by_project"]
+    assert "CP100" in obp and obp["CP100"]["cust_id"] == "42", obp
+    g = obp["CP100"]["groups"][0]
+    assert g["draw"] and g["draw"]["status"] == "Partially Paid", g
+    assert any(s["bill_id"] for s in g["subs"]), g["subs"]
     projects = sl.per_project(events)
     with tempfile.TemporaryDirectory() as td:
         con = _connect(Path(td) / "t.sqlite3")

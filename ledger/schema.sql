@@ -238,7 +238,8 @@ CREATE TABLE IF NOT EXISTS sub_loc_run (
     n_draws       INTEGER,
     divisions     TEXT,                -- JSON: per-division {peak, drawn, repaid, outstanding, avg_lag}
     projects      TEXT,                -- JSON: per-project rows (drawn/repaid/outstanding/avg_lag)
-    loaded_at     TEXT NOT NULL
+    open_by_project TEXT,              -- JSON: {project: {cust_id, open, groups:[{period, draw, subs[]}]}}
+    loaded_at     TEXT NOT NULL        -- for the project drill-down (open subs grouped by draw)
 );
 
 -- ── v_ap_by_project : open AP + bill counts per project ─────────────────────

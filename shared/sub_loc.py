@@ -138,6 +138,7 @@ def build_sub_bill_lines(access, cid, since: str) -> Dict[str, dict]:
             "lines": lines,
             "total": sum(a for _, a in lines),
             "work_month": wm,
+            "bill_ref": str(b.get("DocNumber") or ""),   # vendor bill # (for the QBO bill link)
         }
     return out
 
@@ -150,10 +151,15 @@ def build_invoice_meta(access, cid, since: str) -> Dict[str, dict]:
     for i in qbo_api.query_all(access, cid, "Invoice", f"TxnDate >= '{since}'"):
         memo = ((i.get("PrivateNote") or "") + " " +
                 ((i.get("CustomerMemo") or {}).get("value") or ""))
+        cref = i.get("CustomerRef") or {}
         out[i["Id"]] = {
-            "project": qbo_api.extract_proj((i.get("CustomerRef") or {}).get("name") or ""),
+            "project": qbo_api.extract_proj(cref.get("name") or ""),
             "draw_month": period_month(memo) or _month_of(_parse(i.get("TxnDate"))),
             "doc": str(i.get("DocNumber") or ""),
+            "total": float(i.get("TotalAmt") or 0),        # the draw amount
+            "balance": float(i.get("Balance") or 0),       # >0 = GC hasn't fully paid
+            "txn_date": i.get("TxnDate"),
+            "cust_id": cref.get("value"),                  # QBO customer id -> customerdetail deep link
         }
     return out
 
@@ -184,6 +190,8 @@ def collect_draws(access, cid, sub_lines: Dict[str, dict], start: dt.date) -> Li
                         "party": bill["vendor"] or vendor,
                         "amount": paid * line_amt / bill["total"],
                         "period": bill["work_month"],
+                        "bill_id": lk.get("TxnId"),          # QBO bill id -> the bill deep link
+                        "bill_ref": bill.get("bill_ref") or "",
                     })
     draws.sort(key=lambda x: x["date"])
     return draws
@@ -266,6 +274,7 @@ def run_fifo(draws: List[dict], repays: List[dict]) -> Tuple[List[dict], dict]:
             ev = {"date": e["date"], "type": "DRAW", "project": e["project"],
                   "party": e["party"], "out": amt, "inn": 0.0, "lag": None,
                   "note": note, "balance": bal, "reimb": [],
+                  "bill_id": e.get("bill_id"), "bill_ref": e.get("bill_ref"),
                   "loc_delta": loc_part if loc_part > eps else 0.0}
             if loc_part > eps:
                 # node carries a ref to its event so repayments can stamp the reimbursing
@@ -319,6 +328,21 @@ def run_fifo(draws: List[dict], repays: List[dict]) -> Tuple[List[dict], dict]:
     wl = sum(a * days for a, days in lags)
     wa = sum(a for a, _ in lags)
 
+    # Every still-fronted sub payment (FIFO remainder), tagged with its project + draw
+    # period + the QBO bill it came from - so the dashboard can drill a project into its
+    # open subs grouped by the draw they sit under.
+    open_subs = []
+    for (proj, per), q in queues.items():
+        for n in q:
+            if n["remaining"] > eps:
+                ev = n["ev"]
+                open_subs.append({
+                    "project": proj, "period": (None if per == "*" else per),
+                    "party": ev.get("party"), "open": n["remaining"],
+                    "bill_id": ev.get("bill_id"), "bill_ref": ev.get("bill_ref"),
+                    "date": ev["date"],
+                })
+
     # per-division outstanding (from the remaining FIFO queues)
     for (proj, _per), q in queues.items():
         div[division_of(proj)]["outstanding"] += sum(n["remaining"] for n in q)
@@ -350,6 +374,7 @@ def run_fifo(draws: List[dict], repays: List[dict]) -> Tuple[List[dict], dict]:
         "avg_draw": (total_drawn / len(draws)) if draws else 0.0,
         "avg_repay": (applied_total / len(lags)) if lags else 0.0,
         "divisions": divisions,
+        "open_subs": open_subs,
     }
     return events, summary
 
@@ -372,6 +397,59 @@ def per_project(events: List[dict]) -> List[dict]:
     return rows
 
 
+# ────────────────────────── drill-down (open subs grouped by draw) ──────────
+
+def _invoice_status(total: float, balance: float) -> str:
+    if balance <= 0.005:
+        return "Paid"
+    if balance < total - 0.005:
+        return "Partially Paid"
+    return "Unpaid"
+
+
+def attach_open_by_project(summary: dict, inv_meta: Dict[str, dict]) -> None:
+    """Turn the flat summary['open_subs'] into the dashboard's project drill-down:
+    {project: {cust_id, open, groups:[{period, draw:{doc,total,balance,status,txn_date}, open,
+    subs:[{party, open, bill_id, bill_ref, date}]}]}}. `draw` = the AR invoice for that
+    (project, draw period) - the draw the fronted subs sit under; None for RP/no-period lumps."""
+    # project -> QBO customer id (for the customerdetail "all transactions" deep link)
+    customers: Dict[str, str] = {}
+    # (project, draw month) -> the AR draw invoice (largest wins if several share a period)
+    draw_map: Dict[Tuple[str, str], dict] = {}
+    for meta in inv_meta.values():
+        proj = meta.get("project")
+        if proj and meta.get("cust_id") and proj not in customers:
+            customers[proj] = meta["cust_id"]
+        dm = meta.get("draw_month")
+        if proj and dm:
+            key = (proj, dm)
+            cur = draw_map.get(key)
+            if not cur or (meta.get("total") or 0) > (cur.get("total") or 0):
+                tot, bal = meta.get("total") or 0.0, meta.get("balance") or 0.0
+                draw_map[key] = {"doc": meta.get("doc"), "total": tot, "balance": bal,
+                                 "status": _invoice_status(tot, bal), "txn_date": meta.get("txn_date")}
+    by_project: Dict[str, dict] = {}
+    for s in summary.get("open_subs", []):
+        proj, per = s["project"], s.get("period")
+        p = by_project.setdefault(proj, {"cust_id": customers.get(proj), "open": 0.0, "groups": {}})
+        p["open"] += s["open"]
+        gkey = per or "_none"
+        g = p["groups"].setdefault(gkey, {"period": per, "open": 0.0,
+                                          "draw": (draw_map.get((proj, per)) if per else None), "subs": []})
+        g["open"] += s["open"]
+        g["subs"].append({"party": s["party"], "open": s["open"], "bill_id": s["bill_id"],
+                          "bill_ref": s["bill_ref"], "date": s["date"]})
+    # groups dict -> list, newest draw period first (no-period lump last); subs biggest first
+    out: Dict[str, dict] = {}
+    for proj, p in by_project.items():
+        groups = sorted(p["groups"].values(), key=lambda g: (g["period"] or ""), reverse=True)
+        for g in groups:
+            g["subs"].sort(key=lambda x: -x["open"])
+        out[proj] = {"cust_id": p["cust_id"], "open": p["open"], "groups": groups}
+    summary["open_by_project"] = out
+    summary["customers"] = customers
+
+
 # ────────────────────────── orchestration ──────────────────────────
 
 def compute(access, cid, start: dt.date, today: dt.date,
@@ -385,4 +463,5 @@ def compute(access, cid, start: dt.date, today: dt.date,
     draws = collect_draws(access, cid, sub_lines, start)
     repays = collect_repays(access, cid, inv_meta, start)
     events, summary = run_fifo(draws, repays)
+    attach_open_by_project(summary, inv_meta)
     return events, summary, per_project(events)
