@@ -212,6 +212,13 @@
 
     <!-- ══════════════ TAB: BILLS (the full Bill Tracker - Excel-dense, per-field filters) ══════════════ -->
     <div class="tab-page" data-tab="bills" hidden>
+      <!-- Lien-mark Save bar: sticky top-right, scrolls with this page, only on Bills -->
+      <div class="savebar" id="billSaveBar">
+        <span class="sb-warn">●</span>
+        <span class="sb-text" id="billSaveText"></span>
+        <button class="sb-save" id="btnSaveBillMarks">Save</button>
+        <button id="btnDiscardBillMarks">Discard</button>
+      </div>
       <section class="widget">
         <div class="widget-head">
           <h2>Bill Tracker <span class="count" id="billsNote"></span></h2>
@@ -492,14 +499,6 @@
   </aside>
 
   <div class="toast" id="toast" hidden></div>
-
-  <!-- Unsaved lien marks (Bills) - stage then Save; warns before you leave -->
-  <div class="savebar" id="billSaveBar" hidden>
-    <span class="sb-warn">●</span>
-    <span class="sb-text" id="billSaveText"></span>
-    <button class="sb-save" id="btnSaveBillMarks">Save</button>
-    <button id="btnDiscardBillMarks">Discard</button>
-  </div>
 
   <script src="/static/app.js"></script>
 </body>

@@ -1260,6 +1260,7 @@ const BILL_SORTS = {
 function renderBills() {
   const bills = BILLS || [];
   const vc = $("#billViews"); if (!vc) return;
+  renderBillSaveBar();
   if (!$("#bfVendor") || !$("#bfVendor").options.length) buildBillFilters();
   // quick-preset chips with live counts
   vc.innerHTML = "";
@@ -1456,8 +1457,11 @@ function setBillLien(b, lien) {
 }
 function renderBillSaveBar() {
   const bar = $("#billSaveBar"); if (!bar) return;
-  const n = pendingBillMarks.size; bar.hidden = n === 0;
-  if (n) $("#billSaveText").textContent = `${n} unsaved lien mark${n > 1 ? "s" : ""}`;
+  const n = pendingBillMarks.size;
+  bar.classList.toggle("dirty", n > 0);   // always present on the Bills tab; amber when unsaved
+  $("#billSaveText").textContent = n ? `${n} unsaved lien mark${n > 1 ? "s" : ""}` : "Lien marks saved";
+  { const b = $("#btnSaveBillMarks"); if (b) b.disabled = n === 0; }
+  { const d = $("#btnDiscardBillMarks"); if (d) d.hidden = n === 0; }
 }
 async function saveBillMarks() {
   const entries = [...pendingBillMarks.entries()]; if (!entries.length) return;
