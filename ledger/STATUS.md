@@ -609,6 +609,16 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
       updated (this + ARCHITECTURE). Aesthetic pass: reuses `.kpi`/`.grid`, color only on the green
       settlement amounts, one font. See [[sub-loc-model]].
 
+  - **BUG FIX: Console "last ran" was blank for AR (owner, 2026-08-18).** After a `sync-all` the AP card
+    showed a time but AR didn't. Cause: `_freshness` derived the AR "last ran" from `Open_Invoices.xlsx`
+    at OneDrive candidate paths, but the owner's live AR mirror is **`Collections/Invoice Tracker.xlsx`**
+    (the old file is now `backup_dont_use Open_Invoices.xlsx`) - so it never resolved. Fix: resolve the AR
+    source as `ACB_INVOICE_TRACKER_XLSX` (default `Collections/Invoice Tracker.xlsx`) first, and in the
+    Console **fall back to the ledger `loaded_at`** when no source file is found so a card is never blank.
+    Also added AR / CRM / Sub LOC to the ledger-freshness loop, so all six pipeline cards now show a time.
+    Verified live: AR resolves to 2026-08-18T10:08 (this morning), all cards populated, no console errors.
+    (AR data itself was never affected - `billing_event` had loaded fine; this was a display bug.)
+
 ## IN PROGRESS
 - **Lien-mark workbook mirror (Phase 2 above):** add the `bill_marks.resolve_lien` call to
   `bill-tracker/excel_bill_sync.py`'s Lien preservation once that file has no foreign uncommitted changes.

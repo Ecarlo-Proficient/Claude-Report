@@ -457,7 +457,8 @@ def _freshness(con) -> dict:
     import os
     out = {"ledger": {}, "sources": {}}
     for tbl, key in (("wip_snapshot", "WIP"), ("ap_bill_line", "AP (Bill Tracker)"),
-                     ("cost_line", "Costs (QBO)")):
+                     ("cost_line", "Costs (QBO)"), ("billing_event", "AR (invoices)"),
+                     ("customer", "CRM (customers)"), ("sub_loc_run", "Sub LOC")):
         try:
             r = con.execute(f"SELECT MAX(loaded_at) FROM {tbl}").fetchone()
             out["ledger"][key] = r[0] if r and r[0] else None
@@ -475,8 +476,14 @@ def _freshness(con) -> dict:
     wm = paths.get_path("WIP_EXCEL_PATH", ob / "Company Files - WIP Report/WIP - MASTER new.xlsx")
     out["sources"]["sync-ap"] = mtime(bt)
     out["sources"]["WIP master"] = mtime(wm)
-    for cand in (ob / "Collections/Open_Invoices.xlsx", ob / "Automations-/Open_Invoices.xlsx",
-                 ob / "Open_Invoices.xlsx", ob / "Automations-/Collections/Open_Invoices.xlsx"):
+    # AR mirror: the owner's live file is OneDrive Collections/Invoice Tracker.xlsx (2026-08-18;
+    # the old Open_Invoices.xlsx is now backup_dont_use). Resolve that first (configurable), then
+    # the invoice-sync default (INVOICE_EXPORT_PATH / repo root) and legacy OneDrive names, so the
+    # AR card shows a real "last ran" - not blank - which was the "AP showed, AR didn't" bug.
+    for cand in (paths.get_path("ACB_INVOICE_TRACKER_XLSX", ob / "Collections/Invoice Tracker.xlsx"),
+                 paths.get_path("INVOICE_EXPORT_PATH", PROJECT_ROOT / "Open_Invoices.xlsx"),
+                 ob / "Collections/Open_Invoices.xlsx", ob / "Automations-/Open_Invoices.xlsx",
+                 ob / "Open_Invoices.xlsx"):
         m = mtime(cand)
         if m:
             out["sources"]["sync-ar"] = m

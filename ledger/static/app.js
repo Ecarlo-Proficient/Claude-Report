@@ -338,8 +338,19 @@ async function renderConsole() {
     catch { box.textContent = "Console unavailable."; return; }
   }
   const fr = meta.freshness || { sources: {}, ledger: {} };
-  const lastRun = { ar: (fr.sources || {})["sync-ar"], ap: (fr.sources || {})["sync-ap"],
-    wip: (fr.sources || {})["WIP master"], costs: (fr.ledger || {})["Costs (QBO)"] };
+  // "last ran" per pipeline: prefer when the SOURCE last synced (file mtime), but ALWAYS
+  // fall back to when the ledger last LOADED that feed (loaded_at) so a card is never blank
+  // just because the source file isn't on this machine (the AR mirror often isn't) - that was
+  // the "AP showed, AR didn't" bug. costs/crm/subloc pull straight from QBO/Notion (no file).
+  const src = fr.sources || {}, led = fr.ledger || {};
+  const lastRun = {
+    ap: src["sync-ap"] || led["AP (Bill Tracker)"],
+    ar: src["sync-ar"] || led["AR (invoices)"],
+    wip: src["WIP master"] || led["WIP"],
+    costs: led["Costs (QBO)"],
+    crm: led["CRM (customers)"],
+    subloc: led["Sub LOC"],
+  };
   box.innerHTML = "";
   for (const p of PIPELINES) {
     const card = document.createElement("div"); card.className = "pl-card";
