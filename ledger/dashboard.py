@@ -371,6 +371,62 @@ def _fetch_ap(con) -> dict:
     return ap
 
 
+_AGING_BUCKETS = ["Current", "1-30", "31-60", "61-90", "90+"]
+
+
+def _aging_bucket(days_past_due) -> int:
+    """Index into _AGING_BUCKETS by signed days-past-due - the SAME thresholds as
+    invoice-sync/aging_sheet.py, so the tab ages exactly like the AR Aging workbook.
+    None / not-yet-due (<= 0) sits in Current."""
+    if days_past_due is None or days_past_due <= 0:
+        return 0
+    if days_past_due <= 30:
+        return 1
+    if days_past_due <= 60:
+        return 2
+    if days_past_due <= 90:
+        return 3
+    return 4
+
+
+def _fetch_open_invoices(con) -> dict:
+    """Open AR invoices (the draws the GC still owes you) from billing_event, aged by DUE
+    DATE into the same Current/1-30/31-60/61-90/90+ buckets as the Invoice Tracker's AR
+    Aging tab, each carrying its related Lien Tracker status. Empty (not an error) if
+    billing_event predates the AR columns or is unloaded."""
+    out = {"as_of": _dt.date.today().isoformat(), "buckets": _AGING_BUCKETS, "invoices": []}
+    try:
+        rows = con.execute(
+            "SELECT doc_number, qbo_txn_id, project_no, division, customer, memo, amount, "
+            "balance, txn_date, due_date, net_terms, aging_bucket, status, litigation, "
+            "lien_status, lien_notice FROM billing_event "
+            "WHERE COALESCE(balance,0) > 0.005").fetchall()
+    except sqlite3.OperationalError:
+        return out
+    today = _dt.date.today()
+    invs = []
+    for r in rows:
+        d = dict(r)
+        days, due = None, (d.get("due_date") or "")[:10]
+        if due:
+            try:
+                days = (today - _dt.date.fromisoformat(due)).days
+            except ValueError:
+                days = None
+        bi = _aging_bucket(days)
+        # Only fall back to Notion's stored bucket when there's no due date to age by live.
+        if days is None and d.get("aging_bucket") in _AGING_BUCKETS:
+            bi = _AGING_BUCKETS.index(d["aging_bucket"])
+        d["days_past_due"] = days
+        d["bucket"] = _AGING_BUCKETS[bi]
+        d["bucket_index"] = bi
+        invs.append(d)
+    invs.sort(key=lambda x: ((x.get("customer") or "~").lower(),
+                             x.get("due_date") or "9999", x.get("doc_number") or ""))
+    out["invoices"] = invs
+    return out
+
+
 def _fetch_costs(con) -> dict:
     """QBO cost rollups from cost_line; empty (not an error) if unloaded."""
     out = {"by_code": [], "by_project_code": {}, "by_project": {}, "loaded_total": 0}
@@ -729,6 +785,7 @@ def fetch_data(db_path: Path) -> dict:
         draws = _fetch_draws(con)
         sales = _fetch_sales(con)
         sub_loc = _fetch_sub_loc(con)
+        open_invoices = _fetch_open_invoices(con)
         actions = _fetch_actions(con)
         freshness = _freshness(con)
         try:                                # realm for company-scoped QBO deep links (never logged)
@@ -762,6 +819,7 @@ def fetch_data(db_path: Path) -> dict:
         "draws": draws,
         "sales": sales,
         "sub_loc": sub_loc,
+        "open_invoices": open_invoices,
     }
 
 

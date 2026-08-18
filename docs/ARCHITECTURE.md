@@ -469,8 +469,16 @@ tracker — `fill_gaps_from_qbo` pulls just those by `DocNumber` (`source='qbo_f
 skip with `--no-qbo`). Read-only on Notion + QBO; full-replace per source; `--selftest` proves it offline.
 `dashboard.py::_fetch_draws` joins it by Invoice #; the **Draws tab is a table** — one row per draw
 (Project # · memo · billed-in · invoice # · date · paid-out · stage), green when fully done, click a row
-to open its bills.
-    QBO ──(invoice-sync)──▶ Invoice Tracker (Notion) ──(load_invoices.py)──▶ ledger.billing_event ──▶ Draws
+to open its bills. Each invoice also captures **due date + net terms + Notion's aging bucket**, and by
+resolving its `Lien` relation against the Notion **Lien Tracker** (`load_lien_index`, one query → an
+`{page_id: Status}` index; read-only and degrades to blank if the DB isn't shared with the integration)
+it carries the matching **lien Status**. `dashboard.py::_fetch_open_invoices` then ages the open ones
+(balance>0) by DUE DATE into Current/1-30/31-60/61-90/90+ - the SAME thresholds as
+`invoice-sync/aging_sheet.py` - feeding the **Open Invoices tab**: an AR-aging grid (client-banded, the
+open balance tinted green→red in its one bucket column, a per-bucket grand total), bucket-tile +
+client / project / division / lien / litigation filters, and a QBO deep link on every Invoice #.
+    QBO ──(invoice-sync)──▶ Invoice Tracker (Notion) ──┐
+    Notion Lien Tracker ──(lien Status by relation) ───┴─(load_invoices.py)──▶ ledger.billing_event ──▶ Draws · Open Invoices
 
 **CRM / sales pipeline (`load_customers.py` → `customer` + `sales_touch`).** The pre-project spine:
 the ledger owns the client/lead master too, not just the job. Reads the Notion "Customer List" data

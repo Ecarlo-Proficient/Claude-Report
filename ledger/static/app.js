@@ -188,6 +188,7 @@ let COST = { by_code: [], by_project_code: {}, by_project: {}, by_cost_type: [],
 let DRAWS = { draws: [], total: 0 };
 let SALES = { pipeline: [], by_rep: [], warm: [], customers: [], totals: {} };
 let SUBLOC = { summary: null, divisions: {}, projects: [], open_by_project: {}, events: [] };
+let OI = { as_of: null, buckets: ["Current", "1-30", "31-60", "61-90", "90+"], invoices: [] };  // open AR invoices (aging tab)
 let costCollapsed = new Set();   // collapsed cost-type parents (default: all collapsed)
 let drawsCollapsed = new Set();  // collapsed draw cards (default: all collapsed)
 let drawsExpanded = new Set();   // draws whose bills are expanded in the table (default: none)
@@ -235,6 +236,7 @@ async function load(isAuto) {
   DRAWS = data.draws || { draws: [], total: 0 };
   SALES = data.sales || { pipeline: [], by_rep: [], warm: [], customers: [], totals: {} };
   SUBLOC = data.sub_loc || { summary: null, divisions: {}, projects: [], open_by_project: {}, events: [] };
+  OI = data.open_invoices || { as_of: null, buckets: ["Current", "1-30", "31-60", "61-90", "90+"], invoices: [] };
   PNL = null;   // recompute the portfolio P&L on next open (data just changed)
   // Big-picture first: collapse everything by default; the user expands to zoom in.
   // On a live auto-refresh, preserve what the user has already expanded.
@@ -449,7 +451,7 @@ function visibleColumns() {
 function render() {
   renderHome();
   renderKPIs(); renderAttention(); renderCosts(); renderMargins(); renderDivisions();
-  renderProjects(); renderLiens(); renderVendors(); renderDraws(); renderBills(); renderSubLoc(); renderSales();
+  renderProjects(); renderLiens(); renderVendors(); renderDraws(); renderBills(); renderOpenInvoices(); renderSubLoc(); renderSales();
 }
 
 function timeAgo(iso) {
@@ -1581,6 +1583,206 @@ function applySublocSections() {
     const body = sec.querySelector(".sec-body"); if (body) body.hidden = collapsed;
   }
 }
+// ══ OPEN INVOICES (AR aging) ════════════════════════════════════════════════
+// The GC's side of the ledger: what they still owe you, aged by DUE DATE into the
+// same Current/1-30/31-60/61-90/90+ buckets as the AR Aging workbook, each carrying
+// the matching Notion Lien Tracker status. Read-only; Invoice # deep-links to QBO.
+let invCollapsed = new Set();     // customer groups the owner has collapsed
+let invGroupKeys = [];            // customer groups on screen (drives Collapse/Expand-all)
+let invBucketFilter = null;       // aging bucket clicked in the stats row (null = all)
+const AGING_HEX = ["#2E7D32", "#7CB342", "#D68910", "#C0552B", "#922B21"];  // green→red (matches aging_sheet.py)
+
+// Notion Lien Tracker status → [short label, color class]. Encodes where the lien sits.
+const OI_LIEN = {
+  "Lien":            ["Lien filed",  "st-lien-past"],
+  "Mailed":          ["Mailed",      "st-lien-info"],
+  "Ready to Mail":   ["Ready→mail",  "st-warn"],
+  "In progress":     ["In progress", "st-warn"],
+  "Ready to Review": ["Review",      "st-warn"],
+  "Not started":     ["Not started", "st-dim"],
+  "Did Not Send":    ["Skipped",     "st-dim"],
+  "Paid":            ["Paid",        "st-ok"],
+  "Closed":          ["Closed",      "st-dim"],
+};
+function oiLienNode(inv) {
+  const v = inv.lien_status; if (!v) return null;
+  const m = OI_LIEN[v] || [v, "st-dim"];
+  return stText(m[0], m[1], v + (inv.lien_notice ? " · " + inv.lien_notice : ""));
+}
+const oiBal = i => num(i.balance);
+
+// The Division + Lien filter selects, built once from the data (preserving the pick).
+function buildInvFilters() {
+  const invs = OI.invoices || [];
+  const specs = [
+    { sel: "#ifDivision", get: i => i.division || "", all: "All divisions" },
+    { sel: "#ifLien",     get: i => i.lien_status || "", all: "Any lien", none: "No lien on file" },
+  ];
+  for (const s of specs) {
+    const el = $(s.sel); if (!el) continue;
+    const prev = el.value;
+    const vals = [...new Set(invs.map(s.get).filter(v => v !== ""))].sort((a, b) => a.localeCompare(b));
+    el.innerHTML = "";
+    const a0 = document.createElement("option"); a0.value = ""; a0.textContent = s.all; el.appendChild(a0);
+    if (s.none) { const o = document.createElement("option"); o.value = "__none__"; o.textContent = s.none; el.appendChild(o); }
+    for (const v of vals) { const o = document.createElement("option"); o.value = v; o.textContent = v; el.appendChild(o); }
+    el.value = prev; if (el.value !== prev) el.value = "";
+  }
+}
+
+function invPasses(i, f) {
+  if (f.client && !(i.customer || "").toLowerCase().includes(f.client)) return false;
+  if (f.proj && !(i.project_no || "").toLowerCase().includes(f.proj)) return false;
+  if (f.div && (i.division || "") !== f.div) return false;
+  if (f.lien === "__none__" ? !!i.lien_status : (f.lien && (i.lien_status || "") !== f.lien)) return false;
+  if (f.litig === "ex" && i.litigation) return false;
+  if (f.litig === "only" && !i.litigation) return false;
+  if (invBucketFilter != null && i.bucket_index !== invBucketFilter) return false;
+  return true;
+}
+
+const INV_SORTS = {
+  due:    (a, b) => String(a.due_date || "9999").localeCompare(String(b.due_date || "9999")) || String(a.doc_number || "").localeCompare(String(b.doc_number || "")),
+  owed:   (a, b) => oiBal(b) - oiBal(a),
+  client: (a, b) => (a.customer || "~").localeCompare(b.customer || "~") || String(a.due_date || "9999").localeCompare(String(b.due_date || "9999")),
+};
+
+function renderOpenInvoices() {
+  const host = $("#invTable"); if (!host) return;
+  const buckets = OI.buckets || ["Current", "1-30", "31-60", "61-90", "90+"];
+  const all = OI.invoices || [];
+  if (!$("#ifDivision") || !$("#ifDivision").options.length) buildInvFilters();
+
+  const fv = sel => ($(sel) ? $(sel).value : "");
+  const f = { client: fv("#ifClient").trim().toLowerCase(), proj: fv("#ifProj").trim().toLowerCase(),
+              div: fv("#ifDivision"), lien: fv("#ifLien"), litig: fv("#ifLitig") || "all" };
+
+  // Aging tiles double as the bucket filter. Their totals ignore the bucket pick (so the
+  // full aging picture always shows) but DO honor the other filters.
+  const forTiles = all.filter(i => {
+    const save = invBucketFilter; invBucketFilter = null;
+    const ok = invPasses(i, f); invBucketFilter = save; return ok;
+  });
+  const bTot = buckets.map(() => 0); let bGrand = 0;
+  for (const i of forTiles) { bTot[i.bucket_index] += oiBal(i); bGrand += oiBal(i); }
+  const stats = $("#invStats"); stats.innerHTML = "";
+  const mkTile = (label, val, idx, hex, active) => {
+    const el = document.createElement("div");
+    el.className = "attn ag-tile" + (active ? " active" : "") + (val > 0.005 || idx == null ? "" : " none");
+    if (hex) el.style.borderLeftColor = hex;
+    el.innerHTML = `<span class="a-count"></span><span class="a-label"></span>`;
+    el.querySelector(".a-count").textContent = money(val);
+    el.querySelector(".a-label").textContent = label;
+    el.onclick = () => { invBucketFilter = (idx == null || invBucketFilter === idx) ? null : idx; renderOpenInvoices(); };
+    return el;
+  };
+  stats.appendChild(mkTile("All open", bGrand, null, "", invBucketFilter == null));
+  buckets.forEach((b, k) => stats.appendChild(mkTile(b === "Current" ? "Current" : b + " days", bTot[k], k, AGING_HEX[k], invBucketFilter === k)));
+
+  let rows = all.filter(i => invPasses(i, f));
+  rows = [...rows].sort(INV_SORTS[fv("#ifSort") || "due"] || INV_SORTS.due);
+
+  const shown = rows.reduce((t, i) => t + oiBal(i), 0);
+  $("#invNote").textContent = all.length
+    ? `(${rows.length.toLocaleString()} of ${all.length.toLocaleString()} · ${money(shown)} open)`
+    : "(no AR data - run load_invoices.py)";
+  { const el = $("#invAsOf"); if (el) el.textContent = OI.as_of ? "aged as of " + fmtDate(OI.as_of) : ""; }
+  { const cb = $("#ifClear"); if (cb) cb.hidden = !(f.client || f.proj || f.div || f.lien || f.litig !== "all" || invBucketFilter != null); }
+
+  const thead = host.querySelector("thead"), tbody = host.querySelector("tbody");
+  thead.innerHTML = ""; tbody.innerHTML = "";
+  const cols = [["Client", "left"], ["Project", "left"], ["Invoice #", "left"], ["Date", "left"],
+                ["Due", "left"], ["Net", "left"], ["Lien", "left"], ...buckets.map(b => [b, "right ag"])];
+  const htr = document.createElement("tr");
+  cols.forEach(([c, al]) => { const th = document.createElement("th"); th.className = al; th.textContent = c; htr.appendChild(th); });
+  thead.appendChild(htr);
+
+  if (!rows.length) {
+    const tr = document.createElement("tr"); const td = document.createElement("td");
+    td.colSpan = cols.length; td.className = "left"; td.style.color = "var(--text-dim)"; td.style.padding = "14px 12px";
+    td.textContent = all.length ? "No open invoices match these filters." : "No AR data - run load_invoices.py.";
+    tr.appendChild(td); tbody.appendChild(tr); invGroupKeys = []; updateInvCollapseBtn(); return;
+  }
+
+  // group by client (banding + collapse); per-bucket grand total at the bottom
+  const groups = new Map();
+  for (const i of rows) { const k = i.customer || "(no client)"; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(i); }
+  const order = [...groups.keys()].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  invGroupKeys = order;
+  const grand = buckets.map(() => 0);
+
+  for (const k of order) {
+    const g = groups.get(k);
+    const collapsed = invCollapsed.has(k);
+    const gOpen = g.reduce((t, x) => t + oiBal(x), 0);
+    const gtr = document.createElement("tr"); gtr.className = "bill-group"; gtr.style.cursor = "pointer";
+    gtr.title = collapsed ? "Click to expand" : "Click to collapse";
+    const gtd = document.createElement("td"); gtd.colSpan = cols.length;
+    const caret = document.createElement("span"); caret.className = "bg-caret"; caret.textContent = collapsed ? "▸" : "▾";
+    const key = document.createElement("span"); key.className = "bg-key"; key.textContent = k;
+    const sub = document.createElement("span"); sub.className = "bg-sub";
+    sub.textContent = `  ${g.length} invoice${g.length > 1 ? "s" : ""} · ${money(gOpen)} open`;
+    gtd.appendChild(caret); gtd.appendChild(key); gtd.appendChild(sub); gtr.appendChild(gtd);
+    gtr.onclick = () => { if (invCollapsed.has(k)) invCollapsed.delete(k); else invCollapsed.add(k); renderOpenInvoices(); };
+    tbody.appendChild(gtr);
+    for (const i of g) {
+      grand[i.bucket_index] += oiBal(i);
+      if (!collapsed) tbody.appendChild(invRow(i, buckets));
+    }
+  }
+  const ttr = document.createElement("tr"); ttr.className = "ag-total";
+  const lead = document.createElement("td"); lead.className = "left"; lead.colSpan = 7; lead.textContent = "Total open"; ttr.appendChild(lead);
+  buckets.forEach((b, k) => {
+    const td = document.createElement("td"); td.className = "right ag";
+    if (grand[k] > 0.005) { td.textContent = money(grand[k]); td.classList.add("ag" + k); }
+    ttr.appendChild(td);
+  });
+  tbody.appendChild(ttr);
+  updateInvCollapseBtn();
+}
+
+function invRow(i, buckets) {
+  const tr = document.createElement("tr");
+  const cli = document.createElement("td"); cli.className = "left dim"; cli.textContent = i.customer || "–"; tr.appendChild(cli);
+  const proj = document.createElement("td"); proj.className = "left";
+  if (i.division) { const dot = document.createElement("span"); dot.className = "divdot " + divClass(i.division); dot.title = i.division; proj.appendChild(dot); }
+  proj.appendChild(document.createTextNode(i.project_no || "–")); tr.appendChild(proj);
+  tr.appendChild(qboLinkCell(i.doc_number, qboInvoiceUrl(i.qbo_txn_id), "Open this invoice in QuickBooks"));
+  const dt = document.createElement("td"); dt.className = "left"; dt.textContent = fmtDateShort(i.txn_date); tr.appendChild(dt);
+  const due = document.createElement("td"); due.className = "left"; due.textContent = fmtDateShort(i.due_date);
+  if (i.days_past_due != null && i.days_past_due > 0) due.title = i.days_past_due + " days past due";
+  tr.appendChild(due);
+  const net = document.createElement("td"); net.className = "left dim"; net.textContent = i.net_terms || "–"; tr.appendChild(net);
+  const lien = document.createElement("td"); lien.className = "left status-col"; lien.appendChild(oiLienNode(i) || dimDash()); tr.appendChild(lien);
+  buckets.forEach((b, k) => {
+    const td = document.createElement("td"); td.className = "right ag";
+    if (k === i.bucket_index) {
+      td.classList.add("ag" + k);
+      td.appendChild(document.createTextNode(money(oiBal(i))));
+      if (i.litigation) { td.title = "In litigation"; const f = document.createElement("span"); f.className = "litig"; f.textContent = " ⚖"; td.appendChild(f); }
+    }
+    tr.appendChild(td);
+  });
+  return tr;
+}
+
+function updateInvCollapseBtn() {
+  const btn = $("#ifCollapse"); if (!btn) return;
+  const allC = invGroupKeys.length && invGroupKeys.every(k => invCollapsed.has(k));
+  btn.textContent = allC ? "Expand all" : "Collapse all";
+}
+function invToggleAll() {
+  const allC = invGroupKeys.length && invGroupKeys.every(k => invCollapsed.has(k));
+  if (allC) invCollapsed.clear(); else invGroupKeys.forEach(k => invCollapsed.add(k));
+  renderOpenInvoices();
+}
+function invClearFilters() {
+  ["#ifClient", "#ifProj", "#ifDivision", "#ifLien"].forEach(s => { const el = $(s); if (el) el.value = ""; });
+  const lt = $("#ifLitig"); if (lt) lt.value = "all";
+  invBucketFilter = null;
+  renderOpenInvoices();
+}
+
 function renderSubLoc() {
   const s = SUBLOC.summary;
   const note = $("#sublocNote");
@@ -2616,6 +2818,10 @@ function init() {
   { const el = $("#billGroup"); if (el) el.addEventListener("change", () => { billsCollapsed.clear(); renderBills(); }); }
   { const el = $("#bfClear"); if (el) el.onclick = billClearFilters; }
   { const el = $("#bfCollapse"); if (el) el.onclick = billToggleAll; }
+  ["#ifClient", "#ifProj"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderOpenInvoices); });
+  ["#ifDivision", "#ifLien", "#ifLitig", "#ifSort"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("change", renderOpenInvoices); });
+  { const el = $("#ifClear"); if (el) el.onclick = invClearFilters; }
+  { const el = $("#ifCollapse"); if (el) el.onclick = invToggleAll; }
   { const el = $("#btnCloseBillDetail"); if (el) el.onclick = closePanels; }
   { const el = $("#btnCloseSublocDetail"); if (el) el.onclick = closePanels; }
   { const el = $("#btnSaveBillMarks"); if (el) el.onclick = saveBillMarks; }

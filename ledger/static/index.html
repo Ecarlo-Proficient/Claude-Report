@@ -29,6 +29,7 @@
     <button class="tab" data-tabbtn="pnl">P&amp;L</button>
     <button class="tab" data-tabbtn="costs">Costs</button>
     <button class="tab" data-tabbtn="draws">Draws</button>
+    <button class="tab" data-tabbtn="invoices">Invoices</button>
     <button class="tab" data-tabbtn="bills">Bills</button>
     <button class="tab" data-tabbtn="liens">Liens</button>
     <button class="tab" data-tabbtn="vendors">Vendors</button>
@@ -209,6 +210,47 @@
       </section>
       <div id="drawList"></div>
     </div><!-- /tab: draws -->
+
+    <!-- ══════════════ TAB: OPEN INVOICES (AR aging - what the GC still owes you) ══════════════ -->
+    <div class="tab-page" data-tab="invoices" hidden>
+      <section class="widget">
+        <div class="widget-head">
+          <h2>Open invoices <span class="count" id="invNote"></span></h2>
+          <span class="count" id="invAsOf"></span>
+        </div>
+        <div class="attn-row" id="invStats"></div>
+        <p class="hint">What the GC still owes you (your open <b>AR</b>), aged by <b>due date</b> into the same
+          buckets as the AR Aging workbook - <b>Current</b> isn't due yet, <b>90+</b> is long overdue. The
+          <b>Lien</b> column is the matching status from the Notion Lien Tracker (blank = no lien on file).
+          Invoice # opens the invoice in QuickBooks. Click a bucket tile to filter.</p>
+        <div class="bill-filters" id="invFilters">
+          <label class="fld"><span>Client</span><input type="search" id="ifClient" placeholder="Firestone" autocomplete="off"></label>
+          <label class="fld"><span>Project #</span><input type="search" id="ifProj" placeholder="RP7470" autocomplete="off"></label>
+          <label class="fld"><span>Division</span><select id="ifDivision"></select></label>
+          <label class="fld"><span>Lien</span><select id="ifLien"></select></label>
+          <label class="fld"><span>Litigation</span>
+            <select id="ifLitig">
+              <option value="all">Include</option>
+              <option value="ex">Exclude</option>
+              <option value="only">Only</option>
+            </select>
+          </label>
+          <span class="bf-sep"></span>
+          <label class="fld"><span>Sort</span>
+            <select id="ifSort">
+              <option value="due">Oldest due first</option>
+              <option value="owed">Most owed</option>
+              <option value="client">Client A–Z</option>
+            </select>
+          </label>
+          <button class="btn small" id="ifCollapse">Collapse all</button>
+          <button class="btn small" id="ifClear" hidden>Clear filters</button>
+        </div>
+        <div class="table-scroll">
+          <table class="grid aging-grid" id="invTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </div><!-- /tab: invoices -->
 
     <!-- ══════════════ TAB: BILLS (the full Bill Tracker - Excel-dense, per-field filters) ══════════════ -->
     <div class="tab-page" data-tab="bills" hidden>

@@ -96,6 +96,12 @@ CREATE TABLE IF NOT EXISTS billing_event (
     balance         NUMERIC,                     -- open balance (0 = the GC has paid this draw)
     txn_date        TEXT,                        -- invoice date
     status          TEXT,                        -- Paid | Open (derived from balance)
+    due_date        TEXT,                        -- invoice due date (ages the AR; from the tracker / QBO DueDate)
+    net_terms       TEXT,                        -- Net 15/30/45/... (display)
+    aging_bucket    TEXT,                        -- Notion-computed bucket, fallback only when due_date is null
+    litigation      INTEGER NOT NULL DEFAULT 0,  -- 1 = in litigation (shown, but flagged off the clean aging)
+    lien_status     TEXT,                        -- related Lien Tracker Status (Mailed/Lien/Paid/...) or NULL
+    lien_notice     TEXT,                        -- related Lien Tracker Notice Type (RP/CP/MFD Notice, Intent to Lien...)
     draw_period     TEXT,                        -- from PrivateNote (the QBO custom field is unreachable)
     source          TEXT NOT NULL DEFAULT 'qbo_invoice',
     loaded_at       TEXT NOT NULL

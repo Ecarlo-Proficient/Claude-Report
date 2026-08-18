@@ -58,6 +58,13 @@ DEFAULT_DB = paths.get_path(
 # System Reference.md). Overridable via machine.env if they ever change.
 RESCOM_DS = paths.get("ACB_INVOICE_RESCOM_DS_ID") or "265b24f7-5585-803c-bcae-000ba27328cd"
 MFD_DS = paths.get("ACB_INVOICE_MFD_DS_ID") or "0f8e7cdf-16fe-4137-82e6-255e2ff400ce"
+# Lien Tracker (Notion). Each invoice page carries a `Lien` relation back to this DB;
+# we resolve it to the lien's Status for the Open Invoices tab. Read-only.
+LIEN_DS = paths.get("ACB_LIEN_TRACKER_DS_ID") or "2c5b24f7-5585-80c5-b2d9-000bfcdaa084"
+
+# When an invoice has more than one related lien, show the most-escalated state.
+_LIEN_PRIORITY = ["Lien", "Mailed", "Ready to Mail", "In progress", "Ready to Review",
+                  "Not started", "Did Not Send", "Paid", "Closed"]
 
 _PROJ_RE = re.compile(r"(MFD|CP|RP)\s*(\d+)(-FTW)?", re.IGNORECASE)
 _DIV_PREFIX = {"MFD": "Multi Family", "CP": "Commercial", "RP": "Residential"}
@@ -96,9 +103,13 @@ def _prop(props: dict, name: str):
         return p.get("number")
     if t == "select":
         return (p.get("select") or {}).get("name")
+    if t == "status":
+        return (p.get("status") or {}).get("name")
     if t == "multi_select":
         names = [o.get("name") for o in (p.get("multi_select") or [])]
         return names[0] if names else None
+    if t == "checkbox":
+        return bool(p.get("checkbox"))
     if t == "date":
         return (p.get("date") or {}).get("start")
     if t == "formula":
@@ -107,7 +118,29 @@ def _prop(props: dict, name: str):
     return None
 
 
-def parse_invoice_page(page: dict, division_default: str | None = None) -> dict | None:
+def _relation_ids(props: dict, name: str) -> list[str]:
+    """Page ids a relation property points at (e.g. an invoice's `Lien` links)."""
+    p = props.get(name) or {}
+    if p.get("type") != "relation":
+        return []
+    return [r.get("id") for r in (p.get("relation") or []) if r.get("id")]
+
+
+def _pick_lien(ids: list[str], lien_by_page: dict) -> tuple:
+    """Given an invoice's related lien page ids, return (status, notice) for the
+    most-escalated related lien (or (None, None) if none/unknown)."""
+    hits = [lien_by_page[i] for i in ids if i in lien_by_page]
+    if not hits:
+        return (None, None)
+    def rank(h):
+        s = h.get("status")
+        return _LIEN_PRIORITY.index(s) if s in _LIEN_PRIORITY else len(_LIEN_PRIORITY)
+    best = min(hits, key=rank)
+    return (best.get("status"), best.get("notice"))
+
+
+def parse_invoice_page(page: dict, division_default: str | None = None,
+                       lien_by_page: dict | None = None) -> dict | None:
     """One Invoice Tracker Notion page → a billing_event record."""
     props = page.get("properties", {})
     inv_id = _prop(props, "Invoice ID")
@@ -116,6 +149,7 @@ def parse_invoice_page(page: dict, division_default: str | None = None) -> dict 
         return None
     proj = ((_prop(props, "Project #") or "").upper().strip() or None) \
         or _extract_proj(_prop(props, "Customer (raw)")) or _extract_proj(_prop(props, "Memo"))
+    lien_status, lien_notice = _pick_lien(_relation_ids(props, "Lien"), lien_by_page or {})
     return {
         "qbo_txn_id": str(inv_id or doc),
         "doc_number": (str(doc).strip() if doc else None),
@@ -127,13 +161,42 @@ def parse_invoice_page(page: dict, division_default: str | None = None) -> dict 
         "balance": _num(_prop(props, "Open balance")),
         "txn_date": _prop(props, "Date"),
         "status": _prop(props, "Status"),          # Unpaid | Partially Paid | Paid
+        "due_date": _prop(props, "Due Date"),
+        "net_terms": _prop(props, "Net Terms"),
+        "aging_bucket": _prop(props, "Aging Bucket"),
+        "litigation": 1 if _prop(props, "Litigation") else 0,
+        "lien_status": lien_status,
+        "lien_notice": lien_notice,
         "draw_period": None,
         "source": "invoice_tracker",
     }
 
 
+def load_lien_index(nc, ds_id: str) -> dict:
+    """Query the Lien Tracker once → {lien_page_id: {status, notice}} so each invoice's
+    `Lien` relation resolves to a Status without a per-page fetch. The lien column is an
+    add-on: if the DB isn't shared with the integration (or any read error), degrade to an
+    empty index so the core invoice load still runs - the column just shows blank."""
+    idx: dict = {}
+    try:
+        pages = list(nc.query_data_source(ds_id))
+    except Exception as e:  # noqa: BLE001 - never let the lien add-on break the AR load
+        print(f"  Lien Tracker: not readable ({type(e).__name__}) - lien column will be blank. "
+              "Share the Lien Tracker DB with the automation integration to enable it.")
+        return {}
+    for page in pages:
+        pid = page.get("id")
+        if not pid:
+            continue
+        props = page.get("properties", {})
+        idx[pid] = {"status": _prop(props, "Status"), "notice": _prop(props, "Notice Type")}
+    return idx
+
+
 _COLS = ["qbo_txn_id", "doc_number", "project_no", "division", "customer", "memo",
-         "amount", "balance", "txn_date", "status", "draw_period", "source", "loaded_at"]
+         "amount", "balance", "txn_date", "status", "due_date", "net_terms",
+         "aging_bucket", "litigation", "lien_status", "lien_notice",
+         "draw_period", "source", "loaded_at"]
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
@@ -155,6 +218,16 @@ def _migrate_billing_event(con) -> None:
         con.execute("DROP TABLE billing_event")
         con.executescript(SCHEMA_SQL.read_text(encoding="utf-8"))
         con.commit()
+        cols = {r[1] for r in con.execute("PRAGMA table_info(billing_event)")}
+    # Additive AR/lien columns - ALTER onto DBs that already have the doc_number shape
+    # (CREATE TABLE IF NOT EXISTS won't add columns to an existing table).
+    add = [("due_date", "TEXT"), ("net_terms", "TEXT"), ("aging_bucket", "TEXT"),
+           ("litigation", "INTEGER NOT NULL DEFAULT 0"), ("lien_status", "TEXT"),
+           ("lien_notice", "TEXT")]
+    for name, decl in add:
+        if cols and name not in cols:
+            con.execute(f"ALTER TABLE billing_event ADD COLUMN {name} {decl}")
+    con.commit()
 
 
 def write_events(con, records: list[dict], now: str) -> int:
@@ -195,6 +268,12 @@ def _invoice_from_qbo(inv: dict) -> dict:
         "balance": bal,
         "txn_date": inv.get("TxnDate"),
         "status": status,
+        "due_date": inv.get("DueDate"),
+        "net_terms": None,
+        "aging_bucket": None,
+        "litigation": 0,
+        "lien_status": None,
+        "lien_notice": None,
         "draw_period": None,
         "source": "qbo_fallback",
     }
@@ -262,16 +341,22 @@ def run(db_path: Path, dry_run: bool, show: int, no_qbo: bool = False) -> None:
     con = _connect(db_path)
     from shared.notion_client import NotionClient
     nc = NotionClient()
+    lien_by_page = load_lien_index(nc, LIEN_DS) if LIEN_DS else {}
+    if lien_by_page:
+        print(f"  Lien Tracker: {len(lien_by_page)} lien rows indexed")
     records: list[dict] = []
     for label, ds_id, div_default in (("Res/Com", RESCOM_DS, None), ("MFD", MFD_DS, "Multi Family")):
         if not ds_id:
             print(f"  skip {label}: no data-source id"); continue
         n0 = len(records)
         for page in nc.query_data_source(ds_id):
-            rec = parse_invoice_page(page, div_default)
+            rec = parse_invoice_page(page, div_default, lien_by_page)
             if rec:
                 records.append(rec)
         print(f"  Invoice Tracker ({label}): {len(records) - n0} invoices")
+    liened = sum(1 for r in records if r["lien_status"])
+    if liened:
+        print(f"  {liened} open/closed invoices carry a lien status")
     matched = sum(1 for r in records if r["project_no"])
     print(f"Read {len(records)} invoices · {matched} with a project #")
 
@@ -301,7 +386,8 @@ def run(db_path: Path, dry_run: bool, show: int, no_qbo: bool = False) -> None:
 
 def _selftest() -> None:
     """Offline: fabricate Invoice Tracker Notion pages, parse, write, prove the draw join."""
-    def page(inv_id, num, proj, total, bal, status, date, memo, cust=None):
+    def page(inv_id, num, proj, total, bal, status, date, memo, cust=None,
+             due=None, terms=None, bucket=None, litig=False, lien_ids=None):
         props = {
             "Invoice ID": {"type": "rich_text", "rich_text": [{"plain_text": inv_id}]},
             "Invoice #": {"type": "title", "title": [{"plain_text": num}]},
@@ -311,16 +397,27 @@ def _selftest() -> None:
             "Open balance": {"type": "number", "number": bal},
             "Status": {"type": "select", "select": {"name": status}},
             "Date": {"type": "date", "date": {"start": date}},
+            "Due Date": {"type": "date", "date": ({"start": due} if due else None)},
+            "Net Terms": {"type": "select", "select": ({"name": terms} if terms else None)},
+            "Aging Bucket": {"type": "select", "select": ({"name": bucket} if bucket else None)},
+            "Litigation": {"type": "checkbox", "checkbox": litig},
+            "Lien": {"type": "relation", "relation": [{"id": i} for i in (lien_ids or [])]},
             "Memo": {"type": "rich_text", "rich_text": [{"plain_text": memo}]},
         }
         return {"properties": props}
 
+    # A fabricated Lien Tracker index: two liens, different statuses, on one invoice.
+    lien_by_page = {
+        "L1": {"status": "Mailed", "notice": "RP Notice"},
+        "L2": {"status": "Lien", "notice": "Affidavit of Lien Claimed"},
+    }
     pages = [
         page("5001", "34319", "MFD325", 78032.0, 0.0, "Paid", "2026-05-15", "Mesquite - Briarwood - May Draw 2026"),
-        page("5002", "34535", "RP7470", 91578.90, 91578.90, "Unpaid", "2026-08-06", "315 Woolley - Aug Draw"),
+        page("5002", "34535", "RP7470", 91578.90, 91578.90, "Unpaid", "2026-08-06", "315 Woolley - Aug Draw",
+             due="2026-09-05", terms="Net 30", bucket="Current", lien_ids=["L1", "L2"]),
         page("5003", "34600", "MFD192", 200000.0, 50000.0, "Partially Paid", "2026-07-01", "Mayhill - July Draw"),
     ]
-    records = [r for r in (parse_invoice_page(p, None) for p in pages) if r]
+    records = [r for r in (parse_invoice_page(p, None, lien_by_page) for p in pages) if r]
     with tempfile.TemporaryDirectory() as d:
         con = _connect(Path(d) / "selftest.sqlite3")
         con.execute("INSERT INTO ap_bill_line (line_uid, project_no, invoice_no, matched_invoice, "
@@ -339,9 +436,15 @@ def _selftest() -> None:
         joined = con.execute("SELECT b.amount, b.status FROM ap_bill_line a "
                              "JOIN billing_event b ON b.doc_number = a.invoice_no WHERE a.project_no='MFD325'").fetchone()
         assert joined == (78032.0, "Paid"), joined
+
+        ar = con.execute("SELECT due_date, net_terms, lien_status, lien_notice, litigation "
+                         "FROM billing_event WHERE doc_number='34535'").fetchone()
+        # Two related liens (Mailed + Lien) → most-escalated wins.
+        assert ar == ("2026-09-05", "Net 30", "Lien", "Affidavit of Lien Claimed", 0), ar
+        assert con.execute("SELECT lien_status FROM billing_event WHERE doc_number='34319'").fetchone()[0] is None
         con.close()
     print("selftest OK: 3 Invoice Tracker pages parsed · project+division · Paid/Partially/Unpaid · "
-          "draw ↔ invoice join by Invoice # works.")
+          "draw ↔ invoice join by Invoice # · due date + escalated lien status resolve.")
 
 
 def main() -> int:

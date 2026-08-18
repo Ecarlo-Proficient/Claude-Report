@@ -556,6 +556,28 @@ tr.bill-group:hover > td { background: color-mix(in srgb, var(--accent) 13%, var
 tr.bill-group .bg-caret { color: var(--text-dim); display: inline-block; width: 1.1em; }
 tr.bill-group .bg-key { font-weight: 800; font-size: .95em; letter-spacing: -.01em; }
 tr.bill-group .bg-sub { color: var(--text-dim); font-weight: 500; font-size: .85em; font-variant-numeric: tabular-nums; }
+
+/* ── Open Invoices (AR aging) ─────────────────────────────────────────────── */
+.ag-tile .a-count { font-variant-numeric: tabular-nums; }
+.ag-tile.none { opacity: .5; }
+.aging-grid td.dim { color: var(--text-dim); }
+.aging-grid td.ag { font-variant-numeric: tabular-nums; }
+.aging-grid td.status-col .st { font-weight: 600; }
+.aging-grid .divdot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; vertical-align: middle; background: var(--text-dim); }
+.aging-grid .divdot.rp  { background: var(--accent); }
+.aging-grid .divdot.cp  { background: #3b6ea5; }
+.aging-grid .divdot.mfd { background: #8161b0; }
+.aging-grid .litig { color: var(--neg); font-weight: 700; }
+/* The open balance sits in exactly ONE bucket column, tinted green→red by age. Text is
+   blended toward the theme's foreground so it stays legible in both light and dark. */
+.aging-grid td.ag0 { background: color-mix(in srgb, #2E7D32 15%, transparent); color: color-mix(in srgb, #2E7D32 62%, var(--text)); font-weight: 600; }
+.aging-grid td.ag1 { background: color-mix(in srgb, #7CB342 16%, transparent); color: color-mix(in srgb, #6a9c2f 62%, var(--text)); font-weight: 600; }
+.aging-grid td.ag2 { background: color-mix(in srgb, #D68910 16%, transparent); color: color-mix(in srgb, #D68910 66%, var(--text)); font-weight: 600; }
+.aging-grid td.ag3 { background: color-mix(in srgb, #C0552B 17%, transparent); color: color-mix(in srgb, #C0552B 68%, var(--text)); font-weight: 600; }
+.aging-grid td.ag4 { background: color-mix(in srgb, #922B21 20%, transparent); color: color-mix(in srgb, #922B21 72%, var(--text)); font-weight: 700; }
+tr.ag-total > td { border-top: 2px solid var(--border); background: var(--surface-2); font-weight: 600; font-variant-numeric: tabular-nums; }
+tr.ag-total > td.ag0, tr.ag-total > td.ag1, tr.ag-total > td.ag2, tr.ag-total > td.ag3, tr.ag-total > td.ag4 { background: var(--surface-2); }
+
 /* Bill detail panel: give the QuickBooks link buttons room. */
 #billDetailBody .pnl-actions { margin: 10px 0 2px; }
 /* Lien-mark control (owner sets Notice Sent / Lien Filed / Released per bill). */

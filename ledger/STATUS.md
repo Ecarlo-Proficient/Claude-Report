@@ -643,6 +643,30 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     (The workbook mirror is still Phase 2, unchanged.) Verified live on a DB copy: stage → bar + leave-warn,
     Save persists + clears, Discard reverts, no console errors.
 
+  - **Open Invoices tab - the AR aging, with a Lien column (owner, 2026-08-18).** "All open invoices … the
+    way the aging shows, it's perfect … a new column of Lien that talks to the Notion Lien Tracker."
+    - **`load_invoices.py` enriched:** each Invoice Tracker page now also captures **Due Date · Net Terms ·
+      Notion Aging Bucket · Litigation**, and resolves its **`Lien` relation** against the Notion **Lien
+      Tracker** (`load_lien_index` → one `{page_id: Status}` query; `LIEN_DS` = `2c5b…`, override
+      `ACB_LIEN_TRACKER_DS_ID`) to the matching **lien Status** (most-escalated when an invoice has >1 lien).
+      Read-only add-on: any read error / DB-not-shared degrades the lien column to blank, the AR load still
+      runs. New `billing_event` cols (`due_date, net_terms, aging_bucket, litigation, lien_status,
+      lien_notice`) with an **ALTER-based migration** for existing DBs. `--selftest` extended (due date +
+      escalated-lien resolution) and green.
+    - **`dashboard.py::_fetch_open_invoices`:** open invoices (balance>0) aged by **DUE DATE** into
+      Current/1-30/31-60/61-90/90+ using the **same thresholds as `invoice-sync/aging_sheet.py`** (live-
+      computed; falls back to Notion's stored bucket only when there's no due date). Sorted client → due.
+    - **Dashboard `Invoices` tab** (`renderOpenInvoices`): an AR-aging grid - client-banded + collapsible,
+      the open balance **tinted green→red in its one bucket column**, a **per-bucket grand total**, and the
+      green→red **bucket tiles double as a filter**. Filters: client · project · division · **lien** ·
+      litigation · sort. **Lien column** shows the Notion status (Mailed / Lien filed / Ready→mail / …).
+      Division dots, MM/DD/YY dates, a ⚖ litigation marker, and a **QBO deep link on every Invoice #**.
+      Colors are theme-aware (blended toward the foreground → legible in light + dark).
+    - Verified live on a synthetic DB (7 open invoices spanning all 5 buckets, 3 clients, liens +
+      litigation): tiles + grand total reconcile, every filter/collapse works, QBO links company-scoped,
+      no console errors, colors pass in both themes. Lien column needs the Lien Tracker DB shared with the
+      automation integration to populate (blank until then). See [[open-invoices-tab-spec]].
+
 ## IN PROGRESS
 - **Lien-mark workbook mirror (Phase 2 above):** add the `bill_marks.resolve_lien` call to
   `bill-tracker/excel_bill_sync.py`'s Lien preservation once that file has no foreign uncommitted changes.
