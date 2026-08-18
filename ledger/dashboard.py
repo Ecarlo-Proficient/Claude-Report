@@ -237,6 +237,9 @@ def _pipelines():
         {"key": "crm", "label": "CRM - customers", "steps": [
             {"label": "Pull customers (Notion)", "script": "ledger/load_customers.py", "args": []},
         ]},
+        {"key": "subloc", "label": "Sub LOC (QBO float)", "steps": [
+            {"label": "Load sub LOC float (Touch ID)", "script": "ledger/load_sub_loc.py", "args": []},
+        ]},
     ]
 
 
@@ -652,6 +655,38 @@ def _fetch_sales(con) -> dict:
     return out
 
 
+def _fetch_sub_loc(con) -> dict:
+    """Subcontractor LOC float from sub_loc_run / sub_loc_event; empty (not an error) if the
+    loader hasn't run. summary.outstanding = fronted-but-uncollected NOW; peak = the LOC to size."""
+    out = {"summary": None, "divisions": {}, "projects": [], "events": []}
+    try:
+        run = con.execute("SELECT * FROM sub_loc_run WHERE id=1").fetchone()
+    except sqlite3.OperationalError:
+        return out
+    if not run:
+        return out
+    out["summary"] = {k: run[k] for k in run.keys() if k not in ("divisions", "projects", "id")}
+    try:
+        out["divisions"] = json.loads(run["divisions"] or "{}")
+        out["projects"] = json.loads(run["projects"] or "[]")
+    except (ValueError, TypeError):
+        pass
+    try:
+        rows = con.execute("SELECT event_date, type, project, division, party, out_amt, in_amt, "
+                           "lag_days, balance, note, invoice, reimb FROM sub_loc_event ORDER BY seq")
+        for r in rows:
+            d = dict(r)
+            if d.get("reimb"):
+                try:
+                    d["reimb"] = json.loads(d["reimb"])
+                except (ValueError, TypeError):
+                    d["reimb"] = []
+            out["events"].append(d)
+    except sqlite3.OperationalError:   # degrade to summary-only, never break the whole dashboard
+        pass
+    return out
+
+
 def _connect(db_path: Path) -> sqlite3.Connection:
     """Open the ledger READ-ONLY. New connection per request (SQLite + threads)."""
     con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
@@ -683,6 +718,7 @@ def fetch_data(db_path: Path) -> dict:
         costs = _fetch_costs(con)
         draws = _fetch_draws(con)
         sales = _fetch_sales(con)
+        sub_loc = _fetch_sub_loc(con)
         actions = _fetch_actions(con)
         freshness = _freshness(con)
         try:                                # realm for company-scoped QBO deep links (never logged)
@@ -715,6 +751,7 @@ def fetch_data(db_path: Path) -> dict:
         "cost": costs,
         "draws": draws,
         "sales": sales,
+        "sub_loc": sub_loc,
     }
 
 

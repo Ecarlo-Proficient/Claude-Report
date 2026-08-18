@@ -187,6 +187,7 @@ let BILLS = [];   // full ap_bill_line list for the Bill Tracker tab
 let COST = { by_code: [], by_project_code: {}, by_project: {}, by_cost_type: [], by_vendor: [], loaded_total: 0 };
 let DRAWS = { draws: [], total: 0 };
 let SALES = { pipeline: [], by_rep: [], warm: [], customers: [], totals: {} };
+let SUBLOC = { summary: null, divisions: {}, projects: [], events: [] };
 let costCollapsed = new Set();   // collapsed cost-type parents (default: all collapsed)
 let drawsCollapsed = new Set();  // collapsed draw cards (default: all collapsed)
 let drawsExpanded = new Set();   // draws whose bills are expanded in the table (default: none)
@@ -233,6 +234,7 @@ async function load(isAuto) {
   COST = data.cost || { by_code: [], by_project_code: {}, by_project: {}, by_cost_type: [], by_vendor: [], loaded_total: 0 };
   DRAWS = data.draws || { draws: [], total: 0 };
   SALES = data.sales || { pipeline: [], by_rep: [], warm: [], customers: [], totals: {} };
+  SUBLOC = data.sub_loc || { summary: null, divisions: {}, projects: [], events: [] };
   PNL = null;   // recompute the portfolio P&L on next open (data just changed)
   // Big-picture first: collapse everything by default; the user expands to zoom in.
   // On a live auto-refresh, preserve what the user has already expanded.
@@ -436,7 +438,7 @@ function visibleColumns() {
 function render() {
   renderHome();
   renderKPIs(); renderAttention(); renderCosts(); renderMargins(); renderDivisions();
-  renderProjects(); renderLiens(); renderVendors(); renderDraws(); renderBills(); renderSales();
+  renderProjects(); renderLiens(); renderVendors(); renderDraws(); renderBills(); renderSubLoc(); renderSales();
 }
 
 function timeAgo(iso) {
@@ -1512,6 +1514,81 @@ function openBillDetail(b) {
       gi.appendChild(p); } }
 
   openPanel("#billDetail");
+}
+
+// ── Sub LOC (subcontractor float we front before the GC pays) ───────────────
+// From load_sub_loc.py (shared/sub_loc engine). outstanding = fronted-but-uncollected NOW;
+// peak = the LOC to size to; the repayment feed = "a client payment paid off these subs".
+function renderSubLoc() {
+  const s = SUBLOC.summary;
+  const clearTbl = sel => { const el = $(sel); if (el) { el.querySelector("thead").innerHTML = ""; el.querySelector("tbody").innerHTML = ""; } };
+  const note = $("#sublocNote");
+  if (!s) {
+    if (note) note.textContent = "(not loaded - run the Sub LOC pipeline in Console, or python3 ledger/load_sub_loc.py)";
+    if ($("#sublocStats")) $("#sublocStats").innerHTML = "";
+    if ($("#sublocHint")) $("#sublocHint").textContent = "";
+    ["#sublocDivTable", "#sublocFeedTable", "#sublocProjTable"].forEach(clearTbl);
+    return;
+  }
+  if (note) note.textContent = `(window ${fmtDateShort(s.window_start)}–${fmtDateShort(s.window_end)} · loaded ${s.loaded_at ? fmtDate(s.loaded_at, true) : "–"})`;
+  // headline KPIs
+  const stats = [
+    ["Fronted, still out", money(s.outstanding), "sub $ paid, not yet collected"],
+    ["Peak LOC needed", money(s.peak), s.peak_date ? "high-water " + fmtDate(s.peak_date) : "high-water"],
+    ["Avg draw→repay", (s.avg_lag != null ? Math.round(s.avg_lag) : "–") + " days", "days our cash is out"],
+    ["Prefunded", money(s.prefunded), "GC paid before we paid the sub"],
+  ];
+  const sr = $("#sublocStats"); sr.innerHTML = "";
+  for (const [label, value, sub] of stats) {
+    const el = document.createElement("div"); el.className = "kpi";
+    el.innerHTML = `<div class="k-label"></div><div class="k-value"></div><div class="k-sub"></div>`;
+    el.querySelector(".k-label").textContent = label; el.querySelector(".k-value").textContent = value; el.querySelector(".k-sub").textContent = sub;
+    sr.appendChild(el);
+  }
+  $("#sublocHint").innerHTML = "Cash you <b>front to subs before the GC pays you</b> for that work. " +
+    "<b>Fronted, still out</b> is today's float; <b>Peak</b> is the high-water mark - <b>size your line of credit to it</b> " +
+    "(rule of thumb is a LOC around 10–20% of revenue, but your real need is the peak). Matched per project + draw period, " +
+    "FIFO, so a client payment pays off the oldest fronted subs first. Read-only from QBO via <code>load_sub_loc.py</code>.";
+
+  const buildG = (sel, cols) => { const thead = $(sel + " thead"), tbody = $(sel + " tbody"); thead.innerHTML = ""; tbody.innerHTML = "";
+    const htr = document.createElement("tr"); for (const [c, al] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); } thead.appendChild(htr); return tbody; };
+  const mcell = v => { const td = document.createElement("td"); td.appendChild(moneyCell(v)); return td; };
+  const emptyRow = (tb, n, msg) => { const tr = document.createElement("tr"); const td = document.createElement("td"); td.colSpan = n; td.className = "left"; td.style.color = "var(--text-dim)"; td.style.padding = "12px"; td.textContent = msg; tr.appendChild(td); tb.appendChild(tr); };
+
+  // By division
+  { const tb = buildG("#sublocDivTable", [["Division", "left"], ["Fronted (out)", "right"], ["Peak", "right"], ["Drawn", "right"], ["Repaid", "right"], ["Avg days", "right"]]);
+    const divs = SUBLOC.divisions || {}; const order = ["MFD", "CP", "RP", "Other"]; const rank = k => { const i = order.indexOf(k); return i < 0 ? 99 : i; };
+    const keys = Object.keys(divs).sort((a, b) => rank(a) - rank(b));
+    for (const k of keys) { const d = divs[k]; const tr = document.createElement("tr");
+      tr.appendChild(leftText(k)); const o = mcell(d.outstanding); if ((d.outstanding || 0) > 0.005) o.querySelector(".cell").classList.add("open-amt"); tr.appendChild(o);
+      tr.appendChild(mcell(d.peak)); tr.appendChild(mcell(d.drawn)); tr.appendChild(mcell(d.repaid));
+      tr.appendChild(rightText(d.avg_lag != null ? Math.round(d.avg_lag) + "d" : "–")); tb.appendChild(tr); }
+    if (!keys.length) emptyRow(tb, 6, "No sub float in this window.");
+  }
+
+  // Repayment feed: REPAY events newest first - "a client payment paid off these fronted subs"
+  { const tb = buildG("#sublocFeedTable", [["Date", "left"], ["Client paid (invoice)", "left"], ["Project", "left"], ["Settled subs", "right"], ["Lag", "right"], ["LOC balance after", "right"]]);
+    const repays = (SUBLOC.events || []).filter(e => e.type === "REPAY" && (e.in_amt || 0) > 0.005).reverse().slice(0, 200);
+    for (const e of repays) { const tr = document.createElement("tr");
+      tr.appendChild(leftText(fmtDateShort(e.event_date)));
+      tr.appendChild(leftText((e.invoice ? "INV " + e.invoice : "–") + (e.party ? " · " + e.party : "")));
+      tr.appendChild(leftText(e.project || "–"));
+      const st = mcell(e.in_amt); st.querySelector(".cell").classList.add("st-ok"); tr.appendChild(st);
+      tr.appendChild(rightText(e.lag_days != null ? e.lag_days + "d" : "–"));
+      tr.appendChild(mcell(e.balance)); tb.appendChild(tr); }
+    if (!repays.length) emptyRow(tb, 6, "No client repayments matched to fronted subs yet.");
+  }
+
+  // By project (still fronted, most out first)
+  { const tb = buildG("#sublocProjTable", [["Project", "left"], ["Fronted (out)", "right"], ["Drawn", "right"], ["Repaid", "right"], ["Avg days", "right"]]);
+    const rows = (SUBLOC.projects || []).slice(0, 250);
+    for (const p of rows) { const tr = document.createElement("tr");
+      tr.appendChild(leftText(p.project || "–"));
+      const o = mcell(p.outstanding); if ((p.outstanding || 0) > 0.005) o.querySelector(".cell").classList.add("open-amt"); tr.appendChild(o);
+      tr.appendChild(mcell(p.drawn)); tr.appendChild(mcell(p.repaid));
+      tr.appendChild(rightText(p.avg_lag != null ? Math.round(p.avg_lag) + "d" : "–")); tb.appendChild(tr); }
+    if (!rows.length) emptyRow(tb, 5, "Nothing fronted in this window.");
+  }
 }
 
 // ── Sales / CRM (read-only from the Notion Customer List) ───────────────────

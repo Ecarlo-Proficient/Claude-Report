@@ -200,6 +200,47 @@ CREATE TABLE IF NOT EXISTS bill_mark (
     updated_at  TEXT NOT NULL
 );
 
+-- ── sub_loc_event / sub_loc_run : the subcontractor LOC float model ──────────
+-- How much we have FRONTED to subs before the client repaid us (money out to subs, netted
+-- against client payments per project+draw-period, FIFO, chronological). The engine is
+-- shared/sub_loc.py (read-only QBO pull); loaded by ledger/load_sub_loc.py, full-replaced
+-- each run. `sub_loc_event` = the DRAW (sub paid) / REPAY (client paid) timeline with the
+-- running LOC balance; `sub_loc_run` = the single latest run's summary (peak = the LOC to
+-- size; outstanding = still fronted right now). NOT a source of truth - a derived snapshot.
+CREATE TABLE IF NOT EXISTS sub_loc_event (
+    seq         INTEGER PRIMARY KEY,   -- chronological order within the load
+    event_date  TEXT NOT NULL,         -- ISO date
+    type        TEXT NOT NULL,         -- 'DRAW' (sub paid, money out) | 'REPAY' (client paid, money in)
+    project     TEXT,
+    division    TEXT,                  -- MFD | CP | RP | Other
+    party       TEXT,                  -- the sub (DRAW) or the client (REPAY)
+    out_amt     NUMERIC DEFAULT 0,     -- money OUT: the sub payment
+    in_amt      NUMERIC DEFAULT 0,     -- money IN applied to the LOC (repayment)
+    lag_days    INTEGER,               -- REPAY: days from the oldest draw it settled
+    balance     NUMERIC,               -- running LOC balance AFTER this event
+    note        TEXT,                  -- 'prefunded $x' / 'surplus $x'
+    invoice     TEXT,                  -- REPAY: the client invoice # that paid
+    reimb       TEXT,                  -- DRAW: JSON [[invoice, iso_date], ...] that later settled it
+    loaded_at   TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sub_loc_run (
+    id            INTEGER PRIMARY KEY CHECK (id = 1),   -- single latest run
+    window_start  TEXT,
+    window_end    TEXT,
+    peak          NUMERIC,             -- high-water LOC balance = the LOC you truly need
+    peak_date     TEXT,
+    outstanding   NUMERIC,             -- fronted-but-uncollected RIGHT NOW
+    total_drawn   NUMERIC,
+    total_repaid  NUMERIC,
+    prefunded     NUMERIC,             -- client cash that arrived before the sub was paid (zero-LOC)
+    avg_lag       NUMERIC,             -- amount-weighted draw->repay days
+    n_draws       INTEGER,
+    divisions     TEXT,                -- JSON: per-division {peak, drawn, repaid, outstanding, avg_lag}
+    projects      TEXT,                -- JSON: per-project rows (drawn/repaid/outstanding/avg_lag)
+    loaded_at     TEXT NOT NULL
+);
+
 -- ── v_ap_by_project : open AP + bill counts per project ─────────────────────
 DROP VIEW IF EXISTS v_ap_by_project;
 CREATE VIEW v_ap_by_project AS

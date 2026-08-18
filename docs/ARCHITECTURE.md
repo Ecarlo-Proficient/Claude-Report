@@ -324,7 +324,7 @@ flowchart LR
     LOADER["load_wip_master.py\nCP←Test-CP · RP←Test-RP · MFD←Test-Master\nfilter to real project #s · idempotent upsert"]:::tool
     APLOAD["load_bill_tracker.py\nAP pay status + lien clock → ap_bill_line\n(NOT cost truth — subs excluded)"]:::tool
     DB[("ledger.sqlite3\nproject + wip_snapshot + ap_bill_line\n→ v_wip_latest · v_ap_by_project")]:::out
-    DASH["dashboard.py + static/\nlocal web UI (127.0.0.1) - READ-ONLY except the owner's marks.\nTabs: My view · Overview · P&L · Costs · Draws · Bills\n(Notion-style saved views) · Liens · Vendors · Sales · Console"]:::tool
+    DASH["dashboard.py + static/\nlocal web UI (127.0.0.1) - READ-ONLY except the owner's marks.\nTabs: My view · Overview · P&L · Costs · Draws · Bills\n(Notion-style saved views) · Liens · Vendors · Sub LOC · Sales · Console"]:::tool
     BROWSER[("Browser\nhttp://127.0.0.1:8787")]:::out
     QBO[("QBO\nBills + Purchases\n(read-only pull, Touch ID)")]:::src
     QCOSTS["shared/qbo_costs.py\ncost_leaf + iter_cost_lines\n(the ONE resolver — shared with project-pnl)"]:::tool
@@ -348,6 +348,11 @@ flowchart LR
     NCL[("Notion 'Customer List'\nCRM leads/clients + touch notes\n(read-only source)")]:::src
     CUSTLOAD["load_customers.py\ncustomer + sales_touch (CRM)\nnotes → touch log · created/last-edited-by\nread-only · --selftest"]:::tool
     NCL --> CUSTLOAD ==>|"customer · sales_touch"| DB
+    SUBLOCENG["shared/sub_loc.py\nsub LOC float ENGINE (FIFO, per project+draw-period)\nshared with one-offs/sub_loc_report.py (Excel)"]:::tool
+    SUBLOCLOAD["load_sub_loc.py\nread-only QBO pull → run the engine\n→ sub_loc_event + sub_loc_run · --selftest"]:::tool
+    QBO --> SUBLOCLOAD
+    SUBLOCENG -.->|"compute()"| SUBLOCLOAD
+    SUBLOCLOAD ==>|"sub_loc_event · sub_loc_run"| DB
     FUTURE -.-> DB
 ```
 
@@ -398,6 +403,14 @@ out) and its AR invoice / draw (money in) - real invoice pay status, amount, GC-
 `billing_event` on Invoice # to attach `inv_qbo_id` / `inv_ar_status` / … for that panel. Money cells
 feed the same select-and-sum bar as the rest of the app. Read-only over `ap_bill_line`; the Bill
 Tracker file itself is still produced by `excel_bill_sync.py` (`sync-ap`).
+
+**The Sub LOC tab** answers "how much have we FRONTED to subs before the client paid us, and how big
+a line of credit do we truly need?" The proven model (`shared/sub_loc.py`: read-only QBO pull ->
+per-project, per-draw-period, chronological FIFO netting of sub payments against client payments) is
+loaded into the ledger by `load_sub_loc.py` (`sub_loc_event` timeline + `sub_loc_run` summary; Console
+pipeline "Sub LOC"). The tab shows **outstanding** (today's float), **peak** (the LOC to size to), the
+draw->repay lag, and a **repayment feed** (a client payment paid off these fronted subs). The SAME
+engine backs the standalone `one-offs/sub_loc_report.py` Excel report - one model, two surfaces.
 
 **Now also the CONTROL PLANE (2026-08-12).** Beyond reading, the dashboard runs the data pipelines
 FROM the UI so the owner never touches a terminal. The **Console** tab is a **pipeline registry**

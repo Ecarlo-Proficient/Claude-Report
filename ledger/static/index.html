@@ -32,6 +32,7 @@
     <button class="tab" data-tabbtn="bills">Bills</button>
     <button class="tab" data-tabbtn="liens">Liens</button>
     <button class="tab" data-tabbtn="vendors">Vendors</button>
+    <button class="tab" data-tabbtn="subloc">Sub LOC</button>
     <button class="tab" data-tabbtn="sales">Sales</button>
     <button class="tab" data-tabbtn="console">Console</button>
   </nav>
@@ -291,6 +292,27 @@
         </div>
       </section>
     </div><!-- /tab: vendors -->
+
+    <!-- ══════════════ TAB: SUB LOC (subcontractor float we've fronted) ══════════════ -->
+    <div class="tab-page" data-tab="subloc" hidden>
+      <section class="widget">
+        <div class="widget-head"><h2>Sub LOC <span class="count" id="sublocNote"></span></h2></div>
+        <div class="kpi-row" id="sublocStats"></div>
+        <p class="hint" id="sublocHint"></p>
+      </section>
+      <section class="widget">
+        <div class="widget-head"><h2>By division <span class="count">still fronted + the peak each hit</span></h2></div>
+        <div class="table-scroll"><table class="grid" id="sublocDivTable"><thead></thead><tbody></tbody></table></div>
+      </section>
+      <section class="widget">
+        <div class="widget-head"><h2>Repayment feed <span class="count">a client payment paid off these fronted subs (newest first)</span></h2></div>
+        <div class="table-scroll"><table class="grid" id="sublocFeedTable"><thead></thead><tbody></tbody></table></div>
+      </section>
+      <section class="widget">
+        <div class="widget-head"><h2>By project <span class="count">still fronted, most out first</span></h2></div>
+        <div class="table-scroll"><table class="grid" id="sublocProjTable"><thead></thead><tbody></tbody></table></div>
+      </section>
+    </div><!-- /tab: subloc -->
 
     <!-- ══════════════ TAB: SALES (CRM pipeline — read-only from Notion) ══════════════ -->
     <div class="tab-page" data-tab="sales" hidden>

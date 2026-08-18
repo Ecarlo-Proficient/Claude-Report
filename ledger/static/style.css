@@ -515,7 +515,7 @@ body.col-resizing .bills-grid tbody tr:hover { background: transparent; }
 .bills-grid .bill-vendor { font-weight: 600; }
 .bills-grid .bill-name { color: var(--text-dim); margin-left: 6px; }
 .bills-grid .bill-age { color: var(--text-dim); font-size: .82em; margin-left: 6px; white-space: nowrap; }
-.bills-grid .cell.open-amt { font-weight: 700; }
+.cell.open-amt { font-weight: 700; }   /* "still owed / fronted" money: emphasized app-wide */
 .bills-grid .cell.open-zero { color: var(--text-dim); }
 .bills-grid tbody tr.bill-row:hover { background: var(--row-hover); }
 /* Lien-risk rows: red edge (same visual language as the Liens tab). */

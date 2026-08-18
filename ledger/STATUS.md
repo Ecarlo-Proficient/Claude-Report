@@ -589,6 +589,26 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
       the mark is live on the site + persists, but the workbook won't show it. `resolve_lien` is already
       written and unit-checked, so Phase 2 is a ~2-line call at one spot.
 
+  - **Sub LOC tracker - a live tab (owner, 2026-08-17).** How much we've FRONTED to subs before the client
+    repaid us: the working-capital float + the LOC to size to. The proven model (`one-offs/sub_loc_report.py`,
+    validated to a real $1.70M peak) was **extracted into `shared/sub_loc.py`** (the engine: read-only QBO
+    pull -> per-project, per-draw-period, chronological FIFO) so both the Excel report AND a new ledger
+    loader use ONE copy (the one-off was refactored to import it, 675->334 lines, no duplication).
+    - **`ledger/load_sub_loc.py`** runs the engine, full-replaces `sub_loc_event` (the DRAW/REPAY timeline
+      + running LOC balance) and upserts `sub_loc_run` (the summary). `--selftest` proves it offline (no
+      QBO); one Touch ID per real run; company_id never printed. Console pipeline **"Sub LOC (QBO float)"**.
+    - **Dashboard `Sub LOC` tab** (`_fetch_sub_loc`): headline KPIs - **Fronted, still out** (today's float)
+      · **Peak LOC needed** (+ date; size the LOC to this - research says a LOC ~10-20% of revenue, but the
+      real need is the peak) · **Avg draw->repay** days · **Prefunded**. Then by division, a **repayment
+      feed** ("a client payment paid off these fronted subs" = the owner's "this got paid -> settled $X"),
+      and by project. Verified live on a DB copy (peak $162k / outstanding $62k sample), real ledger
+      untouched, no console errors.
+    - **QC (owner-requested):** high-effort review found 5, all fixed - guarded the `sub_loc_event` query so
+      a partial load can't blank the whole dashboard; killed the model duplication (the refactor above);
+      dropped an unused `--show`; un-scoped `.cell.open-amt` so the float emphasis actually renders; docs
+      updated (this + ARCHITECTURE). Aesthetic pass: reuses `.kpi`/`.grid`, color only on the green
+      settlement amounts, one font. See [[sub-loc-model]].
+
 ## IN PROGRESS
 - **Lien-mark workbook mirror (Phase 2 above):** add the `bill_marks.resolve_lien` call to
   `bill-tracker/excel_bill_sync.py`'s Lien preservation once that file has no foreign uncommitted changes.
