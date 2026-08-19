@@ -769,6 +769,17 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     `cost_line` and attaches `cust_id` to every invoice/P&L row; the link is absent-safe (plain text until a
     costs pull populates it). Populated by re-running load_costs (Resync) - one QBO pull, Touch ID.
 
+  - **Grouped two-level nav + Customers page + Payments stub (owner, 2026-08-19).** The flat tab bar became a
+    **two-level grouped nav** (data-driven `NAV_GROUPS` in app.js; `buildGroupBar`/`buildSubTabs`; `setTab`
+    highlights the group + renders the second row): **My view · Overview · Financials** (Project P&L · Costs)
+    **· Customers** (Customers · Invoices · Draws · Payments · Sales Outreach) **· Vendor Center** (Vendors ·
+    Bills · Sub LOC · Liens) **· IT** (Systems · Console). A group opens its landing (first) tab; single-page
+    groups hide the sub-row. The **Vendors** page is renamed **"Vendor Center"** and **Sales -> "Sales
+    Outreach"**. New **Customers** page - top clients by open AR (from the open invoices; click a client ->
+    Invoices filtered to them; 51 clients / $5.27M). **Payments** is a clear stub (received payments + the AP
+    due out under a fully-paid invoice - needs a payment feed; built next). Verified live: all 15 tabs route,
+    group/sub highlight, no console errors. See [[ledger-expansion-backlog]].
+
 ## IN PROGRESS
 - **Lien-mark workbook mirror (Phase 2 above):** add the `bill_marks.resolve_lien` call to
   `bill-tracker/excel_bill_sync.py`'s Lien preservation once that file has no foreign uncommitted changes.

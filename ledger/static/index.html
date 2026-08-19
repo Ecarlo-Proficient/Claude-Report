@@ -23,21 +23,10 @@
     </div>
   </header>
 
-  <nav class="tabs" id="tabbar">
-    <button class="tab" data-tabbtn="home">My view</button>
-    <button class="tab" data-tabbtn="overview">Overview</button>
-    <button class="tab" data-tabbtn="pnl">Project P&amp;L</button>
-    <button class="tab" data-tabbtn="costs">Costs</button>
-    <button class="tab" data-tabbtn="draws">Draws</button>
-    <button class="tab" data-tabbtn="invoices">Invoices</button>
-    <button class="tab" data-tabbtn="bills">Bills</button>
-    <button class="tab" data-tabbtn="liens">Liens</button>
-    <button class="tab" data-tabbtn="vendors">Vendors</button>
-    <button class="tab" data-tabbtn="subloc">Sub LOC</button>
-    <button class="tab" data-tabbtn="sales">Sales</button>
-    <button class="tab" data-tabbtn="systems">Systems</button>
-    <button class="tab" data-tabbtn="console">Console</button>
-  </nav>
+  <!-- Two-level grouped nav (owner 2026-08-19): parent groups on top, the group's tabs below.
+       Both rows are generated from NAV_GROUPS in app.js so the structure lives in one place. -->
+  <nav class="tabs" id="groupbar"></nav>
+  <nav class="subtabs" id="subtabbar" hidden></nav>
 
   <main class="wrap" id="wrap">
     <div id="errorBanner" class="error-banner" hidden></div>
@@ -336,7 +325,7 @@
     <!-- ══════════════ TAB: VENDORS (spend) ══════════════ -->
     <div class="tab-page" data-tab="vendors" hidden>
       <section class="widget">
-        <div class="widget-head"><h2>Vendor spend <span class="count" id="vendorsNote"></span></h2></div>
+        <div class="widget-head"><h2>Vendor Center <span class="count" id="vendorsNote"></span></h2></div>
         <div class="filters"><input type="search" id="vendorSearch" placeholder="Search vendor…" autocomplete="off"></div>
         <div class="table-scroll">
           <table class="grid clickable" id="vendorTable"><thead></thead><tbody></tbody></table>
@@ -410,6 +399,26 @@
         </div>
       </section>
     </div><!-- /tab: sales -->
+
+    <!-- ══════════════ TAB: CUSTOMERS (top clients by open AR) ══════════════ -->
+    <div class="tab-page" data-tab="customers" hidden>
+      <section class="widget">
+        <div class="widget-head"><h2>Customers <span class="count" id="custNote"></span></h2></div>
+        <p class="hint">Your current clients ranked by <b>open AR</b> (what they still owe you). Click a client to see just their open invoices.</p>
+        <div class="kpi-row" id="custStats"></div>
+        <div class="table-scroll">
+          <table class="grid clickable" id="custTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </div><!-- /tab: customers -->
+
+    <!-- ══════════════ TAB: PAYMENTS (received payments + the AP due out under them) ══════════════ -->
+    <div class="tab-page" data-tab="payments" hidden>
+      <section class="widget">
+        <div class="widget-head"><h2>Payments <span class="count" id="payNote"></span></h2></div>
+        <div id="payBody"></div>
+      </section>
+    </div><!-- /tab: payments -->
 
     <!-- ══════════════ TAB: SYSTEMS (the process registry, read live from the vault) ══════════════ -->
     <div class="tab-page" data-tab="systems" hidden>

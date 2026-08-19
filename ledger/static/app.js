@@ -193,16 +193,55 @@ let costCollapsed = new Set();   // collapsed cost-type parents (default: all co
 let drawsCollapsed = new Set();  // collapsed draw cards (default: all collapsed)
 let drawsExpanded = new Set();   // draws whose bills are expanded in the table (default: none)
 
-// ── Tabs ────────────────────────────────────────────────────────────────────
+// ── Tabs (two-level grouped nav) ─────────────────────────────────────────────
+// Parent groups on the top row; the active group's tabs on the second row. The whole
+// structure lives here, so adding/moving a tab is a one-line edit (owner 2026-08-19).
+const NAV_GROUPS = [
+  { id: "home",       label: "My view",       tabs: ["home"] },
+  { id: "overview",   label: "Overview",      tabs: ["overview"] },
+  { id: "financials", label: "Financials",    tabs: ["pnl", "costs"] },
+  { id: "customers",  label: "Customers",     tabs: ["customers", "invoices", "draws", "payments", "sales"] },
+  { id: "vendors",    label: "Vendor Center", tabs: ["vendors", "bills", "subloc", "liens"] },
+  { id: "it",         label: "IT",            tabs: ["systems", "console"] },
+];
+const TAB_LABELS = {
+  home: "My view", overview: "Overview", pnl: "Project P&L", costs: "Costs",
+  customers: "Customers", invoices: "Invoices", draws: "Draws", payments: "Payments", sales: "Sales Outreach",
+  vendors: "Vendor Center", bills: "Bills", subloc: "Sub LOC", liens: "Liens",
+  systems: "Systems", console: "Console",
+};
+const groupOf = t => NAV_GROUPS.find(g => g.tabs.includes(t)) || NAV_GROUPS[0];
+function buildGroupBar() {
+  const bar = $("#groupbar"); if (!bar) return; bar.innerHTML = "";
+  for (const g of NAV_GROUPS) {
+    const b = document.createElement("button"); b.className = "tab"; b.dataset.group = g.id; b.textContent = g.label;
+    b.onclick = () => setTab(g.tabs[0]);   // a group opens its landing (first) tab
+    bar.appendChild(b);
+  }
+}
+function buildSubTabs(g, active) {
+  const bar = $("#subtabbar"); if (!bar) return;
+  if (!g || g.tabs.length <= 1) { bar.hidden = true; bar.innerHTML = ""; return; }   // single-page group: no second row
+  bar.hidden = false; bar.innerHTML = "";
+  for (const t of g.tabs) {
+    const b = document.createElement("button"); b.className = "subtab" + (t === active ? " active" : "");
+    b.textContent = TAB_LABELS[t] || t; b.onclick = () => setTab(t);
+    bar.appendChild(b);
+  }
+}
 let activeTab = "overview";
 function setTab(t) {
   activeTab = t;
   try { localStorage.setItem("proficient-ledger-tab", t); } catch { /* ignore */ }
   $$(".tab-page").forEach(p => { p.hidden = p.dataset.tab !== t; });
-  $$(".tab").forEach(b => b.classList.toggle("active", b.dataset.tabbtn === t));
+  const g = groupOf(t);
+  $$("#groupbar .tab").forEach(b => b.classList.toggle("active", b.dataset.group === g.id));
+  buildSubTabs(g, t);
   if (t === "pnl") renderPnl();     // portfolio P&L is computed server-side, lazy-loaded
   if (t === "console") renderConsole();
   if (t === "systems") loadSystems();
+  if (t === "customers") renderCustomers();
+  if (t === "payments") renderPayments();
   if (typeof _csClear === "function") _csClear();   // drop any cell selection when the tab changes
   window.scrollTo(0, 0);
 }
@@ -456,7 +495,7 @@ function visibleColumns() {
 function render() {
   renderHome();
   renderKPIs(); renderAttention(); renderCosts(); renderMargins(); renderDivisions();
-  renderProjects(); renderLiens(); renderVendors(); renderDraws(); renderBills(); renderOpenInvoices(); renderSubLoc(); renderSales();
+  renderProjects(); renderLiens(); renderVendors(); renderDraws(); renderBills(); renderOpenInvoices(); renderSubLoc(); renderSales(); renderCustomers();
 }
 
 function timeAgo(iso) {
@@ -1840,6 +1879,49 @@ function invClearFilters() {
   renderOpenInvoices();
 }
 
+// ══ CUSTOMERS ═══════════════════════════════════════════════════════════════
+// Top current clients by OPEN AR (what they still owe), aggregated from the open
+// invoices. Click a client to jump to the Invoices tab filtered to them.
+function renderCustomers() {
+  const invs = OI.invoices || [];
+  const by = new Map();
+  for (const i of invs) {
+    const c = i.customer || "(no client)";
+    const e = by.get(c) || { client: c, open: 0, n: 0, oldest: null };
+    e.open += oiBal(i); e.n += 1;
+    if (i.due_date && (!e.oldest || i.due_date < e.oldest)) e.oldest = i.due_date;
+    by.set(c, e);
+  }
+  const rows = [...by.values()].sort((a, b) => b.open - a.open);
+  const total = rows.reduce((t, r) => t + r.open, 0);
+  { const n = $("#custNote"); if (n) n.textContent = rows.length ? `(${rows.length} clients · ${money(total)} open)` : "(no AR data - load invoices)"; }
+  { const stats = $("#custStats"); if (stats) { stats.innerHTML = "";
+      for (const [l, v] of [["Open AR", money(total)], ["Clients", String(rows.length)], ["Biggest client", rows[0] ? rows[0].client : "–"]]) {
+        const k = el2("div", "kpi"); k.appendChild(el2("div", "k-label", l)); k.appendChild(el2("div", "k-value", v)); stats.appendChild(k); } } }
+  const tb = buildHead("#custTable", [["Client", "left"], ["Open AR", "right"], ["Open invoices", "right"], ["Oldest due", "left"]]);
+  if (!tb) return; tb.innerHTML = "";
+  for (const r of rows) {
+    const tr = document.createElement("tr"); tr.style.cursor = "pointer"; tr.title = "See this client's open invoices";
+    tr.onclick = () => { const cf = $("#ifClient"); if (cf) cf.value = r.client; setTab("invoices"); renderOpenInvoices(); };
+    tr.appendChild(leftText(r.client)); tr.appendChild(rightText(money(r.open)));
+    tr.appendChild(rightText(String(r.n))); tr.appendChild(leftText(r.oldest ? fmtDateShort(r.oldest) : "–"));
+    tb.appendChild(tr);
+  }
+  if (!rows.length) { const tr = document.createElement("tr"); const td = document.createElement("td"); td.colSpan = 4; td.className = "left"; td.style.color = "var(--text-dim)"; td.style.padding = "14px 12px"; td.textContent = "No open AR - run load_invoices.py."; tr.appendChild(td); tb.appendChild(tr); }
+}
+
+// ══ PAYMENTS (stub - built next) ═════════════════════════════════════════════
+function renderPayments() {
+  const body = $("#payBody"); if (!body) return;
+  { const n = $("#payNote"); if (n) n.textContent = "- coming next"; }
+  body.innerHTML = "";
+  const p = document.createElement("p"); p.className = "hint"; p.style.padding = "8px 18px 18px";
+  p.innerHTML = "<b>Coming next:</b> every payment you've received, and when one <b>fully pays an invoice</b>, "
+    + "the AP we still owe out under that draw (the vendor bills on the project). Needs a payment feed "
+    + "(QBO payments or the tracker's paid dates) - I'll wire it up in the next pass.";
+  body.appendChild(p);
+}
+
 function renderSubLoc() {
   const s = SUBLOC.summary;
   const note = $("#sublocNote");
@@ -3100,7 +3182,7 @@ function init() {
   for (const id of ["#sysSearch", "#sysOwner", "#sysHealth", "#sysState", "#sysLife", "#sysRetired"]) {
     const el = $(id); if (el) el.addEventListener("input", renderSystems);
   }
-  $$(".tab").forEach(b => { b.onclick = () => setTab(b.dataset.tabbtn); });
+  buildGroupBar();   // generate the two-level nav (top groups; sub-tabs render on setTab)
   let savedTab = "home";
   try { savedTab = localStorage.getItem("proficient-ledger-tab") || "home"; } catch { /* ignore */ }
   setTab(savedTab);

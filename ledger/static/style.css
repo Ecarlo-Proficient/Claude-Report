@@ -95,6 +95,14 @@ body {
 }
 .tab:hover { color: var(--text); }
 .tab.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+/* Second-level nav: the active group's tabs, in a lighter bar under the group bar. */
+.subtabs { display: flex; gap: 4px; padding: 6px 20px; background: var(--surface-2);
+  border-bottom: 1px solid var(--border); overflow-x: auto; }
+.subtabs[hidden] { display: none; }
+.subtab { font: inherit; font-size: .88em; cursor: pointer; white-space: nowrap;
+  padding: 6px 13px; border: none; background: none; color: var(--text-dim); border-radius: 7px; }
+.subtab:hover { color: var(--text); background: var(--row-hover); }
+.subtab.active { color: var(--text); background: color-mix(in srgb, var(--accent) 14%, var(--surface)); font-weight: 600; }
 .tab-page { display: flex; flex-direction: column; gap: 18px; }
 .tab-page[hidden] { display: none; }
 
