@@ -160,6 +160,12 @@ def _portfolio_pnl(con) -> dict:
     client_of = {r["project_no"]: r["customer"] for r in con.execute(
         "SELECT project_no, customer FROM billing_event "
         "WHERE customer IS NOT NULL AND project_no IS NOT NULL GROUP BY project_no")}
+    try:  # project → QBO customer id (CustomerRef.value) for the project# deep link; absent-safe
+        cust_of = {r["project_no"]: r["customer_id"] for r in con.execute(
+            "SELECT project_no, customer_id FROM cost_line "
+            "WHERE customer_id IS NOT NULL AND customer_id <> '' GROUP BY project_no")}
+    except sqlite3.OperationalError:
+        cust_of = {}
     rows, div = [], {}
     comp = {"earned": 0.0, "cost": 0.0, "overhead": 0.0, "net": 0.0, "billed": 0.0, "n": 0}
     for w in wip:
@@ -186,7 +192,7 @@ def _portfolio_pnl(con) -> dict:
                      "overhead": oh, "net": net,
                      "net_pct": (net / earned) if earned else None, "billed": b,
                      "client": client_of.get(p) or w["builder_or_gc"] or None,
-                     "pnl_mtime": mtime})
+                     "cust_id": cust_of.get(p), "pnl_mtime": mtime})
         d = div.setdefault(division, {"division": division, "earned": 0.0, "cost": 0.0,
                                       "overhead": 0.0, "net": 0.0, "billed": 0.0, "n": 0})
         for k, v in (("earned", earned), ("cost", cost), ("overhead", oh), ("net", net), ("billed", b)):
@@ -424,6 +430,13 @@ def _fetch_open_invoices(con) -> dict:
             "WHERE COALESCE(balance,0) > 0.005").fetchall()
     except sqlite3.OperationalError:
         return out
+    # Project → QBO customer id (CustomerRef.value from cost_line) for the project# deep link. Absent-safe.
+    try:
+        cust_of = {r["project_no"]: r["customer_id"] for r in con.execute(
+            "SELECT project_no, customer_id FROM cost_line "
+            "WHERE customer_id IS NOT NULL AND customer_id <> '' GROUP BY project_no")}
+    except sqlite3.OperationalError:
+        cust_of = {}
     today = _dt.date.today()
     invs = []
     for r in rows:
@@ -455,6 +468,7 @@ def _fetch_open_invoices(con) -> dict:
         ls = lien_clock.lien_state(div_code, inv_date, today, memo=(d.get("memo") or ""))
         d["lien_due_label"] = ls.label or None
         d["lien_due_state"] = ls.state
+        d["cust_id"] = cust_of.get(proj)             # project# → QBO customerdetail deep link
         invs.append(d)
     invs.sort(key=lambda x: ((x.get("customer") or "~").lower(),
                              x.get("due_date") or "9999", x.get("doc_number") or ""))

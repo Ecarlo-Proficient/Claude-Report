@@ -1793,7 +1793,13 @@ function invRow(i, buckets) {
   const cli = document.createElement("td"); cli.className = "left dim"; cli.textContent = i.customer || "–"; tr.appendChild(cli);
   const proj = document.createElement("td"); proj.className = "left";
   if (i.division) { const dot = document.createElement("span"); dot.className = "divdot " + divClass(i.division); dot.title = i.division; proj.appendChild(dot); }
-  proj.appendChild(document.createTextNode(i.project_no || "–")); tr.appendChild(proj);
+  const purl = qboCustomerUrl(i.cust_id);   // project # → QBO project page (all its transactions)
+  if (purl && i.project_no) {
+    const a = document.createElement("a"); a.href = purl; a.target = "_blank"; a.rel = "noopener"; a.className = "qbo-link";
+    a.textContent = i.project_no; a.title = "Open this project in QuickBooks (all transactions)"; a.onclick = e => e.stopPropagation();
+    proj.appendChild(a);
+  } else { proj.appendChild(document.createTextNode(i.project_no || "–")); }
+  tr.appendChild(proj);
   tr.appendChild(qboLinkCell(i.doc_number, qboInvoiceUrl(i.qbo_txn_id), "Open this invoice in QuickBooks"));
   const dt = document.createElement("td"); dt.className = "left"; dt.textContent = fmtDateShort(i.txn_date);
   if (i.days_past_due != null && i.days_past_due > 0) dt.title = i.days_past_due + " days past due (due " + fmtDateShort(i.due_date) + ")";
@@ -2298,7 +2304,15 @@ function renderPnl() {
       // expand the P&L inline (full width, room for the dense numbers) - no side panel
       row.onclick = (e) => { if (e.target.closest(".cell")) return; open ? pnlExpanded.delete(r.proj) : pnlExpanded.add(r.proj); renderPnl(); };
     }
-    row.appendChild(leftText((known.has(r.proj) ? (open ? "▾ " : "▸ ") : "") + r.proj));
+    const pcell = document.createElement("td"); pcell.className = "left";
+    if (known.has(r.proj)) pcell.appendChild(document.createTextNode(open ? "▾ " : "▸ "));
+    const ppurl = qboCustomerUrl(r.cust_id);   // project # → QBO project page (all its transactions)
+    if (ppurl) {
+      const a = document.createElement("a"); a.href = ppurl; a.target = "_blank"; a.rel = "noopener"; a.className = "qbo-link";
+      a.textContent = r.proj; a.title = "Open this project in QuickBooks (all transactions)"; a.onclick = e => e.stopPropagation();
+      pcell.appendChild(a);
+    } else { pcell.appendChild(document.createTextNode(r.proj)); }
+    row.appendChild(pcell);
     row.appendChild(leftText(r.division));
     { const c = leftText(r.client || "–"); c.style.color = r.client ? "" : "var(--text-dim)"; row.appendChild(c); }
     row.appendChild(rightText(money(r.contract))); row.appendChild(rightText(((r.pct_complete || 0) * 100).toFixed(0) + "%"));

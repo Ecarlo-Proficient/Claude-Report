@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS cost_line (
     is_sub          INTEGER NOT NULL DEFAULT 0,
     vendor          TEXT,
     description     TEXT,
+    customer_id     TEXT,                        -- QBO CustomerRef.value (the project's customer id) → customerdetail deep link
     source          TEXT NOT NULL DEFAULT 'qbo',
     loaded_at       TEXT NOT NULL,
     PRIMARY KEY (qbo_txn_id, qbo_line_id)

@@ -761,6 +761,14 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     - Verified live (v1.1.0): heading, Client + P&L-updated columns, client filter (BEDROCK -> its jobs),
       costs card gone from the Console, reload still runs load_costs, no console errors.
 
+  - **Project # -> QBO project page (owner, 2026-08-19).** Clicking a project # (Open Invoices AND
+    Project P&L) opens that project's QBO **customerdetail** page (all its transactions), via the existing
+    `qboCustomerUrl`. The QBO customer id per project = **`CustomerRef.value`**, which `shared/qbo_costs`
+    already computes but `load_costs` dropped - now **persisted to `cost_line.customer_id`** (schema column +
+    ALTER migration + added to the insert cols). The dashboard maps `{project -> customer_id}` from
+    `cost_line` and attaches `cust_id` to every invoice/P&L row; the link is absent-safe (plain text until a
+    costs pull populates it). Populated by re-running load_costs (Resync) - one QBO pull, Touch ID.
+
 ## IN PROGRESS
 - **Lien-mark workbook mirror (Phase 2 above):** add the `bill_marks.resolve_lien` call to
   `bill-tracker/excel_bill_sync.py`'s Lien preservation once that file has no foreign uncommitted changes.

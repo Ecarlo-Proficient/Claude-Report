@@ -74,6 +74,12 @@ def _migrate_cost_line(con) -> None:
         con.execute("DROP TABLE cost_line")
         con.executescript(SCHEMA_SQL.read_text(encoding="utf-8"))
         con.commit()
+        cols = {r[1] for r in con.execute("PRAGMA table_info(cost_line)")}
+    # Additive: customer_id (the QBO CustomerRef.value → project's customerdetail deep link).
+    # CREATE TABLE IF NOT EXISTS won't add it to an existing table; populated on the next pull.
+    if cols and "customer_id" not in cols:
+        con.execute("ALTER TABLE cost_line ADD COLUMN customer_id TEXT")
+        con.commit()
 
 
 def target_projects(con, division: str | None, active: bool, projects: list[str] | None) -> set:
@@ -118,7 +124,7 @@ def write_cost_lines(con, records: list[dict], targets: set, now: str,
     if targets and not incremental:
         con.execute(f"DELETE FROM cost_line WHERE source='qbo' AND project_no IN ({ph})", tuple(targets))
     cols = ["qbo_txn_id", "qbo_line_id", "txn_type", "project_no", "cost_code", "account",
-            "amount", "txn_date", "is_sub", "vendor", "description", "source", "loaded_at"]
+            "amount", "txn_date", "is_sub", "vendor", "description", "customer_id", "source", "loaded_at"]
     ins = 0
     for r in kept:
         row = {**r, "source": "qbo", "loaded_at": now}
