@@ -110,6 +110,44 @@ CREATE TABLE IF NOT EXISTS billing_event (
 );
 
 
+-- ── payment : a received customer payment - money IN as ONE transaction ──────
+-- A QBO Payment object: the GC hands over cash once, and that one payment can
+-- settle several invoices. This is the TRANSACTION (total, date, who paid); the
+-- invoices it lands on live in payment_application below. Loaded by a full
+-- replace each run (load_payments.py, source = 'qbo_payment') over a rolling
+-- window, so the table mirrors the last pull. Not the books - QBO is.
+CREATE TABLE IF NOT EXISTS payment (
+    qbo_txn_id      TEXT PRIMARY KEY,            -- QBO Payment Id
+    txn_date        TEXT,                        -- payment date (when the money came in)
+    customer        TEXT,                        -- CustomerRef.name (the GC / client who paid)
+    customer_id     TEXT,                        -- CustomerRef.value (QBO deep link)
+    total_amt       NUMERIC,                     -- TotalAmt - the whole payment
+    unapplied_amt   NUMERIC,                     -- UnappliedAmt - credit not yet on any invoice
+    method          TEXT,                        -- PaymentMethodRef.name (Check / ACH / ...) if present
+    ref_no          TEXT,                        -- PaymentRefNum (check #) if present
+    source          TEXT NOT NULL DEFAULT 'qbo_payment',
+    loaded_at       TEXT NOT NULL
+);
+
+
+-- ── payment_application : which invoice(s) a payment paid, and how much ───────
+-- One row per (payment, invoice) link (QBO Payment Line -> LinkedTxn of type
+-- Invoice). amount = the slice of the payment applied to that invoice. invoice_no
+-- / project_no / division are resolved against billing_event by the invoice's QBO
+-- id (NULL when the invoice isn't in the tracker window - still shown by id).
+CREATE TABLE IF NOT EXISTS payment_application (
+    payment_txn_id  TEXT NOT NULL,               -- -> payment.qbo_txn_id
+    invoice_txn_id  TEXT,                         -- LinkedTxn.TxnId (QBO Invoice Id)
+    invoice_no      TEXT,                         -- resolved DocNumber (billing_event join)
+    project_no      TEXT,
+    division        TEXT,
+    amount          NUMERIC,                      -- money applied to THIS invoice from THIS payment
+    PRIMARY KEY (payment_txn_id, invoice_txn_id)
+);
+CREATE INDEX IF NOT EXISTS ix_payapp_payment ON payment_application (payment_txn_id);
+CREATE INDEX IF NOT EXISTS ix_payapp_invoice ON payment_application (invoice_no);
+
+
 -- ── wip_snapshot : the COMPUTED WIP position, one row per (project, date) ────
 -- This is exactly what a Test tab of "WIP - MASTER new.xlsx" holds. The loader
 -- lands it here so the monthly WIP stops living in a spreadsheet. Re-running for

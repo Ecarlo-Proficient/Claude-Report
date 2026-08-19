@@ -479,48 +479,53 @@ def _fetch_open_invoices(con) -> dict:
 
 
 def _fetch_payments(con) -> dict:
-    """Received AR payments: every invoice the GC has paid in full OR part, with the amount
-    received (gross - open balance) and, when FULLY paid, the AP still due OUT under that project
-    (the vendor bills you must now pay). Empty (not an error) if billing_event is unloaded."""
-    out = {"payments": [], "total_received": 0.0, "ap_due_total": 0.0}
+    """Received customer payments, each as ONE transaction (money IN) with the
+    invoice(s) it paid grouped beneath it. Reads the payment / payment_application
+    tables (QBO Payment objects via load_payments.py). Empty (not an error) when
+    that loader hasn't run yet."""
+    out = {"payments": [], "total_received": 0.0, "count": 0, "invoices_paid": 0, "loaded_at": None}
     try:
-        rows = con.execute(
-            "SELECT doc_number, qbo_txn_id, project_no, division, customer, amount, balance, "
-            "txn_date, due_date, paid_date, status FROM billing_event "
-            "WHERE amount IS NOT NULL AND COALESCE(balance,0) < amount - 0.005").fetchall()
+        prows = con.execute(
+            "SELECT qbo_txn_id, txn_date, customer, customer_id, total_amt, unapplied_amt, "
+            "method, ref_no, loaded_at FROM payment").fetchall()
     except sqlite3.OperationalError:
         return out
-    ap_open = {}    # open AP per project = what we still owe vendors on that job (money OUT)
-    try:
-        for r in con.execute("SELECT project_no, COALESCE(SUM(open_balance),0) o FROM ap_bill_line "
-                             "WHERE COALESCE(open_balance,0) > 0 AND project_no IS NOT NULL GROUP BY project_no"):
-            ap_open[r["project_no"]] = r["o"]
-    except sqlite3.OperationalError:
-        pass
+    if not prows:
+        return out
     try:            # project -> QBO customer id for the deep link (same source as the P&L/invoices)
         cust_of = {r["project_no"]: r["customer_id"] for r in con.execute(
             "SELECT project_no, customer_id FROM cost_line "
             "WHERE customer_id IS NOT NULL AND customer_id <> '' GROUP BY project_no")}
     except sqlite3.OperationalError:
         cust_of = {}
-    pays, recv_tot, paid_projects = [], 0.0, set()
-    for r in rows:
-        d = dict(r)
-        received = round((d["amount"] or 0) - (d["balance"] or 0), 2)
-        fully = (d["balance"] or 0) <= 0.005
-        d["received"] = received
-        d["fully_paid"] = fully
-        d["ap_due_out"] = round(ap_open.get(d["project_no"], 0.0), 2) if fully else None
-        d["cust_id"] = cust_of.get(d["project_no"])
-        recv_tot += received
-        if fully and d.get("project_no"):
-            paid_projects.add(d["project_no"])
-        pays.append(d)
-    pays.sort(key=lambda x: (x.get("paid_date") or x.get("txn_date") or ""), reverse=True)   # most recent first
+    apps_by_pay = {}
+    try:
+        for a in con.execute("SELECT payment_txn_id, invoice_txn_id, invoice_no, project_no, "
+                             "division, amount FROM payment_application"):
+            d = dict(a)
+            d["cust_id"] = cust_of.get(d["project_no"])       # project deep link
+            apps_by_pay.setdefault(a["payment_txn_id"], []).append(d)
+    except sqlite3.OperationalError:
+        pass
+    pays, recv_tot, links = [], 0.0, 0
+    for r in prows:
+        p = dict(r)
+        apps = apps_by_pay.get(p["qbo_txn_id"], [])
+        apps.sort(key=lambda x: (x.get("project_no") or "", x.get("invoice_no") or ""))
+        divs = {a.get("division") for a in apps if a.get("division")}
+        p["applications"] = apps
+        p["invoice_count"] = len(apps)
+        p["applied_total"] = round(sum(a.get("amount") or 0 for a in apps), 2)
+        p["division"] = next(iter(divs)) if len(divs) == 1 else ("Mixed" if divs else None)
+        recv_tot += p.get("total_amt") or 0
+        links += len(apps)
+        pays.append(p)
+    pays.sort(key=lambda x: (x.get("txn_date") or ""), reverse=True)      # most recent payment first
     out["payments"] = pays
     out["total_received"] = round(recv_tot, 2)
-    # AP due out across DISTINCT paid jobs (a job with 2 paid invoices is counted once).
-    out["ap_due_total"] = round(sum(ap_open.get(p, 0.0) for p in paid_projects), 2)
+    out["count"] = len(pays)
+    out["invoices_paid"] = links
+    out["loaded_at"] = pays[0].get("loaded_at") if pays else None
     return out
 
 

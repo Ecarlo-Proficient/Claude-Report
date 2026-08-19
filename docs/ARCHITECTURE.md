@@ -328,7 +328,7 @@ flowchart LR
 
     TEST[("WIP - MASTER new.xlsx\nTest tabs — the FINAL WIP\n(read-only source)")]:::src
     BT[("Bill Tracker.xlsx\nBills + Inventory\n(read-only source)")]:::src
-    SCHEMA["schema.sql\nspine: project · cost_code · budget_line ·\ncost_line · billing_event · wip_snapshot ·\nap_bill_line · customer · sales_touch  (SQLite + Postgres)"]:::tool
+    SCHEMA["schema.sql\nspine: project · cost_code · budget_line ·\ncost_line · billing_event · payment · payment_application ·\nwip_snapshot · ap_bill_line · customer · sales_touch  (SQLite + Postgres)"]:::tool
     LOADER["load_wip_master.py\nCP←Test-CP · RP←Test-RP · MFD←Test-Master\nfilter to real project #s · idempotent upsert"]:::tool
     APLOAD["load_bill_tracker.py\nAP pay status + lien clock → ap_bill_line\n(NOT cost truth — subs excluded)"]:::tool
     DB[("ledger.sqlite3\nproject + wip_snapshot + ap_bill_line\n→ v_wip_latest · v_ap_by_project")]:::out
@@ -364,6 +364,8 @@ flowchart LR
     QBO --> SUBLOCLOAD
     SUBLOCENG -.->|"compute()"| SUBLOCLOAD
     SUBLOCLOAD ==>|"sub_loc_event · sub_loc_run"| DB
+    PAYLOAD["load_payments.py\nQBO Payment txns → payment + payment_application\n(money IN, each with the invoices it paid)\nresolves invoice # / project by id · --selftest"]:::tool
+    QBO --> PAYLOAD ==>|"payment · payment_application"| DB
     FUTURE -.-> DB
 ```
 

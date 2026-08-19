@@ -790,15 +790,36 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     Status · AP due out in red). Verified live: 275 payments, $12.6M received, 248 paid in full, $4.13M AP
     due out; no console errors. (Per-invoice payment status, not individual QBO Payment txns - fine for v1.)
 
+  - **Payments REDESIGN → payment-as-transaction (owner, 2026-08-19: "just the payment as a transaction then
+    see below as grouped the invoices it pays, it's simple").** Rebuilt off the actual QBO **Payment** objects,
+    not invoice rows (billing_event is invoice-level, so a cheque paying N draws was not reconstructable there -
+    it is only a real thing in the Payment's `Line[].LinkedTxn`). NEW loader **`load_payments.py`** pulls Payment
+    txns (rolling window, default 12 months) → two spine tables **`payment`** (the transaction: date · customer ·
+    total · ref#/method · unapplied) + **`payment_application`** (one row per invoice a payment paid, with the
+    applied amount). Each linked invoice is resolved to its invoice # / project via `billing_event`, then - for the
+    ones that aged out of the tracker (billing_event holds only ~351 open/recent) - **by a second QBO pull of those
+    invoices by Id** (`shared.qbo_api.extract_proj` → project/division). Idempotent full-replace; read-only on QBO;
+    `--selftest` offline. `_fetch_payments` returns each payment with its `applications[]` nested; `renderPayments`
+    renders a collapsible **payment header** (green, → QBO customer) with the **invoice rows grouped beneath**
+    (invoice# → QBO · project# → QBO · division · applied $), default expanded, Collapse-all. Verified live:
+    **846 payments · $38.67M received · 1,415 invoice links (100% resolved)**; multi-invoice payments group
+    correctly (one cheque → up to 32 invoices); no console errors. Supersedes the per-invoice v1 above (AP-due-out
+    dropped per "it's simple").
+
   - **Project P&L: status column + sort dropdown + status filter (owner, 2026-08-19).** `_portfolio_pnl` now
     returns ALL jobs with a `status` + `active` flag (company/division TOTALS stay active-only). Frontend:
     a **Status column** (green Active / dim Closed·Complete), a **status filter** (default Active only; All;
     Closed only), and a real **sort dropdown** (worst/best margin · most earned · most cost · biggest contract
     · project #) alongside the clickable headers. Verified live: 170 rows (137 active shown by default, 33
     Closed under the filter), sort re-orders, no console errors. STATUS SOURCE: **CP = Test-CP** (Active/
-    Closed/Complete), **MFD = Test-Master** (blank -> Active by construction). **RP GAP: all 119 RP read
-    "Active"** because RP closure lives in the SCHEDULE, which isn't loaded - loading the schedule (rp_wip_reader
-    knows it) to mark RP jobs closed is the follow-up. See [[ledger-expansion-backlog]].
+    Closed/Complete), **MFD = Test-Master** (blank -> Active by construction). **RP: all 119 read "Active"
+    because the RP source (Test-RP) is active-only by construction - closed RP jobs drop OUT of the WIP master
+    entirely, so there is no "Closed" RP row to load.** CORRECTION (owner, 2026-08-19: "was already done...
+    schedule is mounted?"): the daily SCHEDULE *is* mounted (`/Volumes/Common/OPERATIONS/SCHEDULE`,
+    `shared/schedule.py` reads it) and its per-job on-schedule mark IS already in the ledger as
+    `wip_snapshot.mark_schedule` (✓ 77 / ✗ 42) - it was never "not loaded". So the finer RP signal (on the
+    crew schedule vs off) already exists; a true Active/Closed for RP would mean loading closed RP jobs from a
+    source that carries them (not the active-only Test-RP). See [[ledger-expansion-backlog]].
 
 ## IN PROGRESS
 - **Lien-mark workbook mirror (Phase 2 above):** add the `bill_marks.resolve_lien` call to
