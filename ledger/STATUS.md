@@ -780,6 +780,16 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     due out under a fully-paid invoice - needs a payment feed; built next). Verified live: all 15 tabs route,
     group/sub highlight, no console errors. See [[ledger-expansion-backlog]].
 
+  - **Payments page (owner, 2026-08-19).** Every invoice the GC has paid (full or part): received =
+    gross - open balance; when **fully paid**, **AP due out** = the open `ap_bill_line` on that project (the
+    vendor cash to send out now). `load_invoices` now captures the tracker's **Paid Date** (billing_event
+    `paid_date` col + ALTER migration); `_fetch_payments` joins billing_event (balance < amount) to the AP
+    open-per-project and the `cost_line` customer_id (project# -> QBO). `ap_due_total` sums DISTINCT paid
+    jobs (a job with 2 paid invoices counts once). Frontend `renderPayments`: KPIs (received / count / paid-in-
+    full / AP due out) + a table (Paid · Client · Project# → QBO · Invoice# → QBO · Invoiced · Received ·
+    Status · AP due out in red). Verified live: 275 payments, $12.6M received, 248 paid in full, $4.13M AP
+    due out; no console errors. (Per-invoice payment status, not individual QBO Payment txns - fine for v1.)
+
 ## IN PROGRESS
 - **Lien-mark workbook mirror (Phase 2 above):** add the `bill_marks.resolve_lien` call to
   `bill-tracker/excel_bill_sync.py`'s Lien preservation once that file has no foreign uncommitted changes.

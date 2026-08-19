@@ -189,6 +189,7 @@ let DRAWS = { draws: [], total: 0 };
 let SALES = { pipeline: [], by_rep: [], warm: [], customers: [], totals: {} };
 let SUBLOC = { summary: null, divisions: {}, projects: [], open_by_project: {}, events: [] };
 let OI = { as_of: null, buckets: ["Current", "1-30", "31-60", "61-90", "90+"], invoices: [] };  // open AR invoices (aging tab)
+let PAY = { payments: [], total_received: 0, ap_due_total: 0 };   // received AR payments + AP due out
 let costCollapsed = new Set();   // collapsed cost-type parents (default: all collapsed)
 let drawsCollapsed = new Set();  // collapsed draw cards (default: all collapsed)
 let drawsExpanded = new Set();   // draws whose bills are expanded in the table (default: none)
@@ -277,6 +278,7 @@ async function load(isAuto) {
   SALES = data.sales || { pipeline: [], by_rep: [], warm: [], customers: [], totals: {} };
   SUBLOC = data.sub_loc || { summary: null, divisions: {}, projects: [], open_by_project: {}, events: [] };
   OI = data.open_invoices || { as_of: null, buckets: ["Current", "1-30", "31-60", "61-90", "90+"], invoices: [] };
+  PAY = data.payments || { payments: [], total_received: 0, ap_due_total: 0 };
   PNL = null;   // recompute the portfolio P&L on next open (data just changed)
   // Big-picture first: collapse everything by default; the user expands to zoom in.
   // On a live auto-refresh, preserve what the user has already expanded.
@@ -1910,16 +1912,54 @@ function renderCustomers() {
   if (!rows.length) { const tr = document.createElement("tr"); const td = document.createElement("td"); td.colSpan = 4; td.className = "left"; td.style.color = "var(--text-dim)"; td.style.padding = "14px 12px"; td.textContent = "No open AR - run load_invoices.py."; tr.appendChild(td); tb.appendChild(tr); }
 }
 
-// ══ PAYMENTS (stub - built next) ═════════════════════════════════════════════
+// ══ PAYMENTS ═════════════════════════════════════════════════════════════════
+// Received AR payments (invoices the GC has paid in full or part). When an invoice is
+// fully paid, "AP due out" = the vendor bills still open on that job - the cash to send out.
 function renderPayments() {
   const body = $("#payBody"); if (!body) return;
-  { const n = $("#payNote"); if (n) n.textContent = "- coming next"; }
+  const pays = PAY.payments || [];
+  { const n = $("#payNote"); if (n) n.textContent = pays.length ? `(${pays.length} · ${money(PAY.total_received)} received)` : "(no payment data - run load_invoices.py)"; }
   body.innerHTML = "";
-  const p = document.createElement("p"); p.className = "hint"; p.style.padding = "8px 18px 18px";
-  p.innerHTML = "<b>Coming next:</b> every payment you've received, and when one <b>fully pays an invoice</b>, "
-    + "the AP we still owe out under that draw (the vendor bills on the project). Needs a payment feed "
-    + "(QBO payments or the tracker's paid dates) - I'll wire it up in the next pass.";
-  body.appendChild(p);
+  const stats = document.createElement("div"); stats.className = "kpi-row";
+  const fully = pays.filter(p => p.fully_paid).length;
+  for (const [l, v] of [["Received", money(PAY.total_received)], ["Payments", String(pays.length)],
+                        ["Paid in full", String(fully)], ["AP due out (paid jobs)", money(PAY.ap_due_total)]]) {
+    const k = el2("div", "kpi"); k.appendChild(el2("div", "k-label", l)); k.appendChild(el2("div", "k-value", v)); stats.appendChild(k);
+  }
+  body.appendChild(stats);
+  const hint = document.createElement("p"); hint.className = "hint";
+  hint.innerHTML = "Every invoice the GC has paid (full or part). When one is <b>paid in full</b>, <b>AP due out</b> "
+    + "is what you still owe vendors on that job - the cash that just freed up should go out. Invoice # and project # open QuickBooks.";
+  body.appendChild(hint);
+  const wrap = document.createElement("div"); wrap.className = "table-scroll";
+  const table = document.createElement("table"); table.className = "grid"; table.id = "payTable";
+  table.innerHTML = "<thead></thead><tbody></tbody>"; wrap.appendChild(table); body.appendChild(wrap);
+  const tb = buildHead("#payTable", [["Paid", "left"], ["Client", "left"], ["Project", "left"], ["Invoice #", "left"],
+    ["Invoiced", "right"], ["Received", "right"], ["Status", "left"], ["AP due out", "right"]]);
+  if (!tb) return; tb.innerHTML = "";
+  for (const p of pays) {
+    const tr = document.createElement("tr");
+    tr.appendChild(leftText(fmtDateShort(p.paid_date || p.txn_date)));
+    tr.appendChild(leftText(p.customer || "–"));
+    const pc = document.createElement("td"); pc.className = "left"; const purl = qboCustomerUrl(p.cust_id);
+    if (purl && p.project_no) { const a = document.createElement("a"); a.href = purl; a.target = "_blank"; a.rel = "noopener"; a.className = "qbo-link"; a.textContent = p.project_no; a.title = "Open this project in QuickBooks"; pc.appendChild(a); }
+    else pc.appendChild(document.createTextNode(p.project_no || "–"));
+    tr.appendChild(pc);
+    tr.appendChild(qboLinkCell(p.doc_number, qboInvoiceUrl(p.qbo_txn_id), "Open this invoice in QuickBooks"));
+    tr.appendChild(rightText(money(p.amount)));
+    tr.appendChild(rightText(money(p.received)));
+    const st = document.createElement("td"); st.className = "left";
+    st.appendChild(stText(p.fully_paid ? "Paid in full" : "Partial", p.fully_paid ? "st-ok" : "st-warn"));
+    tr.appendChild(st);
+    const ap = document.createElement("td"); ap.className = "right";
+    if (p.fully_paid && p.ap_due_out != null) {
+      ap.textContent = money(p.ap_due_out);
+      if (p.ap_due_out > 0.005) { ap.style.color = "var(--neg)"; ap.style.fontWeight = "600"; ap.title = "Still owed to vendors on this job - pay it out"; }
+    }
+    tr.appendChild(ap);
+    tb.appendChild(tr);
+  }
+  if (!pays.length) { const tr = document.createElement("tr"); const td = document.createElement("td"); td.colSpan = 8; td.className = "left"; td.style.color = "var(--text-dim)"; td.style.padding = "14px 12px"; td.textContent = "No payments loaded - run load_invoices.py (it now captures Paid Date)."; tr.appendChild(td); tb.appendChild(tr); }
 }
 
 function renderSubLoc() {

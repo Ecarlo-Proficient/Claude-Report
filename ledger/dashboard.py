@@ -476,6 +476,52 @@ def _fetch_open_invoices(con) -> dict:
     return out
 
 
+def _fetch_payments(con) -> dict:
+    """Received AR payments: every invoice the GC has paid in full OR part, with the amount
+    received (gross - open balance) and, when FULLY paid, the AP still due OUT under that project
+    (the vendor bills you must now pay). Empty (not an error) if billing_event is unloaded."""
+    out = {"payments": [], "total_received": 0.0, "ap_due_total": 0.0}
+    try:
+        rows = con.execute(
+            "SELECT doc_number, qbo_txn_id, project_no, division, customer, amount, balance, "
+            "txn_date, due_date, paid_date, status FROM billing_event "
+            "WHERE amount IS NOT NULL AND COALESCE(balance,0) < amount - 0.005").fetchall()
+    except sqlite3.OperationalError:
+        return out
+    ap_open = {}    # open AP per project = what we still owe vendors on that job (money OUT)
+    try:
+        for r in con.execute("SELECT project_no, COALESCE(SUM(open_balance),0) o FROM ap_bill_line "
+                             "WHERE COALESCE(open_balance,0) > 0 AND project_no IS NOT NULL GROUP BY project_no"):
+            ap_open[r["project_no"]] = r["o"]
+    except sqlite3.OperationalError:
+        pass
+    try:            # project -> QBO customer id for the deep link (same source as the P&L/invoices)
+        cust_of = {r["project_no"]: r["customer_id"] for r in con.execute(
+            "SELECT project_no, customer_id FROM cost_line "
+            "WHERE customer_id IS NOT NULL AND customer_id <> '' GROUP BY project_no")}
+    except sqlite3.OperationalError:
+        cust_of = {}
+    pays, recv_tot, paid_projects = [], 0.0, set()
+    for r in rows:
+        d = dict(r)
+        received = round((d["amount"] or 0) - (d["balance"] or 0), 2)
+        fully = (d["balance"] or 0) <= 0.005
+        d["received"] = received
+        d["fully_paid"] = fully
+        d["ap_due_out"] = round(ap_open.get(d["project_no"], 0.0), 2) if fully else None
+        d["cust_id"] = cust_of.get(d["project_no"])
+        recv_tot += received
+        if fully and d.get("project_no"):
+            paid_projects.add(d["project_no"])
+        pays.append(d)
+    pays.sort(key=lambda x: (x.get("paid_date") or x.get("txn_date") or ""), reverse=True)   # most recent first
+    out["payments"] = pays
+    out["total_received"] = round(recv_tot, 2)
+    # AP due out across DISTINCT paid jobs (a job with 2 paid invoices is counted once).
+    out["ap_due_total"] = round(sum(ap_open.get(p, 0.0) for p in paid_projects), 2)
+    return out
+
+
 def _fetch_costs(con) -> dict:
     """QBO cost rollups from cost_line; empty (not an error) if unloaded."""
     out = {"by_code": [], "by_project_code": {}, "by_project": {}, "loaded_total": 0}
@@ -835,6 +881,7 @@ def fetch_data(db_path: Path) -> dict:
         sales = _fetch_sales(con)
         sub_loc = _fetch_sub_loc(con)
         open_invoices = _fetch_open_invoices(con)
+        payments = _fetch_payments(con)
         actions = _fetch_actions(con)
         freshness = _freshness(con)
         try:                                # realm for company-scoped QBO deep links (never logged)
@@ -870,6 +917,7 @@ def fetch_data(db_path: Path) -> dict:
         "sales": sales,
         "sub_loc": sub_loc,
         "open_invoices": open_invoices,
+        "payments": payments,
     }
 
 

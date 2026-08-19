@@ -145,6 +145,7 @@ def parse_invoice_page(page: dict, division_default: str | None = None,
         "txn_date": _prop(props, "Date"),
         "status": _prop(props, "Status"),          # Unpaid | Partially Paid | Paid
         "due_date": _prop(props, "Due Date"),
+        "paid_date": _prop(props, "Paid Date"),
         "net_terms": _prop(props, "Net Terms"),
         "aging_bucket": _prop(props, "Aging Bucket"),
         "litigation": 1 if _prop(props, "Litigation") else 0,
@@ -186,7 +187,7 @@ def load_customer_titles(nc) -> dict:
 
 
 _COLS = ["qbo_txn_id", "doc_number", "project_no", "division", "customer", "memo",
-         "amount", "balance", "txn_date", "status", "due_date", "net_terms",
+         "amount", "balance", "txn_date", "status", "due_date", "paid_date", "net_terms",
          "aging_bucket", "litigation", "lien_status", "lien_notice",
          "draw_period", "source", "loaded_at"]
 
@@ -215,7 +216,7 @@ def _migrate_billing_event(con) -> None:
     # (CREATE TABLE IF NOT EXISTS won't add columns to an existing table).
     add = [("due_date", "TEXT"), ("net_terms", "TEXT"), ("aging_bucket", "TEXT"),
            ("litigation", "INTEGER NOT NULL DEFAULT 0"), ("lien_status", "TEXT"),
-           ("lien_notice", "TEXT")]
+           ("lien_notice", "TEXT"), ("paid_date", "TEXT")]
     for name, decl in add:
         if cols and name not in cols:
             con.execute(f"ALTER TABLE billing_event ADD COLUMN {name} {decl}")
@@ -261,6 +262,7 @@ def _invoice_from_qbo(inv: dict) -> dict:
         "txn_date": inv.get("TxnDate"),
         "status": status,
         "due_date": inv.get("DueDate"),
+        "paid_date": None,
         "net_terms": None,
         "aging_bucket": None,
         "litigation": 0,

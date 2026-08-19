@@ -103,6 +103,7 @@ CREATE TABLE IF NOT EXISTS billing_event (
     litigation      INTEGER NOT NULL DEFAULT 0,  -- 1 = in litigation (shown, but flagged off the clean aging)
     lien_status     TEXT,                        -- related Lien Tracker Status (Mailed/Lien/Paid/...) or NULL
     lien_notice     TEXT,                        -- related Lien Tracker Notice Type (RP/CP/MFD Notice, Intent to Lien...)
+    paid_date       TEXT,                        -- Paid Date from the tracker (when the GC paid; drives the Payments tab)
     draw_period     TEXT,                        -- from PrivateNote (the QBO custom field is unreachable)
     source          TEXT NOT NULL DEFAULT 'qbo_invoice',
     loaded_at       TEXT NOT NULL
