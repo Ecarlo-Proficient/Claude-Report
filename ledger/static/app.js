@@ -1192,6 +1192,11 @@ let activeBillView = "open";
 let billsCollapsed = new Set();   // group keys the owner has collapsed (caret / Collapse-all)
 let billGroupKeys = [];           // group keys currently on screen (drives the Collapse/Expand-all button)
 const BILL_LIEN_RISK = new Set(["Notice PAST due", "Notice due in ≤7d", "Lien Filed"]);
+// A row goes RED only when a notice/lien ACTUALLY EXISTS on the bill (owner 2026-08-19:
+// "it's when there is a notice or lien filed that we should make red") - NOT merely because a
+// computed deadline passed. The deadline urgency still shows in the lien CELL colour; the red
+// row line means an actual notice was sent or a lien was filed against the job.
+const BILL_LIEN_ACTIVE = new Set(["Notice Sent", "Lien Filed"]);
 // Compact numeric date for the dense grid: MM/DD/YY (01/01/26). Still month-first (never
 // year-first). bill_date is ISO yyyy-mm-dd.
 function fmtDateShort(v) {
@@ -1279,9 +1284,42 @@ function buildBillFilters() {   // populate each select once from the data; pres
     if (spec.blank && bills.some(b => spec.get(b) === "")) { const o = document.createElement("option"); o.value = "__blank__"; o.textContent = spec.blank; el.appendChild(o); }
     el.value = prev; if (el.value !== prev) el.value = "";   // reset only if the old pick left the domain
   }
+  buildBillDateFilter();
 }
-function billFilterValues() { const f = {}; for (const spec of BILL_FILTERS) { const el = $(spec.sel); f[spec.sel] = el ? el.value : ""; } return f; }
+// Month → day date filter (Excel-style: pick the month first, then optionally a day within it).
+const _BMONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function billMonthLabel(ym) { const [y, m] = ym.split("-"); return `${_BMONTHS[+m - 1]} ${y}`; }
+function buildBillDateFilter() {
+  const bills = BILLS || [];
+  const monthEl = $("#bfMonth"), dayEl = $("#bfDay");
+  if (!monthEl || !dayEl) return;
+  const months = [...new Set(bills.map(b => String(b.bill_date || "").slice(0, 7)).filter(s => /^\d{4}-\d{2}$/.test(s)))].sort().reverse();  // newest first
+  const prevM = monthEl.value;
+  monthEl.innerHTML = "";
+  { const o = document.createElement("option"); o.value = ""; o.textContent = "All months"; monthEl.appendChild(o); }
+  for (const ym of months) { const o = document.createElement("option"); o.value = ym; o.textContent = billMonthLabel(ym); monthEl.appendChild(o); }
+  monthEl.value = prevM; if (monthEl.value !== prevM) monthEl.value = "";
+  // days present in the selected month (disabled until a month is picked, like Excel's drill-down)
+  const prevD = dayEl.value;
+  dayEl.innerHTML = "";
+  { const o = document.createElement("option"); o.value = ""; o.textContent = "All days"; dayEl.appendChild(o); }
+  const ym = monthEl.value;
+  if (ym) {
+    const days = [...new Set(bills.map(b => String(b.bill_date || "")).filter(d => d.slice(0, 7) === ym && /^\d{4}-\d{2}-\d{2}/.test(d)).map(d => d.slice(0, 10)))].sort();
+    for (const d of days) { const o = document.createElement("option"); o.value = d; o.textContent = `${_BMONTHS[+ym.slice(5, 7) - 1]} ${+d.slice(8, 10)}`; dayEl.appendChild(o); }
+    dayEl.disabled = false;
+  } else { dayEl.disabled = true; }
+  dayEl.value = prevD; if (dayEl.value !== prevD) dayEl.value = "";
+}
+function billFilterValues() {
+  const f = {}; for (const spec of BILL_FILTERS) { const el = $(spec.sel); f[spec.sel] = el ? el.value : ""; }
+  f["#bfMonth"] = $("#bfMonth") ? $("#bfMonth").value : "";
+  f["#bfDay"] = $("#bfDay") ? $("#bfDay").value : "";
+  return f;
+}
 function billPassesFilters(b, f) {
+  const mo = f["#bfMonth"]; if (mo && String(b.bill_date || "").slice(0, 7) !== mo) return false;
+  const dy = f["#bfDay"];   if (dy && String(b.bill_date || "").slice(0, 10) !== dy) return false;
   const v = f["#bfVendor"];   if (v && (b.vendor || "") !== v) return false;
   const d = f["#bfDivision"]; if (d === "__blank__" ? (b.division || "") !== "" : (d && (b.division || "") !== d)) return false;
   const p = f["#bfPay"];      if (p && (b.pay_status || "") !== p) return false;
@@ -1292,6 +1330,8 @@ function billPassesFilters(b, f) {
 }
 function billClearFilters() {
   for (const spec of BILL_FILTERS) { const el = $(spec.sel); if (el) el.value = ""; }
+  ["#bfMonth", "#bfDay"].forEach(s => { const el = $(s); if (el) el.value = ""; });
+  buildBillDateFilter();
   renderBills();
 }
 // Sort comparators. Rows are sorted BEFORE grouping, so within each group the order
@@ -1432,7 +1472,7 @@ function billGroupLabel(k, group) {
 }
 function billRow(b) {
   const tr = document.createElement("tr");
-  tr.className = "bill-row" + (BILL_LIEN_RISK.has(b.lien_status) ? " risk" : "");
+  tr.className = "bill-row" + (BILL_LIEN_ACTIVE.has(b.lien_status) ? " risk" : "");
   tr.style.cursor = "pointer";
   // Click the row (not a link / not a selectable money cell) → the invoice slides in on the right.
   tr.onclick = (e) => { if (e.target.closest(".cell") || e.target.closest("a")) return; openBillDetail(b); };
@@ -3315,6 +3355,9 @@ function init() {
   { const el = $("#vendorSearch"); if (el) el.addEventListener("input", renderVendors); }
   ["#lienFProj", "#lienFVendor", "#lienFInv", "#lienFName"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderLiens); });
   ["#bfVendor", "#bfDivision", "#bfPay", "#bfInv", "#bfAppr", "#bfLien", "#billSort"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("change", renderBills); });
+  // Month → day: picking a month repopulates the day list for that month (Excel drill-down), then renders.
+  { const m = $("#bfMonth"); if (m) m.addEventListener("change", () => { buildBillDateFilter(); renderBills(); }); }
+  { const d = $("#bfDay"); if (d) d.addEventListener("change", renderBills); }
   { const el = $("#billGroup"); if (el) el.addEventListener("change", () => {
     const grp = el.value;   // re-collapse under the new grouping (collapse stays the default)
     billsCollapsed = grp === "none" ? new Set() : new Set((BILLS || []).map(b => billGroupKey(b, grp)));

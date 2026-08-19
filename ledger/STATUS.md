@@ -857,6 +857,17 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     invoices show their affidavit date (4 past due = window closed, RP7466 has 27d left); retainage/Lien/None paths
     unchanged; no console errors.
 
+  - **Bills: red line means an actual notice/lien, + a month→day date filter (owner, 2026-08-19: "need
+    date filter by month first then specific day like Excel" · "the red line, why only put it in notice due?
+    it's when there is a notice or lien filed that we should make red").** (1) The red row line (`.risk`
+    left-border) now keys off **`BILL_LIEN_ACTIVE = {Notice Sent, Lien Filed}`** - an actual notice sent or lien
+    filed - NOT the computed deadline states (`BILL_LIEN_RISK`, which still drives the separate "Lien risk"
+    view). Verified live: 69 Notice-Sent bills all red, 249 Notice-PAST-due bills none red. The deadline urgency
+    still shows in the lien CELL colour. (2) NEW **Month + Day filters** lead the Bills filter bar: pick a month
+    (newest first) and the Day list populates with just that month's days (Excel-style drill-down; Day disabled
+    until a month is picked). Wired into `billPassesFilters` by `bill_date` prefix; Clear resets both. Verified:
+    July 2026 → 432 bills, then Jul 1 → 15.
+
   - **Project P&L: status column + sort dropdown + status filter (owner, 2026-08-19).** `_portfolio_pnl` now
     returns ALL jobs with a `status` + `active` flag (company/division TOTALS stay active-only). Frontend:
     a **Status column** (green Active / dim Closed·Complete), a **status filter** (default Active only; All;
