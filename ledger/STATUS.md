@@ -805,6 +805,13 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     **846 payments · $38.67M received · 1,415 invoice links (100% resolved)**; multi-invoice payments group
     correctly (one cheque → up to 32 invoices); no console errors. Supersedes the per-invoice v1 above (AP-due-out
     dropped per "it's simple").
+    **GC normalization (owner "Yes normalize for sure!").** QBO records a payment against the bare leaf customer,
+    which is often the project sub-customer (`RP6676-FTW`, `CP790 - HUNTER RANCH AMENITY`) - not the client. The
+    loader now pulls the QBO Customer hierarchy once (2,012 customers) and walks each payer's `ParentRef` to the
+    TOP parent = the GC, stored as `payment.parent_customer` / `parent_customer_id` (ALTER-migrated). The header
+    shows the GC (→ QBO), the project stays in the invoice sub-rows. All 846 payers resolved to a real GC (e.g.
+    RP6676-FTW → LONESTAR GREEN HOMES, CP790 → DL MEACHAM LP); root-walk stops at the deepest KNOWN ancestor so an
+    inactive parent (absent from the active-only pull) never crashes it.
 
   - **Project P&L: status column + sort dropdown + status filter (owner, 2026-08-19).** `_portfolio_pnl` now
     returns ALL jobs with a `status` + `active` flag (company/division TOTALS stay active-only). Frontend:

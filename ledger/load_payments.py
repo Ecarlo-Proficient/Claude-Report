@@ -55,6 +55,7 @@ DEFAULT_DB = paths.get_path(
 )
 
 _PAYMENT_COLS = ("qbo_txn_id", "txn_date", "customer", "customer_id",
+                 "parent_customer", "parent_customer_id",
                  "total_amt", "unapplied_amt", "method", "ref_no", "source", "loaded_at")
 _APP_COLS = ("payment_txn_id", "invoice_txn_id", "invoice_no",
              "project_no", "division", "amount")
@@ -86,7 +87,17 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     con = sqlite3.connect(db_path)
     con.row_factory = sqlite3.Row
     con.executescript(SCHEMA_SQL.read_text(encoding="utf-8"))   # CREATE TABLE IF NOT EXISTS → new tables land
+    _migrate_payment(con)
     return con
+
+
+def _migrate_payment(con) -> None:
+    """Add the parent-GC columns to a payment table made by an earlier schema.
+    (IF NOT EXISTS won't alter an existing table, so add them explicitly.)"""
+    cols = {r[1] for r in con.execute("PRAGMA table_info(payment)")}
+    for name in ("parent_customer", "parent_customer_id"):
+        if cols and name not in cols:
+            con.execute(f"ALTER TABLE payment ADD COLUMN {name} TEXT")
 
 
 def _cutoff(months: int) -> str:
@@ -98,6 +109,29 @@ def _cutoff(months: int) -> str:
         y -= 1
     day = min(today.day, 28)
     return dt.date(y, m, day).isoformat()
+
+
+def _customer_gc_map(query_all, access, company_id) -> dict:
+    """{customer_id → (gc_name, gc_id)}: every QBO customer resolved to the TOP of its
+    hierarchy - the GC. Payment CustomerRef.name is the bare leaf (often a project
+    sub-customer like 'RP6676-FTW'); its parent chain ends at the client (LONESTAR
+    GREEN HOMES). Customers are few, so one pull builds the whole map."""
+    cust = {}
+    for c in query_all(access, company_id, "Customer"):
+        cid = str(c.get("Id") or "")
+        if cid:
+            cust[cid] = (c.get("DisplayName") or "", str((c.get("ParentRef") or {}).get("value") or ""))
+
+    def root(i: str) -> str:
+        # climb to the top parent, but stop at the deepest KNOWN ancestor: an inactive
+        # parent won't be in this (active-only) pull, so never step onto a missing id.
+        seen = set()
+        while cust.get(i, ("", ""))[1] in cust and cust[i][1] and i not in seen:
+            seen.add(i)
+            i = cust[i][1]
+        return i
+
+    return {i: (cust[root(i)][0], root(i)) for i in cust}
 
 
 def _invoice_index(con) -> dict:
@@ -123,6 +157,8 @@ def _rows_from_payment(p: dict, inv_idx: dict) -> tuple[dict, list[dict]]:
         "txn_date": (p.get("TxnDate") or "")[:10] or None,
         "customer": cref.get("name"),
         "customer_id": cref.get("value"),
+        "parent_customer": None,        # filled from the QBO customer hierarchy in _load
+        "parent_customer_id": None,
         "total_amt": _num(p.get("TotalAmt")),
         "unapplied_amt": _num(p.get("UnappliedAmt")),
         "method": (p.get("PaymentMethodRef") or {}).get("name"),
@@ -157,6 +193,8 @@ def _load(con, months: int, dry_run: bool) -> int:
     from shared.qbo_api import load_credentials, query_all
     access, company_id = load_credentials()
     print("  authenticated.")                       # never echo the realm/company id (owner 2026-08-06)
+    gc_map = _customer_gc_map(query_all, access, company_id)
+    print(f"  mapped {len(gc_map)} customers to their parent GC.")
     raw = query_all(access, company_id, "Payment", f"TxnDate >= '{cutoff}'")
     print(f"  pulled {len(raw)} payments since {cutoff}.")
 
@@ -165,6 +203,9 @@ def _load(con, months: int, dry_run: bool) -> int:
         prow, arows = _rows_from_payment(p, inv_idx)
         if not prow["qbo_txn_id"]:
             continue
+        gc = gc_map.get(prow["customer_id"] or "")     # normalize the payer to the GC (parent of the project sub-customer)
+        if gc and gc[0]:
+            prow["parent_customer"], prow["parent_customer_id"] = gc
         payments.append(prow)
         apps.extend(arows)
 
@@ -235,15 +276,25 @@ def _selftest() -> int:
         prow, arows = _rows_from_payment(pay, _invoice_index(con))
         assert prow["total_amt"] == 150000.0 and prow["customer_id"] == "77", prow
         assert len(arows) == 2, arows
+        # parent-GC hierarchy walk: leaf 'RP1-JOB' (99) → parent 'Firestone' (77), 2 levels deep
+        fake_q = lambda a, c, e, where="": [
+            {"Id": "77", "DisplayName": "Firestone Building Co", "ParentRef": None},
+            {"Id": "99", "DisplayName": "RP1-JOB", "ParentRef": {"value": "77"}},
+        ]
+        gmap = _customer_gc_map(fake_q, None, None)
+        assert gmap["99"] == ("Firestone Building Co", "77"), gmap        # leaf resolves up to the GC
+        assert gmap["77"] == ("Firestone Building Co", "77"), gmap        # a top-level GC resolves to itself
+        prow["parent_customer"], prow["parent_customer_id"] = gmap["99"]
         got = {a["invoice_txn_id"]: a for a in arows}
         assert got["INV9"]["invoice_no"] == "34999" and got["INV9"]["project_no"] == "CP861", got
         assert got["INV_UNKNOWN"]["invoice_no"] is None, got            # unresolved still recorded by id
         assert got["INV9"]["amount"] == 100000.0 and got["INV_UNKNOWN"]["amount"] == 50000.0, got
         # write + grouped read-back
         now = "2026-08-19T00:00:00"
-        con.execute("INSERT INTO payment (qbo_txn_id, txn_date, customer, customer_id, total_amt, "
-                    "unapplied_amt, method, ref_no, source, loaded_at) VALUES "
-                    "(:qbo_txn_id,:txn_date,:customer,:customer_id,:total_amt,:unapplied_amt,:method,:ref_no,'qbo_payment',:loaded_at)",
+        con.execute("INSERT INTO payment (qbo_txn_id, txn_date, customer, customer_id, parent_customer, "
+                    "parent_customer_id, total_amt, unapplied_amt, method, ref_no, source, loaded_at) VALUES "
+                    "(:qbo_txn_id,:txn_date,:customer,:customer_id,:parent_customer,:parent_customer_id,"
+                    ":total_amt,:unapplied_amt,:method,:ref_no,'qbo_payment',:loaded_at)",
                     {**prow, "loaded_at": now})
         for a in arows:
             con.execute("INSERT INTO payment_application (payment_txn_id, invoice_txn_id, invoice_no, "

@@ -119,8 +119,10 @@ CREATE TABLE IF NOT EXISTS billing_event (
 CREATE TABLE IF NOT EXISTS payment (
     qbo_txn_id      TEXT PRIMARY KEY,            -- QBO Payment Id
     txn_date        TEXT,                        -- payment date (when the money came in)
-    customer        TEXT,                        -- CustomerRef.name (the GC / client who paid)
-    customer_id     TEXT,                        -- CustomerRef.value (QBO deep link)
+    customer        TEXT,                        -- CustomerRef.name (raw QBO leaf - often the project sub-customer)
+    customer_id     TEXT,                        -- CustomerRef.value (QBO deep link to the leaf)
+    parent_customer     TEXT,                    -- the GC: QBO customer hierarchy walked to its top parent
+    parent_customer_id  TEXT,                    -- the top parent's id (deep link to the GC)
     total_amt       NUMERIC,                     -- TotalAmt - the whole payment
     unapplied_amt   NUMERIC,                     -- UnappliedAmt - credit not yet on any invoice
     method          TEXT,                        -- PaymentMethodRef.name (Check / ACH / ...) if present

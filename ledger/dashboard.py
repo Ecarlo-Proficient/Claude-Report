@@ -486,8 +486,8 @@ def _fetch_payments(con) -> dict:
     out = {"payments": [], "total_received": 0.0, "count": 0, "invoices_paid": 0, "loaded_at": None}
     try:
         prows = con.execute(
-            "SELECT qbo_txn_id, txn_date, customer, customer_id, total_amt, unapplied_amt, "
-            "method, ref_no, loaded_at FROM payment").fetchall()
+            "SELECT qbo_txn_id, txn_date, customer, customer_id, parent_customer, parent_customer_id, "
+            "total_amt, unapplied_amt, method, ref_no, loaded_at FROM payment").fetchall()
     except sqlite3.OperationalError:
         return out
     if not prows:

@@ -1964,9 +1964,10 @@ function renderPayments() {
     left.appendChild(caret);
     const key = document.createElement("span"); key.className = "bg-key";
     key.appendChild(document.createTextNode(fmtDateShort(p.txn_date) + "  ·  "));
-    const curl = qboCustomerUrl(p.customer_id);
-    if (curl) { const a = document.createElement("a"); a.href = curl; a.target = "_blank"; a.rel = "noopener"; a.className = "qbo-link"; a.textContent = p.customer || "–"; a.title = "Open this customer in QuickBooks"; a.onclick = (e) => e.stopPropagation(); key.appendChild(a); }
-    else key.appendChild(document.createTextNode(p.customer || "–"));
+    const payer = p.parent_customer || p.customer || "–";        // the GC (parent), not the project sub-customer
+    const curl = qboCustomerUrl(p.parent_customer_id || p.customer_id);
+    if (curl) { const a = document.createElement("a"); a.href = curl; a.target = "_blank"; a.rel = "noopener"; a.className = "qbo-link"; a.textContent = payer; a.title = "Open this customer in QuickBooks"; a.onclick = (e) => e.stopPropagation(); key.appendChild(a); }
+    else key.appendChild(document.createTextNode(payer));
     const meta = [p.method, p.ref_no ? "#" + p.ref_no : null].filter(Boolean).join(" ");
     if (meta) { const m = document.createElement("span"); m.className = "bg-sub"; m.textContent = "  ·  " + meta; key.appendChild(m); }
     left.appendChild(key);
