@@ -169,9 +169,8 @@ def _portfolio_pnl(con) -> dict:
     rows, div = [], {}
     comp = {"earned": 0.0, "cost": 0.0, "overhead": 0.0, "net": 0.0, "billed": 0.0, "n": 0}
     for w in wip:
-        st = (w["status"] or "").lower()
-        if st not in ("", "active"):                 # skip Closed / Complete
-            continue
+        st_raw = (w["status"] or "").strip()
+        active = st_raw.lower() in ("", "active")    # blank = MFD (active by construction)
         p = w["project_no"]
         division = w["division"] or ("Multi Family" if p.startswith("MFD")
                    else "Commercial" if p.startswith("CP") else "Residential")
@@ -192,7 +191,10 @@ def _portfolio_pnl(con) -> dict:
                      "overhead": oh, "net": net,
                      "net_pct": (net / earned) if earned else None, "billed": b,
                      "client": client_of.get(p) or w["builder_or_gc"] or None,
-                     "cust_id": cust_of.get(p), "pnl_mtime": mtime})
+                     "cust_id": cust_of.get(p), "pnl_mtime": mtime,
+                     "status": st_raw or "Active", "active": active})
+        if not active:                               # Closed/Complete: shown + filterable, but OFF the totals
+            continue
         d = div.setdefault(division, {"division": division, "earned": 0.0, "cost": 0.0,
                                       "overhead": 0.0, "net": 0.0, "billed": 0.0, "n": 0})
         for k, v in (("earned", earned), ("cost", cost), ("overhead", oh), ("net", net), ("billed", b)):

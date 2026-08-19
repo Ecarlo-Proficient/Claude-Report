@@ -790,6 +790,16 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     Status · AP due out in red). Verified live: 275 payments, $12.6M received, 248 paid in full, $4.13M AP
     due out; no console errors. (Per-invoice payment status, not individual QBO Payment txns - fine for v1.)
 
+  - **Project P&L: status column + sort dropdown + status filter (owner, 2026-08-19).** `_portfolio_pnl` now
+    returns ALL jobs with a `status` + `active` flag (company/division TOTALS stay active-only). Frontend:
+    a **Status column** (green Active / dim Closed·Complete), a **status filter** (default Active only; All;
+    Closed only), and a real **sort dropdown** (worst/best margin · most earned · most cost · biggest contract
+    · project #) alongside the clickable headers. Verified live: 170 rows (137 active shown by default, 33
+    Closed under the filter), sort re-orders, no console errors. STATUS SOURCE: **CP = Test-CP** (Active/
+    Closed/Complete), **MFD = Test-Master** (blank -> Active by construction). **RP GAP: all 119 RP read
+    "Active"** because RP closure lives in the SCHEDULE, which isn't loaded - loading the schedule (rp_wip_reader
+    knows it) to mark RP jobs closed is the follow-up. See [[ledger-expansion-backlog]].
+
 ## IN PROGRESS
 - **Lien-mark workbook mirror (Phase 2 above):** add the `bill_marks.resolve_lien` call to
   `bill-tracker/excel_bill_sync.py`'s Lien preservation once that file has no foreign uncommitted changes.

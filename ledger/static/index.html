@@ -148,6 +148,17 @@
           <label class="fld"><span>Project #</span><input type="search" id="pnlFProj" placeholder="CP800" autocomplete="off"></label>
           <label class="fld"><span>Client</span><input type="search" id="pnlFClient" placeholder="Firestone" autocomplete="off"></label>
           <select id="pnlFDivision"><option value="">All divisions</option><option>Commercial</option><option>Multi Family</option><option>Residential</option></select>
+          <select id="pnlFStatus"><option value="active">Active only</option><option value="all">All statuses</option><option value="closed">Closed only</option></select>
+          <label class="fld"><span>Sort</span>
+            <select id="pnlSortSel">
+              <option value="worst">Worst margin</option>
+              <option value="best">Best margin</option>
+              <option value="earned">Most earned</option>
+              <option value="cost">Most cost</option>
+              <option value="contract">Biggest contract</option>
+              <option value="name">Project #</option>
+            </select>
+          </label>
         </div>
         <div class="table-scroll">
           <table class="grid clickable" id="pnlJobTable"><thead></thead><tbody></tbody></table>
