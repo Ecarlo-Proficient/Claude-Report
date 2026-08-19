@@ -149,13 +149,17 @@ def _portfolio_pnl(con) -> dict:
     so its jobs are active by construction); Closed/Complete are excluded. Same
     per-project math as _project_pnl, batched into 3 aggregate reads."""
     wip = list(con.execute(
-        "SELECT project_no, division, status, total_contract_price tcp, percent_complete pc "
-        "FROM v_wip_latest"))
+        "SELECT project_no, division, status, total_contract_price tcp, percent_complete pc, "
+        "builder_or_gc FROM v_wip_latest"))
     costs = {r["project_no"]: r["c"] for r in con.execute(
         "SELECT project_no, COALESCE(SUM(amount),0) c FROM cost_line GROUP BY project_no")}
     billed = {r["project_no"]: r["a"] for r in con.execute(
         "SELECT project_no, COALESCE(SUM(amount),0) a FROM billing_event "
         "WHERE project_no IS NOT NULL GROUP BY project_no")}
+    # Client (the GC) per project: the resolved parent from AR invoices, else the WIP builder.
+    client_of = {r["project_no"]: r["customer"] for r in con.execute(
+        "SELECT project_no, customer FROM billing_event "
+        "WHERE customer IS NOT NULL AND project_no IS NOT NULL GROUP BY project_no")}
     rows, div = [], {}
     comp = {"earned": 0.0, "cost": 0.0, "overhead": 0.0, "net": 0.0, "billed": 0.0, "n": 0}
     for w in wip:
@@ -173,10 +177,16 @@ def _portfolio_pnl(con) -> dict:
         oh = round((_OVERHEAD_MFD_COST * cost) if is_mfd else (_OVERHEAD_REV * earned), 2)
         net = round(earned - cost - oh, 2)
         b = billed.get(p, 0) or 0
+        try:                                             # ~4 stats/project (no glob) - cheap, cached client-side
+            mtime = pnl_paths.find_pnl(p).get("mtime")
+        except Exception:  # noqa: BLE001 - a path hiccup must never break the P&L
+            mtime = None
         rows.append({"proj": p, "division": division, "contract": contract,
                      "pct_complete": pc, "earned": earned, "cost": cost,
                      "overhead": oh, "net": net,
-                     "net_pct": (net / earned) if earned else None, "billed": b})
+                     "net_pct": (net / earned) if earned else None, "billed": b,
+                     "client": client_of.get(p) or w["builder_or_gc"] or None,
+                     "pnl_mtime": mtime})
         d = div.setdefault(division, {"division": division, "earned": 0.0, "cost": 0.0,
                                       "overhead": 0.0, "net": 0.0, "billed": 0.0, "n": 0})
         for k, v in (("earned", earned), ("cost", cost), ("overhead", oh), ("net", net), ("billed", b)):
@@ -231,7 +241,10 @@ def _pipelines():
             {"label": "Draft CP WIP", "script": "wip/cp_wip_reader.py", "args": [], "side": True},
             {"label": "Draft RP WIP", "script": "wip/rp_wip_reader.py", "args": [], "side": True},
         ]}},
-        {"key": "costs", "label": "Costs (QBO, 90d)", "steps": [
+        # Hidden as its own Console card (owner 2026-08-19 - costs belong in a future "Company P&L"
+        # view). It STAYS in the reload/all chains so Resync keeps costs fresh for the Project P&L
+        # (which reads cost_line); it just isn't a standalone button any more.
+        {"key": "costs", "label": "Costs (QBO, 90d)", "hidden": True, "steps": [
             {"label": "Pull costs (90d, Touch ID)", "script": "ledger/load_costs.py", "args": ["--active", "--since", since]},
         ]},
         {"key": "ap", "label": "AP - bills + liens", "steps": [
@@ -957,6 +970,8 @@ class Handler(BaseHTTPRequestHandler):
     def _pipelines_list(self):
         out = []
         for p in _pipelines():
+            if p.get("hidden"):        # kept in reload/all, just no standalone Console card
+                continue
             out.append({
                 "key": p["key"], "label": p["label"],
                 "steps": [{"label": s["label"], "side": bool(s.get("side"))} for s in p["steps"]],

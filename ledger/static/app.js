@@ -2268,20 +2268,24 @@ function renderPnl() {
   // by job — filterable + sortable (headers), click → detail
   const fProj = ($("#pnlFProj") ? $("#pnlFProj").value : "").trim().toLowerCase();
   const fDiv = $("#pnlFDivision") ? $("#pnlFDivision").value : "";
-  let shown = rows.filter(r => (!fProj || r.proj.toLowerCase().includes(fProj)) && (!fDiv || r.division === fDiv));
+  const fClient = ($("#pnlFClient") ? $("#pnlFClient").value : "").trim().toLowerCase();
+  let shown = rows.filter(r => (!fProj || r.proj.toLowerCase().includes(fProj))
+    && (!fDiv || r.division === fDiv)
+    && (!fClient || (r.client || "").toLowerCase().includes(fClient)));
   shown.sort((a, b) => { const k = pnlSort.key, av = a[k], bv = b[k];
     if (av == null) return 1; if (bv == null) return -1;
     return (av < bv ? -1 : av > bv ? 1 : 0) * pnlSort.dir; });
-  const cols = [["proj", "Project", "left"], ["division", "Division", "left"], ["contract", "Contract", "right"],
-    ["pct_complete", "%", "right"], ["earned", "Earned", "right"], ["cost", "Cost", "right"],
-    ["overhead", "Overhead", "right"], ["net", "Net", "right"], ["net_pct", "Net %", "right"]];
+  const cols = [["proj", "Project", "left"], ["division", "Division", "left"], ["client", "Client", "left"],
+    ["contract", "Contract", "right"], ["pct_complete", "%", "right"], ["earned", "Earned", "right"],
+    ["cost", "Cost", "right"], ["overhead", "Overhead", "right"], ["net", "Net", "right"],
+    ["net_pct", "Net %", "right"], ["pnl_mtime", "P&L updated", "right"]];
   const thead = $("#pnlJobTable thead"), tbody = $("#pnlJobTable tbody"); thead.innerHTML = ""; tbody.innerHTML = "";
   const htr = document.createElement("tr");
   for (const [key, label, al] of cols) {
     const th = document.createElement("th"); if (al === "left") th.className = "left";
     th.textContent = label + (pnlSort.key === key ? (pnlSort.dir < 0 ? " ▾" : " ▴") : "");
     th.style.cursor = "pointer";
-    th.onclick = () => { if (pnlSort.key === key) pnlSort.dir *= -1; else { pnlSort.key = key; pnlSort.dir = (key === "proj" || key === "division") ? 1 : -1; } renderPnl(); };
+    th.onclick = () => { if (pnlSort.key === key) pnlSort.dir *= -1; else { pnlSort.key = key; pnlSort.dir = (key === "proj" || key === "division" || key === "client") ? 1 : -1; } renderPnl(); };
     htr.appendChild(th);
   }
   thead.appendChild(htr);
@@ -2296,10 +2300,16 @@ function renderPnl() {
     }
     row.appendChild(leftText((known.has(r.proj) ? (open ? "▾ " : "▸ ") : "") + r.proj));
     row.appendChild(leftText(r.division));
+    { const c = leftText(r.client || "–"); c.style.color = r.client ? "" : "var(--text-dim)"; row.appendChild(c); }
     row.appendChild(rightText(money(r.contract))); row.appendChild(rightText(((r.pct_complete || 0) * 100).toFixed(0) + "%"));
     row.appendChild(rightText(money(r.earned))); row.appendChild(rightText(money(r.cost)));
     row.appendChild(rightText(money(r.overhead))); row.appendChild(rightText(money(r.net)));
     const pt = document.createElement("td"); pt.className = r.net >= 0 ? "pos" : "neg"; pt.textContent = pctTxt(r.net_pct); row.appendChild(pt);
+    // P&L updated = when this project's project-pnl Excel was last generated (owner 2026-08-19).
+    const upd = document.createElement("td"); upd.className = "right"; upd.style.color = "var(--text-dim)"; upd.style.fontSize = ".88em";
+    if (r.pnl_mtime) { upd.textContent = timeAgo(r.pnl_mtime); upd.title = "P&L Excel generated " + fmtDate(r.pnl_mtime, true); }
+    else { upd.textContent = "not generated"; upd.style.opacity = ".55"; }
+    row.appendChild(upd);
     tbody.appendChild(row);
     if (open) {
       const er = document.createElement("tr"); er.className = "pnl-expand-row";
@@ -3060,7 +3070,7 @@ function init() {
     if (sublocCollapsed.has(k)) sublocCollapsed.delete(k); else sublocCollapsed.add(k); applySublocSections(); });
   try { const bv = localStorage.getItem("proficient-ledger-billview"); if (bv && BILL_VIEWS.some(v => v.id === bv)) activeBillView = bv; } catch { /* ignore */ }
   ["#salesSearch", "#salesStage", "#salesDivision"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderSales); });
-  ["#pnlFProj", "#pnlFDivision"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderPnl); });
+  ["#pnlFProj", "#pnlFClient", "#pnlFDivision"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderPnl); });
   { const el = $("#btnClearLien"); if (el) el.onclick = () => { activeLien = null; renderLiens(); }; }
   { const el = $("#btnClearDrawStage"); if (el) el.onclick = () => { activeDrawStage = null; renderDraws(); }; }
   { const el = $("#homeDivision"); if (el) el.addEventListener("input", renderHome); }

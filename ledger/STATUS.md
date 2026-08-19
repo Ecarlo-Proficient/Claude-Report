@@ -745,8 +745,21 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     - **Sort now orders the client GROUPS** by the chosen key (Oldest-due-first really puts the oldest
       client on top), fixing the "says Oldest due first but shows Client A-Z" mismatch.
     - Verified live (v1.1.0): pill + clock render, litigation red/excluded, no Due column, group order.
-    - STILL PENDING (next): Project # -> QBO project page (needs the QBO customer id per project), and the
-      Project P&L batch (remove Costs card, rename to Project P&L, last-updated column, client filter).
+    - STILL PENDING (next): Project # -> QBO project page (needs the QBO customer id per project;
+      `shared/qbo_costs` already computes it from `CustomerRef.value` - persist it to `cost_line`).
+
+  - **Project P&L batch (owner, 2026-08-19).** Four asks on the P&L tab:
+    - **Costs card removed from the Console** - it's now `hidden` (kept in the reload/all chains so
+      Resync still refreshes costs for the P&L, which reads `cost_line`); it just isn't a standalone
+      button. Costs belong in a future "Company P&L" view (NOT built - owner "don't build, just remove").
+    - **Renamed the tab + heading "P&L" -> "Project P&L"** (reserving "Company P&L" for the period view).
+    - **"P&L updated" column** = when each project's project-pnl Excel was last generated
+      (`pnl_paths.find_pnl(p).mtime`, batched into `_portfolio_pnl` - ~4 stats/project, cached client-side);
+      shows "6d ago" / "not generated".
+    - **Client column + client filter** on the by-job table (client = the resolved GC from
+      `billing_event.customer`, fallback `v_wip_latest.builder_or_gc`). 134 of 137 active jobs resolve a client.
+    - Verified live (v1.1.0): heading, Client + P&L-updated columns, client filter (BEDROCK -> its jobs),
+      costs card gone from the Console, reload still runs load_costs, no console errors.
 
 ## IN PROGRESS
 - **Lien-mark workbook mirror (Phase 2 above):** add the `bill_marks.resolve_lien` call to

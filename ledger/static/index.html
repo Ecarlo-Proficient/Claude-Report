@@ -26,7 +26,7 @@
   <nav class="tabs" id="tabbar">
     <button class="tab" data-tabbtn="home">My view</button>
     <button class="tab" data-tabbtn="overview">Overview</button>
-    <button class="tab" data-tabbtn="pnl">P&amp;L</button>
+    <button class="tab" data-tabbtn="pnl">Project P&amp;L</button>
     <button class="tab" data-tabbtn="costs">Costs</button>
     <button class="tab" data-tabbtn="draws">Draws</button>
     <button class="tab" data-tabbtn="invoices">Invoices</button>
@@ -141,7 +141,7 @@
     <!-- ══════════════ TAB: P&L (portfolio — live per-job P&L + totals) ══════════════ -->
     <div class="tab-page" data-tab="pnl" hidden>
       <section class="widget">
-        <div class="widget-head"><h2>Company P&amp;L <span class="count" id="pnlNote"></span></h2></div>
+        <div class="widget-head"><h2>Project P&amp;L <span class="count" id="pnlNote"></span></h2></div>
         <div class="kpi-row" id="pnlTotals"></div>
         <p class="hint">Live from the ledger spine — <b>earned revenue</b> (contract × %complete) −
           <b>costs</b> (QBO, incl. subs) − <b>overhead</b> (10% of revenue; MFD 9% of costs). Reconciles
@@ -157,6 +157,7 @@
         <div class="widget-head"><h2>By job <span class="count" id="pnlJobNote">— click a header to sort · worst margin first</span></h2></div>
         <div class="filters">
           <label class="fld"><span>Project #</span><input type="search" id="pnlFProj" placeholder="CP800" autocomplete="off"></label>
+          <label class="fld"><span>Client</span><input type="search" id="pnlFClient" placeholder="Firestone" autocomplete="off"></label>
           <select id="pnlFDivision"><option value="">All divisions</option><option>Commercial</option><option>Multi Family</option><option>Residential</option></select>
         </div>
         <div class="table-scroll">
