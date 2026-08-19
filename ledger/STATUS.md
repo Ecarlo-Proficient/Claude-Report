@@ -842,6 +842,21 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     "API field reference - QBO codes → what they mean for us" section added to the vault's
     `04_integrations/quickbooks-online.md` (PaymentMethod values, Payment=money-in, leaf-vs-GC customer, invoice Balance).
 
+  - **Lien clock: two stages - notice, then the AFFIDAVIT deadline (owner, 2026-08-19: "if mailed at or before
+    deadline mark done and then move ... lien due ... research when Texas decides a notice cannot fork over to a
+    lien due to time passing").** Researched (Tex. Prop. Code Ch. 53, post-SB219): the real cutoff is the **lien
+    affidavit filing deadline = 15th of the 4th month (MFD/CP) / 3rd month (RP) after the work month** (§53.052) -
+    a FIXED date one month past the notice deadline, NOT 30 days from the mailing (the "~30 days" is coincidental).
+    `shared/lien_clock.py` gained `AFFIDAVIT_MONTHS`, `affidavit_deadline`, and `status_stage`; `lien_state` now
+    takes `lien_status=` (the Notion Lien Tracker status). When it's **Mailed/Sent**, the clock advances from the
+    notice deadline to the affidavit deadline (label prefixed **LIEN**, e.g. `LIEN Sep 15, 2026 · 27d` or
+    `LIEN PAST DUE · Aug 14, 2026` once the window closes); a **Lien/Paid/Released** status ends the clock; anything
+    else stays on the notice clock. Backward-compatible - callers passing no status are unchanged (money_bleeds uses
+    `notice_deadline` directly and is untouched). Wired in BOTH `ledger/dashboard.py` (Open Invoices) and
+    `invoice-sync/export_invoices_xlsx.py` (AR Aging Excel) so the site and workbook agree. Verified live: 5 Mailed
+    invoices show their affidavit date (4 past due = window closed, RP7466 has 27d left); retainage/Lien/None paths
+    unchanged; no console errors.
+
   - **Project P&L: status column + sort dropdown + status filter (owner, 2026-08-19).** `_portfolio_pnl` now
     returns ALL jobs with a `status` + `active` flag (company/division TOTALS stay active-only). Frontend:
     a **Status column** (green Active / dim Closed·Complete), a **status filter** (default Active only; All;

@@ -7,6 +7,14 @@ mirror. Update this in the SAME commit as any change to this tool.
 
 ## DONE / FINALIZED
 
+- **AR Aging lien clock now two-stage (2026-08-19).** `export_invoices_xlsx.py` passes the invoice's
+  Notion Lien Tracker status into `shared/lien_clock.lien_state(lien_status=...)`. Once a notice is
+  **Mailed**, the aging tab's lien cell advances from the notice deadline to the **lien-affidavit
+  deadline** (15th of the 4th month CP/MFD / 3rd month RP after the work month, § 53.052) - the real
+  "can no longer become a lien" cutoff, labelled `LIEN ...`. Same call the ledger dashboard makes, so
+  the workbook and site never drift. `lien_status` is now computed once and feeds both the column and
+  the clock.
+
 - **Aging tab visual hierarchy (2026-08-14, the user — "professional colors")** —
   the client/project bands were near-identical pale blues, so projects read as
   their own rows. Rebuilt as a high-contrast, stepped hierarchy where STRUCTURE is

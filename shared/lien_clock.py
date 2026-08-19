@@ -20,6 +20,25 @@ The deadlines
     Deadlines roll **BACKWARD** to the prior business day, never forward
     (weekends only here; holidays are not modelled).
 
+Two stages: notice, then affidavit
+-----------------------------------
+    The notice is only step one. The lien is actually perfected by FILING the
+    lien AFFIDAVIT, on its own clock (§ 53.052): by the **15th of the 4th month**
+    (commercial / MFD / CP) or the **15th of the 3rd month** (residential / RP)
+    after the work month. **That affidavit date - not 30 days after mailing - is
+    the point a mailed notice can no longer become a lien** (§ 53.053(c) accrues
+    the debt on the last day of the last work month; the affidavit deadline is a
+    FIXED 15th-of-the-month anchored to it, so mailing early does not move it).
+    It lands one calendar month after the notice deadline, which is where the
+    "~30 days" intuition comes from.
+
+    So once the notice is MAILED, this clock advances from the notice deadline to
+    the affidavit deadline. The advance is driven by the **Notion Lien Tracker
+    status** the caller passes (`lien_status=`): a "mailed/sent" status moves to
+    the affidavit clock (label prefixed `LIEN`); a "lien filed / paid / released"
+    status ends the clock. Callers that pass no status keep the notice-only
+    behaviour unchanged (money_bleeds, which has no Notion status, is unaffected).
+
 Work month = INVOICE month (the user 2026-07-16, settled — do not re-add a
 conservative offset). RP invoices go out the day the job finishes; draws bill
 their own work month. The first build used an earlier month "to be safe" and
@@ -53,6 +72,29 @@ from typing import NamedTuple, Optional, Tuple
 # Months after the work month in which notice is due, by division.
 NOTICE_MONTHS = {"MFD": 3, "CP": 3, "RP": 2}
 NOTICE_DAY = 15
+
+# Months after the work month by which the lien AFFIDAVIT must be filed (§ 53.052) -
+# always one month past the notice deadline. This is the real cutoff: once it passes,
+# a mailed notice can no longer be perfected into a lien.
+AFFIDAVIT_MONTHS = {"MFD": 4, "CP": 4, "RP": 3}
+
+# Notion Lien Tracker statuses → which stage of the clock the invoice is in.
+#   'sent' = the notice went out → advance to the affidavit clock.
+#   'done' = the lien is filed or the matter is closed → the clock is finished.
+# Anything else (Ready to Mail, In progress, blank, …) is still on the notice clock.
+_STATUS_SENT = {"mailed", "notice sent", "sent", "served", "intent to lien"}
+_STATUS_DONE = {"lien", "lien filed", "filed", "affidavit filed",
+                "released", "paid", "resolved", "collected"}
+
+
+def status_stage(status: Optional[str]) -> Optional[str]:
+    """A Notion Lien Tracker status → 'sent' | 'done' | None (still on the notice clock)."""
+    s = (status or "").strip().lower()
+    if s in _STATUS_DONE:
+        return "done"
+    if s in _STATUS_SENT:
+        return "sent"
+    return None
 
 # Retainage runs off a different clock: notice due 30 days after the invoice date
 # (the user 2026-08-12). Invoiced at completion, so invoice date + 30 = § 53.057.
@@ -111,6 +153,17 @@ def notice_deadline(work_year: int, work_month: int, division: str) -> dt.date:
     return roll_back_weekend(dt.date(y, m, NOTICE_DAY))
 
 
+def affidavit_deadline(work_year: int, work_month: int, division: str) -> dt.date:
+    """The date the lien AFFIDAVIT must be FILED by (§ 53.052) - the point a mailed
+    notice can no longer become a lien. 15th of the (4th commercial / 3rd residential)
+    month after the work month, rolled back off weekends. A FIXED date anchored to the
+    work month, NOT 30 days from the mailing. Unknown division → the shorter residential
+    clock (erring toward the earlier date is the safe direction for a deadline)."""
+    n = AFFIDAVIT_MONTHS.get(division, AFFIDAVIT_MONTHS["RP"])
+    y, m = add_months(work_year, work_month, n)
+    return roll_back_weekend(dt.date(y, m, NOTICE_DAY))
+
+
 def is_retainage_text(*texts: str) -> bool:
     return any(RETAINAGE_RE.search(t) for t in texts if t)
 
@@ -165,25 +218,45 @@ def lien_state(
     *,
     memo: str = "",
     note: str = "",
+    lien_status: Optional[str] = None,
 ) -> LienState:
-    """The lien-notice position of one open invoice.
+    """The lien position of one open invoice, across BOTH stages of the clock.
 
     `memo` and `note` are free text (the QBO memo and the collections clerk's
     Quick Status) used to spot retainage and an already-sent notice. Both are
     text heuristics — a retainage invoice whose memo doesn't say "retainage"
     will be given a monthly deadline it may not be governed by.
+
+    `lien_status` is the Notion Lien Tracker status. When it says the notice was
+    MAILED, the clock advances from the notice deadline to the lien-AFFIDAVIT
+    deadline (`LIEN`-prefixed label) - the real "can no longer become a lien"
+    cutoff. When it says the lien is filed / paid / released, the clock is done.
+    Omit it (or None) to keep the notice-only behaviour.
     """
     if invoice_date is None:
         return LienState(STATE_OK, None, None, "")
 
-    if notice_already_sent(note, memo):
-        return LienState(STATE_SENT, None, None, "Notice sent")
+    stage = status_stage(lien_status)
+    if stage == "done":
+        # lien filed or matter closed - the Notion status pill tells the story; no pending clock.
+        return LienState(STATE_SENT, None, None, "")
 
     if is_retainage_text(memo, note):
+        if stage == "sent" or notice_already_sent(note, memo):
+            return LienState(STATE_SENT, None, None, "Notice sent")
         # Retainage notice is due 30 days after the invoice date (the user
         # 2026-08-12). Dated and banded like everything else, off its own clock;
         # the 'RET' prefix marks which clock it is.
         return _band(retainage_deadline(invoice_date), today, prefix="RET")
+
+    if stage == "sent":
+        # Notice mailed → advance to the lien-affidavit clock (the real cutoff).
+        aff = affidavit_deadline(invoice_date.year, invoice_date.month, division)
+        return _band(aff, today, prefix="LIEN")
+
+    if notice_already_sent(note, memo):
+        # Legacy text heuristic (no Notion status): a note that the notice went out.
+        return LienState(STATE_SENT, None, None, "Notice sent")
 
     deadline = notice_deadline(invoice_date.year, invoice_date.month, division)
     return _band(deadline, today)

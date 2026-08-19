@@ -216,6 +216,10 @@ def _aging_record(
     prev_draw, vendor_status, vendor_bills, vendor_amount, this_amount = vendor_cells(
         division, invoice_num, vendor_map, chains
     )
+    # Notion Lien Tracker status (resolved via the invoice's `Lien` relation). Computed once:
+    # it drives BOTH the lien-status column and the lien CLOCK (a Mailed status advances the
+    # clock to the affidavit deadline), so the workbook matches the dashboard exactly.
+    lien_status = liens.short(liens.for_invoice(props, lien_index or {})[0])
 
     return {
         # Page id so an absorbed note can be mirrored up to this invoice's Notion
@@ -249,11 +253,12 @@ def _aging_record(
             division, _date_value(props.get("Date")), today,
             memo=_text(props.get("Memo")),
             note=_text(props.get("Quick Status")),
+            lien_status=lien_status,
         ),
         # Notion Lien Tracker status, resolved via the invoice's `Lien` relation - the SAME
         # value the dashboard's Open Invoices Lien column shows, so the two never drift.
         # Short label; blank when no lien row is linked to the invoice.
-        "lien_status": liens.short(liens.for_invoice(props, lien_index or {})[0]),
+        "lien_status": lien_status,
         "notes": _text(props.get("Quick Status")),
         "last_action": _date_value(props.get("Last Action Date")),
         # Deep link to the invoice in QBO, written by the sync. The aging tab

@@ -467,7 +467,11 @@ def _fetch_open_invoices(con) -> dict:
                 inv_date = _dt.date.fromisoformat(tx)
             except ValueError:
                 inv_date = None
-        ls = lien_clock.lien_state(div_code, inv_date, today, memo=(d.get("memo") or ""))
+        # The Notion Lien Tracker status advances the clock: once the notice is Mailed, it moves
+        # from the notice deadline to the lien-AFFIDAVIT deadline (the real cutoff); a filed/paid
+        # status ends it. Same call the AR Aging Excel makes, so the site and workbook agree.
+        ls = lien_clock.lien_state(div_code, inv_date, today, memo=(d.get("memo") or ""),
+                                   lien_status=d.get("lien_status"))
         d["lien_due_label"] = ls.label or None
         d["lien_due_state"] = ls.state
         d["cust_id"] = cust_of.get(proj)             # project# → QBO customerdetail deep link
