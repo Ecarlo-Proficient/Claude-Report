@@ -190,7 +190,7 @@ let SALES = { pipeline: [], by_rep: [], warm: [], customers: [], totals: {} };
 let SUBLOC = { summary: null, divisions: {}, projects: [], open_by_project: {}, events: [] };
 let OI = { as_of: null, buckets: ["Current", "1-30", "31-60", "61-90", "90+"], invoices: [] };  // open AR invoices (aging tab)
 let PAY = { payments: [], total_received: 0, count: 0, invoices_paid: 0 };   // received payments, each with the invoices it paid
-let paymentsCollapsed = new Set();   // payment ids collapsed (default: all expanded, so the invoices show)
+let paymentsExpanded = new Set();   // payment ids expanded to show their invoices (default: all collapsed - scannable list)
 let costCollapsed = new Set();   // collapsed cost-type parents (default: all collapsed)
 let drawsCollapsed = new Set();  // collapsed draw cards (default: all collapsed)
 let drawsExpanded = new Set();   // draws whose bills are expanded in the table (default: none)
@@ -202,13 +202,13 @@ const NAV_GROUPS = [
   { id: "home",       label: "My view",       tabs: ["home"] },
   { id: "overview",   label: "Overview",      tabs: ["overview"] },
   { id: "financials", label: "Financials",    tabs: ["pnl", "costs"] },
-  { id: "customers",  label: "Customers",     tabs: ["customers", "invoices", "draws", "payments", "sales"] },
-  { id: "vendors",    label: "Vendor Center", tabs: ["vendors", "bills", "subloc", "liens"] },
+  { id: "customers",  label: "Customer",      tabs: ["customers", "invoices", "draws", "payments", "sales"] },
+  { id: "vendors",    label: "Vendor",        tabs: ["vendors", "bills", "subloc", "liens"] },
   { id: "it",         label: "IT",            tabs: ["systems", "console"] },
 ];
 const TAB_LABELS = {
   home: "My view", overview: "Overview", pnl: "Project P&L", costs: "Costs",
-  customers: "Customers", invoices: "Invoices", draws: "Draws", payments: "Payments", sales: "Sales Outreach",
+  customers: "Customer Center", invoices: "Invoices", draws: "Draws", payments: "Payments", sales: "Sales Outreach",
   vendors: "Vendor Center", bills: "Bills", subloc: "Sub LOC", liens: "Liens",
   systems: "Systems", console: "Console",
 };
@@ -1882,46 +1882,84 @@ function invClearFilters() {
   renderOpenInvoices();
 }
 
-// ══ CUSTOMERS ═══════════════════════════════════════════════════════════════
-// Top current clients by OPEN AR (what they still owe), aggregated from the open
-// invoices. Click a client to jump to the Invoices tab filtered to them.
+// ══ CUSTOMER CENTER ══════════════════════════════════════════════════════════
+// Top clients by OPEN AR (what they still owe), grouped PER DIVISION - so you see
+// who the big clients are in Commercial vs Residential vs Multi Family, not just
+// one "biggest" overall. Click a client to jump to Invoices filtered to them.
+const CUST_DIV_ORDER = ["Commercial", "Residential", "Multi Family"];
 function renderCustomers() {
   const invs = OI.invoices || [];
-  const by = new Map();
+  const byDiv = new Map();               // division -> Map(client -> {open, n, oldest})
   for (const i of invs) {
+    const div = i.division || "(no division)";
     const c = i.customer || "(no client)";
-    const e = by.get(c) || { client: c, open: 0, n: 0, oldest: null };
+    if (!byDiv.has(div)) byDiv.set(div, new Map());
+    const m = byDiv.get(div);
+    const e = m.get(c) || { client: c, open: 0, n: 0, oldest: null };
     e.open += oiBal(i); e.n += 1;
     if (i.due_date && (!e.oldest || i.due_date < e.oldest)) e.oldest = i.due_date;
-    by.set(c, e);
+    m.set(c, e);
   }
-  const rows = [...by.values()].sort((a, b) => b.open - a.open);
-  const total = rows.reduce((t, r) => t + r.open, 0);
-  { const n = $("#custNote"); if (n) n.textContent = rows.length ? `(${rows.length} clients · ${money(total)} open)` : "(no AR data - load invoices)"; }
+  // stable division order: the three known ones first, then any extras by open $ desc
+  const order = [...byDiv.keys()].sort((a, b) => {
+    const ia = CUST_DIV_ORDER.indexOf(a), ib = CUST_DIV_ORDER.indexOf(b);
+    if (ia !== -1 || ib !== -1) return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+    return a.localeCompare(b);
+  });
+  const divOpen = d => [...byDiv.get(d).values()].reduce((t, e) => t + e.open, 0);
+  const clients = new Set(); let total = 0;
+  for (const m of byDiv.values()) for (const e of m.values()) { clients.add(e.client); total += e.open; }
+  { const n = $("#custNote"); if (n) n.textContent = clients.size ? `(${clients.size} clients · ${money(total)} open)` : "(no AR data - load invoices)"; }
   { const stats = $("#custStats"); if (stats) { stats.innerHTML = "";
-      for (const [l, v] of [["Open AR", money(total)], ["Clients", String(rows.length)], ["Biggest client", rows[0] ? rows[0].client : "–"]]) {
+      const tiles = [["Open AR", money(total)], ["Clients", String(clients.size)]];
+      for (const d of order) tiles.push([d, money(divOpen(d))]);       // per-division open AR (replaces the useless "biggest client")
+      for (const [l, v] of tiles) {
         const k = el2("div", "kpi"); k.appendChild(el2("div", "k-label", l)); k.appendChild(el2("div", "k-value", v)); stats.appendChild(k); } } }
   const tb = buildHead("#custTable", [["Client", "left"], ["Open AR", "right"], ["Open invoices", "right"], ["Oldest due", "left"]]);
   if (!tb) return; tb.innerHTML = "";
-  for (const r of rows) {
-    const tr = document.createElement("tr"); tr.style.cursor = "pointer"; tr.title = "See this client's open invoices";
-    tr.onclick = () => { const cf = $("#ifClient"); if (cf) cf.value = r.client; setTab("invoices"); renderOpenInvoices(); };
-    tr.appendChild(leftText(r.client)); tr.appendChild(rightText(money(r.open)));
-    tr.appendChild(rightText(String(r.n))); tr.appendChild(leftText(r.oldest ? fmtDateShort(r.oldest) : "–"));
-    tb.appendChild(tr);
+  if (!order.length) { const tr = document.createElement("tr"); const td = document.createElement("td"); td.colSpan = 4; td.className = "left"; td.style.color = "var(--text-dim)"; td.style.padding = "14px 12px"; td.textContent = "No open AR - run load_invoices.py."; tr.appendChild(td); tb.appendChild(tr); return; }
+  for (const div of order) {
+    const rows = [...byDiv.get(div).values()].sort((a, b) => b.open - a.open);   // top clients first
+    // division band header (spans the row) - open AR + client count in this division
+    const gtr = document.createElement("tr"); gtr.className = "bill-group";
+    const gtd = document.createElement("td"); gtd.colSpan = 4;
+    const cell = document.createElement("div"); cell.className = "bg-cell";
+    const key = document.createElement("span"); key.className = "bg-key"; key.textContent = div;
+    const amt = document.createElement("span"); amt.className = "bg-amt";
+    amt.textContent = `${money(divOpen(div))} open · ${rows.length} client${rows.length === 1 ? "" : "s"}`;
+    cell.appendChild(key); cell.appendChild(amt); gtd.appendChild(cell); gtr.appendChild(gtd); tb.appendChild(gtr);
+    for (const r of rows) {
+      const tr = document.createElement("tr"); tr.style.cursor = "pointer"; tr.title = "See this client's open invoices";
+      tr.onclick = () => { const cf = $("#ifClient"); if (cf) cf.value = r.client; const df = $("#ifDivision"); if (df) df.value = ""; setTab("invoices"); renderOpenInvoices(); };
+      tr.appendChild(leftText(r.client)); tr.appendChild(rightText(money(r.open)));
+      tr.appendChild(rightText(String(r.n))); tr.appendChild(leftText(r.oldest ? fmtDateShort(r.oldest) : "–"));
+      tb.appendChild(tr);
+    }
   }
-  if (!rows.length) { const tr = document.createElement("tr"); const td = document.createElement("td"); td.colSpan = 4; td.className = "left"; td.style.color = "var(--text-dim)"; td.style.padding = "14px 12px"; td.textContent = "No open AR - run load_invoices.py."; tr.appendChild(td); tb.appendChild(tr); }
 }
 
 // ══ PAYMENTS ═════════════════════════════════════════════════════════════════
-// Received payments. Each row is ONE payment transaction (the money in); the invoice(s)
-// that payment settled are grouped beneath it. Sourced from QBO Payment objects
-// (load_payments.py → payment / payment_application). Simple: payment on top, its invoices below.
+// Each row is ONE payment transaction (money IN): Client · Payment Ref # · Payment Type ·
+// Amount Paid. Expand it to see the invoices it paid (invoice # · total open · amount applied).
+// "Unlocks (AP)" ties the money-in to money-out: the open vendor bills on that payment's
+// project(s) - click it and the side panel lists them (talks to the Bills tab data).
+// Sourced from QBO Payment objects (load_payments.py → payment / payment_application).
+function payOpenBillsByProject() {
+  const idx = {};
+  for (const b of (BILLS || [])) { if (num(b.open_balance) > 0.005 && b.project_no) (idx[b.project_no] ||= []).push(b); }
+  return idx;
+}
+function payUnlockBills(p, idx) {
+  const projs = [...new Set((p.applications || []).map(a => a.project_no).filter(Boolean))];
+  let bills = []; for (const pr of projs) bills = bills.concat(idx[pr] || []);
+  return bills;
+}
 function renderPayments() {
   const body = $("#payBody"); if (!body) return;
   const pays = PAY.payments || [];
   { const n = $("#payNote"); if (n) n.textContent = pays.length ? `(${pays.length} payments · ${money(PAY.total_received)} received)` : "(no payment data - run load_payments.py)"; }
   body.innerHTML = "";
+  const billIdx = payOpenBillsByProject();
   const stats = document.createElement("div"); stats.className = "kpi-row";
   for (const [l, v] of [["Received", money(PAY.total_received)], ["Payments", String(pays.length)],
                         ["Invoices paid", String(PAY.invoices_paid || 0)]]) {
@@ -1930,20 +1968,20 @@ function renderPayments() {
   body.appendChild(stats);
   const head = document.createElement("div"); head.className = "list-head";
   const hint = document.createElement("p"); hint.className = "hint"; hint.style.margin = "0";
-  hint.innerHTML = "Each row is a <b>payment received</b> - the money in as one transaction. The invoice(s) it paid are grouped beneath. Amounts, invoice # and project # open QuickBooks.";
+  hint.innerHTML = "Each row is a <b>payment received</b>. Click it to see the invoices it paid. <b>Unlocks (AP)</b> is the open vendor bills on that job - click it to see what you can now pay out.";
   head.appendChild(hint);
   if (pays.length) {
-    const allCollapsed = pays.every(p => paymentsCollapsed.has(p.qbo_txn_id));
+    const allExpanded = pays.every(p => paymentsExpanded.has(p.qbo_txn_id));
     const btn = document.createElement("button"); btn.className = "btn small subtle";
-    btn.textContent = allCollapsed ? "Expand all" : "Collapse all";
-    btn.onclick = () => { if (allCollapsed) paymentsCollapsed.clear(); else pays.forEach(p => paymentsCollapsed.add(p.qbo_txn_id)); renderPayments(); };
+    btn.textContent = allExpanded ? "Collapse all" : "Expand all";
+    btn.onclick = () => { if (allExpanded) paymentsExpanded.clear(); else pays.forEach(p => paymentsExpanded.add(p.qbo_txn_id)); renderPayments(); };
     head.appendChild(btn);
   }
   body.appendChild(head);
   const wrap = document.createElement("div"); wrap.className = "table-scroll";
   const table = document.createElement("table"); table.className = "grid"; table.id = "payTable";
   table.innerHTML = "<thead></thead><tbody></tbody>"; wrap.appendChild(table); body.appendChild(wrap);
-  const cols = [["Invoice #", "left"], ["Project", "left"], ["Division", "left"], ["Applied", "right"]];
+  const cols = [["Client", "left"], ["Payment Ref #", "left"], ["Payment Type", "left"], ["Amount Paid", "right"], ["Unlocks (AP)", "right"]];
   const tb = buildHead("#payTable", cols);
   if (!tb) return; tb.innerHTML = "";
   if (!pays.length) {
@@ -1953,52 +1991,99 @@ function renderPayments() {
     tr.appendChild(td); tb.appendChild(tr); return;
   }
   for (const p of pays) {
-    const collapsed = paymentsCollapsed.has(p.qbo_txn_id);
-    // ── payment header: the transaction (date · who paid · total · # invoices) ──
-    const gtr = document.createElement("tr"); gtr.className = "bill-group"; gtr.style.cursor = "pointer";
-    gtr.title = collapsed ? "Click to show the invoices this payment paid" : "Click to collapse";
-    const gtd = document.createElement("td"); gtd.colSpan = cols.length;
-    const cell = document.createElement("div"); cell.className = "bg-cell";
-    const left = document.createElement("span"); left.className = "bg-left";
-    const caret = document.createElement("span"); caret.className = "bg-caret"; caret.textContent = collapsed ? "▸" : "▾";
-    left.appendChild(caret);
-    const key = document.createElement("span"); key.className = "bg-key";
-    key.appendChild(document.createTextNode(fmtDateShort(p.txn_date) + "  ·  "));
-    const payer = p.parent_customer || p.customer || "–";        // the GC (parent), not the project sub-customer
+    const expanded = paymentsExpanded.has(p.qbo_txn_id);
+    // ── the payment transaction: Client · Ref # · Type · Amount Paid · Unlocks (AP) ──
+    const tr = document.createElement("tr"); tr.className = "pay-row"; tr.style.cursor = "pointer";
+    tr.title = expanded ? "Click to hide the invoices" : "Click to see the invoices this payment paid";
+    // client (with caret + GC link)
+    const cc = document.createElement("td"); cc.className = "left";
+    const caret = document.createElement("span"); caret.className = "bg-caret"; caret.textContent = expanded ? "▾" : "▸"; cc.appendChild(caret);
+    const payer = p.parent_customer || p.customer || "–";
     const curl = qboCustomerUrl(p.parent_customer_id || p.customer_id);
-    if (curl) { const a = document.createElement("a"); a.href = curl; a.target = "_blank"; a.rel = "noopener"; a.className = "qbo-link"; a.textContent = payer; a.title = "Open this customer in QuickBooks"; a.onclick = (e) => e.stopPropagation(); key.appendChild(a); }
-    else key.appendChild(document.createTextNode(payer));
-    const meta = [p.method, p.ref_no ? "#" + p.ref_no : null].filter(Boolean).join(" ");
-    if (meta) { const m = document.createElement("span"); m.className = "bg-sub"; m.textContent = "  ·  " + meta; key.appendChild(m); }
-    left.appendChild(key);
-    const amt = document.createElement("span"); amt.className = "bg-amt";
-    let amtTxt = `${money(p.total_amt)} · ${p.invoice_count} invoice${p.invoice_count === 1 ? "" : "s"}`;
-    if ((p.unapplied_amt || 0) > 0.005) amtTxt += ` · ${money(p.unapplied_amt)} unapplied`;
-    amt.textContent = amtTxt;
-    cell.appendChild(left); cell.appendChild(amt); gtd.appendChild(cell); gtr.appendChild(gtd);
-    gtr.onclick = () => { if (paymentsCollapsed.has(p.qbo_txn_id)) paymentsCollapsed.delete(p.qbo_txn_id); else paymentsCollapsed.add(p.qbo_txn_id); renderPayments(); };
-    tb.appendChild(gtr);
-    // ── the invoices this payment paid ──
-    if (!collapsed) {
+    if (curl) { const a = document.createElement("a"); a.href = curl; a.target = "_blank"; a.rel = "noopener"; a.className = "qbo-link"; a.textContent = payer; a.title = "Open this customer in QuickBooks"; a.onclick = (e) => e.stopPropagation(); cc.appendChild(a); }
+    else cc.appendChild(document.createTextNode(payer));
+    tr.appendChild(cc);
+    tr.appendChild(leftText(p.ref_no || "–"));
+    tr.appendChild(leftText(p.method || "–"));
+    tr.appendChild(rightText(money(p.total_amt)));
+    // Unlocks (AP): open vendor bills on this payment's project(s) → click opens the side panel
+    const uc = document.createElement("td"); uc.className = "right";
+    const bills = payUnlockBills(p, billIdx);
+    if (bills.length) {
+      const sum = bills.reduce((t, b) => t + num(b.open_balance), 0);
+      const link = document.createElement("span"); link.className = "unlock-link";
+      link.textContent = `${money(sum)} · ${bills.length}`;
+      link.title = "See the open vendor bills this payment lets you pay out";
+      link.onclick = (e) => { e.stopPropagation(); openPaymentBills(p, bills); };
+      uc.appendChild(link);
+    } else uc.appendChild(document.createTextNode("–"));
+    tr.appendChild(uc);
+    tr.onclick = () => { if (paymentsExpanded.has(p.qbo_txn_id)) paymentsExpanded.delete(p.qbo_txn_id); else paymentsExpanded.add(p.qbo_txn_id); renderPayments(); };
+    tb.appendChild(tr);
+    // ── grouped invoices this payment paid: Invoice # · Total open · Amount applied ──
+    if (expanded) {
+      const sr = document.createElement("tr"); sr.className = "pay-invoices";
+      const std = document.createElement("td"); std.colSpan = cols.length;
+      const box = document.createElement("table"); box.className = "sub-grid";
+      const th = document.createElement("thead"); th.innerHTML = "<tr><th class='left'>Invoice #</th><th class='right'>Total open</th><th class='right'>Amount applied</th></tr>";
+      box.appendChild(th);
+      const bod = document.createElement("tbody");
       if (!p.applications.length) {
-        const tr = document.createElement("tr"); tr.className = "sub-row";
-        const td = document.createElement("td"); td.colSpan = cols.length; td.className = "left"; td.style.color = "var(--text-dim)";
-        td.textContent = (p.unapplied_amt || 0) > 0.005 ? "Unapplied - a credit on account, not yet on an invoice." : "No invoice links on this payment.";
-        tr.appendChild(td); tb.appendChild(tr);
+        const r = document.createElement("tr"); const c = document.createElement("td"); c.colSpan = 3; c.className = "left dim";
+        c.textContent = (p.unapplied_amt || 0) > 0.005 ? "Unapplied - a credit on account, not yet on an invoice." : "No invoice links on this payment.";
+        r.appendChild(c); bod.appendChild(r);
       }
       for (const a of p.applications) {
-        const tr = document.createElement("tr"); tr.className = "sub-row";
-        tr.appendChild(qboLinkCell(a.invoice_no || ("inv " + a.invoice_txn_id), a.invoice_no ? qboInvoiceUrl(a.invoice_txn_id) : null, "Open this invoice in QuickBooks"));
-        const pc = document.createElement("td"); pc.className = "left"; const purl = qboCustomerUrl(a.cust_id);
-        if (purl && a.project_no) { const pa = document.createElement("a"); pa.href = purl; pa.target = "_blank"; pa.rel = "noopener"; pa.className = "qbo-link"; pa.textContent = a.project_no; pa.title = "Open this project in QuickBooks"; pc.appendChild(pa); }
-        else pc.appendChild(document.createTextNode(a.project_no || "–"));
-        tr.appendChild(pc);
-        tr.appendChild(leftText(a.division || "–"));
-        tr.appendChild(rightText(money(a.amount)));
-        tb.appendChild(tr);
+        const r = document.createElement("tr");
+        r.appendChild(qboLinkCell(a.invoice_no || ("inv " + a.invoice_txn_id), a.invoice_no ? qboInvoiceUrl(a.invoice_txn_id) : null, "Open this invoice in QuickBooks"));
+        const oc = document.createElement("td"); oc.className = "right";
+        if (a.invoice_open == null) oc.appendChild(document.createTextNode("–"));
+        else if (a.invoice_open > 0.005) { oc.textContent = money(a.invoice_open); oc.style.color = "var(--neg)"; }
+        else { oc.textContent = "paid"; oc.className = "right dim"; }
+        r.appendChild(oc);
+        r.appendChild(rightText(money(a.amount)));
+        bod.appendChild(r);
       }
+      box.appendChild(bod); std.appendChild(box); sr.appendChild(std); tb.appendChild(sr);
     }
   }
+}
+
+// The AP bills a payment unlocks: open vendor bills on the same project(s), grouped by project.
+// Read from the already-loaded Bills tab data - money IN (this payment) → money OUT (these bills).
+function openPaymentBills(p, bills) {
+  $("#payBillsTitle").textContent = (p.parent_customer || p.customer || "Payment");
+  const projs = [...new Set((p.applications || []).map(a => a.project_no).filter(Boolean))];
+  const sum = bills.reduce((t, b) => t + num(b.open_balance), 0);
+  $("#payBillsSub").textContent = `${fmtDateShort(p.txn_date)} · ${money(p.total_amt)} in · unlocks ${money(sum)} AP across ${projs.length} job${projs.length === 1 ? "" : "s"}`;
+  const body = $("#payBillsBody"); body.innerHTML = "";
+  const intro = document.createElement("p"); intro.className = "hint";
+  intro.textContent = "Open vendor bills on this payment's project(s) - the cash that just came in can go out to clear these.";
+  body.appendChild(intro);
+  const byProj = new Map();
+  for (const b of bills) { const k = b.project_no || "–"; if (!byProj.has(k)) byProj.set(k, []); byProj.get(k).push(b); }
+  for (const [proj, list] of byProj) {
+    list.sort((a, b) => num(b.open_balance) - num(a.open_balance));
+    const g = document.createElement("div"); g.className = "dgroup";
+    const h = document.createElement("h4");
+    h.textContent = `${proj}${nameOf(proj) ? " · " + nameOf(proj) : ""} · ${money(list.reduce((t, b) => t + num(b.open_balance), 0))} open`;
+    g.appendChild(h);
+    const t = document.createElement("table"); t.className = "sub-grid";
+    t.innerHTML = "<thead><tr><th class='left'>Vendor</th><th class='left'>Bill #</th><th class='right'>Open</th><th class='left'>Status</th></tr></thead>";
+    const tbb = document.createElement("tbody");
+    for (const b of list) {
+      const r = document.createElement("tr");
+      const vend = qboBillHref(b.qbo_link);
+      if (vend) { const vtd = document.createElement("td"); vtd.className = "left"; const a = document.createElement("a"); a.href = vend; a.target = "_blank"; a.rel = "noopener"; a.className = "qbo-link"; a.textContent = b.vendor || "–"; a.title = "Open bill in QuickBooks"; vtd.appendChild(a); r.appendChild(vtd); }
+      else r.appendChild(leftText(b.vendor || "–"));
+      r.appendChild(leftText(b.bill_ref || "–"));
+      const oc = document.createElement("td"); oc.className = "right"; oc.textContent = money(b.open_balance); oc.style.color = "var(--neg)"; r.appendChild(oc);
+      r.appendChild(leftText(b.pay_status || "–"));
+      tbb.appendChild(r);
+    }
+    t.appendChild(tbb); g.appendChild(t); body.appendChild(g);
+  }
+  openPanel("#payBills");
 }
 
 function renderSubLoc() {
@@ -2878,7 +2963,8 @@ function detailAsText() {
 // ── Panels ────────────────────────────────────────────────────────────────
 function openPanel(sel) { $("#overlay").hidden = false; $(sel).hidden = false; }
 function closePanels() { $("#overlay").hidden = true; $("#detail").hidden = true; $("#settings").hidden = true;
-  { const bd = $("#billDetail"); if (bd) bd.hidden = true; } { const sd = $("#sublocDetail"); if (sd) sd.hidden = true; } }
+  { const bd = $("#billDetail"); if (bd) bd.hidden = true; } { const sd = $("#sublocDetail"); if (sd) sd.hidden = true; }
+  { const pb = $("#payBills"); if (pb) pb.hidden = true; } }
 
 // ── Copy + CSV + toast ────────────────────────────────────────────────────
 let toastTimer = null;
@@ -3240,6 +3326,7 @@ function init() {
   { const el = $("#ifClear"); if (el) el.onclick = invClearFilters; }
   { const el = $("#ifCollapse"); if (el) el.onclick = invToggleAll; }
   { const el = $("#btnCloseBillDetail"); if (el) el.onclick = closePanels; }
+  { const el = $("#btnClosePayBills"); if (el) el.onclick = closePanels; }
   { const el = $("#btnCloseSublocDetail"); if (el) el.onclick = closePanels; }
   { const el = $("#btnSaveBillMarks"); if (el) el.onclick = saveBillMarks; }
   { const el = $("#btnDiscardBillMarks"); if (el) el.onclick = discardBillMarks; }

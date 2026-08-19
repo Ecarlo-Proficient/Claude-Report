@@ -414,7 +414,7 @@
     <!-- ══════════════ TAB: CUSTOMERS (top clients by open AR) ══════════════ -->
     <div class="tab-page" data-tab="customers" hidden>
       <section class="widget">
-        <div class="widget-head"><h2>Customers <span class="count" id="custNote"></span></h2></div>
+        <div class="widget-head"><h2>Customer Center <span class="count" id="custNote"></span></h2></div>
         <p class="hint">Your current clients ranked by <b>open AR</b> (what they still owe you). Click a client to see just their open invoices.</p>
         <div class="kpi-row" id="custStats"></div>
         <div class="table-scroll">
@@ -525,6 +525,20 @@
       </div>
     </div>
     <div class="panel-body" id="billDetailBody"></div>
+  </aside>
+
+  <!-- ── Payment drill-over: the AP bills this payment unlocks (talks to the Bills tab data) ── -->
+  <aside class="panel panel-right" id="payBills" hidden>
+    <div class="panel-head">
+      <div>
+        <div class="panel-title" id="payBillsTitle">–</div>
+        <div class="panel-sub" id="payBillsSub"></div>
+      </div>
+      <div class="panel-head-actions">
+        <button class="btn icon" id="btnClosePayBills" title="Close">✕</button>
+      </div>
+    </div>
+    <div class="panel-body" id="payBillsBody"></div>
   </aside>
 
   <!-- ── Sub-LOC project drill-over (open subs grouped by the draw they sit under) ── -->

@@ -58,7 +58,7 @@ _PAYMENT_COLS = ("qbo_txn_id", "txn_date", "customer", "customer_id",
                  "parent_customer", "parent_customer_id",
                  "total_amt", "unapplied_amt", "method", "ref_no", "source", "loaded_at")
 _APP_COLS = ("payment_txn_id", "invoice_txn_id", "invoice_no",
-             "project_no", "division", "amount")
+             "project_no", "division", "amount", "invoice_open")
 
 
 def _num(x) -> float:
@@ -92,12 +92,15 @@ def _connect(db_path: Path) -> sqlite3.Connection:
 
 
 def _migrate_payment(con) -> None:
-    """Add the parent-GC columns to a payment table made by an earlier schema.
+    """Add columns to payment / payment_application tables made by an earlier schema.
     (IF NOT EXISTS won't alter an existing table, so add them explicitly.)"""
-    cols = {r[1] for r in con.execute("PRAGMA table_info(payment)")}
+    pcols = {r[1] for r in con.execute("PRAGMA table_info(payment)")}
     for name in ("parent_customer", "parent_customer_id"):
-        if cols and name not in cols:
+        if pcols and name not in pcols:
             con.execute(f"ALTER TABLE payment ADD COLUMN {name} TEXT")
+    acols = {r[1] for r in con.execute("PRAGMA table_info(payment_application)")}
+    if acols and "invoice_open" not in acols:
+        con.execute("ALTER TABLE payment_application ADD COLUMN invoice_open NUMERIC")
 
 
 def _cutoff(months: int) -> str:
@@ -134,14 +137,25 @@ def _customer_gc_map(query_all, access, company_id) -> dict:
     return {i: (cust[root(i)][0], root(i)) for i in cust}
 
 
+def _payment_method_map(query_all, access, company_id) -> dict:
+    """{payment_method_id → name} (Check / ACH / Cash / ...). A Payment's
+    PaymentMethodRef comes back as an id only (no name), so resolve it once."""
+    out = {}
+    for m in query_all(access, company_id, "PaymentMethod"):
+        mid = str(m.get("Id") or "")
+        if mid:
+            out[mid] = m.get("Name")
+    return out
+
+
 def _invoice_index(con) -> dict:
-    """{QBO invoice id → (invoice_no, project_no, division)} from billing_event,
-    so a payment's LinkedTxn resolves to the draw it paid."""
+    """{QBO invoice id → (invoice_no, project_no, division, open_balance)} from
+    billing_event, so a payment's LinkedTxn resolves to the draw it paid."""
     idx = {}
     try:
-        for r in con.execute("SELECT qbo_txn_id, doc_number, project_no, division FROM billing_event"):
+        for r in con.execute("SELECT qbo_txn_id, doc_number, project_no, division, balance FROM billing_event"):
             if r["qbo_txn_id"]:
-                idx[str(r["qbo_txn_id"])] = (r["doc_number"], r["project_no"], r["division"])
+                idx[str(r["qbo_txn_id"])] = (r["doc_number"], r["project_no"], r["division"], r["balance"])
     except sqlite3.OperationalError:
         pass
     return idx
@@ -175,7 +189,7 @@ def _rows_from_payment(p: dict, inv_idx: dict) -> tuple[dict, list[dict]]:
             inv_id = str(lt.get("TxnId") or "")
             if not inv_id:
                 continue
-            doc, proj, div = inv_idx.get(inv_id, (None, None, None))
+            doc, proj, div, bal = inv_idx.get(inv_id, (None, None, None, None))
             apps.append({
                 "payment_txn_id": pid,
                 "invoice_txn_id": inv_id,
@@ -183,6 +197,7 @@ def _rows_from_payment(p: dict, inv_idx: dict) -> tuple[dict, list[dict]]:
                 "project_no": proj,
                 "division": div,
                 "amount": share,
+                "invoice_open": bal,
             })
     return payment, apps
 
@@ -195,6 +210,7 @@ def _load(con, months: int, dry_run: bool) -> int:
     print("  authenticated.")                       # never echo the realm/company id (owner 2026-08-06)
     gc_map = _customer_gc_map(query_all, access, company_id)
     print(f"  mapped {len(gc_map)} customers to their parent GC.")
+    pm_map = _payment_method_map(query_all, access, company_id)     # PaymentMethodRef is an id only - resolve the name
     raw = query_all(access, company_id, "Payment", f"TxnDate >= '{cutoff}'")
     print(f"  pulled {len(raw)} payments since {cutoff}.")
 
@@ -206,6 +222,9 @@ def _load(con, months: int, dry_run: bool) -> int:
         gc = gc_map.get(prow["customer_id"] or "")     # normalize the payer to the GC (parent of the project sub-customer)
         if gc and gc[0]:
             prow["parent_customer"], prow["parent_customer_id"] = gc
+        mid = str((p.get("PaymentMethodRef") or {}).get("value") or "")
+        if mid and pm_map.get(mid):
+            prow["method"] = pm_map[mid]
         payments.append(prow)
         apps.extend(arows)
 
@@ -222,10 +241,10 @@ def _load(con, months: int, dry_run: bool) -> int:
             for inv in query_all(access, company_id, "Invoice", f"Id IN ({inlist})"):
                 iid = str(inv.get("Id") or "")
                 proj = extract_proj((inv.get("CustomerRef") or {}).get("name") or "")
-                extra[iid] = (inv.get("DocNumber"), proj, _division_of(proj))
+                extra[iid] = (inv.get("DocNumber"), proj, _division_of(proj), _num(inv.get("Balance")))
         for a in apps:
             if not a["invoice_no"] and a["invoice_txn_id"] in extra:
-                a["invoice_no"], a["project_no"], a["division"] = extra[a["invoice_txn_id"]]
+                a["invoice_no"], a["project_no"], a["division"], a["invoice_open"] = extra[a["invoice_txn_id"]]
         print(f"  resolved {sum(1 for v in extra.values() if v[0])} more invoices from QBO by id.")
 
     total = round(sum(p["total_amt"] for p in payments), 2)
@@ -263,9 +282,9 @@ def _selftest() -> int:
     round-trip, and the grouped read (payment → applications) reconstructs."""
     with tempfile.TemporaryDirectory() as td:
         con = _connect(Path(td) / "t.sqlite3")
-        # a draw the payment will resolve against
-        con.execute("INSERT INTO billing_event (qbo_txn_id, doc_number, project_no, division, source, loaded_at) "
-                    "VALUES ('INV9','34999','CP861','Commercial','qbo_invoice','x')")
+        # a draw the payment will resolve against (balance 5000 = still partly open)
+        con.execute("INSERT INTO billing_event (qbo_txn_id, doc_number, project_no, division, balance, source, loaded_at) "
+                    "VALUES ('INV9','34999','CP861','Commercial',5000,'qbo_invoice','x')")
         pay = {"Id": "P1", "TxnDate": "2026-08-10", "TotalAmt": "150000.00", "UnappliedAmt": "0",
                "CustomerRef": {"name": "Firestone Building Co", "value": "77"},
                "PaymentMethodRef": {"name": "Check"}, "PaymentRefNum": "10231",
@@ -289,6 +308,7 @@ def _selftest() -> int:
         assert got["INV9"]["invoice_no"] == "34999" and got["INV9"]["project_no"] == "CP861", got
         assert got["INV_UNKNOWN"]["invoice_no"] is None, got            # unresolved still recorded by id
         assert got["INV9"]["amount"] == 100000.0 and got["INV_UNKNOWN"]["amount"] == 50000.0, got
+        assert got["INV9"]["invoice_open"] == 5000 and got["INV_UNKNOWN"]["invoice_open"] is None, got   # open balance flows for resolved
         # write + grouped read-back
         now = "2026-08-19T00:00:00"
         con.execute("INSERT INTO payment (qbo_txn_id, txn_date, customer, customer_id, parent_customer, "
@@ -298,8 +318,8 @@ def _selftest() -> int:
                     {**prow, "loaded_at": now})
         for a in arows:
             con.execute("INSERT INTO payment_application (payment_txn_id, invoice_txn_id, invoice_no, "
-                        "project_no, division, amount) VALUES "
-                        "(:payment_txn_id,:invoice_txn_id,:invoice_no,:project_no,:division,:amount)", a)
+                        "project_no, division, amount, invoice_open) VALUES "
+                        "(:payment_txn_id,:invoice_txn_id,:invoice_no,:project_no,:division,:amount,:invoice_open)", a)
         con.commit()
         n = con.execute("SELECT COUNT(*) FROM payment_application WHERE payment_txn_id='P1'").fetchone()[0]
         assert n == 2, n

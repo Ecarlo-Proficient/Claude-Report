@@ -144,6 +144,7 @@ CREATE TABLE IF NOT EXISTS payment_application (
     project_no      TEXT,
     division        TEXT,
     amount          NUMERIC,                      -- money applied to THIS invoice from THIS payment
+    invoice_open    NUMERIC,                      -- the invoice's current open balance (0 = fully settled)
     PRIMARY KEY (payment_txn_id, invoice_txn_id)
 );
 CREATE INDEX IF NOT EXISTS ix_payapp_payment ON payment_application (payment_txn_id);

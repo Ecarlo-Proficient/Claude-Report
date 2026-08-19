@@ -581,6 +581,22 @@ tr.bill-group .bg-amt { font-weight: 800; font-size: .95em; letter-spacing: -.01
 tr.sub-row > td:first-child { padding-left: 26px; }
 tr.sub-row > td { color: var(--text); }
 
+/* Payments: the transaction row + its nested invoices */
+tr.pay-row > td { font-weight: 500; }
+tr.pay-row .bg-caret { color: var(--text-dim); display: inline-block; width: 1.3em; }
+tr.pay-row:hover > td { background: var(--row-hover); }
+.unlock-link { color: var(--accent); cursor: pointer; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.unlock-link:hover { text-decoration: underline; }
+tr.pay-invoices > td { padding: 0 12px 10px 26px; background: var(--surface-2); }
+/* a compact nested table (a payment's invoices, or a project's unlocked bills in the side panel) */
+table.sub-grid { width: 100%; border-collapse: collapse; font-size: .92em; }
+table.sub-grid th { color: var(--text-dim); font-weight: 600; text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+table.sub-grid th.right { text-align: right; }
+table.sub-grid td { padding: 5px 10px; border-bottom: 1px solid var(--border-faint, var(--border)); }
+table.sub-grid td.right { text-align: right; font-variant-numeric: tabular-nums; }
+table.sub-grid td.dim { color: var(--text-dim); }
+table.sub-grid tr:last-child td { border-bottom: none; }
+
 /* ── Open Invoices (AR aging) ─────────────────────────────────────────────── */
 .ag-tile .a-count { font-variant-numeric: tabular-nums; }
 .ag-tile.none { opacity: .5; }

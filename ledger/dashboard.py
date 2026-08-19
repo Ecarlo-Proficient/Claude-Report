@@ -501,7 +501,7 @@ def _fetch_payments(con) -> dict:
     apps_by_pay = {}
     try:
         for a in con.execute("SELECT payment_txn_id, invoice_txn_id, invoice_no, project_no, "
-                             "division, amount FROM payment_application"):
+                             "division, amount, invoice_open FROM payment_application"):
             d = dict(a)
             d["cust_id"] = cust_of.get(d["project_no"])       # project deep link
             apps_by_pay.setdefault(a["payment_txn_id"], []).append(d)

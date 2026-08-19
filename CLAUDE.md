@@ -171,6 +171,17 @@ restate them here. Business/strategic context lives in session memory, not in th
   Draw Period field is unreachable — use **PrivateNote** as the workaround.
 - **Bills carry the project # in memo / PrivateNote** (not a period tag); subs are flagged by `"sub"` in
   the bill memo.
+- **Ref fields come back as an ID ONLY (`{value: "65"}`, no `name`) - resolve the name yourself** by
+  pulling that entity once into an `{id -> name}` map. Bit us on `PaymentMethodRef` (all 846 payments
+  showed a blank "Payment Type" until we pulled the `PaymentMethod` entity -> Check/ACH/Wire/…). Same
+  shape for a Payment's `CustomerRef`, which is the **bare leaf** (the project sub-customer, e.g.
+  `RP6676-FTW`) - pull `Customer` and walk `ParentRef` to the top parent for the GC (`LONESTAR GREEN
+  HOMES`); stop at the deepest KNOWN ancestor since inactive parents are absent from the active-only
+  pull. Both resolvers live in `ledger/load_payments.py` (`_payment_method_map`, `_customer_gc_map`).
+- **A `Payment` = money IN as a transaction.** `TotalAmt` + `TxnDate` + `CustomerRef`; the invoices it
+  paid are in `Line[].LinkedTxn` where `TxnType == "Invoice"` (the line `Amount` is the slice applied to
+  that invoice). It also carries `PaymentRefNum` (check #), `ProjectRef`, `DepositToAccountRef`,
+  `UnappliedAmt`, `TxnSource`. `Balance` on the linked `Invoice` = that invoice's open amount.
 - **Cost codes live in the QBO ITEM name, NOT the account.** An item-based expense line
   (`ItemBasedExpenseLineDetail`) carries an `ItemRef` whose `name` is our cost code (SL1, PV6, CS1…)
   and has NO line-level `AccountRef`; an account-based line resolves to its account

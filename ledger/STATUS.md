@@ -813,6 +813,35 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     RP6676-FTW → LONESTAR GREEN HOMES, CP790 → DL MEACHAM LP); root-walk stops at the deepest KNOWN ancestor so an
     inactive parent (absent from the active-only pull) never crashes it.
 
+  - **Payments v3: columnar transaction + "Unlocks (AP)" side menu (owner, 2026-08-19: "client, Payment Ref #,
+    Payment Type, Amount Paid · grouped: Invoices paid, the total open and the amount applied · then see what bills
+    that unlocks via the side menu by talking to bills").** Each payment is now a proper ROW - **Client · Payment
+    Ref # · Payment Type · Amount Paid · Unlocks (AP)** - default COLLAPSED (scannable); click to reveal a nested
+    grid of the invoices it paid (**Invoice # · Total open · Amount applied**). `payment_application` gained
+    `invoice_open` (the invoice's QBO `Balance`, captured in both resolution paths; ALTER-migrated). **Payment Type
+    fix:** `PaymentMethodRef` returns an id ONLY (no name) - added `_payment_method_map` (pull the PaymentMethod
+    entity) so the column fills (Check 527 · ACH 167 · QB Payments-Bank 109 · Credit Card 10 · Direct Deposit/Wire/
+    Zelle/Cash). **Side menu** `openPaymentBills` (new `#payBills` panel): click a payment's "Unlocks (AP)" and the
+    open vendor bills on that payment's project(s) slide in, grouped by job (Vendor · Bill # · Open · Status, → QBO)
+    - the money-IN → money-OUT link, read live from the already-loaded Bills tab data. Verified live: DL MEACHAM's
+    $33,516 Check unlocks $85,758 across 20 open bills on CP790; no console errors.
+
+  - **Customer Center: top clients PER DIVISION (owner, 2026-08-19: "biggest client useless... give me the top
+    clients per division instead").** `renderCustomers` now groups open-AR clients under Commercial / Residential /
+    Multi Family bands (each a header with the division's open $ + client count), clients ranked by open AR within.
+    The useless "Biggest client" KPI is replaced by **per-division open-AR tiles**. Verified live: Commercial $1.22M/
+    15 clients, Residential $1.12M/35, Multi Family $3.12M/3.
+
+  - **Nav rename: group = singular, page = "... Center" (owner, 2026-08-19: "name the parent header of Vendor =
+    Vendor, the page Vendor Center is where all the vendors are listed. SAME FOR CUSTOMERS").** Group headers are now
+    **Customer** and **Vendor** (singular); the first page under each is **Customer Center** / **Vendor Center**.
+    NAV_GROUPS labels + TAB_LABELS + the index.html page heading updated.
+
+  - **QBO field reference logged (owner, 2026-08-19: "are you logging all the qbo codes... so we evolve and not
+    regress").** The id-only-Ref gotcha + Payment anatomy added to CLAUDE.md "QBO API gotchas"; a matching
+    "API field reference - QBO codes → what they mean for us" section added to the vault's
+    `04_integrations/quickbooks-online.md` (PaymentMethod values, Payment=money-in, leaf-vs-GC customer, invoice Balance).
+
   - **Project P&L: status column + sort dropdown + status filter (owner, 2026-08-19).** `_portfolio_pnl` now
     returns ALL jobs with a `status` + `active` flag (company/division TOTALS stay active-only). Frontend:
     a **Status column** (green Active / dim Closed·Complete), a **status filter** (default Active only; All;
