@@ -2369,7 +2369,7 @@ function renderPnl() {
   }
   const rows = PNL.rows || [], divs = PNL.by_division || [], comp = PNL.company || {};
   const pctTxt = p => (p == null ? "—" : (p * 100).toFixed(1) + "%");
-  $("#pnlNote").textContent = rows.length ? `(${comp.n || 0} active jobs · ${money(comp.earned)} earned)` : "(no P&L data — load WIP + costs)";
+  $("#pnlNote").textContent = rows.length ? `(${comp.n || 0} active jobs · ${money(comp.earned)} earned)` : "(no P&L data - load WIP + costs)";
 
   // company totals
   const tiles = [["Earned revenue", money(comp.earned)], ["Costs", money(comp.cost)],
