@@ -43,15 +43,18 @@ from urllib.parse import parse_qs, urlparse
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
-from shared import paths, pnl_paths, bill_marks  # noqa: E402
+from shared import paths, pnl_paths, bill_marks, lien_clock  # noqa: E402
+
+import registry_view  # noqa: E402  (local: parses the vault's process registry for the Systems tab)
 
 HERE = Path(__file__).resolve().parent
 STATIC = HERE / "static"
 
 # Dashboard build version - shown in the top bar so the owner can confirm which build is
 # live. Bump on every user-visible release. 1.0.0 = Open Invoices tab + lien columns;
-# 1.0.1 = Open Invoices client shows the parent GC (not the project-level name).
-LEDGER_VERSION = "1.0.1"
+# 1.0.1 = Open Invoices client shows the parent GC (not the project-level name);
+# 1.1.0 = Systems tab - the process registry rendered live from the vault.
+LEDGER_VERSION = "1.1.0"
 
 DEFAULT_DB = paths.get_path(
     "ACB_LEDGER_DB",
@@ -425,6 +428,20 @@ def _fetch_open_invoices(con) -> dict:
         d["days_past_due"] = days
         d["bucket"] = _AGING_BUCKETS[bi]
         d["bucket_index"] = bi
+        # Computed Texas lien-notice CLOCK ("when the lien is due") - the SAME shared/lien_clock
+        # the AR Aging Excel uses, so the site and the workbook agree. Division from the project #.
+        proj = d.get("project_no") or ""
+        div_code = "MFD" if proj.startswith("MFD") else "CP" if proj.startswith("CP") else "RP"
+        inv_date = None
+        tx = (d.get("txn_date") or "")[:10]
+        if tx:
+            try:
+                inv_date = _dt.date.fromisoformat(tx)
+            except ValueError:
+                inv_date = None
+        ls = lien_clock.lien_state(div_code, inv_date, today, memo=(d.get("memo") or ""))
+        d["lien_due_label"] = ls.label or None
+        d["lien_due_state"] = ls.state
         invs.append(d)
     invs.sort(key=lambda x: ((x.get("customer") or "~").lower(),
                              x.get("due_date") or "9999", x.get("doc_number") or ""))
@@ -879,6 +896,8 @@ class Handler(BaseHTTPRequestHandler):
             self._sync_status()
         elif path == "/api/pipelines":     # the Console registry (pipelines + their steps)
             self._pipelines_list()
+        elif path == "/api/processes":     # the Systems tab (vault process registry, live)
+            self._processes()
         elif path.startswith("/static/"):
             self._static(path[len("/static/"):])
         else:
@@ -921,6 +940,20 @@ class Handler(BaseHTTPRequestHandler):
             con.close()
 
     # ── in-app Console: run any pipeline (or the safe loaders-only reload) ────
+    def _processes(self):
+        """The systems & process registry, parsed fresh from the vault markdown.
+
+        Read-only and uncached on purpose: the vault files are the source of
+        truth, so editing them and reloading the tab is the whole update loop.
+        A missing vault is reported in the payload, never raised - the rest of
+        the dashboard must keep working on a machine with no vault checkout.
+        """
+        try:
+            self._json(registry_view.load_registry())
+        except Exception as e:                      # noqa: BLE001
+            self._json({"ok": False, "domains": [], "rows": [],
+                        "error": f"registry parse failed: {e}"})
+
     def _pipelines_list(self):
         out = []
         for p in _pipelines():

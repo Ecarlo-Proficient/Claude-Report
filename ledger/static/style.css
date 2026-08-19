@@ -586,6 +586,28 @@ tr.bill-group .bg-amt { font-weight: 800; font-size: .95em; letter-spacing: -.01
 .aging-grid td.ag4 { background: color-mix(in srgb, #922B21 20%, transparent); color: color-mix(in srgb, #922B21 72%, var(--text)); font-weight: 700; }
 tr.ag-total > td { border-top: 2px solid var(--border); background: var(--surface-2); font-weight: 600; font-variant-numeric: tabular-nums; }
 tr.ag-total > td.ag0, tr.ag-total > td.ag1, tr.ag-total > td.ag2, tr.ag-total > td.ag3, tr.ag-total > td.ag4 { background: var(--surface-2); }
+/* Client group-header band: neutral grey here (not the green accent tint the Bills tab uses),
+   the owner found the green odd on this tab (2026-08-19). */
+.aging-grid tr.bill-group > td { background: var(--surface-2); }
+.aging-grid tr.bill-group:hover > td { background: var(--row-hover); }
+/* Vertical rules between the aging bucket columns so the eye tracks the money across (owner). */
+.aging-grid td.ag, .aging-grid th.ag { border-left: 1px solid var(--border); }
+/* Lien cell = the computed notice CLOCK (when the lien is due) + the Notion status pill. */
+.aging-grid td.lien-cell { white-space: normal; }
+.lien-clock { display: inline-block; font-size: .82em; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.lien-clock + .notion-pill { margin-left: 7px; }
+.lien-clock.lc-past   { color: var(--neg); font-weight: 700; }
+.lien-clock.lc-urgent { color: #C0552B; }
+.lien-clock.lc-watch  { color: #b8860b; }
+.lien-clock.lc-sent   { color: var(--pos); font-weight: 500; }
+.lien-clock.lc-ok     { color: var(--text-dim); font-weight: 500; }
+/* Notion-style status pill (grey pill + a colored dot) so the lien status reads as "from Notion". */
+.notion-pill { display: inline-flex; align-items: center; gap: 5px; padding: 1px 8px 1px 6px; border-radius: 11px;
+  background: color-mix(in srgb, var(--text) 8%, transparent); font-size: .82em; font-weight: 500; white-space: nowrap; vertical-align: middle; }
+.notion-pill .np-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+/* A filter that is hiding/limiting rows turns RED so it's obvious a filter is in place (owner). */
+#invFilters select.filter-on { border-color: var(--neg); color: var(--neg); font-weight: 600;
+  background: color-mix(in srgb, var(--neg) 8%, var(--surface-2)); }
 
 /* Bill detail panel: give the QuickBooks link buttons room. */
 #billDetailBody .pnl-actions { margin: 10px 0 2px; }
@@ -616,3 +638,89 @@ tr.ag-total > td.ag0, tr.ag-total > td.ag1, tr.ag-total > td.ag2, tr.ag-total > 
 .kpi.clickable:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
 .row-link { color: var(--accent); text-decoration: none; }
 .row-link:hover { text-decoration: underline; }
+
+/* ── Systems & processes tab ───────────────────────────────────────────────
+   The process registry rendered live from the vault markdown. Colour here
+   encodes STATE only, never decoration: the health dot is the one saturated
+   mark on the row, and everything else stays in the neutral type scale.
+   Three axes, three visual weights - dot = health (how it runs), pill = state
+   (how sure we are), inline tag = life (whether it runs at all).           */
+
+.sys-filters { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 18px 12px; }
+.sys-chip {
+  display: inline-flex; align-items: baseline; gap: 6px; cursor: pointer;
+  padding: 4px 11px; border-radius: 999px; font: inherit; font-size: .85em;
+  color: var(--text-dim); background: var(--surface);
+  border: 1px solid var(--border); transition: border-color .12s, background .12s, color .12s;
+}
+.sys-chip:hover { border-color: var(--accent); color: var(--text); }
+.sys-chip.active {
+  color: var(--text); border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+}
+.sys-chip-count { font-variant-numeric: tabular-nums; opacity: .65; font-size: .92em; }
+
+/* Health dot - the only saturated colour on a row. */
+.sys-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; vertical-align: middle; }
+.sys-dot.green  { background: var(--pos); }
+.sys-dot.yellow { background: #d9931f; }
+.sys-dot.red    { background: var(--neg); }
+.sys-dot.none   { background: transparent; border: 1.5px solid var(--border); }
+
+/* Fixed layout so nine prose columns always fit the pane - the registry is a
+   thing you READ, so it must never need horizontal scrolling to follow a row. */
+#sysTable { table-layout: fixed; width: 100%; }
+#sysTable th, #sysTable td { vertical-align: top; white-space: normal; overflow-wrap: break-word; }
+#sysTable td.left span { white-space: normal; }
+#sysTable tbody tr:not(.sys-group) td:first-child { text-align: center; padding-right: 0; }
+#sysTable th:nth-child(1), #sysTable td:nth-child(1) { width: 28px; }
+#sysTable th:nth-child(2) { width: 6%; }
+#sysTable th:nth-child(3) { width: 24%; }
+#sysTable th:nth-child(4) { width: 11%; }
+#sysTable th:nth-child(5) { width: 14%; }
+#sysTable th:nth-child(6) { width: 12%; }
+#sysTable th:nth-child(7) { width: 13%; }
+#sysTable th:nth-child(8) { width: 7%; }
+#sysTable th:nth-child(9) { width: 10%; }
+
+.sys-id { font-family: var(--font-mono); font-size: .86em; color: var(--text-dim); white-space: nowrap; }
+.sys-process { font-weight: 550; }
+
+/* Domain section header inside the one table - a full-width rule, not a cell. */
+tr.sys-group td {
+  background: var(--surface-2); color: var(--text-dim);
+  font-size: .78em; text-transform: uppercase; letter-spacing: .06em;
+  font-weight: 650; padding-top: 12px; padding-bottom: 6px;
+  text-align: left;
+  border-top: 1px solid var(--border);
+}
+tr.sys-retired { opacity: .45; }
+tr.sys-retired .sys-process { text-decoration: line-through; }
+
+/* State pill - how sure the description is. Deliberately low-contrast:
+   it is metadata about our confidence, not about the business. */
+.sys-state {
+  display: inline-block; padding: 1px 9px; border-radius: 999px;
+  font-size: .78em; white-space: nowrap; max-width: 100%; overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-dim); background: var(--surface-2); border: 1px solid var(--border);
+}
+.sys-state.proposed {
+  color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+.sys-state.inferred { font-style: italic; }
+.sys-state.retired { opacity: .7; }
+
+/* Life tag - only shown when a row is NOT live, because "agreed but never
+   built" is the thing this view exists to make impossible to miss. */
+.sys-life {
+  display: inline-block; margin-left: 8px; padding: 0 7px; border-radius: 4px;
+  font-size: .74em; text-transform: uppercase; letter-spacing: .05em; font-weight: 650;
+  color: #8a6100; background: color-mix(in srgb, #d9931f 18%, var(--surface));
+  border: 1px solid color-mix(in srgb, #d9931f 40%, var(--border)); vertical-align: middle;
+}
+html[data-theme="dark"] .sys-life { color: #e8b45c; }
+
+.check { display: inline-flex; align-items: center; gap: 6px; font-size: .88em; color: var(--text-dim); white-space: nowrap; }
+.check input { margin: 0; }

@@ -136,7 +136,7 @@ restate them here. Business/strategic context lives in session memory, not in th
   `shared/notion_client` (needs `ACB_ACTIONS_DS_ID` + the DB shared with the "Automation Integrator"
   integration). `dashboard.py` + `static/` = a local web UI (127.0.0.1) — tabs (My view · Overview ·
   Costs · Draws · Liens · Vendors), READ-ONLY except the ONE write (the owner's waiver mark →
-  `waiver`); `open_ledger.command` launcher (co-located in `~/Documents/CompanyHealth/`). DB lives
+  `waiver`); `open_ledger.command` launcher (co-located in `~/Documents/CompanyHealth/`). **`registry_view.py` + the `Systems` tab** render the vault's systems & process registry (`AI Brain_Vault/02_processes/*.md`) LIVE - parsed per request, never cached, never written back, no ledger table; vault path via `shared/paths.vault_dir()` (`ACB_VAULT_DIR`), read-only. It **replaced the daily markdown digest** (disabled 2026-08-19). DB lives
   OUTSIDE the repo (`~/Library/Application Support/Proficient/ledger.sqlite3`; override `ACB_LEDGER_DB`).
 - **project-pnl/** — per-project P&L (CP/MFD + RP × budgeted/unbudgeted) → OneDrive PROJECT
   P&Ls. Overhead shown as a final row at **10% of revenue** (was 11%, the user 2026-07-16;

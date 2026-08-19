@@ -4,6 +4,38 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Systems tab — the process registry, live in the ledger (2026-08-19).** The systems & process
+  registry (`AI Brain_Vault/02_processes/`, eight domain files) now renders as a tab instead of a
+  daily markdown digest. Requested by the owner: "we just need to have this in the Project Ledger,
+  my systems and processes live view."
+  - **`registry_view.py`** — parses the eight domain markdown row tables
+    (`ID | Process | Owner | Operators & touchers | Record | Automation | Cadence | H | State | Life`).
+    Only tables whose header's first cell is `ID` are treated as registry tables (the files carry
+    other pipe tables). Strips markdown, resolves the three axes into `health_key` / `state_kind` +
+    `confirmed_on` / `life_key`, and flags retired rows (struck ID, or State/Life `retired`).
+    The `Life` column is absent from older domain files — a row without one is **live**.
+    Standalone self-check: `python3 ledger/registry_view.py`.
+  - **`GET /api/processes`** — re-parses on EVERY request. No cache, no ledger table, no write-back:
+    the vault stays the source of truth and this is only a window onto it. Read-only, per the scope
+    the owner picked.
+  - **The tab** — six KPIs (processes · broken · fragile · running clean · unconfirmed · agreed-but-
+    not-live), domain chips, and filters for search / owner / health / state / life / show-retired,
+    over one table grouped by domain. Health dot is the only saturated colour on a row; the life tag
+    shows only when a row is NOT live, because "agreed but never built" is what the registry exists
+    to catch.
+  - **Path** — `shared/paths.vault_dir()` / `process_registry_dir()`, override `ACB_VAULT_DIR`.
+    READ-ONLY from this repo. No name ever enters the UI: owners are the role handles as stored, and
+    the roster is not read.
+  - **Verified live in the browser** (dark, 1223px pane): 81 rows / 8 domains parsed, 73 active +
+    8 retired; every filter and chip re-counts correctly; no console errors; table fits with no
+    horizontal scroll. **Liveness proven** against a scratch copy of the registry — edited a row's
+    health and state in the markdown and both the row and the rollup counts moved on the next fetch
+    with no restart. **Missing vault** degrades to a one-line message on the tab while `/api/data`
+    and every other tab keep working.
+  - Dashboard build **v1.1.0**.
+  - **The 06:38 daily digest scheduled task is disabled** (not deleted); `02_processes/digest-log.md`
+    is kept as history.
+
 - **`schema.sql`** — the 6-table spine (`project`, `cost_code`, `budget_line`, `cost_line`,
   `billing_event`, `wip_snapshot`) + `v_wip_latest` view. Portable across SQLite and Postgres
   (natural keys, ISO-text timestamps, 0/1 booleans, `DROP VIEW`+`CREATE VIEW`, `ON CONFLICT`).
@@ -698,6 +730,23 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     merges them, falls back to `Customer (raw)` when a relation doesn't resolve; a customer list the
     token can't read is skipped (those invoices show the project name). Selftest extended. Loaded live:
     all 98 open invoices now show a real client (51 distinct GCs, 0 project-shaped names).
+
+  - **Open Invoices refinements (owner, 2026-08-19).** A batch of feedback on the Invoices tab:
+    - **Lien column now shows the computed CLOCK + the Notion status.** `_fetch_open_invoices` adds
+      `lien_due_label`/`lien_due_state` from **`shared/lien_clock`** (the SAME clock the AR Aging Excel
+      uses, so the site and workbook agree - "when the lien is due"); the frontend renders it colored by
+      urgency, with the **Notion Lien Tracker status beside it as a Notion-style PILL** (grey pill +
+      colored dot) so it reads as "from Notion". (Pill is blank until the Lien Tracker DB is shared.)
+    - **Litigation excluded by DEFAULT** (was Include); the filter box turns **red** whenever it's
+      hiding/limiting rows so it's obvious a filter is in place. 76 of 98 shown by default (22 in litigation).
+    - **Removed the Due column** (the payment-due date; days-past-due moved to the Date cell's tooltip).
+    - **Vertical rules between the aging columns**; the client group-header band is now **neutral grey**
+      (was the green accent tint the owner flagged).
+    - **Sort now orders the client GROUPS** by the chosen key (Oldest-due-first really puts the oldest
+      client on top), fixing the "says Oldest due first but shows Client A-Z" mismatch.
+    - Verified live (v1.1.0): pill + clock render, litigation red/excluded, no Due column, group order.
+    - STILL PENDING (next): Project # -> QBO project page (needs the QBO customer id per project), and the
+      Project P&L batch (remove Costs card, rename to Project P&L, last-updated column, client filter).
 
 ## IN PROGRESS
 - **Lien-mark workbook mirror (Phase 2 above):** add the `bill_marks.resolve_lien` call to

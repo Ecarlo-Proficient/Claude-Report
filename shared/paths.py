@@ -64,6 +64,7 @@ _DEFAULT_ONEDRIVE_BASE = (
     Path.home() / "Library/CloudStorage/OneDrive-ProficientConcrete,LLC"
 )
 _DEFAULT_COMPANYHEALTH = Path.home() / "Documents" / "CompanyHealth"
+_DEFAULT_VAULT = Path.home() / "Documents" / "Claude" / "AI Brain_Vault"
 
 
 def onedrive_base() -> Path:
@@ -76,6 +77,18 @@ def companyhealth_dir() -> Path:
     Holds only the two things the owner opens — Company Tracker.xlsx and
     Company Dashboard.html; the workbooks that feed them live in _sources/."""
     return get_path("ACB_COMPANYHEALTH_DIR", _DEFAULT_COMPANYHEALTH)
+
+
+def vault_dir() -> Path:
+    """The AI Brain_Vault — the business brain and the systems/process registry.
+    Override: ACB_VAULT_DIR. READ-ONLY from this repo: tools may render vault
+    content (the ledger's Systems tab reads 02_processes/), never write it."""
+    return get_path("ACB_VAULT_DIR", _DEFAULT_VAULT)
+
+
+def process_registry_dir() -> Path:
+    """The registry's domain files (02_processes/) inside the vault."""
+    return vault_dir() / "02_processes"
 
 
 def companyhealth_sources_dir() -> Path:
@@ -138,6 +151,7 @@ def _self_check() -> None:
     print("\nShared roots (most outputs derive from these):")
     _print_root("OneDrive mirror", "ACB_ONEDRIVE_BASE", onedrive_base())
     _print_root("Company-health folder", "ACB_COMPANYHEALTH_DIR", companyhealth_dir())
+    _print_root("AI Brain_Vault (read-only)", "ACB_VAULT_DIR", vault_dir())
 
     print("\nPer-file overrides (optional — unset means the script's own default):")
     for key in ("INVOICE_EXPORT_PATH", "WIP_EXCEL_PATH", "ACB_GENERAL_LIST_XLSX"):

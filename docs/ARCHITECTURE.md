@@ -9,7 +9,15 @@
 > picture (open it in a browser after pulling). Refresh it when structure meaningfully changes;
 > THIS file is the always-current source of truth.
 
-Last updated: 2026-08-08 (ledger/ cont'd: shared/qbo_costs.py — cost_leaf MOVED out of project-pnl
+Last updated: 2026-08-19 (ledger/: NEW **Systems tab** — the systems & process registry
+(`AI Brain_Vault/02_processes/*.md`) rendered LIVE in the dashboard. `ledger/registry_view.py`
+parses the eight domain markdown tables per request (no cache, no DB table, no write-back);
+`/api/processes` serves them; the tab filters by domain/owner/health/state/life. Vault path
+resolves via `shared/paths.vault_dir()` (`ACB_VAULT_DIR`), READ-ONLY. This REPLACED the daily
+06:38 markdown digest, which is disabled — the owner: "we just need to have this in the
+Project Ledger, my systems and processes live view". Dashboard build v1.1.0.)
+
+Previously: 2026-08-08 (ledger/ cont'd: shared/qbo_costs.py — cost_leaf MOVED out of project-pnl
 (imported back, byte-compatible) so the ledger shares the ONE cost-code resolver; load_costs.py pulls
 QBO Bills+Purchases → complete cost_line by cost code incl. subs, reconciles to wip_snapshot,
 --selftest proves it offline. cost_line fleshed out + v_cost_by_project/v_cost_by_code views.
@@ -324,13 +332,16 @@ flowchart LR
     LOADER["load_wip_master.py\nCP←Test-CP · RP←Test-RP · MFD←Test-Master\nfilter to real project #s · idempotent upsert"]:::tool
     APLOAD["load_bill_tracker.py\nAP pay status + lien clock → ap_bill_line\n(NOT cost truth — subs excluded)"]:::tool
     DB[("ledger.sqlite3\nproject + wip_snapshot + ap_bill_line\n→ v_wip_latest · v_ap_by_project")]:::out
-    DASH["dashboard.py + static/\nlocal web UI (127.0.0.1) - READ-ONLY except the owner's marks.\nTabs: My view · Overview · P&L · Costs · Draws · Bills\n(Notion-style saved views) · Liens · Vendors · Sub LOC · Sales · Console"]:::tool
+    DASH["dashboard.py + static/\nlocal web UI (127.0.0.1) - READ-ONLY except the owner's marks.\nTabs: My view · Overview · P&L · Costs · Draws · Bills\n(Notion-style saved views) · Liens · Vendors · Sub LOC · Sales · Systems · Console"]:::tool
+    REG[("AI Brain_Vault/02_processes/*.md\neight domain files — the process registry\n(read-only source, never written)")]:::src
+    REGVIEW["registry_view.py\nparses the markdown row tables per request\nhealth · state · life — no cache, no DB table"]:::tool
     BROWSER[("Browser\nhttp://127.0.0.1:8787")]:::out
     QBO[("QBO\nBills + Purchases\n(read-only pull, Touch ID)")]:::src
     QCOSTS["shared/qbo_costs.py\ncost_leaf + iter_cost_lines\n(the ONE resolver — shared with project-pnl)"]:::tool
     COSTLOAD["load_costs.py\ncost_line by cost code · incl. subs ·\nreconciles to wip_snapshot · --selftest"]:::tool
     FUTURE["later: budget_line (takeoff by code)\n· billing_event (AR / draws)"]:::future
 
+    REG --> REGVIEW --> DASH
     TEST --> LOADER
     BT --> APLOAD
     QBO --> COSTLOAD
@@ -431,6 +442,25 @@ The job-detail panel links to **project-pnl**: `shared/pnl_paths.py` finds the p
 tools — gated behind a `confirm`; QBO stays read-only, only the .xlsx is written). This is the ledger's
 first reach OUT to a peripheral tool; the "own the spine" inverse (project-pnl reading `cost_line` from
 the ledger) is still ahead.
+
+The **Systems** tab (2026-08-19) is the ledger's first window onto something that is not a job:
+the **systems & process registry** (`AI Brain_Vault/02_processes/`, eight domain files). It is a
+**live view, not a copy** - `registry_view.py` re-parses the markdown row tables on every
+`/api/processes` request, so editing a vault file and hitting Reload is the entire update loop.
+Nothing lands in `ledger.sqlite3`, nothing is written back: the vault stays the one owner of
+registry truth, and the ledger only renders it. The three axes are kept visually distinct because
+the registry keeps them distinct - a **health dot** (running / fragile / broken / nothing to fail
+yet), a **state pill** (how sure the description is: confirmed · inferred · proposed), and, only
+when a row is not live, a **life tag** (idea · agreed · building), which is what surfaces the
+"agreed but never built" rows the registry exists to catch. Owners render as role handles, exactly
+as stored; the roster is never read and no name enters the UI. The vault root resolves through
+`shared/paths.vault_dir()` (`ACB_VAULT_DIR`), and a machine with no vault degrades to a one-line
+message on that tab while the rest of the dashboard runs untouched.
+
+**This replaced the 06:38 daily markdown digest**, which appended a written summary of the same
+registry to `02_processes/digest-log.md` each morning. The scheduled job is disabled and the log
+kept as history (the owner, 2026-08-19: "we just need to have this in the Project Ledger, my
+systems and processes live view"). A view you open beats a digest you have to have received.
 
 **On/off, on demand (owner: no always-on).** The dashboard is launched, not resident. `open_ledger.command`
 starts it if down + opens the browser; **`ledger/app/`** is a real Cocoa app (`ledger_app.py`, PyObjC +

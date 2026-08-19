@@ -202,6 +202,7 @@ function setTab(t) {
   $$(".tab").forEach(b => b.classList.toggle("active", b.dataset.tabbtn === t));
   if (t === "pnl") renderPnl();     // portfolio P&L is computed server-side, lazy-loaded
   if (t === "console") renderConsole();
+  if (t === "systems") loadSystems();
   if (typeof _csClear === "function") _csClear();   // drop any cell selection when the tab changes
   window.scrollTo(0, 0);
 }
@@ -1605,22 +1606,39 @@ let invGroupKeys = [];            // customer groups on screen (drives Collapse/
 let invBucketFilter = null;       // aging bucket clicked in the stats row (null = all)
 const AGING_HEX = ["#2E7D32", "#7CB342", "#D68910", "#C0552B", "#922B21"];  // green→red (matches aging_sheet.py)
 
-// Notion Lien Tracker status → [short label, color class]. Encodes where the lien sits.
+// Notion Lien Tracker status → [label, dot color]. Rendered as a Notion-style status pill
+// (grey pill + a colored dot) so it reads as "this came from the Notion Lien Tracker".
 const OI_LIEN = {
-  "Lien":            ["Lien filed",  "st-lien-past"],
-  "Mailed":          ["Mailed",      "st-lien-info"],
-  "Ready to Mail":   ["Ready→mail",  "st-warn"],
-  "In progress":     ["In progress", "st-warn"],
-  "Ready to Review": ["Review",      "st-warn"],
-  "Not started":     ["Not started", "st-dim"],
-  "Did Not Send":    ["Skipped",     "st-dim"],
-  "Paid":            ["Paid",        "st-ok"],
-  "Closed":          ["Closed",      "st-dim"],
+  "Lien":            ["Lien filed",   "#C0392B"],   // red
+  "Mailed":          ["Mailed",       "#2E77BC"],   // blue
+  "Ready to Mail":   ["Ready to mail", "#D68910"],  // orange
+  "In progress":     ["In progress",  "#2E77BC"],   // blue
+  "Ready to Review": ["Review",       "#D68910"],   // orange
+  "Not started":     ["Not started",  "#9AA1AC"],   // grey
+  "Did Not Send":    ["Skipped",      "#9AA1AC"],   // grey
+  "Paid":            ["Paid",         "#3E9B57"],   // green
+  "Closed":          ["Closed",       "#9AA1AC"],   // grey
 };
 function oiLienNode(inv) {
   const v = inv.lien_status; if (!v) return null;
-  const m = OI_LIEN[v] || [v, "st-dim"];
-  return stText(m[0], m[1], v + (inv.lien_notice ? " · " + inv.lien_notice : ""));
+  const m = OI_LIEN[v] || [v, "#9AA1AC"];
+  const pill = document.createElement("span"); pill.className = "notion-pill";
+  const dot = document.createElement("span"); dot.className = "np-dot"; dot.style.background = m[1];
+  const lbl = document.createElement("span"); lbl.textContent = m[0];
+  pill.appendChild(dot); pill.appendChild(lbl);
+  pill.title = "Notion Lien Tracker: " + v + (inv.lien_notice ? " · " + inv.lien_notice : "");
+  return pill;
+}
+// Computed Texas lien-notice CLOCK (when a lien is due) - from shared/lien_clock in the backend
+// payload, the SAME clock the AR Aging Excel uses so the two never disagree.
+function oiLienClock(inv) {
+  const v = inv.lien_due_label; if (!v) return null;
+  const st = inv.lien_due_state || "";
+  const cls = st === "PAST" ? "lc-past" : (st === "URGENT" ? "lc-urgent"
+            : (st === "WATCH" || st === "RETAINAGE") ? "lc-watch" : st === "SENT" ? "lc-sent" : "lc-ok");
+  const s = document.createElement("span"); s.className = "lien-clock " + cls;
+  s.textContent = v; s.title = "Texas lien-notice deadline (computed)";
+  return s;
 }
 const oiBal = i => num(i.balance);
 
@@ -1668,7 +1686,10 @@ function renderOpenInvoices() {
 
   const fv = sel => ($(sel) ? $(sel).value : "");
   const f = { client: fv("#ifClient").trim().toLowerCase(), proj: fv("#ifProj").trim().toLowerCase(),
-              div: fv("#ifDivision"), lien: fv("#ifLien"), litig: fv("#ifLitig") || "all" };
+              div: fv("#ifDivision"), lien: fv("#ifLien"), litig: fv("#ifLitig") || "ex" };
+  // Litigation is EXCLUDED by default; flag the box red whenever it's hiding/limiting rows so it's
+  // obvious to the eye that a filter is in place (owner 2026-08-19).
+  { const el = $("#ifLitig"); if (el) el.classList.toggle("filter-on", (el.value || "ex") !== "all"); }
 
   // Aging tiles double as the bucket filter. Their totals ignore the bucket pick (so the
   // full aging picture always shows) but DO honor the other filters.
@@ -1700,12 +1721,12 @@ function renderOpenInvoices() {
     ? `(${rows.length.toLocaleString()} of ${all.length.toLocaleString()} · ${money(shown)} open)`
     : "(no AR data - run load_invoices.py)";
   { const el = $("#invAsOf"); if (el) el.textContent = OI.as_of ? "aged as of " + fmtDate(OI.as_of) : ""; }
-  { const cb = $("#ifClear"); if (cb) cb.hidden = !(f.client || f.proj || f.div || f.lien || f.litig !== "all" || invBucketFilter != null); }
+  { const cb = $("#ifClear"); if (cb) cb.hidden = !(f.client || f.proj || f.div || f.lien || f.litig !== "ex" || invBucketFilter != null); }
 
   const thead = host.querySelector("thead"), tbody = host.querySelector("tbody");
   thead.innerHTML = ""; tbody.innerHTML = "";
   const cols = [["Client", "left"], ["Project", "left"], ["Invoice #", "left"], ["Date", "left"],
-                ["Due", "left"], ["Net", "left"], ["Lien", "left"], ...buckets.map(b => [b, "right ag"])];
+                ["Net", "left"], ["Lien", "left"], ...buckets.map(b => [b, "right ag"])];
   const htr = document.createElement("tr");
   cols.forEach(([c, al]) => { const th = document.createElement("th"); th.className = al; th.textContent = c; htr.appendChild(th); });
   thead.appendChild(htr);
@@ -1720,7 +1741,17 @@ function renderOpenInvoices() {
   // group by client (banding + collapse); per-bucket grand total at the bottom
   const groups = new Map();
   for (const i of rows) { const k = i.customer || "(no client)"; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(i); }
-  const order = [...groups.keys()].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  // Order the CLIENT GROUPS by the chosen sort (not just A-Z), so "Oldest due first" really
+  // puts the client with the oldest invoice on top, "Most owed" the biggest balance, etc.
+  const sortKey = fv("#ifSort") || "due";
+  const gMinDue = k => groups.get(k).reduce((m, i) => (i.due_date && (!m || i.due_date < m)) ? i.due_date : m, null) || "9999";
+  const gTotal = k => groups.get(k).reduce((t, i) => t + oiBal(i), 0);
+  const groupCmp = {
+    due:    (a, b) => gMinDue(a).localeCompare(gMinDue(b)) || a.localeCompare(b, undefined, { numeric: true }),
+    owed:   (a, b) => gTotal(b) - gTotal(a),
+    client: (a, b) => a.localeCompare(b, undefined, { numeric: true }),
+  };
+  const order = [...groups.keys()].sort(groupCmp[sortKey] || groupCmp.due);
   invGroupKeys = order;
   const grand = buckets.map(() => 0);
 
@@ -1747,7 +1778,7 @@ function renderOpenInvoices() {
     }
   }
   const ttr = document.createElement("tr"); ttr.className = "ag-total";
-  const lead = document.createElement("td"); lead.className = "left"; lead.colSpan = 7; lead.textContent = "Total open"; ttr.appendChild(lead);
+  const lead = document.createElement("td"); lead.className = "left"; lead.colSpan = 6; lead.textContent = "Total open"; ttr.appendChild(lead);
   buckets.forEach((b, k) => {
     const td = document.createElement("td"); td.className = "right ag";
     if (grand[k] > 0.005) { td.textContent = money(grand[k]); td.classList.add("ag" + k); }
@@ -1764,12 +1795,16 @@ function invRow(i, buckets) {
   if (i.division) { const dot = document.createElement("span"); dot.className = "divdot " + divClass(i.division); dot.title = i.division; proj.appendChild(dot); }
   proj.appendChild(document.createTextNode(i.project_no || "–")); tr.appendChild(proj);
   tr.appendChild(qboLinkCell(i.doc_number, qboInvoiceUrl(i.qbo_txn_id), "Open this invoice in QuickBooks"));
-  const dt = document.createElement("td"); dt.className = "left"; dt.textContent = fmtDateShort(i.txn_date); tr.appendChild(dt);
-  const due = document.createElement("td"); due.className = "left"; due.textContent = fmtDateShort(i.due_date);
-  if (i.days_past_due != null && i.days_past_due > 0) due.title = i.days_past_due + " days past due";
-  tr.appendChild(due);
+  const dt = document.createElement("td"); dt.className = "left"; dt.textContent = fmtDateShort(i.txn_date);
+  if (i.days_past_due != null && i.days_past_due > 0) dt.title = i.days_past_due + " days past due (due " + fmtDateShort(i.due_date) + ")";
+  tr.appendChild(dt);
   const net = document.createElement("td"); net.className = "left dim"; net.textContent = i.net_terms || "–"; tr.appendChild(net);
-  const lien = document.createElement("td"); lien.className = "left status-col"; lien.appendChild(oiLienNode(i) || dimDash()); tr.appendChild(lien);
+  // Lien cell: the computed notice-deadline CLOCK (when a lien is due) + the Notion status pill.
+  const lien = document.createElement("td"); lien.className = "left status-col lien-cell";
+  const clock = oiLienClock(i); if (clock) lien.appendChild(clock);
+  const pill = oiLienNode(i); if (pill) lien.appendChild(pill);
+  if (!clock && !pill) lien.appendChild(dimDash());
+  tr.appendChild(lien);
   buckets.forEach((b, k) => {
     const td = document.createElement("td"); td.className = "right ag";
     if (k === i.bucket_index) {
@@ -1794,7 +1829,7 @@ function invToggleAll() {
 }
 function invClearFilters() {
   ["#ifClient", "#ifProj", "#ifDivision", "#ifLien"].forEach(s => { const el = $(s); if (el) el.value = ""; });
-  const lt = $("#ifLitig"); if (lt) lt.value = "all";
+  const lt = $("#ifLitig"); if (lt) lt.value = "ex";   // baseline = litigation excluded
   invBucketFilter = null;
   renderOpenInvoices();
 }
@@ -2821,6 +2856,181 @@ function initCellSelect() {
   });
 }
 
+
+// ── Systems & processes ─────────────────────────────────────────────────────
+// The registry lives in the vault as markdown (02_processes/*.md); the server
+// parses it per request, so this is a live view of those files, not a copy.
+// Read-only by design - the vault owns the truth, we only render it.
+// Replaced the daily markdown digest (the owner, 2026-08-19).
+let REG = null;             // cached /api/processes payload
+let sysDomain = null;       // domain code currently filtered to (null = all)
+
+const HEALTH_LABEL = { red: "Broken", yellow: "Fragile", green: "Running", none: "Not started" };
+
+async function loadSystems(force) {
+  if (REG && !force) { renderSystems(); return; }
+  const note = $("#sysNote");
+  if (note) note.textContent = "(reading the vault…)";
+  try { REG = await (await fetch("/api/processes")).json(); }
+  catch { REG = { ok: false, rows: [], domains: [], error: "could not reach the ledger server" }; }
+  renderSystems();
+}
+
+function sysFiltered() {
+  const rows = (REG && REG.rows) || [];
+  const q = ($("#sysSearch") ? $("#sysSearch").value : "").trim().toLowerCase();
+  const owner = $("#sysOwner") ? $("#sysOwner").value : "";
+  const health = $("#sysHealth") ? $("#sysHealth").value : "";
+  const state = $("#sysState") ? $("#sysState").value : "";
+  const life = $("#sysLife") ? $("#sysLife").value : "";
+  const showRetired = $("#sysRetired") ? $("#sysRetired").checked : false;
+  return rows.filter(r => {
+    if (r.retired && !showRetired) return false;
+    if (sysDomain && r.domain_code !== sysDomain) return false;
+    if (owner && r.owner !== owner) return false;
+    if (health && r.health_key !== health) return false;
+    if (state && r.state_kind !== state) return false;
+    if (life && r.life_key !== life) return false;
+    if (q) {
+      const hay = [r.id, r.process, r.owner, r.touchers, r.record, r.automation, r.cadence, r.domain]
+        .join(" ").toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+function renderSystems() {
+  const note = $("#sysNote"), tb = $("#sysTable tbody"), th = $("#sysTable thead");
+  if (!tb || !th) return;
+  if (REG && REG.ok === false) {
+    note.textContent = "(unavailable)";
+    th.innerHTML = ""; tb.innerHTML = "";
+    const tr = document.createElement("tr"), td = document.createElement("td");
+    td.className = "left"; td.colSpan = 8;
+    td.textContent = REG.error || "The process registry could not be read.";
+    tr.appendChild(td); tb.appendChild(tr);
+    return;
+  }
+  if (!REG) return;
+
+  // Owner list is rebuilt from the payload, preserving the current pick.
+  const sel = $("#sysOwner");
+  if (sel && sel.options.length <= 1) {
+    for (const o of (REG.owners || [])) {
+      const opt = document.createElement("option");
+      opt.value = o.owner; opt.textContent = `${o.owner} (${o.count})`;
+      sel.appendChild(opt);
+    }
+  }
+
+  const c = REG.counts || { health: {}, state: {}, life: {} };
+  const h = c.health || {}, st = c.state || {}, lf = c.life || {};
+  const stalled = (lf.agreed || 0) + (lf.building || 0);
+  const stats = [
+    ["Processes", String(c.active || 0), `${c.retired || 0} retired`],
+    ["Broken", String(h.red || 0), "running and going wrong"],
+    ["Fragile", String(h.yellow || 0), "one person or one step from failing"],
+    ["Running clean", String(h.green || 0), "automated or reliable"],
+    ["Unconfirmed", String((st.proposed || 0) + (st.inferred || 0)),
+      `${st.proposed || 0} proposed · ${st.inferred || 0} inferred`],
+    ["Agreed, not live", String(stalled), "decided but never built"],
+  ];
+  const sr = $("#sysStats"); sr.innerHTML = "";
+  for (const [label, value, sub] of stats) {
+    const el = document.createElement("div"); el.className = "kpi";
+    el.innerHTML = `<div class="k-label"></div><div class="k-value"></div><div class="k-sub"></div>`;
+    el.querySelector(".k-label").textContent = label;
+    el.querySelector(".k-value").textContent = value;
+    el.querySelector(".k-sub").textContent = sub;
+    sr.appendChild(el);
+  }
+
+  // Domain chips - one per registry file, plus All.
+  const dom = $("#sysDomains"); dom.innerHTML = "";
+  const mk = (code, label, count) => {
+    const b = document.createElement("button");
+    b.className = "sys-chip" + ((sysDomain === code) ? " active" : "");
+    b.innerHTML = `<span class="sys-chip-label"></span><span class="sys-chip-count"></span>`;
+    b.querySelector(".sys-chip-label").textContent = label;
+    b.querySelector(".sys-chip-count").textContent = String(count);
+    b.onclick = () => { sysDomain = code; renderSystems(); };
+    dom.appendChild(b);
+  };
+  const live = (REG.rows || []).filter(r => !r.retired);
+  mk(null, "All", live.length);
+  for (const d of (REG.domains || [])) {
+    mk(d.code, d.code || d.title, d.rows.filter(r => !r.retired).length);
+  }
+
+  const rows = sysFiltered();
+  // Denominator follows the retired toggle, so the count never reads "81 of 73".
+  const universe = ($("#sysRetired") && $("#sysRetired").checked) ? (c.total || 0) : (c.active || 0);
+  note.textContent = `(${rows.length} of ${universe}${REG.source ? " · live from the vault" : ""})`;
+
+  const cols = ["", "ID", "Process", "Owner", "Also touches", "Record", "Automation", "Cadence", "State"];
+  th.innerHTML = ""; tb.innerHTML = "";
+  const htr = document.createElement("tr");
+  for (const c2 of cols) {
+    const el = document.createElement("th");
+    el.className = "left"; el.textContent = c2; htr.appendChild(el);
+  }
+  th.appendChild(htr);
+
+  if (!rows.length) {
+    const tr = document.createElement("tr"), td = document.createElement("td");
+    td.className = "left"; td.colSpan = cols.length; td.textContent = "No processes match these filters.";
+    tr.appendChild(td); tb.appendChild(tr); return;
+  }
+
+  let lastDomain = null;
+  for (const r of rows) {
+    if (r.domain !== lastDomain) {          // a section header per domain
+      lastDomain = r.domain;
+      const gr = document.createElement("tr"); gr.className = "sys-group";
+      const gd = document.createElement("td"); gd.className = "left"; gd.colSpan = cols.length;
+      gd.textContent = `${r.domain_code} · ${r.domain}`;
+      gr.appendChild(gd); tb.appendChild(gr);
+    }
+    const tr = document.createElement("tr");
+    if (r.retired) tr.classList.add("sys-retired");
+
+    const hd = document.createElement("td");
+    const dot = document.createElement("span");
+    dot.className = "sys-dot " + (r.health_key || "none");
+    dot.title = HEALTH_LABEL[r.health_key] || "";
+    hd.appendChild(dot); tr.appendChild(hd);
+
+    const idc = document.createElement("td"); idc.className = "left sys-id";
+    idc.textContent = r.id; tr.appendChild(idc);
+
+    const pc = document.createElement("td"); pc.className = "left sys-process";
+    pc.textContent = r.process;
+    if (r.life_key && r.life_key !== "live" && !r.retired) {
+      const tag = document.createElement("span");
+      tag.className = "sys-life " + r.life_key;
+      tag.textContent = r.life_key;
+      tag.title = "Decided, but not running yet";
+      pc.appendChild(tag);
+    }
+    tr.appendChild(pc);
+
+    for (const k of ["owner", "touchers", "record", "automation", "cadence"]) {
+      tr.appendChild(leftText(r[k] || ""));
+    }
+
+    const sc = document.createElement("td"); sc.className = "left";
+    const pill = document.createElement("span");
+    pill.className = "sys-state " + (r.state_kind || "unknown");
+    pill.textContent = r.state_kind === "confirmed" && r.confirmed_on
+      ? `confirmed ${fmtDateShort(r.confirmed_on)}` : (r.state_kind || "");
+    if (r.confirmed_on) pill.title = "Confirmed by the owner on " + fmtDate(r.confirmed_on);
+    sc.appendChild(pill); tr.appendChild(sc);
+
+    tb.appendChild(tr);
+  }
+}
+
 function init() {
   applySettings();
   syncSettingsUI();
@@ -2862,6 +3072,10 @@ function init() {
       { ..._consoleEls(), btn: el }); }
   $("#btnClearRule").onclick = () => { activeRule = null; renderAttention(); renderProjects(); };
   $("#btnSettings").onclick = () => openPanel("#settings");
+  { const el = $("#btnSysReload"); if (el) el.onclick = () => loadSystems(true); }
+  for (const id of ["#sysSearch", "#sysOwner", "#sysHealth", "#sysState", "#sysLife", "#sysRetired"]) {
+    const el = $(id); if (el) el.addEventListener("input", renderSystems);
+  }
   $$(".tab").forEach(b => { b.onclick = () => setTab(b.dataset.tabbtn); });
   let savedTab = "home";
   try { savedTab = localStorage.getItem("proficient-ledger-tab") || "home"; } catch { /* ignore */ }

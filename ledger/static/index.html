@@ -35,6 +35,7 @@
     <button class="tab" data-tabbtn="vendors">Vendors</button>
     <button class="tab" data-tabbtn="subloc">Sub LOC</button>
     <button class="tab" data-tabbtn="sales">Sales</button>
+    <button class="tab" data-tabbtn="systems">Systems</button>
     <button class="tab" data-tabbtn="console">Console</button>
   </nav>
 
@@ -230,8 +231,8 @@
           <label class="fld"><span>Lien</span><select id="ifLien"></select></label>
           <label class="fld"><span>Litigation</span>
             <select id="ifLitig">
-              <option value="all">Include</option>
               <option value="ex">Exclude</option>
+              <option value="all">Include</option>
               <option value="only">Only</option>
             </select>
           </label>
@@ -408,6 +409,51 @@
         </div>
       </section>
     </div><!-- /tab: sales -->
+
+    <!-- ══════════════ TAB: SYSTEMS (the process registry, read live from the vault) ══════════════ -->
+    <div class="tab-page" data-tab="systems" hidden>
+      <section class="widget">
+        <div class="widget-head">
+          <h2>Systems &amp; processes <span class="count" id="sysNote"></span></h2>
+          <button class="btn small" id="btnSysReload" title="Re-read the registry files from the vault">Reload</button>
+        </div>
+        <p class="hint">Every process the business runs, one row each, read live from the vault
+          registry. <b>Health</b> is how it runs · <b>State</b> is how sure the description is ·
+          <b>Life</b> is whether it runs at all. Read-only here - the vault markdown stays the
+          source of truth, so edit there and hit Reload.</p>
+        <div class="kpi-row" id="sysStats"></div>
+        <div class="sys-filters" id="sysDomains"></div>
+        <div class="filters">
+          <input type="search" id="sysSearch" placeholder="Search process, owner, record, automation…" autocomplete="off">
+          <select id="sysOwner"><option value="">All owners</option></select>
+          <select id="sysHealth">
+            <option value="">All health</option>
+            <option value="red">Broken</option>
+            <option value="yellow">Fragile</option>
+            <option value="green">Running</option>
+            <option value="none">Nothing to fail yet</option>
+          </select>
+          <select id="sysState">
+            <option value="">All states</option>
+            <option value="proposed">Proposed</option>
+            <option value="inferred">Inferred</option>
+            <option value="confirmed">Confirmed</option>
+            <option value="corrected">Corrected</option>
+          </select>
+          <select id="sysLife">
+            <option value="">All lifecycle</option>
+            <option value="live">Live</option>
+            <option value="building">Building</option>
+            <option value="agreed">Agreed</option>
+            <option value="idea">Idea</option>
+          </select>
+          <label class="check"><input type="checkbox" id="sysRetired"> Show retired</label>
+        </div>
+        <div class="table-scroll">
+          <table class="grid" id="sysTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </div><!-- /tab: systems -->
 
     <!-- ══════════════ TAB: CONSOLE (control plane - run the pipelines) ══════════════ -->
     <div class="tab-page" data-tab="console" hidden>
