@@ -14,6 +14,7 @@ const COLUMNS = [
   { key: "project_no",            label: "Project #",     type: "text",   align: "left", always: true },
   { key: "division",              label: "Division",      type: "text",   align: "left", def: true },
   { key: "project_name",          label: "Name",          type: "text",   align: "left", def: true },
+  { key: "client",                label: "Client",        type: "text",   align: "left", always: true },   // always shown (owner: "always see client")
   { key: "status",                label: "Status",        type: "status", align: "left", def: true },
   { key: "rp_category",           label: "Category",      type: "text",   align: "left" },
   { key: "builder_or_gc",         label: "Builder / GC",  type: "text",   align: "left" },
@@ -469,7 +470,7 @@ function filtered() {
     if (f.category && r.rp_category !== f.category) return false;
     if (f.activeOnly && !isActive(r)) return false;
     if (f.q) {
-      const hay = [r.project_no, r.project_name, r.builder_or_gc].filter(Boolean).join(" ").toLowerCase();
+      const hay = [r.project_no, r.project_name, r.builder_or_gc, r.client].filter(Boolean).join(" ").toLowerCase();
       if (!hay.includes(f.q)) return false;
     }
     return true;
@@ -2812,7 +2813,7 @@ function renderPnl() {
   shown.sort((a, b) => { const k = pnlSort.key, av = a[k], bv = b[k];
     if (av == null) return 1; if (bv == null) return -1;
     return (av < bv ? -1 : av > bv ? 1 : 0) * pnlSort.dir; });
-  const cols = [["proj", "Project", "left"], ["division", "Division", "left"], ["client", "Client", "left"],
+  const cols = [["proj", "Project", "left"], ["name", "Name / address", "left"], ["division", "Division", "left"], ["client", "Client", "left"],
     ["status", "Status", "left"], ["contract", "Contract", "right"], ["pct_complete", "%", "right"], ["earned", "Earned", "right"],
     ["cost", "Cost", "right"], ["overhead", "Overhead", "right"], ["net", "Net", "right"],
     ["net_pct", "Net %", "right"], ["pnl_mtime", "P&L updated", "right"]];
@@ -2822,7 +2823,7 @@ function renderPnl() {
     const th = document.createElement("th"); if (al === "left") th.className = "left";
     th.textContent = label + (pnlSort.key === key ? (pnlSort.dir < 0 ? " ▾" : " ▴") : "");
     th.style.cursor = "pointer";
-    th.onclick = () => { if (pnlSort.key === key) pnlSort.dir *= -1; else { pnlSort.key = key; pnlSort.dir = (key === "proj" || key === "division" || key === "client" || key === "status") ? 1 : -1; } renderPnl(); };
+    th.onclick = () => { if (pnlSort.key === key) pnlSort.dir *= -1; else { pnlSort.key = key; pnlSort.dir = (key === "proj" || key === "name" || key === "division" || key === "client" || key === "status") ? 1 : -1; } renderPnl(); };
     htr.appendChild(th);
   }
   thead.appendChild(htr);
@@ -2844,6 +2845,7 @@ function renderPnl() {
       pcell.appendChild(a);
     } else { pcell.appendChild(document.createTextNode(r.proj)); }
     row.appendChild(pcell);
+    { const c = leftText(r.name || "–"); c.style.color = r.name ? "" : "var(--text-dim)"; c.title = r.name || ""; row.appendChild(c); }
     row.appendChild(leftText(r.division));
     { const c = leftText(r.client || "–"); c.style.color = r.client ? "" : "var(--text-dim)"; row.appendChild(c); }
     { const s = document.createElement("td"); s.className = "left"; s.appendChild(stText(r.status || "Active", r.active ? "st-ok" : "st-dim")); row.appendChild(s); }

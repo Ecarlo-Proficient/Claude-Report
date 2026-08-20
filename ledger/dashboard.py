@@ -170,16 +170,13 @@ def _portfolio_pnl(con) -> dict:
     per-project math as _project_pnl, batched into 3 aggregate reads."""
     wip = list(con.execute(
         "SELECT project_no, division, status, total_contract_price tcp, percent_complete pc, "
-        "builder_or_gc FROM v_wip_latest"))
+        "builder_or_gc, project_name FROM v_wip_latest"))
     costs = {r["project_no"]: r["c"] for r in con.execute(
         "SELECT project_no, COALESCE(SUM(amount),0) c FROM cost_line GROUP BY project_no")}
     billed = {r["project_no"]: r["a"] for r in con.execute(
         "SELECT project_no, COALESCE(SUM(amount),0) a FROM billing_event "
         "WHERE project_no IS NOT NULL GROUP BY project_no")}
-    # Client (the GC) per project: the resolved parent from AR invoices, else the WIP builder.
-    client_of = {r["project_no"]: r["customer"] for r in con.execute(
-        "SELECT project_no, customer FROM billing_event "
-        "WHERE customer IS NOT NULL AND project_no IS NOT NULL GROUP BY project_no")}
+    client_of = _project_customer_map(con)   # the shared client resolver (same as Bills/Liens/projects)
     try:  # project → QBO customer id (CustomerRef.value) for the project# deep link; absent-safe
         cust_of = {r["project_no"]: r["customer_id"] for r in con.execute(
             "SELECT project_no, customer_id FROM cost_line "
@@ -210,6 +207,7 @@ def _portfolio_pnl(con) -> dict:
                      "pct_complete": pc, "earned": earned, "cost": cost,
                      "overhead": oh, "net": net,
                      "net_pct": (net / earned) if earned else None, "billed": b,
+                     "name": w["project_name"],                          # the job name / address
                      "client": client_of.get(p) or w["builder_or_gc"] or None,
                      "cust_id": cust_of.get(p), "pnl_mtime": mtime,
                      "status": st_raw or "Active", "active": active})
@@ -371,6 +369,39 @@ LIEN_RANK = {
 }
 
 
+_PROJ_SHAPED = re.compile(r"^(RP|CP|MFD)\d", re.I)
+
+
+def _project_customer_map(con) -> dict:
+    """{project_no -> client (the GC)} - the ONE client resolver, shared by the AP/Liens view, the
+    projects list, and the portfolio P&L so they never disagree. PRIMARY: project_customer (the QBO
+    Customer:Project hierarchy reversed by load_payments, covers EVERY project); then payments'
+    resolved GC, then a non-project-shaped billing_event customer, fill any gap."""
+    out = {}
+    try:
+        for r in con.execute("SELECT project_no pn, client FROM project_customer WHERE COALESCE(client,'') <> ''"):
+            out[r["pn"]] = r["client"]
+    except sqlite3.OperationalError:
+        pass
+    try:
+        for r in con.execute(
+                "SELECT pa.project_no pn, p.parent_customer gc, COUNT(*) n FROM payment_application pa "
+                "JOIN payment p ON p.qbo_txn_id = pa.payment_txn_id "
+                "WHERE pa.project_no IS NOT NULL AND COALESCE(p.parent_customer,'') <> '' "
+                "GROUP BY pa.project_no, p.parent_customer ORDER BY pa.project_no, n DESC"):
+            out.setdefault(r["pn"], r["gc"])
+    except sqlite3.OperationalError:
+        pass
+    try:
+        for r in con.execute("SELECT project_no pn, customer c FROM billing_event "
+                             "WHERE project_no IS NOT NULL AND COALESCE(customer,'') <> ''"):
+            if r["pn"] not in out and not _PROJ_SHAPED.match(r["c"] or ""):
+                out.setdefault(r["pn"], r["c"])
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
 def _fetch_ap(con) -> dict:
     """AP + lien view from ap_bill_line; empty (not an error) if the table is absent."""
     ap = {"summary": {"open_balance": 0, "open_lines": 0, "watch_count": 0},
@@ -413,33 +444,7 @@ def _fetch_ap(con) -> dict:
             bmap[str(be["doc_number"])] = dict(be)
     except sqlite3.OperationalError:
         pass
-    # project -> client (the GC). PRIMARY: project_customer, reversed from the QBO Customer:Project
-    # hierarchy by load_payments, which covers EVERY project (every project is a QBO sub-customer under
-    # its GC). Fallbacks (payments' resolved GC, then a non-project-shaped billing_event customer) only
-    # fill projects the hierarchy pull somehow missed. Powers "CP790 · DL MEACHAM LP" + the client filter.
-    proj_shaped = re.compile(r"^(RP|CP|MFD)\d", re.I)
-    proj_customer = {}
-    try:
-        for r in con.execute("SELECT project_no pn, client FROM project_customer WHERE COALESCE(client,'') <> ''"):
-            proj_customer[r["pn"]] = r["client"]
-    except sqlite3.OperationalError:
-        pass
-    try:
-        for r in con.execute(
-                "SELECT pa.project_no pn, p.parent_customer gc, COUNT(*) n FROM payment_application pa "
-                "JOIN payment p ON p.qbo_txn_id = pa.payment_txn_id "
-                "WHERE pa.project_no IS NOT NULL AND COALESCE(p.parent_customer,'') <> '' "
-                "GROUP BY pa.project_no, p.parent_customer ORDER BY pa.project_no, n DESC"):
-            proj_customer.setdefault(r["pn"], r["gc"])          # first per project = most frequent GC
-    except sqlite3.OperationalError:
-        pass
-    try:
-        for r in con.execute("SELECT project_no pn, customer c FROM billing_event "
-                             "WHERE project_no IS NOT NULL AND COALESCE(customer,'') <> ''"):
-            if r["pn"] not in proj_customer and not proj_shaped.match(r["c"] or ""):
-                proj_customer.setdefault(r["pn"], r["c"])
-    except sqlite3.OperationalError:
-        pass
+    proj_customer = _project_customer_map(con)   # project -> client (the GC), the shared resolver
     bills = []
     for r in con.execute(
         "SELECT project_no, division, vendor, bill_ref, bill_date, account, "
@@ -971,6 +976,7 @@ def fetch_data(db_path: Path) -> dict:
         if got:
             loaded_at = got[0]
         ap = _fetch_ap(con)
+        proj_client = _project_customer_map(con)   # project -> client, to show on the projects list too
         costs = _fetch_costs(con)
         draws = _fetch_draws(con)
         sales = _fetch_sales(con)
@@ -988,10 +994,11 @@ def fetch_data(db_path: Path) -> dict:
         con.close()
         return {"error": f"Ledger schema not found ({e}). Run the loader first."}
     con.close()
-    for r in rows:  # attach QBO cost rollup onto each project row
+    for r in rows:  # attach QBO cost rollup + the client onto each project row
         cp = costs["by_project"].get(r["project_no"])
         r["costs_loaded"] = cp["costs_loaded"] if cp else None
         r["sub_costs"] = cp["sub_costs"] if cp else None
+        r["client"] = proj_client.get(r["project_no"])
     for d in draws.get("draws", []):  # attach the Notion action link (if tracked)
         inv = (d.get("matched_invoice") or "").split("—")[0].strip()
         d["action"] = actions.get(f"draw:{inv}")

@@ -971,6 +971,16 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     pay-status blank" the owner saw was the **un-restarted server** serving the pre-enrichment `lien_watch` - the
     data was always resolvable (client is 100% on sent/filed). Backend change - needs the dashboard restart.
 
+  - **Client on the Overview projects list + job name/address in Project P&L (owner, 2026-08-20: "need client
+    here in overview, it's important to always see client, in project P&L get the job name/address as well").**
+    Extracted the client resolver to a shared **`_project_customer_map(con)`** (was inline in `_fetch_ap`) so
+    Bills, Liens, the projects list, and the P&L all name the client identically. `fetch_data` attaches `client`
+    to every project row (152/170); the Overview table gets an **always-on Client column** (`always:true`, survives
+    a customized column set) + client in the project search. `_portfolio_pnl` now selects `project_name` and uses
+    the shared resolver → the P&L "By job" table leads **Project · Name / address · Division · Client** (name
+    170/170, client 157/170). Verified live on :8787: CP585 → Green Road Construction; CP800 → TOPAZ AT LIGHT
+    FARMS / Tri-C; no console errors.
+
   - **Project P&L: status column + sort dropdown + status filter (owner, 2026-08-19).** `_portfolio_pnl` now
     returns ALL jobs with a `status` + `active` flag (company/division TOTALS stay active-only). Frontend:
     a **Status column** (green Active / dim Closed·Complete), a **status filter** (default Active only; All;
