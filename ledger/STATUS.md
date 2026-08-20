@@ -927,6 +927,15 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     the log has content. Unit-verified (`_pnl_last_line` extracts `✓ costs pulled: 128 lines` from a mixed log);
     live line needs a real generation to watch.
 
+  - **All applicable Bills filters are now multi-select (owner, 2026-08-20: "the same for all filters that are
+    applicable / multi select makes sense to add").** One generic checkbox component (`BILL_MSEL` + `buildBillMSel`
+    / `billMSelPasses`) converts **Client · Division · Pay status · Invoice · Approved · Lien** from single-selects
+    to multi-select dropdowns (include model: empty = all, checked = only those). Client carries a search box (113
+    values); Lien shows the short labels (Past due / Notice sent / …); blanks/`(multiple)` are labeled. Day stays a
+    single drill (dependent on one month); Vendor keeps its bespoke pump-exclude default; Month keeps its cascade.
+    Only one menu opens at a time; "Clear filters" resets every multi-select. Verified live: RP+MFD → "2 selected",
+    1,758 bills, no CP rows; per-menu search/labels/clear all work; no console errors.
+
   - **Project P&L: status column + sort dropdown + status filter (owner, 2026-08-19).** `_portfolio_pnl` now
     returns ALL jobs with a `status` + `active` flag (company/division TOTALS stay active-only). Frontend:
     a **Status column** (green Active / dim Closed·Complete), a **status filter** (default Active only; All;

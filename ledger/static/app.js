@@ -1263,27 +1263,54 @@ function dimDash() { const s = document.createElement("span"); s.className = "st
 function statusCell(node) { const td = document.createElement("td"); td.className = "left status-col"; td.appendChild(node || dimDash()); return td; }
 
 // ── the six per-field filter dropdowns (each a component, not a search box) ──
-const BILL_FILTERS = [   // Vendor is a custom multi-select (excludes pumps by default) - handled separately
-  { sel: "#bfCustomer", get: b => b.client || "",          all: "All clients" },
-  { sel: "#bfDivision", get: b => b.division || "",        all: "All divisions", blank: "No division" },
-  { sel: "#bfPay",      get: b => b.pay_status || "",      all: "Any pay status" },
-  { sel: "#bfInv",      get: b => b.invoice_status || "",  all: "Any invoice" },
-  { sel: "#bfAppr",     get: b => b.approved || "",        all: "Any approval" },
-  { sel: "#bfLien",     get: b => b.lien_status || "",     all: "Any lien", risk: true },
+// Categorical filters, all MULTI-select (checkboxes): empty selection = all; checked = show only
+// those (owner 2026-08-20: "the same for all filters where multi select makes sense"). ONE generic
+// component. Vendor + Month are bespoke (pump default / month cascade); Day stays a single drill.
+const billMSel = {};   // { id: Set(selected raw values) }
+const BILL_MSEL = [
+  { id: "bfCustomer", all: "All clients",    get: b => b.client || "",        search: true, lbl: v => v || "(no client)" },
+  { id: "bfDivision", all: "All divisions",  get: b => b.division || "",       lbl: v => v || "(no division)" },
+  { id: "bfPay",      all: "Any pay status", get: b => b.pay_status || "",     lbl: v => v || "(none)" },
+  { id: "bfInv",      all: "Any invoice",    get: b => b.invoice_status || "", lbl: v => v || "(none)" },
+  { id: "bfAppr",     all: "Any approval",   get: b => b.approved || "",       lbl: v => v === "approved" ? "Approved" : (v === "not approved" ? "Not approved" : (v || "(blank)")) },
+  { id: "bfLien",     all: "Any lien",       get: b => b.lien_status || "",    lbl: v => v ? (LIEN_SHORT[v] || v) : "(no lien clock)" },
 ];
-function buildBillFilters() {   // populate each select once from the data; preserve the pick
-  const bills = BILLS || [];
-  for (const spec of BILL_FILTERS) {
-    const el = $(spec.sel); if (!el) continue;
-    const prev = el.value;
-    const vals = [...new Set(bills.map(spec.get).filter(v => v !== ""))].sort((a, b) => a.localeCompare(b));
-    el.innerHTML = "";
-    const optAll = document.createElement("option"); optAll.value = ""; optAll.textContent = spec.all; el.appendChild(optAll);
-    if (spec.risk) { const o = document.createElement("option"); o.value = "__risk__"; o.textContent = "Any lien risk"; el.appendChild(o); }
-    for (const v of vals) { const o = document.createElement("option"); o.value = v; o.textContent = v; el.appendChild(o); }
-    if (spec.blank && bills.some(b => spec.get(b) === "")) { const o = document.createElement("option"); o.value = "__blank__"; o.textContent = spec.blank; el.appendChild(o); }
-    el.value = prev; if (el.value !== prev) el.value = "";   // reset only if the old pick left the domain
+function _billMSelVals(cfg) { return [...new Set((BILLS || []).map(cfg.get))].sort((a, b) => cfg.lbl(a).localeCompare(cfg.lbl(b))); }
+function toggleBillMSel(id, val, checked) {
+  const s = billMSel[id] || (billMSel[id] = new Set());
+  if (checked) s.add(val); else s.delete(val);
+  buildBillMSel(BILL_MSEL.find(c => c.id === id)); renderBills();
+}
+function buildBillMSel(cfg) {
+  const menu = $("#" + cfg.id + "Menu"), btn = $("#" + cfg.id + "Btn");
+  if (!menu || !btn) return;
+  const s = billMSel[cfg.id] || (billMSel[cfg.id] = new Set());
+  const vals = _billMSelVals(cfg);
+  for (const v of [...s]) if (!vals.includes(v)) s.delete(v);   // drop values gone from the data
+  menu.innerHTML = "";
+  if (cfg.search) { const q = document.createElement("input"); q.type = "search"; q.className = "msel-search"; q.placeholder = "Search";
+    q.oninput = () => { const t = q.value.toLowerCase(); for (const lab of menu.querySelectorAll(".msel-opt")) lab.hidden = t && !lab.textContent.toLowerCase().includes(t); }; menu.appendChild(q); }
+  { const clr = document.createElement("button"); clr.type = "button"; clr.className = "msel-clear"; clr.textContent = "Clear";
+    clr.onclick = () => { s.clear(); buildBillMSel(cfg); renderBills(); }; menu.appendChild(clr); }
+  for (const v of vals) {
+    const lab = document.createElement("label"); lab.className = "msel-opt";
+    const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = s.has(v);
+    cb.onchange = () => toggleBillMSel(cfg.id, v, cb.checked);
+    lab.appendChild(cb); lab.appendChild(document.createTextNode(" " + cfg.lbl(v)));
+    menu.appendChild(lab);
   }
+  if (!s.size) btn.textContent = cfg.all;
+  else if (s.size === 1) btn.textContent = cfg.lbl([...s][0]);
+  else btn.textContent = s.size + " selected";
+  btn.classList.toggle("on", s.size > 0);
+  btn.title = s.size ? [...s].map(cfg.lbl).join(", ") : "";
+}
+function billMSelPasses(b) {
+  for (const cfg of BILL_MSEL) { const s = billMSel[cfg.id]; if (s && s.size && !s.has(cfg.get(b))) return false; }
+  return true;
+}
+function buildBillFilters() {
+  for (const cfg of BILL_MSEL) buildBillMSel(cfg);
   buildBillDateFilter();
   buildBillVendorFilter();
 }
@@ -1375,30 +1402,26 @@ function buildBillVendorFilter() {
   btn.title = billVendorHidden.size ? "Hidden: " + [...billVendorHidden].join(", ") : "";
 }
 function billFilterValues() {
-  const f = {}; for (const spec of BILL_FILTERS) { const el = $(spec.sel); f[spec.sel] = el ? el.value : ""; }
+  const f = {};
   f["#bfMonth"] = billMonths.size ? [...billMonths] : "";
   f["#bfDay"] = $("#bfDay") ? $("#bfDay").value : "";
-  f["#bfVendor"] = _vendorNonDefault() ? "1" : "";     // "Clear filters" shows only when vendor deviates from the default
-  return f;
+  f["#bfVendor"] = _vendorNonDefault() ? "1" : "";                                   // vendor deviates from the pump default
+  f["#bfMSel"] = BILL_MSEL.some(c => (billMSel[c.id] || {}).size) ? "1" : "";        // any categorical multi-select active
+  return f;                                                                          // (drives the "Clear filters" button)
 }
 function billPassesFilters(b, f) {
   const mo = f["#bfMonth"]; if (mo && mo.length && !mo.includes(String(b.bill_date || "").slice(0, 7))) return false;
   const dy = f["#bfDay"];   if (dy && String(b.bill_date || "").slice(0, 10) !== dy) return false;
-  const cl = f["#bfCustomer"]; if (cl && (b.client || "") !== cl) return false;
   if (billVendorHidden.has(b.vendor || "")) return false;      // vendor multi-select (pumps hidden by default)
-  const d = f["#bfDivision"]; if (d === "__blank__" ? (b.division || "") !== "" : (d && (b.division || "") !== d)) return false;
-  const p = f["#bfPay"];      if (p && (b.pay_status || "") !== p) return false;
-  const iv = f["#bfInv"];     if (iv && (b.invoice_status || "") !== iv) return false;
-  const ap = f["#bfAppr"];    if (ap && (b.approved || "") !== ap) return false;
-  const ln = f["#bfLien"];    if (ln === "__risk__" ? !BILL_LIEN_RISK.has(b.lien_status) : (ln && (b.lien_status || "") !== ln)) return false;
+  if (!billMSelPasses(b)) return false;                        // Client / Division / Pay / Invoice / Approved / Lien
   return true;
 }
 function billClearFilters() {
-  for (const spec of BILL_FILTERS) { const el = $(spec.sel); if (el) el.value = ""; }
+  for (const cfg of BILL_MSEL) (billMSel[cfg.id] || (billMSel[cfg.id] = new Set())).clear();
   billMonths.clear();
   billVendorHidden = new Set(billVendorDefault);   // back to the default (pumps hidden), not "show everything"
   { const d = $("#bfDay"); if (d) d.value = ""; }
-  buildBillDateFilter(); buildBillVendorFilter();
+  buildBillFilters();
   renderBills();
 }
 // Sort comparators. Rows are sorted BEFORE grouping, so within each group the order
@@ -1607,8 +1630,9 @@ function findBillForLien(r) {
 function jumpToVendorBills(vendor) {
   activeBillView = "all";
   setTab("bills");
-  renderBills();                              // ensure the filter dropdowns are populated
-  const el = $("#bfVendor"); if (el) el.value = vendor;
+  renderBills();                              // ensure the filter menus are populated
+  billVendorHidden = new Set(_billVendors().filter(v => v !== vendor));   // show ONLY this vendor (exclude the rest)
+  buildBillVendorFilter();
   renderBills();
   window.scrollTo(0, 0);
 }
@@ -3481,12 +3505,15 @@ function init() {
   ["#drawFClient", "#drawFProj", "#drawFVendor", "#drawFInv", "#drawDivision"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderDraws); });
   { const el = $("#vendorSearch"); if (el) el.addEventListener("input", renderVendors); }
   ["#lienFProj", "#lienFVendor", "#lienFInv", "#lienFName"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderLiens); });
-  ["#bfCustomer", "#bfVendor", "#bfDivision", "#bfPay", "#bfInv", "#bfAppr", "#bfLien", "#billSort"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("change", renderBills); });
-  // Month + Vendor multi-selects: the button toggles the checkbox menu; a click outside closes it.
-  for (const [btnId, menuId, wrapId] of [["#bfMonthBtn", "#bfMonthMenu", "#bfMonthMsel"], ["#bfVendorBtn", "#bfVendorMenu", "#bfVendorMsel"]]) {
+  { const el = $("#billSort"); if (el) el.addEventListener("change", renderBills); }
+  // Month + Vendor + every categorical multi-select: the button toggles the checkbox menu; a click outside closes it.
+  const _mselWraps = [["#bfMonthBtn", "#bfMonthMenu", "#bfMonthMsel"], ["#bfVendorBtn", "#bfVendorMenu", "#bfVendorMsel"],
+    ...BILL_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`])];
+  const _closeMsels = (except) => { for (const [, mId] of _mselWraps) { const m = $(mId); if (m && mId !== except) m.hidden = true; } };
+  for (const [btnId, menuId, wrapId] of _mselWraps) {
     const btn = $(btnId), menu = $(menuId);
     if (btn && menu) {
-      btn.addEventListener("click", (e) => { e.stopPropagation(); menu.hidden = !menu.hidden; });
+      btn.addEventListener("click", (e) => { e.stopPropagation(); const open = menu.hidden; _closeMsels(menuId); menu.hidden = !open; });   // one menu open at a time
       document.addEventListener("click", (e) => { if (!menu.hidden && !e.target.closest(wrapId)) menu.hidden = true; });
     }
   }

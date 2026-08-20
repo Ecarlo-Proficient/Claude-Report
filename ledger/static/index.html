@@ -278,18 +278,27 @@
           </div>
           <label class="fld"><span>Day</span><select id="bfDay"></select></label>
           <span class="bf-sep"></span>
-          <label class="fld"><span>Client</span><select id="bfCustomer"></select></label>
-          <div class="fld"><span>Vendor</span>
-            <div class="msel" id="bfVendorMsel">
-              <button type="button" class="msel-btn" id="bfVendorBtn">All vendors</button>
-              <div class="msel-menu wide" id="bfVendorMenu" hidden></div>
-            </div>
+          <div class="fld"><span>Client</span>
+            <div class="msel" id="bfCustomerMsel"><button type="button" class="msel-btn" id="bfCustomerBtn">All clients</button><div class="msel-menu wide" id="bfCustomerMenu" hidden></div></div>
           </div>
-          <label class="fld"><span>Division</span><select id="bfDivision"></select></label>
-          <label class="fld"><span>Pay status</span><select id="bfPay"></select></label>
-          <label class="fld"><span>Invoice</span><select id="bfInv"></select></label>
-          <label class="fld"><span>Approved</span><select id="bfAppr"></select></label>
-          <label class="fld"><span>Lien</span><select id="bfLien"></select></label>
+          <div class="fld"><span>Vendor</span>
+            <div class="msel" id="bfVendorMsel"><button type="button" class="msel-btn" id="bfVendorBtn">All vendors</button><div class="msel-menu wide" id="bfVendorMenu" hidden></div></div>
+          </div>
+          <div class="fld"><span>Division</span>
+            <div class="msel" id="bfDivisionMsel"><button type="button" class="msel-btn" id="bfDivisionBtn">All divisions</button><div class="msel-menu" id="bfDivisionMenu" hidden></div></div>
+          </div>
+          <div class="fld"><span>Pay status</span>
+            <div class="msel" id="bfPayMsel"><button type="button" class="msel-btn" id="bfPayBtn">Any pay status</button><div class="msel-menu" id="bfPayMenu" hidden></div></div>
+          </div>
+          <div class="fld"><span>Invoice</span>
+            <div class="msel" id="bfInvMsel"><button type="button" class="msel-btn" id="bfInvBtn">Any invoice</button><div class="msel-menu" id="bfInvMenu" hidden></div></div>
+          </div>
+          <div class="fld"><span>Approved</span>
+            <div class="msel" id="bfApprMsel"><button type="button" class="msel-btn" id="bfApprBtn">Any approval</button><div class="msel-menu" id="bfApprMenu" hidden></div></div>
+          </div>
+          <div class="fld"><span>Lien</span>
+            <div class="msel" id="bfLienMsel"><button type="button" class="msel-btn" id="bfLienBtn">Any lien</button><div class="msel-menu" id="bfLienMenu" hidden></div></div>
+          </div>
           <span class="bf-sep"></span>
           <label class="fld"><span>Group by</span>
             <select id="billGroup">
