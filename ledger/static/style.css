@@ -331,6 +331,8 @@ tr:hover .row-open::after { opacity: .75; }
 .savebar[hidden] { display: none; }
 .savebar .sb-warn { color: var(--text-dim); font-size: .68em; }
 .savebar .sb-text { font-weight: 600; font-size: .86em; font-variant-numeric: tabular-nums; }
+.savebar .sb-review { cursor: pointer; }
+.savebar .sb-review:hover { text-decoration: underline; }
 .savebar:not(.dirty) .sb-text { color: var(--text-dim); font-weight: 500; }
 .savebar.dirty { border-color: color-mix(in srgb, #b8860b 60%, var(--border)); box-shadow: 0 6px 20px rgba(0, 0, 0, .22); }
 .savebar.dirty .sb-warn { color: #b8860b; font-size: 1em; }

@@ -259,7 +259,7 @@
       <!-- Lien-mark Save bar: sticky top-right, scrolls with this page, only on Bills -->
       <div class="savebar" id="billSaveBar">
         <span class="sb-warn">●</span>
-        <span class="sb-text" id="billSaveText"></span>
+        <span class="sb-text sb-review" id="billSaveText" title="Review the lien marks you've made"></span>
         <button class="sb-save" id="btnSaveBillMarks">Save</button>
         <button id="btnDiscardBillMarks">Discard</button>
       </div>
@@ -561,6 +561,20 @@
       </div>
     </div>
     <div class="panel-body" id="payBillsBody"></div>
+  </aside>
+
+  <!-- ── Lien-mark review: what you changed (staged) + what's already on file, before you Save ── -->
+  <aside class="panel panel-right" id="lienReview" hidden>
+    <div class="panel-head">
+      <div>
+        <div class="panel-title" id="lienReviewTitle">Lien marks</div>
+        <div class="panel-sub" id="lienReviewSub"></div>
+      </div>
+      <div class="panel-head-actions">
+        <button class="btn icon" id="btnCloseLienReview" title="Close">✕</button>
+      </div>
+    </div>
+    <div class="panel-body" id="lienReviewBody"></div>
   </aside>
 
   <!-- ── Sub-LOC project drill-over (open subs grouped by the draw they sit under) ── -->

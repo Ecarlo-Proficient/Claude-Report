@@ -936,6 +936,18 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     Only one menu opens at a time; "Clear filters" resets every multi-select. Verified live: RP+MFD → "2 selected",
     1,758 bills, no CP rows; per-menu search/labels/clear all work; no console errors.
 
+  - **Lien-mark REVIEW summary + a Synology lien-folder link (owner, 2026-08-20: "Lien marks saved - press and
+    it shows me all the marks i made ... first do the lien summary so i know what i changed before saving ... link
+    the lien marks to a new folder in my synology").** Pressing the save-bar text ("N unsaved lien marks" / "Lien
+    marks saved") opens a **review panel** (`openLienReview`, new `#lienReview` slide-over): an **Unsaved changes**
+    section showing each staged mark as **old → new** (with Save/Discard right there), and an **On file** section
+    of the marks currently in effect (`lien_marked` bills). So nothing saves blind. Plus an **"Open lien folder ↗"**
+    button → `POST /api/lien/folder` (`_LIEN_FOLDER`, machine.env `LIEN_FOLDER`, default
+    `/Volumes/Accounting/LIENS & MONTHLY NOTICES/Vendor Liens/2026`) opens the Synology folder cross-platform via
+    `_os_open`; optional `?vendor=` drills to a subfolder IF it exists (never creates one; path-traversal guarded).
+    Verified live: staged 2 → review shows `– → Notice sent` / `– → Lien filed` + 8 on file; folder opens.
+    **Deeper linking (per-vendor subfolders / attach the actual PDF) is a proposal pending the owner's call.**
+
   - **Project P&L: status column + sort dropdown + status filter (owner, 2026-08-19).** `_portfolio_pnl` now
     returns ALL jobs with a `status` + `active` flag (company/division TOTALS stay active-only). Frontend:
     a **Status column** (green Active / dim Closed·Complete), a **status filter** (default Active only; All;

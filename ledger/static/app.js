@@ -1678,6 +1678,66 @@ function discardBillMarks() {
   const bd = $("#billDetail"); if (bd && !bd.hidden) closePanels();
   toast("Discarded unsaved marks");
 }
+// Press the save-bar text → a review of the lien marks: what you STAGED (old → new, so nothing
+// saves blind) and what's already ON FILE, plus a jump to the Synology lien folder.
+function openLienReview() {
+  const staged = [...pendingBillMarks.entries()].map(([id, p]) => ({ b: (BILLS || []).find(x => x.bill_id === id), p }));
+  const saved = (BILLS || []).filter(b => b.lien_marked && b.lien_status && !pendingBillMarks.has(b.bill_id));
+  $("#lienReviewSub").textContent = staged.length ? `${staged.length} unsaved · review, then Save`
+    : (saved.length ? `${saved.length} on file` : "no lien marks yet");
+  const body = $("#lienReviewBody"); body.innerHTML = "";
+  const lienTxt = v => v ? (LIEN_SHORT[v] || v) : "–";
+  const projCell = b => (b && b.project_no ? `${b.project_no}${b.client ? " · " + b.client : ""}` : "–");
+  const section = (title, note) => { const g = document.createElement("div"); g.className = "dgroup";
+    g.appendChild(el2("h4", null, title));
+    if (note) { const p = el2("p", "hint", note); p.style.margin = "2px 0 6px"; g.appendChild(p); }
+    body.appendChild(g); return g; };
+  const grid = (cols) => { const t = document.createElement("table"); t.className = "sub-grid";
+    t.innerHTML = "<thead><tr>" + cols.map(c => `<th class='left'>${c}</th>`).join("") + "</tr></thead>";
+    const tb = document.createElement("tbody"); t.appendChild(tb); return { t, tb }; };
+  if (staged.length) {
+    const g = section("Unsaved changes", "Review each change, then Save. Discard drops them all.");
+    const { t, tb } = grid(["Vendor", "Project · client", "Bill #", "Change"]);
+    for (const { b, p } of staged) {
+      const tr = document.createElement("tr");
+      tr.appendChild(leftText(b ? (b.vendor || "–") : "(bill not on screen)"));
+      tr.appendChild(leftText(projCell(b)));
+      tr.appendChild(leftText(b ? (b.bill_ref || "–") : "–"));
+      const ch = document.createElement("td"); ch.className = "left";
+      ch.innerHTML = `<span class="dim">${lienTxt(p.prevLien)}</span> → <b>${p.lien ? lienTxt(p.lien) : "cleared"}</b>`;
+      tr.appendChild(ch); tb.appendChild(tr);
+    }
+    g.appendChild(t);
+    const acts = document.createElement("div"); acts.className = "pnl-actions";
+    const sv = document.createElement("button"); sv.className = "btn"; sv.textContent = `Save ${staged.length} mark${staged.length > 1 ? "s" : ""}`;
+    sv.onclick = () => { closePanels(); saveBillMarks(); }; acts.appendChild(sv);
+    const dc = document.createElement("button"); dc.className = "btn subtle"; dc.textContent = "Discard"; dc.onclick = () => { discardBillMarks(); openLienReview(); }; acts.appendChild(dc);
+    g.appendChild(acts);
+  }
+  if (saved.length) {
+    const g = section(`On file (${saved.length})`, "Lien marks currently in effect on your bills.");
+    const { t, tb } = grid(["Vendor", "Project · client", "Bill #", "Mark"]);
+    saved.sort((a, b) => (a.vendor || "").localeCompare(b.vendor || ""));
+    for (const b of saved) {
+      const tr = document.createElement("tr");
+      tr.appendChild(leftText(b.vendor || "–"));
+      tr.appendChild(leftText(projCell(b)));
+      tr.appendChild(leftText(b.bill_ref || "–"));
+      const m = document.createElement("td"); m.className = "left"; m.appendChild(stText(lienTxt(b.lien_status), "st-lien-" + (LIEN_CLASS[b.lien_status] || "info"))); tr.appendChild(m);
+      tb.appendChild(tr);
+    }
+    g.appendChild(t);
+  }
+  if (!staged.length && !saved.length) body.appendChild(el2("p", "hint", "No lien marks yet. Open a bill and mark Notice Sent / Lien Filed / Released."));
+  { const g = section("Lien documents", "");
+    const a = document.createElement("button"); a.className = "btn"; a.textContent = "Open lien folder ↗";
+    a.title = "Open the Synology Vendor Liens folder (where the notice / lien PDFs are filed)";
+    a.onclick = () => fetch("/api/lien/folder", { method: "POST" }).then(r => r.json()).then(j => toast(j.error ? "Couldn't open: " + j.error : "Opened the lien folder"));
+    g.appendChild(a);
+    const p = el2("p", "hint", "Vendor Liens / 2026 on the Accounting share."); p.style.marginTop = "6px"; g.appendChild(p);
+  }
+  openPanel("#lienReview");
+}
 // Click a bill row → the invoice slides in on the right: bill (money out) + its AR
 // invoice / draw (money in), with QuickBooks deep links to both.
 function openBillDetail(b) {
@@ -3155,7 +3215,7 @@ function detailAsText() {
 function openPanel(sel) { $("#overlay").hidden = false; $(sel).hidden = false; }
 function closePanels() { $("#overlay").hidden = true; $("#detail").hidden = true; $("#settings").hidden = true;
   { const bd = $("#billDetail"); if (bd) bd.hidden = true; } { const sd = $("#sublocDetail"); if (sd) sd.hidden = true; }
-  { const pb = $("#payBills"); if (pb) pb.hidden = true; } }
+  { const pb = $("#payBills"); if (pb) pb.hidden = true; } { const lr = $("#lienReview"); if (lr) lr.hidden = true; } }
 
 // ── Copy + CSV + toast ────────────────────────────────────────────────────
 let toastTimer = null;
@@ -3530,6 +3590,8 @@ function init() {
   { const el = $("#ifCollapse"); if (el) el.onclick = invToggleAll; }
   { const el = $("#btnCloseBillDetail"); if (el) el.onclick = closePanels; }
   { const el = $("#btnClosePayBills"); if (el) el.onclick = closePanels; }
+  { const el = $("#btnCloseLienReview"); if (el) el.onclick = closePanels; }
+  { const el = $("#billSaveText"); if (el) el.onclick = openLienReview; }   // press "Lien marks saved" → review them
   { const el = $("#btnCloseSublocDetail"); if (el) el.onclick = closePanels; }
   { const el = $("#btnSaveBillMarks"); if (el) el.onclick = saveBillMarks; }
   { const el = $("#btnDiscardBillMarks"); if (el) el.onclick = discardBillMarks; }

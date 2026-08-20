@@ -81,6 +81,10 @@ _PNL_LOG_DIR = Path.home() / "Library" / "Logs" / "Proficient" / "ledger-pnl"
 _PROJ_RE = re.compile(r"^(MFD|CP|RP)\d+(-FTW)?$", re.IGNORECASE)
 _PNL_JOBS: dict = {}                 # proj -> {state, started, log, detail, proc, file}
 _PNL_LOCK = threading.Lock()
+# Where the lien notice / affidavit PDFs are filed (Synology). Per-machine override via
+# machine.env LIEN_FOLDER; default is the Accounting share's Vendor Liens folder.
+_LIEN_FOLDER = paths.get_path("LIEN_FOLDER",
+                              "/Volumes/Accounting/LIENS & MONTHLY NOTICES/Vendor Liens/2026")
 
 
 def _os_open(path: str):
@@ -1056,6 +1060,8 @@ class Handler(BaseHTTPRequestHandler):
             self._pnl_open(self._query().get("proj", ""), folder=self._query().get("folder") == "1")
         elif p == "/api/job/open":        # open the SOURCE job folder (Synology CP/RP, OneDrive MFD)
             self._job_open(self._query().get("proj", ""))
+        elif p == "/api/lien/folder":     # open the Synology Vendor Liens folder (where notice/lien PDFs live)
+            self._lien_folder(self._query().get("vendor", ""))
         elif p == "/api/pnl/generate":    # run project-pnl (gated by an explicit confirm)
             self._pnl_generate()
         elif p == "/api/sync":            # in-app Resync: run the ledger loaders (gated)
@@ -1166,6 +1172,27 @@ class Handler(BaseHTTPRequestHandler):
         if err:
             return self._json({"error": err}, 500)
         self._json({"ok": True, "path": str(folder), "note": note})
+
+    def _lien_folder(self, vendor: str = ""):
+        """Open the Synology Vendor Liens folder (where the notice / lien PDFs are filed). An
+        optional ?vendor= drills to that vendor's subfolder IF it already exists - never creates
+        one. Only ever opens under _LIEN_FOLDER (no path traversal). Cross-platform via _os_open."""
+        base = Path(_LIEN_FOLDER)
+        target = base
+        v = re.sub(r"[\\/]+", " ", (vendor or "")).strip()
+        if v:
+            cand = base / v
+            try:
+                if cand.is_dir():
+                    target = cand
+            except OSError:
+                pass
+        if not target.exists():
+            return self._json({"error": f"folder not found (is the Accounting share mounted?)"}, 404)
+        err = _os_open(str(target))
+        if err:
+            return self._json({"error": err}, 500)
+        self._json({"ok": True, "path": str(target)})
 
     def _pnl_find(self, proj: str):
         proj = (proj or "").strip().upper()
