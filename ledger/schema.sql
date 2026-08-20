@@ -270,6 +270,7 @@ CREATE TABLE IF NOT EXISTS sub_loc_event (
     note        TEXT,                  -- 'prefunded $x' / 'surplus $x'
     invoice     TEXT,                  -- REPAY: the client invoice # that paid
     reimb       TEXT,                  -- DRAW: JSON [[invoice, iso_date], ...] that later settled it
+    settled     TEXT,                  -- REPAY: JSON [{party, bill_id, bill_ref, draw_date, amount, fully, lag_days}] the subs it paid down
     loaded_at   TEXT NOT NULL
 );
 

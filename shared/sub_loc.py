@@ -291,6 +291,7 @@ def run_fifo(draws: List[dict], repays: List[dict]) -> Tuple[List[dict], dict]:
             R = e["amount"]
             applied_here = 0.0
             first_lag = None
+            settled: List[dict] = []   # the sub payments THIS client payment paid down (the line items)
             q = queues[p]
             while R > eps and q and q[0]["remaining"] > eps:
                 node = q[0]
@@ -305,6 +306,16 @@ def run_fifo(draws: List[dict], repays: List[dict]) -> Tuple[List[dict], dict]:
                     first_lag = days
                 # stamp the reimbursing invoice + client-paid date on the draw
                 node["ev"]["reimb"].append((e.get("invoice", ""), e["date"]))
+                # record the sub line item this repayment settled (for the feed's side menu)
+                settled.append({
+                    "party": node["ev"].get("party"),
+                    "bill_id": node["ev"].get("bill_id"),
+                    "bill_ref": node["ev"].get("bill_ref"),
+                    "draw_date": node["date"],
+                    "amount": take,                       # of this payment, applied to this sub
+                    "fully": node["remaining"] <= eps,    # this sub now fully collected?
+                    "lag_days": days,
+                })
                 dv = div[division_of(e["project"])]
                 dv["repaid"] += take
                 dv["wl"] += take * days
@@ -319,7 +330,7 @@ def run_fifo(draws: List[dict], repays: List[dict]) -> Tuple[List[dict], dict]:
                            "party": e["party"], "out": 0.0, "inn": applied_here,
                            "lag": first_lag, "note": note, "balance": bal,
                            "invoice": e.get("invoice", ""), "reimb": [],
-                           "loc_delta": -applied_here})
+                           "settled": settled, "loc_delta": -applied_here})
         if bal > peak:
             peak, peak_date = bal, e["date"]
 

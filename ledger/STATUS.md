@@ -868,6 +868,18 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     until a month is picked). Wired into `billPassesFilters` by `bill_date` prefix; Clear resets both. Verified:
     July 2026 → 432 bills, then Jul 1 → 15.
 
+  - **Sub LOC: dashboard-shaped, + repayment line items (owner, 2026-08-19: "by division top ungrouped ·
+    repayment feed needs to show me the line items in side menu · by project collapse all only show top 5 most
+    in the hole then expand more (x count) ... a dash not a huge long list").** (1) **By division** moved to the
+    TOP, flat/ungrouped (its own plain widget, always shown - no more collapsed section). (2) **By project** now
+    shows only the **top 5 most in the hole** (outstanding desc) with an **Expand more (N)** toggle (373 hidden →
+    "Show top 5"). (3) **Repayment feed rows are clickable → a side panel lists the fronted subs that payment paid
+    down** (FIFO oldest-first: Sub · Bill # → QBO · Fronted date · Applied $ · Fully/Partial). NEW DATA: the FIFO
+    engine (`shared/sub_loc.py`) records a `settled[]` list per REPAY event → `sub_loc_event.settled` (JSON,
+    ALTER-migrated) → `_fetch_sub_loc` parses it → `openSublocRepay` renders it. Verified live: INV 34482 (DL
+    MEACHAM, CP790) settled $25,428 across 11 subs; 181 of 308 repayments carry line items (the rest are pure
+    prefunding/surplus); no console errors.
+
   - **Project P&L: status column + sort dropdown + status filter (owner, 2026-08-19).** `_portfolio_pnl` now
     returns ALL jobs with a `status` + `active` flag (company/division TOTALS stay active-only). Frontend:
     a **Status column** (green Active / dim Closed·Complete), a **status filter** (default Active only; All;

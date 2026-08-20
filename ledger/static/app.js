@@ -1660,7 +1660,9 @@ function openBillDetail(b) {
 // subs grouped by the draw they sit under); the feed is bucketed this week / this month /
 // prior (prior collapsed); By division collapses. QBO links: each sub bill, and a project's
 // customerdetail page (all its transactions).
-let sublocCollapsed = new Set(["subdiv", "feed-prior"]);   // By division + prior-months collapsed by default
+let sublocCollapsed = new Set(["feed-prior"]);   // the feed's prior-months bucket, collapsed by default
+let sublocProjExpanded = false;   // By project shows the top few most-in-the-hole; expand for the rest
+const SUBLOC_PROJ_TOP = 5;
 const _slBuildG = (sel, cols) => { const th = $(sel + " thead"), tb = $(sel + " tbody"); th.innerHTML = ""; tb.innerHTML = "";
   const htr = document.createElement("tr"); for (const [c, al] of cols) { const h = document.createElement("th"); if (al === "left") h.className = "left"; h.textContent = c; htr.appendChild(h); } th.appendChild(htr); return tb; };
 const _slMcell = v => { const td = document.createElement("td"); td.appendChild(moneyCell(v)); return td; };
@@ -2153,19 +2155,30 @@ function renderSubLoc() {
     "FIFO, so a client payment pays off the oldest fronted subs first. Read-only from QBO via <code>load_sub_loc.py</code>.";
   applySublocSections();
 
-  // By project FIRST - click a row for its open subs grouped by draw
+  // By project: TOP few most in the hole (outstanding desc); expand for the rest so the tab
+  // stays a dashboard, not a long list. Click a row for its open subs grouped by draw.
   { const tb = _slBuildG("#sublocProjTable", [["Project", "left"], ["Fronted (out)", "right"], ["Drawn", "right"], ["Repaid", "right"], ["Avg days", "right"]]);
     const obp = SUBLOC.open_by_project || {};
-    for (const p of (SUBLOC.projects || []).slice(0, 300)) { const tr = document.createElement("tr");
+    const all = [...(SUBLOC.projects || [])].sort((a, b) => (b.outstanding || 0) - (a.outstanding || 0));   // most in the hole first
+    const shown = sublocProjExpanded ? all : all.slice(0, SUBLOC_PROJ_TOP);
+    for (const p of shown) { const tr = document.createElement("tr");
       if (obp[p.project]) { tr.style.cursor = "pointer"; tr.title = "See this project's open subs by draw";
         tr.onclick = (e) => { if (e.target.closest(".cell")) return; openSublocDetail(p.project); }; }
       tr.appendChild(leftText(p.project || "–"));
       const o = _slMcell(p.outstanding); if ((p.outstanding || 0) > 0.005) o.querySelector(".cell").classList.add("open-amt"); tr.appendChild(o);
       tr.appendChild(_slMcell(p.drawn)); tr.appendChild(_slMcell(p.repaid));
       tr.appendChild(rightText(p.avg_lag != null ? Math.round(p.avg_lag) + "d" : "–")); tb.appendChild(tr); }
-    if (!(SUBLOC.projects || []).length) _slEmpty(tb, 5, "Nothing fronted in this window.");
+    if (!all.length) _slEmpty(tb, 5, "Nothing fronted in this window.");
+    const more = $("#sublocProjMore"); if (more) { more.innerHTML = "";
+      if (all.length > SUBLOC_PROJ_TOP) {
+        const btn = document.createElement("button"); btn.className = "btn small subtle";
+        btn.textContent = sublocProjExpanded ? `Show top ${SUBLOC_PROJ_TOP}` : `Expand more (${all.length - SUBLOC_PROJ_TOP})`;
+        btn.onclick = () => { sublocProjExpanded = !sublocProjExpanded; renderSubLoc(); };
+        more.appendChild(btn);
+      }
+    }
   }
-  // By division (collapsible section)
+  // By division (flat, at the top of the tab)
   { const tb = _slBuildG("#sublocDivTable", [["Division", "left"], ["Fronted (out)", "right"], ["Peak", "right"], ["Drawn", "right"], ["Repaid", "right"], ["Avg days", "right"]]);
     const divs = SUBLOC.divisions || {}; const order = ["MFD", "CP", "RP", "Other"]; const rank = k => { const i = order.indexOf(k); return i < 0 ? 99 : i; };
     const keys = Object.keys(divs).sort((a, b) => rank(a) - rank(b));
@@ -2208,6 +2221,9 @@ function renderSublocFeed() {
       for (const [c, al] of [["Date", "left"], ["Client paid (invoice)", "left"], ["Project", "left"], ["Settled subs", "right"], ["Lag", "right"], ["LOC balance after", "right"]]) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
       thead.appendChild(htr);
       for (const e of rows) { const tr = document.createElement("tr");
+        const hasItems = e.settled && e.settled.length;
+        if (hasItems) { tr.style.cursor = "pointer"; tr.title = "See the fronted subs this payment paid off";
+          tr.onclick = (ev) => { if (ev.target.closest(".cell")) return; openSublocRepay(e); }; }
         tr.appendChild(leftText(fmtDateShort(e.event_date)));
         tr.appendChild(leftText((e.invoice ? "INV " + e.invoice : "–") + (e.party ? " · " + e.party : "")));
         tr.appendChild(leftText(e.project || "–"));
@@ -2253,6 +2269,36 @@ function openSublocDetail(project) {
       const o = _slMcell(sub.open); o.querySelector(".cell").classList.add("open-amt"); tr.appendChild(o); tbody.appendChild(tr); }
     table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table); gd.appendChild(scroll); body.appendChild(gd);
   }
+  openPanel("#sublocDetail");
+}
+// A client payment (repayment) → the fronted sub payments it paid down, FIFO oldest-first (the line items).
+function openSublocRepay(e) {
+  $("#sublocDetailTitle").textContent = (e.invoice ? "INV " + e.invoice : "Client payment") + (e.party ? " · " + e.party : "");
+  const nm = nameOf(e.project);
+  $("#sublocDetailSub").textContent = `${fmtDateShort(e.event_date)} · ${e.project || "–"}${nm ? " · " + nm : ""} · ${money(e.in_amt)} settled${e.lag_days != null ? " · " + e.lag_days + "d lag" : ""}`;
+  const body = $("#sublocDetailBody"); body.innerHTML = "";
+  const items = e.settled || [];
+  const intro = document.createElement("p"); intro.className = "hint";
+  intro.textContent = "The fronted sub payments this client payment paid down (FIFO, oldest first). Bill # opens QuickBooks.";
+  body.appendChild(intro);
+  const scroll = document.createElement("div"); scroll.className = "table-scroll";
+  const table = document.createElement("table"); table.className = "sub-grid";
+  table.innerHTML = "<thead><tr><th class='left'>Sub</th><th class='left'>Bill #</th><th class='left'>Fronted</th><th class='right'>Applied</th><th class='left'>Status</th></tr></thead>";
+  const tb = document.createElement("tbody");
+  for (const s of items) {
+    const tr = document.createElement("tr");
+    tr.appendChild(leftText(s.party || "–"));
+    const bt = document.createElement("td"); bt.className = "left";
+    if (s.bill_id) { const a = document.createElement("a"); a.href = qboUrl("bill", s.bill_id); a.target = "_blank"; a.rel = "noopener"; a.className = "qbo-link"; a.textContent = s.bill_ref || ("#" + s.bill_id); a.title = "Open this bill in QuickBooks"; bt.appendChild(a); }
+    else bt.appendChild(document.createTextNode(s.bill_ref || "–"));
+    tr.appendChild(bt);
+    tr.appendChild(leftText(s.draw_date ? fmtDateShort(s.draw_date) : "–"));
+    const at = document.createElement("td"); at.className = "right"; at.textContent = money(s.amount); tr.appendChild(at);
+    tr.appendChild(leftText(s.fully ? "Fully collected" : "Partial"));
+    tb.appendChild(tr);
+  }
+  if (!items.length) { const tr = document.createElement("tr"); const td = document.createElement("td"); td.colSpan = 5; td.className = "left dim"; td.textContent = "No matched sub line items on this payment."; tr.appendChild(td); tb.appendChild(tr); }
+  table.appendChild(tb); scroll.appendChild(table); body.appendChild(scroll);
   openPanel("#sublocDetail");
 }
 

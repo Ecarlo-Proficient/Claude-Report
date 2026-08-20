@@ -844,15 +844,20 @@ def _fetch_sub_loc(con) -> dict:
     except (ValueError, TypeError):
         pass
     try:
+        # `settled` may be absent on a ledger written before this column existed - select it
+        # defensively so an old DB degrades instead of throwing (the loader adds it on next run).
+        ecols = {r[1] for r in con.execute("PRAGMA table_info(sub_loc_event)")}
+        settled_col = ", settled" if "settled" in ecols else ""
         rows = con.execute("SELECT event_date, type, project, division, party, out_amt, in_amt, "
-                           "lag_days, balance, note, invoice, reimb FROM sub_loc_event ORDER BY seq")
+                           f"lag_days, balance, note, invoice, reimb{settled_col} FROM sub_loc_event ORDER BY seq")
         for r in rows:
             d = dict(r)
-            if d.get("reimb"):
-                try:
-                    d["reimb"] = json.loads(d["reimb"])
-                except (ValueError, TypeError):
-                    d["reimb"] = []
+            for col in ("reimb", "settled"):
+                if d.get(col):
+                    try:
+                        d[col] = json.loads(d[col])
+                    except (ValueError, TypeError):
+                        d[col] = []
             out["events"].append(d)
     except sqlite3.OperationalError:   # degrade to summary-only, never break the whole dashboard
         pass

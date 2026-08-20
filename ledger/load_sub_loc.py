@@ -50,6 +50,11 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     if "open_by_project" not in have:
         con.execute("ALTER TABLE sub_loc_run ADD COLUMN open_by_project TEXT")
         con.commit()
+    # sub_loc_event.settled (the subs each repayment paid down) - same reason, add if missing.
+    haveE = {r[1] for r in con.execute("PRAGMA table_info(sub_loc_event)")}
+    if "settled" not in haveE:
+        con.execute("ALTER TABLE sub_loc_event ADD COLUMN settled TEXT")
+        con.commit()
     return con
 
 
@@ -64,14 +69,16 @@ def write(con: sqlite3.Connection, events, summary, projects, start, today) -> N
     rows = []
     for i, e in enumerate(events):
         reimb = json.dumps([[inv, _iso(d)] for inv, d in e.get("reimb", [])]) if e.get("reimb") else None
+        settled = json.dumps([{**s, "draw_date": _iso(s.get("draw_date"))} for s in e.get("settled", [])],
+                             default=str) if e.get("settled") else None
         rows.append((
             i, _iso(e["date"]), e["type"], e.get("project"), sl.division_of(e.get("project") or ""),
             e.get("party"), e.get("out", 0.0), e.get("inn", 0.0), e.get("lag"),
-            e.get("balance", 0.0), e.get("note") or None, e.get("invoice") or None, reimb, now))
+            e.get("balance", 0.0), e.get("note") or None, e.get("invoice") or None, reimb, settled, now))
     con.executemany(
         "INSERT INTO sub_loc_event (seq, event_date, type, project, division, party, out_amt, "
-        "in_amt, lag_days, balance, note, invoice, reimb, loaded_at) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+        "in_amt, lag_days, balance, note, invoice, reimb, settled, loaded_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
     con.execute(
         "INSERT INTO sub_loc_run (id, window_start, window_end, peak, peak_date, outstanding, "
         "total_drawn, total_repaid, prefunded, avg_lag, n_draws, divisions, projects, open_by_project, loaded_at) "

@@ -577,6 +577,8 @@ tr.bill-group .bg-amt { font-weight: 800; font-size: .95em; letter-spacing: -.01
 /* a hint + an action (Collapse all) on one line above a grouped table */
 .list-head { display: flex; align-items: center; justify-content: space-between; gap: 12px;
   margin: 4px 2px 10px; flex-wrap: wrap; }
+/* "Expand more (N)" row under a top-N dashboard table */
+.more-row { padding: 8px 2px 2px; }
 /* invoice rows nested under a payment: indent the first cell so the grouping reads */
 tr.sub-row > td:first-child { padding-left: 26px; }
 tr.sub-row > td { color: var(--text); }

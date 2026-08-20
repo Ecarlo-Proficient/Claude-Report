@@ -354,22 +354,20 @@
         <div class="kpi-row" id="sublocStats"></div>
         <p class="hint" id="sublocHint"></p>
       </section>
-      <!-- By project FIRST (the priority) - click a row for its open subs grouped by draw -->
+      <!-- By division at the TOP, ungrouped (always shown) -->
       <section class="widget">
-        <div class="widget-head"><h2>By project <span class="count">still fronted, most out first &middot; click a row for its open subs by draw</span></h2></div>
+        <div class="widget-head"><h2>By division <span class="count">still fronted + the peak each hit</span></h2></div>
+        <div class="table-scroll"><table class="grid" id="sublocDivTable"><thead></thead><tbody></tbody></table></div>
+      </section>
+      <!-- By project: the top few most in the hole; expand for the rest (a dashboard, not a long list) -->
+      <section class="widget">
+        <div class="widget-head"><h2>By project <span class="count">most fronted first &middot; click a row for its open subs by draw</span></h2></div>
         <div class="table-scroll"><table class="grid clickable" id="sublocProjTable"><thead></thead><tbody></tbody></table></div>
+        <div id="sublocProjMore" class="more-row"></div>
       </section>
-      <section class="widget" id="sublocFeedSection">
-        <div class="widget-head sec-head" data-sec="subfeed" title="Click to collapse / expand">
-          <h2><span class="sec-caret"></span> Repayment feed <span class="count">a client payment paid off these fronted subs</span></h2>
-        </div>
-        <div class="sec-body" id="sublocFeed"></div>
-      </section>
-      <section class="widget" id="sublocDivSection">
-        <div class="widget-head sec-head" data-sec="subdiv" title="Click to collapse / expand">
-          <h2><span class="sec-caret"></span> By division <span class="count">still fronted + the peak each hit</span></h2>
-        </div>
-        <div class="sec-body"><div class="table-scroll"><table class="grid" id="sublocDivTable"><thead></thead><tbody></tbody></table></div></div>
+      <section class="widget">
+        <div class="widget-head"><h2>Repayment feed <span class="count">a client payment paid off these fronted subs &middot; click a row for the line items</span></h2></div>
+        <div id="sublocFeed"></div>
       </section>
     </div><!-- /tab: subloc -->
 
