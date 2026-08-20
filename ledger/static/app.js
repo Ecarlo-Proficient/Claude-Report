@@ -2773,32 +2773,115 @@ function el2(tag, cls, txt) { const e = document.createElement(tag); if (cls) e.
 // The company Work-in-Progress schedule, straight from the ledger's wip_snapshot (loaded from the
 // WIP master's Test tabs). Columns + order mirror the Test-Master reference; grouped by division
 // with subtotals and a grand total. Read-only - the master workbook stays where you EDIT the WIP.
+// Bonded is intentionally NOT here - dropped from the dashboard WIP view (the user
+// 2026-08-20); the Excel Test tabs keep it. `cf` marks a column that carries a
+// job-performance conditional format (see _wipCond).
 const WIP_COLS = [
   { k: "project_no", label: "Project #", t: "text" },
   { k: "project_name", label: "Name", t: "text" },
-  { k: "bonded", label: "Bonded", t: "bond" },
   { k: "total_contract_price", label: "Total Contract", t: "money" },
   { k: "estimated_total_costs", label: "Est. Total Costs", t: "money" },
   { k: "original_profit", label: "Original Profit", t: "money" },
-  { k: "gross_profit_pct", label: "GP %", t: "pct" },
+  { k: "gross_profit_pct", label: "GP %", t: "pct", cf: "gp" },
   { k: "costs_to_date", label: "Costs to Date", t: "money" },
   { k: "cost_to_complete", label: "Cost to Complete", t: "money" },
-  { k: "percent_complete", label: "% Complete", t: "pct" },
+  { k: "percent_complete", label: "% Complete", t: "pct", cf: "pctbar" },
   { k: "revenues_earned_to_date", label: "Revenues Earned", t: "money" },
-  { k: "profit_earned_to_date", label: "Profit Earned", t: "money" },
+  { k: "profit_earned_to_date", label: "Profit Earned", t: "money", cf: "neg0" },
   { k: "billed_to_date", label: "Billed", t: "money" },
-  { k: "overbillings", label: "Overbillings", t: "money" },
-  { k: "underbillings", label: "Underbillings", t: "money" },
+  { k: "overbillings", label: "Overbillings", t: "money", cf: "over" },
+  { k: "underbillings", label: "Underbillings", t: "money", cf: "under" },
   { k: "left_to_bill", label: "Left to Bill", t: "money" },
-  { k: "future_profit_to_earn", label: "Future Profit", t: "money" },
-  { k: "pure_job_borrow", label: "Pure Job Borrow", t: "money" },
+  { k: "future_profit_to_earn", label: "Future Profit", t: "money", cf: "future" },
+  { k: "pure_job_borrow", label: "Pure Job Borrow", t: "money", cf: "borrow" },
 ];
 const WIP_DIV_ORDER = ["Multi Family", "Commercial", "Residential"];
 function _wipFmt(c, v) {
-  if (c.t === "pct") return v == null ? "–" : (v * 100).toFixed(1) + "%";
-  if (c.t === "bond") return (v === 1 || v === "Y" || v === "y" || v === true) ? "Y" : (v == null || v === "" ? "" : "N");
+  if (c.t === "pct") return v == null || v === "" ? "–" : (v * 100).toFixed(1) + "%";
   return v == null || v === "" ? "–" : String(v);
 }
+
+// ── WIP column widths (drag a header divider; persists per person) ──────────
+const WIP_COL_DEFAULTS = { "Project #": 88, "Name": 190, "Total Contract": 122,
+  "Est. Total Costs": 122, "Original Profit": 118, "GP %": 74, "Costs to Date": 116,
+  "Cost to Complete": 128, "% Complete": 96, "Revenues Earned": 128, "Profit Earned": 116,
+  "Billed": 112, "Overbillings": 116, "Underbillings": 118, "Left to Bill": 112,
+  "Future Profit": 116, "Pure Job Borrow": 128 };
+function loadWipColWidths() {
+  try { return { ...WIP_COL_DEFAULTS, ...JSON.parse(localStorage.getItem("proficient-ledger-wipcols") || "{}") }; }
+  catch { return { ...WIP_COL_DEFAULTS }; }
+}
+let wipColW = loadWipColWidths();
+function saveWipColWidths() { try { localStorage.setItem("proficient-ledger-wipcols", JSON.stringify(wipColW)); } catch { /* ignore */ } }
+function startWipColResize(e, idx, label) {
+  e.preventDefault(); e.stopPropagation();
+  const table = $("#wipTable"); const cg = table.querySelector("colgroup"); if (!cg) return;
+  const col = cg.children[idx]; const startX = e.clientX; const startW = parseFloat(col.style.width) || col.offsetWidth;
+  document.body.classList.add("col-resizing");
+  const onMove = (ev) => {
+    const w = Math.max(48, Math.round(startW + (ev.clientX - startX)));
+    col.style.width = w + "px"; wipColW[label] = w;
+    let s = 0; for (const c of cg.children) s += parseFloat(c.style.width) || 0; table.style.width = s + "px";
+  };
+  const onUp = () => { document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp);
+    document.body.classList.remove("col-resizing"); saveWipColWidths(); };
+  document.addEventListener("mousemove", onMove); document.addEventListener("mouseup", onUp);
+}
+
+// ── Conditional formatting: encode job health with color, never decoration ──
+// Returns {bg, fg, bold, bar, title} for one cell, or null. Sign conventions come
+// straight from the WIP writer's formulas (wip/wip_writer.py):
+//   OVERBILLINGS  = MAX(Billed − Earned, 0)  → holding the GC's cash (good, green)
+//   UNDERBILLINGS = MAX(Earned − Billed, 0)  → earned but not billed (financing, red)
+//   PURE JOB BORROW = MAX(CostToComplete − LeftToBill, 0) → cash drain (red)
+//   FUTURE PROFIT = Original − Earned profit  → negative means eroded (red)
+//   GP %: thin/negative red, healthy green, >30% amber (owner's "missing cost" flag)
+function _mix(varName, pct) { return `color-mix(in srgb, ${varName} ${pct}%, transparent)`; }
+function _wipCond(kind, r, key) {
+  const contract = Math.max(num(r.total_contract_price), 1);
+  if (kind === "gp") {
+    const v = r.gross_profit_pct; if (v == null || v === "") return null;
+    if (v < 0.05) return { bg: _mix("var(--neg)", 20), fg: "var(--neg)", bold: true, title: "Margin very thin / negative" };
+    if (v < 0.12) return { bg: _mix("#b8860b", 18), title: "Below-target margin" };
+    if (v > 0.30) return { bg: _mix("#b8860b", 20), fg: "#8a6508", title: "Unusually high GP% - verify for a missing cost" };
+    return { bg: _mix("var(--pos)", 15), title: "Healthy margin" };
+  }
+  if (kind === "pctbar") {
+    const v = r.percent_complete; if (v == null || v === "") return null;
+    const p = Math.max(0, Math.min(100, v * 100));
+    return { bar: p, title: p.toFixed(1) + "% complete" };
+  }
+  if (kind === "over") {           // overbilled = holding cash = positive
+    const v = num(r.overbillings); if (v <= 0) return null;
+    const a = 8 + Math.min(20, (v / contract) * 120);
+    return { bg: _mix("var(--pos)", a), title: "Billed ahead of earned - holding the GC's cash" };
+  }
+  if (kind === "under") {          // underbilled = financing the job = red flag
+    const v = num(r.underbillings); if (v <= 0) return null;
+    const ratio = v / contract, a = 8 + Math.min(24, ratio * 140);
+    return { bg: _mix("var(--neg)", a), fg: ratio > 0.08 ? "var(--neg)" : null, bold: ratio > 0.08,
+      title: "Earned ahead of billed - unbilled work you are financing" };
+  }
+  if (kind === "borrow") {         // pure job borrow = cash the job pulls to finish
+    const v = num(r.pure_job_borrow); if (v <= 0) return null;
+    const ratio = v / contract;
+    if (ratio < 0.05) return { bg: _mix("#b8860b", 16), title: "This job borrows some cash to finish" };
+    return { bg: _mix("var(--neg)", 8 + Math.min(22, ratio * 130)), fg: "var(--neg)", bold: true,
+      title: "Cost to complete exceeds what is left to bill - a cash drain" };
+  }
+  if (kind === "future") {         // remaining profit to earn
+    const v = r.future_profit_to_earn; if (v == null || v === "") return null;
+    if (v < 0) return { bg: _mix("var(--neg)", 20), fg: "var(--neg)", bold: true, title: "Expected profit eroded below what is already earned" };
+    if (v > 0) return { bg: _mix("var(--pos)", 10), title: "Profit still ahead to earn" };
+    return null;
+  }
+  if (kind === "neg0") {           // any money col that is a red flag when negative
+    if (num(r[key]) < 0) return { bg: _mix("var(--neg)", 20), fg: "var(--neg)", bold: true, title: "Negative - losing money to date" };
+    return null;
+  }
+  return null;
+}
+
 function renderWip() {
   const thead = $("#wipTable thead"), tbody = $("#wipTable tbody"); if (!thead || !tbody) return;
   const activeOnly = $("#wipActive") ? $("#wipActive").checked : true;
@@ -2810,8 +2893,23 @@ function renderWip() {
   for (const r of rows) { const d = r.division || "Other"; if (!byDiv.has(d)) byDiv.set(d, []); byDiv.get(d).push(r); }
   const order = [...byDiv.keys()].sort((a, b) => { const ia = WIP_DIV_ORDER.indexOf(a), ib = WIP_DIV_ORDER.indexOf(b); return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib) || a.localeCompare(b); });
   thead.innerHTML = ""; tbody.innerHTML = "";
+  // Fixed layout + a <colgroup> so widths are exact and draggable; the sticky
+  // thead (base .grid rule) then freezes as the bounded container scrolls.
+  const table = $("#wipTable");
+  { const oldCg = table.querySelector("colgroup"); if (oldCg) oldCg.remove(); }
+  const colgroup = document.createElement("colgroup");
   const htr = document.createElement("tr");
-  for (const c of WIP_COLS) { const th = document.createElement("th"); if (c.t === "text" || c.t === "bond") th.className = "left"; th.textContent = c.label; htr.appendChild(th); }
+  let wsum = 0;
+  WIP_COLS.forEach((c, i) => {
+    const th = document.createElement("th"); if (c.t === "text") th.className = "left"; th.textContent = c.label;
+    const grip = document.createElement("div"); grip.className = "col-resize"; grip.title = "Drag to resize this column";
+    grip.addEventListener("mousedown", (e) => startWipColResize(e, i, c.label));
+    th.appendChild(grip); htr.appendChild(th);
+    const w = Math.max(48, wipColW[c.label] || 110); const col = document.createElement("col"); col.style.width = w + "px";
+    colgroup.appendChild(col); wsum += w;
+  });
+  table.insertBefore(colgroup, table.firstChild);
+  table.style.width = wsum + "px";
   thead.appendChild(htr);
   if (!rows.length) { const tr = document.createElement("tr"); const td = document.createElement("td"); td.colSpan = WIP_COLS.length; td.className = "left"; td.style.color = "var(--text-dim)"; td.style.padding = "14px 12px"; td.textContent = "No WIP data - run load_wip_master.py."; tr.appendChild(td); tbody.appendChild(tr); return; }
   const sumRow = (label, list, cls) => {
@@ -2819,7 +2917,7 @@ function renderWip() {
     WIP_COLS.forEach((c, i) => { const td = document.createElement("td");
       if (i === 0) { td.className = "left"; td.textContent = label; }
       else if (c.t === "money") { td.className = "right"; td.appendChild(moneyCell(list.reduce((t, r) => t + num(r[c.k]), 0))); }
-      else td.className = (c.t === "text" || c.t === "bond") ? "left" : "right";
+      else td.className = c.t === "text" ? "left" : "right";
       tr.appendChild(td); });
     return tr;
   };
@@ -2838,7 +2936,17 @@ function renderWip() {
         const td = document.createElement("td");
         if (c.t === "money") td.appendChild(moneyCell(r[c.k]));
         else if (c.t === "text") { td.className = "left"; const s = document.createElement("span"); s.textContent = _wipFmt(c, r[c.k]); s.title = _wipFmt(c, r[c.k]); td.appendChild(s); }
-        else { td.className = c.t === "bond" ? "left" : "right"; td.textContent = _wipFmt(c, r[c.k]); }
+        else { td.className = "right"; td.textContent = _wipFmt(c, r[c.k]); }
+        if (c.cf) {
+          const cond = _wipCond(c.cf, r, c.k);
+          if (cond) {
+            if (cond.bar != null) { td.classList.add("wip-bar"); td.style.setProperty("--bar", cond.bar + "%"); }
+            if (cond.bg) td.style.background = cond.bg;
+            if (cond.fg) td.style.color = cond.fg;
+            if (cond.bold) td.style.fontWeight = "700";
+            if (cond.title) td.title = cond.title;
+          }
+        }
         tr.appendChild(td);
       }
       tbody.appendChild(tr);

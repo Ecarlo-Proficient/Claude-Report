@@ -991,6 +991,20 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     toggle (default on). Read-only (the master workbook stays where WIP is edited). Verified live on :8787: 137
     active jobs, report Aug 7 2026, the top MFD job's contract / 14.5% GP / 98.5% complete tie to the sheet;
     grand total ~$29.7M contract; no console errors. Frontend-only - no server restart needed.
+    - **Enhancements (owner, 2026-08-20: "conditional formatting ... a greater visual representation of job
+      performance + ability to change column size. also freeze the header. drop bonded in this version only").**
+      (a) **Bonded dropped** from `WIP_COLS` - DASHBOARD ONLY; the Excel Test tabs keep it. (b) **Frozen header**:
+      the WIP `.table-scroll` gets a `.wip-scroll` class (bounded `max-height`, `overflow:auto`) so the base
+      `.grid` sticky thead truly freezes as the schedule scrolls (verified: header pins at container-top offset 0
+      after a 900px scroll). (c) **Resizable columns**: reuses the Bills grip pattern - a `<colgroup>` + a
+      `.col-resize` grip per header, `startWipColResize`, widths persist in `localStorage` (`proficient-ledger-wipcols`);
+      `.wip-grid` is now `table-layout:fixed`. (d) **Conditional formatting** (`_wipCond`, color only to encode) with
+      sign conventions taken straight from `wip/wip_writer.py`: GP% thin/negative red · healthy green · **>30% amber**
+      (owner's "missing cost" flag); **% Complete** an in-cell data bar; **Overbillings** green (holding the GC's
+      cash); **Underbillings** red scaled by contract (financing the job); **Pure Job Borrow** amber→red (a cash
+      drain); **Future Profit** red when negative; **Profit Earned** red when negative. A compact color **legend**
+      sits above the table. Verified live on :8791: 137 GP tints, 130 data bars, 7 overbill / 8 underbill / 5
+      job-borrow / 18 future-profit tints fire on real rows; no console errors. Frontend-only.
 
   - **Project P&L: status column + sort dropdown + status filter (owner, 2026-08-19).** `_portfolio_pnl` now
     returns ALL jobs with a `status` + `active` flag (company/division TOTALS stay active-only). Frontend:
@@ -1013,6 +1027,9 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
 - Owner to validate the producer Runs (AR/AP) and the draft-WIP button with a real click (real syncs + Touch ID).
 
 ## TO DO
+- **Sync-diff view (owner building an HTML prototype separately, 2026-08-20):** a "what changed since the
+  last sync" view. Owner is drafting the HTML on their side and will hand it over to merge into the dashboard
+  later - parked here so it is not lost; no action until the owner shares it.
 - **Investigate the ~6 active reconcile mismatches** (QBO cost ≠ WIP figure, e.g. RP6901/RP6440):
   likely a base/-FTW split or a stale WIP cost — owner review; keep dollar specifics out of the repo.
 - `budget_line` from the takeoff/ETC extractor by cost code (`shared/takeoff_etc.py` is project-total

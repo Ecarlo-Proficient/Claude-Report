@@ -174,7 +174,14 @@
           <label class="inline-check"><input type="checkbox" id="wipActive" checked> Active only</label>
         </div>
         <p class="hint" id="wipHint"></p>
-        <div class="table-scroll">
+        <div class="wip-legend" id="wipLegend">
+          <span class="wip-lg"><i class="wip-sw pos"></i>Overbilled - holding the GC's cash</span>
+          <span class="wip-lg"><i class="wip-sw neg"></i>Underbilled / job borrow - financing the job</span>
+          <span class="wip-lg"><i class="wip-sw gp-lo"></i>GP thin<i class="wip-sw gp-ok"></i>healthy<i class="wip-sw gp-hi"></i>&gt;30% (verify)</span>
+          <span class="wip-lg"><i class="wip-sw bar"></i>% complete</span>
+          <span class="wip-lg wip-lg-dim">Drag a header divider to resize · click a row to open the job</span>
+        </div>
+        <div class="table-scroll wip-scroll">
           <table class="grid wip-grid" id="wipTable"><thead></thead><tbody></tbody></table>
         </div>
       </section>
