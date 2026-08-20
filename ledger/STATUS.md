@@ -866,7 +866,12 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     still shows in the lien CELL colour. (2) NEW **Month + Day filters** lead the Bills filter bar: pick a month
     (newest first) and the Day list populates with just that month's days (Excel-style drill-down; Day disabled
     until a month is picked). Wired into `billPassesFilters` by `bill_date` prefix; Clear resets both. Verified:
-    July 2026 → 432 bills, then Jul 1 → 15.
+    July 2026 → 432 bills, then Jul 1 → 15. **Month upgraded to MULTI-SELECT (owner 2026-08-20: "multi select
+    the months ... all of June and back ... checkbox ... auto selects the prior months ... option to remove those
+    priors").** The Month field is now a checkbox dropdown (`.msel`): checking a month adds it AND every OLDER
+    month (`billMonths` Set; "June and back"), and individual priors can be unchecked; button shows "Jun 2026 +8".
+    The Day drill stays, enabled only when exactly one month is selected. Verified live: Jun → 9 checked, remove
+    May → 8, Dec 2024 (oldest) → 1 bill + Day on.
 
   - **Sub LOC: dashboard-shaped, + repayment line items (owner, 2026-08-19: "by division top ungrouped ·
     repayment feed needs to show me the line items in side menu · by project collapse all only show top 5 most

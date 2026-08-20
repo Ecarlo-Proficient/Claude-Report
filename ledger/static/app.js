@@ -1286,26 +1286,46 @@ function buildBillFilters() {   // populate each select once from the data; pres
   }
   buildBillDateFilter();
 }
-// Month → day date filter (Excel-style: pick the month first, then optionally a day within it).
+// Month MULTI-select (checkboxes) + a day drill. Clicking a month checks it AND all OLDER
+// months ("June and back"); individual priors can then be unchecked (owner 2026-08-20). The
+// Day select drills into a single month (Excel-style), enabled only when exactly one is chosen.
+let billMonths = new Set();   // selected 'YYYY-MM' (empty = all months)
 const _BMONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 function billMonthLabel(ym) { const [y, m] = ym.split("-"); return `${_BMONTHS[+m - 1]} ${y}`; }
+function _billMonthsAsc() {   // every month present in the data, oldest → newest
+  return [...new Set((BILLS || []).map(b => String(b.bill_date || "").slice(0, 7)).filter(s => /^\d{4}-\d{2}$/.test(s)))].sort();
+}
+function toggleBillMonth(ym, checked) {
+  const asc = _billMonthsAsc();
+  if (checked) { for (const m of asc) if (m <= ym) billMonths.add(m); }   // this month + everything older
+  else billMonths.delete(ym);                                             // remove just this prior month
+  buildBillDateFilter(); renderBills();
+}
 function buildBillDateFilter() {
-  const bills = BILLS || [];
-  const monthEl = $("#bfMonth"), dayEl = $("#bfDay");
-  if (!monthEl || !dayEl) return;
-  const months = [...new Set(bills.map(b => String(b.bill_date || "").slice(0, 7)).filter(s => /^\d{4}-\d{2}$/.test(s)))].sort().reverse();  // newest first
-  const prevM = monthEl.value;
-  monthEl.innerHTML = "";
-  { const o = document.createElement("option"); o.value = ""; o.textContent = "All months"; monthEl.appendChild(o); }
-  for (const ym of months) { const o = document.createElement("option"); o.value = ym; o.textContent = billMonthLabel(ym); monthEl.appendChild(o); }
-  monthEl.value = prevM; if (monthEl.value !== prevM) monthEl.value = "";
-  // days present in the selected month (disabled until a month is picked, like Excel's drill-down)
-  const prevD = dayEl.value;
-  dayEl.innerHTML = "";
+  const menu = $("#bfMonthMenu"), btn = $("#bfMonthBtn"), dayEl = $("#bfDay");
+  if (!menu || !btn || !dayEl) return;
+  const asc = _billMonthsAsc();
+  for (const m of [...billMonths]) if (!asc.includes(m)) billMonths.delete(m);   // drop months no longer in the data
+  // the checkbox menu, newest first, with a Clear
+  menu.innerHTML = "";
+  { const clr = document.createElement("button"); clr.type = "button"; clr.className = "msel-clear";
+    clr.textContent = "Clear"; clr.onclick = () => { billMonths.clear(); buildBillDateFilter(); renderBills(); }; menu.appendChild(clr); }
+  for (const ym of [...asc].reverse()) {
+    const lab = document.createElement("label"); lab.className = "msel-opt";
+    const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = billMonths.has(ym);
+    cb.onchange = () => toggleBillMonth(ym, cb.checked);
+    lab.appendChild(cb); lab.appendChild(document.createTextNode(" " + billMonthLabel(ym)));
+    menu.appendChild(lab);
+  }
+  if (!billMonths.size) btn.textContent = "All months";
+  else { const newest = [...billMonths].sort().reverse()[0]; btn.textContent = billMonths.size === 1 ? billMonthLabel(newest) : `${billMonthLabel(newest)} +${billMonths.size - 1}`; }
+  btn.classList.toggle("on", billMonths.size > 0);
+  // day drill: only when EXACTLY one month is selected
+  const prevD = dayEl.value; dayEl.innerHTML = "";
   { const o = document.createElement("option"); o.value = ""; o.textContent = "All days"; dayEl.appendChild(o); }
-  const ym = monthEl.value;
-  if (ym) {
-    const days = [...new Set(bills.map(b => String(b.bill_date || "")).filter(d => d.slice(0, 7) === ym && /^\d{4}-\d{2}-\d{2}/.test(d)).map(d => d.slice(0, 10)))].sort();
+  if (billMonths.size === 1) {
+    const ym = [...billMonths][0];
+    const days = [...new Set((BILLS || []).map(b => String(b.bill_date || "")).filter(d => d.slice(0, 7) === ym && /^\d{4}-\d{2}-\d{2}/.test(d)).map(d => d.slice(0, 10)))].sort();
     for (const d of days) { const o = document.createElement("option"); o.value = d; o.textContent = `${_BMONTHS[+ym.slice(5, 7) - 1]} ${+d.slice(8, 10)}`; dayEl.appendChild(o); }
     dayEl.disabled = false;
   } else { dayEl.disabled = true; }
@@ -1313,12 +1333,12 @@ function buildBillDateFilter() {
 }
 function billFilterValues() {
   const f = {}; for (const spec of BILL_FILTERS) { const el = $(spec.sel); f[spec.sel] = el ? el.value : ""; }
-  f["#bfMonth"] = $("#bfMonth") ? $("#bfMonth").value : "";
+  f["#bfMonth"] = billMonths.size ? [...billMonths] : "";
   f["#bfDay"] = $("#bfDay") ? $("#bfDay").value : "";
   return f;
 }
 function billPassesFilters(b, f) {
-  const mo = f["#bfMonth"]; if (mo && String(b.bill_date || "").slice(0, 7) !== mo) return false;
+  const mo = f["#bfMonth"]; if (mo && mo.length && !mo.includes(String(b.bill_date || "").slice(0, 7))) return false;
   const dy = f["#bfDay"];   if (dy && String(b.bill_date || "").slice(0, 10) !== dy) return false;
   const v = f["#bfVendor"];   if (v && (b.vendor || "") !== v) return false;
   const d = f["#bfDivision"]; if (d === "__blank__" ? (b.division || "") !== "" : (d && (b.division || "") !== d)) return false;
@@ -1330,7 +1350,8 @@ function billPassesFilters(b, f) {
 }
 function billClearFilters() {
   for (const spec of BILL_FILTERS) { const el = $(spec.sel); if (el) el.value = ""; }
-  ["#bfMonth", "#bfDay"].forEach(s => { const el = $(s); if (el) el.value = ""; });
+  billMonths.clear();
+  { const d = $("#bfDay"); if (d) d.value = ""; }
   buildBillDateFilter();
   renderBills();
 }
@@ -3406,8 +3427,12 @@ function init() {
   { const el = $("#vendorSearch"); if (el) el.addEventListener("input", renderVendors); }
   ["#lienFProj", "#lienFVendor", "#lienFInv", "#lienFName"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderLiens); });
   ["#bfVendor", "#bfDivision", "#bfPay", "#bfInv", "#bfAppr", "#bfLien", "#billSort"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("change", renderBills); });
-  // Month → day: picking a month repopulates the day list for that month (Excel drill-down), then renders.
-  { const m = $("#bfMonth"); if (m) m.addEventListener("change", () => { buildBillDateFilter(); renderBills(); }); }
+  // Month multi-select: the button toggles the checkbox menu; a click outside closes it.
+  { const btn = $("#bfMonthBtn"), menu = $("#bfMonthMenu");
+    if (btn && menu) {
+      btn.addEventListener("click", (e) => { e.stopPropagation(); menu.hidden = !menu.hidden; });
+      document.addEventListener("click", (e) => { if (!menu.hidden && !e.target.closest("#bfMonthMsel")) menu.hidden = true; });
+    } }
   { const d = $("#bfDay"); if (d) d.addEventListener("change", renderBills); }
   { const el = $("#billGroup"); if (el) el.addEventListener("change", () => {
     const grp = el.value;   // re-collapse under the new grouping (collapse stays the default)

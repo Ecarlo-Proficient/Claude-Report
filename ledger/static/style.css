@@ -530,6 +530,25 @@ a.ri-name:hover { text-decoration: underline; }
   border: 1px solid var(--border); background: var(--surface-2); color: var(--text); max-width: 200px; }
 .bill-filters .bf-sep { flex: 1 1 14px; min-width: 8px; }
 
+/* Month multi-select: a select-styled button that opens a checkbox menu */
+.msel { position: relative; display: inline-block; }
+.msel-btn { font: inherit; font-size: .85em; padding: 5px 22px 5px 8px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text); max-width: 200px; text-align: left;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  background-image: linear-gradient(45deg, transparent 50%, var(--text-dim) 50%), linear-gradient(135deg, var(--text-dim) 50%, transparent 50%);
+  background-position: calc(100% - 12px) center, calc(100% - 8px) center; background-size: 4px 4px, 4px 4px; background-repeat: no-repeat; }
+.msel-btn.on { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.msel-menu { position: absolute; z-index: 40; top: calc(100% + 4px); left: 0; min-width: 160px; max-height: 280px; overflow-y: auto;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 5px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, .28); display: flex; flex-direction: column; gap: 1px; }
+.msel-opt { display: flex; align-items: center; gap: 7px; padding: 5px 8px; border-radius: 6px; cursor: pointer;
+  font-size: .88em; white-space: nowrap; }
+.msel-opt:hover { background: var(--row-hover); }
+.msel-opt input { cursor: pointer; }
+.msel-clear { font: inherit; font-size: .78em; color: var(--text-dim); background: none; border: none; cursor: pointer;
+  text-align: left; padding: 4px 8px 6px; border-bottom: 1px solid var(--border); margin-bottom: 3px; }
+.msel-clear:hover { color: var(--accent); }
+
 /* Division chip - one subtle hue per division (RP green / CP blue / MFD violet). */
 .divchip { display: inline-block; padding: 0 6px; border-radius: 5px; font-size: .82em; font-weight: 700;
   font-variant-numeric: tabular-nums; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-dim); }

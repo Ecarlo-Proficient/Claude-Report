@@ -270,7 +270,12 @@
         </div>
         <div class="bill-views" id="billViews"></div>
         <div class="bill-filters" id="billFilters">
-          <label class="fld"><span>Month</span><select id="bfMonth"></select></label>
+          <div class="fld"><span>Month</span>
+            <div class="msel" id="bfMonthMsel">
+              <button type="button" class="msel-btn" id="bfMonthBtn">All months</button>
+              <div class="msel-menu" id="bfMonthMenu" hidden></div>
+            </div>
+          </div>
           <label class="fld"><span>Day</span><select id="bfDay"></select></label>
           <span class="bf-sep"></span>
           <label class="fld"><span>Vendor</span><select id="bfVendor"></select></label>
