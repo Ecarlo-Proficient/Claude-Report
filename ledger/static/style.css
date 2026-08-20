@@ -541,6 +541,9 @@ a.ri-name:hover { text-decoration: underline; }
 .msel-menu { position: absolute; z-index: 40; top: calc(100% + 4px); left: 0; min-width: 160px; max-height: 280px; overflow-y: auto;
   background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 5px;
   box-shadow: 0 10px 28px rgba(0, 0, 0, .28); display: flex; flex-direction: column; gap: 1px; }
+/* display:flex above would override the `hidden` attribute's display:none - restore it so the
+   menu starts closed and the toggle/click-outside actually hide it. */
+.msel-menu[hidden] { display: none; }
 .msel-opt { display: flex; align-items: center; gap: 7px; padding: 5px 8px; border-radius: 6px; cursor: pointer;
   font-size: .88em; white-space: nowrap; }
 .msel-opt:hover { background: var(--row-hover); }
