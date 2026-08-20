@@ -375,12 +375,17 @@ def _fetch_ap(con) -> dict:
             bmap[str(be["doc_number"])] = dict(be)
     except sqlite3.OperationalError:
         pass
-    # project -> client (the GC): the QBO-hierarchy GC from payments first (most reliable), else a
-    # billing_event customer that isn't just the project name. Powers "CP790 · DL MEACHAM LP" on the
-    # Bills tab and the client filter (owner 2026-08-20). project-shaped names like "CP790 - HUNTER
-    # RANCH" are skipped so a real GC wins.
+    # project -> client (the GC). PRIMARY: project_customer, reversed from the QBO Customer:Project
+    # hierarchy by load_payments, which covers EVERY project (every project is a QBO sub-customer under
+    # its GC). Fallbacks (payments' resolved GC, then a non-project-shaped billing_event customer) only
+    # fill projects the hierarchy pull somehow missed. Powers "CP790 · DL MEACHAM LP" + the client filter.
     proj_shaped = re.compile(r"^(RP|CP|MFD)\d", re.I)
     proj_customer = {}
+    try:
+        for r in con.execute("SELECT project_no pn, client FROM project_customer WHERE COALESCE(client,'') <> ''"):
+            proj_customer[r["pn"]] = r["client"]
+    except sqlite3.OperationalError:
+        pass
     try:
         for r in con.execute(
                 "SELECT pa.project_no pn, p.parent_customer gc, COUNT(*) n FROM payment_application pa "

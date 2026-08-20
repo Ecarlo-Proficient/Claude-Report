@@ -114,11 +114,15 @@ def _cutoff(months: int) -> str:
     return dt.date(y, m, day).isoformat()
 
 
-def _customer_gc_map(query_all, access, company_id) -> dict:
-    """{customer_id → (gc_name, gc_id)}: every QBO customer resolved to the TOP of its
-    hierarchy - the GC. Payment CustomerRef.name is the bare leaf (often a project
-    sub-customer like 'RP6676-FTW'); its parent chain ends at the client (LONESTAR
-    GREEN HOMES). Customers are few, so one pull builds the whole map."""
+def _customer_gc_map(query_all, access, company_id, extract_proj=None) -> tuple:
+    """One customer pull → two maps.
+      gc_map   {customer_id → (gc_name, gc_id)}: every QBO customer resolved to the TOP of its
+               hierarchy - the GC. A Payment's CustomerRef is the bare leaf (often a project
+               sub-customer 'RP6676-FTW'); its parent chain ends at the client (LONESTAR GREEN HOMES).
+      proj_map {project_no → (gc_name, gc_id)}: because every project is a QBO sub-customer whose
+               NAME carries the project # (Customer:Project), reversing that gives the client for
+               EVERY project - not just the ones that happen to have a payment. Empty if no
+               extract_proj is passed."""
     cust = {}
     for c in query_all(access, company_id, "Customer"):
         cid = str(c.get("Id") or "")
@@ -134,7 +138,19 @@ def _customer_gc_map(query_all, access, company_id) -> dict:
             i = cust[i][1]
         return i
 
-    return {i: (cust[root(i)][0], root(i)) for i in cust}
+    gc_map = {i: (cust[root(i)][0], root(i)) for i in cust}
+    proj_map: dict = {}
+    if extract_proj:
+        for cid, (disp, _) in cust.items():
+            pn = extract_proj(disp or "")
+            if not pn:
+                continue
+            r = root(cid)
+            gc_name = cust[r][0]
+            # only when there's a REAL client above the project (its "GC" isn't itself another project name)
+            if gc_name and not extract_proj(gc_name):
+                proj_map.setdefault(pn.upper(), (gc_name, r))
+    return gc_map, proj_map
 
 
 def _payment_method_map(query_all, access, company_id) -> dict:
@@ -205,11 +221,11 @@ def _rows_from_payment(p: dict, inv_idx: dict) -> tuple[dict, list[dict]]:
 def _load(con, months: int, dry_run: bool) -> int:
     inv_idx = _invoice_index(con)
     cutoff = _cutoff(months)
-    from shared.qbo_api import load_credentials, query_all
+    from shared.qbo_api import load_credentials, query_all, extract_proj
     access, company_id = load_credentials()
     print("  authenticated.")                       # never echo the realm/company id (owner 2026-08-06)
-    gc_map = _customer_gc_map(query_all, access, company_id)
-    print(f"  mapped {len(gc_map)} customers to their parent GC.")
+    gc_map, proj_cust = _customer_gc_map(query_all, access, company_id, extract_proj)
+    print(f"  mapped {len(gc_map)} customers to their GC; {len(proj_cust)} projects to a client.")
     pm_map = _payment_method_map(query_all, access, company_id)     # PaymentMethodRef is an id only - resolve the name
     raw = query_all(access, company_id, "Payment", f"TxnDate >= '{cutoff}'")
     print(f"  pulled {len(raw)} payments since {cutoff}.")
@@ -272,8 +288,13 @@ def _load(con, months: int, dry_run: bool) -> int:
         seen.add(k)
         con.execute(f"INSERT OR REPLACE INTO payment_application ({', '.join(_APP_COLS)}) VALUES ({aph})",
                     {c: a.get(c) for c in _APP_COLS})
+    # project -> client (the GC), reversed from the QBO Customer:Project hierarchy, for EVERY project.
+    con.execute("DELETE FROM project_customer")
+    con.executemany(
+        "INSERT OR REPLACE INTO project_customer (project_no, client, client_id, loaded_at) VALUES (?,?,?,?)",
+        [(pn, gc, gid, now) for pn, (gc, gid) in proj_cust.items()])
     con.commit()
-    print(f"  wrote {len(payments)} payments + {len(seen)} applications.")
+    print(f"  wrote {len(payments)} payments + {len(seen)} applications + {len(proj_cust)} project→client rows.")
     return len(payments)
 
 
@@ -295,14 +316,16 @@ def _selftest() -> int:
         prow, arows = _rows_from_payment(pay, _invoice_index(con))
         assert prow["total_amt"] == 150000.0 and prow["customer_id"] == "77", prow
         assert len(arows) == 2, arows
-        # parent-GC hierarchy walk: leaf 'RP1-JOB' (99) → parent 'Firestone' (77), 2 levels deep
+        # parent-GC hierarchy walk: leaf 'RP1234 ...' (99) → parent 'Firestone' (77), 2 levels deep
+        from shared.qbo_api import extract_proj as _xp
         fake_q = lambda a, c, e, where="": [
             {"Id": "77", "DisplayName": "Firestone Building Co", "ParentRef": None},
-            {"Id": "99", "DisplayName": "RP1-JOB", "ParentRef": {"value": "77"}},
+            {"Id": "99", "DisplayName": "RP1234 - SOME JOB", "ParentRef": {"value": "77"}},
         ]
-        gmap = _customer_gc_map(fake_q, None, None)
+        gmap, pmap = _customer_gc_map(fake_q, None, None, _xp)
         assert gmap["99"] == ("Firestone Building Co", "77"), gmap        # leaf resolves up to the GC
         assert gmap["77"] == ("Firestone Building Co", "77"), gmap        # a top-level GC resolves to itself
+        assert pmap.get("RP1234") == ("Firestone Building Co", "77"), pmap   # project reversed from Customer:Project
         prow["parent_customer"], prow["parent_customer_id"] = gmap["99"]
         got = {a["invoice_txn_id"]: a for a in arows}
         assert got["INV9"]["invoice_no"] == "34999" and got["INV9"]["project_no"] == "CP861", got

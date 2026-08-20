@@ -110,6 +110,19 @@ CREATE TABLE IF NOT EXISTS billing_event (
 );
 
 
+-- ── project_customer : project # → its CLIENT (the GC), from the QBO hierarchy ──
+-- Every project is a QBO sub-customer whose name carries the project #, nested under the
+-- GC (Customer:Project). Reversing that gives project → client for EVERY project, not just
+-- the ones that happen to have a payment/invoice. Filled by load_payments.py (which already
+-- pulls the whole customer list) as a full replace; read by the Bills tab.
+CREATE TABLE IF NOT EXISTS project_customer (
+    project_no  TEXT PRIMARY KEY,
+    client      TEXT,                        -- the GC = top of this project's QBO customer chain
+    client_id   TEXT,                        -- the GC's QBO customer id (deep link)
+    loaded_at   TEXT NOT NULL
+);
+
+
 -- ── payment : a received customer payment - money IN as ONE transaction ──────
 -- A QBO Payment object: the GC hands over cash once, and that one payment can
 -- settle several invoices. This is the TRANSACTION (total, date, who paid); the

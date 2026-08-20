@@ -899,6 +899,14 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     bills). NEW **Client filter** (`#bfCustomer`, leads the field group) + a **Customer group-by** so you can see
     all of a client's open bills across projects, then group/drill per project. Verified live: CP790 → DL MEACHAM
     LP, filter → 98 bills, group-by-client works; no console errors.
+    **Client resolved for EVERY project (owner 2026-08-20: "Project tells you the customer ... Customer:Project,
+    then reverse it ... it's all blank ... you are missing where it's at").** The first pass only resolved paid/
+    invoiced projects (left ~537 blank). Fixed at the source: every project is a QBO **sub-customer** whose name
+    carries the project # (Customer:Project), so `load_payments` now **reverses that hierarchy for all customers**
+    → a new **`project_customer`** table (project_no → client + client_id), 1,514 projects mapped. `_fetch_ap`
+    reads it FIRST (payments/billing_event only fill gaps). Coverage 2,354 → **2,455 of 2,891**; the remaining 436
+    are genuinely project-less bills (397, no project = no client) or multi-project bills (37). **NOTE: needs a
+    `load_payments` re-run to populate `project_customer` AND a dashboard-server restart to serve `b.client`.**
 
   - **Project P&L: status column + sort dropdown + status filter (owner, 2026-08-19).** `_portfolio_pnl` now
     returns ALL jobs with a `status` + `active` flag (company/division TOTALS stay active-only). Frontend:

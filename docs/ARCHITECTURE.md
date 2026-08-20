@@ -364,8 +364,8 @@ flowchart LR
     QBO --> SUBLOCLOAD
     SUBLOCENG -.->|"compute()"| SUBLOCLOAD
     SUBLOCLOAD ==>|"sub_loc_event · sub_loc_run"| DB
-    PAYLOAD["load_payments.py\nQBO Payment txns → payment + payment_application\n(money IN, each with the invoices it paid)\nresolves invoice # / project by id · --selftest"]:::tool
-    QBO --> PAYLOAD ==>|"payment · payment_application"| DB
+    PAYLOAD["load_payments.py\nQBO Payment txns → payment + payment_application\n(money IN, each with the invoices it paid)\n+ project_customer (reverse the QBO Customer:Project\nhierarchy → client per project) · --selftest"]:::tool
+    QBO --> PAYLOAD ==>|"payment · payment_application · project_customer"| DB
     FUTURE -.-> DB
 ```
 
