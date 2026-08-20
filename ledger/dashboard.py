@@ -105,6 +105,22 @@ def _os_open(path: str):
     return None
 
 
+def _ensure_lien_vendor_dir(vendor: str):
+    """`_LIEN_FOLDER/<vendor>` for a vendor's lien docs (owner: organize by vendor, auto-create on
+    mark). Creates ONLY the vendor subfolder and ONLY if the base already exists - so we never
+    build a fake tree that shadows an unmounted share. Sanitized (no path traversal). Path or None."""
+    safe = re.sub(r"[\\/]+", " ", (vendor or "")).strip().strip(".")
+    base = Path(_LIEN_FOLDER)
+    if not safe or not base.is_dir():
+        return None
+    d = base / safe
+    try:
+        d.mkdir(exist_ok=True)
+        return d
+    except OSError:
+        return None
+
+
 # ── live P&L compute (folds project-pnl's numbers INTO the dashboard) ────────
 # Conventions match project-pnl/project_pnl_export.py so the two reconcile:
 # Earned Revenue = contract × %complete; costs = cost_line (QBO truth, incl subs);
@@ -1174,21 +1190,16 @@ class Handler(BaseHTTPRequestHandler):
         self._json({"ok": True, "path": str(folder), "note": note})
 
     def _lien_folder(self, vendor: str = ""):
-        """Open the Synology Vendor Liens folder (where the notice / lien PDFs are filed). An
-        optional ?vendor= drills to that vendor's subfolder IF it already exists - never creates
-        one. Only ever opens under _LIEN_FOLDER (no path traversal). Cross-platform via _os_open."""
-        base = Path(_LIEN_FOLDER)
-        target = base
-        v = re.sub(r"[\\/]+", " ", (vendor or "")).strip()
-        if v:
-            cand = base / v
-            try:
-                if cand.is_dir():
-                    target = cand
-            except OSError:
-                pass
+        """Open the Synology Vendor Liens folder. With ?vendor=, drill to (and create, if missing)
+        that vendor's subfolder - organize by vendor, auto-create (owner 2026-08-20); without it,
+        open the base. Only ever under _LIEN_FOLDER (no path traversal). Cross-platform."""
+        target = Path(_LIEN_FOLDER)
+        if (vendor or "").strip():
+            d = _ensure_lien_vendor_dir(vendor)
+            if d is not None:
+                target = d                       # else fall back to the base folder
         if not target.exists():
-            return self._json({"error": f"folder not found (is the Accounting share mounted?)"}, 404)
+            return self._json({"error": "folder not found (is the Accounting share mounted?)"}, 404)
         err = _os_open(str(target))
         if err:
             return self._json({"error": err}, 500)
@@ -1314,7 +1325,14 @@ class Handler(BaseHTTPRequestHandler):
             bill_marks.set_lien_mark(bill_id, lien, _dt.datetime.now().isoformat(timespec="seconds"))
         except sqlite3.OperationalError as e:
             return self._json({"error": f"write failed: {e}"}, 500)
-        self._json({"ok": True, "bill_id": bill_id, "lien": lien})
+        # Auto-create the vendor's lien folder on an ACTUAL notice/lien (owner 2026-08-20) so the
+        # PDF has a home. Only Notice Sent / Lien Filed - a cleared or Released mark makes no folder.
+        folder = None
+        vendor = (body.get("vendor") or "").strip()
+        if lien in ("Notice Sent", "Lien Filed") and vendor:
+            d = _ensure_lien_vendor_dir(vendor)
+            folder = str(d) if d is not None else None
+        self._json({"ok": True, "bill_id": bill_id, "lien": lien, "folder": folder})
 
 
 def _daemonize():

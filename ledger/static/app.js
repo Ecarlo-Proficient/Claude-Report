@@ -1661,8 +1661,9 @@ async function saveBillMarks() {
   const btn = $("#btnSaveBillMarks"); if (btn) { btn.disabled = true; btn.textContent = "Saving…"; }
   try {
     for (const [bill_id, p] of entries) {
+      const bx = (BILLS || []).find(x => x.bill_id === bill_id);      // vendor → auto-create its lien folder on save
       const res = await fetch("/api/bill-mark", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bill_id, lien: p.lien || "" }) });
+        body: JSON.stringify({ bill_id, lien: p.lien || "", vendor: bx ? (bx.vendor || "") : "" }) });
       const j = await res.json(); if (!j.ok) throw new Error(j.error || "write failed");
     }
     pendingBillMarks.clear();
@@ -1788,6 +1789,10 @@ function openBillDetail(b) {
     gb.appendChild(hint); }
   { const acts = document.createElement("div"); acts.className = "pnl-actions";
     const bl = qboBillHref(b.qbo_link); if (bl) acts.appendChild(linkBtn("Open bill in QuickBooks ↗", bl));
+    if (b.vendor) { const lf = document.createElement("button"); lf.className = "btn subtle"; lf.textContent = "Open lien folder ↗";
+      lf.title = "Open this vendor's lien folder on the Accounting share (created if missing)";
+      lf.onclick = () => fetch("/api/lien/folder?vendor=" + encodeURIComponent(b.vendor), { method: "POST" }).then(r => r.json()).then(j => toast(j.error ? "Couldn't open: " + j.error : `Opened ${b.vendor}'s lien folder`));
+      acts.appendChild(lf); }
     if (acts.childNodes.length) gb.appendChild(acts); }
 
   const gi = grp("Invoice / draw  ·  money in");

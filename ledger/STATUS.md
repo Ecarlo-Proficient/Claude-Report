@@ -944,9 +944,14 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     of the marks currently in effect (`lien_marked` bills). So nothing saves blind. Plus an **"Open lien folder ↗"**
     button → `POST /api/lien/folder` (`_LIEN_FOLDER`, machine.env `LIEN_FOLDER`, default
     `/Volumes/Accounting/LIENS & MONTHLY NOTICES/Vendor Liens/2026`) opens the Synology folder cross-platform via
-    `_os_open`; optional `?vendor=` drills to a subfolder IF it exists (never creates one; path-traversal guarded).
-    Verified live: staged 2 → review shows `– → Notice sent` / `– → Lien filed` + 8 on file; folder opens.
-    **Deeper linking (per-vendor subfolders / attach the actual PDF) is a proposal pending the owner's call.**
+    `_os_open`. **Organized BY VENDOR, auto-created on mark (owner's pick, 2026-08-20):** `?vendor=` drills to
+    `2026/<VENDOR>` and **creates it if missing** (`_ensure_lien_vendor_dir` - only the subfolder, only if the base
+    exists, so it never shadows an unmounted share; path-traversal guarded). Saving a **Notice Sent / Lien Filed**
+    mark auto-creates that vendor's folder (`_set_bill_mark` takes the vendor; `saveBillMarks` passes it); the bill
+    detail has a per-vendor **"Open lien folder ↗"** button. Verified live: staged 2 → review shows `– → Notice
+    sent` / `– → Lien filed` + 8 on file; POST with a vendor creates + opens `2026/<vendor>`. Route is a **POST**
+    (like `/api/job/open`); needs a dashboard-server restart. Next option (not built): attach the actual PDF path
+    to each mark.
 
   - **Project P&L: status column + sort dropdown + status filter (owner, 2026-08-19).** `_portfolio_pnl` now
     returns ALL jobs with a `status` + `active` flag (company/division TOTALS stay active-only). Frontend:
