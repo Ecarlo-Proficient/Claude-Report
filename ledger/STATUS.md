@@ -989,8 +989,8 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     % Complete · Revenues Earned · Profit Earned · Billed · Over · Under · Left to Bill · Future Profit · Pure Job
     Borrow. Grouped by division (band header) with a **subtotal per division + a GRAND TOTAL**; **Active only**
     toggle (default on). Read-only (the master workbook stays where WIP is edited). Verified live on :8787: 137
-    active jobs, report Aug 7 2026, MFD177 = $8,677,258 / 14.5% GP / 98.5% (ties to the sheet); grand total
-    $29.7M contract; no console errors. Frontend-only - no server restart needed.
+    active jobs, report Aug 7 2026, the top MFD job's contract / 14.5% GP / 98.5% complete tie to the sheet;
+    grand total ~$29.7M contract; no console errors. Frontend-only - no server restart needed.
 
   - **Project P&L: status column + sort dropdown + status filter (owner, 2026-08-19).** `_portfolio_pnl` now
     returns ALL jobs with a `status` + `active` flag (company/division TOTALS stay active-only). Frontend:
