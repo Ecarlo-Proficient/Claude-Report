@@ -615,6 +615,17 @@ tr.bill-group .bg-amt { font-weight: 800; font-size: .95em; letter-spacing: -.01
   margin: 4px 2px 10px; flex-wrap: wrap; }
 /* "Expand more (N)" row under a top-N dashboard table */
 .more-row { padding: 8px 2px 2px; }
+
+/* WIP report: a wide, dense schedule (mirrors Test-Master) with subtotal + total rows */
+.wip-grid { font-size: .82em; }
+.wip-grid th, .wip-grid td { padding: 4px 8px; white-space: nowrap; }
+tr.wip-subtotal > td { border-top: 1px solid var(--border); font-weight: 700;
+  background: color-mix(in srgb, var(--accent) 6%, transparent); }
+tr.wip-total > td { border-top: 2px solid var(--accent); font-weight: 800;
+  background: color-mix(in srgb, var(--accent) 11%, transparent); }
+.inline-check { display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  font-size: .8em; color: var(--text-dim); font-weight: 500; white-space: nowrap; }
+.inline-check input { cursor: pointer; }
 /* invoice rows nested under a payment: indent the first cell so the grouping reads */
 tr.sub-row > td:first-child { padding-left: 26px; }
 tr.sub-row > td { color: var(--text); }

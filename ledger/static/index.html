@@ -167,6 +167,18 @@
     </div><!-- /tab: pnl -->
 
     <!-- ══════════════ TAB: COSTS (pivot — code → jobs) ══════════════ -->
+    <div class="tab-page" data-tab="wip" hidden>
+      <section class="widget">
+        <div class="widget-head">
+          <h2>WIP report <span class="count" id="wipNote"></span></h2>
+          <label class="inline-check"><input type="checkbox" id="wipActive" checked> Active only</label>
+        </div>
+        <p class="hint" id="wipHint"></p>
+        <div class="table-scroll">
+          <table class="grid wip-grid" id="wipTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </div><!-- /tab: wip -->
     <div class="tab-page" data-tab="costs" hidden>
       <section class="widget">
         <div class="widget-head"><h2>Cost type ▸ job type <span class="count">— click a code to see every job that spent it</span></h2></div>

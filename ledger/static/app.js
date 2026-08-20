@@ -202,13 +202,13 @@ let drawsExpanded = new Set();   // draws whose bills are expanded in the table 
 const NAV_GROUPS = [
   { id: "home",       label: "My view",       tabs: ["home"] },
   { id: "overview",   label: "Overview",      tabs: ["overview"] },
-  { id: "financials", label: "Financials",    tabs: ["pnl", "costs"] },
+  { id: "financials", label: "Financials",    tabs: ["pnl", "wip", "costs"] },
   { id: "customers",  label: "Customer",      tabs: ["customers", "invoices", "draws", "payments", "sales"] },
   { id: "vendors",    label: "Vendor",        tabs: ["vendors", "bills", "subloc", "liens"] },
   { id: "it",         label: "IT",            tabs: ["systems", "console"] },
 ];
 const TAB_LABELS = {
-  home: "My view", overview: "Overview", pnl: "Project P&L", costs: "Costs",
+  home: "My view", overview: "Overview", pnl: "Project P&L", wip: "WIP report", costs: "Costs",
   customers: "Customer Center", invoices: "Invoices", draws: "Draws", payments: "Payments", sales: "Sales Outreach",
   vendors: "Vendor Center", bills: "Bills", subloc: "Sub LOC", liens: "Liens",
   systems: "Systems", console: "Console",
@@ -241,6 +241,7 @@ function setTab(t) {
   $$("#groupbar .tab").forEach(b => b.classList.toggle("active", b.dataset.group === g.id));
   buildSubTabs(g, t);
   if (t === "pnl") renderPnl();     // portfolio P&L is computed server-side, lazy-loaded
+  if (t === "wip") renderWip();
   if (t === "console") renderConsole();
   if (t === "systems") loadSystems();
   if (t === "customers") renderCustomers();
@@ -2768,6 +2769,84 @@ function el2(tag, cls, txt) { const e = document.createElement(tag); if (cls) e.
 
 // Portfolio P&L tab — every active job's live P&L + division/company totals. Computed
 // server-side (/api/pnl/portfolio), lazy-loaded on first open, recomputed after a reload.
+// ══ WIP REPORT ═══════════════════════════════════════════════════════════════
+// The company Work-in-Progress schedule, straight from the ledger's wip_snapshot (loaded from the
+// WIP master's Test tabs). Columns + order mirror the Test-Master reference; grouped by division
+// with subtotals and a grand total. Read-only - the master workbook stays where you EDIT the WIP.
+const WIP_COLS = [
+  { k: "project_no", label: "Project #", t: "text" },
+  { k: "project_name", label: "Name", t: "text" },
+  { k: "bonded", label: "Bonded", t: "bond" },
+  { k: "total_contract_price", label: "Total Contract", t: "money" },
+  { k: "estimated_total_costs", label: "Est. Total Costs", t: "money" },
+  { k: "original_profit", label: "Original Profit", t: "money" },
+  { k: "gross_profit_pct", label: "GP %", t: "pct" },
+  { k: "costs_to_date", label: "Costs to Date", t: "money" },
+  { k: "cost_to_complete", label: "Cost to Complete", t: "money" },
+  { k: "percent_complete", label: "% Complete", t: "pct" },
+  { k: "revenues_earned_to_date", label: "Revenues Earned", t: "money" },
+  { k: "profit_earned_to_date", label: "Profit Earned", t: "money" },
+  { k: "billed_to_date", label: "Billed", t: "money" },
+  { k: "overbillings", label: "Overbillings", t: "money" },
+  { k: "underbillings", label: "Underbillings", t: "money" },
+  { k: "left_to_bill", label: "Left to Bill", t: "money" },
+  { k: "future_profit_to_earn", label: "Future Profit", t: "money" },
+  { k: "pure_job_borrow", label: "Pure Job Borrow", t: "money" },
+];
+const WIP_DIV_ORDER = ["Multi Family", "Commercial", "Residential"];
+function _wipFmt(c, v) {
+  if (c.t === "pct") return v == null ? "–" : (v * 100).toFixed(1) + "%";
+  if (c.t === "bond") return (v === 1 || v === "Y" || v === "y" || v === true) ? "Y" : (v == null || v === "" ? "" : "N");
+  return v == null || v === "" ? "–" : String(v);
+}
+function renderWip() {
+  const thead = $("#wipTable thead"), tbody = $("#wipTable tbody"); if (!thead || !tbody) return;
+  const activeOnly = $("#wipActive") ? $("#wipActive").checked : true;
+  const isActive = r => { const s = (r.status || "").trim().toLowerCase(); return s === "" || s === "active"; };
+  const rows = (ALL || []).filter(r => !activeOnly || isActive(r));
+  if ($("#wipNote")) $("#wipNote").textContent = `(${rows.length} job${rows.length === 1 ? "" : "s"} · report ${meta && meta.report_date ? fmtDate(meta.report_date) : "–"})`;
+  if ($("#wipHint")) $("#wipHint").innerHTML = "The company Work-in-Progress schedule, live from the ledger (loaded from the WIP master's Test tabs). Columns mirror <b>Test-Master</b>; grouped by division with subtotals. Read-only here - edit the WIP in the master workbook.";
+  const byDiv = new Map();
+  for (const r of rows) { const d = r.division || "Other"; if (!byDiv.has(d)) byDiv.set(d, []); byDiv.get(d).push(r); }
+  const order = [...byDiv.keys()].sort((a, b) => { const ia = WIP_DIV_ORDER.indexOf(a), ib = WIP_DIV_ORDER.indexOf(b); return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib) || a.localeCompare(b); });
+  thead.innerHTML = ""; tbody.innerHTML = "";
+  const htr = document.createElement("tr");
+  for (const c of WIP_COLS) { const th = document.createElement("th"); if (c.t === "text" || c.t === "bond") th.className = "left"; th.textContent = c.label; htr.appendChild(th); }
+  thead.appendChild(htr);
+  if (!rows.length) { const tr = document.createElement("tr"); const td = document.createElement("td"); td.colSpan = WIP_COLS.length; td.className = "left"; td.style.color = "var(--text-dim)"; td.style.padding = "14px 12px"; td.textContent = "No WIP data - run load_wip_master.py."; tr.appendChild(td); tbody.appendChild(tr); return; }
+  const sumRow = (label, list, cls) => {
+    const tr = document.createElement("tr"); tr.className = cls;
+    WIP_COLS.forEach((c, i) => { const td = document.createElement("td");
+      if (i === 0) { td.className = "left"; td.textContent = label; }
+      else if (c.t === "money") { td.className = "right"; td.appendChild(moneyCell(list.reduce((t, r) => t + num(r[c.k]), 0))); }
+      else td.className = (c.t === "text" || c.t === "bond") ? "left" : "right";
+      tr.appendChild(td); });
+    return tr;
+  };
+  for (const div of order) {
+    const list = byDiv.get(div);
+    const gtr = document.createElement("tr"); gtr.className = "bill-group";
+    const gtd = document.createElement("td"); gtd.colSpan = WIP_COLS.length;
+    const cell = document.createElement("div"); cell.className = "bg-cell";
+    const key = document.createElement("span"); key.className = "bg-key"; key.textContent = div;
+    const amt = document.createElement("span"); amt.className = "bg-amt"; amt.textContent = `${list.length} job${list.length === 1 ? "" : "s"} · ${money(list.reduce((t, r) => t + num(r.total_contract_price), 0))} contract`;
+    cell.appendChild(key); cell.appendChild(amt); gtd.appendChild(cell); gtr.appendChild(gtd); tbody.appendChild(gtr);
+    for (const r of list) {
+      const tr = document.createElement("tr"); tr.style.cursor = "pointer"; tr.title = "Open this project";
+      tr.onclick = (e) => { if (e.target.closest(".cell")) return; openDetail(r); };
+      for (const c of WIP_COLS) {
+        const td = document.createElement("td");
+        if (c.t === "money") td.appendChild(moneyCell(r[c.k]));
+        else if (c.t === "text") { td.className = "left"; const s = document.createElement("span"); s.textContent = _wipFmt(c, r[c.k]); s.title = _wipFmt(c, r[c.k]); td.appendChild(s); }
+        else { td.className = c.t === "bond" ? "left" : "right"; td.textContent = _wipFmt(c, r[c.k]); }
+        tr.appendChild(td);
+      }
+      tbody.appendChild(tr);
+    }
+    tbody.appendChild(sumRow(div + " total", list, "wip-subtotal"));
+  }
+  tbody.appendChild(sumRow("GRAND TOTAL", rows, "wip-total"));
+}
 function renderPnl() {
   if (!PNL) {
     const n = $("#pnlNote"); if (n) n.textContent = "computing…";
@@ -3604,6 +3683,7 @@ function init() {
   ["#drawFClient", "#drawFProj", "#drawFVendor", "#drawFInv", "#drawDivision"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderDraws); });
   { const el = $("#vendorSearch"); if (el) el.addEventListener("input", renderVendors); }
   { const el = $("#lienFProj"); if (el) el.addEventListener("input", renderLiens); }   // the other lien filters are multi-selects now
+  { const el = $("#wipActive"); if (el) el.addEventListener("change", renderWip); }
   { const el = $("#billSort"); if (el) el.addEventListener("change", renderBills); }
   // Month + Vendor + every categorical multi-select: the button toggles the checkbox menu; a click outside closes it.
   const _mselWraps = [["#bfMonthBtn", "#bfMonthMenu", "#bfMonthMsel"], ["#bfVendorBtn", "#bfVendorMenu", "#bfVendorMsel"],
