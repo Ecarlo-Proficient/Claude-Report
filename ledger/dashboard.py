@@ -469,6 +469,12 @@ def _fetch_ap(con) -> dict:
     watch = [b for b in bills if (b.get("lien_status") or "") in LIEN_RANK]
     watch.sort(key=lambda b: (LIEN_RANK[b["lien_status"]], -(b.get("open_balance") or 0)))
     ap["lien_watch"] = watch[:500]
+    # The Liens PAGE = bills where a notice was actually SENT or a lien FILED (the owner's marks),
+    # NOT the deadline clock (owner 2026-08-20). Filed first, then by open $. Small list, no cap.
+    _SENT = {"Lien Filed": 0, "Notice Sent": 1}
+    liens = [b for b in bills if (b.get("lien_status") or "") in _SENT]
+    liens.sort(key=lambda b: (_SENT[b["lien_status"]], -(b.get("open_balance") or 0)))
+    ap["liens"] = liens
     ap["summary"] = {"open_balance": open_bal, "open_lines": open_lines, "watch_count": len(watch)}
     return ap
 

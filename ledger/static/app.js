@@ -182,7 +182,7 @@ function raw(col, v) {
 
 // ── State ─────────────────────────────────────────────────────────────────
 let ALL = [];
-let AP = { summary: {}, lien_watch: [], by_project: {}, bills: [] };
+let AP = { summary: {}, lien_watch: [], liens: [], by_project: {}, bills: [] };
 let BILLS = [];   // full ap_bill_line list for the Bill Tracker tab
 let COST = { by_code: [], by_project_code: {}, by_project: {}, by_cost_type: [], by_vendor: [], loaded_total: 0 };
 let DRAWS = { draws: [], total: 0 };
@@ -272,7 +272,7 @@ async function load(isAuto) {
   $("#errorBanner").hidden = true;
   ALL = data.projects || [];
   ALL.forEach(deriveMetrics);
-  AP = data.ap || { summary: {}, lien_watch: [], by_project: {}, bills: [] };
+  AP = data.ap || { summary: {}, lien_watch: [], liens: [], by_project: {}, bills: [] };
   BILLS = AP.bills || [];
   COST = data.cost || { by_code: [], by_project_code: {}, by_project: {}, by_cost_type: [], by_vendor: [], loaded_total: 0 };
   DRAWS = data.draws || { draws: [], total: 0 };
@@ -1072,15 +1072,17 @@ function buildLienMSel(cfg, watch) {
 }
 function lienMSelPasses(r) { for (const cfg of LIEN_MSEL) { const s = lienMSel[cfg.id]; if (s && s.size && !s.has(cfg.get(r))) return false; } return true; }
 function renderLiens() {
-  const s = AP.summary || {};
-  const watch = AP.lien_watch || [];
-  $("#liensNote").textContent = watch.length ? `(${watch.length} bills on the clock)` : "(no AP data — run load_bill_tracker.py)";
-  const pastDue = watch.filter(r => r.lien_status === "Notice PAST due");
+  // This page is ONLY what's actually been SENT or FILED (owner 2026-08-20) - not the deadline clock.
+  const watch = AP.liens || [];
+  $("#liensNote").textContent = watch.length ? `(${watch.length} sent + filed)` : "(none sent or filed yet)";
+  const openOf = rows => rows.reduce((t, r) => t + num(r.open_balance), 0);
+  const sent = watch.filter(r => r.lien_status === "Notice Sent");
+  const filed = watch.filter(r => r.lien_status === "Lien Filed");
   // ── summary KPIs ──
   const stats = [
-    ["Open AP", money(s.open_balance || 0), `${s.open_lines || 0} open bills`],
-    ["On the lien clock", String(s.watch_count || 0), "need action"],
-    ["Past due", String(pastDue.length), money(pastDue.reduce((t, r) => t + num(r.open_balance), 0)) + " open"],
+    ["Notices sent", String(sent.length), money(openOf(sent)) + " open"],
+    ["Liens filed", String(filed.length), money(openOf(filed)) + " open"],
+    ["Open $ at stake", money(openOf(watch)), `across ${watch.length} bill${watch.length === 1 ? "" : "s"}`],
   ];
   const sr = $("#liensStats"); sr.innerHTML = "";
   for (const [label, value, sub] of stats) {
@@ -1091,7 +1093,7 @@ function renderLiens() {
     el.querySelector(".k-sub").textContent = sub;
     sr.appendChild(el);
   }
-  // ── clickable stage tiles (the widgets) → filter the one table below ──
+  // ── clickable tiles → filter to Notice Sent / Lien Filed ──
   const byStatus = {};
   for (const r of watch) (byStatus[r.lien_status] || (byStatus[r.lien_status] = [])).push(r);
   const filters = $("#lienFilters"); filters.innerHTML = "";
@@ -1105,15 +1107,14 @@ function renderLiens() {
     if (n || key === null) el.onclick = () => { activeLien = key; renderLiens(); };
     filters.appendChild(el);
   };
-  tile(null, "All on the clock", watch.length, watch.reduce((t, r) => t + num(r.open_balance), 0), "", activeLien === null);
-  for (const status of LIEN_ORDER) {
+  tile(null, "All sent + filed", watch.length, openOf(watch), "", activeLien === null);
+  for (const status of ["Lien Filed", "Notice Sent"]) {
     const rows = byStatus[status]; if (!rows || !rows.length) continue;
-    tile(status, LIEN_SHORT[status] || status, rows.length,
-         rows.reduce((t, r) => t + num(r.open_balance), 0), LIEN_CLASS[status] || "info", activeLien === status);
+    tile(status, LIEN_SHORT[status] || status, rows.length, openOf(rows), LIEN_CLASS[status] || "info", activeLien === status);
   }
   $("#btnClearLien").hidden = activeLien === null;
 
-  // ── multi-select filters (built from the watchlist) + the active stage + a Project # search ──
+  // ── multi-select filters (built from the sent/filed list) + the active stage + a Project # search ──
   for (const cfg of LIEN_MSEL) buildLienMSel(cfg, watch);
   const qProj = ($("#lienFProj") ? $("#lienFProj").value : "").trim().toLowerCase();
   const known = new Set(ALL.map(r => r.project_no));

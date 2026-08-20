@@ -961,8 +961,15 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     Project # · Invoice associated (the AR draw → QBO) · Invoice pay status (did the client pay it)** - `Project #`,
     not `CP #`, and it's ALL divisions (verified: MFD325/RP present). NEW **multi-select filters** (Client · Vendor ·
     Division · Invoice status - the same checkbox UI as Bills, `LIEN_MSEL`/`buildLienMSel`/`lienMSelPasses`) plus a
-    Project # search box; the old 4 search boxes are gone. Verified live: headers match; MFD filter → 121 rows, no
-    non-MFD; no console errors.
+    Project # search box; the old 4 search boxes are gone.
+    **SCOPED to sent/filed only (owner 2026-08-20: "i don't need on the lien clock on that page, this page is
+    solely for what has actually been sent/filed").** `_fetch_ap` now also returns **`ap["liens"]`** = bills whose
+    mark is **Notice Sent / Lien Filed** (Filed first), and the page renders THAT, not the deadline clock. Header
+    "Liens filed & notices sent"; KPIs Notices sent / Liens filed / Open $ at stake; tiles Lien filed · Notice sent.
+    Verified live: **88 sent/filed (5 filed, 83 sent), client 88/88, date 88/88, pay-status 78/88** (the 10 blanks
+    are invoices not in the tracker/billing_event); 0 blank client/date; no console errors. NOTE: the "date/client/
+    pay-status blank" the owner saw was the **un-restarted server** serving the pre-enrichment `lien_watch` - the
+    data was always resolvable (client is 100% on sent/filed). Backend change - needs the dashboard restart.
 
   - **Project P&L: status column + sort dropdown + status filter (owner, 2026-08-19).** `_portfolio_pnl` now
     returns ALL jobs with a `status` + `active` flag (company/division TOTALS stay active-only). Frontend:

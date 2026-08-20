@@ -332,16 +332,16 @@
     <!-- ══════════════ TAB: LIENS (collections worklist) ══════════════ -->
     <div class="tab-page" data-tab="liens" hidden>
       <section class="widget">
-        <div class="widget-head"><h2>AP &amp; lien clock <span class="count" id="liensNote"></span></h2></div>
+        <div class="widget-head"><h2>Liens filed &amp; notices sent <span class="count" id="liensNote"></span></h2></div>
         <div class="kpi-row" id="liensStats"></div>
-        <p class="hint">These are <b>unpaid bills YOU owe</b> (your AP — money <b>out</b>). Texas gives your
-          vendor/supplier a deadline (the 15th of the 2nd month after the bill) to send a lien notice; once
-          it passes, they can put a <b>lien on the project</b>. So "past due" = pay these to clear the lien
-          risk on your jobs. <b>This is not your AR</b> (you liening a GC who hasn't paid you).</p>
+        <p class="hint">Bills where a lien notice has actually been <b>sent</b> or a lien <b>filed</b> - the real
+          lien register (all divisions). It is <b>not</b> the deadline clock: only what you've marked. Each row is
+          the vendor, the bill, the client + project it sits on, and the AR draw it ties to (with whether the
+          client paid it). Mark bills from the <b>Bills</b> tab; they land here once saved.</p>
       </section>
       <section class="widget">
         <div class="widget-head">
-          <h2>On the lien clock <span class="count">— click a stage to filter the list</span></h2>
+          <h2>Sent + filed <span class="count">- click a tile to filter</span></h2>
           <button class="btn small" id="btnClearLien" hidden>Show all</button>
         </div>
         <div class="attn-row" id="lienFilters"></div>
