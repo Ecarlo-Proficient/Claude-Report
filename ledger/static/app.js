@@ -1264,6 +1264,7 @@ function statusCell(node) { const td = document.createElement("td"); td.classNam
 
 // ── the six per-field filter dropdowns (each a component, not a search box) ──
 const BILL_FILTERS = [
+  { sel: "#bfCustomer", get: b => b.client || "",          all: "All clients" },
   { sel: "#bfVendor",   get: b => b.vendor || "",         all: "All vendors" },
   { sel: "#bfDivision", get: b => b.division || "",        all: "All divisions", blank: "No division" },
   { sel: "#bfPay",      get: b => b.pay_status || "",      all: "Any pay status" },
@@ -1340,6 +1341,7 @@ function billFilterValues() {
 function billPassesFilters(b, f) {
   const mo = f["#bfMonth"]; if (mo && mo.length && !mo.includes(String(b.bill_date || "").slice(0, 7))) return false;
   const dy = f["#bfDay"];   if (dy && String(b.bill_date || "").slice(0, 10) !== dy) return false;
+  const cl = f["#bfCustomer"]; if (cl && (b.client || "") !== cl) return false;
   const v = f["#bfVendor"];   if (v && (b.vendor || "") !== v) return false;
   const d = f["#bfDivision"]; if (d === "__blank__" ? (b.division || "") !== "" : (d && (b.division || "") !== d)) return false;
   const p = f["#bfPay"];      if (p && (b.pay_status || "") !== p) return false;
@@ -1482,11 +1484,13 @@ function billGroupKey(b, group) {
   if (group === "division") return b.division || "–";
   if (group === "project_no") return b.project_no || "–";
   if (group === "vendor") return b.vendor || "–";
+  if (group === "client") return b.client || "–";
   if (group === "matched_invoice") return b.invoice_no || b.matched_invoice || "–";
   return "–";
 }
 function billGroupLabel(k, group) {
   if (group === "project_no" && k !== "–") { const nm = nameOf(k); return nm ? `${k} · ${nm}` : k; }
+  if (group === "client") return k === "–" ? "No client on file" : k;
   if (group === "division") return k === "–" ? "No division" : k;
   if (group === "matched_invoice") return k === "–" ? "No draw" : "Draw " + k;
   return k;
@@ -1501,12 +1505,14 @@ function billRow(b) {
   const vtd = document.createElement("td"); vtd.className = "left";
   const vs = document.createElement("span"); vs.className = "bill-vendor"; vs.textContent = b.vendor || "–"; vs.title = b.vendor || "";
   vtd.appendChild(vs); tr.appendChild(vtd);
-  // Project (division chip + name)
+  // Project (division chip + CLIENT - easier to scan than the job name; job name is in the tooltip)
   const ptd = document.createElement("td"); ptd.className = "left";
   if (b.project_no) {
     const chip = document.createElement("span"); const dc = divClass(b.division);
     chip.className = "divchip" + (dc ? " " + dc : ""); chip.textContent = b.project_no; ptd.appendChild(chip);
-    const nm = nameOf(b.project_no); if (nm) { const s = document.createElement("span"); s.className = "bill-name"; s.textContent = nm; s.title = nm; ptd.appendChild(s); }
+    const nm = nameOf(b.project_no); const disp = b.client || nm;
+    if (disp) { const s = document.createElement("span"); s.className = "bill-name"; s.textContent = disp;
+      s.title = b.client ? (nm ? `${b.client} · ${nm}` : b.client) : nm; ptd.appendChild(s); }
   } else { ptd.appendChild(document.createTextNode("–")); }
   tr.appendChild(ptd);
   // Bill # (QBO deep link)
@@ -3426,7 +3432,7 @@ function init() {
   ["#drawFClient", "#drawFProj", "#drawFVendor", "#drawFInv", "#drawDivision"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderDraws); });
   { const el = $("#vendorSearch"); if (el) el.addEventListener("input", renderVendors); }
   ["#lienFProj", "#lienFVendor", "#lienFInv", "#lienFName"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderLiens); });
-  ["#bfVendor", "#bfDivision", "#bfPay", "#bfInv", "#bfAppr", "#bfLien", "#billSort"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("change", renderBills); });
+  ["#bfCustomer", "#bfVendor", "#bfDivision", "#bfPay", "#bfInv", "#bfAppr", "#bfLien", "#billSort"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("change", renderBills); });
   // Month multi-select: the button toggles the checkbox menu; a click outside closes it.
   { const btn = $("#bfMonthBtn"), menu = $("#bfMonthMenu");
     if (btn && menu) {

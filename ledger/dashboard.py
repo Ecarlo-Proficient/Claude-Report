@@ -375,6 +375,28 @@ def _fetch_ap(con) -> dict:
             bmap[str(be["doc_number"])] = dict(be)
     except sqlite3.OperationalError:
         pass
+    # project -> client (the GC): the QBO-hierarchy GC from payments first (most reliable), else a
+    # billing_event customer that isn't just the project name. Powers "CP790 · DL MEACHAM LP" on the
+    # Bills tab and the client filter (owner 2026-08-20). project-shaped names like "CP790 - HUNTER
+    # RANCH" are skipped so a real GC wins.
+    proj_shaped = re.compile(r"^(RP|CP|MFD)\d", re.I)
+    proj_customer = {}
+    try:
+        for r in con.execute(
+                "SELECT pa.project_no pn, p.parent_customer gc, COUNT(*) n FROM payment_application pa "
+                "JOIN payment p ON p.qbo_txn_id = pa.payment_txn_id "
+                "WHERE pa.project_no IS NOT NULL AND COALESCE(p.parent_customer,'') <> '' "
+                "GROUP BY pa.project_no, p.parent_customer ORDER BY pa.project_no, n DESC"):
+            proj_customer.setdefault(r["pn"], r["gc"])          # first per project = most frequent GC
+    except sqlite3.OperationalError:
+        pass
+    try:
+        for r in con.execute("SELECT project_no pn, customer c FROM billing_event "
+                             "WHERE project_no IS NOT NULL AND COALESCE(customer,'') <> ''"):
+            if r["pn"] not in proj_customer and not proj_shaped.match(r["c"] or ""):
+                proj_customer.setdefault(r["pn"], r["c"])
+    except sqlite3.OperationalError:
+        pass
     bills = []
     for r in con.execute(
         "SELECT project_no, division, vendor, bill_ref, bill_date, account, "
@@ -382,6 +404,7 @@ def _fetch_ap(con) -> dict:
         "matched_invoice, invoice_no, gc_paid_date, pay_date, qbo_link "
         "FROM ap_bill_line ORDER BY bill_date DESC"):
         b = dict(r)
+        b["client"] = proj_customer.get(b.get("project_no"))
         bid = bill_marks.bill_id_from_link(b.get("qbo_link"))
         b["bill_id"] = bid                           # QBO bill id = workbook _Key; None → not markable
         b["lien_marked"] = bool(bid and marks.get(bid))   # currently a site override (vs computed)

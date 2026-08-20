@@ -890,6 +890,16 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     (`.cell-sel .cell` gets the box, not the full wide `<td>`) so a selected amount reads as a tight box, not a
     long green bar - app-wide.
 
+  - **Bills show the CLIENT + a Client filter/group (owner, 2026-08-20: "put Project:Customer instead of the
+    project name ... need a filter for customer to see all open bills for both client then dive deeper per
+    project").** The Bills PROJECT cell now shows the **chip + the CLIENT** (e.g. `CP790 · DL MEACHAM LP`) instead
+    of the job name (job name moved to the tooltip). Client resolved per project in `_fetch_ap` via a new
+    `proj_customer` map: **payments' QBO-hierarchy GC first** (`payment_application` → `payment.parent_customer`,
+    most reliable), else a `billing_event` customer that isn't project-shaped; attached as `b.client` (2,354/2,891
+    bills). NEW **Client filter** (`#bfCustomer`, leads the field group) + a **Customer group-by** so you can see
+    all of a client's open bills across projects, then group/drill per project. Verified live: CP790 → DL MEACHAM
+    LP, filter → 98 bills, group-by-client works; no console errors.
+
   - **Project P&L: status column + sort dropdown + status filter (owner, 2026-08-19).** `_portfolio_pnl` now
     returns ALL jobs with a `status` + `active` flag (company/division TOTALS stay active-only). Frontend:
     a **Status column** (green Active / dim Closed·Complete), a **status filter** (default Active only; All;
