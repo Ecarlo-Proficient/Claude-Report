@@ -953,6 +953,17 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     (like `/api/job/open`); needs a dashboard-server restart. Next option (not built): attach the actual PDF path
     to each mark.
 
+  - **Liens page: real columns (all divisions, not CP) + multi-select filters (owner, 2026-08-20: "Liens ... Vendor
+    first, Date, amount, Invoice #, Client, project #, Invoice associated, Invoice Payment status ... you put cp# as
+    if this page is only cp# ... need filters too not just search").** The watchlist is now built from the ENRICHED
+    bills (`_fetch_ap` computes `lien_watch` from `bills` after the client/AR-invoice join), so it carries client,
+    bill date, and the AR invoice + its pay status. Columns are now **Vendor · Date · Amount · Invoice # · Client ·
+    Project # · Invoice associated (the AR draw → QBO) · Invoice pay status (did the client pay it)** - `Project #`,
+    not `CP #`, and it's ALL divisions (verified: MFD325/RP present). NEW **multi-select filters** (Client · Vendor ·
+    Division · Invoice status - the same checkbox UI as Bills, `LIEN_MSEL`/`buildLienMSel`/`lienMSelPasses`) plus a
+    Project # search box; the old 4 search boxes are gone. Verified live: headers match; MFD filter → 121 rows, no
+    non-MFD; no console errors.
+
   - **Project P&L: status column + sort dropdown + status filter (owner, 2026-08-19).** `_portfolio_pnl` now
     returns ALL jobs with a `status` + `active` flag (company/division TOTALS stay active-only). Frontend:
     a **Status column** (green Active / dim Closed·Complete), a **status filter** (default Active only; All;

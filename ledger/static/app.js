@@ -1041,6 +1041,36 @@ function splitDraw(mi) {
   return { draw: m[1].trim(), name: dash >= 0 ? rest.slice(dash + 3).trim() : rest };
 }
 
+// Liens-page multi-select filters (same checkbox UI as the Bills tab), self-contained. Built from
+// the lien watchlist (all divisions), so you filter, not just search.
+const lienMSel = {};   // { id: Set }
+const LIEN_MSEL = [
+  { id: "lfClient", all: "All clients",     get: r => r.client || "",         search: true, lbl: v => v || "(no client)" },
+  { id: "lfVendor", all: "All vendors",     get: r => r.vendor || "",         search: true, lbl: v => v || "(none)" },
+  { id: "lfDiv",    all: "All divisions",   get: r => r.division || "",        lbl: v => v || "(none)" },
+  { id: "lfPay",    all: "Any inv. status", get: r => r.inv_ar_status || "",   lbl: v => v || "(no invoice)" },
+];
+function buildLienMSel(cfg, watch) {
+  const menu = $("#" + cfg.id + "Menu"), btn = $("#" + cfg.id + "Btn");
+  if (!menu || !btn) return;
+  const s = lienMSel[cfg.id] || (lienMSel[cfg.id] = new Set());
+  const vals = [...new Set(watch.map(cfg.get))].sort((a, b) => cfg.lbl(a).localeCompare(cfg.lbl(b)));
+  for (const v of [...s]) if (!vals.includes(v)) s.delete(v);
+  menu.innerHTML = "";
+  if (cfg.search) { const q = document.createElement("input"); q.type = "search"; q.className = "msel-search"; q.placeholder = "Search";
+    q.oninput = () => { const t = q.value.toLowerCase(); for (const lab of menu.querySelectorAll(".msel-opt")) lab.hidden = t && !lab.textContent.toLowerCase().includes(t); }; menu.appendChild(q); }
+  { const clr = document.createElement("button"); clr.type = "button"; clr.className = "msel-clear"; clr.textContent = "Clear"; clr.onclick = () => { s.clear(); renderLiens(); }; menu.appendChild(clr); }
+  for (const v of vals) {
+    const lab = document.createElement("label"); lab.className = "msel-opt";
+    const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = s.has(v);
+    cb.onchange = () => { if (cb.checked) s.add(v); else s.delete(v); renderLiens(); };
+    lab.appendChild(cb); lab.appendChild(document.createTextNode(" " + cfg.lbl(v)));
+    menu.appendChild(lab);
+  }
+  btn.textContent = !s.size ? cfg.all : (s.size === 1 ? cfg.lbl([...s][0]) : s.size + " selected");
+  btn.classList.toggle("on", s.size > 0);
+}
+function lienMSelPasses(r) { for (const cfg of LIEN_MSEL) { const s = lienMSel[cfg.id]; if (s && s.size && !s.has(cfg.get(r))) return false; } return true; }
 function renderLiens() {
   const s = AP.summary || {};
   const watch = AP.lien_watch || [];
@@ -1083,33 +1113,30 @@ function renderLiens() {
   }
   $("#btnClearLien").hidden = activeLien === null;
 
-  // ── the one table below — filtered by the active stage + the per-field boxes ──
-  const lv = sel => ($(sel) ? $(sel).value : "").trim().toLowerCase();
-  const qProj = lv("#lienFProj"), qVend = lv("#lienFVendor"), qInv = lv("#lienFInv"), qName = lv("#lienFName");
+  // ── multi-select filters (built from the watchlist) + the active stage + a Project # search ──
+  for (const cfg of LIEN_MSEL) buildLienMSel(cfg, watch);
+  const qProj = ($("#lienFProj") ? $("#lienFProj").value : "").trim().toLowerCase();
   const known = new Set(ALL.map(r => r.project_no));
   const base = activeLien ? (byStatus[activeLien] || []) : watch;
-  const enriched = base.map(r => {
-    const d = splitDraw(r.matched_invoice);
-    return { r, draw: r.invoice_no || d.draw || "", name: nameOf(r.project_no) || d.name || "" };
-  });
-  const shown = enriched.filter(({ r, draw, name }) => {          // each filled field must match (AND)
-    if (qProj && !`${r.project_no || ""} ${draw}`.toLowerCase().includes(qProj)) return false;
-    if (qVend && !String(r.vendor || "").toLowerCase().includes(qVend)) return false;
-    if (qInv && !`${r.bill_ref || ""} ${draw}`.toLowerCase().includes(qInv)) return false;
-    if (qName && !String(name || "").toLowerCase().includes(qName)) return false;
+  const shown = base.filter(r => {
+    if (qProj && !`${r.project_no || ""} ${r.invoice_no || ""}`.toLowerCase().includes(qProj)) return false;
+    if (!lienMSelPasses(r)) return false;
     return true;
   });
 
-  // CP # · Draw # · Name/Address · Invoice # · Amount lead (owner's order); the
-  // vendor trails and urgency is the coloured row edge so CP # stays first.
-  const cols = [["CP #", "left"], ["Draw #", "left"], ["Name / Address", "left"],
-                ["Invoice #", "left"], ["Amount", "right"], ["Vendor", "left"]];
+  // Vendor first, then Date · Amount · Invoice # (the bill) · Client · Project # (ALL divisions,
+  // not CP) · the AR invoice it's associated with + whether the client PAID that invoice. Urgency
+  // is the coloured row edge.
+  const payShort = st => !st ? null : (/paid/i.test(st) && !/unpaid|partial/i.test(st) ? ["Paid", "st-ok"]
+    : (/partial/i.test(st) ? ["Partial", "st-warn"] : ["Unpaid", "st-warn"]));
+  const cols = [["Vendor", "left"], ["Date", "left"], ["Amount", "right"], ["Invoice #", "left"],
+                ["Client", "left"], ["Project #", "left"], ["Invoice associated", "left"], ["Invoice pay status", "left"]];
   const thead = $("#lienTable thead"), tbody = $("#lienTable tbody");
   thead.innerHTML = ""; tbody.innerHTML = "";
   const htr = document.createElement("tr");
   for (const [c, al] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
   thead.appendChild(htr);
-  for (const { r, draw, name } of shown) {
+  for (const r of shown) {
     const tr = document.createElement("tr");
     tr.className = "lien-row u-" + (LIEN_CLASS[r.lien_status] || "info");
     tr.title = r.lien_status || "";
@@ -1119,28 +1146,32 @@ function renderLiens() {
       if (fb) openBillDetail(fb);
       else if (r.project_no && known.has(r.project_no)) openDetail(ALL.find(x => x.project_no === r.project_no));
     };
-    tr.appendChild(leftText(r.project_no || "—"));
-    tr.appendChild(leftText(draw || "—"));
-    tr.appendChild(leftText(name || "—"));
-    const inv = document.createElement("td"); inv.className = "left";
-    let chip;
-    if (r.qbo_link) {
-      chip = document.createElement("a");
-      chip.href = qboBillHref(r.qbo_link); chip.target = "_blank"; chip.rel = "noopener";
-      chip.title = "Open this bill in QuickBooks"; chip.onclick = (e) => e.stopPropagation();
-      chip.className = "invno qbo-link";
-    } else {
-      chip = document.createElement("span"); chip.className = "invno";
-    }
-    chip.textContent = r.bill_ref || "—"; inv.appendChild(chip); tr.appendChild(inv);
-    const amt = document.createElement("td"); const mc = moneyCell(r.open_balance); mc.classList.add("lien-amt"); amt.appendChild(mc); tr.appendChild(amt);
-    tr.appendChild(leftText(r.vendor || "—"));
+    tr.appendChild(leftText(r.vendor || "–"));                                    // Vendor
+    tr.appendChild(leftText(r.bill_date ? fmtDateShort(r.bill_date) : "–"));      // Date
+    const amt = document.createElement("td"); const mc = moneyCell(r.open_balance); mc.classList.add("lien-amt"); amt.appendChild(mc); tr.appendChild(amt);   // Amount (open)
+    // Invoice # = the bill's own number → QBO bill
+    const inv = document.createElement("td"); inv.className = "left"; let chip;
+    if (r.qbo_link) { chip = document.createElement("a"); chip.href = qboBillHref(r.qbo_link); chip.target = "_blank"; chip.rel = "noopener"; chip.title = "Open this bill in QuickBooks"; chip.onclick = (e) => e.stopPropagation(); chip.className = "invno qbo-link"; }
+    else { chip = document.createElement("span"); chip.className = "invno"; }
+    chip.textContent = r.bill_ref || "–"; inv.appendChild(chip); tr.appendChild(inv);
+    tr.appendChild(leftText(r.client || "–"));                                    // Client
+    tr.appendChild(leftText(r.project_no || "–"));                                // Project #
+    // Invoice associated = the AR draw invoice → QBO invoice
+    const ia = document.createElement("td"); ia.className = "left";
+    if (r.invoice_no && r.inv_qbo_id) { const a = document.createElement("a"); a.href = qboInvoiceUrl(r.inv_qbo_id); a.target = "_blank"; a.rel = "noopener"; a.className = "qbo-link"; a.textContent = r.invoice_no; a.title = "Open this invoice in QuickBooks"; a.onclick = (e) => e.stopPropagation(); ia.appendChild(a); }
+    else ia.appendChild(document.createTextNode(r.invoice_no || "–"));
+    tr.appendChild(ia);
+    // Invoice pay status = did the CLIENT pay that AR invoice (the lien tell: they paid, you didn't)
+    const ps = document.createElement("td"); ps.className = "left";
+    const pj = payShort(r.inv_ar_status);
+    if (pj) ps.appendChild(stText(pj[0], pj[1], r.inv_ar_status)); else ps.appendChild(document.createTextNode("–"));
+    tr.appendChild(ps);
     tbody.appendChild(tr);
   }
   if (!shown.length) {
     const tr = document.createElement("tr"); const td = document.createElement("td");
     td.colSpan = cols.length; td.className = "left"; td.style.color = "var(--text-dim)";
-    td.textContent = watch.length ? "No bills match this stage / search." : "No AP data — run load_bill_tracker.py.";
+    td.textContent = watch.length ? "No bills match these filters." : "No AP data - run load_bill_tracker.py.";
     tr.appendChild(td); tbody.appendChild(tr);
   }
 }
@@ -3569,11 +3600,12 @@ function init() {
     $(sel).addEventListener("input", renderProjects));
   ["#drawFClient", "#drawFProj", "#drawFVendor", "#drawFInv", "#drawDivision"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderDraws); });
   { const el = $("#vendorSearch"); if (el) el.addEventListener("input", renderVendors); }
-  ["#lienFProj", "#lienFVendor", "#lienFInv", "#lienFName"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderLiens); });
+  { const el = $("#lienFProj"); if (el) el.addEventListener("input", renderLiens); }   // the other lien filters are multi-selects now
   { const el = $("#billSort"); if (el) el.addEventListener("change", renderBills); }
   // Month + Vendor + every categorical multi-select: the button toggles the checkbox menu; a click outside closes it.
   const _mselWraps = [["#bfMonthBtn", "#bfMonthMenu", "#bfMonthMsel"], ["#bfVendorBtn", "#bfVendorMenu", "#bfVendorMsel"],
-    ...BILL_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`])];
+    ...BILL_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`]),
+    ...LIEN_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`])];
   const _closeMsels = (except) => { for (const [, mId] of _mselWraps) { const m = $(mId); if (m && mId !== except) m.hidden = true; } };
   for (const [btnId, menuId, wrapId] of _mselWraps) {
     const btn = $(btnId), menu = $(menuId);

@@ -345,11 +345,12 @@
           <button class="btn small" id="btnClearLien" hidden>Show all</button>
         </div>
         <div class="attn-row" id="lienFilters"></div>
-        <div class="filters">
-          <label class="fld"><span>CP #</span><input type="search" id="lienFProj" placeholder="CP745" autocomplete="off"></label>
-          <label class="fld"><span>Vendor</span><input type="search" id="lienFVendor" placeholder="Burnco" autocomplete="off"></label>
-          <label class="fld"><span>Invoice #</span><input type="search" id="lienFInv" placeholder="600524" autocomplete="off"></label>
-          <label class="fld"><span>Name / address</span><input type="search" id="lienFName" placeholder="Firestone" autocomplete="off"></label>
+        <div class="bill-filters">
+          <div class="fld"><span>Client</span><div class="msel" id="lfClientMsel"><button type="button" class="msel-btn" id="lfClientBtn">All clients</button><div class="msel-menu wide" id="lfClientMenu" hidden></div></div></div>
+          <div class="fld"><span>Vendor</span><div class="msel" id="lfVendorMsel"><button type="button" class="msel-btn" id="lfVendorBtn">All vendors</button><div class="msel-menu wide" id="lfVendorMenu" hidden></div></div></div>
+          <div class="fld"><span>Division</span><div class="msel" id="lfDivMsel"><button type="button" class="msel-btn" id="lfDivBtn">All divisions</button><div class="msel-menu" id="lfDivMenu" hidden></div></div></div>
+          <label class="fld"><span>Project #</span><input type="search" id="lienFProj" placeholder="CP745 / RP7186" autocomplete="off"></label>
+          <div class="fld"><span>Invoice status</span><div class="msel" id="lfPayMsel"><button type="button" class="msel-btn" id="lfPayBtn">Any inv. status</button><div class="msel-menu" id="lfPayMenu" hidden></div></div></div>
         </div>
         <div class="table-scroll">
           <table class="grid clickable" id="lienTable"><thead></thead><tbody></tbody></table>

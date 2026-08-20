@@ -389,23 +389,17 @@ def _fetch_ap(con) -> dict:
         bid = bill_marks.bill_id_from_link(r["qbo_link"])
         tag = marks.get(bid) if bid else None
         return tag if tag in bill_marks.LIEN_STATES else r["lien_status"]
-    open_bal, open_lines, watch = 0.0, 0, []
+    open_bal, open_lines = 0.0, 0
     for r in rows:
         ob = r["open_balance"] or 0
         if ob > 0:
             open_bal += ob
             open_lines += 1
-        d = dict(r); d["lien_status"] = _eff_lien(r)
-        if d["lien_status"] in LIEN_RANK:
-            watch.append(d)
-    watch.sort(key=lambda r: (LIEN_RANK[r["lien_status"]], -(r["open_balance"] or 0)))
     by_project = {}
     for r in con.execute("SELECT project_no, open_lines, open_balance FROM v_ap_by_project "
                          "WHERE COALESCE(open_balance,0) > 0"):
         if r["project_no"]:
             by_project[r["project_no"]] = {"open_lines": r["open_lines"], "open_balance": r["open_balance"]}
-    ap["summary"] = {"open_balance": open_bal, "open_lines": open_lines, "watch_count": len(watch)}
-    ap["lien_watch"] = watch[:500]   # full worklist for the Liens page
     ap["by_project"] = by_project
     # Full bill list for the Bill Tracker tab. Every row is one bill (open_balance is
     # per-bill, safe to sum). Description is omitted to keep the payload lean; account
@@ -469,6 +463,13 @@ def _fetch_ap(con) -> dict:
             b["inv_customer"] = inv["customer"]
         bills.append(b)
     ap["bills"] = bills
+    # The lien WATCHLIST = the enriched bills that are on the clock OR marked (any LIEN_RANK status),
+    # so the Liens page carries the client, bill date, the AR invoice + its pay status - not just the
+    # project #. Most-urgent first. It's ALL divisions, not CP-only.
+    watch = [b for b in bills if (b.get("lien_status") or "") in LIEN_RANK]
+    watch.sort(key=lambda b: (LIEN_RANK[b["lien_status"]], -(b.get("open_balance") or 0)))
+    ap["lien_watch"] = watch[:500]
+    ap["summary"] = {"open_balance": open_bal, "open_lines": open_lines, "watch_count": len(watch)}
     return ap
 
 
