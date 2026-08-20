@@ -879,6 +879,11 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     ALTER-migrated) → `_fetch_sub_loc` parses it → `openSublocRepay` renders it. Verified live: INV 34482 (DL
     MEACHAM, CP790) settled $25,428 across 11 subs; 181 of 308 repayments carry line items (the rest are pure
     prefunding/surplus); no console errors.
+    **Affordance polish (owner: "green bar too long · hard to know if i click the project # it shows costs").**
+    The By-project project # is now an **accent link** (`.row-open`, with a `›` on row hover) so the drill-in is
+    obvious; caption says "click a project #". And the Excel-style money-cell SELECTION now **hugs the value**
+    (`.cell-sel .cell` gets the box, not the full wide `<td>`) so a selected amount reads as a tight box, not a
+    long green bar - app-wide.
 
   - **Project P&L: status column + sort dropdown + status filter (owner, 2026-08-19).** `_portfolio_pnl` now
     returns ALL jobs with a `status` + `active` flag (company/division TOTALS stay active-only). Frontend:

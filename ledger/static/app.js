@@ -2162,9 +2162,14 @@ function renderSubLoc() {
     const all = [...(SUBLOC.projects || [])].sort((a, b) => (b.outstanding || 0) - (a.outstanding || 0));   // most in the hole first
     const shown = sublocProjExpanded ? all : all.slice(0, SUBLOC_PROJ_TOP);
     for (const p of shown) { const tr = document.createElement("tr");
-      if (obp[p.project]) { tr.style.cursor = "pointer"; tr.title = "See this project's open subs by draw";
+      const drillable = !!obp[p.project];
+      if (drillable) { tr.style.cursor = "pointer"; tr.title = "See this project's open subs by draw";
         tr.onclick = (e) => { if (e.target.closest(".cell")) return; openSublocDetail(p.project); }; }
-      tr.appendChild(leftText(p.project || "–"));
+      // project # is the visible click affordance (accent link + a › on hover) when it drills in
+      const pc = document.createElement("td"); pc.className = "left";
+      if (drillable) { const lk = document.createElement("span"); lk.className = "row-open"; lk.textContent = p.project; pc.appendChild(lk); }
+      else pc.appendChild(document.createTextNode(p.project || "–"));
+      tr.appendChild(pc);
       const o = _slMcell(p.outstanding); if ((p.outstanding || 0) > 0.005) o.querySelector(".cell").classList.add("open-amt"); tr.appendChild(o);
       tr.appendChild(_slMcell(p.drawn)); tr.appendChild(_slMcell(p.repaid));
       tr.appendChild(rightText(p.avg_lag != null ? Math.round(p.avg_lag) + "d" : "–")); tb.appendChild(tr); }
