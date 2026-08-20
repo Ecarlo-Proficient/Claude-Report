@@ -1263,9 +1263,8 @@ function dimDash() { const s = document.createElement("span"); s.className = "st
 function statusCell(node) { const td = document.createElement("td"); td.className = "left status-col"; td.appendChild(node || dimDash()); return td; }
 
 // ── the six per-field filter dropdowns (each a component, not a search box) ──
-const BILL_FILTERS = [
+const BILL_FILTERS = [   // Vendor is a custom multi-select (excludes pumps by default) - handled separately
   { sel: "#bfCustomer", get: b => b.client || "",          all: "All clients" },
-  { sel: "#bfVendor",   get: b => b.vendor || "",         all: "All vendors" },
   { sel: "#bfDivision", get: b => b.division || "",        all: "All divisions", blank: "No division" },
   { sel: "#bfPay",      get: b => b.pay_status || "",      all: "Any pay status" },
   { sel: "#bfInv",      get: b => b.invoice_status || "",  all: "Any invoice" },
@@ -1286,6 +1285,7 @@ function buildBillFilters() {   // populate each select once from the data; pres
     el.value = prev; if (el.value !== prev) el.value = "";   // reset only if the old pick left the domain
   }
   buildBillDateFilter();
+  buildBillVendorFilter();
 }
 // Month MULTI-select (checkboxes) + a day drill. Clicking a month checks it AND all OLDER
 // months ("June and back"); individual priors can then be unchecked (owner 2026-08-20). The
@@ -1332,17 +1332,60 @@ function buildBillDateFilter() {
   } else { dayEl.disabled = true; }
   dayEl.value = prevD; if (dayEl.value !== prevD) dayEl.value = "";
 }
+// Vendor MULTI-select. The concrete-pump vendors are excluded BY DEFAULT (owner 2026-08-20) - the
+// data stays, just filtered; check them back (or "Show all") to include them. Checked = shown.
+let billVendorHidden = new Set();     // vendor names currently hidden
+let billVendorDefault = new Set();    // the default-hidden set (the pumps) - to detect a non-default pick
+let billVendorInit = false;
+function _billVendors() { return [...new Set((BILLS || []).map(b => b.vendor).filter(Boolean))].sort((a, b) => a.localeCompare(b)); }
+function _billPumpVendors() { return _billVendors().filter(v => /pump/i.test(v)); }
+function _vendorNonDefault() {
+  if (billVendorHidden.size !== billVendorDefault.size) return true;
+  for (const v of billVendorHidden) if (!billVendorDefault.has(v)) return true;
+  return false;
+}
+function toggleBillVendor(v, checked) { if (checked) billVendorHidden.delete(v); else billVendorHidden.add(v); buildBillVendorFilter(); renderBills(); }
+function buildBillVendorFilter() {
+  const menu = $("#bfVendorMenu"), btn = $("#bfVendorBtn");
+  if (!menu || !btn) return;
+  const vendors = _billVendors();
+  if (!billVendorInit && vendors.length) {          // first build → default hides the pumps
+    billVendorDefault = new Set(_billPumpVendors());
+    billVendorHidden = new Set(billVendorDefault);
+    billVendorInit = true;
+  }
+  for (const v of [...billVendorHidden]) if (!vendors.includes(v)) billVendorHidden.delete(v);   // drop vendors gone from data
+  menu.innerHTML = "";
+  { const s = document.createElement("input"); s.type = "search"; s.className = "msel-search"; s.placeholder = "Search vendors";
+    s.oninput = () => { const q = s.value.toLowerCase(); for (const lab of menu.querySelectorAll(".msel-opt")) lab.hidden = q && !lab.textContent.toLowerCase().includes(q); }; menu.appendChild(s); }
+  { const a = document.createElement("button"); a.type = "button"; a.className = "msel-clear"; a.textContent = "Show all (incl. pumps)";
+    a.onclick = () => { billVendorHidden.clear(); buildBillVendorFilter(); renderBills(); }; menu.appendChild(a); }
+  for (const v of vendors) {
+    const lab = document.createElement("label"); lab.className = "msel-opt";
+    const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = !billVendorHidden.has(v);
+    cb.onchange = () => toggleBillVendor(v, cb.checked);
+    lab.appendChild(cb); lab.appendChild(document.createTextNode(" " + v));
+    menu.appendChild(lab);
+  }
+  const isDefaultPumps = billVendorDefault.size > 0 && !_vendorNonDefault();
+  if (!billVendorHidden.size) btn.textContent = "All vendors";
+  else if (isDefaultPumps) btn.textContent = "All vendors except pumps";
+  else btn.textContent = `All except ${billVendorHidden.size}`;
+  btn.classList.toggle("on", _vendorNonDefault());
+  btn.title = billVendorHidden.size ? "Hidden: " + [...billVendorHidden].join(", ") : "";
+}
 function billFilterValues() {
   const f = {}; for (const spec of BILL_FILTERS) { const el = $(spec.sel); f[spec.sel] = el ? el.value : ""; }
   f["#bfMonth"] = billMonths.size ? [...billMonths] : "";
   f["#bfDay"] = $("#bfDay") ? $("#bfDay").value : "";
+  f["#bfVendor"] = _vendorNonDefault() ? "1" : "";     // "Clear filters" shows only when vendor deviates from the default
   return f;
 }
 function billPassesFilters(b, f) {
   const mo = f["#bfMonth"]; if (mo && mo.length && !mo.includes(String(b.bill_date || "").slice(0, 7))) return false;
   const dy = f["#bfDay"];   if (dy && String(b.bill_date || "").slice(0, 10) !== dy) return false;
   const cl = f["#bfCustomer"]; if (cl && (b.client || "") !== cl) return false;
-  const v = f["#bfVendor"];   if (v && (b.vendor || "") !== v) return false;
+  if (billVendorHidden.has(b.vendor || "")) return false;      // vendor multi-select (pumps hidden by default)
   const d = f["#bfDivision"]; if (d === "__blank__" ? (b.division || "") !== "" : (d && (b.division || "") !== d)) return false;
   const p = f["#bfPay"];      if (p && (b.pay_status || "") !== p) return false;
   const iv = f["#bfInv"];     if (iv && (b.invoice_status || "") !== iv) return false;
@@ -1353,8 +1396,9 @@ function billPassesFilters(b, f) {
 function billClearFilters() {
   for (const spec of BILL_FILTERS) { const el = $(spec.sel); if (el) el.value = ""; }
   billMonths.clear();
+  billVendorHidden = new Set(billVendorDefault);   // back to the default (pumps hidden), not "show everything"
   { const d = $("#bfDay"); if (d) d.value = ""; }
-  buildBillDateFilter();
+  buildBillDateFilter(); buildBillVendorFilter();
   renderBills();
 }
 // Sort comparators. Rows are sorted BEFORE grouping, so within each group the order
@@ -3433,12 +3477,14 @@ function init() {
   { const el = $("#vendorSearch"); if (el) el.addEventListener("input", renderVendors); }
   ["#lienFProj", "#lienFVendor", "#lienFInv", "#lienFName"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderLiens); });
   ["#bfCustomer", "#bfVendor", "#bfDivision", "#bfPay", "#bfInv", "#bfAppr", "#bfLien", "#billSort"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("change", renderBills); });
-  // Month multi-select: the button toggles the checkbox menu; a click outside closes it.
-  { const btn = $("#bfMonthBtn"), menu = $("#bfMonthMenu");
+  // Month + Vendor multi-selects: the button toggles the checkbox menu; a click outside closes it.
+  for (const [btnId, menuId, wrapId] of [["#bfMonthBtn", "#bfMonthMenu", "#bfMonthMsel"], ["#bfVendorBtn", "#bfVendorMenu", "#bfVendorMsel"]]) {
+    const btn = $(btnId), menu = $(menuId);
     if (btn && menu) {
       btn.addEventListener("click", (e) => { e.stopPropagation(); menu.hidden = !menu.hidden; });
-      document.addEventListener("click", (e) => { if (!menu.hidden && !e.target.closest("#bfMonthMsel")) menu.hidden = true; });
-    } }
+      document.addEventListener("click", (e) => { if (!menu.hidden && !e.target.closest(wrapId)) menu.hidden = true; });
+    }
+  }
   { const d = $("#bfDay"); if (d) d.addEventListener("change", renderBills); }
   { const el = $("#billGroup"); if (el) el.addEventListener("change", () => {
     const grp = el.value;   // re-collapse under the new grouping (collapse stays the default)

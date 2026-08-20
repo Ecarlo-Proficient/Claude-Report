@@ -551,6 +551,9 @@ a.ri-name:hover { text-decoration: underline; }
 .msel-clear { font: inherit; font-size: .78em; color: var(--text-dim); background: none; border: none; cursor: pointer;
   text-align: left; padding: 4px 8px 6px; border-bottom: 1px solid var(--border); margin-bottom: 3px; }
 .msel-clear:hover { color: var(--accent); }
+.msel-menu.wide { min-width: 240px; }
+.msel-search { font: inherit; font-size: .85em; padding: 5px 8px; margin: 1px 2px 5px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text); }
 
 /* Division chip - one subtle hue per division (RP green / CP blue / MFD violet). */
 .divchip { display: inline-block; padding: 0 6px; border-radius: 5px; font-size: .82em; font-weight: 700;

@@ -908,6 +908,16 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     are genuinely project-less bills (397, no project = no client) or multi-project bills (37). **NOTE: needs a
     `load_payments` re-run to populate `project_customer` AND a dashboard-server restart to serve `b.client`.**
 
+  - **Bills Vendor filter → multi-select, pumps excluded by default (owner, 2026-08-20: "vendor filter to be
+    able to select ... by default don't show MCP/Core Concrete Pumping, still have info there in case we want to
+    remove filter ... say 'all vendors except pumps'").** Vendor is now a checkbox dropdown (`.msel`, like Month)
+    with a search box (100+ vendors) + a "Show all (incl. pumps)" link. Checked = shown. On first build it defaults
+    to **hiding every pump vendor** (matched by `/pump/i`: Core, MCP, Nelson, Five Star) - the data stays, just
+    filtered; check them back or "Show all" to include. Button reads **"All vendors except pumps"** at the default,
+    "All except N" when changed, "All vendors" when nothing hidden. `billVendorHidden` Set drives `billPassesFilters`;
+    "Clear filters" resets to the default (pumps hidden) and only lights up when the vendor pick deviates. Verified
+    live: default 2,569 of 2,891 (322 pump bills hidden), check Core back → "All except 3" and its bills return.
+
   - **Project P&L: status column + sort dropdown + status filter (owner, 2026-08-19).** `_portfolio_pnl` now
     returns ALL jobs with a `status` + `active` flag (company/division TOTALS stay active-only). Frontend:
     a **Status column** (green Active / dim Closed·Complete), a **status filter** (default Active only; All;

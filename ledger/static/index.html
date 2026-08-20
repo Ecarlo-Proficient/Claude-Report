@@ -279,7 +279,12 @@
           <label class="fld"><span>Day</span><select id="bfDay"></select></label>
           <span class="bf-sep"></span>
           <label class="fld"><span>Client</span><select id="bfCustomer"></select></label>
-          <label class="fld"><span>Vendor</span><select id="bfVendor"></select></label>
+          <div class="fld"><span>Vendor</span>
+            <div class="msel" id="bfVendorMsel">
+              <button type="button" class="msel-btn" id="bfVendorBtn">All vendors</button>
+              <div class="msel-menu wide" id="bfVendorMenu" hidden></div>
+            </div>
+          </div>
           <label class="fld"><span>Division</span><select id="bfDivision"></select></label>
           <label class="fld"><span>Pay status</span><select id="bfPay"></select></label>
           <label class="fld"><span>Invoice</span><select id="bfInv"></select></label>
