@@ -209,6 +209,30 @@ def _portfolio_pnl(con) -> dict:
     return {"rows": rows, "by_division": by_div, "company": comp}
 
 
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _pnl_last_line(path) -> str:
+    """The last MEANINGFUL line of a generation log - the tool's own progress text ('where it's
+    at'), not the whole log. Reads only the tail, strips ANSI + box-drawing, skips blank/border
+    lines. Empty string if the log isn't readable yet."""
+    if not path:
+        return ""
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, 2)
+            size = f.tell()
+            f.seek(max(0, size - 4096))
+            data = f.read().decode("utf-8", "replace")
+    except OSError:
+        return ""
+    for ln in reversed(data.splitlines()):
+        s = _ANSI_RE.sub("", ln).strip().strip("─╭╮╰╯│▌ ").strip()
+        if s and re.search(r"[A-Za-z0-9]", s):
+            return s[:130]
+    return ""
+
+
 def _pnl_wait(proj: str) -> None:
     """Reap a generation subprocess and record its outcome (running → done/error)."""
     j = _PNL_JOBS.get(proj)
@@ -1160,6 +1184,7 @@ class Handler(BaseHTTPRequestHandler):
         out = {"state": j["state"]}
         if j["state"] == "running":
             out["elapsed"] = int(time.time() - j["started"])
+            out["status"] = _pnl_last_line(j.get("log"))   # one live line: where the run is at
         if j.get("detail"):
             out["detail"] = j["detail"]
         self._json(out)
@@ -1206,7 +1231,8 @@ class Handler(BaseHTTPRequestHandler):
                 f = open(_PNL_LOG_DIR / f"{proj}.log", "w")
                 proc = subprocess.Popen(
                     ["/bin/bash", str(_PNL_RUN), proj],
-                    cwd=str(_PNL_DIR), stdout=f, stderr=subprocess.STDOUT)
+                    cwd=str(_PNL_DIR), stdout=f, stderr=subprocess.STDOUT,
+                    env={**os.environ, "PYTHONUNBUFFERED": "1"})   # flush progress live so the status line updates
             except OSError as e:
                 return self._json({"error": f"spawn failed: {e}"}, 500)
             _PNL_JOBS[proj] = {"state": "running", "started": time.time(),

@@ -918,6 +918,15 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     "Clear filters" resets to the default (pumps hidden) and only lights up when the vendor pick deviates. Verified
     live: default 2,569 of 2,891 (322 pump bills hidden), check Core back → "All except 3" and its bills return.
 
+  - **Project P&L generation shows a live status line (owner, 2026-08-20: "see the terminal status of where
+    it's at not just Generating and the seconds ... don't pull full log, just one line that is updating").** The
+    generation subprocess runs with `PYTHONUNBUFFERED=1` so project-pnl's progress flushes live to its per-project
+    log; `_pnl_status` returns `status` = **`_pnl_last_line(log)`** (tail only, ANSI + box-drawing stripped, blank/
+    border lines skipped - one clean line, capped 130 chars). Frontend: the poll (now every 1.5s) shows
+    `Generating… (Ns) · <that line>` instead of just the seconds, falling back to "Touch ID may be waiting" until
+    the log has content. Unit-verified (`_pnl_last_line` extracts `✓ costs pulled: 128 lines` from a mixed log);
+    live line needs a real generation to watch.
+
   - **Project P&L: status column + sort dropdown + status filter (owner, 2026-08-19).** `_portfolio_pnl` now
     returns ALL jobs with a `status` + `active` flag (company/division TOTALS stay active-only). Frontend:
     a **Status column** (green Active / dim Closed·Complete), a **status filter** (default Active only; All;

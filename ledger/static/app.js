@@ -3009,7 +3009,12 @@ function buildPnlGroup(proj) {
 function pollPnl(proj, genBtn, msg, refresh) {
   const finish = (t) => { msg.textContent = t; genBtn.disabled = false; genBtn.textContent = "Generate / Refresh"; refresh(); };
   const tick = () => fetch(`/api/pnl/status?proj=${encodeURIComponent(proj)}`).then(r => r.json()).then(s => {
-    if (s.state === "running") { msg.textContent = `Generating… (${s.elapsed || 0}s) — Touch ID may be waiting.`; setTimeout(tick, 2000); }
+    if (s.state === "running") {
+      const where = s.status ? " · " + s.status : " · Touch ID may be waiting";
+      msg.textContent = `Generating… (${s.elapsed || 0}s)${where}`;
+      msg.title = s.status || "";
+      setTimeout(tick, 1500);
+    }
     else if (s.state === "done") { finish("Done — P&L refreshed."); }
     else if (s.state === "error") { msg.textContent = "Failed: " + (s.detail || "see the log"); genBtn.disabled = false; genBtn.textContent = "Generate / Refresh"; }
     else { finish(""); }
