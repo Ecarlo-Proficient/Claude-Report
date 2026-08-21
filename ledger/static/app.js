@@ -1838,20 +1838,81 @@ function payDirtyCount() {
   }
   return n;
 }
+// ── Generic multi-select checklist (search + Select all/None; a toggle updates in place so
+// the search box survives). The caller owns a `store` ({id -> Set}) and passes an onChange
+// render callback. cfg: { id, all, get, lbl, search }. DOM: `${id}Btn` pill + `${id}Menu` panel.
+// (Pay Bills uses this; the older Bills/Liens builders predate it and stay as they are.)
+function _mselVals(items, cfg) { return [...new Set(items.map(cfg.get))].sort((a, b) => cfg.lbl(a).localeCompare(cfg.lbl(b))); }
+function mselLabelUpdate(cfg, store) {
+  const btn = $("#" + cfg.id + "Btn"), menu = $("#" + cfg.id + "Menu"); if (!btn) return;
+  const s = store[cfg.id] || new Set();
+  btn.textContent = !s.size ? cfg.all : (s.size === 1 ? cfg.lbl([...s][0]) : s.size + " selected");
+  btn.classList.toggle("on", s.size > 0);
+  btn.title = s.size ? [...s].map(cfg.lbl).join(", ") : "";
+  const cnt = menu ? menu.querySelector(".msel-count") : null; if (cnt) cnt.textContent = `${s.size} selected`;
+}
+function mselBulk(cfg, store, sel, onChange) {   // Select all / None over the VISIBLE (search-filtered) options
+  const menu = $("#" + cfg.id + "Menu"); if (!menu) return;
+  const s = store[cfg.id] || (store[cfg.id] = new Set());
+  for (const lab of menu.querySelectorAll(".msel-opt")) {
+    if (lab.hidden) continue; const v = lab.dataset.val;
+    if (sel) s.add(v); else s.delete(v);
+    const cb = lab.querySelector("input"); if (cb) cb.checked = sel;
+  }
+  mselLabelUpdate(cfg, store); onChange();
+}
+function buildMSel(cfg, items, store, onChange) {
+  const menu = $("#" + cfg.id + "Menu"), btn = $("#" + cfg.id + "Btn"); if (!menu || !btn) return;
+  const s = store[cfg.id] || (store[cfg.id] = new Set());
+  const vals = _mselVals(items, cfg);
+  for (const v of [...s]) if (!vals.includes(v)) s.delete(v);   // drop values gone from the data
+  menu.innerHTML = "";
+  if (cfg.search) { const q = document.createElement("input"); q.type = "search"; q.className = "msel-search"; q.placeholder = "Search";
+    q.oninput = () => { const t = q.value.toLowerCase(); for (const lab of menu.querySelectorAll(".msel-opt")) lab.hidden = t && !lab.textContent.toLowerCase().includes(t); }; menu.appendChild(q);
+    const tools = document.createElement("div"); tools.className = "msel-tools";
+    const all = document.createElement("button"); all.type = "button"; all.className = "msel-tool"; all.textContent = "Select all"; all.onclick = () => mselBulk(cfg, store, true, onChange);
+    const none = document.createElement("button"); none.type = "button"; none.className = "msel-tool"; none.textContent = "None"; none.onclick = () => mselBulk(cfg, store, false, onChange);
+    const cnt = document.createElement("span"); cnt.className = "msel-count";
+    tools.appendChild(all); tools.appendChild(none); tools.appendChild(cnt); menu.appendChild(tools); }
+  { const clr = document.createElement("button"); clr.type = "button"; clr.className = "msel-clear"; clr.textContent = "Clear";
+    clr.onclick = () => { s.clear(); buildMSel(cfg, items, store, onChange); onChange(); }; menu.appendChild(clr); }
+  for (const v of vals) {
+    const lab = document.createElement("label"); lab.className = "msel-opt"; lab.dataset.val = v;
+    const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = s.has(v);
+    cb.onchange = () => { if (cb.checked) s.add(v); else s.delete(v); mselLabelUpdate(cfg, store); onChange(); };
+    lab.appendChild(cb); lab.appendChild(document.createTextNode(" " + cfg.lbl(v)));
+    menu.appendChild(lab);
+  }
+  mselLabelUpdate(cfg, store);
+}
+function mselPasses(item, cfgs, store) {
+  for (const cfg of cfgs) { const s = store[cfg.id]; if (s && s.size && !s.has(cfg.get(item))) return false; }
+  return true;
+}
+
+// Pay Bills multi-select filters - the same rich set as the Bills tab (owner 2026-08-21:
+// "filter down just like bills: client, approved, liens, project, division - same multi-select").
+const payMSel = {};
+let _payMSelSig = null;
+const PAY_MSEL = [
+  { id: "pfClient", all: "All clients",   get: b => b.client || "",      search: true, lbl: v => v || "(no client)" },
+  { id: "pfVendor", all: "All vendors",   get: b => b.vendor || "",      search: true, lbl: v => v || "(none)" },
+  { id: "pfDiv",    all: "All divisions", get: b => b.division || "",     lbl: v => v || "(none)" },
+  { id: "pfAppr",   all: "Any approval",  get: b => b.approved || "",     lbl: v => v === "approved" ? "Approved" : (v === "not approved" ? "Not approved" : (v || "(blank)")) },
+  { id: "pfLien",   all: "Any lien",      get: b => b.lien_status || "",  lbl: v => v ? (LIEN_SHORT[v] || v) : "(no lien clock)" },
+];
+function buildPayFilters() { for (const cfg of PAY_MSEL) buildMSel(cfg, _payMarkable(), payMSel, renderPayBills); }
+
 const payFunded = b => (b.inv_ar_status === "Paid") || (b.invoice_status === "Invoice paid");
 function _payFilterPass(b) {
   const st = payState(b);
-  const show = $("#pfShow") ? $("#pfShow").value : "approved";
+  const show = $("#pfShow") ? $("#pfShow").value : "open";
   if (show === "run") { if (!st.selected) return false; }
-  else {
-    if (num(b.open_balance) <= 0 && !st.selected) return false;                 // nothing left to pay
-    if (show === "approved" && (b.approved || "") !== "approved" && !st.selected) return false;
-  }
+  else if (num(b.open_balance) <= 0 && !st.selected) return false;   // "Open bills" (default): still owed
   const q = ($("#pfSearch") ? $("#pfSearch").value : "").trim().toLowerCase();
-  if (q && !`${b.vendor || ""} ${b.client || ""} ${b.project_no || ""} ${b.bill_ref || ""} ${b.invoice_no || ""}`.toLowerCase().includes(q)) return false;
-  const dv = $("#pfDivision") ? $("#pfDivision").value : "";
-  if (dv && String(b.division || "").toUpperCase() !== dv) return false;
+  if (q && !`${b.project_no || ""} ${b.bill_ref || ""} ${b.invoice_no || ""} ${b.vendor || ""} ${b.client || ""}`.toLowerCase().includes(q)) return false;
   if ($("#pfFunded") && $("#pfFunded").checked && !payFunded(b)) return false;
+  if (!mselPasses(b, PAY_MSEL, payMSel)) return false;              // Client / Vendor / Division / Approved / Lien
   return true;
 }
 function payArCell(b) {
@@ -1874,6 +1935,12 @@ function _paySetAmount(b, val) {           // live: update draft + save bar only
 function renderPayBills() {
   _payRecomputeSaved();   // always reflect the latest server run; payDraft holds unsaved edits on top
   const thead = $("#payTable thead"), tbody = $("#payTable tbody"); if (!thead || !tbody) return;
+  // Build the multi-select filter menus once per data change (NOT on every render), so a checkbox
+  // toggle keeps its open search box - a toggle re-renders with the same bill set, same signature.
+  const paySig = String(_payMarkable().length);
+  if (paySig !== _payMSelSig || !($("#pfClientMenu") && $("#pfClientMenu").querySelector(".msel-opt"))) {
+    _payMSelSig = paySig; buildPayFilters();
+  }
   let rows = _payMarkable().filter(_payFilterPass);
   rows.sort((a, b) => (a.vendor || "").localeCompare(b.vendor || "") || String(a.bill_date || "").localeCompare(String(b.bill_date || "")));
   const cols = ["Pay", "Vendor", "Client", "Project #", "Bill #", "Date", "Open bal", "Pay $", "GC draw", "Invoice #", "Lien"];
@@ -1884,7 +1951,7 @@ function renderPayBills() {
   thead.appendChild(htr);
   if (!rows.length) { const tr = document.createElement("tr"); const td = document.createElement("td");
     td.colSpan = cols.length; td.className = "left"; td.style.color = "var(--text-dim)"; td.style.padding = "14px 12px";
-    td.textContent = BILLS && BILLS.length ? "No bills match - widen the filters (try Show: All open)." : "No AP data - run load_bill_tracker.py.";
+    td.textContent = BILLS && BILLS.length ? "No bills match - widen or clear the filters." : "No AP data - run load_bill_tracker.py.";
     tr.appendChild(td); tbody.appendChild(tr); renderPaySaveBar(); renderPayList(); return; }
   let capped = false;
   rows.forEach((b, i) => {
@@ -4114,7 +4181,8 @@ function init() {
   // Month + Vendor + every categorical multi-select: the button toggles the checkbox menu; a click outside closes it.
   const _mselWraps = [["#bfMonthBtn", "#bfMonthMenu", "#bfMonthMsel"], ["#bfVendorBtn", "#bfVendorMenu", "#bfVendorMsel"],
     ...BILL_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`]),
-    ...LIEN_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`])];
+    ...LIEN_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`]),
+    ...PAY_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`])];
   const _closeMsels = (except) => { for (const [, mId] of _mselWraps) { const m = $(mId); if (m && mId !== except) m.hidden = true; } };
   for (const [btnId, menuId, wrapId] of _mselWraps) {
     const btn = $(btnId), menu = $(menuId);
@@ -4143,7 +4211,7 @@ function init() {
   { const el = $("#btnDiscardBillMarks"); if (el) el.onclick = discardBillMarks; }
   // Pay Bills (check-run worksheet)
   { const el = $("#pfSearch"); if (el) el.addEventListener("input", renderPayBills); }
-  ["#pfDivision", "#pfShow", "#pfFunded"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("change", renderPayBills); });
+  ["#pfShow", "#pfFunded"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("change", renderPayBills); });
   { const el = $("#pfSelectAll"); if (el) el.onclick = paySelectAllShown; }
   { const el = $("#pfClearRun"); if (el) el.onclick = clearPayRun; }
   { const el = $("#pfExport"); if (el) el.onclick = exportPayList; }

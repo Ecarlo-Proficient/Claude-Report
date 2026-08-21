@@ -367,14 +367,26 @@
           it records what you plan to pay, it does <b>not</b> pay anything in QuickBooks - record the actual payment
           in QBO and the bill clears here on the next AP sync.</p>
         <div class="bill-filters" id="payFilters">
-          <label class="fld"><span>Search</span><input type="search" id="pfSearch" placeholder="vendor / client / project / bill #"></label>
-          <label class="fld"><span>Division</span>
-            <select id="pfDivision"><option value="">All divisions</option><option value="CP">Commercial</option><option value="MFD">Multi Family</option><option value="RP">Residential</option></select>
-          </label>
+          <label class="fld"><span>Search</span><input type="search" id="pfSearch" placeholder="project / bill #"></label>
+          <div class="fld"><span>Client</span>
+            <div class="msel" id="pfClientMsel"><button type="button" class="msel-btn" id="pfClientBtn">All clients</button><div class="msel-menu wide" id="pfClientMenu" hidden></div></div>
+          </div>
+          <div class="fld"><span>Vendor</span>
+            <div class="msel" id="pfVendorMsel"><button type="button" class="msel-btn" id="pfVendorBtn">All vendors</button><div class="msel-menu wide" id="pfVendorMenu" hidden></div></div>
+          </div>
+          <div class="fld"><span>Division</span>
+            <div class="msel" id="pfDivMsel"><button type="button" class="msel-btn" id="pfDivBtn">All divisions</button><div class="msel-menu" id="pfDivMenu" hidden></div></div>
+          </div>
+          <div class="fld"><span>Approved</span>
+            <div class="msel" id="pfApprMsel"><button type="button" class="msel-btn" id="pfApprBtn">Any approval</button><div class="msel-menu" id="pfApprMenu" hidden></div></div>
+          </div>
+          <div class="fld"><span>Lien</span>
+            <div class="msel" id="pfLienMsel"><button type="button" class="msel-btn" id="pfLienBtn">Any lien</button><div class="msel-menu" id="pfLienMenu" hidden></div></div>
+          </div>
+          <span class="bf-sep"></span>
           <label class="fld"><span>Show</span>
             <select id="pfShow">
-              <option value="approved">Approved &amp; open</option>
-              <option value="open">All open</option>
+              <option value="open">Open bills</option>
               <option value="run">In this pay run</option>
             </select>
           </label>

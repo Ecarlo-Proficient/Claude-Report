@@ -4,6 +4,17 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Pay Bills: default = ALL open bills + the same rich multi-select filters as Bills (owner, 2026-08-21:
+  "why put a default view for non-approved bills? I need to see all open bills as default and filter down
+  just like bills - client, approved, liens, project, division, same multi-select").** Default `Show` is
+  now **Open bills** (every bill with an open balance, 649), not Approved-only. Added **Client · Vendor ·
+  Division · Approved · Lien** multi-selects (search + Select all/None), matching the Bills tab; Project is
+  the search box. Rather than a 4th copy of the msel builder, added ONE **generic** component
+  (`buildMSel` / `mselBulk` / `mselLabelUpdate` / `mselPasses`, driven by a caller-owned `store` + onChange)
+  and a `PAY_MSEL` config; the older Bills/Liens builders predate it and stay as-is. Filters are built once
+  per data change (signature guard) so a checkbox toggle keeps its open search box. Verified live: default
+  649 open; Approved→397, +CP→101, clear→649; client search 113→1 and survives a toggle; menu open/close +
+  Clear both reset cleanly; no console errors.
 - **Dates → numeric mm/dd/yyyy everywhere in the dashboard (owner, 2026-08-21: "draws shows invoices
   with full date, I just need it mm/dd/yyyy for all formatting everywhere").** Replaced the long
   weekday+abbr-month style. `fmtDate(v, withTime)` now emits `08/07/2026` (was `Fri, Aug 7, 2026`) and
