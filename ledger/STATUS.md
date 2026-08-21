@@ -4,6 +4,16 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Dates → numeric mm/dd/yyyy everywhere in the dashboard (owner, 2026-08-21: "draws shows invoices
+  with full date, I just need it mm/dd/yyyy for all formatting everywhere").** Replaced the long
+  weekday+abbr-month style. `fmtDate(v, withTime)` now emits `08/07/2026` (was `Fri, Aug 7, 2026`) and
+  `fmtDateShort(v)` emits `06/23/2026` (was 2-digit `06/23/26`); the `_DOW`/`_MON` arrays are removed. Both
+  helpers cover every displayed date (meta line, Draws, WIP report date, detail panels, Bills/Pay dates).
+  Also added a **Bill date** column to the Pay Bills **pay list** (the pay table already had it) so the
+  generated check run carries dates. Core "never year-first" rule is unchanged - this is a style switch
+  from readable to compact numeric. Excel outputs are a separate surface and were NOT touched (WIP header
+  stays frozen to `MON DD, YYYY`). Updated memory [[dates-never-year-first]]. Verified live: Draws shows
+  `05/05/2026` with zero weekday format left; meta line + pay list dates all mm/dd/yyyy.
 - **Checklist filters: working search + Select all / None (owner, 2026-08-21: "you are expecting me to
   select through countless vendors ... select all/deselect so I can just select the few I need ... when
   I type a vendor name it doesn't filter down").** Two fixes to the `.msel` multi-select component

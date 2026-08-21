@@ -523,17 +523,15 @@ function timeAgo(iso) {
   return Math.floor(hrs / 24) + "d ago";
 }
 
-// The owner's date format — NEVER year-first. Day-of-week, abbreviated month, then
-// day and year as digits (month-day-year): "Mon, Aug 10, 2026" (+ 12h time if asked).
-const _DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const _MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+// The owner's date format (owner 2026-08-21: "mm/dd/yyyy for all formatting everywhere").
+// Numeric month-day-year, zero-padded, 4-digit year - NEVER year-first. Add 12h time only
+// when asked. This is THE date format for the whole dashboard (see also fmtDateShort).
 function fmtDate(v, withTime) {
-  if (!v) return "—";
+  if (!v) return "–";
   const m = String(v).trim().match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?/);
   if (!m) return String(v);                      // not an ISO date → leave as-is
   const [, Y, Mo, D, H, Mi] = m;
-  const dt = new Date(+Y, +Mo - 1, +D);          // local — avoids the UTC off-by-one
-  let out = `${_DOW[dt.getDay()]}, ${_MON[+Mo - 1]} ${+D}, ${Y}`;
+  let out = `${Mo}/${D}/${Y}`;                    // mm/dd/yyyy, already zero-padded by the ISO source
   if (withTime && H != null) {
     let hr = +H; const ap = hr >= 12 ? "PM" : "AM"; hr = hr % 12 || 12;
     out += ` · ${hr}:${Mi} ${ap}`;
@@ -1272,9 +1270,9 @@ const BILL_LIEN_RISK = new Set(["Notice PAST due", "Notice due in ≤7d", "Lien 
 const BILL_LIEN_ACTIVE = new Set(["Notice Sent", "Lien Filed"]);
 // Compact numeric date for the dense grid: MM/DD/YY (01/01/26). Still month-first (never
 // year-first). bill_date is ISO yyyy-mm-dd.
-function fmtDateShort(v) {
+function fmtDateShort(v) {   // mm/dd/yyyy (owner 2026-08-21: 4-digit year everywhere)
   const m = String(v || "").trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
-  return m ? `${m[2]}/${m[3]}/${m[1].slice(2)}` : (v ? String(v) : "–");
+  return m ? `${m[2]}/${m[3]}/${m[1]}` : (v ? String(v) : "–");
 }
 // Per-column widths for the Bills grid - drag the divider between headers to resize;
 // a squished column wraps its text instead of clipping. Widths persist per person.
@@ -1958,9 +1956,9 @@ function renderPayList() {
   if (note) note.textContent = `(${vendors.length} vendor${vendors.length !== 1 ? "s" : ""} · ${sel.length} bill${sel.length !== 1 ? "s" : ""} · ${money(grand)})`;
   const thead = $("#payListTable thead"), tbody = $("#payListTable tbody");
   thead.innerHTML = ""; tbody.innerHTML = "";
-  const cols = ["Vendor", "Bill #", "Project #", "Client", "Invoice #", "GC draw", "Pay $"];
+  const cols = ["Vendor", "Bill #", "Bill date", "Project #", "Client", "Invoice #", "GC draw", "Pay $"];
   const htr = document.createElement("tr");
-  cols.forEach((c, i) => { const th = document.createElement("th"); if (i !== 6) th.className = "left"; th.textContent = c; htr.appendChild(th); });
+  cols.forEach((c, i) => { const th = document.createElement("th"); if (i !== cols.length - 1) th.className = "left"; th.textContent = c; htr.appendChild(th); });
   thead.appendChild(htr);
   for (const v of vendors) {
     const list = byV.get(v); const sub = list.reduce((t, b) => t + payAmountOf(b), 0);
@@ -1974,6 +1972,7 @@ function renderPayList() {
       const tr = document.createElement("tr"); tr.className = "pay-row";
       const cV = document.createElement("td"); cV.className = "left"; cV.textContent = b.vendor || "–"; tr.appendChild(cV);
       tr.appendChild(qboLinkCell(b.bill_ref, qboBillHref(b.qbo_link), "Open this bill in QuickBooks"));
+      const cDt = document.createElement("td"); cDt.className = "left"; cDt.textContent = fmtDateShort(b.bill_date); tr.appendChild(cDt);
       const cP = document.createElement("td"); cP.className = "left"; cP.textContent = b.project_no || "–"; tr.appendChild(cP);
       const cC = document.createElement("td"); cC.className = "left"; cC.textContent = b.client || "–"; tr.appendChild(cC);
       tr.appendChild(_payInvNoCell(b));
@@ -1985,7 +1984,7 @@ function renderPayList() {
   const gt = document.createElement("tr"); gt.className = "wip-total";
   cols.forEach((c, i) => { const td = document.createElement("td");
     if (i === 0) { td.className = "left"; td.textContent = "GRAND TOTAL"; }
-    else if (i === 6) { td.className = "right"; td.appendChild(moneyCell(grand)); }
+    else if (i === cols.length - 1) { td.className = "right"; td.appendChild(moneyCell(grand)); }
     else td.className = "left";
     gt.appendChild(td); });
   tbody.appendChild(gt);
@@ -3063,7 +3062,7 @@ function renderRepActivity() {
   const due = myc.filter(c => open(c) && c.follow_up_date && c.follow_up_date <= todayStr).sort((a, b) => a.follow_up_date < b.follow_up_date ? -1 : 1);
   const dueBox = el2("div", "rep-list");
   if (!due.length) dueBox.appendChild(el2("p", "hint", "Nothing due."));
-  for (const c of due.slice(0, 10)) { const li = el2("div", "rep-item"); li.appendChild(itemName(c)); li.appendChild(el2("span", "ri-meta", `${fmtDate(c.follow_up_date).replace(/^\w+, /, "")} · ${c.sales_status}`)); dueBox.appendChild(li); }
+  for (const c of due.slice(0, 10)) { const li = el2("div", "rep-item"); li.appendChild(itemName(c)); li.appendChild(el2("span", "ri-meta", `${fmtDate(c.follow_up_date)} · ${c.sales_status}`)); dueBox.appendChild(li); }
   right.appendChild(dueBox);
 
   // GOING STALE (open + no contact in 21+ days)
