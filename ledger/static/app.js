@@ -3641,6 +3641,26 @@ function buildPnlGroup(proj) {
     const nr = rowP("Net margin", `${money(d.net)} · ${d.net_pct == null ? "—" : (d.net_pct * 100).toFixed(1) + "%"}`, "pnl-net");
     nr.classList.add(d.net >= 0 ? "pos" : "neg");
     rowP("Billed to GC (AR)", money(d.billed), "pnl-sub");
+    // The make-up of billed-to-date: every AR invoice (draw) the project has, paid or open
+    // (owner 2026-08-21: "I need to see all the invoices the project has"). Oldest first.
+    if (d.invoices && d.invoices.length) {
+      const cap = document.createElement("div"); cap.className = "pnl-cap"; cap.textContent = `Invoices - all draws (${d.invoices.length})`; pl.appendChild(cap);
+      const tbl = document.createElement("div"); tbl.className = "pnl-invoices";
+      for (const iv of d.invoices) {
+        const r = document.createElement("div"); r.className = "pnl-inv";
+        const dt = document.createElement("span"); dt.className = "pi-date"; dt.textContent = fmtDateShort(iv.txn_date);
+        const no = document.createElement("span"); no.className = "pi-no";
+        if (iv.doc_number && iv.qbo_txn_id) { const a = document.createElement("a"); a.href = qboInvoiceUrl(iv.qbo_txn_id); a.target = "_blank"; a.rel = "noopener"; a.className = "qbo-link"; a.textContent = iv.doc_number; a.title = "Open this invoice in QuickBooks"; no.appendChild(a); }
+        else no.textContent = iv.doc_number || "–";
+        const am = document.createElement("span"); am.className = "pi-amt"; am.appendChild(moneyCell(iv.amount));
+        const paid = num(iv.balance) <= 0;
+        const st = document.createElement("span"); st.className = "pi-st";
+        st.appendChild(stText(paid ? "Paid" : "Open", paid ? "st-ok" : "st-warn",
+          paid ? (iv.paid_date ? "GC paid " + fmtDateShort(iv.paid_date) : "GC paid") : ("Open AR balance " + money(iv.balance))));
+        r.appendChild(dt); r.appendChild(no); r.appendChild(am); r.appendChild(st); tbl.appendChild(r);
+      }
+      pl.appendChild(tbl);
+    }
     if (d.by_code && d.by_code.length) {
       const cap = document.createElement("div"); cap.className = "pnl-cap"; cap.textContent = "Costs by code"; pl.appendChild(cap);
       const tbl = document.createElement("div"); tbl.className = "pnl-codes";

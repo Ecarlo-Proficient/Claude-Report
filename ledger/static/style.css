@@ -215,6 +215,14 @@ tr.lien-row.u-info > td:first-child { border-left-color: var(--text-dim); }
 .pnl-code { display: flex; justify-content: space-between; gap: 10px; font-size: .86em; padding: 2px 0; font-variant-numeric: tabular-nums; }
 .pnl-code .pc-code { color: var(--text-dim); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .95em; }
 .pnl-code.uncoded .pc-code { color: var(--neg); }
+/* Every AR invoice (draw) that makes up billed-to-date, in the P&L expansion. */
+.pnl-invoices { display: flex; flex-direction: column; gap: 1px; margin-top: 2px; }
+.pnl-inv { display: grid; grid-template-columns: 74px 1fr auto auto; align-items: baseline; gap: 10px;
+  font-size: .86em; padding: 2px 0; font-variant-numeric: tabular-nums; }
+.pnl-inv .pi-date { color: var(--text-dim); }
+.pnl-inv .pi-no { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pnl-inv .pi-amt { text-align: right; font-weight: 600; }
+.pnl-inv .pi-st { text-align: right; }
 /* Portfolio P&L tab: margin coloring on totals + tables */
 .pnl-kpi-pos .k-value { color: var(--pos); }
 .pnl-kpi-neg .k-value { color: var(--neg); }

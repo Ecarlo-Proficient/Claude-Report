@@ -4,6 +4,14 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Project P&L: the invoices behind billed-to-date (owner, 2026-08-21: "in project P&L I need my billed
+  to date, I need to see all the invoices the project has").** The P&L expansion (`buildPnlGroup`, shown
+  in both the P&L-tab inline expand and the project detail panel) now lists **every AR invoice (draw) the
+  project has** right under "Billed to GC (AR)" - oldest first, each row = invoice date (mm/dd/yyyy) ·
+  invoice # (QBO deep link) · amount · Paid/Open (Open = the GC still owes; tooltip carries the paid date
+  or the open AR balance). Server: `_project_pnl` returns an `invoices` list from `billing_event` (the AR
+  ledger, paid + open) alongside the existing billed total; the amounts sum to billed-to-date. Verified
+  live: CP790 shows 8 draws (6 Paid, 2 Open) summing exactly to its billed figure; no console errors.
 - **Pay Bills: default = ALL open bills + the same rich multi-select filters as Bills (owner, 2026-08-21:
   "why put a default view for non-approved bills? I need to see all open bills as default and filter down
   just like bills - client, approved, liens, project, division, same multi-select").** Default `Show` is

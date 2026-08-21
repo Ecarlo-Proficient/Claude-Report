@@ -150,6 +150,10 @@ def _project_pnl(con, proj: str) -> dict:
         "COUNT(*) lines, MAX(is_sub) is_sub FROM cost_line WHERE project_no = ? "
         "GROUP BY COALESCE(cost_code,'(uncoded)') ORDER BY amount DESC", (proj,))]
     billed = con.execute("SELECT COALESCE(SUM(amount),0) a FROM billing_event WHERE project_no = ?", (proj,)).fetchone()["a"] or 0
+    # Every AR invoice (draw) this project has billed - the make-up of billed-to-date, oldest first.
+    invoices = [dict(r) for r in con.execute(
+        "SELECT doc_number, qbo_txn_id, amount, balance, txn_date, status, paid_date, due_date, memo "
+        "FROM billing_event WHERE project_no = ? ORDER BY txn_date, doc_number", (proj,))]
     overhead = round((_OVERHEAD_MFD_COST * cost) if is_mfd else (_OVERHEAD_REV * earned), 2)
     net = round(earned - cost - overhead, 2)
     return {
@@ -158,7 +162,7 @@ def _project_pnl(con, proj: str) -> dict:
         "cost": cost, "overhead": overhead,
         "overhead_basis": "9% of costs (MFD)" if is_mfd else "10% of revenue",
         "net": net, "net_pct": (net / earned) if earned else None,
-        "by_code": by_code,
+        "by_code": by_code, "invoices": invoices,
         "has_wip": row is not None,
     }
 
