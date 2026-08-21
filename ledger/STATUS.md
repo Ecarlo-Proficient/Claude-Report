@@ -4,6 +4,52 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Checklist filters: working search + Select all / None (owner, 2026-08-21: "you are expecting me to
+  select through countless vendors ... select all/deselect so I can just select the few I need ... when
+  I type a vendor name it doesn't filter down").** Two fixes to the `.msel` multi-select component
+  (Bills vendor/client, Liens client/vendor):
+  - **Search now filters the list.** Same trap the author already fixed for `.msel-menu`: `.msel-opt`
+    had `display:flex`, which beat the `hidden` attribute the search sets, so typing narrowed nothing.
+    Added `.msel-opt[hidden] { display:none }`. Typing a name now collapses the checklist to matches.
+  - **Select all / None** toolbar on the big (searchable) checklists, acting on the VISIBLE
+    (search-filtered) options in place - so you type a name, hit None on the rest, then check the few
+    you want. A live "N shown / selected" count sits in the toolbar. Vendor also keeps a
+    "Reset to default (hide pumps)" link.
+  - **Toggling a box no longer rebuilds the menu** (label/count update in place), so the search box and
+    scroll position survive a click (they were resetting before). Verified live: vendor search 89→5 for
+    "ready mix", None hides the visible set, single toggle is exact (4→5→4), search survives a toggle.
+- **Lazy-tab refresh fix (found while building Pay Bills).** `setTab(savedTab)` runs at init BEFORE
+  `load()`, and `render()` does not re-dispatch the tabs that read the main `/api/data` globals
+  (`wip` / `payments` / `paybills`) - so a fresh refresh sitting on one of them rendered EMPTY until you
+  interacted. `load()` now calls `_renderLazyTab(activeTab)` after `render()`. Verified: a refresh with
+  the saved tab = Pay Bills now shows all 397 rows immediately (was "No AP data").
+- **Pay Bills tab - a dedicated check-run worksheet (owner, 2026-08-21: "mark bills for payment, hit
+  save → generate the list + amount to be paid ... ability to change the amount / partial paid ...
+  a dedicated paying bills page ... still see invoice paid, what invoice / client it goes to, lien
+  notice sent/filed"; kept OFF the Bills tab on purpose - "too crowded / accidentally clicked").**
+  New **Pay Bills** tab in the Vendor group (Vendor Center · Bills · **Pay Bills** · Sub LOC · Liens).
+  - **Boundary (safety):** it is a PLANNING WORKSHEET, not a payment. It records intent (which bills,
+    how much) as a LOCAL overlay and generates the pay list; it NEVER pays QBO or moves money. QBO
+    stays source of truth - the owner records the real payment there and the bill clears here on the
+    next `sync-ap`. So, unlike the lien tag, pay marks are NOT mirrored to the workbook.
+  - **Store:** `shared/bill_marks.py` gains a SEPARATE `pay_mark(bill_id, amount, updated_at)` table +
+    `read_pay_marks` / `set_pay_marks` (one txn: selected→upsert, unselected→delete) / `clear_pay_marks`.
+    Keyed by the QBO bill id, absent-safe, in the ledger DB. `amount` NULL = pay the full open balance;
+    a number = a partial. Only the dashboard reads/writes it (excel_bill_sync never touches it).
+  - **Backend:** `_fetch_ap` attaches `pay_selected` / `pay_amount` to each bill; `POST /api/pay-run`
+    (`_save_pay_run`, batch) and `POST /api/pay-run/clear` (`_clear_pay_run`).
+  - **Frontend (`renderPayBills`):** mark a bill (checkbox), edit its **Pay $** (defaults to the full
+    open balance, editable down to a partial - amber when it is not the full amount). Filters: search,
+    division, Show (Approved & open · All open · In this pay run), GC-funded only, Select all shown,
+    Clear run. Columns carry every metric the owner asked for: Vendor · Client · Project # · Bill # ·
+    Date · Open bal · **Pay $** · GC draw (AR invoice) status · Invoice # (QBO deep link) · Lien.
+    A sticky **Save pay run** bar (mirrors the lien save bar) shows the live count + total; Save
+    persists and **generates the Pay list** grouped by vendor with subtotals + a GRAND TOTAL, plus a
+    **CSV export** to take to QBO / the bank. State model: `paySaved` recomputed from BILLS every
+    render (server truth) + `payDraft` overlay for unsaved edits; auto-refresh + unload are guarded
+    while a draft is unsaved. Verified live on :8791: 2891 bills / 649 open / 397 approved+open,
+    select→save→**reload persists** (partial `$100` kept, dirty=0), clear empties the run, CSV quotes
+    commas correctly, no console errors.
 - **Systems tab — the process registry, live in the ledger (2026-08-19).** The systems & process
   registry (`AI Brain_Vault/02_processes/`, eight domain files) now renders as a tab instead of a
   daily markdown digest. Requested by the owner: "we just need to have this in the Project Ledger,

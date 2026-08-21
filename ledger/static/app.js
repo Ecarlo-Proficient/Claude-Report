@@ -204,13 +204,13 @@ const NAV_GROUPS = [
   { id: "overview",   label: "Overview",      tabs: ["overview"] },
   { id: "financials", label: "Financials",    tabs: ["pnl", "wip", "costs"] },
   { id: "customers",  label: "Customer",      tabs: ["customers", "invoices", "draws", "payments", "sales"] },
-  { id: "vendors",    label: "Vendor",        tabs: ["vendors", "bills", "subloc", "liens"] },
+  { id: "vendors",    label: "Vendor",        tabs: ["vendors", "bills", "paybills", "subloc", "liens"] },
   { id: "it",         label: "IT",            tabs: ["systems", "console"] },
 ];
 const TAB_LABELS = {
   home: "My view", overview: "Overview", pnl: "Project P&L", wip: "WIP report", costs: "Costs",
   customers: "Customer Center", invoices: "Invoices", draws: "Draws", payments: "Payments", sales: "Sales Outreach",
-  vendors: "Vendor Center", bills: "Bills", subloc: "Sub LOC", liens: "Liens",
+  vendors: "Vendor Center", bills: "Bills", paybills: "Pay Bills", subloc: "Sub LOC", liens: "Liens",
   systems: "Systems", console: "Console",
 };
 const groupOf = t => NAV_GROUPS.find(g => g.tabs.includes(t)) || NAV_GROUPS[0];
@@ -246,6 +246,7 @@ function setTab(t) {
   if (t === "systems") loadSystems();
   if (t === "customers") renderCustomers();
   if (t === "payments") renderPayments();
+  if (t === "paybills") renderPayBills();
   if (typeof _csClear === "function") _csClear();   // drop any cell selection when the tab changes
   window.scrollTo(0, 0);
 }
@@ -299,6 +300,14 @@ async function load(isAuto) {
     (meta.loaded_at ? ` · loaded ${fmtDate(meta.loaded_at, true)}` : "");
   buildFilterOptions();
   render();
+  _renderLazyTab(activeTab);   // wip/payments/paybills read main-load globals but aren't in render();
+                               // re-dispatch the active one now that data is in (fixes a fresh refresh on it)
+}
+// Lazy tabs dispatched by setTab (not render()) that read the /api/data globals. pnl/systems/console
+// fetch their OWN data on open, so they self-refresh; these three read ALL / PAY / BILLS synchronously.
+function _renderLazyTab(t) {
+  const map = { wip: renderWip, payments: renderPayments, paybills: renderPayBills };
+  if (map[t]) map[t]();
 }
 function showError(msg) {
   const b = $("#errorBanner"); b.hidden = false; b.textContent = msg;
@@ -1046,12 +1055,31 @@ function splitDraw(mi) {
 // Liens-page multi-select filters (same checkbox UI as the Bills tab), self-contained. Built from
 // the lien watchlist (all divisions), so you filter, not just search.
 const lienMSel = {};   // { id: Set }
+let _lienMSelSig = null;   // data signature; the msels rebuild only when it changes (not on a toggle)
 const LIEN_MSEL = [
   { id: "lfClient", all: "All clients",     get: r => r.client || "",         search: true, lbl: v => v || "(no client)" },
   { id: "lfVendor", all: "All vendors",     get: r => r.vendor || "",         search: true, lbl: v => v || "(none)" },
   { id: "lfDiv",    all: "All divisions",   get: r => r.division || "",        lbl: v => v || "(none)" },
   { id: "lfPay",    all: "Any inv. status", get: r => r.inv_ar_status || "",   lbl: v => v || "(no invoice)" },
 ];
+function _lienLabelUpdate(cfg) {
+  const btn = $("#" + cfg.id + "Btn"), menu = $("#" + cfg.id + "Menu"); if (!btn) return;
+  const s = lienMSel[cfg.id] || new Set();
+  btn.textContent = !s.size ? cfg.all : (s.size === 1 ? cfg.lbl([...s][0]) : s.size + " selected");
+  btn.classList.toggle("on", s.size > 0);
+  const cnt = menu ? menu.querySelector(".msel-count") : null; if (cnt) cnt.textContent = `${s.size} selected`;
+}
+function _lienBulk(cfg, sel) {   // Select all / None over the VISIBLE (search-filtered) options
+  const menu = $("#" + cfg.id + "Menu"); if (!menu) return;
+  const s = lienMSel[cfg.id] || (lienMSel[cfg.id] = new Set());
+  for (const lab of menu.querySelectorAll(".msel-opt")) {
+    if (lab.hidden) continue;
+    const v = lab.dataset.val;
+    if (sel) s.add(v); else s.delete(v);
+    const cb = lab.querySelector("input"); if (cb) cb.checked = sel;
+  }
+  _lienLabelUpdate(cfg); renderLiens();
+}
 function buildLienMSel(cfg, watch) {
   const menu = $("#" + cfg.id + "Menu"), btn = $("#" + cfg.id + "Btn");
   if (!menu || !btn) return;
@@ -1060,17 +1088,21 @@ function buildLienMSel(cfg, watch) {
   for (const v of [...s]) if (!vals.includes(v)) s.delete(v);
   menu.innerHTML = "";
   if (cfg.search) { const q = document.createElement("input"); q.type = "search"; q.className = "msel-search"; q.placeholder = "Search";
-    q.oninput = () => { const t = q.value.toLowerCase(); for (const lab of menu.querySelectorAll(".msel-opt")) lab.hidden = t && !lab.textContent.toLowerCase().includes(t); }; menu.appendChild(q); }
-  { const clr = document.createElement("button"); clr.type = "button"; clr.className = "msel-clear"; clr.textContent = "Clear"; clr.onclick = () => { s.clear(); renderLiens(); }; menu.appendChild(clr); }
+    q.oninput = () => { const t = q.value.toLowerCase(); for (const lab of menu.querySelectorAll(".msel-opt")) lab.hidden = t && !lab.textContent.toLowerCase().includes(t); }; menu.appendChild(q);
+    const tools = document.createElement("div"); tools.className = "msel-tools";
+    const all = document.createElement("button"); all.type = "button"; all.className = "msel-tool"; all.textContent = "Select all"; all.onclick = () => _lienBulk(cfg, true);
+    const none = document.createElement("button"); none.type = "button"; none.className = "msel-tool"; none.textContent = "None"; none.onclick = () => _lienBulk(cfg, false);
+    const cnt = document.createElement("span"); cnt.className = "msel-count";
+    tools.appendChild(all); tools.appendChild(none); tools.appendChild(cnt); menu.appendChild(tools); }
+  { const clr = document.createElement("button"); clr.type = "button"; clr.className = "msel-clear"; clr.textContent = "Clear"; clr.onclick = () => { s.clear(); buildLienMSel(cfg, watch); renderLiens(); }; menu.appendChild(clr); }
   for (const v of vals) {
-    const lab = document.createElement("label"); lab.className = "msel-opt";
+    const lab = document.createElement("label"); lab.className = "msel-opt"; lab.dataset.val = v;
     const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = s.has(v);
-    cb.onchange = () => { if (cb.checked) s.add(v); else s.delete(v); renderLiens(); };
+    cb.onchange = () => { if (cb.checked) s.add(v); else s.delete(v); _lienLabelUpdate(cfg); renderLiens(); };
     lab.appendChild(cb); lab.appendChild(document.createTextNode(" " + cfg.lbl(v)));
     menu.appendChild(lab);
   }
-  btn.textContent = !s.size ? cfg.all : (s.size === 1 ? cfg.lbl([...s][0]) : s.size + " selected");
-  btn.classList.toggle("on", s.size > 0);
+  _lienLabelUpdate(cfg);
 }
 function lienMSelPasses(r) { for (const cfg of LIEN_MSEL) { const s = lienMSel[cfg.id]; if (s && s.size && !s.has(cfg.get(r))) return false; } return true; }
 function renderLiens() {
@@ -1117,7 +1149,14 @@ function renderLiens() {
   $("#btnClearLien").hidden = activeLien === null;
 
   // ── multi-select filters (built from the sent/filed list) + the active stage + a Project # search ──
-  for (const cfg of LIEN_MSEL) buildLienMSel(cfg, watch);
+  // Rebuild only when the underlying data changes - NOT on every render - so a checkbox toggle keeps the
+  // open search box + scroll position instead of rebuilding the menu under the user (owner 2026-08-21). A
+  // toggle re-renders with the SAME watch, so its signature is unchanged; a data load makes a new one.
+  const lienSig = `${watch.length}:${watch[0] ? watch[0].bill_id : ""}:${watch.length ? watch[watch.length - 1].bill_id : ""}`;
+  if (lienSig !== _lienMSelSig || !$("#lfVendorMenu") || !$("#lfVendorMenu").querySelector(".msel-opt")) {
+    _lienMSelSig = lienSig;
+    for (const cfg of LIEN_MSEL) buildLienMSel(cfg, watch);
+  }
   const qProj = ($("#lienFProj") ? $("#lienFProj").value : "").trim().toLowerCase();
   const known = new Set(ALL.map(r => r.project_no));
   const base = activeLien ? (byStatus[activeLien] || []) : watch;
@@ -1310,10 +1349,34 @@ const BILL_MSEL = [
   { id: "bfLien",     all: "Any lien",       get: b => b.lien_status || "",    lbl: v => v ? (LIEN_SHORT[v] || v) : "(no lien clock)" },
 ];
 function _billMSelVals(cfg) { return [...new Set((BILLS || []).map(cfg.get))].sort((a, b) => cfg.lbl(a).localeCompare(cfg.lbl(b))); }
+// Toggle updates the label IN PLACE (no rebuild) so an active search survives (owner 2026-08-21).
 function toggleBillMSel(id, val, checked) {
   const s = billMSel[id] || (billMSel[id] = new Set());
   if (checked) s.add(val); else s.delete(val);
-  buildBillMSel(BILL_MSEL.find(c => c.id === id)); renderBills();
+  _mselLabelUpdate(BILL_MSEL.find(c => c.id === id)); renderBills();
+}
+function _mselLabelUpdate(cfg) {
+  if (!cfg) return;
+  const btn = $("#" + cfg.id + "Btn"), menu = $("#" + cfg.id + "Menu"); if (!btn) return;
+  const s = billMSel[cfg.id] || new Set();
+  if (!s.size) btn.textContent = cfg.all;
+  else if (s.size === 1) btn.textContent = cfg.lbl([...s][0]);
+  else btn.textContent = s.size + " selected";
+  btn.classList.toggle("on", s.size > 0);
+  btn.title = s.size ? [...s].map(cfg.lbl).join(", ") : "";
+  const cnt = menu ? menu.querySelector(".msel-count") : null; if (cnt) cnt.textContent = `${s.size} selected`;
+}
+// Select all / None over the VISIBLE (search-filtered) options, in place.
+function _billMSelBulk(cfg, sel) {
+  const menu = $("#" + cfg.id + "Menu"); if (!menu) return;
+  const s = billMSel[cfg.id] || (billMSel[cfg.id] = new Set());
+  for (const lab of menu.querySelectorAll(".msel-opt")) {
+    if (lab.hidden) continue;
+    const v = lab.dataset.val;
+    if (sel) s.add(v); else s.delete(v);
+    const cb = lab.querySelector("input"); if (cb) cb.checked = sel;
+  }
+  _mselLabelUpdate(cfg); renderBills();
 }
 function buildBillMSel(cfg) {
   const menu = $("#" + cfg.id + "Menu"), btn = $("#" + cfg.id + "Btn");
@@ -1323,21 +1386,22 @@ function buildBillMSel(cfg) {
   for (const v of [...s]) if (!vals.includes(v)) s.delete(v);   // drop values gone from the data
   menu.innerHTML = "";
   if (cfg.search) { const q = document.createElement("input"); q.type = "search"; q.className = "msel-search"; q.placeholder = "Search";
-    q.oninput = () => { const t = q.value.toLowerCase(); for (const lab of menu.querySelectorAll(".msel-opt")) lab.hidden = t && !lab.textContent.toLowerCase().includes(t); }; menu.appendChild(q); }
+    q.oninput = () => { const t = q.value.toLowerCase(); for (const lab of menu.querySelectorAll(".msel-opt")) lab.hidden = t && !lab.textContent.toLowerCase().includes(t); }; menu.appendChild(q);
+    const tools = document.createElement("div"); tools.className = "msel-tools";
+    const all = document.createElement("button"); all.type = "button"; all.className = "msel-tool"; all.textContent = "Select all"; all.title = "Select every option the search lists"; all.onclick = () => _billMSelBulk(cfg, true);
+    const none = document.createElement("button"); none.type = "button"; none.className = "msel-tool"; none.textContent = "None"; none.title = "Deselect every option the search lists"; none.onclick = () => _billMSelBulk(cfg, false);
+    const cnt = document.createElement("span"); cnt.className = "msel-count";
+    tools.appendChild(all); tools.appendChild(none); tools.appendChild(cnt); menu.appendChild(tools); }
   { const clr = document.createElement("button"); clr.type = "button"; clr.className = "msel-clear"; clr.textContent = "Clear";
     clr.onclick = () => { s.clear(); buildBillMSel(cfg); renderBills(); }; menu.appendChild(clr); }
   for (const v of vals) {
-    const lab = document.createElement("label"); lab.className = "msel-opt";
+    const lab = document.createElement("label"); lab.className = "msel-opt"; lab.dataset.val = v;
     const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = s.has(v);
     cb.onchange = () => toggleBillMSel(cfg.id, v, cb.checked);
     lab.appendChild(cb); lab.appendChild(document.createTextNode(" " + cfg.lbl(v)));
     menu.appendChild(lab);
   }
-  if (!s.size) btn.textContent = cfg.all;
-  else if (s.size === 1) btn.textContent = cfg.lbl([...s][0]);
-  else btn.textContent = s.size + " selected";
-  btn.classList.toggle("on", s.size > 0);
-  btn.title = s.size ? [...s].map(cfg.lbl).join(", ") : "";
+  _mselLabelUpdate(cfg);
 }
 function billMSelPasses(b) {
   for (const cfg of BILL_MSEL) { const s = billMSel[cfg.id]; if (s && s.size && !s.has(cfg.get(b))) return false; }
@@ -1405,7 +1469,35 @@ function _vendorNonDefault() {
   for (const v of billVendorHidden) if (!billVendorDefault.has(v)) return true;
   return false;
 }
-function toggleBillVendor(v, checked) { if (checked) billVendorHidden.delete(v); else billVendorHidden.add(v); buildBillVendorFilter(); renderBills(); }
+// A single checkbox toggle updates the label + count IN PLACE - no rebuild - so the search
+// box and scroll position survive (owner 2026-08-21: checking a vendor must not reset the search).
+function toggleBillVendor(v, checked) {
+  if (checked) billVendorHidden.delete(v); else billVendorHidden.add(v);
+  _vendorLabelUpdate(); renderBills();
+}
+function _vendorLabelUpdate() {
+  const btn = $("#bfVendorBtn"), menu = $("#bfVendorMenu"); if (!btn) return;
+  const vendors = _billVendors(); const shown = vendors.length - billVendorHidden.size;
+  const isDefaultPumps = billVendorDefault.size > 0 && !_vendorNonDefault();
+  if (!billVendorHidden.size) btn.textContent = "All vendors";
+  else if (isDefaultPumps) btn.textContent = "All vendors except pumps";
+  else btn.textContent = `${shown} of ${vendors.length} vendors`;
+  btn.classList.toggle("on", _vendorNonDefault());
+  btn.title = billVendorHidden.size ? "Hidden: " + [...billVendorHidden].join(", ") : "";
+  const cnt = menu ? menu.querySelector(".msel-count") : null; if (cnt) cnt.textContent = `${shown} shown`;
+}
+// Select all / None act on the VISIBLE (search-filtered) options only, in place, so you can
+// type a name, hit None on everything, then check just the few you want (owner 2026-08-21).
+function _vendorBulk(show) {
+  const menu = $("#bfVendorMenu"); if (!menu) return;
+  for (const lab of menu.querySelectorAll(".msel-opt")) {
+    if (lab.hidden) continue;
+    const v = lab.dataset.vendor;
+    if (show) billVendorHidden.delete(v); else billVendorHidden.add(v);
+    const cb = lab.querySelector("input"); if (cb) cb.checked = show;
+  }
+  _vendorLabelUpdate(); renderBills();
+}
 function buildBillVendorFilter() {
   const menu = $("#bfVendorMenu"), btn = $("#bfVendorBtn");
   if (!menu || !btn) return;
@@ -1419,21 +1511,21 @@ function buildBillVendorFilter() {
   menu.innerHTML = "";
   { const s = document.createElement("input"); s.type = "search"; s.className = "msel-search"; s.placeholder = "Search vendors";
     s.oninput = () => { const q = s.value.toLowerCase(); for (const lab of menu.querySelectorAll(".msel-opt")) lab.hidden = q && !lab.textContent.toLowerCase().includes(q); }; menu.appendChild(s); }
-  { const a = document.createElement("button"); a.type = "button"; a.className = "msel-clear"; a.textContent = "Show all (incl. pumps)";
-    a.onclick = () => { billVendorHidden.clear(); buildBillVendorFilter(); renderBills(); }; menu.appendChild(a); }
+  { const tools = document.createElement("div"); tools.className = "msel-tools";
+    const all = document.createElement("button"); all.type = "button"; all.className = "msel-tool"; all.textContent = "Select all"; all.title = "Show every vendor the search lists"; all.onclick = () => _vendorBulk(true);
+    const none = document.createElement("button"); none.type = "button"; none.className = "msel-tool"; none.textContent = "None"; none.title = "Hide every vendor the search lists - then check the few you want"; none.onclick = () => _vendorBulk(false);
+    const cnt = document.createElement("span"); cnt.className = "msel-count";
+    tools.appendChild(all); tools.appendChild(none); tools.appendChild(cnt); menu.appendChild(tools); }
+  if (billVendorDefault.size) { const r = document.createElement("button"); r.type = "button"; r.className = "msel-clear"; r.textContent = "Reset to default (hide pumps)";
+    r.onclick = () => { billVendorHidden = new Set(billVendorDefault); buildBillVendorFilter(); renderBills(); }; menu.appendChild(r); }
   for (const v of vendors) {
-    const lab = document.createElement("label"); lab.className = "msel-opt";
+    const lab = document.createElement("label"); lab.className = "msel-opt"; lab.dataset.vendor = v;
     const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = !billVendorHidden.has(v);
     cb.onchange = () => toggleBillVendor(v, cb.checked);
     lab.appendChild(cb); lab.appendChild(document.createTextNode(" " + v));
     menu.appendChild(lab);
   }
-  const isDefaultPumps = billVendorDefault.size > 0 && !_vendorNonDefault();
-  if (!billVendorHidden.size) btn.textContent = "All vendors";
-  else if (isDefaultPumps) btn.textContent = "All vendors except pumps";
-  else btn.textContent = `All except ${billVendorHidden.size}`;
-  btn.classList.toggle("on", _vendorNonDefault());
-  btn.title = billVendorHidden.size ? "Hidden: " + [...billVendorHidden].join(", ") : "";
+  _vendorLabelUpdate();
 }
 function billFilterValues() {
   const f = {};
@@ -1712,6 +1804,233 @@ function discardBillMarks() {
   pendingBillMarks.clear(); renderBillSaveBar(); renderBills();
   const bd = $("#billDetail"); if (bd && !bd.hidden) closePanels();
   toast("Discarded unsaved marks");
+}
+
+// ══════════════ PAY BILLS (a dedicated check-run worksheet) ══════════════
+// Mark bills for a check run, set a partial amount, Save → generate the pay list.
+// It records INTENT only - it never pays QuickBooks or moves money (the owner records
+// the real payment in QBO; the bill clears here on the next AP sync). Kept off the Bills
+// tab on purpose (owner 2026-08-21: that tab is too crowded / an accidental click risk).
+// State: paySaved = the server's current run ({bill_id -> amount|null}); payDraft = edits
+// since load (only touched bills). Effective = draft wins, else saved, else unselected.
+let paySaved = new Map();   // server truth: {bill_id -> amount|null}, recomputed from BILLS each render
+let payDraft = new Map();   // unsaved overlay: {bill_id -> {selected, amount}} for touched bills
+const PAY_ROW_CAP = 1500;
+
+function _payMarkable() { return (BILLS || []).filter(b => b.bill_id); }   // has a QBO bill id → markable
+function _payRecomputeSaved() {   // mirror the current server run from the latest BILLS (idempotent, cheap)
+  paySaved = new Map();
+  for (const b of _payMarkable()) if (b.pay_selected) paySaved.set(b.bill_id, b.pay_amount == null ? null : num(b.pay_amount));
+}
+function payState(b) {                    // effective {selected, amount} for a bill
+  if (payDraft.has(b.bill_id)) return payDraft.get(b.bill_id);
+  if (paySaved.has(b.bill_id)) return { selected: true, amount: paySaved.get(b.bill_id) };
+  return { selected: false, amount: null };
+}
+function payAmountOf(b) { const a = payState(b).amount; return a == null ? num(b.open_balance) : num(a); }
+function paySelectedBills() { return _payMarkable().filter(b => payState(b).selected && payAmountOf(b) > 0); }
+function payDirtyCount() {
+  let n = 0;
+  for (const [id, d] of payDraft) {
+    const savedSel = paySaved.has(id);
+    const savedAmt = savedSel ? paySaved.get(id) : null;
+    const dAmt = d.amount == null ? null : num(d.amount);
+    const same = (!!d.selected === savedSel) && (!d.selected || dAmt === (savedAmt == null ? null : num(savedAmt)));
+    if (!same) n++;
+  }
+  return n;
+}
+const payFunded = b => (b.inv_ar_status === "Paid") || (b.invoice_status === "Invoice paid");
+function _payFilterPass(b) {
+  const st = payState(b);
+  const show = $("#pfShow") ? $("#pfShow").value : "approved";
+  if (show === "run") { if (!st.selected) return false; }
+  else {
+    if (num(b.open_balance) <= 0 && !st.selected) return false;                 // nothing left to pay
+    if (show === "approved" && (b.approved || "") !== "approved" && !st.selected) return false;
+  }
+  const q = ($("#pfSearch") ? $("#pfSearch").value : "").trim().toLowerCase();
+  if (q && !`${b.vendor || ""} ${b.client || ""} ${b.project_no || ""} ${b.bill_ref || ""} ${b.invoice_no || ""}`.toLowerCase().includes(q)) return false;
+  const dv = $("#pfDivision") ? $("#pfDivision").value : "";
+  if (dv && String(b.division || "").toUpperCase() !== dv) return false;
+  if ($("#pfFunded") && $("#pfFunded").checked && !payFunded(b)) return false;
+  return true;
+}
+function payArCell(b) {
+  const v = b.inv_ar_status || "";
+  if (v) { const cls = v === "Paid" ? "st-ok" : /partial/i.test(v) ? "st-warn" : "st-bad";
+    return stText(/partial/i.test(v) ? "Partial" : v, cls, "GC draw (AR invoice) status"); }
+  return invText(b);
+}
+function _paySetSelected(b, sel) {
+  const cur = payState(b);
+  payDraft.set(b.bill_id, { selected: sel, amount: sel ? cur.amount : null });
+  renderPayBills();
+}
+function _paySetAmount(b, val) {           // live: update draft + save bar only (keep input focus)
+  let amt = val === "" ? null : Math.max(0, Math.round(num(val)));
+  if (amt != null && amt === Math.round(num(b.open_balance))) amt = null;   // exactly the full balance → "full"
+  payDraft.set(b.bill_id, { selected: true, amount: amt });
+  renderPaySaveBar(); renderPayList();
+}
+function renderPayBills() {
+  _payRecomputeSaved();   // always reflect the latest server run; payDraft holds unsaved edits on top
+  const thead = $("#payTable thead"), tbody = $("#payTable tbody"); if (!thead || !tbody) return;
+  let rows = _payMarkable().filter(_payFilterPass);
+  rows.sort((a, b) => (a.vendor || "").localeCompare(b.vendor || "") || String(a.bill_date || "").localeCompare(String(b.bill_date || "")));
+  const cols = ["Pay", "Vendor", "Client", "Project #", "Bill #", "Date", "Open bal", "Pay $", "GC draw", "Invoice #", "Lien"];
+  thead.innerHTML = ""; tbody.innerHTML = "";
+  const htr = document.createElement("tr");
+  cols.forEach((c, i) => { const th = document.createElement("th");
+    if (![0, 6, 7].includes(i)) th.className = "left"; th.textContent = c; htr.appendChild(th); });
+  thead.appendChild(htr);
+  if (!rows.length) { const tr = document.createElement("tr"); const td = document.createElement("td");
+    td.colSpan = cols.length; td.className = "left"; td.style.color = "var(--text-dim)"; td.style.padding = "14px 12px";
+    td.textContent = BILLS && BILLS.length ? "No bills match - widen the filters (try Show: All open)." : "No AP data - run load_bill_tracker.py.";
+    tr.appendChild(td); tbody.appendChild(tr); renderPaySaveBar(); renderPayList(); return; }
+  let capped = false;
+  rows.forEach((b, i) => {
+    if (i >= PAY_ROW_CAP) { capped = true; return; }
+    const st = payState(b), sel = st.selected;
+    const tr = document.createElement("tr"); tr.className = "pay-row" + (sel ? " on" : "");
+    // Pay checkbox
+    const c0 = document.createElement("td"); c0.style.textAlign = "center";
+    const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = sel; cb.title = "Include this bill in the pay run";
+    cb.onchange = () => _paySetSelected(b, cb.checked); c0.appendChild(cb); tr.appendChild(c0);
+    // Vendor / Client / Project / Bill # / Date
+    const cV = document.createElement("td"); cV.className = "left"; const vs = document.createElement("span"); vs.className = "bill-vendor"; vs.textContent = b.vendor || "–"; cV.appendChild(vs); tr.appendChild(cV);
+    const cC = document.createElement("td"); cC.className = "left"; cC.textContent = b.client || "–"; if (!b.client) cC.style.color = "var(--text-dim)"; tr.appendChild(cC);
+    const cP = document.createElement("td"); cP.className = "left"; cP.textContent = b.project_no || "–"; tr.appendChild(cP);
+    tr.appendChild(qboLinkCell(b.bill_ref, qboBillHref(b.qbo_link), "Open this bill in QuickBooks"));
+    const cD = document.createElement("td"); cD.className = "left"; cD.textContent = fmtDateShort(b.bill_date); tr.appendChild(cD);
+    // Open balance
+    const cO = document.createElement("td"); cO.className = "right"; cO.appendChild(moneyCell(b.open_balance)); tr.appendChild(cO);
+    // Pay $ (editable; disabled unless selected)
+    const cPay = document.createElement("td"); cPay.className = "right";
+    const inp = document.createElement("input"); inp.type = "number"; inp.min = "0"; inp.step = "1"; inp.className = "pay-amt";
+    inp.value = String(Math.round(payAmountOf(b))); inp.disabled = !sel;
+    inp.oninput = () => { _paySetAmount(b, inp.value);
+      inp.classList.toggle("partial", inp.value !== "" && num(inp.value) !== Math.round(num(b.open_balance))); };
+    if (sel && st.amount != null) inp.classList.add("partial");   // an explicit custom amount (not the full balance)
+    cPay.appendChild(inp); tr.appendChild(cPay);
+    // GC draw status / Invoice # / Lien
+    const cAr = document.createElement("td"); cAr.className = "left"; const ar = payArCell(b); if (ar) cAr.appendChild(ar); else cAr.textContent = "–"; tr.appendChild(cAr);
+    tr.appendChild(_payInvNoCell(b));
+    const cL = document.createElement("td"); cL.className = "left"; const lt = lienText(b); if (lt) cL.appendChild(lt); else cL.textContent = "–"; tr.appendChild(cL);
+    tbody.appendChild(tr);
+  });
+  if (capped) { const tr = document.createElement("tr"); const td = document.createElement("td");
+    td.colSpan = cols.length; td.className = "left"; td.style.color = "var(--text-dim)"; td.style.padding = "8px 12px";
+    td.textContent = `Showing the first ${PAY_ROW_CAP} - narrow the filters to see the rest.`; tr.appendChild(td); tbody.appendChild(tr); }
+  renderPaySaveBar(); renderPayList();
+}
+function _payInvNoCell(b) {
+  const td = document.createElement("td"); td.className = "left";
+  if (b.invoice_no && b.inv_qbo_id) { const a = document.createElement("a"); a.href = qboInvoiceUrl(b.inv_qbo_id);
+    a.target = "_blank"; a.rel = "noopener"; a.className = "qbo-link"; a.textContent = b.invoice_no; a.title = "Open this invoice in QuickBooks"; td.appendChild(a); }
+  else { const s = document.createElement("span"); s.textContent = b.invoice_no || "–"; if (!b.invoice_no) s.style.color = "var(--text-dim)"; td.appendChild(s); }
+  return td;
+}
+function renderPaySaveBar() {
+  const sel = paySelectedBills();
+  const total = sel.reduce((t, b) => t + payAmountOf(b), 0);
+  const n = payDirtyCount();
+  const bar = $("#paySaveBar"); if (bar) bar.classList.toggle("dirty", n > 0);
+  const txt = $("#paySaveText");
+  if (txt) txt.textContent = n
+    ? `${n} unsaved change${n > 1 ? "s" : ""} · run: ${sel.length} bill${sel.length !== 1 ? "s" : ""}, ${money(total)}`
+    : (sel.length ? `Pay run: ${sel.length} bill${sel.length !== 1 ? "s" : ""} · ${money(total)}` : "No bills in the pay run");
+  { const s = $("#btnSavePayRun"); if (s) s.disabled = n === 0; }
+  { const d = $("#btnDiscardPayRun"); if (d) d.hidden = n === 0; }
+  { const qs = $("#payQuickStat"); if (qs) qs.textContent = sel.length ? `${sel.length} selected · ${money(total)} to pay` : ""; }
+  { const note = $("#payNote"); if (note) note.textContent = `(${_payMarkable().filter(b => num(b.open_balance) > 0).length} open bills)`; }
+}
+function renderPayList() {
+  const w = $("#payListWidget"); if (!w) return;
+  const sel = paySelectedBills();
+  if (!sel.length) { w.hidden = true; return; }
+  w.hidden = false;
+  const byV = new Map();
+  for (const b of sel) { const v = b.vendor || "–"; if (!byV.has(v)) byV.set(v, []); byV.get(v).push(b); }
+  const vendors = [...byV.keys()].sort((a, b) => a.localeCompare(b));
+  const grand = sel.reduce((t, b) => t + payAmountOf(b), 0);
+  const note = $("#payListNote");
+  if (note) note.textContent = `(${vendors.length} vendor${vendors.length !== 1 ? "s" : ""} · ${sel.length} bill${sel.length !== 1 ? "s" : ""} · ${money(grand)})`;
+  const thead = $("#payListTable thead"), tbody = $("#payListTable tbody");
+  thead.innerHTML = ""; tbody.innerHTML = "";
+  const cols = ["Vendor", "Bill #", "Project #", "Client", "Invoice #", "GC draw", "Pay $"];
+  const htr = document.createElement("tr");
+  cols.forEach((c, i) => { const th = document.createElement("th"); if (i !== 6) th.className = "left"; th.textContent = c; htr.appendChild(th); });
+  thead.appendChild(htr);
+  for (const v of vendors) {
+    const list = byV.get(v); const sub = list.reduce((t, b) => t + payAmountOf(b), 0);
+    const gtr = document.createElement("tr"); gtr.className = "bill-group";
+    const gtd = document.createElement("td"); gtd.colSpan = cols.length;
+    const cell = document.createElement("div"); cell.className = "bg-cell";
+    const key = document.createElement("span"); key.className = "bg-key"; key.textContent = v;
+    const amt = document.createElement("span"); amt.className = "bg-amt"; amt.textContent = `${list.length} bill${list.length !== 1 ? "s" : ""} · ${money(sub)}`;
+    cell.appendChild(key); cell.appendChild(amt); gtd.appendChild(cell); gtr.appendChild(gtd); tbody.appendChild(gtr);
+    for (const b of list) {
+      const tr = document.createElement("tr"); tr.className = "pay-row";
+      const cV = document.createElement("td"); cV.className = "left"; cV.textContent = b.vendor || "–"; tr.appendChild(cV);
+      tr.appendChild(qboLinkCell(b.bill_ref, qboBillHref(b.qbo_link), "Open this bill in QuickBooks"));
+      const cP = document.createElement("td"); cP.className = "left"; cP.textContent = b.project_no || "–"; tr.appendChild(cP);
+      const cC = document.createElement("td"); cC.className = "left"; cC.textContent = b.client || "–"; tr.appendChild(cC);
+      tr.appendChild(_payInvNoCell(b));
+      const cAr = document.createElement("td"); cAr.className = "left"; const ar = payArCell(b); if (ar) cAr.appendChild(ar); else cAr.textContent = "–"; tr.appendChild(cAr);
+      const cPay = document.createElement("td"); cPay.className = "right"; cPay.appendChild(moneyCell(payAmountOf(b))); tr.appendChild(cPay);
+      tbody.appendChild(tr);
+    }
+  }
+  const gt = document.createElement("tr"); gt.className = "wip-total";
+  cols.forEach((c, i) => { const td = document.createElement("td");
+    if (i === 0) { td.className = "left"; td.textContent = "GRAND TOTAL"; }
+    else if (i === 6) { td.className = "right"; td.appendChild(moneyCell(grand)); }
+    else td.className = "left";
+    gt.appendChild(td); });
+  tbody.appendChild(gt);
+}
+async function savePayRun() {
+  const items = [...payDraft.entries()].map(([bill_id, d]) => ({
+    bill_id, selected: !!d.selected, amount: d.selected ? (d.amount == null ? null : num(d.amount)) : null }));
+  if (!items.length) return;
+  const btn = $("#btnSavePayRun"); if (btn) { btn.disabled = true; btn.textContent = "Saving…"; }
+  try {
+    const res = await fetch("/api/pay-run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ items }) });
+    const j = await res.json(); if (!j.ok) throw new Error(j.error || "write failed");
+    toast(`Pay run saved · ${j.count} bill${j.count !== 1 ? "s" : ""}`);
+    payDraft = new Map(); await load(true); renderPayBills();
+  } catch (e) { toast("Save failed: " + e.message); }
+  finally { if (btn) { btn.textContent = "Save pay run"; } renderPaySaveBar(); }
+}
+function discardPayRun() { payDraft = new Map(); renderPayBills(); toast("Discarded unsaved changes"); }
+async function clearPayRun() {
+  if (!paySelectedBills().length && !payDraft.size) { toast("The pay run is already empty"); return; }
+  if (!confirm("Empty the whole pay run? This unmarks every bill in it.")) return;
+  try {
+    const res = await fetch("/api/pay-run/clear", { method: "POST" });
+    const j = await res.json(); if (!j.ok) throw new Error(j.error || "clear failed");
+    toast(`Cleared ${j.cleared} bill${j.cleared !== 1 ? "s" : ""} from the pay run`);
+    payDraft = new Map(); await load(true); renderPayBills();
+  } catch (e) { toast("Clear failed: " + e.message); }
+}
+function paySelectAllShown() {
+  const rows = _payMarkable().filter(_payFilterPass).filter(b => num(b.open_balance) > 0);
+  for (const b of rows) { const cur = payState(b); if (!cur.selected) payDraft.set(b.bill_id, { selected: true, amount: cur.amount }); }
+  renderPayBills();
+}
+function exportPayList() {
+  const sel = paySelectedBills().slice().sort((a, b) => (a.vendor || "").localeCompare(b.vendor || "") || String(a.bill_date || "").localeCompare(String(b.bill_date || "")));
+  if (!sel.length) { toast("Nothing to export - mark some bills first"); return; }
+  const head = ["Vendor", "Bill #", "Bill date", "Division", "Project #", "Client", "Invoice #", "GC draw status", "Open balance", "Pay amount"];
+  const lines = [head];
+  for (const b of sel) lines.push([b.vendor || "", b.bill_ref || "", b.bill_date || "", b.division || "", b.project_no || "",
+    b.client || "", b.invoice_no || "", b.inv_ar_status || b.invoice_status || "", Math.round(num(b.open_balance)), Math.round(payAmountOf(b))]);
+  const csv = lines.map(r => r.map(c => { const s = String(c == null ? "" : c); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }).join(",")).join("\r\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob); const a = document.createElement("a");
+  a.href = url; a.download = "pay-run.csv"; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 // Press the save-bar text → a review of the lien marks: what you STAGED (old → new, so nothing
 // saves blind) and what's already ON FILE, plus a jump to the Synology lien folder.
@@ -3823,7 +4142,15 @@ function init() {
   { const el = $("#btnCloseSublocDetail"); if (el) el.onclick = closePanels; }
   { const el = $("#btnSaveBillMarks"); if (el) el.onclick = saveBillMarks; }
   { const el = $("#btnDiscardBillMarks"); if (el) el.onclick = discardBillMarks; }
-  window.addEventListener("beforeunload", (e) => { if (pendingBillMarks.size) { e.preventDefault(); e.returnValue = ""; } });
+  // Pay Bills (check-run worksheet)
+  { const el = $("#pfSearch"); if (el) el.addEventListener("input", renderPayBills); }
+  ["#pfDivision", "#pfShow", "#pfFunded"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("change", renderPayBills); });
+  { const el = $("#pfSelectAll"); if (el) el.onclick = paySelectAllShown; }
+  { const el = $("#pfClearRun"); if (el) el.onclick = clearPayRun; }
+  { const el = $("#pfExport"); if (el) el.onclick = exportPayList; }
+  { const el = $("#btnSavePayRun"); if (el) el.onclick = savePayRun; }
+  { const el = $("#btnDiscardPayRun"); if (el) el.onclick = discardPayRun; }
+  window.addEventListener("beforeunload", (e) => { if (pendingBillMarks.size || payDraft.size) { e.preventDefault(); e.returnValue = ""; } });
   $$(".sec-head").forEach(h => h.onclick = () => { const k = h.dataset.sec;
     if (sublocCollapsed.has(k)) sublocCollapsed.delete(k); else sublocCollapsed.add(k); applySublocSections(); });
   try { const bv = localStorage.getItem("proficient-ledger-billview"); if (bv && BILL_VIEWS.some(v => v.id === bv)) activeBillView = bv; } catch { /* ignore */ }
@@ -3854,7 +4181,7 @@ function init() {
   try { savedTab = localStorage.getItem("proficient-ledger-tab") || "home"; } catch { /* ignore */ }
   setTab(savedTab);
   initCellSelect();   // Excel-style click/drag cell selection + running-sum bar
-  setInterval(() => { if (!syncing && !pendingBillMarks.size) load(true); }, 90000);   // soft auto-refresh (paused during a resync or while lien marks are unsaved)
+  setInterval(() => { if (!syncing && !pendingBillMarks.size && !payDraft.size) load(true); }, 90000);   // soft auto-refresh (paused during a resync or while lien / pay-run marks are unsaved)
   $("#btnCloseSettings").onclick = closePanels;
   $("#btnCloseDetail").onclick = closePanels;
   $("#btnCopyDetail").onclick = () => copy(detailAsText());

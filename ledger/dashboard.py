@@ -445,6 +445,7 @@ def _fetch_ap(con) -> dict:
     except sqlite3.OperationalError:
         pass
     proj_customer = _project_customer_map(con)   # project -> client (the GC), the shared resolver
+    pay = bill_marks.read_pay_marks()             # current check run: {bill_id -> {amount}}
     bills = []
     for r in con.execute(
         "SELECT project_no, division, vendor, bill_ref, bill_date, account, "
@@ -455,6 +456,9 @@ def _fetch_ap(con) -> dict:
         b["client"] = proj_customer.get(b.get("project_no"))
         bid = bill_marks.bill_id_from_link(b.get("qbo_link"))
         b["bill_id"] = bid                           # QBO bill id = workbook _Key; None → not markable
+        pm = pay.get(bid) if bid else None           # is this bill in the current pay run?
+        b["pay_selected"] = bool(pm)
+        b["pay_amount"] = (pm.get("amount") if pm and pm.get("amount") is not None else None)  # None → full open bal
         b["lien_marked"] = bool(bid and marks.get(bid))   # currently a site override (vs computed)
         if bid and marks.get(bid) in bill_marks.LIEN_STATES:
             b["lien_status"] = marks[bid]            # site mark wins until the next sync-ap
@@ -1086,6 +1090,10 @@ class Handler(BaseHTTPRequestHandler):
             self._set_waiver()
         elif p == "/api/bill-mark":       # a ledger write - the owner's lien mark (mirrors to the workbook on sync-ap)
             self._set_bill_mark()
+        elif p == "/api/pay-run":         # a ledger write - the owner's check-run worksheet (LOCAL only, never pays QBO)
+            self._save_pay_run()
+        elif p == "/api/pay-run/clear":   # empty the whole pay run (after the check run is done)
+            self._clear_pay_run()
         elif p == "/api/pnl/open":        # open the P&L workbook (or ?folder=1 → its folder), cross-platform
             self._pnl_open(self._query().get("proj", ""), folder=self._query().get("folder") == "1")
         elif p == "/api/job/open":        # open the SOURCE job folder (Synology CP/RP, OneDrive MFD)
@@ -1347,6 +1355,32 @@ class Handler(BaseHTTPRequestHandler):
             d = _ensure_lien_vendor_dir(vendor)
             folder = str(d) if d is not None else None
         self._json({"ok": True, "bill_id": bill_id, "lien": lien, "folder": folder})
+
+    def _save_pay_run(self):
+        """Persist the check-run worksheet: which bills to pay + a partial amount override.
+        LOCAL intent only - this NEVER pays QBO or moves money; the owner records the real
+        payment in QBO and the next sync-ap pulls the true status back."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except (ValueError, json.JSONDecodeError):
+            return self._json({"error": "bad request"}, 400)
+        items = body.get("items")
+        if not isinstance(items, list):
+            return self._json({"error": "items (a list) required"}, 400)
+        try:
+            kept = bill_marks.set_pay_marks(items, _dt.datetime.now().isoformat(timespec="seconds"))
+        except (sqlite3.OperationalError, ValueError, TypeError) as e:
+            return self._json({"error": f"write failed: {e}"}, 500)
+        self._json({"ok": True, "count": kept})
+
+    def _clear_pay_run(self):
+        """Empty the whole pay run (after the check run is done)."""
+        try:
+            n = bill_marks.clear_pay_marks()
+        except sqlite3.OperationalError as e:
+            return self._json({"error": f"write failed: {e}"}, 500)
+        self._json({"ok": True, "cleared": n})
 
 
 def _daemonize():

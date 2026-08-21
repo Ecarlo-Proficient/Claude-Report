@@ -100,3 +100,80 @@ def resolve_lien(bill_id: str | None, marks: dict, preserved: str | None, comput
             return tag
         return computed                   # mark was cleared → recompute the countdown
     return preserved if preserved else computed
+
+
+# ── Pay-run marks ────────────────────────────────────────────────────────────
+# A SEPARATE overlay from the lien tag: which bills the owner has selected to pay in
+# the current check run, and (optionally) a partial amount that overrides the bill's
+# full open balance. This is a PLANNING WORKSHEET only - it records intent, never a
+# payment. QBO stays the source of truth: the owner records the real payment in QBO,
+# and the next `sync-ap` pulls the true pay status back (the bill then drops off the
+# open list). So, unlike the lien tag, pay marks are NOT mirrored to the workbook and
+# are NOT read by excel_bill_sync - the dashboard is their only reader/writer. Keyed by
+# the same QBO bill id, absent-safe, in the same ledger DB (the dashboard's write surface).
+def _ensure_pay(con: sqlite3.Connection) -> None:
+    con.execute("CREATE TABLE IF NOT EXISTS pay_mark ("
+                "bill_id TEXT PRIMARY KEY, amount REAL, updated_at TEXT NOT NULL)")
+
+
+def read_pay_marks() -> dict:
+    """{bill_id -> {'amount': float|None}} for every bill in the current pay run. A None
+    amount means 'pay the full open balance' (the caller resolves it). {} if there is no
+    ledger DB / table yet - absent-safe, so a tool without a ledger behaves as before."""
+    if not LEDGER_DB.exists():
+        return {}
+    try:
+        con = sqlite3.connect(f"file:{LEDGER_DB}?mode=ro", uri=True)
+    except sqlite3.OperationalError:
+        return {}
+    try:
+        rows = con.execute("SELECT bill_id, amount FROM pay_mark").fetchall()
+        return {str(b): {"amount": a} for b, a in rows}
+    except sqlite3.OperationalError:      # table not created yet
+        return {}
+    finally:
+        con.close()
+
+
+def set_pay_marks(items: list, now: str) -> int:
+    """Persist a pay run in ONE transaction. Each item is {bill_id, amount, selected}: a
+    selected bill is upserted (amount None → pay the full open balance), an unselected one
+    is deleted. Returns the number of bills kept in the run. Opens the ledger writable."""
+    con = sqlite3.connect(str(LEDGER_DB))
+    try:
+        _ensure_pay(con)
+        kept = 0
+        for it in items or []:
+            bid = str(it.get("bill_id") or "").strip()
+            if not bid:
+                continue
+            if it.get("selected"):
+                amt = it.get("amount")
+                amt = float(amt) if amt not in (None, "") else None
+                con.execute(
+                    "INSERT INTO pay_mark (bill_id, amount, updated_at) VALUES (?,?,?) "
+                    "ON CONFLICT(bill_id) DO UPDATE SET amount=excluded.amount, updated_at=excluded.updated_at",
+                    (bid, amt, now))
+                kept += 1
+            else:
+                con.execute("DELETE FROM pay_mark WHERE bill_id=?", (bid,))
+        con.commit()
+        return kept
+    finally:
+        con.close()
+
+
+def clear_pay_marks() -> int:
+    """Empty the whole pay run (after the check run is done). Returns rows removed; 0 if the
+    ledger DB / table is absent."""
+    if not LEDGER_DB.exists():
+        return 0
+    con = sqlite3.connect(str(LEDGER_DB))
+    try:
+        _ensure_pay(con)
+        n = con.execute("SELECT COUNT(*) FROM pay_mark").fetchone()[0]
+        con.execute("DELETE FROM pay_mark")
+        con.commit()
+        return n
+    finally:
+        con.close()

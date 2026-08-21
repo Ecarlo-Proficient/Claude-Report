@@ -348,6 +348,57 @@
       </section>
     </div><!-- /tab: bills -->
 
+    <!-- ══════════════ TAB: PAY BILLS (check-run worksheet) ══════════════ -->
+    <div class="tab-page" data-tab="paybills" hidden>
+      <!-- Pay-run save bar: sticky top-right, mirrors the Bills lien save bar -->
+      <div class="savebar" id="paySaveBar">
+        <span class="sb-warn">●</span>
+        <span class="sb-text sb-review" id="paySaveText" title="Review this pay run"></span>
+        <button class="sb-save" id="btnSavePayRun">Save pay run</button>
+        <button id="btnDiscardPayRun">Discard</button>
+      </div>
+      <section class="widget">
+        <div class="widget-head">
+          <h2>Pay Bills <span class="count" id="payNote"></span></h2>
+          <span class="count" id="payQuickStat"></span>
+        </div>
+        <p class="hint">Mark the bills you're paying and set the amount (defaults to the full open balance - edit it
+          for a partial). Hit <b>Save pay run</b> to lock it in and generate the pay list below. This is a worksheet:
+          it records what you plan to pay, it does <b>not</b> pay anything in QuickBooks - record the actual payment
+          in QBO and the bill clears here on the next AP sync.</p>
+        <div class="bill-filters" id="payFilters">
+          <label class="fld"><span>Search</span><input type="search" id="pfSearch" placeholder="vendor / client / project / bill #"></label>
+          <label class="fld"><span>Division</span>
+            <select id="pfDivision"><option value="">All divisions</option><option value="CP">Commercial</option><option value="MFD">Multi Family</option><option value="RP">Residential</option></select>
+          </label>
+          <label class="fld"><span>Show</span>
+            <select id="pfShow">
+              <option value="approved">Approved &amp; open</option>
+              <option value="open">All open</option>
+              <option value="run">In this pay run</option>
+            </select>
+          </label>
+          <label class="inline-check" title="Only bills whose GC draw has actually been paid - you've been funded, so the sub can be paid"><input type="checkbox" id="pfFunded"> GC-funded only</label>
+          <span class="bf-sep"></span>
+          <button class="btn small" id="pfSelectAll">Select all shown</button>
+          <button class="btn small" id="pfClearRun" title="Empty the whole pay run">Clear run</button>
+        </div>
+        <div class="table-scroll">
+          <table class="grid pay-grid" id="payTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+      <section class="widget" id="payListWidget" hidden>
+        <div class="widget-head">
+          <h2>Pay list <span class="count" id="payListNote"></span></h2>
+          <button class="btn small" id="pfExport">Export CSV</button>
+        </div>
+        <p class="hint">The saved check run, grouped by vendor. Take this to QuickBooks / the bank to cut the payments.</p>
+        <div class="table-scroll">
+          <table class="grid pay-list-grid" id="payListTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </div><!-- /tab: paybills -->
+
     <!-- ══════════════ TAB: LIENS (collections worklist) ══════════════ -->
     <div class="tab-page" data-tab="liens" hidden>
       <section class="widget">

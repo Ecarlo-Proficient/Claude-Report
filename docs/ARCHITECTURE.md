@@ -332,7 +332,7 @@ flowchart LR
     LOADER["load_wip_master.py\nCP←Test-CP · RP←Test-RP · MFD←Test-Master\nfilter to real project #s · idempotent upsert"]:::tool
     APLOAD["load_bill_tracker.py\nAP pay status + lien clock → ap_bill_line\n(NOT cost truth — subs excluded)"]:::tool
     DB[("ledger.sqlite3\nproject + wip_snapshot + ap_bill_line\n→ v_wip_latest · v_ap_by_project")]:::out
-    DASH["dashboard.py + static/\nlocal web UI (127.0.0.1) - READ-ONLY except the owner's marks.\nTabs: My view · Overview · P&L · Costs · Draws · Bills\n(Notion-style saved views) · Liens · Vendors · Sub LOC · Sales · Systems · Console"]:::tool
+    DASH["dashboard.py + static/\nlocal web UI (127.0.0.1) - READ-ONLY except the owner's marks.\nTabs: My view · Overview · P&L · WIP · Costs · Draws · Bills · Pay Bills\n(Notion-style saved views) · Liens · Vendors · Sub LOC · Sales · Systems · Console"]:::tool
     REG[("AI Brain_Vault/02_processes/*.md\neight domain files — the process registry\n(read-only source, never written)")]:::src
     REGVIEW["registry_view.py\nparses the markdown row tables per request\nhealth · state · life — no cache, no DB table"]:::tool
     BROWSER[("Browser\nhttp://127.0.0.1:8787")]:::out
@@ -352,6 +352,7 @@ flowchart LR
     COSTLOAD ==>|"cost_line · cost_code"| DB
     DB ==>|"read-only"| DASH --> BROWSER
     DASH -.->|"owner marks: waiver · lien tag (bill_mark) → mirrored to the workbook on next sync-ap"| DB
+    DASH -.->|"Pay Bills check-run worksheet (pay_mark) - LOCAL only, never pays QBO / not mirrored"| DB
     SYNCACT["sync_actions.py\naction items → Notion pages\n(shared/notion_client)"]:::tool
     NOTION[("Notion 'Ledger Actions' DB\nthe folder-memory per action")]:::out
     DB --> SYNCACT --> NOTION

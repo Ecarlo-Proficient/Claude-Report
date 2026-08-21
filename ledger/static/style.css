@@ -548,11 +548,20 @@ a.ri-name:hover { text-decoration: underline; }
 .msel-menu[hidden] { display: none; }
 .msel-opt { display: flex; align-items: center; gap: 7px; padding: 5px 8px; border-radius: 6px; cursor: pointer;
   font-size: .88em; white-space: nowrap; }
+/* Same trap as .msel-menu: display:flex would beat the `hidden` attribute, so the search
+   box could not filter options out. Restore hidden's display:none for filtered options. */
+.msel-opt[hidden] { display: none; }
 .msel-opt:hover { background: var(--row-hover); }
 .msel-opt input { cursor: pointer; }
 .msel-clear { font: inherit; font-size: .78em; color: var(--text-dim); background: none; border: none; cursor: pointer;
   text-align: left; padding: 4px 8px 6px; border-bottom: 1px solid var(--border); margin-bottom: 3px; }
 .msel-clear:hover { color: var(--accent); }
+/* Select all / None toolbar at the top of a big checklist (e.g. vendors). */
+.msel-tools { display: flex; gap: 4px; padding: 1px 2px 5px; border-bottom: 1px solid var(--border); margin-bottom: 3px; }
+.msel-tool { font: inherit; font-size: .76em; color: var(--text-dim); background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: 6px; cursor: pointer; padding: 3px 9px; }
+.msel-tool:hover { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.msel-count { margin-left: auto; font-size: .74em; color: var(--text-dim); align-self: center; padding-right: 3px; font-variant-numeric: tabular-nums; }
 .msel-menu.wide { min-width: 240px; }
 .msel-search { font: inherit; font-size: .85em; padding: 5px 8px; margin: 1px 2px 5px; border-radius: 6px;
   border: 1px solid var(--border); background: var(--surface-2); color: var(--text); }
@@ -650,6 +659,20 @@ tr.wip-total > td { border-top: 2px solid var(--accent); font-weight: 800;
 .inline-check { display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
   font-size: .8em; color: var(--text-dim); font-weight: 500; white-space: nowrap; }
 .inline-check input { cursor: pointer; }
+
+/* Pay Bills: a check-run worksheet - mark bills, set a partial amount, save → pay list. */
+.pay-grid td, .pay-grid th { padding: 4px 9px; }
+.pay-grid tbody tr.pay-row:hover { background: var(--row-hover); }
+.pay-grid tbody tr.pay-row.on { background: color-mix(in srgb, var(--pos) 8%, transparent); }
+.pay-grid tbody tr.pay-row.on:hover { background: color-mix(in srgb, var(--pos) 13%, transparent); }
+.pay-grid input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
+.pay-amt { width: 92px; text-align: right; font-variant-numeric: tabular-nums; padding: 2px 6px;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text);
+  font-size: .95em; font-family: inherit; }
+.pay-amt:disabled { background: transparent; color: var(--text-dim); border-color: transparent; }
+.pay-amt.partial { border-color: color-mix(in srgb, #b8860b 60%, var(--border)); color: #8a6508; font-weight: 700; }
+.pay-amt:focus { outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent); }
 /* invoice rows nested under a payment: indent the first cell so the grouping reads */
 tr.sub-row > td:first-child { padding-left: 26px; }
 tr.sub-row > td { color: var(--text); }
