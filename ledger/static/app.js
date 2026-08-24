@@ -2548,66 +2548,80 @@ function invSubGroupToggle() { invSubGroup = !invSubGroup; const b = $("#ifSubGr
 // A "different view" the owner opens, picks which invoices to include (all checked by
 // default), and copies for a client - into Excel as cells or into an email as a table.
 let stmtRows = [];                     // snapshot of the invoices shown when the panel opened
-let stmtOff = new Set();               // keys the owner UNCHECKED (excluded from the copy)
+let stmtOn = new Set();                // keys the owner SELECTED (default NONE - opt in, owner 2026-08-21)
 const invKey = i => String(i.qbo_txn_id || i.doc_number || `${i.project_no}|${i.txn_date}|${i.balance}`);
 function _invRows() {                   // the same filtered set the table shows (msels + selects + bucket)
   const fv = sel => ($(sel) ? $(sel).value : "");
   const f = { div: fv("#ifDivision"), lien: fv("#ifLien"), litig: fv("#ifLitig") || "ex" };
   return (OI.invoices || []).filter(i => invPasses(i, f));
 }
-function _stmtChecked() { return stmtRows.filter(i => !stmtOff.has(invKey(i))); }
+function _stmtChecked() { return stmtRows.filter(i => stmtOn.has(invKey(i))); }
+function _stmtRowEls() { const b = $("#invStmtBody"); return b ? [...b.querySelectorAll("tr.stmt-row")] : []; }
 function _stmtTotalUpdate() {
-  const rows = _stmtChecked();
-  const t = rows.reduce((s, i) => s + oiBal(i), 0);
+  const t = _stmtChecked().reduce((s, i) => s + oiBal(i), 0);
   { const el = $("#stmtTotalVal"); if (el) el.textContent = money(t); }
-  { const b = $("#btnCopyStmt"); if (b) b.textContent = `Copy table (${rows.length})`; }
+  { const el = $("#stmtCount"); if (el) el.textContent = `${stmtOn.size} of ${stmtRows.length} selected`; }
+  { const b = $("#btnCopyStmt"); if (b) { b.textContent = stmtOn.size ? `Copy table (${stmtOn.size})` : "Copy table"; b.disabled = !stmtOn.size; } }
+}
+function _stmtSearch() {                 // narrow the list by project / invoice # / client
+  const q = ($("#stmtSearch") ? $("#stmtSearch").value : "").trim().toLowerCase();
+  for (const tr of _stmtRowEls()) tr.hidden = !!q && !(tr.dataset.s || "").includes(q);
+}
+function _stmtSelectVisible(on) {        // Select all / None over the rows the search currently shows
+  for (const tr of _stmtRowEls()) {
+    if (tr.hidden) continue;
+    const cb = tr.querySelector("input");
+    if (on) stmtOn.add(tr.dataset.key); else stmtOn.delete(tr.dataset.key);
+    if (cb) cb.checked = on; tr.classList.toggle("on", on);
+  }
+  _stmtTotalUpdate();
 }
 function openInvStatement() {
   stmtRows = _invRows().slice().sort(INV_SORTS.due);
-  stmtOff = new Set();
+  stmtOn = new Set();
   if (!stmtRows.length) { toast("No invoices in the current filter to copy"); return; }
   const clients = [...new Set(stmtRows.map(i => i.customer || "(no client)"))];
-  $("#invStmtTitle").textContent = clients.length === 1 ? clients[0] : `Open invoices · ${clients.length} clients`;
-  $("#invStmtSub").textContent = `${stmtRows.length} invoice${stmtRows.length > 1 ? "s" : ""}${OI.as_of ? " · as of " + fmtDate(OI.as_of) : ""} · uncheck any to exclude, then Copy table`;
+  const multi = clients.length > 1;
+  $("#invStmtTitle").textContent = multi ? `Open invoices · ${clients.length} clients` : clients[0];
+  $("#invStmtSub").textContent = `${stmtRows.length} open invoice${stmtRows.length > 1 ? "s" : ""}${OI.as_of ? " · as of " + fmtDate(OI.as_of) : ""}`;
   const body = $("#invStmtBody"); body.innerHTML = "";
-  body.appendChild(el2("p", "hint", "Internal-only columns (lien, litigation) are left off. Copy pastes into Excel as cells, or into an email as a table."));
+  // Controls: search + Select all / None (over the filtered rows) + a live count. Nothing is
+  // selected to start (owner 2026-08-21: auto-selecting all was hard to work with).
+  const ctrl = document.createElement("div"); ctrl.className = "stmt-ctrl";
+  const search = document.createElement("input"); search.type = "search"; search.id = "stmtSearch"; search.className = "stmt-search";
+  search.placeholder = "Search project / address / invoice #" + (multi ? " / client" : ""); search.oninput = _stmtSearch;
+  const all = document.createElement("button"); all.type = "button"; all.className = "btn small"; all.textContent = "Select all"; all.title = "Select every invoice the search shows"; all.onclick = () => _stmtSelectVisible(true);
+  const none = document.createElement("button"); none.type = "button"; none.className = "btn small"; none.textContent = "None"; none.onclick = () => _stmtSelectVisible(false);
+  const cnt = document.createElement("span"); cnt.className = "stmt-count"; cnt.id = "stmtCount";
+  ctrl.appendChild(search); ctrl.appendChild(all); ctrl.appendChild(none); ctrl.appendChild(cnt); body.appendChild(ctrl);
+  body.appendChild(el2("p", "hint", "Search to narrow, then Select all or tick the ones to send. Internal columns (lien, litigation) are left off; Copy pastes into Excel as cells or into an email as a table."));
   const tbl = document.createElement("table"); tbl.className = "grid stmt-grid";
   const thead = document.createElement("thead"), tbody = document.createElement("tbody");
-  const cols = ["", "Project", "Invoice #", "Invoice date", "Due date", "Past due", "Amount due"];
+  const cols = multi ? ["", "Client", "Project", "Invoice #", "Invoice date", "Due date", "Past due", "Amount due"]
+    : ["", "Project", "Invoice #", "Invoice date", "Due date", "Past due", "Amount due"];
+  const amtIdx = cols.length - 1;
   const htr = document.createElement("tr");
-  cols.forEach((c, idx) => { const th = document.createElement("th"); if (idx !== 6) th.className = "left"; th.textContent = c; htr.appendChild(th); });
+  cols.forEach((c, idx) => { const th = document.createElement("th"); if (idx !== amtIdx) th.className = "left"; th.textContent = c; htr.appendChild(th); });
   thead.appendChild(htr);
-  const byClient = new Map();
-  for (const i of stmtRows) { const c = i.customer || "(no client)"; if (!byClient.has(c)) byClient.set(c, []); byClient.get(c).push(i); }
-  for (const [c, list] of byClient) {
-    if (clients.length > 1) {
-      const gtr = document.createElement("tr"); gtr.className = "bill-group";
-      const gtd = document.createElement("td"); gtd.colSpan = cols.length;
-      const cell = document.createElement("div"); cell.className = "bg-cell";
-      const key = document.createElement("span"); key.className = "bg-key"; key.textContent = c;
-      cell.appendChild(key); gtd.appendChild(cell); gtr.appendChild(gtd); tbody.appendChild(gtr);
-    }
-    const byP = new Map();
-    for (const i of list) { const p = i.project_no || "(no project)"; if (!byP.has(p)) byP.set(p, []); byP.get(p).push(i); }
-    for (const [p, pg] of byP) {
-      for (const i of pg) {
-        const tr = document.createElement("tr"); tr.className = "stmt-row";
-        const c0 = document.createElement("td"); const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = true;
-        cb.onchange = () => { if (cb.checked) stmtOff.delete(invKey(i)); else stmtOff.add(invKey(i)); tr.classList.toggle("off", !cb.checked); _stmtTotalUpdate(); };
-        c0.appendChild(cb); tr.appendChild(c0);
-        tr.appendChild(leftText(p + (nameOf(p) ? " · " + nameOf(p) : "")));
-        tr.appendChild(leftText(i.doc_number || "–"));
-        tr.appendChild(leftText(fmtDateShort(i.txn_date)));
-        tr.appendChild(leftText(fmtDateShort(i.due_date)));
-        const dpd = (i.days_past_due != null && i.days_past_due > 0) ? i.days_past_due + "d" : "–";
-        const dc = leftText(dpd); if (i.days_past_due > 0) dc.style.color = "var(--neg)"; tr.appendChild(dc);
-        tr.appendChild(rightText(money(oiBal(i))));
-        tbody.appendChild(tr);
-      }
-    }
+  for (const i of stmtRows) {
+    const p = i.project_no || "(no project)";
+    const tr = document.createElement("tr"); tr.className = "stmt-row"; tr.dataset.key = invKey(i);
+    tr.dataset.s = `${i.customer || ""} ${p} ${nameOf(p)} ${i.doc_number || ""}`.toLowerCase();
+    const c0 = document.createElement("td"); const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = false;
+    cb.onchange = () => { if (cb.checked) stmtOn.add(tr.dataset.key); else stmtOn.delete(tr.dataset.key); tr.classList.toggle("on", cb.checked); _stmtTotalUpdate(); };
+    c0.appendChild(cb); tr.appendChild(c0);
+    if (multi) tr.appendChild(leftText(i.customer || "–"));
+    tr.appendChild(leftText(p + (nameOf(p) ? " · " + nameOf(p) : "")));
+    tr.appendChild(leftText(i.doc_number || "–"));
+    tr.appendChild(leftText(fmtDateShort(i.txn_date)));
+    tr.appendChild(leftText(fmtDateShort(i.due_date)));
+    const dpd = (i.days_past_due != null && i.days_past_due > 0) ? i.days_past_due + "d" : "–";
+    const dc = leftText(dpd); if (i.days_past_due > 0) dc.style.color = "var(--neg)"; tr.appendChild(dc);
+    tr.appendChild(rightText(money(oiBal(i))));
+    tbody.appendChild(tr);
   }
   const ttr = document.createElement("tr"); ttr.className = "ag-total";
-  const lead = document.createElement("td"); lead.className = "left"; lead.colSpan = 6; lead.textContent = "Total due"; ttr.appendChild(lead);
+  const lead = document.createElement("td"); lead.className = "left"; lead.colSpan = amtIdx; lead.textContent = "Total selected"; ttr.appendChild(lead);
   const tv = document.createElement("td"); tv.className = "right"; tv.id = "stmtTotalVal"; ttr.appendChild(tv); tbody.appendChild(ttr);
   tbl.appendChild(thead); tbl.appendChild(tbody); body.appendChild(tbl);
   _stmtTotalUpdate();

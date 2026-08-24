@@ -740,7 +740,13 @@ tr.ag-total > td.ag0, tr.ag-total > td.ag1, tr.ag-total > td.ag2, tr.ag-total > 
 .stmt-grid { width: 100%; font-size: .86em; }
 .stmt-grid th, .stmt-grid td { padding: 4px 8px; }
 .stmt-grid input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
-.stmt-grid tr.stmt-row.off td:not(:first-child) { opacity: .4; text-decoration: line-through; }
+.stmt-grid tr.stmt-row.on > td { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.stmt-grid tr.stmt-row:hover > td { background: var(--row-hover); }
+/* Statement controls: a search box + Select all / None + a live count. */
+.stmt-ctrl { display: flex; align-items: center; gap: 8px; margin: 2px 0 8px; flex-wrap: wrap; }
+.stmt-search { flex: 1 1 200px; min-width: 140px; font: inherit; font-size: .9em; padding: 6px 9px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); color: var(--text); }
+.stmt-count { margin-left: auto; font-size: .82em; color: var(--text-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
 /* Vertical rules between the aging bucket columns so the eye tracks the money across (owner). */
 .aging-grid td.ag, .aging-grid th.ag { border-left: 1px solid var(--border); }
 /* Lien cell = the computed notice CLOCK (when the lien is due) + the Notion status pill. */

@@ -14,9 +14,12 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     button toggles back to the original flat list. Grand total is unaffected either way.
   - **Frozen header**: the invoices `.table-scroll` gets `.inv-scroll` (bounded height) so the base
     `.grid` sticky thead freezes as you scroll (verified: pinned at offset 0 after a scroll).
-  - **"Copy for client" statement** (a right-side panel, the "different view"): opens the filtered open
-    invoices grouped client -> project, each with a checkbox (all checked; uncheck to exclude - live total
-    + "Copy table (N)"). **Copy writes BOTH formats** via `ClipboardItem` - `text/html` (a bordered table
+  - **"Copy for client" statement** (a right-side panel, the "different view"): a flat, searchable list of
+    the filtered open invoices. **Nothing is selected to start** (owner 2026-08-21: auto-checking all was
+    hard to work with) - a **search box** narrows by project / address / invoice # / client, and
+    **Select all / None** act on the filtered rows; tick individual rows too. Live "N of M selected" +
+    "Copy table (N)" (disabled at 0). The Client column shows only in the multi-client view; a single-client
+    statement fits without horizontal scroll. **Copy writes BOTH formats** via `ClipboardItem` - `text/html` (a bordered table
     that pastes into an email) and `text/plain` TSV (pastes into Excel as cells), fallback to plain copy.
     Client-facing columns only: Client · Project (# + name) · Invoice # · Invoice date · Due date · Days
     past due · Amount due + Total due; **internal columns (lien clock, litigation) are deliberately left
