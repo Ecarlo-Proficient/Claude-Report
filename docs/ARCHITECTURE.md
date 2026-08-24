@@ -613,6 +613,24 @@ marks (merged by txn id) and prunes long-cleared checks. Output `~/Documents/Com
 Money Out Register.xlsx` (chmod 600); the aged-&gt;30-days unmarked checks are the chase
 list, surfaced on the company dashboard.
 
+**`one-offs/legacy_job_cost_pull.py`** (read-only QBO) — costs + billing for an OLDER
+job whose lines were never consistently project-coded. Plain "costs for this customer"
+under-reports such a job, because only part of its cost carries the project customer.
+Works on Bill + Purchase **LINE ITEMS** (never txn totals - most bills are multi-line
+and only some lines belong to the job) and takes a line on the first rule that fires:
+**1 project** (line `CustomerRef` = the project customer) → **2 line text** (line
+Description or line `CustomerRef.name` names the job) → **3 bill note** (the BILL's
+`PrivateNote` names the job, names exactly ONE job number, and the line's own text
+names no job at all). **Guard on rule 3:** a memo listing more than one job number
+(shared pump/material vendors) is SKIPPED, never split. Billing is separate: on an
+older job the invoices usually sit on the **parent** customer, so both project and
+parent are pulled and the invoices whose `PrivateNote` names the job are kept.
+Customer ids resolve from the project # (`--project-id`/`--parent-id` override);
+`--alias` adds the street name the job goes by. `--expect <json>` verifies a run
+against known-good figures (✓/✗ per line) - fixtures live in the log dir, never in
+this repo. The company-wide Bill/Purchase pulls are disk-cached under
+`~/Library/Logs/Proficient/legacy-job-pull/` and shared across jobs.
+
 **`one-offs/sub_loc_report.py`** (read-only) — subcontractor line-of-credit float
 model. Sub bills (memo ~ "sub") paid → LOC draws (BillPayment date, allocated across
 each bill's line projects); client Payments → repayments. Matched **by draw period**:
