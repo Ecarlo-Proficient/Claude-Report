@@ -40,7 +40,14 @@ manual close), RP (no draws — expenses → invoice → profit).
   page)** · QBO # (linked to the SCAN, the user's identifier) · DATE ·
   VENDOR · QTY · RATE · AMOUNT · [SALES TAX] · DRAW label · DESCRIPTION.
   The ↗ first column is the direct QBO link (the user 2026-08-10 — it went
-  missing when QBO # became the attachment link). The mark readback is
+  missing when QBO # became the attachment link). **Column A is a DEDICATED
+  4.5-wide ↗ lane and the scoreboard starts at column B** (the user
+  2026-08-10, rejecting the first cut: arrows floating in the 34-wide ITEM
+  column read as slop). Every scoreboard formula, band fill, conditional
+  format and autofit range is one column right of where it used to be.
+  Verified by LOOKING at the rendered CP585 Labor + Concrete sheets in Excel,
+  not just by reading cells back — that is now the standing bar for any
+  layout change here. The mark readback is
   HEADER-DRIVEN (finds the QBO #/DATE/VENDOR/AMOUNT columns by name), so it
   reads both pre- and post-↗ layouts and survives future column moves. The QBO # link opens the UPLOADED BILL
   FILE, not the QBO bill page (the user 2026-07-31): QBO's attachment URLs

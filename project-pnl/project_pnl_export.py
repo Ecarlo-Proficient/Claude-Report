@@ -4153,12 +4153,15 @@ def build_sheet_labor_concrete(
     # C actual/vendor, D balance/description, E bal%/qty, F../draws + rate,
     # amount, tax, draw-label.
     n_draws = len(col_keys)
-    sb_tax = 6 + n_draws                     # scoreboard TAX col (after draws)
+    sb_tax = 7 + n_draws                     # scoreboard TAX col (after draws)
     sb_fuel = sb_tax + (1 if has_tax else 0)
     sb_incl = sb_fuel + (1 if has_fuel else 0)
-    widths = {1: 34, 2: 16, 3: 20, 4: 16, 5: 12}
+    # Col 1 is the ledger's ↗ lane and must stay GENUINELY NARROW (the user
+    # 2026-08-10 — a wide shared column with floating arrows is slop); the
+    # scoreboard starts at col 2.
+    widths = {1: 4.5, 2: 34, 3: 16, 4: 20, 5: 16, 6: 12}
     for i in range(n_draws):
-        widths[6 + i] = 18                   # fits "01/26/26–02/25/26" unclipped
+        widths[7 + i] = 18                   # fits "01/26/26–02/25/26" unclipped
     if has_tax:
         widths[sb_tax] = 14
     if has_fuel:
@@ -4186,13 +4189,13 @@ def build_sheet_labor_concrete(
         ws.column_dimensions[get_column_letter(col)].width = w
 
     r = _write_meta_block(ws, proj, cust_info, wip_info, as_of)
-    sub = ws.cell(row=r, column=1, value=(
+    sub = ws.cell(row=r, column=2, value=(
         f"{kind.upper()} — SCOREBOARD (budget vs actual by cost code and draw), "
         f"then the LEDGER: every bill, fully expanded."))
     sub.font = Font(bold=True, size=SZ, color="1F3A5F")
     r += 1
     if budget_source:
-        src = ws.cell(row=r, column=1, value=f"Budget source: {budget_source}")
+        src = ws.cell(row=r, column=2, value=f"Budget source: {budget_source}")
         src.font = Font(italic=True, size=SZ, color="595959")
         r += 1
     r += 1
@@ -4202,10 +4205,10 @@ def build_sheet_labor_concrete(
     F_OUT = PatternFill("solid", fgColor="7F7F7F")
     F_TAXF = PatternFill("solid", fgColor="7F6000")
     hdr = r
-    heads = ([("ITEM (cost code)", 1, F_DRAW), ("BUDGET", 2, F_DRAW),
-              ("ACTUAL" + (" (ex-tax)" if has_tax else ""), 3, F_DRAW),
-              ("BALANCE $", 4, F_DRAW), ("BALANCE %", 5, F_DRAW)]
-             + [(h, 6 + i, F_OUT if k in (_BEFORE_KEY, _AFTER_KEY) else F_DRAW)
+    heads = ([("ITEM (cost code)", 2, F_DRAW), ("BUDGET", 3, F_DRAW),
+              ("ACTUAL" + (" (ex-tax)" if has_tax else ""), 4, F_DRAW),
+              ("BALANCE $", 5, F_DRAW), ("BALANCE %", 6, F_DRAW)]
+             + [(h, 7 + i, F_OUT if k in (_BEFORE_KEY, _AFTER_KEY) else F_DRAW)
                 for i, (k, h) in enumerate(col_keys)])
     if has_tax:
         heads.append(("SALES TAX", sb_tax, F_TAXF))
@@ -4226,24 +4229,24 @@ def build_sheet_labor_concrete(
     for code in codes:
         g = _grp(code)
         band = _cost_band_fill(code)
-        ws.cell(row=r, column=1, value=_cost_code_label(code)
+        ws.cell(row=r, column=2, value=_cost_code_label(code)
                 ).font = Font(bold=True, size=SZ)
-        bcell = ws.cell(row=r, column=2, value=round(budget.get(code, 0.0), 2))
+        bcell = ws.cell(row=r, column=3, value=round(budget.get(code, 0.0), 2))
         bcell.number_format = ACC_FMT
         bcell.font = Font(size=SZ)
         for i, (key, _h) in enumerate(col_keys):
-            c = ws.cell(row=r, column=6 + i,
+            c = ws.cell(row=r, column=7 + i,
                         value=round(g["draws"].get(key, 0.0), 2))
             c.number_format = ACC_FMT
             c.font = Font(size=SZ)
-        ac = ws.cell(row=r, column=3, value="=" + "+".join(
-            f"{get_column_letter(6 + i)}{r}" for i in range(n_draws)))
+        ac = ws.cell(row=r, column=4, value="=" + "+".join(
+            f"{get_column_letter(7 + i)}{r}" for i in range(n_draws)))
         ac.number_format = ACC_FMT
         ac.font = Font(bold=True, size=SZ)
-        blc = ws.cell(row=r, column=4, value=f"=B{r}-C{r}")
+        blc = ws.cell(row=r, column=5, value=f"=C{r}-D{r}")
         blc.number_format = ACC_FMT
         blc.font = Font(bold=True, size=SZ)
-        pc = ws.cell(row=r, column=5, value=f'=IF(B{r}=0,"",D{r}/B{r})')
+        pc = ws.cell(row=r, column=6, value=f'=IF(C{r}=0,"",E{r}/C{r})')
         pc.number_format = PCT_FMT
         pc.font = Font(bold=True, size=SZ)
         if has_tax:
@@ -4257,13 +4260,13 @@ def build_sheet_labor_concrete(
             fcell.number_format = ACC_FMT
             fcell.font = Font(size=SZ)
         if has_tax or has_fuel:
-            parts = [f"C{r}"] + ([f"{get_column_letter(sb_tax)}{r}"] if has_tax else []) \
+            parts = [f"D{r}"] + ([f"{get_column_letter(sb_tax)}{r}"] if has_tax else []) \
                     + ([f"{get_column_letter(sb_fuel)}{r}"] if has_fuel else [])
             ic = ws.cell(row=r, column=sb_incl, value="=" + "+".join(parts))
             ic.number_format = ACC_FMT
             ic.font = Font(size=SZ)
-        last_sb = sb_incl if (has_tax or has_fuel) else 5 + n_draws
-        for col in range(1, last_sb + 1):
+        last_sb = sb_incl if (has_tax or has_fuel) else 6 + n_draws
+        for col in range(2, last_sb + 1):
             cell = ws.cell(row=r, column=col)
             cell.fill = band
             cell.border = THIN_BORDER
@@ -4274,28 +4277,28 @@ def build_sheet_labor_concrete(
     last_code = r - 1
 
     tot = r
-    ws.cell(row=tot, column=1, value=f"TOTAL {kind.upper()}").font = TOTAL_FONT
-    last_sb = sb_incl if (has_tax or has_fuel) else 5 + n_draws
-    for col in range(1, last_sb + 1):
+    ws.cell(row=tot, column=2, value=f"TOTAL {kind.upper()}").font = TOTAL_FONT
+    last_sb = sb_incl if (has_tax or has_fuel) else 6 + n_draws
+    for col in range(2, last_sb + 1):
         cell = ws.cell(row=tot, column=col)
         cell.fill = TOTAL_FILL
         cell.font = TOTAL_FONT
         cell.border = THIN_BORDER
-    for col in ([2, 3] + [6 + i for i in range(n_draws)]
+    for col in ([3, 4] + [7 + i for i in range(n_draws)]
                 + ([sb_tax] if has_tax else [])
                 + ([sb_fuel] if has_fuel else [])
                 + ([sb_incl] if (has_tax or has_fuel) else [])):
         L = get_column_letter(col)
         c = ws.cell(row=tot, column=col, value=f"=SUM({L}{first_code}:{L}{last_code})")
         c.number_format = ACC_FMT
-    ws.cell(row=tot, column=4, value=f"=B{tot}-C{tot}").number_format = ACC_FMT
-    ws.cell(row=tot, column=5,
-            value=f'=IF(B{tot}=0,"",D{tot}/B{tot})').number_format = PCT_FMT
+    ws.cell(row=tot, column=5, value=f"=C{tot}-D{tot}").number_format = ACC_FMT
+    ws.cell(row=tot, column=6,
+            value=f'=IF(C{tot}=0,"",E{tot}/C{tot})').number_format = PCT_FMT
     ws.row_dimensions[tot].height = ROW_H
     r += 1
 
     red = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
-    for col in (4, 5):
+    for col in (5, 6):
         L = get_column_letter(col)
         ws.conditional_formatting.add(
             f"{L}{first_code}:{L}{tot}",
@@ -4314,7 +4317,7 @@ def build_sheet_labor_concrete(
     # ───────────────────────── LEDGER ─────────────────────────
     n_marks_kept = [0]
     r_ledger_hdr = r + 1                       # the QBO#/DATE/… header row
-    lh = ws.cell(row=r, column=1, value=(
+    lh = ws.cell(row=r, column=2, value=(
         "LEDGER — every bill; the DRAW column says which draw window the bill "
         "date fell in. QBO # opens the uploaded bill file (attachments/ beside "
         "this workbook); '(N files)' opens that bill's own scan folder. "
@@ -4346,7 +4349,7 @@ def build_sheet_labor_concrete(
         if not merged:
             continue
         band = _cost_band_fill(code)
-        bc = ws.cell(row=r, column=1, value=_cost_code_label(code))
+        bc = ws.cell(row=r, column=2, value=_cost_code_label(code))
         bc.font = Font(bold=True, size=SZ)
         sub_amt = round(sum(l["amount"] for l in merged), 2)
         sc = ws.cell(row=r, column=L_AMT, value=sub_amt)
@@ -4449,7 +4452,7 @@ def build_sheet_labor_concrete(
     # their line count. DESCRIPTION is excluded — it spills right by design.
     # Measured rows: the scoreboard table, the yards strip, and the ledger —
     # never the spilling note lines.
-    _autofit(ws, 1, L_DESC - 1, [hdr, r_ledger_hdr],
+    _autofit(ws, 2, L_DESC - 1, [hdr, r_ledger_hdr],
              [(hdr, tot), (r_ledger_hdr, ws.max_row)])
     if n_marks_kept[0] or marks:
         kept, had = n_marks_kept[0], len(marks or {})
