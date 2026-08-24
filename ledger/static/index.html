@@ -245,8 +245,12 @@
           <b>Lien</b> column is the matching status from the Notion Lien Tracker (blank = no lien on file).
           Invoice # opens the invoice in QuickBooks. Click a bucket tile to filter.</p>
         <div class="bill-filters" id="invFilters">
-          <label class="fld"><span>Client</span><input type="search" id="ifClient" placeholder="Firestone" autocomplete="off"></label>
-          <label class="fld"><span>Project #</span><input type="search" id="ifProj" placeholder="RP7470" autocomplete="off"></label>
+          <div class="fld"><span>Client</span>
+            <div class="msel" id="ifClientMsel"><button type="button" class="msel-btn" id="ifClientBtn">All clients</button><div class="msel-menu wide" id="ifClientMenu" hidden></div></div>
+          </div>
+          <div class="fld"><span>Project #</span>
+            <div class="msel" id="ifProjMsel"><button type="button" class="msel-btn" id="ifProjBtn">All projects</button><div class="msel-menu" id="ifProjMenu" hidden></div></div>
+          </div>
           <label class="fld"><span>Division</span><select id="ifDivision"></select></label>
           <label class="fld"><span>Lien</span><select id="ifLien"></select></label>
           <label class="fld"><span>Litigation</span>
@@ -264,10 +268,12 @@
               <option value="client">Client A–Z</option>
             </select>
           </label>
+          <button class="btn small" id="ifSubGroup" title="Group each client's invoices by project, or flatten to one list">Flatten</button>
           <button class="btn small" id="ifCollapse">Collapse all</button>
+          <button class="btn small" id="ifStatement" title="Open a clean statement of the filtered open invoices to copy/paste to the client">Copy for client ↗</button>
           <button class="btn small" id="ifClear" hidden>Clear filters</button>
         </div>
-        <div class="table-scroll">
+        <div class="table-scroll inv-scroll">
           <table class="grid aging-grid" id="invTable"><thead></thead><tbody></tbody></table>
         </div>
       </section>
@@ -644,6 +650,21 @@
       </div>
     </div>
     <div class="panel-body" id="payBillsBody"></div>
+  </aside>
+
+  <!-- ── Client statement: a clean, copy/paste-able table of the filtered open invoices ── -->
+  <aside class="panel panel-right wide" id="invStatement" hidden>
+    <div class="panel-head">
+      <div>
+        <div class="panel-title" id="invStmtTitle">Open invoices</div>
+        <div class="panel-sub" id="invStmtSub"></div>
+      </div>
+      <div class="panel-head-actions">
+        <button class="btn small" id="btnCopyStmt">Copy table</button>
+        <button class="btn icon" id="btnCloseStmt" title="Close">✕</button>
+      </div>
+    </div>
+    <div class="panel-body" id="invStmtBody"></div>
   </aside>
 
   <!-- ── Lien-mark review: what you changed (staged) + what's already on file, before you Save ── -->

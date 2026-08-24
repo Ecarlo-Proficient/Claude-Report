@@ -4,6 +4,24 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Open Invoices: multi-select filters + project sub-grouping + a client statement to copy/paste
+  (owner, 2026-08-21).** Four asks, all frontend:
+  - **Client + Project # are now multi-selects** (the generic `buildMSel` component, search + Select
+    all/None), replacing the free-text boxes. `invPasses` uses `mselPasses`; Customer Center's
+    jump-to-client sets the Client set. `_invMSelSig` guards the rebuild so a toggle keeps its search.
+  - **Sub-group each client's invoices by PROJECT** (default) when the client has >1 project - an
+    indented sub-band per project (project # · name · subtotal · count). A **Flatten / Group by project**
+    button toggles back to the original flat list. Grand total is unaffected either way.
+  - **Frozen header**: the invoices `.table-scroll` gets `.inv-scroll` (bounded height) so the base
+    `.grid` sticky thead freezes as you scroll (verified: pinned at offset 0 after a scroll).
+  - **"Copy for client" statement** (a right-side panel, the "different view"): opens the filtered open
+    invoices grouped client -> project, each with a checkbox (all checked; uncheck to exclude - live total
+    + "Copy table (N)"). **Copy writes BOTH formats** via `ClipboardItem` - `text/html` (a bordered table
+    that pastes into an email) and `text/plain` TSV (pastes into Excel as cells), fallback to plain copy.
+    Client-facing columns only: Client · Project (# + name) · Invoice # · Invoice date · Due date · Days
+    past due · Amount due + Total due; **internal columns (lien clock, litigation) are deliberately left
+    off**. Verified live: NEWLEAF (5 projects) sub-bands render, uncheck updates the total, TSV/HTML build
+    correctly and sum to the shown total; no console errors. Frontend-only - a browser reload picks it up.
 - **Project P&L: the invoices behind billed-to-date (owner, 2026-08-21: "in project P&L I need my billed
   to date, I need to see all the invoices the project has").** The P&L expansion (`buildPnlGroup`, shown
   in both the P&L-tab inline expand and the project detail panel) now lists **every AR invoice (draw) the

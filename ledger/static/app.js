@@ -2267,6 +2267,13 @@ function applySublocSections() {
 let invCollapsed = new Set();     // customer groups the owner has collapsed
 let invGroupKeys = [];            // customer groups on screen (drives Collapse/Expand-all)
 let invBucketFilter = null;       // aging bucket clicked in the stats row (null = all)
+let invSubGroup = true;           // sub-group a client's invoices by project (default) vs one flat list
+const invMSel = {};               // Client / Project # multi-select filters (owner 2026-08-21)
+let _invMSelSig = null;
+const INV_MSEL = [
+  { id: "ifClient", all: "All clients",  get: i => i.customer || "",   search: true, lbl: v => v || "(no client)" },
+  { id: "ifProj",   all: "All projects", get: i => i.project_no || "", search: true, lbl: v => v || "(no project)" },
+];
 const AGING_HEX = ["#2E7D32", "#7CB342", "#D68910", "#C0552B", "#922B21"];  // green→red (matches aging_sheet.py)
 
 // Notion Lien Tracker status → [label, dot color]. Rendered as a Notion-style status pill
@@ -2325,8 +2332,7 @@ function buildInvFilters() {
 }
 
 function invPasses(i, f) {
-  if (f.client && !(i.customer || "").toLowerCase().includes(f.client)) return false;
-  if (f.proj && !(i.project_no || "").toLowerCase().includes(f.proj)) return false;
+  if (!mselPasses(i, INV_MSEL, invMSel)) return false;   // Client / Project # multi-selects
   if (f.div && (i.division || "") !== f.div) return false;
   if (f.lien === "__none__" ? !!i.lien_status : (f.lien && (i.lien_status || "") !== f.lien)) return false;
   if (f.litig === "ex" && i.litigation) return false;
@@ -2348,8 +2354,12 @@ function renderOpenInvoices() {
   if (!$("#ifDivision") || !$("#ifDivision").options.length) buildInvFilters();
 
   const fv = sel => ($(sel) ? $(sel).value : "");
-  const f = { client: fv("#ifClient").trim().toLowerCase(), proj: fv("#ifProj").trim().toLowerCase(),
-              div: fv("#ifDivision"), lien: fv("#ifLien"), litig: fv("#ifLitig") || "ex" };
+  const f = { div: fv("#ifDivision"), lien: fv("#ifLien"), litig: fv("#ifLitig") || "ex" };  // Client/Project # are msels now
+  // Client + Project # multi-selects: build once per data change (signature guard) so a toggle keeps its search.
+  const invSig = String(all.length);
+  if (invSig !== _invMSelSig || !($("#ifClientMenu") && $("#ifClientMenu").querySelector(".msel-opt"))) {
+    _invMSelSig = invSig; for (const cfg of INV_MSEL) buildMSel(cfg, all, invMSel, renderOpenInvoices);
+  }
   // Litigation is EXCLUDED by default; flag the box red whenever it's hiding/limiting rows so it's
   // obvious to the eye that a filter is in place (owner 2026-08-19).
   { const el = $("#ifLitig"); if (el) el.classList.toggle("filter-on", (el.value || "ex") !== "all"); }
@@ -2384,7 +2394,8 @@ function renderOpenInvoices() {
     ? `(${rows.length.toLocaleString()} of ${all.length.toLocaleString()} · ${money(shown)} open)`
     : "(no AR data - run load_invoices.py)";
   { const el = $("#invAsOf"); if (el) el.textContent = OI.as_of ? "aged as of " + fmtDate(OI.as_of) : ""; }
-  { const cb = $("#ifClear"); if (cb) cb.hidden = !(f.client || f.proj || f.div || f.lien || f.litig !== "ex" || invBucketFilter != null); }
+  { const anyMsel = INV_MSEL.some(c => (invMSel[c.id] || {}).size);
+    const cb = $("#ifClear"); if (cb) cb.hidden = !(anyMsel || f.div || f.lien || f.litig !== "ex" || invBucketFilter != null); }
 
   const thead = host.querySelector("thead"), tbody = host.querySelector("tbody");
   thead.innerHTML = ""; tbody.innerHTML = "";
@@ -2435,9 +2446,26 @@ function renderOpenInvoices() {
     cell.appendChild(left); cell.appendChild(amt); gtd.appendChild(cell); gtr.appendChild(gtd);
     gtr.onclick = () => { if (invCollapsed.has(k)) invCollapsed.delete(k); else invCollapsed.add(k); renderOpenInvoices(); };
     tbody.appendChild(gtr);
-    for (const i of g) {
-      grand[i.bucket_index] += oiBal(i);
-      if (!collapsed) tbody.appendChild(invRow(i, buckets));
+    for (const i of g) grand[i.bucket_index] += oiBal(i);   // grand total counts every invoice, even collapsed
+    if (collapsed) continue;
+    // Sub-group a client's invoices by PROJECT when the toggle is on and there's >1 project
+    // (owner 2026-08-21); otherwise the original flat list. Grand total is unaffected either way.
+    const projs = [...new Set(g.map(x => x.project_no || "(no project)"))];
+    if (invSubGroup && projs.length > 1) {
+      const inP = p => g.filter(x => (x.project_no || "(no project)") === p);
+      const pMinDue = p => inP(p).reduce((m, x) => (x.due_date && (!m || x.due_date < m)) ? x.due_date : m, null) || "9999";
+      const pTotal = p => inP(p).reduce((t, x) => t + oiBal(x), 0);
+      const pCmp = { due: (a, b) => pMinDue(a).localeCompare(pMinDue(b)) || a.localeCompare(b, undefined, { numeric: true }),
+        owed: (a, b) => pTotal(b) - pTotal(a),
+        client: (a, b) => a.localeCompare(b, undefined, { numeric: true }) }[sortKey] || null;
+      const porder = pCmp ? [...projs].sort(pCmp) : projs;
+      for (const p of porder) {
+        const pg = inP(p);
+        tbody.appendChild(invSubBand(p, nameOf(p), pTotal(p), pg.length, cols.length));
+        for (const i of pg) tbody.appendChild(invRow(i, buckets));
+      }
+    } else {
+      for (const i of g) tbody.appendChild(invRow(i, buckets));
     }
   }
   const ttr = document.createElement("tr"); ttr.className = "ag-total";
@@ -2497,10 +2525,126 @@ function invToggleAll() {
   renderOpenInvoices();
 }
 function invClearFilters() {
-  ["#ifClient", "#ifProj", "#ifDivision", "#ifLien"].forEach(s => { const el = $(s); if (el) el.value = ""; });
-  const lt = $("#ifLitig"); if (lt) lt.value = "ex";   // baseline = litigation excluded
+  ["#ifDivision", "#ifLien"].forEach(s => { const el = $(s); if (el) el.value = ""; });
+  for (const cfg of INV_MSEL) invMSel[cfg.id] = new Set();   // clear Client + Project # multi-selects
+  _invMSelSig = null;                                        // force the menus to rebuild (reset checks + label)
+  const lt = $("#ifLitig"); if (lt) lt.value = "ex";         // baseline = litigation excluded
   invBucketFilter = null;
   renderOpenInvoices();
+}
+// A project sub-band inside a client group (indented, lighter than the client band).
+function invSubBand(proj, name, open, count, colspan) {
+  const tr = document.createElement("tr"); tr.className = "bill-subgroup";
+  const td = document.createElement("td"); td.colSpan = colspan;
+  const cell = document.createElement("div"); cell.className = "bg-cell";
+  const key = document.createElement("span"); key.className = "sg-key"; key.textContent = proj + (name ? " · " + name : "");
+  const amt = document.createElement("span"); amt.className = "bg-amt"; amt.textContent = `${money(open)} · ${count} inv`;
+  cell.appendChild(key); cell.appendChild(amt); td.appendChild(cell); tr.appendChild(td);
+  return tr;
+}
+function invSubGroupToggle() { invSubGroup = !invSubGroup; const b = $("#ifSubGroup"); if (b) b.textContent = invSubGroup ? "Flatten" : "Group by project"; renderOpenInvoices(); }
+
+// ── Client statement: a clean, copy/paste-able table of the filtered open invoices ──
+// A "different view" the owner opens, picks which invoices to include (all checked by
+// default), and copies for a client - into Excel as cells or into an email as a table.
+let stmtRows = [];                     // snapshot of the invoices shown when the panel opened
+let stmtOff = new Set();               // keys the owner UNCHECKED (excluded from the copy)
+const invKey = i => String(i.qbo_txn_id || i.doc_number || `${i.project_no}|${i.txn_date}|${i.balance}`);
+function _invRows() {                   // the same filtered set the table shows (msels + selects + bucket)
+  const fv = sel => ($(sel) ? $(sel).value : "");
+  const f = { div: fv("#ifDivision"), lien: fv("#ifLien"), litig: fv("#ifLitig") || "ex" };
+  return (OI.invoices || []).filter(i => invPasses(i, f));
+}
+function _stmtChecked() { return stmtRows.filter(i => !stmtOff.has(invKey(i))); }
+function _stmtTotalUpdate() {
+  const rows = _stmtChecked();
+  const t = rows.reduce((s, i) => s + oiBal(i), 0);
+  { const el = $("#stmtTotalVal"); if (el) el.textContent = money(t); }
+  { const b = $("#btnCopyStmt"); if (b) b.textContent = `Copy table (${rows.length})`; }
+}
+function openInvStatement() {
+  stmtRows = _invRows().slice().sort(INV_SORTS.due);
+  stmtOff = new Set();
+  if (!stmtRows.length) { toast("No invoices in the current filter to copy"); return; }
+  const clients = [...new Set(stmtRows.map(i => i.customer || "(no client)"))];
+  $("#invStmtTitle").textContent = clients.length === 1 ? clients[0] : `Open invoices · ${clients.length} clients`;
+  $("#invStmtSub").textContent = `${stmtRows.length} invoice${stmtRows.length > 1 ? "s" : ""}${OI.as_of ? " · as of " + fmtDate(OI.as_of) : ""} · uncheck any to exclude, then Copy table`;
+  const body = $("#invStmtBody"); body.innerHTML = "";
+  body.appendChild(el2("p", "hint", "Internal-only columns (lien, litigation) are left off. Copy pastes into Excel as cells, or into an email as a table."));
+  const tbl = document.createElement("table"); tbl.className = "grid stmt-grid";
+  const thead = document.createElement("thead"), tbody = document.createElement("tbody");
+  const cols = ["", "Project", "Invoice #", "Invoice date", "Due date", "Past due", "Amount due"];
+  const htr = document.createElement("tr");
+  cols.forEach((c, idx) => { const th = document.createElement("th"); if (idx !== 6) th.className = "left"; th.textContent = c; htr.appendChild(th); });
+  thead.appendChild(htr);
+  const byClient = new Map();
+  for (const i of stmtRows) { const c = i.customer || "(no client)"; if (!byClient.has(c)) byClient.set(c, []); byClient.get(c).push(i); }
+  for (const [c, list] of byClient) {
+    if (clients.length > 1) {
+      const gtr = document.createElement("tr"); gtr.className = "bill-group";
+      const gtd = document.createElement("td"); gtd.colSpan = cols.length;
+      const cell = document.createElement("div"); cell.className = "bg-cell";
+      const key = document.createElement("span"); key.className = "bg-key"; key.textContent = c;
+      cell.appendChild(key); gtd.appendChild(cell); gtr.appendChild(gtd); tbody.appendChild(gtr);
+    }
+    const byP = new Map();
+    for (const i of list) { const p = i.project_no || "(no project)"; if (!byP.has(p)) byP.set(p, []); byP.get(p).push(i); }
+    for (const [p, pg] of byP) {
+      for (const i of pg) {
+        const tr = document.createElement("tr"); tr.className = "stmt-row";
+        const c0 = document.createElement("td"); const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = true;
+        cb.onchange = () => { if (cb.checked) stmtOff.delete(invKey(i)); else stmtOff.add(invKey(i)); tr.classList.toggle("off", !cb.checked); _stmtTotalUpdate(); };
+        c0.appendChild(cb); tr.appendChild(c0);
+        tr.appendChild(leftText(p + (nameOf(p) ? " · " + nameOf(p) : "")));
+        tr.appendChild(leftText(i.doc_number || "–"));
+        tr.appendChild(leftText(fmtDateShort(i.txn_date)));
+        tr.appendChild(leftText(fmtDateShort(i.due_date)));
+        const dpd = (i.days_past_due != null && i.days_past_due > 0) ? i.days_past_due + "d" : "–";
+        const dc = leftText(dpd); if (i.days_past_due > 0) dc.style.color = "var(--neg)"; tr.appendChild(dc);
+        tr.appendChild(rightText(money(oiBal(i))));
+        tbody.appendChild(tr);
+      }
+    }
+  }
+  const ttr = document.createElement("tr"); ttr.className = "ag-total";
+  const lead = document.createElement("td"); lead.className = "left"; lead.colSpan = 6; lead.textContent = "Total due"; ttr.appendChild(lead);
+  const tv = document.createElement("td"); tv.className = "right"; tv.id = "stmtTotalVal"; ttr.appendChild(tv); tbody.appendChild(ttr);
+  tbl.appendChild(thead); tbl.appendChild(tbody); body.appendChild(tbl);
+  _stmtTotalUpdate();
+  openPanel("#invStatement");
+}
+const _esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+async function copyInvStatement() {
+  const rows = _stmtChecked();
+  if (!rows.length) { toast("Nothing checked to copy"); return; }
+  const byClient = new Map();
+  for (const i of rows) { const c = i.customer || "(no client)"; if (!byClient.has(c)) byClient.set(c, []); byClient.get(c).push(i); }
+  const H = ["Client", "Project", "Invoice #", "Invoice date", "Due date", "Days past due", "Amount due"];
+  const tsv = [H.join("\t")];
+  let html = '<table border="1" cellspacing="0" cellpadding="5" style="border-collapse:collapse;font-family:Arial,Helvetica,sans-serif;font-size:13px">';
+  html += "<thead><tr>" + H.map(h => `<th style="text-align:left;background:#f2f2f2">${_esc(h)}</th>`).join("") + "</tr></thead><tbody>";
+  let grand = 0;
+  for (const [c, list] of byClient) {
+    list.sort((a, b) => (a.project_no || "").localeCompare(b.project_no || "", undefined, { numeric: true }) || String(a.txn_date || "").localeCompare(String(b.txn_date || "")));
+    for (const i of list) {
+      const proj = (i.project_no || "") + (nameOf(i.project_no) ? " " + nameOf(i.project_no) : "");
+      const dpd = (i.days_past_due != null && i.days_past_due > 0) ? String(i.days_past_due) : "";
+      const amt = Math.round(oiBal(i)); grand += oiBal(i);
+      tsv.push([c, proj, i.doc_number || "", fmtDateShort(i.txn_date), fmtDateShort(i.due_date), dpd, amt].join("\t"));
+      const htmlCells = [c, proj, i.doc_number || "", fmtDateShort(i.txn_date), fmtDateShort(i.due_date), dpd, "$" + amt.toLocaleString()];
+      html += "<tr>" + htmlCells.map((x, idx) => `<td style="text-align:${idx === 6 ? "right" : "left"}">${_esc(String(x))}</td>`).join("") + "</tr>";
+    }
+  }
+  tsv.push(["", "", "", "", "", "Total due", Math.round(grand)].join("\t"));
+  html += `<tr><td colspan="6" style="text-align:right;font-weight:bold">Total due</td><td style="text-align:right;font-weight:bold">$${Math.round(grand).toLocaleString()}</td></tr></tbody></table>`;
+  try {
+    if (navigator.clipboard && window.ClipboardItem) {
+      await navigator.clipboard.write([new ClipboardItem({
+        "text/html": new Blob([html], { type: "text/html" }),
+        "text/plain": new Blob([tsv.join("\n")], { type: "text/plain" }) })]);
+      toast(`Copied ${rows.length} invoice${rows.length > 1 ? "s" : ""} - paste into Excel or an email`);
+    } else { throw new Error("no ClipboardItem"); }
+  } catch { copy(tsv.join("\n")); }
 }
 
 // ══ CUSTOMER CENTER ══════════════════════════════════════════════════════════
@@ -2551,7 +2695,8 @@ function renderCustomers() {
     cell.appendChild(key); cell.appendChild(amt); gtd.appendChild(cell); gtr.appendChild(gtd); tb.appendChild(gtr);
     for (const r of rows) {
       const tr = document.createElement("tr"); tr.style.cursor = "pointer"; tr.title = "See this client's open invoices";
-      tr.onclick = () => { const cf = $("#ifClient"); if (cf) cf.value = r.client; const df = $("#ifDivision"); if (df) df.value = ""; setTab("invoices"); renderOpenInvoices(); };
+      tr.onclick = () => { invMSel.ifClient = new Set([r.client]); invMSel.ifProj = new Set(); _invMSelSig = null;   // filter Invoices to this client (msel)
+        const df = $("#ifDivision"); if (df) df.value = ""; setTab("invoices"); renderOpenInvoices(); };
       tr.appendChild(leftText(r.client)); tr.appendChild(rightText(money(r.open)));
       tr.appendChild(rightText(String(r.n))); tr.appendChild(leftText(r.oldest ? fmtDateShort(r.oldest) : "–"));
       tb.appendChild(tr);
@@ -3846,7 +3991,8 @@ function detailAsText() {
 function openPanel(sel) { $("#overlay").hidden = false; $(sel).hidden = false; }
 function closePanels() { $("#overlay").hidden = true; $("#detail").hidden = true; $("#settings").hidden = true;
   { const bd = $("#billDetail"); if (bd) bd.hidden = true; } { const sd = $("#sublocDetail"); if (sd) sd.hidden = true; }
-  { const pb = $("#payBills"); if (pb) pb.hidden = true; } { const lr = $("#lienReview"); if (lr) lr.hidden = true; } }
+  { const pb = $("#payBills"); if (pb) pb.hidden = true; } { const lr = $("#lienReview"); if (lr) lr.hidden = true; }
+  { const st = $("#invStatement"); if (st) st.hidden = true; } }
 
 // ── Copy + CSV + toast ────────────────────────────────────────────────────
 let toastTimer = null;
@@ -4202,7 +4348,8 @@ function init() {
   const _mselWraps = [["#bfMonthBtn", "#bfMonthMenu", "#bfMonthMsel"], ["#bfVendorBtn", "#bfVendorMenu", "#bfVendorMsel"],
     ...BILL_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`]),
     ...LIEN_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`]),
-    ...PAY_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`])];
+    ...PAY_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`]),
+    ...INV_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`])];
   const _closeMsels = (except) => { for (const [, mId] of _mselWraps) { const m = $(mId); if (m && mId !== except) m.hidden = true; } };
   for (const [btnId, menuId, wrapId] of _mselWraps) {
     const btn = $(btnId), menu = $(menuId);
@@ -4218,10 +4365,13 @@ function init() {
     renderBills(); }); }
   { const el = $("#bfClear"); if (el) el.onclick = billClearFilters; }
   { const el = $("#bfCollapse"); if (el) el.onclick = billToggleAll; }
-  ["#ifClient", "#ifProj"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderOpenInvoices); });
   ["#ifDivision", "#ifLien", "#ifLitig", "#ifSort"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("change", renderOpenInvoices); });
   { const el = $("#ifClear"); if (el) el.onclick = invClearFilters; }
   { const el = $("#ifCollapse"); if (el) el.onclick = invToggleAll; }
+  { const el = $("#ifSubGroup"); if (el) el.onclick = invSubGroupToggle; }
+  { const el = $("#ifStatement"); if (el) el.onclick = openInvStatement; }
+  { const el = $("#btnCopyStmt"); if (el) el.onclick = copyInvStatement; }
+  { const el = $("#btnCloseStmt"); if (el) el.onclick = closePanels; }
   { const el = $("#btnCloseBillDetail"); if (el) el.onclick = closePanels; }
   { const el = $("#btnClosePayBills"); if (el) el.onclick = closePanels; }
   { const el = $("#btnCloseLienReview"); if (el) el.onclick = closePanels; }
