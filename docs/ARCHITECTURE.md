@@ -188,6 +188,16 @@ carry a project #, not a contract.
 > `Open_Invoices.xlsx`. AR never triggers AP; if the tracker is stale the tab
 > subtitle turns red and the run logs a warning, and a missing file yields `?`
 > rather than a false "Vendors Paid".
+>
+> **Step 3/3 - the ledger reload (owner 2026-08-24).** `sync-all` runs only the
+> PRODUCERS (QBO → Bill Tracker.xlsx, QBO → Notion); the ledger the dashboard reads
+> is loaded by a SEPARATE set of loaders, so a `sync-all` used to leave the dashboard
+> on the last ledger snapshot (a paid invoice still showing open). `sync-all` now
+> calls **`ledger/reload_ledger.sh`** as its final step - the loader half (WIP · bills
+> · invoices `--no-qbo` · customers; costs stay on the dashboard Resync). So terminal
+> `sync-all` and the dashboard's Resync run the same loaders and can't drift. (The
+> `sync-all` wiring lives in the machine's `~/.zshrc`, not the repo; the script is
+> repo-tracked.)
 
 ---
 

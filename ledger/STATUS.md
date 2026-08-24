@@ -4,6 +4,17 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **`sync-all` now reloads the ledger too - one command (owner, 2026-08-24: "the ledger cannot be another
+  thing I HAVE to update ... I sync-all and expect the ledger to sync too, why not one?").** Root cause of
+  a stale invoice (34318 showed open in the dashboard though paid in QBO): the terminal `sync-all` ran only
+  the PRODUCERS (QBO -> Bill Tracker.xlsx, QBO -> Notion), never the ledger LOADERS - so the dashboard's
+  ledger stayed on the last load while Notion/Excel were current. (Confirmed the split: Notion had 34318
+  Paid; the ledger was the Aug-19 snapshot.) Fix: new **`ledger/reload_ledger.sh`** runs the loader half
+  (WIP · bills · invoices `--no-qbo` · customers - fast, no Touch ID; costs stay on the dashboard Resync as
+  a 90-day QBO pull), continue-on-error with a summary. Wired into the machine's `sync-all` as step **3/3**
+  (`~/.zshrc`, not repo-tracked; skipped on `--dry-run`). So `sync-all` = AP -> AR -> **ledger reload ->
+  dashboard**. Verified: reload ran clean (exit 0); 34318 now `Paid · $0` in the ledger. Same loaders the
+  dashboard's Resync("reload") runs, so terminal + dashboard can't drift.
 - **Open Invoices: lien-deadline filter + dropped the aging blurb (owner, 2026-08-21).** Removed the
   paragraph describing the aging buckets (the tiles are self-explanatory). Added a **Lien deadline**
   filter on the computed lien-notice CLOCK (`lien_due_state`, from `shared/lien_clock`), separate from the
