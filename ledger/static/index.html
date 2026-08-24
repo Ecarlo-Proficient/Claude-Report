@@ -240,10 +240,6 @@
           <span class="count" id="invAsOf"></span>
         </div>
         <div class="attn-row" id="invStats"></div>
-        <p class="hint">What the GC still owes you (your open <b>AR</b>), aged by <b>due date</b> into the same
-          buckets as the AR Aging workbook - <b>Current</b> isn't due yet, <b>90+</b> is long overdue. The
-          <b>Lien</b> column is the matching status from the Notion Lien Tracker (blank = no lien on file).
-          Invoice # opens the invoice in QuickBooks. Click a bucket tile to filter.</p>
         <div class="bill-filters" id="invFilters">
           <div class="fld"><span>Client</span>
             <div class="msel" id="ifClientMsel"><button type="button" class="msel-btn" id="ifClientBtn">All clients</button><div class="msel-menu wide" id="ifClientMenu" hidden></div></div>
@@ -252,7 +248,15 @@
             <div class="msel" id="ifProjMsel"><button type="button" class="msel-btn" id="ifProjBtn">All projects</button><div class="msel-menu" id="ifProjMenu" hidden></div></div>
           </div>
           <label class="fld"><span>Division</span><select id="ifDivision"></select></label>
-          <label class="fld"><span>Lien</span><select id="ifLien"></select></label>
+          <label class="fld"><span>Lien deadline</span>
+            <select id="ifLienClock" title="Texas lien-notice CLOCK: past its deadline, or coming up soon (covers CP draws + retainage and RP)">
+              <option value="">Any deadline</option>
+              <option value="past">Past due (missed)</option>
+              <option value="upcoming">Upcoming (due soon)</option>
+              <option value="sent">Notice sent</option>
+            </select>
+          </label>
+          <label class="fld"><span>Lien status</span><select id="ifLien"></select></label>
           <label class="fld"><span>Litigation</span>
             <select id="ifLitig">
               <option value="ex">Exclude</option>

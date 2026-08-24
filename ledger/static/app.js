@@ -2331,9 +2331,13 @@ function buildInvFilters() {
   }
 }
 
+// Lien-notice CLOCK buckets (the computed deadline, not the Notion status). "upcoming" = urgent
+// OR watch, which covers CP draws, CP retainage (RET-banded), and RP - all divisions the clock runs.
+const LIENCLK = { past: s => s === "PAST", upcoming: s => s === "URGENT" || s === "WATCH", sent: s => s === "SENT" };
 function invPasses(i, f) {
   if (!mselPasses(i, INV_MSEL, invMSel)) return false;   // Client / Project # multi-selects
   if (f.div && (i.division || "") !== f.div) return false;
+  if (f.lienclk && LIENCLK[f.lienclk] && !LIENCLK[f.lienclk](i.lien_due_state || "")) return false;
   if (f.lien === "__none__" ? !!i.lien_status : (f.lien && (i.lien_status || "") !== f.lien)) return false;
   if (f.litig === "ex" && i.litigation) return false;
   if (f.litig === "only" && !i.litigation) return false;
@@ -2354,7 +2358,7 @@ function renderOpenInvoices() {
   if (!$("#ifDivision") || !$("#ifDivision").options.length) buildInvFilters();
 
   const fv = sel => ($(sel) ? $(sel).value : "");
-  const f = { div: fv("#ifDivision"), lien: fv("#ifLien"), litig: fv("#ifLitig") || "ex" };  // Client/Project # are msels now
+  const f = { div: fv("#ifDivision"), lien: fv("#ifLien"), lienclk: fv("#ifLienClock"), litig: fv("#ifLitig") || "ex" };  // Client/Project # are msels now
   // Client + Project # multi-selects: build once per data change (signature guard) so a toggle keeps its search.
   const invSig = String(all.length);
   if (invSig !== _invMSelSig || !($("#ifClientMenu") && $("#ifClientMenu").querySelector(".msel-opt"))) {
@@ -2395,7 +2399,7 @@ function renderOpenInvoices() {
     : "(no AR data - run load_invoices.py)";
   { const el = $("#invAsOf"); if (el) el.textContent = OI.as_of ? "aged as of " + fmtDate(OI.as_of) : ""; }
   { const anyMsel = INV_MSEL.some(c => (invMSel[c.id] || {}).size);
-    const cb = $("#ifClear"); if (cb) cb.hidden = !(anyMsel || f.div || f.lien || f.litig !== "ex" || invBucketFilter != null); }
+    const cb = $("#ifClear"); if (cb) cb.hidden = !(anyMsel || f.div || f.lien || f.lienclk || f.litig !== "ex" || invBucketFilter != null); }
 
   const thead = host.querySelector("thead"), tbody = host.querySelector("tbody");
   thead.innerHTML = ""; tbody.innerHTML = "";
@@ -2525,7 +2529,7 @@ function invToggleAll() {
   renderOpenInvoices();
 }
 function invClearFilters() {
-  ["#ifDivision", "#ifLien"].forEach(s => { const el = $(s); if (el) el.value = ""; });
+  ["#ifDivision", "#ifLien", "#ifLienClock"].forEach(s => { const el = $(s); if (el) el.value = ""; });
   for (const cfg of INV_MSEL) invMSel[cfg.id] = new Set();   // clear Client + Project # multi-selects
   _invMSelSig = null;                                        // force the menus to rebuild (reset checks + label)
   const lt = $("#ifLitig"); if (lt) lt.value = "ex";         // baseline = litigation excluded
@@ -4379,7 +4383,7 @@ function init() {
     renderBills(); }); }
   { const el = $("#bfClear"); if (el) el.onclick = billClearFilters; }
   { const el = $("#bfCollapse"); if (el) el.onclick = billToggleAll; }
-  ["#ifDivision", "#ifLien", "#ifLitig", "#ifSort"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("change", renderOpenInvoices); });
+  ["#ifDivision", "#ifLien", "#ifLienClock", "#ifLitig", "#ifSort"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("change", renderOpenInvoices); });
   { const el = $("#ifClear"); if (el) el.onclick = invClearFilters; }
   { const el = $("#ifCollapse"); if (el) el.onclick = invToggleAll; }
   { const el = $("#ifSubGroup"); if (el) el.onclick = invSubGroupToggle; }

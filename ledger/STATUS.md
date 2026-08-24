@@ -4,6 +4,13 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Open Invoices: lien-deadline filter + dropped the aging blurb (owner, 2026-08-21).** Removed the
+  paragraph describing the aging buckets (the tiles are self-explanatory). Added a **Lien deadline**
+  filter on the computed lien-notice CLOCK (`lien_due_state`, from `shared/lien_clock`), separate from the
+  existing Notion **Lien status** filter (renamed for clarity): **Past due (missed)** = `PAST`,
+  **Upcoming (due soon)** = `URGENT` + `WATCH`, **Notice sent** = `SENT`. "Upcoming" covers CP draws, CP
+  **retainage** (RET-banded 30-day clock) and RP - the clock runs for every division. Verified live: Past
+  due -> 38 (CP 22 / RP 12 / MFD 4), Upcoming -> 20 spanning all three divisions; no console errors.
 - **Open Invoices: multi-select filters + project sub-grouping + a client statement to copy/paste
   (owner, 2026-08-21).** Four asks, all frontend:
   - **Client + Project # are now multi-selects** (the generic `buildMSel` component, search + Select
