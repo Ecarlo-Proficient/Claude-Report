@@ -80,8 +80,9 @@ try:
     from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
     from openpyxl.utils import get_column_letter
     from openpyxl.formatting.rule import CellIsRule
-    from openpyxl.cell.rich_text import CellRichText, TextBlock
-    from openpyxl.cell.text import InlineFont
+    # NOTE: no rich-text imports on purpose — multi-run inline strings are what
+    # make Mac Excel offer to "repair" the file (shared/xlsx_verify.py). Style
+    # the cell, never runs inside it.
 except ImportError:
     print("✗  pip3 install --break-system-packages openpyxl requests")
     sys.exit(1)
@@ -100,6 +101,8 @@ from shared.cost_lines import line_category, combine_bill_lines, CATEGORY_ORDER
 # cost_leaf moved to shared/ (2026-08-08) — the ledger's load_costs.py needs the
 # SAME resolver, so it can never drift from this tool's cost buckets.
 from shared.qbo_costs import cost_leaf
+from shared.job_lines import JobMatcher
+from shared.xlsx_verify import assert_clean
 
 # ── terminal output (styled like sync-ar / sync-ap; the user 2026-06-26) ──────────
 # Colors auto-disable when piped/redirected or NO_COLOR is set.
@@ -486,24 +489,21 @@ def _cost_code_label(name):
 
 def _cost_code_value(raw, indent: int = 0, size: Optional[int] = None,
                      color: str = "000000"):
-    """Build the cell value for an account label.
-    If `raw` is a cost code, return Excel rich text with ONLY the code token
-    bold and the ' - Job Type Cost' description in normal weight (the user
-    2026-06-09: "just the cost code bolded"). Otherwise return the plain
-    indented string.
-    """
+    """Build the cell value for an account label: the indented
+    'SL1 - Slab Concrete' string.
+
+    PLAIN STRING, never rich text. This used to return a CellRichText with the
+    code token bold and the description regular (the user 2026-06-09, "just the
+    cost code bolded"), but multi-run inline strings are the exact thing
+    `shared/xlsx_verify` refuses — they are what makes Mac Excel throw "we found
+    a problem with some content" and offer to repair the file. A P&L whose
+    accumulating-costs block happened to contain a cost code shipped a workbook
+    at risk of that prompt (found on MFD172, 2026-08-24; the header of
+    shared/xlsx_verify.py is the standing list). The `size`/`color` arguments
+    are kept so every call site still works — style the CELL, not runs inside
+    it."""
     pad = "    " * indent
-    full = _xml_clean(_cost_code_label(raw))
-    raw_s = _xml_clean(str(raw).strip()) if raw is not None else ""
-    sz = size or BASE_SIZE
-    # Rich text only when raw is a code AND the break-out starts with the code
-    if _is_cost_code(raw) and full.startswith(raw_s) and full != raw_s:
-        rest = full[len(raw_s):]            # ' - Commercial Sidewalks Concrete'
-        return CellRichText([
-            TextBlock(InlineFont(b=True, sz=sz, color=color), pad + raw_s),
-            TextBlock(InlineFont(b=False, sz=sz, color=color), rest),
-        ])
-    return pad + full
+    return pad + _xml_clean(_cost_code_label(raw))
 
 
 # cost_leaf now lives in shared/qbo_costs.py (imported above) — the single
@@ -530,17 +530,10 @@ def _cost_name_only(code):
 
 def _cost_name_value(code, indent: int = 0, size: Optional[int] = None,
                      color: str = "000000"):
-    """Rich text: bold code + normal ' - Cost Name' (no job-type word)."""
+    """'SL2 - Rebar & Reinforcement' (no job-type word), indented. PLAIN
+    STRING — see `_cost_code_value` for why rich text is banned here."""
     pad = "    " * indent
-    full = _xml_clean(_cost_name_only(code))
-    raw_s = _xml_clean(str(code).strip())
-    sz = size or BASE_SIZE
-    if _is_cost_code(code) and full.startswith(raw_s) and full != raw_s:
-        return CellRichText([
-            TextBlock(InlineFont(b=True, sz=sz, color=color), pad + raw_s),
-            TextBlock(InlineFont(b=False, sz=sz, color=color), full[len(raw_s):]),
-        ])
-    return pad + full
+    return pad + _xml_clean(_cost_name_only(code))
 
 
 # Cost CATEGORY = the account a cost lands in, merging cost codes by meaning
@@ -597,6 +590,31 @@ def _write_cell(ws, row: int, column: int, value):
 
 # ────────── invoice / bill pulls ──────────
 
+# ── legacy-job attribution (the user 2026-08-24) ──────────────────────
+# Jobs that predate consistent project coding carry only PART of their cost on
+# the project customer; the rest is named in the line description or the bill
+# memo. `--legacy` installs a JobMatcher here for ONE job and every cost-line
+# test in this file goes through `_line_belongs`. It is scoped by customer id,
+# so any other project in the same run falls straight back to the strict test —
+# behaviour for modern jobs is unchanged. See shared/job_lines.py.
+_LEGACY_MATCH: Optional[JobMatcher] = None
+
+
+def _set_legacy_matcher(proj: str, customer_id: str, legacy: bool,
+                        aliases: Optional[List[str]] = None) -> None:
+    """Install (or clear) the legacy matcher for ONE project. Called per
+    project so a batch can never leak one job's aliases into the next."""
+    global _LEGACY_MATCH
+    _LEGACY_MATCH = (JobMatcher(customer_id, proj, aliases or (), legacy=True)
+                     if legacy else None)
+
+
+def _line_belongs(det: dict, ln: dict, txn: dict, customer_id: str) -> bool:
+    if _LEGACY_MATCH is not None and _LEGACY_MATCH.customer_id == customer_id:
+        return _LEGACY_MATCH(det, ln, txn)
+    return (det.get("CustomerRef") or {}).get("value") == customer_id
+
+
 def fetch_customer_bills_and_purchases(
     access: str, company_id: str, customer_id: str,
     start_date: str, end_date: str,
@@ -618,7 +636,7 @@ def fetch_customer_bills_and_purchases(
                 or ln.get("ItemBasedExpenseLineDetail")
                 or {}
             )
-            if (det.get("CustomerRef") or {}).get("value") == customer_id:
+            if det and _line_belongs(det, ln, txn, customer_id):
                 return True
         return False
 
@@ -628,13 +646,46 @@ def fetch_customer_bills_and_purchases(
     return bills, purchases
 
 
+def _synth_pl_totals(bills: List[dict], purchases: List[dict],
+                     income_groups: Dict[str, dict], customer_id: str,
+                     acct_type: Dict[str, str], item_account: Dict[str, str],
+                     pl_end: str) -> Dict[str, float]:
+    """Stand in for QBO's project P&L report on a legacy job, built from the
+    attributed lines + the job's invoices so every figure ties to the same
+    source as the rest of the workbook. COGS vs Expense split by account type,
+    exactly as the Transactions sheet does."""
+    cogs = exp = 0.0
+    for txn in list(bills) + list(purchases):
+        if (txn.get("TxnDate") or "") > pl_end:
+            continue
+        for ln in txn.get("Line") or []:
+            det = (ln.get("AccountBasedExpenseLineDetail")
+                   or ln.get("ItemBasedExpenseLineDetail") or {})
+            if not (det and _line_belongs(det, ln, txn, customer_id)):
+                continue
+            amt = float(ln.get("Amount", 0) or 0)
+            aid = ((det.get("AccountRef") or {}).get("value")
+                   or item_account.get((det.get("ItemRef") or {}).get("value")))
+            if (acct_type.get(aid) or "").lower().startswith("cost of goods"):
+                cogs += amt
+            else:
+                exp += amt
+    income = sum(g.get("net_billed", 0.0) for k, g in income_groups.items()
+                 if k != "__retainage")
+    gp = income - cogs
+    return {"income": round(income, 2), "cogs": round(cogs, 2),
+            "gross_profit": round(gp, 2), "expenses": round(exp, 2),
+            "net_ordinary_income": round(gp - exp, 2),
+            "net_income": round(gp - exp, 2)}
+
+
 def _proj_line_total(txn: dict, customer_id: str) -> float:
     """Sum of a transaction's line amounts that reference this project."""
     tot = 0.0
     for ln in txn.get("Line") or []:
         det = (ln.get("AccountBasedExpenseLineDetail")
                or ln.get("ItemBasedExpenseLineDetail") or {})
-        if (det.get("CustomerRef") or {}).get("value") == customer_id:
+        if det and _line_belongs(det, ln, txn, customer_id):
             tot += float(ln.get("Amount", 0) or 0)
     return tot
 
@@ -1371,6 +1422,20 @@ def safe_save(wb: Workbook, out_path: Path) -> Optional[Path]:
         return None
     tmp = out_path.with_name(out_path.name + ".tmp")
     wb.save(str(tmp))
+    # Rule 5b: never hand over a workbook that hasn't passed the corruption
+    # check as its LAST step. Run it on the TEMP file — a file that would make
+    # Excel offer to "repair" it must never reach the real path (the user
+    # 2026-08-17, "same errors still producing"; MFD172 tripped it 2026-08-24).
+    try:
+        assert_clean(tmp)
+    except Exception as e:
+        print(f"    ✗ {out_path.name} failed the xlsx corruption check — "
+              f"NOT written:\n      {e}")
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        return None
     try:
         os.replace(str(tmp), str(out_path))
     except OSError as e:
@@ -1486,7 +1551,7 @@ def gather_transactions(
         for ln in txn.get("Line") or []:
             det = (ln.get("AccountBasedExpenseLineDetail")
                    or ln.get("ItemBasedExpenseLineDetail") or {})
-            if (det.get("CustomerRef") or {}).get("value") != customer_id:
+            if not (det and _line_belongs(det, ln, txn, customer_id)):
                 continue
             amt = float(ln.get("Amount", 0) or 0)
             if abs(amt) < 0.005:
@@ -1596,7 +1661,7 @@ def bucket_costs_by_draw_window(
             for ln in txn.get("Line") or []:
                 det = (ln.get("AccountBasedExpenseLineDetail")
                        or ln.get("ItemBasedExpenseLineDetail") or {})
-                if (det.get("CustomerRef") or {}).get("value") == customer_id:
+                if det and _line_belongs(det, ln, txn, customer_id):
                     disregarded["total"] += float(ln.get("Amount", 0) or 0)
                     disregarded["count"] += 1
             return
@@ -1609,7 +1674,7 @@ def bucket_costs_by_draw_window(
                 or ln.get("ItemBasedExpenseLineDetail")
                 or {}
             )
-            if (det.get("CustomerRef") or {}).get("value") != customer_id:
+            if not (det and _line_belongs(det, ln, txn, customer_id)):
                 continue
             amt = float(ln.get("Amount", 0) or 0)
             if amt == 0:
@@ -3885,7 +3950,7 @@ def costs_by_code(bills: List[dict], purchases: List[dict], customer_id: str,
         for ln in txn.get("Line") or []:
             det = (ln.get("AccountBasedExpenseLineDetail")
                    or ln.get("ItemBasedExpenseLineDetail") or {})
-            if (det.get("CustomerRef") or {}).get("value") != customer_id:
+            if not (det and _line_belongs(det, ln, txn, customer_id)):
                 continue
             amt = float(ln.get("Amount", 0) or 0)
             if abs(amt) < 0.005:
@@ -3960,7 +4025,7 @@ def code_costs_by_draw(
         for ln in txn.get("Line") or []:
             det = (ln.get("AccountBasedExpenseLineDetail")
                    or ln.get("ItemBasedExpenseLineDetail") or {})
-            if (det.get("CustomerRef") or {}).get("value") != customer_id:
+            if not (det and _line_belongs(det, ln, txn, customer_id)):
                 continue
             amt = float(ln.get("Amount", 0) or 0)
             if abs(amt) < 0.005:
@@ -5627,6 +5692,18 @@ def generate_project_pnl(
             rd_dir.mkdir(parents=True, exist_ok=True)
 
     invoices = fetch_customer_invoices(access, company_id, cust_info["id"])
+    # An older job invoices on the PARENT customer, not the project (the user
+    # 2026-08-24) — without this its billed-to-date reads as zero. Pull the
+    # parent's too and let the memo decide which ones are this job's.
+    if _LEGACY_MATCH is not None and cust_info.get("parent_id"):
+        _seen = {i["Id"] for i in invoices}
+        _extra = [i for i in fetch_customer_invoices(
+                      access, company_id, cust_info["parent_id"])
+                  if i["Id"] not in _seen and _LEGACY_MATCH.invoice_belongs(i)]
+        if _extra:
+            invoices += _extra
+            ui_event(f"legacy: +{len(_extra)} invoice(s) billed on the parent "
+                     f"customer", icon="⚑", color=_YEL)
     income_groups = group_invoices_by_draw(invoices, interactive=interactive)
     # AR/AP payment state (the user 2026-08-05): invoice/bill Balance == 0 is
     # PAID. Purchases (checks/CC) are paid by nature.
@@ -5650,11 +5727,20 @@ def generate_project_pnl(
         pl_end = last_end.isoformat()
         pl_cutoff = last_end.strftime("%m/%d/%y")
 
-    pl_data = fetch_project_pl(access, company_id, cust_info["id"],
-                               start_date, pl_end)
-    pl_totals = extract_pl_totals(pl_data)
-    ui_event(f"P&L through {pl_end}  ·  income ${pl_totals['income']:,.0f} · "
-             f"COGS ${pl_totals['cogs']:,.0f} · GP ${pl_totals['gross_profit']:,.0f}")
+    # QBO's own project P&L report is keyed to the project customer, so on a
+    # legacy job it cannot see the line-text / bill-memo costs OR the invoices
+    # billed on the parent — it would report a job millions short. In legacy
+    # mode the totals are synthesized from the SAME attributed lines the rest
+    # of the workbook is built from (below, once the bills are pulled).
+    if _LEGACY_MATCH is not None:
+        pl_data, pl_totals = {}, {}
+    else:
+        pl_data = fetch_project_pl(access, company_id, cust_info["id"],
+                                   start_date, pl_end)
+        pl_totals = extract_pl_totals(pl_data)
+        ui_event(f"P&L through {pl_end}  ·  income ${pl_totals['income']:,.0f} · "
+                 f"COGS ${pl_totals['cogs']:,.0f} · "
+                 f"GP ${pl_totals['gross_profit']:,.0f}")
 
     accounts = query_all(access, company_id, "Account")
     parent_map = build_account_parent_map(accounts)
@@ -5697,6 +5783,14 @@ def generate_project_pnl(
     paid_map = {b.get("Id"): float(b.get("Balance", 0) or 0) <= 0.005
                 for b in bills}
     paid_map.update({pch.get("Id"): True for pch in purchases})
+    if _LEGACY_MATCH is not None:
+        pl_totals = _synth_pl_totals(bills, purchases, income_groups,
+                                     cust_info["id"], acct_type, item_account,
+                                     pl_end)
+        ui_event(f"P&L through {pl_end}  ·  income ${pl_totals['income']:,.0f} · "
+                 f"COGS ${pl_totals['cogs']:,.0f} · "
+                 f"GP ${pl_totals['gross_profit']:,.0f}  "
+                 f"{_DIM}(synthesized — legacy attribution){_RESET}")
     ui_event(f"{len(bills)} bills · {len(purchases)} purchases  "
              f"{_DIM}(from {bill_start}){_RESET}")
 
@@ -6509,7 +6603,7 @@ def _qbo_lines_from_fetched(bills, purchases, customer_id, anames, item_acct,
         for ln in txn.get("Line") or []:
             det = (ln.get("AccountBasedExpenseLineDetail")
                    or ln.get("ItemBasedExpenseLineDetail") or {})
-            if (det.get("CustomerRef") or {}).get("value") != customer_id:
+            if not (det and _line_belongs(det, ln, txn, customer_id)):
                 continue
             amt = float(ln.get("Amount", 0) or 0)
             if amt == 0:
@@ -6712,6 +6806,17 @@ def main() -> int:
     ap.add_argument("--overhead-pct", type=float, default=10.0,
                     help="Company overhead as %% of revenue (default 10.0, the user 2026-07-16). "
                          "Drives Overhead Allocation + True Net Profit rows.")
+    ap.add_argument("--legacy", action="store_true",
+                    help="LEGACY JOB attribution for jobs that predate "
+                         "consistent project coding: a cost line counts when "
+                         "the line's customer is the project, OR the line text "
+                         "names the job, OR the bill memo names it and names "
+                         "exactly one job. Also pulls invoices billed on the "
+                         "PARENT customer. Off by default — see "
+                         "shared/job_lines.py.")
+    ap.add_argument("--alias", action="append", default=[],
+                    help="Street name the job goes by (repeatable), e.g. "
+                         "--alias 'BONDS RANCH'. Only used with --legacy.")
     ap.add_argument("--no-prompt", action="store_true",
                     help="Don't pause to ask about mistyped invoice period "
                          "dates (skip them and warn instead). Use for "
@@ -6766,6 +6871,14 @@ def main() -> int:
             ui_warn("skipped — no matching customer")
             not_found.append(proj)
             continue
+        # Per project, so a batch can never carry one job's aliases into
+        # the next; clears itself when --legacy is off.
+        _set_legacy_matcher(proj, cust_map[proj]["id"], args.legacy, args.alias)
+        if args.legacy:
+            ui_event(f"legacy attribution ON for {proj}"
+                     + (f"  · aliases: {', '.join(args.alias)}"
+                        if args.alias else ""),
+                     icon="⚑", color=_YEL)
         try:
             path = generate_project_pnl(
                 access, company_id, proj,

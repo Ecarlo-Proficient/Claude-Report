@@ -87,7 +87,10 @@ restate them here. Business/strategic context lives in session memory, not in th
 
 - **shared/** — the common package: `qbo_vault.py` (Keychain blob, one Touch ID per run),
   `paths.py` (per-machine path resolution), `qbo_api.py` (QBO auth + retrying GET, `query_all`,
-  report walkers, `PROJ_RE` — used by project-pnl and the WIP readers), `qbo_costs.py` (the ONE
+  report walkers, `PROJ_RE` — used by project-pnl and the WIP readers), `job_lines.py` (the ONE
+  "does this line belong to this job" test — strict by default; project-pnl's `--legacy`
+  mode adds line-text and bill-memo rules for pre-2025 jobs, with a memo naming 2+ jobs
+  SKIPPED not split; shared with `one-offs/legacy_job_cost_pull.py`), `qbo_costs.py` (the ONE
   cost-code resolver `cost_leaf` + the `iter_cost_lines` pull-and-resolve engine — shared by
   project-pnl and the ledger's `load_costs.py`), `notion_client.py` (thin Notion API client —
   create/query/update pages; used by `ledger/sync_actions.py`; invoice-sync keeps its own tool-local

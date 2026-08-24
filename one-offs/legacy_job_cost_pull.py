@@ -56,7 +56,7 @@ from typing import Dict, List, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from shared import qbo_api
-from shared.qbo_api import PROJ_RE
+from shared.job_lines import JobMatcher
 
 DEFAULT_SINCE = "2023-01-01"
 CACHE_DIR = Path.home() / "Library" / "Logs" / "Proficient" / "legacy-job-pull"
@@ -79,15 +79,6 @@ def resolve_job(access: str, cid: str, project: str,
                     name)
     print(f"✗  No customer found for {project}. Pass --project-id explicitly.")
     raise SystemExit(1)
-
-
-def job_pattern(project: str, aliases: List[str]) -> re.Pattern:
-    """The job # plus any name it goes by on the street ('Bonds Ranch').
-    Spaces in an alias match any run of whitespace."""
-    parts = [re.escape(project)]
-    for a in aliases or []:
-        parts.append(r"\s*".join(re.escape(w) for w in a.split()))
-    return re.compile("|".join(parts), re.IGNORECASE)
 
 
 # ── raw pulls (disk-cached) ───────────────────────────────────────────
@@ -128,40 +119,27 @@ def pull(access: str, cid: str, since: str, project_id: str,
 
 
 # ── attribution ───────────────────────────────────────────────────────
-
-def _jobs_in(text: str) -> set:
-    return {m.upper() for m in PROJ_RE.findall(text or "")}
-
+# The three rules and their guard live in shared/job_lines.py — project-pnl
+# runs on the SAME matcher (`--legacy`), so the P&L and this pull can never
+# disagree about what belongs to a job.
 
 def attribute(txns: List[dict], tx_type: str, vendor_field: str,
-              project_id: str, job_re: re.Pattern) -> List[dict]:
+              matcher: JobMatcher) -> List[dict]:
     """One row per attributed LINE. `rule` records which of the three fired."""
     rows: List[dict] = []
     for t in txns or []:
         memo = (t.get("PrivateNote") or "").strip()
-        memo_names_job = bool(job_re.search(memo))
-        memo_jobs = _jobs_in(memo)
         vendor = ((t.get(vendor_field) or {}).get("name") or "").strip()
         for idx, ln in enumerate(t.get("Line") or []):
             det = (ln.get("AccountBasedExpenseLineDetail")
                    or ln.get("ItemBasedExpenseLineDetail"))
             if not det:
                 continue
+            rule = matcher.rule(det, ln, t)
+            if not rule:
+                continue
             cref = det.get("CustomerRef") or {}
             desc = (ln.get("Description") or "").strip()
-            line_text = f"{desc} {cref.get('name') or ''}"
-
-            if cref.get("value") == project_id:
-                rule = "project"
-            elif job_re.search(line_text):
-                rule = "line text"
-            elif (memo_names_job and len(memo_jobs) == 1
-                  and not _jobs_in(line_text)):
-                # GUARD: a memo naming >1 job fails len()==1 above and is
-                # skipped, deliberately not split across jobs.
-                rule = "bill note"
-            else:
-                continue
 
             rows.append({
                 "rule": rule,
@@ -179,13 +157,13 @@ def attribute(txns: List[dict], tx_type: str, vendor_field: str,
     return rows
 
 
-def invoice_rows(invoices: List[dict], job_re: re.Pattern) -> List[dict]:
+def invoice_rows(invoices: List[dict], matcher: JobMatcher) -> List[dict]:
     """Job invoices: customer-coded to project OR parent, memo names the job.
     Voided invoices are dropped (QBO zeroes them and prefixes 'Voided - ')."""
     out, seen = [], set()
     for inv in invoices or []:
         memo = (inv.get("PrivateNote") or "").strip()
-        if not job_re.search(memo) or memo.lower().startswith("voided"):
+        if not matcher.invoice_belongs(inv):
             continue
         if inv["Id"] in seen:            # both customer pulls can return it
             continue
@@ -253,7 +231,7 @@ def main() -> int:
     access, cid = qbo_api.load_credentials()          # realm never printed
     pid, parent, disp = resolve_job(access, cid, a.project,
                                     a.project_id, a.parent_id)
-    job_re = job_pattern(a.project, a.alias)
+    matcher = JobMatcher(pid, a.project, a.alias, legacy=True)
 
     print(f"{disp}" + (f"  ({', '.join(a.alias)})" if a.alias else ""))
     print(f"cost window {a.since} .. {a.as_of}   line-item attribution\n")
@@ -263,8 +241,8 @@ def main() -> int:
     print(f"pulled  {len(bills):,} bills   {len(purchases):,} purchases   "
           f"{len(invoices):,} invoices on the project/parent customers\n")
 
-    lines = (attribute(bills, "Bill", "VendorRef", pid, job_re)
-             + attribute(purchases, "Purchase", "EntityRef", pid, job_re))
+    lines = (attribute(bills, "Bill", "VendorRef", matcher)
+             + attribute(purchases, "Purchase", "EntityRef", matcher))
 
     def tot(rows, cutoff=None):
         rows = [r for r in rows if cutoff is None or r["date"] <= cutoff]
@@ -290,7 +268,7 @@ def main() -> int:
               f"{_mark(i_amt, e[0])}")
     print()
 
-    inv = invoice_rows(invoices, job_re)
+    inv = invoice_rows(invoices, matcher)
     b_asof = round(sum(r["amount"] for r in inv if r["date"] <= a.as_of), 2)
     kinds: Dict[str, int] = {}
     for r in inv:

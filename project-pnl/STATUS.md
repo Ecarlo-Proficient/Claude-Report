@@ -158,6 +158,34 @@ manual close), RP (no draws — expenses → invoice → profit).
   rows have no division tab, so MFD status is gone until Test-Master carries
   STATUS again — `active mfd` will find nothing.
 
+- **LEGACY-JOB attribution (`--legacy`, 2026-08-24).** Jobs that predate
+  consistent project coding carry only PART of their cost on the project
+  customer; the rest is named in the line description or the bill memo, and
+  their invoices sit on the PARENT customer. QBO's own project P&L report
+  cannot see any of it, so those jobs used to export millions short. `--legacy`
+  (plus `--alias "<street name>"`) routes every cost-line test through
+  **`shared/job_lines.JobMatcher`** — project customer → line text → bill memo,
+  first rule wins, and a memo naming MORE THAN ONE job number is skipped, never
+  split. It also pulls the parent customer's invoices (memo-filtered) and
+  SYNTHESIZES the P&L totals from the same attributed lines
+  (`_synth_pl_totals`) instead of asking QBO for a report it cannot answer.
+  Opt-in and scoped per project (`_set_legacy_matcher` is called per project so
+  a batch can't leak one job's aliases into the next); with the flag off,
+  `_line_belongs` is byte-identical to the old `CustomerRef == customer_id`
+  test — verified on CP585 (COGS $109,893 both ways). Same matcher backs
+  `one-offs/legacy_job_cost_pull.py`, so the P&L and that pull can never
+  disagree. First use: MFD172, reproducing its known figures to the cent.
+- **Rich text is BANNED in this exporter, and every save is now gated on the
+  corruption check (2026-08-24).** `_cost_code_value` / `_cost_name_value` were
+  returning `CellRichText` (bold code token + regular description, the user
+  2026-06-09) — multi-run inline strings, exactly what `shared/xlsx_verify`
+  refuses and what makes Mac Excel offer to "repair" the file. It only ever
+  showed up when the accumulating-costs block contained a cost code, so most
+  P&Ls were clean by luck; MFD172 tripped it. Both helpers now return plain
+  strings (style the CELL, never runs inside it) and the rich-text imports are
+  gone. `safe_save` runs `assert_clean` on the TEMP file and REFUSES to publish
+  a workbook that fails — rule 5b was never wired into this tool before.
+
 ## OPEN ISSUES
 
 - **6 of 17 Active CP jobs now have a readable cost-code budget.** The newer

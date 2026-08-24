@@ -301,6 +301,15 @@ ETC with the exact source (owner's RP-file cell, takeoff file+cell, or blank). I
 write. READ-ONLY on every source (safe even with the WIP file open). Provenance is captured
 at read time (`rp_wip_reader` tags each row's `audit_contract_src` / `audit_etc_src`).
 
+**`shared/job_lines.py`** — the ONE test for "does this expense line belong to this job".
+STRICT by default (the line's `CustomerRef` is the project customer, exactly what every
+caller did before). LEGACY mode adds two fallbacks for jobs that predate consistent project
+coding: the line's own text names the job, or the BILL's memo names it AND names exactly one
+job number AND the line text names none — with the guard that a memo naming 2+ jobs is
+skipped, never split. Also `invoice_belongs`, since an older job invoices on the PARENT
+customer. Shared by `project-pnl --legacy` and `one-offs/legacy_job_cost_pull.py` so the
+P&L and the ad-hoc pull can never disagree about what a job cost.
+
 **Blank ETC → takeoff fallback (2026-08-07).** When the estimator left an ETC cell
 blank in the RP file, `rp_wip_reader.classify_from_file` calls
 `shared/takeoff_etc.find_takeoff_etc` (moved out of `one-offs/rp_schedule_wip_preview`
