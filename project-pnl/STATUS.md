@@ -175,6 +175,25 @@ manual close), RP (no draws — expenses → invoice → profit).
   test — verified on CP585 (COGS $109,893 both ways). Same matcher backs
   `one-offs/legacy_job_cost_pull.py`, so the P&L and that pull can never
   disagree. First use: MFD172, reproducing its known figures to the cent.
+- **`--job-class` (2026-08-25, MFD228).** A fourth legacy rule: the line's
+  `ClassRef` sits under the job's OWN class branch, matched as a PREFIX so the
+  live parent and its deleted per-job leaf both count. Two traps it exists to
+  survive: (a) **the job's class is usually INACTIVE** - a plain
+  `SELECT * FROM Class` returns active only, so on MFD228 the query showed
+  `MULTI FAMILY:MARKER LAPIZ` while every cost line actually carried
+  `…:MFD228 (deleted)`; (b) **a division class is not a job class** -
+  `JobMatcher` REFUSES a bare `MULTI FAMILY` / `Residential` / `Commercial`
+  prefix, which would claim every job in the division.
+- **Job numbers now match separator-tolerantly and suffix-exactly
+  (2026-08-25).** `job_number_pattern` accepts `MFD228`, `MFD 228`, `MFD-228`
+  (clerks write all three) while still refusing `MFD2281` and, critically,
+  keeping a base job and its `-FTW` sibling apart. The suffix guard fires only
+  on a hyphen-attached token (`RP7186-FTW`) or FTW in any spacing - NOT on the
+  ordinary memo form `MFD172 - 1392 E Bonds Ranch Rd`, where the spaced hyphen
+  separates fields. Getting that wrong dropped 48 real lines in testing.
+  Effect on live numbers: MFD228 gained $6,680 (9 lines written `MFD 228`),
+  and MFD172 gained **$105,163** across 18 `MFD 172-0-20-1` sub-service draws
+  that the original hand-built pull never saw.
 - **Rich text is BANNED in this exporter, and every save is now gated on the
   corruption check (2026-08-24).** `_cost_code_value` / `_cost_name_value` were
   returning `CellRichText` (bold code token + regular description, the user

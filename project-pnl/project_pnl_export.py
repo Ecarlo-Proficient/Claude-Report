@@ -601,11 +601,13 @@ _LEGACY_MATCH: Optional[JobMatcher] = None
 
 
 def _set_legacy_matcher(proj: str, customer_id: str, legacy: bool,
-                        aliases: Optional[List[str]] = None) -> None:
+                        aliases: Optional[List[str]] = None,
+                        job_class: str = "") -> None:
     """Install (or clear) the legacy matcher for ONE project. Called per
     project so a batch can never leak one job's aliases into the next."""
     global _LEGACY_MATCH
-    _LEGACY_MATCH = (JobMatcher(customer_id, proj, aliases or (), legacy=True)
+    _LEGACY_MATCH = (JobMatcher(customer_id, proj, aliases or (), legacy=True,
+                                class_prefix=job_class)
                      if legacy else None)
 
 
@@ -6817,6 +6819,12 @@ def main() -> int:
     ap.add_argument("--alias", action="append", default=[],
                     help="Street name the job goes by (repeatable), e.g. "
                          "--alias 'BONDS RANCH'. Only used with --legacy.")
+    ap.add_argument("--job-class", default="",
+                    help="The job's OWN class branch, e.g. "
+                         "'MULTI FAMILY:MARKER LAPIZ'. Matched as a PREFIX so "
+                         "the live parent and its deleted per-job leaf both "
+                         "count. A bare division name is refused. Only used "
+                         "with --legacy.")
     ap.add_argument("--no-prompt", action="store_true",
                     help="Don't pause to ask about mistyped invoice period "
                          "dates (skip them and warn instead). Use for "
@@ -6873,9 +6881,15 @@ def main() -> int:
             continue
         # Per project, so a batch can never carry one job's aliases into
         # the next; clears itself when --legacy is off.
-        _set_legacy_matcher(proj, cust_map[proj]["id"], args.legacy, args.alias)
+        try:
+            _set_legacy_matcher(proj, cust_map[proj]["id"], args.legacy,
+                                args.alias, args.job_class)
+        except ValueError as e:
+            ui_fail(f"{proj}: {e}")
+            return 1
         if args.legacy:
             ui_event(f"legacy attribution ON for {proj}"
+                     + (f"  · class: {args.job_class}" if args.job_class else "")
                      + (f"  · aliases: {', '.join(args.alias)}"
                         if args.alias else ""),
                      icon="⚑", color=_YEL)
