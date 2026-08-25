@@ -218,13 +218,13 @@ const NAV_GROUPS = [
   { id: "financials", label: "Financials",    tabs: ["pnl", "wip", "costs"] },
   { id: "customers",  label: "Customer",      tabs: ["customers", "invoices", "draws", "payments", "sales"] },
   { id: "vendors",    label: "Vendor",        tabs: ["vendors", "bills", "paybills", "subloc", "liens"] },
-  { id: "it",         label: "IT",            tabs: ["systems", "console"] },
+  { id: "it",         label: "IT",            tabs: ["systems", "graph", "console"] },
 ];
 const TAB_LABELS = {
   home: "My view", overview: "Overview", pnl: "Project P&L", wip: "WIP report", costs: "Costs",
   customers: "Customer Center", invoices: "Invoices", draws: "Draws", payments: "Payments", sales: "Sales Outreach",
   vendors: "Vendor Center", bills: "Bills", paybills: "Pay Bills", subloc: "Sub LOC", liens: "Liens",
-  systems: "Systems", console: "Console",
+  systems: "Systems", graph: "Graph", console: "Console",
 };
 const groupOf = t => NAV_GROUPS.find(g => g.tabs.includes(t)) || NAV_GROUPS[0];
 function buildGroupBar() {
@@ -256,7 +256,9 @@ function setTab(t) {
   if (t === "pnl") renderPnl();     // portfolio P&L is computed server-side, lazy-loaded
   if (t === "wip") renderWip();
   if (t === "console") renderConsole();
+  if (t !== "graph") stopGraphLoop();   // release the canvas render loop when leaving the Graph tab
   if (t === "systems") loadSystems();
+  if (t === "graph") loadGraph();
   if (t === "customers") renderCustomers();
   if (t === "payments") renderPayments();
   if (t === "paybills") renderPayBills();
@@ -455,6 +457,7 @@ const PIPELINE_DESC = {
   costs: "Pulls the last 90 days of job costs from QuickBooks (incl. subs), keyed by cost code, into the ledger. Prompts Touch ID. Feeds the Costs tab + the Project P&L margins.",
   crm: "Pulls the Notion Customer List into the ledger - leads/clients + the per-rep outreach touch log. Feeds Customer Center · Sales Outreach.",
   subloc: "Pulls QBO payments to subs to model each sub's float (line-item, actual pay dates, chronological FIFO). Feeds the Sub LOC tab.",
+  pnl: "Regenerates the per-project P&L workbooks for every ACTIVE job of one division (OneDrive PROJECT P&Ls; CP lands in the job's Synology folder). Reads QBO + the takeoff budget and writes Excel - it does NOT change the ledger. One division at a time; a full division takes a while, so pick the one you need.",
 };
 async function renderConsole() {
   const box = $("#consoleList"); if (!box) return;
@@ -494,6 +497,7 @@ async function renderConsole() {
     }
     card.appendChild(steps);
     const acts = document.createElement("div"); acts.className = "pl-acts";
+    const actionsOnly = (p.actions || []).length > 0 && !p.steps.length;
     const runBtn = document.createElement("button"); runBtn.className = "btn small";
     const sides = p.steps.filter(s => s.side).map(s => s.label);
     const msg = sides.length
@@ -504,7 +508,23 @@ async function renderConsole() {
       runBtn.textContent = "Queued ✕"; runBtn.classList.add("subtle"); card.classList.add("pl-queued");
       runBtn.onclick = () => { syncQueue = syncQueue.filter(q => q.key !== p.key); toast("Removed from the queue"); renderConsole(); };
     } else { runBtn.textContent = "Run"; runBtn.onclick = () => runPipeline(p.key, msg, { ..._consoleEls(), btn: runBtn }); }
-    acts.appendChild(runBtn);
+    if (!actionsOnly) acts.appendChild(runBtn);
+    // Pipelines that expose per-variant actions (P&L by division) render one
+    // button each INSTEAD of a generic Run - "pnl" alone resolves to no steps.
+    for (const a of (p.actions || [])) {
+      const aBtn = document.createElement("button"); aBtn.className = "btn small";
+      if (a.key === runningPipeline) { aBtn.textContent = `${a.label}…`; aBtn.disabled = true; card.classList.add("pl-running"); }
+      else if (syncQueue.some(q => q.key === a.key)) {
+        aBtn.textContent = `${a.label} ✕`; aBtn.classList.add("subtle"); card.classList.add("pl-queued");
+        aBtn.onclick = () => { syncQueue = syncQueue.filter(q => q.key !== a.key); toast("Removed from the queue"); renderConsole(); };
+      } else {
+        aBtn.textContent = a.label;
+        aBtn.onclick = () => runPipeline(a.key,
+          `Regenerate the ${a.label} P&L workbooks?\n\nRuns every ACTIVE ${a.label.replace("Active ", "")} job against QuickBooks and rewrites its workbook. Writes Excel only - the ledger is untouched. This can take several minutes.`,
+          { ..._consoleEls(), btn: aBtn });
+      }
+      acts.appendChild(aBtn);
+    }
     if (p.draft) {
       const dBtn = document.createElement("button"); dBtn.className = "btn small subtle"; dBtn.textContent = p.draft.label;
       dBtn.onclick = () => runPipeline("wip-draft",
@@ -4489,6 +4509,467 @@ function renderSystems() {
   }
 }
 
+// ── Graph tab: the org knowledge graph + imported system diagrams ─────────────
+// A self-contained canvas graph, no libraries. One renderer, two layouts:
+//   org map  -> force-directed (Obsidian-style): nodes = vault notes, edges = [[links]]
+//   diagrams -> layered flow, imported from docs/ARCHITECTURE.md mermaid (arrows = data flow)
+// Data is fetched once from /api/graph (parsed live server-side from the vault + docs).
+let GRAPH = null;            // cached /api/graph payload
+let graphMode = "org";       // "org" or a diagram key
+let GV = null;               // live view state for the current mode
+let _graphRAF = 0;
+let _gDraw = true;           // redraw-needed flag: paint only on change or while the sim moves (idle-cheap)
+const _gmark = () => { _gDraw = true; };
+
+const GRAPH_GROUPS = ["hub", "01_company", "02_processes", "03_systems", "04_integrations", "05_tools", "tasks"];
+const GRAPH_GROUP_LABEL = {
+  hub: "Hubs", "01_company": "Company & people", "02_processes": "Processes",
+  "03_systems": "Systems", "04_integrations": "Integrations", "05_tools": "Tools", tasks: "Tasks",
+};
+const _ge = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const _graphFont = () => getComputedStyle(document.body).fontFamily || "system-ui, sans-serif";
+
+function _pal() {
+  // Theme-aware colours, read fresh each draw so the dark-mode toggle just works.
+  const cs = getComputedStyle(document.documentElement);
+  const v = (n, d) => (cs.getPropertyValue(n).trim() || d);
+  return {
+    bg: v("--graph-bg", v("--surface", "#ffffff")),
+    edge: v("--graph-edge", "#c8d0da"),
+    text: v("--text", "#1f2937"),
+    dim: v("--text-dim", "#8a97a6"),
+    stroke: v("--graph-node-stroke", "#ffffff"),
+    hi: v("--accent", "#3b82f6"),
+    box: v("--graph-box", "#eef1f5"),
+    boxStroke: v("--border", "#d5dbe2"),
+    c: [1, 2, 3, 4, 5, 6, 7, 8].map(i => v("--graph-c" + i, "#8aa0b6")),
+  };
+}
+const _groupColor = (pal, group) => pal.c[(GRAPH_GROUPS.indexOf(group) + pal.c.length) % pal.c.length];
+const _graphCanvas = () => document.getElementById("graphCanvas");
+
+function _graphSize() {
+  const cv = _graphCanvas(); if (!cv) return null;
+  const wrap = cv.parentElement, dpr = window.devicePixelRatio || 1;
+  const w = wrap.clientWidth, h = wrap.clientHeight;
+  if (!w || !h) return null;                          // tab hidden -> size later
+  if (cv._cw !== w || cv._ch !== h || cv._dpr !== dpr) {
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+    cv.style.width = w + "px"; cv.style.height = h + "px";
+    cv._cw = w; cv._ch = h; cv._dpr = dpr;
+  }
+  return { cv, ctx: cv.getContext("2d"), w, h, dpr };
+}
+
+async function loadGraph(force) {
+  const note = document.getElementById("graphNote");
+  if (GRAPH && !force) { buildGraphModes(); setGraphMode(graphMode); return; }
+  if (note) note.textContent = "loading…";
+  try { GRAPH = await (await fetch("/api/graph")).json(); }
+  catch (e) { if (note) note.textContent = "could not load the graph"; return; }
+  buildGraphModes();
+  const keys = ["org", ...((GRAPH.diagrams && GRAPH.diagrams.diagrams) || []).map(d => d.key)];
+  if (!keys.includes(graphMode)) graphMode = "org";
+  setGraphMode(graphMode);
+}
+
+function buildGraphModes() {
+  const bar = document.getElementById("graphModes"); if (!bar) return;
+  bar.innerHTML = "";
+  const mk = (mode, label, sub) => {
+    const b = document.createElement("button");
+    b.className = "graph-mode" + (mode === graphMode ? " active" : "");
+    b.dataset.mode = mode;
+    b.innerHTML = `<span class="gm-label">${_ge(label)}</span>` + (sub ? `<span class="gm-sub">${_ge(sub)}</span>` : "");
+    b.onclick = () => setGraphMode(mode);
+    bar.appendChild(b);
+  };
+  const org = GRAPH.org || { nodes: [], links: [] };
+  mk("org", "Org map", `${(org.nodes || []).length} notes`);
+  for (const d of ((GRAPH.diagrams && GRAPH.diagrams.diagrams) || [])) {
+    // The diagram title leads with a domain code, then a dash and the long description; the
+    // short lead word makes a tidy chip, full title on hover. The split set MUST include the
+    // em dash: the ARCHITECTURE.md headings are authored with one (same as registry_view).
+    const short = (d.title.split(/[-–—(]/)[0] || d.title).trim();
+    const b = document.createElement("button");
+    b.className = "graph-mode" + (d.key === graphMode ? " active" : "");
+    b.dataset.mode = d.key; b.title = d.title;
+    b.innerHTML = `<span class="gm-label">${_ge(short)}</span><span class="gm-sub">${d.nodes.length} · ${d.edges.length}</span>`;
+    b.onclick = () => setGraphMode(d.key);
+    bar.appendChild(b);
+  }
+}
+
+function setGraphMode(mode) {
+  graphMode = mode;
+  document.querySelectorAll("#graphModes .graph-mode").forEach(b => b.classList.toggle("active", b.dataset.mode === mode));
+  buildGV(mode);
+  const note = document.getElementById("graphNote");
+  if (note) note.textContent = GV.err ? GV.err : `${GV.nodes.length} nodes · ${GV.links.length} links`;
+  buildGraphLegend();
+  hideGraphInfo();
+  const s = document.getElementById("graphSearch"); if (s) s.value = "";
+  layoutGV();
+  GV._fitted = false;
+  startGraphLoop();
+}
+
+function buildGV(mode) {
+  if (mode === "org") {
+    const src = (GRAPH.org && GRAPH.org.ok) ? GRAPH.org : { nodes: [], links: [] };
+    const nodes = src.nodes.map(n => ({
+      id: n.id, label: n.label, group: n.group, deg: n.deg || 0,
+      r: 4 + Math.sqrt(n.deg || 0) * 1.9, kind: "dot",
+    }));
+    GV = { layout: "force", directed: false, nodes, links: (src.links || []).slice(),
+           err: (GRAPH.org && GRAPH.org.error) || "" };
+  } else {
+    const d = ((GRAPH.diagrams && GRAPH.diagrams.diagrams) || []).find(x => x.key === mode)
+      || { nodes: [], edges: [], direction: "LR" };
+    const nodes = d.nodes.map(n => ({ id: n.id, label: n.label, cluster: n.cluster || "", kind: "box" }));
+    GV = { layout: "layered", directed: true, dir: d.direction || "LR", nodes,
+           links: (d.edges || []).map(e => ({ source: e.source, target: e.target, label: e.label || "" })), err: "" };
+  }
+  GV.view = { x: 0, y: 0, scale: 1 };
+  GV.alpha = GV.layout === "force" ? 1 : 0;
+  GV.hover = GV.sel = GV.drag = null; GV.pan = null; GV.hits = null; GV._userMoved = false;
+  GV.byId = {}; GV.adj = {};
+  GV.nodes.forEach(n => { n.x = n.y = 0; GV.byId[n.id] = n; GV.adj[n.id] = new Set(); });
+  GV.links.forEach(l => { if (GV.adj[l.source] && GV.adj[l.target]) { GV.adj[l.source].add(l.target); GV.adj[l.target].add(l.source); } });
+  if (GV.layout === "layered") measureBoxes();
+}
+
+function _wrapLabel(ctx, text, maxW, maxLines) {
+  const words = String(text || "").split(/\s+/).filter(Boolean);
+  const lines = []; let cur = "";
+  for (const w of words) {
+    const t = cur ? cur + " " + w : w;
+    if (ctx.measureText(t).width > maxW && cur) { lines.push(cur); cur = w; if (lines.length === maxLines - 1) break; }
+    else cur = t;
+  }
+  if (cur && lines.length < maxLines) lines.push(cur);
+  const used = lines.join(" ").split(/\s+/).length;
+  if (used < words.length && lines.length) {              // ran out of lines -> ellipsis
+    let last = lines[lines.length - 1];
+    while (ctx.measureText(last + " …").width > maxW && last.length) last = last.slice(0, -1);
+    lines[lines.length - 1] = last + " …";
+  }
+  return lines.length ? lines : [""];
+}
+
+function measureBoxes() {
+  const sz = _graphSize(); const ctx = sz ? sz.ctx : _graphCanvas().getContext("2d");
+  ctx.font = "600 12px " + _graphFont();
+  for (const n of GV.nodes) {
+    n.lines = _wrapLabel(ctx, n.label, 150, 3);
+    let w = 0; for (const ln of n.lines) w = Math.max(w, ctx.measureText(ln).width);
+    n.w = Math.min(184, Math.max(56, w + 22));
+    n.h = n.lines.length * 15 + 14;
+  }
+}
+
+function layoutGV() { if (GV.layout === "layered") layeredLayout(); else forceInit(); }
+
+function forceInit() {
+  const n = GV.nodes.length || 1, R = 60 + n * 3.5;
+  GV.nodes.forEach((nd, i) => {
+    const a = (i / n) * Math.PI * 2 * 1.618;            // golden-angle spiral start
+    const rad = R * Math.sqrt((i + 0.5) / n);
+    nd.x = Math.cos(a) * rad; nd.y = Math.sin(a) * rad; nd.vx = nd.vy = 0; nd.fixed = false;
+  });
+  GV.alpha = 1;
+}
+
+function forceStep() {
+  const nodes = GV.nodes, n = nodes.length; if (!n) return;
+  const k = 80, temp = 36 * GV.alpha, grav = 0.034;
+  for (const a of nodes) { a.dx = 0; a.dy = 0; }
+  for (let i = 0; i < n; i++) {
+    const a = nodes[i];
+    for (let j = i + 1; j < n; j++) {
+      const b = nodes[j];
+      let dx = a.x - b.x, dy = a.y - b.y, d = Math.hypot(dx, dy);
+      if (d < 0.02) { dx = (i - j) * 0.1 + 0.05; dy = 0.05; d = Math.hypot(dx, dy); }
+      const m = (k * k) / d / d, ux = dx * m, uy = dy * m;   // repulsion ~ k^2/d
+      a.dx += ux; a.dy += uy; b.dx -= ux; b.dy -= uy;
+      const minD = a.r + b.r + 5;                            // soft collision: keep circles apart
+      if (d < minD) { const push = (minD - d) / d * 0.4, px = dx * push, py = dy * push;
+        a.dx += px; a.dy += py; b.dx -= px; b.dy -= py; }
+    }
+  }
+  for (const l of GV.links) {
+    const a = GV.byId[l.source], b = GV.byId[l.target]; if (!a || !b) continue;
+    let dx = a.x - b.x, dy = a.y - b.y, d = Math.hypot(dx, dy) || 0.02;
+    const m = (d / k), ux = (dx / d) * d * m, uy = (dy / d) * d * m;   // attraction ~ d^2/k
+    a.dx -= ux; a.dy -= uy; b.dx += ux; b.dy += uy;
+  }
+  for (const a of nodes) {
+    a.dx -= a.x * grav; a.dy -= a.y * grav;                 // gentle gravity keeps it centred
+    if (a === (GV.drag && GV.drag.node)) continue;
+    const len = Math.hypot(a.dx, a.dy);
+    if (len > 0) { const s = Math.min(len, temp) / len; a.x += a.dx * s; a.y += a.dy * s; }
+  }
+  GV.alpha *= 0.985;
+}
+
+function layeredLayout() {
+  const nodes = GV.nodes, byId = GV.byId;
+  const out = {}, indeg = {};
+  nodes.forEach(n => { out[n.id] = []; indeg[n.id] = 0; });
+  for (const l of GV.links) if (byId[l.source] && byId[l.target]) { out[l.source].push(l.target); indeg[l.target]++; }
+  // Longest-path ranks via Kahn; nodes stuck in a cycle keep rank 0 (rare in these DAGs).
+  const rank = {}, ind = {}; nodes.forEach(n => { rank[n.id] = 0; ind[n.id] = indeg[n.id]; });
+  let q = nodes.filter(n => indeg[n.id] === 0).map(n => n.id); const seen = new Set();
+  while (q.length) {
+    const id = q.shift(); if (seen.has(id)) continue; seen.add(id);
+    for (const t of out[id]) { rank[t] = Math.max(rank[t], rank[id] + 1); if (--ind[t] <= 0 && !seen.has(t)) q.push(t); }
+  }
+  const layers = {}; nodes.forEach(n => (layers[rank[n.id]] ||= []).push(n));
+  const ranks = Object.keys(layers).map(Number).sort((a, b) => a - b);
+  ranks.forEach((r, i) => layers[r].forEach((n, j) => { n._rk = i; n._ord = j; }));
+  // Barycentre sweeps to reduce crossings.
+  for (let pass = 0; pass < 6; pass++) {
+    for (const r of ranks) {
+      const layer = layers[r];
+      layer.forEach(n => {
+        const nb = [...GV.adj[n.id]].map(id => byId[id]).filter(m => m && m._rk !== n._rk);
+        n._bc = nb.length ? nb.reduce((s, m) => s + m._ord, 0) / nb.length : n._ord;
+      });
+      layer.sort((a, b) => a._bc - b._bc);
+      layer.forEach((n, j) => { n._ord = j; });
+    }
+  }
+  const horizontal = /^[LR]/.test(GV.dir || "LR");         // LR/RL lay ranks along x
+  const maxW = Math.max(60, ...nodes.map(n => n.w || 60));
+  const maxH = Math.max(30, ...nodes.map(n => n.h || 30));
+  const gapMain = (horizontal ? maxW : maxH) + 74;
+  const gapCross = (horizontal ? maxH : maxW) + 22;
+  for (const r of ranks) {
+    const layer = layers[r], span = (layer.length - 1) * gapCross;
+    layer.forEach((n, j) => {
+      const main = n._rk * gapMain, cross = j * gapCross - span / 2;
+      if (horizontal) { n.x = main; n.y = cross; } else { n.x = cross; n.y = main; }
+    });
+  }
+}
+
+// Comfortable default framing for the force map: centre on the MEDIAN node and
+// scale to the core (85th-percentile radius), so a few flung-out nodes can't shrink
+// the whole graph to dots. "Fit" (fitGraph) still frames every node exactly.
+function frameGraph() {
+  const sz = _graphSize(); if (!sz || !GV || !GV.nodes.length) return false;
+  const med = arr => arr.slice().sort((a, b) => a - b)[arr.length >> 1];
+  const cx = med(GV.nodes.map(n => n.x)), cy = med(GV.nodes.map(n => n.y));
+  const ds = GV.nodes.map(n => Math.hypot(n.x - cx, n.y - cy)).sort((a, b) => a - b);
+  const core = ds[Math.floor(ds.length * 0.85)] || ds[ds.length - 1] || 1;
+  const scale = Math.max(0.14, Math.min(1.8, 0.42 * Math.min(sz.w, sz.h) / core));
+  GV.view.scale = scale; GV.view.x = sz.w / 2 - cx * scale; GV.view.y = sz.h / 2 - cy * scale;
+  GV._fitted = true;
+  return true;
+}
+
+function fitGraph() {
+  const sz = _graphSize(); if (!sz || !GV || !GV.nodes.length) return false;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const n of GV.nodes) {
+    const hw = n.kind === "box" ? n.w / 2 : n.r, hh = n.kind === "box" ? n.h / 2 : n.r;
+    x0 = Math.min(x0, n.x - hw); y0 = Math.min(y0, n.y - hh);
+    x1 = Math.max(x1, n.x + hw); y1 = Math.max(y1, n.y + hh);
+  }
+  const pad = 46, gw = Math.max(1, x1 - x0), gh = Math.max(1, y1 - y0);
+  const scale = Math.min((sz.w - pad * 2) / gw, (sz.h - pad * 2) / gh, 2.2);
+  GV.view.scale = Math.max(0.12, scale);
+  GV.view.x = sz.w / 2 - ((x0 + x1) / 2) * GV.view.scale;
+  GV.view.y = sz.h / 2 - ((y0 + y1) / 2) * GV.view.scale;
+  GV._fitted = true;
+  return true;
+}
+
+function _borderPoint(n, tx, ty) {
+  const dx = tx - n.x, dy = ty - n.y, d = Math.hypot(dx, dy) || 1, ux = dx / d, uy = dy / d;
+  if (n.kind === "box") {
+    const hw = n.w / 2 + 2, hh = n.h / 2 + 2;
+    const s = 1 / Math.max(Math.abs(ux) / hw, Math.abs(uy) / hh);
+    return [n.x + ux * s, n.y + uy * s];
+  }
+  return [n.x + ux * (n.r + 1), n.y + uy * (n.r + 1)];
+}
+
+function drawGraph() {
+  const sz = _graphSize(); if (!sz) return;
+  if (!GV._fitted) { if (GV.layout === "force") frameGraph(); else fitGraph(); }
+  const { ctx, w, h, dpr } = sz, pal = _pal(), v = GV.view;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = pal.bg; ctx.fillRect(0, 0, w, h);
+  ctx.translate(v.x, v.y); ctx.scale(v.scale, v.scale);
+  const focus = GV.hover || GV.sel, near = focus ? GV.adj[focus.id] : null;
+  const hits = GV.hits;
+  // edges
+  ctx.lineWidth = 1 / v.scale; ctx.lineCap = "round";
+  for (const l of GV.links) {
+    const a = GV.byId[l.source], b = GV.byId[l.target]; if (!a || !b) continue;
+    const on = focus && (l.source === focus.id || l.target === focus.id);
+    ctx.globalAlpha = focus && !on ? 0.12 : (GV.directed ? 0.55 : 0.5);
+    ctx.strokeStyle = on ? pal.hi : pal.edge;
+    const [ax, ay] = GV.directed ? _borderPoint(a, b.x, b.y) : [a.x, a.y];
+    const [bx, by] = GV.directed ? _borderPoint(b, a.x, a.y) : [b.x, b.y];
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+    if (GV.directed) {
+      const ang = Math.atan2(by - ay, bx - ax), s = 8;
+      ctx.fillStyle = on ? pal.hi : pal.edge;
+      ctx.beginPath();
+      ctx.moveTo(bx, by);
+      ctx.lineTo(bx - s * Math.cos(ang - 0.4), by - s * Math.sin(ang - 0.4));
+      ctx.lineTo(bx - s * Math.cos(ang + 0.4), by - s * Math.sin(ang + 0.4));
+      ctx.closePath(); ctx.fill();
+    }
+  }
+  ctx.globalAlpha = 1;
+  const showLabels = document.getElementById("graphLabels") && document.getElementById("graphLabels").checked;
+  // nodes
+  for (const n of GV.nodes) {
+    const spotlight = focus === n || (near && near.has(n.id)) || (hits && hits.has(n.id));
+    const dim = (focus && n !== focus && !(near && near.has(n.id))) || (hits && !hits.has(n.id));
+    ctx.globalAlpha = dim ? 0.22 : 1;
+    if (n.kind === "box") _drawBox(ctx, n, pal, showLabels, focus === n);
+    else _drawDot(ctx, n, pal, v.scale, showLabels && (spotlight || n.r > 11 || v.scale > 1.15), focus === n);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function _drawDot(ctx, n, pal, scale, label, isFocus) {
+  ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
+  ctx.fillStyle = _groupColor(pal, n.group);
+  ctx.fill();
+  ctx.lineWidth = (isFocus ? 2.4 : 1.2) / scale; ctx.strokeStyle = isFocus ? pal.hi : pal.stroke; ctx.stroke();
+  if (label) {
+    ctx.font = `${isFocus ? "600 " : ""}12px ${_graphFont()}`;
+    ctx.fillStyle = isFocus ? pal.text : pal.dim;
+    ctx.textAlign = "left"; ctx.textBaseline = "middle";
+    ctx.fillText(n.label, n.x + n.r + 4, n.y);
+  }
+}
+
+function _roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath(); ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+}
+
+function _drawBox(ctx, n, pal, label, isFocus) {
+  const x = n.x - n.w / 2, y = n.y - n.h / 2;
+  _roundRect(ctx, x, y, n.w, n.h, 7);
+  ctx.fillStyle = pal.box; ctx.fill();
+  ctx.lineWidth = isFocus ? 2.4 : 1.2; ctx.strokeStyle = isFocus ? pal.hi : pal.boxStroke; ctx.stroke();
+  if (label !== false) {
+    ctx.font = "600 12px " + _graphFont();
+    ctx.fillStyle = pal.text; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    const lines = n.lines || [n.label], y0 = n.y - (lines.length - 1) * 7.5;
+    lines.forEach((ln, i) => ctx.fillText(ln, n.x, y0 + i * 15));
+  }
+}
+
+function buildGraphLegend() {
+  const el = document.getElementById("graphLegend"); if (!el) return;
+  el.innerHTML = "";
+  if (GV.layout === "force") {
+    const pal = _pal(), counts = {};
+    GV.nodes.forEach(n => { counts[n.group] = (counts[n.group] || 0) + 1; });
+    for (const g of GRAPH_GROUPS) {
+      if (!counts[g]) continue;
+      const row = document.createElement("div"); row.className = "gl-row";
+      row.innerHTML = `<span class="gl-dot" style="background:${_groupColor(pal, g)}"></span>` +
+        `<span>${_ge(GRAPH_GROUP_LABEL[g] || g)}</span><span class="gl-n">${counts[g]}</span>`;
+      el.appendChild(row);
+    }
+  } else {
+    const row = document.createElement("div"); row.className = "gl-row gl-note";
+    row.innerHTML = `<span>Arrows show data flow.</span>`;
+    el.appendChild(row);
+  }
+}
+
+function showGraphInfo(n) {
+  const el = document.getElementById("graphInfo"); if (!el) return;
+  const nb = [...(GV.adj[n.id] || [])].map(id => GV.byId[id]).filter(Boolean)
+    .sort((a, b) => (b.deg || 0) - (a.deg || 0));
+  const sub = GV.layout === "force"
+    ? `${_ge(GRAPH_GROUP_LABEL[n.group] || n.group)} · ${n.deg} link${n.deg === 1 ? "" : "s"}`
+    : (n.cluster ? _ge(n.cluster) : `${nb.length} connection${nb.length === 1 ? "" : "s"}`);
+  const list = nb.slice(0, 14).map(m => `<li>${_ge(m.label)}</li>`).join("");
+  el.innerHTML = `<button class="gi-x" title="Close">×</button>` +
+    `<div class="gi-title">${_ge(n.label)}</div><div class="gi-sub">${sub}</div>` +
+    (list ? `<div class="gi-h">Connected to</div><ul class="gi-list">${list}</ul>` : "") +
+    (nb.length > 14 ? `<div class="gi-more">+${nb.length - 14} more</div>` : "");
+  el.querySelector(".gi-x").onclick = () => { GV.sel = null; hideGraphInfo(); _gmark(); };
+  el.hidden = false;
+}
+function hideGraphInfo() { const el = document.getElementById("graphInfo"); if (el) el.hidden = true; }
+
+function _graphEventWorld(e) {
+  const cv = _graphCanvas(), rect = cv.getBoundingClientRect();
+  const cx = e.clientX - rect.left, cy = e.clientY - rect.top;
+  return { cx, cy, wx: (cx - GV.view.x) / GV.view.scale, wy: (cy - GV.view.y) / GV.view.scale };
+}
+function _pickNode(wx, wy) {
+  // topmost-ish: iterate in reverse so later-drawn wins ties
+  for (let i = GV.nodes.length - 1; i >= 0; i--) {
+    const n = GV.nodes[i];
+    if (n.kind === "box") { if (Math.abs(wx - n.x) <= n.w / 2 && Math.abs(wy - n.y) <= n.h / 2) return n; }
+    else if (Math.hypot(wx - n.x, wy - n.y) <= n.r + 4) return n;
+  }
+  return null;
+}
+
+function startGraphLoop() { stopGraphLoop(); _gDraw = true; const tick = () => {
+  if (!GV || activeTab !== "graph") { _graphRAF = 0; return; }
+  if (GV.layout === "force" && GV.alpha > 0.02) { forceStep(); if (!GV._userMoved) frameGraph(); _gDraw = true; }  // keep the view framed as the layout settles
+  if (_gDraw) { drawGraph(); _gDraw = false; }   // idle when nothing moves; the tab-switch stops the loop entirely
+  _graphRAF = requestAnimationFrame(tick);
+}; _graphRAF = requestAnimationFrame(tick); }
+function stopGraphLoop() { if (_graphRAF) cancelAnimationFrame(_graphRAF); _graphRAF = 0; }
+
+function wireGraphCanvas() {
+  const cv = _graphCanvas(); if (!cv) return;
+  cv.addEventListener("wheel", e => {
+    e.preventDefault(); if (!GV) return; GV._userMoved = true; _gmark();
+    const { cx, cy } = _graphEventWorld(e);
+    const f = Math.exp(-e.deltaY * 0.0016), ns = Math.min(3.2, Math.max(0.12, GV.view.scale * f));
+    const k = ns / GV.view.scale;
+    GV.view.x = cx - (cx - GV.view.x) * k; GV.view.y = cy - (cy - GV.view.y) * k; GV.view.scale = ns;
+  }, { passive: false });
+  cv.addEventListener("pointerdown", e => {
+    if (!GV) return; GV._userMoved = true; _gmark(); cv.setPointerCapture(e.pointerId);
+    const { cx, cy, wx, wy } = _graphEventWorld(e);
+    const n = _pickNode(wx, wy);
+    if (n) { GV.drag = { node: n, moved: false }; n.fixed = true; if (GV.layout === "force") GV.alpha = Math.max(GV.alpha, 0.4); }
+    else GV.pan = { x: cx, y: cy, vx: GV.view.x, vy: GV.view.y, moved: false };
+  });
+  cv.addEventListener("pointermove", e => {
+    if (!GV) return; _gmark();
+    const { cx, cy, wx, wy } = _graphEventWorld(e);
+    if (GV.drag) { GV.drag.node.x = wx; GV.drag.node.y = wy; GV.drag.moved = true; if (GV.layout === "force") GV.alpha = Math.max(GV.alpha, 0.3); return; }
+    if (GV.pan) { GV.view.x = GV.pan.vx + (cx - GV.pan.x); GV.view.y = GV.pan.vy + (cy - GV.pan.y); GV.pan.moved = true; cv.style.cursor = "grabbing"; return; }
+    const n = _pickNode(wx, wy);
+    GV.hover = n; cv.style.cursor = n ? "pointer" : "grab";
+  });
+  const end = e => {
+    if (!GV) return; _gmark();
+    if (GV.drag) { const nd = GV.drag.node; if (GV.layout === "force") nd.fixed = false; if (!GV.drag.moved) { GV.sel = nd; showGraphInfo(nd); } GV.drag = null; }
+    else if (GV.pan) { if (!GV.pan.moved) { GV.sel = null; hideGraphInfo(); } GV.pan = null; cv.style.cursor = "grab"; }
+  };
+  cv.addEventListener("pointerup", end);
+  cv.addEventListener("pointerleave", () => { if (GV && !GV.drag && !GV.pan) { GV.hover = null; _gmark(); } });
+}
+
+function graphSearch(q) {
+  if (!GV) return; q = (q || "").trim().toLowerCase(); _gmark();
+  if (!q) { GV.hits = null; return; }
+  GV.hits = new Set(GV.nodes.filter(n => (n.label || "").toLowerCase().includes(q) || (n.id || "").toLowerCase().includes(q)).map(n => n.id));
+  const first = GV.nodes.find(n => GV.hits.has(n.id));
+  if (first) { GV.sel = first; showGraphInfo(first); GV._userMoved = true; const sz = _graphSize(); if (sz) { GV.view.x = sz.w / 2 - first.x * GV.view.scale; GV.view.y = sz.h / 2 - first.y * GV.view.scale; } }
+}
+
 function init() {
   applySettings();
   syncSettingsUI();
@@ -4570,6 +5051,11 @@ function init() {
   for (const id of ["#sysSearch", "#sysOwner", "#sysHealth", "#sysState", "#sysLife", "#sysRetired"]) {
     const el = $(id); if (el) el.addEventListener("input", renderSystems);
   }
+  { const el = $("#btnGraphReload"); if (el) el.onclick = () => loadGraph(true); }
+  { const el = $("#graphFit"); if (el) el.onclick = () => { if (GV) { GV._userMoved = false; fitGraph(); _gmark(); } }; }
+  { const el = $("#graphSearch"); if (el) el.addEventListener("input", e => graphSearch(e.target.value)); }
+  { const el = $("#graphLabels"); if (el) el.addEventListener("change", _gmark); }
+  wireGraphCanvas();
   buildGroupBar();   // generate the two-level nav (top groups; sub-tabs render on setTab)
   let savedTab = "home";
   try { savedTab = localStorage.getItem("proficient-ledger-tab") || "home"; } catch { /* ignore */ }

@@ -211,6 +211,35 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   - **The 06:38 daily digest scheduled task is disabled** (not deleted); `02_processes/digest-log.md`
     is kept as history.
 
+- **Graph tab — the org as a map (2026-08-25).** Requested by the owner: "add the graph view of my
+  org the same way that we have it for obsidian, any other graphs you have made to help explain our
+  systems don't create just import and finalize in ledger." One self-contained canvas viewer (no
+  libraries — the dashboard has zero external scripts and stays that way) renders two things:
+  - **Org map** — every vault note is a node, every `[[wikilink]]` an edge (live, ~80 notes /
+    ~388 links). Force-directed like Obsidian's graph: nodes coloured by top folder
+    (hub / company / processes / systems / integrations / tools / tasks), sized by link count.
+    Default framing centres on the MEDIAN node at the 85th-percentile radius so a few flung-out
+    nodes can't shrink the core to dots; **Fit** frames every node exactly. Hover highlights a
+    node + its neighbours (rest dim); click opens a side panel (group, link count, neighbour list);
+    search dims non-matches and centres the first hit; drag a node, scroll to zoom, drag to pan.
+  - **System diagrams** — the mermaid flowcharts already authored in `docs/ARCHITECTURE.md`
+    (AR · AP · WIP · Ledger · exports · money-bleeds) are IMPORTED (not redrawn): the exact nodes
+    and arrows are parsed from the mermaid source and laid out top-down/left-right (longest-path
+    layers + barycentre crossing-reduction) with directional arrowheads and edge labels.
+  - **`vault_graph.py`** — walks the vault (`rglob('*.md')`), resolves wikilinks by path-id then
+    bare stem, and parses the mermaid blocks. **`ROSTER.md` is excluded explicitly** (plus
+    dotfolders / `~$` temp) so no name can reach the graph — the vault is role-handle-only and the
+    roster is the one names file. Standalone self-check: `python3 ledger/vault_graph.py`.
+  - **`GET /api/graph`** — re-parses the vault + `ARCHITECTURE.md` on EVERY request. No cache, no
+    ledger table, no write-back; a missing vault degrades to a one-line message on the tab.
+  - **Path** — `shared/paths.vault_dir()`, override `ACB_VAULT_DIR`, READ-ONLY. Diagrams read from
+    the repo's own `docs/ARCHITECTURE.md`.
+  - **Render loop** idles when nothing moves (redraws only on change or while the sim settles) and
+    stops entirely when you leave the tab. Colours are theme tokens (`--graph-*`, light + dark).
+  - **Verified live in the browser** (dark + light, 1221px pane): org map 80 nodes / 388 links and
+    all 6 diagrams render; deterministic parse (CLI == server); hover / click / search / mode-switch
+    work; no console errors; ROSTER absent from the node set (80 notes, not 81).
+
 - **`schema.sql`** — the 6-table spine (`project`, `cost_code`, `budget_line`, `cost_line`,
   `billing_event`, `wip_snapshot`) + `v_wip_latest` view. Portable across SQLite and Postgres
   (natural keys, ISO-text timestamps, 0/1 booleans, `DROP VIEW`+`CREATE VIEW`, `ON CONFLICT`).
@@ -948,7 +977,7 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     **two-level grouped nav** (data-driven `NAV_GROUPS` in app.js; `buildGroupBar`/`buildSubTabs`; `setTab`
     highlights the group + renders the second row): **My view · Overview · Financials** (Project P&L · Costs)
     **· Customers** (Customers · Invoices · Draws · Payments · Sales Outreach) **· Vendor Center** (Vendors ·
-    Bills · Sub LOC · Liens) **· IT** (Systems · Console). A group opens its landing (first) tab; single-page
+    Bills · Sub LOC · Liens) **· IT** (Systems · Graph · Console). A group opens its landing (first) tab; single-page
     groups hide the sub-row. The **Vendors** page is renamed **"Vendor Center"** and **Sales -> "Sales
     Outreach"**. New **Customers** page - top clients by open AR (from the open invoices; click a client ->
     Invoices filtered to them; 51 clients / $5.27M). **Payments** is a clear stub (received payments + the AP
@@ -1211,6 +1240,15 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   today — needs per-code) → enables budget-vs-actual from the spine.
 - Postgres deployment decision (Synology container vs. small cloud box) — schema is ready either way.
 - Optional: a read-only dashboard over `v_wip_latest` (Phase 3) — DB first, UI later.
+
+- **Console: Project P&L workbooks, per division (2026-08-25).** A card with
+  three buttons - Active CP / Active RP / Active MFD - each regenerating every
+  ACTIVE job of that division via `project-pnl/project_pnl_export.py active
+  <div>`. It is a GENERATOR, not a loader: its steps live under `actions`, not
+  `steps`, so `_resolve_steps("reload"/"all")` can never sweep it in - a Full
+  refresh must not kick off 138 P&L runs. Same isolation trick the WIP draft
+  uses. Writes Excel only; the ledger is untouched. `pnl` alone and any
+  unknown `pnl-<x>` resolve to zero steps and are rejected by `_sync_start`.
 
 ## OPEN ISSUES / NOTES
 - MFD rows come from `Test-Master`, which has **no STATUS column** → MFD `status` loads as NULL

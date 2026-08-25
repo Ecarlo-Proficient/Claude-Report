@@ -9,7 +9,13 @@
 > picture (open it in a browser after pulling). Refresh it when structure meaningfully changes;
 > THIS file is the always-current source of truth.
 
-Last updated: 2026-08-19 (ledger/: NEW **Systems tab** — the systems & process registry
+Last updated: 2026-08-25 (ledger/: NEW **Graph tab** — the org as a map. `ledger/vault_graph.py`
+parses the whole vault's `[[wikilinks]]` into a force-directed org graph (Obsidian-style; ROSTER
+excluded so no names) AND imports the mermaid system diagrams from THIS file into the same
+canvas viewer; `/api/graph` serves both, parsed live (no cache, no DB table). Self-contained
+canvas renderer in `static/app.js` — no libraries. See the Graph tab entry in `ledger/STATUS.md`.)
+
+Previously: 2026-08-19 (ledger/: NEW **Systems tab** — the systems & process registry
 (`AI Brain_Vault/02_processes/*.md`) rendered LIVE in the dashboard. `ledger/registry_view.py`
 parses the eight domain markdown tables per request (no cache, no DB table, no write-back);
 `/api/processes` serves them; the tab filters by domain/owner/health/state/life. Vault path
@@ -54,7 +60,7 @@ shared/                the ONLY importable common code
 └─ setup_qbo.py        vault admin CLI (--status/--test/--rotate/--purge)
 
 invoice-sync/          QBO → Notion AR sync + Teams cards   (was automation-worker/)
-bill-tracker/          AP bills (FULL pull incl. subs) → Excel tracker + QBO Audit sheet (6 checks) + job_coding_audit drill
+bill-tracker/          AP bills (FULL pull incl. subs) → Excel tracker + QBO Audit sheet (7 checks, incl. Unused PO) + job_coding_audit drill
 statement-reconciler/  vendor statement PDFs ↔ QBO open bills
 wip/                   ALL WIP tooling: wip_writer.py (shared engine) + CP/RP readers + close scripts
 ledger/                canonical project DB: schema.sql spine + loaders (WIP · Bill Tracker · costs · AR invoices · customers) + dashboard
@@ -211,10 +217,11 @@ flowchart LR
     classDef tool fill:#f6f5f1,stroke:#4b5563,color:#1f2937
     classDef out fill:#dfeae2,stroke:#3E7A5C,color:#1f2937
 
-    QBO[("QBO\nALL bills (incl. subs) + invoices")]:::src
+    QBO[("QBO\nALL bills (incl. subs) + invoices + POs")]:::src
     NAS[("Synology NAS\nvendor statement PDFs")]:::src
     GL[("General List xlsx\nSynology · READ-ONLY")]:::src
-    BT["excel_bill_sync.py\nBills/Inventory/Liens + 6 Audit- Table sheets"]:::tool
+    POT[("PO tracker xlsx\nOneDrive · READ-ONLY\nvia po_tracker.py")]:::src
+    BT["excel_bill_sync.py\nBills/Inventory/Liens + 7 Audit- Table sheets"]:::tool
     JCA["job_coding_audit.py\non-demand per-job drill"]:::tool
     SR["statement_reconciler.py"]:::tool
     BX[("Bill Tracker.xlsx\nOneDrive/Automations-\ndisplay = non-sub · audit = incl. subs")]:::out
@@ -223,17 +230,24 @@ flowchart LR
     QBO --> BT --> BX
     QBO -. "audit-job" .-> JCA
     GL -- "RP draw matching" --> BT
+    POT -- "Unused PO reconcile" --> BT
     QBO --> SR
     NAS --> SR --> RX
 ```
 
 Full pull (2026-08-06): the tracker pulls every bill incl. subs. Subs are kept off the
-Bills/Inventory/Liens sheets but flow to the audit, now **six `Audit - …` sheets**, each a
+Bills/Inventory/Liens sheets but flow to the audit, now **seven `Audit - …` sheets**, each a
 proper Excel Table (filter/sort): Not Approved · Data Entry · Missing Project · Duplicates ·
-**FW Misplaced** · Sub No Project. The old `duplicate_bill_audit` / `item_no_project_audit`
-/ `sub_bill_audit` scripts were folded in and retired; `job_coding_audit.py` remains as the
-interactive `audit-job` drill. Cost codes (QBO Item name) are captured for the audit only —
-never a display column.
+**FW Misplaced** · Sub No Project · **Unused PO**. The old `duplicate_bill_audit` /
+`item_no_project_audit` / `sub_bill_audit` scripts were folded in and retired; `job_coding_audit.py`
+remains as the interactive `audit-job` drill. Cost codes (QBO Item name) are captured for the audit
+only — never a display column.
+
+**Unused PO (2026-08-25):** the "two tools, one story" join. `po_tracker.py` reads the office PO
+tracker workbook (`ACB_PO_TRACKER_XLSX`, READ-ONLY) and `bill_rows.build_po_index()` pulls QBO
+`PurchaseOrder` with status/date/vendor/total/bill-link. Reconciled per PO → `Audit - Unused PO`:
+Open-no-bill · Stale >60d · on-tracker-not-in-QBO, with the manual tracker's freshness stamped on
+the sheet. Degrades to a QBO-only view if the tracker is unreadable.
 
 ---
 
@@ -351,9 +365,10 @@ flowchart LR
     LOADER["load_wip_master.py\nCP←Test-CP · RP←Test-RP · MFD←Test-Master\nfilter to real project #s · idempotent upsert"]:::tool
     APLOAD["load_bill_tracker.py\nAP pay status + lien clock → ap_bill_line\n(NOT cost truth — subs excluded)"]:::tool
     DB[("ledger.sqlite3\nproject + wip_snapshot + ap_bill_line\n→ v_wip_latest · v_ap_by_project")]:::out
-    DASH["dashboard.py + static/\nlocal web UI (127.0.0.1) - READ-ONLY except the owner's marks.\nTabs: My view · Overview · P&L · WIP · Costs · Draws · Bills · Pay Bills\n(Notion-style saved views) · Liens · Vendors · Sub LOC · Sales · Systems · Console"]:::tool
+    DASH["dashboard.py + static/\nlocal web UI (127.0.0.1) - READ-ONLY except the owner's marks.\nTabs: My view · Overview · P&L · WIP · Costs · Draws · Bills · Pay Bills\n(Notion-style saved views) · Liens · Vendors · Sub LOC · Sales · Systems · Graph · Console"]:::tool
     REG[("AI Brain_Vault/02_processes/*.md\neight domain files — the process registry\n(read-only source, never written)")]:::src
     REGVIEW["registry_view.py\nparses the markdown row tables per request\nhealth · state · life — no cache, no DB table"]:::tool
+    VGRAPH["vault_graph.py\nwhole-vault wiki-links → org map (ROSTER excluded)\n+ docs/ARCHITECTURE.md mermaid → the Graph tab\nlive, no cache, no DB table"]:::tool
     BROWSER[("Browser\nhttp://127.0.0.1:8787")]:::out
     QBO[("QBO\nBills + Purchases\n(read-only pull, Touch ID)")]:::src
     QCOSTS["shared/qbo_costs.py\ncost_leaf + iter_cost_lines\n(the ONE resolver — shared with project-pnl)"]:::tool
@@ -361,6 +376,7 @@ flowchart LR
     FUTURE["later: budget_line (takeoff by code)\n· billing_event (AR / draws)"]:::future
 
     REG --> REGVIEW --> DASH
+    REG --> VGRAPH --> DASH
     TEST --> LOADER
     BT --> APLOAD
     QBO --> COSTLOAD
@@ -464,6 +480,13 @@ The job-detail panel links to **project-pnl**: `shared/pnl_paths.py` finds the p
 tools — gated behind a `confirm`; QBO stays read-only, only the .xlsx is written). This is the ledger's
 first reach OUT to a peripheral tool; the "own the spine" inverse (project-pnl reading `cost_line` from
 the ledger) is still ahead.
+
+**Ledger Console → Project P&L** — the Console's `Project P&L workbooks` card runs
+`project-pnl/project_pnl_export.py active cp|rp|mfd` as a subprocess, one division per
+button. Declared under `actions` rather than `steps` so it is unreachable from the
+`reload` / `all` chains (a Full refresh must never launch every project's P&L). Writes
+Excel to OneDrive `PROJECT P&Ls` (CP → the job's Synology folder); the ledger DB is not
+touched by it.
 
 The **Systems** tab (2026-08-19) is the ledger's first window onto something that is not a job:
 the **systems & process registry** (`AI Brain_Vault/02_processes/`, eight domain files). It is a

@@ -6779,9 +6779,15 @@ def expand_active_projects(tokens: List[str],
     (the user 2026-07-16: `project-pnl active cp`). No division token = all
     three. Non-keyword tokens still pass through, so `active cp MFD177` works.
     Returns (projects, expanded?)."""
-    toks = [t.strip().upper() for t in tokens]
+    # Split on the separators people actually type: `active-cp`, `active,cp`
+    # and `active cp` all mean the same batch. Without this, `active-cp` fell
+    # through as a literal project number, QBO had no customer called
+    # ACTIVE-CP, and the run did nothing but say "skipped" (the user
+    # 2026-08-25: "it's not loading").
+    toks = [part for t in tokens
+            for part in re.split(r"[-,/]", t.strip().upper()) if part]
     if "ACTIVE" not in toks:
-        return toks, False
+        return [t.strip().upper() for t in tokens], False
     divs = {t for t in toks if t in ("CP", "RP", "MFD")} or {"CP", "RP", "MFD"}
     extras = [t for t in toks if t not in ("ACTIVE", "CP", "RP", "MFD")]
     matched = sorted(

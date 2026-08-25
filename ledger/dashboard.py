@@ -46,6 +46,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from shared import paths, pnl_paths, bill_marks, lien_clock  # noqa: E402
 
 import registry_view  # noqa: E402  (local: parses the vault's process registry for the Systems tab)
+import vault_graph    # noqa: E402  (local: vault [[link]] graph + docs/ARCHITECTURE.md diagrams for the Graph tab)
 
 HERE = Path(__file__).resolve().parent
 STATIC = HERE / "static"
@@ -312,6 +313,15 @@ def _pipelines():
         {"key": "crm", "label": "CRM - customers", "steps": [
             {"label": "Pull customers (Notion)", "script": "ledger/load_customers.py", "args": []},
         ]},
+        # Workbook GENERATOR, not a loader: its steps live under "actions" so it
+        # can never be swept into the reload/all chains - a Full refresh must not
+        # kick off 138 project P&L runs (same reason the WIP draft sits outside
+        # "steps"). One action per division; each is its own explicit click.
+        {"key": "pnl", "label": "Project P&L workbooks", "steps": [], "actions": [
+            {"key": "pnl-cp", "label": "Active CP"},
+            {"key": "pnl-rp", "label": "Active RP"},
+            {"key": "pnl-mfd", "label": "Active MFD"},
+        ]},
         {"key": "subloc", "label": "Sub LOC (QBO float)", "steps": [
             {"label": "Load sub LOC float (Touch ID)", "script": "ledger/load_sub_loc.py", "args": []},
         ]},
@@ -328,6 +338,13 @@ def _resolve_steps(pipeline_key):
         return [s for p in pls for s in p["steps"]]
     if pipeline_key == "wip-draft":
         return next((p["draft"]["steps"] for p in pls if p["key"] == "wip" and p.get("draft")), [])
+    if pipeline_key.startswith("pnl-"):
+        div = pipeline_key[4:].upper()
+        if div not in ("CP", "RP", "MFD"):
+            return []
+        return [{"label": f"Regenerate Active {div} P&L workbooks",
+                 "script": "project-pnl/project_pnl_export.py",
+                 "args": ["active", div.lower(), "--no-prompt"], "side": True}]
     return next((p["steps"] for p in pls if p["key"] == pipeline_key), [])
 
 
@@ -1109,6 +1126,8 @@ class Handler(BaseHTTPRequestHandler):
             self._pipelines_list()
         elif path == "/api/processes":     # the Systems tab (vault process registry, live)
             self._processes()
+        elif path == "/api/graph":         # the Graph tab (vault link-graph + system diagrams, live)
+            self._graph()
         elif path.startswith("/static/"):
             self._static(path[len("/static/"):])
         else:
@@ -1171,6 +1190,19 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": False, "domains": [], "rows": [],
                         "error": f"registry parse failed: {e}"})
 
+    def _graph(self):
+        """The org map (vault notes + [[wikilinks]]) and the imported system
+        diagrams (mermaid in docs/ARCHITECTURE.md). Same contract as _processes:
+        parsed live, never cached, read-only, and a missing vault is reported in
+        the payload rather than raised so the rest of the dashboard keeps working.
+        """
+        try:
+            self._json(vault_graph.load_all())
+        except Exception as e:                      # noqa: BLE001
+            self._json({"org": {"ok": False, "nodes": [], "links": [],
+                                "error": f"graph parse failed: {e}"},
+                        "diagrams": {"ok": False, "diagrams": []}})
+
     def _pipelines_list(self):
         out = []
         for p in _pipelines():
@@ -1181,6 +1213,7 @@ class Handler(BaseHTTPRequestHandler):
                 "steps": [{"label": s["label"], "side": bool(s.get("side"))} for s in p["steps"]],
                 "has_producer": any(s.get("side") for s in p["steps"]),
                 "draft": ({"label": p["draft"]["label"]} if p.get("draft") else None),
+                "actions": p.get("actions") or [],
             })
         self._json({"pipelines": out})
 
