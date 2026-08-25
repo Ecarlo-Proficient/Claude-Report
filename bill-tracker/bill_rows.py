@@ -41,6 +41,7 @@ from qbo_bill_tracker import (
     STATUS_AWAITING_PAYMENT,
     STATUS_AWAITING_INVOICE,
     STATUS_PARTIAL_PAID,
+    STATUS_PARTIALLY_PAID_REMAINDER,
     STATUS_UNPAID,
 )
 
@@ -477,10 +478,13 @@ def _aggregate_invoice_status(line_statuses: List[str]) -> str:
         return STATUS_AWAITING_PAYMENT
     if STATUS_NO_PROJECT in s:
         return STATUS_NO_PROJECT
-    if s == {STATUS_OK_TO_PAY}:
-        return STATUS_OK_TO_PAY
-    if STATUS_OK_TO_PAY in s and len(s) > 1:
-        return STATUS_PARTIAL_PAID
+    if len(s) == 1:
+        return next(iter(s))          # all lines agree (incl. the partial-remainder AR state)
+    # mixed multi-project lines below
+    if STATUS_OK_TO_PAY in s:
+        return STATUS_PARTIAL_PAID    # some fully funded + others → decide float vs wait
+    if STATUS_PARTIALLY_PAID_REMAINDER in s:
+        return STATUS_PARTIALLY_PAID_REMAINDER   # some partially paid, none fully
     if STATUS_AWAITING_INVOICE in s:
         return STATUS_AWAITING_INVOICE
     return STATUS_AWAITING_PAYMENT

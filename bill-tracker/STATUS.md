@@ -40,6 +40,18 @@ no business findings, dollar exposures, or owner analyses (those live in the own
   green tint for `"approved"` (kept red for `"not approved"`); `Lien` cell was already cell-scoped.
   No cell is colored by another cell's status. Legend relabeled `ROW KEY →` → `STATUS KEY →`.
   Verified: `validate_xlsx` clean; CF sqref = `N`(Approved) / `O`(Lien) / `R`(Invoice Status) only.
+- **Invoice-status colors + new AR state (2026-08-12, owner).** `Invoice paid` is now ALWAYS green
+  (dropped the gray "done" tint). New invoice status **`Partially Paid/Awaiting Remainder`** —
+  emitted by `compute_invoice_status` when a matched invoice has `0 < Balance < Total` (GC paid part)
+  — colored NEUTRAL tan (`FFEB9C`, Excel "Neutral"). `_aggregate_invoice_status` preserves it
+  (single-project) and handles mixed multi-project sets. Legend: green=`Invoice paid`,
+  tan=`Awaiting / partial pay`, gray "Done" removed. New constant in `qbo_bill_tracker.py`
+  (`STATUS_PARTIALLY_PAID_REMAINDER` + `COLOR_PARTIAL_REMAINDER` + `STATUS_FILL_MAP` entry).
+- **Invoice Open Bal column (2026-08-12, owner).** Added `Invoice Open Bal` (from `inv_balance`,
+  the matched invoice's QBO Balance) to the Bills/Inventory sheets, positioned right BEFORE
+  `Invoice Total`. 28 → 29 columns; positional `values` list + `COL_WIDTHS` updated, dividers now
+  at cols 13/17. Verified: 29 cols, AR order `… Invoice Date · Invoice Open Bal · Invoice Total …`,
+  `validate_xlsx` clean, 6/6 existing tests pass.
 
 - **No realm in the terminal (2026-08-06, owner).** The auth step printed
   `ok. company_id=<realm>`; removed — it now just prints `ok.`, consistent with `sync-ar`

@@ -85,6 +85,11 @@ STATUS_PAID = "Bill paid"
 # "is it fully funded" question is line-aggregated. Partial paid signals
 # "some lines funded, AP can decide to float the remainder or wait."
 STATUS_PARTIAL_PAID = "Partial paid"
+# 2026-08-12 (the user): the GC has paid PART of a matched invoice (0 < balance
+# < total) — distinct from "Awaiting Payment" (nothing paid yet). Its own AR
+# label so the owner sees "some money landed, remainder still due." Colored
+# NEUTRAL (Excel-tan) on the Bills sheet.
+STATUS_PARTIALLY_PAID_REMAINDER = "Partially Paid/Awaiting Remainder"
 
 # 2026-07-13: the single Status split into two axes (the user). PAY STATUS is the AP
 # side (did WE pay the vendor) from the bill balance; INVOICE STATUS is the AR
@@ -111,14 +116,19 @@ def compute_invoice_status(matched: Optional[dict], division: Optional[str]) -> 
         return STATUS_NO_PROJECT
     if matched is None:
         return STATUS_AWAITING_INVOICE
-    if float(matched.get("Balance") or 0) == 0:
-        return STATUS_OK_TO_PAY         # "Invoice paid"
-    return STATUS_AWAITING_PAYMENT
+    bal = float(matched.get("Balance") or 0)
+    if bal == 0:
+        return STATUS_OK_TO_PAY         # "Invoice paid" — GC funded in full
+    total = float(matched.get("TotalAmt") or 0)
+    if 0 < bal < total:
+        return STATUS_PARTIALLY_PAID_REMAINDER   # GC paid part; remainder due
+    return STATUS_AWAITING_PAYMENT      # bal == total → nothing paid yet
 OVERRIDE_VALUES = [STATUS_OK_TO_PAY, "ON HOLD", "REVIEW", "DISPUTED"]
 
 # Color fills
 COLOR_OK_TO_PAY = "C6EFCE"           # green
 COLOR_AWAITING_PAYMENT = "FFEB9C"    # yellow
+COLOR_PARTIAL_REMAINDER = "FFEB9C"   # neutral tan (Excel "Neutral")
 COLOR_AWAITING_INVOICE = "FFF8DC"    # beige
 COLOR_NO_PROJECT = "FFC7CE"          # red
 COLOR_PAID = "D9D9D9"                # grey
@@ -132,6 +142,7 @@ COLOR_SUBTOTAL = "E7E6E6"            # light grey
 STATUS_FILL_MAP = {
     STATUS_OK_TO_PAY: COLOR_OK_TO_PAY,
     STATUS_AWAITING_PAYMENT: COLOR_AWAITING_PAYMENT,
+    STATUS_PARTIALLY_PAID_REMAINDER: COLOR_PARTIAL_REMAINDER,
     STATUS_AWAITING_INVOICE: COLOR_AWAITING_INVOICE,
     STATUS_NO_PROJECT: COLOR_NO_PROJECT,
     STATUS_PAID: COLOR_PAID,

@@ -81,6 +81,7 @@ from qbo_bill_tracker import (
     parse_date,
     STATUS_OK_TO_PAY, STATUS_AWAITING_PAYMENT, STATUS_AWAITING_INVOICE,
     STATUS_PAID, STATUS_NO_PROJECT, STATUS_PARTIAL_PAID,
+    STATUS_PARTIALLY_PAID_REMAINDER,
     MATCH_BASIS_DRAW, MATCH_BASIS_FINAL,
 )
 from bill_rows import (
@@ -145,10 +146,10 @@ DATE_FMT = "m/d/yyyy"
 CF_GREEN_READY = "C6EFCE"        # Invoice paid + approved → pay the vendor
 CF_ORANGE_URGENT = "FFC299"      # Invoice paid + not approved → approve now
 CF_RED_HOLD = "FCE4E4"           # Awaiting + not approved → held (soft pink)
-CF_GRAY_DONE = "D9D9D9"          # Bill paid + approved → done
 CF_YELLOW_AUDIT = "FFEB9C"       # Bill paid + not approved → audit
+CF_NEUTRAL = "FFEB9C"            # Excel "Neutral" tan — partial/awaiting GC pay
 CF_PURPLE_NEEDS_PROJECT = "E4D7F5"  # No project # → needs project
-CF_PEACH_PARTIAL = "FFCC66"      # Partial paid → warm amber, action needed
+CF_PEACH_PARTIAL = "FFCC66"      # Partial paid (multi-project) → warm amber
 CF_LIEN_NOTICE = "FFC000"        # amber — lien NOTICE sent (escalation step 1)
 CF_LIEN_FILED  = "FF0000"        # red — real LIEN filed (escalation step 2)
 CF_LIEN_RELEASED = "92D050"      # green — lien RELEASED / satisfied (resolved)
@@ -240,13 +241,14 @@ BILL_ROW_COLS: List[Tuple[str, str]] = [
     ("Matched Invoice",    "text"),      # 20 — # + memo (scope), for eyeballing the match
     ("Invoice #",          "text"),      # 21 — just the # → QBO link
     ("Invoice Date",       "date"),      # 22
-    ("Invoice Total",      "money"),     # 23
-    ("GC Paid Date",       "date"),      # 24 — when the GC paid the invoice (money IN)
+    ("Invoice Open Bal",   "money"),     # 23 — what the GC still owes on the invoice
+    ("Invoice Total",      "money"),     # 24
+    ("GC Paid Date",       "date"),      # 25 — when the GC paid the invoice (money IN)
     # ── HOW WE PAID (AP cash-OUT; band derived from Pay Ref #) ──
-    ("Pay Ref #",          "text"),      # 25 — check # we paid with (blank for CC)
-    ("Pay Date",           "date"),      # 26 — when we paid the vendor
-    ("Pay Method",         "text"),      # 27 — Check / CC / (multiple)
-    ("_Key",               "text"),      # 28 — hidden merge join key
+    ("Pay Ref #",          "text"),      # 26 — check # we paid with (blank for CC)
+    ("Pay Date",           "date"),      # 27 — when we paid the vendor
+    ("Pay Method",         "text"),      # 28 — Check / CC / (multiple)
+    ("_Key",               "text"),      # 29 — hidden merge join key
 ]
 LINE_AMT_COL_INDEX = next(i + 1 for i, (h, _) in enumerate(BILL_ROW_COLS) if h == "Line Amount")
 HEADERS = [h for h, _ in BILL_ROW_COLS]
@@ -284,10 +286,11 @@ COL_WIDTHS: Dict[int, float] = {
     # CLIENT PAYMENT · AR
     18: 16,                                          # Invoice Status
     19: 26,                                          # Client (sits by the match)
-    20: 60, 21: 10, 22: 11, 23: 12, 24: 12,          # Matched Inv / Invoice # / Inv Date / Inv Total / GC Paid Date
+    20: 60, 21: 10, 22: 11,                          # Matched Inv / Invoice # / Inv Date
+    23: 13, 24: 12, 25: 12,                          # Invoice Open Bal / Inv Total / GC Paid Date
     # HOW WE PAID (AP cash-out)
-    25: 14, 26: 11, 27: 12,                          # Pay Ref # / Pay Date / Pay Method
-    28: 14,                                          # _Key (hidden)
+    26: 14, 27: 11, 28: 12,                          # Pay Ref # / Pay Date / Pay Method
+    29: 14,                                          # _Key (hidden)
 }
 
 
@@ -899,13 +902,14 @@ def _write_bill_row(ws, r_i: int, r: dict, edits: Dict[str, Dict[str, str]],
         _invoice_cell(r.get("inv_doc", ""), r.get("inv_memo", ""), r.get("match_basis", "")),  # 20 Matched Invoice
         r.get("inv_doc", ""),                                    # 21 Invoice # (→ link)
         r.get("inv_date"),                                       # 22
-        r.get("inv_total"),                                      # 23
-        r.get("payment_date"),                                   # 24 GC Paid Date (money IN)
+        r.get("inv_balance"),                                    # 23 Invoice Open Bal (GC still owes)
+        r.get("inv_total"),                                      # 24 Invoice Total
+        r.get("payment_date"),                                   # 25 GC Paid Date (money IN)
         # ── HOW WE PAID (AP cash-out) ──
-        _pm.get("ref", ""),                                      # 25 Pay Ref #
-        _pm.get("date"),                                         # 26 Pay Date
-        _pm.get("method", ""),                                   # 27 Pay Method
-        key,                                                     # 28 _Key
+        _pm.get("ref", ""),                                      # 26 Pay Ref #
+        _pm.get("date"),                                         # 27 Pay Date
+        _pm.get("method", ""),                                   # 28 Pay Method
+        key,                                                     # 29 _Key
     ]
     for c_i, (val, kind) in enumerate(zip(values, KINDS), start=1):
         c = ws.cell(row=r_i, column=c_i, value=val)
@@ -970,14 +974,13 @@ def _rowcolor_legend(ws, start_col: int) -> None:
     inside, mirroring the lien key one row above."""
     # (hex fill or None, label, font hex)
     items = [
-        (None,                    "STATUS KEY →",          "1F3864"),
-        (CF_GREEN_READY,          "GC funded: pay now",    "000000"),
-        (CF_YELLOW_AUDIT,         "Fronted: awaiting pay", "000000"),
-        (CF_RED_HOLD,             "Fronted: not inv'd",    "000000"),
-        (CF_PEACH_PARTIAL,        "Partly funded",         "000000"),
-        (CF_GRAY_DONE,            "Done",                  "000000"),
-        (CF_PURPLE_NEEDS_PROJECT, "No project #",          "000000"),
-        (None,                    "Pipeline: awaiting GC", "1F3864"),
+        (None,                    "STATUS KEY →",           "1F3864"),
+        (CF_GREEN_READY,          "Invoice paid",           "000000"),
+        (CF_NEUTRAL,              "Awaiting / partial pay", "000000"),
+        (CF_RED_HOLD,             "Fronted: not inv'd",     "000000"),
+        (CF_PEACH_PARTIAL,        "Partly funded (multi)",  "000000"),
+        (CF_PURPLE_NEEDS_PROJECT, "No project #",           "000000"),
+        (None,                    "Pipeline: awaiting GC",  "1F3864"),
     ]
     for i, (hex_color, text, font_hex) in enumerate(items):
         col = start_col + i
@@ -1106,25 +1109,27 @@ def _finalize_sheet(ws, table_name: str, last_row: int,
     ws.conditional_formatting.add(approved_range,
         _cf_fill_rule(f'${approved_letter}{fr}="approved"', CF_GREEN_READY))
 
-    # ── Invoice-Status cell: RECONCILIATION (Pay Status × Invoice Status) ──
-    # Paints ONLY the Invoice Status cell (was the whole-row band). The
-    # combinations are mutually exclusive (a row has exactly one Pay×Invoice
-    # pair), so rule order doesn't affect correctness.
+    # ── Invoice-Status cell: color by the AR state (Good / Neutral / Bad) ──
+    # Paints ONLY the Invoice Status cell (never the row). "Invoice paid" is
+    # ALWAYS green now (the user 2026-08-12) — the old gray "done" tint is gone;
+    # "Partially Paid/Awaiting Remainder" is neutral tan. Awaiting Payment /
+    # Awaiting Invoice tint only once we've FRONTED the vendor (bill paid), so an
+    # unpaid pipeline bill stays uncolored. States are mutually exclusive, so
+    # rule order doesn't affect correctness.
     inv_range = f"{inv_letter}{DATA_START}:{inv_letter}{last_row}"
-    bill_open = f'OR(${pay_letter}{fr}="Unpaid",${pay_letter}{fr}="Partial paid")'
-    # Pay Status now carries a (fronted)/(collected) suffix on paid bills, so
-    # match on the "Bill paid" PREFIX rather than the exact string.
+    # Pay Status carries a (fronted)/(collected) suffix on paid bills, so match
+    # on the "Bill paid" PREFIX rather than the exact string.
     paid = f'LEFT(${pay_letter}{fr},9)="Bill paid"'
     cf_rules: List[Tuple[str, str]] = [
         # No project # (data issue) wins regardless of the other axis.
         (f'${inv_letter}{fr}="No project #"',                            CF_PURPLE_NEEDS_PROJECT),
+        # Invoice paid in full → green, whether or not we've paid the vendor.
+        (f'${inv_letter}{fr}="Invoice paid"',                            CF_GREEN_READY),
+        # GC paid part of the invoice → neutral tan, remainder still due.
+        (f'${inv_letter}{fr}="{STATUS_PARTIALLY_PAID_REMAINDER}"',       CF_NEUTRAL),
         # Fronted — we paid the vendor, GC hasn't reimbursed us.
         (f'AND({paid},${inv_letter}{fr}="Awaiting Payment")',           CF_YELLOW_AUDIT),
         (f'AND({paid},${inv_letter}{fr}="Awaiting Invoice")',           CF_RED_HOLD),
-        # Done — vendor paid AND GC paid.
-        (f'AND({paid},${inv_letter}{fr}="Invoice paid")',               CF_GRAY_DONE),
-        # GC funded, vendor bill still open → pay now.
-        (f'AND({bill_open},${inv_letter}{fr}="Invoice paid")',           CF_GREEN_READY),
         # Partly funded across a multi-project bill → decide float or wait.
         (f'${inv_letter}{fr}="Partial paid"',                            CF_PEACH_PARTIAL),
         # Everything else (bill open + awaiting GC) → no tint, normal pipeline.
