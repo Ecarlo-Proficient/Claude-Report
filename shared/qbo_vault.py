@@ -3,8 +3,9 @@
 qbo_vault.py — Cross-platform credential store for QBO.
 
 PLATFORMS
-  macOS  → single-blob Keychain entry (service='automation-qbo'),
-           biometric ACL, one Touch ID prompt per process. (Original behavior.)
+  macOS  → single-blob login-keychain entry (service='automation-qbo').
+           NOT biometric-gated: a standard login-keychain item, so the real
+           gate is the login keychain being unlocked (see DESIGN below).
   Linux  → environment variables QBO_CLIENT_ID / QBO_CLIENT_SECRET /
            QBO_COMPANY_ID / QBO_REFRESH_TOKEN. Used by the Docker container.
            Token rotation writes to a JSON file at QBO_SECRETS_FILE (default
@@ -12,35 +13,44 @@ PLATFORMS
            restarts. Reads prefer the file when present, falling back to env vars.
 
 DESIGN (macOS)
-  All QBO keys live together in ONE Keychain entry stored as a
-  base64-encoded JSON blob with biometric ACL (-T "").
+  All QBO keys live together in ONE login-keychain entry, stored as a
+  base64-encoded JSON blob via `security add-generic-password ... -T ""`.
 
-  Why: reading the blob = ONE Touch ID prompt, and every key becomes
-  available to the calling script for the rest of the process. No more
-  five separate Touch ID prompts to read five keys.
+  IMPORTANT (corrected 2026-08-17): this is NOT a biometric / Touch ID ACL.
+  The `security` CLI cannot create a Touch-ID-bound item (that needs a
+  SecAccessControl through the Security framework). Reading the blob triggers
+  macOS keychain access control: on an UNTRUSTED read it shows the "security
+  wants to use your confidential information" confirmation, which on a Touch
+  ID Mac you MAY approve with a fingerprint - that is the historical "one
+  Touch ID per run". But the prompt is not guaranteed: once /usr/bin/security
+  is trusted for the item (you clicked "Always Allow", and/or put() re-created
+  the item on a refresh-token rotation), reads are SILENT. The real security
+  boundary is the login keychain being unlocked (it unlocks at login), not a
+  fingerprint.
 
-  Within a single Python process, the blob is decrypted once and cached
-  in memory. Subsequent get() calls hit the cache — zero extra Keychain
-  interaction.
+  Why one blob: reading it = ONE keychain access instead of five, and every
+  key becomes available for the rest of the process. Within a single Python
+  process the blob is decrypted once and cached in memory; later get() calls
+  hit the cache with zero extra Keychain interaction.
 
 ISOLATION → LIBRARY (the user 2026-07-17)
   Original design: one blob per service. REVISED by the user: this blob
   (service 'automation-qbo') is now THE key library — every new
   integration's key lives here (JT_GRANT_KEY = JobTread joined
-  2026-07-17), one place to track them all, one Touch ID per run.
+  2026-07-17), one place to track them all, one keychain read per run.
   The Notion/Teams/invoice-sync blobs predate the decision and stay
   where they are (historical exceptions, not the pattern).
 
 Public API (identical across platforms):
-  get_all()   -> dict[str, str]    # one Touch ID on Mac; reads env+file on Linux
+  get_all()   -> dict[str, str]    # reads the blob on Mac (may prompt, then cached); env+file on Linux
   get(key)    -> str               # convenience on top of get_all
   put(key, value)                  # update one key (Keychain on Mac, file on Linux)
   put_all(values)                  # update multiple keys at once
   delete(key) -> bool              # remove one key
-  has_credentials() -> bool        # no Touch ID on Mac; existence check
+  has_credentials() -> bool        # existence check only on Mac (no blob read)
   list_stored() -> list[str]       # keys present
   purge_all() -> int               # wipe (Keychain on Mac, file on Linux)
-  clear_cache()                    # force next get_all to re-prompt
+  clear_cache()                    # force next get_all to re-read the blob
   KNOWN_KEYS, SecretsError
 """
 from __future__ import annotations
@@ -106,7 +116,8 @@ def _read_blob_mac() -> Dict[str, str]:
 
 
 def _write_blob_mac(data: Dict[str, str]) -> None:
-    """Encode + store. Overwrites if exists. Biometric ACL."""
+    """Encode + store in the login keychain (security -T ""). Overwrites if
+    exists. NOT a biometric ACL - see the module docstring."""
     encoded = base64.b64encode(json.dumps(data).encode()).decode()
     _sec("delete-generic-password", "-a", ACCOUNT, "-s", SERVICE, "-l", LABEL)
     r = _sec(
@@ -171,7 +182,8 @@ def _write_blob(data: Dict[str, str]) -> None:
 
 
 def get_all() -> Dict[str, str]:
-    """Return all stored keys. Prompts Touch ID ONCE per process."""
+    """Return all stored keys. Reads the login-keychain blob once per process
+    (a keychain access that MAY prompt; see module docstring), then caches it."""
     global _cache
     if _cache is None:
         _cache = _read_blob()
@@ -218,7 +230,7 @@ def delete(key: str) -> bool:
 
 
 def has_credentials() -> bool:
-    """True if creds are present. No Touch ID on Mac (metadata only)."""
+    """True if creds are present. Metadata-only on Mac (no blob read, no prompt)."""
     if _IS_MAC:
         r = _sec("find-generic-password", "-a", ACCOUNT, "-s", SERVICE, "-l", LABEL)
         return r.returncode == 0
@@ -228,7 +240,7 @@ def has_credentials() -> bool:
 
 
 def list_stored() -> List[str]:
-    """Keys actually present in the blob. Requires Touch ID on Mac (reads blob)."""
+    """Keys actually present in the blob. Reads the blob on Mac (may prompt)."""
     return list(get_all().keys())
 
 
@@ -246,7 +258,7 @@ def purge_all() -> int:
 
 
 def clear_cache() -> None:
-    """Forget the in-process cache. Next get_all() re-prompts Touch ID."""
+    """Forget the in-process cache. Next get_all() re-reads the blob (may prompt)."""
     global _cache
     _cache = None
 
@@ -254,6 +266,6 @@ def clear_cache() -> None:
 if __name__ == "__main__":
     print(f"service={SERVICE} label={LABEL} account={ACCOUNT}")
     if has_credentials():
-        print("blob: present (Touch ID required to enumerate keys)")
+        print("blob: present (a keychain read is needed to enumerate keys)")
     else:
         print("blob: none")

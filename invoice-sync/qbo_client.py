@@ -2,7 +2,8 @@
 qbo_client.py — Minimal QuickBooks Online client for the automation worker.
 
 Auth via the qbo_vault Keychain blob at project root (Phase 1 of QBO Export v2).
-One Touch ID prompt per process unlocks all QBO keys.
+One login-keychain read per process unlocks all QBO keys (may prompt; NOT
+biometric - see shared/qbo_vault.py).
 
 Public API:
     creds = load_qbo_credentials()
@@ -69,7 +70,7 @@ def load_qbo_credentials() -> QBOCredentials:
     Refresh the QBO access token using the stored refresh token.
 
     Reads QBO_CLIENT_ID / QBO_CLIENT_SECRET / QBO_COMPANY_ID / QBO_REFRESH_TOKEN
-    from the qbo_vault Keychain blob (single Touch ID prompt). Persists the
+    from the qbo_vault Keychain blob (one login-keychain read; may prompt). Persists the
     rotated refresh token if QBO returns a new one.
 
     Raises QBOError if the blob is missing or the refresh fails.

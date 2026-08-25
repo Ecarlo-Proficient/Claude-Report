@@ -6,9 +6,10 @@ restructure) so the WIP readers no longer have to load that file by raw
 path with importlib. project_pnl_export and cp_wip_reader both import
 from here now.
 
-Auth model: token-style — `access, company_id = load_credentials()` does
-one refresh-token exchange against the qbo_vault Keychain blob (single
-Touch ID per run) and persists a rotated refresh token if QBO returns one.
+Auth model: token-style - `access, company_id = load_credentials()` does
+one refresh-token exchange against the qbo_vault Keychain blob (one
+login-keychain read; may prompt, NOT biometric - see shared/qbo_vault.py)
+and persists a rotated refresh token if QBO returns one.
 
 Retry model: `_api_get` retries transient 5xx/429 and network timeouts
 with exponential backoff (8 attempts, capped at 30s + jitter) — absorbs a
