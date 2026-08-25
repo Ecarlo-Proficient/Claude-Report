@@ -32,12 +32,12 @@ html[data-theme="light"] {
 }
 html[data-theme="dark"] {
   --bg: #0f1319;
-  --surface: #161b22;
-  --surface-2: #1b212b;
-  --border: #2a323d;
-  --text: #e6e9ee;
-  --text-dim: #98a2b3;
-  --row-hover: #1d2731;
+  --surface: #171d26;
+  --surface-2: #1f2733;
+  --border: #35404f;        /* was #2a323d - separators were too faint to see (owner 2026-08-25) */
+  --text: #eef1f5;
+  --text-dim: #aeb9c9;      /* was #98a2b3 - brighter secondary text */
+  --row-hover: #232f3c;
   --shadow: 0 1px 2px rgba(0,0,0,.4);
   --pos: #4ade80;
   --neg: #f87171;
@@ -247,6 +247,10 @@ td.pnl-expand .dgroup > h4:first-child { display: none; }   /* the row already s
 .notion-link:hover { border-color: var(--accent); }
 a.qbo-link { color: var(--accent); text-decoration: none; font-variant-numeric: tabular-nums; }
 a.qbo-link:hover { text-decoration: underline; }
+/* Dark mode: brighten links/accent-text toward white (keeps the chosen accent hue) so they
+   read against the dark surface - the muted default green was too low-contrast (owner 2026-08-25). */
+html[data-theme="dark"] a.qbo-link,
+html[data-theme="dark"] .unlock-link { color: color-mix(in srgb, var(--accent) 58%, #ffffff); }
 /* the bill-# chip when it's a QBO link: accent border on hover, no underline inside the pill */
 a.invno.qbo-link:hover { border-color: var(--accent); text-decoration: none; }
 

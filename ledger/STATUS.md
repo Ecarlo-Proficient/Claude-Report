@@ -4,6 +4,12 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Dark-mode legibility pass (owner, 2026-08-25: "hard to see").** Brightened the dark tokens:
+  `--text-dim` #98a2b3 -> #aeb9c9 (secondary text is everywhere), `--border` #2a323d -> #35404f (faint
+  separators), a touch more surface separation, and a brighter `--row-hover`. The accent is a per-user
+  inline setting (default #3E7A5C, a muted green that read low-contrast on dark), so instead of fighting
+  it, links (`a.qbo-link` / `.unlock-link`) are brightened toward white **in dark mode only**
+  (`color-mix(accent 58%, #fff)`) - keeps the chosen hue, lifts the contrast. Light theme untouched.
 - **Customer Center: avg days to pay + future cash-in forecast (owner, 2026-08-25).** New backend
   `_client_pay_speed(con)` computes per-client average days from INVOICE date to PAID date over paid
   `billing_event` rows (guarded 0-400 days), plus a portfolio average, exposed on the open-invoices payload
