@@ -4,6 +4,15 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Console: queue multiple syncs (run in order) + a "Sync AP + AR" button (owner, 2026-08-25: "can it not
+  run two at the same time ... i also need progress bar ... sync AR and AP together, both need the same
+  info").** Runs are single-locked on the server (concurrent QBO pulls + ledger DELETE/INSERT would corrupt
+  each other), so a 2nd Run used to just 409 into a fleeting toast. Added a **client-side queue**:
+  `runPipeline` enqueues when one is running; `finishSync -> _drainQueue` starts the next automatically.
+  Cards show **Running… / Queued ✕** (click a queued card to drop it), the shared progress bar names the
+  running pipeline + "N queued". New **Sync AP + AR** button runs AP then AR back to back (AP first - AR's
+  aging reads AP's Bill Tracker output). Verified: enqueue while running doesn't re-POST, dedups, AP orders
+  before AR, buttons reflect state. Frontend-only.
 - **Vendor Center jump auto-expands the vendor's bills (owner, 2026-08-25).** Clicking a vendor jumps to
   Bills filtered to them, but bills open collapsed by default, so it was an extra click.
   `jumpToVendorBills` now deletes that vendor's group key(s) from `billsCollapsed` (via `billGroupKey`

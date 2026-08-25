@@ -596,7 +596,10 @@
       <section class="widget">
         <div class="widget-head">
           <h2>Console <span class="count">- run the pipelines from here</span></h2>
-          <button class="btn small" id="btnFullRefresh" title="Run every pipeline including the source producers (AR/AP), then the loaders. Real writes to Notion/Teams/Excel; prompts Touch ID.">Full refresh</button>
+          <div class="console-actions">
+            <button class="btn small" id="btnSyncApAr" title="Run AP (bill tracker) then AR (invoice sync) back to back - both pull from QuickBooks and AR's aging reads AP's output, so they belong together.">Sync AP + AR</button>
+            <button class="btn small" id="btnFullRefresh" title="Run every pipeline including the source producers (AR/AP), then the loaders. Real writes to Notion/Teams/Excel; prompts Touch ID.">Full refresh</button>
+          </div>
         </div>
         <p class="hint">Each pipeline refreshes a source and loads it into the ledger. <b>Reload</b> (My view)
           runs the loaders only - read-only, fast. A pipeline's <b>Run</b> also runs its <b>producer</b>

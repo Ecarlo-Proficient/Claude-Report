@@ -343,18 +343,40 @@ async function manualRefresh() {
 // with a live progress bar. Pauses the silent auto-refresh while running (loaders
 // drop/rebuild tables). Producer steps + QBO costs prompt Touch ID on this Mac.
 let syncing = false;
+let runningPipeline = null;   // key of the sync currently running
+let syncQueue = [];           // [{ key, els }] confirmed syncs waiting - they run ONE AT A TIME
+                              // (concurrent QBO pulls + ledger DELETE/INSERT would corrupt each other).
 // Run a pipeline key ('reload' = safe loaders-only default, 'all' = full chain incl
 // producers, 'ar'/'ap'/'costs'/'crm'/'wip', 'wip-draft'), driving the given progress
-// elements. `els` = { btn, prog, fill, step }.
+// elements. `els` = { btn, prog, fill, step }. If a sync is already running, this QUEUES it.
 async function runPipeline(pipeline, confirmMsg, els) {
   if (confirmMsg && !confirm(confirmMsg)) return;
+  if (syncing) {
+    if (pipeline === runningPipeline || syncQueue.some(q => q.key === pipeline)) { toast("That sync is already running or queued."); return; }
+    syncQueue.push({ key: pipeline, els });
+    toast(`Queued - runs when the current sync finishes (${syncQueue.length} waiting).`);
+    if (activeTab === "console") renderConsole();
+    return;
+  }
+  _startPipeline(pipeline, els);
+}
+async function _startPipeline(pipeline, els) {
   let res;
   try { res = await (await fetch("/api/sync", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pipeline, confirm: true }) })).json(); }
-  catch (e) { toast("Could not start: " + e); return; }
-  if (res.error) { toast(res.error); return; }
-  syncing = true; if (els.btn) els.btn.disabled = true;
+  catch (e) { toast("Could not start: " + e); _drainQueue(); return; }
+  if (res.error) { toast(res.error); _drainQueue(); return; }
+  syncing = true; runningPipeline = pipeline; if (els.btn) els.btn.disabled = true;
   els.prog.hidden = false; els.fill.classList.remove("err"); els.fill.style.width = "0%";
-  pollSync(res.steps || [], els);
+  if (activeTab === "console") renderConsole();
+  pollSync(res.steps || [], els, pipeline);
+}
+// Start the next queued sync once the current one is fully done (sequential).
+function _drainQueue() {
+  if (syncing || !syncQueue.length) return;
+  const next = syncQueue.shift();
+  const label = (PIPELINES || []).find(p => p.key === next.key)?.label || next.key;
+  toast(`Starting queued sync: ${label}`);
+  _startPipeline(next.key, next.els);
 }
 
 async function startResync() {
@@ -363,9 +385,26 @@ async function startResync() {
     { btn: $("#btnResync"), prog: $("#syncProgress"), fill: $("#syncBarFill"), step: $("#syncStep") });
 }
 
-function pollSync(steps, els) {
+// AP + AR back to back - both pull the same QBO info and AR's aging reads AP's Bill Tracker output,
+// so they belong together (owner 2026-08-25). AP runs first (the run-order rule), AR queued behind it.
+async function runApAr() {
+  if (!confirm("Sync AP + AR now?\n\nRuns the bill tracker (AP) FIRST, then the invoice sync (AR) - both pull from QuickBooks and prompt Touch ID, and AR's aging reads AP's output. Loads both into the ledger.")) return;
+  const els = _consoleEls();
+  if (syncing) {
+    if (runningPipeline !== "ap" && !syncQueue.some(q => q.key === "ap")) syncQueue.push({ key: "ap", els });
+    if (runningPipeline !== "ar" && !syncQueue.some(q => q.key === "ar")) syncQueue.push({ key: "ar", els });
+    toast(`Queued AP + AR (${syncQueue.length} waiting).`);
+    if (activeTab === "console") renderConsole();
+  } else {
+    syncQueue.push({ key: "ar", els });   // AR waits behind AP
+    _startPipeline("ap", els);
+  }
+}
+
+function pollSync(steps, els, pipeline) {
   const { btn, prog, fill, step } = els;
   const total = steps.length || 1;
+  const plabel = (PIPELINES || []).find(p => p.key === pipeline)?.label || pipeline || "";
   let fails = 0;
   const tick = () => fetch("/api/sync/status").then(r => r.json()).then(s => {
     fails = 0;
@@ -373,7 +412,8 @@ function pollSync(steps, els) {
     const cur = (s.steps || [])[s.current];
     fill.style.width = Math.round(done / total * 100) + "%";
     if (s.state === "running") {
-      step.textContent = `${cur ? cur.label : "..."} - step ${Math.min(done + 1, total)} of ${total}${s.elapsed ? ` - ${s.elapsed}s` : ""}`;
+      const q = syncQueue.length ? ` · ${syncQueue.length} queued` : "";
+      step.textContent = `${plabel ? plabel + " - " : ""}${cur ? cur.label : "..."} - step ${Math.min(done + 1, total)} of ${total}${s.elapsed ? ` - ${s.elapsed}s` : ""}${q}`;
       setTimeout(tick, 1500);
     } else if (s.state === "done") {
       fill.style.width = "100%"; step.textContent = "Done - reloading the app...";
@@ -394,10 +434,12 @@ function pollSync(steps, els) {
 }
 
 async function finishSync(els, msg, reload) {
-  syncing = false; if (els.btn) els.btn.disabled = false;
+  syncing = false; runningPipeline = null; if (els.btn) els.btn.disabled = false;
   if (reload) { try { await load(true); if (typeof renderConsole === "function" && activeTab === "console") renderConsole(); } catch { /* ignore */ } }
   if (msg) toast(msg);
-  if (!/(failed|lost|Lost)/.test(msg)) setTimeout(() => { els.prog.hidden = true; els.fill.style.width = "0%"; }, 2600);
+  // Keep the bar up if another run is queued (it starts right away); else tidy it after a beat.
+  if (!syncQueue.length && !/(failed|lost|Lost)/.test(msg)) setTimeout(() => { els.prog.hidden = true; els.fill.style.width = "0%"; }, 2600);
+  _drainQueue();
 }
 
 // ── Console tab: the control plane. Lists each pipeline (from /api/pipelines) with its
@@ -452,12 +494,16 @@ async function renderConsole() {
     }
     card.appendChild(steps);
     const acts = document.createElement("div"); acts.className = "pl-acts";
-    const runBtn = document.createElement("button"); runBtn.className = "btn small"; runBtn.textContent = "Run";
+    const runBtn = document.createElement("button"); runBtn.className = "btn small";
     const sides = p.steps.filter(s => s.side).map(s => s.label);
     const msg = sides.length
       ? `Run the ${p.label} pipeline?\n\nThis fires a REAL sync (${sides.join(", ")}) - writes to the source (Notion / Teams / Excel) and prompts Touch ID - then loads it into the ledger.`
       : `Run the ${p.label} loader?\n\nReads the current source into the ledger (read-only on the source).`;
-    runBtn.onclick = () => runPipeline(p.key, msg, { ..._consoleEls(), btn: runBtn });
+    if (p.key === runningPipeline) { runBtn.textContent = "Running…"; runBtn.disabled = true; card.classList.add("pl-running"); }
+    else if (syncQueue.some(q => q.key === p.key)) {   // click a queued card to drop it from the queue
+      runBtn.textContent = "Queued ✕"; runBtn.classList.add("subtle"); card.classList.add("pl-queued");
+      runBtn.onclick = () => { syncQueue = syncQueue.filter(q => q.key !== p.key); toast("Removed from the queue"); renderConsole(); };
+    } else { runBtn.textContent = "Run"; runBtn.onclick = () => runPipeline(p.key, msg, { ..._consoleEls(), btn: runBtn }); }
     acts.appendChild(runBtn);
     if (p.draft) {
       const dBtn = document.createElement("button"); dBtn.className = "btn small subtle"; dBtn.textContent = p.draft.label;
@@ -4514,6 +4560,7 @@ function init() {
   $("#btnExport").onclick = exportCSV;
   $("#btnRefresh").onclick = manualRefresh;
   { const el = $("#btnResync"); if (el) el.onclick = startResync; }
+  { const el = $("#btnSyncApAr"); if (el) el.onclick = runApAr; }
   { const el = $("#btnFullRefresh"); if (el) el.onclick = () => runPipeline("all",
       "Full refresh - run EVERY pipeline?\n\nRuns the source producers (AR sync -> Notion/Teams, AP sync -> Bill Tracker.xlsx) AND the loaders, in order. Real writes; expect multiple Touch ID prompts; takes a few minutes.",
       { ..._consoleEls(), btn: el }); }
