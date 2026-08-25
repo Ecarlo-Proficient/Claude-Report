@@ -84,6 +84,13 @@ no business findings, dollar exposures, or owner analyses (those live in the own
   `shared/cost_code_audit.po_origin`. Verified offline (4 scenarios: PO-also-wrong, bill-deviated,
   tracker-recovered, no-PO), `validate_xlsx` clean. **Standalone one-off doesn't yet carry the PO
   column** (would need a PO pull); bill-tracker sheet is the PO-aware surface.
+- **Cost Code: hauler type + dict overrides (2026-08-25, owner).** `shared/cost_code_audit`
+  overrides moved tuple→dict `{concrete/material/both/hauler/exclude}`. New **hauler** type = a
+  material vendor where haul-off/equipment (`*5/*51/*52`) is legit (trucking, JA Rock), so only
+  `*1`/`*6` flag - kills the haul-off false positives. `both` fixes vendors like Preferred Materials.
+  Overrides live OUTSIDE the repo at `<companyhealth>/concrete_suppliers.json` (vendor names). Live
+  run (3,697 bills / 13,030 lines): overrides cut miscodes 163→94; origin split 29 upstream (PO/
+  super-PM) · 63 no-PO (direct entry) · 0 deviated. `hauler` is override-only (not auto-detected).
 
 - **No realm in the terminal (2026-08-06, owner).** The auth step printed
   `ok. company_id=<realm>`; removed — it now just prints `ok.`, consistent with `sync-ar`

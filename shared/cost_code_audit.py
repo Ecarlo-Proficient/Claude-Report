@@ -47,9 +47,11 @@ _CONCRETE_MEMO_RE = re.compile(
     r"|SACKS?|SCK|SACK\s*MIX|CONCRETE|READY[\s-]*MIX|REDI[\s-]*MIX|REDIMIX)\b",
     re.IGNORECASE)
 
-TYPE_LABEL = {"concrete": "Concrete", "material": "Material",
-              "both": "Both (conc+mat)", "review": "Review - possible"}
-TYPE_ORDER = {"concrete": 0, "material": 1, "both": 2, "review": 3}
+TYPE_LABEL = {"concrete": "Concrete", "material": "Material", "both": "Both (conc+mat)",
+              "hauler": "Hauler (haul-off OK)", "review": "Review - possible"}
+TYPE_ORDER = {"concrete": 0, "material": 1, "both": 2, "hauler": 3, "review": 4}
+# Override / forced-type keys (in priority order); "exclude" drops a vendor.
+OVERRIDE_TYPES = ("concrete", "material", "both", "hauler")
 
 
 def concrete_memo(desc: str) -> bool:
@@ -86,29 +88,32 @@ def po_origin(bill_number: Optional[str], po_numbers, po_found: bool) -> str:
     return f"PO codes {'/'.join('*' + n for n in nums)} - bill deviated from PO"
 
 
-def load_override(path: Path) -> Tuple[set, set, set, set]:
-    """JSON {"concrete":[…], "material":[…], "both":[…], "exclude":[…]} → four
-    upper-cased name sets. Missing/broken file → all empty."""
-    empty = (set(), set(), set(), set())
+def load_override(path: Path) -> Dict[str, set]:
+    """JSON {"concrete":[…], "material":[…], "both":[…], "hauler":[…],
+    "exclude":[…]} → dict of upper-cased name sets. Missing/broken file → empties.
+    A forced type wins over auto-detection; "exclude" drops the vendor."""
+    keys = OVERRIDE_TYPES + ("exclude",)
+    out = {k: set() for k in keys}
     if not path or not Path(path).exists():
-        return empty
+        return out
     try:
         data = json.loads(Path(path).read_text())
     except (OSError, json.JSONDecodeError):
-        return empty
-
-    def names(key):
-        return {str(x).strip().upper() for x in data.get(key, [])}
-    return names("concrete"), names("material"), names("both"), names("exclude")
+        return out
+    for k in keys:
+        out[k] = {str(x).strip().upper() for x in data.get(k, [])}
+    return out
 
 
 def classify_vendors(rows: List[dict], threshold: float = 0.60, min_lines: int = 3,
                      review_floor: float = 0.25,
-                     override: Tuple[set, set, set, set] = (set(), set(), set(), set())
+                     override: Optional[Dict[str, set]] = None
                      ) -> Tuple[Dict[str, dict], Dict[str, str]]:
     """Aggregate lines per vendor and classify each as a coding TYPE (concrete /
-    material / both / review). Returns (agg_by_vendor_upper, type_by_vendor_upper).
-    Auto-detected from the *1-vs-*2/3/4 split; an override forces the type."""
+    material / both / hauler / review). Returns (agg_by_vendor_upper,
+    type_by_vendor_upper). Auto-detected from the *1-vs-*2/3/4 split; an override
+    forces the type (hauler is override-only - it can't be auto-detected)."""
+    override = override or {}
     agg: Dict[str, dict] = defaultdict(
         lambda: {"vendor": "", "coded": 0, "concrete": 0, "material": 0,
                  "other": 0, "nocode": 0, "amount": 0.0})
@@ -128,7 +133,7 @@ def classify_vendors(rows: List[dict], threshold: float = 0.60, min_lines: int =
             else:
                 a["other"] += 1
 
-    inc_c, inc_m, inc_b, exc = override
+    exc = override.get("exclude", set())
     vtype: Dict[str, str] = {}
     for up, a in agg.items():
         c = a["coded"]
@@ -136,12 +141,10 @@ def classify_vendors(rows: List[dict], threshold: float = 0.60, min_lines: int =
         a["pct_m"] = (a["material"] / c) if c else 0.0
         if up in exc:
             continue
-        if up in inc_c:
-            vtype[up] = "concrete"; continue
-        if up in inc_m:
-            vtype[up] = "material"; continue
-        if up in inc_b:
-            vtype[up] = "both"; continue
+        forced = next((t for t in OVERRIDE_TYPES if up in override.get(t, set())), None)
+        if forced:
+            vtype[up] = forced
+            continue
         if c < min_lines:
             if a["concrete"] or a["material"]:
                 vtype[up] = "review"
@@ -183,14 +186,21 @@ def flag_lines(rows: List[dict], vtype: Dict[str, str]) -> List[dict]:
                 reason = (f"No cost code - account line: "
                           f"{r.get('account') or '(none)'} (expected *1 Concrete)")
 
-        elif t == "material":
-            if n in MATERIAL:
-                continue                      # rebar / lumber / aggregates — correct
-            if n in MATERIAL_FORBIDDEN:
+        elif t in ("material", "hauler"):
+            # material: rebar/lumber/aggregates only. hauler: same PLUS haul-off /
+            # equipment (*5/*51/*52) is legitimate (trucking, JA Rock, etc.), so
+            # only concrete/labor flag.
+            allowed = MATERIAL | (EQUIP if t == "hauler" else set())
+            if n in allowed:
+                continue
+            forbidden = (CONCRETE | LABOR) if t == "hauler" else MATERIAL_FORBIDDEN
+            if n in forbidden:
                 fam = ("Concrete" if n in CONCRETE
                        else "Equipment" if n in EQUIP else "Labor")
-                reason = (f"{code} = {name} - {fam} on a MATERIAL vendor "
-                          f"(expected rebar/lumber *2/*3)")
+                kind = "HAULER" if t == "hauler" else "MATERIAL"
+                expect = ("rebar/lumber/aggregates or haul-off" if t == "hauler"
+                          else "rebar/lumber *2/*3")
+                reason = f"{code} = {name} - {fam} on a {kind} vendor (expected {expect})"
             else:
                 continue                      # fuel/supplies/no-code: not the named set
 

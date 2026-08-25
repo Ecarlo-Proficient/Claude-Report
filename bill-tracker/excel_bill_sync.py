@@ -2264,11 +2264,11 @@ def build_cost_code_sheet(wb, all_rows: List[dict],
 
     # Caption: captured vendor types, to the right of the header.
     counts = {t: sum(1 for v in vtype.values() if v == t)
-              for t in ("concrete", "material", "both", "review")}
+              for t in ("concrete", "material", "both", "hauler", "review")}
     ws = wb["Audit - Cost Code"]
     cap = (f"Vendors captured: {counts['concrete']} concrete · {counts['material']} "
-           f"material · {counts['both']} both · {counts['review']} review "
-           f"(type override: concrete_suppliers.json)")
+           f"material · {counts['both']} both · {counts['hauler']} hauler · "
+           f"{counts['review']} review (type override: concrete_suppliers.json)")
     cc = ws.cell(row=1, column=len(headers) + 2, value=cap)
     cc.font = Font(name="Calibri", size=10, italic=True, color="808080")
     return len(flags)

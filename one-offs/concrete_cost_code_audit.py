@@ -230,15 +230,16 @@ def build_workbook(agg: Dict[str, dict], vtype: Dict[str, str],
     # Summary sheet (plain, label + value same row).
     ws0 = wb.create_sheet("Summary", 0)
     counts = {t: sum(1 for v in vtype.values() if v == t)
-              for t in ("concrete", "material", "both", "review")}
+              for t in ("concrete", "material", "both", "hauler", "review")}
     summary = [
-        ("Cost Code Audit - concrete / material / both", ""),
+        ("Cost Code Audit - concrete / material / both / hauler", ""),
         ("Generated", meta["generated"]),
         ("Bills scanned (since " + meta["since"] + ")", meta["bills"]),
         ("Bill lines scanned", meta["lines"]),
         ("Concrete suppliers (→ all *1)", counts["concrete"]),
         ("Material suppliers (→ *2/*3/*4, no *1/*5/*6)", counts["material"]),
         ("Both suppliers (yardage memo → *1)", counts["both"]),
+        ("Hauler vendors (haul-off *5 OK)", counts["hauler"]),
         ("Vendors to review (borderline)", counts["review"]),
         ("Miscoded lines flagged", len(flags)),
         ("Threshold / min coded lines", f'{meta["threshold"]:.0%} / {meta["min_lines"]}'),
@@ -287,19 +288,19 @@ def main() -> int:
     print(f"  {n_bills} bills · {len(rows)} lines")
 
     override = load_override(args.override)
-    inc_c, inc_m, inc_b, exc = override
-    n_over = len(inc_c) + len(inc_m) + len(inc_b) + len(exc)
+    n_over = sum(len(v) for v in override.values())
     if n_over:
-        print(f"  override: {len(inc_c)} concrete / {len(inc_m)} material / "
-              f"{len(inc_b)} both / {len(exc)} exclude")
+        print("  override: " + " / ".join(f"{len(override[k])} {k}"
+              for k in ("concrete", "material", "both", "hauler", "exclude")))
 
     agg, vtype = classify_vendors(rows, args.threshold, args.min_lines,
                                   args.review_floor, override)
     flags = flag_lines(rows, vtype)
     counts = {t: sum(1 for v in vtype.values() if v == t)
-              for t in ("concrete", "material", "both", "review")}
+              for t in ("concrete", "material", "both", "hauler", "review")}
     print(f"  vendors: {counts['concrete']} concrete · {counts['material']} material · "
-          f"{counts['both']} both · {counts['review']} review  →  {len(flags)} miscoded lines")
+          f"{counts['both']} both · {counts['hauler']} hauler · {counts['review']} review"
+          f"  →  {len(flags)} miscoded lines")
 
     meta = {
         "generated": dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
