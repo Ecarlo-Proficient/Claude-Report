@@ -67,6 +67,25 @@ def code_families(cost_code: str) -> Tuple[Optional[str], Optional[str]]:
     return m["number"], m["description"]
 
 
+def po_origin(bill_number: Optional[str], po_numbers, po_found: bool) -> str:
+    """Where a miscode came from: compare the bill line's cost-code family to the
+    family numbers on its linked PO. Answers "is the clerk just trusting a wrong
+    PO from the super/PM?" (the user 2026-08-25).
+      • not po_found            → the bill has no PO (clerk coded it standalone)
+      • po_numbers empty        → the PO carries no cost code to compare
+      • bill_number in po_nums  → the PO ALSO carries this code → upstream (super/PM)
+      • else                    → the PO's code differs → the bill deviated
+    """
+    if not po_found:
+        return "No PO on the bill (clerk-coded)"
+    nums = [n for n in (po_numbers or []) if n]
+    if not nums:
+        return "PO has no cost code"
+    if bill_number is not None and bill_number in nums:
+        return f"PO also codes *{bill_number} - upstream (super/PM)"
+    return f"PO codes {'/'.join('*' + n for n in nums)} - bill deviated from PO"
+
+
 def load_override(path: Path) -> Tuple[set, set, set, set]:
     """JSON {"concrete":[…], "material":[…], "both":[…], "exclude":[…]} → four
     upper-cased name sets. Missing/broken file → all empty."""

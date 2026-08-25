@@ -137,9 +137,13 @@ def build_po_index(
 
     rec = {id, doc, status (POStatus Open/Closed), date (TxnDate), vendor,
            total (TotalAmt), has_bill (any LinkedTxn Bill), job (project # off a
-           line's CustomerRef)}. Superset of build_po_map — derive the id→doc map
-           as {pid: rec['doc']}, so main() does ONE PurchaseOrder pull, not two.
+           line's CustomerRef), codes (leaf cost codes on the PO's lines),
+           numbers (their cost-code family numbers)}. Superset of build_po_map —
+           derive the id→doc map as {pid: rec['doc']}, so main() does ONE
+           PurchaseOrder pull, not two. `codes`/`numbers` feed the Cost Code
+           audit's PO-origin check (did the PO already carry the wrong code?).
     """
+    from shared.cost_code_audit import code_families  # bootstrap done by entry script
     index: Dict[str, dict] = {}
     for po in query_all(qbo_access, qbo_cid, "PurchaseOrder"):
         pid = po.get("Id", "")
@@ -150,14 +154,20 @@ def build_po_index(
         has_bill = any(lt.get("TxnType") == "Bill"
                        for lt in (po.get("LinkedTxn") or []))
         job = ""
+        codes: List[str] = []
         for ln in (po.get("Line") or []):
             det = (ln.get("ItemBasedExpenseLineDetail")
                    or ln.get("AccountBasedExpenseLineDetail") or {})
             cust = (det.get("CustomerRef") or {}).get("name", "")
             proj = get_project_num(cust) if cust else None
-            if proj:
+            if proj and not job:
                 job = proj
-                break
+            item = (ln.get("ItemBasedExpenseLineDetail") or {}).get("ItemRef") or {}
+            leaf = (item.get("name") or "").split(":")[-1].strip()
+            if leaf:
+                codes.append(leaf)
+        numbers = sorted({code_families(c)[0] for c in codes
+                          if code_families(c)[0]})
         index[pid] = {
             "id": pid,
             "doc": (po.get("DocNumber") or "").strip(),
@@ -167,6 +177,8 @@ def build_po_index(
             "total": float(po.get("TotalAmt") or 0),
             "has_bill": has_bill,
             "job": job,
+            "codes": sorted(set(codes)),
+            "numbers": numbers,
         }
     return index
 

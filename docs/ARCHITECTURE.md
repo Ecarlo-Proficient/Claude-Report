@@ -9,11 +9,12 @@
 > picture (open it in a browser after pulling). Refresh it when structure meaningfully changes;
 > THIS file is the always-current source of truth.
 
-Last updated: 2026-08-25 (ledger/: NEW **Graph tab** — the org as a map. `ledger/vault_graph.py`
-parses the whole vault's `[[wikilinks]]` into a force-directed org graph (Obsidian-style; ROSTER
-excluded so no names) AND imports the mermaid system diagrams from THIS file into the same
-canvas viewer; `/api/graph` serves both, parsed live (no cache, no DB table). Self-contained
-canvas renderer in `static/app.js` — no libraries. See the Graph tab entry in `ledger/STATUS.md`.)
+Last updated: 2026-08-25 (ledger/: NEW **Graph tab** — the org as a map (`ledger/vault_graph.py`,
+`/api/graph`) AND NEW **WIP Review tab** — the WIP update as accept/merge. Each wip reader +
+`master_wip_test` gained `--emit-review` (diff a Test tab, no write) and `--apply-review` (write
+only approved values) modes backed by `wip/wip_review_common.py`; the ledger orchestrates them by
+subprocess+JSON (`/api/wip/review`, `/api/wip/merge`) and shows every change WAS→NOW split into
+Accept·QBO / PM answers. See the Graph tab and WIP Review entries in `ledger/STATUS.md`.)
 
 Previously: 2026-08-19 (ledger/: NEW **Systems tab** — the systems & process registry
 (`AI Brain_Vault/02_processes/*.md`) rendered LIVE in the dashboard. `ledger/registry_view.py`
@@ -247,7 +248,10 @@ only — never a display column.
 logic as the standalone `one-offs/concrete_cost_code_audit.py`) over the full bill population.
 It captures each vendor's coding TYPE from its `*1`-vs-`*2/3/4` split — concrete (→ all `*1`),
 material (rebar/lumber, never `*1`/`*5`/`*6`), both (yardage MEMO must be `*1`) — and flags lines
-that break the rule. Types overridable via `<companyhealth>/concrete_suppliers.json`.
+that break the rule. Types overridable via `<companyhealth>/concrete_suppliers.json`. Each flag is
+**cross-referenced to the bill's PO** (`PO #`/`PO Cost Code`/`Origin` via `bill_rows.build_po_index`
+codes + `cost_code_audit.po_origin`): PO-also-wrong = upstream (super/PM), bill-deviated, or no-PO;
+the PO tracker recovers the PO# when QBO left the bill unlinked.
 
 **Unused PO (2026-08-25):** the "two tools, one story" join. `po_tracker.py` reads the office PO
 tracker workbook (`ACB_PO_TRACKER_XLSX`, READ-ONLY) and `bill_rows.build_po_index()` pulls QBO
@@ -271,6 +275,7 @@ flowchart LR
     QBO[("QBO\nvia shared/qbo_api")]:::src
     RPFIX[("Owner's RP WIP workbook\n'RP WIP' sheet — verified lines")]:::src
     WMTAB[("'WIP Master' tab\nMFD contract/ETC")]:::src
+    MFDTAB[("'WIP - MFD' tab\nhand-kept MFD division WIP")]:::src
     TKETC["shared/takeoff_etc.py\nfind_takeoff_etc: blank ETC → takeoff\ncost sheet (SL+PR / FW / BID)"]:::tool
 
     ENGINE["wip_writer.py\nthe SHARED report ENGINE:\nCpRow · COLS · write_test_cp ·\nformatting · change audit ·\nedit-tracking · QC\n(guarded by wip_excel_guard.py)"]:::tool
@@ -278,6 +283,7 @@ flowchart LR
     RPR["rp_wip_reader.py\nRP READER: owner's file → 'Test - RP'"]:::tool
     MASTER["master_wip_test.py\nORCHESTRATOR: MFD + CP + RP → 'Test-Master'\n(+ change audit)"]:::tool
     TEST[("WIP - MASTER new.xlsx\nTest tabs ONLY (SharePoint)")]:::out
+    MFDT["mfd_wip_test.py\nMFD ENTRY TAB: copies 'WIP - MFD' →\n'Test - MFD' + ETC · REVISED ETC · GP% ·\nQBO costs/billed (anchored per job) ·\ncost to complete\n(guarded by wip_excel_guard.py)"]:::tool
     CLOSE["qbo_close_list.py →\nqbo_bulk_close.py"]:::tool
     QW[("QBO WRITE — gated\nCONFIRM=Y · MFD always excluded")]:::gate
 
@@ -285,8 +291,10 @@ flowchart LR
     RPFIX --> RPR
     FOLDERS --> TKETC
     TKETC -.->|"blank ETC only\n(estimator entry wins)"| RPR
-    QBO --> CPR & RPR & MASTER
+    QBO --> CPR & RPR & MASTER & MFDT
     WMTAB --> MASTER
+    MFDTAB -->|"seeded once (--seed)"| MFDT
+    MFDT --> TEST
     CPR -.->|"scan reused by"| MASTER
     RPR -.->|"classify/write reused by"| MASTER
     CPR & RPR & MASTER ==>|"import the engine"| ENGINE
@@ -295,6 +303,18 @@ flowchart LR
     MASTER -.->|"--audit (inspect, NO write)"| AUDIT
     QBO --> CLOSE --> QW
 ```
+
+**`mfd_wip_test.py` is deliberately NOT a `wip_writer` reader** (2026-08-25). The other
+three tabs are generated reports rebuilt from scratch every run; `Test - MFD` is a
+DATA-ENTRY tab that MFD types into, seeded once from the hand-kept `WIP - MFD` and
+thereafter only refreshed in its two QBO columns. It therefore mirrors `WIP - MFD`'s
+Calibri look, **not** the frozen `WIP Master` Tahoma-8 style that rail 5a pins the
+generated tabs to - it is meant to replace `WIP - MFD`, so it has to look like it.
+Columns B..M are copied verbatim and never written again. QBO figures anchor on the
+largest-contract row of each job group because a job like MFD192 carries three contract
+rows in Excel but exactly one project in QBO, with no way to split costs between them;
+sibling rows show a muted `see MFD192` marker, which `SUM()` ignores so the totals row
+still counts each job once.
 
 **The three readers import ONE engine (`wip_writer.py`), never each other** (2026-08-04).
 `wip_writer` owns everything that turns `CpRow`s into a formatted, audited, edit-tracked
@@ -371,7 +391,7 @@ flowchart LR
     LOADER["load_wip_master.py\nCP←Test-CP · RP←Test-RP · MFD←Test-Master\nfilter to real project #s · idempotent upsert"]:::tool
     APLOAD["load_bill_tracker.py\nAP pay status + lien clock → ap_bill_line\n(NOT cost truth — subs excluded)"]:::tool
     DB[("ledger.sqlite3\nproject + wip_snapshot + ap_bill_line\n→ v_wip_latest · v_ap_by_project")]:::out
-    DASH["dashboard.py + static/\nlocal web UI (127.0.0.1) - READ-ONLY except the owner's marks.\nTabs: My view · Overview · P&L · WIP · Costs · Draws · Bills · Pay Bills\n(Notion-style saved views) · Liens · Vendors · Sub LOC · Sales · Systems · Graph · Console"]:::tool
+    DASH["dashboard.py + static/\nlocal web UI (127.0.0.1) - READ-ONLY except the owner's marks + WIP Review writes.\nTabs: My view · Overview · P&L · WIP · WIP Review · Costs · Draws · Bills · Pay Bills\n(Notion-style saved views) · Liens · Vendors · Sub LOC · Sales · Systems · Graph · Console"]:::tool
     REG[("AI Brain_Vault/02_processes/*.md\neight domain files — the process registry\n(read-only source, never written)")]:::src
     REGVIEW["registry_view.py\nparses the markdown row tables per request\nhealth · state · life — no cache, no DB table"]:::tool
     VGRAPH["vault_graph.py\nwhole-vault wiki-links → org map (ROSTER excluded)\n+ docs/ARCHITECTURE.md mermaid → the Graph tab\nlive, no cache, no DB table"]:::tool

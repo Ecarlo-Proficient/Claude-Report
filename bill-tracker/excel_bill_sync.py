@@ -89,10 +89,10 @@ from bill_rows import (
     approved_text,
     collapse_rows, multi_project_bill_ids, MULTI_MARKER,
 )
-from po_tracker import load_po_tracker, reconcile_unused_pos, index_by_doc
+from po_tracker import load_po_tracker, reconcile_unused_pos, index_by_doc, _norm_po
 from general_list import load_contracts
 from shared.cost_code_audit import (
-    classify_vendors, flag_lines, load_override, code_families, TYPE_LABEL)
+    classify_vendors, flag_lines, load_override, code_families, po_origin, TYPE_LABEL)
 
 
 # ─────────────────────── constants ───────────────────────
@@ -2189,7 +2189,9 @@ def build_unused_po_sheet(wb, po_index: Dict[str, dict],
     return len(flagged)
 
 
-def build_cost_code_sheet(wb, all_rows: List[dict]) -> int:
+def build_cost_code_sheet(wb, all_rows: List[dict],
+                          po_index: Optional[Dict[str, dict]] = None,
+                          tracker_by_po: Optional[Dict[str, dict]] = None) -> int:
     """`Audit - Cost Code` — vendors coding to the wrong cost-code FAMILY for what
     they sell (the user 2026-08-25). Same rules as the standalone
     one-offs/concrete_cost_code_audit.py, sharing shared/cost_code_audit: capture
@@ -2213,22 +2215,51 @@ def build_cost_code_sheet(wb, all_rows: List[dict]) -> int:
             "date": r.get("bill_date"),
             "project": r.get("project_num", "") or "",
             "amount": r.get("line_amount") or 0.0,
+            "po_num": r.get("po_num", "") or "",
         })
     override = load_override(paths.companyhealth_dir() / "concrete_suppliers.json")
     _agg, vtype = classify_vendors(recs, override=override)
     flags = flag_lines(recs, vtype)
 
+    # PO-origin cross-reference: did the linked PO already carry the wrong code
+    # (upstream super/PM) or did the bill deviate? PO cost codes come from QBO;
+    # the tracker recovers the PO # when QBO left the bill unlinked (the user
+    # 2026-08-25). The tracker's own Cost Code column is unusable (2% filled).
+    po_by_doc = index_by_doc(po_index) if po_index else {}
+    bill_to_po = {}                                   # tracker Bill # → PO #
+    for po, rec in (tracker_by_po or {}).items():
+        for b in (rec.get("bill_no") or "").split(","):
+            b = b.strip()
+            if b:
+                bill_to_po.setdefault(b, po)
+
+    def _po_for(f):
+        doc = _norm_po(f.get("po_num"))               # QBO LinkedTxn PO first
+        if not doc:
+            doc = bill_to_po.get((f.get("bill_doc") or "").strip(), "")  # tracker fallback
+        rec = po_by_doc.get(_norm_po(doc)) if doc else None
+        return doc, rec
+
+    for f in flags:
+        doc, rec = _po_for(f)
+        f["po_doc"] = doc or ""
+        f["po_codes"] = ", ".join(rec.get("codes", [])) if rec else ""
+        f["origin"] = po_origin(f.get("number"),
+                                rec.get("numbers") if rec else None, bool(doc))
+
     headers = ["Vendor", "Type", "Bill #", "Bill Date", "Project", "Cost Code",
-               "Cost Name", "Amount", "Line Description", "Reason", "Open"]
+               "Cost Name", "Amount", "PO #", "PO Cost Code", "Origin",
+               "Line Description", "Reason", "Open"]
     kinds = ["text", "text", "text", "date", "text", "text", "text", "money",
-             "text", "text", "link"]
+             "text", "text", "text", "text", "text", "link"]
     data = [[f["vendor"], TYPE_LABEL.get(f["vtype"], ""), f["bill_doc"], f["date"],
              f["project"], f["cost_code"], f["cost_name"] or "",
-             round(float(f["amount"]), 2), f["desc"], f["reason"], f["bill_id"]]
+             round(float(f["amount"]), 2), f["po_doc"], f["po_codes"], f["origin"],
+             f["desc"], f["reason"], f["bill_id"]]
             for f in flags]
     _audit_table_sheet(
         wb, "Audit - Cost Code", "tblAuditCostCode", headers, kinds, data,
-        [26, 15, 12, 11, 12, 11, 18, 13, 32, 44, 6],
+        [26, 15, 12, 11, 11, 11, 16, 12, 10, 14, 34, 30, 40, 6],
     )
 
     # Caption: captured vendor types, to the right of the header.
@@ -2450,8 +2481,9 @@ def main() -> int:
     n_unused = build_unused_po_sheet(wb, po_index, tracker_by_po, tracker_meta,
                                      dt.date.today())
 
-    # Cost-code audit — vendors must code to their family (concrete/material/both).
-    n_cc = build_cost_code_sheet(wb, all_rows)
+    # Cost-code audit — vendors must code to their family (concrete/material/both),
+    # cross-referenced to each bill's PO cost code (upstream vs bill-level miscode).
+    n_cc = build_cost_code_sheet(wb, all_rows, po_index, tracker_by_po)
 
     print(f"  Bills: {n_bills} bills (open + paid since {PAID_CUTOFF_DATE})")
     print(f"  Liens: live view  ·  Inventory: {n_inv} lines  ·  Audit: {n_audit} flagged"

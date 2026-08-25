@@ -75,6 +75,15 @@ no business findings, dollar exposures, or owner analyses (those live in the own
   `<companyhealth>/concrete_suppliers.json` `{concrete/material/both/exclude}`. Verified offline
   (Cowtown/RCI/Preferred mock): types + all 4 flags correct incl. yardage-memo catch, `validate_xlsx`
   clean, 6/6 tests pass.
+- **Cost Code audit → PO-origin cross-reference (2026-08-25, owner).** Each flagged line now shows
+  `PO #` · `PO Cost Code` · `Origin`: did the linked PO ALSO carry the wrong family (**upstream** -
+  super/PM built the PO wrong, clerk trusted it), did the bill **deviate** from a correct PO, or was
+  there **no PO** (clerk-coded)? PO cost codes come from QBO (`bill_rows.build_po_index` now captures
+  each PO's line `codes`/`numbers`); the PO tracker recovers the PO# by Bill# when QBO left the bill
+  unlinked (the tracker's own Cost Code column is unusable - 2% filled, foreign format). Verdict in
+  `shared/cost_code_audit.po_origin`. Verified offline (4 scenarios: PO-also-wrong, bill-deviated,
+  tracker-recovered, no-PO), `validate_xlsx` clean. **Standalone one-off doesn't yet carry the PO
+  column** (would need a PO pull); bill-tracker sheet is the PO-aware surface.
 
 - **No realm in the terminal (2026-08-06, owner).** The auth step printed
   `ok. company_id=<realm>`; removed — it now just prints `ok.`, consistent with `sync-ar`
