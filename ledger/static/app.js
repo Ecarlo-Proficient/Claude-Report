@@ -1770,6 +1770,9 @@ function jumpToVendorBills(vendor) {
   renderBills();                              // ensure the filter menus are populated
   billVendorHidden = new Set(_billVendors().filter(v => v !== vendor));   // show ONLY this vendor (exclude the rest)
   buildBillVendorFilter();
+  // Expand this vendor's group(s) so their bills show immediately - no extra click (owner 2026-08-25).
+  const grp = $("#billGroup") ? $("#billGroup").value : "vendor";
+  for (const b of (BILLS || [])) if ((b.vendor || "") === vendor) billsCollapsed.delete(billGroupKey(b, grp));
   renderBills();
   window.scrollTo(0, 0);
 }

@@ -4,6 +4,17 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Vendor Center jump auto-expands the vendor's bills (owner, 2026-08-25).** Clicking a vendor jumps to
+  Bills filtered to them, but bills open collapsed by default, so it was an extra click.
+  `jumpToVendorBills` now deletes that vendor's group key(s) from `billsCollapsed` (via `billGroupKey`
+  under the current Group-by) before the final render, so their bills show immediately. Verified: ABATIX
+  jump shows all 6 bills expanded.
+- **Dashboard opens chromeless - no browser address bar showing 127.0.0.1 (owner, 2026-08-25: "white bar
+  on top that shows the IP").** The menubar app (`ledger/app/ledger_app.py`) opened the default browser
+  (`webbrowser.open`), whose address bar shows the IP. Now it prefers a Chromium-family **app-mode** window
+  (`open -na "<Chrome/Edge/Brave/Chromium>" --args --app=<url>`) - no address bar / tabs - falling back to
+  the default browser if none is installed. Chrome IS installed here. **REQUIRES REBUILDING the app**
+  (`ledger/build_ledger_app.command`) since the running Project Ledger.app is compiled from this source.
 - **Payments "Unlocks (AP)": scope by DIVISION - draw for CP/MFD, whole job for RP (owner, 2026-08-25:
   "use draw period ... do the same fix for MFD and NOT RP").** A $460K Tri-C check showed it unlocked $1.1M
   of AP because `payUnlockBills` matched open vendor bills by `project_no` (every open bill on CP800), so
