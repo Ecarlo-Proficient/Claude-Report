@@ -4,6 +4,13 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Customer Center: avg days to pay + future cash-in forecast (owner, 2026-08-25).** New backend
+  `_client_pay_speed(con)` computes per-client average days from INVOICE date to PAID date over paid
+  `billing_event` rows (guarded 0-400 days), plus a portfolio average, exposed on the open-invoices payload
+  as `pay_speed`. Customer Center gains an **Avg days to pay** column (dimmed `~Nd` portfolio fallback when a
+  client has no paid history) and three **forecast KPI tiles** - cumulative expected cash-in **≤30d / ≤60d /
+  ≤90d**, each open invoice projected to `invoice_date + client_avg_days`. Verified: portfolio avg 37d, 75
+  clients with history, forecast tiles populate.
 - **Open Invoices: freeze ONLY the column header + kill the white scrollbar (owner, 2026-08-25).** The
   frozen-header bounded box was pinning the aging KPI tiles too. Moved `#invStats` INSIDE `.inv-scroll`
   (above the table) so the tiles scroll away with the list while the sticky column header still freezes;

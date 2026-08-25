@@ -510,6 +510,31 @@ def _aging_bucket(days_past_due) -> int:
     return 4
 
 
+def _client_pay_speed(con) -> dict:
+    """How long each client takes to pay: avg days from INVOICE date to PAID date over their
+    PAID invoices - the input to a future-cash-in forecast (owner 2026-08-25). Returns
+    {by_client: {client_lower: {avg_days, n}}, all_avg: <portfolio avg or None>}. Absent-safe."""
+    try:
+        rows = con.execute(
+            "SELECT customer, txn_date, paid_date FROM billing_event "
+            "WHERE COALESCE(balance,0) <= 0.005 AND COALESCE(paid_date,'') <> '' AND COALESCE(txn_date,'') <> ''"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return {"by_client": {}, "all_avg": None}
+    agg, alld = {}, []
+    for r in rows:
+        try:
+            d = (_dt.date.fromisoformat(r["paid_date"][:10]) - _dt.date.fromisoformat(r["txn_date"][:10])).days
+        except (ValueError, TypeError):
+            continue
+        if d < 0 or d > 400:                      # guard against typo'd dates
+            continue
+        agg.setdefault((r["customer"] or "").strip().lower(), []).append(d)
+        alld.append(d)
+    by_client = {c: {"avg_days": round(sum(v) / len(v)), "n": len(v)} for c, v in agg.items() if v}
+    return {"by_client": by_client, "all_avg": (round(sum(alld) / len(alld)) if alld else None)}
+
+
 def _fetch_open_invoices(con) -> dict:
     """Open AR invoices (the draws the GC still owes you) from billing_event, aged by DUE
     DATE into the same Current/1-30/31-60/61-90/90+ buckets as the Invoice Tracker's AR
@@ -571,6 +596,7 @@ def _fetch_open_invoices(con) -> dict:
     invs.sort(key=lambda x: ((x.get("customer") or "~").lower(),
                              x.get("due_date") or "9999", x.get("doc_number") or ""))
     out["invoices"] = invs
+    out["pay_speed"] = _client_pay_speed(con)   # avg days-to-pay per client → cash-in forecast
     return out
 
 

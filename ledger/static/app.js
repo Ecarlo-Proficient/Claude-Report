@@ -2706,19 +2706,30 @@ function renderCustomers() {
   const clients = new Set(); let total = 0;
   for (const m of byDiv.values()) for (const e of m.values()) { clients.add(e.client); total += e.open; }
   { const n = $("#custNote"); if (n) n.textContent = clients.size ? `(${clients.size} clients · ${money(total)} open)` : "(no AR data - load invoices)"; }
+  // ── Payment speed → future cash-in forecast (owner 2026-08-25) ──
+  const paySpeed = OI.pay_speed || { by_client: {}, all_avg: null };
+  const clientAvgDays = c => { const s = paySpeed.by_client[(c || "").toLowerCase()]; return (s && s.avg_days != null) ? s.avg_days : paySpeed.all_avg; };
+  const _DAYMS = 86400000, _now = Date.now();
+  const expectedMs = i => { const m = String(i.txn_date || "").match(/^(\d{4})-(\d{2})-(\d{2})/); const a = clientAvgDays(i.customer);
+    if (!m || a == null) return null; const d = new Date(+m[1], +m[2] - 1, +m[3]); d.setDate(d.getDate() + a); return d.getTime(); };
+  let f30 = 0, f60 = 0, f90 = 0;   // cumulative expected receipts within N days (by each client's own pay pattern)
+  for (const i of invs) { const ms = expectedMs(i); if (ms == null) continue; const out = (ms - _now) / _DAYMS; const bal = oiBal(i);
+    if (out <= 30) { f30 += bal; f60 += bal; f90 += bal; } else if (out <= 60) { f60 += bal; f90 += bal; } else if (out <= 90) { f90 += bal; } }
   { const stats = $("#custStats"); if (stats) { stats.innerHTML = "";
       const tiles = [["Open AR", money(total)], ["Clients", String(clients.size)]];
       for (const d of order) tiles.push([d, money(divOpen(d))]);       // per-division open AR (replaces the useless "biggest client")
-      for (const [l, v] of tiles) {
-        const k = el2("div", "kpi"); k.appendChild(el2("div", "k-label", l)); k.appendChild(el2("div", "k-value", v)); stats.appendChild(k); } } }
-  const tb = buildHead("#custTable", [["Client", "left"], ["Open AR", "right"], ["Open invoices", "right"], ["Oldest due", "left"]]);
+      if (paySpeed.all_avg != null) tiles.push(["Cash-in ≤30d", money(f30), "fc"], ["≤60d", money(f60), "fc"], ["≤90d", money(f90), "fc"]);
+      for (const [l, v, cls] of tiles) {
+        const k = el2("div", "kpi" + (cls ? " kpi-" + cls : "")); k.appendChild(el2("div", "k-label", l)); k.appendChild(el2("div", "k-value", v)); stats.appendChild(k); } } }
+  const NCOL = 5;
+  const tb = buildHead("#custTable", [["Client", "left"], ["Open AR", "right"], ["Open invoices", "right"], ["Oldest due", "left"], ["Avg days to pay", "right"]]);
   if (!tb) return; tb.innerHTML = "";
-  if (!order.length) { const tr = document.createElement("tr"); const td = document.createElement("td"); td.colSpan = 4; td.className = "left"; td.style.color = "var(--text-dim)"; td.style.padding = "14px 12px"; td.textContent = "No open AR - run load_invoices.py."; tr.appendChild(td); tb.appendChild(tr); return; }
+  if (!order.length) { const tr = document.createElement("tr"); const td = document.createElement("td"); td.colSpan = NCOL; td.className = "left"; td.style.color = "var(--text-dim)"; td.style.padding = "14px 12px"; td.textContent = "No open AR - run load_invoices.py."; tr.appendChild(td); tb.appendChild(tr); return; }
   for (const div of order) {
     const rows = [...byDiv.get(div).values()].sort((a, b) => b.open - a.open);   // top clients first
     // division band header (spans the row) - open AR + client count in this division
     const gtr = document.createElement("tr"); gtr.className = "bill-group";
-    const gtd = document.createElement("td"); gtd.colSpan = 4;
+    const gtd = document.createElement("td"); gtd.colSpan = NCOL;
     const cell = document.createElement("div"); cell.className = "bg-cell";
     const key = document.createElement("span"); key.className = "bg-key"; key.textContent = div;
     const amt = document.createElement("span"); amt.className = "bg-amt";
@@ -2730,6 +2741,13 @@ function renderCustomers() {
         const df = $("#ifDivision"); if (df) df.value = ""; setTab("invoices"); renderOpenInvoices(); };
       tr.appendChild(leftText(r.client)); tr.appendChild(rightText(money(r.open)));
       tr.appendChild(rightText(String(r.n))); tr.appendChild(leftText(r.oldest ? fmtDateShort(r.oldest) : "–"));
+      // Avg days to pay (from this client's paid history); dim the portfolio fallback so it reads as an estimate.
+      const sp = paySpeed.by_client[(r.client || "").toLowerCase()];
+      const ad = document.createElement("td"); ad.className = "right";
+      if (sp && sp.avg_days != null) { ad.textContent = `${sp.avg_days}d`; ad.title = `avg over ${sp.n} paid invoice${sp.n === 1 ? "" : "s"}`; }
+      else if (paySpeed.all_avg != null) { ad.textContent = `~${paySpeed.all_avg}d`; ad.className = "right dim"; ad.title = "no paid history for this client - portfolio average"; }
+      else ad.textContent = "–";
+      tr.appendChild(ad);
       tb.appendChild(tr);
     }
   }
