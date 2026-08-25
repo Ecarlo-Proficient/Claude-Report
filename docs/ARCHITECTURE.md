@@ -283,7 +283,7 @@ flowchart LR
     RPR["rp_wip_reader.py\nRP READER: owner's file → 'Test - RP'"]:::tool
     MASTER["master_wip_test.py\nORCHESTRATOR: MFD + CP + RP → 'Test-Master'\n(+ change audit)"]:::tool
     TEST[("WIP - MASTER new.xlsx\nTest tabs ONLY (SharePoint)")]:::out
-    MFDT["mfd_wip_test.py\nMFD ENTRY TAB: copies 'WIP - MFD' →\n'Test - MFD' + ETC · REVISED ETC · GP% ·\nQBO costs/billed (anchored per job) ·\ncost to complete\n(guarded by wip_excel_guard.py)"]:::tool
+    MFDT["mfd_wip_test.py\nMFD ENTRY TAB: copies 'WIP - MFD' →\n'Test - MFD' + ETC · REVISED ETC · GP% ·\nQBO costs/billed/retainage (anchored per job) ·\ncost to complete\n(guarded by wip_excel_guard.py)"]:::tool
     CLOSE["qbo_close_list.py →\nqbo_bulk_close.py"]:::tool
     QW[("QBO WRITE — gated\nCONFIRM=Y · MFD always excluded")]:::gate
 
@@ -315,6 +315,16 @@ largest-contract row of each job group because a job like MFD192 carries three c
 rows in Excel but exactly one project in QBO, with no way to split costs between them;
 sibling rows show a muted `see MFD192` marker, which `SUM()` ignores so the totals row
 still counts each job once.
+
+**Retainage comes from the GL, not from invoice lines** (2026-08-25). QBO's `99 - Retainage`
+invoice item posts to a real Other Current Asset account, `Retainage Receivable`, so the
+per-job balance of that account is the answer and it is read from the `GeneralLedger`
+report. Two traps are baked into the code as comments: the report's account filter is
+**`account`, singular** (`accounts` is silently ignored and returns the whole truncated
+general ledger), and `cp_wip_reader`'s gross-minus-net retainage heuristic must NOT be
+reused here — it is wrong on MFD by $466k on one job, because retainage that has since been
+billed still sits in the invoice history. The column is expected to disagree with the tab's
+own `Total Retainage`; the cell comment states the variance.
 
 **The three readers import ONE engine (`wip_writer.py`), never each other** (2026-08-04).
 `wip_writer` owns everything that turns `CpRow`s into a formatted, audited, edit-tracked

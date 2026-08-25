@@ -4,7 +4,7 @@
 > (CLAUDE.md/AGENTS.md structure rule 7). Tool matters only — no business
 > findings, no dollar exposures, no owner-only analysis.
 
-Last updated: 2026-07-29
+Last updated: 2026-08-25
 
 ## DONE / FINALIZED
 
@@ -775,3 +775,121 @@ with correct reasons + source cells). A live run needs the Common volume mounted
 
 Workflow going forward: `--audit` → owner inspects the workbook → approve → real
 run writes the report.
+
+---
+
+## 2026-08-25 — `Test - MFD`: an entry tab MFD owns, with a QBO block they can't edit
+
+**New tool: `mfd_wip_test.py`.** MFD needed an easier way to put their numbers into the
+WIP. The live `WIP - MFD` tab stays untouched; the script seeds an allow-listed
+`Test - MFD` copy of it and adds six columns. The owner's intent (2026-08-25) is that
+`Test - MFD` **takes over from `WIP - MFD`** once it is signed off.
+
+**Layout — B..M are copied verbatim and never written again.** The script owns N..S only:
+
+| col | header | who fills it | how |
+|-----|--------|--------------|-----|
+| N | `ETC` | MFD types it | grey/orange input style lifted from the live tab |
+| O | `REVISED ETC` | MFD types it | seeded `=N<row>`; typed over when a CO moves the budget |
+| P | `GP %` | formula | `(REV. CONTRACT - REVISED ETC) / REV. CONTRACT` |
+| Q | `COSTS TO DATE` | QBO | green header, tinted cell, comment |
+| R | `BILLED TO DATE` | QBO | green header, tinted cell, comment |
+| S | `RETAINAGE (QBO)` | QBO | green header; comment carries the variance vs col M |
+| T | `COST TO COMPLETE` | formula | `REVISED ETC - COSTS TO DATE` |
+
+`Q5:S5` is a merged, centered banner carrying `QBO - LAST SYNC mm/dd/yyyy h:mm AM`.
+GP% mirrors `WIP Master`!Q and cost-to-complete mirrors `WIP Master`!I so the two sheets
+agree. The TOTALS block is extended across N..S, and a two-cell key sits below the table.
+
+**FORMATTING — this tab is the rail-5a exception, on purpose.** Rail 5a freezes the
+GENERATED Test tabs to the `WIP Master` Tahoma-8 look. `Test - MFD` is a DATA-ENTRY tab
+that replaces `WIP - MFD`, so it mirrors `WIP - MFD`'s Calibri look instead, including
+MFD's existing bold-orange-on-grey input convention. **Do not restyle it to Tahoma 8** —
+that would make it stop looking like the tab it is replacing.
+
+**MFD192 anchoring (the owner's ruling, 2026-08-25).** `WIP - MFD` carries three contract
+rows for job 192 (Hudsonwood 009 / Offsite 010 / base 008); QBO has ONE project MFD192.
+Costs cannot be split — 455 of 460 cost lines carry no contract marker at all (only 5 say
+OFFSITE, $19k of $2.63M). So QBO figures land on the **largest-contract row** of each job
+group (row 10, the 008 base, for MFD192) and sibling rows get a muted `see MFD192` marker.
+`SUM()` ignores text, so the totals row still counts each job exactly once.
+
+**Idempotency.** `--seed` builds the tab (gated behind `CONFIRM=Y` if it already exists,
+since re-seeding discards whatever MFD typed). The default run refreshes **only** Q, R and
+the banner; `build_columns` runs every pass but never overwrites an ETC or REVISED ETC that
+already has a value, so a row MFD adds later picks up the styling and formulas on the next
+sync. Verified: typed values in N and O survive a refresh, stale QBO cells get replaced.
+
+**Cells are visually locked, not protected** (owner's choice). No sheet protection is
+applied — the QBO look is carried by the green header, the tinted fill and a cell comment.
+
+**Cross-check the tab now gives for free** (first live run, 2026-08-25): QBO billed vs the
+tab's own hand-entered `COMPLETED TO DATE` matched to the penny on MFD192 and MFD325, and
+within $1 on MFD177. MFD295 differed — see OPEN ISSUES.
+
+## OPEN ISSUES
+
+- **MFD295 (ELITE ROCK CREEK) billed disagrees by $171,571.94.** The tab's `COMPLETED TO
+  DATE` says 2,261,378.92; the QBO project P&L says 2,089,806.98. The job shows 100%
+  complete on the tab. Someone has to reconcile which is right — the script only surfaces
+  the gap, it does not resolve it.
+- **MFD295 is on `WIP - MFD` but not on `WIP Master`.** The two tabs do not carry the same
+  job list. Not a defect of this script, but it means the tabs will not tie out.
+- **Per-contract billed is available but not implemented.** MFD192's invoice memos DO name
+  the contract ("HUDSONWOOD CONTRACT", "OFFSITE CONTRACT", bare = 008), so BILLED could be
+  split three ways even though COSTS cannot. Left out of v1 deliberately: splitting billed
+  while costs stay anchored would put a billed figure next to an empty cost cell and make
+  the margin on those rows read as real. Revisit only if the owner wants it.
+
+## 2026-08-25 (later) — `RETAINAGE (QBO)` added to the green block
+
+The owner asked to see QBO's retainage next to MFD's own, so the green QBO block grew from
+two columns to three: `COSTS TO DATE` · `BILLED TO DATE` · **`RETAINAGE (QBO)`**, with
+`COST TO COMPLETE` moving from S to T and the sync banner widening from `Q5:R5` to `Q5:S5`.
+
+**Where the number comes from — do not re-derive.** QBO tracks retainage properly: the
+invoice item `99 - Retainage` posts to a real Other Current Asset account,
+**`Retainage Receivable`**. A negative retainage line on a draw DEBITS that account
+(retainage moves out of AR); billing the retainage later CREDITS it back out. So the
+per-job balance of that account IS "what QBO has", pulled from the `GeneralLedger` report
+filtered to that account. Verified: the per-name sum ties to the account's `CurrentBalance`
+exactly (1,607,763.04).
+
+**Two traps, both now handled in code:**
+
+- **The GL report's account filter is `account`, SINGULAR.** Passing `accounts` is accepted
+  and then silently ignored — you get the entire 66k-row general ledger back, truncated to
+  its first 11 accounts, with no error and no retainage section. It looks like a clean empty
+  result. `account=<id>` returns 101 rows and one section.
+- **Do NOT reuse `cp_wip_reader`'s retainage heuristic** (gross P&L income minus the sum of
+  non-retainage invoice totals). It is built for CP and is wrong on MFD by $466k on MFD177,
+  because retainage that has since been BILLED still sits in the invoice history. The GL
+  balance nets it out; the invoice scan does not.
+
+**The column is expected to disagree with col M, and that is the point.** QBO stops counting
+retainage once it has been billed to the GC; the WIP tab keeps carrying it. The cell comment
+states the variance per job, summed across the job's contract rows (MFD192 spreads retainage
+over three rows against one QBO balance).
+
+First live run: **MFD192 agrees to the penny (345,756.41 both ways)**. The other three do not
+— see OPEN ISSUES.
+
+**Migration guard.** A tab built by the earlier two-column version carries a stale `Q5:R5`
+merge and a `COST TO COMPLETE` formula sitting in S. `build_columns` now drops any
+banner-row merge that is not the current span before re-merging (overlapping merges are an
+Excel repair prompt), and clears any formula found in a QBO column. Upgrade path tested on a
+copy of the already-built tab: `assert_clean` passes, B..M still byte-identical.
+
+## OPEN ISSUES
+
+- **Retainage: three of four MFD jobs disagree with QBO, all in the same direction** (QBO
+  lower, i.e. QBO has already released retainage the WIP still carries):
+  - MFD177 — QBO **-26,057.51**, tab 207,240.28, gap **-233,297.79**. QBO shows this job's
+    retainage fully billed out and then some; a negative balance on the asset account means
+    more was invoiced than ever accrued there.
+  - MFD295 — QBO 15,246.42, tab 203,673.24, gap **-188,426.82**.
+  - MFD325 — QBO 56,980.07, tab 90,727.08, gap **-33,747.01**, which is exactly the
+    "JANUARY DRAW" retainage the hidden `RETAINAGE MFD` tab records as last billed.
+  Each gap lines up with an amount on the hidden `RETAINAGE MFD` tab, so these look like
+  retainage that was invoiced and never taken off the WIP — but that is a call for a person,
+  not the script.
