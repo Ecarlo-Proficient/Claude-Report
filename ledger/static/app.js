@@ -2763,7 +2763,7 @@ function renderCustomers() {
 // Open vendor bills indexed by the DRAW (AR invoice) they're matched to - NOT by project.
 // A payment pays a specific draw; only the bills tied to that draw are what it unlocks, not the
 // whole project's AP backlog (owner 2026-08-25: "use draw period, you are grabbing all costs").
-function payOpenBillsByDraw() {
+function payOpenBillsByDraw() {   // open bills keyed by the DRAW (AR invoice) they're matched to
   const idx = {};
   for (const b of (BILLS || [])) {
     const draw = b.invoice_no || b.matched_invoice;
@@ -2771,17 +2771,30 @@ function payOpenBillsByDraw() {
   }
   return idx;
 }
-function payUnlockBills(p, idx) {
-  const draws = [...new Set((p.applications || []).map(a => a.invoice_no).filter(Boolean).map(String))];
-  let bills = []; for (const d of draws) bills = bills.concat(idx[d] || []);
-  return bills;
+function payOpenBillsByProject() {   // open bills keyed by project (for RP - see the division rule below)
+  const idx = {};
+  for (const b of (BILLS || [])) { if (num(b.open_balance) > 0.005 && b.project_no) (idx[b.project_no] ||= []).push(b); }
+  return idx;
+}
+// Division rule (owner 2026-08-25). CP/MFD are STAGED: each draw is its own scope with its own costs
+// and its own invoice, so a payment unlocks ONLY the bills matched to the draw it paid. RP is regular
+// work: costs go in UP FRONT and the job is invoiced ONCE at the end, so bills aren't tied to a draw -
+// use the whole project's open AP for RP.
+const _payIsRP = (proj, div) => /^RP/i.test(proj || "") || String(div || "").toLowerCase().startsWith("res");
+function payUnlockBills(p, drawIdx, projIdx) {
+  const bills = new Set();
+  for (const a of (p.applications || [])) {
+    if (_payIsRP(a.project_no, a.division)) { for (const b of (projIdx[a.project_no] || [])) bills.add(b); }
+    else if (a.invoice_no) { for (const b of (drawIdx[String(a.invoice_no)] || [])) bills.add(b); }
+  }
+  return [...bills];
 }
 function renderPayments() {
   const body = $("#payBody"); if (!body) return;
   const pays = PAY.payments || [];
   { const n = $("#payNote"); if (n) n.textContent = pays.length ? `(${pays.length} payments · ${money(PAY.total_received)} received)` : "(no payment data - run load_payments.py)"; }
   body.innerHTML = "";
-  const billIdx = payOpenBillsByDraw();
+  const drawIdx = payOpenBillsByDraw(), projIdx = payOpenBillsByProject();
   const stats = document.createElement("div"); stats.className = "kpi-row";
   for (const [l, v] of [["Received", money(PAY.total_received)], ["Payments", String(pays.length)],
                         ["Invoices paid", String(PAY.invoices_paid || 0)]]) {
@@ -2790,7 +2803,7 @@ function renderPayments() {
   body.appendChild(stats);
   const head = document.createElement("div"); head.className = "list-head";
   const hint = document.createElement("p"); hint.className = "hint"; hint.style.margin = "0";
-  hint.innerHTML = "Each row is a <b>payment received</b>. Click it to see the invoices (draws) it paid. <b>Unlocks (AP)</b> is the open vendor bills tied to those same draws - the AP this payment actually funds, not the whole job's backlog.";
+  hint.innerHTML = "Each row is a <b>payment received</b>. Click it to see the invoices (draws) it paid. <b>Unlocks (AP)</b> is the open vendor bills this payment funds: for staged <b>CP/MFD</b> draws, only the bills on the draw it paid; for <b>RP</b> (costs up front, billed once), the whole job's open AP.";
   head.appendChild(hint);
   const actions = document.createElement("div"); actions.className = "list-actions";
   const seg = document.createElement("div"); seg.className = "seg"; seg.title = "Break cash-in down by period";
@@ -2857,7 +2870,7 @@ function renderPayments() {
     tr.appendChild(rightText(money(p.total_amt)));
     // Unlocks (AP): open vendor bills on this payment's project(s) → click opens the side panel
     const uc = document.createElement("td"); uc.className = "right";
-    const bills = payUnlockBills(p, billIdx);
+    const bills = payUnlockBills(p, drawIdx, projIdx);
     if (bills.length) {
       const sum = bills.reduce((t, b) => t + num(b.open_balance), 0);
       const link = document.createElement("span"); link.className = "unlock-link";

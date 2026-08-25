@@ -4,15 +4,16 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
-- **Payments "Unlocks (AP)": scope to the DRAW, not the whole project (owner, 2026-08-25: "use draw
-  period, you are grabbing all costs for the project").** A $460K Tri-C check showed it unlocked $1.1M of
-  AP - because `payUnlockBills` matched open vendor bills by `project_no` (every open bill on CP800, 81
-  bills), so every payment on a job showed that job's entire AP backlog, identical across payments. Bills
-  carry `invoice_no` (the matched draw), and a payment's applications carry the draw `invoice_no` it paid,
-  so the fix indexes open bills by DRAW (`payOpenBillsByDraw`) and matches on that. Now 37671 correctly
-  shows its draw 34431's bills = **$92,168 · 15**, not the project's $1.1M. Updated the hint/tooltips to say
-  "the AP this payment actually funds, not the whole job's backlog." Frontend-only (BILLS already carry
-  `invoice_no`).
+- **Payments "Unlocks (AP)": scope by DIVISION - draw for CP/MFD, whole job for RP (owner, 2026-08-25:
+  "use draw period ... do the same fix for MFD and NOT RP").** A $460K Tri-C check showed it unlocked $1.1M
+  of AP because `payUnlockBills` matched open vendor bills by `project_no` (every open bill on CP800), so
+  every payment on a job showed the entire backlog. Fix: **CP/MFD are STAGED** (each draw = a scope with
+  its own costs + invoice), so match open bills to the DRAW the payment paid (`bill.invoice_no` ↔ the
+  application's `invoice_no`, via `payOpenBillsByDraw`); **RP** is regular work (costs UP FRONT, invoiced
+  ONCE at the end - bills aren't tied to a draw), so use the whole project's open AP (`payOpenBillsByProject`).
+  `payUnlockBills(p, drawIdx, projIdx)` branches per application via `_payIsRP` (project# prefix / division).
+  Verified: CP790 $11,418·3 (draw) vs $85,758·20 project; MFD192 $302,989·11 (draw) vs $921,218·65; RP6901-FTW
+  $19,546·3 = whole job. Frontend-only (BILLS already carry `invoice_no`).
 - **Dark-mode legibility pass (owner, 2026-08-25: "hard to see").** Brightened the dark tokens:
   `--text-dim` #98a2b3 -> #aeb9c9 (secondary text is everywhere), `--border` #2a323d -> #35404f (faint
   separators), a touch more surface separation, and a brighter `--row-hover`. The accent is a per-user
