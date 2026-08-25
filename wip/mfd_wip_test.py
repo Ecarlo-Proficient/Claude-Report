@@ -1,24 +1,21 @@
 #!/usr/bin/env python3
 """
-mfd_wip_test.py - builds and refreshes the 'Test - MFD' tab of
-'WIP - MASTER new.xlsx': the MFD division WIP with an entry block MFD fills in
-and a QBO block the script owns.
+mfd_wip_test.py - the MFD division WIP tab: an entry block MFD fills in and a
+QBO block the script owns, on 'WIP - MFD' in 'WIP - MASTER new.xlsx'.
 
-WHY THIS TAB EXISTS
-The live 'WIP - MFD' tab is hand-maintained and code-locked
-(wip_excel_guard.ALLOWED_WRITE_SHEETS). 'Test - MFD' is the allow-listed
-staging copy that is MEANT TO TAKE OVER from it once the owner signs off
-(the user 2026-08-25). It is therefore a faithful copy of 'WIP - MFD' - same
-Calibri look, same input convention - plus six new columns.
+HISTORY - WHY THIS WRITES A LIVE TAB
+Built 2026-08-25 on a staging copy ('Test - MFD') because 'WIP - MFD' was
+read-only at code level. The two were then diffed attribute by attribute -
+values, formulas, every style facet, merges, dimensions, comments, conditional
+formatting, validation, hyperlinks, images, filters AND sheet chrome - and the
+copy proved a faithful superset, so on the owner's instruction the tabs were
+MERGED: 'WIP - MFD' was graduated in wip_excel_guard.ALLOWED_WRITE_SHEETS and
+the staging tab deleted. One tab now, under its original name.
 
-FORMATTING NOTE (read before "fixing" this file)
-Repo CLAUDE.md rail 5a freezes the WIP Test tabs to the 'WIP Master' look
-(Tahoma 8). That rule governs the tabs the CP/RP readers write. THIS tab is
-the exception the owner asked for: it must mirror 'WIP - MFD', because it
-replaces 'WIP - MFD'. Do not restyle it to Tahoma 8.
-
-LAYOUT - columns B..M are copied verbatim and NEVER touched again.
-The script only ever owns N..S:
+THE CONTRACT THAT MAKES WRITING A LIVE TAB SAFE
+Columns B..M are MFD's. This script NEVER reads them for anything but the job
+number, the contract, the change orders and the retainage variance, and NEVER
+writes them. It owns N..T and nothing else. Keep it that way.
 
     N  ETC                MFD types it        grey/orange input style
     O  REVISED ETC        MFD types it        seeded '=N<row>'; type over on a CO
@@ -27,8 +24,17 @@ The script only ever owns N..S:
     Q  COSTS TO DATE      from QBO            green header, tinted cell, comment
     R  BILLED TO DATE     from QBO            green header, tinted cell, comment
     S  RETAINAGE (QBO)    from QBO            green header; comment carries the
-                                              variance against the tab's own col M
+                                              variance against MFD's own col M
     T  COST TO COMPLETE   formula             REVISED ETC - COSTS TO DATE
+
+GP % mirrors 'WIP Master'!Q and COST TO COMPLETE mirrors 'WIP Master'!I, so the
+two sheets agree. The input styling deliberately matches the bold-orange-on-grey
+MFD already uses in F/G/I/J/M - this tab is theirs, it should look like itself.
+
+FORMATTING NOTE (read before "fixing" this file)
+Repo CLAUDE.md rail 5a freezes the GENERATED Test tabs to the 'WIP Master'
+Tahoma-8 look. This tab is not one of them: it is MFD's own hand-kept sheet in
+its original Calibri. Do not restyle it to Tahoma 8.
 
 RETAINAGE - WHERE THE NUMBER COMES FROM (probed 2026-08-25, do not re-derive)
 QBO tracks retainage properly: the invoice item '99 - Retainage' posts to a real
@@ -45,40 +51,32 @@ Two traps that cost an hour, both already handled here:
     (gross P&L income minus non-retainage invoice totals). That heuristic is
     built for CP and gives the WRONG answer on MFD - on the largest job it
     missed by more than twice the retainage actually at stake - because
-    retainage that has since been BILLED still sits in the
-    invoice history. The GL balance nets it out; the invoice scan does not.
+    retainage that has since been BILLED still sits in the invoice history.
+    The GL balance nets it out; the invoice scan does not.
 
-The account balance is expected to DISAGREE with the tab's own 'Total Retainage'
-(col M), and that disagreement is the point of the column. QBO stops counting
-retainage once it has been billed to the GC; the WIP tab keeps carrying it. The
-cell comment spells the variance out per job.
+The retainage column is EXPECTED to disagree with MFD's own 'Total Retainage'
+(col M), and that disagreement is the point of it. QBO stops counting retainage
+once it has been billed to the GC; the WIP tab keeps carrying it. The cell
+comment spells the variance out per job.
 
-GP % mirrors 'WIP Master'!Q ((contract - ETC) / contract) so the two sheets
-agree; COST TO COMPLETE mirrors 'WIP Master'!I.
-
-THE MFD192 PROBLEM (the reason for the 'see MFD192' markers)
+ONE JOB NUMBER CAN BE SEVERAL CONTRACTS
 'WIP - MFD' carries THREE contract rows for job 192 (Hudsonwood 009, Offsite
 010, base 008), but QBO has ONE project MFD192 - all 460 cost lines sit on one
 customer with no contract marker (5 lines mention OFFSITE, together well under
-1% of the job). Costs cannot be split. So per the owner's 2026-08-25 ruling the QBO
-figures ANCHOR on the largest-contract row of each job group; the sibling rows
-get a muted 'see MFD192' marker instead of a number. SUM() ignores text, so
-the totals row still adds up exactly once.
+1% of the job). Costs cannot be split. So per the owner's 2026-08-25 ruling the
+QBO figures ANCHOR on the largest-contract row of each job group; the sibling
+rows get a muted 'see MFD192' marker instead of a number. SUM() ignores text, so
+the totals row still counts each job exactly once.
 
 USAGE
-    python3 wip/mfd_wip_test.py --seed          first build (copies WIP - MFD)
-    python3 wip/mfd_wip_test.py                 refresh QBO columns only
-    python3 wip/mfd_wip_test.py --dry-run       show what would change
-    python3 wip/mfd_wip_test.py --no-qbo        skip the QBO pull
-
-A re-seed over an existing 'Test - MFD' DISCARDS whatever MFD typed there, so
-it is gated behind CONFIRM=Y. The default refresh never touches B..P or S.
+    python3 wip/mfd_wip_test.py              refresh the QBO columns
+    python3 wip/mfd_wip_test.py --dry-run    show what would change
+    python3 wip/mfd_wip_test.py --no-qbo     scaffolding only, no QBO pull
 """
 from __future__ import annotations
 
 import argparse
 import datetime as dt
-import os
 import re
 import sys
 from copy import copy
@@ -101,8 +99,8 @@ WIP_EXCEL_PATH = paths.get_path(
     paths.onedrive_base() / "Company Files - WIP Report/WIP - MASTER new.xlsx",
 )
 
-SOURCE_TAB = "WIP - MFD"      # read-only template
-TARGET_TAB = "Test - MFD"     # allow-listed write target
+TARGET_TAB = "WIP - MFD"      # the live MFD tab — graduated in wip_excel_guard 2026-08-25
+RETIRED_TAB = "Test - MFD"    # the staging copy this replaced; deleted on sight
 
 HDR_ROW = 6                   # 'PROJECT | MOBE DATE | ...'
 FIRST_DATA_ROW = 7
@@ -224,95 +222,39 @@ def anchor_row(ws, rows: List[int]) -> int:
 
 # ─────────────────────────── seed from the live tab ───────────────────────────
 
-def copy_sheet_chrome(src, ws, force: bool = False) -> List[str]:
-    """Copy the sheet-level chrome openpyxl does NOT carry with cell copies:
-    tab colour, orientation, fit-to-page, margins, zoom, and the print area.
+def widen_print_area(ws) -> None:
+    """Make sure the print area covers the columns this script owns.
 
-    Missed on the first build (2026-08-25) and only caught by diffing the two
-    sheets attribute by attribute before retiring 'WIP - MFD'. Cell values,
-    styles, merges, comments, dimensions, filters and validations all copied
-    fine - this was the entire gap, and every item in it is print behaviour,
-    which is exactly what nobody notices until the report comes out wrong.
+    The tab's own print area was '$B$2:$L$15' - it predates both the Total
+    Retainage column (M) and everything added here, so leaving it alone prints a
+    report missing the new work. Same first cell and same last row as the
+    original; only the column span changes. Left alone once it is wide enough,
+    so a hand adjustment is never fought.
 
-    Self-healing: with force=False it only fills in what is UNSET on the
-    target, so a tab already built by the earlier version gets fixed once and
-    a later hand adjustment is never fought. Returns what it changed."""
-    done: List[str] = []
-
-    if force or ws.sheet_properties.tabColor is None:
-        if src.sheet_properties.tabColor is not None:
-            ws.sheet_properties.tabColor = copy(src.sheet_properties.tabColor)
-            done.append("tab colour")
-
-    # Test the FLAG, not the container: openpyxl hands back an empty
-    # PageSetupProperties object rather than None, so a `is None` check on the
-    # container silently skips this and fit-to-page never gets copied - which
-    # leaves fitToHeight and orientation set but not actually honoured on print.
-    sp = src.sheet_properties.pageSetUpPr
-    tgt_fit = getattr(ws.sheet_properties.pageSetUpPr, "fitToPage", None)
-    if sp is not None and sp.fitToPage and (force or not tgt_fit):
-        ws.sheet_properties.pageSetUpPr = copy(sp)
-        done.append("fit-to-page")
-
-    for field in ("orientation", "paperSize", "scale", "fitToWidth", "fitToHeight"):
-        val = getattr(src.page_setup, field, None)
-        if val is None:
-            continue
-        if force or getattr(ws.page_setup, field, None) is None:
-            setattr(ws.page_setup, field, val)
-            done.append(f"page {field}")
-
-    if force or ws.page_margins.left != src.page_margins.left:
-        ws.page_margins = copy(src.page_margins)
-        done.append("margins")
-
-    if src.sheet_view.zoomScaleNormal and (force or not ws.sheet_view.zoomScaleNormal):
-        ws.sheet_view.zoomScaleNormal = src.sheet_view.zoomScaleNormal
-        done.append("zoom")
-
-    # Print area. The source's own area stops at column L - it predates both
-    # the Total Retainage column and everything this script adds, so copying it
-    # verbatim would hand back a printed report missing the new work. Span the
-    # full block instead, same first cell and same last row as theirs.
-    if force or not ws.print_area:
-        last_row = totals_rows(ws)[1] or max(data_rows(ws))
-        ws.print_area = f"$B$2:${get_column_letter(max(NEW_COLS))}${last_row}"
-        done.append("print area")
-
-    return done
+    (Sheet CHROME - tab colour, orientation, fit-to-page, margins, zoom - needed
+    copying only while this lived on a separate staging tab. Writing in place on
+    the real sheet, it is already correct and must not be touched.)"""
+    last_row = totals_rows(ws)[1] or max(data_rows(ws))
+    want = f"${get_column_letter(max(NEW_COLS))}${last_row}"
+    current = ws.print_area or ""
+    if want.split("$")[1] in current.split(":")[-1]:
+        return
+    ws.print_area = f"$B$2:{want}"
 
 
-def seed(wb) -> None:
-    """Rebuild 'Test - MFD' as a cell-for-cell copy of 'WIP - MFD'."""
-    src = wb[SOURCE_TAB]
-    if TARGET_TAB in wb.sheetnames:
-        del wb[TARGET_TAB]
-    idx = wb.sheetnames.index(SOURCE_TAB) + 1
-    ws = wb.create_sheet(TARGET_TAB, idx)
-    assert_write_allowed(ws.title)
-
-    for row in src.iter_rows():
-        for cell in row:
-            if cell.value is None and not cell.has_style:
-                continue
-            tgt = ws.cell(row=cell.row, column=cell.column, value=cell.value)
-            if cell.has_style:
-                tgt._style = copy(cell._style)
-            if cell.comment is not None:
-                tgt.comment = Comment(cell.comment.text, cell.comment.author or "WIP")
-
-    for rng in src.merged_cells.ranges:
-        ws.merge_cells(str(rng))
-    for key, dim in src.column_dimensions.items():
-        ws.column_dimensions[key].width = dim.width
-        ws.column_dimensions[key].hidden = dim.hidden
-    for key, dim in src.row_dimensions.items():
-        ws.row_dimensions[key].height = dim.height
-        ws.row_dimensions[key].hidden = dim.hidden
-    ws.sheet_format.defaultRowHeight = src.sheet_format.defaultRowHeight
-    ws.sheet_view.showGridLines = src.sheet_view.showGridLines
-    if src.freeze_panes:
-        ws.freeze_panes = src.freeze_panes
+def _clear_legend(ws, rows: List[int]) -> None:
+    """Remove the two-cell key block earlier versions parked under the table.
+    The owner cut it as clutter (2026-08-25); this clears it wherever a previous
+    run left it so it does not linger on an already-built tab."""
+    base = max(rows) + 8
+    for row in (base, base + 1):
+        for col in (COL_ETC, COL_REV_ETC):
+            cell = ws.cell(row=row, column=col)
+            cell.value = None
+            cell.fill = PatternFill()
+            cell.font = Font(name=FONT_NAME, size=11)
+            cell.border = Border()
+            cell.alignment = Alignment()
 
 
 # ─────────────────────────── the new columns ───────────────────────────
@@ -414,13 +356,8 @@ def build_columns(ws) -> None:
         _style(ctc, CALC_FONT, fmt=CURRENCY)
 
     _build_totals(ws, rows)
-    _build_key(ws, rows)
-
-    src = ws.parent[SOURCE_TAB] if SOURCE_TAB in ws.parent.sheetnames else None
-    if src is not None:
-        healed = copy_sheet_chrome(src, ws)
-        if healed:
-            print(f"  sheet chrome filled in from '{SOURCE_TAB}': {', '.join(healed)}")
+    _clear_legend(ws, rows)
+    widen_print_area(ws)
 
 
 def _build_totals(ws, rows: List[int]) -> None:
@@ -448,24 +385,6 @@ def _build_totals(ws, rows: List[int]) -> None:
                  value=f"=IF(H{sum_row}=0,0,(H{sum_row}-{o}{sum_row})/H{sum_row})")
     _style(gp, Font(name=FONT_NAME, size=11, bold=True), fmt=PCT,
            align=Alignment(horizontal="center", vertical="center"))
-
-
-def _build_key(ws, rows: List[int]) -> None:
-    """Two swatch cells under the table so MFD can see which cells are theirs.
-    Sits below the PRODUCTION BALANCE block that lives in column K."""
-    base = max(rows) + 8
-    a = Alignment(horizontal="center", vertical="center")
-    _style(ws.cell(row=base, column=COL_ETC, value="MFD ENTERS"),
-           Font(name=FONT_NAME, size=10, bold=True, color="FFFA7D00"),
-           INPUT_FILL, align=a)
-    _style(ws.cell(row=base + 1, column=COL_ETC, value="FROM QBO"),
-           Font(name=FONT_NAME, size=10, bold=True, color="FFFFFFFF"),
-           QBO_HDR_FILL, align=a)
-    for row, text in ((base, "type your numbers in these cells"),
-                      (base + 1, "written by the sync - do not type here")):
-        cell = ws.cell(row=row, column=COL_REV_ETC, value=text)
-        cell.font = Font(name=FONT_NAME, size=10, color="FF7F7F7F")
-        cell.alignment = Alignment(horizontal="left", vertical="center")
 
 
 # ─────────────────────────── QBO ───────────────────────────
@@ -640,9 +559,6 @@ def write_qbo(ws, data: Dict[str, dict], stamp: str) -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--seed", action="store_true",
-                    help="Rebuild 'Test - MFD' from 'WIP - MFD' (discards MFD's "
-                         "typed values on the test tab; needs CONFIRM=Y if it exists).")
     ap.add_argument("--no-qbo", action="store_true", help="Skip the QBO pull.")
     ap.add_argument("--dry-run", action="store_true",
                     help="Report what would change; write nothing.")
@@ -655,25 +571,18 @@ def main() -> int:
         return 1
 
     wb = open_wip_workbook_for_write(WIP_EXCEL_PATH)
-    if SOURCE_TAB not in wb.sheetnames:
-        print(f"  source tab {SOURCE_TAB!r} missing")
+    if TARGET_TAB not in wb.sheetnames:
+        print(f"  tab {TARGET_TAB!r} missing")
         return 1
 
-    exists = TARGET_TAB in wb.sheetnames
-    if args.seed:
-        if exists and os.environ.get("CONFIRM") != "Y":
-            print(f"  '{TARGET_TAB}' already exists. Re-seeding DISCARDS whatever "
-                  f"MFD typed there.\n  Re-run with CONFIRM=Y to proceed.")
-            return 2
-        print(f"  seeding from '{SOURCE_TAB}'")
-        if not args.dry_run:
-            seed(wb)
-    elif not exists:
-        print(f"  '{TARGET_TAB}' does not exist yet - run with --seed first.")
-        return 2
+    ws = wb[TARGET_TAB]
+    assert_write_allowed(ws.title)
 
-    ws = wb[TARGET_TAB] if TARGET_TAB in wb.sheetnames else wb[SOURCE_TAB]
-    assert_write_allowed(ws.title if TARGET_TAB in wb.sheetnames else TARGET_TAB)
+    # The staging tab was merged into the live one on 2026-08-25. Drop it if a
+    # workbook still carries it, so the two can never drift apart again.
+    if RETIRED_TAB in wb.sheetnames and not args.dry_run:
+        del wb[RETIRED_TAB]
+        print(f"  removed the retired '{RETIRED_TAB}' tab")
 
     rows = data_rows(ws)
     groups = group_rows(ws, rows)
@@ -681,12 +590,13 @@ def main() -> int:
     for job, job_rows in sorted(groups.items()):
         anchor = anchor_row(ws, job_rows)
         label = str(ws.cell(row=anchor, column=2).value or "").strip()
-        extra = f"  (+{len(job_rows) - 1} sibling row(s) -> 'see {job}')" if len(job_rows) > 1 else ""
+        extra = (f"  (+{len(job_rows) - 1} sibling row(s) -> 'see {job}')"
+                 if len(job_rows) > 1 else "")
         print(f"    {job}: anchor row {anchor} - {label}{extra}")
 
-    # Runs on every pass, not just --seed: it is non-destructive (it never
-    # overwrites an ETC or a REVISED ETC that already has a value), so a row
-    # MFD adds later picks up the styling and formulas on the next sync.
+    # Non-destructive by construction: it writes ONLY columns N..T, and never
+    # overwrites an ETC or REVISED ETC that already has a value, so a row MFD
+    # adds later picks up the styling and formulas on the next sync.
     if not args.dry_run:
         build_columns(ws)
 

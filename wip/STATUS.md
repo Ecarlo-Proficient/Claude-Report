@@ -926,3 +926,38 @@ The only reference is its own print-area defined name, which retires with the sh
 deleting it breaks no formula anywhere.
 
 **Verdict: `Test - MFD` is a faithful superset of `WIP - MFD` and safe to swap in.**
+
+## 2026-08-25 (final) — MERGED: `Test - MFD` retired, `WIP - MFD` graduated
+
+The owner's call after the replacement audit came back clean: **merge the two tabs into one
+under the original name.** `WIP - MFD` now carries the entry columns and the QBO block;
+`Test - MFD` is deleted.
+
+**`wip_excel_guard` graduated `'WIP - MFD'`** — the documented path (owner's explicit
+instruction, name added deliberately to `ALLOWED_WRITE_SHEETS`, never a config flag). It is
+the first live division tab any script may write.
+
+**The contract that makes writing a live tab safe:** columns B..M are MFD's. The script reads
+them only for the job number, contract, change orders and the retainage variance, and NEVER
+writes them. It owns N..T and nothing else. Verified against the pre-merge backup: B..M values
+AND formatting are byte-identical after the live write.
+
+**Script simplified with the staging tab gone.** `seed()` and `--seed` deleted (source and
+target are the same sheet now), `copy_sheet_chrome()` deleted (writing in place, the chrome is
+already correct and must not be touched) — replaced by `widen_print_area()`, which only pushes
+the print area out to cover the owned columns and leaves it alone once wide enough.
+`main()` deletes a leftover `Test - MFD` on sight so the two can never drift apart again.
+
+**Key/legend block removed** (owner: clutter). `_clear_legend()` wipes it wherever an earlier
+run parked it, so an already-built tab is cleaned on the next sync rather than needing a
+rebuild.
+
+Backups before each step are in `WIP History/`: `… (pre Test-MFD 08-25).xlsx` is the tab as it
+stood before any of this work, `… (pre MFD merge 08-25).xlsx` is immediately before the merge.
+
+## OPEN ISSUES
+
+- **`Test - MFD` stays in `ALLOWED_WRITE_SHEETS`** as a harmless retired name. Remove it
+  whenever; nothing writes there now.
+- The other live division tabs (`WIP - CP`, `WIP Master`) remain code-locked. This graduation
+  covers `WIP - MFD` only, and deliberately so.

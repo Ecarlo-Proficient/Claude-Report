@@ -275,7 +275,7 @@ flowchart LR
     QBO[("QBO\nvia shared/qbo_api")]:::src
     RPFIX[("Owner's RP WIP workbook\n'RP WIP' sheet — verified lines")]:::src
     WMTAB[("'WIP Master' tab\nMFD contract/ETC")]:::src
-    MFDTAB[("'WIP - MFD' tab\nhand-kept MFD division WIP")]:::src
+    MFDTAB[("'WIP - MFD' tab\nMFD division WIP - LIVE\nB..M hand-kept · N..T script-owned")]:::out
     TKETC["shared/takeoff_etc.py\nfind_takeoff_etc: blank ETC → takeoff\ncost sheet (SL+PR / FW / BID)"]:::tool
 
     ENGINE["wip_writer.py\nthe SHARED report ENGINE:\nCpRow · COLS · write_test_cp ·\nformatting · change audit ·\nedit-tracking · QC\n(guarded by wip_excel_guard.py)"]:::tool
@@ -283,7 +283,7 @@ flowchart LR
     RPR["rp_wip_reader.py\nRP READER: owner's file → 'Test - RP'"]:::tool
     MASTER["master_wip_test.py\nORCHESTRATOR: MFD + CP + RP → 'Test-Master'\n(+ change audit)"]:::tool
     TEST[("WIP - MASTER new.xlsx\nTest tabs ONLY (SharePoint)")]:::out
-    MFDT["mfd_wip_test.py\nMFD ENTRY TAB: copies 'WIP - MFD' →\n'Test - MFD' + ETC · REVISED ETC · GP% ·\nQBO costs/billed/retainage (anchored per job) ·\ncost to complete\n(guarded by wip_excel_guard.py)"]:::tool
+    MFDT["mfd_wip_test.py\nMFD ENTRY TAB: writes 'WIP - MFD' cols N..T\nETC · REVISED ETC · GP% ·\nQBO costs/billed/retainage (anchored per job) ·\ncost to complete. NEVER writes B..M\n(the ONE live tab wip_excel_guard allows)"]:::tool
     CLOSE["qbo_close_list.py →\nqbo_bulk_close.py"]:::tool
     QW[("QBO WRITE — gated\nCONFIRM=Y · MFD always excluded")]:::gate
 
@@ -293,8 +293,7 @@ flowchart LR
     TKETC -.->|"blank ETC only\n(estimator entry wins)"| RPR
     QBO --> CPR & RPR & MASTER & MFDT
     WMTAB --> MASTER
-    MFDTAB -->|"seeded once (--seed)"| MFDT
-    MFDT --> TEST
+    MFDT -->|"cols N..T, in place"| MFDTAB
     CPR -.->|"scan reused by"| MASTER
     RPR -.->|"classify/write reused by"| MASTER
     CPR & RPR & MASTER ==>|"import the engine"| ENGINE
@@ -305,18 +304,27 @@ flowchart LR
 ```
 
 **`mfd_wip_test.py` is deliberately NOT a `wip_writer` reader** (2026-08-25). The other
-three tabs are generated reports rebuilt from scratch every run; `Test - MFD` is a
-DATA-ENTRY tab that MFD types into, seeded once from the hand-kept `WIP - MFD` and
-thereafter only refreshed in its two QBO columns. It therefore mirrors `WIP - MFD`'s
-Calibri look, **not** the frozen `WIP Master` Tahoma-8 style that rail 5a pins the
-generated tabs to - it is meant to replace `WIP - MFD`, so it has to look like it.
-Columns B..M are copied verbatim and never written again. QBO figures anchor on the
+three tabs are generated reports rebuilt from scratch every run; `WIP - MFD` is MFD's own
+DATA-ENTRY tab that they type into, and the script only adds columns to it. It therefore
+keeps its Calibri look, **not** the frozen `WIP Master` Tahoma-8 style that rail 5a pins the
+generated tabs to. It was built on a `Test - MFD` staging copy, audited attribute by
+attribute against the live tab, then **merged into `WIP - MFD` and the staging tab deleted**
+on the owner's instruction — which is why `'WIP - MFD'` is now the one live division tab in
+`wip_excel_guard.ALLOWED_WRITE_SHEETS`. The contract that makes that safe: **columns B..M
+are MFD's and the script never writes them**; it owns N..T and nothing else. QBO figures anchor on the
 largest-contract row of each job group because a job like MFD192 carries three contract
 rows in Excel but exactly one project in QBO, with no way to split costs between them;
 sibling rows show a muted `see MFD192` marker, which `SUM()` ignores so the totals row
 still counts each job once.
 
-**The seed copies sheet CHROME too** (2026-08-25). openpyxl carries none of it with a
+**Sheet chrome, kept for the record** (2026-08-25). While this lived on a staging tab, the
+copy had to carry chrome openpyxl does not move with cells — tab colour, orientation,
+fit-to-page, margins, zoom, print area. All of it is print behaviour, invisible on screen,
+and it was the ONLY gap the replacement audit found. Writing in place now, the chrome is
+already right and is left alone; only `widen_print_area()` remains, because the tab's own
+print area stopped at column L and predated the new columns. The general lesson stands:
+**a sheet copy that looks perfect on screen can still be broken on paper.** Superseded
+detail: openpyxl carries none of it with a
 cell-by-cell copy: tab colour, orientation, fit-to-page, margins, zoom and the print area.
 All of it is print behaviour, so it is invisible on screen and only shows up when the report
 is PDF'd for a bank. `copy_sheet_chrome()` runs from both `seed()` and `build_columns()`, so
