@@ -322,8 +322,8 @@ per-job balance of that account is the answer and it is read from the `GeneralLe
 report. Two traps are baked into the code as comments: the report's account filter is
 **`account`, singular** (`accounts` is silently ignored and returns the whole truncated
 general ledger), and `cp_wip_reader`'s gross-minus-net retainage heuristic must NOT be
-reused here — it is wrong on MFD by $466k on one job, because retainage that has since been
-billed still sits in the invoice history. The column is expected to disagree with the tab's
+reused here — on MFD's largest job it misses by more than twice the retainage actually at
+stake, because retainage that has since been billed still sits in the invoice history. The column is expected to disagree with the tab's
 own `Total Retainage`; the cell comment states the variance.
 
 **The three readers import ONE engine (`wip_writer.py`), never each other** (2026-08-04).

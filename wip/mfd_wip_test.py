@@ -43,8 +43,9 @@ Two traps that cost an hour, both already handled here:
     truncated to the first 11 accounts - with no error.
   * Do NOT derive retainage from invoice lines the way cp_wip_reader does
     (gross P&L income minus non-retainage invoice totals). That heuristic is
-    built for CP and gives the WRONG answer on MFD - it missed by $466k on
-    MFD177 - because retainage that has since been BILLED still sits in the
+    built for CP and gives the WRONG answer on MFD - on the largest job it
+    missed by more than twice the retainage actually at stake - because
+    retainage that has since been BILLED still sits in the
     invoice history. The GL balance nets it out; the invoice scan does not.
 
 The account balance is expected to DISAGREE with the tab's own 'Total Retainage'
@@ -58,8 +59,8 @@ agree; COST TO COMPLETE mirrors 'WIP Master'!I.
 THE MFD192 PROBLEM (the reason for the 'see MFD192' markers)
 'WIP - MFD' carries THREE contract rows for job 192 (Hudsonwood 009, Offsite
 010, base 008), but QBO has ONE project MFD192 - all 460 cost lines sit on one
-customer with no contract marker (only 5 lines mention OFFSITE, $19k of
-$2.63M). Costs cannot be split. So per the owner's 2026-08-25 ruling the QBO
+customer with no contract marker (5 lines mention OFFSITE, together well under
+1% of the job). Costs cannot be split. So per the owner's 2026-08-25 ruling the QBO
 figures ANCHOR on the largest-contract row of each job group; the sibling rows
 get a muted 'see MFD192' marker instead of a number. SUM() ignores text, so
 the totals row still adds up exactly once.
