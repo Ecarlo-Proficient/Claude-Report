@@ -957,7 +957,9 @@ stood before any of this work, `… (pre MFD merge 08-25).xlsx` is immediately b
 
 ## OPEN ISSUES
 
-- **`Test - MFD` stays in `ALLOWED_WRITE_SHEETS`** as a harmless retired name. Remove it
-  whenever; nothing writes there now.
+- ~~`Test - MFD` stays in `ALLOWED_WRITE_SHEETS`~~ — **stripped 2026-08-25.** The allow-list
+  is now `Test`, `Test-Master`, `Test - CP`, `Test - RP`, `WIP - MFD`. `mfd_wip_test` still
+  deletes a stray `Test - MFD` if a workbook carries one, but a sheet DELETE does not go
+  through `assert_write_allowed`, so it needs no entry.
 - The other live division tabs (`WIP - CP`, `WIP Master`) remain code-locked. This graduation
   covers `WIP - MFD` only, and deliberately so.

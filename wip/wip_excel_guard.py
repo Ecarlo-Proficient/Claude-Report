@@ -39,7 +39,10 @@ from openpyxl.workbook.workbook import Workbook
 # instruction, after 'Test - MFD' was diffed against it attribute by attribute
 # (values, formulas, styles, merges, dimensions, comments, conditional formatting,
 # validation, hyperlinks, images, filters AND sheet chrome) and confirmed a faithful
-# superset. The two tabs were then merged into this one and 'Test - MFD' deleted.
+# superset. The two tabs were then merged into this one and 'Test - MFD' deleted;
+# that name was dropped from this list on 2026-08-25 once nothing wrote to it.
+# (mfd_wip_test still DELETES a stray 'Test - MFD' if a workbook carries one, but
+# a sheet delete does not go through assert_write_allowed, so it needs no entry.)
 # mfd_wip_test.py writes columns N..T of this sheet ONLY and never touches B..M.
 # This is the documented graduation path, not a config flag.
 ALLOWED_WRITE_SHEETS: frozenset[str] = frozenset({
@@ -47,7 +50,6 @@ ALLOWED_WRITE_SHEETS: frozenset[str] = frozenset({
     "Test-Master",         # legacy single-division sandbox — kept so existing tests pass
     "Test - CP",    # Commercial test tab
     "Test - RP",    # Residential test tab
-    "Test - MFD",   # retired 2026-08-25 (merged into 'WIP - MFD'); name kept harmless
     "WIP - MFD",    # LIVE MFD division tab — graduated 2026-08-25, N..T only
 })
 
