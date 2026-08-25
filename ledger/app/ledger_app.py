@@ -62,30 +62,12 @@ def _start_server() -> None:
         cwd=REPO, stdout=logf, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, env=env)
 
 
-# Chromium-family browsers open a chromeless "app mode" window (no address bar / tabs) via
-# --app=<url>. The owner didn't want the 127.0.0.1 address showing in a browser bar (2026-08-25).
-_APP_BROWSERS = [
-    "/Applications/Google Chrome.app",
-    "/Applications/Microsoft Edge.app",
-    "/Applications/Brave Browser.app",
-    "/Applications/Chromium.app",
-]
-
-
 def _open_browser() -> None:
     for _ in range(80):                               # wait up to ~20s for the server
         if _server_up():
             break
         time.sleep(0.25)
-    for app in _APP_BROWSERS:                          # prefer a chromeless app-mode window
-        if os.path.isdir(app):
-            try:
-                subprocess.Popen(["/usr/bin/open", "-na", app, "--args",
-                                  "--app=" + URL, "--window-size=1400,900"])
-                return
-            except Exception:
-                pass
-    webbrowser.open(URL)                               # fallback: default browser (shows its address bar)
+    webbrowser.open(URL)
 
 
 def _stop_server() -> None:

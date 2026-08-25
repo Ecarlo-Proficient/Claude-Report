@@ -314,6 +314,7 @@ tr.draw-group .g-sub { color: var(--text-dim); font-weight: 500; font-size: .85e
 .pl-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .pl-name { font-weight: 600; }
 .pl-when { font-size: .8em; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.pl-desc { font-size: .84em; color: var(--text-dim); line-height: 1.45; margin: 6px 0 2px; }
 .pl-steps { display: flex; flex-wrap: wrap; gap: 6px; margin: 9px 0; }
 .pl-step { font-size: .78em; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--border);
   background: var(--surface); color: var(--text-dim); white-space: nowrap; }

@@ -404,6 +404,16 @@ async function finishSync(els, msg, reload) {
 // steps, last-run, and a Run button (a pipeline's Run also fires its real producer).
 let PIPELINES = null;
 const _consoleEls = () => ({ prog: $("#consoleProgress"), fill: $("#consoleBarFill"), step: $("#consoleStep") });
+// Plain-language "what this sync does" per pipeline (owner 2026-08-25): what it grabs, where it
+// writes, and which tabs it feeds. Two hops for AP/AR (QBO -> the working system -> the ledger).
+const PIPELINE_DESC = {
+  ap: "Grabs every vendor bill + purchase from QuickBooks and matches each to the GC draw that authorizes paying it -> writes Bill Tracker.xlsx (OneDrive) -> loads the bills + lien clock into the ledger. Feeds Bills · Pay Bills · Liens.",
+  ar: "Grabs your open AR invoices (the draws) from QuickBooks -> updates the Notion Invoice Tracker + the AR Aging Excel (sweeps paid ones to Paid, posts MFD pay events to Teams) -> loads them into the ledger. Feeds Invoices · Draws · Customers · Payments.",
+  wip: "Reads the WIP master's Test tabs (SharePoint Excel) -> loads the project list + WIP snapshot (contract, % complete, over/under-billing) into the ledger. Feeds Overview · WIP report · Project P&L.",
+  costs: "Pulls the last 90 days of job costs from QuickBooks (incl. subs), keyed by cost code, into the ledger. Prompts Touch ID. Feeds the Costs tab + the Project P&L margins.",
+  crm: "Pulls the Notion Customer List into the ledger - leads/clients + the per-rep outreach touch log. Feeds Customer Center · Sales Outreach.",
+  subloc: "Pulls QBO payments to subs to model each sub's float (line-item, actual pay dates, chronological FIFO). Feeds the Sub LOC tab.",
+};
 async function renderConsole() {
   const box = $("#consoleList"); if (!box) return;
   if (!PIPELINES) {
@@ -434,6 +444,7 @@ async function renderConsole() {
     when.textContent = lr ? `last ${timeAgo(lr)}` : ""; if (lr) when.title = fmtDate(lr, true);
     head.appendChild(when);
     card.appendChild(head);
+    if (PIPELINE_DESC[p.key]) { const d = document.createElement("p"); d.className = "pl-desc"; d.textContent = PIPELINE_DESC[p.key]; card.appendChild(d); }
     const steps = document.createElement("div"); steps.className = "pl-steps";
     for (const s of p.steps) {
       const chip = document.createElement("span"); chip.className = "pl-step" + (s.side ? " producer" : "");
