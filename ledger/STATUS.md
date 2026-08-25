@@ -4,6 +4,15 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Payments tab: fixed blank + weeks/months breakdown (owner, 2026-08-25).** The tab rendered its KPI
+  strip but a BLANK table. Root cause: the Pay Bills tab (added earlier this session) reused
+  `id="payTable"`, colliding with the Payments table's own `id="payTable"`, so `buildHead("#payTable")`
+  filled the hidden Pay Bills table. Renamed the Pay Bills table to `payBillsTable`. Then added the
+  owner's ask: a **Flat / Weeks / Months** segmented toggle (default Months) that bands payments by period
+  with a per-period cash-in total (e.g. "Aug 2026 · $1.2M · 31 payments"), plus a **Date** column. Click a
+  payment still expands the invoices it paid; **Unlocks (AP)** still shows the vendor bills (costs) that
+  cash frees up. Verified live: 847 payments, 13 month bands / 53 week bands, Pay Bills unaffected (745
+  rows).
 - **`sync-all` now reloads the ledger too - one command (owner, 2026-08-24: "the ledger cannot be another
   thing I HAVE to update ... I sync-all and expect the ledger to sync too, why not one?").** Root cause of
   a stale invoice (34318 showed open in the dashboard though paid in QBO): the terminal `sync-all` ran only

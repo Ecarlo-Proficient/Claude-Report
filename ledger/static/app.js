@@ -192,6 +192,19 @@ let SUBLOC = { summary: null, divisions: {}, projects: [], open_by_project: {}, 
 let OI = { as_of: null, buckets: ["Current", "1-30", "31-60", "61-90", "90+"], invoices: [] };  // open AR invoices (aging tab)
 let PAY = { payments: [], total_received: 0, count: 0, invoices_paid: 0 };   // received payments, each with the invoices it paid
 let paymentsExpanded = new Set();   // payment ids expanded to show their invoices (default: all collapsed - scannable list)
+let paymentsGroupBy = "month";      // 'none' | 'week' | 'month' - cash-in broken down by period (owner 2026-08-25)
+const _MON3 = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+// Period key (sortable, newest-first) + a human label for a payment's date.
+function payPeriod(dateStr, mode) {
+  const m = String(dateStr || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return { key: "0000", label: "No date" };
+  const [, Y, Mo, D] = m;
+  if (mode === "month") return { key: `${Y}-${Mo}`, label: `${_MON3[+Mo - 1]} ${Y}` };
+  // week: roll back to Monday (local date math, no UTC drift)
+  const d = new Date(+Y, +Mo - 1, +D); const dow = (d.getDay() + 6) % 7; d.setDate(d.getDate() - dow);
+  const wk = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return { key: wk, label: `Week of ${fmtDateShort(wk)}` };
+}
 let costCollapsed = new Set();   // collapsed cost-type parents (default: all collapsed)
 let drawsCollapsed = new Set();  // collapsed draw cards (default: all collapsed)
 let drawsExpanded = new Set();   // draws whose bills are expanded in the table (default: none)
@@ -1934,7 +1947,7 @@ function _paySetAmount(b, val) {           // live: update draft + save bar only
 }
 function renderPayBills() {
   _payRecomputeSaved();   // always reflect the latest server run; payDraft holds unsaved edits on top
-  const thead = $("#payTable thead"), tbody = $("#payTable tbody"); if (!thead || !tbody) return;
+  const thead = $("#payBillsTable thead"), tbody = $("#payBillsTable tbody"); if (!thead || !tbody) return;
   // Build the multi-select filter menus once per data change (NOT on every render), so a checkbox
   // toggle keeps its open search box - a toggle re-renders with the same bill set, same signature.
   const paySig = String(_payMarkable().length);
@@ -2752,20 +2765,29 @@ function renderPayments() {
   body.appendChild(stats);
   const head = document.createElement("div"); head.className = "list-head";
   const hint = document.createElement("p"); hint.className = "hint"; hint.style.margin = "0";
-  hint.innerHTML = "Each row is a <b>payment received</b>. Click it to see the invoices it paid. <b>Unlocks (AP)</b> is the open vendor bills on that job - click it to see what you can now pay out.";
+  hint.innerHTML = "Each row is a <b>payment received</b>. Click it to see the invoices it paid (the money that funds the job's costs). <b>Unlocks (AP)</b> is the open vendor bills on that job.";
   head.appendChild(hint);
+  const actions = document.createElement("div"); actions.className = "list-actions";
+  const seg = document.createElement("div"); seg.className = "seg"; seg.title = "Break cash-in down by period";
+  for (const [val, lbl] of [["none", "Flat"], ["week", "Weeks"], ["month", "Months"]]) {
+    const b = document.createElement("button"); b.type = "button"; b.className = "seg-btn" + (paymentsGroupBy === val ? " on" : ""); b.textContent = lbl;
+    b.onclick = () => { paymentsGroupBy = val; renderPayments(); };
+    seg.appendChild(b);
+  }
+  actions.appendChild(seg);
   if (pays.length) {
     const allExpanded = pays.every(p => paymentsExpanded.has(p.qbo_txn_id));
     const btn = document.createElement("button"); btn.className = "btn small subtle";
     btn.textContent = allExpanded ? "Collapse all" : "Expand all";
     btn.onclick = () => { if (allExpanded) paymentsExpanded.clear(); else pays.forEach(p => paymentsExpanded.add(p.qbo_txn_id)); renderPayments(); };
-    head.appendChild(btn);
+    actions.appendChild(btn);
   }
+  head.appendChild(actions);
   body.appendChild(head);
   const wrap = document.createElement("div"); wrap.className = "table-scroll";
   const table = document.createElement("table"); table.className = "grid"; table.id = "payTable";
   table.innerHTML = "<thead></thead><tbody></tbody>"; wrap.appendChild(table); body.appendChild(wrap);
-  const cols = [["Client", "left"], ["Payment Ref #", "left"], ["Payment Type", "left"], ["Amount Paid", "right"], ["Unlocks (AP)", "right"]];
+  const cols = [["Client", "left"], ["Date", "left"], ["Payment Ref #", "left"], ["Payment Type", "left"], ["Amount Paid", "right"], ["Unlocks (AP)", "right"]];
   const tb = buildHead("#payTable", cols);
   if (!tb) return; tb.innerHTML = "";
   if (!pays.length) {
@@ -2774,7 +2796,24 @@ function renderPayments() {
     td.textContent = "No payments loaded - run python3 ledger/load_payments.py (pulls QBO Payment transactions).";
     tr.appendChild(td); tb.appendChild(tr); return;
   }
-  for (const p of pays) {
+  // Newest first; optionally banded by week/month with a per-period cash-in total (owner 2026-08-25).
+  const sorted = [...pays].sort((a, b) => String(b.txn_date || "").localeCompare(String(a.txn_date || "")));
+  const perTot = {}, perN = {};
+  if (paymentsGroupBy !== "none") for (const p of sorted) { const k = payPeriod(p.txn_date, paymentsGroupBy).key; perTot[k] = (perTot[k] || 0) + num(p.total_amt); perN[k] = (perN[k] || 0) + 1; }
+  let curPeriod = null;
+  for (const p of sorted) {
+    if (paymentsGroupBy !== "none") {
+      const per = payPeriod(p.txn_date, paymentsGroupBy);
+      if (per.key !== curPeriod) {
+        curPeriod = per.key;
+        const gtr = document.createElement("tr"); gtr.className = "bill-group";
+        const gtd = document.createElement("td"); gtd.colSpan = cols.length;
+        const cell = document.createElement("div"); cell.className = "bg-cell";
+        const key = document.createElement("span"); key.className = "bg-key"; key.textContent = per.label;
+        const amt = document.createElement("span"); amt.className = "bg-amt"; amt.textContent = `${money(perTot[per.key])} · ${perN[per.key]} payment${perN[per.key] === 1 ? "" : "s"}`;
+        cell.appendChild(key); cell.appendChild(amt); gtd.appendChild(cell); gtr.appendChild(gtd); tb.appendChild(gtr);
+      }
+    }
     const expanded = paymentsExpanded.has(p.qbo_txn_id);
     // ── the payment transaction: Client · Ref # · Type · Amount Paid · Unlocks (AP) ──
     const tr = document.createElement("tr"); tr.className = "pay-row"; tr.style.cursor = "pointer";
@@ -2787,6 +2826,7 @@ function renderPayments() {
     if (curl) { const a = document.createElement("a"); a.href = curl; a.target = "_blank"; a.rel = "noopener"; a.className = "qbo-link"; a.textContent = payer; a.title = "Open this customer in QuickBooks"; a.onclick = (e) => e.stopPropagation(); cc.appendChild(a); }
     else cc.appendChild(document.createTextNode(payer));
     tr.appendChild(cc);
+    tr.appendChild(leftText(fmtDateShort(p.txn_date)));
     tr.appendChild(leftText(p.ref_no || "–"));
     tr.appendChild(leftText(p.method || "–"));
     tr.appendChild(rightText(money(p.total_amt)));
