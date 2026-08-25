@@ -125,6 +125,11 @@ restate them here. Business/strategic context lives in session memory, not in th
   over/under-billing and job-borrow are computed columns in Excel. Close scripts:
   `qbo_close_list.py` / `qbo_bulk_close.py` (**always exclude MFD — those close by hand**).
   The old QBO→Notion WIP sync is fully deleted (stub + plist gone 2026-07-13).
+  **WIP Review accept/merge (2026-08-25):** each reader + `master_wip_test` gained `--emit-review`
+  (compute as usual, diff the tab, dump JSON, NO write) and `--apply-review` (revert disapproved
+  fields, then write) modes, backed by `wip_review_common.py` (the ONE diff/revert core — QBO
+  fields accepted, PM fields answered). The ledger's WIP Review tab orchestrates them; see the
+  ledger bullet. `wip_writer.write_test_cp` is still the ONE guarded, frozen-format tab writer.
 - **ledger/** — the canonical project database (Phase 1 of "own the spine, keep the systems as
   peripherals"). `schema.sql` = the portable spine (SQLite + Postgres): `project` · `cost_code` ·
   `budget_line` · `cost_line` · `billing_event` · `wip_snapshot` · `ap_bill_line` · `waiver` ·
@@ -139,7 +144,13 @@ restate them here. Business/strategic context lives in session memory, not in th
   `shared/notion_client` (needs `ACB_ACTIONS_DS_ID` + the DB shared with the "Automation Integrator"
   integration). `dashboard.py` + `static/` = a local web UI (127.0.0.1) — tabs (My view · Overview ·
   Costs · Draws · Liens · Vendors), READ-ONLY except the ONE write (the owner's waiver mark →
-  `waiver`); `open_ledger.command` launcher (co-located in `~/Documents/CompanyHealth/`). **`registry_view.py` + the `Systems` tab** render the vault's systems & process registry (`AI Brain_Vault/02_processes/*.md`) LIVE - parsed per request, never cached, never written back, no ledger table; vault path via `shared/paths.vault_dir()` (`ACB_VAULT_DIR`), read-only. It **replaced the daily markdown digest** (disabled 2026-08-19). DB lives
+  `waiver`); `open_ledger.command` launcher (co-located in `~/Documents/CompanyHealth/`). **`registry_view.py` + the `Systems` tab** render the vault's systems & process registry (`AI Brain_Vault/02_processes/*.md`) LIVE - parsed per request, never cached, never written back, no ledger table; vault path via `shared/paths.vault_dir()` (`ACB_VAULT_DIR`), read-only. It **replaced the daily markdown digest** (disabled 2026-08-19). **`vault_graph.py` + the `Graph` tab** render the org as a map the SAME way (live, no cache): the whole vault's `[[wikilinks]]` as a force-directed org graph (`ROSTER.md` excluded - no names) plus the mermaid system diagrams IMPORTED from `docs/ARCHITECTURE.md`, all in one self-contained canvas viewer (no JS libraries); `/api/graph` serves it. **The `WIP Review`
+  tab** is the WIP update as accept/merge: `/api/wip/review` runs each wip tool's `--emit-review`
+  (diff each Test tab, no write), the tab shows every change as WAS→NOW split into **Accept·QBO**
+  (costs/billed/retainage, checked) and **PM answers** (contract/COs/ETC, unchecked), and
+  `/api/wip/merge` runs `--apply-review` to write only the approved values to Test - CP / Test - RP /
+  Test-Master (guarded). Dashboard↔wip is subprocess+JSON only (never an import); JSON in
+  `~/Library/Application Support/Proficient/wip-review/`. DB lives
   OUTSIDE the repo (`~/Library/Application Support/Proficient/ledger.sqlite3`; override `ACB_LEDGER_DB`).
 - **project-pnl/** — per-project P&L (CP/MFD + RP × budgeted/unbudgeted) → OneDrive PROJECT
   P&Ls. Overhead shown as a final row at **10% of revenue** (was 11%, the user 2026-07-16;

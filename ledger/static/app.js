@@ -215,13 +215,13 @@ let drawsExpanded = new Set();   // draws whose bills are expanded in the table 
 const NAV_GROUPS = [
   { id: "home",       label: "My view",       tabs: ["home"] },
   { id: "overview",   label: "Overview",      tabs: ["overview"] },
-  { id: "financials", label: "Financials",    tabs: ["pnl", "wip", "costs"] },
+  { id: "financials", label: "Financials",    tabs: ["pnl", "wip", "wipreview", "costs"] },
   { id: "customers",  label: "Customer",      tabs: ["customers", "invoices", "draws", "payments", "sales"] },
   { id: "vendors",    label: "Vendor",        tabs: ["vendors", "bills", "paybills", "subloc", "liens"] },
   { id: "it",         label: "IT",            tabs: ["systems", "graph", "console"] },
 ];
 const TAB_LABELS = {
-  home: "My view", overview: "Overview", pnl: "Project P&L", wip: "WIP report", costs: "Costs",
+  home: "My view", overview: "Overview", pnl: "Project P&L", wip: "WIP report", wipreview: "WIP Review", costs: "Costs",
   customers: "Customer Center", invoices: "Invoices", draws: "Draws", payments: "Payments", sales: "Sales Outreach",
   vendors: "Vendor Center", bills: "Bills", paybills: "Pay Bills", subloc: "Sub LOC", liens: "Liens",
   systems: "Systems", graph: "Graph", console: "Console",
@@ -255,6 +255,7 @@ function setTab(t) {
   buildSubTabs(g, t);
   if (t === "pnl") renderPnl();     // portfolio P&L is computed server-side, lazy-loaded
   if (t === "wip") renderWip();
+  if (t === "wipreview") loadWipReview();
   if (t === "console") renderConsole();
   if (t !== "graph") stopGraphLoop();   // release the canvas render loop when leaving the Graph tab
   if (t === "systems") loadSystems();
@@ -4970,6 +4971,254 @@ function graphSearch(q) {
   if (first) { GV.sel = first; showGraphInfo(first); GV._userMoved = true; const sz = _graphSize(); if (sz) { GV.view.x = sz.w / 2 - first.x * GV.view.scale; GV.view.y = sz.h / 2 - first.y * GV.view.scale; } }
 }
 
+// ── WIP Review: pending WIP update as before/after → approve/disapprove → write ─
+// Compute runs the WIP pipeline (3 QBO pulls) and diffs each Test tab; the owner
+// approves QBO facts and answers on the PM fields; Sync writes the approved values
+// to Test - CP / Test - RP / Test-Master. All read-only until Sync. State is
+// wrDecisions[PN][field] = approved(bool) for CHANGED fields; wrDrop = rejected ADDs.
+let WR = null;
+let wrDecisions = {};
+let wrDrop = new Set();
+let wrPoll = null;
+
+const WR_DIV_ORDER = ["Commercial", "Residential", "Multi-Family"];
+const wrChanged = c => c.filter(f => f.changed);
+function wrDelta(f) {
+  const a = f.was == null ? null : Number(f.was), b = f.now == null ? null : Number(f.now);
+  if (a == null && b == null) return null;
+  if (a == null) return { txt: "new", dir: 0 };
+  if (b == null) return { txt: "cleared", dir: 0 };
+  const d = b - a;
+  return { txt: (d >= 0 ? "+" : "") + money(d), dir: d > 0 ? 1 : d < 0 ? -1 : 0 };
+}
+
+async function loadWipReview(force) {
+  const note = $("#wrNote"), body = $("#wrBody");
+  if (!body) return;
+  if (wrPoll) return;                                  // a compute/sync run is in flight
+  try { WR = await (await fetch("/api/wip/review")).json(); }
+  catch (e) { if (note) note.textContent = "could not load"; return; }
+  if (!WR.ready) {
+    if (note) note.textContent = "";
+    $("#wrFilters").hidden = true; $("#wrSync").hidden = true; $("#wrStats").innerHTML = "";
+    body.innerHTML = `<div class="wr-empty"><p>No pending review yet.</p>
+      <p class="hint">Hit <b>Compute pending update</b> to run the WIP pipeline and see every
+      change before anything is written. It pulls Billed/Costs from QuickBooks (a few Touch ID
+      prompts) and takes a few minutes.</p></div>`;
+    return;
+  }
+  wrInitDecisions();
+  renderWipReview();
+}
+
+function wrInitDecisions() {
+  // Fresh review → default marks: QBO facts approved, PM fields left for an answer.
+  wrDecisions = {}; wrDrop = new Set();
+  for (const r of WR.records) {
+    if (r.status === "SAME") continue;
+    const marks = {};
+    for (const f of wrChanged(r.fields)) marks[f.key] = (f.block === "qbo");
+    wrDecisions[r.project_num] = marks;
+  }
+}
+
+function renderWipReview() {
+  const note = $("#wrNote"), body = $("#wrBody");
+  const g = WR.generated || {}, at = Object.values(g).map(x => x.at).filter(Boolean).sort().pop();
+  if (note) note.textContent = at ? `computed ${fmtDate(at, true)}` : "";
+  $("#wrFilters").hidden = false; $("#wrSync").hidden = false;
+  renderWrStats();
+  const div = $("#wrDivision").value, st = $("#wrStatus").value;
+  const q = ($("#wrSearch").value || "").trim().toLowerCase();
+  const changedOnly = $("#wrChangedOnly").checked;
+  body.innerHTML = "";
+  let shown = 0;
+  for (const dv of WR_DIV_ORDER) {
+    if (div && div !== dv) continue;
+    let recs = WR.records.filter(r => r.division === dv);
+    if (changedOnly) recs = recs.filter(r => r.status !== "SAME");
+    if (st) recs = recs.filter(r => r.status === st);
+    if (q) recs = recs.filter(r => (r.project_num + " " + r.name).toLowerCase().includes(q));
+    if (!recs.length) continue;
+    const gen = g[dv];
+    const head = document.createElement("div");
+    head.className = "wr-div-head";
+    head.innerHTML = `<span>${dv}</span><span class="wr-div-sub">${gen ? gen.tab : ""} · ${recs.length} shown</span>`;
+    body.appendChild(head);
+    for (const r of recs) { body.appendChild(wrJobCard(r)); shown++; }
+  }
+  if (!shown) body.innerHTML = `<div class="wr-empty"><p>Nothing matches the filters.</p></div>`;
+  wrUpdateApproveCount();
+}
+
+function renderWrStats() {
+  const el = $("#wrStats"); if (!el) return;
+  const c = WR.counts || {};
+  const tiles = [
+    ["Jobs in update", c.jobs || 0, ""],
+    ["Changed", c.changed || 0, "amber"],
+    ["Added", c.added || 0, ""],
+    ["Removed", c.removed || 0, ""],
+  ];
+  el.innerHTML = "";
+  for (const [label, val, cls] of tiles) {
+    const k = document.createElement("div"); k.className = "kpi" + (cls ? " wr-kpi-" + cls : "");
+    k.innerHTML = `<div class="k-label">${label}</div><div class="k-value">${val}</div>`;
+    el.appendChild(k);
+  }
+}
+
+function wrJobCard(r) {
+  const card = document.createElement("div");
+  card.className = "wr-job wr-" + r.status.toLowerCase();
+  const badge = `<span class="wr-badge ${r.status.toLowerCase()}">${r.status}</span>`;
+  const removed = r.status === "REMOVED", added = r.status === "ADDED";
+  let head = `<div class="wr-job-head"><span class="wr-pn">${_ge(r.project_num)}</span>`
+    + `<span class="wr-name">${_ge(r.name)}</span>${badge}`;
+  if (added) {
+    const inc = !wrDrop.has(r.project_num);
+    head += `<label class="wr-inc"><input type="checkbox" class="wr-inc-cb" ${inc ? "checked" : ""}> add this job</label>`;
+  } else if (removed) {
+    head += `<span class="wr-drop-note">will drop off the tab</span>`;
+  } else {
+    head += `<button class="btn tiny wr-job-all" type="button">Approve job</button>`;
+  }
+  head += `</div>`;
+  card.innerHTML = head;
+  if (r.flags) { const fl = document.createElement("div"); fl.className = "wr-flags"; fl.textContent = r.flags; card.appendChild(fl); }
+  const changed = wrChanged(r.fields);
+  for (const block of ["qbo", "pm"]) {
+    const fs = changed.filter(f => f.block === block);
+    if (!fs.length) continue;
+    const wrap = document.createElement("div"); wrap.className = "wr-block";
+    wrap.innerHTML = `<div class="wr-block-title ${block}">${block === "qbo" ? "Accept · QuickBooks" : "PM answers"}</div>`;
+    for (const f of fs) wrap.appendChild(wrFieldRow(r, f, removed));
+    card.appendChild(wrap);
+  }
+  if (added) card.querySelector(".wr-inc-cb").onchange = e => {
+    if (e.target.checked) wrDrop.delete(r.project_num); else wrDrop.add(r.project_num);
+    card.classList.toggle("wr-excluded", !e.target.checked); wrUpdateApproveCount();
+  };
+  const allBtn = card.querySelector(".wr-job-all");
+  if (allBtn) allBtn.onclick = () => { for (const f of changed) wrSet(r.project_num, f.key, true); renderWipReview(); };
+  return card;
+}
+
+function wrFieldRow(r, f, removed) {
+  const row = document.createElement("label");
+  row.className = "wr-field";
+  const d = wrDelta(f);
+  const approved = removed ? false : !!(wrDecisions[r.project_num] && wrDecisions[r.project_num][f.key]);
+  row.innerHTML =
+    `<span class="wr-fl">${_ge(f.label)}</span>`
+    + `<span class="wr-was">${money(f.was)}</span><span class="wr-arrow">→</span>`
+    + `<span class="wr-now">${money(f.now)}</span>`
+    + (d ? `<span class="wr-delta ${d.dir > 0 ? "up" : d.dir < 0 ? "down" : ""}">${d.txt}</span>` : `<span class="wr-delta"></span>`);
+  if (!removed) {
+    const cb = document.createElement("input");
+    cb.type = "checkbox"; cb.className = "wr-check"; cb.checked = approved;
+    cb.onchange = () => { wrSet(r.project_num, f.key, cb.checked); row.classList.toggle("on", cb.checked); wrUpdateApproveCount(); };
+    row.appendChild(cb);
+    row.classList.toggle("on", approved);
+  } else {
+    row.classList.add("wr-ro");
+  }
+  return row;
+}
+
+function wrSet(pn, key, val) { (wrDecisions[pn] = wrDecisions[pn] || {})[key] = val; }
+
+function wrUpdateApproveCount() {
+  let n = 0;
+  for (const pn in wrDecisions) for (const k in wrDecisions[pn]) if (wrDecisions[pn][k]) n++;
+  const btn = $("#wrSync");
+  if (btn) btn.textContent = n ? `Sync ${n} approved →` : "Sync approved →";
+}
+
+function wrBulk(mode) {
+  // mode: 'qbo' | 'all' | 'clear' — over the CURRENTLY VISIBLE jobs only.
+  const div = $("#wrDivision").value, st = $("#wrStatus").value;
+  const q = ($("#wrSearch").value || "").trim().toLowerCase();
+  const changedOnly = $("#wrChangedOnly").checked;
+  for (const r of WR.records) {
+    if (r.status === "SAME") continue;
+    if (div && r.division !== div) continue;
+    if (changedOnly && r.status === "SAME") continue;
+    if (st && r.status !== st) continue;
+    if (q && !(r.project_num + " " + r.name).toLowerCase().includes(q)) continue;
+    for (const f of wrChanged(r.fields)) {
+      if (mode === "clear") wrSet(r.project_num, f.key, false);
+      else if (mode === "all") wrSet(r.project_num, f.key, true);
+      else if (mode === "qbo" && f.block === "qbo") wrSet(r.project_num, f.key, true);
+    }
+  }
+  renderWipReview();
+}
+
+async function runWipReview() {
+  if (WR && WR.ready && !confirm("Recompute the pending WIP update?\n\nThis re-runs the WIP pipeline (CP folders, RP file, MFD) and pulls Billed/Costs from QuickBooks - expect a few Touch ID prompts and a few minutes. Nothing is written.")) return;
+  else if (!(WR && WR.ready) && !confirm("Compute the pending WIP update?\n\nRuns the WIP pipeline and pulls Billed/Costs from QuickBooks (a few Touch ID prompts, a few minutes). Nothing is written - you review the changes first.")) return;
+  const r = await fetch("/api/wip/review", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm: true }) });
+  if (r.status === 409) { alert("A sync is already running - let it finish first."); return; }
+  if (!r.ok) { alert("Could not start the review."); return; }
+  wrRunProgress("Computing the pending update", () => loadWipReview(true));
+}
+
+async function syncWipReview() {
+  let n = 0; for (const pn in wrDecisions) for (const k in wrDecisions[pn]) if (wrDecisions[pn][k]) n++;
+  const dropped = wrDrop.size;
+  if (!confirm(`Write approved changes to the WIP master?\n\n${n} approved change(s) will be written to Test - CP, Test - RP and Test-Master. Unchecked changes keep the current tab value${dropped ? `; ${dropped} added job(s) will be left off` : ""}.\n\nThis writes the production WIP workbook (guarded) and pulls QuickBooks again (Touch ID).`)) return;
+  const decisions = wrBuildDecisions();
+  const r = await fetch("/api/wip/merge", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm: true, decisions }) });
+  if (r.status === 409) { alert("A sync is already running - let it finish first."); return; }
+  if (!r.ok) { alert("Could not start the sync."); return; }
+  wrRunProgress("Writing the approved changes", () => loadWipReview(true));
+}
+
+function wrBuildDecisions() {
+  // Carry each disapproved field's "was" so every tab reverts the SAME number.
+  const wasOf = {};
+  for (const r of WR.records) {
+    wasOf[r.project_num] = wasOf[r.project_num] || {};
+    for (const f of r.fields) wasOf[r.project_num][f.key] = f.was;
+  }
+  const fields = {};
+  for (const pn in wrDecisions) {
+    const m = {};
+    for (const k in wrDecisions[pn]) {
+      const approved = !!wrDecisions[pn][k];
+      m[k] = { approved, revert: approved ? null : (wasOf[pn] ? wasOf[pn][k] : null) };
+    }
+    fields[pn] = m;
+  }
+  return { fields, drop_added: [...wrDrop] };
+}
+
+function wrRunProgress(label, onDone) {
+  const body = $("#wrBody"), note = $("#wrNote");
+  $("#wrFilters").hidden = true; $("#wrSync").hidden = true; $("#wrStats").innerHTML = "";
+  $("#wrCompute").disabled = true; $("#wrSync").disabled = true;
+  body.innerHTML = `<div class="wr-run"><div class="wr-run-label">${_ge(label)}…</div>
+    <div class="wr-steps" id="wrSteps"></div>
+    <div class="pl-bar"><div class="pl-fill" id="wrFill"></div></div>
+    <div class="hint" id="wrRunHint">Running - this can take a few minutes; Touch ID prompts appear on the Mac.</div></div>`;
+  if (wrPoll) clearInterval(wrPoll);
+  wrPoll = setInterval(async () => {
+    let s; try { s = await (await fetch("/api/sync/status")).json(); } catch { return; }
+    const steps = s.steps || [];
+    const done = steps.filter(x => x.state === "done").length;
+    const fill = $("#wrFill"); if (fill) fill.style.width = steps.length ? Math.round(done / steps.length * 100) + "%" : "0%";
+    const box = $("#wrSteps");
+    if (box) box.innerHTML = steps.map(x => `<div class="wr-step ${x.state}">${x.state === "done" ? "✓" : x.state === "error" ? "✕" : x.state === "running" ? "▶" : "·"} ${_ge(x.label)}</div>`).join("");
+    if (s.state !== "running") {
+      clearInterval(wrPoll); wrPoll = null;
+      $("#wrCompute").disabled = false; $("#wrSync").disabled = false;
+      if (s.state === "error") { if (note) note.textContent = "run failed - see the log"; }
+      onDone();
+    }
+  }, 1500);
+}
+
 function init() {
   applySettings();
   syncSettingsUI();
@@ -5056,6 +5305,14 @@ function init() {
   { const el = $("#graphSearch"); if (el) el.addEventListener("input", e => graphSearch(e.target.value)); }
   { const el = $("#graphLabels"); if (el) el.addEventListener("change", _gmark); }
   wireGraphCanvas();
+  { const el = $("#wrCompute"); if (el) el.onclick = runWipReview; }
+  { const el = $("#wrSync"); if (el) el.onclick = syncWipReview; }
+  { const el = $("#wrApproveQbo"); if (el) el.onclick = () => wrBulk("qbo"); }
+  { const el = $("#wrApproveAll"); if (el) el.onclick = () => wrBulk("all"); }
+  { const el = $("#wrClearAll"); if (el) el.onclick = () => wrBulk("clear"); }
+  for (const id of ["#wrSearch", "#wrDivision", "#wrStatus", "#wrChangedOnly"]) {
+    const el = $(id); if (el) el.addEventListener("input", () => { if (WR && WR.ready) renderWipReview(); });
+  }
   buildGroupBar();   // generate the two-level nav (top groups; sub-tabs render on setTab)
   let savedTab = "home";
   try { savedTab = localStorage.getItem("proficient-ledger-tab") || "home"; } catch { /* ignore */ }

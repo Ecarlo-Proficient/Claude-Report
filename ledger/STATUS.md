@@ -240,6 +240,47 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     all 6 diagrams render; deterministic parse (CLI == server); hover / click / search / mode-switch
     work; no console errors; ROSTER absent from the node set (80 notes, not 81).
 
+- **WIP Review tab — the pending WIP update as accept/merge (2026-08-25).** Requested by the
+  owner: "make the wip update give me the report to accept/merge ... i can accept costs/billed to
+  date and have pm answer on the rest ... easy to see the before and afters ... showing me the
+  changes and once i approve/disapprove each change it then syncs to the RP Test for RP, CP Test
+  for CP and the Master Test for all three divisions." A **Financials → WIP Review** tab shows the
+  pending update as a per-job, per-field **WAS → NOW** diff and writes only what the owner approves
+  to the three Test tabs.
+  - **The split (the whole point).** **Accept · QuickBooks** = Costs / Billed / Retainage - facts,
+    **checked by default**. **PM answers** = Original Contract / Approved COs / Original ETC / CO
+    Costs - **unchecked** until confirmed. Each changed field has its own approve/disapprove
+    checkbox; approve writes the new value, leave it off to keep the current tab value. Bulk:
+    Approve all QBO · Approve all shown · Clear all, plus per-job Approve. Added jobs get an
+    include/exclude toggle; removed jobs are shown (they drop on the next write).
+  - **`wip/wip_review_common.py`** — the ONE place the reviewable field set, the tab-header lookup
+    (working tabs carry the ORIGINAL CONTRACT / APPROVED COs breakout; the lean Test-Master folds
+    them into TOTAL CONTRACT PRICE / ESTIMATED TOTAL COSTS), the diff, and the revert live, so the
+    three tabs can't diff or merge differently. A disapproved field carries its **`revert`** (the
+    exact "was" the owner saw) so every tab reverts the SAME source number - reverting the source
+    fields (base_contract, co_revenue) also fixes Test-Master's derived totals for free.
+  - **Faithful reuse, no drift.** Each tool keeps its exact compute+write; two thin modes were
+    added: `--emit-review <json>` (compute as usual, diff the tab, dump JSON, **no write**) and
+    `--apply-review <json>` (compute, revert disapproved fields, then write normally). CP →
+    `cp_wip_reader` (Test - CP, active+completed), RP → `rp_wip_reader` (Test - RP, the owner's RP
+    file), MFD → `master_wip_test` (Test-Master; a **fast early path** emits MFD only, skipping the
+    CP/RP scan). Master's `--apply-review` writes Test-Master for all three divisions and is guarded
+    to NOT double-write Test - RP (rp_wip_reader owns that write, decisions applied).
+  - **Dashboard** talks to the tools ONLY by subprocess + JSON (repo rule): `POST /api/wip/review`
+    runs the three emits (gated, QBO Touch ID each), `GET /api/wip/review` merges the three JSONs,
+    `POST /api/wip/merge` saves `decisions.json` and runs the three guarded writes. JSON lives in
+    `~/Library/Application Support/Proficient/wip-review/` (outside the repo). The single sync-lock
+    is shared with the Console so a review/merge can't overlap a sync (concurrent QBO + tab writes
+    would corrupt).
+  - **Verified:** CP emit (51 jobs / 34 changed) and RP emit (119 / 116) from real runs; MFD
+    snapshot mapping (folded columns) correct; merged endpoint (173 jobs, 3 divisions); UI before/
+    after + QBO/PM split + toggles + bulk + filters, light + dark, no console errors; decisions
+    payload carries `revert` for disapproved; `apply_decisions` unit-verified (revert to carried
+    value, keep approved fresh, drop rejected adds); CP `--apply-review --dry-run` ran clean.
+  - **Known v1 gaps (fast-follow):** review + merge each re-pull QBO (≈3 Touch IDs apiece; a shared
+    cache would halve it); approved QBO fields write the LATEST pull (may differ by pennies from the
+    review if QBO moved between); a REMOVED job can't yet be KEPT from the UI (it drops).
+
 - **`schema.sql`** — the 6-table spine (`project`, `cost_code`, `budget_line`, `cost_line`,
   `billing_event`, `wip_snapshot`) + `v_wip_latest` view. Portable across SQLite and Postgres
   (natural keys, ISO-text timestamps, 0/1 booleans, `DROP VIEW`+`CREATE VIEW`, `ON CONFLICT`).

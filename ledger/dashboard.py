@@ -348,6 +348,50 @@ def _resolve_steps(pipeline_key):
     return next((p["steps"] for p in pls if p["key"] == pipeline_key), [])
 
 
+# ── WIP Review: the accept/merge flow over the three Test tabs ────────────────
+# The ledger shows the pending WIP update as a per-job before/after diff, the owner
+# approves/disapproves each change, and approved values are written to Test - CP
+# (CP), Test - RP (RP), and Test-Master (all three). The dashboard ONLY orchestrates
+# subprocesses and reads/writes JSON - it never imports the wip tools (repo rule).
+# Each tool's --emit-review dumps its tab's diff; --apply-review applies the owner's
+# decisions and writes. JSON lives OUTSIDE the repo (Claude-visible/synced folder).
+_WIP_REVIEW_DIR = Path(os.environ.get(
+    "ACB_WIP_REVIEW_DIR",
+    Path.home() / "Library" / "Application Support" / "Proficient" / "wip-review"))
+# division -> emit file. Order is the display order (CP, RP, then the MFD-on-Master).
+_WIP_REVIEW_FILES = [("Commercial", "cp.json"), ("Residential", "rp.json"),
+                     ("Multi-Family", "master.json")]
+
+
+def _rp_wip_file() -> Path:
+    """The owner's verified RP WIP workbook - the binding RP source, resolved the
+    same way rp_wip_reader does so Master and Test - RP read the identical file."""
+    return paths.get_path("RP_WIP_FILE", paths.onedrive_base() / "RP WIP TO FIX_Final.xlsx")
+
+
+def _wip_review_steps(mode: str):
+    """mode 'emit' -> the three diff runs (no tab write); 'apply' -> the three
+    guarded writes (Test - CP / Test - RP / Test-Master), each honouring the SAME
+    decisions.json. Master needs --rp-from-file so its RP rows match Test - RP."""
+    _WIP_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+    cp = str(_WIP_REVIEW_DIR / "cp.json")
+    rp = str(_WIP_REVIEW_DIR / "rp.json")
+    mst = str(_WIP_REVIEW_DIR / "master.json")
+    dec = str(_WIP_REVIEW_DIR / "decisions.json")
+    if mode == "emit":
+        return [
+            {"label": "Review CP (Test - CP, Touch ID)", "script": "wip/cp_wip_reader.py", "args": ["--emit-review", cp]},
+            {"label": "Review RP (Test - RP, Touch ID)", "script": "wip/rp_wip_reader.py", "args": ["--emit-review", rp]},
+            {"label": "Review MFD (Test-Master, Touch ID)", "script": "wip/master_wip_test.py", "args": ["--emit-review", mst]},
+        ]
+    return [
+        {"label": "Write CP → Test - CP", "script": "wip/cp_wip_reader.py", "args": ["--apply-review", dec], "side": True},
+        {"label": "Write RP → Test - RP", "script": "wip/rp_wip_reader.py", "args": ["--apply-review", dec], "side": True},
+        {"label": "Write all → Test-Master", "script": "wip/master_wip_test.py",
+         "args": ["--apply-review", dec, "--rp-from-file", str(_rp_wip_file())], "side": True},
+    ]
+
+
 _SYNC = {"state": "idle", "current": -1, "started": 0.0, "log": None, "pipeline": None, "steps": []}
 _SYNC_LOCK = threading.Lock()
 
@@ -1128,6 +1172,8 @@ class Handler(BaseHTTPRequestHandler):
             self._processes()
         elif path == "/api/graph":         # the Graph tab (vault link-graph + system diagrams, live)
             self._graph()
+        elif path == "/api/wip/review":    # the WIP Review tab (pending before/after diff, merged)
+            self._wip_review_get()
         elif path.startswith("/static/"):
             self._static(path[len("/static/"):])
         else:
@@ -1153,6 +1199,10 @@ class Handler(BaseHTTPRequestHandler):
             self._pnl_generate()
         elif p == "/api/sync":            # in-app Resync: run the ledger loaders (gated)
             self._sync_start()
+        elif p == "/api/wip/review":      # WIP Review: compute the pending diff (no writes)
+            self._wip_review_run()
+        elif p == "/api/wip/merge":       # WIP Review: write approved changes to the 3 Test tabs (gated)
+            self._wip_merge()
         else:
             self._send(404, b"not found", "text/plain; charset=utf-8")
 
@@ -1237,18 +1287,79 @@ class Handler(BaseHTTPRequestHandler):
         steps = _resolve_steps(pipeline)
         if not steps:
             return self._json({"error": f"unknown pipeline '{pipeline}'"}, 400)
+        return self._launch(steps, pipeline)
+
+    def _launch(self, steps, pipeline):
+        """Claim the single run-lock and spawn the steps thread. Shared by the
+        Console sync and the WIP Review emit/apply runs so only ONE can hold the
+        lock at a time (concurrent QBO pulls + tab writes would corrupt)."""
         with _SYNC_LOCK:
             if _SYNC["state"] == "running":
                 return self._json({"error": "a sync is already running", "running": True}, 409)
             # claim it INSIDE the lock so a second POST can't also see "idle" and launch
-            # a second run that writes the ledger at once (TOCTOU). Single authoritative claim.
+            # a second run that writes at once (TOCTOU). Single authoritative claim.
             _SYNC["state"] = "running"
             _SYNC["started"] = time.time()
             _SYNC["current"] = -1
             _SYNC["pipeline"] = pipeline
             _SYNC["steps"] = [{"label": s["label"], "state": "pending"} for s in steps]
         threading.Thread(target=_run_sync, args=(steps,), daemon=True).start()
-        self._json({"ok": True, "pipeline": pipeline, "steps": [s["label"] for s in steps]})
+        return self._json({"ok": True, "pipeline": pipeline, "steps": [s["label"] for s in steps]})
+
+    # ── WIP Review endpoints (emit the diff · read it · write approved) ──────
+    def _wip_review_run(self):
+        """Start the three emit runs (CP/RP/MFD) - compute the pending update and
+        diff each Test tab, no writes. Confirm-gated; each run does a QBO pull."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except (ValueError, json.JSONDecodeError):
+            return self._json({"error": "bad request"}, 400)
+        if not body.get("confirm"):
+            return self._json({"error": "confirm required"}, 400)
+        return self._launch(_wip_review_steps("emit"), "wip-review")
+
+    def _wip_review_get(self):
+        """Merge the three emit JSONs into one review payload for the UI."""
+        out = {"ok": True, "generated": {}, "records": [], "ready": False}
+        for div, fn in _WIP_REVIEW_FILES:
+            p = _WIP_REVIEW_DIR / fn
+            if not p.exists():
+                continue
+            try:
+                d = json.loads(p.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            out["ready"] = True
+            out["records"].extend(d.get("records", []))
+            out["generated"][div] = {"tab": d.get("tab"), "count": d.get("count"),
+                                     "changed": d.get("changed"),
+                                     "at": _dt.datetime.fromtimestamp(p.stat().st_mtime).isoformat(timespec="seconds")}
+        dec = _WIP_REVIEW_DIR / "decisions.json"
+        try:
+            out["decisions"] = json.loads(dec.read_text(encoding="utf-8")) if dec.exists() else {}
+        except (OSError, ValueError):
+            out["decisions"] = {}
+        changed = [r for r in out["records"] if r["status"] != "SAME"]
+        out["counts"] = {"jobs": len(out["records"]), "changed": len(changed),
+                         "added": sum(r["status"] == "ADDED" for r in out["records"]),
+                         "removed": sum(r["status"] == "REMOVED" for r in out["records"])}
+        return self._json(out)
+
+    def _wip_merge(self):
+        """Save the owner's decisions, then start the three guarded writes."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except (ValueError, json.JSONDecodeError):
+            return self._json({"error": "bad request"}, 400)
+        if not body.get("confirm"):
+            return self._json({"error": "confirm required"}, 400)
+        decisions = body.get("decisions") or {}
+        _WIP_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+        (_WIP_REVIEW_DIR / "decisions.json").write_text(
+            json.dumps(decisions, indent=2), encoding="utf-8")
+        return self._launch(_wip_review_steps("apply"), "wip-merge")
 
     def _job_open(self, proj: str):
         """Open the SOURCE job folder on the file server (docs/takeoffs/photos) —

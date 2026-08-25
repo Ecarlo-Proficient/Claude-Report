@@ -186,6 +186,38 @@
         </div>
       </section>
     </div><!-- /tab: wip -->
+
+    <!-- ══════════════ TAB: WIP REVIEW (pending update → approve/disapprove → write 3 tabs) ══════════════ -->
+    <div class="tab-page" data-tab="wipreview" hidden>
+      <section class="widget">
+        <div class="widget-head">
+          <h2>WIP Review <span class="count" id="wrNote"></span></h2>
+          <div class="console-actions">
+            <button class="btn small" id="wrCompute" title="Run the WIP pipeline and show every change before it is written">Compute pending update</button>
+            <button class="btn small primary" id="wrSync" title="Write the approved changes to Test - CP, Test - RP and Test-Master" hidden>Sync approved →</button>
+          </div>
+        </div>
+        <p class="hint">The pending WIP update as a before/after. <b>Accept (QBO)</b> = costs / billed /
+          retainage, pulled from QuickBooks - checked by default. <b>PM answers</b> = contract / COs / ETC -
+          left <b>unchecked</b> until confirmed. Approve a change to write the new value; leave it off to keep
+          what's on the tab. Approved changes sync to <b>Test - CP</b> (CP), <b>Test - RP</b> (RP) and
+          <b>Test-Master</b> (all three). Read-only until you hit Sync.</p>
+        <div class="kpi-row" id="wrStats"></div>
+        <div class="filters" id="wrFilters" hidden>
+          <input type="search" id="wrSearch" placeholder="Find a job #, name…" autocomplete="off">
+          <select id="wrDivision"><option value="">All divisions</option><option>Commercial</option><option>Residential</option><option>Multi-Family</option></select>
+          <select id="wrStatus"><option value="">All changes</option><option value="CHANGED">Changed</option><option value="ADDED">Added</option><option value="REMOVED">Removed</option></select>
+          <label class="check"><input type="checkbox" id="wrChangedOnly" checked> Changed only</label>
+          <span class="wr-bulk">
+            <button class="btn tiny" id="wrApproveQbo" title="Approve every QBO change (costs / billed / retainage)">Approve all QBO</button>
+            <button class="btn tiny" id="wrApproveAll" title="Approve every change shown">Approve all shown</button>
+            <button class="btn tiny" id="wrClearAll" title="Uncheck every change (keep the tabs as they are)">Clear all</button>
+          </span>
+        </div>
+        <div id="wrBody" class="wr-body"></div>
+      </section>
+    </div><!-- /tab: wipreview -->
+
     <div class="tab-page" data-tab="costs" hidden>
       <section class="widget">
         <div class="widget-head"><h2>Cost type ▸ job type <span class="count">— click a code to see every job that spent it</span></h2></div>
@@ -590,6 +622,31 @@
         </div>
       </section>
     </div><!-- /tab: systems -->
+
+    <!-- ══════════════ TAB: GRAPH (org knowledge graph + imported system diagrams) ══════════════ -->
+    <div class="tab-page" data-tab="graph" hidden>
+      <section class="widget">
+        <div class="widget-head">
+          <h2>Graph <span class="count" id="graphNote"></span></h2>
+          <button class="btn small" id="btnGraphReload" title="Re-read the vault links and the diagram source">Reload</button>
+        </div>
+        <p class="hint">The org as a map. <b>Org map</b> is every vault note as a node and every
+          <code>[[link]]</code> as an edge - the same view Obsidian gives, live from the vault. The
+          rest are the system diagrams imported from <code>docs/ARCHITECTURE.md</code>. Drag nodes,
+          scroll to zoom, drag the background to pan. Read-only.</p>
+        <div class="graph-modes" id="graphModes"></div>
+        <div class="graph-wrap">
+          <canvas id="graphCanvas"></canvas>
+          <div class="graph-toolbar">
+            <input type="search" id="graphSearch" placeholder="Find a node…" autocomplete="off">
+            <button class="btn small" id="graphFit" title="Fit the whole graph in view">Fit</button>
+            <label class="check"><input type="checkbox" id="graphLabels" checked> Labels</label>
+          </div>
+          <div class="graph-legend" id="graphLegend"></div>
+          <div class="graph-info" id="graphInfo" hidden></div>
+        </div>
+      </section>
+    </div><!-- /tab: graph -->
 
     <!-- ══════════════ TAB: CONSOLE (control plane - run the pipelines) ══════════════ -->
     <div class="tab-page" data-tab="console" hidden>

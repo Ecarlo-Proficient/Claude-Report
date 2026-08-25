@@ -49,6 +49,7 @@ from openpyxl import load_workbook
 # The shared report engine — same formatting/writer for every division.
 # RP is a reader; it imports the engine, never another reader (2026-08-04).
 import wip_writer as W
+import wip_review_common as WR   # shared WIP-review diff/merge (ledger accept/merge flow)
 from shared import paths, qbo_api
 from shared.takeoff_etc import find_takeoff_etc
 
@@ -1005,6 +1006,14 @@ def main() -> int:
                          "the owner's RP WIP file. The file is the source of "
                          "truth — only use this to inspect the old pipeline.")
     ap.add_argument("--file", help="override the RP WIP file path")
+    ap.add_argument("--emit-review", metavar="JSON",
+                    help="Ledger WIP Review: compute as usual, then write a "
+                         "before/after diff of 'Test - RP' to this JSON and STOP "
+                         "(no tab write).")
+    ap.add_argument("--apply-review", metavar="JSON",
+                    help="Ledger WIP Review: compute as usual, revert every "
+                         "DISAPPROVED field in this decisions JSON to the current "
+                         "tab value, then write 'Test - RP' normally.")
     args = ap.parse_args()
 
     # DEFAULT: the owner's verified RP WIP file (the binding RP source of
@@ -1031,6 +1040,17 @@ def main() -> int:
             print("  Enriching with QBO Billed/Costs …")
             enrich_with_qbo([(r,) for r in rows])
         rows = classify_from_file(rows)
+        # ── Ledger WIP Review: emit the diff and STOP, or apply decisions then write ──
+        if args.emit_review:
+            prior = WR.snapshot_tab(W.WIP_EXCEL_PATH, "Test - RP", "working")
+            recs = WR.diff_rows(rows, prior, division="Residential",
+                                tab_name="Test - RP", tab_kind="working")
+            WR.write_review_json(args.emit_review, "Residential", "Test - RP", recs)
+            print(f"  ✓ WIP review emitted → {args.emit_review} "
+                  f"({sum(r['status'] != 'SAME' for r in recs)} changed of {len(recs)})")
+            return 0
+        if args.apply_review:
+            rows = WR.apply_decisions(rows, WR.load_decisions(args.apply_review))
         try:
             write_rp_tab(rows, dry_run=args.dry_run)
         except W.WipWriteDenied as e:

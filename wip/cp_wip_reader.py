@@ -36,6 +36,7 @@ from shared import qbo_api
 
 # The shared report engine. CP is a reader; it feeds these, never redefines them.
 import wip_writer as W
+import wip_review_common as WR   # shared WIP-review diff/merge (ledger accept/merge flow)
 # CpRow (the shared data model) and the terminal-output helpers are used
 # pervasively here; the WRITER itself (write_test_cp / WipWriteDenied) is NOT
 # re-exported — call it as W.write_test_cp so no other tool can ever reach the
@@ -761,6 +762,14 @@ def main() -> int:
                     help="Filter to one project # (e.g. CP672). Case-insensitive.")
     ap.add_argument("--no-qbo", action="store_true",
                     help="Skip QBO join (fast local test of takeoff parsing).")
+    ap.add_argument("--emit-review", metavar="JSON",
+                    help="Ledger WIP Review: compute as usual, then write a "
+                         "before/after diff of 'Test - CP' to this JSON and STOP "
+                         "(no tab write).")
+    ap.add_argument("--apply-review", metavar="JSON",
+                    help="Ledger WIP Review: compute as usual, revert every "
+                         "DISAPPROVED field in this decisions JSON to the current "
+                         "tab value, then write 'Test - CP' normally.")
     ap.add_argument("--verbose", "-v", action="store_true",
                     help="Show debug logs (timestamps + module names).")
     args = ap.parse_args()
@@ -830,6 +839,18 @@ def main() -> int:
     # (the user 2026-07-13: bad-looking numbers render red).
     for row in rows:
         row.needs_review = bool(row.status_flags)
+
+    # ── Ledger WIP Review: emit the diff and STOP, or apply decisions then write ──
+    if args.emit_review:
+        prior = WR.snapshot_tab(WIP_EXCEL_PATH, TEST_TAB, "working")
+        recs = WR.diff_rows(rows, prior, division="Commercial",
+                            tab_name=TEST_TAB, tab_kind="working")
+        WR.write_review_json(args.emit_review, "Commercial", TEST_TAB, recs)
+        print(f"  ✓ WIP review emitted → {args.emit_review} "
+              f"({sum(r['status'] != 'SAME' for r in recs)} changed of {len(recs)})")
+        return 0
+    if args.apply_review:
+        rows = WR.apply_decisions(rows, WR.load_decisions(args.apply_review))
 
     # ── Write / dry-run report ──
     try:

@@ -25,6 +25,7 @@ from openpyxl import load_workbook
 import cp_wip_reader as CP        # CP READER: folder scan / draws
 import wip_writer as W            # the shared report ENGINE
 import rp_wip_reader as RP
+import wip_review_common as WR    # shared WIP-review diff/merge (ledger accept/merge flow)
 
 MASTER_SHEET = "WIP Master"
 # 'WIP Master' tab layout: header row 3, data row 4+.
@@ -165,6 +166,15 @@ def main() -> int:
                          "'RP WIP' workbook instead of the General List "
                          "pipeline (the user 2026-07-29); CP lines in it are "
                          "excluded, billed/costs still refresh from QBO")
+    ap.add_argument("--emit-review", metavar="JSON",
+                    help="Ledger WIP Review: compute as usual, then write a "
+                         "before/after diff of the MFD rows on 'Test-Master' to "
+                         "this JSON and STOP (CP/RP are reviewed via their own "
+                         "working tabs; no tab write).")
+    ap.add_argument("--apply-review", metavar="JSON",
+                    help="Ledger WIP Review: compute as usual, revert every "
+                         "DISAPPROVED field (all divisions) in this decisions JSON "
+                         "to the current tab value, then write 'Test-Master'.")
     ap.add_argument("--audit", nargs="?", const="", metavar="XLSX",
                     help="INSPECT-ONLY (the user 2026-08-07): run the full "
                          "pipeline and write a pre-write audit workbook — every "
@@ -180,6 +190,21 @@ def main() -> int:
     # ── MFD (master sheet) ──
     mfd_rows = read_mfd_from_master(W.WIP_EXCEL_PATH)
     print(f"  MFD from '{MASTER_SHEET}': {len(mfd_rows)} job(s)")
+
+    # ── Ledger WIP Review, MFD emit (fast path) ──
+    # MFD is the only division emitted from here (CP/RP go through their own
+    # working-tab readers), so the review can skip the slow CP/RP folder scan
+    # entirely: enrich just the MFD rows, diff against Test-Master, emit, STOP.
+    if args.emit_review:
+        CP.enrich_with_qbo(mfd_rows)               # billed/costs for MFD (one QBO pass)
+        prior = WR.snapshot_tab(W.WIP_EXCEL_PATH, "Test-Master", "master")
+        mfd_prior = {p: v for p, v in prior.items() if p.startswith("MFD")}
+        recs = WR.diff_rows(mfd_rows, mfd_prior, division="Multi-Family",
+                            tab_name="Test-Master", tab_kind="master")
+        WR.write_review_json(args.emit_review, "Multi-Family", "Test-Master", recs)
+        print(f"  ✓ WIP review emitted → {args.emit_review} "
+              f"({sum(r['status'] != 'SAME' for r in recs)} MFD changed of {len(recs)})")
+        return 0
 
     # ── CP (live folder scan, ACTIVE only — the unified sheet is a WIP) ──
     if not CP.CP_ACTIVE_DIR.exists():
@@ -313,6 +338,14 @@ def main() -> int:
             label = label.replace("Residential — ", f"Residential — {ht} — ", 1)
         row.section = label
 
+    # ── Ledger WIP Review (Test-Master): apply the all-division decisions then
+    #    write. CP/RP changes are reviewed on their own working tabs; the SAME
+    #    decisions file is applied here so Test-Master and the working tabs can't
+    #    disagree. (The MFD emit is a fast early path above - it never reaches the
+    #    full CP/RP build.) ──
+    if args.apply_review:
+        bank_rows = WR.apply_decisions(bank_rows, WR.load_decisions(args.apply_review))
+
     # ── --audit: inspect-before-write. Full pipeline already ran (QBO, ETC
     #    fallback, classify); now emit the provenance/add-remove workbook and
     #    STOP — the WIP report is not touched (the user 2026-08-07). ──
@@ -376,7 +409,11 @@ def main() -> int:
     # 'Test - RP' is written by rp_wip_reader.write_rp_tab — the single
     # writer of that tab, so a standalone RP run and this unified run can
     # never produce different layouts (they did, on 2026-08-04).
-    if args.rp_from_file:
+    # Under --apply-review the ledger runs rp_wip_reader --apply-review SEPARATELY
+    # to write 'Test - RP' with the decisions applied, so master must NOT also
+    # write it here from the (undecided) rp_sorted rows — that would double-write
+    # the tab and lose the owner's approve/disapprove marks.
+    if args.rp_from_file and not args.apply_review:
         try:
             RP.write_rp_tab(rp_sorted, dry_run=args.dry_run)
         except W.WipWriteDenied as e:
