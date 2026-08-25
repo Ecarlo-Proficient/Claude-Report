@@ -2884,7 +2884,7 @@ function renderPayments() {
   body.appendChild(stats);
   const head = document.createElement("div"); head.className = "list-head";
   const hint = document.createElement("p"); hint.className = "hint"; hint.style.margin = "0";
-  hint.innerHTML = "Each row is a <b>payment received</b>. Click it to see the invoices (draws) it paid. <b>Unlocks (AP)</b> is the open vendor bills this payment funds: for staged <b>CP/MFD</b> draws, only the bills on the draw it paid; for <b>RP</b> (costs up front, billed once), the whole job's open AP.";
+  hint.innerHTML = "Each row is a <b>payment received</b>. Click it to see the invoices (draws) it paid. <b>Unlocks (AP)</b> is the open vendor bills this payment funds: for staged <b>CP/MFD</b> draws, only the bills on the draw it paid; for <b>RP</b> (costs up front, billed once), the whole job's open AP. <b>Net after AP</b> = amount paid − that AP: what's left once those vendors are paid (red = the AP exceeds the payment).";
   head.appendChild(hint);
   const actions = document.createElement("div"); actions.className = "list-actions";
   const seg = document.createElement("div"); seg.className = "seg"; seg.title = "Break cash-in down by period";
@@ -2906,7 +2906,7 @@ function renderPayments() {
   const wrap = document.createElement("div"); wrap.className = "table-scroll";
   const table = document.createElement("table"); table.className = "grid"; table.id = "payTable";
   table.innerHTML = "<thead></thead><tbody></tbody>"; wrap.appendChild(table); body.appendChild(wrap);
-  const cols = [["Client", "left"], ["Date", "left"], ["Payment Ref #", "left"], ["Payment Type", "left"], ["Amount Paid", "right"], ["Unlocks (AP)", "right"]];
+  const cols = [["Client", "left"], ["Date", "left"], ["Payment Ref #", "left"], ["Payment Type", "left"], ["Amount Paid", "right"], ["Unlocks (AP)", "right"], ["Net after AP", "right"]];
   const tb = buildHead("#payTable", cols);
   if (!tb) return; tb.innerHTML = "";
   if (!pays.length) {
@@ -2952,15 +2952,25 @@ function renderPayments() {
     // Unlocks (AP): open vendor bills on this payment's project(s) → click opens the side panel
     const uc = document.createElement("td"); uc.className = "right";
     const bills = payUnlockBills(p, drawIdx, projIdx);
+    const apSum = bills.reduce((t, b) => t + num(b.open_balance), 0);
     if (bills.length) {
-      const sum = bills.reduce((t, b) => t + num(b.open_balance), 0);
       const link = document.createElement("span"); link.className = "unlock-link";
-      link.textContent = `${money(sum)} · ${bills.length}`;
+      link.textContent = `${money(apSum)} · ${bills.length}`;
       link.title = "Open vendor bills on the draw(s) this payment paid - the AP it funds";
       link.onclick = (e) => { e.stopPropagation(); openPaymentBills(p, bills); };
       uc.appendChild(link);
     } else uc.appendChild(document.createTextNode("–"));
     tr.appendChild(uc);
+    // Net after AP: money in − the AP this payment funds = what's left once those vendors are paid.
+    // Negative = the AP owed on this draw/job exceeds what came in (this payment doesn't cover it).
+    const net = num(p.total_amt) - apSum;
+    const nc = document.createElement("td"); nc.className = "right"; nc.style.fontWeight = "600";
+    nc.textContent = money(net);
+    nc.title = bills.length
+      ? `${money(p.total_amt)} in − ${money(apSum)} AP = ${money(net)} left after paying those vendors`
+      : "No AP tied to this payment - the full amount is net";
+    if (net < -0.005) nc.style.color = "var(--neg)";
+    tr.appendChild(nc);
     tr.onclick = () => { if (paymentsExpanded.has(p.qbo_txn_id)) paymentsExpanded.delete(p.qbo_txn_id); else paymentsExpanded.add(p.qbo_txn_id); renderPayments(); };
     tb.appendChild(tr);
     // ── grouped invoices this payment paid: Invoice # · Total open · Amount applied ──

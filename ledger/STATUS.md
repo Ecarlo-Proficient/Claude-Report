@@ -36,6 +36,12 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   `payUnlockBills(p, drawIdx, projIdx)` branches per application via `_payIsRP` (project# prefix / division).
   Verified: CP790 $11,418·3 (draw) vs $85,758·20 project; MFD192 $302,989·11 (draw) vs $921,218·65; RP6901-FTW
   $19,546·3 = whole job. Frontend-only (BILLS already carry `invoice_no`).
+- **Payments "Net after AP" column (owner, 2026-08-25: "a new column that shows me the net income after
+  ap is paid").** New rightmost column = **Amount Paid − Unlocks (AP)**: what's left of a payment once the
+  vendor bills it funds are paid. Reuses the same `payUnlockBills` sum (so it's division-correct: draw for
+  CP/MFD, whole job for RP). **Negative = red** (the AP owed on that draw/job exceeds the payment - it
+  doesn't cover itself). No portfolio total on purpose: summing per-payment nets would double-count AP that
+  two RP payments on the same job both "unlock". Frontend-only (app.js) - reload, no restart.
 - **Dark-mode legibility pass (owner, 2026-08-25: "hard to see").** Brightened the dark tokens:
   `--text-dim` #98a2b3 -> #aeb9c9 (secondary text is everywhere), `--border` #2a323d -> #35404f (faint
   separators), a touch more surface separation, and a brighter `--row-hover`. The accent is a per-user
