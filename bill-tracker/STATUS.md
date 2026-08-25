@@ -52,6 +52,29 @@ no business findings, dollar exposures, or owner analyses (those live in the own
   `Invoice Total`. 28 → 29 columns; positional `values` list + `COL_WIDTHS` updated, dividers now
   at cols 13/17. Verified: 29 cols, AR order `… Invoice Date · Invoice Open Bal · Invoice Total …`,
   `validate_xlsx` clean, 6/6 existing tests pass.
+- **`Audit - Unused PO` sheet — PO tracker × QBO, one story (2026-08-25, owner).** New
+  `po_tracker.py` reads the office PO tracker workbook (`Orders` tab, READ-ONLY) and reconciles
+  it against QBO POs. New `bill_rows.build_po_index()` pulls `PurchaseOrder` once with
+  `POStatus`/`TxnDate`/`VendorRef`/`TotalAmt`/`LinkedTxn`/job (replaces `build_po_map` in main;
+  id→doc derived, so still ONE PO pull). Flags: **Open, no bill** · **Stale >60d** (open+unbilled
+  aged past 60d) · **On tracker, not in QBO** (recent, UNBILLED tracker PO never issued — billed
+  tracker rows are excluded as not-"unused"). One row per PO, QBO + tracker columns side by side,
+  `polink` → QBO PO deep link; tracker freshness stamped to the right of the header. Tracker path
+  = `ACB_PO_TRACKER_XLSX` (default OneDrive `Purchase Orders/Copy 05 dic.xlsx` — the CURRENT file;
+  `1.0purchase-order-tracker.xlsx` is ~15 mo stale, do not use). Degrades to a QBO-only view if
+  the tracker is unreadable. Verified offline (real tracker + mock QBO): all 3 flags fire, QBO rows
+  link / tracker-only rows don't, `validate_xlsx` clean. **First live `sync-ap` validates the QBO
+  `build_po_index` parse.**
+- **`Audit - Cost Code` sheet — vendors code to their family (2026-08-25, owner).** 8th audit sheet.
+  Cost-code NUMBER = family (1 concrete · 2/3/4 material · 5/51/52 equip · 6 labor). Auto-captures
+  each vendor's TYPE from its `*1`-vs-`*2/3/4` split — **concrete** (→ all `*1`), **material** (RCI
+  → `*2/*3/*4`, never `*1`/`*5`/`*6`), **both** (Preferred Materials → yardage/ready-mix MEMO line
+  must be `*1`) — then flags lines breaking the rule. Runs over the full `all_rows` sync-ap already
+  pulls. Logic lives in **`shared/cost_code_audit.py`** (shared with the standalone
+  `one-offs/concrete_cost_code_audit.py` — repo rule: shared, not tool→tool). Types overridable via
+  `<companyhealth>/concrete_suppliers.json` `{concrete/material/both/exclude}`. Verified offline
+  (Cowtown/RCI/Preferred mock): types + all 4 flags correct incl. yardage-memo catch, `validate_xlsx`
+  clean, 6/6 tests pass.
 
 - **No realm in the terminal (2026-08-06, owner).** The auth step printed
   `ok. company_id=<realm>`; removed — it now just prints `ok.`, consistent with `sync-ar`

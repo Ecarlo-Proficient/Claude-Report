@@ -130,6 +130,47 @@ def build_po_map(qbo_access: str, qbo_cid: str) -> Dict[str, str]:
     return po_map
 
 
+def build_po_index(
+    qbo_access: str, qbo_cid: str, vendor_map: Dict[str, str],
+) -> Dict[str, dict]:
+    """Pull PurchaseOrders once → {po_id: rich rec} for the Unused-PO audit.
+
+    rec = {id, doc, status (POStatus Open/Closed), date (TxnDate), vendor,
+           total (TotalAmt), has_bill (any LinkedTxn Bill), job (project # off a
+           line's CustomerRef)}. Superset of build_po_map — derive the id→doc map
+           as {pid: rec['doc']}, so main() does ONE PurchaseOrder pull, not two.
+    """
+    index: Dict[str, dict] = {}
+    for po in query_all(qbo_access, qbo_cid, "PurchaseOrder"):
+        pid = po.get("Id", "")
+        if not pid:
+            continue
+        vref = po.get("VendorRef") or {}
+        vendor = vendor_map.get(vref.get("value", ""), vref.get("name", "") or "")
+        has_bill = any(lt.get("TxnType") == "Bill"
+                       for lt in (po.get("LinkedTxn") or []))
+        job = ""
+        for ln in (po.get("Line") or []):
+            det = (ln.get("ItemBasedExpenseLineDetail")
+                   or ln.get("AccountBasedExpenseLineDetail") or {})
+            cust = (det.get("CustomerRef") or {}).get("name", "")
+            proj = get_project_num(cust) if cust else None
+            if proj:
+                job = proj
+                break
+        index[pid] = {
+            "id": pid,
+            "doc": (po.get("DocNumber") or "").strip(),
+            "status": po.get("POStatus") or "",
+            "date": parse_date(po.get("TxnDate")),
+            "vendor": vendor,
+            "total": float(po.get("TotalAmt") or 0),
+            "has_bill": has_bill,
+            "job": job,
+        }
+    return index
+
+
 def get_po_number(bill: dict, po_map: Dict[str, str]) -> str:
     """Extract PO #(s) for a Bill via LinkedTxn (PO clerk-linked in QBO).
 

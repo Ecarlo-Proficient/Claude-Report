@@ -85,11 +85,14 @@ from qbo_bill_tracker import (
     MATCH_BASIS_DRAW, MATCH_BASIS_FINAL,
 )
 from bill_rows import (
-    build_account_maps, build_po_map, build_payment_map, build_rows,
+    build_account_maps, build_po_index, build_payment_map, build_rows,
     approved_text,
     collapse_rows, multi_project_bill_ids, MULTI_MARKER,
 )
+from po_tracker import load_po_tracker, reconcile_unused_pos, index_by_doc
 from general_list import load_contracts
+from shared.cost_code_audit import (
+    classify_vendors, flag_lines, load_override, code_families, TYPE_LABEL)
 
 
 # ─────────────────────── constants ───────────────────────
@@ -114,6 +117,7 @@ INVOICE_CUTOFF_DATE = "2024-01-01"
 QBO_BILL_URL_TEMPLATE = "https://qbo.intuit.com/app/bill?txnId={bill_id}"
 QBO_INVOICE_URL_TEMPLATE = "https://qbo.intuit.com/app/invoice?txnId={inv_id}"
 QBO_BILLPAYMENT_URL_TEMPLATE = "https://qbo.intuit.com/app/billpayment?txnId={pay_id}"
+QBO_PO_URL_TEMPLATE = "https://qbo.intuit.com/app/purchaseorder?txnId={po_id}"
 
 # Muted palette — chrome is calm so the two CF signals can read at a glance.
 HEADER_FILL = PatternFill("solid", start_color="6E7E94")
@@ -316,6 +320,15 @@ def _qbo_link(bill_id: str) -> str:
     if not bill_id:
         return ""
     url = QBO_BILL_URL_TEMPLATE.format(bill_id=bill_id)
+    return f'=HYPERLINK("{url}","↗")'
+
+
+def _qbo_po_link(po_id: str) -> str:
+    """QBO purchase-order link as a single-glyph 'button'. Blank when the PO has
+    no QBO id (tracker-only rows)."""
+    if not po_id:
+        return ""
+    url = QBO_PO_URL_TEMPLATE.format(po_id=po_id)
     return f'=HYPERLINK("{url}","↗")'
 
 
@@ -1958,6 +1971,10 @@ def _audit_table_sheet(wb, sheet_name: str, table_name: str,
                     link = _qbo_link(val)
                     c = ws.cell(row=r, column=c_i, value=link or None)
                     _format_data_cell(c, "link")
+                elif kind == "polink":
+                    link = _qbo_po_link(val)
+                    c = ws.cell(row=r, column=c_i, value=link or None)
+                    _format_data_cell(c, "link")
                 else:
                     c = ws.cell(row=r, column=c_i, value=val)
                     _format_data_cell(c, kind)
@@ -2127,6 +2144,105 @@ def build_audit_sheets(wb, rows: List[dict],
             + sum(len(g) for g in dup_groups) + len(fw_flags) + len(sub_missing))
 
 
+def build_unused_po_sheet(wb, po_index: Dict[str, dict],
+                          tracker_by_po: Dict[str, dict],
+                          tracker_meta: dict, today: dt.date) -> int:
+    """`Audit - Unused PO` — the "two tools, one story" join between QBO purchase
+    orders and the office PO tracker (the user 2026-08-25). One row per flagged PO,
+    QBO fields and tracker fields side by side so AP can hunt down the gap:
+      • Open, no bill        — QBO PO Open with no bill linked.
+      • Stale >Nd            — that, aged past the stale threshold.
+      • On tracker, not in QBO — a recent, unbilled tracker PO never issued in QBO.
+    The tracker's freshness is stamped to the right of the header so a stale
+    manual log is never mistaken for live truth.
+    """
+    po_by_doc = index_by_doc(po_index)
+    flagged = reconcile_unused_pos(po_by_doc, tracker_by_po, today)
+
+    headers = ["PO #", "Vendor", "PO Date", "Days Open", "Job", "Amount",
+               "QBO Status", "QBO Bill?", "Tracker Bill #", "Tracker QB",
+               "Reason", "Open"]
+    kinds = ["text", "text", "date", "flag", "text", "money", "text", "text",
+             "text", "text", "text", "polink"]
+    data = [[f["po"], f["vendor"], f["po_date"],
+             f["days_open"] if f["days_open"] is not None else "",
+             f["job"], f["amount"], f["qbo_status"], f["qbo_bill"],
+             f["tracker_bill"], f["tracker_qb"], f["reason"], f["po_id"]]
+            for f in flagged]
+    _audit_table_sheet(
+        wb, "Audit - Unused PO", "tblAuditUnusedPO", headers, kinds, data,
+        [10, 24, 11, 10, 12, 13, 12, 9, 18, 13, 26, 6],
+    )
+
+    # Freshness caption to the RIGHT of the table (row 1), outside the table ref.
+    ws = wb["Audit - Unused PO"]
+    md = tracker_meta.get("max_date")
+    if tracker_meta.get("error"):
+        cap = f"PO tracker unavailable ({tracker_meta['error']}) — QBO-only view"
+    else:
+        behind = (today - md).days if md else None
+        cap = (f"Tracker: {Path(tracker_meta.get('path', '')).name} · "
+               f"data through {md} ({behind}d behind) · "
+               f"{tracker_meta.get('po_count', 0)} POs")
+    cc = ws.cell(row=1, column=len(headers) + 2, value=cap)
+    cc.font = Font(name="Calibri", size=10, italic=True, color="808080")
+    return len(flagged)
+
+
+def build_cost_code_sheet(wb, all_rows: List[dict]) -> int:
+    """`Audit - Cost Code` — vendors coding to the wrong cost-code FAMILY for what
+    they sell (the user 2026-08-25). Same rules as the standalone
+    one-offs/concrete_cost_code_audit.py, sharing shared/cost_code_audit: capture
+    each vendor's TYPE (concrete / material / both) from its *1-vs-*2/3/4 split,
+    then flag every line that breaks the type's rule. Runs over the FULL bill
+    population sync-ap already pulled (incl. subs + paid-since-cutoff). An override
+    JSON (<companyhealth>/concrete_suppliers.json) forces a vendor's type."""
+    recs = []
+    for r in all_rows:
+        raw = r.get("cost_code", "") or ""
+        number, cost_name = code_families(raw)
+        recs.append({
+            "vendor": r.get("vendor", "") or "",
+            "number": number,
+            "cost_code": raw.split(":")[-1].strip(),
+            "cost_name": cost_name,
+            "desc": r.get("line_desc", "") or "",
+            "account": r.get("account", "") or "",
+            "bill_id": r.get("bill_id", ""),
+            "bill_doc": r.get("bill_doc", ""),
+            "date": r.get("bill_date"),
+            "project": r.get("project_num", "") or "",
+            "amount": r.get("line_amount") or 0.0,
+        })
+    override = load_override(paths.companyhealth_dir() / "concrete_suppliers.json")
+    _agg, vtype = classify_vendors(recs, override=override)
+    flags = flag_lines(recs, vtype)
+
+    headers = ["Vendor", "Type", "Bill #", "Bill Date", "Project", "Cost Code",
+               "Cost Name", "Amount", "Line Description", "Reason", "Open"]
+    kinds = ["text", "text", "text", "date", "text", "text", "text", "money",
+             "text", "text", "link"]
+    data = [[f["vendor"], TYPE_LABEL.get(f["vtype"], ""), f["bill_doc"], f["date"],
+             f["project"], f["cost_code"], f["cost_name"] or "",
+             round(float(f["amount"]), 2), f["desc"], f["reason"], f["bill_id"]]
+            for f in flags]
+    _audit_table_sheet(
+        wb, "Audit - Cost Code", "tblAuditCostCode", headers, kinds, data,
+        [26, 15, 12, 11, 12, 11, 18, 13, 32, 44, 6],
+    )
+
+    # Caption: captured vendor types, to the right of the header.
+    counts = {t: sum(1 for v in vtype.values() if v == t)
+              for t in ("concrete", "material", "both", "review")}
+    ws = wb["Audit - Cost Code"]
+    cap = (f"Vendors captured: {counts['concrete']} concrete · {counts['material']} "
+           f"material · {counts['both']} both · {counts['review']} review "
+           f"(type override: concrete_suppliers.json)")
+    cc = ws.cell(row=1, column=len(headers) + 2, value=cap)
+    cc.font = Font(name="Calibri", size=10, italic=True, color="808080")
+    return len(flags)
+
+
 # ─────────────────────── main ───────────────────────
 
 def main() -> int:
@@ -2156,9 +2272,10 @@ def main() -> int:
     account_map, item_map = build_account_maps(qbo_access, qbo_cid)
     print(f"  {len(account_map)} accounts, {len(item_map)} items")
 
-    print("→ building PO map …")
-    po_map = build_po_map(qbo_access, qbo_cid)
-    print(f"  {len(po_map)} purchase orders")
+    print("→ building PO index …")
+    po_index = build_po_index(qbo_access, qbo_cid, vendor_map)
+    po_map = {pid: rec["doc"] for pid, rec in po_index.items()}
+    print(f"  {len(po_index)} purchase orders")
 
     print("→ building invoice → payment date map …")
     payment_map = build_payment_map(qbo_access, qbo_cid)
@@ -2321,8 +2438,24 @@ def main() -> int:
     build_liens_sheet(ws_liens)       # live FILTER view of tblBills (Lien set)
     n_audit = build_audit_sheets(wb, all_rows,
                                  vendor_root=vendor_root, vendor_map=vendor_map)
+
+    # Unused PO audit — QBO POs × the office PO tracker (read-only). Tracker
+    # unavailable (share unmounted / file moved) degrades to a QBO-only view.
+    print("→ loading PO tracker (read-only) + reconciling POs …")
+    tracker_by_po, tracker_meta = load_po_tracker()
+    if tracker_meta.get("error"):
+        print(f"  ⚠ PO tracker unavailable: {tracker_meta['error']} — Unused PO from QBO only")
+    else:
+        print(f"  tracker: {tracker_meta['po_count']} POs, data through {tracker_meta['max_date']}")
+    n_unused = build_unused_po_sheet(wb, po_index, tracker_by_po, tracker_meta,
+                                     dt.date.today())
+
+    # Cost-code audit — vendors must code to their family (concrete/material/both).
+    n_cc = build_cost_code_sheet(wb, all_rows)
+
     print(f"  Bills: {n_bills} bills (open + paid since {PAID_CUTOFF_DATE})")
-    print(f"  Liens: live view  ·  Inventory: {n_inv} lines  ·  Audit: {n_audit} flagged")
+    print(f"  Liens: live view  ·  Inventory: {n_inv} lines  ·  Audit: {n_audit} flagged"
+          f"  ·  Unused PO: {n_unused}  ·  Cost Code: {n_cc}")
 
     wb.save(OUTPUT_PATH)
     post_process_xlsx(OUTPUT_PATH)

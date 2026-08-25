@@ -60,7 +60,7 @@ shared/                the ONLY importable common code
 └─ setup_qbo.py        vault admin CLI (--status/--test/--rotate/--purge)
 
 invoice-sync/          QBO → Notion AR sync + Teams cards   (was automation-worker/)
-bill-tracker/          AP bills (FULL pull incl. subs) → Excel tracker + QBO Audit sheet (7 checks, incl. Unused PO) + job_coding_audit drill
+bill-tracker/          AP bills (FULL pull incl. subs) → Excel tracker + QBO Audit sheet (8 checks, incl. Unused PO + Cost Code) + job_coding_audit drill
 statement-reconciler/  vendor statement PDFs ↔ QBO open bills
 wip/                   ALL WIP tooling: wip_writer.py (shared engine) + CP/RP readers + close scripts
 ledger/                canonical project DB: schema.sql spine + loaders (WIP · Bill Tracker · costs · AR invoices · customers) + dashboard
@@ -236,12 +236,18 @@ flowchart LR
 ```
 
 Full pull (2026-08-06): the tracker pulls every bill incl. subs. Subs are kept off the
-Bills/Inventory/Liens sheets but flow to the audit, now **seven `Audit - …` sheets**, each a
+Bills/Inventory/Liens sheets but flow to the audit, now **eight `Audit - …` sheets**, each a
 proper Excel Table (filter/sort): Not Approved · Data Entry · Missing Project · Duplicates ·
-**FW Misplaced** · Sub No Project · **Unused PO**. The old `duplicate_bill_audit` /
+**FW Misplaced** · Sub No Project · **Unused PO** · **Cost Code**. The old `duplicate_bill_audit` /
 `item_no_project_audit` / `sub_bill_audit` scripts were folded in and retired; `job_coding_audit.py`
 remains as the interactive `audit-job` drill. Cost codes (QBO Item name) are captured for the audit
 only — never a display column.
+
+**Cost Code (2026-08-25):** `Audit - Cost Code` reuses **`shared/cost_code_audit.py`** (the same
+logic as the standalone `one-offs/concrete_cost_code_audit.py`) over the full bill population.
+It captures each vendor's coding TYPE from its `*1`-vs-`*2/3/4` split — concrete (→ all `*1`),
+material (rebar/lumber, never `*1`/`*5`/`*6`), both (yardage MEMO must be `*1`) — and flags lines
+that break the rule. Types overridable via `<companyhealth>/concrete_suppliers.json`.
 
 **Unused PO (2026-08-25):** the "two tools, one story" join. `po_tracker.py` reads the office PO
 tracker workbook (`ACB_PO_TRACKER_XLSX`, READ-ONLY) and `bill_rows.build_po_index()` pulls QBO
@@ -605,6 +611,7 @@ flowchart LR
     EXP["qbo-export/\nqbo_export.py"]:::tool
     RECODE["one-offs/\nqbo_recode_review.py"]:::tool
     LOANS["one-offs/\nloans_to_subs_audit.py"]:::tool
+    CCAUD["one-offs/\nconcrete_cost_code_audit.py"]:::tool
 
     P1[("OneDrive\nPROJECT P&Ls")]:::out
     P2[("Equipment_Debt_Schedule_v2.xlsx\nbeside the script")]:::out
@@ -612,6 +619,7 @@ flowchart LR
     P4[("OneDrive\n-Inbox- Project Report Exports")]:::out
     P5[("QBO WRITE — gated\nxlsx audit · Approved=Y · --commit")]:::gate
     P7[("OneDrive QBO Audits xlsx\n+ QBO WRITE — gated\nConfirm Sub-Account · --commit")]:::gate
+    P8[("OneDrive QBO Audits\nConcrete Cost Code Audit.xlsx")]:::out
 
     QBO --> PNL --> P1
     WIPM -->|"Contract/ETC/COs/STATUS auto-pull\n(typed override still wins)"| PNL
@@ -622,6 +630,7 @@ flowchart LR
     QBO --> EXP --> P4
     QBO --> RECODE --> P5
     QBO --> LOANS --> P7
+    QBO --> CCAUD --> P8
 ```
 
 **`one-offs/schedule_report.py`** (read-only) — standalone weekly crew-schedule stage
@@ -644,6 +653,17 @@ carries a user-owned `CLEARED?` (Y/N) column and is STATEFUL — a refresh prese
 marks (merged by txn id) and prunes long-cleared checks. Output `~/Documents/CompanyHealth/
 Money Out Register.xlsx` (chmod 600); the aged-&gt;30-days unmarked checks are the chase
 list, surfaced on the company dashboard.
+
+**`one-offs/concrete_cost_code_audit.py`** (read-only QBO, the user 2026-08-25) - vendors code
+to the wrong cost-code family. Cost-code NUMBER = the family (1 Concrete · 2/3/4 material ·
+5/51/52 equip · 6 labor; `shared/qbo_costs`). The script CAPTURES each vendor's coding TYPE from
+its `*1` vs `*2-4` split - **concrete** (ready-mix → all `*1`), **material** (rebar/lumber → never
+`*1`/`*5`/`*6`, e.g. RCI), **both** (concrete + material, e.g. Preferred Materials → a yardage/
+ready-mix MEMO line must be `*1`) - then flags every line that breaks its type's rule. Tunable
+(`--threshold`/`--min-lines`) with an override JSON kept OUTSIDE the repo
+(`<companyhealth>/concrete_suppliers.json`, `{concrete/material/both/exclude}`). Output
+OneDrive `Works In Progress/QBO Audits/Concrete Cost Code Audit.xlsx` (Vendors · Miscoded Lines ·
+Summary; plain, `assert_clean`).
 
 **`one-offs/legacy_job_cost_pull.py`** (read-only QBO) — costs + billing for an OLDER
 job whose lines were never consistently project-coded. Plain "costs for this customer"
