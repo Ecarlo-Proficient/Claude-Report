@@ -735,7 +735,22 @@ tr.ag-total > td.ag0, tr.ag-total > td.ag1, tr.ag-total > td.ag2, tr.ag-total > 
 .aging-grid tr.bill-group > td { background: var(--surface-2); }
 .aging-grid tr.bill-group:hover > td { background: var(--row-hover); }
 /* Frozen header: bound the scroll box so the base .grid sticky thead truly freezes. */
-.inv-scroll { max-height: calc(100vh - 300px); min-height: 320px; overflow: auto; }
+/* Bounded so the sticky column header freezes; taller now that the KPI tiles live INSIDE it
+   (they scroll away with the list - owner 2026-08-25 "freeze the header, not the KPI strip"). */
+.inv-scroll { max-height: calc(100vh - 200px); min-height: 340px; overflow: auto; }
+.inv-tiles { padding: 4px 2px 12px; }
+/* Subtle dark scrollbars app-wide - the default light track reads as a white bar in dark mode
+   (owner 2026-08-25). Transparent track, a faint thumb that darkens on hover. */
+.table-scroll, .panel-body, .msel-menu { scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-dim) 45%, transparent) transparent; }
+.table-scroll::-webkit-scrollbar, .panel-body::-webkit-scrollbar, .msel-menu::-webkit-scrollbar { width: 11px; height: 11px; }
+.table-scroll::-webkit-scrollbar-track, .panel-body::-webkit-scrollbar-track, .msel-menu::-webkit-scrollbar-track { background: transparent; }
+.table-scroll::-webkit-scrollbar-thumb, .panel-body::-webkit-scrollbar-thumb, .msel-menu::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-dim) 42%, transparent); border-radius: 7px;
+  border: 3px solid transparent; background-clip: padding-box; }
+.table-scroll::-webkit-scrollbar-thumb:hover, .panel-body::-webkit-scrollbar-thumb:hover, .msel-menu::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text-dim) 68%, transparent); background-clip: padding-box; }
+.table-scroll::-webkit-scrollbar-corner, .panel-body::-webkit-scrollbar-corner { background: transparent; }
 .aging-grid thead th { box-shadow: inset 0 -1px var(--border); z-index: 2; }
 /* Project sub-band inside a client group: indented, lighter than the client band. */
 .aging-grid tr.bill-subgroup > td { background: color-mix(in srgb, var(--surface-2) 55%, transparent);

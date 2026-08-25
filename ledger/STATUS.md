@@ -4,6 +4,13 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Open Invoices: freeze ONLY the column header + kill the white scrollbar (owner, 2026-08-25).** The
+  frozen-header bounded box was pinning the aging KPI tiles too. Moved `#invStats` INSIDE `.inv-scroll`
+  (above the table) so the tiles scroll away with the list while the sticky column header still freezes;
+  filters stay fixed above (their dropdowns need to escape the scroll). Enlarged the box (tiles no longer
+  sit above it). Added **dark, subtle scrollbars** app-wide (`.table-scroll` / `.panel-body` / `.msel-menu`)
+  - the default light track read as a "white bar" in dark mode. Verified: tiles scroll away, header pins at
+  container-top 0, filters persist.
 - **Payments tab: fixed blank + weeks/months breakdown (owner, 2026-08-25).** The tab rendered its KPI
   strip but a BLANK table. Root cause: the Pay Bills tab (added earlier this session) reused
   `id="payTable"`, colliding with the Payments table's own `id="payTable"`, so `buildHead("#payTable")`
