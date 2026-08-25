@@ -316,6 +316,14 @@ rows in Excel but exactly one project in QBO, with no way to split costs between
 sibling rows show a muted `see MFD192` marker, which `SUM()` ignores so the totals row
 still counts each job once.
 
+**The seed copies sheet CHROME too** (2026-08-25). openpyxl carries none of it with a
+cell-by-cell copy: tab colour, orientation, fit-to-page, margins, zoom and the print area.
+All of it is print behaviour, so it is invisible on screen and only shows up when the report
+is PDF'd for a bank. `copy_sheet_chrome()` runs from both `seed()` and `build_columns()`, so
+an existing tab self-heals; it fills only what is unset, so it never fights a hand
+adjustment. The print area is the one thing deliberately widened rather than copied — the
+source's stops at column L, which predates the new columns.
+
 **Retainage comes from the GL, not from invoice lines** (2026-08-25). QBO's `99 - Retainage`
 invoice item posts to a real Other Current Asset account, `Retainage Receivable`, so the
 per-job balance of that account is the answer and it is read from the `GeneralLedger`

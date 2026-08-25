@@ -224,6 +224,64 @@ def anchor_row(ws, rows: List[int]) -> int:
 
 # ─────────────────────────── seed from the live tab ───────────────────────────
 
+def copy_sheet_chrome(src, ws, force: bool = False) -> List[str]:
+    """Copy the sheet-level chrome openpyxl does NOT carry with cell copies:
+    tab colour, orientation, fit-to-page, margins, zoom, and the print area.
+
+    Missed on the first build (2026-08-25) and only caught by diffing the two
+    sheets attribute by attribute before retiring 'WIP - MFD'. Cell values,
+    styles, merges, comments, dimensions, filters and validations all copied
+    fine - this was the entire gap, and every item in it is print behaviour,
+    which is exactly what nobody notices until the report comes out wrong.
+
+    Self-healing: with force=False it only fills in what is UNSET on the
+    target, so a tab already built by the earlier version gets fixed once and
+    a later hand adjustment is never fought. Returns what it changed."""
+    done: List[str] = []
+
+    if force or ws.sheet_properties.tabColor is None:
+        if src.sheet_properties.tabColor is not None:
+            ws.sheet_properties.tabColor = copy(src.sheet_properties.tabColor)
+            done.append("tab colour")
+
+    # Test the FLAG, not the container: openpyxl hands back an empty
+    # PageSetupProperties object rather than None, so a `is None` check on the
+    # container silently skips this and fit-to-page never gets copied - which
+    # leaves fitToHeight and orientation set but not actually honoured on print.
+    sp = src.sheet_properties.pageSetUpPr
+    tgt_fit = getattr(ws.sheet_properties.pageSetUpPr, "fitToPage", None)
+    if sp is not None and sp.fitToPage and (force or not tgt_fit):
+        ws.sheet_properties.pageSetUpPr = copy(sp)
+        done.append("fit-to-page")
+
+    for field in ("orientation", "paperSize", "scale", "fitToWidth", "fitToHeight"):
+        val = getattr(src.page_setup, field, None)
+        if val is None:
+            continue
+        if force or getattr(ws.page_setup, field, None) is None:
+            setattr(ws.page_setup, field, val)
+            done.append(f"page {field}")
+
+    if force or ws.page_margins.left != src.page_margins.left:
+        ws.page_margins = copy(src.page_margins)
+        done.append("margins")
+
+    if src.sheet_view.zoomScaleNormal and (force or not ws.sheet_view.zoomScaleNormal):
+        ws.sheet_view.zoomScaleNormal = src.sheet_view.zoomScaleNormal
+        done.append("zoom")
+
+    # Print area. The source's own area stops at column L - it predates both
+    # the Total Retainage column and everything this script adds, so copying it
+    # verbatim would hand back a printed report missing the new work. Span the
+    # full block instead, same first cell and same last row as theirs.
+    if force or not ws.print_area:
+        last_row = totals_rows(ws)[1] or max(data_rows(ws))
+        ws.print_area = f"$B$2:${get_column_letter(max(NEW_COLS))}${last_row}"
+        done.append("print area")
+
+    return done
+
+
 def seed(wb) -> None:
     """Rebuild 'Test - MFD' as a cell-for-cell copy of 'WIP - MFD'."""
     src = wb[SOURCE_TAB]
@@ -252,6 +310,9 @@ def seed(wb) -> None:
         ws.row_dimensions[key].height = dim.height
         ws.row_dimensions[key].hidden = dim.hidden
     ws.sheet_format.defaultRowHeight = src.sheet_format.defaultRowHeight
+    ws.sheet_view.showGridLines = src.sheet_view.showGridLines
+    if src.freeze_panes:
+        ws.freeze_panes = src.freeze_panes
 
 
 # ─────────────────────────── the new columns ───────────────────────────
@@ -354,6 +415,12 @@ def build_columns(ws) -> None:
 
     _build_totals(ws, rows)
     _build_key(ws, rows)
+
+    src = ws.parent[SOURCE_TAB] if SOURCE_TAB in ws.parent.sheetnames else None
+    if src is not None:
+        healed = copy_sheet_chrome(src, ws)
+        if healed:
+            print(f"  sheet chrome filled in from '{SOURCE_TAB}': {', '.join(healed)}")
 
 
 def _build_totals(ws, rows: List[int]) -> None:

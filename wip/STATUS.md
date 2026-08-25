@@ -891,3 +891,38 @@ copy of the already-built tab: `assert_clean` passes, B..M still byte-identical.
   that was invoiced and never taken off the WIP — but that is a call for a person, not the
   script. Per-job figures are in the vault log; repo rule 7 keeps dollar exposures out of
   this file.
+
+## 2026-08-25 (later still) — replacement audit: the seed was missing sheet CHROME
+
+Before retiring `WIP - MFD`, both sheets were diffed attribute by attribute. **The data copy
+was complete** — cell values, formulas, every style facet, merges, column widths, row
+heights, hidden state, comments, conditional formatting, data validation, hyperlinks,
+images/charts, autofilter and freeze panes were all identical or absent in both.
+
+**What the seed had NOT copied: sheet-level chrome, all of it print behaviour.** Tab colour,
+page orientation (landscape), `fitToHeight=0`, `fitToPage`, page margins, zoom, and the
+**print area**. openpyxl does not carry any of these with a cell-by-cell copy. Nothing here
+shows up on screen, which is why it survived the first build unnoticed — it only appears
+when the report is printed or PDF'd, and MFD's WIP goes to banks.
+
+Fixed by `copy_sheet_chrome(src, ws, force=False)`, called from `seed()` and from
+`build_columns()` so a tab built by an earlier version **self-heals on the next sync**
+rather than needing a re-seed. With `force=False` it fills in only what is UNSET on the
+target, so it never fights a later hand adjustment.
+
+**Trap inside the fix:** test `pageSetUpPr.fitToPage`, NOT `pageSetUpPr is None`. openpyxl
+returns an empty `PageSetupProperties` object rather than `None`, so a container check
+silently skips it — leaving orientation and `fitToHeight` set but not actually honoured,
+which prints across pages while every attribute reads correct in code.
+
+**Print area was deliberately WIDENED, not copied verbatim** — `$B$2:$L$15` → `$B$2:$T$15`.
+The source's area stops at column L: it predates both the Total Retainage column (M) and
+everything this script adds, so a verbatim copy would print a report missing the new
+columns. Same first cell and same last row as theirs; only the column span changed. To go
+back to the original span, set `ws.print_area` in `copy_sheet_chrome`.
+
+**Nothing else in the workbook references `'WIP - MFD'`** — checked every sheet XML part.
+The only reference is its own print-area defined name, which retires with the sheet. So
+deleting it breaks no formula anywhere.
+
+**Verdict: `Test - MFD` is a faithful superset of `WIP - MFD` and safe to swap in.**
