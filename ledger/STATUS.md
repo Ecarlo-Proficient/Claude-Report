@@ -4,6 +4,15 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Payments "Unlocks (AP)": scope to the DRAW, not the whole project (owner, 2026-08-25: "use draw
+  period, you are grabbing all costs for the project").** A $460K Tri-C check showed it unlocked $1.1M of
+  AP - because `payUnlockBills` matched open vendor bills by `project_no` (every open bill on CP800, 81
+  bills), so every payment on a job showed that job's entire AP backlog, identical across payments. Bills
+  carry `invoice_no` (the matched draw), and a payment's applications carry the draw `invoice_no` it paid,
+  so the fix indexes open bills by DRAW (`payOpenBillsByDraw`) and matches on that. Now 37671 correctly
+  shows its draw 34431's bills = **$92,168 · 15**, not the project's $1.1M. Updated the hint/tooltips to say
+  "the AP this payment actually funds, not the whole job's backlog." Frontend-only (BILLS already carry
+  `invoice_no`).
 - **Dark-mode legibility pass (owner, 2026-08-25: "hard to see").** Brightened the dark tokens:
   `--text-dim` #98a2b3 -> #aeb9c9 (secondary text is everywhere), `--border` #2a323d -> #35404f (faint
   separators), a touch more surface separation, and a brighter `--row-hover`. The accent is a per-user

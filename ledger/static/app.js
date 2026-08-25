@@ -2756,17 +2756,24 @@ function renderCustomers() {
 // ══ PAYMENTS ═════════════════════════════════════════════════════════════════
 // Each row is ONE payment transaction (money IN): Client · Payment Ref # · Payment Type ·
 // Amount Paid. Expand it to see the invoices it paid (invoice # · total open · amount applied).
-// "Unlocks (AP)" ties the money-in to money-out: the open vendor bills on that payment's
-// project(s) - click it and the side panel lists them (talks to the Bills tab data).
+// "Unlocks (AP)" ties the money-in to money-out: the open vendor bills matched to the DRAW(S)
+// this payment paid (bill.invoice_no) - NOT every bill on the project - click it and the side
+// panel lists them (talks to the Bills tab data).
 // Sourced from QBO Payment objects (load_payments.py → payment / payment_application).
-function payOpenBillsByProject() {
+// Open vendor bills indexed by the DRAW (AR invoice) they're matched to - NOT by project.
+// A payment pays a specific draw; only the bills tied to that draw are what it unlocks, not the
+// whole project's AP backlog (owner 2026-08-25: "use draw period, you are grabbing all costs").
+function payOpenBillsByDraw() {
   const idx = {};
-  for (const b of (BILLS || [])) { if (num(b.open_balance) > 0.005 && b.project_no) (idx[b.project_no] ||= []).push(b); }
+  for (const b of (BILLS || [])) {
+    const draw = b.invoice_no || b.matched_invoice;
+    if (num(b.open_balance) > 0.005 && draw) (idx[String(draw)] ||= []).push(b);
+  }
   return idx;
 }
 function payUnlockBills(p, idx) {
-  const projs = [...new Set((p.applications || []).map(a => a.project_no).filter(Boolean))];
-  let bills = []; for (const pr of projs) bills = bills.concat(idx[pr] || []);
+  const draws = [...new Set((p.applications || []).map(a => a.invoice_no).filter(Boolean).map(String))];
+  let bills = []; for (const d of draws) bills = bills.concat(idx[d] || []);
   return bills;
 }
 function renderPayments() {
@@ -2774,7 +2781,7 @@ function renderPayments() {
   const pays = PAY.payments || [];
   { const n = $("#payNote"); if (n) n.textContent = pays.length ? `(${pays.length} payments · ${money(PAY.total_received)} received)` : "(no payment data - run load_payments.py)"; }
   body.innerHTML = "";
-  const billIdx = payOpenBillsByProject();
+  const billIdx = payOpenBillsByDraw();
   const stats = document.createElement("div"); stats.className = "kpi-row";
   for (const [l, v] of [["Received", money(PAY.total_received)], ["Payments", String(pays.length)],
                         ["Invoices paid", String(PAY.invoices_paid || 0)]]) {
@@ -2783,7 +2790,7 @@ function renderPayments() {
   body.appendChild(stats);
   const head = document.createElement("div"); head.className = "list-head";
   const hint = document.createElement("p"); hint.className = "hint"; hint.style.margin = "0";
-  hint.innerHTML = "Each row is a <b>payment received</b>. Click it to see the invoices it paid (the money that funds the job's costs). <b>Unlocks (AP)</b> is the open vendor bills on that job.";
+  hint.innerHTML = "Each row is a <b>payment received</b>. Click it to see the invoices (draws) it paid. <b>Unlocks (AP)</b> is the open vendor bills tied to those same draws - the AP this payment actually funds, not the whole job's backlog.";
   head.appendChild(hint);
   const actions = document.createElement("div"); actions.className = "list-actions";
   const seg = document.createElement("div"); seg.className = "seg"; seg.title = "Break cash-in down by period";
@@ -2855,7 +2862,7 @@ function renderPayments() {
       const sum = bills.reduce((t, b) => t + num(b.open_balance), 0);
       const link = document.createElement("span"); link.className = "unlock-link";
       link.textContent = `${money(sum)} · ${bills.length}`;
-      link.title = "See the open vendor bills this payment lets you pay out";
+      link.title = "Open vendor bills on the draw(s) this payment paid - the AP it funds";
       link.onclick = (e) => { e.stopPropagation(); openPaymentBills(p, bills); };
       uc.appendChild(link);
     } else uc.appendChild(document.createTextNode("–"));
@@ -2900,7 +2907,7 @@ function openPaymentBills(p, bills) {
   $("#payBillsSub").textContent = `${fmtDateShort(p.txn_date)} · ${money(p.total_amt)} in · unlocks ${money(sum)} AP across ${projs.length} job${projs.length === 1 ? "" : "s"}`;
   const body = $("#payBillsBody"); body.innerHTML = "";
   const intro = document.createElement("p"); intro.className = "hint";
-  intro.textContent = "Open vendor bills on this payment's project(s) - the cash that just came in can go out to clear these.";
+  intro.textContent = "Open vendor bills tied to the draw(s) this payment paid - the AP this cash-in actually funds (not the whole job).";
   body.appendChild(intro);
   const byProj = new Map();
   for (const b of bills) { const k = b.project_no || "–"; if (!byProj.has(k)) byProj.set(k, []); byProj.get(k).push(b); }
