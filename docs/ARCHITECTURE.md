@@ -297,6 +297,7 @@ flowchart LR
     WMTAB --> MASTER
     MFDCOLS ==>|"column order + formulas"| MFDT
     MFDT -->|"script-owned cols, in place"| MFDTAB
+    MFDTAB -.->|"typed ETC wins over\n'WIP Master' contract÷markup"| MASTER
     MFDT --> MFDLOG
     CPR -.->|"scan reused by"| MASTER
     RPR -.->|"classify/write reused by"| MASTER

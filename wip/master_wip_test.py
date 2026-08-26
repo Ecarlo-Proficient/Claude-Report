@@ -34,6 +34,66 @@ MCOL_PROJ, MCOL_NAME, MCOL_CONTRACT, MCOL_ETC = 1, 2, 5, 6
 
 _MFD_ETC_FORMULA = re.compile(r"^=\(?\s*E(\d+)\s*/\s*([0-9.]+)\s*\)?$", re.I)
 
+# The MFD division tab — where MFD now types a real ETC (mfd_wip_test.py).
+MFD_SHEET = "WIP - MFD"
+MFD_HDR_ROW = 6
+_MFD_JOB_RE = re.compile(r"^\s*(\d{2,4})\b")
+
+
+def read_mfd_etc_from_division_tab(wip_path: Path) -> dict:
+    """{job -> ETC} typed by MFD on the 'WIP - MFD' tab.
+
+    WHY THIS BEATS THE MASTER'S FORMULA (the owner, 2026-08-26)
+    'WIP Master'!F is `=(E/markup)` — contract ÷ markup. The WIP standard calls
+    that a FALLBACK only: it is the contract worked backwards, not an estimator's
+    build. Once MFD types a real ETC on their own tab, that is the budget and the
+    divisor is just an echo of the contract. So the typed value wins and the
+    formula stays as the fallback for jobs nobody has filled in yet.
+
+    A job is only taken from the tab when EVERY row for it carries a typed number.
+    MFD192 is three contract rows against one job-level ETC (the owner: "ignore for
+    now"), so a partial sum would understate the budget — those jobs fall through
+    to the divisor formula instead, which is exactly what a fallback is for.
+
+    Read BY HEADER NAME: the tab's column order is owned by mfd_wip_cols and has
+    already moved twice. Never read it by position. Returns {} if the tab is gone.
+    """
+    try:
+        wb = load_workbook(wip_path, data_only=True, read_only=True)
+    except Exception:
+        return {}
+    try:
+        if MFD_SHEET not in wb.sheetnames:
+            return {}
+        ws = wb[MFD_SHEET]
+        cols = {}
+        for c in range(1, ws.max_column + 1):
+            h = str(ws.cell(MFD_HDR_ROW, c).value or "").strip().upper()
+            if h and h not in cols:
+                cols[h] = c
+        if "PROJECT" not in cols or "ETC" not in cols:
+            return {}
+
+        per_job: dict = {}
+        for r in range(MFD_HDR_ROW + 1, ws.max_row + 1):
+            label = ws.cell(r, cols["PROJECT"]).value
+            if not str(label or "").strip():
+                break
+            m = _MFD_JOB_RE.match(str(label))
+            if not m:
+                continue
+            job = f"MFD{m.group(1)}"
+            per_job.setdefault(job, []).append(
+                RP._money(ws.cell(r, cols["ETC"]).value))
+
+        out = {}
+        for job, vals in per_job.items():
+            if vals and all(v for v in vals):        # every row filled, none zero
+                out[job] = sum(vals)
+        return out
+    finally:
+        wb.close()
+
 
 def read_mfd_from_master(wip_path: Path):
     """MFD#### rows from the 'WIP Master' tab — the master sheet IS the MFD
@@ -46,6 +106,10 @@ def read_mfd_from_master(wip_path: Path):
     data_only read returns None — which silently blanked MFD's entire budget
     (caught by the change audit, 2026-08-03). Read the cached value, and when
     it is missing evaluate the sheet's own divisor formula instead."""
+    typed_etc = read_mfd_etc_from_division_tab(wip_path)
+    if typed_etc:
+        print(f"    · MFD ETC from '{MFD_SHEET}' for: "
+              f"{', '.join(sorted(typed_etc))}")
     wb = load_workbook(wip_path, data_only=True, read_only=True)
     fwb = load_workbook(wip_path, data_only=False, read_only=True)
     ws, fws = wb[MASTER_SHEET], fwb[MASTER_SHEET]
@@ -56,7 +120,12 @@ def read_mfd_from_master(wip_path: Path):
             continue
         proj = str(proj).strip().upper()
         contract = RP._money(ws.cell(r, MCOL_CONTRACT).value)
-        etc = RP._money(ws.cell(r, MCOL_ETC).value)
+        # MFD's own typed ETC wins over the master's contract-divided-by-markup
+        # formula; the formula stays as the fallback for jobs not yet filled in.
+        etc = typed_etc.get(proj)
+        etc_src = f"'{MFD_SHEET}' (typed by MFD)" if etc is not None else None
+        if etc is None:
+            etc = RP._money(ws.cell(r, MCOL_ETC).value)
         if etc is None and contract:
             m = _MFD_ETC_FORMULA.match(
                 str(fws.cell(r, MCOL_ETC).value or "").replace(" ", ""))
@@ -71,7 +140,8 @@ def read_mfd_from_master(wip_path: Path):
         row.takeoff_path = wip_path          # contract/ETC link → the master tab
         row.src_link = str(wip_path)
         row.src_fragment = W._sheet_fragment(MASTER_SHEET, f"A{r}")
-        row.notes.append(f"Contract/ETC from '{MASTER_SHEET}' row {r}")
+        row.notes.append(f"Contract from '{MASTER_SHEET}' row {r}; "
+                         f"ETC from {etc_src or f'{MASTER_SHEET} row {r}'}")
         rows.append(row)
     wb.close()
     fwb.close()

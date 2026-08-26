@@ -1064,3 +1064,44 @@ value carried, chrome unchanged, `assert_clean` passes.
 
 **The audit trail proved itself here** — it caught MFD177's ETC being entered between runs
 (`None -> 7,416,459.65`) without anyone having to mention it.
+
+## 2026-08-26 (later still) — the master now prefers MFD's TYPED ETC
+
+`master_wip_test.read_mfd_from_master` read MFD's ETC off `'WIP Master'`!F, which is
+`=(E/markup)` — the contract divided by markup. The WIP standard calls that a **fallback
+only**: it is the contract worked backwards, not an estimator's build. Now that MFD types a
+real ETC on their own tab, that value is the budget and the divisor is just an echo of the
+contract.
+
+**New `read_mfd_etc_from_division_tab()`** returns `{job -> ETC}` from `'WIP - MFD'`, and the
+typed value wins. The master's formula stays as the fallback for jobs nobody has filled in.
+Every row's note now says which source it used, so a number can always be traced:
+
+```
+MFD177   Contract from 'WIP Master' row 4; ETC from 'WIP - MFD' (typed by MFD)
+MFD192   Contract from 'WIP Master' row 5; ETC from WIP Master row 5
+MFD325   Contract from 'WIP Master' row 6; ETC from WIP Master row 6
+```
+
+**A job is only taken from the tab when EVERY row for it carries a typed number.** MFD192 is
+three contract rows against one job-level ETC, so a partial sum would understate the budget —
+it falls through to the divisor instead, which is exactly what a fallback is for.
+
+**Read BY HEADER NAME.** The division tab's column order is owned by `mfd_wip_cols` and has
+already moved twice; reading it by position would break on the next reorder.
+
+**Contract is NOT taken from the division tab, only ETC.** `'WIP Master'` stays the contract
+source. The two disagree on MFD192 (master 3,820,759 vs the tab's three contracts totalling
+4,188,218.64) and that gap is a known one the owner reports to the bank deliberately — not
+something this change should silently paper over.
+
+## OPEN ISSUES
+
+- **MFD192's ETC is unresolved and parked** (the owner, 2026-08-26: *"ignore for now"*). Two
+  problems stacked: one job-level ETC against three contract rows, AND that ETC is built on a
+  contract 367K below the tab's combined total. Until both are settled, MFD192's GP% on
+  either sheet is not trustworthy. The fallback keeps it working, it does not make it right.
+- **MFD325's ETC fits exactly** (its master contract matches the tab's revised contract to
+  the penny) and **MFD177's is ~85K light**. Neither is typed on the tab yet, so both still
+  come from the divisor.
+- **MFD295 has no ETC anywhere** — it is not on `'WIP Master'` at all.
