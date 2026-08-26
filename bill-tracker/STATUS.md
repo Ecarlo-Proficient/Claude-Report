@@ -91,6 +91,13 @@ no business findings, dollar exposures, or owner analyses (those live in the own
   Overrides live OUTSIDE the repo at `<companyhealth>/concrete_suppliers.json` (vendor names). Live
   run (3,697 bills / 13,030 lines): overrides cut miscodes 163→94; origin split 29 upstream (PO/
   super-PM) · 63 no-PO (direct entry) · 0 deviated. `hauler` is override-only (not auto-detected).
+- **Cost Code: skip non-job fees / read the memo (2026-08-25, owner).** Credit-card, finance, bank,
+  and late fees legitimately post to an EXPENSE ACCOUNT, not a cost code - `shared/cost_code_audit`
+  now skips any line whose memo/bill#/account reads as one (`is_nonjob`), and a concrete vendor's
+  account line (no cost code) only flags when its MEMO reads as a real concrete purchase
+  (`concrete_memo`), not as overhead. Cut the live count 94→68. **Open question:** ready-mix vendors
+  billing PUMP (`*51`) - likely legitimate (they provide the pump), so concrete-vendor flagging may
+  need to allow `*51/*52`; pending owner call.
 
 - **No realm in the terminal (2026-08-06, owner).** The auth step printed
   `ok. company_id=<realm>`; removed — it now just prints `ok.`, consistent with `sync-ar`

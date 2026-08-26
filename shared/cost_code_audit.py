@@ -46,6 +46,14 @@ _CONCRETE_MEMO_RE = re.compile(
     r"\b(?:\d+(?:\.\d+)?\s*(?:C\.?Y\.?|CU\.?\s*YD|YDS?|YARDS?|CUBIC)"
     r"|SACKS?|SCK|SACK\s*MIX|CONCRETE|READY[\s-]*MIX|REDI[\s-]*MIX|REDIMIX)\b",
     re.IGNORECASE)
+# Non-job charges that legitimately post to an EXPENSE ACCOUNT, not a cost code
+# (the user 2026-08-25): credit-card / finance / bank / late fees. Read the memo,
+# bill #, or account and NEVER flag these as a coding miss.
+_NONJOB_MEMO_RE = re.compile(
+    r"\b(?:CC|CREDIT\s*CARD|FINANCE\s*CHARGE|LATE\s*(?:CHARGE|FEE|PAYMENT)|"
+    r"INTEREST|SERVICE\s*CHARGE|BANK\s*(?:CHARGE|FEE)|CONVENIENCE\s*FEE|"
+    r"PROCESSING\s*FEE|SURCHARGE|MONTHLY\s*FEE|STATEMENT\s*FEE)\b",
+    re.IGNORECASE)
 
 TYPE_LABEL = {"concrete": "Concrete", "material": "Material", "both": "Both (conc+mat)",
               "hauler": "Hauler (haul-off OK)", "review": "Review - possible"}
@@ -57,6 +65,13 @@ OVERRIDE_TYPES = ("concrete", "material", "both", "hauler")
 def concrete_memo(desc: str) -> bool:
     """True if a line description reads as concrete yardage / ready-mix."""
     return bool(_CONCRETE_MEMO_RE.search(desc or ""))
+
+
+def is_nonjob(text: str) -> bool:
+    """True if the text (memo / bill # / account) reads as a credit-card, finance,
+    bank, or late fee - overhead that belongs in an expense account, not a cost
+    code, so it must never be flagged as a coding miss."""
+    return bool(_NONJOB_MEMO_RE.search(text or ""))
 
 
 def code_families(cost_code: str) -> Tuple[Optional[str], Optional[str]]:
@@ -170,6 +185,11 @@ def flag_lines(rows: List[dict], vtype: Dict[str, str]) -> List[dict]:
         t = vtype.get(r["vendor"].upper())
         if t in (None, "review"):
             continue
+        # Credit-card / finance / bank / late fees legitimately hit an expense
+        # account, not a cost code - read the memo/bill#/account and skip them.
+        if (is_nonjob(r.get("desc") or "") or is_nonjob(r.get("bill_doc") or "")
+                or is_nonjob(r.get("account") or "")):
+            continue
         n = r.get("number")
         code = r.get("cost_code") or ""
         name = r.get("cost_name") or ""
@@ -182,9 +202,12 @@ def flag_lines(rows: List[dict], vtype: Dict[str, str]) -> List[dict]:
                 reason = f"{code} = {name} (expected *1 Concrete)"
             elif code:
                 reason = f'Item "{code}" is not a cost code (expected *1 Concrete)'
+            elif concrete_memo(r.get("desc") or ""):
+                # account line whose MEMO reads as a real concrete purchase - a
+                # job cost hiding in an expense account (expected *1).
+                reason = "Concrete purchase on an account line - expected *1 Concrete"
             else:
-                reason = (f"No cost code - account line: "
-                          f"{r.get('account') or '(none)'} (expected *1 Concrete)")
+                continue   # account line, not a concrete purchase (overhead) - legit
 
         elif t in ("material", "hauler"):
             # material: rebar/lumber/aggregates only. hauler: same PLUS haul-off /
