@@ -192,15 +192,6 @@ def render(rep: str, rows, touches, live, today: dt.date) -> str:
     )
     in_play = [r for r in ordered if r["sales_status"] == IN_PLAY]
     in_play.sort(key=lambda r: r["last_contacted"] or "", reverse=True)
-    by_stage: dict[str, int] = {}
-    for r in rows:
-        by_stage[r["sales_status"]] = by_stage.get(r["sales_status"], 0) + 1
-
-    # ── summary chips ──
-    chips = []
-    for st, (label, _rank, cls) in sorted(STAGES.items(), key=lambda kv: kv[1][1]):
-        if by_stage.get(st):
-            chips.append(f'<div class="chip {cls}"><b>{by_stage[st]}</b><span>{e(label)}</span></div>')
 
     # ── cards for the live conversations ──
     cards = []
@@ -265,17 +256,7 @@ def render(rep: str, rows, touches, live, today: dt.date) -> str:
  header{{border-bottom:2px solid var(--ink);padding-bottom:14px;margin-bottom:16px;}}
  h1{{font-size:23px;margin:0 0 3px;letter-spacing:-.02em;}}
  .sub{{color:var(--muted);font-size:13px;margin:0;}} .sub b{{color:var(--ink);font-weight:600;}}
- .lead{{background:var(--card);border:1px solid var(--line);border-radius:11px;padding:13px 16px;font-size:13.5px;margin:16px 0 20px;}}
- .chips{{display:flex;gap:9px;flex-wrap:wrap;margin-bottom:22px;}}
- .chip{{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:9px 13px;min-width:104px;
-  border-top:3px solid var(--line);}}
- .chip b{{display:block;font-size:20px;line-height:1.1;letter-spacing:-.02em;}}
- .chip span{{font-size:11.5px;color:var(--muted);}}
- .chip.hot{{border-top-color:var(--hot)}} .chip.live{{border-top-color:var(--live)}}
- .chip.warm{{border-top-color:var(--warm)}} .chip.cold{{border-top-color:var(--cold)}}
- .chip.dead{{border-top-color:var(--dead)}}
- h2{{font-size:13px;margin:26px 0 4px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);}}
- .h2note{{font-size:12.5px;color:var(--muted);margin:0 0 11px;}}
+ h2{{font-size:13px;margin:24px 0 10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);}}
  .acct{{background:var(--card);border:1px solid var(--line);border-radius:11px;padding:13px 15px;margin-bottom:9px;
   border-left:3px solid var(--hot);break-inside:avoid;}}
  .acct .top{{display:flex;justify-content:space-between;align-items:baseline;gap:12px;}}
@@ -313,7 +294,7 @@ def render(rep: str, rows, touches, live, today: dt.date) -> str:
   margin-left:6px;text-transform:uppercase;letter-spacing:.03em;vertical-align:middle;}}
  .foot{{margin-top:20px;font-size:11.5px;color:var(--muted);border-top:1px solid var(--line);padding-top:10px;}}
  @media print{{body{{background:#fff}} .wrap{{max-width:none;padding:0}} .tools{{display:none}}
-  .acct,.chip,.lead,table{{border-color:#ccc}} h2{{break-after:avoid}} tr{{break-inside:avoid}}
+  .acct,table{{border-color:#ccc}} h2{{break-after:avoid}} tr{{break-inside:avoid}}
   table{{overflow:visible;border-radius:0}} thead{{display:table-header-group}}}}
 </style></head><body><div class="wrap">
 
@@ -323,18 +304,10 @@ def render(rep: str, rows, touches, live, today: dt.date) -> str:
      &middot; {len(rows)} accounts</p>
 </header>
 
-<div class="lead"><b>Before you contact a builder or GC, search this list.</b> Every company here already has
-an open outreach thread. If it turns up below, coordinate with the outreach rep before reaching out, so we are
-not two voices into the same conversation. Anything not on the list is fair game.</div>
-
-<div class="chips">{''.join(chips)}</div>
-
-<h2>In conversation now</h2>
-<p class="h2note">Live threads with real back-and-forth. These are the ones to leave alone or coordinate on.</p>
+<h2>Active now</h2>
 {''.join(cards)}
 
-<h2>Full account list ({len(rows)})</h2>
-<p class="h2note">Every company in the book, live thread or not. Search by company, contact, or email.</p>
+<h2>Full list ({len(rows)})</h2>
 <div class="tools"><input id="q" type="search" placeholder="Search company, contact or email..." autocomplete="off"></div>
 <table>
  <colgroup><col style="width:32%"><col style="width:5%"><col style="width:14%"><col style="width:11%">
@@ -343,8 +316,8 @@ not two voices into the same conversation. Anything not on the list is fair game
  <tbody id="tb">{''.join(trs)}</tbody>
 </table>
 
-<p class="foot">Source: Notion Customer List via the project ledger. Stage and last-contact date are whatever the
-record says at pull time. &ldquo;Live client&rdquo; means the company is already the builder/GC on an active job.</p>
+<p class="foot">Notion Customer List via the project ledger. &ldquo;Live client&rdquo; = already the builder/GC
+on an active job.</p>
 </div>
 <script>
  var q=document.getElementById('q'),rows=[].slice.call(document.querySelectorAll('#tb tr'));
