@@ -11,9 +11,15 @@ So column ORDER is data now, exactly like wip_writer.COLS. Reordering the list b
 reorders the sheet; adding a column is one line. Positions are DERIVED - never write
 a column letter or index anywhere else in the MFD tooling, ask this module.
 
-THE GROUPING (the owner, 2026-08-25): everything MFD types sits in ONE run so entry is
-a single left-to-right pass with no calculated cell interrupting it; the QBO block is
-next; the metrics that drive decisions are furthest right.
+THE GROUPING (the owner, 2026-08-25, refined 2026-08-26): entry is a left-to-right pass;
+the QBO block is next; the metrics that drive decisions are furthest right.
+
+Group banners describe CONTENT, not who types - the bold-orange-on-grey fill already
+marks every cell MFD enters, and it does so per-cell, which a banner cannot.
+
+The one calculated column inside the entry band is REV. CONTRACT, and it belongs there:
+contract + change orders = revised contract is a single idea, and splitting the answer
+away from its inputs made no sense. Do not "tidy" it back out to the metrics block.
 
 ONE ETC, FOR THE WHOLE CONTRACT (the owner, 2026-08-26 - settled, do not re-litigate)
 There is deliberately NO 'original ETC + CO costs = revised ETC' trio here, even though
@@ -44,10 +50,18 @@ COLS: List[Tuple[str, int, str, str, str]] = [
     ("COMPLETION DATE SOG/PAVING",   17, "completion",   "",           "carry"),
     ("CUSTOMER",                     17, "customer",     "",           "carry"),
 
-    # ── ONE typing run. Do not put a calculated column inside this block. ──
-    ("CONTRACT",                     15, "contract",     "MFD ENTERS", "input"),
+    # ── the contract, and what it became. These three READ AS ONE THING: ──
+    # contract + change orders = revised contract. Separating the result from
+    # its two inputs is what the owner called out on 2026-08-26, and he was
+    # right - wip_writer groups the same trio, and project-pnl does too. A
+    # computed cell sitting between typed ones is correct HERE and nowhere else
+    # in the entry band.
+    ("CONTRACT",                     15, "contract",     "CONTRACT",   "input"),
     ("CHANGE ORDERS",                15, "co",           "",           "input"),
-    ("ETC",                          15, "etc",          "",           "input"),
+    ("REV. CONTRACT",                15, "rev_contract", "",           "calc"),
+
+    # ── the rest of what MFD types, one uninterrupted run ──────────────────
+    ("ETC",                          15, "etc",          "BUDGET & BILLING", "input"),
     ("COMPLETED TO DATE",            16, "completed",    "",           "input"),
     ("EARNED LESS RET.",             16, "earned_less",  "",           "input"),
     ("Total Retainage",              15, "retainage",    "",           "input"),
@@ -58,8 +72,7 @@ COLS: List[Tuple[str, int, str, str, str]] = [
     ("RETAINAGE (QBO)",              17, "qbo_retain",   "",           "qbo"),
 
     # ── what the numbers mean, most decision-useful furthest right ────────
-    ("REV. CONTRACT",                15, "rev_contract", "METRICS",    "calc"),
-    ("EARNED REVENUE",               15, "earned_rev",   "",           "calc"),
+    ("EARNED REVENUE",               15, "earned_rev",   "METRICS",    "calc"),
     ("% COMPLETE",                   12, "pct",          "",           "calc"),
     ("BALANCE TO FINISH INCL'N RET", 16, "balance",      "",           "calc"),
     ("COST TO COMPLETE",             17, "ctc",          "",           "calc"),

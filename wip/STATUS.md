@@ -978,9 +978,10 @@ column letter or index anywhere else in the MFD tooling — ask that module.**
 | Group | Columns |
 |---|---|
 | — | `PROJECT` `MOBE DATE` `COMPLETION DATE` `CUSTOMER` |
-| **MFD ENTERS** | `CONTRACT` `CHANGE ORDERS` `ETC` `COMPLETED TO DATE` `EARNED LESS RET.` `Total Retainage` |
+| **CONTRACT** | `CONTRACT` `CHANGE ORDERS` `REV. CONTRACT` |
+| **BUDGET & BILLING** | `ETC` `COMPLETED TO DATE` `EARNED LESS RET.` `Total Retainage` |
 | **FROM QBO** | `COSTS TO DATE` `BILLED TO DATE` `RETAINAGE (QBO)` |
-| **METRICS** | `REV. CONTRACT` `EARNED REVENUE` `% COMPLETE` `BALANCE TO FINISH` `COST TO COMPLETE` `BILLED AHEAD` `BILLED BEHIND` `GP %` |
+| **METRICS** | `EARNED REVENUE` `% COMPLETE` `BALANCE TO FINISH` `COST TO COMPLETE` `BILLED AHEAD` `BILLED BEHIND` `GP %` |
 
 21 columns, B..V (was 22 before REVISED ETC was retired 2026-08-26). Each group carries a merged banner on row 5; the QBO one is the sync stamp.
 
@@ -1105,3 +1106,41 @@ something this change should silently paper over.
   the penny) and **MFD177's is ~85K light**. Neither is typed on the tab yet, so both still
   come from the divisor.
 - **MFD295 has no ETC anywhere** — it is not on `'WIP Master'` at all.
+
+## 2026-08-26 (final) — `REV. CONTRACT` moved back beside its own inputs
+
+**The owner's correction, and he was right:** *"why would revised contract be separated from
+the contract and co???"* `REV. CONTRACT` is `CONTRACT + CHANGE ORDERS`. Putting the answer
+seven columns away from its two inputs was me over-applying "metrics on the right" to a
+column that was never a metric. `wip_writer` groups exactly that trio, and `project-pnl`
+does too — the convention was already in the repo and I quoted it before ignoring it.
+
+Layout now: **`CONTRACT` · `CHANGE ORDERS` · `REV. CONTRACT`** together, then the rest of
+the entry band, then QBO, then the metrics. 21 columns, B..V, unchanged in count.
+
+**Group banners now describe CONTENT, not who types.** `CONTRACT` · `BUDGET & BILLING` ·
+`FROM QBO` · `METRICS`. The bold-orange-on-grey fill already marks every cell MFD enters,
+per-cell, which a banner cannot — a banner reading "MFD ENTERS" over a computed
+`REV. CONTRACT` would have been wrong.
+
+**One computed cell now sits inside the entry band, and that is correct HERE and nowhere
+else.** Noted in the spec so it does not get "tidied" back out.
+
+**The spec paid for itself.** This was a one-line move in `mfd_wip_cols.COLS`; every formula
+repointed itself because they resolve columns by key. Under the old hardcoded-position code
+this was the change that used to cost a shift plus a migration guard.
+
+Verified against the pre-move backup: every MFD-typed value carried, `assert_clean` passes.
+
+## OPEN ISSUES
+
+- **MFD177's QBO retainage is negative (-26,057.51) and it is a real bookkeeping gap, not a
+  rounding artifact.** The job has billed millions since July 2025, but its
+  `Retainage Receivable` account holds only **7 transactions, all from 2026-03-01 onward**:
+  37,681.82 withheld against 63,739.33 billed out. Retainage withheld on every draw before
+  March 2026 never reached that account, then retainage was invoiced against it — including
+  a 50,766.36 "City Retainage" invoice on 04-05 — leaving a credit balance. QBO is not
+  saying retainage is owed back; it is saying roughly eight months of withholding was never
+  posted. The tab's own 207,240.28 is the figure with history behind it. **Someone in
+  accounting needs to decide whether the pre-March draws are restated or the account is
+  simply accepted as starting in March.**
