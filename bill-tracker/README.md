@@ -51,39 +51,43 @@ the audit only; they are **never** shown as a column on the display sheets.
 | `Bills` | bill | one row per bill; multi-project bills show `(multiple)`, drill to Inventory |
 | `Inventory` | line | per-line drill-down for multi-project bills |
 | `Liens` | — | live Excel FILTER over the Bills table (Lien set) |
-| `Audit - …` (×8) | mixed | one proper Excel Table per audit section — see below |
+| `Audit - Coding` / `Audit - PO` / `Audit - Bills` | mixed | THREE themed Excel Tables, each with an `Issue` filter — see below |
 
 `Lien` and `Notes` on the Bills sheet are user-editable and **preserved** across runs
 (keyed by `Bill.Id-Line.Id`).
 
-## The audit — one Excel Table per section (the user 2026-08-06)
+## The audit — THREE themed sheets (the user 2026-08-25, de-bloat from 9 tabs)
 
-Each section is its own **`Audit - …` sheet** wrapped in a proper Excel Table, so every
-column filters and sorts natively (banners can't live inside a table — that's why they're
-separate sheets). Every data row deep-links to the bill in QBO via the `Open` column. An
-empty section still renders a valid one-row table (`✓ none found`).
+The audit checks are grouped into **three filterable Excel Tables**, each with an `Issue`
+column (filter to one check) plus a `Detail` column and an `Open` QBO deep-link. Every row's
+finding logic is unchanged — only the rendering is consolidated.
 
-| Sheet | Catches |
+| Sheet | `Issue` values it merges |
 |---|---|
-| `Audit - Not Approved` | Stale NOT APPROVED bills aged past `NOT_APPROVED_BUFFER_DAYS` (Aging + Days Old columns) |
-| `Audit - Data Entry` | Empty/mismatched Class, line-desc project mismatch |
-| `Audit - Missing Project` | High-confidence uncoded job costs with no project # (non-sub) |
-| `Audit - Duplicates` | Same bill # within a vendor tree — double-entry / double-pay risk (all bills) |
-| `Audit - FW Misplaced` | **FW flatwork code on any CP job, MFD job, or base `RP####` slab** — legit only on `-FTW`; division/slab from the project #, never Class. Has Cost Code + Sub? columns |
-| `Audit - Sub No Project` | A sub **cost-code (item) line** with no project # — account-based category lines (reimbursements, fees, overhead) are excluded |
-| `Audit - Unused PO` | **QBO POs × the office PO tracker, one story.** Flags: `Open, no bill` (QBO PO Open, nothing billed) · `Stale >60d` (that, aged) · `On tracker, not in QBO` (recent UNBILLED tracker PO never issued). QBO + tracker columns side by side; `Open` deep-links the QBO PO. Freshness of the manual tracker is stamped by the header |
-| `Audit - Cost Code` | **Vendors coding to the wrong cost-code FAMILY** (the number: 1 concrete · 2/3/4 material · 5/51/52 equip · 6 labor). Each vendor's TYPE is auto-captured from its `*1`-vs-`*2/3/4` split: **concrete** (→ all `*1`), **material** (e.g. RCI → `*2/*3/*4`, never `*1`/`*5`/`*6`), **both** (e.g. Preferred Materials → a yardage/ready-mix MEMO line must be `*1`), **hauler** (trucking/haul vendors → material plus haul-off `*5` OK, only `*1`/`*6` flag; override-only). Flags every line that breaks its type's rule. **Each flag is cross-referenced to the bill's PO** (`PO #` / `PO Cost Code` / `Origin`): whether the PO ALSO carried the wrong code (**upstream** super/PM), the bill **deviated** from a correct PO, or there was **no PO** (clerk-coded). PO codes come from QBO; the PO tracker recovers the PO# when QBO left the bill unlinked. Logic in `shared/cost_code_audit.py`; override types via `<companyhealth>/concrete_suppliers.json` |
+| `Audit - Coding` | **Data Entry** (empty/mismatched Class, line-desc project mismatch) · **Missing Project** (uncoded job cost, no project #) · **FW Misplaced** (FW code on a CP/MFD/base-`RP####` slab) · **Sub No Project** (sub cost-code line, no project #) · **Cost Code** (wrong cost-code FAMILY for the vendor's type; `Detail` carries the type + PO origin) |
+| `Audit - PO` | **Unused PO** (`Open, no bill` · `Stale >60d` · `On tracker, not in QBO`) · **Missing PO** (a real COGS bill — not a sub, not expense-only — with NO PO, last 90 days). PO rows link to the QBO PO, bill rows to the bill |
+| `Audit - Bills` | **Not Approved** (stale NOT APPROVED bills) · **Duplicate** (same bill # within a vendor tree) |
 
-`Audit - Unused PO` reads a second source: the office **PO tracker** workbook (`Orders` tab,
+**Cost-code detail:** the cost-code NUMBER is the family (1 concrete · 2/3/4 material · 5/51/52
+equip · 6 labor). Each vendor's TYPE is auto-captured from its `*1`-vs-`*2/3/4` split —
+**concrete** (→ all `*1`), **material** (e.g. RCI → `*2/*3/*4`, never `*1`/`*5`/`*6`), **both**
+(e.g. Preferred Materials → a yardage/ready-mix MEMO line must be `*1`), **hauler** (trucking/haul
+→ material plus haul-off `*5` OK, only `*1`/`*6` flag; override-only). Credit-card / finance / bank
+/ late fees post to an expense account, not a cost code — never flagged. Each flag's `Detail`
+cross-references the bill's PO: **upstream** (PO also carried the wrong code), **bill deviated**, or
+**no PO**. Logic in `shared/cost_code_audit.py`; type overrides via
+`<companyhealth>/concrete_suppliers.json` (`{concrete/material/both/hauler/exclude}`).
+
+`Audit - PO` reads a second source: the office **PO tracker** workbook (`Orders` tab,
 READ-ONLY) via `po_tracker.py`. Path = `ACB_PO_TRACKER_XLSX` (default OneDrive
 `Purchase Orders/Copy 05 dic.xlsx` — the CURRENT file; the older `1.0purchase-order-tracker.xlsx`
 is ~15 months stale). If the tracker is unreadable the sheet degrades to a QBO-only view. The
 manual tracker lags QBO by weeks/months, so its last-data-date is printed on the sheet — never
 treat a blank tracker side as truth.
 
-`Audit - Duplicates`, `Audit - FW Misplaced`, and `Audit - Sub No Project` fold in what the
-standalone `duplicate_bill_audit.py`, `item_no_project_audit.py`, and `sub_bill_audit.py` did — retired 2026-08-06
-(one tool, one workbook). History note: the audit covers the tracker's population (open +
+The Duplicate / FW / Sub-No-Project checks fold in what the standalone `duplicate_bill_audit.py`,
+`item_no_project_audit.py`, and `sub_bill_audit.py` did — retired 2026-08-06 (one tool, one
+workbook). History note: the audit covers the tracker's population (open +
 paid-since-`PAID_CUTOFF_DATE`); the retired scripts could scan all-time, so pre-cutoff
 **paid** bills are out of the audit's window.
 

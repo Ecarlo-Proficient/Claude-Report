@@ -1975,6 +1975,10 @@ def _audit_table_sheet(wb, sheet_name: str, table_name: str,
                     link = _qbo_po_link(val)
                     c = ws.cell(row=r, column=c_i, value=link or None)
                     _format_data_cell(c, "link")
+                elif kind == "url":
+                    c = ws.cell(row=r, column=c_i,
+                                value=(f'=HYPERLINK("{val}","↗")' if val else None))
+                    _format_data_cell(c, "link")
                 else:
                     c = ws.cell(row=r, column=c_i, value=val)
                     _format_data_cell(c, kind)
@@ -1990,288 +1994,205 @@ def _audit_table_sheet(wb, sheet_name: str, table_name: str,
     return len(data_rows)
 
 
-def build_audit_sheets(wb, rows: List[dict],
-                       vendor_root: Optional[Dict[str, str]] = None,
-                       vendor_map: Optional[Dict[str, str]] = None) -> int:
-    """QBO audit — ONE sheet per section, each a proper Excel Table (the user
-    2026-08-06: filterable/sortable, no merged banners). Sheets (prefix 'Audit - '):
-      1. Not Approved      — stale NOT APPROVED bills (bill-grain).
-      2. Data Entry        — empty/mismatched Class, line-desc project mismatch.
-      3. Missing Project   — likely job cost with no project # (non-sub).
-      4. Duplicates        — same bill # within a vendor tree (full population).
-      5. FW Misplaced      — FW cost code on a CP / MFD / base-RP#### slab.
-      6. Sub No Project    — a sub cost-code (item) line with no project #
-                             (account-based category lines are excluded).
-
-    `rows` is the FULL population incl. sub bills. Sections 1–3 keep their exact
-    non-sub behavior; duplicates (4) and FW (5) scan the whole population; the sub
-    section (6) is subs only. Sections 4–6 fold in what the standalone
-    duplicate_bill_audit / item_no_project_audit / sub_bill_audit scripts did.
-    Returns the total flagged-entry count.
-    """
-    today = dt.date.today()
-
-    # Split the population: sections 1–3 keep their exact non-sub behavior;
-    # duplicates + FW scan the full population; the sub section is subs only.
-    display_rows = [r for r in rows if not r.get("is_sub")]
-    sub_rows     = [r for r in rows if r.get("is_sub")]
-
-    # Collect all sections' work
-    stale_bills = _stale_not_approved_bills(display_rows, today)
-    flagged: List[Tuple[dict, List[str]]] = []
-    uncoded: List[Tuple[dict, str, str]] = []   # (row, reason, division)
-    for r in display_rows:
-        issues = _audit_row_checks(r)
-        if issues:
-            flagged.append((r, issues))
-        uc = _uncoded_job_cost(r)               # uncoded lines never have a project,
-        if uc:                                  # so they can't also appear in `flagged`
-            uncoded.append((r, uc[0], uc[1]))
-    flagged.sort(key=lambda x: ((x[0].get("vendor") or "").upper(),
-                                x[0].get("bill_doc", "")))
-    uncoded.sort(key=lambda x: ((x[0].get("vendor") or "").upper(),
-                                x[0].get("bill_doc", "")))
-    # Duplicates scan the FULL population incl. subs (subsumes duplicate_bill_audit).
-    dup_groups = _duplicate_bill_groups(rows, vendor_root, vendor_map)
-
-    # FW cost code on a CP/MFD/base-RP job (full population incl. subs).
-    fw_flags: List[Tuple[dict, str]] = []
-    for r in rows:
-        reason = _fw_misplaced(r)
-        if reason:
-            fw_flags.append((r, reason))
-    fw_flags.sort(key=lambda x: ((x[0].get("division") or ""),
-                                 (x[0].get("project_num") or ""),
-                                 (x[0].get("vendor") or "").upper()))
-
-    # SUB bills missing a project # (subsumes sub_bill_audit). Cost-code items
-    # ONLY — an item/COGS line carries a real cost code (SL1, PV6…). Account-based
-    # category lines (reimbursements, fees, overhead) are out of scope here: they
-    # have no cost code and aren't job cost to chase onto a project (the user
-    # 2026-08-12).
-    sub_missing = [r for r in sub_rows
-                   if not (r.get("project_num") or "").strip()
-                   and r.get("bill_type") == "COGS"]
-    sub_missing.sort(key=lambda r: ((r.get("vendor") or "").upper(),
-                                    r.get("bill_doc", "")))
-
-    print(f"  audit: {len(stale_bills)} stale, {len(flagged)} data-entry, "
-          f"{len(uncoded)} uncoded job-cost, {len(dup_groups)} duplicate-ref group(s), "
-          f"{len(fw_flags)} FW-misplaced, {len(sub_missing)} sub missing-project")
-
-    # ── One Table sheet per section ─────────────────────────────────────
-    _audit_table_sheet(
-        wb, "Audit - Not Approved", "tblAuditNotApproved",
-        ["Bill #", "Vendor", "Bill Date", "Customer/Project", "Project #",
-         "Division", "Aging", "Days Old", "Open"],
-        ["text", "text", "date", "text", "text", "text", "text", "flag", "link"],
-        [[s["bill_doc"], s["vendor"], s["bill_date"], s["customer_name"],
-          s["project_num"] or "(none)", s["division"] or "(none)",
-          _aging_bucket_for(s["days_old"]), s["days_old"], s["bill_id"]]
-         for s in stale_bills],
-        [12, 28, 11, 40, 12, 10, 12, 9, 7],
-    )
-    _audit_table_sheet(
-        wb, "Audit - Data Entry", "tblAuditDataEntry",
-        ["Bill #", "Vendor", "Bill Date", "Customer/Project", "Project #",
-         "Division", "Class field (QBO)", "Line Description", "Issue", "Open"],
-        ["text", "text", "date", "text", "text", "text", "text", "text",
-         "text", "link"],
-        [[r.get("bill_doc", ""), r.get("vendor", ""), r.get("bill_date"),
-          r.get("customer_name", ""), r.get("project_num", "") or "(none)",
-          r.get("division", "") or "(none)", r.get("class_name", "") or "(empty)",
-          r.get("line_desc", ""), " · ".join(issues), r.get("bill_id", "")]
-         for r, issues in flagged],
-        [12, 28, 11, 40, 12, 10, 16, 40, 35, 7],
-    )
-    _audit_table_sheet(
-        wb, "Audit - Missing Project", "tblAuditMissingProject",
-        ["Bill #", "Vendor", "Bill Date", "Customer/Project", "Division",
-         "Class field (QBO)", "Line Description", "Reason", "Open"],
-        ["text", "text", "date", "text", "text", "text", "text", "text", "link"],
-        [[r.get("bill_doc", ""), r.get("vendor", ""), r.get("bill_date"),
-          r.get("customer_name", "") or "(none)", division,
-          r.get("class_name", "") or "(empty)", r.get("line_desc", ""),
-          reason, r.get("bill_id", "")]
-         for r, reason, division in uncoded],
-        [12, 28, 11, 40, 10, 16, 40, 45, 7],
-    )
-    # Duplicates — flatten groups to rows, a "Same Amount?" flag per group.
-    dup_data = []
-    for g in dup_groups:
-        same_amt = len({round(b["bill_total"], 2) for b in g}) == 1
-        flag = "YES — same $" if same_amt else "NO — amounts differ"
-        for b in g:
-            dup_data.append([
-                b["bill_doc"], b["vendor"], b["bill_date"], b["customer_name"],
-                b["root_name"] or b["vendor"], round(float(b["bill_total"]), 2),
-                flag, b["bill_id"]])
-    _audit_table_sheet(
-        wb, "Audit - Duplicates", "tblAuditDuplicates",
-        ["Ref #", "Vendor", "Bill Date", "Customer/Project", "Vendor Tree",
-         "Bill Total", "Same Amount?", "Open"],
-        ["text", "text", "date", "text", "text", "money", "text", "link"],
-        dup_data,
-        [14, 28, 11, 40, 28, 14, 18, 7],
-    )
-    _audit_table_sheet(
-        wb, "Audit - FW Misplaced", "tblAuditFW",
-        ["Bill #", "Vendor", "Bill Date", "Customer/Project", "Project #",
-         "Division", "Cost Code", "Sub?", "Line Description", "Reason", "Open"],
-        ["text", "text", "date", "text", "text", "text", "text", "text",
-         "text", "text", "link"],
-        [[r.get("bill_doc", ""), r.get("vendor", ""), r.get("bill_date"),
-          r.get("customer_name", "") or "(none)",
-          r.get("project_num", "") or "(none)", r.get("division", "") or "(none)",
-          r.get("cost_code", ""), "SUB" if r.get("is_sub") else "",
-          r.get("line_desc", ""), reason, r.get("bill_id", "")]
-         for r, reason in fw_flags],
-        [12, 28, 11, 40, 12, 10, 12, 7, 36, 44, 7],
-    )
-    _audit_table_sheet(
-        wb, "Audit - Sub No Project", "tblAuditSubNoProject",
-        ["Bill #", "Vendor", "Bill Date", "Customer/Project", "Cost Code",
-         "Line Description", "Open"],
-        ["text", "text", "date", "text", "text", "text", "link"],
-        [[r.get("bill_doc", ""), r.get("vendor", ""), r.get("bill_date"),
-          r.get("customer_name", "") or "(none)", r.get("cost_code", ""),
-          r.get("line_desc", ""), r.get("bill_id", "")]
-         for r in sub_missing],
-        [12, 28, 11, 40, 12, 44, 7],
-    )
-
-    return (len(stale_bills) + len(flagged) + len(uncoded)
-            + sum(len(g) for g in dup_groups) + len(fw_flags) + len(sub_missing))
+def _bill_url(bid: str) -> str:
+    return QBO_BILL_URL_TEMPLATE.format(bill_id=bid) if bid else ""
 
 
-def build_unused_po_sheet(wb, po_index: Dict[str, dict],
-                          tracker_by_po: Dict[str, dict],
-                          tracker_meta: dict, today: dt.date) -> int:
-    """`Audit - Unused PO` — the "two tools, one story" join between QBO purchase
-    orders and the office PO tracker (the user 2026-08-25). One row per flagged PO,
-    QBO fields and tracker fields side by side so AP can hunt down the gap:
-      • Open, no bill        — QBO PO Open with no bill linked.
-      • Stale >Nd            — that, aged past the stale threshold.
-      • On tracker, not in QBO — a recent, unbilled tracker PO never issued in QBO.
-    The tracker's freshness is stamped to the right of the header so a stale
-    manual log is never mistaken for live truth.
-    """
-    po_by_doc = index_by_doc(po_index)
-    flagged = reconcile_unused_pos(po_by_doc, tracker_by_po, today)
-
-    headers = ["PO #", "Vendor", "PO Date", "Days Open", "Job", "Amount",
-               "QBO Status", "QBO Bill?", "Tracker Bill #", "Tracker QB",
-               "Reason", "Open"]
-    kinds = ["text", "text", "date", "flag", "text", "money", "text", "text",
-             "text", "text", "text", "polink"]
-    data = [[f["po"], f["vendor"], f["po_date"],
-             f["days_open"] if f["days_open"] is not None else "",
-             f["job"], f["amount"], f["qbo_status"], f["qbo_bill"],
-             f["tracker_bill"], f["tracker_qb"], f["reason"], f["po_id"]]
-            for f in flagged]
-    _audit_table_sheet(
-        wb, "Audit - Unused PO", "tblAuditUnusedPO", headers, kinds, data,
-        [10, 24, 11, 10, 12, 13, 12, 9, 18, 13, 26, 6],
-    )
-
-    # Freshness caption to the RIGHT of the table (row 1), outside the table ref.
-    ws = wb["Audit - Unused PO"]
-    md = tracker_meta.get("max_date")
-    if tracker_meta.get("error"):
-        cap = f"PO tracker unavailable ({tracker_meta['error']}) — QBO-only view"
-    else:
-        behind = (today - md).days if md else None
-        cap = (f"Tracker: {Path(tracker_meta.get('path', '')).name} · "
-               f"data through {md} ({behind}d behind) · "
-               f"{tracker_meta.get('po_count', 0)} POs")
-    cc = ws.cell(row=1, column=len(headers) + 2, value=cap)
-    cc.font = Font(name="Calibri", size=10, italic=True, color="808080")
-    return len(flagged)
+def _po_url(pid: str) -> str:
+    return QBO_PO_URL_TEMPLATE.format(po_id=pid) if pid else ""
 
 
-def build_cost_code_sheet(wb, all_rows: List[dict],
-                          po_index: Optional[Dict[str, dict]] = None,
-                          tracker_by_po: Optional[Dict[str, dict]] = None) -> int:
-    """`Audit - Cost Code` — vendors coding to the wrong cost-code FAMILY for what
-    they sell (the user 2026-08-25). Same rules as the standalone
-    one-offs/concrete_cost_code_audit.py, sharing shared/cost_code_audit: capture
-    each vendor's TYPE (concrete / material / both) from its *1-vs-*2/3/4 split,
-    then flag every line that breaks the type's rule. Runs over the FULL bill
-    population sync-ap already pulled (incl. subs + paid-since-cutoff). An override
-    JSON (<companyhealth>/concrete_suppliers.json) forces a vendor's type."""
+def _missing_po_bills(all_rows: List[dict], today: dt.date, days: int = 90) -> List[dict]:
+    """Bills with NO PO that are real COGS purchases: not a sub, has ≥1 item/COGS
+    line (so not an expense-only bill), within the last `days` (the user 2026-08-25).
+    One row per bill. The mirror of the Unused-PO audit."""
+    cutoff = today - dt.timedelta(days=days)
+    by_bill: Dict[str, dict] = {}
+    for r in all_rows:
+        bid = r.get("bill_id")
+        if not bid:
+            continue
+        b = by_bill.setdefault(bid, {"row": r, "cogs": False, "projects": set()})
+        if r.get("bill_type") == "COGS":
+            b["cogs"] = True
+        if r.get("project_num"):
+            b["projects"].add(r["project_num"])
+    out = []
+    for bid, b in by_bill.items():
+        r = b["row"]
+        d = r.get("bill_date")
+        if (r.get("is_sub") or (r.get("po_num") or "").strip() or not b["cogs"]
+                or not (isinstance(d, dt.date) and d >= cutoff)):
+            continue
+        out.append({"bill_id": bid, "bill_doc": r.get("bill_doc", ""),
+                    "vendor": r.get("vendor", ""), "bill_date": d,
+                    "project": ", ".join(sorted(b["projects"]))
+                    or (r.get("customer_name", "") or ""),
+                    "amount": r.get("bill_total") or 0.0})
+    out.sort(key=lambda x: ((x["vendor"] or "").upper(), x["bill_date"]))
+    return out
+
+
+def _cost_code_findings(all_rows: List[dict], po_index: Optional[Dict[str, dict]],
+                        tracker_by_po: Optional[Dict[str, dict]]
+                        ) -> Tuple[List[list], Dict[str, str]]:
+    """Cost-code family miscodes → themed Coding rows, each with its PO origin.
+    Returns (rows, vtype). Same logic as the old Audit - Cost Code sheet."""
     recs = []
     for r in all_rows:
         raw = r.get("cost_code", "") or ""
         number, cost_name = code_families(raw)
-        recs.append({
-            "vendor": r.get("vendor", "") or "",
-            "number": number,
-            "cost_code": raw.split(":")[-1].strip(),
-            "cost_name": cost_name,
-            "desc": r.get("line_desc", "") or "",
-            "account": r.get("account", "") or "",
-            "bill_id": r.get("bill_id", ""),
-            "bill_doc": r.get("bill_doc", ""),
-            "date": r.get("bill_date"),
-            "project": r.get("project_num", "") or "",
-            "amount": r.get("line_amount") or 0.0,
-            "po_num": r.get("po_num", "") or "",
-        })
+        recs.append({"vendor": r.get("vendor", "") or "", "number": number,
+                     "cost_code": raw.split(":")[-1].strip(), "cost_name": cost_name,
+                     "desc": r.get("line_desc", "") or "", "account": r.get("account", "") or "",
+                     "bill_id": r.get("bill_id", ""), "bill_doc": r.get("bill_doc", ""),
+                     "date": r.get("bill_date"), "project": r.get("project_num", "") or "",
+                     "amount": r.get("line_amount") or 0.0, "po_num": r.get("po_num", "") or ""})
     override = load_override(paths.companyhealth_dir() / "concrete_suppliers.json")
     _agg, vtype = classify_vendors(recs, override=override)
     flags = flag_lines(recs, vtype)
 
-    # PO-origin cross-reference: did the linked PO already carry the wrong code
-    # (upstream super/PM) or did the bill deviate? PO cost codes come from QBO;
-    # the tracker recovers the PO # when QBO left the bill unlinked (the user
-    # 2026-08-25). The tracker's own Cost Code column is unusable (2% filled).
     po_by_doc = index_by_doc(po_index) if po_index else {}
-    bill_to_po = {}                                   # tracker Bill # → PO #
+    bill_to_po: Dict[str, str] = {}
     for po, rec in (tracker_by_po or {}).items():
         for b in (rec.get("bill_no") or "").split(","):
             b = b.strip()
             if b:
                 bill_to_po.setdefault(b, po)
-
-    def _po_for(f):
-        doc = _norm_po(f.get("po_num"))               # QBO LinkedTxn PO first
-        if not doc:
-            doc = bill_to_po.get((f.get("bill_doc") or "").strip(), "")  # tracker fallback
-        rec = po_by_doc.get(_norm_po(doc)) if doc else None
-        return doc, rec
-
+    rows = []
     for f in flags:
-        doc, rec = _po_for(f)
-        f["po_doc"] = doc or ""
-        f["po_codes"] = ", ".join(rec.get("codes", [])) if rec else ""
-        f["origin"] = po_origin(f.get("number"),
-                                rec.get("numbers") if rec else None, bool(doc))
+        doc = _norm_po(f.get("po_num")) or _norm_po(
+            bill_to_po.get((f.get("bill_doc") or "").strip(), ""))
+        rec = po_by_doc.get(doc) if doc else None
+        origin = po_origin(f.get("number"), rec.get("numbers") if rec else None, bool(doc))
+        detail = f"[{TYPE_LABEL.get(f['vtype'], '')}] {f['reason']} · {origin}"
+        rows.append(["Cost Code", f["vendor"], f["bill_doc"], f["date"], f["project"],
+                     f["cost_code"], round(float(f["amount"]), 2), detail,
+                     _bill_url(f["bill_id"])])
+    return rows, vtype
 
-    headers = ["Vendor", "Type", "Bill #", "Bill Date", "Project", "Cost Code",
-               "Cost Name", "Amount", "PO #", "PO Cost Code", "Origin",
-               "Line Description", "Reason", "Open"]
-    kinds = ["text", "text", "text", "date", "text", "text", "text", "money",
-             "text", "text", "text", "text", "text", "link"]
-    data = [[f["vendor"], TYPE_LABEL.get(f["vtype"], ""), f["bill_doc"], f["date"],
-             f["project"], f["cost_code"], f["cost_name"] or "",
-             round(float(f["amount"]), 2), f["po_doc"], f["po_codes"], f["origin"],
-             f["desc"], f["reason"], f["bill_id"]]
-            for f in flags]
+
+def build_audits(wb, all_rows: List[dict],
+                 po_index: Optional[Dict[str, dict]] = None,
+                 tracker_by_po: Optional[Dict[str, dict]] = None,
+                 tracker_meta: Optional[dict] = None,
+                 vendor_root: Optional[Dict[str, str]] = None,
+                 vendor_map: Optional[Dict[str, str]] = None) -> int:
+    """THREE themed audit sheets (the user 2026-08-25 — de-bloat from 9 tabs). Each
+    is one filterable Excel Table with an 'Issue' column so a single sheet covers a
+    family of checks:
+      Audit - Coding : Data Entry · Missing Project · FW Misplaced · Sub No Project · Cost Code
+      Audit - PO     : Unused PO · Missing PO
+      Audit - Bills  : Not Approved · Duplicates
+    All the finding logic is unchanged — only the rendering is consolidated."""
+    today = dt.date.today()
+    display_rows = [r for r in all_rows if not r.get("is_sub")]
+    sub_rows = [r for r in all_rows if r.get("is_sub")]
+
+    # ── CODING ──────────────────────────────────────────────────────────
+    coding: List[list] = []
+    for r in display_rows:
+        issues = _audit_row_checks(r)
+        if issues:
+            coding.append(["Data Entry", r.get("vendor", ""), r.get("bill_doc", ""),
+                           r.get("bill_date"),
+                           r.get("project_num", "") or (r.get("customer_name", "") or ""),
+                           "", r.get("line_amount") or 0.0,
+                           f"Class {r.get('class_name', '') or '(empty)'} · "
+                           + " · ".join(issues), _bill_url(r.get("bill_id", ""))])
+        uc = _uncoded_job_cost(r)
+        if uc:
+            coding.append(["Missing Project", r.get("vendor", ""), r.get("bill_doc", ""),
+                           r.get("bill_date"), r.get("customer_name", "") or "(none)",
+                           "", r.get("line_amount") or 0.0, uc[0],
+                           _bill_url(r.get("bill_id", ""))])
+    for r in all_rows:
+        reason = _fw_misplaced(r)
+        if reason:
+            coding.append(["FW Misplaced", r.get("vendor", ""), r.get("bill_doc", ""),
+                           r.get("bill_date"), r.get("project_num", "") or "(none)",
+                           (r.get("cost_code", "") or "").split(":")[-1].strip(),
+                           r.get("line_amount") or 0.0,
+                           ("SUB · " if r.get("is_sub") else "") + reason,
+                           _bill_url(r.get("bill_id", ""))])
+    for r in sub_rows:
+        if not (r.get("project_num") or "").strip() and r.get("bill_type") == "COGS":
+            coding.append(["Sub No Project", r.get("vendor", ""), r.get("bill_doc", ""),
+                           r.get("bill_date"), "(none)",
+                           (r.get("cost_code", "") or "").split(":")[-1].strip(),
+                           r.get("line_amount") or 0.0, r.get("line_desc", "") or "",
+                           _bill_url(r.get("bill_id", ""))])
+    cc_rows, vtype = _cost_code_findings(all_rows, po_index, tracker_by_po)
+    coding.extend(cc_rows)
+    coding.sort(key=lambda x: (x[0], (x[1] or "").upper(), str(x[2])))
     _audit_table_sheet(
-        wb, "Audit - Cost Code", "tblAuditCostCode", headers, kinds, data,
-        [26, 15, 12, 11, 11, 11, 16, 12, 10, 14, 34, 30, 40, 6],
-    )
+        wb, "Audit - Coding", "tblAuditCoding",
+        ["Issue", "Vendor", "Bill #", "Bill Date", "Project", "Cost Code",
+         "Amount", "Detail", "Open"],
+        ["text", "text", "text", "date", "text", "text", "money", "text", "url"],
+        coding, [16, 26, 12, 11, 12, 11, 12, 52, 6])
+    cnt = {t: sum(1 for v in vtype.values() if v == t)
+           for t in ("concrete", "material", "both", "hauler", "review")}
+    ws = wb["Audit - Coding"]
+    ws.cell(row=1, column=11,
+            value=(f"Cost-code vendor types: {cnt['concrete']} concrete · "
+                   f"{cnt['material']} material · {cnt['both']} both · {cnt['hauler']} "
+                   f"hauler · {cnt['review']} review")).font = Font(
+        name="Calibri", size=10, italic=True, color="808080")
 
-    # Caption: captured vendor types, to the right of the header.
-    counts = {t: sum(1 for v in vtype.values() if v == t)
-              for t in ("concrete", "material", "both", "hauler", "review")}
-    ws = wb["Audit - Cost Code"]
-    cap = (f"Vendors captured: {counts['concrete']} concrete · {counts['material']} "
-           f"material · {counts['both']} both · {counts['hauler']} hauler · "
-           f"{counts['review']} review (type override: concrete_suppliers.json)")
-    cc = ws.cell(row=1, column=len(headers) + 2, value=cap)
-    cc.font = Font(name="Calibri", size=10, italic=True, color="808080")
-    return len(flags)
+    # ── PO ──────────────────────────────────────────────────────────────
+    po: List[list] = []
+    if po_index is not None:
+        po_by_doc = index_by_doc(po_index)
+        for f in reconcile_unused_pos(po_by_doc, tracker_by_po or {}, today):
+            detail = (f"QBO {f['qbo_status']} · bill?={f['qbo_bill']} · tracker "
+                      f"bill {f['tracker_bill'] or '-'} · "
+                      f"{f['days_open'] if f['days_open'] is not None else '?'}d open")
+            po.append([f["reason"], f["vendor"], f["po"], f["po_date"], f["job"],
+                       f["amount"] or 0.0, detail, _po_url(f["po_id"])])
+    for m in _missing_po_bills(all_rows, today, 90):
+        po.append(["Missing PO (COGS, no PO)", m["vendor"], m["bill_doc"],
+                   m["bill_date"], m["project"], m["amount"] or 0.0,
+                   "COGS bill with no PO (last 90 days)", _bill_url(m["bill_id"])])
+    po.sort(key=lambda x: (x[0], (x[1] or "").upper()))
+    _audit_table_sheet(
+        wb, "Audit - PO", "tblAuditPO",
+        ["Issue", "Vendor", "PO/Bill #", "Date", "Project/Job", "Amount",
+         "Detail", "Open"],
+        ["text", "text", "text", "date", "text", "money", "text", "url"],
+        po, [26, 26, 12, 11, 12, 12, 46, 6])
+    if tracker_meta:
+        md = tracker_meta.get("max_date")
+        cap = (f"PO tracker unavailable ({tracker_meta['error']})"
+               if tracker_meta.get("error") else
+               f"PO tracker: {Path(tracker_meta.get('path', '')).name} · through {md}")
+        wb["Audit - PO"].cell(row=1, column=10, value=cap).font = Font(
+            name="Calibri", size=10, italic=True, color="808080")
+
+    # ── BILLS ───────────────────────────────────────────────────────────
+    bills: List[list] = []
+    for s in _stale_not_approved_bills(display_rows, today):
+        bills.append(["Not Approved", s["vendor"], s["bill_doc"], s["bill_date"],
+                      s["project_num"] or (s["customer_name"] or ""), "",
+                      f"{_aging_bucket_for(s['days_old'])} · {s['days_old']}d old",
+                      _bill_url(s["bill_id"])])
+    for g in _duplicate_bill_groups(all_rows, vendor_root, vendor_map):
+        same_amt = len({round(b["bill_total"], 2) for b in g}) == 1
+        flag = "same $" if same_amt else "amounts differ"
+        for b in g:
+            bills.append(["Duplicate", b["vendor"], b["bill_doc"], b["bill_date"],
+                          b["customer_name"], round(float(b["bill_total"]), 2),
+                          f"vendor tree {b['root_name'] or b['vendor']} · {flag}",
+                          _bill_url(b["bill_id"])])
+    bills.sort(key=lambda x: (x[0], (x[1] or "").upper()))
+    _audit_table_sheet(
+        wb, "Audit - Bills", "tblAuditBills",
+        ["Issue", "Vendor", "Bill/Ref #", "Date", "Project", "Amount", "Detail", "Open"],
+        ["text", "text", "text", "date", "text", "money", "text", "url"],
+        bills, [16, 26, 12, 11, 12, 12, 42, 6])
+
+    print(f"  audits: Coding {len(coding)} · PO {len(po)} · Bills {len(bills)}")
+    return len(coding) + len(po) + len(bills)
 
 
 # ─────────────────────── main ───────────────────────
@@ -2445,8 +2366,8 @@ def main() -> int:
     ws_bills = wb.create_sheet("Bills")
     ws_liens = wb.create_sheet("Liens")
     ws_inv   = wb.create_sheet("Inventory")
-    # The audit is now one Excel Table per section (build_audit_sheets), each on
-    # its own "Audit - …" sheet — created after the display sheets, below.
+    # The audit is now THREE themed Excel Tables (build_audits): Coding · PO ·
+    # Bills — created after the display sheets, below.
     # MFD/RP/CP division sheets removed 2026-07-13 (unused; Project # is on Bills).
     # Bill payments show as Pay columns on Bills, not a separate sheet (2026-07-13).
 
@@ -2467,27 +2388,23 @@ def main() -> int:
         lien_editable=True,               # Bills is the only sheet with the Lien tag + dropdown
     )
     build_liens_sheet(ws_liens)       # live FILTER view of tblBills (Lien set)
-    n_audit = build_audit_sheets(wb, all_rows,
-                                 vendor_root=vendor_root, vendor_map=vendor_map)
 
-    # Unused PO audit — QBO POs × the office PO tracker (read-only). Tracker
-    # unavailable (share unmounted / file moved) degrades to a QBO-only view.
-    print("→ loading PO tracker (read-only) + reconciling POs …")
+    # PO tracker (read-only) feeds the Unused-PO + Cost-Code PO-origin checks.
+    print("→ loading PO tracker (read-only) …")
     tracker_by_po, tracker_meta = load_po_tracker()
     if tracker_meta.get("error"):
-        print(f"  ⚠ PO tracker unavailable: {tracker_meta['error']} — Unused PO from QBO only")
+        print(f"  ⚠ PO tracker unavailable: {tracker_meta['error']} — PO checks QBO-only")
     else:
         print(f"  tracker: {tracker_meta['po_count']} POs, data through {tracker_meta['max_date']}")
-    n_unused = build_unused_po_sheet(wb, po_index, tracker_by_po, tracker_meta,
-                                     dt.date.today())
 
-    # Cost-code audit — vendors must code to their family (concrete/material/both),
-    # cross-referenced to each bill's PO cost code (upstream vs bill-level miscode).
-    n_cc = build_cost_code_sheet(wb, all_rows, po_index, tracker_by_po)
+    # THREE themed audit sheets (Coding · PO · Bills) — de-bloat from 9 tabs.
+    n_audit = build_audits(wb, all_rows, po_index=po_index,
+                           tracker_by_po=tracker_by_po, tracker_meta=tracker_meta,
+                           vendor_root=vendor_root, vendor_map=vendor_map)
 
     print(f"  Bills: {n_bills} bills (open + paid since {PAID_CUTOFF_DATE})")
-    print(f"  Liens: live view  ·  Inventory: {n_inv} lines  ·  Audit: {n_audit} flagged"
-          f"  ·  Unused PO: {n_unused}  ·  Cost Code: {n_cc}")
+    print(f"  Liens: live view  ·  Inventory: {n_inv} lines  ·  Audit: {n_audit} rows "
+          f"across 3 themed sheets")
 
     wb.save(OUTPUT_PATH)
     post_process_xlsx(OUTPUT_PATH)

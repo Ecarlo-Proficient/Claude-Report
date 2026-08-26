@@ -61,7 +61,7 @@ shared/                the ONLY importable common code
 └─ setup_qbo.py        vault admin CLI (--status/--test/--rotate/--purge)
 
 invoice-sync/          QBO → Notion AR sync + Teams cards   (was automation-worker/)
-bill-tracker/          AP bills (FULL pull incl. subs) → Excel tracker + QBO Audit sheet (8 checks, incl. Unused PO + Cost Code) + job_coding_audit drill
+bill-tracker/          AP bills (FULL pull incl. subs) → Excel tracker + 3 themed Audit sheets (Coding · PO · Bills) + job_coding_audit drill
 statement-reconciler/  vendor statement PDFs ↔ QBO open bills
 wip/                   ALL WIP tooling: wip_writer.py (shared engine) + CP/RP readers + close scripts
 ledger/                canonical project DB: schema.sql spine + loaders (WIP · Bill Tracker · costs · AR invoices · customers) + dashboard
@@ -222,7 +222,7 @@ flowchart LR
     NAS[("Synology NAS\nvendor statement PDFs")]:::src
     GL[("General List xlsx\nSynology · READ-ONLY")]:::src
     POT[("PO tracker xlsx\nOneDrive · READ-ONLY\nvia po_tracker.py")]:::src
-    BT["excel_bill_sync.py\nBills/Inventory/Liens + 7 Audit- Table sheets"]:::tool
+    BT["excel_bill_sync.py\nBills/Inventory/Liens + 3 themed Audit sheets"]:::tool
     JCA["job_coding_audit.py\non-demand per-job drill"]:::tool
     SR["statement_reconciler.py"]:::tool
     BX[("Bill Tracker.xlsx\nOneDrive/Automations-\ndisplay = non-sub · audit = incl. subs")]:::out
@@ -237,27 +237,27 @@ flowchart LR
 ```
 
 Full pull (2026-08-06): the tracker pulls every bill incl. subs. Subs are kept off the
-Bills/Inventory/Liens sheets but flow to the audit, now **eight `Audit - …` sheets**, each a
-proper Excel Table (filter/sort): Not Approved · Data Entry · Missing Project · Duplicates ·
-**FW Misplaced** · Sub No Project · **Unused PO** · **Cost Code**. The old `duplicate_bill_audit` /
-`item_no_project_audit` / `sub_bill_audit` scripts were folded in and retired; `job_coding_audit.py`
-remains as the interactive `audit-job` drill. Cost codes (QBO Item name) are captured for the audit
-only — never a display column.
+Bills/Inventory/Liens sheets but flow to the audit — **THREE themed `Audit - …` sheets**
+(the user 2026-08-25, de-bloat from 9 tabs via `build_audits`), each a filterable Excel Table
+with an `Issue` column: **`Audit - Coding`** (Data Entry · Missing Project · FW Misplaced · Sub
+No Project · Cost Code) · **`Audit - PO`** (Unused PO · Missing PO) · **`Audit - Bills`** (Not
+Approved · Duplicates). The old `duplicate_bill_audit` / `item_no_project_audit` / `sub_bill_audit`
+scripts were folded in and retired; `job_coding_audit.py` remains as the interactive `audit-job`
+drill. Cost codes (QBO Item name) are captured for the audit only — never a display column.
 
-**Cost Code (2026-08-25):** `Audit - Cost Code` reuses **`shared/cost_code_audit.py`** (the same
-logic as the standalone `one-offs/concrete_cost_code_audit.py`) over the full bill population.
-It captures each vendor's coding TYPE from its `*1`-vs-`*2/3/4` split — concrete (→ all `*1`),
-material (rebar/lumber, never `*1`/`*5`/`*6`), both (yardage MEMO must be `*1`) — and flags lines
-that break the rule. Types overridable via `<companyhealth>/concrete_suppliers.json`. Each flag is
-**cross-referenced to the bill's PO** (`PO #`/`PO Cost Code`/`Origin` via `bill_rows.build_po_index`
-codes + `cost_code_audit.po_origin`): PO-also-wrong = upstream (super/PM), bill-deviated, or no-PO;
-the PO tracker recovers the PO# when QBO left the bill unlinked.
+**Cost Code (in `Audit - Coding`):** reuses **`shared/cost_code_audit.py`** (same logic as the
+standalone `one-offs/concrete_cost_code_audit.py`). Captures each vendor's coding TYPE from its
+`*1`-vs-`*2/3/4` split — concrete (→ all `*1`), material (never `*1`/`*5`/`*6`), both (yardage MEMO
+must be `*1`), hauler (haul-off `*5` OK; override-only) — and flags lines that break the rule.
+Credit-card / finance fees post to an expense account, not a cost code — never flagged. Overrides:
+`<companyhealth>/concrete_suppliers.json`. Each flag's `Detail` carries the PO origin
+(`bill_rows.build_po_index` codes + `cost_code_audit.po_origin`): PO-also-wrong = upstream (super/PM),
+bill-deviated, or no-PO.
 
-**Unused PO (2026-08-25):** the "two tools, one story" join. `po_tracker.py` reads the office PO
-tracker workbook (`ACB_PO_TRACKER_XLSX`, READ-ONLY) and `bill_rows.build_po_index()` pulls QBO
-`PurchaseOrder` with status/date/vendor/total/bill-link. Reconciled per PO → `Audit - Unused PO`:
-Open-no-bill · Stale >60d · on-tracker-not-in-QBO, with the manual tracker's freshness stamped on
-the sheet. Degrades to a QBO-only view if the tracker is unreadable.
+**PO theme:** `po_tracker.py` reads the office PO tracker (`ACB_PO_TRACKER_XLSX`, READ-ONLY) and
+`bill_rows.build_po_index()` pulls QBO `PurchaseOrder`. **Unused PO** = PO with no bill / stale;
+**Missing PO** = a real COGS bill (not sub, not expense-only) with NO PO, last 90 days — the mirror.
+Degrades to a QBO-only view if the tracker is unreadable.
 
 ---
 

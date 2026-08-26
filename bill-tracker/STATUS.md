@@ -91,6 +91,16 @@ no business findings, dollar exposures, or owner analyses (those live in the own
   Overrides live OUTSIDE the repo at `<companyhealth>/concrete_suppliers.json` (vendor names). Live
   run (3,697 bills / 13,030 lines): overrides cut miscodes 163→94; origin split 29 upstream (PO/
   super-PM) · 63 no-PO (direct entry) · 0 deviated. `hauler` is override-only (not auto-detected).
+- **Audit consolidation → 3 themed sheets + Missing PO (2026-08-25, owner).** De-bloat: the 8
+  `Audit - …` tabs merged into **THREE** filterable Tables, each with an `Issue` column +
+  `Detail` + `Open`: **`Audit - Coding`** (Data Entry · Missing Project · FW Misplaced · Sub No
+  Project · Cost Code) · **`Audit - PO`** (Unused PO · **new Missing PO** = a real COGS bill —
+  not sub, not expense-only — with NO PO, last 90 days) · **`Audit - Bills`** (Not Approved ·
+  Duplicates). One orchestrator `build_audits()` (+ `_cost_code_findings`, `_missing_po_bills`)
+  replaces `build_audit_sheets`/`build_unused_po_sheet`/`build_cost_code_sheet` (all deleted);
+  finding logic unchanged, only rendering. New `url` cell-kind lets one sheet mix bill + PO
+  deep-links. Verified offline (every issue routes to the right sheet, `validate_xlsx` clean,
+  6/6 tests). **First live `sync-ap` confirms the merged output.**
 - **Cost Code: skip non-job fees / read the memo (2026-08-25, owner).** Credit-card, finance, bank,
   and late fees legitimately post to an EXPENSE ACCOUNT, not a cost code - `shared/cost_code_audit`
   now skips any line whose memo/bill#/account reads as one (`is_nonjob`), and a concrete vendor's
