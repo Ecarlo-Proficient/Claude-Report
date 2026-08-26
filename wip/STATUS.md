@@ -963,3 +963,70 @@ stood before any of this work, `… (pre MFD merge 08-25).xlsx` is immediately b
   through `assert_write_allowed`, so it needs no entry.
 - The other live division tabs (`WIP - CP`, `WIP Master`) remain code-locked. This graduation
   covers `WIP - MFD` only, and deliberately so.
+
+## 2026-08-26 — column order is DATA now; inputs grouped; over/underbilling added
+
+**The process fix, not just a layout change.** Three of the four rebuild cycles on
+2026-08-25 were caused by hardcoded positions (`COL_ETC = 14`, `COL_CTC = 20`): every
+column the owner added became a shift plus a migration guard. Column order now lives in
+**`wip/mfd_wip_cols.py`** as an ordered spec, the same shape as `wip_writer.COLS`.
+Reordering the sheet is editing that list; adding a column is one line. **Never write a
+column letter or index anywhere else in the MFD tooling — ask that module.**
+
+**Layout (the owner, 2026-08-26): one typing run, QBO next, decisions on the right.**
+
+| Group | Columns |
+|---|---|
+| — | `PROJECT` `MOBE DATE` `COMPLETION DATE` `CUSTOMER` |
+| **MFD ENTERS** | `CONTRACT` `CHANGE ORDERS` `ETC` `REVISED ETC` `COMPLETED TO DATE` `EARNED LESS RET.` `Total Retainage` |
+| **FROM QBO** | `COSTS TO DATE` `BILLED TO DATE` `RETAINAGE (QBO)` |
+| **METRICS** | `REV. CONTRACT` `EARNED REVENUE` `% COMPLETE` `BALANCE TO FINISH` `COST TO COMPLETE` `BILLED AHEAD` `BILLED BEHIND` `GP %` |
+
+22 columns, B..W. Each group carries a merged banner on row 5; the QBO one is the sync stamp.
+
+**New: `EARNED REVENUE`, `BILLED AHEAD`, `BILLED BEHIND`.** Earned is cost-to-cost —
+`revised contract × (QBO costs / revised ETC)` — the CPA and bank method, and the ONLY
+basis on which the two billing columns mean anything. Deriving earned from the tab's own
+`% COMPLETE` would make it equal `COMPLETED TO DATE` and both billing columns
+identically zero. All three are anchor-only, like every metric that needs costs, and
+blank themselves on the sibling rows rather than lying.
+
+**`% COMPLETE` keeps the tab's OWN billing-based definition** (`completed / revised
+contract`), which is NOT the standard's cost-based one. It predates this script and MFD
+reads it that way; changing it silently would be a defect.
+
+**The reorder is safe because the tab is read BY HEADER NAME and written by position**
+(`header_map()` + `_HEADER_ALIASES`). Old and new layouts never have to agree. Verified
+against the pre-regroup backup: **every MFD-typed value carried, none lost**, and the
+sheet chrome is unchanged.
+
+**Traps hit and fixed:**
+- `clear_block` must unmerge EVERYTHING before clearing — a merged cell's `.value` is
+  read-only, so any surviving merge raises `AttributeError`. `write_layout` re-creates
+  the merges the sheet needs.
+- The production-balance block used to sit in a hardcoded cell and would have been
+  stranded under a different column by the reorder. It is positioned from the spec now.
+
+**Audit trail** (the owner: "everything must be logged so that when someone asks who did
+this we can trace back"). Every change to an MFD-owned value is appended to
+`~/Library/Logs/Proficient/mfd-wip/value-changes.jsonl` with the old value, the new
+value, the run timestamp and the workbook's last-modified time. `--history` prints it.
+A first run with no prior snapshot records ONE baseline entry rather than inventing a
+change per cell. **HONEST LIMIT, stated in the log output itself: Excel does not record
+which PERSON typed a cell**, so no script can read that off the file — pair the workbook
+mtime with SharePoint version history to put a name to it.
+
+## OPEN ISSUES
+
+- **The new metrics stay blank until MFD types an ETC.** `EARNED REVENUE`, `GP %`,
+  `COST TO COMPLETE`, `BILLED AHEAD` and `BILLED BEHIND` all need `REVISED ETC`, which is
+  currently empty on every row (it seeds to `=ETC`, and ETC is unfilled). Expected, not a
+  defect — but the tab looks half-empty until the first entry pass.
+- **Two backups from 2026-08-25 were deleted** when `WIP History/` was reorganised on
+  08-26 (`Backups/` + `working copies/` created). `… (pre Test-MFD 08-25).xlsx` and
+  `… (pre MFD merge 08-25).xlsx` are gone. The 08-26 pre-regroup backup lives in
+  `WIP History/Backups/`.
+- **MFD's ETC will exist in two places.** `master_wip_test.read_mfd_from_master` still
+  reads it off `WIP Master` as `=(E/1.17)` — contract ÷ markup, which the WIP standard
+  calls a fallback only. The owner has approved switching the master to prefer the typed
+  ETC on `WIP - MFD` and fall back to the divisor formula when blank. **NOT YET BUILT.**

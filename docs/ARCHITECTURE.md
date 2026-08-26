@@ -283,7 +283,9 @@ flowchart LR
     RPR["rp_wip_reader.py\nRP READER: owner's file → 'Test - RP'"]:::tool
     MASTER["master_wip_test.py\nORCHESTRATOR: MFD + CP + RP → 'Test-Master'\n(+ change audit)"]:::tool
     TEST[("WIP - MASTER new.xlsx\nTest tabs ONLY (SharePoint)")]:::out
-    MFDT["mfd_wip_test.py\nMFD ENTRY TAB: writes 'WIP - MFD' cols N..T\nETC · REVISED ETC · GP% ·\nQBO costs/billed/retainage (anchored per job) ·\ncost to complete. NEVER writes B..M\n(the ONE live tab wip_excel_guard allows)"]:::tool
+    MFDCOLS["mfd_wip_cols.py\nthe COLUMN CONTRACT: ordered spec +\ngroups + formulas. Order is DATA -\nreordering the sheet edits this list"]:::tool
+    MFDT["mfd_wip_test.py\nMFD ENTRY TAB: writes 'WIP - MFD'\nreads BY HEADER NAME, writes by position\nMFD ENTERS · FROM QBO · METRICS\nnever writes an MFD-owned value\n(the ONE live tab wip_excel_guard allows)"]:::tool
+    MFDLOG[("~/Library/Logs/Proficient/mfd-wip\nvalue-changes.jsonl - immutable\naudit trail of every MFD-owned edit")]:::out
     CLOSE["qbo_close_list.py →\nqbo_bulk_close.py"]:::tool
     QW[("QBO WRITE — gated\nCONFIRM=Y · MFD always excluded")]:::gate
 
@@ -293,7 +295,9 @@ flowchart LR
     TKETC -.->|"blank ETC only\n(estimator entry wins)"| RPR
     QBO --> CPR & RPR & MASTER & MFDT
     WMTAB --> MASTER
-    MFDT -->|"cols N..T, in place"| MFDTAB
+    MFDCOLS ==>|"column order + formulas"| MFDT
+    MFDT -->|"script-owned cols, in place"| MFDTAB
+    MFDT --> MFDLOG
     CPR -.->|"scan reused by"| MASTER
     RPR -.->|"classify/write reused by"| MASTER
     CPR & RPR & MASTER ==>|"import the engine"| ENGINE
@@ -316,6 +320,16 @@ largest-contract row of each job group because a job like MFD192 carries three c
 rows in Excel but exactly one project in QBO, with no way to split costs between them;
 sibling rows show a muted `see MFD192` marker, which `SUM()` ignores so the totals row
 still counts each job once.
+
+**Column order is DATA** (2026-08-26). `mfd_wip_cols.py` holds the ordered spec, the group
+labels and every formula, exactly like `wip_writer.COLS`. The first cut hardcoded positions
+and every added column became a shift plus a migration guard - three of four rebuild cycles
+on 2026-08-25 were that, not changed requirements. Reordering the sheet is now editing a
+list. The tab is read **by header name** and written **by position**, so old and new layouts
+never have to agree, and a reorder cannot lose a typed value. Groups: `MFD ENTERS` (one
+uninterrupted typing run) · `FROM QBO` (under the sync stamp) · `METRICS` (decisions, on the
+right, incl. cost-to-cost earned revenue and billed-ahead/behind). Every change to an
+MFD-owned value is appended to an immutable JSONL log under `~/Library/Logs/Proficient/`.
 
 **Sheet chrome, kept for the record** (2026-08-25). While this lived on a staging tab, the
 copy had to carry chrome openpyxl does not move with cells — tab colour, orientation,

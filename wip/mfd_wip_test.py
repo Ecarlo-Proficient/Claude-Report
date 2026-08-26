@@ -1,82 +1,80 @@
 #!/usr/bin/env python3
 """
-mfd_wip_test.py - the MFD division WIP tab: an entry block MFD fills in and a
-QBO block the script owns, on 'WIP - MFD' in 'WIP - MASTER new.xlsx'.
+mfd_wip_test.py - the MFD division WIP tab: an entry block MFD fills in, a QBO
+block the script owns, and the metrics that read off both. Writes 'WIP - MFD'
+in 'WIP - MASTER new.xlsx'.
+
+COLUMN ORDER LIVES IN mfd_wip_cols.py, NOT HERE. Never write a column letter or
+index in this file - ask that module. Reordering the sheet is editing its list.
 
 HISTORY - WHY THIS WRITES A LIVE TAB
 Built 2026-08-25 on a staging copy ('Test - MFD') because 'WIP - MFD' was
-read-only at code level. The two were then diffed attribute by attribute -
-values, formulas, every style facet, merges, dimensions, comments, conditional
-formatting, validation, hyperlinks, images, filters AND sheet chrome - and the
+read-only at code level. The two were then diffed attribute by attribute and the
 copy proved a faithful superset, so on the owner's instruction the tabs were
-MERGED: 'WIP - MFD' was graduated in wip_excel_guard.ALLOWED_WRITE_SHEETS and
-the staging tab deleted. One tab now, under its original name.
+MERGED: 'WIP - MFD' was graduated in wip_excel_guard.ALLOWED_WRITE_SHEETS and the
+staging tab deleted.
 
 THE CONTRACT THAT MAKES WRITING A LIVE TAB SAFE
-Columns B..M are MFD's. This script NEVER reads them for anything but the job
-number, the contract, the change orders and the retainage variance, and NEVER
-writes them. It owns N..T and nothing else. Keep it that way.
+MFD owns the value of every 'carry' and 'input' column in the spec. This script
+carries those values through a reorder and NEVER invents or overwrites one. It
+owns the 'qbo' and 'calc' columns. That split is enforced in one place -
+mfd_wip_cols.OWNED_BY_MFD - so it cannot drift.
 
-    N  ETC                MFD types it        grey/orange input style
-    O  REVISED ETC        MFD types it        seeded '=N<row>'; type over on a CO
-    P  GP %               formula             (REV. CONTRACT - REVISED ETC) / REV. CONTRACT
-       Q5:S5              merged banner       'QBO - LAST SYNC mm/dd/yyyy h:mm AM'
-    Q  COSTS TO DATE      from QBO            green header, tinted cell, comment
-    R  BILLED TO DATE     from QBO            green header, tinted cell, comment
-    S  RETAINAGE (QBO)    from QBO            green header; comment carries the
-                                              variance against MFD's own col M
-    T  COST TO COMPLETE   formula             REVISED ETC - COSTS TO DATE
-
-GP % mirrors 'WIP Master'!Q and COST TO COMPLETE mirrors 'WIP Master'!I, so the
-two sheets agree. The input styling deliberately matches the bold-orange-on-grey
-MFD already uses in F/G/I/J/M - this tab is theirs, it should look like itself.
+LAYOUT (the owner, 2026-08-25): everything MFD types sits in ONE run so entry is a
+single left-to-right pass with no calculated cell interrupting it; the QBO block
+follows under its sync stamp; the metrics that drive decisions are furthest right.
 
 FORMATTING NOTE (read before "fixing" this file)
 Repo CLAUDE.md rail 5a freezes the GENERATED Test tabs to the 'WIP Master'
-Tahoma-8 look. This tab is not one of them: it is MFD's own hand-kept sheet in
-its original Calibri. Do not restyle it to Tahoma 8.
+Tahoma-8 look. This tab is not one of them: it is MFD's own hand-kept sheet in its
+original Calibri. Do not restyle it to Tahoma 8.
 
 RETAINAGE - WHERE THE NUMBER COMES FROM (probed 2026-08-25, do not re-derive)
 QBO tracks retainage properly: the invoice item '99 - Retainage' posts to a real
 Other Current Asset account, 'Retainage Receivable'. A negative retainage line on
-a draw DEBITS that account (retainage moves out of AR); billing the retainage
-later CREDITS it back out. So the per-job balance of that account IS "what QBO
-has", and it is pulled from the GeneralLedger report filtered to that account.
+a draw DEBITS that account; billing the retainage later CREDITS it back out. So
+the per-job balance of that account IS "what QBO has", pulled from the
+GeneralLedger report filtered to that account.
 
-Two traps that cost an hour, both already handled here:
-  * The GL report's account filter is 'account' (SINGULAR). Passing 'accounts'
-    is silently IGNORED and you get the whole 66k-row general ledger back,
-    truncated to the first 11 accounts - with no error.
-  * Do NOT derive retainage from invoice lines the way cp_wip_reader does
-    (gross P&L income minus non-retainage invoice totals). That heuristic is
-    built for CP and gives the WRONG answer on MFD - on the largest job it
-    missed by more than twice the retainage actually at stake - because
-    retainage that has since been BILLED still sits in the invoice history.
-    The GL balance nets it out; the invoice scan does not.
+Two traps, both handled below:
+  * The GL report's account filter is 'account' (SINGULAR). Passing 'accounts' is
+    silently IGNORED and returns the whole 66k-row general ledger, truncated.
+  * Do NOT derive retainage from invoice lines the way cp_wip_reader does. That
+    heuristic is built for CP and is wrong on MFD - on the largest job it missed
+    by more than twice the retainage actually at stake - because retainage that
+    has since been BILLED still sits in the invoice history.
 
-The retainage column is EXPECTED to disagree with MFD's own 'Total Retainage'
-(col M), and that disagreement is the point of it. QBO stops counting retainage
-once it has been billed to the GC; the WIP tab keeps carrying it. The cell
-comment spells the variance out per job.
+The retainage column is EXPECTED to disagree with MFD's own Total Retainage, and
+that disagreement is the point of it.
 
 ONE JOB NUMBER CAN BE SEVERAL CONTRACTS
-'WIP - MFD' carries THREE contract rows for job 192 (Hudsonwood 009, Offsite
-010, base 008), but QBO has ONE project MFD192 - all 460 cost lines sit on one
-customer with no contract marker (5 lines mention OFFSITE, together well under
-1% of the job). Costs cannot be split. So per the owner's 2026-08-25 ruling the
-QBO figures ANCHOR on the largest-contract row of each job group; the sibling
-rows get a muted 'see MFD192' marker instead of a number. SUM() ignores text, so
-the totals row still counts each job exactly once.
+'WIP - MFD' carries THREE contract rows for job 192 (Hudsonwood 009, Offsite 010,
+base 008) but QBO has ONE project MFD192, whose cost lines carry no contract
+marker. Costs cannot be split, so QBO figures ANCHOR on the largest-contract row
+of each job group and sibling rows get a muted 'see MFD192'. SUM() ignores text,
+so the totals row counts each job exactly once. Every metric that needs COSTS is
+therefore anchor-only, and blanks itself on the siblings rather than lying.
+
+AUDIT TRAIL (the owner, 2026-08-25: "everything must be logged so that when
+someone asks who did this we can trace back")
+Every change to an MFD-owned value is appended to an immutable JSONL log in
+~/Library/Logs/Proficient/mfd-wip/ with the old value, the new value, the run
+timestamp and the workbook's last-modified time. HONEST LIMIT: Excel does not
+record which PERSON typed a cell, so no script can read that off the file. The
+log answers what changed, when, and on what basis; pair the workbook mtime with
+SharePoint version history to put a name to it.
 
 USAGE
-    python3 wip/mfd_wip_test.py              refresh the QBO columns
+    python3 wip/mfd_wip_test.py              refresh QBO + metrics
     python3 wip/mfd_wip_test.py --dry-run    show what would change
-    python3 wip/mfd_wip_test.py --no-qbo     scaffolding only, no QBO pull
+    python3 wip/mfd_wip_test.py --no-qbo     layout only, no QBO pull
+    python3 wip/mfd_wip_test.py --history    print the change log and exit
 """
 from __future__ import annotations
 
 import argparse
 import datetime as dt
+import json
 import re
 import sys
 from copy import copy
@@ -91,6 +89,7 @@ from openpyxl.comments import Comment
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
+import mfd_wip_cols as C
 from shared import paths, xlsx_verify
 from wip_excel_guard import assert_write_allowed, open_wip_workbook_for_write
 
@@ -99,48 +98,35 @@ WIP_EXCEL_PATH = paths.get_path(
     paths.onedrive_base() / "Company Files - WIP Report/WIP - MASTER new.xlsx",
 )
 
-TARGET_TAB = "WIP - MFD"      # the live MFD tab — graduated in wip_excel_guard 2026-08-25
-RETIRED_TAB = "Test - MFD"    # the staging copy this replaced; deleted on sight
+TARGET_TAB = "WIP - MFD"
+RETIRED_TAB = "Test - MFD"       # the staging copy this replaced; deleted on sight
 
-HDR_ROW = 6                   # 'PROJECT | MOBE DATE | ...'
+HDR_ROW = 6
 FIRST_DATA_ROW = 7
-BANNER_ROW = 5                # the row the sync stamp merges across
+BANNER_ROW = 5                   # the sync stamp merges across the QBO block
 
-COL_CONTRACT = 6              # F
-COL_CO = 7                    # G
-COL_ETC = 14                  # N
-COL_REV_ETC = 15              # O
-COL_GP_PCT = 16               # P
-COL_COSTS = 17                # Q
-COL_BILLED = 18               # R
-COL_RETAINAGE = 19            # S
-COL_CTC = 20                  # T
+LOG_DIR = Path.home() / "Library/Logs/Proficient/mfd-wip"
+CHANGE_LOG = LOG_DIR / "value-changes.jsonl"
+SNAPSHOT = LOG_DIR / "last-snapshot.json"
 
-NEW_COLS = (COL_ETC, COL_REV_ETC, COL_GP_PCT, COL_COSTS, COL_BILLED,
-            COL_RETAINAGE, COL_CTC)
-QBO_COLS = (COL_COSTS, COL_BILLED, COL_RETAINAGE)   # the green block
-COL_TAB_RETAINAGE = 13        # M - MFD's own 'Total Retainage', for the variance
-
-# ── styles: lifted verbatim from 'WIP - MFD' so the tab is indistinguishable ──
+# ── styles: lifted verbatim from the tab so it keeps looking like itself ──
 FONT_NAME = "Calibri"
 CURRENCY = '_("$"* #,##0.00_);_("$"* \\(#,##0.00\\);_("$"* "-"??_);_(@_)'
 PCT = "0.00%"
+DATEFMT = "mm-dd-yy"
 
 _THIN = Side(style="thin", color="000000")
+_MED = Side(style="medium", color="000000")
 BORDER = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
 
-# MFD's existing manual-entry look: bold orange on light grey (F/G/I/J/M)
 INPUT_FILL = PatternFill("solid", fgColor="FFF2F2F2")
 INPUT_FONT = Font(name=FONT_NAME, size=12, bold=True, color="FFFA7D00")
-
-# plain calculated cell, same as H/K on the live tab
 CALC_FONT = Font(name=FONT_NAME, size=11)
-
+CARRY_FONT = Font(name=FONT_NAME, size=11)
 HDR_FONT = Font(name=FONT_NAME, size=11, bold=True)
 HDR_INPUT_FILL = PatternFill("solid", fgColor="FFF2F2F2")
 HDR_ALIGN = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
-# QBO block. Green is the signal "this came from QuickBooks, hands off".
 QBO_HDR_FILL = PatternFill("solid", fgColor="FF2CA01C")
 QBO_HDR_FONT = Font(name=FONT_NAME, size=11, bold=True, color="FFFFFFFF")
 QBO_CELL_FILL = PatternFill("solid", fgColor="FFEBF4E8")
@@ -148,9 +134,10 @@ QBO_CELL_FONT = Font(name=FONT_NAME, size=11, color="FF375623")
 BANNER_FILL = PatternFill("solid", fgColor="FFD9EAD3")
 BANNER_FONT = Font(name=FONT_NAME, size=10, bold=True, color="FF1F4E20")
 
-# sibling rows of a multi-contract job: muted, obviously not a number
 MUTED_FILL = PatternFill("solid", fgColor="FFF1EFE8")
 MUTED_FONT = Font(name=FONT_NAME, size=10, italic=True, color="FF7F7F7F")
+
+TOTAL_FONT = Font(name=FONT_NAME, size=11, bold=True)
 
 QBO_NOTE = ("From QuickBooks Online (project P&L, all time).\n"
             "The sync overwrites this cell - do not type here.")
@@ -163,7 +150,44 @@ RETAINAGE_NOTE = (
     "carrying it. A gap means retainage was invoiced and has not been taken off "
     "the WIP, or the reverse.")
 
+REV_ETC_NOTE = ("Starts equal to ETC. Type the new budget over it when an "
+                "approved change order moves the cost.")
+
+EARNED_NOTE = (
+    "Cost-to-cost earned revenue: revised contract x (QBO costs / revised ETC).\n"
+    "This is the CPA and bank method, and the only basis on which BILLED AHEAD / "
+    "BILLED BEHIND mean anything.\nBlank on a row with no QBO costs of its own.")
+
+OVER_NOTE = ("Billed MORE than the work earned. You are holding the GC's money - "
+             "good for cash, but it is borrowed against work still to do.")
+UNDER_NOTE = ("Billed LESS than the work earned. You are financing this job out "
+              "of pocket - revenue earned that has not been invoiced.")
+
 _JOB_RE = re.compile(r"^\s*(\d{2,4})\b")
+
+# Old header text -> spec key, so a reorder reads the tab by NAME and never by
+# position. Anything not listed is a calculated column and gets rebuilt.
+_HEADER_ALIASES = {
+    "PROJECT": "project",
+    "MOBE DATE": "mobe",
+    "COMPLETION DATE SOG/PAVING": "completion",
+    "CUSTOMER": "customer",
+    "CONTRACT": "contract",
+    "CHANGE ORDERS": "co",
+    "ETC": "etc",
+    "REVISED ETC": "rev_etc",
+    "COMPLETED TO DATE": "completed",
+    "EARNED LESS RET.": "earned_less",
+    "EARNED LESS RET": "earned_less",
+    "TOTAL RETAINAGE": "retainage",
+    "COSTS TO DATE": "qbo_costs",
+    "BILLED TO DATE": "qbo_billed",
+    "RETAINAGE (QBO)": "qbo_retain",
+}
+
+
+def _norm(text) -> str:
+    return re.sub(r"\s+", " ", str(text or "")).strip().upper()
 
 
 def job_of(label) -> Optional[str]:
@@ -181,12 +205,23 @@ def _num(v) -> float:
 
 # ─────────────────────────── sheet geometry ───────────────────────────
 
-def data_rows(ws) -> List[int]:
-    """Contract rows: from FIRST_DATA_ROW down while column B carries a job #."""
+def header_map(ws) -> Dict[str, int]:
+    """{spec key -> column index} as the sheet CURRENTLY stands, matched by
+    header TEXT. This is what makes a reorder safe: the tab is read by name and
+    written by position, so the two never have to agree beforehand."""
+    found: Dict[str, int] = {}
+    for col in range(1, ws.max_column + 1):
+        key = _HEADER_ALIASES.get(_norm(ws.cell(row=HDR_ROW, column=col).value))
+        if key and key not in found:
+            found[key] = col
+    return found
+
+
+def data_rows(ws, project_col: int) -> List[int]:
     out = []
     r = FIRST_DATA_ROW
     while r <= ws.max_row:
-        label = ws.cell(row=r, column=2).value
+        label = ws.cell(row=r, column=project_col).value
         if not str(label or "").strip():
             break
         if job_of(label):
@@ -198,66 +233,157 @@ def data_rows(ws) -> List[int]:
 def totals_rows(ws):
     """(label_row, sum_row) of the TOTALS block, or (None, None)."""
     for r in range(FIRST_DATA_ROW, min(ws.max_row, 60) + 1):
-        for c in range(2, 14):
-            if str(ws.cell(row=r, column=c).value or "").strip().upper() == "TOTALS:":
+        for c in range(1, min(ws.max_column, 30) + 1):
+            if _norm(ws.cell(row=r, column=c).value) == "TOTALS:":
                 return r, r + 1
     return None, None
 
 
-def group_rows(ws, rows: List[int]) -> Dict[str, List[int]]:
+def group_rows(ws, rows: List[int], project_col: int) -> Dict[str, List[int]]:
     groups: Dict[str, List[int]] = {}
     for r in rows:
-        job = job_of(ws.cell(row=r, column=2).value)
+        job = job_of(ws.cell(row=r, column=project_col).value)
         if job:
             groups.setdefault(job, []).append(r)
     return groups
 
 
-def anchor_row(ws, rows: List[int]) -> int:
+def anchor_row(ws, rows: List[int], cols: Dict[str, int]) -> int:
     """The row a job's QBO figures land on: the biggest revised contract.
     For MFD192 that is the base 008 row, which is what the owner asked for."""
-    return max(rows, key=lambda r: _num(ws.cell(row=r, column=COL_CONTRACT).value)
-               + _num(ws.cell(row=r, column=COL_CO).value))
+    def size(r):
+        return (_num(ws.cell(row=r, column=cols["contract"]).value)
+                + _num(ws.cell(row=r, column=cols["co"]).value))
+    return max(rows, key=size)
 
 
-# ─────────────────────────── seed from the live tab ───────────────────────────
+# ─────────────────────────── read what MFD owns ───────────────────────────
 
-def widen_print_area(ws) -> None:
-    """Make sure the print area covers the columns this script owns.
-
-    The tab's own print area was '$B$2:$L$15' - it predates both the Total
-    Retainage column (M) and everything added here, so leaving it alone prints a
-    report missing the new work. Same first cell and same last row as the
-    original; only the column span changes. Left alone once it is wide enough,
-    so a hand adjustment is never fought.
-
-    (Sheet CHROME - tab colour, orientation, fit-to-page, margins, zoom - needed
-    copying only while this lived on a separate staging tab. Writing in place on
-    the real sheet, it is already correct and must not be touched.)"""
-    last_row = totals_rows(ws)[1] or max(data_rows(ws))
-    want = f"${get_column_letter(max(NEW_COLS))}${last_row}"
-    current = ws.print_area or ""
-    if want.split("$")[1] in current.split(":")[-1]:
-        return
-    ws.print_area = f"$B$2:{want}"
-
-
-def _clear_legend(ws, rows: List[int]) -> None:
-    """Remove the two-cell key block earlier versions parked under the table.
-    The owner cut it as clutter (2026-08-25); this clears it wherever a previous
-    run left it so it does not linger on an already-built tab."""
-    base = max(rows) + 8
-    for row in (base, base + 1):
-        for col in (COL_ETC, COL_REV_ETC):
-            cell = ws.cell(row=row, column=col)
-            cell.value = None
-            cell.fill = PatternFill()
-            cell.font = Font(name=FONT_NAME, size=11)
-            cell.border = Border()
-            cell.alignment = Alignment()
+def read_owned(ws, rows: List[int], cols: Dict[str, int]) -> Dict[int, Dict[str, object]]:
+    """Every MFD-owned value on the sheet as it stands, keyed by row then spec
+    key. Read BEFORE the rewrite; written back into the new positions after.
+    Calculated and QBO columns are deliberately not read - they are rebuilt."""
+    out: Dict[int, Dict[str, object]] = {}
+    for r in rows:
+        vals: Dict[str, object] = {}
+        for key in C.OWNED_BY_MFD:
+            col = cols.get(key)
+            if not col:
+                continue
+            v = ws.cell(row=r, column=col).value
+            if isinstance(v, str) and v.startswith("="):
+                continue                      # a formula is not a typed value
+            if v is not None:
+                vals[key] = v
+        out[r] = vals
+    return out
 
 
-# ─────────────────────────── the new columns ───────────────────────────
+# ─────────────────────────── audit trail ───────────────────────────
+
+def _snapshot_key(vals: Dict[str, object]) -> str:
+    return str(vals.get("project", "")).strip()
+
+
+def audit(owned: Dict[int, Dict[str, object]], stamp: str, dry: bool) -> List[dict]:
+    """Diff MFD-owned values against the previous run and append every change to
+    an immutable JSONL log. Answers "what changed, when, on what basis" - see the
+    honest limit on WHO in the module docstring."""
+    first_run = not SNAPSHOT.exists()
+    prior = {}
+    if not first_run:
+        try:
+            prior = json.loads(SNAPSHOT.read_text())
+        except (ValueError, OSError):
+            prior = {}
+
+    current = {_snapshot_key(v): {k: _jsonable(x) for k, x in v.items()}
+               for v in owned.values() if _snapshot_key(v)}
+
+    try:
+        mtime = dt.datetime.fromtimestamp(
+            WIP_EXCEL_PATH.stat().st_mtime).strftime("%m/%d/%Y %-I:%M %p")
+    except OSError:
+        mtime = None
+
+    # With no prior snapshot there is nothing to diff against - every value would
+    # read as "new", which is noise, not history. Record one baseline entry so the
+    # log says where the trail starts instead of inventing 50 changes.
+    if first_run:
+        if not dry:
+            LOG_DIR.mkdir(parents=True, exist_ok=True)
+            with CHANGE_LOG.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps({
+                    "at": stamp, "workbook_modified": mtime, "row": None,
+                    "column": None, "key": None, "old": None,
+                    "new": f"{len(current)} job(s)", "kind": "baseline",
+                }) + "\n")
+            SNAPSHOT.write_text(json.dumps(current, indent=1, sort_keys=True))
+        return []
+
+    changes: List[dict] = []
+    for job, vals in current.items():
+        was = prior.get(job, {})
+        for key, new in vals.items():
+            old = was.get(key)
+            if old == new:
+                continue
+            changes.append({
+                "at": stamp, "workbook_modified": mtime, "row": job,
+                "column": C.header(key), "key": key,
+                "old": old, "new": new,
+                "kind": "added" if job not in prior else "changed",
+            })
+        for key in set(was) - set(vals):
+            changes.append({
+                "at": stamp, "workbook_modified": mtime, "row": job,
+                "column": C.header(key), "key": key,
+                "old": was[key], "new": None, "kind": "cleared",
+            })
+    for job in set(prior) - set(current):
+        changes.append({"at": stamp, "workbook_modified": mtime, "row": job,
+                        "column": None, "key": None, "old": None, "new": None,
+                        "kind": "row removed"})
+
+    if changes and not dry:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        with CHANGE_LOG.open("a", encoding="utf-8") as fh:
+            for rec in changes:
+                fh.write(json.dumps(rec) + "\n")
+    if not dry:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        SNAPSHOT.write_text(json.dumps(current, indent=1, sort_keys=True))
+    return changes
+
+
+def _jsonable(v):
+    if isinstance(v, (dt.datetime, dt.date)):
+        return v.strftime("%Y-%m-%d")
+    if isinstance(v, float):
+        return round(v, 2)
+    return v
+
+
+def print_history(limit: int = 40) -> int:
+    if not CHANGE_LOG.exists():
+        print(f"\n  no change log yet at {CHANGE_LOG}\n")
+        return 0
+    recs = [json.loads(l) for l in CHANGE_LOG.read_text().splitlines() if l.strip()]
+    print(f"\n  {len(recs)} logged change(s) - {CHANGE_LOG}")
+    print("  Excel does not record WHO typed a cell; pair 'workbook modified' "
+          "with SharePoint version history for a name.\n")
+    for rec in recs[-limit:]:
+        old, new = rec.get("old"), rec.get("new")
+        fmt = lambda v: ("-" if v is None else
+                         f"{v:,.2f}" if isinstance(v, (int, float)) else str(v))
+        print(f"  {rec['at']:>22}  {str(rec['row'])[:26]:26} "
+              f"{str(rec.get('column'))[:22]:22} {fmt(old):>16} -> {fmt(new):>16}"
+              f"   (workbook saved {rec.get('workbook_modified')})")
+    print()
+    return 0
+
+
+# ─────────────────────────── write the layout ───────────────────────────
 
 def _style(cell, font, fill=None, fmt=None, align=None, border=True):
     cell.font = font
@@ -271,120 +397,141 @@ def _style(cell, font, fill=None, fmt=None, align=None, border=True):
         cell.border = BORDER
 
 
-def build_columns(ws) -> None:
-    """Write headers, banner, input styling and formulas for N..S.
-    Never reads or writes columns B..M."""
-    rows = data_rows(ws)
-    if not rows:
-        raise RuntimeError(f"No contract rows found on {ws.title!r}")
-    groups = group_rows(ws, rows)
-    anchors = {anchor_row(ws, rs) for rs in groups.values()}
+def _fmt_for(key: str) -> Optional[str]:
+    if key in C.PCT_KEYS:
+        return PCT
+    if key in C.DATE_KEYS:
+        return DATEFMT
+    if key in C.TEXT_KEYS:
+        return "General"
+    return CURRENCY
 
-    for col, width in ((COL_ETC, 16), (COL_REV_ETC, 16), (COL_GP_PCT, 11),
-                       (COL_COSTS, 17), (COL_BILLED, 17), (COL_RETAINAGE, 17),
-                       (COL_CTC, 18)):
-        ws.column_dimensions[get_column_letter(col)].width = width
 
-    # merged sync banner sitting directly on top of the QBO headers. The block
-    # grew from two columns to three when retainage was added (2026-08-25), so a
-    # tab built by the earlier version carries a stale Q5:R5 merge - drop any
-    # merge that starts on the banner row before re-merging, or Excel reports
-    # overlapping merged cells and repairs the file.
-    q = get_column_letter(COL_COSTS)
-    last = get_column_letter(max(QBO_COLS))
-    span = f"{q}{BANNER_ROW}:{last}{BANNER_ROW}"
-    for m in [str(m) for m in ws.merged_cells.ranges]:
-        if m != span and m.startswith(f"{q}{BANNER_ROW}:"):
-            ws.unmerge_cells(m)
-    if span not in {str(m) for m in ws.merged_cells.ranges}:
+def clear_block(ws, rows: List[int], last_row: int) -> None:
+    """Wipe the whole report block so a reorder cannot leave a stale column
+    behind. Rows 1-4 (the title block) are never touched; row 5 is cleared only
+    across the data columns so the green 'WIP REPORT' label at B5 survives."""
+    wide = max(ws.max_column, C.last_index())
+    # Unmerge EVERYTHING first. A merged cell's value is read-only, so any merge
+    # left standing makes the clear below raise; write_layout re-creates the two
+    # merges the sheet actually needs (the group banners and the TOTALS: label).
+    for merged in [str(m) for m in ws.merged_cells.ranges]:
+        ws.unmerge_cells(merged)
+    for r in range(BANNER_ROW, last_row + 1):
+        for c in range(C.FIRST_COL, wide + 1):
+            if r == BANNER_ROW and c == C.FIRST_COL:
+                continue                          # B5 = the sheet's own title
+            cell = ws.cell(row=r, column=c)
+            cell.value = None
+            cell.fill = PatternFill()
+            cell.font = Font(name=FONT_NAME, size=11)
+            cell.border = Border()
+            cell.alignment = Alignment()
+            cell.number_format = "General"
+            cell.comment = None
+
+
+def write_layout(ws, rows: List[int], owned: Dict[int, Dict[str, object]],
+                 label_row: int, sum_row: int) -> None:
+    """Headers, group banners, MFD's carried values, and every formula - all
+    positioned from the spec. The ONLY place the sheet's shape is decided."""
+    for key in C.KEYS:
+        ws.column_dimensions[C.letter(key)].width = C.BY_KEY[key][1]
+
+    # group banners: the QBO block carries the sync stamp, the others a label
+    for label, first_key in C.group_starts().items():
+        keys = C.group_keys(label)
+        span = f"{C.letter(keys[0])}{BANNER_ROW}:{C.letter(keys[-1])}{BANNER_ROW}"
         ws.merge_cells(span)
-    for c in QBO_COLS:
-        _style(ws.cell(row=BANNER_ROW, column=c), BANNER_FONT, BANNER_FILL,
+        cell = ws.cell(row=BANNER_ROW, column=C.index(keys[0]))
+        is_qbo = C.kind(first_key) == "qbo"
+        cell.value = label
+        _style(cell, BANNER_FONT if is_qbo else Font(name=FONT_NAME, size=10, bold=True,
+                                                     color="FF7F7F7F"),
+               BANNER_FILL if is_qbo else PatternFill("solid", fgColor="FFF7F7F7"),
                align=Alignment(horizontal="center", vertical="center"))
 
-    headers = (
-        (COL_ETC, "ETC", HDR_FONT, HDR_INPUT_FILL),
-        (COL_REV_ETC, "REVISED ETC", HDR_FONT, HDR_INPUT_FILL),
-        (COL_GP_PCT, "GP %", HDR_FONT, None),
-        (COL_COSTS, "COSTS TO DATE", QBO_HDR_FONT, QBO_HDR_FILL),
-        (COL_BILLED, "BILLED TO DATE", QBO_HDR_FONT, QBO_HDR_FILL),
-        (COL_RETAINAGE, "RETAINAGE (QBO)", QBO_HDR_FONT, QBO_HDR_FILL),
-        (COL_CTC, "COST TO COMPLETE", HDR_FONT, None),
-    )
-    for col, label, font, fill in headers:
-        cell = ws.cell(row=HDR_ROW, column=col, value=label)
-        _style(cell, font, fill, align=HDR_ALIGN)
-
-    for row in rows:
-        n = get_column_letter(COL_ETC)
-        o = get_column_letter(COL_REV_ETC)
-
-        etc = ws.cell(row=row, column=COL_ETC)
-        _style(etc, INPUT_FONT, INPUT_FILL, CURRENCY)
-
-        rev = ws.cell(row=row, column=COL_REV_ETC)
-        if rev.value in (None, ""):
-            rev.value = f"={n}{row}"
-        _style(rev, INPUT_FONT, INPUT_FILL, CURRENCY)
-        rev.comment = Comment(
-            "Starts equal to ETC. Type the new budget over it when an approved "
-            "change order moves the cost.", "WIP")
-
-        gp = ws.cell(row=row, column=COL_GP_PCT,
-                     value=f"=IF(H{row}=0,0,(H{row}-{o}{row})/H{row})")
-        _style(gp, CALC_FONT, fmt=PCT,
-               align=Alignment(horizontal="center", vertical="center"))
-
-        is_anchor = row in anchors
-        for col in QBO_COLS:
-            cell = ws.cell(row=row, column=col)
-            # Migration guard: before retainage was added, COST TO COMPLETE sat
-            # in S, which is now a QBO column. A tab built by that version still
-            # holds its formula here, and a QBO column must never carry one.
-            if isinstance(cell.value, str) and cell.value.startswith("="):
-                cell.value = None
-            if is_anchor:
-                _style(cell, QBO_CELL_FONT, QBO_CELL_FILL, CURRENCY)
-                cell.comment = Comment(QBO_NOTE, "WIP")
-            else:
-                _style(cell, MUTED_FONT, MUTED_FILL, fmt="General",
-                       align=Alignment(horizontal="center", vertical="center"))
-
-        ctc = ws.cell(row=row, column=COL_CTC)
-        qc = f"{get_column_letter(COL_COSTS)}{row}"
-        ctc.value = (f'=IF(OR({o}{row}=0,NOT(ISNUMBER({qc}))),"",{o}{row}-{qc})')
-        _style(ctc, CALC_FONT, fmt=CURRENCY)
-
-    _build_totals(ws, rows)
-    _clear_legend(ws, rows)
-    widen_print_area(ws)
-
-
-def _build_totals(ws, rows: List[int]) -> None:
-    """Extend the existing TOTALS block across N..S. Text markers are ignored
-    by SUM(), so each job's QBO figure is counted exactly once."""
-    label_row, sum_row = totals_rows(ws)
-    if not label_row:
-        return
-    first, last = rows[0], rows[-1]
-    labels = {COL_ETC: "ETC", COL_REV_ETC: "REVISED ETC", COL_GP_PCT: "GP %",
-              COL_COSTS: "COSTS TO DATE", COL_BILLED: "BILLED TO DATE",
-              COL_RETAINAGE: "RETAINAGE (QBO)", COL_CTC: "COST TO COMPLETE"}
-    for col, label in labels.items():
-        _style(ws.cell(row=label_row, column=col, value=label), HDR_FONT,
+    for key in C.KEYS:
+        cell = ws.cell(row=HDR_ROW, column=C.index(key), value=C.header(key))
+        k = C.kind(key)
+        _style(cell,
+               QBO_HDR_FONT if k == "qbo" else HDR_FONT,
+               QBO_HDR_FILL if k == "qbo" else (HDR_INPUT_FILL if k == "input" else None),
                align=HDR_ALIGN)
 
-    o = get_column_letter(COL_REV_ETC)
-    for col in (COL_ETC, COL_REV_ETC, COL_COSTS, COL_BILLED, COL_RETAINAGE,
-                COL_CTC):
-        L = get_column_letter(col)
-        cell = ws.cell(row=sum_row, column=col, value=f"=SUM({L}{first}:{L}{last})")
-        _style(cell, Font(name=FONT_NAME, size=11, bold=True), fmt=CURRENCY,
-               align=Alignment(horizontal="center", vertical="center"))
-    gp = ws.cell(row=sum_row, column=COL_GP_PCT,
-                 value=f"=IF(H{sum_row}=0,0,(H{sum_row}-{o}{sum_row})/H{sum_row})")
-    _style(gp, Font(name=FONT_NAME, size=11, bold=True), fmt=PCT,
-           align=Alignment(horizontal="center", vertical="center"))
+    notes = {"rev_etc": REV_ETC_NOTE, "earned_rev": EARNED_NOTE,
+             "over": OVER_NOTE, "under": UNDER_NOTE}
+
+    for r in rows:
+        vals = owned.get(r, {})
+        for key in C.KEYS:
+            cell = ws.cell(row=r, column=C.index(key))
+            k = C.kind(key)
+            if k in ("carry", "input"):
+                cell.value = vals.get(key)
+                if key == "rev_etc" and cell.value in (None, ""):
+                    cell.value = f"={C.letter('etc')}{r}"
+                _style(cell,
+                       INPUT_FONT if k == "input" else CARRY_FONT,
+                       INPUT_FILL if k == "input" else None,
+                       _fmt_for(key),
+                       Alignment(horizontal="center", vertical="center")
+                       if key in C.DATE_KEYS else None)
+            elif k == "calc":
+                cell.value = C.formula(key, r)
+                _style(cell, CALC_FONT, None, _fmt_for(key),
+                       Alignment(horizontal="center", vertical="center")
+                       if key in C.PCT_KEYS else None)
+            else:                                     # qbo - value comes later
+                _style(cell, QBO_CELL_FONT, QBO_CELL_FILL, CURRENCY)
+            if key in notes:
+                cell.comment = Comment(notes[key], "WIP")
+
+    _write_totals(ws, rows, label_row, sum_row)
+    _write_production_balance(ws, sum_row)
+    widen_print_area(ws, sum_row)
+
+
+def _write_totals(ws, rows: List[int], label_row: int, sum_row: int) -> None:
+    first, last = rows[0], rows[-1]
+    tot_cell = ws.cell(row=label_row, column=C.index("customer"), value="TOTALS:")
+    _style(tot_cell, HDR_FONT, align=Alignment(horizontal="center", vertical="center"))
+    ws.merge_cells(f"{C.letter('customer')}{label_row}:{C.letter('customer')}{sum_row}")
+
+    for key in C.KEYS:
+        if C.kind(key) == "carry":
+            continue
+        _style(ws.cell(row=label_row, column=C.index(key), value=C.header(key)),
+               HDR_FONT, align=HDR_ALIGN)
+        f = C.total_formula(key, sum_row, first, last)
+        if not f:
+            continue
+        _style(ws.cell(row=sum_row, column=C.index(key), value=f),
+               TOTAL_FONT, None, _fmt_for(key),
+               Alignment(horizontal="center", vertical="center"))
+
+
+def _write_production_balance(ws, sum_row: int) -> None:
+    """The sheet's own closing figure: balance to finish less retainage held.
+    It used to sit in a hardcoded cell; positioned from the spec now so a
+    reorder carries it along instead of stranding it under a new column."""
+    row = sum_row + 2
+    lab = ws.cell(row=row, column=C.index("ctc"),
+                  value="PRODUCTION BALANCE LESS RETAINAGE")
+    lab.font = Font(name=FONT_NAME, size=11, bold=True, italic=True)
+    lab.alignment = Alignment(horizontal="right", vertical="center")
+    val = ws.cell(row=row + 1, column=C.index("ctc"),
+                  value=f"={C.letter('balance')}{sum_row}-{C.letter('retainage')}{sum_row}")
+    val.font = Font(name=FONT_NAME, size=11, bold=True)
+    val.number_format = CURRENCY
+    val.alignment = Alignment(horizontal="right", vertical="center")
+    val.border = Border(top=_THIN, bottom=_MED)
+
+
+def widen_print_area(ws, sum_row: int) -> None:
+    """Cover every column the report owns. The tab's original area stopped at
+    column L, predating both Total Retainage and everything added here."""
+    ws.print_area = f"$B$2:${get_column_letter(C.last_index())}${sum_row}"
 
 
 # ─────────────────────────── QBO ───────────────────────────
@@ -512,47 +659,59 @@ def _retainage_variance(ws, job_rows: List[int], qbo_amount: float) -> str:
             f"Difference: {gap:+,.2f} (QBO minus this report).")
 
 
-def write_qbo(ws, data: Dict[str, dict], stamp: str) -> int:
-    """Write the QBO figures onto each job's anchor row + the sync banner.
-    Touches ONLY columns Q and R and the banner cell."""
-    rows = data_rows(ws)
-    groups = group_rows(ws, rows)
+def write_qbo(ws, rows: List[int], cols: Dict[str, int], data: Dict[str, dict],
+              stamp: str) -> int:
+    """Write each job's QBO figures onto its anchor row and stamp the banner.
+    Touches ONLY the spec's qbo columns."""
+    groups = group_rows(ws, rows, C.index("project"))
     written = 0
     for job, job_rows in groups.items():
-        anchor = anchor_row(ws, job_rows)
-        for row in job_rows:
-            if row == anchor:
+        anchor = anchor_row(ws, job_rows, {k: C.index(k) for k in C.KEYS})
+        for r in job_rows:
+            if r == anchor:
                 continue
-            for col in QBO_COLS:
-                cell = ws.cell(row=row, column=col)
+            for key in C.QBO_KEYS:
+                cell = ws.cell(row=r, column=C.index(key))
                 cell.value = f"see {job}"
-                _style(cell, MUTED_FONT, MUTED_FILL, fmt="General",
-                       align=Alignment(horizontal="center", vertical="center"))
+                cell.comment = None
+                _style(cell, MUTED_FONT, MUTED_FILL, "General",
+                       Alignment(horizontal="center", vertical="center"))
         vals = data.get(job)
         if not vals:
             continue
-        for col, key in ((COL_COSTS, "costs"), (COL_BILLED, "billed"),
-                         (COL_RETAINAGE, "retainage")):
-            cell = ws.cell(row=anchor, column=col)
-            amount = vals.get(key)
-            if amount is None:                  # QBO had nothing for this job
-                cell.value = None
-                _style(cell, QBO_CELL_FONT, QBO_CELL_FILL, CURRENCY)
-                cell.comment = Comment(QBO_NOTE, "WIP")
-                continue
-            cell.value = round(amount, 2)
+        for key, src in (("qbo_costs", "costs"), ("qbo_billed", "billed"),
+                         ("qbo_retain", "retainage")):
+            cell = ws.cell(row=anchor, column=C.index(key))
+            amount = vals.get(src)
             _style(cell, QBO_CELL_FONT, QBO_CELL_FILL, CURRENCY)
+            cell.value = None if amount is None else round(amount, 2)
             note = QBO_NOTE
-            if col == COL_RETAINAGE:
-                note = f"{RETAINAGE_NOTE}\n\n{_retainage_variance(ws, job_rows, amount)}"
+            if key == "qbo_retain":
+                note = RETAINAGE_NOTE
+                if amount is not None:
+                    note += "\n\n" + _retainage_variance(ws, job_rows, amount)
             cell.comment = Comment(note, "WIP")
         written += 1
 
-    banner = ws.cell(row=BANNER_ROW, column=COL_COSTS)
+    banner_keys = C.group_keys("FROM QBO")
+    banner = ws.cell(row=BANNER_ROW, column=C.index(banner_keys[0]))
     banner.value = f"QBO - LAST SYNC {stamp}"
     _style(banner, BANNER_FONT, BANNER_FILL,
            align=Alignment(horizontal="center", vertical="center"))
     return written
+
+
+def _retainage_variance(ws, job_rows: List[int], qbo_amount: float) -> str:
+    """QBO's balance against the sum of this job's own Total Retainage cells.
+    Summed across the group because MFD192 spreads retainage over three contract
+    rows while QBO holds one balance."""
+    theirs = sum(_num(ws.cell(row=r, column=C.index("retainage")).value)
+                 for r in job_rows)
+    gap = qbo_amount - theirs
+    if abs(gap) < 0.01:
+        return f"This report says {theirs:,.2f} - they agree."
+    return (f"This report says {theirs:,.2f}.\n"
+            f"Difference: {gap:+,.2f} (QBO minus this report).")
 
 
 # ─────────────────────────── main ───────────────────────────
@@ -562,7 +721,12 @@ def main() -> int:
     ap.add_argument("--no-qbo", action="store_true", help="Skip the QBO pull.")
     ap.add_argument("--dry-run", action="store_true",
                     help="Report what would change; write nothing.")
+    ap.add_argument("--history", action="store_true",
+                    help="Print the logged value changes and exit.")
     args = ap.parse_args()
+
+    if args.history:
+        return print_history()
 
     print(f"\n  MFD WIP -> '{TARGET_TAB}'")
     print(f"  workbook: {WIP_EXCEL_PATH}")
@@ -574,41 +738,68 @@ def main() -> int:
     if TARGET_TAB not in wb.sheetnames:
         print(f"  tab {TARGET_TAB!r} missing")
         return 1
-
     ws = wb[TARGET_TAB]
     assert_write_allowed(ws.title)
 
-    # The staging tab was merged into the live one on 2026-08-25. Drop it if a
-    # workbook still carries it, so the two can never drift apart again.
     if RETIRED_TAB in wb.sheetnames and not args.dry_run:
         del wb[RETIRED_TAB]
         print(f"  removed the retired '{RETIRED_TAB}' tab")
 
-    rows = data_rows(ws)
-    groups = group_rows(ws, rows)
+    # Read the sheet as it stands, BY HEADER NAME - this is what lets the column
+    # order change without the old and new layouts having to agree.
+    cols = header_map(ws)
+    missing = [k for k in C.OWNED_BY_MFD if k not in cols]
+    if "project" not in cols:
+        print("  cannot find the PROJECT column - header row changed?")
+        return 1
+    if missing:
+        print(f"  note: no existing column for {', '.join(missing)} - will start blank")
+
+    rows = data_rows(ws, cols["project"])
+    if not rows:
+        print("  no contract rows found")
+        return 1
+    owned = read_owned(ws, rows, cols)
+    label_row, sum_row = totals_rows(ws)
+    if not label_row:
+        label_row, sum_row = rows[-1] + 2, rows[-1] + 3
+
+    groups = group_rows(ws, rows, cols["project"])
     print(f"  {len(rows)} contract row(s), {len(groups)} QBO job(s)")
     for job, job_rows in sorted(groups.items()):
-        anchor = anchor_row(ws, job_rows)
-        label = str(ws.cell(row=anchor, column=2).value or "").strip()
+        anchor = anchor_row(ws, job_rows, cols)
+        label = str(ws.cell(row=anchor, column=cols["project"]).value or "").strip()
         extra = (f"  (+{len(job_rows) - 1} sibling row(s) -> 'see {job}')"
                  if len(job_rows) > 1 else "")
         print(f"    {job}: anchor row {anchor} - {label}{extra}")
 
-    # Non-destructive by construction: it writes ONLY columns N..T, and never
-    # overwrites an ETC or REVISED ETC that already has a value, so a row MFD
-    # adds later picks up the styling and formulas on the next sync.
-    if not args.dry_run:
-        build_columns(ws)
+    order = [C.letter(k) for k in C.KEYS]
+    print(f"  layout: {len(C.COLS)} columns {order[0]}..{order[-1]}  "
+          f"| MFD enters {C.letter(C.INPUT_KEYS[0])}..{C.letter(C.INPUT_KEYS[-1])}"
+          f" | QBO {C.letter(C.QBO_KEYS[0])}..{C.letter(C.QBO_KEYS[-1])}"
+          f" | metrics {C.letter(C.CALC_KEYS[0])}..{C.letter(C.CALC_KEYS[-1])}")
 
     stamp = dt.datetime.now().strftime("%m/%d/%Y %-I:%M %p")
+    changes = audit(owned, stamp, args.dry_run)
+    if changes:
+        print(f"  {len(changes)} value change(s) since the last run "
+              f"-> {CHANGE_LOG.name}")
+        for rec in changes[:8]:
+            print(f"    {rec['row'][:28]:28} {str(rec['column'])[:20]:20} "
+                  f"{rec['old']} -> {rec['new']}")
+    else:
+        print("  no MFD-entered value changed since the last run")
+
     data = {} if args.no_qbo else fetch_qbo(sorted(groups))
-    if not args.dry_run:
-        n = write_qbo(ws, data, stamp)
-        print(f"  QBO figures written to {n} anchor row(s); banner stamped {stamp}")
 
     if args.dry_run:
-        print("  dry run - nothing written")
+        print("  dry run - nothing written\n")
         return 0
+
+    clear_block(ws, rows, sum_row + 3)
+    write_layout(ws, rows, owned, label_row, sum_row)
+    n = write_qbo(ws, rows, cols, data, stamp)
+    print(f"  QBO figures written to {n} anchor row(s); banner stamped {stamp}")
 
     wb.save(WIP_EXCEL_PATH)
     xlsx_verify.assert_clean(WIP_EXCEL_PATH)
