@@ -136,17 +136,23 @@ def div_tag(division: str | None) -> tuple[str, str]:
     return ("", "")
 
 
-def fetch(db: Path, rep: str):
+# statuses that mean somebody has actually made contact - the only ones that can
+# collide. An untouched Lead is nobody's account yet, and a closed row is history.
+TOUCHED = ("Contacted", "Follow up", "Interested", "No response")
+
+
+def fetch(db: Path, rep: str | None):
     con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     con.row_factory = sqlite3.Row
-    rows = con.execute(
-        """
-        SELECT customer_key, name, division, sales_status, last_contacted,
-               primary_contact, primary_email, primary_phone, n_touches, notion_url
-        FROM customer WHERE last_edited_by = ?
-        """,
-        (rep,),
-    ).fetchall()
+    cols = ("customer_key, name, division, sales_status, last_contacted, primary_contact, "
+            "primary_email, primary_phone, n_touches, notion_url, last_edited_by")
+    if rep:
+        rows = con.execute(f"SELECT {cols} FROM customer WHERE last_edited_by = ?", (rep,)).fetchall()
+    else:
+        marks = ",".join("?" * len(TOUCHED))
+        rows = con.execute(
+            f"SELECT {cols} FROM customer WHERE sales_status IN ({marks})", TOUCHED
+        ).fetchall()
     keys = {r["customer_key"] for r in rows}
     touches: dict[str, list[sqlite3.Row]] = {k: [] for k in keys}
     for t in con.execute(
@@ -181,7 +187,7 @@ def _log_li(date_txt: str, note: str) -> str:
     return '<li><span class="d">%s</span>%s</li>' % (date_txt or "-", note)
 
 
-def render(rep: str, rows, touches, live, today: dt.date) -> str:
+def render(rep: str | None, rows, touches, live, today: dt.date) -> str:
     e = html.escape
     ordered = sorted(
         rows,
@@ -228,6 +234,19 @@ def render(rep: str, rows, touches, live, today: dt.date) -> str:
   </div>""")
 
     # ── the A-Z index of everything ──
+    cols_html = (
+        '<colgroup><col style="width:32%"><col style="width:5%"><col style="width:14%">'
+        '<col style="width:11%"><col style="width:15%"><col style="width:23%"></colgroup>'
+        if rep else
+        '<colgroup><col style="width:26%"><col style="width:5%"><col style="width:12%">'
+        '<col style="width:11%"><col style="width:15%"><col style="width:13%">'
+        '<col style="width:18%"></colgroup>'
+    )
+    worked_th = "" if rep else "<th>Worked by</th>"
+
+    def worked_td(r) -> str:
+        return "" if rep else f'<td class="who">{e(r["last_edited_by"] or "-")}</td>'
+
     trs = []
     for r in sorted(rows, key=lambda r: r["name"].upper()):
         label, tag = div_tag(r["division"])
@@ -235,11 +254,12 @@ def render(rep: str, rows, touches, live, today: dt.date) -> str:
         stage_label = r["sales_status"] or "-"
         badge = ' <span class="mini">live client</span>' if r["customer_key"] in live else ""
         trs.append(
-            f'<tr data-s="{e((r["name"] + " " + (r["primary_contact"] or "") + " " + (r["primary_email"] or "")).lower())}">'
+            f'<tr data-s="{e((r["name"] + " " + (r["primary_contact"] or "") + " " + (r["primary_email"] or "") + " " + (r["last_edited_by"] or "")).lower())}">'
             f'<td class="co">{e(nice(r["name"]))}{badge}</td>'
             f'<td>{_tag(label, tag)}</td>'
             f'<td><span class="pill {cls}">{e(stage_label)}</span></td>'
             f'<td class="num">{e(fmt_date(r["last_contacted"])) or "-"}</td>'
+            f'{worked_td(r)}'
             f'<td class="who">{e(nice(r["primary_contact"])) or "-"}</td>'
             f'<td class="em">{e(r["primary_email"] or "-")}</td></tr>'
         )
@@ -247,7 +267,7 @@ def render(rep: str, rows, touches, live, today: dt.date) -> str:
     return f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Outreach Accounts &middot; {e(rep)}</title>
+<title>{e(rep) + ' &middot; Outreach Accounts' if rep else 'Accounts Being Worked'}</title>
 <style>
  :root{{--ink:#1c2230;--muted:#5b6472;--line:#e4e7ee;--bg:#f6f7f9;--card:#fff;
   --hot:#2f9e44;--live:#3b5bdb;--warm:#e8a13a;--cold:#8a94a6;--dead:#e03131;
@@ -287,14 +307,15 @@ def render(rep: str, rows, touches, live, today: dt.date) -> str:
  tr:last-child td{{border-bottom:none;}}
  td.co{{font-weight:600;}} td.num{{white-space:nowrap;color:var(--muted);}}
  td .tag{{margin-left:0;}}
- td.who{{color:#333;}} td.em{{color:var(--muted);font-size:11.5px;overflow-wrap:break-word;}}
+ td.who{{color:#333;overflow-wrap:break-word;}} td.em{{color:var(--muted);font-size:11.5px;overflow-wrap:break-word;}}
  td.co,th{{hyphens:none;}}
  .pill{{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:20px;white-space:nowrap;}}
  .pill.hot{{background:#e6f4ea;color:var(--hot)}} .pill.live{{background:#e7ecfd;color:var(--live)}}
  .pill.warm{{background:#fdf1de;color:#a86a12}} .pill.cold{{background:#eef0f3;color:var(--cold)}}
  .pill.dead{{background:#fdecec;color:var(--dead)}}
  .mini{{font-size:9.5px;font-weight:700;color:var(--dead);background:#fdecec;padding:1px 5px;border-radius:4px;
-  margin-left:6px;text-transform:uppercase;letter-spacing:.03em;vertical-align:middle;}}
+  margin-left:6px;text-transform:uppercase;letter-spacing:.03em;vertical-align:middle;
+  white-space:nowrap;display:inline-block;}}
  .foot{{margin-top:20px;font-size:11.5px;color:var(--muted);border-top:1px solid var(--line);padding-top:10px;}}
  @media print{{body{{background:#fff}} .wrap{{max-width:none;padding:0}} .tools{{display:none}}
   .acct,table{{border-color:#ccc}} h2{{break-after:avoid}} tr{{break-inside:avoid}}
@@ -302,9 +323,9 @@ def render(rep: str, rows, touches, live, today: dt.date) -> str:
 </style></head><body><div class="wrap">
 
 <header>
-  <h1>Outreach Accounts in Play</h1>
-  <p class="sub"><b>{e(rep)}</b> &middot; sales outreach book &middot; as of {today.strftime('%m/%d/%Y')}
-     &middot; {len(rows)} accounts</p>
+  <h1>{"Outreach Accounts in Play" if rep else "Accounts Being Worked"}</h1>
+  <p class="sub"><b>{e(rep) if rep else "All reps"}</b> &middot; {"sales outreach book" if rep else "every account someone has contacted"}
+     &middot; as of {today.strftime('%m/%d/%Y')} &middot; {len(rows)} accounts</p>
 </header>
 
 <h2>Active now</h2>
@@ -313,9 +334,8 @@ def render(rep: str, rows, touches, live, today: dt.date) -> str:
 <h2>Full list ({len(rows)})</h2>
 <div class="tools"><input id="q" type="search" placeholder="Search company, contact or email..." autocomplete="off"></div>
 <table>
- <colgroup><col style="width:32%"><col style="width:5%"><col style="width:14%"><col style="width:11%">
-  <col style="width:15%"><col style="width:23%"></colgroup>
- <thead><tr><th>Company</th><th>Div</th><th>Stage</th><th>Last contact</th><th>Contact</th><th>Email</th></tr></thead>
+ {cols_html}
+ <thead><tr><th>Company</th><th>Div</th><th>Stage</th><th>Last contact</th>{worked_th}<th>Contact</th><th>Email</th></tr></thead>
  <tbody id="tb">{''.join(trs)}</tbody>
 </table>
 
@@ -333,6 +353,8 @@ on an active job.</p>
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--rep", help="Notion display name of the rep (exact)")
+    ap.add_argument("--all", action="store_true",
+                    help="every rep's touched accounts (the collision list), with a Worked-by column")
     ap.add_argument("--out", type=Path, help="output .html path")
     ap.add_argument("--db", type=Path, default=DEFAULT_DB)
     ap.add_argument("--list-reps", action="store_true", help="show who has a working set, then exit")
@@ -352,16 +374,19 @@ def main() -> int:
         con.close()
         return 0
 
-    if not a.rep or not a.out:
-        ap.error("--rep and --out are required (or use --list-reps)")
+    if not a.out or (not a.rep and not a.all):
+        ap.error("--out plus either --rep or --all is required (or use --list-reps)")
+    if a.rep and a.all:
+        ap.error("--rep and --all are mutually exclusive")
 
     rows, touches, live = fetch(a.db, a.rep)
     if not rows:
-        print(f"no accounts attributed to {a.rep!r} - check --list-reps for the exact spelling", file=sys.stderr)
+        who = "any rep" if a.all else repr(a.rep)
+        print(f"no accounts found for {who} - check --list-reps for the exact spelling", file=sys.stderr)
         return 1
 
     a.out.parent.mkdir(parents=True, exist_ok=True)
-    a.out.write_text(render(a.rep, rows, touches, live, dt.date.today()), encoding="utf-8")
+    a.out.write_text(render(a.rep if a.rep else None, rows, touches, live, dt.date.today()), encoding="utf-8")
     print(f"wrote {a.out}  ({len(rows)} accounts, {sum(len(v) for v in touches.values())} logged touches, "
           f"{len(live)} already-live-client flags)")
     return 0

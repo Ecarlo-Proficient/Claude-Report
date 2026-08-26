@@ -728,7 +728,11 @@ there is no manual Owner property. Cross-checks each account against `project.bu
 and flags the ones that are ALREADY a live job's client. Output is a single self-contained
 HTML file (searchable index, print CSS for the PDF) written wherever `--out` points; the rep
 is a runtime `--rep` argument so no name is ever stored in the repo (`--list-reps` shows the
-options). Deliverables live in `~/Documents/CompanyHealth/`, never here.
+options). **`--all`** swaps the rep filter for every account ANY rep has actually contacted
+(Contacted · Follow up · Interested · No response - an untouched Lead is nobody's account yet,
+a closed row is history) and adds a **Worked by** column: that is the collision list, and it is
+what goes to the MFD president weekly (registry EST-13), since he bids commercial work
+independently. Deliverables live in `~/Documents/CompanyHealth/`, never here.
 
 **`one-offs/concrete_cost_code_audit.py`** (read-only QBO, the user 2026-08-25) - vendors code
 to the wrong cost-code family. Cost-code NUMBER = the family (1 Concrete · 2/3/4 material ·
