@@ -879,14 +879,9 @@ function renderDraws() {
     if (d.ar_status) { const s = document.createElement("span"); s.className = d.ar_status === "Paid" ? "ar-paid" : "ar-open"; s.textContent = d.ar_status; stt.appendChild(s); }
     else stt.appendChild(document.createTextNode("—"));
     tr.appendChild(stt);
-    const invtd = document.createElement("td"); invtd.className = "left";
-    if (d.invoice_no && d.ar_qbo_id) {
-      const a = document.createElement("a"); a.href = qboInvoiceUrl(d.ar_qbo_id);
-      a.target = "_blank"; a.rel = "noopener"; a.className = "qbo-link"; a.textContent = d.invoice_no;
-      a.title = "Open invoice in QuickBooks"; a.onclick = (e) => e.stopPropagation();
-      invtd.appendChild(a);
-    } else { const s = document.createElement("span"); s.textContent = d.invoice_no || "—"; invtd.appendChild(s); }
-    tr.appendChild(invtd);
+    // Invoice #: click the number for the memo + details in the sidebar (owner: "same info in
+    // the sidebar for draws"), the ↗ for QuickBooks. Row click still expands the vendor bills.
+    tr.appendChild(invNoCell(d.inv || (d.invoice_no ? { doc_number: d.invoice_no, qbo_txn_id: d.ar_qbo_id } : null)));
     tr.appendChild(leftText(fmtDate(d.ar_date || d.recency)));
     const ot = document.createElement("td"); const mo = moneyCell(d.total); mo.classList.add("draw-out"); ot.appendChild(mo);
     const pc = document.createElement("span"); pc.className = "paidcnt"; pc.textContent = ` ${d.paid}/${d.n}`; ot.appendChild(pc); tr.appendChild(ot);
@@ -2589,7 +2584,7 @@ function invRow(i, buckets) {
     proj.appendChild(a);
   } else { proj.appendChild(document.createTextNode(i.project_no || "–")); }
   tr.appendChild(proj);
-  tr.appendChild(qboLinkCell(i.doc_number, qboInvoiceUrl(i.qbo_txn_id), "Open this invoice in QuickBooks"));
+  tr.appendChild(invNoCell(i));
   const dt = document.createElement("td"); dt.className = "left"; dt.textContent = fmtDateShort(i.txn_date);
   if (i.days_past_due != null && i.days_past_due > 0) dt.title = i.days_past_due + " days past due (due " + fmtDateShort(i.due_date) + ")";
   tr.appendChild(dt);
@@ -2609,7 +2604,96 @@ function invRow(i, buckets) {
     }
     tr.appendChild(td);
   });
+  tr.style.cursor = "pointer";
+  tr.title = "Click for the invoice memo + details (no QuickBooks)";
+  tr.onclick = (e) => { if (e.target.closest("a")) return; openInvoiceDetail(i); };
   return tr;
+}
+
+// Invoice number cell: the NUMBER opens the native detail (memo + fields, no QBO); the small
+// ↗ opens QuickBooks for when you actually need it (owner 2026-08-25: "i like the qbo links but
+// hate using qbo"). `inv` carries the billing_event fields (doc_number, memo, amount, …).
+function invNoCell(inv) {
+  const td = document.createElement("td"); td.className = "left";
+  const docn = inv && (inv.doc_number || inv.invoice_no);
+  if (!docn) { td.appendChild(dimDash()); return td; }
+  const link = document.createElement("span"); link.className = "inv-detail-link"; link.textContent = docn;
+  link.title = "Invoice memo + details (no QuickBooks)";
+  link.onclick = (e) => { e.stopPropagation(); openInvoiceDetail(inv); };
+  td.appendChild(link);
+  const qurl = qboInvoiceUrl(inv.qbo_txn_id);
+  if (qurl) {
+    const a = document.createElement("a"); a.href = qurl; a.target = "_blank"; a.rel = "noopener";
+    a.className = "qbo-ico"; a.textContent = "↗"; a.title = "Open this invoice in QuickBooks";
+    a.onclick = (e) => e.stopPropagation(); td.appendChild(a);
+  }
+  return td;
+}
+
+// The invoice's memo + every field in the side panel - read a draw/invoice without opening QBO.
+// Works for an Invoices row and a Draws row alike (both carry the same billing_event fields).
+function openInvoiceDetail(inv) {
+  if (!inv) return;
+  const docn = inv.doc_number || inv.invoice_no || "—";
+  $("#invDetailTitle").textContent = "Invoice " + docn;
+  $("#invDetailSub").textContent = [inv.customer, inv.project_no, inv.division].filter(Boolean).join(" · ");
+  const body = $("#invDetailBody"); body.innerHTML = "";
+  // Memo first - the headline the owner asked for.
+  const memo = (inv.memo == null ? "" : String(inv.memo)).trim();
+  { const g = document.createElement("div"); g.className = "dgroup";
+    const h = document.createElement("h4"); h.textContent = "Memo"; g.appendChild(h);
+    const n = document.createElement("div"); n.className = "dnote" + (memo ? "" : " dim");
+    n.textContent = memo || "(no memo on this invoice)"; g.appendChild(n); body.appendChild(g); }
+  const amt = num(inv.amount), bal = inv.balance == null ? null : num(inv.balance);
+  const paid = (amt != null && bal != null) ? amt - bal : null;
+  const isOpen = !(bal != null && bal <= 0.005) && (inv.status || "").toLowerCase() !== "paid";
+  // Days-past-due is only meaningful while the invoice is still OPEN. A paid draw shows its
+  // Paid date instead (a paid invoice isn't "past due").
+  let dpd = isOpen ? inv.days_past_due : null;
+  if (isOpen && dpd == null && inv.due_date) { const dd = Math.floor((Date.now() - Date.parse(inv.due_date)) / 86400000); if (!isNaN(dd)) dpd = dd; }
+  const groups = [
+    ["Billing", [
+      ["Amount billed", money(amt), false],
+      ["Open balance", money(bal), bal != null && bal > 0.005],
+      paid != null ? ["Paid", money(paid), false] : null,
+      ["Status", inv.status || (bal != null && bal > 0.005 ? "Open" : "Paid"), false],
+    ]],
+    ["Dates & terms", [
+      ["Invoice date", inv.txn_date ? fmtDate(inv.txn_date) : null, false],
+      ["Due date", inv.due_date ? fmtDate(inv.due_date) : null, false],
+      dpd != null ? ["Days past due", dpd > 0 ? dpd + " days" : "current", dpd > 0] : null,
+      ["Terms", inv.net_terms, false],
+      ["Draw period", inv.draw_period, false],
+      inv.paid_date ? ["Paid date", fmtDate(inv.paid_date), false] : null,
+    ]],
+    ["Lien", [
+      ["Notice deadline", inv.lien_due_label, false],
+      ["Lien status", inv.lien_status, false],
+      ["Notice type", inv.lien_notice, false],
+    ]],
+  ];
+  for (const [title, rows] of groups) {
+    const present = rows.filter(r => r && r[1] != null && r[1] !== "" && r[1] !== "—");
+    if (!present.length) continue;
+    const g = document.createElement("div"); g.className = "dgroup";
+    const h = document.createElement("h4"); h.textContent = title; g.appendChild(h);
+    for (const [label, val, neg] of present) {
+      const row = document.createElement("div"); row.className = "drow";
+      const dk = document.createElement("span"); dk.className = "dk"; dk.textContent = label;
+      const dv = document.createElement("span"); dv.className = "dv" + (neg ? " neg" : "");
+      dv.textContent = val; dv.title = "Click to copy"; dv.onclick = () => copy(String(val));
+      row.appendChild(dk); row.appendChild(dv); g.appendChild(row);
+    }
+    body.appendChild(g);
+  }
+  const qurl = qboInvoiceUrl(inv.qbo_txn_id);
+  if (qurl) {
+    const g = document.createElement("div"); g.className = "dgroup inv-qbo";
+    const a = document.createElement("a"); a.href = qurl; a.target = "_blank"; a.rel = "noopener";
+    a.className = "qbo-link"; a.textContent = "Open in QuickBooks ↗"; a.title = "Only if you need it";
+    g.appendChild(a); body.appendChild(g);
+  }
+  openPanel("#invDetail");
 }
 
 function updateInvCollapseBtn() {
@@ -4179,7 +4263,7 @@ function openPanel(sel) { $("#overlay").hidden = false; $(sel).hidden = false; }
 function closePanels() { $("#overlay").hidden = true; $("#detail").hidden = true; $("#settings").hidden = true;
   { const bd = $("#billDetail"); if (bd) bd.hidden = true; } { const sd = $("#sublocDetail"); if (sd) sd.hidden = true; }
   { const pb = $("#payBills"); if (pb) pb.hidden = true; } { const lr = $("#lienReview"); if (lr) lr.hidden = true; }
-  { const st = $("#invStatement"); if (st) st.hidden = true; } }
+  { const st = $("#invStatement"); if (st) st.hidden = true; } { const iv = $("#invDetail"); if (iv) iv.hidden = true; } }
 
 // ── Copy + CSV + toast ────────────────────────────────────────────────────
 let toastTimer = null;
@@ -5270,6 +5354,7 @@ function init() {
   { const el = $("#btnCloseStmt"); if (el) el.onclick = closePanels; }
   { const el = $("#btnCloseBillDetail"); if (el) el.onclick = closePanels; }
   { const el = $("#btnClosePayBills"); if (el) el.onclick = closePanels; }
+  { const el = $("#btnCloseInvDetail"); if (el) el.onclick = closePanels; }
   { const el = $("#btnCloseLienReview"); if (el) el.onclick = closePanels; }
   { const el = $("#billSaveText"); if (el) el.onclick = openLienReview; }   // press "Lien marks saved" → review them
   { const el = $("#btnCloseSublocDetail"); if (el) el.onclick = closePanels; }

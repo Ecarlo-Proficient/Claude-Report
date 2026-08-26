@@ -1073,3 +1073,12 @@ html[data-theme="dark"] .wr-block-title.pm { color: #7fb0e0; }
   .wr-field { grid-template-columns: 128px 1fr 14px 1fr 22px; }
   .wr-delta { display: none; }
 }
+
+/* ── Invoice detail: native-first invoice # link + a subtle QBO icon ─────────── */
+.inv-detail-link { cursor: pointer; border-bottom: 1px dotted var(--border); font-variant-numeric: tabular-nums; }
+.inv-detail-link:hover { color: var(--accent); border-bottom-color: var(--accent); }
+.qbo-ico { margin-left: 6px; font-size: .82em; text-decoration: none; opacity: .55; }
+.qbo-ico:hover { opacity: 1; }
+#invDetailBody .dv.neg { color: var(--neg); }
+#invDetailBody .dnote.dim { color: var(--text-dim); font-style: italic; }
+.dgroup.inv-qbo { margin-top: 6px; }

@@ -702,6 +702,20 @@
     <div class="panel-body" id="billDetailBody"></div>
   </aside>
 
+  <!-- ── Invoice detail: the memo + every field, so a draw/invoice can be read without QBO ── -->
+  <aside class="panel panel-right" id="invDetail" hidden>
+    <div class="panel-head">
+      <div>
+        <div class="panel-title" id="invDetailTitle">–</div>
+        <div class="panel-sub" id="invDetailSub"></div>
+      </div>
+      <div class="panel-head-actions">
+        <button class="btn icon" id="btnCloseInvDetail" title="Close">✕</button>
+      </div>
+    </div>
+    <div class="panel-body" id="invDetailBody"></div>
+  </aside>
+
   <!-- ── Payment drill-over: the AP bills this payment unlocks (talks to the Bills tab data) ── -->
   <aside class="panel panel-right" id="payBills" hidden>
     <div class="panel-head">

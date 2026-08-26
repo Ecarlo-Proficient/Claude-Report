@@ -606,7 +606,7 @@ def _fetch_open_invoices(con) -> dict:
         rows = con.execute(
             "SELECT doc_number, qbo_txn_id, project_no, division, customer, memo, amount, "
             "balance, txn_date, due_date, net_terms, aging_bucket, status, litigation, "
-            "lien_status, lien_notice FROM billing_event "
+            "lien_status, lien_notice, paid_date, draw_period FROM billing_event "
             "WHERE COALESCE(balance,0) > 0.005").fetchall()
     except sqlite3.OperationalError:
         return out
@@ -877,7 +877,9 @@ def _fetch_draws(con, limit: int = 100) -> dict:
     # AR side (money IN) from the Invoice Tracker load — joined by Invoice #.
     bmap: dict = {}
     try:
-        for b in con.execute("SELECT doc_number, qbo_txn_id, amount, balance, status, txn_date, customer "
+        for b in con.execute("SELECT doc_number, qbo_txn_id, project_no, division, customer, memo, "
+                             "amount, balance, status, txn_date, due_date, net_terms, paid_date, "
+                             "draw_period, lien_status, lien_notice "
                              "FROM billing_event WHERE doc_number IS NOT NULL"):
             bmap[str(b["doc_number"])] = dict(b)
     except sqlite3.OperationalError:
@@ -923,6 +925,9 @@ def _fetch_draws(con, limit: int = 100) -> dict:
             "ar_date": (ar["txn_date"] if ar else None),       # invoice date
             "ar_qbo_id": (ar["qbo_txn_id"] if ar else None),   # QBO Invoice Id → deep link
             "customer": (ar["customer"] if ar else None),
+            # The whole invoice row (memo + fields) so the Draws sidebar can show the same
+            # invoice detail the Invoices tab does - read a draw without opening QBO.
+            "inv": ar,
             "gc_paid_in": gc_paid_in,
         })
         out.append(d)

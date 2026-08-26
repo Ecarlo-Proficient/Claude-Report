@@ -42,6 +42,18 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   CP/MFD, whole job for RP). **Negative = red** (the AP owed on that draw/job exceeds the payment - it
   doesn't cover itself). No portfolio total on purpose: summing per-payment nets would double-count AP that
   two RP payments on the same job both "unlock". Frontend-only (app.js) - reload, no restart.
+- **Invoice detail sidebar - read a draw/invoice without QBO (owner, 2026-08-25: "need memo on invoices if i
+  click it give me the details ... for draws i want that same info in the sidebar ... i like the qbo links
+  but also hate using qbo").** New `#invDetail` side panel (`openInvoiceDetail`): the invoice's **Memo**
+  (headline) + Billing (amount / open / paid / status), Dates & terms (invoice / due / days-past-due / terms /
+  draw period / paid date), and Lien (notice deadline / status / notice type) - all from the `billing_event`
+  row already loaded, no QBO call. **Invoices tab:** the row (and the invoice #) opens it; **Draws tab:** the
+  invoice # opens it (row-click still expands the vendor bills). The invoice # is now a **native-detail link**
+  with a small **↗** QBO icon beside it, and the panel keeps an "Open in QuickBooks" link - QBO stays one
+  click away but is no longer the default (shared `invNoCell`). Days-past-due shows only while OPEN (a paid
+  draw shows its Paid date instead). Backend: `_fetch_draws` attaches the full invoice (`d.inv`) and
+  `_fetch_open_invoices` adds `paid_date`/`draw_period` - **needs a restart** (the fetch changed); the front
+  end is a reload. Verified light + dark, both tabs, no console errors.
 - **Dark-mode legibility pass (owner, 2026-08-25: "hard to see").** Brightened the dark tokens:
   `--text-dim` #98a2b3 -> #aeb9c9 (secondary text is everywhere), `--border` #2a323d -> #35404f (faint
   separators), a touch more surface separation, and a brighter `--row-hover`. The accent is a per-user
