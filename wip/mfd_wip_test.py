@@ -645,20 +645,6 @@ def fetch_qbo(jobs: List[str]) -> Dict[str, dict]:
     return out
 
 
-def _retainage_variance(ws, job_rows: List[int], qbo_amount: float) -> str:
-    """The one line of the comment that does the comparing: QBO's balance
-    against the sum of this job's own 'Total Retainage' cells (col M). Summed
-    across the group because a job like MFD192 spreads its retainage over three
-    contract rows while QBO holds one balance."""
-    theirs = sum(_num(ws.cell(row=r, column=COL_TAB_RETAINAGE).value)
-                 for r in job_rows)
-    gap = qbo_amount - theirs
-    if abs(gap) < 0.01:
-        return f"This report says {theirs:,.2f} - they agree."
-    return (f"This report says {theirs:,.2f}.\n"
-            f"Difference: {gap:+,.2f} (QBO minus this report).")
-
-
 def write_qbo(ws, rows: List[int], cols: Dict[str, int], data: Dict[str, dict],
               stamp: str) -> int:
     """Write each job's QBO figures onto its anchor row and stamp the banner.
