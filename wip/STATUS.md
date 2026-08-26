@@ -978,11 +978,11 @@ column letter or index anywhere else in the MFD tooling — ask that module.**
 | Group | Columns |
 |---|---|
 | — | `PROJECT` `MOBE DATE` `COMPLETION DATE` `CUSTOMER` |
-| **MFD ENTERS** | `CONTRACT` `CHANGE ORDERS` `ETC` `REVISED ETC` `COMPLETED TO DATE` `EARNED LESS RET.` `Total Retainage` |
+| **MFD ENTERS** | `CONTRACT` `CHANGE ORDERS` `ETC` `COMPLETED TO DATE` `EARNED LESS RET.` `Total Retainage` |
 | **FROM QBO** | `COSTS TO DATE` `BILLED TO DATE` `RETAINAGE (QBO)` |
 | **METRICS** | `REV. CONTRACT` `EARNED REVENUE` `% COMPLETE` `BALANCE TO FINISH` `COST TO COMPLETE` `BILLED AHEAD` `BILLED BEHIND` `GP %` |
 
-22 columns, B..W. Each group carries a merged banner on row 5; the QBO one is the sync stamp.
+21 columns, B..V (was 22 before REVISED ETC was retired 2026-08-26). Each group carries a merged banner on row 5; the QBO one is the sync stamp.
 
 **New: `EARNED REVENUE`, `BILLED AHEAD`, `BILLED BEHIND`.** Earned is cost-to-cost —
 `revised contract × (QBO costs / revised ETC)` — the CPA and bank method, and the ONLY
@@ -1030,3 +1030,37 @@ mtime with SharePoint version history to put a name to it.
   reads it off `WIP Master` as `=(E/1.17)` — contract ÷ markup, which the WIP standard
   calls a fallback only. The owner has approved switching the master to prefer the typed
   ETC on `WIP - MFD` and fall back to the divisor formula when blank. **NOT YET BUILT.**
+
+## 2026-08-26 (later) — ONE ETC for the whole contract; `REVISED ETC` retired
+
+**The owner's ruling (settled, do not re-litigate):** *"just use one contract and one ETC
+for the mfd jobs we have now ... im not going to make them put the etc of the CO."* So the
+MFD tab has a SINGLE `ETC` column meaning the estimated total cost of the **entire**
+contract, change orders included. `REVISED ETC` is gone; 21 columns, B..V.
+
+**Deliberately NOT the house trio.** `wip_writer` and `project-pnl` both build
+`original ETC + CO costs = revised ETC`. This tab does not, on purpose.
+
+**And the analysis says that was the right call, not just the easier one.** The proposal was
+to add a `CO COSTS` column and compute revised ETC from it. Checking the live data first
+killed it: the ETC on MFD177 is `WIP Master`!E4 ÷ 1.17 — the divisor **fallback**, computed
+off a contract figure that already carried ~91% of that job's change orders. Layering a
+separate CO-cost column on top would have counted most of the CO cost **twice** and driven
+GP% badly negative. One column with one meaning avoids the whole class of error.
+
+**What the single ETC costs us, stated honestly:** the tab cannot show how much a change
+order added to the budget, and it cannot flag a CO that was added to the contract but never
+costed — the top-WIP-mistake `wip_writer`'s comment warns about. The owner accepted that
+trade for the existing jobs. Revisit only if he asks.
+
+**A small residual on MFD177:** its ETC derives from a contract of 8,677,257.79 while the
+tab's own revised contract is 8,762,675.89 — about 85K short of covering the whole contract,
+so GP% (15.36%) is marginally optimistic. Not worth chasing; it corrects itself the first
+time a real estimator ETC replaces the divisor value.
+
+**Migration was clean.** All six `REVISED ETC` cells held the seed formula `=H<row>`, never a
+typed value, so nothing was lost. Verified against the pre-change backup: every MFD-typed
+value carried, chrome unchanged, `assert_clean` passes.
+
+**The audit trail proved itself here** — it caught MFD177's ETC being entered between runs
+(`None -> 7,416,459.65`) without anyone having to mention it.

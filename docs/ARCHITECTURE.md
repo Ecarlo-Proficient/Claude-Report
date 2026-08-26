@@ -326,7 +326,12 @@ labels and every formula, exactly like `wip_writer.COLS`. The first cut hardcode
 and every added column became a shift plus a migration guard - three of four rebuild cycles
 on 2026-08-25 were that, not changed requirements. Reordering the sheet is now editing a
 list. The tab is read **by header name** and written **by position**, so old and new layouts
-never have to agree, and a reorder cannot lose a typed value. Groups: `MFD ENTERS` (one
+never have to agree, and a reorder cannot lose a typed value. There is deliberately **one `ETC`** meaning the whole contract's estimated cost, COs
+included - not the `original + CO costs = revised` trio `wip_writer` and `project-pnl`
+build (the owner, 2026-08-26). The tab's existing ETC came from `WIP Master`'s
+`=(E/1.17)` fallback, computed off a contract that already carried ~91% of the job's
+change orders, so a separate CO-cost column would have double-counted most of it.
+Groups: `MFD ENTERS` (one
 uninterrupted typing run) · `FROM QBO` (under the sync stamp) · `METRICS` (decisions, on the
 right, incl. cost-to-cost earned revenue and billed-ahead/behind). Every change to an
 MFD-owned value is appended to an immutable JSONL log under `~/Library/Logs/Proficient/`.

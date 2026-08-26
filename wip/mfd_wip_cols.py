@@ -15,6 +15,17 @@ THE GROUPING (the owner, 2026-08-25): everything MFD types sits in ONE run so en
 a single left-to-right pass with no calculated cell interrupting it; the QBO block is
 next; the metrics that drive decisions are furthest right.
 
+ONE ETC, FOR THE WHOLE CONTRACT (the owner, 2026-08-26 - settled, do not re-litigate)
+There is deliberately NO 'original ETC + CO costs = revised ETC' trio here, even though
+wip_writer and project-pnl both build one. The owner's ruling: "just use one contract and
+one ETC ... im not going to make them put the etc of the CO." So the single ETC column
+means the estimated total cost of the ENTIRE contract, change orders included.
+
+That also avoids a live double-count. The ETC on the sheet came from WIP Master's
+`=(E/1.17)` divisor fallback, computed off a contract figure that ALREADY carried ~91% of
+that job's change orders. Adding a separate CO-cost column on top of it would have counted
+most of the CO cost twice and driven GP% badly negative. One column, one meaning.
+
 KIND tells the writer what a column IS, and that drives both styling and safety:
   carry  - MFD's, script never writes it, only moves it during a reorder
   input  - MFD types it; bold-orange-on-grey, their existing convention
@@ -37,7 +48,6 @@ COLS: List[Tuple[str, int, str, str, str]] = [
     ("CONTRACT",                     15, "contract",     "MFD ENTERS", "input"),
     ("CHANGE ORDERS",                15, "co",           "",           "input"),
     ("ETC",                          15, "etc",          "",           "input"),
-    ("REVISED ETC",                  15, "rev_etc",      "",           "input"),
     ("COMPLETED TO DATE",            16, "completed",    "",           "input"),
     ("EARNED LESS RET.",             16, "earned_less",  "",           "input"),
     ("Total Retainage",              15, "retainage",    "",           "input"),
@@ -132,16 +142,16 @@ def _f(key: str, r: int, L) -> Optional[str]:
     if key == "rev_contract":
         return f"={L('contract')}{r}+{L('co')}{r}"
     if key == "earned_rev":
-        return (f'=IF(OR({L("rev_etc")}{r}="",{L("rev_etc")}{r}=0,'
+        return (f'=IF(OR({L("etc")}{r}="",{L("etc")}{r}=0,'
                 f'NOT(ISNUMBER({L("qbo_costs")}{r}))),"",'
-                f'{L("rev_contract")}{r}*{L("qbo_costs")}{r}/{L("rev_etc")}{r})')
+                f'{L("rev_contract")}{r}*{L("qbo_costs")}{r}/{L("etc")}{r})')
     if key == "pct":
         return f'=IF({L("rev_contract")}{r}=0,0,{L("completed")}{r}/{L("rev_contract")}{r})'
     if key == "balance":
         return f'={L("rev_contract")}{r}-{L("earned_less")}{r}'
     if key == "ctc":
-        return (f'=IF(OR({L("rev_etc")}{r}=0,NOT(ISNUMBER({L("qbo_costs")}{r}))),"",'
-                f'{L("rev_etc")}{r}-{L("qbo_costs")}{r})')
+        return (f'=IF(OR({L("etc")}{r}=0,NOT(ISNUMBER({L("qbo_costs")}{r}))),"",'
+                f'{L("etc")}{r}-{L("qbo_costs")}{r})')
     if key == "over":
         return (f'=IF({L("earned_rev")}{r}="","",'
                 f'MAX({L("completed")}{r}-{L("earned_rev")}{r},0))')
@@ -150,7 +160,7 @@ def _f(key: str, r: int, L) -> Optional[str]:
                 f'MAX({L("earned_rev")}{r}-{L("completed")}{r},0))')
     if key == "gp":
         return (f'=IF({L("rev_contract")}{r}=0,0,'
-                f'({L("rev_contract")}{r}-{L("rev_etc")}{r})/{L("rev_contract")}{r})')
+                f'({L("rev_contract")}{r}-{L("etc")}{r})/{L("rev_contract")}{r})')
     return None
 
 
@@ -159,7 +169,7 @@ def formula(key: str, row: int) -> Optional[str]:
 
 
 # Totals row: money columns subtotal, ratios recompute off the totals.
-TOTAL_SUM_KEYS = ["contract", "co", "etc", "rev_etc", "completed", "earned_less",
+TOTAL_SUM_KEYS = ["contract", "co", "etc", "completed", "earned_less",
                   "retainage", "qbo_costs", "qbo_billed", "qbo_retain",
                   "rev_contract", "earned_rev", "balance", "ctc", "over", "under"]
 
@@ -172,7 +182,7 @@ def total_formula(key: str, row: int, first: int, last: int) -> Optional[str]:
         return f'=IF({L("rev_contract")}{row}=0,0,{L("completed")}{row}/{L("rev_contract")}{row})'
     if key == "gp":
         return (f'=IF({L("rev_contract")}{row}=0,0,'
-                f'({L("rev_contract")}{row}-{L("rev_etc")}{row})/{L("rev_contract")}{row})')
+                f'({L("rev_contract")}{row}-{L("etc")}{row})/{L("rev_contract")}{row})')
     return None
 
 

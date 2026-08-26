@@ -150,8 +150,10 @@ RETAINAGE_NOTE = (
     "carrying it. A gap means retainage was invoiced and has not been taken off "
     "the WIP, or the reverse.")
 
-REV_ETC_NOTE = ("Starts equal to ETC. Type the new budget over it when an "
-                "approved change order moves the cost.")
+ETC_NOTE = ("Estimated total cost for the WHOLE contract - change orders included.\n"
+            "ONE number: do not split out a separate CO cost (the owner, 2026-08-26).\n"
+            "This is the estimator's build. It drives GP %, cost to complete and "
+            "earned revenue, so it must stay the BID, never actual cost.")
 
 EARNED_NOTE = (
     "Cost-to-cost earned revenue: revised contract x (QBO costs / revised ETC).\n"
@@ -175,7 +177,6 @@ _HEADER_ALIASES = {
     "CONTRACT": "contract",
     "CHANGE ORDERS": "co",
     "ETC": "etc",
-    "REVISED ETC": "rev_etc",
     "COMPLETED TO DATE": "completed",
     "EARNED LESS RET.": "earned_less",
     "EARNED LESS RET": "earned_less",
@@ -459,7 +460,7 @@ def write_layout(ws, rows: List[int], owned: Dict[int, Dict[str, object]],
                QBO_HDR_FILL if k == "qbo" else (HDR_INPUT_FILL if k == "input" else None),
                align=HDR_ALIGN)
 
-    notes = {"rev_etc": REV_ETC_NOTE, "earned_rev": EARNED_NOTE,
+    notes = {"etc": ETC_NOTE, "earned_rev": EARNED_NOTE,
              "over": OVER_NOTE, "under": UNDER_NOTE}
 
     for r in rows:
@@ -469,8 +470,6 @@ def write_layout(ws, rows: List[int], owned: Dict[int, Dict[str, object]],
             k = C.kind(key)
             if k in ("carry", "input"):
                 cell.value = vals.get(key)
-                if key == "rev_etc" and cell.value in (None, ""):
-                    cell.value = f"={C.letter('etc')}{r}"
                 _style(cell,
                        INPUT_FONT if k == "input" else CARRY_FONT,
                        INPUT_FILL if k == "input" else None,
