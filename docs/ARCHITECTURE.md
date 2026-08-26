@@ -700,6 +700,16 @@ marks (merged by txn id) and prunes long-cleared checks. Output `~/Documents/Com
 Money Out Register.xlsx` (chmod 600); the aged-&gt;30-days unmarked checks are the chase
 list, surfaced on the company dashboard.
 
+**`one-offs/sales_rep_leads_report.py`** (read-only ledger) - one outreach rep's live book,
+rendered for the estimators so nobody cold-calls an account that is mid-conversation. Reads
+`customer` + `sales_touch` (the Notion Customer List feed, `ledger/load_customers.py`) and
+attributes a rep's working set by Notion **"Last edited by"** - the settled convention, since
+there is no manual Owner property. Cross-checks each account against `project.builder_or_gc`
+and flags the ones that are ALREADY a live job's client. Output is a single self-contained
+HTML file (searchable index, print CSS for the PDF) written wherever `--out` points; the rep
+is a runtime `--rep` argument so no name is ever stored in the repo (`--list-reps` shows the
+options). Deliverables live in `~/Documents/CompanyHealth/`, never here.
+
 **`one-offs/concrete_cost_code_audit.py`** (read-only QBO, the user 2026-08-25) - vendors code
 to the wrong cost-code family. Cost-code NUMBER = the family (1 Concrete · 2/3/4 material ·
 5/51/52 equip · 6 labor; `shared/qbo_costs`). The script CAPTURES each vendor's coding TYPE from
