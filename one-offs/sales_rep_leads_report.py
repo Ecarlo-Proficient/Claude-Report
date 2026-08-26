@@ -41,13 +41,14 @@ DEFAULT_DB = paths.get_path(
     Path.home() / "Library" / "Application Support" / "Proficient" / "ledger.sqlite3",
 )
 
-# pipeline stage -> (display label, sort rank, css class)
+# pipeline stage -> (sort rank, css class). The label shown IS the Notion status,
+# verbatim - a relabelled stage is one more thing to translate back to the record.
 STAGES = {
-    "Interested":  ("In conversation", 1, "hot"),
-    "Contacted":   ("Contacted",       2, "live"),
-    "Follow up":   ("Follow-up wave",  3, "warm"),
-    "Lead":        ("Not yet worked",  4, "cold"),
-    "No response": ("No response",     5, "dead"),
+    "Interested":  (1, "hot"),
+    "Contacted":   (2, "live"),
+    "Follow up":   (3, "warm"),
+    "Lead":        (4, "cold"),
+    "No response": (5, "dead"),
 }
 IN_PLAY = "Interested"
 
@@ -127,9 +128,9 @@ def nice(text: str | None) -> str:
 def div_tag(division: str | None) -> tuple[str, str]:
     d = (division or "").lower()
     if d.startswith("com"):
-        return ("Com", "com")
+        return ("CP", "cp")
     if d.startswith("res"):
-        return ("Res", "res")
+        return ("RP", "rp")
     if "multi" in d:
         return ("MFD", "mfd")
     return ("", "")
@@ -185,7 +186,7 @@ def render(rep: str, rows, touches, live, today: dt.date) -> str:
     ordered = sorted(
         rows,
         key=lambda r: (
-            STAGES.get(r["sales_status"], ("", 9, ""))[1],
+            STAGES.get(r["sales_status"], (9, ""))[0],
             -(days_since(r["last_contacted"], today) is not None),
             r["last_contacted"] or "",
         ),
@@ -230,7 +231,8 @@ def render(rep: str, rows, touches, live, today: dt.date) -> str:
     trs = []
     for r in sorted(rows, key=lambda r: r["name"].upper()):
         label, tag = div_tag(r["division"])
-        stage_label, _rank, cls = STAGES.get(r["sales_status"], (r["sales_status"] or "-", 9, ""))
+        _rank, cls = STAGES.get(r["sales_status"], (9, ""))
+        stage_label = r["sales_status"] or "-"
         badge = ' <span class="mini">live client</span>' if r["customer_key"] in live else ""
         trs.append(
             f'<tr data-s="{e((r["name"] + " " + (r["primary_contact"] or "") + " " + (r["primary_email"] or "")).lower())}">'
@@ -248,7 +250,8 @@ def render(rep: str, rows, touches, live, today: dt.date) -> str:
 <title>Outreach Accounts &middot; {e(rep)}</title>
 <style>
  :root{{--ink:#1c2230;--muted:#5b6472;--line:#e4e7ee;--bg:#f6f7f9;--card:#fff;
-  --hot:#2f9e44;--live:#3b5bdb;--warm:#e8a13a;--cold:#8a94a6;--dead:#e03131;--com:#e8590c;--res:#3b5bdb;}}
+  --hot:#2f9e44;--live:#3b5bdb;--warm:#e8a13a;--cold:#8a94a6;--dead:#e03131;
+  --rp:#2f9e44;--cp:#e8590c;--mfd:#3b5bdb;}}
  *{{box-sizing:border-box}}
  body{{margin:0;background:var(--bg);color:var(--ink);
   font:14.5px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;}}
@@ -265,9 +268,8 @@ def render(rep: str, rows, touches, live, today: dt.date) -> str:
  .contact{{margin:4px 0 0;font-size:12.5px;color:var(--muted);}}
  .contact .who{{color:var(--ink);font-weight:600;}}
  .contact a{{color:var(--live);text-decoration:none;}}
- .tag{{font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;margin-left:7px;vertical-align:middle;}}
- .tag.com{{background:#fde8d9;color:var(--com);}} .tag.res{{background:#e7ecfd;color:var(--res);}}
- .tag.mfd{{background:#e6f4ea;color:var(--hot);}}
+ .tag{{font-size:10.5px;font-weight:800;letter-spacing:.04em;margin-left:8px;vertical-align:middle;}}
+ .tag.rp{{color:var(--rp);}} .tag.cp{{color:var(--cp);}} .tag.mfd{{color:var(--mfd);}}
  .badge{{display:inline-block;margin-top:7px;font-size:11px;font-weight:700;padding:2px 8px;border-radius:5px;
   background:#fdecec;color:var(--dead);}}
  .log{{margin:7px 0 0;padding-left:15px;font-size:12.5px;color:#333;}}
@@ -284,6 +286,7 @@ def render(rep: str, rows, touches, live, today: dt.date) -> str:
  td{{padding:7px 11px;border-bottom:1px solid #f0f2f6;vertical-align:top;}}
  tr:last-child td{{border-bottom:none;}}
  td.co{{font-weight:600;}} td.num{{white-space:nowrap;color:var(--muted);}}
+ td .tag{{margin-left:0;}}
  td.who{{color:#333;}} td.em{{color:var(--muted);font-size:11.5px;overflow-wrap:break-word;}}
  td.co,th{{hyphens:none;}}
  .pill{{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:20px;white-space:nowrap;}}
