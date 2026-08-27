@@ -41,7 +41,8 @@ from shared import pnl_paths
 from shared.xlsx_verify import assert_clean
 
 ARCHIVE = "completed mfd project p&l"
-OVERHEAD_PCT = 0.10
+OVERHEAD_PCT = 0.10          # company view: 10% of REVENUE
+MFD_OVERHEAD_PCT = 0.09      # MFD's own view: 9% of COSTS (CLAUDE.md)
 
 # Big and plain. The whole complaint about the old sheet was that it is dense.
 SZ = 14                      # body
@@ -62,6 +63,19 @@ F_KPI = PatternFill("solid", fgColor="F2F2F2")
 HAIR = Side(style="thin", color="D0D7E2")
 BOX = Border(left=HAIR, right=HAIR, top=HAIR, bottom=HAIR)
 UNDER = Border(bottom=Side(style="medium", color=NAVY))
+THICK = Side(style="medium", color=NAVY)
+
+
+def _thick_box(ws, r0: int, r1: int, c0: int, c1: int) -> None:
+    """Heavy rule around a block so it reads as its own thing."""
+    for rr in range(r0, r1 + 1):
+        for cc in range(c0, c1 + 1):
+            cur = ws.cell(row=rr, column=cc).border
+            ws.cell(row=rr, column=cc).border = Border(
+                left=THICK if cc == c0 else cur.left,
+                right=THICK if cc == c1 else cur.right,
+                top=THICK if rr == r0 else cur.top,
+                bottom=THICK if rr == r1 else cur.bottom)
 
 
 # ───────────────────────────── read the source ─────────────────────────────
@@ -318,31 +332,53 @@ def _totals(src: dict) -> dict:
     cost = cogs + opex
     gp = billed - cost
     oh = billed * OVERHEAD_PCT
+    moh = cost * MFD_OVERHEAD_PCT
     return {"billed": billed, "cogs": cogs, "opex": opex, "cost": cost,
             "gp": gp, "oh": oh, "net": gp - oh,
             "gpm": gp / billed if billed else 0.0,
-            "netm": (gp - oh) / billed if billed else 0.0}
+            "netm": (gp - oh) / billed if billed else 0.0,
+            "moh": moh, "mnet": gp - moh,
+            "mnetm": (gp - moh) / billed if billed else 0.0}
 
 
 def _kpi_strip(ws, r: int, t: dict, col0: int = 1) -> int:
-    """The metrics ACROSS, not stacked. Returns the next free row."""
+    """Metrics ACROSS, exactly 4 cells wide so the strip lines up with the
+    table beneath it instead of running off to column N (the user 2026-08-27).
+    The two OVERHEAD views get their own boxed block below, because MFD's 9%
+    of cost and the company's 10% of revenue are different answers and the
+    MFD one must not get lost among the others."""
     kpis = [("BILLED", t["billed"], MONEY, NAVY), ("COST", t["cost"], MONEY, NAVY),
             ("GROSS PROFIT", t["gp"], MONEY, GREEN if t["gp"] >= 0 else RED),
-            ("GROSS MARGIN", t["gpm"], PCT, GREEN if t["gp"] >= 0 else RED),
-            ("OVERHEAD 10%", -t["oh"], MONEY, GREY),
-            ("NET PROFIT", t["net"], MONEY, GREEN if t["net"] >= 0 else RED),
-            ("NET MARGIN", t["netm"], PCT, GREEN if t["net"] >= 0 else RED)]
+            ("GROSS MARGIN", t["gpm"], PCT, GREEN if t["gp"] >= 0 else RED)]
     for i, (label, val, fmt, color) in enumerate(kpis):
-        c = col0 + i * 2
+        c = col0 + i
         _t(ws, r, c, label, size=SZ_SMALL, bold=True, color="FFFFFF",
            fill=F_HDR, align="center", border=BOX)
         _t(ws, r + 1, c, val, size=SZ + 4, bold=True, color=color, fmt=fmt,
            fill=F_KPI, align="center", border=BOX)
-        ws.merge_cells(start_row=r, start_column=c, end_row=r, end_column=c + 1)
-        ws.merge_cells(start_row=r + 1, start_column=c, end_row=r + 1, end_column=c + 1)
     ws.row_dimensions[r].height = 22
-    ws.row_dimensions[r + 1].height = 34
-    return r + 3
+    ws.row_dimensions[r + 1].height = 32
+
+    r2 = r + 3
+    _t(ws, r2, col0, "AFTER OVERHEAD", size=SZ_SMALL, bold=True, color="FFFFFF",
+       fill=F_HDR, border=BOX)
+    for c in (col0 + 1, col0 + 2, col0 + 3):
+        _t(ws, r2, c, {col0 + 1: "OVERHEAD", col0 + 2: "NET PROFIT",
+                       col0 + 3: "NET MARGIN"}[c], size=SZ_SMALL, bold=True,
+           color="FFFFFF", fill=F_HDR, align="center", border=BOX)
+    for i, (lbl, oh, net, netm) in enumerate((
+            ("Company — 10% of revenue", t["oh"], t["net"], t["netm"]),
+            ("MFD — 9% of cost", t["moh"], t["mnet"], t["mnetm"]))):
+        rr = r2 + 1 + i
+        _t(ws, rr, col0, lbl, size=SZ_SMALL, bold=(i == 1), border=BOX)
+        _t(ws, rr, col0 + 1, -oh, size=SZ, fmt=MONEY, color=GREY,
+           align="right", border=BOX)
+        _t(ws, rr, col0 + 2, net, size=SZ, bold=True, fmt=MONEY,
+           color=GREEN if net >= 0 else RED, align="right", border=BOX)
+        _t(ws, rr, col0 + 3, netm, size=SZ, bold=True, fmt=PCT,
+           color=GREEN if net >= 0 else RED, align="right", border=BOX)
+    _thick_box(ws, r2, r2 + 2, col0, col0 + 3)
+    return r2 + 4
 
 
 def build_bundle(jobs: List[tuple], out: Path) -> None:
@@ -362,12 +398,15 @@ def build_bundle(jobs: List[tuple], out: Path) -> None:
     _t(sm, 2, 1, f"{len(jobs)} finished jobs · click a job to open its detail · "
                  f"{dt.datetime.now():%m/%d/%Y}", size=SZ_SMALL, color=GREY)
 
-    tot = {k: sum(t[k] for _, _, t in jobs) for k in ("billed", "cost", "gp", "oh", "net")}
+    tot = {k: sum(t[k] for _, _, t in jobs)
+           for k in ("billed", "cost", "gp", "oh", "net", "moh", "mnet")}
+    tot["mnetm"] = tot["mnet"] / tot["billed"] if tot["billed"] else 0
     tot["gpm"] = tot["gp"] / tot["billed"] if tot["billed"] else 0
     tot["netm"] = tot["net"] / tot["billed"] if tot["billed"] else 0
     r = _kpi_strip(sm, 4, tot)
 
-    heads = ["JOB", "BILLED", "COST", "GROSS PROFIT", "GP %", "NET PROFIT", "NET %"]
+    heads = ["JOB", "BILLED", "COST", "GROSS PROFIT", "GP %",
+             "NET — company 10% of revenue", "NET — MFD 9% of cost"]
     for c, h in enumerate(heads, 1):
         _t(sm, r, c, h, size=SZ_SMALL, bold=True, color="FFFFFF", fill=F_HDR,
            align="center", wrap=True, border=BOX)
@@ -384,8 +423,8 @@ def build_bundle(jobs: List[tuple], out: Path) -> None:
            color=GREEN if t["gp"] >= 0 else RED)
         _t(sm, r, 6, t["net"], size=SZ, fmt=MONEY, align="right",
            color=GREEN if t["net"] >= 0 else RED)
-        _t(sm, r, 7, t["netm"], size=SZ, fmt=PCT, align="right",
-           color=GREEN if t["net"] >= 0 else RED)
+        _t(sm, r, 7, t["mnet"], size=SZ, bold=True, fmt=MONEY, align="right",
+           color=GREEN if t["mnet"] >= 0 else RED)
         for c in range(1, 8):
             sm.cell(row=r, column=c).border = BOX
             if r % 2 == 0:
@@ -393,12 +432,15 @@ def build_bundle(jobs: List[tuple], out: Path) -> None:
         r += 1
     _t(sm, r, 1, f"TOTAL — {len(jobs)} JOBS", size=SZ, bold=True, fill=F_KPI)
     for c, k, fmt in ((2, "billed", MONEY), (3, "cost", MONEY), (4, "gp", MONEY),
-                      (5, "gpm", PCT), (6, "net", MONEY), (7, "netm", PCT)):
+                      (5, "gpm", PCT), (6, "net", MONEY), (7, "mnet", MONEY)):
         _t(sm, r, c, tot[k], size=SZ, bold=True, fmt=fmt, align="right",
            fill=F_KPI, color=(GREEN if tot["gp"] >= 0 else RED) if c in (4, 5, 6, 7) else "000000")
     for c in range(1, 8):
         sm.cell(row=r, column=c).border = BOX
-    for col, w in zip("ABCDEFG", (16, 18, 18, 18, 12, 18, 12)):
+    # MFD's own overhead column is boxed on the job table too, so it reads as
+    # a distinct answer rather than another number in the row.
+    _thick_box(sm, r - len(jobs) - 1, r, 7, 7)
+    for col, w in zip("ABCDEFG", (18, 19, 19, 19, 11, 26, 24)):
         sm.column_dimensions[col].width = w
     sm.freeze_panes = "A4"
 
@@ -406,84 +448,138 @@ def build_bundle(jobs: List[tuple], out: Path) -> None:
         ws = wb.create_sheet(job[:31])
         ws.sheet_view.showGridLines = False
         _t(ws, 1, 1, f"{job} — JOB RESULT", size=SZ_TITLE - 2, bold=True, color=NAVY)
-        back = _t(ws, 1, 6, "← back to Summary", size=SZ_SMALL)
+        back = _t(ws, 1, 5, "← back to Summary", size=SZ_SMALL, align="right")
         back.hyperlink = "#'Summary'!A1"
         back.font = Font(size=SZ_SMALL, color=LINK, underline="single")
         _t(ws, 2, 1, src["title"].replace("PROJECT P&L — ", ""), size=SZ_SMALL, color=GREY)
         r = _kpi_strip(ws, 4, t)
 
+        # ONE grid for both blocks: A label/doc · B date · C what-for ·
+        # D amount · E paid. No column is ever left blank in a data row —
+        # the empty column A down the cost detail is what made the first cut
+        # read as sloppy (the user 2026-08-27).
         _t(ws, r, 1, "INVOICED", size=SZ + 2, bold=True, color=NAVY)
-        _t(ws, r, 5, t["billed"], size=SZ + 2, bold=True, color=NAVY,
+        _t(ws, r, 4, t["billed"], size=SZ + 2, bold=True, color=NAVY,
            fmt=MONEY, align="right")
         r += 1
         for c, h in ((1, "Invoice"), (2, "Date"), (3, "What for"),
-                     (5, "Amount"), (6, "Paid?")):
-            _t(ws, r, c, h, size=SZ_SMALL, bold=True, color="FFFFFF", fill=F_HDR)
+                     (4, "Amount"), (5, "Paid?")):
+            _t(ws, r, c, h, size=SZ_SMALL, bold=True, color="FFFFFF",
+               fill=F_HDR, border=BOX)
         r += 1
         for inv in sorted(src["invoices"], key=lambda i: str(i["date"]), reverse=True):
-            _t(ws, r, 1, inv["doc"], size=SZ_SMALL)
+            c1 = _t(ws, r, 1, inv["doc"], size=SZ_SMALL)
+            c1.number_format = "0"              # an invoice # is not a quantity
+            if inv["url"]:                      # → the invoice in QBO
+                c1.hyperlink = inv["url"]
+                c1.font = Font(size=SZ_SMALL, color=LINK, underline="single")
             dc = _t(ws, r, 2, inv["date"], size=SZ_SMALL)
             dc.number_format = "mm/dd/yyyy"
-            _t(ws, r, 3, str(inv["memo"])[:78], size=SZ_SMALL)
-            _t(ws, r, 5, inv["gross"] + inv["ret_billed"], size=SZ_SMALL,
+            _t(ws, r, 3, str(inv["memo"])[:90], size=SZ_SMALL)
+            _t(ws, r, 4, inv["gross"] + inv["ret_billed"], size=SZ_SMALL,
                fmt=MONEY, align="right")
-            _t(ws, r, 6, str(inv["paid"]), size=SZ_SMALL,
+            _t(ws, r, 5, str(inv["paid"]), size=SZ_SMALL,
                color=GREY if str(inv["paid"]).startswith("PAID") else RED)
             if r % 2 == 0:
-                for c in range(1, 7):
+                for c in range(1, 6):
                     ws.cell(row=r, column=c).fill = F_BAND
             r += 1
         if src["not_billed"]:
+            _t(ws, r, 1, "(journal entry)", size=SZ_SMALL, color=GREY)
             _t(ws, r, 3, "retainage moved by journal entry", size=SZ_SMALL, color=GREY)
-            _t(ws, r, 5, src["not_billed"], size=SZ_SMALL, fmt=MONEY,
+            _t(ws, r, 4, src["not_billed"], size=SZ_SMALL, fmt=MONEY,
                align="right", color=GREY)
             r += 1
         r += 1
 
-        _t(ws, r, 1, "COSTS — account, then vendor, then every line", size=SZ + 2,
-           bold=True, color=NAVY)
-        _t(ws, r, 5, t["cost"], size=SZ + 2, bold=True, color=NAVY,
+        _t(ws, r, 1, "COSTS — account, then vendor, then every line",
+           size=SZ + 2, bold=True, color=NAVY)
+        _t(ws, r, 4, t["cost"], size=SZ + 2, bold=True, color=NAVY,
            fmt=MONEY, align="right")
+        r += 1
+        for c, h in ((1, "Account / Vendor / Doc #"), (2, "Date"),
+                     (3, "Description"), (4, "Amount"), (5, "Paid?")):
+            _t(ws, r, c, h, size=SZ_SMALL, bold=True, color="FFFFFF",
+               fill=F_HDR, border=BOX)
         r += 1
         for sec in src["sections"]:
             _t(ws, r, 1, sec["name"], size=SZ, bold=True, color="FFFFFF", fill=F_HDR)
-            _t(ws, r, 5, sec["total"], size=SZ, bold=True, color="FFFFFF",
+            _t(ws, r, 4, sec["total"], size=SZ, bold=True, color="FFFFFF",
                fill=F_HDR, fmt=MONEY, align="right")
-            for c in (2, 3, 4, 6):
+            for c in (2, 3, 5):
                 ws.cell(row=r, column=c).fill = F_HDR
             r += 1
             for acct in sec["accounts"]:
                 _t(ws, r, 1, acct["name"], size=SZ, bold=True, color=NAVY, fill=F_BAND)
-                _t(ws, r, 5, acct["total"], size=SZ, bold=True, color=NAVY,
+                _t(ws, r, 4, acct["total"], size=SZ, bold=True, color=NAVY,
                    fill=F_BAND, fmt=MONEY, align="right")
-                for c in (2, 3, 4, 6):
+                for c in (2, 3, 5):
                     ws.cell(row=r, column=c).fill = F_BAND
                 r += 1
                 for v in acct["vendors"]:
                     _t(ws, r, 1, v["name"], size=SZ_SMALL, bold=True, indent=1)
-                    _t(ws, r, 5, v["total"], size=SZ_SMALL, bold=True,
+                    _t(ws, r, 4, v["total"], size=SZ_SMALL, bold=True,
                        fmt=MONEY_C, align="right")
                     ws.row_dimensions[r].outline_level = 1
                     ws.row_dimensions[r].hidden = True
                     r += 1
                     for ln in v["lines"]:
+                        dc1 = _t(ws, r, 1, ln["doc"], size=SZ_SMALL, indent=2)
+                        if ln["url"]:            # → the bill in QBO
+                            dc1.hyperlink = ln["url"]
+                            dc1.font = Font(size=SZ_SMALL, color=LINK,
+                                            underline="single")
                         dc = _t(ws, r, 2, ln["date"], size=SZ_SMALL)
                         dc.number_format = "mm/dd/yyyy"
-                        _t(ws, r, 3, ln["doc"], size=SZ_SMALL)
-                        _t(ws, r, 4, str(ln["desc"])[:70], size=SZ_SMALL)
-                        _t(ws, r, 5, ln["amt"], size=SZ_SMALL, fmt=MONEY_C, align="right")
-                        _t(ws, r, 6, ln["paid"], size=SZ_SMALL, color=GREY)
+                        _t(ws, r, 3, str(ln["desc"])[:90], size=SZ_SMALL)
+                        _t(ws, r, 4, ln["amt"], size=SZ_SMALL, fmt=MONEY_C,
+                           align="right")
+                        _t(ws, r, 5, ln["paid"], size=SZ_SMALL, color=GREY)
                         ws.row_dimensions[r].outline_level = 2
                         ws.row_dimensions[r].hidden = True
                         r += 1
-        for col, w in zip("ABCDEF", (44, 14, 18, 62, 18, 24)):
+        for col, w in zip("ABCDE", (38, 14, 74, 20, 24)):
             ws.column_dimensions[col].width = w
+        ws.freeze_panes = "A4"
         ws.sheet_properties.outlinePr.summaryBelow = False
 
     tmp = out.with_suffix(".tmp.xlsx")
     wb.save(str(tmp))
     assert_clean(tmp)
+    for msg in lint_layout(wb):
+        print(f"    ⚑ layout: {msg}")
     tmp.replace(out)
+
+
+def lint_layout(wb) -> List[str]:
+    """Catch the things that make a sheet READ badly but verify fine — the
+    class of defect that shipped twice before this existed (the user
+    2026-08-27: "why don't you inspect it after? it looks sloppy").
+
+    Checks: a column left empty inside the used range (a gutter), and data
+    rows whose first column is blank (a ragged left edge). Cell-level checks
+    catch corruption; these catch ugly."""
+    from openpyxl.utils import get_column_letter
+    out: List[str] = []
+    for ws in wb.worksheets:
+        last = max((c.column for row in ws.iter_rows() for c in row
+                    if c.value is not None), default=0)
+        if not last:
+            continue
+        used = set()
+        for row in ws.iter_rows(min_row=1, max_col=last):
+            for c in row:
+                if c.value is not None:
+                    used.add(c.column)
+        gutters = [get_column_letter(i) for i in range(1, last + 1) if i not in used]
+        if gutters:
+            out.append(f"{ws.title}: empty column(s) {gutters} inside A..{get_column_letter(last)}")
+        blank_a = sum(1 for row in ws.iter_rows(min_row=6, max_col=last)
+                      if row[0].value is None
+                      and any(c.value is not None for c in row[1:]))
+        if blank_a > 5:
+            out.append(f"{ws.title}: {blank_a} rows have data but a blank column A")
+    return out
 
 
 def main() -> int:
