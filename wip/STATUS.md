@@ -434,7 +434,7 @@ now (the user 2026-08-04): **draw → signed proposal PDF → takeoff**.
   must-fix flag naming both figures.
 
 ### Two guards, both added after the change audit caught a regression
-The first cut of this dropped **CP783 from $364,032 to $56,544** — the audit
+The first cut of this dropped **CP783 from ~$364k to ~$57k** — the audit
 caught it on the very next run:
 - **Several proposal PDFs ⇒ don't guess.** CP783 holds a main proposal, a
   breakout, a dirt/utilities proposal and a revised dirt proposal. They are
@@ -482,10 +482,10 @@ folder. CP861 files its workbook a level deeper, under a per-company subfolder
 (ours and the GC's sit side by side), so draws #4 and #5 produced no candidate
 and the reader silently settled on **draw #3**:
 
-    draw #3 (what we read)  net CO $0        billed $410,520
-    draw #5 (actual latest) net CO $52,576   billed $605,426
+    draw #3 (what we read)  net CO $0      billed ~$411k
+    draw #5 (actual latest) net CO ~$53k   billed ~$605k
 
-So the job was understated by **$52,576 of change orders and $194,906 of
+So the job was understated by **~$53k of change orders and ~$195k of
 billing**, with nothing on the report to say so — the reader had a valid draw,
 just an old one.
 
@@ -503,11 +503,11 @@ SAME draw number** in one folder. `Draw #4/` holds both `Draw Excel #4` and
 `Revised LP Draw Excel #4`. Draw # tied, so the winner fell out of filesystem
 iteration order — arbitrary — and the superseded original won:
 
-    original draw #4   net CO $79,752   billed $529,054
-    revised  draw #4   net CO $66,200   billed $515,502   ← the live one
+    original draw #4   net CO ~$80k   billed ~$529k
+    revised  draw #4   net CO ~$66k   billed ~$516k   ← the live one
 
-The revision backs a **$13,552** change order out. Reading the dead file invented
-a $13,552 shortfall against QBO invoice 34288, whose cumulative $515,502 ties to
+The revision backs a **~$13.5k** change order out. Reading the dead file invented
+a matching shortfall against QBO invoice 34288, whose cumulative billed ties to
 the revised draw **to the dollar** (the user 2026-08-04 — flagged the file and
 the invoice).
 
@@ -515,8 +515,9 @@ the invoice).
   a name matching `revis` (Revised/Revision) beats the original, then newest
   mtime. `has_g702()` still gates every candidate.
 - CP765 is the only project whose chosen workbook changes. **Its WIP row moves
-  when the reader next runs**: contract $635,578 → $622,026, CO $79,752 →
-  $66,200, billed $529,054 → $515,502. Numbers going DOWN here is the correction,
+  when the reader next runs**: contract ~$636k → ~$622k, CO ~$80k → ~$66k,
+  billed ~$529k → ~$516k (each shifts by the same ~$13.5k the revision backs
+  out). Numbers going DOWN here is the correction,
   not a regression.
 - Money Bleeds `Draws CP` goes 1 RED → 0 RED as a result.
 

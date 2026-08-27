@@ -688,7 +688,8 @@ AMBER = "BF8F00"           # partially paid — encodes state, not decoration
 
 def _pay_state(balance, total=None):
     """(label, colour) for a payment state. PARTIAL carries the OPEN amount,
-    because 'UNPAID' on an invoice with $390 left of $280,838 reads as a
+    because 'UNPAID' on an invoice with a few hundred dollars left of a
+    six-figure total reads as a
     collection problem when it is a rounding tail (the user 2026-08-27)."""
     try:
         b = float(balance or 0)
@@ -3829,7 +3830,7 @@ def _read_yards_sheet(path: Path) -> Tuple[float, Dict[str, float]]:
 
     The takeoff does NOT split yards by cost code — the deliverable rows roll
     into the SL/PV/CS/MS families in ways only the estimator knows (CP745 moves
-    $1,733.79 of concrete from the foundation group into paving). So the TOTAL
+    a ~$1.7k concrete line from the foundation group into paving). So the TOTAL
     is the only figure a $/yd comparison may lean on; per-family yards are
     deliberately NOT inferred."""
     total, rows = 0.0, {}
@@ -4132,7 +4133,7 @@ _FOCUS_NUM = {"Labor": "6", "Concrete": "1"}
 _FOCUS_TIE = {"Labor": "Subcontractors Expense: Labor",
               "Concrete": "Job Materials: Concrete"}
 # A concrete line only counts toward YARDS when it was actually bought by the
-# yard. Lump vendor bills (qty 1 × $8,901.84) would wreck the $/yd math, so
+# yard. Lump vendor bills (qty 1 × a ~$8.9k lump) would wreck the $/yd math, so
 # they're carried in their own bucket and named on the sheet.
 _YARD_DESC_RE = re.compile(r"\byd|yard", re.IGNORECASE)
 

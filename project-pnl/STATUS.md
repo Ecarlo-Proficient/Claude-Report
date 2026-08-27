@@ -8,6 +8,12 @@ manual close), RP (no draws — expenses → invoice → profit).
 
 ## DONE / FINALIZED
 
+- **Dollar figures genericized to `~$Nk` form (2026-08-27)** in this file and in
+  `project_pnl_export.py` comments; the CI leak guard's TEMP exclusion for the
+  export is retired and the guard now also catches non-round six-figure amounts
+  (patterns live in `.github/leak_guard.sh`). Comment/doc wording only - no
+  behavior change.
+
 - **`cost_leaf` moved to `shared/qbo_costs.py`** (2026-08-08) — the ledger's `load_costs.py` needs
   the SAME cost-code resolver, so it graduated to shared/. This tool imports it back
   (`from shared.qbo_costs import cost_leaf`); byte-compatible, no behavior change (imports + compiles
@@ -172,7 +178,7 @@ manual close), RP (no draws — expenses → invoice → profit).
   Opt-in and scoped per project (`_set_legacy_matcher` is called per project so
   a batch can't leak one job's aliases into the next); with the flag off,
   `_line_belongs` is byte-identical to the old `CustomerRef == customer_id`
-  test — verified on CP585 (COGS $109,893 both ways). Same matcher backs
+  test — verified on CP585 (identical six-figure COGS both ways). Same matcher backs
   `one-offs/legacy_job_cost_pull.py`, so the P&L and that pull can never
   disagree. First use: MFD172, reproducing its known figures to the cent.
 - **CLASS/PROJECT LOOKUP — `--class-project` (the user 2026-08-25, MFD295).**
@@ -216,7 +222,7 @@ manual close), RP (no draws — expenses → invoice → profit).
   ordinary memo form `MFD172 - 1392 E Bonds Ranch Rd`, where the spaced hyphen
   separates fields. Getting that wrong dropped 48 real lines in testing.
   Effect on live numbers: MFD228 gained $6,680 (9 lines written `MFD 228`),
-  and MFD172 gained **$105,163** across 18 `MFD 172-0-20-1` sub-service draws
+  and MFD172 gained **~$105k** across 18 `MFD 172-0-20-1` sub-service draws
   that the original hand-built pull never saw.
 - **`+class` — the short form, and the class is FOUND not typed (2026-08-25).**
   `project-pnl MFD228 +class` is the whole command. `discover_job_classes`

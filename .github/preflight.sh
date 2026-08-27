@@ -40,15 +40,28 @@ fi
 fail=0
 
 echo "== 1/3 syntax (compileall) =="
-if python3 -m compileall -q . >/dev/null 2>&1; then
+# -x mirrors ci.yml: skip venvs/node_modules so a local env can't fail a gate
+# CI never sees. Note local python may be older than CI's 3.11 - that is a
+# FEATURE: the repo floor is 3.9+, and 3.9 parsing here enforces it.
+CA_SKIP='/(\.venv|venv|env|node_modules|\.git)(/|$)'
+if python3 -m compileall -q -x "$CA_SKIP" . >/dev/null 2>&1; then
   echo "   ok"
 else
   echo "   FAIL - a .py file does not parse:"
-  python3 -m compileall -q . 2>&1 | head -20
+  python3 -m compileall -q -x "$CA_SKIP" . 2>&1 | head -20
   fail=1
 fi
 
 echo "== 2/3 critical lint (ruff E9,F63,F7,F82) =="
+# CI pins ruff (see ci.yml) so a new release can't newly flag old code. Warn
+# when the local copy drifts from the pin - a newer local ruff can block a
+# push CI would pass, an older one can miss what CI will catch.
+pin="$(sed -n 's/.*ruff==\([0-9][0-9.]*\).*/\1/p' .github/workflows/ci.yml | head -1)"
+have="$(python3 -m ruff --version 2>/dev/null | awk '{print $2}')"
+if [ -n "$pin" ] && [ -n "$have" ] && [ "$pin" != "$have" ]; then
+  echo "   note: local ruff $have != CI pin $pin - align with:"
+  echo "         pip3 install --break-system-packages ruff==$pin"
+fi
 if ! python3 -c "import ruff" >/dev/null 2>&1; then
   echo "   NOT INSTALLED - and this is the gate that fails most often."
   echo "   Install it:  pip3 install --break-system-packages ruff"
@@ -73,28 +86,19 @@ else
 fi
 
 echo "== 3/3 data-leak guard =="
-# Use `git grep -P`, never plain grep: /usr/bin/grep on macOS has NO -P and
-# exits 2, which a naive `if grep ...` reads as "no match" - a silently dead
-# gate. git bundles PCRE on both macOS and the Linux runner. And -P not -E:
-# \b is dead in git grep's ERE, so -E passes locally while failing on CI.
-# Keep this regex identical to ci.yml.
-PATTERNS='\$[0-9]{1,3}(,[0-9]{3})+\.[0-9]{2}|\$[0-9]{1,3},[0-9]{3},[0-9]{3}|\b[0-9]{2}-[0-9]{7}\b|\b[0-9]{3,5} [A-Z]{3,}( [A-Z]{3,})* (ROAD|STREET|DRIVE|AVENUE|TRAIL|COURT|LANE|CIRCLE|BOULEVARD)\b'
-EXCLUDES=(':!.github' ':!*.example.json' ':!project-pnl/project_pnl_export.py')
-
-leak_scan() {  # $1 = label, rest = extra git-grep args
+# The patterns live in .github/leak_guard.sh - the ONE copy, shared with
+# ci.yml, so this gate and CI can never drift. Edit the script, never here.
+leak_scan() {  # $1 = label, rest = args passed through to leak_guard.sh
   local label="$1"; shift
-  git grep -nP "$PATTERNS" "$@" -- "${EXCLUDES[@]}"
-  local rc=$?
-  case "$rc" in
-    0) echo "   FAIL ($label) - real dollar figures, FEIN-shaped ids, or street"
-       echo "   addresses above. Genericize them, or move the finding to the"
-       echo "   vault / ~/Library/Logs/Proficient. Repo rule: dollar exposures"
-       echo "   never live in a STATUS.md."
-       fail=1 ;;
-    1) echo "   ok ($label)" ;;
-    *) echo "   ERROR ($label) - git grep -P failed (rc=$rc); treating as a failure"
-       fail=1 ;;
-  esac
+  if bash .github/leak_guard.sh "$@"; then
+    echo "   ok ($label)"
+  else
+    echo "   FAIL ($label) - see above. Genericize the figure (round it or"
+    echo "   write ~\$Nk), or move the finding to the vault /"
+    echo "   ~/Library/Logs/Proficient. Dollar exposures never live in a"
+    echo "   STATUS.md."
+    fail=1
+  fi
 }
 
 # Working tree covers tracked files as they stand; --cached covers the index,

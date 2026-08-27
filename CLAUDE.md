@@ -276,6 +276,11 @@ This folder is a git repo pushed to a **private GitHub remote** shared with the 
   changes, just no longer mandatory.
 
 **Session flow:**
+- **One-time per clone: install the CI gates as a pre-push hook** -
+  `ln -sf ../../.github/preflight.sh "$(git rev-parse --git-dir)/hooks/pre-push"`.
+  `preflight.sh` runs the same gates as CI (syntax, ruff, the data-leak guard in
+  `.github/leak_guard.sh` - the ONE copy of those patterns, never fork it), all of
+  them every run, so a red CI never starts on GitHub. Bypass once: `git push --no-verify`.
 - **Start of any session that will modify files: `git pull` on `dev` first** — the developer's pushes
   may have changed things. Working on a stale copy creates divergence.
 - **End of any session where files changed: run `git status`, then PROMPT THE USER** to land the work

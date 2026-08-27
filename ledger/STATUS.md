@@ -58,8 +58,8 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   application's `invoice_no`, via `payOpenBillsByDraw`); **RP** is regular work (costs UP FRONT, invoiced
   ONCE at the end - bills aren't tied to a draw), so use the whole project's open AP (`payOpenBillsByProject`).
   `payUnlockBills(p, drawIdx, projIdx)` branches per application via `_payIsRP` (project# prefix / division).
-  Verified: CP790 $11,418·3 (draw) vs $85,758·20 project; MFD192 $302,989·11 (draw) vs $921,218·65; RP6901-FTW
-  $19,546·3 = whole job. Frontend-only (BILLS already carry `invoice_no`).
+  Verified: CP790 ~$11k·3 (draw) vs ~$86k·20 project; MFD192 ~$303k·11 (draw) vs ~$921k·65; RP6901-FTW
+  ~$20k·3 = whole job (·N = bill count). Frontend-only (BILLS already carry `invoice_no`).
 - **Payments "Net after AP" column (owner, 2026-08-25: "a new column that shows me the net income after
   ap is paid").** New rightmost column = **Amount Paid − Unlocks (AP)**: what's left of a payment once the
   vendor bills it funds are paid. Reuses the same `payUnlockBills` sum (so it's division-correct: draw for

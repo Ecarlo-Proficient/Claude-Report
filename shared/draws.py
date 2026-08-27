@@ -85,7 +85,7 @@ def _draw_workbooks(draw_folder: Path, max_depth: int = 3):
     folder: the team often files it under a per-company subfolder (ours and the
     GC's sit side by side). CP861's draws #4 and #5 did exactly that, so a
     single-level scan found neither and the reader silently fell back to
-    draw #3 — costing $52,576 of change orders and $194,906 of billing on that
+    draw #3 — costing ~$53k of change orders and ~$195k of billing on that
     job (2026-08-04). 'DO NOT USE' style folders are skipped, and the caller
     still requires `has_g702()`, so the GC's own spreadsheets can't win.
     """
