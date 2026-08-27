@@ -295,6 +295,22 @@ manual close), RP (no draws — expenses → invoice → profit).
   that looks plausible is worse than an error, so the run now stops and says
   to do one job at a time. `+class` stays safe in a batch — the class is
   discovered per job.
+- **`completed_pnl.py` — the SIMPLE report for a finished job (2026-08-27).**
+  A separate template, not more surgery on the main exporter (the user:
+  "made simply, not small font and easy to follow so we can get a birds eye
+  view and swoop into the details when needed"). Three sheets:
+  **Summary** — a metrics strip ACROSS the top (billed · cost · gross profit ·
+  margin · overhead · net · net margin), then cost-by-account beside the
+  invoices that paid for it, every account name linking into the detail;
+  **Costs** — account → vendor → line, collapsed to accounts by default.
+  Base font 14 (18 for the KPI figures), no cents on the birds-eye view.
+  **It READS the generated workbook, not QBO** — it re-shapes
+  `Project_PnL_<job>.xlsx`, whose numbers are already proven line-level by
+  `one-offs/pnl_line_level_audit.py`. So it cannot introduce an attribution
+  bug, needs no credentials, and runs in a second. Requires the source
+  workbook to carry a `By Account` sheet (regenerate older ones first).
+  This is why the side-by-side layout did NOT need the `_Ref` refactor that
+  corrupted the main sheet: a fresh template owns its own geometry.
 - **Rich text is BANNED in this exporter, and every save is now gated on the
   corruption check (2026-08-24).** `_cost_code_value` / `_cost_name_value` were
   returning `CellRichText` (bold code token + regular description, the user
