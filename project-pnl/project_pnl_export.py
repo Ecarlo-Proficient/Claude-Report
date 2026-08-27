@@ -2586,6 +2586,7 @@ def build_sheet_pl(
     underbill_total: float = 0.0,
     underbill_count: int = 0,
     income_rows: Optional[List[dict]] = None,
+    simple: bool = False,
     realm: str = "",
 ) -> None:
     """
@@ -3070,7 +3071,11 @@ def build_sheet_pl(
     def _clr(pct):
         return "000000" if pct is None else (GREEN if pct >= 1.0 else RED)
 
-    if draw_rows:
+    # DRAW COVERAGE and ACCUMULATING COSTS both answer "what do we bill
+    # next", which is settled on a finished job — `simple` drops both (the
+    # user 2026-08-27: "these are completed projects, a more streamlined what
+    # the project performed is all we need").
+    if draw_rows and not simple:
         rc = 3
         cov_top = rc
         t = ws.cell(row=rc, column=4, value="DRAW COVERAGE")
@@ -3192,7 +3197,7 @@ def build_sheet_pl(
                 ws.cell(row=gr, column=col).border = Border(
                     left=cur.left, right=_vrule, top=cur.top, bottom=cur.bottom)
 
-    if accum:
+    if accum and not simple:
         ra = 3
 
         def side(label, amt=None, *, formula=None, bold=False, border=None,
@@ -5723,6 +5728,7 @@ def generate_project_pnl(
     overhead_pct: float = 10.0,
     interactive: bool = False,
     infer_periods: bool = False,
+    simple: bool = False,
 ) -> Optional[Path]:
     ui_proj(proj, f"{cust_info['name']}  ·  id {cust_info['id']}")
 
@@ -6114,7 +6120,8 @@ def generate_project_pnl(
     draw_anchors: Dict[str, str] = {}
     draw_sheet_order: List[str] = []
     underbill_total, underbill_count = 0.0, 0
-    for nm, lbl, net, costs, held, billed in reversed(draw_rows):
+    for nm, lbl, net, costs, held, billed in (
+            [] if simple else reversed(draw_rows)):
         sn = _sheet_name(nm)
         _bottom, m_tot, m_cnt = build_sheet_one_draw(
             wb, sn, proj, cust_info, wip_info, nm, lbl, net, costs, held, billed,
@@ -6137,7 +6144,7 @@ def generate_project_pnl(
         else:
             ui_done(msg)
 
-    leftover = build_sheet_next_draw_retainage(
+    leftover = None if simple else build_sheet_next_draw_retainage(
         wb, proj, cust_info, wip_info, income_groups, draw_costs, as_of,
         realm=company_id)
     if leftover is not None:
@@ -6261,7 +6268,7 @@ def generate_project_pnl(
         retainage_billed_total=ret_billed_total, tx_refs=tx_refs,
         alt_overhead_pct=_alt_oh, underbill_total=underbill_total,
         underbill_count=underbill_count, income_rows=tx.get("income"),
-        realm=company_id,
+        simple=simple, realm=company_id,
     )
     # Order (the user 2026-07-16; Labor/Concrete first among the analysis tabs
     # 2026-07-29 — they're the PM/ops manager's main view): P&L, Transactions,
@@ -6927,6 +6934,11 @@ def main() -> int:
                          "is found automatically from the job number, active or "
                          "not - you never type its name. Shorthand: put +class "
                          "anywhere on the command line.")
+    ap.add_argument("--simple", action="store_true",
+                    help="STRIPPED-BACK P&L for a COMPLETED job: no draw "
+                         "sheets, no Next Draw sheet, and no draw-coverage or "
+                         "accumulating-costs blocks on the P&L. Shorthand: "
+                         "+simple anywhere on the command line.")
     ap.add_argument("--class-project", action="store_true",
                     help="CLASS/PROJECT LOOKUP (the user 2026-08-25): the job's "
                          "cost is exactly its CLASS lines plus its PROJECT "
@@ -6955,6 +6967,8 @@ def main() -> int:
     # (the user 2026-08-25: "i will never remember that huge line of text").
     if any(a.strip().lower() in ("+class", "+classes") for a in args.projects):
         args.use_class = True
+    if any(a.strip().lower() in ("+simple", "+basic") for a in args.projects):
+        args.simple = True
     projects = [a.strip().upper() for a in args.projects
                 if not _is_report(a) and not a.strip().startswith("+")]
     out_dir = Path(args.out).expanduser()
@@ -7055,6 +7069,7 @@ def main() -> int:
                 dry_run=args.dry_run,
                 overhead_pct=args.overhead_pct,
                 interactive=interactive,
+                simple=args.simple,
             )
             if path:
                 generated.append(path)

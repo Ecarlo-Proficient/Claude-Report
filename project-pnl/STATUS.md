@@ -258,6 +258,19 @@ manual close), RP (no draws — expenses → invoice → profit).
   block, so nothing to move) but inherits PARTIAL through the shared
   Transactions builder. Draw sheets are still generated for every template —
   the owner deletes them in his own copy, which is his edit, not the tool's.
+- **`+simple` — the stripped-back P&L for a COMPLETED job (2026-08-27).**
+  Drops every forward-looking surface: the per-draw sheets, the `Next Draw`
+  sheet, the `DRAW COVERAGE` table and the `ACCUMULATING COSTS — NEXT DRAW`
+  block. What remains is P&L · Transactions · POs · Reconciliations · Cash
+  Flow. "What do we bill next" is a settled question on a finished job.
+  **NOT DONE — laying blocks ① and ② side by side.** It was attempted and
+  reverted: the approach gave `row()` a `_Ref(int)` handle carrying its own
+  column so a formula could render `B12`/`E12` from the same f-string. That
+  works for formulas and breaks openpyxl, which builds a cell coordinate from
+  `str(row)` — so `ws.cell(row=_Ref(7,'B'), column=2)` produced **`BB7`**
+  (column 54), and the corruption gate caught it. Any retry must NOT override
+  `__str__` on a value that is ever passed as a row: give the handle an
+  explicit `.ref` property and change the ~23 formula sites to use it.
 - **Rich text is BANNED in this exporter, and every save is now gated on the
   corruption check (2026-08-24).** `_cost_code_value` / `_cost_name_value` were
   returning `CellRichText` (bold code token + regular description, the user
