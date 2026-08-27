@@ -213,18 +213,18 @@ let drawsExpanded = new Set();   // draws whose bills are expanded in the table 
 // Parent groups on the top row; the active group's tabs on the second row. The whole
 // structure lives here, so adding/moving a tab is a one-line edit (owner 2026-08-19).
 const NAV_GROUPS = [
-  { id: "home",       label: "My view",       tabs: ["home"] },
+  { id: "console",    label: "Console",       tabs: ["console"] },
   { id: "overview",   label: "Overview",      tabs: ["overview"] },
   { id: "financials", label: "Financials",    tabs: ["pnl", "wip", "wipreview", "costs"] },
   { id: "customers",  label: "Customer",      tabs: ["customers", "invoices", "draws", "payments", "sales"] },
-  { id: "vendors",    label: "Vendor",        tabs: ["vendors", "bills", "paybills", "subloc", "liens"] },
-  { id: "it",         label: "IT",            tabs: ["systems", "graph", "console"] },
+  { id: "vendors",    label: "Vendor",        tabs: ["vendors", "bills", "paybills", "accounting", "subloc", "liens"] },
+  { id: "it",         label: "IT",            tabs: ["systems"] },
 ];
 const TAB_LABELS = {
-  home: "My view", overview: "Overview", pnl: "Project P&L", wip: "WIP report", wipreview: "WIP Review", costs: "Costs",
+  overview: "Overview", pnl: "Project P&L", wip: "WIP report", wipreview: "WIP Review", costs: "Costs",
   customers: "Customer Center", invoices: "Invoices", draws: "Draws", payments: "Payments", sales: "Sales Outreach",
-  vendors: "Vendor Center", bills: "Bills", paybills: "Pay Bills", subloc: "Sub LOC", liens: "Liens",
-  systems: "Systems", graph: "Graph", console: "Console",
+  vendors: "Vendor Center", bills: "Bills", paybills: "Pay Bills", accounting: "Accounting", subloc: "Sub LOC", liens: "Liens",
+  systems: "Systems", console: "Console",
 };
 const groupOf = t => NAV_GROUPS.find(g => g.tabs.includes(t)) || NAV_GROUPS[0];
 function buildGroupBar() {
@@ -257,9 +257,8 @@ function setTab(t) {
   if (t === "wip") renderWip();
   if (t === "wipreview") loadWipReview();
   if (t === "console") renderConsole();
-  if (t !== "graph") stopGraphLoop();   // release the canvas render loop when leaving the Graph tab
   if (t === "systems") loadSystems();
-  if (t === "graph") loadGraph();
+  if (t === "accounting") loadAccounting();
   if (t === "customers") renderCustomers();
   if (t === "payments") renderPayments();
   if (t === "paybills") renderPayBills();
@@ -711,8 +710,11 @@ function renderHome() {
     if (n) el.onclick = go;
     ar.appendChild(el);
   }
-  // ── working on (active projects) ──
+  // ── working on (active projects) - only if the section exists. It was merged into the
+  //    Overview's Projects section (which has search + filters), so on the merged tab this
+  //    block simply no-ops. ──
   const sel = $("#homeDivision");
+  if (!sel || !$("#homeWorkingTable")) return;
   if (sel && sel.options.length <= 1) for (const d of uniq(ALL.map(r => r.division))) { const o = document.createElement("option"); o.value = d; o.textContent = d; sel.appendChild(o); }
   const div = sel ? sel.value : "";
   const active = ALL.filter(r => isActive(r) && (!div || r.division === div))
@@ -5315,6 +5317,94 @@ function wrRunProgress(label, onDone) {
   }, 1500);
 }
 
+// ── Accounting fixes: the Bill Tracker audits, filterable by audit type ───────
+let ACCT = null;            // cached /api/accounting payload
+let acctIssue = null;       // the audit-type filter currently active (null = all)
+async function loadAccounting(force) {
+  const note = $("#acctNote"), body = $("#acctTable");
+  if (!body) return;
+  if (ACCT && !force) { renderAccounting(); return; }
+  if (note) note.textContent = "loading…";
+  try { ACCT = await (await fetch("/api/accounting")).json(); }
+  catch (e) { if (note) note.textContent = "could not load"; return; }
+  renderAccounting();
+}
+
+function _acctPillClass(issue) {
+  const i = (issue || "").toLowerCase();
+  if (i.includes("not approved") || i.includes("missing project") || i.includes("no project")) return "warn";
+  if (i.includes("duplicate")) return "neg";
+  return "info";
+}
+
+function renderAccounting() {
+  const note = $("#acctNote"), stats = $("#acctStats"), filt = $("#acctFilters"), table = $("#acctTable");
+  if (!table) return;
+  const tbody = table.querySelector("tbody"), thead = table.querySelector("thead");
+  if (!ACCT || !ACCT.ok) {
+    if (note) note.textContent = ACCT && ACCT.error ? "unavailable" : "";
+    stats.innerHTML = ""; filt.innerHTML = ""; thead.innerHTML = "";
+    tbody.innerHTML = ACCT && ACCT.error
+      ? `<tr><td class="left" style="padding:14px;color:var(--text-dim)">${_ge(ACCT.error)}</td></tr>` : "";
+    return;
+  }
+  const all = ACCT.findings || [];
+  if (note) note.textContent = `${all.length} to fix`;
+  const counts = ACCT.counts || {};
+  // stat tiles: total + per themed group
+  const groups = {};
+  for (const f of all) groups[f.group] = (groups[f.group] || 0) + 1;
+  stats.innerHTML = "";
+  const tile = (label, val, cls) => { const k = document.createElement("div"); k.className = "kpi" + (cls ? " " + cls : ""); k.innerHTML = `<div class="k-label">${_ge(label)}</div><div class="k-value">${val}</div>`; stats.appendChild(k); };
+  tile("All fixes", all.length, all.length ? "wr-kpi-amber" : "");
+  for (const g of ["Coding", "Bills", "PO"]) if (groups[g]) tile(g, groups[g]);
+  // filter chips by audit type (with counts)
+  filt.innerHTML = "";
+  const chip = (label, key, n) => {
+    const b = document.createElement("button"); b.className = "acct-chip" + (acctIssue === key ? " active" : "");
+    b.innerHTML = `${_ge(label)} <span class="ac-n">${n}</span>`;
+    b.onclick = () => { acctIssue = acctIssue === key ? null : key; renderAccounting(); };
+    filt.appendChild(b);
+  };
+  chip("All", null, all.length);
+  for (const iss of Object.keys(counts).sort((a, b) => counts[b] - counts[a])) chip(iss, iss, counts[iss]);
+  // division filter
+  const dsel = $("#acctDivision");
+  if (dsel && dsel.options.length <= 1) for (const d of [...new Set(all.map(f => f.division).filter(Boolean))].sort()) { const o = document.createElement("option"); o.value = d; o.textContent = d; dsel.appendChild(o); }
+  const dv = dsel ? dsel.value : "", q = ($("#acctSearch").value || "").trim().toLowerCase();
+  const rows = all.filter(f => (!acctIssue || f.issue === acctIssue) && (!dv || f.division === dv)
+    && (!q || (f.vendor + " " + f.project + " " + f.bill_no + " " + f.detail).toLowerCase().includes(q)));
+  const cols = [["Issue", "left"], ["Vendor", "left"], ["Bill #", "left"], ["Date", "left"], ["Project", "left"], ["Cost code", "left"], ["Amount", "right"], ["Detail", "left"], ["", "left"]];
+  thead.innerHTML = ""; const htr = document.createElement("tr");
+  for (const [c, al] of cols) { const th = document.createElement("th"); th.className = al; th.textContent = c; htr.appendChild(th); } thead.appendChild(htr);
+  tbody.innerHTML = "";
+  if (!rows.length) {
+    const tr = document.createElement("tr"), td = document.createElement("td");
+    td.colSpan = cols.length; td.className = "left"; td.style.cssText = "padding:14px;color:var(--text-dim)";
+    td.textContent = all.length ? "Nothing matches the filters." : "No audit findings - everything's clean.";
+    tr.appendChild(td); tbody.appendChild(tr); return;
+  }
+  for (const f of rows) {
+    const tr = document.createElement("tr");
+    const ic = document.createElement("td"); ic.className = "left";
+    const pill = document.createElement("span"); pill.className = "acct-pill " + _acctPillClass(f.issue); pill.textContent = f.issue; ic.appendChild(pill); tr.appendChild(ic);
+    tr.appendChild(leftText(f.vendor || "–"));
+    const bc = document.createElement("td"); bc.className = "left";
+    if (f.url) { const a = document.createElement("a"); a.href = f.url; a.target = "_blank"; a.rel = "noopener"; a.className = "qbo-link"; a.textContent = f.bill_no || "open"; a.title = "Open in QuickBooks"; bc.appendChild(a); }
+    else bc.appendChild(document.createTextNode(f.bill_no || "–"));
+    tr.appendChild(bc);
+    tr.appendChild(leftText(f.date ? fmtDateShort(f.date) : "–"));
+    tr.appendChild(leftText(f.project || "–"));
+    tr.appendChild(leftText(f.cost_code || "–"));
+    tr.appendChild(rightText(money(f.amount)));
+    tr.appendChild(leftText(f.detail || ""));
+    const oc = document.createElement("td"); oc.className = "left";
+    if (f.url) { const a = document.createElement("a"); a.href = f.url; a.target = "_blank"; a.rel = "noopener"; a.className = "qbo-ico"; a.textContent = "↗"; a.title = "Open in QuickBooks"; oc.appendChild(a); }
+    tr.appendChild(oc);
+    tbody.appendChild(tr);
+  }
+}
+
 function init() {
   applySettings();
   syncSettingsUI();
@@ -5400,8 +5490,8 @@ function init() {
   { const el = $("#btnGraphReload"); if (el) el.onclick = () => loadGraph(true); }
   { const el = $("#graphFit"); if (el) el.onclick = () => { if (GV) { GV._userMoved = false; fitGraph(); _gmark(); } }; }
   { const el = $("#graphSearch"); if (el) el.addEventListener("input", e => graphSearch(e.target.value)); }
-  { const el = $("#graphLabels"); if (el) el.addEventListener("change", _gmark); }
-  wireGraphCanvas();
+  { const el = $("#btnAcctReload"); if (el) el.onclick = () => loadAccounting(true); }
+  for (const id of ["#acctSearch", "#acctDivision"]) { const el = $(id); if (el) el.addEventListener("input", () => { if (ACCT && ACCT.ok) renderAccounting(); }); }
   { const el = $("#wrCompute"); if (el) el.onclick = runWipReview; }
   { const el = $("#wrSync"); if (el) el.onclick = syncWipReview; }
   { const el = $("#wrApproveQbo"); if (el) el.onclick = () => wrBulk("qbo"); }
@@ -5411,8 +5501,9 @@ function init() {
     const el = $(id); if (el) el.addEventListener("input", () => { if (WR && WR.ready) renderWipReview(); });
   }
   buildGroupBar();   // generate the two-level nav (top groups; sub-tabs render on setTab)
-  let savedTab = "home";
-  try { savedTab = localStorage.getItem("proficient-ledger-tab") || "home"; } catch { /* ignore */ }
+  let savedTab = "overview";
+  try { savedTab = localStorage.getItem("proficient-ledger-tab") || "overview"; } catch { /* ignore */ }
+  if (savedTab === "home" || savedTab === "graph") savedTab = "overview";   // merged/removed tabs
   setTab(savedTab);
   initCellSelect();   // Excel-style click/drag cell selection + running-sum bar
   setInterval(() => { if (!syncing && !pendingBillMarks.size && !payDraft.size) load(true); }, 90000);   // soft auto-refresh (paused during a resync or while lien / pay-run marks are unsaved)

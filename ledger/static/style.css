@@ -1082,3 +1082,17 @@ html[data-theme="dark"] .wr-block-title.pm { color: #7fb0e0; }
 #invDetailBody .dv.neg { color: var(--neg); }
 #invDetailBody .dnote.dim { color: var(--text-dim); font-style: italic; }
 .dgroup.inv-qbo { margin-top: 6px; }
+
+/* ── Accounting fixes: audit-type filter chips + issue pills ─────────────────── */
+.acct-filters { display: flex; flex-wrap: wrap; gap: 7px; margin: 10px 0 4px; }
+.acct-chip { padding: 4px 11px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--text); cursor: pointer; font-size: .84em; font-family: var(--font); }
+.acct-chip:hover { border-color: var(--accent); }
+.acct-chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.acct-chip .ac-n { opacity: .6; font-variant-numeric: tabular-nums; margin-left: 3px; }
+.acct-chip.active .ac-n { opacity: .85; }
+.acct-pill { font-size: .7em; text-transform: uppercase; letter-spacing: .03em; padding: 2px 7px; border-radius: 999px; font-weight: 700; white-space: nowrap; }
+.acct-pill.warn { background: color-mix(in srgb, #d99a2b 22%, transparent); color: #9a6a12; }
+html[data-theme="dark"] .acct-pill.warn { color: #e8b45c; }
+.acct-pill.neg { background: color-mix(in srgb, var(--neg) 18%, transparent); color: var(--neg); }
+.acct-pill.info { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+html[data-theme="dark"] .acct-pill.info { color: color-mix(in srgb, var(--accent) 55%, #fff); }

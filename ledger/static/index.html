@@ -31,36 +31,27 @@
   <main class="wrap" id="wrap">
     <div id="errorBanner" class="error-banner" hidden></div>
 
-    <!-- ══════════════ TAB: MY VIEW (home / default) ══════════════ -->
-    <div class="tab-page" data-tab="home" hidden>
-      <section class="widget">
-        <div class="widget-head">
-          <h2>Data freshness <span class="count" id="homeFreshNote"></span></h2>
-          <button class="btn small" id="btnResync" title="Pull fresh data into the app — runs every loader. The QBO-costs step prompts Touch ID on this Mac. No terminal needed.">⟳&nbsp;Resync</button>
-        </div>
-        <div class="fresh-row" id="homeFresh"></div>
-        <div class="sync-progress" id="syncProgress" hidden>
-          <div class="sync-bar"><div class="sync-bar-fill" id="syncBarFill"></div></div>
-          <div class="sync-step" id="syncStep"></div>
-        </div>
-      </section>
-      <section class="widget">
-        <div class="widget-head"><h2>Action items <span class="count">— click to jump in</span></h2></div>
-        <div class="action-row" id="homeActions"></div>
-      </section>
-      <section class="widget">
-        <div class="widget-head">
-          <h2>Working on <span class="count" id="homeWorkingNote"></span></h2>
-          <select id="homeDivision"><option value="">All divisions</option></select>
-        </div>
-        <div class="table-scroll">
-          <table class="grid clickable" id="homeWorkingTable"><thead></thead><tbody></tbody></table>
-        </div>
-      </section>
-    </div><!-- /tab: home -->
-
-    <!-- ══════════════ TAB: OVERVIEW ══════════════ -->
+    <!-- ══════════════ TAB: OVERVIEW (merged — My view + Overview) ══════════════ -->
     <div class="tab-page" data-tab="overview">
+
+    <!-- ── Data freshness + one-click Resync (was My view) ──────────── -->
+    <section class="widget">
+      <div class="widget-head">
+        <h2>Data freshness <span class="count" id="homeFreshNote"></span></h2>
+        <button class="btn small" id="btnResync" title="Pull fresh data into the app — runs every loader. A couple of QBO steps prompt Touch ID on this Mac. No terminal needed.">⟳&nbsp;Resync</button>
+      </div>
+      <div class="fresh-row" id="homeFresh"></div>
+      <div class="sync-progress" id="syncProgress" hidden>
+        <div class="sync-bar"><div class="sync-bar-fill" id="syncBarFill"></div></div>
+        <div class="sync-step" id="syncStep"></div>
+      </div>
+    </section>
+
+    <!-- ── Action items (was My view) ───────────────────────────────── -->
+    <section class="widget">
+      <div class="widget-head"><h2>Action items <span class="count">— click to jump in</span></h2></div>
+      <div class="action-row" id="homeActions"></div>
+    </section>
 
     <!-- ── KPI widgets ──────────────────────────────────────────────── -->
     <section class="widget" id="widget-kpis">
@@ -623,30 +614,27 @@
       </section>
     </div><!-- /tab: systems -->
 
-    <!-- ══════════════ TAB: GRAPH (org knowledge graph + imported system diagrams) ══════════════ -->
-    <div class="tab-page" data-tab="graph" hidden>
+    <!-- ══════════════ TAB: ACCOUNTING (Bill Tracker audits — the fixes to make) ══════════════ -->
+    <div class="tab-page" data-tab="accounting" hidden>
       <section class="widget">
         <div class="widget-head">
-          <h2>Graph <span class="count" id="graphNote"></span></h2>
-          <button class="btn small" id="btnGraphReload" title="Re-read the vault links and the diagram source">Reload</button>
+          <h2>Accounting fixes <span class="count" id="acctNote"></span></h2>
+          <button class="btn small" id="btnAcctReload" title="Re-read the Bill Tracker audits">Reload</button>
         </div>
-        <p class="hint">The org as a map. <b>Org map</b> is every vault note as a node and every
-          <code>[[link]]</code> as an edge - the same view Obsidian gives, live from the vault. The
-          rest are the system diagrams imported from <code>docs/ARCHITECTURE.md</code>. Drag nodes,
-          scroll to zoom, drag the background to pan. Read-only.</p>
-        <div class="graph-modes" id="graphModes"></div>
-        <div class="graph-wrap">
-          <canvas id="graphCanvas"></canvas>
-          <div class="graph-toolbar">
-            <input type="search" id="graphSearch" placeholder="Find a node…" autocomplete="off">
-            <button class="btn small" id="graphFit" title="Fit the whole graph in view">Fit</button>
-            <label class="check"><input type="checkbox" id="graphLabels" checked> Labels</label>
-          </div>
-          <div class="graph-legend" id="graphLegend"></div>
-          <div class="graph-info" id="graphInfo" hidden></div>
+        <p class="hint">Everything the AP sync flagged for a fix, from the Bill Tracker audits - bills to approve,
+          data-entry gaps, missing project #s, misplaced FW codes, subs with no project, duplicates, and PO
+          mismatches. Filter by the audit that matters, then click a bill to open it in QuickBooks.</p>
+        <div class="kpi-row" id="acctStats"></div>
+        <div class="acct-filters" id="acctFilters"></div>
+        <div class="filters">
+          <input type="search" id="acctSearch" placeholder="Find a vendor, project #, bill ref…" autocomplete="off">
+          <select id="acctDivision"><option value="">All divisions</option></select>
+        </div>
+        <div class="table-scroll">
+          <table class="grid" id="acctTable"><thead></thead><tbody></tbody></table>
         </div>
       </section>
-    </div><!-- /tab: graph -->
+    </div><!-- /tab: accounting -->
 
     <!-- ══════════════ TAB: CONSOLE (control plane - run the pipelines) ══════════════ -->
     <div class="tab-page" data-tab="console" hidden>

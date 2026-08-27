@@ -859,6 +859,98 @@ def _waiver_key(mi, vendor, bill_ref) -> str:
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
 
 
+# ── Accounting fixes: the Bill Tracker audits, folded into the ledger ─────────
+_AUDIT_SHEETS = ("Audit - Coding", "Audit - PO", "Audit - Bills")
+
+
+def _audit_div(project: str) -> str:
+    p = (project or "").upper()
+    if p.startswith("MFD"):
+        return "Multi Family"
+    if p.startswith("CP"):
+        return "Commercial"
+    if p.startswith("RP"):
+        return "Residential"
+    return ""
+
+
+def _fetch_accounting_audits() -> dict:
+    """The three Bill Tracker audit sheets (the fixes to make) as ONE filterable list.
+    Read live from Bill Tracker.xlsx: bill-tracker already computes the findings with the
+    FULL bill data (incl subs + cost codes) that ap_bill_line doesn't carry, so the ledger
+    reads the sheets rather than recomputing. Read-only; a missing file is reported, not raised."""
+    from openpyxl import load_workbook
+    bt = paths.get_path("ACB_BILL_TRACKER_XLSX", paths.onedrive_base() / "Automations-/Bill Tracker.xlsx")
+    out = {"ok": False, "source": str(bt), "findings": [], "counts": {}}
+    if not bt.exists():
+        out["error"] = f"Bill Tracker.xlsx not found ({bt}). Run the AP sync first."
+        return out
+    try:
+        # data_only=False: the Open column is an =HYPERLINK("url","↗") FORMULA, so the cached
+        # value is just "↗" - we read the formula and pull the URL out. Every other audit cell
+        # is a plain stored value, so it reads the same either way.
+        wb = load_workbook(bt)
+    except Exception as e:                          # noqa: BLE001
+        out["error"] = f"could not open Bill Tracker.xlsx: {e}"
+        return out
+    findings = []
+    for sheet in _AUDIT_SHEETS:
+        if sheet not in wb.sheetnames:
+            continue
+        ws = wb[sheet]
+        hdr, idx = None, {}
+        for r in range(1, 8):
+            vals = [ws.cell(r, c).value for c in range(1, (ws.max_column or 0) + 1)]
+            if "Issue" in vals:
+                hdr, idx = r, {v: c for c, v in enumerate(vals, 1) if v}
+                break
+        if not hdr:
+            continue
+        ocol = idx.get("Open")
+
+        def cell(r, *names):
+            for n in names:
+                c = idx.get(n)
+                if c and ws.cell(r, c).value not in (None, ""):
+                    return ws.cell(r, c).value
+            return None
+
+        for r in range(hdr + 1, (ws.max_row or 0) + 1):
+            iv = idx.get("Issue") and ws.cell(r, idx["Issue"]).value
+            if not iv or not str(iv).strip():
+                continue
+            url = None
+            if ocol:
+                oc = ws.cell(r, ocol)
+                if oc.hyperlink:
+                    url = oc.hyperlink.target
+                elif isinstance(oc.value, str) and "HYPERLINK(" in oc.value:
+                    m = re.search(r'HYPERLINK\("([^"]+)"', oc.value)
+                    url = m.group(1) if m else None
+                elif isinstance(oc.value, str) and oc.value.startswith("http"):
+                    url = oc.value
+            proj = str(cell(r, "Project", "Project/Job") or "").strip()
+            dv = cell(r, "Bill Date", "Date")
+            amt = cell(r, "Amount")
+            findings.append({
+                "issue": str(iv).strip(),
+                "vendor": str(cell(r, "Vendor") or "").strip(),
+                "bill_no": str(cell(r, "Bill #", "PO/Bill #", "Bill/Ref #") or "").strip(),
+                "date": (dv.isoformat()[:10] if hasattr(dv, "isoformat") else (str(dv)[:10] if dv else None)),
+                "project": proj, "division": _audit_div(proj),
+                "cost_code": str(cell(r, "Cost Code") or "").strip(),
+                "amount": (float(amt) if isinstance(amt, (int, float)) else None),
+                "detail": str(cell(r, "Detail") or "").strip(),
+                "url": url, "group": sheet.replace("Audit - ", ""),
+            })
+    wb.close()
+    counts = {}
+    for f in findings:
+        counts[f["issue"]] = counts.get(f["issue"], 0) + 1
+    out.update(ok=True, findings=findings, counts=counts)
+    return out
+
+
 # race-through stages, in worklist priority — Ready-to-turn-in first (all bills
 # paid → turn it in to unlock the next draw), then pay vendors, then awaiting GC.
 # A draw is "done" (green) the moment every bill is PAID; unconditional waivers are
@@ -1188,6 +1280,11 @@ class Handler(BaseHTTPRequestHandler):
             self._graph()
         elif path == "/api/wip/review":    # the WIP Review tab (pending before/after diff, merged)
             self._wip_review_get()
+        elif path == "/api/accounting":    # the Accounting tab (Bill Tracker audits, live)
+            try:
+                self._json(_fetch_accounting_audits())
+            except Exception as e:         # noqa: BLE001
+                self._json({"ok": False, "findings": [], "error": f"audit read failed: {e}"})
         elif path.startswith("/static/"):
             self._static(path[len("/static/"):])
         else:
