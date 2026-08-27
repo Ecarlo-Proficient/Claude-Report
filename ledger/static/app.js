@@ -223,7 +223,7 @@ const NAV_GROUPS = [
 const TAB_LABELS = {
   overview: "Overview", pnl: "Project P&L", wip: "WIP report", wipreview: "WIP Review", costs: "Costs",
   customers: "Customer Center", invoices: "Invoices", draws: "Draws", payments: "Payments", sales: "Sales Outreach",
-  vendors: "Vendor Center", bills: "Bills", paybills: "Pay Bills", accounting: "Accounting", subloc: "Sub LOC", liens: "Liens",
+  vendors: "Vendor Center", bills: "Bills", paybills: "Pay Bills", accounting: "Audit", subloc: "Sub LOC", liens: "Liens",
   systems: "Systems", console: "Console",
 };
 const groupOf = t => NAV_GROUPS.find(g => g.tabs.includes(t)) || NAV_GROUPS[0];
@@ -5376,8 +5376,8 @@ function wrRunProgress(label, onDone) {
 let ACCT = null;            // cached /api/accounting payload
 let acctIssue = null;       // the audit-type filter currently active (null = all)
 async function loadAccounting(force) {
-  const note = $("#acctNote"), list = $("#acctList");
-  if (!list) return;
+  const note = $("#acctNote"), table = $("#acctTable");
+  if (!table) return;
   if (ACCT && !force) { renderAccounting(); return; }
   if (note) note.textContent = "loading…";
   try { ACCT = await (await fetch("/api/accounting")).json(); }
@@ -5392,15 +5392,14 @@ function _acctPillClass(issue) {
   return "info";
 }
 
-function _acctDot() { const s = document.createElement("span"); s.className = "acct-dot"; s.textContent = "·"; return s; }
-
 function renderAccounting() {
-  const note = $("#acctNote"), stats = $("#acctStats"), filt = $("#acctFilters"), list = $("#acctList");
-  if (!list) return;
+  const note = $("#acctNote"), stats = $("#acctStats"), filt = $("#acctFilters"), table = $("#acctTable");
+  if (!table) return;
+  const thead = table.querySelector("thead"), tbody = table.querySelector("tbody");
   if (!ACCT || !ACCT.ok) {
     if (note) note.textContent = ACCT && ACCT.error ? "unavailable" : "";
-    if (stats) stats.innerHTML = ""; if (filt) filt.innerHTML = "";
-    list.innerHTML = ACCT && ACCT.error ? `<div class="acct-empty">${_ge(ACCT.error)}</div>` : "";
+    if (stats) stats.innerHTML = ""; if (filt) filt.innerHTML = ""; thead.innerHTML = "";
+    tbody.innerHTML = ACCT && ACCT.error ? `<tr><td class="left" style="padding:14px;color:var(--text-dim)">${_ge(ACCT.error)}</td></tr>` : "";
     return;
   }
   const all = ACCT.findings || [];
@@ -5428,39 +5427,40 @@ function renderAccounting() {
   if (dsel && dsel.options.length <= 1) for (const d of [...new Set(all.map(f => f.division).filter(Boolean))].sort()) { const o = document.createElement("option"); o.value = d; o.textContent = d; dsel.appendChild(o); }
   const dv = dsel ? dsel.value : "", q = ($("#acctSearch").value || "").trim().toLowerCase();
   const rows = all.filter(f => (!acctIssue || f.issue === acctIssue) && (!dv || f.division === dv)
-    && (!q || (f.vendor + " " + f.project + " " + f.bill_no + " " + f.detail).toLowerCase().includes(q)));
-  list.innerHTML = "";
+    && (!q || (f.vendor + " " + f.project + " " + f.bill_no + " " + (f.memo || "") + " " + f.detail).toLowerCase().includes(q)));
+  // fixed meta widths (px) so one long outlier can't blow a column wide (the old wasted
+  // space); the two text columns (null width) share the rest and wrap - nothing truncates.
+  const cols = [["Issue", "left audit-soft", 126], ["Vendor", "left audit-soft", 148], ["Bill #", "left", 78],
+    ["Date", "left", 104], ["Project", "left", 126], ["Cost", "left", 68], ["Amount", "right", 92],
+    ["Line memo", "left audit-soft", null], ["Why flagged", "left audit-soft", null]];
+  thead.innerHTML = ""; const htr = document.createElement("tr");
+  for (const [c, cls, w] of cols) { const th = document.createElement("th"); th.className = cls; th.textContent = c; if (w) th.style.width = w + "px"; htr.appendChild(th); } thead.appendChild(htr);
+  tbody.innerHTML = "";
   if (!rows.length) {
-    const d = document.createElement("div"); d.className = "acct-empty";
-    d.textContent = all.length ? "Nothing matches the filters." : "No audit findings - everything's clean.";
-    list.appendChild(d); return;
+    const tr = document.createElement("tr"), td = document.createElement("td");
+    td.colSpan = cols.length; td.className = "left"; td.style.cssText = "padding:14px;color:var(--text-dim)";
+    td.textContent = all.length ? "Nothing matches the filters." : "No audit findings - everything's clean.";
+    tr.appendChild(td); tbody.appendChild(tr); return;
   }
   const frag = document.createDocumentFragment();
   for (const f of rows) {
-    const it = document.createElement("div"); it.className = "acct-item";
-    const body = document.createElement("div"); body.className = "acct-body";
-    // line 1: issue pill · vendor · project · cost code
-    const l1 = document.createElement("div"); l1.className = "acct-l1";
-    const pill = document.createElement("span"); pill.className = "acct-pill " + _acctPillClass(f.issue); pill.textContent = f.issue; l1.appendChild(pill);
-    const ven = document.createElement("span"); ven.className = "acct-vendor"; ven.textContent = f.vendor || "–"; l1.appendChild(ven);
-    if (f.project) { const p = document.createElement("span"); p.className = "acct-chip-mini"; p.textContent = f.project; l1.appendChild(p); }
-    if (f.cost_code) { const c = document.createElement("span"); c.className = "acct-chip-mini cc"; c.textContent = f.cost_code; l1.appendChild(c); }
-    body.appendChild(l1);
-    // line 2: bill # · date · the full flagged-reason description (wraps to full width)
-    const l2 = document.createElement("div"); l2.className = "acct-l2";
-    if (f.bill_no) { const s = document.createElement("span"); s.className = "acct-billno"; s.textContent = "Bill " + f.bill_no; l2.appendChild(s); }
-    if (f.date) { if (l2.childNodes.length) l2.appendChild(_acctDot()); const d = document.createElement("span"); d.textContent = fmtDateShort(f.date); l2.appendChild(d); }
-    if (f.detail) { if (l2.childNodes.length) l2.appendChild(_acctDot()); const dt = document.createElement("span"); dt.className = "acct-detail"; dt.textContent = f.detail; l2.appendChild(dt); }
-    body.appendChild(l2);
-    it.appendChild(body);
-    // right rail: amount + the QBO link, in one consistent spot
-    const right = document.createElement("div"); right.className = "acct-right";
-    if (f.amount != null) { const amt = document.createElement("div"); amt.className = "acct-amt"; amt.textContent = money(f.amount); right.appendChild(amt); }
-    if (f.url) { const a = document.createElement("a"); a.href = f.url; a.target = "_blank"; a.rel = "noopener"; a.className = "acct-open"; a.textContent = "QBO ↗"; a.title = "Open this bill in QuickBooks"; right.appendChild(a); }
-    it.appendChild(right);
-    frag.appendChild(it);
+    const tr = document.createElement("tr");
+    const ic = document.createElement("td"); ic.className = "left audit-soft";
+    const pill = document.createElement("span"); pill.className = "acct-pill " + _acctPillClass(f.issue); pill.textContent = f.issue; ic.appendChild(pill); tr.appendChild(ic);
+    const vc = leftText(f.vendor || "–"); vc.classList.add("audit-soft"); tr.appendChild(vc);
+    const bc = document.createElement("td"); bc.className = "left";
+    if (f.url) { const a = document.createElement("a"); a.href = f.url; a.target = "_blank"; a.rel = "noopener"; a.className = "qbo-link"; a.textContent = f.bill_no || "open"; a.title = "Open this bill in QuickBooks"; bc.appendChild(a); }
+    else bc.appendChild(document.createTextNode(f.bill_no || "–"));
+    tr.appendChild(bc);
+    tr.appendChild(leftText(f.date ? fmtDateShort(f.date) : "–"));
+    const pc = leftText(f.project || "–"); pc.title = f.project || ""; tr.appendChild(pc);
+    tr.appendChild(leftText(f.cost_code || "–"));
+    tr.appendChild(rightText(f.amount != null ? money(f.amount) : ""));
+    const mc = document.createElement("td"); mc.className = "left audit-soft"; mc.textContent = f.memo || "–"; if (!f.memo) mc.classList.add("audit-dim"); tr.appendChild(mc);
+    const dc = document.createElement("td"); dc.className = "left audit-soft"; dc.textContent = f.detail || ""; tr.appendChild(dc);
+    frag.appendChild(tr);
   }
-  list.appendChild(frag);
+  tbody.appendChild(frag);
 }
 
 function init() {

@@ -894,6 +894,35 @@ def _fetch_accounting_audits() -> dict:
         out["error"] = f"could not open Bill Tracker.xlsx: {e}"
         return out
     findings = []
+    # line memo (Line Description) lives only on the Bills/Inventory sheets, keyed per line
+    # by (Bill #, Line Amount) - join it on so each finding shows what the clerk actually
+    # wrote on the bill line, not just why it was flagged. Subs aren't on those display
+    # sheets, so sub findings carry no memo; a single-line bill falls back to its one desc.
+    memo_by_line, descs_by_bill = {}, {}
+    for msheet in ("Bills", "Inventory"):
+        if msheet not in wb.sheetnames:
+            continue
+        ms = wb[msheet]
+        mhdr, midx = None, {}
+        for r in range(1, 8):
+            vals = [ms.cell(r, c).value for c in range(1, (ms.max_column or 0) + 1)]
+            if "Line Description" in vals and "Bill #" in vals:
+                mhdr, midx = r, {v: c for c, v in enumerate(vals, 1) if v}
+                break
+        if not mhdr:
+            continue
+        bcol, acol, dcol = midx.get("Bill #"), midx.get("Line Amount"), midx.get("Line Description")
+        if not (bcol and dcol):
+            continue
+        for r in range(mhdr + 1, (ms.max_row or 0) + 1):
+            bno, desc = ms.cell(r, bcol).value, ms.cell(r, dcol).value
+            if not bno or desc in (None, ""):
+                continue
+            bno, desc = str(bno).strip(), str(desc).strip()
+            amt = ms.cell(r, acol).value if acol else None
+            akey = round(float(amt), 2) if isinstance(amt, (int, float)) else None
+            memo_by_line.setdefault((bno, akey), desc)
+            descs_by_bill.setdefault(bno, []).append(desc)
     for sheet in _AUDIT_SHEETS:
         if sheet not in wb.sheetnames:
             continue
@@ -932,14 +961,22 @@ def _fetch_accounting_audits() -> dict:
             proj = str(cell(r, "Project", "Project/Job") or "").strip()
             dv = cell(r, "Bill Date", "Date")
             amt = cell(r, "Amount")
+            bno = str(cell(r, "Bill #", "PO/Bill #", "Bill/Ref #") or "").strip()
+            akey = round(float(amt), 2) if isinstance(amt, (int, float)) else None
+            memo = memo_by_line.get((bno, akey)) if bno else None
+            if not memo and bno in descs_by_bill:      # single-line bill: unambiguous fallback
+                uniq = set(descs_by_bill[bno])
+                if len(uniq) == 1:
+                    memo = next(iter(uniq))
             findings.append({
                 "issue": str(iv).strip(),
                 "vendor": str(cell(r, "Vendor") or "").strip(),
-                "bill_no": str(cell(r, "Bill #", "PO/Bill #", "Bill/Ref #") or "").strip(),
+                "bill_no": bno,
                 "date": (dv.isoformat()[:10] if hasattr(dv, "isoformat") else (str(dv)[:10] if dv else None)),
                 "project": proj, "division": _audit_div(proj),
                 "cost_code": str(cell(r, "Cost Code") or "").strip(),
                 "amount": (float(amt) if isinstance(amt, (int, float)) else None),
+                "memo": memo or "",
                 "detail": str(cell(r, "Detail") or "").strip(),
                 "url": url, "group": sheet.replace("Audit - ", ""),
             })

@@ -1084,7 +1084,7 @@ html[data-theme="dark"] .wr-block-title.pm { color: #7fb0e0; }
 .dgroup.inv-qbo { margin-top: 6px; }
 
 /* ── Accounting fixes: audit-type filter chips + issue pills ─────────────────── */
-.acct-filters { display: flex; flex-wrap: wrap; gap: 7px; margin: 10px 0 4px; }
+.acct-filters { display: flex; flex-wrap: wrap; gap: 7px; margin: 10px 18px 4px; }
 .acct-chip { padding: 4px 11px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--text); cursor: pointer; font-size: .84em; font-family: var(--font); }
 .acct-chip:hover { border-color: var(--accent); }
 .acct-chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
@@ -1096,24 +1096,18 @@ html[data-theme="dark"] .acct-pill.warn { color: #e8b45c; }
 .acct-pill.neg { background: color-mix(in srgb, var(--neg) 18%, transparent); color: var(--neg); }
 .acct-pill.info { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
 html[data-theme="dark"] .acct-pill.info { color: color-mix(in srgb, var(--accent) 55%, #fff); }
-/* Findings as a compact list - kills the wide-table whitespace and gives the
-   flagged-reason description the full row width, so it never truncates. */
-.acct-list { margin-top: 6px; }
-.acct-item { display: flex; align-items: flex-start; gap: 14px; padding: 9px 8px; border-bottom: 1px solid var(--border); }
-.acct-item:hover { background: color-mix(in srgb, var(--text) 4%, transparent); }
-.acct-body { flex: 1 1 auto; min-width: 0; }
-.acct-l1 { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.acct-vendor { font-weight: 600; }
-.acct-chip-mini { font-size: .78em; padding: 1px 7px; border-radius: 6px; white-space: nowrap;
-  background: color-mix(in srgb, var(--text) 7%, transparent); color: var(--text-dim); font-variant-numeric: tabular-nums; }
-.acct-l2 { margin-top: 3px; font-size: .9em; line-height: 1.45; color: var(--text-dim); }
-.acct-detail { color: var(--text); }
-.acct-dot { margin: 0 6px; opacity: .5; }
-.acct-right { flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; white-space: nowrap; padding-left: 6px; }
-.acct-amt { font-weight: 600; font-variant-numeric: tabular-nums; }
-.acct-open { font-size: .82em; color: var(--accent); text-decoration: none; opacity: .8; }
-.acct-open:hover { opacity: 1; text-decoration: underline; }
-.acct-empty { padding: 16px 8px; color: var(--text-dim); }
+/* Audit table: the two text columns (Line memo, Why flagged) wrap and absorb the
+   slack; the narrow meta columns stay at their content width, so nothing truncates
+   and no width is wasted. Full text colour + base size (no grey demotion). */
+/* Audit table: fixed layout with explicit meta widths (set in JS) so one long outlier
+   can't blow a column wide (the old wasted space). Short identifier columns stay one line
+   (ellipsis only if truly long); the "soft" columns (Issue, Vendor, Project, and the two
+   text columns) wrap at word boundaries and share the remaining width - nothing truncated. */
+#acctTable { table-layout: fixed; }
+#acctTable th, #acctTable td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: top; line-height: 1.4; }
+#acctTable th.audit-soft, #acctTable td.audit-soft { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: break-word; }
+#acctTable .acct-pill { white-space: normal; font-size: .66em; }
+#acctTable td.audit-dim { color: var(--text-dim); }
 
 /* Open invoices: Amounts/Aging view toggle + the amounts total row */
 .widget-head .wh-right { display: flex; align-items: center; gap: 12px; }

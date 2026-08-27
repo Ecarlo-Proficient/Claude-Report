@@ -20,13 +20,18 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     (Coding/Bills/PO), a chip per audit type with counts (Not Approved · Missing Project · FW Misplaced
     · Sub No Project · Duplicate · Missing/Unused PO · Cost Code · Data Entry · ...), search + division
     filter, QBO bill links. `/api/accounting`. Verified: 1876 findings, filter chips isolate each type.
-    - **Row layout reworked (owner, 2026-08-27: "how much space is wasted ... i need to read the
-      description line").** The 9-column stretched table wasted width and truncated the Detail column
-      (the flagged-reason) off the right edge. Replaced with a compact 2-line list row (`.acct-item`):
-      line 1 = issue pill · vendor · project · cost-code chips; line 2 = bill # · date · the FULL
-      flagged-reason description, wrapping across the whole row so it never truncates; amount + one QBO
-      link in a fixed right rail. Front-end only (app.js/index.html/style.css), so a browser reload picks
-      it up. Verified live: description reads in full, filters + QBO deep links intact.
+    - **Spacing + line memo + rename (owner, 2026-08-27: "how much space is wasted ... i liked the column
+      layout it was just the spacing ... i need the line memo as well ... renamed to Audit").** Kept the
+      COLUMN layout, fixed the wasted width: `table-layout: fixed` with explicit meta widths so one long
+      outlier can't blow a column wide (that was the wasted space); the two text columns (Line memo, Why
+      flagged) share the remaining width and wrap. **Added the Line memo column** - the clerk's bill-line
+      description - joined in `_fetch_accounting_audits` from the Bills/Inventory sheets by (Bill #, Line
+      Amount) with a single-line-bill fallback (~45% of findings carry one; subs aren't on those display
+      sheets, so they show a dim "-"). Renamed the tab **Accounting -> Audit** (TAB_LABELS + h2; internal
+      key/route unchanged). Fixed the filter chips touching the panel edge (`.acct-filters` given the
+      standard 18px inset). NB: the memo join changed `_fetch_accounting_audits`, so this one needs an
+      app restart, not just a reload. Verified live: project #s show in full, memo + reason both readable,
+      filters + QBO links intact.
   - **Open invoices: Amounts | Aging toggle.** **Amounts** = a clean flat list (Client · Project ·
     Invoice # · Date · Open balance · Invoice total + a TOTAL row), shares the tab's filters + sort,
     click a row for the invoice detail. **Aging** = the existing buckets + lien clock. Amounts is the

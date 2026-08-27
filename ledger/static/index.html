@@ -624,20 +624,22 @@
     <div class="tab-page" data-tab="accounting" hidden>
       <section class="widget">
         <div class="widget-head">
-          <h2>Accounting fixes <span class="count" id="acctNote"></span></h2>
+          <h2>Audit <span class="count" id="acctNote"></span></h2>
           <button class="btn small" id="btnAcctReload" title="Re-read the Bill Tracker audits">Reload</button>
         </div>
         <p class="hint">Everything the AP sync flagged for a fix, from the Bill Tracker audits - bills to approve,
           data-entry gaps, missing project #s, misplaced FW codes, subs with no project, duplicates, and PO
-          mismatches. Each row's second line is the reason it was flagged; filter by the audit that matters,
-          and use the QBO link to open the bill.</p>
+          mismatches. <b>Line memo</b> is what the clerk wrote on the bill line; <b>Why flagged</b> is the reason.
+          Filter by the audit that matters, and click the bill # to open it in QuickBooks.</p>
         <div class="kpi-row" id="acctStats"></div>
         <div class="acct-filters" id="acctFilters"></div>
         <div class="filters">
           <input type="search" id="acctSearch" placeholder="Find a vendor, project #, bill ref…" autocomplete="off">
           <select id="acctDivision"><option value="">All divisions</option></select>
         </div>
-        <div class="acct-list" id="acctList"></div>
+        <div class="table-scroll">
+          <table class="grid" id="acctTable"><thead></thead><tbody></tbody></table>
+        </div>
       </section>
     </div><!-- /tab: accounting -->
 
