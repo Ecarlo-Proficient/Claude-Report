@@ -1096,6 +1096,24 @@ html[data-theme="dark"] .acct-pill.warn { color: #e8b45c; }
 .acct-pill.neg { background: color-mix(in srgb, var(--neg) 18%, transparent); color: var(--neg); }
 .acct-pill.info { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
 html[data-theme="dark"] .acct-pill.info { color: color-mix(in srgb, var(--accent) 55%, #fff); }
+/* Findings as a compact list - kills the wide-table whitespace and gives the
+   flagged-reason description the full row width, so it never truncates. */
+.acct-list { margin-top: 6px; }
+.acct-item { display: flex; align-items: flex-start; gap: 14px; padding: 9px 8px; border-bottom: 1px solid var(--border); }
+.acct-item:hover { background: color-mix(in srgb, var(--text) 4%, transparent); }
+.acct-body { flex: 1 1 auto; min-width: 0; }
+.acct-l1 { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.acct-vendor { font-weight: 600; }
+.acct-chip-mini { font-size: .78em; padding: 1px 7px; border-radius: 6px; white-space: nowrap;
+  background: color-mix(in srgb, var(--text) 7%, transparent); color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.acct-l2 { margin-top: 3px; font-size: .9em; line-height: 1.45; color: var(--text-dim); }
+.acct-detail { color: var(--text); }
+.acct-dot { margin: 0 6px; opacity: .5; }
+.acct-right { flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; white-space: nowrap; padding-left: 6px; }
+.acct-amt { font-weight: 600; font-variant-numeric: tabular-nums; }
+.acct-open { font-size: .82em; color: var(--accent); text-decoration: none; opacity: .8; }
+.acct-open:hover { opacity: 1; text-decoration: underline; }
+.acct-empty { padding: 16px 8px; color: var(--text-dim); }
 
 /* Open invoices: Amounts/Aging view toggle + the amounts total row */
 .widget-head .wh-right { display: flex; align-items: center; gap: 12px; }

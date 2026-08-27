@@ -20,6 +20,13 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     (Coding/Bills/PO), a chip per audit type with counts (Not Approved · Missing Project · FW Misplaced
     · Sub No Project · Duplicate · Missing/Unused PO · Cost Code · Data Entry · ...), search + division
     filter, QBO bill links. `/api/accounting`. Verified: 1876 findings, filter chips isolate each type.
+    - **Row layout reworked (owner, 2026-08-27: "how much space is wasted ... i need to read the
+      description line").** The 9-column stretched table wasted width and truncated the Detail column
+      (the flagged-reason) off the right edge. Replaced with a compact 2-line list row (`.acct-item`):
+      line 1 = issue pill · vendor · project · cost-code chips; line 2 = bill # · date · the FULL
+      flagged-reason description, wrapping across the whole row so it never truncates; amount + one QBO
+      link in a fixed right rail. Front-end only (app.js/index.html/style.css), so a browser reload picks
+      it up. Verified live: description reads in full, filters + QBO deep links intact.
   - **Open invoices: Amounts | Aging toggle.** **Amounts** = a clean flat list (Client · Project ·
     Invoice # · Date · Open balance · Invoice total + a TOTAL row), shares the tab's filters + sort,
     click a row for the invoice detail. **Aging** = the existing buckets + lien clock. Amounts is the
