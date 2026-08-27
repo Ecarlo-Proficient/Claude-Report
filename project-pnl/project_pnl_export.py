@@ -2356,6 +2356,116 @@ def build_sheet_transactions(
     return refs
 
 
+def build_sheet_by_account(wb: Workbook, proj: str, cust_info: dict,
+                           wip_info: dict, tx: dict, as_of: str,
+                           realm: str = "", paid_map: Optional[dict] = None
+                           ) -> Dict[str, int]:
+    """The SECOND view of the same money: ACCOUNT → VENDOR → the lines.
+
+    Transactions groups by vendor, which answers "what did we buy from X".
+    This answers "what is IN this account", which is the question you cannot
+    otherwise ask — e.g. `*Job Material` carrying 3.1M on MFD133 (the user
+    2026-08-27: "I need to audit this to make sure nothing is in there that
+    shouldn't be"). Same records, same totals, pivoted.
+
+    Returns {account name: row} so the P&L can link each of its account lines
+    straight to the detail that adds up to it.
+    """
+    ws = wb.create_sheet("By Account")
+    ws.sheet_view.showGridLines = False
+    r = _write_meta_block(ws, proj, cust_info, wip_info, as_of)
+    sub = ws.cell(row=r, column=1, value=(
+        "COST BY ACCOUNT — every account, the vendors inside it, and every "
+        "line. Same lines as Transactions, grouped the other way."))
+    sub.font = Font(bold=True, size=BASE_SIZE, color="1F3A5F")
+    r += 2
+
+    SZ = BASE_SIZE
+    anchors: Dict[str, int] = {}
+
+    def cell(rr, cc, v, *, bold=False, fmt=None, color="000000",
+             fill=None, indent=0, size=None):
+        c = _write_cell(ws, rr, cc, v)
+        c.font = Font(bold=bold, size=size or SZ, color=color)
+        if fmt:
+            c.number_format = fmt
+        if fill is not None:
+            c.fill = fill
+        if indent:
+            c.alignment = Alignment(indent=indent)
+        return c
+
+    for title, key, accts_key, fill in (
+            ("COST OF GOODS SOLD", "cogs", "cogs_accounts", PatternFill("solid", fgColor="1F3A5F")),
+            ("OPERATING EXPENSES (non-COGS)", "exp", "exp_accounts", PatternFill("solid", fgColor="7F6000"))):
+        recs = [rec for v in (tx.get(key) or {}).values() for rec in v]
+        if not recs:
+            continue
+        # account -> vendor -> lines. Vendor is recoverable because the source
+        # dict is keyed by it.
+        by_acct: Dict[str, Dict[str, list]] = {}
+        for vendor, rows_ in (tx.get(key) or {}).items():
+            for rec in rows_:
+                by_acct.setdefault(rec["account"], {}).setdefault(vendor, []).append(rec)
+
+        cell(r, 1, title, bold=True, color="FFFFFF", fill=fill)
+        for c in range(2, 7):
+            ws.cell(row=r, column=c).fill = fill
+        cell(r, 5, sum(rec["amount"] for rec in recs), bold=True, fmt=CURR_FMT,
+             color="FFFFFF", fill=fill)
+        r += 1
+        for c, h in ((1, "Account / Vendor / Line"), (2, "Date"), (3, "Doc #"),
+                     (4, "Description"), (5, "Amount"), (6, "Paid?")):
+            hc = cell(r, c, h, bold=True, color="1F3A5F")
+            hc.border = BOTTOM_BORDER
+        r += 1
+
+        for acct in sorted(by_acct, key=lambda a: -sum(
+                rec["amount"] for v in by_acct[a].values() for rec in v)):
+            vendors = by_acct[acct]
+            atot = sum(rec["amount"] for v in vendors.values() for rec in v)
+            anchors[acct] = r
+            cell(r, 1, acct, bold=True, color="1F3A5F")
+            cell(r, 5, atot, bold=True, fmt=CURR_FMT, color="1F3A5F")
+            for c in range(1, 7):
+                ws.cell(row=r, column=c).fill = PatternFill("solid", fgColor="DDEBF7")
+                ws.cell(row=r, column=c).border = THIN_BORDER
+            r += 1
+            for vendor in sorted(vendors, key=lambda v: -sum(x["amount"] for x in vendors[v])):
+                lines = vendors[vendor]
+                cell(r, 1, vendor or "(no vendor)", bold=True, indent=1)
+                cell(r, 5, sum(x["amount"] for x in lines), bold=True, fmt=CURR_FMT)
+                ws.row_dimensions[r].outline_level = 1
+                r += 1
+                for rec in lines:
+                    idc = cell(r, 3, rec.get("ref") or rec.get("txn_id") or "")
+                    u = _qbo_txn_url(rec.get("tx_type", "Bill"), rec.get("txn_id", ""), realm)
+                    if u:
+                        idc.hyperlink = u
+                        idc.font = Font(size=SZ, color="0563C1", underline="single")
+                    _d = _parse_date(rec.get("date", ""))
+                    dc = _write_cell(ws, r, 2, _d or rec.get("date", ""))
+                    dc.number_format = "mm/dd/yyyy"
+                    dc.font = Font(size=SZ)
+                    cell(r, 4, rec.get("desc", ""), indent=2)
+                    cell(r, 5, rec["amount"], fmt=CURR_FMT)
+                    if paid_map is not None:
+                        _pd = paid_map.get(rec.get("txn_id"))
+                        if _pd is not None:
+                            _lbl, _col = _pay_state(_pd[0], _pd[1])
+                            if _lbl:
+                                cell(r, 6, _lbl, bold=True, color=_col)
+                    ws.row_dimensions[r].outline_level = 2
+                    r += 1
+        r += 1
+
+    for col, w in zip("ABCDEF", (58, 13, 16, 62, 18, 24)):
+        ws.column_dimensions[col].width = w
+    ws.sheet_properties.outlinePr.summaryBelow = False
+    _setup_print(ws, 6)
+    return anchors
+
+
 def _find_amount_match(target: float, candidates: list, tol: float = 0.01) -> list:
     """Transactions whose amount ≈ |target| (the user 2026-06-26 — find what a recon gap
     equals, fast). De-duped, largest first."""
@@ -2614,6 +2724,7 @@ def build_sheet_pl(
     underbill_count: int = 0,
     income_rows: Optional[List[dict]] = None,
     simple: bool = False,
+    acct_anchors: Optional[Dict[str, int]] = None,
     realm: str = "",
 ) -> None:
     """
@@ -2742,7 +2853,14 @@ def build_sheet_pl(
         rows_ = []
         for nm in names:
             esc = str(nm).replace('"', '""')
-            rows_.append(row(nm, formula=f'=SUMIF({tx_refs["acct_col"]},"{esc}",{tx_refs["amt_col"]})', indent=1))
+            _rr = row(nm, formula=f'=SUMIF({tx_refs["acct_col"]},"{esc}",{tx_refs["amt_col"]})', indent=1)
+            rows_.append(_rr)
+            # click the account name → the lines that add up to it
+            _a = (acct_anchors or {}).get(nm)
+            if _a:
+                _c = ws.cell(row=_rr, column=1)
+                _c.hyperlink = f"#'By Account'!A{_a}"
+                _c.font = Font(size=BASE_SIZE, color="0563C1", underline="single")
         f = ("=" + "+".join(f"B{x}" for x in rows_)) if rows_ else "=0"
         tc = ws.cell(row=hdr_row, column=2, value=f)
         tc.number_format = CURR_FMT
@@ -6096,6 +6214,11 @@ def generate_project_pnl(
     tx_refs = build_sheet_transactions(wb, proj, cust_info, wip_info, tx, as_of,
                                        paid_map=paid_map,
                                        realm=company_id)
+    # Second view of the same lines, pivoted account → vendor, so a P&L figure
+    # can be clicked straight through to what makes it up (the user 2026-08-27).
+    acct_anchors = build_sheet_by_account(wb, proj, cust_info, wip_info, tx,
+                                          as_of, realm=company_id,
+                                          paid_map=paid_map)
     qbo_exp = pl_totals.get("gross_profit", 0.0) - pl_totals.get("net_ordinary_income", 0.0)
     # Candidate pool for the difference-finder: every project cost line + invoice
     # facet, so a gap of $X can be traced to a single transaction equaling it.
@@ -6310,20 +6433,20 @@ def generate_project_pnl(
         retainage_billed_total=ret_billed_total, tx_refs=tx_refs,
         alt_overhead_pct=_alt_oh, underbill_total=underbill_total,
         underbill_count=underbill_count, income_rows=tx.get("income"),
-        simple=simple, realm=company_id,
+        simple=simple, acct_anchors=acct_anchors, realm=company_id,
     )
     # Order (the user 2026-07-16; Labor/Concrete first among the analysis tabs
     # 2026-07-29 — they're the PM/ops manager's main view): P&L, Transactions,
     # Labor, Concrete, their detail, Budget vs Actual, Next Draw, the draw
     # sheets, POs, Reconciliations; Cash Flow trails.
-    _order_sheets(wb, ["P&L", "Transactions",
+    _order_sheets(wb, ["P&L", "Transactions", "By Account",
                        "Labor", "Concrete", "Budget vs Actual",
                        *(["Next Draw"] if leftover is not None else []),
                        *draw_sheet_order,
                        "POs", "Reconciliations", "Cash Flow"])
 
     # Color-code the tabs for navigation (the user 2026-06-26).
-    _tabcolors = {"P&L": "1F3A5F", "Cash Flow": "C55A11",
+    _tabcolors = {"P&L": "1F3A5F", "By Account": "375623", "Cash Flow": "C55A11",
                   "Next Draw": "808080",
                   "Labor": "7030A0", "Concrete": "7030A0",
                   "Budget vs Actual": "BF8F00",
