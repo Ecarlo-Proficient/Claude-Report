@@ -227,7 +227,58 @@ def read_tab(ws, plan):
         for mfield, header in plan.get("marks", {}).items():
             snap[mfield] = _text(cell(row, header))
 
+        _fill_derived(snap)
         yield proj, snap
+
+
+def _fill_derived(snap):
+    """Fill the WIP derived columns from the inputs when they came back blank.
+
+    The Test tabs carry the derived figures (TOTAL CONTRACT PRICE, ESTIMATED TOTAL
+    COSTS, PERCENT COMPLETE, ...) as Excel FORMULAS. openpyxl reads a formula cell
+    as None whenever the workbook's cached values were stripped - which every script
+    write to the tabs does - so a routine load leaves those columns NULL. Without
+    contract or % complete the ledger's Project P&L reads every job as a total loss
+    (owner 2026-08-27: "the P&L is not functioning ... due to it needing data").
+
+    So compute them here from the input columns, using the SAME formulas the sheet
+    uses (wip_writer's column guide): only ever FILLS a blank - a real typed value
+    (e.g. MFD's contract off the WIP Master tab) is left untouched."""
+    def n(k):
+        v = snap.get(k)
+        return v if isinstance(v, (int, float)) else None
+
+    def put(k, v):
+        if snap.get(k) in (None, "") and v is not None:
+            snap[k] = round(v, 4)
+
+    oc, co = n("original_contract"), (n("approved_cos") or 0.0)
+    oec, coc = n("original_estimated_cost"), (n("co_costs") or 0.0)
+    i_cost, billed = n("costs_to_date"), n("billed_to_date")
+    tcp = n("total_contract_price") or ((oc + co) if oc is not None else None)          # C = A + B
+    etc = n("estimated_total_costs") or ((oec + coc) if oec is not None else None)      # F = D + E
+    put("total_contract_price", tcp)
+    put("estimated_total_costs", etc)
+    gp = (tcp - etc) if (tcp is not None and etc is not None) else None                 # G = C - F
+    put("original_profit", gp)
+    put("gross_profit_pct", (gp / tcp) if (gp is not None and tcp) else None)           # H = G / C
+    put("cost_to_complete", (etc - i_cost) if (etc is not None and i_cost is not None) else None)  # J = F - I
+    pct = (i_cost / etc) if (i_cost is not None and etc) else None                      # K = I / F
+    put("percent_complete", pct)
+    earned = (tcp * pct) if (tcp is not None and pct is not None) else None             # L = C * K
+    put("revenues_earned_to_date", earned)
+    put("profit_earned_to_date", (gp * pct) if (gp is not None and pct is not None) else None)  # M = G * K
+    if earned is not None and billed is not None:
+        put("overbillings", max(billed - earned, 0.0))                                 # O = MAX(N-L,0)
+        put("underbillings", max(earned - billed, 0.0))                                # P = MAX(L-N,0)
+    if tcp is not None and billed is not None:
+        put("left_to_bill", tcp - billed)                                              # R = C - N
+    if gp is not None and earned is not None:
+        pe = gp * pct if pct is not None else None
+        put("future_profit_to_earn", (gp - pe) if pe is not None else None)            # S = G - M
+    jtc, ltb = snap.get("cost_to_complete"), snap.get("left_to_bill")
+    if isinstance(jtc, (int, float)) and isinstance(ltb, (int, float)):
+        put("pure_job_borrow", max(jtc - ltb, 0.0))                                    # T = MAX(J-R,0)
 
 
 def load(excel_path: Path, db_path: Path, dry_run: bool, show: int):

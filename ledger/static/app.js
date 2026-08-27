@@ -384,7 +384,7 @@ function _drainQueue() {
 
 async function startResync() {
   runPipeline("reload",
-    "Reload all data now?\n\nRuns every loader (WIP, QBO costs [Touch ID], Bill Tracker, Invoices, Customers) and reads the current sources into the ledger. Read-only on the sources; takes about a minute.",
+    "Reload all data now?\n\nRuns EVERY loader into the ledger - WIP, Costs (QBO), Bill Tracker, Invoices, Payments (QBO), Customers, Sub LOC - so the Project P&L and Payments come back current. Read-only on the sources; a couple of QBO steps may prompt Touch ID; takes a minute or two.",
     { btn: $("#btnResync"), prog: $("#syncProgress"), fill: $("#syncBarFill"), step: $("#syncStep") });
 }
 
@@ -456,6 +456,7 @@ const PIPELINE_DESC = {
   ar: "Grabs your open AR invoices (the draws) from QuickBooks -> updates the Notion Invoice Tracker + the AR Aging Excel (sweeps paid ones to Paid, posts MFD pay events to Teams) -> loads them into the ledger. Feeds Invoices · Draws · Customers · Payments.",
   wip: "Reads the WIP master's Test tabs (SharePoint Excel) -> loads the project list + WIP snapshot (contract, % complete, over/under-billing) into the ledger. Feeds Overview · WIP report · Project P&L.",
   costs: "Pulls the last 90 days of job costs from QuickBooks (incl. subs), keyed by cost code, into the ledger. Prompts Touch ID. Feeds the Costs tab + the Project P&L margins.",
+  payments: "Pulls QuickBooks Payments (money IN) - who paid, which invoices/draws it cleared, the payment method - into the ledger, a rolling 12-month year. Feeds the Payments tab.",
   crm: "Pulls the Notion Customer List into the ledger - leads/clients + the per-rep outreach touch log. Feeds Customer Center · Sales Outreach.",
   subloc: "Pulls QBO payments to subs to model each sub's float (line-item, actual pay dates, chronological FIFO). Feeds the Sub LOC tab.",
   pnl: "Regenerates the per-project P&L workbooks for every ACTIVE job of one division (OneDrive PROJECT P&Ls; CP lands in the job's Synology folder). Reads QBO + the takeoff budget and writes Excel - it does NOT change the ledger. One division at a time; a full division takes a while, so pick the one you need.",
@@ -477,6 +478,7 @@ async function renderConsole() {
     ar: src["sync-ar"] || led["AR (invoices)"],
     wip: src["WIP master"] || led["WIP"],
     costs: led["Costs (QBO)"],
+    payments: led["Payments"],
     crm: led["CRM (customers)"],
     subloc: led["Sub LOC"],
   };

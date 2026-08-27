@@ -310,6 +310,14 @@ def _pipelines():
             {"label": "Sync invoices (QBO -> Notion + Teams)", "script": "invoice-sync/run_invoice_sync.py", "args": [], "side": True},
             {"label": "Load invoices -> ledger", "script": "ledger/load_invoices.py", "args": []},
         ]},
+        {"key": "payments", "label": "Payments (QBO)", "steps": [
+            # Payments are money IN and drive the Payments tab. Was wired into NO sync at all
+            # (owner 2026-08-27: "payments section is not showing recent payments"), so it now
+            # rides the reload chain like every other loader. load_payments DELETE+reloads its
+            # window, so the window IS the history depth: a rolling 12-month year (its default)
+            # keeps the Payments tab's history while catching the newest payments each run.
+            {"label": "Pull payments (QBO, rolling year)", "script": "ledger/load_payments.py", "args": ["--months", "12"]},
+        ]},
         {"key": "crm", "label": "CRM - customers", "steps": [
             {"label": "Pull customers (Notion)", "script": "ledger/load_customers.py", "args": []},
         ]},
@@ -799,6 +807,7 @@ def _freshness(con) -> dict:
     out = {"ledger": {}, "sources": {}}
     for tbl, key in (("wip_snapshot", "WIP"), ("ap_bill_line", "AP (Bill Tracker)"),
                      ("cost_line", "Costs (QBO)"), ("billing_event", "AR (invoices)"),
+                     ("payment", "Payments"),
                      ("customer", "CRM (customers)"), ("sub_loc_run", "Sub LOC")):
         try:
             r = con.execute(f"SELECT MAX(loaded_at) FROM {tbl}").fetchone()

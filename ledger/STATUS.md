@@ -4,6 +4,30 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **One efficient sync + the P&L actually works now (owner, 2026-08-27: "the most efficient way to update
+  this ledger ... the P&L is not functioning due to it needing data ... the payments section is not showing
+  recent payments ... simple to sync and efficient").** Three problems, one root theme - two loaders never
+  ran in the sync people actually use:
+  - **Payments was wired into NO sync** (`load_payments` was in neither the dashboard pipelines nor
+    `reload_ledger.sh`), so the Payments tab was frozen at the last manual run. Fix: a **`payments` pipeline**
+    (rides the reload chain like every other loader) + a step in `reload_ledger.sh`. Rolling **12-month**
+    window because `load_payments` DELETE+reloads its window, so the window IS the history depth (a shorter
+    window silently drops older payments). Refreshed: 848 payments, recent ones included.
+  - **Costs (the P&L's cost side) only ran on the dashboard Resync, never on terminal `sync-all`**, so a
+    terminal-only user's P&L cost went stale. Fix: `load_costs --active --since <90d>` added to
+    `reload_ledger.sh` too. So **both** paths (dashboard Resync AND `sync-all`) now leave the ledger fully
+    fresh; the Console shows each source's last-load so you can SEE what's stale (`_freshness` gained
+    Payments).
+  - **The P&L read every job as a total loss** even with fresh costs, because `v_wip_latest` had
+    `total_contract_price` / `percent_complete` NULL for ~all jobs. Root cause: those are **Excel formulas**
+    on the WIP Test tabs, and openpyxl reads a formula cell as None whenever the cached values were stripped
+    (every script write to the tabs does that). Fix: `load_wip_master._fill_derived` **computes** the derived
+    WIP columns from the input columns (the same formulas the sheet uses: C=A+B, F=D+E, K=I/F, ...), only
+    ever filling a blank. After reload: contract populated 3 -> 156 jobs, % complete 0 -> 112; the Project
+    P&L went from all-losses to **$23.6M earned / net +$1.12M (4.8%)**, split MF 5.4% · CP 4.6% · RP 0.7%.
+  - Backend needs a **restart** (dashboard.py + the loaders changed); the front end (Console Payments card +
+    Resync wording) is a reload. Known follow-up: each QBO loader authenticates separately - a shared-session
+    runner would cut that, and %complete >100% on over-budget jobs is passed through uncapped (matches Excel).
 - **Console: queue multiple syncs (run in order) + a "Sync AP + AR" button (owner, 2026-08-25: "can it not
   run two at the same time ... i also need progress bar ... sync AR and AP together, both need the same
   info").** Runs are single-locked on the server (concurrent QBO pulls + ledger DELETE/INSERT would corrupt
@@ -89,8 +113,8 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   the PRODUCERS (QBO -> Bill Tracker.xlsx, QBO -> Notion), never the ledger LOADERS - so the dashboard's
   ledger stayed on the last load while Notion/Excel were current. (Confirmed the split: Notion had 34318
   Paid; the ledger was the Aug-19 snapshot.) Fix: new **`ledger/reload_ledger.sh`** runs the loader half
-  (WIP · bills · invoices `--no-qbo` · customers - fast, no Touch ID; costs stay on the dashboard Resync as
-  a 90-day QBO pull), continue-on-error with a summary. Wired into the machine's `sync-all` as step **3/3**
+  (WIP · bills · invoices `--no-qbo` · customers - and (added 2026-08-27, see
+  below) costs + payments; continue-on-error with a summary. Wired into the machine's `sync-all` as step **3/3**
   (`~/.zshrc`, not repo-tracked; skipped on `--dry-run`). So `sync-all` = AP -> AR -> **ledger reload ->
   dashboard**. Verified: reload ran clean (exit 0); 34318 now `Paid · $0` in the ledger. Same loaders the
   dashboard's Resync("reload") runs, so terminal + dashboard can't drift.
