@@ -183,6 +183,14 @@ restate them here. Business/strategic context lives in session memory, not in th
   match from the start of the string.
 - **Custom fields:** the API only returns `DefinitionId=1` regardless of approach/minor version, so the
   Draw Period field is unreachable — use **PrivateNote** as the workaround.
+- **NEVER attribute a job's cost from a bill's `TotalAmt` — always sum the LINE `Amount`s**
+  (the user 2026-08-27, standing rule). Sub and supplier bills are multi-line and span several
+  jobs; banking a whole bill because ONE line matched hands the job every other job's money on
+  that document. It never errors and the result looks plausible — MFD228 is 879,732 line-level
+  vs **1,516,919** by bill totals, a 72% overstatement that reads as a catastrophic overrun.
+  55 of its 291 bills were partial. `shared/job_lines.JobMatcher` is line-level by design;
+  **verify with `one-offs/pnl_line_level_audit.py`** after any attribution change or P&L batch —
+  it re-derives every job from QBO at line level and fails if a delivered workbook disagrees.
 - **Bills carry the project # in memo / PrivateNote** (not a period tag); subs are flagged by `"sub"` in
   the bill memo.
 - **Ref fields come back as an ID ONLY (`{value: "65"}`, no `name`) - resolve the name yourself** by

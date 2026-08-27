@@ -761,6 +761,14 @@ the rollup can never disagree with what it links to. `shared/pnl_paths._archive_
 the shared notion of "filed": `find_pnl` looks inside those folders and project-pnl
 regenerates a filed job back into its archive folder.
 
+**`one-offs/pnl_line_level_audit.py`** (read-only QBO) — the guard on the owner's standing
+rule: **job cost comes from LINE amounts, never a bill's `TotalAmt`**. Sub bills are
+multi-line and span jobs, so banking a whole bill because one line matched hands the job
+every other job's money — silently, and plausibly. Re-derives every completed job's cost
+from QBO at line level, compares it to what the delivered workbook reports (fails on any
+disagreement), and prints the whole-bill figure alongside so the exposure is visible:
+MFD228 is 879,732 line-level vs 1,516,919 by bill totals, +72%.
+
 **`one-offs/legacy_job_cost_pull.py`** (read-only QBO) — costs + billing for an OLDER
 job whose lines were never consistently project-coded. Plain "costs for this customer"
 under-reports such a job, because only part of its cost carries the project customer.
