@@ -271,6 +271,30 @@ manual close), RP (no draws — expenses → invoice → profit).
   (column 54), and the corruption gate caught it. Any retry must NOT override
   `__str__` on a value that is ever passed as a row: give the handle an
   explicit `.ref` property and change the ~23 formula sites to use it.
+- **Completed jobs get filed, and roll up (2026-08-27).** Finished jobs live
+  in an ARCHIVE subfolder of the P&L root — `completed mfd project p&l` — so
+  the top level stays the live work. Both sides know about it:
+  `pnl_paths._archive_dirs()` matches any subfolder starting `completed` /
+  `closed` / `archive`, `find_pnl` searches inside them (else the dashboard
+  reports a filed job as never generated), and `_resolve_project_out_dir`
+  REGENERATES a filed job back into its archive folder instead of quietly
+  creating a second copy at the top level.
+  **`completed_rollup.py`** builds `Completed MFD P&L.xlsx` beside those
+  folders: one row per job (contract · ETC · billed · cost · GP · GP% · cost
+  vs ETC), a portfolio total, and an `OPEN ↗` link per row. It reads each
+  job's **Transactions** sheet, never QBO — offline, seconds, and it cannot
+  disagree with the workbook it links to. (Not the P&L sheet: those totals are
+  live formulas, and openpyxl returns formula TEXT unless Excel has cached a
+  value.) Links are stored relative targets, so the rollup must sit beside the
+  job folders.
+- **`--alias` is REFUSED on a multi-project run (2026-08-27).** It is global to
+  the run, so a batch applied every job's street name to every job: rebuilding
+  MFD172 and MFD228 together with both `BONDS RANCH` and `LAPIZ` made MFD228
+  report **4,213,532** of cost instead of 879,732, and inflated MFD172 to
+  5,422,266. The attribution was fine; the invocation was not. A wrong number
+  that looks plausible is worse than an error, so the run now stops and says
+  to do one job at a time. `+class` stays safe in a batch — the class is
+  discovered per job.
 - **Rich text is BANNED in this exporter, and every save is now gated on the
   corruption check (2026-08-24).** `_cost_code_value` / `_cost_name_value` were
   returning `CellRichText` (bold code token + regular description, the user

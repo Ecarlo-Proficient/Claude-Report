@@ -89,6 +89,7 @@ except ImportError:
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from shared import paths
+from shared import pnl_paths
 from shared.draws import read_pay_app, learn_period_shape, infer_period_tag
 from shared.qbo_api import (
     API_BASE, MINOR_VERSION, PROJ_RE,
@@ -217,6 +218,13 @@ def _resolve_project_out_dir(proj: str, out_dir: Path) -> Tuple[Path, Optional[s
     folder's 'Profit and Loss' subfolder; everything else → <out_dir>/<proj>.
     Returns (folder, note) where note explains any CP fallback (for the UI)."""
     if not proj.upper().startswith("CP"):
+        # If this job has already been FILED under an archive subfolder
+        # ("completed mfd project p&l"), regenerate it THERE — otherwise a
+        # re-run silently creates a second copy at the top level and the two
+        # drift apart (the user 2026-08-27).
+        for _arch in pnl_paths._archive_dirs():
+            if (_arch / proj).is_dir():
+                return _arch / proj, f"filed under {_arch.name}"
         return out_dir / proj, None
     if not CP_AWARDED_BASE.exists():
         return out_dir / proj, "Common drive not mounted → OneDrive"
@@ -6982,6 +6990,19 @@ def main() -> int:
     if was_expanded and not projects:
         print(f"  ✗ `active` found no Active projects in the WIP master "
               f"({args.wip_master}) — is the Test-Master tab current?")
+        return 1
+
+    # --alias is GLOBAL to the run, so a batch would apply EVERY job's street
+    # name to EVERY job. That is exactly how MFD228 picked up MFD172's Bonds
+    # Ranch costs and reported 4.2M instead of 880K (2026-08-27). Aliases are
+    # per-job by nature — refuse the combination rather than produce a wrong
+    # number that looks plausible.
+    if args.alias and len(projects) > 1:
+        print(f"  ✗ --alias applies to EVERY project in the run, so it cannot be "
+              f"used with {len(projects)} projects at once "
+              f"({', '.join(projects[:4])}{'…' if len(projects) > 4 else ''}).\n"
+              f"    Run each job on its own with its own --alias, or drop --alias "
+              f"(+class alone is per-job and safe in a batch).")
         return 1
 
     ui_banner("Project P&L Export")

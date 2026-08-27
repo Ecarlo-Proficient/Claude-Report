@@ -127,6 +127,23 @@ def pnl_path(proj: str, out_dir: "Path | None" = None) -> Path:
     return folder / PNL_FILE.format(proj=proj)
 
 
+# Subfolders of PROJECT P&Ls that hold FINISHED jobs. Matched case-insensitively
+# by prefix so "completed mfd project p&l", "Completed CP …" and friends all
+# count without needing to be listed one by one.
+ARCHIVE_PREFIXES = ("completed", "closed", "archive")
+
+
+def _archive_dirs():
+    """Existing archive subfolders under the P&L output root."""
+    try:
+        root = pnl_out_dir()
+        return [d for d in sorted(root.iterdir())
+                if d.is_dir()
+                and d.name.lower().startswith(ARCHIVE_PREFIXES)]
+    except OSError:
+        return []
+
+
 def _candidates(proj: str):
     """Every place this project's workbook might exist (newest one wins in find_pnl).
     Covers the resolved path (incl. Common drive if mounted), the per-project subfolder,
@@ -142,6 +159,11 @@ def _candidates(proj: str):
     fname = PNL_FILE.format(proj=proj)
     add(pnl_path(proj))                                   # exact resolved path
     add(pnl_out_dir() / proj / fname)                    # default per-project subfolder
+    # Finished jobs are filed away under an ARCHIVE subfolder (the user
+    # 2026-08-27) so the top level stays the live work. Look there too, or the
+    # dashboard reports "never generated" the moment a job is filed.
+    for _arch in _archive_dirs():
+        add(_arch / proj / fname)
     ob = paths.onedrive_base()
     add(ob / "PROJECT P&Ls" / proj / fname)              # older flat tree, subfolder
     add(ob / "PROJECT P&Ls" / fname)                     # older flat tree, root

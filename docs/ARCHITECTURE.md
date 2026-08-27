@@ -752,6 +752,15 @@ ready-mix MEMO line must be `*1`) - then flags every line that breaks its type's
 OneDrive `Works In Progress/QBO Audits/Concrete Cost Code Audit.xlsx` (Vendors · Miscoded Lines ·
 Summary; plain, `assert_clean`).
 
+**`project-pnl/completed_rollup.py`** (read-only, no QBO) — one combined P&L over every
+finished job filed under an archive subfolder of the P&L root (`completed mfd project
+p&l`). One row per job with contract/ETC/billed/cost/GP and an `OPEN ↗` link to that job's
+own workbook, plus a portfolio total. Figures are read from each workbook's **Transactions**
+sheet (real numbers) rather than its P&L sheet (live formulas openpyxl cannot evaluate), so
+the rollup can never disagree with what it links to. `shared/pnl_paths._archive_dirs()` is
+the shared notion of "filed": `find_pnl` looks inside those folders and project-pnl
+regenerates a filed job back into its archive folder.
+
 **`one-offs/legacy_job_cost_pull.py`** (read-only QBO) — costs + billing for an OLDER
 job whose lines were never consistently project-coded. Plain "costs for this customer"
 under-reports such a job, because only part of its cost carries the project customer.
