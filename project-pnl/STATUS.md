@@ -218,6 +218,17 @@ manual close), RP (no draws — expenses → invoice → profit).
   Effect on live numbers: MFD228 gained $6,680 (9 lines written `MFD 228`),
   and MFD172 gained **$105,163** across 18 `MFD 172-0-20-1` sub-service draws
   that the original hand-built pull never saw.
+- **`+class` — the short form, and the class is FOUND not typed (2026-08-25).**
+  `project-pnl MFD228 +class` is the whole command. `discover_job_classes`
+  matches the job number against each class's LEAF segment across ACTIVE and
+  INACTIVE classes, then keys on the class **ID**, because QBO renames a class
+  when you deactivate or reactivate it (MFD228's went from
+  `…:MFD228 (deleted)` to `…:MFD228` mid-session; the id never moved). Leaf
+  matching also means a division or builder branch can never be selected by
+  accident, and lookalikes are safe — MFD295 does not match RP5295/RP4295.
+  `+class` alone = **project ∪ class**; add `--legacy`/`--alias` to turn the
+  line-text and bill-memo rules back on too. `--job-class` survives as an
+  explicit override. The class list is pulled once per run, not per project.
 - **Rich text is BANNED in this exporter, and every save is now gated on the
   corruption check (2026-08-24).** `_cost_code_value` / `_cost_name_value` were
   returning `CellRichText` (bold code token + regular description, the user

@@ -125,12 +125,49 @@ def _line_text(det: dict, ln: dict) -> str:
     return f"{(ln.get('Description') or '').strip()} {cref.get('name') or ''}"
 
 
+_DELETED_RE = re.compile(r"\s*\(deleted\)\s*$", re.IGNORECASE)
+
+
+def discover_job_classes(classes, project: str) -> dict:
+    """{id -> name} for the job's OWN class branch, found by the job number in
+    a class's LEAF segment - plus anything nested beneath it.
+
+    Why by ID: QBO renames a class when you deactivate or reactivate it (it
+    appends / drops " (deleted)"), so a name is not a stable key. IDs are. The
+    owner reactivated MFD228's class mid-session and its name changed from
+    `…:MFD228 (deleted)` to `…:MFD228`; the id did not move.
+
+    `classes` is the raw QBO Class list (pass ACTIVE **and** INACTIVE - a job's
+    class is usually inactive, and an active-only query finds nothing).
+    Matching is on the LEAF only, so a division or builder branch can never be
+    selected by accident."""
+    pat = re.compile(job_number_pattern(project) + r"$", re.IGNORECASE)
+    hit = {}
+    for c in classes or []:
+        name = c.get("FullyQualifiedName") or c.get("Name") or ""
+        leaf = _DELETED_RE.sub("", name.rsplit(":", 1)[-1]).strip()
+        if leaf and pat.match(leaf):
+            hit[str(c["Id"])] = name
+    if not hit:
+        return {}
+    # anything filed UNDER a matched class belongs to the same job
+    roots = [n for n in hit.values()]
+    for c in classes or []:
+        name = c.get("FullyQualifiedName") or c.get("Name") or ""
+        if str(c["Id"]) in hit:
+            continue
+        if any(name.upper().startswith(r.upper() + ":") for r in roots):
+            hit[str(c["Id"])] = name
+    return hit
+
+
 class JobMatcher:
     """Callable line test for one job. `rule()` says which rule fired."""
 
     def __init__(self, customer_id: str, project: str = "",
                  aliases: Iterable[str] = (), legacy: bool = False,
-                 class_prefix: str = "", text_rules: bool = True):
+                 class_prefix: str = "", text_rules: bool = True,
+                 class_ids: Iterable[str] = ()):
         self.customer_id = str(customer_id)
         self.project = (project or "").upper()
         self.legacy = bool(legacy and self.project)
@@ -141,6 +178,8 @@ class JobMatcher:
                 f"{cp!r} is a DIVISION class, not a job class — it would claim "
                 f"every job in that division. Pass the job's own class branch.")
         self.class_prefix = cp.upper()
+        # Preferred over the prefix: rename-proof, reactivation-proof.
+        self.class_ids = {str(i) for i in (class_ids or ())}
         # CLASS/PROJECT LOOKUP (the user 2026-08-25): on a job that ran across
         # the coding switchover, project and class between them ARE the whole
         # cost - the line description and bill memo add noise, not signal. This
@@ -152,6 +191,11 @@ class JobMatcher:
             return "project"
         if not self.legacy or self.pattern is None:
             return None
+        if self.class_ids:
+            ref = (det.get("ClassRef") or ln.get("ClassRef")
+                   or txn.get("ClassRef") or {})
+            if str(ref.get("value") or "") in self.class_ids:
+                return "class"
         if self.class_prefix:
             # Prefix, not equality: the live parent branch and the deleted
             # per-job leaf beneath it are the same job.

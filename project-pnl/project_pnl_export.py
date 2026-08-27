@@ -101,7 +101,7 @@ from shared.cost_lines import line_category, combine_bill_lines, CATEGORY_ORDER
 # cost_leaf moved to shared/ (2026-08-08) — the ledger's load_costs.py needs the
 # SAME resolver, so it can never drift from this tool's cost buckets.
 from shared.qbo_costs import cost_leaf
-from shared.job_lines import JobMatcher
+from shared.job_lines import JobMatcher, discover_job_classes
 from shared.xlsx_verify import assert_clean
 
 # ── terminal output (styled like sync-ar / sync-ap; the user 2026-06-26) ──────────
@@ -602,12 +602,14 @@ _LEGACY_MATCH: Optional[JobMatcher] = None
 
 def _set_legacy_matcher(proj: str, customer_id: str, legacy: bool,
                         aliases: Optional[List[str]] = None,
-                        job_class: str = "", text_rules: bool = True) -> None:
+                        job_class: str = "", text_rules: bool = True,
+                        class_ids=()) -> None:
     """Install (or clear) the legacy matcher for ONE project. Called per
     project so a batch can never leak one job's aliases into the next."""
     global _LEGACY_MATCH
     _LEGACY_MATCH = (JobMatcher(customer_id, proj, aliases or (), legacy=True,
-                                class_prefix=job_class, text_rules=text_rules)
+                                class_prefix=job_class, text_rules=text_rules,
+                                class_ids=class_ids)
                      if legacy else None)
 
 
@@ -6852,6 +6854,11 @@ def main() -> int:
                          "the live parent and its deleted per-job leaf both "
                          "count. A bare division name is refused. Only used "
                          "with --legacy.")
+    ap.add_argument("--class", dest="use_class", action="store_true",
+                    help="Add the job's CLASS-coded lines to the P&L. The class "
+                         "is found automatically from the job number, active or "
+                         "not - you never type its name. Shorthand: put +class "
+                         "anywhere on the command line.")
     ap.add_argument("--class-project", action="store_true",
                     help="CLASS/PROJECT LOOKUP (the user 2026-08-25): the job's "
                          "cost is exactly its CLASS lines plus its PROJECT "
@@ -6874,7 +6881,14 @@ def main() -> int:
     def _is_report(a):
         return a.lower().endswith(".xlsx") and Path(a).expanduser().exists()
     report_files = [Path(a).expanduser() for a in args.projects if _is_report(a)]
-    projects = [a.strip().upper() for a in args.projects if not _is_report(a)]
+    # `+class` reads naturally mid-command ("project-pnl MFD228 +class") and
+    # argparse hands it through as a positional, so pull it out here rather
+    # than making anyone type a class name they should never have to know
+    # (the user 2026-08-25: "i will never remember that huge line of text").
+    if any(a.strip().lower() in ("+class", "+classes") for a in args.projects):
+        args.use_class = True
+    projects = [a.strip().upper() for a in args.projects
+                if not _is_report(a) and not a.strip().startswith("+")]
     out_dir = Path(args.out).expanduser()
     # Prompt to fix mistyped period dates only when attached to a terminal.
     interactive = (not args.no_prompt) and sys.stdin.isatty()
@@ -6908,6 +6922,7 @@ def main() -> int:
     ui_step("Project → customer map", f"{len(cust_map)} projects")
     ui_step("WIP master loaded", f"{len(wip_master)} rows")
 
+    _ALL_CLASSES = [None]        # lazy: pulled once per run, only if +class
     as_of = dt.datetime.now().strftime("%Y-%m-%d %I:%M %p")  # 12-hour + AM/PM
     generated: List[Path] = []
     not_found: List[str] = []
@@ -6920,22 +6935,42 @@ def main() -> int:
             continue
         # Per project, so a batch can never carry one job's aliases into
         # the next; clears itself when --legacy is off.
+        # +class / --class: find the job's OWN class from the job number,
+        # active or not, and key on its ID so a QBO reactivate-rename can't
+        # break it (the user 2026-08-25 - QBO renames on reactivate).
+        _cls = {}
+        if args.use_class or args.class_project:
+            if _ALL_CLASSES[0] is None:              # one pull, reused by a batch
+                _ALL_CLASSES[0] = (query_all(access, company_id, "Class")
+                                   + query_all(access, company_id, "Class",
+                                               "Active = false"))
+            _cls = discover_job_classes(_ALL_CLASSES[0], proj)
+            if not _cls:
+                ui_warn(f"{proj}: no class names this job — continuing without "
+                        f"the class rule")
         try:
-            _set_legacy_matcher(proj, cust_map[proj]["id"],
-                                args.legacy or args.class_project,
-                                args.alias, args.job_class,
-                                text_rules=not args.class_project)
+            _set_legacy_matcher(
+                proj, cust_map[proj]["id"],
+                args.legacy or args.class_project or args.use_class,
+                args.alias, args.job_class,
+                # +class alone = project ∪ class ("the whole P&L, plus the
+                # class lines"). Adding --legacy/--alias turns the line-text
+                # and bill-memo rules back on as well.
+                text_rules=not (args.class_project
+                                or (args.use_class and not args.legacy)),
+                class_ids=list(_cls.keys()))
         except ValueError as e:
             ui_fail(f"{proj}: {e}")
             return 1
-        if args.class_project and not args.job_class:
-            ui_fail(f"{proj}: --class-project needs --job-class (the job's own "
-                    f"class branch) — without it the method is project-only.")
+        if args.class_project and not (args.job_class or _cls):
+            ui_fail(f"{proj}: no class found for this job — the class/project "
+                    f"lookup would be project-only.")
             return 1
-        if args.legacy or args.class_project:
+        if args.legacy or args.class_project or args.use_class:
+            _cn = ", ".join(sorted(_cls.values())) or args.job_class
             ui_event(("CLASS/PROJECT lookup ON for " if args.class_project
                       else "legacy attribution ON for ") + proj
-                     + (f"  · class: {args.job_class}" if args.job_class else "")
+                     + (f"  · class: {_cn}" if _cn else "")
                      + (f"  · aliases: {', '.join(args.alias)}"
                         if args.alias else ""),
                      icon="⚑", color=_YEL)
