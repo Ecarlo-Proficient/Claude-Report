@@ -260,7 +260,13 @@
       <section class="widget">
         <div class="widget-head">
           <h2>Open invoices <span class="count" id="invNote"></span></h2>
-          <span class="count" id="invAsOf"></span>
+          <div class="wh-right">
+            <span class="count" id="invAsOf"></span>
+            <div class="seg" id="invViewSeg" title="Amounts = a clean list of what's owed · Aging = the AR aging buckets + lien clock">
+              <button type="button" class="seg-btn on" data-view="amounts">Amounts</button>
+              <button type="button" class="seg-btn" data-view="aging">Aging</button>
+            </div>
+          </div>
         </div>
         <div class="bill-filters" id="invFilters">
           <div class="fld"><span>Client</span>

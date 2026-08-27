@@ -1096,3 +1096,7 @@ html[data-theme="dark"] .acct-pill.warn { color: #e8b45c; }
 .acct-pill.neg { background: color-mix(in srgb, var(--neg) 18%, transparent); color: var(--neg); }
 .acct-pill.info { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
 html[data-theme="dark"] .acct-pill.info { color: color-mix(in srgb, var(--accent) 55%, #fff); }
+
+/* Open invoices: Amounts/Aging view toggle + the amounts total row */
+.widget-head .wh-right { display: flex; align-items: center; gap: 12px; }
+.inv-total-row td { font-weight: 700; border-top: 2px solid var(--border); font-variant-numeric: tabular-nums; }

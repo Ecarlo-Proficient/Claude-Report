@@ -2444,6 +2444,55 @@ const INV_SORTS = {
   client: (a, b) => (a.customer || "~").localeCompare(b.customer || "~") || String(a.due_date || "9999").localeCompare(String(b.due_date || "9999")),
 };
 
+let invView = "amounts";   // "amounts" | "aging" - the Open-invoices view toggle (owner 2026-08-27)
+
+// The AMOUNTS view: a clean, flat, sortable list of open invoices and what's owed - no aging
+// buckets, no lien columns. Shares the tab's filters + sort with the Aging view; click a row
+// for the invoice memo + details, or the invoice # for the native detail / QBO.
+function renderInvAmounts(all, f) {
+  const host = $("#invTable"), thead = host.querySelector("thead"), tbody = host.querySelector("tbody");
+  { const st = $("#invStats"); if (st) st.innerHTML = ""; }   // aging tiles belong to the Aging view
+  let rows = all.filter(i => invPasses(i, f));
+  rows = [...rows].sort(INV_SORTS[($("#ifSort") || {}).value || "due"] || INV_SORTS.due);
+  const totOpen = rows.reduce((t, i) => t + oiBal(i), 0);
+  const totAmt = rows.reduce((t, i) => t + num(i.amount), 0);
+  $("#invNote").textContent = all.length
+    ? `(${rows.length.toLocaleString()} of ${all.length.toLocaleString()} · ${money(totOpen)} open)` : "(no AR data)";
+  { const anyMsel = INV_MSEL.some(c => (invMSel[c.id] || {}).size);
+    const cb = $("#ifClear"); if (cb) cb.hidden = !(anyMsel || f.div || f.lien || f.lienclk || f.litig !== "ex"); }
+  const cols = [["Client", "left"], ["Project", "left"], ["Invoice #", "left"], ["Date", "left"], ["Open balance", "right"], ["Invoice total", "right"]];
+  thead.innerHTML = ""; const htr = document.createElement("tr");
+  for (const [c, al] of cols) { const th = document.createElement("th"); th.className = al; th.textContent = c; htr.appendChild(th); } thead.appendChild(htr);
+  tbody.innerHTML = "";
+  if (!rows.length) {
+    const tr = document.createElement("tr"), td = document.createElement("td");
+    td.colSpan = cols.length; td.className = "left"; td.style.cssText = "padding:14px;color:var(--text-dim)";
+    td.textContent = all.length ? "No open invoices match these filters." : "No AR data - run load_invoices.py.";
+    tr.appendChild(td); tbody.appendChild(tr); return;
+  }
+  for (const i of rows) {
+    const tr = document.createElement("tr"); tr.style.cursor = "pointer";
+    tr.title = "Click for the invoice memo + details";
+    tr.onclick = (e) => { if (e.target.closest("a")) return; openInvoiceDetail(i); };
+    const cli = document.createElement("td"); cli.className = "left dim"; cli.textContent = i.customer || "–"; tr.appendChild(cli);
+    const pc = document.createElement("td"); pc.className = "left";
+    if (i.division) { const dot = document.createElement("span"); dot.className = "divdot " + divClass(i.division); dot.title = i.division; pc.appendChild(dot); }
+    pc.appendChild(document.createTextNode(i.project_no || "–")); tr.appendChild(pc);
+    tr.appendChild(invNoCell(i));
+    tr.appendChild(leftText(fmtDateShort(i.txn_date)));
+    const ob = document.createElement("td"); ob.className = "right"; ob.textContent = money(oiBal(i));
+    if (i.days_past_due != null && i.days_past_due > 0) { ob.style.color = "var(--neg)"; ob.title = i.days_past_due + " days past due"; }
+    tr.appendChild(ob);
+    tr.appendChild(rightText(money(i.amount)));
+    tbody.appendChild(tr);
+  }
+  const tr = document.createElement("tr"); tr.className = "inv-total-row";
+  const td0 = document.createElement("td"); td0.className = "left"; td0.colSpan = 4; td0.textContent = "TOTAL"; tr.appendChild(td0);
+  const t1 = document.createElement("td"); t1.className = "right"; t1.textContent = money(totOpen); tr.appendChild(t1);
+  const t2 = document.createElement("td"); t2.className = "right"; t2.textContent = money(totAmt); tr.appendChild(t2);
+  tbody.appendChild(tr);
+}
+
 function renderOpenInvoices() {
   const host = $("#invTable"); if (!host) return;
   const buckets = OI.buckets || ["Current", "1-30", "31-60", "61-90", "90+"];
@@ -2460,6 +2509,12 @@ function renderOpenInvoices() {
   // Litigation is EXCLUDED by default; flag the box red whenever it's hiding/limiting rows so it's
   // obvious to the eye that a filter is in place (owner 2026-08-19).
   { const el = $("#ifLitig"); if (el) el.classList.toggle("filter-on", (el.value || "ex") !== "all"); }
+
+  // Two views over the same filtered invoices (owner 2026-08-27): AMOUNTS = a clean list of what's
+  // owed; AGING = the buckets + lien clock. The aging-only grouping buttons hide in Amounts.
+  { const fl = $("#ifSubGroup"), cl = $("#ifCollapse"); const aging = invView === "aging";
+    if (fl) fl.style.display = aging ? "" : "none"; if (cl) cl.style.display = aging ? "" : "none"; }
+  if (invView === "amounts") { renderInvAmounts(all, f); return; }
 
   // Aging tiles double as the bucket filter. Their totals ignore the bucket pick (so the
   // full aging picture always shows) but DO honor the other filters.
@@ -5443,6 +5498,7 @@ function init() {
   { const el = $("#ifSubGroup"); if (el) el.onclick = invSubGroupToggle; }
   { const el = $("#ifStatement"); if (el) el.onclick = openInvStatement; }
   { const el = $("#btnCopyStmt"); if (el) el.onclick = copyInvStatement; }
+  { const seg = $("#invViewSeg"); if (seg) for (const b of seg.querySelectorAll(".seg-btn")) b.onclick = () => { invView = b.dataset.view; seg.querySelectorAll(".seg-btn").forEach(x => x.classList.toggle("on", x === b)); renderOpenInvoices(); }; }
   { const el = $("#btnCloseStmt"); if (el) el.onclick = closePanels; }
   { const el = $("#btnCloseBillDetail"); if (el) el.onclick = closePanels; }
   { const el = $("#btnClosePayBills"); if (el) el.onclick = closePanels; }

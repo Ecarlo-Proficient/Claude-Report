@@ -4,6 +4,27 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **UX overhaul for efficiency (owner, 2026-08-27: "visual improvements ... efficiency ... i need
+  console first ... graph is cluttered/glitchy ... my view and overview are basically the same,
+  one overview ... fold the bill tracker audit sheet in for Accounting fixes, filterable ... open
+  invoices, two views: amounts + aging").**
+  - **Console is the first nav group.** **My view + Overview merged** into one Overview - freshness +
+    Resync + action items now sit on top of the Portfolio KPIs / Needs-attention / divisions /
+    projects (the duplicate "Working on" list dropped; renderHome's active-projects block guards off).
+  - **Graph tab removed** - the vault org-map was an illegible hairball of internal notes; gone from
+    nav + HTML. (The `vault_graph.py` backend + `/api/graph` are now dead code, left for a later prune.)
+  - **NEW Accounting tab** (Vendor group): the three Bill Tracker audit sheets folded into one
+    filterable list. `_fetch_accounting_audits` reads `Audit - Coding/PO/Bills` from Bill Tracker.xlsx
+    live (bill-tracker computes them with the full bill data - subs + cost codes - that ap_bill_line
+    lacks; the Open column is an `=HYPERLINK` formula, parsed for the QBO URL). Stat tiles by theme
+    (Coding/Bills/PO), a chip per audit type with counts (Not Approved · Missing Project · FW Misplaced
+    · Sub No Project · Duplicate · Missing/Unused PO · Cost Code · Data Entry · ...), search + division
+    filter, QBO bill links. `/api/accounting`. Verified: 1876 findings, filter chips isolate each type.
+  - **Open invoices: Amounts | Aging toggle.** **Amounts** = a clean flat list (Client · Project ·
+    Invoice # · Date · Open balance · Invoice total + a TOTAL row), shares the tab's filters + sort,
+    click a row for the invoice detail. **Aging** = the existing buckets + lien clock. Amounts is the
+    default; the aging-only Flatten/Collapse buttons hide in Amounts.
+  - Front end reload for the UI; the Accounting tab added `/api/accounting`, so a restart picks that up.
 - **One efficient sync + the P&L actually works now (owner, 2026-08-27: "the most efficient way to update
   this ledger ... the P&L is not functioning due to it needing data ... the payments section is not showing
   recent payments ... simple to sync and efficient").** Three problems, one root theme - two loaders never
