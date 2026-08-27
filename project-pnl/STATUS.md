@@ -229,6 +229,29 @@ manual close), RP (no draws — expenses → invoice → profit).
   `+class` alone = **project ∪ class**; add `--legacy`/`--alias` to turn the
   line-text and bill-memo rules back on too. `--job-class` survives as an
   explicit override. The class list is pulled once per run, not per project.
+- **P&L reads total-first, and PARTIAL is a real state (2026-08-27, all
+  templates).** Three changes, asked for on MFD295 but applied everywhere:
+  * **`PARTIAL — <amount> open`** replaces a bare UNPAID wherever a balance is
+    known (Transactions income rows, Transactions bill lines, the draw sheets).
+    One resolver, `_pay_state(balance, total)`. `paid_map` now carries
+    `(balance, total)` instead of a bool, which is what makes the open amount
+    available. It was calling a 280,838 invoice with 389.70 left UNPAID, which
+    reads as a collection problem rather than a rounding tail.
+  * **Section totals sit ON the header bar**, not in a total row underneath —
+    `Cost of Goods Sold` and `Operating Expenses` carry their own sum and the
+    accounts detail them below. `acct_lines` returns the HEADER row now, so
+    every downstream ref (Costs to Date, Gross Profit) still points at the
+    total. `total_label` stays in the signature but is no longer written.
+  * **`Income (incl. retainage)` lists every invoice behind it** — number,
+    memo, amount, newest first, each linked to its QBO invoice. Labels are
+    flattened to one line: the Period tag is stripped (it is the row above's
+    identity) and the project name dropped via `_project_name_words`, so a
+    memo does not repeat the client on all 14 rows. Verified to tie: the
+    listed invoices sum to the bar exactly.
+  NOT changed: the RP `Job P&L` keeps its flatter shape (no COGS account
+  block, so nothing to move) but inherits PARTIAL through the shared
+  Transactions builder. Draw sheets are still generated for every template —
+  the owner deletes them in his own copy, which is his edit, not the tool's.
 - **Rich text is BANNED in this exporter, and every save is now gated on the
   corruption check (2026-08-24).** `_cost_code_value` / `_cost_name_value` were
   returning `CellRichText` (bold code token + regular description, the user

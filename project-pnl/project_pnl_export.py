@@ -683,6 +683,28 @@ def _synth_pl_totals(bills: List[dict], purchases: List[dict],
             "net_income": round(gp - exp, 2)}
 
 
+AMBER = "BF8F00"           # partially paid — encodes state, not decoration
+
+
+def _pay_state(balance, total=None):
+    """(label, colour) for a payment state. PARTIAL carries the OPEN amount,
+    because 'UNPAID' on an invoice with $390 left of $280,838 reads as a
+    collection problem when it is a rounding tail (the user 2026-08-27)."""
+    try:
+        b = float(balance or 0)
+    except (TypeError, ValueError):
+        return None, None
+    if b <= 0.005:
+        return "PAID", "008000"
+    try:
+        t = float(total) if total is not None else None
+    except (TypeError, ValueError):
+        t = None
+    if t is not None and b < t - 0.005:
+        return f"PARTIAL — {b:,.2f} open", AMBER
+    return "UNPAID", "C00000"
+
+
 def _proj_line_total(txn: dict, customer_id: str) -> float:
     """Sum of a transaction's line amounts that reference this project."""
     tot = 0.0
@@ -2135,10 +2157,14 @@ def build_sheet_transactions(
         cell(r, 5, float(inv.get("withheld", 0) or 0), fmt=CURR_FMT, color="C0504D")
         cell(r, 6, f"=D{r}-E{r}+G{r}", bold=True, fmt=CURR_FMT)     # NET = TotalAmt
         cell(r, 7, float(inv.get("billed_ret", 0) or 0), fmt=CURR_FMT, color=GREEN)
-        # AR payment state (the user 2026-08-05): Balance 0 = collected.
-        _pd = float(inv.get("balance", 0) or 0) <= 0.005
-        cell(r, 8, "PAID" if _pd else "UNPAID", bold=True,
-             color=(GREEN if _pd else "C00000"))
+        # AR payment state (the user 2026-08-05): Balance 0 = collected;
+        # part-paid shows what is still open (the user 2026-08-27).
+        _lbl, _col = _pay_state(inv.get("balance"),
+                                float(inv.get("billed", 0) or 0)
+                                + float(inv.get("billed_ret", 0) or 0)
+                                - float(inv.get("withheld", 0) or 0))
+        if _lbl:
+            cell(r, 8, _lbl, bold=True, color=_col)
         r += 1
     cell(r, 1, "TOTAL INCOME", bold=True, border=TOP_BORDER)
     for c in (4, 5, 6, 7):
@@ -2212,8 +2238,9 @@ def build_sheet_transactions(
             if paid_map is not None:
                 _pd = paid_map.get(ln.get("txn_id"))
                 if _pd is not None:
-                    cell(r, 6, "PAID" if _pd else "UNPAID", bold=True,
-                         color=(GREEN if _pd else "C00000"))
+                    _lbl, _col = _pay_state(_pd[0], _pd[1])
+                    if _lbl:
+                        cell(r, 6, _lbl, bold=True, color=_col)
             ws.row_dimensions[r].outline_level = 1   # collapsible, open default
             r += 1
         vt = ws.cell(row=vrow, column=5,
@@ -2557,6 +2584,7 @@ def build_sheet_pl(
     alt_overhead_pct: Optional[float] = None,
     underbill_total: float = 0.0,
     underbill_count: int = 0,
+    income_rows: Optional[List[dict]] = None,
     realm: str = "",
 ) -> None:
     """
@@ -2676,14 +2704,22 @@ def build_sheet_pl(
         return used
 
     def acct_lines(header, names, total_label, fill):
+        """Header bar CARRIES the total (the user 2026-08-27) — the section
+        reads total-first and the accounts detail it underneath, instead of
+        making you scroll to a total row at the bottom. `total_label` is kept
+        in the signature for callers but is no longer written as its own row."""
         nonlocal r
-        row(header, None, bold=True, color=NAVY, fill=fill)
+        hdr_row = row(header, None, bold=True, color=NAVY, fill=fill)
         rows_ = []
         for nm in names:
             esc = str(nm).replace('"', '""')
             rows_.append(row(nm, formula=f'=SUMIF({tx_refs["acct_col"]},"{esc}",{tx_refs["amt_col"]})', indent=1))
         f = ("=" + "+".join(f"B{x}" for x in rows_)) if rows_ else "=0"
-        return row(total_label, formula=f, bold=True, border=TOP_BORDER, fill=fill)
+        tc = ws.cell(row=hdr_row, column=2, value=f)
+        tc.number_format = CURR_FMT
+        tc.font = Font(bold=True, size=BASE_SIZE, color=NAVY)
+        tc.fill = fill
+        return hdr_row
 
     def snapshot(title, basis_label, inc_expr, gp_expr, costs, opex):
         nonlocal r
@@ -2898,6 +2934,32 @@ def build_sheet_pl(
         income_row = row("Income (incl. retainage)", formula=f"={Btot}",
                          bold=True, size=BASE_SIZE + 1, color="375623", fill=INCOME_FILL)
         _qbo_link(income_row, _cust_url)
+        # Every invoice behind that total, newest first (the user 2026-08-27:
+        # "show me the invoice #, memo then the amount under it so we see the
+        # p&l totals"). Total on the bar, detail underneath — same shape as
+        # COGS. Amounts are each invoice's CONTRIBUTION to the bar: gross work
+        # billed + retainage billed back, or the retainage moved by JE.
+        for _inv in sorted(income_rows or [],
+                           key=lambda i: str(i.get("date") or ""), reverse=True):
+            _amt = (float(_inv.get("billed", 0) or 0)
+                    + float(_inv.get("billed_ret", 0) or 0)
+                    + float(_inv.get("not_billed_ret", 0) or 0))
+            if abs(_amt) < 0.005:
+                continue
+            _doc = str(_inv.get("doc") or _inv.get("id") or "")
+            # One clean line: memos carry an embedded newline + the Period tag,
+            # and repeat the project name on every invoice. Drop all three —
+            # the tag is the draw's identity, already the row above it.
+            _raw = DRAW_PERIOD_RE.sub("", str(_inv.get("memo") or ""))
+            _raw = re.sub(r"\s+", " ", _raw).strip(" -–·")
+            _memo = _clean_cost_text(_raw, _project_name_words(cust_info.get("name", "")))
+            _lbl = f"#{_doc} — {_memo}" if _memo else f"#{_doc}"
+            _ir = row(_lbl, _amt, indent=1, size=BASE_SIZE - 1, color="375623")
+            _iu = _qbo_txn_url("invoice", _inv.get("id", ""), realm)
+            if _iu:
+                _c = ws.cell(row=_ir, column=1)
+                _c.hyperlink = _iu
+                _c.font = Font(size=BASE_SIZE - 1, color=LINK, underline="single")
         cogs_row = acct_lines("Cost of Goods Sold", tx_refs.get("cogs_accts") or [],
                               "Total Cost of Goods Sold", COGS_FILL)
         _qbo_link(cogs_row, _costs_url)
@@ -3490,7 +3552,8 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
                 if kind != "pm" and paid_map is not None:
                     _pd = paid_map.get(i.get("txn_id"))
                     if _pd is not None:
-                        wc(r, 6, "PAID" if _pd else "UNPAID", bold=True,
+                        _lbl, _col = _pay_state(_pd[0], _pd[1])
+                        wc(r, 6, _lbl or "", bold=True,
                            color=(GREEN if _pd else RED))
                 r += 1
         r += 1
@@ -5805,9 +5868,10 @@ def generate_project_pnl(
     bills, purchases = fetch_customer_bills_and_purchases(
         access, company_id, cust_info["id"], bill_start, end_date,
     )
-    paid_map = {b.get("Id"): float(b.get("Balance", 0) or 0) <= 0.005
-                for b in bills}
-    paid_map.update({pch.get("Id"): True for pch in purchases})
+    # {txn id: (balance, total)} — the balance is what makes PARTIAL possible.
+    paid_map = {b.get("Id"): (float(b.get("Balance", 0) or 0),
+                              float(b.get("TotalAmt", 0) or 0)) for b in bills}
+    paid_map.update({pch.get("Id"): (0.0, 0.0) for pch in purchases})
     if _LEGACY_MATCH is not None:
         pl_totals = _synth_pl_totals(bills, purchases, income_groups,
                                      cust_info["id"], acct_type, item_account,
@@ -6195,7 +6259,8 @@ def generate_project_pnl(
         draw_anchors=draw_anchors, retainage_nb=retainage_nb,
         retainage_billed_total=ret_billed_total, tx_refs=tx_refs,
         alt_overhead_pct=_alt_oh, underbill_total=underbill_total,
-        underbill_count=underbill_count, realm=company_id,
+        underbill_count=underbill_count, income_rows=tx.get("income"),
+        realm=company_id,
     )
     # Order (the user 2026-07-16; Labor/Concrete first among the analysis tabs
     # 2026-07-29 — they're the PM/ops manager's main view): P&L, Transactions,
@@ -6306,9 +6371,10 @@ def generate_project_pnl_rp(
     bills, purchases = fetch_customer_bills_and_purchases(
         access, company_id, cust_info["id"], bill_start, end_date,
     )
-    paid_map = {b.get("Id"): float(b.get("Balance", 0) or 0) <= 0.005
-                for b in bills}
-    paid_map.update({pch.get("Id"): True for pch in purchases})
+    # {txn id: (balance, total)} — the balance is what makes PARTIAL possible.
+    paid_map = {b.get("Id"): (float(b.get("Balance", 0) or 0),
+                              float(b.get("TotalAmt", 0) or 0)) for b in bills}
+    paid_map.update({pch.get("Id"): (0.0, 0.0) for pch in purchases})
     ui_event(f"{len(bills)} bills · {len(purchases)} purchases  "
              f"{_DIM}(from {bill_start}){_RESET}")
 
@@ -6651,9 +6717,10 @@ def _qbo_project_cost_lines(access, company_id, customer_id, start, end) -> list
     """Fetch + build cost lines for the standalone cross-check."""
     bills, purchases = fetch_customer_bills_and_purchases(
         access, company_id, customer_id, start, end)
-    paid_map = {b.get("Id"): float(b.get("Balance", 0) or 0) <= 0.005
-                for b in bills}
-    paid_map.update({pch.get("Id"): True for pch in purchases})
+    # {txn id: (balance, total)} — the balance is what makes PARTIAL possible.
+    paid_map = {b.get("Id"): (float(b.get("Balance", 0) or 0),
+                              float(b.get("TotalAmt", 0) or 0)) for b in bills}
+    paid_map.update({pch.get("Id"): (0.0, 0.0) for pch in purchases})
     accounts = query_all(access, company_id, "Account")
     anames = {a.get("Id"): a.get("Name") for a in accounts if a.get("Id")}
     items = query_all(access, company_id, "Item")
