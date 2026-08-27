@@ -275,6 +275,24 @@ This folder is a git repo pushed to a **private GitHub remote** shared with the 
   hard-requires the check. Feature branches + PRs into `dev` remain fine for larger or riskier
   changes, just no longer mandatory.
 
+**Multi-session protocol (binding, the user 2026-08-27 - "I need multiple sessions open
+running, and after, for it to push and commit flawlessly"):**
+- **One session = one worktree.** A repo-MODIFYING session whose main clone already carries
+  another session's uncommitted work does not wait and does not tiptoe - it moves itself into
+  its own worktree: `bash .github/worktree.sh new <topic>` (or the session's native worktree
+  isolation), work there, then land with `bash .github/worktree.sh done` - which rebases onto
+  fresh dev, pushes through the gates, retries the push race, and removes the worktree.
+  Worktrees inherit this machine's `machine.env` automatically (`shared/paths.py` resolves the
+  main clone through the git common dir). Land early, land often - small landings can't conflict.
+- **The main clone carries at most ONE modifying session at a time.** Read-only sessions are
+  unrestricted. Work that must stay in the main clone: invoice-sync (tool-local `.env`/`state/`),
+  anything launchd-run, and any deliverable regen - one writer per output file, always.
+- **Never touch a sibling session's dirty files, never `git add -A` on a shared tree** - stage
+  your own files by name. Blocked on their file anyway? Message that session
+  (ListAgents -> SendMessage) instead of stalling or waiting blind.
+- A red MANUAL preflight while pushes go green means a sibling is mid-edit somewhere in the
+  tree, not that the gates disagree - the push hook judges only the pushed commit.
+
 **Session flow:**
 - **One-time per clone: install the CI gates as a pre-push hook** -
   `ln -sf ../../.github/preflight.sh "$(git rev-parse --git-dir)/hooks/pre-push"`.

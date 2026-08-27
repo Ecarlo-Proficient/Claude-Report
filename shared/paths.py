@@ -22,6 +22,7 @@ USAGE
 from __future__ import annotations
 
 import os
+import subprocess
 from pathlib import Path
 
 # machine.env lives at the REPO ROOT (one level above shared/) — same place
@@ -29,6 +30,30 @@ from pathlib import Path
 # across the 2026-07 restructure without touching it.
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _MACHINE_ENV = _REPO_ROOT / "machine.env"
+
+
+def _main_worktree_env(repo_root: Path) -> "Path | None":
+    """machine.env is per-machine and gitignored, so a linked git WORKTREE
+    (one session = one worktree, 2026-08-27) starts life without one. Resolve
+    the MAIN clone through the shared git common dir and use its copy, so
+    worktrees inherit this machine's paths with zero setup. Any failure
+    (no git, not a repo, no file) falls back to the old behavior."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(repo_root), "rev-parse",
+             "--path-format=absolute", "--git-common-dir"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if out.returncode != 0:
+            return None
+        cand = Path(out.stdout.strip()).parent / "machine.env"
+        return cand if cand.is_file() else None
+    except Exception:
+        return None
+
+
+if not _MACHINE_ENV.exists():
+    _MACHINE_ENV = _main_worktree_env(_REPO_ROOT) or _MACHINE_ENV
 
 
 def _load_machine_env() -> dict:
