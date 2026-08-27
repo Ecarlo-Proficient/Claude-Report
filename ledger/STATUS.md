@@ -46,6 +46,15 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
       links (no realm). Verified live end-to-end (single opens in a new tab, the 3-scan bill lists all three).
       FUTURE: point project-pnl at `shared/qbo_attachments` too (it keeps its own copy for now - its file was
       mid-edit in another session); optionally a Console step to rebuild the index on demand.
+    - **Copy as table (owner, 2026-08-27: "select, select all to copy and paste to people, with header ...
+      like a table copy and paste").** Row checkboxes + a select-all in the header, and a **Copy** button that
+      puts the rows on the clipboard WITH HEADERS as BOTH tab-separated text (pastes into Excel/Sheets as cells)
+      and an HTML `<table>` (pastes into email/Word as a formatted table). Copies the selected rows, or all
+      currently-shown (filtered) rows when nothing is selected; the button shows the count ("Copy 3" / "Copy
+      all (1876)"). Nine data columns (Issue · Vendor · Bill # · Date · Project · Cost · Amount · Line memo ·
+      Why flagged); the checkbox and 📎 columns are omitted. Selection survives filtering (stable per-finding
+      key). Front-end only - a browser reload picks it up. Verified the payload (header + one line per row,
+      tab-separated; HTML table for rich paste).
   - **Open invoices: Amounts | Aging toggle.** **Amounts** = a clean flat list (Client · Project ·
     Invoice # · Date · Open balance · Invoice total + a TOTAL row), shares the tab's filters + sort,
     click a row for the invoice detail. **Aging** = the existing buckets + lien clock. Amounts is the

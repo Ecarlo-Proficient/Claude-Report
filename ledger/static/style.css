@@ -1108,6 +1108,8 @@ html[data-theme="dark"] .acct-pill.info { color: color-mix(in srgb, var(--accent
 #acctTable th.audit-soft, #acctTable td.audit-soft { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: break-word; }
 #acctTable .acct-pill { white-space: normal; font-size: .66em; }
 #acctTable td.audit-dim { color: var(--text-dim); }
+#acctTable th.acct-check, #acctTable td.acct-check { text-align: center; overflow: visible; padding-left: 4px; padding-right: 4px; }
+#acctTable .acct-check input { cursor: pointer; margin: 0; vertical-align: middle; }
 /* Scan link: opens the bill's uploaded scan(s) via fresh QBO links, no QBO login. */
 .acct-scan { border: none; background: none; cursor: pointer; font-size: .95em; padding: 0 2px;
   opacity: .8; color: var(--text); font-variant-numeric: tabular-nums; }

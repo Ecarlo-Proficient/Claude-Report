@@ -5375,6 +5375,8 @@ function wrRunProgress(label, onDone) {
 // ── Accounting fixes: the Bill Tracker audits, filterable by audit type ───────
 let ACCT = null;            // cached /api/accounting payload
 let acctIssue = null;       // the audit-type filter currently active (null = all)
+let acctSel = new Set();    // selected finding keys (f._k) for copy-as-table
+let _acctVisible = [];      // the currently-filtered rows ("Copy all" copies these)
 async function loadAccounting(force) {
   const note = $("#acctNote"), table = $("#acctTable");
   if (!table) return;
@@ -5382,6 +5384,8 @@ async function loadAccounting(force) {
   if (note) note.textContent = "loading…";
   try { ACCT = await (await fetch("/api/accounting")).json(); }
   catch (e) { if (note) note.textContent = "could not load"; return; }
+  (ACCT.findings || []).forEach((f, i) => { f._k = i; });   // stable key for selection across filters
+  acctSel = new Set();
   renderAccounting();
 }
 
@@ -5428,23 +5432,32 @@ function renderAccounting() {
   const dv = dsel ? dsel.value : "", q = ($("#acctSearch").value || "").trim().toLowerCase();
   const rows = all.filter(f => (!acctIssue || f.issue === acctIssue) && (!dv || f.division === dv)
     && (!q || (f.vendor + " " + f.project + " " + f.bill_no + " " + (f.memo || "") + " " + f.detail).toLowerCase().includes(q)));
+  _acctVisible = rows;
   // fixed meta widths (px) so one long outlier can't blow a column wide (the old wasted
   // space); the two text columns (null width) share the rest and wrap - nothing truncates.
   const cols = [["Issue", "left audit-soft", 126], ["Vendor", "left audit-soft", 148], ["Bill #", "left", 78],
     ["📎", "left", 52], ["Date", "left", 104], ["Project", "left", 126], ["Cost", "left", 68], ["Amount", "right", 92],
     ["Line memo", "left audit-soft", null], ["Why flagged", "left audit-soft", null]];
   thead.innerHTML = ""; const htr = document.createElement("tr");
+  const chTh = document.createElement("th"); chTh.className = "left acct-check"; chTh.style.width = "32px";
+  const selAll = document.createElement("input"); selAll.type = "checkbox"; selAll.id = "acctSelAll"; selAll.title = "Select all shown";
+  selAll.onchange = () => { if (selAll.checked) rows.forEach(f => acctSel.add(f._k)); else rows.forEach(f => acctSel.delete(f._k)); renderAccounting(); };
+  chTh.appendChild(selAll); htr.appendChild(chTh);
   for (const [c, cls, w] of cols) { const th = document.createElement("th"); th.className = cls; th.textContent = c; if (w) th.style.width = w + "px"; htr.appendChild(th); } thead.appendChild(htr);
   tbody.innerHTML = "";
   if (!rows.length) {
     const tr = document.createElement("tr"), td = document.createElement("td");
-    td.colSpan = cols.length; td.className = "left"; td.style.cssText = "padding:14px;color:var(--text-dim)";
+    td.colSpan = cols.length + 1; td.className = "left"; td.style.cssText = "padding:14px;color:var(--text-dim)";
     td.textContent = all.length ? "Nothing matches the filters." : "No audit findings - everything's clean.";
-    tr.appendChild(td); tbody.appendChild(tr); return;
+    tr.appendChild(td); tbody.appendChild(tr); _acctUpdateSelAll(); _acctUpdateCopyBtn(); return;
   }
   const frag = document.createDocumentFragment();
   for (const f of rows) {
     const tr = document.createElement("tr");
+    const chTd = document.createElement("td"); chTd.className = "left acct-check";
+    const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = acctSel.has(f._k);
+    cb.onchange = () => { if (cb.checked) acctSel.add(f._k); else acctSel.delete(f._k); _acctUpdateSelAll(); _acctUpdateCopyBtn(); };
+    chTd.appendChild(cb); tr.appendChild(chTd);
     const ic = document.createElement("td"); ic.className = "left audit-soft";
     const pill = document.createElement("span"); pill.className = "acct-pill " + _acctPillClass(f.issue); pill.textContent = f.issue; ic.appendChild(pill); tr.appendChild(ic);
     const vc = leftText(f.vendor || "–"); vc.classList.add("audit-soft"); tr.appendChild(vc);
@@ -5470,6 +5483,56 @@ function renderAccounting() {
     frag.appendChild(tr);
   }
   tbody.appendChild(frag);
+  _acctUpdateSelAll(); _acctUpdateCopyBtn();
+}
+
+// Copy-as-table: the columns copied (headers + values), minus the checkbox and 📎 columns.
+const ACCT_COPY_COLS = [["Issue", f => f.issue], ["Vendor", f => f.vendor], ["Bill #", f => f.bill_no],
+  ["Date", f => f.date ? fmtDateShort(f.date) : ""], ["Project", f => f.project], ["Cost", f => f.cost_code],
+  ["Amount", f => f.amount != null ? money(f.amount) : ""], ["Line memo", f => f.memo], ["Why flagged", f => f.detail]];
+
+function _acctUpdateCopyBtn() {
+  const b = $("#btnAcctCopy"); if (!b || b.disabled) return;
+  b.textContent = acctSel.size ? `Copy ${acctSel.size}` : `Copy all (${_acctVisible.length})`;
+}
+function _acctUpdateSelAll() {
+  const sa = $("#acctSelAll"); if (!sa) return;
+  const n = _acctVisible.filter(f => acctSel.has(f._k)).length;
+  sa.checked = _acctVisible.length > 0 && n === _acctVisible.length;
+  sa.indeterminate = n > 0 && n < _acctVisible.length;
+}
+
+// Put the rows on the clipboard as BOTH tab-separated text (pastes into Excel/Sheets as
+// cells) and an HTML table (pastes into email/Word as a formatted table) - header first.
+async function copyAcctTable(rows) {
+  const heads = ACCT_COPY_COLS.map(c => c[0]);
+  const body = rows.map(f => ACCT_COPY_COLS.map(c => { const v = c[1](f); return v == null ? "" : String(v); }));
+  const clean = v => v.replace(/[\t\r\n]+/g, " ").trim();
+  const tsv = [heads, ...body].map(r => r.map(clean).join("\t")).join("\n");
+  const html = "<table><thead><tr>" + heads.map(h => `<th>${_ge(h)}</th>`).join("") + "</tr></thead><tbody>"
+    + body.map(r => "<tr>" + r.map(v => `<td>${_ge(v)}</td>`).join("") + "</tr>").join("") + "</tbody></table>";
+  try {
+    if (window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
+      await navigator.clipboard.write([new ClipboardItem({
+        "text/plain": new Blob([tsv], { type: "text/plain" }),
+        "text/html": new Blob([html], { type: "text/html" }) })]);
+    } else if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(tsv);
+    } else { throw new Error("no clipboard"); }
+    return true;
+  } catch (e) {
+    try { const ta = document.createElement("textarea"); ta.value = tsv; ta.style.cssText = "position:fixed;opacity:0"; document.body.appendChild(ta); ta.select(); const ok = document.execCommand("copy"); ta.remove(); return ok; }
+    catch (_) { return false; }
+  }
+}
+
+async function _acctDoCopy() {
+  const rows = acctSel.size ? ((ACCT && ACCT.findings) || []).filter(f => acctSel.has(f._k)) : _acctVisible;
+  if (!rows.length) return;
+  const ok = await copyAcctTable(rows);
+  const b = $("#btnAcctCopy"); if (!b) return;
+  b.disabled = true; b.textContent = ok ? `Copied ${rows.length} ✓` : "Copy failed";
+  setTimeout(() => { b.disabled = false; _acctUpdateCopyBtn(); }, 1400);
 }
 
 // Resolve a bill's scan link(s) on click - the dashboard fetches FRESH (minutes-lived)
@@ -5590,6 +5653,7 @@ function init() {
   { const el = $("#graphFit"); if (el) el.onclick = () => { if (GV) { GV._userMoved = false; fitGraph(); _gmark(); } }; }
   { const el = $("#graphSearch"); if (el) el.addEventListener("input", e => graphSearch(e.target.value)); }
   { const el = $("#btnAcctReload"); if (el) el.onclick = () => loadAccounting(true); }
+  { const el = $("#btnAcctCopy"); if (el) el.onclick = _acctDoCopy; }
   for (const id of ["#acctSearch", "#acctDivision"]) { const el = $(id); if (el) el.addEventListener("input", () => { if (ACCT && ACCT.ok) renderAccounting(); }); }
   { const el = $("#wrCompute"); if (el) el.onclick = runWipReview; }
   { const el = $("#wrSync"); if (el) el.onclick = syncWipReview; }
