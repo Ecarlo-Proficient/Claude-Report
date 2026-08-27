@@ -179,13 +179,13 @@ manual close), RP (no draws — expenses → invoice → profit).
   The owner's name for it: the OLD method (class) plus the NEW one (project),
   and nothing else. It is the right method for a job that ran straight across
   the coding switchover. On MFD295 the two are perfectly disjoint - 163
-  project-coded lines ($496,541, Dec 2024 → Aug 2026) and 127 class-coded
-  lines ($1,358,265, Sep 2024 → Aug 2025), with **ZERO lines carrying both**.
-  Either source alone reports a fraction of the job. The flag implies
-  `--legacy`, REQUIRES `--job-class`, and switches the line-text and bill-memo
-  rules OFF (`JobMatcher(text_rules=False)`) so the answer is exactly
-  class ∪ project - on MFD295 the text rules would have added $33,859 of
-  ambiguous lines the owner did not ask to include.
+  project-coded lines (Dec 2024 → Aug 2026) and 127 class-coded lines
+  (Sep 2024 → Aug 2025), with **ZERO lines carrying both**. Either source
+  alone reports a fraction of the job. The flag implies `--legacy`, REQUIRES
+  `--job-class`, and switches the line-text and bill-memo rules OFF
+  (`JobMatcher(text_rules=False)`) so the answer is exactly class ∪ project -
+  on MFD295 the text rules would have pulled in a further block of ambiguous
+  lines the owner did not ask to include.
 - **`--infer-periods` — retroactive draw windows (the user 2026-08-25).**
   Older invoices carry no `(Period:…)` tag, and the untagged fallback is the
   CALENDAR month, which is wrong whenever the GC's window straddles month end.

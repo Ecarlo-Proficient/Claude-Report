@@ -16,6 +16,7 @@ takeoff.
 """
 from __future__ import annotations
 
+import datetime as _dt
 import re
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -451,23 +452,21 @@ def _add_months(y: int, m: int, delta: int):
 
 def _clamp_day(y: int, m: int, day: int) -> "_dt.date":
     import calendar
-    import datetime as _d
-    return _d.date(y, m, min(day, calendar.monthrange(y, m)[1]))
+    return _dt.date(y, m, min(day, calendar.monthrange(y, m)[1]))
 
 
 def learn_period_shape(memos) -> Optional[dict]:
     """Window shape from the memos that DO carry a Period tag:
     {end_day, start_day, span} where `span` is how many months back the window
     starts. Returns None when fewer than one tagged memo is available."""
-    import datetime as _d
     ends, starts, spans = [], [], []
     for memo in memos or []:
         m = _PERIOD_TAG_RE.search(memo or "")
         if not m:
             continue
         try:
-            s = _d.datetime.strptime(m.group(1), "%m/%d/%Y").date()
-            e = _d.datetime.strptime(m.group(2), "%m/%d/%Y").date()
+            s = _dt.datetime.strptime(m.group(1), "%m/%d/%Y").date()
+            e = _dt.datetime.strptime(m.group(2), "%m/%d/%Y").date()
         except ValueError:
             continue
         if s > e:
