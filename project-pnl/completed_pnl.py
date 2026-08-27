@@ -346,8 +346,8 @@ def _kpi_strip(ws, r: int, t: dict, col0: int = 1) -> int:
 
 
 def build_bundle(jobs: List[tuple], out: Path) -> None:
-    """ONE workbook for the director: a portfolio sheet, then a sheet per job
-    carrying its P&L and its transactions grouped account → vendor → line.
+    """MFD Overview Total: the overview sheet, then a sheet per job carrying
+    its P&L and its transactions grouped account → vendor → line.
 
     EVERY link is INTERNAL. The per-job reports link to files beside them,
     which is right on the share and broken the moment the file is emailed —
@@ -358,7 +358,7 @@ def build_bundle(jobs: List[tuple], out: Path) -> None:
     sm.title = "Summary"
     sm.sheet_view.showGridLines = False
 
-    _t(sm, 1, 1, "COMPLETED MFD JOBS — COMBINED P&L", size=SZ_TITLE, bold=True, color=NAVY)
+    _t(sm, 1, 1, "MFD OVERVIEW — TOTAL", size=SZ_TITLE, bold=True, color=NAVY)
     _t(sm, 2, 1, f"{len(jobs)} finished jobs · click a job to open its detail · "
                  f"{dt.datetime.now():%m/%d/%Y}", size=SZ_SMALL, color=GREY)
 
@@ -492,9 +492,10 @@ def main() -> int:
     ap.add_argument("--all", action="store_true", help="every job in the archive folder")
     ap.add_argument("--folder", default=None)
     ap.add_argument("--bundle", action="store_true",
-                    help="ONE workbook for the director: a portfolio sheet plus "
-                         "a sheet per job (P&L + grouped transactions). All "
-                         "links internal, so it survives being emailed.")
+                    help="MFD Overview Total: ONE workbook with the overview "
+                         "sheet plus a sheet per job (P&L + grouped "
+                         "transactions). All links internal, so it survives "
+                         "being emailed.")
     a = ap.parse_args()
     folder = (Path(a.folder).expanduser() if a.folder
               else pnl_paths.pnl_out_dir() / ARCHIVE)
@@ -522,7 +523,7 @@ def main() -> int:
         if not loaded:
             print("✗  nothing to bundle")
             return 1
-        out = folder / "Completed MFD Jobs — for the Director.xlsx"
+        out = folder / "MFD Overview Total.xlsx"
         build_bundle(loaded, out)
         tb = sum(t["billed"] for _, _, t in loaded)
         tc = sum(t["cost"] for _, _, t in loaded)
