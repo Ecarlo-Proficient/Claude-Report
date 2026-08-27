@@ -5431,7 +5431,7 @@ function renderAccounting() {
   // fixed meta widths (px) so one long outlier can't blow a column wide (the old wasted
   // space); the two text columns (null width) share the rest and wrap - nothing truncates.
   const cols = [["Issue", "left audit-soft", 126], ["Vendor", "left audit-soft", 148], ["Bill #", "left", 78],
-    ["Date", "left", 104], ["Project", "left", 126], ["Cost", "left", 68], ["Amount", "right", 92],
+    ["📎", "left", 52], ["Date", "left", 104], ["Project", "left", 126], ["Cost", "left", 68], ["Amount", "right", 92],
     ["Line memo", "left audit-soft", null], ["Why flagged", "left audit-soft", null]];
   thead.innerHTML = ""; const htr = document.createElement("tr");
   for (const [c, cls, w] of cols) { const th = document.createElement("th"); th.className = cls; th.textContent = c; if (w) th.style.width = w + "px"; htr.appendChild(th); } thead.appendChild(htr);
@@ -5452,6 +5452,15 @@ function renderAccounting() {
     if (f.url) { const a = document.createElement("a"); a.href = f.url; a.target = "_blank"; a.rel = "noopener"; a.className = "qbo-link"; a.textContent = f.bill_no || "open"; a.title = "Open this bill in QuickBooks"; bc.appendChild(a); }
     else bc.appendChild(document.createTextNode(f.bill_no || "–"));
     tr.appendChild(bc);
+    const sc = document.createElement("td"); sc.className = "left";
+    if (f.att > 0) {
+      const b = document.createElement("button"); b.type = "button"; b.className = "acct-scan";
+      b.textContent = f.att > 1 ? ("📎" + f.att) : "📎";   // 📎 / 📎N
+      b.title = f.att > 1 ? (f.att + " scans - click to choose") : "Open the bill scan (no QBO)";
+      b.onclick = (e) => { e.stopPropagation(); openBillScan(f, b); };
+      sc.appendChild(b);
+    }
+    tr.appendChild(sc);
     tr.appendChild(leftText(f.date ? fmtDateShort(f.date) : "–"));
     const pc = leftText(f.project || "–"); pc.title = f.project || ""; tr.appendChild(pc);
     tr.appendChild(leftText(f.cost_code || "–"));
@@ -5462,6 +5471,37 @@ function renderAccounting() {
   }
   tbody.appendChild(frag);
 }
+
+// Resolve a bill's scan link(s) on click - the dashboard fetches FRESH (minutes-lived)
+// QBO download links, so the file opens without going into QuickBooks. One scan opens
+// straight away; several show a chooser.
+async function openBillScan(f, el) {
+  const m = /txnId=(\d+)/.exec(f.url || ""); if (!m) return;
+  const orig = el.textContent; el.textContent = "…"; el.disabled = true;
+  try {
+    const r = await (await fetch(`/api/attachment?bill=${m[1]}`)).json();
+    el.disabled = false; el.textContent = orig;
+    const files = (r && r.files) || [];
+    if (!r || !r.ok || !files.length) { el.title = (r && r.error) || "No scan available"; el.classList.add("scan-empty"); return; }
+    if (files.length === 1) window.open(files[0].url, "_blank", "noopener");
+    else showScanMenu(files, el);
+  } catch (e) { el.disabled = false; el.textContent = orig; }
+}
+
+function showScanMenu(files, el) {
+  _closeScanMenu();
+  const menu = document.createElement("div"); menu.className = "scan-menu"; menu.id = "scanMenu";
+  for (const f of files) {
+    const a = document.createElement("a"); a.href = f.url; a.target = "_blank"; a.rel = "noopener";
+    a.textContent = f.name || "attachment"; a.onclick = () => setTimeout(_closeScanMenu, 0); menu.appendChild(a);
+  }
+  document.body.appendChild(menu);
+  const r = el.getBoundingClientRect();
+  menu.style.left = Math.max(8, Math.min(r.left, window.innerWidth - menu.offsetWidth - 12)) + "px";
+  menu.style.top = (r.bottom + 4) + "px";
+  setTimeout(() => document.addEventListener("click", _closeScanMenu, { once: true }), 0);
+}
+function _closeScanMenu() { const m = $("#scanMenu"); if (m) m.remove(); }
 
 function init() {
   applySettings();

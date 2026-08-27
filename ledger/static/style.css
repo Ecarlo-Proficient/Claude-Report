@@ -1108,6 +1108,17 @@ html[data-theme="dark"] .acct-pill.info { color: color-mix(in srgb, var(--accent
 #acctTable th.audit-soft, #acctTable td.audit-soft { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: break-word; }
 #acctTable .acct-pill { white-space: normal; font-size: .66em; }
 #acctTable td.audit-dim { color: var(--text-dim); }
+/* Scan link: opens the bill's uploaded scan(s) via fresh QBO links, no QBO login. */
+.acct-scan { border: none; background: none; cursor: pointer; font-size: .95em; padding: 0 2px;
+  opacity: .8; color: var(--text); font-variant-numeric: tabular-nums; }
+.acct-scan:hover { opacity: 1; }
+.acct-scan.scan-empty { opacity: .3; cursor: default; }
+.scan-menu { position: fixed; z-index: 60; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.28); padding: 6px; display: flex;
+  flex-direction: column; gap: 2px; max-width: 340px; }
+.scan-menu a { padding: 6px 10px; border-radius: 6px; color: var(--text); text-decoration: none;
+  font-size: .9em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.scan-menu a:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
 
 /* Open invoices: Amounts/Aging view toggle + the amounts total row */
 .widget-head .wh-right { display: flex; align-items: center; gap: 12px; }

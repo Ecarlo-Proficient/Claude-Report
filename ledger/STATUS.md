@@ -32,6 +32,20 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
       standard 18px inset). NB: the memo join changed `_fetch_accounting_audits`, so this one needs an
       app restart, not just a reload. Verified live: project #s show in full, memo + reason both readable,
       filters + QBO links intact.
+    - **Bill scan links (owner, 2026-08-27: "link to the attachments ... see how that works for multiple
+      attachments, that was our issue with the pnl").** A **📎 column**: click it to open the bill's uploaded
+      scan(s) WITHOUT going into QBO. Reuses the P&L's proven attachable mechanism, lifted to the ONE shared
+      resolver **`shared/qbo_attachments.py`**: a disk INDEX of every Attachable `(entity, txn) -> [{Id,
+      FileName}]` (the SAME 7-day cache the P&L already builds, reused - no second sweep) + a FRESH,
+      minutes-lived `TempDownloadUri` fetched per file at click-time. The dashboard shows the 📎 only when the
+      cache says att>0 (no QBO call to render the tab); clicking hits **`/api/attachment`**, which SUBPROCESSES
+      **`ledger/attachments.py`** (never imports it - repo rule) to resolve fresh links. **Multiple attachments**
+      - the P&L's pain point, because Excel fits one hyperlink per cell (it fell back to a folder-with-count) -
+      are handled natively here: a multi-scan bill shows a chooser listing every file. Coverage: of 1606 flagged
+      bills with a txnId, 787 have one scan and 63 have several. Read-only on QBO; the loader prints only the
+      links (no realm). Verified live end-to-end (single opens in a new tab, the 3-scan bill lists all three).
+      FUTURE: point project-pnl at `shared/qbo_attachments` too (it keeps its own copy for now - its file was
+      mid-edit in another session); optionally a Console step to rebuild the index on demand.
   - **Open invoices: Amounts | Aging toggle.** **Amounts** = a clean flat list (Client · Project ·
     Invoice # · Date · Open balance · Invoice total + a TOTAL row), shares the tab's filters + sort,
     click a row for the invoice detail. **Aging** = the existing buckets + lien clock. Amounts is the

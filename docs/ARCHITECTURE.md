@@ -51,6 +51,7 @@ shared/                the ONLY importable common code
 ├─ paths.py            per-machine output paths (machine.env at REPO ROOT)
 ├─ qbo_api.py          QBO auth + retrying GET, query_all, P&L walkers, PROJ_RE
 ├─ qbo_costs.py        cost_leaf (the ONE cost-code resolver) + iter_cost_lines — shared w/ ledger
+├─ qbo_attachments.py  Attachable index + fresh scan links (7-day cache reused from P&L) — ledger Audit 📎
 ├─ notion_client.py    thin Notion API client (create/query/update pages) — used by ledger/sync_actions
 ├─ cost_lines.py       cost-line category (Concrete/Labor/Materials) + bill-line combine
 ├─ draws.py            CP draw (AIA G702/G703) discovery + parsing (wip ↔ health)
@@ -444,7 +445,7 @@ flowchart LR
     LOADER["load_wip_master.py\nCP←Test-CP · RP←Test-RP · MFD←Test-Master\nfilter to real project #s · idempotent upsert"]:::tool
     APLOAD["load_bill_tracker.py\nAP pay status + lien clock → ap_bill_line\n(NOT cost truth — subs excluded)"]:::tool
     DB[("ledger.sqlite3\nproject + wip_snapshot + ap_bill_line\n→ v_wip_latest · v_ap_by_project")]:::out
-    DASH["dashboard.py + static/\nlocal web UI (127.0.0.1) - READ-ONLY except the owner's marks + WIP Review writes.\nTabs: My view · Overview · P&L · WIP · WIP Review · Costs · Draws · Bills · Pay Bills\n(Notion-style saved views) · Liens · Vendors · Sub LOC · Sales · Systems · Graph · Console"]:::tool
+    DASH["dashboard.py + static/\nlocal web UI (127.0.0.1) - READ-ONLY except the owner's marks + WIP Review writes.\nTabs: Console · Overview · P&L · WIP · WIP Review · Costs · Draws · Bills · Pay Bills\n(Notion-style saved views) · Audit · Liens · Vendors · Sub LOC · Sales · Systems"]:::tool
     REG[("AI Brain_Vault/02_processes/*.md\neight domain files — the process registry\n(read-only source, never written)")]:::src
     REGVIEW["registry_view.py\nparses the markdown row tables per request\nhealth · state · life — no cache, no DB table"]:::tool
     VGRAPH["vault_graph.py\nwhole-vault wiki-links → org map (ROSTER excluded)\n+ docs/ARCHITECTURE.md mermaid → the Graph tab\nlive, no cache, no DB table"]:::tool
@@ -481,6 +482,11 @@ flowchart LR
     SUBLOCLOAD ==>|"sub_loc_event · sub_loc_run"| DB
     PAYLOAD["load_payments.py\nQBO Payment txns → payment + payment_application\n(money IN, each with the invoices it paid)\n+ project_customer (reverse the QBO Customer:Project\nhierarchy → client per project) · --selftest"]:::tool
     QBO --> PAYLOAD ==>|"payment · payment_application · project_customer"| DB
+    QATT["shared/qbo_attachments.py\nAttachable INDEX (entity,txn)→[Id,FileName]\n7-day disk cache (REUSED from the P&L, no re-sweep)\n+ FRESH TempDownloadUri per file"]:::tool
+    ATTLOAD["attachments.py\nbill txnId → fresh scan link(s) as JSON\nSUBPROCESSED by /api/attachment, never imported"]:::tool
+    DASH -.->|"/api/attachment (📎 click on the Audit tab)"| ATTLOAD
+    ATTLOAD -.->|"index_from_cache + fresh_links"| QATT
+    QATT -.->|"re-read attachable → fresh minutes-lived link"| QBO
     FUTURE -.-> DB
 ```
 

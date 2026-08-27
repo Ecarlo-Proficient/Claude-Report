@@ -981,6 +981,18 @@ def _fetch_accounting_audits() -> dict:
                 "url": url, "group": sheet.replace("Audit - ", ""),
             })
     wb.close()
+    # attachment count per finding, from the shared attachable index (disk cache, NO QBO
+    # call). The UI shows a scan link only when att>0 and fetches fresh links on click, so
+    # no-scan bills never trigger a lookup. Missing cache -> everything reads 0 (no links).
+    try:
+        from shared import qbo_attachments
+        idx = qbo_attachments.index_from_cache()
+        for f in findings:
+            m = re.search(r"txnId=(\d+)", f.get("url") or "")
+            f["att"] = (len(idx.get(("Bill", m.group(1)), [])) if (idx and m) else 0)
+    except Exception:                                  # noqa: BLE001 - never let counts break the audit
+        for f in findings:
+            f["att"] = 0
     counts = {}
     for f in findings:
         counts[f["issue"]] = counts.get(f["issue"], 0) + 1
@@ -1291,6 +1303,24 @@ class Handler(BaseHTTPRequestHandler):
     def _query(self) -> dict:
         return {k: v[0] for k, v in parse_qs(urlparse(self.path).query).items()}
 
+    def _attachment(self, q: dict) -> None:
+        """Resolve a bill's QBO scan link(s) on demand - subprocess the loader (never an
+        import), which prints JSON {ok, files:[{name,url}]} with fresh TempDownloadUris."""
+        bill = (q.get("bill") or "").strip()
+        if not bill.isdigit():
+            return self._json({"ok": False, "error": "bad bill id"}, 400)
+        tx_type = q.get("type") or "Bill"
+        try:
+            out = subprocess.check_output(
+                [sys.executable, str(PROJECT_ROOT / "ledger" / "attachments.py"), bill, "--type", tx_type],
+                cwd=str(PROJECT_ROOT), stderr=subprocess.DEVNULL, timeout=60)
+            lines = [ln for ln in out.decode("utf-8", "replace").splitlines() if ln.strip()]
+            self._json(json.loads(lines[-1]) if lines else {"ok": False, "error": "no output"})
+        except subprocess.TimeoutExpired:
+            self._json({"ok": False, "error": "attachment lookup timed out"})
+        except Exception as e:                          # noqa: BLE001
+            self._json({"ok": False, "error": f"attachment lookup failed: {e}"})
+
     def do_GET(self):
         path = self.path.split("?", 1)[0]
         if path == "/":
@@ -1317,11 +1347,13 @@ class Handler(BaseHTTPRequestHandler):
             self._graph()
         elif path == "/api/wip/review":    # the WIP Review tab (pending before/after diff, merged)
             self._wip_review_get()
-        elif path == "/api/accounting":    # the Accounting tab (Bill Tracker audits, live)
+        elif path == "/api/accounting":    # the Audit tab (Bill Tracker audits, live)
             try:
                 self._json(_fetch_accounting_audits())
             except Exception as e:         # noqa: BLE001
                 self._json({"ok": False, "findings": [], "error": f"audit read failed: {e}"})
+        elif path == "/api/attachment":    # a bill's scan link(s), resolved fresh from QBO on click
+            self._attachment(self._query())
         elif path.startswith("/static/"):
             self._static(path[len("/static/"):])
         else:
