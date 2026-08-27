@@ -311,11 +311,190 @@ def build(job: str, src: dict, out: Path) -> None:
     tmp.replace(out)
 
 
+def _totals(src: dict) -> dict:
+    billed = sum(i["gross"] + i["ret_billed"] for i in src["invoices"]) + src["not_billed"]
+    cogs = next((x["total"] for x in src["sections"] if x["name"].startswith("COST")), 0.0)
+    opex = next((x["total"] for x in src["sections"] if x["name"].startswith("OPERATING")), 0.0)
+    cost = cogs + opex
+    gp = billed - cost
+    oh = billed * OVERHEAD_PCT
+    return {"billed": billed, "cogs": cogs, "opex": opex, "cost": cost,
+            "gp": gp, "oh": oh, "net": gp - oh,
+            "gpm": gp / billed if billed else 0.0,
+            "netm": (gp - oh) / billed if billed else 0.0}
+
+
+def _kpi_strip(ws, r: int, t: dict, col0: int = 1) -> int:
+    """The metrics ACROSS, not stacked. Returns the next free row."""
+    kpis = [("BILLED", t["billed"], MONEY, NAVY), ("COST", t["cost"], MONEY, NAVY),
+            ("GROSS PROFIT", t["gp"], MONEY, GREEN if t["gp"] >= 0 else RED),
+            ("GROSS MARGIN", t["gpm"], PCT, GREEN if t["gp"] >= 0 else RED),
+            ("OVERHEAD 10%", -t["oh"], MONEY, GREY),
+            ("NET PROFIT", t["net"], MONEY, GREEN if t["net"] >= 0 else RED),
+            ("NET MARGIN", t["netm"], PCT, GREEN if t["net"] >= 0 else RED)]
+    for i, (label, val, fmt, color) in enumerate(kpis):
+        c = col0 + i * 2
+        _t(ws, r, c, label, size=SZ_SMALL, bold=True, color="FFFFFF",
+           fill=F_HDR, align="center", border=BOX)
+        _t(ws, r + 1, c, val, size=SZ + 4, bold=True, color=color, fmt=fmt,
+           fill=F_KPI, align="center", border=BOX)
+        ws.merge_cells(start_row=r, start_column=c, end_row=r, end_column=c + 1)
+        ws.merge_cells(start_row=r + 1, start_column=c, end_row=r + 1, end_column=c + 1)
+    ws.row_dimensions[r].height = 22
+    ws.row_dimensions[r + 1].height = 34
+    return r + 3
+
+
+def build_bundle(jobs: List[tuple], out: Path) -> None:
+    """ONE workbook for the director: a portfolio sheet, then a sheet per job
+    carrying its P&L and its transactions grouped account → vendor → line.
+
+    EVERY link is INTERNAL. The per-job reports link to files beside them,
+    which is right on the share and broken the moment the file is emailed —
+    this one has to survive being sent (the user 2026-08-27).
+    """
+    wb = Workbook()
+    sm = wb.active
+    sm.title = "Summary"
+    sm.sheet_view.showGridLines = False
+
+    _t(sm, 1, 1, "COMPLETED MFD JOBS — COMBINED P&L", size=SZ_TITLE, bold=True, color=NAVY)
+    _t(sm, 2, 1, f"{len(jobs)} finished jobs · click a job to open its detail · "
+                 f"{dt.datetime.now():%m/%d/%Y}", size=SZ_SMALL, color=GREY)
+
+    tot = {k: sum(t[k] for _, _, t in jobs) for k in ("billed", "cost", "gp", "oh", "net")}
+    tot["gpm"] = tot["gp"] / tot["billed"] if tot["billed"] else 0
+    tot["netm"] = tot["net"] / tot["billed"] if tot["billed"] else 0
+    r = _kpi_strip(sm, 4, tot)
+
+    heads = ["JOB", "BILLED", "COST", "GROSS PROFIT", "GP %", "NET PROFIT", "NET %"]
+    for c, h in enumerate(heads, 1):
+        _t(sm, r, c, h, size=SZ_SMALL, bold=True, color="FFFFFF", fill=F_HDR,
+           align="center", wrap=True, border=BOX)
+    r += 1
+    for job, _src, t in sorted(jobs, key=lambda x: -x[2]["billed"]):
+        cell = _t(sm, r, 1, job, size=SZ, bold=True)
+        cell.hyperlink = f"#'{job}'!A1"
+        cell.font = Font(size=SZ, bold=True, color=LINK, underline="single")
+        _t(sm, r, 2, t["billed"], size=SZ, fmt=MONEY, align="right")
+        _t(sm, r, 3, t["cost"], size=SZ, fmt=MONEY, align="right")
+        _t(sm, r, 4, t["gp"], size=SZ, bold=True, fmt=MONEY, align="right",
+           color=GREEN if t["gp"] >= 0 else RED)
+        _t(sm, r, 5, t["gpm"], size=SZ, fmt=PCT, align="right",
+           color=GREEN if t["gp"] >= 0 else RED)
+        _t(sm, r, 6, t["net"], size=SZ, fmt=MONEY, align="right",
+           color=GREEN if t["net"] >= 0 else RED)
+        _t(sm, r, 7, t["netm"], size=SZ, fmt=PCT, align="right",
+           color=GREEN if t["net"] >= 0 else RED)
+        for c in range(1, 8):
+            sm.cell(row=r, column=c).border = BOX
+            if r % 2 == 0:
+                sm.cell(row=r, column=c).fill = F_BAND
+        r += 1
+    _t(sm, r, 1, f"TOTAL — {len(jobs)} JOBS", size=SZ, bold=True, fill=F_KPI)
+    for c, k, fmt in ((2, "billed", MONEY), (3, "cost", MONEY), (4, "gp", MONEY),
+                      (5, "gpm", PCT), (6, "net", MONEY), (7, "netm", PCT)):
+        _t(sm, r, c, tot[k], size=SZ, bold=True, fmt=fmt, align="right",
+           fill=F_KPI, color=(GREEN if tot["gp"] >= 0 else RED) if c in (4, 5, 6, 7) else "000000")
+    for c in range(1, 8):
+        sm.cell(row=r, column=c).border = BOX
+    for col, w in zip("ABCDEFG", (16, 18, 18, 18, 12, 18, 12)):
+        sm.column_dimensions[col].width = w
+    sm.freeze_panes = "A4"
+
+    for job, src, t in sorted(jobs, key=lambda x: -x[2]["billed"]):
+        ws = wb.create_sheet(job[:31])
+        ws.sheet_view.showGridLines = False
+        _t(ws, 1, 1, f"{job} — JOB RESULT", size=SZ_TITLE - 2, bold=True, color=NAVY)
+        back = _t(ws, 1, 6, "← back to Summary", size=SZ_SMALL)
+        back.hyperlink = "#'Summary'!A1"
+        back.font = Font(size=SZ_SMALL, color=LINK, underline="single")
+        _t(ws, 2, 1, src["title"].replace("PROJECT P&L — ", ""), size=SZ_SMALL, color=GREY)
+        r = _kpi_strip(ws, 4, t)
+
+        _t(ws, r, 1, "INVOICED", size=SZ + 2, bold=True, color=NAVY)
+        _t(ws, r, 5, t["billed"], size=SZ + 2, bold=True, color=NAVY,
+           fmt=MONEY, align="right")
+        r += 1
+        for c, h in ((1, "Invoice"), (2, "Date"), (3, "What for"),
+                     (5, "Amount"), (6, "Paid?")):
+            _t(ws, r, c, h, size=SZ_SMALL, bold=True, color="FFFFFF", fill=F_HDR)
+        r += 1
+        for inv in sorted(src["invoices"], key=lambda i: str(i["date"]), reverse=True):
+            _t(ws, r, 1, inv["doc"], size=SZ_SMALL)
+            dc = _t(ws, r, 2, inv["date"], size=SZ_SMALL)
+            dc.number_format = "mm/dd/yyyy"
+            _t(ws, r, 3, str(inv["memo"])[:78], size=SZ_SMALL)
+            _t(ws, r, 5, inv["gross"] + inv["ret_billed"], size=SZ_SMALL,
+               fmt=MONEY, align="right")
+            _t(ws, r, 6, str(inv["paid"]), size=SZ_SMALL,
+               color=GREY if str(inv["paid"]).startswith("PAID") else RED)
+            if r % 2 == 0:
+                for c in range(1, 7):
+                    ws.cell(row=r, column=c).fill = F_BAND
+            r += 1
+        if src["not_billed"]:
+            _t(ws, r, 3, "retainage moved by journal entry", size=SZ_SMALL, color=GREY)
+            _t(ws, r, 5, src["not_billed"], size=SZ_SMALL, fmt=MONEY,
+               align="right", color=GREY)
+            r += 1
+        r += 1
+
+        _t(ws, r, 1, "COSTS — account, then vendor, then every line", size=SZ + 2,
+           bold=True, color=NAVY)
+        _t(ws, r, 5, t["cost"], size=SZ + 2, bold=True, color=NAVY,
+           fmt=MONEY, align="right")
+        r += 1
+        for sec in src["sections"]:
+            _t(ws, r, 1, sec["name"], size=SZ, bold=True, color="FFFFFF", fill=F_HDR)
+            _t(ws, r, 5, sec["total"], size=SZ, bold=True, color="FFFFFF",
+               fill=F_HDR, fmt=MONEY, align="right")
+            for c in (2, 3, 4, 6):
+                ws.cell(row=r, column=c).fill = F_HDR
+            r += 1
+            for acct in sec["accounts"]:
+                _t(ws, r, 1, acct["name"], size=SZ, bold=True, color=NAVY, fill=F_BAND)
+                _t(ws, r, 5, acct["total"], size=SZ, bold=True, color=NAVY,
+                   fill=F_BAND, fmt=MONEY, align="right")
+                for c in (2, 3, 4, 6):
+                    ws.cell(row=r, column=c).fill = F_BAND
+                r += 1
+                for v in acct["vendors"]:
+                    _t(ws, r, 1, v["name"], size=SZ_SMALL, bold=True, indent=1)
+                    _t(ws, r, 5, v["total"], size=SZ_SMALL, bold=True,
+                       fmt=MONEY_C, align="right")
+                    ws.row_dimensions[r].outline_level = 1
+                    ws.row_dimensions[r].hidden = True
+                    r += 1
+                    for ln in v["lines"]:
+                        dc = _t(ws, r, 2, ln["date"], size=SZ_SMALL)
+                        dc.number_format = "mm/dd/yyyy"
+                        _t(ws, r, 3, ln["doc"], size=SZ_SMALL)
+                        _t(ws, r, 4, str(ln["desc"])[:70], size=SZ_SMALL)
+                        _t(ws, r, 5, ln["amt"], size=SZ_SMALL, fmt=MONEY_C, align="right")
+                        _t(ws, r, 6, ln["paid"], size=SZ_SMALL, color=GREY)
+                        ws.row_dimensions[r].outline_level = 2
+                        ws.row_dimensions[r].hidden = True
+                        r += 1
+        for col, w in zip("ABCDEF", (44, 14, 18, 62, 18, 24)):
+            ws.column_dimensions[col].width = w
+        ws.sheet_properties.outlinePr.summaryBelow = False
+
+    tmp = out.with_suffix(".tmp.xlsx")
+    wb.save(str(tmp))
+    assert_clean(tmp)
+    tmp.replace(out)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Simple report for a finished job")
     ap.add_argument("jobs", nargs="*", help="e.g. MFD133")
     ap.add_argument("--all", action="store_true", help="every job in the archive folder")
     ap.add_argument("--folder", default=None)
+    ap.add_argument("--bundle", action="store_true",
+                    help="ONE workbook for the director: a portfolio sheet plus "
+                         "a sheet per job (P&L + grouped transactions). All "
+                         "links internal, so it survives being emailed.")
     a = ap.parse_args()
     folder = (Path(a.folder).expanduser() if a.folder
               else pnl_paths.pnl_out_dir() / ARCHIVE)
@@ -324,6 +503,7 @@ def main() -> int:
     if not jobs:
         print("✗  name a job, or pass --all")
         return 1
+    loaded = []
     for job in jobs:
         src_path = folder / job / f"Project_PnL_{job}.xlsx"
         if not src_path.exists():
@@ -333,9 +513,22 @@ def main() -> int:
         if not src["sections"]:
             print(f"  ⚠ {job}: no 'By Account' sheet — regenerate it first")
             continue
-        out = folder / job / f"{job} Job Result.xlsx"
-        build(job, src, out)
-        print(f"  ✓ {job}  →  {out.name}")
+        loaded.append((job, src, _totals(src)))
+        if not a.bundle:
+            out = folder / job / f"{job} Job Result.xlsx"
+            build(job, src, out)
+            print(f"  ✓ {job}  →  {out.name}")
+    if a.bundle:
+        if not loaded:
+            print("✗  nothing to bundle")
+            return 1
+        out = folder / "Completed MFD Jobs — for the Director.xlsx"
+        build_bundle(loaded, out)
+        tb = sum(t["billed"] for _, _, t in loaded)
+        tc = sum(t["cost"] for _, _, t in loaded)
+        print(f"  {len(loaded)} jobs   billed ${tb:,.0f}   cost ${tc:,.0f}   "
+              f"GP ${tb - tc:,.0f} ({(tb - tc) / tb * 100 if tb else 0:.2f}%)")
+        print(f"  → {out}")
     return 0
 
 
