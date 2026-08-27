@@ -130,7 +130,7 @@ class JobMatcher:
 
     def __init__(self, customer_id: str, project: str = "",
                  aliases: Iterable[str] = (), legacy: bool = False,
-                 class_prefix: str = ""):
+                 class_prefix: str = "", text_rules: bool = True):
         self.customer_id = str(customer_id)
         self.project = (project or "").upper()
         self.legacy = bool(legacy and self.project)
@@ -141,6 +141,11 @@ class JobMatcher:
                 f"{cp!r} is a DIVISION class, not a job class — it would claim "
                 f"every job in that division. Pass the job's own class branch.")
         self.class_prefix = cp.upper()
+        # CLASS/PROJECT LOOKUP (the user 2026-08-25): on a job that ran across
+        # the coding switchover, project and class between them ARE the whole
+        # cost - the line description and bill memo add noise, not signal. This
+        # turns rules 3 and 4 off so the answer is exactly class ∪ project.
+        self.text_rules = bool(text_rules)
 
     def rule(self, det: dict, ln: dict, txn: dict) -> Optional[str]:
         if (det.get("CustomerRef") or {}).get("value") == self.customer_id:
@@ -152,6 +157,8 @@ class JobMatcher:
             # per-job leaf beneath it are the same job.
             if _line_class(det, ln, txn).upper().startswith(self.class_prefix):
                 return "class"
+        if not self.text_rules:
+            return None
         text = _line_text(det, ln)
         if self.pattern.search(text):
             return "line text"

@@ -175,6 +175,30 @@ manual close), RP (no draws — expenses → invoice → profit).
   test — verified on CP585 (COGS $109,893 both ways). Same matcher backs
   `one-offs/legacy_job_cost_pull.py`, so the P&L and that pull can never
   disagree. First use: MFD172, reproducing its known figures to the cent.
+- **CLASS/PROJECT LOOKUP — `--class-project` (the user 2026-08-25, MFD295).**
+  The owner's name for it: the OLD method (class) plus the NEW one (project),
+  and nothing else. It is the right method for a job that ran straight across
+  the coding switchover. On MFD295 the two are perfectly disjoint - 163
+  project-coded lines ($496,541, Dec 2024 → Aug 2026) and 127 class-coded
+  lines ($1,358,265, Sep 2024 → Aug 2025), with **ZERO lines carrying both**.
+  Either source alone reports a fraction of the job. The flag implies
+  `--legacy`, REQUIRES `--job-class`, and switches the line-text and bill-memo
+  rules OFF (`JobMatcher(text_rules=False)`) so the answer is exactly
+  class ∪ project - on MFD295 the text rules would have added $33,859 of
+  ambiguous lines the owner did not ask to include.
+- **`--infer-periods` — retroactive draw windows (the user 2026-08-25).**
+  Older invoices carry no `(Period:…)` tag, and the untagged fallback is the
+  CALENDAR month, which is wrong whenever the GC's window straddles month end.
+  MFD295 bills the 21st through the 20th, so the fallback pushed three weeks
+  of cost into the wrong draw. `shared/draws.learn_period_shape` reads the
+  window SHAPE off the invoices that ARE tagged (MFD295: start day 21, end day
+  20, span 1 month, learned from 3) and `infer_period_tag` writes the matching
+  tag onto the untagged ones before grouping, so the existing parser handles
+  them natively. The draw's MONTH is never guessed from the invoice date when
+  the memo names one - MFD295's June 2025 draw was billed on the 23rd and
+  still lands in 05/21–06/20. Retainage-only invoices are deliberately left
+  untagged; they bill no work window and belong to the retainage blocks.
+  Ties broken toward the LATER day, so one 04/20 typo among 21sts loses.
 - **`--job-class` (2026-08-25, MFD228).** A fourth legacy rule: the line's
   `ClassRef` sits under the job's OWN class branch, matched as a PREFIX so the
   live parent and its deleted per-job leaf both count. Two traps it exists to

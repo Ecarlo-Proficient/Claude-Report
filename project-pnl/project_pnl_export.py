@@ -89,7 +89,7 @@ except ImportError:
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from shared import paths
-from shared.draws import read_pay_app
+from shared.draws import read_pay_app, learn_period_shape, infer_period_tag
 from shared.qbo_api import (
     API_BASE, MINOR_VERSION, PROJ_RE,
     load_credentials, _api_get, query_all, report,
@@ -602,12 +602,12 @@ _LEGACY_MATCH: Optional[JobMatcher] = None
 
 def _set_legacy_matcher(proj: str, customer_id: str, legacy: bool,
                         aliases: Optional[List[str]] = None,
-                        job_class: str = "") -> None:
+                        job_class: str = "", text_rules: bool = True) -> None:
     """Install (or clear) the legacy matcher for ONE project. Called per
     project so a batch can never leak one job's aliases into the next."""
     global _LEGACY_MATCH
     _LEGACY_MATCH = (JobMatcher(customer_id, proj, aliases or (), legacy=True,
-                                class_prefix=job_class)
+                                class_prefix=job_class, text_rules=text_rules)
                      if legacy else None)
 
 
@@ -5656,6 +5656,7 @@ def generate_project_pnl(
     dry_run: bool = False,
     overhead_pct: float = 10.0,
     interactive: bool = False,
+    infer_periods: bool = False,
 ) -> Optional[Path]:
     ui_proj(proj, f"{cust_info['name']}  ·  id {cust_info['id']}")
 
@@ -5706,6 +5707,26 @@ def generate_project_pnl(
             invoices += _extra
             ui_event(f"legacy: +{len(_extra)} invoice(s) billed on the parent "
                      f"customer", icon="⚑", color=_YEL)
+    if infer_periods:
+        _shape = learn_period_shape([(i.get("PrivateNote") or "")
+                                     for i in invoices])
+        if not _shape:
+            ui_warn("--infer-periods: no invoice carries a (Period:…) tag, so "
+                    "there is no shape to learn from — left as-is")
+        else:
+            _n = 0
+            for _inv in invoices:
+                _tag = infer_period_tag(_inv.get("PrivateNote") or "",
+                                        _parse_date(_inv.get("TxnDate", "")),
+                                        _shape)
+                if _tag:
+                    _inv["PrivateNote"] = ((_inv.get("PrivateNote") or "").rstrip()
+                                           + "\n" + _tag)
+                    _n += 1
+            ui_event(f"periods inferred for {_n} invoice(s) — window learned "
+                     f"from {_shape['n']} tagged: day {_shape['start_day']} of "
+                     f"the prior month → day {_shape['end_day']}",
+                     icon="⚑", color=_YEL)
     income_groups = group_invoices_by_draw(invoices, interactive=interactive)
     # AR/AP payment state (the user 2026-08-05): invoice/bill Balance == 0 is
     # PAID. Purchases (checks/CC) are paid by nature.
@@ -6831,6 +6852,18 @@ def main() -> int:
                          "the live parent and its deleted per-job leaf both "
                          "count. A bare division name is refused. Only used "
                          "with --legacy.")
+    ap.add_argument("--class-project", action="store_true",
+                    help="CLASS/PROJECT LOOKUP (the user 2026-08-25): the job's "
+                         "cost is exactly its CLASS lines plus its PROJECT "
+                         "lines, with the line-text and bill-memo rules OFF. "
+                         "For a job that ran across the class→project coding "
+                         "switchover. Implies --legacy; needs --job-class.")
+    ap.add_argument("--infer-periods", action="store_true",
+                    help="Learn the draw-window shape from the invoices that DO "
+                         "carry a (Period:…) tag and apply it to the ones that "
+                         "don't, instead of falling back to the calendar month. "
+                         "The draw's MONTH still comes from the memo's own "
+                         "wording. Retainage invoices are left untagged.")
     ap.add_argument("--no-prompt", action="store_true",
                     help="Don't pause to ask about mistyped invoice period "
                          "dates (skip them and warn instead). Use for "
@@ -6888,13 +6921,20 @@ def main() -> int:
         # Per project, so a batch can never carry one job's aliases into
         # the next; clears itself when --legacy is off.
         try:
-            _set_legacy_matcher(proj, cust_map[proj]["id"], args.legacy,
-                                args.alias, args.job_class)
+            _set_legacy_matcher(proj, cust_map[proj]["id"],
+                                args.legacy or args.class_project,
+                                args.alias, args.job_class,
+                                text_rules=not args.class_project)
         except ValueError as e:
             ui_fail(f"{proj}: {e}")
             return 1
-        if args.legacy:
-            ui_event(f"legacy attribution ON for {proj}"
+        if args.class_project and not args.job_class:
+            ui_fail(f"{proj}: --class-project needs --job-class (the job's own "
+                    f"class branch) — without it the method is project-only.")
+            return 1
+        if args.legacy or args.class_project:
+            ui_event(("CLASS/PROJECT lookup ON for " if args.class_project
+                      else "legacy attribution ON for ") + proj
                      + (f"  · class: {args.job_class}" if args.job_class else "")
                      + (f"  · aliases: {', '.join(args.alias)}"
                         if args.alias else ""),
@@ -6902,6 +6942,7 @@ def main() -> int:
         try:
             path = generate_project_pnl(
                 access, company_id, proj,
+                infer_periods=args.infer_periods,
                 cust_info=cust_map[proj],
                 wip_info=wip_master.get(proj, {}),
                 start_date=args.start_date,

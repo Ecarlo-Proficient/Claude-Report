@@ -405,3 +405,118 @@ def read_pay_app(project_folder: Path) -> dict:
                 out[key] = round(val, 2)
     out["sov"] = parse_g703_rows(sheet_rows(path, 1))
     return out
+
+
+# ───────────────── retroactive draw periods (the user 2026-08-25) ─────────────────
+#
+# On an older job the recent invoices carry an explicit "(Period:MM/DD/YYYY -
+# MM/DD/YYYY)" tag and the earlier ones do not. Without a tag the P&L falls back
+# to the CALENDAR month, which is wrong whenever the GC's draw window straddles
+# month end - MFD295 bills the 21st through the 20th, so a calendar-month
+# fallback pushes three weeks of cost into the wrong draw.
+#
+# These learn the window SHAPE from the invoices that ARE tagged and apply it
+# backwards. Nothing is guessed about which month a draw belongs to: that comes
+# from the memo's own "December Draw 2024" / "February 2025 Draw" wording, and
+# only falls back to the invoice date when the memo names no month.
+
+_MONTHS = {m.lower(): i for i, m in enumerate(
+    ["January", "February", "March", "April", "May", "June", "July",
+     "August", "September", "October", "November", "December"], 1)}
+_MONTH_YEAR_RE = re.compile(
+    r"\b(" + "|".join(_MONTHS) + r")\b[^0-9]{0,14}(\d{4})?", re.IGNORECASE)
+_PERIOD_TAG_RE = re.compile(
+    r"\(\s*Period\s*:\s*(\d{1,2}/\d{1,2}/\d{2,4})\s*[-–]\s*(\d{1,2}/\d{1,2}/\d{2,4})\s*\)",
+    re.IGNORECASE)
+_RETAINAGE_ONLY_RE = re.compile(r"retainage", re.IGNORECASE)
+
+
+def _mode(vals, default):
+    """Most common value; ties break toward the LATER one (a window that starts
+    on the 21st and once on the 20th is a 21st window with one typo)."""
+    if not vals:
+        return default
+    best, n = default, 0
+    for v in sorted(set(vals), reverse=True):
+        c = vals.count(v)
+        if c > n:
+            best, n = v, c
+    return best
+
+
+def _add_months(y: int, m: int, delta: int):
+    i = (y * 12 + (m - 1)) + delta
+    return i // 12, i % 12 + 1
+
+
+def _clamp_day(y: int, m: int, day: int) -> "_dt.date":
+    import calendar
+    import datetime as _d
+    return _d.date(y, m, min(day, calendar.monthrange(y, m)[1]))
+
+
+def learn_period_shape(memos) -> Optional[dict]:
+    """Window shape from the memos that DO carry a Period tag:
+    {end_day, start_day, span} where `span` is how many months back the window
+    starts. Returns None when fewer than one tagged memo is available."""
+    import datetime as _d
+    ends, starts, spans = [], [], []
+    for memo in memos or []:
+        m = _PERIOD_TAG_RE.search(memo or "")
+        if not m:
+            continue
+        try:
+            s = _d.datetime.strptime(m.group(1), "%m/%d/%Y").date()
+            e = _d.datetime.strptime(m.group(2), "%m/%d/%Y").date()
+        except ValueError:
+            continue
+        if s > e:
+            continue
+        ends.append(e.day)
+        starts.append(s.day)
+        spans.append((e.year * 12 + e.month) - (s.year * 12 + s.month))
+    if not ends:
+        return None
+    return {"end_day": _mode(ends, 20), "start_day": _mode(starts, 21),
+            "span": _mode(spans, 1), "n": len(ends)}
+
+
+def draw_month_from_memo(memo: str, fallback_date):
+    """(year, month) of the draw this invoice bills, from the memo's own month
+    wording; the invoice date only when the memo names no month."""
+    for m in _MONTH_YEAR_RE.finditer(memo or ""):
+        mon = _MONTHS[m.group(1).lower()]
+        yr = int(m.group(2)) if m.group(2) else None
+        if yr is None and fallback_date is not None:
+            # No year beside the month name: take the invoice's, stepping back
+            # a year if that would put the draw in the future (a January draw
+            # billed in January is this year; billed in December it is next).
+            yr = fallback_date.year
+            if mon - fallback_date.month > 6:
+                yr -= 1
+        if yr:
+            return yr, mon
+    if fallback_date is None:
+        return None
+    return fallback_date.year, fallback_date.month
+
+
+def infer_period_tag(memo: str, txn_date, shape: dict) -> Optional[str]:
+    """The `(Period:… - …)` tag this invoice would have carried, or None when
+    it should not get one (already tagged, or a pure retainage invoice, which
+    bills no work window and is handled by the retainage blocks)."""
+    if not shape or _PERIOD_TAG_RE.search(memo or ""):
+        return None
+    ym = draw_month_from_memo(memo or "", txn_date)
+    if not ym:
+        return None
+    if _RETAINAGE_ONLY_RE.search(memo or "") and not re.search(r"draw", memo or "", re.I):
+        return None
+    y, mo = ym
+    end = _clamp_day(y, mo, shape["end_day"])
+    sy, sm = _add_months(y, mo, -abs(shape["span"]))
+    start = _clamp_day(sy, sm, shape["start_day"])
+    if start > end:
+        return None
+    return (f"(Period:{start.strftime('%m/%d/%Y')} - "
+            f"{end.strftime('%m/%d/%Y')})")

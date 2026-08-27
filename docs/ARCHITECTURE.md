@@ -387,13 +387,20 @@ ETC with the exact source (owner's RP-file cell, takeoff file+cell, or blank). I
 write. READ-ONLY on every source (safe even with the WIP file open). Provenance is captured
 at read time (`rp_wip_reader` tags each row's `audit_contract_src` / `audit_etc_src`).
 
+**`shared/draws.py`** also carries the RETROACTIVE DRAW PERIOD helpers
+(`learn_period_shape` / `infer_period_tag`, 2026-08-25): learn the draw-window shape from
+the invoices that carry a `(Period:…)` tag and write the same tag onto the ones that don't,
+so a job whose window straddles month end (MFD295 bills the 21st→20th) stops falling back
+to the calendar month. The draw's month comes from the memo's own wording, not the invoice
+date; retainage invoices stay untagged.
+
 **`shared/job_lines.py`** — the ONE test for "does this expense line belong to this job".
 STRICT by default (the line's `CustomerRef` is the project customer, exactly what every
 caller did before). LEGACY mode adds two fallbacks for jobs that predate consistent project
 coding: the line's own text names the job, or the BILL's memo names it AND names exactly one
 job number AND the line text names none — with the guard that a memo naming 2+ jobs is
 skipped, never split. Also `invoice_belongs`, since an older job invoices on the PARENT
-customer. Shared by `project-pnl --legacy` and `one-offs/legacy_job_cost_pull.py` so the
+customer. The CLASS rule is opt-in (`--job-class`) and refuses a bare division prefix. `--class-project` (the owner's "class/project lookup") turns the text/memo rules off so the answer is exactly class ∪ project - the right method for a job that ran across the class→project coding switchover. Shared by `project-pnl --legacy` and `one-offs/legacy_job_cost_pull.py` so the
 P&L and the ad-hoc pull can never disagree about what a job cost.
 
 **Blank ETC → takeoff fallback (2026-08-07).** When the estimator left an ETC cell
