@@ -658,6 +658,25 @@ def fetch_customer_bills_and_purchases(
     return bills, purchases
 
 
+# Pre-mobilization buffer on the Bill/Purchase pull. 18 months: long enough to
+# catch real early cost, short enough to keep the payload sane. It was 180 days
+# and silently CLIPPED real cost — MFD281's first bill is 2023-12-08, eleven
+# months before its first invoice, so $237.50 of pre-mobilization rental fell
+# outside and the workbook disagreed with QBO (caught by
+# one-offs/pnl_line_level_audit.py, 2026-08-27).
+_BILL_LOOKBACK_DAYS = 548
+
+
+def _txn_touches_job(txn: dict, customer_id: str) -> bool:
+    """Does any expense line of this txn belong to the job? (window check only)"""
+    for ln in txn.get("Line") or []:
+        det = (ln.get("AccountBasedExpenseLineDetail")
+               or ln.get("ItemBasedExpenseLineDetail"))
+        if det and _line_belongs(det, ln, txn, customer_id):
+            return True
+    return False
+
+
 def _synth_pl_totals(bills: List[dict], purchases: List[dict],
                      income_groups: Dict[str, dict], customer_id: str,
                      acct_type: Dict[str, str], item_account: Dict[str, str],
@@ -5877,7 +5896,7 @@ def generate_project_pnl(
             activity.append(d)
     bill_start = start_date
     if activity:
-        cand = (min(activity) - dt.timedelta(days=180)).isoformat()
+        cand = (min(activity) - dt.timedelta(days=_BILL_LOOKBACK_DAYS)).isoformat()
         if cand > start_date:
             bill_start = cand
     bills, purchases = fetch_customer_bills_and_purchases(
@@ -5897,6 +5916,21 @@ def generate_project_pnl(
                  f"{_DIM}(synthesized — legacy attribution){_RESET}")
     ui_event(f"{len(bills)} bills · {len(purchases)} purchases  "
              f"{_DIM}(from {bill_start}){_RESET}")
+    # If the OLDEST attributed cost sits within a month of the window start,
+    # the window may still be clipping older cost — say so rather than quietly
+    # under-report the job.
+    if bill_start > start_date:
+        _d = [t.get("TxnDate") or "" for t in list(bills) + list(purchases)
+              if _txn_touches_job(t, cust_info["id"])]
+        _d = [x for x in _d if x]
+        if _d:
+            _edge = (dt.date.fromisoformat(bill_start)
+                     + dt.timedelta(days=30)).isoformat()
+            if min(_d) <= _edge:
+                ui_event(f"oldest attributed cost {min(_d)} sits at the edge of "
+                         f"the pull window ({bill_start}) — re-run with "
+                         f"--start-date to confirm nothing older was clipped",
+                         icon="⚑", color=_YEL)
 
     pos = fetch_customer_purchase_orders(
         access, company_id, cust_info["id"], bill_start, end_date,
