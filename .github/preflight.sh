@@ -37,6 +37,37 @@ if [ ! -f .github/workflows/ci.yml ]; then
   exit 1
 fi
 
+# ---- what to scan: the working tree, or the commit being pushed? ----
+# git invokes pre-push as `pre-push <remote> <url>` with the pushed refs on
+# stdin ("<local-ref> <local-sha> <remote-ref> <remote-sha>"). In that mode,
+# gate THE PUSH CONTENT, not the working tree: concurrent sessions edit this
+# clone side by side (2026-08-27: another session's half-done edit blocked a
+# clean push), and CI will judge the commit, never the tree. Run by hand
+# (no args / a tty on stdin) it scans the working tree as before - that is
+# the mode that catches problems BEFORE they are committed.
+MODE=tree
+if [ "$#" -ge 1 ] && [ ! -t 0 ]; then
+  sha=""
+  while read -r _lref lsha _rref _rsha; do
+    case "$lsha" in
+      "" ) ;;
+      *[!0]* ) sha="$lsha"; break ;;   # skip branch deletions (all-zero sha)
+    esac
+  done
+  if [ -n "$sha" ]; then
+    WT="$(mktemp -d "${TMPDIR:-/tmp}/preflight.XXXXXX")/wt"
+    if git worktree add --detach --quiet "$WT" "$sha" 2>/dev/null; then
+      MODE=push
+      trap 'cd "$repo_root"; git worktree remove --force "$WT" >/dev/null 2>&1; rm -rf "$(dirname "$WT")"' EXIT
+      cd "$WT" || exit 1
+      echo "preflight: gating pushed commit ${sha:0:10} (not the working tree)"
+    else
+      rm -rf "$(dirname "$WT")"
+      echo "preflight: could not materialize $sha - falling back to a working-tree scan"
+    fi
+  fi
+fi
+
 fail=0
 
 echo "== 1/3 syntax (compileall) =="
@@ -88,9 +119,11 @@ fi
 echo "== 3/3 data-leak guard =="
 # The patterns live in .github/leak_guard.sh - the ONE copy, shared with
 # ci.yml, so this gate and CI can never drift. Edit the script, never here.
+GUARD=.github/leak_guard.sh
+[ -f "$GUARD" ] || GUARD="$repo_root/.github/leak_guard.sh"
 leak_scan() {  # $1 = label, rest = args passed through to leak_guard.sh
   local label="$1"; shift
-  if bash .github/leak_guard.sh "$@"; then
+  if bash "$GUARD" "$@"; then
     echo "   ok ($label)"
   else
     echo "   FAIL ($label) - see above. Genericize the figure (round it or"
