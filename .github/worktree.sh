@@ -12,6 +12,11 @@
 #                 the pushed commit), retries the push race, then removes the
 #                 worktree and its branch. The flawless-landing command.
 #   list          worktrees + wt/* branches.
+#
+# Acceptance-tested end to end 2026-08-27: worktree created while the main
+# tree sat dirty with another session's work - paths.py resolved the main
+# machine.env, preflight ran green in isolation, and this very commit landed
+# on dev from the worktree through `done` (rebase, gated push, cleanup).
 set -uo pipefail
 
 die() { echo "worktree.sh: $*" >&2; exit 1; }
