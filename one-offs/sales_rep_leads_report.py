@@ -350,9 +350,56 @@ on an active job.</p>
 </body></html>"""
 
 
+def render_email(rep: str | None, rows, touches, live, today: dt.date) -> str:
+    """The same book as plain, allowlist-safe HTML for an email body.
+
+    Outlook sanitizes away <style>, <span> and every inline colour, so nothing here
+    may depend on CSS: the division and the live-client flag are words, not colours."""
+    e = html.escape
+    who = f"{e(rep)} &middot; " if rep else "All reps &middot; "
+    out = [f"<h2>{'Outreach Accounts in Play' if rep else 'Accounts Being Worked'}</h2>",
+           f"<p>{who}as of {today.strftime('%m/%d/%Y')} &middot; {len(rows)} accounts"
+           f"{'' if rep else ' that someone has contacted'}.</p>"]
+
+    active = [r for r in rows if r["sales_status"] == IN_PLAY]
+    active.sort(key=lambda r: r["last_contacted"] or "", reverse=True)
+    if active:
+        out.append(f"<h3>Active now ({len(active)})</h3><ul>")
+        for r in active:
+            label, _cls = div_tag(r["division"])
+            bits = [f"<b>{e(nice(r['name']))}</b>"]
+            if label:
+                bits.append(f"({label})")
+            if r["last_contacted"]:
+                bits.append(f"last touch {fmt_date(r['last_contacted'])}")
+            if r["customer_key"] in live:
+                bits.append(f"<i>already a live client: {e(', '.join(live[r['customer_key']]))}</i>")
+            last = [t for t in touches.get(r["customer_key"], [])][-1:]
+            if last:
+                bits.append(f"&ndash; {e(clean_note(last[0]['note']))}")
+            out.append("<li>" + " &middot; ".join(bits) + "</li>")
+        out.append("</ul>")
+
+    hdr = ["Company", "Div", "Stage", "Last contact"] + ([] if rep else ["Worked by"]) + ["Contact", "Email"]
+    out.append(f"<h3>Full list ({len(rows)})</h3><table><tr>"
+               + "".join(f"<th>{h}</th>" for h in hdr) + "</tr>")
+    for r in sorted(rows, key=lambda r: r["name"].upper()):
+        label, _cls = div_tag(r["division"])
+        name = e(nice(r["name"])) + (" (live client)" if r["customer_key"] in live else "")
+        cells = [name, label, e(r["sales_status"] or "-"), e(fmt_date(r["last_contacted"])) or "-"]
+        if not rep:
+            cells.append(e(r["last_edited_by"] or "-"))
+        cells += [e(nice(r["primary_contact"])) or "-", e(r["primary_email"] or "-")]
+        out.append("<tr>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>")
+    out.append("</table>")
+    return "\n".join(out)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--rep", help="Notion display name of the rep (exact)")
+    ap.add_argument("--email-body", action="store_true",
+                    help="emit allowlist-safe HTML for an email body (no CSS) instead of the styled page")
     ap.add_argument("--all", action="store_true",
                     help="every rep's touched accounts (the collision list), with a Worked-by column")
     ap.add_argument("--out", type=Path, help="output .html path")
@@ -386,7 +433,8 @@ def main() -> int:
         return 1
 
     a.out.parent.mkdir(parents=True, exist_ok=True)
-    a.out.write_text(render(a.rep if a.rep else None, rows, touches, live, dt.date.today()), encoding="utf-8")
+    make = render_email if a.email_body else render
+    a.out.write_text(make(a.rep if a.rep else None, rows, touches, live, dt.date.today()), encoding="utf-8")
     print(f"wrote {a.out}  ({len(rows)} accounts, {sum(len(v) for v in touches.values())} logged touches, "
           f"{len(live)} already-live-client flags)")
     return 0

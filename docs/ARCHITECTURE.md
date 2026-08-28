@@ -745,7 +745,11 @@ options). **`--all`** swaps the rep filter for every account ANY rep has actuall
 (Contacted · Follow up · Interested · No response - an untouched Lead is nobody's account yet,
 a closed row is history) and adds a **Worked by** column: that is the collision list, and it is
 what goes to the MFD president weekly (registry EST-13), since he bids commercial work
-independently. Deliverables live in `~/Documents/CompanyHealth/`, never here.
+independently. **`--email-body`** re-renders the same book as allowlist-safe HTML (no CSS, no
+`<span>`, no `<style>`) for an Outlook message body - the mail API has no attachment parameter,
+so the report IS the body and colour is replaced by words. A scheduled task runs
+`load_customers` -> `--all` -> `--all --email-body` -> mail, every Monday.
+Deliverables live in `~/Documents/CompanyHealth/`, never here.
 
 **`one-offs/concrete_cost_code_audit.py`** (read-only QBO, the user 2026-08-25) - vendors code
 to the wrong cost-code family. Cost-code NUMBER = the family (1 Concrete · 2/3/4 material ·
