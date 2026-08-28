@@ -42,6 +42,10 @@ from shared import pnl_paths
 from shared.xlsx_verify import assert_clean
 
 ARCHIVE = "completed mfd project p&l"
+# Payroll is carried in the overhead %, so charging it to the job as well
+# double-counts it (the user 2026-08-27). Excluded from job cost and reported
+# on the sheet as a named exclusion — never silently dropped.
+PAYROLL_RE = re.compile(r"payroll|wages|salar|employee benefit|workers.?comp", re.I)
 OVERHEAD_PCT = 0.10          # company view: 10% of REVENUE
 MFD_OVERHEAD_PCT = 0.09      # MFD's own view: 9% of COSTS (CLAUDE.md)
 
@@ -51,8 +55,8 @@ MFD_OVERHEAD_PCT = 0.09      # MFD's own view: 9% of COSTS (CLAUDE.md)
 # negative — four treatments competing on one page, which is what read as
 # amateurish (the user 2026-08-27). Now: navy anchors ONE band per table, rules
 # do the separating instead of boxes, and red is reserved for profit lines.
-SZ = 13                      # body
-SZ_SMALL = 12                # detail rows
+SZ = 14                      # body
+SZ_SMALL = 13                # detail rows — was 12 and read too small
 SZ_TITLE = 20
 NAVY = "1F3A5F"
 INK = "1F2937"               # near-black body text, softer than pure black
@@ -147,8 +151,42 @@ def read_source(path: Path) -> dict:
                         "paid": a.cell(r, 6).value or "",
                         "url": (a.cell(r, 3).hyperlink.target
                                 if a.cell(r, 3).hyperlink else None)})
+        # Payroll out of job cost (it lives in overhead), recorded so the
+        # sheet can say what it left out.
+        payroll = 0.0
+        for sec in sections:
+            keep = []
+            for acct in sec["accounts"]:
+                if PAYROLL_RE.search(acct["name"]):
+                    payroll += acct["total"]
+                else:
+                    keep.append(acct)
+            sec["accounts"] = keep
+            sec["total"] = round(sum(a["total"] for a in keep), 2)
+
+        # One row per BILL, not per line: a bill split over several lines of
+        # the same account is one document and reads as one (the user
+        # 2026-08-27). The line count rides along so nothing is hidden.
+        for sec in sections:
+            for acct in sec["accounts"]:
+                for v in acct["vendors"]:
+                    merged: Dict[str, dict] = {}
+                    for ln in v["lines"]:
+                        key = str(ln["doc"] or id(ln))
+                        if key in merged:
+                            m = merged[key]
+                            m["amt"] += ln["amt"]
+                            m["n"] += 1
+                        else:
+                            merged[key] = dict(ln, n=1)
+                    for m in merged.values():
+                        if m["n"] > 1:
+                            m["desc"] = f"{m['n']} lines · {m['desc']}"
+                    v["lines"] = sorted(merged.values(),
+                                        key=lambda x: str(x["date"]), reverse=True)
+
         title = str(wb["P&L"].cell(1, 1).value or "")
-        return {"invoices": inv, "not_billed": not_billed,
+        return {"invoices": inv, "not_billed": not_billed, "payroll": round(payroll, 2),
                 "sections": sections, "title": title}
     finally:
         wb.close()
@@ -470,8 +508,12 @@ def build_bundle(jobs: List[tuple], out: Path) -> None:
     sm.sheet_view.showGridLines = False
 
     _t(sm, 1, 1, "MFD OVERVIEW — TOTAL", size=SZ_TITLE, bold=True, color=NAVY)
-    _t(sm, 2, 1, f"{len(jobs)} completed jobs · click a job to open its detail · "
-                 f"{dt.datetime.now():%m/%d/%Y}", size=SZ_SMALL, color=GREY)
+    _pay = sum(src.get("payroll", 0.0) for _, src, _t2 in jobs)
+    _note = (f" · excludes payroll of {_pay:,.0f} (carried in overhead)"
+             if _pay else "")
+    _t(sm, 2, 1, f"{len(jobs)} completed jobs · click a job to open its detail"
+                 f"{_note} · {dt.datetime.now():%m/%d/%Y}",
+       size=SZ_SMALL, color=GREY)
     for c in range(1, 8):
         sm.cell(row=2, column=c).border = Border(bottom=HAIR)
     sm.row_dimensions[1].height = 30
@@ -525,7 +567,7 @@ def build_bundle(jobs: List[tuple], out: Path) -> None:
     sm.row_dimensions[r].height = 24
     for col, w in zip("ABCDEFG", (34, 18, 18, 18, 11, 20, 20)):
         sm.column_dimensions[col].width = w
-    sm.freeze_panes = "A4"
+
 
     for job, src, t in sorted(jobs, key=lambda x: -x[2]["billed"]):
         ws = wb.create_sheet(job[:31])
@@ -595,6 +637,11 @@ def build_bundle(jobs: List[tuple], out: Path) -> None:
         _t(ws, r, 6, t["cost"], size=SZ + 2, bold=True, color=NAVY,
            fmt=MONEY, align="right")
         r += 1
+        if src.get("payroll"):
+            _t(ws, r, 1, f"excludes payroll of {src['payroll']:,.0f} — carried "
+                         f"in the overhead %, not charged to the job",
+               size=SZ_SMALL - 1, color=GREY)
+            r += 1
         for c, h in ((1, "Account / Vendor / Doc #"), (2, "Date"),
                      (3, "Description"), (6, "Amount"), (7, "Paid?")):
             _t(ws, r, c, h, size=SZ_SMALL - 1, bold=True, color="FFFFFF",
@@ -647,9 +694,8 @@ def build_bundle(jobs: List[tuple], out: Path) -> None:
         # C carries the description and SPILLS across D:E (empty on data rows;
         # the metric tiles above are what keep those columns from reading as
         # gutters). Amount and Paid sit at the right edge, always aligned.
-        for col, w in zip("ABCDEFG", (26, 13, 24, 24, 24, 20, 14)):
+        for col, w in zip("ABCDEFG", (28, 14, 25, 25, 25, 21, 15)):
             ws.column_dimensions[col].width = w
-        ws.freeze_panes = "A11"
         ws.sheet_properties.outlinePr.summaryBelow = False
 
     for ws in wb.worksheets:                 # lands on one page wide as a PDF
