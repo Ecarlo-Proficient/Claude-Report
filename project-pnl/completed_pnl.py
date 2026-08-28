@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import re
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -185,7 +186,8 @@ def build(job: str, src: dict, out: Path) -> None:
     ws.title = "Summary"
     ws.sheet_view.showGridLines = False
 
-    _t(ws, 1, 1, f"{job} — JOB RESULT", size=SZ_TITLE, bold=True, color=NAVY)
+    _t(ws, 1, 1, job_label(job, src.get("title", "")), size=SZ_TITLE,
+       bold=True, color=NAVY)
     _t(ws, 2, 1, f"{src['title'].replace('PROJECT P&L — ', '')}   ·   completed job   "
                  f"·   {dt.datetime.now():%m/%d/%Y}", size=SZ_SMALL, color=GREY)
 
@@ -332,6 +334,48 @@ def build(job: str, src: dict, out: Path) -> None:
     tmp.replace(out)
 
 
+_SUFFIX_RE = re.compile(r",?\s*(L\.?L\.?C\.?|INC\.?|LTD\.?|CORP\.?)\s*$", re.I)
+
+
+def job_label(job: str, title: str) -> str:
+    """'MFD133 — JLB Builders' — the number and the name in ONE cell, never a
+    separate column (the user 2026-08-27).
+
+    The name comes from the QBO customer path `<GC>:<project>`. Some projects
+    carry the site in their own name ('MFD295 - Rock Creek Apartments'); most
+    are bare ('MFD133'), so the GC is the useful name. Trailing LLC/INC is
+    dropped and a SHOUTED name is title-cased, because a report reads better
+    than a database does."""
+    fqn = (title or "").replace("PROJECT P&L — ", "").strip()
+    if not fqn:
+        return job
+    parts = [x.strip() for x in fqn.split(":") if x.strip()]
+    leaf = parts[-1] if parts else ""
+    name = re.sub(r"^\s*" + re.escape(job) + r"\s*[-–—:]*\s*", "", leaf,
+                  flags=re.I).strip()
+    if not name:
+        # Some GCs nest a development under themselves
+        # ("JPI Construction, LLC:SPCA:MFD160"), so take the TOP-level
+        # customer — the GC — not the intermediate grouping, which is usually
+        # an internal abbreviation nobody outside recognises.
+        name = parts[0] if parts else ""
+    # A GC's legal name often carries the development after a dash
+    # ("Embrey Builders LLC-Champions Way DFW LP") — the entity is the part
+    # that identifies the job on a report, so cut there.
+    head = re.split(r"\s*[-–]\s*", name, 1)[0]
+    if len(head) >= 6:
+        name = head
+    name = re.sub(r"\b(L\.?L\.?C\.?|INC\.?|LTD\.?|CORP\.?|L\.?P\.?)\b", "", name,
+                  flags=re.I)
+    name = re.sub(r"\s{2,}", " ", name).strip(" ,-")
+    if name and name == name.upper():
+        name = name.title()
+    if len(name) > 26:                      # keep the cell one clean line
+        cut = name[:26].rsplit(" ", 1)[0]
+        name = cut if len(cut) >= 10 else name[:26]
+    return f"{job} — {name}" if name else job
+
+
 def _totals(src: dict) -> dict:
     billed = sum(i["gross"] + i["ret_billed"] for i in src["invoices"]) + src["not_billed"]
     cogs = next((x["total"] for x in src["sections"] if x["name"].startswith("COST")), 0.0)
@@ -450,7 +494,7 @@ def build_bundle(jobs: List[tuple], out: Path) -> None:
     sm.row_dimensions[r].height = 30
     r += 1
     for job, _src, t in sorted(jobs, key=lambda x: -x[2]["billed"]):
-        cell = _t(sm, r, 1, job, size=SZ, bold=True)
+        cell = _t(sm, r, 1, job_label(job, _src.get("title", "")), size=SZ, bold=True)
         cell.hyperlink = f"#'{job}'!A1"
         cell.font = Font(size=SZ, bold=True, color=LINK, underline="single")
         _t(sm, r, 2, t["billed"], size=SZ, fmt=MONEY, align="right", color=INK)
@@ -479,18 +523,19 @@ def build_bundle(jobs: List[tuple], out: Path) -> None:
     # a distinct answer rather than another number in the row.
     _thick_box(sm, r - len(jobs) - 1, r, 7, 7)
     sm.row_dimensions[r].height = 24
-    for col, w in zip("ABCDEFG", (19, 19, 19, 19, 12, 22, 22)):
+    for col, w in zip("ABCDEFG", (34, 18, 18, 18, 11, 20, 20)):
         sm.column_dimensions[col].width = w
     sm.freeze_panes = "A4"
 
     for job, src, t in sorted(jobs, key=lambda x: -x[2]["billed"]):
         ws = wb.create_sheet(job[:31])
         ws.sheet_view.showGridLines = False
-        _t(ws, 1, 1, f"{job} — JOB RESULT", size=SZ_TITLE - 2, bold=True, color=NAVY)
+        _t(ws, 1, 1, job_label(job, src.get("title", "")), size=SZ_TITLE - 2,
+           bold=True, color=NAVY)
         back = _t(ws, 1, 7, "← back to Summary", size=SZ_SMALL, align="right")
         back.hyperlink = "#'Summary'!A1"
         back.font = Font(size=SZ_SMALL, color=LINK, underline="single")
-        _t(ws, 2, 1, src["title"].replace("PROJECT P&L — ", ""),
+        _t(ws, 2, 1, f"completed job · {src['title'].replace('PROJECT P&L — ', '')}",
            size=SZ_SMALL, color=GREY)
         for c in range(1, 8):
             ws.cell(row=2, column=c).border = Border(bottom=HAIR)
