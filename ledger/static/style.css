@@ -302,6 +302,13 @@ tr.draw-group .g-sub { color: var(--text-dim); font-weight: 500; font-size: .85e
 .bills-sub { padding: 6px 10px 12px 34px; }
 .bills-cap { color: var(--text-dim); font-size: .82em; padding: 4px 2px 8px; font-variant-numeric: tabular-nums; }
 .bills-sub table.grid { background: var(--surface); border-radius: 8px; }
+/* Vendor sub-groups inside a draw's bills: total first, click to open the bills under it. */
+.bills-sub tr.vgroup > td { background: var(--surface-2); cursor: pointer; border-top: 1px solid var(--border); }
+.bills-sub tr.vgroup:hover > td { background: color-mix(in srgb, var(--accent) 7%, var(--surface-2)); }
+.bills-sub tr.vgroup .vg-caret { color: var(--text-dim); }
+.bills-sub tr.vgroup .vg-name { font-weight: 700; }
+.bills-sub tr.vgroup .vg-meta { color: var(--text-dim); font-weight: 500; font-size: .85em; font-variant-numeric: tabular-nums; }
+.bills-sub tr.vbill > td:first-child { border-left: 2px solid var(--border); }
 
 /* ── Vendor type pill ──────────────────────────────────────────────────── */
 .vtype { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: .8em; white-space: nowrap;

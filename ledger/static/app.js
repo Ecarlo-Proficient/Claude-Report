@@ -208,6 +208,11 @@ function payPeriod(dateStr, mode) {
 let costCollapsed = new Set();   // collapsed cost-type parents (default: all collapsed)
 let drawsCollapsed = new Set();  // collapsed draw cards (default: all collapsed)
 let drawsExpanded = new Set();   // draws whose bills are expanded in the table (default: none)
+let drawVendorExpanded = new Set();   // (draw|vendor) groups expanded inside a draw's bills (default: none)
+// Waiver tracking is PARKED (owner 2026-08-27: "i don't do waiver ... a feature for future PMs").
+// The engine stays intact - /api/waiver, the waiver table, setWaiver() - flip this to true to
+// bring the per-bill "Waiver in hand" column + caption back. It never gated a draw's stage/color.
+const WAIVERS_ENABLED = false;
 
 // ── Tabs (two-level grouped nav) ─────────────────────────────────────────────
 // Parent groups on the top row; the active group's tabs on the second row. The whole
@@ -814,21 +819,40 @@ const DRAW_STAGE_SHORT = {
   "Ready to turn in": "Collect from GC",
   "All paid": "All paid",
 };
+// Draws filters: the SAME searchable multi-select used on Pay Bills / Invoices (owner
+// 2026-08-27: "consistent throughout the ledger ... a selectable box that drills down the
+// more you type, with select/deselect all"). Vendor is multi-valued (a draw spans many
+// bills), so it carries its own pass; the rest key one value per draw.
+const DIV_LABEL = { MFD: "Multi Family", CP: "Commercial", RP: "Residential" };
+function _drawDiv(d) { const m = String(d.project_no || "").toUpperCase().match(/^(MFD|CP|RP)/); return m ? m[1] : ""; }
+const drawMSel = {};
+let _drawMSelSig = null;
+const DRAW_MSEL = [
+  { id: "dfClient", all: "All clients",   get: d => d.customer || "",   search: true, lbl: v => v || "(no client)" },
+  { id: "dfProj",   all: "All projects",  get: d => d.project_no || "", search: true, lbl: v => v || "(none)" },
+  { id: "dfVendor", all: "All vendors",   get: v => v, vendors: true,   search: true, lbl: v => v || "(none)" },
+  { id: "dfInv",    all: "All invoices",  get: d => d.invoice_no || "", search: true, lbl: v => v || "(none)" },
+  { id: "dfDiv",    all: "All divisions", get: d => _drawDiv(d),                      lbl: v => DIV_LABEL[v] || v || "(none)" },
+];
+function buildDrawFilters() {
+  const draws = DRAWS.draws || [];
+  const sig = String(draws.length);
+  if (sig === _drawMSelSig && $("#dfClientMenu") && $("#dfClientMenu").querySelector(".msel-opt")) return;
+  _drawMSelSig = sig;
+  const vendors = [...new Set(draws.flatMap(d => (d.bills || []).map(b => b.vendor || "").filter(Boolean)))];
+  for (const cfg of DRAW_MSEL) buildMSel(cfg, cfg.vendors ? vendors : draws, drawMSel, renderDraws);
+}
+function drawMselPasses(d) {
+  for (const cfg of DRAW_MSEL) {
+    const s = drawMSel[cfg.id]; if (!s || !s.size) continue;
+    if (cfg.vendors) { if (!(d.bills || []).some(b => s.has(b.vendor || ""))) return false; }
+    else if (!s.has(cfg.get(d))) return false;
+  }
+  return true;
+}
 function renderDraws() {
-  const fv = sel => ($(sel) ? $(sel).value : "").trim().toLowerCase();
-  const fProj = fv("#drawFProj"), fVend = fv("#drawFVendor"), fInv = fv("#drawFInv"), fClient = fv("#drawFClient");
-  const div = $("#drawDivision") ? $("#drawDivision").value : "";
-  const all = (DRAWS.draws || []).filter(d => {                 // each filled field must match (AND)
-    if (div && !String(d.project_no || "").toUpperCase().startsWith(div)
-            && !(d.label || "").toUpperCase().includes("— " + div)) return false;
-    if (fProj && !String(d.project_no || "").toLowerCase().includes(fProj)
-              && !(d.label || "").toLowerCase().includes(fProj)) return false;
-    if (fInv && !String(d.invoice_no || "").toLowerCase().includes(fInv)) return false;
-    if (fVend && !(d.bills || []).some(b => (b.vendor || "").toLowerCase().includes(fVend))) return false;
-    // Client = the GC / project name (e.g. "Firestone" catches every Firestone job)
-    if (fClient && !(String(d.customer || "") + " " + (d.label || "")).toLowerCase().includes(fClient)) return false;
-    return true;
-  });
+  buildDrawFilters();                              // (re)build the multi-selects when the draw set changes
+  const all = (DRAWS.draws || []).filter(drawMselPasses);   // Client · Project · Vendor · Invoice · Division (AND)
   const shown = activeDrawStage ? all.filter(d => d.stage === activeDrawStage) : all;
   $("#drawsNote").textContent = (DRAWS.draws || []).length
     ? `(${shown.length} shown of ${DRAWS.total} · most recent first)`
@@ -867,7 +891,7 @@ function renderDraws() {
   const table = document.createElement("table"); table.className = "grid draws-table";
   const thead = document.createElement("thead"), tbody = document.createElement("tbody");
   const cols = [["", "left"], ["Draw memo", "left"], ["Billed (in)", "right"], ["Status", "left"],
-                ["Invoice #", "left"], ["Date", "left"], ["Paid out", "right"], ["Stage", "left"]];
+                ["Invoice #", "left"], ["Date", "left"], ["Paid out", "right"], ["Net", "right"], ["Stage", "left"]];
   const htr = document.createElement("tr");
   for (const [c, al] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
   thead.appendChild(htr);
@@ -883,7 +907,7 @@ function renderDraws() {
       const sp = document.createElement("span"); sp.className = "g-proj"; sp.textContent = curProj || "—";
       const sub = document.createElement("span"); sub.className = "g-sub";
       const nm = nameOf(curProj);
-      sub.textContent = `${nm ? " · " + nm : ""} · ${g.length} draw${g.length > 1 ? "s" : ""} · ${money(gIn)} in / ${money(gOut)} out`;
+      sub.textContent = `${nm ? " · " + nm : ""} · ${g.length} draw${g.length > 1 ? "s" : ""} · ${money(gIn)} in / ${money(gOut)} out / ${money(gIn - gOut)} net`;
       gtd.appendChild(sp); gtd.appendChild(sub); gtr.appendChild(gtd); tbody.appendChild(gtr);
     }
     const done = d.stage === "All paid";   // green row only when fully settled (GC paid + vendors paid)
@@ -910,6 +934,11 @@ function renderDraws() {
     tr.appendChild(leftText(fmtDate(d.ar_date || d.recency)));
     const ot = document.createElement("td"); const mo = moneyCell(d.total); mo.classList.add("draw-out"); ot.appendChild(mo);
     const pc = document.createElement("span"); pc.className = "paidcnt"; pc.textContent = ` ${d.paid}/${d.n}`; ot.appendChild(pc); tr.appendChild(ot);
+    // Net = what the GC billed in minus the bills TIED to this draw (not what we've paid) - the draw's margin
+    const nt = document.createElement("td");
+    if (d.billed != null) { const net = (d.billed || 0) - (d.total || 0); const nc = moneyCell(net); if (net < 0) nc.style.color = "var(--neg)"; nc.title = "billed in − bills tied to this draw"; nt.appendChild(nc); }
+    else nt.appendChild(document.createTextNode("—"));
+    tr.appendChild(nt);
     const st = document.createElement("td"); st.className = "left";
     const pill = document.createElement("span"); pill.className = "lien " + (DRAW_STAGE_CLASS[d.stage] || "info"); pill.textContent = DRAW_STAGE_SHORT[d.stage] || DRAW_STAGE_LABEL[d.stage] || d.stage; pill.title = DRAW_STAGE_LABEL[d.stage] || d.stage; st.appendChild(pill);
     if (d.action && d.action.url) { const a = document.createElement("a"); a.className = "notion-link"; a.href = d.action.url; a.target = "_blank"; a.rel = "noopener"; a.textContent = " 📄"; a.title = "Notion · " + (d.action.status || "Open"); st.appendChild(a); }
@@ -927,30 +956,56 @@ function renderDraws() {
 function buildBillsTable(d) {
   const wrap = document.createElement("div"); wrap.className = "bills-sub";
   const cap = document.createElement("div"); cap.className = "bills-cap";
-  cap.textContent = `${d.n} bills · ${money(d.total)} to vendors · ${d.paid}/${d.n} paid · ${d.waivers}/${d.n} waivers in`;
+  cap.textContent = `${d.n} bills · ${money(d.total)} to vendors · ${d.paid}/${d.n} paid`
+    + (WAIVERS_ENABLED ? ` · ${d.waivers}/${d.n} waivers in` : "");
   wrap.appendChild(cap);
   const scroll = document.createElement("div"); scroll.className = "table-scroll";
   const table = document.createElement("table"); table.className = "grid";
   const thead = document.createElement("thead"), tbody = document.createElement("tbody");
-  const cols = [["Vendor", "left"], ["Bill #", "left"], ["Bill date", "left"], ["Amount", "right"], ["Paid", "left"], ["GC funded", "left"], ["Waiver in hand", "left"]];
+  const cols = [["Vendor", "left"], ["Bill #", "left"], ["Bill date", "left"], ["Amount", "right"], ["Paid", "left"], ["GC funded", "left"]];
+  if (WAIVERS_ENABLED) cols.push(["Waiver in hand", "left"]);
   const htr = document.createElement("tr");
   for (const [c, al] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
   thead.appendChild(htr);
-  for (const b of d.bills) {
-    const tr = document.createElement("tr");
-    tr.appendChild(leftText(b.vendor || "—"));
-    tr.appendChild(qboLinkCell(b.bill_ref, qboBillHref(b.qbo_link), "Open this bill in QuickBooks"));
-    tr.appendChild(leftText(fmtDate(b.bill_date)));
-    const av = document.createElement("td"); av.appendChild(moneyCell(b.amount)); tr.appendChild(av);
-    tr.appendChild(leftText(b.pay_date ? "✓ " + fmtDate(b.pay_date) : "—"));
-    tr.appendChild(leftText(b.gc_paid ? "✓ " + fmtDate(b.gc_paid) : "—"));
-    const wtd = document.createElement("td"); wtd.className = "left";
-    const lab = document.createElement("label"); lab.className = "chk";
-    const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = !!b.waiver;
-    cb.onchange = () => setWaiver(d, b, cb);
-    lab.appendChild(cb); lab.appendChild(document.createTextNode(b.waiver ? " in hand" : " mark"));
-    wtd.appendChild(lab); tr.appendChild(wtd);
-    tbody.appendChild(tr);
+  // Sub-group by vendor: each vendor is a header row with its total (biggest first), collapsed;
+  // open it to see that vendor's bills underneath (owner 2026-08-27: "totals first, open for bills").
+  const byVendor = new Map();
+  for (const b of d.bills) { const v = b.vendor || "—"; if (!byVendor.has(v)) byVendor.set(v, []); byVendor.get(v).push(b); }
+  const vendors = [...byVendor.keys()].sort((a, b) =>
+    byVendor.get(b).reduce((t, x) => t + (x.amount || 0), 0) - byVendor.get(a).reduce((t, x) => t + (x.amount || 0), 0));
+  for (const v of vendors) {
+    const bills = byVendor.get(v);
+    const vtot = bills.reduce((t, x) => t + (x.amount || 0), 0);
+    const vpaid = bills.filter(x => x.pay_date).length;
+    const vkey = d.matched_invoice + "|" + v;
+    const vopen = drawVendorExpanded.has(vkey);
+    const vtr = document.createElement("tr"); vtr.className = "vgroup"; vtr.style.cursor = "pointer";
+    vtr.onclick = () => { vopen ? drawVendorExpanded.delete(vkey) : drawVendorExpanded.add(vkey); renderDraws(); };
+    const vtd = document.createElement("td"); vtd.colSpan = cols.length; vtd.className = "left";
+    const car = document.createElement("span"); car.className = "vg-caret"; car.textContent = vopen ? "▾ " : "▸ ";
+    const nm = document.createElement("span"); nm.className = "vg-name"; nm.textContent = v;
+    const mt = document.createElement("span"); mt.className = "vg-meta";
+    mt.textContent = ` · ${bills.length} bill${bills.length > 1 ? "s" : ""} · ${money(vtot)} · ${vpaid}/${bills.length} paid`;
+    vtd.appendChild(car); vtd.appendChild(nm); vtd.appendChild(mt); vtr.appendChild(vtd); tbody.appendChild(vtr);
+    if (!vopen) continue;
+    for (const b of bills) {
+      const tr = document.createElement("tr"); tr.className = "vbill";
+      tr.appendChild(leftText(""));                         // vendor cell blank - grouped in the header above
+      tr.appendChild(qboLinkCell(b.bill_ref, qboBillHref(b.qbo_link), "Open this bill in QuickBooks"));
+      tr.appendChild(leftText(fmtDate(b.bill_date)));
+      const av = document.createElement("td"); av.appendChild(moneyCell(b.amount)); tr.appendChild(av);
+      tr.appendChild(leftText(b.pay_date ? "✓ " + fmtDate(b.pay_date) : "—"));
+      tr.appendChild(leftText(b.gc_paid ? "✓ " + fmtDate(b.gc_paid) : "—"));
+      if (WAIVERS_ENABLED) {
+        const wtd = document.createElement("td"); wtd.className = "left";
+        const lab = document.createElement("label"); lab.className = "chk";
+        const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = !!b.waiver;
+        cb.onchange = () => setWaiver(d, b, cb);
+        lab.appendChild(cb); lab.appendChild(document.createTextNode(b.waiver ? " in hand" : " mark"));
+        wtd.appendChild(lab); tr.appendChild(wtd);
+      }
+      tbody.appendChild(tr);
+    }
   }
   table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table); wrap.appendChild(scroll);
   return wrap;
@@ -5593,7 +5648,7 @@ function init() {
   wireSettings();
   ["#search", "#fDivision", "#fStatus", "#fCategory", "#fActive"].forEach(sel =>
     $(sel).addEventListener("input", renderProjects));
-  ["#drawFClient", "#drawFProj", "#drawFVendor", "#drawFInv", "#drawDivision"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("input", renderDraws); });
+  // Draws filters are multi-selects now (built by buildDrawFilters, toggled via _mselWraps below).
   { const el = $("#vendorSearch"); if (el) el.addEventListener("input", renderVendors); }
   { const el = $("#lienFProj"); if (el) el.addEventListener("input", renderLiens); }   // the other lien filters are multi-selects now
   { const el = $("#wipActive"); if (el) el.addEventListener("change", renderWip); }
@@ -5603,7 +5658,8 @@ function init() {
     ...BILL_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`]),
     ...LIEN_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`]),
     ...PAY_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`]),
-    ...INV_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`])];
+    ...INV_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`]),
+    ...DRAW_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`])];
   const _closeMsels = (except) => { for (const [, mId] of _mselWraps) { const m = $(mId); if (m && mId !== except) m.hidden = true; } };
   for (const [btnId, menuId, wrapId] of _mselWraps) {
     const btn = $(btnId), menu = $(menuId);

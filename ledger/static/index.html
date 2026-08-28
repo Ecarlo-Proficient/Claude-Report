@@ -239,17 +239,11 @@
           Click a tile above to filter.
           <br><b>RP is excluded</b> - residential bills at completion / milestones, not formal draws.</p>
         <div class="filters">
-          <label class="fld"><span>Client</span><input type="search" id="drawFClient" placeholder="Firestone" autocomplete="off"></label>
-          <label class="fld"><span>Project #</span><input type="search" id="drawFProj" placeholder="CP745" autocomplete="off"></label>
-          <label class="fld"><span>Vendor</span><input type="search" id="drawFVendor" placeholder="Burnco" autocomplete="off"></label>
-          <label class="fld"><span>Invoice #</span><input type="search" id="drawFInv" placeholder="34449" autocomplete="off"></label>
-          <label class="fld"><span>Division</span>
-            <select id="drawDivision">
-              <option value="">All divisions</option>
-              <option value="MFD">Multi Family</option>
-              <option value="CP">Commercial</option>
-            </select>
-          </label>
+          <div class="msel" id="dfClientMsel"><button type="button" class="msel-btn" id="dfClientBtn">All clients</button><div class="msel-menu wide" id="dfClientMenu" hidden></div></div>
+          <div class="msel" id="dfProjMsel"><button type="button" class="msel-btn" id="dfProjBtn">All projects</button><div class="msel-menu" id="dfProjMenu" hidden></div></div>
+          <div class="msel" id="dfVendorMsel"><button type="button" class="msel-btn" id="dfVendorBtn">All vendors</button><div class="msel-menu wide" id="dfVendorMenu" hidden></div></div>
+          <div class="msel" id="dfInvMsel"><button type="button" class="msel-btn" id="dfInvBtn">All invoices</button><div class="msel-menu" id="dfInvMenu" hidden></div></div>
+          <div class="msel" id="dfDivMsel"><button type="button" class="msel-btn" id="dfDivBtn">All divisions</button><div class="msel-menu" id="dfDivMenu" hidden></div></div>
         </div>
       </section>
       <div id="drawList"></div>

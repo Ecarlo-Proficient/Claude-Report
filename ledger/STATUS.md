@@ -4,6 +4,23 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Draws tab overhaul (owner, 2026-08-27).** Four changes in one pass:
+  - **Consistent multi-select filters.** The plain Client/Project/Vendor/Invoice/Division inputs became
+    the SAME searchable multi-select used on Pay Bills / Invoices (`buildMSel`): type to drill the options
+    down, Select-all / None, Clear. `DRAW_MSEL` + `drawMselPasses` (Vendor is multi-valued - a draw spans
+    many bills - so it has its own pass; the rest key one value per draw). Consistent with the rest now.
+  - **Bills sub-grouped by vendor.** Expanding a draw shows each vendor as a header row with its total
+    (biggest first), collapsed; open a vendor to see its bills underneath - totals first, drill on demand.
+    New state `drawVendorExpanded`, keyed `(matched_invoice|vendor)`.
+  - **Net column** after Paid out = Billed in − the bills TIED to the draw (`d.billed - d.total`), not
+    what's been paid - the draw's margin; red when negative; also added to each project-group header
+    ("$X in / $Y out / $Z net").
+  - **Waiver tracking PARKED** (owner: "i don't do waiver ... a feature for future PMs; park it, don't
+    delete - it's a good system"). The per-bill "Waiver in hand" column + caption are hidden behind
+    `const WAIVERS_ENABLED = false`; the engine (`/api/waiver`, the `waiver` table, `setWaiver`) stays
+    intact - flip the flag to bring it back. It never gated a draw's stage/color.
+  Front-end only (app.js/index.html/style.css) - a browser reload picks it up. Verified live: filters
+  drill + select-all, vendor groups expand to bills, Net computes (incl. a red negative), no waiver UI.
 - **First-open lag fixed - two-phase load (owner, 2026-08-27: "when first opening now lags before it
   registers my clicks").** `/api/data` was one ~5.5 MB blob parsed up front (ap.bills 2.7 MB + sub_loc
   1.3 MB + payments + sales - data for tabs not yet open), blocking the main thread so clicks didn't
