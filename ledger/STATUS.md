@@ -21,6 +21,10 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     intact - flip the flag to bring it back. It never gated a draw's stage/color.
   Front-end only (app.js/index.html/style.css) - a browser reload picks it up. Verified live: filters
   drill + select-all, vendor groups expand to bills, Net computes (incl. a red negative), no waiver UI.
+  - **Dropdown-clip fix:** the Draws table (`#drawList`) sat OUTSIDE the filters `.widget`, so the widget
+    was short and its `overflow:hidden` clipped the open multi-select menus to a sliver. Moved `#drawList`
+    INSIDE the widget (like every other msel tab - Invoices/Pay Bills/Bills keep their table in the widget),
+    so the menu drops over the table unclipped. Caught by screenshot, not by DOM assertions.
 - **First-open lag fixed - two-phase load (owner, 2026-08-27: "when first opening now lags before it
   registers my clicks").** `/api/data` was one ~5.5 MB blob parsed up front (ap.bills 2.7 MB + sub_loc
   1.3 MB + payments + sales - data for tabs not yet open), blocking the main thread so clicks didn't
