@@ -767,6 +767,12 @@ the rollup can never disagree with what it links to. `shared/pnl_paths._archive_
 the shared notion of "filed": `find_pnl` looks inside those folders and project-pnl
 regenerates a filed job back into its archive folder.
 
+**`one-offs/job_vendor_report.py`** (read-only QBO) — job cost for a date window grouped
+by vendor, in the shape a PM's "Transaction List by Vendor" takes but complete. `--compare`
+reads the PM's own xlsx and adds a diff sheet labelling each gap: missing from their report,
+not coded to the job in QBO, or a date-range difference. Uses `shared/job_lines.JobMatcher`
+(class + project, aliases optional) and sums LINE amounts only.
+
 **`one-offs/pnl_line_level_audit.py`** (read-only QBO) — the guard on the owner's standing
 rule: **job cost comes from LINE amounts, never a bill's `TotalAmt`**. Sub bills are
 multi-line and span jobs, so banking a whole bill because one line matched hands the job
