@@ -44,24 +44,31 @@ ARCHIVE = "completed mfd project p&l"
 OVERHEAD_PCT = 0.10          # company view: 10% of REVENUE
 MFD_OVERHEAD_PCT = 0.09      # MFD's own view: 9% of COSTS (CLAUDE.md)
 
-# Big and plain. The whole complaint about the old sheet was that it is dense.
-SZ = 14                      # body
+# ── one accent, lots of white space ────────────────────────────────────
+# The first cut used solid navy on the tile headers AND the section headers AND
+# the table headers, borders on every cell, row banding, and red on every
+# negative — four treatments competing on one page, which is what read as
+# amateurish (the user 2026-08-27). Now: navy anchors ONE band per table, rules
+# do the separating instead of boxes, and red is reserved for profit lines.
+SZ = 13                      # body
 SZ_SMALL = 12                # detail rows
-SZ_TITLE = 22
+SZ_TITLE = 20
 NAVY = "1F3A5F"
+INK = "1F2937"               # near-black body text, softer than pure black
 GREEN = "1E6B3A"
 RED = "B00020"
 LINK = "0563C1"
-GREY = "595959"
+GREY = "6B7280"
 MONEY = '#,##0;[Red](#,##0)'          # birds-eye: no cents
 MONEY_C = '#,##0.00;[Red](#,##0.00)'  # detail: cents
 PCT = "0.0%"
 
-F_HDR = PatternFill("solid", fgColor=NAVY)
-F_BAND = PatternFill("solid", fgColor="EDF3FA")
-F_KPI = PatternFill("solid", fgColor="F2F2F2")
-HAIR = Side(style="thin", color="D0D7E2")
+F_HDR = PatternFill("solid", fgColor=NAVY)      # the ONE navy band per table
+F_BAND = PatternFill("solid", fgColor="F4F6F9")  # barely-there row banding
+F_KPI = PatternFill("none")                      # tiles sit on white
+HAIR = Side(style="thin", color="E3E8EF")
 BOX = Border(left=HAIR, right=HAIR, top=HAIR, bottom=HAIR)
+RULE = Side(style="thin", color=NAVY)
 UNDER = Border(bottom=Side(style="medium", color=NAVY))
 THICK = Side(style="medium", color=NAVY)
 
@@ -352,17 +359,15 @@ def _tiles(ws, r: int, items, spans) -> None:
     for (label, val, fmt, color), (c0, c1) in zip(items, spans):
         ws.merge_cells(start_row=r, start_column=c0, end_row=r, end_column=c1)
         ws.merge_cells(start_row=r + 1, start_column=c0, end_row=r + 1, end_column=c1)
-        _t(ws, r, c0, label, size=SZ_SMALL, bold=True, color="FFFFFF",
-           fill=F_HDR, align="center")
-        _t(ws, r + 1, c0, val, size=SZ + 6, bold=True, color=color, fmt=fmt,
-           fill=F_KPI, align="center")
+        _t(ws, r, c0, label, size=SZ_SMALL - 1, bold=True, color=GREY,
+           align="left")
+        _t(ws, r + 1, c0, val, size=SZ + 9, bold=True, color=color, fmt=fmt,
+           align="left")
+        # a hairline under the label is all the separation a tile needs
         for cc in range(c0, c1 + 1):
-            ws.cell(row=r, column=cc).border = BOX
-            ws.cell(row=r + 1, column=cc).border = BOX
-            ws.cell(row=r, column=cc).fill = F_HDR
-            ws.cell(row=r + 1, column=cc).fill = F_KPI
-    ws.row_dimensions[r].height = 20
-    ws.row_dimensions[r + 1].height = 38
+            ws.cell(row=r, column=cc).border = Border(bottom=RULE)
+    ws.row_dimensions[r].height = 18
+    ws.row_dimensions[r + 1].height = 40
 
 
 def _kpi_strip(ws, r: int, t: dict, spans) -> int:
@@ -380,29 +385,29 @@ def _kpi_strip(ws, r: int, t: dict, spans) -> int:
     r2 = r + 3
     lab, oh_c, net_c, pct_c = spans[0][0], spans[1], spans[2], spans[3]
     ws.merge_cells(start_row=r2, start_column=lab, end_row=r2, end_column=spans[0][1])
-    _t(ws, r2, lab, "AFTER OVERHEAD", size=SZ_SMALL, bold=True, color="FFFFFF",
-       fill=F_HDR)
+    _t(ws, r2, lab, "AFTER OVERHEAD", size=SZ_SMALL - 1, bold=True, color=GREY,
+       indent=1)
     for span, txt in ((oh_c, "OVERHEAD"), (net_c, "NET PROFIT"), (pct_c, "NET MARGIN")):
         ws.merge_cells(start_row=r2, start_column=span[0], end_row=r2, end_column=span[1])
-        _t(ws, r2, span[0], txt, size=SZ_SMALL, bold=True, color="FFFFFF",
-           fill=F_HDR, align="center")
+        _t(ws, r2, span[0], txt, size=SZ_SMALL - 1, bold=True, color=GREY,
+           align="right")
     for cc in range(spans[0][0], spans[3][1] + 1):
-        ws.cell(row=r2, column=cc).fill = F_HDR
+        ws.cell(row=r2, column=cc).border = Border(bottom=HAIR)
     for i, (lbl, oh, net, netm) in enumerate((
             ("Company — 10% of revenue", t["oh"], t["net"], t["netm"]),
             ("MFD — 9% of cost", t["moh"], t["mnet"], t["mnetm"]))):
         rr = r2 + 1 + i
         ws.merge_cells(start_row=rr, start_column=lab, end_row=rr, end_column=spans[0][1])
-        _t(ws, rr, lab, lbl, size=SZ, bold=(i == 1), indent=1)
+        _t(ws, rr, lab, lbl, size=SZ, bold=(i == 1), color=INK, indent=1)
         for span, val, fmt, col in (
                 (oh_c, -oh, MONEY, GREY),
                 (net_c, net, MONEY, GREEN if net >= 0 else RED),
                 (pct_c, netm, PCT, GREEN if net >= 0 else RED)):
             ws.merge_cells(start_row=rr, start_column=span[0], end_row=rr,
                            end_column=span[1])
-            _t(ws, rr, span[0], val, size=SZ + 1, bold=True, fmt=fmt,
-               color=col, align="center")
-        ws.row_dimensions[rr].height = 24
+            _t(ws, rr, span[0], val, size=SZ + 2, bold=True, fmt=fmt,
+               color=col, align="right")
+        ws.row_dimensions[rr].height = 26
     _thick_box(ws, r2, r2 + 2, spans[0][0], spans[3][1])
     return r2 + 4
 
@@ -421,8 +426,12 @@ def build_bundle(jobs: List[tuple], out: Path) -> None:
     sm.sheet_view.showGridLines = False
 
     _t(sm, 1, 1, "MFD OVERVIEW — TOTAL", size=SZ_TITLE, bold=True, color=NAVY)
-    _t(sm, 2, 1, f"{len(jobs)} finished jobs · click a job to open its detail · "
+    _t(sm, 2, 1, f"{len(jobs)} completed jobs · click a job to open its detail · "
                  f"{dt.datetime.now():%m/%d/%Y}", size=SZ_SMALL, color=GREY)
+    for c in range(1, 8):
+        sm.cell(row=2, column=c).border = Border(bottom=HAIR)
+    sm.row_dimensions[1].height = 30
+    sm.row_dimensions[3].height = 8
 
     tot = {k: sum(t[k] for _, _, t in jobs)
            for k in ("billed", "cost", "gp", "oh", "net", "moh", "mnet")}
@@ -435,16 +444,17 @@ def build_bundle(jobs: List[tuple], out: Path) -> None:
     heads = ["JOB", "BILLED", "COST", "GROSS PROFIT", "GP %",
              "NET  (company 10%)", "NET  (MFD 9%)"]
     for c, h in enumerate(heads, 1):
-        _t(sm, r, c, h, size=SZ_SMALL, bold=True, color="FFFFFF", fill=F_HDR,
-           align="center" if c > 1 else "left", wrap=True, border=BOX)
-    sm.row_dimensions[r].height = 32
+        _t(sm, r, c, h, size=SZ_SMALL - 1, bold=True, color="FFFFFF", fill=F_HDR,
+           align="right" if c > 1 else "left", wrap=True,
+           indent=1 if c == 1 else 0)
+    sm.row_dimensions[r].height = 30
     r += 1
     for job, _src, t in sorted(jobs, key=lambda x: -x[2]["billed"]):
         cell = _t(sm, r, 1, job, size=SZ, bold=True)
         cell.hyperlink = f"#'{job}'!A1"
         cell.font = Font(size=SZ, bold=True, color=LINK, underline="single")
-        _t(sm, r, 2, t["billed"], size=SZ, fmt=MONEY, align="right")
-        _t(sm, r, 3, t["cost"], size=SZ, fmt=MONEY, align="right")
+        _t(sm, r, 2, t["billed"], size=SZ, fmt=MONEY, align="right", color=INK)
+        _t(sm, r, 3, t["cost"], size=SZ, fmt=MONEY, align="right", color=INK)
         _t(sm, r, 4, t["gp"], size=SZ, bold=True, fmt=MONEY, align="right",
            color=GREEN if t["gp"] >= 0 else RED)
         _t(sm, r, 5, t["gpm"], size=SZ, fmt=PCT, align="right",
@@ -453,19 +463,18 @@ def build_bundle(jobs: List[tuple], out: Path) -> None:
            color=GREEN if t["net"] >= 0 else RED)
         _t(sm, r, 7, t["mnet"], size=SZ, bold=True, fmt=MONEY, align="right",
            color=GREEN if t["mnet"] >= 0 else RED)
-        for c in range(1, 8):
-            sm.cell(row=r, column=c).border = BOX
-            if r % 2 == 0:
+        if r % 2 == 0:
+            for c in range(1, 8):
                 sm.cell(row=r, column=c).fill = F_BAND
         sm.row_dimensions[r].height = 22
         r += 1
-    _t(sm, r, 1, f"TOTAL — {len(jobs)} JOBS", size=SZ, bold=True, fill=F_KPI)
+    _t(sm, r, 1, f"TOTAL — {len(jobs)} JOBS", size=SZ, bold=True, color=NAVY)
     for c, k, fmt in ((2, "billed", MONEY), (3, "cost", MONEY), (4, "gp", MONEY),
                       (5, "gpm", PCT), (6, "net", MONEY), (7, "mnet", MONEY)):
         _t(sm, r, c, tot[k], size=SZ, bold=True, fmt=fmt, align="right",
-           fill=F_KPI, color=(GREEN if tot["gp"] >= 0 else RED) if c in (4, 5, 6, 7) else "000000")
+           color=(GREEN if tot[k] >= 0 else RED) if c in (4, 5, 6, 7) else NAVY)
     for c in range(1, 8):
-        sm.cell(row=r, column=c).border = BOX
+        sm.cell(row=r, column=c).border = Border(top=RULE)
     # MFD's own overhead column is boxed on the job table too, so it reads as
     # a distinct answer rather than another number in the row.
     _thick_box(sm, r - len(jobs) - 1, r, 7, 7)
@@ -481,7 +490,12 @@ def build_bundle(jobs: List[tuple], out: Path) -> None:
         back = _t(ws, 1, 7, "← back to Summary", size=SZ_SMALL, align="right")
         back.hyperlink = "#'Summary'!A1"
         back.font = Font(size=SZ_SMALL, color=LINK, underline="single")
-        _t(ws, 2, 1, src["title"].replace("PROJECT P&L — ", ""), size=SZ_SMALL, color=GREY)
+        _t(ws, 2, 1, src["title"].replace("PROJECT P&L — ", ""),
+           size=SZ_SMALL, color=GREY)
+        for c in range(1, 8):
+            ws.cell(row=2, column=c).border = Border(bottom=HAIR)
+        ws.row_dimensions[1].height = 30
+        ws.row_dimensions[3].height = 8
         JOB_SPANS = [(1, 2), (3, 4), (5, 6), (7, 7)]
         r = _kpi_strip(ws, 4, t, JOB_SPANS)
 
@@ -495,11 +509,11 @@ def build_bundle(jobs: List[tuple], out: Path) -> None:
         r += 1
         for c, h in ((1, "Invoice"), (2, "Date"), (3, "What for"),
                      (6, "Amount"), (7, "Paid?")):
-            _t(ws, r, c, h, size=SZ_SMALL, bold=True, color="FFFFFF",
-               fill=F_HDR, align="center" if c in (6, 7) else "left")
+            _t(ws, r, c, h, size=SZ_SMALL - 1, bold=True, color="FFFFFF",
+               fill=F_HDR, align="right" if c == 6 else
+               ("center" if c == 7 else "left"), indent=1 if c == 1 else 0)
         for c in range(1, 8):
             ws.cell(row=r, column=c).fill = F_HDR
-            ws.cell(row=r, column=c).border = BOX
         ws.row_dimensions[r].height = 22
         r += 1
         for inv in sorted(src["invoices"], key=lambda i: str(i["date"]), reverse=True):
@@ -538,28 +552,28 @@ def build_bundle(jobs: List[tuple], out: Path) -> None:
         r += 1
         for c, h in ((1, "Account / Vendor / Doc #"), (2, "Date"),
                      (3, "Description"), (6, "Amount"), (7, "Paid?")):
-            _t(ws, r, c, h, size=SZ_SMALL, bold=True, color="FFFFFF",
-               fill=F_HDR, align="center" if c in (6, 7) else "left")
+            _t(ws, r, c, h, size=SZ_SMALL - 1, bold=True, color="FFFFFF",
+               fill=F_HDR, align="right" if c == 6 else
+               ("center" if c == 7 else "left"), indent=1 if c == 1 else 0)
         for c in range(1, 8):
             ws.cell(row=r, column=c).fill = F_HDR
-            ws.cell(row=r, column=c).border = BOX
         ws.row_dimensions[r].height = 22
         r += 1
         for sec in src["sections"]:
-            _t(ws, r, 1, sec["name"], size=SZ, bold=True, color="FFFFFF", fill=F_HDR)
-            _t(ws, r, 6, sec["total"], size=SZ, bold=True, color="FFFFFF",
-               fill=F_HDR, fmt=MONEY, align="right")
-            for c in (2, 3, 4, 5, 7):
-                ws.cell(row=r, column=c).fill = F_HDR
-            ws.row_dimensions[r].height = 24
+            _t(ws, r, 1, sec["name"], size=SZ + 1, bold=True, color=NAVY)
+            _t(ws, r, 6, sec["total"], size=SZ + 1, bold=True, color=NAVY,
+               fmt=MONEY, align="right")
+            for c in range(1, 8):
+                ws.cell(row=r, column=c).border = Border(bottom=RULE)
+            ws.row_dimensions[r].height = 26
             r += 1
             for acct in sec["accounts"]:
-                _t(ws, r, 1, acct["name"], size=SZ, bold=True, color=NAVY, fill=F_BAND)
-                _t(ws, r, 6, acct["total"], size=SZ, bold=True, color=NAVY,
+                _t(ws, r, 1, acct["name"], size=SZ, bold=True, color=INK, fill=F_BAND)
+                _t(ws, r, 6, acct["total"], size=SZ, bold=True, color=INK,
                    fill=F_BAND, fmt=MONEY, align="right")
                 for c in (2, 3, 4, 5, 7):
                     ws.cell(row=r, column=c).fill = F_BAND
-                ws.row_dimensions[r].height = 22
+                ws.row_dimensions[r].height = 21
                 r += 1
                 for v in acct["vendors"]:
                     _t(ws, r, 1, v["name"], size=SZ_SMALL, bold=True, indent=1)
@@ -593,6 +607,12 @@ def build_bundle(jobs: List[tuple], out: Path) -> None:
         ws.freeze_panes = "A11"
         ws.sheet_properties.outlinePr.summaryBelow = False
 
+    for ws in wb.worksheets:                 # lands on one page wide as a PDF
+        ws.page_setup.orientation = "landscape"
+        ws.page_setup.fitToWidth = 1
+        ws.page_setup.fitToHeight = 0
+        ws.sheet_properties.pageSetUpPr.fitToPage = True
+        ws.print_options.horizontalCentered = True
     tmp = out.with_suffix(".tmp.xlsx")
     wb.save(str(tmp))
     assert_clean(tmp)

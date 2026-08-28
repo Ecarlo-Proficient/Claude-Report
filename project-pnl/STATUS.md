@@ -311,6 +311,20 @@ manual close), RP (no draws — expenses → invoice → profit).
   workbook to carry a `By Account` sheet (regenerate older ones first).
   This is why the side-by-side layout did NOT need the `_Ref` refactor that
   corrupted the main sheet: a fresh template owns its own geometry.
+- **Bundle visual pass (2026-08-27).** The first cut was called amateurish and
+  the diagnosis was competing treatments: solid navy on the tile headers AND
+  section headers AND table headers, borders on every cell, row banding, and
+  red on every negative — four things fighting for attention. Now ONE navy band
+  anchors each table, rules separate instead of boxes, banding is barely-there
+  (`F4F6F9`), and red is reserved for profit/net figures. Measured on MFD172:
+  navy fills 14 cells (was every header row), bordered cells 44 (was every
+  cell), red text 5. Tiles sit on white with a hairline under the label.
+  Also: identifiers align LEFT (an invoice # right-aligned floated to the far
+  edge of its column, away from its own header), description spills across the
+  tile columns instead of needing a 74-wide column, explicit row heights, and
+  landscape fit-to-width page setup so it prints/PDFs as one page wide.
+  **`lint_layout()` expands merged ranges** before calling a column empty — it
+  was flagging the tile columns as gutters.
 - **Rich text is BANNED in this exporter, and every save is now gated on the
   corruption check (2026-08-24).** `_cost_code_value` / `_cost_name_value` were
   returning `CellRichText` (bold code token + regular description, the user
