@@ -325,6 +325,17 @@ manual close), RP (no draws — expenses → invoice → profit).
   landscape fit-to-width page setup so it prints/PDFs as one page wide.
   **`lint_layout()` expands merged ranges** before calling a column empty — it
   was flagging the tile columns as gutters.
+- **"Funded but unpaid" flag on every draw sheet (2026-08-28).** When the GC
+  has PAID a draw but bills inside it are still open, the sheet says so with
+  the count, the total and the bill numbers. That state is what earns a
+  supplier notice and it is invisible everywhere else — the draw reads
+  collected and the job reads covered. It came from MFD325's July 2026 draw:
+  Estrada 598125 sat open on a draw that had already funded it, so the PM
+  widened his report to 05/30 to surface it, which dragged June's cost onto
+  July's income and made a +18k draw read as -100k. The flag means nobody has
+  to widen a window to find one. Also fixed here: the draw sheets painted
+  every payment status GREEN, because `paid_map` became a `(balance, total)`
+  tuple with PARTIAL and `GREEN if _pd else RED` is always true on a tuple.
 - **Rich text is BANNED in this exporter, and every save is now gated on the
   corruption check (2026-08-24).** `_cost_code_value` / `_cost_name_value` were
   returning `CellRichText` (bold code token + regular description, the user

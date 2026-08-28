@@ -3625,6 +3625,35 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
 
     qbo_periodtxt = (f"{period[0]:%m/%d/%y}–{period[1]:%m/%d/%y}" if period else lbl)
     kpi_strip("DRAW SUMMARY  (QBO)", qbo_total, len(qbo_bills), qbo_periodtxt)
+    # FUNDED BUT UNPAID — the GC has paid this draw, yet bills inside it are
+    # still open. That is what earns a supplier notice, and it is invisible
+    # anywhere else: the draw looks collected and the job looks covered
+    # (MFD325 July 2026 — Estrada 598125 sat open on a draw that had already
+    # funded it, so the PM widened his date range to surface it and made a
+    # healthy draw read as a 100k loss). Stated here so nobody has to widen a
+    # window to find it (the user 2026-08-28).
+    if _inv_paid and paid_map is not None:
+        _open = []
+        for _b in qbo_bills:
+            _pd = paid_map.get(_b.get("txn_id"))
+            if _pd is not None and float(_pd[0] or 0) > 0.005:
+                _open.append((_b.get("num", ""), float(_pd[0])))
+        if _open:
+            _seen, _uniq = set(), []
+            for _n, _bal in _open:
+                if _n in _seen:
+                    continue
+                _seen.add(_n)
+                _uniq.append((_n, _bal))
+            _tot = sum(b for _, b in _uniq)
+            wc(r, 1, f"⚑ THIS DRAW WAS COLLECTED BUT {len(_uniq)} BILL(S) IN IT ARE "
+                     f"STILL OPEN — ${_tot:,.2f}. Supplier-notice risk; the money "
+                     f"for these is already in.", bold=True, color="9C5700")
+            r += 1
+            wc(r, 1, "    " + " · ".join(f"#{n} ${b:,.2f}" for n, b in
+                                         sorted(_uniq, key=lambda x: -x[1])[:8]),
+               color="9C5700")
+            r += 2
     if has_pm:
         r += 1
         if pm_rep:
