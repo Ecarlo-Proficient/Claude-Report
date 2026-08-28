@@ -4,6 +4,22 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Draws + Audit fixes (owner, 2026-08-28).**
+  - **MCP/CORE pumping out of Pay Vendors.** The stage already ignored MCP/CORE concrete pumping; now the
+    DISPLAYED pay-out does too - new `total_gate` (backend, gating bills only) drives "Paid out", the paid
+    count (`paid_gate/n_gate`), Net, and the group totals, so pump bills don't contribute to what we owe
+    vendors. The bills still SHOW: their vendor group is tagged "not paid by us" and the caption notes
+    "$X pump (not paid by us)". (A sibling session had added a stage-only tag; reconciled to the money too.)
+  - **Draw period column.** Parsed from the matched-invoice text ("August 2026", "Draw #4", or the period
+    end date; the ledger's `draw_period` column is empty - it's a QBO PrivateNote value not loaded). The
+    full "(Period: start - end)" range is in the tooltip.
+  - **Filter search-box visual bug.** The Draws menus live in `.filters`, whose `input[type=search]{flex:1
+    1 240px}` made the msel search box GROW to fill the flex-column menu (a ~170px-tall box when filtered
+    to a few options). Pinned with `.msel-menu input.msel-search { flex: 0 0 auto }`.
+  - **Audit tab lag/crash.** It built EVERY filtered row (~1900, each with a checkbox + scan button),
+    rebuilt on every keystroke - clicks stalled for seconds and the tab crashed. Capped the DOM to 250
+    rows with a "narrow with a chip/division/search (Copy still takes all N)" note; Copy + Select-all still
+    operate on the full filtered set. Re-render dropped from seconds to ~10ms.
 - **Draws tab overhaul (owner, 2026-08-27).** Four changes in one pass:
   - **Consistent multi-select filters.** The plain Client/Project/Vendor/Invoice/Division inputs became
     the SAME searchable multi-select used on Pay Bills / Invoices (`buildMSel`): type to drill the options

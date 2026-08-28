@@ -1004,6 +1004,20 @@ def _fetch_accounting_audits() -> dict:
 # paid → turn it in to unlock the next draw), then pay vendors, then awaiting GC.
 # A draw is "done" (green) the moment every bill is PAID; unconditional waivers are
 # tracked per bill (the checkboxes) for the owner's records but no longer gate green.
+# Vendors that must NOT hold a draw in "Pay vendors" (the owner 2026-08-28).
+# The pump companies invoice on their own cycle and are paid outside the draw,
+# so an open pump bill was parking otherwise-finished draws in the wrong stage.
+# Their bills STILL SHOW on the draw and still count in the money — they just
+# don't gate it. Matched tightly: "JD Core Construction" and "CORE SUPPLY EAST"
+# are different vendors and must not be caught.
+_NON_GATING_VENDOR_RE = re.compile(
+    r"^\s*(MCP\s+CONCRETE\s+PUMPING|CORE\s+CONCRETE\s+PUMPING)\b", re.I)
+
+
+def _gates_stage(vendor: str) -> bool:
+    return not _NON_GATING_VENDOR_RE.match(vendor or "")
+
+
 _STAGE_ORDER = {"Ready to turn in": 0, "Fund in — pay vendors": 1,
                 "Awaiting GC funding": 2, "All paid": 3}
 
@@ -1046,19 +1060,26 @@ def _fetch_draws(con, limit: int = 100) -> dict:
             "open": r["open_bal"] or 0, "pay_status": r["pay_status"], "invoice_status": r["invoice_status"],
             "gc_paid": r["gc"], "pay_date": r["pd"], "bill_date": r["bd"], "qbo_link": r["qbo_link"],
             "waiver_key": wk, "waiver": bool(wmap.get(wk, 0)),
+            "gates": _gates_stage(r["vendor"]),
         })
     out = []
     for mi, d in draws.items():
         bills = d["bills"]
         n = len(bills)
         paid = sum(1 for b in bills if b["pay_date"])
+        # Stage is decided on the GATING bills only. If every bill on the draw
+        # is a pump bill there is nothing else to judge by, so fall back to all
+        # of them rather than calling the draw done on no evidence.
+        gate = [b for b in bills if b["gates"]] or bills
+        n_gate = len(gate)
+        paid_gate = sum(1 for b in gate if b["pay_date"])
         funded = any(b["gc_paid"] for b in bills)
         waivers = sum(1 for b in bills if b["waiver"])
         ar = bmap.get(str(d.get("invoice_no") or ""))
         gc_paid_in = bool(ar and (ar.get("status") == "Paid" or (ar.get("balance") or 0) <= 0.005))
         if not funded:
             stage = "Awaiting GC funding"
-        elif paid < n:
+        elif paid_gate < n_gate:
             stage = "Fund in — pay vendors"
         elif gc_paid_in:                   # vendors paid AND the GC has paid our AR = fully settled
             stage = "All paid"
@@ -1066,7 +1087,13 @@ def _fetch_draws(con, limit: int = 100) -> dict:
             stage = "Ready to turn in"
         d.update({
             "label": (mi or "").split("\n")[0].strip(), "n": n, "paid": paid, "funded": funded,
-            "waivers": waivers, "total": sum(b["amount"] for b in bills), "stage": stage,
+            # how many bills actually decide the stage, and how many open bills
+            # are parked because they are non-gating vendors
+            "n_gate": n_gate, "paid_gate": paid_gate,
+            "parked": sum(1 for b in bills if not b["gates"] and not b["pay_date"]),
+            "waivers": waivers, "total": sum(b["amount"] for b in bills),
+            # what we actually pay = gating bills only (MCP/CORE concrete pumping excluded - not paid by us)
+            "total_gate": sum(b["amount"] for b in bills if b["gates"]), "stage": stage,
             "recency": max([(b["gc_paid"] or b["pay_date"] or b["bill_date"] or "") for b in bills] or [""]),
             # money IN (billed to GC) — from the Invoice Tracker, by Invoice #
             "billed": (ar["amount"] if ar else None),          # net billed to the GC

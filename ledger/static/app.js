@@ -850,6 +850,17 @@ function drawMselPasses(d) {
   }
   return true;
 }
+// The draw period lives in the matched-invoice text (the ledger's draw_period field is empty -
+// it's a QBO PrivateNote value that isn't loaded). Pull a short label: "August 2026", "Draw #4",
+// or the period end date; the full "(Period: start - end)" range goes in the tooltip.
+function drawPeriod(mi) {
+  const s = String(mi || "");
+  let m = s.match(/\b([A-Z][a-z]+) Draw (\d{4})/); if (m) return m[1] + " " + m[2];
+  m = s.match(/\bDraw\s*#?\s*(\d+)/i); if (m) return "Draw #" + m[1];
+  m = s.match(/Period:\s*[\d/]+\s*-\s*([\d/]+)/i); if (m) return m[1];
+  return "";
+}
+function drawPeriodFull(mi) { const m = String(mi || "").match(/Period:\s*([\d/]+\s*-\s*[\d/]+)/i); return m ? "Period " + m[1].replace(/\s+/g, " ") : ""; }
 function renderDraws() {
   buildDrawFilters();                              // (re)build the multi-selects when the draw set changes
   const all = (DRAWS.draws || []).filter(drawMselPasses);   // Client · Project · Vendor · Invoice · Division (AND)
@@ -862,7 +873,7 @@ function renderDraws() {
   const stats = [
     ["All paid", "All paid", "GC paid you + vendors paid"],
     ["Collect from GC", "Ready to turn in", "vendors paid, GC still owes"],
-    ["Pay vendors", "Fund in — pay vendors", "GC funded, vendors not paid yet"],
+    ["Pay vendors", "Fund in — pay vendors", "GC funded, vendors not paid yet"],   // pump bills don't gate this
     ["Awaiting GC", "Awaiting GC funding", "not funded by the GC yet"],
   ];
   const sr = $("#drawsStats"); sr.innerHTML = "";
@@ -890,7 +901,7 @@ function renderDraws() {
   const scroll = document.createElement("div"); scroll.className = "table-scroll";
   const table = document.createElement("table"); table.className = "grid draws-table";
   const thead = document.createElement("thead"), tbody = document.createElement("tbody");
-  const cols = [["", "left"], ["Draw memo", "left"], ["Billed (in)", "right"], ["Status", "left"],
+  const cols = [["", "left"], ["Draw memo", "left"], ["Period", "left"], ["Billed (in)", "right"], ["Status", "left"],
                 ["Invoice #", "left"], ["Date", "left"], ["Paid out", "right"], ["Net", "right"], ["Stage", "left"]];
   const htr = document.createElement("tr");
   for (const [c, al] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
@@ -901,7 +912,7 @@ function renderDraws() {
       curProj = d.project_no;
       const g = grouped.filter(x => x.project_no === curProj);
       const gIn = g.reduce((t, x) => t + (x.billed || 0), 0);
-      const gOut = g.reduce((t, x) => t + (x.total || 0), 0);
+      const gOut = g.reduce((t, x) => t + (x.total_gate != null ? x.total_gate : (x.total || 0)), 0);
       const gtr = document.createElement("tr"); gtr.className = "draw-group";
       const gtd = document.createElement("td"); gtd.colSpan = cols.length;
       const sp = document.createElement("span"); sp.className = "g-proj"; sp.textContent = curProj || "—";
@@ -919,6 +930,8 @@ function renderDraws() {
     const cc = document.createElement("td"); cc.className = "left draw-caret"; cc.textContent = open ? "▾" : "▸"; tr.appendChild(cc);
     const memo = (d.label || "").replace(/^\s*\S+\s*—\s*/, "").replace(/^\s*(MFD|CP|RP)\d+(-FTW)?\s*-\s*/i, "").trim() || d.label || "—";
     tr.appendChild(leftText(memo));
+    const per = drawPeriod(d.matched_invoice); const perCell = leftText(per || "—");
+    if (per) perCell.title = drawPeriodFull(d.matched_invoice) || per; tr.appendChild(perCell);
     const bt = document.createElement("td");
     if (d.billed != null) { const mc = moneyCell(d.billed); mc.classList.add("draw-in"); bt.appendChild(mc); }
     else bt.appendChild(document.createTextNode("—"));
@@ -932,11 +945,13 @@ function renderDraws() {
     // the sidebar for draws"), the ↗ for QuickBooks. Row click still expands the vendor bills.
     tr.appendChild(invNoCell(d.inv || (d.invoice_no ? { doc_number: d.invoice_no, qbo_txn_id: d.ar_qbo_id } : null)));
     tr.appendChild(leftText(fmtDate(d.ar_date || d.recency)));
-    const ot = document.createElement("td"); const mo = moneyCell(d.total); mo.classList.add("draw-out"); ot.appendChild(mo);
-    const pc = document.createElement("span"); pc.className = "paidcnt"; pc.textContent = ` ${d.paid}/${d.n}`; ot.appendChild(pc); tr.appendChild(ot);
-    // Net = what the GC billed in minus the bills TIED to this draw (not what we've paid) - the draw's margin
+    // Pay-out excludes MCP/CORE concrete pumping (we don't pay them) - the gating total/count.
+    const payTotal = d.total_gate != null ? d.total_gate : d.total;
+    const ot = document.createElement("td"); const mo = moneyCell(payTotal); mo.classList.add("draw-out"); ot.appendChild(mo);
+    const pc = document.createElement("span"); pc.className = "paidcnt"; pc.textContent = ` ${d.paid_gate != null ? d.paid_gate : d.paid}/${d.n_gate != null ? d.n_gate : d.n}`; ot.appendChild(pc); tr.appendChild(ot);
+    // Net = billed in minus the vendor bills we actually pay (excl. pump; not what's been paid) - the margin
     const nt = document.createElement("td");
-    if (d.billed != null) { const net = (d.billed || 0) - (d.total || 0); const nc = moneyCell(net); if (net < 0) nc.style.color = "var(--neg)"; nc.title = "billed in − bills tied to this draw"; nt.appendChild(nc); }
+    if (d.billed != null) { const net = (d.billed || 0) - payTotal; const nc = moneyCell(net); if (net < 0) nc.style.color = "var(--neg)"; nc.title = "billed in minus vendor bills we pay (excl. pump)"; nt.appendChild(nc); }
     else nt.appendChild(document.createTextNode("—"));
     tr.appendChild(nt);
     const st = document.createElement("td"); st.className = "left";
@@ -956,7 +971,9 @@ function renderDraws() {
 function buildBillsTable(d) {
   const wrap = document.createElement("div"); wrap.className = "bills-sub";
   const cap = document.createElement("div"); cap.className = "bills-cap";
-  cap.textContent = `${d.n} bills · ${money(d.total)} to vendors · ${d.paid}/${d.n} paid`
+  const payTotal = d.total_gate != null ? d.total_gate : d.total;   // excl MCP/CORE pumping (not paid by us)
+  cap.textContent = `${d.n} bills · ${money(payTotal)} to pay · ${(d.paid_gate != null ? d.paid_gate : d.paid)}/${(d.n_gate != null ? d.n_gate : d.n)} paid`
+    + (d.total - payTotal > 0.5 ? ` · ${money(d.total - payTotal)} pump (not paid by us)` : "")
     + (WAIVERS_ENABLED ? ` · ${d.waivers}/${d.n} waivers in` : "");
   wrap.appendChild(cap);
   const scroll = document.createElement("div"); scroll.className = "table-scroll";
@@ -986,7 +1003,14 @@ function buildBillsTable(d) {
     const nm = document.createElement("span"); nm.className = "vg-name"; nm.textContent = v;
     const mt = document.createElement("span"); mt.className = "vg-meta";
     mt.textContent = ` · ${bills.length} bill${bills.length > 1 ? "s" : ""} · ${money(vtot)} · ${vpaid}/${bills.length} paid`;
-    vtd.appendChild(car); vtd.appendChild(nm); vtd.appendChild(mt); vtr.appendChild(vtd); tbody.appendChild(vtr);
+    vtd.appendChild(car); vtd.appendChild(nm); vtd.appendChild(mt);
+    // MCP/CORE concrete pumping: shown for completeness but NOT paid by us - excluded from the
+    // "Pay vendors" stage AND from the pay-out total/count/net (owner 2026-08-28).
+    if (bills.length && bills[0].gates === false) {
+      const tag = document.createElement("span"); tag.className = "vg-tag"; tag.textContent = "not paid by us";
+      vtd.appendChild(tag);
+    }
+    vtr.appendChild(vtd); tbody.appendChild(vtr);
     if (!vopen) continue;
     for (const b of bills) {
       const tr = document.createElement("tr"); tr.className = "vbill";
@@ -5527,8 +5551,9 @@ function renderAccounting() {
     td.textContent = all.length ? "Nothing matches the filters." : "No audit findings - everything's clean.";
     tr.appendChild(td); tbody.appendChild(tr); _acctUpdateSelAll(); _acctUpdateCopyBtn(); return;
   }
+  const ACCT_CAP = 250;   // render cap - all ~1900 rows (each w/ a checkbox + scan button) crashed the tab
   const frag = document.createDocumentFragment();
-  for (const f of rows) {
+  for (const f of rows.slice(0, ACCT_CAP)) {
     const tr = document.createElement("tr");
     const chTd = document.createElement("td"); chTd.className = "left acct-check";
     const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = acctSel.has(f._k);
@@ -5559,6 +5584,12 @@ function renderAccounting() {
     frag.appendChild(tr);
   }
   tbody.appendChild(frag);
+  if (rows.length > ACCT_CAP) {
+    const tr = document.createElement("tr"), td = document.createElement("td");
+    td.colSpan = cols.length + 1; td.className = "left"; td.style.cssText = "padding:12px 14px;color:var(--text-dim)";
+    td.textContent = `Showing the first ${ACCT_CAP} of ${rows.length} - narrow with a chip, division, or the search above (Copy still takes all ${rows.length}).`;
+    tr.appendChild(td); tbody.appendChild(tr);
+  }
   _acctUpdateSelAll(); _acctUpdateCopyBtn();
 }
 

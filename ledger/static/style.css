@@ -308,6 +308,9 @@ tr.draw-group .g-sub { color: var(--text-dim); font-weight: 500; font-size: .85e
 .bills-sub tr.vgroup .vg-caret { color: var(--text-dim); }
 .bills-sub tr.vgroup .vg-name { font-weight: 700; }
 .bills-sub tr.vgroup .vg-meta { color: var(--text-dim); font-weight: 500; font-size: .85em; font-variant-numeric: tabular-nums; }
+.bills-sub tr.vgroup .vg-tag { margin-left: 7px; font-size: .78em; font-weight: 600; padding: 1px 7px; border-radius: 999px;
+  color: #9a6a12; background: color-mix(in srgb, #d99a2b 20%, transparent); white-space: nowrap; }
+html[data-theme="dark"] .bills-sub tr.vgroup .vg-tag { color: #e8b45c; }
 .bills-sub tr.vbill > td:first-child { border-left: 2px solid var(--border); }
 
 /* ── Vendor type pill ──────────────────────────────────────────────────── */
@@ -612,6 +615,9 @@ a.ri-name:hover { text-decoration: underline; }
 .msel-menu.wide { min-width: 240px; }
 .msel-search { font: inherit; font-size: .85em; padding: 5px 8px; margin: 1px 2px 5px; border-radius: 6px;
   border: 1px solid var(--border); background: var(--surface-2); color: var(--text); }
+/* The Draws menus sit inside `.filters`, whose `input[type=search]{flex:1 1 240px}` rule would make
+   the search box GROW to fill the flex-column menu (a 170px-tall search when filtered). Pin it. */
+.msel-menu input.msel-search { flex: 0 0 auto; width: auto; }
 
 /* Division chip - one subtle hue per division (RP green / CP blue / MFD violet). */
 .divchip { display: inline-block; padding: 0 6px; border-radius: 5px; font-size: .82em; font-weight: 700;
