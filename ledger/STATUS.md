@@ -4,6 +4,14 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **First-open lag fixed - two-phase load (owner, 2026-08-27: "when first opening now lags before it
+  registers my clicks").** `/api/data` was one ~5.5 MB blob parsed up front (ap.bills 2.7 MB + sub_loc
+  1.3 MB + payments + sales - data for tabs not yet open), blocking the main thread so clicks didn't
+  register. Split it: `fetch_data(scope)` serves **light** (meta/projects/costs/draws/liens/open-invoices,
+  ~1.2 MB) on first paint so the Overview is instantly interactive, then the frontend pulls **heavy**
+  (bills/sub_loc/payments/sales, ~4.3 MB) in the background via `loadHeavy()` and re-renders (render()
+  builds every tab's DOM). Manual + 90s auto-refresh still fetch **full** in one shot (unchanged). 78%
+  smaller first load. Verified: light then heavy fire in sequence, all heavy tabs populate, no errors.
 - **UX overhaul for efficiency (owner, 2026-08-27: "visual improvements ... efficiency ... i need
   console first ... graph is cluttered/glitchy ... my view and overview are basically the same,
   one overview ... fold the bill tracker audit sheet in for Accounting fixes, filterable ... open

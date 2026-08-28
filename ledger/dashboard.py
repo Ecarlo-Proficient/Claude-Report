@@ -1205,8 +1205,16 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     return con
 
 
-def fetch_data(db_path: Path) -> dict:
-    """Return {meta, projects} from v_wip_latest, or {error} if the db isn't ready."""
+def fetch_data(db_path: Path, scope: str = "full") -> dict:
+    """Return the ledger payload, or {error} if the db isn't ready.
+
+    scope splits the load so the app is interactive on first paint instead of parsing the
+    whole ~5 MB blob up front:
+      * 'full'  - everything (used by manual + the 90s auto-refresh).
+      * 'light' - the Overview core (projects/costs/draws/liens); the heavy tab blobs
+                  (bills, sub_loc, payments, sales) are DEFERRED. Sent on first page load.
+      * 'heavy' - only those deferred blobs, fetched in the background right after 'light'.
+    """
     if not db_path.exists():
         return {"error": f"No ledger database at {db_path}. "
                          f"Run:  python3 ledger/load_wip_master.py"}
@@ -1214,6 +1222,17 @@ def fetch_data(db_path: Path) -> dict:
         con = _connect(db_path)
     except sqlite3.OperationalError as e:
         return {"error": f"Could not open {db_path}: {e}"}
+    if scope == "heavy":                    # only the deferred, tab-specific blobs
+        try:
+            out = {"ap_bills": _fetch_ap(con).get("bills", []),
+                   "sub_loc": _fetch_sub_loc(con),
+                   "payments": _fetch_payments(con),
+                   "sales": _fetch_sales(con)}
+        except sqlite3.OperationalError as e:
+            con.close()
+            return {"error": f"Ledger schema not found ({e}). Run the loader first."}
+        con.close()
+        return out
     try:
         rows = [dict(r) for r in con.execute("SELECT * FROM v_wip_latest")]
         report_date = None
@@ -1229,12 +1248,14 @@ def fetch_data(db_path: Path) -> dict:
         proj_client = _project_customer_map(con)   # project -> client, to show on the projects list too
         costs = _fetch_costs(con)
         draws = _fetch_draws(con)
-        sales = _fetch_sales(con)
-        sub_loc = _fetch_sub_loc(con)
         open_invoices = _fetch_open_invoices(con)
-        payments = _fetch_payments(con)
         actions = _fetch_actions(con)
         freshness = _freshness(con)
+        sub_loc = sales = payments = None          # heavy blobs: only on a full load (deferred otherwise)
+        if scope == "full":
+            sales = _fetch_sales(con)
+            sub_loc = _fetch_sub_loc(con)
+            payments = _fetch_payments(con)
         try:                                # realm for company-scoped QBO deep links (never logged)
             _mr = con.execute("SELECT value FROM meta WHERE key='qbo_realm'").fetchone()
             qbo_realm = _mr[0] if _mr else None
@@ -1252,7 +1273,9 @@ def fetch_data(db_path: Path) -> dict:
     for d in draws.get("draws", []):  # attach the Notion action link (if tracked)
         inv = (d.get("matched_invoice") or "").split("—")[0].strip()
         d["action"] = actions.get(f"draw:{inv}")
-    return {
+    if scope == "light":
+        ap = {**ap, "bills": []}      # defer the ~2.7 MB bill list to the heavy fetch
+    out = {
         "meta": {
             "db_path": str(db_path),
             "version": LEDGER_VERSION,
@@ -1266,11 +1289,13 @@ def fetch_data(db_path: Path) -> dict:
         "ap": ap,
         "cost": costs,
         "draws": draws,
-        "sales": sales,
-        "sub_loc": sub_loc,
         "open_invoices": open_invoices,
-        "payments": payments,
     }
+    if scope == "full":               # the heavy tab blobs ride along on a full refresh
+        out["sales"] = sales
+        out["sub_loc"] = sub_loc
+        out["payments"] = payments
+    return out
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -1326,7 +1351,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/":
             self._static("index.html")
         elif path == "/api/data":
-            self._json(fetch_data(self.db_path))
+            q = self._query()
+            scope = "light" if q.get("light") else ("heavy" if q.get("heavy") else "full")
+            self._json(fetch_data(self.db_path, scope))
         elif path == "/api/health":
             self._json({"ok": True})
         elif path == "/api/pnl":

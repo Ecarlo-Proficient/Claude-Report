@@ -284,7 +284,7 @@ let activeRep = null;    // rep whose activity drill is shown (null = auto: the 
 // ── Load ──────────────────────────────────────────────────────────────────
 async function load(isAuto) {
   let data;
-  try { data = await (await fetch("/api/data")).json(); }
+  try { data = await (await fetch(isAuto ? "/api/data" : "/api/data?light=1")).json(); }
   catch (e) { return showError("Could not reach the server: " + e); }
   if (data.error) return showError(data.error);
   $("#errorBanner").hidden = true;
@@ -294,10 +294,11 @@ async function load(isAuto) {
   BILLS = AP.bills || [];
   COST = data.cost || { by_code: [], by_project_code: {}, by_project: {}, by_cost_type: [], by_vendor: [], loaded_total: 0 };
   DRAWS = data.draws || { draws: [], total: 0 };
-  SALES = data.sales || { pipeline: [], by_rep: [], warm: [], customers: [], totals: {} };
-  SUBLOC = data.sub_loc || { summary: null, divisions: {}, projects: [], open_by_project: {}, events: [] };
+  // heavy blobs: present on a full/auto load; on the light initial load they arrive via loadHeavy()
+  if (data.sales !== undefined) SALES = data.sales || { pipeline: [], by_rep: [], warm: [], customers: [], totals: {} };
+  if (data.sub_loc !== undefined) SUBLOC = data.sub_loc || { summary: null, divisions: {}, projects: [], open_by_project: {}, events: [] };
   OI = data.open_invoices || { as_of: null, buckets: ["Current", "1-30", "31-60", "61-90", "90+"], invoices: [] };
-  PAY = data.payments || { payments: [], total_received: 0, count: 0, invoices_paid: 0 };
+  if (data.payments !== undefined) PAY = data.payments || { payments: [], total_received: 0, count: 0, invoices_paid: 0 };
   PNL = null;   // recompute the portfolio P&L on next open (data just changed)
   // Big-picture first: collapse everything by default; the user expands to zoom in.
   // On a live auto-refresh, preserve what the user has already expanded.
@@ -317,6 +318,26 @@ async function load(isAuto) {
   render();
   _renderLazyTab(activeTab);   // wip/payments/paybills read main-load globals but aren't in render();
                                // re-dispatch the active one now that data is in (fixes a fresh refresh on it)
+  if (!isAuto) loadHeavy();    // phase 2: pull the deferred heavy tab blobs in the background
+}
+
+// Phase 2 of the FIRST load: the heavy tab blobs (bills ~2.7 MB, sub_loc, payments, sales)
+// are fetched in the background so first paint isn't blocked on the whole ~5 MB. When they
+// land, fill the globals and re-render (render() builds every tab's DOM, incl. hidden ones).
+async function loadHeavy() {
+  let h;
+  try { h = await (await fetch("/api/data?heavy=1")).json(); } catch (e) { return; }
+  if (!h || h.error) return;
+  AP.bills = h.ap_bills || [];
+  BILLS = AP.bills;
+  if (h.sub_loc) SUBLOC = h.sub_loc;
+  if (h.payments) PAY = h.payments;
+  if (h.sales) SALES = h.sales;
+  const bgrp = $("#billGroup") ? $("#billGroup").value : "vendor";   // bills open collapsed by default
+  billsCollapsed = bgrp === "none" ? new Set() : new Set((BILLS || []).map(b => billGroupKey(b, bgrp)));
+  buildFilterOptions();
+  render();
+  _renderLazyTab(activeTab);
 }
 // Lazy tabs dispatched by setTab (not render()) that read the /api/data globals. pnl/systems/console
 // fetch their OWN data on open, so they self-refresh; these three read ALL / PAY / BILLS synchronously.
