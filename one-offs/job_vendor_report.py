@@ -119,31 +119,85 @@ def _norm(s: str) -> str:
     return "".join(ch for ch in (s or "").upper() if ch.isalnum())[:14]
 
 
+def _doc(s: str) -> str:
+    return "".join(ch for ch in (s or "").upper() if ch.isalnum())
+
+
+def _match_pm(rows: List[dict], pm: List[dict]):
+    """Tag each of OUR lines with whether the PM's report caught the BILL, and
+    return the bills only he has.
+
+    Matched per DOCUMENT, not per line. A bill that is one row on his report
+    is often several lines on ours (a sub bills form/rebar/pour separately),
+    so amount-for-amount matching wrongly called whole vendors "partly
+    missing" when their totals agreed to the cent. A bill is a bill on both
+    sides; the document number is the honest key."""
+    theirs: Dict[tuple, float] = defaultdict(float)
+    their_rows: Dict[tuple, list] = defaultdict(list)
+    for x in pm:
+        k = (_norm(x["vendor"]), _doc(x["num"]))
+        theirs[k] += x["amt"]
+        their_rows[k].append(x)
+    ours: Dict[tuple, float] = defaultdict(float)
+    for r in rows:
+        ours[(_norm(r["vendor"]), _doc(r["num"]))] += r["amt"]
+
+    caught = 0
+    for r in rows:
+        k = (_norm(r["vendor"]), _doc(r["num"]))
+        if k in theirs:
+            r["pm"] = "Yes"
+            caught += 1
+        else:
+            r["pm"] = "No"
+    extra = [x for k, lst in their_rows.items() if k not in ours for x in lst]
+    return caught, extra
+
+
 def build(project: str, d0: str, d1: str, rows: List[dict],
-          pm: List[dict], out: Path) -> None:
+          pm: List[dict], out: Path, income: float = 0.0) -> None:
     wb = Workbook()
     ws = wb.active
     ws.title = "Vendor Report"
     ws.sheet_view.showGridLines = False
     total = sum(r["amt"] for r in rows)
 
+    caught, extra = _match_pm(rows, pm) if pm else (0, [])
+    missed = [x for x in rows if x.get("pm") == "No"]
+
     _c(ws, 1, 1, f"{project} — JOB COST BY VENDOR", size=SZ_T, bold=True, color=NAVY)
     _c(ws, 2, 1, f"{dt.date.fromisoformat(d0):%m/%d/%Y} – {dt.date.fromisoformat(d1):%m/%d/%Y}"
                  f"   ·   every bill and purchase coded to this job   ·   line amounts, "
                  f"never bill totals", size=SZ_S, color=GREY)
-    for c in range(1, 7):
+    for c in range(1, 8):
         ws.cell(row=2, column=c).border = Border(bottom=HAIR)
-    _c(ws, 4, 1, "TOTAL", size=SZ, bold=True, color=NAVY)
-    _c(ws, 4, 5, total, size=SZ + 4, bold=True, color=NAVY, fmt=MONEY, align="right")
-    ws.row_dimensions[4].height = 30
 
-    r = 6
+    # NET FIRST (the user 2026-08-27) — the number the draw turns on.
+    net = income - total
+    tiles = [("BILLED THIS DRAW", income, MONEY, NAVY),
+             ("JOB COST", total, MONEY, NAVY),
+             ("NET", net, MONEY, GREEN if net >= 0 else RED)]
+    if pm:
+        tiles.append((f"MISSED BY THE PM REPORT",
+                      sum(x["amt"] for x in missed), MONEY, RED))
+    for i, (lbl, val, fmt, col) in enumerate(tiles):
+        c0 = 1 + i * 2
+        ws.merge_cells(start_row=4, start_column=c0, end_row=4, end_column=c0 + 1)
+        ws.merge_cells(start_row=5, start_column=c0, end_row=5, end_column=c0 + 1)
+        _c(ws, 4, c0, lbl, size=SZ_S - 1, bold=True, color=GREY)
+        _c(ws, 5, c0, val, size=SZ + 8, bold=True, color=col, fmt=fmt)
+        for cc in (c0, c0 + 1):
+            ws.cell(row=4, column=cc).border = Border(bottom=RULE)
+    ws.row_dimensions[4].height = 18
+    ws.row_dimensions[5].height = 40
+
+    r = 7
     for c, h in ((1, "Vendor / Doc #"), (2, "Date"), (3, "Memo"),
-                 (5, "Amount"), (6, "Paid?")):
+                 (5, "Amount"), (6, "Paid?"), (7, "On PM report?")):
         _c(ws, r, c, h, size=SZ_S - 1, bold=True, color="FFFFFF", fill=F_HDR,
-           align="right" if c == 5 else ("center" if c == 6 else "left"),
+           align="right" if c == 5 else ("center" if c in (6, 7) else "left"),
            indent=1 if c == 1 else 0)
-    for c in range(1, 7):
+    for c in range(1, 8):
         ws.cell(row=r, column=c).fill = F_HDR
     ws.row_dimensions[r].height = 22
     r += 1
@@ -153,11 +207,18 @@ def build(project: str, d0: str, d1: str, rows: List[dict],
         by[x["vendor"]].append(x)
     for vendor in sorted(by, key=lambda v: -sum(x["amt"] for x in by[v])):
         lines = sorted(by[vendor], key=lambda x: x["date"])
+        vmiss = sum(x["amt"] for x in lines if x.get("pm") == "No")
         _c(ws, r, 1, vendor, size=SZ, bold=True, color=INK, fill=F_BAND)
         _c(ws, r, 5, sum(x["amt"] for x in lines), size=SZ, bold=True,
            color=INK, fill=F_BAND, fmt=MONEY, align="right")
+        if pm and vmiss:
+            _c(ws, r, 7, "NOT ON PM REPORT" if vmiss == sum(x["amt"] for x in lines)
+               else "partly missing", size=SZ_S - 1, bold=True, color=RED,
+               fill=F_BAND, align="center")
         for c in (2, 3, 4, 6):
             ws.cell(row=r, column=c).fill = F_BAND
+        if pm and not vmiss:
+            ws.cell(row=r, column=7).fill = F_BAND
         ws.row_dimensions[r].height = 21
         r += 1
         for x in lines:
@@ -168,8 +229,28 @@ def build(project: str, d0: str, d1: str, rows: List[dict],
             _c(ws, r, 5, x["amt"], fmt=MONEY, align="right")
             _c(ws, r, 6, x["paid"], align="center",
                color=GREY if x["paid"] == "Paid" else RED)
+            if pm:
+                _c(ws, r, 7, x.get("pm", ""), align="center", bold=x.get("pm") == "No",
+                   color=GREY if x.get("pm") == "Yes" else RED)
             r += 1
-    for col, w in zip("ABCDEF", (34, 14, 62, 22, 20, 14)):
+
+    if extra:
+        r += 1
+        _c(ws, r, 1, "ON THE PM REPORT BUT NOT CODED TO THIS JOB IN QBO",
+           size=SZ, bold=True, color=NAVY)
+        _c(ws, r, 5, sum(x["amt"] for x in extra), size=SZ, bold=True,
+           color=NAVY, fmt=MONEY, align="right")
+        for c in range(1, 8):
+            ws.cell(row=r, column=c).border = Border(bottom=RULE)
+        r += 1
+        for x in sorted(extra, key=lambda y: -y["amt"]):
+            _c(ws, r, 1, f"{x['vendor']}  {x['num']}".strip(), indent=1)
+            _c(ws, r, 3, str(x["memo"])[:90])
+            _c(ws, r, 5, x["amt"], fmt=MONEY, align="right")
+            _c(ws, r, 7, "PM only", align="center", color=RED, bold=True)
+            r += 1
+
+    for col, w in zip("ABCDEFG", (34, 14, 58, 20, 20, 14, 20)):
         ws.column_dimensions[col].width = w
 
     if pm:
@@ -238,6 +319,10 @@ def main() -> int:
     ap.add_argument("--to", dest="d1", required=True)
     ap.add_argument("--alias", action="append", default=[])
     ap.add_argument("--compare", default=None, help="the PM's xlsx, for a diff sheet")
+    ap.add_argument("--income", type=float, default=0.0,
+                    help="what the draw BILLED, so the sheet can lead with net. "
+                         "Take it from the draw sheet's INCOME figure — it is the "
+                         "invoice's own number, not something to infer from dates.")
     ap.add_argument("--out", default=None)
     a = ap.parse_args()
     rows = pull(a.project, a.d0, a.d1, a.alias)
@@ -245,7 +330,7 @@ def main() -> int:
     out = Path(a.out).expanduser() if a.out else (
         Path.home() / "Downloads" /
         f"{a.project} Vendor Report {a.d0} to {a.d1}.xlsx")
-    build(a.project, a.d0, a.d1, rows, pm, out)
+    build(a.project, a.d0, a.d1, rows, pm, out, income=a.income)
     print(f"  {len(rows)} line(s)   ${sum(r['amt'] for r in rows):,.2f}")
     if pm:
         print(f"  PM report: {len(pm)} line(s)   ${sum(r['amt'] for r in pm):,.2f}"

@@ -3703,9 +3703,11 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
                 if kind != "pm" and paid_map is not None:
                     _pd = paid_map.get(i.get("txn_id"))
                     if _pd is not None:
+                        # Use the colour _pay_state returns. `_pd` is a
+                        # (balance, total) TUPLE — always truthy — so the old
+                        # `GREEN if _pd else RED` painted UNPAID green.
                         _lbl, _col = _pay_state(_pd[0], _pd[1])
-                        wc(r, 6, _lbl or "", bold=True,
-                           color=(GREEN if _pd else RED))
+                        wc(r, 6, _lbl or "", bold=True, color=_col or RED)
                 r += 1
         r += 1
 
