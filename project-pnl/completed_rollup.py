@@ -222,12 +222,14 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Combined P&L over completed jobs")
     ap.add_argument("--folder", default=None,
                     help=f"folder holding the job subfolders "
-                         f"(default: <PROJECT P&Ls>/{DEFAULT_SUBDIR})")
+                         f"(default: <PROJECT P&Ls>/Multi-Family/{DEFAULT_SUBDIR})")
     ap.add_argument("--out", default=None, help=f"output file (default: {OUT_NAME})")
     a = ap.parse_args()
 
     folder = (Path(a.folder).expanduser() if a.folder
-              else pnl_paths.pnl_out_dir() / DEFAULT_SUBDIR)
+              # inside the DIVISION folder - P&Ls are sorted by division so a
+              # folder link can be shared with one PM (the user 2026-08-31)
+              else pnl_paths.division_dir("MFD") / DEFAULT_SUBDIR)
     if not folder.is_dir():
         print(f"✗  no such folder: {folder}")
         return 1

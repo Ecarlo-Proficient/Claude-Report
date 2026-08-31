@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import os
 import re
 import sys
 from pathlib import Path
@@ -67,6 +68,12 @@ GREY = "6B7280"
 MONEY = '#,##0;[Red](#,##0)'          # birds-eye: no cents
 MONEY_C = '#,##0.00;[Red](#,##0.00)'  # detail: cents
 PCT = "0.0%"
+
+# Column A is a narrow GUTTER on the overview sheets and content starts in B
+# (the user 2026-08-31: "goal: have ability to move info away from left side").
+# The big title is the one thing left in A, hanging into the gutter.
+GUTTER_W = 3
+C0 = 2                       # first content column
 
 F_HDR = PatternFill("solid", fgColor=NAVY)      # the ONE navy band per table
 F_BAND = PatternFill("solid", fgColor="F4F6F9")  # barely-there row banding
@@ -523,27 +530,36 @@ def build_bundle(jobs: List[tuple], out: Path) -> None:
     EVERY link is INTERNAL. The per-job reports link to files beside them,
     which is right on the share and broken the moment the file is emailed —
     this one has to survive being sent (the user 2026-08-27).
+
+    COLUMN A IS A NARROW GUTTER and every table starts in B (the user
+    2026-08-31): content welded to the window edge has nowhere to breathe.
+    The one thing that stays in A is the big title, which hangs into the
+    gutter and spills across the empty cells beside it, so the eye still
+    starts at the corner. Nothing else is written to column A - which is why
+    `lint_layout` is told where the content actually begins.
     """
     wb = Workbook()
     sm = wb.active
     sm.title = "Summary"
     sm.sheet_view.showGridLines = False
 
+    LAST = C0 + 7                      # rightmost content column on the summary
     _n_act = sum(1 for _, src, _x in jobs if src.get("status") == "Active")
     _t(sm, 1, 1, "MFD OVERVIEW — ALL JOBS", size=SZ_TITLE, bold=True, color=NAVY)
     _pay = sum(src.get("payroll", 0.0) for _, src, _t2 in jobs)
     _note = (f" · excludes payroll of {_pay:,.0f} (carried in overhead)"
              if _pay else "")
-    _t(sm, 2, 1, f"{_n_act} active · {len(jobs) - _n_act} completed · click a job "
-                 f"for its detail sheet, or 'open workbook' for the full file"
-                 f"{_note}",
+    _t(sm, 2, C0, f"{_n_act} active · {len(jobs) - _n_act} completed · click a job "
+                  f"for its detail sheet, or 'open workbook' for the full file"
+                  f"{_note}",
        size=SZ_SMALL, color=GREY)
     # Generated stamp with the TIME — these are re-run through the day and a
     # date alone cannot tell you which pull you are looking at (the user
     # 2026-08-31). Its own cell so it keeps its own format.
-    _t(sm, 1, 8, f"Generated {dt.datetime.now():%m/%d/%Y %I:%M %p}",
+    _t(sm, 1, LAST, f"Generated {dt.datetime.now():%m/%d/%Y %I:%M %p}",
        size=SZ_SMALL, color=GREY, align="right")
-    for c in range(1, 9):
+    # the rule runs from the gutter so the hanging title sits ON it
+    for c in range(1, LAST + 1):
         sm.cell(row=2, column=c).border = Border(bottom=HAIR)
     sm.row_dimensions[1].height = 30
     sm.row_dimensions[3].height = 8
@@ -556,44 +572,44 @@ def build_bundle(jobs: List[tuple], out: Path) -> None:
         return d
 
     tot = _sum(jobs)
-    SUM_SPANS = [(1, 2), (3, 4), (5, 6), (7, 7)]
+    SUM_SPANS = [(C0, C0 + 1), (C0 + 2, C0 + 3), (C0 + 4, C0 + 5), (C0 + 6, C0 + 6)]
     r = _kpi_strip(sm, 4, tot, SUM_SPANS)
 
     heads = ["JOB", "BILLED", "COST", "GROSS PROFIT", "GP %",
              "NET  (company 10%)", "NET  (MFD 9%)"]
-    for c, h in enumerate(heads, 1):
-        _t(sm, r, c, h, size=SZ_SMALL - 1, bold=True, color="FFFFFF", fill=F_HDR,
-           align="right" if c > 1 else "left", wrap=True,
-           indent=1 if c == 1 else 0)
+    for i, h in enumerate(heads):
+        _t(sm, r, C0 + i, h, size=SZ_SMALL - 1, bold=True, color="FFFFFF",
+           fill=F_HDR, align="left" if i == 0 else "right", wrap=True,
+           indent=1 if i == 0 else 0)
     sm.row_dimensions[r].height = 30
-    _t(sm, r, 8, "FULL DETAIL", size=SZ_SMALL - 1, bold=True, color="FFFFFF",
+    _t(sm, r, LAST, "FULL DETAIL", size=SZ_SMALL - 1, bold=True, color="FFFFFF",
        fill=F_HDR, align="center")
     r += 1
 
     def _job_row(job, _src, t):
         nonlocal r
-        cell = _t(sm, r, 1, job_label(job, _src.get("title", "")), size=SZ, bold=True)
+        cell = _t(sm, r, C0, job_label(job, _src.get("title", "")), size=SZ, bold=True)
         cell.hyperlink = f"#'{job}'!A1"
         cell.font = Font(size=SZ, bold=True, color=LINK, underline="single")
-        _t(sm, r, 2, t["billed"], size=SZ, fmt=MONEY, align="right", color=INK)
-        _t(sm, r, 3, t["cost"], size=SZ, fmt=MONEY, align="right", color=INK)
-        _t(sm, r, 4, t["gp"], size=SZ, bold=True, fmt=MONEY, align="right",
+        _t(sm, r, C0 + 1, t["billed"], size=SZ, fmt=MONEY, align="right", color=INK)
+        _t(sm, r, C0 + 2, t["cost"], size=SZ, fmt=MONEY, align="right", color=INK)
+        _t(sm, r, C0 + 3, t["gp"], size=SZ, bold=True, fmt=MONEY, align="right",
            color=GREEN if t["gp"] >= 0 else RED)
-        _t(sm, r, 5, t["gpm"], size=SZ, fmt=PCT, align="right",
+        _t(sm, r, C0 + 4, t["gpm"], size=SZ, fmt=PCT, align="right",
            color=GREEN if t["gp"] >= 0 else RED)
-        _t(sm, r, 6, t["net"], size=SZ, fmt=MONEY, align="right",
+        _t(sm, r, C0 + 5, t["net"], size=SZ, fmt=MONEY, align="right",
            color=GREEN if t["net"] >= 0 else RED)
-        _t(sm, r, 7, t["mnet"], size=SZ, bold=True, fmt=MONEY, align="right",
+        _t(sm, r, C0 + 6, t["mnet"], size=SZ, bold=True, fmt=MONEY, align="right",
            color=GREEN if t["mnet"] >= 0 else RED)
         # "see the actual project excel for details" — the job name jumps to
         # its sheet INSIDE this file (survives being emailed); this opens the
         # real workbook on the share.
         if _src.get("rel"):
-            lk = _t(sm, r, 8, "open workbook  ↗", size=SZ_SMALL, color=LINK)
+            lk = _t(sm, r, LAST, "open workbook  ↗", size=SZ_SMALL, color=LINK)
             lk.hyperlink = _src["rel"]
             lk.font = Font(size=SZ_SMALL, color=LINK, underline="single")
         if r % 2 == 0:
-            for c in range(1, 9):
+            for c in range(C0, LAST + 1):
                 sm.cell(row=r, column=c).fill = F_BAND
         sm.row_dimensions[r].height = 22
         r += 1
@@ -602,22 +618,23 @@ def build_bundle(jobs: List[tuple], out: Path) -> None:
         nonlocal r
         if not sel:
             return
-        _t(sm, r, 1, title, size=SZ, bold=True, color="FFFFFF", fill=F_HDR)
+        _t(sm, r, C0, title, size=SZ, bold=True, color="FFFFFF", fill=F_HDR)
         if note:
-            _t(sm, r, 2, note, size=SZ_SMALL - 1, color="FFFFFF", fill=F_HDR)
-        for c in range(1, 9):
+            _t(sm, r, C0 + 1, note, size=SZ_SMALL - 1, color="FFFFFF", fill=F_HDR)
+        for c in range(C0, LAST + 1):
             sm.cell(row=r, column=c).fill = F_HDR
         sm.row_dimensions[r].height = 22
         r += 1
         for _j, _sc, _tt in sorted(sel, key=lambda x: -x[2]["billed"]):
             _job_row(_j, _sc, _tt)
         st = _sum(sel)
-        _t(sm, r, 1, f"subtotal — {len(sel)} job(s)", size=SZ, bold=True, color=NAVY)
-        for c, k, fmt in ((2, "billed", MONEY), (3, "cost", MONEY), (4, "gp", MONEY),
-                          (5, "gpm", PCT), (6, "net", MONEY), (7, "mnet", MONEY)):
+        _t(sm, r, C0, f"subtotal — {len(sel)} job(s)", size=SZ, bold=True, color=NAVY)
+        for c, k, fmt in ((C0 + 1, "billed", MONEY), (C0 + 2, "cost", MONEY),
+                          (C0 + 3, "gp", MONEY), (C0 + 4, "gpm", PCT),
+                          (C0 + 5, "net", MONEY), (C0 + 6, "mnet", MONEY)):
             _t(sm, r, c, st[k], size=SZ, bold=True, fmt=fmt, align="right",
-               color=(GREEN if st[k] >= 0 else RED) if c in (4, 5, 6, 7) else NAVY)
-        for c in range(1, 9):
+               color=(GREEN if st[k] >= 0 else RED) if c >= C0 + 3 else NAVY)
+        for c in range(C0, LAST + 1):
             sm.cell(row=r, column=c).border = Border(top=HAIR)
         r += 2
 
@@ -629,52 +646,56 @@ def build_bundle(jobs: List[tuple], out: Path) -> None:
     _section("ACTIVE — in progress", _active,
              "costs to date only — not finished")
     _section("COMPLETED", _done)
-    _t(sm, r, 1, f"ALL MFD — {len(jobs)} JOBS", size=SZ, bold=True, color=NAVY)
-    for c, k, fmt in ((2, "billed", MONEY), (3, "cost", MONEY), (4, "gp", MONEY),
-                      (5, "gpm", PCT), (6, "net", MONEY), (7, "mnet", MONEY)):
+    _t(sm, r, C0, f"ALL MFD — {len(jobs)} JOBS", size=SZ, bold=True, color=NAVY)
+    for c, k, fmt in ((C0 + 1, "billed", MONEY), (C0 + 2, "cost", MONEY),
+                      (C0 + 3, "gp", MONEY), (C0 + 4, "gpm", PCT),
+                      (C0 + 5, "net", MONEY), (C0 + 6, "mnet", MONEY)):
         _t(sm, r, c, tot[k], size=SZ, bold=True, fmt=fmt, align="right",
-           color=(GREEN if tot[k] >= 0 else RED) if c in (4, 5, 6, 7) else NAVY)
-    for c in range(1, 9):
+           color=(GREEN if tot[k] >= 0 else RED) if c >= C0 + 3 else NAVY)
+    for c in range(C0, LAST + 1):
         sm.cell(row=r, column=c).border = Border(top=RULE)
     sm.row_dimensions[r].height = 24
-    for col, w in zip("ABCDEFGH", (34, 18, 18, 18, 11, 20, 20, 19)):
+    sm.column_dimensions["A"].width = GUTTER_W
+    for col, w in zip("BCDEFGHI", (34, 18, 18, 18, 11, 20, 20, 19)):
         sm.column_dimensions[col].width = w
 
 
     for job, src, t in sorted(jobs, key=lambda x: -x[2]["billed"]):
         ws = wb.create_sheet(job[:31])
         ws.sheet_view.showGridLines = False
+        JLAST = C0 + 6                 # rightmost content column on a job sheet
         _t(ws, 1, 1, job_label(job, src.get("title", "")), size=SZ_TITLE - 2,
            bold=True, color=NAVY)
-        back = _t(ws, 1, 7, "← back to Summary", size=SZ_SMALL, align="right")
+        back = _t(ws, 1, JLAST, "← back to Summary", size=SZ_SMALL, align="right")
         back.hyperlink = "#'Summary'!A1"
         back.font = Font(size=SZ_SMALL, color=LINK, underline="single")
-        _t(ws, 2, 1, f"{src.get('status', 'Completed').lower()} job · "
-                     f"{src['title'].replace('PROJECT P&L — ', '')}",
+        _t(ws, 2, C0, f"{src.get('status', 'Completed').lower()} job · "
+                      f"{src['title'].replace('PROJECT P&L — ', '')}",
            size=SZ_SMALL, color=GREY)
-        _t(ws, 2, 7, f"Generated {dt.datetime.now():%m/%d/%Y %I:%M %p}",
+        _t(ws, 2, JLAST, f"Generated {dt.datetime.now():%m/%d/%Y %I:%M %p}",
            size=SZ_SMALL, color=GREY, align="right")
-        for c in range(1, 8):
+        for c in range(1, JLAST + 1):
             ws.cell(row=2, column=c).border = Border(bottom=HAIR)
         ws.row_dimensions[1].height = 30
         ws.row_dimensions[3].height = 8
-        JOB_SPANS = [(1, 2), (3, 4), (5, 6), (7, 7)]
+        JOB_SPANS = [(C0, C0 + 1), (C0 + 2, C0 + 3), (C0 + 4, C0 + 5),
+                     (C0 + 6, C0 + 6)]
         r = _kpi_strip(ws, 4, t, JOB_SPANS)
 
-        # ONE grid for both blocks: A label/doc · B date · C what-for ·
-        # D amount · E paid. No column is ever left blank in a data row —
+        # ONE grid for both blocks: B label/doc · C date · D what-for ·
+        # G amount · H paid. No column is ever left blank in a data row —
         # the empty column A down the cost detail is what made the first cut
         # read as sloppy (the user 2026-08-27).
-        _t(ws, r, 1, "INVOICED", size=SZ + 2, bold=True, color=NAVY)
-        _t(ws, r, 6, t["billed"], size=SZ + 2, bold=True, color=NAVY,
+        _t(ws, r, C0, "INVOICED", size=SZ + 2, bold=True, color=NAVY)
+        _t(ws, r, C0 + 5, t["billed"], size=SZ + 2, bold=True, color=NAVY,
            fmt=MONEY, align="right")
         r += 1
-        for c, h in ((1, "Invoice"), (2, "Date"), (3, "What for"),
-                     (6, "Amount"), (7, "Paid?")):
+        for c, h in ((C0, "Invoice"), (C0 + 1, "Date"), (C0 + 2, "What for"),
+                     (C0 + 5, "Amount"), (C0 + 6, "Paid?")):
             _t(ws, r, c, h, size=SZ_SMALL - 1, bold=True, color="FFFFFF",
-               fill=F_HDR, align="right" if c == 6 else
-               ("center" if c == 7 else "left"), indent=1 if c == 1 else 0)
-        for c in range(1, 8):
+               fill=F_HDR, align="right" if c == C0 + 5 else
+               ("center" if c == C0 + 6 else "left"), indent=1 if c == C0 else 0)
+        for c in range(C0, JLAST + 1):
             ws.cell(row=r, column=c).fill = F_HDR
         ws.row_dimensions[r].height = 22
         r += 1
@@ -682,94 +703,96 @@ def build_bundle(jobs: List[tuple], out: Path) -> None:
             # An invoice number is an IDENTIFIER, so it reads left. Numeric
             # right-alignment parked it at the far edge of a wide column,
             # disconnected from its own header.
-            c1 = _t(ws, r, 1, inv["doc"], size=SZ_SMALL, align="left")
+            c1 = _t(ws, r, C0, inv["doc"], size=SZ_SMALL, align="left")
             c1.number_format = "0"
             if inv["url"]:                      # → the invoice in QBO
                 c1.hyperlink = inv["url"]
                 c1.font = Font(size=SZ_SMALL, color=LINK, underline="single")
-            dc = _t(ws, r, 2, inv["date"], size=SZ_SMALL, align="left")
+            dc = _t(ws, r, C0 + 1, inv["date"], size=SZ_SMALL, align="left")
             dc.number_format = "mm/dd/yyyy"
-            _t(ws, r, 3, str(inv["memo"])[:110], size=SZ_SMALL)   # spills D:E
-            _t(ws, r, 6, inv["gross"] + inv["ret_billed"], size=SZ_SMALL,
+            _t(ws, r, C0 + 2, str(inv["memo"])[:110], size=SZ_SMALL)   # spills E:F
+            _t(ws, r, C0 + 5, inv["gross"] + inv["ret_billed"], size=SZ_SMALL,
                fmt=MONEY, align="right")
-            _t(ws, r, 7, str(inv["paid"]), size=SZ_SMALL, align="center",
+            _t(ws, r, C0 + 6, str(inv["paid"]), size=SZ_SMALL, align="center",
                color=GREY if str(inv["paid"]).startswith("PAID") else RED)
             if r % 2 == 0:
-                for c in range(1, 8):
+                for c in range(C0, JLAST + 1):
                     ws.cell(row=r, column=c).fill = F_BAND
             ws.row_dimensions[r].height = 20
             r += 1
         if src["not_billed"]:
-            _t(ws, r, 1, "(journal entry)", size=SZ_SMALL, color=GREY, align="left")
-            _t(ws, r, 3, "retainage moved by journal entry", size=SZ_SMALL, color=GREY)
-            _t(ws, r, 6, src["not_billed"], size=SZ_SMALL, fmt=MONEY,
+            _t(ws, r, C0, "(journal entry)", size=SZ_SMALL, color=GREY, align="left")
+            _t(ws, r, C0 + 2, "retainage moved by journal entry", size=SZ_SMALL,
+               color=GREY)
+            _t(ws, r, C0 + 5, src["not_billed"], size=SZ_SMALL, fmt=MONEY,
                align="right", color=GREY)
             r += 1
         r += 1
 
-        _t(ws, r, 1, "COSTS — account, then vendor, then every line",
+        _t(ws, r, C0, "COSTS — account, then vendor, then every line",
            size=SZ + 2, bold=True, color=NAVY)
-        _t(ws, r, 6, t["cost"], size=SZ + 2, bold=True, color=NAVY,
+        _t(ws, r, C0 + 5, t["cost"], size=SZ + 2, bold=True, color=NAVY,
            fmt=MONEY, align="right")
         r += 1
         if src.get("payroll"):
-            _t(ws, r, 1, f"excludes payroll of {src['payroll']:,.0f} — carried "
-                         f"in the overhead %, not charged to the job",
+            _t(ws, r, C0, f"excludes payroll of {src['payroll']:,.0f} — carried "
+                          f"in the overhead %, not charged to the job",
                size=SZ_SMALL - 1, color=GREY)
             r += 1
-        for c, h in ((1, "Account / Vendor / Doc #"), (2, "Date"),
-                     (3, "Description"), (6, "Amount"), (7, "Paid?")):
+        for c, h in ((C0, "Account / Vendor / Doc #"), (C0 + 1, "Date"),
+                     (C0 + 2, "Description"), (C0 + 5, "Amount"), (C0 + 6, "Paid?")):
             _t(ws, r, c, h, size=SZ_SMALL - 1, bold=True, color="FFFFFF",
-               fill=F_HDR, align="right" if c == 6 else
-               ("center" if c == 7 else "left"), indent=1 if c == 1 else 0)
-        for c in range(1, 8):
+               fill=F_HDR, align="right" if c == C0 + 5 else
+               ("center" if c == C0 + 6 else "left"), indent=1 if c == C0 else 0)
+        for c in range(C0, JLAST + 1):
             ws.cell(row=r, column=c).fill = F_HDR
         ws.row_dimensions[r].height = 22
         r += 1
         for sec in src["sections"]:
-            _t(ws, r, 1, sec["name"], size=SZ + 1, bold=True, color=NAVY)
-            _t(ws, r, 6, sec["total"], size=SZ + 1, bold=True, color=NAVY,
+            _t(ws, r, C0, sec["name"], size=SZ + 1, bold=True, color=NAVY)
+            _t(ws, r, C0 + 5, sec["total"], size=SZ + 1, bold=True, color=NAVY,
                fmt=MONEY, align="right")
-            for c in range(1, 8):
+            for c in range(C0, JLAST + 1):
                 ws.cell(row=r, column=c).border = Border(bottom=RULE)
             ws.row_dimensions[r].height = 26
             r += 1
             for acct in sec["accounts"]:
-                _t(ws, r, 1, acct["name"], size=SZ, bold=True, color=INK, fill=F_BAND)
-                _t(ws, r, 6, acct["total"], size=SZ, bold=True, color=INK,
+                _t(ws, r, C0, acct["name"], size=SZ, bold=True, color=INK, fill=F_BAND)
+                _t(ws, r, C0 + 5, acct["total"], size=SZ, bold=True, color=INK,
                    fill=F_BAND, fmt=MONEY, align="right")
-                for c in (2, 3, 4, 5, 7):
+                for c in (C0 + 1, C0 + 2, C0 + 3, C0 + 4, C0 + 6):
                     ws.cell(row=r, column=c).fill = F_BAND
                 ws.row_dimensions[r].height = 21
                 r += 1
                 for v in acct["vendors"]:
-                    _t(ws, r, 1, v["name"], size=SZ_SMALL, bold=True, indent=1)
-                    _t(ws, r, 6, v["total"], size=SZ_SMALL, bold=True,
+                    _t(ws, r, C0, v["name"], size=SZ_SMALL, bold=True, indent=1)
+                    _t(ws, r, C0 + 5, v["total"], size=SZ_SMALL, bold=True,
                        fmt=MONEY, align="right")
                     ws.row_dimensions[r].outline_level = 1
                     ws.row_dimensions[r].hidden = True
                     r += 1
                     for ln in v["lines"]:
-                        dc1 = _t(ws, r, 1, ln["doc"], size=SZ_SMALL, indent=2,
+                        dc1 = _t(ws, r, C0, ln["doc"], size=SZ_SMALL, indent=2,
                                  align="left")
                         if ln["url"]:            # → the bill in QBO
                             dc1.hyperlink = ln["url"]
                             dc1.font = Font(size=SZ_SMALL, color=LINK,
                                             underline="single")
-                        dc = _t(ws, r, 2, ln["date"], size=SZ_SMALL, align="left")
+                        dc = _t(ws, r, C0 + 1, ln["date"], size=SZ_SMALL, align="left")
                         dc.number_format = "mm/dd/yyyy"
-                        _t(ws, r, 3, str(ln["desc"])[:110], size=SZ_SMALL)
-                        _t(ws, r, 6, ln["amt"], size=SZ_SMALL, fmt=MONEY_C,
+                        _t(ws, r, C0 + 2, str(ln["desc"])[:110], size=SZ_SMALL)
+                        _t(ws, r, C0 + 5, ln["amt"], size=SZ_SMALL, fmt=MONEY_C,
                            align="right")
-                        _t(ws, r, 7, ln["paid"], size=SZ_SMALL, color=GREY,
+                        _t(ws, r, C0 + 6, ln["paid"], size=SZ_SMALL, color=GREY,
                            align="center")
                         ws.row_dimensions[r].outline_level = 2
                         ws.row_dimensions[r].hidden = True
                         r += 1
-        # C carries the description and SPILLS across D:E (empty on data rows;
+        # D carries the description and SPILLS across E:F (empty on data rows;
         # the metric tiles above are what keep those columns from reading as
         # gutters). Amount and Paid sit at the right edge, always aligned.
-        for col, w in zip("ABCDEFG", (28, 14, 25, 25, 25, 21, 15)):
+        ws.column_dimensions["A"].width = GUTTER_W
+        for col, w in zip("BCDEFGH", (28, 14, 25, 25, 25, 21, 15)):
             ws.column_dimensions[col].width = w
         ws.sheet_properties.outlinePr.summaryBelow = False
 
@@ -782,19 +805,22 @@ def build_bundle(jobs: List[tuple], out: Path) -> None:
     tmp = out.with_suffix(".tmp.xlsx")
     wb.save(str(tmp))
     assert_clean(tmp)
-    for msg in lint_layout(wb):
+    for msg in lint_layout(wb, first_col=C0):
         print(f"    ⚑ layout: {msg}")
     tmp.replace(out)
 
 
-def lint_layout(wb) -> List[str]:
+def lint_layout(wb, first_col: int = 1) -> List[str]:
     """Catch the things that make a sheet READ badly but verify fine — the
     class of defect that shipped twice before this existed (the user
     2026-08-27: "why don't you inspect it after? it looks sloppy").
 
     Checks: a column left empty inside the used range (a gutter), and data
     rows whose first column is blank (a ragged left edge). Cell-level checks
-    catch corruption; these catch ugly."""
+    catch corruption; these catch ugly.
+
+    `first_col` is where the content actually begins - anything left of it is
+    a DELIBERATE gutter, so neither check may fire on it."""
     from openpyxl.utils import get_column_letter
     out: List[str] = []
     for ws in wb.worksheets:
@@ -811,15 +837,33 @@ def lint_layout(wb) -> List[str]:
         # top-left cell of a merge carries the value.
         for mr in ws.merged_cells.ranges:
             used.update(range(mr.min_col, mr.max_col + 1))
-        gutters = [get_column_letter(i) for i in range(1, last + 1) if i not in used]
+        gutters = [get_column_letter(i) for i in range(first_col, last + 1)
+                   if i not in used]
         if gutters:
             out.append(f"{ws.title}: empty column(s) {gutters} inside A..{get_column_letter(last)}")
         blank_a = sum(1 for row in ws.iter_rows(min_row=6, max_col=last)
-                      if row[0].value is None
-                      and any(c.value is not None for c in row[1:]))
+                      if row[first_col - 1].value is None
+                      and any(c.value is not None for c in row[first_col:]))
         if blank_a > 5:
-            out.append(f"{ws.title}: {blank_a} rows have data but a blank column A")
+            out.append(f"{ws.title}: {blank_a} rows have data but a blank "
+                       f"column {get_column_letter(first_col)}")
     return out
+
+
+def _link_target(target: Path, base: Path) -> str:
+    """A workbook link that resolves on BOTH Windows and Mac (the user
+    2026-08-31).
+
+    RELATIVE, always. An absolute path is either /Users/... or C:\\... and is
+    wrong on the other machine the moment the file is opened there - and it
+    breaks again the instant the folder is re-shared under a different OneDrive
+    root, which is exactly what the division-folder sharing rule causes. Excel
+    resolves a relative target against the workbook's own folder on both
+    platforms, so the overview and the P&Ls only have to keep their positions
+    relative to EACH OTHER, wherever the tree is mounted. Separators are forced
+    to '/' - Windows Excel accepts them, Mac Excel needs them.
+    """
+    return Path(os.path.relpath(target, base)).as_posix()
 
 
 def main() -> int:
@@ -836,8 +880,10 @@ def main() -> int:
                          "transactions). All links internal, so it survives "
                          "being emailed.")
     a = ap.parse_args()
+    # The archive lives INSIDE the division folder now, because a division
+    # folder is what gets shared with its PM (the user 2026-08-31).
     folder = (Path(a.folder).expanduser() if a.folder
-              else pnl_paths.pnl_out_dir() / ARCHIVE)
+              else pnl_paths.division_dir("MFD") / ARCHIVE)
     # (job, folder-holding-it, status)
     todo = [(d.name, folder, "Completed")
             for d in sorted(folder.iterdir()) if d.is_dir()] if a.all else \
@@ -862,12 +908,9 @@ def main() -> int:
             print(f"  ⚠ {job}: no 'By Account' sheet — regenerate it first")
             continue
         src["status"] = status
-        # relative to where the bundle is written (the archive folder), so the
-        # link resolves on the share
-        try:
-            src["rel"] = str(src_path.relative_to(folder))
-        except ValueError:
-            src["rel"] = f"../{src_path.relative_to(folder.parent)}"
+        # Relative to where the bundle is written (the archive folder), so the
+        # link resolves on the share from any machine.
+        src["rel"] = _link_target(src_path, folder)
         loaded.append((job, src, _totals(src)))
         if not a.bundle:
             # An ACTIVE job lives in the P&L root, not the archive — write its

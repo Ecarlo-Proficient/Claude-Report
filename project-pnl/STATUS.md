@@ -8,6 +8,34 @@ manual close), RP (no draws — expenses → invoice → profit).
 
 ## DONE / FINALIZED
 
+- **P&Ls are SORTED INTO THE DIVISION FOLDER (2026-08-31, binding).** The
+  OneDrive folder LINK is the unit of sharing: the owner sends a PM the link to
+  their division, so a P&L landing at the `PROJECT P&Ls` root would put every
+  other PM's numbers behind that same link. One rule, in
+  `shared/pnl_paths.division_dir()` -> `Commercial` / `Multi-Family` /
+  `Residential` (folder names already on OneDrive; an unrecognised project #
+  stays at the root rather than risk being misfiled into the wrong division).
+  Applied at every writer: `_resolve_project_out_dir` (CP/MFD), the RP
+  `<proj> - <client>` folder, and the draw cross-check workbook - which used to
+  land loose at the root where nobody it was written for could see it.
+  `pnl_paths._archive_dirs()` now sweeps each division folder as well as the
+  root, and `find_pnl` keeps the pre-division root path as a candidate so
+  nothing already written goes missing. The disk was ALREADY sorted by hand;
+  this is the code catching up, so no files moved. Fixed the same stale
+  assumption in `completed_pnl.py`, `completed_rollup.py` and
+  `one-offs/pnl_line_level_audit.py`, whose default archive path had silently
+  stopped resolving.
+
+- **Overview: column A is a narrow gutter, content starts in B (2026-08-31).**
+  `completed_pnl.py --bundle`, both the Summary and the per-job sheets (the
+  user: "goal: have ability to move info away from left side"). Only the big
+  title stays in A, hanging into the gutter and spilling across. `lint_layout`
+  takes a `first_col` so the deliberate gutter doesn't trip its
+  empty-column/ragged-left-edge checks. Overview workbook links are RELATIVE
+  and forced to `/` separators (`_link_target`) so they resolve on Windows and
+  Mac and survive the tree being re-shared under a different OneDrive root.
+  Totals unchanged by the shift: 14 jobs, billed 54.6M, cost 49.2M, GP 9.74%.
+
 - **Dollar figures genericized to `~$Nk` form (2026-08-27)** in this file and in
   `project_pnl_export.py` comments; the CI leak guard's TEMP exclusion for the
   export is retired and the guard now also catches non-round six-figure amounts

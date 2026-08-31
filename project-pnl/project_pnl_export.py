@@ -215,8 +215,15 @@ def _find_awarded_cp_folder(base: Path, proj: str) -> Optional[Path]:
 
 def _resolve_project_out_dir(proj: str, out_dir: Path) -> Tuple[Path, Optional[str]]:
     """Where a project's workbook folder should live. CP → Common-drive awarded
-    folder's 'Profit and Loss' subfolder; everything else → <out_dir>/<proj>.
-    Returns (folder, note) where note explains any CP fallback (for the UI)."""
+    folder's 'Profit and Loss' subfolder; everything else →
+    <out_dir>/<division>/<proj>.
+    Returns (folder, note) where note explains any CP fallback (for the UI).
+
+    The DIVISION folder is not cosmetic: the owner shares that folder's link
+    with the PM who runs the division, so a P&L landing at the root would put
+    every other PM's numbers behind the same link (the user 2026-08-31). The
+    one rule lives in shared/pnl_paths.division_dir."""
+    _div = pnl_paths.division_dir(proj, out_dir)
     if not proj.upper().startswith("CP"):
         # If this job has already been FILED under an archive subfolder
         # ("completed mfd project p&l"), regenerate it THERE — otherwise a
@@ -225,12 +232,12 @@ def _resolve_project_out_dir(proj: str, out_dir: Path) -> Tuple[Path, Optional[s
         for _arch in pnl_paths._archive_dirs():
             if (_arch / proj).is_dir():
                 return _arch / proj, f"filed under {_arch.name}"
-        return out_dir / proj, None
+        return _div / proj, None
     if not CP_AWARDED_BASE.exists():
-        return out_dir / proj, "Common drive not mounted → OneDrive"
+        return _div / proj, "Common drive not mounted → OneDrive"
     folder = _find_awarded_cp_folder(CP_AWARDED_BASE, proj)
     if folder is None:
-        return out_dir / proj, f"no awarded folder for {proj} → OneDrive"
+        return _div / proj, f"no awarded folder for {proj} → OneDrive"
     return folder / CP_PNL_SUBDIR, None
 
 
@@ -6742,7 +6749,9 @@ def generate_project_pnl_rp(
     _client = (_fqn.split(":")[0].strip() if ":" in _fqn else (cust_info.get("name") or ""))
     _client = re.sub(r'[:\\/?*\[\]<>|"]', "-", _client).strip()
     label = f"{proj} - {_client}" if _client else proj
-    proj_dir = out_dir / label                    # one home folder per project
+    # ...inside the division folder, same sharing rule as every other P&L
+    # (the user 2026-08-31) - see shared/pnl_paths.division_dir.
+    proj_dir = pnl_paths.division_dir(proj, out_dir) / label   # one home folder per project
     proj_dir.mkdir(parents=True, exist_ok=True)
     out_path = proj_dir / f"{label}.xlsx"
     saved = safe_save(wb, out_path)
@@ -7062,8 +7071,13 @@ def cross_check_draw_report(access, company_id, report_path: Path,
 
     for w in (ws, ws2):
         _setup_print(w, 6)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"{report_path.stem} — CROSS-CHECK.xlsx"
+    # Beside the project's OWN P&L, not loose at the root: the root is not
+    # shared with anyone, so a cross-check left there is invisible to the PM
+    # who needs it, and it is the one artifact that escaped the division
+    # sorting rule (the user 2026-08-31).
+    xc_dir, _ = _resolve_project_out_dir(proj, out_dir)
+    xc_dir.mkdir(parents=True, exist_ok=True)
+    out_path = xc_dir / f"{report_path.stem} — CROSS-CHECK.xlsx"
     saved = safe_save(wb, out_path)
     if saved:
         print(f"    ✓ {saved.name}  ({len(missing)} missing ${miss_tot:,.0f}, "

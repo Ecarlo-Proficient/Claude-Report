@@ -81,6 +81,36 @@ def pnl_out_dir() -> Path:
                           paths.onedrive_base() / "Automations-/PROJECT P&Ls")
 
 
+# ── one folder per division, and P&Ls are SORTED into it ─────────────────
+# Binding (the user 2026-08-31): "if a p&l routes to this folder you must add a
+# new rule to sort in the division folders. i want to send the folder links but
+# can't show other pms other p&l that arent' theres." The OneDrive folder link
+# is the unit of sharing, so a division folder has to hold ONLY that division's
+# jobs - a P&L landing at the root would expose every PM's numbers to whoever
+# has the link. Folder names match what is already on OneDrive.
+DIVISION_DIRS = {"CP": "Commercial", "MFD": "Multi-Family", "RP": "Residential"}
+
+
+def division_of(proj: str) -> str:
+    """'MFD' | 'CP' | 'RP' from a project #, or '' when it is none of them."""
+    pu = (proj or "").strip().upper()
+    for pre in ("MFD", "CP", "RP"):        # MFD first - longest prefix wins
+        if pu.startswith(pre):
+            return pre
+    return ""
+
+
+def division_dir(proj: str, out_dir: "Path | None" = None) -> Path:
+    """The division folder a project's P&L belongs in.
+
+    An unrecognised project # stays at the root rather than being filed into
+    the wrong division - a misfiled P&L is exactly the leak this rule exists
+    to prevent."""
+    out_dir = out_dir or pnl_out_dir()
+    name = DIVISION_DIRS.get(division_of(proj))
+    return out_dir / name if name else out_dir
+
+
 def _find_awarded_cp_folder(base: Path, proj: str):
     """Awarded-project folder for a CP job, matched by project # (full match wins,
     bare-number match on a digit boundary as fallback). None if base unreachable."""
@@ -107,17 +137,18 @@ def resolve_project_out_dir(proj: str, out_dir: "Path | None" = None):
     """(folder, note) — where project-pnl would put this project's workbook.
     `note` explains any CP → OneDrive fallback (surfaced in the UI)."""
     out_dir = out_dir or pnl_out_dir()
+    base = division_dir(proj, out_dir)
     if not proj.upper().startswith("CP"):
-        return out_dir / proj, None
+        return base / proj, None
     try:
         mounted = CP_AWARDED_BASE.exists()
     except OSError:
         mounted = False
     if not mounted:
-        return out_dir / proj, "Common drive not mounted → OneDrive"
+        return base / proj, "Common drive not mounted → OneDrive"
     folder = _find_awarded_cp_folder(CP_AWARDED_BASE, proj)
     if folder is None:
-        return out_dir / proj, f"no awarded folder for {proj} → OneDrive"
+        return base / proj, f"no awarded folder for {proj} → OneDrive"
     return folder / CP_PNL_SUBDIR, None
 
 
@@ -134,14 +165,19 @@ ARCHIVE_PREFIXES = ("completed", "closed", "archive")
 
 
 def _archive_dirs():
-    """Existing archive subfolders under the P&L output root."""
-    try:
-        root = pnl_out_dir()
-        return [d for d in sorted(root.iterdir())
-                if d.is_dir()
-                and d.name.lower().startswith(ARCHIVE_PREFIXES)]
-    except OSError:
-        return []
+    """Existing archive subfolders, under the P&L root AND inside each division
+    folder ('Multi-Family/completed mfd project p&l'). The root is still swept
+    for archives filed before the division rule."""
+    out: list = []
+    root = pnl_out_dir()
+    for base in [root] + [root / n for n in DIVISION_DIRS.values()]:
+        try:
+            out += [d for d in sorted(base.iterdir())
+                    if d.is_dir()
+                    and d.name.lower().startswith(ARCHIVE_PREFIXES)]
+        except OSError:
+            continue
+    return out
 
 
 def _candidates(proj: str):
@@ -158,7 +194,8 @@ def _candidates(proj: str):
 
     fname = PNL_FILE.format(proj=proj)
     add(pnl_path(proj))                                   # exact resolved path
-    add(pnl_out_dir() / proj / fname)                    # default per-project subfolder
+    add(division_dir(proj) / proj / fname)                # division-sorted
+    add(pnl_out_dir() / proj / fname)                    # pre-division root subfolder
     # Finished jobs are filed away under an ARCHIVE subfolder (the user
     # 2026-08-27) so the top level stays the live work. Look there too, or the
     # dashboard reports "never generated" the moment a job is filed.

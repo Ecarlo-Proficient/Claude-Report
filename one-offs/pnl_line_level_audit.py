@@ -78,7 +78,9 @@ def main() -> int:
     ap.add_argument("--folder", default=None)
     a = ap.parse_args()
     folder = (Path(a.folder).expanduser() if a.folder
-              else pnl_paths.pnl_out_dir() / "completed mfd project p&l")
+              # inside the DIVISION folder - P&Ls are sorted by division so a
+              # folder link can be shared with one PM (the user 2026-08-31)
+              else pnl_paths.division_dir("MFD") / "completed mfd project p&l")
     jobs = sorted(d.name for d in folder.iterdir()
                   if d.is_dir() and (d / f"Project_PnL_{d.name}.xlsx").exists())
     if not jobs:
