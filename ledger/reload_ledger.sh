@@ -28,6 +28,7 @@ step "Invoices -> ledger";    python3 ledger/load_invoices.py --no-qbo      || r
 step "Customers -> ledger";   python3 ledger/load_customers.py              || rc=1
 step "Costs -> ledger";       python3 ledger/load_costs.py --active --since "$since" || rc=1
 step "Payments -> ledger";    python3 ledger/load_payments.py --months 12   || rc=1
+step "Bill payments -> ledger"; python3 ledger/load_bill_payments.py         || rc=1
 
 if [ "$rc" -eq 0 ]; then
   printf '\n\033[32mledger reload: OK\033[0m\n'

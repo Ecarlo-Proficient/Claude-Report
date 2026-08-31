@@ -2091,13 +2091,13 @@ function jumpToVendorBills(vendor) {
 // in the bulk load). Each bill shows its project, or "multiple" -> click the bill to see every line
 // item + project #. Filter by pay status. Owner 2026-08-28: "vendor center open into its own vendor
 // page like qbo ... see the bill its paying and the project ... if multiple say multiple, click for lines".
-let _vendorData = null, _vendorType = "all";
+let _vendorData = null, _vendorType = "all", _vendorView = "bills";   // bills | payments
 const _vendorBillOpen = new Set();
 async function openVendorPage(vendor) {
   $("#vendorDetailTitle").textContent = vendor;
   $("#vendorDetailSub").textContent = "loading…";
   const body = $("#vendorDetailBody"); body.innerHTML = "";
-  _vendorData = null; _vendorType = "all"; _vendorBillOpen.clear();
+  _vendorData = null; _vendorType = "all"; _vendorView = "bills"; _vendorBillOpen.clear();
   openPanel("#vendorDetail");
   let data;
   try { data = await (await fetch("/api/vendor?v=" + encodeURIComponent(vendor))).json(); }
@@ -2108,8 +2108,19 @@ async function openVendorPage(vendor) {
 }
 function renderVendorPage() {
   const d = _vendorData; if (!d) return;
-  $("#vendorDetailSub").textContent = `${d.count} bills · ${money(d.total)} billed · ${money(d.open)} open · ${d.paid_ct} paid`;
   const body = $("#vendorDetailBody"); body.innerHTML = "";
+  // Bills | Payments view toggle
+  const vseg = document.createElement("div"); vseg.className = "seg vendor-seg";
+  for (const [k, lbl] of [["bills", `Bills (${d.count})`], ["payments", `Payments (${d.pay_count || 0})`]]) {
+    const b = document.createElement("button"); b.type = "button"; b.className = "seg-btn" + (_vendorView === k ? " on" : ""); b.textContent = lbl;
+    b.onclick = () => { _vendorView = k; renderVendorPage(); }; vseg.appendChild(b);
+  }
+  body.appendChild(vseg);
+  if (_vendorView === "payments") {
+    $("#vendorDetailSub").textContent = `${d.pay_count || 0} payments · ${money(d.pay_total || 0)} paid out this year`;
+    return _renderVendorPayments(d, body);
+  }
+  $("#vendorDetailSub").textContent = `${d.count} bills · ${money(d.total)} billed · ${money(d.open)} open · ${d.paid_ct} paid`;
   const seg = document.createElement("div"); seg.className = "seg vendor-seg";
   for (const [k, lbl] of [["all", "All"], ["open", "Open"], ["paid", "Paid"]]) {
     const b = document.createElement("button"); b.type = "button"; b.className = "seg-btn" + (_vendorType === k ? " on" : ""); b.textContent = lbl;
@@ -2159,6 +2170,26 @@ function _vendorLines(b) {
   }
   table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table); wrap.appendChild(scroll);
   return wrap;
+}
+// Vendor payments view: the QBO BillPayments (money out) this year, from the local bill_payment table.
+function _renderVendorPayments(d, body) {
+  const pays = d.payments || [];
+  if (!pays.length) { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = "No bill payments recorded this year (run the AP / bill-payments sync to pull them)."; body.appendChild(p); return; }
+  const scroll = document.createElement("div"); scroll.className = "table-scroll";
+  const table = document.createElement("table"); table.className = "grid"; const thead = document.createElement("thead"), tbody = document.createElement("tbody");
+  const htr = document.createElement("tr");
+  for (const [c, al] of [["Date", "left"], ["Ref / cheque #", "left"], ["Type", "left"], ["Bills paid", "right"], ["Amount", "right"]]) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
+  thead.appendChild(htr);
+  for (const p of pays) {
+    const tr = document.createElement("tr");
+    tr.appendChild(leftText(fmtDateShort(p.txn_date)));
+    tr.appendChild(qboLinkCell(p.ref_no || "–", null, ""));   // ref # copyable
+    tr.appendChild(leftText(p.pay_type || "–"));
+    tr.appendChild(rightText(String(p.n_bills || 0)));
+    const amt = document.createElement("td"); amt.appendChild(moneyCell(p.total_amt)); tr.appendChild(amt);
+    tbody.appendChild(tr);
+  }
+  table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table); body.appendChild(scroll);
 }
 // Lien marks are STAGED, then Saved (the owner marks several, then commits once). A mark
 // updates the panel + grid optimistically and shows the Save bar; nothing is written until

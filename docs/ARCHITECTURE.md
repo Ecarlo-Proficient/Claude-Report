@@ -484,6 +484,8 @@ flowchart LR
     SUBLOCLOAD ==>|"sub_loc_event · sub_loc_run"| DB
     PAYLOAD["load_payments.py\nQBO Payment txns → payment + payment_application\n(money IN, each with the invoices it paid)\n+ project_customer (reverse the QBO Customer:Project\nhierarchy → client per project) · --selftest"]:::tool
     QBO --> PAYLOAD ==>|"payment · payment_application · project_customer"| DB
+    BPLOAD["load_bill_payments.py\nQBO BillPayment (money OUT) → bill_payment + bill_payment_line\n(this year; one cheque → many bills; vendor page reads on demand)"]:::tool
+    QBO --> BPLOAD ==>|"bill_payment · bill_payment_line"| DB
     QATT["shared/qbo_attachments.py\nAttachable INDEX (entity,txn)→[Id,FileName]\n7-day disk cache (REUSED from the P&L, no re-sweep)\n+ FRESH TempDownloadUri per file"]:::tool
     ATTLOAD["attachments.py\nbill txnId → fresh scan link(s) as JSON\nSUBPROCESSED by /api/attachment, never imported"]:::tool
     DASH -.->|"/api/attachment (📎 click on the Audit tab)"| ATTLOAD
@@ -740,18 +742,40 @@ rendered for the estimators so nobody cold-calls an account that is mid-conversa
 `customer` + `sales_touch` (the Notion Customer List feed, `ledger/load_customers.py`) and
 attributes a rep's working set by Notion **"Last edited by"** - the settled convention, since
 there is no manual Owner property. Cross-checks each account against `project.builder_or_gc`
-and flags the ones that are ALREADY a live job's client. Output is a single self-contained
-HTML file (searchable index, print CSS for the PDF) written wherever `--out` points; the rep
-is a runtime `--rep` argument so no name is ever stored in the repo (`--list-reps` shows the
-options). **`--all`** swaps the rep filter for every account ANY rep has actually contacted
+and flags the ones that are ALREADY a live job's client. Output is a **PDF** written wherever
+`--out` points - the suffix picks the format, and `.pdf` is rendered by the script itself
+through headless Chrome, with the intermediate markup written to a temp dir that dies with the
+run (the owner 2026-08-31: "html format is the wrong format for this" - every HTML here had a
+PDF twin rendered from it seconds later, so the HTML was a build leftover, not a deliverable).
+`.html` still works for debugging the markup. The rep is a runtime `--rep` argument so no name
+is ever stored in the repo (`--list-reps` shows the options). **`--all`** swaps the rep filter for every account ANY rep has actually contacted
 (Contacted · Follow up · Interested · No response - an untouched Lead is nobody's account yet,
 a closed row is history) and adds a **Worked by** column: that is the collision list, and it is
 what goes to the MFD president weekly (registry EST-13), since he bids commercial work
-independently. **`--email-body`** re-renders the same book as allowlist-safe HTML (no CSS, no
-`<span>`, no `<style>`) for an Outlook message body - the mail API has no attachment parameter,
-so the report IS the body and colour is replaced by words. A scheduled task runs
-`load_customers` -> `--all` -> `--all --email-body` -> mail, every Monday.
-Deliverables live in `~/Documents/CompanyHealth/`, never here.
+independently. **What's new since the last report** leads the page (the owner 2026-08-31 - the
+director already has last week's list, so the useful part is what changed): the run drops a
+snapshot of `{customer_key: last_contacted}` into `~/Library/Application Support/Proficient/
+sales-report/` and the next run diffs against it, splitting the delta into **new accounts** (absent
+from the last report entirely) and **fresh outreach** (already listed, last-contact date has since
+moved). The report is written in place so there is no old file to diff - the snapshot IS the
+history. Snapshots are scoped per rep, skip same-day files so a re-run still diffs against last
+week, and prune to the last 12. With no prior snapshot it falls back to a 7-day window on
+`last_contacted` and says so on the page; `--no-snapshot` runs without recording a baseline.
+**`one-offs/sales_report_baseline_import.py`** seeds that history backwards from an
+already-rendered report: it pulls the FULL LIST table out of a report PDF (`pdftotext -layout`),
+maps the printed company names back to `customer` (normalized, prefix-tolerant for the clipped
+column, and it refuses an ambiguous truncation rather than guessing - `Dooley Mack Constructors
+of` matches two ledger rows), and writes it as that date's snapshot. Accounts absent from the
+imported report are carried at their current date so another rep's book cannot masquerade as new.
+It skips a PDF that is a different kind of report, and will not overwrite a RECORDED snapshot
+without `--force` - real history outranks a reconstruction. This is how 2026-08-27 got a baseline
+after the fact: the date-window guess said 12 accounts had fresh outreach, the true diff against
+the list actually sent said **8** - the other 4 were already on it at the same contact date.
+A scheduled task runs `load_customers` -> `--all --out ....pdf` every Monday and
+**stops there** - it renders the report, the owner sends it himself (the owner 2026-08-31: "the
+plan was never to send it automatically"). **`--email-body`** (allowlist-safe HTML for an Outlook
+body) survives for manual use but has no caller. Deliverables live in
+`~/Documents/CompanyHealth/Sales/`, never here.
 
 **`one-offs/concrete_cost_code_audit.py`** (read-only QBO, the user 2026-08-25) - vendors code
 to the wrong cost-code family. Cost-code NUMBER = the family (1 Concrete · 2/3/4 material ·

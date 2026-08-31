@@ -4,6 +4,17 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Vendor payments - QBO BillPayment (money OUT), on demand (owner, 2026-08-28: "vendor center with
+  bill payments ... pull all payments from this year ... keep the refresh light ... maybe a data center
+  but security risk").** New loader **`load_bill_payments.py`** pulls QBO BillPayment (money out to
+  vendors) for the year into two LOCAL tables (`bill_payment` + `bill_payment_line`) - the same private
+  ledger DB that already holds costs / money-in, never pushed, never cloud, so **no new security surface**
+  (the "data center" is just the file already on the Mac). One cheque/ACH pays several bills
+  (`Line[].LinkedTxn -> Bill`), so `n_bills` is the line count. Wired into `reload_ledger.sh` + the Console
+  "payments" pipeline; the vendor page reads a vendor's payments **ON DEMAND** via `/api/vendor` (never the
+  bulk load), so **the refresh stays light**. The vendor page gained a **Bills | Payments** toggle. Loaded
+  this year's payments; verified: COWTOWN -> 16 payments, one cheque covering 34 bills. `--dry-run` /
+  `--selftest` supported.
 - **Subs in the draws - the labor side of the full picture (owner, 2026-08-28: "i need subs in the draws
   to see the full picture").** Subs (1099 labor) are excluded from the Bill Tracker display sheets, so
   they never reached `ap_bill_line` or the draws (material-only). Now `_fetch_draws` pulls `is_sub` cost

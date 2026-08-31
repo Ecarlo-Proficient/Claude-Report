@@ -163,6 +163,30 @@ CREATE TABLE IF NOT EXISTS payment_application (
 CREATE INDEX IF NOT EXISTS ix_payapp_payment ON payment_application (payment_txn_id);
 CREATE INDEX IF NOT EXISTS ix_payapp_invoice ON payment_application (invoice_no);
 
+-- ── bill_payment : money OUT to vendors — the QBO BillPayment transaction ────
+-- A cheque/ACH can pay several bills at once (Line[].LinkedTxn -> Bill), so the
+-- payment lives on top and the bills it covered are its lines. The vendor page
+-- reads this ON DEMAND per vendor (never the bulk load). Loaded by
+-- load_bill_payments.py (read-only QBO pull, this-year window, DELETE+reload).
+CREATE TABLE IF NOT EXISTS bill_payment (
+    qbo_txn_id  TEXT PRIMARY KEY,                 -- QBO BillPayment Id
+    txn_date    TEXT,                             -- when we paid the vendor
+    vendor      TEXT,                             -- VendorRef.name
+    vendor_id   TEXT,                             -- VendorRef.value (QBO deep link)
+    total_amt   NUMERIC,                          -- TotalAmt — the whole payment
+    pay_type    TEXT,                             -- PayType: Check | CreditCard
+    ref_no      TEXT,                             -- DocNumber (cheque #) if present
+    source      TEXT NOT NULL DEFAULT 'qbo_billpayment',
+    loaded_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_billpay_vendor ON bill_payment (vendor);
+CREATE TABLE IF NOT EXISTS bill_payment_line (
+    payment_id  TEXT NOT NULL,                    -- -> bill_payment.qbo_txn_id
+    bill_id     TEXT,                             -- the Bill this payment applied to (QBO Bill Id)
+    amount      NUMERIC,                          -- money applied to THIS bill from THIS payment
+    PRIMARY KEY (payment_id, bill_id)
+);
+
 
 -- ── wip_snapshot : the COMPUTED WIP position, one row per (project, date) ────
 -- This is exactly what a Test tab of "WIP - MASTER new.xlsx" holds. The loader

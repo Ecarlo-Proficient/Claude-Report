@@ -317,6 +317,8 @@ def _pipelines():
             # window, so the window IS the history depth: a rolling 12-month year (its default)
             # keeps the Payments tab's history while catching the newest payments each run.
             {"label": "Pull payments (QBO, rolling year)", "script": "ledger/load_payments.py", "args": ["--months", "12"]},
+            # Money OUT (BillPayment) - the vendor page's Payments view. Local table, read on demand.
+            {"label": "Pull bill payments (QBO, this year)", "script": "ledger/load_bill_payments.py", "args": []},
         ]},
         {"key": "crm", "label": "CRM - customers", "steps": [
             {"label": "Pull customers (Notion)", "script": "ledger/load_customers.py", "args": []},
@@ -1260,10 +1262,25 @@ def _fetch_vendor(con, vendor: str) -> dict:
         b["paid"] = bool(b["pay_date"])
         out.append(b)
     out.sort(key=lambda b: (b["bill_date"] or ""), reverse=True)
+    # bill payments (money OUT) this year - from the local bill_payment table (QBO BillPayment,
+    # loaded by load_bill_payments). One cheque can pay several bills, so n_bills is its line count.
+    payments = []
+    try:
+        pln = {r["payment_id"]: r["n"] for r in
+               con.execute("SELECT payment_id, COUNT(*) n FROM bill_payment_line GROUP BY payment_id")}
+        for r in con.execute("SELECT qbo_txn_id, txn_date, total_amt, pay_type, ref_no "
+                             "FROM bill_payment WHERE vendor = ? ORDER BY txn_date DESC", (vendor,)):
+            d = dict(r)
+            d["n_bills"] = pln.get(r["qbo_txn_id"], 0)
+            payments.append(d)
+    except sqlite3.OperationalError:
+        pass
     return {"ok": True, "vendor": vendor, "count": len(out),
             "total": sum((b["amount"] or 0) for b in out),
             "open": sum((b["open_balance"] or 0) for b in out),
-            "paid_ct": sum(1 for b in out if b["paid"]), "bills": out}
+            "paid_ct": sum(1 for b in out if b["paid"]), "bills": out,
+            "payments": payments, "pay_total": round(sum((p["total_amt"] or 0) for p in payments), 2),
+            "pay_count": len(payments)}
 
 
 def _subloc_events(con, project: str = "") -> list:
