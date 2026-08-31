@@ -1995,7 +1995,8 @@ def _write_meta_block(ws, proj: str, cust_info: dict, wip_info: dict,
                       as_of: str, start_row: int = 1,
                       start_date: Optional[str] = None,
                       end_date: Optional[str] = None,
-                      note: Optional[str] = None) -> int:
+                      note: Optional[str] = None,
+                      compact: bool = False) -> int:
     """
     Compact 2-line project header (title + one combined subtitle). Returns the
     first content row (start_row + 2 — no blank gap; the user 2026-06-09).
@@ -2016,6 +2017,16 @@ def _write_meta_block(ws, proj: str, cust_info: dict, wip_info: dict,
     title_cell = ws.cell(row=start_row, column=1, value=title)
     title_cell.font = Font(bold=True, size=16, color="000000")
     ws.merge_cells(start_row=start_row, start_column=1, end_row=start_row, end_column=8)
+
+    if compact:
+        # ONE header row (the user 2026-08-31): the division line is noise on a
+        # draw sheet and it costs a row of frozen height. "Generated" goes in
+        # the cell straight after the merge — a merged cell can only carry one
+        # format, so the grey italic needs its own cell.
+        gen = ws.cell(row=start_row, column=9, value=f"Generated {as_of}")
+        gen.font = Font(italic=True, size=BASE_SIZE, color="595959")
+        gen.alignment = Alignment(vertical="center")
+        return start_row + 1
 
     # Everything in ONE subtitle line (division · window · generated · note)
     sub_parts = [division]
@@ -3519,7 +3530,7 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
     def keyb(x):
         return (str(x.get("num", "")).strip(), round(float(x.get("amount", 0) or 0), 2))
 
-    r = _write_meta_block(ws, proj, cust_info, wip_info, as_of)
+    r = _write_meta_block(ws, proj, cust_info, wip_info, as_of, compact=True)
     # PAID / UNPAID leads the title (the user 2026-08-05): the draw is PAID
     # when every invoice in it has a zero open balance in QBO.
     _inv_paid = bool(invoices) and all(
@@ -3563,9 +3574,12 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
     # retainage → net draw → costs → profit → overhead → REAL net, read left to
     # right, big, with the profit cells colored by sign. MFD (which has a PM
     # report to argue with) gets a second strip so both perspectives stay.
-    KPI_COLS = [1, 2, 3, 4, 5, 7, 8, 9, 10]
-    for _c in (7, 8, 9, 10):
-        ws.column_dimensions[get_column_letter(_c)].width = 18
+    # Each KPI is a MERGED PAIR of columns, so the strip carries its own width
+    # and never dictates the bills table below it (the user 2026-08-31 — it was
+    # forcing the table's Paid?/status columns to 18). Nine tiles over columns
+    # A..R, contiguous, no gap between GROSS PROFIT and GROSS MARGIN %.
+    KPI_COLS = [1, 3, 5, 7, 9, 11, 13, 15, 17]
+    KPI_SPAN = 2
     _oh_label = (f"OVERHEAD\n{alt_overhead_pct:.0f}% of costs"
                  if alt_overhead_pct is not None
                  else f"OVERHEAD\n{overhead_pct:.0f}% of income")
@@ -3588,24 +3602,45 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
                  (_oh_label, -oh, KPI_FMT, False),
                  ("REAL NET PROFIT", npf, KPI_FMT, True),
                  ("REAL NET %", (npf / rev if rev else 0), "0.0%", True)]
-        band(r, 1, 10, f"{title}   ·   {periodtxt}")
+        band(r, 1, KPI_COLS[-1] + KPI_SPAN - 1, f"{title}   ·   {periodtxt}")
         r += 1
         for col, (label, _v, _f, _s) in zip(KPI_COLS, cells):
+            ws.merge_cells(start_row=r, start_column=col,
+                           end_row=r, end_column=col + KPI_SPAN - 1)
             c = ws.cell(row=r, column=col, value=label)
             c.font = Font(bold=True, size=BASE_SIZE, color="FFFFFF")
             c.fill = PatternFill("solid", fgColor="44546A")
             c.alignment = Alignment(horizontal="center", vertical="center",
                                     wrap_text=True)
-            c.border = THIN_BORDER
+            for _cc in range(col, col + KPI_SPAN):
+                ws.cell(row=r, column=_cc).border = THIN_BORDER
+                ws.cell(row=r, column=_cc).fill = PatternFill("solid", fgColor="44546A")
         ws.row_dimensions[r].height = 32
         r += 1
+        # The derived figures are FORMULAS so the derivation is visible —
+        # gross profit is income − costs, NOT net draw − costs (the user
+        # 2026-08-31: "i want to see if you are getting the gross from total
+        # income or net draw"). Column letters follow KPI_COLS.
+        _L = [get_column_letter(c) for c in KPI_COLS]
+        _INC, _RET, _NET, _CST, _GP, _GM, _OH, _NP, _NM = _L
+        _formula = {
+            _NET: f"={_INC}{r}+{_RET}{r}",
+            _GP:  f"={_INC}{r}-{_CST}{r}",
+            _GM:  f'=IF({_INC}{r}=0,"",{_GP}{r}/{_INC}{r})',
+            _NP:  f"={_GP}{r}+{_OH}{r}",
+            _NM:  f'=IF({_INC}{r}=0,"",{_NP}{r}/{_INC}{r})',
+        }
         signed = []
         for col, (_l, value, fmt, sign) in zip(KPI_COLS, cells):
-            c = ws.cell(row=r, column=col, value=value)
+            _lt = get_column_letter(col)
+            ws.merge_cells(start_row=r, start_column=col,
+                           end_row=r, end_column=col + KPI_SPAN - 1)
+            c = ws.cell(row=r, column=col, value=_formula.get(_lt, value))
             c.number_format = fmt
             c.font = Font(bold=True, size=BASE_SIZE + 4)
             c.alignment = Alignment(horizontal="center", vertical="center")
-            c.border = THIN_BORDER
+            for _cc in range(col, col + KPI_SPAN):
+                ws.cell(row=r, column=_cc).border = THIN_BORDER
             if sign:
                 signed.append(get_column_letter(col) + str(r))
         ws.row_dimensions[r].height = 26
@@ -3625,35 +3660,6 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
 
     qbo_periodtxt = (f"{period[0]:%m/%d/%y}–{period[1]:%m/%d/%y}" if period else lbl)
     kpi_strip("DRAW SUMMARY  (QBO)", qbo_total, len(qbo_bills), qbo_periodtxt)
-    # FUNDED BUT UNPAID — the GC has paid this draw, yet bills inside it are
-    # still open. That is what earns a supplier notice, and it is invisible
-    # anywhere else: the draw looks collected and the job looks covered
-    # (MFD325 July 2026 — Estrada 598125 sat open on a draw that had already
-    # funded it, so the PM widened his date range to surface it and made a
-    # healthy draw read as a 100k loss). Stated here so nobody has to widen a
-    # window to find it (the user 2026-08-28).
-    if _inv_paid and paid_map is not None:
-        _open = []
-        for _b in qbo_bills:
-            _pd = paid_map.get(_b.get("txn_id"))
-            if _pd is not None and float(_pd[0] or 0) > 0.005:
-                _open.append((_b.get("num", ""), float(_pd[0])))
-        if _open:
-            _seen, _uniq = set(), []
-            for _n, _bal in _open:
-                if _n in _seen:
-                    continue
-                _seen.add(_n)
-                _uniq.append((_n, _bal))
-            _tot = sum(b for _, b in _uniq)
-            wc(r, 1, f"⚑ THIS DRAW WAS COLLECTED BUT {len(_uniq)} BILL(S) IN IT ARE "
-                     f"STILL OPEN — ${_tot:,.2f}. Supplier-notice risk; the money "
-                     f"for these is already in.", bold=True, color="9C5700")
-            r += 1
-            wc(r, 1, "    " + " · ".join(f"#{n} ${b:,.2f}" for n, b in
-                                         sorted(_uniq, key=lambda x: -x[1])[:8]),
-               color="9C5700")
-            r += 2
     if has_pm:
         r += 1
         if pm_rep:
@@ -3677,15 +3683,18 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
         VENDOR (the user 2026-06-26 — every transaction listing groups by vendor); every
         bill links (QBO deep-link for QBO rows, the source PM report for PM rows)."""
         nonlocal r
+        # Column A is an empty gutter so the vendor name is not jammed against
+        # the sheet edge, and so the outline +/- controls have somewhere to sit
+        # (the user 2026-08-31). Everything below shifts one column right.
         tot = round(sum(i["amount"] for i in items), 2)
-        band(r, 1, 6, f"{title}", fill=(WARN_FILL if color == RED else SUBHDR_FILL))
-        ws.cell(row=r, column=1).font = _font(bold=True, color=(RED if color == RED else NAVY))
-        ws.cell(row=r, column=5).value = tot
-        ws.cell(row=r, column=5).number_format = CURR_FMT
-        ws.cell(row=r, column=5).font = _font(bold=True, color=(RED if color == RED else NAVY))
+        band(r, 2, 11, f"{title}", fill=(WARN_FILL if color == RED else SUBHDR_FILL))
+        ws.cell(row=r, column=2).font = _font(bold=True, color=(RED if color == RED else NAVY))
+        ws.cell(row=r, column=9).value = tot
+        ws.cell(row=r, column=9).number_format = CURR_FMT
+        ws.cell(row=r, column=9).font = _font(bold=True, color=(RED if color == RED else NAVY))
         r += 1
-        for c, h in ((1, "Bill # / Vendor"), (2, "Date"), (3, "Description"),
-                     (4, "Amount"), (5, "Where / status"), (6, "Paid?")):
+        for c, h in ((2, "Vendor / Bill #"), (3, "Date"), (4, "Description"),
+                     (9, "Amount"), (10, "Where / status"), (11, "Paid?")):
             wc(r, c, h, bold=True, color=NAVY).border = BOTTOM_BORDER
         r += 1
         byv = {}
@@ -3693,8 +3702,8 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
             byv.setdefault(i.get("vendor") or "(no vendor)", []).append(i)
         for vend in sorted(byv, key=lambda v: -sum(i["amount"] for i in byv[v])):
             vit = byv[vend]
-            wc(r, 1, f"{vend}  ({len(vit)})", bold=True, color=color)
-            wc(r, 4, round(sum(i["amount"] for i in vit), 2), fmt=CURR_FMT,
+            wc(r, 2, f"{vend}  ({len(vit)})", bold=True, color=color)
+            wc(r, 9, round(sum(i["amount"] for i in vit), 2), fmt=CURR_FMT,
                bold=True, color=color)
             r += 1
             for i in sorted(vit, key=lambda x: -x["amount"]):
@@ -3722,11 +3731,11 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
                     else:
                         note, ncol, nlink = ("⚠ not in QBO (orphan → Reconciliations)",
                                              RED, None)
-                wc(r, 1, str(i["num"]) or "(no #)", indent=1, link=blink)
-                wdate(r, 2, i.get("date", ""))
-                wc(r, 3, _clean_cost_text(i.get("desc", ""), _known_words))
-                wc(r, 4, i["amount"], fmt=CURR_FMT, color=color)
-                wc(r, 5, note, color=ncol, link=nlink)
+                wc(r, 2, str(i["num"]) or "(no #)", indent=1, link=blink)
+                wdate(r, 3, i.get("date", ""))
+                wc(r, 4, _clean_cost_text(i.get("desc", ""), _known_words))
+                wc(r, 9, i["amount"], fmt=CURR_FMT, color=color)
+                wc(r, 10, note, color=ncol, link=nlink)
                 # AP payment state (the user 2026-08-05); PM report lines have
                 # no QBO bill to check.
                 if kind != "pm" and paid_map is not None:
@@ -3736,7 +3745,12 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
                         # (balance, total) TUPLE — always truthy — so the old
                         # `GREEN if _pd else RED` painted UNPAID green.
                         _lbl, _col = _pay_state(_pd[0], _pd[1])
-                        wc(r, 6, _lbl or "", bold=True, color=_col or RED)
+                        wc(r, 11, _lbl or "", bold=True, color=_col or RED)
+                # COLLAPSED BY DEFAULT — the sheet opens on vendor totals, the
+                # way the Project Ledger does; click + to open one vendor
+                # (the user 2026-08-31).
+                ws.row_dimensions[r].outline_level = 1
+                ws.row_dimensions[r].hidden = True
                 r += 1
         r += 1
 
@@ -3754,7 +3768,15 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
         detail(f"BILLS THIS DRAW — grouped by vendor  ({len(qbo_bills)})",
                qbo_bills, NAVY, "plain")
 
-    _setup_print(ws, 5)
+    # A = gutter (outline +/- lives here); DESCRIPTION in D spills across E:H
+    # because those stay empty on data rows, so no single column has to be 46
+    # wide and skew the KPI pairs above.
+    for _c, _w in zip("ABCDEFGHIJKLMNOPQR",
+                      (3, 30, 13, 16, 16, 16, 16, 16, 17, 20, 14,
+                       15, 15, 15, 15, 15, 15, 15)):
+        ws.column_dimensions[_c].width = _w
+    ws.sheet_properties.outlinePr.summaryBelow = False
+    _setup_print(ws, 11)
     return r, missed_total, len(missed)
 
 
