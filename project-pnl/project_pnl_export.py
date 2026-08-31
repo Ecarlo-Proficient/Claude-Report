@@ -3689,12 +3689,12 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
         tot = round(sum(i["amount"] for i in items), 2)
         band(r, 2, 7, f"{title}", fill=(WARN_FILL if color == RED else SUBHDR_FILL))
         ws.cell(row=r, column=2).font = _font(bold=True, color=(RED if color == RED else NAVY))
-        ws.cell(row=r, column=5).value = tot
-        ws.cell(row=r, column=5).number_format = CURR_FMT
-        ws.cell(row=r, column=5).font = _font(bold=True, color=(RED if color == RED else NAVY))
+        ws.cell(row=r, column=3).value = tot
+        ws.cell(row=r, column=3).number_format = CURR_FMT
+        ws.cell(row=r, column=3).font = _font(bold=True, color=(RED if color == RED else NAVY))
         r += 1
-        for c, h in ((2, "Vendor / Bill #"), (3, "Date"), (4, "Description"),
-                     (5, "Amount"), (6, "Where / status"), (7, "Paid?")):
+        for c, h in ((2, "Vendor / Bill #"), (3, "Amount"), (4, "Date"),
+                     (5, "Where / status"), (6, "Paid?"), (7, "Description")):
             wc(r, c, h, bold=True, color=NAVY).border = BOTTOM_BORDER
         r += 1
         byv = {}
@@ -3703,7 +3703,7 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
         for vend in sorted(byv, key=lambda v: -sum(i["amount"] for i in byv[v])):
             vit = byv[vend]
             wc(r, 2, f"{vend}  ({len(vit)})", bold=True, color=color)
-            wc(r, 5, round(sum(i["amount"] for i in vit), 2), fmt=CURR_FMT,
+            wc(r, 3, round(sum(i["amount"] for i in vit), 2), fmt=CURR_FMT,
                bold=True, color=color)
             r += 1
             for i in sorted(vit, key=lambda x: -x["amount"]):
@@ -3732,10 +3732,10 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
                         note, ncol, nlink = ("⚠ not in QBO (orphan → Reconciliations)",
                                              RED, None)
                 wc(r, 2, str(i["num"]) or "(no #)", indent=1, link=blink)
-                wdate(r, 3, i.get("date", ""))
-                wc(r, 4, _clean_cost_text(i.get("desc", ""), _known_words))
-                wc(r, 5, i["amount"], fmt=CURR_FMT, color=color)
-                wc(r, 6, note, color=ncol, link=nlink)
+                wc(r, 3, i["amount"], fmt=CURR_FMT, color=color)
+                wdate(r, 4, i.get("date", ""))
+                wc(r, 5, note, color=ncol, link=nlink)
+                wc(r, 7, _clean_cost_text(i.get("desc", ""), _known_words))
                 # AP payment state (the user 2026-08-05); PM report lines have
                 # no QBO bill to check.
                 if kind != "pm" and paid_map is not None:
@@ -3745,7 +3745,7 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
                         # (balance, total) TUPLE — always truthy — so the old
                         # `GREEN if _pd else RED` painted UNPAID green.
                         _lbl, _col = _pay_state(_pd[0], _pd[1])
-                        wc(r, 7, _lbl or "", bold=True, color=_col or RED)
+                        wc(r, 6, _lbl or "", bold=True, color=_col or RED)
                 # COLLAPSED BY DEFAULT — the sheet opens on vendor totals, the
                 # way the Project Ledger does; click + to open one vendor
                 # (the user 2026-08-31).
@@ -3772,12 +3772,16 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
     # reserved spill columns — those were a 64-character void on every row
     # (the user 2026-08-31: "this is what i mean by extra space"). H..R exist
     # only to give the merged KPI pairs above their width.
+    # Money first, date second, DESCRIPTION LAST so it spills right over the
+    # empty columns (the user 2026-08-31) — the same convention the
+    # Labor/Concrete ledger uses. Because it spills, G stays narrow, which is
+    # what keeps the merged KPI pairs above roughly even.
     for _c, _w in zip("ABCDEFGHIJKLMNOPQR",
-                      (3, 30, 12, 32, 17, 20, 14,
+                      (3, 30, 17, 12, 20, 14, 15,
                        15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15)):
         ws.column_dimensions[_c].width = _w
     ws.sheet_properties.outlinePr.summaryBelow = False
-    _setup_print(ws, 7)
+    _setup_print(ws, 12)
     return r, missed_total, len(missed)
 
 
