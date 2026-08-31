@@ -4,6 +4,16 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Responsiveness / "one file carrying everything" - clarified + hardened (owner, 2026-08-28: "the
+  responsiveness and loading of all that data ... like the audit i don't want it to get to that point").**
+  The ledger is 5.1 MB, biggest table ~9K rows - SQLite handles millions, so the FILE is not the
+  bottleneck. The Audit lag was RENDERING (the browser building ~1,900 DOM rows on every keystroke), NOT
+  the DB - fixed with the 250-row render cap. Two standing rules keep it responsive regardless of data
+  size: (1) **on-demand fetching** - a feature's data never rides the bulk page load (vendor / subloc /
+  draws fetch a slice on open); (2) **render caps** on any list that can grow large. Proactive: added
+  indexes on the hot on-demand slice reads (`ap_bill_line.vendor` / `.matched_invoice`,
+  `cost_line.(is_sub,project_no)` / `.project_no`, `sub_loc_event.project`) so they stay O(log n) as
+  tables grow instead of full scans - verified the vendor lookup went SCAN -> SEARCH.
 - **Vendor payments - QBO BillPayment (money OUT), on demand (owner, 2026-08-28: "vendor center with
   bill payments ... pull all payments from this year ... keep the refresh light ... maybe a data center
   but security risk").** New loader **`load_bill_payments.py`** pulls QBO BillPayment (money out to

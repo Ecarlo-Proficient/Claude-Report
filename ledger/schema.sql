@@ -472,3 +472,14 @@ CREATE TABLE IF NOT EXISTS meta (
     value      TEXT,
     loaded_at  TEXT
 );
+
+-- ── performance indexes for the ON-DEMAND slice reads ────────────────────────
+-- The dashboard never loads a whole table into the browser - it reads small slices
+-- per vendor / project / draw when you open something. These indexes keep those
+-- slice reads O(log n) as the tables grow, instead of a full table scan. (Placed
+-- after all tables so every referenced table exists when the schema is applied.)
+CREATE INDEX IF NOT EXISTS ix_apbill_vendor    ON ap_bill_line  (vendor);          -- vendor page bills
+CREATE INDEX IF NOT EXISTS ix_apbill_draw      ON ap_bill_line  (matched_invoice); -- draws roll-up
+CREATE INDEX IF NOT EXISTS ix_costline_sub     ON cost_line     (is_sub, project_no); -- subs on a draw
+CREATE INDEX IF NOT EXISTS ix_costline_proj    ON cost_line     (project_no);       -- project cost slices
+CREATE INDEX IF NOT EXISTS ix_sublocevent_proj ON sub_loc_event (project);          -- sub-LOC source drill-down
