@@ -490,6 +490,9 @@ flowchart LR
     ATTLOAD["attachments.py\nbill txnId → fresh scan link(s) as JSON\nSUBPROCESSED by /api/attachment, never imported"]:::tool
     DASH -.->|"/api/attachment (📎 click on the Audit tab)"| ATTLOAD
     ATTLOAD -.->|"index_from_cache + fresh_links"| QATT
+    ATTDL["download_attachments.py\nselected bills → save scans to a folder, named &lt;Bill#&gt; &lt;Vendor&gt;\nSUBPROCESSED by /api/attachment/download, never imported"]:::tool
+    DASH -.->|"/api/attachment/download (Download scans → reveal folder)"| ATTDL
+    ATTDL -.->|"fresh_links → download files"| QATT
     QATT -.->|"re-read attachable → fresh minutes-lived link"| QBO
     FUTURE -.-> DB
 ```

@@ -8,6 +8,35 @@ manual close), RP (no draws — expenses → invoice → profit).
 
 ## DONE / FINALIZED
 
+- **THE LEFT GUTTER IS THE STANDARD FOR EVERY P&L (2026-08-31, signed off).**
+  Column A is a narrow gutter on every sheet and content starts in B; only the
+  row-1/row-2 titles stay in A, hanging into it. On the draw sheets the KPI band
+  and its `DRAW SUMMARY` banner start in B too, so the strip lines up with the
+  bills table under it. Body text is size 12 everywhere, with each sheet's
+  column widths scaled by the same ratio so a bump cannot clip anything.
+  POs and Reconciliations moved AHEAD of the draw sheets - a job with a dozen
+  monthly draws buried them off the end of the tab bar.
+
+  **Both are POST-PASSES in `safe_save` (`_normalise_body_font`,
+  `_apply_left_gutter`), not edits at the call sites, and that is deliberate:**
+  the builders hard-code column numbers in ~310 places AND build 270+ formulas
+  out of literal column letters (`"=D7-E7+G7"`, `"=Transactions!E568"`).
+  Re-indexing that by hand is how you ship a workbook whose formulas quietly
+  point one column off. A uniform one-column shift, applied once, rewrites every
+  reference mechanically - cross-sheet references included, because every sheet
+  moves by the same amount. Repo rule 5b in full: `insert_cols` moves cells and
+  styles and NOTHING else, so merges, widths, freeze panes, hyperlink anchors,
+  conditional-format ranges, the print area and every formula are re-derived by
+  hand, and `assert_clean` still runs last. A sheet that ALREADY reads
+  gutter-first (the draw sheets, `By Account`) is skipped rather than shifted
+  twice. Verified on MFD325 cell-by-cell: every value, format, merge, width,
+  freeze pane, print area and outline landed exactly one column right, nothing
+  else moved.
+  **Do not "fix" a font size or a column index at a call site** - the delivered
+  size and the delivered left edge are decided in those two passes, and editing
+  both places double-applies.
+
+
 - **One overview PER DIVISION, in the division folder (2026-08-31).**
   `completed_pnl.py --division mfd|cp|rp --bundle` writes
   `<division folder>/<DIV> Overview.xlsx`. The MFD one moved OUT of the archive

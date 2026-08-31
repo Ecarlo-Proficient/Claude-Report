@@ -69,6 +69,7 @@ import warnings
 # RP takeoffs carry INDIRECT() print areas openpyxl can't keep — harmless
 # (read-only budget pull), silence the noise (same as the WIP readers).
 warnings.filterwarnings("ignore", message="Print area cannot be set to Defined name.*")
+from copy import copy
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -78,7 +79,7 @@ try:
     import openpyxl
     from openpyxl import Workbook
     from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
-    from openpyxl.utils import get_column_letter
+    from openpyxl.utils import get_column_letter, column_index_from_string
     from openpyxl.formatting.rule import CellIsRule
     # NOTE: no rich-text imports on purpose — multi-run inline strings are what
     # make Mac Excel offer to "repair" the file (shared/xlsx_verify.py). Style
@@ -1471,6 +1472,206 @@ def read_back_inputs(path: Path, sheet: str = "P&L") -> Dict[str, float]:
     return out
 
 
+# ── the left gutter (the user 2026-08-31) ─────────────────────────────────
+# "make A column small, start info in B. goal: have ability to move info away
+# from left side." Proven on the MFD overview first, then extended here.
+#
+# WHY IT IS A POST-PASS AND NOT 300 EDITS: the sheet builders hard-code column
+# numbers in ~310 places AND build 270+ formulas out of literal column letters
+# ("=D7-E7+G7", "=Transactions!E568"). Re-indexing all of that by hand is how
+# you ship a workbook whose formulas quietly point one column off. Instead the
+# shift happens ONCE, uniformly, right before save - and because every sheet
+# moves by the same amount, every reference (including cross-sheet ones) shifts
+# by exactly the same amount too, which is a mechanical rewrite rather than a
+# judgement call. Repo rule 5b applies in full: openpyxl's insert_cols moves
+# cells and their styles and NOTHING else, so merges, widths, freeze panes,
+# hyperlink anchors, conditional-format ranges, the print area and every
+# formula are re-derived here by hand, and `safe_save` still runs
+# `assert_clean` on the result as the last step.
+GUTTER_W = 3.0
+
+# An A1 reference: optional $, 1-3 letters, optional $, digits. Guarded on both
+# sides so a function name with digits (LOG10() ) or an identifier fragment
+# cannot be mistaken for a cell.
+_A1_REF_RE = re.compile(
+    r"(?<![A-Za-z0-9_.])(\$?)([A-Za-z]{1,3})(\$?)([0-9]{1,7})(?![A-Za-z0-9_(])")
+
+
+def _bump_ref(m, n: int) -> str:
+    col = column_index_from_string(m.group(2).upper()) + n
+    return f"{m.group(1)}{get_column_letter(col)}{m.group(3)}{m.group(4)}"
+
+
+def _shift_a1(text: str, n: int) -> str:
+    """Shift every A1-style column reference in `text` right by `n`.
+
+    Quoted spans are stepped over: double quotes hold Excel string literals
+    (TEXT(D8,"#,##0.00")) and single quotes hold sheet names ('Draw – July
+    2026'!A6) - a reference inside either is not a reference to shift."""
+    out: List[str] = []
+    i, L = 0, len(text)
+    while i < L:
+        ch = text[i]
+        if ch in ('"', "'"):
+            j = i + 1
+            while j < L:
+                if text[j] == ch:
+                    if ch == '"' and j + 1 < L and text[j + 1] == '"':
+                        j += 2                      # "" is an escaped quote
+                        continue
+                    break
+                j += 1
+            out.append(text[i:min(j + 1, L)])
+            i = j + 1
+        else:
+            j = i
+            while j < L and text[j] not in ('"', "'"):
+                j += 1
+            out.append(_A1_REF_RE.sub(lambda m: _bump_ref(m, n), text[i:j]))
+            i = j
+    return "".join(out)
+
+
+def _has_gutter(ws, width: float) -> bool:
+    """True when this sheet ALREADY reads as gutter-first - the draw sheets,
+    whose column A is a 3-wide margin the vendor table starts to the right of
+    (the user 2026-08-30). Shifting those again would just stack two gutters."""
+    d = dict.get(ws.column_dimensions, "A")
+    return d is not None and d.width is not None and d.width <= width + 1.5
+
+
+def _normalise_body_font(wb: Workbook, size: int = 12) -> None:
+    """Body text is size 12 on every sheet (the user 2026-08-31: "make all
+    standard fonts (text font, transaction, etc) all size 12").
+
+    A PASS, not ~50 edits at the call sites, for two reasons: the delivered
+    size then has exactly one home, and bumping a size without widening the
+    columns clips the text. Each sheet's body size is whatever size most of its
+    cells use; if that is below the target the cells are bumped AND the sheet's
+    column widths are scaled by the same ratio, so nothing that fitted before
+    stops fitting. Sheets already at the target are left untouched, byte for
+    byte. Sizes BELOW the body size stay put - the 10pt italic legends and
+    footnotes are annotations, not text, and shouting them helps nobody.
+    """
+    for ws in wb.worksheets:
+        counts: Dict[float, int] = {}
+        for row in ws.iter_rows():
+            for c in row:
+                if c.value is not None and c.font is not None and c.font.size:
+                    counts[float(c.font.size)] = counts.get(float(c.font.size), 0) + 1
+        if not counts:
+            continue
+        body = max(counts, key=lambda k: counts[k])
+        # Bump the sheet's own body size AND any stray cell written a point
+        # under the target - a lone 11pt row among 12pt ones is the kind of
+        # thing that reads as a mistake rather than a choice.
+        bump = {s for s in counts if body <= s < size or size - 1 <= s < size}
+        if not bump:
+            continue
+        for row in ws.iter_rows():
+            for c in row:
+                f = c.font
+                if f is None or not f.size or float(f.size) not in bump:
+                    continue
+                c.font = Font(name=f.name, size=size, bold=f.bold,
+                              italic=f.italic, color=f.color,
+                              underline=f.underline, strike=f.strike,
+                              vertAlign=f.vertAlign)
+        if body >= size:                 # only strays were bumped - widths stand
+            continue
+        ratio = size / body
+        for d in list(ws.column_dimensions.values()):
+            if d.width:
+                d.width = round(d.width * ratio, 1)
+
+
+def _apply_left_gutter(wb: Workbook, n: int = 1, width: float = GUTTER_W) -> None:
+    """Insert `n` narrow columns at the left of every sheet that doesn't
+    already have one, and hang the row-1 title back into the gutter.
+
+    The title is the ONE thing that stays in column A - same shape the owner
+    signed off on for the MFD overview: the eye still starts at the corner,
+    everything else starts in B."""
+    from openpyxl.formatting.formatting import ConditionalFormattingList
+    from openpyxl.worksheet.cell_range import CellRange
+
+    for ws in wb.worksheets:
+        if _has_gutter(ws, width):
+            continue
+        # ── 1. snapshot everything insert_cols will NOT carry across ──
+        merges = [(m.min_col, m.min_row, m.max_col, m.max_row)
+                  for m in ws.merged_cells.ranges]
+        widths = [(column_index_from_string(k), d.width, d.hidden,
+                   d.outline_level, d.bestFit)
+                  for k, d in ws.column_dimensions.items()]
+        cfs = [(str(rng.sqref), list(rng.rules))
+               for rng in ws.conditional_formatting]
+        freeze = ws.freeze_panes
+        p_area = ws.print_area
+        af_ref = ws.auto_filter.ref
+        dvs = [(dv, str(dv.sqref)) for dv in ws.data_validations.dataValidation]
+
+        # ── 2. the one thing openpyxl does correctly: values + styles ──
+        ws.insert_cols(1, n)
+
+        # ── 3. formulas, by the same uniform offset ──
+        for row in ws.iter_rows():
+            for c in row:
+                if c.data_type == "f" and isinstance(c.value, str):
+                    c.value = _shift_a1(c.value, n)
+                # a hyperlink rides along with its cell but keeps the OLD
+                # anchor, which would drop the link a column to the left
+                if c.hyperlink is not None:
+                    c.hyperlink.ref = c.coordinate
+
+        # ── 4. the title hangs into the gutter (see the docstring) ──
+        title = ws.cell(row=1, column=1 + n)
+        hang = isinstance(title.value, str) and bool(title.value.strip())
+        if hang:
+            a1 = ws.cell(row=1, column=1)
+            a1.value = title.value
+            a1._style = copy(title._style)
+            title.value = None
+
+        # ── 5. put back what step 2 dropped ──
+        merges = [(mc0 + n, mr0, mc1 + n, mr1)
+                  for (mc0, mr0, mc1, mr1) in merges]
+        if hang:
+            # ONLY the row-1 title band reaches back into the gutter. Row 2
+            # (the meta line) starts in B like every other row - widening its
+            # merge instead would swallow the cell the text now lives in.
+            merges = [((1, mr0, mc1, mr1)
+                       if (mr0 == 1 and mr1 == 1 and mc0 == 1 + n)
+                       else (mc0, mr0, mc1, mr1))
+                      for (mc0, mr0, mc1, mr1) in merges]
+        ws.merged_cells.ranges = [
+            CellRange(min_col=mc0, min_row=mr0, max_col=mc1, max_row=mr1)
+            for (mc0, mr0, mc1, mr1) in merges]
+        ws.column_dimensions.clear()
+        for idx, w, hidden, lvl, best in widths:
+            d = ws.column_dimensions[get_column_letter(idx + n)]
+            d.width, d.hidden, d.outline_level, d.bestFit = w, hidden, lvl, best
+        g = ws.column_dimensions[get_column_letter(1)]
+        g.width = width
+        if freeze:
+            ws.freeze_panes = _shift_a1(str(freeze), n)
+        if cfs:
+            ws.conditional_formatting = ConditionalFormattingList()
+            for sqref, rules in cfs:
+                for rule in rules:
+                    ws.conditional_formatting.add(_shift_a1(sqref, n), rule)
+        if p_area:
+            # keep the LEFT edge at A: the title now lives there, and a print
+            # area starting at B would clip it off the page
+            shifted = _shift_a1(str(p_area), n)
+            ws.print_area = re.sub(r"\$[A-Z]{1,3}\$(\d+)", r"$A$\1", shifted,
+                                   count=1)
+        if af_ref:
+            ws.auto_filter.ref = _shift_a1(str(af_ref), n)
+        for dv, sqref in dvs:
+            dv.sqref = _shift_a1(sqref, n)
+
+
 def safe_save(wb: Workbook, out_path: Path) -> Optional[Path]:
     """Write atomically and NEVER clobber a workbook that's open in Excel.
     Excel drops a `~$<name>` owner-lock file next to an open workbook; if that
@@ -1481,6 +1682,8 @@ def safe_save(wb: Workbook, out_path: Path) -> Optional[Path]:
         print(f"    ⚠ {out_path.name} looks OPEN in Excel — skipped to avoid "
               f"overwriting it. Close it and re-run.")
         return None
+    _normalise_body_font(wb)
+    _apply_left_gutter(wb)
     tmp = out_path.with_name(out_path.name + ".tmp")
     wb.save(str(tmp))
     # Rule 5b: never hand over a workbook that hasn't passed the corruption
@@ -3592,8 +3795,11 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
     # Each KPI is a MERGED PAIR of columns, so the strip carries its own width
     # and never dictates the bills table below it (the user 2026-08-31 — it was
     # forcing the table's Paid?/status columns to 18). Nine tiles over columns
-    # A..R, contiguous, no gap between GROSS PROFIT and GROSS MARGIN %.
-    KPI_COLS = [1, 3, 5, 7, 9, 11, 13, 15, 17]
+    # B..S, contiguous, no gap between GROSS PROFIT and GROSS MARGIN %.
+    # They START IN B so they line up with the bills table beneath them and
+    # leave column A as the gutter (the user 2026-08-31, reviewing the gutter
+    # preview: "move the KPI to B"). Only the row-1/row-2 titles stay in A.
+    KPI_COLS = [2, 4, 6, 8, 10, 12, 14, 16, 18]
     KPI_SPAN = 2
     _oh_label = (f"OVERHEAD\n{alt_overhead_pct:.0f}% of costs"
                  if alt_overhead_pct is not None
@@ -3617,7 +3823,8 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
                  (_oh_label, -oh, KPI_FMT, False),
                  ("REAL NET PROFIT", npf, KPI_FMT, True),
                  ("REAL NET %", (npf / rev if rev else 0), "0.0%", True)]
-        band(r, 1, KPI_COLS[-1] + KPI_SPAN - 1, f"{title}   ·   {periodtxt}")
+        band(r, KPI_COLS[0], KPI_COLS[-1] + KPI_SPAN - 1,
+             f"{title}   ·   {periodtxt}")
         r += 1
         for col, (label, _v, _f, _s) in zip(KPI_COLS, cells):
             ws.merge_cells(start_row=r, start_column=col,
@@ -3791,9 +3998,9 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
     # empty columns (the user 2026-08-31) — the same convention the
     # Labor/Concrete ledger uses. Because it spills, G stays narrow, which is
     # what keeps the merged KPI pairs above roughly even.
-    for _c, _w in zip("ABCDEFGHIJKLMNOPQR",
+    for _c, _w in zip("ABCDEFGHIJKLMNOPQRS",
                       (3, 30, 17, 12, 20, 14, 15,
-                       15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15)):
+                       15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15)):
         ws.column_dimensions[_c].width = _w
     ws.sheet_properties.outlinePr.summaryBelow = False
     _setup_print(ws, 12)
@@ -6510,13 +6717,17 @@ def generate_project_pnl(
     )
     # Order (the user 2026-07-16; Labor/Concrete first among the analysis tabs
     # 2026-07-29 — they're the PM/ops manager's main view): P&L, Transactions,
-    # Labor, Concrete, their detail, Budget vs Actual, Next Draw, the draw
-    # sheets, POs, Reconciliations; Cash Flow trails.
+    # Labor, Concrete, their detail, Budget vs Actual, Next Draw, POs,
+    # Reconciliations, then the draw sheets; Cash Flow trails.
+    # POs and Reconciliations sit BEFORE the draws (the user 2026-08-31): a job
+    # with a dozen monthly draws buried them off the end of the tab bar, and
+    # they are read far more often than any single old draw.
     _order_sheets(wb, ["P&L", "Transactions", "By Account",
                        "Labor", "Concrete", "Budget vs Actual",
                        *(["Next Draw"] if leftover is not None else []),
+                       "POs", "Reconciliations",
                        *draw_sheet_order,
-                       "POs", "Reconciliations", "Cash Flow"])
+                       "Cash Flow"])
 
     # Color-code the tabs for navigation (the user 2026-06-26).
     _tabcolors = {"P&L": "1F3A5F", "By Account": "375623", "Cash Flow": "C55A11",
