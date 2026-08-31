@@ -2419,14 +2419,18 @@ def build_sheet_by_account(wb: Workbook, proj: str, cust_info: dict,
             for rec in rows_:
                 by_acct.setdefault(rec["account"], {}).setdefault(vendor, []).append(rec)
 
-        cell(r, 1, title, bold=True, color="FFFFFF", fill=fill)
-        for c in range(2, 7):
+        # Same grid as the draw sheets (the user 2026-08-31): A is a narrow
+        # gutter for the outline controls, money reads first, description last
+        # so it spills instead of needing a wide column. Line rows used to
+        # leave column A empty, which was a 58-wide void down the page.
+        cell(r, 2, title, bold=True, color="FFFFFF", fill=fill)
+        for c in (1, 3, 4, 5, 6, 7):
             ws.cell(row=r, column=c).fill = fill
-        cell(r, 5, sum(rec["amount"] for rec in recs), bold=True, fmt=CURR_FMT,
+        cell(r, 3, sum(rec["amount"] for rec in recs), bold=True, fmt=CURR_FMT,
              color="FFFFFF", fill=fill)
         r += 1
-        for c, h in ((1, "Account / Vendor / Line"), (2, "Date"), (3, "Doc #"),
-                     (4, "Description"), (5, "Amount"), (6, "Paid?")):
+        for c, h in ((2, "Account / Vendor / Doc #"), (3, "Amount"), (4, "Date"),
+                     (5, "Paid?"), (6, "Description")):
             hc = cell(r, c, h, bold=True, color="1F3A5F")
             hc.border = BOTTOM_BORDER
         r += 1
@@ -2436,44 +2440,48 @@ def build_sheet_by_account(wb: Workbook, proj: str, cust_info: dict,
             vendors = by_acct[acct]
             atot = sum(rec["amount"] for v in vendors.values() for rec in v)
             anchors[acct] = r
-            cell(r, 1, acct, bold=True, color="1F3A5F")
-            cell(r, 5, atot, bold=True, fmt=CURR_FMT, color="1F3A5F")
-            for c in range(1, 7):
+            cell(r, 2, acct, bold=True, color="1F3A5F")
+            cell(r, 3, atot, bold=True, fmt=CURR_FMT, color="1F3A5F")
+            for c in range(2, 8):
                 ws.cell(row=r, column=c).fill = PatternFill("solid", fgColor="DDEBF7")
                 ws.cell(row=r, column=c).border = THIN_BORDER
             r += 1
             for vendor in sorted(vendors, key=lambda v: -sum(x["amount"] for x in vendors[v])):
                 lines = vendors[vendor]
-                cell(r, 1, vendor or "(no vendor)", bold=True, indent=1)
-                cell(r, 5, sum(x["amount"] for x in lines), bold=True, fmt=CURR_FMT)
+                cell(r, 2, vendor or "(no vendor)", bold=True, indent=1)
+                cell(r, 3, sum(x["amount"] for x in lines), bold=True, fmt=CURR_FMT)
                 ws.row_dimensions[r].outline_level = 1
                 r += 1
                 for rec in lines:
-                    idc = cell(r, 3, rec.get("ref") or rec.get("txn_id") or "")
+                    idc = cell(r, 2, rec.get("ref") or rec.get("txn_id") or "",
+                               indent=2)
                     u = _qbo_txn_url(rec.get("tx_type", "Bill"), rec.get("txn_id", ""), realm)
                     if u:
                         idc.hyperlink = u
                         idc.font = Font(size=SZ, color="0563C1", underline="single")
+                    cell(r, 3, rec["amount"], fmt=CURR_FMT)
                     _d = _parse_date(rec.get("date", ""))
-                    dc = _write_cell(ws, r, 2, _d or rec.get("date", ""))
+                    dc = _write_cell(ws, r, 4, _d or rec.get("date", ""))
                     dc.number_format = "mm/dd/yyyy"
                     dc.font = Font(size=SZ)
-                    cell(r, 4, rec.get("desc", ""), indent=2)
-                    cell(r, 5, rec["amount"], fmt=CURR_FMT)
                     if paid_map is not None:
                         _pd = paid_map.get(rec.get("txn_id"))
                         if _pd is not None:
                             _lbl, _col = _pay_state(_pd[0], _pd[1])
                             if _lbl:
-                                cell(r, 6, _lbl, bold=True, color=_col)
+                                cell(r, 5, _lbl, bold=True, color=_col)
+                    cell(r, 6, rec.get("desc", ""))
+                    # COLLAPSED by default — the page opens on accounts and
+                    # their vendors, not thousands of lines.
                     ws.row_dimensions[r].outline_level = 2
+                    ws.row_dimensions[r].hidden = True
                     r += 1
         r += 1
 
-    for col, w in zip("ABCDEF", (58, 13, 16, 62, 18, 24)):
+    for col, w in zip("ABCDEFG", (3, 46, 17, 13, 22, 16, 15)):
         ws.column_dimensions[col].width = w
     ws.sheet_properties.outlinePr.summaryBelow = False
-    _setup_print(ws, 6)
+    _setup_print(ws, 10)
     return anchors
 
 
@@ -2870,7 +2878,7 @@ def build_sheet_pl(
             _a = (acct_anchors or {}).get(nm)
             if _a:
                 _c = ws.cell(row=_rr, column=1)
-                _c.hyperlink = f"#'By Account'!A{_a}"
+                _c.hyperlink = f"#'By Account'!B{_a}"   # account name is in B now
                 _c.font = Font(size=BASE_SIZE, color="0563C1", underline="single")
         f = ("=" + "+".join(f"B{x}" for x in rows_)) if rows_ else "=0"
         tc = ws.cell(row=hdr_row, column=2, value=f)
