@@ -4,6 +4,13 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Draws: group by customer then project + no row highlight (owner, 2026-08-28: "group by customer then
+  by project · remove row highlighting color").** Two-level grouping - a bold **customer (GC)** header,
+  then the **project** headers nested under it (indented, lighter), then the draws. Each project resolves
+  to ONE canonical GC (`_buildDrawClientMap` prefers a clean client name over a project-prefixed
+  sub-customer like "MFD325 - BRIARWOOD", so a project's draws never split across two "customers" - the
+  count went 20 -> 15). Removed the green "All paid" row background (`.draw-row.done`); status still reads
+  from the stage pill.
 - **Vendor page + copyable ref #s (owner, 2026-08-28: "vendor center open into its own vendor page like
   qbo ... transactions ... filters of what type ... see the bill its paying and the project ... if
   multiple say multiple, click for all line items with the project #" · "ref# be either a copy or link").**

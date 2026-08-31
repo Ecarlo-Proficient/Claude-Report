@@ -285,18 +285,18 @@ a.invno.qbo-link:hover { border-color: var(--accent); text-decoration: none; }
 .draws-table td { vertical-align: middle; }
 .draw-row .draw-caret { color: var(--text-dim); width: 1.4em; text-align: center; }
 .draw-row:hover { background: var(--row-hover); }
-.draw-row.done { background: color-mix(in srgb, var(--pos) 13%, transparent); }
-.draw-row.done:hover { background: color-mix(in srgb, var(--pos) 20%, transparent); }
-.draw-row.done td:first-child { box-shadow: inset 3px 0 var(--pos); }
 .cell.draw-in { color: var(--pos); font-weight: 700; }      /* money IN (GC pays you) */
 .cell.draw-out { color: var(--text); }                       /* money OUT (you pay vendors) */
 .ar-open { color: #b8860b; font-size: .82em; font-weight: 600; }   /* Unpaid / Partially Paid — GC still owes */
 .ar-paid { color: var(--pos); font-size: .82em; font-weight: 600; }  /* Paid */
 .paidcnt { color: var(--text-dim); font-size: .85em; font-variant-numeric: tabular-nums; }
-tr.draw-group > td { background: color-mix(in srgb, var(--accent) 8%, var(--surface-2));
-  border-top: 2px solid var(--border); padding: 9px 10px; }
+tr.draw-cust > td { background: color-mix(in srgb, var(--accent) 16%, var(--surface-2));
+  border-top: 2px solid color-mix(in srgb, var(--accent) 38%, var(--border)); padding: 9px 12px; }
+tr.draw-cust .g-cust { font-weight: 800; font-size: 1.02em; letter-spacing: -.01em; }
+tr.draw-group > td { background: color-mix(in srgb, var(--accent) 7%, var(--surface-2));
+  border-top: 1px solid var(--border); padding: 7px 10px 7px 26px; }   /* nested under the customer */
 tr.draw-group .g-proj { font-weight: 800; font-size: .95em; letter-spacing: -.01em; }
-tr.draw-group .g-sub { color: var(--text-dim); font-weight: 500; font-size: .85em; }
+tr.draw-group .g-sub, tr.draw-cust .g-sub { color: var(--text-dim); font-weight: 500; font-size: .85em; }
 .draws-table tbody td:nth-child(2) span { display: inline-block; max-width: 320px; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
 /* Working-on table: truncate the long Name so all columns fit the boxed width. */

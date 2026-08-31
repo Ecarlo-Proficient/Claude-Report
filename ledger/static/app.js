@@ -867,6 +867,22 @@ function drawPeriod(mi) {
   return "";
 }
 function drawPeriodFull(mi) { const m = String(mi || "").match(/Period:\s*([\d/]+\s*-\s*[\d/]+)/i); return m ? "Period " + m[1].replace(/\s+/g, " ") : ""; }
+// Resolve each PROJECT to one canonical client (GC) for grouping. billing_event customers are
+// inconsistent - a project's draws can carry the GC ("JPI Construction, LLC") on some and a
+// project-prefixed sub-customer ("MFD325 - BRIARWOOD") on others - so per project we PREFER a clean GC
+// name and strip the project prefix otherwise. Built once per render so a project never splits.
+let _drawClientByProj = {};
+function _buildDrawClientMap(draws) {
+  const m = {};
+  for (const d of draws) {
+    const p = d.project_no || ""; const raw = (d.customer || "").trim(); if (!raw) continue;
+    const prefixed = /^(MFD|CP|RP)\d+/i.test(raw);
+    const name = prefixed ? (raw.replace(/^(MFD|CP|RP)\d+(-FTW)?\s*[-–]\s*/i, "").trim() || raw) : raw;
+    if (!m[p] || (!prefixed && m[p].prefixed)) m[p] = { name, prefixed };   // clean GC name wins
+  }
+  _drawClientByProj = {}; for (const p in m) _drawClientByProj[p] = m[p].name;
+}
+function _drawCustomer(d) { return _drawClientByProj[d.project_no || ""] || "(no client)"; }
 // When a filter is active, the tab's description says WHAT it's filtering; with no filter it stays the
 // generic blurb (owner 2026-08-28: "change the desc to show what it's filtering ... All = generic").
 const _DRAW_FLABEL = { dfClient: "Client", dfProj: "Project", dfVendor: "Vendor", dfInv: "Invoice", dfDiv: "Division" };
@@ -920,8 +936,10 @@ function renderDraws() {
   // (in)" = the GC pays you; "Paid out" = you pay vendors — money-in vs money-out.
   const box = $("#drawList"); box.innerHTML = "";
   if (!shown.length) { box.innerHTML = '<p class="hint" style="padding:14px 18px">No draws match.</p>'; return; }
-  // Grouped by project #: sort by project, newest draw first within each project.
+  // Grouped by CUSTOMER (GC), then by project # within each; newest draw first within a project.
+  _buildDrawClientMap(DRAWS.draws || []);   // resolve each project to one canonical GC (stable across filters)
   const grouped = [...shown].sort((a, b) =>
+    _drawCustomer(a).localeCompare(_drawCustomer(b)) ||
     (a.project_no || "").localeCompare(b.project_no || "") ||
     String(b.ar_date || b.recency || "").localeCompare(String(a.ar_date || a.recency || "")));
   const scroll = document.createElement("div"); scroll.className = "table-scroll";
@@ -932,11 +950,25 @@ function renderDraws() {
   const htr = document.createElement("tr");
   for (const [c, al] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
   thead.appendChild(htr);
-  let curProj = null;
+  let curCust = null, curProj = null;
   for (const d of grouped) {
-    if (d.project_no !== curProj) {                       // project group header
+    const cust = _drawCustomer(d);
+    if (cust !== curCust) {                               // customer (GC) group header
+      curCust = cust; curProj = null;
+      const cg = grouped.filter(x => _drawCustomer(x) === cust);
+      const cIn = cg.reduce((t, x) => t + (x.billed || 0), 0);
+      const cOut = cg.reduce((t, x) => t + (x.total_gate != null ? x.total_gate : (x.total || 0)), 0);
+      const nProj = new Set(cg.map(x => x.project_no)).size;
+      const ctr = document.createElement("tr"); ctr.className = "draw-cust";
+      const ctd = document.createElement("td"); ctd.colSpan = cols.length;
+      const cs = document.createElement("span"); cs.className = "g-cust"; cs.textContent = cust;
+      const csub = document.createElement("span"); csub.className = "g-sub";
+      csub.textContent = ` · ${nProj} project${nProj > 1 ? "s" : ""} · ${cg.length} draw${cg.length > 1 ? "s" : ""} · ${money(cIn)} in / ${money(cOut)} out / ${money(cIn - cOut)} net`;
+      ctd.appendChild(cs); ctd.appendChild(csub); ctr.appendChild(ctd); tbody.appendChild(ctr);
+    }
+    if (d.project_no !== curProj) {                       // project group header (within the customer)
       curProj = d.project_no;
-      const g = grouped.filter(x => x.project_no === curProj);
+      const g = grouped.filter(x => x.project_no === curProj && _drawCustomer(x) === cust);
       const gIn = g.reduce((t, x) => t + (x.billed || 0), 0);
       const gOut = g.reduce((t, x) => t + (x.total_gate != null ? x.total_gate : (x.total || 0)), 0);
       const gtr = document.createElement("tr"); gtr.className = "draw-group";
