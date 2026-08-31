@@ -4,6 +4,13 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Audit tab: Class column + multi-column sort (owner, 2026-08-28: "need class in the column ...
+  sort by date or vendor ... both ways at the same time").** Added a **Class** column (the QBO
+  division, already on each finding) between Project and Cost, and to the copy-as-table columns.
+  Made every meaningful header **click-to-sort**: click adds it, click again flips asc/desc, a third
+  click drops it; columns STACK in click order (`acctSort = [{key,dir}]`), so Vendor-then-Date sorts
+  by vendor then by date within each vendor - "both ways at the same time." Active columns show ▲/▼ +
+  an order badge; the sort runs before the 250-row render cap. Front-end only.
 - **Draws + Audit fixes (owner, 2026-08-28).**
   - **MCP/CORE pumping out of Pay Vendors.** The stage already ignored MCP/CORE concrete pumping; now the
     DISPLAYED pay-out does too - new `total_gate` (backend, gating bills only) drives "Paid out", the paid

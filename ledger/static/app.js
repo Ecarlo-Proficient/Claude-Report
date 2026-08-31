@@ -5477,6 +5477,7 @@ let ACCT = null;            // cached /api/accounting payload
 let acctIssue = null;       // the audit-type filter currently active (null = all)
 let acctSel = new Set();    // selected finding keys (f._k) for copy-as-table
 let _acctVisible = [];      // the currently-filtered rows ("Copy all" copies these)
+let acctSort = [];          // multi-column sort: [{key, dir}] - click a header to add/cycle asc/desc/off
 async function loadAccounting(force) {
   const note = $("#acctNote"), table = $("#acctTable");
   if (!table) return;
@@ -5494,6 +5495,33 @@ function _acctPillClass(issue) {
   if (i.includes("not approved") || i.includes("missing project") || i.includes("no project")) return "warn";
   if (i.includes("duplicate")) return "neg";
   return "info";
+}
+
+// Multi-column sort for the Audit table (owner 2026-08-28: "sort by date or vendor ... both ways at
+// the same time"). Click a header to add it; click again to flip asc/desc; again to drop it. Columns
+// stack in click order, so Vendor-then-Date sorts by vendor, then by date within each vendor.
+const ACCT_SORT_KEYS = {
+  "Issue": f => f.issue, "Vendor": f => f.vendor, "Bill #": f => f.bill_no,
+  "Date": f => f.date || "", "Project": f => f.project, "Class": f => f.division,
+  "Cost": f => f.cost_code, "Amount": f => (f.amount == null ? -Infinity : f.amount),
+  "Line memo": f => f.memo, "Why flagged": f => f.detail,
+};
+function _acctCmp(a, b) {
+  for (const s of acctSort) {
+    const acc = ACCT_SORT_KEYS[s.key]; if (!acc) continue;
+    const av = acc(a), bv = acc(b);
+    const c = (typeof av === "number" || typeof bv === "number")
+      ? (av || 0) - (bv || 0) : String(av || "").localeCompare(String(bv || ""));
+    if (c) return c * s.dir;
+  }
+  return 0;
+}
+function _acctToggleSort(key) {
+  const i = acctSort.findIndex(s => s.key === key);
+  if (i < 0) acctSort.push({ key, dir: 1 });
+  else if (acctSort[i].dir === 1) acctSort[i].dir = -1;
+  else acctSort.splice(i, 1);
+  renderAccounting();
 }
 
 function renderAccounting() {
@@ -5532,18 +5560,30 @@ function renderAccounting() {
   const dv = dsel ? dsel.value : "", q = ($("#acctSearch").value || "").trim().toLowerCase();
   const rows = all.filter(f => (!acctIssue || f.issue === acctIssue) && (!dv || f.division === dv)
     && (!q || (f.vendor + " " + f.project + " " + f.bill_no + " " + (f.memo || "") + " " + f.detail).toLowerCase().includes(q)));
+  if (acctSort.length) rows.sort(_acctCmp);   // multi-column sort (applied before the render cap)
   _acctVisible = rows;
   // fixed meta widths (px) so one long outlier can't blow a column wide (the old wasted
   // space); the two text columns (null width) share the rest and wrap - nothing truncates.
   const cols = [["Issue", "left audit-soft", 126], ["Vendor", "left audit-soft", 148], ["Bill #", "left", 78],
-    ["📎", "left", 52], ["Date", "left", 104], ["Project", "left", 126], ["Cost", "left", 68], ["Amount", "right", 92],
+    ["📎", "left", 52], ["Date", "left", 104], ["Project", "left", 122], ["Class", "left", 104], ["Cost", "left", 64], ["Amount", "right", 92],
     ["Line memo", "left audit-soft", null], ["Why flagged", "left audit-soft", null]];
   thead.innerHTML = ""; const htr = document.createElement("tr");
   const chTh = document.createElement("th"); chTh.className = "left acct-check"; chTh.style.width = "32px";
   const selAll = document.createElement("input"); selAll.type = "checkbox"; selAll.id = "acctSelAll"; selAll.title = "Select all shown";
   selAll.onchange = () => { if (selAll.checked) rows.forEach(f => acctSel.add(f._k)); else rows.forEach(f => acctSel.delete(f._k)); renderAccounting(); };
   chTh.appendChild(selAll); htr.appendChild(chTh);
-  for (const [c, cls, w] of cols) { const th = document.createElement("th"); th.className = cls; th.textContent = c; if (w) th.style.width = w + "px"; htr.appendChild(th); } thead.appendChild(htr);
+  for (const [c, cls, w] of cols) {
+    const th = document.createElement("th"); th.className = cls; if (w) th.style.width = w + "px";
+    const si = acctSort.findIndex(s => s.key === c);
+    if (ACCT_SORT_KEYS[c]) {
+      th.classList.add("acct-sortable");
+      th.textContent = c + (si >= 0 ? (acctSort[si].dir === 1 ? " ▲" : " ▼") + (acctSort.length > 1 ? (si + 1) : "") : "");
+      th.title = "Click to sort; click again to reverse; a third click clears it. Sort by more than one column - they stack in click order.";
+      th.onclick = () => _acctToggleSort(c);
+    } else th.textContent = c;
+    htr.appendChild(th);
+  }
+  thead.appendChild(htr);
   tbody.innerHTML = "";
   if (!rows.length) {
     const tr = document.createElement("tr"), td = document.createElement("td");
@@ -5577,6 +5617,7 @@ function renderAccounting() {
     tr.appendChild(sc);
     tr.appendChild(leftText(f.date ? fmtDateShort(f.date) : "–"));
     const pc = leftText(f.project || "–"); pc.title = f.project || ""; tr.appendChild(pc);
+    tr.appendChild(leftText(f.division || "–"));   // Class (QBO division)
     tr.appendChild(leftText(f.cost_code || "–"));
     tr.appendChild(rightText(f.amount != null ? money(f.amount) : ""));
     const mc = document.createElement("td"); mc.className = "left audit-soft"; mc.textContent = f.memo || "–"; if (!f.memo) mc.classList.add("audit-dim"); tr.appendChild(mc);
@@ -5595,8 +5636,9 @@ function renderAccounting() {
 
 // Copy-as-table: the columns copied (headers + values), minus the checkbox and 📎 columns.
 const ACCT_COPY_COLS = [["Issue", f => f.issue], ["Vendor", f => f.vendor], ["Bill #", f => f.bill_no],
-  ["Date", f => f.date ? fmtDateShort(f.date) : ""], ["Project", f => f.project], ["Cost", f => f.cost_code],
-  ["Amount", f => f.amount != null ? money(f.amount) : ""], ["Line memo", f => f.memo], ["Why flagged", f => f.detail]];
+  ["Date", f => f.date ? fmtDateShort(f.date) : ""], ["Project", f => f.project], ["Class", f => f.division],
+  ["Cost", f => f.cost_code], ["Amount", f => f.amount != null ? money(f.amount) : ""],
+  ["Line memo", f => f.memo], ["Why flagged", f => f.detail]];
 
 function _acctUpdateCopyBtn() {
   const b = $("#btnAcctCopy"); if (!b || b.disabled) return;
