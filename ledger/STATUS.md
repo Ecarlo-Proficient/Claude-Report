@@ -4,6 +4,13 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Draw report - inline, summary-first, copyable (owner, 2026-08-28: "subs in the draw view ... a report
+  i can copy and paste to people ... don't want it to open side ... full report ... summary then the whole
+  thing ... spreadsheet ... careful with load time and bloat").** Clicking a draw expands INLINE (no side
+  panel) into a report: a summary line (client · project · period · billed in / paid out / net / status) +
+  a **Copy report** button, then the subs (vendor-grouped bills). Copy puts the draw + its subs on the
+  clipboard as TSV (pastes into a spreadsheet) AND an HTML table (email) - a summary block + the sub lines,
+  pump bills flagged. Built entirely from the draw data already loaded (`d.bills`), so zero extra fetch / bloat.
 - **Draws: group by customer then project + no row highlight (owner, 2026-08-28: "group by customer then
   by project · remove row highlighting color").** Two-level grouping - a bold **customer (GC)** header,
   then the **project** headers nested under it (indented, lighter), then the draws. Each project resolves

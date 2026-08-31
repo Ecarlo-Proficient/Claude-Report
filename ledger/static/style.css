@@ -308,6 +308,8 @@ tr.draw-group .g-sub, tr.draw-cust .g-sub { color: var(--text-dim); font-weight:
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
 .draw-bills-row > td { padding: 0; background: var(--surface-2); }
 .bills-sub { padding: 6px 10px 12px 34px; }
+.draw-rep-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 4px 2px 6px; }
+.draw-rep-sum { font-size: .9em; color: var(--text); font-variant-numeric: tabular-nums; }
 .bills-cap { color: var(--text-dim); font-size: .82em; padding: 4px 2px 8px; font-variant-numeric: tabular-nums; }
 .bills-sub table.grid { background: var(--surface); border-radius: 8px; }
 /* Vendor sub-groups inside a draw's bills: total first, click to open the bills under it. */
