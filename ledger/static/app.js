@@ -1029,14 +1029,17 @@ function renderDraws() {
 function buildBillsTable(d) {
   const wrap = document.createElement("div"); wrap.className = "bills-sub";
   const payTotal = d.total_gate != null ? d.total_gate : d.total;   // excl MCP/CORE pumping (not paid by us)
-  const net = (d.billed || 0) - payTotal;
+  const subsT = d.subs_total || 0;
+  const totalOut = payTotal + subsT;               // materials + subs (labor) = the full picture
+  const net = (d.billed || 0) - totalOut;
   // Report header: a summary line + a Copy button (paste the draw + its subs to people). Inline - no
   // side panel (owner 2026-08-28); built from the draw data already loaded, so no extra fetch / bloat.
   const rh = document.createElement("div"); rh.className = "draw-rep-head";
   const sm = document.createElement("div"); sm.className = "draw-rep-sum";
   sm.innerHTML = `<b>${_ge(_drawCustomer(d))}</b> · ${_ge(d.project_no || "")}`
     + (drawPeriod(d.matched_invoice) ? " · " + _ge(drawPeriod(d.matched_invoice)) : "")
-    + ` &nbsp;·&nbsp; Billed in <b>${_ge(d.billed != null ? money(d.billed) : "—")}</b> · Paid out <b>${_ge(money(payTotal))}</b>`
+    + ` &nbsp;·&nbsp; Billed in <b>${_ge(d.billed != null ? money(d.billed) : "—")}</b> · Materials <b>${_ge(money(payTotal))}</b>`
+    + (subsT ? ` · Subs <b>${_ge(money(subsT))}</b> · Total out <b>${_ge(money(totalOut))}</b>` : "")
     + ` · Net <b>${_ge(d.billed != null ? money(net) : "—")}</b> · ${_ge(DRAW_STAGE_SHORT[d.stage] || d.stage || "")}`;
   const cpBtn = document.createElement("button"); cpBtn.type = "button"; cpBtn.className = "btn small"; cpBtn.textContent = "Copy report";
   cpBtn.title = "Copy this draw + its subs as a table to paste to people";
@@ -1103,29 +1106,59 @@ function buildBillsTable(d) {
     }
   }
   table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table); wrap.appendChild(scroll);
+  if ((d.subs || []).length) wrap.appendChild(_drawSubsTable(d));   // the labor side (subs), so it's the full picture
+  return wrap;
+}
+// Subs (labor) on a draw - is_sub cost lines matched by project + draw period, grouped by sub. Not in
+// ap_bill_line (the Bill Tracker excludes subs from the display sheets), so this is the labor side.
+function _drawSubsTable(d) {
+  const wrap = document.createElement("div"); wrap.className = "draw-subs";
+  const cap = document.createElement("div"); cap.className = "bills-cap";
+  cap.textContent = `Subs (labor) · ${money(d.subs_total)} · ${d.subs.length} sub${d.subs.length > 1 ? "s" : ""} · matched by project + draw period`;
+  wrap.appendChild(cap);
+  const scroll = document.createElement("div"); scroll.className = "table-scroll";
+  const table = document.createElement("table"); table.className = "grid";
+  const thead = document.createElement("thead"), tbody = document.createElement("tbody");
+  const htr = document.createElement("tr");
+  for (const [c, al] of [["Sub", "left"], ["Bills", "right"], ["Total", "right"]]) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
+  thead.appendChild(htr);
+  for (const s of d.subs) {
+    const tr = document.createElement("tr");
+    tr.appendChild(leftText(s.vendor || "–"));
+    tr.appendChild(rightText(String(s.n || 0)));
+    const tc = document.createElement("td"); tc.appendChild(moneyCell(s.total)); tr.appendChild(tc);
+    tbody.appendChild(tr);
+  }
+  table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table); wrap.appendChild(scroll);
   return wrap;
 }
 // Copy a draw + its subs as a table (TSV for spreadsheets + HTML for email) to paste to people.
 async function copyDrawReport(d, btn) {
   const payTotal = d.total_gate != null ? d.total_gate : d.total;
-  const net = (d.billed || 0) - payTotal;
+  const subsT = d.subs_total || 0, totalOut = payTotal + subsT;
+  const net = (d.billed || 0) - totalOut;
   const summary = [
     ["Client", _drawCustomer(d)], ["Project", d.project_no || ""],
     ["Period", drawPeriod(d.matched_invoice) || ""], ["Invoice #", d.invoice_no || ""],
-    ["Billed in", d.billed != null ? money(d.billed) : ""], ["Paid out", money(payTotal)],
+    ["Billed in", d.billed != null ? money(d.billed) : ""], ["Materials out", money(payTotal)],
+    ["Subs (labor)", money(subsT)], ["Total out", money(totalOut)],
     ["Net", d.billed != null ? money(net) : ""], ["Status", DRAW_STAGE_SHORT[d.stage] || d.stage || ""],
   ];
-  const billHead = ["Vendor", "Bill #", "Bill date", "Amount", "Paid", "GC funded"];
+  const billHead = ["Vendor (material)", "Bill #", "Bill date", "Amount", "Paid", "GC funded"];
   const billRows = (d.bills || []).slice().sort((a, b) => (b.amount || 0) - (a.amount || 0)).map(b => [
     b.vendor || "", b.bill_ref || "", fmtDate(b.bill_date) || "",
     money(b.amount) + (b.gates === false ? " (pump)" : ""), b.pay_date ? fmtDate(b.pay_date) : "", b.gc_paid ? fmtDate(b.gc_paid) : ""]);
+  const subHead = ["Sub (labor)", "Bills", "Total"];
+  const subRows = (d.subs || []).map(s => [s.vendor || "", String(s.n || 0), money(s.total)]);
   const clean = v => String(v == null ? "" : v).replace(/[\t\r\n]+/g, " ").trim();
-  const tsv = summary.map(r => r.map(clean).join("\t")).join("\n") + "\n\n"
-    + [billHead, ...billRows].map(r => r.map(clean).join("\t")).join("\n");
+  const tsvTable = rows => rows.map(r => r.map(clean).join("\t")).join("\n");
+  const tsv = tsvTable(summary) + "\n\nMATERIALS\n" + tsvTable([billHead, ...billRows])
+    + (subRows.length ? "\n\nSUBS (LABOR)\n" + tsvTable([subHead, ...subRows]) : "");
   const esc = v => _ge(String(v == null ? "" : v));
-  const html = "<table>" + summary.map(r => `<tr><th style="text-align:left">${esc(r[0])}</th><td>${esc(r[1])}</td></tr>`).join("")
-    + "</table><br><table><thead><tr>" + billHead.map(h => `<th>${esc(h)}</th>`).join("") + "</tr></thead><tbody>"
-    + billRows.map(r => "<tr>" + r.map(v => `<td>${esc(v)}</td>`).join("") + "</tr>").join("") + "</tbody></table>";
+  const htmlTable = (head, rows) => "<table><thead><tr>" + head.map(h => `<th>${esc(h)}</th>`).join("") + "</tr></thead><tbody>"
+    + rows.map(r => "<tr>" + r.map(v => `<td>${esc(v)}</td>`).join("") + "</tr>").join("") + "</tbody></table>";
+  const html = "<table>" + summary.map(r => `<tr><th style="text-align:left">${esc(r[0])}</th><td>${esc(r[1])}</td></tr>`).join("") + "</table><br>"
+    + htmlTable(billHead, billRows) + (subRows.length ? "<br>" + htmlTable(subHead, subRows) : "");
   let ok = false;
   try {
     if (window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {

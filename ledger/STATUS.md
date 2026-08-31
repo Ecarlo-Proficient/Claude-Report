@@ -4,6 +4,15 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Subs in the draws - the labor side of the full picture (owner, 2026-08-28: "i need subs in the draws
+  to see the full picture").** Subs (1099 labor) are excluded from the Bill Tracker display sheets, so
+  they never reached `ap_bill_line` or the draws (material-only). Now `_fetch_draws` pulls `is_sub` cost
+  lines from `cost_line` (QBO) and matches them to each draw by **project + date-in-the-draw-period** (the
+  period lives in the matched-invoice text), grouped by sub -> `d.subs` + `d.subs_total` (helpers
+  `_draw_period_range`, `_subs_by_project`). The draw report gained a **"Subs (labor)" section** and a
+  full-picture summary (Billed in · Materials · Subs · Total out · Net-after-subs); Copy report includes
+  both a MATERIALS and a SUBS block. Grouped-by-sub server-side, so the payload grows only ~KB (51 of 57
+  draws carry subs). Verified live: MFD325 -> Briones / JMP / Xtreeme.
 - **Draw report - inline, summary-first, copyable (owner, 2026-08-28: "subs in the draw view ... a report
   i can copy and paste to people ... don't want it to open side ... full report ... summary then the whole
   thing ... spreadsheet ... careful with load time and bloat").** Clicking a draw expands INLINE (no side

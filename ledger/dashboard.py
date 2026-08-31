@@ -1021,6 +1021,32 @@ def _gates_stage(vendor: str) -> bool:
 _STAGE_ORDER = {"Ready to turn in": 0, "Fund in — pay vendors": 1,
                 "Awaiting GC funding": 2, "All paid": 3}
 
+# Subs (1099 labor) are NOT on the Bill Tracker display sheets, so they never reach ap_bill_line or
+# the draws. Pull them from cost_line (QBO, is_sub) and match to a draw by project + date-in-period -
+# the draw's billing period is in the matched-invoice text "(Period: MM/DD/YYYY - MM/DD/YYYY)".
+_PERIOD_RE = re.compile(r"Period:\s*(\d+)/(\d+)/(\d+)\s*-\s*(\d+)/(\d+)/(\d+)", re.I)
+
+
+def _draw_period_range(mi: str):
+    m = _PERIOD_RE.search(mi or "")
+    if not m:
+        return (None, None)
+    g = m.groups()
+    return (f"{g[2]}-{int(g[0]):02d}-{int(g[1]):02d}", f"{g[5]}-{int(g[3]):02d}-{int(g[4]):02d}")
+
+
+def _subs_by_project(con) -> dict:
+    """is_sub cost lines grouped by project -> [{vendor, txn_date, amount, cost_code}], for matching
+    to each draw's period. Empty (not an error) if cost_line isn't loaded."""
+    out: dict = {}
+    try:
+        for r in con.execute("SELECT project_no, vendor, txn_date, amount, cost_code "
+                             "FROM cost_line WHERE is_sub=1 AND project_no IS NOT NULL"):
+            out.setdefault(r["project_no"], []).append(dict(r))
+    except sqlite3.OperationalError:
+        pass
+    return out
+
 
 def _fetch_draws(con, limit: int = 100) -> dict:
     """Roll AP bills up BY DRAW (matched invoice) → the race-through pipeline,
@@ -1063,10 +1089,25 @@ def _fetch_draws(con, limit: int = 100) -> dict:
             "gates": _gates_stage(r["vendor"]),
         })
     out = []
+    subs_by_proj = _subs_by_project(con)   # is_sub cost lines per project (matched to draws by period)
     for mi, d in draws.items():
         bills = d["bills"]
         n = len(bills)
         paid = sum(1 for b in bills if b["pay_date"])
+        # Subs (labor) on this draw = is_sub cost lines for the project, dated in the draw's period,
+        # grouped by sub. They aren't in ap_bill_line (excluded from the display sheets), so this is
+        # the only place the draw shows the labor side of the picture.
+        p0, p1 = _draw_period_range(mi)
+        subs_agg: dict = {}
+        if p0 and p1:
+            for s in subs_by_proj.get(d["project_no"], []):
+                if p0 <= (s.get("txn_date") or "") <= p1:
+                    v = subs_agg.setdefault(s.get("vendor") or "?",
+                                            {"vendor": s.get("vendor") or "?", "total": 0.0, "n": 0})
+                    v["total"] += (s.get("amount") or 0)
+                    v["n"] += 1
+        d["subs"] = sorted(subs_agg.values(), key=lambda x: -x["total"])
+        d["subs_total"] = round(sum(v["total"] for v in subs_agg.values()), 2)
         # Stage is decided on the GATING bills only. If every bill on the draw
         # is a pump bill there is nothing else to judge by, so fall back to all
         # of them rather than calling the draw done on no evidence.
