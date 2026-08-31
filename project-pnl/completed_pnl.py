@@ -118,39 +118,68 @@ def _thick_box(ws, r0: int, r1: int, c0: int, c1: int) -> None:
 _VENDOR_RE = re.compile(r"^(.*?)\s*\((\d+)\)\s*$")
 
 
-def _read_invoices(ws) -> tuple:
+def _first_col(ws) -> int:
+    """Where the Transactions sheet's labels actually start.
+
+    P&Ls generated from 2026-08-31 carry a LEFT GUTTER: column A is empty and
+    every label sits in B. Reading column A regardless is not a wrong number,
+    it is a SILENT ZERO - the job reports 0 billed / 0 cost and drops out of
+    the overview totals looking like a job with no activity. So find the
+    'Inv #' header and take its column; pre-gutter workbooks answer 1."""
+    for r in range(1, 60):
+        for c in range(1, 5):
+            if str(ws.cell(r, c).value or "").strip() == "Inv #":
+                return c
+    return 1
+
+
+def _header_map(ws, row: int, c0: int) -> Dict[str, int]:
+    """{header text -> column} for one header row, read from c0 rightwards."""
+    return {str(ws.cell(row, c).value or "").strip().lower(): c
+            for c in range(c0, c0 + 10)}
+
+
+def _read_invoices(ws, c0: int) -> tuple:
     """Every invoice, and the retainage that moved by journal entry."""
     inv: List[dict] = []
     hdr = next((r for r in range(1, 60)
-                if str(ws.cell(r, 1).value or "").strip() == "Inv #"), None)
+                if str(ws.cell(r, c0).value or "").strip() == "Inv #"), None)
     if hdr is None:
         return inv, 0.0
+    col = _header_map(ws, hdr, c0)
+    DOC = col.get("inv #", c0)
+    DATE = col.get("date", c0 + 1)
+    MEMO = col.get("memo", c0 + 2)
+    GROSS = col.get("gross income", c0 + 3)
+    WHELD = col.get("retainage withheld", c0 + 4)
+    RETB = col.get("retainage billed", c0 + 6)
+    PAID = col.get("paid?", c0 + 7)
     end = next((r for r in range(hdr + 1, ws.max_row + 1)
-                if str(ws.cell(r, 1).value or "").startswith("TOTAL")), ws.max_row)
+                if str(ws.cell(r, c0).value or "").startswith("TOTAL")), ws.max_row)
 
     def f(rr, cc):
         v = ws.cell(rr, cc).value
         return float(v) if isinstance(v, (int, float)) else 0.0
 
     for r in range(hdr + 1, end):
-        inv.append({"doc": ws.cell(r, 1).value, "date": ws.cell(r, 2).value,
-                    "memo": ws.cell(r, 3).value or "",
-                    "gross": f(r, 4), "withheld": f(r, 5),
-                    "ret_billed": f(r, 7),
-                    "paid": ws.cell(r, 8).value or "",
-                    "url": (ws.cell(r, 1).hyperlink.target
-                            if ws.cell(r, 1).hyperlink else None)})
+        inv.append({"doc": ws.cell(r, DOC).value, "date": ws.cell(r, DATE).value,
+                    "memo": ws.cell(r, MEMO).value or "",
+                    "gross": f(r, GROSS), "withheld": f(r, WHELD),
+                    "ret_billed": f(r, RETB),
+                    "paid": ws.cell(r, PAID).value or "",
+                    "url": (ws.cell(r, DOC).hyperlink.target
+                            if ws.cell(r, DOC).hyperlink else None)})
     # Rows between the income total and the first cost block, with no account:
     # retainage the bookkeeper moved by journal entry instead of invoicing.
     stop = next((r for r in range(end + 1, ws.max_row + 1)
-                 if str(ws.cell(r, 1).value or "").strip()
+                 if str(ws.cell(r, c0).value or "").strip()
                  .startswith(("COGS", "EXPENSES"))), ws.max_row + 1)
-    not_billed = sum(f(r, 5) for r in range(end + 1, stop)
-                     if not ws.cell(r, 4).value)
+    not_billed = sum(f(r, WHELD) for r in range(end + 1, stop)
+                     if not ws.cell(r, GROSS).value)
     return inv, not_billed
 
 
-def _read_costs(ws) -> List[dict]:
+def _read_costs(ws, c0: int) -> List[dict]:
     """COST OF GOODS SOLD / OPERATING EXPENSES → account → vendor → line.
 
     Read from the **Transactions** sheet, which every template writes the same
@@ -168,7 +197,7 @@ def _read_costs(ws) -> List[dict]:
     cols: Dict[str, int] = {}
     vendor = ""
     for r in range(1, ws.max_row + 1):
-        label = str(ws.cell(r, 1).value or "").strip()
+        label = str(ws.cell(r, c0).value or "").strip()
         lvl = ws.row_dimensions[r].outline_level or 0
         if label.startswith("COGS"):
             cur = {"name": "COST OF GOODS SOLD", "rows": []}
@@ -184,8 +213,7 @@ def _read_costs(ws) -> List[dict]:
         if cur is None:
             continue
         if label == "Ref #":
-            cols = {str(ws.cell(r, c).value or "").strip().lower(): c
-                    for c in range(1, 10)}
+            cols = _header_map(ws, r, c0)
             continue
         if label.startswith("TOTAL"):
             cur = None
@@ -196,16 +224,16 @@ def _read_costs(ws) -> List[dict]:
             m = _VENDOR_RE.match(label)
             vendor = m.group(1).strip() if m else ""   # else: a category banner
             continue
-        amt = ws.cell(r, cols.get("amount", 5)).value
+        amt = ws.cell(r, cols.get("amount", c0 + 4)).value
         if not isinstance(amt, (int, float)):
             continue
-        doc_c = cols.get("ref #", 1)
-        desc_c = cols.get("memo", cols.get("description", 3))
+        doc_c = cols.get("ref #", c0)
+        desc_c = cols.get("memo", cols.get("description", c0 + 2))
         paid_c = cols.get("paid?")
         cur["rows"].append({
-            "acct": str(ws.cell(r, cols.get("account", 4)).value or "(unclassified)"),
+            "acct": str(ws.cell(r, cols.get("account", c0 + 3)).value or "(unclassified)"),
             "vendor": vendor or "(no vendor)",
-            "date": ws.cell(r, cols.get("date", 2)).value,
+            "date": ws.cell(r, cols.get("date", c0 + 1)).value,
             "doc": ws.cell(r, doc_c).value,
             "desc": ws.cell(r, desc_c).value or "",
             "amt": float(amt),
@@ -249,8 +277,9 @@ def read_source(path: Path) -> dict:
     wb = load_workbook(str(path), data_only=False)
     try:
         ws = wb["Transactions"]
-        inv, not_billed = _read_invoices(ws)
-        sections = _read_costs(ws)
+        c0 = _first_col(ws)          # 1 pre-gutter, 2 from 2026-08-31 on
+        inv, not_billed = _read_invoices(ws, c0)
+        sections = _read_costs(ws, c0)
 
         # Payroll out of job cost (it lives in overhead), recorded so the
         # sheet can say what it left out.

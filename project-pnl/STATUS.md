@@ -8,6 +8,33 @@ manual close), RP (no draws — expenses → invoice → profit).
 
 ## DONE / FINALIZED
 
+- **THE MFD REGENERATION RECIPE (2026-08-31) — stop guessing the flags.**
+  All 14 MFD P&Ls were rebuilt onto the gutter layout. The flags are NOT
+  interchangeable; run them exactly like this:
+
+  | Jobs | Command |
+  |---|---|
+  | MFD133 160 166 182 183 186 231 281 | `--class --simple` (one batch is fine) |
+  | MFD295 | `--class --simple --infer-periods` |
+  | MFD172 | `--legacy --alias 'BONDS RANCH' --class --simple` — **alone** |
+  | MFD228 | `--legacy --class --simple` — **alone** |
+  | MFD177 MFD192 MFD325 | no flags (live jobs, full draw template) |
+
+  `--class` alone is NOT enough for MFD172 (short by **192,526**) or MFD228
+  (short by 11,381) - both need `--legacy`'s bill-memo rule, and MFD172 needs
+  its street alias too. `--alias` is refused on a multi-project run, so those
+  two must run on their own.
+
+  **Always snapshot billed/cost per job BEFORE regenerating and diff after.**
+  That is what caught the two wrong-flag jobs, and it is the only way to tell a
+  flag mistake from a real QBO change: with the right flags 12 of 14 jobs
+  reproduced to the cent, and the two that moved were traced to edited bills
+  (MFD177 -10,933: 16 lines recoded off the job, several of whose own
+  descriptions name MFD186/MFD172, plus bill D78027 edited 4,923.28 → 4,623.28;
+  MFD228 -484.50: bill JMP07252024MFD lost a line). A silent drop with no
+  explanation is a flag bug, not a data change.
+
+
 - **THE LEFT GUTTER IS THE STANDARD FOR EVERY P&L (2026-08-31, signed off).**
   Column A is a narrow gutter on every sheet and content starts in B; only the
   row-1/row-2 titles stay in A, hanging into it. On the draw sheets the KPI band
