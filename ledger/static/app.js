@@ -254,6 +254,7 @@ let activeTab = "overview";
 function setTab(t) {
   activeTab = t;
   try { localStorage.setItem("proficient-ledger-tab", t); } catch { /* ignore */ }
+  { const rv = $("#recordView"); if (rv) rv.hidden = true; }   // leaving a record view when a tab is picked
   $$(".tab-page").forEach(p => { p.hidden = p.dataset.tab !== t; });
   const g = groupOf(t);
   $$("#groupbar .tab").forEach(b => b.classList.toggle("active", b.dataset.group === g.id));
@@ -1550,7 +1551,7 @@ function renderVendors() {
   $("#vendorsNote").textContent = (COST.by_vendor || []).length
     ? `(${vends.length} vendors · $${Math.round(totalSpend).toLocaleString()})`
     : "(no cost data — run load_costs.py)";
-  const cols = [["Vendor", "left"], ["Type", "left"], ["Spend", "right"], ["Jobs", "right"], ["Lines", "right"]];
+  const cols = [["Vendor", "left"], ["Type", "left"], ["Spend", "right"], ["Jobs", "right"], ["Open bills", "right"], ["Open $", "right"]];
   const thead = $("#vendorTable thead"), tbody = $("#vendorTable tbody");
   thead.innerHTML = ""; tbody.innerHTML = "";
   const htr = document.createElement("tr");
@@ -1563,7 +1564,7 @@ function renderVendors() {
     tr.onclick = (e) => { if (e.target.closest(".cell")) return; openVendorPage(v.vendor); };
     tr.appendChild(leftText(v.vendor));
     const ty = document.createElement("td"); ty.className = "left";
-    const pill = document.createElement("span"); pill.className = "vtype" + (v.vtype === "Sub" ? " sub" : "");
+    const pill = document.createElement("span"); pill.className = "vtype" + (v.vtype === "Sub" ? " sub" : (v.vtype === "Service" ? " service" : ""));
     pill.textContent = v.vtype || "—"; ty.appendChild(pill); tr.appendChild(ty);
     const st = document.createElement("td");
     const bar = document.createElement("span"); bar.className = "cell bar";
@@ -1572,7 +1573,10 @@ function renderVendors() {
     bar.appendChild(fill); bar.appendChild(txt); bar.title = "Click to copy"; bar.onclick = () => copy(String(Math.round(v.spend || 0)));
     st.appendChild(bar); tr.appendChild(st);
     tr.appendChild(rightText(String(v.jobs || 0)));
-    tr.appendChild(rightText(String(v.lines || 0)));
+    tr.appendChild(rightText(v.open_bills ? String(v.open_bills) : "–"));
+    const oc = document.createElement("td");
+    if (v.open_bal > 0.5) oc.appendChild(moneyCell(v.open_bal)); else oc.appendChild(document.createTextNode("–"));
+    tr.appendChild(oc);
     tbody.appendChild(tr);
   }
 }
@@ -2094,11 +2098,9 @@ function jumpToVendorBills(vendor) {
 let _vendorData = null, _vendorType = "all", _vendorView = "bills";   // bills | payments
 const _vendorBillOpen = new Set();
 async function openVendorPage(vendor) {
-  $("#vendorDetailTitle").textContent = vendor;
-  $("#vendorDetailSub").textContent = "loading…";
-  const body = $("#vendorDetailBody"); body.innerHTML = "";
+  openRecord(vendor, "loading…");
+  const body = $("#recordBody"); body.innerHTML = "";
   _vendorData = null; _vendorType = "all"; _vendorView = "bills"; _vendorBillOpen.clear();
-  openPanel("#vendorDetail");
   let data;
   try { data = await (await fetch("/api/vendor?v=" + encodeURIComponent(vendor))).json(); }
   catch (e) { body.textContent = "could not load this vendor"; return; }
@@ -2108,7 +2110,7 @@ async function openVendorPage(vendor) {
 }
 function renderVendorPage() {
   const d = _vendorData; if (!d) return;
-  const body = $("#vendorDetailBody"); body.innerHTML = "";
+  const body = $("#recordBody"); body.innerHTML = "";
   // Bills | Payments view toggle
   const vseg = document.createElement("div"); vseg.className = "seg vendor-seg";
   for (const [k, lbl] of [["bills", `Bills (${d.count})`], ["payments", `Payments (${d.pay_count || 0})`]]) {
@@ -2117,10 +2119,10 @@ function renderVendorPage() {
   }
   body.appendChild(vseg);
   if (_vendorView === "payments") {
-    $("#vendorDetailSub").textContent = `${d.pay_count || 0} payments · ${money(d.pay_total || 0)} paid out this year`;
+    $("#recordSub").textContent = `${d.pay_count || 0} payments · ${money(d.pay_total || 0)} paid out this year`;
     return _renderVendorPayments(d, body);
   }
-  $("#vendorDetailSub").textContent = `${d.count} bills · ${money(d.total)} billed · ${money(d.open)} open · ${d.paid_ct} paid`;
+  $("#recordSub").textContent = `${d.count} bills · ${money(d.total)} billed · ${money(d.open)} open · ${d.paid_ct} paid`;
   const seg = document.createElement("div"); seg.className = "seg vendor-seg";
   for (const [k, lbl] of [["all", "All"], ["open", "Open"], ["paid", "Paid"]]) {
     const b = document.createElement("button"); b.type = "button"; b.className = "seg-btn" + (_vendorType === k ? " on" : ""); b.textContent = lbl;
@@ -4699,6 +4701,22 @@ function closePanels() { $("#overlay").hidden = true; $("#detail").hidden = true
   { const st = $("#invStatement"); if (st) st.hidden = true; } { const iv = $("#invDetail"); if (iv) iv.hidden = true; }
   { const vd = $("#vendorDetail"); if (vd) vd.hidden = true; } }
 
+// Full-page record view (app-style, like JobTread) - takes over the main content area instead of a
+// narrow side slide-over, so wide detail has room to read (owner 2026-08-28: "side view squishes too
+// much"). Opening hides the tab-pages; Back restores the tab you came from (activeTab is unchanged).
+function openRecord(title, sub) {
+  $$(".tab-page").forEach(p => { p.hidden = true; });
+  $("#recordView").hidden = false;
+  $("#recordTitle").textContent = title || "";
+  $("#recordSub").textContent = sub || "";
+  window.scrollTo(0, 0);
+}
+function closeRecord() {
+  const rv = $("#recordView"); if (rv) rv.hidden = true;
+  $$(".tab-page").forEach(p => { p.hidden = p.dataset.tab !== activeTab; });
+  window.scrollTo(0, 0);
+}
+
 // ── Copy + CSV + toast ────────────────────────────────────────────────────
 let toastTimer = null;
 function toast(msg) {
@@ -6044,6 +6062,7 @@ function init() {
   { const el = $("#billSaveText"); if (el) el.onclick = openLienReview; }   // press "Lien marks saved" → review them
   { const el = $("#btnCloseSublocDetail"); if (el) el.onclick = closePanels; }
   { const el = $("#btnCloseVendorDetail"); if (el) el.onclick = closePanels; }
+  { const el = $("#recordBack"); if (el) el.onclick = closeRecord; }
   { const el = $("#btnSaveBillMarks"); if (el) el.onclick = saveBillMarks; }
   { const el = $("#btnDiscardBillMarks"); if (el) el.onclick = discardBillMarks; }
   // Pay Bills (check-run worksheet)

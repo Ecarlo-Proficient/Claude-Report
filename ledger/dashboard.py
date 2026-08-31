@@ -722,6 +722,11 @@ def _fetch_payments(con) -> dict:
     return out
 
 
+# Vendors whose SERVICE is in their name are a service, not a supplier (owner 2026-08-28:
+# "pump ... pier drilling ... saw cut ... it's a service"). Name-based, so it's obvious per row.
+_SERVICE_RE = re.compile(r"\b(pump\w*|pier|drill\w*|saw\w*|cutting|sealing|grind\w*)\b", re.I)
+
+
 def _fetch_costs(con) -> dict:
     """QBO cost rollups from cost_line; empty (not an error) if unloaded."""
     out = {"by_code": [], "by_project_code": {}, "by_project": {}, "loaded_total": 0}
@@ -792,12 +797,30 @@ def _fetch_costs(con) -> dict:
         parent = parent or r["account"] or "Materials"
         mix.setdefault(r["vendor"], {})
         mix[r["vendor"]][parent] = mix[r["vendor"]].get(parent, 0) + (r["amt"] or 0)
+    # per-vendor AP open balance + open bill count (from ap_bill_line; one row per bill, open_balance
+    # is per-bill). Shown on the Vendor Center instead of the raw line count (owner 2026-08-28).
+    apo: dict = {}
+    try:
+        for r in con.execute("SELECT vendor, bill_ref, bill_date, MAX(open_balance) ob FROM ap_bill_line "
+                             "WHERE vendor IS NOT NULL AND vendor <> '' GROUP BY vendor, bill_ref, bill_date"):
+            ob = r["ob"] or 0
+            if ob > 0.5:
+                a = apo.setdefault(r["vendor"], {"open": 0.0, "open_bills": 0})
+                a["open"] += ob
+                a["open_bills"] += 1
+    except sqlite3.OperationalError:
+        pass
     for v in vend:
         spend = v["spend"] or 0
         sub_share = (v["sub_spend"] or 0) / spend if spend else 0
         vm = mix.get(v["vendor"], {})
         top = max(vm, key=vm.get) if vm else None
         v["vtype"] = "Sub" if sub_share >= 0.5 else (f"Supplier: {top}" if top else "Supplier")
+        if _SERVICE_RE.search(v["vendor"] or ""):     # a service (in the name), not a supplier
+            v["vtype"] = "Service"
+        a = apo.get(v["vendor"], {"open": 0.0, "open_bills": 0})
+        v["open_bal"] = round(a["open"], 2)
+        v["open_bills"] = a["open_bills"]
     out["by_vendor"] = vend
     return out
 

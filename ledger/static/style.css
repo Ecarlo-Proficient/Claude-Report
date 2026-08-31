@@ -124,6 +124,14 @@ body {
 .subtab.active { color: var(--text); background: color-mix(in srgb, var(--accent) 14%, var(--surface)); font-weight: 600; }
 .tab-page { display: flex; flex-direction: column; gap: 18px; }
 .tab-page[hidden] { display: none; }
+/* Full-page record view (app-style) - full width, so wide detail reads without the side-panel squish. */
+.record-view { display: flex; flex-direction: column; gap: 14px; }
+.record-view[hidden] { display: none; }
+.record-head { display: flex; align-items: center; gap: 14px; }
+.record-head-txt { min-width: 0; }
+.record-title { font-size: 1.15em; font-weight: 800; letter-spacing: -.01em; }
+.record-sub { color: var(--text-dim); font-size: .88em; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.record-body .widget, .record-body > .seg { margin-bottom: 12px; }
 
 /* ── Layout ────────────────────────────────────────────────────────────── */
 .wrap { max-width: var(--maxw); margin: 0 auto; padding: 20px; display: flex; flex-direction: column; gap: 18px; }
@@ -328,6 +336,9 @@ html[data-theme="dark"] .bills-sub tr.vgroup .vg-tag { color: #e8b45c; }
   border: 1px solid var(--border); background: var(--surface-2); color: var(--text-dim); }
 .vtype.sub { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
   background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.vtype.service { color: #8a6d1f; border-color: color-mix(in srgb, #d99a2b 45%, var(--border));
+  background: color-mix(in srgb, #d99a2b 14%, transparent); }
+html[data-theme="dark"] .vtype.service { color: #e8b45c; }
 
 /* ── Home / My view ────────────────────────────────────────────────────── */
 .fresh-row { display: flex; flex-wrap: wrap; gap: 10px; padding: 6px 18px 16px; }

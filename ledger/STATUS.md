@@ -4,6 +4,18 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Vendor Center: full-page view + open-balance columns + Service type (owner, 2026-08-28: "open a page
+  fully ... like jobtread ... the side view squishes too much" · "just open balance, how many bills open" ·
+  "pump / pier drilling / saw cut ... it's a service").**
+  - **Full-page record view.** New `#recordView` shell (`openRecord` / `closeRecord`) takes over the main
+    content area, full width, with a ← Back button - the vendor page moved off the narrow side slide-over
+    onto it, so the wide bills/payments tables read without squishing. Reusable for other drill-downs.
+    (`setTab` closes it; the old `#vendorDetail` side panel is now unused.)
+  - **Columns.** Dropped the raw line count; added **Open bills** (# bills with a balance) + **Open $** (their
+    open balance), aggregated per vendor from `ap_bill_line` in `_fetch_costs`.
+  - **Service type.** Vendors whose service is in their name (pump / pier drilling / saw cut / sealing /
+    grinding) get a **Service** pill, not "Supplier" (`_SERVICE_RE`). Verified: MCP/Core Pumping, Xtreeme
+    Sawing, Newstar / BARO'S Drilling.
 - **Responsiveness / "one file carrying everything" - clarified + hardened (owner, 2026-08-28: "the
   responsiveness and loading of all that data ... like the audit i don't want it to get to that point").**
   The ledger is 5.1 MB, biggest table ~9K rows - SQLite handles millions, so the FILE is not the
