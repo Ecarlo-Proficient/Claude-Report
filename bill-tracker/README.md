@@ -62,6 +62,12 @@ The audit checks are grouped into **three filterable Excel Tables**, each with a
 column (filter to one check) plus a `Detail` column and an `Open` QBO deep-link. Every row's
 finding logic is unchanged — only the rendering is consolidated.
 
+**Acknowledge & keep** — `Audit - Coding` has an editable **`Status`** column. Type a mark
+(e.g. `KEEP - prepaid, allocate at closeout`) on a one-off you're deliberately keeping: it
+**persists** across runs (keyed by bill #) and **mirrors into the Bills `Notes`** so both agree.
+Filter `Status`: blank = still needs review, marked = acknowledged / on the record. This differs
+from `audit_exclusions.json`, which *hides* an item — the mark keeps it visible so nothing is lost.
+
 | Sheet | `Issue` values it merges |
 |---|---|
 | `Audit - Coding` | **Data Entry** (empty/mismatched Class, line-desc project mismatch) · **Missing Project** (uncoded job cost, no project #) · **FW Misplaced** (FW code on a CP/MFD/base-`RP####` slab) · **Sub No Project** (sub cost-code line, no project #) · **Cost Code** (wrong cost-code FAMILY for the vendor's type; `Detail` carries the type + PO origin) |

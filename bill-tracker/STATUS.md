@@ -91,6 +91,15 @@ no business findings, dollar exposures, or owner analyses (those live in the own
   Overrides live OUTSIDE the repo at `<companyhealth>/concrete_suppliers.json` (vendor names). Live
   run (3,697 bills / 13,030 lines): overrides cut miscodes 163→94; origin split 29 upstream (PO/
   super-PM) · 63 no-PO (direct entry) · 0 deviated. `hauler` is override-only (not auto-detected).
+- **Audit Status marks - acknowledge & keep (2026-08-25, owner).** `Audit - Coding` gained an
+  editable **`Status`** column (+ hidden `_Key`=bill_id). Type a mark (e.g. `KEEP - reason`) to
+  acknowledge a one-off you're deliberately keeping (vs. `audit_exclusions.json` which HIDES it):
+  the mark **persists across runs** (`preserve_audit_marks`, keyed by bill_id) and **mirrors into
+  the Bills `Notes`** (the audit is the entry point → pushed in `main`, idempotent append; Bills
+  row key = bill_id, so it lands). Filter `Status`: blank = still needs review, marked = on the
+  record. Nothing lost - stored in BOTH the audit and Bills Notes. Verified offline round-trip
+  (build → mark → re-read → rebuild persists + pushes, `validate_xlsx` clean, 6/6 tests). Edge:
+  editing/removing a mark may leave a stale copy in Bills Notes - clear both to fully remove.
 - **Missing Project exclusions (EXCEL ONLY, 2026-08-25, owner).** Known-legit no-project vendors
   (equipment rental, overhead, insurance) and classes are suppressed from the Missing Project check
   via `<companyhealth>/audit_exclusions.json` (`{missing_project: {vendors, classes}}`,

@@ -747,6 +747,35 @@ def preserve_edits(path: Path) -> Dict[str, Dict[str, str]]:
     return migrated
 
 
+def preserve_audit_marks(path: Path) -> Dict[str, str]:
+    """Read the existing `Audit - Coding` sheet's user-entered `Status` marks,
+    keyed by the hidden `_Key` (bill_id). These persist across runs and mirror into
+    the Bills Notes so the audit and Bills stay consistent (the user 2026-08-25).
+    First non-empty mark per bill wins. Empty/first-run/unreadable → {}."""
+    if not path.exists():
+        return {}
+    try:
+        wb = load_workbook(path, data_only=True)
+    except Exception as e:
+        print(f"  ⚠ couldn't read audit marks: {e}")
+        return {}
+    if "Audit - Coding" not in wb.sheetnames:
+        return {}
+    ws = wb["Audit - Coding"]
+    hdr = [(c.value or "") for c in ws[1]]
+    if "_Key" not in hdr or "Status" not in hdr:
+        return {}
+    ki, si = hdr.index("_Key"), hdr.index("Status")
+    marks: Dict[str, str] = {}
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        if ki >= len(row) or si >= len(row):
+            continue
+        bid, st = row[ki], row[si]
+        if bid and st and str(st).strip():
+            marks.setdefault(str(bid), str(st).strip())
+    return marks
+
+
 # ─────────────────────── sheet rendering ───────────────────────
 
 def _apply_header(ws, hide_cols: Optional[List[int]] = None) -> None:
@@ -2097,7 +2126,7 @@ def _cost_code_findings(all_rows: List[dict], po_index: Optional[Dict[str, dict]
         detail = f"[{TYPE_LABEL.get(f['vtype'], '')}] {f['reason']} · {origin}"
         rows.append(["Cost Code", f["vendor"], f["bill_doc"], f["date"], f["project"],
                      f["cost_code"], round(float(f["amount"]), 2), detail,
-                     _bill_url(f["bill_id"])])
+                     _bill_url(f["bill_id"]), f["bill_id"]])
     return rows, vtype
 
 
@@ -2106,7 +2135,8 @@ def build_audits(wb, all_rows: List[dict],
                  tracker_by_po: Optional[Dict[str, dict]] = None,
                  tracker_meta: Optional[dict] = None,
                  vendor_root: Optional[Dict[str, str]] = None,
-                 vendor_map: Optional[Dict[str, str]] = None) -> int:
+                 vendor_map: Optional[Dict[str, str]] = None,
+                 audit_marks: Optional[Dict[str, str]] = None) -> int:
     """THREE themed audit sheets (the user 2026-08-25 — de-bloat from 9 tabs). Each
     is one filterable Excel Table with an 'Issue' column so a single sheet covers a
     family of checks:
@@ -2118,8 +2148,11 @@ def build_audits(wb, all_rows: List[dict],
     display_rows = [r for r in all_rows if not r.get("is_sub")]
     sub_rows = [r for r in all_rows if r.get("is_sub")]
     mp_excl = _load_audit_exclusions().get("missing_project", {})
+    audit_marks = audit_marks or {}
 
     # ── CODING ──────────────────────────────────────────────────────────
+    # Each row ends with the raw bill_id (last element) so the Status mark can be
+    # keyed to the bill and preserved across runs.
     coding: List[list] = []
     for r in display_rows:
         issues = _audit_row_checks(r)
@@ -2129,13 +2162,14 @@ def build_audits(wb, all_rows: List[dict],
                            r.get("project_num", "") or (r.get("customer_name", "") or ""),
                            "", r.get("line_amount") or 0.0,
                            f"Class {r.get('class_name', '') or '(empty)'} · "
-                           + " · ".join(issues), _bill_url(r.get("bill_id", ""))])
+                           + " · ".join(issues), _bill_url(r.get("bill_id", "")),
+                           r.get("bill_id", "")])
         uc = _uncoded_job_cost(r)
         if uc and not _excluded(r, mp_excl):   # skip known-legit no-project vendors/classes
             coding.append(["Missing Project", r.get("vendor", ""), r.get("bill_doc", ""),
                            r.get("bill_date"), r.get("customer_name", "") or "(none)",
                            "", r.get("line_amount") or 0.0, uc[0],
-                           _bill_url(r.get("bill_id", ""))])
+                           _bill_url(r.get("bill_id", "")), r.get("bill_id", "")])
     for r in all_rows:
         reason = _fw_misplaced(r)
         if reason:
@@ -2144,30 +2178,38 @@ def build_audits(wb, all_rows: List[dict],
                            (r.get("cost_code", "") or "").split(":")[-1].strip(),
                            r.get("line_amount") or 0.0,
                            ("SUB · " if r.get("is_sub") else "") + reason,
-                           _bill_url(r.get("bill_id", ""))])
+                           _bill_url(r.get("bill_id", "")), r.get("bill_id", "")])
     for r in sub_rows:
         if not (r.get("project_num") or "").strip() and r.get("bill_type") == "COGS":
             coding.append(["Sub No Project", r.get("vendor", ""), r.get("bill_doc", ""),
                            r.get("bill_date"), "(none)",
                            (r.get("cost_code", "") or "").split(":")[-1].strip(),
                            r.get("line_amount") or 0.0, r.get("line_desc", "") or "",
-                           _bill_url(r.get("bill_id", ""))])
+                           _bill_url(r.get("bill_id", "")), r.get("bill_id", "")])
     cc_rows, vtype = _cost_code_findings(all_rows, po_index, tracker_by_po)
     coding.extend(cc_rows)
     coding.sort(key=lambda x: (x[0], (x[1] or "").upper(), str(x[2])))
+    # Insert the editable, preserved Status (from the mark keyed by bill_id) after
+    # Issue; carry the bill_id as a hidden _Key so the mark survives the next run.
+    coding_data = [[r[0], audit_marks.get(r[9], ""), r[1], r[2], r[3], r[4], r[5],
+                    r[6], r[7], r[8], r[9]] for r in coding]
     _audit_table_sheet(
         wb, "Audit - Coding", "tblAuditCoding",
-        ["Issue", "Vendor", "Bill #", "Bill Date", "Project", "Cost Code",
-         "Amount", "Detail", "Open"],
-        ["text", "text", "text", "date", "text", "text", "money", "text", "url"],
-        coding, [16, 26, 12, 11, 12, 11, 12, 52, 6])
+        ["Issue", "Status", "Vendor", "Bill #", "Bill Date", "Project", "Cost Code",
+         "Amount", "Detail", "Open", "_Key"],
+        ["text", "text", "text", "text", "date", "text", "text", "money", "text",
+         "url", "text"],
+        coding_data, [16, 20, 24, 12, 11, 12, 11, 12, 46, 6, 12])
+    ws = wb["Audit - Coding"]
+    ws.column_dimensions[get_column_letter(11)].hidden = True   # hide _Key
     cnt = {t: sum(1 for v in vtype.values() if v == t)
            for t in ("concrete", "material", "both", "hauler", "review")}
-    ws = wb["Audit - Coding"]
-    ws.cell(row=1, column=11,
-            value=(f"Cost-code vendor types: {cnt['concrete']} concrete · "
-                   f"{cnt['material']} material · {cnt['both']} both · {cnt['hauler']} "
-                   f"hauler · {cnt['review']} review")).font = Font(
+    ws.cell(row=1, column=13,
+            value=(f"Mark a Status (e.g. KEEP - reason) to acknowledge & keep an item; "
+                   f"it persists and mirrors to the Bills Notes.  |  Cost-code vendor "
+                   f"types: {cnt['concrete']} concrete · {cnt['material']} material · "
+                   f"{cnt['both']} both · {cnt['hauler']} hauler · "
+                   f"{cnt['review']} review")).font = Font(
         name="Calibri", size=10, italic=True, color="808080")
 
     # ── PO ──────────────────────────────────────────────────────────────
@@ -2363,6 +2405,20 @@ def main() -> int:
     else:
         print("  no existing workbook — first run, nothing to preserve")
 
+    # Audit Status marks (Audit - Coding) — persist across runs AND push into the
+    # Bills Notes so the two stay consistent (the audit is the entry point).
+    audit_marks = preserve_audit_marks(OUTPUT_PATH)
+    for _bid, _mark in audit_marks.items():
+        _mark = (_mark or "").strip()
+        if not _mark:
+            continue
+        _slot = edits.setdefault(_bid, {"Lien": "", "Notes": ""})
+        _note = _slot.get("Notes") or ""
+        if _mark not in _note:                      # idempotent append (no dup)
+            _slot["Notes"] = f"{_note} · {_mark}".strip(" ·") if _note else _mark
+    if audit_marks:
+        print(f"  {len(audit_marks)} audit Status mark(s) carried forward → Bills Notes")
+
     print("→ rotating backup …")
     rotate_backup(OUTPUT_PATH)
 
@@ -2430,7 +2486,8 @@ def main() -> int:
     # THREE themed audit sheets (Coding · PO · Bills) — de-bloat from 9 tabs.
     n_audit = build_audits(wb, all_rows, po_index=po_index,
                            tracker_by_po=tracker_by_po, tracker_meta=tracker_meta,
-                           vendor_root=vendor_root, vendor_map=vendor_map)
+                           vendor_root=vendor_root, vendor_map=vendor_map,
+                           audit_marks=audit_marks)
 
     print(f"  Bills: {n_bills} bills (open + paid since {PAID_CUTOFF_DATE})")
     print(f"  Liens: live view  ·  Inventory: {n_inv} lines  ·  Audit: {n_audit} rows "
