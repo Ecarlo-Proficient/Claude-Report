@@ -124,10 +124,26 @@ def read_source(path: Path) -> dict:
         cur_sec = cur_acct = cur_vendor = None
         if "By Account" in wb.sheetnames:
             a = wb["By Account"]
+            # HEADER-DRIVEN, because the By Account grid moved (2026-08-31:
+            # the label went from column A to B and the amount from E to C to
+            # kill a 58-wide void). Older workbooks still carry the old grid,
+            # so find the columns by their header text rather than assuming.
+            LBL, AMT, DTE, PAID, DESC = 1, 5, 2, 6, 4
+            for hr in range(1, min(a.max_row, 40) + 1):
+                row = {str(a.cell(hr, c).value or "").strip().lower(): c
+                       for c in range(1, 9)}
+                hit = next((v for k, v in row.items()
+                            if k.startswith("account / vendor")), None)
+                if hit and "amount" in row:
+                    LBL, AMT = hit, row["amount"]
+                    DTE = row.get("date", DTE)
+                    PAID = row.get("paid?", PAID)
+                    DESC = row.get("description", DESC)
+                    break
             for r in range(1, a.max_row + 1):
                 lvl = a.row_dimensions[r].outline_level or 0
-                v1 = a.cell(r, 1).value
-                amt = a.cell(r, 5).value
+                v1 = a.cell(r, LBL).value
+                amt = a.cell(r, AMT).value
                 txt = str(v1 or "").strip()
                 if txt in ("COST OF GOODS SOLD", "OPERATING EXPENSES (non-COGS)"):
                     cur_sec = {"name": txt, "total": float(amt or 0), "accounts": []}
@@ -144,13 +160,18 @@ def read_source(path: Path) -> dict:
                     cur_vendor = {"name": txt, "total": float(amt or 0), "lines": []}
                     cur_acct["vendors"].append(cur_vendor)
                 elif lvl == 2 and cur_vendor is not None:
+                    # In the new grid the doc # shares the label column with
+                    # its account and vendor (indented); in the old one it had
+                    # its own column 3.
+                    doc_c = LBL if LBL != 1 else 3
                     cur_vendor["lines"].append({
-                        "date": a.cell(r, 2).value, "doc": a.cell(r, 3).value,
-                        "desc": a.cell(r, 4).value or "",
-                        "amt": float(a.cell(r, 5).value or 0),
-                        "paid": a.cell(r, 6).value or "",
-                        "url": (a.cell(r, 3).hyperlink.target
-                                if a.cell(r, 3).hyperlink else None)})
+                        "date": a.cell(r, DTE).value,
+                        "doc": a.cell(r, doc_c).value,
+                        "desc": a.cell(r, DESC).value or "",
+                        "amt": float(a.cell(r, AMT).value or 0),
+                        "paid": a.cell(r, PAID).value or "",
+                        "url": (a.cell(r, doc_c).hyperlink.target
+                                if a.cell(r, doc_c).hyperlink else None)})
         # Payroll out of job cost (it lives in overhead), recorded so the
         # sheet can say what it left out.
         payroll = 0.0
@@ -187,7 +208,8 @@ def read_source(path: Path) -> dict:
 
         title = str(wb["P&L"].cell(1, 1).value or "")
         return {"invoices": inv, "not_billed": not_billed, "payroll": round(payroll, 2),
-                "sections": sections, "title": title}
+                "sections": sections, "title": title,
+                "status": "Completed", "rel": None}
     finally:
         wb.close()
 
@@ -507,23 +529,28 @@ def build_bundle(jobs: List[tuple], out: Path) -> None:
     sm.title = "Summary"
     sm.sheet_view.showGridLines = False
 
-    _t(sm, 1, 1, "MFD OVERVIEW — TOTAL", size=SZ_TITLE, bold=True, color=NAVY)
+    _n_act = sum(1 for _, src, _x in jobs if src.get("status") == "Active")
+    _t(sm, 1, 1, "MFD OVERVIEW — ALL JOBS", size=SZ_TITLE, bold=True, color=NAVY)
     _pay = sum(src.get("payroll", 0.0) for _, src, _t2 in jobs)
     _note = (f" · excludes payroll of {_pay:,.0f} (carried in overhead)"
              if _pay else "")
-    _t(sm, 2, 1, f"{len(jobs)} completed jobs · click a job to open its detail"
+    _t(sm, 2, 1, f"{_n_act} active · {len(jobs) - _n_act} completed · click a job "
+                 f"for its detail sheet, or 'open workbook' for the full file"
                  f"{_note} · {dt.datetime.now():%m/%d/%Y}",
        size=SZ_SMALL, color=GREY)
-    for c in range(1, 8):
+    for c in range(1, 9):
         sm.cell(row=2, column=c).border = Border(bottom=HAIR)
     sm.row_dimensions[1].height = 30
     sm.row_dimensions[3].height = 8
 
-    tot = {k: sum(t[k] for _, _, t in jobs)
-           for k in ("billed", "cost", "gp", "oh", "net", "moh", "mnet")}
-    tot["mnetm"] = tot["mnet"] / tot["billed"] if tot["billed"] else 0
-    tot["gpm"] = tot["gp"] / tot["billed"] if tot["billed"] else 0
-    tot["netm"] = tot["net"] / tot["billed"] if tot["billed"] else 0
+    def _sum(sel):
+        d = {k: sum(t[k] for _, _, t in sel)
+             for k in ("billed", "cost", "gp", "oh", "net", "moh", "mnet")}
+        for a, b in (("gpm", "gp"), ("netm", "net"), ("mnetm", "mnet")):
+            d[a] = d[b] / d["billed"] if d["billed"] else 0
+        return d
+
+    tot = _sum(jobs)
     SUM_SPANS = [(1, 2), (3, 4), (5, 6), (7, 7)]
     r = _kpi_strip(sm, 4, tot, SUM_SPANS)
 
@@ -534,8 +561,12 @@ def build_bundle(jobs: List[tuple], out: Path) -> None:
            align="right" if c > 1 else "left", wrap=True,
            indent=1 if c == 1 else 0)
     sm.row_dimensions[r].height = 30
+    _t(sm, r, 8, "FULL DETAIL", size=SZ_SMALL - 1, bold=True, color="FFFFFF",
+       fill=F_HDR, align="center")
     r += 1
-    for job, _src, t in sorted(jobs, key=lambda x: -x[2]["billed"]):
+
+    def _job_row(job, _src, t):
+        nonlocal r
         cell = _t(sm, r, 1, job_label(job, _src.get("title", "")), size=SZ, bold=True)
         cell.hyperlink = f"#'{job}'!A1"
         cell.font = Font(size=SZ, bold=True, color=LINK, underline="single")
@@ -549,23 +580,59 @@ def build_bundle(jobs: List[tuple], out: Path) -> None:
            color=GREEN if t["net"] >= 0 else RED)
         _t(sm, r, 7, t["mnet"], size=SZ, bold=True, fmt=MONEY, align="right",
            color=GREEN if t["mnet"] >= 0 else RED)
+        # "see the actual project excel for details" — the job name jumps to
+        # its sheet INSIDE this file (survives being emailed); this opens the
+        # real workbook on the share.
+        if _src.get("rel"):
+            lk = _t(sm, r, 8, "open workbook  ↗", size=SZ_SMALL, color=LINK)
+            lk.hyperlink = _src["rel"]
+            lk.font = Font(size=SZ_SMALL, color=LINK, underline="single")
         if r % 2 == 0:
-            for c in range(1, 8):
+            for c in range(1, 9):
                 sm.cell(row=r, column=c).fill = F_BAND
         sm.row_dimensions[r].height = 22
         r += 1
-    _t(sm, r, 1, f"TOTAL — {len(jobs)} JOBS", size=SZ, bold=True, color=NAVY)
+
+    def _section(title, sel, note=""):
+        nonlocal r
+        if not sel:
+            return
+        _t(sm, r, 1, title, size=SZ, bold=True, color="FFFFFF", fill=F_HDR)
+        if note:
+            _t(sm, r, 2, note, size=SZ_SMALL - 1, color="FFFFFF", fill=F_HDR)
+        for c in range(1, 9):
+            sm.cell(row=r, column=c).fill = F_HDR
+        sm.row_dimensions[r].height = 22
+        r += 1
+        for _j, _sc, _tt in sorted(sel, key=lambda x: -x[2]["billed"]):
+            _job_row(_j, _sc, _tt)
+        st = _sum(sel)
+        _t(sm, r, 1, f"subtotal — {len(sel)} job(s)", size=SZ, bold=True, color=NAVY)
+        for c, k, fmt in ((2, "billed", MONEY), (3, "cost", MONEY), (4, "gp", MONEY),
+                          (5, "gpm", PCT), (6, "net", MONEY), (7, "mnet", MONEY)):
+            _t(sm, r, c, st[k], size=SZ, bold=True, fmt=fmt, align="right",
+               color=(GREEN if st[k] >= 0 else RED) if c in (4, 5, 6, 7) else NAVY)
+        for c in range(1, 9):
+            sm.cell(row=r, column=c).border = Border(top=HAIR)
+        r += 2
+
+    # Kept apart on purpose: an ACTIVE job's cost is only what has landed so
+    # far, so folding it into one total with finished work reads as a margin
+    # nobody has earned yet.
+    _active = [j for j in jobs if j[1].get("status") == "Active"]
+    _done = [j for j in jobs if j[1].get("status") != "Active"]
+    _section("ACTIVE — in progress", _active,
+             "costs to date only — not finished")
+    _section("COMPLETED", _done)
+    _t(sm, r, 1, f"ALL MFD — {len(jobs)} JOBS", size=SZ, bold=True, color=NAVY)
     for c, k, fmt in ((2, "billed", MONEY), (3, "cost", MONEY), (4, "gp", MONEY),
                       (5, "gpm", PCT), (6, "net", MONEY), (7, "mnet", MONEY)):
         _t(sm, r, c, tot[k], size=SZ, bold=True, fmt=fmt, align="right",
            color=(GREEN if tot[k] >= 0 else RED) if c in (4, 5, 6, 7) else NAVY)
-    for c in range(1, 8):
+    for c in range(1, 9):
         sm.cell(row=r, column=c).border = Border(top=RULE)
-    # MFD's own overhead column is boxed on the job table too, so it reads as
-    # a distinct answer rather than another number in the row.
-    _thick_box(sm, r - len(jobs) - 1, r, 7, 7)
     sm.row_dimensions[r].height = 24
-    for col, w in zip("ABCDEFG", (34, 18, 18, 18, 11, 20, 20)):
+    for col, w in zip("ABCDEFGH", (34, 18, 18, 18, 11, 20, 20, 19)):
         sm.column_dimensions[col].width = w
 
 
@@ -751,6 +818,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Simple report for a finished job")
     ap.add_argument("jobs", nargs="*", help="e.g. MFD133")
     ap.add_argument("--all", action="store_true", help="every job in the archive folder")
+    ap.add_argument("--with-active", action="store_true",
+                    help="include the LIVE jobs from the P&L root alongside the "
+                         "completed ones, split into their own section")
     ap.add_argument("--folder", default=None)
     ap.add_argument("--bundle", action="store_true",
                     help="MFD Overview Total: ONE workbook with the overview "
@@ -760,14 +830,22 @@ def main() -> int:
     a = ap.parse_args()
     folder = (Path(a.folder).expanduser() if a.folder
               else pnl_paths.pnl_out_dir() / ARCHIVE)
-    jobs = ([d.name for d in sorted(folder.iterdir()) if d.is_dir()]
-            if a.all else [j.upper() for j in a.jobs])
-    if not jobs:
+    # (job, folder-holding-it, status)
+    todo = [(d.name, folder, "Completed")
+            for d in sorted(folder.iterdir()) if d.is_dir()] if a.all else \
+           [(j.upper(), folder, "Completed") for j in a.jobs]
+    if a.with_active:
+        root = folder.parent
+        done = {j for j, _f, _s in todo}
+        todo += [(d.name, root, "Active") for d in sorted(root.iterdir())
+                 if d.is_dir() and d.name.upper().startswith("MFD")
+                 and d.name not in done]
+    if not todo:
         print("✗  name a job, or pass --all")
         return 1
     loaded = []
-    for job in jobs:
-        src_path = folder / job / f"Project_PnL_{job}.xlsx"
+    for job, where, status in todo:
+        src_path = where / job / f"Project_PnL_{job}.xlsx"
         if not src_path.exists():
             print(f"  ⚠ {job}: no {src_path.name}")
             continue
@@ -775,16 +853,26 @@ def main() -> int:
         if not src["sections"]:
             print(f"  ⚠ {job}: no 'By Account' sheet — regenerate it first")
             continue
+        src["status"] = status
+        # relative to where the bundle is written (the archive folder), so the
+        # link resolves on the share
+        try:
+            src["rel"] = str(src_path.relative_to(folder))
+        except ValueError:
+            src["rel"] = f"../{src_path.relative_to(folder.parent)}"
         loaded.append((job, src, _totals(src)))
         if not a.bundle:
-            out = folder / job / f"{job} Job Result.xlsx"
+            # An ACTIVE job lives in the P&L root, not the archive — write its
+            # report beside its own workbook.
+            out = where / job / f"{job} Job Result.xlsx"
             build(job, src, out)
             print(f"  ✓ {job}  →  {out.name}")
     if a.bundle:
         if not loaded:
             print("✗  nothing to bundle")
             return 1
-        out = folder / "MFD Overview Total.xlsx"
+        out = folder / ("MFD Overview — All Jobs.xlsx" if a.with_active
+                        else "MFD Overview Total.xlsx")
         build_bundle(loaded, out)
         tb = sum(t["billed"] for _, _, t in loaded)
         tc = sum(t["cost"] for _, _, t in loaded)
