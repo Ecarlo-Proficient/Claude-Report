@@ -261,6 +261,8 @@ td.pnl-expand .dgroup > h4:first-child { display: none; }   /* the row already s
 .draw-head { align-items: flex-start; }
 .draw-head .panel-sub { font-variant-numeric: tabular-nums; }
 .hint { margin: 4px 18px 14px; color: var(--text-dim); font-size: .88em; line-height: 1.5; }
+.hint.hint-filtered { color: var(--text); }   /* the live "Showing: ..." filter summary */
+.hint-clear-note { color: var(--text-dim); font-weight: 400; }
 .notion-link { font-size: .82em; padding: 2px 10px; border-radius: 999px; text-decoration: none;
   border: 1px solid var(--border); background: var(--surface-2); color: var(--text); white-space: nowrap; }
 .notion-link:hover { border-color: var(--accent); }

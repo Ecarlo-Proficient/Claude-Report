@@ -4,6 +4,11 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Filtered-tab description (owner, 2026-08-28: "if i put a filter ... change the desc to show what it's
+  filtering ... All = generic").** When a filter is active on Draws or Audit, the tab's hint swaps to a
+  live "Showing: <what's filtered>" line (Client/Project/Vendor/Invoice/Division/Stage on Draws;
+  Issue/Class/Search on Audit); clear the filters and it returns to the generic blurb. `_setHintFilter`
+  captures the generic HTML once and swaps it. (Reusable - other filtered tabs can call it.)
 - **Sub LOC: on-demand source drill-down + bulk trimmed - the bloat answer in action (owner, 2026-08-28:
   "click by project ... show me where it got this info from ... how do we help with bloat and load times
   if we do it this way?").** The per-project LOC event chain (~1.1 MB, 3357 events) no longer rides in the

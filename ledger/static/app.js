@@ -861,9 +861,29 @@ function drawPeriod(mi) {
   return "";
 }
 function drawPeriodFull(mi) { const m = String(mi || "").match(/Period:\s*([\d/]+\s*-\s*[\d/]+)/i); return m ? "Period " + m[1].replace(/\s+/g, " ") : ""; }
+// When a filter is active, the tab's description says WHAT it's filtering; with no filter it stays the
+// generic blurb (owner 2026-08-28: "change the desc to show what it's filtering ... All = generic").
+const _DRAW_FLABEL = { dfClient: "Client", dfProj: "Project", dfVendor: "Vendor", dfInv: "Invoice", dfDiv: "Division" };
+function drawFilterSummary() {
+  const parts = [];
+  for (const cfg of DRAW_MSEL) {
+    const s = drawMSel[cfg.id];
+    if (s && s.size) parts.push(`${_DRAW_FLABEL[cfg.id]}: ${s.size <= 2 ? [...s].map(cfg.lbl).join(", ") : s.size + " selected"}`);
+  }
+  if (activeDrawStage) parts.push(`Stage: ${DRAW_STAGE_SHORT[activeDrawStage] || activeDrawStage}`);
+  return parts.join(" · ");
+}
+// Swap a tab's `.hint` between its generic blurb and a live "Showing: ..." filter summary.
+function _setHintFilter(tab, summary) {
+  const h = document.querySelector(`.tab-page[data-tab="${tab}"] .hint`); if (!h) return;
+  if (!h.dataset.generic) h.dataset.generic = h.innerHTML;   // capture the generic blurb once
+  if (summary) { h.innerHTML = `<b>Showing:</b> ${_ge(summary)} <span class="hint-clear-note">- clear the filters for the full list</span>`; h.classList.add("hint-filtered"); }
+  else { h.innerHTML = h.dataset.generic; h.classList.remove("hint-filtered"); }
+}
 function renderDraws() {
   buildDrawFilters();                              // (re)build the multi-selects when the draw set changes
   const all = (DRAWS.draws || []).filter(drawMselPasses);   // Client · Project · Vendor · Invoice · Division (AND)
+  _setHintFilter("draws", drawFilterSummary());
   const shown = activeDrawStage ? all.filter(d => d.stage === activeDrawStage) : all;
   $("#drawsNote").textContent = (DRAWS.draws || []).length
     ? `(${shown.length} shown of ${DRAWS.total} · most recent first)`
@@ -5533,6 +5553,14 @@ function _acctPillClass(issue) {
   return "info";
 }
 
+function acctFilterSummary() {
+  const parts = [];
+  if (acctIssue) parts.push(`Issue: ${acctIssue}`);
+  const dv = $("#acctDivision") ? $("#acctDivision").value : ""; if (dv) parts.push(`Class: ${dv}`);
+  const q = ($("#acctSearch").value || "").trim(); if (q) parts.push(`Search: "${q}"`);
+  return parts.join(" · ");
+}
+
 // Multi-column sort for the Audit table (owner 2026-08-28: "sort by date or vendor ... both ways at
 // the same time"). Click a header to add it; click again to flip asc/desc; again to drop it. Columns
 // stack in click order, so Vendor-then-Date sorts by vendor, then by date within each vendor.
@@ -5596,6 +5624,7 @@ function renderAccounting() {
   const dv = dsel ? dsel.value : "", q = ($("#acctSearch").value || "").trim().toLowerCase();
   const rows = all.filter(f => (!acctIssue || f.issue === acctIssue) && (!dv || f.division === dv)
     && (!q || (f.vendor + " " + f.project + " " + f.bill_no + " " + (f.memo || "") + " " + f.detail).toLowerCase().includes(q)));
+  _setHintFilter("accounting", acctFilterSummary());   // desc reflects the active filter (generic when All)
   if (acctSort.length) rows.sort(_acctCmp);   // multi-column sort (applied before the render cap)
   _acctVisible = rows;
   // fixed meta widths (px) so one long outlier can't blow a column wide (the old wasted
