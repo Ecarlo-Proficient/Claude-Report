@@ -76,7 +76,8 @@ from `audit_exclusions.json`, which *hides* an item — the mark keeps it visibl
 
 **Cost-code detail:** the cost-code NUMBER is the family (1 concrete · 2/3/4 material · 5/51/52
 equip · 6 labor). Each vendor's TYPE is auto-captured from its `*1`-vs-`*2/3/4` split —
-**concrete** (→ all `*1`), **material** (e.g. RCI → `*2/*3/*4`, never `*1`/`*5`/`*6`), **both**
+**concrete** (→ all `*1`; a `*4` aggregate line - pea gravel / sand / base - is fine WHEN the
+memo says so, memo-gated not a blanket pass), **material** (e.g. RCI → `*2/*3/*4`, never `*1`/`*5`/`*6`), **both**
 (e.g. Preferred Materials → a yardage/ready-mix MEMO line must be `*1`), **hauler** (trucking/haul
 → material plus haul-off `*5` OK, only `*1`/`*6` flag; override-only). Credit-card / finance / bank
 / late fees post to an expense account, not a cost code — never flagged. Each flag's `Detail`

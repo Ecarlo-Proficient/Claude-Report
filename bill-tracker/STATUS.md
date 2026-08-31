@@ -116,6 +116,12 @@ no business findings, dollar exposures, or owner analyses (those live in the own
   finding logic unchanged, only rendering. New `url` cell-kind lets one sheet mix bill + PO
   deep-links. Verified offline (every issue routes to the right sheet, `validate_xlsx` clean,
   6/6 tests). **First live `sync-ap` confirms the merged output.**
+- **Cost Code: aggregate (*4) allowed on concrete vendors WHEN the memo says so (2026-08-25, owner).**
+  Ready-mix vendors haul aggregate (pea gravel / sand / base), so `*4` is legit on a concrete vendor
+  ONLY when the line memo reads as aggregate (`aggregate_memo` - pea gravel, sand, gravel, select
+  fill, flex base, crushed, asphalt, dirt…). A `*4` with no aggregate memo still flags, as do rebar/
+  lumber/pump/labor. Owner: NOT a blanket `*4` pass - memo-gated. Pump (`*51`) still flags per prior
+  call. In `shared/cost_code_audit.flag_lines`.
 - **Cost Code: skip non-job fees / read the memo (2026-08-25, owner).** Credit-card, finance, bank,
   and late fees legitimately post to an EXPENSE ACCOUNT, not a cost code - `shared/cost_code_audit`
   now skips any line whose memo/bill#/account reads as one (`is_nonjob`), and a concrete vendor's

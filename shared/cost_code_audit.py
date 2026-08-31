@@ -54,6 +54,13 @@ _NONJOB_MEMO_RE = re.compile(
     r"INTEREST|SERVICE\s*CHARGE|BANK\s*(?:CHARGE|FEE)|CONVENIENCE\s*FEE|"
     r"PROCESSING\s*FEE|SURCHARGE|MONTHLY\s*FEE|STATEMENT\s*FEE)\b",
     re.IGNORECASE)
+# A line memo that reads as AGGREGATE (*4) — a ready-mix vendor legitimately hauls
+# these, so *4 is correct on a concrete vendor ONLY when the memo confirms it (the
+# user 2026-08-25). Items per the Cost Code Sheet's Aggregates row.
+_AGGREGATE_MEMO_RE = re.compile(
+    r"\b(?:PEA\s*GRAVEL|GRAVEL|CUSHION\s*SAND|SAND|SELECT\s*FILL|FLEX\s*BASE|"
+    r"ROAD\s*BASE|BASE\s*ROCK|CRUSHED(?:\s*CONCRETE)?|AGGREGATE|ASPHALT|"
+    r"FILL\s*DIRT|DIRT|LIMESTONE|RIP\s*RAP)\b", re.IGNORECASE)
 
 TYPE_LABEL = {"concrete": "Concrete", "material": "Material", "both": "Both (conc+mat)",
               "hauler": "Hauler (haul-off OK)", "review": "Review - possible"}
@@ -72,6 +79,12 @@ def is_nonjob(text: str) -> bool:
     bank, or late fee - overhead that belongs in an expense account, not a cost
     code, so it must never be flagged as a coding miss."""
     return bool(_NONJOB_MEMO_RE.search(text or ""))
+
+
+def aggregate_memo(desc: str) -> bool:
+    """True if a line memo reads as aggregate (pea gravel, sand, base, …). A ready-mix
+    vendor hauls aggregate, so *4 on a concrete vendor is legit when the memo says so."""
+    return bool(_AGGREGATE_MEMO_RE.search(desc or ""))
 
 
 def code_families(cost_code: str) -> Tuple[Optional[str], Optional[str]]:
@@ -198,6 +211,8 @@ def flag_lines(rows: List[dict], vtype: Dict[str, str]) -> List[dict]:
         if t == "concrete":
             if n == "1":
                 continue
+            if n == "4" and aggregate_memo(r.get("desc") or ""):
+                continue   # aggregate (pea gravel/sand/base) - ready-mix hauls it, memo confirms
             if n is not None:
                 reason = f"{code} = {name} (expected *1 Concrete)"
             elif code:
