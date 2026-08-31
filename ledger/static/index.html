@@ -477,7 +477,8 @@
     <div class="tab-page" data-tab="vendors" hidden>
       <section class="widget">
         <div class="widget-head"><h2>Vendor Center <span class="count" id="vendorsNote"></span></h2></div>
-        <div class="filters"><input type="search" id="vendorSearch" placeholder="Search vendor…" autocomplete="off"></div>
+        <div class="filters"><input type="search" id="vendorSearch" placeholder="Search vendor…" autocomplete="off">
+          <label class="chk"><input type="checkbox" id="vendorGroupType"> Group by type</label></div>
         <div class="table-scroll">
           <table class="grid clickable" id="vendorTable"><thead></thead><tbody></tbody></table>
         </div>
@@ -621,11 +622,7 @@
           <h2>Audit <span class="count" id="acctNote"></span></h2>
           <button class="btn small" id="btnAcctReload" title="Re-read the Bill Tracker audits">Reload</button>
         </div>
-        <p class="hint">Everything the AP sync flagged for a fix, from the Bill Tracker audits - bills to approve,
-          data-entry gaps, missing project #s, misplaced FW codes, subs with no project, duplicates, and PO
-          mismatches. <b>Line memo</b> is what the clerk wrote on the bill line; <b>Why flagged</b> is the reason;
-          <b>📎</b> opens the bill's uploaded scan without going into QBO. Filter by the audit that matters, or
-          click the bill # for the QBO bill page.</p>
+        <p class="hint">Bills the AP sync flagged to fix. Pick an audit below to filter; <b>📎</b> opens the scan, the bill # copies (↗ for QBO).</p>
         <div class="kpi-row" id="acctStats"></div>
         <div class="acct-filters" id="acctFilters"></div>
         <div class="filters">

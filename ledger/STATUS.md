@@ -11,11 +11,26 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     content area, full width, with a ← Back button - the vendor page moved off the narrow side slide-over
     onto it, so the wide bills/payments tables read without squishing. Reusable for other drill-downs.
     (`setTab` closes it; the old `#vendorDetail` side panel is now unused.)
-  - **Columns.** Dropped the raw line count; added **Open bills** (# bills with a balance) + **Open $** (their
-    open balance), aggregated per vendor from `ap_bill_line` in `_fetch_costs`.
+  - **Columns.** Dropped the raw line count AND the Spend bar (owner: "remove spent, spent what? ... just
+    give me the open balance"); the grid is now Vendor · Type · Jobs · **Open bills** · **Open $**, sorted
+    most-owed-first, and the header note totals open AP.
+  - **Open AP now from QBO, not `ap_bill_line` (owner, 2026-08-28: "i see the new columns but i don't see
+    the info loaded").** `ap_bill_line` excludes subs and uses Bill Tracker names, so it only covered
+    35/179 vendors. New `vendor_ap` table (`schema.sql`) is loaded by `load_bill_payments.py` straight from
+    QBO open Bills (`Balance > 0`, grouped by `VendorRef.name`) - so it covers **every** vendor incl. subs
+    with QBO names that join `cost_line` cleanly. `_fetch_costs` reads `vendor_ap`. Verified: COWTOWN /
+    SUNRISE / Preferred now show an open balance (were blank); open-AP coverage went 35 -> 40 of the shown
+    vendors.
+  - **Group by type (owner: "give me ability to group by type").** A **Group by type** checkbox collapses
+    the list under Service / Sub / Supplier headers (each with a vendor count + open total).
   - **Service type.** Vendors whose service is in their name (pump / pier drilling / saw cut / sealing /
     grinding) get a **Service** pill, not "Supplier" (`_SERVICE_RE`). Verified: MCP/Core Pumping, Xtreeme
     Sawing, Newstar / BARO'S Drilling.
+- **Audit hint + filter descriptions simplified (owner, 2026-08-28: "way too much info, just make it
+  simple" · "the filters desc are useless, you just used the names of the filters, tell the user what it's
+  filtering").** The Audit blurb is now one line. Both the Audit and Draws filter descriptions lead with the
+  **result count** and name the **values** (no "Issue:" / "Class:" / "Client:" field-label prefixes): e.g.
+  *"Showing: 289 of 1883 bills · Missing PO (COGS, no PO)"*, *"Showing: 1 draw · CP745 - FIRESTONE"*.
 - **Responsiveness / "one file carrying everything" - clarified + hardened (owner, 2026-08-28: "the
   responsiveness and loading of all that data ... like the audit i don't want it to get to that point").**
   The ledger is 5.1 MB, biggest table ~9K rows - SQLite handles millions, so the FILE is not the

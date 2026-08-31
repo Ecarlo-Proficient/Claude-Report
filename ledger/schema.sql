@@ -186,6 +186,17 @@ CREATE TABLE IF NOT EXISTS bill_payment_line (
     amount      NUMERIC,                          -- money applied to THIS bill from THIS payment
     PRIMARY KEY (payment_id, bill_id)
 );
+-- ── vendor_ap : open AP per vendor, straight from QBO (Bill.Balance > 0) ──────
+-- The Vendor Center's "Open $" / "Open bills". Pulled by load_bill_payments from
+-- QBO Bills so it covers EVERY vendor (incl. subs, which the Bill Tracker sheets
+-- drop) and uses QBO vendor names (which match cost_line, so the join is clean).
+CREATE TABLE IF NOT EXISTS vendor_ap (
+    vendor      TEXT PRIMARY KEY,                 -- QBO VendorRef.name
+    vendor_id   TEXT,
+    open_bal    NUMERIC,                          -- sum of open Bill balances
+    open_bills  INTEGER,                          -- how many bills still open
+    loaded_at   TEXT NOT NULL
+);
 
 
 -- ── wip_snapshot : the COMPUTED WIP position, one row per (project, date) ────

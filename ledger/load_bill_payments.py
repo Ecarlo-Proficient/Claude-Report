@@ -114,8 +114,24 @@ def _load(con: sqlite3.Connection, since: str, dry_run: bool) -> int:
         seen.add(k)
         con.execute(f"INSERT OR REPLACE INTO bill_payment_line ({', '.join(_BPL_COLS)}) VALUES ({lph})",
                     {c: ln.get(c) for c in _BPL_COLS})
+
+    # Open AP per vendor (unpaid Bill balances) - the Vendor Center's Open $ / Open bills. Pulled
+    # straight from QBO Bills so it covers EVERY vendor (incl. subs) with QBO names (match cost_line).
+    vap: dict = {}
+    for b in query_all(access, company_id, "Bill", "Balance > '0'"):
+        ven = b.get("VendorRef") or {}
+        name, bal = ven.get("name"), _num(b.get("Balance"))
+        if not name or bal <= 0.005:
+            continue
+        a = vap.setdefault(name, {"vendor": name, "vendor_id": ven.get("value"), "open_bal": 0.0, "open_bills": 0})
+        a["open_bal"] += bal
+        a["open_bills"] += 1
+    con.execute("DELETE FROM vendor_ap")
+    for a in vap.values():
+        con.execute("INSERT OR REPLACE INTO vendor_ap (vendor, vendor_id, open_bal, open_bills, loaded_at) "
+                    "VALUES (?,?,?,?,?)", [a["vendor"], a["vendor_id"], round(a["open_bal"], 2), a["open_bills"], now])
     con.commit()
-    print(f"  wrote {len(payments)} payments + {len(seen)} bill links.")
+    print(f"  wrote {len(payments)} payments + {len(seen)} bill links + {len(vap)} vendors' open AP.")
     return len(payments)
 
 

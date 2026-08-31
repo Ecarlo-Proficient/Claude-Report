@@ -886,15 +886,16 @@ function _buildDrawClientMap(draws) {
 function _drawCustomer(d) { return _drawClientByProj[d.project_no || ""] || "(no client)"; }
 // When a filter is active, the tab's description says WHAT it's filtering; with no filter it stays the
 // generic blurb (owner 2026-08-28: "change the desc to show what it's filtering ... All = generic").
-const _DRAW_FLABEL = { dfClient: "Client", dfProj: "Project", dfVendor: "Vendor", dfInv: "Invoice", dfDiv: "Division" };
-function drawFilterSummary() {
+const _DRAW_FLABEL = { dfClient: "client", dfProj: "project", dfVendor: "vendor", dfInv: "invoice", dfDiv: "division" };
+function drawFilterSummary(shownCount) {
   const parts = [];
   for (const cfg of DRAW_MSEL) {
-    const s = drawMSel[cfg.id];
-    if (s && s.size) parts.push(`${_DRAW_FLABEL[cfg.id]}: ${s.size <= 2 ? [...s].map(cfg.lbl).join(", ") : s.size + " selected"}`);
+    const s = drawMSel[cfg.id];    // ≤2: name the values; more: "3 vendors" (the values, not the field label)
+    if (s && s.size) parts.push(s.size <= 2 ? [...s].map(cfg.lbl).join(", ") : `${s.size} ${_DRAW_FLABEL[cfg.id]}s`);
   }
-  if (activeDrawStage) parts.push(`Stage: ${DRAW_STAGE_SHORT[activeDrawStage] || activeDrawStage}`);
-  return parts.join(" · ");
+  if (activeDrawStage) parts.push(DRAW_STAGE_SHORT[activeDrawStage] || activeDrawStage);
+  if (!parts.length) return "";
+  return `${shownCount} draw${shownCount === 1 ? "" : "s"} · ${parts.join(" · ")}`;
 }
 // Swap a tab's `.hint` between its generic blurb and a live "Showing: ..." filter summary.
 function _setHintFilter(tab, summary) {
@@ -906,8 +907,8 @@ function _setHintFilter(tab, summary) {
 function renderDraws() {
   buildDrawFilters();                              // (re)build the multi-selects when the draw set changes
   const all = (DRAWS.draws || []).filter(drawMselPasses);   // Client · Project · Vendor · Invoice · Division (AND)
-  _setHintFilter("draws", drawFilterSummary());
   const shown = activeDrawStage ? all.filter(d => d.stage === activeDrawStage) : all;
+  _setHintFilter("draws", drawFilterSummary(shown.length));   // count + what's filtered (generic when nothing selected)
   $("#drawsNote").textContent = (DRAWS.draws || []).length
     ? `(${shown.length} shown of ${DRAWS.total} · most recent first)`
     : "(no draw data — run load_bill_tracker.py)";
@@ -1547,31 +1548,41 @@ function renderVendors() {
   const q = ($("#vendorSearch") ? $("#vendorSearch").value : "").trim().toLowerCase();
   let vends = COST.by_vendor || [];
   if (q) vends = vends.filter(v => (v.vendor || "").toLowerCase().includes(q));
-  const totalSpend = vends.reduce((t, v) => t + (v.spend || 0), 0);
+  const grouped = $("#vendorGroupType") && $("#vendorGroupType").checked;
+  const totalOpen = vends.reduce((t, v) => t + (v.open_bal || 0), 0);
   $("#vendorsNote").textContent = (COST.by_vendor || []).length
-    ? `(${vends.length} vendors · $${Math.round(totalSpend).toLocaleString()})`
+    ? `(${vends.length} vendors · ${money(totalOpen)} open)`
     : "(no cost data — run load_costs.py)";
-  const cols = [["Vendor", "left"], ["Type", "left"], ["Spend", "right"], ["Jobs", "right"], ["Open bills", "right"], ["Open $", "right"]];
+  const cols = [["Vendor", "left"], ["Type", "left"], ["Jobs", "right"], ["Open bills", "right"], ["Open $", "right"]];
   const thead = $("#vendorTable thead"), tbody = $("#vendorTable tbody");
   thead.innerHTML = ""; tbody.innerHTML = "";
   const htr = document.createElement("tr");
   for (const [c, al] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
   thead.appendChild(htr);
-  const max = vends.reduce((m, v) => Math.max(m, v.spend || 0), 0) || 1;
-  for (const v of vends.slice(0, 150)) {
+  const gType = v => (v.vtype || "—").split(":")[0].trim();   // Sub | Service | Supplier
+  const rows = [...vends].sort(grouped
+    ? (a, b) => gType(a).localeCompare(gType(b)) || (b.open_bal || 0) - (a.open_bal || 0)
+    : (a, b) => (b.open_bal || 0) - (a.open_bal || 0));       // default: most owed first
+  let curG = null;
+  for (const v of rows.slice(0, 300)) {
+    if (grouped && gType(v) !== curG) {                       // type group header
+      curG = gType(v);
+      const gv = rows.filter(x => gType(x) === curG);
+      const gopen = gv.reduce((t, x) => t + (x.open_bal || 0), 0);
+      const gtr = document.createElement("tr"); gtr.className = "draw-cust";
+      const gtd = document.createElement("td"); gtd.colSpan = cols.length;
+      const gs = document.createElement("span"); gs.className = "g-cust"; gs.textContent = curG;
+      const gsub = document.createElement("span"); gsub.className = "g-sub";
+      gsub.textContent = ` · ${gv.length} vendor${gv.length > 1 ? "s" : ""} · ${money(gopen)} open`;
+      gtd.appendChild(gs); gtd.appendChild(gsub); gtr.appendChild(gtd); tbody.appendChild(gtr);
+    }
     const tr = document.createElement("tr");
-    tr.classList.add("row-click"); tr.title = "Open this vendor's page (bills, projects, line items)";
+    tr.classList.add("row-click"); tr.title = "Open this vendor's page";
     tr.onclick = (e) => { if (e.target.closest(".cell")) return; openVendorPage(v.vendor); };
     tr.appendChild(leftText(v.vendor));
     const ty = document.createElement("td"); ty.className = "left";
     const pill = document.createElement("span"); pill.className = "vtype" + (v.vtype === "Sub" ? " sub" : (v.vtype === "Service" ? " service" : ""));
     pill.textContent = v.vtype || "—"; ty.appendChild(pill); tr.appendChild(ty);
-    const st = document.createElement("td");
-    const bar = document.createElement("span"); bar.className = "cell bar";
-    const fill = document.createElement("span"); fill.className = "bar-fill"; fill.style.width = ((v.spend || 0) / max * 100) + "%";
-    const txt = document.createElement("span"); txt.className = "bar-txt"; txt.textContent = money(v.spend);
-    bar.appendChild(fill); bar.appendChild(txt); bar.title = "Click to copy"; bar.onclick = () => copy(String(Math.round(v.spend || 0)));
-    st.appendChild(bar); tr.appendChild(st);
     tr.appendChild(rightText(String(v.jobs || 0)));
     tr.appendChild(rightText(v.open_bills ? String(v.open_bills) : "–"));
     const oc = document.createElement("td");
@@ -5790,12 +5801,15 @@ function _acctPillClass(issue) {
   return "info";
 }
 
-function acctFilterSummary() {
+// Plain-language "what's shown", not the filter-widget labels (owner 2026-08-28: "tell the user
+// what it's filtering"). Leads with the result count, then the actual values (no "Issue:"/"Class:").
+function acctFilterDesc(shown, total) {
   const parts = [];
-  if (acctIssue) parts.push(`Issue: ${acctIssue}`);
-  const dv = $("#acctDivision") ? $("#acctDivision").value : ""; if (dv) parts.push(`Class: ${dv}`);
-  const q = ($("#acctSearch").value || "").trim(); if (q) parts.push(`Search: "${q}"`);
-  return parts.join(" · ");
+  if (acctIssue) parts.push(acctIssue);
+  const dv = $("#acctDivision") ? $("#acctDivision").value : ""; if (dv) parts.push(dv);
+  const q = ($("#acctSearch").value || "").trim(); if (q) parts.push(`matching "${q}"`);
+  if (!parts.length) return "";
+  return `${shown} of ${total} bills · ${parts.join(" · ")}`;
 }
 
 // Multi-column sort for the Audit table (owner 2026-08-28: "sort by date or vendor ... both ways at
@@ -5861,7 +5875,7 @@ function renderAccounting() {
   const dv = dsel ? dsel.value : "", q = ($("#acctSearch").value || "").trim().toLowerCase();
   const rows = all.filter(f => (!acctIssue || f.issue === acctIssue) && (!dv || f.division === dv)
     && (!q || (f.vendor + " " + f.project + " " + f.bill_no + " " + (f.memo || "") + " " + f.detail).toLowerCase().includes(q)));
-  _setHintFilter("accounting", acctFilterSummary());   // desc reflects the active filter (generic when All)
+  _setHintFilter("accounting", acctFilterDesc(rows.length, all.length));   // count + what's filtered (generic when All)
   if (acctSort.length) rows.sort(_acctCmp);   // multi-column sort (applied before the render cap)
   _acctVisible = rows;
   // fixed meta widths (px) so one long outlier can't blow a column wide (the old wasted
@@ -6022,6 +6036,7 @@ function init() {
     $(sel).addEventListener("input", renderProjects));
   // Draws filters are multi-selects now (built by buildDrawFilters, toggled via _mselWraps below).
   { const el = $("#vendorSearch"); if (el) el.addEventListener("input", renderVendors); }
+  { const el = $("#vendorGroupType"); if (el) el.addEventListener("change", renderVendors); }
   { const el = $("#lienFProj"); if (el) el.addEventListener("input", renderLiens); }   // the other lien filters are multi-selects now
   { const el = $("#wipActive"); if (el) el.addEventListener("change", renderWip); }
   { const el = $("#billSort"); if (el) el.addEventListener("change", renderBills); }

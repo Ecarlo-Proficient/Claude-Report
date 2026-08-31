@@ -797,17 +797,12 @@ def _fetch_costs(con) -> dict:
         parent = parent or r["account"] or "Materials"
         mix.setdefault(r["vendor"], {})
         mix[r["vendor"]][parent] = mix[r["vendor"]].get(parent, 0) + (r["amt"] or 0)
-    # per-vendor AP open balance + open bill count (from ap_bill_line; one row per bill, open_balance
-    # is per-bill). Shown on the Vendor Center instead of the raw line count (owner 2026-08-28).
+    # per-vendor open AP from vendor_ap (QBO Bill balances via load_bill_payments) - covers EVERY
+    # vendor incl. subs, keyed by QBO vendor name so it joins cost_line cleanly (owner 2026-08-28).
     apo: dict = {}
     try:
-        for r in con.execute("SELECT vendor, bill_ref, bill_date, MAX(open_balance) ob FROM ap_bill_line "
-                             "WHERE vendor IS NOT NULL AND vendor <> '' GROUP BY vendor, bill_ref, bill_date"):
-            ob = r["ob"] or 0
-            if ob > 0.5:
-                a = apo.setdefault(r["vendor"], {"open": 0.0, "open_bills": 0})
-                a["open"] += ob
-                a["open_bills"] += 1
+        for r in con.execute("SELECT vendor, open_bal, open_bills FROM vendor_ap"):
+            apo[r["vendor"]] = {"open": r["open_bal"] or 0.0, "open_bills": r["open_bills"] or 0}
     except sqlite3.OperationalError:
         pass
     for v in vend:
