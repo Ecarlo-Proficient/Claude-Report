@@ -4,6 +4,18 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Vendor page + copyable ref #s (owner, 2026-08-28: "vendor center open into its own vendor page like
+  qbo ... transactions ... filters of what type ... see the bill its paying and the project ... if
+  multiple say multiple, click for all line items with the project #" · "ref# be either a copy or link").**
+  - **Vendor page (on-demand, QBO-style).** Clicking a vendor in the Vendor Center opens its own panel:
+    every bill via **`/api/vendor?v=X`** (fetched per vendor - NOT in the bulk load), with date, bill #,
+    project (or **"multiple"** -> click the bill to drill to all line items + project #s), amount, and pay
+    status. Filter by transaction type (All / Open / Paid). `_fetch_vendor` groups ap_bill_line lines by
+    bill. Same on-demand pattern as Sub LOC - adds ~0 to page load. (Bill-centric for now; a true QBO
+    BillPayment loader is the chosen follow-up if payment-grouping is wanted.)
+  - **Ref # = copy OR link.** `qboLinkCell` now renders the number as click-to-COPY (with a toast) plus a
+    trailing ↗ for QBO - grab a bill/invoice # without being yanked into QuickBooks. Applies everywhere
+    (Bills, Draws, Sub LOC bills, Audit, the vendor page).
 - **Filtered-tab description (owner, 2026-08-28: "if i put a filter ... change the desc to show what it's
   filtering ... All = generic").** When a filter is active on Draws or Audit, the tab's hint swaps to a
   live "Showing: <what's filtered>" line (Client/Project/Vendor/Invoice/Division/Stage on Draws;

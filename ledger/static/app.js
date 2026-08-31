@@ -800,15 +800,21 @@ function qboBillHref(link) {
 }
 // A left-aligned <td> whose text opens a QBO deep link in a new tab when `url` is
 // set; a plain cell otherwise. Used for bill/invoice numbers across the tables.
+// Ref # cell: the NUMBER copies to the clipboard on click (owner 2026-08-28: "sometimes i just want
+// to copy the ref# and not take me to qbo"); the trailing ↗ is the QBO link.
 function qboLinkCell(text, url, title) {
   const td = document.createElement("td"); td.className = "left";
   const label = text || "—";
-  if (url) {
-    const a = document.createElement("a");
-    a.href = url; a.target = "_blank"; a.rel = "noopener"; a.className = "qbo-link";
-    a.textContent = label; if (title) a.title = title;
-    a.onclick = e => e.stopPropagation();
-    td.appendChild(a);
+  if (text) {
+    const s = document.createElement("span"); s.className = "refcopy"; s.textContent = label;
+    s.title = "Click to copy " + label;
+    s.onclick = e => { e.stopPropagation(); copy(label); toast("Copied " + label); };
+    td.appendChild(s);
+    if (url) {
+      const a = document.createElement("a"); a.href = url; a.target = "_blank"; a.rel = "noopener";
+      a.className = "qbo-ico"; a.textContent = " ↗"; a.title = title || "Open in QuickBooks";
+      a.onclick = e => e.stopPropagation(); td.appendChild(a);
+    }
   } else { td.textContent = label; }
   return td;
 }
@@ -1441,13 +1447,10 @@ function renderVendors() {
   for (const [c, al] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
   thead.appendChild(htr);
   const max = vends.reduce((m, v) => Math.max(m, v.spend || 0), 0) || 1;
-  const billVendors = new Set((BILLS || []).map(b => b.vendor));   // who has bills we can drill into
   for (const v of vends.slice(0, 150)) {
     const tr = document.createElement("tr");
-    if (billVendors.has(v.vendor)) {   // click the row → the Bills tab, filtered to this vendor
-      tr.classList.add("row-click"); tr.title = "See this vendor's bills";
-      tr.onclick = (e) => { if (e.target.closest(".cell")) return; jumpToVendorBills(v.vendor); };
-    }
+    tr.classList.add("row-click"); tr.title = "Open this vendor's page (bills, projects, line items)";
+    tr.onclick = (e) => { if (e.target.closest(".cell")) return; openVendorPage(v.vendor); };
     tr.appendChild(leftText(v.vendor));
     const ty = document.createElement("td"); ty.className = "left";
     const pill = document.createElement("span"); pill.className = "vtype" + (v.vtype === "Sub" ? " sub" : "");
@@ -1972,6 +1975,80 @@ function jumpToVendorBills(vendor) {
   for (const b of (BILLS || [])) if ((b.vendor || "") === vendor) billsCollapsed.delete(billGroupKey(b, grp));
   renderBills();
   window.scrollTo(0, 0);
+}
+
+// Vendor page (QBO-style, ON DEMAND) - one vendor's bills, fetched per vendor via /api/vendor (never
+// in the bulk load). Each bill shows its project, or "multiple" -> click the bill to see every line
+// item + project #. Filter by pay status. Owner 2026-08-28: "vendor center open into its own vendor
+// page like qbo ... see the bill its paying and the project ... if multiple say multiple, click for lines".
+let _vendorData = null, _vendorType = "all";
+const _vendorBillOpen = new Set();
+async function openVendorPage(vendor) {
+  $("#vendorDetailTitle").textContent = vendor;
+  $("#vendorDetailSub").textContent = "loading…";
+  const body = $("#vendorDetailBody"); body.innerHTML = "";
+  _vendorData = null; _vendorType = "all"; _vendorBillOpen.clear();
+  openPanel("#vendorDetail");
+  let data;
+  try { data = await (await fetch("/api/vendor?v=" + encodeURIComponent(vendor))).json(); }
+  catch (e) { body.textContent = "could not load this vendor"; return; }
+  if (!data || !data.ok) { body.textContent = (data && data.error) || "no data for this vendor"; return; }
+  _vendorData = data;
+  renderVendorPage();
+}
+function renderVendorPage() {
+  const d = _vendorData; if (!d) return;
+  $("#vendorDetailSub").textContent = `${d.count} bills · ${money(d.total)} billed · ${money(d.open)} open · ${d.paid_ct} paid`;
+  const body = $("#vendorDetailBody"); body.innerHTML = "";
+  const seg = document.createElement("div"); seg.className = "seg vendor-seg";
+  for (const [k, lbl] of [["all", "All"], ["open", "Open"], ["paid", "Paid"]]) {
+    const b = document.createElement("button"); b.type = "button"; b.className = "seg-btn" + (_vendorType === k ? " on" : ""); b.textContent = lbl;
+    b.onclick = () => { _vendorType = k; renderVendorPage(); }; seg.appendChild(b);
+  }
+  body.appendChild(seg);
+  const bills = (d.bills || []).filter(b => _vendorType === "all" || (_vendorType === "paid" ? b.paid : !b.paid));
+  if (!bills.length) { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = "No bills match this filter."; body.appendChild(p); return; }
+  const scroll = document.createElement("div"); scroll.className = "table-scroll";
+  const table = document.createElement("table"); table.className = "grid"; const thead = document.createElement("thead"), tbody = document.createElement("tbody");
+  const htr = document.createElement("tr");
+  for (const [c, al] of [["", "left"], ["Date", "left"], ["Bill #", "left"], ["Project", "left"], ["Amount", "right"], ["Status", "left"]]) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
+  thead.appendChild(htr);
+  bills.forEach((b, i) => {
+    const key = (b.bill_ref || "?") + "|" + (b.bill_date || "") + "|" + i;
+    const open = _vendorBillOpen.has(key), multi = b.lines.length > 1;
+    const tr = document.createElement("tr"); tr.className = "vp-bill"; if (multi) tr.style.cursor = "pointer";
+    tr.onclick = (e) => { if (e.target.closest("a") || e.target.closest(".refcopy") || e.target.closest(".cell")) return; if (!multi) return; open ? _vendorBillOpen.delete(key) : _vendorBillOpen.add(key); renderVendorPage(); };
+    const cc = document.createElement("td"); cc.className = "left draw-caret"; cc.textContent = multi ? (open ? "▾" : "▸") : ""; tr.appendChild(cc);
+    tr.appendChild(leftText(fmtDateShort(b.bill_date)));
+    tr.appendChild(qboLinkCell(b.bill_ref, qboBillHref(b.qbo_link), "Open this bill in QuickBooks"));
+    const pcell = document.createElement("td"); pcell.className = "left";
+    if (b.project === "multiple") { const s = document.createElement("span"); s.className = "vp-multi"; s.textContent = "multiple"; s.title = "Click the bill to see all line items + project #s"; pcell.appendChild(s); }
+    else pcell.appendChild(document.createTextNode(b.project || "–"));
+    tr.appendChild(pcell);
+    const amt = document.createElement("td"); amt.appendChild(moneyCell(b.amount)); tr.appendChild(amt);
+    const st = document.createElement("td"); st.className = "left";
+    const stp = document.createElement("span"); stp.className = b.paid ? "ar-paid" : "ar-open"; stp.textContent = b.paid ? ("Paid " + fmtDateShort(b.pay_date)) : (b.pay_status || "Open"); st.appendChild(stp); tr.appendChild(st);
+    tbody.appendChild(tr);
+    if (multi && open) { const lr = document.createElement("tr"); const ltd = document.createElement("td"); ltd.colSpan = 6; ltd.appendChild(_vendorLines(b)); lr.appendChild(ltd); tbody.appendChild(lr); }
+  });
+  table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table); body.appendChild(scroll);
+}
+function _vendorLines(b) {
+  const wrap = document.createElement("div"); wrap.className = "bills-sub";
+  const cap = document.createElement("div"); cap.className = "bills-cap"; cap.textContent = `${b.lines.length} line items on bill ${b.bill_ref || ""}${b.projects.length > 1 ? " · " + b.projects.filter(p => p !== "(multiple)").join(", ") : ""}`; wrap.appendChild(cap);
+  const scroll = document.createElement("div"); scroll.className = "table-scroll";
+  const table = document.createElement("table"); table.className = "grid"; const thead = document.createElement("thead"), tbody = document.createElement("tbody");
+  const htr = document.createElement("tr");
+  for (const [c, al] of [["Project #", "left"], ["Description", "left"], ["Amount", "right"]]) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
+  thead.appendChild(htr);
+  for (const ln of b.lines) { const tr = document.createElement("tr");
+    tr.appendChild(leftText(ln.project_no || "–"));
+    tr.appendChild(leftText(ln.description || "–"));
+    tr.appendChild(rightText(money(ln.amount)));
+    tbody.appendChild(tr);
+  }
+  table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table); wrap.appendChild(scroll);
+  return wrap;
 }
 // Lien marks are STAGED, then Saved (the owner marks several, then commits once). A mark
 // updates the panel + grid optimistically and shows the Save bar; nothing is written until
@@ -4478,7 +4555,8 @@ function openPanel(sel) { $("#overlay").hidden = false; $(sel).hidden = false; }
 function closePanels() { $("#overlay").hidden = true; $("#detail").hidden = true; $("#settings").hidden = true;
   { const bd = $("#billDetail"); if (bd) bd.hidden = true; } { const sd = $("#sublocDetail"); if (sd) sd.hidden = true; }
   { const pb = $("#payBills"); if (pb) pb.hidden = true; } { const lr = $("#lienReview"); if (lr) lr.hidden = true; }
-  { const st = $("#invStatement"); if (st) st.hidden = true; } { const iv = $("#invDetail"); if (iv) iv.hidden = true; } }
+  { const st = $("#invStatement"); if (st) st.hidden = true; } { const iv = $("#invDetail"); if (iv) iv.hidden = true; }
+  { const vd = $("#vendorDetail"); if (vd) vd.hidden = true; } }
 
 // ── Copy + CSV + toast ────────────────────────────────────────────────────
 let toastTimer = null;
@@ -5667,10 +5745,7 @@ function renderAccounting() {
     const ic = document.createElement("td"); ic.className = "left audit-soft";
     const pill = document.createElement("span"); pill.className = "acct-pill " + _acctPillClass(f.issue); pill.textContent = f.issue; ic.appendChild(pill); tr.appendChild(ic);
     const vc = leftText(f.vendor || "–"); vc.classList.add("audit-soft"); tr.appendChild(vc);
-    const bc = document.createElement("td"); bc.className = "left";
-    if (f.url) { const a = document.createElement("a"); a.href = f.url; a.target = "_blank"; a.rel = "noopener"; a.className = "qbo-link"; a.textContent = f.bill_no || "open"; a.title = "Open this bill in QuickBooks"; bc.appendChild(a); }
-    else bc.appendChild(document.createTextNode(f.bill_no || "–"));
-    tr.appendChild(bc);
+    tr.appendChild(qboLinkCell(f.bill_no, f.url, "Open this bill in QuickBooks"));
     const sc = document.createElement("td"); sc.className = "left";
     if (f.att > 0) {
       const b = document.createElement("button"); b.type = "button"; b.className = "acct-scan";
@@ -5827,6 +5902,7 @@ function init() {
   { const el = $("#btnCloseLienReview"); if (el) el.onclick = closePanels; }
   { const el = $("#billSaveText"); if (el) el.onclick = openLienReview; }   // press "Lien marks saved" → review them
   { const el = $("#btnCloseSublocDetail"); if (el) el.onclick = closePanels; }
+  { const el = $("#btnCloseVendorDetail"); if (el) el.onclick = closePanels; }
   { const el = $("#btnSaveBillMarks"); if (el) el.onclick = saveBillMarks; }
   { const el = $("#btnDiscardBillMarks"); if (el) el.onclick = discardBillMarks; }
   // Pay Bills (check-run worksheet)

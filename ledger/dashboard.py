@@ -1185,6 +1185,46 @@ def _fetch_sales(con) -> dict:
     return out
 
 
+def _fetch_vendor(con, vendor: str) -> dict:
+    """On-demand: one vendor's bills, grouped from ap_bill_line lines (the vendor page). Each bill
+    carries its lines (with project # each), so a multi-project bill shows 'multiple' and drills to
+    the line items. Kept OUT of the bulk load - fetched per vendor on click."""
+    try:
+        rows = con.execute(
+            "SELECT bill_ref, bill_date, project_no, division, description, line_amount, bill_total, "
+            "open_balance, pay_status, pay_date, gc_paid_date, matched_invoice, invoice_no, qbo_link "
+            "FROM ap_bill_line WHERE vendor = ? ORDER BY bill_date DESC, bill_ref", (vendor,)).fetchall()
+    except sqlite3.OperationalError as e:                    # noqa: BLE001
+        return {"ok": False, "error": str(e), "bills": []}
+    bills: dict = {}
+    for r in rows:
+        key = (r["bill_ref"] or "?") + "|" + (r["bill_date"] or "")   # a bill_ref can recur on another date
+        b = bills.get(key)
+        if not b:
+            b = bills[key] = {
+                "bill_ref": r["bill_ref"], "bill_date": r["bill_date"], "bill_total": r["bill_total"],
+                "open_balance": r["open_balance"], "pay_status": r["pay_status"], "pay_date": r["pay_date"],
+                "gc_paid": r["gc_paid_date"], "invoice_no": r["invoice_no"], "matched_invoice": r["matched_invoice"],
+                "qbo_link": r["qbo_link"], "lines": [], "_projs": set()}
+        b["lines"].append({"project_no": r["project_no"], "division": r["division"],
+                           "description": r["description"], "amount": r["line_amount"]})
+        if r["project_no"]:
+            b["_projs"].add(r["project_no"])
+    out = []
+    for b in bills.values():
+        projs = sorted(b.pop("_projs"))
+        b["project"] = projs[0] if len(projs) == 1 else ("multiple" if len(projs) > 1 else "")
+        b["projects"] = projs
+        b["amount"] = b["bill_total"] if b["bill_total"] is not None else sum((ln["amount"] or 0) for ln in b["lines"])
+        b["paid"] = bool(b["pay_date"])
+        out.append(b)
+    out.sort(key=lambda b: (b["bill_date"] or ""), reverse=True)
+    return {"ok": True, "vendor": vendor, "count": len(out),
+            "total": sum((b["amount"] or 0) for b in out),
+            "open": sum((b["open_balance"] or 0) for b in out),
+            "paid_ct": sum(1 for b in out if b["paid"]), "bills": out}
+
+
 def _subloc_events(con, project: str = "") -> list:
     """Parsed sub_loc_event rows (the LOC transaction chain), optionally for ONE project. The
     reimb/settled JSON columns are decoded; `settled` may predate the column, so it's optional."""
@@ -1428,6 +1468,8 @@ class Handler(BaseHTTPRequestHandler):
             self._attachment(self._query())
         elif path == "/api/subloc/project":  # on-demand: one project's LOC event chain (the source)
             self._subloc_project(self._query().get("p", ""))
+        elif path == "/api/vendor":          # on-demand: one vendor's bills (the vendor page)
+            self._vendor(self._query().get("v", ""))
         elif path.startswith("/static/"):
             self._static(path[len("/static/"):])
         else:
@@ -1481,6 +1523,17 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": True, "project": project, "events": _subloc_events(con, project)})
         except sqlite3.OperationalError as e:                # noqa: BLE001
             self._json({"ok": False, "error": str(e), "events": []})
+        finally:
+            con.close()
+
+    def _vendor(self, vendor: str):
+        """On-demand: one vendor's bills for the vendor page. Not in the bulk load."""
+        vendor = (vendor or "").strip()
+        if not vendor:
+            return self._json({"ok": False, "error": "no vendor", "bills": []}, 400)
+        con = _connect(self.db_path)
+        try:
+            self._json(_fetch_vendor(con, vendor))
         finally:
             con.close()
 
