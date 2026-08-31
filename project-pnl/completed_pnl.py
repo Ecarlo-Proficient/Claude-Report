@@ -536,8 +536,13 @@ def build_bundle(jobs: List[tuple], out: Path) -> None:
              if _pay else "")
     _t(sm, 2, 1, f"{_n_act} active · {len(jobs) - _n_act} completed · click a job "
                  f"for its detail sheet, or 'open workbook' for the full file"
-                 f"{_note} · {dt.datetime.now():%m/%d/%Y}",
+                 f"{_note}",
        size=SZ_SMALL, color=GREY)
+    # Generated stamp with the TIME — these are re-run through the day and a
+    # date alone cannot tell you which pull you are looking at (the user
+    # 2026-08-31). Its own cell so it keeps its own format.
+    _t(sm, 1, 8, f"Generated {dt.datetime.now():%m/%d/%Y %I:%M %p}",
+       size=SZ_SMALL, color=GREY, align="right")
     for c in range(1, 9):
         sm.cell(row=2, column=c).border = Border(bottom=HAIR)
     sm.row_dimensions[1].height = 30
@@ -644,8 +649,11 @@ def build_bundle(jobs: List[tuple], out: Path) -> None:
         back = _t(ws, 1, 7, "← back to Summary", size=SZ_SMALL, align="right")
         back.hyperlink = "#'Summary'!A1"
         back.font = Font(size=SZ_SMALL, color=LINK, underline="single")
-        _t(ws, 2, 1, f"completed job · {src['title'].replace('PROJECT P&L — ', '')}",
+        _t(ws, 2, 1, f"{src.get('status', 'Completed').lower()} job · "
+                     f"{src['title'].replace('PROJECT P&L — ', '')}",
            size=SZ_SMALL, color=GREY)
+        _t(ws, 2, 7, f"Generated {dt.datetime.now():%m/%d/%Y %I:%M %p}",
+           size=SZ_SMALL, color=GREY, align="right")
         for c in range(1, 8):
             ws.cell(row=2, column=c).border = Border(bottom=HAIR)
         ws.row_dimensions[1].height = 30
@@ -871,8 +879,9 @@ def main() -> int:
         if not loaded:
             print("✗  nothing to bundle")
             return 1
-        out = folder / ("MFD Overview — All Jobs.xlsx" if a.with_active
-                        else "MFD Overview Total.xlsx")
+        # One canonical file, overwritten each run. Two differently-named
+        # variants had already accumulated in the folder (the user 2026-08-31).
+        out = folder / "MFD Overview.xlsx"
         build_bundle(loaded, out)
         tb = sum(t["billed"] for _, _, t in loaded)
         tc = sum(t["cost"] for _, _, t in loaded)
