@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import json
 import os
 import re
 import stat
@@ -2002,6 +2003,34 @@ def _po_url(pid: str) -> str:
     return QBO_PO_URL_TEMPLATE.format(po_id=pid) if pid else ""
 
 
+def _load_audit_exclusions() -> Dict[str, Dict[str, list]]:
+    """EXCEL-ONLY audit suppressions from <companyhealth>/audit_exclusions.json
+    (the user 2026-08-25 — the ledger is untouched). Known-legit no-project vendors
+    (equipment rental, overhead, insurance) and classes that should never trip the
+    Missing Project check. Shape: {"missing_project": {"vendors": [...],
+    "classes": [...]}}. Missing/broken file → no exclusions."""
+    p = paths.companyhealth_dir() / "audit_exclusions.json"
+    try:
+        data = json.loads(p.read_text()) if p.exists() else {}
+    except (OSError, json.JSONDecodeError):
+        data = {}
+    out: Dict[str, Dict[str, list]] = {}
+    for check, cfg in data.items():
+        if check.startswith("_") or not isinstance(cfg, dict):
+            continue
+        out[check] = {"vendors": [str(x).strip().upper() for x in cfg.get("vendors", [])],
+                      "classes": [str(x).strip().upper() for x in cfg.get("classes", [])]}
+    return out
+
+
+def _excluded(r: dict, excl: Dict[str, list]) -> bool:
+    """True if the row's vendor or QBO class matches an exclusion (substring, ci)."""
+    vend = (r.get("vendor") or "").upper()
+    cls = (r.get("class_name") or "").upper()
+    return (any(v and v in vend for v in excl.get("vendors", ()))
+            or any(c and c in cls for c in excl.get("classes", ())))
+
+
 def _missing_po_bills(all_rows: List[dict], today: dt.date, days: int = 90) -> List[dict]:
     """Bills with NO PO that are real COGS purchases: not a sub, has ≥1 item/COGS
     line (so not an expense-only bill), within the last `days` (the user 2026-08-25).
@@ -2088,6 +2117,7 @@ def build_audits(wb, all_rows: List[dict],
     today = dt.date.today()
     display_rows = [r for r in all_rows if not r.get("is_sub")]
     sub_rows = [r for r in all_rows if r.get("is_sub")]
+    mp_excl = _load_audit_exclusions().get("missing_project", {})
 
     # ── CODING ──────────────────────────────────────────────────────────
     coding: List[list] = []
@@ -2101,7 +2131,7 @@ def build_audits(wb, all_rows: List[dict],
                            f"Class {r.get('class_name', '') or '(empty)'} · "
                            + " · ".join(issues), _bill_url(r.get("bill_id", ""))])
         uc = _uncoded_job_cost(r)
-        if uc:
+        if uc and not _excluded(r, mp_excl):   # skip known-legit no-project vendors/classes
             coding.append(["Missing Project", r.get("vendor", ""), r.get("bill_doc", ""),
                            r.get("bill_date"), r.get("customer_name", "") or "(none)",
                            "", r.get("line_amount") or 0.0, uc[0],

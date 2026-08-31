@@ -91,6 +91,12 @@ no business findings, dollar exposures, or owner analyses (those live in the own
   Overrides live OUTSIDE the repo at `<companyhealth>/concrete_suppliers.json` (vendor names). Live
   run (3,697 bills / 13,030 lines): overrides cut miscodes 163→94; origin split 29 upstream (PO/
   super-PM) · 63 no-PO (direct entry) · 0 deviated. `hauler` is override-only (not auto-detected).
+- **Missing Project exclusions (EXCEL ONLY, 2026-08-25, owner).** Known-legit no-project vendors
+  (equipment rental, overhead, insurance) and classes are suppressed from the Missing Project check
+  via `<companyhealth>/audit_exclusions.json` (`{missing_project: {vendors, classes}}`,
+  case-insensitive substring). Seeded: `Bobcat of North Texas` (owner said "North Dallas" - no such
+  vendor), `CBUSA`, `Cindy Montgomery` (Agency LLC), class `10702-10704` (C.F Hawn Fwy). Loader
+  `_load_audit_exclusions` + `_excluded` in `build_audits`. **Ledger untouched** - Excel audit only.
 - **Audit consolidation → 3 themed sheets + Missing PO (2026-08-25, owner).** De-bloat: the 8
   `Audit - …` tabs merged into **THREE** filterable Tables, each with an `Issue` column +
   `Detail` + `Open`: **`Audit - Coding`** (Data Entry · Missing Project · FW Misplaced · Sub No
