@@ -1185,10 +1185,37 @@ def _fetch_sales(con) -> dict:
     return out
 
 
-def _fetch_sub_loc(con) -> dict:
+def _subloc_events(con, project: str = "") -> list:
+    """Parsed sub_loc_event rows (the LOC transaction chain), optionally for ONE project. The
+    reimb/settled JSON columns are decoded; `settled` may predate the column, so it's optional."""
+    ecols = {r[1] for r in con.execute("PRAGMA table_info(sub_loc_event)")}
+    settled_col = ", settled" if "settled" in ecols else ""
+    sql = ("SELECT event_date, type, project, division, party, out_amt, in_amt, "
+           f"lag_days, balance, note, invoice, reimb{settled_col} FROM sub_loc_event")
+    args: tuple = ()
+    if project:
+        sql += " WHERE project = ?"
+        args = (project,)
+    sql += " ORDER BY seq"
+    events = []
+    for r in con.execute(sql, args):
+        d = dict(r)
+        for col in ("reimb", "settled"):
+            if d.get(col):
+                try:
+                    d[col] = json.loads(d[col])
+                except (ValueError, TypeError):
+                    d[col] = []
+        events.append(d)
+    return events
+
+
+def _fetch_sub_loc(con, full_events: bool = False) -> dict:
     """Subcontractor LOC float from sub_loc_run / sub_loc_event; empty (not an error) if the
-    loader hasn't run. summary.outstanding = fronted-but-uncollected NOW; peak = the LOC to size."""
-    out = {"summary": None, "divisions": {}, "projects": [], "open_by_project": {}, "events": []}
+    loader hasn't run. summary.outstanding = fronted-but-uncollected NOW; peak = the LOC to size.
+    The full per-event chain (~1 MB) is NOT shipped in the bulk load - only the small `repays`
+    slice the feed needs; a project's chain is fetched on demand via /api/subloc/project."""
+    out = {"summary": None, "divisions": {}, "projects": [], "open_by_project": {}, "repays": []}
     try:
         run = con.execute("SELECT * FROM sub_loc_run WHERE id=1").fetchone()
     except sqlite3.OperationalError:
@@ -1205,23 +1232,14 @@ def _fetch_sub_loc(con) -> dict:
     except (ValueError, TypeError):
         pass
     try:
-        # `settled` may be absent on a ledger written before this column existed - select it
-        # defensively so an old DB degrades instead of throwing (the loader adds it on next run).
-        ecols = {r[1] for r in con.execute("PRAGMA table_info(sub_loc_event)")}
-        settled_col = ", settled" if "settled" in ecols else ""
-        rows = con.execute("SELECT event_date, type, project, division, party, out_amt, in_amt, "
-                           f"lag_days, balance, note, invoice, reimb{settled_col} FROM sub_loc_event ORDER BY seq")
-        for r in rows:
-            d = dict(r)
-            for col in ("reimb", "settled"):
-                if d.get(col):
-                    try:
-                        d[col] = json.loads(d[col])
-                    except (ValueError, TypeError):
-                        d[col] = []
-            out["events"].append(d)
+        events = _subloc_events(con)
     except sqlite3.OperationalError:   # degrade to summary-only, never break the whole dashboard
-        pass
+        events = []
+    # The feed needs only client repayments (a small slice); the full chain is fetched on demand
+    # per project (/api/subloc/project), so the bulk load doesn't carry ~1 MB of raw events.
+    out["repays"] = [e for e in events if e.get("type") == "REPAY" and (e.get("in_amt") or 0) > 0.005]
+    if full_events:
+        out["events"] = events
     return out
 
 
@@ -1408,6 +1426,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "findings": [], "error": f"audit read failed: {e}"})
         elif path == "/api/attachment":    # a bill's scan link(s), resolved fresh from QBO on click
             self._attachment(self._query())
+        elif path == "/api/subloc/project":  # on-demand: one project's LOC event chain (the source)
+            self._subloc_project(self._query().get("p", ""))
         elif path.startswith("/static/"):
             self._static(path[len("/static/"):])
         else:
@@ -1449,6 +1469,18 @@ class Handler(BaseHTTPRequestHandler):
         con = _connect(self.db_path)
         try:
             self._json(_project_pnl(con, proj))
+        finally:
+            con.close()
+
+    def _subloc_project(self, project: str):
+        """On-demand: one project's full LOC event chain (the 'where this came from' source report).
+        Kept OUT of the bulk load, so adding this drill-down costs nothing on every page load."""
+        project = (project or "").strip().upper()
+        con = _connect(self.db_path)
+        try:
+            self._json({"ok": True, "project": project, "events": _subloc_events(con, project)})
+        except sqlite3.OperationalError as e:                # noqa: BLE001
+            self._json({"ok": False, "error": str(e), "events": []})
         finally:
             con.close()
 

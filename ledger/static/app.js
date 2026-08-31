@@ -188,7 +188,7 @@ let BILLS = [];   // full ap_bill_line list for the Bill Tracker tab
 let COST = { by_code: [], by_project_code: {}, by_project: {}, by_cost_type: [], by_vendor: [], loaded_total: 0 };
 let DRAWS = { draws: [], total: 0 };
 let SALES = { pipeline: [], by_rep: [], warm: [], customers: [], totals: {} };
-let SUBLOC = { summary: null, divisions: {}, projects: [], open_by_project: {}, events: [] };
+let SUBLOC = { summary: null, divisions: {}, projects: [], open_by_project: {}, repays: [], events: [] };
 let OI = { as_of: null, buckets: ["Current", "1-30", "31-60", "61-90", "90+"], invoices: [] };  // open AR invoices (aging tab)
 let PAY = { payments: [], total_received: 0, count: 0, invoices_paid: 0 };   // received payments, each with the invoices it paid
 let paymentsExpanded = new Set();   // payment ids expanded to show their invoices (default: all collapsed - scannable list)
@@ -301,7 +301,7 @@ async function load(isAuto) {
   DRAWS = data.draws || { draws: [], total: 0 };
   // heavy blobs: present on a full/auto load; on the light initial load they arrive via loadHeavy()
   if (data.sales !== undefined) SALES = data.sales || { pipeline: [], by_rep: [], warm: [], customers: [], totals: {} };
-  if (data.sub_loc !== undefined) SUBLOC = data.sub_loc || { summary: null, divisions: {}, projects: [], open_by_project: {}, events: [] };
+  if (data.sub_loc !== undefined) SUBLOC = data.sub_loc || { summary: null, divisions: {}, projects: [], open_by_project: {}, repays: [], events: [] };
   OI = data.open_invoices || { as_of: null, buckets: ["Current", "1-30", "31-60", "61-90", "90+"], invoices: [] };
   if (data.payments !== undefined) PAY = data.payments || { payments: [], total_received: 0, count: 0, invoices_paid: 0 };
   PNL = null;   // recompute the portfolio P&L on next open (data just changed)
@@ -3349,9 +3349,44 @@ function renderSubLoc() {
   }
   renderSublocFeed();
 }
+// The per-project LOC event chain (the "where this came from" source report) is fetched ON DEMAND
+// and cached - it never rides in the bulk load, so the tab stays light no matter how many exist.
+const _sublocSrcCache = {};
+async function _sublocLoadSource(project, body) {
+  const sec = document.createElement("div"); sec.className = "dgroup";
+  const h = document.createElement("h4"); h.textContent = "Where this came from - every LOC transaction"; sec.appendChild(h);
+  const cap = document.createElement("div"); cap.className = "bills-cap"; cap.textContent = "loading the source…"; sec.appendChild(cap);
+  body.appendChild(sec);
+  let data = _sublocSrcCache[project];
+  if (!data) {
+    try { data = await (await fetch("/api/subloc/project?p=" + encodeURIComponent(project))).json(); _sublocSrcCache[project] = data; }
+    catch (e) { cap.textContent = "could not load the source events"; return; }
+  }
+  const evs = (data && data.events) || [];
+  if (!evs.length) { cap.textContent = "No LOC events recorded for this project."; return; }
+  const outT = evs.reduce((t, e) => t + (e.out_amt || 0), 0), inT = evs.reduce((t, e) => t + (e.in_amt || 0), 0);
+  cap.textContent = `${evs.length} transactions · ${money(outT)} fronted out · ${money(inT)} reimbursed in`;
+  const scroll = document.createElement("div"); scroll.className = "table-scroll";
+  const table = document.createElement("table"); table.className = "grid"; const thead = document.createElement("thead"), tbody = document.createElement("tbody");
+  const htr = document.createElement("tr");
+  for (const [c, al] of [["Date", "left"], ["Event", "left"], ["Party / invoice", "left"], ["Out", "right"], ["In", "right"], ["LOC balance", "right"], ["Lag", "right"]]) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
+  thead.appendChild(htr);
+  for (const e of evs) {
+    const tr = document.createElement("tr");
+    tr.appendChild(leftText(fmtDateShort(e.event_date)));
+    tr.appendChild(leftText(e.type || "–"));
+    tr.appendChild(leftText(((e.invoice ? "INV " + e.invoice : "") + (e.party ? (e.invoice ? " · " : "") + e.party : "")) || "–"));
+    tr.appendChild(rightText(e.out_amt ? money(e.out_amt) : "–"));
+    tr.appendChild(rightText(e.in_amt ? money(e.in_amt) : "–"));
+    tr.appendChild(rightText(e.balance != null ? money(e.balance) : "–"));
+    tr.appendChild(rightText(e.lag_days != null ? e.lag_days + "d" : "–"));
+    tbody.appendChild(tr);
+  }
+  table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table); sec.appendChild(scroll);
+}
 function renderSublocFeed() {
   const box = $("#sublocFeed"); if (!box) return; box.innerHTML = "";
-  const repays = (SUBLOC.events || []).filter(e => e.type === "REPAY" && (e.in_amt || 0) > 0.005);
+  const repays = SUBLOC.repays || (SUBLOC.events || []).filter(e => e.type === "REPAY" && (e.in_amt || 0) > 0.005);
   if (!repays.length) { const p = document.createElement("p"); p.className = "hint"; p.style.margin = "10px 18px"; p.textContent = "No client repayments matched to fronted subs yet."; box.appendChild(p); return; }
   const now = new Date(); const dow = (now.getDay() + 6) % 7;   // Monday = 0
   const weekStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dow);
@@ -3428,6 +3463,7 @@ function openSublocDetail(project) {
       const o = _slMcell(sub.open); o.querySelector(".cell").classList.add("open-amt"); tr.appendChild(o); tbody.appendChild(tr); }
     table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table); gd.appendChild(scroll); body.appendChild(gd);
   }
+  _sublocLoadSource(project, body);   // append the full LOC event chain (the source), fetched on demand
   openPanel("#sublocDetail");
 }
 // A client payment (repayment) → the fronted sub payments it paid down, FIFO oldest-first (the line items).

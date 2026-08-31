@@ -4,6 +4,16 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Sub LOC: on-demand source drill-down + bulk trimmed - the bloat answer in action (owner, 2026-08-28:
+  "click by project ... show me where it got this info from ... how do we help with bloat and load times
+  if we do it this way?").** The per-project LOC event chain (~1.1 MB, 3357 events) no longer rides in the
+  bulk load - only the small `repays` slice the feed needs. Clicking a project now fetches JUST that
+  project's chain via **`/api/subloc/project?p=X`** (~37 KB, cached) and appends a "Where this came from -
+  every LOC transaction" report to the detail panel. Net: sub_loc payload **1.32 MB -> 0.48 MB** (heavy
+  load ~840 KB lighter) WHILE ADDING the drill-down. **The pattern (the answer):** reports are fetched
+  per-item on open, never baked into the bulk load, so each new report costs ~0 on every page load - the
+  same model the P&L / Systems / Console tabs already use. `_subloc_events(con, project)` is the shared
+  reader; the feed reads `SUBLOC.repays`.
 - **Audit tab: Class column + multi-column sort (owner, 2026-08-28: "need class in the column ...
   sort by date or vendor ... both ways at the same time").** Added a **Class** column (the QBO
   division, already on each finding) between Project and Cost, and to the copy-as-table columns.
