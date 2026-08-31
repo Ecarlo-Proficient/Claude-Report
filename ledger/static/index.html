@@ -118,6 +118,47 @@
 
     </div><!-- /tab: overview -->
 
+    <!-- ══════════════ TAB: HEALTH (company-health metric layer) ══════════════
+         Money In / Money Out / Position / Break-Even + Recurring & Debt - the fold-in of the
+         retired Company Tracker/Dashboard. Sections are assembled SERVER-SIDE (/api/healthtab);
+         this page renders them verbatim so the model can never fork. -->
+    <div class="tab-page" data-tab="health" hidden>
+      <section class="widget">
+        <div class="widget-head">
+          <h2>Company health <span class="count" id="healthNote"></span></h2>
+          <button class="btn small" id="btnHealthPull"
+                  title="Pull the QBO-only numbers (cash, P&amp;L, 13-wk cash flow, recurring register) into the ledger. Touch ID on this Mac. Everything else on this page is already live from the ledger.">⟳&nbsp;Pull QBO metrics</button>
+        </div>
+        <p class="hint">Live from the ledger - AR, AP, WIP backlog, draws and Sub LOC read the same tables as
+          their tabs. Cash, margins, burn and the recurring register come from the last
+          <b>Pull QBO metrics</b> run and carry its date: QBO bank balances only move when uploads
+          are entered, so treat cash as of its stamp, not as of now.</p>
+        <div class="sync-progress" id="healthProg" hidden>
+          <div class="sync-bar"><div class="sync-bar-fill" id="healthFill"></div></div>
+          <div class="sync-step" id="healthStep"></div>
+        </div>
+      </section>
+      <div id="healthSections"></div>
+      <section class="widget" id="healthRecWidget" hidden>
+        <div class="widget-head"><h2>Recurring &amp; Debt <span class="count" id="healthRecNote"></span></h2></div>
+        <p class="hint">The fixed obligations behind break-even, with what <b>CHANGED / STOPPED / NEW</b>
+          since last month. Debt payments are read off the liability balance drop; MCA rows are shown
+          for review but never counted (their balance moves are refinance entries, not cash out).</p>
+        <div class="kpi-row" id="healthRecKpis"></div>
+        <div id="healthRecAlerts"></div>
+        <details class="health-details" id="healthRecDetails">
+          <summary>Full register - every obligation by month</summary>
+          <div class="table-scroll"><table class="grid" id="healthRecTable"><thead></thead><tbody></tbody></table></div>
+        </details>
+      </section>
+      <section class="widget" id="healthAuditWidget" hidden>
+        <details class="health-details">
+          <summary>Break-even audit trail - where every figure came from</summary>
+          <div class="table-scroll"><table class="grid" id="healthAuditTable"><thead></thead><tbody></tbody></table></div>
+        </details>
+      </section>
+    </div><!-- /tab: health -->
+
     <!-- ══════════════ TAB: P&L (portfolio — live per-job P&L + totals) ══════════════ -->
     <div class="tab-page" data-tab="pnl" hidden>
       <section class="widget">

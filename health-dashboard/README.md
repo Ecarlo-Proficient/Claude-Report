@@ -1,5 +1,9 @@
 # Company Health (`money_bleeds.py` + legacy `qbo_health.py`)
 
+> **Superseded 2026-08-31 by the ledger's Health tab** (`ledger/load_health.py` +
+> `/api/healthtab` - see `ledger/README.md`). This stack stays runnable until the owner
+> calls its retirement; see STATUS.md for what the ledger does not yet replace.
+
 > Commands below run from the repo root. Uses the shared QBO vault
 > (`shared/qbo_vault.py`) — one Touch ID per run.
 

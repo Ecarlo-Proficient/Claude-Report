@@ -486,6 +486,14 @@ flowchart LR
     QBO --> PAYLOAD ==>|"payment · payment_application · project_customer"| DB
     BPLOAD["load_bill_payments.py\nQBO BillPayment (money OUT) → bill_payment + bill_payment_line\n(this year; one cheque → many bills; vendor page reads on demand)"]:::tool
     QBO --> BPLOAD ==>|"bill_payment · bill_payment_line"| DB
+    QPLMOD["shared/qbo_pl.py\nP&L report walk → the 5 totals\n(exact-match lock + GP-NOI identity check)"]:::tool
+    RECURMOD["shared/recurring.py\nrecurring-obligations register (FIN-12)\nP&L + BS by month, CHANGED/STOPPED/NEW"]:::tool
+    HLOAD["load_health.py\nbank cash · retainage GL · P&L blocks (MTD/YTD/prior)\n13-wk cash flow (burn/runway) · recurring register\n→ health_snapshot (JSON payloads) · --selftest"]:::tool
+    QBO --> HLOAD ==>|"health_snapshot"| DB
+    QPLMOD -.->|"pl_totals()"| HLOAD
+    RECURMOD -.->|"build()"| HLOAD
+    BEMOD["shared/breakeven.py\nbreak-even model - build_from_blocks()\n(also read by company_tracker until it retires)"]:::tool
+    BEMOD -.->|"/api/healthtab computes live"| DASH
     QATT["shared/qbo_attachments.py\nAttachable INDEX (entity,txn)→[Id,FileName]\n7-day disk cache (REUSED from the P&L, no re-sweep)\n+ FRESH TempDownloadUri per file"]:::tool
     ATTLOAD["attachments.py\nbill txnId → fresh scan link(s) as JSON\nSUBPROCESSED by /api/attachment, never imported"]:::tool
     DASH -.->|"/api/attachment (📎 click on the Audit tab)"| ATTLOAD
@@ -552,6 +560,25 @@ loaded into the ledger by `load_sub_loc.py` (`sub_loc_event` timeline + `sub_loc
 pipeline "Sub LOC"). The tab shows **outstanding** (today's float), **peak** (the LOC to size to), the
 draw->repay lag, and a **repayment feed** (a client payment paid off these fronted subs). The SAME
 engine backs the standalone `one-offs/sub_loc_report.py` Excel report - one model, two surfaces.
+
+**The Health tab (2026-08-31)** folds the retired `health-dashboard/` Company Tracker / Company
+Dashboard model into the ledger: **Money In / Money Out / Position / Break-Even** (the owner's
+settled 2026-07-17 organization) plus the **Recurring & Debt** register (FIN-12). Sections are
+assembled SERVER-SIDE (`_fetch_health` -> `GET /api/healthtab`, preformatted values) so the model
+can never fork between a workbook and a page again. Most rows are **derived live** from tables the
+other loaders already fill - AR + aging + the lien-past count from `billing_event` (the same
+`shared/lien_clock` states as the Invoices tab), AP + the by-AR-state bill groups from
+`ap_bill_line`, backlog / under-over / contract from `v_wip_latest`, draws-ready from the Draws
+rollup, Sub LOC peak by division from `sub_loc_run`, top-customer concentration from YTD
+`billing_event`. Only the QBO-only numbers ride `health_snapshot` via **`load_health.py`**
+(Console pipeline "Health metrics (QBO)", in the `reload` chain): bank cash (stale-by-design -
+QBO's feed only moves on uploads, so every cash figure carries the pull's as-of stamp, ruling
+2026-07-28), retainage GL, the P&L blocks (via `shared/qbo_pl`), the 13-week cash flow ->
+burn/runway, and `shared/recurring`'s register. Break-even is computed at page load by
+`shared/breakeven.build_from_blocks` off the stored blocks, with the full **audit trail** table
+(the user 2026-08-03: "I need to audit the numbers") and the DSO input taken from the ledger's
+own client pay-speed. Every metric row click-jumps to the tab that holds its detail; bars reuse
+the app's aging and division palettes (colour encodes, never decorates).
 
 **Now also the CONTROL PLANE (2026-08-12).** Beyond reading, the dashboard runs the data pipelines
 FROM the UI so the owner never touches a terminal. The **Console** tab is a **pipeline registry**
@@ -867,6 +894,11 @@ flowchart LR
     BT --> MB
     MB --> OUT
 ```
+
+> **Superseded by the ledger's Health tab (2026-08-31).** The Money In / Money Out /
+> Position / Break-Even model now renders live in the ledger (`_fetch_health` +
+> `load_health.py`), and the tracker outputs sat unopened since 2026-08-12. This stack
+> stays runnable until the owner calls its retirement; nothing schedules it.
 
 **`health-dashboard/company_tracker.py` + `company_dashboard.py`** (read-only, no QBO) —
 the consolidation. `company_dashboard.py` holds the shared readers and `build_sections()`

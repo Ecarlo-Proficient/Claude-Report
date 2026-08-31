@@ -1161,3 +1161,57 @@ html[data-theme="dark"] .acct-pill.info { color: color-mix(in srgb, var(--accent
 /* Open invoices: Amounts/Aging view toggle + the amounts total row */
 .widget-head .wh-right { display: flex; align-items: center; gap: 12px; }
 .inv-total-row td { font-weight: 700; border-top: 2px solid var(--border); font-variant-numeric: tabular-nums; }
+
+/* ── Health tab: the company-health metric layer ─────────────────────────────
+   Sections arrive preformatted from /api/healthtab. Colour ENCODES state only:
+   green = money owed to us / good, red = money out / bad, amber = watch,
+   neutral otherwise; bar hues reuse the aging (ag0..ag4) and division palettes
+   the Invoices / Sub LOC tabs already use, so the same thing is always the
+   same colour app-wide. */
+.hv-g { color: var(--pos); }
+.hv-r { color: var(--neg); }
+.hv-a { color: #C0552B; }
+html[data-theme="dark"] .hv-a { color: #e8956a; }
+.hv-n { color: var(--text); }
+.health-grid { width: 100%; }
+.health-grid td { padding: var(--row-pad); border-top: 1px solid var(--border); }
+.health-grid tr:first-child td { border-top: none; }
+.health-grid td.h-metric { font-weight: 600; white-space: nowrap; }
+.health-grid td.h-val { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+.health-grid td.h-detail { color: var(--text-dim); font-size: .9em; }
+.health-grid tr.h-click { cursor: pointer; }
+.health-grid tr.h-click:hover td { background: var(--row-hover); }
+.health-grid .h-jump { color: var(--text-dim); font-size: .85em; }
+.health-grid tr.h-click:hover .h-jump { color: var(--accent); }
+td.h-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* One proportional bar + its legend (AR/AP aging, Sub LOC by division). */
+.hbar-wrap { padding: 4px 2px 10px; }
+.hbar-head { font-size: .82em; font-weight: 600; color: var(--text-dim); margin: 6px 0 5px; }
+.hbar { display: flex; height: 14px; border-radius: 7px; overflow: hidden; background: var(--surface-2); }
+.hbar .hseg { display: block; height: 100%; }
+.hbar-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 6px;
+  font-size: .82em; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.hleg { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.hdot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--text-dim); }
+/* age buckets - the Invoices tab's green -> red ramp */
+.hseg.bk0, .hdot.bk0 { background: #2E7D32; }
+.hseg.bk1, .hdot.bk1 { background: #7CB342; }
+.hseg.bk2, .hdot.bk2 { background: #D68910; }
+.hseg.bk3, .hdot.bk3 { background: #C0552B; }
+.hseg.bk4, .hdot.bk4 { background: #922B21; }
+/* divisions - the same hues as the aging tab's division dots */
+.hseg.dv-RP, .hdot.dv-RP { background: var(--accent); }
+.hseg.dv-CP, .hdot.dv-CP { background: #3b6ea5; }
+.hseg.dv-MFD, .hdot.dv-MFD { background: #8161b0; }
+.hseg.dv-Other, .hdot.dv-Other { background: var(--text-dim); }
+
+/* Recurring & Debt: alert rows + the collapsed full register */
+.hrec-alert { display: flex; align-items: baseline; gap: 10px; padding: 6px 4px;
+  border-top: 1px solid var(--border); }
+.hrec-alert:first-child { border-top: none; }
+.hrec-name { font-weight: 600; }
+.hrec-note { color: var(--text-dim); font-size: .9em; }
+.health-details summary { cursor: pointer; font-size: .9em; font-weight: 600;
+  color: var(--text-dim); padding: 4px 0 8px; user-select: none; }
+.health-details summary:hover { color: var(--accent); }

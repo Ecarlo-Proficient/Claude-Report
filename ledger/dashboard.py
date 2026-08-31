@@ -43,7 +43,7 @@ from urllib.parse import parse_qs, urlparse
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
-from shared import paths, pnl_paths, bill_marks, lien_clock  # noqa: E402
+from shared import paths, pnl_paths, bill_marks, lien_clock, breakeven  # noqa: E402
 
 import registry_view  # noqa: E402  (local: parses the vault's process registry for the Systems tab)
 import vault_graph    # noqa: E402  (local: vault [[link]] graph + docs/ARCHITECTURE.md diagrams for the Graph tab)
@@ -54,8 +54,11 @@ STATIC = HERE / "static"
 # Dashboard build version - shown in the top bar so the owner can confirm which build is
 # live. Bump on every user-visible release. 1.0.0 = Open Invoices tab + lien columns;
 # 1.0.1 = Open Invoices client shows the parent GC (not the project-level name);
-# 1.1.0 = Systems tab - the process registry rendered live from the vault.
-LEDGER_VERSION = "1.1.0"
+# 1.1.0 = Systems tab - the process registry rendered live from the vault;
+# 1.2.0 = Health tab - the company-health metric layer (folds the retired
+#         Company Tracker/Dashboard model in: Money In / Money Out / Position /
+#         Break-Even + the FIN-12 Recurring & Debt register).
+LEDGER_VERSION = "1.2.0"
 
 DEFAULT_DB = paths.get_path(
     "ACB_LEDGER_DB",
@@ -334,6 +337,11 @@ def _pipelines():
         ]},
         {"key": "subloc", "label": "Sub LOC (QBO float)", "steps": [
             {"label": "Load sub LOC float (Touch ID)", "script": "ledger/load_sub_loc.py", "args": []},
+        ]},
+        {"key": "healthpull", "label": "Health metrics (QBO)", "steps": [
+            # Cash / P&L blocks / 13-wk flow / recurring register -> health_snapshot.
+            # The Health tab derives everything else live from the other loaders' tables.
+            {"label": "Pull health metrics (Touch ID)", "script": "ledger/load_health.py", "args": []},
         ]},
     ]
 
@@ -828,7 +836,8 @@ def _freshness(con) -> dict:
     for tbl, key in (("wip_snapshot", "WIP"), ("ap_bill_line", "AP (Bill Tracker)"),
                      ("cost_line", "Costs (QBO)"), ("billing_event", "AR (invoices)"),
                      ("payment", "Payments"),
-                     ("customer", "CRM (customers)"), ("sub_loc_run", "Sub LOC")):
+                     ("customer", "CRM (customers)"), ("sub_loc_run", "Sub LOC"),
+                     ("health_snapshot", "Health (QBO)")):
         try:
             r = con.execute(f"SELECT MAX(loaded_at) FROM {tbl}").fetchone()
             out["ledger"][key] = r[0] if r and r[0] else None
@@ -1366,6 +1375,309 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     return con
 
 
+# ── Health tab: the company-health metric layer over the whole ledger ─────────
+# Money In / Money Out / Position / Break-Even (the owner's settled 2026-07-17
+# organization from the retired Company Tracker) + the Recurring & Debt register
+# (FIN-12). Most rows are DERIVED live from tables other loaders fill; the QBO-only
+# numbers (cash, retainage GL, P&L blocks, 13-wk flow, recurring) come from
+# health_snapshot via ledger/load_health.py. Server-side ONLY - the client renders
+# the sections verbatim, so the workbook-era rule holds: one model, no drift.
+
+def _hm(v) -> str:
+    """$ display: rounded, negative as -$x. '–' for missing."""
+    if v is None:
+        return "–"
+    try:
+        n = float(v)
+    except (TypeError, ValueError):
+        return "–"
+    s = f"${abs(n):,.0f}"
+    return f"-{s}" if n < -0.5 else s
+
+
+def _hpct(v) -> str:
+    if v is None:
+        return "–"
+    try:
+        return f"{float(v) * 100:.1f}%"
+    except (TypeError, ValueError):
+        return "–"
+
+
+def _health_snapshot(con) -> dict:
+    """{key: {payload, as_of}} from health_snapshot; {} until load_health runs."""
+    out = {}
+    try:
+        for r in con.execute("SELECT key, payload, as_of FROM health_snapshot"):
+            try:
+                out[r["key"]] = {"payload": json.loads(r["payload"] or "null"), "as_of": r["as_of"]}
+            except (ValueError, TypeError):
+                pass
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
+def _health_asof_label(iso: str) -> str:
+    """mm/dd/yyyy h:mm AM/PM from an ISO stamp (dates are never year-first)."""
+    try:
+        d = _dt.datetime.fromisoformat(iso)
+        return d.strftime("%m/%d/%Y %I:%M %p").replace(" 0", " ").lstrip("0")
+    except (ValueError, TypeError):
+        return iso or ""
+
+
+def _fetch_health(con) -> dict:
+    """Assemble the Health tab payload: preformatted sections + the recurring
+    register + the break-even audit trail. Every figure is either derived from
+    ledger tables or read from health_snapshot - no QBO call on page load."""
+    hs = _health_snapshot(con)
+    hp = {k: v["payload"] for k, v in hs.items()}
+    pull_asof = next((v["as_of"] for v in hs.values() if v.get("as_of")), None)
+
+    # ── AR: open invoices (billing_event) - aged the same way the Invoices tab ages
+    oi = _fetch_open_invoices(con)
+    invs = oi.get("invoices", [])
+    ar_total = sum((i.get("balance") or 0) for i in invs)
+    ar_bk = {b: 0.0 for b in _AGING_BUCKETS}
+    for i in invs:
+        ar_bk[i.get("bucket") or "Current"] += (i.get("balance") or 0)
+    ar60 = ar_bk["61-90"] + ar_bk["90+"]
+    lien_past = [i for i in invs if i.get("lien_due_state") == lien_clock.STATE_PAST]
+    lien_past_amt = sum((i.get("balance") or 0) for i in lien_past)
+    dso = ((oi.get("pay_speed") or {}).get("all_avg"))
+
+    # ── AP: open bills (ap_bill_line), grouped by the Bill Tracker's AR state
+    ap_total, ap60 = 0.0, 0.0
+    ap_bk = {b: 0.0 for b in _AGING_BUCKETS}
+    grp = {"paid": [0, 0.0], "awaiting_pay": [0, 0.0], "awaiting_inv": [0, 0.0], "no_proj": [0, 0.0]}
+    today = _dt.date.today()
+    try:
+        rows = con.execute("SELECT invoice_status, open_balance, bill_date FROM ap_bill_line "
+                           "WHERE COALESCE(open_balance,0) > 0").fetchall()
+    except sqlite3.OperationalError:
+        rows = []
+    for r in rows:
+        ob = r["open_balance"] or 0
+        ap_total += ob
+        age = None
+        bd = (r["bill_date"] or "")[:10]
+        if bd:
+            try:
+                age = (today - _dt.date.fromisoformat(bd)).days
+            except ValueError:
+                age = None
+        bi = _aging_bucket(age)
+        ap_bk[_AGING_BUCKETS[bi]] += ob
+        if bi >= 3:
+            ap60 += ob
+        st = (r["invoice_status"] or "").lower()
+        key = ("paid" if st == "invoice paid"
+               else "awaiting_inv" if st == "awaiting invoice"
+               else "no_proj" if st.startswith("no project")
+               else "awaiting_pay")     # Awaiting Payment / Partial paid / Partially Paid...
+        grp[key][0] += 1
+        grp[key][1] += ob
+
+    # ── WIP position: the active portfolio (same Active rule as the P&L tab)
+    wip = {"n": 0, "contract": 0.0, "left": 0.0, "under": 0.0, "over": 0.0, "retain": 0.0}
+    try:
+        for r in con.execute("SELECT status, total_contract_price tcp, left_to_bill lb, "
+                             "underbillings ub, overbillings ob, retainage_held rh FROM v_wip_latest"):
+            if (r["status"] or "").strip().lower() not in ("", "active"):
+                continue
+            wip["n"] += 1
+            wip["contract"] += r["tcp"] or 0
+            wip["left"] += r["lb"] or 0
+            wip["under"] += r["ub"] or 0
+            wip["over"] += r["ob"] or 0
+            wip["retain"] += r["rh"] or 0
+    except sqlite3.OperationalError:
+        pass
+
+    # ── Draws ready to turn in (vendors paid, our AR still open - collect it)
+    ready_n, ready_amt = 0, 0.0
+    for d in _fetch_draws(con).get("draws", []):
+        if d.get("stage") == "Ready to turn in":
+            amt = d.get("ar_open")
+            if amt is not None and amt <= 1:   # a cents-level residue = settled, not money to chase
+                continue
+            if not amt:                # not billed yet (or all-pump): show the draw's own size
+                amt = d.get("total_gate") or d.get("total") or 0
+            ready_n += 1
+            ready_amt += amt
+
+    # ── Sub LOC (sub_loc_run)
+    loc = _fetch_sub_loc(con)
+    loc_sum = loc.get("summary") or {}
+    loc_divs = loc.get("divisions") or {}
+
+    # ── Top-customer concentration: YTD billed by client (billing_event)
+    jan1 = _dt.date(today.year, 1, 1).isoformat()
+    client_of = _project_customer_map(con)
+    by_client: dict = {}
+    ytd_billed = 0.0
+    try:
+        for r in con.execute("SELECT project_no, customer, COALESCE(amount,0) a FROM billing_event "
+                             "WHERE COALESCE(txn_date,'') >= ?", (jan1,)):
+            c = client_of.get(r["project_no"]) or r["customer"] or "(unknown)"
+            by_client[c] = by_client.get(c, 0.0) + r["a"]
+            ytd_billed += r["a"]
+    except sqlite3.OperationalError:
+        pass
+    top_client, conc = None, None
+    if by_client and ytd_billed:
+        top_client = max(by_client, key=by_client.get)
+        conc = by_client[top_client] / ytd_billed
+
+    # ── The QBO-only layer (health_snapshot)
+    bank = hp.get("bank_accounts") or {}
+    cash = bank.get("cash")
+    retain_gl = (hp.get("retainage") or {}).get("receivable")
+    blocks = hp.get("pl_blocks") or {}
+    ytdb = blocks.get("ytd") or {}
+    gm = (ytdb.get("gross_profit") / ytdb["income"]) if ytdb.get("income") else None
+    nm = (ytdb.get("net_operating") / ytdb["income"]) if ytdb.get("income") and ytdb.get("net_operating") is not None else None
+    mtdb = blocks.get("mtd") or {}
+    gm_mtd = (mtdb.get("gross_profit") / mtdb["income"]) if mtdb.get("income") else None
+    priorb = blocks.get("prior") or {}
+    gm_prior = (priorb.get("gross_profit") / priorb["income"]) if priorb.get("income") else None
+    flow = hp.get("weekly_flow") or {}
+    fsum = flow.get("summary") or {}
+    burn = fsum.get("avg_weekly_paid")
+    runway = fsum.get("runway_weeks")
+    asof_lbl = _health_asof_label(pull_asof) if pull_asof else None
+
+    retain_show = retain_gl if retain_gl is not None else (wip["retain"] or None)
+    retain_note = ("GL retainage accounts" if retain_gl is not None else "WIP retainage held (run the Health pull for GL)")
+    if retain_gl is not None and abs((wip["retain"] or 0) - retain_gl) > 1000:
+        retain_note = f"GL accounts · WIP shows {_hm(wip['retain'])} held"
+
+    cov = (ar_total / ap_total) if ap_total else None
+    over_under = wip["over"] - wip["under"]
+
+    def bar(bk):
+        return [[b, round(bk.get(b, 0)), f"bk{i}", ""] for i, b in enumerate(_AGING_BUCKETS) if bk.get(b)]
+
+    money_in = {
+        "title": "Money In – owed to us / to bill", "tone": "in",
+        "heroes": [["Accounts Receivable", _hm(ar_total), "g"],
+                   ["Unbilled backlog", _hm(wip["left"]), "g"],
+                   ["Retainage", _hm(retain_show), "g"]],
+        "rows": [
+            ["Accounts Receivable", _hm(ar_total),
+             (f"{len(invs)} open invoices · aged 60+ {_hm(ar60)}" if ar60 > 0.5 else f"{len(invs)} open invoices"),
+             "g", "invoices"],
+            ["Unbilled backlog (WIP active)", _hm(wip["left"]),
+             f"{wip['n']} active jobs · contract {_hm(wip['contract'])}", "g", "wip"],
+            ["Underbilled / job borrow (WIP)", _hm(wip["under"]), "earned but not yet billed", "g", "wip"],
+            ["Retainage receivable", _hm(retain_show), retain_note, "g", None],
+            ["Lien deadline PAST", _hm(lien_past_amt),
+             f"{len(lien_past)} open invoices past the notice deadline", "r" if lien_past else "g", "invoices"],
+            ["Draws ready to turn in", _hm(ready_amt),
+             (f"{ready_n} draw(s) – vendors paid, collect from the GC" if ready_n
+              else "none waiting"), "a" if ready_n else "g", "draws"]],
+        "bars": [["AR aging", bar(ar_bk)]],
+    }
+    money_out = {
+        "title": "Money Out – we owe / committed", "tone": "out",
+        "heroes": [["Accounts Payable", _hm(ap_total), "r"],
+                   ["Sub LOC peak", _hm(loc_sum.get("peak")), "a"],
+                   ["Weekly burn", _hm(burn), "a"]],
+        "rows": [
+            ["Accounts Payable (open bills)", _hm(ap_total),
+             (f"aged 60+ {_hm(ap60)} (by bill date)" if ap60 > 0.5 else "open vendor bills"), "r", "bills"],
+            ["Bills to pay NOW – client already paid us", _hm(grp['paid'][1]),
+             f"{grp['paid'][0]} bills – money is in, the sub can lien us", "r" if grp["paid"][0] else "g", "paybills"],
+            ["Bills – client hasn't paid us", _hm(grp['awaiting_pay'][1]),
+             f"{grp['awaiting_pay'][0]} bills – collect from the GC first", "a", "bills"],
+            ["Bills – no GC invoice issued yet", _hm(grp['awaiting_inv'][1]),
+             f"{grp['awaiting_inv'][0]} bills – bill the GC", "a", "bills"],
+            ["Bills – no project #", _hm(grp['no_proj'][1]),
+             f"{grp['no_proj'][0]} bills – fix the coding (Audit tab)", "a" if grp["no_proj"][0] else "g", "accounting"],
+            ["Sub LOC peak needed", _hm(loc_sum.get("peak")),
+             f"outstanding now {_hm(loc_sum.get('outstanding'))}", "a", "subloc"],
+            ["Weekly sub/vendor burn", _hm(burn),
+             (f"13-wk avg cash out{' · as of ' + asof_lbl if asof_lbl else ''}"), "a", None]],
+        "bars": [["AP aging (by bill date)", bar(ap_bk)],
+                 ["Sub LOC peak by division",
+                  [[d, round((v or {}).get("peak") or 0), f"dv-{d}",
+                    (f"{(v or {}).get('avg_lag'):.0f}d lag" if (v or {}).get("avg_lag") else "")]
+                   for d, v in sorted(loc_divs.items(), key=lambda kv: -((kv[1] or {}).get("peak") or 0))
+                   if (v or {}).get("peak")]]],
+    }
+    runway_bad = runway is not None and runway < 8
+    cov_bad = cov is not None and cov < 1
+    position = {
+        "title": "Position – where we stand", "tone": "pos",
+        "heroes": [["Cash (bank)", _hm(cash), "r" if (cash or 0) < 0 else "n"],
+                   ["Runway", ("unconstrained" if (cash is not None and runway is None) else
+                               f"{runway:.1f} wk" if runway is not None else "–"), "r" if runway_bad else "n"],
+                   ["Gross margin", _hpct(gm), "n"]],
+        "rows": [
+            ["Cash (bank, excl. credit cards)", _hm(cash),
+             (f"spendable now · as of {asof_lbl}" if asof_lbl else "run the Health pull for cash"),
+             "r" if (cash or 0) < 0 else "n", None],
+            ["Runway at current burn",
+             ("not constrained – net cash-positive" if (cash is not None and runway is None)
+              else f"{runway:.1f} weeks" if runway is not None else "–"),
+             (fsum.get("note") or "") + (f" · as of {asof_lbl}" if asof_lbl else ""),
+             "r" if runway_bad else "n", None],
+            ["Coverage – AR vs AP", (f"{cov:.2f}" if cov is not None else "–"),
+             "AR ÷ AP; below 1 = inflows don't cover outflows", "r" if cov_bad else "n", None],
+            ["Over / under-billing net (WIP)", _hm(over_under),
+             ("overbilled – liability to earn out" if over_under > 0 else "underbilled – bill it"),
+             "a" if over_under > 0 else "g", "wip"],
+            ["Gross margin % (YTD)", _hpct(gm),
+             f"MTD {_hpct(gm_mtd)} · prior-YTD {_hpct(gm_prior)}", "n", None],
+            ["Net operating margin (YTD)", _hpct(nm), "after overhead – the real bottom line",
+             "r" if (nm is not None and nm < 0.02) else "n", None],
+            ["Top-customer concentration", _hpct(conc),
+             (f"{top_client} · of {_hm(ytd_billed)} billed YTD" if top_client else "billed YTD by client"),
+             "a" if (conc or 0) > 0.25 else "n", None]],
+        "bars": [],
+    }
+    sections = [money_in, money_out, position]
+
+    # ── Break-even (shared/breakeven off the live P&L blocks)
+    be_audit = []
+    if blocks:
+        as_of_dt = None
+        if pull_asof:
+            try:
+                as_of_dt = _dt.datetime.fromisoformat(pull_asof)
+            except ValueError:
+                as_of_dt = None
+        m = breakeven.build_from_blocks(blocks, as_of=as_of_dt, backlog=wip["left"],
+                                        ar=ar_total, retainage=(retain_show or 0.0), dso_days=dso)
+        if m.get("ok"):
+            covm = m["backlog_coverage_months"]
+            sections.append({
+                "title": "Break-Even – what we must sell & collect", "tone": "be",
+                "heroes": [["Break-even / month", _hm(m["breakeven_month"]), "n"],
+                           ["Break-even / week", _hm(m["breakeven_week"]), "n"],
+                           ["Backlog covers", f"{covm:.1f} mo", "g" if covm >= 3 else "a"]],
+                "rows": [[r[0], r[1], r[2], r[3], None] for r in breakeven.rows_for_display(m)],
+                "bars": [],
+                "note": m.get("caveat"),
+            })
+            be_audit = [list(r) for r in breakeven.audit_rows(m, "the Health pull (load_health)")]
+
+    # ── Recurring & Debt (FIN-12) - the register, verbatim for its own widget
+    rec = hp.get("recurring")
+
+    return {
+        "ok": True,
+        "as_of": pull_asof,
+        "as_of_label": asof_lbl,
+        "pulled": bool(hs),
+        "bank_accounts": (bank.get("accounts") or []),
+        "sections": sections,
+        "be_audit": be_audit,
+        "recurring": rec,
+    }
+
+
 def fetch_data(db_path: Path, scope: str = "full") -> dict:
     """Return the ledger payload, or {error} if the db isn't ready.
 
@@ -1540,6 +1852,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(_fetch_accounting_audits())
             except Exception as e:         # noqa: BLE001
                 self._json({"ok": False, "findings": [], "error": f"audit read failed: {e}"})
+        elif path == "/api/healthtab":     # the Health tab (company-health metric layer, live)
+            self._healthtab()
         elif path == "/api/attachment":    # a bill's scan link(s), resolved fresh from QBO on click
             self._attachment(self._query())
         elif path == "/api/subloc/project":  # on-demand: one project's LOC event chain (the source)
@@ -1617,6 +1931,16 @@ class Handler(BaseHTTPRequestHandler):
         con = _connect(self.db_path)
         try:
             self._json(_portfolio_pnl(con))
+        finally:
+            con.close()
+
+    def _healthtab(self):
+        """The Health tab payload - derived live from the ledger + health_snapshot."""
+        con = _connect(self.db_path)
+        try:
+            self._json(_fetch_health(con))
+        except sqlite3.OperationalError as e:
+            self._json({"ok": False, "error": f"ledger not ready: {e}"})
         finally:
             con.close()
 

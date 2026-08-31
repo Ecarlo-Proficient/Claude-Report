@@ -220,13 +220,14 @@ const WAIVERS_ENABLED = false;
 const NAV_GROUPS = [
   { id: "console",    label: "Console",       tabs: ["console"] },
   { id: "overview",   label: "Overview",      tabs: ["overview"] },
+  { id: "health",     label: "Health",        tabs: ["health"] },
   { id: "financials", label: "Financials",    tabs: ["pnl", "wip", "wipreview", "costs"] },
   { id: "customers",  label: "Customer",      tabs: ["customers", "invoices", "draws", "payments", "sales"] },
   { id: "vendors",    label: "Vendor",        tabs: ["vendors", "bills", "paybills", "accounting", "subloc", "liens"] },
   { id: "it",         label: "IT",            tabs: ["systems"] },
 ];
 const TAB_LABELS = {
-  overview: "Overview", pnl: "Project P&L", wip: "WIP report", wipreview: "WIP Review", costs: "Costs",
+  overview: "Overview", health: "Health", pnl: "Project P&L", wip: "WIP report", wipreview: "WIP Review", costs: "Costs",
   customers: "Customer Center", invoices: "Invoices", draws: "Draws", payments: "Payments", sales: "Sales Outreach",
   vendors: "Vendor Center", bills: "Bills", paybills: "Pay Bills", accounting: "Audit", subloc: "Sub LOC", liens: "Liens",
   systems: "Systems", console: "Console",
@@ -260,6 +261,7 @@ function setTab(t) {
   $$("#groupbar .tab").forEach(b => b.classList.toggle("active", b.dataset.group === g.id));
   buildSubTabs(g, t);
   if (t === "pnl") renderPnl();     // portfolio P&L is computed server-side, lazy-loaded
+  if (t === "health") loadHealth(); // company health is computed server-side, lazy-loaded
   if (t === "wip") renderWip();
   if (t === "wipreview") loadWipReview();
   if (t === "console") renderConsole();
@@ -306,6 +308,7 @@ async function load(isAuto) {
   OI = data.open_invoices || { as_of: null, buckets: ["Current", "1-30", "31-60", "61-90", "90+"], invoices: [] };
   if (data.payments !== undefined) PAY = data.payments || { payments: [], total_received: 0, count: 0, invoices_paid: 0 };
   PNL = null;   // recompute the portfolio P&L on next open (data just changed)
+  HEALTH = null;   // same for the Health tab - its sections derive from the same tables
   // Big-picture first: collapse everything by default; the user expands to zoom in.
   // On a live auto-refresh, preserve what the user has already expanded.
   if (!isAuto) {
@@ -348,7 +351,8 @@ async function loadHeavy() {
 // Lazy tabs dispatched by setTab (not render()) that read the /api/data globals. pnl/systems/console
 // fetch their OWN data on open, so they self-refresh; these three read ALL / PAY / BILLS synchronously.
 function _renderLazyTab(t) {
-  const map = { wip: renderWip, payments: renderPayments, paybills: renderPayBills };
+  const map = { wip: renderWip, payments: renderPayments, paybills: renderPayBills,
+                health: () => loadHealth(true) };
   if (map[t]) map[t]();
 }
 function showError(msg) {
@@ -4903,6 +4907,180 @@ let sysDomain = null;       // domain code currently filtered to (null = all)
 
 const HEALTH_LABEL = { red: "Broken", yellow: "Fragile", green: "Running", none: "Not started" };
 
+// ── Health tab: the company-health metric layer ─────────────────────────────
+// Sections come PREFORMATTED from /api/healthtab (one model, server-side - the
+// fold-in of the retired Company Tracker). This side only draws them: hero
+// cards, metric rows (click -> jump to the tab that holds the detail), aging /
+// division bars, the Recurring & Debt register, and the break-even audit trail.
+let HEALTH = null;
+
+async function loadHealth(force) {
+  const box = $("#healthSections"); if (!box) return;
+  if (HEALTH && HEALTH.ok && !force) { renderHealth(); return; }
+  const note = $("#healthNote");
+  if (note && !HEALTH) note.textContent = "loading…";
+  try { HEALTH = await (await fetch("/api/healthtab")).json(); }
+  catch (e) { if (note) note.textContent = "could not load"; return; }
+  renderHealth();
+}
+
+function renderHealth() {
+  const box = $("#healthSections"), note = $("#healthNote");
+  if (!box || !HEALTH) return;
+  if (!HEALTH.ok) {
+    if (note) note.textContent = "unavailable";
+    box.innerHTML = ""; box.appendChild(el2("p", "hint", HEALTH.error || "The ledger is not ready."));
+    return;
+  }
+  if (note) note.textContent = HEALTH.as_of_label
+    ? `QBO metrics as of ${HEALTH.as_of_label}` : "QBO metrics not pulled yet — derived rows only";
+  box.innerHTML = "";
+  for (const sec of HEALTH.sections || []) {
+    const w = el2("section", "widget health-sec tone-" + (sec.tone || "n"));
+    const head = el2("div", "widget-head"); head.appendChild(el2("h2", null, sec.title)); w.appendChild(head);
+    if (sec.heroes && sec.heroes.length) {
+      const kr = el2("div", "kpi-row");
+      for (const [lab, val, cls] of sec.heroes) {
+        const k = el2("div", "kpi");
+        k.appendChild(el2("div", "k-label", lab));
+        k.appendChild(el2("div", "k-value hv-" + (cls || "n"), val));
+        kr.appendChild(k);
+      }
+      w.appendChild(kr);
+    }
+    if (sec.rows && sec.rows.length) {
+      const t = el2("table", "grid health-grid"), tb = el2("tbody");
+      for (const [metric, val, detail, cls, target] of sec.rows) {
+        const tr = el2("tr", target ? "h-click" : null);
+        const tdm = el2("td", "left h-metric", metric);
+        const tdv = el2("td", "h-val hv-" + (cls || "n"), val);
+        const tdd = el2("td", "left h-detail", detail || "");
+        if (target) {
+          tr.title = "Open " + (TAB_LABELS[target] || target);
+          tr.onclick = () => setTab(target);
+          tdd.appendChild(el2("span", "h-jump", " ↗"));
+        }
+        tr.appendChild(tdm); tr.appendChild(tdv); tr.appendChild(tdd);
+        tb.appendChild(tr);
+      }
+      t.appendChild(tb);
+      const sc = el2("div", "table-scroll"); sc.appendChild(t); w.appendChild(sc);
+    }
+    for (const [header, segs] of sec.bars || []) {
+      if (segs && segs.length) w.appendChild(healthBar(header, segs));
+    }
+    if (sec.note) w.appendChild(el2("p", "hint", sec.note));
+    box.appendChild(w);
+  }
+  renderHealthRecurring();
+  renderHealthAudit();
+}
+
+// One proportional bar + legend. Class tokens (bk0..bk4 age, dv-* division)
+// come from the server; colour encodes age or division, never decoration.
+function healthBar(header, segs) {
+  const total = segs.reduce((s, x) => s + (x[1] || 0), 0) || 1;
+  const wrap = el2("div", "hbar-wrap");
+  wrap.appendChild(el2("div", "hbar-head", header));
+  const bar = el2("div", "hbar");
+  for (const [label, value, cls] of segs) {
+    const seg = el2("span", "hseg " + (cls || ""));
+    seg.style.width = Math.max(1.5, value / total * 100) + "%";
+    seg.title = `${label}: ${money(value)}`;
+    bar.appendChild(seg);
+  }
+  wrap.appendChild(bar);
+  const leg = el2("div", "hbar-legend");
+  for (const [label, value, cls, sub] of segs) {
+    const li = el2("span", "hleg");
+    li.appendChild(el2("span", "hdot " + (cls || "")));
+    li.appendChild(el2("span", null, `${label} ${money(value)}${sub ? " · " + sub : ""}`));
+    leg.appendChild(li);
+  }
+  wrap.appendChild(leg);
+  return wrap;
+}
+
+function renderHealthRecurring() {
+  const widget = $("#healthRecWidget"); if (!widget) return;
+  const rec = HEALTH && HEALTH.recurring;
+  widget.hidden = !rec;
+  if (!rec) return;
+  const kpis = $("#healthRecKpis"); kpis.innerHTML = "";
+  const tile = (lab, val, sub) => {
+    const k = el2("div", "kpi");
+    k.appendChild(el2("div", "k-label", lab));
+    k.appendChild(el2("div", "k-value", val));
+    if (sub) k.appendChild(el2("div", "k-sub", sub));
+    kpis.appendChild(k);
+  };
+  tile("Fixed overhead / month", money(rec.fixed_overhead_month), "last full month");
+  tile("Debt service / month", money(rec.debt_service_month), "liability balance drops");
+  tile("Total monthly obligation", money(rec.total_monthly_obligation), "the nut to cover");
+  const alerts = rec.alerts || [];
+  $("#healthRecNote").textContent = alerts.length ? `${alerts.length} to review` : "all steady";
+  const abox = $("#healthRecAlerts"); abox.innerHTML = "";
+  for (const a of alerts) {
+    const row = el2("div", "hrec-alert");
+    row.appendChild(el2("span", "acct-pill " + (a.status === "STOPPED" ? "neg" : a.status === "NEW" ? "info" : "warn"), a.status));
+    row.appendChild(el2("span", "hrec-name", a.name));
+    row.appendChild(el2("span", "hrec-note", a.note || ""));
+    abox.appendChild(row);
+  }
+  const thead = $("#healthRecTable thead"), tbody = $("#healthRecTable tbody");
+  thead.innerHTML = ""; tbody.innerHTML = "";
+  const htr = el2("tr");
+  ["Obligation", "Kind", "Last paid", "Last amount", "Prior", "Status", "YTD"].forEach((c, i) => {
+    const th = el2("th", i === 0 || i === 1 || i === 2 || i === 5 ? "left" : null, c); htr.appendChild(th);
+  });
+  thead.appendChild(htr);
+  const band = label => {
+    const tr = el2("tr", "bill-group"); const td = el2("td", "left", label);
+    td.colSpan = 7; tr.appendChild(td); tbody.appendChild(tr);
+  };
+  const row = (r, kind) => {
+    const tr = el2("tr");
+    tr.appendChild(el2("td", "left", r.name));
+    tr.appendChild(el2("td", "left", kind));
+    tr.appendChild(el2("td", "left", r.last_month || "–"));
+    tr.appendChild(el2("td", "h-num", money(r.last_amount)));
+    tr.appendChild(el2("td", "h-num", r.prior_amount ? money(r.prior_amount) : "–"));
+    tr.appendChild(el2("td", "left " + (r.status === "STOPPED" ? "hv-r" : r.status === "steady" ? "" : "hv-a"),
+                       r.status === "steady" ? "steady" : `${r.status}${r.note ? " · " + r.note : ""}`));
+    tr.appendChild(el2("td", "h-num", money(r.ytd)));
+    tbody.appendChild(tr);
+  };
+  band("Overhead (P&L expense accounts)");
+  for (const r of rec.overhead || []) row(r, r.kind);
+  band("Debt service (liability balance drops — MCA rows shown, never counted)");
+  for (const r of rec.debt || []) row(r, r.refinancing ? "MCA (excluded)" : "debt");
+}
+
+function renderHealthAudit() {
+  const widget = $("#healthAuditWidget"); if (!widget) return;
+  const rows = (HEALTH && HEALTH.be_audit) || [];
+  widget.hidden = !rows.length;
+  if (!rows.length) return;
+  const thead = $("#healthAuditTable thead"), tbody = $("#healthAuditTable tbody");
+  thead.innerHTML = ""; tbody.innerHTML = "";
+  const htr = el2("tr");
+  ["Item", "Value", "Where it came from"].forEach((c, i) => htr.appendChild(el2("th", i === 1 ? null : "left", c)));
+  thead.appendChild(htr);
+  for (const [item, value, src] of rows) {
+    if (String(item).startsWith("──")) {   // divider row; the CAVEAT divider carries its text in src
+      const label = String(item).replace(/─/g, "").trim();
+      const tr = el2("tr", "bill-group");
+      const td = el2("td", "left", src ? `${label} - ${src}` : label);
+      td.colSpan = 3; tr.appendChild(td); tbody.appendChild(tr); continue;
+    }
+    const tr = el2("tr");
+    tr.appendChild(el2("td", "left", item));
+    tr.appendChild(el2("td", "h-num", value));
+    tr.appendChild(el2("td", "left h-detail", src));
+    tbody.appendChild(tr);
+  }
+}
+
 async function loadSystems(force) {
   if (REG && !force) { renderSystems(); return; }
   const note = $("#sysNote");
@@ -6118,6 +6296,9 @@ function init() {
   { const el = $("#btnGraphReload"); if (el) el.onclick = () => loadGraph(true); }
   { const el = $("#graphFit"); if (el) el.onclick = () => { if (GV) { GV._userMoved = false; fitGraph(); _gmark(); } }; }
   { const el = $("#graphSearch"); if (el) el.addEventListener("input", e => graphSearch(e.target.value)); }
+  { const el = $("#btnHealthPull"); if (el) el.onclick = () => runPipeline("healthpull",
+      "Pull QBO health metrics now?\n\nOne loader: bank balances, P&L blocks, 13 weeks of cash flow, and the recurring-obligations register - read-only against QuickBooks, Touch ID on this Mac, under a minute. Everything else on the Health tab is already live from the ledger.",
+      { btn: el, prog: $("#healthProg"), fill: $("#healthFill"), step: $("#healthStep") }); }
   { const el = $("#btnAcctReload"); if (el) el.onclick = () => loadAccounting(true); }
   { const el = $("#btnAcctCopy"); if (el) el.onclick = _acctDoCopy; }
   for (const id of ["#acctSearch", "#acctDivision"]) { const el = $(id); if (el) el.addEventListener("input", () => { if (ACCT && ACCT.ok) renderAccounting(); }); }

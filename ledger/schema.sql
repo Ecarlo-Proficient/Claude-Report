@@ -340,6 +340,22 @@ CREATE TABLE IF NOT EXISTS sub_loc_run (
     loaded_at     TEXT NOT NULL        -- for the project drill-down (open subs grouped by draw)
 );
 
+-- ── health_snapshot : the company-health metric layer (QBO-only numbers) ─────
+-- The few numbers the Health tab can NOT derive from the ledger tables: bank
+-- balances (cash), the retainage GL accounts, the P&L blocks (MTD/YTD/prior -
+-- margins + break-even inputs), the 13-week cash flow (burn/runway), and the
+-- recurring-obligations register (FIN-12). One row per payload, JSON body
+-- (same derived-snapshot pattern as sub_loc_run). Full-replaced by
+-- ledger/load_health.py each run; as_of = the pull time. NOT a source of
+-- truth - QBO is; cash moves only when uploads are entered, so the tab shows
+-- as_of on every cash figure.
+CREATE TABLE IF NOT EXISTS health_snapshot (
+    key        TEXT PRIMARY KEY,   -- 'bank_accounts' | 'retainage' | 'pl_blocks' | 'weekly_flow' | 'recurring'
+    payload    TEXT,               -- JSON
+    as_of      TEXT,               -- ISO datetime of the QBO pull
+    loaded_at  TEXT NOT NULL
+);
+
 -- ── v_ap_by_project : open AP + bill counts per project ─────────────────────
 DROP VIEW IF EXISTS v_ap_by_project;
 CREATE VIEW v_ap_by_project AS

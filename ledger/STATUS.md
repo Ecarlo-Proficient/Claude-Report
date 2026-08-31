@@ -4,6 +4,32 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Health tab - the company-health metric layer folded in (owner, 2026-08-31: "the project ledger
+  is basically acting as the health without the health metrics so i want to see if i can fold that
+  in"). v1.2.0.** The retired `health-dashboard/` Company Tracker / Dashboard model now renders
+  live in the ledger: **Money In / Money Out / Position / Break-Even** (the settled 2026-07-17
+  organization) + the **Recurring & Debt** register (FIN-12).
+  - **One model, server-side.** `_fetch_health` assembles preformatted sections; `GET /api/healthtab`
+    serves them; the client just draws. Derived live from existing tables: AR + aging + lien-past
+    (`billing_event` via the same `shared/lien_clock` states as Invoices), AP + by-AR-state bill
+    groups (`ap_bill_line`: Invoice paid = pay NOW / awaiting payment / awaiting invoice / no
+    project #), backlog-under-over-retainage (`v_wip_latest` actives), draws ready (the Draws
+    rollup, cents-level AR residues filtered), Sub LOC peak by division (`sub_loc_run`),
+    top-customer concentration (YTD `billing_event` by resolved client), coverage AR÷AP, and the
+    break-even DSO input from the ledger's own client pay-speed.
+  - **`load_health.py` + `health_snapshot`** (JSON payloads, full-replaced, `--selftest`): the
+    QBO-only layer - bank cash (as-of stamped; the QBO feed only moves on uploads, ruling
+    2026-07-28; runway clamps at 0 when the balance is negative), retainage GL, P&L blocks
+    MTD/YTD/prior via the new **`shared/qbo_pl.py`** (exact-match locking + the GP-NOI identity
+    check - 'Total Overhead Vehicle Expenses' was shadowing 'Total Expenses' and understating
+    overhead 20x), 13-week cash flow -> burn/runway, and `shared/recurring.build` (FIN-12).
+    Console pipeline "Health metrics (QBO)"; rides the reload chain; freshness row "Health (QBO)".
+  - **`shared/breakeven.build_from_blocks`** - the model now takes blocks directly (the legacy
+    xlsx `build()` delegates to it), computed at page load with the full audit-trail table.
+  - **UI**: its own top-level Health group; hero cards, metric rows that click-jump to the tab
+    holding the detail, AR/AP aging bars + Sub LOC division bars in the app's existing palettes,
+    alert pills (CHANGED/STOPPED/NEW) + the full register and audit tables as collapsibles.
+    Verified in the browser both themes; jump tested; JSON payload ~51 KB.
 - **Vendor Center: full-page view + open-balance columns + Service type (owner, 2026-08-28: "open a page
   fully ... like jobtread ... the side view squishes too much" · "just open balance, how many bills open" ·
   "pump / pier drilling / saw cut ... it's a service").**

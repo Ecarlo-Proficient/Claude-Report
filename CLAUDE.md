@@ -99,7 +99,12 @@ restate them here. Business/strategic context lives in session memory, not in th
   `load_invoices.py` and invoice-sync's AR Aging Excel so the site and workbook never drift),
   `notion_customers.py` (the ONE parent-client resolver: `{page_id -> title}` cache of a customer
   DB + `relation_title`, so the invoice `Customer` relation resolves to the GC, not `Customer (raw)`;
-  shared by the same two so both name the client identically), `setup_qbo.py` (`--status/--test/--rotate/--purge`).
+  shared by the same two so both name the client identically), `qbo_pl.py` (the ONE company P&L
+  report walker -> the 5 totals, exact-match locked + GP-NOI identity check; used by the ledger's
+  `load_health.py`; qbo_health keeps its historical local copy until it retires), `breakeven.py`
+  (the break-even model - `build_from_blocks` for the ledger, the xlsx `build()` for the legacy
+  tracker), `recurring.py` (the FIN-12 recurring-obligations register),
+  `setup_qbo.py` (`--status/--test/--rotate/--purge`).
 - **invoice-sync/** — the QBO → Notion AR invoice sync (was `automation-worker/`). Open invoices
   → two Notion DBs (MFD isolated; Res/Com combined) routed by project-# prefix; sweeps paid;
   archives QBO-deleted (CDC); posts MFD pay events to Teams. Manual via `sync-ar` (launchd plists
@@ -139,7 +144,12 @@ restate them here. Business/strategic context lives in session memory, not in th
   excluded), `load_costs.py` (QBO pull via `shared/qbo_costs` → complete `cost_line` by cost code,
   incl. subs; reconciles to wip_snapshot), `load_customers.py` (Notion Customer List → `customer` +
   `sales_touch`: CRM leads/clients + outreach touch log, per-rep attribution via Notion
-  Created/Last-edited-by, needs `ACB_CUSTOMER_LIST_DS_ID`; read-only, `--selftest`).
+  Created/Last-edited-by, needs `ACB_CUSTOMER_LIST_DS_ID`; read-only, `--selftest`),
+  `load_health.py` (QBO → `health_snapshot`: bank cash + as-of, retainage GL, P&L blocks via
+  `shared/qbo_pl`, 13-wk cash flow → burn/runway, `shared/recurring` register; feeds the **Health
+  tab** — Money In / Money Out / Position / Break-Even + Recurring & Debt, `/api/healthtab`,
+  everything else derived live from the ledger tables; the fold-in that supersedes
+  `health-dashboard/`'s Company Tracker/Dashboard, 2026-08-31).
   `sync_actions.py` mirrors action items (draws-ready MVP) to the Notion "Ledger Actions" DB via
   `shared/notion_client` (needs `ACB_ACTIONS_DS_ID` + the DB shared with the "Automation Integrator"
   integration). `dashboard.py` + `static/` = a local web UI (127.0.0.1) — tabs (My view · Overview ·

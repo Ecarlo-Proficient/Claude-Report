@@ -101,12 +101,24 @@ def read_pl_blocks(path: Path) -> Dict[str, dict]:
 def build(health_path: Path, as_of: Optional[dt.datetime] = None,
           backlog: float = 0.0, ar: float = 0.0, retainage: float = 0.0,
           dso_days: Optional[float] = None) -> dict:
+    """Break-even model from the health_dashboard.xlsx P&L sheet (legacy path).
+    The math lives in build_from_blocks; this just reads the blocks first."""
+    return build_from_blocks(read_pl_blocks(health_path), as_of=as_of,
+                             backlog=backlog, ar=ar, retainage=retainage,
+                             dso_days=dso_days)
+
+
+def build_from_blocks(blocks: Dict[str, dict], as_of: Optional[dt.datetime] = None,
+                      backlog: float = 0.0, ar: float = 0.0, retainage: float = 0.0,
+                      dso_days: Optional[float] = None) -> dict:
     """Break-even model from the YTD block, annualised over the elapsed period.
 
-    `as_of` is the health_dashboard generation time (the YTD cut-off). Overhead
-    is spread evenly across the elapsed period — see `caveat` in the result.
+    `blocks` = {'ytd'|'prior'|('mtd'): {income, cogs, gross_profit, overhead,
+    net_operating}} - from read_pl_blocks (the legacy xlsx) or a live QBO pull
+    (shared/qbo_pl via ledger/load_health). `as_of` is the pull time (the YTD
+    cut-off). Overhead is spread evenly across the elapsed period – see
+    `caveat` in the result.
     """
-    blocks = read_pl_blocks(health_path)
     ytd = blocks.get("ytd", {})
     prior = blocks.get("prior", {})
     income = ytd.get("income") or 0.0
@@ -161,22 +173,29 @@ def build(health_path: Path, as_of: Optional[dt.datetime] = None,
     }
 
 
-def audit_rows(m: dict, source: Optional[Path] = None) -> list:
+def audit_rows(m: dict, source: Optional["Path | str"] = None) -> list:
     """[(item, value, where_it_came_from)] — the full trail behind every
     break-even figure, so the numbers can be checked against QBO by hand
     (the user 2026-08-03: "I need to audit the numbers but can't find them").
+    `source` may be a Path (the legacy xlsx) or a plain string label (the
+    ledger's live QBO pull).
     """
     if not m.get("ok"):
         return []
-    src = (f"{source.parent.name}/{source.name}" if source else "health_dashboard.xlsx")
-    pl = f"{src} → 'P&L' sheet → 'Year to Date (current year)' block"
+    if isinstance(source, Path):
+        src = f"{source.parent.name}/{source.name}"
+        pl = f"{src} → 'P&L' sheet → 'Year to Date (current year)' block"
+    elif source:
+        pl = f"{source} → YTD (Jan 1 → as-of) accrual P&L"
+    else:
+        pl = "health_dashboard.xlsx → 'P&L' sheet → 'Year to Date (current year)' block"
     gm_pct = m["gm"] * 100
 
     def money(v):
         return f"-${abs(v):,.0f}" if v < 0 else f"${v:,.0f}"
 
     return [
-        ("── INPUTS (all from QBO via qbo_health) ──", "", ""),
+        ("── INPUTS (all from QBO) ──", "", ""),
         ("Revenue YTD", money(m["income_ytd"]), pl + " → 'Total Income'"),
         ("Direct job costs YTD (COGS)", money(m["income_ytd"] - m["gross_profit_ytd"]),
          pl + " → 'Total Cost of Goods Sold'"),
@@ -212,7 +231,7 @@ def audit_rows(m: dict, source: Optional[Path] = None) -> list:
         ("  ↳ backlog source", "", "WIP master 'Test-Master' tab → LEFT TO BILL, "
                                    "Active rows (computed: contract − billed)"),
         ("AR coverage", f"{m['ar_coverage_months']:.1f} months",
-         f"{money(m['ar'])} AR ÷ monthly break-even  ·  AR from the AR Aging sheet"),
+         f"{money(m['ar'])} AR ÷ monthly break-even  ·  AR = total open invoices"),
         ("── PRIOR YEAR (same YTD window) ──", "", ""),
         ("Prior-year gross margin",
          f"{m['prior_gm']*100:.2f}%" if m.get("prior_gm") else "—",
@@ -236,15 +255,15 @@ def rows_for_display(m: dict) -> list:
     mos = m["margin_of_safety"]
     cov = m["backlog_coverage_months"]
     return [
-        ("Break-even SALES — per month", money(m["breakeven_month"]),
+        ("Break-even SALES - per month", money(m["breakeven_month"]),
          f"revenue needed to cover ${m['overhead_month']:,.0f}/mo overhead at "
          f"{m['gm']*100:.1f}% GM", "n"),
-        ("Break-even SALES — per week", money(m["breakeven_week"]),
+        ("Break-even SALES - per week", money(m["breakeven_week"]),
          f"${m['overhead_week']:,.0f}/wk overhead ÷ gross margin", "n"),
-        ("Break-even COLLECTIONS — per month", money(m["breakeven_month"]),
+        ("Break-even COLLECTIONS - per month", money(m["breakeven_month"]),
          (f"cash that must ARRIVE; work billed ~{m['dso_days']:.0f} days earlier"
           if m.get("dso_days") else
-          "cash that must ARRIVE — lagged by DSO, retainage excluded"), "a"),
+          "cash that must ARRIVE - lagged by DSO, retainage excluded"), "a"),
         ("Revenue needed per $1 of overhead",
          f"${m['revenue_per_overhead_dollar']:,.2f}",
          "the inverse of gross margin", "n"),

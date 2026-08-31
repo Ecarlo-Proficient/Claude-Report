@@ -40,6 +40,17 @@ exposures or business analysis here (those live in the owner's vault).
   Scope is deliberately the latest draw only — the user 2026-08-04, older folders
   predate this naming and enumerating them all would break.
 
+## SUPERSEDED (2026-08-31) - the ledger's Health tab
+The Money In / Money Out / Position / Break-Even model + the Recurring & Debt register now
+render LIVE in the ledger (`ledger/load_health.py` -> `health_snapshot`; `/api/healthtab`;
+`shared/qbo_pl.py` for the P&L blocks; `shared/breakeven.build_from_blocks` - the xlsx-reading
+`build()` still works for this stack). The tracker outputs here had been unopened since
+2026-08-12. Everything stays runnable until the owner calls its retirement; nothing schedules
+it, and the ledger reads none of its files. What the ledger does NOT yet replace:
+(a) `qbo_health.py --as-of` reproducible month-end closes, and (b) Money Bleeds' filesystem
+draw checks (MFD built-draw / CP G702 shortfall) - the ledger's Draws tab judges draws from
+the Bill Tracker, not the draw folders.
+
 ## OPEN ISSUES
 - **SMB volumes + Touch ID**: hard-fails unless `Multi Family` and `Common`
   are mounted; one Touch ID per run. Blocks a fully unattended morning run.

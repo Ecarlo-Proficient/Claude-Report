@@ -19,6 +19,7 @@ so you can watch your actual data live in a database instead of a spreadsheet.
 | `load_bill_tracker.py` | Reads `Bill Tracker.xlsx` (Bills + Inventory) → fills `ap_bill_line` (AP + liens). |
 | `load_costs.py` | QBO pull → `cost_line` by cost code (incl. subs), via `shared/qbo_costs`. |
 | `load_customers.py` | Notion "Customer List" → `customer` + `sales_touch` (CRM leads/clients + outreach touch log, read-only). |
+| `load_health.py` | QBO pull → `health_snapshot`: bank cash, retainage GL, P&L blocks, 13-wk cash flow, recurring register - the Health tab's QBO-only layer. |
 | `dashboard.py` | Local web dashboard over the ledger — the browser UI (read-only). |
 
 The cost engine itself lives in **`shared/qbo_costs.py`** (`cost_leaf` + `iter_cost_lines`) — the
@@ -51,6 +52,7 @@ v_sales_by_rep   view: outreach activity by last editor (per-rep attribution)
 - `ap_bill_line` ← `load_bill_tracker.py` (**today** — from Bill Tracker.xlsx)
 - `cost_line` + `cost_code` ← `load_costs.py` (**today** — one QBO pull, incl. subs)
 - `customer` + `sales_touch` ← `load_customers.py` (**today** — from the Notion Customer List)
+- `health_snapshot` ← `load_health.py` (**today** — the Health tab's QBO-only metric layer)
 - `budget_line`, `billing_event` ← later (takeoff-by-code budget; AR/draws)
 
 ## Run it
@@ -152,6 +154,14 @@ change the port). It reads the ledger **read-only** and binds to `127.0.0.1` onl
 on the network). What it shows:
 
 - **Portfolio KPIs** — total contract, costs, billed, left-to-bill, net over/(under), active jobs.
+- **Health** — the company-health metric layer (the fold-in of the retired Company
+  Tracker/Dashboard): **Money In / Money Out / Position / Break-Even** + the **Recurring & Debt**
+  register (FIN-12). Sections come preformatted from `/api/healthtab` (one server-side model, no
+  drift); most rows derive live from the ledger tables, the QBO-only numbers (cash with its as-of
+  stamp, retainage GL, margins, burn/runway, the register) come from the last `load_health.py`
+  pull - the tab's **Pull QBO metrics** button, or Console → "Health metrics (QBO)", also in the
+  Resync chain. Every metric row click-jumps to the tab holding its detail; the break-even audit
+  trail (where every figure came from) is a collapsible table.
 - **Needs attention / AP & liens** — exposure chips and the lien watchlist.
 - **Costs by code** — the QBO cost ledger by cost code (portfolio table + a per-job breakdown in the
   detail panel showing loaded vs subs vs WIP costs_to_date — the reconciliation, in the UI). Plus
