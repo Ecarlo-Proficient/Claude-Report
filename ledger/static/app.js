@@ -6083,7 +6083,7 @@ function renderAccounting() {
     const tr = document.createElement("tr"), td = document.createElement("td");
     td.colSpan = cols.length + 1; td.className = "left"; td.style.cssText = "padding:14px;color:var(--text-dim)";
     td.textContent = all.length ? "Nothing matches the filters." : "No audit findings - everything's clean.";
-    tr.appendChild(td); tbody.appendChild(tr); _acctUpdateSelAll(); _acctUpdateCopyBtn(); return;
+    tr.appendChild(td); tbody.appendChild(tr); _acctUpdateSelAll(); _acctUpdateCopyBtn(); _acctUpdateDownloadBtn(); return;
   }
   const ACCT_CAP = 250;   // render cap - all ~1900 rows (each w/ a checkbox + scan button) crashed the tab
   const frag = document.createDocumentFragment();
@@ -6091,7 +6091,7 @@ function renderAccounting() {
     const tr = document.createElement("tr");
     const chTd = document.createElement("td"); chTd.className = "left acct-check";
     const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = acctSel.has(f._k);
-    cb.onchange = () => { if (cb.checked) acctSel.add(f._k); else acctSel.delete(f._k); _acctUpdateSelAll(); _acctUpdateCopyBtn(); };
+    cb.onchange = () => { if (cb.checked) acctSel.add(f._k); else acctSel.delete(f._k); _acctUpdateSelAll(); _acctUpdateCopyBtn(); _acctUpdateDownloadBtn(); };
     chTd.appendChild(cb); tr.appendChild(chTd);
     const ic = document.createElement("td"); ic.className = "left audit-soft";
     const pill = document.createElement("span"); pill.className = "acct-pill " + _acctPillClass(f.issue); pill.textContent = f.issue; ic.appendChild(pill); tr.appendChild(ic);
@@ -6122,7 +6122,7 @@ function renderAccounting() {
     td.textContent = `Showing the first ${ACCT_CAP} of ${rows.length} - narrow with a chip, division, or the search above (Copy still takes all ${rows.length}).`;
     tr.appendChild(td); tbody.appendChild(tr);
   }
-  _acctUpdateSelAll(); _acctUpdateCopyBtn();
+  _acctUpdateSelAll(); _acctUpdateCopyBtn(); _acctUpdateDownloadBtn();
 }
 
 // Copy-as-table: the columns copied (headers + values), minus the checkbox and 📎 columns.
@@ -6173,6 +6173,49 @@ async function _acctDoCopy() {
   const b = $("#btnAcctCopy"); if (!b) return;
   b.disabled = true; b.textContent = ok ? `Copied ${rows.length} ✓` : "Copy failed";
   setTimeout(() => { b.disabled = false; _acctUpdateCopyBtn(); }, 1400);
+}
+
+// Download the selected rows' bill scans to a folder + open it, so the owner can drag them into
+// the message to the responsible party (owner 2026-08-31: "download attachments ... want to show
+// the attachments"). Targets the selection (or all shown when nothing's ticked); only rows that
+// HAVE a scan count. The backend saves each scan named to match the copied table, then reveals
+// the folder. Batch-capped so it stays "a folder to attach", not a bulk export.
+let _acctDownloading = false;
+function _acctDownloadTarget() {
+  const tgt = acctSel.size ? ((ACCT && ACCT.findings) || []).filter(f => acctSel.has(f._k)) : _acctVisible;
+  return tgt.filter(f => f.att > 0);
+}
+function _acctUpdateDownloadBtn() {
+  const b = $("#btnAcctDownload"); if (!b || _acctDownloading) return;
+  const n = _acctDownloadTarget().length, over = n > 60;   // 60 = the batch cap (a folder to attach, not an export)
+  b.disabled = n === 0 || over;
+  b.textContent = (n && !over) ? `Download scans (${n})` : "Download scans";
+  b.title = over ? `Too many (${n}) - tick up to 60 rows, or filter smaller, to download their scans`
+    : (n ? "Download these rows' bill scans into a folder and open it - drag them into your message"
+         : "Tick rows (or filter) to download their bill scans");
+}
+async function _acctDoDownload() {
+  const b = $("#btnAcctDownload"); if (!b || b.disabled || _acctDownloading) return;
+  const withScans = _acctDownloadTarget();
+  if (!withScans.length) { toast("None of those rows have a scan to download"); return; }
+  if (withScans.length > 60) { toast(`Too many (${withScans.length}) - tick up to 60 rows to download at once`); return; }
+  const bills = withScans.map(f => { const m = /txnId=(\d+)/.exec(f.url || ""); return m ? { txnId: m[1], bill_no: f.bill_no, vendor: f.vendor, type: "Bill" } : null; }).filter(Boolean);
+  if (!bills.length) { toast("Could not resolve those bills"); return; }
+  _acctDownloading = true; b.disabled = true; b.textContent = `Downloading ${bills.length}…`;
+  try {
+    const r = await (await fetch("/api/attachment/download", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ bills }) })).json();
+    if (r && r.ok && r.count) {
+      b.textContent = `Downloaded ${r.count} ✓`;
+      toast(`${r.count} scan${r.count === 1 ? "" : "s"} from ${r.bills} bill${r.bills === 1 ? "" : "s"} → folder opened`);
+    } else if (r && r.ok) {
+      b.textContent = "Download scans"; toast("No scans found on those bills");
+    } else {
+      b.textContent = "Download scans"; toast((r && r.error) || "Download failed");
+    }
+  } catch (e) {
+    b.textContent = "Download scans"; toast("Download failed");
+  }
+  setTimeout(() => { _acctDownloading = false; _acctUpdateDownloadBtn(); }, 1800);
 }
 
 // Resolve a bill's scan link(s) on click - the dashboard fetches FRESH (minutes-lived)
@@ -6301,6 +6344,7 @@ function init() {
       { btn: el, prog: $("#healthProg"), fill: $("#healthFill"), step: $("#healthStep") }); }
   { const el = $("#btnAcctReload"); if (el) el.onclick = () => loadAccounting(true); }
   { const el = $("#btnAcctCopy"); if (el) el.onclick = _acctDoCopy; }
+  { const el = $("#btnAcctDownload"); if (el) el.onclick = _acctDoDownload; }
   for (const id of ["#acctSearch", "#acctDivision"]) { const el = $(id); if (el) el.addEventListener("input", () => { if (ACCT && ACCT.ok) renderAccounting(); }); }
   { const el = $("#wrCompute"); if (el) el.onclick = runWipReview; }
   { const el = $("#wrSync"); if (el) el.onclick = syncWipReview; }

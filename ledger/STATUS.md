@@ -30,6 +30,16 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     holding the detail, AR/AP aging bars + Sub LOC division bars in the app's existing palettes,
     alert pills (CHANGED/STOPPED/NEW) + the full register and audit tables as collapsibles.
     Verified in the browser both themes; jump tested; JSON payload ~51 KB.
+- **Audit: download the selected bills' scans to a folder (owner, 2026-08-31: "be able to copy and paste
+  and have option to download attachments ... send transactions to responsible party to fix but want to
+  show the attachments").** Next to **Copy** on the Audit toolbar, a **Download scans** button saves the
+  ticked rows' bill scans (only rows with a 📎) into a fresh dated folder under `~/Downloads/Audit scans/`
+  (override `ACB_AUDIT_SCANS_DIR`), each file named `<Bill#> <Vendor> - <original>` so the scans line up
+  with the copied table, then reveals the folder so the owner drags them into the message. New CLI
+  `ledger/download_attachments.py` (subprocessed by `POST /api/attachment/download`, never imported -
+  QBO auth + the downloads happen in the child; reuses `shared/qbo_attachments` fresh links). Batch-capped
+  at 60 (a folder to attach, not a bulk export); the button disables past the cap and when nothing has a
+  scan. Verified end-to-end: a real bill's scan downloaded as a valid 1-page PDF, correctly named.
 - **Vendor Center: full-page view + open-balance columns + Service type (owner, 2026-08-28: "open a page
   fully ... like jobtread ... the side view squishes too much" · "just open balance, how many bills open" ·
   "pump / pier drilling / saw cut ... it's a service").**

@@ -109,6 +109,14 @@ def _os_open(path: str):
     return None
 
 
+def _audit_scans_dir() -> Path:
+    """A fresh, dated folder for a batch of downloaded bill scans - under ~/Downloads by default
+    (where the owner expects files they're about to attach), one subfolder per run so batches
+    never overwrite each other. Override the base with ACB_AUDIT_SCANS_DIR."""
+    base = paths.get_path("ACB_AUDIT_SCANS_DIR", Path.home() / "Downloads" / "Audit scans")
+    return Path(base) / _dt.datetime.now().strftime("%m-%d-%Y %H%M")
+
+
 def _ensure_lien_vendor_dir(vendor: str):
     """`_LIEN_FOLDER/<vendor>` for a vendor's lien docs (owner: organize by vendor, auto-create on
     mark). Creates ONLY the vendor subfolder and ONLY if the base already exists - so we never
@@ -1819,6 +1827,45 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:                          # noqa: BLE001
             self._json({"ok": False, "error": f"attachment lookup failed: {e}"})
 
+    def _attachment_download(self) -> None:
+        """Download the selected bills' scans to a dated folder + reveal it, so the owner can drag
+        them into the message to the responsible party. Subprocess the loader (never an import);
+        the QBO auth + the file downloads both happen in the child. Batch-capped - this is a
+        folder of scans to attach, not a bulk export."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except (ValueError, json.JSONDecodeError):
+            return self._json({"ok": False, "error": "bad request"}, 400)
+        clean = []
+        for b in (body.get("bills") or []):
+            txn = str((b or {}).get("txnId") or "").strip()
+            if txn.isdigit():
+                clean.append({"txnId": txn, "bill_no": str(b.get("bill_no") or "")[:40],
+                              "vendor": str(b.get("vendor") or "")[:80],
+                              "type": b.get("type") if b.get("type") in ("Bill", "Expense", "Purchase") else "Bill"})
+        if not clean:
+            return self._json({"ok": False, "error": "no bills"}, 400)
+        if len(clean) > 60:
+            return self._json({"ok": False, "error": f"too many bills ({len(clean)}) - select up to 60 to download at once"}, 400)
+        dest = _audit_scans_dir()
+        try:
+            out = subprocess.run(                        # noqa: S603 - fixed argv, our own script
+                [sys.executable, str(PROJECT_ROOT / "ledger" / "download_attachments.py"), "--dest", str(dest)],
+                input=json.dumps(clean).encode("utf-8"), cwd=str(PROJECT_ROOT),
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=300)
+            lines = [ln for ln in out.stdout.decode("utf-8", "replace").splitlines() if ln.strip()]
+            res = json.loads(lines[-1]) if lines else {"ok": False, "error": "no output"}
+        except subprocess.TimeoutExpired:
+            return self._json({"ok": False, "error": "download timed out"})
+        except Exception as e:                          # noqa: BLE001
+            return self._json({"ok": False, "error": f"download failed: {e}"})
+        if res.get("ok") and res.get("count"):
+            err = _os_open(res["folder"])                # reveal the folder for drag-into-email
+            if err:
+                res["reveal_error"] = err
+        self._json(res)
+
     def do_GET(self):
         path = self.path.split("?", 1)[0]
         if path == "/":
@@ -1889,6 +1936,8 @@ class Handler(BaseHTTPRequestHandler):
             self._wip_review_run()
         elif p == "/api/wip/merge":       # WIP Review: write approved changes to the 3 Test tabs (gated)
             self._wip_merge()
+        elif p == "/api/attachment/download":  # save selected bills' scans to a folder + reveal it
+            self._attachment_download()
         else:
             self._send(404, b"not found", "text/plain; charset=utf-8")
 
