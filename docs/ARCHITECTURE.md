@@ -305,7 +305,9 @@ flowchart LR
     CPR & RPR & MASTER ==>|"import the engine"| ENGINE
     ENGINE --> TEST
     AUDIT["wip_audit.py\n--audit: pre-write provenance report\nadds/removes + reason · contract/ETC source"]:::out
+    QC["wip_qc.py\nTHE GATE before anything reaches a bank:\nstructure · formulas · margins · ETC integrity ·\ncross-report coherence · STALE_LATEST\nsign-off file retires reviewed findings\nnon-zero exit on FAIL"]:::gate
     MASTER -.->|"--audit (inspect, NO write)"| AUDIT
+    TEST ==>|"every report, before it is sent"| QC
     QBO --> CLOSE --> QW
 ```
 

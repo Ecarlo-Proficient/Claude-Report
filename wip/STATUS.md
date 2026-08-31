@@ -1145,3 +1145,64 @@ Verified against the pre-move backup: every MFD-typed value carried, `assert_cle
   posted. The tab's own 207,240.28 is the figure with history behind it. **Someone in
   accounting needs to decide whether the pre-March draws are restated or the account is
   simply accepted as starting in March.**
+
+## 2026-08-26 — `wip_qc.py`: the checklist is executable now
+
+**Why** (the owner, 2026-08-26: *"why didn't the session catch these? we need the wip system
+to have our own rules so that i can trust it will catch all"*). The QC rules existed as PROSE
+in a memory file. Prose has to be remembered, gets applied to one file at a time, leaves no
+record of what was run, and gates nothing. Three defects reached the bank because of that:
+
+1. **Scope was "the file I'm editing."** The 8-7-26 report was sent two weeks before the
+   rebuild and nobody re-opened it. No rule said "check every report the bank holds."
+2. **A found defect was never closed out.** The mechanical-ETC check exists *because* a
+   session found that pattern — and eight December rows still carry it. Whether they were
+   reviewed and accepted or simply missed is unrecorded either way.
+3. **Nothing gated the send.** "Verified" meant whatever that session got to.
+
+**`wip/wip_qc.py` runs OUR rules against any bank-format WIP report and exits non-zero on
+FAIL**, so it can gate a delivery. Thresholds are constants at the top of the file — company
+conventions, not generic accounting — and every rule has an ID and reports the rows it fired on.
+
+| | checks |
+|---|---|
+| structure | `FILE_CORRUPT` `HEADER_DRIFT` `FORMULA_OVERWRITTEN` `FORMULA_WRONG_ROW` `TABLE_TOO_SHORT` `TOTAL_RANGE_WRONG` `TOTAL_MISMATCH` `TOTAL_HARDCODED` |
+| presentation | `NO_PRINT_AREA` `PRINT_AREA_SHORT` `NO_FREEZE_PANES` |
+| per row | `CONTRACT_MISSING` `ETC_MISSING` `NEGATIVE_VALUE` `MARGIN_IMPLAUSIBLE` `MARGIN_NEGATIVE` `OVER_100_PCT` `COSTS_OVER_CONTRACT` `ZERO_BILLED` |
+| ETC integrity | `ETC_FROM_COST` `PCT_REPEATED` |
+| across reports | `COSTS_WENT_BACKWARDS` `BILLING_WENT_BACKWARDS` `CONTRACT_MOVED` `MARGIN_SWING` `STALE_LATEST` |
+
+`STALE_LATEST` is the one that would have caught defect 1: it fires when a report is the most
+recent by DATE but was BUILT before another — exactly the 8-7-26 situation.
+
+**Sign-off is half the design, not a nicety.** Several findings are permanently correct and
+permanently accepted — a documented scope cut trips `CONTRACT_MOVED` forever. Without a way to
+retire them the list only grows, everyone learns to skim it, and a real finding hides in the
+noise. `--signoff` takes a JSON of reviewed findings keyed `CHECK:JOB`, each needing a reason
+and a name. A finding is then either OPEN or has a written reason against it, never in between.
+**The sign-off file lives beside the reports, not in this repo** — it carries job numbers and
+dollar reasons, which is business content (rule 7).
+
+**Validated against the three reports Frost holds:** it independently reproduced every finding
+from the manual pass and added three the manual pass missed — `STALE_LATEST`, and the
+`CONTRACT_MOVED` / `MARGIN_SWING` sets between December and March.
+
+```
+python3 wip/wip_qc.py <report.xlsx> [more.xlsx ...]   # gate; non-zero on FAIL
+python3 wip/wip_qc.py --strict <report.xlsx>          # warnings fail too
+python3 wip/wip_qc.py --json <report.xlsx>            # machine-readable (stdout is pure JSON)
+```
+
+**Stated limit, printed on every run:** this proves internal consistency, arithmetic, formula
+correctness and cross-report coherence. It does NOT re-derive costs or billings from QBO. A
+number can be internally perfect and wrong at source. Passing is necessary, not sufficient.
+
+## OPEN ISSUES
+
+- **Open findings on the reports Frost currently holds**, after the documented rulings were
+  signed off: `STALE_LATEST` on the 8-7-26; five implausible margins on the 8-7-26; the eight
+  December mechanical-ETC rows; and four contract moves plus one margin swing between December
+  and March (`RP6764`, `RP6766`, `RP7005`, `RP7242`) that have no recorded reason. `RP7005`
+  moved 13.0% → 29.5%, which is the one worth looking at first.
+- **`wip_qc` only reads the 19-column bank format.** The `Test - CP` / `Test - RP` /
+  `Test-Master` tabs use `wip_writer`'s wider layout and are not checked by it yet.
