@@ -42,7 +42,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from shared import pnl_paths
 from shared.xlsx_verify import assert_clean
 
-ARCHIVE = "completed mfd project p&l"
+# One overview per DIVISION, written INTO that division's folder - the folder
+# whose OneDrive link the owner shares with the PM who runs it
+# (shared/pnl_paths.division_dir). CP and RP default to the current year only:
+# "need one for CP and RP just for this year projects, don't go further back"
+# (the user 2026-08-31). MFD is small enough to carry every job.
+DIVISIONS = {
+    "mfd": {"prefix": "MFD", "label": "MFD", "title": "MFD OVERVIEW — ALL JOBS",
+            "default_year": None,
+            "alt": {"label": "MFD — 9% of cost", "short": "NET  (MFD 9%)"}},
+    "cp": {"prefix": "CP", "label": "CP", "title": "COMMERCIAL OVERVIEW",
+           "default_year": dt.date.today().year, "alt": None},
+    "rp": {"prefix": "RP", "label": "RP", "title": "RESIDENTIAL OVERVIEW",
+           "default_year": dt.date.today().year, "alt": None},
+}
 # Payroll is carried in the overhead %, so charging it to the job as well
 # double-counts it (the user 2026-08-27). Excluded from job cost and reported
 # on the sheet as a named exclusion — never silently dropped.
@@ -99,86 +112,146 @@ def _thick_box(ws, r0: int, r1: int, c0: int, c1: int) -> None:
 
 # ───────────────────────────── read the source ─────────────────────────────
 
+# A vendor row in the Transactions cost block carries its line count:
+# "Estrada Ready Mix  (28)". That suffix is what separates it from a category
+# banner ("CONCRETE", "LABOR"), which carries no amount and no count.
+_VENDOR_RE = re.compile(r"^(.*?)\s*\((\d+)\)\s*$")
+
+
+def _read_invoices(ws) -> tuple:
+    """Every invoice, and the retainage that moved by journal entry."""
+    inv: List[dict] = []
+    hdr = next((r for r in range(1, 60)
+                if str(ws.cell(r, 1).value or "").strip() == "Inv #"), None)
+    if hdr is None:
+        return inv, 0.0
+    end = next((r for r in range(hdr + 1, ws.max_row + 1)
+                if str(ws.cell(r, 1).value or "").startswith("TOTAL")), ws.max_row)
+
+    def f(rr, cc):
+        v = ws.cell(rr, cc).value
+        return float(v) if isinstance(v, (int, float)) else 0.0
+
+    for r in range(hdr + 1, end):
+        inv.append({"doc": ws.cell(r, 1).value, "date": ws.cell(r, 2).value,
+                    "memo": ws.cell(r, 3).value or "",
+                    "gross": f(r, 4), "withheld": f(r, 5),
+                    "ret_billed": f(r, 7),
+                    "paid": ws.cell(r, 8).value or "",
+                    "url": (ws.cell(r, 1).hyperlink.target
+                            if ws.cell(r, 1).hyperlink else None)})
+    # Rows between the income total and the first cost block, with no account:
+    # retainage the bookkeeper moved by journal entry instead of invoicing.
+    stop = next((r for r in range(end + 1, ws.max_row + 1)
+                 if str(ws.cell(r, 1).value or "").strip()
+                 .startswith(("COGS", "EXPENSES"))), ws.max_row + 1)
+    not_billed = sum(f(r, 5) for r in range(end + 1, stop)
+                     if not ws.cell(r, 4).value)
+    return inv, not_billed
+
+
+def _read_costs(ws) -> List[dict]:
+    """COST OF GOODS SOLD / OPERATING EXPENSES → account → vendor → line.
+
+    Read from the **Transactions** sheet, which every template writes the same
+    way — MFD, CP and RP alike. The old reader used the `By Account` sheet,
+    which only the current CP/MFD template has: CP672 and every RP workbook
+    have no such sheet, so a division overview could never have been built from
+    it. Verified equal to the cent against `By Account` on all 14 MFD jobs
+    before the switch (2026-08-31).
+
+    The block is written vendor-major; the account each line belongs to rides
+    on the line itself, so the account tree is regrouped here.
+    """
+    sections: List[dict] = []
+    cur: Optional[dict] = None
+    cols: Dict[str, int] = {}
+    vendor = ""
+    for r in range(1, ws.max_row + 1):
+        label = str(ws.cell(r, 1).value or "").strip()
+        lvl = ws.row_dimensions[r].outline_level or 0
+        if label.startswith("COGS"):
+            cur = {"name": "COST OF GOODS SOLD", "rows": []}
+            sections.append(cur); cols, vendor = {}, ""
+            continue
+        if label.startswith("EXPENSES"):
+            cur = {"name": "OPERATING EXPENSES (non-COGS)", "rows": []}
+            sections.append(cur); cols, vendor = {}, ""
+            continue
+        if label.startswith("INCOME"):
+            cur = None
+            continue
+        if cur is None:
+            continue
+        if label == "Ref #":
+            cols = {str(ws.cell(r, c).value or "").strip().lower(): c
+                    for c in range(1, 10)}
+            continue
+        if label.startswith("TOTAL"):
+            cur = None
+            continue
+        if not cols:
+            continue
+        if lvl == 0:
+            m = _VENDOR_RE.match(label)
+            vendor = m.group(1).strip() if m else ""   # else: a category banner
+            continue
+        amt = ws.cell(r, cols.get("amount", 5)).value
+        if not isinstance(amt, (int, float)):
+            continue
+        doc_c = cols.get("ref #", 1)
+        desc_c = cols.get("memo", cols.get("description", 3))
+        paid_c = cols.get("paid?")
+        cur["rows"].append({
+            "acct": str(ws.cell(r, cols.get("account", 4)).value or "(unclassified)"),
+            "vendor": vendor or "(no vendor)",
+            "date": ws.cell(r, cols.get("date", 2)).value,
+            "doc": ws.cell(r, doc_c).value,
+            "desc": ws.cell(r, desc_c).value or "",
+            "amt": float(amt),
+            "paid": (ws.cell(r, paid_c).value or "") if paid_c else "",
+            "url": (ws.cell(r, doc_c).hyperlink.target
+                    if ws.cell(r, doc_c).hyperlink else None)})
+
+    out: List[dict] = []
+    for sec in sections:
+        accounts: List[dict] = []
+        by_acct: Dict[str, dict] = {}
+        for ln in sec["rows"]:
+            a = by_acct.get(ln["acct"])
+            if a is None:
+                a = by_acct[ln["acct"]] = {"name": ln["acct"], "total": 0.0,
+                                           "vendors": [], "_v": {}}
+                accounts.append(a)
+            v = a["_v"].get(ln["vendor"])
+            if v is None:
+                v = a["_v"][ln["vendor"]] = {"name": ln["vendor"], "total": 0.0,
+                                             "lines": []}
+                a["vendors"].append(v)
+            v["lines"].append(ln)
+            v["total"] = round(v["total"] + ln["amt"], 2)
+            a["total"] = round(a["total"] + ln["amt"], 2)
+        for a in accounts:
+            a.pop("_v", None)
+        accounts.sort(key=lambda a: -a["total"])
+        for a in accounts:
+            a["vendors"].sort(key=lambda v: -v["total"])
+        if accounts:
+            out.append({"name": sec["name"],
+                        "total": round(sum(a["total"] for a in accounts), 2),
+                        "accounts": accounts})
+    return out
+
+
 def read_source(path: Path) -> dict:
-    """Invoices + account/vendor/line detail out of a generated project P&L."""
+    """Invoices + account/vendor/line detail out of a generated project P&L.
+    Template-agnostic: MFD, CP and RP workbooks all read the same way."""
     wb = load_workbook(str(path), data_only=False)
     try:
-        inv: List[dict] = []
         ws = wb["Transactions"]
-        hdr = next((r for r in range(1, 60)
-                    if str(ws.cell(r, 1).value or "").strip() == "Inv #"), None)
-        end = next((r for r in range(hdr + 1, ws.max_row + 1)
-                    if str(ws.cell(r, 1).value or "").startswith("TOTAL")), None)
+        inv, not_billed = _read_invoices(ws)
+        sections = _read_costs(ws)
 
-        def f(rr, cc):
-            v = ws.cell(rr, cc).value
-            return float(v) if isinstance(v, (int, float)) else 0.0
-
-        for r in range(hdr + 1, end):
-            inv.append({"doc": ws.cell(r, 1).value, "date": ws.cell(r, 2).value,
-                        "memo": ws.cell(r, 3).value or "",
-                        "gross": f(r, 4), "withheld": f(r, 5),
-                        "ret_billed": f(r, 7),
-                        "paid": ws.cell(r, 8).value or "",
-                        "url": (ws.cell(r, 1).hyperlink.target
-                                if ws.cell(r, 1).hyperlink else None)})
-        # rows under the income total with NO account are retainage-not-billed
-        not_billed = sum(f(r, 5) for r in range(end + 1, ws.max_row + 1)
-                         if not ws.cell(r, 4).value)
-
-        # By Account: outline 0 = account, 1 = vendor, 2 = line
-        sections: List[dict] = []
-        cur_sec = cur_acct = cur_vendor = None
-        if "By Account" in wb.sheetnames:
-            a = wb["By Account"]
-            # HEADER-DRIVEN, because the By Account grid moved (2026-08-31:
-            # the label went from column A to B and the amount from E to C to
-            # kill a 58-wide void). Older workbooks still carry the old grid,
-            # so find the columns by their header text rather than assuming.
-            LBL, AMT, DTE, PAID, DESC = 1, 5, 2, 6, 4
-            for hr in range(1, min(a.max_row, 40) + 1):
-                row = {str(a.cell(hr, c).value or "").strip().lower(): c
-                       for c in range(1, 9)}
-                hit = next((v for k, v in row.items()
-                            if k.startswith("account / vendor")), None)
-                if hit and "amount" in row:
-                    LBL, AMT = hit, row["amount"]
-                    DTE = row.get("date", DTE)
-                    PAID = row.get("paid?", PAID)
-                    DESC = row.get("description", DESC)
-                    break
-            for r in range(1, a.max_row + 1):
-                lvl = a.row_dimensions[r].outline_level or 0
-                v1 = a.cell(r, LBL).value
-                amt = a.cell(r, AMT).value
-                txt = str(v1 or "").strip()
-                if txt in ("COST OF GOODS SOLD", "OPERATING EXPENSES (non-COGS)"):
-                    cur_sec = {"name": txt, "total": float(amt or 0), "accounts": []}
-                    sections.append(cur_sec)
-                    cur_acct = None
-                    continue
-                if not cur_sec or txt == "Account / Vendor / Line":
-                    continue
-                if lvl == 0 and txt and isinstance(amt, (int, float)):
-                    cur_acct = {"name": txt, "total": float(amt), "vendors": []}
-                    cur_sec["accounts"].append(cur_acct)
-                    cur_vendor = None
-                elif lvl == 1 and cur_acct is not None and txt:
-                    cur_vendor = {"name": txt, "total": float(amt or 0), "lines": []}
-                    cur_acct["vendors"].append(cur_vendor)
-                elif lvl == 2 and cur_vendor is not None:
-                    # In the new grid the doc # shares the label column with
-                    # its account and vendor (indented); in the old one it had
-                    # its own column 3.
-                    doc_c = LBL if LBL != 1 else 3
-                    cur_vendor["lines"].append({
-                        "date": a.cell(r, DTE).value,
-                        "doc": a.cell(r, doc_c).value,
-                        "desc": a.cell(r, DESC).value or "",
-                        "amt": float(a.cell(r, AMT).value or 0),
-                        "paid": a.cell(r, PAID).value or "",
-                        "url": (a.cell(r, doc_c).hyperlink.target
-                                if a.cell(r, doc_c).hyperlink else None)})
         # Payroll out of job cost (it lives in overhead), recorded so the
         # sheet can say what it left out.
         payroll = 0.0
@@ -191,6 +264,7 @@ def read_source(path: Path) -> dict:
                     keep.append(acct)
             sec["accounts"] = keep
             sec["total"] = round(sum(a["total"] for a in keep), 2)
+        sections = [s for s in sections if s["accounts"]]
 
         # One row per BILL, not per line: a bill split over several lines of
         # the same account is one document and reads as one (the user
@@ -213,7 +287,8 @@ def read_source(path: Path) -> dict:
                     v["lines"] = sorted(merged.values(),
                                         key=lambda x: str(x["date"]), reverse=True)
 
-        title = str(wb["P&L"].cell(1, 1).value or "")
+        pl = next((n for n in ("P&L", "Job P&L") if n in wb.sheetnames), None)
+        title = str(wb[pl].cell(1, 1).value or "") if pl else ""
         return {"invoices": inv, "not_billed": not_billed, "payroll": round(payroll, 2),
                 "sections": sections, "title": title,
                 "status": "Completed", "rel": None}
@@ -481,12 +556,12 @@ def _tiles(ws, r: int, items, spans) -> None:
     ws.row_dimensions[r + 1].height = 40
 
 
-def _kpi_strip(ws, r: int, t: dict, spans) -> int:
+def _kpi_strip(ws, r: int, t: dict, spans, alt=None) -> int:
     """Metrics ACROSS, exactly 4 cells wide so the strip lines up with the
     table beneath it instead of running off to column N (the user 2026-08-27).
-    The two OVERHEAD views get their own boxed block below, because MFD's 9%
-    of cost and the company's 10% of revenue are different answers and the
-    MFD one must not get lost among the others."""
+    The OVERHEAD views get their own boxed block below. MFD carries TWO - its
+    own 9%-of-cost view alongside the company's 10%-of-revenue - and the MFD one
+    must not get lost among the others; CP and RP have only the company view."""
     _tiles(ws, r, [
         ("BILLED", t["billed"], MONEY, NAVY),
         ("COST", t["cost"], MONEY, NAVY),
@@ -504,12 +579,14 @@ def _kpi_strip(ws, r: int, t: dict, spans) -> int:
            align="right")
     for cc in range(spans[0][0], spans[3][1] + 1):
         ws.cell(row=r2, column=cc).border = Border(bottom=HAIR)
-    for i, (lbl, oh, net, netm) in enumerate((
-            ("Company — 10% of revenue", t["oh"], t["net"], t["netm"]),
-            ("MFD — 9% of cost", t["moh"], t["mnet"], t["mnetm"]))):
+    views = [(f"Company — {OVERHEAD_PCT:.0%} of revenue", t["oh"], t["net"], t["netm"])]
+    if alt:
+        views.append((alt["label"], t["moh"], t["mnet"], t["mnetm"]))
+    for i, (lbl, oh, net, netm) in enumerate(views):
         rr = r2 + 1 + i
         ws.merge_cells(start_row=rr, start_column=lab, end_row=rr, end_column=spans[0][1])
-        _t(ws, rr, lab, lbl, size=SZ, bold=(i == 1), color=INK, indent=1)
+        _t(ws, rr, lab, lbl, size=SZ, bold=(i == len(views) - 1 and len(views) > 1),
+           color=INK, indent=1)
         for span, val, fmt, col in (
                 (oh_c, -oh, MONEY, GREY),
                 (net_c, net, MONEY, GREEN if net >= 0 else RED),
@@ -519,13 +596,27 @@ def _kpi_strip(ws, r: int, t: dict, spans) -> int:
             _t(ws, rr, span[0], val, size=SZ + 2, bold=True, fmt=fmt,
                color=col, align="right")
         ws.row_dimensions[rr].height = 26
-    _thick_box(ws, r2, r2 + 2, spans[0][0], spans[3][1])
-    return r2 + 4
+    _thick_box(ws, r2, r2 + len(views), spans[0][0], spans[3][1])
+    return r2 + len(views) + 2
 
 
-def build_bundle(jobs: List[tuple], out: Path) -> None:
-    """MFD Overview Total: the overview sheet, then a sheet per job carrying
-    its P&L and its transactions grouped account → vendor → line.
+def _spans(c0: int, last: int, n: int = 4):
+    """Split the content width into `n` merged tile spans, so the metric strip
+    is exactly as wide as the table under it whatever the division's column
+    count is."""
+    width = last - c0 + 1
+    base, extra = divmod(width, n)
+    out, c = [], c0
+    for i in range(n):
+        w = base + (1 if i < extra else 0)
+        out.append((c, c + w - 1))
+        c += w
+    return out
+
+
+def build_bundle(jobs: List[tuple], out: Path, div: dict) -> None:
+    """<DIV> Overview: the overview sheet, then a sheet per job carrying its
+    P&L and its transactions grouped account → vendor → line.
 
     EVERY link is INTERNAL. The per-job reports link to files beside them,
     which is right on the share and broken the moment the file is emailed —
@@ -538,19 +629,27 @@ def build_bundle(jobs: List[tuple], out: Path) -> None:
     starts at the corner. Nothing else is written to column A - which is why
     `lint_layout` is told where the content actually begins.
     """
+    alt = div.get("alt")
+    cols = [("BILLED", "billed", MONEY, 18), ("COST", "cost", MONEY, 18),
+            ("GROSS PROFIT", "gp", MONEY, 18), ("GP %", "gpm", PCT, 11),
+            (f"NET  (company {OVERHEAD_PCT:.0%})", "net", MONEY, 20)]
+    if alt:
+        cols.append((alt["short"], "mnet", MONEY, 20))
+
     wb = Workbook()
     sm = wb.active
     sm.title = "Summary"
     sm.sheet_view.showGridLines = False
 
-    LAST = C0 + 7                      # rightmost content column on the summary
+    LAST = C0 + len(cols) + 1          # job col + data cols + the file link
     _n_act = sum(1 for _, src, _x in jobs if src.get("status") == "Active")
-    _t(sm, 1, 1, "MFD OVERVIEW — ALL JOBS", size=SZ_TITLE, bold=True, color=NAVY)
+    _t(sm, 1, 1, div["title"], size=SZ_TITLE, bold=True, color=NAVY)
     _pay = sum(src.get("payroll", 0.0) for _, src, _t2 in jobs)
     _note = (f" · excludes payroll of {_pay:,.0f} (carried in overhead)"
              if _pay else "")
-    _t(sm, 2, C0, f"{_n_act} active · {len(jobs) - _n_act} completed · click a job "
-                  f"for its detail sheet, or 'open workbook' for the full file"
+    _scope = f" · {div['scope']}" if div.get("scope") else ""
+    _t(sm, 2, C0, f"{_n_act} active · {len(jobs) - _n_act} completed{_scope} · click a "
+                  f"job for its detail sheet, or 'open workbook' for the full file"
                   f"{_note}",
        size=SZ_SMALL, color=GREY)
     # Generated stamp with the TIME — these are re-run through the day and a
@@ -572,35 +671,31 @@ def build_bundle(jobs: List[tuple], out: Path) -> None:
         return d
 
     tot = _sum(jobs)
-    SUM_SPANS = [(C0, C0 + 1), (C0 + 2, C0 + 3), (C0 + 4, C0 + 5), (C0 + 6, C0 + 6)]
-    r = _kpi_strip(sm, 4, tot, SUM_SPANS)
+    r = _kpi_strip(sm, 4, tot, _spans(C0, LAST), alt)
 
-    heads = ["JOB", "BILLED", "COST", "GROSS PROFIT", "GP %",
-             "NET  (company 10%)", "NET  (MFD 9%)"]
-    for i, h in enumerate(heads):
-        _t(sm, r, C0 + i, h, size=SZ_SMALL - 1, bold=True, color="FFFFFF",
-           fill=F_HDR, align="left" if i == 0 else "right", wrap=True,
-           indent=1 if i == 0 else 0)
+    _t(sm, r, C0, "JOB", size=SZ_SMALL - 1, bold=True, color="FFFFFF",
+       fill=F_HDR, align="left", wrap=True, indent=1)
+    for i, (h, _k, _f, _w) in enumerate(cols):
+        _t(sm, r, C0 + 1 + i, h, size=SZ_SMALL - 1, bold=True, color="FFFFFF",
+           fill=F_HDR, align="right", wrap=True)
     sm.row_dimensions[r].height = 30
     _t(sm, r, LAST, "FULL DETAIL", size=SZ_SMALL - 1, bold=True, color="FFFFFF",
        fill=F_HDR, align="center")
     r += 1
+
+    def _row_figures(rr, t, bold_keys=("gp", "mnet")):
+        for i, (_h, k, fmt, _w) in enumerate(cols):
+            pos = k in ("gp", "gpm", "net", "mnet")
+            _t(sm, rr, C0 + 1 + i, t[k], size=SZ, fmt=fmt, align="right",
+               bold=k in bold_keys,
+               color=(GREEN if t[k] >= 0 else RED) if pos else INK)
 
     def _job_row(job, _src, t):
         nonlocal r
         cell = _t(sm, r, C0, job_label(job, _src.get("title", "")), size=SZ, bold=True)
         cell.hyperlink = f"#'{job}'!A1"
         cell.font = Font(size=SZ, bold=True, color=LINK, underline="single")
-        _t(sm, r, C0 + 1, t["billed"], size=SZ, fmt=MONEY, align="right", color=INK)
-        _t(sm, r, C0 + 2, t["cost"], size=SZ, fmt=MONEY, align="right", color=INK)
-        _t(sm, r, C0 + 3, t["gp"], size=SZ, bold=True, fmt=MONEY, align="right",
-           color=GREEN if t["gp"] >= 0 else RED)
-        _t(sm, r, C0 + 4, t["gpm"], size=SZ, fmt=PCT, align="right",
-           color=GREEN if t["gp"] >= 0 else RED)
-        _t(sm, r, C0 + 5, t["net"], size=SZ, fmt=MONEY, align="right",
-           color=GREEN if t["net"] >= 0 else RED)
-        _t(sm, r, C0 + 6, t["mnet"], size=SZ, bold=True, fmt=MONEY, align="right",
-           color=GREEN if t["mnet"] >= 0 else RED)
+        _row_figures(r, t)
         # "see the actual project excel for details" — the job name jumps to
         # its sheet INSIDE this file (survives being emailed); this opens the
         # real workbook on the share.
@@ -629,11 +724,7 @@ def build_bundle(jobs: List[tuple], out: Path) -> None:
             _job_row(_j, _sc, _tt)
         st = _sum(sel)
         _t(sm, r, C0, f"subtotal — {len(sel)} job(s)", size=SZ, bold=True, color=NAVY)
-        for c, k, fmt in ((C0 + 1, "billed", MONEY), (C0 + 2, "cost", MONEY),
-                          (C0 + 3, "gp", MONEY), (C0 + 4, "gpm", PCT),
-                          (C0 + 5, "net", MONEY), (C0 + 6, "mnet", MONEY)):
-            _t(sm, r, c, st[k], size=SZ, bold=True, fmt=fmt, align="right",
-               color=(GREEN if st[k] >= 0 else RED) if c >= C0 + 3 else NAVY)
+        _row_figures(r, st, bold_keys=tuple(k for _h, k, _f, _w in cols))
         for c in range(C0, LAST + 1):
             sm.cell(row=r, column=c).border = Border(top=HAIR)
         r += 2
@@ -646,19 +737,17 @@ def build_bundle(jobs: List[tuple], out: Path) -> None:
     _section("ACTIVE — in progress", _active,
              "costs to date only — not finished")
     _section("COMPLETED", _done)
-    _t(sm, r, C0, f"ALL MFD — {len(jobs)} JOBS", size=SZ, bold=True, color=NAVY)
-    for c, k, fmt in ((C0 + 1, "billed", MONEY), (C0 + 2, "cost", MONEY),
-                      (C0 + 3, "gp", MONEY), (C0 + 4, "gpm", PCT),
-                      (C0 + 5, "net", MONEY), (C0 + 6, "mnet", MONEY)):
-        _t(sm, r, c, tot[k], size=SZ, bold=True, fmt=fmt, align="right",
-           color=(GREEN if tot[k] >= 0 else RED) if c >= C0 + 3 else NAVY)
+    _t(sm, r, C0, f"ALL {div['label']} — {len(jobs)} JOBS", size=SZ, bold=True,
+       color=NAVY)
+    _row_figures(r, tot, bold_keys=tuple(k for _h, k, _f, _w in cols))
     for c in range(C0, LAST + 1):
         sm.cell(row=r, column=c).border = Border(top=RULE)
     sm.row_dimensions[r].height = 24
     sm.column_dimensions["A"].width = GUTTER_W
-    for col, w in zip("BCDEFGHI", (34, 18, 18, 18, 11, 20, 20, 19)):
-        sm.column_dimensions[col].width = w
-
+    sm.column_dimensions[get_column_letter(C0)].width = 34
+    for i, (_h, _k, _f, w) in enumerate(cols):
+        sm.column_dimensions[get_column_letter(C0 + 1 + i)].width = w
+    sm.column_dimensions[get_column_letter(LAST)].width = 19
 
     for job, src, t in sorted(jobs, key=lambda x: -x[2]["billed"]):
         ws = wb.create_sheet(job[:31])
@@ -678,9 +767,7 @@ def build_bundle(jobs: List[tuple], out: Path) -> None:
             ws.cell(row=2, column=c).border = Border(bottom=HAIR)
         ws.row_dimensions[1].height = 30
         ws.row_dimensions[3].height = 8
-        JOB_SPANS = [(C0, C0 + 1), (C0 + 2, C0 + 3), (C0 + 4, C0 + 5),
-                     (C0 + 6, C0 + 6)]
-        r = _kpi_strip(ws, 4, t, JOB_SPANS)
+        r = _kpi_strip(ws, 4, t, _spans(C0, JLAST), alt)
 
         # ONE grid for both blocks: B label/doc · C date · D what-for ·
         # G amount · H paid. No column is ever left blank in a data row —
@@ -866,66 +953,142 @@ def _link_target(target: Path, base: Path) -> str:
     return Path(os.path.relpath(target, base)).as_posix()
 
 
+# A job folder is named for its project, sometimes with the client appended
+# ("RP7437 - OPA CONSTRUCTION"). The project # is the leading token.
+_JOB_RE = re.compile(r"^(MFD|CP|RP)\s*-?\s*\d+(?:-FTW)?", re.I)
+
+
+def _find_workbook(folder: Path, proj: str) -> Optional[Path]:
+    """The generated P&L inside a job folder. CP/MFD write
+    `Project_PnL_<proj>.xlsx`; RP writes `<proj> - <client>.xlsx`."""
+    for cand in (folder / f"Project_PnL_{proj}.xlsx",
+                 folder / f"{folder.name}.xlsx"):
+        if cand.exists():
+            return cand
+    loose = [x for x in sorted(folder.glob("*.xlsx"))
+             if not x.name.startswith("~$") and "Job Result" not in x.name]
+    return loose[0] if len(loose) == 1 else None
+
+
+def _iter_jobs(div_dir: Path, prefix: str):
+    """(project #, workbook, status) for every job under a division.
+
+    Live jobs are direct children of the division folder; finished ones are
+    filed inside an archive subfolder ("completed mfd project p&l")."""
+    out = []
+    try:
+        children = sorted(div_dir.iterdir())
+    except OSError:
+        return out
+    for child in children:
+        if not child.is_dir():
+            continue
+        if child.name.lower().startswith(pnl_paths.ARCHIVE_PREFIXES):
+            for sub in sorted(child.iterdir()):
+                if sub.is_dir():
+                    out.append((sub, "Completed"))
+            continue
+        out.append((child, "Active"))
+    jobs = []
+    for folder, status in out:
+        m = _JOB_RE.match(folder.name)
+        if not m:
+            continue
+        proj = re.sub(r"[\s-]+", "", m.group(0).upper()).replace("FTW", "-FTW")
+        if not proj.upper().startswith(prefix):
+            continue
+        wb = _find_workbook(folder, proj)
+        if wb is None:
+            print(f"  ⚠ {proj}: no P&L workbook in {folder.name}")
+            continue
+        jobs.append((proj, wb, status))
+    return jobs
+
+
+def _year_of(v) -> Optional[int]:
+    return getattr(v, "year", None)
+
+
+def _touched_year(src: dict, year: int) -> bool:
+    """Did this job bill or spend anything in `year`? That is the test for
+    "this year's projects, don't go further back" (the user 2026-08-31) - it
+    keeps a job that is still running from a prior year and drops one that
+    finished before the year started."""
+    if any(_year_of(i["date"]) == year for i in src["invoices"]):
+        return True
+    return any(_year_of(ln["date"]) == year
+               for s in src["sections"] for a in s["accounts"]
+               for v in a["vendors"] for ln in v["lines"])
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Simple report for a finished job")
     ap.add_argument("jobs", nargs="*", help="e.g. MFD133")
+    ap.add_argument("--division", choices=sorted(DIVISIONS), default="mfd",
+                    help="which division's folder to read and write (default mfd)")
     ap.add_argument("--all", action="store_true", help="every job in the archive folder")
     ap.add_argument("--with-active", action="store_true",
-                    help="include the LIVE jobs from the P&L root alongside the "
-                         "completed ones, split into their own section")
-    ap.add_argument("--folder", default=None)
+                    help="include the LIVE jobs from the division folder alongside "
+                         "the completed ones, split into their own section")
+    ap.add_argument("--year", default=None,
+                    help="keep only jobs with an invoice or a cost dated in this "
+                         "year (e.g. 2026); 'all' for no filter. Defaults to the "
+                         "current year for CP and RP, all for MFD.")
+    ap.add_argument("--folder", default=None,
+                    help="override the division folder (rarely needed)")
     ap.add_argument("--bundle", action="store_true",
-                    help="MFD Overview Total: ONE workbook with the overview "
-                         "sheet plus a sheet per job (P&L + grouped "
-                         "transactions). All links internal, so it survives "
-                         "being emailed.")
+                    help="<DIV> Overview: ONE workbook with the overview sheet "
+                         "plus a sheet per job (P&L + grouped transactions). "
+                         "All links internal, so it survives being emailed.")
     a = ap.parse_args()
-    # The archive lives INSIDE the division folder now, because a division
-    # folder is what gets shared with its PM (the user 2026-08-31).
-    folder = (Path(a.folder).expanduser() if a.folder
-              else pnl_paths.division_dir("MFD") / ARCHIVE)
-    # (job, folder-holding-it, status)
-    todo = [(d.name, folder, "Completed")
-            for d in sorted(folder.iterdir()) if d.is_dir()] if a.all else \
-           [(j.upper(), folder, "Completed") for j in a.jobs]
-    if a.with_active:
-        root = folder.parent
-        done = {j for j, _f, _s in todo}
-        todo += [(d.name, root, "Active") for d in sorted(root.iterdir())
-                 if d.is_dir() and d.name.upper().startswith("MFD")
-                 and d.name not in done]
-    if not todo:
-        print("✗  name a job, or pass --all")
+    div = DIVISIONS[a.division]
+    # The overview lands in the DIVISION folder, not the archive inside it: it
+    # covers live and finished jobs alike, so filing it under "completed" put
+    # it somewhere it did not belong (the user 2026-08-31).
+    div_dir = (Path(a.folder).expanduser() if a.folder
+               else pnl_paths.division_dir(div["prefix"]))
+    year = a.year if a.year is not None else div.get("default_year")
+    year = None if str(year).lower() in ("all", "none", "") else int(year)
+
+    found = _iter_jobs(div_dir, div["prefix"])
+    if a.jobs:
+        want = {j.upper() for j in a.jobs}
+        found = [f for f in found if f[0].upper() in want]
+    elif not (a.all or a.with_active or a.bundle):
+        print("✗  name a job, or pass --all / --bundle")
         return 1
-    loaded = []
-    for job, where, status in todo:
-        src_path = where / job / f"Project_PnL_{job}.xlsx"
-        if not src_path.exists():
-            print(f"  ⚠ {job}: no {src_path.name}")
-            continue
+    elif not a.with_active and not a.bundle:
+        found = [f for f in found if f[2] == "Completed"]
+    if not found:
+        print(f"✗  no {div['label']} job folders under {div_dir}")
+        return 1
+
+    loaded, skipped = [], []
+    for job, src_path, status in found:
         src = read_source(src_path)
         if not src["sections"]:
-            print(f"  ⚠ {job}: no 'By Account' sheet — regenerate it first")
+            print(f"  ⚠ {job}: no cost detail in {src_path.name} — regenerate it")
+            continue
+        if year and not _touched_year(src, year):
+            skipped.append(job)
             continue
         src["status"] = status
-        # Relative to where the bundle is written (the archive folder), so the
-        # link resolves on the share from any machine.
-        src["rel"] = _link_target(src_path, folder)
+        src["rel"] = _link_target(src_path, div_dir)
         loaded.append((job, src, _totals(src)))
         if not a.bundle:
-            # An ACTIVE job lives in the P&L root, not the archive — write its
-            # report beside its own workbook.
-            out = where / job / f"{job} Job Result.xlsx"
+            out = src_path.parent / f"{job} Job Result.xlsx"
             build(job, src, out)
             print(f"  ✓ {job}  →  {out.name}")
+    if skipped:
+        print(f"  · {len(skipped)} job(s) with nothing in {year}: "
+              f"{', '.join(sorted(skipped))}")
     if a.bundle:
         if not loaded:
             print("✗  nothing to bundle")
             return 1
-        # One canonical file, overwritten each run. Two differently-named
-        # variants had already accumulated in the folder (the user 2026-08-31).
-        out = folder / "MFD Overview.xlsx"
-        build_bundle(loaded, out)
+        # One canonical file per division, overwritten each run.
+        out = div_dir / f"{div['label']} Overview.xlsx"
+        build_bundle(loaded, out, dict(div, scope=(f"{year} only" if year else "")))
         tb = sum(t["billed"] for _, _, t in loaded)
         tc = sum(t["cost"] for _, _, t in loaded)
         print(f"  {len(loaded)} jobs   billed ${tb:,.0f}   cost ${tc:,.0f}   "

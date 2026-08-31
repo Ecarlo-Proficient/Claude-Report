@@ -8,6 +8,30 @@ manual close), RP (no draws — expenses → invoice → profit).
 
 ## DONE / FINALIZED
 
+- **One overview PER DIVISION, in the division folder (2026-08-31).**
+  `completed_pnl.py --division mfd|cp|rp --bundle` writes
+  `<division folder>/<DIV> Overview.xlsx`. The MFD one moved OUT of the archive
+  subfolder - it covers live and finished jobs alike, so filing it under
+  "completed" put it somewhere it did not belong. CP and RP default to the
+  CURRENT YEAR only (`--year 2026` / `--year all` to override): a job is kept
+  when it has an invoice or a cost dated in that year, which keeps a job still
+  running from last year and drops one that finished before the year started
+  (the user 2026-08-31: "just for this year projects, don't go further back").
+  The MFD 9%-of-cost column and its overhead row appear only for MFD; CP and RP
+  get the company 10%-of-revenue view alone, and the table's column count now
+  drives the metric-strip spans instead of being hard-coded.
+
+- **The reader reads the TRANSACTIONS sheet, not `By Account` (2026-08-31).**
+  Only the current CP/MFD template has a `By Account` sheet - CP672 and every RP
+  workbook have none, so a CP or RP overview could never have been built from
+  it. Every template writes the Transactions cost block the same way (vendor
+  row, then its lines carrying an Account), so the account tree is regrouped
+  from there and one reader now serves MFD, CP and RP. Verified equal **to the
+  cent on all 14 MFD jobs** against the old `By Account` path before switching,
+  and it also retires the old-layout problem: the 11 archived MFD workbooks no
+  longer need regenerating to be readable.
+
+
 - **P&Ls are SORTED INTO THE DIVISION FOLDER (2026-08-31, binding).** The
   OneDrive folder LINK is the unit of sharing: the owner sends a PM the link to
   their division, so a P&L landing at the `PROJECT P&Ls` root would put every
