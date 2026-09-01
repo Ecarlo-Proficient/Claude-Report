@@ -30,6 +30,7 @@ import json
 import os
 import platform
 import re
+import shutil
 import signal
 import sqlite3
 import subprocess
@@ -109,12 +110,53 @@ def _os_open(path: str):
     return None
 
 
+# Downloaded-scan batches are TEMPORARY - a folder to grab a few PDFs from and send, not storage.
+# Each batch self-deletes after this many hours so they never accumulate (owner 2026-08-31: "temp
+# to delete after 24 hours so it doesn't hold storage hostage"). Override with ACB_AUDIT_SCANS_TTL_H.
+_AUDIT_SCANS_TTL_H = 24.0
+_AUDIT_BATCH_RE = re.compile(r"^\d{2}-\d{2}-\d{4} \d{4}$")   # the "MM-DD-YYYY HHMM" batch-folder name
+
+
+def _audit_scans_base() -> Path:
+    return Path(paths.get_path("ACB_AUDIT_SCANS_DIR", Path.home() / "Downloads" / "Audit scans"))
+
+
+def _audit_scans_ttl_h() -> float:
+    try:
+        return max(1.0, float(os.environ.get("ACB_AUDIT_SCANS_TTL_H", _AUDIT_SCANS_TTL_H)))
+    except (TypeError, ValueError):
+        return _AUDIT_SCANS_TTL_H
+
+
+def _prune_audit_scans() -> int:
+    """Delete scan batches older than the TTL so downloads never pile up. Only ever removes our own
+    dated batch subfolders (name = 'MM-DD-YYYY HHMM'); anything else the owner parked in the base is
+    left alone, so a folder they renamed to keep survives. Best-effort: a locked file just waits for
+    the next sweep. Returns how many batches it removed."""
+    base = _audit_scans_base()
+    try:
+        entries = list(base.iterdir())
+    except OSError:
+        return 0                                        # base doesn't exist yet → nothing to prune
+    cutoff = time.time() - _audit_scans_ttl_h() * 3600
+    removed = 0
+    for d in entries:
+        try:
+            if d.is_dir() and _AUDIT_BATCH_RE.match(d.name) and d.stat().st_mtime < cutoff:
+                shutil.rmtree(d, ignore_errors=True)
+                removed += 1
+        except OSError:
+            continue
+    return removed
+
+
 def _audit_scans_dir() -> Path:
     """A fresh, dated folder for a batch of downloaded bill scans - under ~/Downloads by default
-    (where the owner expects files they're about to attach), one subfolder per run so batches
-    never overwrite each other. Override the base with ACB_AUDIT_SCANS_DIR."""
-    base = paths.get_path("ACB_AUDIT_SCANS_DIR", Path.home() / "Downloads" / "Audit scans")
-    return Path(base) / _dt.datetime.now().strftime("%m-%d-%Y %H%M")
+    (where the owner expects files they're about to attach), one subfolder per run so batches never
+    overwrite each other. Override the base with ACB_AUDIT_SCANS_DIR. Prunes stale batches first so
+    the folder stays temporary and never holds storage."""
+    _prune_audit_scans()
+    return _audit_scans_base() / _dt.datetime.now().strftime("%m-%d-%Y %H%M")
 
 
 def _ensure_lien_vendor_dir(vendor: str):
@@ -2355,6 +2397,8 @@ def main():
     Handler.db_path = args.db
     url = f"http://127.0.0.1:{args.port}"
     httpd = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+
+    _prune_audit_scans()   # sweep any scan batches left past their TTL from a previous run
 
     ready = fetch_data(args.db)
     if "error" in ready:

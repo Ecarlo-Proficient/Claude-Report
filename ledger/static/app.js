@@ -817,7 +817,7 @@ function qboLinkCell(text, url, title) {
     td.appendChild(s);
     if (url) {
       const a = document.createElement("a"); a.href = url; a.target = "_blank"; a.rel = "noopener";
-      a.className = "qbo-ico"; a.textContent = " ↗"; a.title = title || "Open in QuickBooks";
+      a.className = "qbo-ico"; a.textContent = "qb"; a.title = title || "Open in QuickBooks";
       a.onclick = e => e.stopPropagation(); td.appendChild(a);
     }
   } else { td.textContent = label; }
@@ -3038,7 +3038,7 @@ function invNoCell(inv) {
   const qurl = qboInvoiceUrl(inv.qbo_txn_id);
   if (qurl) {
     const a = document.createElement("a"); a.href = qurl; a.target = "_blank"; a.rel = "noopener";
-    a.className = "qbo-ico"; a.textContent = "↗"; a.title = "Open this invoice in QuickBooks";
+    a.className = "qbo-ico"; a.textContent = "qb"; a.title = "Open this invoice in QuickBooks";
     a.onclick = (e) => e.stopPropagation(); td.appendChild(a);
   }
   return td;
@@ -6206,7 +6206,7 @@ async function _acctDoDownload() {
     const r = await (await fetch("/api/attachment/download", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ bills }) })).json();
     if (r && r.ok && r.count) {
       b.textContent = `Downloaded ${r.count} ✓`;
-      toast(`${r.count} scan${r.count === 1 ? "" : "s"} from ${r.bills} bill${r.bills === 1 ? "" : "s"} → folder opened`);
+      toast(`${r.count} scan${r.count === 1 ? "" : "s"} from ${r.bills} bill${r.bills === 1 ? "" : "s"} → folder opened · auto-clears in 24h`);
     } else if (r && r.ok) {
       b.textContent = "Download scans"; toast("No scans found on those bills");
     } else {

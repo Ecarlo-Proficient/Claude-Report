@@ -4,7 +4,20 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
-- **Health tab - the company-health metric layer folded in (owner, 2026-08-31: "the project ledger
+- **QBO links show a green "qb" badge, not a faint arrow (owner, 2026-08-31: "the icon to open the qbo
+  link is dark blue on a darker blue background, make it the qbo logo so it's green and instinctive").**
+  The old `↗` glyph inherited the accent (blue-on-blue, easy to miss). `.qbo-ico` is now a solid green
+  (`#2ca01c`, QuickBooks green) circular **qb** badge - a non-infringing evocation of the QBO mark that
+  reads instantly on any row background, in both themes (fixed brand colour, not a theme token). Applied
+  everywhere a QBO link renders: both emitters (`qboLinkCell` for bills, the invoice-# link).
+- **Downloaded scan folders are temporary - self-delete after 24h (owner, 2026-08-31: "the folder must
+  be setup to be temp to delete after 24 hours so it doesn't hold storage hostage").** Each "Download
+  scans" batch (`~/Downloads/Audit scans/<stamp>/`) is a grab-and-send folder, not storage. `_prune_audit_scans`
+  deletes batches older than the TTL (default 24h, override `ACB_AUDIT_SCANS_TTL_H`); it runs before each
+  new download AND at dashboard startup, so they never accumulate whether the app is reused or restarted.
+  Only our own dated batch folders (name = `MM-DD-YYYY HHMM`) are swept - a folder the owner renames to
+  keep survives. The download toast now says "auto-clears in 24h". Unit-tested: old batches deleted, fresh
+  + renamed folders kept, TTL override honored.
   is basically acting as the health without the health metrics so i want to see if i can fold that
   in"). v1.2.0.** The retired `health-dashboard/` Company Tracker / Dashboard model now renders
   live in the ledger: **Money In / Money Out / Position / Break-Even** (the settled 2026-07-17

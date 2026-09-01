@@ -1111,8 +1111,17 @@ html[data-theme="dark"] .wr-block-title.pm { color: #7fb0e0; }
 /* ── Invoice detail: native-first invoice # link + a subtle QBO icon ─────────── */
 .inv-detail-link { cursor: pointer; border-bottom: 1px dotted var(--border); font-variant-numeric: tabular-nums; }
 .inv-detail-link:hover { color: var(--accent); border-bottom-color: var(--accent); }
-.qbo-ico { margin-left: 6px; font-size: .82em; text-decoration: none; opacity: .55; }
-.qbo-ico:hover { opacity: 1; }
+/* QBO link affordance: a green "qb" badge (evokes the QuickBooks mark) so it reads instantly as a
+   QuickBooks link on any row background - the old faint ↗ was blue-on-blue and easy to miss
+   (owner 2026-08-31). Green is fixed brand colour, not a theme token, so it stays green in both. */
+.qbo-ico {
+  display: inline-flex; align-items: center; justify-content: center; vertical-align: middle;
+  margin-left: 7px; width: 17px; height: 17px; border-radius: 50%;
+  background: #2ca01c; color: #fff;                 /* QuickBooks green */
+  font-size: 10px; font-weight: 800; letter-spacing: -.5px; line-height: 1;
+  text-decoration: none; text-transform: lowercase; padding-right: .5px;
+}
+.qbo-ico:hover { background: #23851a; }             /* a touch darker on hover */
 #invDetailBody .dv.neg { color: var(--neg); }
 #invDetailBody .dnote.dim { color: var(--text-dim); font-style: italic; }
 .dgroup.inv-qbo { margin-top: 6px; }
