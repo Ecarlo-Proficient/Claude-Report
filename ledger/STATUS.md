@@ -4,6 +4,21 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Invoices tab: grouped by client like QBO, open/all toggle, collections notes + avg days-to-pay
+  (owner, 2026-08-31: "invoices amounts grouped by client like QBO ... open invoices only, then a
+  toggle for all ... see the notion notes to judge if we get paid soon ... average days to pay").**
+  The Amounts view now GROUPS BY CLIENT (most-owed-first): each client is a header showing invoice
+  count, open $, and **avg days-to-pay** (from `_client_pay_speed`, the same pay-speed the Customer
+  Center forecast uses) so you can guess when a check lands. Rows show project · invoice # · date ·
+  open · total · **Collections note**. A new **Open only ↔ All** segment toggle: open-only rides the
+  light bulk load; **All** (incl. paid) is fetched on demand from `GET /api/invoices/all`
+  (`_fetch_open_invoices(open_only=False)`) so the refresh stays light; paid rows render muted, led by
+  "Paid <date>".
+  - **Notion collections note** = the Invoice Tracker's **`Quick Status`** (the one-liner the aging
+    file + cash-flow forecast already use). `load_invoices.parse_invoice_page` now maps it to a new
+    `billing_event.note` column (migration added to `_migrate_billing_event`; `_fetch_open_invoices`
+    reads it, degrading gracefully if an un-synced DB lacks the column). Populated on the next invoice
+    sync. Verified: 193 invoices carry a note; grouped view + All toggle render live, no console errors.
 - **QBO links show a green "qb" badge, not a faint arrow (owner, 2026-08-31: "the icon to open the qbo
   link is dark blue on a darker blue background, make it the qbo logo so it's green and instinctive").**
   The old `↗` glyph inherited the accent (blue-on-blue, easy to miss). `.qbo-ico` is now a solid green

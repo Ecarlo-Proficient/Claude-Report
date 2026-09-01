@@ -105,6 +105,7 @@ CREATE TABLE IF NOT EXISTS billing_event (
     lien_notice     TEXT,                        -- related Lien Tracker Notice Type (RP/CP/MFD Notice, Intent to Lien...)
     paid_date       TEXT,                        -- Paid Date from the tracker (when the GC paid; drives the Payments tab)
     draw_period     TEXT,                        -- from PrivateNote (the QBO custom field is unreachable)
+    note            TEXT,                        -- Notion Quick Status: the collections one-liner ("GC paying Fri")
     source          TEXT NOT NULL DEFAULT 'qbo_invoice',
     loaded_at       TEXT NOT NULL
 );

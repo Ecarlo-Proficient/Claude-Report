@@ -664,18 +664,27 @@ def _client_pay_speed(con) -> dict:
     return {"by_client": by_client, "all_avg": (round(sum(alld) / len(alld)) if alld else None)}
 
 
-def _fetch_open_invoices(con) -> dict:
-    """Open AR invoices (the draws the GC still owes you) from billing_event, aged by DUE
-    DATE into the same Current/1-30/31-60/61-90/90+ buckets as the Invoice Tracker's AR
-    Aging tab, each carrying its related Lien Tracker status. Empty (not an error) if
-    billing_event predates the AR columns or is unloaded."""
-    out = {"as_of": _dt.date.today().isoformat(), "buckets": _AGING_BUCKETS, "invoices": []}
+def _fetch_open_invoices(con, open_only: bool = True) -> dict:
+    """AR invoices from billing_event, aged by DUE DATE into the same Current/1-30/31-60/61-90/90+
+    buckets as the Invoice Tracker's AR Aging tab, each carrying its related Lien Tracker status +
+    the Notion collections note (Quick Status). `open_only` (default) keeps just the draws the GC
+    still owes; False returns ALL invoices incl. paid (the Invoices tab's "show all" toggle - served
+    on demand so the bulk load stays light). Empty (not an error) if billing_event is unloaded."""
+    out = {"as_of": _dt.date.today().isoformat(), "buckets": _AGING_BUCKETS, "invoices": [], "open_only": open_only}
+    where = "WHERE COALESCE(balance,0) > 0.005" if open_only else ""
+    try:
+        have = {r[1] for r in con.execute("PRAGMA table_info(billing_event)")}
+    except sqlite3.OperationalError:
+        return out
+    if not have:
+        return out
+    note_col = ", note" if "note" in have else ""   # older DBs lack it until the next invoice sync
     try:
         rows = con.execute(
             "SELECT doc_number, qbo_txn_id, project_no, division, customer, memo, amount, "
             "balance, txn_date, due_date, net_terms, aging_bucket, status, litigation, "
-            "lien_status, lien_notice, paid_date, draw_period FROM billing_event "
-            "WHERE COALESCE(balance,0) > 0.005").fetchall()
+            "lien_status, lien_notice, paid_date, draw_period" + note_col + " FROM billing_event "
+            + where).fetchall()
     except sqlite3.OperationalError:
         return out
     # Project → QBO customer id (CustomerRef.value from cost_line) for the project# deep link. Absent-safe.
@@ -1949,6 +1958,8 @@ class Handler(BaseHTTPRequestHandler):
             self._subloc_project(self._query().get("p", ""))
         elif path == "/api/vendor":          # on-demand: one vendor's bills (the vendor page)
             self._vendor(self._query().get("v", ""))
+        elif path == "/api/invoices/all":    # on-demand: ALL invoices incl. paid (the "show all" toggle)
+            self._invoices_all()
         elif path.startswith("/static/"):
             self._static(path[len("/static/"):])
         else:
@@ -2004,6 +2015,15 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": True, "project": project, "events": _subloc_events(con, project)})
         except sqlite3.OperationalError as e:                # noqa: BLE001
             self._json({"ok": False, "error": str(e), "events": []})
+        finally:
+            con.close()
+
+    def _invoices_all(self):
+        """On-demand: ALL AR invoices incl. paid, for the Invoices tab's 'show all' toggle. Kept OUT
+        of the bulk load so the refresh stays light - fetched only when the owner flips to All."""
+        con = _connect(self.db_path)
+        try:
+            self._json(_fetch_open_invoices(con, open_only=False))
         finally:
             con.close()
 

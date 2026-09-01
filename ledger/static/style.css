@@ -298,9 +298,16 @@ a.invno.qbo-link:hover { border-color: var(--accent); text-decoration: none; }
 .ar-open { color: #b8860b; font-size: .82em; font-weight: 600; }   /* Unpaid / Partially Paid — GC still owes */
 .ar-paid { color: var(--pos); font-size: .82em; font-weight: 600; }  /* Paid */
 .paidcnt { color: var(--text-dim); font-size: .85em; font-variant-numeric: tabular-nums; }
-tr.draw-cust > td { background: color-mix(in srgb, var(--accent) 16%, var(--surface-2));
+tr.draw-cust > td, tr.inv-client > td { background: color-mix(in srgb, var(--accent) 16%, var(--surface-2));
   border-top: 2px solid color-mix(in srgb, var(--accent) 38%, var(--border)); padding: 9px 12px; }
-tr.draw-cust .g-cust { font-weight: 800; font-size: 1.02em; letter-spacing: -.01em; }
+tr.draw-cust .g-cust, tr.inv-client .g-cust { font-weight: 800; font-size: 1.02em; letter-spacing: -.01em; }
+tr.inv-client .g-sub { color: var(--text-dim); font-weight: 500; font-size: .85em; }
+/* AR amounts view: muted paid rows + the Notion collections note (Quick Status) */
+tr.inv-paid td { color: var(--text-dim); }
+td.inv-note .note-txt { color: var(--text); }
+td.inv-note { max-width: 340px; }
+td.inv-note .note-txt { display: inline-block; max-width: 300px; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; vertical-align: bottom; }
 tr.draw-group > td { background: color-mix(in srgb, var(--accent) 7%, var(--surface-2));
   border-top: 1px solid var(--border); padding: 7px 10px 7px 26px; }   /* nested under the customer */
 tr.draw-group .g-proj { font-weight: 800; font-size: .95em; letter-spacing: -.01em; }

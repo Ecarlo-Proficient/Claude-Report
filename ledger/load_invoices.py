@@ -152,6 +152,7 @@ def parse_invoice_page(page: dict, division_default: str | None = None,
         "lien_status": lien_stat,
         "lien_notice": lien_notice,
         "draw_period": None,
+        "note": _prop(props, "Quick Status"),      # the collections one-liner ("GC paying Fri") for the AR view
         "source": "invoice_tracker",
     }
 
@@ -189,7 +190,7 @@ def load_customer_titles(nc) -> dict:
 _COLS = ["qbo_txn_id", "doc_number", "project_no", "division", "customer", "memo",
          "amount", "balance", "txn_date", "status", "due_date", "paid_date", "net_terms",
          "aging_bucket", "litigation", "lien_status", "lien_notice",
-         "draw_period", "source", "loaded_at"]
+         "draw_period", "note", "source", "loaded_at"]
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
@@ -216,7 +217,7 @@ def _migrate_billing_event(con) -> None:
     # (CREATE TABLE IF NOT EXISTS won't add columns to an existing table).
     add = [("due_date", "TEXT"), ("net_terms", "TEXT"), ("aging_bucket", "TEXT"),
            ("litigation", "INTEGER NOT NULL DEFAULT 0"), ("lien_status", "TEXT"),
-           ("lien_notice", "TEXT"), ("paid_date", "TEXT")]
+           ("lien_notice", "TEXT"), ("paid_date", "TEXT"), ("note", "TEXT")]
     for name, decl in add:
         if cols and name not in cols:
             con.execute(f"ALTER TABLE billing_event ADD COLUMN {name} {decl}")

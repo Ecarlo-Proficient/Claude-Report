@@ -2800,58 +2800,109 @@ const INV_SORTS = {
 };
 
 let invView = "amounts";   // "amounts" | "aging" - the Open-invoices view toggle (owner 2026-08-27)
+let invScope = "open";     // "open" | "all" - open-only vs every invoice incl. paid (owner 2026-08-31)
+let OI_ALL = null;         // on-demand cache of ALL invoices; fetched the first time scope flips to "all"
+function invData() { return (invScope === "all" && OI_ALL) ? OI_ALL : OI; }
+// avg days-to-pay for a client, from the active dataset's pay_speed (falls back to the portfolio avg).
+function invClientAvgDays(c) { const ps = (invData().pay_speed) || {}; const s = (ps.by_client || {})[(c || "").toLowerCase()]; return (s && s.avg_days != null) ? s.avg_days : null; }
+// Flip open-only ↔ all. "All" is fetched on demand the first time (kept off the bulk load), then cached.
+async function _setInvScope(scope, seg, btn) {
+  invScope = scope;
+  seg.querySelectorAll(".seg-btn").forEach(x => x.classList.toggle("on", x === btn));
+  if (scope === "all" && !OI_ALL) {
+    { const n = $("#invNote"); if (n) n.textContent = "(loading all invoices…)"; }
+    try { OI_ALL = await (await fetch("/api/invoices/all")).json(); }
+    catch (e) {
+      OI_ALL = null; toast("Could not load all invoices"); invScope = "open";
+      seg.querySelectorAll(".seg-btn").forEach(x => x.classList.toggle("on", x.dataset.scope === "open"));
+    }
+  }
+  renderOpenInvoices();
+}
 
-// The AMOUNTS view: a clean, flat, sortable list of open invoices and what's owed - no aging
-// buckets, no lien columns. Shares the tab's filters + sort with the Aging view; click a row
-// for the invoice memo + details, or the invoice # for the native detail / QBO.
+// The AMOUNTS view: invoices GROUPED BY CLIENT like QBO's AR (owner 2026-08-31). Each client is a
+// header showing how many invoices, what's open, and how fast they pay (avg days-to-pay → a guess at
+// when it lands); its rows show project / invoice # / date / open / total / the Notion collections
+// note. Honors the Open-only↔All scope toggle. Click a row for details, or the invoice # for QBO.
 function renderInvAmounts(all, f) {
   const host = $("#invTable"), thead = host.querySelector("thead"), tbody = host.querySelector("tbody");
   { const st = $("#invStats"); if (st) st.innerHTML = ""; }   // aging tiles belong to the Aging view
-  let rows = all.filter(i => invPasses(i, f));
-  rows = [...rows].sort(INV_SORTS[($("#ifSort") || {}).value || "due"] || INV_SORTS.due);
+  const rows = all.filter(i => invPasses(i, f));
+  const sortFn = INV_SORTS[($("#ifSort") || {}).value || "due"] || INV_SORTS.due;
+  // group by client, tally open + billed, then order clients by most-open-first
+  const groups = new Map();
+  for (const i of rows) {
+    const c = i.customer || "–";
+    let g = groups.get(c); if (!g) { g = { client: c, open: 0, billed: 0, rows: [] }; groups.set(c, g); }
+    g.open += oiBal(i); g.billed += num(i.amount); g.rows.push(i);
+  }
+  const clients = [...groups.values()].sort((a, b) => b.open - a.open || (a.client || "~").localeCompare(b.client || "~"));
+  for (const g of clients) g.rows.sort(sortFn);
   const totOpen = rows.reduce((t, i) => t + oiBal(i), 0);
-  const totAmt = rows.reduce((t, i) => t + num(i.amount), 0);
+  const totBilled = rows.reduce((t, i) => t + num(i.amount), 0);
   $("#invNote").textContent = all.length
-    ? `(${rows.length.toLocaleString()} of ${all.length.toLocaleString()} · ${money(totOpen)} open)` : "(no AR data)";
+    ? `(${rows.length.toLocaleString()} of ${all.length.toLocaleString()} · ${money(totOpen)} open · ${clients.length} client${clients.length === 1 ? "" : "s"})` : "(no AR data)";
   { const anyMsel = INV_MSEL.some(c => (invMSel[c.id] || {}).size);
     const cb = $("#ifClear"); if (cb) cb.hidden = !(anyMsel || f.div || f.lien || f.lienclk || f.litig !== "ex"); }
-  const cols = [["Client", "left"], ["Project", "left"], ["Invoice #", "left"], ["Date", "left"], ["Open balance", "right"], ["Invoice total", "right"]];
+  const cols = [["Project", "left"], ["Invoice #", "left"], ["Date", "left"], ["Open balance", "right"], ["Invoice total", "right"], ["Collections note", "left"]];
   thead.innerHTML = ""; const htr = document.createElement("tr");
   for (const [c, al] of cols) { const th = document.createElement("th"); th.className = al; th.textContent = c; htr.appendChild(th); } thead.appendChild(htr);
   tbody.innerHTML = "";
   if (!rows.length) {
     const tr = document.createElement("tr"), td = document.createElement("td");
     td.colSpan = cols.length; td.className = "left"; td.style.cssText = "padding:14px;color:var(--text-dim)";
-    td.textContent = all.length ? "No open invoices match these filters." : "No AR data - run load_invoices.py.";
+    td.textContent = all.length ? "No invoices match these filters." : "No AR data - run load_invoices.py.";
     tr.appendChild(td); tbody.appendChild(tr); return;
   }
-  for (const i of rows) {
-    const tr = document.createElement("tr"); tr.style.cursor = "pointer";
-    tr.title = "Click for the invoice memo + details";
-    tr.onclick = (e) => { if (e.target.closest("a")) return; openInvoiceDetail(i); };
-    const cli = document.createElement("td"); cli.className = "left dim"; cli.textContent = i.customer || "–"; tr.appendChild(cli);
-    const pc = document.createElement("td"); pc.className = "left";
-    if (i.division) { const dot = document.createElement("span"); dot.className = "divdot " + divClass(i.division); dot.title = i.division; pc.appendChild(dot); }
-    pc.appendChild(document.createTextNode(i.project_no || "–")); tr.appendChild(pc);
-    tr.appendChild(invNoCell(i));
-    tr.appendChild(leftText(fmtDateShort(i.txn_date)));
-    const ob = document.createElement("td"); ob.className = "right"; ob.textContent = money(oiBal(i));
-    if (i.days_past_due != null && i.days_past_due > 0) { ob.style.color = "var(--neg)"; ob.title = i.days_past_due + " days past due"; }
-    tr.appendChild(ob);
-    tr.appendChild(rightText(money(i.amount)));
-    tbody.appendChild(tr);
+  for (const g of clients) {
+    // client header (like QBO's customer group): who, how many, open $, and how fast they pay
+    const hr = document.createElement("tr"); hr.className = "inv-client";
+    const htd = document.createElement("td"); htd.colSpan = cols.length;
+    const nm = document.createElement("span"); nm.className = "g-cust"; nm.textContent = g.client;
+    const sub = document.createElement("span"); sub.className = "g-sub";
+    const ad = invClientAvgDays(g.client);
+    const bits = [`${g.rows.length} invoice${g.rows.length === 1 ? "" : "s"}`, `${money(g.open)} open`];
+    if (ad != null) bits.push(`avg pays in ${ad}d`);
+    sub.textContent = " · " + bits.join(" · ");
+    htd.appendChild(nm); htd.appendChild(sub); hr.appendChild(htd); tbody.appendChild(hr);
+    for (const i of g.rows) {
+      const paid = oiBal(i) <= 0.005;
+      const tr = document.createElement("tr"); tr.style.cursor = "pointer"; if (paid) tr.classList.add("inv-paid");
+      tr.title = "Click for the invoice memo + details";
+      tr.onclick = (e) => { if (e.target.closest("a")) return; openInvoiceDetail(i); };
+      const pc = document.createElement("td"); pc.className = "left";
+      if (i.division) { const dot = document.createElement("span"); dot.className = "divdot " + divClass(i.division); dot.title = i.division; pc.appendChild(dot); }
+      pc.appendChild(document.createTextNode(i.project_no || "–")); tr.appendChild(pc);
+      tr.appendChild(invNoCell(i));
+      tr.appendChild(leftText(fmtDateShort(i.txn_date)));
+      const ob = document.createElement("td"); ob.className = "right";
+      if (paid) { ob.textContent = "–"; ob.classList.add("dim"); }
+      else { ob.textContent = money(oiBal(i)); if (i.days_past_due != null && i.days_past_due > 0) { ob.style.color = "var(--neg)"; ob.title = i.days_past_due + " days past due"; } }
+      tr.appendChild(ob);
+      tr.appendChild(rightText(money(i.amount)));
+      // Collections note = Notion Quick Status; a paid row leads with its paid date
+      const nc = document.createElement("td"); nc.className = "left inv-note";
+      if (paid && i.paid_date) { const p = document.createElement("span"); p.className = "st ok"; p.textContent = "Paid " + fmtDateShort(i.paid_date); nc.appendChild(p); }
+      if (i.note) { if (nc.childNodes.length) nc.appendChild(document.createTextNode(" ")); const n = document.createElement("span"); n.className = "note-txt"; n.textContent = i.note; n.title = i.note; nc.appendChild(n); }
+      if (!nc.childNodes.length) { nc.textContent = "–"; nc.classList.add("dim"); }
+      tr.appendChild(nc);
+      tbody.appendChild(tr);
+    }
   }
   const tr = document.createElement("tr"); tr.className = "inv-total-row";
-  const td0 = document.createElement("td"); td0.className = "left"; td0.colSpan = 4; td0.textContent = "TOTAL"; tr.appendChild(td0);
-  const t1 = document.createElement("td"); t1.className = "right"; t1.textContent = money(totOpen); tr.appendChild(t1);
-  const t2 = document.createElement("td"); t2.className = "right"; t2.textContent = money(totAmt); tr.appendChild(t2);
+  const td0 = document.createElement("td"); td0.className = "left"; td0.colSpan = 3; td0.textContent = "TOTAL"; tr.appendChild(td0);
+  tr.appendChild(rightText(money(totOpen)));
+  tr.appendChild(rightText(money(totBilled)));
+  tr.appendChild(document.createElement("td"));
   tbody.appendChild(tr);
 }
 
 function renderOpenInvoices() {
   const host = $("#invTable"); if (!host) return;
-  const buckets = OI.buckets || ["Current", "1-30", "31-60", "61-90", "90+"];
-  const all = OI.invoices || [];
+  const D = invData();
+  const buckets = D.buckets || ["Current", "1-30", "31-60", "61-90", "90+"];
+  const all = D.invoices || [];
+  { const h = $("#invHeading"); if (h) h.textContent = invScope === "all" ? "All invoices" : "Open invoices"; }
   if (!$("#ifDivision") || !$("#ifDivision").options.length) buildInvFilters();
 
   const fv = sel => ($(sel) ? $(sel).value : "");
@@ -2900,7 +2951,7 @@ function renderOpenInvoices() {
   $("#invNote").textContent = all.length
     ? `(${rows.length.toLocaleString()} of ${all.length.toLocaleString()} · ${money(shown)} open)`
     : "(no AR data - run load_invoices.py)";
-  { const el = $("#invAsOf"); if (el) el.textContent = OI.as_of ? "aged as of " + fmtDate(OI.as_of) : ""; }
+  { const el = $("#invAsOf"); if (el) el.textContent = D.as_of ? "aged as of " + fmtDate(D.as_of) : ""; }
   { const anyMsel = INV_MSEL.some(c => (invMSel[c.id] || {}).size);
     const cb = $("#ifClear"); if (cb) cb.hidden = !(anyMsel || f.div || f.lien || f.lienclk || f.litig !== "ex" || invBucketFilter != null); }
 
@@ -6290,6 +6341,7 @@ function init() {
   { const el = $("#ifStatement"); if (el) el.onclick = openInvStatement; }
   { const el = $("#btnCopyStmt"); if (el) el.onclick = copyInvStatement; }
   { const seg = $("#invViewSeg"); if (seg) for (const b of seg.querySelectorAll(".seg-btn")) b.onclick = () => { invView = b.dataset.view; seg.querySelectorAll(".seg-btn").forEach(x => x.classList.toggle("on", x === b)); renderOpenInvoices(); }; }
+  { const seg = $("#invScopeSeg"); if (seg) for (const b of seg.querySelectorAll(".seg-btn")) b.onclick = () => _setInvScope(b.dataset.scope, seg, b); }
   { const el = $("#btnCloseStmt"); if (el) el.onclick = closePanels; }
   { const el = $("#btnCloseBillDetail"); if (el) el.onclick = closePanels; }
   { const el = $("#btnClosePayBills"); if (el) el.onclick = closePanels; }

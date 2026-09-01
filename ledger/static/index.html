@@ -294,9 +294,13 @@
     <div class="tab-page" data-tab="invoices" hidden>
       <section class="widget">
         <div class="widget-head">
-          <h2>Open invoices <span class="count" id="invNote"></span></h2>
+          <h2><span id="invHeading">Open invoices</span> <span class="count" id="invNote"></span></h2>
           <div class="wh-right">
             <span class="count" id="invAsOf"></span>
+            <div class="seg" id="invScopeSeg" title="Open only = unpaid invoices the GC still owes · All = every invoice incl. paid">
+              <button type="button" class="seg-btn on" data-scope="open">Open only</button>
+              <button type="button" class="seg-btn" data-scope="all">All</button>
+            </div>
             <div class="seg" id="invViewSeg" title="Amounts = a clean list of what's owed · Aging = the AR aging buckets + lien clock">
               <button type="button" class="seg-btn on" data-view="amounts">Amounts</button>
               <button type="button" class="seg-btn" data-view="aging">Aging</button>
