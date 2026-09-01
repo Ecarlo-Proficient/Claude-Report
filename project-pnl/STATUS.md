@@ -41,8 +41,10 @@ manual close), RP (no draws — expenses → invoice → profit).
   and its `DRAW SUMMARY` banner start in B too, so the strip lines up with the
   bills table under it. Body text is size 12 everywhere, with each sheet's
   column widths scaled by the same ratio so a bump cannot clip anything.
-  POs and Reconciliations moved AHEAD of the draw sheets - a job with a dozen
-  monthly draws buried them off the end of the tab bar.
+  **THE DRAW SHEETS GO LAST and nothing sits behind them** (the user
+  2026-09-01) - a job with a dozen monthly draws pushes anything after them off
+  the end of the tab bar. POs, Reconciliations and Cash Flow all moved ahead of
+  the draws; every one of them is read more often than any single old draw.
 
   **Both are POST-PASSES in `safe_save` (`_normalise_body_font`,
   `_apply_left_gutter`), not edits at the call sites, and that is deliberate:**

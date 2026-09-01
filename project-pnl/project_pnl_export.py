@@ -6718,16 +6718,16 @@ def generate_project_pnl(
     # Order (the user 2026-07-16; Labor/Concrete first among the analysis tabs
     # 2026-07-29 — they're the PM/ops manager's main view): P&L, Transactions,
     # Labor, Concrete, their detail, Budget vs Actual, Next Draw, POs,
-    # Reconciliations, then the draw sheets; Cash Flow trails.
-    # POs and Reconciliations sit BEFORE the draws (the user 2026-08-31): a job
-    # with a dozen monthly draws buried them off the end of the tab bar, and
-    # they are read far more often than any single old draw.
+    # Reconciliations, Cash Flow — and the draw sheets LAST.
+    # THE DRAWS GO AT THE END, nothing after them (the user 2026-09-01): a job
+    # with a dozen monthly draws pushes anything behind them off the end of the
+    # tab bar, and every one of these tabs is read more often than any single
+    # old draw. Cash Flow used to trail and was the last thing left buried.
     _order_sheets(wb, ["P&L", "Transactions", "By Account",
                        "Labor", "Concrete", "Budget vs Actual",
                        *(["Next Draw"] if leftover is not None else []),
-                       "POs", "Reconciliations",
-                       *draw_sheet_order,
-                       "Cash Flow"])
+                       "POs", "Reconciliations", "Cash Flow",
+                       *draw_sheet_order])
 
     # Color-code the tabs for navigation (the user 2026-06-26).
     _tabcolors = {"P&L": "1F3A5F", "By Account": "375623", "Cash Flow": "C55A11",
