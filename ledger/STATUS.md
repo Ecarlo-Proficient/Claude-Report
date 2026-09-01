@@ -4,6 +4,19 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Grouped views collapse by default + nav reorder (owner, 2026-08-31: "fold the grouping for all
+  tabs ... collapsed as default and a toggle for uncollapse ... default moving forward for every page
+  that groups"; "sub group by project now! too mixed up"; "move Console to last").**
+  - **Nav order** is now Overview · Customer · Vendor · Financials · Health · IT · **Console (last)**.
+  - **Collapse-by-default is the standing rule for every grouped view.** Costs / Draws / Bills already
+    did it; now the new ones do too: the **Invoices** amounts view (client bands collapsed, click to
+    open, Collapse/Expand-all button), the **Payments** month/week bands (collapsed to just
+    "<period> · N payments"; the Expand-all button drives the bands when grouped), and the **Vendor
+    Center** group-by-type (type bands collapsed, its own Expand-all). Collapse state is an EXPANDED
+    set (default empty = all collapsed), so newly appearing groups collapse too.
+  - **Invoices amounts sub-groups by PROJECT inside each client** (owner: "too mixed up") via the same
+    `invSubBand` the Aging view uses; the Group-by-project/Flatten toggle now shows in both views.
+    Verified: nav order, all three collapse defaults, and JPI's MFD177/MFD192/MFD325 project bands.
 - **Invoices tab: grouped by client like QBO, open/all toggle, collections notes + avg days-to-pay
   (owner, 2026-08-31: "invoices amounts grouped by client like QBO ... open invoices only, then a
   toggle for all ... see the notion notes to judge if we get paid soon ... average days to pay").**

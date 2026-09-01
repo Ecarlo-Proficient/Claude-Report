@@ -192,6 +192,7 @@ let SUBLOC = { summary: null, divisions: {}, projects: [], open_by_project: {}, 
 let OI = { as_of: null, buckets: ["Current", "1-30", "31-60", "61-90", "90+"], invoices: [] };  // open AR invoices (aging tab)
 let PAY = { payments: [], total_received: 0, count: 0, invoices_paid: 0 };   // received payments, each with the invoices it paid
 let paymentsExpanded = new Set();   // payment ids expanded to show their invoices (default: all collapsed - scannable list)
+let paymentsPeriodsExpanded = new Set();  // month/week bands expanded (default none = all collapsed, owner 2026-08-31)
 let paymentsGroupBy = "month";      // 'none' | 'week' | 'month' - cash-in broken down by period (owner 2026-08-25)
 const _MON3 = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 // Period key (sortable, newest-first) + a human label for a payment's date.
@@ -217,14 +218,14 @@ const WAIVERS_ENABLED = false;
 // ── Tabs (two-level grouped nav) ─────────────────────────────────────────────
 // Parent groups on the top row; the active group's tabs on the second row. The whole
 // structure lives here, so adding/moving a tab is a one-line edit (owner 2026-08-19).
-const NAV_GROUPS = [
-  { id: "console",    label: "Console",       tabs: ["console"] },
+const NAV_GROUPS = [   // order (owner 2026-08-31): Overview · Customer · Vendor · Financials · Health · IT · Console (Console last)
   { id: "overview",   label: "Overview",      tabs: ["overview"] },
-  { id: "health",     label: "Health",        tabs: ["health"] },
-  { id: "financials", label: "Financials",    tabs: ["pnl", "wip", "wipreview", "costs"] },
   { id: "customers",  label: "Customer",      tabs: ["customers", "invoices", "draws", "payments", "sales"] },
   { id: "vendors",    label: "Vendor",        tabs: ["vendors", "bills", "paybills", "accounting", "subloc", "liens"] },
+  { id: "financials", label: "Financials",    tabs: ["pnl", "wip", "wipreview", "costs"] },
+  { id: "health",     label: "Health",        tabs: ["health"] },
   { id: "it",         label: "IT",            tabs: ["systems"] },
+  { id: "console",    label: "Console",       tabs: ["console"] },
 ];
 const TAB_LABELS = {
   overview: "Overview", health: "Health", pnl: "Project P&L", wip: "WIP report", wipreview: "WIP Review", costs: "Costs",
@@ -1548,6 +1549,20 @@ function renderLiens() {
   }
 }
 
+let vendorTypeExpanded = new Set();   // vendor TYPE groups expanded (default none = all collapsed, owner 2026-08-31)
+let _vendorGroupKeys = [];
+function _updateVendorExpandBtn() {
+  const b = $("#vendorExpandAll"); if (!b) return;
+  const grouped = _vendorGroupKeys.length > 0;
+  b.style.display = grouped ? "" : "none";
+  const allExp = grouped && _vendorGroupKeys.every(k => vendorTypeExpanded.has(k));
+  b.textContent = allExp ? "Collapse all" : "Expand all";
+}
+function _vendorToggleAll() {
+  const allExp = _vendorGroupKeys.length && _vendorGroupKeys.every(k => vendorTypeExpanded.has(k));
+  if (allExp) vendorTypeExpanded.clear(); else _vendorGroupKeys.forEach(k => vendorTypeExpanded.add(k));
+  renderVendors();
+}
 function renderVendors() {
   const q = ($("#vendorSearch") ? $("#vendorSearch").value : "").trim().toLowerCase();
   let vends = COST.by_vendor || [];
@@ -1567,19 +1582,7 @@ function renderVendors() {
   const rows = [...vends].sort(grouped
     ? (a, b) => gType(a).localeCompare(gType(b)) || (b.open_bal || 0) - (a.open_bal || 0)
     : (a, b) => (b.open_bal || 0) - (a.open_bal || 0));       // default: most owed first
-  let curG = null;
-  for (const v of rows.slice(0, 300)) {
-    if (grouped && gType(v) !== curG) {                       // type group header
-      curG = gType(v);
-      const gv = rows.filter(x => gType(x) === curG);
-      const gopen = gv.reduce((t, x) => t + (x.open_bal || 0), 0);
-      const gtr = document.createElement("tr"); gtr.className = "draw-cust";
-      const gtd = document.createElement("td"); gtd.colSpan = cols.length;
-      const gs = document.createElement("span"); gs.className = "g-cust"; gs.textContent = curG;
-      const gsub = document.createElement("span"); gsub.className = "g-sub";
-      gsub.textContent = ` · ${gv.length} vendor${gv.length > 1 ? "s" : ""} · ${money(gopen)} open`;
-      gtd.appendChild(gs); gtd.appendChild(gsub); gtr.appendChild(gtd); tbody.appendChild(gtr);
-    }
+  const vendorRow = v => {
     const tr = document.createElement("tr");
     tr.classList.add("row-click"); tr.title = "Open this vendor's page";
     tr.onclick = (e) => { if (e.target.closest(".cell")) return; openVendorPage(v.vendor); };
@@ -1592,8 +1595,32 @@ function renderVendors() {
     const oc = document.createElement("td");
     if (v.open_bal > 0.5) oc.appendChild(moneyCell(v.open_bal)); else oc.appendChild(document.createTextNode("–"));
     tr.appendChild(oc);
-    tbody.appendChild(tr);
+    return tr;
+  };
+  if (grouped) {   // type groups, COLLAPSED by default; open a type to see its vendors (owner 2026-08-31)
+    const order = [], byType = new Map();
+    for (const v of rows) { const t = gType(v); if (!byType.has(t)) { byType.set(t, []); order.push(t); } byType.get(t).push(v); }
+    _vendorGroupKeys = order;
+    for (const t of order) {
+      const gv = byType.get(t), expanded = vendorTypeExpanded.has(t);
+      const gopen = gv.reduce((s, x) => s + (x.open_bal || 0), 0);
+      const gtr = document.createElement("tr"); gtr.className = "draw-cust"; gtr.style.cursor = "pointer";
+      gtr.title = expanded ? "Click to collapse" : "Click to expand";
+      const gtd = document.createElement("td"); gtd.colSpan = cols.length;
+      const caret = document.createElement("span"); caret.className = "bg-caret"; caret.textContent = expanded ? "▾ " : "▸ ";
+      const gs = document.createElement("span"); gs.className = "g-cust"; gs.textContent = t;
+      const gsub = document.createElement("span"); gsub.className = "g-sub";
+      gsub.textContent = ` · ${gv.length} vendor${gv.length > 1 ? "s" : ""} · ${money(gopen)} open`;
+      gtd.appendChild(caret); gtd.appendChild(gs); gtd.appendChild(gsub); gtr.appendChild(gtd);
+      gtr.onclick = () => { if (vendorTypeExpanded.has(t)) vendorTypeExpanded.delete(t); else vendorTypeExpanded.add(t); renderVendors(); };
+      tbody.appendChild(gtr);
+      if (expanded) for (const v of gv.slice(0, 300)) tbody.appendChild(vendorRow(v));
+    }
+  } else {
+    _vendorGroupKeys = [];
+    for (const v of rows.slice(0, 300)) tbody.appendChild(vendorRow(v));
   }
+  _updateVendorExpandBtn();
 }
 function leftText(v) { const td = document.createElement("td"); td.className = "left"; const s = document.createElement("span"); s.textContent = v; td.appendChild(s); return td; }
 
@@ -2712,7 +2739,7 @@ function applySublocSections() {
 // The GC's side of the ledger: what they still owe you, aged by DUE DATE into the
 // same Current/1-30/31-60/61-90/90+ buckets as the AR Aging workbook, each carrying
 // the matching Notion Lien Tracker status. Read-only; Invoice # deep-links to QBO.
-let invCollapsed = new Set();     // customer groups the owner has collapsed
+let invExpanded = new Set();      // customer groups the owner has EXPANDED (default: none = all collapsed, owner 2026-08-31)
 let invGroupKeys = [];            // customer groups on screen (drives Collapse/Expand-all)
 let invBucketFilter = null;       // aging bucket clicked in the stats row (null = all)
 let invSubGroup = true;           // sub-group a client's invoices by project (default) vs one flat list
@@ -2852,41 +2879,62 @@ function renderInvAmounts(all, f) {
     const tr = document.createElement("tr"), td = document.createElement("td");
     td.colSpan = cols.length; td.className = "left"; td.style.cssText = "padding:14px;color:var(--text-dim)";
     td.textContent = all.length ? "No invoices match these filters." : "No AR data - run load_invoices.py.";
-    tr.appendChild(td); tbody.appendChild(tr); return;
+    tr.appendChild(td); tbody.appendChild(tr); invGroupKeys = []; updateInvCollapseBtn(); return;
   }
+  invGroupKeys = clients.map(g => g.client);   // drives the Collapse/Expand-all button
+  const amtRow = (i) => {
+    const paid = oiBal(i) <= 0.005;
+    const tr = document.createElement("tr"); tr.style.cursor = "pointer"; if (paid) tr.classList.add("inv-paid");
+    tr.title = "Click for the invoice memo + details";
+    tr.onclick = (e) => { if (e.target.closest("a")) return; openInvoiceDetail(i); };
+    const pc = document.createElement("td"); pc.className = "left";
+    if (i.division) { const dot = document.createElement("span"); dot.className = "divdot " + divClass(i.division); dot.title = i.division; pc.appendChild(dot); }
+    pc.appendChild(document.createTextNode(i.project_no || "–")); tr.appendChild(pc);
+    tr.appendChild(invNoCell(i));
+    tr.appendChild(leftText(fmtDateShort(i.txn_date)));
+    const ob = document.createElement("td"); ob.className = "right";
+    if (paid) { ob.textContent = "–"; ob.classList.add("dim"); }
+    else { ob.textContent = money(oiBal(i)); if (i.days_past_due != null && i.days_past_due > 0) { ob.style.color = "var(--neg)"; ob.title = i.days_past_due + " days past due"; } }
+    tr.appendChild(ob);
+    tr.appendChild(rightText(money(i.amount)));
+    // Collections note = Notion Quick Status; a paid row leads with its paid date
+    const nc = document.createElement("td"); nc.className = "left inv-note";
+    if (paid && i.paid_date) { const p = document.createElement("span"); p.className = "st ok"; p.textContent = "Paid " + fmtDateShort(i.paid_date); nc.appendChild(p); }
+    if (i.note) { if (nc.childNodes.length) nc.appendChild(document.createTextNode(" ")); const n = document.createElement("span"); n.className = "note-txt"; n.textContent = i.note; n.title = i.note; nc.appendChild(n); }
+    if (!nc.childNodes.length) { nc.textContent = "–"; nc.classList.add("dim"); }
+    return tr;
+  };
   for (const g of clients) {
-    // client header (like QBO's customer group): who, how many, open $, and how fast they pay
-    const hr = document.createElement("tr"); hr.className = "inv-client";
+    const expanded = invExpanded.has(g.client);   // collapsed by default; open a client to see its invoices
+    // client header (like QBO's customer group): caret, who, how many, open $, and how fast they pay
+    const hr = document.createElement("tr"); hr.className = "inv-client"; hr.style.cursor = "pointer";
+    hr.title = expanded ? "Click to collapse" : "Click to expand";
     const htd = document.createElement("td"); htd.colSpan = cols.length;
+    const caret = document.createElement("span"); caret.className = "bg-caret"; caret.textContent = expanded ? "▾ " : "▸ ";
     const nm = document.createElement("span"); nm.className = "g-cust"; nm.textContent = g.client;
     const sub = document.createElement("span"); sub.className = "g-sub";
     const ad = invClientAvgDays(g.client);
     const bits = [`${g.rows.length} invoice${g.rows.length === 1 ? "" : "s"}`, `${money(g.open)} open`];
     if (ad != null) bits.push(`avg pays in ${ad}d`);
     sub.textContent = " · " + bits.join(" · ");
-    htd.appendChild(nm); htd.appendChild(sub); hr.appendChild(htd); tbody.appendChild(hr);
-    for (const i of g.rows) {
-      const paid = oiBal(i) <= 0.005;
-      const tr = document.createElement("tr"); tr.style.cursor = "pointer"; if (paid) tr.classList.add("inv-paid");
-      tr.title = "Click for the invoice memo + details";
-      tr.onclick = (e) => { if (e.target.closest("a")) return; openInvoiceDetail(i); };
-      const pc = document.createElement("td"); pc.className = "left";
-      if (i.division) { const dot = document.createElement("span"); dot.className = "divdot " + divClass(i.division); dot.title = i.division; pc.appendChild(dot); }
-      pc.appendChild(document.createTextNode(i.project_no || "–")); tr.appendChild(pc);
-      tr.appendChild(invNoCell(i));
-      tr.appendChild(leftText(fmtDateShort(i.txn_date)));
-      const ob = document.createElement("td"); ob.className = "right";
-      if (paid) { ob.textContent = "–"; ob.classList.add("dim"); }
-      else { ob.textContent = money(oiBal(i)); if (i.days_past_due != null && i.days_past_due > 0) { ob.style.color = "var(--neg)"; ob.title = i.days_past_due + " days past due"; } }
-      tr.appendChild(ob);
-      tr.appendChild(rightText(money(i.amount)));
-      // Collections note = Notion Quick Status; a paid row leads with its paid date
-      const nc = document.createElement("td"); nc.className = "left inv-note";
-      if (paid && i.paid_date) { const p = document.createElement("span"); p.className = "st ok"; p.textContent = "Paid " + fmtDateShort(i.paid_date); nc.appendChild(p); }
-      if (i.note) { if (nc.childNodes.length) nc.appendChild(document.createTextNode(" ")); const n = document.createElement("span"); n.className = "note-txt"; n.textContent = i.note; n.title = i.note; nc.appendChild(n); }
-      if (!nc.childNodes.length) { nc.textContent = "–"; nc.classList.add("dim"); }
-      tr.appendChild(nc);
-      tbody.appendChild(tr);
+    htd.appendChild(caret); htd.appendChild(nm); htd.appendChild(sub); hr.appendChild(htd);
+    hr.onclick = () => { if (invExpanded.has(g.client)) invExpanded.delete(g.client); else invExpanded.add(g.client); renderOpenInvoices(); };
+    tbody.appendChild(hr);
+    if (!expanded) continue;   // collapsed: skip the invoice rows
+    // sub-group a client's invoices by PROJECT (owner 2026-08-31: "too mixed up") when the toggle is
+    // on and there's more than one project; otherwise a flat list. Same pattern as the Aging view.
+    const sortKey = ($("#ifSort") || {}).value || "due";
+    const projs = [...new Set(g.rows.map(x => x.project_no || "(no project)"))];
+    if (invSubGroup && projs.length > 1) {
+      const inP = p => g.rows.filter(x => (x.project_no || "(no project)") === p);
+      const pTotal = p => inP(p).reduce((t, x) => t + oiBal(x), 0);
+      const pMinDue = p => inP(p).reduce((m, x) => (x.due_date && (!m || x.due_date < m)) ? x.due_date : m, null) || "9999";
+      const pCmp = { due: (a, b) => pMinDue(a).localeCompare(pMinDue(b)) || a.localeCompare(b, undefined, { numeric: true }),
+        owed: (a, b) => pTotal(b) - pTotal(a), client: (a, b) => a.localeCompare(b, undefined, { numeric: true }) }[sortKey] || null;
+      const porder = pCmp ? [...projs].sort(pCmp) : projs;
+      for (const p of porder) { tbody.appendChild(invSubBand(p, nameOf(p), pTotal(p), inP(p).length, cols.length)); for (const i of inP(p)) tbody.appendChild(amtRow(i)); }
+    } else {
+      for (const i of g.rows) tbody.appendChild(amtRow(i));
     }
   }
   const tr = document.createElement("tr"); tr.className = "inv-total-row";
@@ -2895,6 +2943,7 @@ function renderInvAmounts(all, f) {
   tr.appendChild(rightText(money(totBilled)));
   tr.appendChild(document.createElement("td"));
   tbody.appendChild(tr);
+  updateInvCollapseBtn();
 }
 
 function renderOpenInvoices() {
@@ -2917,9 +2966,10 @@ function renderOpenInvoices() {
   { const el = $("#ifLitig"); if (el) el.classList.toggle("filter-on", (el.value || "ex") !== "all"); }
 
   // Two views over the same filtered invoices (owner 2026-08-27): AMOUNTS = a clean list of what's
-  // owed; AGING = the buckets + lien clock. The aging-only grouping buttons hide in Amounts.
-  { const fl = $("#ifSubGroup"), cl = $("#ifCollapse"); const aging = invView === "aging";
-    if (fl) fl.style.display = aging ? "" : "none"; if (cl) cl.style.display = aging ? "" : "none"; }
+  // owed; AGING = the buckets + lien clock. Both group by client, sub-group by project, and collapse -
+  // so the Collapse/Expand-all and Group-by-project buttons show in BOTH (owner 2026-08-31).
+  { const fl = $("#ifSubGroup"), cl = $("#ifCollapse");
+    if (fl) fl.style.display = ""; if (cl) cl.style.display = ""; }
   if (invView === "amounts") { renderInvAmounts(all, f); return; }
 
   // Aging tiles double as the bucket filter. Their totals ignore the bucket pick (so the
@@ -2989,7 +3039,7 @@ function renderOpenInvoices() {
 
   for (const k of order) {
     const g = groups.get(k);
-    const collapsed = invCollapsed.has(k);
+    const collapsed = !invExpanded.has(k);   // collapsed by default; expanded only if the owner opened it
     const gOpen = g.reduce((t, x) => t + oiBal(x), 0);
     const gtr = document.createElement("tr"); gtr.className = "bill-group"; gtr.style.cursor = "pointer";
     gtr.title = collapsed ? "Click to expand" : "Click to collapse";
@@ -3002,7 +3052,7 @@ function renderOpenInvoices() {
     const amt = document.createElement("span"); amt.className = "bg-amt";
     amt.textContent = `${money(gOpen)} open · ${g.length} invoice${g.length > 1 ? "s" : ""}`;
     cell.appendChild(left); cell.appendChild(amt); gtd.appendChild(cell); gtr.appendChild(gtd);
-    gtr.onclick = () => { if (invCollapsed.has(k)) invCollapsed.delete(k); else invCollapsed.add(k); renderOpenInvoices(); };
+    gtr.onclick = () => { if (invExpanded.has(k)) invExpanded.delete(k); else invExpanded.add(k); renderOpenInvoices(); };
     tbody.appendChild(gtr);
     for (const i of g) grand[i.bucket_index] += oiBal(i);   // grand total counts every invoice, even collapsed
     if (collapsed) continue;
@@ -3163,12 +3213,12 @@ function openInvoiceDetail(inv) {
 
 function updateInvCollapseBtn() {
   const btn = $("#ifCollapse"); if (!btn) return;
-  const allC = invGroupKeys.length && invGroupKeys.every(k => invCollapsed.has(k));
-  btn.textContent = allC ? "Expand all" : "Collapse all";
+  const allExp = invGroupKeys.length && invGroupKeys.every(k => invExpanded.has(k));
+  btn.textContent = allExp ? "Collapse all" : "Expand all";
 }
 function invToggleAll() {
-  const allC = invGroupKeys.length && invGroupKeys.every(k => invCollapsed.has(k));
-  if (allC) invCollapsed.clear(); else invGroupKeys.forEach(k => invCollapsed.add(k));
+  const allExp = invGroupKeys.length && invGroupKeys.every(k => invExpanded.has(k));
+  if (allExp) invExpanded.clear(); else invGroupKeys.forEach(k => invExpanded.add(k));
   renderOpenInvoices();
 }
 function invClearFilters() {
@@ -3444,10 +3494,17 @@ function renderPayments() {
   }
   actions.appendChild(seg);
   if (pays.length) {
-    const allExpanded = pays.every(p => paymentsExpanded.has(p.qbo_txn_id));
     const btn = document.createElement("button"); btn.className = "btn small subtle";
-    btn.textContent = allExpanded ? "Collapse all" : "Expand all";
-    btn.onclick = () => { if (allExpanded) paymentsExpanded.clear(); else pays.forEach(p => paymentsExpanded.add(p.qbo_txn_id)); renderPayments(); };
+    if (paymentsGroupBy !== "none") {   // grouped: the button expands/collapses the month/week BANDS (top level)
+      const keys = [...new Set(pays.map(p => payPeriod(p.txn_date, paymentsGroupBy).key))];
+      const allExp = keys.length && keys.every(k => paymentsPeriodsExpanded.has(k));
+      btn.textContent = allExp ? "Collapse all" : "Expand all";
+      btn.onclick = () => { if (allExp) paymentsPeriodsExpanded.clear(); else keys.forEach(k => paymentsPeriodsExpanded.add(k)); renderPayments(); };
+    } else {                            // flat: the button expands/collapses each payment's invoices
+      const allExpanded = pays.every(p => paymentsExpanded.has(p.qbo_txn_id));
+      btn.textContent = allExpanded ? "Collapse all" : "Expand all";
+      btn.onclick = () => { if (allExpanded) paymentsExpanded.clear(); else pays.forEach(p => paymentsExpanded.add(p.qbo_txn_id)); renderPayments(); };
+    }
     actions.appendChild(btn);
   }
   head.appendChild(actions);
@@ -3474,13 +3531,20 @@ function renderPayments() {
       const per = payPeriod(p.txn_date, paymentsGroupBy);
       if (per.key !== curPeriod) {
         curPeriod = per.key;
-        const gtr = document.createElement("tr"); gtr.className = "bill-group";
+        const pExp = paymentsPeriodsExpanded.has(per.key);   // bands COLLAPSED by default (owner 2026-08-31)
+        const gtr = document.createElement("tr"); gtr.className = "bill-group"; gtr.style.cursor = "pointer";
+        gtr.title = pExp ? "Click to collapse" : "Click to expand";
         const gtd = document.createElement("td"); gtd.colSpan = cols.length;
         const cell = document.createElement("div"); cell.className = "bg-cell";
+        const left = document.createElement("span"); left.className = "bg-left";
+        const caret = document.createElement("span"); caret.className = "bg-caret"; caret.textContent = pExp ? "▾" : "▸";
         const key = document.createElement("span"); key.className = "bg-key"; key.textContent = per.label;
+        left.appendChild(caret); left.appendChild(key);
         const amt = document.createElement("span"); amt.className = "bg-amt"; amt.textContent = `${money(perTot[per.key])} · ${perN[per.key]} payment${perN[per.key] === 1 ? "" : "s"}`;
-        cell.appendChild(key); cell.appendChild(amt); gtd.appendChild(cell); gtr.appendChild(gtd); tb.appendChild(gtr);
+        cell.appendChild(left); cell.appendChild(amt); gtd.appendChild(cell); gtr.appendChild(gtd); tb.appendChild(gtr);
+        gtr.onclick = () => { if (paymentsPeriodsExpanded.has(per.key)) paymentsPeriodsExpanded.delete(per.key); else paymentsPeriodsExpanded.add(per.key); renderPayments(); };
       }
+      if (!paymentsPeriodsExpanded.has(per.key)) continue;   // collapsed band → skip its payment rows
     }
     const expanded = paymentsExpanded.has(p.qbo_txn_id);
     // ── the payment transaction: Client · Ref # · Type · Amount Paid · Unlocks (AP) ──
@@ -6309,6 +6373,7 @@ function init() {
   // Draws filters are multi-selects now (built by buildDrawFilters, toggled via _mselWraps below).
   { const el = $("#vendorSearch"); if (el) el.addEventListener("input", renderVendors); }
   { const el = $("#vendorGroupType"); if (el) el.addEventListener("change", renderVendors); }
+  { const el = $("#vendorExpandAll"); if (el) el.onclick = _vendorToggleAll; }
   { const el = $("#lienFProj"); if (el) el.addEventListener("input", renderLiens); }   // the other lien filters are multi-selects now
   { const el = $("#wipActive"); if (el) el.addEventListener("change", renderWip); }
   { const el = $("#billSort"); if (el) el.addEventListener("change", renderBills); }
