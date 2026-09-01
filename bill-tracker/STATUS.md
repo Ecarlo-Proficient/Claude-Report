@@ -122,6 +122,17 @@ no business findings, dollar exposures, or owner analyses (those live in the own
   fill, flex base, crushed, asphalt, dirt…). A `*4` with no aggregate memo still flags, as do rebar/
   lumber/pump/labor. Owner: NOT a blanket `*4` pass - memo-gated. Pump (`*51`) still flags per prior
   call. In `shared/cost_code_audit.flag_lines`.
+- **`Audit - History` — persistent cost-code miscode log (2026-09-01, owner).** "I need this logged
+  in the system - how often the clerk is making the mistakes, and what got fixed after refreshing."
+  New module `cost_code_history.py` (pure state, no QBO) + a fourth audit sheet. State =
+  `<companyhealth>/cost_code_history.json` (OUTSIDE the repo, never committed). `_cost_code_findings`
+  now also returns the raw flags; each REAL run (dry-run bails first) opens/updates an entry
+  (First/Last Seen + Times) per current miscode, flips any vanished OPEN entry to FIXED (with date),
+  and re-opens a reappearing one. Key = `bill_id|cost_code`. Sheet shows all OPEN + FIXED-within-60d
+  (older fixes kept off-sheet); caption = open/new/fixed counts + rolling new/run rate (one clerk, so
+  the aggregate IS the clerk rate). Verified: state machine unit-tested (new/fixed/reopen, persistence,
+  same-key amount sum, corrupt-file resilience); integration test renders the sheet, passes
+  `validate_xlsx` + `xlsx_verify.assert_clean`, and confirms a recode flips OPEN→FIXED.
 - **Cost Code: skip non-job fees / read the memo (2026-08-25, owner).** Credit-card, finance, bank,
   and late fees legitimately post to an EXPENSE ACCOUNT, not a cost code - `shared/cost_code_audit`
   now skips any line whose memo/bill#/account reads as one (`is_nonjob`), and a concrete vendor's

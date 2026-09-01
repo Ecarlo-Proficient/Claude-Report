@@ -92,6 +92,7 @@ from bill_rows import (
 )
 from po_tracker import load_po_tracker, reconcile_unused_pos, index_by_doc, _norm_po
 from general_list import load_contracts
+import cost_code_history as cchist
 from shared.cost_code_audit import (
     classify_vendors, flag_lines, load_override, code_families, po_origin, TYPE_LABEL)
 
@@ -2093,9 +2094,11 @@ def _missing_po_bills(all_rows: List[dict], today: dt.date, days: int = 90) -> L
 
 def _cost_code_findings(all_rows: List[dict], po_index: Optional[Dict[str, dict]],
                         tracker_by_po: Optional[Dict[str, dict]]
-                        ) -> Tuple[List[list], Dict[str, str]]:
+                        ) -> Tuple[List[list], Dict[str, str], List[dict]]:
     """Cost-code family miscodes → themed Coding rows, each with its PO origin.
-    Returns (rows, vtype). Same logic as the old Audit - Cost Code sheet."""
+    Returns (rows, vtype, flags). `flags` are the raw miscode dicts (vendor,
+    bill_id, bill_doc, cost_code, project, amount, date, reason, vtype) that feed
+    the persistent history log. Same logic as the old Audit - Cost Code sheet."""
     recs = []
     for r in all_rows:
         raw = r.get("cost_code", "") or ""
@@ -2127,7 +2130,7 @@ def _cost_code_findings(all_rows: List[dict], po_index: Optional[Dict[str, dict]
         rows.append(["Cost Code", f["vendor"], f["bill_doc"], f["date"], f["project"],
                      f["cost_code"], round(float(f["amount"]), 2), detail,
                      _bill_url(f["bill_id"]), f["bill_id"]])
-    return rows, vtype
+    return rows, vtype, flags
 
 
 def build_audits(wb, all_rows: List[dict],
@@ -2136,7 +2139,8 @@ def build_audits(wb, all_rows: List[dict],
                  tracker_meta: Optional[dict] = None,
                  vendor_root: Optional[Dict[str, str]] = None,
                  vendor_map: Optional[Dict[str, str]] = None,
-                 audit_marks: Optional[Dict[str, str]] = None) -> int:
+                 audit_marks: Optional[Dict[str, str]] = None,
+                 history_path: Optional[Path] = None) -> int:
     """THREE themed audit sheets (the user 2026-08-25 — de-bloat from 9 tabs). Each
     is one filterable Excel Table with an 'Issue' column so a single sheet covers a
     family of checks:
@@ -2186,7 +2190,7 @@ def build_audits(wb, all_rows: List[dict],
                            (r.get("cost_code", "") or "").split(":")[-1].strip(),
                            r.get("line_amount") or 0.0, r.get("line_desc", "") or "",
                            _bill_url(r.get("bill_id", "")), r.get("bill_id", "")])
-    cc_rows, vtype = _cost_code_findings(all_rows, po_index, tracker_by_po)
+    cc_rows, vtype, cc_flags = _cost_code_findings(all_rows, po_index, tracker_by_po)
     coding.extend(cc_rows)
     coding.sort(key=lambda x: (x[0], (x[1] or "").upper(), str(x[2])))
     # Insert the editable, preserved Status (from the mark keyed by bill_id) after
@@ -2211,6 +2215,33 @@ def build_audits(wb, all_rows: List[dict],
                    f"{cnt['both']} both · {cnt['hauler']} hauler · "
                    f"{cnt['review']} review")).font = Font(
         name="Calibri", size=10, italic=True, color="808080")
+
+    # ── HISTORY ─────────────────────────────────────────────────────────
+    # Persistent cost-code miscode log (the owner 2026-09-01): how often the
+    # bill clerk miscodes over time + what got FIXED between refreshes. State is
+    # a JSON OUTSIDE the repo; only a real run reaches here (dry-run bails first).
+    hp = history_path or (paths.companyhealth_dir() / "cost_code_history.json")
+    try:
+        hist = cchist.load(hp)
+        recap = cchist.update(hist, cc_flags, today)
+        cchist.save(hp, hist)
+        hist_rows = cchist.to_rows(hist, today)
+        hist_data = [row[:-1] + [_bill_url(row[-1])] for row in hist_rows]
+        _audit_table_sheet(
+            wb, "Audit - History", "tblAuditHistory",
+            ["Status", "Vendor", "Bill #", "Cost Code", "Reason", "Project",
+             "First Seen", "Last Seen", "Times", "Fixed On", "QBO"],
+            ["text", "text", "text", "text", "text", "text",
+             "date", "date", "flag", "date", "url"],
+            hist_data, [10, 24, 12, 11, 44, 11, 11, 11, 7, 11, 6])
+        wb["Audit - History"].cell(row=1, column=13,
+                                   value=cchist.recap_note(recap, today)).font = Font(
+            name="Calibri", size=10, italic=True, color="808080")
+        print(f"  cost-code history: {recap['open']} open · {recap['new']} new · "
+              f"{recap['fixed']} fixed this run · {recap['rate']} new/run "
+              f"({recap['runs']} runs) → {hp.name}")
+    except Exception as e:                          # never let the log kill a run
+        print(f"  ⚠ cost-code history skipped: {e}")
 
     # ── PO ──────────────────────────────────────────────────────────────
     po: List[list] = []
@@ -2491,7 +2522,7 @@ def main() -> int:
 
     print(f"  Bills: {n_bills} bills (open + paid since {PAID_CUTOFF_DATE})")
     print(f"  Liens: live view  ·  Inventory: {n_inv} lines  ·  Audit: {n_audit} rows "
-          f"across 3 themed sheets")
+          f"across 3 themed sheets + cost-code History log")
 
     wb.save(OUTPUT_PATH)
     post_process_xlsx(OUTPUT_PATH)

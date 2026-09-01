@@ -52,6 +52,7 @@ the audit only; they are **never** shown as a column on the display sheets.
 | `Inventory` | line | per-line drill-down for multi-project bills |
 | `Liens` | — | live Excel FILTER over the Bills table (Lien set) |
 | `Audit - Coding` / `Audit - PO` / `Audit - Bills` | mixed | THREE themed Excel Tables, each with an `Issue` filter — see below |
+| `Audit - History` | miscode | persistent cost-code miscode log — how often + what got fixed (see below) |
 
 `Lien` and `Notes` on the Bills sheet are user-editable and **preserved** across runs
 (keyed by `Bill.Id-Line.Id`).
@@ -97,6 +98,25 @@ The Duplicate / FW / Sub-No-Project checks fold in what the standalone `duplicat
 workbook). History note: the audit covers the tracker's population (open +
 paid-since-`PAID_CUTOFF_DATE`); the retired scripts could scan all-time, so pre-cutoff
 **paid** bills are out of the audit's window.
+
+## `Audit - History` — the cost-code miscode log (the user 2026-09-01)
+
+"I need this logged in the system — how often the clerk is making the mistakes, and what got
+fixed after refreshing." The `Cost Code` findings are folded into a **persistent log** that
+survives across runs, rendered as a fourth filterable sheet.
+
+- **State** = `<companyhealth>/cost_code_history.json` — OUTSIDE the repo, next to the other
+  audit configs, never committed. Logic in **`cost_code_history.py`** (pure state; no QBO).
+- Each **real** run (dry-run bails before the audit, so it never mutates the log): every current
+  miscode opens/updates an entry (`First Seen` / `Last Seen` / `Times`); any previously-**OPEN**
+  entry gone from this run flips to **FIXED** (with the date) — that is "what got fixed"; a FIXED
+  entry that reappears re-opens.
+- Key = `bill_id + cost_code`, so recoding `SL51 → SL1` next run reads as one FIXED. Recoding to
+  *another* wrong code reads as one fixed + one new (a fresh mistake — which is the point).
+- The sheet shows every **OPEN** entry plus **FIXED** entries from the last 60 days (older fixes
+  stay in the JSON, off-sheet, so it stays lean). Filter `Status` = OPEN / FIXED. The caption
+  carries the recap: open / new-this-run / fixed-this-run and a rolling **new/run** rate — the
+  bill clerk's coding-error frequency (one clerk does data entry, so the aggregate is the rate).
 
 ## Audits — the remaining standalone drill
 

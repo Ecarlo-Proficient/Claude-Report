@@ -62,7 +62,7 @@ shared/                the ONLY importable common code
 └─ setup_qbo.py        vault admin CLI (--status/--test/--rotate/--purge)
 
 invoice-sync/          QBO → Notion AR sync + Teams cards   (was automation-worker/)
-bill-tracker/          AP bills (FULL pull incl. subs) → Excel tracker + 3 themed Audit sheets (Coding · PO · Bills) + job_coding_audit drill
+bill-tracker/          AP bills (FULL pull incl. subs) → Excel tracker + 3 themed Audit sheets (Coding · PO · Bills) + cost-code History log + job_coding_audit drill
 statement-reconciler/  vendor statement PDFs ↔ QBO open bills
 wip/                   ALL WIP tooling: wip_writer.py (shared engine) + CP/RP readers + close scripts
 ledger/                canonical project DB: schema.sql spine + loaders (WIP · Bill Tracker · costs · AR invoices · customers) + dashboard
@@ -223,13 +223,15 @@ flowchart LR
     NAS[("Synology NAS\nvendor statement PDFs")]:::src
     GL[("General List xlsx\nSynology · READ-ONLY")]:::src
     POT[("PO tracker xlsx\nOneDrive · READ-ONLY\nvia po_tracker.py")]:::src
-    BT["excel_bill_sync.py\nBills/Inventory/Liens + 3 themed Audit sheets"]:::tool
+    BT["excel_bill_sync.py\nBills/Inventory/Liens + 3 themed Audit sheets + History log"]:::tool
     JCA["job_coding_audit.py\non-demand per-job drill"]:::tool
     SR["statement_reconciler.py"]:::tool
     BX[("Bill Tracker.xlsx\nOneDrive/Automations-\ndisplay = non-sub · audit = incl. subs")]:::out
+    CCH[("cost_code_history.json\nCompanyHealth · cost-code miscode log")]:::out
     RX[("reconciliation xlsx\n→ back to NAS")]:::out
 
     QBO --> BT --> BX
+    BT -. "miscode log (read+write each run)" .-> CCH
     QBO -. "audit-job" .-> JCA
     GL -- "RP draw matching" --> BT
     POT -- "Unused PO reconcile" --> BT
@@ -254,6 +256,13 @@ Credit-card / finance fees post to an expense account, not a cost code — never
 `<companyhealth>/concrete_suppliers.json`. Each flag's `Detail` carries the PO origin
 (`bill_rows.build_po_index` codes + `cost_code_audit.po_origin`): PO-also-wrong = upstream (super/PM),
 bill-deviated, or no-PO.
+
+**Cost-code history (`Audit - History`, the user 2026-09-01):** the `Cost Code` findings feed a
+persistent log — `cost_code_history.py` + `<companyhealth>/cost_code_history.json` (outside the
+repo, never committed). Each real run opens/updates an entry per current miscode (First/Last Seen ·
+Times), flips a vanished OPEN entry to **FIXED**, and re-opens a reappearing one — answering "how
+often" and "what got fixed after refreshing." Key = `bill_id|cost_code`; caption = open/new/fixed +
+a rolling new/run bill-clerk error rate. Dry-run never mutates the log.
 
 **PO theme:** `po_tracker.py` reads the office PO tracker (`ACB_PO_TRACKER_XLSX`, READ-ONLY) and
 `bill_rows.build_po_index()` pulls QBO `PurchaseOrder`. **Unused PO** = PO with no bill / stale;
