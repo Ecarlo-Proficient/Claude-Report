@@ -4,6 +4,15 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Collections report (owner 2026-09-02: "a summary like this ... the status of select open invoices
+  ... to send off to financials to do cashflow forecast").** The Invoices amounts view gained a **Pick**
+  column (per invoice, and a tick on each client band for all of theirs); the **Collections report**
+  button (shows the picked count) previews one line per picked invoice in the owner's own format -
+  `CP831 - Town East - Invoice 34517 - $227k = <collections note> (Nd late)` - with a totals line, then
+  **Copy these lines** or **Excel for financials** (grouped by client: project, job, invoice #, dates,
+  days late, open, total, status / promise, next follow-up, last action, lien, Notion page; late days
+  and open in red, notes amber). Nothing picked = everything shown. Short all-caps tokens keep their
+  case in the job name (JPI, LLC).
 - **The PUSH on the project page (2026-09-02).** A bill the supplier agreed to carry into a
   later draw (rule in `<CompanyHealth>/draw_moves.json`, `shared/draw_moves.py`) arrives on
   the later draw from the Bill Tracker match; `_fetch_draws` marks it live from the same rule

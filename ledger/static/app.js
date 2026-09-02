@@ -3126,7 +3126,7 @@ function renderInvAmounts(all, f) {
     ? `(${rows.length.toLocaleString()} of ${all.length.toLocaleString()} · ${money(totOpen)} open · ${clients.length} client${clients.length === 1 ? "" : "s"})` : "(no AR data)";
   { const anyMsel = INV_MSEL.some(c => (invMSel[c.id] || {}).size);
     const cb = $("#ifClear"); if (cb) cb.hidden = !(anyMsel || invMonthSel !== null || invQuick || f.div || f.lien || f.lienclk || f.litig !== "ex"); }
-  const cols = [["Project", "left"], ["Invoice #", "left"], ["Date", "left"], ["Due", "left"], ["Memo", "left"], ["Open balance", "right"], ["Invoice total", "right"], ["Last action", "left"], ["Next follow-up", "left"], ["Collections note", "left"]];
+  const cols = [["Pick", "left"], ["Project", "left"], ["Invoice #", "left"], ["Date", "left"], ["Due", "left"], ["Memo", "left"], ["Open balance", "right"], ["Invoice total", "right"], ["Last action", "left"], ["Next follow-up", "left"], ["Collections note", "left"]];
   thead.innerHTML = ""; const htr = document.createElement("tr");
   for (const [c, al] of cols) { const th = document.createElement("th"); th.className = al; th.textContent = c; htr.appendChild(th); } thead.appendChild(htr);
   tbody.innerHTML = "";
@@ -3142,7 +3142,9 @@ function renderInvAmounts(all, f) {
     const paid = oiBal(i) <= 0.005;
     const tr = document.createElement("tr"); tr.style.cursor = "pointer"; if (paid) tr.classList.add("inv-paid");
     tr.title = "Click for the invoice memo + details";
-    tr.onclick = (e) => { if (e.target.closest("a")) return; openInvoicePage(i); };
+    tr.onclick = (e) => { if (e.target.closest("a") || e.target.closest("input")) return; openInvoicePage(i); };
+    { const kc = document.createElement("td"); kc.className = "left inv-pick"; const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = invPick.has(invKey(i)); cb.title = "Pick this invoice for the collections report";
+      cb.onclick = (e) => e.stopPropagation(); cb.onchange = () => { if (cb.checked) invPick.add(invKey(i)); else invPick.delete(invKey(i)); _invPickUpdate(); }; kc.appendChild(cb); tr.appendChild(kc); }
     const pc = document.createElement("td"); pc.className = "left";
     if (i.division) { const dot = document.createElement("span"); dot.className = "divdot " + divClass(i.division); dot.title = i.division; pc.appendChild(dot); }
     pc.appendChild(document.createTextNode(i.project_no || "–")); tr.appendChild(pc);
@@ -3193,6 +3195,9 @@ function renderInvAmounts(all, f) {
     hr.title = expanded ? "Click to collapse" : "Click to expand";
     const htd = document.createElement("td"); htd.colSpan = cols.length;
     const caret = document.createElement("span"); caret.className = "bg-caret"; caret.textContent = expanded ? "▾ " : "▸ ";
+    { const gcb = document.createElement("input"); gcb.type = "checkbox"; gcb.className = "inv-pick-all"; gcb.title = "Pick every invoice of this client for the collections report";
+      gcb.checked = g.rows.every(x => invPick.has(invKey(x))); gcb.indeterminate = !gcb.checked && g.rows.some(x => invPick.has(invKey(x)));
+      gcb.onclick = (e) => e.stopPropagation(); gcb.onchange = () => { for (const x of g.rows) { if (gcb.checked) invPick.add(invKey(x)); else invPick.delete(invKey(x)); } renderOpenInvoices(); }; caret.appendChild(gcb); }
     const nm = document.createElement("span"); nm.className = "g-cust"; nm.textContent = g.client;
     const ad = invClientAvgDays(g.client);
     const sub = document.createElement("span"); sub.className = "g-sub"; sub.hidden = true;   // (the metrics grid replaced the text run)
@@ -3219,12 +3224,12 @@ function renderInvAmounts(all, f) {
     }
   }
   const tr = document.createElement("tr"); tr.className = "inv-total-row";
-  const td0 = document.createElement("td"); td0.className = "left"; td0.colSpan = 5; td0.textContent = "TOTAL"; tr.appendChild(td0);
+  const td0 = document.createElement("td"); td0.className = "left"; td0.colSpan = 6; td0.textContent = "TOTAL"; tr.appendChild(td0);
   tr.appendChild(rightText(money(totOpen)));
   tr.appendChild(rightText(money(totBilled)));
   tr.appendChild(document.createElement("td")); tr.appendChild(document.createElement("td")); tr.appendChild(document.createElement("td"));
   tbody.appendChild(tr);
-  updateInvCollapseBtn();
+  updateInvCollapseBtn(); _invPickUpdate();
 }
 
 function renderOpenInvoices() {
@@ -4081,6 +4086,57 @@ function invApplyView(name) {
   { const d = $("#ifDelView"); if (d) d.hidden = !name; }
   if (!name) return;
   invStateApply(_invViewsLoad()[name]);
+}
+// ── Collections report (owner 2026-09-02: "a summary like this ... the status of select open invoices ...
+// to send off to financials to do cashflow forecast"). Pick invoices (or take everything shown), then
+// Copy = one line per invoice in the owner's format
+//   "CP831 - Town East - Invoice 34517 - $227k = <collections note>"
+// or Excel = the same rows with the dates, days late, open, note, next follow-up, grouped by client.
+const invPick = new Set();
+function _invPickRows() { const shown = _invRows(); const picked = shown.filter(i => invPick.has(invKey(i))); return picked.length ? picked : shown; }
+function _invPickUpdate() { const b = $("#ifCollect"); if (!b) return; const n = _invRows().filter(i => invPick.has(invKey(i))).length; b.textContent = n ? `Collections report (${n} picked)` : "Collections report"; b.classList.toggle("on", n > 0); }
+function _kfmt(v) { const n = Math.abs(num(v)); const s = n >= 1e6 ? "$" + (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + "M" : n >= 1e3 ? "$" + Math.round(n / 1e3) + "k" : "$" + Math.round(n); return num(v) < 0 ? "(" + s + ")" : s; }
+function _title(s) {   // "JPI-MERRIT PARK" -> "JPI-Merrit Park": short all-caps tokens (JPI, LLC, USA, TX) stay as they are
+  return String(s || "").split(/(\s+|-|\/)/).map(w => (/^[A-Z0-9&.]{1,4}$/.test(w) ? w : w.toLowerCase().replace(/^([a-z])/, c => c.toUpperCase()))).join("");
+}
+function invCollectionsLines(rows) {
+  const lines = [];
+  for (const i of rows) {
+    const nm = _title(nameOf(i.project_no) || "").trim();
+    const status = (i.note || "").trim() || (i.next_followup ? "follow up " + fmtDateShort(i.next_followup) : "no note");
+    lines.push(`${i.project_no || "(no project)"}${nm ? " - " + nm : ""} - Invoice ${i.doc_number || ""} - ${_kfmt(oiBal(i))} = ${status}` + (i.days_past_due > 0 ? ` (${i.days_past_due}d late)` : ""));
+  }
+  const tot = rows.reduce((s, i) => s + oiBal(i), 0);
+  lines.push(`${rows.length} invoice${rows.length === 1 ? "" : "s"} - ${_kfmt(tot)} open - as of ${fmtDate(new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10))}`);
+  return lines;
+}
+function openCollectionsReport() {
+  const rows = _invPickRows(); if (!rows.length) { toast("Nothing to report - no invoices shown"); return; }
+  const picked = _invRows().filter(i => invPick.has(invKey(i))).length;
+  const ov = document.createElement("div"); ov.className = "xdlg-ov";
+  const preview = invCollectionsLines(rows);
+  ov.innerHTML = `<div class="xdlg xdlg-wide" role="dialog"><h3>Collections report - ${rows.length} invoice${rows.length === 1 ? "" : "s"}${picked ? " picked" : " shown (none picked)"}</h3>
+    <pre class="xdlg-pre">${_ge(preview.join("\n"))}</pre>
+    <div class="xdlg-actions"><button class="btn" id="xcCancel">Close</button><button class="btn" id="xcCopy">Copy these lines</button><button class="btn primary" id="xcXlsx">Excel for financials</button></div></div>`;
+  document.body.appendChild(ov);
+  const close = () => ov.remove(); ov.onclick = (e) => { if (e.target === ov) close(); };
+  $("#xcCancel").onclick = close;
+  $("#xcCopy").onclick = () => { copy(preview.join("\n")); toast(`Copied ${rows.length} lines`); close(); };
+  $("#xcXlsx").onclick = () => { close(); invCollectionsXlsx(rows); };
+}
+function invCollectionsXlsx(rows) {
+  const cols = [{ label: "Client" }, { label: "Project" }, { label: "Job" }, { label: "Invoice #" }, { label: "Invoice date" }, { label: "Due" }, { label: "Days late" },
+                { label: "Open", type: "money" }, { label: "Invoice total", type: "money" }, { label: "Status / promise (collections note)" }, { label: "Next follow-up" }, { label: "Last action" }, { label: "Lien" }, { label: "Notion page" }];
+  const data = rows.map(i => [i.customer || "", i.project_no || "", _title(nameOf(i.project_no) || ""), i.doc_number || "", i.txn_date || "", i.due_date || "", i.days_past_due > 0 ? i.days_past_due : 0,
+                              oiBal(i), num(i.amount), i.note || "", i.next_followup || "", i.last_action_date || "", i.lien_status || "", i.notion_url || ""]);
+  const fmt = []; rows.forEach((i, r) => { if (i.days_past_due > 0) fmt.push({ r, c: 6, cls: "neg" }); fmt.push({ r, c: 7, cls: oiBal(i) > 0 ? "neg" : "pos" }); if (i.note) fmt.push({ r, c: 9, cls: "warn" }); });
+  const tot = rows.reduce((s, i) => s + oiBal(i), 0);
+  const body = { name: "Collections report", sheet: "Collections", title: `Collections - ${rows.length} open invoice${rows.length === 1 ? "" : "s"} - ${money(tot)} open`,
+    subtitle: `status per invoice for the cash-flow forecast · exported ${fmtDate(new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 19), true)}`,
+    columns: cols, rows: data, group_by: 0, fmt };
+  toast("Building the Excel report…");
+  fetch("/api/export/xlsx", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(r => r.json())
+    .then(r => toast(r && r.ok ? `Collections report saved to Downloads (${r.rows} invoices) - opened in Finder` : "Export failed: " + ((r && r.error) || "unknown"))).catch(e => toast("Export failed: " + e));
 }
 function invClearFilters() {
   ["#ifDivision", "#ifLien", "#ifLienClock"].forEach(s => { const el = $(s); if (el) el.value = ""; });
@@ -7455,6 +7511,7 @@ function init() {
   { const el = $("#bfCollapse"); if (el) el.onclick = billToggleAll; }
   ["#ifDivision", "#ifLien", "#ifLienClock", "#ifLitig", "#ifSort"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("change", renderOpenInvoices); });
   { const el = $("#ifClear"); if (el) el.onclick = invClearFilters; }
+  { const el = $("#ifCollect"); if (el) el.onclick = openCollectionsReport; }
   // Quick find: type to filter (short debounce); ⌘F / Ctrl+F on the Invoices tab jumps here; Esc clears.
   { const q = $("#ifQuick"); let tq = null;
     if (q) { q.addEventListener("input", () => { clearTimeout(tq); tq = setTimeout(() => { invQuick = q.value.trim(); renderOpenInvoices(); }, 120); });

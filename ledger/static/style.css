@@ -1399,3 +1399,10 @@ tr.pp-vendor > td { background: color-mix(in srgb, var(--surface-2) 60%, var(--s
 .pp-sortbar { display: flex; align-items: center; gap: 10px; padding: 4px 18px 8px; font-size: .9em; }
 table.pp-bills td.pp-vb .pp-vend { font-weight: 600; margin-right: 6px; }
 table.pp-bills .codechip { margin-right: 2px; }
+
+/* collections report (2026-09-02) */
+.xdlg.xdlg-wide { min-width: 720px; max-width: 92vw; }
+.xdlg-pre { font: 13px/1.5 var(--font-mono); white-space: pre-wrap; max-height: 50vh; overflow: auto; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin: 6px 0 4px; color: var(--text); }
+td.inv-pick { width: 28px; }
+.inv-pick-all { margin-right: 6px; vertical-align: middle; }
+#ifCollect.on { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
