@@ -59,6 +59,9 @@ HEADER_ROW = 2                    # row 1 is the grouped banner; real headers ar
 QBO_BILL_RE = re.compile(r"app/bill\?txnId=(\d+)", re.I)
 QBO_BILL_URL = "https://qbo.intuit.com/app/bill?txnId={}"
 
+# a leading "[TAG] " on the Matched Invoice cell (see excel_bill_sync._invoice_cell)
+MATCH_TAG_RE = re.compile(r"^\s*\[([^\]]*)\]\s*(.*)$", re.S)
+
 # canonical field -> Bill Tracker header label
 FIELD_HEADERS = {
     "vendor":       "Vendor",
@@ -132,6 +135,13 @@ def read_sheet(ws):
         # a real line needs a vendor and an amount (skip spacers / totals)
         if not rec["vendor"] and rec["line_amount"] is None:
             continue
+        # the tracker prefixes Matched Invoice with a "[...]" tag on special matches
+        # ([DRAW] / [FULLY BILLED] / [PUSHED from Draw #3]); keep the tag beside the
+        # bare "invoice — memo" so every bill on one draw shares the SAME key
+        rec["match_tag"] = None
+        m = MATCH_TAG_RE.match(rec.get("matched_invoice") or "")
+        if m:
+            rec["match_tag"], rec["matched_invoice"] = m.group(1).strip(), (m.group(2).strip() or None)
         rec["source_sheet"] = ws.title
         yield excel_row, rec
 
@@ -208,14 +218,16 @@ def load(excel_path: Path, db_path: Path, dry_run: bool, show: int):
     if "matched_invoice" not in have or "qbo_link" not in have:
         con.execute("DROP TABLE ap_bill_line")
         con.executescript(SCHEMA_SQL.read_text(encoding="utf-8"))
+    elif "match_tag" not in have:
+        con.execute("ALTER TABLE ap_bill_line ADD COLUMN match_tag TEXT")
     now = dt.datetime.now().isoformat(timespec="seconds")
 
     # full replace: this feed always mirrors the current file
     con.execute("DELETE FROM ap_bill_line WHERE source = 'bill_tracker'")
     cols = ["line_uid", "project_no", "division", "vendor", "bill_ref", "bill_date",
             "account", "description", "line_amount", "bill_total", "open_balance",
-            "pay_status", "approved", "lien_status", "matched_invoice", "invoice_status",
-            "invoice_no", "gc_paid_date", "pay_date", "bt_key", "qbo_link",
+            "pay_status", "approved", "lien_status", "matched_invoice", "match_tag",
+            "invoice_status", "invoice_no", "gc_paid_date", "pay_date", "bt_key", "qbo_link",
             "source_sheet", "loaded_at"]
     ph = ", ".join(f":{c}" for c in cols)
     for r in records:

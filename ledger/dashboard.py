@@ -45,6 +45,7 @@ from urllib.parse import parse_qs, urlparse
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 from shared import paths, pnl_paths, bill_marks, lien_clock, breakeven  # noqa: E402
+from shared import draw_moves      # the push: bills carried into a later draw by agreement
 
 import registry_view  # noqa: E402  (local: parses the vault's process registry for the Systems tab)
 import vault_graph    # noqa: E402  (local: vault [[link]] graph + docs/ARCHITECTURE.md diagrams for the Graph tab)
@@ -1195,12 +1196,17 @@ def _fetch_draws(con, limit: int = 100) -> dict:
         if not d["invoice_no"] and r["invoice_no"]:
             d["invoice_no"] = r["invoice_no"]
         wk = _waiver_key(r["mi"], r["vendor"], r["bill_ref"])
+        # a PUSH (shared/draw_moves): the supplier agreed to carry this bill into a later
+        # draw - the tracker already matched it there; mark it so the band says why
+        mv = draw_moves.find_move(r["project_no"], r["vendor"], r["bd"])
         d["bills"].append({
             "vendor": r["vendor"], "bill_ref": r["bill_ref"], "amount": r["amount"] or 0,
             "open": r["open_bal"] or 0, "pay_status": r["pay_status"], "invoice_status": r["invoice_status"],
             "gc_paid": r["gc"], "pay_date": r["pd"], "bill_date": r["bd"], "qbo_link": r["qbo_link"],
             "waiver_key": wk, "waiver": bool(wmap.get(wk, 0)),
             "gates": _gates_stage(r["vendor"]),
+            "pushed": draw_moves.push_label(mv) if mv else "",
+            "pushed_note": draw_moves.push_note(mv) if mv else "",
         })
     # Projects whose CP/MFD bills are still "Awaiting Invoice" (no matched draw yet) get a pseudo-draw
     # so they are visible here too (owner 2026-09-02: "CP785 is not showing in the draws") - the GC
@@ -1222,6 +1228,26 @@ def _fetch_draws(con, limit: int = 100) -> dict:
             })
     except sqlite3.OperationalError:
         pass
+    # pushed in / pushed out per draw: what rode in, and which draw (same project, the
+    # period the bill's own date falls in) it left - both bands say so
+    for mi, d in draws.items():
+        pin = [b for b in d["bills"] if b.get("pushed")]
+        if not pin:
+            continue
+        d["pushed_in"] = {"count": len(pin), "total": round(sum((b["amount"] or 0) for b in pin), 2),
+                          "label": pin[0]["pushed"], "note": pin[0]["pushed_note"]}
+        for b in pin:
+            for mi2, d2 in draws.items():
+                if d2 is d or d2.get("project_no") != d.get("project_no"):
+                    continue
+                q0, q1 = _draw_period_range(mi2)
+                if q0 and q1 and q0 <= (b["bill_date"] or "") <= q1:
+                    mv2 = draw_moves.find_move(d.get("project_no"), b["vendor"], b["bill_date"])
+                    po = d2.setdefault("pushed_out", {"count": 0, "total": 0.0, "to": d.get("invoice_no"),
+                                                      "note": draw_moves.push_note(mv2, "out") if mv2 else ""})
+                    po["count"] += 1
+                    po["total"] = round(po["total"] + (b["amount"] or 0), 2)
+                    break
     out = []
     subs_by_proj = _subs_by_project(con)   # is_sub cost lines per project (matched to draws by period)
     for mi, d in draws.items():

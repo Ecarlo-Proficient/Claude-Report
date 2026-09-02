@@ -92,6 +92,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from shared import paths
 from shared import pnl_paths
 from shared.draws import read_pay_app, learn_period_shape, infer_period_tag
+from shared import draw_moves
 from shared.qbo_api import (
     API_BASE, MINOR_VERSION, PROJ_RE,
     load_credentials, _api_get, query_all, report,
@@ -1878,11 +1879,18 @@ def bucket_costs_by_draw_window(
     draw_periods: List[Tuple[str, dt.date, dt.date]],
     parent_map: Dict[str, str],
     account_names: Optional[Dict[str, str]] = None,
+    project_no: str = "",
 ) -> Dict[str, dict]:
     """
     Bucket bill/purchase lines into draw windows by TxnDate (bills are never
     period-tagged — invoices only). Sub bills INCLUDED ("sub" tag = Sub LOC
     tracker, not P&L exclusion).
+
+    A PUSH (shared/draw_moves, the user 2026-09-02): a bill the supplier agreed
+    to carry into the next draw is bucketed by the rule's date instead of its
+    own, keeps its real date, and is marked "pushed from Draw #N" on the row;
+    the receiving draw gets `pushed_in` and the draw it left `pushed_out`
+    ({count, total, rule}) so both sheets say so. No rule → nothing moves.
 
     Returns, per draw label:
       {"total": float,
@@ -1919,8 +1927,22 @@ def bucket_costs_by_draw_window(
                 return None                    # pre-period history — disregard
         return outside
 
+    def _push_acc(bucket: Optional[dict], key: str, mv: dict, txn_id: str,
+                  amt: float) -> None:
+        if bucket is None:
+            return
+        acc = bucket.setdefault(key, {"count": 0, "total": 0.0, "rule": mv,
+                                      "ids": set()})
+        acc["ids"].add(txn_id)
+        acc["total"] = round(acc["total"] + amt, 2)
+
     def assign(txn: dict, tx_type: str, vendor_field: str) -> None:
-        target = bucket_for(_parse_date(txn.get("TxnDate", "")))
+        vendor = _xml_clean(((txn.get(vendor_field) or {}).get("name") or "(no vendor)").strip())
+        real_d = _parse_date(txn.get("TxnDate", ""))
+        eff_d, mv = (draw_moves.effective_date(project_no, vendor, real_d)
+                     if project_no and real_d else (real_d, None))
+        target = bucket_for(eff_d)
+        src = bucket_for(real_d) if mv else None   # the draw the bill LEFT
         if target is None:                     # pre-anchor history — count, skip
             for ln in txn.get("Line") or []:
                 det = (ln.get("AccountBasedExpenseLineDetail")
@@ -1929,7 +1951,6 @@ def bucket_costs_by_draw_window(
                     disregarded["total"] += float(ln.get("Amount", 0) or 0)
                     disregarded["count"] += 1
             return
-        vendor = _xml_clean(((txn.get(vendor_field) or {}).get("name") or "(no vendor)").strip())
         doc_num = _xml_clean(str(txn.get("DocNumber") or txn.get("Id") or ""))
         memo = _xml_clean((txn.get("PrivateNote") or "").strip())
         for ln in txn.get("Line") or []:
@@ -1967,16 +1988,27 @@ def bucket_costs_by_draw_window(
                 "vendor": vendor,
                 "desc": _xml_clean((ln.get("Description") or memo or "").strip()),
                 "amount": amt,
+                "pushed": draw_moves.push_label(mv) if mv else "",
             })
             vg["total"] += amt
             lg["total"] += amt
             pg["total"] += amt
             target["total"] += amt
+            if mv:
+                _push_acc(target, "pushed_in", mv, txn.get("Id", ""), amt)
+                if src is not target:
+                    _push_acc(src, "pushed_out", mv, txn.get("Id", ""), amt)
 
     for b in bills:
         assign(b, "Bill", "VendorRef")
     for p in purchases:
         assign(p, "Expense", "EntityRef")
+
+    for bucket in list(out.values()) + [outside]:
+        for key in ("pushed_in", "pushed_out"):
+            acc = bucket.get(key)
+            if acc:
+                acc["count"] = len(acc.pop("ids"))   # bills, not lines
 
     if outside["total"] or outside["groups"]:
         out["__outside"] = outside
@@ -3685,7 +3717,8 @@ def _draw_flat_bills(draw_cost: dict) -> list:
                     rows.append({"num": str(t.get("doc_num", "")), "date": t.get("date", ""),
                                  "vendor": vend, "cat": cat, "desc": t.get("desc", ""),
                                  "amount": float(t.get("amount", 0) or 0),
-                                 "tx_type": t.get("tx_type", ""), "txn_id": t.get("txn_id", "")})
+                                 "tx_type": t.get("tx_type", ""), "txn_id": t.get("txn_id", ""),
+                                 "pushed": t.get("pushed", "")})
     return rows
 
 
@@ -3895,6 +3928,17 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
         else:
             wc(r, 1, "— no PM report matched this draw —", color="595959")
             r += 1
+    # A PUSH (shared/draw_moves, the user 2026-09-02): the receiving draw says
+    # what came in, the draw the bills left says what went out; the bill rows
+    # below carry the same mark, so the strip's cost total is explained on its face.
+    for _pk, _pdir in (("pushed_in", "in"), ("pushed_out", "out")):
+        _pa = (draw_cost or {}).get(_pk)
+        if _pa:
+            r += 1
+            wc(r, 2, f"{_pa['count']} bills · ${_pa['total']:,.2f} pushed {_pdir}: "
+                     f"{draw_moves.push_note(_pa['rule'], _pdir)}",
+               bold=True, color="BF8F00")
+            r += 1
     # Only the strip stays pinned — everything below scrolls under it.
     ws.freeze_panes = ws.cell(row=r, column=1)
     r += 2
@@ -3953,6 +3997,12 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
                     else:
                         note, ncol, nlink = ("⚠ not in QBO (orphan → Reconciliations)",
                                              RED, None)
+                if kind != "pm" and i.get("pushed"):
+                    # the supplier agreed to carry it into this draw - say so
+                    # on the row; the bill keeps its own date beside it
+                    note = (i["pushed"] if note == "in this draw"
+                            else f"{i['pushed']} · {note}")
+                    ncol, nlink = "BF8F00", None
                 wc(r, 2, str(i["num"]) or "(no #)", indent=1, link=blink)
                 wc(r, 3, i["amount"], fmt=CURR_FMT, color=color)
                 wdate(r, 4, i.get("date", ""))
@@ -4490,6 +4540,7 @@ def code_costs_by_draw(
     bills: List[dict], purchases: List[dict], customer_id: str,
     draw_periods: List[Tuple[str, dt.date, dt.date]],
     account_names: Optional[Dict[str, str]] = None,
+    project_no: str = "",
 ) -> Dict[str, dict]:
     """Every project cost LINE keyed by COST CODE **and** draw window, keeping
     each line's qty/rate so the Concrete sheet can do yards and $/yd, and
@@ -4519,7 +4570,10 @@ def code_costs_by_draw(
     for txn, tx_type, vfield in sources:
         vendor = _xml_clean(((txn.get(vfield) or {}).get("name") or "(no vendor)").strip())
         date = txn.get("TxnDate", "")
-        key = window_for(_parse_date(date))
+        # a pushed bill rides the rule's draw (shared/draw_moves); its own date stays
+        _eff, _mv = (draw_moves.effective_date(project_no, vendor, _parse_date(date))
+                     if project_no else (_parse_date(date), None))
+        key = window_for(_eff)
         for ln in txn.get("Line") or []:
             det = (ln.get("AccountBasedExpenseLineDetail")
                    or ln.get("ItemBasedExpenseLineDetail") or {})
@@ -4549,6 +4603,7 @@ def code_costs_by_draw(
                 "qty": _f(det.get("Qty")), "rate": _f(det.get("UnitPrice")),
                 "doc": _xml_clean(str(txn.get("DocNumber") or "")),
                 "txn_id": txn.get("Id", ""), "tx_type": tx_type,
+                "pushed": draw_moves.push_label(_mv) if _mv else "",
             })
     return out
 
@@ -4985,8 +5040,10 @@ def build_sheet_labor_concrete(
             if L_FUEL and ln.get("fuel"):
                 ws.cell(row=r, column=L_FUEL,
                         value=ln["fuel"]).number_format = ACC_FMT
-            ws.cell(row=r, column=L_DRAW,
-                    value=draw_name.get(ln["draw"], ln["draw"])).font = Font(size=SZ)
+            _dl = draw_name.get(ln["draw"], ln["draw"])
+            if ln.get("pushed"):
+                _dl = f"{_dl} · {ln['pushed']}"
+            ws.cell(row=r, column=L_DRAW, value=_dl).font = Font(size=SZ)
             for col in (L_QTY, L_RATE, L_AMT, L_TAX, L_FUEL):
                 if col:
                     ws.cell(row=r, column=col).font = Font(size=SZ)
@@ -6351,8 +6408,17 @@ def generate_project_pnl(
 
     draw_costs = bucket_costs_by_draw_window(
         bills, purchases, cust_info["id"], draw_periods, parent_map,
-        account_names=account_names,
+        account_names=account_names, project_no=proj,
     )
+    for _plbl, _pdc in draw_costs.items():
+        for _pk, _pword in (("pushed_in", "in from"), ("pushed_out", "out to")):
+            _pa = _pdc.get(_pk) if isinstance(_pdc, dict) else None
+            if _pa:
+                _pr = _pa["rule"]
+                _pto = _pr.get("from_draw") if _pk == "pushed_in" else _pr.get("to_draw")
+                ui_event(f"{_plbl}: {_pa['count']} bills · ${_pa['total']:,.2f} pushed "
+                         f"{_pword} Draw #{_pto} ({_pr['vendor'].title()}, after "
+                         f"{_pr['after']:%m/%d/%y})", icon="↪", color=_CYAN)
 
     # Accumulating costs for the next draw = EXACTLY the costs that fell
     # outside every draw window (the Draws "Costs Outside Draw Windows"
@@ -6631,7 +6697,8 @@ def generate_project_pnl(
             ui_warn("Labor/Concrete sheets skipped — no takeoff budget "
                     "(is the Common drive mounted?)")
         _cc = code_costs_by_draw(bills, purchases, cust_info["id"],
-                                 draw_periods, account_names=account_names)
+                                 draw_periods, account_names=account_names,
+                                 project_no=proj)
         _yards = load_cp_concrete_yards(proj)
         # Columns are headed by the DRAW NUMBER, not the period dates (the
         # user 2026-07-29 — the takeoff template's WEEK columns become draws).

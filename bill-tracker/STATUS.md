@@ -5,6 +5,16 @@ no business findings, dollar exposures, or owner analyses (those live in the own
 
 ## DONE / FINALIZED
 
+- **The PUSH match basis (2026-09-02).** `MATCH_BASIS_PUSHED`: a CP/MFD bill the
+  supplier agreed to carry into a later draw (rule in `<CompanyHealth>/draw_moves.json`,
+  read by `shared/draw_moves.py`) is matched AS OF the rule's date, so `Matched
+  Invoice` names the later draw, prefixed `[PUSHED from Draw #a] ` the way `[DRAW]` /
+  `[FULLY BILLED]` already mark the RP semantics. `bill_rows` carries `match_note`
+  per line (aggregated like `match_basis` at bill grain); the run summary counts the
+  pushed rows. The ledger loader splits the leading tag into `match_tag` so every
+  bill on one draw keeps the same draw key. Same rule file drives the P&L and the
+  ledger's draw bands.
+
 - **Pipeline:** `run_tracker.sh` → `sync_view.py` → `excel_bill_sync.py` → `Bill Tracker.xlsx`
   (OneDrive `Automations-/`). Sheets: Bills · Inventory · QBO Audit · Liens.
 - **Full pull incl. subs (2026-08-06).** Every bill is fetched (open any-date + paid since

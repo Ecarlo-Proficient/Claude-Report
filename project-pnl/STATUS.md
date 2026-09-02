@@ -8,6 +8,21 @@ manual close), RP (no draws — expenses → invoice → profit).
 
 ## DONE / FINALIZED
 
+- **The PUSH - a bill carried into a later draw by agreement (2026-09-02).**
+  Bills land in a draw by date (TxnDate inside the invoice's Period tag). When the
+  user agrees with a supplier to carry end-of-period bills into the next draw, a
+  rule in `<CompanyHealth>/draw_moves.json` (read by **`shared/draw_moves.py`** -
+  project + vendor substring + cutoff `after` / `through` + `move_to` date +
+  draw numbers + why) makes `bucket_costs_by_draw_window` and `code_costs_by_draw`
+  bucket those bills AS OF the rule's date. The bill keeps its real date; the
+  receiving draw sheet says "N bills · $X pushed in: <vendor> bills dated after
+  <cutoff> were pushed in from Draw #a - <why>", the draw they left says
+  "pushed out", every moved row's Where/status reads "pushed from Draw #a", and
+  the Labor/Concrete ledger's DRAW column carries the same mark. The console
+  logs each move per draw. The same rule file drives the Bill Tracker match and
+  the ledger's draw bands, so all three agree. No rule file → nothing moves.
+  First use: CP800 Preferred Materials after 07/20/26, Draw #3 → Draw #4.
+
 - **`closeout.py` — the FINAL closeout report (2026-09-02).**
   `<job folder>/<JOB> FINAL Closeout.xlsx` (one permanent page per finished job)
   plus `<division>/Closeout Index.xlsx` (every FINAL issued, filterable by

@@ -84,6 +84,8 @@ Reads the line-level `Bills` + `Inventory` sheets of `Bill Tracker.xlsx` (overri
 pay status, and the Texas lien clock per bill. Read-only on Excel; each run **full-replaces**
 `source='bill_tracker'` so it mirrors the current file.
 
+The tracker prefixes `Matched Invoice` with a `[TAG] ` on special matches (`[DRAW]`, `[FULLY BILLED]`, `[PUSHED from Draw #3]` - the last is a bill the supplier agreed to carry into a later draw, rule in `<CompanyHealth>/draw_moves.json` via `shared/draw_moves.py`). The loader splits that tag into `match_tag` and keeps `matched_invoice` as the bare "invoice — memo", so every bill on one draw shares the same draw key.
+
 > **Not the cost ledger.** Bill Tracker's display sheets EXCLUDE subs, and for a sub-based labor
 > company subs are most of the cost — measured 25–98% short of the QBO WIP truth per job. Job cost
 > stays in `wip_snapshot`; the complete `cost_line` (incl. subs + true SL/PV cost codes) comes later

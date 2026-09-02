@@ -83,7 +83,7 @@ from qbo_bill_tracker import (
     STATUS_OK_TO_PAY, STATUS_AWAITING_PAYMENT, STATUS_AWAITING_INVOICE,
     STATUS_PAID, STATUS_NO_PROJECT, STATUS_PARTIAL_PAID,
     STATUS_PARTIALLY_PAID_REMAINDER,
-    MATCH_BASIS_DRAW, MATCH_BASIS_FINAL,
+    MATCH_BASIS_DRAW, MATCH_BASIS_FINAL, MATCH_BASIS_PUSHED,
 )
 from bill_rows import (
     build_account_maps, build_po_index, build_payment_map, build_rows,
@@ -334,7 +334,8 @@ def _qbo_po_link(po_id: str) -> str:
     return f'=HYPERLINK("{url}","↗")'
 
 
-def _invoice_cell(inv_doc: str, inv_memo: str, match_basis: str = "") -> str:
+def _invoice_cell(inv_doc: str, inv_memo: str, match_basis: str = "",
+                  match_note: str = "") -> str:
     """Format Invoice # together with the invoice's PrivateNote (draw memo)
     so the AP team can eyeball whether the QBO match is correct. No truncation
     — column is wide enough, and clipping the period notation defeats the
@@ -342,7 +343,9 @@ def _invoice_cell(inv_doc: str, inv_memo: str, match_basis: str = "") -> str:
 
     `match_basis` prefixes a per-row signal when General List RP draw semantics
     applied: [DRAW] = the next draw authorizes this bill; [FULLY BILLED] = job
-    is 100% billed, matched to the last draw."""
+    is 100% billed, matched to the last draw. [PUSHED from Draw #N] = a CP/MFD
+    bill the supplier agreed to carry into this later draw (shared/draw_moves);
+    the ledger loader splits that leading tag off so the draw key stays clean."""
     if not inv_doc:
         return ""
     prefix = ""
@@ -350,6 +353,8 @@ def _invoice_cell(inv_doc: str, inv_memo: str, match_basis: str = "") -> str:
         prefix = "[DRAW] "
     elif match_basis == MATCH_BASIS_FINAL:
         prefix = "[FULLY BILLED] "
+    elif match_basis == MATCH_BASIS_PUSHED:
+        prefix = "[" + ((match_note or "pushed").replace("pushed", "PUSHED", 1)) + "] "
     memo = (inv_memo or "").strip()
     body = inv_doc if not memo else f"{inv_doc} — {memo}"
     return prefix + body
@@ -943,7 +948,8 @@ def _write_bill_row(ws, r_i: int, r: dict, edits: Dict[str, Dict[str, str]],
         # ── CLIENT PAYMENT · AR ──
         r.get("invoice_status", ""),                             # 18 Invoice Status (AR)
         r.get("gc_name", ""),                                    # 19 Client (GC/parent, by the match)
-        _invoice_cell(r.get("inv_doc", ""), r.get("inv_memo", ""), r.get("match_basis", "")),  # 20 Matched Invoice
+        _invoice_cell(r.get("inv_doc", ""), r.get("inv_memo", ""), r.get("match_basis", ""),
+                      r.get("match_note", "")),                  # 20 Matched Invoice
         r.get("inv_doc", ""),                                    # 21 Invoice # (→ link)
         r.get("inv_date"),                                       # 22
         r.get("inv_balance"),                                    # 23 Invoice Open Bal (GC still owes)
@@ -2415,6 +2421,9 @@ def main() -> int:
     n_draw = sum(1 for r in display_rows if r.get("match_basis") == MATCH_BASIS_DRAW)
     n_final = sum(1 for r in display_rows if r.get("match_basis") == MATCH_BASIS_FINAL)
     print(f"→ RP draw semantics: {n_draw} draw-matched · {n_final} fully-billed")
+    n_pushed = sum(1 for r in display_rows if r.get("match_basis") == MATCH_BASIS_PUSHED)
+    if n_pushed:
+        print(f"→ pushed to a later draw by agreement (shared/draw_moves): {n_pushed} rows")
 
     if args.limit > 0:
         print(f"→ --limit {args.limit}: capping row sets")

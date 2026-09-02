@@ -26,6 +26,7 @@ from collections import defaultdict
 from typing import Dict, List, Optional, Set, Tuple
 
 from qbo_bill_tracker import (
+    MATCH_BASIS_PUSHED,
     query_all,
     get_line_customer_ref,
     get_project_num,
@@ -44,6 +45,7 @@ from qbo_bill_tracker import (
     STATUS_PARTIALLY_PAID_REMAINDER,
     STATUS_UNPAID,
 )
+from shared import draw_moves   # the push: a bill carried into a later draw by agreement
 
 
 # ─────────────────────── approval flag ───────────────────────
@@ -301,15 +303,23 @@ def build_rows(
 
             matched: Optional[dict] = None
             match_basis = ""
+            match_note = ""
             if cust_id and division:
                 # Concatenate description + account so the RP pump filter can
                 # detect pump bills regardless of which field carries the cue.
                 bill_text = f"{line_desc}  {account_name}"
+                # A PUSH (shared/draw_moves): the supplier agreed to carry this
+                # bill into a later draw, so it is matched AS OF the rule's date
+                # (inside that draw's period); the bill keeps its real date.
+                match_date, _mv = draw_moves.effective_date(project_num, vendor_name, bill_date)
                 matched, match_basis = find_matching_invoice_ex(
-                    bill_date, division, cust_id, invoices_by_customer,
+                    match_date, division, cust_id, invoices_by_customer,
                     bill_text=bill_text, bill_amount=line_amt,
                     project_num=project_num, gl_contracts=gl_contracts,
                 )
+                if _mv and matched:
+                    match_basis = MATCH_BASIS_PUSHED
+                    match_note = draw_moves.push_label(_mv)
 
             inv_doc = ""
             inv_id = ""
@@ -377,6 +387,7 @@ def build_rows(
                 "pay_status": pay_status,
                 "invoice_status": invoice_status,
                 "match_basis": match_basis,
+                "match_note": match_note,
             })
     return rows
 
@@ -700,6 +711,10 @@ def collapse_rows(line_rows: List[dict], grain: str = "bill") -> List[dict]:
             "match_basis": (
                 _agg_distinct_or_multi([r.get("match_basis") or "" for r in lines])
                 if grain == "bill" else first.get("match_basis", "")
+            ),
+            "match_note": (
+                _agg_distinct_or_multi([r.get("match_note") or "" for r in lines])
+                if grain == "bill" else first.get("match_note", "")
             ),
             "is_multi_project": is_multi,
             "line_count": len(lines),

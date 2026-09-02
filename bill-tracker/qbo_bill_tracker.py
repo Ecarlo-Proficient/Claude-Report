@@ -467,6 +467,7 @@ MATCH_BASIS_COVER = "cover"      # invoice covers the bill amount (today's behav
 MATCH_BASIS_DRAW = "draw"        # RP partial-billed: the NEXT draw authorizes the bill
 MATCH_BASIS_FINAL = "final"      # RP fully-billed: attach a late bill to the LAST draw
 MATCH_BASIS_PERIOD = "period"    # MFD/CP: bill date falls inside the invoice's draw period
+MATCH_BASIS_PUSHED = "pushed"    # MFD/CP: carried into a later draw by agreement (shared/draw_moves)
 
 
 def _invoice_scope(inv: dict) -> str:

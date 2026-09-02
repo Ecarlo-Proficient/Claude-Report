@@ -3575,7 +3575,9 @@ function _renderPpDraws() {
     { const cc = document.createElement("td"); cc.className = "left"; for (const c of (b.codes || [])) { const chip = document.createElement("span"); chip.className = "codechip"; chip.textContent = c; cc.appendChild(chip); cc.appendChild(document.createTextNode(" ")); } if (!(b.codes || []).length) { cc.textContent = "–"; cc.classList.add("dim"); } tr.appendChild(cc); }
     const ac = document.createElement("td"); ac.className = "ip-amt"; ac.appendChild(moneyCell(b.amount)); tr.appendChild(ac);
     tr.appendChild(leftText(fmtDateShort(b.bill_date)));
-    { const wc = leftText(isSub ? "QuickBooks · labor" : [b.invoice_status, b.approved ? (b.approved === "approved" ? "approved" : b.approved) : null].filter(Boolean).join(" · ") || "Bill Tracker"); wc.classList.add("dim"); tr.appendChild(wc); }
+    { const wc = leftText(isSub ? "QuickBooks · labor" : [b.invoice_status, b.approved ? (b.approved === "approved" ? "approved" : b.approved) : null].filter(Boolean).join(" · ") || "Bill Tracker"); wc.classList.add("dim");
+      if (b.pushed) { const s = document.createElement("span"); s.className = "vg-tag push"; s.textContent = b.pushed; s.title = b.pushed_note || "carried into this draw by agreement with the supplier"; wc.prepend(document.createTextNode(" ")); wc.prepend(s); }   // the push: rides this draw by agreement, keeps its own date
+      tr.appendChild(wc); }
     { const st = document.createElement("td"); st.className = "left"; const pill = document.createElement("span"); pill.className = b.paid ? "ar-paid" : "ar-open";
       pill.textContent = isSub ? (b.paid ? "Paid " + fmtDateShort(b.pay_date) : "No") : (b.pay_date ? "Paid " + fmtDateShort(b.pay_date) : (b.paid ? "Yes (no date)" : "No" + (num(b.open) > 0.005 ? " · " + money(b.open) + " open" : "")));
       if (isSub && !b.paid) pill.title = "No QuickBooks bill payment applied to this bill in the loaded window (this year)"; st.appendChild(pill); tr.appendChild(st); }
@@ -3643,7 +3645,7 @@ function _renderPpDraws() {
     const nSub = (dr.sub_bills || []).length;
     const cell2 = (a, b, cls) => `<span class="pp-c ${cls || ""}"><span class="pp-c1">${a}</span><span class="pp-c2">${b}</span></span>`;
     head.innerHTML = `<span class="bg-caret">${open ? "▾" : "▸"}</span>
-      <span class="pp-lab">${_ge(dr.no_draw ? "No draw yet" : "Invoice " + (dr.invoice_no || dr.label.split(" — ")[0]))}${dr.draw_no ? `<small class="pp-drawno">Draw #${dr.draw_no}</small>` : ""}</span>
+      <span class="pp-lab">${_ge(dr.no_draw ? "No draw yet" : "Invoice " + (dr.invoice_no || dr.label.split(" — ")[0]))}${dr.draw_no ? `<small class="pp-drawno">Draw #${dr.draw_no}</small>` : ""}${dr.pushed_in ? `<small class="pp-drawno push" title="${_ge(dr.pushed_in.note || "")}">${dr.pushed_in.count} pushed in</small>` : ""}${dr.pushed_out ? `<small class="pp-drawno push" title="${_ge(dr.pushed_out.note || "")}">${dr.pushed_out.count} pushed out</small>` : ""}</span>
       <span class="pp-dt">${_ge(dr.ar_date ? fmtDate(dr.ar_date) : "–")}</span>
       <span class="pp-billed">${dr.no_draw ? "–" : _ge(money(dr.billed))}</span>
       <span class="pp-gc ${dr.no_draw ? "" : dr.gc_paid ? "ok" : "due"}">${dr.no_draw ? "–" : dr.gc_paid ? "paid" : "owes " + _ge(money(dr.ar_open))}</span>
@@ -3659,6 +3661,9 @@ function _renderPpDraws() {
     band.appendChild(head);
     if (open) {
       if (!dr.no_draw) band.appendChild(drawStrip(dr));
+      // the push, on the band's face: what rode in / what left, and why (the same sentence the P&L draw sheet carries)
+      for (const [k, word] of [["pushed_in", "pushed in"], ["pushed_out", "pushed out"]]) { const p = dr[k]; if (!p) continue;
+        const cap = document.createElement("div"); cap.className = "bills-cap pp-push"; cap.textContent = `${p.count} bill${p.count === 1 ? "" : "s"} · ${money(p.total)} ${word}: ${p.note || ""}`; band.appendChild(cap); }
       band.appendChild(sortBar());
       const mat = dr.bills.filter(_ppBillShown), subs = (dr.sub_bills || []).filter(_ppBillShown);
       if (!mat.length && !subs.length) { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = _pp.filter === "unpaid" ? "Every bill on this draw is paid." : "No bills."; band.appendChild(p); }

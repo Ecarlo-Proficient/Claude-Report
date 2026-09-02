@@ -1337,6 +1337,13 @@ table.grid td.ip-amt { font-weight: 700; font-size: 1.08em; }
 .vg-tag.future { display: inline-block; font-size: .78em; font-weight: 600; padding: 0 6px; border-radius: 999px; margin-left: 6px; vertical-align: middle;
   color: var(--neg); border: 1px solid color-mix(in srgb, var(--neg) 50%, var(--border)); background: color-mix(in srgb, var(--neg) 8%, transparent); }
 
+/* the push: a bill carried into a later draw by agreement (shared/draw_moves) - amber = "moved on purpose", never an error */
+.vg-tag.push, .pp-drawno.push { display: inline-block; font-size: .78em; font-weight: 600; padding: 0 6px; border-radius: 999px; margin-left: 6px; vertical-align: middle;
+  color: #b7791f; border: 1px solid color-mix(in srgb, #b7791f 50%, var(--border)); background: color-mix(in srgb, #b7791f 8%, transparent); }
+html[data-theme="dark"] .vg-tag.push, html[data-theme="dark"] .pp-drawno.push { color: #e8b45c; }
+.bills-cap.pp-push { color: #b7791f; }
+html[data-theme="dark"] .bills-cap.pp-push { color: #e8b45c; }
+
 .ip-paid.due { color: var(--neg); font-weight: 600; }
 .ip-paid.ok { color: var(--pos); }
 .datef-reset { margin-left: 4px; }

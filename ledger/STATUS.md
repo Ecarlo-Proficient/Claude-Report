@@ -4,6 +4,16 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **The PUSH on the project page (2026-09-02).** A bill the supplier agreed to carry into a
+  later draw (rule in `<CompanyHealth>/draw_moves.json`, `shared/draw_moves.py`) arrives on
+  the later draw from the Bill Tracker match; `_fetch_draws` marks it live from the same rule
+  (`pushed` = "pushed from Draw #a", `pushed_note` = the why) and gives the receiving band
+  `pushed_in` {count, total, note} and the band it left `pushed_out` (found by the bill's own
+  date inside that draw's period). The band header shows "N pushed in" / "N pushed out" amber
+  pills, the open band carries the sentence under the draw strip, and each moved bill's
+  Where/status cell leads with the amber "pushed from Draw #a" tag. `load_bill_tracker` now
+  splits the tracker's leading `[TAG] ` off `Matched Invoice` into the new `ap_bill_line.match_tag`
+  column (migration = ALTER TABLE) so the draw key stays the bare invoice + memo.
 - **Project page draws read like the P&L draw sheet; sort / group by vendor or cost code (owner
   2026-09-02: "need this level of readability on the ledger and be able to sort by vendor and cost
   code fast").** An open draw starts with its **DRAW SUMMARY** strip - Income billed (net, cash to

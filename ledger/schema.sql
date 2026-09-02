@@ -277,6 +277,8 @@ CREATE TABLE IF NOT EXISTS ap_bill_line (
     approved      TEXT,
     lien_status   TEXT,               -- 'Notice due in ≤15d' / 'Notice PAST due' / ...
     matched_invoice TEXT,             -- the DRAW this bill is on (AR invoice it authorizes)
+    match_tag       TEXT,             -- the tracker's leading "[...]" on Matched Invoice ([DRAW] / [PUSHED from Draw #3]),
+                                      -- split off so the draw key above stays the bare invoice + memo
     invoice_status  TEXT,             -- Bill Tracker pipeline: Invoice paid / Awaiting Invoice / ...
     invoice_no      TEXT,
     gc_paid_date    TEXT,             -- when the client/GC funded that draw
