@@ -3375,7 +3375,7 @@ async function openInvoicePage(inv) {
   }
   // ── 3. the Notion collections log ──
   const s3 = sec("Collections log · Notion Invoice Tracker", i.notion_edited ? `page edited ${fmtDate(i.notion_edited, true)}` : "");
-  if (i.notion_url) invNotionSection(s3, i.notion_url);
+  if (i.notion_url) invNotionSection(s3, i.notion_url, true);   // body + timestamp + comments only
   else { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = "This invoice came from QuickBooks directly - it has no Invoice Tracker page yet."; s3.appendChild(p); }
 }
 function openInvoiceDetail(inv) {
@@ -3474,16 +3474,18 @@ function invToggleAll() {
 // The whole Notion page inside the drawer (owner 2026-09-02: "i need all the Notion page contents,
 // all of it so i don't need to open notion"). Fetched on open via /api/invoice/notion (server-cached 60 s).
 const _npCache = {};
-function invNotionSection(body, url) {
+function invNotionSection(body, url, bodyOnly) {
+  // bodyOnly (the invoice PAGE, owner 2026-09-02: "just the page body and the timestamp"): no property
+  // list - the page already shows those fields above; the drawer keeps the full property view.
   const g = document.createElement("div"); g.className = "dgroup np";
-  const h = document.createElement("h4"); h.textContent = "Notion page"; g.appendChild(h);
+  if (!bodyOnly) { const h = document.createElement("h4"); h.textContent = "Notion page"; g.appendChild(h); }
   const box = document.createElement("div"); box.className = "np-box"; box.textContent = "Loading the Notion page…"; g.appendChild(box);
   body.appendChild(g);
   const draw = (d) => {
     box.innerHTML = "";
     if (!d || !d.ok) { box.textContent = "Could not load the page" + (d && d.error ? ": " + d.error : "") + "."; box.classList.add("dim"); return; }
     const meta = document.createElement("div"); meta.className = "np-meta"; meta.textContent = `as in Notion · page edited ${fmtDate(d.last_edited.replace(" ", "T"), true)}`; box.appendChild(meta);
-    const props = (d.properties || []).filter(p => p.value !== "" && p.value != null && p.type !== "title");
+    const props = bodyOnly ? [] : (d.properties || []).filter(p => p.value !== "" && p.value != null && p.type !== "title");
     if (props.length) {
       const pl = document.createElement("div"); pl.className = "np-props";
       for (const p of props) {
@@ -3521,7 +3523,7 @@ function invNotionSection(body, url) {
         const tx = document.createElement("div"); tx.textContent = c.text; el.appendChild(who); el.appendChild(tx); box.appendChild(el);
       }
     }
-    if (!props.length && !blocks.length && !cm.length) { box.textContent = "The page has no content beyond the fields above."; box.classList.add("dim"); }
+    if (!props.length && !blocks.length && !cm.length) { box.textContent = bodyOnly ? "Nothing written on the page body yet, and no comments." : "The page has no content beyond the fields above."; box.classList.add("dim"); }
   };
   if (_npCache[url]) { draw(_npCache[url]); return; }
   fetch("/api/invoice/notion?url=" + encodeURIComponent(url)).then(r => r.json()).then(d => { if (d && d.ok) _npCache[url] = d; draw(d); }).catch(e => draw({ ok: false, error: String(e) }));
