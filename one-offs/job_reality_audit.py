@@ -86,13 +86,16 @@ def pull(refresh: bool) -> dict:
     costs = [{"proj": r["project_no"], "date": r["txn_date"], "amt": r["amount"],
               "code": r["cost_code"] or "", "acct": r["account"] or "",
               "vendor": r["vendor"] or "", "sub": r["is_sub"],
-              "doc": r["qbo_txn_id"], "desc": (r["description"] or "")[:60]}
+              "txn": r["qbo_txn_id"], "type": r.get("txn_type") or "",
+              "doc": r.get("doc_number") or "", "line": r.get("line_no") or "",
+              "desc": (r["description"] or "")[:80],
+              "memo": (r.get("memo") or "")[:80]}
              for r in qc.iter_cost_lines(access, company_id, account_names,
                                          cust_to_proj)
              if r["project_no"]]
     print(f"  {len(costs):,} cost lines attributed to a project")
     d = {"pulled_at": dt.datetime.now().isoformat(timespec="seconds"),
-         "invoices": invoices, "costs": costs}
+         "realm": company_id, "invoices": invoices, "costs": costs}
     CACHE.parent.mkdir(parents=True, exist_ok=True)
     CACHE.write_text(json.dumps(d))
     return d
