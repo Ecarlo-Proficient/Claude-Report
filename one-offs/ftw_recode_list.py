@@ -31,7 +31,16 @@ outline +/- if they want to.
 
 Reads the cache `job_reality_audit.py` writes. No QBO pull of its own.
 
+MERGING INTO THE CLERK'S WORKBOOK is the normal path (`--into`). The owner
+already has one coding-errors workbook the clerk works in and does not want the
+same information scattered over several files, so this writes ONE sheet into
+that workbook, in that workbook's own column layout, and leaves every other
+sheet untouched. A re-run replaces its own sheet rather than adding a second
+copy. The file is backed up first and the corruption gate runs before it is put
+back.
+
 USAGE
+  python3 one-offs/ftw_recode_list.py --into "/path/Code Code Errors 8.31.26.xlsx"
   python3 one-offs/ftw_recode_list.py --out ~/Downloads/"FTW Recodes.xlsx"
 """
 from __future__ import annotations
@@ -46,7 +55,7 @@ from collections import defaultdict
 from pathlib import Path
 from urllib.parse import quote
 
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Border, Font, Side
 from openpyxl.utils import get_column_letter
 
@@ -192,9 +201,123 @@ def _vendor_block(ws, r: int, rows: list, heads: list, realm: str,
     return r
 
 
+# The clerk's workbook speaks this column language - match it exactly rather
+# than importing a second convention into the same file.
+CLERK_COLS = ["Issue", "Vendor", "Bill #", "Date", "Project", "Class", "Cost",
+              "Amount", "Line memo", "Why flagged", "Move to",
+              "After 08/06 mtg", "Open in QBO"]
+DIVISION = {"MFD": "Multi Family", "CP": "Commercial", "RP": "Residential"}
+
+
+def _division(proj: str) -> str:
+    """From the project #, never the QBO Class field (CLAUDE.md: do not trust
+    Class for division)."""
+    for pre, name in DIVISION.items():
+        if proj.upper().startswith(pre):
+            return name
+    return ""
+
+
+def merge_sheet(book: Path, move: list, need_job: list, wrong: list,
+                realm: str, meeting: str, sheet_name: str) -> dict:
+    """Write ONE sheet into the clerk's existing workbook, in their layout.
+
+    Every other sheet is left exactly as it is - this only adds or replaces its
+    own. Their workbook carries an Excel Table on the first sheet, and rule 5b
+    is about a table ref left pointing past its data; nothing here touches that
+    sheet's rows, so the ref stays valid, and `assert_clean` proves it before
+    the file goes back."""
+    lock = book.with_name("~$" + book.name)
+    if lock.exists():
+        raise SystemExit(f"✗  {book.name} is OPEN in Excel - close it and re-run "
+                         f"(refusing to overwrite the clerk's work)")
+    wb = load_workbook(str(book))
+    before = {ws.title: ws.max_row for ws in wb.worksheets}
+    if sheet_name in wb.sheetnames:          # re-run replaces, never duplicates
+        wb.remove(wb[sheet_name])
+    ws = wb.create_sheet(sheet_name)
+
+    tagged = []
+    for rows, issue, target in ((move, "FW - move to -FTW", True),
+                                (need_job, "FW - create -FTW first", False),
+                                (wrong, "FW - wrong code (CP/MFD)", False)):
+        for x in rows:
+            tagged.append(dict(x, _issue=issue, _target=x.get("target", "") if target else ""))
+    # biggest vendor first, that vendor's rows together, and anything coded
+    # since the meeting at the very top whatever vendor it is
+    vend_total = defaultdict(float)
+    for x in tagged:
+        vend_total[x.get("vendor") or ""] += x["amt"]
+    tagged.sort(key=lambda x: (
+        0 if (x.get("date") or "") >= meeting else 1,
+        -vend_total[x.get("vendor") or ""],
+        x.get("vendor") or "",
+        x.get("date") or ""))
+
+    for i, h in enumerate(CLERK_COLS, start=1):
+        c = ws.cell(row=1, column=i, value=h)
+        c.font = Font(size=12, bold=True)
+    for r, x in enumerate(tagged, start=2):
+        after = (x.get("date") or "") >= meeting
+        why = {"FW - move to -FTW":
+               f"FW code on slab {x['proj']} - flatwork belongs on {x.get('_target')}",
+               "FW - create -FTW first":
+               f"FW code on slab {x['proj']} - no -FTW job exists yet, create it first",
+               "FW - wrong code (CP/MFD)":
+               f"FW code on a {_division(x['proj'])} job - flatwork belongs to RP"}[x["_issue"]]
+        if after:
+            why += f" - CODED AFTER THE {_us(meeting)} MEETING"
+        # a REAL date, not the ISO text - the clerk's other sheets carry real
+        # dates, and text sorts lexically and cannot be date-filtered
+        try:
+            when = dt.date.fromisoformat((x.get("date") or "")[:10])
+        except ValueError:
+            when = x.get("date") or ""
+        vals = [x["_issue"], x.get("vendor") or "", str(x.get("doc") or ""),
+                when, x["proj"], _division(x["proj"]),
+                (x.get("code") or "").split(":")[-1], x["amt"],
+                (x.get("desc") or x.get("memo") or "")[:80], why,
+                x.get("_target") or "", "YES" if after else "", None]
+        for i, v in enumerate(vals, start=1):
+            c = ws.cell(row=r, column=i, value=v)
+            c.font = Font(size=12, bold=bool(after and i == 12))
+            if CLERK_COLS[i - 1] == "Amount":
+                c.number_format = MONEY
+            elif CLERK_COLS[i - 1] == "Date" and isinstance(v, dt.date):
+                c.number_format = "mm/dd/yyyy"      # never year-first (owner)
+        link = qbo_url(x.get("type", ""), x.get("txn", ""), realm)
+        if link:
+            lc = ws.cell(row=r, column=len(CLERK_COLS), value="open bill")
+            lc.hyperlink = link
+            lc.font = Font(size=12, color="0563C1", underline="single")
+    ws.auto_filter.ref = (f"A1:{get_column_letter(len(CLERK_COLS))}"
+                          f"{max(len(tagged) + 1, 2)}")
+    ws.freeze_panes = "A2"
+    for col, w in zip("ABCDEFGHIJKLM",
+                      (24, 30, 15, 12, 12, 14, 8, 13, 42, 62, 14, 15, 12)):
+        ws.column_dimensions[col].width = w
+
+    tmp = book.with_suffix(".tmp.xlsx")
+    wb.save(str(tmp))
+    assert_clean(tmp)
+    check = load_workbook(str(tmp))
+    after_rows = {t: check[t].max_row for t in before}
+    if after_rows != before:
+        tmp.unlink()
+        raise SystemExit(f"✗  refusing to write: an existing sheet changed size "
+                         f"{before} -> {after_rows}")
+    tmp.replace(book)
+    return {"rows": len(tagged), "sheets_kept": len(before)}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Per-bill FTW recode worklist")
     ap.add_argument("--out", default=str(Path.home() / "Downloads" / "FTW Recodes.xlsx"))
+    ap.add_argument("--into", default="",
+                    help="merge ONE sheet into this existing workbook instead "
+                         "of writing a separate file")
+    ap.add_argument("--sheet", default="FW Misplaced",
+                    help="sheet name used by --into (replaced on a re-run)")
     ap.add_argument("--cache", default=str(CACHE))
     ap.add_argument("--meeting", default="2026-08-06",
                     help="the date the rule was settled; anything coded this "
@@ -207,6 +330,24 @@ def main() -> int:
     data = json.loads(cache.read_text())
     realm = data.get("realm", "")
     move, need_job, wrong_code = classify(data["costs"])
+
+    if a.into:
+        book = Path(a.into).expanduser()
+        if not book.exists():
+            print(f"✗  no workbook at {book}")
+            return 1
+        bak = (Path(os.environ.get("TMPDIR", "/tmp")) /
+               f"{book.stem}.backup-{dt.datetime.now():%Y%m%d-%H%M%S}.xlsx")
+        bak.write_bytes(book.read_bytes())
+        info = merge_sheet(book, move, need_job, wrong_code, realm,
+                           a.meeting, a.sheet)
+        after = sum(1 for r in move + need_job + wrong_code
+                    if (r.get("date") or "") >= a.meeting)
+        print(f"  sheet '{a.sheet}' written into {book.name}")
+        print(f"    {info['rows']} rows · {after} coded after {_us(a.meeting)} "
+              f"· {info['sheets_kept']} existing sheet(s) untouched")
+        print(f"    backup: {bak}")
+        return 0
 
     wb = Workbook()
     wb.remove(wb.active)
