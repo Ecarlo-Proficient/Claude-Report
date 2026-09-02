@@ -20,6 +20,12 @@ FALLBACK closes exactly those holes: after loading Notion, it finds CP/MFD draw
 invoice #s with no billing_event match and pulls ONLY those from QBO by DocNumber
 (source='qbo_fallback'). Tracker first; QBO fills only what it lacks (owner 2026-08-11).
 
+`billing_event.customer_id` (2026-09-01) = the QBO customer id an invoice's CustomerRef points
+at (the project sub-customer), so the project-# deep link no longer has to borrow it from
+`cost_line` - an invoice on a project with no loaded costs still links. The QBO-fallback rows
+carry it natively; tracker rows (Notion has no QBO customer id) are stamped from the QBO
+Customer list when credentials are at hand, else from what the ledger already knows.
+
 SAFETY
     * Read-only on Notion AND QBO; writes only the local ledger. Scoped full-replace
       of each source ('invoice_tracker', 'qbo_fallback') — idempotent; a re-run mirrors.
@@ -153,6 +159,7 @@ def parse_invoice_page(page: dict, division_default: str | None = None,
         "lien_notice": lien_notice,
         "draw_period": None,
         "note": _prop(props, "Quick Status"),      # the collections one-liner ("GC paying Fri") for the AR view
+        "customer_id": None,                       # Notion carries no QBO customer id; stamped after the write (fill_customer_ids)
         "source": "invoice_tracker",
     }
 
@@ -190,7 +197,7 @@ def load_customer_titles(nc) -> dict:
 _COLS = ["qbo_txn_id", "doc_number", "project_no", "division", "customer", "memo",
          "amount", "balance", "txn_date", "status", "due_date", "paid_date", "net_terms",
          "aging_bucket", "litigation", "lien_status", "lien_notice",
-         "draw_period", "note", "source", "loaded_at"]
+         "draw_period", "note", "customer_id", "source", "loaded_at"]
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
@@ -217,7 +224,8 @@ def _migrate_billing_event(con) -> None:
     # (CREATE TABLE IF NOT EXISTS won't add columns to an existing table).
     add = [("due_date", "TEXT"), ("net_terms", "TEXT"), ("aging_bucket", "TEXT"),
            ("litigation", "INTEGER NOT NULL DEFAULT 0"), ("lien_status", "TEXT"),
-           ("lien_notice", "TEXT"), ("paid_date", "TEXT"), ("note", "TEXT")]
+           ("lien_notice", "TEXT"), ("paid_date", "TEXT"), ("note", "TEXT"),
+           ("customer_id", "TEXT")]   # 2026-09-01: the project sub-customer's QBO id (deep link)
     for name, decl in add:
         if cols and name not in cols:
             con.execute(f"ALTER TABLE billing_event ADD COLUMN {name} {decl}")
@@ -270,11 +278,45 @@ def _invoice_from_qbo(inv: dict) -> dict:
         "lien_status": None,
         "lien_notice": None,
         "draw_period": None,
+        "customer_id": (inv.get("CustomerRef") or {}).get("value"),
         "source": "qbo_fallback",
     }
 
 
-def fill_gaps_from_qbo(con, now: str, dry_run: bool, batch: int = 25) -> int:
+def project_customer_ids(con, creds=None) -> dict:
+    """{project_no -> QBO customer id}: the project sub-customer an invoice's CustomerRef points
+    at. From QBO's Customer list when credentials are at hand (covers projects with NO loaded
+    costs), layered over what the ledger already knows (`cost_line.customer_id`). Read-only; a
+    QBO hiccup degrades to the ledger's own map and never breaks the AR load."""
+    out: dict = {}
+    try:
+        for pn, cid in con.execute("SELECT project_no, MAX(customer_id) FROM cost_line "
+                                   "WHERE customer_id IS NOT NULL GROUP BY project_no"):
+            out[pn] = cid
+    except sqlite3.OperationalError:
+        pass
+    if creds:
+        try:
+            from shared.qbo_api import build_project_customer_map
+            out.update({p: str(v["id"]) for p, v in build_project_customer_map(*creds).items() if v.get("id")})
+        except Exception as e:  # noqa: BLE001 - the deep link is a nicety, never break the AR load
+            print(f"  project customers: QBO map unavailable ({type(e).__name__}); using the ledger's own")
+    return out
+
+
+def fill_customer_ids(con, project_to_customer: dict) -> int:
+    """Stamp `billing_event.customer_id` on invoices that lack one (tracker rows; the QBO
+    fallback rows already carry theirs). Returns rows updated. Never overwrites a value."""
+    n = 0
+    for pn, cid in project_to_customer.items():
+        if pn and cid:
+            n += con.execute("UPDATE billing_event SET customer_id = ? "
+                             "WHERE project_no = ? AND customer_id IS NULL", (cid, pn)).rowcount
+    con.commit()
+    return n
+
+
+def fill_gaps_from_qbo(con, now: str, dry_run: bool, batch: int = 25, creds=None) -> int:
     """Fill the ONE thing the Invoice Tracker can't: draws whose AR invoice was never
     entered there. Find CP/MFD draw invoice_nos with no billing_event match, pull ONLY
     those from QBO by DocNumber, and land them as source='qbo_fallback'. The tracker
@@ -292,8 +334,11 @@ def fill_gaps_from_qbo(con, now: str, dry_run: bool, batch: int = 25) -> int:
         print("  --dry-run: not pulling QBO.")
         return 0
     from shared.qbo_api import load_credentials, query_all
-    access, company_id = load_credentials()
-    print("  authenticated.")                     # never echo the realm/company id (owner 2026-08-06)
+    if creds:
+        access, company_id = creds                # one authentication per run (shared with the customer-id stamp)
+    else:
+        access, company_id = load_credentials()
+        print("  authenticated.")                 # never echo the realm/company id (owner 2026-08-06)
     recs: list[dict] = []
     for i in range(0, len(gaps), batch):
         inlist = ", ".join("'" + d.replace("'", "") + "'" for d in gaps[i:i + batch])
@@ -376,8 +421,14 @@ def run(db_path: Path, dry_run: bool, show: int, no_qbo: bool = False) -> None:
     now = dt.datetime.now().isoformat(timespec="seconds")
     n = write_events(con, records, now)
     print(f"Wrote {n} billing_event rows → {db_path}")
+    creds = None
     if not no_qbo:
-        fill_gaps_from_qbo(con, now, dry_run=False)               # QBO fills the tracker's holes
+        from shared.qbo_api import load_credentials
+        creds = load_credentials()                                # ONE authentication for both QBO steps
+        print("  authenticated.")                                 # never echo the realm/company id (owner 2026-08-06)
+        fill_gaps_from_qbo(con, now, dry_run=False, creds=creds)  # QBO fills the tracker's holes
+    stamped = fill_customer_ids(con, project_customer_ids(con, creds))
+    print(f"  {stamped} invoices stamped with their project's QBO customer id (project-# deep link)")
     _draw_coverage(con, show)
     con.close()
 
@@ -450,9 +501,26 @@ def _selftest() -> None:
         assert con.execute("SELECT customer FROM billing_event WHERE doc_number='34535'").fetchone()[0] == "Firestone Building Co"
         # No relation → falls back to the raw project-level name.
         assert con.execute("SELECT customer FROM billing_event WHERE doc_number='34600'").fetchone()[0] == "MFD192 - MAYHILL"
+
+        # customer_id (2026-09-01): a QBO-fallback record carries CustomerRef.value natively; tracker
+        # rows are stamped from the project map (offline here: the ledger's own cost_line). A project
+        # with no known customer id stays NULL - never guessed.
+        assert all(r["customer_id"] is None for r in records)
+        fb = _invoice_from_qbo({"Id": "77", "DocNumber": "34999", "TotalAmt": 1000, "Balance": 0,
+                                "TxnDate": "2026-06-01", "CustomerRef": {"value": "c77", "name": "MFD192 - MAYHILL"}})
+        assert (fb["customer_id"], fb["project_no"], fb["status"]) == ("c77", "MFD192", "Paid"), fb
+        con.execute("INSERT INTO project (project_no, division, is_ftw, updated_at) VALUES ('RP7470','Residential',0,'t')")
+        con.execute("INSERT INTO cost_line (qbo_txn_id, qbo_line_id, txn_type, project_no, amount, customer_id, loaded_at) "
+                    "VALUES ('B9','1','Bill','RP7470',100,'c55','t')")
+        con.commit()
+        assert fill_customer_ids(con, project_customer_ids(con)) == 1
+        got = {r[0]: r[1] for r in con.execute("SELECT doc_number, customer_id FROM billing_event")}
+        assert got == {"34319": None, "34535": "c55", "34600": None}, got
+        assert fill_customer_ids(con, project_customer_ids(con)) == 0      # idempotent, never overwrites
         con.close()
     print("selftest OK: 3 Invoice Tracker pages parsed · project+division · Paid/Partially/Unpaid · "
-          "draw ↔ invoice join by Invoice # · due date + escalated lien · parent-client resolve.")
+          "draw ↔ invoice join by Invoice # · due date + escalated lien · parent-client resolve · "
+          "customer_id stamped from the project map (QBO-fallback rows carry it natively).")
 
 
 def main() -> int:

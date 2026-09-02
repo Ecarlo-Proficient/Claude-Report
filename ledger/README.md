@@ -115,6 +115,19 @@ shared `cost_leaf()` resolver. This is the **complete** cost source (subs includ
 The cost engine (`shared/qbo_costs.py`) is shared with project-pnl, so cost-code figures tie between
 the ledger and the P&L export by construction.
 
+## The money trail - every line behind Costs / Billed (2026-09-02)
+
+`GET /api/trail?project=CP800&kind=costs|billed|both` (`ledger/trail.py`) returns every
+`cost_line` (one QBO Bill / Expense line: date, vendor, bill #, memo, description, code, amount,
+"part of a $X bill", qb deep link, scan flag) and every `billing_event` invoice for a project,
+chronological, with a **running total per kind** - the red line the page draws against the ETC and
+the contract. `&csv=1` gives the same as an Excel-ready CSV. The totals block carries the WIP
+report's figures beside QuickBooks' and the two honest comparisons: invoices + retainage held vs
+WIP billed (WIP is gross), and costs split into "dated after the report" vs "not explained by
+dates". The page (`static/trail.js`, "Show every dollar" in the project drawer) is read-only.
+`python3 ledger/trail.py --selftest` proves it offline. The extra `cost_line` columns are additive
+and NULL until the next full `load_costs.py` run. No created / edited stamps (parked by the owner).
+
 ## CRM — customers & sales pipeline (Notion)
 
 ```bash

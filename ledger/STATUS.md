@@ -4,6 +4,23 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **The money trail - "show every single dollar" (owner 2026-09-01: "qbo cost/billed to date should
+  show exactly what new line/bill/scan/ref#/memo/description ... with links and transparency, no
+  hidden number ... a clear red line"). Landed 2026-09-02.** `cost_line` gained the audit trail the
+  QBO payload already carried and the loader dropped: `doc_number` (bill #), `memo` (bill-level,
+  now SEPARATE from the line `description` - no more folding), `line_no`, `bill_total` (display
+  only, never summed), `vendor_id`, `class_name`, `is_sub_evidence`, `has_attachment` (from the
+  shared Attachable index; NULL = no index, never 0-as-fact); `billing_event` gained `customer_id`.
+  Additive, idempotent migration; both `--selftest`s extended; a full pull backfilled it (line count
+  and sum unchanged). New `ledger/trail.py` serves **`/api/trail?project=&kind=costs|billed|both`**
+  (+ `&csv=1`): every line with a running total per kind, qb deep links (bill / expense / invoice,
+  company-scoped), the WIP figures beside QuickBooks', and two honest reconciliations - invoices +
+  retainage held vs WIP billed (gross), and costs split into "after the report date" vs "not
+  explained by dates". New `static/trail.js` + `trail.css`: the **"Show every dollar"** page from
+  the project drawer - as-of chips, the two figure pairs (match quiet, gap red), an inline-SVG
+  **red line** chart (running total vs ETC / contract, crossing point marked), and an Excel-like
+  table grouped by month with subtotals, sort, search, Copy (tab-separated) and CSV. 15px,
+  negatives in red parentheses. No "entered by" / edit stamps - parked by the owner.
 - **Readability pass for an older, Excel-only reader (owner 2026-09-01, first slice landed 2026-09-02).**
   (1) **Header bar folded into the nav** (owner: "top ledger remove or move down, takes up vertical
   space"): brand · group tabs · Export / Refresh / gear on one sticky row, the group's sub-tabs on a

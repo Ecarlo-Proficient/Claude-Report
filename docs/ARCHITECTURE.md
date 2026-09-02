@@ -9,7 +9,7 @@
 > picture (open it in a browser after pulling). Refresh it when structure meaningfully changes;
 > THIS file is the always-current source of truth.
 
-Last updated: 2026-08-25 (ledger/: NEW **Graph tab** — the org as a map (`ledger/vault_graph.py`,
+Last updated: 2026-09-02 (ledger/: NEW **money trail** - `ledger/trail.py` + `static/trail.js`, `/api/trail`: every QBO line behind a project's Costs / Billed with the running total against ETC and contract; `cost_line` gained bill #, memo, line #, bill total, vendor/class ids, sub evidence, scan flag. 2026-08-25: NEW **Graph tab** — the org as a map (`ledger/vault_graph.py`,
 `/api/graph`) AND NEW **WIP Review tab** — the WIP update as accept/merge. Each wip reader +
 `master_wip_test` gained `--emit-review` (diff a Test tab, no write) and `--apply-review` (write
 only approved values) modes backed by `wip/wip_review_common.py`; the ledger orchestrates them by
@@ -463,7 +463,8 @@ flowchart LR
     BROWSER[("Browser\nhttp://127.0.0.1:8787")]:::out
     QBO[("QBO\nBills + Purchases\n(read-only pull, Touch ID)")]:::src
     QCOSTS["shared/qbo_costs.py\ncost_leaf + iter_cost_lines\n(the ONE resolver — shared with project-pnl)"]:::tool
-    COSTLOAD["load_costs.py\ncost_line by cost code · incl. subs ·\nreconciles to wip_snapshot · --selftest"]:::tool
+    COSTLOAD["load_costs.py\ncost_line by cost code · incl. subs ·\n+ the trail columns (bill # · memo · line # · bill total · scan) ·\nreconciles to wip_snapshot · --selftest"]:::tool
+    TRAIL["trail.py + static/trail.js\n/api/trail: every cost / billed line behind a project's totals,\nrunning total vs ETC + contract (the red line) · CSV · qb + scan links"]:::tool
     FUTURE["later: budget_line (takeoff by code)\n· billing_event (AR / draws)"]:::future
 
     REG --> REGVIEW --> DASH
@@ -477,6 +478,7 @@ flowchart LR
     APLOAD ==>|"ap_bill_line"| DB
     COSTLOAD ==>|"cost_line · cost_code"| DB
     DB ==>|"read-only"| DASH --> BROWSER
+    DB ==>|"cost_line + billing_event + v_wip_latest"| TRAIL --> DASH
     DASH -.->|"owner marks: waiver · lien tag (bill_mark) → mirrored to the workbook on next sync-ap"| DB
     DASH -.->|"Pay Bills check-run worksheet (pay_mark) - LOCAL only, never pays QBO / not mirrored"| DB
     SYNCACT["sync_actions.py\naction items → Notion pages\n(shared/notion_client)"]:::tool

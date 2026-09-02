@@ -77,8 +77,19 @@ CREATE TABLE IF NOT EXISTS cost_line (
     txn_date        TEXT,
     is_sub          INTEGER NOT NULL DEFAULT 0,
     vendor          TEXT,
-    description     TEXT,
+    description     TEXT,                        -- the LINE's own Description (never the bill memo - that is `memo`)
     customer_id     TEXT,                        -- QBO CustomerRef.value (the project's customer id) → customerdetail deep link
+    -- The audit trail behind a line (2026-09-01): what a reader asks for before he trusts the
+    -- total. All additive; ALTERed onto older DBs by load_costs._migrate_cost_line, filled by
+    -- the next FULL pull, NULL until then. No created/edited stamps (parked by the owner).
+    doc_number      TEXT,                        -- bill / expense DocNumber (the vendor's ref #)
+    memo            TEXT,                        -- bill-level PrivateNote, kept SEPARATE from the line description
+    line_no         INTEGER,                     -- QBO LineNum (position on the document, 1-based)
+    bill_total      NUMERIC,                     -- the whole document's TotalAmt - DISPLAY ONLY ("part of a larger bill"), NEVER summed
+    vendor_id       TEXT,                        -- QBO VendorRef.value (Bill) / EntityRef.value (Purchase)
+    class_name      TEXT,                        -- QBO ClassRef.name (the line's, else the transaction's)
+    is_sub_evidence TEXT,                        -- the memo token that set is_sub = 1 ('sub', 'Subcontractor'...); NULL when not a sub
+    has_attachment  INTEGER,                     -- 1/0 from the shared Attachable index at load time; NULL = no index (unknown, never 0-as-fact)
     source          TEXT NOT NULL DEFAULT 'qbo',
     loaded_at       TEXT NOT NULL,
     PRIMARY KEY (qbo_txn_id, qbo_line_id)
@@ -106,6 +117,7 @@ CREATE TABLE IF NOT EXISTS billing_event (
     paid_date       TEXT,                        -- Paid Date from the tracker (when the GC paid; drives the Payments tab)
     draw_period     TEXT,                        -- from PrivateNote (the QBO custom field is unreachable)
     note            TEXT,                        -- Notion Quick Status: the collections one-liner ("GC paying Fri")
+    customer_id     TEXT,                        -- QBO CustomerRef.value (the project sub-customer) - so an invoice on a project with no loaded costs still deep-links (2026-09-01)
     source          TEXT NOT NULL DEFAULT 'qbo_invoice',
     loaded_at       TEXT NOT NULL
 );

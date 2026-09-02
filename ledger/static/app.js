@@ -4745,6 +4745,11 @@ function openDetail(r) {
     body.appendChild(g);
   }
   body.appendChild(buildPnlGroup(r.project_no));
+  if (window.openTrail) {   // the money trail (trail.js): every QBO line behind Costs / Billed, with the running total
+    const g = document.createElement("div"); g.className = "dgroup"; const b = document.createElement("button"); b.className = "btn";
+    b.textContent = "Show every dollar"; b.title = "Every QBO line behind Costs to date and Billed to date, with a running total against the budget";
+    b.onclick = () => { closePanels(); openTrail(r.project_no); }; g.appendChild(b); body.appendChild(g);
+  }
   const ap = AP.by_project && AP.by_project[r.project_no];
   if (ap) {
     const g = document.createElement("div"); g.className = "dgroup";

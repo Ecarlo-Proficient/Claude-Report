@@ -48,6 +48,7 @@ from shared import paths, pnl_paths, bill_marks, lien_clock, breakeven  # noqa: 
 
 import registry_view  # noqa: E402  (local: parses the vault's process registry for the Systems tab)
 import vault_graph    # noqa: E402  (local: vault [[link]] graph + docs/ARCHITECTURE.md diagrams for the Graph tab)
+import trail          # noqa: E402  (local: the money trail - every QBO line behind a project's Costs / Billed, /api/trail)
 
 HERE = Path(__file__).resolve().parent
 STATIC = HERE / "static"
@@ -1958,6 +1959,12 @@ class Handler(BaseHTTPRequestHandler):
             self._subloc_project(self._query().get("p", ""))
         elif path == "/api/vendor":          # on-demand: one vendor's bills (the vendor page)
             self._vendor(self._query().get("v", ""))
+        elif path == "/api/trail":           # the money trail: every cost / billed line behind a project's totals (&csv=1 for Excel)
+            con = _connect(self.db_path)
+            try:
+                self._send(*trail.respond(con, self._query()))
+            finally:
+                con.close()
         elif path == "/api/invoices/all":    # on-demand: ALL invoices incl. paid (the "show all" toggle)
             self._invoices_all()
         elif path.startswith("/static/"):
