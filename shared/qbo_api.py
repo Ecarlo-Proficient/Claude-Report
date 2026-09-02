@@ -43,6 +43,43 @@ PROJ_RE = re.compile(
 )
 
 
+def project_of_invoice(inv: dict) -> str:
+    """The job number an INVOICE belongs to, or "" when it names none (or two).
+
+    **The customer is not where the job number lives.** Measured 2026-09-02 over
+    a two-month window: 0 of 228 invoices carried a project # in
+    `CustomerRef.name` - they are billed to the parent GC ("JPI Construction,
+    LLC") with the job named in the memo ("MFD160 - 9001 Cypress Waters Blvd -
+    Partial Retainage Release"). Attributing on the customer alone reads about
+    5% of the invoice book and reported MFD182 as never invoiced when its P&L
+    bills 4.5M. This is the same PrivateNote workaround the rest of the repo
+    uses for bills (CLAUDE.md: the Draw Period custom field is unreachable, so
+    the memo carries the job).
+
+    Order: the customer path (for invoices that ARE on a project sub-customer),
+    then PrivateNote, then the customer-facing memo, then line descriptions.
+    Text naming TWO jobs returns "" - skipped, never split, the same rule
+    `shared/job_lines` applies to bill memos.
+    """
+    def _n(p: str) -> str:
+        return p.upper().replace(" ", "")
+
+    m = PROJ_RE.search(((inv.get("CustomerRef") or {}).get("name") or ""))
+    if m:
+        return _n(m.group(0))
+    for text in (inv.get("PrivateNote"),
+                 (inv.get("CustomerMemo") or {}).get("value")):
+        found = {_n(x) for x in PROJ_RE.findall(text or "")}
+        if len(found) == 1:
+            return found.pop()
+        if len(found) > 1:
+            return ""
+    found = set()
+    for ln in (inv.get("Line") or []):
+        found |= {_n(x) for x in PROJ_RE.findall(ln.get("Description") or "")}
+    return found.pop() if len(found) == 1 else ""
+
+
 def load_credentials() -> Tuple[str, str]:
     if not kc.has_credentials():
         print("✗  No QBO credentials in Keychain. Run: python3 shared/setup_qbo.py")

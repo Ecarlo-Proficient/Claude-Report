@@ -47,7 +47,7 @@ from collections import defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from shared.qbo_api import PROJ_RE, load_credentials, query_all
+from shared.qbo_api import load_credentials, project_of_invoice, query_all
 
 
 LEDGER_DB = Path(os.environ.get(
@@ -69,14 +69,6 @@ def _last_costs() -> dict:
         return {}
     finally:
         con.close()
-
-
-def _proj_of(inv: dict) -> str:
-    """The project # on an invoice. CustomerRef.name is
-    `Parent:Project # Name`, so search it - never match from the start."""
-    name = ((inv.get("CustomerRef") or {}).get("name") or "")
-    m = PROJ_RE.search(name)
-    return m.group(0).upper().replace(" ", "") if m else ""
 
 
 def main() -> int:
@@ -113,7 +105,7 @@ def main() -> int:
     invoices = query_all(access, company_id, "Invoice")
     jobs: dict = defaultdict(lambda: {"first": "", "last": "", "n": 0, "amt": 0.0})
     for inv in invoices:
-        p = _proj_of(inv)
+        p = project_of_invoice(inv)
         if not p:
             continue
         d = str(inv.get("TxnDate") or "")
