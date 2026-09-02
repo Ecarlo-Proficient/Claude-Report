@@ -1314,3 +1314,13 @@ html[data-theme="dark"] .acct-src.po { color: #b79ae0; } html[data-theme="dark"]
 .ip-kv .dv.ip-big { font-size: 1.45em; font-weight: 700; letter-spacing: -.02em; }
 table.grid td.ip-amt { font-weight: 700; font-size: 1.08em; }
 .bg-amt { font-variant-numeric: tabular-nums; }
+
+/* export dialog (2026-09-02) */
+.xdlg-ov { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 60; display: flex; align-items: center; justify-content: center; }
+.xdlg { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; min-width: 380px; box-shadow: var(--shadow); }
+.xdlg h3 { margin: 0 0 12px; font-size: 1.05em; }
+.xdlg label { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; color: var(--text-dim); font-size: .92em; }
+.xdlg select { font: inherit; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); }
+.xdlg-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.savebar[hidden] { display: none; }

@@ -50,6 +50,7 @@ import registry_view  # noqa: E402  (local: parses the vault's process registry 
 import vault_graph    # noqa: E402  (local: vault [[link]] graph + docs/ARCHITECTURE.md diagrams for the Graph tab)
 import trail          # noqa: E402  (local: the money trail - every QBO line behind a project's Costs / Billed, /api/trail)
 import notion_page    # noqa: E402  (local: one Notion page, whole, for the invoice side panel - /api/invoice/notion)
+import table_export   # noqa: E402  (local: a filtered table -> grouped Excel report in ~/Downloads, POST /api/export/xlsx)
 
 HERE = Path(__file__).resolve().parent
 STATIC = HERE / "static"
@@ -587,7 +588,7 @@ def _fetch_ap(con) -> dict:
     bills = []
     for r in con.execute(
         "SELECT project_no, division, vendor, bill_ref, bill_date, account, "
-        "line_amount, open_balance, pay_status, approved, invoice_status, lien_status, "
+        "line_amount, bill_total, open_balance, pay_status, approved, invoice_status, lien_status, "
         "matched_invoice, invoice_no, gc_paid_date, pay_date, qbo_link "
         "FROM ap_bill_line ORDER BY bill_date DESC"):
         b = dict(r)
@@ -2029,6 +2030,29 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:                          # noqa: BLE001
             self._json({"ok": False, "error": f"attachment lookup failed: {e}"})
 
+    def _export_xlsx(self) -> None:
+        """Write the rows the client shows (already filtered + ordered) as a grouped Excel report,
+        reveal it in Finder, return the path. Bounded: 20k rows, 40 columns."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except (ValueError, json.JSONDecodeError):
+            return self._json({"ok": False, "error": "bad request"}, 400)
+        rows, cols = body.get("rows") or [], body.get("columns") or []
+        if not rows or not cols:
+            return self._json({"ok": False, "error": "nothing to export"}, 400)
+        if len(rows) > 20000 or len(cols) > 40:
+            return self._json({"ok": False, "error": "too big for one report - narrow the filter"}, 400)
+        try:
+            path = table_export.build(body, Path.home() / "Downloads")
+        except Exception as e:  # noqa: BLE001 - surface the reason, never a 500
+            return self._json({"ok": False, "error": f"{type(e).__name__}: {e}"})
+        try:
+            subprocess.run(["open", "-R", str(path)], check=False, timeout=10)   # noqa: S603,S607 - reveal in Finder
+        except Exception:  # noqa: BLE001
+            pass
+        self._json({"ok": True, "path": str(path), "rows": len(rows)})
+
     def _attachment_download(self) -> None:
         """Download the selected bills' scans to a dated folder + reveal it, so the owner can drag
         them into the message to the responsible party. Subprocess the loader (never an import);
@@ -2154,6 +2178,8 @@ class Handler(BaseHTTPRequestHandler):
             self._wip_review_run()
         elif p == "/api/wip/merge":       # WIP Review: write approved changes to the 3 Test tabs (gated)
             self._wip_merge()
+        elif p == "/api/export/xlsx":          # the table on screen -> a grouped Excel report in ~/Downloads (revealed)
+            self._export_xlsx()
         elif p == "/api/attachment/download":  # save selected bills' scans to a folder + reveal it
             self._attachment_download()
         else:

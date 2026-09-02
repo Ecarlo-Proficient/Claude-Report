@@ -2302,8 +2302,10 @@ function setBillLien(b, lien) {
 function renderBillSaveBar() {
   const bar = $("#billSaveBar"); if (!bar) return;
   const n = pendingBillMarks.size;
-  bar.classList.toggle("dirty", n > 0);   // always present on the Bills tab; amber when unsaved
-  $("#billSaveText").textContent = n ? `${n} unsaved lien mark${n > 1 ? "s" : ""}` : "Lien marks saved";
+  bar.classList.toggle("dirty", n > 0);
+  bar.hidden = n === 0;                   // only while something is unsaved (owner 2026-09-02: "why is this here?"); saved marks are reviewed from the button by Clear filters
+  $("#billSaveText").textContent = n ? `${n} unsaved lien mark${n > 1 ? "s" : ""} - review` : "";
+  { const rv = $("#btnLienReview"); if (rv) rv.hidden = n > 0; }
   { const b = $("#btnSaveBillMarks"); if (b) b.disabled = n === 0; }
   { const d = $("#btnDiscardBillMarks"); if (d) d.hidden = n === 0; }
 }
@@ -5373,11 +5375,87 @@ function _csvTable() {
   const cols = visibleColumns();
   return { name: "projects", rows: filtered(), cols: cols.map(c => [c.label, r => raw(c, r[c.key])]) };
 }
+// Export dialog (owner 2026-09-02): Excel (a grouped report that keeps the state colours) or CSV, and
+// "how would you like it grouped" - defaults to the grouping on screen (Bills: the Group by select).
+const EXPORT_GROUPS = {
+  bills: [["", "None"], ["Vendor", "Vendor"], ["Project", "Project"], ["Client", "Client"], ["Division", "Division"], ["Invoice", "Draw / invoice"]],
+  invoices: [["", "None"], ["Client", "Client"], ["Project", "Project"], ["Status", "Status"]],
+  wip: [["", "None"], ["Division", "Division"]],
+  projects: [["", "None"], ["Division", "Division"], ["Client", "Client"]],
+};
 function exportCSV() {
-  const { name, rows, cols } = _csvTable();
+  const spec = _csvTable();
+  const groups = EXPORT_GROUPS[spec.name] || [["", "None"]];
+  let def = "";
+  if (spec.name === "bills") { const g = ($("#billGroup") || {}).value; def = { vendor: "Vendor", project_no: "Project", client: "Client", division: "Division", matched_invoice: "Invoice" }[g] || ""; }
+  if (spec.name === "invoices") def = "Client";
+  const ov = document.createElement("div"); ov.className = "xdlg-ov";
+  ov.innerHTML = `<div class="xdlg" role="dialog"><h3>Export ${_ge(spec.rows.length.toLocaleString())} ${_ge(spec.name)} rows</h3>
+    <label>Format <select id="xdFmt"><option value="xlsx">Excel (.xlsx) - keeps the colour coding, groups collapse</option><option value="csv">CSV - plain rows</option></select></label>
+    <label>Group by <select id="xdGrp">${groups.map(([v, l]) => `<option value="${_ge(v)}"${v === def ? " selected" : ""}>${_ge(l)}</option>`).join("")}</select></label>
+    <div class="xdlg-actions"><button class="btn" id="xdCancel">Cancel</button><button class="btn primary" id="xdGo">Export</button></div></div>`;
+  document.body.appendChild(ov);
+  const close = () => ov.remove();
+  ov.onclick = (e) => { if (e.target === ov) close(); };
+  $("#xdCancel").onclick = close;
+  $("#xdGo").onclick = () => { const fmt = $("#xdFmt").value, grp = $("#xdGrp").value; close(); if (fmt === "xlsx") exportXlsx(spec, grp); else exportCsvPlain(spec, grp); };
+}
+function _stateFmt(name, row, label) {   // the on-screen colour for a cell, as a state class for Excel
+  if (name === "bills") {
+    if (label === "Open balance" && num(row.open_balance) > 0) return "neg";
+    if (label === "Paid" && row.pay_date) return "pos";
+    if (label === "Lien" && BILL_LIEN_RISK.has(row.lien_status)) return "warn";
+    if (label === "Approved" && row.approved && row.approved !== "approved") return "warn";
+    if (label === "Invoice status" && row.invoice_status === "Invoice paid") return "pos";
+  }
+  if (name === "invoices") {
+    if (label === "Open balance" && oiBal(row) > 0) return "neg";
+    if (label === "Days past due" && num(row.days_past_due) > 0) return "neg";
+    if (label === "Status" && (row.status || "").toLowerCase() === "paid") return "pos";
+    if (label === "Lien" && row.lien_status) return "warn";
+  }
+  return null;
+}
+async function exportXlsx(spec, grp) {
+  const { name, rows, cols } = spec;
+  const moneyLabels = new Set(["This line", "Bill total", "Open balance", "Invoice total", "Amount", ...WIP_COLS.filter(c => c.t === "money").map(c => c.label)]);
+  const columns = cols.map(([l]) => ({ label: l, type: moneyLabels.has(l) ? "money" : "text" }));
+  const gi = grp ? cols.findIndex(([l]) => l === grp) : -1;
+  const data = rows.map(r => cols.map(([, g]) => g(r)));
+  const fmt = [];
+  rows.forEach((r, ri) => cols.forEach(([l], ci) => { const c = _stateFmt(name, r, l); if (c) fmt.push({ r: ri, c: ci, cls: c }); }));
+  const filt = name === "bills" ? [(billView().name), billDate && billDate.active() ? "date " + billDate.label() : "", ...BILL_MSEL.map(c => (billMSel[c.id] || {}).size ? [...billMSel[c.id]].join("/") : "").filter(Boolean)].filter(Boolean).join(" · ")
+             : name === "invoices" ? [invScope === "all" ? "all invoices" : "open invoices", invQuick ? `find "${invQuick}"` : ""].filter(Boolean).join(" · ") : "";
+  const body = { name: `${name === "bills" ? "Bill Tracker" : name === "invoices" ? "Invoices" : name} ${grp ? "by " + grp : ""}`.trim(),
+    sheet: name, title: `${name === "bills" ? "Bill Tracker" : name === "invoices" ? "Open invoices" : "Ledger"}${filt ? " - " + filt : ""}`,
+    subtitle: `${rows.length.toLocaleString()} rows as shown · exported ${fmtDate(new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 19), true)}${grp ? " · grouped by " + grp : ""}`,   // local time, not UTC
+    columns, rows: data, group_by: gi >= 0 ? gi : null, fmt };
+  toast("Building the Excel report…");
+  try {
+    const r = await (await fetch("/api/export/xlsx", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })).json();
+    if (r && r.ok) toast(`Excel report saved to Downloads (${r.rows} rows) - opened in Finder`); else toast("Export failed: " + ((r && r.error) || "unknown"));
+  } catch (e) { toast("Export failed: " + e); }
+}
+function exportCsvPlain(spec, grp) {
+  const { name, rows, cols } = spec;
   const esc = v => { const s = String(v ?? ""); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
   const head = cols.map(([l]) => esc(l)).join(",");
-  const body = rows.map(r => cols.map(([, g]) => esc(g(r))).join(",")).join("\n");
+  const gi = grp ? cols.findIndex(([l]) => l === grp) : -1;
+  let ordered = rows;
+  if (gi >= 0) {   // grouped CSV = sorted by the group (stable) with a subtotal line per group
+    const key = r => String(cols[gi][1](r) ?? "");
+    const seen = new Map(); rows.forEach((r, i) => { const k = key(r); if (!seen.has(k)) seen.set(k, i); });
+    ordered = [...rows].sort((a, b) => seen.get(key(a)) - seen.get(key(b)));
+  }
+  const moneyLabels = new Set(["This line", "Bill total", "Open balance", "Invoice total"]);
+  const lines = []; let cur = null, subs = null;
+  const flush = () => { if (cur == null) return; lines.push(cols.map(([l], ci) => ci === gi ? esc(cur + " total") : (moneyLabels.has(l) ? esc(Math.round((subs[ci] || 0) * 100) / 100) : "")).join(",")); };
+  for (const r of ordered) {
+    if (gi >= 0) { const k = String(cols[gi][1](r) ?? ""); if (k !== cur) { flush(); cur = k; subs = {}; } cols.forEach(([l], ci) => { if (moneyLabels.has(l)) subs[ci] = (subs[ci] || 0) + (num(cols[ci][1](r)) || 0); }); }
+    lines.push(cols.map(([, g]) => esc(g(r))).join(","));
+  }
+  flush();
+  const body = lines.join("\n");
   const blob = new Blob(["\ufeff" + head + "\n" + body], { type: "text/csv" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
@@ -6970,7 +7048,8 @@ function init() {
   { const el = $("#btnClosePayBills"); if (el) el.onclick = closePanels; }
   { const el = $("#btnCloseInvDetail"); if (el) el.onclick = closePanels; }
   { const el = $("#btnCloseLienReview"); if (el) el.onclick = closePanels; }
-  { const el = $("#billSaveText"); if (el) el.onclick = openLienReview; }   // press "Lien marks saved" → review them
+  { const el = $("#billSaveText"); if (el) el.onclick = openLienReview; }   // press the unsaved count → review them
+  { const el = $("#btnLienReview"); if (el) el.onclick = openLienReview; }   // saved marks on file, reviewed on demand
   { const el = $("#btnCloseSublocDetail"); if (el) el.onclick = closePanels; }
   { const el = $("#btnCloseVendorDetail"); if (el) el.onclick = closePanels; }
   { const el = $("#recordBack"); if (el) el.onclick = closeRecord; }

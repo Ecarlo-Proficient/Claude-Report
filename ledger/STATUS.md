@@ -4,6 +4,17 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Export dialog + grouped Excel report; lien save bar only when unsaved (owner 2026-09-02).**
+  Export CSV now asks **Format** (Excel or CSV) and **Group by** (defaults to the grouping on screen -
+  Bills: the Group by select, e.g. Vendor). Excel = `ledger/table_export.py` via `POST /api/export/xlsx`:
+  title block with the filter summary, frozen + autofiltered header, a band per group with subtotals
+  and an Excel outline (bands collapse), grand total, money formats, and **state colours** - paid
+  green, open red, lien risk / not approved amber. **Owner-granted exception to rule 5 (plain Excel)
+  for THIS report only**, colour encodes state, nothing decorative; `xlsx_verify.assert_clean` is the
+  last step. Saved to `~/Downloads/<name> <stamp>.xlsx` and revealed in Finder. CSV grouped = sorted by
+  the group with a subtotal line per group. The bills payload now carries `bill_total` (the export's
+  Bill total column was empty). The **lien-mark save bar** shows only while marks are unsaved (owner:
+  "why is this here?"); saved marks are reviewed from the "Lien marks on file" button.
 - **Bills + Draws for the GC's "statement from each supplier as of a date for a project" (owner
   2026-09-02).** One shared **Date** control (`dateFilter`) on both tabs: **Month** = every month ticked
   by default with Select all / Deselect all (the Day select is gone); **Date** = from / to with the

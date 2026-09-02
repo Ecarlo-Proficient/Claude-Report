@@ -465,6 +465,7 @@ flowchart LR
     QCOSTS["shared/qbo_costs.py\ncost_leaf + iter_cost_lines\n(the ONE resolver — shared with project-pnl)"]:::tool
     COSTLOAD["load_costs.py\ncost_line by cost code · incl. subs ·\n+ the trail columns (bill # · memo · line # · bill total · scan) ·\nreconciles to wip_snapshot · --selftest"]:::tool
     NPAGE["notion_page.py\n/api/invoice/notion: one Invoice Tracker page, whole\n(properties · body · comments) for the invoice drawer · read-only · 60 s cache"]:::tool
+    XLSX["table_export.py\nPOST /api/export/xlsx: the filtered table -> grouped Excel report\n(bands + subtotals + state colours) in ~/Downloads, xlsx_verify last"]:::tool
     IPAGE["/api/invoice/page + /api/invoice/notion (notion_page.py)\nthe invoice as a page: QBO details · the draw's bills by vendor + pay status\n· subs in the draw period · the Notion collections log"]:::tool
     TRAIL["trail.py + static/trail.js\n/api/trail: every cost / billed line behind a project's totals,\nrunning total vs ETC + contract (the red line) · CSV · qb + scan links"]:::tool
     FUTURE["later: budget_line (takeoff by code)\n· billing_event (AR / draws)"]:::future
@@ -482,6 +483,7 @@ flowchart LR
     DB ==>|"read-only"| DASH --> BROWSER
     DB ==>|"cost_line + billing_event + v_wip_latest"| TRAIL --> DASH
     DB ==>|"billing_event + ap_bill_line + cost_line"| IPAGE --> DASH
+    DASH -->|"rows on screen"| XLSX
     NOTIONP[("Notion Invoice Tracker\n(page read, on demand)")]:::src --> NPAGE --> DASH
     DASH -.->|"owner marks: waiver · lien tag (bill_mark) → mirrored to the workbook on next sync-ap"| DB
     DASH -.->|"Pay Bills check-run worksheet (pay_mark) - LOCAL only, never pays QBO / not mirrored"| DB
