@@ -160,6 +160,7 @@ function applySettings() {
 // ── Formatting ────────────────────────────────────────────────────────────
 const isNum = v => typeof v === "number" && !Number.isNaN(v);
 function money(v) {
+  if (v != null && v !== "" && !Number.isNaN(Number(v)) && Math.abs(Number(v)) > 0 && Math.abs(Number(v)) < 0.5) { const n = Number(v); const s = "$" + Math.abs(n).toFixed(2); return n < 0 ? `(${s})` : s; }   // cents, never a misleading $0
   if (v === null || v === undefined || v === "") return "—";
   const n = Number(v); if (Number.isNaN(n)) return "—";
   const s = "$" + Math.round(Math.abs(n)).toLocaleString();
@@ -996,6 +997,7 @@ function renderDraws() {
       const sub = document.createElement("span"); sub.className = "g-sub";
       const nm = nameOf(curProj);
       sub.textContent = `${nm ? " · " + nm : ""} · ${g.length} draw${g.length > 1 ? "s" : ""} · ${money(gIn)} in / ${money(gOut)} out / ${money(gIn - gOut)} net`;
+      gtr.style.cursor = "pointer"; gtr.title = "Open the project page"; gtr.onclick = () => openProjectPage(curProj);
       gtd.appendChild(sp); gtd.appendChild(sub); gtr.appendChild(gtd); tbody.appendChild(gtr);
     }
     const done = d.stage === "All paid";   // green row only when fully settled (GC paid + vendors paid)
@@ -1060,6 +1062,7 @@ function buildBillsTable(d) {
     + ` &nbsp;·&nbsp; Billed in <b>${_ge(d.billed != null ? money(d.billed) : "—")}</b> · Materials <b>${_ge(money(payTotal))}</b>`
     + (subsT ? ` · Subs <b>${_ge(money(subsT))}</b> · Total out <b>${_ge(money(totalOut))}</b>` : "")
     + ` · Net <b>${_ge(d.billed != null ? money(net) : "—")}</b> · ${_ge(DRAW_STAGE_SHORT[d.stage] || d.stage || "")}`;
+  if (d.project_no) { const pp = document.createElement("button"); pp.type = "button"; pp.className = "btn small primary"; pp.textContent = "Project page"; pp.style.marginLeft = "8px"; pp.onclick = (e) => { e.stopPropagation(); openProjectPage(d.project_no); }; sm.appendChild(pp); }
   const cpBtn = document.createElement("button"); cpBtn.type = "button"; cpBtn.className = "btn small"; cpBtn.textContent = "Copy report";
   cpBtn.title = "Copy this draw + its subs as a table to paste to people";
   cpBtn.onclick = (e) => { e.stopPropagation(); copyDrawReport(d, cpBtn); };
@@ -3330,7 +3333,8 @@ function invNoCell(inv) {
 // then bills / links. Opened from any project # in the app. Read-only except the pay-run marks.
 let _pp = null;
 async function openProjectPage(pn) {
-  if (!pn) return;
+  if (!pn || !/^(MFD|CP|RP)\d/i.test(String(pn))) { if (pn) toast(`"${pn}" is not a project # - nothing to open`); return; }   // e.g. the "(multiple)" bucket
+  pn = String(pn).toUpperCase();
   const r0 = (ALL || []).find(x => x.project_no === pn) || {};
   openRecord(pn + (r0.project_name ? " · " + r0.project_name : ""), [r0.division, r0.status ? "WIP status " + r0.status : ""].filter(Boolean).join(" · "));
   const body = $("#recordBody"); body.innerHTML = ""; skeletonInto(body, 6);
@@ -3403,7 +3407,7 @@ async function openProjectPage(pn) {
   const qurl = qboCustomerUrl(cid); if (qurl) { const a = document.createElement("a"); a.className = "btn small"; a.href = qurl; a.target = "_blank"; a.rel = "noopener"; a.textContent = "Project in QuickBooks ↗"; acts3.appendChild(a); }
   s3.appendChild(acts3);
 }
-function _ppBillShown(b) { const paid = !!b.pay_date; return _pp.filter === "all" || !paid; }
+function _ppBillShown(b) { const paid = !!b.paid; return _pp.filter === "all" || !paid; }
 function _renderPpDraws() {
   const { d, host } = { d: _pp.d, host: $("#ppDraws") }; if (!host) return; host.innerHTML = "";
   const keys = d.draws.map(x => x.matched_invoice); const allOpen = keys.length && keys.every(k => _pp.open.has(k));
@@ -3431,9 +3435,9 @@ function _renderPpDraws() {
         const table = document.createElement("table"); table.className = "grid pp-bills"; const thead = document.createElement("thead"), tbody = document.createElement("tbody");
         thead.innerHTML = "<tr><th class='left'>Pay</th><th class='left'>Vendor</th><th class='left'>Bill #</th><th class='left'>Date</th><th class='right'>Amount</th><th class='right'>Open</th><th class='left'>Status</th><th class='left'>Waiver</th></tr>";
         for (const b of bills) {
-          const tr = document.createElement("tr"); if (b.pay_date) tr.classList.add("inv-paid");
+          const tr = document.createElement("tr"); if (b.paid) tr.classList.add("inv-paid");
           const pc = document.createElement("td"); pc.className = "left";
-          if (!b.pay_date && b.gates) { const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = !!b.pay_selected; cb.title = "Put this bill on the pay run (Pay Bills) - local intent, never QuickBooks";
+          if (!b.paid && b.gates) { const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = !!b.pay_selected; cb.title = "Put this bill on the pay run (Pay Bills) - local intent, never QuickBooks";
             cb.onchange = () => _ppSetPay([b], cb.checked); pc.appendChild(cb); }
           else if (!b.gates) { const s = document.createElement("span"); s.className = "vg-tag"; s.textContent = "GC pays"; s.title = "Concrete pumping - paid by the GC directly"; pc.appendChild(s); }
           tr.appendChild(pc);
@@ -3442,8 +3446,8 @@ function _renderPpDraws() {
           tr.appendChild(leftText(fmtDateShort(b.bill_date)));
           const ac = document.createElement("td"); ac.className = "ip-amt"; ac.appendChild(moneyCell(b.amount)); tr.appendChild(ac);
           const oc = document.createElement("td"); oc.className = "right ip-amt"; oc.textContent = num(b.open) > 0.005 ? money(b.open) : "–"; if (num(b.open) > 0.005) oc.style.color = "var(--neg)"; else oc.classList.add("dim"); tr.appendChild(oc);
-          const st = document.createElement("td"); st.className = "left"; const pill = document.createElement("span"); pill.className = b.pay_date ? "ar-paid" : "ar-open"; pill.textContent = b.pay_date ? "Paid " + fmtDateShort(b.pay_date) : (b.pay_status || "Open"); st.appendChild(pill); tr.appendChild(st);
-          tr.appendChild(leftText(b.waiver ? "received" : (b.pay_date ? "–" : "needed")));
+          const st = document.createElement("td"); st.className = "left"; const pill = document.createElement("span"); pill.className = b.paid ? "ar-paid" : "ar-open"; pill.textContent = b.pay_date ? "Paid " + fmtDateShort(b.pay_date) : (b.paid ? (b.pay_status || "Paid") + " (no date)" : (b.pay_status || "Open")); st.appendChild(pill); tr.appendChild(st);
+          tr.appendChild(leftText(b.waiver ? "received" : (b.paid ? "–" : "needed")));
           tbody.appendChild(tr);
         }
         table.appendChild(thead); table.appendChild(tbody); band.appendChild(table);
@@ -3470,7 +3474,7 @@ function _ppMarkBlockers() {
 }
 function _ppExport() {
   const d = _pp.d, rows = [];
-  for (const dr of d.draws) for (const b of dr.bills) if (b.pay_selected || (!b.pay_date && b.gates && _pp.filter === "unpaid" && false)) rows.push([dr.no_draw ? "No draw yet" : "Invoice " + (dr.invoice_no || ""), b.vendor, b.bill_ref, b.bill_date, num(b.amount), num(b.open), b.pay_date ? "Paid " + fmtDate(b.pay_date) : (b.pay_status || "Open"), b.waiver ? "received" : "needed"]);
+  for (const dr of d.draws) for (const b of dr.bills) if (b.pay_selected) rows.push([dr.no_draw ? "No draw yet" : "Invoice " + (dr.invoice_no || ""), b.vendor, b.bill_ref, b.bill_date, num(b.amount), num(b.open), b.pay_date ? "Paid " + fmtDate(b.pay_date) : (b.pay_status || "Open"), b.waiver ? "received" : "needed"]);
   if (!rows.length) { toast("Nothing ticked to pay on this job yet - tick bills (or Mark blockers) first"); return; }
   const body = { name: `Pay list ${_pp.pn}`, sheet: "Pay list", title: `${_pp.pn} - bills to pay to unlock the next draw`,
     subtitle: `${rows.length} bills ticked on the pay run · exported ${fmtDate(new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 19), true)}`,

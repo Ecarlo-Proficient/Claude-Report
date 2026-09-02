@@ -4,6 +4,14 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Paid is ONE rule; cents never round to $0; Draws rows open the project page (owner 2026-09-02:
+  "might be cents ... short paid shows 0").** `_bill_paid` (dashboard.py) = a pay date OR the tracker
+  status says "Bill paid" (11 bills carry the status with a blank date) OR nothing owed - used by the
+  draw stage, the project page's vendors-paid counts and its blockers, so a paid bill with a blank
+  date is never a "blocker at $0". `money()` shows cents for any non-zero amount under fifty cents
+  ($0.03, not $0) - one invoice really is short-paid by 3 cents. Draws tab: the project header row
+  and the draw report's "Project page" button open the project page; ids that are not a project #
+  (the "(multiple)" bucket) are refused with a toast.
 - **The PROJECT page (owner 2026-09-02: "one place ... i find i am switching tabs a lot").** Every
   project # opens a full page (from the WIP drawer, the P&L group, an Invoices project band, the
   invoice page): **How it's doing** (contract, ETC + planned GP, QBO costs vs WIP, billed, earned, live

@@ -958,6 +958,15 @@ def _fetch_actions(con) -> dict:
     return out
 
 
+def _bill_paid(b: dict) -> bool:
+    """A bill counts as paid when the tracker has a pay date, OR its status says 'Bill paid'
+    (the date column is sometimes left blank), OR nothing is owed on it. Used by the draw stage
+    and the project page so a paid bill with a blank date never reads as a blocker (owner
+    2026-09-02: two 'blockers' at $0 were exactly that)."""
+    st = (b.get("pay_status") or "").lower()
+    return bool(b.get("pay_date")) or st.startswith("bill paid") or (b.get("open") or 0) <= 0.005 and st != ""
+
+
 def _waiver_key(mi, vendor, bill_ref) -> str:
     """Deterministic key for a bill's waiver — survives ap_bill_line reloads."""
     raw = f"{mi or ''}|{vendor or ''}|{bill_ref or ''}"
@@ -1218,7 +1227,7 @@ def _fetch_draws(con, limit: int = 100) -> dict:
     for mi, d in draws.items():
         bills = d["bills"]
         n = len(bills)
-        paid = sum(1 for b in bills if b["pay_date"])
+        paid = sum(1 for b in bills if _bill_paid(b))
         # Subs (labor) on this draw = is_sub cost lines for the project, dated in the draw's period,
         # grouped by sub. They aren't in ap_bill_line (excluded from the display sheets), so this is
         # the only place the draw shows the labor side of the picture.
@@ -1238,7 +1247,7 @@ def _fetch_draws(con, limit: int = 100) -> dict:
         # of them rather than calling the draw done on no evidence.
         gate = [b for b in bills if b["gates"]] or bills
         n_gate = len(gate)
-        paid_gate = sum(1 for b in gate if b["pay_date"])
+        paid_gate = sum(1 for b in gate if _bill_paid(b))
         funded = any(b["gc_paid"] for b in bills)
         waivers = sum(1 for b in bills if b["waiver"])
         ar = bmap.get(str(d.get("invoice_no") or ""))
@@ -1258,7 +1267,7 @@ def _fetch_draws(con, limit: int = 100) -> dict:
             # how many bills actually decide the stage, and how many open bills
             # are parked because they are non-gating vendors
             "n_gate": n_gate, "paid_gate": paid_gate,
-            "parked": sum(1 for b in bills if not b["gates"] and not b["pay_date"]),
+            "parked": sum(1 for b in bills if not b["gates"] and not _bill_paid(b)),
             "waivers": waivers, "total": sum(b["amount"] for b in bills),
             # what we actually pay = gating bills only (MCP/CORE concrete pumping excluded - not paid by us)
             "total_gate": sum(b["amount"] for b in bills if b["gates"]), "stage": stage,
@@ -1467,10 +1476,12 @@ def _fetch_project_page(con, pn: str) -> dict:
             b["pay_selected"] = bool(bid and pay.get(bid))
         gate = [b for b in d["bills"] if b["gates"]]
         d["vendors_total"] = len(gate)
-        d["vendors_paid"] = sum(1 for b in gate if b["pay_date"])
-        d["paid_amt"] = round(sum((b["amount"] or 0) for b in gate if b["pay_date"]), 2)
+        for b in d["bills"]:
+            b["paid"] = _bill_paid(b)
+        d["vendors_paid"] = sum(1 for b in gate if b["paid"])
+        d["paid_amt"] = round(sum((b["amount"] or 0) for b in gate if b["paid"]), 2)
         d["gate_amt"] = round(sum((b["amount"] or 0) for b in gate), 2)
-        d["unpaid_amt"] = round(sum((b["open"] or 0) for b in gate if not b["pay_date"]), 2)
+        d["unpaid_amt"] = round(sum((b["open"] or 0) for b in gate if not b["paid"]), 2)
         d["waivers_total"] = len(gate)
         d["gc_paid"] = bool(d.get("gc_paid_in"))
     # funding chain: the first draw the GC has not paid us; its blockers = unpaid gating bills on every EARLIER draw
@@ -1483,7 +1494,7 @@ def _fetch_project_page(con, pn: str) -> dict:
             if (d.get("ar_date") or "") > (nxt.get("ar_date") or ""):
                 continue
             for b in d["bills"]:
-                if b["gates"] and (not b["pay_date"] or (b["open"] or 0) > 0.005):   # no pay date = no waiver yet, even at $0 open
+                if b["gates"] and not b["paid"]:
                     blockers.append({"draw": d.get("label"), "invoice_no": d.get("invoice_no"), "vendor": b["vendor"], "bill_ref": b["bill_ref"],
                                      "open": b["open"], "bill_id": b["bill_id"], "pay_selected": b["pay_selected"], "waiver": b["waiver"]})
                     blk_total += b["open"] or 0
