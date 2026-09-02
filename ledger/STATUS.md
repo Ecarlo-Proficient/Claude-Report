@@ -4,6 +4,19 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Readability pass for an older, Excel-only reader (owner 2026-09-01, first slice landed 2026-09-02).**
+  (1) **Header bar folded into the nav** (owner: "top ledger remove or move down, takes up vertical
+  space"): brand · group tabs · Export / Refresh / gear on one sticky row, the group's sub-tabs on a
+  second; the "N projects · WIP report · ledger loaded" meta line moved into the Data freshness
+  head, the version pill into Customize. (2) **15px base, 12px floor**: `--fs` and the settings
+  default are 15px; every `.68em`-`.78em` rule became `.8em` (23 rules), so nothing renders under
+  12px. (3) **Negatives like Excel**: `money()` prints `($28,067)` and `moneyCell()` adds `.neg`
+  (red) - one rule, every table; CSV/raw values unchanged. (4) WIP report: division subtotal /
+  GRAND TOTAL labels span Project # + Name (were cut at "Multi Fa..."); % complete past 100 renders
+  red with "costs to date exceed the ETC" instead of clamping quietly. (5) Data freshness no longer
+  says "all current" - each card carries its own as-of. Verified at 1440 wide, light, no console
+  errors. Still open from the same list: Costs-tab bar behind the number, collapsed-group header
+  alignment on Bills / Invoices, Bills filter fold, light-by-default theme, loading skeletons.
 - **WIP Review shows direction (2026-09-02).** New `REVERSED` status + tile and status filter; each
   field row prints the source document under the new value ("from Draw #4 G702 · <file>"), a
   REVERSED / decreased mark, and the note; carried values get one quiet line ("Kept from the tab

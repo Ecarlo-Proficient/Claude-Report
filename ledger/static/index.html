@@ -7,26 +7,24 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <!-- ── Top bar ─────────────────────────────────────────────────────── -->
-  <header class="topbar">
-    <div class="brand">
-      <span class="dot"></span>
-      <div>
-        <div class="brand-title">Project Ledger <span class="brand-ver" id="appVersion" title="Dashboard build version"></span></div>
-        <div class="brand-sub" id="metaLine">loading…</div>
+  <!-- ── Nav strip: the ONE sticky header ──────────────────────────────
+       Row 1: brand · the parent groups · Export / Refresh / gear. Row 2: the active group's
+       tabs (owner 2026-08-19: two-level nav; both rows are generated from NAV_GROUPS in app.js).
+       The old title bar (name + meta line) spent a full row on chrome - gone (owner 2026-09-01:
+       "remove or move down, takes up vertical space"). The meta line lives in Data freshness,
+       the version pill in the Customize panel. -->
+  <header class="navstrip">
+    <div class="navrow">
+      <span class="brand" title="Project Ledger"><span class="dot"></span>Ledger</span>
+      <nav class="tabs" id="groupbar"></nav>
+      <div class="topbar-actions">
+        <button class="btn" id="btnExport" title="Export the current table to CSV">Export CSV</button>
+        <button class="btn" id="btnRefresh" title="Re-read the ledger now (instant). For new numbers, run a sync - see Data freshness.">Refresh</button>
+        <button class="btn icon" id="btnSettings" title="Customize">⚙</button>
       </div>
     </div>
-    <div class="topbar-actions">
-      <button class="btn" id="btnExport" title="Export the current table to CSV">Export CSV</button>
-      <button class="btn" id="btnRefresh" title="Re-read the ledger now (instant). For new numbers, run a sync — see Data freshness.">Refresh</button>
-      <button class="btn icon" id="btnSettings" title="Customize">⚙</button>
-    </div>
+    <nav class="subtabs" id="subtabbar" hidden></nav>
   </header>
-
-  <!-- Two-level grouped nav (owner 2026-08-19): parent groups on top, the group's tabs below.
-       Both rows are generated from NAV_GROUPS in app.js so the structure lives in one place. -->
-  <nav class="tabs" id="groupbar"></nav>
-  <nav class="subtabs" id="subtabbar" hidden></nav>
 
   <main class="wrap" id="wrap">
     <div id="errorBanner" class="error-banner" hidden></div>
@@ -37,7 +35,7 @@
     <!-- ── Data freshness + one-click Resync (was My view) ──────────── -->
     <section class="widget">
       <div class="widget-head">
-        <h2>Data freshness <span class="count" id="homeFreshNote"></span></h2>
+        <h2>Data freshness <span class="count" id="metaLine">loading…</span><span class="count" id="homeFreshNote"></span></h2>
         <button class="btn small" id="btnResync" title="Pull fresh data into the app — runs every loader. A couple of QBO steps prompt Touch ID on this Mac. No terminal needed.">⟳&nbsp;Resync</button>
       </div>
       <div class="fresh-row" id="homeFresh"></div>
@@ -837,7 +835,7 @@
   <!-- ── Settings slide-over ────────────────────────────────────────── -->
   <aside class="panel panel-right" id="settings" hidden>
     <div class="panel-head">
-      <div class="panel-title">Customize</div>
+      <div class="panel-title">Customize <span class="brand-ver" id="appVersion" title="Dashboard build version"></span></div>
       <div class="panel-head-actions">
         <button class="btn" id="btnSetDefault" title="Save the current view (theme, width, widgets, columns) as your default">Set as default</button>
         <button class="btn" id="btnReset" title="Reset to your saved default">Reset</button>

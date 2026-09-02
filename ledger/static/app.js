@@ -60,7 +60,7 @@ function deriveMetrics(r) {
 // ── Settings ──────────────────────────────────────────────────────────────
 const LS_KEY = "proficient-ledger-settings-v1";
 const DEFAULTS = {
-  theme: "auto", accent: "#3E7A5C", font: "system", fontSize: 14,
+  theme: "auto", accent: "#3E7A5C", font: "system", fontSize: 15,   // 15px base (owner 2026-09-01: older Excel readers)
   density: "comfortable", width: "medium",
   widgets: { kpis: true, attention: true, ap: true, costs: true, margins: true, divisions: true, projects: true },
   columns: COLUMNS.filter(c => c.always || c.def).map(c => c.key),
@@ -163,7 +163,7 @@ function money(v) {
   if (v === null || v === undefined || v === "") return "—";
   const n = Number(v); if (Number.isNaN(n)) return "—";
   const s = "$" + Math.round(Math.abs(n)).toLocaleString();
-  return n < 0 ? "-" + s : s;
+  return n < 0 ? "(" + s + ")" : s;      // negatives like Excel: ($28,067), coloured red by .neg (owner 2026-09-01)
 }
 function pct(v) {
   if (v === null || v === undefined || v === "") return "—";
@@ -321,9 +321,10 @@ async function load(isAuto) {
   }
   meta = data.meta || {};
   { const v = $("#appVersion"); if (v) v.textContent = meta.version ? "v" + meta.version : ""; }
+  // The meta line lives in the Data freshness head (the title bar it sat in is gone, 2026-09-01).
   $("#metaLine").textContent =
-    `${meta.project_count} projects · report ${meta.report_date ? fmtDate(meta.report_date) : "—"}` +
-    (meta.loaded_at ? ` · loaded ${fmtDate(meta.loaded_at, true)}` : "");
+    `${meta.project_count} projects · WIP report ${meta.report_date ? fmtDate(meta.report_date) : "–"}` +
+    (meta.loaded_at ? ` · ledger loaded ${fmtDate(meta.loaded_at, true)}` : "");
   buildFilterOptions();
   render();
   _renderLazyTab(activeTab);   // wip/payments/paybills read main-load globals but aren't in render();
@@ -712,7 +713,7 @@ function renderHome() {
   }
   const freshNote = $("#homeFreshNote");
   if (freshNote) freshNote.textContent = needSync
-    ? `— ${needSync} recommended to sync (>48h, weekends aside)` : "— all current";
+    ? `- ${needSync} recommended to sync (over 48h, weekends aside)` : "";   // each card says its own as-of; no blanket "all current" (owner 2026-09-01)
   // ── action items (click → jump to the work) ──
   const pastDue = (AP.lien_watch || []).filter(r => r.lien_status === "Notice PAST due").length;
   const dueSoon = (AP.lien_watch || []).filter(r => r.lien_status === "Notice due in ≤7d").length;
@@ -4215,6 +4216,8 @@ function _wipCond(kind, r, key) {
   if (kind === "pctbar") {
     const v = r.percent_complete; if (v == null || v === "") return null;
     const p = Math.max(0, Math.min(100, v * 100));
+    if (v > 1.0005) return { bar: 100, bg: _mix("var(--neg)", 18), fg: "var(--neg)", bold: true,
+                             title: (v * 100).toFixed(1) + "% - costs to date exceed the ETC (over budget)" };
     return { bar: p, title: p.toFixed(1) + "% complete" };
   }
   if (kind === "over") {           // overbilled = holding cash = positive
@@ -4281,7 +4284,8 @@ function renderWip() {
   const sumRow = (label, list, cls) => {
     const tr = document.createElement("tr"); tr.className = cls;
     WIP_COLS.forEach((c, i) => { const td = document.createElement("td");
-      if (i === 0) { td.className = "left"; td.textContent = label; }
+      if (i === 0) { td.className = "left"; td.textContent = label; td.colSpan = 2; }   // label spans Project # + Name (was cut at 88px)
+      else if (i === 1) return;
       else if (c.t === "money") { td.className = "right"; td.appendChild(moneyCell(list.reduce((t, r) => t + num(r[c.k]), 0))); }
       else td.className = c.t === "text" ? "left" : "right";
       tr.appendChild(td); });
@@ -4579,7 +4583,7 @@ function statusPill(v) {
   return s;
 }
 function textCell(v, left) { const s = document.createElement("span"); s.textContent = v; const w = document.createElement("span"); w.appendChild(s); return w; }
-function moneyCell(v) { const s = document.createElement("span"); s.className = "cell"; s.textContent = money(v); s.onclick = () => copy(String(Math.round(num(v)))); s.title = "Click to copy"; return s; }
+function moneyCell(v) { const s = document.createElement("span"); s.className = "cell" + (num(v) < 0 ? " neg" : ""); s.textContent = money(v); s.onclick = () => copy(String(Math.round(num(v)))); s.title = "Click to copy"; return s; }
 function addRow(tbody, cells) { const tr = document.createElement("tr"); cells.forEach((c, i) => { const td = document.createElement("td"); if (i === 0) td.className = "left"; td.appendChild(c); tr.appendChild(td); }); tbody.appendChild(tr); }
 
 // ── Detail panel ──────────────────────────────────────────────────────────
