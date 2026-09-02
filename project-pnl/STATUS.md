@@ -8,6 +8,18 @@ manual close), RP (no draws — expenses → invoice → profit).
 
 ## DONE / FINALIZED
 
+- **`closeout.py` — the FINAL closeout report (2026-09-02).**
+  `<job folder>/<JOB> FINAL Closeout.xlsx` (one permanent page per finished job)
+  plus `<division>/Closeout Index.xlsx` (every FINAL issued, filterable by
+  division / client / type). **FINAL means IMMUTABLE:** a re-run refuses to
+  overwrite an existing FINAL and says when it was issued; `--reissue "<reason>"`
+  supersedes it and the sheet then carries the original issue date and the
+  reason on its face. A document labelled FINAL whose figures quietly moved is
+  worse than no document. Reads the generated P&L, so no QBO pull. Client comes
+  from the WIP master for RP and from the P&L's own customer path for CP/MFD;
+  type is RP Tract/Custom, or Slab / Flatwork off the project #.
+
+
 - **THE MFD REGENERATION RECIPE (2026-08-31) — stop guessing the flags.**
   All 14 MFD P&Ls were rebuilt onto the gutter layout. The flags are NOT
   interchangeable; run them exactly like this:
