@@ -4,6 +4,13 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Date filter Reset + untick-to-all; invoice page paid-at-a-glance + one identity line (owner
+  2026-09-02).** The shared Month | Date control shows a **Reset** while a date filter is active and
+  unticking the last month goes back to All months (same on the Invoices month filter). Invoice page
+  vendor bands and the section header now read **x/y paid · $paid / $total (· $ still owed)**, red
+  until every bill is paid, green when done. Header repetition removed: the record line carries
+  client · project # + name · division once, the section is just "Invoice · QuickBooks", and the memo
+  is plain text under it, not a boxed blob.
 - **Dropdown menus never cut off; Bills says WHY a list is empty; future-dated bills flagged (owner
   2026-09-02).** Every multi-select / date menu is pinned to the viewport at its button when it opens
   (`_placeMenu`: fixed position, opens upward when there is more room above, height capped to the

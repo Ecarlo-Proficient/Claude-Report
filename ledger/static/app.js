@@ -1805,13 +1805,15 @@ function dateFilter(id, getDates, onChange) {
   const host = $("#" + id); if (!host) return st;
   host.innerHTML = `<span class="seg tiny"><button type="button" class="seg-btn on" data-m="month">Month</button><button type="button" class="seg-btn" data-m="date">Date</button></span>
     <span class="datef-month msel" id="${id}Msel"><button type="button" class="msel-btn" id="${id}Btn">All months</button><div class="msel-menu" id="${id}Menu" hidden></div></span>
-    <span class="datef-range" hidden><input type="date" id="${id}From" title="From (leave blank for no lower bound)"> <span class="dim">to</span> <input type="date" id="${id}To" title="To - a statement 'as of' a day is just this box"></span>`;
+    <span class="datef-range" hidden><input type="date" id="${id}From" title="From (leave blank for no lower bound)"> <span class="dim">to</span> <input type="date" id="${id}To" title="To - a statement 'as of' a day is just this box"></span>
+    <button type="button" class="btn small datef-reset" id="${id}Reset" title="Back to all dates" hidden>Reset</button>`;
   const btn = $("#" + id + "Btn"), menu = $("#" + id + "Menu"), from = $("#" + id + "From"), to = $("#" + id + "To");
   const paintMode = () => { host.querySelectorAll(".seg-btn").forEach(b => b.classList.toggle("on", b.dataset.m === st.mode));
     host.querySelector(".datef-month").hidden = st.mode !== "month"; host.querySelector(".datef-range").hidden = st.mode !== "date"; };
   host.querySelectorAll(".seg-btn").forEach(b => b.onclick = () => { st.mode = b.dataset.m; paintMode(); onChange(); });
   btn.onclick = (e) => { e.stopPropagation(); const open = menu.hidden; document.querySelectorAll(".msel-menu").forEach(m => m.hidden = true); menu.hidden = !open; if (open) _placeMenu(btn, menu); };
   from.onchange = () => { st.from = from.value; onChange(); }; to.onchange = () => { st.to = to.value; onChange(); };
+  $("#" + id + "Reset").onclick = () => { st.clear(); onChange(); };
   st.build = () => {
     const asc = [...new Set(getDates().map(x => String(x || "").slice(0, 7)).filter(x => /^\d{4}-\d{2}$/.test(x)))].sort();
     if (st.months) for (const m of [...st.months]) if (!asc.includes(m)) st.months.delete(m);
@@ -1825,7 +1827,9 @@ function dateFilter(id, getDates, onChange) {
     for (const ym of [...asc].reverse()) {
       const lab = document.createElement("label"); lab.className = "msel-opt";
       const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = sel.has(ym);
-      cb.onchange = () => { const s2 = new Set(st.months === null ? asc : st.months); if (cb.checked) s2.add(ym); else s2.delete(ym); st.months = s2.size === asc.length ? null : s2; st.build(); onChange(); };
+      cb.onchange = () => { const s2 = new Set(st.months === null ? asc : st.months); if (cb.checked) s2.add(ym); else s2.delete(ym);
+        st.months = (s2.size === asc.length || s2.size === 0) ? null : s2;   // unticking the last one goes back to ALL (owner 2026-09-02)
+        st.build(); onChange(); };
       lab.appendChild(cb); lab.appendChild(document.createTextNode(" " + billMonthLabel(ym))); menu.appendChild(lab);
     }
     if (st.months === null) btn.textContent = "All months";
@@ -1833,6 +1837,7 @@ function dateFilter(id, getDates, onChange) {
     else { const newest = [...sel].sort().reverse()[0]; btn.textContent = sel.size === 1 ? billMonthLabel(newest) : `${billMonthLabel(newest)} +${sel.size - 1}`; }
     btn.classList.toggle("on", st.months !== null);
     paintMode();
+    { const rs = $("#" + id + "Reset"); if (rs) rs.hidden = !st.active(); }
   };
   st.passes = (dateStr) => {
     const ds = String(dateStr || "").slice(0, 10);
@@ -1840,6 +1845,7 @@ function dateFilter(id, getDates, onChange) {
     return st.months === null || st.months.has(ds.slice(0, 7));
   };
   st.active = () => st.mode === "date" ? !!(st.from || st.to) : st.months !== null;
+  const _onChange = onChange; onChange = () => { st.build(); _onChange(); };   // every change repaints the control (Reset visibility, label)
   st.label = () => st.mode === "date" ? [st.from ? "from " + fmtDate(st.from) : "", st.to ? "to " + fmtDate(st.to) : ""].filter(Boolean).join(" ") : btn.textContent;
   st.clear = () => { st.months = null; st.from = ""; st.to = ""; from.value = ""; to.value = ""; st.build(); };
   return st;
@@ -2897,7 +2903,7 @@ function _invMonthSet(asc) { return invMonthSel === null ? new Set(asc) : invMon
 function toggleInvMonth(ym, checked) {
   const asc = _invMonthsAsc(), s = new Set(_invMonthSet(asc));
   if (checked) s.add(ym); else s.delete(ym);
-  invMonthSel = s.size === asc.length ? null : s;
+  invMonthSel = (s.size === asc.length || s.size === 0) ? null : s;   // unticking the last one goes back to ALL
   buildInvDateFilter(); renderOpenInvoices();
 }
 function buildInvDateFilter() {
@@ -3358,12 +3364,14 @@ function _renderIpBills() {
     for (const v of vendors) {
       const key = "v:" + v.vendor, open = _ip.open.has(key);
       const tot = v.bills.reduce((s, b) => s + num(b.amount), 0), opn = v.bills.reduce((s, b) => s + num(b.open), 0), paidCt = v.bills.filter(b => b.pay_date).length;
+      const paidAmt = v.bills.reduce((s, b) => s + (b.pay_date ? num(b.amount) : Math.max(0, num(b.amount) - num(b.open))), 0);
       const gtr = document.createElement("tr"); gtr.className = "bill-group"; gtr.style.cursor = "pointer"; gtr.title = open ? "Click to collapse" : "Click to expand";
       const gtd = document.createElement("td"); gtd.colSpan = 9;
       const cell = document.createElement("div"); cell.className = "bg-cell";
       const caret = document.createElement("span"); caret.className = "bg-caret"; caret.textContent = open ? "▾ " : "▸ ";
       const k = document.createElement("span"); k.className = "bg-key"; k.textContent = v.vendor;
-      const amtS = document.createElement("span"); amtS.className = "bg-amt"; amtS.textContent = `${v.bills.length} bill${v.bills.length === 1 ? "" : "s"} · ${money(tot)} · ${money(opn)} open · ${paidCt} paid`;
+      const amtS = document.createElement("span"); amtS.className = "bg-amt ip-paid " + (paidCt === v.bills.length ? "ok" : "due");
+      amtS.textContent = `${paidCt}/${v.bills.length} paid · ${money(paidAmt)} / ${money(tot)}` + (opn > 0.005 ? ` · ${money(opn)} still owed` : "");
       cell.appendChild(caret); cell.appendChild(k); cell.appendChild(amtS); gtd.appendChild(cell); gtr.appendChild(gtd);
       gtr.onclick = () => { if (_ip.open.has(key)) _ip.open.delete(key); else _ip.open.add(key); _renderIpBills(); };
       tbody.appendChild(gtr);
@@ -3410,7 +3418,7 @@ function _renderIpBills() {
 }
 async function openInvoicePage(inv) {
   const docn = inv.doc_number || inv.invoice_no || "";
-  openRecord(`Invoice ${docn}`, [inv.customer, inv.project_no, inv.division].filter(Boolean).join(" · "));
+  openRecord(`Invoice ${docn}`, [inv.customer, [inv.project_no, nameOf(inv.project_no)].filter(Boolean).join(" "), inv.division].filter(Boolean).join(" · "));   // the ONE identity line (owner: no repeats)
   const body = $("#recordBody"); body.innerHTML = ""; skeletonInto(body, 6);
   let d;
   try { d = await (await fetch(`/api/invoice/page?no=${encodeURIComponent(docn)}`)).json(); }
@@ -3428,9 +3436,9 @@ async function openInvoicePage(inv) {
   // ── 1. the invoice, as QuickBooks has it ──
   const amt = num(i.amount), bal = i.balance == null ? null : num(i.balance), paidAmt = (amt != null && bal != null) ? amt - bal : null;
   const isOpen = !(bal != null && bal <= 0.005) && (i.status || "").toLowerCase() !== "paid";
-  const s1 = sec("Invoice · QuickBooks", `${i.customer || ""} · ${i.project_no || ""}${nameOf(i.project_no) ? " " + nameOf(i.project_no) : ""}`);
+  const s1 = sec("Invoice · QuickBooks", "");
   const top = document.createElement("div"); top.className = "ip-top"; s1.appendChild(top);
-  const memoBox = document.createElement("div"); memoBox.className = "ip-memo" + (i.memo ? "" : " dim"); memoBox.textContent = i.memo || "(no memo on this invoice)"; top.appendChild(memoBox);
+  const memoBox = document.createElement("div"); memoBox.className = "ip-memo" + (i.memo ? "" : " dim"); memoBox.textContent = i.memo || "(no memo on this invoice)"; memoBox.title = "Invoice memo"; top.appendChild(memoBox);
   const grid = document.createElement("div"); grid.className = "ip-grid"; top.appendChild(grid);
   const col = (title, rows) => { const c = document.createElement("div"); c.className = "dgroup"; const h = document.createElement("h4"); h.textContent = title; c.appendChild(h); kv(c, rows); grid.appendChild(c); };
   col("Billing", [["Invoice #", docn], ["Amount billed", money(amt), "ip-big"], ["Open balance", money(bal), "ip-big" + (bal != null && bal > 0.005 ? " neg" : "")], paidAmt != null ? ["Paid", money(paidAmt)] : null, ["Status", i.status || (bal > 0.005 ? "Open" : "Paid")]].filter(Boolean));
@@ -3446,7 +3454,8 @@ async function openInvoicePage(inv) {
   s1.appendChild(acts);
   // ── 2. the bills on this draw, grouped by vendor, with pay status ──
   const T = d.totals || {};
-  const s2 = sec("Bills on this draw · Bill Tracker, subs from QuickBooks", `${T.bills || 0} bills · ${T.bills_paid || 0} paid · ${money(T.materials_open)} still open`);
+  const s2 = sec("Bills on this draw · Bill Tracker, subs from QuickBooks", `${T.bills_paid || 0}/${T.bills || 0} paid · ${money((T.materials || 0) - (T.materials_open || 0))} / ${money(T.materials)}` + ((T.materials_open || 0) > 0.005 ? ` · ${money(T.materials_open)} still owed` : ""));
+  { const cnt = s2.querySelector(".count"); if (cnt) cnt.classList.add("ip-paid", (T.bills_paid || 0) === (T.bills || 0) ? "ok" : "due"); }
   const strip = document.createElement("div"); strip.className = "kpi-row ip-strip";
   for (const [l, v, sub] of [["Billed to the GC", money(T.billed), i.status || ""], ["Materials we pay", money(T.materials_we_pay), T.materials !== T.materials_we_pay ? `${money(T.materials)} incl. pump vendors the GC pays` : ""],
                              ["Subs (labor)", money(T.subs), d.period && d.period.start ? "in the draw period" : "no period on the memo"], ["Net after bills + subs", money(T.net), T.net != null && T.net < 0 ? "bills exceed the draw" : ""]]) {

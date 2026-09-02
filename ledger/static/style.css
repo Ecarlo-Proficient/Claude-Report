@@ -1296,7 +1296,7 @@ html[data-theme="dark"] .acct-src.po { color: #b79ae0; } html[data-theme="dark"]
 /* the invoice page (2026-09-02) */
 .ip-sec { margin-bottom: 14px; }
 .ip-top { padding: 0 18px 6px; }
-.ip-memo { font-size: 1.05em; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); margin: 4px 0 12px; white-space: pre-wrap; }
+.ip-memo { font-size: 1.05em; padding: 0 0 12px; margin: 0; white-space: pre-wrap; color: var(--text); }   /* plain text under the identity line, not a box (owner 2026-09-02) */
 .ip-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 0 28px; }
 .ip-grid .dgroup { margin-bottom: 10px; }
 .ip-kv .drow .dv { text-align: right; }
@@ -1327,3 +1327,7 @@ table.grid td.ip-amt { font-weight: 700; font-size: 1.08em; }
 
 .vg-tag.future { display: inline-block; font-size: .78em; font-weight: 600; padding: 0 6px; border-radius: 999px; margin-left: 6px; vertical-align: middle;
   color: var(--neg); border: 1px solid color-mix(in srgb, var(--neg) 50%, var(--border)); background: color-mix(in srgb, var(--neg) 8%, transparent); }
+
+.ip-paid.due { color: var(--neg); font-weight: 600; }
+.ip-paid.ok { color: var(--pos); }
+.datef-reset { margin-left: 4px; }
