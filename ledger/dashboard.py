@@ -1123,7 +1123,7 @@ def _gates_stage(vendor: str) -> bool:
 
 
 _STAGE_ORDER = {"Ready to turn in": 0, "Fund in — pay vendors": 1,
-                "Awaiting GC funding": 2, "All paid": 3}
+                "Awaiting GC funding": 2, "All paid": 3, "No draw yet": 5}
 
 # Subs (1099 labor) are NOT on the Bill Tracker display sheets, so they never reach ap_bill_line or
 # the draws. Pull them from cost_line (QBO, is_sub) and match to a draw by project + date-in-period -
@@ -1192,6 +1192,26 @@ def _fetch_draws(con, limit: int = 100) -> dict:
             "waiver_key": wk, "waiver": bool(wmap.get(wk, 0)),
             "gates": _gates_stage(r["vendor"]),
         })
+    # Projects whose CP/MFD bills are still "Awaiting Invoice" (no matched draw yet) get a pseudo-draw
+    # so they are visible here too (owner 2026-09-02: "CP785 is not showing in the draws") - the GC
+    # statement question starts before the draw exists.
+    try:
+        for r in con.execute(
+                "SELECT project_no, division, vendor, bill_ref, MAX(bill_total) amount, MAX(open_balance) open_bal, "
+                "pay_status, invoice_status, MAX(pay_date) pd, MAX(bill_date) bd, MAX(qbo_link) qbo_link "
+                "FROM ap_bill_line WHERE (matched_invoice IS NULL OR matched_invoice = '') AND project_no IS NOT NULL "
+                "AND project_no <> '' AND project_no NOT LIKE 'RP%' GROUP BY project_no, vendor, bill_ref"):
+            mi = f"(no draw yet) — {r['project_no']}"
+            d = draws.setdefault(mi, {"matched_invoice": mi, "project_no": r["project_no"], "division": r["division"],
+                                      "invoice_no": None, "bills": [], "no_draw": True})
+            d["bills"].append({
+                "vendor": r["vendor"], "bill_ref": r["bill_ref"], "amount": r["amount"] or 0,
+                "open": r["open_bal"] or 0, "pay_status": r["pay_status"], "invoice_status": r["invoice_status"],
+                "gc_paid": None, "pay_date": r["pd"], "bill_date": r["bd"], "qbo_link": r["qbo_link"],
+                "waiver_key": None, "waiver": False, "gates": _gates_stage(r["vendor"]),
+            })
+    except sqlite3.OperationalError:
+        pass
     out = []
     subs_by_proj = _subs_by_project(con)   # is_sub cost lines per project (matched to draws by period)
     for mi, d in draws.items():
@@ -1222,7 +1242,9 @@ def _fetch_draws(con, limit: int = 100) -> dict:
         waivers = sum(1 for b in bills if b["waiver"])
         ar = bmap.get(str(d.get("invoice_no") or ""))
         gc_paid_in = bool(ar and (ar.get("status") == "Paid" or (ar.get("balance") or 0) <= 0.005))
-        if not funded:
+        if d.get("no_draw"):
+            stage = "No draw yet"
+        elif not funded:
             stage = "Awaiting GC funding"
         elif paid_gate < n_gate:
             stage = "Fund in — pay vendors"

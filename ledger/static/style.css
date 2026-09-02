@@ -1304,3 +1304,13 @@ html[data-theme="dark"] .acct-src.po { color: #b79ae0; } html[data-theme="dark"]
 .ip-strip { padding: 6px 18px 14px; }
 .ip-sec .np { padding: 0 18px 16px; }
 .ip-tools { display: flex; gap: 10px; align-items: center; padding: 0 18px 10px; }
+
+/* date filter (Month | Date) shared by Bills and Draws; prominent amounts on the invoice page (2026-09-02) */
+.datef { display: inline-flex; align-items: center; gap: 6px; }
+.datef .seg.tiny .seg-btn { padding: 3px 9px; font-size: .86em; }
+.datef input[type="date"] { font: inherit; padding: 4px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); }
+.datef-range { display: inline-flex; align-items: center; gap: 6px; }
+.datef-range[hidden], .datef-month[hidden] { display: none; }
+.ip-kv .dv.ip-big { font-size: 1.45em; font-weight: 700; letter-spacing: -.02em; }
+table.grid td.ip-amt { font-weight: 700; font-size: 1.08em; }
+.bg-amt { font-variant-numeric: tabular-nums; }

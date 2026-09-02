@@ -920,7 +920,9 @@ function _setHintFilter(tab, summary) {
 }
 function renderDraws() {
   buildDrawFilters();                              // (re)build the multi-selects when the draw set changes
-  const all = (DRAWS.draws || []).filter(drawMselPasses);   // Client · Project · Vendor · Invoice · Division (AND)
+  if (!drawDate) drawDate = dateFilter("dfDate", () => (DRAWS.draws || []).map(d => d.ar_date || d.recency), renderDraws);
+  drawDate.build();
+  const all = (DRAWS.draws || []).filter(d => drawMselPasses(d) && drawDate.passes(d.ar_date || d.recency));   // Client · Project · Vendor · Invoice · Division · Date (AND)
   const shown = activeDrawStage ? all.filter(d => d.stage === activeDrawStage) : all;
   _setHintFilter("draws", drawFilterSummary(shown.length));   // count + what's filtered (generic when nothing selected)
   $("#drawsNote").textContent = (DRAWS.draws || []).length
@@ -933,6 +935,7 @@ function renderDraws() {
     ["Collect from GC", "Ready to turn in", "vendors paid, GC still owes"],
     ["Pay vendors", "Fund in — pay vendors", "GC funded, vendors not paid yet"],   // pump bills don't gate this
     ["Awaiting GC", "Awaiting GC funding", "not funded by the GC yet"],
+    ["No draw yet", "No draw yet", "bills in, no draw invoice yet"],   // e.g. a job still 'Awaiting Invoice' in the tracker
   ];
   const sr = $("#drawsStats"); sr.innerHTML = "";
   for (const [label, stageKey, sub] of stats) {
@@ -1718,6 +1721,7 @@ function statusCell(node) { const td = document.createElement("td"); td.classNam
 const billMSel = {};   // { id: Set(selected raw values) }
 const BILL_MSEL = [
   { id: "bfCustomer", all: "All clients",    get: b => b.client || "",        search: true, lbl: v => v || "(no client)" },
+  { id: "bfProject",  all: "All projects",   get: b => b.project_no || "",    search: true, lbl: v => v || "(no project #)" },
   { id: "bfDivision", all: "All divisions",  get: b => b.division || "",       lbl: v => v || "(no division)" },
   { id: "bfPay",      all: "Any pay status", get: b => b.pay_status || "",     lbl: v => v || "(none)" },
   { id: "bfInv",      all: "Any invoice",    get: b => b.invoice_status || "", lbl: v => v || "(none)" },
@@ -1785,53 +1789,67 @@ function billMSelPasses(b) {
 }
 function buildBillFilters() {
   for (const cfg of BILL_MSEL) buildBillMSel(cfg);
-  buildBillDateFilter();
+  if (!billDate) billDate = dateFilter("bfDate", () => (BILLS || []).map(b => b.bill_date), renderBills);
+  billDate.build();
   buildBillVendorFilter();
 }
 // Month MULTI-select (checkboxes) + a day drill. Clicking a month checks it AND all OLDER
 // months ("June and back"); individual priors can then be unchecked (owner 2026-08-20). The
 // Day select drills into a single month (Excel-style), enabled only when exactly one is chosen.
-let billMonths = new Set();   // selected 'YYYY-MM' (empty = all months)
+
+// ── Date filter shared by Bills and Draws (owner 2026-09-02): two modes. MONTH = every month ticked
+// by default with Select all / Deselect all; DATE = a from / to pair with the native calendar (pick a
+// day or type it) - "as of July 25" is just a To date. Switching modes re-renders at once.
+function dateFilter(id, getDates, onChange) {
+  const st = { mode: "month", months: null, from: "", to: "" };   // months: null = all
+  const host = $("#" + id); if (!host) return st;
+  host.innerHTML = `<span class="seg tiny"><button type="button" class="seg-btn on" data-m="month">Month</button><button type="button" class="seg-btn" data-m="date">Date</button></span>
+    <span class="datef-month msel" id="${id}Msel"><button type="button" class="msel-btn" id="${id}Btn">All months</button><div class="msel-menu" id="${id}Menu" hidden></div></span>
+    <span class="datef-range" hidden><input type="date" id="${id}From" title="From (leave blank for no lower bound)"> <span class="dim">to</span> <input type="date" id="${id}To" title="To - a statement 'as of' a day is just this box"></span>`;
+  const btn = $("#" + id + "Btn"), menu = $("#" + id + "Menu"), from = $("#" + id + "From"), to = $("#" + id + "To");
+  const paintMode = () => { host.querySelectorAll(".seg-btn").forEach(b => b.classList.toggle("on", b.dataset.m === st.mode));
+    host.querySelector(".datef-month").hidden = st.mode !== "month"; host.querySelector(".datef-range").hidden = st.mode !== "date"; };
+  host.querySelectorAll(".seg-btn").forEach(b => b.onclick = () => { st.mode = b.dataset.m; paintMode(); onChange(); });
+  btn.onclick = (e) => { e.stopPropagation(); const open = menu.hidden; document.querySelectorAll(".msel-menu").forEach(m => m.hidden = true); menu.hidden = !open; };
+  from.onchange = () => { st.from = from.value; onChange(); }; to.onchange = () => { st.to = to.value; onChange(); };
+  st.build = () => {
+    const asc = [...new Set(getDates().map(x => String(x || "").slice(0, 7)).filter(x => /^\d{4}-\d{2}$/.test(x)))].sort();
+    if (st.months) for (const m of [...st.months]) if (!asc.includes(m)) st.months.delete(m);
+    const sel = st.months === null ? new Set(asc) : st.months;
+    menu.innerHTML = "";
+    const tools = document.createElement("div"); tools.className = "msel-tools";
+    const all = document.createElement("button"); all.type = "button"; all.className = "msel-tool"; all.textContent = "Select all"; all.onclick = () => { st.months = null; st.build(); onChange(); };
+    const none = document.createElement("button"); none.type = "button"; none.className = "msel-tool"; none.textContent = "Deselect all"; none.onclick = () => { st.months = new Set(); st.build(); onChange(); };
+    const cnt = document.createElement("span"); cnt.className = "msel-count"; cnt.textContent = `${sel.size} of ${asc.length}`;
+    tools.appendChild(all); tools.appendChild(none); tools.appendChild(cnt); menu.appendChild(tools);
+    for (const ym of [...asc].reverse()) {
+      const lab = document.createElement("label"); lab.className = "msel-opt";
+      const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = sel.has(ym);
+      cb.onchange = () => { const s2 = new Set(st.months === null ? asc : st.months); if (cb.checked) s2.add(ym); else s2.delete(ym); st.months = s2.size === asc.length ? null : s2; st.build(); onChange(); };
+      lab.appendChild(cb); lab.appendChild(document.createTextNode(" " + billMonthLabel(ym))); menu.appendChild(lab);
+    }
+    if (st.months === null) btn.textContent = "All months";
+    else if (!sel.size) btn.textContent = "No months";
+    else { const newest = [...sel].sort().reverse()[0]; btn.textContent = sel.size === 1 ? billMonthLabel(newest) : `${billMonthLabel(newest)} +${sel.size - 1}`; }
+    btn.classList.toggle("on", st.months !== null);
+    paintMode();
+  };
+  st.passes = (dateStr) => {
+    const ds = String(dateStr || "").slice(0, 10);
+    if (st.mode === "date") { if (st.from && ds < st.from) return false; if (st.to && ds > st.to) return false; return true; }
+    return st.months === null || st.months.has(ds.slice(0, 7));
+  };
+  st.active = () => st.mode === "date" ? !!(st.from || st.to) : st.months !== null;
+  st.label = () => st.mode === "date" ? [st.from ? "from " + fmtDate(st.from) : "", st.to ? "to " + fmtDate(st.to) : ""].filter(Boolean).join(" ") : btn.textContent;
+  st.clear = () => { st.months = null; st.from = ""; st.to = ""; from.value = ""; to.value = ""; st.build(); };
+  return st;
+}
+let billDate = null, drawDate = null;
+let billMonths = new Set();   // (legacy - the Month/Date control above replaced the month click-older filter)
 const _BMONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 function billMonthLabel(ym) { const [y, m] = ym.split("-"); return `${_BMONTHS[+m - 1]} ${y}`; }
 function _billMonthsAsc() {   // every month present in the data, oldest → newest
   return [...new Set((BILLS || []).map(b => String(b.bill_date || "").slice(0, 7)).filter(s => /^\d{4}-\d{2}$/.test(s)))].sort();
-}
-function toggleBillMonth(ym, checked) {
-  const asc = _billMonthsAsc();
-  if (checked) { for (const m of asc) if (m <= ym) billMonths.add(m); }   // this month + everything older
-  else billMonths.delete(ym);                                             // remove just this prior month
-  buildBillDateFilter(); renderBills();
-}
-function buildBillDateFilter() {
-  const menu = $("#bfMonthMenu"), btn = $("#bfMonthBtn"), dayEl = $("#bfDay");
-  if (!menu || !btn || !dayEl) return;
-  const asc = _billMonthsAsc();
-  for (const m of [...billMonths]) if (!asc.includes(m)) billMonths.delete(m);   // drop months no longer in the data
-  // the checkbox menu, newest first, with a Clear
-  menu.innerHTML = "";
-  { const clr = document.createElement("button"); clr.type = "button"; clr.className = "msel-clear";
-    clr.textContent = "Clear"; clr.onclick = () => { billMonths.clear(); buildBillDateFilter(); renderBills(); }; menu.appendChild(clr); }
-  for (const ym of [...asc].reverse()) {
-    const lab = document.createElement("label"); lab.className = "msel-opt";
-    const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = billMonths.has(ym);
-    cb.onchange = () => toggleBillMonth(ym, cb.checked);
-    lab.appendChild(cb); lab.appendChild(document.createTextNode(" " + billMonthLabel(ym)));
-    menu.appendChild(lab);
-  }
-  if (!billMonths.size) btn.textContent = "All months";
-  else { const newest = [...billMonths].sort().reverse()[0]; btn.textContent = billMonths.size === 1 ? billMonthLabel(newest) : `${billMonthLabel(newest)} +${billMonths.size - 1}`; }
-  btn.classList.toggle("on", billMonths.size > 0);
-  // day drill: only when EXACTLY one month is selected
-  const prevD = dayEl.value; dayEl.innerHTML = "";
-  { const o = document.createElement("option"); o.value = ""; o.textContent = "All days"; dayEl.appendChild(o); }
-  if (billMonths.size === 1) {
-    const ym = [...billMonths][0];
-    const days = [...new Set((BILLS || []).map(b => String(b.bill_date || "")).filter(d => d.slice(0, 7) === ym && /^\d{4}-\d{2}-\d{2}/.test(d)).map(d => d.slice(0, 10)))].sort();
-    for (const d of days) { const o = document.createElement("option"); o.value = d; o.textContent = `${_BMONTHS[+ym.slice(5, 7) - 1]} ${+d.slice(8, 10)}`; dayEl.appendChild(o); }
-    dayEl.disabled = false;
-  } else { dayEl.disabled = true; }
-  dayEl.value = prevD; if (dayEl.value !== prevD) dayEl.value = "";
 }
 // Vendor MULTI-select. The concrete-pump vendors are excluded BY DEFAULT (owner 2026-08-20) - the
 // data stays, just filtered; check them back (or "Show all") to include them. Checked = shown.
@@ -1905,24 +1923,21 @@ function buildBillVendorFilter() {
 }
 function billFilterValues() {
   const f = {};
-  f["#bfMonth"] = billMonths.size ? [...billMonths] : "";
-  f["#bfDay"] = $("#bfDay") ? $("#bfDay").value : "";
+  f["#bfDate"] = billDate && billDate.active() ? "1" : "";
   f["#bfVendor"] = _vendorNonDefault() ? "1" : "";                                   // vendor deviates from the pump default
   f["#bfMSel"] = BILL_MSEL.some(c => (billMSel[c.id] || {}).size) ? "1" : "";        // any categorical multi-select active
   return f;                                                                          // (drives the "Clear filters" button)
 }
 function billPassesFilters(b, f) {
-  const mo = f["#bfMonth"]; if (mo && mo.length && !mo.includes(String(b.bill_date || "").slice(0, 7))) return false;
-  const dy = f["#bfDay"];   if (dy && String(b.bill_date || "").slice(0, 10) !== dy) return false;
+  if (billDate && !billDate.passes(b.bill_date)) return false;   // Month | Date (from / to)
   if (billVendorHidden.has(b.vendor || "")) return false;      // vendor multi-select (pumps hidden by default)
   if (!billMSelPasses(b)) return false;                        // Client / Division / Pay / Invoice / Approved / Lien
   return true;
 }
 function billClearFilters() {
   for (const cfg of BILL_MSEL) (billMSel[cfg.id] || (billMSel[cfg.id] = new Set())).clear();
-  billMonths.clear();
+  if (billDate) billDate.clear();
   billVendorHidden = new Set(billVendorDefault);   // back to the default (pumps hidden), not "show everything"
-  { const d = $("#bfDay"); if (d) d.value = ""; }
   buildBillFilters();
   renderBills();
 }
@@ -3285,6 +3300,23 @@ function invNoCell(inv) {
 let _ip = null;
 function _ipGroups() { const d = _ip.d; return [...(d.vendors || []).map(v => "v:" + v.vendor), ...(d.subs || []).map(v => "s:" + v.vendor)]; }
 function _ipBillPasses(b) { const paid = !!b.pay_date || num(b.open) <= 0.005; return _ip.filter === "all" || (_ip.filter === "paid" ? paid : !paid); }
+function _copyIpBills() {
+  const { d } = _ip, i = d.invoice;
+  const vendors = (d.vendors || []).map(v => ({ ...v, bills: v.bills.filter(_ipBillPasses) })).filter(v => v.bills.length);
+  const lines = [`Invoice ${i.doc_number} · ${i.customer || ""} · ${i.project_no || ""} ${nameOf(i.project_no) || ""} · ${_ip.filter === "all" ? "all bills" : _ip.filter + " bills"} · as of ${fmtDate(new Date().toISOString().slice(0, 10))}`,
+                 ["Vendor", "Bill date", "Bill #", "Amount", "Open", "Pay status", "Approved", "Lien", "GC paid us"].join("\t")];
+  let tAmt = 0, tOpen = 0;
+  for (const v of vendors) {
+    let vAmt = 0, vOpen = 0;
+    for (const b of v.bills) { vAmt += num(b.amount); vOpen += num(b.open);
+      lines.push([v.vendor, fmtDate(b.bill_date), b.bill_ref || "", Math.round(num(b.amount) * 100) / 100, Math.round(num(b.open) * 100) / 100,
+                  b.pay_date ? "Paid " + fmtDate(b.pay_date) : (b.pay_status || "Open"), b.approved || "", b.lien_status || "", b.gc_paid ? fmtDate(b.gc_paid) : ""].join("\t")); }
+    lines.push([v.vendor + " total", "", "", Math.round(vAmt * 100) / 100, Math.round(vOpen * 100) / 100, "", "", "", ""].join("\t"));
+    tAmt += vAmt; tOpen += vOpen;
+  }
+  lines.push(["TOTAL", "", "", Math.round(tAmt * 100) / 100, Math.round(tOpen * 100) / 100, "", "", "", ""].join("\t"));
+  copy(lines.join("\n"));
+}
 function _renderIpBills() {
   const { d, host } = _ip; host.innerHTML = "";
   const i = d.invoice;
@@ -3318,8 +3350,8 @@ function _renderIpBills() {
         const nm = leftText(""); if (!b.gates) { const s = document.createElement("span"); s.className = "vg-tag"; s.textContent = "not paid by us"; s.title = "Concrete pumping - the GC pays this vendor directly"; nm.appendChild(s); } tr.appendChild(nm);
         tr.appendChild(leftText(fmtDateShort(b.bill_date)));
         tr.appendChild(qboLinkCell(b.bill_ref || "–", qboBillHref(b.qbo_link), "Open this bill in QuickBooks"));
-        const ac = document.createElement("td"); ac.appendChild(moneyCell(b.amount)); tr.appendChild(ac);
-        const oc = document.createElement("td"); oc.className = "right"; oc.textContent = num(b.open) > 0.005 ? money(b.open) : "–"; if (num(b.open) > 0.005) oc.style.color = "var(--neg)"; else oc.classList.add("dim"); tr.appendChild(oc);
+        const ac = document.createElement("td"); ac.className = "ip-amt"; ac.appendChild(moneyCell(b.amount)); tr.appendChild(ac);
+        const oc = document.createElement("td"); oc.className = "right ip-amt"; oc.textContent = num(b.open) > 0.005 ? money(b.open) : "–"; if (num(b.open) > 0.005) oc.style.color = "var(--neg)"; else oc.classList.add("dim"); tr.appendChild(oc);
         const st = document.createElement("td"); st.className = "left"; const pill = document.createElement("span"); pill.className = b.pay_date ? "ar-paid" : "ar-open"; pill.textContent = b.pay_date ? "Paid " + fmtDateShort(b.pay_date) : (b.pay_status || "Open"); st.appendChild(pill); tr.appendChild(st);
         tr.appendChild(leftText(b.approved || "–"));
         tr.appendChild(leftText(b.lien_status || "–"));
@@ -3378,10 +3410,10 @@ async function openInvoicePage(inv) {
   const memoBox = document.createElement("div"); memoBox.className = "ip-memo" + (i.memo ? "" : " dim"); memoBox.textContent = i.memo || "(no memo on this invoice)"; top.appendChild(memoBox);
   const grid = document.createElement("div"); grid.className = "ip-grid"; top.appendChild(grid);
   const col = (title, rows) => { const c = document.createElement("div"); c.className = "dgroup"; const h = document.createElement("h4"); h.textContent = title; c.appendChild(h); kv(c, rows); grid.appendChild(c); };
-  col("Billing", [["Invoice #", docn], ["Amount billed", money(amt)], ["Open balance", money(bal), bal != null && bal > 0.005 ? "neg" : ""], paidAmt != null ? ["Paid", money(paidAmt)] : null, ["Status", i.status || (bal > 0.005 ? "Open" : "Paid")]].filter(Boolean));
+  col("Billing", [["Invoice #", docn], ["Amount billed", money(amt), "ip-big"], ["Open balance", money(bal), "ip-big" + (bal != null && bal > 0.005 ? " neg" : "")], paidAmt != null ? ["Paid", money(paidAmt)] : null, ["Status", i.status || (bal > 0.005 ? "Open" : "Paid")]].filter(Boolean));
   col("Dates & terms", [["Invoice date", i.txn_date ? fmtDate(i.txn_date) : null], ["Due date", i.due_date ? fmtDate(i.due_date) : null],
     isOpen && i.days_past_due != null ? ["Days past due", i.days_past_due > 0 ? i.days_past_due + " days" : "current", i.days_past_due > 0 ? "neg" : ""] : null,
-    ["Aging bucket", i.bucket], ["Terms", i.net_terms], ["Draw period", d.period && d.period.start ? `${fmtDate(d.period.start)} – ${fmtDate(d.period.end)}` : i.draw_period], i.paid_date ? ["Paid date", fmtDate(i.paid_date)] : null].filter(Boolean));
+    ["Terms", i.net_terms], ["Draw period", d.period && d.period.start ? `${fmtDate(d.period.start)} – ${fmtDate(d.period.end)}` : i.draw_period], i.paid_date ? ["Paid date", fmtDate(i.paid_date)] : null].filter(Boolean));
   col("Lien", [["Notice deadline", i.lien_due_label], ["Lien status", i.lien_status], ["Notice type", i.lien_notice], ["Litigation", i.litigation ? "yes" : null]]);
   col("Collections", [["Last action", i.last_action_date ? fmtDate(i.last_action_date) : null], ["Next follow-up", i.next_followup ? fmtDate(i.next_followup) : null], ["Note", i.note]]);
   const acts = document.createElement("div"); acts.className = "ip-actions";
@@ -3412,7 +3444,9 @@ async function openInvoicePage(inv) {
   }
   const tog = document.createElement("button"); tog.type = "button"; tog.className = "btn small"; tog.id = "ipToggle"; tog.textContent = "Expand all";
   tog.onclick = () => { const groups = _ipGroups(); const allOpen = groups.every(g => _ip.open.has(g)); _ip.open = new Set(allOpen ? [] : groups); _renderIpBills(); };
-  tools.appendChild(seg); tools.appendChild(tog); s2.appendChild(tools);
+  const cp = document.createElement("button"); cp.type = "button"; cp.className = "btn small"; cp.textContent = "Copy bills"; cp.title = "Copy the bills shown (this filter), grouped by vendor with subtotals - paste into Excel or an email";
+  cp.onclick = () => _copyIpBills();
+  tools.appendChild(seg); tools.appendChild(tog); tools.appendChild(cp); s2.appendChild(tools);
   s2.appendChild(_ip.host);
   _renderIpBills();
   // ── 3. the Notion collections log ──
@@ -6887,7 +6921,7 @@ function init() {
   { const el = $("#wipActive"); if (el) el.addEventListener("change", renderWip); }
   { const el = $("#billSort"); if (el) el.addEventListener("change", renderBills); }
   // Month + Vendor + every categorical multi-select: the button toggles the checkbox menu; a click outside closes it.
-  const _mselWraps = [["#bfMonthBtn", "#bfMonthMenu", "#bfMonthMsel"], ["#bfVendorBtn", "#bfVendorMenu", "#bfVendorMsel"],
+  const _mselWraps = [["#bfDateBtn", "#bfDateMenu", "#bfDateMsel"], ["#dfDateBtn", "#dfDateMenu", "#dfDateMsel"], ["#bfVendorBtn", "#bfVendorMenu", "#bfVendorMsel"],
     ...BILL_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`]),
     ...LIEN_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`]),
     ...PAY_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`]),
@@ -6901,7 +6935,7 @@ function init() {
       document.addEventListener("click", (e) => { if (!menu.hidden && !e.target.closest(wrapId)) menu.hidden = true; });
     }
   }
-  { const d = $("#bfDay"); if (d) d.addEventListener("change", renderBills); }
+
   { const el = $("#billGroup"); if (el) el.addEventListener("change", () => {
     const grp = el.value;   // re-collapse under the new grouping (collapse stays the default)
     billsCollapsed = grp === "none" ? new Set() : new Set((BILLS || []).map(b => billGroupKey(b, grp)));

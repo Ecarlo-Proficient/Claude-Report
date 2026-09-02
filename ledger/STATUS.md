@@ -4,6 +4,15 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Bills + Draws for the GC's "statement from each supplier as of a date for a project" (owner
+  2026-09-02).** One shared **Date** control (`dateFilter`) on both tabs: **Month** = every month ticked
+  by default with Select all / Deselect all (the Day select is gone); **Date** = from / to with the
+  native calendar (pick or type), so "as of July 25" is just a To date; switching modes re-renders at
+  once. Bills gained a **Project #** multi-select. Draws now also surfaces projects whose CP/MFD bills
+  have no draw invoice yet as a **"No draw yet"** stage + tile (owner: "CP785 is not showing in the
+  draws" - its 27 bills are all Awaiting Invoice, so no draw existed to show). Invoice page: Aging
+  bucket removed, **Copy bills** (the filtered bills grouped by vendor with subtotals, tab-separated),
+  and the amounts made prominent (billed / open large, bill amount column bold).
 - **Invoice page: vendor groups collapsed by default + Expand/Collapse all + All | Unpaid | Paid
   (owner 2026-09-02).** The bills block re-renders in place (`_renderIpBills`): each vendor (and each
   sub) is a collapsed band with count · total · open · paid; the toggle flips every band; the filter

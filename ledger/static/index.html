@@ -287,6 +287,7 @@
           <div class="msel" id="dfVendorMsel"><button type="button" class="msel-btn" id="dfVendorBtn">All vendors</button><div class="msel-menu wide" id="dfVendorMenu" hidden></div></div>
           <div class="msel" id="dfInvMsel"><button type="button" class="msel-btn" id="dfInvBtn">All invoices</button><div class="msel-menu" id="dfInvMenu" hidden></div></div>
           <div class="msel" id="dfDivMsel"><button type="button" class="msel-btn" id="dfDivBtn">All divisions</button><div class="msel-menu" id="dfDivMenu" hidden></div></div>
+          <div class="datef" id="dfDate"></div>
         </div>
         <div id="drawList"></div>
       </section>
@@ -384,14 +385,11 @@
         </div>
         <div class="bill-views" id="billViews"></div>
         <div class="bill-filters" id="billFilters">
-          <div class="fld"><span>Month</span>
-            <div class="msel" id="bfMonthMsel">
-              <button type="button" class="msel-btn" id="bfMonthBtn">All months</button>
-              <div class="msel-menu" id="bfMonthMenu" hidden></div>
-            </div>
-          </div>
-          <label class="fld"><span>Day</span><select id="bfDay"></select></label>
+          <div class="fld"><span>Date</span><div class="datef" id="bfDate"></div></div>
           <span class="bf-sep"></span>
+          <div class="fld"><span>Project #</span>
+            <div class="msel" id="bfProjectMsel"><button type="button" class="msel-btn" id="bfProjectBtn">All projects</button><div class="msel-menu" id="bfProjectMenu" hidden></div></div>
+          </div>
           <div class="fld"><span>Client</span>
             <div class="msel" id="bfCustomerMsel"><button type="button" class="msel-btn" id="bfCustomerBtn">All clients</button><div class="msel-menu wide" id="bfCustomerMenu" hidden></div></div>
           </div>
