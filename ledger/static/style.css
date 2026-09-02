@@ -1331,3 +1331,17 @@ table.grid td.ip-amt { font-weight: 700; font-size: 1.08em; }
 .ip-paid.due { color: var(--neg); font-weight: 600; }
 .ip-paid.ok { color: var(--pos); }
 .datef-reset { margin-left: 4px; }
+
+/* the project page (2026-09-02) */
+.pp-unlock { margin: 0 18px 10px; padding: 12px 14px; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--neg) 45%, var(--border)); background: color-mix(in srgb, var(--neg) 6%, var(--surface)); font-size: 1.02em; }
+.pp-unlock.ok, .pp-unlock .ok { border-color: color-mix(in srgb, var(--pos) 45%, var(--border)); background: color-mix(in srgb, var(--pos) 6%, var(--surface)); }
+.pp-unlock-b { margin-top: 4px; color: var(--text); }
+.pp-unlock-b.ok { color: var(--pos); }
+.pp-draw { border-top: 1px solid var(--border); }
+.pp-draw.next .pp-draw-h { background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
+.pp-draw-h { display: flex; align-items: center; gap: 14px; padding: 9px 18px; flex-wrap: wrap; }
+.pp-draw-h .pp-lab { font-weight: 700; min-width: 120px; }
+.pp-draw-h .pp-dt, .pp-draw-h .pp-billed, .pp-draw-h .pp-stage { color: var(--text-dim); }
+.pp-draw-h .pp-stage { margin-left: auto; font-size: .9em; }
+.pp-gc.ok { color: var(--pos); font-weight: 600; } .pp-gc.due { color: var(--neg); font-weight: 700; }
+table.pp-bills { margin: 0 0 6px; }

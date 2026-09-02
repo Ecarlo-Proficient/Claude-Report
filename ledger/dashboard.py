@@ -1444,6 +1444,57 @@ def _fetch_vendor(con, vendor: str) -> dict:
             "pay_count": len(payments)}
 
 
+def _fetch_project_page(con, pn: str) -> dict:
+    """The PROJECT page (owner 2026-09-02): everything about one job in one place. Section 1 = how
+    it's doing (`_project_pnl`); section 2 = how we get funded - the job's draws in order, each with
+    GC-paid state, vendors paid x/y, waivers, and the funding-chain math: the next draw the GC still
+    owes is unlocked by paying the unpaid bills on the draws BEFORE it (their unconditional waivers
+    gate the release). Pay-to-unlock checkboxes ride the existing pay run (pay_mark) - local intent
+    only, never QBO."""
+    pn = (pn or "").strip().upper()
+    if not pn:
+        return {"ok": False, "error": "project required"}
+    pr = con.execute("SELECT project_no, name, division FROM project WHERE project_no = ?", (pn,)).fetchone()
+    pnl = _project_pnl(con, pn)
+    draws = [d for d in _fetch_draws(con, limit=100000)["draws"] if (d.get("project_no") or "").upper() == pn]
+    # draw order = invoice date, then recency; the "no draw yet" bucket last
+    draws.sort(key=lambda d: (1 if d.get("no_draw") else 0, d.get("ar_date") or d.get("recency") or ""))
+    pay = bill_marks.read_pay_marks()
+    for d in draws:
+        for b in d["bills"]:
+            bid = bill_marks.bill_id_from_link(b.get("qbo_link"))
+            b["bill_id"] = bid
+            b["pay_selected"] = bool(bid and pay.get(bid))
+        gate = [b for b in d["bills"] if b["gates"]]
+        d["vendors_total"] = len(gate)
+        d["vendors_paid"] = sum(1 for b in gate if b["pay_date"])
+        d["paid_amt"] = round(sum((b["amount"] or 0) for b in gate if b["pay_date"]), 2)
+        d["gate_amt"] = round(sum((b["amount"] or 0) for b in gate), 2)
+        d["unpaid_amt"] = round(sum((b["open"] or 0) for b in gate if not b["pay_date"]), 2)
+        d["waivers_total"] = len(gate)
+        d["gc_paid"] = bool(d.get("gc_paid_in"))
+    # funding chain: the first draw the GC has not paid us; its blockers = unpaid gating bills on every EARLIER draw
+    nxt = next((d for d in draws if not d.get("no_draw") and (d.get("ar_open") or 0) > 0.005), None)
+    blockers, blk_total = [], 0.0
+    if nxt:
+        for d in draws:
+            if d is nxt or d.get("no_draw"):
+                continue
+            if (d.get("ar_date") or "") > (nxt.get("ar_date") or ""):
+                continue
+            for b in d["bills"]:
+                if b["gates"] and (not b["pay_date"] or (b["open"] or 0) > 0.005):   # no pay date = no waiver yet, even at $0 open
+                    blockers.append({"draw": d.get("label"), "invoice_no": d.get("invoice_no"), "vendor": b["vendor"], "bill_ref": b["bill_ref"],
+                                     "open": b["open"], "bill_id": b["bill_id"], "pay_selected": b["pay_selected"], "waiver": b["waiver"]})
+                    blk_total += b["open"] or 0
+    funding = {"next_draw": ({"label": nxt.get("label"), "invoice_no": nxt.get("invoice_no"), "ar_open": nxt.get("ar_open"),
+                              "billed": nxt.get("billed"), "ar_date": nxt.get("ar_date"), "stage": nxt.get("stage")} if nxt else None),
+               "blockers": blockers, "blockers_total": round(blk_total, 2),
+               "own_unpaid": (round(nxt["unpaid_amt"], 2) if nxt else 0.0)}
+    return {"ok": True, "project": {"project_no": pn, "name": pr["name"] if pr else None, "division": pr["division"] if pr else pnl.get("division")},
+            "pnl": pnl, "draws": draws, "funding": funding}
+
+
 def _fetch_invoice_page(con, no: str) -> dict:
     """The invoice as a PAGE (owner 2026-09-02: "all the invoice qbo details on top, the bills grouped
     below that, their pay status, and then the Notion collections log"). Invoice = the billing_event
@@ -2143,6 +2194,12 @@ class Handler(BaseHTTPRequestHandler):
             self._invoices_all()
         elif path == "/api/invoice/notion":  # on-demand: the invoice's whole Notion page (properties + body + comments), 60 s cache
             self._json(notion_page.fetch(self._query().get("url", "")))
+        elif path == "/api/project/page":    # on-demand: the project page - how it's doing + how we get funded (draws, blockers, pay-to-unlock)
+            con = _connect(self.db_path)
+            try:
+                self._json(_fetch_project_page(con, self._query().get("no", "")))
+            finally:
+                con.close()
         elif path == "/api/invoice/page":    # on-demand: the invoice page - QBO details, the draw's bills by vendor + pay status, subs
             con = _connect(self.db_path)
             try:

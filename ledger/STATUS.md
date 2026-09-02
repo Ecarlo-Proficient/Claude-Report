@@ -4,6 +4,17 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **The PROJECT page (owner 2026-09-02: "one place ... i find i am switching tabs a lot").** Every
+  project # opens a full page (from the WIP drawer, the P&L group, an Invoices project band, the
+  invoice page): **How it's doing** (contract, ETC + planned GP, QBO costs vs WIP, billed, earned, live
+  net margin, the P&L group, Show every dollar) · **How we get funded** (the job's draws in order,
+  each with GC paid / GC owes, vendors x/y paid $/$ in red or green, waivers, stage; the funding-chain
+  box names the next draw the GC owes and the unpaid bills on EARLIER draws that block it; **pay-to-
+  unlock** checkboxes write the existing pay run (pay_mark, local only); "Mark blockers to pay";
+  "Export pay list" = the grouped Excel report) · **Bills and links** (Bill Tracker / Invoices filtered
+  to the job, QBO project). `GET /api/project/page?no=` (`_fetch_project_page`). Not yet folded:
+  the Draws / Pay Bills / Liens tabs still exist as before - next step is to make them lists that
+  open this page.
 - **Date filter Reset + untick-to-all; invoice page paid-at-a-glance + one identity line (owner
   2026-09-02).** The shared Month | Date control shows a **Reset** while a date filter is active and
   unticking the last month goes back to All months (same on the Invoices month filter). Invoice page

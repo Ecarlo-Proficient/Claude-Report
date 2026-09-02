@@ -3323,6 +3323,163 @@ function invNoCell(inv) {
 
 // The invoice's memo + every field in the side panel - read a draw/invoice without opening QBO.
 // Works for an Invoices row and a Draws row alike (both carry the same billing_event fields).
+
+// ── The PROJECT page (owner 2026-09-02): everything about one job in one place - section 1 "how
+// it's doing" (WIP + live P&L + the trail), section 2 "how we get funded" (draws in order, GC paid,
+// vendors x/y paid, the funding-chain math, pay-to-unlock checkboxes on the existing pay run, export),
+// then bills / links. Opened from any project # in the app. Read-only except the pay-run marks.
+let _pp = null;
+async function openProjectPage(pn) {
+  if (!pn) return;
+  const r0 = (ALL || []).find(x => x.project_no === pn) || {};
+  openRecord(pn + (r0.project_name ? " · " + r0.project_name : ""), [r0.division, r0.status ? "WIP status " + r0.status : ""].filter(Boolean).join(" · "));
+  const body = $("#recordBody"); body.innerHTML = ""; skeletonInto(body, 6);
+  let d;
+  try { d = await (await fetch(`/api/project/page?no=${encodeURIComponent(pn)}`)).json(); }
+  catch (e) { body.textContent = "could not load this project"; return; }
+  if (!d || !d.ok) { body.textContent = (d && d.error) || "no data for this project"; return; }
+  _pp = { d, pn, open: new Set(), filter: "unpaid" };
+  body.innerHTML = "";
+  if (!r0.project_name && d.project && d.project.name) $("#recordTitle").textContent = `${pn} · ${d.project.name}`;
+  const sec = (title, note) => { const w = document.createElement("section"); w.className = "widget ip-sec";
+    const h = document.createElement("div"); h.className = "widget-head"; h.innerHTML = `<h2>${_ge(title)} <span class="count">${_ge(note || "")}</span></h2>`; w.appendChild(h); body.appendChild(w); return w; };
+  const kpi = (host, items) => { const strip = document.createElement("div"); strip.className = "kpi-row ip-strip";
+    for (const [l, v, sub, cls] of items) { const k = document.createElement("div"); k.className = "kpi" + (cls ? " " + cls : "");
+      k.innerHTML = `<div class="k-label"></div><div class="k-value"></div><div class="k-sub"></div>`;
+      k.querySelector(".k-label").textContent = l; k.querySelector(".k-value").textContent = v; k.querySelector(".k-sub").textContent = sub || ""; strip.appendChild(k); }
+    host.appendChild(strip); };
+  // ── 1. how it's doing ──
+  const p = d.pnl || {};
+  const s1 = sec("How it's doing", `WIP master report ${r0.report_date ? fmtDate(r0.report_date) : "–"} · QuickBooks costs loaded ${loadedAt("Costs (QBO)") ? fmtDate(loadedAt("Costs (QBO)"), true) : "–"}`);
+  const gp = num(r0.total_contract_price) - num(r0.estimated_total_costs);
+  kpi(s1, [
+    ["Contract", money(p.contract || r0.total_contract_price), r0.approved_cos ? `incl. COs ${money(r0.approved_cos)}` : ""],
+    ["ETC (budget)", money(r0.estimated_total_costs), r0.total_contract_price ? `planned GP ${money(gp)} · ${(gp / num(r0.total_contract_price) * 100).toFixed(1)}%` : ""],
+    ["Costs to date (QuickBooks)", money(p.cost), r0.costs_to_date != null ? `WIP report ${money(r0.costs_to_date)}` : "", num(p.cost) > num(r0.estimated_total_costs) && r0.estimated_total_costs ? "pnl-kpi-neg" : ""],
+    ["Billed to date", money(p.billed), r0.billed_to_date != null ? `WIP (gross) ${money(r0.billed_to_date)}` : ""],
+    ["Earned revenue", money(p.earned), `${((p.pct_complete || 0) * 100).toFixed(1)}% complete`],
+    ["Net margin (live P&L)", money(p.net), p.net_pct != null ? `${(p.net_pct * 100).toFixed(1)}% of earned · overhead ${p.overhead_basis || ""}` : "", num(p.net) < 0 ? "pnl-kpi-neg" : "pnl-kpi-pos"],
+  ]);
+  const acts1 = document.createElement("div"); acts1.className = "ip-actions";
+  const trailBtn = document.createElement("button"); trailBtn.className = "btn small"; trailBtn.textContent = "Show every dollar"; trailBtn.onclick = () => openTrail(pn); acts1.appendChild(trailBtn);
+  if (r0.project_no) { const dr = document.createElement("button"); dr.className = "btn small"; dr.textContent = "WIP row detail"; dr.onclick = () => openDetail(r0); acts1.appendChild(dr); }
+  s1.appendChild(acts1);
+  const plWrap = document.createElement("div"); plWrap.className = "ip-top"; plWrap.appendChild(buildPnlGroup(pn)); s1.appendChild(plWrap);
+  // ── 2. how we get funded ──
+  const F = d.funding || {}, nx = F.next_draw;
+  const s2 = sec("How we get funded", `${d.draws.length} draw${d.draws.length === 1 ? "" : "s"} · GC owes ${money(d.draws.reduce((s, x) => s + num(x.ar_open), 0))}`);
+  const unlock = document.createElement("div"); unlock.className = "pp-unlock" + (nx ? "" : " ok");
+  if (nx) {
+    const blk = F.blockers || [];
+    unlock.innerHTML = `<div class="pp-unlock-h">Next money in: <b>${_ge(nx.label.split(" — ")[0])}</b> · GC owes <b>${_ge(money(nx.ar_open))}</b>${nx.ar_date ? " · invoiced " + _ge(fmtDate(nx.ar_date)) : ""}</div>`
+      + (blk.length ? (F.blockers_total > 0.005
+            ? `<div class="pp-unlock-b">Blocked by <b>${blk.length}</b> unpaid bill${blk.length === 1 ? "" : "s"} on earlier draws · <b>${_ge(money(F.blockers_total))}</b> to pay (their unconditional waivers release this draw)</div>`
+            : `<div class="pp-unlock-b"><b>${blk.length}</b> bill${blk.length === 1 ? "" : "s"} on earlier draws show no payment date yet ($0 open) - confirm they are paid and collect the waivers, then this draw is clear on our side</div>`)
+                    : `<div class="pp-unlock-b ok">No unpaid bills on earlier draws - nothing on our side blocks this draw${F.own_unpaid > 0.005 ? `; ${_ge(money(F.own_unpaid))} of its own bills still to pay once funded` : ""}.</div>`);
+  } else unlock.innerHTML = `<div class="pp-unlock-h ok">Nothing outstanding - the GC has paid every draw on file.</div>`;
+  s2.appendChild(unlock);
+  const tools = document.createElement("div"); tools.className = "ip-tools";
+  const seg = document.createElement("div"); seg.className = "seg";
+  for (const [k, lbl] of [["unpaid", "Unpaid bills"], ["all", "All bills"]]) { const b = document.createElement("button"); b.type = "button"; b.className = "seg-btn" + (k === "unpaid" ? " on" : ""); b.textContent = lbl;
+    b.onclick = () => { _pp.filter = k; seg.querySelectorAll(".seg-btn").forEach(x => x.classList.toggle("on", x === b)); _renderPpDraws(); }; seg.appendChild(b); }
+  const tog = document.createElement("button"); tog.type = "button"; tog.className = "btn small"; tog.id = "ppToggle"; tog.textContent = "Expand all";
+  tog.onclick = () => { const keys = d.draws.map(x => x.matched_invoice); const all = keys.every(k => _pp.open.has(k)); _pp.open = new Set(all ? [] : keys); _renderPpDraws(); };
+  const mk = document.createElement("button"); mk.type = "button"; mk.className = "btn small"; mk.textContent = "Mark blockers to pay"; mk.title = "Tick every unpaid bill on the draws before the next one the GC owes - they go on the pay run";
+  mk.onclick = () => _ppMarkBlockers();
+  const ex = document.createElement("button"); ex.type = "button"; ex.className = "btn small"; ex.textContent = "Export pay list"; ex.title = "Excel report of the bills ticked to pay on this job, grouped by draw";
+  ex.onclick = () => _ppExport();
+  const pb = document.createElement("button"); pb.type = "button"; pb.className = "btn small subtle"; pb.textContent = "Open Pay Bills"; pb.onclick = () => setTab("paybills");
+  tools.appendChild(seg); tools.appendChild(tog); tools.appendChild(mk); tools.appendChild(ex); tools.appendChild(pb); s2.appendChild(tools);
+  const host = document.createElement("div"); host.id = "ppDraws"; s2.appendChild(host);
+  _renderPpDraws();
+  // ── 3. bills + links ──
+  const s3 = sec("Bills and links", "");
+  const acts3 = document.createElement("div"); acts3.className = "ip-actions";
+  const bb = document.createElement("button"); bb.className = "btn small"; bb.textContent = "Bills on this job"; bb.title = "The Bill Tracker filtered to this project";
+  bb.onclick = () => { if (typeof billMSel === "object") { for (const c of BILL_MSEL) billMSel[c.id] = new Set(); billMSel["bfProject"] = new Set([pn]); } activeBillView = "all"; setTab("bills"); if (typeof buildBillFilters === "function") buildBillFilters(); renderBills(); };
+  acts3.appendChild(bb);
+  const ib = document.createElement("button"); ib.className = "btn small"; ib.textContent = "Invoices on this job"; ib.onclick = () => { invMSel["ifProj"] = new Set([pn]); _invMSelSig = null; setTab("invoices"); renderOpenInvoices(); }; acts3.appendChild(ib);
+  const cid = (COST.by_project && COST.by_project[pn] && COST.by_project[pn].customer_id) || ((invData().invoices || []).find(i => i.project_no === pn) || {}).cust_id;
+  const qurl = qboCustomerUrl(cid); if (qurl) { const a = document.createElement("a"); a.className = "btn small"; a.href = qurl; a.target = "_blank"; a.rel = "noopener"; a.textContent = "Project in QuickBooks ↗"; acts3.appendChild(a); }
+  s3.appendChild(acts3);
+}
+function _ppBillShown(b) { const paid = !!b.pay_date; return _pp.filter === "all" || !paid; }
+function _renderPpDraws() {
+  const { d, host } = { d: _pp.d, host: $("#ppDraws") }; if (!host) return; host.innerHTML = "";
+  const keys = d.draws.map(x => x.matched_invoice); const allOpen = keys.length && keys.every(k => _pp.open.has(k));
+  { const tg = $("#ppToggle"); if (tg) tg.textContent = allOpen ? "Collapse all" : "Expand all"; }
+  if (!d.draws.length) { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = "No draws or bills on this job in the Bill Tracker yet."; host.appendChild(p); return; }
+  const nxInv = d.funding && d.funding.next_draw ? d.funding.next_draw.invoice_no : null;
+  for (const dr of d.draws) {
+    const key = dr.matched_invoice, open = _pp.open.has(key);
+    const band = document.createElement("div"); band.className = "pp-draw" + (dr.invoice_no && dr.invoice_no === nxInv ? " next" : "");
+    const head = document.createElement("div"); head.className = "pp-draw-h"; head.style.cursor = "pointer";
+    const paidAll = dr.vendors_total > 0 && dr.vendors_paid === dr.vendors_total;
+    head.innerHTML = `<span class="bg-caret">${open ? "▾" : "▸"}</span>
+      <span class="pp-lab">${_ge(dr.no_draw ? "No draw yet" : "Invoice " + (dr.invoice_no || dr.label.split(" — ")[0]))}</span>
+      <span class="pp-dt">${_ge(dr.ar_date ? fmtDate(dr.ar_date) : "")}</span>
+      <span class="pp-billed">${dr.no_draw ? "" : "billed " + _ge(money(dr.billed))}</span>
+      <span class="pp-gc ${dr.no_draw ? "" : dr.gc_paid ? "ok" : "due"}">${dr.no_draw ? "" : dr.gc_paid ? "GC paid" : "GC owes " + _ge(money(dr.ar_open))}</span>
+      <span class="ip-paid ${paidAll ? "ok" : "due"}">${dr.vendors_paid}/${dr.vendors_total} vendors paid · ${_ge(money(dr.paid_amt))} / ${_ge(money(dr.gate_amt))}${dr.unpaid_amt > 0.005 ? " · " + _ge(money(dr.unpaid_amt)) + " to pay" : ""}</span>
+      <span class="pp-stage">${_ge(dr.stage)}</span>`;
+    head.onclick = () => { if (_pp.open.has(key)) _pp.open.delete(key); else _pp.open.add(key); _renderPpDraws(); };
+    band.appendChild(head);
+    if (open) {
+      const bills = dr.bills.filter(_ppBillShown).sort((a, b) => (a.vendor || "").localeCompare(b.vendor || "") || (a.bill_date || "").localeCompare(b.bill_date || ""));
+      if (!bills.length) { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = _pp.filter === "unpaid" ? "Every vendor on this draw is paid." : "No bills."; band.appendChild(p); }
+      else {
+        const table = document.createElement("table"); table.className = "grid pp-bills"; const thead = document.createElement("thead"), tbody = document.createElement("tbody");
+        thead.innerHTML = "<tr><th class='left'>Pay</th><th class='left'>Vendor</th><th class='left'>Bill #</th><th class='left'>Date</th><th class='right'>Amount</th><th class='right'>Open</th><th class='left'>Status</th><th class='left'>Waiver</th></tr>";
+        for (const b of bills) {
+          const tr = document.createElement("tr"); if (b.pay_date) tr.classList.add("inv-paid");
+          const pc = document.createElement("td"); pc.className = "left";
+          if (!b.pay_date && b.gates) { const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = !!b.pay_selected; cb.title = "Put this bill on the pay run (Pay Bills) - local intent, never QuickBooks";
+            cb.onchange = () => _ppSetPay([b], cb.checked); pc.appendChild(cb); }
+          else if (!b.gates) { const s = document.createElement("span"); s.className = "vg-tag"; s.textContent = "GC pays"; s.title = "Concrete pumping - paid by the GC directly"; pc.appendChild(s); }
+          tr.appendChild(pc);
+          tr.appendChild(leftText(b.vendor || "–"));
+          tr.appendChild(qboLinkCell(b.bill_ref || "–", qboBillHref(b.qbo_link), "Open this bill in QuickBooks"));
+          tr.appendChild(leftText(fmtDateShort(b.bill_date)));
+          const ac = document.createElement("td"); ac.className = "ip-amt"; ac.appendChild(moneyCell(b.amount)); tr.appendChild(ac);
+          const oc = document.createElement("td"); oc.className = "right ip-amt"; oc.textContent = num(b.open) > 0.005 ? money(b.open) : "–"; if (num(b.open) > 0.005) oc.style.color = "var(--neg)"; else oc.classList.add("dim"); tr.appendChild(oc);
+          const st = document.createElement("td"); st.className = "left"; const pill = document.createElement("span"); pill.className = b.pay_date ? "ar-paid" : "ar-open"; pill.textContent = b.pay_date ? "Paid " + fmtDateShort(b.pay_date) : (b.pay_status || "Open"); st.appendChild(pill); tr.appendChild(st);
+          tr.appendChild(leftText(b.waiver ? "received" : (b.pay_date ? "–" : "needed")));
+          tbody.appendChild(tr);
+        }
+        table.appendChild(thead); table.appendChild(tbody); band.appendChild(table);
+      }
+    }
+    host.appendChild(band);
+  }
+}
+async function _ppSetPay(bills, selected) {
+  const items = bills.filter(b => b.bill_id).map(b => ({ bill_id: b.bill_id, selected, amount: null }));
+  if (!items.length) { toast("These bills have no QuickBooks link to key the pay run on"); return; }
+  try {
+    const r = await (await fetch("/api/pay-run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ items }) })).json();
+    if (r && r.ok) { for (const b of bills) b.pay_selected = selected; toast(selected ? `${items.length} bill${items.length === 1 ? "" : "s"} added to the pay run` : "Removed from the pay run"); }
+    else toast("Could not save: " + ((r && r.error) || "unknown"));
+  } catch (e) { toast("Could not save: " + e); }
+  _renderPpDraws();
+}
+function _ppMarkBlockers() {
+  const F = _pp.d.funding || {}, ids = new Set((F.blockers || []).map(b => b.bill_id).filter(Boolean));
+  const bills = []; for (const dr of _pp.d.draws) for (const b of dr.bills) if (ids.has(b.bill_id)) bills.push(b);
+  if (!bills.length) { toast("No blockers to mark"); return; }
+  _ppSetPay(bills, true);
+}
+function _ppExport() {
+  const d = _pp.d, rows = [];
+  for (const dr of d.draws) for (const b of dr.bills) if (b.pay_selected || (!b.pay_date && b.gates && _pp.filter === "unpaid" && false)) rows.push([dr.no_draw ? "No draw yet" : "Invoice " + (dr.invoice_no || ""), b.vendor, b.bill_ref, b.bill_date, num(b.amount), num(b.open), b.pay_date ? "Paid " + fmtDate(b.pay_date) : (b.pay_status || "Open"), b.waiver ? "received" : "needed"]);
+  if (!rows.length) { toast("Nothing ticked to pay on this job yet - tick bills (or Mark blockers) first"); return; }
+  const body = { name: `Pay list ${_pp.pn}`, sheet: "Pay list", title: `${_pp.pn} - bills to pay to unlock the next draw`,
+    subtitle: `${rows.length} bills ticked on the pay run · exported ${fmtDate(new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 19), true)}`,
+    columns: [{ label: "Draw" }, { label: "Vendor" }, { label: "Bill #" }, { label: "Bill date" }, { label: "Amount", type: "money" }, { label: "Open", type: "money" }, { label: "Status" }, { label: "Waiver" }],
+    rows, group_by: 0, fmt: rows.map((r, i) => ({ r: i, c: 5, cls: r[5] > 0 ? "neg" : "pos" })) };
+  toast("Building the Excel report…");
+  fetch("/api/export/xlsx", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(r => r.json())
+    .then(r => toast(r && r.ok ? `Pay list saved to Downloads (${r.rows} bills) - opened in Finder` : "Export failed: " + ((r && r.error) || "unknown"))).catch(e => toast("Export failed: " + e));
+}
 // ── The invoice as a PAGE (owner 2026-09-02): QBO details on top, the draw's bills grouped by vendor
 // with pay status (+ subs from QuickBooks), then the Notion collections log. Full-width record view.
 // ── invoice page: the bills block (vendors + subs), re-rendered on filter / collapse ──
@@ -3449,6 +3606,7 @@ async function openInvoicePage(inv) {
   col("Collections", [["Last action", i.last_action_date ? fmtDate(i.last_action_date) : null], ["Next follow-up", i.next_followup ? fmtDate(i.next_followup) : null], ["Note", i.note]]);
   const acts = document.createElement("div"); acts.className = "ip-actions";
   const qurl = qboInvoiceUrl(i.qbo_txn_id); if (qurl) { const a = document.createElement("a"); a.className = "btn small"; a.href = qurl; a.target = "_blank"; a.rel = "noopener"; a.textContent = "Open in QuickBooks ↗"; acts.appendChild(a); }
+  if (i.project_no) { const b = document.createElement("button"); b.className = "btn small primary"; b.textContent = "Project page"; b.onclick = () => openProjectPage(i.project_no); acts.appendChild(b); }
   const purl = qboCustomerUrl(i.cust_id); if (purl) { const a = document.createElement("a"); a.className = "btn small"; a.href = purl; a.target = "_blank"; a.rel = "noopener"; a.textContent = "Project in QuickBooks ↗"; acts.appendChild(a); }
   if (i.notion_url) { const a = document.createElement("a"); a.className = "btn small"; a.href = i.notion_url; a.target = "_blank"; a.rel = "noopener"; a.textContent = "Open in Notion ↗"; acts.appendChild(a); }
   s1.appendChild(acts);
@@ -3700,7 +3858,8 @@ function invClearFilters() {
 }
 // A project sub-band inside a client group (indented, lighter than the client band).
 function invSubBand(proj, name, open, count, colspan) {
-  const tr = document.createElement("tr"); tr.className = "bill-subgroup";
+  const tr = document.createElement("tr"); tr.className = "bill-subgroup"; tr.style.cursor = "pointer"; tr.title = "Open the project page";
+  tr.onclick = (e) => { e.stopPropagation(); if (proj && proj !== "(no project)") openProjectPage(proj); };
   const td = document.createElement("td"); td.colSpan = colspan;
   const cell = document.createElement("div"); cell.className = "bg-cell";
   const key = document.createElement("span"); key.className = "sg-key"; key.textContent = proj + (name ? " · " + name : "");
@@ -5107,6 +5266,9 @@ let detailRow = null;
 function buildPnlGroup(proj) {
   const g = document.createElement("div"); g.className = "dgroup";
   const h = document.createElement("h4"); h.textContent = "P&L"; g.appendChild(h);
+  if (!(_pp && _pp.pn === proj && $("#recordView") && !$("#recordView").hidden)) {   // not when already ON the project page
+    const b = document.createElement("button"); b.className = "btn small primary"; b.textContent = "Open project page"; b.style.marginBottom = "8px";
+    b.onclick = (e) => { e.stopPropagation(); closePanels(); openProjectPage(proj); }; g.appendChild(b); }
 
   // ── live computed P&L (folded in from the spine; reconciles with project-pnl) ──
   const pl = document.createElement("div"); pl.className = "pnl-live"; pl.textContent = "computing…"; g.appendChild(pl);
@@ -5229,6 +5391,8 @@ function openDetail(r) {
   $("#detailTitle").textContent = `${r.project_no} — ${r.project_name || ""}`;
   $("#detailSub").textContent = `${r.division || ""}${r.source_tab ? " · " + r.source_tab : ""}`;
   const body = $("#detailBody"); body.innerHTML = "";
+  { const g = document.createElement("div"); g.className = "dgroup"; const b = document.createElement("button"); b.className = "btn primary"; b.textContent = "Open project page";
+    b.title = "Everything about this job in one place - how it's doing, how we get funded, bills, the trail"; b.onclick = () => { closePanels(); openProjectPage(r.project_no); }; g.appendChild(b); body.appendChild(g); }
   const typ = k => ({ money: "money", pct: "pct" }[k] ? { type: k } : { type: "text" });
   for (const [title, fields] of DETAIL_GROUPS) {
     const rows = fields.filter(([k]) => r[k] !== null && r[k] !== undefined && r[k] !== "");
