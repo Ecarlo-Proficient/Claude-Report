@@ -4,9 +4,24 @@
 > (CLAUDE.md/AGENTS.md structure rule 7). Tool matters only — no business
 > findings, no dollar exposures, no owner-only analysis.
 
-Last updated: 2026-08-25
+Last updated: 2026-09-02
 
 ## DONE / FINALIZED
+
+- **WIP Review direction rules (owner 2026-09-01: "projects where the CO/ETC/Contract reverse in
+  direction").** `wip_review_common.py` now owns three rules the CP / RP / Master emit and apply
+  paths all share: **CARRY** - a PM field (contract / COs / ETC / CO costs) the reader could not
+  source this run keeps the tab value (`carry_pm_fields` puts it back on the row, so
+  `--emit-review` never shows "cleared" and `--apply-review` can never blank it); **REVERSED** -
+  a PM value going DOWN gets a new job status between CHANGED and ADDED, is never bulk-approved,
+  and the card names the document it came from; **DECREASED** - a QBO field going down stays
+  accepted but carries a note (voided / deleted / re-coded?). Every field cell now carries
+  `source` / `source_path` (`set_source` stamped by the readers: "Draw #4 G702 · <file>",
+  "takeoff · <file>", "proposal PDF · <file>", "RP WIP file · row N", "QuickBooks · ...",
+  "carried from tab"), plus `reversed` / `decreased` / `carried` / `note`. Unit-proven offline
+  (carry, reversal, decreased, source); the live CP emit could not run this session (the CP
+  project root was not mounted - 0 folders), so the next "Compute pending update" is the first
+  real run. Readers stay read-only in `--emit-review`.
 
 - **DIVISION SOURCES OF TRUTH (the user 2026-07-31 — binding):**
   - **CP** — the G702 **draws** in each project folder (latest draw = contract,

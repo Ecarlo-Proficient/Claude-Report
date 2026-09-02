@@ -414,7 +414,11 @@ def main() -> int:
     #    disagree. (The MFD emit is a fast early path above - it never reaches the
     #    full CP/RP build.) ──
     if args.apply_review:
-        bank_rows = WR.apply_decisions(bank_rows, WR.load_decisions(args.apply_review))
+        # Same carry rule as the review: a PM value with no source this run keeps
+        # the tab value, so an approved sync can never blank it.
+        prior = WR.snapshot_tab(W.WIP_EXCEL_PATH, "Test-Master", "master")
+        bank_rows = WR.apply_decisions(bank_rows, WR.load_decisions(args.apply_review),
+                                       prior=prior, tab_kind="master")
 
     # ── --audit: inspect-before-write. Full pipeline already ran (QBO, ETC
     #    fallback, classify); now emit the provenance/add-remove workbook and

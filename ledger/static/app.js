@@ -5907,6 +5907,7 @@ function renderWrStats() {
   const tiles = [
     ["Jobs in update", c.jobs || 0, ""],
     ["Changed", c.changed || 0, "amber"],
+    ["Reversed", c.reversed || 0, c.reversed ? "red" : ""],
     ["Added", c.added || 0, ""],
     ["Removed", c.removed || 0, ""],
   ];
@@ -5936,6 +5937,12 @@ function wrJobCard(r) {
   head += `</div>`;
   card.innerHTML = head;
   if (r.flags) { const fl = document.createElement("div"); fl.className = "wr-flags"; fl.textContent = r.flags; card.appendChild(fl); }
+  const carried = (r.fields || []).filter(f => f.carried);
+  if (carried.length) {
+    const c = document.createElement("div"); c.className = "wr-carried";
+    c.textContent = "Kept from the tab (no source document this run): " + carried.map(f => `${f.label} ${money(f.now)}`).join(" · ");
+    card.appendChild(c);
+  }
   const changed = wrChanged(r.fields);
   for (const block of ["qbo", "pm"]) {
     const fs = changed.filter(f => f.block === block);
@@ -5950,7 +5957,7 @@ function wrJobCard(r) {
     card.classList.toggle("wr-excluded", !e.target.checked); wrUpdateApproveCount();
   };
   const allBtn = card.querySelector(".wr-job-all");
-  if (allBtn) allBtn.onclick = () => { for (const f of changed) wrSet(r.project_num, f.key, true); renderWipReview(); };
+  if (allBtn) allBtn.onclick = () => { for (const f of changed) if (!f.reversed) wrSet(r.project_num, f.key, true); renderWipReview(); };
   return card;
 }
 
@@ -5959,11 +5966,20 @@ function wrFieldRow(r, f, removed) {
   row.className = "wr-field";
   const d = wrDelta(f);
   const approved = removed ? false : !!(wrDecisions[r.project_num] && wrDecisions[r.project_num][f.key]);
+  // Direction colour: up is neutral; a PM value going DOWN is amber (REVERSED - needs a named
+  // document), a contract going down is red; a QBO decrease is marked, not coloured.
+  let dcls = "";
+  if (d && d.dir < 0) dcls = f.block === "pm" ? (f.key === "orig_contract" ? "down" : "amber") : "";
+  if (f.reversed) row.classList.add("wr-reversed");
+  const src = f.source ? `<span class="wr-src" title="${_ge(f.source_path || f.source)}">${_ge(f.source)}</span>` : "";
+  const note = f.note ? `<span class="wr-note">${_ge(f.note)}</span>` : "";
+  const mark = f.reversed ? `<span class="wr-mark rev">REVERSED</span>` : f.decreased ? `<span class="wr-mark dec">decreased</span>` : "";
   row.innerHTML =
     `<span class="wr-fl">${_ge(f.label)}</span>`
     + `<span class="wr-was">${money(f.was)}</span><span class="wr-arrow">→</span>`
-    + `<span class="wr-now">${money(f.now)}</span>`
-    + (d ? `<span class="wr-delta ${d.dir > 0 ? "up" : d.dir < 0 ? "down" : ""}">${d.txt}</span>` : `<span class="wr-delta"></span>`);
+    + `<span class="wr-now">${money(f.now)}${mark}</span>`
+    + (d ? `<span class="wr-delta ${dcls}">${d.txt}</span>` : `<span class="wr-delta"></span>`)
+    + ((src || note) ? `<span class="wr-srcline">${src}${note}</span>` : "");
   if (!removed) {
     const cb = document.createElement("input");
     cb.type = "checkbox"; cb.className = "wr-check"; cb.checked = approved;
@@ -5998,7 +6014,7 @@ function wrBulk(mode) {
     if (q && !(r.project_num + " " + r.name).toLowerCase().includes(q)) continue;
     for (const f of wrChanged(r.fields)) {
       if (mode === "clear") wrSet(r.project_num, f.key, false);
-      else if (mode === "all") wrSet(r.project_num, f.key, true);
+      else if (mode === "all" && !f.reversed) wrSet(r.project_num, f.key, true);   // a reversal is never bulk-approved
       else if (mode === "qbo" && f.block === "qbo") wrSet(r.project_num, f.key, true);
     }
   }

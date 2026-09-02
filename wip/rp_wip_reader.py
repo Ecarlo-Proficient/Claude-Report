@@ -309,6 +309,12 @@ def read_rp_from_file(xlsx_path: Path):
         row.audit_etc_src = (f"RP file 'RP WIP'!row {r} · ETC $ (estimator)"
                              if etc is not None else None)
         row.audit_origin = f"RP file 'RP WIP' row {r}"
+        # The review names the cell every PM value came from (source chip).
+        WR.set_source(row, "orig_contract",
+                      f"RP WIP file · 'RP WIP' row {r} · CONTRACT $", xlsx_path)
+        if row.co_revenue is not None:
+            WR.set_source(row, "approved_cos",
+                          f"RP WIP file · 'RP WIP' row {r} · CO $", xlsx_path)
         # TYPE = Tract / Custom (the user 2026-07-31 — it must not disappear
         # from the RP view). Same rule as the GL pipeline: production builders
         # (by name OR by the General-Lista code) are Tract, everyone else is
@@ -342,6 +348,9 @@ def read_rp_from_file(xlsx_path: Path):
         if etc is not None:
             row.cell_marks["base_etc"] = _ETC_MANUAL_BLUE   # writer col key
             row.etc_source = "estimator"
+            WR.set_source(row, "orig_etc",
+                          f"RP WIP file · 'RP WIP' row {r} · ETC $ typed by the "
+                          f"estimator (blue)", xlsx_path)
         # The "where is it at?" marks carried straight from the file: SCHEDULE /
         # GENERAL LIST / JOBTREAD (the user 2026-08-07). ✓ renders green, ✗ red,
         # so Test - RP shows at a glance where each project stands.
@@ -408,6 +417,8 @@ def fill_missing_etc_from_takeoff(rows, root: Path = None):
                 row.cell_marks = {}
             row.cell_marks["base_etc"] = _ETC_TAKEOFF_ORANGE   # writer col key
             row.audit_etc_src = f"takeoff '{Path(tk).name}' · {note}"
+            WR.set_source(row, "orig_etc",
+                          f"takeoff · {Path(tk).name} ({note}) · orange, verify", tk)
             row.notes.append(
                 f"ETC ${etc:,.0f} read from takeoff '{Path(tk).name}' "
                 f"({note}) — VERIFY")
@@ -440,6 +451,8 @@ def classify_from_file(rows):
                 print(f"    ⚠ {row.project_num}: {fld} kept at the owner's "
                       f"marked value (QBO refresh discarded)")
                 setattr(row, fld, val)
+                WR.set_source(row, fld, "RP WIP file · owner-marked value, "
+                                        "QBO refresh discarded")
         if (row.section == "FTW BACKLOG"
                 and (row.billed_to_date or row.costs_to_date)):
             row.section = "FTW — OFF-SCHEDULE (COSTS)"
@@ -1046,11 +1059,15 @@ def main() -> int:
             recs = WR.diff_rows(rows, prior, division="Residential",
                                 tab_name="Test - RP", tab_kind="working")
             WR.write_review_json(args.emit_review, "Residential", "Test - RP", recs)
-            print(f"  ✓ WIP review emitted → {args.emit_review} "
-                  f"({sum(r['status'] != 'SAME' for r in recs)} changed of {len(recs)})")
+            print(f"  ✓ WIP review emitted → {args.emit_review} ({WR.summarize(recs)})")
             return 0
         if args.apply_review:
-            rows = WR.apply_decisions(rows, WR.load_decisions(args.apply_review))
+            # Same carry rule as the review: a PM field with no source this run
+            # keeps the tab value (a blank ETC whose takeoff is unreachable today
+            # must not blank the orange value already on the tab).
+            prior = WR.snapshot_tab(W.WIP_EXCEL_PATH, "Test - RP", "working")
+            rows = WR.apply_decisions(rows, WR.load_decisions(args.apply_review),
+                                      prior=prior, tab_kind="working")
         try:
             write_rp_tab(rows, dry_run=args.dry_run)
         except W.WipWriteDenied as e:

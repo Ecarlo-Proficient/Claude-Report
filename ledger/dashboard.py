@@ -2172,6 +2172,7 @@ class Handler(BaseHTTPRequestHandler):
             out["decisions"] = {}
         changed = [r for r in out["records"] if r["status"] != "SAME"]
         out["counts"] = {"jobs": len(out["records"]), "changed": len(changed),
+                         "reversed": sum(r["status"] == "REVERSED" for r in out["records"]),   # PM value went DOWN - needs a named source
                          "added": sum(r["status"] == "ADDED" for r in out["records"]),
                          "removed": sum(r["status"] == "REMOVED" for r in out["records"])}
         return self._json(out)

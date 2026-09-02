@@ -361,6 +361,14 @@ def _select_takeoffs(folder: Path):
     return included, None
 
 
+def _takeoff_label(included) -> str:
+    """'takeoff · <file>' or 'takeoffs summed · a + b' - the review's source chip."""
+    names = [Path(p).name for p in included]
+    if len(names) == 1:
+        return f"takeoff · {names[0]}"
+    return f"takeoffs summed · {' + '.join(names)}"
+
+
 def parse_takeoff(folder: Path, row: CpRow) -> None:
     """Extract Contract Price + ETC into `row` from the takeoff. Used when the
     project has NO draw yet (pre-Draw#1) — contract comes from the proposal
@@ -395,6 +403,8 @@ def parse_takeoff(folder: Path, row: CpRow) -> None:
 
     takeoff_contract = contract_total if got_contract else None
     row.base_etc = etc_total if got_etc else None
+    if got_etc:
+        WR.set_source(row, "orig_etc", _takeoff_label(included), included[0])
 
     # CONTRACT SOURCE ORDER for a pre-draw job (the user 2026-08-04):
     # the signed proposal PDF FIRST, the takeoff only as a fallback. The PDF is
@@ -404,6 +414,10 @@ def parse_takeoff(folder: Path, row: CpRow) -> None:
     pdf_amt, pdf_note = proposals.contract_from_folder(folder)
     if pdf_amt is not None:
         row.base_contract = pdf_amt
+        pdf_path, _ = proposals.find_proposal_pdf(folder)   # the review names the file
+        WR.set_source(row, "orig_contract",
+                      f"proposal PDF · {pdf_path.name}" if pdf_path else "proposal PDF",
+                      pdf_path)
         # Cross-verify the two independent sources (the user 2026-08-04:
         # "verify with pdf or vice versa"). Agreement is worth saying out loud;
         # disagreement is a must-fix, because one of the two is stale.
@@ -424,6 +438,7 @@ def parse_takeoff(folder: Path, row: CpRow) -> None:
         row.base_contract = takeoff_contract
         if takeoff_contract is not None:
             row.notes.append(f"Contract from the takeoff — {pdf_note}")
+            WR.set_source(row, "orig_contract", _takeoff_label(included), included[0])
 
     if multi:
         row.notes.append(
@@ -474,6 +489,7 @@ def parse_takeoff_etc(folder: Path, row: CpRow) -> None:
             wb_formula.close()
     if got_etc:
         row.base_etc = etc_total
+        WR.set_source(row, "orig_etc", _takeoff_label(included), included[0])
 
 
 # ─────────────────────── draw (G702/G703) read ────────────────────
@@ -503,6 +519,12 @@ def parse_draw(project_folder: Path, row: CpRow) -> bool:
     row.co_revenue = data["net_co"]
     row.billed_to_date = data["billed"]
     row.retainage_held = data["retainage"]
+    # The review names the document every one of these four came from - a CP
+    # value that goes DOWN is usually a different draw file being read (a
+    # revised copy, a deeper folder), and the owner must see which.
+    draw_src = f"Draw #{draw_num} G702 · {draw_file.name}"
+    for key in ("orig_contract", "approved_cos", "billed", "retainage"):
+        WR.set_source(row, key, draw_src, draw_file)
     row.notes.append(
         f"Draw #{draw_num}: billed ${data['billed']:,.0f} (gross), "
         f"retainage ${(data['retainage'] or 0):,.0f}, "
@@ -722,6 +744,8 @@ def enrich_with_qbo(rows: List[CpRow]) -> None:
                 )
                 row.billed_to_date = gross_billed
                 row.retainage_held = max(gross_billed - net_collectible, 0.0)
+                WR.set_source(row, "billed", "QuickBooks · invoices, gross incl. retainage")
+                WR.set_source(row, "retainage", "QuickBooks · gross billed minus net collectible")
                 log.info("  %s billed(gross)=%.2f net-collectible=%.2f retainage-held=%.2f (QBO)",
                          row.project_num, gross_billed, net_collectible, row.retainage_held)
             else:
@@ -737,6 +761,7 @@ def enrich_with_qbo(rows: List[CpRow]) -> None:
                 (totals.get("cogs", 0.0) or 0.0)
                 + (totals.get("expenses", 0.0) or 0.0)
             )
+            WR.set_source(row, "costs", "QuickBooks · project P&L, COGS + expenses")
             # Over-budget is NOT flagged: it's a business observation the WIP
             # report surfaces itself (Costs > ETC, and the uncapped % column).
             # Flags are reserved for things the script could not confirm as
@@ -846,11 +871,14 @@ def main() -> int:
         recs = WR.diff_rows(rows, prior, division="Commercial",
                             tab_name=TEST_TAB, tab_kind="working")
         WR.write_review_json(args.emit_review, "Commercial", TEST_TAB, recs)
-        print(f"  ✓ WIP review emitted → {args.emit_review} "
-              f"({sum(r['status'] != 'SAME' for r in recs)} changed of {len(recs)})")
+        print(f"  ✓ WIP review emitted → {args.emit_review} ({WR.summarize(recs)})")
         return 0
     if args.apply_review:
-        rows = WR.apply_decisions(rows, WR.load_decisions(args.apply_review))
+        # The SAME carry rule the review applied: a PM field with no source this
+        # run keeps the tab value, so an approved sync can never blank it.
+        prior = WR.snapshot_tab(WIP_EXCEL_PATH, TEST_TAB, "working")
+        rows = WR.apply_decisions(rows, WR.load_decisions(args.apply_review),
+                                  prior=prior, tab_kind="working")
 
     # ── Write / dry-run report ──
     try:

@@ -4,6 +4,12 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **WIP Review shows direction (2026-09-02).** New `REVERSED` status + tile and status filter; each
+  field row prints the source document under the new value ("from Draw #4 G702 · <file>"), a
+  REVERSED / decreased mark, and the note; carried values get one quiet line ("Kept from the tab
+  (no source document this run)"). "Approve all shown" and "Approve job" skip reversed fields - a
+  reversal needs an explicit click. Reads the new cells from `wip/wip_review_common.py`; older JSONs
+  still render (the extra keys are optional). `/api/wip/review` counts `reversed`.
 - **Grouped views collapse by default + nav reorder (owner, 2026-08-31: "fold the grouping for all
   tabs ... collapsed as default and a toggle for uncollapse ... default moving forward for every page
   that groups"; "sub group by project now! too mixed up"; "move Console to last").**

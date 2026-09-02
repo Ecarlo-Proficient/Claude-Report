@@ -1047,6 +1047,7 @@ html[data-theme="dark"] .sys-life { color: #e8b45c; }
 .btn.primary:hover { filter: brightness(1.06); }
 .btn:disabled { opacity: .5; cursor: default; }
 .wr-kpi-amber .k-value { color: #b7791f; }
+.wr-kpi-red .k-value { color: var(--neg); }
 html[data-theme="dark"] .wr-kpi-amber .k-value { color: #e8b45c; }
 .wr-bulk { display: inline-flex; gap: 6px; align-items: center; margin-left: auto; }
 .wr-body { margin-top: 12px; }
@@ -1071,6 +1072,19 @@ html[data-theme="dark"] .wr-kpi-amber .k-value { color: #e8b45c; }
 html[data-theme="dark"] .wr-badge.changed { color: #e8b45c; }
 .wr-badge.added { background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--accent); }
 .wr-badge.removed { background: color-mix(in srgb, var(--neg) 18%, transparent); color: var(--neg); }
+.wr-badge.reversed { background: color-mix(in srgb, var(--neg) 14%, transparent); color: var(--neg); }
+.wr-job.wr-reversed { border-left: 3px solid var(--neg); }
+.wr-carried { font-size: .86em; color: var(--text-dim); margin: 4px 0 2px; }
+.wr-field.wr-reversed { background: color-mix(in srgb, var(--neg) 6%, transparent); }
+.wr-mark { font-size: .72em; font-weight: 700; letter-spacing: .03em; margin-left: 6px; padding: 1px 6px; border-radius: 999px; vertical-align: middle; }
+.wr-mark.rev { background: color-mix(in srgb, var(--neg) 16%, transparent); color: var(--neg); }
+.wr-mark.dec { background: color-mix(in srgb, #b7791f 16%, transparent); color: #9a6a12; }
+html[data-theme="dark"] .wr-mark.dec { color: #e8b45c; }
+.wr-delta.amber { color: #b7791f; }
+html[data-theme="dark"] .wr-delta.amber { color: #e8b45c; }
+.wr-srcline { grid-column: 1 / -1; display: flex; gap: 10px; flex-wrap: wrap; font-size: .82em; color: var(--text-dim); padding-left: 2px; }
+.wr-src::before { content: "from "; }
+.wr-note { font-style: italic; }
 .wr-job-all { margin-left: auto; }
 .wr-inc { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; font-size: .82em; color: var(--text-dim); }
 .wr-drop-note { margin-left: auto; font-size: .8em; color: var(--neg); font-style: italic; }
