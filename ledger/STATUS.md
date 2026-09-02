@@ -4,6 +4,20 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Nav fold (owner 2026-09-02: "go ahead and fold draws, pay bills and liens into it"; "2-3 columns
+  to save vertical space"; "show me what has been selected at a glance before exporting").**
+  - **Draws -> Funding.** The Customer sub-tab is now *Funding by project*: one row per job with the
+    next draw the GC owes, what blocks it (unpaid bills on earlier draws), the latest draw's vendors
+    paid, and a status (Ready to collect / Blocked / Settled / No draw yet) with tiles that filter;
+    a row opens the project page. The old per-draw race-through renderer (`renderDraws`) is dead code
+    kept for one release; the draw bands live on the project page now.
+  - **Pay Bills + Liens leave the nav.** Reached from the Bills header ("Pay run (N) ->" shows the
+    ticked count; "Lien register ->"); both pages carry a "<- Bills" back button and highlight the
+    Vendor group. Vendor is 4 sub-tabs, Customer 5.
+  - **Project page.** The P&L block flows in 3 columns (`.pnl-live` CSS columns); every bill row has
+    a *Waiver received* tick (the same waiver mark the Draws tab kept, `/api/waiver`); a **Selected
+    to pay** box above the draws lists exactly what is ticked (per vendor, bill #, draw, $) with an
+    untick-all; Export pay list confirms the count and total first.
 - **Paid is ONE rule; cents never round to $0; Draws rows open the project page (owner 2026-09-02:
   "might be cents ... short paid shows 0").** `_bill_paid` (dashboard.py) = a pay date OR the tracker
   status says "Bill paid" (11 bills carry the status with a blank date) OR nothing owed - used by the

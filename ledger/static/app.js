@@ -222,7 +222,7 @@ const WAIVERS_ENABLED = false;
 const NAV_GROUPS = [   // order (owner 2026-08-31): Overview · Customer · Vendor · Financials · Health · IT · Console (Console last)
   { id: "overview",   label: "Overview",      tabs: ["overview"] },
   { id: "customers",  label: "Customer",      tabs: ["customers", "invoices", "draws", "payments", "sales"] },
-  { id: "vendors",    label: "Vendor",        tabs: ["vendors", "bills", "paybills", "accounting", "subloc", "liens"] },
+  { id: "vendors",    label: "Vendor",        tabs: ["vendors", "bills", "accounting", "subloc"] },   // Pay Bills + Liens fold under Bills (owner 2026-09-02)
   { id: "financials", label: "Financials",    tabs: ["pnl", "wip", "wipreview", "costs"] },
   { id: "health",     label: "Health",        tabs: ["health"] },
   { id: "it",         label: "IT",            tabs: ["systems"] },
@@ -230,11 +230,12 @@ const NAV_GROUPS = [   // order (owner 2026-08-31): Overview · Customer · Vend
 ];
 const TAB_LABELS = {
   overview: "Overview", health: "Health", pnl: "Project P&L", wip: "WIP report", wipreview: "WIP Review", costs: "Costs",
-  customers: "Customer Center", invoices: "Invoices", draws: "Draws", payments: "Payments", sales: "Sales Outreach",
+  customers: "Customer Center", invoices: "Invoices", draws: "Funding", payments: "Payments", sales: "Sales Outreach",
   vendors: "Vendor Center", bills: "Bills", paybills: "Pay Bills", accounting: "Audit", subloc: "Sub LOC", liens: "Liens",
   systems: "Systems", console: "Console",
 };
-const groupOf = t => NAV_GROUPS.find(g => g.tabs.includes(t)) || NAV_GROUPS[0];
+const HIDDEN_TAB_GROUP = { paybills: "vendors", liens: "vendors" };   // pages without a sub-tab: opened from Bills
+const groupOf = t => NAV_GROUPS.find(g => g.tabs.includes(t)) || NAV_GROUPS.find(g => g.id === HIDDEN_TAB_GROUP[t]) || NAV_GROUPS[0];
 function buildGroupBar() {
   const bar = $("#groupbar"); if (!bar) return; bar.innerHTML = "";
   for (const g of NAV_GROUPS) {
@@ -635,7 +636,7 @@ function visibleColumns() {
 function render() {
   renderHome();
   renderKPIs(); renderAttention(); renderCosts(); renderMargins(); renderDivisions();
-  renderProjects(); renderLiens(); renderVendors(); renderDraws(); renderBills(); renderOpenInvoices(); renderSubLoc(); renderSales(); renderCustomers();
+  renderProjects(); renderLiens(); renderVendors(); renderFunding(); renderBills(); renderOpenInvoices(); renderSubLoc(); renderSales(); renderCustomers();
 }
 
 function timeAgo(iso) {
@@ -919,6 +920,77 @@ function _setHintFilter(tab, summary) {
   if (summary) { h.innerHTML = `<b>Showing:</b> ${_ge(summary)} <span class="hint-clear-note">- clear the filters for the full list</span>`; h.classList.add("hint-filtered"); }
   else { h.innerHTML = h.dataset.generic; h.classList.remove("hint-filtered"); }
 }
+
+// ── Funding by project (owner 2026-09-02: fold Draws into the project page). One row per job:
+// the next draw the GC owes, what blocks it (unpaid bills on EARLIER draws - the funding chain),
+// and the latest draw's vendors paid. Click a row -> the project page, where the work happens.
+const _isPaidBill = b => !!b.pay_date || (b.pay_status || "").toLowerCase().startsWith("bill paid") || (num(b.open) <= 0.005 && !!b.pay_status);
+let fundingStage = null;
+function _fundingRows() {
+  const draws = (DRAWS.draws || []).filter(d => drawMselPasses(d) && (!drawDate || drawDate.passes(d.ar_date || d.recency)));
+  const byP = new Map();
+  for (const d of draws) { const k = d.project_no || "(none)"; if (!byP.has(k)) byP.set(k, []); byP.get(k).push(d); }
+  const rows = [];
+  for (const [pn, list] of byP) {
+    list.sort((a, b) => (a.no_draw ? 1 : 0) - (b.no_draw ? 1 : 0) || String(a.ar_date || a.recency || "").localeCompare(String(b.ar_date || b.recency || "")));
+    const real = list.filter(d => !d.no_draw);
+    const next = real.find(d => num(d.ar_open) > 0.005) || null;
+    let blockers = 0, blockAmt = 0;
+    if (next) for (const d of real) { if (d === next || String(d.ar_date || "") > String(next.ar_date || "")) continue;
+      for (const b of d.bills) if (b.gates && !_isPaidBill(b)) { blockers++; blockAmt += num(b.open); } }
+    const latest = real.length ? real[real.length - 1] : list[list.length - 1];
+    const gate = latest ? latest.bills.filter(b => b.gates) : [];
+    const paidCt = gate.filter(_isPaidBill).length;
+    const gcOwes = real.reduce((s, d) => s + num(d.ar_open), 0);
+    const status = !real.length ? "No draw yet" : !next ? "Settled" : blockers ? "Blocked - pay vendors first" : "Ready to collect";
+    const client = (_drawClientByProj[pn] || "") || list.map(d => d.customer).find(Boolean) || ((invData().invoices || []).find(i => i.project_no === pn) || {}).customer
+                 || (((ALL || []).find(r => r.project_no === pn) || {}).builder_or_gc) || "";
+    rows.push({ pn, client, n: real.length, gcOwes, next, blockers, blockAmt, latest, paidCt, gateN: gate.length, status,
+                unpaidLatest: gate.filter(b => !_isPaidBill(b)).reduce((s, b) => s + num(b.open), 0) });
+  }
+  rows.sort((a, b) => b.gcOwes - a.gcOwes || a.pn.localeCompare(b.pn, undefined, { numeric: true }));
+  return rows;
+}
+function renderFunding() {
+  buildDrawFilters();
+  _buildDrawClientMap(DRAWS.draws || []);   // the project -> GC map the old Draws view built (clean GC name wins)
+  if (!drawDate) drawDate = dateFilter("dfDate", () => (DRAWS.draws || []).map(d => d.ar_date || d.recency), renderFunding);
+  drawDate.build();
+  const all = _fundingRows();
+  const shown = fundingStage ? all.filter(r => r.status === fundingStage) : all;
+  $("#drawsNote").textContent = (DRAWS.draws || []).length ? `(${shown.length} of ${all.length} projects · GC owes ${money(shown.reduce((s, r) => s + r.gcOwes, 0))})` : "(no draw data - run load_bill_tracker.py)";
+  _setHintFilter("draws", drawFilterSummary(shown.length));
+  const stats = $("#drawsStats"); stats.innerHTML = "";
+  for (const [st, sub] of [["Ready to collect", "nothing blocks the next draw"], ["Blocked - pay vendors first", "earlier-draw bills unpaid"], ["Settled", "GC has paid every draw"], ["No draw yet", "bills in, nothing invoiced"]]) {
+    const n = all.filter(r => r.status === st).length, amt = all.filter(r => r.status === st).reduce((s, r) => s + r.gcOwes, 0);
+    const k = document.createElement("div"); k.className = "kpi kpi-click" + (fundingStage === st ? " kpi-fc" : "") + (st.startsWith("Blocked") && n ? " pnl-kpi-neg" : "");
+    k.innerHTML = `<div class="k-label"></div><div class="k-value"></div><div class="k-sub"></div>`;
+    k.querySelector(".k-label").textContent = st; k.querySelector(".k-value").textContent = String(n); k.querySelector(".k-sub").textContent = amt ? `${money(amt)} owed · ${sub}` : sub;
+    k.onclick = () => { fundingStage = fundingStage === st ? null : st; renderFunding(); }; stats.appendChild(k);
+  }
+  { const b = $("#btnClearDrawStage"); if (b) { b.hidden = !fundingStage; b.onclick = () => { fundingStage = null; renderFunding(); }; } }
+  const host = $("#drawList"); host.innerHTML = "";
+  if (!shown.length) { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = all.length ? "No projects match." : "No draw data yet."; host.appendChild(p); return; }
+  const scroll = document.createElement("div"); scroll.className = "table-scroll";
+  const table = document.createElement("table"); table.className = "grid clickable"; const thead = document.createElement("thead"), tbody = document.createElement("tbody");
+  const htr = document.createElement("tr");
+  for (const [c, al] of [["Project", "left"], ["Client", "left"], ["Draws", "right"], ["GC owes", "right"], ["Next draw", "left"], ["Blocked by", "left"], ["Latest draw vendors", "left"], ["Status", "left"]]) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
+  thead.appendChild(htr);
+  for (const r of shown) {
+    const tr = document.createElement("tr"); tr.style.cursor = "pointer"; tr.title = "Open the project page";
+    tr.onclick = (e) => { if (e.target.closest("a") || e.target.closest(".cell")) return; openProjectPage(r.pn); };
+    const pc = leftText(r.pn); const nm = nameOf(r.pn); if (nm) { const s = document.createElement("span"); s.className = "g-sub"; s.textContent = " · " + nm; pc.appendChild(s); } tr.appendChild(pc);
+    tr.appendChild(leftText(r.client || "–"));
+    tr.appendChild(rightText(String(r.n)));
+    const oc = document.createElement("td"); oc.className = "right ip-amt"; oc.textContent = r.gcOwes > 0.005 ? money(r.gcOwes) : "–"; if (r.gcOwes > 0.005) oc.style.color = "var(--neg)"; tr.appendChild(oc);
+    tr.appendChild(leftText(r.next ? `${r.next.invoice_no || ""} · ${money(r.next.ar_open)}${r.next.ar_date ? " · " + fmtDateShort(r.next.ar_date) : ""}` : (r.n ? "all paid" : "–")));
+    const bc = document.createElement("td"); bc.className = "left"; if (r.blockers) { bc.textContent = `${r.blockers} bill${r.blockers === 1 ? "" : "s"} · ${money(r.blockAmt)}`; bc.style.color = "var(--neg)"; bc.style.fontWeight = "600"; } else bc.textContent = r.next ? "nothing" : "–"; tr.appendChild(bc);
+    const vc = document.createElement("td"); vc.className = "left"; const sp = document.createElement("span"); sp.className = "ip-paid " + (r.gateN && r.paidCt === r.gateN ? "ok" : "due"); sp.textContent = r.gateN ? `${r.paidCt}/${r.gateN} paid${r.unpaidLatest > 0.005 ? " · " + money(r.unpaidLatest) + " to pay" : ""}` : "–"; vc.appendChild(sp); tr.appendChild(vc);
+    const sc = leftText(r.status); if (r.status.startsWith("Blocked")) sc.style.color = "var(--neg)"; else if (r.status === "Ready to collect") sc.style.color = "var(--pos)"; tr.appendChild(sc);
+    tbody.appendChild(tr);
+  }
+  table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table); host.appendChild(scroll);
+}
 function renderDraws() {
   buildDrawFilters();                              // (re)build the multi-selects when the draw set changes
   if (!drawDate) drawDate = dateFilter("dfDate", () => (DRAWS.draws || []).map(d => d.ar_date || d.recency), renderDraws);
@@ -947,7 +1019,7 @@ function renderDraws() {
     el.querySelector(".k-label").textContent = label;
     el.querySelector(".k-value").textContent = String(n);
     el.querySelector(".k-sub").textContent = sub;
-    if (n) el.onclick = () => { activeDrawStage = activeDrawStage === stageKey ? null : stageKey; renderDraws(); };
+    if (n) el.onclick = () => { activeDrawStage = activeDrawStage === stageKey ? null : stageKey; renderFunding(); };
     sr.appendChild(el);
   }
   { const cb = $("#btnClearDrawStage"); if (cb) cb.hidden = !activeDrawStage; }
@@ -1005,7 +1077,7 @@ function renderDraws() {
     const tr = document.createElement("tr"); tr.className = "draw-row" + (done ? " done" : "");
     tr.style.cursor = "pointer";
     tr.onclick = (e) => { if (e.target.closest(".cell") || e.target.closest("a")) return;
-      open ? drawsExpanded.delete(d.matched_invoice) : drawsExpanded.add(d.matched_invoice); renderDraws(); };
+      open ? drawsExpanded.delete(d.matched_invoice) : drawsExpanded.add(d.matched_invoice); renderFunding(); };
     const cc = document.createElement("td"); cc.className = "left draw-caret"; cc.textContent = open ? "▾" : "▸"; tr.appendChild(cc);
     const memo = (d.label || "").replace(/^\s*\S+\s*—\s*/, "").replace(/^\s*(MFD|CP|RP)\d+(-FTW)?\s*-\s*/i, "").trim() || d.label || "—";
     tr.appendChild(leftText(memo));
@@ -1093,7 +1165,7 @@ function buildBillsTable(d) {
     const vkey = d.matched_invoice + "|" + v;
     const vopen = drawVendorExpanded.has(vkey);
     const vtr = document.createElement("tr"); vtr.className = "vgroup"; vtr.style.cursor = "pointer";
-    vtr.onclick = () => { vopen ? drawVendorExpanded.delete(vkey) : drawVendorExpanded.add(vkey); renderDraws(); };
+    vtr.onclick = () => { vopen ? drawVendorExpanded.delete(vkey) : drawVendorExpanded.add(vkey); renderFunding(); };
     const vtd = document.createElement("td"); vtd.colSpan = cols.length; vtd.className = "left";
     const car = document.createElement("span"); car.className = "vg-caret"; car.textContent = vopen ? "▾ " : "▸ ";
     const nm = document.createElement("span"); nm.className = "vg-name"; nm.textContent = v;
@@ -1204,7 +1276,7 @@ async function setWaiver(draw, bill, cb) {
     bill.waiver = received;                       // update local state
     draw.waivers = draw.bills.filter(b => b.waiver).length;   // caption only — doesn't gate the stage
     toast(received ? "Waiver marked in hand" : "Waiver cleared");
-    renderDraws();
+    renderFunding();
   } catch (e) {
     cb.checked = !received;                        // revert on failure
     toast("Could not save: " + e.message);
@@ -2007,6 +2079,7 @@ function renderBills() {
   const lienN = rows.filter(b => BILL_LIEN_RISK.has(b.lien_status)).length;
   $("#billsNote").textContent = bills.length ? `(${rows.length.toLocaleString()} of ${bills.length.toLocaleString()})` : "(no AP data - run load_bill_tracker.py)";
   { const qs = $("#billsQuickStat"); if (qs) qs.textContent = bills.length ? `${money(openSum)} open · ${lienN} lien risk` : ""; }
+  { const pr = $("#btnPayRunGo"); if (pr) { const n = (BILLS || []).filter(b => b.pay_selected).length; pr.textContent = n ? `Pay run (${n}) →` : "Pay run →"; pr.classList.toggle("on", n > 0); } }
 
   // table. Each status is its OWN column (Paid / Invoice / Lien / Appr) so a blank in
   // one never hides a missing value by being merged with the others.
@@ -3368,7 +3441,7 @@ async function openProjectPage(pn) {
   const trailBtn = document.createElement("button"); trailBtn.className = "btn small"; trailBtn.textContent = "Show every dollar"; trailBtn.onclick = () => openTrail(pn); acts1.appendChild(trailBtn);
   if (r0.project_no) { const dr = document.createElement("button"); dr.className = "btn small"; dr.textContent = "WIP row detail"; dr.onclick = () => openDetail(r0); acts1.appendChild(dr); }
   s1.appendChild(acts1);
-  const plWrap = document.createElement("div"); plWrap.className = "ip-top"; plWrap.appendChild(buildPnlGroup(pn)); s1.appendChild(plWrap);
+  const plWrap = document.createElement("div"); plWrap.className = "ip-top pp-pnl"; plWrap.appendChild(buildPnlGroup(pn)); s1.appendChild(plWrap);   // 3 columns (owner: save vertical space)
   // ── 2. how we get funded ──
   const F = d.funding || {}, nx = F.next_draw;
   const s2 = sec("How we get funded", `${d.draws.length} draw${d.draws.length === 1 ? "" : "s"} · GC owes ${money(d.draws.reduce((s, x) => s + num(x.ar_open), 0))}`);
@@ -3394,6 +3467,7 @@ async function openProjectPage(pn) {
   ex.onclick = () => _ppExport();
   const pb = document.createElement("button"); pb.type = "button"; pb.className = "btn small subtle"; pb.textContent = "Open Pay Bills"; pb.onclick = () => setTab("paybills");
   tools.appendChild(seg); tools.appendChild(tog); tools.appendChild(mk); tools.appendChild(ex); tools.appendChild(pb); s2.appendChild(tools);
+  const sel = document.createElement("div"); sel.id = "ppSelected"; sel.className = "pp-selected"; s2.appendChild(sel);   // what is ticked, at a glance, before any export
   const host = document.createElement("div"); host.id = "ppDraws"; s2.appendChild(host);
   _renderPpDraws();
   // ── 3. bills + links ──
@@ -3408,8 +3482,27 @@ async function openProjectPage(pn) {
   s3.appendChild(acts3);
 }
 function _ppBillShown(b) { const paid = !!b.paid; return _pp.filter === "all" || !paid; }
+function _renderPpSelected() {
+  const box = $("#ppSelected"); if (!box) return;
+  const picked = []; for (const dr of _pp.d.draws) for (const b of dr.bills) if (b.pay_selected) picked.push({ dr, b });
+  box.innerHTML = "";
+  if (!picked.length) { box.classList.add("empty"); box.textContent = "Nothing ticked to pay on this job yet - tick bills below, or Mark blockers to pay."; return; }
+  box.classList.remove("empty");
+  const tot = picked.reduce((s, x) => s + num(x.b.open), 0);
+  const h = document.createElement("div"); h.className = "pp-sel-h"; h.textContent = `Selected to pay: ${picked.length} bill${picked.length === 1 ? "" : "s"} · ${money(tot)}`; box.appendChild(h);
+  const ul = document.createElement("div"); ul.className = "pp-sel-list";
+  const byV = new Map(); for (const x of picked) { const k = x.b.vendor || "?"; if (!byV.has(k)) byV.set(k, []); byV.get(k).push(x); }
+  for (const [v, xs] of [...byV].sort((a, b) => a[0].localeCompare(b[0]))) {
+    const li = document.createElement("div"); li.className = "pp-sel-v";
+    li.innerHTML = `<b>${_ge(v)}</b> · ${xs.length} bill${xs.length === 1 ? "" : "s"} · ${_ge(money(xs.reduce((s, x) => s + num(x.b.open), 0)))} <span class="dim">(${xs.map(x => _ge(x.b.bill_ref || "?") + " on " + _ge(x.dr.invoice_no ? "inv " + x.dr.invoice_no : "no draw")).join(", ")})</span>`;
+    ul.appendChild(li);
+  }
+  box.appendChild(ul);
+  const clr = document.createElement("button"); clr.type = "button"; clr.className = "btn small subtle"; clr.textContent = "Untick all on this job"; clr.onclick = () => _ppSetPay(picked.map(x => x.b), false); box.appendChild(clr);
+}
 function _renderPpDraws() {
   const { d, host } = { d: _pp.d, host: $("#ppDraws") }; if (!host) return; host.innerHTML = "";
+  _renderPpSelected();
   const keys = d.draws.map(x => x.matched_invoice); const allOpen = keys.length && keys.every(k => _pp.open.has(k));
   { const tg = $("#ppToggle"); if (tg) tg.textContent = allOpen ? "Collapse all" : "Expand all"; }
   if (!d.draws.length) { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = "No draws or bills on this job in the Bill Tracker yet."; host.appendChild(p); return; }
@@ -3433,7 +3526,7 @@ function _renderPpDraws() {
       if (!bills.length) { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = _pp.filter === "unpaid" ? "Every vendor on this draw is paid." : "No bills."; band.appendChild(p); }
       else {
         const table = document.createElement("table"); table.className = "grid pp-bills"; const thead = document.createElement("thead"), tbody = document.createElement("tbody");
-        thead.innerHTML = "<tr><th class='left'>Pay</th><th class='left'>Vendor</th><th class='left'>Bill #</th><th class='left'>Date</th><th class='right'>Amount</th><th class='right'>Open</th><th class='left'>Status</th><th class='left'>Waiver</th></tr>";
+        thead.innerHTML = "<tr><th class='left'>Pay</th><th class='left'>Vendor</th><th class='left'>Bill #</th><th class='left'>Date</th><th class='right'>Amount</th><th class='right'>Open</th><th class='left'>Status</th><th class='left'>Waiver received</th></tr>";
         for (const b of bills) {
           const tr = document.createElement("tr"); if (b.paid) tr.classList.add("inv-paid");
           const pc = document.createElement("td"); pc.className = "left";
@@ -3447,7 +3540,11 @@ function _renderPpDraws() {
           const ac = document.createElement("td"); ac.className = "ip-amt"; ac.appendChild(moneyCell(b.amount)); tr.appendChild(ac);
           const oc = document.createElement("td"); oc.className = "right ip-amt"; oc.textContent = num(b.open) > 0.005 ? money(b.open) : "–"; if (num(b.open) > 0.005) oc.style.color = "var(--neg)"; else oc.classList.add("dim"); tr.appendChild(oc);
           const st = document.createElement("td"); st.className = "left"; const pill = document.createElement("span"); pill.className = b.paid ? "ar-paid" : "ar-open"; pill.textContent = b.pay_date ? "Paid " + fmtDateShort(b.pay_date) : (b.paid ? (b.pay_status || "Paid") + " (no date)" : (b.pay_status || "Open")); st.appendChild(pill); tr.appendChild(st);
-          tr.appendChild(leftText(b.waiver ? "received" : (b.paid ? "–" : "needed")));
+          { const wc = document.createElement("td"); wc.className = "left";
+            if (dr.no_draw) wc.textContent = "–";
+            else { const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = !!b.waiver; cb.title = "Tick when the vendor's unconditional waiver is in hand (your mark - the same one the Draws tab kept)";
+              cb.onchange = () => { setWaiver(dr, b, cb); b.waiver = cb.checked; }; wc.appendChild(cb); if (!b.waiver && !b.paid) { const s = document.createElement("span"); s.className = "inv-late"; s.textContent = " needed"; wc.appendChild(s); } }
+            tr.appendChild(wc); }
           tbody.appendChild(tr);
         }
         table.appendChild(thead); table.appendChild(tbody); band.appendChild(table);
@@ -3476,6 +3573,7 @@ function _ppExport() {
   const d = _pp.d, rows = [];
   for (const dr of d.draws) for (const b of dr.bills) if (b.pay_selected) rows.push([dr.no_draw ? "No draw yet" : "Invoice " + (dr.invoice_no || ""), b.vendor, b.bill_ref, b.bill_date, num(b.amount), num(b.open), b.pay_date ? "Paid " + fmtDate(b.pay_date) : (b.pay_status || "Open"), b.waiver ? "received" : "needed"]);
   if (!rows.length) { toast("Nothing ticked to pay on this job yet - tick bills (or Mark blockers) first"); return; }
+  if (!confirm(`Export ${rows.length} bill${rows.length === 1 ? "" : "s"} ticked to pay (${money(rows.reduce((s, r) => s + num(r[5]), 0))} open) as the pay-list report?\n\nThe list above the draws shows exactly what is ticked.`)) return;
   const body = { name: `Pay list ${_pp.pn}`, sheet: "Pay list", title: `${_pp.pn} - bills to pay to unlock the next draw`,
     subtitle: `${rows.length} bills ticked on the pay run · exported ${fmtDate(new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 19), true)}`,
     columns: [{ label: "Draw" }, { label: "Vendor" }, { label: "Bill #" }, { label: "Bill date" }, { label: "Amount", type: "money" }, { label: "Open", type: "money" }, { label: "Status" }, { label: "Waiver" }],
@@ -7273,7 +7371,7 @@ function init() {
         cost: { key: "cost", dir: -1 }, contract: { key: "contract", dir: -1 }, name: { key: "proj", dir: 1 } }[el.value];
       if (m) pnlSort = m; renderPnl(); }); }
   { const el = $("#btnClearLien"); if (el) el.onclick = () => { activeLien = null; renderLiens(); }; }
-  { const el = $("#btnClearDrawStage"); if (el) el.onclick = () => { activeDrawStage = null; renderDraws(); }; }
+  { const el = $("#btnClearDrawStage"); if (el) el.onclick = () => { activeDrawStage = null; renderFunding(); }; }
   { const el = $("#homeDivision"); if (el) el.addEventListener("input", renderHome); }
   $("#btnExport").onclick = exportCSV;
   $("#btnRefresh").onclick = manualRefresh;
@@ -7288,6 +7386,9 @@ function init() {
       window._billMoreOpenIfActive = () => { if (!on && BILL_MSEL.some(c => (billMSel[c.id] || {}).size && more.contains($("#" + c.id + "Msel")))) { on = true; paint(); } };
       paint();
     } }
+  { const pr = $("#btnPayRunGo"); if (pr) pr.onclick = () => setTab("paybills"); }
+  { const lr = $("#btnLienRegGo"); if (lr) lr.onclick = () => setTab("liens"); }
+  for (const id of ["btnBackBillsPay", "btnBackBillsLien"]) { const b = $("#" + id); if (b) b.onclick = () => setTab("bills"); }
   { const el = $("#btnCostsFull"); if (el) el.onclick = () => runPipeline("costs-full",
       "Reload ALL job costs from QuickBooks?\n\nEvery project, all history - a full replace, so bills that were deleted or re-coded in QuickBooks drop out (the 90-day Resync never removes them). Read-only on QuickBooks; one Touch ID; 30 to 40 minutes.",
       { btn: $("#btnCostsFull"), prog: $("#syncProgress"), fill: $("#syncBarFill"), step: $("#syncStep") }); }

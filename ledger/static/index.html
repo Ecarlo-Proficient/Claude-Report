@@ -271,16 +271,14 @@
     <div class="tab-page" data-tab="draws" hidden>
       <section class="widget">
         <div class="widget-head">
-          <h2>Draw race-through <span class="count" id="drawsNote"></span></h2>
+          <h2>Funding by project <span class="count" id="drawsNote"></span></h2>
           <button class="btn small" id="btnClearDrawStage" hidden>Show all</button>
         </div>
         <div class="kpi-row" id="drawsStats"></div>
-        <p class="hint"><b>The money flows one way:</b> the GC funds the draw (money <b>in</b> to you) →
-          you pay the vendors (money <b>out</b>) → the GC pays your draw invoice. A draw is
-          <b>green (All paid)</b> once the GC has paid you <b>and</b> every vendor is paid;
-          <b>Collect from GC</b> means you've paid the vendors but the GC still owes you.
-          Click a tile above to filter.
-          <br><b>RP is excluded</b> - residential bills at completion / milestones, not formal draws.</p>
+        <p class="hint">One row per job: the <b>next draw the GC owes</b>, what <b>blocks</b> it (unpaid bills on
+          earlier draws - their waivers release the money), and the latest draw's vendors paid. Click a row to
+          open the project page, where the draws, bills, pay-to-unlock and the pay list live.
+          <b>RP is excluded</b> - residential bills at completion / milestones, not formal draws.</p>
         <div class="filters">
           <div class="msel" id="dfClientMsel"><button type="button" class="msel-btn" id="dfClientBtn">All clients</button><div class="msel-menu wide" id="dfClientMenu" hidden></div></div>
           <div class="msel" id="dfProjMsel"><button type="button" class="msel-btn" id="dfProjBtn">All projects</button><div class="msel-menu" id="dfProjMenu" hidden></div></div>
@@ -381,7 +379,9 @@
       <section class="widget">
         <div class="widget-head">
           <h2>Bill Tracker <span class="count" id="billsNote"></span></h2>
-          <span class="count" id="billsQuickStat"></span>
+          <span class="wh-right"><span class="count" id="billsQuickStat"></span>
+            <button class="btn small" id="btnPayRunGo" title="The check-run worksheet: the bills ticked to pay, amounts, Save / Clear">Pay run →</button>
+            <button class="btn small" id="btnLienRegGo" title="The lien register: notices sent and liens filed">Lien register →</button></span>
         </div>
         <div class="bill-views" id="billViews"></div>
         <div class="bill-filters" id="billFilters">
@@ -447,6 +447,7 @@
 
     <!-- ══════════════ TAB: PAY BILLS (check-run worksheet) ══════════════ -->
     <div class="tab-page" data-tab="paybills" hidden>
+      <div class="record-head"><button class="btn small" id="btnBackBillsPay">← Bills</button><div class="record-head-txt"><div class="record-title">Pay run</div><div class="record-sub">the check-run worksheet - local intent only, never QuickBooks</div></div></div>
       <!-- Pay-run save bar: sticky top-right, mirrors the Bills lien save bar -->
       <div class="savebar" id="paySaveBar">
         <span class="sb-warn">●</span>
@@ -510,6 +511,7 @@
 
     <!-- ══════════════ TAB: LIENS (collections worklist) ══════════════ -->
     <div class="tab-page" data-tab="liens" hidden>
+      <div class="record-head"><button class="btn small" id="btnBackBillsLien">← Bills</button><div class="record-head-txt"><div class="record-title">Lien register</div><div class="record-sub">notices sent and liens filed - your marks</div></div></div>
       <section class="widget">
         <div class="widget-head"><h2>Liens filed &amp; notices sent <span class="count" id="liensNote"></span></h2></div>
         <div class="kpi-row" id="liensStats"></div>
