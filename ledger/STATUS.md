@@ -4,6 +4,18 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Data freshness shows every feed (owner 2026-09-02: "4 of 8 feeds shown").** The strip now renders
+  all nine timestamps `_freshness()` computes: the three source files (sync-ap, sync-ar, WIP master) and
+  each ledger load (Costs, Invoices, Payments, Customers, Sub LOC, Health). A feed never loaded says
+  "never / not loaded yet"; the 48-business-hour stale flag applies to each. First run surfaced Sub LOC
+  as 13 days stale - which is the point.
+- **Vendor "open" mismatch fixed by labelling both systems (owner 2026-09-02).** The Vendor Center
+  columns read "Open bills (QBO)" / "Open $ (QBO)"; the vendor page header shows
+  "open $X (QuickBooks, N bills) · Bill Tracker: ... (subs are not in the Bill Tracker)". `/api/vendor`
+  gained `qbo_open` / `qbo_open_bills` (from `vendor_ap`) and `qbo_bills` - the vendor's bills grouped
+  from the QBO job-costed lines in `cost_line` (date, bill #, project(s), memo, amount, qb link). A
+  vendor with no Bill Tracker rows (a sub) now gets that QBO list instead of "No bills" - verified on a
+  sub: 6 open bills / 49 QBO bills where the page used to show $0.
 - **Invoices tab, round two (owner 2026-09-02).** (1) **Month filter** shows every month ticked (the
   honest picture of "all"); untick to drop one; **Select all / Deselect all** in the menu with a
   "N of M" count; the Day select is gone ("useless"). (2) **Quick find (⌘F / Ctrl+F)**: on the

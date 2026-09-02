@@ -1364,7 +1364,43 @@ def _fetch_vendor(con, vendor: str) -> dict:
             payments.append(d)
     except sqlite3.OperationalError:
         pass
+    # QuickBooks' own open AP for this vendor (vendor_ap: every vendor incl. subs) - shown BESIDE the
+    # Bill Tracker figure, labelled, so the list and the page can't seem to disagree (owner 2026-09-02).
+    qbo_open, qbo_open_bills = None, None
+    try:
+        r = con.execute("SELECT open_bal, open_bills FROM vendor_ap WHERE vendor = ?", (vendor,)).fetchone()
+        if r:
+            qbo_open, qbo_open_bills = r["open_bal"], r["open_bills"]
+    except sqlite3.OperationalError:
+        pass
+    # The vendor's bills as QBO job-costed lines (cost_line carries subs, which the Bill Tracker never
+    # does): grouped per document, newest first, so a sub gets a real page instead of "No bills".
+    qbo_bills: list = []
+    try:
+        have = {r[1] for r in con.execute("PRAGMA table_info(cost_line)")}
+        doc = "doc_number" if "doc_number" in have else "NULL"
+        memo = "memo" if "memo" in have else "description"
+        grp: dict = {}
+        for r in con.execute(
+                f"SELECT qbo_txn_id, txn_type, txn_date, {doc} doc_number, {memo} memo, project_no, amount "
+                "FROM cost_line WHERE vendor = ? ORDER BY txn_date DESC, qbo_txn_id, qbo_line_id", (vendor,)):
+            g = grp.get(r["qbo_txn_id"])
+            if not g:
+                g = grp[r["qbo_txn_id"]] = {"txn_id": r["qbo_txn_id"], "txn_type": r["txn_type"] or "Bill",
+                                             "date": r["txn_date"], "doc_number": r["doc_number"],
+                                             "memo": r["memo"], "amount": 0.0, "_p": set()}
+            g["amount"] += float(r["amount"] or 0)
+            if r["project_no"]:
+                g["_p"].add(r["project_no"])
+        for g in grp.values():
+            g["projects"] = sorted(g.pop("_p"))
+            g["amount"] = round(g["amount"], 2)
+            qbo_bills.append(g)
+        qbo_bills.sort(key=lambda g: g["date"] or "", reverse=True)
+    except sqlite3.OperationalError:
+        qbo_bills = []
     return {"ok": True, "vendor": vendor, "count": len(out),
+            "qbo_open": qbo_open, "qbo_open_bills": qbo_open_bills, "qbo_bills": qbo_bills,
             "total": sum((b["amount"] or 0) for b in out),
             "open": sum((b["open_balance"] or 0) for b in out),
             "paid_ct": sum(1 for b in out if b["paid"]), "bills": out,

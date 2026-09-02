@@ -685,11 +685,19 @@ const STALE_BUSINESS_H = 48;                       // > 2 business days → reco
 function renderHome() {
   // ── data freshness ──
   const fr = meta.freshness || { ledger: {}, sources: {} };
+  // Every feed _freshness() computes - the three source files and each ledger load - so AR, payments,
+  // CRM, Sub LOC and Health staleness are visible too (owner 2026-09-02: "4 of 8 feeds shown").
+  const S = fr.sources || {}, L = fr.ledger || {};
   const items = [
-    ["sync-ap (AP bills)", (fr.sources || {})["sync-ap"]],
-    ["sync-ar (AR)", (fr.sources || {})["sync-ar"]],
-    ["WIP master", (fr.sources || {})["WIP master"]],
-    ["Costs loaded (QBO)", (fr.ledger || {})["Costs (QBO)"]],
+    ["sync-ap (AP bills)", S["sync-ap"]],
+    ["sync-ar (AR)", S["sync-ar"]],
+    ["WIP master", S["WIP master"]],
+    ["Costs loaded (QBO)", L["Costs (QBO)"]],
+    ["Invoices loaded (AR)", L["AR (invoices)"]],
+    ["Payments loaded (QBO)", L["Payments"]],
+    ["Customers loaded (Notion)", L["CRM (customers)"]],
+    ["Sub LOC computed", L["Sub LOC"]],
+    ["Health pulled (QBO)", L["Health (QBO)"]],
   ];
   const box = $("#homeFresh"); box.innerHTML = "";
   let needSync = 0;
@@ -703,8 +711,8 @@ function renderHome() {
     if (stale) { el.classList.add("stale"); needSync++; }
     el.innerHTML = `<div class="f-label"></div><div class="f-when"></div><div class="f-ago"></div>`;
     el.querySelector(".f-label").textContent = label;
-    el.querySelector(".f-when").textContent = fmtDate(when, true);
-    el.querySelector(".f-ago").textContent = timeAgo(when);
+    el.querySelector(".f-when").textContent = when ? fmtDate(when, true) : "never";
+    el.querySelector(".f-ago").textContent = when ? timeAgo(when) : "not loaded yet";
     if (stale) {
       const b = document.createElement("div"); b.className = "sync-rec"; b.textContent = "⟳ Sync recommended";
       el.appendChild(b);
@@ -1573,7 +1581,7 @@ function renderVendors() {
   $("#vendorsNote").textContent = (COST.by_vendor || []).length
     ? `(${vends.length} vendors · ${money(totalOpen)} open)`
     : "(no cost data — run load_costs.py)";
-  const cols = [["Vendor", "left"], ["Type", "left"], ["Jobs", "right"], ["Open bills", "right"], ["Open $", "right"]];
+  const cols = [["Vendor", "left"], ["Type", "left"], ["Jobs", "right"], ["Open bills (QBO)", "right"], ["Open $ (QBO)", "right"]];   // labelled: QuickBooks open AP, subs included
   const thead = $("#vendorTable thead"), tbody = $("#vendorTable tbody");
   thead.innerHTML = ""; tbody.innerHTML = "";
   const htr = document.createElement("tr");
@@ -2165,7 +2173,10 @@ function renderVendorPage() {
     $("#recordSub").textContent = `${d.pay_count || 0} payments · ${money(d.pay_total || 0)} paid out this year`;
     return _renderVendorPayments(d, body);
   }
-  $("#recordSub").textContent = `${d.count} bills · ${money(d.total)} billed · ${money(d.open)} open · ${d.paid_ct} paid`;
+  // Two systems, two labels (owner 2026-09-02: the list said one "open", the page another): QuickBooks
+  // open AP covers every vendor incl. subs; the Bill Tracker excludes subs.
+  $("#recordSub").textContent = (d.qbo_open != null ? `open ${money(d.qbo_open)} (QuickBooks, ${d.qbo_open_bills || 0} bills) · ` : "")
+    + `Bill Tracker: ${d.count} bills · ${money(d.total)} billed · ${money(d.open)} open · ${d.paid_ct} paid` + (d.count ? "" : " (subs are not in the Bill Tracker)");
   const seg = document.createElement("div"); seg.className = "seg vendor-seg";
   for (const [k, lbl] of [["all", "All"], ["open", "Open"], ["paid", "Paid"]]) {
     const b = document.createElement("button"); b.type = "button"; b.className = "seg-btn" + (_vendorType === k ? " on" : ""); b.textContent = lbl;
@@ -2173,6 +2184,7 @@ function renderVendorPage() {
   }
   body.appendChild(seg);
   const bills = (d.bills || []).filter(b => _vendorType === "all" || (_vendorType === "paid" ? b.paid : !b.paid));
+  if (!(d.bills || []).length && (d.qbo_bills || []).length) return _renderVendorQboBills(d, body);   // a sub: show its QBO bills instead
   if (!bills.length) { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = "No bills match this filter."; body.appendChild(p); return; }
   const scroll = document.createElement("div"); scroll.className = "table-scroll";
   const table = document.createElement("table"); table.className = "grid"; const thead = document.createElement("thead"), tbody = document.createElement("tbody");
@@ -2197,6 +2209,28 @@ function renderVendorPage() {
     tbody.appendChild(tr);
     if (multi && open) { const lr = document.createElement("tr"); const ltd = document.createElement("td"); ltd.colSpan = 6; ltd.appendChild(_vendorLines(b)); lr.appendChild(ltd); tbody.appendChild(lr); }
   });
+  table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table); body.appendChild(scroll);
+}
+// A vendor with no Bill Tracker rows (a sub, or a vendor the tracker doesn't carry): its bills straight
+// from the QBO cost lines already in the ledger - date, bill #, project(s), memo, amount, qb link.
+function _renderVendorQboBills(d, body) {
+  const cap = document.createElement("div"); cap.className = "bills-cap";
+  cap.textContent = `${d.qbo_bills.length} bills from QuickBooks (job-costed lines) - this vendor has no Bill Tracker rows, so pay status comes from QuickBooks' open balance above.`;
+  body.appendChild(cap);
+  const scroll = document.createElement("div"); scroll.className = "table-scroll";
+  const table = document.createElement("table"); table.className = "grid"; const thead = document.createElement("thead"), tbody = document.createElement("tbody");
+  const htr = document.createElement("tr");
+  for (const [c, al] of [["Date", "left"], ["Bill #", "left"], ["Project", "left"], ["Memo", "left"], ["Amount", "right"]]) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
+  thead.appendChild(htr);
+  for (const b of d.qbo_bills) {
+    const tr = document.createElement("tr");
+    tr.appendChild(leftText(fmtDateShort(b.date)));
+    tr.appendChild(qboLinkCell(b.doc_number || "–", qboUrl(b.txn_type === "Expense" ? "expense" : "bill", b.txn_id), "Open this bill in QuickBooks"));
+    tr.appendChild(leftText(b.projects.length > 1 ? b.projects.join(", ") : (b.projects[0] || "–")));
+    const m = leftText(b.memo || "–"); m.title = b.memo || ""; m.className += " inv-memo"; tr.appendChild(m);
+    const amt = document.createElement("td"); amt.appendChild(moneyCell(b.amount)); tr.appendChild(amt);
+    tbody.appendChild(tr);
+  }
   table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table); body.appendChild(scroll);
 }
 function _vendorLines(b) {
