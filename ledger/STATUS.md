@@ -4,6 +4,12 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Invoice page: vendor groups collapsed by default + Expand/Collapse all + All | Unpaid | Paid
+  (owner 2026-09-02).** The bills block re-renders in place (`_renderIpBills`): each vendor (and each
+  sub) is a collapsed band with count · total · open · paid; the toggle flips every band; the filter
+  keeps only paid (pay date, or nothing open) or unpaid bills and recounts the bands; the column header
+  shows only once a band is open. Subs carry no per-bill pay status, so they show under "All bills"
+  only and say so. Notion section on the page = body + timestamp + comments (no property list).
 - **The invoice as a PAGE (owner 2026-09-02: "Open Invoices, need to open as a page, i want to see all
   the invoice qbo details on top, the bills grouped below that, their pay status and then the Notion
   Collections log").** Clicking an invoice on the Invoices tab now opens the full-width record view

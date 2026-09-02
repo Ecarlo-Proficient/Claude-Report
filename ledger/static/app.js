@@ -3281,6 +3281,78 @@ function invNoCell(inv) {
 // Works for an Invoices row and a Draws row alike (both carry the same billing_event fields).
 // ── The invoice as a PAGE (owner 2026-09-02): QBO details on top, the draw's bills grouped by vendor
 // with pay status (+ subs from QuickBooks), then the Notion collections log. Full-width record view.
+// ── invoice page: the bills block (vendors + subs), re-rendered on filter / collapse ──
+let _ip = null;
+function _ipGroups() { const d = _ip.d; return [...(d.vendors || []).map(v => "v:" + v.vendor), ...(d.subs || []).map(v => "s:" + v.vendor)]; }
+function _ipBillPasses(b) { const paid = !!b.pay_date || num(b.open) <= 0.005; return _ip.filter === "all" || (_ip.filter === "paid" ? paid : !paid); }
+function _renderIpBills() {
+  const { d, host } = _ip; host.innerHTML = "";
+  const i = d.invoice;
+  const groups = _ipGroups(); const allOpen = groups.length && groups.every(g => _ip.open.has(g));
+  { const tg = $("#ipToggle"); if (tg) tg.textContent = allOpen ? "Collapse all" : "Expand all"; }
+  const vendors = (d.vendors || []).map(v => ({ ...v, bills: v.bills.filter(_ipBillPasses) })).filter(v => v.bills.length);
+  if (!(d.vendors || []).length) { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = "No Bill Tracker bills carry this invoice # yet (the AP sync matches bills to draws; RP jobs bill at completion)."; host.appendChild(p); }
+  else if (!vendors.length) { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = _ip.filter === "paid" ? "No paid bills on this draw yet." : "No unpaid bills on this draw - every vendor is paid."; host.appendChild(p); }
+  else {
+    const scroll = document.createElement("div"); scroll.className = "table-scroll";
+    const table = document.createElement("table"); table.className = "grid"; const thead = document.createElement("thead"), tbody = document.createElement("tbody");
+    const htr = document.createElement("tr");
+    for (const [c, al] of [["Vendor / bill", "left"], ["Date", "left"], ["Bill #", "left"], ["Amount", "right"], ["Open", "right"], ["Pay status", "left"], ["Approved", "left"], ["Lien", "left"], ["GC paid us", "left"]]) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
+    thead.appendChild(htr);
+    thead.hidden = !vendors.some(v => _ip.open.has("v:" + v.vendor));   // headers only once a group is open
+    for (const v of vendors) {
+      const key = "v:" + v.vendor, open = _ip.open.has(key);
+      const tot = v.bills.reduce((s, b) => s + num(b.amount), 0), opn = v.bills.reduce((s, b) => s + num(b.open), 0), paidCt = v.bills.filter(b => b.pay_date).length;
+      const gtr = document.createElement("tr"); gtr.className = "bill-group"; gtr.style.cursor = "pointer"; gtr.title = open ? "Click to collapse" : "Click to expand";
+      const gtd = document.createElement("td"); gtd.colSpan = 9;
+      const cell = document.createElement("div"); cell.className = "bg-cell";
+      const caret = document.createElement("span"); caret.className = "bg-caret"; caret.textContent = open ? "▾ " : "▸ ";
+      const k = document.createElement("span"); k.className = "bg-key"; k.textContent = v.vendor;
+      const amtS = document.createElement("span"); amtS.className = "bg-amt"; amtS.textContent = `${v.bills.length} bill${v.bills.length === 1 ? "" : "s"} · ${money(tot)} · ${money(opn)} open · ${paidCt} paid`;
+      cell.appendChild(caret); cell.appendChild(k); cell.appendChild(amtS); gtd.appendChild(cell); gtr.appendChild(gtd);
+      gtr.onclick = () => { if (_ip.open.has(key)) _ip.open.delete(key); else _ip.open.add(key); _renderIpBills(); };
+      tbody.appendChild(gtr);
+      if (!open) continue;
+      for (const b of v.bills) {
+        const tr = document.createElement("tr");
+        const nm = leftText(""); if (!b.gates) { const s = document.createElement("span"); s.className = "vg-tag"; s.textContent = "not paid by us"; s.title = "Concrete pumping - the GC pays this vendor directly"; nm.appendChild(s); } tr.appendChild(nm);
+        tr.appendChild(leftText(fmtDateShort(b.bill_date)));
+        tr.appendChild(qboLinkCell(b.bill_ref || "–", qboBillHref(b.qbo_link), "Open this bill in QuickBooks"));
+        const ac = document.createElement("td"); ac.appendChild(moneyCell(b.amount)); tr.appendChild(ac);
+        const oc = document.createElement("td"); oc.className = "right"; oc.textContent = num(b.open) > 0.005 ? money(b.open) : "–"; if (num(b.open) > 0.005) oc.style.color = "var(--neg)"; else oc.classList.add("dim"); tr.appendChild(oc);
+        const st = document.createElement("td"); st.className = "left"; const pill = document.createElement("span"); pill.className = b.pay_date ? "ar-paid" : "ar-open"; pill.textContent = b.pay_date ? "Paid " + fmtDateShort(b.pay_date) : (b.pay_status || "Open"); st.appendChild(pill); tr.appendChild(st);
+        tr.appendChild(leftText(b.approved || "–"));
+        tr.appendChild(leftText(b.lien_status || "–"));
+        tr.appendChild(leftText(b.gc_paid ? fmtDateShort(b.gc_paid) : "–"));
+        tbody.appendChild(tr);
+      }
+    }
+    table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table); host.appendChild(scroll);
+  }
+  if ((d.subs || []).length && _ip.filter === "all") {
+    const cap = document.createElement("div"); cap.className = "bills-cap"; cap.textContent = `Subs (labor) on ${i.project_no} dated ${fmtDate(d.period.start)} – ${fmtDate(d.period.end)}, from QuickBooks - pay status is not tracked per sub bill, so they sit outside the Paid / Unpaid filter.`; host.appendChild(cap);
+    const scroll = document.createElement("div"); scroll.className = "table-scroll";
+    const table = document.createElement("table"); table.className = "grid"; const thead = document.createElement("thead"), tbody = document.createElement("tbody");
+    const htr = document.createElement("tr"); for (const [c, al] of [["Sub / bill", "left"], ["Date", "left"], ["Bill #", "left"], ["Description", "left"], ["Code", "left"], ["Amount", "right"]]) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); } thead.appendChild(htr);
+    thead.hidden = !d.subs.some(v => _ip.open.has("s:" + v.vendor));
+    for (const v of d.subs) {
+      const key = "s:" + v.vendor, open = _ip.open.has(key);
+      const gtr = document.createElement("tr"); gtr.className = "bill-group"; gtr.style.cursor = "pointer"; const gtd = document.createElement("td"); gtd.colSpan = 6;
+      const cell = document.createElement("div"); cell.className = "bg-cell"; const caret = document.createElement("span"); caret.className = "bg-caret"; caret.textContent = open ? "▾ " : "▸ ";
+      const k = document.createElement("span"); k.className = "bg-key"; k.textContent = v.vendor; const am = document.createElement("span"); am.className = "bg-amt"; am.textContent = `${v.lines.length} line${v.lines.length === 1 ? "" : "s"} · ${money(v.total)}`;
+      cell.appendChild(caret); cell.appendChild(k); cell.appendChild(am); gtd.appendChild(cell); gtr.appendChild(gtd);
+      gtr.onclick = () => { if (_ip.open.has(key)) _ip.open.delete(key); else _ip.open.add(key); _renderIpBills(); };
+      tbody.appendChild(gtr);
+      if (!open) continue;
+      for (const l of v.lines) { const tr = document.createElement("tr"); tr.appendChild(leftText("")); tr.appendChild(leftText(fmtDateShort(l.date)));
+        tr.appendChild(qboLinkCell(l.doc_number || "–", qboUrl(l.txn_type === "Expense" ? "expense" : "bill", l.txn_id), "Open in QuickBooks"));
+        const dc = leftText(l.description || "–"); dc.className += " inv-memo"; dc.title = l.description || ""; tr.appendChild(dc);
+        const cc = document.createElement("td"); cc.className = "left"; if (l.cost_code) { const chip = document.createElement("span"); chip.className = "codechip"; chip.textContent = l.cost_code; cc.appendChild(chip); } tr.appendChild(cc);
+        const ac = document.createElement("td"); ac.appendChild(moneyCell(l.amount)); tr.appendChild(ac); tbody.appendChild(tr); }
+    }
+    table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table); host.appendChild(scroll);
+  }
+}
 async function openInvoicePage(inv) {
   const docn = inv.doc_number || inv.invoice_no || "";
   openRecord(`Invoice ${docn}`, [inv.customer, inv.project_no, inv.division].filter(Boolean).join(" · "));
@@ -3328,51 +3400,21 @@ async function openInvoicePage(inv) {
     k.querySelector(".k-label").textContent = l; k.querySelector(".k-value").textContent = v; k.querySelector(".k-sub").textContent = sub; strip.appendChild(k);
   }
   s2.appendChild(strip);
-  if (!(d.vendors || []).length) { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = "No Bill Tracker bills carry this invoice # yet (the AP sync matches bills to draws; RP jobs bill at completion)."; s2.appendChild(p); }
-  else {
-    const scroll = document.createElement("div"); scroll.className = "table-scroll";
-    const table = document.createElement("table"); table.className = "grid"; const thead = document.createElement("thead"), tbody = document.createElement("tbody");
-    const htr = document.createElement("tr");
-    for (const [c, al] of [["Vendor / bill", "left"], ["Date", "left"], ["Bill #", "left"], ["Amount", "right"], ["Open", "right"], ["Pay status", "left"], ["Approved", "left"], ["Lien", "left"], ["GC paid us", "left"]]) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
-    thead.appendChild(htr);
-    for (const v of d.vendors) {
-      const gtr = document.createElement("tr"); gtr.className = "bill-group"; const gtd = document.createElement("td"); gtd.colSpan = 9;
-      const cell = document.createElement("div"); cell.className = "bg-cell"; const key = document.createElement("span"); key.className = "bg-key"; key.textContent = v.vendor;
-      const amtS = document.createElement("span"); amtS.className = "bg-amt"; amtS.textContent = `${v.n} bill${v.n === 1 ? "" : "s"} · ${money(v.total)} · ${money(v.open)} open · ${v.paid_ct} paid`;
-      cell.appendChild(key); cell.appendChild(amtS); gtd.appendChild(cell); gtr.appendChild(gtd); tbody.appendChild(gtr);
-      for (const b of v.bills) {
-        const tr = document.createElement("tr");
-        const nm = leftText(""); nm.className = "left"; if (!b.gates) { const s = document.createElement("span"); s.className = "vg-tag"; s.textContent = "not paid by us"; s.title = "Concrete pumping - the GC pays this vendor directly"; nm.appendChild(s); } tr.appendChild(nm);
-        tr.appendChild(leftText(fmtDateShort(b.bill_date)));
-        tr.appendChild(qboLinkCell(b.bill_ref || "–", qboBillHref(b.qbo_link), "Open this bill in QuickBooks"));
-        const ac = document.createElement("td"); ac.appendChild(moneyCell(b.amount)); tr.appendChild(ac);
-        const oc = document.createElement("td"); oc.className = "right"; oc.textContent = num(b.open) > 0.005 ? money(b.open) : "–"; if (num(b.open) > 0.005) oc.style.color = "var(--neg)"; else oc.classList.add("dim"); tr.appendChild(oc);
-        const st = document.createElement("td"); st.className = "left"; const pill = document.createElement("span"); pill.className = b.pay_date ? "ar-paid" : "ar-open"; pill.textContent = b.pay_date ? "Paid " + fmtDateShort(b.pay_date) : (b.pay_status || "Open"); st.appendChild(pill); tr.appendChild(st);
-        tr.appendChild(leftText(b.approved || "–"));
-        tr.appendChild(leftText(b.lien_status || "–"));
-        tr.appendChild(leftText(b.gc_paid ? fmtDateShort(b.gc_paid) : "–"));
-        tbody.appendChild(tr);
-      }
-    }
-    table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table); s2.appendChild(scroll);
+  // vendor groups collapsed by default, Collapse/Expand all, and an All | Open | Paid filter
+  // (owner 2026-09-02: "group the vendors so it's collapsed by default, show a toggle like invoices ...
+  // have a filter to show paid and unpaid bills"). Re-rendered in place on every toggle.
+  _ip = { d, open: new Set(), filter: "all", host: document.createElement("div") };
+  const tools = document.createElement("div"); tools.className = "ip-tools";
+  const seg = document.createElement("div"); seg.className = "seg";
+  for (const [k, lbl] of [["all", "All bills"], ["open", "Unpaid"], ["paid", "Paid"]]) {
+    const b = document.createElement("button"); b.type = "button"; b.className = "seg-btn" + (k === "all" ? " on" : ""); b.dataset.k = k; b.textContent = lbl;
+    b.onclick = () => { _ip.filter = k; seg.querySelectorAll(".seg-btn").forEach(x => x.classList.toggle("on", x === b)); _renderIpBills(); }; seg.appendChild(b);
   }
-  if ((d.subs || []).length) {
-    const cap = document.createElement("div"); cap.className = "bills-cap"; cap.textContent = `Subs (labor) on ${i.project_no} dated ${fmtDate(d.period.start)} – ${fmtDate(d.period.end)}, from QuickBooks - pay status is not tracked per sub bill.`; s2.appendChild(cap);
-    const scroll = document.createElement("div"); scroll.className = "table-scroll";
-    const table = document.createElement("table"); table.className = "grid"; const thead = document.createElement("thead"), tbody = document.createElement("tbody");
-    const htr = document.createElement("tr"); for (const [c, al] of [["Sub / bill", "left"], ["Date", "left"], ["Bill #", "left"], ["Description", "left"], ["Code", "left"], ["Amount", "right"]]) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); } thead.appendChild(htr);
-    for (const v of d.subs) {
-      const gtr = document.createElement("tr"); gtr.className = "bill-group"; const gtd = document.createElement("td"); gtd.colSpan = 6;
-      const cell = document.createElement("div"); cell.className = "bg-cell"; const key = document.createElement("span"); key.className = "bg-key"; key.textContent = v.vendor; const am = document.createElement("span"); am.className = "bg-amt"; am.textContent = `${v.lines.length} line${v.lines.length === 1 ? "" : "s"} · ${money(v.total)}`;
-      cell.appendChild(key); cell.appendChild(am); gtd.appendChild(cell); gtr.appendChild(gtd); tbody.appendChild(gtr);
-      for (const l of v.lines) { const tr = document.createElement("tr"); tr.appendChild(leftText("")); tr.appendChild(leftText(fmtDateShort(l.date)));
-        tr.appendChild(qboLinkCell(l.doc_number || "–", qboUrl(l.txn_type === "Expense" ? "expense" : "bill", l.txn_id), "Open in QuickBooks"));
-        const dc = leftText(l.description || "–"); dc.className += " inv-memo"; dc.title = l.description || ""; tr.appendChild(dc);
-        const cc = document.createElement("td"); cc.className = "left"; if (l.cost_code) { const chip = document.createElement("span"); chip.className = "codechip"; chip.textContent = l.cost_code; cc.appendChild(chip); } tr.appendChild(cc);
-        const ac = document.createElement("td"); ac.appendChild(moneyCell(l.amount)); tr.appendChild(ac); tbody.appendChild(tr); }
-    }
-    table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table); s2.appendChild(scroll);
-  }
+  const tog = document.createElement("button"); tog.type = "button"; tog.className = "btn small"; tog.id = "ipToggle"; tog.textContent = "Expand all";
+  tog.onclick = () => { const groups = _ipGroups(); const allOpen = groups.every(g => _ip.open.has(g)); _ip.open = new Set(allOpen ? [] : groups); _renderIpBills(); };
+  tools.appendChild(seg); tools.appendChild(tog); s2.appendChild(tools);
+  s2.appendChild(_ip.host);
+  _renderIpBills();
   // ── 3. the Notion collections log ──
   const s3 = sec("Collections log · Notion Invoice Tracker", i.notion_edited ? `page edited ${fmtDate(i.notion_edited, true)}` : "");
   if (i.notion_url) invNotionSection(s3, i.notion_url, true);   // body + timestamp + comments only

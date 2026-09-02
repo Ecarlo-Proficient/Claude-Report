@@ -1303,3 +1303,4 @@ html[data-theme="dark"] .acct-src.po { color: #b79ae0; } html[data-theme="dark"]
 .ip-actions { display: flex; gap: 8px; padding: 4px 18px 16px; flex-wrap: wrap; }
 .ip-strip { padding: 6px 18px 14px; }
 .ip-sec .np { padding: 0 18px 16px; }
+.ip-tools { display: flex; gap: 10px; align-items: center; padding: 0 18px 10px; }
