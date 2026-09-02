@@ -1421,6 +1421,83 @@ def _fetch_vendor(con, vendor: str) -> dict:
             "pay_count": len(payments)}
 
 
+def _fetch_invoice_page(con, no: str) -> dict:
+    """The invoice as a PAGE (owner 2026-09-02: "all the invoice qbo details on top, the bills grouped
+    below that, their pay status, and then the Notion collections log"). Invoice = the billing_event
+    row with the same aging / lien computation the Invoices tab uses; bills = every Bill Tracker line
+    whose Invoice # is this draw, grouped by vendor then bill, with pay status; subs = QBO is_sub cost
+    lines on the project inside the draw period (the Bill Tracker never carries subs). The Notion log
+    is fetched by the page separately (/api/invoice/notion). Read-only, on demand."""
+    no = (no or "").strip()
+    if not no:
+        return {"ok": False, "error": "invoice # required"}
+    inv = next((i for i in _fetch_open_invoices(con, open_only=False)["invoices"]
+                if str(i.get("doc_number") or "").strip() == no), None)
+    if not inv:
+        return {"ok": False, "error": f"invoice {no} is not in the ledger"}
+    # ── bills on this draw (Bill Tracker), grouped vendor -> bill -> lines ──
+    vendors: dict = {}
+    try:
+        rows = con.execute(
+            "SELECT vendor, bill_ref, bill_date, project_no, description, line_amount, bill_total, open_balance, "
+            "pay_status, pay_date, approved, lien_status, gc_paid_date, invoice_status, qbo_link "
+            "FROM ap_bill_line WHERE TRIM(COALESCE(invoice_no,'')) = ? ORDER BY vendor, bill_date, bill_ref", (no,)).fetchall()
+    except sqlite3.OperationalError:
+        rows = []
+    for r in rows:
+        v = vendors.setdefault(r["vendor"] or "?", {"vendor": r["vendor"] or "?", "bills": {}, "total": 0.0, "open": 0.0, "paid_ct": 0})
+        key = (r["bill_ref"] or "?") + "|" + (r["bill_date"] or "")
+        b = v["bills"].get(key)
+        if not b:
+            b = v["bills"][key] = {"bill_ref": r["bill_ref"], "bill_date": r["bill_date"], "amount": r["bill_total"],
+                                   "open": r["open_balance"] or 0, "pay_status": r["pay_status"], "pay_date": r["pay_date"],
+                                   "approved": r["approved"], "lien_status": r["lien_status"], "gc_paid": r["gc_paid_date"],
+                                   "invoice_status": r["invoice_status"], "qbo_link": r["qbo_link"],
+                                   "gates": _gates_stage(r["vendor"]), "lines": []}
+            v["total"] += float(r["bill_total"] or 0)
+            v["open"] += float(r["open_balance"] or 0)
+            v["paid_ct"] += 1 if r["pay_date"] else 0
+        b["lines"].append({"project_no": r["project_no"], "description": r["description"], "amount": r["line_amount"]})
+    vend_out = []
+    for v in vendors.values():
+        v["bills"] = list(v["bills"].values())
+        for b in v["bills"]:
+            if b["amount"] is None:
+                b["amount"] = sum((ln["amount"] or 0) for ln in b["lines"])
+        v["n"] = len(v["bills"])
+        vend_out.append(v)
+    vend_out.sort(key=lambda v: -v["total"])
+    # ── subs on this draw (QBO cost lines, project + draw period from the memo) ──
+    p0, p1 = _draw_period_range(inv.get("memo") or "")
+    subs: dict = {}
+    if p0 and p1 and inv.get("project_no"):
+        try:
+            have = {r[1] for r in con.execute("PRAGMA table_info(cost_line)")}
+            doc = "doc_number" if "doc_number" in have else "NULL"
+            for r in con.execute(
+                    f"SELECT vendor, txn_date, {doc} doc_number, description, amount, cost_code, qbo_txn_id, txn_type "
+                    "FROM cost_line WHERE is_sub=1 AND project_no = ? AND txn_date BETWEEN ? AND ? "
+                    "ORDER BY vendor, txn_date", (inv["project_no"], p0, p1)):
+                v = subs.setdefault(r["vendor"] or "?", {"vendor": r["vendor"] or "?", "total": 0.0, "lines": []})
+                v["total"] += float(r["amount"] or 0)
+                v["lines"].append({"date": r["txn_date"], "doc_number": r["doc_number"], "description": r["description"],
+                                   "amount": r["amount"], "cost_code": r["cost_code"], "txn_id": r["qbo_txn_id"],
+                                   "txn_type": r["txn_type"] or "Bill"})
+        except sqlite3.OperationalError:
+            pass
+    subs_out = sorted(subs.values(), key=lambda v: -v["total"])
+    mat_total = sum(v["total"] for v in vend_out)
+    mat_gate = sum(b["amount"] or 0 for v in vend_out for b in v["bills"] if b["gates"])
+    subs_total = sum(v["total"] for v in subs_out)
+    return {"ok": True, "invoice": inv, "vendors": vend_out, "subs": subs_out,
+            "period": {"start": p0, "end": p1},
+            "totals": {"materials": round(mat_total, 2), "materials_we_pay": round(mat_gate, 2),
+                       "materials_open": round(sum(v["open"] for v in vend_out), 2),
+                       "bills": sum(v["n"] for v in vend_out), "bills_paid": sum(v["paid_ct"] for v in vend_out),
+                       "subs": round(subs_total, 2), "total_out": round(mat_gate + subs_total, 2),
+                       "billed": inv.get("amount"), "net": None if inv.get("amount") is None else round(float(inv["amount"]) - mat_gate - subs_total, 2)}}
+
+
 def _subloc_events(con, project: str = "") -> list:
     """Parsed sub_loc_event rows (the LOC transaction chain), optionally for ONE project. The
     reimb/settled JSON columns are decoded; `settled` may predate the column, so it's optional."""
@@ -2020,6 +2097,12 @@ class Handler(BaseHTTPRequestHandler):
             self._invoices_all()
         elif path == "/api/invoice/notion":  # on-demand: the invoice's whole Notion page (properties + body + comments), 60 s cache
             self._json(notion_page.fetch(self._query().get("url", "")))
+        elif path == "/api/invoice/page":    # on-demand: the invoice page - QBO details, the draw's bills by vendor + pay status, subs
+            con = _connect(self.db_path)
+            try:
+                self._json(_fetch_invoice_page(con, self._query().get("no", "")))
+            finally:
+                con.close()
         elif path.startswith("/static/"):
             self._static(path[len("/static/"):])
         else:

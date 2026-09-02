@@ -4,6 +4,18 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **The invoice as a PAGE (owner 2026-09-02: "Open Invoices, need to open as a page, i want to see all
+  the invoice qbo details on top, the bills grouped below that, their pay status and then the Notion
+  Collections log").** Clicking an invoice on the Invoices tab now opens the full-width record view
+  instead of the drawer: (1) **Invoice · QuickBooks** - memo, Billing / Dates & terms / Lien /
+  Collections columns (the same aging + lien clock the tab computes), QBO + project + Notion links;
+  (2) **Bills on this draw** - every Bill Tracker line whose Invoice # is this draw, grouped by vendor
+  then bill with amount, open, pay status (Paid mm/dd or the tracker status), approval, lien, GC-paid
+  date, pump vendors tagged "not paid by us"; plus the subs (QBO is_sub cost lines on the project inside
+  the draw period parsed from the memo) as their own grouped table; a strip totals billed vs materials
+  we pay vs subs vs net; (3) **Collections log · Notion** - the whole tracker page (properties, body,
+  comments) via the existing `/api/invoice/notion`. New on-demand `GET /api/invoice/page?no=<invoice #>`
+  (`_fetch_invoice_page`). The drawer (`openInvoiceDetail`) stays for the Payments / Draws call sites.
 - **Nine-item batch (owner 2026-09-02: "do 1-9").** (1) **Sub LOC** recomputed (was 13 days stale) and
   `reload_ledger.sh` gained the Sub LOC + Health steps the in-app chain already had. (2) **Collections
   dates on the Invoices row**: `billing_event` + `last_action_date`, `next_followup` (Invoice Tracker

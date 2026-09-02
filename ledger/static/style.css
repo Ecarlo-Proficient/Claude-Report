@@ -1292,3 +1292,14 @@ table.grid td.inv-note { max-width: 300px; white-space: normal; }
 .acct-src.bill { border-color: #3b6ea5; color: #2f5a8a; }
 html[data-theme="dark"] .acct-src.po { color: #b79ae0; } html[data-theme="dark"] .acct-src.bill { color: #86b4e6; }
 .acct-sect { font-size: .82em; font-weight: 700; color: var(--text-dim); margin: 0 4px 0 10px; align-self: center; }
+
+/* the invoice page (2026-09-02) */
+.ip-sec { margin-bottom: 14px; }
+.ip-top { padding: 0 18px 6px; }
+.ip-memo { font-size: 1.05em; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); margin: 4px 0 12px; white-space: pre-wrap; }
+.ip-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 0 28px; }
+.ip-grid .dgroup { margin-bottom: 10px; }
+.ip-kv .drow .dv { text-align: right; }
+.ip-actions { display: flex; gap: 8px; padding: 4px 18px 16px; flex-wrap: wrap; }
+.ip-strip { padding: 6px 18px 14px; }
+.ip-sec .np { padding: 0 18px 16px; }
