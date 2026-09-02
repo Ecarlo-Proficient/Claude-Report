@@ -3484,7 +3484,7 @@ async function openProjectPage(pn) {
 function _ppBillShown(b) { const paid = !!b.paid; return _pp.filter === "all" || !paid; }
 function _renderPpSelected() {
   const box = $("#ppSelected"); if (!box) return;
-  const picked = []; for (const dr of _pp.d.draws) for (const b of dr.bills) if (b.pay_selected) picked.push({ dr, b });
+  const picked = _ppAllSelected();
   box.innerHTML = "";
   if (!picked.length) { box.classList.add("empty"); box.textContent = "Nothing ticked to pay on this job yet - tick bills below, or Mark blockers to pay."; return; }
   box.classList.remove("empty");
@@ -3500,6 +3500,18 @@ function _renderPpSelected() {
   box.appendChild(ul);
   const clr = document.createElement("button"); clr.type = "button"; clr.className = "btn small subtle"; clr.textContent = "Untick all on this job"; clr.onclick = () => _ppSetPay(picked.map(x => x.b), false); box.appendChild(clr);
 }
+function _ppBillsOf(dr) { return [...(dr.bills || []), ...(dr.sub_bills || [])]; }
+function _ppAllSelected() { const out = []; for (const dr of _pp.d.draws) for (const b of _ppBillsOf(dr)) if (b.pay_selected) out.push({ dr, b }); return out; }
+function _ppCheck(bills, label, title) {   // a select-all checkbox for a group of bills (unpaid, payable by us)
+  const payable = bills.filter(b => !b.paid && b.gates && b.bill_id);
+  const cb = document.createElement("input"); cb.type = "checkbox"; cb.className = "pp-grp-cb";
+  cb.checked = payable.length > 0 && payable.every(b => b.pay_selected);
+  cb.indeterminate = !cb.checked && payable.some(b => b.pay_selected);
+  cb.disabled = !payable.length; cb.title = title || `Tick every unpaid bill in ${label}`;
+  cb.onclick = (e) => e.stopPropagation();
+  cb.onchange = () => _ppSetPay(payable, cb.checked);
+  return cb;
+}
 function _renderPpDraws() {
   const { d, host } = { d: _pp.d, host: $("#ppDraws") }; if (!host) return; host.innerHTML = "";
   _renderPpSelected();
@@ -3507,46 +3519,70 @@ function _renderPpDraws() {
   { const tg = $("#ppToggle"); if (tg) tg.textContent = allOpen ? "Collapse all" : "Expand all"; }
   if (!d.draws.length) { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = "No draws or bills on this job in the Bill Tracker yet."; host.appendChild(p); return; }
   const nxInv = d.funding && d.funding.next_draw ? d.funding.next_draw.invoice_no : null;
+  const billRow = (dr, b, isSub) => {
+    const tr = document.createElement("tr"); if (b.paid) tr.classList.add("inv-paid");
+    const pc = document.createElement("td"); pc.className = "left";
+    if (!b.paid && b.gates && b.bill_id) { const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = !!b.pay_selected; cb.title = "Put this bill on the pay run (Pay Bills) - local intent, never QuickBooks";
+      cb.onclick = (e) => e.stopPropagation(); cb.onchange = () => _ppSetPay([b], cb.checked); pc.appendChild(cb); }
+    else if (!b.gates) { const s = document.createElement("span"); s.className = "vg-tag"; s.textContent = "GC pays"; s.title = "Concrete pumping - paid by the GC directly"; pc.appendChild(s); }
+    tr.appendChild(pc);
+    tr.appendChild(leftText(""));   // vendor is the group header
+    tr.appendChild(qboLinkCell(b.bill_ref || "–", isSub ? qboUrl(b.txn_type === "Expense" ? "expense" : "bill", b.bill_id) : qboBillHref(b.qbo_link), "Open this bill in QuickBooks"));
+    tr.appendChild(leftText(fmtDateShort(b.bill_date)));
+    { const mc = leftText(isSub ? (b.memo || (b.codes || []).join(", ") || "–") : "–"); mc.className += " inv-memo"; mc.title = isSub ? (b.memo || "") : ""; tr.appendChild(mc); }
+    const ac = document.createElement("td"); ac.className = "ip-amt"; ac.appendChild(moneyCell(b.amount)); tr.appendChild(ac);
+    const oc = document.createElement("td"); oc.className = "right ip-amt"; oc.textContent = num(b.open) > 0.005 ? money(b.open) : "–"; if (num(b.open) > 0.005) oc.style.color = "var(--neg)"; else oc.classList.add("dim"); tr.appendChild(oc);
+    const st = document.createElement("td"); st.className = "left"; const pill = document.createElement("span"); pill.className = b.paid ? "ar-paid" : "ar-open";
+    pill.textContent = isSub ? (b.paid ? "Paid " + fmtDateShort(b.pay_date) : "No payment on file") : (b.pay_date ? "Paid " + fmtDateShort(b.pay_date) : (b.paid ? (b.pay_status || "Paid") + " (no date)" : (b.pay_status || "Open")));
+    if (isSub && !b.paid) pill.title = "No QuickBooks bill payment applied to this bill in the loaded window (this year)"; st.appendChild(pill); tr.appendChild(st);
+    { const wc = document.createElement("td"); wc.className = "left";
+      if (dr.no_draw || isSub) wc.textContent = isSub ? "–" : "–";
+      else { const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = !!b.waiver; cb.title = "Tick when the vendor's unconditional waiver is in hand";
+        cb.onclick = (e) => e.stopPropagation(); cb.onchange = () => { setWaiver(dr, b, cb); b.waiver = cb.checked; }; wc.appendChild(cb); if (!b.waiver && !b.paid) { const s = document.createElement("span"); s.className = "inv-late"; s.textContent = " needed"; wc.appendChild(s); } }
+      tr.appendChild(wc); }
+    return tr;
+  };
+  const vendorGroups = (tbody, dr, bills, isSub) => {
+    const byV = new Map(); for (const b of bills) { const k = b.vendor || "?"; if (!byV.has(k)) byV.set(k, []); byV.get(k).push(b); }
+    for (const [v, list] of [...byV].sort((a, b) => a[0].localeCompare(b[0]))) {
+      const paidCt = list.filter(b => b.paid).length, tot = list.reduce((s, b) => s + num(b.amount), 0), owed = list.reduce((s, b) => s + (b.paid ? 0 : num(b.open)), 0);
+      const gtr = document.createElement("tr"); gtr.className = "bill-subgroup pp-vendor";
+      const cbTd = document.createElement("td"); cbTd.className = "left"; cbTd.appendChild(_ppCheck(list, v)); gtr.appendChild(cbTd);
+      const vt = document.createElement("td"); vt.className = "left"; vt.colSpan = 8;
+      const cell = document.createElement("div"); cell.className = "bg-cell"; const k = document.createElement("span"); k.className = "sg-key"; k.textContent = v;
+      const am = document.createElement("span"); am.className = "bg-amt ip-paid " + (paidCt === list.length ? "ok" : "due"); am.textContent = `${paidCt}/${list.length} paid · ${money(tot - owed)} / ${money(tot)}` + (owed > 0.005 ? ` · ${money(owed)} to pay` : "");
+      cell.appendChild(k); cell.appendChild(am); vt.appendChild(cell); gtr.appendChild(vt); tbody.appendChild(gtr);
+      for (const b of list) tbody.appendChild(billRow(dr, b, isSub));
+    }
+  };
   for (const dr of d.draws) {
     const key = dr.matched_invoice, open = _pp.open.has(key);
     const band = document.createElement("div"); band.className = "pp-draw" + (dr.invoice_no && dr.invoice_no === nxInv ? " next" : "");
     const head = document.createElement("div"); head.className = "pp-draw-h"; head.style.cursor = "pointer";
     const paidAll = dr.vendors_total > 0 && dr.vendors_paid === dr.vendors_total;
+    const nSub = (dr.sub_bills || []).length;
     head.innerHTML = `<span class="bg-caret">${open ? "▾" : "▸"}</span>
       <span class="pp-lab">${_ge(dr.no_draw ? "No draw yet" : "Invoice " + (dr.invoice_no || dr.label.split(" — ")[0]))}</span>
       <span class="pp-dt">${_ge(dr.ar_date ? fmtDate(dr.ar_date) : "")}</span>
       <span class="pp-billed">${dr.no_draw ? "" : "billed " + _ge(money(dr.billed))}</span>
       <span class="pp-gc ${dr.no_draw ? "" : dr.gc_paid ? "ok" : "due"}">${dr.no_draw ? "" : dr.gc_paid ? "GC paid" : "GC owes " + _ge(money(dr.ar_open))}</span>
-      <span class="ip-paid ${paidAll ? "ok" : "due"}">${dr.vendors_paid}/${dr.vendors_total} vendors paid · ${_ge(money(dr.paid_amt))} / ${_ge(money(dr.gate_amt))}${dr.unpaid_amt > 0.005 ? " · " + _ge(money(dr.unpaid_amt)) + " to pay" : ""}</span>
+      <span class="ip-paid ${paidAll ? "ok" : "due"}">materials ${dr.vendors_paid}/${dr.vendors_total} paid · ${_ge(money(dr.paid_amt))} / ${_ge(money(dr.gate_amt))}${dr.unpaid_amt > 0.005 ? " · " + _ge(money(dr.unpaid_amt)) + " to pay" : ""}</span>
+      ${nSub ? `<span class="ip-paid ${dr.subs_paid_ct === nSub ? "ok" : "due"}">labor ${dr.subs_paid_ct}/${nSub} paid · ${_ge(money(dr.subs_amt - dr.subs_unpaid_amt))} / ${_ge(money(dr.subs_amt))}${dr.subs_unpaid_amt > 0.005 ? " · " + _ge(money(dr.subs_unpaid_amt)) + " to pay" : ""}</span>` : (dr.no_draw ? "" : `<span class="pp-dt">no labor in period</span>`)}
       <span class="pp-stage">${_ge(dr.stage)}</span>`;
+    // draw-level select-all: every unpaid bill we pay on this draw (materials + labor)
+    const allCb = _ppCheck(_ppBillsOf(dr), "this draw", "Tick every unpaid bill on this draw (materials and labor)");
+    const allWrap = document.createElement("label"); allWrap.className = "pp-all"; allWrap.title = allCb.title; allWrap.onclick = (e) => e.stopPropagation();
+    allWrap.appendChild(allCb); allWrap.appendChild(document.createTextNode(" all unpaid")); head.insertBefore(allWrap, head.querySelector(".pp-stage"));
     head.onclick = () => { if (_pp.open.has(key)) _pp.open.delete(key); else _pp.open.add(key); _renderPpDraws(); };
     band.appendChild(head);
     if (open) {
-      const bills = dr.bills.filter(_ppBillShown).sort((a, b) => (a.vendor || "").localeCompare(b.vendor || "") || (a.bill_date || "").localeCompare(b.bill_date || ""));
-      if (!bills.length) { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = _pp.filter === "unpaid" ? "Every vendor on this draw is paid." : "No bills."; band.appendChild(p); }
+      const mat = dr.bills.filter(_ppBillShown), subs = (dr.sub_bills || []).filter(_ppBillShown);
+      if (!mat.length && !subs.length) { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = _pp.filter === "unpaid" ? "Every bill on this draw is paid." : "No bills."; band.appendChild(p); }
       else {
         const table = document.createElement("table"); table.className = "grid pp-bills"; const thead = document.createElement("thead"), tbody = document.createElement("tbody");
-        thead.innerHTML = "<tr><th class='left'>Pay</th><th class='left'>Vendor</th><th class='left'>Bill #</th><th class='left'>Date</th><th class='right'>Amount</th><th class='right'>Open</th><th class='left'>Status</th><th class='left'>Waiver received</th></tr>";
-        for (const b of bills) {
-          const tr = document.createElement("tr"); if (b.paid) tr.classList.add("inv-paid");
-          const pc = document.createElement("td"); pc.className = "left";
-          if (!b.paid && b.gates) { const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = !!b.pay_selected; cb.title = "Put this bill on the pay run (Pay Bills) - local intent, never QuickBooks";
-            cb.onchange = () => _ppSetPay([b], cb.checked); pc.appendChild(cb); }
-          else if (!b.gates) { const s = document.createElement("span"); s.className = "vg-tag"; s.textContent = "GC pays"; s.title = "Concrete pumping - paid by the GC directly"; pc.appendChild(s); }
-          tr.appendChild(pc);
-          tr.appendChild(leftText(b.vendor || "–"));
-          tr.appendChild(qboLinkCell(b.bill_ref || "–", qboBillHref(b.qbo_link), "Open this bill in QuickBooks"));
-          tr.appendChild(leftText(fmtDateShort(b.bill_date)));
-          const ac = document.createElement("td"); ac.className = "ip-amt"; ac.appendChild(moneyCell(b.amount)); tr.appendChild(ac);
-          const oc = document.createElement("td"); oc.className = "right ip-amt"; oc.textContent = num(b.open) > 0.005 ? money(b.open) : "–"; if (num(b.open) > 0.005) oc.style.color = "var(--neg)"; else oc.classList.add("dim"); tr.appendChild(oc);
-          const st = document.createElement("td"); st.className = "left"; const pill = document.createElement("span"); pill.className = b.paid ? "ar-paid" : "ar-open"; pill.textContent = b.pay_date ? "Paid " + fmtDateShort(b.pay_date) : (b.paid ? (b.pay_status || "Paid") + " (no date)" : (b.pay_status || "Open")); st.appendChild(pill); tr.appendChild(st);
-          { const wc = document.createElement("td"); wc.className = "left";
-            if (dr.no_draw) wc.textContent = "–";
-            else { const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = !!b.waiver; cb.title = "Tick when the vendor's unconditional waiver is in hand (your mark - the same one the Draws tab kept)";
-              cb.onchange = () => { setWaiver(dr, b, cb); b.waiver = cb.checked; }; wc.appendChild(cb); if (!b.waiver && !b.paid) { const s = document.createElement("span"); s.className = "inv-late"; s.textContent = " needed"; wc.appendChild(s); } }
-            tr.appendChild(wc); }
-          tbody.appendChild(tr);
-        }
+        thead.innerHTML = "<tr><th class='left'>Pay</th><th class='left'>Vendor</th><th class='left'>Bill #</th><th class='left'>Date</th><th class='left'>Memo</th><th class='right'>Amount</th><th class='right'>Open</th><th class='left'>Status</th><th class='left'>Waiver received</th></tr>";
+        if (mat.length) { const sr = document.createElement("tr"); sr.className = "pp-sect"; sr.innerHTML = `<td class="left" colspan="9">Materials · Bill Tracker</td>`; tbody.appendChild(sr); vendorGroups(tbody, dr, mat, false); }
+        if (subs.length) { const sr = document.createElement("tr"); sr.className = "pp-sect"; sr.innerHTML = `<td class="left" colspan="9">Labor (subs) · QuickBooks bills dated in the draw period · paid = a bill payment applied this year</td>`; tbody.appendChild(sr); vendorGroups(tbody, dr, subs, true); }
         table.appendChild(thead); table.appendChild(tbody); band.appendChild(table);
       }
     }
@@ -3565,13 +3601,13 @@ async function _ppSetPay(bills, selected) {
 }
 function _ppMarkBlockers() {
   const F = _pp.d.funding || {}, ids = new Set((F.blockers || []).map(b => b.bill_id).filter(Boolean));
-  const bills = []; for (const dr of _pp.d.draws) for (const b of dr.bills) if (ids.has(b.bill_id)) bills.push(b);
+  const bills = []; for (const dr of _pp.d.draws) for (const b of _ppBillsOf(dr)) if (ids.has(b.bill_id)) bills.push(b);
   if (!bills.length) { toast("No blockers to mark"); return; }
   _ppSetPay(bills, true);
 }
 function _ppExport() {
   const d = _pp.d, rows = [];
-  for (const dr of d.draws) for (const b of dr.bills) if (b.pay_selected) rows.push([dr.no_draw ? "No draw yet" : "Invoice " + (dr.invoice_no || ""), b.vendor, b.bill_ref, b.bill_date, num(b.amount), num(b.open), b.pay_date ? "Paid " + fmtDate(b.pay_date) : (b.pay_status || "Open"), b.waiver ? "received" : "needed"]);
+  for (const dr of d.draws) for (const b of _ppBillsOf(dr)) if (b.pay_selected) rows.push([dr.no_draw ? "No draw yet" : "Invoice " + (dr.invoice_no || ""), b.vendor, b.bill_ref, b.bill_date, num(b.amount), num(b.open), b.pay_date ? "Paid " + fmtDate(b.pay_date) : (b.pay_status || (b.paid ? "Paid" : "Open")), dr.sub_bills && dr.sub_bills.includes(b) ? "labor" : (b.waiver ? "received" : "needed")]);
   if (!rows.length) { toast("Nothing ticked to pay on this job yet - tick bills (or Mark blockers) first"); return; }
   if (!confirm(`Export ${rows.length} bill${rows.length === 1 ? "" : "s"} ticked to pay (${money(rows.reduce((s, r) => s + num(r[5]), 0))} open) as the pay-list report?\n\nThe list above the draws shows exactly what is ticked.`)) return;
   const body = { name: `Pay list ${_pp.pn}`, sheet: "Pay list", title: `${_pp.pn} - bills to pay to unlock the next draw`,

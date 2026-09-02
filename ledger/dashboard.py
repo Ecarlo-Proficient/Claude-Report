@@ -1469,11 +1469,50 @@ def _fetch_project_page(con, pn: str) -> dict:
     # draw order = invoice date, then recency; the "no draw yet" bucket last
     draws.sort(key=lambda d: (1 if d.get("no_draw") else 0, d.get("ar_date") or d.get("recency") or ""))
     pay = bill_marks.read_pay_marks()
+    # Subs (labor) per draw as BILLS, not just a total (owner 2026-09-02: "labor doesn't show on the
+    # project page"): QBO is_sub cost lines on the job inside the draw period, grouped per QBO bill,
+    # with paid = a BillPayment applied to that bill (bill_payment_line, this year's window) - the
+    # Bill Tracker never carries subs, so this is the only pay signal there is for them.
+    have = {r[1] for r in con.execute("PRAGMA table_info(cost_line)")}
+    doc = "doc_number" if "doc_number" in have else "NULL"
+    memo = "memo" if "memo" in have else "description"
+    sub_lines = [dict(r) for r in con.execute(
+        f"SELECT qbo_txn_id, txn_type, txn_date, vendor, {doc} doc_number, {memo} memo, description, amount, cost_code "
+        "FROM cost_line WHERE is_sub=1 AND project_no = ? ORDER BY txn_date, qbo_txn_id, qbo_line_id", (pn,))]
+    paid_by_bill: dict = {}
+    try:
+        for r in con.execute("SELECT l.bill_id, MAX(p.txn_date) d, SUM(l.amount) a FROM bill_payment_line l "
+                             "JOIN bill_payment p ON p.qbo_txn_id = l.payment_id GROUP BY l.bill_id"):
+            paid_by_bill[str(r["bill_id"])] = (r["d"], r["a"] or 0)
+    except sqlite3.OperationalError:
+        pass
     for d in draws:
         for b in d["bills"]:
             bid = bill_marks.bill_id_from_link(b.get("qbo_link"))
             b["bill_id"] = bid
             b["pay_selected"] = bool(bid and pay.get(bid))
+        p0, p1 = _draw_period_range(d.get("matched_invoice") or "")
+        subs: dict = {}
+        if p0 and p1:
+            for ln in sub_lines:
+                if not (p0 <= (ln["txn_date"] or "") <= p1):
+                    continue
+                sb = subs.get(ln["qbo_txn_id"])
+                if not sb:
+                    pd = paid_by_bill.get(str(ln["qbo_txn_id"]))
+                    sb = subs[ln["qbo_txn_id"]] = {"vendor": ln["vendor"], "bill_id": str(ln["qbo_txn_id"]), "txn_type": ln["txn_type"] or "Bill",
+                                                    "bill_ref": ln["doc_number"], "bill_date": ln["txn_date"], "memo": ln["memo"], "amount": 0.0,
+                                                    "paid": bool(pd), "pay_date": pd[0] if pd else None, "paid_amt": pd[1] if pd else 0,
+                                                    "pay_selected": bool(pay.get(str(ln["qbo_txn_id"]))), "codes": set(), "gates": True}
+                sb["amount"] += float(ln["amount"] or 0)
+                if ln["cost_code"]:
+                    sb["codes"].add(ln["cost_code"])
+        for sb in subs.values():
+            sb["amount"] = round(sb["amount"], 2); sb["open"] = 0.0 if sb["paid"] else sb["amount"]; sb["codes"] = sorted(sb["codes"])
+        d["sub_bills"] = sorted(subs.values(), key=lambda x: ((x["vendor"] or ""), x["bill_date"] or ""))
+        d["subs_paid_ct"] = sum(1 for x in d["sub_bills"] if x["paid"])
+        d["subs_amt"] = round(sum(x["amount"] for x in d["sub_bills"]), 2)
+        d["subs_unpaid_amt"] = round(sum(x["amount"] for x in d["sub_bills"] if not x["paid"]), 2)
         gate = [b for b in d["bills"] if b["gates"]]
         d["vendors_total"] = len(gate)
         for b in d["bills"]:

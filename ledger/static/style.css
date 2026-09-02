@@ -1356,3 +1356,8 @@ table.pp-bills { margin: 0 0 6px; }
 .pp-sel-h { font-weight: 700; margin-bottom: 4px; }
 .pp-sel-v { padding: 2px 0; }
 #btnPayRunGo.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); font-weight: 600; }
+
+.pp-all { display: inline-flex; align-items: center; gap: 4px; font-size: .9em; color: var(--text-dim); }
+tr.pp-sect > td { background: var(--surface-2); font-weight: 700; color: var(--text-dim); font-size: .88em; text-transform: none; }
+tr.pp-vendor > td { background: color-mix(in srgb, var(--surface-2) 60%, var(--surface)); }
+.pp-grp-cb { cursor: pointer; }

@@ -4,6 +4,17 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Project page: labor per draw, vendor sub-groups, group + draw select-all (owner 2026-09-02:
+  "labor doesn't show on the project page ... subgroup by vendor and add a check next to the pay and
+  name so that i can select all in that group or select all unpaid bills for that draw").** Each draw
+  band now carries a **Labor (subs)** section: the QBO is_sub bills dated in the draw period, grouped
+  per QBO bill, with **paid = a QBO BillPayment applied to that bill** (`bill_payment_line`, this
+  year's window - the Bill Tracker never carries subs, so that is the only pay signal; unpaid reads
+  "No payment on file"). Materials and labor are each grouped by vendor with a **group checkbox**
+  (ticks every unpaid bill of that vendor onto the pay run; indeterminate when partly ticked) and the
+  band header has an **"all unpaid"** checkbox for the whole draw. Sub bills key the pay run by their
+  QBO bill id, the same key the Bill Tracker bills use. Band headers show materials x/y and labor x/y
+  paid with $paid / $total; the Selected-to-pay box and the pay-list export include labor.
 - **Nav fold (owner 2026-09-02: "go ahead and fold draws, pay bills and liens into it"; "2-3 columns
   to save vertical space"; "show me what has been selected at a glance before exporting").**
   - **Draws -> Funding.** The Customer sub-tab is now *Funding by project*: one row per job with the
