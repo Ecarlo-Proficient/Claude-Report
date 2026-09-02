@@ -118,6 +118,19 @@ def build(spec: dict, dest_dir: Path) -> Path:
         cell = ws.cell(row=r, column=j + 1, value=round(grand[j], 2)); cell.number_format = _MONEY; cell.font = Font(bold=True)
     for j in range(1, len(cols) + 1):
         ws.cell(row=r, column=j).border = Border(top=Side(style="medium"))
+    # footer lines under the total, e.g. "Unlocks <invoice> · Draw #n  $X" / "Net = ...": label sits in the
+    # column before the first money column, the value in that money column (owner's own layout, 2026-09-02)
+    first_money = (min(money_cols) if money_cols else len(cols) - 1)
+    for f in (spec.get("footer") or []):
+        r += 1
+        lab = ws.cell(row=r, column=max(1, first_money), value=str(f.get("label") or ""))
+        val = ws.cell(row=r, column=first_money + 1, value=_num(f.get("value")))
+        val.number_format = _MONEY
+        cls = f.get("cls")
+        if cls in _FILLS:
+            lab.fill = _FILLS[cls]; val.fill = _FILLS[cls]; lab.font = Font(bold=True, color=_FONTS[cls].color); val.font = Font(bold=True, color=_FONTS[cls].color)
+        else:
+            lab.font = Font(bold=True); val.font = Font(bold=True)
     # widths from content, autofilter on the header block
     for j, c in enumerate(cols, start=1):
         longest = max([len(str(c.get("label") or ""))] + [len(str(rw[j - 1])) for rw in rows if j - 1 < len(rw) and rw[j - 1] is not None][:400])
@@ -134,13 +147,15 @@ def _selftest() -> None:
     spec = {"name": "selftest bills", "title": "Bill Tracker - CP800 to 07/25/2026", "subtitle": "44 bills",
             "columns": [{"label": "Vendor"}, {"label": "Bill #"}, {"label": "Amount", "type": "money"}, {"label": "Open", "type": "money"}, {"label": "Paid"}],
             "rows": [["VENDOR A", "1001", 100.5, 0, "Paid 08/01/2026"], ["VENDOR A", "1002", 50, 50, "Open"], ["VENDOR B", "77", 20, 20, "Open"]],
-            "group_by": 0, "fmt": [{"r": 0, "c": 4, "cls": "pos"}, {"r": 1, "c": 3, "cls": "neg"}, {"r": 2, "c": 3, "cls": "neg"}]}
+            "group_by": 0, "fmt": [{"r": 0, "c": 4, "cls": "pos"}, {"r": 1, "c": 3, "cls": "neg"}, {"r": 2, "c": 3, "cls": "neg"}],
+            "footer": [{"label": "Unlocks 34511 · Draw #3", "value": 383563}, {"label": "Net = unlock - to pay", "value": 383563 - 70, "cls": "pos"}]}
     with tempfile.TemporaryDirectory() as d:
         p = build(spec, Path(d))
         from openpyxl import load_workbook
         ws = load_workbook(p).active
         assert ws["A4"].value == "Vendor" and ws["A5"].value.startswith("VENDOR A") and ws["C5"].value == 150.5
         assert ws["A8"].value.startswith("VENDOR B") and ws["A10"].value == "TOTAL" and ws["D10"].value == 70
+        assert ws["B11"].value.startswith("Unlocks") and ws["C11"].value == 383563 and ws["B12"].value.startswith("Net") and ws["C12"].value == 383493
         assert ws.freeze_panes == "A5" and xlsx_verify.verify_xlsx(p) == []
     print("table_export selftest OK - bands + subtotals + total, money formats, state fills, clean xlsx")
 

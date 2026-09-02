@@ -1517,6 +1517,8 @@ def _fetch_project_page(con, pn: str) -> dict:
         d["vendors_total"] = len(gate)
         for b in d["bills"]:
             b["paid"] = _bill_paid(b)
+        m = re.search(r"draw\s*#?\s*(\d+)", d.get("label") or d.get("matched_invoice") or "", re.I)
+        d["draw_no"] = int(m.group(1)) if m else None   # "Draw #4" from the invoice memo (owner 2026-09-02: "add Draw #")
         d["vendors_paid"] = sum(1 for b in gate if b["paid"])
         d["paid_amt"] = round(sum((b["amount"] or 0) for b in gate if b["paid"]), 2)
         d["gate_amt"] = round(sum((b["amount"] or 0) for b in gate), 2)
@@ -1538,7 +1540,7 @@ def _fetch_project_page(con, pn: str) -> dict:
                     blockers.append({"draw": d.get("label"), "invoice_no": d.get("invoice_no"), "vendor": b["vendor"], "bill_ref": b["bill_ref"],
                                      "open": b["open"], "bill_id": b["bill_id"], "pay_selected": b["pay_selected"], "waiver": b["waiver"]})
                     blk_total += b["open"] or 0
-    funding = {"next_draw": ({"label": nxt.get("label"), "invoice_no": nxt.get("invoice_no"), "ar_open": nxt.get("ar_open"),
+    funding = {"next_draw": ({"label": nxt.get("label"), "invoice_no": nxt.get("invoice_no"), "ar_open": nxt.get("ar_open"), "draw_no": nxt.get("draw_no"),
                               "billed": nxt.get("billed"), "ar_date": nxt.get("ar_date"), "stage": nxt.get("stage")} if nxt else None),
                "blockers": blockers, "blockers_total": round(blk_total, 2),
                "own_unpaid": (round(nxt["unpaid_amt"], 2) if nxt else 0.0)}

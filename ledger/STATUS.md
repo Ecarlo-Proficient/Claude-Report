@@ -4,6 +4,12 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Pay list: Draw # and the Unlocks / Net footer (owner 2026-09-02, from his own edit of the export).**
+  Each draw carries `draw_no` parsed from the invoice memo ("Draw #4"); the project page bands and
+  the funding box show it ("Invoice 34511 · Draw #3"), and the pay-list export's Draw column reads
+  "Invoice 34431 · Draw #2". `table_export` gained optional **footer rows** under TOTAL (label in the
+  column before the first money column): the pay list ends with "Unlocks <invoice> · Draw #n  $X"
+  and "Net = unlock - to pay  $Y" (green when positive, red when the bills exceed the draw).
 - **One band layout everywhere + the sync pill (owner 2026-09-02: "ALL headers like this should be
   changed"; "the syncs and the timestamp of the last sync on top always, and a button to run it").**
   `bandMetrics(cell, [[value, label, cls]...])` is now the ONE way a grouped band shows its figures:

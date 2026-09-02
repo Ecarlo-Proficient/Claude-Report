@@ -1384,3 +1384,4 @@ tr.pp-vendor > td { background: color-mix(in srgb, var(--surface-2) 60%, var(--s
 .sync-pill .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-dim); }
 .sync-pill.ok .dot { background: var(--pos); } .sync-pill.stale .dot { background: #d9931f; } .sync-pill.busy .dot { background: var(--accent); animation: skel 1s linear infinite; }
 .sync-pill.stale { border-color: color-mix(in srgb, #d9931f 55%, var(--border)); }
+.pp-drawno { display: block; font-size: .78em; color: var(--text-dim); font-weight: 500; }
