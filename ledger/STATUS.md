@@ -4,6 +4,18 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **One band layout everywhere + the sync pill (owner 2026-09-02: "ALL headers like this should be
+  changed"; "the syncs and the timestamp of the last sync on top always, and a button to run it").**
+  `bandMetrics(cell, [[value, label, cls]...])` is now the ONE way a grouped band shows its figures:
+  name on the left, fixed metric columns on the right, each a value with its label under it, so bands
+  line up down the page and no number is unlabeled. Converted: Bills vendor/group bands (open · bills
+  · paid · lien risk), Invoices client bands (invoices · open · billed · avg days to pay) and project
+  sub-bands, Invoices aging bands, Payments period bands, Vendor Center type bands, WIP division bands
+  (jobs · contract · costs · billed · underbilled), the vendor page groups, the invoice page vendor and
+  sub bands, the project page vendor rows. Nav strip: a **sync pill** always on screen - "Synced
+  mm/dd/yyyy h:mm · N stale" (green when every feed is within 48 business hours, amber otherwise,
+  "Syncing…" while a run is in flight; hover lists every feed; click jumps to Data freshness) - plus a
+  **Resync** button that runs the same loaders-only reload as the Overview button.
 - **Project page draws: three levels, collapsed by default, aligned columns, newest first (owner
   2026-09-02).** Level 1 = the draw bands (a grid row under one header: Draw · Invoiced · Billed · GC
   · Materials $ + x/y paid · Labor $ + x/y paid · Pay run tick · Stage); level 2 = open a draw ->

@@ -693,6 +693,15 @@ tr.bill-group .bg-sub { color: var(--text-dim); font-weight: 500; font-size: .85
    size/weight (owner 2026-08-18) so the amount reads at a glance - anchored by the name on
    the left so it's always visible, never scrolled off the right of this wide table. */
 tr.bill-group .bg-cell { display: flex; align-items: baseline; gap: 12px; }
+/* the shared band grid (bandMetrics): name left, fixed metric columns right, value over label */
+.bg-cell.bg-grid { display: grid; grid-template-columns: minmax(200px, 1fr) repeat(var(--nm, 0), minmax(110px, 150px)); align-items: center; gap: 0 12px; }
+.bg-cell.bg-grid .bg-left, .bg-cell.bg-grid .bg-key, .bg-cell.bg-grid .sg-key, .bg-cell.bg-grid .g-cust { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bg-m { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.15; font-weight: 400; }
+.bg-m b { font-variant-numeric: tabular-nums; font-weight: 700; font-size: .98em; letter-spacing: -.01em; }
+.bg-m small { color: var(--text-dim); font-size: .74em; font-weight: 500; letter-spacing: 0; }
+.bg-m.neg b { color: var(--neg); } .bg-m.pos b, .bg-m.ok b { color: var(--pos); } .bg-m.due b { color: var(--neg); }
+tr.bill-group .bg-cell.bg-grid, tr.bill-subgroup .bg-cell.bg-grid, tr.inv-client .bg-cell.bg-grid { display: grid; }
+tr.inv-client .g-cust { font-weight: 800; }
 tr.bill-group .bg-amt { font-weight: 800; font-size: .95em; letter-spacing: -.01em; color: var(--text);
   font-variant-numeric: tabular-nums; white-space: nowrap; }
 
@@ -1369,3 +1378,9 @@ table.pp-bills { margin: 0 0 6px; }
 tr.pp-sect > td { background: var(--surface-2); font-weight: 700; color: var(--text-dim); font-size: .88em; text-transform: none; }
 tr.pp-vendor > td { background: color-mix(in srgb, var(--surface-2) 60%, var(--surface)); }
 .pp-grp-cb { cursor: pointer; }
+
+/* the sync pill in the nav strip (2026-09-02: "the syncs and the timestamp on top always") */
+.sync-pill { display: inline-flex; align-items: center; gap: 7px; padding: 4px 11px; border-radius: 999px; border: 1px solid var(--border); font-size: .88em; cursor: pointer; white-space: nowrap; color: var(--text); }
+.sync-pill .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-dim); }
+.sync-pill.ok .dot { background: var(--pos); } .sync-pill.stale .dot { background: #d9931f; } .sync-pill.busy .dot { background: var(--accent); animation: skel 1s linear infinite; }
+.sync-pill.stale { border-color: color-mix(in srgb, #d9931f 55%, var(--border)); }

@@ -684,7 +684,22 @@ function businessHoursSince(thenMs, nowMs) {
 }
 const STALE_BUSINESS_H = 48;                       // > 2 business days → recommend a sync
 
+function renderSyncPill() {
+  const pill = $("#syncPill"), txt = $("#syncPillText"); if (!pill || !txt) return;
+  const fr = meta.freshness || { ledger: {}, sources: {} }, S = fr.sources || {}, L = fr.ledger || {};
+  const feeds = [["AP bills", S["sync-ap"]], ["AR", S["sync-ar"]], ["WIP master", S["WIP master"]], ["Costs", L["Costs (QBO)"]], ["Invoices", L["AR (invoices)"]],
+                 ["Payments", L["Payments"]], ["Customers", L["CRM (customers)"]], ["Sub LOC", L["Sub LOC"]], ["Health", L["Health (QBO)"]]];
+  let newest = null, stale = [];
+  for (const [n, w] of feeds) { if (!w) { stale.push(n + " never"); continue; } const t = Date.parse(w.length <= 16 ? w + ":00" : w); if (isNaN(t)) continue;
+    if (!newest || t > newest) newest = t; if (businessHoursSince(t, Date.now()) > STALE_BUSINESS_H) stale.push(`${n} ${timeAgo(w)}`); }
+  if (typeof syncing !== "undefined" && syncing) { pill.className = "sync-pill busy"; txt.textContent = "Syncing…"; pill.title = "A sync is running - see the progress on Overview"; return; }
+  pill.className = "sync-pill " + (stale.length ? "stale" : "ok");
+  txt.textContent = newest ? `Synced ${fmtDate(new Date(newest - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 19), true)}` : "Not synced";
+  if (stale.length) txt.textContent += ` · ${stale.length} stale`;
+  pill.title = feeds.map(([n, w]) => `${n}: ${w ? fmtDate(w, true) + " (" + timeAgo(w) + ")" : "never"}`).join("\n") + (stale.length ? "\n\nStale (over 48 business hours): " + stale.join(", ") : "\n\nEvery feed is within 48 business hours");
+}
 function renderHome() {
+  renderSyncPill();
   // ── data freshness ──
   const fr = meta.freshness || { ledger: {}, sources: {} };
   // Every feed _freshness() computes - the three source files and each ledger load - so AR, payments,
@@ -1696,9 +1711,9 @@ function renderVendors() {
       const gtd = document.createElement("td"); gtd.colSpan = cols.length;
       const caret = document.createElement("span"); caret.className = "bg-caret"; caret.textContent = expanded ? "▾ " : "▸ ";
       const gs = document.createElement("span"); gs.className = "g-cust"; gs.textContent = t;
-      const gsub = document.createElement("span"); gsub.className = "g-sub";
-      gsub.textContent = ` · ${gv.length} vendor${gv.length > 1 ? "s" : ""} · ${money(gopen)} open`;
-      gtd.appendChild(caret); gtd.appendChild(gs); gtd.appendChild(gsub); gtr.appendChild(gtd);
+      const cell = document.createElement("div"); cell.className = "bg-cell"; const left = document.createElement("span"); left.className = "bg-left"; left.appendChild(caret); left.appendChild(gs); cell.appendChild(left);
+      bandMetrics(cell, [[gv.length, "vendors"], [money(gopen), "open"]]);
+      gtd.appendChild(cell); gtr.appendChild(gtd);
       gtr.onclick = () => { if (vendorTypeExpanded.has(t)) vendorTypeExpanded.delete(t); else vendorTypeExpanded.add(t); renderVendors(); };
       tbody.appendChild(gtr);
       if (expanded) for (const v of gv.slice(0, 300)) tbody.appendChild(vendorRow(v));
@@ -1710,6 +1725,21 @@ function renderVendors() {
   _updateVendorExpandBtn();
 }
 function leftText(v) { const td = document.createElement("td"); td.className = "left"; const s = document.createElement("span"); s.textContent = v; td.appendChild(s); return td; }
+// Every grouped band (Bills vendors, Invoices clients, Payments periods, WIP divisions, the invoice
+// and project pages' vendors...) lays its figures out the SAME way: the name on the left, then fixed
+// metric columns, each a value with its label under it - so bands line up down the page and every
+// number says what it is (owner 2026-09-02: "a column I can rely on ... ALL headers like this").
+function bandMetrics(cell, metrics) {
+  const ms = (metrics || []).filter(Boolean);
+  cell.classList.add("bg-grid"); cell.style.setProperty("--nm", String(ms.length));
+  for (const [v, label, cls] of ms) {
+    const m = document.createElement("span"); m.className = "bg-m" + (cls ? " " + cls : "");
+    const b = document.createElement("b"); b.textContent = v == null ? "–" : String(v);
+    const s = document.createElement("small"); s.textContent = label || "";
+    m.appendChild(b); m.appendChild(s); cell.appendChild(m);
+  }
+  return cell;
+}
 
 // ── Bill Tracker (the full ap_bill_line) ──────────────────────────────────────
 // An Excel-dense table you scroll like the workbook. Default: open bills, grouped
@@ -2149,9 +2179,9 @@ function renderBills() {
       left.appendChild(caret); left.appendChild(key);
       // Open $ + bill count at the SAME size/weight as the vendor (owner 2026-08-18) so the
       // amount is scannable down the collapsed list; right-aligned in the row.
-      const amt = document.createElement("span"); amt.className = "bg-amt";
-      amt.textContent = `${money(gOpen)} open · ${g.length} bill${g.length > 1 ? "s" : ""}`;
-      cell.appendChild(left); cell.appendChild(amt); gtd.appendChild(cell); gtr.appendChild(gtd);
+      cell.appendChild(left);
+      bandMetrics(cell, [[money(gOpen), "open", gOpen > 0.005 ? "neg" : ""], [g.length, "bills"], [g.filter(b => b.pay_date).length, "paid"], [g.filter(b => BILL_LIEN_RISK.has(b.lien_status)).length || "–", "lien risk"]]);
+      gtd.appendChild(cell); gtr.appendChild(gtd);
       gtr.onclick = () => { if (billsCollapsed.has(k)) billsCollapsed.delete(k); else billsCollapsed.add(k); renderBills(); };
       tbody.appendChild(gtr);
       if (!collapsed) for (const b of g) if (!pushRow(b)) break outer;
@@ -2665,8 +2695,9 @@ function renderPayList() {
     const gtd = document.createElement("td"); gtd.colSpan = cols.length;
     const cell = document.createElement("div"); cell.className = "bg-cell";
     const key = document.createElement("span"); key.className = "bg-key"; key.textContent = v;
-    const amt = document.createElement("span"); amt.className = "bg-amt"; amt.textContent = `${list.length} bill${list.length !== 1 ? "s" : ""} · ${money(sub)}`;
-    cell.appendChild(key); cell.appendChild(amt); gtd.appendChild(cell); gtr.appendChild(gtd); tbody.appendChild(gtr);
+    cell.appendChild(key);
+    bandMetrics(cell, [[list.length, "bills"], [money(sub), "total"]]);
+    gtd.appendChild(cell); gtr.appendChild(gtd); tbody.appendChild(gtr);
     for (const b of list) {
       const tr = document.createElement("tr"); tr.className = "pay-row";
       const cV = document.createElement("td"); cV.className = "left"; cV.textContent = b.vendor || "–"; tr.appendChild(cV);
@@ -3163,12 +3194,11 @@ function renderInvAmounts(all, f) {
     const htd = document.createElement("td"); htd.colSpan = cols.length;
     const caret = document.createElement("span"); caret.className = "bg-caret"; caret.textContent = expanded ? "▾ " : "▸ ";
     const nm = document.createElement("span"); nm.className = "g-cust"; nm.textContent = g.client;
-    const sub = document.createElement("span"); sub.className = "g-sub";
     const ad = invClientAvgDays(g.client);
-    const bits = [`${g.rows.length} invoice${g.rows.length === 1 ? "" : "s"}`, `${money(g.open)} open`];
-    if (ad != null) bits.push(`avg pays in ${ad}d`);
-    sub.textContent = " · " + bits.join(" · ");
-    htd.appendChild(caret); htd.appendChild(nm); htd.appendChild(sub); hr.appendChild(htd);
+    const sub = document.createElement("span"); sub.className = "g-sub"; sub.hidden = true;   // (the metrics grid replaced the text run)
+    const cellG = document.createElement("div"); cellG.className = "bg-cell"; const leftG = document.createElement("span"); leftG.className = "bg-left"; leftG.appendChild(caret); leftG.appendChild(nm); cellG.appendChild(leftG);
+    bandMetrics(cellG, [[g.rows.length, "invoices"], [money(g.open), "open", g.open > 0.005 ? "neg" : ""], [money(g.billed), "billed"], [ad != null ? ad + "d" : "–", "avg days to pay"]]);
+    htd.appendChild(cellG); hr.appendChild(htd);
     hr.onclick = () => { if (invExpanded.has(g.client)) invExpanded.delete(g.client); else invExpanded.add(g.client); renderOpenInvoices(); };
     tbody.appendChild(hr);
     if (!expanded) continue;   // collapsed: skip the invoice rows
@@ -3301,9 +3331,9 @@ function renderOpenInvoices() {
     const caret = document.createElement("span"); caret.className = "bg-caret"; caret.textContent = collapsed ? "▸" : "▾";
     const key = document.createElement("span"); key.className = "bg-key"; key.textContent = k;
     left.appendChild(caret); left.appendChild(key);
-    const amt = document.createElement("span"); amt.className = "bg-amt";
-    amt.textContent = `${money(gOpen)} open · ${g.length} invoice${g.length > 1 ? "s" : ""}`;
-    cell.appendChild(left); cell.appendChild(amt); gtd.appendChild(cell); gtr.appendChild(gtd);
+    cell.appendChild(left);
+    bandMetrics(cell, [[money(gOpen), "open", gOpen > 0.005 ? "neg" : ""], [g.length, "invoices"]]);
+    gtd.appendChild(cell); gtr.appendChild(gtd);
     gtr.onclick = () => { if (invExpanded.has(k)) invExpanded.delete(k); else invExpanded.add(k); renderOpenInvoices(); };
     tbody.appendChild(gtr);
     for (const i of g) grand[i.bucket_index] += oiBal(i);   // grand total counts every invoice, even collapsed
@@ -3571,8 +3601,9 @@ function _renderPpDraws() {
       const vt = document.createElement("td"); vt.className = "left"; vt.colSpan = 8;
       const cell = document.createElement("div"); cell.className = "bg-cell"; const caret = document.createElement("span"); caret.className = "bg-caret"; caret.textContent = vopen ? "▾ " : "▸ ";
       const k = document.createElement("span"); k.className = "sg-key"; k.textContent = v;
-      const am = document.createElement("span"); am.className = "bg-amt ip-paid " + (paidCt === list.length ? "ok" : "due"); am.textContent = `${money(tot)} · ${list.length} bill${list.length === 1 ? "" : "s"} · ${paidCt}/${list.length} paid` + (owed > 0.005 ? ` · ${money(owed)} to pay` : "");
-      cell.appendChild(caret); cell.appendChild(k); cell.appendChild(am); vt.appendChild(cell); gtr.appendChild(vt);
+      const leftP = document.createElement("span"); leftP.className = "bg-left"; leftP.appendChild(caret); leftP.appendChild(k); cell.appendChild(leftP);
+      bandMetrics(cell, [[money(tot), "total"], [list.length, "bills"], [`${paidCt}/${list.length}`, "paid", paidCt === list.length ? "ok" : "due"], [owed > 0.005 ? money(owed) : "–", "to pay", owed > 0.005 ? "neg" : ""]]);
+      vt.appendChild(cell); gtr.appendChild(vt);
       gtr.onclick = (e) => { if (e.target.closest("input")) return; if (_pp.openV.has("*")) { _pp.openV = new Set(); for (const d2 of _pp.d.draws) for (const s2 of ["materials", "labor"]) for (const b2 of (s2 === "labor" ? (d2.sub_bills || []) : d2.bills)) _pp.openV.add(`${d2.matched_invoice}|${s2}|${b2.vendor || "?"}`); }
         if (_pp.openV.has(vkey)) _pp.openV.delete(vkey); else _pp.openV.add(vkey); _renderPpDraws(); };
       tbody.appendChild(gtr);
@@ -3692,9 +3723,9 @@ function _renderIpBills() {
       const cell = document.createElement("div"); cell.className = "bg-cell";
       const caret = document.createElement("span"); caret.className = "bg-caret"; caret.textContent = open ? "▾ " : "▸ ";
       const k = document.createElement("span"); k.className = "bg-key"; k.textContent = v.vendor;
-      const amtS = document.createElement("span"); amtS.className = "bg-amt ip-paid " + (paidCt === v.bills.length ? "ok" : "due");
-      amtS.textContent = `${paidCt}/${v.bills.length} paid · ${money(paidAmt)} / ${money(tot)}` + (opn > 0.005 ? ` · ${money(opn)} still owed` : "");
-      cell.appendChild(caret); cell.appendChild(k); cell.appendChild(amtS); gtd.appendChild(cell); gtr.appendChild(gtd);
+      const leftV = document.createElement("span"); leftV.className = "bg-left"; leftV.appendChild(caret); leftV.appendChild(k); cell.appendChild(leftV);
+      bandMetrics(cell, [[`${paidCt}/${v.bills.length}`, "paid", paidCt === v.bills.length ? "ok" : "due"], [money(paidAmt), "paid $"], [money(tot), "total"], [opn > 0.005 ? money(opn) : "–", "still owed", opn > 0.005 ? "neg" : ""]]);
+      gtd.appendChild(cell); gtr.appendChild(gtd);
       gtr.onclick = () => { if (_ip.open.has(key)) _ip.open.delete(key); else _ip.open.add(key); _renderIpBills(); };
       tbody.appendChild(gtr);
       if (!open) continue;
@@ -3724,8 +3755,10 @@ function _renderIpBills() {
       const key = "s:" + v.vendor, open = _ip.open.has(key);
       const gtr = document.createElement("tr"); gtr.className = "bill-group"; gtr.style.cursor = "pointer"; const gtd = document.createElement("td"); gtd.colSpan = 6;
       const cell = document.createElement("div"); cell.className = "bg-cell"; const caret = document.createElement("span"); caret.className = "bg-caret"; caret.textContent = open ? "▾ " : "▸ ";
-      const k = document.createElement("span"); k.className = "bg-key"; k.textContent = v.vendor; const am = document.createElement("span"); am.className = "bg-amt"; am.textContent = `${v.lines.length} line${v.lines.length === 1 ? "" : "s"} · ${money(v.total)}`;
-      cell.appendChild(caret); cell.appendChild(k); cell.appendChild(am); gtd.appendChild(cell); gtr.appendChild(gtd);
+      const k = document.createElement("span"); k.className = "bg-key"; k.textContent = v.vendor;
+      const leftS = document.createElement("span"); leftS.className = "bg-left"; leftS.appendChild(caret); leftS.appendChild(k); cell.appendChild(leftS);
+      bandMetrics(cell, [[v.lines.length, "lines"], [money(v.total), "total"]]);
+      gtd.appendChild(cell); gtr.appendChild(gtd);
       gtr.onclick = () => { if (_ip.open.has(key)) _ip.open.delete(key); else _ip.open.add(key); _renderIpBills(); };
       tbody.appendChild(gtr);
       if (!open) continue;
@@ -4028,8 +4061,9 @@ function invSubBand(proj, name, open, count, colspan) {
   const td = document.createElement("td"); td.colSpan = colspan;
   const cell = document.createElement("div"); cell.className = "bg-cell";
   const key = document.createElement("span"); key.className = "sg-key"; key.textContent = proj + (name ? " · " + name : "");
-  const amt = document.createElement("span"); amt.className = "bg-amt"; amt.textContent = `${money(open)} · ${count} inv`;
-  cell.appendChild(key); cell.appendChild(amt); td.appendChild(cell); tr.appendChild(td);
+  cell.appendChild(key);
+  bandMetrics(cell, [[money(open), "open", open > 0.005 ? "neg" : ""], [count, "invoices"]]);
+  td.appendChild(cell); tr.appendChild(td);
   return tr;
 }
 function invSubGroupToggle() { invSubGroup = !invSubGroup; const b = $("#ifSubGroup"); if (b) b.textContent = invSubGroup ? "Flatten" : "Group by project"; renderOpenInvoices(); }
@@ -4205,9 +4239,9 @@ function renderCustomers() {
     const gtd = document.createElement("td"); gtd.colSpan = NCOL;
     const cell = document.createElement("div"); cell.className = "bg-cell";
     const key = document.createElement("span"); key.className = "bg-key"; key.textContent = div;
-    const amt = document.createElement("span"); amt.className = "bg-amt";
-    amt.textContent = `${money(divOpen(div))} open · ${rows.length} client${rows.length === 1 ? "" : "s"}`;
-    cell.appendChild(key); cell.appendChild(amt); gtd.appendChild(cell); gtr.appendChild(gtd); tb.appendChild(gtr);
+    cell.appendChild(key);
+    bandMetrics(cell, [[money(divOpen(div)), "open", "neg"], [rows.length, "clients"]]);
+    gtd.appendChild(cell); gtr.appendChild(gtd); tb.appendChild(gtr);
     for (const r of rows) {
       const tr = document.createElement("tr"); tr.style.cursor = "pointer"; tr.title = "See this client's open invoices";
       tr.onclick = () => { invMSel.ifClient = new Set([r.client]); invMSel.ifProj = new Set(); _invMSelSig = null;   // filter Invoices to this client (msel)
@@ -4333,8 +4367,9 @@ function renderPayments() {
         const caret = document.createElement("span"); caret.className = "bg-caret"; caret.textContent = pExp ? "▾" : "▸";
         const key = document.createElement("span"); key.className = "bg-key"; key.textContent = per.label;
         left.appendChild(caret); left.appendChild(key);
-        const amt = document.createElement("span"); amt.className = "bg-amt"; amt.textContent = `${money(perTot[per.key])} · ${perN[per.key]} payment${perN[per.key] === 1 ? "" : "s"}`;
-        cell.appendChild(left); cell.appendChild(amt); gtd.appendChild(cell); gtr.appendChild(gtd); tb.appendChild(gtr);
+        cell.appendChild(left);
+        bandMetrics(cell, [[money(perTot[per.key]), "received", "pos"], [perN[per.key], "payments"]]);
+        gtd.appendChild(cell); gtr.appendChild(gtd); tb.appendChild(gtr);
         gtr.onclick = () => { if (paymentsPeriodsExpanded.has(per.key)) paymentsPeriodsExpanded.delete(per.key); else paymentsPeriodsExpanded.add(per.key); renderPayments(); };
       }
       if (!paymentsPeriodsExpanded.has(per.key)) continue;   // collapsed band → skip its payment rows
@@ -5098,8 +5133,10 @@ function renderWip() {
     const gtd = document.createElement("td"); gtd.colSpan = WIP_COLS.length;
     const cell = document.createElement("div"); cell.className = "bg-cell";
     const key = document.createElement("span"); key.className = "bg-key"; key.textContent = div;
-    const amt = document.createElement("span"); amt.className = "bg-amt"; amt.textContent = `${list.length} job${list.length === 1 ? "" : "s"} · ${money(list.reduce((t, r) => t + num(r.total_contract_price), 0))} contract`;
-    cell.appendChild(key); cell.appendChild(amt); gtd.appendChild(cell); gtr.appendChild(gtd); tbody.appendChild(gtr);
+    cell.appendChild(key);
+    const sumOf = k2 => list.reduce((t2, r) => t2 + num(r[k2]), 0);
+    bandMetrics(cell, [[list.length, "jobs"], [money(sumOf("total_contract_price")), "contract"], [money(sumOf("costs_to_date")), "costs to date"], [money(sumOf("billed_to_date")), "billed"], [money(sumOf("underbillings")), "underbilled", sumOf("underbillings") > 0 ? "neg" : ""]]);
+    gtd.appendChild(cell); gtr.appendChild(gtd); tbody.appendChild(gtr);
     for (const r of list) {
       const tr = document.createElement("tr"); tr.style.cursor = "pointer"; tr.title = "Open this project";
       tr.onclick = (e) => { if (e.target.closest(".cell")) return; openDetail(r); };
@@ -7439,6 +7476,9 @@ function init() {
   $("#btnExport").onclick = exportCSV;
   $("#btnRefresh").onclick = manualRefresh;
   { const el = $("#btnResync"); if (el) el.onclick = startResync; }
+  { const el = $("#btnResyncTop"); if (el) el.onclick = startResync; }   // the same reload, from the strip that is always on screen
+  { const p = $("#syncPill"); if (p) p.onclick = () => { setTab("overview"); const w = $("#homeFresh"); if (w) w.scrollIntoView({ behavior: "smooth", block: "center" }); }; }
+  setInterval(renderSyncPill, 5000);   // reflects "Syncing…" while a run is in flight and the age as time passes
   // Bills: the secondary filters live behind "More filters" (owner 2026-09-01: "10 dropdowns + 8 pills
   // above the fold"); remembered per person, and forced open while one of them is active.
   { const btn = $("#bfMoreBtn"), more = $("#bfMore");
