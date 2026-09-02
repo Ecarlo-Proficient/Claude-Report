@@ -60,7 +60,7 @@ function deriveMetrics(r) {
 // ── Settings ──────────────────────────────────────────────────────────────
 const LS_KEY = "proficient-ledger-settings-v1";
 const DEFAULTS = {
-  theme: "auto", accent: "#3E7A5C", font: "system", fontSize: 15,   // 15px base (owner 2026-09-01: older Excel readers)
+  theme: "light", accent: "#3E7A5C", font: "system", fontSize: 15,   // light by default (owner 2026-09-02); a saved choice still wins   // 15px base (owner 2026-09-01: older Excel readers)
   density: "comfortable", width: "medium",
   widgets: { kpis: true, attention: true, ap: true, costs: true, margins: true, divisions: true, projects: true },
   columns: COLUMNS.filter(c => c.always || c.def).map(c => c.key),
@@ -1266,7 +1266,7 @@ function renderCosts() {
   const groups = COST.by_cost_type || [];
   const total = COST.loaded_total || groups.reduce((t, g) => t + (g.actual || 0), 0);
   $("#costCount").textContent = total
-    ? `($${Math.round(total).toLocaleString()} · where the money goes)`
+    ? `($${Math.round(total).toLocaleString()} loaded from QuickBooks${loadedAt("Costs (QBO)") ? " " + fmtDate(loadedAt("Costs (QBO)"), true) : ""} · where the money goes)`
     : "(no cost data — run load_costs.py)";
   renderCostMix(groups, total);
   const cols = [["Cost type  ▸  job type", "left"], ["Code", "left"], ["Actual", "right"], ["% of total", "right"], ["Lines", "right"]];
@@ -1973,7 +1973,8 @@ function renderBills() {
   // one never hides a missing value by being merged with the others.
   const group = $("#billGroup") ? $("#billGroup").value : "vendor";
   const thead = $("#billTable thead"), tbody = $("#billTable tbody");
-  thead.innerHTML = ""; tbody.innerHTML = "";
+  thead.innerHTML = "";
+  thead.hidden = false; tbody.innerHTML = "";
   const cols = [["Vendor", "left", ""], ["Project", "left", ""], ["Bill #", "left", "Bill number - opens the bill in QuickBooks"],
                 ["Date", "left", "Bill date (MM/DD/YY)"], ["Amount", "right", "Bill amount"], ["Open", "right", "Open balance we still owe"],
                 ["Paid", "left", "Did we pay the vendor?"], ["Invoice", "left", "Was the AR invoice (draw) paid by the GC?"],
@@ -2014,6 +2015,7 @@ function renderBills() {
     for (const b of rows) { const k = billGroupKey(b, group); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(b); }
     const order = [...groups.keys()].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));   // A→Z
     billGroupKeys = order;
+    thead.hidden = order.length > 0 && order.every(k => billsCollapsed.has(k));   // headers only once a group is open (owner 2026-09-01)
     outer:
     for (const k of order) {
       const g = groups.get(k);
@@ -2689,7 +2691,8 @@ function openBillDetail(b) {
   row(gb, "Vendor", b.vendor);
   row(gb, "Bill #", b.bill_ref);
   row(gb, "Bill date", fmtDate(b.bill_date));
-  row(gb, "Amount", money(b.line_amount));
+  row(gb, "This line", money(b.line_amount));                                   // the tracker row is ONE line of the bill
+  if (b.bill_total != null && Math.abs(num(b.bill_total) - num(b.line_amount)) > 0.5) row(gb, "Bill total (what the qb link opens)", money(b.bill_total));
   row(gb, "Open balance", money(b.open_balance), bOpen(b) > 0 ? "neg" : "");
   row(gb, "Paid the vendor?", b.pay_status);
   row(gb, "Approved?", b.approved === "approved" ? "Yes" : (b.approved ? "No" : ""));
@@ -2972,7 +2975,7 @@ function renderInvAmounts(all, f) {
     ? `(${rows.length.toLocaleString()} of ${all.length.toLocaleString()} · ${money(totOpen)} open · ${clients.length} client${clients.length === 1 ? "" : "s"})` : "(no AR data)";
   { const anyMsel = INV_MSEL.some(c => (invMSel[c.id] || {}).size);
     const cb = $("#ifClear"); if (cb) cb.hidden = !(anyMsel || invMonthSel !== null || invQuick || f.div || f.lien || f.lienclk || f.litig !== "ex"); }
-  const cols = [["Project", "left"], ["Invoice #", "left"], ["Date", "left"], ["Due", "left"], ["Memo", "left"], ["Open balance", "right"], ["Invoice total", "right"], ["Collections note", "left"]];
+  const cols = [["Project", "left"], ["Invoice #", "left"], ["Date", "left"], ["Due", "left"], ["Memo", "left"], ["Open balance", "right"], ["Invoice total", "right"], ["Last action", "left"], ["Next follow-up", "left"], ["Collections note", "left"]];
   thead.innerHTML = ""; const htr = document.createElement("tr");
   for (const [c, al] of cols) { const th = document.createElement("th"); th.className = al; th.textContent = c; htr.appendChild(th); } thead.appendChild(htr);
   tbody.innerHTML = "";
@@ -2983,6 +2986,7 @@ function renderInvAmounts(all, f) {
     tr.appendChild(td); tbody.appendChild(tr); invGroupKeys = []; updateInvCollapseBtn(); return;
   }
   invGroupKeys = clients.map(g => g.client);   // drives the Collapse/Expand-all button
+  thead.hidden = !clients.some(g => invExpanded.has(g.client));   // headers only when a client is open (owner 2026-09-01)
   const amtRow = (i) => {
     const paid = oiBal(i) <= 0.005;
     const tr = document.createElement("tr"); tr.style.cursor = "pointer"; if (paid) tr.classList.add("inv-paid");
@@ -3008,6 +3012,13 @@ function renderInvAmounts(all, f) {
     else { ob.textContent = money(oiBal(i)); if (i.days_past_due != null && i.days_past_due > 0) { ob.style.color = "var(--neg)"; ob.title = i.days_past_due + " days past due"; } }
     tr.appendChild(ob);
     tr.appendChild(rightText(money(i.amount)));
+    // The two dates collections runs on (Invoice Tracker "Last Action Date" / "Next Follow-Up"); an
+    // overdue follow-up reads red (owner 2026-09-02).
+    { const la = document.createElement("td"); la.className = "left"; la.textContent = i.last_action_date ? fmtDateShort(i.last_action_date) : "–"; if (!i.last_action_date) la.classList.add("dim"); tr.appendChild(la);
+      const nf = document.createElement("td"); nf.className = "left";
+      if (i.next_followup) { nf.textContent = fmtDateShort(i.next_followup); const dd = Date.parse(i.next_followup); if (!paid && !isNaN(dd) && dd < Date.now() - 86400000) { nf.style.color = "var(--neg)"; nf.style.fontWeight = "600"; nf.title = "follow-up date has passed"; } }
+      else { nf.textContent = "–"; nf.classList.add("dim"); }
+      tr.appendChild(nf); }
     // Collections note = Notion Quick Status; a paid row leads with its paid date
     const nc = document.createElement("td"); nc.className = "left inv-note";
     if (paid && i.paid_date) { const p = document.createElement("span"); p.className = "st ok"; p.textContent = "Paid " + fmtDateShort(i.paid_date); nc.appendChild(p); }
@@ -3061,7 +3072,7 @@ function renderInvAmounts(all, f) {
   const td0 = document.createElement("td"); td0.className = "left"; td0.colSpan = 5; td0.textContent = "TOTAL"; tr.appendChild(td0);
   tr.appendChild(rightText(money(totOpen)));
   tr.appendChild(rightText(money(totBilled)));
-  tr.appendChild(document.createElement("td"));
+  tr.appendChild(document.createElement("td")); tr.appendChild(document.createElement("td")); tr.appendChild(document.createElement("td"));
   tbody.appendChild(tr);
   updateInvCollapseBtn();
 }
@@ -3286,6 +3297,10 @@ function openInvoiceDetail(inv) {
     const h = document.createElement("h4"); h.textContent = "Collections"; g.appendChild(h);
     const n = document.createElement("div"); n.className = "dnote" + (inv.note ? "" : " dim");
     n.textContent = inv.note || "(no collections note in the Invoice Tracker)"; g.appendChild(n);
+    for (const [lab, val] of [["Last action", inv.last_action_date ? fmtDate(inv.last_action_date) : null], ["Next follow-up", inv.next_followup ? fmtDate(inv.next_followup) : null]]) {
+      if (!val) continue; const row = document.createElement("div"); row.className = "drow";
+      const dk = document.createElement("span"); dk.className = "dk"; dk.textContent = lab; const dv = document.createElement("span"); dv.className = "dv"; dv.textContent = val;
+      row.appendChild(dk); row.appendChild(dv); g.appendChild(row); }
     if (inv.notion_url) {
       const row = document.createElement("div"); row.className = "drow";
       const a = document.createElement("a"); a.className = "notion-link"; a.style.marginLeft = "0"; a.href = inv.notion_url; a.target = "_blank"; a.rel = "noopener";
@@ -3757,7 +3772,7 @@ function renderPayments() {
   const wrap = document.createElement("div"); wrap.className = "table-scroll";
   const table = document.createElement("table"); table.className = "grid"; table.id = "payTable";
   table.innerHTML = "<thead></thead><tbody></tbody>"; wrap.appendChild(table); body.appendChild(wrap);
-  const cols = [["Client", "left"], ["Date", "left"], ["Payment Ref #", "left"], ["Payment Type", "left"], ["Amount Paid", "right"], ["Unlocks (AP)", "right"], ["Net after AP", "right"]];
+  const cols = [["Client", "left"], ["Project", "left"], ["Date", "left"], ["Payment Ref #", "left"], ["Payment Type", "left"], ["Amount Paid", "right"], ["Unlocks (AP)", "right"], ["Net after AP", "right"]];
   const tb = buildHead("#payTable", cols);
   if (!tb) return; tb.innerHTML = "";
   if (!pays.length) {
@@ -3803,6 +3818,12 @@ function renderPayments() {
     if (curl) { const a = document.createElement("a"); a.href = curl; a.target = "_blank"; a.rel = "noopener"; a.className = "qbo-link"; a.textContent = payer; a.title = "Open this customer in QuickBooks"; a.onclick = (e) => e.stopPropagation(); cc.appendChild(a); }
     else cc.appendChild(document.createTextNode(payer));
     tr.appendChild(cc);
+    // the project # this payment pays (owner 2026-09-02): one project, or "multiple" - click the row for the lines
+    { const projs = [...new Set((p.applications || []).map(a => a.project_no).filter(Boolean))];
+      const pc = document.createElement("td"); pc.className = "left";
+      if (projs.length > 1) { const s = document.createElement("span"); s.className = "vp-multi"; s.textContent = "multiple"; s.title = projs.join(", ") + " - click the row to see each invoice"; pc.appendChild(s); }
+      else { pc.textContent = projs[0] || "–"; if (!projs.length) pc.classList.add("dim"); }
+      tr.appendChild(pc); }
     tr.appendChild(leftText(fmtDateShort(p.txn_date)));
     tr.appendChild(leftText(p.ref_no || "–"));
     tr.appendChild(leftText(p.method || "–"));
@@ -3836,17 +3857,20 @@ function renderPayments() {
       const sr = document.createElement("tr"); sr.className = "pay-invoices";
       const std = document.createElement("td"); std.colSpan = cols.length;
       const box = document.createElement("table"); box.className = "sub-grid";
-      const th = document.createElement("thead"); th.innerHTML = "<tr><th class='left'>Invoice #</th><th class='right'>Total open</th><th class='right'>Amount applied</th></tr>";
+      const th = document.createElement("thead"); th.innerHTML = "<tr><th class='left'>Invoice #</th><th class='left'>Project</th><th class='left'>Invoice date</th><th class='left'>Memo</th><th class='right'>Total open</th><th class='right'>Amount applied</th></tr>";
       box.appendChild(th);
       const bod = document.createElement("tbody");
       if (!p.applications.length) {
-        const r = document.createElement("tr"); const c = document.createElement("td"); c.colSpan = 3; c.className = "left dim";
+        const r = document.createElement("tr"); const c = document.createElement("td"); c.colSpan = 6; c.className = "left dim";
         c.textContent = (p.unapplied_amt || 0) > 0.005 ? "Unapplied - a credit on account, not yet on an invoice." : "No invoice links on this payment.";
         r.appendChild(c); bod.appendChild(r);
       }
       for (const a of p.applications) {
         const r = document.createElement("tr");
         r.appendChild(qboLinkCell(a.invoice_no || ("inv " + a.invoice_txn_id), a.invoice_no ? qboInvoiceUrl(a.invoice_txn_id) : null, "Open this invoice in QuickBooks"));
+        r.appendChild(leftText(a.project_no || "–"));
+        r.appendChild(leftText(a.invoice_date ? fmtDateShort(a.invoice_date) : "–"));
+        { const mc = leftText(a.memo || "–"); mc.className += " inv-memo"; mc.title = a.memo || ""; r.appendChild(mc); }
         const oc = document.createElement("td"); oc.className = "right";
         if (a.invoice_open == null) oc.appendChild(document.createTextNode("–"));
         else if (a.invoice_open > 0.005) { oc.textContent = money(a.invoice_open); oc.style.color = "var(--neg)"; }
@@ -4572,6 +4596,7 @@ function renderWip() {
 function renderPnl() {
   if (!PNL) {
     const n = $("#pnlNote"); if (n) n.textContent = "computing…";
+    skeletonInto($("#pnlJobTable") ? $("#pnlJobTable").querySelector("tbody") : null, 6);
     fetch("/api/pnl/portfolio").then(r => r.json()).then(d => { PNL = d.error ? { rows: [], by_division: [], company: {} } : d; renderPnl(); })
       .catch(() => { const e = $("#pnlNote"); if (e) e.textContent = "unavailable"; });
     return;
@@ -4700,24 +4725,48 @@ function renderKPIs() {
         over = sum("overbillings"), under = sum("underbillings"),
         active = rows.filter(isActive).length;
   const net = over - under;
+  // Every card says where its number comes from and as of when (owner 2026-09-01: an Excel-only
+  // reader who does not trust a figure until he sees its source). These six are the WIP master's
+  // own columns, summed - not QuickBooks (that total is on the Cost mix widget, labelled).
+  const wipSrc = srcText("WIP master", meta.report_date, "report");
   const cards = [
-    ["Total Contract", money(contract), `${rows.length} jobs`],
-    ["Costs to Date", money(costs), contract ? `${(costs / contract * 100).toFixed(0)}% of contract` : ""],
-    ["Billed to Date", money(billed), contract ? `${(billed / contract * 100).toFixed(0)}% of contract` : ""],
-    ["Left to Bill", money(left), ""],
-    ["Net Over/(Under)", money(net), net >= 0 ? "overbilled" : "underbilled"],
-    ["Active Jobs", String(active), `of ${rows.length}`],
+    ["Total Contract", money(contract), `${rows.length} jobs`, wipSrc, "sum of Total Contract Price across the WIP rows"],
+    ["Costs to Date (WIP report)", money(costs), contract ? `${(costs / contract * 100).toFixed(0)}% of contract` : "", wipSrc, "sum of the WIP master's Costs to Date column - the report-date cut, not live QuickBooks"],
+    ["Billed to Date", money(billed), contract ? `${(billed / contract * 100).toFixed(0)}% of contract` : "", wipSrc, "sum of Billed to Date (gross, incl. retainage)"],
+    ["Left to Bill", money(left), "", wipSrc, "sum of Left to Bill = contract - billed"],
+    ["Net Over/(Under)", money(net), net >= 0 ? "overbilled" : "underbilled", wipSrc, "overbillings minus underbillings"],
+    ["Active Jobs", String(active), `of ${rows.length}`, wipSrc, "STATUS = Active on the Test tabs (blank = MFD, active by construction)"],
   ];
   const row = $("#kpiRow"); row.innerHTML = "";
-  for (const [label, value, sub] of cards) {
+  for (const [label, value, sub, src, how] of cards) {
     const el = document.createElement("div"); el.className = "kpi";
     el.innerHTML = `<div class="k-label"></div><div class="k-value"></div><div class="k-sub"></div>`;
     el.querySelector(".k-label").textContent = label;
     el.querySelector(".k-value").textContent = value;
     el.querySelector(".k-sub").textContent = sub;
+    el.appendChild(srcChip(src, how));
     row.appendChild(el);
   }
 }
+// ── provenance chips: "<system> · <as-of>" under a figure, the formula in words on hover ──
+function srcText(system, when, kind) {
+  if (!when) return system;
+  return `${system} · ${kind === "report" ? "report " + fmtDate(when) : "loaded " + fmtDate(when, true)}`;
+}
+function srcChip(text, how) {
+  const s = document.createElement("div"); s.className = "k-src"; s.textContent = text || ""; if (how) s.title = how; return s;
+}
+// Grey shimmer lines where content is about to land (owner 2026-09-01: no blank cards while loading).
+function skeletonInto(host, n) {
+  if (!host) return;
+  const isTbody = host.tagName === "TBODY";
+  host.innerHTML = "";
+  for (let k = 0; k < (n || 5); k++) {
+    if (isTbody) { const tr = document.createElement("tr"); const td = document.createElement("td"); td.colSpan = 12; td.className = "left"; const s = document.createElement("div"); s.className = "skel"; s.style.width = (55 + ((k * 17) % 40)) + "%"; td.appendChild(s); tr.appendChild(td); host.appendChild(tr); }
+    else { const s = document.createElement("div"); s.className = "skel"; s.style.width = (55 + ((k * 17) % 40)) + "%"; host.appendChild(s); }
+  }
+}
+function loadedAt(feed) { return ((meta.freshness || {}).ledger || {})[feed] || null; }
 
 function renderDivisions() {
   const groups = {};
@@ -4976,7 +5025,7 @@ function openDetail(r) {
     const rows = fields.filter(([k]) => r[k] !== null && r[k] !== undefined && r[k] !== "");
     if (!rows.length) continue;
     const g = document.createElement("div"); g.className = "dgroup";
-    const h = document.createElement("h4"); h.textContent = title; g.appendChild(h);
+    const h = document.createElement("h4"); h.textContent = title === "Identity" ? title : `${title}  ·  WIP master, report ${fmtDate(r.report_date)}`; g.appendChild(h);
     for (const [k, label, type] of rows) {
       const row = document.createElement("div"); row.className = "drow";
       const dk = document.createElement("span"); dk.className = "dk"; dk.textContent = label;
@@ -4997,7 +5046,7 @@ function openDetail(r) {
   const ap = AP.by_project && AP.by_project[r.project_no];
   if (ap) {
     const g = document.createElement("div"); g.className = "dgroup";
-    const h = document.createElement("h4"); h.textContent = "AP / Liens (Bill Tracker)"; g.appendChild(h);
+    const h = document.createElement("h4"); h.textContent = `AP / Liens  ·  Bill Tracker${((meta.freshness || {}).sources || {})["sync-ap"] ? ", " + fmtDate(((meta.freshness || {}).sources || {})["sync-ap"], true) : ""} (excludes subs)`; g.appendChild(h);
     for (const [label, val] of [["Open AP balance", money(ap.open_balance)], ["Open bills", String(ap.open_lines)]]) {
       const row = document.createElement("div"); row.className = "drow";
       const dk = document.createElement("span"); dk.className = "dk"; dk.textContent = label;
@@ -5011,17 +5060,22 @@ function openDetail(r) {
   const cload = COST.by_project && COST.by_project[r.project_no];
   if (cbp && cbp.length) {
     const g = document.createElement("div"); g.className = "dgroup";
-    const h = document.createElement("h4"); h.textContent = "Costs (QBO, by code)"; g.appendChild(h);
+    const h = document.createElement("h4"); h.textContent = `Costs by code  ·  QuickBooks${loadedAt("Costs (QBO)") ? ", loaded " + fmtDate(loadedAt("Costs (QBO)"), true) : ""}`; g.appendChild(h);
     const summary = [];
     if (cload) {
       summary.push(["Total loaded", money(cload.costs_loaded)]);
       if (cload.sub_costs) summary.push(["of which subs", money(cload.sub_costs)]);
-      if (r.costs_to_date != null) summary.push(["WIP costs_to_date", money(r.costs_to_date)]);
+      if (r.costs_to_date != null) {
+        summary.push(["WIP master costs to date (report " + fmtDate(r.report_date) + ")", money(r.costs_to_date)]);
+        // The reconciliation the loader prints to the terminal, on screen: match within 5% or a red gap.
+        const gap = num(cload.costs_loaded) - num(r.costs_to_date), tol = Math.abs(num(r.costs_to_date)) * 0.05;
+        summary.push([Math.abs(gap) <= tol ? "Difference (match, within 5%)" : "Difference (QuickBooks minus WIP)", (gap >= 0 ? "+" : "") + money(gap), Math.abs(gap) > tol]);
+      }
     }
-    for (const [label, val] of summary) {
+    for (const [label, val, bad] of summary) {
       const row = document.createElement("div"); row.className = "drow";
       const dk = document.createElement("span"); dk.className = "dk"; dk.textContent = label;
-      const dv = document.createElement("span"); dv.className = "dv"; dv.textContent = val; dv.title = "Click to copy"; dv.onclick = () => copy(val);
+      const dv = document.createElement("span"); dv.className = "dv" + (bad ? " neg" : ""); dv.textContent = val; dv.title = "Click to copy"; dv.onclick = () => copy(val);
       row.appendChild(dk); row.appendChild(dv); g.appendChild(row);
     }
     for (const c of cbp) {
@@ -5037,9 +5091,9 @@ function openDetail(r) {
   }
   if (r.costs_loaded != null) {
     const g = document.createElement("div"); g.className = "dgroup";
-    const h = document.createElement("h4"); h.textContent = "Margin (QBO actual)"; g.appendChild(h);
+    const h = document.createElement("h4"); h.textContent = "Margin  ·  computed here from the WIP contract / ETC and QuickBooks costs"; g.appendChild(h);
     const mrows = [
-      ["Planned markup (contract ÷ ETC)", pct(r.markup_pct)],
+      ["Planned markup ((contract − ETC) ÷ ETC)", pct(r.markup_pct)],   // label now matches the arithmetic (was "contract ÷ ETC")
       ["Planned margin (GP ÷ contract)", pct(r.margin_pct)],
       ["Budget burn (cost ÷ ETC)", pct(r.budget_burn)],
       ["Actual markup (billed ÷ QBO cost)", pct(r.actual_markup_pct)],
@@ -5110,18 +5164,49 @@ async function copy(text) {
   try { await navigator.clipboard.writeText(text); toast("Copied: " + text.slice(0, 40)); }
   catch { const ta = document.createElement("textarea"); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove(); toast("Copied"); }
 }
-function exportCSV() {
+// Export CSV = the table you are looking at, with its filters (owner 2026-09-02: "export the current
+// visible table respecting filters"). Each tab names its rows + columns; anything else falls back to
+// the Overview projects table.
+function _csvTable() {
+  const nz = v => v == null ? "" : v;
+  if (activeTab === "invoices") {
+    const rows = _invRows();
+    return { name: "invoices", rows, cols: [
+      ["Client", i => i.customer], ["Project", i => i.project_no], ["Invoice #", i => i.doc_number], ["Date", i => i.txn_date],
+      ["Due", i => i.due_date], ["Days past due", i => i.days_past_due], ["Memo", i => i.memo], ["Open balance", i => oiBal(i)],
+      ["Invoice total", i => num(i.amount)], ["Status", i => i.status], ["Last action", i => i.last_action_date],
+      ["Next follow-up", i => i.next_followup], ["Collections note", i => i.note], ["Lien", i => i.lien_status],
+      ["Notice deadline", i => i.lien_due_label], ["Notion page", i => i.notion_url]].map(([l, g]) => [l, r => nz(g(r))]) };
+  }
+  if (activeTab === "bills") {
+    const view = billView(), f = billFilterValues();
+    const rows = (BILLS || []).filter(b => view.pred(b) && billPassesFilters(b, f));
+    return { name: "bills", rows, cols: [
+      ["Vendor", b => b.vendor], ["Project", b => b.project_no], ["Division", b => b.division], ["Bill #", b => b.bill_ref],
+      ["Bill date", b => b.bill_date], ["This line", b => num(b.line_amount)], ["Bill total", b => num(b.bill_total)],
+      ["Open balance", b => num(b.open_balance)], ["Pay status", b => b.pay_status], ["Paid", b => b.pay_date],
+      ["Invoice", b => b.invoice_no], ["Invoice status", b => b.invoice_status], ["GC paid", b => b.gc_paid_date],
+      ["Approved", b => b.approved], ["Lien", b => b.lien_status], ["Description", b => b.description]].map(([l, g]) => [l, r => nz(g(r))]) };
+  }
+  if (activeTab === "wip") {
+    const activeOnly = $("#wipActive") ? $("#wipActive").checked : true;
+    const rows = (ALL || []).filter(r => !activeOnly || ["", "active"].includes((r.status || "").toLowerCase()));
+    return { name: "wip", rows, cols: WIP_COLS.map(c => [c.label, r => nz(r[c.k])]) };
+  }
   const cols = visibleColumns();
-  const rows = filtered();
+  return { name: "projects", rows: filtered(), cols: cols.map(c => [c.label, r => raw(c, r[c.key])]) };
+}
+function exportCSV() {
+  const { name, rows, cols } = _csvTable();
   const esc = v => { const s = String(v ?? ""); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
-  const head = cols.map(c => esc(c.label)).join(",");
-  const body = rows.map(r => cols.map(c => esc(raw(c, r[c.key]))).join(",")).join("\n");
-  const blob = new Blob([head + "\n" + body], { type: "text/csv" });
+  const head = cols.map(([l]) => esc(l)).join(",");
+  const body = rows.map(r => cols.map(([, g]) => esc(g(r))).join(",")).join("\n");
+  const blob = new Blob(["\ufeff" + head + "\n" + body], { type: "text/csv" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = `ledger_${meta.report_date || "export"}.csv`;
+  a.download = `ledger_${name}_${new Date().toISOString().slice(0, 10)}.csv`;
   a.click(); URL.revokeObjectURL(a.href);
-  toast(`Exported ${rows.length} rows`);
+  toast(`Exported ${rows.length} ${name} rows (as filtered)`);
 }
 
 // ── Settings UI ───────────────────────────────────────────────────────────
@@ -5286,7 +5371,7 @@ async function loadHealth(force) {
   const box = $("#healthSections"); if (!box) return;
   if (HEALTH && HEALTH.ok && !force) { renderHealth(); return; }
   const note = $("#healthNote");
-  if (note && !HEALTH) note.textContent = "loading…";
+  if (note && !HEALTH) { note.textContent = "loading…"; skeletonInto($("#healthSections"), 8); }
   try { HEALTH = await (await fetch("/api/healthtab")).json(); }
   catch (e) { if (note) note.textContent = "could not load"; return; }
   renderHealth();
@@ -6341,6 +6426,8 @@ function wrRunProgress(label, onDone) {
 // ── Accounting fixes: the Bill Tracker audits, filterable by audit type ───────
 let ACCT = null;            // cached /api/accounting payload
 let acctIssue = null;       // the audit-type filter currently active (null = all)
+const ACCT_VENDOR_MSEL = { id: "acctVendor", all: "All vendors", get: f => f.vendor || "", search: true, lbl: v => v || "(no vendor)" };
+const acctMSel = {}; let _acctVendorSig = null;
 let acctSel = new Set();    // selected finding keys (f._k) for copy-as-table
 let _acctVisible = [];      // the currently-filtered rows ("Copy all" copies these)
 let acctSort = [];          // multi-column sort: [{key, dir}] - click a header to add/cycle asc/desc/off
@@ -6349,6 +6436,7 @@ async function loadAccounting(force) {
   if (!table) return;
   if (ACCT && !force) { renderAccounting(); return; }
   if (note) note.textContent = "loading…";
+  skeletonInto(table.tBodies[0] || table, 8);
   try { ACCT = await (await fetch("/api/accounting")).json(); }
   catch (e) { if (note) note.textContent = "could not load"; return; }
   (ACCT.findings || []).forEach((f, i) => { f._k = i; });   // stable key for selection across filters
@@ -6430,12 +6518,20 @@ function renderAccounting() {
     filt.appendChild(b);
   };
   chip("All", null, all.length);
-  for (const iss of Object.keys(counts).sort((a, b) => counts[b] - counts[a])) chip(iss, iss, counts[iss]);
+  // two labelled sections (owner 2026-09-02): the BILL audits (Coding + Bills sheets) and the PO audits
+  const issGroup = {}; for (const f of all) issGroup[f.issue] = f.group;
+  const sect = (label) => { const s = document.createElement("span"); s.className = "acct-sect"; s.textContent = label; filt.appendChild(s); };
+  const byCount = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
+  const billIss = byCount.filter(i => issGroup[i] !== "PO"), poIss = byCount.filter(i => issGroup[i] === "PO");
+  if (billIss.length) { sect("Bills"); for (const iss of billIss) chip(iss, iss, counts[iss]); }
+  if (poIss.length) { sect("POs"); for (const iss of poIss) chip(iss, iss, counts[iss]); }
+  // vendor checkbox filter (same multi-select as the other tabs)
+  { const sig = String(all.length); if (sig !== _acctVendorSig || !($("#acctVendorMenu") && $("#acctVendorMenu").querySelector(".msel-opt"))) { _acctVendorSig = sig; buildMSel(ACCT_VENDOR_MSEL, all, acctMSel, renderAccounting); } }
   // division filter
   const dsel = $("#acctDivision");
   if (dsel && dsel.options.length <= 1) for (const d of [...new Set(all.map(f => f.division).filter(Boolean))].sort()) { const o = document.createElement("option"); o.value = d; o.textContent = d; dsel.appendChild(o); }
   const dv = dsel ? dsel.value : "", q = ($("#acctSearch").value || "").trim().toLowerCase();
-  const rows = all.filter(f => (!acctIssue || f.issue === acctIssue) && (!dv || f.division === dv)
+  const rows = all.filter(f => (!acctIssue || f.issue === acctIssue) && (!dv || f.division === dv) && mselPasses(f, [ACCT_VENDOR_MSEL], acctMSel)
     && (!q || (f.vendor + " " + f.project + " " + f.bill_no + " " + (f.memo || "") + " " + f.detail).toLowerCase().includes(q)));
   _setHintFilter("accounting", acctFilterDesc(rows.length, all.length));   // count + what's filtered (generic when All)
   if (acctSort.length) rows.sort(_acctCmp);   // multi-column sort (applied before the render cap)
@@ -6478,6 +6574,7 @@ function renderAccounting() {
     cb.onchange = () => { if (cb.checked) acctSel.add(f._k); else acctSel.delete(f._k); _acctUpdateSelAll(); _acctUpdateCopyBtn(); _acctUpdateDownloadBtn(); };
     chTd.appendChild(cb); tr.appendChild(chTd);
     const ic = document.createElement("td"); ic.className = "left audit-soft";
+    { const src = document.createElement("span"); src.className = "acct-src " + (f.group === "PO" ? "po" : "bill"); src.textContent = f.group === "PO" ? "PO" : "Bill"; src.title = f.group === "PO" ? "A purchase-order finding (Audit - PO)" : `A bill finding (Audit - ${f.group})`; ic.appendChild(src); }
     const pill = document.createElement("span"); pill.className = "acct-pill " + _acctPillClass(f.issue); pill.textContent = f.issue; ic.appendChild(pill); tr.appendChild(ic);
     const vc = leftText(f.vendor || "–"); vc.classList.add("audit-soft"); tr.appendChild(vc);
     tr.appendChild(qboLinkCell(f.bill_no, f.url, "Open this bill in QuickBooks"));
@@ -6651,7 +6748,7 @@ function init() {
     ...BILL_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`]),
     ...LIEN_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`]),
     ...PAY_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`]),
-    ...INV_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`]), ["#ifMonthBtn", "#ifMonthMenu", "#ifMonthMsel"],
+    ...INV_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`]), ["#ifMonthBtn", "#ifMonthMenu", "#ifMonthMsel"], ["#acctVendorBtn", "#acctVendorMenu", "#acctVendorMsel"],
     ...DRAW_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`])];
   const _closeMsels = (except) => { for (const [, mId] of _mselWraps) { const m = $(mId); if (m && mId !== except) m.hidden = true; } };
   for (const [btnId, menuId, wrapId] of _mselWraps) {
@@ -6727,6 +6824,19 @@ function init() {
   $("#btnExport").onclick = exportCSV;
   $("#btnRefresh").onclick = manualRefresh;
   { const el = $("#btnResync"); if (el) el.onclick = startResync; }
+  // Bills: the secondary filters live behind "More filters" (owner 2026-09-01: "10 dropdowns + 8 pills
+  // above the fold"); remembered per person, and forced open while one of them is active.
+  { const btn = $("#bfMoreBtn"), more = $("#bfMore");
+    if (btn && more) {
+      let on = false; try { on = localStorage.getItem("proficient-ledger-billmore") === "1"; } catch { /* ignore */ }
+      const paint = () => { more.hidden = !on; btn.classList.toggle("on", on); btn.textContent = on ? "Fewer filters" : "More filters"; };
+      btn.onclick = () => { on = !on; try { localStorage.setItem("proficient-ledger-billmore", on ? "1" : "0"); } catch { /* ignore */ } paint(); };
+      window._billMoreOpenIfActive = () => { if (!on && BILL_MSEL.some(c => (billMSel[c.id] || {}).size && more.contains($("#" + c.id + "Msel")))) { on = true; paint(); } };
+      paint();
+    } }
+  { const el = $("#btnCostsFull"); if (el) el.onclick = () => runPipeline("costs-full",
+      "Reload ALL job costs from QuickBooks?\n\nEvery project, all history - a full replace, so bills that were deleted or re-coded in QuickBooks drop out (the 90-day Resync never removes them). Read-only on QuickBooks; one Touch ID; 30 to 40 minutes.",
+      { btn: $("#btnCostsFull"), prog: $("#syncProgress"), fill: $("#syncBarFill"), step: $("#syncStep") }); }
   { const el = $("#btnSyncApAr"); if (el) el.onclick = runApAr; }
   { const el = $("#btnFullRefresh"); if (el) el.onclick = () => runPipeline("all",
       "Full refresh - run EVERY pipeline?\n\nRuns the source producers (AR sync -> Notion/Teams, AP sync -> Bill Tracker.xlsx) AND the loaders, in order. Real writes; expect multiple Touch ID prompts; takes a few minutes.",

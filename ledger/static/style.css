@@ -1245,8 +1245,8 @@ td.h-num { text-align: right; font-variant-numeric: tabular-nums; white-space: n
 /* ── Invoices: the collections view (owner 2026-09-02) ──────────────────────
    Memo in one line with the full text on hover, so Open / Total / Note stay on screen;
    "Nd late" reads red; the note links to its Notion page and says when it was last edited. */
-table.grid td.inv-memo { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-table.grid td.inv-note { max-width: 360px; white-space: normal; }
+table.grid td.inv-memo { max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+table.grid td.inv-note { max-width: 300px; white-space: normal; }
 .inv-late { color: var(--neg); font-weight: 600; font-size: .9em; }
 .notion-link { display: inline-block; margin-left: 8px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border);
   background: var(--surface-2); color: var(--text); font-size: .85em; font-weight: 600; text-decoration: none; vertical-align: middle; white-space: nowrap; }
@@ -1271,3 +1271,24 @@ table.grid td.inv-note { max-width: 360px; white-space: normal; }
 .np-body .np-divider { border-top: 1px solid var(--border); margin: 6px 0; }
 .np-comment { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin: 6px 0; white-space: pre-wrap; }
 .np-who { color: var(--text-dim); font-size: .88em; margin-bottom: 2px; }
+
+/* Costs tab: the bar sits behind the number - keep it quiet so the figure stays legible (owner 2026-09-01) */
+.bar .bar-fill { opacity: .45; }
+.bar .bar-txt { font-weight: 600; }
+
+/* provenance chip under a KPI (2026-09-02) */
+.kpi .k-src { margin-top: 6px; font-size: .8em; color: var(--text-dim); border-top: 1px dashed var(--border); padding-top: 4px; }
+.fresh-actions { display: inline-flex; gap: 6px; }
+.bf-more:not([hidden]) { display: contents; }
+#bfMoreBtn.on { background: color-mix(in srgb, var(--accent) 12%, var(--surface)); border-color: var(--accent); }
+
+/* loading skeleton (2026-09-02) */
+.skel { height: 12px; border-radius: 6px; margin: 10px 0; background: linear-gradient(90deg, var(--surface-2) 25%, var(--row-hover) 50%, var(--surface-2) 75%); background-size: 200% 100%; animation: skel 1.2s linear infinite; }
+@keyframes skel { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+
+/* Audit: Bill vs PO per row + labelled chip sections (2026-09-02) */
+.acct-src { display: inline-block; min-width: 30px; text-align: center; font-size: .78em; font-weight: 700; border-radius: 5px; padding: 1px 5px; margin-right: 6px; border: 1px solid var(--border); color: var(--text-dim); }
+.acct-src.po { border-color: #8161b0; color: #6b4fa0; }
+.acct-src.bill { border-color: #3b6ea5; color: #2f5a8a; }
+html[data-theme="dark"] .acct-src.po { color: #b79ae0; } html[data-theme="dark"] .acct-src.bill { color: #86b4e6; }
+.acct-sect { font-size: .82em; font-weight: 700; color: var(--text-dim); margin: 0 4px 0 10px; align-self: center; }

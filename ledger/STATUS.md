@@ -4,6 +4,28 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Nine-item batch (owner 2026-09-02: "do 1-9").** (1) **Sub LOC** recomputed (was 13 days stale) and
+  `reload_ledger.sh` gained the Sub LOC + Health steps the in-app chain already had. (2) **Collections
+  dates on the Invoices row**: `billing_event` + `last_action_date`, `next_followup` (Invoice Tracker
+  "Last Action Date" / "Next Follow-Up"), new columns Last action · Next follow-up (a passed follow-up
+  reads red) and in the drawer's Collections group; invoice sync re-run. (3) **Export CSV exports the
+  table you are on**: Invoices (as filtered, incl. quick find, all collections fields + Notion page),
+  Bills (view + filters), WIP report, else the Overview projects table; UTF-8 BOM so Excel opens it
+  clean. (4) **Source chips**: every Portfolio KPI carries "WIP master · report mm/dd/yyyy" with the
+  formula in words on hover; "Costs to Date (WIP report)" vs the Cost mix's "loaded from QuickBooks
+  <time>"; the project drawer's groups are headed by their source (WIP master + report date · Bill
+  Tracker + sync time, excludes subs · QuickBooks + loaded time · computed here) and the Costs group
+  prints the **WIP-vs-QuickBooks difference** (match within 5%, else red); the "Planned markup" label now
+  matches its arithmetic. (5) **Full cost reload** button beside Resync (`costs-full` pipeline: every
+  project, all history, full replace - the only way deleted / re-coded bills drop out; never part of
+  reload/all). (6) Readability: cost bars at 45% opacity behind bold figures; Bills and Invoices column
+  headers hide while every group is collapsed; Bills secondary filters behind **More filters**
+  (remembered per person); **light theme by default** (a saved choice still wins); shimmer skeletons
+  while P&L, Health and Audit load. (8) **Audit**: a Bill / PO tag on every row, the issue chips split
+  into "Bills" and "POs" sections, a vendor checkbox filter. **Payments**: a Project column (one
+  project or "multiple") and the invoice sub-rows carry project · invoice date · memo (server joins
+  `billing_event` by invoice #). (9) **Bill drawer** shows "This line" and "Bill total (what the qb link
+  opens)". Not done: (7) the live WIP recompute - the CP project root is still not mounted.
 - **Data freshness shows every feed (owner 2026-09-02: "4 of 8 feeds shown").** The strip now renders
   all nine timestamps `_freshness()` computes: the three source files (sync-ap, sync-ar, WIP master) and
   each ledger load (Costs, Invoices, Payments, Customers, Sub LOC, Health). A feed never loaded says

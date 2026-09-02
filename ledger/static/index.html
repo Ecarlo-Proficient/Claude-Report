@@ -37,7 +37,10 @@
     <section class="widget">
       <div class="widget-head">
         <h2>Data freshness <span class="count" id="metaLine">loading…</span><span class="count" id="homeFreshNote"></span></h2>
-        <button class="btn small" id="btnResync" title="Pull fresh data into the app — runs every loader. A couple of QBO steps prompt Touch ID on this Mac. No terminal needed.">⟳&nbsp;Resync</button>
+        <span class="fresh-actions">
+          <button class="btn small" id="btnCostsFull" title="Full cost reload from QuickBooks: every project, all history, deleted or re-coded bills drop out. 30 to 40 minutes.">Full cost reload</button>
+          <button class="btn small" id="btnResync" title="Pull fresh data into the app - runs every loader. A couple of QBO steps prompt Touch ID on this Mac. No terminal needed.">⟳&nbsp;Resync</button>
+        </span>
       </div>
       <div class="fresh-row" id="homeFresh"></div>
       <div class="sync-progress" id="syncProgress" hidden>
@@ -395,6 +398,8 @@
           <div class="fld"><span>Vendor</span>
             <div class="msel" id="bfVendorMsel"><button type="button" class="msel-btn" id="bfVendorBtn">All vendors</button><div class="msel-menu wide" id="bfVendorMenu" hidden></div></div>
           </div>
+          <button type="button" class="btn small" id="bfMoreBtn" title="Division, pay status, invoice, approval and lien filters">More filters</button>
+          <span class="bf-more" id="bfMore" hidden>
           <div class="fld"><span>Division</span>
             <div class="msel" id="bfDivisionMsel"><button type="button" class="msel-btn" id="bfDivisionBtn">All divisions</button><div class="msel-menu" id="bfDivisionMenu" hidden></div></div>
           </div>
@@ -410,6 +415,7 @@
           <div class="fld"><span>Lien</span>
             <div class="msel" id="bfLienMsel"><button type="button" class="msel-btn" id="bfLienBtn">Any lien</button><div class="msel-menu" id="bfLienMenu" hidden></div></div>
           </div>
+          </span>
           <span class="bf-sep"></span>
           <label class="fld"><span>Group by</span>
             <select id="billGroup">
@@ -688,6 +694,7 @@
         <div class="filters">
           <input type="search" id="acctSearch" placeholder="Find a vendor, project #, bill ref…" autocomplete="off">
           <select id="acctDivision"><option value="">All divisions</option></select>
+          <div class="msel" id="acctVendorMsel"><button type="button" class="msel-btn" id="acctVendorBtn" title="Tick the vendors to show">All vendors</button><div class="msel-menu wide" id="acctVendorMenu" hidden></div></div>
           <button class="btn small" id="btnAcctCopy" title="Copy the selected rows (or all shown) as a table with headers - paste into Excel, Google Sheets, or an email">Copy all</button>
           <button class="btn small" id="btnAcctDownload" title="Download the selected rows' bill scans into a folder and open it - drag them into the message to the responsible party" disabled>Download scans</button>
         </div>

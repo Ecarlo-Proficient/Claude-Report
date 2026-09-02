@@ -408,6 +408,9 @@ def _resolve_steps(pipeline_key):
         return [s for p in pls for s in p["steps"]]
     if pipeline_key == "wip-draft":
         return next((p["draft"]["steps"] for p in pls if p["key"] == "wip" and p.get("draft")), [])
+    if pipeline_key == "costs-full":          # explicit click only - never part of reload/all (30-40 min)
+        return [{"label": "Full cost reload (every project, all history, Touch ID)",
+                 "script": "ledger/load_costs.py", "args": []}]
     if pipeline_key.startswith("pnl-"):
         div = pipeline_key[4:].upper()
         if div not in ("CP", "RP", "MFD"):
@@ -681,7 +684,7 @@ def _fetch_open_invoices(con, open_only: bool = True) -> dict:
     if not have:
         return out
     note_col = ", note" if "note" in have else ""   # older DBs lack it until the next invoice sync
-    note_col += "".join(f", {c}" for c in ("notion_url", "notion_edited") if c in have)   # the note's Notion page + last edit
+    note_col += "".join(f", {c}" for c in ("notion_url", "notion_edited", "last_action_date", "next_followup") if c in have)   # Notion page, last edit, collections dates
     try:
         rows = con.execute(
             "SELECT doc_number, qbo_txn_id, project_no, division, customer, memo, amount, "
@@ -761,12 +764,22 @@ def _fetch_payments(con) -> dict:
             "WHERE customer_id IS NOT NULL AND customer_id <> '' GROUP BY project_no")}
     except sqlite3.OperationalError:
         cust_of = {}
+    # The invoice's own memo + date, so a payment's sub-rows read like the Invoices tab
+    # (owner 2026-09-02: "enrich the Payments invoice sub-rows with project # / date / memo").
+    inv_meta: dict = {}
+    try:
+        for r in con.execute("SELECT doc_number, memo, txn_date FROM billing_event WHERE doc_number IS NOT NULL"):
+            inv_meta[str(r["doc_number"]).strip()] = (r["memo"], r["txn_date"])
+    except sqlite3.OperationalError:
+        pass
     apps_by_pay = {}
     try:
         for a in con.execute("SELECT payment_txn_id, invoice_txn_id, invoice_no, project_no, "
                              "division, amount, invoice_open FROM payment_application"):
             d = dict(a)
             d["cust_id"] = cust_of.get(d["project_no"])       # project deep link
+            m = inv_meta.get(str(d.get("invoice_no") or "").strip())
+            d["memo"], d["invoice_date"] = (m[0], m[1]) if m else (None, None)
             apps_by_pay.setdefault(a["payment_txn_id"], []).append(d)
     except sqlite3.OperationalError:
         pass
