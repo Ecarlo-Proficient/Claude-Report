@@ -4,6 +4,20 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Invoices tab, round two (owner 2026-09-02).** (1) **Month filter** shows every month ticked (the
+  honest picture of "all"); untick to drop one; **Select all / Deselect all** in the menu with a
+  "N of M" count; the Day select is gone ("useless"). (2) **Quick find (⌘F / Ctrl+F)**: on the
+  Invoices tab the shortcut jumps to a Find box; every word must match somewhere in invoice # · memo ·
+  amount · project # · client · note · status, and a word starting with `-` filters OUT (e.g.
+  `draw -offsite`); Esc clears; amounts match with or without `$` and commas. (3) **Saved views**:
+  the current filters, sort, scope (open / all), Amounts / Aging, grouping and quick find saved under
+  a name (localStorage, per person) - View list · Save view · Delete view. (4) **The whole Notion page
+  in the drawer**: new `ledger/notion_page.py` + `GET /api/invoice/notion?url=` renders EVERY property
+  (all 25 tracker fields - Quick Status, Assignee, Next Follow-Up, Last Action Date, Project Manager,
+  Lien links, QBO link...), the page body (paragraphs, headings, lists, to-dos, callouts, quotes,
+  tables, files) and the comment thread, read-only, on demand, 60 s server cache; the drawer widened
+  to 640px. Verified live at 1440: 19 months ticked, `draw -offsite` → 29 of 101, a saved view applied,
+  drawer loads 17 filled properties; `notion_page.py --selftest` covers id-from-url and every property type.
 - **Invoices = the collections view (owner 2026-09-02: "filter by date, use the same bills date filter
   ... i need to see the memo, and the collections note with what notion page shows if clicked ... every
   single data point for meeting").** (1) **Month / Day filter** on invoice date, identical to the Bills

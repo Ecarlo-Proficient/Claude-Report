@@ -2810,54 +2810,73 @@ function buildInvFilters() {
 // Lien-notice CLOCK buckets (the computed deadline, not the Notion status). "upcoming" = urgent
 // OR watch, which covers CP draws, CP retainage (RET-banded), and RP - all divisions the clock runs.
 const LIENCLK = { past: s => s === "PAST", upcoming: s => s === "URGENT" || s === "WATCH", sent: s => s === "SENT" };
-// Invoice DATE filter - the same month multi-select + day drill the Bills tab has (owner 2026-09-02:
-// "use the same bills date filter where it's by month and if expanded can do by date"). Month = the
-// invoice date; a month click checks it and everything older; Day enables with exactly one month.
-let invMonths = new Set();
+// Invoice MONTH filter (owner 2026-09-02: "show all the boxes selected so i can deselect ... we need a
+// select / deselect all ... days is useless, remove"). null = every month (all boxes ticked); a Set = the
+// ticked months. Unticking the first month turns the full list into a Set minus that month; ticking the
+// last missing one goes back to null.
+let invMonthSel = null;
 function _invMonthsAsc() {
   return [...new Set(((invData().invoices) || []).map(i => String(i.txn_date || "").slice(0, 7)).filter(s => /^\d{4}-\d{2}$/.test(s)))].sort();
 }
+function _invMonthSet(asc) { return invMonthSel === null ? new Set(asc) : invMonthSel; }
 function toggleInvMonth(ym, checked) {
-  const asc = _invMonthsAsc();
-  if (checked) { for (const m of asc) if (m <= ym) invMonths.add(m); } else invMonths.delete(ym);
+  const asc = _invMonthsAsc(), s = new Set(_invMonthSet(asc));
+  if (checked) s.add(ym); else s.delete(ym);
+  invMonthSel = s.size === asc.length ? null : s;
   buildInvDateFilter(); renderOpenInvoices();
 }
 function buildInvDateFilter() {
-  const menu = $("#ifMonthMenu"), btn = $("#ifMonthBtn"), dayEl = $("#ifDay");
-  if (!menu || !btn || !dayEl) return;
+  const menu = $("#ifMonthMenu"), btn = $("#ifMonthBtn");
+  if (!menu || !btn) return;
   const asc = _invMonthsAsc();
-  for (const m of [...invMonths]) if (!asc.includes(m)) invMonths.delete(m);
+  if (invMonthSel) { for (const m of [...invMonthSel]) if (!asc.includes(m)) invMonthSel.delete(m); }
+  const sel = _invMonthSet(asc);
   menu.innerHTML = "";
-  { const clr = document.createElement("button"); clr.type = "button"; clr.className = "msel-clear";
-    clr.textContent = "Clear"; clr.onclick = () => { invMonths.clear(); buildInvDateFilter(); renderOpenInvoices(); }; menu.appendChild(clr); }
+  { const tools = document.createElement("div"); tools.className = "msel-tools";
+    const all = document.createElement("button"); all.type = "button"; all.className = "msel-tool"; all.textContent = "Select all";
+    all.onclick = () => { invMonthSel = null; buildInvDateFilter(); renderOpenInvoices(); };
+    const none = document.createElement("button"); none.type = "button"; none.className = "msel-tool"; none.textContent = "Deselect all";
+    none.onclick = () => { invMonthSel = new Set(); buildInvDateFilter(); renderOpenInvoices(); };
+    const cnt = document.createElement("span"); cnt.className = "msel-count"; cnt.textContent = `${sel.size} of ${asc.length}`;
+    tools.appendChild(all); tools.appendChild(none); tools.appendChild(cnt); menu.appendChild(tools); }
   for (const ym of [...asc].reverse()) {
     const lab = document.createElement("label"); lab.className = "msel-opt";
-    const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = invMonths.has(ym);
+    const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = sel.has(ym);
     cb.onchange = () => toggleInvMonth(ym, cb.checked);
     lab.appendChild(cb); lab.appendChild(document.createTextNode(" " + billMonthLabel(ym)));
     menu.appendChild(lab);
   }
-  if (!invMonths.size) btn.textContent = "All months";
-  else { const newest = [...invMonths].sort().reverse()[0]; btn.textContent = invMonths.size === 1 ? billMonthLabel(newest) : `${billMonthLabel(newest)} +${invMonths.size - 1}`; }
-  btn.classList.toggle("on", invMonths.size > 0);
-  const prevD = dayEl.value; dayEl.innerHTML = "";
-  { const o = document.createElement("option"); o.value = ""; o.textContent = "All days"; dayEl.appendChild(o); }
-  if (invMonths.size === 1) {
-    const ym = [...invMonths][0];
-    const days = [...new Set(((invData().invoices) || []).map(i => String(i.txn_date || "")).filter(d => d.slice(0, 7) === ym && /^\d{4}-\d{2}-\d{2}/.test(d)).map(d => d.slice(0, 10)))].sort();
-    for (const d of days) { const o = document.createElement("option"); o.value = d; o.textContent = `${_BMONTHS[+ym.slice(5, 7) - 1]} ${+d.slice(8, 10)}`; dayEl.appendChild(o); }
-    dayEl.disabled = false;
-  } else { dayEl.disabled = true; }
-  dayEl.value = prevD; if (dayEl.value !== prevD) dayEl.value = "";
+  if (invMonthSel === null) btn.textContent = "All months";
+  else if (!sel.size) btn.textContent = "No months";
+  else { const newest = [...sel].sort().reverse()[0]; btn.textContent = sel.size === 1 ? billMonthLabel(newest) : `${billMonthLabel(newest)} +${sel.size - 1}`; }
+  btn.classList.toggle("on", invMonthSel !== null);
 }
 function invDatePasses(i) {
-  if (invMonths.size && !invMonths.has(String(i.txn_date || "").slice(0, 7))) return false;
-  const dy = $("#ifDay") ? $("#ifDay").value : "";
-  if (dy && String(i.txn_date || "").slice(0, 10) !== dy) return false;
+  return invMonthSel === null || invMonthSel.has(String(i.txn_date || "").slice(0, 7));
+}
+// Quick find (⌘F / Ctrl+F on this tab): every word must match somewhere in invoice # · memo · amount ·
+// project # · client · note · status; a word starting with "-" must NOT match (filter it out).
+let invQuick = "";
+function _invHay(i) {
+  const amt = num(i.amount), bal = oiBal(i);
+  return [i.doc_number, i.memo, i.project_no, i.customer, i.note, i.status, i.division,
+          amt != null ? String(Math.round(amt)) : "", amt != null ? money(amt) : "",
+          bal != null ? String(Math.round(bal)) : "", bal != null ? money(bal) : ""].join(" ").toLowerCase();
+}
+function invQuickPasses(i) {
+  const terms = invQuick.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!terms.length) return true;
+  const hay = _invHay(i), hayNum = hay.replace(/[$,]/g, "");
+  for (const raw of terms) {
+    const neg = raw.length > 1 && raw[0] === "-", term = neg ? raw.slice(1) : raw, tn = term.replace(/[$,]/g, "");
+    const hit = hay.includes(term) || (tn && hayNum.includes(tn));
+    if (neg ? hit : !hit) return false;
+  }
   return true;
 }
 function invPasses(i, f) {
-  if (!invDatePasses(i)) return false;                   // Month / Day (invoice date)
+  if (!invDatePasses(i)) return false;                   // Month (invoice date)
+  if (!invQuickPasses(i)) return false;                  // quick find (⌘F)
   if (!mselPasses(i, INV_MSEL, invMSel)) return false;   // Client / Project # multi-selects
   if (f.div && (i.division || "") !== f.div) return false;
   if (f.lienclk && LIENCLK[f.lienclk] && !LIENCLK[f.lienclk](i.lien_due_state || "")) return false;
@@ -2918,7 +2937,7 @@ function renderInvAmounts(all, f) {
   $("#invNote").textContent = all.length
     ? `(${rows.length.toLocaleString()} of ${all.length.toLocaleString()} · ${money(totOpen)} open · ${clients.length} client${clients.length === 1 ? "" : "s"})` : "(no AR data)";
   { const anyMsel = INV_MSEL.some(c => (invMSel[c.id] || {}).size);
-    const cb = $("#ifClear"); if (cb) cb.hidden = !(anyMsel || invMonths.size || ($("#ifDay") || {}).value || f.div || f.lien || f.lienclk || f.litig !== "ex"); }
+    const cb = $("#ifClear"); if (cb) cb.hidden = !(anyMsel || invMonthSel !== null || invQuick || f.div || f.lien || f.lienclk || f.litig !== "ex"); }
   const cols = [["Project", "left"], ["Invoice #", "left"], ["Date", "left"], ["Due", "left"], ["Memo", "left"], ["Open balance", "right"], ["Invoice total", "right"], ["Collections note", "left"]];
   thead.innerHTML = ""; const htr = document.createElement("tr");
   for (const [c, al] of cols) { const th = document.createElement("th"); th.className = al; th.textContent = c; htr.appendChild(th); } thead.appendChild(htr);
@@ -3071,7 +3090,7 @@ function renderOpenInvoices() {
     : "(no AR data - run load_invoices.py)";
   { const el = $("#invAsOf"); if (el) el.textContent = D.as_of ? "aged as of " + fmtDate(D.as_of) : ""; }
   { const anyMsel = INV_MSEL.some(c => (invMSel[c.id] || {}).size);
-    const cb = $("#ifClear"); if (cb) cb.hidden = !(anyMsel || invMonths.size || ($("#ifDay") || {}).value || f.div || f.lien || f.lienclk || f.litig !== "ex" || invBucketFilter != null); }
+    const cb = $("#ifClear"); if (cb) cb.hidden = !(anyMsel || invMonthSel !== null || invQuick || f.div || f.lien || f.lienclk || f.litig !== "ex" || invBucketFilter != null); }
 
   const thead = host.querySelector("thead"), tbody = host.querySelector("tbody");
   thead.innerHTML = ""; tbody.innerHTML = "";
@@ -3241,6 +3260,7 @@ function openInvoiceDetail(inv) {
       row.appendChild(a); row.appendChild(ed); g.appendChild(row);
     }
     body.appendChild(g); }
+  if (inv.notion_url) invNotionSection(body, inv.notion_url);   // the whole page - properties, body, comments
   const amt = num(inv.amount), bal = inv.balance == null ? null : num(inv.balance);
   const paid = (amt != null && bal != null) ? amt - bal : null;
   const isOpen = !(bal != null && bal <= 0.005) && (inv.status || "").toLowerCase() !== "paid";
@@ -3303,13 +3323,121 @@ function invToggleAll() {
   if (allExp) invExpanded.clear(); else invGroupKeys.forEach(k => invExpanded.add(k));
   renderOpenInvoices();
 }
+// The whole Notion page inside the drawer (owner 2026-09-02: "i need all the Notion page contents,
+// all of it so i don't need to open notion"). Fetched on open via /api/invoice/notion (server-cached 60 s).
+const _npCache = {};
+function invNotionSection(body, url) {
+  const g = document.createElement("div"); g.className = "dgroup np";
+  const h = document.createElement("h4"); h.textContent = "Notion page"; g.appendChild(h);
+  const box = document.createElement("div"); box.className = "np-box"; box.textContent = "Loading the Notion page…"; g.appendChild(box);
+  body.appendChild(g);
+  const draw = (d) => {
+    box.innerHTML = "";
+    if (!d || !d.ok) { box.textContent = "Could not load the page" + (d && d.error ? ": " + d.error : "") + "."; box.classList.add("dim"); return; }
+    const meta = document.createElement("div"); meta.className = "np-meta"; meta.textContent = `as in Notion · page edited ${fmtDate(d.last_edited.replace(" ", "T"), true)}`; box.appendChild(meta);
+    const props = (d.properties || []).filter(p => p.value !== "" && p.value != null && p.type !== "title");
+    if (props.length) {
+      const pl = document.createElement("div"); pl.className = "np-props";
+      for (const p of props) {
+        const row = document.createElement("div"); row.className = "drow";
+        const dk = document.createElement("span"); dk.className = "dk"; dk.textContent = p.name;
+        const dv = document.createElement("span"); dv.className = "dv np-val"; dv.textContent = p.value; dv.title = "Click to copy"; dv.onclick = () => copy(String(p.value));
+        if (p.type === "url" && /^https?:/.test(p.value)) { const a = document.createElement("a"); a.href = p.value; a.target = "_blank"; a.rel = "noopener"; a.textContent = p.value; dv.textContent = ""; dv.appendChild(a); }
+        row.appendChild(dk); row.appendChild(dv); pl.appendChild(row);
+      }
+      box.appendChild(pl);
+    }
+    const blocks = d.blocks || [];
+    if (blocks.length) {
+      const bh = document.createElement("div"); bh.className = "np-sub"; bh.textContent = "Page body"; box.appendChild(bh);
+      const bl = document.createElement("div"); bl.className = "np-body";
+      for (const b of blocks) {
+        const el = document.createElement("div"); el.className = "np-b np-" + b.type; el.style.marginLeft = (b.depth * 14) + "px";
+        if (b.type === "divider") { el.className += " np-divider"; }
+        else if (b.type === "to_do") { el.textContent = (b.checked ? "☑ " : "☐ ") + b.text; }
+        else if (b.type === "bulleted_list_item") { el.textContent = "• " + b.text; }
+        else if (b.type === "numbered_list_item") { el.textContent = "· " + b.text; }
+        else if (b.url) { const a = document.createElement("a"); a.href = b.url; a.target = "_blank"; a.rel = "noopener"; a.textContent = b.text || b.type; el.appendChild(a); }
+        else { el.textContent = b.text; }
+        if (b.at && b.type === "paragraph" && b.text) el.title = "written " + b.at;
+        bl.appendChild(el);
+      }
+      box.appendChild(bl);
+    }
+    const cm = d.comments || [];
+    if (cm.length) {
+      const ch = document.createElement("div"); ch.className = "np-sub"; ch.textContent = `Comments (${cm.length})`; box.appendChild(ch);
+      for (const c of cm) {
+        const el = document.createElement("div"); el.className = "np-comment";
+        const who = document.createElement("div"); who.className = "np-who"; who.textContent = [c.by, c.at ? fmtDate(c.at.replace(" ", "T"), true) : ""].filter(Boolean).join(" · ");
+        const tx = document.createElement("div"); tx.textContent = c.text; el.appendChild(who); el.appendChild(tx); box.appendChild(el);
+      }
+    }
+    if (!props.length && !blocks.length && !cm.length) { box.textContent = "The page has no content beyond the fields above."; box.classList.add("dim"); }
+  };
+  if (_npCache[url]) { draw(_npCache[url]); return; }
+  fetch("/api/invoice/notion?url=" + encodeURIComponent(url)).then(r => r.json()).then(d => { if (d && d.ok) _npCache[url] = d; draw(d); }).catch(e => draw({ ok: false, error: String(e) }));
+}
+
+// ── Saved views for the Invoices tab (owner 2026-09-02: "give me ability to save custom views") ──
+const INV_VIEWS_KEY = "proficient-ledger-invviews";
+function _invViewsLoad() { try { return JSON.parse(localStorage.getItem(INV_VIEWS_KEY) || "{}") || {}; } catch { return {}; } }
+function _invViewsSave(v) { try { localStorage.setItem(INV_VIEWS_KEY, JSON.stringify(v)); } catch { /* ignore */ } }
+function invStateCapture() {
+  const fv = sel => ($(sel) ? $(sel).value : "");
+  return { months: invMonthSel === null ? null : [...invMonthSel],
+           msel: Object.fromEntries(INV_MSEL.map(c => [c.id, [...(invMSel[c.id] || [])]])),
+           div: fv("#ifDivision"), lienclk: fv("#ifLienClock"), lien: fv("#ifLien"), litig: fv("#ifLitig") || "ex",
+           sort: fv("#ifSort") || "due", scope: invScope, view: invView, quick: invQuick,
+           subgroup: invSubGroup, bucket: invBucketFilter };
+}
+function invStateApply(st) {
+  if (!st) return;
+  invMonthSel = st.months === null || st.months === undefined ? null : new Set(st.months);
+  for (const c of INV_MSEL) invMSel[c.id] = new Set((st.msel || {})[c.id] || []);
+  _invMSelSig = null;                                                  // rebuild the client / project menus
+  const setv = (sel, v) => { const el = $(sel); if (el) el.value = v || ""; };
+  setv("#ifDivision", st.div); setv("#ifLienClock", st.lienclk); setv("#ifLien", st.lien); setv("#ifLitig", st.litig || "ex"); setv("#ifSort", st.sort || "due");
+  invQuick = st.quick || ""; { const q = $("#ifQuick"); if (q) q.value = invQuick; }
+  invSubGroup = st.subgroup !== false; invBucketFilter = st.bucket == null ? null : st.bucket;
+  const clickSeg = (segSel, attr, val) => { const b = document.querySelector(`${segSel} .seg-btn[data-${attr}="${val}"]`); if (b && !b.classList.contains("on")) b.click(); };
+  clickSeg("#invViewSeg", "view", st.view || "amounts");
+  clickSeg("#invScopeSeg", "scope", st.scope || "open");             // "all" fetches the paid ones on demand
+  renderOpenInvoices();
+}
+function buildInvViews() {
+  const vs = $("#ifViews"); if (!vs) return;
+  const views = _invViewsLoad(), cur = vs.value;
+  vs.innerHTML = ""; const o0 = document.createElement("option"); o0.value = ""; o0.textContent = "Custom"; vs.appendChild(o0);
+  for (const name of Object.keys(views).sort((a, b) => a.localeCompare(b))) { const o = document.createElement("option"); o.value = name; o.textContent = name; vs.appendChild(o); }
+  vs.value = cur; if (vs.value !== cur) vs.value = "";
+  { const d = $("#ifDelView"); if (d) d.hidden = !vs.value; }
+}
+function invSaveView() {
+  const vs = $("#ifViews");
+  const name = (prompt("Name this view (same name overwrites):", vs && vs.value ? vs.value : "") || "").trim();
+  if (!name) return;
+  const views = _invViewsLoad(); views[name] = invStateCapture(); _invViewsSave(views);
+  buildInvViews(); if (vs) { vs.value = name; } { const d = $("#ifDelView"); if (d) d.hidden = false; }
+}
+function invDeleteView() {
+  const vs = $("#ifViews"); if (!vs || !vs.value) return;
+  if (!confirm(`Delete the view "${vs.value}"?`)) return;
+  const views = _invViewsLoad(); delete views[vs.value]; _invViewsSave(views);
+  vs.value = ""; buildInvViews();
+}
+function invApplyView(name) {
+  { const d = $("#ifDelView"); if (d) d.hidden = !name; }
+  if (!name) return;
+  invStateApply(_invViewsLoad()[name]);
+}
 function invClearFilters() {
   ["#ifDivision", "#ifLien", "#ifLienClock"].forEach(s => { const el = $(s); if (el) el.value = ""; });
   for (const cfg of INV_MSEL) invMSel[cfg.id] = new Set();   // clear Client + Project # multi-selects
   _invMSelSig = null;                                        // force the menus to rebuild (reset checks + label)
   const lt = $("#ifLitig"); if (lt) lt.value = "ex";         // baseline = litigation excluded
   invBucketFilter = null;
-  invMonths.clear(); { const d = $("#ifDay"); if (d) d.value = ""; }   // the date filter too
+  invMonthSel = null; invQuick = ""; { const q = $("#ifQuick"); if (q) q.value = ""; }   // month + quick find too
   renderOpenInvoices();
 }
 // A project sub-band inside a client group (indented, lighter than the client band).
@@ -6508,7 +6636,21 @@ function init() {
   { const el = $("#bfCollapse"); if (el) el.onclick = billToggleAll; }
   ["#ifDivision", "#ifLien", "#ifLienClock", "#ifLitig", "#ifSort"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("change", renderOpenInvoices); });
   { const el = $("#ifClear"); if (el) el.onclick = invClearFilters; }
-  { const d = $("#ifDay"); if (d) d.addEventListener("change", renderOpenInvoices); }
+  // Quick find: type to filter (short debounce); ⌘F / Ctrl+F on the Invoices tab jumps here; Esc clears.
+  { const q = $("#ifQuick"); let tq = null;
+    if (q) { q.addEventListener("input", () => { clearTimeout(tq); tq = setTimeout(() => { invQuick = q.value.trim(); renderOpenInvoices(); }, 120); });
+      q.addEventListener("keydown", e => { if (e.key === "Escape") { q.value = ""; invQuick = ""; renderOpenInvoices(); q.blur(); e.stopPropagation(); } }); }
+    document.addEventListener("keydown", e => {
+      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "f" || e.altKey) return;
+      if (activeTab !== "invoices" || !$("#ifQuick")) return;
+      if (document.querySelector(".panel:not([hidden])")) return;          // a side panel is open - leave the browser's find alone
+      e.preventDefault(); const el = $("#ifQuick"); el.focus(); el.select();
+    }); }
+  // Saved views: the current filters + sort + scope + quick find under a name (localStorage, per person).
+  buildInvViews();
+  { const sv = $("#ifSaveView"); if (sv) sv.onclick = invSaveView; }
+  { const dv = $("#ifDelView"); if (dv) dv.onclick = invDeleteView; }
+  { const vs = $("#ifViews"); if (vs) vs.onchange = () => invApplyView(vs.value); }
   { const el = $("#ifCollapse"); if (el) el.onclick = invToggleAll; }
   { const el = $("#ifSubGroup"); if (el) el.onclick = invSubGroupToggle; }
   { const el = $("#ifStatement"); if (el) el.onclick = openInvStatement; }

@@ -1253,3 +1253,21 @@ table.grid td.inv-note { max-width: 360px; white-space: normal; }
 .notion-link::after { content: " \2197"; }
 .notion-link:hover { border-color: var(--accent); color: var(--accent); }
 .note-edited { margin-left: 6px; color: var(--text-dim); font-size: .85em; white-space: nowrap; }
+
+/* Invoices: quick find, saved views, and the Notion page inside the drawer (2026-09-02) */
+.inv-quick { font: inherit; padding: 5px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); min-width: 300px; }
+.inv-quick:focus { outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); border-color: var(--accent); }
+#invDetail { width: min(640px, 94vw); }
+.np-box { font-size: .95em; }
+.np-meta { color: var(--text-dim); font-size: .88em; margin-bottom: 6px; }
+.np-sub { font-weight: 700; margin: 12px 0 4px; }
+.np-val { max-width: 60%; text-align: right; white-space: pre-wrap; word-break: break-word; }
+.np-body .np-b { padding: 3px 0; white-space: pre-wrap; word-break: break-word; }
+.np-body .np-heading_1 { font-weight: 700; font-size: 1.1em; margin-top: 8px; }
+.np-body .np-heading_2 { font-weight: 700; margin-top: 6px; }
+.np-body .np-heading_3 { font-weight: 600; }
+.np-body .np-quote, .np-body .np-callout { border-left: 3px solid var(--border); padding-left: 10px; color: var(--text-dim); }
+.np-body .np-code { font-family: var(--font-mono); font-size: .9em; background: var(--surface-2); padding: 6px 8px; border-radius: 6px; }
+.np-body .np-divider { border-top: 1px solid var(--border); margin: 6px 0; }
+.np-comment { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin: 6px 0; white-space: pre-wrap; }
+.np-who { color: var(--text-dim); font-size: .88em; margin-bottom: 2px; }

@@ -49,6 +49,7 @@ from shared import paths, pnl_paths, bill_marks, lien_clock, breakeven  # noqa: 
 import registry_view  # noqa: E402  (local: parses the vault's process registry for the Systems tab)
 import vault_graph    # noqa: E402  (local: vault [[link]] graph + docs/ARCHITECTURE.md diagrams for the Graph tab)
 import trail          # noqa: E402  (local: the money trail - every QBO line behind a project's Costs / Billed, /api/trail)
+import notion_page    # noqa: E402  (local: one Notion page, whole, for the invoice side panel - /api/invoice/notion)
 
 HERE = Path(__file__).resolve().parent
 STATIC = HERE / "static"
@@ -1968,6 +1969,8 @@ class Handler(BaseHTTPRequestHandler):
                 con.close()
         elif path == "/api/invoices/all":    # on-demand: ALL invoices incl. paid (the "show all" toggle)
             self._invoices_all()
+        elif path == "/api/invoice/notion":  # on-demand: the invoice's whole Notion page (properties + body + comments), 60 s cache
+            self._json(notion_page.fetch(self._query().get("url", "")))
         elif path.startswith("/static/"):
             self._static(path[len("/static/"):])
         else:

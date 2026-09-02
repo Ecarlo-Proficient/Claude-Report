@@ -307,13 +307,15 @@
           </div>
         </div>
         <div class="bill-filters" id="invFilters">
+          <label class="fld inv-quick-fld"><span>Find (⌘F)</span>
+            <input type="search" id="ifQuick" class="inv-quick" placeholder="invoice #, memo, amount, project · -word excludes" autocomplete="off">
+          </label>
           <div class="fld"><span>Month</span>
             <div class="msel" id="ifMonthMsel">
-              <button type="button" class="msel-btn" id="ifMonthBtn" title="Invoice month - pick one to drill into a day">All months</button>
+              <button type="button" class="msel-btn" id="ifMonthBtn" title="Invoice month - every month is in until you untick one">All months</button>
               <div class="msel-menu" id="ifMonthMenu" hidden></div>
             </div>
           </div>
-          <label class="fld"><span>Day</span><select id="ifDay"></select></label>
           <span class="bf-sep"></span>
           <div class="fld"><span>Client</span>
             <div class="msel" id="ifClientMsel"><button type="button" class="msel-btn" id="ifClientBtn">All clients</button><div class="msel-menu wide" id="ifClientMenu" hidden></div></div>
@@ -346,6 +348,11 @@
               <option value="client">Client A–Z</option>
             </select>
           </label>
+          <label class="fld"><span>View</span>
+            <select id="ifViews" title="Your saved filter sets for this tab"><option value="">Custom</option></select>
+          </label>
+          <button class="btn small" id="ifSaveView" title="Save the current filters, sort, scope and quick find as a named view">Save view</button>
+          <button class="btn small" id="ifDelView" title="Delete the selected saved view" hidden>Delete view</button>
           <button class="btn small" id="ifSubGroup" title="Group each client's invoices by project, or flatten to one list">Flatten</button>
           <button class="btn small" id="ifCollapse">Collapse all</button>
           <button class="btn small" id="ifStatement" title="Open a clean statement of the filtered open invoices to copy/paste to the client">Copy for client ↗</button>
