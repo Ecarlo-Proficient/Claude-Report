@@ -1385,3 +1385,10 @@ tr.pp-vendor > td { background: color-mix(in srgb, var(--surface-2) 60%, var(--s
 .sync-pill.ok .dot { background: var(--pos); } .sync-pill.stale .dot { background: #d9931f; } .sync-pill.busy .dot { background: var(--accent); animation: skel 1s linear infinite; }
 .sync-pill.stale { border-color: color-mix(in srgb, #d9931f 55%, var(--border)); }
 .pp-drawno { display: block; font-size: .78em; color: var(--text-dim); font-weight: 500; }
+
+/* project page: the open draw reads like the P&L draw sheet (2026-09-02) */
+.pp-drawpl { padding: 8px 18px 4px; }
+.pp-drawpl .kpi { padding: 8px 12px; } .pp-drawpl .k-value { font-size: 1.25em; }
+.pp-sortbar { display: flex; align-items: center; gap: 10px; padding: 4px 18px 8px; font-size: .9em; }
+table.pp-bills td.pp-vb .pp-vend { font-weight: 600; margin-right: 6px; }
+table.pp-bills .codechip { margin-right: 2px; }

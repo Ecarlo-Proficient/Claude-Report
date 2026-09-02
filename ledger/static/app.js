@@ -3445,7 +3445,7 @@ async function openProjectPage(pn) {
   try { d = await (await fetch(`/api/project/page?no=${encodeURIComponent(pn)}`)).json(); }
   catch (e) { body.textContent = "could not load this project"; return; }
   if (!d || !d.ok) { body.textContent = (d && d.error) || "no data for this project"; return; }
-  _pp = { d, pn, open: new Set(), openV: new Set(), filter: "unpaid" };   // open = draws, openV = vendor groups (collapsed by default, always)
+  _pp = { d, pn, open: new Set(), openV: new Set(), filter: "unpaid", sort: "vendor" };   // open = draws, openV = groups (collapsed by default, always); sort = vendor | code | date | amount
   body.innerHTML = "";
   if (!r0.project_name && d.project && d.project.name) $("#recordTitle").textContent = `${pn} · ${d.project.name}`;
   const sec = (title, note) => { const w = document.createElement("section"); w.className = "widget ip-sec";
@@ -3560,6 +3560,8 @@ function _renderPpDraws() {
   const nxInv = d.funding && d.funding.next_draw ? d.funding.next_draw.invoice_no : null;
   { const hd = document.createElement("div"); hd.className = "pp-draw-h pp-cols";
     hd.innerHTML = `<span></span><span>Draw</span><span>Invoiced</span><span>Billed</span><span>GC</span><span>Materials</span><span>Labor</span><span>Pay run</span><span>Stage</span>`; host.appendChild(hd); }
+  const COLS = 10;
+  const codeOf = b => (b.codes && b.codes.length) ? b.codes.join(", ") : "(uncoded)";
   const billRow = (dr, b, isSub) => {
     const tr = document.createElement("tr"); if (b.paid) tr.classList.add("inv-paid");
     const pc = document.createElement("td"); pc.className = "left";
@@ -3567,48 +3569,71 @@ function _renderPpDraws() {
       cb.onclick = (e) => e.stopPropagation(); cb.onchange = () => _ppSetPay([b], cb.checked); pc.appendChild(cb); }
     else if (!b.gates) { const s = document.createElement("span"); s.className = "vg-tag"; s.textContent = "GC pays"; s.title = "Concrete pumping - paid by the GC directly"; pc.appendChild(s); }
     tr.appendChild(pc);
-    tr.appendChild(leftText(""));   // vendor is the group header
-    tr.appendChild(qboLinkCell(b.bill_ref || "–", isSub ? qboUrl(b.txn_type === "Expense" ? "expense" : "bill", b.bill_id) : qboBillHref(b.qbo_link), "Open this bill in QuickBooks"));
-    tr.appendChild(leftText(fmtDateShort(b.bill_date)));
-    { const mc = leftText(isSub ? (b.memo || (b.codes || []).join(", ") || "–") : "–"); mc.className += " inv-memo"; mc.title = isSub ? (b.memo || "") : ""; tr.appendChild(mc); }
+    { const vb = document.createElement("td"); vb.className = "left pp-vb"; const v = document.createElement("span"); v.className = "pp-vend"; v.textContent = b.vendor || "–"; vb.appendChild(v);
+      vb.appendChild(document.createTextNode(" ")); const link = qboLinkCell(b.bill_ref || "–", isSub ? qboUrl(b.txn_type === "Expense" ? "expense" : "bill", b.bill_id) : qboBillHref(b.qbo_link), "Open this bill in QuickBooks");
+      while (link.firstChild) vb.appendChild(link.firstChild); tr.appendChild(vb); }
+    { const cc = document.createElement("td"); cc.className = "left"; for (const c of (b.codes || [])) { const chip = document.createElement("span"); chip.className = "codechip"; chip.textContent = c; cc.appendChild(chip); cc.appendChild(document.createTextNode(" ")); } if (!(b.codes || []).length) { cc.textContent = "–"; cc.classList.add("dim"); } tr.appendChild(cc); }
     const ac = document.createElement("td"); ac.className = "ip-amt"; ac.appendChild(moneyCell(b.amount)); tr.appendChild(ac);
-    const oc = document.createElement("td"); oc.className = "right ip-amt"; oc.textContent = num(b.open) > 0.005 ? money(b.open) : "–"; if (num(b.open) > 0.005) oc.style.color = "var(--neg)"; else oc.classList.add("dim"); tr.appendChild(oc);
-    const st = document.createElement("td"); st.className = "left"; const pill = document.createElement("span"); pill.className = b.paid ? "ar-paid" : "ar-open";
-    pill.textContent = isSub ? (b.paid ? "Paid " + fmtDateShort(b.pay_date) : "No payment on file") : (b.pay_date ? "Paid " + fmtDateShort(b.pay_date) : (b.paid ? (b.pay_status || "Paid") + " (no date)" : (b.pay_status || "Open")));
-    if (isSub && !b.paid) pill.title = "No QuickBooks bill payment applied to this bill in the loaded window (this year)"; st.appendChild(pill); tr.appendChild(st);
+    tr.appendChild(leftText(fmtDateShort(b.bill_date)));
+    { const wc = leftText(isSub ? "QuickBooks · labor" : [b.invoice_status, b.approved ? (b.approved === "approved" ? "approved" : b.approved) : null].filter(Boolean).join(" · ") || "Bill Tracker"); wc.classList.add("dim"); tr.appendChild(wc); }
+    { const st = document.createElement("td"); st.className = "left"; const pill = document.createElement("span"); pill.className = b.paid ? "ar-paid" : "ar-open";
+      pill.textContent = isSub ? (b.paid ? "Paid " + fmtDateShort(b.pay_date) : "No") : (b.pay_date ? "Paid " + fmtDateShort(b.pay_date) : (b.paid ? "Yes (no date)" : "No" + (num(b.open) > 0.005 ? " · " + money(b.open) + " open" : "")));
+      if (isSub && !b.paid) pill.title = "No QuickBooks bill payment applied to this bill in the loaded window (this year)"; st.appendChild(pill); tr.appendChild(st); }
+    { const dc = leftText(b.description || "–"); dc.className += " inv-memo"; dc.title = b.description || ""; if (!b.description) dc.classList.add("dim"); tr.appendChild(dc); }
     { const wc = document.createElement("td"); wc.className = "left";
-      if (dr.no_draw || isSub) wc.textContent = isSub ? "–" : "–";
+      if (dr.no_draw || isSub) wc.textContent = "–";
       else { const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = !!b.waiver; cb.title = "Tick when the vendor's unconditional waiver is in hand";
         cb.onclick = (e) => e.stopPropagation(); cb.onchange = () => { setWaiver(dr, b, cb); b.waiver = cb.checked; }; wc.appendChild(cb); if (!b.waiver && !b.paid) { const s = document.createElement("span"); s.className = "inv-late"; s.textContent = " needed"; wc.appendChild(s); } }
       tr.appendChild(wc); }
     return tr;
   };
-  const sectionRow = (tbody, dr, label, bills, sect) => {   // level 2: the section total (Materials $X / Labor $Y) with its own select-all
+  const sectionRow = (tbody, dr, label, bills, sect) => {   // the section total (Materials $X / Labor $Y) with its own select-all
     const paidCt = bills.filter(b => b.paid).length, tot = bills.reduce((s, b) => s + num(b.amount), 0), owed = bills.reduce((s, b) => s + (b.paid ? 0 : num(b.open)), 0);
     const sr = document.createElement("tr"); sr.className = "pp-sect";
     const cbTd = document.createElement("td"); cbTd.className = "left"; cbTd.appendChild(_ppCheck(bills, label, `Tick every unpaid ${label.toLowerCase()} bill on this draw`)); sr.appendChild(cbTd);
-    const td = document.createElement("td"); td.className = "left"; td.colSpan = 8;
+    const td = document.createElement("td"); td.className = "left"; td.colSpan = COLS - 1;
     td.innerHTML = `<b>${_ge(label)}</b> <span class="ip-paid ${paidCt === bills.length ? "ok" : "due"}">${_ge(money(tot))} · ${paidCt}/${bills.length} paid${owed > 0.005 ? " · " + _ge(money(owed)) + " to pay" : ""}</span>` + (sect === "labor" ? ` <span class="dim">QuickBooks bills dated in the draw period · paid = a bill payment applied this year</span>` : ` <span class="dim">Bill Tracker</span>`);
     sr.appendChild(td); tbody.appendChild(sr);
   };
-  const vendorGroups = (tbody, dr, bills, isSub, sect) => {   // level 2 vendors (collapsed) -> level 3 bills
-    const byV = new Map(); for (const b of bills) { const k = b.vendor || "?"; if (!byV.has(k)) byV.set(k, []); byV.get(k).push(b); }
-    for (const [v, list] of [...byV].sort((a, b) => a[0].localeCompare(b[0]))) {
-      const vkey = `${dr.matched_invoice}|${sect}|${v}`, vopen = _pp.openV.has("*") || _pp.openV.has(vkey);
+  const groupedRows = (tbody, dr, bills, isSub, sect) => {   // bands by vendor or by cost code (collapsed) -> bills
+    const keyOf = _pp.sort === "code" ? codeOf : (b => b.vendor || "?");
+    const byK = new Map(); for (const b of bills) { const k = keyOf(b); if (!byK.has(k)) byK.set(k, []); byK.get(k).push(b); }
+    for (const [v, list] of [...byK].sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true }))) {
+      const vkey = `${dr.matched_invoice}|${sect}|${_pp.sort}|${v}`, vopen = _pp.openV.has("*") || _pp.openV.has(vkey);
       const paidCt = list.filter(b => b.paid).length, tot = list.reduce((s, b) => s + num(b.amount), 0), owed = list.reduce((s, b) => s + (b.paid ? 0 : num(b.open)), 0);
       const gtr = document.createElement("tr"); gtr.className = "bill-subgroup pp-vendor"; gtr.style.cursor = "pointer"; gtr.title = vopen ? "Click to collapse" : "Click to see the bills";
       const cbTd = document.createElement("td"); cbTd.className = "left"; cbTd.appendChild(_ppCheck(list, v)); gtr.appendChild(cbTd);
-      const vt = document.createElement("td"); vt.className = "left"; vt.colSpan = 8;
-      const cell = document.createElement("div"); cell.className = "bg-cell"; const caret = document.createElement("span"); caret.className = "bg-caret"; caret.textContent = vopen ? "▾ " : "▸ ";
-      const k = document.createElement("span"); k.className = "sg-key"; k.textContent = v;
-      const leftP = document.createElement("span"); leftP.className = "bg-left"; leftP.appendChild(caret); leftP.appendChild(k); cell.appendChild(leftP);
+      const vt = document.createElement("td"); vt.className = "left"; vt.colSpan = COLS - 1;
+      const cell = document.createElement("div"); cell.className = "bg-cell"; const leftP = document.createElement("span"); leftP.className = "bg-left";
+      const caret = document.createElement("span"); caret.className = "bg-caret"; caret.textContent = vopen ? "▾ " : "▸ "; const k = document.createElement("span"); k.className = "sg-key"; k.textContent = v; leftP.appendChild(caret); leftP.appendChild(k); cell.appendChild(leftP);
       bandMetrics(cell, [[money(tot), "total"], [list.length, "bills"], [`${paidCt}/${list.length}`, "paid", paidCt === list.length ? "ok" : "due"], [owed > 0.005 ? money(owed) : "–", "to pay", owed > 0.005 ? "neg" : ""]]);
       vt.appendChild(cell); gtr.appendChild(vt);
-      gtr.onclick = (e) => { if (e.target.closest("input")) return; if (_pp.openV.has("*")) { _pp.openV = new Set(); for (const d2 of _pp.d.draws) for (const s2 of ["materials", "labor"]) for (const b2 of (s2 === "labor" ? (d2.sub_bills || []) : d2.bills)) _pp.openV.add(`${d2.matched_invoice}|${s2}|${b2.vendor || "?"}`); }
+      gtr.onclick = (e) => { if (e.target.closest("input")) return; if (_pp.openV.has("*")) { _pp.openV = new Set(); for (const d2 of _pp.d.draws) for (const s2 of ["materials", "labor"]) for (const b2 of (s2 === "labor" ? (d2.sub_bills || []) : d2.bills)) _pp.openV.add(`${d2.matched_invoice}|${s2}|${_pp.sort}|${keyOf(b2)}`); }
         if (_pp.openV.has(vkey)) _pp.openV.delete(vkey); else _pp.openV.add(vkey); _renderPpDraws(); };
       tbody.appendChild(gtr);
-      if (vopen) for (const b of list) tbody.appendChild(billRow(dr, b, isSub));
+      if (vopen) for (const b of list.sort((x, y) => (x.bill_date || "").localeCompare(y.bill_date || ""))) tbody.appendChild(billRow(dr, b, isSub));
     }
+  };
+  const flatRows = (tbody, dr, bills, isSub) => {   // sorted by date or amount, no bands
+    const sorted = [...bills].sort(_pp.sort === "amount" ? ((x, y) => num(y.amount) - num(x.amount)) : ((x, y) => (x.bill_date || "").localeCompare(y.bill_date || "")));
+    for (const b of sorted) tbody.appendChild(billRow(dr, b, isSub));
+  };
+  const drawStrip = (dr) => {   // DRAW SUMMARY, the same cells as the P&L workbook's draw sheet
+    const p = dr.pl || {}; const strip = document.createElement("div"); strip.className = "kpi-row pp-strip pp-drawpl";
+    const items = [["Income · billed this draw", money(p.income), "the net invoice - cash to collect"], ["Costs · " + (p.bills || 0) + " bills", money(p.costs), "materials we pay + labor in period"],
+      ["Gross profit", money(p.gross), "income − costs", num(p.gross) < 0 ? "pnl-kpi-neg" : ""], ["Gross margin %", p.margin_pct != null ? (p.margin_pct * 100).toFixed(1) + "%" : "–", "", num(p.gross) < 0 ? "pnl-kpi-neg" : ""],
+      ["Overhead", money(p.overhead), p.overhead_basis || ""], ["Real net profit", money(p.net), p.net_pct != null ? (p.net_pct * 100).toFixed(1) + "% of income" : "", num(p.net) < 0 ? "pnl-kpi-neg" : "pnl-kpi-pos"]];
+    for (const [l, v, sub, cls] of items) { const k = document.createElement("div"); k.className = "kpi" + (cls ? " " + cls : ""); k.innerHTML = `<div class="k-label"></div><div class="k-value"></div><div class="k-sub"></div>`;
+      k.querySelector(".k-label").textContent = l; k.querySelector(".k-value").textContent = v; k.querySelector(".k-sub").textContent = sub || ""; strip.appendChild(k); }
+    return strip;
+  };
+  const sortBar = () => {
+    const bar = document.createElement("div"); bar.className = "pp-sortbar";
+    const lab = document.createElement("span"); lab.className = "dim"; lab.textContent = "Sort / group by"; bar.appendChild(lab);
+    const seg = document.createElement("span"); seg.className = "seg tiny";
+    for (const [k, l] of [["vendor", "Vendor"], ["code", "Cost code"], ["date", "Date"], ["amount", "Amount"]]) { const b = document.createElement("button"); b.type = "button"; b.className = "seg-btn" + (_pp.sort === k ? " on" : ""); b.textContent = l;
+      b.onclick = (e) => { e.stopPropagation(); _pp.sort = k; if (k === "date" || k === "amount") _pp.openV = new Set(["*"]); _renderPpDraws(); }; seg.appendChild(b); }
+    bar.appendChild(seg); return bar;
   };
   for (const dr of d.draws) {
     const key = dr.matched_invoice, open = _pp.open.has(key);
@@ -3633,14 +3658,18 @@ function _renderPpDraws() {
     head.onclick = () => { if (_pp.open.has(key)) _pp.open.delete(key); else _pp.open.add(key); _renderPpDraws(); };
     band.appendChild(head);
     if (open) {
+      if (!dr.no_draw) band.appendChild(drawStrip(dr));
+      band.appendChild(sortBar());
       const mat = dr.bills.filter(_ppBillShown), subs = (dr.sub_bills || []).filter(_ppBillShown);
       if (!mat.length && !subs.length) { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = _pp.filter === "unpaid" ? "Every bill on this draw is paid." : "No bills."; band.appendChild(p); }
       else {
         const table = document.createElement("table"); table.className = "grid pp-bills"; const thead = document.createElement("thead"), tbody = document.createElement("tbody");
-        thead.innerHTML = "<tr><th class='left'>Pay</th><th class='left'>Vendor</th><th class='left'>Bill #</th><th class='left'>Date</th><th class='left'>Memo</th><th class='right'>Amount</th><th class='right'>Open</th><th class='left'>Status</th><th class='left'>Waiver received</th></tr>";
-        if (mat.length) { sectionRow(tbody, dr, "Materials", mat, "materials"); vendorGroups(tbody, dr, mat, false, "materials"); }
-        if (subs.length) { sectionRow(tbody, dr, "Labor (subs)", subs, "labor"); vendorGroups(tbody, dr, subs, true, "labor"); }
-        thead.hidden = ![...mat, ...subs].some(b => _pp.openV.has("*") || _pp.openV.has(`${dr.matched_invoice}|${dr.sub_bills && dr.sub_bills.includes(b) ? "labor" : "materials"}|${b.vendor || "?"}`));   // headers only once bills show
+        thead.innerHTML = "<tr><th class='left'>Pay</th><th class='left'>Vendor / Bill #</th><th class='left'>Code</th><th class='right'>Amount</th><th class='left'>Date</th><th class='left'>Where / status</th><th class='left'>Paid?</th><th class='left'>Description</th><th class='left'>Waiver</th></tr>";
+        const flat = _pp.sort === "date" || _pp.sort === "amount";
+        if (mat.length) { sectionRow(tbody, dr, "Materials", mat, "materials"); if (flat) flatRows(tbody, dr, mat, false); else groupedRows(tbody, dr, mat, false, "materials"); }
+        if (subs.length) { sectionRow(tbody, dr, "Labor (subs)", subs, "labor"); if (flat) flatRows(tbody, dr, subs, true); else groupedRows(tbody, dr, subs, true, "labor"); }
+        const keyOf = _pp.sort === "code" ? codeOf : (b => b.vendor || "?");
+        thead.hidden = !flat && ![...mat, ...subs].some(b => _pp.openV.has("*") || _pp.openV.has(`${dr.matched_invoice}|${dr.sub_bills && dr.sub_bills.includes(b) ? "labor" : "materials"}|${_pp.sort}|${keyOf(b)}`));   // headers only once bills show
         table.appendChild(thead); table.appendChild(tbody); band.appendChild(table);
       }
     }

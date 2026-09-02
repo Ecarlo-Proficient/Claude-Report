@@ -4,6 +4,17 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Project page draws read like the P&L draw sheet; sort / group by vendor or cost code (owner
+  2026-09-02: "need this level of readability on the ledger and be able to sort by vendor and cost
+  code fast").** An open draw starts with its **DRAW SUMMARY** strip - Income billed (net, cash to
+  collect) · Costs (materials we pay + labor in period, n bills) · Gross profit · Gross margin % ·
+  Overhead (10% of income; MFD 9% of costs) · Real net profit + % - the same arithmetic as the
+  workbook's draw sheets. Then **Sort / group by: Vendor | Cost code | Date | Amount**: vendor and
+  cost-code views are collapsed bands with the band metrics; date and amount are flat sorted rows.
+  Bill rows carry the sheet's columns: Vendor / Bill # (qb link) · Code chips · Amount · Date ·
+  Where / status (tracker invoice status + approval, or "QuickBooks · labor") · Paid? · Description
+  (the QBO line description) · Waiver tick. Cost codes and descriptions come from `cost_line` joined
+  by the bill's QBO id (the tracker row carries neither); multi-code bills band by their sorted set.
 - **Pay list: Draw # and the Unlocks / Net footer (owner 2026-09-02, from his own edit of the export).**
   Each draw carries `draw_no` parsed from the invoice memo ("Draw #4"); the project page bands and
   the funding box show it ("Invoice 34511 · Draw #3"), and the pay-list export's Draw column reads

@@ -1486,11 +1486,28 @@ def _fetch_project_page(con, pn: str) -> dict:
             paid_by_bill[str(r["bill_id"])] = (r["d"], r["a"] or 0)
     except sqlite3.OperationalError:
         pass
+    # cost codes + line descriptions per QBO bill (the tracker row carries neither), so the draw table can
+    # sort / group by cost code the way the P&L draw sheet reads (owner 2026-09-02)
+    codes_by_txn: dict = {}
+    for r in con.execute("SELECT qbo_txn_id, cost_code, account, description FROM cost_line WHERE project_no = ? "
+                         "ORDER BY qbo_txn_id, qbo_line_id", (pn,)):
+        e = codes_by_txn.setdefault(str(r["qbo_txn_id"]), {"codes": [], "desc": None})
+        code = r["cost_code"] or (r["account"].split(":")[-1].strip() if r["account"] else None)
+        if code and code not in e["codes"]:
+            e["codes"].append(code)
+        if not e["desc"] and r["description"]:
+            e["desc"] = r["description"]
+    for e in codes_by_txn.values():
+        e["codes"].sort()            # "SL2, SL3" and "SL3, SL2" are the same band
+    is_mfd = pn.startswith("MFD")
     for d in draws:
         for b in d["bills"]:
             bid = bill_marks.bill_id_from_link(b.get("qbo_link"))
             b["bill_id"] = bid
             b["pay_selected"] = bool(bid and pay.get(bid))
+            e = codes_by_txn.get(str(bid)) if bid else None
+            b["codes"] = e["codes"] if e else []
+            b["description"] = (e["desc"] if e else None)
         p0, p1 = _draw_period_range(d.get("matched_invoice") or "")
         subs: dict = {}
         if p0 and p1:
@@ -1513,6 +1530,9 @@ def _fetch_project_page(con, pn: str) -> dict:
         d["subs_paid_ct"] = sum(1 for x in d["sub_bills"] if x["paid"])
         d["subs_amt"] = round(sum(x["amount"] for x in d["sub_bills"]), 2)
         d["subs_unpaid_amt"] = round(sum(x["amount"] for x in d["sub_bills"] if not x["paid"]), 2)
+        for sb in d["sub_bills"]:
+            sb["description"] = sb.get("memo") or (codes_by_txn.get(sb["bill_id"], {}).get("desc"))
+
         gate = [b for b in d["bills"] if b["gates"]]
         d["vendors_total"] = len(gate)
         for b in d["bills"]:
@@ -1523,6 +1543,16 @@ def _fetch_project_page(con, pn: str) -> dict:
         d["paid_amt"] = round(sum((b["amount"] or 0) for b in gate if b["paid"]), 2)
         d["gate_amt"] = round(sum((b["amount"] or 0) for b in gate), 2)
         d["unpaid_amt"] = round(sum((b["open"] or 0) for b in gate if not b["paid"]), 2)
+        # the draw's own P&L strip - the same arithmetic as the P&L workbook's draw sheet
+        income = float(d.get("billed") or 0)                       # the net invoice = cash to collect
+        costs = round(float(d.get("gate_amt") or 0) + d["subs_amt"], 2)
+        gross = round(income - costs, 2)
+        overhead = round((_OVERHEAD_MFD_COST * costs) if is_mfd else (_OVERHEAD_REV * income), 2)
+        d["pl"] = {"income": income, "costs": costs, "bills": len(d["bills"]) + len(d["sub_bills"]), "gross": gross,
+                   "margin_pct": (gross / income) if income else None, "overhead": overhead,
+                   "overhead_basis": "9% of costs (MFD)" if is_mfd else "10% of income",
+                   "net": round(gross - overhead, 2), "net_pct": ((gross - overhead) / income) if income else None,
+                   "period": {"start": _draw_period_range(d.get("matched_invoice") or "")[0], "end": _draw_period_range(d.get("matched_invoice") or "")[1]}}
         d["waivers_total"] = len(gate)
         d["gc_paid"] = bool(d.get("gc_paid_in"))
     # funding chain: the OLDEST draw the GC has not paid us; its blockers = unpaid gating bills on every EARLIER draw
