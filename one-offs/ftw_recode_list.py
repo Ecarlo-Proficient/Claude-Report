@@ -16,6 +16,15 @@ THREE SHEETS, because they are three different actions:
                          twin at all, so this is a cost-code correction, not a
                          job move (the owner's rule, 2026-08-06).
 
+EVERY SHEET LEADS WITH WHAT LANDED AFTER THE MEETING. The owner settled the
+CP/MFD rule in a meeting on 2026-08-06, so a line coded that way SINCE is a
+different problem from the historical backlog - the same mistake made after
+everyone was told. Measured 2026-09-02: of 502,505 miscoded to CP/MFD, only
+3,861 (4 lines) postdates the meeting and September is clean, so the meeting
+worked and the rest is a cleanup of history. Keeping the two apart is the
+point - burying four live lines inside 188 historical ones hides the only
+part that is still happening.
+
 Plain formatting on purpose (repo rule 5): this is a worklist, not a report.
 Rows are grouped but NEVER hidden - the clerk can collapse a vendor with the
 outline +/- if they want to.
@@ -91,20 +100,18 @@ def _t(ws, r, c, v, *, bold=False, fmt=None, align=None, wrap=False, size=11):
 
 
 def sheet_by_vendor(wb, title: str, rows: list, realm: str, blurb: str,
-                    show_target: bool) -> None:
+                    show_target: bool, meeting: str = "") -> None:
     ws = wb.create_sheet(title)
     ws.sheet_view.showGridLines = False
-    by_vendor = defaultdict(list)
-    for r in rows:
-        by_vendor[r.get("vendor") or "(no vendor)"].append(r)
-    order = sorted(by_vendor, key=lambda v: -sum(x["amt"] for x in by_vendor[v]))
     total = sum(r["amt"] for r in rows)
     bills = len({(r.get("txn"), r.get("doc")) for r in rows})
+    after = [r for r in rows if meeting and (r.get("date") or "") >= meeting]
+    before = [r for r in rows if r not in after] if after else rows
 
     _t(ws, 1, 1, title.upper(), bold=True, size=14)
     _t(ws, 2, 1, blurb, size=10)
-    _t(ws, 3, 1, f"{len(order)} vendors · {bills} bills · {len(rows)} lines · "
-                 f"{total:,.2f} total · biggest vendor first", size=10)
+    _t(ws, 3, 1, f"{bills} bills · {len(rows)} lines · {total:,.2f} total · "
+                 f"biggest vendor first", size=10)
     heads = ["Done", "Date", "Bill #", "Move FROM"] + \
             (["Move TO"] if show_target else []) + \
             ["Code", "Amount", "Description", "Open in QBO"]
@@ -114,6 +121,45 @@ def sheet_by_vendor(wb, title: str, rows: list, realm: str, blurb: str,
                align="right" if h == "Amount" else "left")
         c.border = Border(bottom=THIN)
     r += 1
+    for block, banner in ((after, f"CODED THIS WAY AFTER THE {_us(meeting)} MEETING "
+                                  f"- {len(after)} line(s), {sum(x['amt'] for x in after):,.2f} "
+                                  f"- raise these, they are still happening"),
+                          (before, f"BEFORE THE MEETING - historical cleanup, "
+                                   f"{len(before)} line(s), "
+                                   f"{sum(x['amt'] for x in before):,.2f}")):
+        if not block:
+            continue
+        if after:                      # only banner the split when there IS one
+            _t(ws, r, 2, banner, bold=True)
+            for i in range(len(heads)):
+                ws.cell(row=r, column=2 + i).border = Border(top=THIN, bottom=THIN)
+            r += 1
+        r = _vendor_block(ws, r, block, heads, realm, show_target)
+    _t(ws, r, 2, "TOTAL", bold=True)
+    _t(ws, r, 2 + heads.index("Amount"), total, bold=True, fmt=MONEY, align="right")
+    for i in range(len(heads)):
+        ws.cell(row=r, column=2 + i).border = Border(top=THIN)
+
+    ws.column_dimensions["A"].width = 3
+    widths = [7, 11, 14, 13] + ([13] if show_target else []) + [8, 14, 52, 13]
+    for i, w in enumerate(widths):
+        ws.column_dimensions[get_column_letter(2 + i)].width = w
+    ws.sheet_properties.outlinePr.summaryBelow = False
+    ws.freeze_panes = f"A{6}"
+
+
+def _us(iso: str) -> str:
+    """2026-08-06 -> 08/06 - the owner never reads a date year-first."""
+    p = (iso or "").split("-")
+    return f"{p[1]}/{p[2]}" if len(p) == 3 else iso
+
+
+def _vendor_block(ws, r: int, rows: list, heads: list, realm: str,
+                  show_target: bool) -> int:
+    by_vendor = defaultdict(list)
+    for x in rows:
+        by_vendor[x.get("vendor") or "(no vendor)"].append(x)
+    order = sorted(by_vendor, key=lambda v: -sum(x["amt"] for x in by_vendor[v]))
     for vendor in order:
         lines = sorted(by_vendor[vendor], key=lambda x: (x.get("date") or ""))
         sub = sum(x["amt"] for x in lines)
@@ -143,23 +189,16 @@ def sheet_by_vendor(wb, title: str, rows: list, realm: str, blurb: str,
             # collapse a vendor with the outline +/- if they want to
             ws.row_dimensions[r].outline_level = 1
             r += 1
-    _t(ws, r, 2, "TOTAL", bold=True)
-    _t(ws, r, 2 + heads.index("Amount"), total, bold=True, fmt=MONEY, align="right")
-    for i in range(len(heads)):
-        ws.cell(row=r, column=2 + i).border = Border(top=THIN)
-
-    ws.column_dimensions["A"].width = 3
-    widths = [7, 11, 14, 13] + ([13] if show_target else []) + [8, 14, 52, 13]
-    for i, w in enumerate(widths):
-        ws.column_dimensions[get_column_letter(2 + i)].width = w
-    ws.sheet_properties.outlinePr.summaryBelow = False
-    ws.freeze_panes = f"A{6}"
+    return r
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Per-bill FTW recode worklist")
     ap.add_argument("--out", default=str(Path.home() / "Downloads" / "FTW Recodes.xlsx"))
     ap.add_argument("--cache", default=str(CACHE))
+    ap.add_argument("--meeting", default="2026-08-06",
+                    help="the date the rule was settled; anything coded this "
+                         "way SINCE is listed first (default 2026-08-06)")
     a = ap.parse_args()
     cache = Path(a.cache).expanduser()
     if not cache.exists():
@@ -172,17 +211,19 @@ def main() -> int:
     wb = Workbook()
     wb.remove(wb.active)
     sheet_by_vendor(
-        wb, "Recode by vendor", move, realm, show_target=True,
+        wb, "Recode by vendor", move, realm, show_target=True, meeting=a.meeting,
         blurb="Move each line from the slab to its -FTW twin. The twin already "
               "exists, so nothing needs creating first.")
     if need_job:
         sheet_by_vendor(
             wb, "Create -FTW first", need_job, realm, show_target=False,
+            meeting=a.meeting,
             blurb="FW cost on an RP slab with NO -FTW twin. The flatwork job has "
                   "to be created before these can move.")
     if wrong_code:
         sheet_by_vendor(
             wb, "Wrong code", wrong_code, realm, show_target=False,
+            meeting=a.meeting,
             blurb="FW cost on a CP or MFD job. Those divisions have no -FTW "
                   "twin, so this is a cost-code correction, not a job move.")
     out = Path(a.out).expanduser()
