@@ -1810,7 +1810,7 @@ function dateFilter(id, getDates, onChange) {
   const paintMode = () => { host.querySelectorAll(".seg-btn").forEach(b => b.classList.toggle("on", b.dataset.m === st.mode));
     host.querySelector(".datef-month").hidden = st.mode !== "month"; host.querySelector(".datef-range").hidden = st.mode !== "date"; };
   host.querySelectorAll(".seg-btn").forEach(b => b.onclick = () => { st.mode = b.dataset.m; paintMode(); onChange(); });
-  btn.onclick = (e) => { e.stopPropagation(); const open = menu.hidden; document.querySelectorAll(".msel-menu").forEach(m => m.hidden = true); menu.hidden = !open; };
+  btn.onclick = (e) => { e.stopPropagation(); const open = menu.hidden; document.querySelectorAll(".msel-menu").forEach(m => m.hidden = true); menu.hidden = !open; if (open) _placeMenu(btn, menu); };
   from.onchange = () => { st.from = from.value; onChange(); }; to.onchange = () => { st.to = to.value; onChange(); };
   st.build = () => {
     const asc = [...new Set(getDates().map(x => String(x || "").slice(0, 7)).filter(x => /^\d{4}-\d{2}$/.test(x)))].sort();
@@ -1845,6 +1845,21 @@ function dateFilter(id, getDates, onChange) {
   return st;
 }
 let billDate = null, drawDate = null;
+// Dropdown menus live inside cards that clip (`.widget { overflow: hidden }`), so an open menu is
+// pinned to the viewport at its button instead - it can never be cut off by the card, and it gets
+// as much height as the screen below (or above) the button allows. Closed on scroll / resize.
+function _placeMenu(btn, menu) {
+  const r = btn.getBoundingClientRect();
+  menu.style.position = "fixed"; menu.style.top = ""; menu.style.bottom = ""; menu.style.left = Math.max(8, Math.min(r.left, window.innerWidth - menu.offsetWidth - 8)) + "px";
+  const below = window.innerHeight - r.bottom - 12, above = r.top - 12;
+  if (below >= 220 || below >= above) { menu.style.top = (r.bottom + 4) + "px"; menu.style.maxHeight = Math.max(160, Math.min(420, below)) + "px"; }
+  else { menu.style.bottom = (window.innerHeight - r.top + 4) + "px"; menu.style.maxHeight = Math.max(160, Math.min(420, above)) + "px"; }
+}
+(function () {
+  const closeAll = () => document.querySelectorAll(".msel-menu:not([hidden])").forEach(m => { m.hidden = true; });
+  window.addEventListener("resize", closeAll);
+  window.addEventListener("scroll", closeAll, true);   // any scrolling container - the pinned menu would drift otherwise
+})();
 let billMonths = new Set();   // (legacy - the Month/Date control above replaced the month click-older filter)
 const _BMONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 function billMonthLabel(ym) { const [y, m] = ym.split("-"); return `${_BMONTHS[+m - 1]} ${y}`; }
@@ -2016,7 +2031,11 @@ function renderBills() {
   if (!rows.length) {
     const tr = document.createElement("tr"); const td = document.createElement("td");
     td.colSpan = cols.length; td.className = "left"; td.style.color = "var(--text-dim)"; td.style.padding = "14px 12px";
-    td.textContent = bills.length ? "No bills match these filters." : "No AP data - run load_bill_tracker.py.";
+    if (!bills.length) td.textContent = "No AP data - run load_bill_tracker.py.";
+    else {   // say what is hiding them: the view pill (e.g. Open AP hides paid bills) is easy to miss (owner 2026-09-02)
+      const byFilters = bills.filter(b => billPassesFilters(b, f)).length;
+      td.textContent = byFilters ? `No bills match - ${byFilters} bill${byFilters === 1 ? "" : "s"} pass${byFilters === 1 ? "es" : ""} the filters but ${byFilters === 1 ? "is" : "are"} hidden by the "${view.name}" view above. Pick "All bills" to see ${byFilters === 1 ? "it" : "them"}.` : "No bills match these filters.";
+    }
     tr.appendChild(td); tbody.appendChild(tr); billGroupKeys = []; updateBillCollapseBtn(group); return;
   }
 
@@ -2106,6 +2125,8 @@ function billRow(b) {
   // Date (MM/DD/YY) + age badge once a bill is 2+ months old
   const dtd = document.createElement("td"); dtd.className = "left bill-date";
   const ds = document.createElement("span"); ds.textContent = fmtDateShort(b.bill_date); ds.title = fmtDate(b.bill_date); dtd.appendChild(ds);
+  if (String(b.bill_date || "").slice(0, 10) > new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10)) {
+    const w = document.createElement("span"); w.className = "vg-tag future"; w.textContent = "future date"; w.title = "This bill is dated after today - almost certainly a typo on the bill date in QuickBooks (wrong year)"; dtd.appendChild(w); }
   const mo = billMonthsOld(b);
   if (mo != null && mo >= 2) { const a = document.createElement("span"); a.className = "bill-age"; a.textContent = mo + "mo"; dtd.appendChild(a); }
   tr.appendChild(dtd);
@@ -7009,7 +7030,7 @@ function init() {
   for (const [btnId, menuId, wrapId] of _mselWraps) {
     const btn = $(btnId), menu = $(menuId);
     if (btn && menu) {
-      btn.addEventListener("click", (e) => { e.stopPropagation(); const open = menu.hidden; _closeMsels(menuId); menu.hidden = !open; });   // one menu open at a time
+      btn.addEventListener("click", (e) => { e.stopPropagation(); const open = menu.hidden; _closeMsels(menuId); menu.hidden = !open; if (open) _placeMenu(btn, menu); });   // one menu open at a time; pinned to the viewport so no card clips it
       document.addEventListener("click", (e) => { if (!menu.hidden && !e.target.closest(wrapId)) menu.hidden = true; });
     }
   }

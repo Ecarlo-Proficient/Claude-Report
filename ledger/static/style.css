@@ -1324,3 +1324,6 @@ table.grid td.ip-amt { font-weight: 700; font-size: 1.08em; }
 .xdlg-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
 .savebar[hidden] { display: none; }
+
+.vg-tag.future { display: inline-block; font-size: .78em; font-weight: 600; padding: 0 6px; border-radius: 999px; margin-left: 6px; vertical-align: middle;
+  color: var(--neg); border: 1px solid color-mix(in srgb, var(--neg) 50%, var(--border)); background: color-mix(in srgb, var(--neg) 8%, transparent); }

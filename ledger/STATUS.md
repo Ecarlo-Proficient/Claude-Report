@@ -4,6 +4,15 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Dropdown menus never cut off; Bills says WHY a list is empty; future-dated bills flagged (owner
+  2026-09-02).** Every multi-select / date menu is pinned to the viewport at its button when it opens
+  (`_placeMenu`: fixed position, opens upward when there is more room above, height capped to the
+  screen; closed on scroll / resize) - the cards clip (`.widget { overflow: hidden }`) and used to cut
+  menus off on short pages. The Bills empty state now counts the bills that pass the dropdown filters
+  but are hidden by the VIEW pill (e.g. "1 bill ... hidden by the Open AP view - pick All bills") - the
+  "bill in Dec 2026 that never shows" was a paid bill under the default Open AP view. That bill is
+  also dated 12/04/2026, i.e. in the future: rows dated after today carry a red **future date** tag
+  (a wrong-year typo on the QuickBooks bill date).
 - **Export dialog + grouped Excel report; lien save bar only when unsaved (owner 2026-09-02).**
   Export CSV now asks **Format** (Excel or CSV) and **Group by** (defaults to the grouping on screen -
   Bills: the Group by select, e.g. Vendor). Excel = `ledger/table_export.py` via `POST /api/export/xlsx`:
