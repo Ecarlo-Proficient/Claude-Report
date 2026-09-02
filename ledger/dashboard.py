@@ -1523,8 +1523,9 @@ def _fetch_project_page(con, pn: str) -> dict:
         d["unpaid_amt"] = round(sum((b["open"] or 0) for b in gate if not b["paid"]), 2)
         d["waivers_total"] = len(gate)
         d["gc_paid"] = bool(d.get("gc_paid_in"))
-    # funding chain: the first draw the GC has not paid us; its blockers = unpaid gating bills on every EARLIER draw
-    nxt = next((d for d in draws if not d.get("no_draw") and (d.get("ar_open") or 0) > 0.005), None)
+    # funding chain: the OLDEST draw the GC has not paid us; its blockers = unpaid gating bills on every EARLIER draw
+    asc = sorted((d for d in draws if not d.get("no_draw")), key=lambda d: d.get("ar_date") or d.get("recency") or "")
+    nxt = next((d for d in asc if (d.get("ar_open") or 0) > 0.005), None)
     blockers, blk_total = [], 0.0
     if nxt:
         for d in draws:
@@ -1541,6 +1542,9 @@ def _fetch_project_page(con, pn: str) -> dict:
                               "billed": nxt.get("billed"), "ar_date": nxt.get("ar_date"), "stage": nxt.get("stage")} if nxt else None),
                "blockers": blockers, "blockers_total": round(blk_total, 2),
                "own_unpaid": (round(nxt["unpaid_amt"], 2) if nxt else 0.0)}
+    # display order: newest draw first (owner 2026-09-02), the "no draw yet" bucket on top as the newest work
+    draws.sort(key=lambda d: (0 if d.get("no_draw") else 1, ""), reverse=False)
+    draws.sort(key=lambda d: (1 if d.get("no_draw") else 0, d.get("ar_date") or d.get("recency") or ""), reverse=True)
     return {"ok": True, "project": {"project_no": pn, "name": pr["name"] if pr else None, "division": pr["division"] if pr else pnl.get("division")},
             "pnl": pnl, "draws": draws, "funding": funding}
 

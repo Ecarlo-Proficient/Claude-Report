@@ -3415,7 +3415,7 @@ async function openProjectPage(pn) {
   try { d = await (await fetch(`/api/project/page?no=${encodeURIComponent(pn)}`)).json(); }
   catch (e) { body.textContent = "could not load this project"; return; }
   if (!d || !d.ok) { body.textContent = (d && d.error) || "no data for this project"; return; }
-  _pp = { d, pn, open: new Set(), filter: "unpaid" };
+  _pp = { d, pn, open: new Set(), openV: new Set(), filter: "unpaid" };   // open = draws, openV = vendor groups (collapsed by default, always)
   body.innerHTML = "";
   if (!r0.project_name && d.project && d.project.name) $("#recordTitle").textContent = `${pn} · ${d.project.name}`;
   const sec = (title, note) => { const w = document.createElement("section"); w.className = "widget ip-sec";
@@ -3459,8 +3459,17 @@ async function openProjectPage(pn) {
   const seg = document.createElement("div"); seg.className = "seg";
   for (const [k, lbl] of [["unpaid", "Unpaid bills"], ["all", "All bills"]]) { const b = document.createElement("button"); b.type = "button"; b.className = "seg-btn" + (k === "unpaid" ? " on" : ""); b.textContent = lbl;
     b.onclick = () => { _pp.filter = k; seg.querySelectorAll(".seg-btn").forEach(x => x.classList.toggle("on", x === b)); _renderPpDraws(); }; seg.appendChild(b); }
-  const tog = document.createElement("button"); tog.type = "button"; tog.className = "btn small"; tog.id = "ppToggle"; tog.textContent = "Expand all";
-  tog.onclick = () => { const keys = d.draws.map(x => x.matched_invoice); const all = keys.every(k => _pp.open.has(k)); _pp.open = new Set(all ? [] : keys); _renderPpDraws(); };
+  // three views (owner 2026-09-02): Draws = bands only · Vendors = every draw open, vendor totals collapsed · Bills = everything open
+  const tog = document.createElement("div"); tog.className = "seg"; tog.id = "ppToggle";
+  for (const [k, lbl, title] of [["draws", "Draws", "Just the draw bands"], ["vendors", "Vendors", "Every draw open to its vendor totals"], ["bills", "Bills", "Every vendor open to its bills"]]) {
+    const b = document.createElement("button"); b.type = "button"; b.className = "seg-btn" + (k === "draws" ? " on" : ""); b.dataset.v = k; b.textContent = lbl; b.title = title;
+    b.onclick = () => { const keys = d.draws.map(x => x.matched_invoice);
+      if (k === "draws") { _pp.open = new Set(); _pp.openV = new Set(); }
+      else if (k === "vendors") { _pp.open = new Set(keys); _pp.openV = new Set(); }
+      else { _pp.open = new Set(keys); _pp.openV = new Set(["*"]); }
+      _renderPpDraws(); };
+    tog.appendChild(b);
+  }
   const mk = document.createElement("button"); mk.type = "button"; mk.className = "btn small"; mk.textContent = "Mark blockers to pay"; mk.title = "Tick every unpaid bill on the draws before the next one the GC owes - they go on the pay run";
   mk.onclick = () => _ppMarkBlockers();
   const ex = document.createElement("button"); ex.type = "button"; ex.className = "btn small"; ex.textContent = "Export pay list"; ex.title = "Excel report of the bills ticked to pay on this job, grouped by draw";
@@ -3516,9 +3525,11 @@ function _renderPpDraws() {
   const { d, host } = { d: _pp.d, host: $("#ppDraws") }; if (!host) return; host.innerHTML = "";
   _renderPpSelected();
   const keys = d.draws.map(x => x.matched_invoice); const allOpen = keys.length && keys.every(k => _pp.open.has(k));
-  { const tg = $("#ppToggle"); if (tg) tg.textContent = allOpen ? "Collapse all" : "Expand all"; }
+  { const tg = $("#ppToggle"); if (tg) { const v = !_pp.open.size ? "draws" : (allOpen && _pp.openV.has("*")) ? "bills" : (allOpen && !_pp.openV.size) ? "vendors" : ""; tg.querySelectorAll(".seg-btn").forEach(b => b.classList.toggle("on", b.dataset.v === v)); } }
   if (!d.draws.length) { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = "No draws or bills on this job in the Bill Tracker yet."; host.appendChild(p); return; }
   const nxInv = d.funding && d.funding.next_draw ? d.funding.next_draw.invoice_no : null;
+  { const hd = document.createElement("div"); hd.className = "pp-draw-h pp-cols";
+    hd.innerHTML = `<span></span><span>Draw</span><span>Invoiced</span><span>Billed</span><span>GC</span><span>Materials</span><span>Labor</span><span>Pay run</span><span>Stage</span>`; host.appendChild(hd); }
   const billRow = (dr, b, isSub) => {
     const tr = document.createElement("tr"); if (b.paid) tr.classList.add("inv-paid");
     const pc = document.createElement("td"); pc.className = "left";
@@ -3542,17 +3553,30 @@ function _renderPpDraws() {
       tr.appendChild(wc); }
     return tr;
   };
-  const vendorGroups = (tbody, dr, bills, isSub) => {
+  const sectionRow = (tbody, dr, label, bills, sect) => {   // level 2: the section total (Materials $X / Labor $Y) with its own select-all
+    const paidCt = bills.filter(b => b.paid).length, tot = bills.reduce((s, b) => s + num(b.amount), 0), owed = bills.reduce((s, b) => s + (b.paid ? 0 : num(b.open)), 0);
+    const sr = document.createElement("tr"); sr.className = "pp-sect";
+    const cbTd = document.createElement("td"); cbTd.className = "left"; cbTd.appendChild(_ppCheck(bills, label, `Tick every unpaid ${label.toLowerCase()} bill on this draw`)); sr.appendChild(cbTd);
+    const td = document.createElement("td"); td.className = "left"; td.colSpan = 8;
+    td.innerHTML = `<b>${_ge(label)}</b> <span class="ip-paid ${paidCt === bills.length ? "ok" : "due"}">${_ge(money(tot))} · ${paidCt}/${bills.length} paid${owed > 0.005 ? " · " + _ge(money(owed)) + " to pay" : ""}</span>` + (sect === "labor" ? ` <span class="dim">QuickBooks bills dated in the draw period · paid = a bill payment applied this year</span>` : ` <span class="dim">Bill Tracker</span>`);
+    sr.appendChild(td); tbody.appendChild(sr);
+  };
+  const vendorGroups = (tbody, dr, bills, isSub, sect) => {   // level 2 vendors (collapsed) -> level 3 bills
     const byV = new Map(); for (const b of bills) { const k = b.vendor || "?"; if (!byV.has(k)) byV.set(k, []); byV.get(k).push(b); }
     for (const [v, list] of [...byV].sort((a, b) => a[0].localeCompare(b[0]))) {
+      const vkey = `${dr.matched_invoice}|${sect}|${v}`, vopen = _pp.openV.has("*") || _pp.openV.has(vkey);
       const paidCt = list.filter(b => b.paid).length, tot = list.reduce((s, b) => s + num(b.amount), 0), owed = list.reduce((s, b) => s + (b.paid ? 0 : num(b.open)), 0);
-      const gtr = document.createElement("tr"); gtr.className = "bill-subgroup pp-vendor";
+      const gtr = document.createElement("tr"); gtr.className = "bill-subgroup pp-vendor"; gtr.style.cursor = "pointer"; gtr.title = vopen ? "Click to collapse" : "Click to see the bills";
       const cbTd = document.createElement("td"); cbTd.className = "left"; cbTd.appendChild(_ppCheck(list, v)); gtr.appendChild(cbTd);
       const vt = document.createElement("td"); vt.className = "left"; vt.colSpan = 8;
-      const cell = document.createElement("div"); cell.className = "bg-cell"; const k = document.createElement("span"); k.className = "sg-key"; k.textContent = v;
-      const am = document.createElement("span"); am.className = "bg-amt ip-paid " + (paidCt === list.length ? "ok" : "due"); am.textContent = `${paidCt}/${list.length} paid · ${money(tot - owed)} / ${money(tot)}` + (owed > 0.005 ? ` · ${money(owed)} to pay` : "");
-      cell.appendChild(k); cell.appendChild(am); vt.appendChild(cell); gtr.appendChild(vt); tbody.appendChild(gtr);
-      for (const b of list) tbody.appendChild(billRow(dr, b, isSub));
+      const cell = document.createElement("div"); cell.className = "bg-cell"; const caret = document.createElement("span"); caret.className = "bg-caret"; caret.textContent = vopen ? "▾ " : "▸ ";
+      const k = document.createElement("span"); k.className = "sg-key"; k.textContent = v;
+      const am = document.createElement("span"); am.className = "bg-amt ip-paid " + (paidCt === list.length ? "ok" : "due"); am.textContent = `${money(tot)} · ${list.length} bill${list.length === 1 ? "" : "s"} · ${paidCt}/${list.length} paid` + (owed > 0.005 ? ` · ${money(owed)} to pay` : "");
+      cell.appendChild(caret); cell.appendChild(k); cell.appendChild(am); vt.appendChild(cell); gtr.appendChild(vt);
+      gtr.onclick = (e) => { if (e.target.closest("input")) return; if (_pp.openV.has("*")) { _pp.openV = new Set(); for (const d2 of _pp.d.draws) for (const s2 of ["materials", "labor"]) for (const b2 of (s2 === "labor" ? (d2.sub_bills || []) : d2.bills)) _pp.openV.add(`${d2.matched_invoice}|${s2}|${b2.vendor || "?"}`); }
+        if (_pp.openV.has(vkey)) _pp.openV.delete(vkey); else _pp.openV.add(vkey); _renderPpDraws(); };
+      tbody.appendChild(gtr);
+      if (vopen) for (const b of list) tbody.appendChild(billRow(dr, b, isSub));
     }
   };
   for (const dr of d.draws) {
@@ -3561,18 +3585,20 @@ function _renderPpDraws() {
     const head = document.createElement("div"); head.className = "pp-draw-h"; head.style.cursor = "pointer";
     const paidAll = dr.vendors_total > 0 && dr.vendors_paid === dr.vendors_total;
     const nSub = (dr.sub_bills || []).length;
+    const cell2 = (a, b, cls) => `<span class="pp-c ${cls || ""}"><span class="pp-c1">${a}</span><span class="pp-c2">${b}</span></span>`;
     head.innerHTML = `<span class="bg-caret">${open ? "▾" : "▸"}</span>
       <span class="pp-lab">${_ge(dr.no_draw ? "No draw yet" : "Invoice " + (dr.invoice_no || dr.label.split(" — ")[0]))}</span>
-      <span class="pp-dt">${_ge(dr.ar_date ? fmtDate(dr.ar_date) : "")}</span>
-      <span class="pp-billed">${dr.no_draw ? "" : "billed " + _ge(money(dr.billed))}</span>
-      <span class="pp-gc ${dr.no_draw ? "" : dr.gc_paid ? "ok" : "due"}">${dr.no_draw ? "" : dr.gc_paid ? "GC paid" : "GC owes " + _ge(money(dr.ar_open))}</span>
-      <span class="ip-paid ${paidAll ? "ok" : "due"}">materials ${dr.vendors_paid}/${dr.vendors_total} paid · ${_ge(money(dr.paid_amt))} / ${_ge(money(dr.gate_amt))}${dr.unpaid_amt > 0.005 ? " · " + _ge(money(dr.unpaid_amt)) + " to pay" : ""}</span>
-      ${nSub ? `<span class="ip-paid ${dr.subs_paid_ct === nSub ? "ok" : "due"}">labor ${dr.subs_paid_ct}/${nSub} paid · ${_ge(money(dr.subs_amt - dr.subs_unpaid_amt))} / ${_ge(money(dr.subs_amt))}${dr.subs_unpaid_amt > 0.005 ? " · " + _ge(money(dr.subs_unpaid_amt)) + " to pay" : ""}</span>` : (dr.no_draw ? "" : `<span class="pp-dt">no labor in period</span>`)}
+      <span class="pp-dt">${_ge(dr.ar_date ? fmtDate(dr.ar_date) : "–")}</span>
+      <span class="pp-billed">${dr.no_draw ? "–" : _ge(money(dr.billed))}</span>
+      <span class="pp-gc ${dr.no_draw ? "" : dr.gc_paid ? "ok" : "due"}">${dr.no_draw ? "–" : dr.gc_paid ? "paid" : "owes " + _ge(money(dr.ar_open))}</span>
+      ${cell2(_ge(money(dr.gate_amt)), `${dr.vendors_paid}/${dr.vendors_total} paid${dr.unpaid_amt > 0.005 ? " · " + _ge(money(dr.unpaid_amt)) + " to pay" : ""}`, "ip-paid " + (paidAll ? "ok" : "due"))}
+      ${nSub ? cell2(_ge(money(dr.subs_amt)), `${dr.subs_paid_ct}/${nSub} paid${dr.subs_unpaid_amt > 0.005 ? " · " + _ge(money(dr.subs_unpaid_amt)) + " to pay" : ""}`, "ip-paid " + (dr.subs_paid_ct === nSub ? "ok" : "due")) : cell2("$0", dr.no_draw ? "" : "none in period", "dim")}
+      <span class="pp-allcell"></span>
       <span class="pp-stage">${_ge(dr.stage)}</span>`;
     // draw-level select-all: every unpaid bill we pay on this draw (materials + labor)
     const allCb = _ppCheck(_ppBillsOf(dr), "this draw", "Tick every unpaid bill on this draw (materials and labor)");
     const allWrap = document.createElement("label"); allWrap.className = "pp-all"; allWrap.title = allCb.title; allWrap.onclick = (e) => e.stopPropagation();
-    allWrap.appendChild(allCb); allWrap.appendChild(document.createTextNode(" all unpaid")); head.insertBefore(allWrap, head.querySelector(".pp-stage"));
+    allWrap.appendChild(allCb); allWrap.appendChild(document.createTextNode(" all unpaid")); head.querySelector(".pp-allcell").appendChild(allWrap);
     head.onclick = () => { if (_pp.open.has(key)) _pp.open.delete(key); else _pp.open.add(key); _renderPpDraws(); };
     band.appendChild(head);
     if (open) {
@@ -3581,8 +3607,9 @@ function _renderPpDraws() {
       else {
         const table = document.createElement("table"); table.className = "grid pp-bills"; const thead = document.createElement("thead"), tbody = document.createElement("tbody");
         thead.innerHTML = "<tr><th class='left'>Pay</th><th class='left'>Vendor</th><th class='left'>Bill #</th><th class='left'>Date</th><th class='left'>Memo</th><th class='right'>Amount</th><th class='right'>Open</th><th class='left'>Status</th><th class='left'>Waiver received</th></tr>";
-        if (mat.length) { const sr = document.createElement("tr"); sr.className = "pp-sect"; sr.innerHTML = `<td class="left" colspan="9">Materials · Bill Tracker</td>`; tbody.appendChild(sr); vendorGroups(tbody, dr, mat, false); }
-        if (subs.length) { const sr = document.createElement("tr"); sr.className = "pp-sect"; sr.innerHTML = `<td class="left" colspan="9">Labor (subs) · QuickBooks bills dated in the draw period · paid = a bill payment applied this year</td>`; tbody.appendChild(sr); vendorGroups(tbody, dr, subs, true); }
+        if (mat.length) { sectionRow(tbody, dr, "Materials", mat, "materials"); vendorGroups(tbody, dr, mat, false, "materials"); }
+        if (subs.length) { sectionRow(tbody, dr, "Labor (subs)", subs, "labor"); vendorGroups(tbody, dr, subs, true, "labor"); }
+        thead.hidden = ![...mat, ...subs].some(b => _pp.openV.has("*") || _pp.openV.has(`${dr.matched_invoice}|${dr.sub_bills && dr.sub_bills.includes(b) ? "labor" : "materials"}|${b.vendor || "?"}`));   // headers only once bills show
         table.appendChild(thead); table.appendChild(tbody); band.appendChild(table);
       }
     }

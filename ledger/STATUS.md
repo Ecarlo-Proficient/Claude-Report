@@ -4,6 +4,13 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Project page draws: three levels, collapsed by default, aligned columns, newest first (owner
+  2026-09-02).** Level 1 = the draw bands (a grid row under one header: Draw · Invoiced · Billed · GC
+  · Materials $ + x/y paid · Labor $ + x/y paid · Pay run tick · Stage); level 2 = open a draw ->
+  the Materials and Labor section totals with their vendor totals (collapsed); level 3 = open a
+  vendor -> its bills. The **Draws | Vendors | Bills** segment sets the depth for the whole page; the
+  vendor and draw checkboxes still tick whole groups onto the pay run. Draws list newest first ("No
+  draw yet" on top as the newest work); the funding chain still walks oldest-first for the blockers.
 - **Project page: labor per draw, vendor sub-groups, group + draw select-all (owner 2026-09-02:
   "labor doesn't show on the project page ... subgroup by vendor and add a check next to the pay and
   name so that i can select all in that group or select all unpaid bills for that draw").** Each draw

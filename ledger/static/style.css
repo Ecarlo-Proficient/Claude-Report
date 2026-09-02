@@ -1339,10 +1339,18 @@ table.grid td.ip-amt { font-weight: 700; font-size: 1.08em; }
 .pp-unlock-b.ok { color: var(--pos); }
 .pp-draw { border-top: 1px solid var(--border); }
 .pp-draw.next .pp-draw-h { background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
-.pp-draw-h { display: flex; align-items: center; gap: 14px; padding: 9px 18px; flex-wrap: wrap; }
-.pp-draw-h .pp-lab { font-weight: 700; min-width: 120px; }
-.pp-draw-h .pp-dt, .pp-draw-h .pp-billed, .pp-draw-h .pp-stage { color: var(--text-dim); }
-.pp-draw-h .pp-stage { margin-left: auto; font-size: .9em; }
+/* the draw band is a GRID row so every band lines up under one header (owner: "a column i can rely on") */
+.pp-draw-h { display: grid; grid-template-columns: 22px 150px 96px 110px 130px minmax(180px, 1fr) minmax(180px, 1fr) 118px 150px; align-items: center; gap: 0 12px; padding: 8px 18px; }
+.pp-draw-h.pp-cols { padding: 6px 18px 4px; font-size: .78em; font-weight: 700; color: var(--text-dim); border-top: 0; cursor: default; }
+.pp-draw-h .pp-lab { font-weight: 700; }
+.pp-draw-h .pp-dt, .pp-draw-h .pp-stage { color: var(--text-dim); }
+.pp-draw-h .pp-billed { font-variant-numeric: tabular-nums; font-weight: 600; }
+.pp-draw-h .pp-stage { font-size: .88em; }
+.pp-c { display: flex; flex-direction: column; line-height: 1.2; }
+.pp-c .pp-c1 { font-weight: 700; font-variant-numeric: tabular-nums; }
+.pp-c .pp-c2 { font-size: .85em; }
+.pp-c.dim { color: var(--text-dim); font-weight: 400; }
+@media (max-width: 1250px) { .pp-draw-h { grid-template-columns: 22px 130px 90px 100px 110px 1fr 1fr 100px 120px; } }
 .pp-gc.ok { color: var(--pos); font-weight: 600; } .pp-gc.due { color: var(--neg); font-weight: 700; }
 table.pp-bills { margin: 0 0 6px; }
 
