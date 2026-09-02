@@ -2810,7 +2810,54 @@ function buildInvFilters() {
 // Lien-notice CLOCK buckets (the computed deadline, not the Notion status). "upcoming" = urgent
 // OR watch, which covers CP draws, CP retainage (RET-banded), and RP - all divisions the clock runs.
 const LIENCLK = { past: s => s === "PAST", upcoming: s => s === "URGENT" || s === "WATCH", sent: s => s === "SENT" };
+// Invoice DATE filter - the same month multi-select + day drill the Bills tab has (owner 2026-09-02:
+// "use the same bills date filter where it's by month and if expanded can do by date"). Month = the
+// invoice date; a month click checks it and everything older; Day enables with exactly one month.
+let invMonths = new Set();
+function _invMonthsAsc() {
+  return [...new Set(((invData().invoices) || []).map(i => String(i.txn_date || "").slice(0, 7)).filter(s => /^\d{4}-\d{2}$/.test(s)))].sort();
+}
+function toggleInvMonth(ym, checked) {
+  const asc = _invMonthsAsc();
+  if (checked) { for (const m of asc) if (m <= ym) invMonths.add(m); } else invMonths.delete(ym);
+  buildInvDateFilter(); renderOpenInvoices();
+}
+function buildInvDateFilter() {
+  const menu = $("#ifMonthMenu"), btn = $("#ifMonthBtn"), dayEl = $("#ifDay");
+  if (!menu || !btn || !dayEl) return;
+  const asc = _invMonthsAsc();
+  for (const m of [...invMonths]) if (!asc.includes(m)) invMonths.delete(m);
+  menu.innerHTML = "";
+  { const clr = document.createElement("button"); clr.type = "button"; clr.className = "msel-clear";
+    clr.textContent = "Clear"; clr.onclick = () => { invMonths.clear(); buildInvDateFilter(); renderOpenInvoices(); }; menu.appendChild(clr); }
+  for (const ym of [...asc].reverse()) {
+    const lab = document.createElement("label"); lab.className = "msel-opt";
+    const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = invMonths.has(ym);
+    cb.onchange = () => toggleInvMonth(ym, cb.checked);
+    lab.appendChild(cb); lab.appendChild(document.createTextNode(" " + billMonthLabel(ym)));
+    menu.appendChild(lab);
+  }
+  if (!invMonths.size) btn.textContent = "All months";
+  else { const newest = [...invMonths].sort().reverse()[0]; btn.textContent = invMonths.size === 1 ? billMonthLabel(newest) : `${billMonthLabel(newest)} +${invMonths.size - 1}`; }
+  btn.classList.toggle("on", invMonths.size > 0);
+  const prevD = dayEl.value; dayEl.innerHTML = "";
+  { const o = document.createElement("option"); o.value = ""; o.textContent = "All days"; dayEl.appendChild(o); }
+  if (invMonths.size === 1) {
+    const ym = [...invMonths][0];
+    const days = [...new Set(((invData().invoices) || []).map(i => String(i.txn_date || "")).filter(d => d.slice(0, 7) === ym && /^\d{4}-\d{2}-\d{2}/.test(d)).map(d => d.slice(0, 10)))].sort();
+    for (const d of days) { const o = document.createElement("option"); o.value = d; o.textContent = `${_BMONTHS[+ym.slice(5, 7) - 1]} ${+d.slice(8, 10)}`; dayEl.appendChild(o); }
+    dayEl.disabled = false;
+  } else { dayEl.disabled = true; }
+  dayEl.value = prevD; if (dayEl.value !== prevD) dayEl.value = "";
+}
+function invDatePasses(i) {
+  if (invMonths.size && !invMonths.has(String(i.txn_date || "").slice(0, 7))) return false;
+  const dy = $("#ifDay") ? $("#ifDay").value : "";
+  if (dy && String(i.txn_date || "").slice(0, 10) !== dy) return false;
+  return true;
+}
 function invPasses(i, f) {
+  if (!invDatePasses(i)) return false;                   // Month / Day (invoice date)
   if (!mselPasses(i, INV_MSEL, invMSel)) return false;   // Client / Project # multi-selects
   if (f.div && (i.division || "") !== f.div) return false;
   if (f.lienclk && LIENCLK[f.lienclk] && !LIENCLK[f.lienclk](i.lien_due_state || "")) return false;
@@ -2871,8 +2918,8 @@ function renderInvAmounts(all, f) {
   $("#invNote").textContent = all.length
     ? `(${rows.length.toLocaleString()} of ${all.length.toLocaleString()} · ${money(totOpen)} open · ${clients.length} client${clients.length === 1 ? "" : "s"})` : "(no AR data)";
   { const anyMsel = INV_MSEL.some(c => (invMSel[c.id] || {}).size);
-    const cb = $("#ifClear"); if (cb) cb.hidden = !(anyMsel || f.div || f.lien || f.lienclk || f.litig !== "ex"); }
-  const cols = [["Project", "left"], ["Invoice #", "left"], ["Date", "left"], ["Open balance", "right"], ["Invoice total", "right"], ["Collections note", "left"]];
+    const cb = $("#ifClear"); if (cb) cb.hidden = !(anyMsel || invMonths.size || ($("#ifDay") || {}).value || f.div || f.lien || f.lienclk || f.litig !== "ex"); }
+  const cols = [["Project", "left"], ["Invoice #", "left"], ["Date", "left"], ["Due", "left"], ["Memo", "left"], ["Open balance", "right"], ["Invoice total", "right"], ["Collections note", "left"]];
   thead.innerHTML = ""; const htr = document.createElement("tr");
   for (const [c, al] of cols) { const th = document.createElement("th"); th.className = al; th.textContent = c; htr.appendChild(th); } thead.appendChild(htr);
   tbody.innerHTML = "";
@@ -2893,6 +2940,16 @@ function renderInvAmounts(all, f) {
     pc.appendChild(document.createTextNode(i.project_no || "–")); tr.appendChild(pc);
     tr.appendChild(invNoCell(i));
     tr.appendChild(leftText(fmtDateShort(i.txn_date)));
+    // Due + how late (the collections question), then the invoice MEMO in full (owner 2026-09-02:
+    // "i need to see the memo ... every single data point for meeting")
+    const due = document.createElement("td"); due.className = "left";
+    if (i.due_date) { due.textContent = fmtDateShort(i.due_date);
+      if (!paid && i.days_past_due != null && i.days_past_due > 0) { const l = document.createElement("span"); l.className = "inv-late"; l.textContent = ` ${i.days_past_due}d late`; due.appendChild(l); } }
+    else { due.textContent = "–"; due.classList.add("dim"); }
+    tr.appendChild(due);
+    const mc = document.createElement("td"); mc.className = "left inv-memo";
+    if (i.memo) { mc.textContent = i.memo; mc.title = i.memo; } else { mc.textContent = "–"; mc.classList.add("dim"); }
+    tr.appendChild(mc);
     const ob = document.createElement("td"); ob.className = "right";
     if (paid) { ob.textContent = "–"; ob.classList.add("dim"); }
     else { ob.textContent = money(oiBal(i)); if (i.days_past_due != null && i.days_past_due > 0) { ob.style.color = "var(--neg)"; ob.title = i.days_past_due + " days past due"; } }
@@ -2902,7 +2959,16 @@ function renderInvAmounts(all, f) {
     const nc = document.createElement("td"); nc.className = "left inv-note";
     if (paid && i.paid_date) { const p = document.createElement("span"); p.className = "st ok"; p.textContent = "Paid " + fmtDateShort(i.paid_date); nc.appendChild(p); }
     if (i.note) { if (nc.childNodes.length) nc.appendChild(document.createTextNode(" ")); const n = document.createElement("span"); n.className = "note-txt"; n.textContent = i.note; n.title = i.note; nc.appendChild(n); }
+    // The note's Notion page (the Invoice Tracker) - one click to read the whole thread or update it -
+    // and how fresh the note is (owner 2026-09-02: "the collections note with what notion page shows if clicked").
+    if (i.notion_url) {
+      const a = document.createElement("a"); a.className = "notion-link"; a.href = i.notion_url; a.target = "_blank"; a.rel = "noopener";
+      a.textContent = "Notion"; a.title = "Open this invoice's page in the Notion Invoice Tracker" + (i.notion_edited ? ` (last edited ${fmtDate(i.notion_edited, true)})` : "");
+      a.onclick = e => e.stopPropagation(); nc.appendChild(a);
+      if (i.notion_edited) { const ed = document.createElement("span"); ed.className = "note-edited"; ed.textContent = "edited " + fmtDateShort(i.notion_edited); nc.appendChild(ed); }
+    }
     if (!nc.childNodes.length) { nc.textContent = "–"; nc.classList.add("dim"); }
+    tr.appendChild(nc);   // (was never appended before 2026-09-02 - the column rendered blank)
     return tr;
   };
   for (const g of clients) {
@@ -2939,7 +3005,7 @@ function renderInvAmounts(all, f) {
     }
   }
   const tr = document.createElement("tr"); tr.className = "inv-total-row";
-  const td0 = document.createElement("td"); td0.className = "left"; td0.colSpan = 3; td0.textContent = "TOTAL"; tr.appendChild(td0);
+  const td0 = document.createElement("td"); td0.className = "left"; td0.colSpan = 5; td0.textContent = "TOTAL"; tr.appendChild(td0);
   tr.appendChild(rightText(money(totOpen)));
   tr.appendChild(rightText(money(totBilled)));
   tr.appendChild(document.createElement("td"));
@@ -2962,6 +3028,7 @@ function renderOpenInvoices() {
   if (invSig !== _invMSelSig || !($("#ifClientMenu") && $("#ifClientMenu").querySelector(".msel-opt"))) {
     _invMSelSig = invSig; for (const cfg of INV_MSEL) buildMSel(cfg, all, invMSel, renderOpenInvoices);
   }
+  buildInvDateFilter();
   // Litigation is EXCLUDED by default; flag the box red whenever it's hiding/limiting rows so it's
   // obvious to the eye that a filter is in place (owner 2026-08-19).
   { const el = $("#ifLitig"); if (el) el.classList.toggle("filter-on", (el.value || "ex") !== "all"); }
@@ -3004,7 +3071,7 @@ function renderOpenInvoices() {
     : "(no AR data - run load_invoices.py)";
   { const el = $("#invAsOf"); if (el) el.textContent = D.as_of ? "aged as of " + fmtDate(D.as_of) : ""; }
   { const anyMsel = INV_MSEL.some(c => (invMSel[c.id] || {}).size);
-    const cb = $("#ifClear"); if (cb) cb.hidden = !(anyMsel || f.div || f.lien || f.lienclk || f.litig !== "ex" || invBucketFilter != null); }
+    const cb = $("#ifClear"); if (cb) cb.hidden = !(anyMsel || invMonths.size || ($("#ifDay") || {}).value || f.div || f.lien || f.lienclk || f.litig !== "ex" || invBucketFilter != null); }
 
   const thead = host.querySelector("thead"), tbody = host.querySelector("tbody");
   thead.innerHTML = ""; tbody.innerHTML = "";
@@ -3160,6 +3227,20 @@ function openInvoiceDetail(inv) {
     const h = document.createElement("h4"); h.textContent = "Memo"; g.appendChild(h);
     const n = document.createElement("div"); n.className = "dnote" + (memo ? "" : " dim");
     n.textContent = memo || "(no memo on this invoice)"; g.appendChild(n); body.appendChild(g); }
+  // Collections: the Notion Quick Status note, when it was last touched, and the tracker page itself
+  // (owner 2026-09-02: "i need to do collections and need every single data point for meeting").
+  { const g = document.createElement("div"); g.className = "dgroup";
+    const h = document.createElement("h4"); h.textContent = "Collections"; g.appendChild(h);
+    const n = document.createElement("div"); n.className = "dnote" + (inv.note ? "" : " dim");
+    n.textContent = inv.note || "(no collections note in the Invoice Tracker)"; g.appendChild(n);
+    if (inv.notion_url) {
+      const row = document.createElement("div"); row.className = "drow";
+      const a = document.createElement("a"); a.className = "notion-link"; a.style.marginLeft = "0"; a.href = inv.notion_url; a.target = "_blank"; a.rel = "noopener";
+      a.textContent = "Open in Notion"; a.title = "This invoice's page in the Invoice Tracker - the full note thread";
+      const ed = document.createElement("span"); ed.className = "dv dim"; ed.textContent = inv.notion_edited ? "page edited " + fmtDate(inv.notion_edited, true) : "";
+      row.appendChild(a); row.appendChild(ed); g.appendChild(row);
+    }
+    body.appendChild(g); }
   const amt = num(inv.amount), bal = inv.balance == null ? null : num(inv.balance);
   const paid = (amt != null && bal != null) ? amt - bal : null;
   const isOpen = !(bal != null && bal <= 0.005) && (inv.status || "").toLowerCase() !== "paid";
@@ -3228,6 +3309,7 @@ function invClearFilters() {
   _invMSelSig = null;                                        // force the menus to rebuild (reset checks + label)
   const lt = $("#ifLitig"); if (lt) lt.value = "ex";         // baseline = litigation excluded
   invBucketFilter = null;
+  invMonths.clear(); { const d = $("#ifDay"); if (d) d.value = ""; }   // the date filter too
   renderOpenInvoices();
 }
 // A project sub-band inside a client group (indented, lighter than the client band).
@@ -6407,7 +6489,7 @@ function init() {
     ...BILL_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`]),
     ...LIEN_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`]),
     ...PAY_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`]),
-    ...INV_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`]),
+    ...INV_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`]), ["#ifMonthBtn", "#ifMonthMenu", "#ifMonthMsel"],
     ...DRAW_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`])];
   const _closeMsels = (except) => { for (const [, mId] of _mselWraps) { const m = $(mId); if (m && mId !== except) m.hidden = true; } };
   for (const [btnId, menuId, wrapId] of _mselWraps) {
@@ -6426,6 +6508,7 @@ function init() {
   { const el = $("#bfCollapse"); if (el) el.onclick = billToggleAll; }
   ["#ifDivision", "#ifLien", "#ifLienClock", "#ifLitig", "#ifSort"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("change", renderOpenInvoices); });
   { const el = $("#ifClear"); if (el) el.onclick = invClearFilters; }
+  { const d = $("#ifDay"); if (d) d.addEventListener("change", renderOpenInvoices); }
   { const el = $("#ifCollapse"); if (el) el.onclick = invToggleAll; }
   { const el = $("#ifSubGroup"); if (el) el.onclick = invSubGroupToggle; }
   { const el = $("#ifStatement"); if (el) el.onclick = openInvStatement; }

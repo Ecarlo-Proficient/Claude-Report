@@ -118,6 +118,8 @@ CREATE TABLE IF NOT EXISTS billing_event (
     draw_period     TEXT,                        -- from PrivateNote (the QBO custom field is unreachable)
     note            TEXT,                        -- Notion Quick Status: the collections one-liner ("GC paying Fri")
     customer_id     TEXT,                        -- QBO CustomerRef.value (the project sub-customer) - so an invoice on a project with no loaded costs still deep-links (2026-09-01)
+    notion_url      TEXT,                        -- the Invoice Tracker page (collections: open the note's page in one click)
+    notion_edited   TEXT,                        -- Notion last_edited_time - how fresh the collections note is
     source          TEXT NOT NULL DEFAULT 'qbo_invoice',
     loaded_at       TEXT NOT NULL
 );

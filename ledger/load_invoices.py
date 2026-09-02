@@ -159,6 +159,8 @@ def parse_invoice_page(page: dict, division_default: str | None = None,
         "lien_notice": lien_notice,
         "draw_period": None,
         "note": _prop(props, "Quick Status"),      # the collections one-liner ("GC paying Fri") for the AR view
+        "notion_url": page.get("url"),             # the tracker page itself - the collections view links to it (owner 2026-09-02)
+        "notion_edited": (page.get("last_edited_time") or "")[:19] or None,   # how fresh the note is
         "customer_id": None,                       # Notion carries no QBO customer id; stamped after the write (fill_customer_ids)
         "source": "invoice_tracker",
     }
@@ -197,7 +199,7 @@ def load_customer_titles(nc) -> dict:
 _COLS = ["qbo_txn_id", "doc_number", "project_no", "division", "customer", "memo",
          "amount", "balance", "txn_date", "status", "due_date", "paid_date", "net_terms",
          "aging_bucket", "litigation", "lien_status", "lien_notice",
-         "draw_period", "note", "customer_id", "source", "loaded_at"]
+         "draw_period", "note", "notion_url", "notion_edited", "customer_id", "source", "loaded_at"]
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
@@ -225,7 +227,8 @@ def _migrate_billing_event(con) -> None:
     add = [("due_date", "TEXT"), ("net_terms", "TEXT"), ("aging_bucket", "TEXT"),
            ("litigation", "INTEGER NOT NULL DEFAULT 0"), ("lien_status", "TEXT"),
            ("lien_notice", "TEXT"), ("paid_date", "TEXT"), ("note", "TEXT"),
-           ("customer_id", "TEXT")]   # 2026-09-01: the project sub-customer's QBO id (deep link)
+           ("customer_id", "TEXT"),   # 2026-09-01: the project sub-customer's QBO id (deep link)
+           ("notion_url", "TEXT"), ("notion_edited", "TEXT")]   # 2026-09-02: the tracker page + its last edit (collections view)
     for name, decl in add:
         if cols and name not in cols:
             con.execute(f"ALTER TABLE billing_event ADD COLUMN {name} {decl}")
@@ -278,6 +281,7 @@ def _invoice_from_qbo(inv: dict) -> dict:
         "lien_status": None,
         "lien_notice": None,
         "draw_period": None,
+        "notion_url": None, "notion_edited": None,   # no tracker page - QBO filled this one
         "customer_id": (inv.get("CustomerRef") or {}).get("value"),
         "source": "qbo_fallback",
     }

@@ -680,6 +680,7 @@ def _fetch_open_invoices(con, open_only: bool = True) -> dict:
     if not have:
         return out
     note_col = ", note" if "note" in have else ""   # older DBs lack it until the next invoice sync
+    note_col += "".join(f", {c}" for c in ("notion_url", "notion_edited") if c in have)   # the note's Notion page + last edit
     try:
         rows = con.execute(
             "SELECT doc_number, qbo_txn_id, project_no, division, customer, memo, amount, "

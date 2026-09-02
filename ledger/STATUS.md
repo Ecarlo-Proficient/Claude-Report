@@ -4,6 +4,20 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Invoices = the collections view (owner 2026-09-02: "filter by date, use the same bills date filter
+  ... i need to see the memo, and the collections note with what notion page shows if clicked ... every
+  single data point for meeting").** (1) **Month / Day filter** on invoice date, identical to the Bills
+  tab's (month multi-select checks that month and everything older; Day drills in when exactly one month
+  is picked; Clear filters resets it); applies to both the Amounts and Aging views. (2) Amounts view
+  gained **Due** (with "Nd late" in red while open) and the full **Memo** (one line, full text on hover).
+  (3) **Collections note now renders** - the cell was built but never appended to the row (pre-existing
+  bug, the column was always blank) - with a **Notion pill** that opens the invoice's Invoice Tracker
+  page and an "edited mm/dd/yyyy" stamp (the page's `last_edited_time`; note the AR sync's own
+  property updates count as edits). (4) The invoice drawer gained a **Collections** group: the note,
+  "Open in Notion", page-edited time. Data: `billing_event` + `notion_url`, `notion_edited` (additive
+  migration; `load_invoices` fills them from the Notion page - QBO-fallback rows have none); the invoice
+  sync was re-run (370 of 378 invoices carry a page). Verified at 1440 light: filter → 4 of 101 for the
+  current month, 8 Notion links on the first client, drawer opens, no console errors.
 - **The money trail - "show every single dollar" (owner 2026-09-01: "qbo cost/billed to date should
   show exactly what new line/bill/scan/ref#/memo/description ... with links and transparency, no
   hidden number ... a clear red line"). Landed 2026-09-02.** `cost_line` gained the audit trail the
