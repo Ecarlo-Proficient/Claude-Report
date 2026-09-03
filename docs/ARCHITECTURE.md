@@ -982,7 +982,7 @@ forced to 100%). **Overhead is a % of the CONTRACT** - 10% company, 9% MFD view 
 for the ETC), so a finished job's projection block is live, not zero. Per draw, the same
 rule is sliced by the draw's income. Profit stays actuals (billed - cost - overhead). The
 `<DIV> Overview` (`completed_pnl.py`) reads the contract out of each workbook and applies
-the identical rule. Its Transactions sheet groups job costs
+the identical rule. The **Next Draw** sheet carries the accumulating-costs block (Job Type > cost code > vendor > bill, newest first) and sits right before the newest draw tab; the P&L's draw-coverage table shows overhead $ per view on completion (rate x contract x draw cost / ETC). Its Transactions sheet groups job costs
 **concrete → labor → materials** via `shared/cost_lines.py` — non-labor bill lines
 combine per (bill × account); labor lines are never combined. The **Budget vs Actual**
 **Labor** and **Concrete** sheets (CP) are the PM/ops manager's main view (the user

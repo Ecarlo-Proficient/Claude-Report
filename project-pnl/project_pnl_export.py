@@ -3254,6 +3254,7 @@ def build_sheet_pl(
         income_row = row("Income", income, bold=True, fill=INCOME_FILL)
         _qbo_link(income_row, _cust_url)
         wip_contract_cell = None
+        wip_etc_cell = None
     else:
         Binc = f"{tx_refs['billed']}-{tx_refs['withheld']}+{tx_refs['billed_ret']}"
         Wcell = tx_refs['withheld']
@@ -3317,41 +3318,59 @@ def build_sheet_pl(
         if _mismatch(_typed_etc, _wip_etc):
             row(f"⚑ typed — differs from WIP master (${_wip_etc:,.0f})", None,
                 indent=1, size=BASE_SIZE - 2, color="9C5700")
-        co_row = row("Change Orders (approved, per G702)" if _g702_src
-                     else "Change Orders (approved, from draw)",
-                     _cos, color=GREEN)
-        coc_row = row("CO Costs (estimated)", _co_cost,
-                      color=("000000" if _co_cost else "C0504D"))
-        # yellow inputs: the originals + CO cost (no QBO source yet — pending
-        # the CO-template cost line; type it here and it survives re-syncs)
-        # Yellow = YOU typed it. A G702-sourced contract is not an input, so it
-        # stays white (the user 2026-07-29).
-        for rr in ((etc_in, coc_row) if _g702_src else (k_row, etc_in, coc_row)):
-            cc = ws.cell(row=rr, column=2)
-            cc.fill = YEL
-            cc.border = Border(left=_HAIR, right=_HAIR, top=_HAIR, bottom=_HAIR)
+        # CHANGE ORDERS and the REVISED rows appear only when there is
+        # something to revise (the user 2026-09-03: "remove change orders and
+        # revised rows if there are no change orders or revised etc to put,
+        # it just takes up space"). No COs => the originals ARE the numbers
+        # everything downstream measures against.
+        _has_co = bool(_cos) or bool(_co_cost)
         # NO CONTRACT ON FILE => TOTAL BILLED STANDS IN (the user 2026-09-03:
         # "completed jobs use the total billed as contract"). A finished job
         # is off the WIP master, so its inputs are blank; without this every
         # contract-based line below (overhead, projection) read zero. The
         # ETC falls back the same way to costs to date - the two MUST move
         # together, or a filled contract against a zero ETC shows the whole
-        # contract as profit. Both are IFs, so a typed value wins the moment
-        # a PM enters one. The ETC formula is finished once COGS is known.
-        rev_ctr_row = row("Revised Contract Price",
-                          formula=f"=IF(B{k_row}+B{co_row}=0,{Btot},B{k_row}+B{co_row})",
-                          bold=True, border=TOP_BORDER)
-        if _ctr is None and not _cos:
+        # contract as profit. A typed value wins the moment a PM enters one
+        # (the read-back ignores formulas). The ETC fill waits for COGS.
+        if not _has_co and _ctr is None:
+            ws.cell(row=k_row, column=2).value = f"={Btot}"
             row("no contract on file - total billed stands in", None,
                 indent=1, size=BASE_SIZE - 2, color="595959")
-        rev_etc_row = row("Revised ETC", formula=f"=B{etc_in}+B{coc_row}",
-                          bold=True)
-        if _etc is None and not _co_cost:
+        if not _has_co and _etc is None:
             row("no ETC on file - costs to date stand in", None,
                 indent=1, size=BASE_SIZE - 2, color="595959")
-        # everything downstream measures against the REVISED numbers
-        c_ref = f"$B${rev_ctr_row}"
-        e_ref = f"$B${rev_etc_row}"
+        if _has_co:
+            co_row = row("Change Orders (approved, per G702)" if _g702_src
+                         else "Change Orders (approved, from draw)",
+                         _cos, color=GREEN)
+            coc_row = row("CO Costs (estimated)", _co_cost,
+                          color=("000000" if _co_cost else "C0504D"))
+        else:
+            co_row = coc_row = None
+        # yellow inputs: the originals + CO cost (no QBO source yet — pending
+        # the CO-template cost line; type it here and it survives re-syncs)
+        # Yellow = YOU typed it. A G702-sourced contract is not an input, so it
+        # stays white (the user 2026-07-29).
+        _yellow = [etc_in] if _g702_src else [k_row, etc_in]
+        if coc_row:
+            _yellow.append(coc_row)
+        for rr in _yellow:
+            cc = ws.cell(row=rr, column=2)
+            cc.fill = YEL
+            cc.border = Border(left=_HAIR, right=_HAIR, top=_HAIR, bottom=_HAIR)
+        if _has_co:
+            # no rule above the row (the user 2026-09-03: "remove this black line")
+            rev_ctr_row = row("Revised Contract Price",
+                              formula=f"=IF(B{k_row}+B{co_row}=0,{Btot},B{k_row}+B{co_row})",
+                              bold=True)
+            rev_etc_row = row("Revised ETC", formula=f"=B{etc_in}+B{coc_row}",
+                              bold=True)
+            c_ref = f"$B${rev_ctr_row}"
+            e_ref = f"$B${rev_etc_row}"
+        else:
+            rev_ctr_row = rev_etc_row = None
+            c_ref = f"$B${k_row}"
+            e_ref = f"$B${etc_in}"
         # 'Closed' in the WIP master (Test-Master STATUS) forces the close-out
         # view (the user 2026-07-16): % Complete = 100%, Cost to Complete = 0,
         # Earned = full contract. Closing a job in the WIP master closes it
@@ -3376,7 +3395,7 @@ def build_sheet_pl(
         #    sitting on top of the REAL profit ($ and %) — the user 2026-07-16 ──
         row("ACTUALS — QBO to date", None, bold=True, color="FFFFFF",
             fill=hero_fill)
-        bd_row = row("Billed to Date", formula=f"={Btot}", bold=True)
+        bd_row = row("Billed to Date (incl. retainage)", formula=f"={Btot}", bold=True)
         _qbo_link(bd_row, _cust_url)
         ctd_row = row("Costs to Date", None)
         gpa_row = row("Gross Profit (to date)",
@@ -3416,6 +3435,7 @@ def build_sheet_pl(
             CellIsRule(operator="greaterThan", formula=["1"],
                        font=Font(bold=True, color="C00000")))
         wip_contract_cell = c_ref
+        wip_etc_cell = e_ref
         r += 1
 
         # ── ② PROFIT & LOSS TOTALS — TRUE totals, retainage included (the
@@ -3491,10 +3511,13 @@ def build_sheet_pl(
             cc.number_format = fmt
             cc.font = Font(bold=isb, size=BASE_SIZE, color=NAVY if isb else "000000")
         _qbo_link(ctd_row, _costs_url)
-        # Revised ETC: no ETC on file => costs to date stand in (see the
-        # contract fallback above - the pair moves together).
-        ws.cell(row=rev_etc_row, column=2).value = (
-            f"=IF(B{etc_in}+B{coc_row}=0,B{cogs_row},B{etc_in}+B{coc_row})")
+        # ETC: no ETC on file => costs to date stand in (see the contract
+        # fallback above - the pair moves together).
+        if rev_etc_row:
+            ws.cell(row=rev_etc_row, column=2).value = (
+                f"=IF(B{etc_in}+B{coc_row}=0,B{cogs_row},B{etc_in}+B{coc_row})")
+        elif _etc is None:
+            ws.cell(row=etc_in, column=2).value = f"=B{cogs_row}"
 
         costs = f"B{cogs_row}"
         opex = f"B{exp_row}"
@@ -3537,18 +3560,26 @@ def build_sheet_pl(
         box(btop, r - 1)
         r += 1
 
-    # ── RIGHT SIDE: DRAW COVERAGE table (D–M) + ACCUMULATING COSTS (O–P) ──
+    # ── RIGHT SIDE: DRAW COVERAGE table (D onward) ──
     #   D Draw | E Period | F Draw Total | G Retained | H Net Billed |
-    #   I Costs | J Gross Profit | K Coverage % | L Net Profit | M Net Cov %
+    #   I Costs | J Gross Profit | K Coverage % | then per overhead VIEW:
+    #   OH $ | Net Profit | Net Cov % (MFD: 9% then 10%; CP: 10%) | % Compl
     #   Draw Total (F) + Retained (G) are COLLAPSED by default (the user 2026-06-09)
     #   — click the [+] above to expand. Vertical rule on the right of Net
     #   Billed (H) separates the BILLED side from the COSTS side.
+    #   ACCUMULATING COSTS moved to the Next Draw sheet (the user 2026-09-03).
+    _views = ([(_alt, _aoh), (overhead_pct, oh)] if show_mfd
+              else [(overhead_pct, oh)])
+    _view_cols = [(12 + 3 * i, 13 + 3 * i, 14 + 3 * i) for i in range(len(_views))]
+    _pc_col = 12 + 3 * len(_views)             # % Compl sits after the last view
     for col, w in (("D", 22), ("E", 19), ("F", 14), ("G", 13), ("H", 15),
-                   ("I", 12), ("J", 15), ("K", 13), ("L", 15), ("M", 13)):
+                   ("I", 12), ("J", 15), ("K", 13)):
         ws.column_dimensions[col].width = w
-    ws.column_dimensions["N"].width = 11 if wip_contract_cell else 2  # % Compl / spacer
-    ws.column_dimensions["O"].width = 44
-    ws.column_dimensions["P"].width = 18
+    for _oc, _nc, _cc in _view_cols:
+        ws.column_dimensions[get_column_letter(_oc)].width = 14
+        ws.column_dimensions[get_column_letter(_nc)].width = 15
+        ws.column_dimensions[get_column_letter(_cc)].width = 13
+    ws.column_dimensions[get_column_letter(_pc_col)].width = 11 if wip_contract_cell else 2
     # collapse the two retainage-detail columns (Draw Total, Retained) by
     # default — outline level 1 + hidden on BOTH so they form one collapsed
     # group; the [+] control sits to the right (over Net Billed). group()
@@ -3578,13 +3609,20 @@ def build_sheet_pl(
         #    Coverage %); AFTER OVERHEAD over (Net Profit, Net Cov %). The %
         #    lives IN the header (the user 2026-07-16), and MFD jobs use the
         #    MFD 9%-on-costs model here instead of %-of-revenue.
-        # Both views net overhead on the draw's INCOME: a draw's share of the
-        # contract is what it billed, so % of income per draw sums to % of
-        # the contract over the job (the user 2026-09-03). MFD used to net
-        # 9% on COSTS here - a different base from its own P&L.
-        _ao_hdr = (f"AFTER OVERHEAD — MFD {_alt:.0f}% of income" if show_mfd
-                   else f"AFTER OVERHEAD — {overhead_pct:.0f}% of income")
-        for c0, c1, txt in ((10, 11, "GROSS"), (12, 13, _ao_hdr)):
+        # OVERHEAD ON COMPLETION (the user 2026-09-03: "show how much overhead
+        # total $ is, not just the net, and after 9% do the 10% to have both
+        # ... this is based on completion, use the real metrics"): a draw's
+        # overhead is its share of the contract's overhead by the WORK it
+        # carried - rate x contract x (this draw's costs / ETC) - real costs
+        # against the ETC, not what the draw happened to bill. The shares sum
+        # to rate x contract x % complete over the job. MFD shows the 9% view
+        # then the 10%; CP the 10% alone.
+        _blocks = [(10, 11, "GROSS")]
+        for (_rate, _frac), (_oc, _nc, _cc) in zip(_views, _view_cols):
+            _blocks.append((_oc, _cc, f"AFTER OVERHEAD — {_rate:.0f}% of contract"
+                                      f"{' (MFD)' if show_mfd and _frac == _aoh and len(_views) > 1 else ''}"
+                                      f" × draw % complete"))
+        for c0, c1, txt in _blocks:
             gb = ws.cell(row=rc, column=c0, value=txt)
             gb.font = Font(bold=True, size=BASE_SIZE - 1, color=NAVY)
             gb.alignment = Alignment(horizontal="center")
@@ -3596,7 +3634,9 @@ def build_sheet_pl(
         # cols: 4 Draw 5 Period | 6 Draw Total 7 Retained | 8 Net Billed |
         #       9 Costs 10 Gross Profit 11 Coverage % 12 Net Profit 13 Net Cov %
         _heads = ["Draw", "Period", "Draw Total", "Retained", "Net Billed",
-                  "Costs", "Gross Profit", "Coverage %", "Net Profit", "Net Cov %"]
+                  "Costs", "Gross Profit", "Coverage %"]
+        for _rate, _frac in _views:
+            _heads += [f"{_rate:.0f}% OH $", "Net Profit", "Net Cov %"]
         if wip_contract_cell:
             _heads.append("% Compl")   # cumulative billed ÷ contract (the user 2026-06-22)
         for ci, h in enumerate(_heads, start=4):
@@ -3632,24 +3672,32 @@ def build_sheet_pl(
             nb.font = Font(size=BASE_SIZE - 1)
             ct = _write_cell(ws, rc, 9, costs); ct.number_format = CURR_FMT
             ct.font = Font(size=BASE_SIZE - 1, color=COST_TXT)
-            # formulas: Gross Profit, Coverage %, Net Profit, Net Coverage %
+            # formulas: Gross Profit, Coverage %, then per view OH $ (on
+            # completion), Net Profit, Net Coverage %. Sign colours on the
+            # overhead columns are CONDITIONAL - the value is only known to Excel.
             fmls = [
                 (10, f"=H{rc}-I{rc}", CURR_FMT, _clr(pc)),
                 (11, f'=IF(I{rc}=0,"",H{rc}/I{rc})', '0.0%', _clr(pc)),
-                (12, (f"=H{rc}*{one_minus_aoh}-I{rc}" if show_mfd
-                      else f"=H{rc}*{one_minus_oh}-I{rc}"), CURR_FMT, _clr(po)),
-                (13, (f'=IF(I{rc}=0,"",H{rc}/(I{rc}/{one_minus_aoh}))' if show_mfd
-                      else f'=IF(I{rc}=0,"",H{rc}/(I{rc}/{one_minus_oh}))'),
-                 '0.0%', _clr(po)),
             ]
+            for (_rate, _frac), (_oc, _nc, _cc) in zip(_views, _view_cols):
+                _OC = get_column_letter(_oc)
+                _oh_f = (f"=IF({wip_etc_cell}=0,H{rc}*{_frac},"
+                         f"{wip_contract_cell}*I{rc}/{wip_etc_cell}*{_frac})"
+                         if wip_contract_cell else f"=H{rc}*{_frac}")
+                fmls += [
+                    (_oc, _oh_f, CURR_FMT, "595959"),
+                    (_nc, f"=H{rc}-I{rc}-{_OC}{rc}", CURR_FMT, "000000"),
+                    (_cc, f'=IF(I{rc}+{_OC}{rc}=0,"",H{rc}/(I{rc}+{_OC}{rc}))',
+                     '0.0%', "000000"),
+                ]
             for col, f, nf, clr in fmls:
                 cell = ws.cell(row=rc, column=col, value=f)
                 cell.number_format = nf
                 cell.font = Font(size=BASE_SIZE - 1, color=clr)
-                if col in (11, 13):
+                if col == 11 or col in [_cc for _o, _n, _cc in _view_cols]:
                     cell.alignment = Alignment(horizontal="center")
             if wip_contract_cell:   # cumulative billed ÷ contract through this draw
-                pcc = ws.cell(row=rc, column=14,
+                pcc = ws.cell(row=rc, column=_pc_col,
                               value=f'=IF({wip_contract_cell}=0,"",'
                                     f'SUM(H{first_draw_row}:H{rc})/{wip_contract_cell})')
                 pcc.number_format = "0.0%"
@@ -3667,19 +3715,34 @@ def build_sheet_pl(
                 (9, f"=SUM(I{first_draw_row}:I{last_draw_row})", CURR_FMT, COST_TXT),
                 (10, f"=H{rc}-I{rc}", CURR_FMT, "000000"),
                 (11, f'=IF(I{rc}=0,"",H{rc}/I{rc})', '0.0%', "000000"),
-                (12, (f"=H{rc}*{one_minus_aoh}-I{rc}" if show_mfd
-                      else f"=H{rc}*{one_minus_oh}-I{rc}"), CURR_FMT, "000000"),
-                (13, (f'=IF(I{rc}=0,"",H{rc}/(I{rc}/{one_minus_aoh}))' if show_mfd
-                      else f'=IF(I{rc}=0,"",H{rc}/(I{rc}/{one_minus_oh}))'),
-                 '0.0%', "000000")):
+                *[x for (_oc, _nc, _cc) in _view_cols for x in (
+                    (_oc, f"=SUM({get_column_letter(_oc)}{first_draw_row}:"
+                          f"{get_column_letter(_oc)}{last_draw_row})", CURR_FMT, "595959"),
+                    (_nc, f"=H{rc}-I{rc}-{get_column_letter(_oc)}{rc}", CURR_FMT, "000000"),
+                    (_cc, f'=IF(I{rc}+{get_column_letter(_oc)}{rc}=0,"",'
+                          f'H{rc}/(I{rc}+{get_column_letter(_oc)}{rc}))', '0.0%', "000000"))]):
             cell = ws.cell(row=rc, column=col, value=f)
             cell.number_format = nf
             cell.font = Font(bold=True, size=BASE_SIZE - 1, color=clr)
             cell.border = TOP_BORDER
-            if col in (11, 13):
+            if col == 11 or col in [_cc for _o, _n, _cc in _view_cols]:
                 cell.alignment = Alignment(horizontal="center")
+        # sign colours for the overhead views, decided by Excel from the value
+        for _oc, _nc, _cc in _view_cols:
+            _rng = (f"{get_column_letter(_nc)}{first_draw_row}:"
+                    f"{get_column_letter(_nc)}{rc}")
+            ws.conditional_formatting.add(_rng, CellIsRule(
+                operator="lessThan", formula=["0"], font=Font(color=RED)))
+            ws.conditional_formatting.add(_rng, CellIsRule(
+                operator="greaterThanOrEqual", formula=["0"], font=Font(color=GREEN)))
+            _rng = (f"{get_column_letter(_cc)}{first_draw_row}:"
+                    f"{get_column_letter(_cc)}{rc}")
+            ws.conditional_formatting.add(_rng, CellIsRule(
+                operator="lessThan", formula=["1"], font=Font(color=RED)))
+            ws.conditional_formatting.add(_rng, CellIsRule(
+                operator="greaterThanOrEqual", formula=["1"], font=Font(color=GREEN)))
         if wip_contract_cell:   # overall % complete = total billed ÷ contract
-            tpc = ws.cell(row=rc, column=14,
+            tpc = ws.cell(row=rc, column=_pc_col,
                           value=f'=IF({wip_contract_cell}=0,"",H{rc}/{wip_contract_cell})')
             tpc.number_format = "0.0%"
             tpc.font = Font(bold=True, size=BASE_SIZE - 1)
@@ -3688,112 +3751,25 @@ def build_sheet_pl(
 
         # ── vertical rules: after Costs (col 9) and between Coverage % and
         #    Net Profit (after col 11), full table height (the user 2026-06-19) ──
+        _rules = [9, 11] + [_cc for _o, _n, _cc in _view_cols[:-1]]
         for gr in range(cov_top, rc + 1):
-            for col in (9, 11):
+            for col in _rules:
                 cur = ws.cell(row=gr, column=col).border
                 ws.cell(row=gr, column=col).border = Border(
                     left=cur.left, right=_vrule, top=cur.top, bottom=cur.bottom)
 
-    if accum and not simple:
-        ra = 3
-
-        def side(label, amt=None, *, formula=None, bold=False, border=None,
-                 fmt=CURR_FMT, color="000000", italic=False, size=None,
-                 fill=None, indent=0) -> int:
-            nonlocal ra
-            used = ra
-            val = ("    " * indent + label) if (isinstance(label, str) and indent) else label
-            c = _write_cell(ws, ra, 15, val)
-            c.font = Font(bold=bold, italic=italic, size=size or BASE_SIZE, color=color)
-            a = None
-            if formula is not None:
-                a = ws.cell(row=ra, column=16, value=formula)
-                a.number_format = fmt
-                a.font = Font(bold=bold, size=size or BASE_SIZE, color=color)
-            elif amt is not None:
-                a = _write_cell(ws, ra, 16, amt)
-                a.number_format = fmt
-                a.font = Font(bold=bold, size=size or BASE_SIZE, color=color)
-            if border is not None:
-                c.border = border
-                if a is not None:
-                    a.border = border
-            if fill is not None:
-                c.fill = fill
-                (a or ws.cell(row=ra, column=16)).fill = fill
-            ra += 1
-            return used
-
-        h = ws.cell(row=ra, column=15,
-                    value="ACCUMULATING COSTS — NEXT DRAW   ➜ see detail")
-        out_sheet = (draw_anchors or {}).get("__outside")
-        if out_sheet:
-            h.hyperlink = f"#'{out_sheet}'!A1"
-            h.font = Font(bold=True, size=BASE_SIZE, color=LINK, underline="single")
-        else:
-            h.font = Font(bold=True, size=BASE_SIZE, color=NAVY)
-        h.border = BOTTOM_BORDER
-        ws.cell(row=ra, column=16).border = BOTTOM_BORDER
-        ra += 1
-        side(f"bills + purchases outside any draw window (through "
-             f"{accum['through']}) — same as Draws ➜", italic=True,
-             color="595959", size=BASE_SIZE - 2)
-
-        by_pfx: Dict[str, dict] = {}
-        for code, tot in accum["groups"].items():
-            pfx, _num = _split_code(code)
-            key = pfx or "—"
-            d = by_pfx.setdefault(key, {"total": 0.0, "codes": []})
-            d["total"] += tot
-            d["codes"].append(code)
-        pfx_total_rows = []
-        labor_code_rows = []
-        for pfx in sorted(by_pfx, key=lambda k: _JOB_PREFIX_ORDER.get(k, 99)):
-            d = by_pfx[pfx]
-            jobname = (_JOB_TYPE_NAMES.get(pfx, "Other")
-                       if pfx != "—" else "No Job Type")
-            hdr_row = side(jobname, None, bold=True, fill=ACCENT_FILL)
-            code_rows = []
-            for code in sorted(d["codes"], key=_cost_code_sort_key):
-                amt = accum["groups"][code]
-                lbl_val = (_cost_name_value(code, indent=1, size=BASE_SIZE)
-                           if _is_cost_code(code) else None)
-                if lbl_val is not None:
-                    c = ws.cell(row=ra, column=15, value=lbl_val)
-                    c.font = Font(size=BASE_SIZE)
-                    a = _write_cell(ws, ra, 16, amt); a.number_format = CURR_FMT
-                    a.font = Font(size=BASE_SIZE)
-                    cur = ra
-                    ra += 1
-                else:
-                    cur = side(code, amt, indent=1)
-                code_rows.append(cur)
-                if _cost_category(code) == "Labor":
-                    labor_code_rows.append(cur)
-            # job-prefix total = SUM of its code cells
-            f = ("=" + "+".join(f"P{cr}" for cr in code_rows)) if code_rows else "=0"
-            ws.cell(row=hdr_row, column=16, value=f).number_format = CURR_FMT
-            ws.cell(row=hdr_row, column=16).font = Font(bold=True, size=BASE_SIZE)
-            ws.cell(row=hdr_row, column=16).fill = ACCENT_FILL
-            pfx_total_rows.append(hdr_row)
-        total_f = ("=" + "+".join(f"P{pr}" for pr in pfx_total_rows)) if pfx_total_rows else "=0"
-        tot_row = side("Total accumulating costs", formula=total_f, bold=True,
-                       border=TOP_BORDER)
-        if labor_code_rows:
-            lf = "=" + "+".join(f"P{lr}" for lr in labor_code_rows)
-            side("  ↳ of which Labor already PAID out of pocket", formula=lf,
-                 bold=True, color="C0504D")
-            side("(subs/crews are paid weekly — this cash is already out the "
-                 "door, awaiting the next draw)", italic=True, color="595959",
-                 size=BASE_SIZE - 2)
-        side("Draw needed (costs + overhead)",
-             formula=(f"=P{tot_row}/{one_minus_aoh}" if show_mfd
-                      else f"=P{tot_row}/{one_minus_oh}"),
-             bold=True, color=NAVY)
-        side((f"(= costs ÷ {one_minus_aoh} — MFD {_alt:.0f}% of income; "
-              f"break-even only, no profit margin)") if show_mfd else
-             f"(= costs ÷ {one_minus_oh}; break-even only, no profit margin)",
-             italic=True, color="595959", size=BASE_SIZE - 2)
+    if accum and not simple and (draw_anchors or {}).get("__outside"):
+        # The ACCUMULATING COSTS block moved to the Next Draw sheet (the user
+        # 2026-09-03); one linked line here says where it went and how much.
+        _nr = (rc + 2) if draw_rows else 3
+        _lk = ws.cell(row=_nr, column=4,
+                      value=f"Accumulating toward the next draw (through {accum['through']})"
+                            f"   ➜ Next Draw")
+        _lk.hyperlink = f"#'{draw_anchors['__outside']}'!A1"
+        _lk.font = Font(bold=True, size=BASE_SIZE - 1, color=LINK, underline="single")
+        _am = ws.cell(row=_nr, column=9, value=accum["total"])
+        _am.number_format = CURR_FMT
+        _am.font = Font(bold=True, size=BASE_SIZE - 1, color=COST_TXT)
 
 
 def _draw_flat_bills(draw_cost: dict) -> list:
@@ -4222,10 +4198,19 @@ def build_sheet_draw_data(wb: Workbook, draw_costs: dict, draw_rows: list,
 
 
 def build_sheet_next_draw_retainage(wb, proj, cust_info, wip_info, income_groups,
-                                    draw_costs, as_of, realm=""):
+                                    draw_costs, as_of, realm="", accum=None,
+                                    overhead_pct=10.0, alt_overhead_pct=None):
     """Costs OUTSIDE every draw window (accumulating toward the next draw) +
     untagged invoices. Retainage blocks were REMOVED (the user 2026-07-16 —
-    that story already lives on the Transactions sheet)."""
+    that story already lives on the Transactions sheet).
+
+    Since 2026-09-03 this sheet IS the accumulating-costs block that used to
+    sit on the P&L (the user: "move that to next draw, and make the whole
+    sheet start out like the way it is in the P&L, grouped by Job Type > cost
+    code > Vendor sorted by newest to oldest"): it opens on the Job Type and
+    cost-code totals exactly as the P&L block read, with each cost code's
+    vendors and each vendor's bills collapsed underneath (click + to open),
+    bills newest first. Every total is a SUM of the rows beneath it."""
     outside = draw_costs.get("__outside")
     untag = income_groups.get("__untagged")
     has = ((outside and (outside.get("total") or outside.get("groups")))
@@ -4236,8 +4221,9 @@ def build_sheet_next_draw_retainage(wb, proj, cust_info, wip_info, income_groups
     ws = wb.create_sheet("Next Draw")
     ws.sheet_view.showGridLines = False
     ws.sheet_view.zoomScale = 110
-    for col, w in (("A", 16), ("B", 12), ("C", 24), ("D", 16), ("E", 40), ("F", 14)):
+    for col, w in (("A", 46), ("B", 12), ("C", 20), ("D", 44), ("E", 14), ("F", 15)):
         ws.column_dimensions[col].width = w
+    ws.sheet_properties.outlinePr.summaryBelow = False
 
     def wc(row, col, val, *, bold=False, color="000000", fmt=None, fill=None,
            indent=0, link=None, wrap=False):
@@ -4272,37 +4258,110 @@ def build_sheet_next_draw_retainage(wb, proj, cust_info, wip_info, income_groups
 
     disregarded = draw_costs.get("__disregarded")
     if outside and (outside.get("total") or outside.get("groups")):
-        band(r, "NEXT DRAW — costs since the last draw (accumulating)"); r += 1
+        _thr = f"  (through {accum['through']})" if accum else ""
+        band(r, f"ACCUMULATING COSTS — NEXT DRAW{_thr}"); r += 1
+        wc(r, 1, "bills + purchases outside any draw window · Job Type › cost code › "
+                 "vendor › bill (newest first) · click + to open a vendor",
+           color="595959")
+        r += 1
         if disregarded:
             wc(r, 1, f"history before {disregarded.get('anchor') or 'the first tagged period'} "
                      f"disregarded here ({disregarded['count']} lines, "
                      f"${disregarded['total']:,.0f}) — pre-period process; "
                      f"still in P&L totals / Transactions", color="595959")
             r += 1
-        for i, h in enumerate(["Bill # / Vendor", "Date", "Cost", "Description", "", "Amount"], 1):
+        for i, h in enumerate(["Job Type / Cost Code / Vendor / Bill #", "Date", "Cost",
+                               "Description", "", "Amount"], 1):
             hc = wc(r, i, h, bold=True, color=NAVY); hc.border = BOTTOM_BORDER
         r += 1
-        byv = {}                                          # group by vendor (the user 2026-06-26)
-        for b in _draw_flat_bills(outside):
-            byv.setdefault(b["vendor"] or "(no vendor)", []).append(b)
-        for vend in sorted(byv, key=lambda v: -sum(b["amount"] for b in byv[v])):
-            vit = byv[vend]
-            wc(r, 1, f"{vend}  ({len(vit)})", bold=True, color="C55A11")
-            wc(r, 6, round(sum(b["amount"] for b in vit), 2), fmt=CURR_FMT,
-               bold=True, color="C55A11")
+        # prefix -> cost code -> vendor -> bills, straight off the bucketed tree
+        tree: Dict[str, Dict[str, Dict[str, list]]] = {}
+        for pg in (outside.get("groups") or {}).values():
+            for leaf, lg in pg.get("subs", {}).items():
+                pfx, _n = _split_code(leaf)
+                for vend, vg in lg.get("vendors", {}).items():
+                    (tree.setdefault(pfx or "—", {}).setdefault(leaf, {})
+                         .setdefault(vend or "(no vendor)", [])).extend(vg.get("txns", []))
+
+        def _d(t):
+            v = t.get("date", "")
+            d = _parse_date(v) if isinstance(v, str) else (v if isinstance(v, dt.date) else None)
+            return d or dt.date.min
+
+        pfx_cells, labor_cells = [], []
+        for pfx in sorted(tree, key=lambda k: _JOB_PREFIX_ORDER.get(k, 99)):
+            jobname = (_JOB_TYPE_NAMES.get(pfx, "Other") if pfx != "—" else "No Job Type")
+            pr = r
+            wc(r, 1, jobname, bold=True, fill=ACCENT_FILL)
+            for c in range(2, 7):
+                ws.cell(row=r, column=c).fill = ACCENT_FILL
             r += 1
-            for b in sorted(vit, key=lambda x: (_parse_date(x["date"]) if isinstance(x["date"], str)
-                                                else x["date"]) or dt.date.min, reverse=True):
-                wc(r, 1, b["num"] or "(no #)", indent=1,
-                   link=_qbo_txn_url(b["tx_type"], b["txn_id"], realm))
-                wdate(r, 2, b["date"]); wc(r, 3, b["cat"])
-                wc(r, 4, _clean_cost_text(b["desc"], _known_words))
-                wc(r, 6, b["amount"], fmt=CURR_FMT)
+            code_cells = []
+            for leaf in sorted(tree[pfx], key=_cost_code_sort_key):
+                cr = r
+                lbl = (_cost_name_value(leaf, indent=1) if _is_cost_code(leaf)
+                       else "    " + str(leaf))
+                wc(r, 1, lbl, bold=True)
+                wc(r, 3, _cost_category(leaf))
                 r += 1
-        wc(r, 1, "Total accumulating", bold=True)
-        wc(r, 6, outside.get("total", 0.0), fmt=CURR_FMT, bold=True)
+                vend_cells = []
+                byv = tree[pfx][leaf]
+                for vend in sorted(byv, key=lambda v: -sum(float(t.get("amount", 0) or 0)
+                                                          for t in byv[v])):
+                    txns = byv[vend]
+                    vr = r
+                    wc(r, 1, f"{vend}  ({len(txns)})", indent=2, bold=True, color="C55A11")
+                    ws.row_dimensions[r].outline_level = 1
+                    ws.row_dimensions[r].hidden = True
+                    r += 1
+                    first = r
+                    for t in sorted(txns, key=_d, reverse=True):
+                        wc(r, 1, str(t.get("doc_num", "")) or "(no #)", indent=3,
+                           link=_qbo_txn_url(t.get("tx_type", ""), t.get("txn_id", ""), realm))
+                        wdate(r, 2, t.get("date", ""))
+                        wc(r, 3, _cost_category(leaf))
+                        wc(r, 4, _clean_cost_text(t.get("desc", ""), _known_words))
+                        if t.get("pushed"):
+                            wc(r, 5, t["pushed"], color="BF8F00")
+                        wc(r, 6, float(t.get("amount", 0) or 0), fmt=CURR_FMT)
+                        ws.row_dimensions[r].outline_level = 2
+                        ws.row_dimensions[r].hidden = True
+                        r += 1
+                    vend_cells.append(wc(vr, 6, f"=SUM(F{first}:F{r - 1})", fmt=CURR_FMT,
+                                         bold=True, color="C55A11"))
+                cc_ = wc(cr, 6, "=" + "+".join(c.coordinate for c in vend_cells),
+                         fmt=CURR_FMT, bold=True)
+                code_cells.append(cc_)
+                if _cost_category(leaf) == "Labor":
+                    labor_cells.append(cc_)
+            pfx_cells.append(wc(pr, 6, "=" + "+".join(c.coordinate for c in code_cells),
+                                fmt=CURR_FMT, bold=True, fill=ACCENT_FILL))
+        wc(r, 1, "Total accumulating costs", bold=True)
+        tot = wc(r, 6, ("=" + "+".join(c.coordinate for c in pfx_cells)) if pfx_cells else 0.0,
+                 fmt=CURR_FMT, bold=True)
         for cc in range(1, 7):
             ws.cell(row=r, column=cc).border = TOP_BORDER
+        r += 1
+        if labor_cells:
+            wc(r, 1, "↳ of which Labor already PAID out of pocket", bold=True,
+               color="C0504D", indent=1)
+            wc(r, 6, "=" + "+".join(c.coordinate for c in labor_cells), fmt=CURR_FMT,
+               bold=True, color="C0504D")
+            r += 1
+            wc(r, 1, "(subs/crews are paid weekly — this cash is already out the door, "
+                     "awaiting the next draw)", color="595959", indent=1)
+            r += 1
+        # Break-even draw for these costs under each overhead view - MFD sees
+        # its 9% and the company 10% (the user 2026-09-03: "have both").
+        _views = ([(alt_overhead_pct, alt_overhead_pct / 100.0)] if alt_overhead_pct else []) \
+            + [(overhead_pct, overhead_pct / 100.0)]
+        for _rate, _frac in _views:
+            wc(r, 1, f"Draw needed to cover costs + {_rate:.0f}% OH", bold=True, color=NAVY)
+            wc(r, 6, f"={tot.coordinate}/{round(1 - _frac, 4)}", fmt=CURR_FMT,
+               bold=True, color=NAVY)
+            r += 1
+        wc(r, 1, "(= costs ÷ (1 − rate); break-even only, no profit margin)",
+           color="595959", indent=1)
         r += 2
 
     def invoice_section(grp, title, color):
@@ -6879,7 +6938,8 @@ def generate_project_pnl(
 
     leftover = None if simple else build_sheet_next_draw_retainage(
         wb, proj, cust_info, wip_info, income_groups, draw_costs, as_of,
-        realm=company_id)
+        realm=company_id, accum=accum, overhead_pct=overhead_pct,
+        alt_overhead_pct=_alt_oh)
     if leftover is not None:
         draw_anchors["__outside"] = leftover.title
 
@@ -7012,16 +7072,18 @@ def generate_project_pnl(
     # with a dozen monthly draws pushes anything behind them off the end of the
     # tab bar, and every one of these tabs is read more often than any single
     # old draw. Cash Flow used to trail and was the last thing left buried.
+    # Next Draw sits RIGHT BEFORE the newest draw tab (the user 2026-09-03):
+    # it is the draw that is forming, so it reads as the head of the run.
     _order_sheets(wb, ["P&L", "Transactions", "By Account",
                        "Labor", "Concrete", "Budget vs Actual",
-                       *(["Next Draw"] if leftover is not None else []),
                        "POs", "Reconciliations", "Cash Flow",
                        *([_draw_data_tab] if _draw_data_tab else []),
+                       *(["Next Draw"] if leftover is not None else []),
                        *draw_sheet_order])
 
     # Color-code the tabs for navigation (the user 2026-06-26).
     _tabcolors = {"P&L": "1F3A5F", "By Account": "375623", "Cash Flow": "C55A11",
-                  "Next Draw": "808080",
+                  "Next Draw": "9DC3E6",     # lighter blue than the draw tabs (2E75B6)
                   "Labor": "7030A0", "Concrete": "7030A0",
                   "Budget vs Actual": "BF8F00",
                   "Transactions": "548235", "POs": "808080",

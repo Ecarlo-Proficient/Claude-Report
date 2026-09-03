@@ -8,6 +8,40 @@ manual close), RP (no draws — expenses → invoice → profit).
 
 ## DONE / FINALIZED
 
+- **P&L SHEET: FOUR OWNER FIXES IN ONE PASS (2026-09-03, MFD test subject).**
+  1. **Change Orders / CO Costs / Revised rows appear only when there is a CO
+     or a CO cost** ("it just takes up space"); with none, the Original rows are
+     the cells everything measures against, and the rule above Revised Contract
+     is gone. The no-contract fallback then lands IN the Original Contract input
+     (`=<total billed>`, still yellow, still overridable - the read-back skips
+     formulas) and the ETC input gets `=<costs to date>`; both carry a small
+     grey note naming the stand-in.
+  2. **"Billed to Date (incl. retainage)"** - the total always is (gross work +
+     retainage billed back + retainage moved by JE).
+  3. **ACCUMULATING COSTS left the P&L for the Next Draw sheet**, which now IS
+     that block: Job Type > cost code rows open (as the P&L block read), vendors
+     and bills collapsed under them, bills newest first, every total a SUM of the
+     rows beneath, then Total / Labor already paid / "Draw needed" under each
+     overhead view. The P&L keeps one linked line under the coverage table
+     ("Accumulating toward the next draw ... ➜ Next Draw" + the amount). The tab
+     sits **right before the newest draw tab** in a lighter blue (`9DC3E6`) than
+     the draws (`2E75B6`) - the forming draw heads the run (the owner: "not grey,
+     right next to the latest draw sheet, a different shade of blue").
+  4. **DRAW COVERAGE shows the overhead $ per view, not just the net**, and MFD
+     gets BOTH views (9% then 10%; CP the 10% alone): per view `OH $` · `Net
+     Profit` · `Net Cov %`, then `% Compl`. **Overhead per draw is on
+     COMPLETION** (the owner: "this is based on completion, make sure to use the
+     real metrics"): `rate x contract x (this draw's costs / ETC)` - the share of
+     the contract's overhead the draw's WORK carried, off real costs against the
+     ETC, not what the draw happened to bill; the shares sum to rate x contract x
+     % complete. Falls back to rate x draw income only when ETC is 0. Sign
+     colours on the overhead columns are conditional formats (Excel knows the
+     value, Python does not). Column widths, the % Compl column and the vertical
+     rules follow the view count.
+  Verified on MFD325 (12 draws, COs absent, accumulating 78,571.61) and MFD133
+  (completed, `--simple`, blank inputs): every formula inspected after the
+  gutter pass; `assert_clean` passed in `safe_save`.
+
 - **OVERHEAD IS A % OF THE CONTRACT - ONE RULE, P&L AND OVERVIEW (2026-09-03,
   MFD as the test subject).** Three sessions hit the same defect from three
   sides in one afternoon and pulled in different directions: one fixed only the
