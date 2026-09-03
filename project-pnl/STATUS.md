@@ -119,16 +119,35 @@ manual close), RP (no draws — expenses → invoice → profit).
   pre-move OneDrive folder, so a P&L generated before the move is found.
   **Setup is one click, once:** Teams → the channel's Files tab → Sync.
 
-- **`closeout.py` — the FINAL closeout report (2026-09-02).**
-  `<job folder>/<JOB> FINAL Closeout.xlsx` (one permanent page per finished job)
-  plus `<division>/Closeout Index.xlsx` (every FINAL issued, filterable by
-  division / client / type). **FINAL means IMMUTABLE:** a re-run refuses to
-  overwrite an existing FINAL and says when it was issued; `--reissue "<reason>"`
-  supersedes it and the sheet then carries the original issue date and the
-  reason on its face. A document labelled FINAL whose figures quietly moved is
-  worse than no document. Reads the generated P&L, so no QBO pull. Client comes
-  from the WIP master for RP and from the P&L's own customer path for CP/MFD;
-  type is RP Tract/Custom, or Slab / Flatwork off the project #.
+- **RETIRED 2026-09-03 — ONE JOB, ONE P&L.** A finished MFD job folder held
+  THREE workbooks of the same figures: `Project_PnL_<job>.xlsx`, `<job> Job
+  Result.xlsx` (`completed_pnl.py`) and `<job> FINAL Closeout.xlsx`
+  (`closeout.py`) — plus `Closeout Index.xlsx` and a never-once-run
+  `completed_rollup.py` → `Completed MFD P&L.xlsx`. Five outputs, one set of
+  numbers, every one of them re-derived from the P&L. The owner called it:
+  "why is there a job result excel? shouldn't this be merged with the P&L? i
+  feel that we are confused and all over the place."
+  **The simplified finished-job report was already a FLAG on the real P&L** —
+  `--simple` drops the draw sheets, the Next Draw sheet and the coverage
+  blocks, and the MFD recipe above already runs completed jobs with it. The
+  second file bought nothing and drifted: MFD177/192/325 were carrying a
+  "finished job" report on an ACTIVE job, dated a day BEFORE the P&L beside it.
+  **Deleted:** `closeout.py`, `completed_rollup.py`, `completed_pnl.build()`
+  (the Job Result writer, 165 lines) and 26 stale workbooks on OneDrive.
+  **Kept:** `Project_PnL_<job>.xlsx` per job · `<DIV> Overview.xlsx` per
+  division. Before deleting a generator again, check whether the shape it makes
+  is already a flag on the P&L.
+
+- **THE OVERVIEW REBUILDS WITH THE P&L (2026-09-03).** The owner: "make sure
+  now if we update any mfd p&l it will get updated on the overview." The
+  Overview is assembled FROM the division's workbooks, so a run that rewrote
+  one left it describing figures that no longer existed. `project_pnl_export`
+  now calls `completed_pnl.rebuild_overview()` for every division a run
+  touched, before it prints the summary; `--no-overview` opts out, and a
+  failure there is reported but never fails an otherwise good P&L run. It reads
+  workbooks only — no QBO, no credential unlock — so it is cheap enough to do
+  every time. `load_division()` is the ONE reader the CLI and the auto-rebuild
+  share, so the same workbook can never be assembled two different ways.
 
 
 - **THE MFD REGENERATION RECIPE (2026-08-31) — stop guessing the flags.**

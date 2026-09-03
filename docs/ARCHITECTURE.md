@@ -748,7 +748,7 @@ flowchart LR
     LOANS["one-offs/\nloans_to_subs_audit.py"]:::tool
     CCAUD["one-offs/\nconcrete_cost_code_audit.py"]:::tool
 
-    P1[("OneDrive\nPROJECT P&Ls")]:::out
+    P1[("PROJECT P&Ls\nCP → Commercial · RP → Residential\nMFD → Teams 'Project Financials'")]:::out
     P2[("Equipment_Debt_Schedule_v2.xlsx\nbeside the script")]:::out
     P3[("health xlsx\nprivate · chmod 600")]:::out
     P4[("OneDrive\n-Inbox- Project Report Exports")]:::out
@@ -840,14 +840,41 @@ ready-mix MEMO line must be `*1`) - then flags every line that breaks its type's
 OneDrive `Works In Progress/QBO Audits/Concrete Cost Code Audit.xlsx` (Vendors · Miscoded Lines ·
 Summary; plain, `assert_clean`).
 
-**`project-pnl/completed_rollup.py`** (read-only, no QBO) — one combined P&L over every
-finished job filed under an archive subfolder of the P&L root (`completed mfd project
-p&l`). One row per job with contract/ETC/billed/cost/GP and an `OPEN ↗` link to that job's
-own workbook, plus a portfolio total. Figures are read from each workbook's **Transactions**
-sheet (real numbers) rather than its P&L sheet (live formulas openpyxl cannot evaluate), so
-the rollup can never disagree with what it links to. `shared/pnl_paths._archive_dirs()` is
+**`project-pnl/completed_pnl.py`** (read-only, no QBO) — `<DIV> Overview.xlsx`: one row per
+job with contract/ETC/billed/cost/GP over a sheet per job, all links internal so it survives
+being emailed. Figures are read from each workbook's **Transactions** sheet (real numbers)
+rather than its P&L sheet (live formulas openpyxl cannot evaluate), so the Overview can never
+disagree with what it links to. **`project_pnl_export.py` rebuilds it at the end of every run**
+(`--no-overview` opts out): it is assembled FROM the division's workbooks, so a run that
+rewrites one leaves it describing figures that no longer exist, and reading workbooks costs
+no QBO call. `shared/pnl_paths._archive_dirs()` is
 the shared notion of "filed": `find_pnl` looks inside those folders and project-pnl
-regenerates a filed job back into its archive folder.
+regenerates a filed job back into its archive folder — including the archive that
+travelled with a division into a Teams channel (below).
+
+**RETIRED 2026-09-03 — one job, one P&L.** A finished MFD job folder had grown THREE
+workbooks of the same numbers: `Project_PnL_<job>.xlsx`, `<job> Job Result.xlsx`
+(`completed_pnl.py`) and `<job> FINAL Closeout.xlsx` (`closeout.py`), plus `Closeout
+Index.xlsx` and a never-once-run `completed_rollup.py` → `Completed MFD P&L.xlsx`. Five
+outputs, one set of figures, all re-derived from the P&L. The owner called it: "why is there
+a job result excel? shouldn't this be merged with the P&L? i feel that we are confused and
+all over the place." The simplified finished-job report they name was already a FLAG on the
+real P&L — `--simple` drops the draw sheets and coverage blocks — so the second file bought
+nothing and drifted: MFD177/192/325 were carrying a "finished job" report on an ACTIVE job,
+older than the P&L beside it. `closeout.py` and `completed_rollup.py` are deleted,
+`completed_pnl.py` keeps only the Overview, and 26 stale workbooks were removed. What
+remains: **`Project_PnL_<job>.xlsx` per job, `<DIV> Overview.xlsx` per division.**
+
+**`shared/pnl_paths.division_dir` — the ONE routing rule, now Teams-aware (2026-09-03).**
+A division's P&Ls land in its own folder because the owner shares that folder's link with
+the PM who runs the division; the root would expose every PM's margins. `DIVISION_CHANNELS`
+lets a division live in a **Teams channel** instead: **MFD → `Project Financials`**. A Teams
+channel's Files tab is a SharePoint folder, so once the channel is synced it is an ordinary
+local path — the same shape as `Company Files - WIP Report`, which the wip/ readers have
+written to for months. No Graph API, no new key. Resolution order: an explicit `--out` ·
+`ACB_PNL_DIR_<DIV>` · the synced channel · the OneDrive division folder. It is a **move**,
+not a mirror — two copies of `MFD Overview.xlsx` would drift. When the channel is not synced
+the run falls back to OneDrive and **says so in its note** rather than pretending it routed.
 
 **`one-offs/job_vendor_report.py`** (read-only QBO) — job cost for a date window grouped
 by vendor, in the shape a PM's "Transaction List by Vendor" takes but complete. `--compare`

@@ -8,10 +8,15 @@ project-pnl writes with — without importing that tool (repo rule: tools never 
 tools; common code lives in shared/).
 
 project-pnl writes  <folder>/Project_PnL_<proj>.xlsx  where <folder> is:
-  * non-CP : <out>/<proj>
+  * non-CP : <division folder>/<proj>
   * CP     : the Common-drive awarded folder's 'Profit and Loss' subfolder, falling
-             back to <out>/<proj> when the drive isn't mounted or nothing matches.
-<out> defaults to OneDrive 'Automations-/PROJECT P&Ls' (ACB_PNL_OUT_DIR override).
+             back to <division folder>/<proj> when the drive isn't mounted or
+             nothing matches.
+The DIVISION folder is `division_dir` — the OneDrive 'Commercial'/'Multi-Family'/
+'Residential' folder, or, when a division is mapped to a TEAMS CHANNEL and that
+channel is synced on this Mac, the channel's folder (MFD → 'Project Financials',
+the user 2026-09-03). <out> defaults to OneDrive 'Automations-/PROJECT P&Ls'
+(ACB_PNL_OUT_DIR); a single division can be pinned with ACB_PNL_DIR_<DIV>.
 
 NOTE (dedupe follow-up): project-pnl still keeps its own copy of this logic
 (_resolve_project_out_dir / _find_awarded_cp_folder). It should import these instead so
@@ -100,15 +105,130 @@ def division_of(proj: str) -> str:
     return ""
 
 
-def division_dir(proj: str, out_dir: "Path | None" = None) -> Path:
-    """The division folder a project's P&L belongs in.
+# ── a division folder may live in a TEAMS CHANNEL ────────────────────────
+# (the user 2026-09-03): "make new python route Multifamily p&l to
+# <the Project Financials channel>". A Teams channel's Files tab IS a
+# SharePoint folder, so once the channel is synced it is an ordinary path on
+# this Mac - exactly the shape of 'Company Files - WIP Report', which the wip/
+# readers have written to for months. No Graph API and no new key: the route
+# is a folder name, and OneDrive does the moving.
+#
+# MOVE, not mirror (the user 2026-09-03): the channel is the ONLY home for the
+# division once it is synced. Two copies of 'MFD Overview.xlsx' would drift,
+# and the folder link the owner shares has to be the one with the live numbers.
+DIVISION_CHANNELS = {"MFD": "Project Financials"}
+
+# A synced channel shows up under one of TWO naming schemes, because OneDrive
+# syncs a team channel and a shared library differently:
+#   * personal OneDrive root : '<Team> - <Channel>'
+#       'Company Files - WIP Report'          (what the wip/ readers use)
+#   * shared-library root    : '<Site> - <Library>', the site itself named
+#       '<Team>-<Channel>'
+#       'OneDrive-SharedLibraries-<Org>/Multi-Family-Project Financials - Documents'
+# So: drop a trailing library segment, then require the channel at the END of
+# what is left, on a separator boundary. Nothing looser - a bare substring
+# match would happily route the book into any folder that merely mentions the
+# words, and a P&L in the wrong folder is the exact leak division_dir exists
+# to prevent.
+_LIBRARY_SUFFIX_RE = re.compile(r"\s+-\s+(Documents|Shared Documents)$", re.I)
+_channel_cache: dict = {}
+
+
+def _channel_roots():
+    """Every place a sync can land: the personal OneDrive root, plus each
+    'OneDrive-SharedLibraries-*' root beside it."""
+    roots = [paths.onedrive_base()]
+    for r in roots[0].parent.glob("OneDrive-SharedLibraries-*"):
+        if r.is_dir():
+            roots.append(r)
+    return roots
+
+
+def channel_dir(channel: str) -> "Path | None":
+    """The local folder of a synced Teams channel, or None when it isn't synced.
+
+    Deterministic on a tie: an exact-name folder wins over a '<Team> - <Channel>'
+    one, and roots are searched in a fixed order, so two syncs of the same
+    channel can never send successive runs to different folders."""
+    if channel in _channel_cache:
+        return _channel_cache[channel]
+    tail = re.compile(r"(?:^|[\s\-–])" + re.escape(channel) + r"$", re.I)
+    exact, partial = None, None
+    for root in _channel_roots():
+        try:
+            children = sorted(root.iterdir())
+        except OSError:
+            continue
+        for child in children:
+            if not child.is_dir():
+                continue
+            name = _LIBRARY_SUFFIX_RE.sub("", child.name).strip()
+            if name.lower() == channel.lower():
+                exact = exact or child
+            elif partial is None and tail.search(name):
+                partial = child
+    found = exact or partial
+    # A CloudStorage folder can be WRITABLE but not LISTABLE: macOS grants the
+    # write and refuses `iterdir` until the running app has Full Disk Access
+    # (2026-09-03, the shared-library sync of this very channel). That half
+    # state is worse than no sync at all - workbooks would land there while
+    # `_iter_jobs` saw an empty folder, so the Overview would quietly rebuild
+    # from nothing and a finished job would regenerate outside its archive.
+    # Require the listing, or treat the channel as not synced.
+    if found is not None and not _listable(found):
+        found = None
+    _channel_cache[channel] = found
+    return found
+
+
+def _listable(d: Path) -> bool:
+    """True when this process can actually enumerate `d` (see channel_dir)."""
+    try:
+        next(iter(d.iterdir()), None)
+        return True
+    except OSError:
+        return False
+
+
+def division_dir(proj: str, out_dir: "Path | None" = None,
+                 forced: bool = False) -> Path:
+    """The division folder a project's P&L belongs in."""
+    return division_dir_note(proj, out_dir, forced)[0]
+
+
+def division_dir_note(proj: str, out_dir: "Path | None" = None,
+                      forced: bool = False):
+    """(folder, note) — the division folder, and why, when it isn't the default.
+
+    Resolution order: an explicit --out (`forced`) beats every route · an
+    `ACB_PNL_DIR_<DIV>` override · the division's Teams channel when synced ·
+    the OneDrive division folder.
 
     An unrecognised project # stays at the root rather than being filed into
     the wrong division - a misfiled P&L is exactly the leak this rule exists
     to prevent."""
     out_dir = out_dir or pnl_out_dir()
-    name = DIVISION_DIRS.get(division_of(proj))
-    return out_dir / name if name else out_dir
+    div = division_of(proj)
+    name = DIVISION_DIRS.get(div)
+    default = out_dir / name if name else out_dir
+    if forced:                       # someone named an output folder; obey it
+        return default, None
+    override = paths.get("ACB_PNL_DIR_" + div) if div else ""
+    if override:
+        return Path(override).expanduser(), f"ACB_PNL_DIR_{div} override"
+    channel = DIVISION_CHANNELS.get(div)
+    if channel:
+        found = channel_dir(channel)
+        if found is not None:
+            return found, None
+        # Fall back rather than fail a run - but SAY SO. A silent fallback is
+        # how the owner ends up sharing a channel link to a folder the numbers
+        # never reached.
+        return default, (f"Teams channel '{channel}' is not readable on this Mac "
+                         f"(not synced, or synced as a shared library this app "
+                         f"cannot list) → wrote to {default.name} on OneDrive "
+                         f"instead")
+    return default, None
 
 
 def _find_awarded_cp_folder(base: Path, proj: str):
@@ -137,9 +257,9 @@ def resolve_project_out_dir(proj: str, out_dir: "Path | None" = None):
     """(folder, note) — where project-pnl would put this project's workbook.
     `note` explains any CP → OneDrive fallback (surfaced in the UI)."""
     out_dir = out_dir or pnl_out_dir()
-    base = division_dir(proj, out_dir)
+    base, dnote = division_dir_note(proj, out_dir)
     if not proj.upper().startswith("CP"):
-        return base / proj, None
+        return base / proj, dnote
     try:
         mounted = CP_AWARDED_BASE.exists()
     except OSError:
@@ -170,7 +290,15 @@ def _archive_dirs():
     for archives filed before the division rule."""
     out: list = []
     root = pnl_out_dir()
-    for base in [root] + [root / n for n in DIVISION_DIRS.values()]:
+    # Resolved, not hard-coded: a division routed to a Teams channel keeps its
+    # 'completed …' archive inside that channel, and a re-run has to regenerate
+    # a finished job THERE rather than spawn a second copy at the top level.
+    bases = [root] + [root / n for n in DIVISION_DIRS.values()]
+    for _d in DIVISION_DIRS:
+        _r = division_dir(_d)
+        if _r not in bases:
+            bases.append(_r)
+    for base in bases:
         try:
             out += [d for d in sorted(base.iterdir())
                     if d.is_dir()
@@ -195,6 +323,9 @@ def _candidates(proj: str):
     fname = PNL_FILE.format(proj=proj)
     add(pnl_path(proj))                                   # exact resolved path
     add(division_dir(proj) / proj / fname)                # division-sorted
+    _dn = DIVISION_DIRS.get(division_of(proj))
+    if _dn:                                              # pre-Teams-move home
+        add(pnl_out_dir() / _dn / proj / fname)
     add(pnl_out_dir() / proj / fname)                    # pre-division root subfolder
     # Finished jobs are filed away under an ARCHIVE subfolder (the user
     # 2026-08-27) so the top level stays the live work. Look there too, or the
