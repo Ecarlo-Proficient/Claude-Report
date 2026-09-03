@@ -52,7 +52,7 @@ from shared.xlsx_verify import assert_clean
 DIVISIONS = {
     "mfd": {"prefix": "MFD", "label": "MFD", "title": "MFD OVERVIEW — ALL JOBS",
             "default_year": None,
-            "alt": {"label": "MFD — 9% of cost", "short": "NET  (MFD 9%)"}},
+            "alt": {"label": "9% OH", "short": "FINAL NET  (9% OH)"}},
     "cp": {"prefix": "CP", "label": "CP", "title": "COMMERCIAL OVERVIEW",
            "default_year": dt.date.today().year, "alt": None},
     "rp": {"prefix": "RP", "label": "RP", "title": "RESIDENTIAL OVERVIEW",
@@ -62,8 +62,14 @@ DIVISIONS = {
 # double-counts it (the user 2026-08-27). Excluded from job cost and reported
 # on the sheet as a named exclusion — never silently dropped.
 PAYROLL_RE = re.compile(r"payroll|wages|salar|employee benefit|workers.?comp", re.I)
-OVERHEAD_PCT = 0.10          # company view: 10% of REVENUE
-MFD_OVERHEAD_PCT = 0.09      # MFD's own view: 9% of COSTS (CLAUDE.md)
+# BOTH overhead views are a % of the CONTRACT, and on a finished job the
+# contract IS the total billed - what the job ultimately sold for (the user
+# 2026-09-03: "completed jobs use the total billed as contract and make the oh
+# correct then take 10% or 9% of the total contract"). This REPLACES the old
+# 9%-of-COSTS basis: a cost-based overhead moved with the overrun, so the
+# worse a job went the bigger its overhead charge, which is backwards.
+OVERHEAD_PCT = 0.10          # 10% of contract (= total billed on a done job)
+MFD_OVERHEAD_PCT = 0.09      # 9% of the same contract - the second view
 
 # ── one accent, lots of white space ────────────────────────────────────
 # The first cut used solid navy on the tile headers AND the section headers AND
@@ -390,8 +396,9 @@ def _totals(src: dict) -> dict:
     opex = next((x["total"] for x in src["sections"] if x["name"].startswith("OPERATING")), 0.0)
     cost = cogs + opex
     gp = billed - cost
-    oh = billed * OVERHEAD_PCT
-    moh = cost * MFD_OVERHEAD_PCT
+    contract = billed            # a finished job's contract is what it billed
+    oh = contract * OVERHEAD_PCT
+    moh = contract * MFD_OVERHEAD_PCT
     return {"billed": billed, "cogs": cogs, "opex": opex, "cost": cost,
             "gp": gp, "oh": oh, "net": gp - oh,
             "gpm": gp / billed if billed else 0.0,
@@ -439,13 +446,14 @@ def _kpi_strip(ws, r: int, t: dict, spans, alt=None) -> int:
     ws.merge_cells(start_row=r2, start_column=lab, end_row=r2, end_column=spans[0][1])
     _t(ws, r2, lab, "AFTER OVERHEAD", size=SZ_SMALL - 1, bold=True, color=GREY,
        indent=1)
-    for span, txt in ((oh_c, "OVERHEAD"), (net_c, "NET PROFIT"), (pct_c, "NET MARGIN")):
+    for span, txt in ((oh_c, "OVERHEAD"), (net_c, "FINAL NET PROFIT"),
+                      (pct_c, "NET MARGIN")):
         ws.merge_cells(start_row=r2, start_column=span[0], end_row=r2, end_column=span[1])
         _t(ws, r2, span[0], txt, size=SZ_SMALL - 1, bold=True, color=GREY,
            align="right")
     for cc in range(spans[0][0], spans[3][1] + 1):
         ws.cell(row=r2, column=cc).border = Border(bottom=HAIR)
-    views = [(f"Company — {OVERHEAD_PCT:.0%} of revenue", t["oh"], t["net"], t["netm"])]
+    views = [(f"{OVERHEAD_PCT:.0%} OH", t["oh"], t["net"], t["netm"])]
     if alt:
         views.append((alt["label"], t["moh"], t["mnet"], t["mnetm"]))
     for i, (lbl, oh, net, netm) in enumerate(views):
@@ -462,6 +470,11 @@ def _kpi_strip(ws, r: int, t: dict, spans, alt=None) -> int:
             _t(ws, rr, span[0], val, size=SZ + 2, bold=True, fmt=fmt,
                color=col, align="right")
         ws.row_dimensions[rr].height = 26
+        if i:                       # separate the two views with a heavy rule
+            for cc in range(spans[0][0], spans[3][1] + 1):
+                cur = ws.cell(row=rr, column=cc).border
+                ws.cell(row=rr, column=cc).border = Border(
+                    left=cur.left, right=cur.right, bottom=cur.bottom, top=THICK)
     _thick_box(ws, r2, r2 + len(views), spans[0][0], spans[3][1])
     return r2 + len(views) + 2
 
@@ -498,7 +511,7 @@ def build_bundle(jobs: List[tuple], out: Path, div: dict) -> None:
     alt = div.get("alt")
     cols = [("BILLED", "billed", MONEY, 18), ("COST", "cost", MONEY, 18),
             ("GROSS PROFIT", "gp", MONEY, 18), ("GP %", "gpm", PCT, 11),
-            (f"NET  (company {OVERHEAD_PCT:.0%})", "net", MONEY, 20)]
+            (f"FINAL NET  ({OVERHEAD_PCT:.0%} OH)", "net", MONEY, 20)]
     if alt:
         cols.append((alt["short"], "mnet", MONEY, 20))
 

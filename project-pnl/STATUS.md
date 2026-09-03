@@ -142,6 +142,23 @@ manual close), RP (no draws — expenses → invoice → profit).
   pre-move OneDrive folder, so a P&L generated before the move is found.
   **Setup is one click, once:** Teams → the channel's Files tab → Sync.
 
+- **OVERHEAD IS A % OF THE CONTRACT, BOTH VIEWS (2026-09-03).** The owner:
+  "completed jobs use the total billed as contract and make the oh correct then
+  take 10% or 9% of the total contract." On a finished job the contract IS the
+  total billed - what it ultimately sold for - so the Overview now charges
+  **10% of billed** and **9% of billed**, shown as two stacked views split by a
+  heavy rule: `10% OH` / `FINAL NET PROFIT`, then the rule, then `9% OH` /
+  `FINAL NET PROFIT`. The per-job columns read `FINAL NET (10% OH)` and
+  `FINAL NET (9% OH)`.
+  **This REPLACES the 9%-of-COSTS basis** for the Overview. A cost-based
+  overhead rose with the overrun, so the worse a job went the bigger its
+  overhead charge - backwards, and it flattered nothing.
+  **OPEN - the per-job P&L still disagrees.** `project_pnl_export.py` computes
+  MFD's 9% on COSTS (see its `_oh_label`, "9% of costs"), so the same job now
+  shows two different 9% figures depending on which workbook you open. CLAUDE.md
+  still documents the old basis ("MFD alt view stays 9% on costs"). Both need
+  the owner's word before changing - it means regenerating all 14 MFD P&Ls.
+
 - **RETIRED 2026-09-03 — ONE JOB, ONE P&L.** A finished MFD job folder held
   THREE workbooks of the same figures: `Project_PnL_<job>.xlsx`, `<job> Job
   Result.xlsx` (`completed_pnl.py`) and `<job> FINAL Closeout.xlsx`
