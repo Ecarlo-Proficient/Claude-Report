@@ -8,6 +8,29 @@ manual close), RP (no draws — expenses → invoice → profit).
 
 ## DONE / FINALIZED
 
+- **HISTORY CORRECTION — commit `d436ed2` contains work its message does not
+  describe (2026-09-03).** That commit is titled "gutter: shift WHOLE-COLUMN
+  references too" and does contain that fix, but roughly 25 of its 45 added
+  lines are ANOTHER session's auto-Overview feature (`--no-overview`,
+  `touched_divs`, the `rebuild_overview` call at the end of a run). Two sessions
+  were editing `project_pnl_export.py` in the same clone at the same time, and
+  a `git commit -- <path>` swept in whatever was in the working tree.
+  Verified: `git show d436ed2^:project-pnl/project_pnl_export.py` matches
+  `rebuild_overview|no-overview` **0** times, `d436ed2` matches **2**.
+  The feature itself is owner-requested and correct - any run that writes a P&L
+  rebuilds that division's Overview, `--no-overview` opts out. Not amended: the
+  commit is pushed to a shared branch and rewriting that history costs more than
+  the misattribution does. Recorded here instead so nobody trusts the message
+  over the diff.
+
+  **The rule this broke:** a pathspec commit is only as safe as the working
+  tree. `git commit -- <file>` commits the file's CURRENT CONTENT, not just
+  your own edits to it. Committing by path protects you from OTHER files a
+  teammate has staged; it does not protect you from their edits inside YOUR
+  file. In a shared clone, check `git diff <path>` before committing it, not
+  just `git status`.
+
+
 - **THE REPAIR PROMPT THAT GOT THROUGH (CP800, 2026-09-03) - read this before
   adding a table to any sheet.** The gutter pass hangs row 1's title back into
   column A. On `Draw Data`, row 1 is not a title, it is the **table header** -
