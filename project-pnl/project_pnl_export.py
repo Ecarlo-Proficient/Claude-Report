@@ -1509,6 +1509,22 @@ GUTTER_W = 3.0
 # cannot be mistaken for a cell.
 _A1_REF_RE = re.compile(
     r"(?<![A-Za-z0-9_.])(\$?)([A-Za-z]{1,3})(\$?)([0-9]{1,7})(?![A-Za-z0-9_(])")
+# A WHOLE-COLUMN range carries no row number ("Transactions!$D:$D"), so the
+# cell pattern above - which requires digits - never sees it. Missing these is
+# not a cosmetic slip: the P&L totals its COGS with
+# SUMIF(Transactions!$D:$D, "<account>", Transactions!$E:$E), and leaving those
+# pointing one column left made "Costs to Date" read 0.00 while every figure
+# derived from it (% complete, earned revenue, cost to complete, gross and net
+# profit) silently followed (2026-09-03).
+_COL_RANGE_RE = re.compile(
+    r"(?<![A-Za-z0-9_.])(\$?)([A-Za-z]{1,3})(\$?):(\$?)([A-Za-z]{1,3})(\$?)"
+    r"(?![A-Za-z0-9_(])")
+
+
+def _bump_col_range(m, n: int) -> str:
+    a = get_column_letter(column_index_from_string(m.group(2).upper()) + n)
+    b = get_column_letter(column_index_from_string(m.group(5).upper()) + n)
+    return f"{m.group(1)}{a}{m.group(3)}:{m.group(4)}{b}{m.group(6)}"
 
 
 def _bump_ref(m, n: int) -> str:
@@ -1541,7 +1557,8 @@ def _shift_a1(text: str, n: int) -> str:
             j = i
             while j < L and text[j] not in ('"', "'"):
                 j += 1
-            out.append(_A1_REF_RE.sub(lambda m: _bump_ref(m, n), text[i:j]))
+            seg = _COL_RANGE_RE.sub(lambda m: _bump_col_range(m, n), text[i:j])
+            out.append(_A1_REF_RE.sub(lambda m: _bump_ref(m, n), seg))
             i = j
     return "".join(out)
 
@@ -7628,6 +7645,11 @@ def main() -> int:
                          "is found automatically from the job number, active or "
                          "not - you never type its name. Shorthand: put +class "
                          "anywhere on the command line.")
+    ap.add_argument("--no-overview", action="store_true",
+                    help="skip the automatic <DIV> Overview rebuild at the end "
+                         "of the run. The Overview describes the workbooks in "
+                         "the division folder, so by default any run that "
+                         "changed one rebuilds it (the user 2026-09-03).")
     ap.add_argument("--simple", action="store_true",
                     help="STRIPPED-BACK P&L for a COMPLETED job: no draw "
                          "sheets, no Next Draw sheet, and no draw-coverage or "
@@ -7715,6 +7737,7 @@ def main() -> int:
     as_of = dt.datetime.now().strftime("%Y-%m-%d %I:%M %p")  # 12-hour + AM/PM
     generated: List[Path] = []
     not_found: List[str] = []
+    touched_divs: set = set()      # divisions whose Overview a run invalidates
 
     for proj in projects:
         if proj not in cust_map:
@@ -7781,6 +7804,7 @@ def main() -> int:
             )
             if path:
                 generated.append(path)
+                touched_divs.add(pnl_paths.division_of(proj))
         except Exception as e:
             ui_fail(f"{proj}: {e}")
             if os.getenv("ACB_DEBUG"):
@@ -7794,6 +7818,26 @@ def main() -> int:
                 generated.append(p)
         except Exception as e:
             ui_fail(f"cross-check {rf.name}: {e}")
+
+    # THE OVERVIEW IS PART OF THE RUN (the user 2026-09-03: "make sure now if we
+    # update any mfd p&l it will get updated on the overview"). It is assembled
+    # FROM the division's workbooks, so a run that rewrites one leaves it
+    # describing figures that no longer exist. completed_pnl reads workbooks
+    # only - no QBO, no credential unlock - so rebuilding every time is cheap,
+    # and a stale Overview is the kind of error nobody catches by eye.
+    # Same tool folder, so this is an import, not a cross-tool one (repo rule 3).
+    if touched_divs and not args.dry_run and not args.no_overview:
+        import completed_pnl as _CP
+        for _d in sorted(d for d in touched_divs if d):
+            try:
+                _res = _CP.rebuild_overview(_d.lower())
+            except Exception as e:                 # never fail a good P&L run
+                ui_fail(f"{_d} Overview not rebuilt: {e}")
+                continue
+            if _res:
+                ui_event(f"{_d} Overview rebuilt — {_res['jobs']} jobs, "
+                         f"billed ${_res['billed']:,.0f}", icon="↻")
+                generated.append(_res["path"])
 
     ui_banner(f"Done — {len(generated)} workbook(s)")
     if not_found:
