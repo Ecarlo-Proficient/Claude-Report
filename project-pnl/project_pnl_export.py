@@ -215,7 +215,8 @@ def _find_awarded_cp_folder(base: Path, proj: str) -> Optional[Path]:
     return numbered
 
 
-def _resolve_project_out_dir(proj: str, out_dir: Path) -> Tuple[Path, Optional[str]]:
+def _resolve_project_out_dir(proj: str, out_dir: Path,
+                             forced: bool = False) -> Tuple[Path, Optional[str]]:
     """Where a project's workbook folder should live. CP → Common-drive awarded
     folder's 'Profit and Loss' subfolder; everything else →
     <out_dir>/<division>/<proj>.
@@ -226,6 +227,14 @@ def _resolve_project_out_dir(proj: str, out_dir: Path) -> Tuple[Path, Optional[s
     every other PM's numbers behind the same link (the user 2026-08-31). The
     one rule lives in shared/pnl_paths.division_dir."""
     _div = pnl_paths.division_dir(proj, out_dir)
+    # An EXPLICIT --out wins over every default route (2026-09-03). It used to
+    # be ignored for CP, which routes to the Common-drive awarded folder
+    # whenever the drive is mounted, and for any job already filed under an
+    # archive - so a run aimed at a scratch directory silently overwrote the
+    # live workbook instead. If someone names an output folder, that is the
+    # output folder.
+    if forced:
+        return _div / proj, "--out given, so the default route is bypassed"
     if not proj.upper().startswith("CP"):
         # If this job has already been FILED under an archive subfolder
         # ("completed mfd project p&l"), regenerate it THERE — otherwise a
@@ -4879,9 +4888,12 @@ def build_sheet_labor_concrete(
     L_TAX = 8 if has_tax else 0
     L_FUEL = (9 if has_tax else 8) if has_fuel else 0
     L_DRAW = max(L_AMT, L_TAX, L_FUEL) + 1
-    L_DESC = L_DRAW + 1
+    # COST CODE is its own COLUMN now, not a grouping row: the ledger groups by
+    # VENDOR (the user 2026-09-02), so the code has to be filterable instead.
+    L_CODE = L_DRAW + 1
+    L_DESC = L_CODE + 1
     for col, w in ((L_QTY, 12), (L_RATE, 13), (L_AMT, 15), (L_DRAW, 16),
-                   (L_DESC, 24)):
+                   (L_CODE, 13), (L_DESC, 24)):
         widths[col] = max(widths.get(col, 0), w)
     if L_TAX:
         widths[L_TAX] = max(widths.get(L_TAX, 0), 13)
@@ -5034,7 +5046,7 @@ def build_sheet_labor_concrete(
         led_heads.append(("SALES TAX", L_TAX))
     if L_FUEL:
         led_heads.append(("FUEL/SVC", L_FUEL))
-    led_heads += [("DRAW", L_DRAW), ("DESCRIPTION", L_DESC)]
+    led_heads += [("DRAW", L_DRAW), ("COST CODE", L_CODE), ("DESCRIPTION", L_DESC)]
     for text, col in led_heads:
         c = ws.cell(row=r, column=col, value=text)
         c.font = Font(bold=True, color="FFFFFF", size=SZ)
@@ -5045,34 +5057,50 @@ def build_sheet_labor_concrete(
     ws.row_dimensions[r].height = ROW_H + 3
     r += 1
 
+    # ── the ledger, GROUPED BY VENDOR (the user 2026-09-02) ──────────────
+    # "labor and concrete should be groupable transactions, grouped by vendor
+    # ... a table i can filter, sort etc. what if i want to filter out just
+    # draw 1?"  So: one collapsible block per vendor, collapsed on open so the
+    # sheet answers "where did it go" first; an AUTOFILTER over the block so
+    # DRAW / COST CODE / VENDOR can each be filtered; and every subtotal is a
+    # SUBTOTAL() formula, so filtering to one draw re-totals the sheet.
+    #
+    # SUBTOTAL(9) not 109, deliberately: 109 also ignores MANUALLY hidden rows,
+    # and a collapsed outline group is manually hidden - every vendor total
+    # would read 0 the moment you collapsed it. 9 ignores filtered rows only.
+    all_lines = []
     for code in codes:
-        g = _grp(code)
-        merged = _merge_bill_lines(g["lines"])
-        if not merged:
-            continue
-        band = _cost_band_fill(code)
-        bc = ws.cell(row=r, column=2, value=_cost_code_label(code))
-        bc.font = Font(bold=True, size=SZ)
-        sub_amt = round(sum(l["amount"] for l in merged), 2)
-        sc = ws.cell(row=r, column=L_AMT, value=sub_amt)
-        sc.number_format = ACC_FMT
-        sc.font = Font(bold=True, size=SZ)
-        if L_TAX:
-            stx = ws.cell(row=r, column=L_TAX,
-                          value=round(sum(l.get("tax", 0) for l in merged), 2))
-            stx.number_format = ACC_FMT
-            stx.font = Font(bold=True, size=SZ)
-        if L_FUEL:
-            sfl = ws.cell(row=r, column=L_FUEL,
-                          value=round(sum(l.get("fuel", 0) for l in merged), 2))
-            sfl.number_format = ACC_FMT
-            sfl.font = Font(bold=True, size=SZ)
+        for ln in _merge_bill_lines(_grp(code)["lines"]):
+            all_lines.append(dict(ln, _code=code))
+    by_vendor: Dict[str, list] = {}
+    for ln in all_lines:
+        by_vendor.setdefault(str(ln.get("vendor") or "(no vendor)"), []).append(ln)
+
+    led_first = r                              # first row of ledger data
+    amt_col = get_column_letter(L_AMT)
+    tax_col = get_column_letter(L_TAX) if L_TAX else None
+    fuel_col = get_column_letter(L_FUEL) if L_FUEL else None
+    for vendor in sorted(by_vendor, key=lambda v: -sum(
+            l["amount"] for l in by_vendor[v])):
+        merged = sorted(by_vendor[vendor], key=lambda x: (str(x.get("date") or ""),
+                                                          -x["amount"]))
+        v_first = r + 1
+        v_last = r + len(merged)
+        vc = ws.cell(row=r, column=2, value=f"{vendor}  ({len(merged)})")
+        vc.font = Font(bold=True, size=SZ)
+        for col, letter in ((L_AMT, amt_col), (L_TAX, tax_col), (L_FUEL, fuel_col)):
+            if not col or not letter:
+                continue
+            sc = ws.cell(row=r, column=col,
+                         value=f"=SUBTOTAL(9,{letter}{v_first}:{letter}{v_last})")
+            sc.number_format = ACC_FMT
+            sc.font = Font(bold=True, size=SZ)
         for col in range(1, L_DESC + 1):
-            ws.cell(row=r, column=col).fill = band
             ws.cell(row=r, column=col).border = THIN_BORDER
         ws.row_dimensions[r].height = ROW_H
         r += 1
         for ln in merged:
+            code = ln["_code"]
             # ↗ = the QBO bill page, always (the user 2026-08-10).
             _qurl = _qbo_txn_url(ln["tx_type"], ln["txn_id"], realm)
             arr = ws.cell(row=r, column=L_ARROW, value="↗")
@@ -5107,6 +5135,10 @@ def build_sheet_labor_concrete(
                 idc.font = Font(size=SZ)
             ws.cell(row=r, column=L_DATE, value=ln["date"]).font = Font(size=SZ)
             ws.cell(row=r, column=L_VEND, value=ln["vendor"]).font = Font(size=SZ)
+            # the cost code on the LINE, so the filter can cut by it
+            _cc = ws.cell(row=r, column=L_CODE, value=_cost_code_label(code))
+            _cc.font = Font(size=SZ)
+            _cc.alignment = Alignment(horizontal="center")
             dc = ws.cell(row=r, column=L_DESC,
                          value=_clean_cost_text(ln["desc"], known) or ln["desc"])
             dc.font = Font(size=SZ)                # last column — spills right
@@ -5151,7 +5183,31 @@ def build_sheet_labor_concrete(
                     ws.cell(row=r, column=col).fill = _mfill
                 n_marks_kept[0] += 1
             ws.row_dimensions[r].height = ROW_H
+            # collapsible under its vendor, and COLLAPSED on open so the sheet
+            # answers "where did it go" before it shows every bill
+            ws.row_dimensions[r].outline_level = 1
+            ws.row_dimensions[r].hidden = True
             r += 1
+    led_last = r - 1
+    if led_last >= led_first:
+        gc = ws.cell(row=r, column=2, value="TOTAL (filtered)")
+        gc.font = Font(bold=True, size=SZ, color=NAVY)
+        for col, letter in ((L_AMT, amt_col), (L_TAX, tax_col), (L_FUEL, fuel_col)):
+            if not col or not letter:
+                continue
+            t = ws.cell(row=r, column=col,
+                        value=f"=SUBTOTAL(9,{letter}{led_first}:{letter}{led_last})")
+            t.number_format = ACC_FMT
+            t.font = Font(bold=True, size=SZ, color=NAVY)
+        for col in range(1, L_DESC + 1):
+            ws.cell(row=r, column=col).border = TOP_BORDER
+        r += 1
+        # Filter the LEDGER ONLY - the scoreboard sits above it and must not be
+        # swept into the same filter range.
+        ws.auto_filter.ref = (f"{get_column_letter(2)}{r_ledger_hdr}:"
+                              f"{get_column_letter(L_DESC)}{led_last}")
+    ws.sheet_properties.outlinePr.summaryBelow = False
+
     # Deliver fitted: every column sized to its longest line, header rows to
     # their line count. DESCRIPTION is excluded — it spills right by design.
     # Measured rows: the scoreboard table, the yards strip, and the ledger —
@@ -6300,6 +6356,7 @@ def generate_project_pnl(
     interactive: bool = False,
     infer_periods: bool = False,
     simple: bool = False,
+    forced_out: bool = False,
 ) -> Optional[Path]:
     ui_proj(proj, f"{cust_info['name']}  ·  id {cust_info['id']}")
 
@@ -6326,7 +6383,7 @@ def generate_project_pnl(
     _alt_oh = 9.0 if is_mfd else None
     # CP drops into the awarded-project folder on the Common drive; MFD stays in the
     # OneDrive tree (the user 2026-07-02).
-    proj_dir, _cp_note = _resolve_project_out_dir(proj, out_dir)
+    proj_dir, _cp_note = _resolve_project_out_dir(proj, out_dir, forced_out)
     if _cp_note:
         ui_event(_cp_note, icon="⚑", color=_YEL)
     elif proj.upper().startswith("CP"):
@@ -7700,6 +7757,7 @@ def main() -> int:
                 overhead_pct=args.overhead_pct,
                 interactive=interactive,
                 simple=args.simple,
+                forced_out=(str(Path(args.out).expanduser()) != str(DEFAULT_OUT)),
             )
             if path:
                 generated.append(path)

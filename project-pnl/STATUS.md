@@ -8,6 +8,31 @@ manual close), RP (no draws — expenses → invoice → profit).
 
 ## DONE / FINALIZED
 
+- **Labor / Concrete LEDGER groups by VENDOR and filters (2026-09-02).**
+  The ledger used to group by cost code, fully expanded. It now opens as one
+  collapsed block per vendor - "where did it go" first - with the COST CODE
+  moved into its own COLUMN so the block can be cut by it, an AUTOFILTER over
+  the ledger only (never the scoreboard above it), and every subtotal a
+  `SUBTOTAL()` formula, so filtering to a single draw re-totals the sheet.
+  DRAW values on CP800 filter to: Before draw 1 · Draw 1..4 · "Draw 4 · pushed
+  from Draw #3".
+
+  **`SUBTOTAL(9)`, never 109.** 109 also ignores MANUALLY hidden rows, and a
+  collapsed outline group IS manually hidden - every vendor total would read 0
+  the moment it was collapsed. 9 ignores filtered rows only.
+
+  The PM's green marks survive this: `read_back_ledger_marks` keys on
+  (bill #, date, vendor, amount) and finds its columns from the header row, so
+  re-ordering and re-grouping rows cannot break it.
+
+- **`--out` is now AUTHORITATIVE (2026-09-03).** It was silently ignored for CP
+  (which routes to the Common-drive awarded folder whenever the drive is
+  mounted) and for any job already filed under an archive, so a run aimed at a
+  scratch directory overwrote the live workbook instead - which is exactly what
+  happened to CP800 during this change. If someone names an output folder, that
+  is the output folder, and the run says so.
+
+
 - **`Draw Data` sheet - the flat table a PivotTable sits on (2026-09-02).**
   One row per draw transaction (Draw · Period · Date · Month · Vendor · Cost
   code · Category · Bill # · Amount · Description · Pushed from) as a real
