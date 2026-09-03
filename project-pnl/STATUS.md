@@ -8,6 +8,66 @@ manual close), RP (no draws — expenses → invoice → profit).
 
 ## DONE / FINALIZED
 
+- **OVERHEAD IS A % OF THE CONTRACT - ONE RULE, P&L AND OVERVIEW (2026-09-03,
+  MFD as the test subject).** Three sessions hit the same defect from three
+  sides in one afternoon and pulled in different directions: one fixed only the
+  Overview (`dbb594e`), one wrote an earned-revenue proration on a worktree
+  (`wt/overhead-on-contract`, branch kept, worktree removed - **do not land it**),
+  one wrote the spec. The owner ruled, three times in plain words: "it's
+  contract 10%", "completed jobs use the total billed as contract ... take 10%
+  or 9% of the total contract", and against proration - "why are you reverting
+  to wip stuff when we are looking at actuals". This is that rule, everywhere:
+  - **Per-job P&L:** ACTUALS overhead = `pct x Revised Contract` (was `x Billed
+    to Date` - the one line that moved every draw); snapshot (3) company AND MFD
+    lines = % of contract (MFD was 9% of COSTS, a different base from its own
+    Overview); projection label says "of contract" (its formula already was).
+    Gross profit stays `billed - cost`: the P&L is actuals, not WIP.
+  - **No contract on file => total billed stands in**, as an `IF` on the Revised
+    Contract row, and **Revised ETC falls back to costs to date the same way**;
+    the pair MUST move together or a filled contract over a zero ETC shows the
+    whole contract as profit. A typed value wins the moment a PM enters one. A
+    small grey note names the stand-in. This is what makes a finished job's
+    projection block live instead of zero (11 of 14 MFD jobs are off the WIP
+    master and had blank inputs).
+  - **Per draw:** both views net overhead on the draw's INCOME (draw income sums
+    to the contract); MFD's draw coverage / KPI / "draw needed" used costs.
+  - **RP job card:** `% of contract` (the bid; billed stands in), rate from
+    `--overhead-pct` (the old card hard-read "of billed").
+  - **Overview (`completed_pnl.py`):** `_read_contract` reads Original Contract +
+    Change Orders off each P&L (the Revised cell is a formula with no cached
+    value), billed stands in when blank; `oh = 10% x contract`, `moh = 9% x
+    contract`; a **CONTRACT column** leads the table and **`10% OH` / `9% OH`
+    columns** sit beside the net each produces (the owner: "how much OH does the
+    10% and 9% make up?"). Layout as the owner drew it (`dbb594e`): `10% OH` /
+    `FINAL NET PROFIT`, heavy rule, `9% OH` / `FINAL NET PROFIT`.
+    **Every derived cell is a FORMULA** (the owner: "make formulas instead of
+    putting straight numbers"): GP `=billed-cost`, OH `=contract*rate`, net
+    `=GP-OH`, subtotals `SUM()` over the section's job rows, the ALL row the
+    sum of both, and the KPI strip reads the ALL row. Job sheets: the strip
+    reads the sheet's own INVOICED / COSTS totals plus `Summary!<CONTRACT cell>`;
+    INVOICED is a `SUM` of the invoice rows, each vendor a `SUM` of its lines,
+    account = its vendors, section = its accounts, job cost = its sections.
+    Only the three source figures (contract, billed, cost) are values. Written
+    with openpyxl so there are no cached results - Excel computes on open;
+    nothing reads the Overview back with `data_only`.
+  - **MFD's folder IS the synced Teams channel now**: `Multi-Family-Project
+    Financials - Documents` under the personal OneDrive root (the owner moved
+    the tree 2026-09-03 10:55). `channel_dir` resolves it as designed - it just
+    was not LISTABLE by this process until mid-afternoon, so the first regen of
+    the day wrote to the old `Automations-/PROJECT P&Ls/Multi-Family` folder and
+    was stopped and re-run. The old folder still holds today's earlier copies;
+    it is not written any more.
+  - **CP Overview reads the Common drive** (`_iter_jobs`): CP P&Ls are written to
+    the awarded folders when the share is mounted, so the OneDrive Commercial
+    folder held stale copies and the Overview summarised them. Not regenerated
+    today - the owner scoped this to MFD.
+  - The ledger's `dashboard.py` overhead constants follow (contract base, MFD 9%
+    of contract; per-draw = % of the draw's income) so the site cannot disagree.
+  **Verified:** scratch Overview built from the 14 MFD workbooks, `assert_clean`
+  passes, every derived cell inspected as a formula; the 14 MFD P&Ls regenerated
+  into the Teams folder with the recipe below (the last run rebuilds
+  `MFD Overview.xlsx` there); MFD133's regenerated P&L inspected row by row.
+
 - **HISTORY CORRECTION — commit `d436ed2` contains work its message does not
   describe (2026-09-03).** That commit is titled "gutter: shift WHOLE-COLUMN
   references too" and does contain that fix, but roughly 25 of its 45 added
@@ -153,11 +213,9 @@ manual close), RP (no draws — expenses → invoice → profit).
   **This REPLACES the 9%-of-COSTS basis** for the Overview. A cost-based
   overhead rose with the overrun, so the worse a job went the bigger its
   overhead charge - backwards, and it flattered nothing.
-  **OPEN - the per-job P&L still disagrees.** `project_pnl_export.py` computes
-  MFD's 9% on COSTS (see its `_oh_label`, "9% of costs"), so the same job now
-  shows two different 9% figures depending on which workbook you open. CLAUDE.md
-  still documents the old basis ("MFD alt view stays 9% on costs"). Both need
-  the owner's word before changing - it means regenerating all 14 MFD P&Ls.
+  **CLOSED the same day** - the per-job P&L now uses the same contract base
+  (see the entry at the top of this list); the owner's word was "it's contract
+  10%", and all 14 MFD P&Ls were regenerated.
 
 - **RETIRED 2026-09-03 — ONE JOB, ONE P&L.** A finished MFD job folder held
   THREE workbooks of the same figures: `Project_PnL_<job>.xlsx`, `<job> Job
@@ -439,7 +497,7 @@ manual close), RP (no draws — expenses → invoice → profit).
   MFD192's three contracts (main / HUDSONWOOD / OFFSITE) already combine
   into one draw per month by shared period tag — verified with the user, no
   structural change was needed.
-- Overhead: 10% of revenue (MFD alt view 9% on costs).
+- Overhead: a % of the CONTRACT - 10% company, 9% MFD view (total billed stands in when no contract is on file).
 
 - **RP template fixed 2026-08-06**: the "Open Project in QBO" header link
   (added 7fa2b40) wrote E2 on the RP Job P&L — inside the meta block's A2:H2

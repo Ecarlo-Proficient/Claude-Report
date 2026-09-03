@@ -977,8 +977,12 @@ exception to the plain-Excel rule — the user asked for an at-a-glance watchboa
 project-pnl reads the WIP master's **Test-Master** tab (the readers' unified MFD+CP+RP
 table) to pre-fill **Original Contract / ETC + Approved COs** (original = total − COs;
 revised rows are live formulas) and honor a **Closed** status (WIP close-out: % complete
-forced to 100%). Company overhead default is **10% of revenue** (MFD alt: 9% on costs —
-also drives the MFD draw-coverage columns). Its Transactions sheet groups job costs
+forced to 100%). **Overhead is a % of the CONTRACT** - 10% company, 9% MFD view (the user
+2026-09-03); a job with no contract on file lets total billed stand in (and costs to date
+for the ETC), so a finished job's projection block is live, not zero. Per draw, the same
+rule is sliced by the draw's income. Profit stays actuals (billed - cost - overhead). The
+`<DIV> Overview` (`completed_pnl.py`) reads the contract out of each workbook and applies
+the identical rule. Its Transactions sheet groups job costs
 **concrete → labor → materials** via `shared/cost_lines.py` — non-labor bill lines
 combine per (bill × account); labor lines are never combined. The **Budget vs Actual**
 **Labor** and **Concrete** sheets (CP) are the PM/ops manager's main view (the user

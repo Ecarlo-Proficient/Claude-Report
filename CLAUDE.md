@@ -163,8 +163,11 @@ restate them here. Business/strategic context lives in session memory, not in th
   `~/Library/Application Support/Proficient/wip-review/`. DB lives
   OUTSIDE the repo (`~/Library/Application Support/Proficient/ledger.sqlite3`; override `ACB_LEDGER_DB`).
 - **project-pnl/** — per-project P&L (CP/MFD + RP × budgeted/unbudgeted) → OneDrive PROJECT
-  P&Ls. Overhead shown as a final row at **10% of revenue** (was 11%, the user 2026-07-16;
-  MFD alt view stays 9% on costs); QBO helpers come from `shared/qbo_api.py`. Batch mode:
+  P&Ls. **Overhead is a % of the CONTRACT** - 10% company, 9% MFD view - never of billed
+  or of costs (the user 2026-09-03: "it's contract 10%"); a job with no contract on file
+  uses its total billed as the contract (completed jobs). Profit is actuals: billed - cost -
+  overhead, no earned-revenue proration (the owner rejected it the same day). QBO helpers
+  come from `shared/qbo_api.py`. Batch mode:
   `project-pnl active cp|rp|mfd` regenerates every Active project of a division (Active =
   the WIP master's Test-Master STATUS).
 - **debt-schedule/** — `loan_sync.py` (QBO → `Equipment_Debt_Schedule_v2.xlsx`, beside it) +

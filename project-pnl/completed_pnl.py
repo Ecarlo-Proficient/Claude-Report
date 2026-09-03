@@ -68,6 +68,10 @@ PAYROLL_RE = re.compile(r"payroll|wages|salar|employee benefit|workers.?comp", r
 # correct then take 10% or 9% of the total contract"). This REPLACES the old
 # 9%-of-COSTS basis: a cost-based overhead moved with the overrun, so the
 # worse a job went the bigger its overhead charge, which is backwards.
+# The contract is READ OUT OF EACH WORKBOOK (`_read_contract`) - the Revised
+# Contract inputs the P&L carries - and total billed stands in when a job has
+# none on file, exactly as the P&L itself does. Same base, same rule, so the
+# Overview can never disagree with the workbooks it is assembled from.
 OVERHEAD_PCT = 0.10          # 10% of contract (= total billed on a done job)
 MFD_OVERHEAD_PCT = 0.09      # 9% of the same contract - the second view
 
@@ -279,6 +283,37 @@ def _read_costs(ws, c0: int) -> List[dict]:
     return out
 
 
+_CTR_LABELS = ("original contract price", "bid proposal (contract)",
+               "contract price")          # pre-2026-07 CP template
+_CO_LABELS = ("change orders",)
+
+
+def _read_contract(wb) -> float:
+    """The revised contract off the P&L sheet's WIP block, 0.0 when none is on
+    file (the caller then lets total billed stand in - the P&L does the same).
+
+    'Revised Contract Price' is a FORMULA and these workbooks are written by
+    openpyxl, so they carry no cached value - reading it gives the formula
+    text. Its inputs (Original Contract + Change Orders) are static, so sum
+    those. Labels are matched by prefix and the value is the cell to the
+    right, on whichever column the label sits (pre- or post-gutter)."""
+    ws = wb["P&L"] if "P&L" in wb.sheetnames else wb.worksheets[0]
+    ctr = co = 0.0
+    for r in range(1, 80):
+        for c in (1, 2):
+            lbl = str(ws.cell(r, c).value or "").strip().lower()
+            if not lbl:
+                continue
+            val = ws.cell(r, c + 1).value
+            if not isinstance(val, (int, float)):
+                continue
+            if not ctr and any(lbl.startswith(x) for x in _CTR_LABELS):
+                ctr = float(val)
+            elif not co and any(lbl.startswith(x) for x in _CO_LABELS):
+                co = float(val)
+    return round(ctr + co, 2)
+
+
 def read_source(path: Path) -> dict:
     """Invoices + account/vendor/line detail out of a generated project P&L.
     Template-agnostic: MFD, CP and RP workbooks all read the same way."""
@@ -328,6 +363,7 @@ def read_source(path: Path) -> dict:
         title = str(wb[pl].cell(1, 1).value or "") if pl else ""
         return {"invoices": inv, "not_billed": not_billed, "payroll": round(payroll, 2),
                 "sections": sections, "title": title,
+                "contract": _read_contract(wb),
                 "status": "Completed", "rel": None}
     finally:
         wb.close()
@@ -396,10 +432,13 @@ def _totals(src: dict) -> dict:
     opex = next((x["total"] for x in src["sections"] if x["name"].startswith("OPERATING")), 0.0)
     cost = cogs + opex
     gp = billed - cost
-    contract = billed            # a finished job's contract is what it billed
+    # the contract on file, else what the job billed (a finished job's
+    # contract IS its total billed - the user 2026-09-03)
+    contract = float(src.get("contract") or 0.0) or billed
     oh = contract * OVERHEAD_PCT
     moh = contract * MFD_OVERHEAD_PCT
-    return {"billed": billed, "cogs": cogs, "opex": opex, "cost": cost,
+    return {"contract": contract, "billed": billed, "cogs": cogs, "opex": opex,
+            "cost": cost,
             "gp": gp, "oh": oh, "net": gp - oh,
             "gpm": gp / billed if billed else 0.0,
             "netm": (gp - oh) / billed if billed else 0.0,
@@ -429,17 +468,38 @@ def _tiles(ws, r: int, items, spans) -> None:
     ws.row_dimensions[r + 1].height = 40
 
 
-def _kpi_strip(ws, r: int, t: dict, spans, alt=None) -> int:
+def _kpi_strip_height(alt=None) -> int:
+    """Rows the strip occupies (tiles + overhead block + spacing), so a caller
+    can lay the table out FIRST and write the strip afterwards with formulas
+    that point at the table's total row."""
+    return 5 + (2 if alt else 1)
+
+
+def _kpi_strip(ws, r: int, t: dict, spans, alt=None, refs=None) -> int:
     """Metrics ACROSS, exactly 4 cells wide so the strip lines up with the
     table beneath it instead of running off to column N (the user 2026-08-27).
-    The OVERHEAD views get their own boxed block below. MFD carries TWO - its
-    own 9%-of-cost view alongside the company's 10%-of-revenue - and the MFD one
-    must not get lost among the others; CP and RP have only the company view."""
+    The OVERHEAD views get their own boxed block below. MFD carries TWO - the
+    company's 10% and its own 9%, both of the CONTRACT - and the MFD one must
+    not get lost among the others; CP and RP have only the company view.
+
+    `refs` = {"contract", "billed", "cost"} cell references. When given, every
+    figure is a FORMULA off those cells (the user 2026-09-03: "make formulas
+    instead of putting straight numbers"), so the strip is the arithmetic on
+    show, not a copy of it; the colours still come from the computed `t`."""
+    def _a(span, row):                       # the address a tile's value sits at
+        return f"{get_column_letter(span[0])}{row}"
+    b_ref = refs["billed"] if refs else None
+    c_ref = refs["cost"] if refs else None
+    gp_ref = _a(spans[2], r + 1)
     _tiles(ws, r, [
-        ("BILLED", t["billed"], MONEY, NAVY),
-        ("COST", t["cost"], MONEY, NAVY),
-        ("GROSS PROFIT", t["gp"], MONEY, GREEN if t["gp"] >= 0 else RED),
-        ("GROSS MARGIN", t["gpm"], PCT, GREEN if t["gp"] >= 0 else RED)], spans)
+        ("BILLED", f"={b_ref}" if refs else t["billed"], MONEY, NAVY),
+        ("COST", f"={c_ref}" if refs else t["cost"], MONEY, NAVY),
+        ("GROSS PROFIT", (f"={_a(spans[0], r + 1)}-{_a(spans[1], r + 1)}" if refs
+                          else t["gp"]), MONEY, GREEN if t["gp"] >= 0 else RED),
+        ("GROSS MARGIN", (f'=IF({_a(spans[0], r + 1)}=0,"",{gp_ref}/{_a(spans[0], r + 1)})'
+                          if refs else t["gpm"]), PCT,
+         GREEN if t["gp"] >= 0 else RED)], spans)
+    bt_ref = _a(spans[0], r + 1)             # the BILLED tile, for the margins
 
     r2 = r + 3
     lab, oh_c, net_c, pct_c = spans[0][0], spans[1], spans[2], spans[3]
@@ -453,18 +513,24 @@ def _kpi_strip(ws, r: int, t: dict, spans, alt=None) -> int:
            align="right")
     for cc in range(spans[0][0], spans[3][1] + 1):
         ws.cell(row=r2, column=cc).border = Border(bottom=HAIR)
-    views = [(f"{OVERHEAD_PCT:.0%} OH", t["oh"], t["net"], t["netm"])]
+    views = [(f"{OVERHEAD_PCT:.0%} OH", OVERHEAD_PCT, t["oh"], t["net"], t["netm"])]
     if alt:
-        views.append((alt["label"], t["moh"], t["mnet"], t["mnetm"]))
-    for i, (lbl, oh, net, netm) in enumerate(views):
+        views.append((alt["label"], MFD_OVERHEAD_PCT, t["moh"], t["mnet"], t["mnetm"]))
+    for i, (lbl, rate, oh, net, netm) in enumerate(views):
         rr = r2 + 1 + i
         ws.merge_cells(start_row=rr, start_column=lab, end_row=rr, end_column=spans[0][1])
         _t(ws, rr, lab, lbl, size=SZ, bold=(i == len(views) - 1 and len(views) > 1),
            color=INK, indent=1)
+        if refs:                    # overhead = rate x CONTRACT, net = GP - OH
+            oh_v = f"=-{refs['contract']}*{rate}"
+            net_v = f"={gp_ref}+{_a(oh_c, rr)}"
+            pct_v = f'=IF({bt_ref}=0,"",{_a(net_c, rr)}/{bt_ref})'
+        else:
+            oh_v, net_v, pct_v = -oh, net, netm
         for span, val, fmt, col in (
-                (oh_c, -oh, MONEY, GREY),
-                (net_c, net, MONEY, GREEN if net >= 0 else RED),
-                (pct_c, netm, PCT, GREEN if net >= 0 else RED)):
+                (oh_c, oh_v, MONEY, GREY),
+                (net_c, net_v, MONEY, GREEN if net >= 0 else RED),
+                (pct_c, pct_v, PCT, GREEN if net >= 0 else RED)):
             ws.merge_cells(start_row=rr, start_column=span[0], end_row=rr,
                            end_column=span[1])
             _t(ws, rr, span[0], val, size=SZ + 2, bold=True, fmt=fmt,
@@ -509,11 +575,38 @@ def build_bundle(jobs: List[tuple], out: Path, div: dict) -> None:
     `lint_layout` is told where the content actually begins.
     """
     alt = div.get("alt")
-    cols = [("BILLED", "billed", MONEY, 18), ("COST", "cost", MONEY, 18),
+    # CONTRACT sits first: it is the base every overhead figure is a % of, so
+    # the reader can check the OH column against it by eye (the user
+    # 2026-09-03: "the oh number never adds up to the % of the contract").
+    # The OH $ sits beside the net it produces (the user 2026-09-03: "how much
+    # OH does the 10% and 9% make up?"), and every derived column is a FORMULA
+    # off the three source columns, so the arithmetic is on the sheet.
+    cols = [("CONTRACT", "contract", MONEY, 18),
+            ("BILLED", "billed", MONEY, 18), ("COST", "cost", MONEY, 18),
             ("GROSS PROFIT", "gp", MONEY, 18), ("GP %", "gpm", PCT, 11),
+            (f"{OVERHEAD_PCT:.0%} OH", "oh", MONEY, 16),
             (f"FINAL NET  ({OVERHEAD_PCT:.0%} OH)", "net", MONEY, 20)]
     if alt:
-        cols.append((alt["short"], "mnet", MONEY, 20))
+        cols += [(f"{MFD_OVERHEAD_PCT:.0%} OH", "moh", MONEY, 16),
+                 (alt["short"], "mnet", MONEY, 20)]
+    L = {k: get_column_letter(C0 + 1 + i) for i, (_h, k, _f, _w) in enumerate(cols)}
+
+    def _formula(k, rr, ranges=None):
+        """The cell formula for column `k` on row `rr`. Source columns
+        (contract / billed / cost) are values on a job row and SUMs over the
+        job rows (`ranges` = [(first, last), ...]) on a subtotal / total row."""
+        if k in ("contract", "billed", "cost"):
+            if not ranges:
+                return None
+            return "=" + "+".join(f"SUM({L[k]}{a}:{L[k]}{b})" for a, b in ranges)
+        return {
+            "gp": f"={L['billed']}{rr}-{L['cost']}{rr}",
+            "gpm": f'=IF({L["billed"]}{rr}=0,"",{L["gp"]}{rr}/{L["billed"]}{rr})',
+            "oh": f"={L['contract']}{rr}*{OVERHEAD_PCT}",
+            "net": f"={L['gp']}{rr}-{L['oh']}{rr}",
+            "moh": f"={L['contract']}{rr}*{MFD_OVERHEAD_PCT}",
+            "mnet": f"={L['gp']}{rr}-{L['moh']}{rr}",
+        }[k]
 
     wb = Workbook()
     sm = wb.active
@@ -544,13 +637,15 @@ def build_bundle(jobs: List[tuple], out: Path, div: dict) -> None:
 
     def _sum(sel):
         d = {k: sum(t[k] for _, _, t in sel)
-             for k in ("billed", "cost", "gp", "oh", "net", "moh", "mnet")}
+             for k in ("contract", "billed", "cost", "gp", "oh", "net", "moh", "mnet")}
         for a, b in (("gpm", "gp"), ("netm", "net"), ("mnetm", "mnet")):
             d[a] = d[b] / d["billed"] if d["billed"] else 0
         return d
 
     tot = _sum(jobs)
-    r = _kpi_strip(sm, 4, tot, _spans(C0, LAST), alt)
+    r = 4 + _kpi_strip_height(alt)      # the strip is written LAST, off the total row
+    job_rows: Dict[str, int] = {}       # job -> its Summary row (the job sheets point here)
+    sec_ranges: list = []               # (first, last) job rows of each section
 
     _t(sm, r, C0, "JOB", size=SZ_SMALL - 1, bold=True, color="FFFFFF",
        fill=F_HDR, align="left", wrap=True, indent=1)
@@ -562,11 +657,12 @@ def build_bundle(jobs: List[tuple], out: Path, div: dict) -> None:
        fill=F_HDR, align="center")
     r += 1
 
-    def _row_figures(rr, t, bold_keys=("gp", "mnet")):
+    def _row_figures(rr, t, bold_keys=("gp", "mnet"), ranges=None):
         for i, (_h, k, fmt, _w) in enumerate(cols):
             pos = k in ("gp", "gpm", "net", "mnet")
-            _t(sm, rr, C0 + 1 + i, t[k], size=SZ, fmt=fmt, align="right",
-               bold=k in bold_keys,
+            f = _formula(k, rr, ranges)
+            _t(sm, rr, C0 + 1 + i, f if f is not None else t[k], size=SZ, fmt=fmt,
+               align="right", bold=k in bold_keys,
                color=(GREEN if t[k] >= 0 else RED) if pos else INK)
 
     def _job_row(job, _src, t):
@@ -574,6 +670,7 @@ def build_bundle(jobs: List[tuple], out: Path, div: dict) -> None:
         cell = _t(sm, r, C0, job_label(job, _src.get("title", "")), size=SZ, bold=True)
         cell.hyperlink = f"#'{job}'!A1"
         cell.font = Font(size=SZ, bold=True, color=LINK, underline="single")
+        job_rows[job] = r
         _row_figures(r, t)
         # "see the actual project excel for details" — the job name jumps to
         # its sheet INSIDE this file (survives being emailed); this opens the
@@ -599,11 +696,14 @@ def build_bundle(jobs: List[tuple], out: Path, div: dict) -> None:
             sm.cell(row=r, column=c).fill = F_HDR
         sm.row_dimensions[r].height = 22
         r += 1
+        first = r
         for _j, _sc, _tt in sorted(sel, key=lambda x: -x[2]["billed"]):
             _job_row(_j, _sc, _tt)
+        sec_ranges.append((first, r - 1))
         st = _sum(sel)
         _t(sm, r, C0, f"subtotal — {len(sel)} job(s)", size=SZ, bold=True, color=NAVY)
-        _row_figures(r, st, bold_keys=tuple(k for _h, k, _f, _w in cols))
+        _row_figures(r, st, bold_keys=tuple(k for _h, k, _f, _w in cols),
+                     ranges=[(first, r - 1)])
         for c in range(C0, LAST + 1):
             sm.cell(row=r, column=c).border = Border(top=HAIR)
         r += 2
@@ -618,10 +718,15 @@ def build_bundle(jobs: List[tuple], out: Path, div: dict) -> None:
     _section("COMPLETED", _done)
     _t(sm, r, C0, f"ALL {div['label']} — {len(jobs)} JOBS", size=SZ, bold=True,
        color=NAVY)
-    _row_figures(r, tot, bold_keys=tuple(k for _h, k, _f, _w in cols))
+    _row_figures(r, tot, bold_keys=tuple(k for _h, k, _f, _w in cols),
+                 ranges=sec_ranges)
     for c in range(C0, LAST + 1):
         sm.cell(row=r, column=c).border = Border(top=RULE)
     sm.row_dimensions[r].height = 24
+    all_row = r
+    # the strip at the top reads the ALL row, so it can never disagree with it
+    _kpi_strip(sm, 4, tot, _spans(C0, LAST), alt,
+               refs={k: f"{L[k]}{all_row}" for k in ("contract", "billed", "cost")})
     sm.column_dimensions["A"].width = GUTTER_W
     sm.column_dimensions[get_column_letter(C0)].width = 34
     for i, (_h, _k, _f, w) in enumerate(cols):
@@ -646,15 +751,17 @@ def build_bundle(jobs: List[tuple], out: Path, div: dict) -> None:
             ws.cell(row=2, column=c).border = Border(bottom=HAIR)
         ws.row_dimensions[1].height = 30
         ws.row_dimensions[3].height = 8
-        r = _kpi_strip(ws, 4, t, _spans(C0, JLAST), alt)
+        r = 4 + _kpi_strip_height(alt)      # strip written last, off the totals below
+        AMT = get_column_letter(C0 + 5)
 
         # ONE grid for both blocks: B label/doc · C date · D what-for ·
         # G amount · H paid. No column is ever left blank in a data row —
         # the empty column A down the cost detail is what made the first cut
         # read as sloppy (the user 2026-08-27).
         _t(ws, r, C0, "INVOICED", size=SZ + 2, bold=True, color=NAVY)
-        _t(ws, r, C0 + 5, t["billed"], size=SZ + 2, bold=True, color=NAVY,
-           fmt=MONEY, align="right")
+        inv_tot = _t(ws, r, C0 + 5, t["billed"], size=SZ + 2, bold=True, color=NAVY,
+                     fmt=MONEY, align="right")
+        inv_first = r + 2                   # after the header row
         r += 1
         for c, h in ((C0, "Invoice"), (C0 + 1, "Date"), (C0 + 2, "What for"),
                      (C0 + 5, "Amount"), (C0 + 6, "Paid?")):
@@ -693,12 +800,15 @@ def build_bundle(jobs: List[tuple], out: Path, div: dict) -> None:
             _t(ws, r, C0 + 5, src["not_billed"], size=SZ_SMALL, fmt=MONEY,
                align="right", color=GREY)
             r += 1
+        if r - 1 >= inv_first:
+            inv_tot.value = f"=SUM({AMT}{inv_first}:{AMT}{r - 1})"
         r += 1
 
         _t(ws, r, C0, "COSTS — account, then vendor, then every line",
            size=SZ + 2, bold=True, color=NAVY)
-        _t(ws, r, C0 + 5, t["cost"], size=SZ + 2, bold=True, color=NAVY,
-           fmt=MONEY, align="right")
+        cost_tot = _t(ws, r, C0 + 5, t["cost"], size=SZ + 2, bold=True, color=NAVY,
+                      fmt=MONEY, align="right")
+        sec_cells: list = []
         r += 1
         if src.get("payroll"):
             _t(ws, r, C0, f"excludes payroll of {src['payroll']:,.0f} — carried "
@@ -716,27 +826,33 @@ def build_bundle(jobs: List[tuple], out: Path, div: dict) -> None:
         r += 1
         for sec in src["sections"]:
             _t(ws, r, C0, sec["name"], size=SZ + 1, bold=True, color=NAVY)
-            _t(ws, r, C0 + 5, sec["total"], size=SZ + 1, bold=True, color=NAVY,
-               fmt=MONEY, align="right")
+            sec_cell = _t(ws, r, C0 + 5, sec["total"], size=SZ + 1, bold=True,
+                          color=NAVY, fmt=MONEY, align="right")
+            sec_cells.append(sec_cell)
+            acct_cells: list = []
             for c in range(C0, JLAST + 1):
                 ws.cell(row=r, column=c).border = Border(bottom=RULE)
             ws.row_dimensions[r].height = 26
             r += 1
             for acct in sec["accounts"]:
                 _t(ws, r, C0, acct["name"], size=SZ, bold=True, color=INK, fill=F_BAND)
-                _t(ws, r, C0 + 5, acct["total"], size=SZ, bold=True, color=INK,
-                   fill=F_BAND, fmt=MONEY, align="right")
+                acct_cell = _t(ws, r, C0 + 5, acct["total"], size=SZ, bold=True,
+                               color=INK, fill=F_BAND, fmt=MONEY, align="right")
+                acct_cells.append(acct_cell)
+                v_cells: list = []
                 for c in (C0 + 1, C0 + 2, C0 + 3, C0 + 4, C0 + 6):
                     ws.cell(row=r, column=c).fill = F_BAND
                 ws.row_dimensions[r].height = 21
                 r += 1
                 for v in acct["vendors"]:
                     _t(ws, r, C0, v["name"], size=SZ_SMALL, bold=True, indent=1)
-                    _t(ws, r, C0 + 5, v["total"], size=SZ_SMALL, bold=True,
-                       fmt=MONEY, align="right")
+                    v_cell = _t(ws, r, C0 + 5, v["total"], size=SZ_SMALL, bold=True,
+                                fmt=MONEY, align="right")
+                    v_cells.append(v_cell)
                     ws.row_dimensions[r].outline_level = 1
                     ws.row_dimensions[r].hidden = True
                     r += 1
+                    ln_first = r
                     for ln in v["lines"]:
                         dc1 = _t(ws, r, C0, ln["doc"], size=SZ_SMALL, indent=2,
                                  align="left")
@@ -754,6 +870,19 @@ def build_bundle(jobs: List[tuple], out: Path, div: dict) -> None:
                         ws.row_dimensions[r].outline_level = 2
                         ws.row_dimensions[r].hidden = True
                         r += 1
+                    if r > ln_first:        # vendor = the sum of its lines
+                        v_cell.value = f"=SUM({AMT}{ln_first}:{AMT}{r - 1})"
+                if v_cells:                 # account = the sum of its vendors
+                    acct_cell.value = "=" + "+".join(c.coordinate for c in v_cells)
+            if acct_cells:                  # section = the sum of its accounts
+                sec_cell.value = "=" + "+".join(c.coordinate for c in acct_cells)
+        if sec_cells:                       # job cost = the sum of its sections
+            cost_tot.value = "=" + "+".join(c.coordinate for c in sec_cells)
+        # the strip reads this sheet's own totals and the Summary's CONTRACT
+        # cell for the job, so every figure on it is traceable
+        _kpi_strip(ws, 4, t, _spans(C0, JLAST), alt,
+                   refs={"contract": f"Summary!{L['contract']}{job_rows[job]}",
+                         "billed": inv_tot.coordinate, "cost": cost_tot.coordinate})
         # D carries the description and SPILLS across E:F (empty on data rows;
         # the metric tiles above are what keep those columns from reading as
         # gutters). Amount and Paid sit at the right edge, always aligned.
@@ -844,6 +973,8 @@ def _find_workbook(folder: Path, proj: str) -> Optional[Path]:
                  folder / f"{folder.name}.xlsx"):
         if cand.exists():
             return cand
+    if not folder.is_dir():
+        return None
     loose = [x for x in sorted(folder.glob("*.xlsx"))
              if not x.name.startswith("~$") and "Job Result" not in x.name]
     return loose[0] if len(loose) == 1 else None
@@ -868,9 +999,38 @@ def _iter_jobs(div_dir: Path, prefix: str):
                     out.append((sub, "Completed"))
             continue
         out.append((child, "Active"))
-    jobs = []
+    # CP P&Ls are WRITTEN to the awarded-project folder on the Common drive
+    # whenever it is mounted (pnl_paths.resolve_project_out_dir), so the
+    # OneDrive Commercial folder holds only older copies. Read the live ones:
+    # '<base>/CP### - NAME/Profit and Loss/' is Active, the same shape under
+    # 'Completed Projects/' is Completed. The dated bucket ('2022 & PREVIOUS')
+    # is skipped - a network walk that deep buys nothing the year filter keeps.
+    # A Synology workbook REPLACES the OneDrive copy of the same job; a job
+    # found only on OneDrive still counts (Common drive not mounted, or a job
+    # with no awarded folder falls back there).
+    if prefix.upper() == "CP":
+        base = pnl_paths.CP_AWARDED_BASE
+        try:
+            mounted = base.is_dir()
+        except OSError:
+            mounted = False
+        if mounted:
+            def _walk(root: Path, status: str):
+                try:
+                    kids = sorted(root.iterdir())
+                except OSError:
+                    return
+                for k in kids:
+                    if k.is_dir() and _JOB_RE.match(k.name):
+                        out.append((k / pnl_paths.CP_PNL_SUBDIR, status))
+            _walk(base, "Active")
+            for k in sorted(base.iterdir()):
+                if k.is_dir() and k.name.lower().startswith(pnl_paths.ARCHIVE_PREFIXES):
+                    _walk(k, "Completed")
+    jobs: dict = {}
     for folder, status in out:
-        m = _JOB_RE.match(folder.name)
+        name = folder.parent.name if folder.name == pnl_paths.CP_PNL_SUBDIR else folder.name
+        m = _JOB_RE.match(name)
         if not m:
             continue
         proj = re.sub(r"[\s-]+", "", m.group(0).upper()).replace("FTW", "-FTW")
@@ -878,10 +1038,14 @@ def _iter_jobs(div_dir: Path, prefix: str):
             continue
         wb = _find_workbook(folder, proj)
         if wb is None:
-            print(f"  ⚠ {proj}: no P&L workbook in {folder.name}")
+            if folder.name != pnl_paths.CP_PNL_SUBDIR:     # a Synology folder with no P&L yet is normal
+                print(f"  ⚠ {proj}: no P&L workbook in {folder.name}")
             continue
-        jobs.append((proj, wb, status))
-    return jobs
+        on_share = folder.name == pnl_paths.CP_PNL_SUBDIR
+        if proj in jobs and not on_share:
+            continue                                        # the share's copy is the live one
+        jobs[proj] = (proj, wb, status)
+    return list(jobs.values())
 
 
 def _year_of(v) -> Optional[int]:

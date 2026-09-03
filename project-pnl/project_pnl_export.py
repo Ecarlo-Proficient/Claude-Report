@@ -3128,6 +3128,7 @@ def build_sheet_pl(
     show_mfd = alt_overhead_pct is not None
     _alt = alt_overhead_pct if alt_overhead_pct is not None else overhead_pct
     _aoh = _alt / 100.0
+    one_minus_aoh = round(1 - _aoh, 4)
 
     # QBO deep links (the user 2026-07-13): Billed totals → the customer page
     # (all invoices on one screen); Costs totals → the project-filtered P&L
@@ -3189,7 +3190,7 @@ def build_sheet_pl(
         tc.fill = fill
         return hdr_row
 
-    def snapshot(title, basis_label, inc_expr, gp_expr, costs, opex):
+    def snapshot(title, basis_label, inc_expr, gp_expr, costs, opex, ctr):
         nonlocal r
         # SINGLE COLUMN (the user 2026-06-22): shared facts once, then MFD block, then
         # COMPANY block STACKED below it — no separate column C (kills the empty
@@ -3226,19 +3227,24 @@ def build_sheet_pl(
         line("Costs (COGS)", f"={costs}")
         line("Gross Profit", f"={gp_expr}")
         line("Markup on costs %", f'=IF({costs}=0,"",({gp_expr})/{costs})', pct=True)
-        co_np = f"({gp_expr})-{opex}-{oh}*({inc_expr})"
-        # MFD-only: the MFD (% on costs) view sits above the company view.
+        # OVERHEAD IS A % OF THE CONTRACT (the user 2026-09-03: "it's contract
+        # 10%" / "take 10% or 9% of the total contract") - never of the income
+        # billed so far and never of costs. `ctr` is the Revised Contract
+        # cell, which itself stands in total billed on a job with no contract
+        # on file (a finished job's contract IS what it billed). Both views
+        # share the base; only the rate differs.
+        co_np = f"({gp_expr})-{opex}-{oh}*{ctr}"
         if show_mfd:
-            mfd_np = f"({gp_expr})-{_aoh}*{costs}"
-            subhdr(f"MFD — {_alt:.0f}% on costs")
-            line(f"less: Overhead ({_alt:.0f}% on costs)", f"=-{_aoh}*{costs}")
+            mfd_np = f"({gp_expr})-{_aoh}*{ctr}"
+            subhdr(f"MFD — {_alt:.0f}% of contract")
+            line(f"less: Overhead ({_alt:.0f}% of contract)", f"=-{_aoh}*{ctr}")
             line("NET PROFIT", f"={mfd_np}", hero=True)
-            line("Profit %", f'=IF({costs}=0,"",({mfd_np})/{costs})', pct=True, hero=True)
-            subhdr(f"COMPANY — {overhead_pct:.0f}% on revenue")
+            line("Profit %", f'=IF(({inc_expr})=0,"",({mfd_np})/({inc_expr}))', pct=True, hero=True)
+            subhdr(f"COMPANY — {overhead_pct:.0f}% of contract")
         # % spelled out on the row itself (the user 2026-07-16: "so we can see
         # what % we're working with")
-        line(f"less: Overhead ({overhead_pct:.0f}% of revenue + direct opex)",
-             f"=-{opex}-{oh}*({inc_expr})")
+        line(f"less: Overhead ({overhead_pct:.0f}% of contract + direct opex)",
+             f"=-{opex}-{oh}*{ctr}")
         line("NET PROFIT", f"={co_np}", hero=True)
         line("Profit %", f'=IF(({inc_expr})=0,"",({co_np})/({inc_expr}))', pct=True, hero=True)
         box(t0, r - 1)
@@ -3324,11 +3330,25 @@ def build_sheet_pl(
             cc = ws.cell(row=rr, column=2)
             cc.fill = YEL
             cc.border = Border(left=_HAIR, right=_HAIR, top=_HAIR, bottom=_HAIR)
+        # NO CONTRACT ON FILE => TOTAL BILLED STANDS IN (the user 2026-09-03:
+        # "completed jobs use the total billed as contract"). A finished job
+        # is off the WIP master, so its inputs are blank; without this every
+        # contract-based line below (overhead, projection) read zero. The
+        # ETC falls back the same way to costs to date - the two MUST move
+        # together, or a filled contract against a zero ETC shows the whole
+        # contract as profit. Both are IFs, so a typed value wins the moment
+        # a PM enters one. The ETC formula is finished once COGS is known.
         rev_ctr_row = row("Revised Contract Price",
-                          formula=f"=B{k_row}+B{co_row}", bold=True,
-                          border=TOP_BORDER)
+                          formula=f"=IF(B{k_row}+B{co_row}=0,{Btot},B{k_row}+B{co_row})",
+                          bold=True, border=TOP_BORDER)
+        if _ctr is None and not _cos:
+            row("no contract on file - total billed stands in", None,
+                indent=1, size=BASE_SIZE - 2, color="595959")
         rev_etc_row = row("Revised ETC", formula=f"=B{etc_in}+B{coc_row}",
                           bold=True)
+        if _etc is None and not _co_cost:
+            row("no ETC on file - costs to date stand in", None,
+                indent=1, size=BASE_SIZE - 2, color="595959")
         # everything downstream measures against the REVISED numbers
         c_ref = f"$B${rev_ctr_row}"
         e_ref = f"$B${rev_etc_row}"
@@ -3344,7 +3364,7 @@ def build_sheet_pl(
                      bold=True, border=TOP_BORDER)
         row("Projected Margin %", formula=f'=IF({c_ref}=0,"",B{pp_row}/{c_ref})',
             fmt=PCT_FMT, bold=True, color=NAVY)
-        poh_row = row(f"less: Overhead ({overhead_pct:.0f}% of revenue)",
+        poh_row = row(f"less: Overhead ({overhead_pct:.0f}% of contract)",
                       formula=f"=-{oh}*{c_ref}", indent=1, color="595959")
         pnp_row = row("Projected NET Profit", formula=f"=B{pp_row}+B{poh_row}",
                       indent=1, bold=True, color=GREEN)
@@ -3362,8 +3382,12 @@ def build_sheet_pl(
         gpa_row = row("Gross Profit (to date)",
                       formula=f"=B{bd_row}-B{ctd_row}",
                       bold=True, border=TOP_BORDER)
-        aoh_row = row(f"less: Overhead ({overhead_pct:.0f}% of billed)",
-                      formula=f"=-{oh}*B{bd_row}", indent=1, color="595959")
+        # The one line that was wrong (the user 2026-09-03: "the oh number
+        # never adds up to the % of the contract"): it charged 10% of BILLED,
+        # so it moved with every draw. Overhead is 10% of the CONTRACT - the
+        # same cell the projection block uses - and it does not move.
+        aoh_row = row(f"less: Overhead ({overhead_pct:.0f}% of contract)",
+                      formula=f"=-{oh}*{c_ref}", indent=1, color="595959")
         rnp_row = row("REAL Net Profit (to date)",
                       formula=f"=B{gpa_row}+B{aoh_row}",
                       bold=True, border=TOP_BORDER)
@@ -3467,6 +3491,10 @@ def build_sheet_pl(
             cc.number_format = fmt
             cc.font = Font(bold=isb, size=BASE_SIZE, color=NAVY if isb else "000000")
         _qbo_link(ctd_row, _costs_url)
+        # Revised ETC: no ETC on file => costs to date stand in (see the
+        # contract fallback above - the pair moves together).
+        ws.cell(row=rev_etc_row, column=2).value = (
+            f"=IF(B{etc_in}+B{coc_row}=0,B{cogs_row},B{etc_in}+B{coc_row})")
 
         costs = f"B{cogs_row}"
         opex = f"B{exp_row}"
@@ -3478,7 +3506,7 @@ def build_sheet_pl(
         _snap3 = ("③ SNAPSHOT — MFD vs COMPANY (realized, net billed)" if show_mfd
                   else "③ SNAPSHOT — REALIZED (net billed, less retainage)")
         snapshot(_snap3, "Realized — billed in cash, less retainage",
-                 f"{Binc}", f"({Binc})-{costs}", costs, opex)
+                 f"{Binc}", f"({Binc})-{costs}", costs, opex, c_ref)
 
         # ── ④ BILLING & RETAINAGE (to date) ──
         btop = sect_title("④ BILLING & RETAINAGE (to date)")
@@ -3550,8 +3578,12 @@ def build_sheet_pl(
         #    Coverage %); AFTER OVERHEAD over (Net Profit, Net Cov %). The %
         #    lives IN the header (the user 2026-07-16), and MFD jobs use the
         #    MFD 9%-on-costs model here instead of %-of-revenue.
-        _ao_hdr = (f"AFTER OVERHEAD — MFD {_alt:.0f}% on costs" if show_mfd
-                   else f"AFTER OVERHEAD — {overhead_pct:.0f}% of revenue")
+        # Both views net overhead on the draw's INCOME: a draw's share of the
+        # contract is what it billed, so % of income per draw sums to % of
+        # the contract over the job (the user 2026-09-03). MFD used to net
+        # 9% on COSTS here - a different base from its own P&L.
+        _ao_hdr = (f"AFTER OVERHEAD — MFD {_alt:.0f}% of income" if show_mfd
+                   else f"AFTER OVERHEAD — {overhead_pct:.0f}% of income")
         for c0, c1, txt in ((10, 11, "GROSS"), (12, 13, _ao_hdr)):
             gb = ws.cell(row=rc, column=c0, value=txt)
             gb.font = Font(bold=True, size=BASE_SIZE - 1, color=NAVY)
@@ -3604,10 +3636,9 @@ def build_sheet_pl(
             fmls = [
                 (10, f"=H{rc}-I{rc}", CURR_FMT, _clr(pc)),
                 (11, f'=IF(I{rc}=0,"",H{rc}/I{rc})', '0.0%', _clr(pc)),
-                # MFD nets overhead on COSTS (9%); company nets on REVENUE.
-                (12, (f"=H{rc}-I{rc}*{1 + _aoh}" if show_mfd
+                (12, (f"=H{rc}*{one_minus_aoh}-I{rc}" if show_mfd
                       else f"=H{rc}*{one_minus_oh}-I{rc}"), CURR_FMT, _clr(po)),
-                (13, (f'=IF(I{rc}=0,"",H{rc}/(I{rc}*{1 + _aoh}))' if show_mfd
+                (13, (f'=IF(I{rc}=0,"",H{rc}/(I{rc}/{one_minus_aoh}))' if show_mfd
                       else f'=IF(I{rc}=0,"",H{rc}/(I{rc}/{one_minus_oh}))'),
                  '0.0%', _clr(po)),
             ]
@@ -3636,9 +3667,9 @@ def build_sheet_pl(
                 (9, f"=SUM(I{first_draw_row}:I{last_draw_row})", CURR_FMT, COST_TXT),
                 (10, f"=H{rc}-I{rc}", CURR_FMT, "000000"),
                 (11, f'=IF(I{rc}=0,"",H{rc}/I{rc})', '0.0%', "000000"),
-                (12, (f"=H{rc}-I{rc}*{1 + _aoh}" if show_mfd
+                (12, (f"=H{rc}*{one_minus_aoh}-I{rc}" if show_mfd
                       else f"=H{rc}*{one_minus_oh}-I{rc}"), CURR_FMT, "000000"),
-                (13, (f'=IF(I{rc}=0,"",H{rc}/(I{rc}*{1 + _aoh}))' if show_mfd
+                (13, (f'=IF(I{rc}=0,"",H{rc}/(I{rc}/{one_minus_aoh}))' if show_mfd
                       else f'=IF(I{rc}=0,"",H{rc}/(I{rc}/{one_minus_oh}))'),
                  '0.0%', "000000")):
             cell = ws.cell(row=rc, column=col, value=f)
@@ -3756,10 +3787,10 @@ def build_sheet_pl(
                  "door, awaiting the next draw)", italic=True, color="595959",
                  size=BASE_SIZE - 2)
         side("Draw needed (costs + overhead)",
-             formula=(f"=P{tot_row}*{round(1 + _aoh, 4)}" if show_mfd
+             formula=(f"=P{tot_row}/{one_minus_aoh}" if show_mfd
                       else f"=P{tot_row}/{one_minus_oh}"),
              bold=True, color=NAVY)
-        side((f"(= costs × {round(1 + _aoh, 4)} — MFD {_alt:.0f}% on costs; "
+        side((f"(= costs ÷ {one_minus_aoh} — MFD {_alt:.0f}% of income; "
               f"break-even only, no profit margin)") if show_mfd else
              f"(= costs ÷ {one_minus_oh}; break-even only, no profit margin)",
              italic=True, color="595959", size=BASE_SIZE - 2)
@@ -3898,7 +3929,10 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
     # preview: "move the KPI to B"). Only the row-1/row-2 titles stay in A.
     KPI_COLS = [2, 4, 6, 8, 10, 12, 14, 16, 18]
     KPI_SPAN = 2
-    _oh_label = (f"OVERHEAD\n{alt_overhead_pct:.0f}% of costs"
+    # Overhead on a draw is a % of the draw's INCOME for both views - per-draw
+    # income sums to the contract, so this is the contract rule sliced by
+    # draw (the user 2026-09-03). MFD's 9% used to ride costs here.
+    _oh_label = (f"OVERHEAD\n{alt_overhead_pct:.0f}% of income"
                  if alt_overhead_pct is not None
                  else f"OVERHEAD\n{overhead_pct:.0f}% of income")
 
@@ -3906,7 +3940,7 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
         """One perspective as a label row + a value row. Returns the next row."""
         nonlocal r
         gp = round(rev - costs_val, 2)
-        oh = round(((alt_overhead_pct / 100.0) * costs_val)
+        oh = round(((alt_overhead_pct / 100.0) * rev)
                    if alt_overhead_pct is not None
                    else (overhead_pct / 100.0) * rev, 2)
         npf = round(gp - oh, 2)
@@ -6041,7 +6075,7 @@ def build_sheet_job_rp(
     gp_vc, gp_pr = profit_line("Gross Profit", fill=GP_FILL)
     margin_vc, _ = profit_line("Margin % (of billed)", fill=GP_FILL)
     markup_vc, _ = profit_line("Markup % (of cost)", fill=GP_FILL)
-    ohx_vc, ohx_pr = profit_line(f"less: Overhead ({overhead_pct:.1f}% of billed)",
+    ohx_vc, ohx_pr = profit_line(f"less: Overhead ({overhead_pct:.0f}% of contract)",
                                  color="C0504D", fill=SECT_FILL)
     tnp_vc, tnp_pr = profit_line("TRUE NET PROFIT", hero=True)
     tnppct_vc, _ = profit_line("True Net Profit %", hero=True)
@@ -6260,7 +6294,9 @@ def build_sheet_job_rp(
     margin_vc.number_format = "0.0%"
     markup_vc.value = f'=IF(B{costs_pr}=0,"",B{gp_pr}/B{costs_pr})'
     markup_vc.number_format = "0.0%"
-    ohx_vc.value = f"=-B{billed_pr}*{oh}"
+    # % of the CONTRACT (the bid), never of billed (the user 2026-09-03); no
+    # bid on file => total billed stands in, same as the CP/MFD template.
+    ohx_vc.value = f"=-{oh}*IF(B{bid_row}=0,B{billed_pr},B{bid_row})"
     ohx_vc.number_format = CURR_FMT
     tnp_vc.value = f"=B{gp_pr}+B{ohx_pr}"
     tnp_vc.number_format = CURR_FMT
@@ -7621,8 +7657,9 @@ def main() -> int:
                     help="Path to WIP master .xlsx for Contract/ETC lookup")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--overhead-pct", type=float, default=10.0,
-                    help="Company overhead as %% of revenue (default 10.0, the user 2026-07-16). "
-                         "Drives Overhead Allocation + True Net Profit rows.")
+                    help="Company overhead as %% of the CONTRACT (default 10.0; "
+                         "the base is the contract, the user 2026-09-03). "
+                         "Drives every Overhead + Net Profit row.")
     ap.add_argument("--legacy", action="store_true",
                     help="LEGACY JOB attribution for jobs that predate "
                          "consistent project coding: a cost line counts when "

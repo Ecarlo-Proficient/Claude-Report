@@ -182,10 +182,12 @@ def _ensure_lien_vendor_dir(vendor: str):
 # ── live P&L compute (folds project-pnl's numbers INTO the dashboard) ────────
 # Conventions match project-pnl/project_pnl_export.py so the two reconcile:
 # Earned Revenue = contract × %complete; costs = cost_line (QBO truth, incl subs);
-# Overhead = 10% of revenue (MFD alt = 9% of costs, the user 2026-07-16); net =
-# revenue − costs − overhead. Billed (AR) is shown alongside as the realized view.
-_OVERHEAD_REV = 0.10          # company: 10% of earned revenue
-_OVERHEAD_MFD_COST = 0.09     # MFD alt view: 9% of costs
+# Overhead = a % of the CONTRACT (10% company, 9% MFD view - the user
+# 2026-09-03: "it's contract 10%"; total billed stands in when no contract is
+# on file, as the P&L workbook does). net = revenue − costs − overhead. Billed
+# (AR) is shown alongside as the realized view.
+_OVERHEAD_REV = 0.10          # company: 10% of the contract
+_OVERHEAD_MFD_COST = 0.09     # MFD view: 9% of the contract
 
 
 def _project_pnl(con, proj: str) -> dict:
@@ -212,13 +214,14 @@ def _project_pnl(con, proj: str) -> dict:
     invoices = [dict(r) for r in con.execute(
         "SELECT doc_number, qbo_txn_id, amount, balance, txn_date, status, paid_date, due_date, memo "
         "FROM billing_event WHERE project_no = ? ORDER BY txn_date, doc_number", (proj,))]
-    overhead = round((_OVERHEAD_MFD_COST * cost) if is_mfd else (_OVERHEAD_REV * earned), 2)
+    _base = contract or billed
+    overhead = round((_OVERHEAD_MFD_COST if is_mfd else _OVERHEAD_REV) * _base, 2)
     net = round(earned - cost - overhead, 2)
     return {
         "proj": proj, "division": div,
         "contract": contract, "pct_complete": pct, "earned": earned, "billed": billed,
         "cost": cost, "overhead": overhead,
-        "overhead_basis": "9% of costs (MFD)" if is_mfd else "10% of revenue",
+        "overhead_basis": "9% of contract (MFD)" if is_mfd else "10% of contract",
         "net": net, "net_pct": (net / earned) if earned else None,
         "by_code": by_code, "invoices": invoices,
         "has_wip": row is not None,
@@ -258,9 +261,9 @@ def _portfolio_pnl(con) -> dict:
         pc = w["pc"] or 0
         earned = round(contract * pc, 2)
         cost = costs.get(p, 0) or 0
-        oh = round((_OVERHEAD_MFD_COST * cost) if is_mfd else (_OVERHEAD_REV * earned), 2)
-        net = round(earned - cost - oh, 2)
         b = billed.get(p, 0) or 0
+        oh = round((_OVERHEAD_MFD_COST if is_mfd else _OVERHEAD_REV) * (contract or b), 2)
+        net = round(earned - cost - oh, 2)
         try:                                             # ~4 stats/project (no glob) - cheap, cached client-side
             mtime = pnl_paths.find_pnl(p).get("mtime")
         except Exception:  # noqa: BLE001 - a path hiccup must never break the P&L
@@ -1588,10 +1591,10 @@ def _fetch_project_page(con, pn: str) -> dict:
         income = float(d.get("billed") or 0)                       # the net invoice = cash to collect
         costs = round(float(d.get("gate_amt") or 0) + d["subs_amt"], 2)
         gross = round(income - costs, 2)
-        overhead = round((_OVERHEAD_MFD_COST * costs) if is_mfd else (_OVERHEAD_REV * income), 2)
+        overhead = round((_OVERHEAD_MFD_COST if is_mfd else _OVERHEAD_REV) * income, 2)   # the draw's slice of the contract
         d["pl"] = {"income": income, "costs": costs, "bills": len(d["bills"]) + len(d["sub_bills"]), "gross": gross,
                    "margin_pct": (gross / income) if income else None, "overhead": overhead,
-                   "overhead_basis": "9% of costs (MFD)" if is_mfd else "10% of income",
+                   "overhead_basis": "9% of income (MFD)" if is_mfd else "10% of income",
                    "net": round(gross - overhead, 2), "net_pct": ((gross - overhead) / income) if income else None,
                    "period": {"start": _draw_period_range(d.get("matched_invoice") or "")[0], "end": _draw_period_range(d.get("matched_invoice") or "")[1]}}
         d["waivers_total"] = len(gate)
