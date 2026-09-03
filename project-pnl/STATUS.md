@@ -8,6 +8,18 @@ manual close), RP (no draws — expenses → invoice → profit).
 
 ## DONE / FINALIZED
 
+- **ARCHIVE ORDER DEFECT (2026-09-03, caught by the post-regen diff).** A
+  finished job regenerates into the first archive folder that already holds it
+  (`_resolve_project_out_dir`), and `pnl_paths._archive_dirs` listed the OLD
+  OneDrive tree before the routed Teams channel - so the 11 completed MFD jobs
+  quietly regenerated into `Automations-/PROJECT P&Ls/Multi-Family/completed …`
+  while the channel kept the morning's copies, and the channel's Overview was
+  assembled from stale workbooks. The log said "wrote MFD172/…" and looked fine;
+  only the written-time column in the verification diff showed 10:55 on 11 of
+  14. Fixed: the routed division folders come first in `_archive_dirs`. **Always
+  print the workbook's mtime in the post-regen diff**, not just the figures - it
+  is the one column that catches a right file in the wrong place.
+
 - **P&L SHEET: FOUR OWNER FIXES IN ONE PASS (2026-09-03, MFD test subject).**
   1. **Change Orders / CO Costs / Revised rows appear only when there is a CO
      or a CO cost** ("it just takes up space"); with none, the Original rows are

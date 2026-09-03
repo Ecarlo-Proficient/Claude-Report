@@ -293,11 +293,20 @@ def _archive_dirs():
     # Resolved, not hard-coded: a division routed to a Teams channel keeps its
     # 'completed …' archive inside that channel, and a re-run has to regenerate
     # a finished job THERE rather than spawn a second copy at the top level.
-    bases = [root] + [root / n for n in DIVISION_DIRS.values()]
+    # THE ROUTED DIVISION FOLDER COMES FIRST. A finished job is regenerated
+    # into the first archive that already holds it, so when the same archive
+    # exists in the old OneDrive tree AND in the synced Teams channel, the
+    # order here decides where the live copy lands. 2026-09-03: the old tree
+    # was listed first and 11 finished MFD jobs regenerated into the folder
+    # nobody reads any more while the channel kept the morning's copies.
+    bases = []
     for _d in DIVISION_DIRS:
         _r = division_dir(_d)
         if _r not in bases:
             bases.append(_r)
+    for _b in [root] + [root / n for n in DIVISION_DIRS.values()]:
+        if _b not in bases:
+            bases.append(_b)
     for base in bases:
         try:
             out += [d for d in sorted(base.iterdir())
