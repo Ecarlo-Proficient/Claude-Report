@@ -225,8 +225,10 @@ def _resolve_project_out_dir(proj: str, out_dir: Path,
     The DIVISION folder is not cosmetic: the owner shares that folder's link
     with the PM who runs the division, so a P&L landing at the root would put
     every other PM's numbers behind the same link (the user 2026-08-31). The
-    one rule lives in shared/pnl_paths.division_dir."""
-    _div = pnl_paths.division_dir(proj, out_dir)
+    one rule lives in shared/pnl_paths.division_dir — which also routes a
+    division to its TEAMS CHANNEL when one is mapped and synced (MFD →
+    'Project Financials', the user 2026-09-03)."""
+    _div, _dnote = pnl_paths.division_dir_note(proj, out_dir, forced=forced)
     # An EXPLICIT --out wins over every default route (2026-09-03). It used to
     # be ignored for CP, which routes to the Common-drive awarded folder
     # whenever the drive is mounted, and for any job already filed under an
@@ -239,11 +241,13 @@ def _resolve_project_out_dir(proj: str, out_dir: Path,
         # If this job has already been FILED under an archive subfolder
         # ("completed mfd project p&l"), regenerate it THERE — otherwise a
         # re-run silently creates a second copy at the top level and the two
-        # drift apart (the user 2026-08-27).
+        # drift apart (the user 2026-08-27). The archive moves WITH the
+        # division, so this finds the one inside the Teams channel too.
         for _arch in pnl_paths._archive_dirs():
             if (_arch / proj).is_dir():
-                return _arch / proj, f"filed under {_arch.name}"
-        return _div / proj, None
+                _n = f"filed under {_arch.name}"
+                return _arch / proj, (f"{_n}; {_dnote}" if _dnote else _n)
+        return _div / proj, _dnote
     if not CP_AWARDED_BASE.exists():
         return _div / proj, "Common drive not mounted → OneDrive"
     folder = _find_awarded_cp_folder(CP_AWARDED_BASE, proj)
@@ -1595,6 +1599,13 @@ def _normalise_body_font(wb: Workbook, size: int = 12) -> None:
                 d.width = round(d.width * ratio, 1)
 
 
+def _ref_first_row(ref: str) -> int:
+    """The row number an A1 range starts on ("B1:L495" -> 1). 0 when unparseable."""
+    head = str(ref or "").split(":")[0]
+    digits = "".join(ch for ch in head if ch.isdigit())
+    return int(digits) if digits else 0
+
+
 def _apply_left_gutter(wb: Workbook, n: int = 1, width: float = GUTTER_W) -> None:
     """Insert `n` narrow columns at the left of every sheet that doesn't
     already have one, and hang the row-1 title back into the gutter.
@@ -1638,6 +1649,15 @@ def _apply_left_gutter(wb: Workbook, n: int = 1, width: float = GUTTER_W) -> Non
         # ── 4. the title hangs into the gutter (see the docstring) ──
         title = ws.cell(row=1, column=1 + n)
         hang = isinstance(title.value, str) and bool(title.value.strip())
+        # ...unless row 1 is a TABLE HEADER rather than a title. Hanging it
+        # moves the first header cell into the gutter and leaves the table's
+        # own first column blank, which openpyxl writes out as a tableColumn
+        # literally named "None" - and Excel opens that with the repair prompt.
+        # It shipped once (CP800, 2026-09-03) because `assert_clean` compares a
+        # table's ref to the sheet's row count but never its column NAMES to
+        # the header cells underneath them.
+        if hang and any(_ref_first_row(t.ref) == 1 for t in tables):
+            hang = False
         if hang:
             a1 = ws.cell(row=1, column=1)
             a1.value = title.value

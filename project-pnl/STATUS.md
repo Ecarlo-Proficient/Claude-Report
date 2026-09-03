@@ -8,6 +8,34 @@ manual close), RP (no draws — expenses → invoice → profit).
 
 ## DONE / FINALIZED
 
+- **THE REPAIR PROMPT THAT GOT THROUGH (CP800, 2026-09-03) - read this before
+  adding a table to any sheet.** The gutter pass hangs row 1's title back into
+  column A. On `Draw Data`, row 1 is not a title, it is the **table header** -
+  so the hang moved "Draw" into A1 and left B1 empty, the table ref still
+  started at B1, and openpyxl wrote that blank header out as a tableColumn
+  literally named **`"None"`**. Excel opens that with "we found a problem with
+  some content".
+
+  **`assert_clean` passed it**, and that is the lesson: its table check
+  compares a table's ref to the sheet's ROW COUNT (the stale-ref case from
+  2026-08-17) and validates the displayName and duplicate column names - but it
+  never compares a tableColumn's NAME to the header cell underneath it, and
+  `"None"` is a non-blank string so the blank-name check does not fire either.
+  A table can therefore be internally valid and still disagree with its sheet.
+  Fixed at the source: the title-hang is skipped when any table on the sheet
+  starts at row 1 (`_ref_first_row`).
+
+  **Checklist when a generated sheet carries an Excel Table:**
+  1. The ref's column span must equal the number of tableColumns.
+  2. Every header cell under the ref must be non-empty AND match its
+     tableColumn name.
+  3. The ref must not end past the sheet's last row (this one `assert_clean`
+     does cover).
+  4. Anything that MOVES cells afterwards - a column insert, a title hang, a
+     row delete - has to move the table ref with them, and must not blank a
+     cell the ref still covers.
+
+
 - **Labor / Concrete LEDGER groups by VENDOR and filters (2026-09-02).**
   The ledger used to group by cost code, fully expanded. It now opens as one
   collapsed block per vendor - "where did it go" first - with the COST CODE
@@ -72,6 +100,24 @@ manual close), RP (no draws — expenses → invoice → profit).
   logs each move per draw. The same rule file drives the Bill Tracker match and
   the ledger's draw bands, so all three agree. No rule file → nothing moves.
   First use: CP800 Preferred Materials after 07/20/26, Draw #3 → Draw #4.
+
+- **MFD ROUTES TO THE TEAMS 'Project Financials' CHANNEL (2026-09-03).**
+  `shared/pnl_paths.DIVISION_CHANNELS` maps a division to a Teams channel, and
+  `division_dir` / `division_dir_note` resolve it: explicit `--out` ·
+  `ACB_PNL_DIR_<DIV>` · the synced channel · the OneDrive division folder.
+  A Teams channel's Files tab IS a SharePoint folder, so once the channel is
+  synced on the Mac it is an ordinary path — the same shape as
+  `Company Files - WIP Report`. No Graph API and no new key.
+  **It is a MOVE, not a mirror** (the user 2026-09-03): two copies of
+  `MFD Overview.xlsx` would drift, and the folder link the owner shares has to
+  be the one with the live numbers. The `completed mfd project p&l` archive
+  travels with the division — `_archive_dirs()` resolves division folders
+  instead of hard-coding them, so a finished job still regenerates into its
+  archive rather than spawning a second copy at the top level.
+  **A run whose channel is not synced falls back to OneDrive and SAYS SO** in
+  its note; it does not pretend to have routed. `find_pnl` still searches the
+  pre-move OneDrive folder, so a P&L generated before the move is found.
+  **Setup is one click, once:** Teams → the channel's Files tab → Sync.
 
 - **`closeout.py` — the FINAL closeout report (2026-09-02).**
   `<job folder>/<JOB> FINAL Closeout.xlsx` (one permanent page per finished job)
