@@ -380,6 +380,11 @@ def _pipelines():
         {"key": "crm", "label": "CRM - customers", "steps": [
             {"label": "Pull customers (Notion)", "script": "ledger/load_customers.py", "args": []},
         ]},
+        {"key": "attachments", "label": "Attachments (QBO scans index)", "steps": [
+            # every Attachable -> attachment(etype, txn_id): the 📎 on every row. Uses the week-old disk
+            # cache when fresh; a sweep otherwise (a few minutes).
+            {"label": "Index attachments (Touch ID)", "script": "ledger/load_attachments.py", "args": []},
+        ]},
         # Workbook GENERATOR, not a loader: its steps live under "actions" so it
         # can never be swept into the reload/all chains - a Full refresh must not
         # kick off 138 project P&L runs (same reason the WIP draft sits outside
@@ -600,6 +605,7 @@ def _fetch_ap(con) -> dict:
         b["pay_selected"] = bool(pm)
         b["pay_amount"] = (pm.get("amount") if pm and pm.get("amount") is not None else None)  # None → full open bal
         b["lien_marked"] = bool(bid and marks.get(bid))   # currently a site override (vs computed)
+        b["att"] = _att_counts(con).get(("Bill", str(bid)), 0) if bid else 0   # scans on file (📎)
         if bid and marks.get(bid) in bill_marks.LIEN_STATES:
             b["lien_status"] = marks[bid]            # site mark wins until the next sync-ap
         inv = bmap.get(str(b.get("invoice_no") or ""))
@@ -738,6 +744,7 @@ def _fetch_open_invoices(con, open_only: bool = True) -> dict:
         d["lien_due_label"] = ls.label or None
         d["lien_due_state"] = ls.state
         d["cust_id"] = cust_of.get(proj)             # project# → QBO customerdetail deep link
+        d["att"] = _att_counts(con).get(("Invoice", str(d.get("qbo_txn_id") or "")), 0)   # the signed draw package etc.
         invs.append(d)
     invs.sort(key=lambda x: ((x.get("customer") or "~").lower(),
                              x.get("due_date") or "9999", x.get("doc_number") or ""))
@@ -792,6 +799,7 @@ def _fetch_payments(con) -> dict:
         apps.sort(key=lambda x: (x.get("project_no") or "", x.get("invoice_no") or ""))
         divs = {a.get("division") for a in apps if a.get("division")}
         p["applications"] = apps
+        p["att"] = _att_counts(con).get(("Payment", str(p.get("qbo_txn_id") or "")), 0)
         p["invoice_count"] = len(apps)
         p["applied_total"] = round(sum(a.get("amount") or 0 for a in apps), 2)
         p["division"] = next(iter(divs)) if len(divs) == 1 else ("Mixed" if divs else None)
@@ -1408,7 +1416,8 @@ def _fetch_vendor(con, vendor: str) -> dict:
                 "bill_ref": r["bill_ref"], "bill_date": r["bill_date"], "bill_total": r["bill_total"],
                 "open_balance": r["open_balance"], "pay_status": r["pay_status"], "pay_date": r["pay_date"],
                 "gc_paid": r["gc_paid_date"], "invoice_no": r["invoice_no"], "matched_invoice": r["matched_invoice"],
-                "qbo_link": r["qbo_link"], "lines": [], "_projs": set()}
+                "qbo_link": r["qbo_link"], "lines": [], "_projs": set(),
+                "att": _att_counts(con).get(("Bill", str(bill_marks.bill_id_from_link(r["qbo_link"]) or "")), 0)}
         b["lines"].append({"project_no": r["project_no"], "division": r["division"],
                            "description": r["description"], "amount": r["line_amount"]})
         if r["project_no"]:
@@ -1432,6 +1441,7 @@ def _fetch_vendor(con, vendor: str) -> dict:
                              "FROM bill_payment WHERE vendor = ? ORDER BY txn_date DESC", (vendor,)):
             d = dict(r)
             d["n_bills"] = pln.get(r["qbo_txn_id"], 0)
+            d["att"] = _att_counts(con).get(("BillPayment", str(r["qbo_txn_id"])), 0)
             payments.append(d)
     except sqlite3.OperationalError:
         pass
@@ -1459,7 +1469,8 @@ def _fetch_vendor(con, vendor: str) -> dict:
             if not g:
                 g = grp[r["qbo_txn_id"]] = {"txn_id": r["qbo_txn_id"], "txn_type": r["txn_type"] or "Bill",
                                              "date": r["txn_date"], "doc_number": r["doc_number"],
-                                             "memo": r["memo"], "amount": 0.0, "_p": set()}
+                                             "memo": r["memo"], "amount": 0.0, "_p": set(),
+                                             "att": _att_counts(con).get(("Purchase" if (r["txn_type"] or "") == "Expense" else "Bill", str(r["qbo_txn_id"])), 0)}
             g["amount"] += float(r["amount"] or 0)
             if r["project_no"]:
                 g["_p"].add(r["project_no"])
@@ -1534,6 +1545,7 @@ def _fetch_project_page(con, pn: str) -> dict:
             e = codes_by_txn.get(str(bid)) if bid else None
             b["codes"] = e["codes"] if e else []
             b["description"] = (e["desc"] if e else None)
+            b["att"] = _att_counts(con).get(("Bill", str(bid)), 0) if bid else 0
         p0, p1 = _draw_period_range(d.get("matched_invoice") or "")
         subs: dict = {}
         if p0 and p1:
@@ -1558,6 +1570,7 @@ def _fetch_project_page(con, pn: str) -> dict:
         d["subs_unpaid_amt"] = round(sum(x["amount"] for x in d["sub_bills"] if not x["paid"]), 2)
         for sb in d["sub_bills"]:
             sb["description"] = sb.get("memo") or (codes_by_txn.get(sb["bill_id"], {}).get("desc"))
+            sb["att"] = _att_counts(con).get(("Purchase" if sb.get("txn_type") == "Expense" else "Bill", sb["bill_id"]), 0)
 
         gate = [b for b in d["bills"] if b["gates"]]
         d["vendors_total"] = len(gate)
@@ -1607,6 +1620,23 @@ def _fetch_project_page(con, pn: str) -> dict:
             "pnl": pnl, "draws": draws, "funding": funding}
 
 
+_ATT_CACHE = {"sig": None, "counts": {}}
+def _att_counts(con) -> dict:
+    """{(etype, txn_id) -> file count} from the attachment table, cached per table state (row count +
+    latest load) so every payload can stamp a 📎 without a join per row. {} until the loader has run."""
+    try:
+        sig = con.execute("SELECT COUNT(*), MAX(loaded_at) FROM attachment").fetchone()
+    except sqlite3.OperationalError:
+        return {}
+    sig = tuple(sig)
+    if _ATT_CACHE["sig"] != sig:
+        counts: dict = {}
+        for r in con.execute("SELECT etype, txn_id, COUNT(*) n FROM attachment GROUP BY etype, txn_id"):
+            counts[(r["etype"], str(r["txn_id"]))] = r["n"]
+        _ATT_CACHE["sig"], _ATT_CACHE["counts"] = sig, counts
+    return _ATT_CACHE["counts"]
+
+
 def _fetch_invoice_page(con, no: str) -> dict:
     """The invoice as a PAGE (owner 2026-09-02: "all the invoice qbo details on top, the bills grouped
     below that, their pay status, and then the Notion collections log"). Invoice = the billing_event
@@ -1635,10 +1665,12 @@ def _fetch_invoice_page(con, no: str) -> dict:
         key = (r["bill_ref"] or "?") + "|" + (r["bill_date"] or "")
         b = v["bills"].get(key)
         if not b:
+            _bid = bill_marks.bill_id_from_link(r["qbo_link"])
             b = v["bills"][key] = {"bill_ref": r["bill_ref"], "bill_date": r["bill_date"], "amount": r["bill_total"],
                                    "open": r["open_balance"] or 0, "pay_status": r["pay_status"], "pay_date": r["pay_date"],
                                    "approved": r["approved"], "lien_status": r["lien_status"], "gc_paid": r["gc_paid_date"],
-                                   "invoice_status": r["invoice_status"], "qbo_link": r["qbo_link"],
+                                   "invoice_status": r["invoice_status"], "qbo_link": r["qbo_link"], "bill_id": _bid,
+                                   "att": _att_counts(con).get(("Bill", str(_bid)), 0) if _bid else 0,
                                    "gates": _gates_stage(r["vendor"]), "lines": []}
             v["total"] += float(r["bill_total"] or 0)
             v["open"] += float(r["open_balance"] or 0)
@@ -1668,7 +1700,8 @@ def _fetch_invoice_page(con, no: str) -> dict:
                 v["total"] += float(r["amount"] or 0)
                 v["lines"].append({"date": r["txn_date"], "doc_number": r["doc_number"], "description": r["description"],
                                    "amount": r["amount"], "cost_code": r["cost_code"], "txn_id": r["qbo_txn_id"],
-                                   "txn_type": r["txn_type"] or "Bill"})
+                                   "txn_type": r["txn_type"] or "Bill",
+                                   "att": _att_counts(con).get(("Purchase" if (r["txn_type"] or "") == "Expense" else "Bill", str(r["qbo_txn_id"])), 0)})
         except sqlite3.OperationalError:
             pass
     subs_out = sorted(subs.values(), key=lambda v: -v["total"])
@@ -2040,6 +2073,27 @@ def _fetch_health(con) -> dict:
     # ── Recurring & Debt (FIN-12) - the register, verbatim for its own widget
     rec = hp.get("recurring")
 
+    # Every row says where its figure comes from and as of when (owner 2026-09-03: "get all sources for
+    # every number"): stamped from the row's own feed - invoices, the WIP report, the Bill Tracker, sub LOC.
+    _fr = _freshness(con)
+    def _asof(v):
+        if not v:
+            return None
+        try:
+            return _dt.datetime.fromisoformat(str(v)[:19]).strftime("%m/%d/%Y %-I:%M %p")
+        except ValueError:
+            return str(v)[:16]
+    _src = {"invoices": ("invoices loaded", _fr["ledger"].get("AR (invoices)")),
+            "wip": ("WIP master", _fr["sources"].get("WIP master")),
+            "bills": ("Bill Tracker", _fr["sources"].get("sync-ap")), "paybills": ("Bill Tracker", _fr["sources"].get("sync-ap")),
+            "accounting": ("Bill Tracker", _fr["sources"].get("sync-ap")), "draws": ("Bill Tracker + invoices", _fr["sources"].get("sync-ap")),
+            "subloc": ("Sub LOC computed", _fr["ledger"].get("Sub LOC"))}
+    for _sec in sections:
+        for _row in _sec.get("rows", []):
+            if len(_row) >= 5 and _row[4] in _src and "as of" not in str(_row[2] or ""):
+                _lab, _when = _src[_row[4]]
+                _row[2] = f"{_row[2]} · {_lab} {_asof(_when) or 'not loaded'}"
+
     return {
         "ok": True,
         "as_of": pull_asof,
@@ -2178,10 +2232,12 @@ class Handler(BaseHTTPRequestHandler):
     def _attachment(self, q: dict) -> None:
         """Resolve a bill's QBO scan link(s) on demand - subprocess the loader (never an
         import), which prints JSON {ok, files:[{name,url}]} with fresh TempDownloadUris."""
-        bill = (q.get("bill") or "").strip()
+        bill = (q.get("bill") or q.get("id") or "").strip()
         if not bill.isdigit():
-            return self._json({"ok": False, "error": "bad bill id"}, 400)
+            return self._json({"ok": False, "error": "bad transaction id"}, 400)
         tx_type = q.get("type") or "Bill"
+        if tx_type not in ("Bill", "Expense", "Purchase", "Invoice", "Payment", "BillPayment", "Estimate", "CreditMemo", "Deposit", "SalesReceipt", "VendorCredit", "JournalEntry"):
+            return self._json({"ok": False, "error": "bad type"}, 400)
         try:
             out = subprocess.check_output(
                 [sys.executable, str(PROJECT_ROOT / "ledger" / "attachments.py"), bill, "--type", tx_type],

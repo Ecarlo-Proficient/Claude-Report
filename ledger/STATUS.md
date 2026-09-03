@@ -4,6 +4,22 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Attachments everywhere + a source on every remaining figure (owner 2026-09-03: "every transaction
+  needs an attachment that we can view on the ledger and open ... get all sources for every number").**
+  New `ledger/load_attachments.py` sweeps QBO Attachable (via the shared `qbo_attachments` index, now with
+  `force=`) into a new `attachment(etype, txn_id, attachable_id, file_name)` table (76k links: Bill, Purchase,
+  Invoice, Payment, BillPayment, ...); rides the reload chain and `reload_ledger.sh`. `_att_counts()` stamps
+  `att` on every payload row - Bills, invoices, payments, vendor page bills + payments, project page bills +
+  labor, invoice page bills + subs - and one `attBtn()` renders the 📎 (count) beside the transaction number
+  in every table. Click = the **in-app viewer** (`openAttachmentViewer`): fresh QBO links fetched on click
+  through the generalised `/api/attachment?id=&type=` (Bill / Purchase / Invoice / Payment / BillPayment ...),
+  a file list, an inline PDF / image preview, Open-in-new-tab and Download. The Audit + trail scan buttons
+  route through the same viewer. **Sources:** Health rows now end with their feed and time ("· Bill Tracker
+  09/03/2026 9:02 AM", "· invoices loaded ...", "· WIP master ..."), Payments KPIs carry a QuickBooks-payments
+  chip and say "last 12 months", the Invoices header shows aged-today + invoices-loaded, the P&L note carries
+  the WIP report date + QBO costs load time. **WIP review:** the RP and Master reviews were recomputed under
+  the new direction rules (RP: 36 changed of 119 · 1 reversed · 20 carried); the CP review still needs the
+  `Common` share mounted (only `Proinfo` is mounted on this Mac).
 - **Collections report (owner 2026-09-02: "a summary like this ... the status of select open invoices
   ... to send off to financials to do cashflow forecast").** The Invoices amounts view gained a **Pick**
   column (per invoice, and a tick on each client band for all of theirs); the **Collections report**

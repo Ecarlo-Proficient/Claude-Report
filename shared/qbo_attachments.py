@@ -64,11 +64,11 @@ def index_from_cache(company_id: str = "") -> Optional[Index]:
     return _read(cands[0])
 
 
-def build_index(access: str, company_id: str, query_all) -> Index:
+def build_index(access: str, company_id: str, query_all, force: bool = False) -> Index:
     """The index from a fresh cache if we have one, else a full Attachable sweep (slow:
     every scan ever uploaded), which is then cached a week. `query_all` is injected to
-    avoid importing the QBO client at module load."""
-    got = index_from_cache(company_id)
+    avoid importing the QBO client at module load. `force` skips the cache (a new sweep)."""
+    got = None if force else index_from_cache(company_id)
     if got is not None:
         return got
     by_key: Index = {}

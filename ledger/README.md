@@ -130,6 +130,15 @@ dates". The page (`static/trail.js`, "Show every dollar" in the project drawer) 
 `python3 ledger/trail.py --selftest` proves it offline. The extra `cost_line` columns are additive
 and NULL until the next full `load_costs.py` run. No created / edited stamps (parked by the owner).
 
+## Attachments - every scan, on every row (2026-09-03)
+
+`load_attachments.py` indexes every QBO attachment (`Attachable` -> `attachment(etype, txn_id,
+attachable_id, file_name)`; Bill, Purchase, Invoice, Payment, BillPayment, ...). Every transaction row in
+the dashboard carries a 📎 with its count; the click opens the in-app viewer, which asks
+`/api/attachment?id=&type=` for FRESH download links (QBO's expire in minutes, so none is stored) and
+previews PDFs / images inline with Open-in-new-tab and Download. `--refresh` forces a new sweep instead of
+the week-old disk cache the P&L export also uses. `--selftest` offline.
+
 ## CRM — customers & sales pipeline (Notion)
 
 ```bash

@@ -529,3 +529,16 @@ CREATE INDEX IF NOT EXISTS ix_apbill_draw      ON ap_bill_line  (matched_invoice
 CREATE INDEX IF NOT EXISTS ix_costline_sub     ON cost_line     (is_sub, project_no); -- subs on a draw
 CREATE INDEX IF NOT EXISTS ix_costline_proj    ON cost_line     (project_no);       -- project cost slices
 CREATE INDEX IF NOT EXISTS ix_sublocevent_proj ON sub_loc_event (project);          -- sub-LOC source drill-down
+
+-- ── attachment : every QBO attachment link, by transaction (load_attachments.py) ──
+-- (etype, txn_id) -> the files on it. Counts drive the 📎 on every row; the click resolves a
+-- fresh TempDownloadUri through /api/attachment (QBO links expire in minutes, so none is stored).
+CREATE TABLE IF NOT EXISTS attachment (
+    etype         TEXT NOT NULL,                -- Bill | Purchase | Invoice | Payment | BillPayment | ...
+    txn_id        TEXT NOT NULL,                -- the transaction's QBO Id
+    attachable_id TEXT NOT NULL,                -- the Attachable Id (re-read at click time for a fresh link)
+    file_name     TEXT,
+    loaded_at     TEXT NOT NULL,
+    PRIMARY KEY (etype, txn_id, attachable_id)
+);
+CREATE INDEX IF NOT EXISTS ix_attachment_txn ON attachment (etype, txn_id);

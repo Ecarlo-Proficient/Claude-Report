@@ -834,6 +834,36 @@ function qboBillHref(link) {
 // set; a plain cell otherwise. Used for bill/invoice numbers across the tables.
 // Ref # cell: the NUMBER copies to the clipboard on click (owner 2026-08-28: "sometimes i just want
 // to copy the ref# and not take me to qbo"); the trailing ↗ is the QBO link.
+// Every transaction row gets the same 📎 (owner 2026-09-03: "every transaction needs an attachment
+// that we can view on the ledger and open"): `attBtn(type, id, n)` shows the count from the ledger's
+// attachment index and opens the viewer - fresh QBO links are fetched on click (they expire in minutes).
+function attBtn(type, id, n, title) {
+  const b = document.createElement("button"); b.type = "button"; b.className = "att-btn" + (n ? "" : " none");
+  b.textContent = n > 1 ? "📎" + n : "📎"; b.title = n ? `${n} attachment${n === 1 ? "" : "s"} in QuickBooks - click to view` : "No attachment on file in QuickBooks";
+  if (n && id) b.onclick = (e) => { e.stopPropagation(); openAttachmentViewer(type, String(id), title || ""); };
+  else b.disabled = true;
+  return b;
+}
+function attCell(type, id, n, title) { const td = document.createElement("td"); td.className = "left att-cell"; td.appendChild(attBtn(type, id, n, title)); return td; }
+async function openAttachmentViewer(type, id, title) {
+  let ov = $("#attViewer");
+  if (!ov) { ov = document.createElement("div"); ov.id = "attViewer"; ov.className = "xdlg-ov"; document.body.appendChild(ov); ov.onclick = (e) => { if (e.target === ov) ov.remove(); }; }
+  ov.innerHTML = `<div class="xdlg att-dlg" role="dialog"><div class="att-head"><h3>${_ge(title || (type + " " + id))}</h3><span class="dim" id="attStatus">fetching fresh links from QuickBooks…</span><button class="btn small" id="attClose">Close</button></div>
+    <div class="att-body"><div class="att-list" id="attList"></div><div class="att-view" id="attView"><div class="tr-note">Loading…</div></div></div></div>`;
+  $("#attClose").onclick = () => ov.remove();
+  let r;
+  try { r = await (await fetch(`/api/attachment?id=${encodeURIComponent(id)}&type=${encodeURIComponent(type)}`)).json(); }
+  catch (e) { r = { ok: false, error: String(e) }; }
+  const files = (r && r.files) || [];
+  const st = $("#attStatus"), list = $("#attList"), view = $("#attView"); if (!st) return;
+  if (!r || !r.ok || !files.length) { st.textContent = (r && r.error) || "No attachment on file"; view.innerHTML = `<div class="tr-note">${_ge((r && r.error) || "Nothing to show.")}</div>`; return; }
+  st.textContent = `${files.length} file${files.length === 1 ? "" : "s"} · links expire in a few minutes`;
+  const show = (f, btn) => { list.querySelectorAll(".att-file").forEach(x => x.classList.toggle("on", x === btn));
+    const isImg = /\.(png|jpe?g|gif|webp|heic)(\?|$)/i.test(f.name || ""); const isPdf = /\.pdf(\?|$)/i.test(f.name || "");
+    view.innerHTML = `<div class="att-tools"><b>${_ge(f.name || "attachment")}</b><a class="btn small" href="${_ge(f.url)}" target="_blank" rel="noopener">Open in a new tab ↗</a><a class="btn small" href="${_ge(f.url)}" download>Download</a></div>`
+      + (isImg ? `<img class="att-img" src="${_ge(f.url)}" alt="">` : `<iframe class="att-frame" src="${_ge(f.url)}${isPdf ? "#toolbar=1" : ""}" title="attachment"></iframe>`); };
+  files.forEach((f, k) => { const b = document.createElement("button"); b.type = "button"; b.className = "att-file"; b.textContent = f.name || ("file " + (k + 1)); b.onclick = () => show(f, b); list.appendChild(b); if (k === 0) show(f, b); });
+}
 function qboLinkCell(text, url, title) {
   const td = document.createElement("td"); td.className = "left";
   const label = text || "—";
@@ -1198,7 +1228,7 @@ function buildBillsTable(d) {
     for (const b of bills) {
       const tr = document.createElement("tr"); tr.className = "vbill";
       tr.appendChild(leftText(""));                         // vendor cell blank - grouped in the header above
-      tr.appendChild(qboLinkCell(b.bill_ref, qboBillHref(b.qbo_link), "Open this bill in QuickBooks"));
+      tr.appendChild(qboLinkCell(b.bill_ref, qboBillHref(b.qbo_link), "Open this bill in QuickBooks")); if (b.att) { const _ab = attBtn("Bill", b.bill_id || (qboBillHref(b.qbo_link) || "").replace(/.*txnId=(\d+).*/, "$1"), b.att, `${b.vendor || ""} · bill ${b.bill_ref || ""}`); _ab.style.marginLeft = "6px"; tr.lastElementChild.appendChild(_ab); }
       tr.appendChild(leftText(fmtDate(b.bill_date)));
       const av = document.createElement("td"); av.appendChild(moneyCell(b.amount)); tr.appendChild(av);
       tr.appendChild(leftText(b.pay_date ? "✓ " + fmtDate(b.pay_date) : "—"));
@@ -2233,7 +2263,7 @@ function billRow(b) {
   } else { ptd.appendChild(document.createTextNode("–")); }
   tr.appendChild(ptd);
   // Bill # (QBO deep link)
-  tr.appendChild(qboLinkCell(b.bill_ref, qboBillHref(b.qbo_link), "Open this bill in QuickBooks"));
+  tr.appendChild(qboLinkCell(b.bill_ref, qboBillHref(b.qbo_link), "Open this bill in QuickBooks")); if (b.att) { const _ab = attBtn("Bill", b.bill_id || (qboBillHref(b.qbo_link) || "").replace(/.*txnId=(\d+).*/, "$1"), b.att, `${b.vendor || ""} · bill ${b.bill_ref || ""}`); _ab.style.marginLeft = "6px"; tr.lastElementChild.appendChild(_ab); }
   // Date (MM/DD/YY) + age badge once a bill is 2+ months old
   const dtd = document.createElement("td"); dtd.className = "left bill-date";
   const ds = document.createElement("span"); ds.textContent = fmtDateShort(b.bill_date); ds.title = fmtDate(b.bill_date); dtd.appendChild(ds);
@@ -2348,7 +2378,7 @@ function renderVendorPage() {
     tr.onclick = (e) => { if (e.target.closest("a") || e.target.closest(".refcopy") || e.target.closest(".cell")) return; if (!multi) return; open ? _vendorBillOpen.delete(key) : _vendorBillOpen.add(key); renderVendorPage(); };
     const cc = document.createElement("td"); cc.className = "left draw-caret"; cc.textContent = multi ? (open ? "▾" : "▸") : ""; tr.appendChild(cc);
     tr.appendChild(leftText(fmtDateShort(b.bill_date)));
-    tr.appendChild(qboLinkCell(b.bill_ref, qboBillHref(b.qbo_link), "Open this bill in QuickBooks"));
+    tr.appendChild(qboLinkCell(b.bill_ref, qboBillHref(b.qbo_link), "Open this bill in QuickBooks")); if (b.att) { const _ab = attBtn("Bill", b.bill_id || (qboBillHref(b.qbo_link) || "").replace(/.*txnId=(\d+).*/, "$1"), b.att, `${b.vendor || ""} · bill ${b.bill_ref || ""}`); _ab.style.marginLeft = "6px"; tr.lastElementChild.appendChild(_ab); }
     const pcell = document.createElement("td"); pcell.className = "left";
     if (b.project === "multiple") { const s = document.createElement("span"); s.className = "vp-multi"; s.textContent = "multiple"; s.title = "Click the bill to see all line items + project #s"; pcell.appendChild(s); }
     else pcell.appendChild(document.createTextNode(b.project || "–"));
@@ -2375,7 +2405,7 @@ function _renderVendorQboBills(d, body) {
   for (const b of d.qbo_bills) {
     const tr = document.createElement("tr");
     tr.appendChild(leftText(fmtDateShort(b.date)));
-    tr.appendChild(qboLinkCell(b.doc_number || "–", qboUrl(b.txn_type === "Expense" ? "expense" : "bill", b.txn_id), "Open this bill in QuickBooks"));
+    { const lc = qboLinkCell(b.doc_number || "–", qboUrl(b.txn_type === "Expense" ? "expense" : "bill", b.txn_id), "Open this bill in QuickBooks"); if (b.att) { const ab = attBtn(b.txn_type === "Expense" ? "Purchase" : "Bill", b.txn_id, b.att, `bill ${b.doc_number || ""}`); ab.style.marginLeft = "6px"; lc.appendChild(ab); } tr.appendChild(lc); }
     tr.appendChild(leftText(b.projects.length > 1 ? b.projects.join(", ") : (b.projects[0] || "–")));
     const m = leftText(b.memo || "–"); m.title = b.memo || ""; m.className += " inv-memo"; tr.appendChild(m);
     const amt = document.createElement("td"); amt.appendChild(moneyCell(b.amount)); tr.appendChild(amt);
@@ -2628,7 +2658,7 @@ function renderPayBills() {
     const cV = document.createElement("td"); cV.className = "left"; const vs = document.createElement("span"); vs.className = "bill-vendor"; vs.textContent = b.vendor || "–"; cV.appendChild(vs); tr.appendChild(cV);
     const cC = document.createElement("td"); cC.className = "left"; cC.textContent = b.client || "–"; if (!b.client) cC.style.color = "var(--text-dim)"; tr.appendChild(cC);
     const cP = document.createElement("td"); cP.className = "left"; cP.textContent = b.project_no || "–"; tr.appendChild(cP);
-    tr.appendChild(qboLinkCell(b.bill_ref, qboBillHref(b.qbo_link), "Open this bill in QuickBooks"));
+    tr.appendChild(qboLinkCell(b.bill_ref, qboBillHref(b.qbo_link), "Open this bill in QuickBooks")); if (b.att) { const _ab = attBtn("Bill", b.bill_id || (qboBillHref(b.qbo_link) || "").replace(/.*txnId=(\d+).*/, "$1"), b.att, `${b.vendor || ""} · bill ${b.bill_ref || ""}`); _ab.style.marginLeft = "6px"; tr.lastElementChild.appendChild(_ab); }
     const cD = document.createElement("td"); cD.className = "left"; cD.textContent = fmtDateShort(b.bill_date); tr.appendChild(cD);
     // Open balance
     const cO = document.createElement("td"); cO.className = "right"; cO.appendChild(moneyCell(b.open_balance)); tr.appendChild(cO);
@@ -2701,7 +2731,7 @@ function renderPayList() {
     for (const b of list) {
       const tr = document.createElement("tr"); tr.className = "pay-row";
       const cV = document.createElement("td"); cV.className = "left"; cV.textContent = b.vendor || "–"; tr.appendChild(cV);
-      tr.appendChild(qboLinkCell(b.bill_ref, qboBillHref(b.qbo_link), "Open this bill in QuickBooks"));
+      tr.appendChild(qboLinkCell(b.bill_ref, qboBillHref(b.qbo_link), "Open this bill in QuickBooks")); if (b.att) { const _ab = attBtn("Bill", b.bill_id || (qboBillHref(b.qbo_link) || "").replace(/.*txnId=(\d+).*/, "$1"), b.att, `${b.vendor || ""} · bill ${b.bill_ref || ""}`); _ab.style.marginLeft = "6px"; tr.lastElementChild.appendChild(_ab); }
       const cDt = document.createElement("td"); cDt.className = "left"; cDt.textContent = fmtDateShort(b.bill_date); tr.appendChild(cDt);
       const cP = document.createElement("td"); cP.className = "left"; cP.textContent = b.project_no || "–"; tr.appendChild(cP);
       const cC = document.createElement("td"); cC.className = "left"; cC.textContent = b.client || "–"; tr.appendChild(cC);
@@ -3257,6 +3287,7 @@ function renderOpenInvoices() {
   // so the Collapse/Expand-all and Group-by-project buttons show in BOTH (owner 2026-08-31).
   { const fl = $("#ifSubGroup"), cl = $("#ifCollapse");
     if (fl) fl.style.display = ""; if (cl) cl.style.display = ""; }
+  { const el = $("#invAsOf"); if (el) el.textContent = (D.as_of ? "aged today " + fmtDate(D.as_of) : "") + (loadedAt("AR (invoices)") ? " · invoices loaded " + fmtDate(loadedAt("AR (invoices)"), true) : ""); }   // both views
   if (invView === "amounts") { renderInvAmounts(all, f); return; }
 
   // Aging tiles double as the bucket filter. Their totals ignore the bucket pick (so the
@@ -3288,7 +3319,7 @@ function renderOpenInvoices() {
   $("#invNote").textContent = all.length
     ? `(${rows.length.toLocaleString()} of ${all.length.toLocaleString()} · ${money(shown)} open)`
     : "(no AR data - run load_invoices.py)";
-  { const el = $("#invAsOf"); if (el) el.textContent = D.as_of ? "aged as of " + fmtDate(D.as_of) : ""; }
+  { const el = $("#invAsOf"); if (el) el.textContent = (D.as_of ? "aged today " + fmtDate(D.as_of) : "") + (loadedAt("AR (invoices)") ? " · invoices loaded " + fmtDate(loadedAt("AR (invoices)"), true) : ""); }
   { const anyMsel = INV_MSEL.some(c => (invMSel[c.id] || {}).size);
     const cb = $("#ifClear"); if (cb) cb.hidden = !(anyMsel || invMonthSel !== null || invQuick || f.div || f.lien || f.lienclk || f.litig !== "ex" || invBucketFilter != null); }
 
@@ -3422,6 +3453,7 @@ function invNoCell(inv) {
   const link = document.createElement("span"); link.className = "inv-detail-link"; link.textContent = docn;
   link.title = "Invoice memo + details (no QuickBooks)";
   link.onclick = (e) => { e.stopPropagation(); openInvoiceDetail(inv); };
+  if (inv.att) { const ab = attBtn("Invoice", inv.qbo_txn_id, inv.att, `${inv.customer || ""} · invoice ${docn}`); ab.style.marginLeft = "6px"; td.appendChild(ab); }
   td.appendChild(link);
   const qurl = qboInvoiceUrl(inv.qbo_txn_id);
   if (qurl) {
@@ -3576,7 +3608,7 @@ function _renderPpDraws() {
     tr.appendChild(pc);
     { const vb = document.createElement("td"); vb.className = "left pp-vb"; const v = document.createElement("span"); v.className = "pp-vend"; v.textContent = b.vendor || "–"; vb.appendChild(v);
       vb.appendChild(document.createTextNode(" ")); const link = qboLinkCell(b.bill_ref || "–", isSub ? qboUrl(b.txn_type === "Expense" ? "expense" : "bill", b.bill_id) : qboBillHref(b.qbo_link), "Open this bill in QuickBooks");
-      while (link.firstChild) vb.appendChild(link.firstChild); tr.appendChild(vb); }
+      while (link.firstChild) vb.appendChild(link.firstChild); if (b.att) { const ab = attBtn(isSub && b.txn_type === "Expense" ? "Purchase" : "Bill", b.bill_id, b.att, `${b.vendor || ""} · bill ${b.bill_ref || ""}`); ab.style.marginLeft = "6px"; vb.appendChild(ab); } tr.appendChild(vb); }
     { const cc = document.createElement("td"); cc.className = "left"; for (const c of (b.codes || [])) { const chip = document.createElement("span"); chip.className = "codechip"; chip.textContent = c; cc.appendChild(chip); cc.appendChild(document.createTextNode(" ")); } if (!(b.codes || []).length) { cc.textContent = "–"; cc.classList.add("dim"); } tr.appendChild(cc); }
     const ac = document.createElement("td"); ac.className = "ip-amt"; ac.appendChild(moneyCell(b.amount)); tr.appendChild(ac);
     tr.appendChild(leftText(fmtDateShort(b.bill_date)));
@@ -3775,7 +3807,7 @@ function _renderIpBills() {
         const tr = document.createElement("tr");
         const nm = leftText(""); if (!b.gates) { const s = document.createElement("span"); s.className = "vg-tag"; s.textContent = "not paid by us"; s.title = "Concrete pumping - the GC pays this vendor directly"; nm.appendChild(s); } tr.appendChild(nm);
         tr.appendChild(leftText(fmtDateShort(b.bill_date)));
-        tr.appendChild(qboLinkCell(b.bill_ref || "–", qboBillHref(b.qbo_link), "Open this bill in QuickBooks"));
+        { const lc = qboLinkCell(b.bill_ref || "–", qboBillHref(b.qbo_link), "Open this bill in QuickBooks"); if (b.att) { const ab = attBtn("Bill", b.bill_id, b.att, `${v.vendor} · bill ${b.bill_ref || ""}`); ab.style.marginLeft = "6px"; lc.appendChild(ab); } tr.appendChild(lc); }
         const ac = document.createElement("td"); ac.className = "ip-amt"; ac.appendChild(moneyCell(b.amount)); tr.appendChild(ac);
         const oc = document.createElement("td"); oc.className = "right ip-amt"; oc.textContent = num(b.open) > 0.005 ? money(b.open) : "–"; if (num(b.open) > 0.005) oc.style.color = "var(--neg)"; else oc.classList.add("dim"); tr.appendChild(oc);
         const st = document.createElement("td"); st.className = "left"; const pill = document.createElement("span"); pill.className = b.pay_date ? "ar-paid" : "ar-open"; pill.textContent = b.pay_date ? "Paid " + fmtDateShort(b.pay_date) : (b.pay_status || "Open"); st.appendChild(pill); tr.appendChild(st);
@@ -3805,7 +3837,7 @@ function _renderIpBills() {
       tbody.appendChild(gtr);
       if (!open) continue;
       for (const l of v.lines) { const tr = document.createElement("tr"); tr.appendChild(leftText("")); tr.appendChild(leftText(fmtDateShort(l.date)));
-        tr.appendChild(qboLinkCell(l.doc_number || "–", qboUrl(l.txn_type === "Expense" ? "expense" : "bill", l.txn_id), "Open in QuickBooks"));
+        { const lc = qboLinkCell(l.doc_number || "–", qboUrl(l.txn_type === "Expense" ? "expense" : "bill", l.txn_id), "Open in QuickBooks"); if (l.att) { const ab = attBtn(l.txn_type === "Expense" ? "Purchase" : "Bill", l.txn_id, l.att, `${v.vendor} · bill ${l.doc_number || ""}`); ab.style.marginLeft = "6px"; lc.appendChild(ab); } tr.appendChild(lc); }
         const dc = leftText(l.description || "–"); dc.className += " inv-memo"; dc.title = l.description || ""; tr.appendChild(dc);
         const cc = document.createElement("td"); cc.className = "left"; if (l.cost_code) { const chip = document.createElement("span"); chip.className = "codechip"; chip.textContent = l.cost_code; cc.appendChild(chip); } tr.appendChild(cc);
         const ac = document.createElement("td"); ac.appendChild(moneyCell(l.amount)); tr.appendChild(ac); tbody.appendChild(tr); }
@@ -4396,9 +4428,10 @@ function renderPayments() {
   body.innerHTML = "";
   const drawIdx = payOpenBillsByDraw(), projIdx = payOpenBillsByProject();
   const stats = document.createElement("div"); stats.className = "kpi-row";
-  for (const [l, v] of [["Received", money(PAY.total_received)], ["Payments", String(pays.length)],
+  for (const [l, v] of [["Received (last 12 months)", money(PAY.total_received)], ["Payments", String(pays.length)],
                         ["Invoices paid", String(PAY.invoices_paid || 0)]]) {
-    const k = el2("div", "kpi"); k.appendChild(el2("div", "k-label", l)); k.appendChild(el2("div", "k-value", v)); stats.appendChild(k);
+    const k = el2("div", "kpi"); k.appendChild(el2("div", "k-label", l)); k.appendChild(el2("div", "k-value", v));
+    k.appendChild(srcChip(srcText("QuickBooks payments", loadedAt("Payments"), "loaded"), "QBO Payment transactions (money in), a rolling 12-month window reloaded on every Resync")); stats.appendChild(k);
   }
   body.appendChild(stats);
   const head = document.createElement("div"); head.className = "list-head";
@@ -4486,7 +4519,7 @@ function renderPayments() {
       else { pc.textContent = projs[0] || "–"; if (!projs.length) pc.classList.add("dim"); }
       tr.appendChild(pc); }
     tr.appendChild(leftText(fmtDateShort(p.txn_date)));
-    tr.appendChild(leftText(p.ref_no || "–"));
+    { const rc = leftText(p.ref_no || "–"); if (p.att) { const ab = attBtn("Payment", p.qbo_txn_id, p.att, `${p.parent_customer || p.customer || ""} · payment ${p.ref_no || ""}`); ab.style.marginLeft = "6px"; rc.appendChild(ab); } tr.appendChild(rc); }
     tr.appendChild(leftText(p.method || "–"));
     tr.appendChild(rightText(money(p.total_amt)));
     // Unlocks (AP): open vendor bills on this payment's project(s) → click opens the side panel
@@ -5266,7 +5299,7 @@ function renderPnl() {
   }
   const rows = PNL.rows || [], divs = PNL.by_division || [], comp = PNL.company || {};
   const pctTxt = p => (p == null ? "—" : (p * 100).toFixed(1) + "%");
-  $("#pnlNote").textContent = rows.length ? `(${comp.n || 0} active jobs · ${money(comp.earned)} earned)` : "(no P&L data - load WIP + costs)";
+  $("#pnlNote").textContent = rows.length ? `(${comp.n || 0} active jobs · ${money(comp.earned)} earned · WIP report ${meta.report_date ? fmtDate(meta.report_date) : "–"} · QBO costs loaded ${loadedAt("Costs (QBO)") ? fmtDate(loadedAt("Costs (QBO)"), true) : "–"})` : "(no P&L data - load WIP + costs)";
 
   // company totals
   const tiles = [["Earned revenue", money(comp.earned)], ["Costs", money(comp.cost)],
@@ -7448,6 +7481,7 @@ async function _acctDoDownload() {
 // straight away; several show a chooser.
 async function openBillScan(f, el) {
   const m = /txnId=(\d+)/.exec(f.url || ""); if (!m) return;
+  if (true) { openAttachmentViewer(f.type === "Expense" || f.type === "Purchase" ? "Purchase" : "Bill", m[1], (f.vendor ? f.vendor + " · " : "") + "bill " + (f.bill_no || m[1])); return; }   // in-app viewer (2026-09-03)
   const orig = el.textContent; el.textContent = "…"; el.disabled = true;
   try {
     const r = await (await fetch(`/api/attachment?bill=${m[1]}`)).json();

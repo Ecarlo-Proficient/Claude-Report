@@ -1406,3 +1406,19 @@ table.pp-bills .codechip { margin-right: 2px; }
 td.inv-pick { width: 28px; }
 .inv-pick-all { margin-right: 6px; vertical-align: middle; }
 #ifCollect.on { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
+
+/* attachments everywhere: the 📎 count + the in-app viewer (2026-09-03) */
+.att-btn { font: inherit; font-size: .85em; padding: 0 6px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; line-height: 1.5; }
+.att-btn:hover { border-color: var(--accent); }
+.att-btn.none { opacity: .3; cursor: default; }
+td.att-cell { width: 44px; }
+.att-dlg { width: min(1200px, 94vw); height: min(86vh, 900px); display: flex; flex-direction: column; padding: 12px 14px; }
+.att-head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; } .att-head h3 { margin: 0; flex: 1 1 auto; font-size: 1em; }
+.att-body { display: grid; grid-template-columns: 220px 1fr; gap: 10px; flex: 1 1 auto; min-height: 0; }
+.att-list { display: flex; flex-direction: column; gap: 4px; overflow: auto; }
+.att-file { font: inherit; text-align: left; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; word-break: break-all; }
+.att-file.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+.att-view { display: flex; flex-direction: column; min-height: 0; }
+.att-tools { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; } .att-tools b { flex: 1 1 auto; word-break: break-all; }
+.att-frame { flex: 1 1 auto; width: 100%; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
+.att-img { max-width: 100%; max-height: 100%; object-fit: contain; border: 1px solid var(--border); border-radius: 8px; }
