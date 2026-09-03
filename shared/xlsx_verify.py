@@ -16,6 +16,16 @@ Vectors (each has bitten us at least once):
     'Repaired Records: View' bug, 2026-08-07.
   · Overlapping merged cells.
   · Style / dxf indices in range.
+  · A table column NAME that disagrees with the header cell under it — an
+    empty header cell becomes a tableColumn literally named "None", which is
+    non-blank so the blank-name check never fires. The table is internally
+    valid and still disagrees with its sheet, and Excel repairs it. CP800,
+    2026-09-03: a column-insert pass blanked B1 while the ref still began at B1.
+  · Cells out of ascending column order within a <row>, duplicate cell refs,
+    or <row> elements out of order — ECMA-376 requires ascending order and Excel
+    silently drops/repairs the row. Bit us 2026-08-26 when a hand-XML edit
+    inserted new <c> elements at the START of a row instead of at their
+    column position (the mileage template repair).
 """
 import re
 import zipfile
@@ -30,6 +40,44 @@ _SHEET_RE = re.compile(r"xl/worksheets/sheet\d+\.xml$")
 _TABLE_RE = re.compile(r"xl/tables/table\d+\.xml$")
 
 
+def _col_index(col: str) -> int:
+    """A1-style column letters -> 1-based index, without importing openpyxl."""
+    n = 0
+    for ch in col:
+        n = n * 26 + (ord(ch) - 64)
+    return n
+
+def _row_cells(xml: str, row: int, shared: list) -> dict:
+    """{column index -> text} for one <row>, inline strings and shared alike."""
+    out = {}
+    m = re.search(r'<row r="%d"[^>]*>(.*?)</row>' % row, xml, re.S)
+    if not m:
+        return out
+    for c in re.finditer(r'<c r="([A-Z]+)\d+"([^>]*)>(.*?)</c>', m.group(1), re.S):
+        ref, attrs, body = c.group(1), c.group(2), c.group(3)
+        tm = re.search(r't="(\w+)"', attrs)
+        t = tm.group(1) if tm else "n"
+        if t == "inlineStr":
+            v = re.search(r"<t[^>]*>(.*?)</t>", body, re.S)
+            out[_col_index(ref)] = v.group(1) if v else ""
+        elif t == "s":
+            v = re.search(r"<v>(\d+)</v>", body)
+            i = int(v.group(1)) if v else -1
+            out[_col_index(ref)] = shared[i] if 0 <= i < len(shared) else ""
+        else:
+            v = re.search(r"<v>(.*?)</v>", body, re.S)
+            out[_col_index(ref)] = v.group(1) if v else ""
+    return out
+
+
+def _col_name(i: int) -> str:
+    s = ""
+    while i:
+        i, r = divmod(i - 1, 26)
+        s = chr(65 + r) + s
+    return s
+
+
 def _overlap(a, b):
     return not (a[2] < b[0] or b[2] < a[0] or a[3] < b[1] or b[3] < a[1])
 
@@ -40,6 +88,11 @@ def verify_xlsx(path) -> list:
     issues = []
     with zipfile.ZipFile(str(path)) as z:
         names = z.namelist()
+        shared_strings = []
+        if "xl/sharedStrings.xml" in names:
+            _sx = z.read("xl/sharedStrings.xml").decode("utf-8", "replace")
+            shared_strings = [re.sub(r"<.*?>", "", si)
+                              for si in re.findall(r"<si>(.*?)</si>", _sx, re.S)]
 
         # ── tables: valid displayName, clean columns, UNIQUE names workbook-wide ──
         all_table_names = []
@@ -64,6 +117,42 @@ def verify_xlsx(path) -> list:
         dup_tables = {t for t in all_table_names if all_table_names.count(t) > 1}
         if dup_tables:
             issues.append(f"duplicate table name(s) across the workbook: {sorted(dup_tables)}")
+
+        # ── styles.xml internal consistency. A <dxf> may hold AT MOST ONE
+        #    <numFmt>; a declared count that disagrees with the actual child
+        #    count, or a custom numFmtId (>=164) used by a cellXf but never
+        #    defined in <numFmts>, is the same class of defect. All three trip
+        #    Excel's repair prompt while LibreOffice opens the file happily —
+        #    2026-08-26, a str.replace() without a count injected a second
+        #    <numFmt> into a <dxf> during a hand-XML edit. ──
+        if "xl/styles.xml" in names:
+            sx = z.read("xl/styles.xml").decode("utf-8", "replace")
+            dblk = re.search(r"<dxfs\b.*?</dxfs>", sx, re.S)
+            if dblk:
+                for i, dx in enumerate(re.findall(r"<dxf>.*?</dxf>", dblk.group(0), re.S)):
+                    if dx.count("<numFmt ") > 1:
+                        issues.append(f"xl/styles.xml: dxf #{i} has "
+                                      f"{dx.count('<numFmt ')} <numFmt> children (max 1)")
+            for tag, child in (("numFmts", "numFmt"), ("fonts", "font"),
+                               ("fills", "fill"), ("borders", "border"),
+                               ("cellStyleXfs", "xf"), ("cellXfs", "xf"),
+                               ("cellStyles", "cellStyle"), ("dxfs", "dxf")):
+                cm = re.search(r'<%s count="(\d+)"' % tag, sx)
+                blk = re.search(r"<%s\b.*?</%s>" % (tag, tag), sx, re.S)
+                if not cm or not blk:
+                    continue
+                actual = len(re.findall(r"<%s[ />]" % child, blk.group(0)))
+                if int(cm.group(1)) != actual:
+                    issues.append(f"xl/styles.xml: <{tag}> declares "
+                                  f"count={cm.group(1)} but holds {actual}")
+            cxb = re.search(r"<cellXfs\b.*?</cellXfs>", sx, re.S)
+            if cxb:
+                defined = {int(v) for v in re.findall(r'<numFmt numFmtId="(\d+)"', sx)}
+                used = {int(v) for v in re.findall(r'<xf numFmtId="(\d+)"', cxb.group(0))}
+                missing = sorted(u for u in used if u >= 164 and u not in defined)
+                if missing:
+                    issues.append(f"xl/styles.xml: cellXfs use custom numFmtId "
+                                  f"{missing} that <numFmts> never defines")
 
         # ── styles: index ceilings ──
         ncx, ndxf = 10 ** 9, 0
@@ -109,6 +198,23 @@ def verify_xlsx(path) -> list:
                     issues.append(f"{n}: dxfId {d} ≥ dxf count {ndxf}")
                     break
 
+            # ── cell / row ordering: ECMA-376 requires <c> ascending by column
+            #    within a <row>, and <row> ascending by r. Excel does NOT warn —
+            #    it "repairs" the file and drops the offending row. 2026-08-26. ──
+            for rm2 in re.finditer(r'<row r="(\d+)"[^>]*>(.*?)</row>', x, re.S):
+                cols = re.findall(r'<c r="([A-Z]+)\d+"', rm2.group(2))
+                idx = [_col_index(c) for c in cols]
+                if idx != sorted(idx):
+                    issues.append(f"{n}: row {rm2.group(1)} has cells out of column "
+                                  f"order ({'/'.join(cols)}) — Excel will drop the row")
+                    break
+                if len(set(idx)) != len(idx):
+                    issues.append(f"{n}: row {rm2.group(1)} has duplicate cell refs")
+                    break
+            rows_seen = [int(v) for v in re.findall(r'<row r="(\d+)"', x)]
+            if rows_seen != sorted(rows_seen):
+                issues.append(f"{n}: <row> elements are not in ascending order")
+
         # ── table range must stay WITHIN its sheet's used rows. A stale table
         #    ref after a row insert/delete (ref points past the last row) is the
         #    top "we found a problem with some content" cause — the 12-31 build
@@ -135,6 +241,36 @@ def verify_xlsx(path) -> list:
                 tx = z.read(tfn).decode("utf-8", "replace")
                 rm = re.search(r'\bref="[A-Z]+\d+:[A-Z]+(\d+)"', tx)
                 nm = re.search(r'displayName="([^"]*)"', tx)
+                # ── a table's column NAMES must match the header cells under
+                #    its ref. openpyxl writes an EMPTY header cell out as the
+                #    literal string "None", which is non-blank, so the
+                #    blank-name check above never sees it (CP800, 2026-09-03).
+                full = re.search(r'\bref="([A-Z]+)(\d+):([A-Z]+)(\d+)"', tx)
+                cols_named = re.findall(r'<tableColumn[^>]*\bname="([^"]*)"', tx)
+                if full and cols_named:
+                    c0 = _col_index(full.group(1))
+                    c1 = _col_index(full.group(3))
+                    hrow = int(full.group(2))
+                    span = c1 - c0 + 1
+                    tname = nm.group(1) if nm else "?"
+                    if span != len(cols_named):
+                        issues.append(f"{tfn}: table {tname!r} ref spans {span} "
+                                      f"column(s) but declares {len(cols_named)} "
+                                      f"tableColumn(s)")
+                    cells = _row_cells(z.read(n).decode("utf-8", "replace"),
+                                       hrow, shared_strings)
+                    for k, cname in enumerate(cols_named):
+                        actual = (cells.get(c0 + k) or "").strip()
+                        where = f"{_col_name(c0 + k)}{hrow}"
+                        if not actual:
+                            issues.append(
+                                f"{tfn}: table {tname!r} column {k + 1} ({where}) is "
+                                f"EMPTY on the sheet but the table names it "
+                                f"{cname!r} — Excel will offer to repair")
+                        elif actual != cname:
+                            issues.append(
+                                f"{tfn}: table {tname!r} column {k + 1} ({where}) "
+                                f"sheet says {actual!r}, table says {cname!r}")
                 if rm and int(rm.group(1)) > smax:
                     issues.append(
                         f"{tfn}: table {nm.group(1) if nm else '?'!r} ref ends at "
