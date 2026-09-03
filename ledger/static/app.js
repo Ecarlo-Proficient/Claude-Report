@@ -840,12 +840,12 @@ function qboBillHref(link) {
 function attBtn(type, id, n, title) {
   const b = document.createElement("button"); b.type = "button"; b.className = "att-btn" + (n ? "" : " none");
   b.textContent = n > 1 ? "📎" + n : "📎"; b.title = n ? `${n} attachment${n === 1 ? "" : "s"} in QuickBooks - click to view` : "No attachment on file in QuickBooks";
-  if (n && id) b.onclick = (e) => { e.stopPropagation(); openAttachmentViewer(type, String(id), title || ""); };
+  if (n && id) b.onclick = (e) => { e.stopPropagation(); openAttachmentViewer(type, String(id), title || "", n); };
   else b.disabled = true;
   return b;
 }
 function attCell(type, id, n, title) { const td = document.createElement("td"); td.className = "left att-cell"; td.appendChild(attBtn(type, id, n, title)); return td; }
-async function openAttachmentViewer(type, id, title) {
+async function openAttachmentViewer(type, id, title, expected) {
   let ov = $("#attViewer");
   if (!ov) { ov = document.createElement("div"); ov.id = "attViewer"; ov.className = "xdlg-ov"; document.body.appendChild(ov); ov.onclick = (e) => { if (e.target === ov) ov.remove(); }; }
   ov.innerHTML = `<div class="xdlg att-dlg" role="dialog"><div class="att-head"><h3>${_ge(title || (type + " " + id))}</h3><span class="dim" id="attStatus">fetching fresh links from QuickBooks…</span><button class="btn small" id="attClose">Close</button></div>
@@ -856,8 +856,8 @@ async function openAttachmentViewer(type, id, title) {
   catch (e) { r = { ok: false, error: String(e) }; }
   const files = (r && r.files) || [];
   const st = $("#attStatus"), list = $("#attList"), view = $("#attView"); if (!st) return;
-  if (!r || !r.ok || !files.length) { st.textContent = (r && r.error) || "No attachment on file"; view.innerHTML = `<div class="tr-note">${_ge((r && r.error) || "Nothing to show.")}</div>`; return; }
-  st.textContent = `${files.length} file${files.length === 1 ? "" : "s"} · links expire in a few minutes`;
+  if (!r || !r.ok || !files.length) { st.textContent = (r && r.error) || (expected ? "The file(s) counted here were deleted in QuickBooks since the last sync - Resync to refresh the count" : "No attachment on file"); view.innerHTML = `<div class="tr-note">${_ge(st.textContent)}</div>`; return; }
+  st.textContent = `${files.length} file${files.length === 1 ? "" : "s"} · links expire in a few minutes` + (expected && files.length < expected ? ` · ${expected - files.length} counted file${expected - files.length === 1 ? " was" : "s were"} deleted in QuickBooks since the last sync` : "");
   const show = (f, btn) => { list.querySelectorAll(".att-file").forEach(x => x.classList.toggle("on", x === btn));
     const isImg = /\.(png|jpe?g|gif|webp|heic)(\?|$)/i.test(f.name || ""); const isPdf = /\.pdf(\?|$)/i.test(f.name || "");
     view.innerHTML = `<div class="att-tools"><b>${_ge(f.name || "attachment")}</b><a class="btn small" href="${_ge(f.url)}" target="_blank" rel="noopener">Open in a new tab ↗</a><a class="btn small" href="${_ge(f.url)}" download>Download</a></div>`

@@ -4,6 +4,12 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Attachments follow QuickBooks deletions (owner 2026-09-03: "our bill process is to upload the
+  original as not approved then delete and upload the signed approved bill").** The Resync step and
+  `reload_ledger.sh` now run `load_attachments.py --refresh` - a fresh Attachable sweep every time, never
+  the week-old disk cache - and the table is a full replace, so a deleted scan drops and the signed upload
+  appears on the next sync. The viewer always fetches live: when a counted file no longer exists it says
+  so ("N counted files were deleted in QuickBooks since the last sync") instead of showing nothing.
 - **Attachments everywhere + a source on every remaining figure (owner 2026-09-03: "every transaction
   needs an attachment that we can view on the ledger and open ... get all sources for every number").**
   New `ledger/load_attachments.py` sweeps QBO Attachable (via the shared `qbo_attachments` index, now with

@@ -383,7 +383,9 @@ def _pipelines():
         {"key": "attachments", "label": "Attachments (QBO scans index)", "steps": [
             # every Attachable -> attachment(etype, txn_id): the 📎 on every row. Uses the week-old disk
             # cache when fresh; a sweep otherwise (a few minutes).
-            {"label": "Index attachments (Touch ID)", "script": "ledger/load_attachments.py", "args": []},
+            # ALWAYS a fresh sweep (owner 2026-09-03: the bill process deletes the unapproved scan and
+            # uploads the signed one - a week-old cache would keep showing the wrong count). ~2 minutes.
+            {"label": "Index attachments - fresh sweep (Touch ID)", "script": "ledger/load_attachments.py", "args": ["--refresh"]},
         ]},
         # Workbook GENERATOR, not a loader: its steps live under "actions" so it
         # can never be swept into the reload/all chains - a Full refresh must not
