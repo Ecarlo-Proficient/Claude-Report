@@ -1611,6 +1611,7 @@ def _apply_left_gutter(wb: Workbook, n: int = 1, width: float = GUTTER_W) -> Non
         p_area = ws.print_area
         af_ref = ws.auto_filter.ref
         dvs = [(dv, str(dv.sqref)) for dv in ws.data_validations.dataValidation]
+        tables = list(ws.tables.values())
 
         # ── 2. the one thing openpyxl does correctly: values + styles ──
         ws.insert_cols(1, n)
@@ -1655,7 +1656,13 @@ def _apply_left_gutter(wb: Workbook, n: int = 1, width: float = GUTTER_W) -> Non
         g = ws.column_dimensions[get_column_letter(1)]
         g.width = width
         if freeze:
-            ws.freeze_panes = _shift_a1(str(freeze), n)
+            # A row-only freeze ("A2") stays "A2". Shifting it to "B2" freezes
+            # the gutter column as well, which turns a 2-pane view into a
+            # 4-pane one - and xlsx_verify rightly calls that corrupt
+            # ("3 selections, has topRight"). Freezing the gutter buys nothing.
+            fz = str(freeze)
+            ws.freeze_panes = (fz if fz[:1].upper() == "A"
+                               else _shift_a1(fz, n))
         if cfs:
             ws.conditional_formatting = ConditionalFormattingList()
             for sqref, rules in cfs:
@@ -1669,6 +1676,13 @@ def _apply_left_gutter(wb: Workbook, n: int = 1, width: float = GUTTER_W) -> Non
                                    count=1)
         if af_ref:
             ws.auto_filter.ref = _shift_a1(str(af_ref), n)
+        # An Excel Table whose ref no longer covers its data is THE classic
+        # repair prompt (rule 5b). insert_cols does not touch it, so move it -
+        # ref and the table's own autoFilter both.
+        for t in tables:
+            t.ref = _shift_a1(str(t.ref), n)
+            if getattr(t, "autoFilter", None) is not None and t.autoFilter.ref:
+                t.autoFilter.ref = _shift_a1(str(t.autoFilter.ref), n)
         for dv, sqref in dvs:
             dv.sqref = _shift_a1(sqref, n)
 
@@ -3715,6 +3729,10 @@ def _draw_flat_bills(draw_cost: dict) -> list:
             for vend, vg in lg.get("vendors", {}).items():
                 for t in vg.get("txns", []):
                     rows.append({"num": str(t.get("doc_num", "")), "date": t.get("date", ""),
+                                 # the COST CODE itself, not just its category -
+                                 # a pivot cut "by cost code" needs SL1/FW6, and
+                                 # `cat` only says Concrete/Labor (ADDITIVE key)
+                                 "code": leaf,
                                  "vendor": vend, "cat": cat, "desc": t.get("desc", ""),
                                  "amount": float(t.get("amount", 0) or 0),
                                  "tx_type": t.get("tx_type", ""), "txn_id": t.get("txn_id", ""),
@@ -3972,7 +3990,12 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
             wc(r, 3, round(sum(i["amount"] for i in vit), 2), fmt=CURR_FMT,
                bold=True, color=color)
             r += 1
-            for i in sorted(vit, key=lambda x: -x["amount"]):
+            # DATE order within the vendor (the user 2026-09-02: "the
+            # transactions for the draws are not sorted by date"). A draw is a
+            # period, so its bills read as a run of dates; biggest-first was
+            # fine for one vendor in isolation and wrong for reading a month.
+            for i in sorted(vit, key=lambda x: (str(x.get("date") or ""),
+                                                -x["amount"])):
                 if kind == "plain":                      # no PM reports (CP): neutral
                     blink = _qbo_txn_url(i.get("tx_type", ""), i.get("txn_id", ""), realm)
                     note, ncol, nlink = ("in this draw", "595959", None)
@@ -4055,6 +4078,67 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
     ws.sheet_properties.outlinePr.summaryBelow = False
     _setup_print(ws, 12)
     return r, missed_total, len(missed)
+
+
+def build_sheet_draw_data(wb: Workbook, draw_costs: dict, draw_rows: list,
+                          realm: str = "") -> Optional[str]:
+    """ONE flat row per draw transaction, as an Excel Table - the sheet a
+    PivotTable sits on.
+
+    The owner asked (2026-09-02) to re-cut a draw's transactions by vendor AND
+    by cost code, the way a pivot does. **openpyxl cannot author a PivotTable.**
+    `Worksheet.add_pivot` exists to PRESERVE one across a read/write; building
+    one from nothing means hand-assembling the cache definition, the cache
+    records and their relationships, which is precisely the hand-written XML
+    that makes Excel offer to repair a file (rule 5b). So this ships the thing a
+    pivot actually needs - one tidy, typed, rectangular table with no merged
+    cells, no blank rows and no subtotals baked in - and Excel builds the pivot
+    off it in three clicks (Insert > PivotTable > this table), re-cuttable by
+    Draw, Vendor, Cost code, Category, Month or any pair of them.
+
+    Every figure here is the SAME line the draw sheets show; this is a second
+    view of them, never a second source."""
+    rows = []
+    for nm, lbl, _net, _costs, _held, _billed in draw_rows or []:
+        for b in _draw_flat_bills(draw_costs.get(lbl) or {}):
+            rows.append((nm, lbl, b))
+    if not rows:
+        return None
+    ws = wb.create_sheet("Draw Data")
+    ws.sheet_view.showGridLines = False
+    heads = ["Draw", "Period", "Date", "Month", "Vendor", "Cost code",
+             "Category", "Bill #", "Amount", "Description", "Pushed from"]
+    for i, h in enumerate(heads, start=1):
+        c = ws.cell(row=1, column=i, value=h)
+        c.font = Font(bold=True, size=BASE_SIZE)
+    r = 2
+    for nm, lbl, b in rows:
+        d = _parse_date(b.get("date")) if isinstance(b.get("date"), str) else b.get("date")
+        vals = [nm, lbl, d or b.get("date"),
+                (d.strftime("%Y-%m") if hasattr(d, "strftime") else ""),
+                b.get("vendor") or "", b.get("code") or "", b.get("cat") or "",
+                str(b.get("num") or ""), float(b.get("amount") or 0),
+                (b.get("desc") or "")[:120], b.get("pushed") or ""]
+        for i, v in enumerate(vals, start=1):
+            c = _write_cell(ws, r, i, v)
+            c.font = Font(size=BASE_SIZE)
+            if heads[i - 1] == "Amount":
+                c.number_format = CURR_FMT
+            elif heads[i - 1] == "Date" and hasattr(v, "strftime"):
+                c.number_format = "mm/dd/yyyy"
+        r += 1
+    # A real Excel Table, sized EXACTLY to the data - a ref past the last row is
+    # the classic repair prompt (rule 5b), so it is derived, never guessed.
+    from openpyxl.worksheet.table import Table, TableStyleInfo
+    ref = f"A1:{get_column_letter(len(heads))}{r - 1}"
+    t = Table(displayName="DrawData", ref=ref)
+    t.tableStyleInfo = TableStyleInfo(name="TableStyleLight1", showRowStripes=True)
+    ws.add_table(t)
+    ws.freeze_panes = "A2"
+    for col, w in zip("ABCDEFGHIJK",
+                      (20, 22, 12, 10, 30, 11, 14, 15, 15, 60, 18)):
+        ws.column_dimensions[col].width = w
+    return ws.title
 
 
 def build_sheet_next_draw_retainage(wb, proj, cust_info, wip_info, income_groups,
@@ -5279,6 +5363,11 @@ def build_sheet_budget_vs_actual(wb, proj, cust_info, wip_info,
                         ws.cell(row=r, column=cc).fill = PatternFill(
                             "solid", fgColor="FDECEA")
             ws.row_dimensions[r].outline_level = 1     # collapsible under the code
+            # ...and COLLAPSED on open (the user 2026-09-02), same as the draw
+            # sheets and By Account: the sheet is a scoreboard of cost codes
+            # first, and the transactions behind a code are what you open when
+            # a code looks wrong - not the wall you land on.
+            ws.row_dimensions[r].hidden = True
             r += 1
     tl = ws.cell(row=r, column=1, value="TOTAL")
     tl.font = Font(bold=True, size=BASE_SIZE - 1)
@@ -6646,6 +6735,9 @@ def generate_project_pnl(
         underbill_count += m_cnt
         draw_anchors[nm] = sn
         draw_sheet_order.append(sn)
+    _draw_data_tab = (build_sheet_draw_data(wb, draw_costs, draw_rows,
+                                            realm=company_id)
+                      if not simple else None)
     underbill_total = round(underbill_total, 2)
     if parsed_reports:
         msg = (f"PM cross-check: {underbill_count} bill(s) on no report "
@@ -6794,6 +6886,7 @@ def generate_project_pnl(
                        "Labor", "Concrete", "Budget vs Actual",
                        *(["Next Draw"] if leftover is not None else []),
                        "POs", "Reconciliations", "Cash Flow",
+                       *([_draw_data_tab] if _draw_data_tab else []),
                        *draw_sheet_order])
 
     # Color-code the tabs for navigation (the user 2026-06-26).
@@ -6802,6 +6895,7 @@ def generate_project_pnl(
                   "Labor": "7030A0", "Concrete": "7030A0",
                   "Budget vs Actual": "BF8F00",
                   "Transactions": "548235", "POs": "808080",
+                  "Draw Data": "375623",
                   "Reconciliations": "808080"}
     for _sn, _col in _tabcolors.items():
         if _sn in wb.sheetnames:

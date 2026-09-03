@@ -8,6 +8,31 @@ manual close), RP (no draws — expenses → invoice → profit).
 
 ## DONE / FINALIZED
 
+- **`Draw Data` sheet - the flat table a PivotTable sits on (2026-09-02).**
+  One row per draw transaction (Draw · Period · Date · Month · Vendor · Cost
+  code · Category · Bill # · Amount · Description · Pushed from) as a real
+  Excel Table, so the owner can re-cut a draw by vendor AND by cost code the
+  way a pivot does. **openpyxl cannot AUTHOR a PivotTable** - `add_pivot`
+  exists to preserve one across a read/write, and building one from nothing
+  means hand-assembling the cache definition and records, which is exactly the
+  hand-written XML rule 5b exists to prevent. So the workbook ships the tidy
+  rectangular source instead and Excel makes the pivot in three clicks. Sits
+  with Cash Flow AHEAD of the draw sheets, never behind them.
+
+- **Budget vs Actual opens COLLAPSED** (2026-09-02) - the cost-code scoreboard
+  first, transactions on demand, same as By Account and the draw sheets.
+  Draw transactions now read in DATE order within a vendor, not
+  biggest-amount-first: a draw is a period, so its bills should read as a run
+  of dates.
+
+- **Gutter pass: two defects the Draw Data table exposed.** A row-only freeze
+  ("A2") was being shifted to "B2", which freezes the gutter column too and
+  turns a 2-pane view into a 4-pane one - `xlsx_verify` correctly called that
+  corrupt and blocked the write. And the pass never moved **Excel Table refs**,
+  the single failure rule 5b names by name; there had been no table in a P&L
+  until now. Both fixed, and the corruption gate is what caught them.
+
+
 - **The PUSH - a bill carried into a later draw by agreement (2026-09-02).**
   Bills land in a draw by date (TxnDate inside the invoice's Period tag). When the
   user agrees with a supplier to carry end-of-period bills into the next draw, a
