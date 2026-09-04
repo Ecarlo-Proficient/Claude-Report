@@ -969,8 +969,9 @@ _JOB_RE = re.compile(r"^(MFD|CP|RP)\s*-?\s*\d+(?:-FTW)?", re.I)
 def _find_workbook(folder: Path, proj: str) -> Optional[Path]:
     """The generated P&L inside a job folder. CP/MFD write
     `Project_PnL_<proj>.xlsx`; RP writes `<proj> - <client>.xlsx`."""
-    for cand in (folder / f"Project_PnL_{proj}.xlsx",
-                 folder / f"{folder.name}.xlsx"):
+    for cand in (folder / f"{proj} FINAL.xlsx",          # finished job
+                 folder / f"Project_PnL_{proj}.xlsx",    # live job
+                 folder / f"{folder.name}.xlsx"):        # RP
         if cand.exists():
             return cand
     if not folder.is_dir():

@@ -8,6 +8,31 @@ manual close), RP (no draws — expenses → invoice → profit).
 
 ## DONE / FINALIZED
 
+- **ONE FILE PER JOB, AND `FINAL` IS THE FINISHED NAME (2026-09-04).** A
+  finished job folder still held THREE workbooks - `Project_PnL_<job>.xlsx`,
+  `<job> Job Result.xlsx` and `<job> FINAL Closeout.xlsx`. The generators were
+  retired 2026-09-03 but their output was never swept, and the leftovers rode
+  the folder move into the Teams channel. The owner: "why is there three? for
+  completed just rename the P&L to final, for actives just use the original
+  name of Project Pnl. delete job result everywhere and clean this up."
+  **25 stale workbooks deleted** (14 Job Result + 11 FINAL Closeout).
+  **Naming now:** live job -> `Project_PnL_<job>.xlsx`; a job filed under a
+  `completed …` archive -> **`<job> FINAL.xlsx`**. `shared/pnl_paths` owns both
+  (`pnl_filename` / `is_archived_dir`), the export writes whichever the output
+  folder implies, and both readers know both names - `find_pnl`'s candidate
+  sweep and `completed_pnl._find_workbook`. The 11 finished MFD workbooks were
+  renamed in place.
+
+- **`active mfd` FOUND NOTHING - A BLANK STATUS IS ACTIVE (2026-09-04).**
+  `project-pnl active mfd` reported "no Active projects in the WIP master" and
+  did nothing. `expand_active_projects` required the literal word `Active` in
+  Test-Master STATUS, but **MFD rows carry a BLANK status** - MFD closes by
+  hand, so nothing ever writes one. Measured: 3 of 3 MFD rows blank, 19 of 19
+  CP `Active`, 119 of 119 RP `Active`. Blank now counts as Active, which is
+  what the ledger already did (`dashboard.py`: "blank = MFD, active by
+  construction"). Two readers of the same column had disagreed for months and
+  only the batch shortcut was wrong.
+
 - **THE ACCESS TOKEN EXPIRES MID-RUN AND NOTHING REFRESHED IT (2026-09-03/04).**
   An Intuit access token lives ONE HOUR. Every tool minted one at startup and
   passed that string around for the rest of the run, so any batch longer than

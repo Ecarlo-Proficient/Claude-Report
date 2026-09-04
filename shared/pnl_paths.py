@@ -39,6 +39,24 @@ CP_AWARDED_BASE = Path(os.environ.get(
     "/Volumes/Common/CURRENT PROJECTS/Awarded Projects Commercial projects"))
 CP_PNL_SUBDIR = "Profit and Loss"
 PNL_FILE = "Project_PnL_{proj}.xlsx"
+# A FINISHED job's workbook is named FINAL (the owner 2026-09-04: "for
+# completed just rename the P&L to final, for actives just use the original
+# name of Project Pnl"). One file per job either way - the separate
+# `<job> Job Result.xlsx` and `<job> FINAL Closeout.xlsx` reports were retired
+# 2026-09-03 and their 25 leftover copies deleted 2026-09-04.
+PNL_FILE_FINAL = "{proj} FINAL.xlsx"
+
+
+def pnl_filename(proj: str, archived: bool) -> str:
+    """The workbook name for this job - FINAL once it is filed under an
+    archive folder, `Project_PnL_<proj>` while it is live."""
+    return (PNL_FILE_FINAL if archived else PNL_FILE).format(proj=proj)
+
+
+def is_archived_dir(folder: "Path") -> bool:
+    """True when `folder` sits inside a 'completed …' archive."""
+    return any(str(x.name).lower().startswith(ARCHIVE_PREFIXES)
+               for x in Path(folder).parents)
 
 # RP source jobs live under the Residential share, filed BY BUILDER then address
 # (same root rp_wip_reader.py uses). We can land on the builder folder reliably;
@@ -275,7 +293,7 @@ def resolve_project_out_dir(proj: str, out_dir: "Path | None" = None):
 def pnl_path(proj: str, out_dir: "Path | None" = None) -> Path:
     """The exact workbook path project-pnl would write for this project."""
     folder, _ = resolve_project_out_dir(proj, out_dir)
-    return folder / PNL_FILE.format(proj=proj)
+    return folder / pnl_filename(proj, is_archived_dir(folder))
 
 
 # Subfolders of PROJECT P&Ls that hold FINISHED jobs. Matched case-insensitively
@@ -330,6 +348,7 @@ def _candidates(proj: str):
             out.append(p)
 
     fname = PNL_FILE.format(proj=proj)
+    fnames = (fname, PNL_FILE_FINAL.format(proj=proj))
     add(pnl_path(proj))                                   # exact resolved path
     add(division_dir(proj) / proj / fname)                # division-sorted
     _dn = DIVISION_DIRS.get(division_of(proj))
@@ -340,7 +359,8 @@ def _candidates(proj: str):
     # 2026-08-27) so the top level stays the live work. Look there too, or the
     # dashboard reports "never generated" the moment a job is filed.
     for _arch in _archive_dirs():
-        add(_arch / proj / fname)
+        for _fn in fnames:                      # FINAL is the archived name
+            add(_arch / proj / _fn)
     ob = paths.onedrive_base()
     add(ob / "PROJECT P&Ls" / proj / fname)              # older flat tree, subfolder
     add(ob / "PROJECT P&Ls" / fname)                     # older flat tree, root

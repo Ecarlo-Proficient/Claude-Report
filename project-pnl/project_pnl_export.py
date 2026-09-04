@@ -7154,7 +7154,10 @@ def generate_project_pnl(
         wb[_sn].sheet_properties.tabColor = "2E75B6"
 
     proj_dir.mkdir(parents=True, exist_ok=True)
-    out_path = proj_dir / f"Project_PnL_{proj}.xlsx"
+    # FINAL once the job is filed under an archive, Project_PnL while it is
+    # live (the owner 2026-09-04). One workbook per job, either way.
+    out_path = proj_dir / pnl_paths.pnl_filename(
+        proj, pnl_paths.is_archived_dir(proj_dir))
     saved = safe_save(wb, out_path)
     if saved:
         ui_done(f"wrote {saved.parent.name}/{saved.name}  ·  "
@@ -7755,9 +7758,16 @@ def expand_active_projects(tokens: List[str],
         return [t.strip().upper() for t in tokens], False
     divs = {t for t in toks if t in ("CP", "RP", "MFD")} or {"CP", "RP", "MFD"}
     extras = [t for t in toks if t not in ("ACTIVE", "CP", "RP", "MFD")]
+    # A BLANK STATUS IS ACTIVE. The Test-Master tab carries Active/Closed on
+    # CP and RP, but MFD rows are left BLANK - MFD closes by hand, so nothing
+    # ever writes a status there (verified 2026-09-04: all 3 MFD rows blank,
+    # all 19 CP 'Active', all 119 RP 'Active'). Requiring the literal word
+    # made `project-pnl active mfd` report "no Active projects in the WIP
+    # master" and do nothing. The ledger already reads it this way
+    # (`dashboard.py`: blank = MFD, active by construction).
     matched = sorted(
         p for p, info in wip_master.items()
-        if str(info.get("status") or "").strip().lower() == "active"
+        if str(info.get("status") or "").strip().lower() in ("", "active")
         and any(p.startswith(d) for d in divs))
     return matched + [e for e in extras if e not in matched], True
 
