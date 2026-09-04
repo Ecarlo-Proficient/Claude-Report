@@ -3273,7 +3273,7 @@ def build_sheet_pl(
         #    projection with its profit/overhead split, then the QBO ACTUALS
         #    band. Yellow inputs persist via read-back; auto-fill comes from
         #    the WIP master (typed value still wins on re-sync).
-        wtop = sect_title("① WIP / PROJECTION   (yellow = your input)")
+        wtop = None
         def _num(*keys):
             for k in keys:
                 v = wip_info.get(k)
@@ -3298,48 +3298,75 @@ def build_sheet_pl(
         _ctr = _typed_ctr if _typed_ctr is not None else _wip_ctr
         _etc = _typed_etc if _typed_etc is not None else _wip_etc
         _co_cost = _num("co_cost_saved")
+        # A FINISHED JOB IS OFF THE WIP MASTER, so its contract and ETC live
+        # only in the WIP reports. Read them, and NAME THE ROW THEY CAME FROM
+        # (the owner 2026-09-04: "sources sources sources always sources so i
+        # can see what you are grabbing these numbers from").
+        _rep_src = ""
+        if _ctr is None or _etc is None:
+            try:
+                from shared import wip_contracts as _wc
+                _rc, _rе, _rs = _wc.contract_for(proj)
+            except Exception:                    # a missing report never fails a run
+                _rc = _rе = None
+                _rs = ""
+            if _rc is not None:
+                if _ctr is None:
+                    _ctr = _rc
+                if _etc is None and _rе is not None:
+                    _etc = _rе
+                _rep_src = _rs
+        # NOTHING ANYWHERE => THERE IS NO PROJECTION, so the whole ① block goes
+        # (the owner 2026-09-04: "if there is 0 wip with contract/etc for the
+        # completed mfd, just remove those rows entirely and just show the
+        # actuals since there's no projection"). It used to stand there filled
+        # with fallbacks - total billed as the contract, costs to date as the
+        # ETC - which made a finished job read as though it had projected
+        # exactly what it spent. Overhead then rides total billed, which on a
+        # finished job IS the contract.
+        _no_projection = _ctr is None and _etc is None
+
+        def _prow(*a, **k):
+            """A ① row - written only when there IS a projection to write, and
+            it opens the section banner on the first one, so a job with no
+            contract anywhere has no empty ① header left standing."""
+            nonlocal wtop
+            if _no_projection:
+                return None
+            if wtop is None:
+                wtop = sect_title("① WIP / PROJECTION   (yellow = your input)")
+            return row(*a, **k)
 
         def _mismatch(typed, wip):
             return (typed is not None and wip is not None
                     and abs(typed - wip) > 1.0)
 
         _g702_src = wip_info.get("contract_g702")
-        k_row = row(f"Original Contract Price  ({_g702_src})" if _g702_src
-                    else "Original Contract Price", _ctr, bold=True)
+        k_row = _prow(f"Original Contract Price  ({_g702_src})" if _g702_src
+                      else "Original Contract Price", _ctr, bold=True)
         if _g702_src:
             _ovr = wip_info.get("contract_g702_typed")
             if _ovr is not None:
-                row(f"⚑ a typed ${_ovr:,.0f} was overridden by the G702", None,
-                    indent=1, size=BASE_SIZE - 2, color="9C5700")
+                _prow(f"⚑ a typed ${_ovr:,.0f} was overridden by the G702", None,
+                      indent=1, size=BASE_SIZE - 2, color="9C5700")
         elif _mismatch(_typed_ctr, _wip_ctr):
-            row(f"⚑ typed — differs from WIP master (${_wip_ctr:,.0f})", None,
-                indent=1, size=BASE_SIZE - 2, color="9C5700")
-        etc_in = row("Original ETC (Estimated Total Cost)", _etc, bold=True)
+            _prow(f"⚑ typed — differs from WIP master (${_wip_ctr:,.0f})", None,
+                  indent=1, size=BASE_SIZE - 2, color="9C5700")
+        etc_in = _prow("Original ETC (Estimated Total Cost)", _etc, bold=True)
         if _mismatch(_typed_etc, _wip_etc):
-            row(f"⚑ typed — differs from WIP master (${_wip_etc:,.0f})", None,
-                indent=1, size=BASE_SIZE - 2, color="9C5700")
+            _prow(f"⚑ typed — differs from WIP master (${_wip_etc:,.0f})", None,
+                  indent=1, size=BASE_SIZE - 2, color="9C5700")
+        # the row these two came out of, printed under them - never a bare number
+        if _rep_src:
+            _prow(f"source: {_rep_src}", None, indent=1,
+                  size=BASE_SIZE - 2, color="595959")
         # CHANGE ORDERS and the REVISED rows appear only when there is
         # something to revise (the user 2026-09-03: "remove change orders and
         # revised rows if there are no change orders or revised etc to put,
         # it just takes up space"). No COs => the originals ARE the numbers
         # everything downstream measures against.
         _has_co = bool(_cos) or bool(_co_cost)
-        # NO CONTRACT ON FILE => TOTAL BILLED STANDS IN (the user 2026-09-03:
-        # "completed jobs use the total billed as contract"). A finished job
-        # is off the WIP master, so its inputs are blank; without this every
-        # contract-based line below (overhead, projection) read zero. The
-        # ETC falls back the same way to costs to date - the two MUST move
-        # together, or a filled contract against a zero ETC shows the whole
-        # contract as profit. A typed value wins the moment a PM enters one
-        # (the read-back ignores formulas). The ETC fill waits for COGS.
-        if not _has_co and _ctr is None:
-            ws.cell(row=k_row, column=2).value = f"={Btot}"
-            row("no contract on file - total billed stands in", None,
-                indent=1, size=BASE_SIZE - 2, color="595959")
-        if not _has_co and _etc is None:
-            row("no ETC on file - costs to date stand in", None,
-                indent=1, size=BASE_SIZE - 2, color="595959")
-        if _has_co:
+        if _has_co and not _no_projection:
             co_row = row("Change Orders (approved, per G702)" if _g702_src
                          else "Change Orders (approved, from draw)",
                          _cos, color=GREEN)
@@ -3354,7 +3381,7 @@ def build_sheet_pl(
         _yellow = [etc_in] if _g702_src else [k_row, etc_in]
         if coc_row:
             _yellow.append(coc_row)
-        for rr in _yellow:
+        for rr in [x for x in _yellow if x]:
             cc = ws.cell(row=rr, column=2)
             cc.fill = YEL
             cc.border = Border(left=_HAIR, right=_HAIR, top=_HAIR, bottom=_HAIR)
@@ -3367,10 +3394,16 @@ def build_sheet_pl(
                               bold=True)
             c_ref = f"$B${rev_ctr_row}"
             e_ref = f"$B${rev_etc_row}"
-        else:
+        elif not _no_projection:
             rev_ctr_row = rev_etc_row = None
             c_ref = f"$B${k_row}"
             e_ref = f"$B${etc_in}"
+        else:
+            # no ① block at all: the contract IS total billed and the ETC IS
+            # costs to date on a finished job, so both refs bind to the
+            # ACTUALS cells a few rows down, once those exist.
+            rev_ctr_row = rev_etc_row = None
+            c_ref = e_ref = None
         # 'Closed' in the WIP master (Test-Master STATUS) forces the close-out
         # view (the user 2026-07-16): % Complete = 100%, Cost to Complete = 0,
         # Earned = full contract. Closing a job in the WIP master closes it
@@ -3378,18 +3411,21 @@ def build_sheet_pl(
         wip_closed = str(wip_info.get("status") or "").strip().lower() in (
             "closed", "complete", "completed", "done")
 
-        # ── projection + the profit/overhead split (the user 2026-07-16) ──
-        pp_row = row("Projected Profit at Completion", formula=f"={c_ref}-{e_ref}",
-                     bold=True, border=TOP_BORDER)
-        row("Projected Margin %", formula=f'=IF({c_ref}=0,"",B{pp_row}/{c_ref})',
-            fmt=PCT_FMT, bold=True, color=NAVY)
-        poh_row = row(f"less: Overhead ({overhead_pct:.0f}% of contract)",
-                      formula=f"=-{oh}*{c_ref}", indent=1, color="595959")
-        pnp_row = row("Projected NET Profit", formula=f"=B{pp_row}+B{poh_row}",
-                      indent=1, bold=True, color=GREEN)
-        row("Projected Net Margin %",
-            formula=f'=IF({c_ref}=0,"",B{pnp_row}/{c_ref})',
-            fmt=PCT_FMT, indent=1, bold=True, color=GREEN)
+        # ── projection + the profit/overhead split (the user 2026-07-16).
+        #    Skipped entirely when no report carries a contract or an ETC:
+        #    there is nothing to project against (the owner 2026-09-04).
+        if not _no_projection:
+            pp_row = row("Projected Profit at Completion", formula=f"={c_ref}-{e_ref}",
+                         bold=True, border=TOP_BORDER)
+            row("Projected Margin %", formula=f'=IF({c_ref}=0,"",B{pp_row}/{c_ref})',
+                fmt=PCT_FMT, bold=True, color=NAVY)
+            poh_row = row(f"less: Overhead ({overhead_pct:.0f}% of contract)",
+                          formula=f"=-{oh}*{c_ref}", indent=1, color="595959")
+            pnp_row = row("Projected NET Profit", formula=f"=B{pp_row}+B{poh_row}",
+                          indent=1, bold=True, color=GREEN)
+            row("Projected Net Margin %",
+                formula=f'=IF({c_ref}=0,"",B{pnp_row}/{c_ref})',
+                fmt=PCT_FMT, indent=1, bold=True, color=GREEN)
 
         # ── ACTUALS — QBO to date: billed first, then costs, then overhead
         #    sitting on top of the REAL profit ($ and %) — the user 2026-07-16 ──
@@ -3398,6 +3434,9 @@ def build_sheet_pl(
         bd_row = row("Billed to Date (incl. retainage)", formula=f"={Btot}", bold=True)
         _qbo_link(bd_row, _cust_url)
         ctd_row = row("Costs to Date", None)
+        if c_ref is None:                    # see the _no_projection branch above
+            c_ref = f"$B${bd_row}"
+            e_ref = f"$B${ctd_row}"
         gpa_row = row("Gross Profit (to date)",
                       formula=f"=B{bd_row}-B{ctd_row}",
                       bold=True, border=TOP_BORDER)
@@ -3405,7 +3444,13 @@ def build_sheet_pl(
         # never adds up to the % of the contract"): it charged 10% of BILLED,
         # so it moved with every draw. Overhead is 10% of the CONTRACT - the
         # same cell the projection block uses - and it does not move.
-        aoh_row = row(f"less: Overhead ({overhead_pct:.0f}% of contract)",
+        # Say what the % is actually taken OF. With no contract on any report
+        # the base is total billed - true on a finished job, but the row must
+        # not claim a contract that does not exist (the owner 2026-09-04).
+        aoh_row = row(f"less: Overhead ({overhead_pct:.0f}% of contract)"
+                      if not _no_projection else
+                      f"less: Overhead ({overhead_pct:.0f}% of total billed — "
+                      f"no contract on any WIP report)",
                       formula=f"=-{oh}*{c_ref}", indent=1, color="595959")
         rnp_row = row("REAL Net Profit (to date)",
                       formula=f"=B{gpa_row}+B{aoh_row}",
@@ -3417,23 +3462,31 @@ def build_sheet_pl(
         # Revenue and reads >100% when costs blow past ETC (red = over budget,
         # never capped — the overage IS the signal); % Billed is billing
         # progress against the contract (retainage-inclusive Btot).
-        pc_row = row("% Complete (cost ÷ ETC)", None, fmt=PCT_FMT, bold=True, color=NAVY)
-        row("% Billed (billed ÷ contract)",
-            formula=f'=IF({c_ref}=0,"",({Btot})/{c_ref})',
-            fmt=PCT_FMT, bold=True, color=NAVY)
-        earn_row = row("Earned Revenue (contract × %)", None)
-        row("Over / (Under) Billing",
-            formula=f'=IF({e_ref}=0,"",({Btot})-B{earn_row})', color="C0504D")
-        ctc_row = row("Cost to Complete (remaining)", None)
+        # These five are all measured AGAINST the contract and the ETC, so on
+        # a job that has neither they would read a trivial 100% / 0 while
+        # implying a contract exists (the owner 2026-09-04: just the actuals).
+        if not _no_projection:
+            pc_row = row("% Complete (cost ÷ ETC)", None, fmt=PCT_FMT, bold=True, color=NAVY)
+            row("% Billed (billed ÷ contract)",
+                formula=f'=IF({c_ref}=0,"",({Btot})/{c_ref})',
+                fmt=PCT_FMT, bold=True, color=NAVY)
+            earn_row = row("Earned Revenue (contract × %)", None)
+            row("Over / (Under) Billing",
+                formula=f'=IF({e_ref}=0,"",({Btot})-B{earn_row})', color="C0504D")
+            ctc_row = row("Cost to Complete (remaining)", None)
+        else:
+            pc_row = earn_row = ctc_row = None
         if wip_closed:
             row("closed per WIP master — % complete forced to 100%", None,
                 size=BASE_SIZE - 2, color="595959")
-        box(wtop, r - 1)
+        if wtop is not None:
+            box(wtop, r - 1)
         # over-budget flag: cost-based % complete turns red past 100%
-        ws.conditional_formatting.add(
-            f"B{pc_row}",
-            CellIsRule(operator="greaterThan", formula=["1"],
-                       font=Font(bold=True, color="C00000")))
+        if pc_row:
+            ws.conditional_formatting.add(
+                f"B{pc_row}",
+                CellIsRule(operator="greaterThan", formula=["1"],
+                           font=Font(bold=True, color="C00000")))
         wip_contract_cell = c_ref
         wip_etc_cell = e_ref
         r += 1
@@ -3467,6 +3520,11 @@ def build_sheet_pl(
             _memo = _clean_cost_text(_raw, _project_name_words(cust_info.get("name", "")))
             _lbl = f"#{_doc} — {_memo}" if _memo else f"#{_doc}"
             _ir = row(_lbl, _amt, indent=1, size=BASE_SIZE - 1, color="375623")
+            # GROUPED UNDER INCOME and collapsed (the owner 2026-09-04: "group
+            # the invoices under income") - the total leads, the draws that make
+            # it up open on the [+], the same way the cost detail reads.
+            ws.row_dimensions[_ir].outline_level = 1
+            ws.row_dimensions[_ir].hidden = True
             _iu = _qbo_txn_url("invoice", _inv.get("id", ""), realm)
             if _iu:
                 _c = ws.cell(row=_ir, column=1)
@@ -3506,18 +3564,16 @@ def build_sheet_pl(
                 (pc_row, f'=IF({e_ref}=0,"",B{cogs_row}/{e_ref})', PCT_FMT, True),
                 (earn_row, f'=IF({e_ref}=0,"",{c_ref}*B{cogs_row}/{e_ref})', CURR_FMT, False),
                 (ctc_row, f"={e_ref}-B{cogs_row}", CURR_FMT, False))
-        for rr, frm, fmt, isb in _wip_fills:
+        for rr, frm, fmt, isb in [x for x in _wip_fills if x[0]]:
             cc = ws.cell(row=rr, column=2, value=frm)
             cc.number_format = fmt
             cc.font = Font(bold=isb, size=BASE_SIZE, color=NAVY if isb else "000000")
         _qbo_link(ctd_row, _costs_url)
-        # ETC: no ETC on file => costs to date stand in (see the contract
-        # fallback above - the pair moves together).
+        # Revised ETC = Original + CO cost. There is no costs-to-date fallback
+        # any more: a job with no ETC on any report has no ① block at all
+        # (the owner 2026-09-04), so there is no cell here to fill.
         if rev_etc_row:
-            ws.cell(row=rev_etc_row, column=2).value = (
-                f"=IF(B{etc_in}+B{coc_row}=0,B{cogs_row},B{etc_in}+B{coc_row})")
-        elif _etc is None:
-            ws.cell(row=etc_in, column=2).value = f"=B{cogs_row}"
+            ws.cell(row=rev_etc_row, column=2).value = f"=B{etc_in}+B{coc_row}"
 
         costs = f"B{cogs_row}"
         opex = f"B{exp_row}"
@@ -3589,6 +3645,8 @@ def build_sheet_pl(
         ws.column_dimensions[_cl].hidden = True
     ws.column_dimensions["H"].collapsed = True
     ws.sheet_properties.outlinePr.summaryRight = True
+    # the invoice group's [+] sits on the Income row ABOVE its detail
+    ws.sheet_properties.outlinePr.summaryBelow = False
 
     COST_TXT = "C55A11"   # Costs column text — distinct color for visual flair
     _vrule = Side(style="thin", color="808080")
