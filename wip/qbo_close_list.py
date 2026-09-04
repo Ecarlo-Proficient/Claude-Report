@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-qbo_close_list.py — Diff Ted's "really open" project list vs QBO's active customers.
+qbo_close_list.py — Diff the user's "really open" project list vs QBO's active customers.
 
 Outputs three sections:
 
-  CLOSE THESE        — active in QBO, NOT in Ted's open list. Mark inactive in QBO.
-                       MFD projects are EXCLUDED from this list — Ted handles MFD
+  CLOSE THESE        — active in QBO, NOT in the user's open list. Mark inactive in QBO.
+                       MFD projects are EXCLUDED from this list — the user handles MFD
                        closures manually. They appear in MFD ACTIVE instead.
   MFD ACTIVE         — every active MFD customer in QBO (manual review).
-  KEEP ACTIVE        — exact matches between Ted's list and QBO.
-  QUESTIONS          — in Ted's open list but NOT found as active in QBO.
+  KEEP ACTIVE        — exact matches between the user's list and QBO.
+  QUESTIONS          — in the user's open list but NOT found as active in QBO.
                        Either inactive (needs reactivation) or never project-tagged,
                        OR base name like "CP861" when QBO only has "CP861-7E" / "CP861-BP".
 
@@ -36,7 +36,7 @@ from typing import Dict, List, Optional, Set, Tuple
 import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-import qbo_vault as kc
+from shared import qbo_vault as kc
 
 API_BASE = "https://quickbooks.api.intuit.com"
 
@@ -47,7 +47,7 @@ _PROJ_RE = re.compile(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Ted's open list — the source of truth.
+# The user's open list — the source of truth.
 # ──────────────────────────────────────────────────────────────────────────────
 TED_OPEN_PROJECTS = """
 MFD133
@@ -234,12 +234,12 @@ def query_all(access: str, company_id: str, entity: str, where: str = "") -> Lis
 # Diff
 # ──────────────────────────────────────────────────────────────────────────────
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Diff Ted's open list vs QBO active (strict matching)")
+    ap = argparse.ArgumentParser(description="Diff the user's open list vs QBO active (strict matching)")
     ap.add_argument("--json", default=None, help="Optional JSON output path")
     args = ap.parse_args()
 
     open_list = parse_open_list()
-    print(f"[info] Ted's open list: {len(open_list)} projects (strict matching)")
+    print(f"[info] the user's open list: {len(open_list)} projects (strict matching)")
 
     print("[info] Authenticating to QBO (Touch ID)...")
     access, company_id = load_credentials()
@@ -276,7 +276,7 @@ def main() -> int:
 
     close_these: List[Tuple[str, str, str]] = []   # (proj, cust_id, name) — to auto-close (NO MFDs)
     keep_active: List[Tuple[str, str, str]] = []
-    mfd_active: List[Tuple[str, str, str]] = []    # ALL active MFDs — Ted handles manually
+    mfd_active: List[Tuple[str, str, str]] = []    # ALL active MFDs — the user handles manually
 
     for proj, customers in sorted(active_by_proj.items()):
         is_mfd = proj.upper().startswith("MFD")
@@ -290,7 +290,7 @@ def main() -> int:
             else:
                 close_these.append((proj, cust_id, name))
 
-    # In Ted's list but not active in QBO (strict only — exact match)
+    # In the user's list but not active in QBO (strict only — exact match)
     qbo_active_set = set(active_by_proj.keys())
     qbo_inactive_set = set(inactive_by_proj.keys())
     questions: List[Tuple[str, str]] = []
@@ -336,7 +336,7 @@ def main() -> int:
     print("\n" + "=" * 70)
     print(f"  SUMMARY")
     print("=" * 70)
-    print(f"  Ted's open list:     {len(open_list)}")
+    print(f"  the user's open list:     {len(open_list)}")
     print(f"  QBO active:          {len(active_customers)}")
     print(f"  QBO active w/ proj#: {sum(len(v) for v in active_by_proj.values())}")
     print(f"  → Auto-close (no MFD): {len(close_these)}")

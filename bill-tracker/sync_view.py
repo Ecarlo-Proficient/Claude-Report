@@ -48,6 +48,7 @@ PHASES = [
     ("fetching OPEN bills",     "📥", "Open bills"),
     ("fetching PAID bills",     "💵", "Paid bills"),
     ("fetching invoices",       "🧾", "Invoices"),
+    ("general list",            "📋", "General List"),
     ("building rows",           "🧱", "Build rows"),
     ("reading existing",        "♻️",  "Preserve lien / notes"),
     ("rotating backup",         "💾", "Backup"),
@@ -56,7 +57,8 @@ PHASES = [
     ("validating xlsx",         "🔍", "Validate (Excel-strict)"),
 ]
 # Phases we don't surface as steps (verbose / redundant for a clean view).
-SKIP_PHASES = ("status breakdown", "by division", "--limit", "excel bill sync starting")
+SKIP_PHASES = ("status breakdown", "by division", "rp draw semantics",
+               "--limit", "excel bill sync starting")
 
 
 def _phase_for(text: str):

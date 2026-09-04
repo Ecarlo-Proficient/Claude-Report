@@ -1,0 +1,933 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Proficient Ledger</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/trail.css">
+</head>
+<body>
+  <!-- ── Nav strip: the ONE sticky header ──────────────────────────────
+       Row 1: brand · the parent groups · Export / Refresh / gear. Row 2: the active group's
+       tabs (owner 2026-08-19: two-level nav; both rows are generated from NAV_GROUPS in app.js).
+       The old title bar (name + meta line) spent a full row on chrome - gone (owner 2026-09-01:
+       "remove or move down, takes up vertical space"). The meta line lives in Data freshness,
+       the version pill in the Customize panel. -->
+  <header class="navstrip">
+    <div class="navrow">
+      <span class="brand" title="Project Ledger"><span class="dot"></span>Ledger</span>
+      <nav class="tabs" id="groupbar"></nav>
+      <div class="topbar-actions">
+        <span class="sync-pill" id="syncPill" title="Last sync per feed"><span class="dot"></span><span id="syncPillText">…</span></span>
+        <button class="btn" id="btnResyncTop" title="Pull fresh data into the app - runs every loader (a couple of QBO steps prompt Touch ID)">⟳ Resync</button>
+        <button class="btn" id="btnExport" title="Export the current table to CSV">Export CSV</button>
+        <button class="btn" id="btnRefresh" title="Re-read the ledger now (instant). For new numbers, run a sync - see Data freshness.">Refresh</button>
+        <button class="btn icon" id="btnSettings" title="Customize">⚙</button>
+      </div>
+    </div>
+    <nav class="subtabs" id="subtabbar" hidden></nav>
+  </header>
+
+  <main class="wrap" id="wrap">
+    <div id="errorBanner" class="error-banner" hidden></div>
+
+    <!-- ══════════════ TAB: OVERVIEW (merged — My view + Overview) ══════════════ -->
+    <div class="tab-page" data-tab="overview">
+
+    <!-- ── Data freshness + one-click Resync (was My view) ──────────── -->
+    <section class="widget">
+      <div class="widget-head">
+        <h2>Data freshness <span class="count" id="metaLine">loading…</span><span class="count" id="homeFreshNote"></span></h2>
+        <span class="fresh-actions">
+          <button class="btn small" id="btnCostsFull" title="Full cost reload from QuickBooks: every project, all history, deleted or re-coded bills drop out. 30 to 40 minutes.">Full cost reload</button>
+          <button class="btn small" id="btnResync" title="Pull fresh data into the app - runs every loader. A couple of QBO steps prompt Touch ID on this Mac. No terminal needed.">⟳&nbsp;Resync</button>
+        </span>
+      </div>
+      <div class="fresh-row" id="homeFresh"></div>
+      <div class="sync-progress" id="syncProgress" hidden>
+        <div class="sync-bar"><div class="sync-bar-fill" id="syncBarFill"></div></div>
+        <div class="sync-step" id="syncStep"></div>
+      </div>
+    </section>
+
+    <!-- ── Action items (was My view) ───────────────────────────────── -->
+    <section class="widget">
+      <div class="widget-head"><h2>Action items <span class="count">— click to jump in</span></h2></div>
+      <div class="action-row" id="homeActions"></div>
+    </section>
+
+    <!-- ── KPI widgets ──────────────────────────────────────────────── -->
+    <section class="widget" id="widget-kpis">
+      <div class="widget-head"><h2>Portfolio</h2></div>
+      <div class="kpi-row" id="kpiRow"></div>
+    </section>
+
+    <!-- ── Needs attention ──────────────────────────────────────────── -->
+    <section class="widget" id="widget-attention">
+      <div class="widget-head">
+        <h2>Needs attention</h2>
+        <button class="btn small" id="btnClearRule" hidden>Clear filter</button>
+      </div>
+      <div class="attn-row" id="attnRow"></div>
+    </section>
+
+    <!-- ── Cost mix (summary bar; full tree + pivot live on the Costs tab) ── -->
+    <section class="widget" id="widget-costs">
+      <div class="widget-head">
+        <h2>Cost mix <span class="count" id="costCount"></span></h2>
+      </div>
+      <div class="costmix" id="costMix"></div>
+    </section>
+
+    <!-- ── Margins & burn (from QBO costs) ──────────────────────────── -->
+    <section class="widget" id="widget-margins">
+      <div class="widget-head">
+        <h2>Margins &amp; burn <span class="count" id="marginNote"></span></h2>
+      </div>
+      <div class="kpi-row" id="marginStats"></div>
+      <div class="table-scroll">
+        <table class="grid clickable" id="marginTable"><thead></thead><tbody></tbody></table>
+      </div>
+    </section>
+
+    <!-- ── Division rollup ──────────────────────────────────────────── -->
+    <section class="widget" id="widget-divisions">
+      <div class="widget-head"><h2>By division</h2></div>
+      <div class="table-scroll">
+        <table class="grid" id="divTable">
+          <thead></thead><tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ── Projects ─────────────────────────────────────────────────── -->
+    <section class="widget" id="widget-projects">
+      <div class="widget-head">
+        <h2>Projects <span class="count" id="projCount"></span></h2>
+      </div>
+      <div class="filters">
+        <input type="search" id="search" placeholder="Search project #, name, builder…" autocomplete="off">
+        <select id="fDivision"><option value="">All divisions</option></select>
+        <select id="fStatus"><option value="">All statuses</option></select>
+        <select id="fCategory"><option value="">All categories</option></select>
+        <label class="chk"><input type="checkbox" id="fActive"> Active only</label>
+      </div>
+      <div class="table-scroll">
+        <table class="grid clickable" id="projTable">
+          <thead></thead><tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    </div><!-- /tab: overview -->
+
+    <!-- ══════════════ TAB: HEALTH (company-health metric layer) ══════════════
+         Money In / Money Out / Position / Break-Even + Recurring & Debt - the fold-in of the
+         retired Company Tracker/Dashboard. Sections are assembled SERVER-SIDE (/api/healthtab);
+         this page renders them verbatim so the model can never fork. -->
+    <div class="tab-page" data-tab="health" hidden>
+      <section class="widget">
+        <div class="widget-head">
+          <h2>Company health <span class="count" id="healthNote"></span></h2>
+          <button class="btn small" id="btnHealthPull"
+                  title="Pull the QBO-only numbers (cash, P&amp;L, 13-wk cash flow, recurring register) into the ledger. Touch ID on this Mac. Everything else on this page is already live from the ledger.">⟳&nbsp;Pull QBO metrics</button>
+        </div>
+        <p class="hint">Live from the ledger - AR, AP, WIP backlog, draws and Sub LOC read the same tables as
+          their tabs. Cash, margins, burn and the recurring register come from the last
+          <b>Pull QBO metrics</b> run and carry its date: QBO bank balances only move when uploads
+          are entered, so treat cash as of its stamp, not as of now.</p>
+        <div class="sync-progress" id="healthProg" hidden>
+          <div class="sync-bar"><div class="sync-bar-fill" id="healthFill"></div></div>
+          <div class="sync-step" id="healthStep"></div>
+        </div>
+      </section>
+      <div id="healthSections"></div>
+      <section class="widget" id="healthRecWidget" hidden>
+        <div class="widget-head"><h2>Recurring &amp; Debt <span class="count" id="healthRecNote"></span></h2></div>
+        <p class="hint">The fixed obligations behind break-even, with what <b>CHANGED / STOPPED / NEW</b>
+          since last month. Debt payments are read off the liability balance drop; MCA rows are shown
+          for review but never counted (their balance moves are refinance entries, not cash out).</p>
+        <div class="kpi-row" id="healthRecKpis"></div>
+        <div id="healthRecAlerts"></div>
+        <details class="health-details" id="healthRecDetails">
+          <summary>Full register - every obligation by month</summary>
+          <div class="table-scroll"><table class="grid" id="healthRecTable"><thead></thead><tbody></tbody></table></div>
+        </details>
+      </section>
+      <section class="widget" id="healthAuditWidget" hidden>
+        <details class="health-details">
+          <summary>Break-even audit trail - where every figure came from</summary>
+          <div class="table-scroll"><table class="grid" id="healthAuditTable"><thead></thead><tbody></tbody></table></div>
+        </details>
+      </section>
+    </div><!-- /tab: health -->
+
+    <!-- ══════════════ TAB: P&L (portfolio — live per-job P&L + totals) ══════════════ -->
+    <div class="tab-page" data-tab="pnl" hidden>
+      <section class="widget">
+        <div class="widget-head"><h2>Project P&amp;L <span class="count" id="pnlNote"></span></h2></div>
+        <div class="kpi-row" id="pnlTotals"></div>
+        <p class="hint">Live from the ledger spine — <b>earned revenue</b> (contract × %complete) −
+          <b>costs</b> (QBO, incl. subs) − <b>overhead</b> (10% of revenue; MFD 9% of costs). Reconciles
+          with the project-pnl Excel. Active jobs only (Closed/Complete excluded). Click a row for the full P&amp;L.</p>
+      </section>
+      <section class="widget">
+        <div class="widget-head"><h2>By division <span class="count">— where the margin is</span></h2></div>
+        <div class="table-scroll">
+          <table class="grid" id="pnlDivTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+      <section class="widget">
+        <div class="widget-head"><h2>By job <span class="count" id="pnlJobNote">— click a header to sort · worst margin first</span></h2></div>
+        <div class="filters">
+          <label class="fld"><span>Project #</span><input type="search" id="pnlFProj" placeholder="CP800" autocomplete="off"></label>
+          <label class="fld"><span>Client</span><input type="search" id="pnlFClient" placeholder="Firestone" autocomplete="off"></label>
+          <select id="pnlFDivision"><option value="">All divisions</option><option>Commercial</option><option>Multi Family</option><option>Residential</option></select>
+          <select id="pnlFStatus"><option value="active">Active only</option><option value="all">All statuses</option><option value="closed">Closed only</option></select>
+          <label class="fld"><span>Sort</span>
+            <select id="pnlSortSel">
+              <option value="worst">Worst margin</option>
+              <option value="best">Best margin</option>
+              <option value="earned">Most earned</option>
+              <option value="cost">Most cost</option>
+              <option value="contract">Biggest contract</option>
+              <option value="name">Project #</option>
+            </select>
+          </label>
+        </div>
+        <div class="table-scroll">
+          <table class="grid clickable" id="pnlJobTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </div><!-- /tab: pnl -->
+
+    <!-- ══════════════ TAB: COSTS (pivot — code → jobs) ══════════════ -->
+    <div class="tab-page" data-tab="wip" hidden>
+      <section class="widget">
+        <div class="widget-head">
+          <h2>WIP report <span class="count" id="wipNote"></span></h2>
+          <label class="inline-check"><input type="checkbox" id="wipActive" checked> Active only</label>
+        </div>
+        <p class="hint" id="wipHint"></p>
+        <div class="wip-legend" id="wipLegend">
+          <span class="wip-lg"><i class="wip-sw pos"></i>Overbilled - holding the GC's cash</span>
+          <span class="wip-lg"><i class="wip-sw neg"></i>Underbilled / job borrow - financing the job</span>
+          <span class="wip-lg"><i class="wip-sw gp-lo"></i>GP thin<i class="wip-sw gp-ok"></i>healthy<i class="wip-sw gp-hi"></i>&gt;30% (verify)</span>
+          <span class="wip-lg"><i class="wip-sw bar"></i>% complete</span>
+          <span class="wip-lg wip-lg-dim">Drag a header divider to resize · click a row to open the job</span>
+        </div>
+        <div class="table-scroll wip-scroll">
+          <table class="grid wip-grid" id="wipTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </div><!-- /tab: wip -->
+
+    <!-- ══════════════ TAB: WIP REVIEW (pending update → approve/disapprove → write 3 tabs) ══════════════ -->
+    <div class="tab-page" data-tab="wipreview" hidden>
+      <section class="widget">
+        <div class="widget-head">
+          <h2>WIP Review <span class="count" id="wrNote"></span></h2>
+          <div class="console-actions">
+            <button class="btn small" id="wrCompute" title="Run the WIP pipeline and show every change before it is written">Compute pending update</button>
+            <button class="btn small primary" id="wrSync" title="Write the approved changes to Test - CP, Test - RP and Test-Master" hidden>Sync approved →</button>
+          </div>
+        </div>
+        <p class="hint">The pending WIP update as a before/after. <b>Accept (QBO)</b> = costs / billed /
+          retainage, pulled from QuickBooks - checked by default. <b>PM answers</b> = contract / COs / ETC -
+          left <b>unchecked</b> until confirmed. Approve a change to write the new value; leave it off to keep
+          what's on the tab. Approved changes sync to <b>Test - CP</b> (CP), <b>Test - RP</b> (RP) and
+          <b>Test-Master</b> (all three). Read-only until you hit Sync.</p>
+        <div class="kpi-row" id="wrStats"></div>
+        <div class="filters" id="wrFilters" hidden>
+          <input type="search" id="wrSearch" placeholder="Find a job #, name…" autocomplete="off">
+          <select id="wrDivision"><option value="">All divisions</option><option>Commercial</option><option>Residential</option><option>Multi-Family</option></select>
+          <select id="wrStatus"><option value="">All changes</option><option value="CHANGED">Changed</option><option value="REVERSED">Reversed (went down)</option><option value="ADDED">Added</option><option value="REMOVED">Removed</option></select>
+          <label class="check"><input type="checkbox" id="wrChangedOnly" checked> Changed only</label>
+          <span class="wr-bulk">
+            <button class="btn tiny" id="wrApproveQbo" title="Approve every QBO change (costs / billed / retainage)">Approve all QBO</button>
+            <button class="btn tiny" id="wrApproveAll" title="Approve every change shown">Approve all shown</button>
+            <button class="btn tiny" id="wrClearAll" title="Uncheck every change (keep the tabs as they are)">Clear all</button>
+          </span>
+        </div>
+        <div id="wrBody" class="wr-body"></div>
+      </section>
+    </div><!-- /tab: wipreview -->
+
+    <div class="tab-page" data-tab="costs" hidden>
+      <section class="widget">
+        <div class="widget-head"><h2>Cost type ▸ job type <span class="count">— click a code to see every job that spent it</span></h2></div>
+        <div class="table-scroll">
+          <table class="grid clickable" id="costTreeTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+      <section class="widget" id="codeJobsWidget" hidden>
+        <div class="widget-head"><h2 id="codeJobsTitle">Jobs</h2></div>
+        <div class="table-scroll">
+          <table class="grid clickable" id="codeJobsTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </div><!-- /tab: costs -->
+
+    <!-- ══════════════ TAB: DRAWS (race-through worklist) ══════════════ -->
+    <div class="tab-page" data-tab="draws" hidden>
+      <section class="widget">
+        <div class="widget-head">
+          <h2>Funding by project <span class="count" id="drawsNote"></span></h2>
+          <button class="btn small" id="btnClearDrawStage" hidden>Show all</button>
+        </div>
+        <div class="kpi-row" id="drawsStats"></div>
+        <p class="hint">One row per job: the <b>next draw the GC owes</b>, what <b>blocks</b> it (unpaid bills on
+          earlier draws - their waivers release the money), and the latest draw's vendors paid. Click a row to
+          open the project page, where the draws, bills, pay-to-unlock and the pay list live.
+          <b>RP is excluded</b> - residential bills at completion / milestones, not formal draws.</p>
+        <div class="filters">
+          <div class="msel" id="dfClientMsel"><button type="button" class="msel-btn" id="dfClientBtn">All clients</button><div class="msel-menu wide" id="dfClientMenu" hidden></div></div>
+          <div class="msel" id="dfProjMsel"><button type="button" class="msel-btn" id="dfProjBtn">All projects</button><div class="msel-menu" id="dfProjMenu" hidden></div></div>
+          <div class="msel" id="dfVendorMsel"><button type="button" class="msel-btn" id="dfVendorBtn">All vendors</button><div class="msel-menu wide" id="dfVendorMenu" hidden></div></div>
+          <div class="msel" id="dfInvMsel"><button type="button" class="msel-btn" id="dfInvBtn">All invoices</button><div class="msel-menu" id="dfInvMenu" hidden></div></div>
+          <div class="msel" id="dfDivMsel"><button type="button" class="msel-btn" id="dfDivBtn">All divisions</button><div class="msel-menu" id="dfDivMenu" hidden></div></div>
+          <div class="datef" id="dfDate"></div>
+        </div>
+        <div id="drawList"></div>
+      </section>
+    </div><!-- /tab: draws -->
+
+    <!-- ══════════════ TAB: OPEN INVOICES (AR aging - what the GC still owes you) ══════════════ -->
+    <div class="tab-page" data-tab="invoices" hidden>
+      <section class="widget">
+        <div class="widget-head">
+          <h2><span id="invHeading">Open invoices</span> <span class="count" id="invNote"></span></h2>
+          <div class="wh-right">
+            <span class="count" id="invAsOf"></span>
+            <div class="seg" id="invScopeSeg" title="Open only = unpaid invoices the GC still owes · All = every invoice incl. paid">
+              <button type="button" class="seg-btn on" data-scope="open">Open only</button>
+              <button type="button" class="seg-btn" data-scope="all">All</button>
+            </div>
+            <div class="seg" id="invViewSeg" title="Amounts = a clean list of what's owed · Aging = the AR aging buckets + lien clock">
+              <button type="button" class="seg-btn on" data-view="amounts">Amounts</button>
+              <button type="button" class="seg-btn" data-view="aging">Aging</button>
+            </div>
+          </div>
+        </div>
+        <div class="bill-filters" id="invFilters">
+          <label class="fld inv-quick-fld"><span>Find (⌘F)</span>
+            <input type="search" id="ifQuick" class="inv-quick" placeholder="invoice #, memo, amount, project · -word excludes" autocomplete="off">
+          </label>
+          <div class="fld"><span>Month</span>
+            <div class="msel" id="ifMonthMsel">
+              <button type="button" class="msel-btn" id="ifMonthBtn" title="Invoice month - every month is in until you untick one">All months</button>
+              <div class="msel-menu" id="ifMonthMenu" hidden></div>
+            </div>
+          </div>
+          <span class="bf-sep"></span>
+          <div class="fld"><span>Client</span>
+            <div class="msel" id="ifClientMsel"><button type="button" class="msel-btn" id="ifClientBtn">All clients</button><div class="msel-menu wide" id="ifClientMenu" hidden></div></div>
+          </div>
+          <div class="fld"><span>Project #</span>
+            <div class="msel" id="ifProjMsel"><button type="button" class="msel-btn" id="ifProjBtn">All projects</button><div class="msel-menu" id="ifProjMenu" hidden></div></div>
+          </div>
+          <label class="fld"><span>Division</span><select id="ifDivision"></select></label>
+          <label class="fld"><span>Lien deadline</span>
+            <select id="ifLienClock" title="Texas lien-notice CLOCK: past its deadline, or coming up soon (covers CP draws + retainage and RP)">
+              <option value="">Any deadline</option>
+              <option value="past">Past due (missed)</option>
+              <option value="upcoming">Upcoming (due soon)</option>
+              <option value="sent">Notice sent</option>
+            </select>
+          </label>
+          <label class="fld"><span>Lien status</span><select id="ifLien"></select></label>
+          <label class="fld"><span>Litigation</span>
+            <select id="ifLitig">
+              <option value="ex">Exclude</option>
+              <option value="all">Include</option>
+              <option value="only">Only</option>
+            </select>
+          </label>
+          <span class="bf-sep"></span>
+          <label class="fld"><span>Sort</span>
+            <select id="ifSort">
+              <option value="due">Oldest due first</option>
+              <option value="owed">Most owed</option>
+              <option value="client">Client A–Z</option>
+            </select>
+          </label>
+          <label class="fld"><span>View</span>
+            <select id="ifViews" title="Your saved filter sets for this tab"><option value="">Custom</option></select>
+          </label>
+          <button class="btn small" id="ifSaveView" title="Save the current filters, sort, scope and quick find as a named view">Save view</button>
+          <button class="btn small" id="ifDelView" title="Delete the selected saved view" hidden>Delete view</button>
+          <button class="btn small" id="ifSubGroup" title="Group each client's invoices by project, or flatten to one list">Flatten</button>
+          <button class="btn small" id="ifCollapse">Collapse all</button>
+          <button class="btn small" id="ifStatement" title="Open a clean statement of the filtered open invoices to copy/paste to the client">Copy for client ↗</button>
+          <button class="btn small primary" id="ifCollect" title="The status of the picked invoices (or everything shown), one line each, to copy - or as Excel for the cash-flow forecast">Collections report</button>
+          <button class="btn small" id="ifClear" hidden>Clear filters</button>
+        </div>
+        <div class="table-scroll inv-scroll">
+          <div class="attn-row inv-tiles" id="invStats"></div>
+          <table class="grid aging-grid" id="invTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </div><!-- /tab: invoices -->
+
+    <!-- ══════════════ TAB: BILLS (the full Bill Tracker - Excel-dense, per-field filters) ══════════════ -->
+    <div class="tab-page" data-tab="bills" hidden>
+      <!-- Lien-mark Save bar: sticky top-right, scrolls with this page, only on Bills -->
+      <div class="savebar" id="billSaveBar">
+        <span class="sb-warn">●</span>
+        <span class="sb-text sb-review" id="billSaveText" title="Review the lien marks you've made"></span>
+        <button class="sb-save" id="btnSaveBillMarks">Save</button>
+        <button id="btnDiscardBillMarks">Discard</button>
+      </div>
+      <section class="widget">
+        <div class="widget-head">
+          <h2>Bill Tracker <span class="count" id="billsNote"></span></h2>
+          <span class="wh-right"><span class="count" id="billsQuickStat"></span>
+            <button class="btn small" id="btnPayRunGo" title="The check-run worksheet: the bills ticked to pay, amounts, Save / Clear">Pay run →</button>
+            <button class="btn small" id="btnLienRegGo" title="The lien register: notices sent and liens filed">Lien register →</button></span>
+        </div>
+        <div class="bill-views" id="billViews"></div>
+        <div class="bill-filters" id="billFilters">
+          <div class="fld"><span>Date</span><div class="datef" id="bfDate"></div></div>
+          <span class="bf-sep"></span>
+          <div class="fld"><span>Project #</span>
+            <div class="msel" id="bfProjectMsel"><button type="button" class="msel-btn" id="bfProjectBtn">All projects</button><div class="msel-menu" id="bfProjectMenu" hidden></div></div>
+          </div>
+          <div class="fld"><span>Client</span>
+            <div class="msel" id="bfCustomerMsel"><button type="button" class="msel-btn" id="bfCustomerBtn">All clients</button><div class="msel-menu wide" id="bfCustomerMenu" hidden></div></div>
+          </div>
+          <div class="fld"><span>Vendor</span>
+            <div class="msel" id="bfVendorMsel"><button type="button" class="msel-btn" id="bfVendorBtn">All vendors</button><div class="msel-menu wide" id="bfVendorMenu" hidden></div></div>
+          </div>
+          <button type="button" class="btn small" id="bfMoreBtn" title="Division, pay status, invoice, approval and lien filters">More filters</button>
+          <span class="bf-more" id="bfMore" hidden>
+          <div class="fld"><span>Division</span>
+            <div class="msel" id="bfDivisionMsel"><button type="button" class="msel-btn" id="bfDivisionBtn">All divisions</button><div class="msel-menu" id="bfDivisionMenu" hidden></div></div>
+          </div>
+          <div class="fld"><span>Pay status</span>
+            <div class="msel" id="bfPayMsel"><button type="button" class="msel-btn" id="bfPayBtn">Any pay status</button><div class="msel-menu" id="bfPayMenu" hidden></div></div>
+          </div>
+          <div class="fld"><span>Invoice</span>
+            <div class="msel" id="bfInvMsel"><button type="button" class="msel-btn" id="bfInvBtn">Any invoice</button><div class="msel-menu" id="bfInvMenu" hidden></div></div>
+          </div>
+          <div class="fld"><span>Approved</span>
+            <div class="msel" id="bfApprMsel"><button type="button" class="msel-btn" id="bfApprBtn">Any approval</button><div class="msel-menu" id="bfApprMenu" hidden></div></div>
+          </div>
+          <div class="fld"><span>Lien</span>
+            <div class="msel" id="bfLienMsel"><button type="button" class="msel-btn" id="bfLienBtn">Any lien</button><div class="msel-menu" id="bfLienMenu" hidden></div></div>
+          </div>
+          </span>
+          <span class="bf-sep"></span>
+          <label class="fld"><span>Group by</span>
+            <select id="billGroup">
+              <option value="vendor">Vendor</option>
+              <option value="none">None</option>
+              <option value="client">Customer</option>
+              <option value="division">Division</option>
+              <option value="project_no">Project</option>
+              <option value="matched_invoice">Draw</option>
+            </select>
+          </label>
+          <label class="fld"><span>Sort</span>
+            <select id="billSort">
+              <option value="oldest">Oldest first</option>
+              <option value="newest">Newest first</option>
+              <option value="vendor">Vendor A–Z</option>
+              <option value="owed">Most owed</option>
+              <option value="amount">Biggest bill</option>
+              <option value="lien">Lien urgency</option>
+            </select>
+          </label>
+          <button class="btn small" id="bfCollapse">Collapse all</button>
+          <button class="btn small" id="bfClear" hidden>Clear filters</button>
+          <button class="btn small subtle" id="btnLienReview" title="The lien marks you have saved on bills - review them">Lien marks on file</button>
+        </div>
+        <div class="table-scroll bills-scroll">
+          <table class="grid bills-grid" id="billTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </div><!-- /tab: bills -->
+
+    <!-- ══════════════ TAB: PAY BILLS (check-run worksheet) ══════════════ -->
+    <div class="tab-page" data-tab="paybills" hidden>
+      <div class="record-head"><button class="btn small" id="btnBackBillsPay">← Bills</button><div class="record-head-txt"><div class="record-title">Pay run</div><div class="record-sub">the check-run worksheet - local intent only, never QuickBooks</div></div></div>
+      <!-- Pay-run save bar: sticky top-right, mirrors the Bills lien save bar -->
+      <div class="savebar" id="paySaveBar">
+        <span class="sb-warn">●</span>
+        <span class="sb-text sb-review" id="paySaveText" title="Review this pay run"></span>
+        <button class="sb-save" id="btnSavePayRun">Save pay run</button>
+        <button id="btnDiscardPayRun">Discard</button>
+      </div>
+      <section class="widget">
+        <div class="widget-head">
+          <h2>Pay Bills <span class="count" id="payNote"></span></h2>
+          <span class="count" id="payQuickStat"></span>
+        </div>
+        <p class="hint">Mark the bills you're paying and set the amount (defaults to the full open balance - edit it
+          for a partial). Hit <b>Save pay run</b> to lock it in and generate the pay list below. This is a worksheet:
+          it records what you plan to pay, it does <b>not</b> pay anything in QuickBooks - record the actual payment
+          in QBO and the bill clears here on the next AP sync.</p>
+        <div class="bill-filters" id="payFilters">
+          <label class="fld"><span>Search</span><input type="search" id="pfSearch" placeholder="project / bill #"></label>
+          <div class="fld"><span>Client</span>
+            <div class="msel" id="pfClientMsel"><button type="button" class="msel-btn" id="pfClientBtn">All clients</button><div class="msel-menu wide" id="pfClientMenu" hidden></div></div>
+          </div>
+          <div class="fld"><span>Vendor</span>
+            <div class="msel" id="pfVendorMsel"><button type="button" class="msel-btn" id="pfVendorBtn">All vendors</button><div class="msel-menu wide" id="pfVendorMenu" hidden></div></div>
+          </div>
+          <div class="fld"><span>Division</span>
+            <div class="msel" id="pfDivMsel"><button type="button" class="msel-btn" id="pfDivBtn">All divisions</button><div class="msel-menu" id="pfDivMenu" hidden></div></div>
+          </div>
+          <div class="fld"><span>Approved</span>
+            <div class="msel" id="pfApprMsel"><button type="button" class="msel-btn" id="pfApprBtn">Any approval</button><div class="msel-menu" id="pfApprMenu" hidden></div></div>
+          </div>
+          <div class="fld"><span>Lien</span>
+            <div class="msel" id="pfLienMsel"><button type="button" class="msel-btn" id="pfLienBtn">Any lien</button><div class="msel-menu" id="pfLienMenu" hidden></div></div>
+          </div>
+          <span class="bf-sep"></span>
+          <label class="fld"><span>Show</span>
+            <select id="pfShow">
+              <option value="open">Open bills</option>
+              <option value="run">In this pay run</option>
+            </select>
+          </label>
+          <label class="inline-check" title="Only bills whose GC draw has actually been paid - you've been funded, so the sub can be paid"><input type="checkbox" id="pfFunded"> GC-funded only</label>
+          <span class="bf-sep"></span>
+          <button class="btn small" id="pfSelectAll">Select all shown</button>
+          <button class="btn small" id="pfClearRun" title="Empty the whole pay run">Clear run</button>
+        </div>
+        <div class="table-scroll">
+          <table class="grid pay-grid" id="payBillsTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+      <section class="widget" id="payListWidget" hidden>
+        <div class="widget-head">
+          <h2>Pay list <span class="count" id="payListNote"></span></h2>
+          <button class="btn small" id="pfExport">Export CSV</button>
+        </div>
+        <p class="hint">The saved check run, grouped by vendor. Take this to QuickBooks / the bank to cut the payments.</p>
+        <div class="table-scroll">
+          <table class="grid pay-list-grid" id="payListTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </div><!-- /tab: paybills -->
+
+    <!-- ══════════════ TAB: LIENS (collections worklist) ══════════════ -->
+    <div class="tab-page" data-tab="liens" hidden>
+      <div class="record-head"><button class="btn small" id="btnBackBillsLien">← Bills</button><div class="record-head-txt"><div class="record-title">Lien register</div><div class="record-sub">notices sent and liens filed - your marks</div></div></div>
+      <section class="widget">
+        <div class="widget-head"><h2>Liens filed &amp; notices sent <span class="count" id="liensNote"></span></h2></div>
+        <div class="kpi-row" id="liensStats"></div>
+        <p class="hint">Bills where a lien notice has actually been <b>sent</b> or a lien <b>filed</b> - the real
+          lien register (all divisions). It is <b>not</b> the deadline clock: only what you've marked. Each row is
+          the vendor, the bill, the client + project it sits on, and the AR draw it ties to (with whether the
+          client paid it). Mark bills from the <b>Bills</b> tab; they land here once saved.</p>
+      </section>
+      <section class="widget">
+        <div class="widget-head">
+          <h2>Sent + filed <span class="count">- click a tile to filter</span></h2>
+          <button class="btn small" id="btnClearLien" hidden>Show all</button>
+        </div>
+        <div class="attn-row" id="lienFilters"></div>
+        <div class="bill-filters">
+          <div class="fld"><span>Client</span><div class="msel" id="lfClientMsel"><button type="button" class="msel-btn" id="lfClientBtn">All clients</button><div class="msel-menu wide" id="lfClientMenu" hidden></div></div></div>
+          <div class="fld"><span>Vendor</span><div class="msel" id="lfVendorMsel"><button type="button" class="msel-btn" id="lfVendorBtn">All vendors</button><div class="msel-menu wide" id="lfVendorMenu" hidden></div></div></div>
+          <div class="fld"><span>Division</span><div class="msel" id="lfDivMsel"><button type="button" class="msel-btn" id="lfDivBtn">All divisions</button><div class="msel-menu" id="lfDivMenu" hidden></div></div></div>
+          <label class="fld"><span>Project #</span><input type="search" id="lienFProj" placeholder="CP745 / RP7186" autocomplete="off"></label>
+          <div class="fld"><span>Invoice status</span><div class="msel" id="lfPayMsel"><button type="button" class="msel-btn" id="lfPayBtn">Any inv. status</button><div class="msel-menu" id="lfPayMenu" hidden></div></div></div>
+        </div>
+        <div class="table-scroll">
+          <table class="grid clickable" id="lienTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </div><!-- /tab: liens -->
+
+    <!-- ══════════════ TAB: VENDORS (spend) ══════════════ -->
+    <div class="tab-page" data-tab="vendors" hidden>
+      <section class="widget">
+        <div class="widget-head"><h2>Vendor Center <span class="count" id="vendorsNote"></span></h2></div>
+        <div class="filters"><input type="search" id="vendorSearch" placeholder="Search vendor…" autocomplete="off">
+          <label class="chk"><input type="checkbox" id="vendorGroupType"> Group by type</label>
+          <button class="btn small" id="vendorExpandAll" style="display:none">Expand all</button></div>
+        <div class="table-scroll">
+          <table class="grid clickable" id="vendorTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </div><!-- /tab: vendors -->
+
+    <!-- ══════════════ TAB: SUB LOC (subcontractor float we've fronted) ══════════════ -->
+    <div class="tab-page" data-tab="subloc" hidden>
+      <section class="widget">
+        <div class="widget-head"><h2>Sub LOC <span class="count" id="sublocNote"></span></h2></div>
+        <div class="kpi-row" id="sublocStats"></div>
+        <p class="hint" id="sublocHint"></p>
+      </section>
+      <!-- By division at the TOP, ungrouped (always shown) -->
+      <section class="widget">
+        <div class="widget-head"><h2>By division <span class="count">still fronted + the peak each hit</span></h2></div>
+        <div class="table-scroll"><table class="grid" id="sublocDivTable"><thead></thead><tbody></tbody></table></div>
+      </section>
+      <!-- By project: the top few most in the hole; expand for the rest (a dashboard, not a long list) -->
+      <section class="widget">
+        <div class="widget-head"><h2>By project <span class="count">most fronted first &middot; click a project # for its open subs by draw</span></h2></div>
+        <div class="table-scroll"><table class="grid clickable" id="sublocProjTable"><thead></thead><tbody></tbody></table></div>
+        <div id="sublocProjMore" class="more-row"></div>
+      </section>
+      <section class="widget">
+        <div class="widget-head"><h2>Repayment feed <span class="count">a client payment paid off these fronted subs &middot; click a row for the line items</span></h2></div>
+        <div id="sublocFeed"></div>
+      </section>
+    </div><!-- /tab: subloc -->
+
+    <!-- ══════════════ TAB: SALES (CRM pipeline — read-only from Notion) ══════════════ -->
+    <div class="tab-page" data-tab="sales" hidden>
+      <section class="widget">
+        <div class="widget-head"><h2>Sales pipeline <span class="count" id="salesNote"></span></h2></div>
+        <div class="kpi-row" id="salesStats"></div>
+        <p class="hint">Read-only from the Notion Customer List (loaded by <code>load_customers.py</code>).
+          Attribution is Notion's own “Last edited by”. Update statuses/notes in Notion, not here.</p>
+      </section>
+      <section class="widget">
+        <div class="widget-head"><h2>Pipeline <span class="count">— customers by stage</span></h2></div>
+        <div class="table-scroll">
+          <table class="grid clickable" id="salesFunnel"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+      <section class="widget">
+        <div class="widget-head"><h2>Activity by rep <span class="count">— who worked what (by last editor) · click a rep</span></h2></div>
+        <div class="table-scroll">
+          <table class="grid clickable" id="salesRepTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+      <section class="widget">
+        <div class="widget-head"><h2>Rep activity <span class="count" id="repActNote"></span></h2></div>
+        <div id="repActivity"></div>
+      </section>
+      <section class="widget">
+        <div class="widget-head"><h2>Warm accounts <span class="count" id="salesWarmNote"></span></h2></div>
+        <div id="salesWarm"></div>
+      </section>
+      <section class="widget">
+        <div class="widget-head"><h2>All customers <span class="count" id="salesCustNote"></span></h2></div>
+        <div class="filters">
+          <input type="search" id="salesSearch" placeholder="Search client, contact, rep…" autocomplete="off">
+          <select id="salesStage"><option value="">All stages</option></select>
+          <select id="salesDivision"><option value="">All divisions</option></select>
+        </div>
+        <div class="table-scroll">
+          <table class="grid clickable" id="salesTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </div><!-- /tab: sales -->
+
+    <!-- ══════════════ TAB: CUSTOMERS (top clients by open AR) ══════════════ -->
+    <div class="tab-page" data-tab="customers" hidden>
+      <section class="widget">
+        <div class="widget-head"><h2>Customer Center <span class="count" id="custNote"></span></h2></div>
+        <p class="hint">Your current clients ranked by <b>open AR</b> (what they still owe you). Click a client to see just their open invoices.</p>
+        <div class="kpi-row" id="custStats"></div>
+        <div class="table-scroll">
+          <table class="grid clickable" id="custTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </div><!-- /tab: customers -->
+
+    <!-- ══════════════ TAB: PAYMENTS (received payments + the AP due out under them) ══════════════ -->
+    <div class="tab-page" data-tab="payments" hidden>
+      <section class="widget">
+        <div class="widget-head"><h2>Payments <span class="count" id="payNote"></span></h2></div>
+        <div id="payBody"></div>
+      </section>
+    </div><!-- /tab: payments -->
+
+    <!-- ══════════════ TAB: SYSTEMS (the process registry, read live from the vault) ══════════════ -->
+    <div class="tab-page" data-tab="systems" hidden>
+      <section class="widget">
+        <div class="widget-head">
+          <h2>Systems &amp; processes <span class="count" id="sysNote"></span></h2>
+          <button class="btn small" id="btnSysReload" title="Re-read the registry files from the vault">Reload</button>
+        </div>
+        <p class="hint">Every process the business runs, one row each, read live from the vault
+          registry. <b>Health</b> is how it runs · <b>State</b> is how sure the description is ·
+          <b>Life</b> is whether it runs at all. Read-only here - the vault markdown stays the
+          source of truth, so edit there and hit Reload.</p>
+        <div class="kpi-row" id="sysStats"></div>
+        <div class="sys-filters" id="sysDomains"></div>
+        <div class="filters">
+          <input type="search" id="sysSearch" placeholder="Search process, owner, record, automation…" autocomplete="off">
+          <select id="sysOwner"><option value="">All owners</option></select>
+          <select id="sysHealth">
+            <option value="">All health</option>
+            <option value="red">Broken</option>
+            <option value="yellow">Fragile</option>
+            <option value="green">Running</option>
+            <option value="none">Nothing to fail yet</option>
+          </select>
+          <select id="sysState">
+            <option value="">All states</option>
+            <option value="proposed">Proposed</option>
+            <option value="inferred">Inferred</option>
+            <option value="confirmed">Confirmed</option>
+            <option value="corrected">Corrected</option>
+          </select>
+          <select id="sysLife">
+            <option value="">All lifecycle</option>
+            <option value="live">Live</option>
+            <option value="building">Building</option>
+            <option value="agreed">Agreed</option>
+            <option value="idea">Idea</option>
+          </select>
+          <label class="check"><input type="checkbox" id="sysRetired"> Show retired</label>
+        </div>
+        <div class="table-scroll">
+          <table class="grid" id="sysTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </div><!-- /tab: systems -->
+
+    <!-- ══════════════ TAB: ACCOUNTING (Bill Tracker audits — the fixes to make) ══════════════ -->
+    <div class="tab-page" data-tab="accounting" hidden>
+      <section class="widget">
+        <div class="widget-head">
+          <h2>Audit <span class="count" id="acctNote"></span></h2>
+          <button class="btn small" id="btnAcctReload" title="Re-read the Bill Tracker audits">Reload</button>
+        </div>
+        <p class="hint">Bills the AP sync flagged to fix. Pick an audit below to filter; <b>📎</b> opens the scan, the bill # copies (↗ for QBO).</p>
+        <div class="kpi-row" id="acctStats"></div>
+        <div class="acct-filters" id="acctFilters"></div>
+        <div class="filters">
+          <input type="search" id="acctSearch" placeholder="Find a vendor, project #, bill ref…" autocomplete="off">
+          <select id="acctDivision"><option value="">All divisions</option></select>
+          <div class="msel" id="acctVendorMsel"><button type="button" class="msel-btn" id="acctVendorBtn" title="Tick the vendors to show">All vendors</button><div class="msel-menu wide" id="acctVendorMenu" hidden></div></div>
+          <button class="btn small" id="btnAcctCopy" title="Copy the selected rows (or all shown) as a table with headers - paste into Excel, Google Sheets, or an email">Copy all</button>
+          <button class="btn small" id="btnAcctDownload" title="Download the selected rows' bill scans into a folder and open it - drag them into the message to the responsible party" disabled>Download scans</button>
+        </div>
+        <div class="table-scroll">
+          <table class="grid" id="acctTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </div><!-- /tab: accounting -->
+
+    <!-- ══════════════ TAB: CONSOLE (control plane - run the pipelines) ══════════════ -->
+    <div class="tab-page" data-tab="console" hidden>
+      <section class="widget">
+        <div class="widget-head">
+          <h2>Console <span class="count">- run the pipelines from here</span></h2>
+          <div class="console-actions">
+            <button class="btn small" id="btnSyncApAr" title="Run AP (bill tracker) then AR (invoice sync) back to back - both pull from QuickBooks and AR's aging reads AP's output, so they belong together.">Sync AP + AR</button>
+            <button class="btn small" id="btnFullRefresh" title="Run every pipeline including the source producers (AR/AP), then the loaders. Real writes to Notion/Teams/Excel; prompts Touch ID.">Full refresh</button>
+          </div>
+        </div>
+        <p class="hint">Each pipeline refreshes a source and loads it into the ledger. <b>Reload</b> (My view)
+          runs the loaders only - read-only, fast. A pipeline's <b>Run</b> also runs its <b>producer</b>
+          (a real sync: QBO to Notion/Teams/Excel, prompts Touch ID). <b>WIP</b> loads the current draft;
+          generating a new draft WIP for PM review is a separate button.</p>
+        <div id="consoleList"></div>
+        <div class="sync-progress" id="consoleProgress" hidden>
+          <div class="sync-bar"><div class="sync-bar-fill" id="consoleBarFill"></div></div>
+          <div class="sync-step" id="consoleStep"></div>
+        </div>
+      </section>
+    </div><!-- /tab: console -->
+
+    <!-- ══════════════ FULL-PAGE RECORD VIEW (takes over the main area; app-style, not a side panel) ══════════════ -->
+    <section class="record-view" id="recordView" hidden>
+      <div class="record-head">
+        <button class="btn small" id="recordBack" title="Back">← Back</button>
+        <div class="record-head-txt">
+          <div class="record-title" id="recordTitle">–</div>
+          <div class="record-sub" id="recordSub"></div>
+        </div>
+      </div>
+      <div class="record-body" id="recordBody"></div>
+    </section>
+
+  </main>
+
+  <!-- ── Detail slide-over ──────────────────────────────────────────── -->
+  <div class="overlay" id="overlay" hidden></div>
+  <aside class="panel panel-right" id="detail" hidden>
+    <div class="panel-head">
+      <div>
+        <div class="panel-title" id="detailTitle">—</div>
+        <div class="panel-sub" id="detailSub"></div>
+      </div>
+      <div class="panel-head-actions">
+        <button class="btn" id="btnCopyDetail" title="Copy this job as text">Copy</button>
+        <button class="btn icon" id="btnCloseDetail" title="Close">✕</button>
+      </div>
+    </div>
+    <div class="panel-body" id="detailBody"></div>
+  </aside>
+
+  <!-- ── Bill / invoice detail slide-over (opens from a Bills row) ───── -->
+  <aside class="panel panel-right" id="billDetail" hidden>
+    <div class="panel-head">
+      <div>
+        <div class="panel-title" id="billDetailTitle">–</div>
+        <div class="panel-sub" id="billDetailSub"></div>
+      </div>
+      <div class="panel-head-actions">
+        <button class="btn icon" id="btnCloseBillDetail" title="Close">✕</button>
+      </div>
+    </div>
+    <div class="panel-body" id="billDetailBody"></div>
+  </aside>
+
+  <!-- ── Invoice detail: the memo + every field, so a draw/invoice can be read without QBO ── -->
+  <aside class="panel panel-right" id="invDetail" hidden>
+    <div class="panel-head">
+      <div>
+        <div class="panel-title" id="invDetailTitle">–</div>
+        <div class="panel-sub" id="invDetailSub"></div>
+      </div>
+      <div class="panel-head-actions">
+        <button class="btn icon" id="btnCloseInvDetail" title="Close">✕</button>
+      </div>
+    </div>
+    <div class="panel-body" id="invDetailBody"></div>
+  </aside>
+
+  <!-- ── Payment drill-over: the AP bills this payment unlocks (talks to the Bills tab data) ── -->
+  <aside class="panel panel-right" id="payBills" hidden>
+    <div class="panel-head">
+      <div>
+        <div class="panel-title" id="payBillsTitle">–</div>
+        <div class="panel-sub" id="payBillsSub"></div>
+      </div>
+      <div class="panel-head-actions">
+        <button class="btn icon" id="btnClosePayBills" title="Close">✕</button>
+      </div>
+    </div>
+    <div class="panel-body" id="payBillsBody"></div>
+  </aside>
+
+  <!-- ── Client statement: a clean, copy/paste-able table of the filtered open invoices ── -->
+  <aside class="panel panel-right wide" id="invStatement" hidden>
+    <div class="panel-head">
+      <div>
+        <div class="panel-title" id="invStmtTitle">Open invoices</div>
+        <div class="panel-sub" id="invStmtSub"></div>
+      </div>
+      <div class="panel-head-actions">
+        <button class="btn small" id="btnCopyStmt">Copy table</button>
+        <button class="btn icon" id="btnCloseStmt" title="Close">✕</button>
+      </div>
+    </div>
+    <div class="panel-body" id="invStmtBody"></div>
+  </aside>
+
+  <!-- ── Lien-mark review: what you changed (staged) + what's already on file, before you Save ── -->
+  <aside class="panel panel-right" id="lienReview" hidden>
+    <div class="panel-head">
+      <div>
+        <div class="panel-title" id="lienReviewTitle">Lien marks</div>
+        <div class="panel-sub" id="lienReviewSub"></div>
+      </div>
+      <div class="panel-head-actions">
+        <button class="btn icon" id="btnCloseLienReview" title="Close">✕</button>
+      </div>
+    </div>
+    <div class="panel-body" id="lienReviewBody"></div>
+  </aside>
+
+  <!-- ── Sub-LOC project drill-over (open subs grouped by the draw they sit under) ── -->
+  <aside class="panel panel-right" id="sublocDetail" hidden>
+    <div class="panel-head">
+      <div>
+        <div class="panel-title" id="sublocDetailTitle">–</div>
+        <div class="panel-sub" id="sublocDetailSub"></div>
+      </div>
+      <div class="panel-head-actions">
+        <button class="btn icon" id="btnCloseSublocDetail" title="Close">✕</button>
+      </div>
+    </div>
+    <div class="panel-body" id="sublocDetailBody"></div>
+  </aside>
+
+  <!-- ── Vendor page (QBO-style, on demand) ─────────────────────────── -->
+  <aside class="panel panel-right" id="vendorDetail" hidden>
+    <div class="panel-head">
+      <div>
+        <div class="panel-title" id="vendorDetailTitle">–</div>
+        <div class="panel-sub" id="vendorDetailSub"></div>
+      </div>
+      <div class="panel-head-actions">
+        <button class="btn icon" id="btnCloseVendorDetail" title="Close">✕</button>
+      </div>
+    </div>
+    <div class="panel-body" id="vendorDetailBody"></div>
+  </aside>
+
+  <!-- ── Settings slide-over ────────────────────────────────────────── -->
+  <aside class="panel panel-right" id="settings" hidden>
+    <div class="panel-head">
+      <div class="panel-title">Customize <span class="brand-ver" id="appVersion" title="Dashboard build version"></span></div>
+      <div class="panel-head-actions">
+        <button class="btn" id="btnSetDefault" title="Save the current view (theme, width, widgets, columns) as your default">Set as default</button>
+        <button class="btn" id="btnReset" title="Reset to your saved default">Reset</button>
+        <button class="btn icon" id="btnCloseSettings" title="Close">✕</button>
+      </div>
+    </div>
+    <div class="panel-body" id="settingsBody">
+      <div class="set-group">
+        <h3>Appearance</h3>
+        <label class="set-row">Theme
+          <select id="setTheme">
+            <option value="auto">Auto (system)</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+        </label>
+        <label class="set-row">Accent
+          <input type="color" id="setAccent">
+        </label>
+        <label class="set-row">Font
+          <select id="setFont">
+            <option value="system">System</option>
+            <option value="inter">Grotesque sans</option>
+            <option value="serif">Serif</option>
+            <option value="mono">Monospace</option>
+          </select>
+        </label>
+        <label class="set-row">Text size <span class="val" id="fsVal"></span>
+          <input type="range" id="setFontSize" min="11" max="20" step="1">
+        </label>
+        <label class="set-row">Density
+          <select id="setDensity">
+            <option value="comfortable">Comfortable</option>
+            <option value="compact">Compact</option>
+          </select>
+        </label>
+        <label class="set-row">Width
+          <select id="setWidth">
+            <option value="full">Full width</option>
+            <option value="medium">Medium</option>
+            <option value="boxed">Boxed</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="set-group">
+        <h3>Widgets</h3>
+        <label class="chk"><input type="checkbox" id="wKpis"> Portfolio KPIs</label>
+        <label class="chk"><input type="checkbox" id="wAttention"> Needs attention</label>
+        <label class="chk"><input type="checkbox" id="wCosts"> Cost mix</label>
+        <label class="chk"><input type="checkbox" id="wMargins"> Margins &amp; burn</label>
+        <label class="chk"><input type="checkbox" id="wDivisions"> Division rollup</label>
+        <label class="chk"><input type="checkbox" id="wProjects"> Projects table</label>
+      </div>
+
+      <div class="set-group">
+        <h3>Table columns</h3>
+        <div id="colChooser" class="col-chooser"></div>
+      </div>
+    </div>
+  </aside>
+
+  <div class="toast" id="toast" hidden></div>
+
+  <script src="/static/app.js"></script>
+  <script src="/static/trail.js"></script>
+</body>
+</html>

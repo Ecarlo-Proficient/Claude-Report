@@ -37,7 +37,7 @@ from typing import Dict, List, Optional, Tuple
 import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-import qbo_vault as kc
+from shared import qbo_vault as kc
 
 API_BASE = "https://quickbooks.api.intuit.com"
 RATE_LIMIT_DELAY_S = 0.2  # 5 req/sec — well under QBO's 500/min/realm limit.
@@ -187,7 +187,7 @@ def main() -> int:
     # ── Auth ─────────────────────────────────────────────────────────────────
     print("\n  Authenticating to QBO (Touch ID)...")
     access, company_id = load_credentials()
-    print(f"  ok — company {company_id}")
+    print("  ok.")   # never echo the company_id / realm
 
     # ── Process ──────────────────────────────────────────────────────────────
     results = []

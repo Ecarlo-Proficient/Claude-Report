@@ -18,30 +18,38 @@ Categorizes each statement line into one of four buckets:
   ✗ MISSING_ON_STATEMENT — Bill exists open in QBO, but vendor doesn't
                             show it on the statement → stale unpaid bill
                             vendor may have credited / already received
-                            payment for; needs Ted's eyes.
+                            payment for; needs the user's eyes.
 
-Writes Excel report with Summary + one sheet per category to (see
-OUTDIR_DEFAULT below; override with --out):
-  ~/Library/CloudStorage/OneDrive-ProficientConcrete,LLC/Automations-/statement reconciles/Statement_Reconciliation_<date>_<vendor>.xlsx
+Writes an Excel report (Summary + one sheet per category) named
+  Statement_Reconciliation_<date>_<vendor>.xlsx
+
+Manually-passed files get the SAME treatment as an --inbox sweep: each Excel
+lands in the Synology Reconciliations folder, and a source file that already
+lives in the Statement Inbox is archived to its DONE subfolder on success. If
+the Synology share isn't mounted, output falls back to OUTDIR_DEFAULT (below)
+and no file is moved. (--out is accepted but ignored in this mode.)
 
 SUPPORTED PDF TEMPLATES (auto-detected by report-type signature, never by vendor name)
   • QuickBooks Statement                 — vendor-issued statement with "INV #<num>. Due <date>" lines
   • QuickBooks Customer Open Balance     — QBO Customer Open Balance report, columnar
   • QuickBooks Open Invoices             — QBO Open Invoices report, columnar (4-col)
+  • Plus per-vendor layouts (White Cap, Bobcat, Bodin, BURNCO, Cintas, Cow Town,
+    Sunbelt, Croell) and generic tabular/columnar — see TEMPLATE_LABELS.
 
 USAGE
-  python3 statement_reconciler.py /path/to/statement.pdf
+  python3 statement_reconciler.py /path/to/statement.pdf            # inbox-style: Excel → Reconciliations, source → DONE if in inbox
   python3 statement_reconciler.py /path/to/statement.pdf --vendor "Exact QBO Display Name"
-  python3 statement_reconciler.py /path/to/statement.pdf --out /custom/path.xlsx
-  python3 statement_reconciler.py /path/to/statement.pdf --dry-run
-  python3 statement_reconciler.py /path/to/statement.pdf --yes    # skip prompts
+  python3 statement_reconciler.py /path/to/statement.pdf --dry-run  # reconcile + print, write/move nothing
+  python3 statement_reconciler.py /path/to/statement.pdf --yes      # skip prompts
+  python3 statement_reconciler.py --inbox                           # sweep the whole Statement Inbox
 
 INTERACTIVE FLOW
   Two Y/N prompts before any QBO call so a misread PDF never wastes API
   roundtrips:
     1. After parse → shows vendor / date / total / first+last line. Confirm.
     2. After QBO vendor lookup → shows matched vendor name. Confirm.
-  After completion, opens the Excel report automatically (macOS `open`).
+  Ends with an INBOX SUMMARY (reconciled / moved-to-DONE / left-for-a-human) and
+  a clickable link to the Reconciliations folder. Does not auto-open the Excel.
 
 DEPENDENCIES
   pip3 install --break-system-packages pdfplumber requests openpyxl
@@ -87,8 +95,8 @@ except ImportError:
     print("✗ pip3 install --break-system-packages openpyxl")
     sys.exit(1)
 
-import qbo_vault as kc
-import paths
+from shared import qbo_vault as kc
+from shared import paths
 
 # ───────────────────────── constants ─────────────────────────
 
@@ -191,14 +199,25 @@ QBO_CUSTOMER_OPEN_BAL_SIG = re.compile(
 )
 QBO_AS_OF_RE = re.compile(
     r"As\s+of\s+([A-Za-z]+\s+\d{1,2},?\s+\d{4})", re.I)
+# Matches EVERY transaction row in a Customer Open Balance report, not just
+# invoices. Credit Memos and Payments carry NEGATIVE amounts (leading "-" or
+# parentheses) and Payments have no due-date column — both must be parsed so
+# the line-sum ties to the report's grand total. (Before 2026-08-12 only
+# "Invoice" rows matched, so credits/payments were dropped, the line-sum came
+# out too HIGH by the credit total, and every statement carrying a credit
+# falsely failed the tie-out.) The due-date group is optional; the amount group
+# accepts a sign or parentheses.
 QBO_CUSTOMER_OPEN_BAL_LINE_RE = re.compile(
     r"""^\s*
-    Invoice\s+
+    (?P<type>(?:Invoice|Credit(?:\s+Me\w*)?|Payment|Discount|Journal|
+                 Deposit|Sales\s+Receipt|Check|Bill\s+Pmt|Transfer)
+             (?:\s*\.\.\.)?)\s+        # QBO truncates a narrow Type cell to "...":
+                                       #   "Credit ..." and "Credit Me..." both seen
     (?P<date>\d{1,2}/\d{1,2}/\d{2,4})\s+
     (?P<num>\S+)\s+
-    (?P<memo>.+?)\s+
-    (?P<due>\d{1,2}/\d{1,2}/\d{2,4})\s+
-    (?P<amount>[\d,]+\.\d{2})\s*$""",
+    (?P<memo>.+?)
+    (?:\s+(?P<due>\d{1,2}/\d{1,2}/\d{2,4}))?\s+
+    (?P<amount>\(?-?[\d,]+\.\d{2}\)?)\s*$""",
     re.VERBOSE | re.MULTILINE,
 )
 QBO_GRAND_TOTAL_RE = re.compile(r"^\s*TOTAL\s+([\d,]+\.\d{2})\s*$", re.MULTILINE)
@@ -529,6 +548,7 @@ TEMPLATE_LABELS = {
     "vendor_cintas":             "Vendor Statement, Cintas (PDF — Date | Sold-To | Reference | Amount Due | Due Date)",
     "vendor_cowtown":            "Vendor Statement, past-due letter (PDF — Job | Inv. No. | Inv. Date | Due Date | Inv. Amount | Balance)",
     "vendor_sunbelt":            "Vendor Statement, Sunbelt Rentals (PDF — Date | Invoice | Job Description | Amount Due)",
+    "vendor_croell":             "Vendor Statement, Croell Inc (PDF — Date | Cd | Invoice | Description | Amount | Balance doubled register/remittance layout)",
 }
 
 
@@ -564,6 +584,10 @@ def detect_template(text: str) -> str:
         return "vendor_cowtown"
     if SUNBELT_SIG.search(text):
         return "vendor_sunbelt"
+    # Croell Inc — doubled register/remittance header; must beat the generic
+    # tabular/columnar sigs (its "Finance Charge" wording trips columnar).
+    if CROELL_SIG.search(text):
+        return "vendor_croell"
     # Vendor tabular statement (Date Invoice Due Date Amount ... Balance header)
     if VENDOR_STMT_TABULAR_SIG.search(text):
         return "vendor_stmt_tabular"
@@ -626,6 +650,20 @@ def _find_qbo_statement_vendor(text: str) -> str:
     return ""
 
 
+def _paren_amount(raw: str) -> float:
+    """Parse a money token that may be negative via a leading '-' OR parentheses.
+    Credits/payments on statements print either way, and both must net out.
+        '(1,483.03)' -> -1483.03 · '-491.73' -> -491.73 · '75.00' -> 75.00"""
+    s = raw.strip()
+    neg = s.startswith("(") and s.endswith(")")
+    s = s.strip("()").replace(",", "").replace("$", "").strip()
+    try:
+        v = float(s)
+    except ValueError:
+        return 0.0
+    return -v if neg else v
+
+
 def parse_statement_qbo_customer_open_balance(full_text: str) -> Tuple[str, str, float, List[StmtLine]]:
     """Parse a QuickBooks Customer Open Balance report into the common shape."""
     vendor = _find_qbo_report_vendor(full_text)
@@ -659,9 +697,25 @@ def parse_statement_qbo_customer_open_balance(full_text: str) -> Tuple[str, str,
         stripped = line.strip()
         if not stripped:
             continue
-        # Sub-customer header? (caps-leading line, not Invoice/Total/header)
+        # Transaction row FIRST (Invoice / Credit Memo / Payment / ...). Checked
+        # before the sub-customer test because a Payment row has no due-date
+        # column and would otherwise satisfy the caps-leading header pattern,
+        # getting swallowed as a bogus sub-customer instead of counted.
+        inv_m = QBO_CUSTOMER_OPEN_BAL_LINE_RE.match(line)
+        if inv_m:
+            memo = inv_m.group("memo").strip()
+            # Truncated memos: QBO shows "..." when memo is cut off
+            memo = memo.rstrip(".").strip() if memo.endswith("...") else memo
+            lines.append(StmtLine(
+                date=_norm_date(inv_m.group("date")),
+                ref=inv_m.group("num").strip(),
+                amount=_paren_amount(inv_m.group("amount")),
+                po=current_subcust, address=memo))
+            continue
+        # Sub-customer header? (caps-leading line, not a txn/total/header)
         sub_m = QBO_SUBCUST_RE.match(line)
-        if sub_m and not stripped.startswith(("Invoice", "Total", "TOTAL", "Type", "Accrual", "Cash")):
+        if sub_m and not stripped.startswith(
+                ("Invoice", "Credit", "Payment", "Total", "TOTAL", "Type", "Accrual", "Cash")):
             cand = sub_m.group(1).strip().rstrip(".").strip()
             # Filter out the parent customer header (our own company).
             # Keep sub-customers with the parent name + suffix ("... - Other", etc.).
@@ -671,17 +725,6 @@ def parse_statement_qbo_customer_open_balance(full_text: str) -> Tuple[str, str,
                 continue
             current_subcust = cand
             continue
-        # Invoice row?
-        inv_m = QBO_CUSTOMER_OPEN_BAL_LINE_RE.match(line)
-        if inv_m:
-            date_str = _norm_date(inv_m.group("date"))
-            num = inv_m.group("num").strip()
-            memo = inv_m.group("memo").strip()
-            amount = float(inv_m.group("amount").replace(",", ""))
-            # Truncated memos: QBO shows "..." when memo is cut off
-            memo = memo.rstrip(".").strip() if memo.endswith("...") else memo
-            lines.append(StmtLine(date=date_str, ref=num, amount=amount,
-                                  po=current_subcust, address=memo))
     return vendor, stmt_date, amt_due, lines
 
 
@@ -755,6 +798,34 @@ BURNCO_SIG  = re.compile(r"Delivery Address\s+PO Number\s+Type", re.I)
 CINTAS_SIG  = re.compile(r"DATE\s+SOLD-TO\s+DESCRIPTION\s+REFERENCE\s+AMOUNT DUE\s+DUE DATE", re.I)
 COWTOWN_SIG = re.compile(r"Inv\.\s*No\.\s+Inv\.\s*Date\s+Due Date", re.I)
 SUNBELT_SIG = re.compile(r"DATE\s+INVOICE\s+JOB\s+DESCRIPTION\s+AMOUNT\s+DUE", re.I)
+
+# ── Template: Croell Inc statement (added 2026-08-12) ─────────────────
+# pdfplumber merges the left register and the right remittance stub onto one
+# physical line, so each data row reads:
+#   <date> <cd> <invoice> <description> <amount> <balance> <due date> \
+#       <invoice-dup> <cd-dup> <amount-dup>
+# We take the FIRST amount (the left "Amount" column) and ignore the duplicated
+# remittance fields. Credits print in parentheses -> negative, so the line-sum
+# nets to Balance Due. Cd codes seen: I=Invoice, F=Finance Charge.
+# The doubled header is an unmistakable signature (checked before the generic
+# tabular/columnar sigs, which the "Finance Charge" wording would otherwise trip).
+CROELL_SIG = re.compile(
+    r"Date\s+Cd\s+Invoice\s+Description\s+Amount\s+Balance\s+"
+    r"Date\s+Due\s+Invoice\s+Cd\s+Amount", re.I)
+CROELL_ROW_RE = re.compile(
+    r"""^\s*
+    (?P<date>\d{1,2}/\d{1,2}/\d{4})\s+
+    (?P<cd>[A-Z])\s+
+    (?P<num>\d+)\s+
+    (?P<desc>.+?)\s+
+    (?P<amount>\(?-?[\d,]+\.\d{2}\)?)\s+
+    (?P<balance>\(?-?[\d,]+\.\d{2}\)?)\s+
+    (?P<duedate>\d{1,2}/\d{1,2}/\d{4})\s+
+    (?P<num2>\d+)\s+
+    (?P<cd2>[A-Z])\s+
+    (?P<amount2>\(?-?[\d,]+\.\d{2}\)?)\s*$""",
+    re.VERBOSE | re.MULTILINE,
+)
 
 
 def _grab(pattern: str, text: str) -> str:
@@ -886,6 +957,35 @@ def parse_statement_sunbelt(full_text: str) -> Tuple[str, str, float, List[StmtL
     return "", stmt_date, amt_due, lines
 
 
+def parse_statement_croell(full_text: str) -> Tuple[str, str, float, List[StmtLine]]:
+    """Parse a Croell Inc statement (doubled register/remittance layout).
+    Takes the left 'Amount' column; credits in parentheses become negatives so
+    the line-sum nets to Balance Due."""
+    vendor = "Croell Inc"
+    # The "Statement Date" header row is doubled and the value sits on the NEXT
+    # line ("... Page\n08/08/2026 08/08/2026 ..."), so grab the first date there.
+    stmt_date = _norm_date(
+        _grab(r"Statement\s+Date[^\n]*\n\s*(\d{1,2}/\d{1,2}/\d{4})", full_text))
+
+    # Balance Due = rightmost value on the aging footer — the last line that is
+    # nothing but money tokens (Current / 1-30 / 31-60 / Over 60 / Bal Due).
+    amt_due = 0.0
+    money_line = re.compile(r"^\s*(?:\(?-?[\d,]+\.\d{2}\)?\s+){2,}\(?-?[\d,]+\.\d{2}\)?\s*$")
+    for ln in reversed(full_text.splitlines()):
+        if money_line.match(ln):
+            amt_due = _paren_amount(re.findall(r"\(?-?[\d,]+\.\d{2}\)?", ln)[-1])
+            break
+
+    lines: List[StmtLine] = []
+    for m in CROELL_ROW_RE.finditer(full_text):
+        lines.append(StmtLine(date=_norm_date(m.group("date")), ref=m.group("num"),
+                              amount=_paren_amount(m.group("amount")),
+                              address=m.group("desc").strip()))
+    if not amt_due:
+        amt_due = round(sum(l.amount for l in lines), 2)
+    return vendor, stmt_date, amt_due, lines
+
+
 # ── Staple-vendor identity overrides ──────────────────────────────
 # A few big, recurring vendors are impossible to identify from the generic
 # body extraction alone: their name is either in a raster logo (no extractable
@@ -968,6 +1068,8 @@ def parse_statement(path: Path) -> Tuple[str, str, float, List[StmtLine]]:
         result = parse_statement_cowtown(full_text)
     elif template == "vendor_sunbelt":
         result = parse_statement_sunbelt(full_text)
+    elif template == "vendor_croell":
+        result = parse_statement_croell(full_text)
     else:
         # No supported template detected — return empty so the caller surfaces
         # the unsupported-template error with the full list of supported formats.
@@ -1096,7 +1198,7 @@ def _xls_to_xlsx_temp(xls_path: Path) -> Path:
     except ImportError:
         sys.exit(_Term.color(_Term.R,
             "✗ Legacy .xls support needs xlrd. Install once into the venv:\n"
-            "    cd '/Users/sebas/Documents/Claude/Projects/Automate Concrete Business/bill-tracker'\n"
+            f"    cd '{Path(__file__).resolve().parent.parent / 'bill-tracker'}'\n"
             "    .venv/bin/python -m pip install 'xlrd<2'\n"
             "  (Pin to <2.0 — xlrd 2.0+ dropped .xls support for security reasons.)"))
     from openpyxl import Workbook
@@ -2532,7 +2634,7 @@ def _term_link(label: str, path: Path) -> str:
 def append_clerk_perf(rows: List["ReconRow"], vendor_name: str, stmt_date: str,
                       stmt_total: float) -> Optional[Path]:
     """Append one row to clerk_performance.csv. Focused on clerk-action metrics —
-    vendor-side issues (tax violations) are EXCLUDED since Ted reads those from QBO."""
+    vendor-side issues (tax violations) are EXCLUDED since the user reads those from QBO."""
     import csv as _csv
 
     by_cat: Dict[str, List["ReconRow"]] = {}
@@ -2885,14 +2987,22 @@ def process_pdf(pdf_path: Path, args: argparse.Namespace,
     return True, counts
 
 
-def _resolve_workflow_dirs(base: Path) -> Tuple[Path, Path, Path]:
+def _resolve_workflow_dirs(base: Path, strict: bool = True
+                           ) -> Tuple[Optional[Path], Optional[Path], Optional[Path]]:
     """Resolve (inbox, done, reconciliations) under `base`, tolerant of the
-    exact folder spelling/spacing. Exits with a clear message if the share
-    isn't mounted or the folders can't be found."""
+    exact folder spelling/spacing. With strict=True (the --inbox sweep) exits
+    with a clear message if the share isn't mounted or the folders can't be
+    found. With strict=False (a manually-passed file) returns (None, None, None)
+    instead, so the caller can fall back to the default output dir and skip the
+    DONE move rather than abort."""
+    def _bail(msg: str) -> Tuple[None, None, None]:
+        if strict:
+            sys.exit(_Term.color(_Term.R, msg))
+        return None, None, None
+
     if not base.exists():
-        sys.exit(_Term.color(_Term.R,
-            f"✗ not found: {base}\n"
-            "  Is the Synology share mounted? (Finder → Go → Connect to Server)"))
+        return _bail(f"✗ not found: {base}\n"
+                     "  Is the Synology share mounted? (Finder → Go → Connect to Server)")
     entries = [d for d in base.iterdir() if d.is_dir()]
 
     def _find(*needles: str) -> Optional[Path]:
@@ -2906,9 +3016,8 @@ def _resolve_workflow_dirs(base: Path) -> Tuple[Path, Path, Path]:
     recon = _find("reconciliation")
     if not inbox or not recon:
         found = ", ".join(sorted(d.name for d in entries)) or "(none)"
-        sys.exit(_Term.color(_Term.R,
-            f"✗ couldn't find the Inbox / Reconciliations folders under {base}\n"
-            f"  Folders present: {found}"))
+        return _bail(f"✗ couldn't find the Inbox / Reconciliations folders under {base}\n"
+                     f"  Folders present: {found}")
 
     done = None
     for d in inbox.iterdir():
@@ -2948,9 +3057,13 @@ def _unique_dest(dest_dir: Path, name: str) -> Path:
 
 
 def run_inbox(args: argparse.Namespace, access: str, cid: str,
-              done: Path, recon: Path, files: List[Path]) -> int:
-    """Reconcile each inbox file → Excel into `recon`; move source → `done` on
-    success. Failures are left in the inbox for a human. Returns exit code."""
+              inbox: Optional[Path], done: Optional[Path], recon: Path,
+              files: List[Path]) -> int:
+    """Reconcile each file → Excel into `recon` with the inbox presentation
+    ([i/N] header + INBOX SUMMARY). A source file that lives in `inbox` is moved
+    to `done` on success; a file passed from elsewhere is reconciled and left in
+    place. Failures are never moved. Used by both the --inbox sweep and manual
+    single/multi-file runs. Returns an exit code."""
     args.out = None
     args.out_dir = recon
     args.no_open = True
@@ -2960,7 +3073,10 @@ def run_inbox(args: argparse.Namespace, access: str, cid: str,
     # auto-skip unknowns (cached-only) so nothing is guessed with nobody watching.
     args.inbox_cached_only = args.yes
 
-    processed: List[str] = []
+    inbox_r = inbox.resolve() if inbox else None
+
+    moved: List[str] = []       # reconciled AND archived to DONE
+    kept: List[str] = []        # reconciled but left in place (not an inbox file)
     failed: List[Tuple[str, str]] = []
     for i, f in enumerate(files, 1):
         print(_Term.color(_Term.BOLD, f"\n[{i}/{len(files)}] {f.name}"))
@@ -2973,21 +3089,37 @@ def run_inbox(args: argparse.Namespace, access: str, cid: str,
         if not ok:
             failed.append((f.name, "skipped (see message above)"))
             continue
+        # Archive to DONE only when the source actually lives in the inbox — and
+        # never on a dry-run (nothing was written, so nothing should move).
+        in_inbox = (done is not None and inbox_r is not None
+                    and f.resolve().parent == inbox_r)
+        if args.dry_run or not in_inbox:
+            if not args.dry_run:
+                print(_Term.color(_Term.DIM, "    ✓ reconciled — left in place (not in inbox)"))
+            kept.append(f.name)
+            continue
         dest = _unique_dest(done, f.name)
         try:
             shutil.move(str(f), str(dest))
             print(_Term.color(_Term.G, f"    ✓ done → {dest.name}"))
+            moved.append(f.name)
         except Exception as e:
             _warn(f"reconciled but couldn't move to DONE: {e}")
-        processed.append(f.name)
+            kept.append(f.name)
 
     print()
     _hr()
     print(_Term.color(_Term.BOLD, "  INBOX SUMMARY"))
     _hr()
-    print(_Term.color(_Term.G, f"  Reconciled + moved to DONE:  {len(processed)}"))
+    if moved:
+        print(_Term.color(_Term.G, f"  Reconciled + moved to DONE:  {len(moved)}"))
+    if kept:
+        note = "reconciled (dry-run)" if args.dry_run else "reconciled, left in place"
+        print(_Term.color(_Term.G, f"  {note+':':28} {len(kept)}"))
+    if not moved and not kept:
+        print(_Term.color(_Term.DIM, "  Reconciled:                  0"))
     if failed:
-        print(_Term.color(_Term.R, f"  Left in inbox (need a human): {len(failed)}"))
+        print(_Term.color(_Term.R, f"  Left for a human:            {len(failed)}"))
         for name, why in failed:
             print(_Term.color(_Term.DIM, f"    · {name} — {why}"))
     print(f"\n  {_Term.color(_Term.BOLD, 'Excels:')} {_term_link(str(recon), recon)}")
@@ -3074,7 +3206,7 @@ def main() -> int:
         t0 = _phase("Authenticating to QBO (Touch ID may prompt)")
         access, cid = load_credentials()
         _done(t0, "Authenticated")
-        return run_inbox(args, access, cid, done, recon, files)
+        return run_inbox(args, access, cid, inbox, done, recon, files)
 
     if not args.pdf:
         p.error("Statement file path required (.pdf / .xlsx / .png) — or use --list-aliases / --forget-vendor.")
@@ -3084,65 +3216,39 @@ def main() -> int:
         if not pp.exists():
             sys.exit(_Term.color(_Term.R, f"✗ not found: {pp}"))
 
-    if len(pdf_paths) > 1 and args.out:
-        sys.exit(_Term.color(_Term.R, "✗ --out is single-PDF only; cannot use with multiple PDFs."))
+    # Manually-passed files get the SAME treatment as an --inbox sweep: each is
+    # reconciled, its Excel written to the Reconciliations folder, and — if the
+    # source actually lives in the inbox — the original archived to DONE. The run
+    # ends with the INBOX SUMMARY. The inbox workflow dirs are resolved leniently
+    # (strict=False): if the Synology share isn't mounted we fall back to the
+    # default output dir and simply skip the archive move.
+    if args.out:
+        _warn("--out is ignored in inbox-style single-file mode; "
+              "the Excel goes to the Reconciliations folder.")
+    base = args.inbox_root or INBOX_ROOT
+    inbox, done, recon = _resolve_workflow_dirs(base, strict=False)
+    if recon is None:
+        recon = OUTDIR_DEFAULT   # share not mounted → local default, no DONE move
 
-    # ── auth once for the whole batch ───────────────────────
     print(_Term.color(_Term.BOLD, "━" * min(60, _width())))
     if len(pdf_paths) == 1:
         print(_Term.color(_Term.BOLD, "  STATEMENT RECONCILER"))
     else:
-        print(_Term.color(_Term.BOLD, f"  STATEMENT RECONCILER  ·  BATCH ({len(pdf_paths)} PDFs)"))
+        print(_Term.color(_Term.BOLD, f"  STATEMENT RECONCILER  ·  {len(pdf_paths)} FILES"))
     print(_Term.color(_Term.BOLD, "━" * min(60, _width())))
+    print(f"  Out:   {recon}")
+    if done:
+        print(f"  Done:  {done}  (only files already in the inbox are moved)")
+    print()
+    if args.dry_run:
+        print(_Term.color(_Term.DIM,
+            "  (dry-run: reconciles and prints findings, but writes no Excel and moves nothing.)\n"))
+
     t0 = _phase("Authenticating to QBO (Touch ID may prompt)")
     access, cid = load_credentials()
     _done(t0, "Authenticated")
-    print()
 
-    # ── process each PDF ────────────────────────────────────
-    failures: List[str] = []
-    batch_counts: Dict[str, int] = {}
-    for i, pdf in enumerate(pdf_paths, 1):
-        if len(pdf_paths) > 1:
-            print(_Term.color(_Term.BOLD,
-                f"\n[{i}/{len(pdf_paths)}] ───────────────────────────────────────\n"))
-        try:
-            ok, counts = process_pdf(pdf, args, access, cid)
-        except Exception as e:
-            _fail(f"error processing {pdf.name}: {e}")
-            failures.append(pdf.name)
-            continue
-        if not ok:
-            failures.append(pdf.name)
-            continue
-        for k, v in counts.items():
-            batch_counts[k] = batch_counts.get(k, 0) + v
-
-    if len(pdf_paths) > 1:
-        print()
-        _hr()
-        print(_Term.color(_Term.BOLD, "  BATCH SUMMARY"))
-        _hr()
-        print(f"  Processed:  {len(pdf_paths) - len(failures)}/{len(pdf_paths)}")
-        if failures:
-            print(_Term.color(_Term.R, f"  Failures:   {', '.join(failures)}"))
-        for key, label, color in [
-            ("MATCHED",               "✓ Matched",                       _Term.G),
-            ("VENDOR_TAX_VIOLATION",  "⚠ Vendor tax violation",          _Term.Y),
-            ("CLERK_AMOUNT_MISMATCH", "⚠ Clerk amount mismatch",         _Term.Y),
-            ("LIKELY_VENDOR_LAG",     "⊙ Likely vendor lag",             _Term.B),
-            ("MISSING_IN_QBO",        "✗ Missing in QBO",                _Term.R),
-            ("MISSING_ON_STATEMENT",  "✗ Missing on Statement",          _Term.R),
-        ]:
-            n = batch_counts.get(key, 0)
-            print(_Term.color(color, f"  {label:38s} {n:3d}") if n > 0
-                  else _Term.color(_Term.DIM, f"  {label:38s} {n:3d}"))
-        _hr()
-        # Clickable folder link for the whole batch
-        print(f"\n  {_Term.color(_Term.BOLD, 'Outputs:')} {_term_link(str(OUTDIR_DEFAULT), OUTDIR_DEFAULT)}")
-        print(f"  {_Term.color(_Term.DIM, 'Tip: Cmd+Click the path above to open in Finder.')}\n")
-
-    return 0 if not failures else 1
+    return run_inbox(args, access, cid, inbox, done, recon, pdf_paths)
 
 
 

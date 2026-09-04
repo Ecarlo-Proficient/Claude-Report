@@ -1,0 +1,282 @@
+# STATUS — invoice-sync
+
+Shared progression record for the QBO → Notion AR invoice sync and its Excel
+mirror. Update this in the SAME commit as any change to this tool.
+
+---
+
+## DONE / FINALIZED
+
+- **AR Aging lien clock now two-stage (2026-08-19).** `export_invoices_xlsx.py` passes the invoice's
+  Notion Lien Tracker status into `shared/lien_clock.lien_state(lien_status=...)`. Once a notice is
+  **Mailed**, the aging tab's lien cell advances from the notice deadline to the **lien-affidavit
+  deadline** (15th of the 4th month CP/MFD / 3rd month RP after the work month, § 53.052) - the real
+  "can no longer become a lien" cutoff, labelled `LIEN ...`. Same call the ledger dashboard makes, so
+  the workbook and site never drift. `lien_status` is now computed once and feeds both the column and
+  the clock.
+
+- **Aging tab visual hierarchy (2026-08-14, the user — "professional colors")** —
+  the client/project bands were near-identical pale blues, so projects read as
+  their own rows. Rebuilt as a high-contrast, stepped hierarchy where STRUCTURE is
+  carried by neutral bands + real indentation, leaving the saturated palette for
+  DATA (buckets/lien/vendor): all-clients `#333F50`, client `#44546A` (slate, white
+  text), project `#F2F2F2` (grey), invoice white — with real Excel indent 0/1/2
+  (not leading spaces), gridlines off, quiet `#D9D9D9` row rules, and secondary
+  grey memo text. The Excel file was also renamed Open_Invoices.xlsx → Invoice
+  Tracker.xlsx (INVOICE_EXPORT_PATH in the local .env).
+  - **Follow-ups same day:** the Open Balance **data bar was removed** (it hurt
+    number legibility) and replaced by an **amber flag** on the Open Balance cell
+    only when it differs from Total Amount (i.e. the invoice is partly paid), so
+    only the exceptions stand out. Clients now sort **alphabetically** (projects
+    too), client/total rows are **height 20**, and a **TOTAL sum row** sits at the
+    bottom (below the autofilter so a filter can't hide it) mirroring the top
+    ALL CLIENTS roll-up.
+- **Cash-flow forecast from the notes (2026-08-12, the user)** — `cash_flow.py`,
+  two new tabs in Open_Invoices.xlsx built from the SAME notes the aging tabs
+  carry (absorb or preserve both feed it):
+  - **`Cash Flow`** — a weekly list (Mon-Sun) of expected inflows: date, client,
+    project, invoice, amount, running **cumulative**, and the source note. A
+    **"promised, needs a date"** review section below holds the conditional /
+    stale / no-date promises so nothing is dropped.
+  - **`Pay Calendar`** — a rolling 6-week grid with each day's expected total.
+  - The parser (`classify_note`) keys on an inflow **promise + a clear date**:
+    "payment promise 8/13" / "paying this friday" / "pick up check Friday" land on
+    the calendar; "if not paid by 8/14" (conditional), "1st week of Aug, no update"
+    (stale), "Payment Promise" (no date) go to review; and it EXCLUDES chases
+    ("send email asking for payment"), disputes, and outflows ("pay to Hope $158k").
+    Bare "today" is not a payment date (it marks when an action happened). The
+    ` – Name, M/D` stamp is stripped first so the sync date is never read as a
+    payment date. Every row shows its note; amounts are expected, not guaranteed.
+- **Aging tab fixes (2026-08-12, the user):**
+  - **Client → project sub-grouping.** A client with more than one project now
+    gets a project sub-group row under it (outline: client 0 → project 1 → invoice
+    2); a single-project client stays flat (client 0 → invoice 1). "See it based
+    on client, then project." Roll-up sums + the Open/Total bar apply at each level.
+  - **"First draw" no longer over-claims.** The draw chain is built only from
+    invoices that passed through Notion's open-invoice sync, so a paid `Draw #1`
+    that was never synced is invisible and its `Draw #2` looked like idx-0 "first."
+    Now `CHAIN_FIRST_DRAW` fires ONLY when it's provably `Draw #1`; any other
+    earliest-seen draw returns `CHAIN_PREV_UNKNOWN` → verdict **"Prev not synced"**
+    (greyed, honest) instead of a false "First draw." Also fixed `contract_label`
+    to strip a trailing `- Retainage` AND the draw tail in either order, so a
+    `Draw #8 - Retainage` chains onto its base contract instead of splitting off.
+  - **Retainage is on the lien clock.** Notice due 30 days after the invoice date
+    (was "own track, undated"). See shared/lien_clock + the retainage memory. The
+    lien column shows `RET DUE <date> · Nd` etc.; money_bleeds updated to match.
+- **Collections tab upgrades (2026-08-11, the user):**
+  - **QBO links fixed — company-scoped deep links.** `qbo_client.invoice_deep_link`
+    now builds Intuit's own `/app/login?pagereq=invoice%3FtxnId%3D<id>&deeplinkcompanyid=<realm>`
+    form. The old bare `app/invoice?txnId=` link carried no company, so with more
+    than one Intuit company on the login it opened a *different* company's
+    transaction — the "random invoice" the owner hit. Realm comes from the loaded
+    creds (never source/logs). Fixed at all writers: sync props, MFD Teams card,
+    paid-flip fallback, `resend_mfd_paid`. Notion + Excel + Teams all inherit it
+    on the next sync. **Verified** invoice 34431 → txnId 1313157 against the QBO API.
+  - **Aging tabs: `Open Balance` then `Total Amount`, with a per-row data bar.**
+    Open balance first, invoice total beside it; a blue data bar on Open Balance
+    scaled by FORMULA to that row's Total Amount cell, so its fill = open ÷ total
+    (full = untouched, short = partly collected). Summary + grand rows scale to
+    their own sums. `C_INVTOTAL` added to the grid; `total_amount` added to the
+    aging record (falls back to open balance so the bar never divides by zero).
+  - **Excel Notes are a two-way status channel** (`notes_preserve.py`). The clerk
+    writes **Notes** (legacy yellow sticky, author attached — NOT threaded
+    Comments, which openpyxl can't read; verified the live file has zero threaded
+    comments). Two scopes, both anchored on the Invoice # column: per-invoice on a
+    detail row, per-client on a summary `N inv` cell (covers all that client's open
+    invoices; a per-invoice Note wins its own row). Two modes:
+    - **PRESERVE (default)** — re-attach every Note verbatim so nothing is lost on
+      the rebuild. No Notion writes. Round-trip tested on the live file: 11
+      per-invoice + 3 per-client, exact.
+    - **ABSORB (default for sync-ar; `ABSORB_NOTES=0` disables; the user 2026-08-11)**
+      - a Note IS the status. Its text (stamped ` – Name, M/D`, en dash never em
+      dash) replaces the Notes column, the cell Note is dropped, and it's **pushed
+      to Notion `Quick Status`**; the prior Quick Status is archived (dated) to the
+      page body (the documented **Collection Log**). This is the first time the sync
+      writes a human-owned field: deliberate, and **idempotent** (absorb only emits
+      a change when text differs, so re-runs push nothing / no duplicate log lines).
+      **Safety: a Note absorbs only if its Notion push SUCCEEDS** - a failed push
+      keeps the cell Note (re-attached, never lost) and retries next sync.
+    - `preview_export.py` runs **absorb + dry-run** against a throwaway path
+      (seeded from the live file): shows the absorbed Notes column, the removed
+      cell Notes, and logs the exact `Quick Status old → new` it WOULD push —
+      writing nothing to Notion or the live file. Absorb + push verified by
+      round-trip and mock-client payload tests.
+- **QBO → Notion AR sync** — open invoices to two Notion DBs (MFD isolated;
+  Res/Com combined) routed by project-# prefix; sweeps paid; archives
+  QBO-deleted via CDC; posts MFD pay events to Teams. Manual via `sync-ar`.
+- **Excel mirror** — `export_invoices_xlsx.py` writes `Open_Invoices.xlsx` to
+  OneDrive `Collections/`. Skips cleanly when Excel has the file open
+  (`~$` lock check) so AutoSave can't clobber the update.
+- **Aging tabs (2026-08-05, split per division 2026-08-10)** — built by
+  `aging_sheet.py`. The owner's ask: Notion reads fine one page at a time but
+  can't be scanned as a hundred rows, so the aging view lives in Excel.
+  - **One tab per division: `CP Aging`, `MFD Aging`, `RP Aging`** (the user
+    2026-08-10 — "keep cp and mfd separated"). **No Division column** — the tab
+    is the division. The combined `AR Aging` tab is gone with it.
+  - **`Lien` column replaced `Days Past Due`** (the user 2026-08-10). Days past
+    due was already legible from which bucket the money sits in; the lien
+    deadline is not, and it is the one that EXPIRES. Shows the date a Ch. 53
+    notice must be MAILED by, with urgency banding: `PAST DUE` (reversed white
+    on dark red), `DUE <date> · Nd` (≤15 days), `<date> · Nd` (≤45), plain date
+    otherwise, `Notice sent`, and `Retainage — own track`.
+  - Buckets Current / 1-30 / 31-60 / 61-90 / 90+, aged **by due date** (same
+    rule `invoice_sync.py` uses for the Notion `Aging Bucket` select, and the
+    same basis as QBO's AR aging).
+  - RP + CP + MFD in one table with a `Division` column for filtering. Parent
+    rows carry a division too (`(mixed)` when a client spans divisions) so the
+    Division filter never orphans a group header.
+  - Invoices grouped under the **parent client** (Notion `Customer` relation →
+    Customer List title, not the project-level `Customer (raw)`), **collapsed
+    by default** via row outline with `summaryBelow = False`.
+  - `Notes` = the collections clerk's Notion `Quick Status`, plus their
+    `Last Action Date`.
+  - **Litigation invoices excluded** (the `Litigation` checkbox on both
+    trackers) — legal work, not collections work, and leaving them in inflates
+    every bucket. The count of what was dropped prints in the subtitle.
+  - **`Invoice #` is a hyperlink to the invoice in QBO** (Notion's `QBO Link`
+    url property, written by the sync). On the number rather than in its own
+    column — keeps the sheet narrow and puts the click where the eye already is.
+    A handful of MFD invoices have no link in Notion; those stay plain text.
+  - **Type sizes: body 12pt, client rows 13pt, title 14pt** (the user
+    2026-08-05). Client rows carry the extra point because the sheet is read
+    COLLAPSED — the client name is the line that has to land first. Column
+    widths are computed by `_autofit`, which measures the strings actually
+    written and scales for 12pt (openpyxl can't autofit: Excel sizes columns at
+    render time and openpyxl never renders). Capped at `MAX_COL_WIDTH` so a long
+    memo can't create a column you have to scroll past.
+  - **Colour (2026-08-05, the user's explicit ask — a named exception to the
+    repo's plain-Excel rule, see CLAUDE.md rule 5).** It encodes age or state
+    only: bucket headers green→red; each detail row tints the one bucket cell
+    holding its balance, so colour drifting rightward = money getting older;
+    blue banding on client summary + all-clients rows; `Vendor Unpaid Bills`
+    red, `Vendors Paid` green. A KEY row and a one-line note sit below the data.
+    **Do not restyle this tab back to plain.**
+  - **RP vendor cells read `n/a` on grey with darker grey italic text** — a
+    blank read as "not looked up yet" when it means "nothing to look up".
+    Applied to all-RP client summary rows too, or an RP-only client looked like
+    it had cleared its vendors.
+  - **`Prev Draw` / `Prev Draw Status` / `Prev Bills Open` / `Prev $ Open`
+    (2026-08-05) — the PREVIOUS draw, not this one.** The funding chain: the GC
+    funds draw N → we pay draw N's vendor bills → those vendors issue
+    unconditional waivers → the GC releases draw N+1. So an unpaid draw is
+    gated by its predecessor, and the verdict separates the two holds:
+    `PAY BILLS → unlock` (prev draw funded, our vendors still owed — **ours** to
+    fix, red) vs `Waiting GC on prev` (prev draw unfunded too — upstream).
+    Chain built by `draw_chain.py`; `Prev Draw` names the invoice used so a bad
+    pick is visible rather than hidden. `This Draw $ Open` keeps the original
+    same-draw figure alongside.
+  - Bill data read from the bill-tracker's `Bill Tracker.xlsx` output file
+    (never its code — repo rule 3, tools never import tools), deduped to bill
+    grain because that sheet is line-level and repeats `Bill Open Bal` on
+    every line of a bill.
+
+- **AR Aging tabs: new "Lien status" column (owner, 2026-08-18).** The AR Aging tabs already
+  had a **Lien** column, but that is the computed Texas notice CLOCK (`shared/lien_clock.py`, a
+  deadline). The dashboard's new Open Invoices Lien column shows the **Notion Lien Tracker
+  status** (Mailed / Lien filed / Ready to mail) instead - a different thing. To keep the workbook
+  and the site connected (owner: "so it matches, we don't want to make it disconnected"), a new
+  **"Lien status"** column now sits beside the clock, carrying that Notion status.
+  - `export_invoices_xlsx._load_lien_index(notion)` pulls the Lien Tracker once
+    (`LIEN_TRACKER_DS_ID`, override via env) and `_aging_record` resolves each invoice's `Lien`
+    relation to its status via the shared **`shared/lien_status.py`** resolver - the SAME code the
+    ledger uses, so the two can never drift. Resilient add-on: if the DB isn't shared with the
+    integration (or any read error) the column degrades to blank and the export still runs.
+  - `aging_sheet.py`: inserted the column at index 6 (after `Lien`); the bucket/vendor column
+    constants are symbolic `range()`s so everything downstream shifted cleanly. Verified on a
+    synthetic build - `Lien`@col6 + `Lien status`@col7, buckets still aligned, values render
+    (Mailed / Lien filed / Ready to mail), and **`xlsx_verify.assert_clean` PASSED** (no repair
+    prompt). The existing lien-clock column and its color coding are unchanged. Owner runs
+    `sync-ar` to see it populated live (needs the Lien Tracker DB shared with the integration).
+
+- **Parent-client resolver moved to shared (2026-08-18).** `_build_customer_title_cache` +
+  `_relation_first_title` were the same logic the ledger's Open Invoices tab needed, so the resolver
+  moved to **`shared/notion_customers.py`** (repo rule: a file a second tool needs moves to shared/).
+  `export_invoices_xlsx` now calls `customers.build_title_cache` / `customers.relation_title`; behavior
+  unchanged (the Excel already showed the parent). The ledger uses the same code, so the workbook and
+  the dashboard name the client identically.
+
+## IN PROGRESS
+
+- **Absorb is LIVE by default (the user 2026-08-11).** `sync-ar` now absorbs Notes
+  and pushes Quick Status. Watch the FIRST live run: confirm the prior Quick Status
+  lands in the page Collection Log and the note text becomes Quick Status, and that
+  no push-failure warnings appear (which would mean Quick Status is not the rich_text
+  type this assumes). `python3 preview_export.py` is the always-safe dry-run preview.
+  `ABSORB_NOTES=0 sync-ar` falls back to preserve mode if needed.
+
+## TO DO
+
+- Collection Log lines append oldest-first (Notion has no prepend). If the owner
+  wants newest-first, that needs a read-reorder-rewrite of the page body.
+
+## OPEN ISSUES
+
+- **THE LIEN COLUMN IS A WATCHLIST, NOT LEGAL ADVICE — and its weakest link is
+  the work month.** Every Ch. 53 deadline runs from the month the labor was
+  furnished. The clock here uses the **invoice month**, which is the owner's
+  settled ruling (2026-07-16: RP invoices go out the day the job finishes,
+  draws bill their own work month; "never re-add a conservative offset" after
+  the first build produced month-early false alarms). **But MFD/CP draw memos
+  routinely state a period that starts in the PRIOR month** — e.g. MFD177 inv
+  34318, "May Draw 2026 (Period: 04/02/2026 - 05/01/2026)". Read as April work,
+  its notice deadline was Jul 15, not Aug 14. The stated period is sitting right
+  there in the memo and is not currently used. Raised with the owner 2026-08-10;
+  the ruling stands until they say otherwise.
+- **Retainage and lease exclusions are memo-text only here.** `money_bleeds`
+  detects both off QBO line items; this tab only has the Notion memo and the
+  clerk's note, so a retainage invoice whose memo doesn't say "retainage" gets a
+  monthly deadline it may not be governed by (one live row reads "Retaiange").
+  Equipment-lease/note invoices to subs — excluded from the clock by the
+  2026-07-16 ruling — are **not detectable at all** from memo text; none are in
+  the current open set, but that is luck, not a guarantee.
+- **"Notice sent" is inferred from the clerk's free-text `Quick Status`.** The
+  pattern is deliberately narrow (it must name the notice/affidavit, so
+  "waiting vendor unconditional" doesn't count), but the real record is the
+  Notion `Lien Tracker` (Admin) DB, which nothing feeds automatically. Wiring
+  that in would replace a heuristic with a fact.
+
+- **RUN ORDER: AP BEFORE AR (2026-08-05).** The aging tab's vendor columns read
+  `Bill Tracker.xlsx`, so `sync-ap` must finish before `sync-ar` or those
+  columns silently report the *previous* AP run. `sync-all` in `~/.zshrc` was
+  written AR-then-AP back when the two were independent; it has been swapped to
+  **AP → AR** and is now the command to use daily (~5 min: AP ≈ 3.5 min,
+  AR ≈ 1-2 min). **There is no cycle** — AP pulls its bills *and* its invoices
+  straight from QBO and never reads Notion or `Open_Invoices.xlsx`, so the
+  dependency is one-way.
+- **Staleness is surfaced, not assumed.** If the tracker predates today,
+  `aging_sheet.py` logs a warning and the tab subtitle turns red with
+  "⚠ VENDOR COLUMNS ARE N HOURS OLD". A missing/unreadable file yields `?` per
+  invoice rather than a false "Vendors Paid". AR never auto-runs AP — a sync
+  with hidden side effects is worse than a stale column that announces itself.
+- **RP has no previous-draw block by design.** RP doesn't bill in draws, and
+  the bill-tracker matches RP bills on "earliest invoice on/after bill date" —
+  not a draw period. Rendered as a grey `n/a` block on the combined tab, and
+  **omitted entirely on the `RP Aging` tab** (the user 2026-08-05 — spreadsheet
+  columns N through R). Both tabs come from one `build_aging_sheet`; the RP one
+  passes `drop_columns=RP_DROP_COLUMNS` and `_Grid` handles the projection, so
+  rows are still built at full width against the `C_*` constants and no caller
+  has to know which physical column a field landed in.
+- **MFD192 and CP861 report `Multi-contract` instead of a previous draw.**
+  MFD192 runs three contracts in parallel (base, HUDSONWOOD, OFFSITE) and CP861
+  carries two different jobs (a 7-Eleven and a BP) under one project #; their
+  draws interleave by date. **Bills carry a project #, not a contract**, so
+  which bills belong to which contract can't be determined — the user
+  2026-08-05: *"MFD192 - oddball, i have no definite way to see what bills
+  belong to which contract yet."* Reported as unattributable rather than split
+  on a guess. If bills ever become contract-attributable, `draw_chain.py`
+  already keys chains by (project, contract) and only the guard needs removing.
+- **Draw sequencing is memo-parsed, which is the fragile part.** `draw_chain.py`
+  strips the draw designator to identify the contract, and the memos are not
+  uniform: `May Draw 2026`, `Draw #2`, `Draw # 6`, `Draw #3 December 2024`,
+  `March 2025 Draw`, `- Retainage - Draw #5`, and periods written both
+  `(Period: …)` and `- Period:…`. All are covered and unit-checked against live
+  memos; a new spelling would show up as a project splitting into phantom
+  contracts. Invoices whose memo names no draw (retainage releases, turnkey
+  flatwork) are excluded from chains — MFD177's `City Retainage` sits between
+  two draws by date and would otherwise be picked as "the previous draw".
+- **Zero-balance rows survive** into the aging tab when Notion still has an
+  invoice marked Unpaid with a $0 open balance (QBO/Notion drift between syncs).
+  Kept deliberately — the row is visible drift the collections clerk should
+  see, and it adds $0 to every bucket.
+- The 15-min launchd schedule is still paused (macOS update broke it); plists
+  live in `launchd/` as `.disabled`.

@@ -8,8 +8,9 @@ to any destination here — just QBO fetch + line-level row assembly.
 Row dict shape (keys consumed by downstream sinks):
     key, bill_id, line_id, bill_date, vendor, bill_doc, po_num,
     bill_total, bill_balance, division, project_num, bill_type, account,
-    line_amount, line_desc, inv_doc, inv_id, inv_date, inv_total,
+    cost_code, line_amount, line_desc, inv_doc, inv_id, inv_date, inv_total,
     inv_balance, payment_date, auto_status, approved
+    (cost_code = raw QBO Item name; audit-only, never shown on display sheets)
 
 Collapse helpers (2026-06-04):
     collapse_rows(line_rows, grain) — roll up line-level rows into bill-grain
@@ -25,12 +26,15 @@ from collections import defaultdict
 from typing import Dict, List, Optional, Set, Tuple
 
 from qbo_bill_tracker import (
+    MATCH_BASIS_PUSHED,
     query_all,
     get_line_customer_ref,
     get_project_num,
     get_division,
-    find_matching_invoice,
+    find_matching_invoice_ex,
     compute_status,
+    compute_pay_status,
+    compute_invoice_status,
     parse_date,
     STATUS_PAID,
     STATUS_NO_PROJECT,
@@ -38,7 +42,10 @@ from qbo_bill_tracker import (
     STATUS_AWAITING_PAYMENT,
     STATUS_AWAITING_INVOICE,
     STATUS_PARTIAL_PAID,
+    STATUS_PARTIALLY_PAID_REMAINDER,
+    STATUS_UNPAID,
 )
+from shared import draw_moves   # the push: a bill carried into a later draw by agreement
 
 
 # ─────────────────────── approval flag ───────────────────────
@@ -46,7 +53,7 @@ from qbo_bill_tracker import (
 def display_status(auto_status: str, approved: bool = False) -> str:
     """Return the pipeline-status label as-is for the Status column.
 
-    Ted 2026-06-03: Approval moved to its own column, so Status is just the
+    The user 2026-06-03: Approval moved to its own column, so Status is just the
     pipeline state ("Awaiting Payment" / "Awaiting Invoice" / "Invoice paid" /
     "Bill paid" / "No project #"). The `approved` arg is kept (unused) so old
     callers don't break — pass it for forward-compat in case we re-merge
@@ -125,6 +132,59 @@ def build_po_map(qbo_access: str, qbo_cid: str) -> Dict[str, str]:
     return po_map
 
 
+def build_po_index(
+    qbo_access: str, qbo_cid: str, vendor_map: Dict[str, str],
+) -> Dict[str, dict]:
+    """Pull PurchaseOrders once → {po_id: rich rec} for the Unused-PO audit.
+
+    rec = {id, doc, status (POStatus Open/Closed), date (TxnDate), vendor,
+           total (TotalAmt), has_bill (any LinkedTxn Bill), job (project # off a
+           line's CustomerRef), codes (leaf cost codes on the PO's lines),
+           numbers (their cost-code family numbers)}. Superset of build_po_map —
+           derive the id→doc map as {pid: rec['doc']}, so main() does ONE
+           PurchaseOrder pull, not two. `codes`/`numbers` feed the Cost Code
+           audit's PO-origin check (did the PO already carry the wrong code?).
+    """
+    from shared.cost_code_audit import code_families  # bootstrap done by entry script
+    index: Dict[str, dict] = {}
+    for po in query_all(qbo_access, qbo_cid, "PurchaseOrder"):
+        pid = po.get("Id", "")
+        if not pid:
+            continue
+        vref = po.get("VendorRef") or {}
+        vendor = vendor_map.get(vref.get("value", ""), vref.get("name", "") or "")
+        has_bill = any(lt.get("TxnType") == "Bill"
+                       for lt in (po.get("LinkedTxn") or []))
+        job = ""
+        codes: List[str] = []
+        for ln in (po.get("Line") or []):
+            det = (ln.get("ItemBasedExpenseLineDetail")
+                   or ln.get("AccountBasedExpenseLineDetail") or {})
+            cust = (det.get("CustomerRef") or {}).get("name", "")
+            proj = get_project_num(cust) if cust else None
+            if proj and not job:
+                job = proj
+            item = (ln.get("ItemBasedExpenseLineDetail") or {}).get("ItemRef") or {}
+            leaf = (item.get("name") or "").split(":")[-1].strip()
+            if leaf:
+                codes.append(leaf)
+        numbers = sorted({code_families(c)[0] for c in codes
+                          if code_families(c)[0]})
+        index[pid] = {
+            "id": pid,
+            "doc": (po.get("DocNumber") or "").strip(),
+            "status": po.get("POStatus") or "",
+            "date": parse_date(po.get("TxnDate")),
+            "vendor": vendor,
+            "total": float(po.get("TotalAmt") or 0),
+            "has_bill": has_bill,
+            "job": job,
+            "codes": sorted(set(codes)),
+            "numbers": numbers,
+        }
+    return index
+
+
 def get_po_number(bill: dict, po_map: Dict[str, str]) -> str:
     """Extract PO #(s) for a Bill via LinkedTxn (PO clerk-linked in QBO).
 
@@ -169,6 +229,21 @@ def line_account_and_type(
     return ("", "")
 
 
+def line_cost_code(line: dict) -> str:
+    """Return the raw QBO Item name — our cost code (SL1 / PV6 / FW2 …) — for an
+    item-based expense line; '' for an account-based line.
+
+    Cost codes live in the QBO ITEM, never the posting account (repo CLAUDE.md).
+    line_account_and_type() deliberately collapses the item to its expense
+    account for the visible Account column; this keeps the raw code for the QBO
+    Audit sheet ONLY — it is never shown on the Bills/Inventory sheets.
+    """
+    if line.get("DetailType") == "ItemBasedExpenseLineDetail":
+        item_ref = (line.get("ItemBasedExpenseLineDetail") or {}).get("ItemRef") or {}
+        return (item_ref.get("name") or "").strip()
+    return ""
+
+
 def build_rows(
     bills: List[dict],
     invoices_by_customer: Dict[str, List[dict]],
@@ -177,6 +252,7 @@ def build_rows(
     item_map: Dict[str, str],
     po_map: Dict[str, str],
     payment_map: Optional[Dict[str, dt.date]] = None,
+    gl_contracts: Optional[Dict[str, float]] = None,
 ) -> List[dict]:
     """One row per bill line. Includes BOTH Item lines (Bill Type=COGS) AND
     Account lines (Bill Type=Other). Lines without project # → Status=NO PROJECT #
@@ -210,6 +286,9 @@ def build_rows(
             division = get_division(project_num)
 
             account_name, bill_type = line_account_and_type(line, account_map, item_map)
+            # Raw cost code (QBO Item name) — kept for the audit only, never
+            # shown on the display sheets. '' for account-based lines.
+            cost_code = line_cost_code(line)
 
             # ClassRef can live on the line (preferred — bills can split across
             # divisions) or on the bill itself (older QBO setups). Try line first.
@@ -223,14 +302,24 @@ def build_rows(
                 class_name = bill_class
 
             matched: Optional[dict] = None
+            match_basis = ""
+            match_note = ""
             if cust_id and division:
                 # Concatenate description + account so the RP pump filter can
                 # detect pump bills regardless of which field carries the cue.
                 bill_text = f"{line_desc}  {account_name}"
-                matched = find_matching_invoice(
-                    bill_date, division, cust_id, invoices_by_customer,
+                # A PUSH (shared/draw_moves): the supplier agreed to carry this
+                # bill into a later draw, so it is matched AS OF the rule's date
+                # (inside that draw's period); the bill keeps its real date.
+                match_date, _mv = draw_moves.effective_date(project_num, vendor_name, bill_date)
+                matched, match_basis = find_matching_invoice_ex(
+                    match_date, division, cust_id, invoices_by_customer,
                     bill_text=bill_text, bill_amount=line_amt,
+                    project_num=project_num, gl_contracts=gl_contracts,
                 )
+                if _mv and matched:
+                    match_basis = MATCH_BASIS_PUSHED
+                    match_note = draw_moves.push_label(_mv)
 
             inv_doc = ""
             inv_id = ""
@@ -260,12 +349,18 @@ def build_rows(
             else:
                 auto_status = compute_status(bill, matched, division)
 
+            # Two-axis split (the user 2026-07-13): pay = did WE pay the vendor;
+            # invoice = did the GC fund us (computed independent of payment).
+            pay_status = compute_pay_status(bill)
+            invoice_status = compute_invoice_status(matched, division)
+
             rows.append({
                 "key": f"{bill_id}-{line_id}",
                 "bill_id": bill_id,
                 "line_id": line_id,
                 "bill_date": bill_date,
                 "vendor": vendor_name,
+                "vendor_id": v_ref.get("value", ""),
                 "bill_doc": bill_doc,
                 "po_num": po_num,
                 "bill_total": bill_total,
@@ -274,6 +369,7 @@ def build_rows(
                 "project_num": project_num or "",
                 "bill_type": bill_type,
                 "account": account_name,
+                "cost_code": cost_code,
                 "line_amount": line_amt,
                 "line_desc": line_desc,
                 "inv_doc": inv_doc,
@@ -288,6 +384,10 @@ def build_rows(
                 "customer_name": cust_name,
                 "class_name": class_name,
                 "auto_status": auto_status,
+                "pay_status": pay_status,
+                "invoice_status": invoice_status,
+                "match_basis": match_basis,
+                "match_note": match_note,
             })
     return rows
 
@@ -302,7 +402,7 @@ MULTI_MARKER = "(multiple)"
 def multi_project_bill_ids(line_rows: List[dict]) -> Set[str]:
     """Return the set of bill_ids whose lines code to 2+ distinct project_nums.
 
-    These are the "inventory" bills Ted described — one supplier ticket
+    These are the "inventory" bills the user described — one supplier ticket
     distributed across multiple jobs. They get displayed as a single summary
     row on the master Bills sheet AND line-level on the Inventory drill-down.
     Single-project bills aren't in this set.
@@ -333,7 +433,7 @@ def _agg_distinct_or_multi(values: List[str]) -> str:
 # common compounds "sales tax", "use tax" as standalone words in either the
 # line account or the line description. Word-boundary anchors on both ends
 # so "Texarkana", "Texas", "taxi" don't false-positive.
-# 2026-06-04: extended to "tax(es|able)?" after Ted hit clerks typing "TAXES"
+# 2026-06-04: extended to "tax(es|able)?" after the user hit clerks typing "TAXES"
 # (plural) on Martin Marietta yardage bills.
 TAX_RE = re.compile(
     r"\b(?:sales\s+tax(?:es|able)?|use\s+tax(?:es|able)?|tax(?:es|able)?)\b",
@@ -403,7 +503,7 @@ def _aggregate_bill_status(line_statuses: List[str]) -> str:
     For a multi-project bill, each line independently matched its own
     project's invoice — so the lines can carry DIFFERENT statuses. The Bills
     sheet shows one row per bill, so we need to collapse the set into one
-    label. Ted 2026-06-04: the "some paid, some not" mixed state becomes
+    label. The user 2026-06-04: the "some paid, some not" mixed state becomes
     `Partial paid`, surfacing the cash-position decision (float remaining
     out of operating, or wait for the last GC invoice to pay).
 
@@ -429,6 +529,27 @@ def _aggregate_bill_status(line_statuses: List[str]) -> str:
     if statuses == {STATUS_OK_TO_PAY}:
         return STATUS_OK_TO_PAY
     if STATUS_AWAITING_INVOICE in statuses:
+        return STATUS_AWAITING_INVOICE
+    return STATUS_AWAITING_PAYMENT
+
+
+def _aggregate_invoice_status(line_statuses: List[str]) -> str:
+    """Roll per-line AR (invoice) statuses into one bill-level label. Same shape
+    as _aggregate_bill_status but AR-only (never 'Bill paid' — that's the pay
+    axis): mixed funded/unfunded → Partial paid."""
+    s = {v for v in line_statuses if v}
+    if not s:
+        return STATUS_AWAITING_PAYMENT
+    if STATUS_NO_PROJECT in s:
+        return STATUS_NO_PROJECT
+    if len(s) == 1:
+        return next(iter(s))          # all lines agree (incl. the partial-remainder AR state)
+    # mixed multi-project lines below
+    if STATUS_OK_TO_PAY in s:
+        return STATUS_PARTIAL_PAID    # some fully funded + others → decide float vs wait
+    if STATUS_PARTIALLY_PAID_REMAINDER in s:
+        return STATUS_PARTIALLY_PAID_REMAINDER   # some partially paid, none fully
+    if STATUS_AWAITING_INVOICE in s:
         return STATUS_AWAITING_INVOICE
     return STATUS_AWAITING_PAYMENT
 
@@ -556,6 +677,7 @@ def collapse_rows(line_rows: List[dict], grain: str = "bill") -> List[dict]:
             "line_id": "",
             "bill_date": first.get("bill_date"),
             "vendor": first.get("vendor", ""),
+            "vendor_id": first.get("vendor_id", ""),
             "bill_doc": first.get("bill_doc", ""),
             "po_num": first.get("po_num", ""),
             "bill_total": chunk_total,
@@ -578,6 +700,22 @@ def collapse_rows(line_rows: List[dict], grain: str = "bill") -> List[dict]:
             "customer_name": first.get("customer_name", ""),
             "class_name": class_name,
             "auto_status": agg_status,
+            # Pay status is bill-level (one balance) → same on every line.
+            # Invoice status is per-line (per matched invoice) → aggregate.
+            "pay_status": first.get("pay_status", ""),
+            "invoice_status": (
+                _aggregate_invoice_status([r.get("invoice_status") or "" for r in lines])
+                if grain == "bill" else first.get("invoice_status", "")
+            ),
+            # match_basis is per-line (per matched invoice) → aggregate like account.
+            "match_basis": (
+                _agg_distinct_or_multi([r.get("match_basis") or "" for r in lines])
+                if grain == "bill" else first.get("match_basis", "")
+            ),
+            "match_note": (
+                _agg_distinct_or_multi([r.get("match_note") or "" for r in lines])
+                if grain == "bill" else first.get("match_note", "")
+            ),
             "is_multi_project": is_multi,
             "line_count": len(lines),
             "share": share,  # 1.0 for single-project; <1.0 for multi-project chunks

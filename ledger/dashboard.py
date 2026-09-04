@@ -1,0 +1,2868 @@
+#!/usr/bin/env python3
+"""
+dashboard.py — a local web dashboard over the project ledger.
+
+Reads the SQLite ledger (READ-ONLY) and serves a single-page dashboard at
+http://127.0.0.1:<port>. No terminal, no SQL: portfolio KPIs, per-division
+rollups, a searchable / sortable projects table, click-into-a-job detail, and
+one-click copy + CSV export. Appearance — theme, font, size, density, content
+width, which widgets and which columns show — is customizable in the UI and
+saved in the browser (localStorage), per person.
+
+SAFETY
+  * Reads open the database READ-ONLY (SQLite mode=ro). The ONLY writes are the owner's
+    own marks, each to its own tiny overlay table (never to the mirrored source tables):
+    waiver (draw waivers) and bill_mark (lien tags → mirrored to the workbook on sync-ap).
+  * The server binds to 127.0.0.1 only — it is not exposed on the network.
+
+USAGE
+  python3 ledger/dashboard.py                       # start + open your browser
+  python3 ledger/dashboard.py --port 8787           # pick the port
+  python3 ledger/dashboard.py --no-open             # don't auto-open a browser
+  python3 ledger/dashboard.py --db /path/ledger.sqlite3
+"""
+from __future__ import annotations
+
+import argparse
+import datetime as _dt
+import hashlib
+import json
+import os
+import platform
+import re
+import shutil
+import signal
+import sqlite3
+import subprocess
+import sys
+import threading
+import time
+import webbrowser
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+from shared import paths, pnl_paths, bill_marks, lien_clock, breakeven  # noqa: E402
+from shared import draw_moves      # the push: bills carried into a later draw by agreement
+
+import registry_view  # noqa: E402  (local: parses the vault's process registry for the Systems tab)
+import vault_graph    # noqa: E402  (local: vault [[link]] graph + docs/ARCHITECTURE.md diagrams for the Graph tab)
+import trail          # noqa: E402  (local: the money trail - every QBO line behind a project's Costs / Billed, /api/trail)
+import notion_page    # noqa: E402  (local: one Notion page, whole, for the invoice side panel - /api/invoice/notion)
+import table_export   # noqa: E402  (local: a filtered table -> grouped Excel report in ~/Downloads, POST /api/export/xlsx)
+
+HERE = Path(__file__).resolve().parent
+STATIC = HERE / "static"
+
+# Dashboard build version - shown in the top bar so the owner can confirm which build is
+# live. Bump on every user-visible release. 1.0.0 = Open Invoices tab + lien columns;
+# 1.0.1 = Open Invoices client shows the parent GC (not the project-level name);
+# 1.1.0 = Systems tab - the process registry rendered live from the vault;
+# 1.2.0 = Health tab - the company-health metric layer (folds the retired
+#         Company Tracker/Dashboard model in: Money In / Money Out / Position /
+#         Break-Even + the FIN-12 Recurring & Debt register).
+LEDGER_VERSION = "1.2.0"
+
+DEFAULT_DB = paths.get_path(
+    "ACB_LEDGER_DB",
+    Path.home() / "Library" / "Application Support" / "Proficient" / "ledger.sqlite3",
+)
+
+CONTENT_TYPES = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "application/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".svg": "image/svg+xml",
+}
+
+# ── P&L link (project-pnl) ──────────────────────────────────────────────────
+# The dashboard can OPEN an existing per-project P&L and, on an explicit owner
+# confirm, RUN project-pnl to (re)generate it. Generation shells out to the tool's
+# own CLI (run_pnl.sh) — a subprocess, never an import (tools never import tools).
+# QBO stays read-only inside project-pnl; the ONE data write (the .xlsx) is gated
+# behind the UI confirm + a confirm flag on the request. Logs land under
+# ~/Library/Logs/Proficient/ (never inside the repo).
+_PNL_DIR = PROJECT_ROOT / "project-pnl"
+_PNL_RUN = _PNL_DIR / "run_pnl.sh"
+_PNL_LOG_DIR = Path.home() / "Library" / "Logs" / "Proficient" / "ledger-pnl"
+_PROJ_RE = re.compile(r"^(MFD|CP|RP)\d+(-FTW)?$", re.IGNORECASE)
+_PNL_JOBS: dict = {}                 # proj -> {state, started, log, detail, proc, file}
+_PNL_LOCK = threading.Lock()
+# Where the lien notice / affidavit PDFs are filed (Synology). Per-machine override via
+# machine.env LIEN_FOLDER; default is the Accounting share's Vendor Liens folder.
+_LIEN_FOLDER = paths.get_path("LIEN_FOLDER",
+                              "/Volumes/Accounting/LIENS & MONTHLY NOTICES/Vendor Liens/2026")
+
+
+def _os_open(path: str):
+    """Open a file/folder in the host OS file manager. Cross-platform so the same
+    dashboard works on Mac OR Windows — the LOCAL server opens it with the native
+    command, so the browser never has to handle smb:// or \\\\server paths. Returns
+    None on success, an error string otherwise. Open-only — never executes."""
+    system = platform.system()
+    try:
+        if system == "Darwin":
+            subprocess.Popen(["open", path])           # Finder (Mac)
+        elif system == "Windows":
+            os.startfile(path)                         # Explorer (Windows)  # noqa: B606
+        else:
+            subprocess.Popen(["xdg-open", path])       # Linux desktops
+    except OSError as e:
+        return f"open failed: {e}"
+    return None
+
+
+# Downloaded-scan batches are TEMPORARY - a folder to grab a few PDFs from and send, not storage.
+# Each batch self-deletes after this many hours so they never accumulate (owner 2026-08-31: "temp
+# to delete after 24 hours so it doesn't hold storage hostage"). Override with ACB_AUDIT_SCANS_TTL_H.
+_AUDIT_SCANS_TTL_H = 24.0
+_AUDIT_BATCH_RE = re.compile(r"^\d{2}-\d{2}-\d{4} \d{4}$")   # the "MM-DD-YYYY HHMM" batch-folder name
+
+
+def _audit_scans_base() -> Path:
+    return Path(paths.get_path("ACB_AUDIT_SCANS_DIR", Path.home() / "Downloads" / "Audit scans"))
+
+
+def _audit_scans_ttl_h() -> float:
+    try:
+        return max(1.0, float(os.environ.get("ACB_AUDIT_SCANS_TTL_H", _AUDIT_SCANS_TTL_H)))
+    except (TypeError, ValueError):
+        return _AUDIT_SCANS_TTL_H
+
+
+def _prune_audit_scans() -> int:
+    """Delete scan batches older than the TTL so downloads never pile up. Only ever removes our own
+    dated batch subfolders (name = 'MM-DD-YYYY HHMM'); anything else the owner parked in the base is
+    left alone, so a folder they renamed to keep survives. Best-effort: a locked file just waits for
+    the next sweep. Returns how many batches it removed."""
+    base = _audit_scans_base()
+    try:
+        entries = list(base.iterdir())
+    except OSError:
+        return 0                                        # base doesn't exist yet → nothing to prune
+    cutoff = time.time() - _audit_scans_ttl_h() * 3600
+    removed = 0
+    for d in entries:
+        try:
+            if d.is_dir() and _AUDIT_BATCH_RE.match(d.name) and d.stat().st_mtime < cutoff:
+                shutil.rmtree(d, ignore_errors=True)
+                removed += 1
+        except OSError:
+            continue
+    return removed
+
+
+def _audit_scans_dir() -> Path:
+    """A fresh, dated folder for a batch of downloaded bill scans - under ~/Downloads by default
+    (where the owner expects files they're about to attach), one subfolder per run so batches never
+    overwrite each other. Override the base with ACB_AUDIT_SCANS_DIR. Prunes stale batches first so
+    the folder stays temporary and never holds storage."""
+    _prune_audit_scans()
+    return _audit_scans_base() / _dt.datetime.now().strftime("%m-%d-%Y %H%M")
+
+
+def _ensure_lien_vendor_dir(vendor: str):
+    """`_LIEN_FOLDER/<vendor>` for a vendor's lien docs (owner: organize by vendor, auto-create on
+    mark). Creates ONLY the vendor subfolder and ONLY if the base already exists - so we never
+    build a fake tree that shadows an unmounted share. Sanitized (no path traversal). Path or None."""
+    safe = re.sub(r"[\\/]+", " ", (vendor or "")).strip().strip(".")
+    base = Path(_LIEN_FOLDER)
+    if not safe or not base.is_dir():
+        return None
+    d = base / safe
+    try:
+        d.mkdir(exist_ok=True)
+        return d
+    except OSError:
+        return None
+
+
+# ── live P&L compute (folds project-pnl's numbers INTO the dashboard) ────────
+# Conventions match project-pnl/project_pnl_export.py so the two reconcile:
+# Earned Revenue = contract × %complete; costs = cost_line (QBO truth, incl subs);
+# Overhead = a % of the CONTRACT (10% company, 9% MFD view - the user
+# 2026-09-03: "it's contract 10%"; total billed stands in when no contract is
+# on file, as the P&L workbook does). net = revenue − costs − overhead. Billed
+# (AR) is shown alongside as the realized view.
+_OVERHEAD_REV = 0.10          # company: 10% of the contract
+_OVERHEAD_MFD_COST = 0.09     # MFD view: 9% of the contract
+
+
+def _project_pnl(con, proj: str) -> dict:
+    """A live per-project P&L assembled from the ledger spine — no Excel needed."""
+    proj = (proj or "").strip().upper()
+    row = con.execute(
+        "SELECT project_no, division, total_contract_price tcp, percent_complete pc, "
+        "costs_to_date ctd, estimated_total_costs etc FROM v_wip_latest WHERE project_no = ?",
+        (proj,)).fetchone()
+    div = (row["division"] if row else None) or ("Multi Family" if proj.startswith("MFD")
+           else "Commercial" if proj.startswith("CP") else "Residential")
+    is_mfd = proj.startswith("MFD") or (div or "").lower().startswith("multi")
+    contract = (row["tcp"] if row else 0) or 0
+    pct = (row["pc"] if row else 0) or 0
+    earned = round(contract * pct, 2)
+    # costs from the QBO-complete cost_line (incl subs), itemized by cost code
+    cost = con.execute("SELECT COALESCE(SUM(amount),0) c FROM cost_line WHERE project_no = ?", (proj,)).fetchone()["c"] or 0
+    by_code = [dict(r) for r in con.execute(
+        "SELECT COALESCE(cost_code,'(uncoded)') code, COALESCE(SUM(amount),0) amount, "
+        "COUNT(*) lines, MAX(is_sub) is_sub FROM cost_line WHERE project_no = ? "
+        "GROUP BY COALESCE(cost_code,'(uncoded)') ORDER BY amount DESC", (proj,))]
+    billed = con.execute("SELECT COALESCE(SUM(amount),0) a FROM billing_event WHERE project_no = ?", (proj,)).fetchone()["a"] or 0
+    # Every AR invoice (draw) this project has billed - the make-up of billed-to-date, oldest first.
+    invoices = [dict(r) for r in con.execute(
+        "SELECT doc_number, qbo_txn_id, amount, balance, txn_date, status, paid_date, due_date, memo "
+        "FROM billing_event WHERE project_no = ? ORDER BY txn_date, doc_number", (proj,))]
+    _base = contract or billed
+    overhead = round((_OVERHEAD_MFD_COST if is_mfd else _OVERHEAD_REV) * _base, 2)
+    net = round(earned - cost - overhead, 2)
+    return {
+        "proj": proj, "division": div,
+        "contract": contract, "pct_complete": pct, "earned": earned, "billed": billed,
+        "cost": cost, "overhead": overhead,
+        "overhead_basis": "9% of contract (MFD)" if is_mfd else "10% of contract",
+        "net": net, "net_pct": (net / earned) if earned else None,
+        "by_code": by_code, "invoices": invoices,
+        "has_wip": row is not None,
+    }
+
+
+def _portfolio_pnl(con) -> dict:
+    """Company P&L: every ACTIVE job's live P&L + division and company totals.
+    Active = WIP status 'Active' OR NULL (MFD — Test-Master carries no STATUS column,
+    so its jobs are active by construction); Closed/Complete are excluded. Same
+    per-project math as _project_pnl, batched into 3 aggregate reads."""
+    wip = list(con.execute(
+        "SELECT project_no, division, status, total_contract_price tcp, percent_complete pc, "
+        "builder_or_gc, project_name FROM v_wip_latest"))
+    costs = {r["project_no"]: r["c"] for r in con.execute(
+        "SELECT project_no, COALESCE(SUM(amount),0) c FROM cost_line GROUP BY project_no")}
+    billed = {r["project_no"]: r["a"] for r in con.execute(
+        "SELECT project_no, COALESCE(SUM(amount),0) a FROM billing_event "
+        "WHERE project_no IS NOT NULL GROUP BY project_no")}
+    client_of = _project_customer_map(con)   # the shared client resolver (same as Bills/Liens/projects)
+    try:  # project → QBO customer id (CustomerRef.value) for the project# deep link; absent-safe
+        cust_of = {r["project_no"]: r["customer_id"] for r in con.execute(
+            "SELECT project_no, customer_id FROM cost_line "
+            "WHERE customer_id IS NOT NULL AND customer_id <> '' GROUP BY project_no")}
+    except sqlite3.OperationalError:
+        cust_of = {}
+    rows, div = [], {}
+    comp = {"earned": 0.0, "cost": 0.0, "overhead": 0.0, "net": 0.0, "billed": 0.0, "n": 0}
+    for w in wip:
+        st_raw = (w["status"] or "").strip()
+        active = st_raw.lower() in ("", "active")    # blank = MFD (active by construction)
+        p = w["project_no"]
+        division = w["division"] or ("Multi Family" if p.startswith("MFD")
+                   else "Commercial" if p.startswith("CP") else "Residential")
+        is_mfd = p.startswith("MFD") or division.lower().startswith("multi")
+        contract = w["tcp"] or 0
+        pc = w["pc"] or 0
+        earned = round(contract * pc, 2)
+        cost = costs.get(p, 0) or 0
+        b = billed.get(p, 0) or 0
+        oh = round((_OVERHEAD_MFD_COST if is_mfd else _OVERHEAD_REV) * (contract or b), 2)
+        net = round(earned - cost - oh, 2)
+        try:                                             # ~4 stats/project (no glob) - cheap, cached client-side
+            mtime = pnl_paths.find_pnl(p).get("mtime")
+        except Exception:  # noqa: BLE001 - a path hiccup must never break the P&L
+            mtime = None
+        rows.append({"proj": p, "division": division, "contract": contract,
+                     "pct_complete": pc, "earned": earned, "cost": cost,
+                     "overhead": oh, "net": net,
+                     "net_pct": (net / earned) if earned else None, "billed": b,
+                     "name": w["project_name"],                          # the job name / address
+                     "client": client_of.get(p) or w["builder_or_gc"] or None,
+                     "cust_id": cust_of.get(p), "pnl_mtime": mtime,
+                     "status": st_raw or "Active", "active": active})
+        if not active:                               # Closed/Complete: shown + filterable, but OFF the totals
+            continue
+        d = div.setdefault(division, {"division": division, "earned": 0.0, "cost": 0.0,
+                                      "overhead": 0.0, "net": 0.0, "billed": 0.0, "n": 0})
+        for k, v in (("earned", earned), ("cost", cost), ("overhead", oh), ("net", net), ("billed", b)):
+            d[k] += v
+            comp[k] += v
+        d["n"] += 1
+        comp["n"] += 1
+    for d in list(div.values()) + [comp]:
+        d["net_pct"] = (d["net"] / d["earned"]) if d["earned"] else None
+    rows.sort(key=lambda r: r["net"])                # worst margin first — the ones to watch
+    by_div = sorted(div.values(), key=lambda d: -d["earned"])
+    return {"rows": rows, "by_division": by_div, "company": comp}
+
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _pnl_last_line(path) -> str:
+    """The last MEANINGFUL line of a generation log - the tool's own progress text ('where it's
+    at'), not the whole log. Reads only the tail, strips ANSI + box-drawing, skips blank/border
+    lines. Empty string if the log isn't readable yet."""
+    if not path:
+        return ""
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, 2)
+            size = f.tell()
+            f.seek(max(0, size - 4096))
+            data = f.read().decode("utf-8", "replace")
+    except OSError:
+        return ""
+    for ln in reversed(data.splitlines()):
+        s = _ANSI_RE.sub("", ln).strip().strip("─╭╮╰╯│▌ ").strip()
+        if s and re.search(r"[A-Za-z0-9]", s):
+            return s[:130]
+    return ""
+
+
+def _pnl_wait(proj: str) -> None:
+    """Reap a generation subprocess and record its outcome (running → done/error)."""
+    j = _PNL_JOBS.get(proj)
+    if not j:
+        return
+    rc = j["proc"].wait()
+    try:
+        j["file"].close()
+    except OSError:
+        pass
+    with _PNL_LOCK:
+        j["state"] = "done" if rc == 0 else "error"
+        j["rc"] = rc
+        if rc != 0:
+            j["detail"] = f"exit {rc} — see {j['log']}"
+
+
+# ── the ledger's CONTROL PLANE: a pipeline registry ────────────────────────
+# Each pipeline is an ordered list of steps run as subprocesses (tools never IMPORT
+# tools - repo rule). `script` is repo-relative; `side: True` marks a PRODUCER with
+# real writes (QBO/Notion/Teams/Excel) vs a read-only loader. The default Resync
+# ("reload") runs the LOADERS ONLY - read the current sources into the ledger, fast +
+# read-only. "all" (Full refresh) also runs the producers. The WIP DRAFT generators
+# (the readers write Test tabs for PM review, then it's implemented) are a SEPARATE,
+# confirm-gated action, never in a refresh. 'QBO costs' pulls the last 90 days
+# incrementally (Touch ID). WIP loads first (it creates the project table).
+_SYNC_LOG_DIR = Path.home() / "Library" / "Logs" / "Proficient" / "ledger-sync"
+_SYNC_COST_WINDOW_DAYS = 90
+
+
+def _pipelines():
+    """Built fresh each call so the cost --since window stays current."""
+    since = (_dt.date.today() - _dt.timedelta(days=_SYNC_COST_WINDOW_DAYS)).isoformat()
+    return [
+        {"key": "wip", "label": "WIP master", "steps": [
+            {"label": "Load current WIP -> ledger", "script": "ledger/load_wip_master.py", "args": []},
+        ], "draft": {"label": "Generate DRAFT WIP (Test tabs, for PM review)", "steps": [
+            {"label": "Draft CP WIP", "script": "wip/cp_wip_reader.py", "args": [], "side": True},
+            {"label": "Draft RP WIP", "script": "wip/rp_wip_reader.py", "args": [], "side": True},
+        ]}},
+        # Hidden as its own Console card (owner 2026-08-19 - costs belong in a future "Company P&L"
+        # view). It STAYS in the reload/all chains so Resync keeps costs fresh for the Project P&L
+        # (which reads cost_line); it just isn't a standalone button any more.
+        {"key": "costs", "label": "Costs (QBO, 90d)", "hidden": True, "steps": [
+            {"label": "Pull costs (90d, Touch ID)", "script": "ledger/load_costs.py", "args": ["--active", "--since", since]},
+        ]},
+        {"key": "ap", "label": "AP - bills + liens", "steps": [
+            {"label": "Sync bills (QBO -> Bill Tracker.xlsx)", "script": "bill-tracker/excel_bill_sync.py", "args": [], "side": True},
+            {"label": "Load bills -> ledger", "script": "ledger/load_bill_tracker.py", "args": []},
+        ]},
+        {"key": "ar", "label": "AR - invoices / draws", "steps": [
+            {"label": "Sync invoices (QBO -> Notion + Teams)", "script": "invoice-sync/run_invoice_sync.py", "args": [], "side": True},
+            {"label": "Load invoices -> ledger", "script": "ledger/load_invoices.py", "args": []},
+        ]},
+        {"key": "payments", "label": "Payments (QBO)", "steps": [
+            # Payments are money IN and drive the Payments tab. Was wired into NO sync at all
+            # (owner 2026-08-27: "payments section is not showing recent payments"), so it now
+            # rides the reload chain like every other loader. load_payments DELETE+reloads its
+            # window, so the window IS the history depth: a rolling 12-month year (its default)
+            # keeps the Payments tab's history while catching the newest payments each run.
+            {"label": "Pull payments (QBO, rolling year)", "script": "ledger/load_payments.py", "args": ["--months", "12"]},
+            # Money OUT (BillPayment) - the vendor page's Payments view. Local table, read on demand.
+            {"label": "Pull bill payments (QBO, this year)", "script": "ledger/load_bill_payments.py", "args": []},
+        ]},
+        {"key": "crm", "label": "CRM - customers", "steps": [
+            {"label": "Pull customers (Notion)", "script": "ledger/load_customers.py", "args": []},
+        ]},
+        {"key": "attachments", "label": "Attachments (QBO scans index)", "steps": [
+            # every Attachable -> attachment(etype, txn_id): the 📎 on every row. Uses the week-old disk
+            # cache when fresh; a sweep otherwise (a few minutes).
+            # ALWAYS a fresh sweep (owner 2026-09-03: the bill process deletes the unapproved scan and
+            # uploads the signed one - a week-old cache would keep showing the wrong count). ~2 minutes.
+            {"label": "Index attachments - fresh sweep (Touch ID)", "script": "ledger/load_attachments.py", "args": ["--refresh"]},
+        ]},
+        # Workbook GENERATOR, not a loader: its steps live under "actions" so it
+        # can never be swept into the reload/all chains - a Full refresh must not
+        # kick off 138 project P&L runs (same reason the WIP draft sits outside
+        # "steps"). One action per division; each is its own explicit click.
+        {"key": "pnl", "label": "Project P&L workbooks", "steps": [], "actions": [
+            {"key": "pnl-cp", "label": "Active CP"},
+            {"key": "pnl-rp", "label": "Active RP"},
+            {"key": "pnl-mfd", "label": "Active MFD"},
+        ]},
+        {"key": "subloc", "label": "Sub LOC (QBO float)", "steps": [
+            {"label": "Load sub LOC float (Touch ID)", "script": "ledger/load_sub_loc.py", "args": []},
+        ]},
+        {"key": "healthpull", "label": "Health metrics (QBO)", "steps": [
+            # Cash / P&L blocks / 13-wk flow / recurring register -> health_snapshot.
+            # The Health tab derives everything else live from the other loaders' tables.
+            {"label": "Pull health metrics (Touch ID)", "script": "ledger/load_health.py", "args": []},
+        ]},
+    ]
+
+
+def _resolve_steps(pipeline_key):
+    """Ordered steps for: a pipeline key (its full chain) - 'reload' (every loader, the
+    safe default Resync) - 'all' (every full chain incl producers) - 'wip-draft'."""
+    pls = _pipelines()
+    if pipeline_key == "reload":
+        return [s for p in pls for s in p["steps"] if not s.get("side")]
+    if pipeline_key == "all":
+        return [s for p in pls for s in p["steps"]]
+    if pipeline_key == "wip-draft":
+        return next((p["draft"]["steps"] for p in pls if p["key"] == "wip" and p.get("draft")), [])
+    if pipeline_key == "costs-full":          # explicit click only - never part of reload/all (30-40 min)
+        return [{"label": "Full cost reload (every project, all history, Touch ID)",
+                 "script": "ledger/load_costs.py", "args": []}]
+    if pipeline_key.startswith("pnl-"):
+        div = pipeline_key[4:].upper()
+        if div not in ("CP", "RP", "MFD"):
+            return []
+        return [{"label": f"Regenerate Active {div} P&L workbooks",
+                 "script": "project-pnl/project_pnl_export.py",
+                 "args": ["active", div.lower(), "--no-prompt"], "side": True}]
+    return next((p["steps"] for p in pls if p["key"] == pipeline_key), [])
+
+
+# ── WIP Review: the accept/merge flow over the three Test tabs ────────────────
+# The ledger shows the pending WIP update as a per-job before/after diff, the owner
+# approves/disapproves each change, and approved values are written to Test - CP
+# (CP), Test - RP (RP), and Test-Master (all three). The dashboard ONLY orchestrates
+# subprocesses and reads/writes JSON - it never imports the wip tools (repo rule).
+# Each tool's --emit-review dumps its tab's diff; --apply-review applies the owner's
+# decisions and writes. JSON lives OUTSIDE the repo (Claude-visible/synced folder).
+_WIP_REVIEW_DIR = Path(os.environ.get(
+    "ACB_WIP_REVIEW_DIR",
+    Path.home() / "Library" / "Application Support" / "Proficient" / "wip-review"))
+# division -> emit file. Order is the display order (CP, RP, then the MFD-on-Master).
+_WIP_REVIEW_FILES = [("Commercial", "cp.json"), ("Residential", "rp.json"),
+                     ("Multi-Family", "master.json")]
+
+
+def _rp_wip_file() -> Path:
+    """The owner's verified RP WIP workbook - the binding RP source, resolved the
+    same way rp_wip_reader does so Master and Test - RP read the identical file."""
+    return paths.get_path("RP_WIP_FILE", paths.onedrive_base() / "RP WIP TO FIX_Final.xlsx")
+
+
+def _wip_review_steps(mode: str):
+    """mode 'emit' -> the three diff runs (no tab write); 'apply' -> the three
+    guarded writes (Test - CP / Test - RP / Test-Master), each honouring the SAME
+    decisions.json. Master needs --rp-from-file so its RP rows match Test - RP."""
+    _WIP_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+    cp = str(_WIP_REVIEW_DIR / "cp.json")
+    rp = str(_WIP_REVIEW_DIR / "rp.json")
+    mst = str(_WIP_REVIEW_DIR / "master.json")
+    dec = str(_WIP_REVIEW_DIR / "decisions.json")
+    if mode == "emit":
+        return [
+            {"label": "Review CP (Test - CP, Touch ID)", "script": "wip/cp_wip_reader.py", "args": ["--emit-review", cp]},
+            {"label": "Review RP (Test - RP, Touch ID)", "script": "wip/rp_wip_reader.py", "args": ["--emit-review", rp]},
+            {"label": "Review MFD (Test-Master, Touch ID)", "script": "wip/master_wip_test.py", "args": ["--emit-review", mst]},
+        ]
+    return [
+        {"label": "Write CP → Test - CP", "script": "wip/cp_wip_reader.py", "args": ["--apply-review", dec], "side": True},
+        {"label": "Write RP → Test - RP", "script": "wip/rp_wip_reader.py", "args": ["--apply-review", dec], "side": True},
+        {"label": "Write all → Test-Master", "script": "wip/master_wip_test.py",
+         "args": ["--apply-review", dec, "--rp-from-file", str(_rp_wip_file())], "side": True},
+    ]
+
+
+_SYNC = {"state": "idle", "current": -1, "started": 0.0, "log": None, "pipeline": None, "steps": []}
+_SYNC_LOCK = threading.Lock()
+
+
+def _run_sync(steps) -> None:
+    """Run the resolved steps in order, recording per-step state for the progress bar.
+    State was claimed under the lock by _sync_start; this just executes + finalizes."""
+    _SYNC_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    logpath = _SYNC_LOG_DIR / "sync.log"
+    with _SYNC_LOCK:
+        _SYNC["log"] = str(logpath)
+    ok = True
+    with open(logpath, "w", encoding="utf-8") as logf:
+        for i, step in enumerate(steps):
+            with _SYNC_LOCK:
+                _SYNC["current"] = i
+                _SYNC["steps"][i]["state"] = "running"
+            logf.write(f"\n===== {step['label']} ({step['script']}) =====\n")
+            logf.flush()
+            try:
+                rc = subprocess.call([sys.executable, str(PROJECT_ROOT / step["script"])] + step.get("args", []),
+                                     cwd=str(PROJECT_ROOT), stdout=logf, stderr=subprocess.STDOUT)
+            except OSError as e:
+                logf.write(f"launch failed: {e}\n")
+                rc = 1
+            with _SYNC_LOCK:
+                _SYNC["steps"][i]["state"] = "done" if rc == 0 else "error"
+            if rc != 0:
+                ok = False
+                break
+    with _SYNC_LOCK:
+        _SYNC["state"] = "done" if ok else "error"
+        _SYNC["current"] = -1
+
+
+# lien states that put a bill on the action watchlist, most-urgent first
+LIEN_RANK = {
+    "Notice PAST due": 0, "Notice due in ≤7d": 1, "Notice due in ≤15d": 2,
+    "Notice due in ≤30d": 3, "Notice Sent": 4, "Lien Filed": 5,
+}
+
+
+_PROJ_SHAPED = re.compile(r"^(RP|CP|MFD)\d", re.I)
+
+
+def _project_customer_map(con) -> dict:
+    """{project_no -> client (the GC)} - the ONE client resolver, shared by the AP/Liens view, the
+    projects list, and the portfolio P&L so they never disagree. PRIMARY: project_customer (the QBO
+    Customer:Project hierarchy reversed by load_payments, covers EVERY project); then payments'
+    resolved GC, then a non-project-shaped billing_event customer, fill any gap."""
+    out = {}
+    try:
+        for r in con.execute("SELECT project_no pn, client FROM project_customer WHERE COALESCE(client,'') <> ''"):
+            out[r["pn"]] = r["client"]
+    except sqlite3.OperationalError:
+        pass
+    try:
+        for r in con.execute(
+                "SELECT pa.project_no pn, p.parent_customer gc, COUNT(*) n FROM payment_application pa "
+                "JOIN payment p ON p.qbo_txn_id = pa.payment_txn_id "
+                "WHERE pa.project_no IS NOT NULL AND COALESCE(p.parent_customer,'') <> '' "
+                "GROUP BY pa.project_no, p.parent_customer ORDER BY pa.project_no, n DESC"):
+            out.setdefault(r["pn"], r["gc"])
+    except sqlite3.OperationalError:
+        pass
+    try:
+        for r in con.execute("SELECT project_no pn, customer c FROM billing_event "
+                             "WHERE project_no IS NOT NULL AND COALESCE(customer,'') <> ''"):
+            if r["pn"] not in out and not _PROJ_SHAPED.match(r["c"] or ""):
+                out.setdefault(r["pn"], r["c"])
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
+def _fetch_ap(con) -> dict:
+    """AP + lien view from ap_bill_line; empty (not an error) if the table is absent."""
+    ap = {"summary": {"open_balance": 0, "open_lines": 0, "watch_count": 0},
+          "lien_watch": [], "by_project": {}, "bills": []}
+    try:
+        rows = con.execute(
+            "SELECT project_no, division, vendor, bill_ref, open_balance, lien_status, "
+            "matched_invoice, invoice_no, qbo_link FROM ap_bill_line").fetchall()
+    except sqlite3.OperationalError:
+        return ap
+    # Site lien marks (Notice Sent / Lien Filed / Released) the owner set on the dashboard.
+    # They win over the computed/loaded lien_status INSTANTLY, before the next sync-ap mirrors
+    # them into the workbook. Keyed by QBO bill id (= the workbook's _Key). Absent-safe.
+    marks = bill_marks.read_lien_marks()
+    def _eff_lien(r):
+        bid = bill_marks.bill_id_from_link(r["qbo_link"])
+        tag = marks.get(bid) if bid else None
+        return tag if tag in bill_marks.LIEN_STATES else r["lien_status"]
+    open_bal, open_lines = 0.0, 0
+    for r in rows:
+        ob = r["open_balance"] or 0
+        if ob > 0:
+            open_bal += ob
+            open_lines += 1
+    by_project = {}
+    for r in con.execute("SELECT project_no, open_lines, open_balance FROM v_ap_by_project "
+                         "WHERE COALESCE(open_balance,0) > 0"):
+        if r["project_no"]:
+            by_project[r["project_no"]] = {"open_lines": r["open_lines"], "open_balance": r["open_balance"]}
+    ap["by_project"] = by_project
+    # Full bill list for the Bill Tracker tab. Every row is one bill (open_balance is
+    # per-bill, safe to sum). Description is omitted to keep the payload lean; account
+    # carries the QBO category. Newest first (bill_date is ISO). Each bill is enriched
+    # with its AR invoice (from billing_event, joined on Invoice #) so the Bills tab can
+    # show the real invoice pay status and deep-link to the invoice in QuickBooks.
+    bmap = {}
+    try:
+        for be in con.execute("SELECT doc_number, qbo_txn_id, amount, balance, status, txn_date, customer "
+                              "FROM billing_event WHERE doc_number IS NOT NULL"):
+            bmap[str(be["doc_number"])] = dict(be)
+    except sqlite3.OperationalError:
+        pass
+    proj_customer = _project_customer_map(con)   # project -> client (the GC), the shared resolver
+    pay = bill_marks.read_pay_marks()             # current check run: {bill_id -> {amount}}
+    bills = []
+    for r in con.execute(
+        "SELECT project_no, division, vendor, bill_ref, bill_date, account, "
+        "line_amount, bill_total, open_balance, pay_status, approved, invoice_status, lien_status, "
+        "matched_invoice, invoice_no, gc_paid_date, pay_date, qbo_link "
+        "FROM ap_bill_line ORDER BY bill_date DESC"):
+        b = dict(r)
+        b["client"] = proj_customer.get(b.get("project_no"))
+        bid = bill_marks.bill_id_from_link(b.get("qbo_link"))
+        b["bill_id"] = bid                           # QBO bill id = workbook _Key; None → not markable
+        pm = pay.get(bid) if bid else None           # is this bill in the current pay run?
+        b["pay_selected"] = bool(pm)
+        b["pay_amount"] = (pm.get("amount") if pm and pm.get("amount") is not None else None)  # None → full open bal
+        b["lien_marked"] = bool(bid and marks.get(bid))   # currently a site override (vs computed)
+        b["att"] = _att_counts(con).get(("Bill", str(bid)), 0) if bid else 0   # scans on file (📎)
+        if bid and marks.get(bid) in bill_marks.LIEN_STATES:
+            b["lien_status"] = marks[bid]            # site mark wins until the next sync-ap
+        inv = bmap.get(str(b.get("invoice_no") or ""))
+        if inv:
+            b["inv_qbo_id"] = inv["qbo_txn_id"]      # QBO Invoice Id → company-scoped deep link
+            b["inv_ar_status"] = inv["status"]       # actual AR status: Paid | Partially Paid | Unpaid
+            b["inv_amount"] = inv["amount"]
+            b["inv_balance"] = inv["balance"]
+            b["inv_date"] = inv["txn_date"]
+            b["inv_customer"] = inv["customer"]
+        bills.append(b)
+    ap["bills"] = bills
+    # The lien WATCHLIST = the enriched bills that are on the clock OR marked (any LIEN_RANK status),
+    # so the Liens page carries the client, bill date, the AR invoice + its pay status - not just the
+    # project #. Most-urgent first. It's ALL divisions, not CP-only.
+    watch = [b for b in bills if (b.get("lien_status") or "") in LIEN_RANK]
+    watch.sort(key=lambda b: (LIEN_RANK[b["lien_status"]], -(b.get("open_balance") or 0)))
+    ap["lien_watch"] = watch[:500]
+    # The Liens PAGE = bills where a notice was actually SENT or a lien FILED (the owner's marks),
+    # NOT the deadline clock (owner 2026-08-20). Filed first, then by open $. Small list, no cap.
+    _SENT = {"Lien Filed": 0, "Notice Sent": 1}
+    liens = [b for b in bills if (b.get("lien_status") or "") in _SENT]
+    liens.sort(key=lambda b: (_SENT[b["lien_status"]], -(b.get("open_balance") or 0)))
+    ap["liens"] = liens
+    ap["summary"] = {"open_balance": open_bal, "open_lines": open_lines, "watch_count": len(watch)}
+    return ap
+
+
+_AGING_BUCKETS = ["Current", "1-30", "31-60", "61-90", "90+"]
+
+
+def _aging_bucket(days_past_due) -> int:
+    """Index into _AGING_BUCKETS by signed days-past-due - the SAME thresholds as
+    invoice-sync/aging_sheet.py, so the tab ages exactly like the AR Aging workbook.
+    None / not-yet-due (<= 0) sits in Current."""
+    if days_past_due is None or days_past_due <= 0:
+        return 0
+    if days_past_due <= 30:
+        return 1
+    if days_past_due <= 60:
+        return 2
+    if days_past_due <= 90:
+        return 3
+    return 4
+
+
+def _client_pay_speed(con) -> dict:
+    """How long each client takes to pay: avg days from INVOICE date to PAID date over their
+    PAID invoices - the input to a future-cash-in forecast (owner 2026-08-25). Returns
+    {by_client: {client_lower: {avg_days, n}}, all_avg: <portfolio avg or None>}. Absent-safe."""
+    try:
+        rows = con.execute(
+            "SELECT customer, txn_date, paid_date FROM billing_event "
+            "WHERE COALESCE(balance,0) <= 0.005 AND COALESCE(paid_date,'') <> '' AND COALESCE(txn_date,'') <> ''"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return {"by_client": {}, "all_avg": None}
+    agg, alld = {}, []
+    for r in rows:
+        try:
+            d = (_dt.date.fromisoformat(r["paid_date"][:10]) - _dt.date.fromisoformat(r["txn_date"][:10])).days
+        except (ValueError, TypeError):
+            continue
+        if d < 0 or d > 400:                      # guard against typo'd dates
+            continue
+        agg.setdefault((r["customer"] or "").strip().lower(), []).append(d)
+        alld.append(d)
+    by_client = {c: {"avg_days": round(sum(v) / len(v)), "n": len(v)} for c, v in agg.items() if v}
+    return {"by_client": by_client, "all_avg": (round(sum(alld) / len(alld)) if alld else None)}
+
+
+def _fetch_open_invoices(con, open_only: bool = True) -> dict:
+    """AR invoices from billing_event, aged by DUE DATE into the same Current/1-30/31-60/61-90/90+
+    buckets as the Invoice Tracker's AR Aging tab, each carrying its related Lien Tracker status +
+    the Notion collections note (Quick Status). `open_only` (default) keeps just the draws the GC
+    still owes; False returns ALL invoices incl. paid (the Invoices tab's "show all" toggle - served
+    on demand so the bulk load stays light). Empty (not an error) if billing_event is unloaded."""
+    out = {"as_of": _dt.date.today().isoformat(), "buckets": _AGING_BUCKETS, "invoices": [], "open_only": open_only}
+    where = "WHERE COALESCE(balance,0) > 0.005" if open_only else ""
+    try:
+        have = {r[1] for r in con.execute("PRAGMA table_info(billing_event)")}
+    except sqlite3.OperationalError:
+        return out
+    if not have:
+        return out
+    note_col = ", note" if "note" in have else ""   # older DBs lack it until the next invoice sync
+    note_col += "".join(f", {c}" for c in ("notion_url", "notion_edited", "last_action_date", "next_followup") if c in have)   # Notion page, last edit, collections dates
+    try:
+        rows = con.execute(
+            "SELECT doc_number, qbo_txn_id, project_no, division, customer, memo, amount, "
+            "balance, txn_date, due_date, net_terms, aging_bucket, status, litigation, "
+            "lien_status, lien_notice, paid_date, draw_period" + note_col + " FROM billing_event "
+            + where).fetchall()
+    except sqlite3.OperationalError:
+        return out
+    # Project → QBO customer id (CustomerRef.value from cost_line) for the project# deep link. Absent-safe.
+    try:
+        cust_of = {r["project_no"]: r["customer_id"] for r in con.execute(
+            "SELECT project_no, customer_id FROM cost_line "
+            "WHERE customer_id IS NOT NULL AND customer_id <> '' GROUP BY project_no")}
+    except sqlite3.OperationalError:
+        cust_of = {}
+    today = _dt.date.today()
+    invs = []
+    for r in rows:
+        d = dict(r)
+        days, due = None, (d.get("due_date") or "")[:10]
+        if due:
+            try:
+                days = (today - _dt.date.fromisoformat(due)).days
+            except ValueError:
+                days = None
+        bi = _aging_bucket(days)
+        # Only fall back to Notion's stored bucket when there's no due date to age by live.
+        if days is None and d.get("aging_bucket") in _AGING_BUCKETS:
+            bi = _AGING_BUCKETS.index(d["aging_bucket"])
+        d["days_past_due"] = days
+        d["bucket"] = _AGING_BUCKETS[bi]
+        d["bucket_index"] = bi
+        # Computed Texas lien-notice CLOCK ("when the lien is due") - the SAME shared/lien_clock
+        # the AR Aging Excel uses, so the site and the workbook agree. Division from the project #.
+        proj = d.get("project_no") or ""
+        div_code = "MFD" if proj.startswith("MFD") else "CP" if proj.startswith("CP") else "RP"
+        inv_date = None
+        tx = (d.get("txn_date") or "")[:10]
+        if tx:
+            try:
+                inv_date = _dt.date.fromisoformat(tx)
+            except ValueError:
+                inv_date = None
+        # The Notion Lien Tracker status advances the clock: once the notice is Mailed, it moves
+        # from the notice deadline to the lien-AFFIDAVIT deadline (the real cutoff); a filed/paid
+        # status ends it. Same call the AR Aging Excel makes, so the site and workbook agree.
+        ls = lien_clock.lien_state(div_code, inv_date, today, memo=(d.get("memo") or ""),
+                                   lien_status=d.get("lien_status"))
+        d["lien_due_label"] = ls.label or None
+        d["lien_due_state"] = ls.state
+        d["cust_id"] = cust_of.get(proj)             # project# → QBO customerdetail deep link
+        d["att"] = _att_counts(con).get(("Invoice", str(d.get("qbo_txn_id") or "")), 0)   # the signed draw package etc.
+        invs.append(d)
+    invs.sort(key=lambda x: ((x.get("customer") or "~").lower(),
+                             x.get("due_date") or "9999", x.get("doc_number") or ""))
+    out["invoices"] = invs
+    out["pay_speed"] = _client_pay_speed(con)   # avg days-to-pay per client → cash-in forecast
+    return out
+
+
+def _fetch_payments(con) -> dict:
+    """Received customer payments, each as ONE transaction (money IN) with the
+    invoice(s) it paid grouped beneath it. Reads the payment / payment_application
+    tables (QBO Payment objects via load_payments.py). Empty (not an error) when
+    that loader hasn't run yet."""
+    out = {"payments": [], "total_received": 0.0, "count": 0, "invoices_paid": 0, "loaded_at": None}
+    try:
+        prows = con.execute(
+            "SELECT qbo_txn_id, txn_date, customer, customer_id, parent_customer, parent_customer_id, "
+            "total_amt, unapplied_amt, method, ref_no, loaded_at FROM payment").fetchall()
+    except sqlite3.OperationalError:
+        return out
+    if not prows:
+        return out
+    try:            # project -> QBO customer id for the deep link (same source as the P&L/invoices)
+        cust_of = {r["project_no"]: r["customer_id"] for r in con.execute(
+            "SELECT project_no, customer_id FROM cost_line "
+            "WHERE customer_id IS NOT NULL AND customer_id <> '' GROUP BY project_no")}
+    except sqlite3.OperationalError:
+        cust_of = {}
+    # The invoice's own memo + date, so a payment's sub-rows read like the Invoices tab
+    # (owner 2026-09-02: "enrich the Payments invoice sub-rows with project # / date / memo").
+    inv_meta: dict = {}
+    try:
+        for r in con.execute("SELECT doc_number, memo, txn_date FROM billing_event WHERE doc_number IS NOT NULL"):
+            inv_meta[str(r["doc_number"]).strip()] = (r["memo"], r["txn_date"])
+    except sqlite3.OperationalError:
+        pass
+    apps_by_pay = {}
+    try:
+        for a in con.execute("SELECT payment_txn_id, invoice_txn_id, invoice_no, project_no, "
+                             "division, amount, invoice_open FROM payment_application"):
+            d = dict(a)
+            d["cust_id"] = cust_of.get(d["project_no"])       # project deep link
+            m = inv_meta.get(str(d.get("invoice_no") or "").strip())
+            d["memo"], d["invoice_date"] = (m[0], m[1]) if m else (None, None)
+            apps_by_pay.setdefault(a["payment_txn_id"], []).append(d)
+    except sqlite3.OperationalError:
+        pass
+    pays, recv_tot, links = [], 0.0, 0
+    for r in prows:
+        p = dict(r)
+        apps = apps_by_pay.get(p["qbo_txn_id"], [])
+        apps.sort(key=lambda x: (x.get("project_no") or "", x.get("invoice_no") or ""))
+        divs = {a.get("division") for a in apps if a.get("division")}
+        p["applications"] = apps
+        p["att"] = _att_counts(con).get(("Payment", str(p.get("qbo_txn_id") or "")), 0)
+        p["invoice_count"] = len(apps)
+        p["applied_total"] = round(sum(a.get("amount") or 0 for a in apps), 2)
+        p["division"] = next(iter(divs)) if len(divs) == 1 else ("Mixed" if divs else None)
+        recv_tot += p.get("total_amt") or 0
+        links += len(apps)
+        pays.append(p)
+    pays.sort(key=lambda x: (x.get("txn_date") or ""), reverse=True)      # most recent payment first
+    out["payments"] = pays
+    out["total_received"] = round(recv_tot, 2)
+    out["count"] = len(pays)
+    out["invoices_paid"] = links
+    out["loaded_at"] = pays[0].get("loaded_at") if pays else None
+    return out
+
+
+# Vendors whose SERVICE is in their name are a service, not a supplier (owner 2026-08-28:
+# "pump ... pier drilling ... saw cut ... it's a service"). Name-based, so it's obvious per row.
+_SERVICE_RE = re.compile(r"\b(pump\w*|pier|drill\w*|saw\w*|cutting|sealing|grind\w*)\b", re.I)
+
+
+def _fetch_costs(con) -> dict:
+    """QBO cost rollups from cost_line; empty (not an error) if unloaded."""
+    out = {"by_code": [], "by_project_code": {}, "by_project": {}, "loaded_total": 0}
+    try:
+        bp = {r["project_no"]: {"costs_loaded": r["costs_loaded"], "sub_costs": r["sub_costs"],
+                                "lines": r["lines"]}
+              for r in con.execute("SELECT project_no, costs_loaded, sub_costs, lines "
+                                   "FROM v_cost_by_project")}
+    except sqlite3.OperationalError:
+        return out
+    out["by_project"] = bp
+    out["loaded_total"] = sum((v["costs_loaded"] or 0) for v in bp.values())
+    # portfolio, by cost code (join the friendly description)
+    for r in con.execute(
+            "SELECT vc.code, vc.cost_code, cc.description, SUM(vc.actual) actual, SUM(vc.lines) lines "
+            "FROM v_cost_by_code vc LEFT JOIN cost_code cc ON cc.code = vc.cost_code "
+            "GROUP BY vc.code, vc.cost_code, cc.description ORDER BY actual DESC"):
+        out["by_code"].append({"code": r["code"], "cost_code": r["cost_code"],
+                               "description": r["description"], "actual": r["actual"], "lines": r["lines"]})
+    # per-project, by cost code (for the job detail drill)
+    pc: dict = {}
+    for r in con.execute("SELECT project_no, code, cost_code, actual, lines "
+                         "FROM v_cost_by_code ORDER BY actual DESC"):
+        pc.setdefault(r["project_no"], []).append(
+            {"code": r["code"], "cost_code": r["cost_code"], "actual": r["actual"], "lines": r["lines"]})
+    out["by_project_code"] = pc
+
+    # grouped: cost TYPE = parent, job TYPE = sub — the JobTread model (material
+    # links to ONE cost-type parent; the job-type sub shows cost-to-budget).
+    from shared.qbo_costs import cost_code_meta, job_type_name
+    groups: dict = {}
+    for c in out["by_code"]:
+        if c["cost_code"]:
+            m = cost_code_meta(c["cost_code"])
+            parent = m["description"] or c["cost_code"]
+            sub = job_type_name(m["prefix"]) or (m["prefix"] or "—")
+        else:                                   # account-based line: no job-type split
+            parent = c["code"]
+            sub = "(account)"
+        g = groups.setdefault(parent, {"parent": parent, "actual": 0, "lines": 0, "subs": {}})
+        g["actual"] += c["actual"] or 0
+        g["lines"] += c["lines"] or 0
+        s = g["subs"].setdefault(sub, {"sub": sub, "code": c["cost_code"], "actual": 0, "lines": 0})
+        s["actual"] += c["actual"] or 0
+        s["lines"] += c["lines"] or 0
+    by_type = []
+    for g in groups.values():
+        g["subs"] = sorted(g["subs"].values(), key=lambda s: -(s["actual"] or 0))
+        by_type.append(g)
+    by_type.sort(key=lambda g: -(g["actual"] or 0))
+    out["by_cost_type"] = by_type
+
+    # by vendor — the Vendors page (who we pay the most, subs vs suppliers)
+    vend = []
+    for r in con.execute(
+            "SELECT vendor, SUM(amount) spend, COUNT(*) lines, "
+            "COUNT(DISTINCT project_no) jobs, "
+            "SUM(CASE WHEN is_sub=1 THEN amount ELSE 0 END) sub_spend "
+            "FROM cost_line WHERE vendor IS NOT NULL AND vendor <> '' "
+            "GROUP BY vendor ORDER BY spend DESC"):
+        vend.append({"vendor": r["vendor"], "spend": r["spend"], "lines": r["lines"],
+                     "jobs": r["jobs"], "sub_spend": r["sub_spend"]})
+    # vendor TYPE — Sub (labor) vs Supplier: <material> — from each vendor's cost mix.
+    mix: dict = {}
+    for r in con.execute("SELECT vendor, cost_code, account, SUM(amount) amt FROM cost_line "
+                         "WHERE vendor IS NOT NULL AND vendor <> '' GROUP BY vendor, cost_code, account"):
+        parent = cost_code_meta(r["cost_code"])["description"] if r["cost_code"] else None
+        parent = parent or r["account"] or "Materials"
+        mix.setdefault(r["vendor"], {})
+        mix[r["vendor"]][parent] = mix[r["vendor"]].get(parent, 0) + (r["amt"] or 0)
+    # per-vendor open AP from vendor_ap (QBO Bill balances via load_bill_payments) - covers EVERY
+    # vendor incl. subs, keyed by QBO vendor name so it joins cost_line cleanly (owner 2026-08-28).
+    apo: dict = {}
+    try:
+        for r in con.execute("SELECT vendor, open_bal, open_bills FROM vendor_ap"):
+            apo[r["vendor"]] = {"open": r["open_bal"] or 0.0, "open_bills": r["open_bills"] or 0}
+    except sqlite3.OperationalError:
+        pass
+    for v in vend:
+        spend = v["spend"] or 0
+        sub_share = (v["sub_spend"] or 0) / spend if spend else 0
+        vm = mix.get(v["vendor"], {})
+        top = max(vm, key=vm.get) if vm else None
+        v["vtype"] = "Sub" if sub_share >= 0.5 else (f"Supplier: {top}" if top else "Supplier")
+        if _SERVICE_RE.search(v["vendor"] or ""):     # a service (in the name), not a supplier
+            v["vtype"] = "Service"
+        a = apo.get(v["vendor"], {"open": 0.0, "open_bills": 0})
+        v["open_bal"] = round(a["open"], 2)
+        v["open_bills"] = a["open_bills"]
+    out["by_vendor"] = vend
+    return out
+
+
+def _freshness(con) -> dict:
+    """When each feed last landed (ledger loaded_at) + when each SOURCE sync wrote
+    its file (mtime) — the owner's "is my data current?" strip."""
+    import os
+    out = {"ledger": {}, "sources": {}}
+    for tbl, key in (("wip_snapshot", "WIP"), ("ap_bill_line", "AP (Bill Tracker)"),
+                     ("cost_line", "Costs (QBO)"), ("billing_event", "AR (invoices)"),
+                     ("payment", "Payments"),
+                     ("customer", "CRM (customers)"), ("sub_loc_run", "Sub LOC"),
+                     ("health_snapshot", "Health (QBO)")):
+        try:
+            r = con.execute(f"SELECT MAX(loaded_at) FROM {tbl}").fetchone()
+            out["ledger"][key] = r[0] if r and r[0] else None
+        except sqlite3.OperationalError:
+            out["ledger"][key] = None
+
+    def mtime(p):
+        try:
+            return _dt.datetime.fromtimestamp(os.path.getmtime(str(p))).isoformat(timespec="minutes")
+        except OSError:
+            return None
+
+    ob = paths.onedrive_base()
+    bt = paths.get_path("ACB_BILL_TRACKER_XLSX", ob / "Automations-/Bill Tracker.xlsx")
+    wm = paths.get_path("WIP_EXCEL_PATH", ob / "Company Files - WIP Report/WIP - MASTER new.xlsx")
+    out["sources"]["sync-ap"] = mtime(bt)
+    out["sources"]["WIP master"] = mtime(wm)
+    # AR mirror: the owner's live file is OneDrive Collections/Invoice Tracker.xlsx (2026-08-18;
+    # the old Open_Invoices.xlsx is now backup_dont_use). Resolve that first (configurable), then
+    # the invoice-sync default (INVOICE_EXPORT_PATH / repo root) and legacy OneDrive names, so the
+    # AR card shows a real "last ran" - not blank - which was the "AP showed, AR didn't" bug.
+    for cand in (paths.get_path("ACB_INVOICE_TRACKER_XLSX", ob / "Collections/Invoice Tracker.xlsx"),
+                 paths.get_path("INVOICE_EXPORT_PATH", PROJECT_ROOT / "Open_Invoices.xlsx"),
+                 ob / "Collections/Open_Invoices.xlsx", ob / "Automations-/Open_Invoices.xlsx",
+                 ob / "Open_Invoices.xlsx"):
+        m = mtime(cand)
+        if m:
+            out["sources"]["sync-ar"] = m
+            break
+    return out
+
+
+def _fetch_actions(con) -> dict:
+    """Map action_key → {url, status} from the `action` table (Notion mirror).
+    Empty (not an error) if sync_actions hasn't run."""
+    out: dict = {}
+    try:
+        for r in con.execute("SELECT action_key, status, notion_url FROM action"):
+            out[r["action_key"]] = {"status": r["status"], "url": r["notion_url"]}
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
+def _bill_paid(b: dict) -> bool:
+    """A bill counts as paid when the tracker has a pay date, OR its status says 'Bill paid'
+    (the date column is sometimes left blank), OR nothing is owed on it. Used by the draw stage
+    and the project page so a paid bill with a blank date never reads as a blocker (owner
+    2026-09-02: two 'blockers' at $0 were exactly that)."""
+    st = (b.get("pay_status") or "").lower()
+    return bool(b.get("pay_date")) or st.startswith("bill paid") or (b.get("open") or 0) <= 0.005 and st != ""
+
+
+def _waiver_key(mi, vendor, bill_ref) -> str:
+    """Deterministic key for a bill's waiver — survives ap_bill_line reloads."""
+    raw = f"{mi or ''}|{vendor or ''}|{bill_ref or ''}"
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+
+
+# ── Accounting fixes: the Bill Tracker audits, folded into the ledger ─────────
+_AUDIT_SHEETS = ("Audit - Coding", "Audit - PO", "Audit - Bills")
+
+
+def _audit_div(project: str) -> str:
+    p = (project or "").upper()
+    if p.startswith("MFD"):
+        return "Multi Family"
+    if p.startswith("CP"):
+        return "Commercial"
+    if p.startswith("RP"):
+        return "Residential"
+    return ""
+
+
+def _fetch_accounting_audits() -> dict:
+    """The three Bill Tracker audit sheets (the fixes to make) as ONE filterable list.
+    Read live from Bill Tracker.xlsx: bill-tracker already computes the findings with the
+    FULL bill data (incl subs + cost codes) that ap_bill_line doesn't carry, so the ledger
+    reads the sheets rather than recomputing. Read-only; a missing file is reported, not raised."""
+    from openpyxl import load_workbook
+    bt = paths.get_path("ACB_BILL_TRACKER_XLSX", paths.onedrive_base() / "Automations-/Bill Tracker.xlsx")
+    out = {"ok": False, "source": str(bt), "findings": [], "counts": {}}
+    if not bt.exists():
+        out["error"] = f"Bill Tracker.xlsx not found ({bt}). Run the AP sync first."
+        return out
+    try:
+        # data_only=False: the Open column is an =HYPERLINK("url","↗") FORMULA, so the cached
+        # value is just "↗" - we read the formula and pull the URL out. Every other audit cell
+        # is a plain stored value, so it reads the same either way.
+        wb = load_workbook(bt)
+    except Exception as e:                          # noqa: BLE001
+        out["error"] = f"could not open Bill Tracker.xlsx: {e}"
+        return out
+    findings = []
+    # line memo (Line Description) lives only on the Bills/Inventory sheets, keyed per line
+    # by (Bill #, Line Amount) - join it on so each finding shows what the clerk actually
+    # wrote on the bill line, not just why it was flagged. Subs aren't on those display
+    # sheets, so sub findings carry no memo; a single-line bill falls back to its one desc.
+    memo_by_line, descs_by_bill = {}, {}
+    for msheet in ("Bills", "Inventory"):
+        if msheet not in wb.sheetnames:
+            continue
+        ms = wb[msheet]
+        mhdr, midx = None, {}
+        for r in range(1, 8):
+            vals = [ms.cell(r, c).value for c in range(1, (ms.max_column or 0) + 1)]
+            if "Line Description" in vals and "Bill #" in vals:
+                mhdr, midx = r, {v: c for c, v in enumerate(vals, 1) if v}
+                break
+        if not mhdr:
+            continue
+        bcol, acol, dcol = midx.get("Bill #"), midx.get("Line Amount"), midx.get("Line Description")
+        if not (bcol and dcol):
+            continue
+        for r in range(mhdr + 1, (ms.max_row or 0) + 1):
+            bno, desc = ms.cell(r, bcol).value, ms.cell(r, dcol).value
+            if not bno or desc in (None, ""):
+                continue
+            bno, desc = str(bno).strip(), str(desc).strip()
+            amt = ms.cell(r, acol).value if acol else None
+            akey = round(float(amt), 2) if isinstance(amt, (int, float)) else None
+            memo_by_line.setdefault((bno, akey), desc)
+            descs_by_bill.setdefault(bno, []).append(desc)
+    for sheet in _AUDIT_SHEETS:
+        if sheet not in wb.sheetnames:
+            continue
+        ws = wb[sheet]
+        hdr, idx = None, {}
+        for r in range(1, 8):
+            vals = [ws.cell(r, c).value for c in range(1, (ws.max_column or 0) + 1)]
+            if "Issue" in vals:
+                hdr, idx = r, {v: c for c, v in enumerate(vals, 1) if v}
+                break
+        if not hdr:
+            continue
+        ocol = idx.get("Open")
+
+        def cell(r, *names):
+            for n in names:
+                c = idx.get(n)
+                if c and ws.cell(r, c).value not in (None, ""):
+                    return ws.cell(r, c).value
+            return None
+
+        for r in range(hdr + 1, (ws.max_row or 0) + 1):
+            iv = idx.get("Issue") and ws.cell(r, idx["Issue"]).value
+            if not iv or not str(iv).strip():
+                continue
+            url = None
+            if ocol:
+                oc = ws.cell(r, ocol)
+                if oc.hyperlink:
+                    url = oc.hyperlink.target
+                elif isinstance(oc.value, str) and "HYPERLINK(" in oc.value:
+                    m = re.search(r'HYPERLINK\("([^"]+)"', oc.value)
+                    url = m.group(1) if m else None
+                elif isinstance(oc.value, str) and oc.value.startswith("http"):
+                    url = oc.value
+            proj = str(cell(r, "Project", "Project/Job") or "").strip()
+            dv = cell(r, "Bill Date", "Date")
+            amt = cell(r, "Amount")
+            bno = str(cell(r, "Bill #", "PO/Bill #", "Bill/Ref #") or "").strip()
+            akey = round(float(amt), 2) if isinstance(amt, (int, float)) else None
+            memo = memo_by_line.get((bno, akey)) if bno else None
+            if not memo and bno in descs_by_bill:      # single-line bill: unambiguous fallback
+                uniq = set(descs_by_bill[bno])
+                if len(uniq) == 1:
+                    memo = next(iter(uniq))
+            findings.append({
+                "issue": str(iv).strip(),
+                "vendor": str(cell(r, "Vendor") or "").strip(),
+                "bill_no": bno,
+                "date": (dv.isoformat()[:10] if hasattr(dv, "isoformat") else (str(dv)[:10] if dv else None)),
+                "project": proj, "division": _audit_div(proj),
+                "cost_code": str(cell(r, "Cost Code") or "").strip(),
+                "amount": (float(amt) if isinstance(amt, (int, float)) else None),
+                "memo": memo or "",
+                "detail": str(cell(r, "Detail") or "").strip(),
+                "url": url, "group": sheet.replace("Audit - ", ""),
+            })
+    wb.close()
+    # attachment count per finding, from the shared attachable index (disk cache, NO QBO
+    # call). The UI shows a scan link only when att>0 and fetches fresh links on click, so
+    # no-scan bills never trigger a lookup. Missing cache -> everything reads 0 (no links).
+    try:
+        from shared import qbo_attachments
+        idx = qbo_attachments.index_from_cache()
+        for f in findings:
+            m = re.search(r"txnId=(\d+)", f.get("url") or "")
+            f["att"] = (len(idx.get(("Bill", m.group(1)), [])) if (idx and m) else 0)
+    except Exception:                                  # noqa: BLE001 - never let counts break the audit
+        for f in findings:
+            f["att"] = 0
+    counts = {}
+    for f in findings:
+        counts[f["issue"]] = counts.get(f["issue"], 0) + 1
+    out.update(ok=True, findings=findings, counts=counts)
+    return out
+
+
+# race-through stages, in worklist priority — Ready-to-turn-in first (all bills
+# paid → turn it in to unlock the next draw), then pay vendors, then awaiting GC.
+# A draw is "done" (green) the moment every bill is PAID; unconditional waivers are
+# tracked per bill (the checkboxes) for the owner's records but no longer gate green.
+# Vendors that must NOT hold a draw in "Pay vendors" (the owner 2026-08-28).
+# The pump companies invoice on their own cycle and are paid outside the draw,
+# so an open pump bill was parking otherwise-finished draws in the wrong stage.
+# Their bills STILL SHOW on the draw and still count in the money — they just
+# don't gate it. Matched tightly: "JD Core Construction" and "CORE SUPPLY EAST"
+# are different vendors and must not be caught.
+_NON_GATING_VENDOR_RE = re.compile(
+    r"^\s*(MCP\s+CONCRETE\s+PUMPING|CORE\s+CONCRETE\s+PUMPING)\b", re.I)
+
+
+def _gates_stage(vendor: str) -> bool:
+    return not _NON_GATING_VENDOR_RE.match(vendor or "")
+
+
+_STAGE_ORDER = {"Ready to turn in": 0, "Fund in — pay vendors": 1,
+                "Awaiting GC funding": 2, "All paid": 3, "No draw yet": 5}
+
+# Subs (1099 labor) are NOT on the Bill Tracker display sheets, so they never reach ap_bill_line or
+# the draws. Pull them from cost_line (QBO, is_sub) and match to a draw by project + date-in-period -
+# the draw's billing period is in the matched-invoice text "(Period: MM/DD/YYYY - MM/DD/YYYY)".
+_PERIOD_RE = re.compile(r"Period:\s*(\d+)/(\d+)/(\d+)\s*-\s*(\d+)/(\d+)/(\d+)", re.I)
+
+
+def _draw_period_range(mi: str):
+    m = _PERIOD_RE.search(mi or "")
+    if not m:
+        return (None, None)
+    g = m.groups()
+    return (f"{g[2]}-{int(g[0]):02d}-{int(g[1]):02d}", f"{g[5]}-{int(g[3]):02d}-{int(g[4]):02d}")
+
+
+def _subs_by_project(con) -> dict:
+    """is_sub cost lines grouped by project -> [{vendor, txn_date, amount, cost_code}], for matching
+    to each draw's period. Empty (not an error) if cost_line isn't loaded."""
+    out: dict = {}
+    try:
+        for r in con.execute("SELECT project_no, vendor, txn_date, amount, cost_code "
+                             "FROM cost_line WHERE is_sub=1 AND project_no IS NOT NULL"):
+            out.setdefault(r["project_no"], []).append(dict(r))
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
+def _fetch_draws(con, limit: int = 100) -> dict:
+    """Roll AP bills up BY DRAW (matched invoice) → the race-through pipeline,
+    joined to the owner's waiver marks. Empty (not an error) if not loaded."""
+    try:
+        rows = con.execute(
+            "SELECT matched_invoice mi, project_no, division, vendor, bill_ref, "
+            "MAX(bill_total) amount, MAX(open_balance) open_bal, pay_status, invoice_status, "
+            "MAX(gc_paid_date) gc, MAX(pay_date) pd, MAX(bill_date) bd, MAX(invoice_no) invoice_no, "
+            "MAX(qbo_link) qbo_link "
+            "FROM ap_bill_line WHERE matched_invoice IS NOT NULL AND matched_invoice <> '' "
+            # RP isn't draws — RP bills at completion / milestones, not formal draws (owner).
+            "AND COALESCE(project_no,'') NOT LIKE 'RP%' AND matched_invoice NOT LIKE '%— RP%' "
+            "GROUP BY matched_invoice, vendor, bill_ref").fetchall()
+    except sqlite3.OperationalError:
+        return {"draws": [], "total": 0}
+    wmap = {w["waiver_key"]: w["received"] for w in con.execute("SELECT waiver_key, received FROM waiver")}
+    # AR side (money IN) from the Invoice Tracker load — joined by Invoice #.
+    bmap: dict = {}
+    try:
+        for b in con.execute("SELECT doc_number, qbo_txn_id, project_no, division, customer, memo, "
+                             "amount, balance, status, txn_date, due_date, net_terms, paid_date, "
+                             "draw_period, lien_status, lien_notice "
+                             "FROM billing_event WHERE doc_number IS NOT NULL"):
+            bmap[str(b["doc_number"])] = dict(b)
+    except sqlite3.OperationalError:
+        pass
+    draws: dict = {}
+    for r in rows:
+        d = draws.setdefault(r["mi"], {"matched_invoice": r["mi"], "project_no": r["project_no"],
+                                       "division": r["division"], "invoice_no": None, "bills": []})
+        if not d["invoice_no"] and r["invoice_no"]:
+            d["invoice_no"] = r["invoice_no"]
+        wk = _waiver_key(r["mi"], r["vendor"], r["bill_ref"])
+        # a PUSH (shared/draw_moves): the supplier agreed to carry this bill into a later
+        # draw - the tracker already matched it there; mark it so the band says why
+        mv = draw_moves.find_move(r["project_no"], r["vendor"], r["bd"])
+        d["bills"].append({
+            "vendor": r["vendor"], "bill_ref": r["bill_ref"], "amount": r["amount"] or 0,
+            "open": r["open_bal"] or 0, "pay_status": r["pay_status"], "invoice_status": r["invoice_status"],
+            "gc_paid": r["gc"], "pay_date": r["pd"], "bill_date": r["bd"], "qbo_link": r["qbo_link"],
+            "waiver_key": wk, "waiver": bool(wmap.get(wk, 0)),
+            "gates": _gates_stage(r["vendor"]),
+            "pushed": draw_moves.push_label(mv) if mv else "",
+            "pushed_note": draw_moves.push_note(mv) if mv else "",
+        })
+    # Projects whose CP/MFD bills are still "Awaiting Invoice" (no matched draw yet) get a pseudo-draw
+    # so they are visible here too (owner 2026-09-02: "CP785 is not showing in the draws") - the GC
+    # statement question starts before the draw exists.
+    try:
+        for r in con.execute(
+                "SELECT project_no, division, vendor, bill_ref, MAX(bill_total) amount, MAX(open_balance) open_bal, "
+                "pay_status, invoice_status, MAX(pay_date) pd, MAX(bill_date) bd, MAX(qbo_link) qbo_link "
+                "FROM ap_bill_line WHERE (matched_invoice IS NULL OR matched_invoice = '') AND project_no IS NOT NULL "
+                "AND project_no <> '' AND project_no NOT LIKE 'RP%' GROUP BY project_no, vendor, bill_ref"):
+            mi = f"(no draw yet) — {r['project_no']}"
+            d = draws.setdefault(mi, {"matched_invoice": mi, "project_no": r["project_no"], "division": r["division"],
+                                      "invoice_no": None, "bills": [], "no_draw": True})
+            d["bills"].append({
+                "vendor": r["vendor"], "bill_ref": r["bill_ref"], "amount": r["amount"] or 0,
+                "open": r["open_bal"] or 0, "pay_status": r["pay_status"], "invoice_status": r["invoice_status"],
+                "gc_paid": None, "pay_date": r["pd"], "bill_date": r["bd"], "qbo_link": r["qbo_link"],
+                "waiver_key": None, "waiver": False, "gates": _gates_stage(r["vendor"]),
+            })
+    except sqlite3.OperationalError:
+        pass
+    # pushed in / pushed out per draw: what rode in, and which draw (same project, the
+    # period the bill's own date falls in) it left - both bands say so
+    for mi, d in draws.items():
+        pin = [b for b in d["bills"] if b.get("pushed")]
+        if not pin:
+            continue
+        d["pushed_in"] = {"count": len(pin), "total": round(sum((b["amount"] or 0) for b in pin), 2),
+                          "label": pin[0]["pushed"], "note": pin[0]["pushed_note"]}
+        for b in pin:
+            for mi2, d2 in draws.items():
+                if d2 is d or d2.get("project_no") != d.get("project_no"):
+                    continue
+                q0, q1 = _draw_period_range(mi2)
+                if q0 and q1 and q0 <= (b["bill_date"] or "") <= q1:
+                    mv2 = draw_moves.find_move(d.get("project_no"), b["vendor"], b["bill_date"])
+                    po = d2.setdefault("pushed_out", {"count": 0, "total": 0.0, "to": d.get("invoice_no"),
+                                                      "note": draw_moves.push_note(mv2, "out") if mv2 else ""})
+                    po["count"] += 1
+                    po["total"] = round(po["total"] + (b["amount"] or 0), 2)
+                    break
+    out = []
+    subs_by_proj = _subs_by_project(con)   # is_sub cost lines per project (matched to draws by period)
+    for mi, d in draws.items():
+        bills = d["bills"]
+        n = len(bills)
+        paid = sum(1 for b in bills if _bill_paid(b))
+        # Subs (labor) on this draw = is_sub cost lines for the project, dated in the draw's period,
+        # grouped by sub. They aren't in ap_bill_line (excluded from the display sheets), so this is
+        # the only place the draw shows the labor side of the picture.
+        p0, p1 = _draw_period_range(mi)
+        subs_agg: dict = {}
+        if p0 and p1:
+            for s in subs_by_proj.get(d["project_no"], []):
+                if p0 <= (s.get("txn_date") or "") <= p1:
+                    v = subs_agg.setdefault(s.get("vendor") or "?",
+                                            {"vendor": s.get("vendor") or "?", "total": 0.0, "n": 0})
+                    v["total"] += (s.get("amount") or 0)
+                    v["n"] += 1
+        d["subs"] = sorted(subs_agg.values(), key=lambda x: -x["total"])
+        d["subs_total"] = round(sum(v["total"] for v in subs_agg.values()), 2)
+        # Stage is decided on the GATING bills only. If every bill on the draw
+        # is a pump bill there is nothing else to judge by, so fall back to all
+        # of them rather than calling the draw done on no evidence.
+        gate = [b for b in bills if b["gates"]] or bills
+        n_gate = len(gate)
+        paid_gate = sum(1 for b in gate if _bill_paid(b))
+        funded = any(b["gc_paid"] for b in bills)
+        waivers = sum(1 for b in bills if b["waiver"])
+        ar = bmap.get(str(d.get("invoice_no") or ""))
+        gc_paid_in = bool(ar and (ar.get("status") == "Paid" or (ar.get("balance") or 0) <= 0.005))
+        if d.get("no_draw"):
+            stage = "No draw yet"
+        elif not funded:
+            stage = "Awaiting GC funding"
+        elif paid_gate < n_gate:
+            stage = "Fund in — pay vendors"
+        elif gc_paid_in:                   # vendors paid AND the GC has paid our AR = fully settled
+            stage = "All paid"
+        else:                              # vendors paid, GC AR still open (we fronted it - collect)
+            stage = "Ready to turn in"
+        d.update({
+            "label": (mi or "").split("\n")[0].strip(), "n": n, "paid": paid, "funded": funded,
+            # how many bills actually decide the stage, and how many open bills
+            # are parked because they are non-gating vendors
+            "n_gate": n_gate, "paid_gate": paid_gate,
+            "parked": sum(1 for b in bills if not b["gates"] and not _bill_paid(b)),
+            "waivers": waivers, "total": sum(b["amount"] for b in bills),
+            # what we actually pay = gating bills only (MCP/CORE concrete pumping excluded - not paid by us)
+            "total_gate": sum(b["amount"] for b in bills if b["gates"]), "stage": stage,
+            "recency": max([(b["gc_paid"] or b["pay_date"] or b["bill_date"] or "") for b in bills] or [""]),
+            # money IN (billed to GC) — from the Invoice Tracker, by Invoice #
+            "billed": (ar["amount"] if ar else None),          # net billed to the GC
+            "ar_open": (ar["balance"] if ar else None),        # GC still owes this much
+            "ar_status": (ar["status"] if ar else None),       # Paid | Partially Paid | Unpaid
+            "ar_date": (ar["txn_date"] if ar else None),       # invoice date
+            "ar_qbo_id": (ar["qbo_txn_id"] if ar else None),   # QBO Invoice Id → deep link
+            "customer": (ar["customer"] if ar else None),
+            # The whole invoice row (memo + fields) so the Draws sidebar can show the same
+            # invoice detail the Invoices tab does - read a draw without opening QBO.
+            "inv": ar,
+            "gc_paid_in": gc_paid_in,
+        })
+        out.append(d)
+    out.sort(key=lambda d: d["recency"], reverse=True)
+    out.sort(key=lambda d: _STAGE_ORDER.get(d["stage"], 9))
+    return {"draws": out[:limit], "total": len(out)}
+
+
+# sales pipeline stages in funnel order
+_SALES_ORDER = {"Lead": 0, "Follow up": 1, "Contacted": 2, "Interested": 3,
+                "No response": 4, "Closed - Won": 5, "Closed - Lost": 6, "(none)": 7}
+
+
+# Non-sales accounts to keep OUT of the sales-rep view: Notion integration bots
+# (they arrive as a bare UUID) plus any account named in ACB_SALES_AUTOMATION_REPS
+# (machine.env, gitignored — so real names never enter the repo). These create /
+# import records but do no outreach, so crediting them as a "rep" is misleading.
+_UUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+_AUTOMATION_REPS = {s.strip() for s in (paths.get("ACB_SALES_AUTOMATION_REPS", "") or "").split(",") if s.strip()}
+
+
+def _is_automation(name) -> bool:
+    return bool(name) and (_UUID_RE.fullmatch(name) is not None or name in _AUTOMATION_REPS)
+
+
+def _rep_label(name):
+    """Display label for an editor: automation → 'Automation'; real people/emails kept."""
+    if not name:
+        return "(unknown)"
+    return "Automation" if _is_automation(name) else name
+
+
+def _fetch_sales(con) -> dict:
+    """CRM / sales pipeline from customer + sales_touch; empty (not an error) if
+    load_customers.py hasn't run. Read-only, like every other feed."""
+    out = {"pipeline": [], "by_rep": [], "warm": [], "customers": [], "touch_log": [],
+           "totals": {"customers": 0, "touches": 0, "interested": 0}}
+    try:
+        pipe = [dict(r) for r in con.execute(
+            "SELECT sales_status, customers, touches FROM v_sales_pipeline")]
+    except sqlite3.OperationalError:
+        return out
+    pipe.sort(key=lambda r: _SALES_ORDER.get(r["sales_status"], 9))
+    out["pipeline"] = pipe
+    out["by_rep"] = []
+    for r in con.execute("SELECT rep, worked, contacted, interested, won FROM v_sales_by_rep ORDER BY worked DESC"):
+        if _is_automation(r["rep"]):   # keep automation / import accounts out of the sales scoreboard
+            continue
+        out["by_rep"].append(dict(r))
+    # touch logs grouped by customer (for the warm-account drill)
+    touches: dict = {}
+    for r in con.execute("SELECT customer_key, touch_date, note FROM sales_touch ORDER BY customer_key, seq"):
+        touches.setdefault(r["customer_key"], []).append({"date": r["touch_date"], "note": r["note"]})
+    for r in con.execute(
+            "SELECT customer_key, name, division, last_contacted, last_edited_by, notion_url "
+            "FROM customer WHERE sales_status = 'Interested' ORDER BY last_contacted DESC"):
+        d = dict(r)
+        d["last_edited_by"] = _rep_label(d["last_edited_by"])
+        d["touches"] = touches.get(r["customer_key"], [])
+        out["warm"].append(d)
+    out["customers"] = []
+    for r in con.execute("SELECT name, division, sales_status, main_status, last_contacted, "
+                         "follow_up_date, last_edited_by, n_touches, notion_url "
+                         "FROM customer ORDER BY last_contacted DESC"):
+        d = dict(r); d["last_edited_by"] = _rep_label(d["last_edited_by"]); out["customers"].append(d)
+    # full dated touch log with rep attribution (feeds the per-rep activity drill:
+    # weekly/daily timeline + recent-touch list). Rep = the customer's last editor.
+    for r in con.execute(
+            "SELECT t.touch_date date, t.note, c.name customer, c.division, "
+            "c.sales_status stage, c.last_edited_by "
+            "FROM sales_touch t JOIN customer c ON c.customer_key = t.customer_key "
+            "WHERE t.touch_date IS NOT NULL ORDER BY t.touch_date"):
+        d = dict(r); d["rep"] = _rep_label(d.pop("last_edited_by")); out["touch_log"].append(d)
+    tot = con.execute(
+        "SELECT COUNT(*) c, COALESCE(SUM(n_touches),0) t, "
+        "SUM(CASE WHEN sales_status='Interested' THEN 1 ELSE 0 END) i FROM customer").fetchone()
+    out["totals"] = {"customers": tot["c"], "touches": tot["t"], "interested": tot["i"]}
+    return out
+
+
+def _fetch_vendor(con, vendor: str) -> dict:
+    """On-demand: one vendor's bills, grouped from ap_bill_line lines (the vendor page). Each bill
+    carries its lines (with project # each), so a multi-project bill shows 'multiple' and drills to
+    the line items. Kept OUT of the bulk load - fetched per vendor on click."""
+    try:
+        rows = con.execute(
+            "SELECT bill_ref, bill_date, project_no, division, description, line_amount, bill_total, "
+            "open_balance, pay_status, pay_date, gc_paid_date, matched_invoice, invoice_no, qbo_link "
+            "FROM ap_bill_line WHERE vendor = ? ORDER BY bill_date DESC, bill_ref", (vendor,)).fetchall()
+    except sqlite3.OperationalError as e:                    # noqa: BLE001
+        return {"ok": False, "error": str(e), "bills": []}
+    bills: dict = {}
+    for r in rows:
+        key = (r["bill_ref"] or "?") + "|" + (r["bill_date"] or "")   # a bill_ref can recur on another date
+        b = bills.get(key)
+        if not b:
+            b = bills[key] = {
+                "bill_ref": r["bill_ref"], "bill_date": r["bill_date"], "bill_total": r["bill_total"],
+                "open_balance": r["open_balance"], "pay_status": r["pay_status"], "pay_date": r["pay_date"],
+                "gc_paid": r["gc_paid_date"], "invoice_no": r["invoice_no"], "matched_invoice": r["matched_invoice"],
+                "qbo_link": r["qbo_link"], "lines": [], "_projs": set(),
+                "att": _att_counts(con).get(("Bill", str(bill_marks.bill_id_from_link(r["qbo_link"]) or "")), 0)}
+        b["lines"].append({"project_no": r["project_no"], "division": r["division"],
+                           "description": r["description"], "amount": r["line_amount"]})
+        if r["project_no"]:
+            b["_projs"].add(r["project_no"])
+    out = []
+    for b in bills.values():
+        projs = sorted(b.pop("_projs"))
+        b["project"] = projs[0] if len(projs) == 1 else ("multiple" if len(projs) > 1 else "")
+        b["projects"] = projs
+        b["amount"] = b["bill_total"] if b["bill_total"] is not None else sum((ln["amount"] or 0) for ln in b["lines"])
+        b["paid"] = bool(b["pay_date"])
+        out.append(b)
+    out.sort(key=lambda b: (b["bill_date"] or ""), reverse=True)
+    # bill payments (money OUT) this year - from the local bill_payment table (QBO BillPayment,
+    # loaded by load_bill_payments). One cheque can pay several bills, so n_bills is its line count.
+    payments = []
+    try:
+        pln = {r["payment_id"]: r["n"] for r in
+               con.execute("SELECT payment_id, COUNT(*) n FROM bill_payment_line GROUP BY payment_id")}
+        for r in con.execute("SELECT qbo_txn_id, txn_date, total_amt, pay_type, ref_no "
+                             "FROM bill_payment WHERE vendor = ? ORDER BY txn_date DESC", (vendor,)):
+            d = dict(r)
+            d["n_bills"] = pln.get(r["qbo_txn_id"], 0)
+            d["att"] = _att_counts(con).get(("BillPayment", str(r["qbo_txn_id"])), 0)
+            payments.append(d)
+    except sqlite3.OperationalError:
+        pass
+    # QuickBooks' own open AP for this vendor (vendor_ap: every vendor incl. subs) - shown BESIDE the
+    # Bill Tracker figure, labelled, so the list and the page can't seem to disagree (owner 2026-09-02).
+    qbo_open, qbo_open_bills = None, None
+    try:
+        r = con.execute("SELECT open_bal, open_bills FROM vendor_ap WHERE vendor = ?", (vendor,)).fetchone()
+        if r:
+            qbo_open, qbo_open_bills = r["open_bal"], r["open_bills"]
+    except sqlite3.OperationalError:
+        pass
+    # The vendor's bills as QBO job-costed lines (cost_line carries subs, which the Bill Tracker never
+    # does): grouped per document, newest first, so a sub gets a real page instead of "No bills".
+    qbo_bills: list = []
+    try:
+        have = {r[1] for r in con.execute("PRAGMA table_info(cost_line)")}
+        doc = "doc_number" if "doc_number" in have else "NULL"
+        memo = "memo" if "memo" in have else "description"
+        grp: dict = {}
+        for r in con.execute(
+                f"SELECT qbo_txn_id, txn_type, txn_date, {doc} doc_number, {memo} memo, project_no, amount "
+                "FROM cost_line WHERE vendor = ? ORDER BY txn_date DESC, qbo_txn_id, qbo_line_id", (vendor,)):
+            g = grp.get(r["qbo_txn_id"])
+            if not g:
+                g = grp[r["qbo_txn_id"]] = {"txn_id": r["qbo_txn_id"], "txn_type": r["txn_type"] or "Bill",
+                                             "date": r["txn_date"], "doc_number": r["doc_number"],
+                                             "memo": r["memo"], "amount": 0.0, "_p": set(),
+                                             "att": _att_counts(con).get(("Purchase" if (r["txn_type"] or "") == "Expense" else "Bill", str(r["qbo_txn_id"])), 0)}
+            g["amount"] += float(r["amount"] or 0)
+            if r["project_no"]:
+                g["_p"].add(r["project_no"])
+        for g in grp.values():
+            g["projects"] = sorted(g.pop("_p"))
+            g["amount"] = round(g["amount"], 2)
+            qbo_bills.append(g)
+        qbo_bills.sort(key=lambda g: g["date"] or "", reverse=True)
+    except sqlite3.OperationalError:
+        qbo_bills = []
+    return {"ok": True, "vendor": vendor, "count": len(out),
+            "qbo_open": qbo_open, "qbo_open_bills": qbo_open_bills, "qbo_bills": qbo_bills,
+            "total": sum((b["amount"] or 0) for b in out),
+            "open": sum((b["open_balance"] or 0) for b in out),
+            "paid_ct": sum(1 for b in out if b["paid"]), "bills": out,
+            "payments": payments, "pay_total": round(sum((p["total_amt"] or 0) for p in payments), 2),
+            "pay_count": len(payments)}
+
+
+def _fetch_project_page(con, pn: str) -> dict:
+    """The PROJECT page (owner 2026-09-02): everything about one job in one place. Section 1 = how
+    it's doing (`_project_pnl`); section 2 = how we get funded - the job's draws in order, each with
+    GC-paid state, vendors paid x/y, waivers, and the funding-chain math: the next draw the GC still
+    owes is unlocked by paying the unpaid bills on the draws BEFORE it (their unconditional waivers
+    gate the release). Pay-to-unlock checkboxes ride the existing pay run (pay_mark) - local intent
+    only, never QBO."""
+    pn = (pn or "").strip().upper()
+    if not pn:
+        return {"ok": False, "error": "project required"}
+    pr = con.execute("SELECT project_no, name, division FROM project WHERE project_no = ?", (pn,)).fetchone()
+    pnl = _project_pnl(con, pn)
+    draws = [d for d in _fetch_draws(con, limit=100000)["draws"] if (d.get("project_no") or "").upper() == pn]
+    # draw order = invoice date, then recency; the "no draw yet" bucket last
+    draws.sort(key=lambda d: (1 if d.get("no_draw") else 0, d.get("ar_date") or d.get("recency") or ""))
+    pay = bill_marks.read_pay_marks()
+    # Subs (labor) per draw as BILLS, not just a total (owner 2026-09-02: "labor doesn't show on the
+    # project page"): QBO is_sub cost lines on the job inside the draw period, grouped per QBO bill,
+    # with paid = a BillPayment applied to that bill (bill_payment_line, this year's window) - the
+    # Bill Tracker never carries subs, so this is the only pay signal there is for them.
+    have = {r[1] for r in con.execute("PRAGMA table_info(cost_line)")}
+    doc = "doc_number" if "doc_number" in have else "NULL"
+    memo = "memo" if "memo" in have else "description"
+    sub_lines = [dict(r) for r in con.execute(
+        f"SELECT qbo_txn_id, txn_type, txn_date, vendor, {doc} doc_number, {memo} memo, description, amount, cost_code "
+        "FROM cost_line WHERE is_sub=1 AND project_no = ? ORDER BY txn_date, qbo_txn_id, qbo_line_id", (pn,))]
+    paid_by_bill: dict = {}
+    try:
+        for r in con.execute("SELECT l.bill_id, MAX(p.txn_date) d, SUM(l.amount) a FROM bill_payment_line l "
+                             "JOIN bill_payment p ON p.qbo_txn_id = l.payment_id GROUP BY l.bill_id"):
+            paid_by_bill[str(r["bill_id"])] = (r["d"], r["a"] or 0)
+    except sqlite3.OperationalError:
+        pass
+    # cost codes + line descriptions per QBO bill (the tracker row carries neither), so the draw table can
+    # sort / group by cost code the way the P&L draw sheet reads (owner 2026-09-02)
+    codes_by_txn: dict = {}
+    for r in con.execute("SELECT qbo_txn_id, cost_code, account, description FROM cost_line WHERE project_no = ? "
+                         "ORDER BY qbo_txn_id, qbo_line_id", (pn,)):
+        e = codes_by_txn.setdefault(str(r["qbo_txn_id"]), {"codes": [], "desc": None})
+        code = r["cost_code"] or (r["account"].split(":")[-1].strip() if r["account"] else None)
+        if code and code not in e["codes"]:
+            e["codes"].append(code)
+        if not e["desc"] and r["description"]:
+            e["desc"] = r["description"]
+    for e in codes_by_txn.values():
+        e["codes"].sort()            # "SL2, SL3" and "SL3, SL2" are the same band
+    is_mfd = pn.startswith("MFD")
+    for d in draws:
+        for b in d["bills"]:
+            bid = bill_marks.bill_id_from_link(b.get("qbo_link"))
+            b["bill_id"] = bid
+            b["pay_selected"] = bool(bid and pay.get(bid))
+            e = codes_by_txn.get(str(bid)) if bid else None
+            b["codes"] = e["codes"] if e else []
+            b["description"] = (e["desc"] if e else None)
+            b["att"] = _att_counts(con).get(("Bill", str(bid)), 0) if bid else 0
+        p0, p1 = _draw_period_range(d.get("matched_invoice") or "")
+        subs: dict = {}
+        if p0 and p1:
+            for ln in sub_lines:
+                if not (p0 <= (ln["txn_date"] or "") <= p1):
+                    continue
+                sb = subs.get(ln["qbo_txn_id"])
+                if not sb:
+                    pd = paid_by_bill.get(str(ln["qbo_txn_id"]))
+                    sb = subs[ln["qbo_txn_id"]] = {"vendor": ln["vendor"], "bill_id": str(ln["qbo_txn_id"]), "txn_type": ln["txn_type"] or "Bill",
+                                                    "bill_ref": ln["doc_number"], "bill_date": ln["txn_date"], "memo": ln["memo"], "amount": 0.0,
+                                                    "paid": bool(pd), "pay_date": pd[0] if pd else None, "paid_amt": pd[1] if pd else 0,
+                                                    "pay_selected": bool(pay.get(str(ln["qbo_txn_id"]))), "codes": set(), "gates": True}
+                sb["amount"] += float(ln["amount"] or 0)
+                if ln["cost_code"]:
+                    sb["codes"].add(ln["cost_code"])
+        for sb in subs.values():
+            sb["amount"] = round(sb["amount"], 2); sb["open"] = 0.0 if sb["paid"] else sb["amount"]; sb["codes"] = sorted(sb["codes"])
+        d["sub_bills"] = sorted(subs.values(), key=lambda x: ((x["vendor"] or ""), x["bill_date"] or ""))
+        d["subs_paid_ct"] = sum(1 for x in d["sub_bills"] if x["paid"])
+        d["subs_amt"] = round(sum(x["amount"] for x in d["sub_bills"]), 2)
+        d["subs_unpaid_amt"] = round(sum(x["amount"] for x in d["sub_bills"] if not x["paid"]), 2)
+        for sb in d["sub_bills"]:
+            sb["description"] = sb.get("memo") or (codes_by_txn.get(sb["bill_id"], {}).get("desc"))
+            sb["att"] = _att_counts(con).get(("Purchase" if sb.get("txn_type") == "Expense" else "Bill", sb["bill_id"]), 0)
+
+        gate = [b for b in d["bills"] if b["gates"]]
+        d["vendors_total"] = len(gate)
+        for b in d["bills"]:
+            b["paid"] = _bill_paid(b)
+        m = re.search(r"draw\s*#?\s*(\d+)", d.get("label") or d.get("matched_invoice") or "", re.I)
+        d["draw_no"] = int(m.group(1)) if m else None   # "Draw #4" from the invoice memo (owner 2026-09-02: "add Draw #")
+        d["vendors_paid"] = sum(1 for b in gate if b["paid"])
+        d["paid_amt"] = round(sum((b["amount"] or 0) for b in gate if b["paid"]), 2)
+        d["gate_amt"] = round(sum((b["amount"] or 0) for b in gate), 2)
+        d["unpaid_amt"] = round(sum((b["open"] or 0) for b in gate if not b["paid"]), 2)
+        # the draw's own P&L strip - the same arithmetic as the P&L workbook's draw sheet
+        income = float(d.get("billed") or 0)                       # the net invoice = cash to collect
+        costs = round(float(d.get("gate_amt") or 0) + d["subs_amt"], 2)
+        gross = round(income - costs, 2)
+        overhead = round((_OVERHEAD_MFD_COST if is_mfd else _OVERHEAD_REV) * income, 2)   # the draw's slice of the contract
+        d["pl"] = {"income": income, "costs": costs, "bills": len(d["bills"]) + len(d["sub_bills"]), "gross": gross,
+                   "margin_pct": (gross / income) if income else None, "overhead": overhead,
+                   "overhead_basis": "9% of income (MFD)" if is_mfd else "10% of income",
+                   "net": round(gross - overhead, 2), "net_pct": ((gross - overhead) / income) if income else None,
+                   "period": {"start": _draw_period_range(d.get("matched_invoice") or "")[0], "end": _draw_period_range(d.get("matched_invoice") or "")[1]}}
+        d["waivers_total"] = len(gate)
+        d["gc_paid"] = bool(d.get("gc_paid_in"))
+    # funding chain: the OLDEST draw the GC has not paid us; its blockers = unpaid gating bills on every EARLIER draw
+    asc = sorted((d for d in draws if not d.get("no_draw")), key=lambda d: d.get("ar_date") or d.get("recency") or "")
+    nxt = next((d for d in asc if (d.get("ar_open") or 0) > 0.005), None)
+    blockers, blk_total = [], 0.0
+    if nxt:
+        for d in draws:
+            if d is nxt or d.get("no_draw"):
+                continue
+            if (d.get("ar_date") or "") > (nxt.get("ar_date") or ""):
+                continue
+            for b in d["bills"]:
+                if b["gates"] and not b["paid"]:
+                    blockers.append({"draw": d.get("label"), "invoice_no": d.get("invoice_no"), "vendor": b["vendor"], "bill_ref": b["bill_ref"],
+                                     "open": b["open"], "bill_id": b["bill_id"], "pay_selected": b["pay_selected"], "waiver": b["waiver"]})
+                    blk_total += b["open"] or 0
+    funding = {"next_draw": ({"label": nxt.get("label"), "invoice_no": nxt.get("invoice_no"), "ar_open": nxt.get("ar_open"), "draw_no": nxt.get("draw_no"),
+                              "billed": nxt.get("billed"), "ar_date": nxt.get("ar_date"), "stage": nxt.get("stage")} if nxt else None),
+               "blockers": blockers, "blockers_total": round(blk_total, 2),
+               "own_unpaid": (round(nxt["unpaid_amt"], 2) if nxt else 0.0)}
+    # display order: newest draw first (owner 2026-09-02), the "no draw yet" bucket on top as the newest work
+    draws.sort(key=lambda d: (0 if d.get("no_draw") else 1, ""), reverse=False)
+    draws.sort(key=lambda d: (1 if d.get("no_draw") else 0, d.get("ar_date") or d.get("recency") or ""), reverse=True)
+    return {"ok": True, "project": {"project_no": pn, "name": pr["name"] if pr else None, "division": pr["division"] if pr else pnl.get("division")},
+            "pnl": pnl, "draws": draws, "funding": funding}
+
+
+_ATT_CACHE = {"sig": None, "counts": {}}
+def _att_counts(con) -> dict:
+    """{(etype, txn_id) -> file count} from the attachment table, cached per table state (row count +
+    latest load) so every payload can stamp a 📎 without a join per row. {} until the loader has run."""
+    try:
+        sig = con.execute("SELECT COUNT(*), MAX(loaded_at) FROM attachment").fetchone()
+    except sqlite3.OperationalError:
+        return {}
+    sig = tuple(sig)
+    if _ATT_CACHE["sig"] != sig:
+        counts: dict = {}
+        for r in con.execute("SELECT etype, txn_id, COUNT(*) n FROM attachment GROUP BY etype, txn_id"):
+            counts[(r["etype"], str(r["txn_id"]))] = r["n"]
+        _ATT_CACHE["sig"], _ATT_CACHE["counts"] = sig, counts
+    return _ATT_CACHE["counts"]
+
+
+def _fetch_invoice_page(con, no: str) -> dict:
+    """The invoice as a PAGE (owner 2026-09-02: "all the invoice qbo details on top, the bills grouped
+    below that, their pay status, and then the Notion collections log"). Invoice = the billing_event
+    row with the same aging / lien computation the Invoices tab uses; bills = every Bill Tracker line
+    whose Invoice # is this draw, grouped by vendor then bill, with pay status; subs = QBO is_sub cost
+    lines on the project inside the draw period (the Bill Tracker never carries subs). The Notion log
+    is fetched by the page separately (/api/invoice/notion). Read-only, on demand."""
+    no = (no or "").strip()
+    if not no:
+        return {"ok": False, "error": "invoice # required"}
+    inv = next((i for i in _fetch_open_invoices(con, open_only=False)["invoices"]
+                if str(i.get("doc_number") or "").strip() == no), None)
+    if not inv:
+        return {"ok": False, "error": f"invoice {no} is not in the ledger"}
+    # ── bills on this draw (Bill Tracker), grouped vendor -> bill -> lines ──
+    vendors: dict = {}
+    try:
+        rows = con.execute(
+            "SELECT vendor, bill_ref, bill_date, project_no, description, line_amount, bill_total, open_balance, "
+            "pay_status, pay_date, approved, lien_status, gc_paid_date, invoice_status, qbo_link "
+            "FROM ap_bill_line WHERE TRIM(COALESCE(invoice_no,'')) = ? ORDER BY vendor, bill_date, bill_ref", (no,)).fetchall()
+    except sqlite3.OperationalError:
+        rows = []
+    for r in rows:
+        v = vendors.setdefault(r["vendor"] or "?", {"vendor": r["vendor"] or "?", "bills": {}, "total": 0.0, "open": 0.0, "paid_ct": 0})
+        key = (r["bill_ref"] or "?") + "|" + (r["bill_date"] or "")
+        b = v["bills"].get(key)
+        if not b:
+            _bid = bill_marks.bill_id_from_link(r["qbo_link"])
+            b = v["bills"][key] = {"bill_ref": r["bill_ref"], "bill_date": r["bill_date"], "amount": r["bill_total"],
+                                   "open": r["open_balance"] or 0, "pay_status": r["pay_status"], "pay_date": r["pay_date"],
+                                   "approved": r["approved"], "lien_status": r["lien_status"], "gc_paid": r["gc_paid_date"],
+                                   "invoice_status": r["invoice_status"], "qbo_link": r["qbo_link"], "bill_id": _bid,
+                                   "att": _att_counts(con).get(("Bill", str(_bid)), 0) if _bid else 0,
+                                   "gates": _gates_stage(r["vendor"]), "lines": []}
+            v["total"] += float(r["bill_total"] or 0)
+            v["open"] += float(r["open_balance"] or 0)
+            v["paid_ct"] += 1 if r["pay_date"] else 0
+        b["lines"].append({"project_no": r["project_no"], "description": r["description"], "amount": r["line_amount"]})
+    vend_out = []
+    for v in vendors.values():
+        v["bills"] = list(v["bills"].values())
+        for b in v["bills"]:
+            if b["amount"] is None:
+                b["amount"] = sum((ln["amount"] or 0) for ln in b["lines"])
+        v["n"] = len(v["bills"])
+        vend_out.append(v)
+    vend_out.sort(key=lambda v: -v["total"])
+    # ── subs on this draw (QBO cost lines, project + draw period from the memo) ──
+    p0, p1 = _draw_period_range(inv.get("memo") or "")
+    subs: dict = {}
+    if p0 and p1 and inv.get("project_no"):
+        try:
+            have = {r[1] for r in con.execute("PRAGMA table_info(cost_line)")}
+            doc = "doc_number" if "doc_number" in have else "NULL"
+            for r in con.execute(
+                    f"SELECT vendor, txn_date, {doc} doc_number, description, amount, cost_code, qbo_txn_id, txn_type "
+                    "FROM cost_line WHERE is_sub=1 AND project_no = ? AND txn_date BETWEEN ? AND ? "
+                    "ORDER BY vendor, txn_date", (inv["project_no"], p0, p1)):
+                v = subs.setdefault(r["vendor"] or "?", {"vendor": r["vendor"] or "?", "total": 0.0, "lines": []})
+                v["total"] += float(r["amount"] or 0)
+                v["lines"].append({"date": r["txn_date"], "doc_number": r["doc_number"], "description": r["description"],
+                                   "amount": r["amount"], "cost_code": r["cost_code"], "txn_id": r["qbo_txn_id"],
+                                   "txn_type": r["txn_type"] or "Bill",
+                                   "att": _att_counts(con).get(("Purchase" if (r["txn_type"] or "") == "Expense" else "Bill", str(r["qbo_txn_id"])), 0)})
+        except sqlite3.OperationalError:
+            pass
+    subs_out = sorted(subs.values(), key=lambda v: -v["total"])
+    mat_total = sum(v["total"] for v in vend_out)
+    mat_gate = sum(b["amount"] or 0 for v in vend_out for b in v["bills"] if b["gates"])
+    subs_total = sum(v["total"] for v in subs_out)
+    return {"ok": True, "invoice": inv, "vendors": vend_out, "subs": subs_out,
+            "period": {"start": p0, "end": p1},
+            "totals": {"materials": round(mat_total, 2), "materials_we_pay": round(mat_gate, 2),
+                       "materials_open": round(sum(v["open"] for v in vend_out), 2),
+                       "bills": sum(v["n"] for v in vend_out), "bills_paid": sum(v["paid_ct"] for v in vend_out),
+                       "subs": round(subs_total, 2), "total_out": round(mat_gate + subs_total, 2),
+                       "billed": inv.get("amount"), "net": None if inv.get("amount") is None else round(float(inv["amount"]) - mat_gate - subs_total, 2)}}
+
+
+def _subloc_events(con, project: str = "") -> list:
+    """Parsed sub_loc_event rows (the LOC transaction chain), optionally for ONE project. The
+    reimb/settled JSON columns are decoded; `settled` may predate the column, so it's optional."""
+    ecols = {r[1] for r in con.execute("PRAGMA table_info(sub_loc_event)")}
+    settled_col = ", settled" if "settled" in ecols else ""
+    sql = ("SELECT event_date, type, project, division, party, out_amt, in_amt, "
+           f"lag_days, balance, note, invoice, reimb{settled_col} FROM sub_loc_event")
+    args: tuple = ()
+    if project:
+        sql += " WHERE project = ?"
+        args = (project,)
+    sql += " ORDER BY seq"
+    events = []
+    for r in con.execute(sql, args):
+        d = dict(r)
+        for col in ("reimb", "settled"):
+            if d.get(col):
+                try:
+                    d[col] = json.loads(d[col])
+                except (ValueError, TypeError):
+                    d[col] = []
+        events.append(d)
+    return events
+
+
+def _fetch_sub_loc(con, full_events: bool = False) -> dict:
+    """Subcontractor LOC float from sub_loc_run / sub_loc_event; empty (not an error) if the
+    loader hasn't run. summary.outstanding = fronted-but-uncollected NOW; peak = the LOC to size.
+    The full per-event chain (~1 MB) is NOT shipped in the bulk load - only the small `repays`
+    slice the feed needs; a project's chain is fetched on demand via /api/subloc/project."""
+    out = {"summary": None, "divisions": {}, "projects": [], "open_by_project": {}, "repays": []}
+    try:
+        run = con.execute("SELECT * FROM sub_loc_run WHERE id=1").fetchone()
+    except sqlite3.OperationalError:
+        return out
+    if not run:
+        return out
+    cols = run.keys()
+    out["summary"] = {k: run[k] for k in cols if k not in ("divisions", "projects", "open_by_project", "id")}
+    try:
+        out["divisions"] = json.loads(run["divisions"] or "{}")
+        out["projects"] = json.loads(run["projects"] or "[]")
+        if "open_by_project" in cols:
+            out["open_by_project"] = json.loads(run["open_by_project"] or "{}")
+    except (ValueError, TypeError):
+        pass
+    try:
+        events = _subloc_events(con)
+    except sqlite3.OperationalError:   # degrade to summary-only, never break the whole dashboard
+        events = []
+    # The feed needs only client repayments (a small slice); the full chain is fetched on demand
+    # per project (/api/subloc/project), so the bulk load doesn't carry ~1 MB of raw events.
+    out["repays"] = [e for e in events if e.get("type") == "REPAY" and (e.get("in_amt") or 0) > 0.005]
+    if full_events:
+        out["events"] = events
+    return out
+
+
+def _connect(db_path: Path) -> sqlite3.Connection:
+    """Open the ledger READ-ONLY. New connection per request (SQLite + threads)."""
+    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    con.row_factory = sqlite3.Row
+    return con
+
+
+# ── Health tab: the company-health metric layer over the whole ledger ─────────
+# Money In / Money Out / Position / Break-Even (the owner's settled 2026-07-17
+# organization from the retired Company Tracker) + the Recurring & Debt register
+# (FIN-12). Most rows are DERIVED live from tables other loaders fill; the QBO-only
+# numbers (cash, retainage GL, P&L blocks, 13-wk flow, recurring) come from
+# health_snapshot via ledger/load_health.py. Server-side ONLY - the client renders
+# the sections verbatim, so the workbook-era rule holds: one model, no drift.
+
+def _hm(v) -> str:
+    """$ display: rounded, negative as -$x. '–' for missing."""
+    if v is None:
+        return "–"
+    try:
+        n = float(v)
+    except (TypeError, ValueError):
+        return "–"
+    s = f"${abs(n):,.0f}"
+    return f"-{s}" if n < -0.5 else s
+
+
+def _hpct(v) -> str:
+    if v is None:
+        return "–"
+    try:
+        return f"{float(v) * 100:.1f}%"
+    except (TypeError, ValueError):
+        return "–"
+
+
+def _health_snapshot(con) -> dict:
+    """{key: {payload, as_of}} from health_snapshot; {} until load_health runs."""
+    out = {}
+    try:
+        for r in con.execute("SELECT key, payload, as_of FROM health_snapshot"):
+            try:
+                out[r["key"]] = {"payload": json.loads(r["payload"] or "null"), "as_of": r["as_of"]}
+            except (ValueError, TypeError):
+                pass
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
+def _health_asof_label(iso: str) -> str:
+    """mm/dd/yyyy h:mm AM/PM from an ISO stamp (dates are never year-first)."""
+    try:
+        d = _dt.datetime.fromisoformat(iso)
+        return d.strftime("%m/%d/%Y %I:%M %p").replace(" 0", " ").lstrip("0")
+    except (ValueError, TypeError):
+        return iso or ""
+
+
+def _fetch_health(con) -> dict:
+    """Assemble the Health tab payload: preformatted sections + the recurring
+    register + the break-even audit trail. Every figure is either derived from
+    ledger tables or read from health_snapshot - no QBO call on page load."""
+    hs = _health_snapshot(con)
+    hp = {k: v["payload"] for k, v in hs.items()}
+    pull_asof = next((v["as_of"] for v in hs.values() if v.get("as_of")), None)
+
+    # ── AR: open invoices (billing_event) - aged the same way the Invoices tab ages
+    oi = _fetch_open_invoices(con)
+    invs = oi.get("invoices", [])
+    ar_total = sum((i.get("balance") or 0) for i in invs)
+    ar_bk = {b: 0.0 for b in _AGING_BUCKETS}
+    for i in invs:
+        ar_bk[i.get("bucket") or "Current"] += (i.get("balance") or 0)
+    ar60 = ar_bk["61-90"] + ar_bk["90+"]
+    lien_past = [i for i in invs if i.get("lien_due_state") == lien_clock.STATE_PAST]
+    lien_past_amt = sum((i.get("balance") or 0) for i in lien_past)
+    dso = ((oi.get("pay_speed") or {}).get("all_avg"))
+
+    # ── AP: open bills (ap_bill_line), grouped by the Bill Tracker's AR state
+    ap_total, ap60 = 0.0, 0.0
+    ap_bk = {b: 0.0 for b in _AGING_BUCKETS}
+    grp = {"paid": [0, 0.0], "awaiting_pay": [0, 0.0], "awaiting_inv": [0, 0.0], "no_proj": [0, 0.0]}
+    today = _dt.date.today()
+    try:
+        rows = con.execute("SELECT invoice_status, open_balance, bill_date FROM ap_bill_line "
+                           "WHERE COALESCE(open_balance,0) > 0").fetchall()
+    except sqlite3.OperationalError:
+        rows = []
+    for r in rows:
+        ob = r["open_balance"] or 0
+        ap_total += ob
+        age = None
+        bd = (r["bill_date"] or "")[:10]
+        if bd:
+            try:
+                age = (today - _dt.date.fromisoformat(bd)).days
+            except ValueError:
+                age = None
+        bi = _aging_bucket(age)
+        ap_bk[_AGING_BUCKETS[bi]] += ob
+        if bi >= 3:
+            ap60 += ob
+        st = (r["invoice_status"] or "").lower()
+        key = ("paid" if st == "invoice paid"
+               else "awaiting_inv" if st == "awaiting invoice"
+               else "no_proj" if st.startswith("no project")
+               else "awaiting_pay")     # Awaiting Payment / Partial paid / Partially Paid...
+        grp[key][0] += 1
+        grp[key][1] += ob
+
+    # ── WIP position: the active portfolio (same Active rule as the P&L tab)
+    wip = {"n": 0, "contract": 0.0, "left": 0.0, "under": 0.0, "over": 0.0, "retain": 0.0}
+    try:
+        for r in con.execute("SELECT status, total_contract_price tcp, left_to_bill lb, "
+                             "underbillings ub, overbillings ob, retainage_held rh FROM v_wip_latest"):
+            if (r["status"] or "").strip().lower() not in ("", "active"):
+                continue
+            wip["n"] += 1
+            wip["contract"] += r["tcp"] or 0
+            wip["left"] += r["lb"] or 0
+            wip["under"] += r["ub"] or 0
+            wip["over"] += r["ob"] or 0
+            wip["retain"] += r["rh"] or 0
+    except sqlite3.OperationalError:
+        pass
+
+    # ── Draws ready to turn in (vendors paid, our AR still open - collect it)
+    ready_n, ready_amt = 0, 0.0
+    for d in _fetch_draws(con).get("draws", []):
+        if d.get("stage") == "Ready to turn in":
+            amt = d.get("ar_open")
+            if amt is not None and amt <= 1:   # a cents-level residue = settled, not money to chase
+                continue
+            if not amt:                # not billed yet (or all-pump): show the draw's own size
+                amt = d.get("total_gate") or d.get("total") or 0
+            ready_n += 1
+            ready_amt += amt
+
+    # ── Sub LOC (sub_loc_run)
+    loc = _fetch_sub_loc(con)
+    loc_sum = loc.get("summary") or {}
+    loc_divs = loc.get("divisions") or {}
+
+    # ── Top-customer concentration: YTD billed by client (billing_event)
+    jan1 = _dt.date(today.year, 1, 1).isoformat()
+    client_of = _project_customer_map(con)
+    by_client: dict = {}
+    ytd_billed = 0.0
+    try:
+        for r in con.execute("SELECT project_no, customer, COALESCE(amount,0) a FROM billing_event "
+                             "WHERE COALESCE(txn_date,'') >= ?", (jan1,)):
+            c = client_of.get(r["project_no"]) or r["customer"] or "(unknown)"
+            by_client[c] = by_client.get(c, 0.0) + r["a"]
+            ytd_billed += r["a"]
+    except sqlite3.OperationalError:
+        pass
+    top_client, conc = None, None
+    if by_client and ytd_billed:
+        top_client = max(by_client, key=by_client.get)
+        conc = by_client[top_client] / ytd_billed
+
+    # ── The QBO-only layer (health_snapshot)
+    bank = hp.get("bank_accounts") or {}
+    cash = bank.get("cash")
+    retain_gl = (hp.get("retainage") or {}).get("receivable")
+    blocks = hp.get("pl_blocks") or {}
+    ytdb = blocks.get("ytd") or {}
+    gm = (ytdb.get("gross_profit") / ytdb["income"]) if ytdb.get("income") else None
+    nm = (ytdb.get("net_operating") / ytdb["income"]) if ytdb.get("income") and ytdb.get("net_operating") is not None else None
+    mtdb = blocks.get("mtd") or {}
+    gm_mtd = (mtdb.get("gross_profit") / mtdb["income"]) if mtdb.get("income") else None
+    priorb = blocks.get("prior") or {}
+    gm_prior = (priorb.get("gross_profit") / priorb["income"]) if priorb.get("income") else None
+    flow = hp.get("weekly_flow") or {}
+    fsum = flow.get("summary") or {}
+    burn = fsum.get("avg_weekly_paid")
+    runway = fsum.get("runway_weeks")
+    asof_lbl = _health_asof_label(pull_asof) if pull_asof else None
+
+    retain_show = retain_gl if retain_gl is not None else (wip["retain"] or None)
+    retain_note = ("GL retainage accounts" if retain_gl is not None else "WIP retainage held (run the Health pull for GL)")
+    if retain_gl is not None and abs((wip["retain"] or 0) - retain_gl) > 1000:
+        retain_note = f"GL accounts · WIP shows {_hm(wip['retain'])} held"
+
+    cov = (ar_total / ap_total) if ap_total else None
+    over_under = wip["over"] - wip["under"]
+
+    def bar(bk):
+        return [[b, round(bk.get(b, 0)), f"bk{i}", ""] for i, b in enumerate(_AGING_BUCKETS) if bk.get(b)]
+
+    money_in = {
+        "title": "Money In – owed to us / to bill", "tone": "in",
+        "heroes": [["Accounts Receivable", _hm(ar_total), "g"],
+                   ["Unbilled backlog", _hm(wip["left"]), "g"],
+                   ["Retainage", _hm(retain_show), "g"]],
+        "rows": [
+            ["Accounts Receivable", _hm(ar_total),
+             (f"{len(invs)} open invoices · aged 60+ {_hm(ar60)}" if ar60 > 0.5 else f"{len(invs)} open invoices"),
+             "g", "invoices"],
+            ["Unbilled backlog (WIP active)", _hm(wip["left"]),
+             f"{wip['n']} active jobs · contract {_hm(wip['contract'])}", "g", "wip"],
+            ["Underbilled / job borrow (WIP)", _hm(wip["under"]), "earned but not yet billed", "g", "wip"],
+            ["Retainage receivable", _hm(retain_show), retain_note, "g", None],
+            ["Lien deadline PAST", _hm(lien_past_amt),
+             f"{len(lien_past)} open invoices past the notice deadline", "r" if lien_past else "g", "invoices"],
+            ["Draws ready to turn in", _hm(ready_amt),
+             (f"{ready_n} draw(s) – vendors paid, collect from the GC" if ready_n
+              else "none waiting"), "a" if ready_n else "g", "draws"]],
+        "bars": [["AR aging", bar(ar_bk)]],
+    }
+    money_out = {
+        "title": "Money Out – we owe / committed", "tone": "out",
+        "heroes": [["Accounts Payable", _hm(ap_total), "r"],
+                   ["Sub LOC peak", _hm(loc_sum.get("peak")), "a"],
+                   ["Weekly burn", _hm(burn), "a"]],
+        "rows": [
+            ["Accounts Payable (open bills)", _hm(ap_total),
+             (f"aged 60+ {_hm(ap60)} (by bill date)" if ap60 > 0.5 else "open vendor bills"), "r", "bills"],
+            ["Bills to pay NOW – client already paid us", _hm(grp['paid'][1]),
+             f"{grp['paid'][0]} bills – money is in, the sub can lien us", "r" if grp["paid"][0] else "g", "paybills"],
+            ["Bills – client hasn't paid us", _hm(grp['awaiting_pay'][1]),
+             f"{grp['awaiting_pay'][0]} bills – collect from the GC first", "a", "bills"],
+            ["Bills – no GC invoice issued yet", _hm(grp['awaiting_inv'][1]),
+             f"{grp['awaiting_inv'][0]} bills – bill the GC", "a", "bills"],
+            ["Bills – no project #", _hm(grp['no_proj'][1]),
+             f"{grp['no_proj'][0]} bills – fix the coding (Audit tab)", "a" if grp["no_proj"][0] else "g", "accounting"],
+            ["Sub LOC peak needed", _hm(loc_sum.get("peak")),
+             f"outstanding now {_hm(loc_sum.get('outstanding'))}", "a", "subloc"],
+            ["Weekly sub/vendor burn", _hm(burn),
+             (f"13-wk avg cash out{' · as of ' + asof_lbl if asof_lbl else ''}"), "a", None]],
+        "bars": [["AP aging (by bill date)", bar(ap_bk)],
+                 ["Sub LOC peak by division",
+                  [[d, round((v or {}).get("peak") or 0), f"dv-{d}",
+                    (f"{(v or {}).get('avg_lag'):.0f}d lag" if (v or {}).get("avg_lag") else "")]
+                   for d, v in sorted(loc_divs.items(), key=lambda kv: -((kv[1] or {}).get("peak") or 0))
+                   if (v or {}).get("peak")]]],
+    }
+    runway_bad = runway is not None and runway < 8
+    cov_bad = cov is not None and cov < 1
+    position = {
+        "title": "Position – where we stand", "tone": "pos",
+        "heroes": [["Cash (bank)", _hm(cash), "r" if (cash or 0) < 0 else "n"],
+                   ["Runway", ("unconstrained" if (cash is not None and runway is None) else
+                               f"{runway:.1f} wk" if runway is not None else "–"), "r" if runway_bad else "n"],
+                   ["Gross margin", _hpct(gm), "n"]],
+        "rows": [
+            ["Cash (bank, excl. credit cards)", _hm(cash),
+             (f"spendable now · as of {asof_lbl}" if asof_lbl else "run the Health pull for cash"),
+             "r" if (cash or 0) < 0 else "n", None],
+            ["Runway at current burn",
+             ("not constrained – net cash-positive" if (cash is not None and runway is None)
+              else f"{runway:.1f} weeks" if runway is not None else "–"),
+             (fsum.get("note") or "") + (f" · as of {asof_lbl}" if asof_lbl else ""),
+             "r" if runway_bad else "n", None],
+            ["Coverage – AR vs AP", (f"{cov:.2f}" if cov is not None else "–"),
+             "AR ÷ AP; below 1 = inflows don't cover outflows", "r" if cov_bad else "n", None],
+            ["Over / under-billing net (WIP)", _hm(over_under),
+             ("overbilled – liability to earn out" if over_under > 0 else "underbilled – bill it"),
+             "a" if over_under > 0 else "g", "wip"],
+            ["Gross margin % (YTD)", _hpct(gm),
+             f"MTD {_hpct(gm_mtd)} · prior-YTD {_hpct(gm_prior)}", "n", None],
+            ["Net operating margin (YTD)", _hpct(nm), "after overhead – the real bottom line",
+             "r" if (nm is not None and nm < 0.02) else "n", None],
+            ["Top-customer concentration", _hpct(conc),
+             (f"{top_client} · of {_hm(ytd_billed)} billed YTD" if top_client else "billed YTD by client"),
+             "a" if (conc or 0) > 0.25 else "n", None]],
+        "bars": [],
+    }
+    sections = [money_in, money_out, position]
+
+    # ── Break-even (shared/breakeven off the live P&L blocks)
+    be_audit = []
+    if blocks:
+        as_of_dt = None
+        if pull_asof:
+            try:
+                as_of_dt = _dt.datetime.fromisoformat(pull_asof)
+            except ValueError:
+                as_of_dt = None
+        m = breakeven.build_from_blocks(blocks, as_of=as_of_dt, backlog=wip["left"],
+                                        ar=ar_total, retainage=(retain_show or 0.0), dso_days=dso)
+        if m.get("ok"):
+            covm = m["backlog_coverage_months"]
+            sections.append({
+                "title": "Break-Even – what we must sell & collect", "tone": "be",
+                "heroes": [["Break-even / month", _hm(m["breakeven_month"]), "n"],
+                           ["Break-even / week", _hm(m["breakeven_week"]), "n"],
+                           ["Backlog covers", f"{covm:.1f} mo", "g" if covm >= 3 else "a"]],
+                "rows": [[r[0], r[1], r[2], r[3], None] for r in breakeven.rows_for_display(m)],
+                "bars": [],
+                "note": m.get("caveat"),
+            })
+            be_audit = [list(r) for r in breakeven.audit_rows(m, "the Health pull (load_health)")]
+
+    # ── Recurring & Debt (FIN-12) - the register, verbatim for its own widget
+    rec = hp.get("recurring")
+
+    # Every row says where its figure comes from and as of when (owner 2026-09-03: "get all sources for
+    # every number"): stamped from the row's own feed - invoices, the WIP report, the Bill Tracker, sub LOC.
+    _fr = _freshness(con)
+    def _asof(v):
+        if not v:
+            return None
+        try:
+            return _dt.datetime.fromisoformat(str(v)[:19]).strftime("%m/%d/%Y %-I:%M %p")
+        except ValueError:
+            return str(v)[:16]
+    _src = {"invoices": ("invoices loaded", _fr["ledger"].get("AR (invoices)")),
+            "wip": ("WIP master", _fr["sources"].get("WIP master")),
+            "bills": ("Bill Tracker", _fr["sources"].get("sync-ap")), "paybills": ("Bill Tracker", _fr["sources"].get("sync-ap")),
+            "accounting": ("Bill Tracker", _fr["sources"].get("sync-ap")), "draws": ("Bill Tracker + invoices", _fr["sources"].get("sync-ap")),
+            "subloc": ("Sub LOC computed", _fr["ledger"].get("Sub LOC"))}
+    for _sec in sections:
+        for _row in _sec.get("rows", []):
+            if len(_row) >= 5 and _row[4] in _src and "as of" not in str(_row[2] or ""):
+                _lab, _when = _src[_row[4]]
+                _row[2] = f"{_row[2]} · {_lab} {_asof(_when) or 'not loaded'}"
+
+    return {
+        "ok": True,
+        "as_of": pull_asof,
+        "as_of_label": asof_lbl,
+        "pulled": bool(hs),
+        "bank_accounts": (bank.get("accounts") or []),
+        "sections": sections,
+        "be_audit": be_audit,
+        "recurring": rec,
+    }
+
+
+def fetch_data(db_path: Path, scope: str = "full") -> dict:
+    """Return the ledger payload, or {error} if the db isn't ready.
+
+    scope splits the load so the app is interactive on first paint instead of parsing the
+    whole ~5 MB blob up front:
+      * 'full'  - everything (used by manual + the 90s auto-refresh).
+      * 'light' - the Overview core (projects/costs/draws/liens); the heavy tab blobs
+                  (bills, sub_loc, payments, sales) are DEFERRED. Sent on first page load.
+      * 'heavy' - only those deferred blobs, fetched in the background right after 'light'.
+    """
+    if not db_path.exists():
+        return {"error": f"No ledger database at {db_path}. "
+                         f"Run:  python3 ledger/load_wip_master.py"}
+    try:
+        con = _connect(db_path)
+    except sqlite3.OperationalError as e:
+        return {"error": f"Could not open {db_path}: {e}"}
+    if scope == "heavy":                    # only the deferred, tab-specific blobs
+        try:
+            out = {"ap_bills": _fetch_ap(con).get("bills", []),
+                   "sub_loc": _fetch_sub_loc(con),
+                   "payments": _fetch_payments(con),
+                   "sales": _fetch_sales(con)}
+        except sqlite3.OperationalError as e:
+            con.close()
+            return {"error": f"Ledger schema not found ({e}). Run the loader first."}
+        con.close()
+        return out
+    try:
+        rows = [dict(r) for r in con.execute("SELECT * FROM v_wip_latest")]
+        report_date = None
+        pcount = len(rows)
+        if rows:
+            report_date = max((r.get("report_date") or "") for r in rows) or None
+        loaded_at = None
+        cur = con.execute("SELECT MAX(loaded_at) FROM wip_snapshot")
+        got = cur.fetchone()
+        if got:
+            loaded_at = got[0]
+        ap = _fetch_ap(con)
+        proj_client = _project_customer_map(con)   # project -> client, to show on the projects list too
+        costs = _fetch_costs(con)
+        draws = _fetch_draws(con)
+        open_invoices = _fetch_open_invoices(con)
+        actions = _fetch_actions(con)
+        freshness = _freshness(con)
+        sub_loc = sales = payments = None          # heavy blobs: only on a full load (deferred otherwise)
+        if scope == "full":
+            sales = _fetch_sales(con)
+            sub_loc = _fetch_sub_loc(con)
+            payments = _fetch_payments(con)
+        try:                                # realm for company-scoped QBO deep links (never logged)
+            _mr = con.execute("SELECT value FROM meta WHERE key='qbo_realm'").fetchone()
+            qbo_realm = _mr[0] if _mr else None
+        except sqlite3.OperationalError:
+            qbo_realm = None
+    except sqlite3.OperationalError as e:
+        con.close()
+        return {"error": f"Ledger schema not found ({e}). Run the loader first."}
+    con.close()
+    for r in rows:  # attach QBO cost rollup + the client onto each project row
+        cp = costs["by_project"].get(r["project_no"])
+        r["costs_loaded"] = cp["costs_loaded"] if cp else None
+        r["sub_costs"] = cp["sub_costs"] if cp else None
+        r["client"] = proj_client.get(r["project_no"])
+    for d in draws.get("draws", []):  # attach the Notion action link (if tracked)
+        inv = (d.get("matched_invoice") or "").split("—")[0].strip()
+        d["action"] = actions.get(f"draw:{inv}")
+    if scope == "light":
+        ap = {**ap, "bills": []}      # defer the ~2.7 MB bill list to the heavy fetch
+    out = {
+        "meta": {
+            "db_path": str(db_path),
+            "version": LEDGER_VERSION,
+            "report_date": report_date,
+            "loaded_at": loaded_at,
+            "project_count": pcount,
+            "freshness": freshness,
+            "qbo_realm": qbo_realm,   # company-scopes the QBO deep links; None -> bare fallback
+        },
+        "projects": rows,
+        "ap": ap,
+        "cost": costs,
+        "draws": draws,
+        "open_invoices": open_invoices,
+    }
+    if scope == "full":               # the heavy tab blobs ride along on a full refresh
+        out["sales"] = sales
+        out["sub_loc"] = sub_loc
+        out["payments"] = payments
+    return out
+
+
+class Handler(BaseHTTPRequestHandler):
+    db_path: Path = DEFAULT_DB
+
+    def log_message(self, *args):  # quiet; no request spam in the terminal
+        pass
+
+    def _send(self, code: int, body: bytes, ctype: str):
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _json(self, obj, code: int = 200):
+        self._send(code, json.dumps(obj, default=str).encode("utf-8"),
+                   "application/json; charset=utf-8")
+
+    def _static(self, name: str):
+        # Serve only files that actually live in static/ (no traversal).
+        target = (STATIC / name).resolve()
+        if STATIC.resolve() not in target.parents or not target.is_file():
+            self._send(404, b"not found", "text/plain; charset=utf-8")
+            return
+        ctype = CONTENT_TYPES.get(target.suffix, "application/octet-stream")
+        self._send(200, target.read_bytes(), ctype)
+
+    def _query(self) -> dict:
+        return {k: v[0] for k, v in parse_qs(urlparse(self.path).query).items()}
+
+    def _attachment(self, q: dict) -> None:
+        """Resolve a bill's QBO scan link(s) on demand - subprocess the loader (never an
+        import), which prints JSON {ok, files:[{name,url}]} with fresh TempDownloadUris."""
+        bill = (q.get("bill") or q.get("id") or "").strip()
+        if not bill.isdigit():
+            return self._json({"ok": False, "error": "bad transaction id"}, 400)
+        tx_type = q.get("type") or "Bill"
+        if tx_type not in ("Bill", "Expense", "Purchase", "Invoice", "Payment", "BillPayment", "Estimate", "CreditMemo", "Deposit", "SalesReceipt", "VendorCredit", "JournalEntry"):
+            return self._json({"ok": False, "error": "bad type"}, 400)
+        try:
+            out = subprocess.check_output(
+                [sys.executable, str(PROJECT_ROOT / "ledger" / "attachments.py"), bill, "--type", tx_type],
+                cwd=str(PROJECT_ROOT), stderr=subprocess.DEVNULL, timeout=60)
+            lines = [ln for ln in out.decode("utf-8", "replace").splitlines() if ln.strip()]
+            self._json(json.loads(lines[-1]) if lines else {"ok": False, "error": "no output"})
+        except subprocess.TimeoutExpired:
+            self._json({"ok": False, "error": "attachment lookup timed out"})
+        except Exception as e:                          # noqa: BLE001
+            self._json({"ok": False, "error": f"attachment lookup failed: {e}"})
+
+    def _export_xlsx(self) -> None:
+        """Write the rows the client shows (already filtered + ordered) as a grouped Excel report,
+        reveal it in Finder, return the path. Bounded: 20k rows, 40 columns."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except (ValueError, json.JSONDecodeError):
+            return self._json({"ok": False, "error": "bad request"}, 400)
+        rows, cols = body.get("rows") or [], body.get("columns") or []
+        if not rows or not cols:
+            return self._json({"ok": False, "error": "nothing to export"}, 400)
+        if len(rows) > 20000 or len(cols) > 40:
+            return self._json({"ok": False, "error": "too big for one report - narrow the filter"}, 400)
+        try:
+            path = table_export.build(body, Path.home() / "Downloads")
+        except Exception as e:  # noqa: BLE001 - surface the reason, never a 500
+            return self._json({"ok": False, "error": f"{type(e).__name__}: {e}"})
+        try:
+            subprocess.run(["open", "-R", str(path)], check=False, timeout=10)   # noqa: S603,S607 - reveal in Finder
+        except Exception:  # noqa: BLE001
+            pass
+        self._json({"ok": True, "path": str(path), "rows": len(rows)})
+
+    def _attachment_download(self) -> None:
+        """Download the selected bills' scans to a dated folder + reveal it, so the owner can drag
+        them into the message to the responsible party. Subprocess the loader (never an import);
+        the QBO auth + the file downloads both happen in the child. Batch-capped - this is a
+        folder of scans to attach, not a bulk export."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except (ValueError, json.JSONDecodeError):
+            return self._json({"ok": False, "error": "bad request"}, 400)
+        clean = []
+        for b in (body.get("bills") or []):
+            txn = str((b or {}).get("txnId") or "").strip()
+            if txn.isdigit():
+                clean.append({"txnId": txn, "bill_no": str(b.get("bill_no") or "")[:40],
+                              "vendor": str(b.get("vendor") or "")[:80],
+                              "type": b.get("type") if b.get("type") in ("Bill", "Expense", "Purchase") else "Bill"})
+        if not clean:
+            return self._json({"ok": False, "error": "no bills"}, 400)
+        if len(clean) > 60:
+            return self._json({"ok": False, "error": f"too many bills ({len(clean)}) - select up to 60 to download at once"}, 400)
+        dest = _audit_scans_dir()
+        try:
+            out = subprocess.run(                        # noqa: S603 - fixed argv, our own script
+                [sys.executable, str(PROJECT_ROOT / "ledger" / "download_attachments.py"), "--dest", str(dest)],
+                input=json.dumps(clean).encode("utf-8"), cwd=str(PROJECT_ROOT),
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=300)
+            lines = [ln for ln in out.stdout.decode("utf-8", "replace").splitlines() if ln.strip()]
+            res = json.loads(lines[-1]) if lines else {"ok": False, "error": "no output"}
+        except subprocess.TimeoutExpired:
+            return self._json({"ok": False, "error": "download timed out"})
+        except Exception as e:                          # noqa: BLE001
+            return self._json({"ok": False, "error": f"download failed: {e}"})
+        if res.get("ok") and res.get("count"):
+            err = _os_open(res["folder"])                # reveal the folder for drag-into-email
+            if err:
+                res["reveal_error"] = err
+        self._json(res)
+
+    def do_GET(self):
+        path = self.path.split("?", 1)[0]
+        if path == "/":
+            self._static("index.html")
+        elif path == "/api/data":
+            q = self._query()
+            scope = "light" if q.get("light") else ("heavy" if q.get("heavy") else "full")
+            self._json(fetch_data(self.db_path, scope))
+        elif path == "/api/health":
+            self._json({"ok": True})
+        elif path == "/api/pnl":
+            self._pnl_find(self._query().get("proj", ""))
+        elif path == "/api/pnl/pl":       # live computed P&L (numbers folded into the UI)
+            self._pnl_pl(self._query().get("proj", ""))
+        elif path == "/api/pnl/portfolio":  # company P&L: every active job + totals
+            self._pnl_portfolio()
+        elif path == "/api/pnl/status":
+            self._pnl_status(self._query().get("proj", ""))
+        elif path == "/api/sync/status":   # progress for the in-app Resync / Console runs
+            self._sync_status()
+        elif path == "/api/pipelines":     # the Console registry (pipelines + their steps)
+            self._pipelines_list()
+        elif path == "/api/processes":     # the Systems tab (vault process registry, live)
+            self._processes()
+        elif path == "/api/graph":         # the Graph tab (vault link-graph + system diagrams, live)
+            self._graph()
+        elif path == "/api/wip/review":    # the WIP Review tab (pending before/after diff, merged)
+            self._wip_review_get()
+        elif path == "/api/accounting":    # the Audit tab (Bill Tracker audits, live)
+            try:
+                self._json(_fetch_accounting_audits())
+            except Exception as e:         # noqa: BLE001
+                self._json({"ok": False, "findings": [], "error": f"audit read failed: {e}"})
+        elif path == "/api/healthtab":     # the Health tab (company-health metric layer, live)
+            self._healthtab()
+        elif path == "/api/attachment":    # a bill's scan link(s), resolved fresh from QBO on click
+            self._attachment(self._query())
+        elif path == "/api/subloc/project":  # on-demand: one project's LOC event chain (the source)
+            self._subloc_project(self._query().get("p", ""))
+        elif path == "/api/vendor":          # on-demand: one vendor's bills (the vendor page)
+            self._vendor(self._query().get("v", ""))
+        elif path == "/api/trail":           # the money trail: every cost / billed line behind a project's totals (&csv=1 for Excel)
+            con = _connect(self.db_path)
+            try:
+                self._send(*trail.respond(con, self._query()))
+            finally:
+                con.close()
+        elif path == "/api/invoices/all":    # on-demand: ALL invoices incl. paid (the "show all" toggle)
+            self._invoices_all()
+        elif path == "/api/invoice/notion":  # on-demand: the invoice's whole Notion page (properties + body + comments), 60 s cache
+            self._json(notion_page.fetch(self._query().get("url", "")))
+        elif path == "/api/project/page":    # on-demand: the project page - how it's doing + how we get funded (draws, blockers, pay-to-unlock)
+            con = _connect(self.db_path)
+            try:
+                self._json(_fetch_project_page(con, self._query().get("no", "")))
+            finally:
+                con.close()
+        elif path == "/api/invoice/page":    # on-demand: the invoice page - QBO details, the draw's bills by vendor + pay status, subs
+            con = _connect(self.db_path)
+            try:
+                self._json(_fetch_invoice_page(con, self._query().get("no", "")))
+            finally:
+                con.close()
+        elif path.startswith("/static/"):
+            self._static(path[len("/static/"):])
+        else:
+            self._send(404, b"not found", "text/plain; charset=utf-8")
+
+    def do_POST(self):
+        p = urlparse(self.path).path
+        if p == "/api/waiver":            # a ledger write - the owner's waiver marks
+            self._set_waiver()
+        elif p == "/api/bill-mark":       # a ledger write - the owner's lien mark (mirrors to the workbook on sync-ap)
+            self._set_bill_mark()
+        elif p == "/api/pay-run":         # a ledger write - the owner's check-run worksheet (LOCAL only, never pays QBO)
+            self._save_pay_run()
+        elif p == "/api/pay-run/clear":   # empty the whole pay run (after the check run is done)
+            self._clear_pay_run()
+        elif p == "/api/pnl/open":        # open the P&L workbook (or ?folder=1 → its folder), cross-platform
+            self._pnl_open(self._query().get("proj", ""), folder=self._query().get("folder") == "1")
+        elif p == "/api/job/open":        # open the SOURCE job folder (Synology CP/RP, OneDrive MFD)
+            self._job_open(self._query().get("proj", ""))
+        elif p == "/api/lien/folder":     # open the Synology Vendor Liens folder (where notice/lien PDFs live)
+            self._lien_folder(self._query().get("vendor", ""))
+        elif p == "/api/pnl/generate":    # run project-pnl (gated by an explicit confirm)
+            self._pnl_generate()
+        elif p == "/api/sync":            # in-app Resync: run the ledger loaders (gated)
+            self._sync_start()
+        elif p == "/api/wip/review":      # WIP Review: compute the pending diff (no writes)
+            self._wip_review_run()
+        elif p == "/api/wip/merge":       # WIP Review: write approved changes to the 3 Test tabs (gated)
+            self._wip_merge()
+        elif p == "/api/export/xlsx":          # the table on screen -> a grouped Excel report in ~/Downloads (revealed)
+            self._export_xlsx()
+        elif p == "/api/attachment/download":  # save selected bills' scans to a folder + reveal it
+            self._attachment_download()
+        else:
+            self._send(404, b"not found", "text/plain; charset=utf-8")
+
+    # ── P&L link handlers ───────────────────────────────────────────────────
+    def _pnl_pl(self, proj: str):
+        """Live computed P&L for the job detail — the numbers, not just a link."""
+        proj = (proj or "").strip().upper()
+        if not _PROJ_RE.match(proj):
+            return self._json({"error": "bad or missing project"}, 400)
+        con = _connect(self.db_path)
+        try:
+            self._json(_project_pnl(con, proj))
+        finally:
+            con.close()
+
+    def _subloc_project(self, project: str):
+        """On-demand: one project's full LOC event chain (the 'where this came from' source report).
+        Kept OUT of the bulk load, so adding this drill-down costs nothing on every page load."""
+        project = (project or "").strip().upper()
+        con = _connect(self.db_path)
+        try:
+            self._json({"ok": True, "project": project, "events": _subloc_events(con, project)})
+        except sqlite3.OperationalError as e:                # noqa: BLE001
+            self._json({"ok": False, "error": str(e), "events": []})
+        finally:
+            con.close()
+
+    def _invoices_all(self):
+        """On-demand: ALL AR invoices incl. paid, for the Invoices tab's 'show all' toggle. Kept OUT
+        of the bulk load so the refresh stays light - fetched only when the owner flips to All."""
+        con = _connect(self.db_path)
+        try:
+            self._json(_fetch_open_invoices(con, open_only=False))
+        finally:
+            con.close()
+
+    def _vendor(self, vendor: str):
+        """On-demand: one vendor's bills for the vendor page. Not in the bulk load."""
+        vendor = (vendor or "").strip()
+        if not vendor:
+            return self._json({"ok": False, "error": "no vendor", "bills": []}, 400)
+        con = _connect(self.db_path)
+        try:
+            self._json(_fetch_vendor(con, vendor))
+        finally:
+            con.close()
+
+    def _pnl_portfolio(self):
+        con = _connect(self.db_path)
+        try:
+            self._json(_portfolio_pnl(con))
+        finally:
+            con.close()
+
+    def _healthtab(self):
+        """The Health tab payload - derived live from the ledger + health_snapshot."""
+        con = _connect(self.db_path)
+        try:
+            self._json(_fetch_health(con))
+        except sqlite3.OperationalError as e:
+            self._json({"ok": False, "error": f"ledger not ready: {e}"})
+        finally:
+            con.close()
+
+    # ── in-app Console: run any pipeline (or the safe loaders-only reload) ────
+    def _processes(self):
+        """The systems & process registry, parsed fresh from the vault markdown.
+
+        Read-only and uncached on purpose: the vault files are the source of
+        truth, so editing them and reloading the tab is the whole update loop.
+        A missing vault is reported in the payload, never raised - the rest of
+        the dashboard must keep working on a machine with no vault checkout.
+        """
+        try:
+            self._json(registry_view.load_registry())
+        except Exception as e:                      # noqa: BLE001
+            self._json({"ok": False, "domains": [], "rows": [],
+                        "error": f"registry parse failed: {e}"})
+
+    def _graph(self):
+        """The org map (vault notes + [[wikilinks]]) and the imported system
+        diagrams (mermaid in docs/ARCHITECTURE.md). Same contract as _processes:
+        parsed live, never cached, read-only, and a missing vault is reported in
+        the payload rather than raised so the rest of the dashboard keeps working.
+        """
+        try:
+            self._json(vault_graph.load_all())
+        except Exception as e:                      # noqa: BLE001
+            self._json({"org": {"ok": False, "nodes": [], "links": [],
+                                "error": f"graph parse failed: {e}"},
+                        "diagrams": {"ok": False, "diagrams": []}})
+
+    def _pipelines_list(self):
+        out = []
+        for p in _pipelines():
+            if p.get("hidden"):        # kept in reload/all, just no standalone Console card
+                continue
+            out.append({
+                "key": p["key"], "label": p["label"],
+                "steps": [{"label": s["label"], "side": bool(s.get("side"))} for s in p["steps"]],
+                "has_producer": any(s.get("side") for s in p["steps"]),
+                "draft": ({"label": p["draft"]["label"]} if p.get("draft") else None),
+                "actions": p.get("actions") or [],
+            })
+        self._json({"pipelines": out})
+
+    def _sync_status(self):
+        with _SYNC_LOCK:
+            out = {"state": _SYNC["state"], "current": _SYNC["current"], "pipeline": _SYNC["pipeline"],
+                   "steps": [dict(s) for s in _SYNC["steps"]]}
+            if _SYNC["state"] == "running":
+                out["elapsed"] = int(time.time() - _SYNC["started"])
+        self._json(out)
+
+    def _sync_start(self):
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except (ValueError, json.JSONDecodeError):
+            return self._json({"error": "bad request"}, 400)
+        if not body.get("confirm"):                   # gate: no confirm, no run
+            return self._json({"error": "confirm required"}, 400)
+        pipeline = str(body.get("pipeline") or "reload")   # default = safe loaders-only reload
+        steps = _resolve_steps(pipeline)
+        if not steps:
+            return self._json({"error": f"unknown pipeline '{pipeline}'"}, 400)
+        return self._launch(steps, pipeline)
+
+    def _launch(self, steps, pipeline):
+        """Claim the single run-lock and spawn the steps thread. Shared by the
+        Console sync and the WIP Review emit/apply runs so only ONE can hold the
+        lock at a time (concurrent QBO pulls + tab writes would corrupt)."""
+        with _SYNC_LOCK:
+            if _SYNC["state"] == "running":
+                return self._json({"error": "a sync is already running", "running": True}, 409)
+            # claim it INSIDE the lock so a second POST can't also see "idle" and launch
+            # a second run that writes at once (TOCTOU). Single authoritative claim.
+            _SYNC["state"] = "running"
+            _SYNC["started"] = time.time()
+            _SYNC["current"] = -1
+            _SYNC["pipeline"] = pipeline
+            _SYNC["steps"] = [{"label": s["label"], "state": "pending"} for s in steps]
+        threading.Thread(target=_run_sync, args=(steps,), daemon=True).start()
+        return self._json({"ok": True, "pipeline": pipeline, "steps": [s["label"] for s in steps]})
+
+    # ── WIP Review endpoints (emit the diff · read it · write approved) ──────
+    def _wip_review_run(self):
+        """Start the three emit runs (CP/RP/MFD) - compute the pending update and
+        diff each Test tab, no writes. Confirm-gated; each run does a QBO pull."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except (ValueError, json.JSONDecodeError):
+            return self._json({"error": "bad request"}, 400)
+        if not body.get("confirm"):
+            return self._json({"error": "confirm required"}, 400)
+        return self._launch(_wip_review_steps("emit"), "wip-review")
+
+    def _wip_review_get(self):
+        """Merge the three emit JSONs into one review payload for the UI."""
+        out = {"ok": True, "generated": {}, "records": [], "ready": False}
+        for div, fn in _WIP_REVIEW_FILES:
+            p = _WIP_REVIEW_DIR / fn
+            if not p.exists():
+                continue
+            try:
+                d = json.loads(p.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            out["ready"] = True
+            out["records"].extend(d.get("records", []))
+            out["generated"][div] = {"tab": d.get("tab"), "count": d.get("count"),
+                                     "changed": d.get("changed"),
+                                     "at": _dt.datetime.fromtimestamp(p.stat().st_mtime).isoformat(timespec="seconds")}
+        dec = _WIP_REVIEW_DIR / "decisions.json"
+        try:
+            out["decisions"] = json.loads(dec.read_text(encoding="utf-8")) if dec.exists() else {}
+        except (OSError, ValueError):
+            out["decisions"] = {}
+        changed = [r for r in out["records"] if r["status"] != "SAME"]
+        out["counts"] = {"jobs": len(out["records"]), "changed": len(changed),
+                         "reversed": sum(r["status"] == "REVERSED" for r in out["records"]),   # PM value went DOWN - needs a named source
+                         "added": sum(r["status"] == "ADDED" for r in out["records"]),
+                         "removed": sum(r["status"] == "REMOVED" for r in out["records"])}
+        return self._json(out)
+
+    def _wip_merge(self):
+        """Save the owner's decisions, then start the three guarded writes."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except (ValueError, json.JSONDecodeError):
+            return self._json({"error": "bad request"}, 400)
+        if not body.get("confirm"):
+            return self._json({"error": "confirm required"}, 400)
+        decisions = body.get("decisions") or {}
+        _WIP_REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+        (_WIP_REVIEW_DIR / "decisions.json").write_text(
+            json.dumps(decisions, indent=2), encoding="utf-8")
+        return self._launch(_wip_review_steps("apply"), "wip-merge")
+
+    def _job_open(self, proj: str):
+        """Open the SOURCE job folder on the file server (docs/takeoffs/photos) —
+        CP → the Synology awarded folder, RP → the builder folder, MFD → its OneDrive
+        folder as a fallback. Cross-platform via _os_open."""
+        proj = (proj or "").strip().upper()
+        if not _PROJ_RE.match(proj):
+            return self._json({"error": "bad project"}, 400)
+        con = _connect(self.db_path)
+        try:
+            r = con.execute("SELECT builder_or_gc FROM project WHERE project_no = ?", (proj,)).fetchone()
+        finally:
+            con.close()
+        folder, note = pnl_paths.job_folder(proj, r["builder_or_gc"] if r else None)
+        if folder is None:                            # MFD / unresolved → the P&L's folder (OneDrive)
+            info = pnl_paths.find_pnl(proj)
+            if info.get("exists"):
+                folder = Path(info["path"]).parent
+            else:
+                return self._json({"error": note or "no folder found"}, 404)
+        err = _os_open(str(folder))
+        if err:
+            return self._json({"error": err}, 500)
+        self._json({"ok": True, "path": str(folder), "note": note})
+
+    def _lien_folder(self, vendor: str = ""):
+        """Open the Synology Vendor Liens folder. With ?vendor=, drill to (and create, if missing)
+        that vendor's subfolder - organize by vendor, auto-create (owner 2026-08-20); without it,
+        open the base. Only ever under _LIEN_FOLDER (no path traversal). Cross-platform."""
+        target = Path(_LIEN_FOLDER)
+        if (vendor or "").strip():
+            d = _ensure_lien_vendor_dir(vendor)
+            if d is not None:
+                target = d                       # else fall back to the base folder
+        if not target.exists():
+            return self._json({"error": "folder not found (is the Accounting share mounted?)"}, 404)
+        err = _os_open(str(target))
+        if err:
+            return self._json({"error": err}, 500)
+        self._json({"ok": True, "path": str(target)})
+
+    def _pnl_find(self, proj: str):
+        proj = (proj or "").strip().upper()
+        if not _PROJ_RE.match(proj):
+            return self._json({"error": "bad or missing project"}, 400)
+        info = pnl_paths.find_pnl(proj)
+        j = _PNL_JOBS.get(proj)
+        info["job"] = j["state"] if j else "idle"
+        self._json(info)
+
+    def _pnl_status(self, proj: str):
+        proj = (proj or "").strip().upper()
+        j = _PNL_JOBS.get(proj)
+        if not j:
+            return self._json({"state": "idle"})
+        out = {"state": j["state"]}
+        if j["state"] == "running":
+            out["elapsed"] = int(time.time() - j["started"])
+            out["status"] = _pnl_last_line(j.get("log"))   # one live line: where the run is at
+        if j.get("detail"):
+            out["detail"] = j["detail"]
+        self._json(out)
+
+    def _pnl_open(self, proj: str, folder: bool = False):
+        """Open the project's P&L workbook (or its containing folder when folder=True)
+        in the host OS file manager. The LOCAL server opens it with the native command
+        so the same dashboard works on Mac or Windows — CP resolves onto the Synology
+        Common drive, RP/MFD onto OneDrive, per pnl_paths (the owner's convention)."""
+        proj = (proj or "").strip().upper()
+        if not _PROJ_RE.match(proj):
+            return self._json({"error": "bad project"}, 400)
+        info = pnl_paths.find_pnl(proj)
+        if not info.get("exists"):
+            return self._json({"error": "no P&L generated yet"}, 404)
+        path = Path(info["path"])
+        if path.name != f"Project_PnL_{proj}.xlsx":   # only ever open the resolved workbook / its folder
+            return self._json({"error": "unexpected file"}, 400)
+        target = path.parent if folder else path
+        err = _os_open(str(target))
+        if err:
+            return self._json({"error": err}, 500)
+        self._json({"ok": True, "path": str(target)})
+
+    def _pnl_generate(self):
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except (ValueError, json.JSONDecodeError):
+            return self._json({"error": "bad request"}, 400)
+        proj = str(body.get("proj", "")).strip().upper()
+        if not _PROJ_RE.match(proj):
+            return self._json({"error": "bad or missing project"}, 400)
+        if not body.get("confirm"):                   # gate: no confirm, no run
+            return self._json({"error": "confirm required"}, 400)
+        if not _PNL_RUN.exists():
+            return self._json({"error": "project-pnl runner not found"}, 500)
+        with _PNL_LOCK:
+            j = _PNL_JOBS.get(proj)
+            if j and j["state"] == "running":
+                return self._json({"state": "running", "proj": proj, "already": True})
+            try:
+                _PNL_LOG_DIR.mkdir(parents=True, exist_ok=True)
+                f = open(_PNL_LOG_DIR / f"{proj}.log", "w")
+                proc = subprocess.Popen(
+                    ["/bin/bash", str(_PNL_RUN), proj],
+                    cwd=str(_PNL_DIR), stdout=f, stderr=subprocess.STDOUT,
+                    env={**os.environ, "PYTHONUNBUFFERED": "1"})   # flush progress live so the status line updates
+            except OSError as e:
+                return self._json({"error": f"spawn failed: {e}"}, 500)
+            _PNL_JOBS[proj] = {"state": "running", "started": time.time(),
+                               "log": str(_PNL_LOG_DIR / f"{proj}.log"),
+                               "proc": proc, "file": f}
+        threading.Thread(target=_pnl_wait, args=(proj,), daemon=True).start()
+        self._json({"state": "running", "proj": proj})
+
+    def _set_waiver(self):
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except (ValueError, json.JSONDecodeError):
+            return self._json({"error": "bad request"}, 400)
+        mi, vendor, bill = body.get("matched_invoice"), body.get("vendor"), body.get("bill_ref")
+        received = 1 if body.get("received") else 0
+        if not mi:
+            return self._json({"error": "matched_invoice required"}, 400)
+        key = _waiver_key(mi, vendor, bill)
+        now = _dt.datetime.now().isoformat(timespec="seconds")
+        try:
+            con = sqlite3.connect(self.db_path)          # WRITABLE (the one write surface)
+            con.execute("CREATE TABLE IF NOT EXISTS waiver (waiver_key TEXT PRIMARY KEY, "
+                        "matched_invoice TEXT, vendor TEXT, bill_ref TEXT, received INTEGER NOT NULL "
+                        "DEFAULT 0, received_date TEXT, note TEXT, updated_at TEXT NOT NULL)")
+            con.execute(
+                "INSERT INTO waiver (waiver_key, matched_invoice, vendor, bill_ref, received, "
+                "received_date, updated_at) VALUES (?,?,?,?,?,?,?) "
+                "ON CONFLICT(waiver_key) DO UPDATE SET received=excluded.received, "
+                "received_date=excluded.received_date, updated_at=excluded.updated_at",
+                (key, mi, vendor, bill, received, now if received else None, now))
+            con.commit(); con.close()
+        except sqlite3.OperationalError as e:
+            return self._json({"error": f"write failed: {e}"}, 500)
+        self._json({"ok": True, "received": bool(received), "waiver_key": key})
+
+    def _set_bill_mark(self):
+        """Set / clear a bill's lien tag (Notice Sent / Lien Filed / Released). Persists in the
+        ledger overlay instantly; the next sync-ap mirrors it into the workbook's Lien cell."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except (ValueError, json.JSONDecodeError):
+            return self._json({"error": "bad request"}, 400)
+        bill_id = str(body.get("bill_id") or "").strip()
+        lien = (body.get("lien") or "").strip()        # "" clears the mark
+        if not bill_id:
+            return self._json({"error": "bill_id required (this bill has no QBO bill link)"}, 400)
+        if lien and lien not in bill_marks.LIEN_STATES:
+            return self._json({"error": f"lien must be one of {bill_marks.LIEN_STATES} or empty"}, 400)
+        try:
+            bill_marks.set_lien_mark(bill_id, lien, _dt.datetime.now().isoformat(timespec="seconds"))
+        except sqlite3.OperationalError as e:
+            return self._json({"error": f"write failed: {e}"}, 500)
+        # Auto-create the vendor's lien folder on an ACTUAL notice/lien (owner 2026-08-20) so the
+        # PDF has a home. Only Notice Sent / Lien Filed - a cleared or Released mark makes no folder.
+        folder = None
+        vendor = (body.get("vendor") or "").strip()
+        if lien in ("Notice Sent", "Lien Filed") and vendor:
+            d = _ensure_lien_vendor_dir(vendor)
+            folder = str(d) if d is not None else None
+        self._json({"ok": True, "bill_id": bill_id, "lien": lien, "folder": folder})
+
+    def _save_pay_run(self):
+        """Persist the check-run worksheet: which bills to pay + a partial amount override.
+        LOCAL intent only - this NEVER pays QBO or moves money; the owner records the real
+        payment in QBO and the next sync-ap pulls the true status back."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except (ValueError, json.JSONDecodeError):
+            return self._json({"error": "bad request"}, 400)
+        items = body.get("items")
+        if not isinstance(items, list):
+            return self._json({"error": "items (a list) required"}, 400)
+        try:
+            kept = bill_marks.set_pay_marks(items, _dt.datetime.now().isoformat(timespec="seconds"))
+        except (sqlite3.OperationalError, ValueError, TypeError) as e:
+            return self._json({"error": f"write failed: {e}"}, 500)
+        self._json({"ok": True, "count": kept})
+
+    def _clear_pay_run(self):
+        """Empty the whole pay run (after the check run is done)."""
+        try:
+            n = bill_marks.clear_pay_marks()
+        except sqlite3.OperationalError as e:
+            return self._json({"error": f"write failed: {e}"}, 500)
+        self._json({"ok": True, "cleared": n})
+
+
+def _daemonize():
+    """Double-fork + setsid so the server outlives whatever launched it. A GUI app's
+    `do shell script` (Project Ledger.app) reaps ordinary backgrounded children when it
+    returns; a process in its OWN session survives. stdout/stderr stay on whatever the
+    caller redirected (the launcher points them at a log)."""
+    if os.fork() > 0:
+        os._exit(0)                       # first parent exits → caller returns immediately
+    os.setsid()                           # new session, detached from the controlling group
+    if os.fork() > 0:
+        os._exit(0)                       # second parent exits → can't reacquire a terminal
+    devnull = os.open(os.devnull, os.O_RDWR)
+    os.dup2(devnull, 0)                   # stdin ← /dev/null (nothing keeps us tethered)
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Local web dashboard over the project ledger.")
+    ap.add_argument("--db", type=Path, default=DEFAULT_DB, help="SQLite ledger to read.")
+    ap.add_argument("--port", type=int, default=8787, help="Port (default 8787).")
+    ap.add_argument("--no-open", action="store_true", help="Don't auto-open a browser.")
+    ap.add_argument("--background", action="store_true",
+                    help="Detach into a new session (daemonize) and serve in the background — "
+                         "so a GUI launcher (Project Ledger.app) can't reap it.")
+    args = ap.parse_args()
+
+    if args.background:                   # detach BEFORE binding, so the grandchild owns the socket
+        _daemonize()
+
+    Handler.db_path = args.db
+    url = f"http://127.0.0.1:{args.port}"
+    httpd = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+
+    _prune_audit_scans()   # sweep any scan batches left past their TTL from a previous run
+
+    ready = fetch_data(args.db)
+    if "error" in ready:
+        print(f"⚠  {ready['error']}")
+    else:
+        m = ready["meta"]
+        print(f"Ledger: {m['project_count']} projects · report {m['report_date']} · {m['db_path']}")
+    print(f"Dashboard: {url}   (Ctrl-C to stop)")
+
+    # Quit cleanly on SIGTERM too — when the server IS the app process (Project
+    # Ledger.app runs it in the foreground), Cmd-Q / Dock-Quit / logout sends SIGTERM.
+    # default_int_handler raises KeyboardInterrupt, same as Ctrl-C, so the handler below runs.
+    signal.signal(signal.SIGTERM, signal.default_int_handler)
+
+    if not args.no_open:
+        threading.Timer(0.6, lambda: webbrowser.open(url)).start()
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("\nStopped.")
+        httpd.shutdown()
+
+
+if __name__ == "__main__":
+    main()

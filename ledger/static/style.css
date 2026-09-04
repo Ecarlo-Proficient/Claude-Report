@@ -1,0 +1,1424 @@
+/* ── Ledger dashboard styles ────────────────────────────────────────────────
+   Everything the settings panel changes flows through these CSS variables:
+   --font, --fs (text size), --row-pad (density), --accent, --maxw (width).
+   Colors switch on  html[data-theme="light|dark"].
+--------------------------------------------------------------------------- */
+
+:root {
+  --font-system: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-inter:  "Inter", "Helvetica Neue", "Segoe UI", system-ui, sans-serif;
+  --font-serif:  Georgia, "Times New Roman", "Iowan Old Style", serif;
+  --font-mono:   "SF Mono", "JetBrains Mono", "Menlo", Consolas, monospace;
+
+  --font: var(--font-system);
+  --fs: 15px;                /* 15px base, nothing under 12px (older Excel readers, owner 2026-09-01) */
+  --row-pad: 10px 12px;      /* comfortable */
+  --maxw: 100%;              /* full width */
+  --accent: #3E7A5C;
+  --radius: 12px;
+}
+
+html[data-theme="light"] {
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --surface-2: #fafbfc;
+  --border: #e3e6ea;
+  --text: #1f2430;
+  --text-dim: #6b7280;
+  --row-hover: #f0f6f3;
+  --shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.08);
+  --pos: #1f7a4d;
+  --neg: #b4341e;
+}
+html[data-theme="dark"] {
+  --bg: #0f1319;
+  --surface: #171d26;
+  --surface-2: #1f2733;
+  --border: #35404f;        /* was #2a323d - separators were too faint to see (owner 2026-08-25) */
+  --text: #eef1f5;
+  --text-dim: #aeb9c9;      /* was #98a2b3 - brighter secondary text */
+  --row-hover: #232f3c;
+  --shadow: 0 1px 2px rgba(0,0,0,.4);
+  --pos: #4ade80;
+  --neg: #f87171;
+}
+
+/* Graph tab palette - colour encodes the vault folder (category), never decoration.
+   Read by app.js _pal() at draw time so the dark toggle just works. */
+html[data-theme="light"] {
+  --graph-bg: #ffffff;
+  --graph-edge: #ccd4de;
+  --graph-node-stroke: #ffffff;
+  --graph-box: #f1f4f8;
+  --graph-c1: #64748b; --graph-c2: #6f63e6; --graph-c3: #2f9e8f; --graph-c4: #d98a2b;
+  --graph-c5: #4a86d6; --graph-c6: #b95aa6; --graph-c7: #cf5348; --graph-c8: #7aa53f;
+}
+html[data-theme="dark"] {
+  --graph-bg: #12171f;
+  --graph-edge: #3a4656;
+  --graph-node-stroke: #171d26;
+  --graph-box: #232d3a;
+  --graph-c1: #94a3b8; --graph-c2: #a394f7; --graph-c3: #4fc4b2; --graph-c4: #f0ad4e;
+  --graph-c5: #6ea8f0; --graph-c6: #db8fce; --graph-c7: #ef7b6f; --graph-c8: #a6cf6b;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: var(--font);
+  font-size: var(--fs);
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Nav strip: the ONE sticky header ──────────────────────────────────────
+   Brand · group tabs · Export / Refresh / gear on one row, the active group's
+   tabs on a second; the whole strip sticks. The old title bar spent a full row
+   on chrome above the nav (owner 2026-09-01: "remove or move down, takes up
+   vertical space") - that height now goes to data. */
+.navstrip { position: sticky; top: 0; z-index: 20; background: var(--surface); border-bottom: 1px solid var(--border); }
+.navrow { display: flex; align-items: stretch; gap: 10px; padding: 0 16px; min-height: 46px; }
+.brand { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; letter-spacing: -.01em;
+  padding-right: 12px; margin-right: 2px; border-right: 1px solid var(--border); white-space: nowrap; }
+.brand .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); flex: none; }
+.brand-ver { font-weight: 600; font-size: .8em; color: var(--text-dim); vertical-align: middle;
+  border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px; margin-left: 8px;
+  font-variant-numeric: tabular-nums; letter-spacing: 0; }
+.topbar-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+
+.btn {
+  font: inherit; font-size: .9em; cursor: pointer;
+  padding: 7px 12px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
+  transition: background .12s, border-color .12s;
+}
+.btn:hover { background: var(--row-hover); border-color: var(--accent); }
+.btn.icon { padding: 7px 10px; font-size: 1em; }
+.btn.small { padding: 4px 10px; font-size: .82em; }
+.btn[hidden] { display: none; }
+
+/* ── Tabs (inside the nav strip) ───────────────────────────────────────── */
+.tabs { display: flex; gap: 2px; flex: 1 1 auto; min-width: 0; overflow-x: auto; overflow-y: hidden; }
+.tab {
+  font: inherit; font-size: 1em; cursor: pointer; white-space: nowrap;
+  padding: 0 14px; border: none; background: none; color: var(--text-dim);
+  border-bottom: 2px solid transparent;
+}
+.tab:hover { color: var(--text); }
+.tab.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+/* Second-level nav: the active group's tabs, a lighter second row of the same strip. */
+.subtabs { display: flex; gap: 4px; padding: 5px 16px 6px; background: var(--surface-2);
+  border-top: 1px solid var(--border); overflow-x: auto; }
+.subtabs[hidden] { display: none; }
+.subtab { font: inherit; font-size: .93em; cursor: pointer; white-space: nowrap;
+  padding: 5px 12px; border: none; background: none; color: var(--text-dim); border-radius: 7px; }
+.subtab:hover { color: var(--text); background: var(--row-hover); }
+.subtab.active { color: var(--text); background: color-mix(in srgb, var(--accent) 14%, var(--surface)); font-weight: 600; }
+.tab-page { display: flex; flex-direction: column; gap: 18px; }
+.tab-page[hidden] { display: none; }
+/* Full-page record view (app-style) - full width, so wide detail reads without the side-panel squish. */
+.record-view { display: flex; flex-direction: column; gap: 14px; }
+.record-view[hidden] { display: none; }
+.record-head { display: flex; align-items: center; gap: 14px; }
+.record-head-txt { min-width: 0; }
+.record-title { font-size: 1.15em; font-weight: 800; letter-spacing: -.01em; }
+.record-sub { color: var(--text-dim); font-size: .88em; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.record-body .widget, .record-body > .seg { margin-bottom: 12px; }
+
+/* ── Layout ────────────────────────────────────────────────────────────── */
+.wrap { max-width: var(--maxw); margin: 0 auto; padding: 16px 20px 20px; display: flex; flex-direction: column; gap: 18px; }
+
+.widget {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden;
+}
+.widget[hidden] { display: none; }
+.widget-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px 6px; }
+.widget-head h2 { margin: 0; font-size: 1em; font-weight: 700; letter-spacing: -.01em; }
+.count { color: var(--text-dim); font-weight: 500; font-size: .85em; }
+
+/* ── KPI cards ─────────────────────────────────────────────────────────── */
+.kpi-row {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px; padding: 8px 18px 18px;
+}
+.kpi {
+  border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px;
+  background: var(--surface-2);
+}
+.kpi.kpi-click { cursor: pointer; transition: background .12s, outline-color .12s; outline: 2px solid transparent; outline-offset: -2px; }
+.kpi.kpi-click:hover { background: var(--row-hover); }
+/* Forecast tiles (expected cash-in): tinted with the accent so they read as a projection, not a fact. */
+.kpi.kpi-fc { background: color-mix(in srgb, var(--accent) 9%, var(--surface-2)); border-color: color-mix(in srgb, var(--accent) 32%, var(--border)); }
+.kpi.kpi-fc .k-value { color: var(--accent); }
+.kpi.kpi-click.active { outline-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+.kpi.kpi-click.none { opacity: .5; cursor: default; }
+.kpi .k-label { color: var(--text-dim); font-size: .8em; text-transform: uppercase; letter-spacing: .04em; }
+.kpi .k-value { font-size: 1.5em; font-weight: 700; margin-top: 4px; letter-spacing: -.02em; }
+.kpi .k-sub { color: var(--text-dim); font-size: .8em; margin-top: 2px; }
+
+/* ── Attention chips ───────────────────────────────────────────────────── */
+.attn-row { display: flex; flex-wrap: wrap; gap: 10px; padding: 8px 18px 18px; }
+.attn {
+  display: flex; flex-direction: column; gap: 2px; cursor: pointer;
+  border: 1px solid var(--border); border-left: 3px solid var(--accent);
+  border-radius: 10px; padding: 10px 14px; min-width: 150px; background: var(--surface-2);
+  transition: border-color .12s, background .12s;
+}
+.attn:hover { background: var(--row-hover); }
+.attn.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+.attn.warn { border-left-color: var(--neg); }
+.attn .a-count { font-size: 1.35em; font-weight: 700; letter-spacing: -.02em; }
+.attn .a-label { font-size: .82em; color: var(--text-dim); }
+.attn .a-sub { font-size: .8em; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.attn.none { opacity: .55; cursor: default; border-left-color: var(--border); }
+
+/* ── Cost mix (proportional bar + legend) ──────────────────────────────── */
+.costmix { padding: 6px 18px 16px; }
+.mixbar { display: flex; height: 16px; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
+.mixseg { height: 100%; min-width: 1px; transition: opacity .12s; }
+.mixseg:hover { opacity: .82; }
+.mixlegend { display: flex; flex-wrap: wrap; gap: 5px 16px; margin-top: 10px; font-size: .82em; color: var(--text-dim); }
+.mixkey { display: inline-flex; align-items: center; gap: 6px; }
+.mixdot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; flex: none; }
+
+/* ── Cost type ▸ job type (grouped cost table) ─────────────────────────── */
+tr.cost-parent { cursor: pointer; }
+tr.cost-parent > td { border-top: 1px solid var(--border); }
+tr.cost-parent .tw { font-weight: 700; letter-spacing: -.01em; }
+tr.cost-parent:hover { background: var(--row-hover); }
+tr.cost-sub > td:first-child { padding-left: 26px; }
+tr.cost-sub .sub-name { color: var(--text-dim); }
+
+/* ── Cost-code chip ────────────────────────────────────────────────────── */
+.codechip { display: inline-block; padding: 1px 8px; border-radius: 6px; font-weight: 700;
+  font-variant-numeric: tabular-nums; font-size: .86em; letter-spacing: .01em;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+  background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--text); }
+
+/* ── Lien urgency pills ────────────────────────────────────────────────── */
+.lien { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: .8em; white-space: nowrap;
+  border: 1px solid var(--border); }
+.lien.past, .lien.d7 { color: #fff; background: var(--neg); border-color: var(--neg); }
+.lien.d15 { color: var(--neg); border-color: color-mix(in srgb, var(--neg) 45%, var(--border));
+  background: color-mix(in srgb, var(--neg) 12%, transparent); }
+.lien.d30 { color: var(--text); border-color: color-mix(in srgb, #b8860b 55%, var(--border));
+  background: color-mix(in srgb, #b8860b 14%, transparent); }
+.lien.info { color: var(--text-dim); }
+.lien.ready { color: #fff; background: var(--pos); border-color: var(--pos); }
+
+/* ── Liens worklist: stage tiles + row urgency edge + the two key columns ─── */
+/* Urgency accent, shared by the clickable stage tiles (.attn) and table rows. */
+.attn.u-past, .attn.u-d7 { border-left-color: var(--neg); }
+.attn.u-d15 { border-left-color: color-mix(in srgb, var(--neg) 55%, var(--border)); }
+.attn.u-d30 { border-left-color: color-mix(in srgb, #b8860b 65%, var(--border)); }
+.attn.u-info { border-left-color: var(--text-dim); }
+tr.lien-row > td:first-child { border-left: 3px solid transparent; }
+tr.lien-row.u-past > td:first-child, tr.lien-row.u-d7 > td:first-child { border-left-color: var(--neg); }
+tr.lien-row.u-d15 > td:first-child { border-left-color: color-mix(in srgb, var(--neg) 55%, var(--border)); }
+tr.lien-row.u-d30 > td:first-child { border-left-color: color-mix(in srgb, #b8860b 65%, var(--border)); }
+tr.lien-row.u-info > td:first-child { border-left-color: var(--text-dim); }
+/* The two the owner said get lost — make them stand out. */
+.invno { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em;
+  padding: 1px 7px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-2); }
+.cell.lien-amt { font-weight: 700; }
+
+/* ── P&L (live numbers + the detailed-export link, in the job-detail panel) ── */
+.pnl-actions { display: flex; gap: 8px; margin: 8px 0 4px; flex-wrap: wrap; }
+.pnl-msg { font-size: .8em; color: var(--text-dim); min-height: 1em; }
+.pnl-live { margin: 2px 0 6px; }
+.pnl-net { border-top: 1px solid var(--border); margin-top: 3px; padding-top: 5px; font-weight: 700; }
+.pnl-net.pos .dv { color: var(--pos); }
+.pnl-net.neg .dv { color: var(--neg); }
+.pnl-live .drow.pnl-sub .dk, .pnl-live .drow.pnl-sub .dv { color: var(--text-dim); font-size: .92em; }
+.pnl-cap { font-size: .8em; text-transform: uppercase; letter-spacing: .04em; color: var(--text-dim);
+  margin: 12px 0 5px; padding-bottom: 3px; border-bottom: 1px solid var(--border); }
+.pnl-codes { display: flex; flex-direction: column; gap: 1px; }
+.pnl-code { display: flex; justify-content: space-between; gap: 10px; font-size: .86em; padding: 2px 0; font-variant-numeric: tabular-nums; }
+.pnl-code .pc-code { color: var(--text-dim); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .95em; }
+.pnl-code.uncoded .pc-code { color: var(--neg); }
+/* Every AR invoice (draw) that makes up billed-to-date, in the P&L expansion. */
+.pnl-invoices { display: flex; flex-direction: column; gap: 1px; margin-top: 2px; }
+.pnl-inv { display: grid; grid-template-columns: 74px 1fr auto auto; align-items: baseline; gap: 10px;
+  font-size: .86em; padding: 2px 0; font-variant-numeric: tabular-nums; }
+.pnl-inv .pi-date { color: var(--text-dim); }
+.pnl-inv .pi-no { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pnl-inv .pi-amt { text-align: right; font-weight: 600; }
+.pnl-inv .pi-st { text-align: right; }
+/* Portfolio P&L tab: margin coloring on totals + tables */
+.pnl-kpi-pos .k-value { color: var(--pos); }
+.pnl-kpi-neg .k-value { color: var(--neg); }
+#pnlDivTable td.pos, #pnlJobTable td.pos { color: var(--pos); font-variant-numeric: tabular-nums; }
+#pnlDivTable td.neg, #pnlJobTable td.neg { color: var(--neg); font-weight: 600; font-variant-numeric: tabular-nums; }
+#pnlJobTable th { user-select: none; white-space: nowrap; }
+/* P&L job expands inline (no side panel): the live P&L block sits under the row */
+#pnlJobTable tr.pnl-open > td { background: color-mix(in srgb, var(--accent) 9%, transparent); font-weight: 600; }
+td.pnl-expand { padding: 6px 18px 16px; background: var(--surface-2); }
+td.pnl-expand .dgroup { max-width: 720px; }
+td.pnl-expand .dgroup > h4:first-child { display: none; }   /* the row already says which job */
+
+/* ── Draws (race-through) ──────────────────────────────────────────────── */
+.draw-head { align-items: flex-start; }
+.draw-head .panel-sub { font-variant-numeric: tabular-nums; }
+.hint { margin: 4px 18px 14px; color: var(--text-dim); font-size: .88em; line-height: 1.5; }
+.hint.hint-filtered { color: var(--text); }   /* the live "Showing: ..." filter summary */
+.hint-clear-note { color: var(--text-dim); font-weight: 400; }
+/* Ref # cell: the number copies on click, the ↗ opens QBO. */
+.refcopy { cursor: pointer; border-bottom: 1px dotted var(--border); }
+.refcopy:hover { color: var(--accent); border-bottom-color: var(--accent); }
+/* Vendor page: "multiple" projects drill to line items; the pay-status filter segment. */
+.vp-multi { color: var(--accent); cursor: pointer; border-bottom: 1px dotted var(--accent); }
+.vendor-seg { margin: 2px 0 12px; }
+.notion-link { font-size: .82em; padding: 2px 10px; border-radius: 999px; text-decoration: none;
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text); white-space: nowrap; }
+.notion-link:hover { border-color: var(--accent); }
+a.qbo-link { color: var(--accent); text-decoration: none; font-variant-numeric: tabular-nums; }
+a.qbo-link:hover { text-decoration: underline; }
+/* Dark mode: brighten links/accent-text toward white (keeps the chosen accent hue) so they
+   read against the dark surface - the muted default green was too low-contrast (owner 2026-08-25). */
+html[data-theme="dark"] a.qbo-link,
+html[data-theme="dark"] .unlock-link { color: color-mix(in srgb, var(--accent) 58%, #ffffff); }
+/* the bill-# chip when it's a QBO link: accent border on hover, no underline inside the pill */
+a.invno.qbo-link:hover { border-color: var(--accent); text-decoration: none; }
+
+/* ── Draws table (one row per draw; click → bills open underneath) ────────── */
+.draws-table td { vertical-align: middle; }
+.draw-row .draw-caret { color: var(--text-dim); width: 1.4em; text-align: center; }
+.draw-row:hover { background: var(--row-hover); }
+.cell.draw-in { color: var(--pos); font-weight: 700; }      /* money IN (GC pays you) */
+.cell.draw-out { color: var(--text); }                       /* money OUT (you pay vendors) */
+.ar-open { color: #b8860b; font-size: .82em; font-weight: 600; }   /* Unpaid / Partially Paid — GC still owes */
+.ar-paid { color: var(--pos); font-size: .82em; font-weight: 600; }  /* Paid */
+.paidcnt { color: var(--text-dim); font-size: .85em; font-variant-numeric: tabular-nums; }
+tr.draw-cust > td, tr.inv-client > td { background: color-mix(in srgb, var(--accent) 16%, var(--surface-2));
+  border-top: 2px solid color-mix(in srgb, var(--accent) 38%, var(--border)); padding: 9px 12px; }
+tr.draw-cust .g-cust, tr.inv-client .g-cust { font-weight: 800; font-size: 1.02em; letter-spacing: -.01em; }
+tr.inv-client .g-sub { color: var(--text-dim); font-weight: 500; font-size: .85em; }
+/* AR amounts view: muted paid rows + the Notion collections note (Quick Status) */
+tr.inv-paid td { color: var(--text-dim); }
+td.inv-note .note-txt { color: var(--text); }
+td.inv-note { max-width: 340px; }
+td.inv-note .note-txt { display: inline-block; max-width: 300px; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; vertical-align: bottom; }
+tr.draw-group > td { background: color-mix(in srgb, var(--accent) 7%, var(--surface-2));
+  border-top: 1px solid var(--border); padding: 7px 10px 7px 26px; }   /* nested under the customer */
+tr.draw-group .g-proj { font-weight: 800; font-size: .95em; letter-spacing: -.01em; }
+tr.draw-group .g-sub, tr.draw-cust .g-sub { color: var(--text-dim); font-weight: 500; font-size: .85em; }
+.draws-table tbody td:nth-child(2) span { display: inline-block; max-width: 320px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+/* Working-on table: truncate the long Name so all columns fit the boxed width. */
+#homeWorkingTable td:nth-child(3) span { display: inline-block; max-width: 280px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+/* All-customers (Sales) table: cap the Client name so every column through Touches
+   stays in view (long client names otherwise blow out col 1 and clip Touches). */
+#salesTable td:nth-child(1) span, #salesTable td:nth-child(1) a { display: inline-block; max-width: 240px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+.draw-bills-row > td { padding: 0; background: var(--surface-2); }
+.bills-sub { padding: 6px 10px 12px 34px; }
+.draw-rep-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 4px 2px 6px; }
+.draw-rep-sum { font-size: .9em; color: var(--text); font-variant-numeric: tabular-nums; }
+.bills-cap { color: var(--text-dim); font-size: .82em; padding: 4px 2px 8px; font-variant-numeric: tabular-nums; }
+.bills-sub table.grid { background: var(--surface); border-radius: 8px; }
+/* Vendor sub-groups inside a draw's bills: total first, click to open the bills under it. */
+.bills-sub tr.vgroup > td { background: var(--surface-2); cursor: pointer; border-top: 1px solid var(--border); }
+.bills-sub tr.vgroup:hover > td { background: color-mix(in srgb, var(--accent) 7%, var(--surface-2)); }
+.bills-sub tr.vgroup .vg-caret { color: var(--text-dim); }
+.bills-sub tr.vgroup .vg-name { font-weight: 700; }
+.bills-sub tr.vgroup .vg-meta { color: var(--text-dim); font-weight: 500; font-size: .85em; font-variant-numeric: tabular-nums; }
+.bills-sub tr.vgroup .vg-tag { margin-left: 7px; font-size: .8em; font-weight: 600; padding: 1px 7px; border-radius: 999px;
+  color: #9a6a12; background: color-mix(in srgb, #d99a2b 20%, transparent); white-space: nowrap; }
+html[data-theme="dark"] .bills-sub tr.vgroup .vg-tag { color: #e8b45c; }
+.bills-sub tr.vbill > td:first-child { border-left: 2px solid var(--border); }
+
+/* ── Vendor type pill ──────────────────────────────────────────────────── */
+.vtype { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: .8em; white-space: nowrap;
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text-dim); }
+.vtype.sub { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.vtype.service { color: #8a6d1f; border-color: color-mix(in srgb, #d99a2b 45%, var(--border));
+  background: color-mix(in srgb, #d99a2b 14%, transparent); }
+html[data-theme="dark"] .vtype.service { color: #e8b45c; }
+
+/* ── Home / My view ────────────────────────────────────────────────────── */
+.fresh-row { display: flex; flex-wrap: wrap; gap: 10px; padding: 6px 18px 16px; }
+.fresh { border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; min-width: 150px; background: var(--surface-2); }
+.fresh .f-label { font-size: .8em; color: var(--text-dim); text-transform: uppercase; letter-spacing: .04em; }
+.fresh .f-when { font-size: 1.05em; font-weight: 600; margin-top: 3px; }
+.fresh .f-ago { font-size: .8em; color: var(--text-dim); margin-top: 1px; }
+.fresh.stale { border-color: color-mix(in srgb, #b8860b 55%, var(--border)); }
+.fresh .sync-rec { margin-top: 6px; display: inline-block; font-size: .8em; font-weight: 700;
+  padding: 1px 8px; border-radius: 999px; color: #b8860b; white-space: nowrap;
+  border: 1px solid color-mix(in srgb, #b8860b 55%, var(--border));
+  background: color-mix(in srgb, #b8860b 12%, transparent); }
+/* in-app Resync progress */
+.sync-progress { padding: 0 18px 16px; }
+.sync-bar { height: 6px; border-radius: 999px; overflow: hidden; background: color-mix(in srgb, var(--text-dim) 16%, transparent); }
+.sync-bar-fill { height: 100%; width: 0; border-radius: 999px; background: var(--accent); transition: width .4s ease; }
+.sync-bar-fill.err { background: var(--neg); }
+.sync-step { font-size: .82em; color: var(--text-dim); margin-top: 6px; font-variant-numeric: tabular-nums; }
+
+/* Console (control plane): one card per pipeline */
+#consoleList { display: flex; flex-direction: column; gap: 10px; padding: 4px 18px 12px; }
+.console-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.pl-card { border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; background: var(--surface-2); }
+.pl-card.pl-running { border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent); }
+.pl-card.pl-queued { border-style: dashed; opacity: .9; }
+.pl-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.pl-name { font-weight: 600; }
+.pl-when { font-size: .8em; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.pl-desc { font-size: .84em; color: var(--text-dim); line-height: 1.45; margin: 6px 0 2px; }
+.pl-steps { display: flex; flex-wrap: wrap; gap: 6px; margin: 9px 0; }
+.pl-step { font-size: .8em; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text-dim); white-space: nowrap; }
+.pl-step.producer { color: #b8860b; border-color: color-mix(in srgb, #b8860b 45%, var(--border));
+  background: color-mix(in srgb, #b8860b 10%, transparent); }
+.pl-acts { display: flex; gap: 8px; }
+.btn.subtle { color: var(--text-dim); }
+
+/* Excel-style cell selection + running-sum bar. Hug the VALUE (the .cell span), not the whole
+   wide column, so a selected money cell reads as a tight box, not a long bar. */
+table.grid td.cell-sel { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+table.grid td.cell-sel .cell { background: color-mix(in srgb, var(--accent) 24%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 60%, transparent); border-radius: 4px; }
+
+/* A clickable identifier (e.g. a project #) that opens a side panel - the affordance the row's
+   click needs so it's obvious the value is a drill-in, not just text. */
+.row-open { color: var(--accent); cursor: pointer; font-weight: 600; }
+tr:hover .row-open { text-decoration: underline; }
+.row-open::after { content: " ›"; opacity: 0; transition: opacity .12s; }
+tr:hover .row-open::after { opacity: .75; }
+.sumbar { position: fixed; right: 20px; bottom: 20px; z-index: 60; display: flex; align-items: center; gap: 12px;
+  padding: 9px 14px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border);
+  box-shadow: 0 8px 26px rgba(0, 0, 0, .30); font-variant-numeric: tabular-nums; }
+.sumbar[hidden] { display: none; }
+/* Lien-mark Save bar (Bills only): sticky pill at the top-right, floats with the page scroll
+   (not a fixed overlay). Subtle when clean, amber when there are unsaved marks. */
+.savebar { position: sticky; top: 8px; z-index: 25; align-self: flex-end; margin-bottom: -10px;
+  display: inline-flex; align-items: center; gap: 10px; padding: 5px 7px 5px 13px; border-radius: 999px;
+  background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow); }
+.savebar[hidden] { display: none; }
+.savebar .sb-warn { color: var(--text-dim); font-size: .8em; }
+.savebar .sb-text { font-weight: 600; font-size: .86em; font-variant-numeric: tabular-nums; }
+.savebar .sb-review { cursor: pointer; }
+.savebar .sb-review:hover { text-decoration: underline; }
+.savebar:not(.dirty) .sb-text { color: var(--text-dim); font-weight: 500; }
+.savebar.dirty { border-color: color-mix(in srgb, #b8860b 60%, var(--border)); box-shadow: 0 6px 20px rgba(0, 0, 0, .22); }
+.savebar.dirty .sb-warn { color: #b8860b; font-size: 1em; }
+.savebar button { border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
+  border-radius: 999px; padding: 4px 14px; font: inherit; font-size: .85em; cursor: pointer; }
+.savebar button:hover:not(:disabled) { border-color: var(--accent); }
+.savebar button[hidden] { display: none; }
+.savebar .sb-save { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
+.savebar .sb-save:disabled { background: var(--surface-2); color: var(--text-dim); border-color: var(--border); cursor: default; }
+.savebar .sb-save:hover:not(:disabled) { filter: brightness(1.06); border-color: var(--accent); }
+.sumbar .sb-label { color: var(--accent); font-weight: 700; font-size: 1.05em; }
+.sumbar .sb-sum { font-weight: 700; font-size: 1.05em; letter-spacing: -.01em; }
+.sumbar .sb-meta { color: var(--text-dim); font-size: .84em; }
+.sumbar button { border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
+  border-radius: 8px; padding: 3px 9px; font-size: .8em; cursor: pointer; }
+.sumbar button:hover { border-color: var(--accent); }
+.action-row { display: flex; flex-wrap: wrap; gap: 10px; padding: 6px 18px 18px; }
+.action { display: flex; flex-direction: column; gap: 2px; cursor: pointer; min-width: 150px;
+  border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 10px;
+  padding: 10px 14px; background: var(--surface-2); transition: background .12s; }
+.action:hover { background: var(--row-hover); }
+.action.warn { border-left-color: var(--neg); }
+.action.none { opacity: .5; cursor: default; border-left-color: var(--border); }
+.action .a-n { font-size: 1.35em; font-weight: 700; }
+.action .a-lab { font-size: .82em; color: var(--text-dim); }
+
+/* ── % complete bar (in the projects table) ────────────────────────────── */
+.bar { position: relative; display: inline-block; min-width: 68px; text-align: right; }
+.bar .bar-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; box-sizing: border-box;
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 62%, transparent); z-index: 0; }
+.bar .bar-fill.over { background: color-mix(in srgb, var(--neg) 32%, transparent);
+  border-color: color-mix(in srgb, var(--neg) 62%, transparent); }
+.bar .bar-txt { position: relative; z-index: 1; padding: 0 4px; }
+/* % complete: full-width bar with a visible track, so the fill level (and how far
+   over 100%) is easy to judge at a glance. */
+.pct-bar { display: block; width: 100%; min-width: 130px; text-align: right;
+  border-radius: 4px; background: color-mix(in srgb, var(--text-dim) 16%, transparent); }
+.pct-bar .bar-fill { border-radius: 4px; background: color-mix(in srgb, var(--pos) 42%, transparent); }
+.pct-bar .bar-fill.over { background: color-mix(in srgb, var(--neg) 42%, transparent); }
+.pct-bar .bar-txt { padding: 0 6px; }
+
+/* ── Filters ───────────────────────────────────────────────────────────── */
+.filters { display: flex; flex-wrap: wrap; gap: 8px 10px; padding: 4px 18px 14px; align-items: flex-end; }
+.filters input[type="search"] { flex: 1 1 240px; min-width: 180px; }
+/* Labeled per-field search boxes (Draws / Liens). */
+.fld { display: inline-flex; flex-direction: column; gap: 3px; }
+.fld > span { font-size: .8em; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: .04em; padding-left: 3px; }
+.fld input[type="search"] { flex: 0 1 auto; min-width: 118px; }
+.filters input, .filters select {
+  font: inherit; font-size: .9em; padding: 7px 10px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
+}
+.chk { display: inline-flex; align-items: center; gap: 6px; color: var(--text-dim); font-size: .9em; cursor: pointer; }
+
+/* ── Tables ────────────────────────────────────────────────────────────── */
+.table-scroll { overflow-x: auto; }
+table.grid { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+table.grid th, table.grid td { padding: var(--row-pad); text-align: right; white-space: nowrap; border-bottom: 1px solid var(--border); }
+table.grid th:first-child, table.grid td:first-child,
+table.grid th.left, table.grid td.left { text-align: left; }
+table.grid thead th {
+  position: sticky; top: 0; background: var(--surface);
+  font-size: .8em; text-transform: uppercase; letter-spacing: .03em; color: var(--text-dim);
+  cursor: pointer; user-select: none; z-index: 1;
+}
+table.grid thead th:hover { color: var(--text); }
+table.grid thead th .arrow { opacity: .5; font-size: .8em; }
+table.grid tbody tr:hover { background: var(--row-hover); }
+table.grid.clickable tbody tr { cursor: pointer; }
+td.num { font-feature-settings: "tnum"; }
+td .cell { cursor: copy; border-radius: 4px; padding: 1px 3px; margin: -1px -3px; }
+td .cell:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.pos { color: var(--pos); }
+.neg { color: var(--neg); }
+.dim { color: var(--text-dim); }
+.pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: .82em; border: 1px solid var(--border); background: var(--surface-2); }
+.pill.active { color: var(--pos); border-color: color-mix(in srgb, var(--pos) 40%, var(--border)); }
+.pill.closed, .pill.complete { color: var(--text-dim); }
+
+.compact { }  /* density handled via --row-pad */
+
+/* ── Slide-over panels ─────────────────────────────────────────────────── */
+.overlay { position: fixed; inset: 0; background: rgba(10,14,20,.4); z-index: 30; }
+.overlay[hidden] { display: none; }
+.panel {
+  position: fixed; top: 0; height: 100vh; width: min(460px, 92vw);
+  background: var(--surface); border-left: 1px solid var(--border);
+  z-index: 40; display: flex; flex-direction: column;
+  box-shadow: -8px 0 24px rgba(10,14,20,.18);
+}
+.panel[hidden] { display: none; }
+.panel.wide { width: min(760px, 96vw); }   /* the client statement needs room for a 7-column table */
+.panel-right { right: 0; }
+.panel-head {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
+  padding: 16px 18px; border-bottom: 1px solid var(--border);
+}
+.panel-title { font-weight: 700; font-size: 1.05em; }
+.panel-sub { color: var(--text-dim); font-size: .85em; margin-top: 2px; }
+.panel-head-actions { display: flex; gap: 8px; flex: none; }
+.panel-body { padding: 16px 18px; overflow-y: auto; }
+
+/* Detail groups */
+.dgroup { margin-bottom: 18px; }
+.dgroup h4 { margin: 0 0 8px; font-size: .8em; text-transform: uppercase; letter-spacing: .04em; color: var(--text-dim); }
+.drow { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; border-bottom: 1px dashed var(--border); }
+.drow .dk { color: var(--text-dim); }
+.drow .dv { font-variant-numeric: tabular-nums; cursor: copy; border-radius: 4px; padding: 0 3px; }
+.drow .dv:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.dnote { white-space: pre-wrap; line-height: 1.45; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+
+/* Settings */
+.set-group { margin-bottom: 20px; }
+.set-group h3 { margin: 0 0 10px; font-size: .82em; text-transform: uppercase; letter-spacing: .04em; color: var(--text-dim); }
+.set-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; }
+.set-row select, .set-row input[type="range"], .set-row input[type="color"] { font: inherit; }
+.set-row input[type="range"] { flex: 1 1 auto; max-width: 200px; }
+.set-row .val { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.col-chooser { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; }
+.col-chooser label { display: flex; align-items: center; gap: 7px; font-size: .9em; }
+
+/* Misc */
+.error-banner { background: color-mix(in srgb, var(--neg) 12%, var(--surface)); border: 1px solid var(--neg); color: var(--neg); padding: 12px 16px; border-radius: 10px; }
+.error-banner[hidden] { display: none; }
+.toast {
+  position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%);
+  background: var(--text); color: var(--bg); padding: 9px 16px; border-radius: 999px;
+  font-size: .9em; z-index: 60; box-shadow: var(--shadow);
+}
+.toast[hidden] { display: none; }
+
+/* ── Sales / CRM: warm-account cards ─────────────────────────────────────── */
+.warm-acct { border: 1px solid var(--border); border-left: 3px solid var(--accent);
+  border-radius: 10px; padding: 10px 14px; margin: 0 18px 10px; background: var(--surface); }
+.warm-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 12px; }
+.warm-name { font-weight: 600; }
+.warm-when { font-size: .82em; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.warm-when.stale { color: #d97706; }
+.warm-by { font-size: .8em; color: var(--text-dim); margin-left: auto; }
+.warm-link { font-size: .8em; color: var(--accent); text-decoration: none; }
+.warm-link:hover { text-decoration: underline; }
+.warm-log { margin: 8px 0 2px; padding-left: 18px; font-size: .88em; line-height: 1.55; }
+.warm-log .d { color: var(--text-dim); font-variant-numeric: tabular-nums; margin-right: 6px; }
+.warm-log .warm-empty { list-style: none; margin-left: -18px; color: var(--text-dim); font-style: italic; }
+
+/* ── Sales / CRM: per-rep activity drill ─────────────────────────────────── */
+#salesRepTable tbody tr.rep-active { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+#salesRepTable tbody tr.rep-active td:first-child { box-shadow: inset 3px 0 0 var(--accent); font-weight: 600; }
+#repActivity { padding: 0 18px 6px; }
+.rep-head { display: flex; align-items: baseline; gap: 12px; margin: 2px 0 12px; }
+.rep-head h3 { font-size: 1.2em; font-weight: 700; }
+.rep-sub { color: var(--text-dim); font-size: .86em; font-variant-numeric: tabular-nums; }
+.rep-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 26px; margin-top: 14px; }
+@media (max-width: 900px) { .rep-cols { grid-template-columns: 1fr; } }
+.rep-col h4 { font-size: .82em; text-transform: uppercase; letter-spacing: .04em; color: var(--text-dim);
+  margin: 16px 0 7px; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+.rep-col h4:first-child { margin-top: 4px; }
+/* weekly touch bars */
+.rep-weeks { display: flex; flex-direction: column; gap: 3px; }
+.rep-week { display: grid; grid-template-columns: 92px 1fr 28px; align-items: center; gap: 8px; font-size: .84em; }
+.rw-lab { color: var(--text-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rw-bar { position: relative; height: 15px; border-radius: 3px; background: color-mix(in srgb, var(--text-dim) 12%, transparent); }
+.rw-bar .bar-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; box-sizing: border-box;
+  background: color-mix(in srgb, var(--accent) 34%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 62%, transparent); }
+.rw-val { text-align: right; font-variant-numeric: tabular-nums; }
+/* recent-touch log */
+.rep-log { display: flex; flex-direction: column; }
+.rep-touch { display: grid; grid-template-columns: 60px 1fr; gap: 10px; padding: 5px 0; border-bottom: 1px solid var(--border); font-size: .86em; }
+.rt-date { color: var(--text-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rt-body { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.rt-cust { font-weight: 600; }
+.rt-note { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* follow-ups / stale / pipeline lists */
+.rep-list { display: flex; flex-direction: column; }
+.rep-item { display: flex; justify-content: space-between; gap: 10px; padding: 4px 0; border-bottom: 1px solid var(--border); font-size: .86em; }
+.ri-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+a.ri-name { color: var(--accent); text-decoration: none; }
+a.ri-name:hover { text-decoration: underline; }
+.ri-meta { color: var(--text-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* ── Bill Tracker: Excel-dense table + quick-preset chips + per-field filters ─ */
+/* Quick-preset chips (compact single row). */
+.bill-views { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 18px 2px; }
+.view-chip { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; font: inherit; font-size: .88em;
+  padding: 5px 11px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2);
+  color: var(--text); transition: border-color .12s, background .12s; }
+.view-chip:hover { border-color: var(--accent); }
+.view-chip.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--surface)); font-weight: 600; }
+.view-chip .vc-count { font-size: .82em; color: var(--text-dim); font-variant-numeric: tabular-nums;
+  padding: 0 6px; border-radius: 999px; background: color-mix(in srgb, var(--text-dim) 15%, transparent); }
+.view-chip.active .vc-count { color: var(--accent); background: color-mix(in srgb, var(--accent) 20%, transparent); }
+
+/* Per-field filter dropdowns (each column is its own filter, not a search box). */
+.bill-filters { display: flex; flex-wrap: wrap; gap: 6px 10px; padding: 8px 18px 12px; align-items: flex-end; }
+.bill-filters select { font: inherit; font-size: .85em; padding: 5px 8px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text); max-width: 200px; }
+.bill-filters .bf-sep { flex: 1 1 14px; min-width: 8px; }
+
+/* Month multi-select: a select-styled button that opens a checkbox menu */
+.msel { position: relative; display: inline-block; }
+.msel-btn { font: inherit; font-size: .85em; padding: 5px 22px 5px 8px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text); max-width: 200px; text-align: left;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  background-image: linear-gradient(45deg, transparent 50%, var(--text-dim) 50%), linear-gradient(135deg, var(--text-dim) 50%, transparent 50%);
+  background-position: calc(100% - 12px) center, calc(100% - 8px) center; background-size: 4px 4px, 4px 4px; background-repeat: no-repeat; }
+.msel-btn.on { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.msel-menu { position: absolute; z-index: 40; top: calc(100% + 4px); left: 0; min-width: 160px; max-height: 280px; overflow-y: auto;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 5px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, .28); display: flex; flex-direction: column; gap: 1px; }
+/* display:flex above would override the `hidden` attribute's display:none - restore it so the
+   menu starts closed and the toggle/click-outside actually hide it. */
+.msel-menu[hidden] { display: none; }
+.msel-opt { display: flex; align-items: center; gap: 7px; padding: 5px 8px; border-radius: 6px; cursor: pointer;
+  font-size: .88em; white-space: nowrap; }
+/* Same trap as .msel-menu: display:flex would beat the `hidden` attribute, so the search
+   box could not filter options out. Restore hidden's display:none for filtered options. */
+.msel-opt[hidden] { display: none; }
+.msel-opt:hover { background: var(--row-hover); }
+.msel-opt input { cursor: pointer; }
+.msel-clear { font: inherit; font-size: .8em; color: var(--text-dim); background: none; border: none; cursor: pointer;
+  text-align: left; padding: 4px 8px 6px; border-bottom: 1px solid var(--border); margin-bottom: 3px; }
+.msel-clear:hover { color: var(--accent); }
+/* Select all / None toolbar at the top of a big checklist (e.g. vendors). */
+.msel-tools { display: flex; gap: 4px; padding: 1px 2px 5px; border-bottom: 1px solid var(--border); margin-bottom: 3px; }
+.msel-tool { font: inherit; font-size: .8em; color: var(--text-dim); background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: 6px; cursor: pointer; padding: 3px 9px; }
+.msel-tool:hover { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.msel-count { margin-left: auto; font-size: .8em; color: var(--text-dim); align-self: center; padding-right: 3px; font-variant-numeric: tabular-nums; }
+.msel-menu.wide { min-width: 240px; }
+.msel-search { font: inherit; font-size: .85em; padding: 5px 8px; margin: 1px 2px 5px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text); }
+/* The Draws menus sit inside `.filters`, whose `input[type=search]{flex:1 1 240px}` rule would make
+   the search box GROW to fill the flex-column menu (a 170px-tall search when filtered). Pin it. */
+.msel-menu input.msel-search { flex: 0 0 auto; width: auto; }
+
+/* Division chip - one subtle hue per division (RP green / CP blue / MFD violet). */
+.divchip { display: inline-block; padding: 0 6px; border-radius: 5px; font-size: .82em; font-weight: 700;
+  font-variant-numeric: tabular-nums; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-dim); }
+.divchip.rp  { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.divchip.cp  { color: #3b6ea5; border-color: color-mix(in srgb, #3b6ea5 48%, var(--border)); background: color-mix(in srgb, #3b6ea5 10%, transparent); }
+.divchip.mfd { color: #8161b0; border-color: color-mix(in srgb, #8161b0 48%, var(--border)); background: color-mix(in srgb, #8161b0 10%, transparent); }
+
+/* The dense grid: tight rows, fixed layout so columns are exact + resizable. A squished
+   column WRAPS its text (overflow-wrap) instead of clipping - drag a divider to resize. */
+/* NB: selectors carry `table.` so they outrank the base `table.grid td` (same specificity,
+   later in source) - otherwise the base `white-space: nowrap` would block wrapping. */
+.bills-grid { font-size: .9em; table-layout: fixed; width: auto; }
+table.bills-grid th, table.bills-grid td { padding: 3px 10px; white-space: normal; overflow-wrap: break-word; vertical-align: top; }
+table.bills-grid thead th { cursor: default; border-right: 1px solid var(--border); position: relative; }
+table.bills-grid thead th:last-child { border-right: none; }
+/* Draggable grip sitting on each header's right divider (Bills + WIP grids). */
+table.bills-grid thead th .col-resize,
+table.wip-grid thead th .col-resize { position: absolute; top: 0; right: -4px; width: 9px; height: 100%; cursor: col-resize; z-index: 4; }
+table.bills-grid thead th .col-resize:hover,
+table.wip-grid thead th .col-resize:hover { background: color-mix(in srgb, var(--accent) 45%, transparent); }
+body.col-resizing { cursor: col-resize; user-select: none; }
+body.col-resizing .bills-grid tbody tr:hover,
+body.col-resizing .wip-grid tbody tr:hover { background: transparent; }
+.bills-grid .bill-vendor { font-weight: 600; }
+.bills-grid .bill-name { color: var(--text-dim); margin-left: 6px; }
+.bills-grid .bill-age { color: var(--text-dim); font-size: .82em; margin-left: 6px; white-space: nowrap; }
+.cell.open-amt { font-weight: 700; }   /* "still owed / fronted" money: emphasized app-wide */
+.bills-grid .cell.open-zero { color: var(--text-dim); }
+.bills-grid tbody tr.bill-row:hover { background: var(--row-hover); }
+/* Lien-risk rows: red edge (same visual language as the Liens tab). */
+tr.bill-row.risk > td:first-child { box-shadow: inset 3px 0 var(--neg); }
+/* Each status is its OWN column - compact colored text; a dim dash means "none". */
+.bills-grid td.status-col { font-weight: 600; }
+.bills-grid .st { font-weight: 600; }
+.st-ok { color: var(--pos); }
+.st-warn { color: #b8860b; }
+.st-bad { color: var(--neg); }
+.st-dim { color: var(--text-dim); font-weight: 500; }
+.st-none { color: var(--text-dim); opacity: .45; font-weight: 400; }
+.st-lien-past, .st-lien-d7, .st-lien-d15 { color: var(--neg); }
+.st-lien-d30 { color: #b8860b; }
+.st-lien-info { color: var(--text-dim); }
+/* Group header rows (vendor A→Z by default): a collapse caret + a subtotal. */
+tr.bill-group > td { background: color-mix(in srgb, var(--accent) 8%, var(--surface-2));
+  border-top: 2px solid var(--border); padding: 6px 10px; }
+tr.bill-group:hover > td { background: color-mix(in srgb, var(--accent) 13%, var(--surface-2)); }
+tr.bill-group .bg-caret { color: var(--text-dim); display: inline-block; width: 1.1em; }
+tr.bill-group .bg-key { font-weight: 800; font-size: .95em; letter-spacing: -.01em; }
+tr.bill-group .bg-sub { color: var(--text-dim); font-weight: 500; font-size: .85em; font-variant-numeric: tabular-nums; }
+/* Group header: the vendor/client name, then the open $ + count RIGHT AFTER it at the SAME
+   size/weight (owner 2026-08-18) so the amount reads at a glance - anchored by the name on
+   the left so it's always visible, never scrolled off the right of this wide table. */
+tr.bill-group .bg-cell { display: flex; align-items: baseline; gap: 12px; }
+/* the shared band grid (bandMetrics): name left, fixed metric columns right, value over label */
+.bg-cell.bg-grid { display: grid; grid-template-columns: minmax(200px, 1fr) repeat(var(--nm, 0), minmax(110px, 150px)); align-items: center; gap: 0 12px; }
+.bg-cell.bg-grid .bg-left, .bg-cell.bg-grid .bg-key, .bg-cell.bg-grid .sg-key, .bg-cell.bg-grid .g-cust { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bg-m { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.15; font-weight: 400; }
+.bg-m b { font-variant-numeric: tabular-nums; font-weight: 700; font-size: .98em; letter-spacing: -.01em; }
+.bg-m small { color: var(--text-dim); font-size: .74em; font-weight: 500; letter-spacing: 0; }
+.bg-m.neg b { color: var(--neg); } .bg-m.pos b, .bg-m.ok b { color: var(--pos); } .bg-m.due b { color: var(--neg); }
+tr.bill-group .bg-cell.bg-grid, tr.bill-subgroup .bg-cell.bg-grid, tr.inv-client .bg-cell.bg-grid { display: grid; }
+tr.inv-client .g-cust { font-weight: 800; }
+tr.bill-group .bg-amt { font-weight: 800; font-size: .95em; letter-spacing: -.01em; color: var(--text);
+  font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* a hint + an action (Collapse all) on one line above a grouped table */
+.list-head { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin: 4px 2px 10px; flex-wrap: wrap; }
+.list-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+/* Segmented toggle (e.g. payments cash-in: Flat / Weeks / Months). */
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--surface-2); }
+.seg-btn { font: inherit; font-size: .8em; padding: 4px 12px; border: none; background: transparent; color: var(--text-dim);
+  cursor: pointer; border-left: 1px solid var(--border); }
+.seg-btn:first-child { border-left: none; }
+.seg-btn:hover { color: var(--text); }
+.seg-btn.on { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--text); font-weight: 600; }
+/* "Expand more (N)" row under a top-N dashboard table */
+.more-row { padding: 8px 2px 2px; }
+
+/* WIP report: a wide, dense schedule (mirrors Test-Master) with subtotal + total
+   rows, resizable columns, a frozen header, and per-cell conditional formatting. */
+.wip-grid { font-size: .82em; table-layout: fixed; width: auto; }
+.wip-grid th { padding: 4px 8px; white-space: nowrap; }
+.wip-grid td { padding: 4px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Bounded scroll box so the sticky thead (base .grid rule) truly freezes. */
+.wip-scroll { max-height: calc(100vh - 210px); min-height: 320px; overflow: auto; }
+.wip-grid thead th { box-shadow: inset 0 -1px var(--border); }   /* header underline while frozen */
+/* % complete data bar: a left-anchored fill behind the right-aligned number. */
+.wip-grid td.wip-bar { background: linear-gradient(to right,
+  color-mix(in srgb, var(--accent) 22%, transparent) var(--bar),
+  transparent var(--bar)) !important; }
+tr.wip-subtotal > td { border-top: 1px solid var(--border); font-weight: 700;
+  background: color-mix(in srgb, var(--accent) 6%, transparent); }
+tr.wip-total > td { border-top: 2px solid var(--accent); font-weight: 800;
+  background: color-mix(in srgb, var(--accent) 11%, transparent); }
+/* Color legend above the schedule. */
+.wip-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center;
+  margin: 2px 2px 10px; font-size: .8em; color: var(--text-dim); }
+.wip-legend .wip-lg { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.wip-legend .wip-lg-dim { opacity: .8; font-style: italic; }
+.wip-sw { display: inline-block; width: 11px; height: 11px; border-radius: 3px; border: 1px solid var(--border); }
+.wip-sw.pos   { background: color-mix(in srgb, var(--pos) 30%, transparent); }
+.wip-sw.neg   { background: color-mix(in srgb, var(--neg) 30%, transparent); }
+.wip-sw.gp-lo { background: color-mix(in srgb, var(--neg) 22%, transparent); }
+.wip-sw.gp-ok { background: color-mix(in srgb, var(--pos) 18%, transparent); }
+.wip-sw.gp-hi { background: color-mix(in srgb, #b8860b 22%, transparent); }
+.wip-sw.bar   { background: linear-gradient(to right, color-mix(in srgb, var(--accent) 40%, transparent) 60%, transparent 60%); }
+.inline-check { display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  font-size: .8em; color: var(--text-dim); font-weight: 500; white-space: nowrap; }
+.inline-check input { cursor: pointer; }
+
+/* Pay Bills: a check-run worksheet - mark bills, set a partial amount, save → pay list. */
+.pay-grid td, .pay-grid th { padding: 4px 9px; }
+.pay-grid tbody tr.pay-row:hover { background: var(--row-hover); }
+.pay-grid tbody tr.pay-row.on { background: color-mix(in srgb, var(--pos) 8%, transparent); }
+.pay-grid tbody tr.pay-row.on:hover { background: color-mix(in srgb, var(--pos) 13%, transparent); }
+.pay-grid input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
+.pay-amt { width: 92px; text-align: right; font-variant-numeric: tabular-nums; padding: 2px 6px;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text);
+  font-size: .95em; font-family: inherit; }
+.pay-amt:disabled { background: transparent; color: var(--text-dim); border-color: transparent; }
+.pay-amt.partial { border-color: color-mix(in srgb, #b8860b 60%, var(--border)); color: #8a6508; font-weight: 700; }
+.pay-amt:focus { outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent); }
+/* invoice rows nested under a payment: indent the first cell so the grouping reads */
+tr.sub-row > td:first-child { padding-left: 26px; }
+tr.sub-row > td { color: var(--text); }
+
+/* Payments: the transaction row + its nested invoices */
+tr.pay-row > td { font-weight: 500; }
+tr.pay-row .bg-caret { color: var(--text-dim); display: inline-block; width: 1.3em; }
+tr.pay-row:hover > td { background: var(--row-hover); }
+.unlock-link { color: var(--accent); cursor: pointer; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.unlock-link:hover { text-decoration: underline; }
+tr.pay-invoices > td { padding: 0 12px 10px 26px; background: var(--surface-2); }
+/* a compact nested table (a payment's invoices, or a project's unlocked bills in the side panel) */
+table.sub-grid { width: 100%; border-collapse: collapse; font-size: .92em; }
+table.sub-grid th { color: var(--text-dim); font-weight: 600; text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+table.sub-grid th.right { text-align: right; }
+table.sub-grid td { padding: 5px 10px; border-bottom: 1px solid var(--border-faint, var(--border)); }
+table.sub-grid td.right { text-align: right; font-variant-numeric: tabular-nums; }
+table.sub-grid td.dim { color: var(--text-dim); }
+table.sub-grid tr:last-child td { border-bottom: none; }
+
+/* ── Open Invoices (AR aging) ─────────────────────────────────────────────── */
+.ag-tile .a-count { font-variant-numeric: tabular-nums; }
+.ag-tile.none { opacity: .5; }
+.aging-grid td.dim { color: var(--text-dim); }
+.aging-grid td.ag { font-variant-numeric: tabular-nums; }
+.aging-grid td.status-col .st { font-weight: 600; }
+.aging-grid .divdot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; vertical-align: middle; background: var(--text-dim); }
+.aging-grid .divdot.rp  { background: var(--accent); }
+.aging-grid .divdot.cp  { background: #3b6ea5; }
+.aging-grid .divdot.mfd { background: #8161b0; }
+.aging-grid .litig { color: var(--neg); font-weight: 700; }
+/* The open balance sits in exactly ONE bucket column, tinted green→red by age. Text is
+   blended toward the theme's foreground so it stays legible in both light and dark. */
+.aging-grid td.ag0 { background: color-mix(in srgb, #2E7D32 15%, transparent); color: color-mix(in srgb, #2E7D32 62%, var(--text)); font-weight: 600; }
+.aging-grid td.ag1 { background: color-mix(in srgb, #7CB342 16%, transparent); color: color-mix(in srgb, #6a9c2f 62%, var(--text)); font-weight: 600; }
+.aging-grid td.ag2 { background: color-mix(in srgb, #D68910 16%, transparent); color: color-mix(in srgb, #D68910 66%, var(--text)); font-weight: 600; }
+.aging-grid td.ag3 { background: color-mix(in srgb, #C0552B 17%, transparent); color: color-mix(in srgb, #C0552B 68%, var(--text)); font-weight: 600; }
+.aging-grid td.ag4 { background: color-mix(in srgb, #922B21 20%, transparent); color: color-mix(in srgb, #922B21 72%, var(--text)); font-weight: 700; }
+tr.ag-total > td { border-top: 2px solid var(--border); background: var(--surface-2); font-weight: 600; font-variant-numeric: tabular-nums; }
+tr.ag-total > td.ag0, tr.ag-total > td.ag1, tr.ag-total > td.ag2, tr.ag-total > td.ag3, tr.ag-total > td.ag4 { background: var(--surface-2); }
+/* Client group-header band: neutral grey here (not the green accent tint the Bills tab uses),
+   the owner found the green odd on this tab (2026-08-19). */
+.aging-grid tr.bill-group > td { background: var(--surface-2); }
+.aging-grid tr.bill-group:hover > td { background: var(--row-hover); }
+/* Frozen header: bound the scroll box so the base .grid sticky thead truly freezes. */
+/* Bounded so the sticky column header freezes; taller now that the KPI tiles live INSIDE it
+   (they scroll away with the list - owner 2026-08-25 "freeze the header, not the KPI strip"). */
+.inv-scroll { max-height: calc(100vh - 200px); min-height: 340px; overflow: auto; }
+.inv-tiles { padding: 4px 2px 12px; }
+/* Subtle dark scrollbars app-wide - the default light track reads as a white bar in dark mode
+   (owner 2026-08-25). Transparent track, a faint thumb that darkens on hover. */
+.table-scroll, .panel-body, .msel-menu { scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-dim) 45%, transparent) transparent; }
+.table-scroll::-webkit-scrollbar, .panel-body::-webkit-scrollbar, .msel-menu::-webkit-scrollbar { width: 11px; height: 11px; }
+.table-scroll::-webkit-scrollbar-track, .panel-body::-webkit-scrollbar-track, .msel-menu::-webkit-scrollbar-track { background: transparent; }
+.table-scroll::-webkit-scrollbar-thumb, .panel-body::-webkit-scrollbar-thumb, .msel-menu::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-dim) 42%, transparent); border-radius: 7px;
+  border: 3px solid transparent; background-clip: padding-box; }
+.table-scroll::-webkit-scrollbar-thumb:hover, .panel-body::-webkit-scrollbar-thumb:hover, .msel-menu::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text-dim) 68%, transparent); background-clip: padding-box; }
+.table-scroll::-webkit-scrollbar-corner, .panel-body::-webkit-scrollbar-corner { background: transparent; }
+.aging-grid thead th { box-shadow: inset 0 -1px var(--border); z-index: 2; }
+/* Project sub-band inside a client group: indented, lighter than the client band. */
+.aging-grid tr.bill-subgroup > td { background: color-mix(in srgb, var(--surface-2) 55%, transparent);
+  border-top: 1px solid var(--border); padding: 3px 10px 3px 24px; }
+.aging-grid tr.bill-subgroup .bg-cell { display: flex; align-items: baseline; gap: 10px; }
+.aging-grid tr.bill-subgroup .sg-key { font-weight: 700; font-size: .9em; color: var(--text); }
+.aging-grid tr.bill-subgroup .bg-amt { color: var(--text-dim); font-size: .84em; font-variant-numeric: tabular-nums; }
+/* Client statement panel: a plain, copyable table; unchecked rows dim + strike so it's clear
+   they are excluded from the copy. */
+.stmt-grid { width: 100%; font-size: .86em; }
+.stmt-grid th, .stmt-grid td { padding: 4px 8px; }
+.stmt-grid input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
+.stmt-grid tr.stmt-row.on > td { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.stmt-grid tr.stmt-row:hover > td { background: var(--row-hover); }
+/* Statement controls: a search box + Select all / None + a live count. */
+.stmt-ctrl { display: flex; align-items: center; gap: 8px; margin: 2px 0 8px; flex-wrap: wrap; }
+.stmt-search { flex: 1 1 200px; min-width: 140px; font: inherit; font-size: .9em; padding: 6px 9px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); color: var(--text); }
+.stmt-count { margin-left: auto; font-size: .82em; color: var(--text-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Vertical rules between the aging bucket columns so the eye tracks the money across (owner). */
+.aging-grid td.ag, .aging-grid th.ag { border-left: 1px solid var(--border); }
+/* Lien cell = the computed notice CLOCK (when the lien is due) + the Notion status pill. */
+.aging-grid td.lien-cell { white-space: normal; }
+.lien-clock { display: inline-block; font-size: .82em; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.lien-clock + .notion-pill { margin-left: 7px; }
+.lien-clock.lc-past   { color: var(--neg); font-weight: 700; }
+.lien-clock.lc-urgent { color: #C0552B; }
+.lien-clock.lc-watch  { color: #b8860b; }
+.lien-clock.lc-sent   { color: var(--pos); font-weight: 500; }
+.lien-clock.lc-ok     { color: var(--text-dim); font-weight: 500; }
+/* Notion-style status pill (grey pill + a colored dot) so the lien status reads as "from Notion". */
+.notion-pill { display: inline-flex; align-items: center; gap: 5px; padding: 1px 8px 1px 6px; border-radius: 11px;
+  background: color-mix(in srgb, var(--text) 8%, transparent); font-size: .82em; font-weight: 500; white-space: nowrap; vertical-align: middle; }
+.notion-pill .np-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+/* A filter that is hiding/limiting rows turns RED so it's obvious a filter is in place (owner). */
+#invFilters select.filter-on { border-color: var(--neg); color: var(--neg); font-weight: 600;
+  background: color-mix(in srgb, var(--neg) 8%, var(--surface-2)); }
+
+/* Bill detail panel: give the QuickBooks link buttons room. */
+#billDetailBody .pnl-actions { margin: 10px 0 2px; }
+/* Lien-mark control (owner sets Notice Sent / Lien Filed / Released per bill). */
+.lien-mark-row { align-items: center; }
+.lien-mark-ctl { display: inline-flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.lien-mark-btn { padding: 3px 9px; }
+.lien-mark-btn.active { border-color: var(--accent); color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface)); font-weight: 600; }
+.lien-mark-hint { margin: 4px 0 2px; font-size: .8em; }
+
+/* ── Sub LOC: collapsible sections + the time-bucketed repayment feed ─────── */
+.sec-head { cursor: pointer; user-select: none; }
+.sec-head:hover h2 { color: var(--accent); }
+.sec-caret { color: var(--text-dim); display: inline-block; width: 1.05em; }
+.sec-body[hidden] { display: none; }
+.feed-bucket-head { display: flex; align-items: baseline; gap: 4px; padding: 9px 18px 5px; }
+.feed-bucket-head.clickable { cursor: pointer; user-select: none; }
+.feed-bucket-head .fb-caret { color: var(--text-dim); }
+.feed-bucket-head .fb-label { font-weight: 700; font-size: .9em; letter-spacing: -.01em; }
+.feed-bucket-head .fb-meta { color: var(--text-dim); font-size: .82em; font-variant-numeric: tabular-nums; }
+.feed-bucket-head.clickable:hover .fb-label { color: var(--accent); }
+/* the project drill-over: draw-group headers read as plain titles, not the tiny caps */
+#sublocDetailBody .dgroup h4 { text-transform: none; letter-spacing: 0; font-size: .92em; color: var(--text); }
+
+/* ── QoL: clickable KPI tiles + inline row links ─────────────────────────── */
+.kpi.clickable { cursor: pointer; transition: border-color .12s, background .12s; }
+.kpi.clickable:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
+.row-link { color: var(--accent); text-decoration: none; }
+.row-link:hover { text-decoration: underline; }
+
+/* ── Systems & processes tab ───────────────────────────────────────────────
+   The process registry rendered live from the vault markdown. Colour here
+   encodes STATE only, never decoration: the health dot is the one saturated
+   mark on the row, and everything else stays in the neutral type scale.
+   Three axes, three visual weights - dot = health (how it runs), pill = state
+   (how sure we are), inline tag = life (whether it runs at all).           */
+
+.sys-filters { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 18px 12px; }
+.sys-chip {
+  display: inline-flex; align-items: baseline; gap: 6px; cursor: pointer;
+  padding: 4px 11px; border-radius: 999px; font: inherit; font-size: .85em;
+  color: var(--text-dim); background: var(--surface);
+  border: 1px solid var(--border); transition: border-color .12s, background .12s, color .12s;
+}
+.sys-chip:hover { border-color: var(--accent); color: var(--text); }
+.sys-chip.active {
+  color: var(--text); border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+}
+.sys-chip-count { font-variant-numeric: tabular-nums; opacity: .65; font-size: .92em; }
+
+/* Health dot - the only saturated colour on a row. */
+.sys-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; vertical-align: middle; }
+.sys-dot.green  { background: var(--pos); }
+.sys-dot.yellow { background: #d9931f; }
+.sys-dot.red    { background: var(--neg); }
+.sys-dot.none   { background: transparent; border: 1.5px solid var(--border); }
+
+/* Fixed layout so nine prose columns always fit the pane - the registry is a
+   thing you READ, so it must never need horizontal scrolling to follow a row. */
+#sysTable { table-layout: fixed; width: 100%; }
+#sysTable th, #sysTable td { vertical-align: top; white-space: normal; overflow-wrap: break-word; }
+#sysTable td.left span { white-space: normal; }
+#sysTable tbody tr:not(.sys-group) td:first-child { text-align: center; padding-right: 0; }
+#sysTable th:nth-child(1), #sysTable td:nth-child(1) { width: 28px; }
+#sysTable th:nth-child(2) { width: 6%; }
+#sysTable th:nth-child(3) { width: 24%; }
+#sysTable th:nth-child(4) { width: 11%; }
+#sysTable th:nth-child(5) { width: 14%; }
+#sysTable th:nth-child(6) { width: 12%; }
+#sysTable th:nth-child(7) { width: 13%; }
+#sysTable th:nth-child(8) { width: 7%; }
+#sysTable th:nth-child(9) { width: 10%; }
+
+.sys-id { font-family: var(--font-mono); font-size: .86em; color: var(--text-dim); white-space: nowrap; }
+.sys-process { font-weight: 550; }
+
+/* Domain section header inside the one table - a full-width rule, not a cell. */
+tr.sys-group td {
+  background: var(--surface-2); color: var(--text-dim);
+  font-size: .8em; text-transform: uppercase; letter-spacing: .06em;
+  font-weight: 650; padding-top: 12px; padding-bottom: 6px;
+  text-align: left;
+  border-top: 1px solid var(--border);
+}
+tr.sys-retired { opacity: .45; }
+tr.sys-retired .sys-process { text-decoration: line-through; }
+
+/* State pill - how sure the description is. Deliberately low-contrast:
+   it is metadata about our confidence, not about the business. */
+.sys-state {
+  display: inline-block; padding: 1px 9px; border-radius: 999px;
+  font-size: .8em; white-space: nowrap; max-width: 100%; overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-dim); background: var(--surface-2); border: 1px solid var(--border);
+}
+.sys-state.proposed {
+  color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+.sys-state.inferred { font-style: italic; }
+.sys-state.retired { opacity: .7; }
+
+/* Life tag - only shown when a row is NOT live, because "agreed but never
+   built" is the thing this view exists to make impossible to miss. */
+.sys-life {
+  display: inline-block; margin-left: 8px; padding: 0 7px; border-radius: 4px;
+  font-size: .8em; text-transform: uppercase; letter-spacing: .05em; font-weight: 650;
+  color: #8a6100; background: color-mix(in srgb, #d9931f 18%, var(--surface));
+  border: 1px solid color-mix(in srgb, #d9931f 40%, var(--border)); vertical-align: middle;
+}
+html[data-theme="dark"] .sys-life { color: #e8b45c; }
+
+.check { display: inline-flex; align-items: center; gap: 6px; font-size: .88em; color: var(--text-dim); white-space: nowrap; }
+.check input { margin: 0; }
+
+/* ── Graph tab ─────────────────────────────────────────────────────────────── */
+.graph-modes { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.graph-mode {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
+  padding: 6px 12px; border: 1px solid var(--border); border-radius: 999px;
+  background: var(--surface); color: var(--text); cursor: pointer; line-height: 1.2;
+  font-family: var(--font); font-size: .84em; transition: border-color .12s, background .12s;
+}
+.graph-mode:hover { border-color: var(--accent); }
+.graph-mode.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.graph-mode .gm-label { font-weight: 600; }
+.graph-mode .gm-sub { font-size: .82em; opacity: .7; }
+.graph-mode.active .gm-sub { opacity: .85; }
+
+.graph-wrap {
+  position: relative; width: 100%; height: calc(100vh - 246px); min-height: 540px;
+  border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
+  background: var(--graph-bg);
+}
+#graphCanvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+
+.graph-toolbar {
+  position: absolute; top: 12px; right: 12px; display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px; background: color-mix(in srgb, var(--surface) 88%, transparent);
+  border: 1px solid var(--border); border-radius: 10px; backdrop-filter: blur(6px); box-shadow: var(--shadow);
+}
+.graph-toolbar input[type="search"] {
+  border: 1px solid var(--border); border-radius: 7px; padding: 4px 8px; font-size: .84em;
+  background: var(--surface); color: var(--text); width: 150px; font-family: var(--font);
+}
+.graph-legend {
+  position: absolute; left: 12px; bottom: 12px; display: flex; flex-direction: column; gap: 4px;
+  padding: 9px 11px; background: color-mix(in srgb, var(--surface) 88%, transparent);
+  border: 1px solid var(--border); border-radius: 10px; backdrop-filter: blur(6px);
+  box-shadow: var(--shadow); font-size: .8em; max-width: 220px;
+}
+.gl-row { display: flex; align-items: center; gap: 7px; color: var(--text-dim); }
+.gl-row.gl-note { color: var(--text-dim); font-style: italic; }
+.gl-dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; }
+.gl-n { margin-left: auto; font-variant-numeric: tabular-nums; opacity: .8; }
+
+.graph-info {
+  position: absolute; left: 12px; top: 12px; width: 250px; max-height: calc(100% - 24px); overflow: auto;
+  padding: 12px 14px; background: color-mix(in srgb, var(--surface) 94%, transparent);
+  border: 1px solid var(--border); border-radius: 12px; backdrop-filter: blur(8px); box-shadow: var(--shadow);
+}
+.graph-info .gi-x {
+  position: absolute; top: 8px; right: 10px; border: none; background: none; cursor: pointer;
+  font-size: 1.15em; line-height: 1; color: var(--text-dim);
+}
+.graph-info .gi-x:hover { color: var(--text); }
+.gi-title { font-weight: 700; font-size: 1.02em; padding-right: 16px; color: var(--text); }
+.gi-sub { color: var(--text-dim); font-size: .84em; margin-top: 2px; }
+.gi-h { font-size: .8em; text-transform: uppercase; letter-spacing: .04em; color: var(--text-dim); margin: 10px 0 4px; }
+.gi-list { margin: 0; padding-left: 16px; font-size: .86em; color: var(--text); }
+.gi-list li { margin: 2px 0; }
+.gi-more { font-size: .8em; color: var(--text-dim); margin-top: 4px; }
+
+@media (max-width: 640px) {
+  .graph-wrap { height: calc(100vh - 260px); }
+  .graph-info { width: 190px; }
+  .graph-toolbar input[type="search"] { width: 104px; }
+}
+
+/* ── WIP Review ────────────────────────────────────────────────────────────── */
+.btn.tiny { padding: 2px 8px; font-size: .8em; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary:hover { filter: brightness(1.06); }
+.btn:disabled { opacity: .5; cursor: default; }
+.wr-kpi-amber .k-value { color: #b7791f; }
+.wr-kpi-red .k-value { color: var(--neg); }
+html[data-theme="dark"] .wr-kpi-amber .k-value { color: #e8b45c; }
+.wr-bulk { display: inline-flex; gap: 6px; align-items: center; margin-left: auto; }
+.wr-body { margin-top: 12px; }
+.wr-empty { padding: 28px 8px; color: var(--text-dim); max-width: 620px; }
+.wr-empty p { margin: 0 0 8px; }
+
+.wr-div-head {
+  display: flex; align-items: baseline; gap: 10px; margin: 18px 0 8px; padding-bottom: 5px;
+  border-bottom: 2px solid var(--border); font-weight: 700; font-size: 1.02em;
+}
+.wr-div-sub { color: var(--text-dim); font-weight: 500; font-size: .82em; }
+
+.wr-job { border: 1px solid var(--border); border-radius: 10px; margin: 8px 0; padding: 10px 12px; background: var(--surface); }
+.wr-job.wr-added { border-left: 3px solid var(--accent); }
+.wr-job.wr-removed { border-left: 3px solid var(--neg); opacity: .82; }
+.wr-job.wr-excluded { opacity: .5; }
+.wr-job-head { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.wr-pn { font-weight: 700; font-variant-numeric: tabular-nums; }
+.wr-name { color: var(--text-dim); font-size: .9em; }
+.wr-badge { font-size: .8em; text-transform: uppercase; letter-spacing: .04em; padding: 2px 7px; border-radius: 999px; font-weight: 700; }
+.wr-badge.changed { background: color-mix(in srgb, #d99a2b 22%, transparent); color: #9a6a12; }
+html[data-theme="dark"] .wr-badge.changed { color: #e8b45c; }
+.wr-badge.added { background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--accent); }
+.wr-badge.removed { background: color-mix(in srgb, var(--neg) 18%, transparent); color: var(--neg); }
+.wr-badge.reversed { background: color-mix(in srgb, var(--neg) 14%, transparent); color: var(--neg); }
+.wr-job.wr-reversed { border-left: 3px solid var(--neg); }
+.wr-carried { font-size: .86em; color: var(--text-dim); margin: 4px 0 2px; }
+.wr-field.wr-reversed { background: color-mix(in srgb, var(--neg) 6%, transparent); }
+.wr-mark { font-size: .72em; font-weight: 700; letter-spacing: .03em; margin-left: 6px; padding: 1px 6px; border-radius: 999px; vertical-align: middle; }
+.wr-mark.rev { background: color-mix(in srgb, var(--neg) 16%, transparent); color: var(--neg); }
+.wr-mark.dec { background: color-mix(in srgb, #b7791f 16%, transparent); color: #9a6a12; }
+html[data-theme="dark"] .wr-mark.dec { color: #e8b45c; }
+.wr-delta.amber { color: #b7791f; }
+html[data-theme="dark"] .wr-delta.amber { color: #e8b45c; }
+.wr-srcline { grid-column: 1 / -1; display: flex; gap: 10px; flex-wrap: wrap; font-size: .82em; color: var(--text-dim); padding-left: 2px; }
+.wr-src::before { content: "from "; }
+.wr-note { font-style: italic; }
+.wr-job-all { margin-left: auto; }
+.wr-inc { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; font-size: .82em; color: var(--text-dim); }
+.wr-drop-note { margin-left: auto; font-size: .8em; color: var(--neg); font-style: italic; }
+.wr-flags { font-size: .8em; color: #8a6d3b; font-style: italic; margin: 4px 0 2px; }
+
+.wr-block { margin-top: 8px; }
+.wr-block-title { font-size: .7em; text-transform: uppercase; letter-spacing: .05em; font-weight: 700; color: var(--text-dim); margin-bottom: 3px; }
+.wr-block-title.qbo { color: #2f7d5b; }
+.wr-block-title.pm { color: #4a6b8a; }
+html[data-theme="dark"] .wr-block-title.qbo { color: #5fc49a; }
+html[data-theme="dark"] .wr-block-title.pm { color: #7fb0e0; }
+
+.wr-field {
+  display: grid; grid-template-columns: 170px 110px 16px 110px 96px 22px;
+  align-items: center; gap: 6px; padding: 4px 6px; border-radius: 6px; cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+.wr-field:hover { background: var(--row-hover); }
+.wr-field.on { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+.wr-field.wr-ro { cursor: default; }
+.wr-fl { color: var(--text-dim); font-size: .86em; }
+.wr-was { color: var(--text-dim); text-align: right; text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--text-dim) 55%, transparent); }
+.wr-arrow { color: var(--text-dim); text-align: center; }
+.wr-now { font-weight: 700; text-align: right; }
+.wr-delta { font-size: .8em; text-align: right; color: var(--text-dim); }
+.wr-delta.up { color: var(--pos); }
+.wr-delta.down { color: var(--neg); }
+.wr-check { justify-self: center; width: 15px; height: 15px; cursor: pointer; }
+
+.wr-run { max-width: 640px; padding: 16px 4px; }
+.wr-run-label { font-weight: 600; margin-bottom: 10px; }
+.wr-steps { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; font-size: .88em; }
+.wr-step { color: var(--text-dim); }
+.wr-step.running { color: var(--text); font-weight: 600; }
+.wr-step.done { color: var(--pos); }
+.wr-step.error { color: var(--neg); }
+.pl-bar { height: 6px; border-radius: 999px; background: var(--border); overflow: hidden; }
+.pl-fill { height: 100%; background: var(--accent); width: 0; transition: width .4s ease; }
+
+@media (max-width: 720px) {
+  .wr-field { grid-template-columns: 128px 1fr 14px 1fr 22px; }
+  .wr-delta { display: none; }
+}
+
+/* ── Invoice detail: native-first invoice # link + a subtle QBO icon ─────────── */
+.inv-detail-link { cursor: pointer; border-bottom: 1px dotted var(--border); font-variant-numeric: tabular-nums; }
+.inv-detail-link:hover { color: var(--accent); border-bottom-color: var(--accent); }
+/* QBO link affordance: a green "qb" badge (evokes the QuickBooks mark) so it reads instantly as a
+   QuickBooks link on any row background - the old faint ↗ was blue-on-blue and easy to miss
+   (owner 2026-08-31). Green is fixed brand colour, not a theme token, so it stays green in both. */
+.qbo-ico {
+  display: inline-flex; align-items: center; justify-content: center; vertical-align: middle;
+  margin-left: 7px; width: 17px; height: 17px; border-radius: 50%;
+  background: #2ca01c; color: #fff;                 /* QuickBooks green */
+  font-size: 10px; font-weight: 800; letter-spacing: -.5px; line-height: 1;
+  text-decoration: none; text-transform: lowercase; padding-right: .5px;
+}
+.qbo-ico:hover { background: #23851a; }             /* a touch darker on hover */
+#invDetailBody .dv.neg { color: var(--neg); }
+#invDetailBody .dnote.dim { color: var(--text-dim); font-style: italic; }
+.dgroup.inv-qbo { margin-top: 6px; }
+
+/* ── Accounting fixes: audit-type filter chips + issue pills ─────────────────── */
+.acct-filters { display: flex; flex-wrap: wrap; gap: 7px; margin: 10px 18px 4px; }
+.acct-chip { padding: 4px 11px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--text); cursor: pointer; font-size: .84em; font-family: var(--font); }
+.acct-chip:hover { border-color: var(--accent); }
+.acct-chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.acct-chip .ac-n { opacity: .6; font-variant-numeric: tabular-nums; margin-left: 3px; }
+.acct-chip.active .ac-n { opacity: .85; }
+.acct-pill { font-size: .7em; text-transform: uppercase; letter-spacing: .03em; padding: 2px 7px; border-radius: 999px; font-weight: 700; white-space: nowrap; }
+.acct-pill.warn { background: color-mix(in srgb, #d99a2b 22%, transparent); color: #9a6a12; }
+html[data-theme="dark"] .acct-pill.warn { color: #e8b45c; }
+.acct-pill.neg { background: color-mix(in srgb, var(--neg) 18%, transparent); color: var(--neg); }
+.acct-pill.info { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+html[data-theme="dark"] .acct-pill.info { color: color-mix(in srgb, var(--accent) 55%, #fff); }
+/* Audit table: the two text columns (Line memo, Why flagged) wrap and absorb the
+   slack; the narrow meta columns stay at their content width, so nothing truncates
+   and no width is wasted. Full text colour + base size (no grey demotion). */
+/* Audit table: fixed layout with explicit meta widths (set in JS) so one long outlier
+   can't blow a column wide (the old wasted space). Short identifier columns stay one line
+   (ellipsis only if truly long); the "soft" columns (Issue, Vendor, Project, and the two
+   text columns) wrap at word boundaries and share the remaining width - nothing truncated. */
+#acctTable { table-layout: fixed; }
+#acctTable th, #acctTable td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: top; line-height: 1.4; }
+#acctTable th.audit-soft, #acctTable td.audit-soft { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: break-word; }
+#acctTable .acct-pill { white-space: normal; font-size: .8em; }
+#acctTable td.audit-dim { color: var(--text-dim); }
+#acctTable th.acct-check, #acctTable td.acct-check { text-align: center; overflow: visible; padding-left: 4px; padding-right: 4px; }
+#acctTable .acct-check input { cursor: pointer; margin: 0; vertical-align: middle; }
+#acctTable th.acct-sortable { cursor: pointer; user-select: none; }
+#acctTable th.acct-sortable:hover { color: var(--accent); }
+/* Scan link: opens the bill's uploaded scan(s) via fresh QBO links, no QBO login. */
+.acct-scan { border: none; background: none; cursor: pointer; font-size: .95em; padding: 0 2px;
+  opacity: .8; color: var(--text); font-variant-numeric: tabular-nums; }
+.acct-scan:hover { opacity: 1; }
+.acct-scan.scan-empty { opacity: .3; cursor: default; }
+.scan-menu { position: fixed; z-index: 60; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.28); padding: 6px; display: flex;
+  flex-direction: column; gap: 2px; max-width: 340px; }
+.scan-menu a { padding: 6px 10px; border-radius: 6px; color: var(--text); text-decoration: none;
+  font-size: .9em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.scan-menu a:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+
+/* Open invoices: Amounts/Aging view toggle + the amounts total row */
+.widget-head .wh-right { display: flex; align-items: center; gap: 12px; }
+.inv-total-row td { font-weight: 700; border-top: 2px solid var(--border); font-variant-numeric: tabular-nums; }
+
+/* ── Health tab: the company-health metric layer ─────────────────────────────
+   Sections arrive preformatted from /api/healthtab. Colour ENCODES state only:
+   green = money owed to us / good, red = money out / bad, amber = watch,
+   neutral otherwise; bar hues reuse the aging (ag0..ag4) and division palettes
+   the Invoices / Sub LOC tabs already use, so the same thing is always the
+   same colour app-wide. */
+.hv-g { color: var(--pos); }
+.hv-r { color: var(--neg); }
+.hv-a { color: #C0552B; }
+html[data-theme="dark"] .hv-a { color: #e8956a; }
+.hv-n { color: var(--text); }
+.health-grid { width: 100%; }
+.health-grid td { padding: var(--row-pad); border-top: 1px solid var(--border); }
+.health-grid tr:first-child td { border-top: none; }
+.health-grid td.h-metric { font-weight: 600; white-space: nowrap; }
+.health-grid td.h-val { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+.health-grid td.h-detail { color: var(--text-dim); font-size: .9em; }
+.health-grid tr.h-click { cursor: pointer; }
+.health-grid tr.h-click:hover td { background: var(--row-hover); }
+.health-grid .h-jump { color: var(--text-dim); font-size: .85em; }
+.health-grid tr.h-click:hover .h-jump { color: var(--accent); }
+td.h-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* One proportional bar + its legend (AR/AP aging, Sub LOC by division). */
+.hbar-wrap { padding: 4px 2px 10px; }
+.hbar-head { font-size: .82em; font-weight: 600; color: var(--text-dim); margin: 6px 0 5px; }
+.hbar { display: flex; height: 14px; border-radius: 7px; overflow: hidden; background: var(--surface-2); }
+.hbar .hseg { display: block; height: 100%; }
+.hbar-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 6px;
+  font-size: .82em; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.hleg { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.hdot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--text-dim); }
+/* age buckets - the Invoices tab's green -> red ramp */
+.hseg.bk0, .hdot.bk0 { background: #2E7D32; }
+.hseg.bk1, .hdot.bk1 { background: #7CB342; }
+.hseg.bk2, .hdot.bk2 { background: #D68910; }
+.hseg.bk3, .hdot.bk3 { background: #C0552B; }
+.hseg.bk4, .hdot.bk4 { background: #922B21; }
+/* divisions - the same hues as the aging tab's division dots */
+.hseg.dv-RP, .hdot.dv-RP { background: var(--accent); }
+.hseg.dv-CP, .hdot.dv-CP { background: #3b6ea5; }
+.hseg.dv-MFD, .hdot.dv-MFD { background: #8161b0; }
+.hseg.dv-Other, .hdot.dv-Other { background: var(--text-dim); }
+
+/* Recurring & Debt: alert rows + the collapsed full register */
+.hrec-alert { display: flex; align-items: baseline; gap: 10px; padding: 6px 4px;
+  border-top: 1px solid var(--border); }
+.hrec-alert:first-child { border-top: none; }
+.hrec-name { font-weight: 600; }
+.hrec-note { color: var(--text-dim); font-size: .9em; }
+.health-details summary { cursor: pointer; font-size: .9em; font-weight: 600;
+  color: var(--text-dim); padding: 4px 0 8px; user-select: none; }
+.health-details summary:hover { color: var(--accent); }
+
+/* negatives print as ($1,234) like Excel and read red - one rule, every table */
+.cell.neg { color: var(--neg); }
+
+/* ── Invoices: the collections view (owner 2026-09-02) ──────────────────────
+   Memo in one line with the full text on hover, so Open / Total / Note stay on screen;
+   "Nd late" reads red; the note links to its Notion page and says when it was last edited. */
+table.grid td.inv-memo { max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+table.grid td.inv-note { max-width: 300px; white-space: normal; }
+.inv-late { color: var(--neg); font-weight: 600; font-size: .9em; }
+.notion-link { display: inline-block; margin-left: 8px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text); font-size: .85em; font-weight: 600; text-decoration: none; vertical-align: middle; white-space: nowrap; }
+.notion-link::after { content: " \2197"; }
+.notion-link:hover { border-color: var(--accent); color: var(--accent); }
+.note-edited { margin-left: 6px; color: var(--text-dim); font-size: .85em; white-space: nowrap; }
+
+/* Invoices: quick find, saved views, and the Notion page inside the drawer (2026-09-02) */
+.inv-quick { font: inherit; padding: 5px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); min-width: 300px; }
+.inv-quick:focus { outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); border-color: var(--accent); }
+#invDetail { width: min(640px, 94vw); }
+.np-box { font-size: .95em; }
+.np-meta { color: var(--text-dim); font-size: .88em; margin-bottom: 6px; }
+.np-sub { font-weight: 700; margin: 12px 0 4px; }
+.np-val { max-width: 60%; text-align: right; white-space: pre-wrap; word-break: break-word; }
+.np-body .np-b { padding: 3px 0; white-space: pre-wrap; word-break: break-word; }
+.np-body .np-heading_1 { font-weight: 700; font-size: 1.1em; margin-top: 8px; }
+.np-body .np-heading_2 { font-weight: 700; margin-top: 6px; }
+.np-body .np-heading_3 { font-weight: 600; }
+.np-body .np-quote, .np-body .np-callout { border-left: 3px solid var(--border); padding-left: 10px; color: var(--text-dim); }
+.np-body .np-code { font-family: var(--font-mono); font-size: .9em; background: var(--surface-2); padding: 6px 8px; border-radius: 6px; }
+.np-body .np-divider { border-top: 1px solid var(--border); margin: 6px 0; }
+.np-comment { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin: 6px 0; white-space: pre-wrap; }
+.np-who { color: var(--text-dim); font-size: .88em; margin-bottom: 2px; }
+
+/* Costs tab: the bar sits behind the number - keep it quiet so the figure stays legible (owner 2026-09-01) */
+.bar .bar-fill { opacity: .45; }
+.bar .bar-txt { font-weight: 600; }
+
+/* provenance chip under a KPI (2026-09-02) */
+.kpi .k-src { margin-top: 6px; font-size: .8em; color: var(--text-dim); border-top: 1px dashed var(--border); padding-top: 4px; }
+.fresh-actions { display: inline-flex; gap: 6px; }
+.bf-more:not([hidden]) { display: contents; }
+#bfMoreBtn.on { background: color-mix(in srgb, var(--accent) 12%, var(--surface)); border-color: var(--accent); }
+
+/* loading skeleton (2026-09-02) */
+.skel { height: 12px; border-radius: 6px; margin: 10px 0; background: linear-gradient(90deg, var(--surface-2) 25%, var(--row-hover) 50%, var(--surface-2) 75%); background-size: 200% 100%; animation: skel 1.2s linear infinite; }
+@keyframes skel { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+
+/* Audit: Bill vs PO per row + labelled chip sections (2026-09-02) */
+.acct-src { display: inline-block; min-width: 30px; text-align: center; font-size: .78em; font-weight: 700; border-radius: 5px; padding: 1px 5px; margin-right: 6px; border: 1px solid var(--border); color: var(--text-dim); }
+.acct-src.po { border-color: #8161b0; color: #6b4fa0; }
+.acct-src.bill { border-color: #3b6ea5; color: #2f5a8a; }
+html[data-theme="dark"] .acct-src.po { color: #b79ae0; } html[data-theme="dark"] .acct-src.bill { color: #86b4e6; }
+.acct-sect { font-size: .82em; font-weight: 700; color: var(--text-dim); margin: 0 4px 0 10px; align-self: center; }
+
+/* the invoice page (2026-09-02) */
+.ip-sec { margin-bottom: 14px; }
+.ip-top { padding: 0 18px 6px; }
+.ip-memo { font-size: 1.05em; padding: 0 0 12px; margin: 0; white-space: pre-wrap; color: var(--text); }   /* plain text under the identity line, not a box (owner 2026-09-02) */
+.ip-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 0 28px; }
+.ip-grid .dgroup { margin-bottom: 10px; }
+.ip-kv .drow .dv { text-align: right; }
+.ip-actions { display: flex; gap: 8px; padding: 4px 18px 16px; flex-wrap: wrap; }
+.ip-strip { padding: 6px 18px 14px; }
+.ip-sec .np { padding: 0 18px 16px; }
+.ip-tools { display: flex; gap: 10px; align-items: center; padding: 0 18px 10px; }
+
+/* date filter (Month | Date) shared by Bills and Draws; prominent amounts on the invoice page (2026-09-02) */
+.datef { display: inline-flex; align-items: center; gap: 6px; }
+.datef .seg.tiny .seg-btn { padding: 3px 9px; font-size: .86em; }
+.datef input[type="date"] { font: inherit; padding: 4px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); }
+.datef-range { display: inline-flex; align-items: center; gap: 6px; }
+.datef-range[hidden], .datef-month[hidden] { display: none; }
+.ip-kv .dv.ip-big { font-size: 1.45em; font-weight: 700; letter-spacing: -.02em; }
+table.grid td.ip-amt { font-weight: 700; font-size: 1.08em; }
+.bg-amt { font-variant-numeric: tabular-nums; }
+
+/* export dialog (2026-09-02) */
+.xdlg-ov { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 60; display: flex; align-items: center; justify-content: center; }
+.xdlg { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; min-width: 380px; box-shadow: var(--shadow); }
+.xdlg h3 { margin: 0 0 12px; font-size: 1.05em; }
+.xdlg label { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; color: var(--text-dim); font-size: .92em; }
+.xdlg select { font: inherit; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); }
+.xdlg-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.savebar[hidden] { display: none; }
+
+.vg-tag.future { display: inline-block; font-size: .78em; font-weight: 600; padding: 0 6px; border-radius: 999px; margin-left: 6px; vertical-align: middle;
+  color: var(--neg); border: 1px solid color-mix(in srgb, var(--neg) 50%, var(--border)); background: color-mix(in srgb, var(--neg) 8%, transparent); }
+
+/* the push: a bill carried into a later draw by agreement (shared/draw_moves) - amber = "moved on purpose", never an error */
+.vg-tag.push, .pp-drawno.push { display: inline-block; font-size: .78em; font-weight: 600; padding: 0 6px; border-radius: 999px; margin-left: 6px; vertical-align: middle;
+  color: #b7791f; border: 1px solid color-mix(in srgb, #b7791f 50%, var(--border)); background: color-mix(in srgb, #b7791f 8%, transparent); }
+html[data-theme="dark"] .vg-tag.push, html[data-theme="dark"] .pp-drawno.push { color: #e8b45c; }
+.bills-cap.pp-push { color: #b7791f; }
+html[data-theme="dark"] .bills-cap.pp-push { color: #e8b45c; }
+
+.ip-paid.due { color: var(--neg); font-weight: 600; }
+.ip-paid.ok { color: var(--pos); }
+.datef-reset { margin-left: 4px; }
+
+/* the project page (2026-09-02) */
+.pp-unlock { margin: 0 18px 10px; padding: 12px 14px; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--neg) 45%, var(--border)); background: color-mix(in srgb, var(--neg) 6%, var(--surface)); font-size: 1.02em; }
+.pp-unlock.ok, .pp-unlock .ok { border-color: color-mix(in srgb, var(--pos) 45%, var(--border)); background: color-mix(in srgb, var(--pos) 6%, var(--surface)); }
+.pp-unlock-b { margin-top: 4px; color: var(--text); }
+.pp-unlock-b.ok { color: var(--pos); }
+.pp-draw { border-top: 1px solid var(--border); }
+.pp-draw.next .pp-draw-h { background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
+/* the draw band is a GRID row so every band lines up under one header (owner: "a column i can rely on") */
+.pp-draw-h { display: grid; grid-template-columns: 22px 150px 96px 110px 130px minmax(180px, 1fr) minmax(180px, 1fr) 118px 150px; align-items: center; gap: 0 12px; padding: 8px 18px; }
+.pp-draw-h.pp-cols { padding: 6px 18px 4px; font-size: .78em; font-weight: 700; color: var(--text-dim); border-top: 0; cursor: default; }
+.pp-draw-h .pp-lab { font-weight: 700; }
+.pp-draw-h .pp-dt, .pp-draw-h .pp-stage { color: var(--text-dim); }
+.pp-draw-h .pp-billed { font-variant-numeric: tabular-nums; font-weight: 600; }
+.pp-draw-h .pp-stage { font-size: .88em; }
+.pp-c { display: flex; flex-direction: column; line-height: 1.2; }
+.pp-c .pp-c1 { font-weight: 700; font-variant-numeric: tabular-nums; }
+.pp-c .pp-c2 { font-size: .85em; }
+.pp-c.dim { color: var(--text-dim); font-weight: 400; }
+@media (max-width: 1250px) { .pp-draw-h { grid-template-columns: 22px 130px 90px 100px 110px 1fr 1fr 100px 120px; } }
+.pp-gc.ok { color: var(--pos); font-weight: 600; } .pp-gc.due { color: var(--neg); font-weight: 700; }
+table.pp-bills { margin: 0 0 6px; }
+
+/* project page: P&L in columns; selected-to-pay preview (2026-09-02) */
+.pp-pnl .pnl-live { column-count: 3; column-gap: 32px; column-rule: 1px solid var(--border); }
+.pp-pnl .pnl-live > * { break-inside: avoid; }
+.pp-pnl .pnl-live .pnl-sub { break-after: avoid; }
+@media (max-width: 1100px) { .pp-pnl .pnl-live { column-count: 2; } }
+.pp-selected { margin: 0 18px 10px; padding: 10px 14px; border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border)); border-radius: 10px; background: color-mix(in srgb, var(--accent) 6%, var(--surface)); }
+.pp-selected.empty { color: var(--text-dim); border-style: dashed; background: transparent; }
+.pp-sel-h { font-weight: 700; margin-bottom: 4px; }
+.pp-sel-v { padding: 2px 0; }
+#btnPayRunGo.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); font-weight: 600; }
+
+.pp-all { display: inline-flex; align-items: center; gap: 4px; font-size: .9em; color: var(--text-dim); }
+tr.pp-sect > td { background: var(--surface-2); font-weight: 700; color: var(--text-dim); font-size: .88em; text-transform: none; }
+tr.pp-vendor > td { background: color-mix(in srgb, var(--surface-2) 60%, var(--surface)); }
+.pp-grp-cb { cursor: pointer; }
+
+/* the sync pill in the nav strip (2026-09-02: "the syncs and the timestamp on top always") */
+.sync-pill { display: inline-flex; align-items: center; gap: 7px; padding: 4px 11px; border-radius: 999px; border: 1px solid var(--border); font-size: .88em; cursor: pointer; white-space: nowrap; color: var(--text); }
+.sync-pill .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-dim); }
+.sync-pill.ok .dot { background: var(--pos); } .sync-pill.stale .dot { background: #d9931f; } .sync-pill.busy .dot { background: var(--accent); animation: skel 1s linear infinite; }
+.sync-pill.stale { border-color: color-mix(in srgb, #d9931f 55%, var(--border)); }
+.pp-drawno { display: block; font-size: .78em; color: var(--text-dim); font-weight: 500; }
+
+/* project page: the open draw reads like the P&L draw sheet (2026-09-02) */
+.pp-drawpl { padding: 8px 18px 4px; }
+.pp-drawpl .kpi { padding: 8px 12px; } .pp-drawpl .k-value { font-size: 1.25em; }
+.pp-sortbar { display: flex; align-items: center; gap: 10px; padding: 4px 18px 8px; font-size: .9em; }
+table.pp-bills td.pp-vb .pp-vend { font-weight: 600; margin-right: 6px; }
+table.pp-bills .codechip { margin-right: 2px; }
+
+/* collections report (2026-09-02) */
+.xdlg.xdlg-wide { min-width: 720px; max-width: 92vw; }
+.xdlg-pre { font: 13px/1.5 var(--font-mono); white-space: pre-wrap; max-height: 50vh; overflow: auto; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin: 6px 0 4px; color: var(--text); }
+td.inv-pick { width: 28px; }
+.inv-pick-all { margin-right: 6px; vertical-align: middle; }
+#ifCollect.on { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
+
+/* attachments everywhere: the 📎 count + the in-app viewer (2026-09-03) */
+.att-btn { font: inherit; font-size: .85em; padding: 0 6px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; line-height: 1.5; }
+.att-btn:hover { border-color: var(--accent); }
+.att-btn.none { opacity: .3; cursor: default; }
+td.att-cell { width: 44px; }
+.att-dlg { width: min(1200px, 94vw); height: min(86vh, 900px); display: flex; flex-direction: column; padding: 12px 14px; }
+.att-head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; } .att-head h3 { margin: 0; flex: 1 1 auto; font-size: 1em; }
+.att-body { display: grid; grid-template-columns: 220px 1fr; gap: 10px; flex: 1 1 auto; min-height: 0; }
+.att-list { display: flex; flex-direction: column; gap: 4px; overflow: auto; }
+.att-file { font: inherit; text-align: left; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; word-break: break-all; }
+.att-file.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+.att-view { display: flex; flex-direction: column; min-height: 0; }
+.att-tools { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; } .att-tools b { flex: 1 1 auto; word-break: break-all; }
+.att-frame { flex: 1 1 auto; width: 100%; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
+.att-img { max-width: 100%; max-height: 100%; object-fit: contain; border: 1px solid var(--border); border-radius: 8px; }
