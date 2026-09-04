@@ -80,7 +80,21 @@ def project_of_invoice(inv: dict) -> str:
     return found.pop() if len(found) == 1 else ""
 
 
-def load_credentials() -> Tuple[str, str]:
+# THE ACCESS TOKEN IN FORCE FOR THIS PROCESS. An Intuit access token lives ONE
+# HOUR, and every tool used to mint one at startup and pass that string around
+# for the rest of the run - so any batch longer than an hour died on a 401
+# partway through. Three overnight MFD regens were lost that way (2026-09-03:
+# a --legacy --class batch of 8 finished jobs takes 60-90 minutes and every
+# job past the hour mark failed AuthenticationFailed, writing 0 workbooks).
+# `_api_get` now mints a fresh token on a 401 and retries, and every caller
+# reads it from here, so a stale token string held by a caller cannot outlive
+# the refresh. The Keychain read needs no prompt ("Always Allow"), so this is
+# silent and safe inside a long unattended run.
+_CURRENT_ACCESS: Optional[str] = None
+
+
+def _bearer_exchange() -> Tuple[str, str]:
+    """(access token, company id) from one refresh-token exchange."""
     if not kc.has_credentials():
         print("✗  No QBO credentials in Keychain. Run: python3 shared/setup_qbo.py")
         sys.exit(1)
@@ -137,6 +151,21 @@ def load_credentials() -> Tuple[str, str]:
     return body["access_token"], creds["QBO_COMPANY_ID"]
 
 
+def load_credentials() -> Tuple[str, str]:
+    global _CURRENT_ACCESS
+    access, company_id = _bearer_exchange()
+    _CURRENT_ACCESS = access
+    return access, company_id
+
+
+def refresh_access() -> str:
+    """Mint a NEW access token mid-run and make it the one in force."""
+    global _CURRENT_ACCESS
+    access, _ = _bearer_exchange()
+    _CURRENT_ACCESS = access
+    return access
+
+
 # ────────────────────────── api helpers ──────────────────────────
 
 def _api_get(path: str, access: str, params: Optional[dict] = None) -> dict:
@@ -150,6 +179,9 @@ def _api_get(path: str, access: str, params: Optional[dict] = None) -> dict:
     p = dict(params or {})
     p["minorversion"] = MINOR_VERSION
     MAX_ATTEMPTS = 8
+    # the process-wide token wins over whatever string the caller is holding
+    access = _CURRENT_ACCESS or access
+    refreshed = 0
 
     def _sleep(attempt: int) -> None:
         _time.sleep(min(2 ** attempt, 30) + _random.uniform(0, 1.0))
@@ -172,6 +204,18 @@ def _api_get(path: str, access: str, params: Optional[dict] = None) -> dict:
             continue
         if r.status_code == 200:
             return r.json()
+        # 401 = the hour is up. Mint a fresh token and retry the SAME call;
+        # twice at most, so a genuinely dead refresh token still fails fast.
+        if r.status_code == 401 and refreshed < 2:
+            refreshed += 1
+            print("      QBO access token expired — refreshing…")
+            try:
+                access = refresh_access()
+            except SystemExit:
+                raise
+            except Exception as e:                     # noqa: BLE001
+                raise RuntimeError(f"{path} → 401 and token refresh failed: {e}")
+            continue
         if r.status_code in (429, 500, 502, 503, 504) and not last:
             print(f"      QBO {r.status_code} (transient) — retry "
                   f"{attempt + 1}/{MAX_ATTEMPTS - 1}...")

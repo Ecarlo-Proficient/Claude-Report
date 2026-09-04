@@ -8,6 +8,27 @@ manual close), RP (no draws — expenses → invoice → profit).
 
 ## DONE / FINALIZED
 
+- **THE ACCESS TOKEN EXPIRES MID-RUN AND NOTHING REFRESHED IT (2026-09-03/04).**
+  An Intuit access token lives ONE HOUR. Every tool minted one at startup and
+  passed that string around for the rest of the run, so any batch longer than
+  an hour died on `401 AuthenticationFailed` partway through. It cost three
+  overnight MFD regens: a `--legacy --class` batch of 8 finished jobs takes
+  60-90 minutes, every job past the hour mark failed, and each run reported
+  **"Done - 0 workbook(s)"** with rc=0 - a silent, total loss that looked like
+  a successful run in the log's tail.
+  **Fixed in `shared/qbo_api.py`** (so every tool gets it): a process-wide
+  `_CURRENT_ACCESS`, a `refresh_access()` that re-does the bearer exchange, and
+  `_api_get` minting a fresh token on a 401 and retrying the same call (twice
+  at most, so a genuinely dead refresh token still fails fast). `_api_get`
+  reads the process-wide token in preference to whatever string the caller
+  holds, so a stale token captured before the refresh cannot outlive it. The
+  Keychain read needs no prompt, so it is silent inside an unattended run.
+  Verified live: refresh mints a new token and a call made with the OLD string
+  still succeeds.
+  **Two lessons:** rc=0 with "0 workbook(s)" is a FAILURE - the batch summary
+  must be read, not just the exit code. And a long unattended batch has to be
+  assumed to outlive its credentials.
+
 - **ARCHIVE ORDER DEFECT (2026-09-03, caught by the post-regen diff).** A
   finished job regenerates into the first archive folder that already holds it
   (`_resolve_project_out_dir`), and `pnl_paths._archive_dirs` listed the OLD
@@ -744,6 +765,17 @@ manual close), RP (no draws — expenses → invoice → profit).
   a workbook that fails — rule 5b was never wired into this tool before.
 
 ## OPEN ISSUES
+
+- **A DYING SMB SHARE HANGS A CP RUN SILENTLY (2026-09-03).** `active cp`
+  ran 71 minutes with 6 seconds of CPU and three log lines: the Synology
+  `Common` share dropped mid-run and a filesystem call on `/Volumes/Common`
+  blocked in the kernel (even `ls /Volumes` hung). No error, no timeout, no
+  output - the QBO calls all carry timeouts, the mount does not. Before a CP
+  batch, confirm the share answers (`ls "/Volumes/Common/CURRENT PROJECTS"`
+  returns promptly); if it is gone, CP P&Ls would fall back to OneDrive, which
+  is the wrong home (one writer per file). The 19 active CP P&Ls are STILL
+  PENDING for that reason - rerun `active cp` once the share is remounted.
+
 
 - **6 of 17 Active CP jobs now have a readable cost-code budget.** The newer
   jobs keep the coded budget in a ROOT `Cost Codes.xlsx` on a `Cost Codes V2`
