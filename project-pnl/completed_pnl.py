@@ -599,14 +599,23 @@ def build_bundle(jobs: List[tuple], out: Path, div: dict) -> None:
             if not ranges:
                 return None
             return "=" + "+".join(f"SUM({L[k]}{a}:{L[k]}{b})" for a, b in ranges)
-        return {
-            "gp": f"={L['billed']}{rr}-{L['cost']}{rr}",
-            "gpm": f'=IF({L["billed"]}{rr}=0,"",{L["gp"]}{rr}/{L["billed"]}{rr})',
-            "oh": f"={L['contract']}{rr}*{OVERHEAD_PCT}",
-            "net": f"={L['gp']}{rr}-{L['oh']}{rr}",
-            "moh": f"={L['contract']}{rr}*{MFD_OVERHEAD_PCT}",
-            "mnet": f"={L['gp']}{rr}-{L['moh']}{rr}",
-        }[k]
+        # BUILT ONE BRANCH AT A TIME, not as a dict literal: the 9% columns
+        # ('moh'/'mnet') exist for MFD only, and a literal evaluated every
+        # entry - so L['moh'] raised KeyError on CP and RP and killed those
+        # Overviews outright (2026-09-04, caught by the CP batch).
+        if k == "gp":
+            return f"={L['billed']}{rr}-{L['cost']}{rr}"
+        if k == "gpm":
+            return f'=IF({L["billed"]}{rr}=0,"",{L["gp"]}{rr}/{L["billed"]}{rr})'
+        if k == "oh":
+            return f"={L['contract']}{rr}*{OVERHEAD_PCT}"
+        if k == "net":
+            return f"={L['gp']}{rr}-{L['oh']}{rr}"
+        if k == "moh":
+            return f"={L['contract']}{rr}*{MFD_OVERHEAD_PCT}"
+        if k == "mnet":
+            return f"={L['gp']}{rr}-{L['moh']}{rr}"
+        raise KeyError(k)
 
     wb = Workbook()
     sm = wb.active

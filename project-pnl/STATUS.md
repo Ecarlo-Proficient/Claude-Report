@@ -8,6 +8,15 @@ manual close), RP (no draws — expenses → invoice → profit).
 
 ## DONE / FINALIZED
 
+- **THE CP AND RP OVERVIEWS WERE DEAD ON ARRIVAL (2026-09-04, caught by the CP
+  batch).** `_formula` in `completed_pnl.build_bundle` returned a DICT LITERAL
+  and indexed it - so every branch was evaluated, including `L['moh']`, the
+  9%-of-contract column that exists for **MFD only**. On CP and RP that raised
+  `KeyError: 'moh'` and the Overview never built; the per-job workbooks were
+  all fine, so the failure only showed at the very end of a 19-job run. Now
+  one `if` per key. **A dict literal is not a switch** - if any branch can be
+  invalid, build the one you need.
+
 - **ONE FILE PER JOB, AND `FINAL` IS THE FINISHED NAME (2026-09-04).** A
   finished job folder still held THREE workbooks - `Project_PnL_<job>.xlsx`,
   `<job> Job Result.xlsx` and `<job> FINAL Closeout.xlsx`. The generators were
