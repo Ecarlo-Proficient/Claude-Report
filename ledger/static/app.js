@@ -205,6 +205,73 @@ function renderWidgetChooser() {   // Settings > Overview widgets: tick + width 
   }
 }
 
+
+// ── Groups: every row that has a parent collapses under it (owner 2026-09-08: "EVERY SINGLE row that has a
+// parent must be grouped - total data first, the detail on a click"). One delegated click handler and one
+// MutationObserver decorate every group header the renderers emit - a caret, a remembered open/closed state
+// (per header text, in localStorage), children hidden while closed. Headers that already run their own
+// toggle (an `onclick` of their own) are left alone. Kinds and their default state:
+const GRP_KINDS = [
+  { sel: "tr.bill-group", kind: "band", open: false },        // vendor / client / division bands in tables
+  { sel: "tr.sys-group", kind: "band", open: false },         // Systems: a domain
+  { sel: "tr.tr-msum", kind: "band", open: false },           // the money trail: a month
+  { sel: ".pnl-codegrp", kind: "sib", open: false, until: ".pnl-codegrp" },   // P&L: a job type over its cost codes
+  { sel: ".wr-div-head", kind: "sib", open: true, until: ".wr-div-head" },    // WIP Review: a division (approval work - open)
+  { sel: ".dgroup > h4", kind: "parent", open: true },        // record panels: a titled block (content - open)
+  { sel: ".warm-head", kind: "parent", open: false },         // Sales: an account card
+  { sel: ".pl-head", kind: "parent", open: true },            // Console: a pipeline card (has the buttons - open)
+];
+const GRP_LS = "proficient-ledger-groups-v1";
+let _grpState = (() => { try { return JSON.parse(localStorage.getItem(GRP_LS)) || {}; } catch { return {}; } })();
+const GRP_HEADER_TR = "tr.bill-group, tr.sys-group, tr.tr-msum, tr.tr-total, tr.pp-sect, tr.bill-subgroup, tr.inv-client, tr.sumRow";
+function _grpChildren(h, def) {
+  if (def.kind === "band") { const out = []; let e = h.nextElementSibling; while (e && !e.matches(GRP_HEADER_TR)) { out.push(e); e = e.nextElementSibling; } return out; }
+  if (def.kind === "sib") { const out = []; let e = h.nextElementSibling; while (e && !e.matches(def.until)) { out.push(e); e = e.nextElementSibling; } return out; }
+  return [...h.parentElement.children].filter(c => c !== h);   // parent: everything in the card but the head
+}
+function _grpKeyOf(h, def) {   // keyed on the NAME (not the caret, not the amounts that change every sync) so the choice sticks
+  const nm = h.querySelector(".bg-key, .sg-key, .g-cust, .warm-name, .pl-name") || h.querySelector("td, span") || h;
+  const t = (nm.textContent || "").replace(/[▸▾]/g, "").replace(/\s+/g, " ").trim().slice(0, 80);
+  return `${def.sel}|${typeof activeTab === "undefined" ? "" : activeTab}|${t}`;
+}
+function _grpApply(h, def, open) {
+  h.classList.toggle("grp-closed", !open);
+  const c = h.querySelector(":scope .grp-caret") || h.querySelector(".grp-caret"); if (c) c.textContent = open ? "▾" : "▸";
+  for (const el of _grpChildren(h, def)) el.hidden = !open;
+}
+function _grpDecorate(root) {
+  for (const def of GRP_KINDS) {
+    const list = root.matches && root.matches(def.sel) ? [root] : [];
+    list.push(...root.querySelectorAll(def.sel));
+    for (const h of list) {
+      if (h.dataset.grp) continue;
+      if (h.onclick || (h.closest("tr") && h.closest("tr").onclick && def.kind === "band")) { h.dataset.grp = "own"; continue; }   // renders its own toggle
+      h.dataset.grp = def.kind; h.dataset.grpSel = def.sel; h.classList.add("grp-h");
+      const caret = document.createElement("span"); caret.className = "grp-caret";
+      let slot = null;   // the caret goes INSIDE the name, never as a new grid / flex item that would shift the columns
+      for (const q of [".bg-left", ".bg-key", ".sg-key", ".g-cust", ".warm-name", ".pl-name", "td"]) { slot = h.querySelector(q); if (slot) break; }
+      if (!slot) slot = (h.firstElementChild && h.firstElementChild.tagName === "SPAN") ? h.firstElementChild : h;
+      slot.insertBefore(caret, slot.firstChild);
+      const k = _grpKeyOf(h, def); const open = (k in _grpState) ? !!_grpState[k] : def.open;
+      _grpApply(h, def, open);
+    }
+  }
+}
+document.addEventListener("click", (e) => {
+  const h = e.target.closest(".grp-h"); if (!h || h.dataset.grp === "own") return;
+  if (e.target.closest("a, input, button, select, textarea, label, .qbo-ico, .att-btn")) return;
+  const def = GRP_KINDS.find(d => d.sel === h.dataset.grpSel); if (!def) return;
+  const open = h.classList.contains("grp-closed");
+  _grpApply(h, def, open);
+  _grpState[_grpKeyOf(h, def)] = open;
+  try { localStorage.setItem(GRP_LS, JSON.stringify(_grpState)); } catch { /* private window */ }
+});
+if (window.MutationObserver && !window.__grpObs) {
+  window.__grpObs = new MutationObserver((muts) => { for (const m of muts) for (const n of m.addedNodes) if (n.nodeType === 1) _grpDecorate(n); });
+  window.__grpObs.observe(document.body, { childList: true, subtree: true });
+  _grpDecorate(document.body);
+}
+
 // ── Formatting ────────────────────────────────────────────────────────────
 const isNum = v => typeof v === "number" && !Number.isNaN(v);
 function money(v) {
@@ -3550,7 +3617,7 @@ async function openProjectPage(pn) {
     ["ETC (budget)", money(r0.estimated_total_costs), r0.total_contract_price ? `planned GP ${money(gp)} · ${(gp / num(r0.total_contract_price) * 100).toFixed(1)}%` : ""],
     ["Costs to date (QuickBooks)", money(p.cost), r0.costs_to_date != null ? `WIP report ${money(r0.costs_to_date)}` : "", num(p.cost) > num(r0.estimated_total_costs) && r0.estimated_total_costs ? "pnl-kpi-neg" : ""],
     ["Billed (gross)", money(p.billed_gross), (p.retainage ? `retainage held ${money(p.retainage)} · ` : "") + "WIP report"],
-    ["Net billed", money(p.net_billed), "QuickBooks invoices, after retainage"],
+    ["Net billed", money(p.net_billed), (p.billed_src || "QuickBooks invoices") + " · after retainage"],
     ["Net (live P&L)", money(p.net), p.net_pct != null ? `${(p.net_pct * 100).toFixed(1)}% of net billed · overhead ${p.overhead_basis || ""}` : "", num(p.net) < 0 ? "pnl-kpi-neg" : "pnl-kpi-pos"],
   ]);
   if ((d.rulings || []).length) {   // the owner's standing rulings (job_rulings.json): the why, so nobody re-flags it
@@ -5740,7 +5807,7 @@ function buildPnlGroup(proj) {
     rowP("% complete", ((d.pct_complete || 0) * 100).toFixed(1) + "%", "pnl-sub");
     rowP("Billed to GC (gross)", money(d.billed_gross));
     rowP("Retainage held", "(" + money(d.retainage) + ")");
-    rowP("Net billed", money(d.net_billed), "pnl-net");
+    rowP("Net billed", money(d.net_billed), "pnl-net").title = d.billed_src || "";
     rowP("Costs to date", "(" + money(d.cost) + ")");
     rowP(`Overhead (${d.overhead_basis})`, "(" + money(d.overhead) + ")");
     const nr = rowP("Net", `${money(d.net)} · ${d.net_pct == null ? "–" : (d.net_pct * 100).toFixed(1) + "%"}`, "pnl-net");
@@ -5771,8 +5838,8 @@ function buildPnlGroup(proj) {
       const cap = document.createElement("div"); cap.className = "pnl-cap"; cap.textContent = "Costs by code · by job type"; pl.appendChild(cap);
       const tbl = document.createElement("div"); tbl.className = "pnl-codes";
       const groups = new Map();
-      for (const c of d.by_code) { const g = c.job_type || c.prefix || "Other"; if (!groups.has(g)) groups.set(g, { total: 0, codes: [] }); const e = groups.get(g); e.total += num(c.amount); e.codes.push(c); }
-      const ordered = [...groups].sort((a, b) => ((a[0] === "Other") - (b[0] === "Other")) || (b[1].total - a[1].total));
+      for (const c of d.by_code) { const g = c.job_type || c.prefix || "No cost code"; if (!groups.has(g)) groups.set(g, { total: 0, codes: [] }); const e = groups.get(g); e.total += num(c.amount); e.codes.push(c); }
+      const ordered = [...groups].sort((a, b) => ((a[0] === "No cost code") - (b[0] === "No cost code")) || (b[1].total - a[1].total));
       for (const [g, e] of ordered) {
         const gh = document.createElement("div"); gh.className = "pnl-codegrp";
         const gn = document.createElement("span"); gn.textContent = g; const ga = document.createElement("span"); ga.textContent = money(e.total); gh.appendChild(gn); gh.appendChild(ga); tbl.appendChild(gh);
@@ -5780,7 +5847,7 @@ function buildPnlGroup(proj) {
         for (const c of e.codes) {
           const r = document.createElement("div"); r.className = "pnl-code in-grp" + (c.code === "(uncoded)" ? " uncoded" : "");
           const nm = document.createElement("span"); nm.className = "pc-code"; nm.textContent = c.code;
-          const n2 = document.createElement("span"); n2.className = "pc-name"; n2.textContent = (c.name ? "- " + c.name : "") + (c.is_sub ? " · sub" : "");
+          const n2 = document.createElement("span"); n2.className = "pc-name"; n2.textContent = (c.name ? "- " + c.name : (c.code === "(uncoded)" ? "- account-coded lines, no item code" : "")) + (c.is_sub ? " · sub" : "");
           const am = document.createElement("span"); am.className = "pc-amt"; am.textContent = money(c.amount);
           r.appendChild(nm); r.appendChild(n2); r.appendChild(am); tbl.appendChild(r);
         }

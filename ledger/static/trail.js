@@ -109,16 +109,8 @@
     thead.appendChild(htr);
     tbody.innerHTML = "";
     if (!rows.length) { tbody.innerHTML = `<tr><td colspan="${COLS.length}" class="left tr-note">No lines match.</td></tr>`; return; }
-    let month = null, mSum = 0, mCount = 0, total = 0;
-    const flushMonth = () => { if (month == null) return;
-      const tr = document.createElement("tr"); tr.className = "tr-msum";
-      tr.innerHTML = `<td class="left" colspan="6">${monthLabel(month)} · ${mCount} line${mCount === 1 ? "" : "s"}</td><td>${tmc(mSum)}</td><td></td><td></td><td></td>`;
-      tbody.appendChild(tr); };
-    const byDate = state.sort.k === "date";
-    for (const l of rows) {
-      const mk = monthKey(l.date);
-      if (byDate && mk !== month) { flushMonth(); month = mk; mSum = 0; mCount = 0; }
-      mSum += l.amount || 0; mCount++; total += l.amount || 0;
+    let total = 0;
+    const lineRow = (l) => {
       const tr = document.createElement("tr"); tr.className = "tr-line " + (l.kind === "billed" ? "tr-billed" : "tr-cost");
       const tag = l.kind === "billed" ? `<span class="tr-tag inv">invoice</span>` : l.is_sub ? `<span class="tr-tag sub">sub</span>` : "";
       const part = l.bill_total != null && Math.abs(l.bill_total - l.amount) > 0.5 ? `<span class="tr-part" title="This line is part of a ${esc(tm(l.bill_total))} bill">part of ${esc(tm(l.bill_total))}</span>` : "";
@@ -134,9 +126,26 @@
         `<td>${l.kind === "cost" && l.has_attachment !== false && l.qbo_url ? `<button class="btn tiny tr-scan" title="Open the scan">📎</button>` : ""}</td>`;
       const doc = tr.querySelector(".tr-doc"); if (doc && l.doc_number && typeof copy === "function") doc.onclick = () => copy(l.doc_number);
       const sc = tr.querySelector(".tr-scan"); if (sc && typeof openBillScan === "function") sc.onclick = (e) => { e.stopPropagation(); openBillScan({ url: l.qbo_url }, sc); };
-      tbody.appendChild(tr);
+      return tr;
+    };
+    const byDate = state.sort.k === "date";
+    if (byDate) {
+      // one header per MONTH first - lines, total, and the running line where the month ends - with its lines
+      // under it; the app's group rule collapses them, so the month totals read first (owner 2026-09-08)
+      const months = new Map();
+      for (const l of rows) { const mk = monthKey(l.date); if (!months.has(mk)) months.set(mk, []); months.get(mk).push(l); }
+      for (const [mk, ls] of months) {
+        const mSum = ls.reduce((a, l) => a + (l.amount || 0), 0); total += mSum;
+        const last = ls.reduce((a, l) => ((l.date || "") > (a.date || "") ? l : a), ls[0]);
+        const oneKind = ls.every(l => l.kind === ls[0].kind);
+        const tr = document.createElement("tr"); tr.className = "tr-msum";
+        tr.innerHTML = `<td class="left" colspan="6">${monthLabel(mk)} · ${ls.length} line${ls.length === 1 ? "" : "s"}</td><td>${tmc(mSum)}</td><td class="tr-run">${oneKind ? tmc(last.running_total) : ""}</td><td></td><td></td>`;
+        tbody.appendChild(tr);
+        for (const l of ls) tbody.appendChild(lineRow(l));
+      }
+    } else {
+      for (const l of rows) { total += l.amount || 0; tbody.appendChild(lineRow(l)); }
     }
-    if (byDate) flushMonth();
     const tot = document.createElement("tr"); tot.className = "tr-total";
     tot.innerHTML = `<td class="left" colspan="6">Total of the ${rows.length} line${rows.length === 1 ? "" : "s"} shown</td><td>${tmc(total)}</td><td></td><td></td><td></td>`;
     tbody.appendChild(tot);

@@ -209,8 +209,8 @@ def _project_pnl(con, proj: str) -> dict:
     cost = con.execute("SELECT COALESCE(SUM(amount),0) c FROM cost_line WHERE project_no = ?", (proj,)).fetchone()["c"] or 0
     by_code = [dict(r) for r in con.execute(
         "SELECT COALESCE(cost_code,'(uncoded)') code, COALESCE(SUM(amount),0) amount, "
-        "COUNT(*) lines, MAX(is_sub) is_sub FROM cost_line WHERE project_no = ? "
-        "GROUP BY COALESCE(cost_code,'(uncoded)') ORDER BY amount DESC", (proj,))]
+        "COUNT(*) lines, COALESCE(is_sub,0) is_sub FROM cost_line WHERE project_no = ? "
+        "GROUP BY COALESCE(cost_code,'(uncoded)'), COALESCE(is_sub,0) ORDER BY amount DESC", (proj,))]
     # job type (SL -> Slab) + cost-type name (1 -> Concrete) per code, so the UI can group "Slab > SL1 - Concrete"
     from shared.qbo_costs import cost_code_meta, job_type_name
     for c in by_code:
@@ -226,7 +226,11 @@ def _project_pnl(con, proj: str) -> dict:
     # (the QBO invoices, after retainage) - costs - overhead = net. Actuals, no earned-revenue proration.
     gross = (row["btd"] if row else 0) or 0
     ret = (row["ret"] if row else 0) or 0
-    net_billed = billed if billed else round(gross - ret, 2)
+    wip_net = round(gross - ret, 2)
+    # billing_event holds only the LOADED QBO invoice window (this year + open); the WIP report is all-time.
+    # Whichever is larger is the complete one (MFD177: 2.2M of QBO invoices vs 8.6M billed on the WIP).
+    net_billed = max(billed or 0, wip_net)
+    billed_src = "QuickBooks invoices" if (billed or 0) >= wip_net else "WIP report (QuickBooks invoices loaded cover only part of this job)"
     if not gross and net_billed:
         gross = round(net_billed + ret, 2)
     _base = contract or net_billed
@@ -235,7 +239,8 @@ def _project_pnl(con, proj: str) -> dict:
     return {
         "proj": proj, "division": div,
         "contract": contract, "pct_complete": pct, "earned": earned, "billed": billed,
-        "billed_gross": gross, "retainage": ret, "net_billed": net_billed,
+        "billed_gross": gross, "retainage": ret, "net_billed": net_billed, "billed_src": billed_src,
+        "invoices_loaded": billed,
         "cost": cost, "overhead": overhead,
         "overhead_basis": "9% of contract (MFD)" if is_mfd else "10% of contract",
         "net": net, "net_pct": (net / net_billed) if net_billed else None,
@@ -280,8 +285,7 @@ def _portfolio_pnl(con) -> dict:
         b = billed.get(p, 0) or 0
         gross = w["btd"] or 0
         ret = w["ret"] or 0
-        if not b and gross:                        # no QBO invoice loaded - the WIP's net stands in
-            b = round(gross - ret, 2)
+        b = max(b or 0, round(gross - ret, 2))    # the WIP report is all-time; the loaded QBO invoices may cover only part of the job
         oh = round((_OVERHEAD_MFD_COST if is_mfd else _OVERHEAD_REV) * (contract or b), 2)
         net = round(b - cost - oh, 2)             # actuals: net billed - costs - overhead (owner 2026-09-08)
         try:                                             # ~4 stats/project (no glob) - cheap, cached client-side

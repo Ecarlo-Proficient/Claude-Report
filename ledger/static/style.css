@@ -125,6 +125,7 @@ body {
 .subtab.active { color: var(--text); background: color-mix(in srgb, var(--accent) 14%, var(--surface)); font-weight: 600; }
 .tab-page { display: flex; flex-direction: column; gap: 18px; }
 .tab-page[hidden] { display: none; }
+[hidden] { display: none !important; }   /* the hidden attribute always wins - rows with their own display:flex/grid were still painted (groups, 2026-09-08) */
 /* Full-page record view (app-style) - full width, so wide detail reads without the side-panel squish. */
 .record-view { display: flex; flex-direction: column; gap: 14px; }
 .record-view[hidden] { display: none; }
@@ -1504,3 +1505,8 @@ table.pp-cov td.neg { color: var(--neg-text); } table.pp-cov td.pos { color: var
 .pp-pnl .pnl-live .pnl-cap { break-after: avoid; break-inside: avoid; }
 .pp-pnl .pnl-live .pnl-codes { break-inside: auto; }
 .pp-pnl .pnl-live .pnl-codegrp { break-after: avoid; }
+
+/* Groups: the caret every collapsible parent carries (owner 2026-09-08); closed = children hidden */
+.grp-h { cursor: pointer; user-select: none; }
+.grp-caret { display: inline-block; width: 1.1em; color: var(--text-dim); font-size: .9em; }
+.grp-h.grp-closed { opacity: 1; }
