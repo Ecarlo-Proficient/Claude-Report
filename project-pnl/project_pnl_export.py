@@ -94,12 +94,13 @@ from shared import pnl_paths
 from shared.draws import read_pay_app, learn_period_shape, infer_period_tag
 from shared import draw_moves
 from shared import job_rulings   # standing per-job rulings -> KNOWN LOSSES / RULINGS block
+from shared import rp_invoicing  # one-invoice vs scope-based RP job, off the invoices
 from shared.qbo_api import (
     API_BASE, MINOR_VERSION, PROJ_RE,
     load_credentials, _api_get, query_all, report,
     extract_proj, build_project_customer_map,
     fetch_project_pl, _walk_pl_rows, extract_pl_totals,
-    fetch_customer_invoices,
+    fetch_customer_invoices, project_of_invoice,
 )
 from shared.cost_lines import line_category, combine_bill_lines, CATEGORY_ORDER
 # cost_leaf moved to shared/ (2026-08-08) — the ledger's load_costs.py needs the
@@ -6145,11 +6146,279 @@ def _write_job_rulings(ws, r: int, proj: str, val_col: int, sz: int, hsz: int,
     return r + 1
 
 
+def _write_rp_cost_groups(ws, r: int, job_groups: dict, last_col: int, SZ: int,
+                          realm: str, COST_FILL, PEND_FILL) -> Tuple[int, List[int]]:
+    """The RP cost detail - ACCOUNT -> VENDOR -> bills (collapsed) - written
+    from `r` down. ONE writer for the Job P&L and every per-invoice stage
+    sheet (2026-09-08), so a stage's costs read exactly like the job's.
+    Returns (next free row, the account-total rows to SUM)."""
+    acct_rows: List[int] = []
+
+    def _rp_vendors(vendors, vlevel, vindent):
+        """vendor (total, visible) → bills (collapsed). Bills link to QBO; bill-
+        pending POs shown amber, wreck labor green."""
+        nonlocal r
+        for vend in sorted(vendors, key=lambda v: -vendors[v]["total"]):
+            vg = vendors[vend]
+            vc = _write_cell(ws, r, 1, vindent + vend)
+            vc.font = Font(bold=True, size=SZ)
+            vt = ws.cell(row=r, column=last_col, value=round(vg["total"], 2))
+            vt.number_format = CURR_FMT; vt.font = Font(bold=True, size=SZ)
+            ws.row_dimensions[r].outline_level = vlevel
+            ws.row_dimensions[r].collapsed = True
+            r += 1
+            for t in sorted(vg["txns"], key=lambda t: _parse_date(t.get("date", ""))
+                            or dt.date.min):
+                pend = t.get("po_pending")
+                tag = (" (bill pending)" if pend else " (wreck)" if t.get("wreck") else "")
+                clr = "BF8F00" if pend else GREEN if t.get("wreck") else "000000"
+                dc2 = _write_cell(ws, r, 1, vindent + "    " + str(t["doc_num"]) + tag)
+                dc2.font = Font(size=SZ, color=clr)
+                u = _qbo_txn_url(t.get("tx_type", ""), t.get("txn_id", ""), realm)
+                if u:
+                    dc2.hyperlink = u
+                    dc2.font = Font(size=SZ, color=LINK, underline="single")
+                dv = _parse_date(t.get("date", ""))
+                d2 = ws.cell(row=r, column=2, value=dv or t.get("date", ""))
+                if dv:
+                    d2.number_format = "mm/dd/yyyy"
+                d2.font = Font(size=SZ)
+                _write_cell(ws, r, 3, t.get("desc", "")).font = Font(size=SZ)
+                a2 = ws.cell(row=r, column=last_col, value=round(t["amount"], 2))
+                a2.number_format = CURR_FMT; a2.font = Font(size=SZ)
+                if pend:
+                    for cc in range(1, last_col + 1):
+                        ws.cell(row=r, column=cc).fill = PEND_FILL
+                ws.row_dimensions[r].outline_level = vlevel + 1
+                ws.row_dimensions[r].hidden = True
+                r += 1
+
+    if not job_groups:
+        nc = _write_cell(ws, r, 1, "  (no job costs found)")
+        nc.font = Font(italic=True, size=SZ, color="808080")
+        r += 1
+    for parent in sorted(job_groups, key=lambda p: -job_groups[p]["total"]):
+        pg = job_groups[parent]
+        subs = pg.get("subs", {})
+        if len(subs) <= 1:                       # collapse parent+single sub → sub name
+            leaf = next(iter(subs), parent) or parent
+            lc = _write_cell(ws, r, 1, leaf)
+            lc.font = Font(bold=True, size=SZ, color=NAVY)
+            tc = ws.cell(row=r, column=last_col, value=round(pg["total"], 2))
+            tc.number_format = CURR_FMT; tc.font = Font(bold=True, size=SZ, color="C55A11")
+            for cc in range(1, last_col + 1):
+                ws.cell(row=r, column=cc).fill = COST_FILL
+            acct_rows.append(r)
+            r += 1
+            if subs:
+                _rp_vendors(subs[leaf]["vendors"], 1, "    ")
+        else:                                    # parent total, then its sub-accounts
+            pc = _write_cell(ws, r, 1, parent)
+            pc.font = Font(bold=True, size=SZ, color=NAVY)
+            pt = ws.cell(row=r, column=last_col, value=round(pg["total"], 2))
+            pt.number_format = CURR_FMT; pt.font = Font(bold=True, size=SZ, color=NAVY)
+            for cc in range(1, last_col + 1):
+                ws.cell(row=r, column=cc).fill = ACCENT_FILL
+            acct_rows.append(r)
+            r += 1
+            for leaf in sorted(subs, key=lambda l: -subs[l]["total"]):
+                sc = _write_cell(ws, r, 1, "    " + leaf); sc.font = Font(bold=True, size=SZ)
+                st = ws.cell(row=r, column=last_col, value=round(subs[leaf]["total"], 2))
+                st.number_format = CURR_FMT; st.font = Font(size=SZ, color="C55A11")
+                for cc in range(1, last_col + 1):
+                    ws.cell(row=r, column=cc).fill = COST_FILL
+                ws.row_dimensions[r].outline_level = 1
+                r += 1
+                _rp_vendors(subs[leaf]["vendors"], 2, "        ")
+    return r, acct_rows
+
+
+def _rp_stage_profile(inv_info: List[dict]) -> dict:
+    """Which kind of residential job this is, read off its own invoices - the
+    ONE rule lives in shared/rp_invoicing (the RP invoicing scan uses it too).
+    A scope-based job bills the slab in pieces (lot prep, piers, grade beams,
+    foundation) on several invoices; a one-invoice job bills it once, extras
+    or not. Two or more STAGE invoices make it multi-stage."""
+    return rp_invoicing.classify(inv_info)
+
+
+def _slice_rp_groups(groups: dict, start: Optional[dt.date],
+                     end: Optional[dt.date]) -> dict:
+    """The same parent -> sub -> vendor -> txns shape, holding only the lines
+    dated in (start, end] - start exclusive, end inclusive, None = open.
+    Totals are rebuilt from what survives. An undated line rides the open-
+    ended (accumulating) slice so it is never lost between two stages."""
+    out: dict = {}
+    for parent, pg in groups.items():
+        np_ = {"total": 0.0, "subs": {}}
+        for leaf, lg in (pg.get("subs") or {}).items():
+            nl = {"total": 0.0, "vendors": {}}
+            for vend, vg in (lg.get("vendors") or {}).items():
+                keep = []
+                for t in vg.get("txns") or []:
+                    d = _parse_date(t.get("date", ""))
+                    if d is None:
+                        if end is not None:
+                            continue
+                    else:
+                        if start is not None and d <= start:
+                            continue
+                        if end is not None and d > end:
+                            continue
+                    keep.append(t)
+                if keep:
+                    tot = sum(float(t.get("amount") or 0) for t in keep)
+                    nl["vendors"][vend] = {"total": tot, "txns": keep}
+                    nl["total"] += tot
+            if nl["vendors"]:
+                np_["subs"][leaf] = nl
+                np_["total"] += nl["total"]
+        if np_["subs"]:
+            out[parent] = np_
+    return out
+
+
+def _rp_stage_sheet_name(doc_num) -> str:
+    return f"Inv #{doc_num}"[:31] if doc_num else "Next Invoice"
+
+
+def build_sheet_rp_stage(
+    wb: Workbook, proj: str, cust_info: dict, wip_info: dict, stage: dict,
+    groups: dict, as_of: str, realm: str = "",
+) -> str:
+    """ONE INVOICE = ONE SHEET on a scope-based residential job (the owner
+    2026-09-08: "the P&L should have sheets like draws but with the invoice #
+    and using the invoice date as the cutoff for costs"). The stage's costs
+    are the job's bills dated after the previous invoice and on/before this
+    one; the sheet shows the invoice, the stage margin, the running totals
+    through this invoice, then the costs account -> vendor -> bill exactly as
+    the Job P&L lists them. The last sheet, "Next Invoice", is what has
+    accumulated since the latest invoice - the CP Next Draw idea.
+
+    stage: doc_num (None = accumulating), id, date, memo, scope, amount,
+           start, end, idx, n, cum_billed_before, cum_costs_before, bid."""
+    SZ = BASE_SIZE - 1
+    HSZ = BASE_SIZE + 1
+    name = _rp_stage_sheet_name(stage.get("doc_num"))
+    ws = wb.create_sheet(name)
+    ws.sheet_view.showGridLines = False
+    ws.sheet_view.zoomScale = 110
+    ws.sheet_properties.outlinePr.summaryBelow = False
+    for col, w in (("A", 40), ("B", 14), ("C", 44), ("D", 15)):
+        ws.column_dimensions[col].width = w
+    HERO = PatternFill("solid", fgColor="1F3A5F")
+    NEXT = PatternFill("solid", fgColor="9DC3E6")
+    SECT = PatternFill("solid", fgColor="DDEBF7")
+    COST_FILL = PatternFill("solid", fgColor="EFF5FC")
+    PEND_FILL = PatternFill("solid", fgColor="FFF2CC")
+    last_col, pcol = 4, 2
+    accum = stage.get("doc_num") is None
+    d_start, d_end = stage.get("start"), stage.get("end")
+    win = ((f"bills dated after {d_start.strftime('%m/%d/%Y')}" if d_start else "all bills")
+           if accum else
+           (f"bills dated {(d_start + dt.timedelta(days=1)).strftime('%m/%d/%Y')} → "
+            f"{d_end.strftime('%m/%d/%Y')}" if d_start else
+            f"bills dated on/before {d_end.strftime('%m/%d/%Y')}"))
+    note = ("Accumulating since the latest invoice" if accum
+            else f"Stage {stage['idx']} of {stage['n']}"
+                 + (f" · {stage['scope']}" if stage.get("scope") else ""))
+    r = _write_meta_block(ws, proj, cust_info, wip_info, as_of, note=note)
+    r += 1
+
+    def _box(r0, r1, c0, c1, side):
+        for gr in range(r0, r1 + 1):
+            for cc in range(c0, c1 + 1):
+                b = ws.cell(row=gr, column=cc).border
+                ws.cell(row=gr, column=cc).border = Border(
+                    left=side if cc == c0 else b.left, right=side if cc == c1 else b.right,
+                    top=side if gr == r0 else b.top, bottom=side if gr == r1 else b.bottom)
+
+    def hero(text, fill=HERO):
+        nonlocal r
+        c = ws.cell(row=r, column=1, value=text)
+        c.font = Font(bold=True, size=HSZ, color="FFFFFF"); c.fill = fill
+        for cc in range(2, pcol + 1):
+            ws.cell(row=r, column=cc).fill = fill
+        r += 1
+
+    def line(label, value=None, fmt=CURR_FMT, bold=False, color="000000", link=None):
+        nonlocal r
+        lc = _write_cell(ws, r, 1, label)
+        lc.font = Font(bold=bold, size=SZ, color=color)
+        vc = ws.cell(row=r, column=pcol, value=value)
+        vc.number_format = fmt
+        vc.font = Font(bold=bold, size=SZ, color=color)
+        if link:
+            lc.hyperlink = link
+            lc.font = Font(bold=bold, size=SZ, color=LINK, underline="single")
+        r += 1
+        return r - 1
+
+    # ── the stage card ──
+    top = r
+    inv_link = _qbo_txn_url("invoice", stage.get("id", ""), realm) if not accum else None
+    if accum:
+        hero("NEXT INVOICE  —  costs accumulated since the latest invoice", NEXT)
+        line(f"Latest invoice: Inv #{stage.get('last_doc', '')} on "
+             f"{d_start.strftime('%m/%d/%Y') if d_start else ''}", None, fmt="General")
+    else:
+        hero(f"INVOICE #{stage['doc_num']}  —  stage {stage['idx']} of {stage['n']}")
+        dv = _parse_date(stage.get("date", ""))
+        line("Invoice date", dv, fmt="mm/dd/yyyy", bold=True, link=inv_link)
+        if stage.get("scope"):
+            line(f"Scope: {stage['scope']}", None, fmt="General")
+    billed_r = line("Billed (this invoice)" if not accum else "Billed (nothing yet)",
+                    float(stage.get("amount") or 0.0), bold=True, color="375623")
+    costs_r = line("Costs (this stage)" if not accum else "Costs since the latest invoice",
+                   None, bold=True, color="C55A11")
+    gp_r = line("Gross profit (this stage)" if not accum else "Unbilled cost so far",
+                f"=B{billed_r}-B{costs_r}", bold=True)
+    line("Margin % (this stage)", f'=IF(B{billed_r}=0,"",B{gp_r}/B{billed_r})', fmt="0.0%")
+    _box(top, r - 1, 1, pcol, _THICK)
+    r += 1
+    # ── running totals through this invoice ──
+    top = r
+    hero("THROUGH THIS INVOICE" if not accum else "JOB TO DATE (incl. the accumulating costs)")
+    cb = round(float(stage.get("cum_billed_before") or 0.0), 2)
+    cc_ = round(float(stage.get("cum_costs_before") or 0.0), 2)
+    cbr = line("Billed to date", f"={cb}+B{billed_r}", bold=True, color="375623")
+    ccr = line("Costs to date", f"={cc_}+B{costs_r}", bold=True, color="C55A11")
+    cgr = line("Gross profit to date", f"=B{cbr}-B{ccr}", bold=True)
+    line("Margin % to date", f'=IF(B{cbr}=0,"",B{cgr}/B{cbr})', fmt="0.0%")
+    bid = stage.get("bid")
+    if bid:
+        line("% of bid billed", f"=IF({bid}=0,\"\",B{cbr}/{bid})", fmt="0%")
+        line("Bid left to bill", f"={bid}-B{cbr}")
+    _box(top, r - 1, 1, pcol, _THICK)
+    r += 1
+
+    # ── the costs, account -> vendor -> bill ──
+    dh = ws.cell(row=r, column=1,
+                 value=("COSTS IN THIS STAGE" if not accum else "COSTS SINCE THE LATEST INVOICE")
+                       + f"  —  {win}")
+    dh.font = Font(bold=True, size=HSZ, color=NAVY); dh.fill = SECT
+    for cc in range(2, last_col + 1):
+        ws.cell(row=r, column=cc).fill = SECT
+    r += 1
+    r, acct_rows = _write_rp_cost_groups(ws, r, groups, last_col, SZ, realm, COST_FILL, PEND_FILL)
+    tlc = _write_cell(ws, r, 1, "Total stage costs" if not accum else "Total accumulated")
+    tlc.font = Font(bold=True, size=SZ); tlc.border = TOP_BORDER
+    tc = ws.cell(row=r, column=last_col,
+                 value=("=" + "+".join(f"D{x}" for x in acct_rows)) if acct_rows else 0)
+    tc.number_format = CURR_FMT; tc.font = Font(bold=True, size=SZ, color="C55A11")
+    tc.border = TOP_BORDER
+    ws.cell(row=costs_r, column=pcol).value = f"=D{r}"
+    r += 1
+    _setup_print(ws, last_col)
+    return name
+
+
 def build_sheet_job_rp(
     wb: Workbook, proj: str, cust_info: dict, wip_info: dict,
     invoices: List[dict], job_groups: dict, job_total: float,
     billed_total: float, as_of: str, overhead_pct: float = 10.0,
-    realm: str = "",
+    realm: str = "", stage_links: Optional[Dict[str, str]] = None,
+    meta_note: Optional[str] = None,
 ) -> None:
     """
     RESIDENTIAL (RP) — the main "Job P&L" sheet (the user 2026-06-19). Most important
@@ -6170,7 +6439,7 @@ def build_sheet_job_rp(
     for col, w in (("A", 40), ("B", 14), ("C", 44), ("D", 15)):
         ws.column_dimensions[col].width = w
 
-    r = _write_meta_block(ws, proj, cust_info, wip_info, as_of)
+    r = _write_meta_block(ws, proj, cust_info, wip_info, as_of, note=meta_note)
     # Header shortcut (the user 2026-08-06): "Open Project in QBO" → project HOME
     # page, in the free header cell to the right of the 4-col RP layout.
     _home_url = _qbo_customer_url(cust_info.get("id", ""), realm)
@@ -6330,6 +6599,10 @@ def build_sheet_job_rp(
     for inv in invoices or []:
         lc = _write_cell(ws, r, 1, f"  Inv #{inv.get('doc_num', '')}")
         lc.font = Font(size=SZ)
+        _st = (stage_links or {}).get(str(inv.get("doc_num", "")))
+        if _st:                        # scope-based job: the invoice has its own stage sheet
+            lc.hyperlink = f"#'{_st}'!A1"
+            lc.font = Font(size=SZ, color=LINK, underline="single")
         dv = _parse_date(inv.get("date", ""))
         dc = ws.cell(row=r, column=2, value=dv or inv.get("date", ""))
         if dv:
@@ -6365,84 +6638,8 @@ def build_sheet_job_rp(
         ws.cell(row=r, column=cc).fill = SECT
     det_top = r
     r += 1
-    acct_rows = []
-
-    def _rp_vendors(vendors, vlevel, vindent):
-        """vendor (total, visible) → bills (collapsed). Bills link to QBO; bill-
-        pending POs shown amber, wreck labor green."""
-        nonlocal r
-        for vend in sorted(vendors, key=lambda v: -vendors[v]["total"]):
-            vg = vendors[vend]
-            vc = _write_cell(ws, r, 1, vindent + vend)
-            vc.font = Font(bold=True, size=SZ)
-            vt = ws.cell(row=r, column=last_col, value=round(vg["total"], 2))
-            vt.number_format = CURR_FMT; vt.font = Font(bold=True, size=SZ)
-            ws.row_dimensions[r].outline_level = vlevel
-            ws.row_dimensions[r].collapsed = True
-            r += 1
-            for t in sorted(vg["txns"], key=lambda t: _parse_date(t.get("date", ""))
-                            or dt.date.min):
-                pend = t.get("po_pending")
-                tag = (" (bill pending)" if pend else " (wreck)" if t.get("wreck") else "")
-                clr = "BF8F00" if pend else GREEN if t.get("wreck") else "000000"
-                dc2 = _write_cell(ws, r, 1, vindent + "    " + str(t["doc_num"]) + tag)
-                dc2.font = Font(size=SZ, color=clr)
-                u = _qbo_txn_url(t.get("tx_type", ""), t.get("txn_id", ""), realm)
-                if u:
-                    dc2.hyperlink = u
-                    dc2.font = Font(size=SZ, color=LINK, underline="single")
-                dv = _parse_date(t.get("date", ""))
-                d2 = ws.cell(row=r, column=2, value=dv or t.get("date", ""))
-                if dv:
-                    d2.number_format = "mm/dd/yyyy"
-                d2.font = Font(size=SZ)
-                _write_cell(ws, r, 3, t.get("desc", "")).font = Font(size=SZ)
-                a2 = ws.cell(row=r, column=last_col, value=round(t["amount"], 2))
-                a2.number_format = CURR_FMT; a2.font = Font(size=SZ)
-                if pend:
-                    for cc in range(1, last_col + 1):
-                        ws.cell(row=r, column=cc).fill = PEND_FILL
-                ws.row_dimensions[r].outline_level = vlevel + 1
-                ws.row_dimensions[r].hidden = True
-                r += 1
-
-    if not job_groups:
-        nc = _write_cell(ws, r, 1, "  (no job costs found)")
-        nc.font = Font(italic=True, size=SZ, color="808080")
-        r += 1
-    for parent in sorted(job_groups, key=lambda p: -job_groups[p]["total"]):
-        pg = job_groups[parent]
-        subs = pg.get("subs", {})
-        if len(subs) <= 1:                       # collapse parent+single sub → sub name
-            leaf = next(iter(subs), parent) or parent
-            lc = _write_cell(ws, r, 1, leaf)
-            lc.font = Font(bold=True, size=SZ, color=NAVY)
-            tc = ws.cell(row=r, column=last_col, value=round(pg["total"], 2))
-            tc.number_format = CURR_FMT; tc.font = Font(bold=True, size=SZ, color="C55A11")
-            for cc in range(1, last_col + 1):
-                ws.cell(row=r, column=cc).fill = COST_FILL
-            acct_rows.append(r)
-            r += 1
-            if subs:
-                _rp_vendors(subs[leaf]["vendors"], 1, "    ")
-        else:                                    # parent total, then its sub-accounts
-            pc = _write_cell(ws, r, 1, parent)
-            pc.font = Font(bold=True, size=SZ, color=NAVY)
-            pt = ws.cell(row=r, column=last_col, value=round(pg["total"], 2))
-            pt.number_format = CURR_FMT; pt.font = Font(bold=True, size=SZ, color=NAVY)
-            for cc in range(1, last_col + 1):
-                ws.cell(row=r, column=cc).fill = ACCENT_FILL
-            acct_rows.append(r)
-            r += 1
-            for leaf in sorted(subs, key=lambda l: -subs[l]["total"]):
-                sc = _write_cell(ws, r, 1, "    " + leaf); sc.font = Font(bold=True, size=SZ)
-                st = ws.cell(row=r, column=last_col, value=round(subs[leaf]["total"], 2))
-                st.number_format = CURR_FMT; st.font = Font(size=SZ, color="C55A11")
-                for cc in range(1, last_col + 1):
-                    ws.cell(row=r, column=cc).fill = COST_FILL
-                ws.row_dimensions[r].outline_level = 1
-                r += 1
-                _rp_vendors(subs[leaf]["vendors"], 2, "        ")
+    r, acct_rows = _write_rp_cost_groups(ws, r, job_groups, last_col, SZ, realm,
+                                        COST_FILL, PEND_FILL)
     tlc = _write_cell(ws, r, 1, "Total job costs"); tlc.font = Font(bold=True, size=SZ)
     tlc.border = TOP_BORDER
     cf = ("=" + "+".join(f"D{jr}" for jr in acct_rows)) if acct_rows else "=0"
@@ -7246,6 +7443,26 @@ def generate_project_pnl_rp(
     """
     ui_event("Residential Job P&L template", color=_DIM)
     invoices = fetch_customer_invoices(access, company_id, cust_info["id"])
+    # An invoice billed to the PARENT builder with the job in its memo is still
+    # this job's invoice (RP6586's lot-prep invoice, 2026-09-08: on the parent,
+    # 27.5k the P&L and the WIP both missed). Sweep the parent's invoices and
+    # keep the ones whose memo names EXACTLY this project (shared
+    # project_of_invoice - the same reader the ledger uses).
+    _pid = cust_info.get("parent_id")
+    if _pid:
+        _have = {i.get("Id") for i in invoices}
+        _extra = [i for i in fetch_customer_invoices(access, company_id, _pid)
+                  if i.get("Id") not in _have
+                  and (project_of_invoice(i) or "").upper() == proj.upper()]
+        if _extra:
+            for i in _extra:
+                i["_on_parent"] = True
+            invoices = invoices + _extra
+            ui_event(f"{len(_extra)} invoice(s) billed on the PARENT customer, matched by "
+                     f"memo: " + ", ".join(f"#{i.get('DocNumber', '')} "
+                                           f"${float(i.get('TotalAmt') or 0):,.0f}"
+                                           for i in _extra),
+                     icon="⚑", color=_YEL)
     inv_info = []
     inv_dates = []
     rp_not_billed = []          # retainage-not-billed JE docs — NOT income (the user 2026-07-02)
@@ -7254,7 +7471,8 @@ def generate_project_pnl_rp(
             "doc_num": _xml_clean(inv.get("DocNumber", "") or inv.get("Id", "")),
             "id": inv.get("Id", ""),
             "date": inv.get("TxnDate", ""),
-            "memo": _xml_clean(inv.get("PrivateNote", "") or ""),
+            "memo": _xml_clean(inv.get("PrivateNote", "") or "")
+                    + (" · billed on the parent customer" if inv.get("_on_parent") else ""),
             "amount": float(inv.get("TotalAmt", 0) or 0),
         }
         if _is_retainage_not_billed(inv):
@@ -7315,16 +7533,32 @@ def generate_project_pnl_rp(
     )
     po_unused, po_used = match_pos_to_bills(pos, bills, cust_info["id"])
 
+    # ONE-INVOICE JOB or SCOPE-BASED JOB? (the owner 2026-09-08). Read off the
+    # invoices themselves. On a one-invoice job the invoice date is the end of
+    # the job, so a later non-wreck bill is suspect (Pending Review). On a
+    # scope-based job the latest invoice is just the latest stage - the job is
+    # still running - so NOTHING is cut off: every bill is a job cost, sliced
+    # per invoice on its own sheet, and what came after the latest invoice is
+    # the next stage accumulating.
+    profile = _rp_stage_profile(inv_info)
+    multi_stage = profile["multi_stage"]
+    cutoff = None if multi_stage else invoice_date
+    ui_event(profile["label"]
+             + ("  ·  a sheet per invoice, costs cut at each invoice date"
+                if multi_stage else ""),
+             icon="§", color=_CYAN)
     job_groups, job_total, pending, dup_flags = gather_rp_costs(
-        bills, purchases, cust_info["id"], invoice_date, parent_map,
+        bills, purchases, cust_info["id"], cutoff, parent_map,
         account_names=account_names, account_fqn=account_fqn,
         item_account=item_account,
     )
     # Open POs dated ON/BEFORE the invoice = committed cost, bill pending →
     # add to the P&L (yellow). After-invoice opens stay buffer (PO sheet only).
+    # A scope-based job has no cutoff: every open PO is a committed cost of
+    # the stage under way.
     unused_ids = {rec["id"] for rec in po_unused if rec.get("id")}
     pend_total, pend_n = inject_pending_pos(
-        job_groups, pos, unused_ids, cust_info["id"], invoice_date,
+        job_groups, pos, unused_ids, cust_info["id"], cutoff,
         parent_map, account_names=account_names, account_fqn=account_fqn,
         item_account=item_account,
     )
@@ -7350,9 +7584,54 @@ def generate_project_pnl_rp(
     wb = Workbook()
     if wb.sheetnames:
         del wb[wb.sheetnames[0]]
+    # Scope-based job: one sheet per invoice (costs cut at each invoice date)
+    # plus "Next Invoice" for what has accumulated since the latest one.
+    stage_sheets: List[str] = []
+    stage_links: Dict[str, str] = {}
+    if multi_stage:
+        _bid = None
+        for _k in ("contract_saved", "revised_contract", "original_contract", "contract"):
+            try:
+                if wip_info.get(_k) not in (None, ""):
+                    _bid = float(wip_info[_k]); break
+            except (TypeError, ValueError):
+                pass
+        _invs = profile["invoices"]
+        _cum_b = _cum_c = 0.0
+        _prev = None
+        for _i, _inv in enumerate(_invs, start=1):
+            _d = _parse_date(_inv["date"])
+            _g = _slice_rp_groups(job_groups, _prev, _d)
+            _c = sum(g["total"] for g in _g.values())
+            _st = {"doc_num": _inv["doc_num"], "id": _inv.get("id", ""), "date": _inv["date"],
+                   "memo": _inv.get("memo", ""), "scope": profile["scopes"][_i - 1],
+                   "amount": _inv["amount"], "start": _prev, "end": _d, "idx": _i,
+                   "n": len(_invs), "cum_billed_before": _cum_b, "cum_costs_before": _cum_c,
+                   "bid": _bid}
+            stage_links[str(_inv["doc_num"])] = _rp_stage_sheet_name(_inv["doc_num"])
+            stage_sheets.append(_st)
+            _cum_b += float(_inv["amount"] or 0); _cum_c += _c; _prev = _d
+        _acc = _slice_rp_groups(job_groups, _prev, None)
+        _acc_total = sum(g["total"] for g in _acc.values())
+        stage_sheets.append({"doc_num": None, "last_doc": _invs[-1]["doc_num"], "amount": 0.0,
+                             "start": _prev, "end": None, "idx": len(_invs) + 1,
+                             "n": len(_invs), "cum_billed_before": _cum_b,
+                             "cum_costs_before": _cum_c, "bid": _bid, "_groups": _acc})
+        ui_event(f"{len(_invs)} stage sheet(s) · accumulating since Inv #{_invs[-1]['doc_num']}: "
+                 f"${_acc_total:,.0f}", icon="§", color=_CYAN)
     build_sheet_job_rp(wb, proj, cust_info, wip_info, inv_info, job_groups,
                        job_total, billed_total, as_of, overhead_pct=overhead_pct,
-                       realm=company_id)
+                       realm=company_id, stage_links=stage_links,
+                       meta_note=profile["label"])
+    stage_names: List[str] = []
+    if multi_stage:
+        _prev = None
+        for _st in stage_sheets:
+            _g = _st.pop("_groups", None)
+            if _g is None:
+                _g = _slice_rp_groups(job_groups, _st["start"], _st["end"])
+            stage_names.append(build_sheet_rp_stage(wb, proj, cust_info, wip_info, _st, _g,
+                                                    as_of, realm=company_id))
     # Transactions sheet — same traceability as the Draw template (the user 2026-06-22).
     # RP has no draws/retainage, so income is the invoices billed; bills split
     # COGS vs Expense by account type.
@@ -7418,16 +7697,21 @@ def generate_project_pnl_rp(
     else:
         ui_event("no takeoff Cost Gral budget found — Budget vs Actual "
                  "skipped", icon="⚑", color=_YEL)
-    _order_sheets(wb, ["Job P&L", "Transactions", "Budget vs Actual",
-                       "Pending Review", "POs", "Reconciliations", "Cash Flow"])
+    _order_sheets(wb, ["Job P&L"] + stage_names
+                  + ["Transactions", "Budget vs Actual",
+                     "Pending Review", "POs", "Reconciliations", "Cash Flow"])
 
     # Color-code the tabs to match the Draw template (the user 2026-06-26).
+    # Stage (invoice) sheets are draw-blue; Next Invoice the lighter blue the
+    # CP Next Draw wears.
     for _sn, _col in {"Job P&L": "1F3A5F", "Cash Flow": "C55A11",
                       "Transactions": "548235", "Budget vs Actual": "BF8F00",
                       "Pending Review": "808080", "POs": "808080",
                       "Reconciliations": "808080"}.items():
         if _sn in wb.sheetnames:
             wb[_sn].sheet_properties.tabColor = _col
+    for _sn in stage_names:
+        wb[_sn].sheet_properties.tabColor = "9DC3E6" if _sn == "Next Invoice" else "2E75B6"
 
     # Folder + file named "RP#### - Customer" (the user 2026-06-26). Customer = the top
     # builder (first segment of the fully-qualified name, e.g. "Grand Homes").

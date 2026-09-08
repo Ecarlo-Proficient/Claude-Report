@@ -56,6 +56,7 @@ shared/                the ONLY importable common code
 ├─ cost_lines.py       cost-line category (Concrete/Labor/Materials) + bill-line combine
 ├─ draws.py            CP draw (AIA G702/G703) discovery + parsing (wip ↔ health)
 ├─ draw_moves.py       the PUSH: a bill carried into a later draw by agreement — <CompanyHealth>/draw_moves.json (project-pnl ↔ bill-tracker ↔ ledger)
+├─ rp_invoicing.py     one-invoice vs scope-based RP job, off the invoice memos (project-pnl ↔ one-offs/rp_stage_scan)
 ├─ job_rulings.py      the RULINGS: a known loss / accepted overrun the owner settled once — <CompanyHealth>/job_rulings.json (wip readers KNOWN: note ↔ wip_qc auto sign-off ↔ project-pnl block ↔ ledger over-budget rule + project page)
 ├─ takeoff_etc.py      blank ETC → takeoff cost sheet (rp_wip_reader ↔ schedule preview)
 ├─ xlsx_verify.py      Excel-corruption gate: every xlsx writer calls assert_clean before handing over
@@ -974,6 +975,13 @@ grouped by AR state × the sub's lien clock). CP draw discovery + G702 parsing l
 **`shared/draws.py`** (shared with `wip/cp_wip_reader.py` — tools never import tools).
 The rich Excel (grouped bands, data bars, color scales, colored tabs) is a deliberate
 exception to the plain-Excel rule — the user asked for an at-a-glance watchboard.
+
+project-pnl's RP template tells a **one-invoice job** from a **scope-based job** off the
+invoices themselves via `shared/rp_invoicing` (2+ STAGE invoices - a memo naming a piece of the
+slab build, not an extra): a scope-based job gets
+**one sheet per invoice** (costs cut at each invoice date, running totals through it) plus a
+`Next Invoice` accumulator, and no post-invoice cutoff (2026-09-08). `one-offs/rp_stage_scan.py`
+classifies every RP job the same way into `<CompanyHealth>/RP Invoicing Stages.xlsx`.
 
 project-pnl reads the WIP master's **Test-Master** tab (the readers' unified MFD+CP+RP
 table) to pre-fill **Original Contract / ETC + Approved COs** (original = total − COs;

@@ -8,6 +8,39 @@ manual close), RP (no draws — expenses → invoice → profit).
 
 ## DONE / FINALIZED
 
+- **SCOPE-BASED RP JOBS GET A SHEET PER INVOICE (2026-09-08, RP6586 the test
+  subject).** The owner: "we have two different types, a one invoice one job vs a
+  scope based invoices for one job like this one. the P&L should have sheets like
+  draws but with the invoice # and using the invoice date as the cutoff for costs."
+  The kind is read off the job's own invoices by the ONE rule in
+  `shared/rp_invoicing.classify` (the scan uses it too). What the 2,464
+  invoices since 2025 taught: EVERY memo reads "RP#### - <address> - <what was
+  billed>", so the third segment is the invoice's description, not a kind
+  marker (a tract job says "Foundation" there), and a tract job is routinely
+  billed AGAIN for extras (pump, rock saw, brickledge, HTT5 bolts, "... Extra")
+  days later - still a one-invoice job. A STAGE invoice names a piece of the
+  slab build (lot prep, piers, mud slab, grade beams, walls, foundation) and is
+  not an extra; 2+ stage invoices = scope-based (75 jobs since 2025); one
+  PARTIAL stage (piers, grade beams ...) = scope-based with one stage billed so
+  far (31); one "Foundation" invoice, extras or not = one-invoice (770). The
+  Job P&L subtitle states the kind. **One-invoice job:** unchanged - the invoice date
+  ends the job, later non-wreck bills go to Pending Review. **Scope-based job:**
+  no cutoff at all (the latest invoice is just the latest stage), every bill is
+  a job cost, open POs count as committed; then ONE SHEET PER INVOICE
+  (`Inv #34114`, draw-blue) holding the invoice (QBO link), date, scope, the
+  stage's billed / costs / GP / margin, the running totals THROUGH that invoice
+  (billed, costs, GP, margin, % of bid billed, bid left to bill), and the
+  stage's costs account -> vendor -> bill - bills dated after the previous
+  invoice and on/before this one (`_slice_rp_groups`, start exclusive, end
+  inclusive). A final **`Next Invoice`** sheet (the CP Next Draw shade) holds
+  what accumulated since the latest invoice. The Job P&L's invoice rows link
+  to their stage sheets. The cost detail walk left `build_sheet_job_rp` for
+  `_write_rp_cost_groups`, the ONE writer both the job sheet and the stage
+  sheets use, so a stage reads exactly like the job. Sheets sit between Job
+  P&L and Transactions. Companion scan: `one-offs/rp_stage_scan.py` lists every
+  RP job's kind off QBO (count, scope-named memos, span, WIP TYPE) to
+  `<CompanyHealth>/RP Invoicing Stages.xlsx`.
+
 - **RP P&Ls LIVE IN THE JOB FOLDER ON THE COMMON DRIVE, LIKE CP (2026-09-08).** The
   owner, on seeing RP6586 land in OneDrive: "it should be in the current projects
   folder not the automation folder, common was mounted." An RP job folder is
