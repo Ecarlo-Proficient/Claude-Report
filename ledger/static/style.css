@@ -1537,3 +1537,4 @@ td.pnl-expand .pnl-live .pnl-cap { break-after: avoid; break-inside: avoid; }
 td.pnl-expand .pnl-live .pnl-codes { break-inside: auto; }
 td.pnl-expand .pnl-live .pnl-codegrp { break-after: avoid; }
 @media (max-width: 1250px) { td.pnl-expand .pnl-live { column-count: 2; } }
+.attn .a-src { display: block; font-size: max(.72em, 12px); color: var(--text-dim); margin-top: 3px; }

@@ -1118,7 +1118,7 @@ function renderFunding() {
   drawDate.build();
   const all = _fundingRows();
   const shown = fundingStage ? all.filter(r => r.status === fundingStage) : all;
-  $("#drawsNote").textContent = (DRAWS.draws || []).length ? `(${shown.length} of ${all.length} projects · GC owes ${money(shown.reduce((s, r) => s + r.gcOwes, 0))})` : "(no draw data - run load_bill_tracker.py)";
+  $("#drawsNote").textContent = (DRAWS.draws || []).length ? `(${shown.length} of ${all.length} projects · GC owes ${money(shown.reduce((s, r) => s + r.gcOwes, 0))} · ${srcText("Bill Tracker", syncedAt("sync-ap"), "loaded")} · ${srcText("QuickBooks invoices", loadedAt("AR (invoices)"), "loaded")})` : "(no draw data - run load_bill_tracker.py)";
   _setHintFilter("draws", drawFilterSummary(shown.length));
   const stats = $("#drawsStats"); stats.innerHTML = "";
   for (const [st, sub] of [["Ready to collect", "nothing blocks the next draw"], ["Blocked - pay vendors first", "earlier-draw bills unpaid"], ["Settled", "GC has paid every draw"], ["No draw yet", "bills in, nothing invoiced"]]) {
@@ -1126,6 +1126,7 @@ function renderFunding() {
     const k = document.createElement("div"); k.className = "kpi kpi-click" + (fundingStage === st ? " kpi-fc" : "") + (st.startsWith("Blocked") && n ? " pnl-kpi-neg" : "");
     k.innerHTML = `<div class="k-label"></div><div class="k-value"></div><div class="k-sub"></div>`;
     k.querySelector(".k-label").textContent = st; k.querySelector(".k-value").textContent = String(n); k.querySelector(".k-sub").textContent = amt ? `${money(amt)} owed · ${sub}` : sub;
+    k.appendChild(srcChip(srcText("Bill Tracker", syncedAt("sync-ap"), "loaded"), "Stage from the Bill Tracker's bill-to-invoice match: the next draw the GC still owes is unlocked by paying the unpaid bills on earlier draws; GC paid from the QuickBooks invoice balance"));
     k.onclick = () => { fundingStage = fundingStage === st ? null : st; renderFunding(); }; stats.appendChild(k);
   }
   { const b = $("#btnClearDrawStage"); if (b) { b.hidden = !fundingStage; b.onclick = () => { fundingStage = null; renderFunding(); }; } }
@@ -1464,12 +1465,14 @@ function renderMargins() {
     ["Over budget", String(overBudget), "cost > ETC (flatwork soft <$15k)"],
   ];
   const sr = $("#marginStats"); sr.innerHTML = "";
+  const qboSrc = srcText("QuickBooks costs", loadedAt("Costs (QBO)"), "loaded"), wipSrc2 = srcText("WIP master", meta.report_date, "report");
   for (const [label, value, sub] of stats) {
     const el = document.createElement("div"); el.className = "kpi";
     el.innerHTML = `<div class="k-label"></div><div class="k-value"></div><div class="k-sub"></div>`;
     el.querySelector(".k-label").textContent = label;
     el.querySelector(".k-value").textContent = value;
     el.querySelector(".k-sub").textContent = sub;
+    el.appendChild(srcChip(/planned/i.test(label) ? wipSrc2 : qboSrc, sub + (/planned/i.test(label) ? " - contract and ETC from the WIP master" : " - QuickBooks cost lines summed by job, billed from the WIP master")));
     sr.appendChild(el);
   }
   // OVER-BUDGET jobs - cost past the full ETC, with the flatwork-budget tolerance
@@ -1817,7 +1820,7 @@ function renderVendors() {
   const grouped = $("#vendorGroupType") && $("#vendorGroupType").checked;
   const totalOpen = vends.reduce((t, v) => t + (v.open_bal || 0), 0);
   $("#vendorsNote").textContent = (COST.by_vendor || []).length
-    ? `(${vends.length} vendors · ${money(totalOpen)} open)`
+    ? `(${vends.length} vendors · ${money(totalOpen)} open · ${srcText("QuickBooks", loadedAt("Costs (QBO)"), "loaded")})`
     : "(no cost data - run load_costs.py)";
   const cols = [["Vendor", "left"], ["Type", "left"], ["Jobs", "right"], ["Open bills (QBO)", "right"], ["Open $ (QBO)", "right"]];   // labelled: QuickBooks open AP, subs included
   const thead = $("#vendorTable thead"), tbody = $("#vendorTable tbody");
@@ -2254,7 +2257,7 @@ function renderBills() {
   const openSum = rows.reduce((t, b) => t + bOpen(b), 0);
   const lienN = rows.filter(b => BILL_LIEN_RISK.has(b.lien_status)).length;
   $("#billsNote").textContent = bills.length ? `(${rows.length.toLocaleString()} of ${bills.length.toLocaleString()})` : "(no AP data - run load_bill_tracker.py)";
-  { const qs = $("#billsQuickStat"); if (qs) qs.textContent = bills.length ? `${money(openSum)} open · ${lienN} lien risk` : ""; }
+  { const qs = $("#billsQuickStat"); if (qs) qs.textContent = bills.length ? `${money(openSum)} open · ${lienN} lien risk · Bill Tracker${syncedAt("sync-ap") ? " synced " + fmtDate(syncedAt("sync-ap"), true) : ""}` : ""; }
   { const pr = $("#btnPayRunGo"); if (pr) { const n = (BILLS || []).filter(b => b.pay_selected).length; pr.textContent = n ? `Pay run (${n}) →` : "Pay run →"; pr.classList.toggle("on", n > 0); } }
 
   // table. Each status is its OWN column (Paid / Invoice / Lien / Appr) so a blank in
@@ -3597,6 +3600,16 @@ function invNoCell(inv) {
 // vendors x/y paid, the funding-chain math, pay-to-unlock checkboxes on the existing pay run, export),
 // then bills / links. Opened from any project # in the app. Read-only except the pay-run marks.
 let _pp = null;
+// WHY the live QuickBooks figure and the WIP report differ - the first honest explanation is the lines dated after
+// the report date (owner: "mistrusting on where numbers are pulled from"); what is left is coding / scope differences.
+function _whySince(p, kind) {
+  const sw = p.since_wip || {}; if (!sw.report_date) return "";
+  const rd = fmtDateShort(sw.report_date);
+  if (kind === "cost") { const gap = num(p.cost) - num(sw.wip_cost); if (Math.abs(gap) < 1) return ` (${rd}) · same`;
+    const after = num(sw.cost_amount); const rest = gap - after;
+    return ` (${rd}) · QuickBooks ${gap >= 0 ? "+" : "-"}${money(Math.abs(gap))}: ${sw.cost_lines} line${sw.cost_lines === 1 ? "" : "s"} dated after the report ${money(after)}${Math.abs(rest) >= 1 ? `, ${rest >= 0 ? "+" : "-"}${money(Math.abs(rest))} coding / scope` : ""}`; }
+  const inv = num(sw.invoices); return inv ? ` (${rd}) · ${inv} invoice${inv === 1 ? "" : "s"} ${money(sw.billed_amount)} dated after the report` : ` (${rd})`;
+}
 async function openProjectPage(pn) {
   if (!pn || !/^(MFD|CP|RP)\d/i.test(String(pn))) { if (pn) toast(`"${pn}" is not a project # - nothing to open`); return; }   // e.g. the "(multiple)" bucket
   pn = String(pn).toUpperCase();
@@ -3624,8 +3637,8 @@ async function openProjectPage(pn) {
   kpi(s1, [
     ["Contract", money(p.contract || r0.total_contract_price), r0.approved_cos ? `incl. COs ${money(r0.approved_cos)}` : ""],
     ["ETC (budget)", money(r0.estimated_total_costs), r0.total_contract_price ? `planned GP ${money(gp)} · ${(gp / num(r0.total_contract_price) * 100).toFixed(1)}%` : ""],
-    ["Costs to date (QuickBooks)", money(p.cost), r0.costs_to_date != null ? `WIP report ${money(r0.costs_to_date)}` : "", num(p.cost) > num(r0.estimated_total_costs) && r0.estimated_total_costs ? "pnl-kpi-neg" : ""],
-    ["Billed (gross)", money(p.billed_gross), (p.retainage ? `retainage held ${money(p.retainage)} · ` : "") + "WIP report"],
+    ["Costs to date (QuickBooks)", money(p.cost), r0.costs_to_date != null ? `WIP report ${money(r0.costs_to_date)}${_whySince(p, "cost")}` : "", num(p.cost) > num(r0.estimated_total_costs) && r0.estimated_total_costs ? "pnl-kpi-neg" : ""],
+    ["Billed (gross)", money(p.billed_gross), (p.retainage ? `retainage held ${money(p.retainage)} · ` : "") + "WIP report" + _whySince(p, "billed")],
     ["Net billed", money(p.net_billed), (p.billed_gap ? `WIP report shows ${money(p.billed_gap)} more - Resync` : "QuickBooks invoices · after retainage"), p.billed_gap ? "pnl-kpi-warn" : ""],
     ["Net (live P&L)", money(p.net), p.net_pct != null ? `${(p.net_pct * 100).toFixed(1)}% of net billed · overhead ${p.overhead_basis || ""}` : "", num(p.net) < 0 ? "pnl-kpi-neg" : "pnl-kpi-pos"],
   ]);
@@ -3644,7 +3657,7 @@ async function openProjectPage(pn) {
   const plWrap = document.createElement("div"); plWrap.className = "ip-top pp-pnl"; plWrap.appendChild(buildPnlGroup(pn)); s1.appendChild(plWrap);   // 3 columns (owner: save vertical space)
   // ── 2. how we get funded ──
   const F = d.funding || {}, nx = F.next_draw;
-  const s2 = sec("How we get funded", `${d.draws.length} draw${d.draws.length === 1 ? "" : "s"} · GC owes ${money(d.draws.reduce((s, x) => s + num(x.ar_open), 0))}`);
+  const s2 = sec("How we get funded", `${d.draws.length} draw${d.draws.length === 1 ? "" : "s"} · GC owes ${money(d.draws.reduce((s, x) => s + num(x.ar_open), 0))} · ${srcText("Bill Tracker", syncedAt("sync-ap"), "loaded")} · ${srcText("QuickBooks invoices", loadedAt("AR (invoices)"), "loaded")}`);
   const unlock = document.createElement("div"); unlock.className = "pp-unlock" + (nx ? "" : " ok");
   if (nx) {
     const blk = F.blockers || [];
@@ -4548,6 +4561,20 @@ async function copyInvStatement() {
 // who the big clients are in Commercial vs Residential vs Multi Family, not just
 // one "biggest" overall. Click a client to jump to Invoices filtered to them.
 const CUST_DIV_ORDER = ["Commercial", "Residential", "Multi Family"];
+function _custForecastList(days, invs, expectedMs) {   // the invoices a Cash-in tile counts, with the date each is expected
+  const rows = invs.map(i => ({ i, ms: expectedMs(i) })).filter(x => x.ms != null && (x.ms - Date.now()) / 86400000 <= days && oiBal(x.i) > 0.005).sort((a, b) => a.ms - b.ms);
+  openRecord(`Cash-in within ${days} days`, `${rows.length} open invoices · projected from each client's average days-to-pay · not a QuickBooks figure`);
+  const body = $("#recordBody"); body.innerHTML = "";
+  const scroll = document.createElement("div"); scroll.className = "table-scroll"; scroll.style.padding = "0 18px 18px";
+  const t = document.createElement("table"); t.className = "grid";
+  t.innerHTML = "<thead><tr><th class='left'>Expected</th><th class='left'>Client</th><th class='left'>Project</th><th class='left'>Invoice</th><th class='left'>Invoiced</th><th class='right'>Open</th></tr></thead>";
+  const tb = document.createElement("tbody"); let tot = 0;
+  for (const { i, ms } of rows) { const tr = document.createElement("tr"); tr.style.cursor = "pointer"; tr.onclick = () => openInvoicePage(i);
+    tr.appendChild(leftText(fmtDateShort(new Date(ms).toISOString().slice(0, 10)))); tr.appendChild(leftText(i.customer || "–")); tr.appendChild(leftText(i.project_no || "–")); tr.appendChild(leftText(i.doc_number || "–")); tr.appendChild(leftText(fmtDateShort(i.txn_date)));
+    const oc = document.createElement("td"); oc.className = "right"; oc.appendChild(moneyCell(oiBal(i))); tr.appendChild(oc); tot += oiBal(i); tb.appendChild(tr); }
+  const tr = document.createElement("tr"); tr.className = "ag-total"; const td = document.createElement("td"); td.className = "left"; td.colSpan = 5; td.textContent = "Total expected"; tr.appendChild(td); const oc = document.createElement("td"); oc.className = "right"; oc.appendChild(moneyCell(tot)); tr.appendChild(oc); tb.appendChild(tr);
+  t.appendChild(tb); scroll.appendChild(t); body.appendChild(scroll);
+}
 function renderCustomers() {
   const invs = OI.invoices || [];
   const byDiv = new Map();               // division -> Map(client -> {open, n, oldest})
@@ -4584,8 +4611,16 @@ function renderCustomers() {
       const tiles = [["Open AR", money(total)], ["Clients", String(clients.size)]];
       for (const d of order) tiles.push([d, money(divOpen(d))]);       // per-division open AR (replaces the useless "biggest client")
       if (paySpeed.all_avg != null) tiles.push(["Cash-in ≤30d", money(f30), "fc"], ["≤60d", money(f60), "fc"], ["≤90d", money(f90), "fc"]);
+      const arSrc = srcText("QuickBooks AR", loadedAt("AR (invoices)"), "loaded");
       for (const [l, v, cls] of tiles) {
-        const k = el2("div", "kpi" + (cls ? " kpi-" + cls : "")); k.appendChild(el2("div", "k-label", l)); k.appendChild(el2("div", "k-value", v)); stats.appendChild(k); } } }
+        const k = el2("div", "kpi" + (cls ? " kpi-" + cls : "")); k.appendChild(el2("div", "k-label", l)); k.appendChild(el2("div", "k-value", v));
+        if (cls === "fc") {   // a PROJECTION, not a QuickBooks figure - say so, and show which invoices it counts
+          const days = parseInt((l.match(/(\d+)d/) || [])[1], 10) || 30;
+          k.appendChild(srcChip("projection · client pay pattern", `Each open invoice placed at its client's average days-to-pay (${paySpeed.all_avg != null ? Math.round(paySpeed.all_avg) + "d portfolio average" : "portfolio average"} when the client has no history). Click to see the invoices counted.`));
+          k.classList.add("kpi-click"); k.title = "Click to see the invoices this counts";
+          k.onclick = () => _custForecastList(days, invs, expectedMs);
+        } else k.appendChild(srcChip(arSrc, l === "Clients" ? "clients with an open invoice" : "open balance of the QuickBooks invoices loaded"));
+        stats.appendChild(k); } } }
   const NCOL = 5;
   const tb = buildHead("#custTable", [["Client", "left"], ["Open AR", "right"], ["Open invoices", "right"], ["Oldest due", "left"], ["Avg days to pay", "right"]]);
   if (!tb) return; tb.innerHTML = "";
@@ -5086,7 +5121,7 @@ function renderSales() {
   const S = SALES || {}, t = S.totals || {};
   const loaded = (S.customers || []).length > 0;
   $("#salesNote").textContent = loaded
-    ? `(${t.customers || 0} customers · ${t.touches || 0} touches logged)`
+    ? `(${t.customers || 0} customers · ${t.touches || 0} touches logged · Notion CRM${loadedAt("CRM (customers)") ? " loaded " + fmtDate(loadedAt("CRM (customers)"), true) : ""})`
     : "(no CRM data - run load_customers.py)";
 
   // ── KPI stats (clickable → filter/jump) ──
@@ -5538,9 +5573,14 @@ function renderPnl() {
   const tiles = [["Billed (gross)", money(comp.billed_gross)], ["Retainage held", money(comp.retainage)], ["Net billed", money(comp.billed)], ["Costs", money(comp.cost)],
     ["Overhead", money(comp.overhead)], ["Net", `${money(comp.net)} · ${pctTxt(comp.net_pct)}`, comp.net == null ? "" : (comp.net >= 0 ? "pos" : "neg")]];
   const tr = $("#pnlTotals"); tr.innerHTML = "";
+  const pnlSrcOf = l => /gross|retainage/i.test(l) ? [srcText("WIP master", meta.report_date, "report"), "the WIP master's billed-to-date / retainage columns"]
+    : /net billed/i.test(l) ? [srcText("QuickBooks invoices", loadedAt("AR (invoices)"), "loaded"), "every QuickBooks invoice on the active jobs, after retainage"]
+    : /cost/i.test(l) ? [srcText("QuickBooks costs", loadedAt("Costs (QBO)"), "loaded"), "QuickBooks cost lines summed by job (line amounts, never bill totals)"]
+    : /overhead/i.test(l) ? ["10% of contract (MFD 9%)", "the owner's overhead rule - a share of the contract, never of billed or cost"]
+    : ["net billed - costs - overhead", "actuals, no earned-revenue proration"];
   for (const [l, v, cls] of tiles) {
     const k = el2("div", "kpi" + (cls ? " pnl-kpi-" + cls : ""));
-    k.appendChild(el2("div", "k-label", l)); k.appendChild(el2("div", "k-value", v)); tr.appendChild(k);
+    k.appendChild(el2("div", "k-label", l)); k.appendChild(el2("div", "k-value", v)); const [st, how] = pnlSrcOf(l); k.appendChild(srcChip(st, how)); tr.appendChild(k);
   }
 
   // by division
@@ -5552,6 +5592,8 @@ function renderPnl() {
     row.appendChild(rightText(money(d.billed))); row.appendChild(rightText(money(d.cost)));
     row.appendChild(rightText(money(d.overhead))); row.appendChild(rightText(money(d.net)));
     const pt = document.createElement("td"); pt.className = d.net >= 0 ? "pos" : "neg"; pt.textContent = pctTxt(d.net_pct); row.appendChild(pt);
+    row.style.cursor = "pointer"; row.title = "Show this division's jobs below";
+    row.onclick = () => { const f = $("#pnlFDivision"); if (f) { f.value = f.value === d.division ? "" : d.division; renderPnl(); } };
     tb.appendChild(row);
   }
 
@@ -5634,6 +5676,7 @@ function renderAttention() {
     el.querySelector(".a-count").textContent = hits.length;
     el.querySelector(".a-label").textContent = rule.label;
     el.querySelector(".a-sub").textContent = hits.length ? money(total) : rule.hint;
+    { const sp = document.createElement("span"); sp.className = "a-src"; sp.textContent = srcText("WIP master", meta.report_date, "report"); el.appendChild(sp); }
     el.title = rule.hint + (hits.length ? " - click to filter the table" : "");
     if (hits.length) el.onclick = () => {
       activeRule = activeRule === rule.key ? null : rule.key;
@@ -5695,8 +5738,11 @@ function skeletonInto(host, n) {
   }
 }
 function loadedAt(feed) { return ((meta.freshness || {}).ledger || {})[feed] || null; }
+function syncedAt(src) { const v = ((meta.freshness || {}).sources || {})[src]; if (!v) return null; if (typeof v === "string") return v; return v.mtime || v.when || null; }   // e.g. "sync-ap" = the Bill Tracker workbook's file time
 
 function renderDivisions() {
+  { const h = document.querySelector("#widget-divisions .widget-head h2"); if (h) { let c = h.querySelector(".count"); if (!c) { c = document.createElement("span"); c.className = "count"; h.appendChild(c); }
+      c.textContent = " " + srcText("WIP master", meta.report_date, "report") + " - contract, costs and billed are the report's own columns; the QuickBooks cost total is on Cost mix and Margins & burn"; } }   // two costs on one page: say which is which
   const groups = {};
   for (const r of ALL) {
     const d = r.division || "-";
@@ -7512,7 +7558,7 @@ function renderAccounting() {
     return;
   }
   const all = ACCT.findings || [];
-  if (note) note.textContent = `${all.length} to fix`;
+  if (note) note.textContent = `${all.length} to fix · Bill Tracker audits${syncedAt("sync-ap") ? " · synced " + fmtDate(syncedAt("sync-ap"), true) : ""}`;
   const counts = ACCT.counts || {};
   // stat tiles: total + per themed group
   const groups = {};

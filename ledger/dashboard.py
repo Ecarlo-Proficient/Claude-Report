@@ -196,7 +196,7 @@ def _project_pnl(con, proj: str) -> dict:
     proj = (proj or "").strip().upper()
     row = con.execute(
         "SELECT project_no, division, total_contract_price tcp, percent_complete pc, "
-        "costs_to_date ctd, estimated_total_costs etc, billed_to_date btd, retainage_held ret "
+        "costs_to_date ctd, estimated_total_costs etc, billed_to_date btd, retainage_held ret, report_date rd "
         "FROM v_wip_latest WHERE project_no = ?",
         (proj,)).fetchone()
     div = (row["division"] if row else None) or ("Multi Family" if proj.startswith("MFD")
@@ -225,6 +225,15 @@ def _project_pnl(con, proj: str) -> dict:
         c["prefix"], c["number"], c["name"] = m["prefix"], m["number"], m["description"]
         c["job_type"] = job_type_name(m["prefix"]) if m["prefix"] else None
     billed = con.execute("SELECT COALESCE(SUM(amount),0) a FROM billing_event WHERE project_no = ?", (proj,)).fetchone()["a"] or 0
+    # WHY QuickBooks and the WIP report differ (owner: "mistrusting on where numbers are pulled from"): the WIP is as of
+    # its report date, QuickBooks is live - so the lines dated AFTER the report date are the honest first explanation.
+    rd = (row["rd"] if row else None)
+    since = {"report_date": rd, "cost_lines": 0, "cost_amount": 0.0, "invoices": 0, "billed_amount": 0.0,
+             "wip_cost": (row["ctd"] if row else None)}
+    if rd:
+        c1 = con.execute("SELECT COUNT(*) n, COALESCE(SUM(amount),0) a FROM cost_line WHERE project_no = ? AND txn_date > ?", (proj, rd)).fetchone()
+        b1 = con.execute("SELECT COUNT(*) n, COALESCE(SUM(amount),0) a FROM billing_event WHERE project_no = ? AND txn_date > ?", (proj, rd)).fetchone()
+        since.update(cost_lines=c1["n"], cost_amount=round(c1["a"], 2), invoices=b1["n"], billed_amount=round(b1["a"], 2))
     # Every AR invoice (draw) this project has billed - the make-up of billed-to-date, oldest first.
     invoices = [dict(r) for r in con.execute(
         "SELECT doc_number, qbo_txn_id, amount, balance, txn_date, status, paid_date, due_date, memo "
@@ -249,6 +258,7 @@ def _project_pnl(con, proj: str) -> dict:
         "proj": proj, "division": div,
         "contract": contract, "pct_complete": pct, "earned": earned, "billed": billed,
         "billed_gross": gross, "retainage": ret, "net_billed": net_billed, "billed_src": billed_src, "billed_gap": billed_gap,
+        "since_wip": since,
         "invoices_loaded": billed,
         "cost": cost, "overhead": overhead,
         "overhead_basis": "9% of contract (MFD)" if is_mfd else "10% of contract",
