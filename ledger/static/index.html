@@ -36,7 +36,7 @@
     <div class="tab-page" data-tab="overview">
 
     <!-- ── Data freshness + one-click Resync (was My view) ──────────── -->
-    <section class="widget">
+    <section class="widget" id="widget-fresh">
       <div class="widget-head">
         <h2>Data freshness <span class="count" id="metaLine">loading…</span><span class="count" id="homeFreshNote"></span></h2>
         <span class="fresh-actions">
@@ -52,8 +52,8 @@
     </section>
 
     <!-- ── Action items (was My view) ───────────────────────────────── -->
-    <section class="widget">
-      <div class="widget-head"><h2>Action items <span class="count">— click to jump in</span></h2></div>
+    <section class="widget" id="widget-actions">
+      <div class="widget-head"><h2>Action items <span class="count">- click to jump in</span></h2></div>
       <div class="action-row" id="homeActions"></div>
     </section>
 
@@ -120,6 +120,7 @@
       </div>
     </section>
 
+    <div class="ov-hidden" id="ovHidden" hidden></div>
     </div><!-- /tab: overview -->
 
     <!-- ══════════════ TAB: HEALTH (company-health metric layer) ══════════════
@@ -173,7 +174,7 @@
           with the project-pnl Excel. Active jobs only (Closed/Complete excluded). Click a row for the full P&amp;L.</p>
       </section>
       <section class="widget">
-        <div class="widget-head"><h2>By division <span class="count">— where the margin is</span></h2></div>
+        <div class="widget-head"><h2>By division <span class="count">- where the margin is</span></h2></div>
         <div class="table-scroll">
           <table class="grid" id="pnlDivTable"><thead></thead><tbody></tbody></table>
         </div>
@@ -256,7 +257,7 @@
 
     <div class="tab-page" data-tab="costs" hidden>
       <section class="widget">
-        <div class="widget-head"><h2>Cost type ▸ job type <span class="count">— click a code to see every job that spent it</span></h2></div>
+        <div class="widget-head"><h2>Cost type ▸ job type <span class="count">- click a code to see every job that spent it</span></h2></div>
         <div class="table-scroll">
           <table class="grid clickable" id="costTreeTable"><thead></thead><tbody></tbody></table>
         </div>
@@ -588,13 +589,13 @@
           Attribution is Notion's own “Last edited by”. Update statuses/notes in Notion, not here.</p>
       </section>
       <section class="widget">
-        <div class="widget-head"><h2>Pipeline <span class="count">— customers by stage</span></h2></div>
+        <div class="widget-head"><h2>Pipeline <span class="count">- customers by stage</span></h2></div>
         <div class="table-scroll">
           <table class="grid clickable" id="salesFunnel"><thead></thead><tbody></tbody></table>
         </div>
       </section>
       <section class="widget">
-        <div class="widget-head"><h2>Activity by rep <span class="count">— who worked what (by last editor) · click a rep</span></h2></div>
+        <div class="widget-head"><h2>Activity by rep <span class="count">- who worked what (by last editor) · click a rep</span></h2></div>
         <div class="table-scroll">
           <table class="grid clickable" id="salesRepTable"><thead></thead><tbody></tbody></table>
         </div>
@@ -909,13 +910,9 @@
       </div>
 
       <div class="set-group">
-        <h3>Widgets</h3>
-        <label class="chk"><input type="checkbox" id="wKpis"> Portfolio KPIs</label>
-        <label class="chk"><input type="checkbox" id="wAttention"> Needs attention</label>
-        <label class="chk"><input type="checkbox" id="wCosts"> Cost mix</label>
-        <label class="chk"><input type="checkbox" id="wMargins"> Margins &amp; burn</label>
-        <label class="chk"><input type="checkbox" id="wDivisions"> Division rollup</label>
-        <label class="chk"><input type="checkbox" id="wProjects"> Projects table</label>
+        <h3>Overview widgets</h3>
+        <p class="set-hint">Tick what shows; pick a width (S = a third, M = half, L = two thirds, Full). The same controls sit on each widget's header.</p>
+        <div id="widgetChooser" class="col-chooser widget-chooser"></div>
       </div>
 
       <div class="set-group">

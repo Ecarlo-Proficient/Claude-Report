@@ -62,9 +62,24 @@ const LS_KEY = "proficient-ledger-settings-v1";
 const DEFAULTS = {
   theme: "light", accent: "#3E7A5C", font: "system", fontSize: 15,   // light by default (owner 2026-09-02); a saved choice still wins   // 15px base (owner 2026-09-01: older Excel readers)
   density: "comfortable", width: "medium",
-  widgets: { kpis: true, attention: true, ap: true, costs: true, margins: true, divisions: true, projects: true },
+  widgets: { fresh: true, actions: true, kpis: true, attention: true, ap: true, costs: true, margins: true, divisions: true, projects: true },
+  sizes: {},   // widget key -> s | m | l | xl (a third / half / two thirds / full width of the Overview board); blank = the widget's default
   columns: COLUMNS.filter(c => c.always || c.def).map(c => c.key),
 };
+// The Overview is a BOARD (owner 2026-09-08: the mission-control layout): every widget is a card on a
+// 12-column grid, sized S/M/L/Full and shown or hidden per the owner's choice, both remembered here.
+const WIDGET_DEFS = [
+  { key: "fresh", id: "widget-fresh", label: "Data freshness", size: "l" },
+  { key: "actions", id: "widget-actions", label: "Action items", size: "s" },
+  { key: "kpis", id: "widget-kpis", label: "Portfolio", size: "xl" },
+  { key: "attention", id: "widget-attention", label: "Needs attention", size: "m" },
+  { key: "costs", id: "widget-costs", label: "Cost mix", size: "m" },
+  { key: "margins", id: "widget-margins", label: "Margins & burn", size: "l" },
+  { key: "divisions", id: "widget-divisions", label: "By division", size: "s" },
+  { key: "projects", id: "widget-projects", label: "Projects", size: "xl" },
+];
+const WIDGET_SIZES = [["s", "S", "a third"], ["m", "M", "half"], ["l", "L", "two thirds"], ["xl", "Full", "full width"]];
+function widgetSize(key) { const d = WIDGET_DEFS.find(x => x.key === key); return (settings.sizes || {})[key] || (d ? d.size : "m"); }
 
 // Lien state → urgency css class (most urgent first), for the AP watchlist.
 const LIEN_CLASS = {
@@ -115,7 +130,7 @@ function baseDefaults() {
   try {
     const d = JSON.parse(localStorage.getItem(LS_DEF));
     if (d) return { ...structuredClone(DEFAULTS), ...d,
-                    widgets: { ...DEFAULTS.widgets, ...(d.widgets || {}) },
+                    widgets: { ...DEFAULTS.widgets, ...(d.widgets || {}) }, sizes: { ...(d.sizes || {}) },
                     columns: Array.isArray(d.columns) && d.columns.length ? d.columns : DEFAULTS.columns };
   } catch { /* ignore */ }
   return structuredClone(DEFAULTS);
@@ -126,7 +141,7 @@ function loadSettings() {
     const s = JSON.parse(localStorage.getItem(LS_KEY));
     if (!s) return base;
     return { ...base, ...s,
-             widgets: { ...base.widgets, ...(s.widgets || {}) },
+             widgets: { ...base.widgets, ...(s.widgets || {}) }, sizes: { ...(base.sizes || {}), ...(s.sizes || {}) },
              columns: Array.isArray(s.columns) && s.columns.length ? s.columns : base.columns };
   } catch { return base; }
 }
@@ -148,13 +163,45 @@ function applySettings() {
   root.style.setProperty("--row-pad", settings.density === "compact" ? "5px 10px" : "10px 12px");
   root.style.setProperty("--maxw", settings.width === "boxed" ? "1180px"
     : settings.width === "medium" ? "1500px" : "100%");   // medium sits between boxed and full
-  // widgets
-  $("#widget-kpis").hidden      = !settings.widgets.kpis;
-  $("#widget-attention").hidden = !settings.widgets.attention;
-  $("#widget-costs").hidden     = !settings.widgets.costs;
-  $("#widget-margins").hidden   = !settings.widgets.margins;
-  $("#widget-divisions").hidden = !settings.widgets.divisions;
-  $("#widget-projects").hidden  = !settings.widgets.projects;
+  // Overview board: show / hide + width per widget, and the header tools that change them
+  for (const d of WIDGET_DEFS) {
+    const el = document.getElementById(d.id); if (!el) continue;
+    el.hidden = settings.widgets[d.key] === false;
+    const sz = widgetSize(d.key); el.dataset.size = sz;
+    _widgetTools(el, d);
+    el.querySelectorAll(".wtools .wsz").forEach(b => b.classList.toggle("on", b.dataset.sz === sz));
+  }
+  _renderOvHidden();
+}
+function _widgetTools(el, d) {   // S M L Full + hide, on the widget header (built once, state synced by applySettings)
+  const head = el.querySelector(".widget-head"); if (!head || head.querySelector(".wtools")) return;
+  const tools = document.createElement("span"); tools.className = "wtools"; tools.title = "Width of this card on the board";
+  for (const [k, lbl, words] of WIDGET_SIZES) { const b = document.createElement("button"); b.type = "button"; b.className = "wsz"; b.dataset.sz = k; b.textContent = lbl; b.title = `${words} of the board`;
+    b.onclick = (e) => { e.stopPropagation(); settings.sizes = settings.sizes || {}; settings.sizes[d.key] = k; saveSettings(); applySettings(); }; tools.appendChild(b); }
+  const x = document.createElement("button"); x.type = "button"; x.className = "whide"; x.textContent = "×"; x.title = `Hide ${d.label} (bring it back from the strip at the bottom, or Settings)`;
+  x.onclick = (e) => { e.stopPropagation(); settings.widgets[d.key] = false; saveSettings(); applySettings(); if (typeof renderWidgetChooser === "function") renderWidgetChooser(); toast(`${d.label} hidden`); };
+  tools.appendChild(x); head.appendChild(tools);
+}
+function _renderOvHidden() {   // the hidden widgets, one "+ name" chip each, so nothing is ever lost
+  const host = document.getElementById("ovHidden"); if (!host) return; host.innerHTML = "";
+  const hidden = WIDGET_DEFS.filter(d => settings.widgets[d.key] === false);
+  host.hidden = !hidden.length; if (!hidden.length) return;
+  const lab = document.createElement("span"); lab.className = "dim"; lab.textContent = "Hidden:"; host.appendChild(lab);
+  for (const d of hidden) { const b = document.createElement("button"); b.type = "button"; b.className = "btn small subtle"; b.textContent = "+ " + d.label; b.title = "Show this widget again";
+    b.onclick = () => { settings.widgets[d.key] = true; saveSettings(); applySettings(); if (typeof renderWidgetChooser === "function") renderWidgetChooser(); }; host.appendChild(b); }
+}
+function renderWidgetChooser() {   // Settings > Overview widgets: tick + width per widget
+  const host = document.getElementById("widgetChooser"); if (!host) return; host.innerHTML = "";
+  for (const d of WIDGET_DEFS) {
+    const row = document.createElement("label"); row.className = "wc-row";
+    const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = settings.widgets[d.key] !== false;
+    cb.onchange = () => { settings.widgets[d.key] = cb.checked; saveSettings(); applySettings(); };
+    const nm = document.createElement("span"); nm.className = "wc-name"; nm.textContent = d.label;
+    const sel = document.createElement("select"); sel.className = "wc-size";
+    for (const [k, lbl, words] of WIDGET_SIZES) { const o = document.createElement("option"); o.value = k; o.textContent = `${lbl} · ${words}`; sel.appendChild(o); }
+    sel.value = widgetSize(d.key); sel.onchange = () => { settings.sizes = settings.sizes || {}; settings.sizes[d.key] = sel.value; saveSettings(); applySettings(); };
+    row.appendChild(cb); row.appendChild(nm); row.appendChild(sel); host.appendChild(row);
+  }
 }
 
 // ── Formatting ────────────────────────────────────────────────────────────
@@ -3645,7 +3692,7 @@ function _renderPpDraws() {
       const vt = document.createElement("td"); vt.className = "left"; vt.colSpan = COLS - 1;
       const cell = document.createElement("div"); cell.className = "bg-cell"; const leftP = document.createElement("span"); leftP.className = "bg-left";
       const caret = document.createElement("span"); caret.className = "bg-caret"; caret.textContent = vopen ? "▾ " : "▸ "; const k = document.createElement("span"); k.className = "sg-key"; k.textContent = v; leftP.appendChild(caret); leftP.appendChild(k); cell.appendChild(leftP);
-      bandMetrics(cell, [[money(tot), "total"], [list.length, "bills"], [`${paidCt}/${list.length}`, "paid", paidCt === list.length ? "ok" : "due"], [owed > 0.005 ? money(owed) : "–", "to pay", owed > 0.005 ? "neg" : ""]]);
+      bandMetrics(cell, [[money(tot), "total"], [list.length, "bills"], [`${paidCt}/${list.length}${paidCt === list.length ? " ✓" : ""}`, "paid", paidCt === list.length ? "ok" : "due"], [owed > 0.005 ? money(owed) : "–", "to pay", owed > 0.005 ? "neg" : ""]]);
       vt.appendChild(cell); gtr.appendChild(vt);
       gtr.onclick = (e) => { if (e.target.closest("input")) return; if (_pp.openV.has("*")) { _pp.openV = new Set(); for (const d2 of _pp.d.draws) for (const s2 of ["materials", "labor"]) for (const b2 of (s2 === "labor" ? (d2.sub_bills || []) : d2.bills)) _pp.openV.add(`${d2.matched_invoice}|${s2}|${_pp.sort}|${keyOf(b2)}`); }
         if (_pp.openV.has(vkey)) _pp.openV.delete(vkey); else _pp.openV.add(vkey); _renderPpDraws(); };
@@ -3791,14 +3838,14 @@ function _renderIpBills() {
     for (const v of vendors) {
       const key = "v:" + v.vendor, open = _ip.open.has(key);
       const tot = v.bills.reduce((s, b) => s + num(b.amount), 0), opn = v.bills.reduce((s, b) => s + num(b.open), 0), paidCt = v.bills.filter(b => b.pay_date).length;
-      const paidAmt = v.bills.reduce((s, b) => s + (b.pay_date ? num(b.amount) : Math.max(0, num(b.amount) - num(b.open))), 0);
       const gtr = document.createElement("tr"); gtr.className = "bill-group"; gtr.style.cursor = "pointer"; gtr.title = open ? "Click to collapse" : "Click to expand";
       const gtd = document.createElement("td"); gtd.colSpan = 9;
       const cell = document.createElement("div"); cell.className = "bg-cell";
       const caret = document.createElement("span"); caret.className = "bg-caret"; caret.textContent = open ? "▾ " : "▸ ";
       const k = document.createElement("span"); k.className = "bg-key"; k.textContent = v.vendor;
       const leftV = document.createElement("span"); leftV.className = "bg-left"; leftV.appendChild(caret); leftV.appendChild(k); cell.appendChild(leftV);
-      bandMetrics(cell, [[`${paidCt}/${v.bills.length}`, "paid", paidCt === v.bills.length ? "ok" : "due"], [money(paidAmt), "paid $"], [money(tot), "total"], [opn > 0.005 ? money(opn) : "–", "still owed", opn > 0.005 ? "neg" : ""]]);
+      const allPaid = paidCt === v.bills.length;
+      bandMetrics(cell, [[`${paidCt}/${v.bills.length}${allPaid ? " ✓" : ""}`, "paid", allPaid ? "ok" : "due"], [opn > 0.005 ? money(opn) : "–", "still owed", opn > 0.005 ? "neg" : ""], [money(tot), "total"]]);
       gtd.appendChild(cell); gtr.appendChild(gtd);
       gtr.onclick = () => { if (_ip.open.has(key)) _ip.open.delete(key); else _ip.open.add(key); _renderIpBills(); };
       tbody.appendChild(gtr);
@@ -5170,15 +5217,15 @@ function _wipCond(kind, r, key) {
   const contract = Math.max(num(r.total_contract_price), 1);
   if (kind === "gp") {
     const v = r.gross_profit_pct; if (v == null || v === "") return null;
-    if (v < 0.05) return { bg: _mix("var(--neg)", 20), fg: "var(--neg)", bold: true, title: "Margin very thin / negative" };
+    if (v < 0.05) return { bg: _mix("var(--neg)", 20), fg: "var(--neg-text)", bold: true, title: "Margin very thin / negative" };
     if (v < 0.12) return { bg: _mix("#b8860b", 18), title: "Below-target margin" };
-    if (v > 0.30) return { bg: _mix("#b8860b", 20), fg: "#8a6508", title: "Unusually high GP% - verify for a missing cost" };
+    if (v > 0.30) return { bg: _mix("#b8860b", 20), fg: "var(--warn-text)", title: "Unusually high GP% - verify for a missing cost" };
     return { bg: _mix("var(--pos)", 15), title: "Healthy margin" };
   }
   if (kind === "pctbar") {
     const v = r.percent_complete; if (v == null || v === "") return null;
     const p = Math.max(0, Math.min(100, v * 100));
-    if (v > 1.0005) return { bar: 100, bg: _mix("var(--neg)", 18), fg: "var(--neg)", bold: true,
+    if (v > 1.0005) return { bar: 100, bg: _mix("var(--neg)", 18), fg: "var(--neg-text)", bold: true,
                              title: (v * 100).toFixed(1) + "% - costs to date exceed the ETC (over budget)" };
     return { bar: p, title: p.toFixed(1) + "% complete" };
   }
@@ -5190,24 +5237,24 @@ function _wipCond(kind, r, key) {
   if (kind === "under") {          // underbilled = financing the job = red flag
     const v = num(r.underbillings); if (v <= 0) return null;
     const ratio = v / contract, a = 8 + Math.min(24, ratio * 140);
-    return { bg: _mix("var(--neg)", a), fg: ratio > 0.08 ? "var(--neg)" : null, bold: ratio > 0.08,
+    return { bg: _mix("var(--neg)", a), fg: ratio > 0.08 ? "var(--neg-text)" : null, bold: ratio > 0.08,
       title: "Earned ahead of billed - unbilled work you are financing" };
   }
   if (kind === "borrow") {         // pure job borrow = cash the job pulls to finish
     const v = num(r.pure_job_borrow); if (v <= 0) return null;
     const ratio = v / contract;
     if (ratio < 0.05) return { bg: _mix("#b8860b", 16), title: "This job borrows some cash to finish" };
-    return { bg: _mix("var(--neg)", 8 + Math.min(22, ratio * 130)), fg: "var(--neg)", bold: true,
+    return { bg: _mix("var(--neg)", 8 + Math.min(22, ratio * 130)), fg: "var(--neg-text)", bold: true,
       title: "Cost to complete exceeds what is left to bill - a cash drain" };
   }
   if (kind === "future") {         // remaining profit to earn
     const v = r.future_profit_to_earn; if (v == null || v === "") return null;
-    if (v < 0) return { bg: _mix("var(--neg)", 20), fg: "var(--neg)", bold: true, title: "Expected profit eroded below what is already earned" };
+    if (v < 0) return { bg: _mix("var(--neg)", 20), fg: "var(--neg-text)", bold: true, title: "Expected profit eroded below what is already earned" };
     if (v > 0) return { bg: _mix("var(--pos)", 10), title: "Profit still ahead to earn" };
     return null;
   }
   if (kind === "neg0") {           // any money col that is a red flag when negative
-    if (num(r[key]) < 0) return { bg: _mix("var(--neg)", 20), fg: "var(--neg)", bold: true, title: "Negative - losing money to date" };
+    if (num(r[key]) < 0) return { bg: _mix("var(--neg)", 20), fg: "var(--neg-text)", bold: true, title: "Negative - losing money to date" };
     return null;
   }
   return null;
@@ -5378,7 +5425,7 @@ function renderPnl() {
     // P&L updated = when this project's project-pnl Excel was last generated (owner 2026-08-19).
     const upd = document.createElement("td"); upd.className = "right"; upd.style.color = "var(--text-dim)"; upd.style.fontSize = ".88em";
     if (r.pnl_mtime) { upd.textContent = timeAgo(r.pnl_mtime); upd.title = "P&L Excel generated " + fmtDate(r.pnl_mtime, true); }
-    else { upd.textContent = "not generated"; upd.style.opacity = ".55"; }
+    else { upd.textContent = "not generated"; upd.classList.add("dim"); }   // dim colour, not a 55% ghost (AA audit 2026-09-08)
     row.appendChild(upd);
     tbody.appendChild(row);
     if (open) {
@@ -6006,12 +6053,7 @@ function syncSettingsUI() {
   $("#fsVal").textContent = settings.fontSize + "px";
   $("#setDensity").value = settings.density;
   $("#setWidth").value = settings.width;
-  $("#wKpis").checked = settings.widgets.kpis;
-  $("#wAttention").checked = settings.widgets.attention;
-  $("#wCosts").checked = settings.widgets.costs;
-  $("#wMargins").checked = settings.widgets.margins;
-  $("#wDivisions").checked = settings.widgets.divisions;
-  $("#wProjects").checked = settings.widgets.projects;
+  renderWidgetChooser();
   const cc = $("#colChooser"); cc.innerHTML = "";
   for (const c of COLUMNS) {
     const lab = document.createElement("label");
@@ -6036,12 +6078,6 @@ function wireSettings() {
   on("#setFontSize", "input", e => { settings.fontSize = +e.target.value; $("#fsVal").textContent = settings.fontSize + "px"; saveSettings(); applySettings(); });
   on("#setDensity", "change", e => { settings.density = e.target.value; saveSettings(); applySettings(); });
   on("#setWidth", "change", e => { settings.width = e.target.value; saveSettings(); applySettings(); });
-  on("#wKpis", "change", e => { settings.widgets.kpis = e.target.checked; saveSettings(); applySettings(); });
-  on("#wAttention", "change", e => { settings.widgets.attention = e.target.checked; saveSettings(); applySettings(); });
-  on("#wCosts", "change", e => { settings.widgets.costs = e.target.checked; saveSettings(); applySettings(); });
-  on("#wMargins", "change", e => { settings.widgets.margins = e.target.checked; saveSettings(); applySettings(); });
-  on("#wDivisions", "change", e => { settings.widgets.divisions = e.target.checked; saveSettings(); applySettings(); });
-  on("#wProjects", "change", e => { settings.widgets.projects = e.target.checked; saveSettings(); applySettings(); });
   on("#btnReset", "click", () => { settings = baseDefaults(); saveSettings(); applySettings(); syncSettingsUI(); render(); toast("Reset to your default"); });
   on("#btnSetDefault", "click", () => { localStorage.setItem(LS_DEF, JSON.stringify(settings)); toast("Saved as your default view"); });
 }
