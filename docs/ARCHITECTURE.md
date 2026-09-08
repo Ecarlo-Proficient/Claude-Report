@@ -982,6 +982,10 @@ slab build, not an extra): a scope-based job gets
 **one sheet per invoice** (costs cut at each invoice date, running totals through it) plus a
 `Next Invoice` accumulator, and no post-invoice cutoff (2026-09-08). `one-offs/rp_stage_scan.py`
 classifies every RP job the same way into `<CompanyHealth>/RP Invoicing Stages.xlsx`.
+`one-offs/invoice_project_audit.py` (+ the `/invoice-audit` command in `.claude/commands/`) lists
+invoices billed to a customer other than the project their memo names, read-only, into
+`<CompanyHealth>/Invoices Off Project.xlsx` - the RP P&L sweeps such parent-billed invoices in by
+memo, every other reader (WIP billed, ledger) misses them until they are re-pointed in QBO.
 
 project-pnl reads the WIP master's **Test-Master** tab (the readers' unified MFD+CP+RP
 table) to pre-fill **Original Contract / ETC + Approved COs** (original = total − COs;
