@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """
-dashboard.py — a local web dashboard over the project ledger.
+dashboard.py - a local web dashboard over the project ledger.
 
 Reads the SQLite ledger (READ-ONLY) and serves a single-page dashboard at
 http://127.0.0.1:<port>. No terminal, no SQL: portfolio KPIs, per-division
 rollups, a searchable / sortable projects table, click-into-a-job detail, and
-one-click copy + CSV export. Appearance — theme, font, size, density, content
-width, which widgets and which columns show — is customizable in the UI and
+one-click copy + CSV export. Appearance - theme, font, size, density, content
+width, which widgets and which columns show - is customizable in the UI and
 saved in the browser (localStorage), per person.
 
 SAFETY
   * Reads open the database READ-ONLY (SQLite mode=ro). The ONLY writes are the owner's
     own marks, each to its own tiny overlay table (never to the mirrored source tables):
     waiver (draw waivers) and bill_mark (lien tags → mirrored to the workbook on sync-ap).
-  * The server binds to 127.0.0.1 only — it is not exposed on the network.
+  * The server binds to 127.0.0.1 only - it is not exposed on the network.
 
 USAGE
   python3 ledger/dashboard.py                       # start + open your browser
@@ -81,7 +81,7 @@ CONTENT_TYPES = {
 # ── P&L link (project-pnl) ──────────────────────────────────────────────────
 # The dashboard can OPEN an existing per-project P&L and, on an explicit owner
 # confirm, RUN project-pnl to (re)generate it. Generation shells out to the tool's
-# own CLI (run_pnl.sh) — a subprocess, never an import (tools never import tools).
+# own CLI (run_pnl.sh) - a subprocess, never an import (tools never import tools).
 # QBO stays read-only inside project-pnl; the ONE data write (the .xlsx) is gated
 # behind the UI confirm + a confirm flag on the request. Logs land under
 # ~/Library/Logs/Proficient/ (never inside the repo).
@@ -99,9 +99,9 @@ _LIEN_FOLDER = paths.get_path("LIEN_FOLDER",
 
 def _os_open(path: str):
     """Open a file/folder in the host OS file manager. Cross-platform so the same
-    dashboard works on Mac OR Windows — the LOCAL server opens it with the native
+    dashboard works on Mac OR Windows - the LOCAL server opens it with the native
     command, so the browser never has to handle smb:// or \\\\server paths. Returns
-    None on success, an error string otherwise. Open-only — never executes."""
+    None on success, an error string otherwise. Open-only - never executes."""
     system = platform.system()
     try:
         if system == "Darwin":
@@ -192,7 +192,7 @@ _OVERHEAD_MFD_COST = 0.09     # MFD view: 9% of the contract
 
 
 def _project_pnl(con, proj: str) -> dict:
-    """A live per-project P&L assembled from the ledger spine — no Excel needed."""
+    """A live per-project P&L assembled from the ledger spine - no Excel needed."""
     proj = (proj or "").strip().upper()
     row = con.execute(
         "SELECT project_no, division, total_contract_price tcp, percent_complete pc, "
@@ -260,7 +260,7 @@ def _project_pnl(con, proj: str) -> dict:
 
 def _portfolio_pnl(con) -> dict:
     """Company P&L: every ACTIVE job's live P&L + division and company totals.
-    Active = WIP status 'Active' OR NULL (MFD — Test-Master carries no STATUS column,
+    Active = WIP status 'Active' OR NULL (MFD - Test-Master carries no STATUS column,
     so its jobs are active by construction); Closed/Complete are excluded. Same
     per-project math as _project_pnl, batched into 3 aggregate reads."""
     wip = list(con.execute(
@@ -363,7 +363,7 @@ def _pnl_wait(proj: str) -> None:
         j["state"] = "done" if rc == 0 else "error"
         j["rc"] = rc
         if rc != 0:
-            j["detail"] = f"exit {rc} — see {j['log']}"
+            j["detail"] = f"exit {rc} - see {j['log']}"
 
 
 # ── the ledger's CONTROL PLANE: a pipeline registry ────────────────────────
@@ -885,7 +885,7 @@ def _fetch_costs(con) -> dict:
             {"code": r["code"], "cost_code": r["cost_code"], "actual": r["actual"], "lines": r["lines"]})
     out["by_project_code"] = pc
 
-    # grouped: cost TYPE = parent, job TYPE = sub — the JobTread model (material
+    # grouped: cost TYPE = parent, job TYPE = sub - the JobTread model (material
     # links to ONE cost-type parent; the job-type sub shows cost-to-budget).
     from shared.qbo_costs import cost_code_meta, job_type_name
     groups: dict = {}
@@ -893,7 +893,7 @@ def _fetch_costs(con) -> dict:
         if c["cost_code"]:
             m = cost_code_meta(c["cost_code"])
             parent = m["description"] or c["cost_code"]
-            sub = job_type_name(m["prefix"]) or (m["prefix"] or "—")
+            sub = job_type_name(m["prefix"]) or (m["prefix"] or "–")
         else:                                   # account-based line: no job-type split
             parent = c["code"]
             sub = "(account)"
@@ -910,7 +910,7 @@ def _fetch_costs(con) -> dict:
     by_type.sort(key=lambda g: -(g["actual"] or 0))
     out["by_cost_type"] = by_type
 
-    # by vendor — the Vendors page (who we pay the most, subs vs suppliers)
+    # by vendor - the Vendors page (who we pay the most, subs vs suppliers)
     vend = []
     for r in con.execute(
             "SELECT vendor, SUM(amount) spend, COUNT(*) lines, "
@@ -920,7 +920,7 @@ def _fetch_costs(con) -> dict:
             "GROUP BY vendor ORDER BY spend DESC"):
         vend.append({"vendor": r["vendor"], "spend": r["spend"], "lines": r["lines"],
                      "jobs": r["jobs"], "sub_spend": r["sub_spend"]})
-    # vendor TYPE — Sub (labor) vs Supplier: <material> — from each vendor's cost mix.
+    # vendor TYPE - Sub (labor) vs Supplier: <material> - from each vendor's cost mix.
     mix: dict = {}
     for r in con.execute("SELECT vendor, cost_code, account, SUM(amount) amt FROM cost_line "
                          "WHERE vendor IS NOT NULL AND vendor <> '' GROUP BY vendor, cost_code, account"):
@@ -953,7 +953,7 @@ def _fetch_costs(con) -> dict:
 
 def _freshness(con) -> dict:
     """When each feed last landed (ledger loaded_at) + when each SOURCE sync wrote
-    its file (mtime) — the owner's "is my data current?" strip."""
+    its file (mtime) - the owner's "is my data current?" strip."""
     import os
     out = {"ledger": {}, "sources": {}}
     for tbl, key in (("wip_snapshot", "WIP"), ("ap_bill_line", "AP (Bill Tracker)"),
@@ -1015,7 +1015,7 @@ def _bill_paid(b: dict) -> bool:
 
 
 def _waiver_key(mi, vendor, bill_ref) -> str:
-    """Deterministic key for a bill's waiver — survives ap_bill_line reloads."""
+    """Deterministic key for a bill's waiver - survives ap_bill_line reloads."""
     raw = f"{mi or ''}|{vendor or ''}|{bill_ref or ''}"
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
 
@@ -1161,14 +1161,14 @@ def _fetch_accounting_audits() -> dict:
     return out
 
 
-# race-through stages, in worklist priority — Ready-to-turn-in first (all bills
+# race-through stages, in worklist priority - Ready-to-turn-in first (all bills
 # paid → turn it in to unlock the next draw), then pay vendors, then awaiting GC.
 # A draw is "done" (green) the moment every bill is PAID; unconditional waivers are
 # tracked per bill (the checkboxes) for the owner's records but no longer gate green.
 # Vendors that must NOT hold a draw in "Pay vendors" (the owner 2026-08-28).
 # The pump companies invoice on their own cycle and are paid outside the draw,
 # so an open pump bill was parking otherwise-finished draws in the wrong stage.
-# Their bills STILL SHOW on the draw and still count in the money — they just
+# Their bills STILL SHOW on the draw and still count in the money - they just
 # don't gate it. Matched tightly: "JD Core Construction" and "CORE SUPPLY EAST"
 # are different vendors and must not be caught.
 _NON_GATING_VENDOR_RE = re.compile(
@@ -1195,7 +1195,7 @@ def _gates_stage(vendor: str) -> bool:
     return not _NON_GATING_VENDOR_RE.match(vendor or "")
 
 
-_STAGE_ORDER = {"Ready to turn in": 0, "Fund in — pay vendors": 1,
+_STAGE_ORDER = {"Ready to turn in": 0, "Fund in - pay vendors": 1,
                 "Awaiting GC funding": 2, "All paid": 3, "No draw yet": 5}
 
 # Subs (1099 labor) are NOT on the Bill Tracker display sheets, so they never reach ap_bill_line or
@@ -1235,13 +1235,13 @@ def _fetch_draws(con, limit: int = 100) -> dict:
             "MAX(gc_paid_date) gc, MAX(pay_date) pd, MAX(bill_date) bd, MAX(invoice_no) invoice_no, "
             "MAX(qbo_link) qbo_link "
             "FROM ap_bill_line WHERE matched_invoice IS NOT NULL AND matched_invoice <> '' "
-            # RP isn't draws — RP bills at completion / milestones, not formal draws (owner).
-            "AND COALESCE(project_no,'') NOT LIKE 'RP%' AND matched_invoice NOT LIKE '%— RP%' "
+            # RP isn't draws - RP bills at completion / milestones, not formal draws (owner).
+            "AND COALESCE(project_no,'') NOT LIKE 'RP%' AND matched_invoice NOT LIKE '%— RP%' AND matched_invoice NOT LIKE '%- RP%' "
             "GROUP BY matched_invoice, vendor, bill_ref").fetchall()
     except sqlite3.OperationalError:
         return {"draws": [], "total": 0}
     wmap = {w["waiver_key"]: w["received"] for w in con.execute("SELECT waiver_key, received FROM waiver")}
-    # AR side (money IN) from the Invoice Tracker load — joined by Invoice #.
+    # AR side (money IN) from the Invoice Tracker load - joined by Invoice #.
     bmap: dict = {}
     try:
         for b in con.execute("SELECT doc_number, qbo_txn_id, project_no, division, customer, memo, "
@@ -1279,7 +1279,7 @@ def _fetch_draws(con, limit: int = 100) -> dict:
                 "pay_status, invoice_status, MAX(pay_date) pd, MAX(bill_date) bd, MAX(qbo_link) qbo_link "
                 "FROM ap_bill_line WHERE (matched_invoice IS NULL OR matched_invoice = '') AND project_no IS NOT NULL "
                 "AND project_no <> '' AND project_no NOT LIKE 'RP%' GROUP BY project_no, vendor, bill_ref"):
-            mi = f"(no draw yet) — {r['project_no']}"
+            mi = f"(no draw yet) - {r['project_no']}"
             d = draws.setdefault(mi, {"matched_invoice": mi, "project_no": r["project_no"], "division": r["division"],
                                       "invoice_no": None, "bills": [], "no_draw": True})
             d["bills"].append({
@@ -1345,7 +1345,7 @@ def _fetch_draws(con, limit: int = 100) -> dict:
         elif not funded:
             stage = "Awaiting GC funding"
         elif paid_gate < n_gate:
-            stage = "Fund in — pay vendors"
+            stage = "Fund in - pay vendors"
         elif gc_paid_in:                   # vendors paid AND the GC has paid our AR = fully settled
             stage = "All paid"
         else:                              # vendors paid, GC AR still open (we fronted it - collect)
@@ -1360,7 +1360,7 @@ def _fetch_draws(con, limit: int = 100) -> dict:
             # what we actually pay = gating bills only (MCP/CORE concrete pumping excluded - not paid by us)
             "total_gate": sum(b["amount"] for b in bills if b["gates"]), "stage": stage,
             "recency": max([(b["gc_paid"] or b["pay_date"] or b["bill_date"] or "") for b in bills] or [""]),
-            # money IN (billed to GC) — from the Invoice Tracker, by Invoice #
+            # money IN (billed to GC) - from the Invoice Tracker, by Invoice #
             "billed": (ar["amount"] if ar else None),          # net billed to the GC
             "ar_open": (ar["balance"] if ar else None),        # GC still owes this much
             "ar_status": (ar["status"] if ar else None),       # Paid | Partially Paid | Unpaid
@@ -1385,7 +1385,7 @@ _SALES_ORDER = {"Lead": 0, "Follow up": 1, "Contacted": 2, "Interested": 3,
 
 # Non-sales accounts to keep OUT of the sales-rep view: Notion integration bots
 # (they arrive as a bare UUID) plus any account named in ACB_SALES_AUTOMATION_REPS
-# (machine.env, gitignored — so real names never enter the repo). These create /
+# (machine.env, gitignored - so real names never enter the repo). These create /
 # import records but do no outreach, so crediting them as a "rep" is misleading.
 _UUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 _AUTOMATION_REPS = {s.strip() for s in (paths.get("ACB_SALES_AUTOMATION_REPS", "") or "").split(",") if s.strip()}
@@ -2239,7 +2239,7 @@ def fetch_data(db_path: Path, scope: str = "full") -> dict:
         r["sub_costs"] = cp["sub_costs"] if cp else None
         r["client"] = proj_client.get(r["project_no"])
     for d in draws.get("draws", []):  # attach the Notion action link (if tracked)
-        inv = (d.get("matched_invoice") or "").split("—")[0].strip()
+        inv = re.split(r"\s+[\u2014\u2013-]\s+", d.get("matched_invoice") or "")[0].strip()   # "33404 - RP6938 - 4130 ..." -> 33404 (legacy rows still carry the em dash)
         d["action"] = actions.get(f"draw:{inv}")
     if scope == "light":
         ap = {**ap, "bills": []}      # defer the ~2.7 MB bill list to the heavy fetch
@@ -2479,7 +2479,7 @@ class Handler(BaseHTTPRequestHandler):
 
     # ── P&L link handlers ───────────────────────────────────────────────────
     def _pnl_pl(self, proj: str):
-        """Live computed P&L for the job detail — the numbers, not just a link."""
+        """Live computed P&L for the job detail - the numbers, not just a link."""
         proj = (proj or "").strip().upper()
         if not _PROJ_RE.match(proj):
             return self._json({"error": "bad or missing project"}, 400)
@@ -2676,7 +2676,7 @@ class Handler(BaseHTTPRequestHandler):
         return self._launch(_wip_review_steps("apply"), "wip-merge")
 
     def _job_open(self, proj: str):
-        """Open the SOURCE job folder on the file server (docs/takeoffs/photos) —
+        """Open the SOURCE job folder on the file server (docs/takeoffs/photos) -
         CP → the Synology awarded folder, RP → the builder folder, MFD → its OneDrive
         folder as a fallback. Cross-platform via _os_open."""
         proj = (proj or "").strip().upper()
@@ -2740,7 +2740,7 @@ class Handler(BaseHTTPRequestHandler):
     def _pnl_open(self, proj: str, folder: bool = False):
         """Open the project's P&L workbook (or its containing folder when folder=True)
         in the host OS file manager. The LOCAL server opens it with the native command
-        so the same dashboard works on Mac or Windows — CP resolves onto the Synology
+        so the same dashboard works on Mac or Windows - CP resolves onto the Synology
         Common drive, RP/MFD onto OneDrive, per pnl_paths (the owner's convention)."""
         proj = (proj or "").strip().upper()
         if not _PROJ_RE.match(proj):
@@ -2891,7 +2891,7 @@ def main():
     ap.add_argument("--port", type=int, default=8787, help="Port (default 8787).")
     ap.add_argument("--no-open", action="store_true", help="Don't auto-open a browser.")
     ap.add_argument("--background", action="store_true",
-                    help="Detach into a new session (daemonize) and serve in the background — "
+                    help="Detach into a new session (daemonize) and serve in the background - "
                          "so a GUI launcher (Project Ledger.app) can't reap it.")
     args = ap.parse_args()
 
@@ -2912,7 +2912,7 @@ def main():
         print(f"Ledger: {m['project_count']} projects · report {m['report_date']} · {m['db_path']}")
     print(f"Dashboard: {url}   (Ctrl-C to stop)")
 
-    # Quit cleanly on SIGTERM too — when the server IS the app process (Project
+    # Quit cleanly on SIGTERM too - when the server IS the app process (Project
     # Ledger.app runs it in the foreground), Cmd-Q / Dock-Quit / logout sends SIGTERM.
     # default_int_handler raises KeyboardInterrupt, same as Ctrl-C, so the handler below runs.
     signal.signal(signal.SIGTERM, signal.default_int_handler)

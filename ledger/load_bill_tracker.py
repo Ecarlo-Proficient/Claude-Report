@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 """
-load_bill_tracker.py — land Bill Tracker's vendor bills into the ledger (AP + liens).
+load_bill_tracker.py - land Bill Tracker's vendor bills into the ledger (AP + liens).
 
 WHAT IT DOES
 Reads the line-level display sheets (Bills, Inventory) of "Bill Tracker.xlsx" and
-fills `ap_bill_line` — vendor, project, account, amount, open balance, pay status,
+fills `ap_bill_line` - vendor, project, account, amount, open balance, pay status,
 and the Texas lien clock per bill line.
 
 WHAT IT IS *NOT*
 Not the cost ledger. Bill Tracker's display sheets EXCLUDE subs, and for a sub-based
-labor company subs are most of the cost — so this understates job cost by design
+labor company subs are most of the cost - so this understates job cost by design
 (measured 25–98% short vs the QBO WIP truth). Job cost stays in wip_snapshot; the
 complete cost_line (incl subs + true SL/PV cost codes) comes later from qbo-export.
 What this uniquely adds is AP pay status + lien deadlines the WIP snapshot lacks.
 
 SAFETY
-    * The workbook is opened READ-ONLY — this tool never writes the sheet.
+    * The workbook is opened READ-ONLY - this tool never writes the sheet.
     * Idempotent: each run FULL-REPLACES source='bill_tracker' rows, mirroring the file.
     * --dry-run parses and reports; writes nothing.
 
@@ -54,7 +54,7 @@ DEFAULT_EXCEL = paths.get_path(
 SHEETS = ("Bills", "Inventory")   # the line-level display sheets
 HEADER_ROW = 2                    # row 1 is the grouped banner; real headers are row 2
 
-# The "Open" column carries `=HYPERLINK("…/app/bill?txnId=<id>","↗")` — a QBO deep
+# The "Open" column carries `=HYPERLINK("…/app/bill?txnId=<id>","↗")` - a QBO deep
 # link to the bill. data_only reads the cached "↗" glyph, so we re-open for formulas.
 QBO_BILL_RE = re.compile(r"app/bill\?txnId=(\d+)", re.I)
 QBO_BILL_URL = "https://qbo.intuit.com/app/bill?txnId={}"
@@ -137,8 +137,10 @@ def read_sheet(ws):
             continue
         # the tracker prefixes Matched Invoice with a "[...]" tag on special matches
         # ([DRAW] / [FULLY BILLED] / [PUSHED from Draw #3]); keep the tag beside the
-        # bare "invoice — memo" so every bill on one draw shares the SAME key
+        # bare "invoice - memo" so every bill on one draw shares the SAME key
         rec["match_tag"] = None
+        if rec.get("matched_invoice"):   # the workbook writes "33404 - RP6938 - ..."; the ledger never shows an em dash (owner rule)
+            rec["matched_invoice"] = re.sub(r"\s*\u2014\s*", " - ", str(rec["matched_invoice"]))
         m = MATCH_TAG_RE.match(rec.get("matched_invoice") or "")
         if m:
             rec["match_tag"], rec["matched_invoice"] = m.group(1).strip(), (m.group(2).strip() or None)
@@ -186,7 +188,7 @@ def load(excel_path: Path, db_path: Path, dry_run: bool, show: int):
     wb.close()
 
     # second pass (formulas only): attach each bill's QBO deep link from the "Open"
-    # ↗ =HYPERLINK() cell — the cached value in the pass above is just the glyph.
+    # ↗ =HYPERLINK() cell - the cached value in the pass above is just the glyph.
     wbf = load_workbook(excel_path, read_only=True, data_only=False)
     links = {}
     for name in SHEETS:
@@ -212,7 +214,7 @@ def load(excel_path: Path, db_path: Path, dry_run: bool, show: int):
     con = sqlite3.connect(db_path)
     con.execute("PRAGMA foreign_keys = ON;")
     con.executescript(SCHEMA_SQL.read_text(encoding="utf-8"))
-    # migrate ap_bill_line if it predates the draw/invoice columns — its rows are
+    # migrate ap_bill_line if it predates the draw/invoice columns - its rows are
     # reloaded from Excel in THIS run, so a drop + recreate is lossless.
     have = {r[1] for r in con.execute("PRAGMA table_info(ap_bill_line)")}
     if "matched_invoice" not in have or "qbo_link" not in have:
@@ -243,7 +245,7 @@ def load(excel_path: Path, db_path: Path, dry_run: bool, show: int):
     off_wip = sorted(ap_projs - known)
     if off_wip:
         print(f"note: {len(off_wip)} AP project#s not in the WIP project table "
-              f"(off-WIP / closed) — kept anyway: {', '.join(off_wip[:8])}"
+              f"(off-WIP / closed) - kept anyway: {', '.join(off_wip[:8])}"
               f"{' …' if len(off_wip) > 8 else ''}")
     _print_watch_db(con, show)
     con.close()
@@ -254,8 +256,8 @@ def _print_watch(watch, show):
         return
     print(f"\nLien watch (top {show}):")
     for r in watch[:show]:
-        print(f"  {(r['lien_status'] or ''):<20} {(r['project_no'] or '—'):<10} "
-              f"{(r['vendor'] or '')[:26]:<26} bill {r['bill_ref'] or '—':<10} "
+        print(f"  {(r['lien_status'] or ''):<20} {(r['project_no'] or '-'):<10} "
+              f"{(r['vendor'] or '')[:26]:<26} bill {r['bill_ref'] or '-':<10} "
               f"open ${r['open_balance'] or 0:,.0f}")
 
 
@@ -269,8 +271,8 @@ def _print_watch_db(con, show):
     rows.sort(key=lambda r: (LIEN_RANK[r[0]], -(r[4] or 0)))
     print(f"\nLien watch (top {show}):")
     for r in rows[:show]:
-        print(f"  {r[0]:<20} {(r[1] or '—'):<10} {(r[2] or '')[:26]:<26} "
-              f"bill {r[3] or '—':<10} open ${r[4] or 0:,.0f}")
+        print(f"  {r[0]:<20} {(r[1] or '-'):<10} {(r[2] or '')[:26]:<26} "
+              f"bill {r[3] or '-':<10} open ${r[4] or 0:,.0f}")
 
 
 def main():

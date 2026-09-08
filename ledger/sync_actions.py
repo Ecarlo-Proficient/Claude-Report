@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-sync_actions.py — mirror ledger action items to Notion (the folder-memory link).
+sync_actions.py - mirror ledger action items to Notion (the folder-memory link).
 
 MVP scope: **draws ready to turn in** (funded + every vendor paid + every
 unconditional waiver in hand). For each, upsert a page in the Notion "Ledger
@@ -23,6 +23,8 @@ USAGE
   python3 ledger/sync_actions.py
 """
 from __future__ import annotations
+
+import re
 
 import argparse
 import datetime as dt
@@ -54,7 +56,7 @@ def ready_draws(con) -> list:
         "SELECT matched_invoice mi, project_no, vendor, bill_ref, MAX(bill_total) amt, "
         "MAX(gc_paid_date) gc, MAX(pay_date) pd FROM ap_bill_line "
         "WHERE matched_invoice IS NOT NULL AND matched_invoice <> '' "
-        "AND COALESCE(project_no,'') NOT LIKE 'RP%' AND matched_invoice NOT LIKE '%— RP%' "
+        "AND COALESCE(project_no,'') NOT LIKE 'RP%' AND matched_invoice NOT LIKE '%- RP%' "
         "GROUP BY matched_invoice, vendor, bill_ref").fetchall()
     wmap = {w[0]: w[1] for w in con.execute("SELECT waiver_key, received FROM waiver")}
     draws: dict = {}
@@ -66,7 +68,7 @@ def ready_draws(con) -> list:
     for mi, d in draws.items():
         b = d["bills"]
         if b and any(x["gc"] for x in b) and all(x["pd"] for x in b) and all(x["waiver"] for x in b):
-            inv = (mi or "").split("—")[0].strip()
+            inv = re.split(r"\s+[\u2014\u2013-]\s+", mi or "")[0].strip()
             out.append({"action_key": f"draw:{inv}", "mi": mi, "project_no": d["project_no"],
                         "label": (mi or "").split("\n")[0].strip(),
                         "amount": round(sum(x["amt"] for x in b)), "n": len(b)})
@@ -86,7 +88,7 @@ def _notion_props(a: dict) -> dict:
 def _notion_body(a: dict) -> list:
     return [
         {"object": "block", "type": "callout", "callout": {
-            "rich_text": [{"text": {"content": f"{a['label']} — {a['n']} bills, "
+            "rich_text": [{"text": {"content": f"{a['label']} - {a['n']} bills, "
                                     "all paid, all unconditional waivers in hand. Ready to turn in."}}],
             "icon": {"emoji": "✅"}}},
         {"object": "block", "type": "to_do", "to_do": {

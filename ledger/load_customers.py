@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """
-load_customers.py — land the Notion "Customer List" (CRM) into the ledger.
+load_customers.py - land the Notion "Customer List" (CRM) into the ledger.
 
 WHAT IT DOES
 Reads the Notion Customer List data source (read-only) and fills two tables:
-  * customer     — one row per client/lead: identity, current pipeline stage,
+  * customer     - one row per client/lead: identity, current pipeline stage,
                    and Notion's own "Created by" / "Last edited by" system fields
-                   (who sourced it / who worked it last — the honest per-rep
+                   (who sourced it / who worked it last - the honest per-rep
                    attribution, no manual Owner property to maintain).
-  * sales_touch  — one row per "History of interactions" line in the page body
+  * sales_touch  - one row per "History of interactions" line in the page body
                    (the outreach touch log), with the date parsed when present.
 
 This is the CRM half of "own the spine": the customer/pipeline lives in the ledger;
-Notion is just the feed. It joins the job spine on nothing yet — leads become
-projects downstream — but it puts sales activity in the same database as the WIP,
+Notion is just the feed. It joins the job spine on nothing yet - leads become
+projects downstream - but it puts sales activity in the same database as the WIP,
 so "what has the outreach rep done" is a query, not a spreadsheet.
 
 SAFETY
@@ -158,7 +158,7 @@ def customer_from_page(page: dict) -> dict:
 # ── pull ────────────────────────────────────────────────────────────────────
 def pull(ds_id: str, all_notes: bool, limit: int | None):
     """Yield (customer_dict, [touch_note, ...]) for each Customer List page.
-    Notes bodies are fetched for worked pages (status past 'Lead') by default —
+    Notes bodies are fetched for worked pages (status past 'Lead') by default -
     pure 'Lead' rows rarely carry a touch log; --all-notes fetches every body."""
     from shared.notion_client import NotionClient
     nc = NotionClient()
@@ -220,10 +220,10 @@ def summarize(records: list[tuple[dict, list[str]]], show: int):
         print(f"  {rep[:28]:<28} {n:>4}")
     if show > 0:
         warm = [(c, t) for c, t in records if c["sales_status"] == "Interested"]
-        print(f"\nInterested — warm accounts ({len(warm)}), top {show}:")
+        print(f"\nInterested - warm accounts ({len(warm)}), top {show}:")
         for c, notes in warm[:show]:
             print(f"  {c['name'][:34]:<34} {(c['division'] or ''):<12} touches:{len(notes)} "
-                  f"last:{c['last_contacted'] or '—'}")
+                  f"last:{c['last_contacted'] or '-'}")
             for note in notes[-3:]:
                 print(f"      · {note[:76]}")
 
@@ -287,7 +287,7 @@ def selftest():
         d0 = con.execute("SELECT touch_date FROM sales_touch WHERE note LIKE 'Quote%'").fetchone()[0]
         assert d0 == "2026-07-15", d0
         con.close()
-    print("selftest OK — extraction, date parse, idempotent load, and views all pass.")
+    print("selftest OK - extraction, date parse, idempotent load, and views all pass.")
 
 
 def main():

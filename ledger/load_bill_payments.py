@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""load_bill_payments.py — QBO BillPayment (money OUT to vendors) → ledger.bill_payment (+ _line).
+"""load_bill_payments.py - QBO BillPayment (money OUT to vendors) → ledger.bill_payment (+ _line).
 
 The Vendor page shows a vendor's payments this year WITHOUT going into QuickBooks. A BillPayment is
 the real payment event (one cheque/ACH can pay several bills); Line[].LinkedTxn holds the bills it
 covered. This lands them in the LOCAL ledger DB (the same private file that already holds costs /
-money-in payments — never pushed, never cloud), so the vendor page reads them on demand and the
-refresh stays light — no bulk-load bloat, no new place data lives.
+money-in payments - never pushed, never cloud), so the vendor page reads them on demand and the
+refresh stays light - no bulk-load bloat, no new place data lives.
 
 Read-only on QBO. Never echoes the realm. Idempotent: DELETE the window, reload.
 
@@ -157,7 +157,7 @@ def _selftest() -> int:
                         [ln["payment_id"], ln["bill_id"], ln["amount"]])
         got = con.execute("SELECT COUNT(*) n, SUM(amount) s FROM bill_payment_line WHERE payment_id='BP1'").fetchone()
         assert got["n"] == 2 and round(got["s"], 2) == 12500.0, dict(got)
-        print("selftest OK — BillPayment + 2 bill links round-trip.")
+        print("selftest OK - BillPayment + 2 bill links round-trip.")
     return 0
 
 

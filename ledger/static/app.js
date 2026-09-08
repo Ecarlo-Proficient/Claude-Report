@@ -39,7 +39,7 @@ const COLUMNS = [
   { key: "subs_pct",              label: "Subs %",        type: "pct" },
 ];
 
-// Derived per-job metrics from the REAL QBO costs — computed once at load time.
+// Derived per-job metrics from the REAL QBO costs - computed once at load time.
 // Only for jobs that actually have costs loaded; others stay null (blank).
 // margin here = billed − QBO cost (a billed-basis margin-to-date, labeled as such).
 function deriveMetrics(r) {
@@ -50,7 +50,7 @@ function deriveMetrics(r) {
   r.qbo_margin    = has && billed != null ? billed - cost : null;
   r.qbo_margin_pct = (r.qbo_margin != null && billed) ? r.qbo_margin / billed : null;
   r.subs_pct      = has && cost && subs != null ? subs / cost : null;
-  // PLANNED markup (on cost) vs PLANNED margin (on revenue) — never the same number.
+  // PLANNED markup (on cost) vs PLANNED margin (on revenue) - never the same number.
   r.markup_pct    = (etc && contract != null) ? (contract - etc) / etc : null;
   r.margin_pct    = (contract && contract !== 0) ? ((contract - num(etc)) / contract) : null;
   // ACTUAL markup from real QBO cost (how much we marked the true cost up).
@@ -87,11 +87,11 @@ const LIEN_CLASS = {
   "Notice due in ≤30d": "d30", "Notice Sent": "info", "Lien Filed": "info",
 };
 
-// Budget adherence — the ONE rule the whole dashboard flags "over budget" with.
+// Budget adherence - the ONE rule the whole dashboard flags "over budget" with.
 // Flatwork (-FTW) budgets are a SOFT reference, not a strict target: the ops
 // manager just sends a sub and charges by the labor it took (flatwork is simple
 // next to slab), so the estimator's FTW budget is a starting point, not a
-// must-hit number the way slab is — EXCEPT on a big flatwork job (~$15k+), which
+// must-hit number the way slab is - EXCEPT on a big flatwork job (~$15k+), which
 // does need to hold its budget. Slab / CP / MFD stay strict.
 const FTW_BUDGET_FLOOR = 15000;
 function budgetCost(r) { return r.costs_loaded != null ? r.costs_loaded : r.costs_to_date; }
@@ -109,7 +109,7 @@ function isOverBudget(r) {
 // Generic, data-driven exposure rules (applied to whatever data is loaded).
 const RULES = [
   { key: "underbilled", label: "Underbilled", warn: false,
-    hint: "earned ahead of billed — could invoice",
+    hint: "earned ahead of billed - could invoice",
     test: r => num(r.underbillings) > 0, amt: r => num(r.underbillings) },
   { key: "overbilled", label: "Overbilled", warn: false,
     hint: "billed ahead of earned",
@@ -276,20 +276,20 @@ if (window.MutationObserver && !window.__grpObs) {
 const isNum = v => typeof v === "number" && !Number.isNaN(v);
 function money(v) {
   if (v != null && v !== "" && !Number.isNaN(Number(v)) && Math.abs(Number(v)) > 0 && Math.abs(Number(v)) < 0.5) { const n = Number(v); const s = "$" + Math.abs(n).toFixed(2); return n < 0 ? `(${s})` : s; }   // cents, never a misleading $0
-  if (v === null || v === undefined || v === "") return "—";
-  const n = Number(v); if (Number.isNaN(n)) return "—";
+  if (v === null || v === undefined || v === "") return "–";
+  const n = Number(v); if (Number.isNaN(n)) return "–";
   const s = "$" + Math.round(Math.abs(n)).toLocaleString();
   return n < 0 ? "(" + s + ")" : s;      // negatives like Excel: ($28,067), coloured red by .neg (owner 2026-09-01)
 }
 function pct(v) {
-  if (v === null || v === undefined || v === "") return "—";
-  const n = Number(v); if (Number.isNaN(n)) return "—";
+  if (v === null || v === undefined || v === "") return "–";
+  const n = Number(v); if (Number.isNaN(n)) return "–";
   return (n * 100).toFixed(1) + "%";
 }
 function fmt(col, v) {
   if (col.type === "money") return money(v);
   if (col.type === "pct")   return pct(v);
-  return (v === null || v === undefined || v === "") ? "—" : String(v);
+  return (v === null || v === undefined || v === "") ? "–" : String(v);
 }
 // raw value for copy / CSV (numbers stay numeric so they paste clean into Excel)
 function raw(col, v) {
@@ -395,7 +395,7 @@ let PNL = null;                       // cached /api/pnl/portfolio result (inval
 let pnlSort = { key: "net", dir: 1 }; // net ascending = worst margin first
 let pnlExpanded = new Set();          // P&L jobs expanded inline (instead of the side panel)
 const nameOf = pn => (ALL.find(r => r.project_no === pn) || {}).project_name || "";
-// A project is "active" if its WIP status is Active — OR blank, which only happens for
+// A project is "active" if its WIP status is Active - OR blank, which only happens for
 // MFD (Test-Master carries no STATUS column, so its jobs are active by construction).
 // Matches _portfolio_pnl on the server so every "active" count agrees, MFD included.
 const isActive = r => ["", "active"].includes((r.status || "").toLowerCase());
@@ -479,9 +479,9 @@ function showError(msg) {
   $("#metaLine").textContent = "not loaded";
 }
 
-// Manual "Refresh" — re-reads the ledger DB and re-renders, WITH feedback so it's
+// Manual "Refresh" - re-reads the ledger DB and re-renders, WITH feedback so it's
 // obvious it did something (the silent 90s auto-refresh does the same in the
-// background). It does NOT re-pull QBO/Excel — that's a sync (the loaders); the
+// background). It does NOT re-pull QBO/Excel - that's a sync (the loaders); the
 // "Data freshness" strip flags when a sync is worth running.
 async function manualRefresh() {
   const btn = $("#btnRefresh"); const orig = btn.textContent;
@@ -782,7 +782,7 @@ function fmtDate(v, withTime) {
 }
 
 // Hours elapsed since `thenMs`, counting only Mon–Fri (weekends don't age the
-// data — nobody syncs on the weekend, so a Friday load isn't "stale" on Monday).
+// data - nobody syncs on the weekend, so a Friday load isn't "stale" on Monday).
 // Steps day-by-day, adding only weekday slices. Used for the sync recommendation.
 function businessHoursSince(thenMs, nowMs) {
   if (!(thenMs > 0) || nowMs <= thenMs) return 0;
@@ -863,15 +863,15 @@ function renderHome() {
   const goRule = (key) => { setTab("overview"); activeRule = key; renderAttention(); renderProjects(); $("#btnClearRule").hidden = false; window.scrollTo(0, 0); };
   const acts = [
     ["Bills past lien date", pastDue, true, () => setTab("liens"),
-      "Unpaid bills YOU owe (AP) whose vendor/supplier lien-notice deadline has passed — they can lien the project. Pay to clear. This is money OUT, not your AR."],
+      "Unpaid bills YOU owe (AP) whose vendor/supplier lien-notice deadline has passed - they can lien the project. Pay to clear. This is money OUT, not your AR."],
     ["Lien date in ≤7d", dueSoon, true, () => setTab("liens"),
       "Unpaid bills you owe that are within 7 days of the vendor's lien-notice deadline."],
     ["Draws ready to turn in", readyDraws, false, () => setTab("draws"),
-      "Draws with every bill paid — turn in to unlock the next draw."],
+      "Draws with every bill paid - turn in to unlock the next draw."],
     ["Over budget", overB, true, () => goRule("overbudget"),
       "Jobs where cost-to-date has passed the ETC budget."],
     ["Underbilled (can invoice)", underB, false, () => goRule("underbilled"),
-      "Jobs earning ahead of what's been billed — you could invoice more."],
+      "Jobs earning ahead of what's been billed - you could invoice more."],
   ];
   const ar = $("#homeActions"); ar.innerHTML = "";
   for (const [label, n, warn, go, tip] of acts) {
@@ -913,15 +913,15 @@ function renderHome() {
 }
 
 const DRAW_STAGE_CLASS = {
-  "Fund in — pay vendors": "d7",
+  "Fund in - pay vendors": "d7",
   "Awaiting GC funding": "info",
   "Ready to turn in": "d7",   // vendors paid, GC still owes -> amber (collect)
   "All paid": "ready",        // GC paid + vendors paid -> green (done)
 };
-// Clearer, direction-explicit pill text (who paid whom). Display only — the internal
+// Clearer, direction-explicit pill text (who paid whom). Display only - the internal
 // stage keys above are unchanged (they're matched in several places).
 const DRAW_STAGE_LABEL = {
-  "Fund in — pay vendors": "GC funded → pay vendors",
+  "Fund in - pay vendors": "GC funded → pay vendors",
   "Awaiting GC funding": "Awaiting GC funding",
   "Ready to turn in": "Vendors paid → collect the rest from the GC",
   "All paid": "All paid - the GC paid you and the vendors are paid",
@@ -981,7 +981,7 @@ async function openAttachmentViewer(type, id, title, expected) {
 }
 function qboLinkCell(text, url, title) {
   const td = document.createElement("td"); td.className = "left";
-  const label = text || "—";
+  const label = text || "-";
   if (text) {
     const s = document.createElement("span"); s.className = "refcopy"; s.textContent = label;
     s.title = "Click to copy " + label;
@@ -997,7 +997,7 @@ function qboLinkCell(text, url, title) {
 }
 // Short pill text (keeps the table narrow); the full "who paid whom" is the tooltip.
 const DRAW_STAGE_SHORT = {
-  "Fund in — pay vendors": "Pay vendors",
+  "Fund in - pay vendors": "Pay vendors",
   "Awaiting GC funding": "Awaiting GC",
   "Ready to turn in": "Collect from GC",
   "All paid": "All paid",
@@ -1160,13 +1160,13 @@ function renderDraws() {
   _setHintFilter("draws", drawFilterSummary(shown.length));   // count + what's filtered (generic when nothing selected)
   $("#drawsNote").textContent = (DRAWS.draws || []).length
     ? `(${shown.length} shown of ${DRAWS.total} · most recent first)`
-    : "(no draw data — run load_bill_tracker.py)";
+    : "(no draw data - run load_bill_tracker.py)";
   // Clickable stage tiles → filter the draw list. Counts come from `all` (all stages);
   // subs spell out the money direction (GC pays us in → we pay vendors out → waivers).
   const stats = [
     ["All paid", "All paid", "GC paid you + vendors paid"],
     ["Collect from GC", "Ready to turn in", "vendors paid, GC still owes"],
-    ["Pay vendors", "Fund in — pay vendors", "GC funded, vendors not paid yet"],   // pump bills don't gate this
+    ["Pay vendors", "Fund in - pay vendors", "GC funded, vendors not paid yet"],   // pump bills don't gate this
     ["Awaiting GC", "Awaiting GC funding", "not funded by the GC yet"],
     ["No draw yet", "No draw yet", "bills in, no draw invoice yet"],   // e.g. a job still 'Awaiting Invoice' in the tracker
   ];
@@ -1185,7 +1185,7 @@ function renderDraws() {
   { const cb = $("#btnClearDrawStage"); if (cb) cb.hidden = !activeDrawStage; }
   // One row per draw (table). Click a row → its bills open underneath. Green = done =
   // every bill PAID (waivers are tracked per bill but don't gate the color). "Billed
-  // (in)" = the GC pays you; "Paid out" = you pay vendors — money-in vs money-out.
+  // (in)" = the GC pays you; "Paid out" = you pay vendors - money-in vs money-out.
   const box = $("#drawList"); box.innerHTML = "";
   if (!shown.length) { box.innerHTML = '<p class="hint" style="padding:14px 18px">No draws match.</p>'; return; }
   // Grouped by CUSTOMER (GC), then by project # within each; newest draw first within a project.
@@ -1225,7 +1225,7 @@ function renderDraws() {
       const gOut = g.reduce((t, x) => t + (x.total_gate != null ? x.total_gate : (x.total || 0)), 0);
       const gtr = document.createElement("tr"); gtr.className = "draw-group";
       const gtd = document.createElement("td"); gtd.colSpan = cols.length;
-      const sp = document.createElement("span"); sp.className = "g-proj"; sp.textContent = curProj || "—";
+      const sp = document.createElement("span"); sp.className = "g-proj"; sp.textContent = curProj || "-";
       const sub = document.createElement("span"); sub.className = "g-sub";
       const nm = nameOf(curProj);
       sub.textContent = `${nm ? " · " + nm : ""} · ${g.length} draw${g.length > 1 ? "s" : ""} · ${money(gIn)} in / ${money(gOut)} out / ${money(gIn - gOut)} net`;
@@ -1239,18 +1239,18 @@ function renderDraws() {
     tr.onclick = (e) => { if (e.target.closest(".cell") || e.target.closest("a")) return;
       open ? drawsExpanded.delete(d.matched_invoice) : drawsExpanded.add(d.matched_invoice); renderFunding(); };
     const cc = document.createElement("td"); cc.className = "left draw-caret"; cc.textContent = open ? "▾" : "▸"; tr.appendChild(cc);
-    const memo = (d.label || "").replace(/^\s*\S+\s*—\s*/, "").replace(/^\s*(MFD|CP|RP)\d+(-FTW)?\s*-\s*/i, "").trim() || d.label || "—";
+    const memo = (d.label || "").replace(/^\s*\S+\s*-\s*/, "").replace(/^\s*(MFD|CP|RP)\d+(-FTW)?\s*-\s*/i, "").trim() || d.label || "-";
     tr.appendChild(leftText(memo));
-    const per = drawPeriod(d.matched_invoice); const perCell = leftText(per || "—");
+    const per = drawPeriod(d.matched_invoice); const perCell = leftText(per || "-");
     if (per) perCell.title = drawPeriodFull(d.matched_invoice) || per; tr.appendChild(perCell);
     const bt = document.createElement("td");
     if (d.billed != null) { const mc = moneyCell(d.billed); mc.classList.add("draw-in"); bt.appendChild(mc); }
-    else bt.appendChild(document.createTextNode("—"));
+    else bt.appendChild(document.createTextNode("-"));
     tr.appendChild(bt);
-    // AR pay status — its own column (green Paid / amber still-owed), not crammed onto the amount
+    // AR pay status - its own column (green Paid / amber still-owed), not crammed onto the amount
     const stt = document.createElement("td"); stt.className = "left";
     if (d.ar_status) { const s = document.createElement("span"); s.className = d.ar_status === "Paid" ? "ar-paid" : "ar-open"; s.textContent = d.ar_status; stt.appendChild(s); }
-    else stt.appendChild(document.createTextNode("—"));
+    else stt.appendChild(document.createTextNode("-"));
     tr.appendChild(stt);
     // Invoice #: click the number for the memo + details in the sidebar (owner: "same info in
     // the sidebar for draws"), the ↗ for QuickBooks. Row click still expands the vendor bills.
@@ -1263,7 +1263,7 @@ function renderDraws() {
     // Net = billed in minus the vendor bills we actually pay (excl. pump; not what's been paid) - the margin
     const nt = document.createElement("td");
     if (d.billed != null) { const net = (d.billed || 0) - payTotal; const nc = moneyCell(net); if (net < 0) nc.style.color = "var(--neg)"; nc.title = "billed in minus vendor bills we pay (excl. pump)"; nt.appendChild(nc); }
-    else nt.appendChild(document.createTextNode("—"));
+    else nt.appendChild(document.createTextNode("-"));
     tr.appendChild(nt);
     const st = document.createElement("td"); st.className = "left";
     const pill = document.createElement("span"); pill.className = "lien " + (DRAW_STAGE_CLASS[d.stage] || "info"); pill.textContent = DRAW_STAGE_SHORT[d.stage] || DRAW_STAGE_LABEL[d.stage] || d.stage; pill.title = DRAW_STAGE_LABEL[d.stage] || d.stage; st.appendChild(pill);
@@ -1291,9 +1291,9 @@ function buildBillsTable(d) {
   const sm = document.createElement("div"); sm.className = "draw-rep-sum";
   sm.innerHTML = `<b>${_ge(_drawCustomer(d))}</b> · ${_ge(d.project_no || "")}`
     + (drawPeriod(d.matched_invoice) ? " · " + _ge(drawPeriod(d.matched_invoice)) : "")
-    + ` &nbsp;·&nbsp; Billed in <b>${_ge(d.billed != null ? money(d.billed) : "—")}</b> · Materials <b>${_ge(money(payTotal))}</b>`
+    + ` &nbsp;·&nbsp; Billed in <b>${_ge(d.billed != null ? money(d.billed) : "-")}</b> · Materials <b>${_ge(money(payTotal))}</b>`
     + (subsT ? ` · Subs <b>${_ge(money(subsT))}</b> · Total out <b>${_ge(money(totalOut))}</b>` : "")
-    + ` · Net <b>${_ge(d.billed != null ? money(net) : "—")}</b> · ${_ge(DRAW_STAGE_SHORT[d.stage] || d.stage || "")}`;
+    + ` · Net <b>${_ge(d.billed != null ? money(net) : "-")}</b> · ${_ge(DRAW_STAGE_SHORT[d.stage] || d.stage || "")}`;
   if (d.project_no) { const pp = document.createElement("button"); pp.type = "button"; pp.className = "btn small primary"; pp.textContent = "Project page"; pp.style.marginLeft = "8px"; pp.onclick = (e) => { e.stopPropagation(); openProjectPage(d.project_no); }; sm.appendChild(pp); }
   const cpBtn = document.createElement("button"); cpBtn.type = "button"; cpBtn.className = "btn small"; cpBtn.textContent = "Copy report";
   cpBtn.title = "Copy this draw + its subs as a table to paste to people";
@@ -1315,7 +1315,7 @@ function buildBillsTable(d) {
   // Sub-group by vendor: each vendor is a header row with its total (biggest first), collapsed;
   // open it to see that vendor's bills underneath (owner 2026-08-27: "totals first, open for bills").
   const byVendor = new Map();
-  for (const b of d.bills) { const v = b.vendor || "—"; if (!byVendor.has(v)) byVendor.set(v, []); byVendor.get(v).push(b); }
+  for (const b of d.bills) { const v = b.vendor || "-"; if (!byVendor.has(v)) byVendor.set(v, []); byVendor.get(v).push(b); }
   const vendors = [...byVendor.keys()].sort((a, b) =>
     byVendor.get(b).reduce((t, x) => t + (x.amount || 0), 0) - byVendor.get(a).reduce((t, x) => t + (x.amount || 0), 0));
   for (const v of vendors) {
@@ -1346,8 +1346,8 @@ function buildBillsTable(d) {
       tr.appendChild(qboLinkCell(b.bill_ref, qboBillHref(b.qbo_link), "Open this bill in QuickBooks")); if (b.att) { const _ab = attBtn("Bill", b.bill_id || (qboBillHref(b.qbo_link) || "").replace(/.*txnId=(\d+).*/, "$1"), b.att, `${b.vendor || ""} · bill ${b.bill_ref || ""}`); _ab.style.marginLeft = "6px"; tr.lastElementChild.appendChild(_ab); }
       tr.appendChild(leftText(fmtDate(b.bill_date)));
       const av = document.createElement("td"); av.appendChild(moneyCell(b.amount)); tr.appendChild(av);
-      tr.appendChild(leftText(b.pay_date ? "✓ " + fmtDate(b.pay_date) : "—"));
-      tr.appendChild(leftText(b.gc_paid ? "✓ " + fmtDate(b.gc_paid) : "—"));
+      tr.appendChild(leftText(b.pay_date ? "✓ " + fmtDate(b.pay_date) : "-"));
+      tr.appendChild(leftText(b.gc_paid ? "✓ " + fmtDate(b.gc_paid) : "-"));
       if (WAIVERS_ENABLED) {
         const wtd = document.createElement("td"); wtd.className = "left";
         const lab = document.createElement("label"); lab.className = "chk";
@@ -1434,7 +1434,7 @@ async function setWaiver(draw, bill, cb) {
     const j = await res.json();
     if (!j.ok) throw new Error(j.error || "write failed");
     bill.waiver = received;                       // update local state
-    draw.waivers = draw.bills.filter(b => b.waiver).length;   // caption only — doesn't gate the stage
+    draw.waivers = draw.bills.filter(b => b.waiver).length;   // caption only - doesn't gate the stage
     toast(received ? "Waiver marked in hand" : "Waiver cleared");
     renderFunding();
   } catch (e) {
@@ -1453,14 +1453,14 @@ function renderMargins() {
   const overBudget = loaded.filter(isOverBudget).length;
   const cSum = loaded.reduce((t, r) => t + num(r.total_contract_price), 0);
   const eSum = loaded.reduce((t, r) => t + num(r.estimated_total_costs), 0);
-  const pct1 = (n, d) => d ? (n / d * 100).toFixed(1) + "%" : "—";
-  $("#marginNote").textContent = loaded.length ? `(${loaded.length} jobs with QBO costs)` : "(no cost data — run load_costs.py)";
+  const pct1 = (n, d) => d ? (n / d * 100).toFixed(1) + "%" : "-";
+  $("#marginNote").textContent = loaded.length ? `(${loaded.length} jobs with QBO costs)` : "(no cost data - run load_costs.py)";
   const stats = [
     ["Planned markup", pct1(cSum - eSum, eSum), "contract vs ETC (on cost)"],
     ["Planned margin", pct1(cSum - eSum, cSum), "GP ÷ contract"],
     ["Actual markup", pct1(billed - cost, cost), "billed ÷ QBO cost"],
     ["Margin to date", money(margin), "billed − QBO cost"],
-    ["Subs share", cost ? (subs / cost * 100).toFixed(0) + "%" : "—", "of QBO cost"],
+    ["Subs share", cost ? (subs / cost * 100).toFixed(0) + "%" : "-", "of QBO cost"],
     ["Over budget", String(overBudget), "cost > ETC (flatwork soft <$15k)"],
   ];
   const sr = $("#marginStats"); sr.innerHTML = "";
@@ -1472,7 +1472,7 @@ function renderMargins() {
     el.querySelector(".k-sub").textContent = sub;
     sr.appendChild(el);
   }
-  // OVER-BUDGET jobs — cost past the full ETC, with the flatwork-budget tolerance
+  // OVER-BUDGET jobs - cost past the full ETC, with the flatwork-budget tolerance
   // applied (small -FTW jobs excluded; slab / CP / MFD / big flatwork kept). Worst first.
   const watch = loaded
     .filter(isOverBudget)
@@ -1499,13 +1499,13 @@ function renderMargins() {
 }
 
 function renderCosts() {
-  // Grouped: cost TYPE (parent) → job TYPE (sub) — the JobTread model. Material
+  // Grouped: cost TYPE (parent) → job TYPE (sub) - the JobTread model. Material
   // rolls to ONE cost-type parent; the job-type sub shows the split for budget.
   const groups = COST.by_cost_type || [];
   const total = COST.loaded_total || groups.reduce((t, g) => t + (g.actual || 0), 0);
   $("#costCount").textContent = total
     ? `($${Math.round(total).toLocaleString()} loaded from QuickBooks${loadedAt("Costs (QBO)") ? " " + fmtDate(loadedAt("Costs (QBO)"), true) : ""} · where the money goes)`
-    : "(no cost data — run load_costs.py)";
+    : "(no cost data - run load_costs.py)";
   renderCostMix(groups, total);
   const cols = [["Cost type  ▸  job type", "left"], ["Code", "left"], ["Actual", "right"], ["% of total", "right"], ["Lines", "right"]];
   const thead = $("#costTreeTable thead"), tbody = $("#costTreeTable tbody");
@@ -1529,7 +1529,7 @@ function renderCosts() {
     const txt = document.createElement("span"); txt.className = "bar-txt"; txt.textContent = money(g.actual);
     bar.appendChild(fill); bar.appendChild(txt); bar.title = "Click to copy"; bar.onclick = (e) => { e.stopPropagation(); copy(String(Math.round(g.actual || 0))); };
     at.appendChild(bar); ptr.appendChild(at);
-    ptr.appendChild(rightText(total ? ((g.actual || 0) / total * 100).toFixed(1) + "%" : "—"));
+    ptr.appendChild(rightText(total ? ((g.actual || 0) / total * 100).toFixed(1) + "%" : "-"));
     ptr.appendChild(rightText(String(g.lines || 0)));
     ptr.onclick = (e) => { if (!e.target.closest(".cell")) { collapsed ? costCollapsed.delete(g.parent) : costCollapsed.add(g.parent); renderCosts(); } };
     tbody.appendChild(ptr);
@@ -1541,10 +1541,10 @@ function renderCosts() {
       const si = document.createElement("span"); si.className = "sub-name"; si.textContent = s.sub; sn.appendChild(si); str.appendChild(sn);
       const ct = document.createElement("td"); ct.className = "left";
       if (s.code) { const chip = document.createElement("span"); chip.className = "codechip"; chip.textContent = s.code; ct.appendChild(chip); }
-      else ct.appendChild(document.createTextNode("—"));
+      else ct.appendChild(document.createTextNode("-"));
       str.appendChild(ct);
       const av = document.createElement("td"); av.appendChild(moneyCell(s.actual)); str.appendChild(av);
-      str.appendChild(rightText(total ? ((s.actual || 0) / total * 100).toFixed(1) + "%" : "—"));
+      str.appendChild(rightText(total ? ((s.actual || 0) / total * 100).toFixed(1) + "%" : "-"));
       str.appendChild(rightText(String(s.lines || 0)));
       tbody.appendChild(str);
     }
@@ -1552,7 +1552,7 @@ function renderCosts() {
 }
 function rightText(v) { const td = document.createElement("td"); const s = document.createElement("span"); s.textContent = v; td.appendChild(s); return td; }
 
-// Cost mix — "how much each cost type takes, % wise" as one proportional bar + legend.
+// Cost mix - "how much each cost type takes, % wise" as one proportional bar + legend.
 const MIX_PALETTE = ["#4A6B8A", "#3E7A5C", "#B9541E", "#6b5b95", "#b8860b", "#1f7a4d",
                      "#B4341E", "#4478a0", "#7a5c3e", "#5c8a6b", "#8a4a6b", "#997a3d"];
 function renderCostMix(groups, total) {
@@ -1586,7 +1586,7 @@ function showCodeJobs(code, label) {
     for (const c of codes) if (c.cost_code === code) rows.push({ project: proj, actual: c.actual, lines: c.lines });
   rows.sort((a, b) => (b.actual || 0) - (a.actual || 0));
   const tot = rows.reduce((t, r) => t + (r.actual || 0), 0);
-  $("#codeJobsTitle").textContent = `${label} (${code}) — ${money(tot)} across ${rows.length} job${rows.length === 1 ? "" : "s"}`;
+  $("#codeJobsTitle").textContent = `${label} (${code}) - ${money(tot)} across ${rows.length} job${rows.length === 1 ? "" : "s"}`;
   const cols = [["Project", "left"], ["Name", "left"], ["Amount", "right"], ["% of code", "right"], ["Lines", "right"]];
   const thead = $("#codeJobsTable thead"), tbody = $("#codeJobsTable tbody");
   thead.innerHTML = ""; tbody.innerHTML = "";
@@ -1600,7 +1600,7 @@ function showCodeJobs(code, label) {
     tr.appendChild(leftText(r.project));
     tr.appendChild(leftText(nameOf(r.project)));
     const av = document.createElement("td"); av.appendChild(moneyCell(r.actual)); tr.appendChild(av);
-    tr.appendChild(rightText(tot ? ((r.actual || 0) / tot * 100).toFixed(1) + "%" : "—"));
+    tr.appendChild(rightText(tot ? ((r.actual || 0) / tot * 100).toFixed(1) + "%" : "-"));
     tr.appendChild(rightText(String(r.lines || 0)));
     tbody.appendChild(tr);
   }
@@ -1618,12 +1618,12 @@ const LIEN_SHORT = {
 };
 
 // Pull the draw # and property name out of a matched_invoice label like
-// "34449 — CP745 - Firestone Forever…" → { draw:"34449", name:"Firestone…" }.
-// Used only as a fallback — invoice_no and the WIP name win when present.
+// "34449 - CP745 - Firestone Forever…" → { draw:"34449", name:"Firestone…" }.
+// Used only as a fallback - invoice_no and the WIP name win when present.
 function splitDraw(mi) {
   if (!mi) return { draw: "", name: "" };
   const head = String(mi).split("\n")[0].trim();
-  const m = head.match(/^\s*([^—]*?)\s*—\s*(.*)$/);
+  const m = head.match(/^\s*([^-]*?)\s*-\s*(.*)$/);
   if (!m) return { draw: head, name: "" };
   const rest = m[2].trim();                       // "CP745 - Firestone Forever…"
   const dash = rest.indexOf(" - ");
@@ -1818,14 +1818,14 @@ function renderVendors() {
   const totalOpen = vends.reduce((t, v) => t + (v.open_bal || 0), 0);
   $("#vendorsNote").textContent = (COST.by_vendor || []).length
     ? `(${vends.length} vendors · ${money(totalOpen)} open)`
-    : "(no cost data — run load_costs.py)";
+    : "(no cost data - run load_costs.py)";
   const cols = [["Vendor", "left"], ["Type", "left"], ["Jobs", "right"], ["Open bills (QBO)", "right"], ["Open $ (QBO)", "right"]];   // labelled: QuickBooks open AP, subs included
   const thead = $("#vendorTable thead"), tbody = $("#vendorTable tbody");
   thead.innerHTML = ""; tbody.innerHTML = "";
   const htr = document.createElement("tr");
   for (const [c, al] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
   thead.appendChild(htr);
-  const gType = v => (v.vtype || "—").split(":")[0].trim();   // Sub | Service | Supplier
+  const gType = v => (v.vtype || "-").split(":")[0].trim();   // Sub | Service | Supplier
   const rows = [...vends].sort(grouped
     ? (a, b) => gType(a).localeCompare(gType(b)) || (b.open_bal || 0) - (a.open_bal || 0)
     : (a, b) => (b.open_bal || 0) - (a.open_bal || 0));       // default: most owed first
@@ -1836,7 +1836,7 @@ function renderVendors() {
     tr.appendChild(leftText(v.vendor));
     const ty = document.createElement("td"); ty.className = "left";
     const pill = document.createElement("span"); pill.className = "vtype" + (v.vtype === "Sub" ? " sub" : (v.vtype === "Service" ? " service" : ""));
-    pill.textContent = v.vtype || "—"; ty.appendChild(pill); tr.appendChild(ty);
+    pill.textContent = v.vtype || "-"; ty.appendChild(pill); tr.appendChild(ty);
     tr.appendChild(rightText(String(v.jobs || 0)));
     tr.appendChild(rightText(v.open_bills ? String(v.open_bills) : "–"));
     const oc = document.createElement("td");
@@ -3306,11 +3306,11 @@ function renderInvAmounts(all, f) {
     const mc = document.createElement("td"); mc.className = "left inv-memo";
     if (i.memo) { mc.textContent = i.memo; mc.title = i.memo; } else { mc.textContent = "–"; mc.classList.add("dim"); }
     tr.appendChild(mc);
-    const ob = document.createElement("td"); ob.className = "right";
+    const ob = document.createElement("td"); ob.className = "right amt-box";
     if (paid) { ob.textContent = "–"; ob.classList.add("dim"); }
     else { ob.textContent = money(oiBal(i)); if (i.days_past_due != null && i.days_past_due > 0) { ob.style.color = "var(--neg)"; ob.title = i.days_past_due + " days past due"; } }
     tr.appendChild(ob);
-    tr.appendChild(rightText(money(i.amount)));
+    { const tc = rightText(money(i.amount)); tc.classList.add("amt-box", "amt-box-soft"); tr.appendChild(tc); }
     // The two dates collections runs on (Invoice Tracker "Last Action Date" / "Next Follow-Up"); an
     // overdue follow-up reads red (owner 2026-09-02).
     { const la = document.createElement("td"); la.className = "left"; la.textContent = i.last_action_date ? fmtDateShort(i.last_action_date) : "–"; if (!i.last_action_date) la.classList.add("dim"); tr.appendChild(la);
@@ -3337,7 +3337,7 @@ function renderInvAmounts(all, f) {
   for (const g of clients) {
     const expanded = invExpanded.has(g.client);   // collapsed by default; open a client to see its invoices
     // client header (like QBO's customer group): caret, who, how many, open $, and how fast they pay
-    const hr = document.createElement("tr"); hr.className = "inv-client"; hr.style.cursor = "pointer";
+    const hr = document.createElement("tr"); hr.className = "inv-client" + (expanded ? " on" : ""); hr.style.cursor = "pointer";
     hr.title = expanded ? "Click to collapse" : "Click to expand";
     const htd = document.createElement("td"); htd.colSpan = cols.length;
     const caret = document.createElement("span"); caret.className = "bg-caret"; caret.textContent = expanded ? "▾ " : "▸ ";
@@ -3348,7 +3348,7 @@ function renderInvAmounts(all, f) {
     const ad = invClientAvgDays(g.client);
     const sub = document.createElement("span"); sub.className = "g-sub"; sub.hidden = true;   // (the metrics grid replaced the text run)
     const cellG = document.createElement("div"); cellG.className = "bg-cell"; const leftG = document.createElement("span"); leftG.className = "bg-left"; leftG.appendChild(caret); leftG.appendChild(nm); cellG.appendChild(leftG);
-    bandMetrics(cellG, [[g.rows.length, "invoices"], [money(g.open), "open", g.open > 0.005 ? "neg" : ""], [money(g.billed), "billed"], [ad != null ? ad + "d" : "–", "avg days to pay"]]);
+    bandMetrics(cellG, [[g.rows.length, "invoices"], [money(g.open), "open", (g.open > 0.005 ? "neg" : "") + " boxed"], [money(g.billed), "billed"], [ad != null ? ad + "d" : "–", "avg days to pay"]]);
     htd.appendChild(cellG); hr.appendChild(htd);
     hr.onclick = () => { if (invExpanded.has(g.client)) invExpanded.delete(g.client); else invExpanded.add(g.client); renderOpenInvoices(); };
     tbody.appendChild(hr);
@@ -3364,9 +3364,15 @@ function renderInvAmounts(all, f) {
       const pCmp = { due: (a, b) => pMinDue(a).localeCompare(pMinDue(b)) || a.localeCompare(b, undefined, { numeric: true }),
         owed: (a, b) => pTotal(b) - pTotal(a), client: (a, b) => a.localeCompare(b, undefined, { numeric: true }) }[sortKey] || null;
       const porder = pCmp ? [...projs].sort(pCmp) : projs;
-      for (const p of porder) { tbody.appendChild(invSubBand(p, nameOf(p), pTotal(p), inP(p).length, cols.length)); for (const i of inP(p)) tbody.appendChild(amtRow(i)); }
+      const pickRow = (i) => { const r = amtRow(i); if (invPick.has(invKey(i))) r.classList.add("picked"); return r; };
+      for (const p of porder) {
+        const pg = inP(p);
+        if (pg.length === 1 && /^RP/i.test(p)) { tbody.appendChild(pickRow(pg[0])); continue; }   // one RP invoice on one job: no project band (owner 2026-09-08)
+        tbody.appendChild(invSubBand(p, nameOf(p), pTotal(p), pg.length, cols.length));
+        pg.forEach((i, ix) => { const r = pickRow(i); r.classList.add("in-proj"); if (ix === pg.length - 1) r.classList.add("proj-last"); tbody.appendChild(r); });
+      }
     } else {
-      for (const i of g.rows) tbody.appendChild(amtRow(i));
+      for (const i of g.rows) { const r = amtRow(i); if (invPick.has(invKey(i))) r.classList.add("picked"); tbody.appendChild(r); }
     }
   }
   const tr = document.createElement("tr"); tr.className = "inv-total-row";
@@ -3475,7 +3481,7 @@ function renderOpenInvoices() {
     const g = groups.get(k);
     const collapsed = !invExpanded.has(k);   // collapsed by default; expanded only if the owner opened it
     const gOpen = g.reduce((t, x) => t + oiBal(x), 0);
-    const gtr = document.createElement("tr"); gtr.className = "bill-group"; gtr.style.cursor = "pointer";
+    const gtr = document.createElement("tr"); gtr.className = "bill-group" + (collapsed ? "" : " on"); gtr.style.cursor = "pointer";   // .on = the client you are in (accent); the rest stay neutral (owner 2026-09-08)
     gtr.title = collapsed ? "Click to expand" : "Click to collapse";
     const gtd = document.createElement("td"); gtd.colSpan = cols.length;
     const cell = document.createElement("div"); cell.className = "bg-cell";   // flex on the div, not the td
@@ -3484,7 +3490,7 @@ function renderOpenInvoices() {
     const key = document.createElement("span"); key.className = "bg-key"; key.textContent = k;
     left.appendChild(caret); left.appendChild(key);
     cell.appendChild(left);
-    bandMetrics(cell, [[money(gOpen), "open", gOpen > 0.005 ? "neg" : ""], [g.length, "invoices"]]);
+    bandMetrics(cell, [[money(gOpen), "open", (gOpen > 0.005 ? "neg" : "") + " boxed"], [g.length, "invoices"]]);
     gtd.appendChild(cell); gtr.appendChild(gtd);
     gtr.onclick = () => { if (invExpanded.has(k)) invExpanded.delete(k); else invExpanded.add(k); renderOpenInvoices(); };
     tbody.appendChild(gtr);
@@ -3503,8 +3509,9 @@ function renderOpenInvoices() {
       const porder = pCmp ? [...projs].sort(pCmp) : projs;
       for (const p of porder) {
         const pg = inP(p);
+        if (pg.length === 1 && /^RP/i.test(p)) { tbody.appendChild(invRow(pg[0], buckets)); continue; }   // one RP invoice on one job: just the invoice, no project band (owner 2026-09-08)
         tbody.appendChild(invSubBand(p, nameOf(p), pTotal(p), pg.length, cols.length));
-        for (const i of pg) tbody.appendChild(invRow(i, buckets));
+        pg.forEach((i, ix) => { const r = invRow(i, buckets); r.classList.add("in-proj"); if (ix === pg.length - 1) r.classList.add("proj-last"); tbody.appendChild(r); });   // the project reads as one BOX
       }
     } else {
       for (const i of g) tbody.appendChild(invRow(i, buckets));
@@ -3556,6 +3563,8 @@ function invRow(i, buckets) {
   tr.style.cursor = "pointer";
   tr.title = "Click for the invoice memo + details (no QuickBooks)";
   tr.onclick = (e) => { if (e.target.closest("a")) return; openInvoicePage(i); };
+  if (invPick.has(invKey(i))) tr.classList.add("picked");
+  { const cells = tr.querySelectorAll("td.ag"); for (const c of cells) if (c.textContent.trim() && c.textContent.trim() !== "–") c.classList.add("amt-box"); }   // the open amount in a black line (owner 2026-09-08)
   return tr;
 }
 
@@ -3639,7 +3648,7 @@ async function openProjectPage(pn) {
   const unlock = document.createElement("div"); unlock.className = "pp-unlock" + (nx ? "" : " ok");
   if (nx) {
     const blk = F.blockers || [];
-    unlock.innerHTML = `<div class="pp-unlock-h">Next money in: <b>${_ge(nx.label.split(" — ")[0])}${nx.draw_no ? " · Draw #" + nx.draw_no : ""}</b> · GC owes <b>${_ge(money(nx.ar_open))}</b>${nx.ar_date ? " · invoiced " + _ge(fmtDate(nx.ar_date)) : ""}</div>`
+    unlock.innerHTML = `<div class="pp-unlock-h">Next money in: <b>${_ge(nx.label.split(/\s+[\u2014\u2013-]\s+/)[0])}${nx.draw_no ? " · Draw #" + nx.draw_no : ""}</b> · GC owes <b>${_ge(money(nx.ar_open))}</b>${nx.ar_date ? " · invoiced " + _ge(fmtDate(nx.ar_date)) : ""}</div>`
       + (blk.length ? (F.blockers_total > 0.005
             ? `<div class="pp-unlock-b">Blocked by <b>${blk.length}</b> unpaid bill${blk.length === 1 ? "" : "s"} on earlier draws · <b>${_ge(money(F.blockers_total))}</b> to pay (their unconditional waivers release this draw)</div>`
             : `<div class="pp-unlock-b"><b>${blk.length}</b> bill${blk.length === 1 ? "" : "s"} on earlier draws show no payment date yet ($0 open) - confirm they are paid and collect the waivers, then this draw is clear on our side</div>`)
@@ -3907,7 +3916,7 @@ function _renderPpDraws() {
     const nSub = (dr.sub_bills || []).length;
     const cell2 = (a, b, cls) => `<span class="pp-c ${cls || ""}"><span class="pp-c1">${a}</span><span class="pp-c2">${b}</span></span>`;
     head.innerHTML = `<span class="bg-caret"></span>
-      <span class="pp-lab">${_ge(dr.no_draw ? "No draw yet" : "Invoice " + (dr.invoice_no || dr.label.split(" — ")[0]))}${dr.draw_no ? `<small class="pp-drawno">Draw #${dr.draw_no}</small>` : ""}${dr.pushed_in ? `<small class="pp-drawno push" title="${_ge(dr.pushed_in.note || "")}">${dr.pushed_in.count} pushed in</small>` : ""}${dr.pushed_out ? `<small class="pp-drawno push" title="${_ge(dr.pushed_out.note || "")}">${dr.pushed_out.count} pushed out</small>` : ""}</span>
+      <span class="pp-lab">${_ge(dr.no_draw ? "No draw yet" : "Invoice " + (dr.invoice_no || dr.label.split(/\s+[\u2014\u2013-]\s+/)[0]))}${dr.draw_no ? `<small class="pp-drawno">Draw #${dr.draw_no}</small>` : ""}${dr.pushed_in ? `<small class="pp-drawno push" title="${_ge(dr.pushed_in.note || "")}">${dr.pushed_in.count} pushed in</small>` : ""}${dr.pushed_out ? `<small class="pp-drawno push" title="${_ge(dr.pushed_out.note || "")}">${dr.pushed_out.count} pushed out</small>` : ""}</span>
       <span class="pp-dt">${_ge(dr.ar_date ? fmtDate(dr.ar_date) : "–")}</span>
       <span class="pp-billed">${dr.no_draw ? "–" : _ge(money(dr.billed))}</span>
       <span class="pp-gc ${dr.no_draw ? "" : dr.gc_paid ? "ok" : "due"}">${dr.no_draw ? "–" : dr.gc_paid ? "paid" : "owes " + _ge(money(dr.ar_open))}</span>
@@ -4082,7 +4091,7 @@ async function openInvoicePage(inv) {
   const sec = (title, note) => { const w = document.createElement("section"); w.className = "widget ip-sec";
     const h = document.createElement("div"); h.className = "widget-head"; h.innerHTML = `<h2>${_ge(title)} <span class="count">${_ge(note || "")}</span></h2>`; w.appendChild(h); body.appendChild(w); return w; };
   const kv = (host, rows) => { const g = document.createElement("div"); g.className = "ip-kv";
-    for (const [k, v, cls] of rows) { if (v == null || v === "" || v === "—") continue;
+    for (const [k, v, cls] of rows) { if (v == null || v === "" || v === "–") continue;
       const r = document.createElement("div"); r.className = "drow"; const dk = document.createElement("span"); dk.className = "dk"; dk.textContent = k;
       const dv = document.createElement("span"); dv.className = "dv" + (cls ? " " + cls : ""); dv.textContent = v; dv.title = "Click to copy"; dv.onclick = () => copy(String(v));
       r.appendChild(dk); r.appendChild(dv); g.appendChild(r); } host.appendChild(g); return g; };
@@ -4142,7 +4151,7 @@ async function openInvoicePage(inv) {
 }
 function openInvoiceDetail(inv) {
   if (!inv) return;
-  const docn = inv.doc_number || inv.invoice_no || "—";
+  const docn = inv.doc_number || inv.invoice_no || "-";
   $("#invDetailTitle").textContent = "Invoice " + docn;
   $("#invDetailSub").textContent = [inv.customer, inv.project_no, inv.division].filter(Boolean).join(" · ");
   const body = $("#invDetailBody"); body.innerHTML = "";
@@ -4200,7 +4209,7 @@ function openInvoiceDetail(inv) {
     ]],
   ];
   for (const [title, rows] of groups) {
-    const present = rows.filter(r => r && r[1] != null && r[1] !== "" && r[1] !== "—");
+    const present = rows.filter(r => r && r[1] != null && r[1] !== "" && r[1] !== "–");
     if (!present.length) continue;
     const g = document.createElement("div"); g.className = "dgroup";
     const h = document.createElement("h4"); h.textContent = title; g.appendChild(h);
@@ -5078,12 +5087,12 @@ function renderSales() {
   const loaded = (S.customers || []).length > 0;
   $("#salesNote").textContent = loaded
     ? `(${t.customers || 0} customers · ${t.touches || 0} touches logged)`
-    : "(no CRM data — run load_customers.py)";
+    : "(no CRM data - run load_customers.py)";
 
   // ── KPI stats (clickable → filter/jump) ──
   const stats = [
-    ["Customers", String(t.customers || 0), "in the list — click to clear filters", () => setSalesFilter("", "")],
-    ["Interested", String(t.interested || 0), "warm — click to see them", () => setSalesFilter("Interested", "")],
+    ["Customers", String(t.customers || 0), "in the list - click to clear filters", () => setSalesFilter("", "")],
+    ["Interested", String(t.interested || 0), "warm - click to see them", () => setSalesFilter("Interested", "")],
     ["Touches logged", String(t.touches || 0), "interaction-log lines", null],
     ["Sales reps", String((S.by_rep || []).length), "working the list", () => { const el = $("#salesRepTable"); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); }],
   ];
@@ -5192,17 +5201,17 @@ function renderSales() {
       nameTd.appendChild(a);
     } else { const s = document.createElement("span"); s.textContent = c.name; nameTd.appendChild(s); }
     tr.appendChild(nameTd);
-    tr.appendChild(leftText(c.division || "—"));
-    tr.appendChild(leftText(c.sales_status || "—"));
-    tr.appendChild(leftText(c.last_contacted ? fmtDate(c.last_contacted) : "—"));
-    tr.appendChild(leftText(c.last_edited_by || "—"));
+    tr.appendChild(leftText(c.division || "-"));
+    tr.appendChild(leftText(c.sales_status || "-"));
+    tr.appendChild(leftText(c.last_contacted ? fmtDate(c.last_contacted) : "-"));
+    tr.appendChild(leftText(c.last_edited_by || "-"));
     tr.appendChild(rightText(String(c.n_touches || 0)));
     tb.appendChild(tr);
   }
   if (!rows.length) {
     const tr = document.createElement("tr"); const td = document.createElement("td");
     td.colSpan = 6; td.className = "left"; td.style.color = "var(--text-dim)";
-    td.textContent = (S.customers || []).length ? "No customers match this filter." : "No CRM data — run load_customers.py.";
+    td.textContent = (S.customers || []).length ? "No customers match this filter." : "No CRM data - run load_customers.py.";
     tr.appendChild(td); tb.appendChild(tr);
   }
 }
@@ -5220,9 +5229,9 @@ function renderRepActivity() {
     activeRep = ranked[0] || (reps[0] && reps[0].rep) || null;
   }
   const note = $("#repActNote"); box.innerHTML = "";
-  if (!activeRep) { if (note) note.textContent = ""; box.appendChild(el2("p", "hint", "No rep activity — run load_customers.py.")); return; }
+  if (!activeRep) { if (note) note.textContent = ""; box.appendChild(el2("p", "hint", "No rep activity - run load_customers.py.")); return; }
   const rep = activeRep;
-  if (note) note.textContent = `— ${rep} · daily & weekly`;
+  if (note) note.textContent = `- ${rep} · daily & weekly`;
   const mine = log.filter(t => t.rep === rep);
   const myc = custs.filter(c => c.last_edited_by === rep);
 
@@ -5243,7 +5252,7 @@ function renderRepActivity() {
   // header
   const head = el2("div", "rep-head"); const h = el2("div");
   h.appendChild(el2("h3", null, rep));
-  h.appendChild(el2("span", "rep-sub", `${mine.length} touches · ${myc.length} customers · ${wins} won · last active ${lastActive ? fmtDate(lastActive) : "—"}`));
+  h.appendChild(el2("span", "rep-sub", `${mine.length} touches · ${myc.length} customers · ${wins} won · last active ${lastActive ? fmtDate(lastActive) : "-"}`));
   head.appendChild(h); box.appendChild(head);
 
   // summary tiles
@@ -5260,8 +5269,8 @@ function renderRepActivity() {
   const cols = el2("div", "rep-cols"); const left = el2("div", "rep-col"), right = el2("div", "rep-col");
   cols.appendChild(left); cols.appendChild(right); box.appendChild(cols);
 
-  // WEEKLY timeline — last 12 weeks including zero weeks (so a drop-off shows)
-  left.appendChild(el2("h4", null, "Weekly touches — last 12 weeks"));
+  // WEEKLY timeline - last 12 weeks including zero weeks (so a drop-off shows)
+  left.appendChild(el2("h4", null, "Weekly touches - last 12 weeks"));
   const weeks = []; for (let i = 11; i >= 0; i--) { const d = new Date(thisMon); d.setDate(d.getDate() - i * 7); weeks.push(ymd(d)); }
   const wc = {}; for (const t of mine) { const k = wk(t); if (k) wc[k] = (wc[k] || 0) + 1; }
   const wmax = Math.max(1, ...weeks.map(w => wc[w] || 0));
@@ -5283,7 +5292,7 @@ function renderRepActivity() {
   for (const t of recent) {
     const line = el2("div", "rep-touch");
     line.appendChild(el2("span", "rt-date", fmtDate(t.date).replace(/^\w+, /, "").replace(/, \d{4}$/, "")));
-    const body = el2("span", "rt-body"); body.appendChild(el2("span", "rt-cust", t.customer || "—"));
+    const body = el2("span", "rt-body"); body.appendChild(el2("span", "rt-cust", t.customer || "-"));
     if (t.note) body.appendChild(el2("span", "rt-note", t.note));
     line.appendChild(body); rlog.appendChild(line);
   }
@@ -5301,7 +5310,7 @@ function renderRepActivity() {
   right.appendChild(dueBox);
 
   // GOING STALE (open + no contact in 21+ days)
-  right.appendChild(el2("h4", null, "Going stale — 21d+ no contact"));
+  right.appendChild(el2("h4", null, "Going stale - 21d+ no contact"));
   const stale = myc.filter(c => open(c) && c.last_contacted && daysAgo(c.last_contacted) > 21).sort((a, b) => daysAgo(b.last_contacted) - daysAgo(a.last_contacted));
   const staleBox = el2("div", "rep-list");
   if (!stale.length) staleBox.appendChild(el2("p", "hint", "Nothing stale."));
@@ -5320,7 +5329,7 @@ function renderRepActivity() {
 // tiny DOM helper (local to the sales drill)
 function el2(tag, cls, txt) { const e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; }
 
-// Portfolio P&L tab — every active job's live P&L + division/company totals. Computed
+// Portfolio P&L tab - every active job's live P&L + division/company totals. Computed
 // server-side (/api/pnl/portfolio), lazy-loaded on first open, recomputed after a reload.
 // ══ WIP REPORT ═══════════════════════════════════════════════════════════════
 // The company Work-in-Progress schedule, straight from the ledger's wip_snapshot (loaded from the
@@ -5522,7 +5531,7 @@ function renderPnl() {
     return;
   }
   const rows = PNL.rows || [], divs = PNL.by_division || [], comp = PNL.company || {};
-  const pctTxt = p => (p == null ? "—" : (p * 100).toFixed(1) + "%");
+  const pctTxt = p => (p == null ? "–" : (p * 100).toFixed(1) + "%");
   $("#pnlNote").textContent = rows.length ? `(${comp.n || 0} active jobs · ${money(comp.billed)} net billed · WIP report ${meta.report_date ? fmtDate(meta.report_date) : "–"} · QBO costs loaded ${loadedAt("Costs (QBO)") ? fmtDate(loadedAt("Costs (QBO)"), true) : "–"})` : "(no P&L data - load WIP + costs)";
 
   // company totals
@@ -5546,7 +5555,7 @@ function renderPnl() {
     tb.appendChild(row);
   }
 
-  // by job — filterable + sortable (headers), click → detail
+  // by job - filterable + sortable (headers), click → detail
   const fProj = ($("#pnlFProj") ? $("#pnlFProj").value : "").trim().toLowerCase();
   const fDiv = $("#pnlFDivision") ? $("#pnlFDivision").value : "";
   const fClient = ($("#pnlFClient") ? $("#pnlFClient").value : "").trim().toLowerCase();
@@ -5625,7 +5634,7 @@ function renderAttention() {
     el.querySelector(".a-count").textContent = hits.length;
     el.querySelector(".a-label").textContent = rule.label;
     el.querySelector(".a-sub").textContent = hits.length ? money(total) : rule.hint;
-    el.title = rule.hint + (hits.length ? " — click to filter the table" : "");
+    el.title = rule.hint + (hits.length ? " - click to filter the table" : "");
     if (hits.length) el.onclick = () => {
       activeRule = activeRule === rule.key ? null : rule.key;
       renderAttention(); renderProjects();
@@ -5690,7 +5699,7 @@ function loadedAt(feed) { return ((meta.freshness || {}).ledger || {})[feed] || 
 function renderDivisions() {
   const groups = {};
   for (const r of ALL) {
-    const d = r.division || "—";
+    const d = r.division || "-";
     const g = groups[d] || (groups[d] = { jobs: 0, contract: 0, costs: 0, billed: 0, over: 0, under: 0 });
     g.jobs++; g.contract += num(r.total_contract_price); g.costs += num(r.costs_to_date);
     g.billed += num(r.billed_to_date); g.over += num(r.overbillings); g.under += num(r.underbillings);
@@ -5721,7 +5730,7 @@ function drillDivision(div) {
   $("#fActive").checked = true;
   renderProjects();
   $("#widget-projects").scrollIntoView({ behavior: "smooth", block: "start" });
-  toast(`${div} — active projects`);
+  toast(`${div} - active projects`);
 }
 const num = v => (isNum(v) ? v : Number(v) || 0);
 
@@ -5791,7 +5800,7 @@ function pctBar(col, value) {
 function statusPill(v) {
   const s = document.createElement("span");
   s.className = "pill " + (v || "").toLowerCase();
-  s.textContent = v || "—";
+  s.textContent = v || "-";
   return s;
 }
 function textCell(v, left) { const s = document.createElement("span"); s.textContent = v; const w = document.createElement("span"); w.appendChild(s); return w; }
@@ -5810,7 +5819,7 @@ const DETAIL_GROUPS = [
 ];
 let detailRow = null;
 
-// P&L (project-pnl) link — shows when the workbook was last pulled, opens it, and
+// P&L (project-pnl) link - shows when the workbook was last pulled, opens it, and
 // (on an explicit confirm) runs project-pnl to (re)generate it. The generate call is
 // the ONLY place the dashboard triggers a QBO pull + a file write; it is gated by a
 // confirm dialog here and a `confirm` flag the server also requires.
@@ -5888,7 +5897,7 @@ function buildPnlGroup(proj) {
     }
   }).catch(() => { pl.textContent = "P&L unavailable."; });
 
-  // ── source job folder (Synology CP/RP · OneDrive MFD) — the owner's "source link" ──
+  // ── source job folder (Synology CP/RP · OneDrive MFD) - the owner's "source link" ──
   const src = document.createElement("div"); src.className = "pnl-actions";
   const jobBtn = document.createElement("button"); jobBtn.className = "btn small"; jobBtn.textContent = "Open job folder ↗";
   jobBtn.title = "Open this job's folder on the file server (docs · takeoffs · photos)";
@@ -5896,7 +5905,7 @@ function buildPnlGroup(proj) {
     .then(r => r.json()).then(x => toast(x.error ? x.error : "Opening job folder…"));
   src.appendChild(jobBtn); g.appendChild(src);
 
-  // ── detailed export (project-pnl Excel) — open / generate ──
+  // ── detailed export (project-pnl Excel) - open / generate ──
   const cap2 = document.createElement("div"); cap2.className = "pnl-cap"; cap2.textContent = "Detailed export (project-pnl)"; g.appendChild(cap2);
   const row = document.createElement("div"); row.className = "drow pnl-pulled";   // the stamp sits in its own box right next to its label (owner 2026-09-08)
   const dk = document.createElement("span"); dk.className = "dk"; dk.textContent = "Last pulled";
@@ -5922,9 +5931,9 @@ function buildPnlGroup(proj) {
   }).catch(() => { dv.textContent = "unavailable"; });
 
   genBtn.onclick = () => {
-    if (!confirm(`Generate the P&L for ${proj}?\n\nThis runs project-pnl against QBO — a Touch ID prompt will appear on this Mac — and can take a minute or two.`)) return;
+    if (!confirm(`Generate the P&L for ${proj}?\n\nThis runs project-pnl against QBO - a Touch ID prompt will appear on this Mac - and can take a minute or two.`)) return;
     genBtn.disabled = true; genBtn.textContent = "Generating…";
-    msg.textContent = "Running project-pnl — watch for the Touch ID prompt on this Mac.";
+    msg.textContent = "Running project-pnl - watch for the Touch ID prompt on this Mac.";
     fetch(`/api/pnl/generate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ proj, confirm: true }) })
       .then(r => r.json()).then(d => {
         if (d.error) { msg.textContent = "Error: " + d.error; genBtn.disabled = false; genBtn.textContent = "Generate / Refresh"; return; }
@@ -5944,7 +5953,7 @@ function pollPnl(proj, genBtn, msg, refresh) {
       msg.title = s.status || "";
       setTimeout(tick, 1500);
     }
-    else if (s.state === "done") { finish("Done — P&L refreshed."); }
+    else if (s.state === "done") { finish("Done - P&L refreshed."); }
     else if (s.state === "error") { msg.textContent = "Failed: " + (s.detail || "see the log"); genBtn.disabled = false; genBtn.textContent = "Generate / Refresh"; }
     else { finish(""); }
   }).catch(() => setTimeout(tick, 3000));
@@ -5953,7 +5962,7 @@ function pollPnl(proj, genBtn, msg, refresh) {
 
 function openDetail(r) {
   detailRow = r;
-  $("#detailTitle").textContent = `${r.project_no} — ${r.project_name || ""}`;
+  $("#detailTitle").textContent = `${r.project_no} - ${r.project_name || ""}`;
   $("#detailSub").textContent = `${r.division || ""}${r.source_tab ? " · " + r.source_tab : ""}`;
   const body = $("#detailBody"); body.innerHTML = "";
   { const g = document.createElement("div"); g.className = "dgroup"; const b = document.createElement("button"); b.className = "btn primary"; b.textContent = "Open project page";
@@ -6057,7 +6066,7 @@ function openDetail(r) {
 }
 function detailAsText() {
   if (!detailRow) return "";
-  const r = detailRow; const lines = [`${r.project_no} — ${r.project_name || ""}`];
+  const r = detailRow; const lines = [`${r.project_no} - ${r.project_name || ""}`];
   for (const [title, fields] of DETAIL_GROUPS) {
     const present = fields.filter(([k]) => r[k] !== null && r[k] !== undefined && r[k] !== "");
     if (!present.length) continue;
@@ -6389,7 +6398,7 @@ function renderHealth() {
     return;
   }
   if (note) note.textContent = HEALTH.as_of_label
-    ? `QBO metrics as of ${HEALTH.as_of_label}` : "QBO metrics not pulled yet — derived rows only";
+    ? `QBO metrics as of ${HEALTH.as_of_label}` : "QBO metrics not pulled yet - derived rows only";
   box.innerHTML = "";
   for (const sec of HEALTH.sections || []) {
     const w = el2("section", "widget health-sec tone-" + (sec.tone || "n"));
@@ -6508,7 +6517,7 @@ function renderHealthRecurring() {
   };
   band("Overhead (P&L expense accounts)");
   for (const r of rec.overhead || []) row(r, r.kind);
-  band("Debt service (liability balance drops — MCA rows shown, never counted)");
+  band("Debt service (liability balance drops - MCA rows shown, never counted)");
   for (const r of rec.debt || []) row(r, r.refinancing ? "MCA (excluded)" : "debt");
 }
 
@@ -6782,7 +6791,7 @@ function buildGraphModes() {
     // The diagram title leads with a domain code, then a dash and the long description; the
     // short lead word makes a tidy chip, full title on hover. The split set MUST include the
     // em dash: the ARCHITECTURE.md headings are authored with one (same as registry_view).
-    const short = (d.title.split(/[-–—(]/)[0] || d.title).trim();
+    const short = (d.title.split(/[\u2014\u2013(-]/)[0] || d.title).trim();
     const b = document.createElement("button");
     b.className = "graph-mode" + (d.key === graphMode ? " active" : "");
     b.dataset.mode = d.key; b.title = d.title;
@@ -7343,7 +7352,7 @@ function wrUpdateApproveCount() {
 }
 
 function wrBulk(mode) {
-  // mode: 'qbo' | 'all' | 'clear' — over the CURRENTLY VISIBLE jobs only.
+  // mode: 'qbo' | 'all' | 'clear' - over the CURRENTLY VISIBLE jobs only.
   const div = $("#wrDivision").value, st = $("#wrStatus").value;
   const q = ($("#wrSearch").value || "").trim().toLowerCase();
   const changedOnly = $("#wrChangedOnly").checked;

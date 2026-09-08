@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-Project Ledger.app — a proper Dock app that runs the local ledger dashboard.
+Project Ledger.app - a proper Dock app that runs the local ledger dashboard.
 
 A real Cocoa app (via PyObjC + py2app), so:
   * its Dock icon is present exactly while the ledger is ON (the indicator),
   * clicking it opens the dashboard in your browser (starts the server if needed),
   * Cmd-Q / right-click Dock → Quit / log out / shut down stop the server cleanly,
-  * real system sleep (closing the lid) also stops it — nothing lingers,
+  * real system sleep (closing the lid) also stops it - nothing lingers,
   * it never runs at login; it's on only while you keep it open.
 
-It manages the dashboard server (ledger/dashboard.py) as a child process — the SAME
-server the terminal launcher uses — and stops it on quit. Built by build_ledger_app.command.
+It manages the dashboard server (ledger/dashboard.py) as a child process - the SAME
+server the terminal launcher uses - and stops it on quit. Built by build_ledger_app.command.
 """
 import os
 import subprocess
@@ -52,7 +52,7 @@ def _server_up() -> bool:
 def _start_server() -> None:
     global _proc
     if _server_up():
-        return                                        # already running — adopt it
+        return                                        # already running - adopt it
     os.makedirs(LOG_DIR, exist_ok=True)
     logf = open(os.path.join(LOG_DIR, "server.log"), "a")
     env = {k: v for k, v in os.environ.items() if k not in _PY_ENV_STRIP}

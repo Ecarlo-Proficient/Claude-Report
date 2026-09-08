@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-load_costs.py — land COMPLETE job costs (incl. subs) into the ledger, by cost code.
+load_costs.py - land COMPLETE job costs (incl. subs) into the ledger, by cost code.
 
 Pulls QBO expense transactions (Bills + Purchases) and writes one `cost_line` per
 expense line, keyed to the project by its line `CustomerRef` and to the cost code
-by the shared `cost_leaf()` resolver — the SAME engine project-pnl uses, so the
+by the shared `cost_leaf()` resolver - the SAME engine project-pnl uses, so the
 ledger and the P&L can never drift. This is the complete cost source Bill Tracker
 couldn't be: subs are included, and reconciles to `wip_snapshot.costs_to_date`.
 
@@ -18,7 +18,7 @@ is on disk, never 0-as-fact). Additive columns; a FULL run backfills them.
 WHY IT NEEDS A QBO PULL
 There is no on-disk artifact with current + complete costs (Bill Tracker excludes
 subs; the P&L workbooks are stale and per-file). This tool reads QBO directly via
-the shared vault — one Touch ID — and is READ-ONLY against QBO.
+the shared vault - one Touch ID - and is READ-ONLY against QBO.
 
 SAFETY
     * READ-ONLY against QBO (GET only, via shared/qbo_api).
@@ -26,7 +26,7 @@ SAFETY
       for the target projects (idempotent; handles QBO deletions).
     * --dry-run pulls and reports the reconciliation WITHOUT writing.
     * --selftest runs the whole pipeline offline on a throwaway DB (no QBO, no
-      touch to your real ledger) — proves the wiring before the first real pull.
+      touch to your real ledger) - proves the wiring before the first real pull.
 
 USAGE
     python3 ledger/load_costs.py --selftest              # offline proof, no QBO
@@ -84,7 +84,7 @@ def _migrate_cost_line(con) -> None:
     cols = {r[1] for r in con.execute("PRAGMA table_info(cost_line)")}
     if cols and "account" not in cols:
         if con.execute("SELECT COUNT(*) FROM cost_line").fetchone()[0]:
-            sys.exit("cost_line has the legacy shape AND rows — refusing to auto-migrate. "
+            sys.exit("cost_line has the legacy shape AND rows - refusing to auto-migrate. "
                      "Back up the ledger and migrate cost_line manually.")
         con.execute("DROP TABLE cost_line")
         con.executescript(SCHEMA_SQL.read_text(encoding="utf-8"))
@@ -105,7 +105,7 @@ def _migrate_cost_line(con) -> None:
 
 
 def target_projects(con, division: str | None, active: bool, projects: list[str] | None) -> set:
-    """Which projects to load costs for — drawn from the ledger's own tables."""
+    """Which projects to load costs for - drawn from the ledger's own tables."""
     if projects:
         want = {p.upper() for p in projects}
         have = {r[0] for r in con.execute("SELECT project_no FROM project")}
@@ -189,7 +189,7 @@ def reconcile(con, targets: set, show: int) -> None:
         ORDER BY COALESCE(c.costs_loaded,0) DESC
     """ % ",".join("?" for _ in targets), tuple(targets)).fetchall()
     reconciled = mism = 0
-    print("\nReconcile — loaded cost vs WIP costs_to_date (the QBO truth):")
+    print("\nReconcile - loaded cost vs WIP costs_to_date (the QBO truth):")
     shown = 0
     for pn, wip, loaded, subs, lines in rows:
         loaded = loaded or 0

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-load_invoices.py — land AR invoices (the draws the GC pays YOU) into the ledger,
-read FROM the Invoice Tracker (Notion) — NOT a second QBO pull.
+load_invoices.py - land AR invoices (the draws the GC pays YOU) into the ledger,
+read FROM the Invoice Tracker (Notion) - NOT a second QBO pull.
 
 Systems connect, they don't each re-pull QBO. `invoice-sync` already mirrors every
 QBO invoice into the **Invoice Tracker** Notion DBs (Res/Com + MFD) every run, and
 keeps paid invoices on file for 12 months. So the ledger reads THAT (via the shared
-Notion token — the same way `load_customers.py` reads the Customer List), and writes
-one `billing_event` per invoice keyed by **Invoice #** — the same number
+Notion token - the same way `load_customers.py` reads the Customer List), and writes
+one `billing_event` per invoice keyed by **Invoice #** - the same number
 `ap_bill_line.invoice_no` carries, so the Draws view can show billed-to-GC (money IN)
 next to paid-to-vendors (money OUT) on every draw.
 
@@ -28,7 +28,7 @@ Customer list when credentials are at hand, else from what the ledger already kn
 
 SAFETY
     * Read-only on Notion AND QBO; writes only the local ledger. Scoped full-replace
-      of each source ('invoice_tracker', 'qbo_fallback') — idempotent; a re-run mirrors.
+      of each source ('invoice_tracker', 'qbo_fallback') - idempotent; a re-run mirrors.
     * The gap fallback authenticates to QBO → ONE Touch ID on this Mac. Skip with
       --no-qbo (Notion-only). --selftest stays fully offline (no Notion, no QBO).
     * --dry-run reads + reports draw coverage + the gap count WITHOUT writing or pulling QBO.
@@ -60,7 +60,7 @@ DEFAULT_DB = paths.get_path(
     Path.home() / "Library" / "Application Support" / "Proficient" / "ledger.sqlite3",
 )
 
-# Invoice Tracker data-source ids (public — documented in docs/Invoice Tracker —
+# Invoice Tracker data-source ids (public - documented in docs/Invoice Tracker -
 # System Reference.md). Overridable via machine.env if they ever change.
 RESCOM_DS = paths.get("ACB_INVOICE_RESCOM_DS_ID") or "265b24f7-5585-803c-bcae-000ba27328cd"
 MFD_DS = paths.get("ACB_INVOICE_MFD_DS_ID") or "0f8e7cdf-16fe-4137-82e6-255e2ff400ce"
@@ -220,7 +220,7 @@ def _migrate_billing_event(con) -> None:
     cols = {r[1] for r in con.execute("PRAGMA table_info(billing_event)")}
     if cols and "doc_number" not in cols:
         if con.execute("SELECT COUNT(*) FROM billing_event").fetchone()[0]:
-            sys.exit("billing_event has the legacy shape AND rows — refusing to auto-migrate.")
+            sys.exit("billing_event has the legacy shape AND rows - refusing to auto-migrate.")
         con.execute("DROP TABLE billing_event")
         con.executescript(SCHEMA_SQL.read_text(encoding="utf-8"))
         con.commit()
@@ -333,9 +333,9 @@ def fill_gaps_from_qbo(con, now: str, dry_run: bool, batch: int = 25, creds=None
         "SELECT DISTINCT a.invoice_no FROM ap_bill_line a "
         "LEFT JOIN billing_event b ON b.doc_number = a.invoice_no "
         "WHERE a.invoice_no GLOB '[0-9]*' AND b.doc_number IS NULL "
-        "  AND COALESCE(a.project_no,'') NOT LIKE 'RP%' AND a.matched_invoice NOT LIKE '%— RP%'")]
+        "  AND COALESCE(a.project_no,'') NOT LIKE 'RP%' AND a.matched_invoice NOT LIKE '%- RP%'")]
     if not gaps:
-        print("QBO fallback: no gaps — every CP/MFD draw is covered by the Invoice Tracker.")
+        print("QBO fallback: no gaps - every CP/MFD draw is covered by the Invoice Tracker.")
         return 0
     print(f"QBO fallback: {len(gaps)} draw invoices missing from the tracker.")
     if dry_run:
@@ -409,7 +409,7 @@ def _draw_coverage(con, show: int) -> None:
         "SELECT COUNT(DISTINCT a.invoice_no) draws, COUNT(DISTINCT b.doc_number) matched "
         "FROM ap_bill_line a LEFT JOIN billing_event b ON b.doc_number = a.invoice_no "
         "WHERE a.invoice_no IS NOT NULL AND a.invoice_no <> '' "
-        "  AND COALESCE(a.project_no,'') NOT LIKE 'RP%' AND a.matched_invoice NOT LIKE '%— RP%'"
+        "  AND COALESCE(a.project_no,'') NOT LIKE 'RP%' AND a.matched_invoice NOT LIKE '%- RP%'"
     ).fetchone()
     tot = con.execute("SELECT SUM(amount), SUM(balance) FROM billing_event WHERE source='invoice_tracker'").fetchone()
     print(f"\nDraw coverage: {row[1] or 0} of {row[0] or 0} MFD/CP draws matched to an AR invoice.")
@@ -419,7 +419,7 @@ def _draw_coverage(con, show: int) -> None:
         for r in con.execute(
                 "SELECT doc_number, project_no, status, amount, balance FROM billing_event "
                 "WHERE source='invoice_tracker' AND project_no IS NOT NULL ORDER BY amount DESC LIMIT ?", (show,)):
-            print(f"  #{(r[0] or '—'):<8} {(r[1] or '—'):<10} {(r[2] or '—'):<14} "
+            print(f"  #{(r[0] or '-'):<8} {(r[1] or '-'):<10} {(r[2] or '-'):<14} "
                   f"${(r[3] or 0):>12,.0f}  open ${(r[4] or 0):>10,.0f}")
 
 
@@ -525,7 +525,7 @@ def _selftest() -> None:
         con = _connect(Path(d) / "selftest.sqlite3")
         con.execute("INSERT INTO ap_bill_line (line_uid, project_no, invoice_no, matched_invoice, "
                     "bill_total, source, loaded_at) VALUES "
-                    "('t1','MFD325','34319','34319 — MFD325 - Mesquite - Briarwood - May Draw 2026',12000,'test','t')")
+                    "('t1','MFD325','34319','34319 - MFD325 - Mesquite - Briarwood - May Draw 2026',12000,'test','t')")
         con.commit()
         n = write_events(con, records, "selftest")
         assert n == 3, n

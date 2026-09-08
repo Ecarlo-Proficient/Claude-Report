@@ -65,7 +65,7 @@ _DATE = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
 # `# 4 - AP: Bills, Subs, Vendors (AP)` -> num 4, title, code AP.
 # The class below MUST keep the em dash: the vault headings are written with one, so
 # stripping it here (house style is hyphen/en dash in AUTHORED text) breaks every file.
-_TITLE = re.compile(r"^#\s*(\d+)\s*[-–—]\s*(.+?)\s*\(([A-Z]{2,4})\)\s*$")
+_TITLE = re.compile(r"^#\s*(\d+)\s*[-–-]\s*(.+?)\s*\(([A-Z]{2,4})\)\s*$")
 
 
 def _plain(cell: str) -> str:

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-load_wip_master.py — land the FINAL WIP master sheet into the project ledger.
+load_wip_master.py - land the FINAL WIP master sheet into the project ledger.
 
 WHAT IT DOES
 Reads the three Test tabs of "WIP - MASTER new.xlsx" (the finalized WIP report)
@@ -8,7 +8,7 @@ and populates two tables of the canonical ledger:
     project        one row per real job   (identity: division, type, builder, ...)
     wip_snapshot   one row per (project, report_date)  (the computed WIP position)
 
-It DOES NOT generate anything from QBO — the master sheet is the source of truth
+It DOES NOT generate anything from QBO - the master sheet is the source of truth
 for this load. The granular cost_code / budget_line / cost_line / billing_event
 tables in schema.sql are filled later by the QBO connectors, not here.
 
@@ -18,7 +18,7 @@ EACH PROJECT IS READ FROM ITS RICHEST SOURCE, exactly once:
     Test-Master   -> division Multi Family (MFD rows only; MFD has no own Test tab)
 
 SAFETY
-    * The Excel workbook is opened READ-ONLY — this tool never writes the sheet.
+    * The Excel workbook is opened READ-ONLY - this tool never writes the sheet.
     * Writes go to a local SQLite file (default) or any DB you point --db at.
     * Upserts are idempotent: re-running replaces the same (project) / (project,
       report_date) rows, never duplicates them.
@@ -52,7 +52,7 @@ from shared import paths  # noqa: E402
 HERE = Path(__file__).resolve().parent
 SCHEMA_SQL = HERE / "schema.sql"
 
-# Default local database — outside the repo (never committed), created on demand.
+# Default local database - outside the repo (never committed), created on demand.
 DEFAULT_DB = (
     Path.home() / "Library" / "Application Support" / "Proficient" / "ledger.sqlite3"
 )

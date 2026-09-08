@@ -258,7 +258,7 @@ tr.lien-row.u-past > td:first-child, tr.lien-row.u-d7 > td:first-child { border-
 tr.lien-row.u-d15 > td:first-child { border-left-color: color-mix(in srgb, var(--neg) 55%, var(--border)); }
 tr.lien-row.u-d30 > td:first-child { border-left-color: color-mix(in srgb, #b8860b 65%, var(--border)); }
 tr.lien-row.u-info > td:first-child { border-left-color: var(--text-dim); }
-/* The two the owner said get lost — make them stand out. */
+/* The two the owner said get lost - make them stand out. */
 .invno { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em;
   padding: 1px 7px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-2); }
 .cell.lien-amt { font-weight: 700; }
@@ -333,7 +333,7 @@ a.invno.qbo-link:hover { border-color: var(--accent); text-decoration: none; }
 .draw-row:hover { background: var(--row-hover); }
 .cell.draw-in { color: var(--pos); font-weight: 700; }      /* money IN (GC pays you) */
 .cell.draw-out { color: var(--text); }                       /* money OUT (you pay vendors) */
-.ar-open { color: var(--warn-text); font-size: .82em; font-weight: 600; }   /* Unpaid / Partially Paid — GC still owes */
+.ar-open { color: var(--warn-text); font-size: .82em; font-weight: 600; }   /* Unpaid / Partially Paid - GC still owes */
 .ar-paid { color: var(--pos); font-size: .82em; font-weight: 600; }  /* Paid */
 .paidcnt { color: var(--text-dim); font-size: .85em; font-variant-numeric: tabular-nums; }
 tr.draw-cust > td, tr.inv-client > td { background: color-mix(in srgb, var(--accent) 16%, var(--surface-2));
@@ -1513,3 +1513,27 @@ table.pp-cov td.neg { color: var(--neg-text); } table.pp-cov td.pos { color: var
 .pnl-live .drow.pnl-warn .dk, .pnl-live .drow.pnl-warn .dv { color: var(--warn-text); }
 .pnl-kpi-warn .k-value { color: var(--warn-text); }
 table.pp-audit { margin: 0; }
+
+/* Invoices tab (owner 2026-09-08): neutral client bands, the OPEN client in the accent; a picked row keeps an
+   accent edge; each project inside a client reads as one thick box; open money sits in a black line */
+.aging-grid tr.bill-group > td, .aging-grid tr.inv-client > td { background: var(--surface-2); }
+.aging-grid tr.bill-group.on > td, .aging-grid tr.inv-client.on > td { background: color-mix(in srgb, var(--accent) 14%, var(--surface)); box-shadow: inset 3px 0 0 var(--accent); }
+.aging-grid tr.picked > td { background: color-mix(in srgb, var(--accent) 7%, var(--surface)); }
+.aging-grid tr.picked > td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+.aging-grid tr.bill-subgroup > td { border-top: 2px solid var(--text); }
+.aging-grid tr.bill-subgroup > td:first-child, .aging-grid tr.in-proj > td:first-child { box-shadow: inset 2px 0 0 var(--text); }
+.aging-grid tr.bill-subgroup > td:last-child, .aging-grid tr.in-proj > td:last-child { box-shadow: inset -2px 0 0 var(--text); }
+.aging-grid tr.proj-last > td { border-bottom: 2px solid var(--text); }
+.aging-grid td.amt-box { box-shadow: inset 0 0 0 1.5px var(--text); font-weight: 700; }
+.aging-grid td.amt-box.amt-box-soft { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 55%, transparent); font-weight: 600; }
+.aging-grid tr.in-proj > td:first-child.amt-box { box-shadow: inset 2px 0 0 var(--text), inset 0 0 0 1.5px var(--text); }
+.bg-m.boxed b { outline: 2px solid var(--text); outline-offset: 2px; padding: 0 3px; border-radius: 2px; }
+/* P&L side peek (Financials > by job): the data fills the row in columns inside a fixed-height box that scrolls
+   (owner 2026-09-08: "wasted space ... make it in columns and scrollable, a consistent widget box") */
+td.pnl-expand .dgroup { max-width: none; max-height: 460px; overflow: auto; padding-right: 6px; }
+td.pnl-expand .pnl-live { column-count: 3; column-gap: 32px; column-rule: 1px solid var(--border); }
+td.pnl-expand .pnl-live > * { break-inside: avoid; }
+td.pnl-expand .pnl-live .pnl-cap { break-after: avoid; break-inside: avoid; }
+td.pnl-expand .pnl-live .pnl-codes { break-inside: auto; }
+td.pnl-expand .pnl-live .pnl-codegrp { break-after: avoid; }
+@media (max-width: 1250px) { td.pnl-expand .pnl-live { column-count: 2; } }
