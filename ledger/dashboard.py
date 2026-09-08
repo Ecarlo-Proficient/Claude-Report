@@ -1673,6 +1673,8 @@ def _fetch_project_page(con, pn: str) -> dict:
                     blockers.append({"draw": d.get("label"), "invoice_no": d.get("invoice_no"), "vendor": b["vendor"], "bill_ref": b["bill_ref"],
                                      "open": b["open"], "bill_id": b["bill_id"], "pay_selected": b["pay_selected"], "waiver": b["waiver"]})
                     blk_total += b["open"] or 0
+    if nxt and blk_total > 0.005:   # the stage says WHY the money is stuck, not just that it is awaited (owner 2026-09-04)
+        nxt["stage"] = f"Blocked - pay ${blk_total:,.0f} on earlier draws first"
     funding = {"next_draw": ({"label": nxt.get("label"), "invoice_no": nxt.get("invoice_no"), "ar_open": nxt.get("ar_open"), "draw_no": nxt.get("draw_no"),
                               "billed": nxt.get("billed"), "ar_date": nxt.get("ar_date"), "stage": nxt.get("stage")} if nxt else None),
                "blockers": blockers, "blockers_total": round(blk_total, 2),

@@ -162,6 +162,7 @@ function applySettings() {
   root.style.setProperty("--fs", settings.fontSize + "px");
   root.style.setProperty("--accent", settings.accent);
   root.style.setProperty("--row-pad", settings.density === "compact" ? "5px 10px" : "10px 12px");
+  root.style.setProperty("--row-pad-dense", settings.density === "compact" ? "3px 8px" : "5px 9px");   // the dense grids (WIP, pay run) follow the same setting
   root.style.setProperty("--maxw", settings.width === "boxed" ? "1180px"
     : settings.width === "medium" ? "1500px" : "100%");   // medium sits between boxed and full
   // Overview board: show / hide + width per widget, and the header tools that change them
@@ -959,7 +960,6 @@ function attBtn(type, id, n, title) {
   else b.disabled = true;
   return b;
 }
-function attCell(type, id, n, title) { const td = document.createElement("td"); td.className = "left att-cell"; td.appendChild(attBtn(type, id, n, title)); return td; }
 async function openAttachmentViewer(type, id, title, expected) {
   let ov = $("#attViewer");
   if (!ov) { ov = document.createElement("div"); ov.id = "attViewer"; ov.className = "xdlg-ov"; document.body.appendChild(ov); ov.onclick = (e) => { if (e.target === ov) ov.remove(); }; }
@@ -1556,8 +1556,9 @@ function renderCosts() {
 function rightText(v) { const td = document.createElement("td"); const s = document.createElement("span"); s.textContent = v; td.appendChild(s); return td; }
 
 // Cost mix - "how much each cost type takes, % wise" as one proportional bar + legend.
-const MIX_PALETTE = ["#4A6B8A", "#3E7A5C", "#B9541E", "#6b5b95", "#b8860b", "#1f7a4d",
-                     "#B4341E", "#4478a0", "#7a5c3e", "#5c8a6b", "#8a4a6b", "#997a3d"];
+// cost-mix categories: none of these may be the accent, --pos or --neg (those colours MEAN something elsewhere)
+const MIX_PALETTE = ["#4A6B8A", "#3f8f8a", "#B9541E", "#6b5b95", "#b8860b", "#5b7fbf",
+                     "#b07a9a", "#4478a0", "#7a5c3e", "#5c8a6b", "#8a4a6b", "#997a3d"];
 function renderCostMix(groups, total) {
   const box = $("#costMix"); box.innerHTML = "";
   if (!total || !groups.length) return;
@@ -1623,15 +1624,6 @@ const LIEN_SHORT = {
 // Pull the draw # and property name out of a matched_invoice label like
 // "34449 - CP745 - Firestone Forever…" → { draw:"34449", name:"Firestone…" }.
 // Used only as a fallback - invoice_no and the WIP name win when present.
-function splitDraw(mi) {
-  if (!mi) return { draw: "", name: "" };
-  const head = String(mi).split("\n")[0].trim();
-  const m = head.match(/^\s*([^-]*?)\s*-\s*(.*)$/);
-  if (!m) return { draw: head, name: "" };
-  const rest = m[2].trim();                       // "CP745 - Firestone Forever…"
-  const dash = rest.indexOf(" - ");
-  return { draw: m[1].trim(), name: dash >= 0 ? rest.slice(dash + 3).trim() : rest };
-}
 
 // Liens-page multi-select filters (same checkbox UI as the Bills tab), self-contained. Built from
 // the lien watchlist (all divisions), so you filter, not just search.
@@ -1903,7 +1895,7 @@ const BILL_LIEN_RISK = new Set(["Notice PAST due", "Notice due in ≤7d", "Lien 
 // computed deadline passed. The deadline urgency still shows in the lien CELL colour; the red
 // row line means an actual notice was sent or a lien was filed against the job.
 const BILL_LIEN_ACTIVE = new Set(["Notice Sent", "Lien Filed"]);
-// Compact numeric date for the dense grid: MM/DD/YY (01/01/26). Still month-first (never
+// Compact numeric date for the dense grid: mm/dd/yyyy (owner 2026-08-21). Still month-first (never
 // year-first). bill_date is ISO yyyy-mm-dd.
 function fmtDateShort(v) {   // mm/dd/yyyy (owner 2026-08-21: 4-digit year everywhere)
   const m = String(v || "").trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -2120,12 +2112,8 @@ function _placeMenu(btn, menu) {
   window.addEventListener("resize", closeAll);
   window.addEventListener("scroll", closeAll, true);   // any scrolling container - the pinned menu would drift otherwise
 })();
-let billMonths = new Set();   // (legacy - the Month/Date control above replaced the month click-older filter)
 const _BMONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 function billMonthLabel(ym) { const [y, m] = ym.split("-"); return `${_BMONTHS[+m - 1]} ${y}`; }
-function _billMonthsAsc() {   // every month present in the data, oldest → newest
-  return [...new Set((BILLS || []).map(b => String(b.bill_date || "").slice(0, 7)).filter(s => /^\d{4}-\d{2}$/.test(s)))].sort();
-}
 // Vendor MULTI-select. The concrete-pump vendors are excluded BY DEFAULT (owner 2026-08-20) - the
 // data stays, just filtered; check them back (or "Show all") to include them. Checked = shown.
 let billVendorHidden = new Set();     // vendor names currently hidden
@@ -2428,18 +2416,6 @@ function findBillForLien(r) {
   });
 }
 // From the Vendors spend tab → the Bills tab, pre-filtered to that vendor (all their bills).
-function jumpToVendorBills(vendor) {
-  activeBillView = "all";
-  setTab("bills");
-  renderBills();                              // ensure the filter menus are populated
-  billVendorHidden = new Set(_billVendors().filter(v => v !== vendor));   // show ONLY this vendor (exclude the rest)
-  buildBillVendorFilter();
-  // Expand this vendor's group(s) so their bills show immediately - no extra click (owner 2026-08-25).
-  const grp = $("#billGroup") ? $("#billGroup").value : "vendor";
-  for (const b of (BILLS || [])) if ((b.vendor || "") === vendor) billsCollapsed.delete(billGroupKey(b, grp));
-  renderBills();
-  window.scrollTo(0, 0);
-}
 
 // Vendor page (QBO-style, ON DEMAND) - one vendor's bills, fetched per vendor via /api/vendor (never
 // in the bulk load). Each bill shows its project, or "multiple" -> click the bill to see every line
@@ -2448,7 +2424,7 @@ function jumpToVendorBills(vendor) {
 let _vendorData = null, _vendorType = "all", _vendorView = "bills";   // bills | payments
 const _vendorBillOpen = new Set();
 async function openVendorPage(vendor) {
-  openRecord(vendor, "loading…");
+  openRecord(vendor, "loading…"); skeletonInto($("#recordBody"), 6);
   const body = $("#recordBody"); body.innerHTML = "";
   _vendorData = null; _vendorType = "all"; _vendorView = "bills"; _vendorBillOpen.clear();
   let data;
@@ -3657,7 +3633,8 @@ async function openProjectPage(pn) {
   const plWrap = document.createElement("div"); plWrap.className = "ip-top pp-pnl"; plWrap.appendChild(buildPnlGroup(pn)); s1.appendChild(plWrap);   // 3 columns (owner: save vertical space)
   // ── 2. how we get funded ──
   const F = d.funding || {}, nx = F.next_draw;
-  const s2 = sec("How we get funded", `${d.draws.length} draw${d.draws.length === 1 ? "" : "s"} · GC owes ${money(d.draws.reduce((s, x) => s + num(x.ar_open), 0))} · ${srcText("Bill Tracker", syncedAt("sync-ap"), "loaded")} · ${srcText("QuickBooks invoices", loadedAt("AR (invoices)"), "loaded")}`);
+  const nInv = d.draws.filter(x => !x.no_draw).length, nNo = d.draws.length - nInv;   // the same count the P&L block shows, plus the not-yet-drawn bucket named
+  const s2 = sec("How we get funded", `${nInv} draw${nInv === 1 ? "" : "s"} invoiced${nNo ? ` + ${nNo} not yet drawn` : ""} · GC owes ${money(d.draws.reduce((s, x) => s + num(x.ar_open), 0))} · ${srcText("Bill Tracker", syncedAt("sync-ap"), "loaded")} · ${srcText("QuickBooks invoices", loadedAt("AR (invoices)"), "loaded")}`);
   const unlock = document.createElement("div"); unlock.className = "pp-unlock" + (nx ? "" : " ok");
   if (nx) {
     const blk = F.blockers || [];
@@ -3929,7 +3906,7 @@ function _renderPpDraws() {
     const nSub = (dr.sub_bills || []).length;
     const cell2 = (a, b, cls) => `<span class="pp-c ${cls || ""}"><span class="pp-c1">${a}</span><span class="pp-c2">${b}</span></span>`;
     head.innerHTML = `<span class="bg-caret"></span>
-      <span class="pp-lab">${_ge(dr.no_draw ? "No draw yet" : "Invoice " + (dr.invoice_no || dr.label.split(/\s+[\u2014\u2013-]\s+/)[0]))}${dr.draw_no ? `<small class="pp-drawno">Draw #${dr.draw_no}</small>` : ""}${dr.pushed_in ? `<small class="pp-drawno push" title="${_ge(dr.pushed_in.note || "")}">${dr.pushed_in.count} pushed in</small>` : ""}${dr.pushed_out ? `<small class="pp-drawno push" title="${_ge(dr.pushed_out.note || "")}">${dr.pushed_out.count} pushed out</small>` : ""}</span>
+      <span class="pp-lab">${_ge(dr.no_draw ? "No draw yet" : "Invoice " + (dr.invoice_no || dr.label.split(/\s+[\u2014\u2013-]\s+/)[0]))}${dr.draw_no ? `<small class="pp-drawno">Draw #${dr.draw_no}</small>` : ""}${dr.pushed_in ? `<small class="pp-drawno push" title="${_ge(dr.pushed_in.note || "Bills the supplier agreed to carry into this draw from the one before")}">${dr.pushed_in.count} bill${dr.pushed_in.count === 1 ? "" : "s"} moved in from the draw before</small>` : ""}${dr.pushed_out ? `<small class="pp-drawno push" title="${_ge(dr.pushed_out.note || "Bills carried to the next draw by agreement with the supplier")}">${dr.pushed_out.count} bill${dr.pushed_out.count === 1 ? "" : "s"} moved to the next draw</small>` : ""}</span>
       <span class="pp-dt">${_ge(dr.ar_date ? fmtDate(dr.ar_date) : "–")}</span>
       <span class="pp-billed">${dr.no_draw ? "–" : _ge(money(dr.billed))}</span>
       <span class="pp-gc ${dr.no_draw ? "" : dr.gc_paid ? "ok" : "due"}">${dr.no_draw ? "–" : dr.gc_paid ? "paid" : "owes " + _ge(money(dr.ar_open))}</span>
@@ -3940,12 +3917,14 @@ function _renderPpDraws() {
     // draw-level select-all: every unpaid bill we pay on this draw (materials + labor)
     const allCb = _ppCheck(_ppBillsOf(dr), "this draw", "Tick every unpaid bill on this draw (materials and labor)");
     const allWrap = document.createElement("label"); allWrap.className = "pp-all"; allWrap.title = allCb.title; allWrap.onclick = (e) => e.stopPropagation();
-    allWrap.appendChild(allCb); allWrap.appendChild(document.createTextNode(" all unpaid")); head.querySelector(".pp-allcell").appendChild(allWrap);
+    { const payable = _ppBillsOf(dr).filter(b => !b.paid && b.gates && b.bill_id), ticked = payable.filter(b => b.pay_selected).length;   // what the column actually says (owner: "all unpaid" read wrong)
+      allWrap.appendChild(allCb); allWrap.appendChild(document.createTextNode(" " + (!payable.length ? "nothing to pay" : ticked ? `${ticked} of ${payable.length} ticked` : `none of ${payable.length} ticked`))); }
+    head.querySelector(".pp-allcell").appendChild(allWrap);
     band.appendChild(head);
     if (open) {
       if (!dr.no_draw) band.appendChild(drawStrip(dr));
       // the push, on the band's face: what rode in / what left, and why (the same sentence the P&L draw sheet carries)
-      for (const [k, word] of [["pushed_in", "pushed in"], ["pushed_out", "pushed out"]]) { const p = dr[k]; if (!p) continue;
+      for (const [k, word] of [["pushed_in", "moved into this draw from the one before"], ["pushed_out", "moved on to the next draw"]]) { const p = dr[k]; if (!p) continue;
         const cap = document.createElement("div"); cap.className = "bills-cap pp-push"; cap.textContent = `${p.count} bill${p.count === 1 ? "" : "s"} · ${money(p.total)} ${word}: ${p.note || ""}`; band.appendChild(cap); }
       band.appendChild(sortBar());
       const mat = dr.bills.filter(_ppBillShown), subs = (dr.sub_bills || []).filter(_ppBillShown);
@@ -4540,7 +4519,7 @@ async function copyInvStatement() {
       const dpd = (i.days_past_due != null && i.days_past_due > 0) ? String(i.days_past_due) : "";
       const amt = Math.round(oiBal(i)); grand += oiBal(i);
       tsv.push([c, proj, i.doc_number || "", fmtDateShort(i.txn_date), fmtDateShort(i.due_date), dpd, amt].join("\t"));
-      const htmlCells = [c, proj, i.doc_number || "", fmtDateShort(i.txn_date), fmtDateShort(i.due_date), dpd, "$" + amt.toLocaleString()];
+      const htmlCells = [c, proj, i.doc_number || "", fmtDateShort(i.txn_date), fmtDateShort(i.due_date), dpd, money(amt)];
       html += "<tr>" + htmlCells.map((x, idx) => `<td style="text-align:${idx === 6 ? "right" : "left"}">${_esc(String(x))}</td>`).join("") + "</tr>";
     }
   }
@@ -5851,7 +5830,6 @@ function statusPill(v) {
 }
 function textCell(v, left) { const s = document.createElement("span"); s.textContent = v; const w = document.createElement("span"); w.appendChild(s); return w; }
 function moneyCell(v) { const s = document.createElement("span"); s.className = "cell" + (num(v) < 0 ? " neg" : ""); s.textContent = money(v); s.onclick = () => copy(String(Math.round(num(v)))); s.title = "Click to copy"; return s; }
-function addRow(tbody, cells) { const tr = document.createElement("tr"); cells.forEach((c, i) => { const td = document.createElement("td"); if (i === 0) td.className = "left"; td.appendChild(c); tr.appendChild(td); }); tbody.appendChild(tr); }
 
 // ── Detail panel ──────────────────────────────────────────────────────────
 const DETAIL_GROUPS = [
@@ -7176,38 +7154,6 @@ function startGraphLoop() { stopGraphLoop(); _gDraw = true; const tick = () => {
 }; _graphRAF = requestAnimationFrame(tick); }
 function stopGraphLoop() { if (_graphRAF) cancelAnimationFrame(_graphRAF); _graphRAF = 0; }
 
-function wireGraphCanvas() {
-  const cv = _graphCanvas(); if (!cv) return;
-  cv.addEventListener("wheel", e => {
-    e.preventDefault(); if (!GV) return; GV._userMoved = true; _gmark();
-    const { cx, cy } = _graphEventWorld(e);
-    const f = Math.exp(-e.deltaY * 0.0016), ns = Math.min(3.2, Math.max(0.12, GV.view.scale * f));
-    const k = ns / GV.view.scale;
-    GV.view.x = cx - (cx - GV.view.x) * k; GV.view.y = cy - (cy - GV.view.y) * k; GV.view.scale = ns;
-  }, { passive: false });
-  cv.addEventListener("pointerdown", e => {
-    if (!GV) return; GV._userMoved = true; _gmark(); cv.setPointerCapture(e.pointerId);
-    const { cx, cy, wx, wy } = _graphEventWorld(e);
-    const n = _pickNode(wx, wy);
-    if (n) { GV.drag = { node: n, moved: false }; n.fixed = true; if (GV.layout === "force") GV.alpha = Math.max(GV.alpha, 0.4); }
-    else GV.pan = { x: cx, y: cy, vx: GV.view.x, vy: GV.view.y, moved: false };
-  });
-  cv.addEventListener("pointermove", e => {
-    if (!GV) return; _gmark();
-    const { cx, cy, wx, wy } = _graphEventWorld(e);
-    if (GV.drag) { GV.drag.node.x = wx; GV.drag.node.y = wy; GV.drag.moved = true; if (GV.layout === "force") GV.alpha = Math.max(GV.alpha, 0.3); return; }
-    if (GV.pan) { GV.view.x = GV.pan.vx + (cx - GV.pan.x); GV.view.y = GV.pan.vy + (cy - GV.pan.y); GV.pan.moved = true; cv.style.cursor = "grabbing"; return; }
-    const n = _pickNode(wx, wy);
-    GV.hover = n; cv.style.cursor = n ? "pointer" : "grab";
-  });
-  const end = e => {
-    if (!GV) return; _gmark();
-    if (GV.drag) { const nd = GV.drag.node; if (GV.layout === "force") nd.fixed = false; if (!GV.drag.moved) { GV.sel = nd; showGraphInfo(nd); } GV.drag = null; }
-    else if (GV.pan) { if (!GV.pan.moved) { GV.sel = null; hideGraphInfo(); } GV.pan = null; cv.style.cursor = "grab"; }
-  };
-  cv.addEventListener("pointerup", end);
-  cv.addEventListener("pointerleave", () => { if (GV && !GV.drag && !GV.pan) { GV.hover = null; _gmark(); } });
-}
 
 function graphSearch(q) {
   if (!GV) return; q = (q || "").trim().toLowerCase(); _gmark();
@@ -7334,7 +7280,7 @@ function wrJobCard(r) {
   } else if (removed) {
     head += `<span class="wr-drop-note">will drop off the tab</span>`;
   } else {
-    head += `<button class="btn tiny wr-job-all" type="button">Approve job</button>`;
+    head += `<button class="btn small wr-job-all" type="button">Approve job</button>`;
   }
   head += `</div>`;
   card.innerHTML = head;
@@ -7791,8 +7737,7 @@ function showScanMenu(files, el) {
   }
   document.body.appendChild(menu);
   const r = el.getBoundingClientRect();
-  menu.style.left = Math.max(8, Math.min(r.left, window.innerWidth - menu.offsetWidth - 12)) + "px";
-  menu.style.top = (r.bottom + 4) + "px";
+  _placeMenu(el, menu);   // the shared placer: flips above the button and caps the height when there is no room below
   setTimeout(() => document.addEventListener("click", _closeScanMenu, { once: true }), 0);
 }
 function _closeScanMenu() { const m = $("#scanMenu"); if (m) m.remove(); }

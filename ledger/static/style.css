@@ -696,7 +696,7 @@ a.ri-name:hover { text-decoration: underline; }
    column WRAPS its text (overflow-wrap) instead of clipping - drag a divider to resize. */
 /* NB: selectors carry `table.` so they outrank the base `table.grid td` (same specificity,
    later in source) - otherwise the base `white-space: nowrap` would block wrapping. */
-.bills-grid { font-size: .9em; table-layout: fixed; width: auto; }
+.bills-grid { font-size: .88em; table-layout: fixed; width: auto; }   /* ONE dense grid size app-wide (was .9 / .82) */
 table.bills-grid th, table.bills-grid td { padding: 3px 10px; white-space: normal; overflow-wrap: break-word; vertical-align: top; }
 table.bills-grid thead th { cursor: default; border-right: 1px solid var(--border); position: relative; }
 table.bills-grid thead th:last-child { border-right: none; }
@@ -767,9 +767,9 @@ tr.bill-group .bg-amt { font-weight: 800; font-size: .95em; letter-spacing: -.01
 
 /* WIP report: a wide, dense schedule (mirrors Test-Master) with subtotal + total
    rows, resizable columns, a frozen header, and per-cell conditional formatting. */
-.wip-grid { font-size: .82em; table-layout: fixed; width: auto; }
-.wip-grid th { padding: 4px 8px; white-space: nowrap; }
-.wip-grid td { padding: 4px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wip-grid { font-size: .88em; table-layout: fixed; width: auto; }
+.wip-grid th { padding: var(--row-pad-dense, 4px 8px); white-space: nowrap; }
+.wip-grid td { padding: var(--row-pad-dense, 4px 8px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* Bounded scroll box so the sticky thead (base .grid rule) truly freezes. */
 .wip-scroll { max-height: calc(100vh - 210px); min-height: 320px; overflow: auto; }
 .wip-grid thead th { box-shadow: inset 0 -1px var(--border); }   /* header underline while frozen */
@@ -798,7 +798,7 @@ tr.wip-total > td { border-top: 2px solid var(--accent); font-weight: 800;
 .inline-check input { cursor: pointer; }
 
 /* Pay Bills: a check-run worksheet - mark bills, set a partial amount, save → pay list. */
-.pay-grid td, .pay-grid th { padding: 4px 9px; }
+.pay-grid td, .pay-grid th { padding: var(--row-pad-dense, 4px 9px); }   /* follows the density setting like every other grid */
 .pay-grid tbody tr.pay-row:hover { background: var(--row-hover); }
 .pay-grid tbody tr.pay-row.on { background: color-mix(in srgb, var(--pos) 8%, transparent); }
 .pay-grid tbody tr.pay-row.on:hover { background: color-mix(in srgb, var(--pos) 13%, transparent); }
@@ -1090,7 +1090,6 @@ html[data-theme="dark"] .sys-life { color: var(--warn-text); }
 }
 
 /* ── WIP Review ────────────────────────────────────────────────────────────── */
-.btn.tiny { padding: 2px 8px; font-size: .8em; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 .btn.primary:hover { filter: brightness(1.06); }
 .btn:disabled { opacity: .5; cursor: default; }
@@ -1377,7 +1376,6 @@ table.grid td.ip-amt { font-weight: 700; font-size: 1.08em; }
 .xdlg label { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; color: var(--text-dim); font-size: .92em; }
 .xdlg select { font: inherit; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); }
 .xdlg-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
-.btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
 .savebar[hidden] { display: none; }
 
 .vg-tag.future { display: inline-block; font-size: .78em; font-weight: 600; padding: 0 6px; border-radius: 999px; margin-left: 6px; vertical-align: middle;
@@ -1451,7 +1449,6 @@ tr.pp-in-grp td.pp-vb { padding-left: 30px; }
 
 /* project page: the open draw reads like the P&L draw sheet (2026-09-02) */
 .pp-drawpl { padding: 8px 18px 4px; }
-.pp-drawpl .kpi { padding: 8px 12px; } .pp-drawpl .k-value { font-size: 1.25em; }
 .pp-sortbar { display: flex; align-items: center; gap: 10px; padding: 4px 18px 8px; font-size: .9em; }
 table.pp-bills td.pp-vb .pp-vend { font-weight: 600; margin-right: 6px; }
 table.pp-bills .codechip { margin-right: 2px; }
