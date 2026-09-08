@@ -706,6 +706,8 @@ can never disconnect (owner 2026-08-18). The clock (`shared/lien_clock.py`, a co
 status (the Notion Lien Tracker, what's actually been done) are different columns on purpose.
     QBO ──(invoice-sync)──▶ Invoice Tracker (Notion) ──┐
     Notion Lien Tracker ──(shared/lien_status)─────────┼─(load_invoices.py)──▶ ledger.billing_event ──▶ Draws · Open Invoices
+    QBO ──(load_invoices.py · full invoice HISTORY: every invoice on a known project, source=qbo_history;
+              tracker rows win · 2026-09-08 "the ledger is the P&L")──▶ ledger.billing_event
                                                         └─(invoice-sync)──────▶ AR Aging Excel · "Lien status" column
 
 **CRM / sales pipeline (`load_customers.py` → `customer` + `sales_touch`).** The pre-project spine:

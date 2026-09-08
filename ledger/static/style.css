@@ -1510,3 +1510,6 @@ table.pp-cov td.neg { color: var(--neg-text); } table.pp-cov td.pos { color: var
 .grp-h { cursor: pointer; user-select: none; }
 .grp-caret { display: inline-block; width: 1.1em; color: var(--text-dim); font-size: .9em; }
 .grp-h.grp-closed { opacity: 1; }
+.pnl-live .drow.pnl-warn .dk, .pnl-live .drow.pnl-warn .dv { color: var(--warn-text); }
+.pnl-kpi-warn .k-value { color: var(--warn-text); }
+table.pp-audit { margin: 0; }

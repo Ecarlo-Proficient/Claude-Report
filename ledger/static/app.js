@@ -3617,7 +3617,7 @@ async function openProjectPage(pn) {
     ["ETC (budget)", money(r0.estimated_total_costs), r0.total_contract_price ? `planned GP ${money(gp)} · ${(gp / num(r0.total_contract_price) * 100).toFixed(1)}%` : ""],
     ["Costs to date (QuickBooks)", money(p.cost), r0.costs_to_date != null ? `WIP report ${money(r0.costs_to_date)}` : "", num(p.cost) > num(r0.estimated_total_costs) && r0.estimated_total_costs ? "pnl-kpi-neg" : ""],
     ["Billed (gross)", money(p.billed_gross), (p.retainage ? `retainage held ${money(p.retainage)} · ` : "") + "WIP report"],
-    ["Net billed", money(p.net_billed), (p.billed_src || "QuickBooks invoices") + " · after retainage"],
+    ["Net billed", money(p.net_billed), (p.billed_gap ? `WIP report shows ${money(p.billed_gap)} more - Resync` : "QuickBooks invoices · after retainage"), p.billed_gap ? "pnl-kpi-warn" : ""],
     ["Net (live P&L)", money(p.net), p.net_pct != null ? `${(p.net_pct * 100).toFixed(1)}% of net billed · overhead ${p.overhead_basis || ""}` : "", num(p.net) < 0 ? "pnl-kpi-neg" : "pnl-kpi-pos"],
   ]);
   if ((d.rulings || []).length) {   // the owner's standing rulings (job_rulings.json): the why, so nobody re-flags it
@@ -3669,7 +3669,38 @@ async function openProjectPage(pn) {
   const sel = document.createElement("div"); sel.id = "ppSelected"; sel.className = "pp-selected"; s2.appendChild(sel);   // what is ticked, at a glance, before any export
   const host = document.createElement("div"); host.id = "ppDraws"; s2.appendChild(host);
   _renderPpDraws();
-  // ── 3. bills + links ──
+  // ── 3. audit findings on this job (the Audit tab, filtered to this project) ──
+  { const au = d.audits || [];
+    const sA = sec("Audit findings on this job", au.length ? `${au.length} to fix · Bill Tracker audits` : "none open");
+    if (!au.length) { const p0 = document.createElement("div"); p0.className = "bills-cap"; p0.textContent = "Nothing flagged on this job in the Bill Tracker audits."; sA.appendChild(p0); }
+    else {
+      const scroll = document.createElement("div"); scroll.className = "table-scroll"; scroll.style.padding = "0 18px 12px";
+      const t = document.createElement("table"); t.className = "grid pp-audit";
+      t.innerHTML = "<thead><tr><th class='left'>Bill #</th><th class='left'>Vendor</th><th class='left'>Date</th><th class='left'>Code</th><th class='right'>Amount</th><th class='left'>What the clerk wrote</th><th class='left'>Detail</th></tr></thead>";
+      const tb = document.createElement("tbody");
+      const byI = new Map(); for (const f of au) { if (!byI.has(f.issue)) byI.set(f.issue, []); byI.get(f.issue).push(f); }
+      for (const [iss, list] of [...byI].sort((a, b) => b[1].length - a[1].length)) {
+        const g = document.createElement("tr"); g.className = "bill-group"; const gd = document.createElement("td"); gd.colSpan = 7;
+        const cell = document.createElement("div"); cell.className = "bg-cell"; const k = document.createElement("span"); k.className = "bg-key"; k.textContent = iss; cell.appendChild(k);
+        bandMetrics(cell, [[list.length, "bills"], [money(list.reduce((s0, f) => s0 + num(f.amount), 0)), "amount"], [list[0].group || "", "audit"]]);
+        gd.appendChild(cell); g.appendChild(gd); tb.appendChild(g);
+        for (const f of list) {
+          const tr = document.createElement("tr");
+          const idm = (f.url || "").match(/txnId=(\d+)/);
+          const lc = qboLinkCell(f.bill_no || "–", f.url, "Open this bill in QuickBooks"); if (f.att && idm) { const ab = attBtn("Bill", idm[1], f.att, `${f.vendor || ""} · bill ${f.bill_no || ""}`); ab.style.marginLeft = "6px"; lc.appendChild(ab); } tr.appendChild(lc);
+          tr.appendChild(leftText(f.vendor || "–")); tr.appendChild(leftText(f.date ? fmtDateShort(f.date) : "–"));
+          { const cc = document.createElement("td"); cc.className = "left"; if (f.cost_code) { const ch = document.createElement("span"); ch.className = "codechip"; ch.textContent = f.cost_code; cc.appendChild(ch); } else cc.textContent = "–"; tr.appendChild(cc); }
+          { const ac = document.createElement("td"); ac.className = "ip-amt"; ac.appendChild(moneyCell(f.amount)); tr.appendChild(ac); }
+          { const mc = leftText(f.memo || "–"); mc.className += " inv-memo"; mc.title = f.memo || ""; tr.appendChild(mc); }
+          { const dc = leftText(f.detail || "–"); dc.className += " inv-memo"; dc.title = f.detail || ""; tr.appendChild(dc); }
+          tb.appendChild(tr);
+        }
+      }
+      t.appendChild(tb); scroll.appendChild(t); sA.appendChild(scroll);
+      const go = document.createElement("div"); go.className = "ip-actions"; const gb = document.createElement("button"); gb.className = "btn small"; gb.textContent = "Open the Audit tab"; gb.onclick = () => { closeRecord(); setTab("accounting"); }; go.appendChild(gb); sA.appendChild(go);
+    }
+  }
+  // ── 4. bills + links ──
   const s3 = sec("Bills and links", "");
   const acts3 = document.createElement("div"); acts3.className = "ip-actions";
   const bb = document.createElement("button"); bb.className = "btn small"; bb.textContent = "Bills on this job"; bb.title = "The Bill Tracker filtered to this project";
@@ -5808,6 +5839,7 @@ function buildPnlGroup(proj) {
     rowP("Billed to GC (gross)", money(d.billed_gross));
     rowP("Retainage held", "(" + money(d.retainage) + ")");
     rowP("Net billed", money(d.net_billed), "pnl-net").title = d.billed_src || "";
+    if (d.billed_gap) { const w = rowP("WIP report shows more billed", money(d.billed_gap), "pnl-sub pnl-warn"); w.title = "The WIP report's billed-to-date is higher than the QuickBooks invoices loaded - Resync loads the invoice history."; }
     rowP("Costs to date", "(" + money(d.cost) + ")");
     rowP(`Overhead (${d.overhead_basis})`, "(" + money(d.overhead) + ")");
     const nr = rowP("Net", `${money(d.net)} · ${d.net_pct == null ? "–" : (d.net_pct * 100).toFixed(1) + "%"}`, "pnl-net");
@@ -5845,9 +5877,9 @@ function buildPnlGroup(proj) {
         const gn = document.createElement("span"); gn.textContent = g; const ga = document.createElement("span"); ga.textContent = money(e.total); gh.appendChild(gn); gh.appendChild(ga); tbl.appendChild(gh);
         e.codes.sort((x, y) => ((parseInt(x.number, 10) || 999) - (parseInt(y.number, 10) || 999)) || String(x.code).localeCompare(String(y.code)));
         for (const c of e.codes) {
-          const r = document.createElement("div"); r.className = "pnl-code in-grp" + (c.code === "(uncoded)" ? " uncoded" : "");
+          const r = document.createElement("div"); r.className = "pnl-code in-grp" + (c.uncoded ? " uncoded" : "");
           const nm = document.createElement("span"); nm.className = "pc-code"; nm.textContent = c.code;
-          const n2 = document.createElement("span"); n2.className = "pc-name"; n2.textContent = (c.name ? "- " + c.name : (c.code === "(uncoded)" ? "- account-coded lines, no item code" : "")) + (c.is_sub ? " · sub" : "");
+          const n2 = document.createElement("span"); n2.className = "pc-name"; n2.textContent = (c.name ? "- " + c.name : "") + (c.is_sub ? " · sub" : "");
           const am = document.createElement("span"); am.className = "pc-amt"; am.textContent = money(c.amount);
           r.appendChild(nm); r.appendChild(n2); r.appendChild(am); tbl.appendChild(r);
         }

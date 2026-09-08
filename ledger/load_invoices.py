@@ -366,6 +366,44 @@ def fill_gaps_from_qbo(con, now: str, dry_run: bool, batch: int = 25, creds=None
     return len(got)
 
 
+def load_history_from_qbo(con, now: str, creds, cust_map: dict) -> int:
+    """Every QuickBooks invoice on a project the ledger knows - the SAME population the project
+    P&L bills from (owner 2026-09-08: "the ledger should be the P&L"). The tracker keeps open +
+    12 months paid, so older draws (MFD177: 6.4M of them) were missing and net billed read short.
+    One pull of the Invoice entity; an invoice lands as source='qbo_history' only when its
+    project resolves (customer name / memo / the project's QBO customer id) AND no other source
+    already carries it - the tracker row (with its Notion page) always wins. Idempotent."""
+    from shared.qbo_api import load_credentials, query_all
+    access, company_id = creds if creds else load_credentials()
+    by_cust = {str(v): k for k, v in (cust_map or {}).items() if v}
+    have_ids = {str(r[0]) for r in con.execute("SELECT qbo_txn_id FROM billing_event WHERE source <> 'qbo_history'")}
+    have_docs = {str(r[0]) for r in con.execute("SELECT doc_number FROM billing_event WHERE source <> 'qbo_history' AND doc_number IS NOT NULL")}
+    recs, seen, unresolved = [], 0, 0
+    for inv in query_all(access, company_id, "Invoice"):
+        seen += 1
+        rec = _invoice_from_qbo(inv)
+        if not rec["project_no"]:
+            rec["project_no"] = by_cust.get(str(rec.get("customer_id") or ""))
+            rec["division"] = _division_for(rec["project_no"]) if rec["project_no"] else None
+        if not rec["project_no"]:
+            unresolved += 1
+            continue
+        if rec["qbo_txn_id"] in have_ids or (rec["doc_number"] and rec["doc_number"] in have_docs):
+            continue
+        rec["source"] = "qbo_history"
+        recs.append(rec)
+    con.execute("DELETE FROM billing_event WHERE source='qbo_history'")
+    ph = ", ".join(f":{c}" for c in _COLS)
+    for r in recs:
+        row = {**r, "loaded_at": now}
+        con.execute(f"INSERT OR REPLACE INTO billing_event ({', '.join(_COLS)}) VALUES ({ph})",
+                    {c: row.get(c) for c in _COLS})
+    con.commit()
+    print(f"QBO history: {seen} invoices in QuickBooks · {len(recs)} older ones added on known projects "
+          f"· {unresolved} with no project (skipped)")
+    return len(recs)
+
+
 def _draw_coverage(con, show: int) -> None:
     row = con.execute(
         "SELECT COUNT(DISTINCT a.invoice_no) draws, COUNT(DISTINCT b.doc_number) matched "
@@ -385,7 +423,7 @@ def _draw_coverage(con, show: int) -> None:
                   f"${(r[3] or 0):>12,.0f}  open ${(r[4] or 0):>10,.0f}")
 
 
-def run(db_path: Path, dry_run: bool, show: int, no_qbo: bool = False) -> None:
+def run(db_path: Path, dry_run: bool, show: int, no_qbo: bool = False, no_history: bool = False) -> None:
     con = _connect(db_path)
     from shared.notion_client import NotionClient
     nc = NotionClient()
@@ -435,7 +473,10 @@ def run(db_path: Path, dry_run: bool, show: int, no_qbo: bool = False) -> None:
         creds = load_credentials()                                # ONE authentication for both QBO steps
         print("  authenticated.")                                 # never echo the realm/company id (owner 2026-08-06)
         fill_gaps_from_qbo(con, now, dry_run=False, creds=creds)  # QBO fills the tracker's holes
-    stamped = fill_customer_ids(con, project_customer_ids(con, creds))
+    cust_map = project_customer_ids(con, creds)
+    if not no_qbo and not no_history:
+        load_history_from_qbo(con, now, creds, cust_map)         # every invoice the P&L bills from (2026-09-08)
+    stamped = fill_customer_ids(con, cust_map)
     print(f"  {stamped} invoices stamped with their project's QBO customer id (project-# deep link)")
     _draw_coverage(con, show)
     con.close()
@@ -538,13 +579,15 @@ def main() -> int:
     ap.add_argument("--show", type=int, default=12, help="Sample rows to print.")
     ap.add_argument("--no-qbo", action="store_true",
                     help="Skip the QBO gap-fallback (Notion-only; no Touch ID).")
+    ap.add_argument("--no-history", action="store_true",
+                    help="Skip the full QBO invoice history (tracker + draw gaps only).")
     ap.add_argument("--selftest", action="store_true", help="Offline pipeline proof (no Notion).")
     args = ap.parse_args()
 
     if args.selftest:
         _selftest()
         return 0
-    run(args.db, args.dry_run, args.show, args.no_qbo)
+    run(args.db, args.dry_run, args.show, args.no_qbo, args.no_history)
     return 0
 
 

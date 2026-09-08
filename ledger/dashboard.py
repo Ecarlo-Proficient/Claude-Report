@@ -208,13 +208,20 @@ def _project_pnl(con, proj: str) -> dict:
     # costs from the QBO-complete cost_line (incl subs), itemized by cost code
     cost = con.execute("SELECT COALESCE(SUM(amount),0) c FROM cost_line WHERE project_no = ?", (proj,)).fetchone()["c"] or 0
     by_code = [dict(r) for r in con.execute(
-        "SELECT COALESCE(cost_code,'(uncoded)') code, COALESCE(SUM(amount),0) amount, "
-        "COUNT(*) lines, COALESCE(is_sub,0) is_sub FROM cost_line WHERE project_no = ? "
-        "GROUP BY COALESCE(cost_code,'(uncoded)'), COALESCE(is_sub,0) ORDER BY amount DESC", (proj,))]
+        "SELECT COALESCE(cost_code,'(uncoded)') code, CASE WHEN cost_code IS NULL THEN account END account, "
+        "COALESCE(SUM(amount),0) amount, COUNT(*) lines, COALESCE(is_sub,0) is_sub FROM cost_line WHERE project_no = ? "
+        "GROUP BY 1, 2, 5 ORDER BY amount DESC", (proj,))]
     # job type (SL -> Slab) + cost-type name (1 -> Concrete) per code, so the UI can group "Slab > SL1 - Concrete"
     from shared.qbo_costs import cost_code_meta, job_type_name
     for c in by_code:
-        m = cost_code_meta(c["code"]) if c["code"] != "(uncoded)" else {"prefix": None, "number": None, "description": None}
+        c["uncoded"] = c["code"] == "(uncoded)"
+        if c["uncoded"]:                     # no item code: group by the ACCOUNT it was entered under (owner 2026-09-08)
+            acct = (c.get("account") or "").strip()
+            c["code"] = acct.split(":")[-1].strip() or "(no account)"
+            c["name"] = ("account " + acct) if ":" in acct else "account-coded, no item code"
+            c["prefix"], c["number"], c["job_type"] = None, None, "No cost code"
+            continue
+        m = cost_code_meta(c["code"])
         c["prefix"], c["number"], c["name"] = m["prefix"], m["number"], m["description"]
         c["job_type"] = job_type_name(m["prefix"]) if m["prefix"] else None
     billed = con.execute("SELECT COALESCE(SUM(amount),0) a FROM billing_event WHERE project_no = ?", (proj,)).fetchone()["a"] or 0
@@ -227,10 +234,12 @@ def _project_pnl(con, proj: str) -> dict:
     gross = (row["btd"] if row else 0) or 0
     ret = (row["ret"] if row else 0) or 0
     wip_net = round(gross - ret, 2)
-    # billing_event holds only the LOADED QBO invoice window (this year + open); the WIP report is all-time.
-    # Whichever is larger is the complete one (MFD177: 2.2M of QBO invoices vs 8.6M billed on the WIP).
-    net_billed = max(billed or 0, wip_net)
-    billed_src = "QuickBooks invoices" if (billed or 0) >= wip_net else "WIP report (QuickBooks invoices loaded cover only part of this job)"
+    # Net billed = the QuickBooks invoices, exactly what the project P&L bills from (owner 2026-09-08: "the ledger
+    # should be the P&L"). load_invoices now lands the full history; if the WIP report still shows more billed
+    # than the invoices loaded, that is a WARNING on the page (Resync), never a silent substitute.
+    net_billed = billed or 0
+    billed_src = "QuickBooks invoices"
+    billed_gap = round(wip_net - net_billed, 2) if wip_net - net_billed > 1000 else 0.0
     if not gross and net_billed:
         gross = round(net_billed + ret, 2)
     _base = contract or net_billed
@@ -239,7 +248,7 @@ def _project_pnl(con, proj: str) -> dict:
     return {
         "proj": proj, "division": div,
         "contract": contract, "pct_complete": pct, "earned": earned, "billed": billed,
-        "billed_gross": gross, "retainage": ret, "net_billed": net_billed, "billed_src": billed_src,
+        "billed_gross": gross, "retainage": ret, "net_billed": net_billed, "billed_src": billed_src, "billed_gap": billed_gap,
         "invoices_loaded": billed,
         "cost": cost, "overhead": overhead,
         "overhead_basis": "9% of contract (MFD)" if is_mfd else "10% of contract",
@@ -285,7 +294,7 @@ def _portfolio_pnl(con) -> dict:
         b = billed.get(p, 0) or 0
         gross = w["btd"] or 0
         ret = w["ret"] or 0
-        b = max(b or 0, round(gross - ret, 2))    # the WIP report is all-time; the loaded QBO invoices may cover only part of the job
+        b = b or 0                                 # the QuickBooks invoices - the same population the P&L bills from
         oh = round((_OVERHEAD_MFD_COST if is_mfd else _OVERHEAD_REV) * (contract or b), 2)
         net = round(b - cost - oh, 2)             # actuals: net billed - costs - overhead (owner 2026-09-08)
         try:                                             # ~4 stats/project (no glob) - cheap, cached client-side
@@ -1166,6 +1175,22 @@ _NON_GATING_VENDOR_RE = re.compile(
     r"^\s*(MCP\s+CONCRETE\s+PUMPING|CORE\s+CONCRETE\s+PUMPING)\b", re.I)
 
 
+
+_ACCT_RAW = _fetch_accounting_audits
+_ACCT_CACHE = {"mtime": None, "data": None}
+def _fetch_accounting_audits() -> dict:   # cached per workbook mtime - the project page reads it per request (2026-09-08)
+    bt = paths.get_path("ACB_BILL_TRACKER_XLSX", paths.onedrive_base() / "Automations-/Bill Tracker.xlsx")
+    try:
+        mt = bt.stat().st_mtime
+    except OSError:
+        mt = None
+    if mt is not None and _ACCT_CACHE["mtime"] == mt and _ACCT_CACHE["data"] is not None:
+        return _ACCT_CACHE["data"]
+    data = _ACCT_RAW()
+    if mt is not None and data.get("ok", True) is not False:
+        _ACCT_CACHE["mtime"], _ACCT_CACHE["data"] = mt, data
+    return data
+
 def _gates_stage(vendor: str) -> bool:
     return not _NON_GATING_VENDOR_RE.match(vendor or "")
 
@@ -1647,7 +1672,15 @@ def _fetch_project_page(con, pn: str) -> dict:
     draws.sort(key=lambda d: (1 if d.get("no_draw") else 0, d.get("ar_date") or d.get("recency") or ""), reverse=True)
     return {"ok": True, "project": {"project_no": pn, "name": pr["name"] if pr else None, "division": pr["division"] if pr else pnl.get("division")},
             "pnl": pnl, "draws": draws, "funding": funding,
-            "rulings": job_rulings.for_job(pn)}   # the owner's standing rulings on this job (known loss / accepted overrun)
+            "rulings": job_rulings.for_job(pn),   # the owner's standing rulings on this job (known loss / accepted overrun)
+            "audits": _audits_for(pn)}            # every Bill Tracker audit finding on this job (owner 2026-09-08: "if the project is in any audit page, have it there")
+
+
+def _audits_for(pn: str) -> list:
+    try:
+        return [f for f in (_fetch_accounting_audits().get("findings") or []) if (f.get("project") or "").upper() == pn]
+    except Exception:  # noqa: BLE001 - the audit workbook must never break the project page
+        return []
 
 
 _ATT_CACHE = {"sig": None, "counts": {}}
