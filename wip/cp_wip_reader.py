@@ -30,6 +30,7 @@ from openpyxl.utils import get_column_letter
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+from shared import job_rulings   # standing per-job rulings -> KNOWN: in NOTES
 from shared import paths
 from shared import proposals  # signed bid-proposal PDF → contract price
 from shared import qbo_api
@@ -594,6 +595,8 @@ def scan_cp_folders(root: Path, is_completed: bool) -> List[CpRow]:
 
         rows.append(row)
 
+    # Standing rulings (the owner 2026-09-08) ride the row as a KNOWN: note.
+    job_rulings.annotate_rows(rows)
     return rows
 
 

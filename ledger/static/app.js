@@ -96,6 +96,7 @@ const LIEN_CLASS = {
 const FTW_BUDGET_FLOOR = 15000;
 function budgetCost(r) { return r.costs_loaded != null ? r.costs_loaded : r.costs_to_date; }
 function isOverBudget(r) {
+  if (r.over_budget_accepted) return false;      // a standing ruling (job_rulings.json): the owner knows why - not a flag
   const etc = num(r.estimated_total_costs);
   if (!(etc > 0) || num(budgetCost(r)) <= etc) return false;
   if (r.is_ftw) {                                  // flatwork: soft budget…
@@ -3552,6 +3553,14 @@ async function openProjectPage(pn) {
     ["Earned revenue", money(p.earned), `${((p.pct_complete || 0) * 100).toFixed(1)}% complete`],
     ["Net margin (live P&L)", money(p.net), p.net_pct != null ? `${(p.net_pct * 100).toFixed(1)}% of earned · overhead ${p.overhead_basis || ""}` : "", num(p.net) < 0 ? "pnl-kpi-neg" : "pnl-kpi-pos"],
   ]);
+  if ((d.rulings || []).length) {   // the owner's standing rulings (job_rulings.json): the why, so nobody re-flags it
+    const rb = document.createElement("div"); rb.className = "pp-unlock pp-rulings";
+    rb.innerHTML = `<div class="pp-unlock-h">Known - the owner ruled on this job</div>` + d.rulings.map(x =>
+      `<div class="pp-unlock-b"><b>${_ge(String(x.kind || "note").toUpperCase())}</b> ${_ge(x.note || "")}`
+      + (x.amount != null ? ` · <b>${_ge(money(x.amount))}</b>` : "") + (x.line ? ` · ${_ge(x.line)}` : "")
+      + (x.source ? ` · ${_ge(x.source)}` : "") + (x.on ? ` · ruled ${_ge(fmtDate(x.on))}` : "") + `</div>`).join("");
+    s1.appendChild(rb);
+  }
   const acts1 = document.createElement("div"); acts1.className = "ip-actions";
   const trailBtn = document.createElement("button"); trailBtn.className = "btn small"; trailBtn.textContent = "Show every dollar"; trailBtn.onclick = () => openTrail(pn); acts1.appendChild(trailBtn);
   if (r0.project_no) { const dr = document.createElement("button"); dr.className = "btn small"; dr.textContent = "WIP row detail"; dr.onclick = () => openDetail(r0); acts1.appendChild(dr); }

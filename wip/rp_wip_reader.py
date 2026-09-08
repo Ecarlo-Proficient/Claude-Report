@@ -50,7 +50,7 @@ from openpyxl import load_workbook
 # RP is a reader; it imports the engine, never another reader (2026-08-04).
 import wip_writer as W
 import wip_review_common as WR   # shared WIP-review diff/merge (ledger accept/merge flow)
-from shared import paths, qbo_api
+from shared import job_rulings, paths, qbo_api
 from shared.takeoff_etc import find_takeoff_etc
 
 def _rp_cols():
@@ -366,6 +366,13 @@ def read_rp_from_file(xlsx_path: Path):
     if skipped_cp:
         print(f"  RP file: excluded {len(skipped_cp)} CP/band line(s): "
               f"{', '.join(skipped_cp)}")
+    # Standing rulings (the owner 2026-09-08): a `KNOWN:` segment in NOTES so
+    # the report explains an accepted overrun itself, every run - nobody has
+    # to re-discover why a job went over. Register: shared/job_rulings.
+    _nr = job_rulings.annotate_rows(rows)
+    if _nr:
+        print(f"  Job rulings: {_nr} line(s) carry a KNOWN: note "
+              f"({job_rulings.RULES_FILE.name})")
     return rows
 
 

@@ -4,6 +4,12 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Standing job rulings (2026-09-08).** `shared/job_rulings` (`<CompanyHealth>/job_rulings.json`) now
+  rides the project rows: `over_budget_accepted` + `rulings_n` on every `/api/projects` row, and
+  `isOverBudget` in `app.js` returns false for an accepted job - the owner already knows why, so it leaves
+  the Over budget rule / KPI / list. `/api/project/page` returns `rulings`, rendered as a "Known - the
+  owner ruled on this job" band (amber, `.pp-rulings`) under the How it's doing KPIs: kind, the why, the
+  $ it concerns, the bid line, the document, the ruling date. Read-only; the register is owner-edited.
 - **Attachments follow QuickBooks deletions (owner 2026-09-03: "our bill process is to upload the
   original as not approved then delete and upload the signed approved bill").** The Resync step and
   `reload_ledger.sh` now run `load_attachments.py --refresh` - a fresh Attachable sweep every time, never

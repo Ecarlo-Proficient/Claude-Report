@@ -617,7 +617,7 @@ _MUTED_NOTE_RE = re.compile(r"quotes\s+PIERS\s+but\s+no\s+PR\s+cost", re.I)
 _SCRIPT_NOTE_RE = re.compile(
     r"^(Draw #|No draw yet|QBO |No QBO project|Duplicate line in the RP file|"
     r"No budget \(ETC\)|Contract/ETC from |Data integrity:|On the .* schedule|"
-    r"% based on Original ETC|RED: )", re.IGNORECASE)
+    r"% based on Original ETC|RED: |KNOWN: )", re.IGNORECASE)
 
 
 # ─────────── owner edits: baseline + auto-colour (2026-08-03) ──────────

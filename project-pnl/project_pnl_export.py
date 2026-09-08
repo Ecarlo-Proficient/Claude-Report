@@ -93,6 +93,7 @@ from shared import paths
 from shared import pnl_paths
 from shared.draws import read_pay_app, learn_period_shape, infer_period_tag
 from shared import draw_moves
+from shared import job_rulings   # standing per-job rulings -> KNOWN LOSSES / RULINGS block
 from shared.qbo_api import (
     API_BASE, MINOR_VERSION, PROJ_RE,
     load_credentials, _api_get, query_all, report,
@@ -1354,22 +1355,65 @@ def load_wip_master(path: Path) -> Dict[str, dict]:
                 continue
             ws = wb[div_tab]
             hdr_row = proj_idx = status_idx = None
+            vals: Dict[str, int] = {}
             for r in range(1, 8):
                 vals = {str(ws.cell(row=r, column=c).value or "").strip().upper(): c
-                        for c in range(1, 12)}
+                        for c in range(1, (ws.max_column or 0) + 1)}
                 if "PROJECT #" in vals and "STATUS" in vals:
                     hdr_row, proj_idx, status_idx = r, vals["PROJECT #"], vals["STATUS"]
                     break
             if hdr_row is None:
                 continue
+
+            def _dnum(r, *hdrs):
+                """First numeric cell under any of these headers on this row.
+                The tab's TOTAL columns are live formulas, so a workbook saved
+                without a recalc reads None there - fall through to the parts."""
+                for h in hdrs:
+                    c = vals.get(h.upper())
+                    if c is None:
+                        continue
+                    v = ws.cell(row=r, column=c).value
+                    if isinstance(v, (int, float)):
+                        return float(v)
+                return None
+
             for r in range(hdr_row + 1, ws.max_row + 1):
                 proj = str(ws.cell(row=r, column=proj_idx).value or "").strip().upper()
                 st = ws.cell(row=r, column=status_idx).value
                 if proj and any(ch.isdigit() for ch in proj) and st:
                     if proj in out:
                         out[proj]["status"] = st
-                    else:                     # project only on the division tab
-                        out[proj] = {"description": None, "status": st}
+                    else:
+                        # A project only on its division tab (2026-09-08,
+                        # RP6586): Test-Master had not been re-run with it, so
+                        # the P&L found no contract and no ETC and the whole
+                        # projection went blank. The division tab is written by
+                        # the same readers, so its numbers are the same source -
+                        # take them, and NAME THE ROW (wip_source is printed).
+                        _oc = _dnum(r, "ORIGINAL CONTRACT")
+                        _co = _dnum(r, "APPROVED COs", "CHANGE ORDERS")
+                        _tc = _dnum(r, "TOTAL CONTRACT PRICE")
+                        _oe = _dnum(r, "ORIGINAL ESTIMATED COST", "ORIGINAL ESTIMATED COSTS",
+                                   "ORIGINAL ETC")
+                        _ce = _dnum(r, "CO COSTS")
+                        _te = _dnum(r, "ESTIMATED TOTAL COSTS")
+                        if _tc is None and _oc is not None:
+                            _tc = _oc + (_co or 0.0)
+                        if _te is None and _oe is not None:
+                            _te = _oe + (_ce or 0.0)
+                        _nm = vals.get("PROJECT NAME")
+                        out[proj] = {
+                            "description": (ws.cell(row=r, column=_nm).value
+                                            if _nm else None),
+                            "status": st,
+                            "original_contract": _oc, "change_orders": _co,
+                            "revised_contract": _tc,
+                            "original_etc": _oe, "revised_etc": _te,
+                            "wip_source": (f"'{div_tab}' row {r}"
+                                           if (_tc is not None or _te is not None)
+                                           else None),
+                        }
     return out
 
 
@@ -3490,6 +3534,10 @@ def build_sheet_pl(
         wip_contract_cell = c_ref
         wip_etc_cell = e_ref
         r += 1
+        # The owner's standing rulings on this job (known loss / accepted
+        # overrun) sit between the projection and the totals they explain.
+        r = _write_job_rulings(ws, r, proj, 2, BASE_SIZE - 1, BASE_SIZE + 1,
+                               hero_fill, box=box)
 
         # ── ② PROFIT & LOSS TOTALS — TRUE totals, retainage included (the
         #    user 2026-07-16): income = gross work billed + retainage billed
@@ -6096,6 +6144,52 @@ def _setup_print(ws, last_col: int, header_rows: int = 2) -> None:
         ws.print_title_rows = f"1:{header_rows}"
 
 
+def _write_job_rulings(ws, r: int, proj: str, val_col: int, sz: int, hsz: int,
+                       hero_fill, box=None) -> int:
+    """KNOWN LOSSES / RULINGS (the owner 2026-09-08) - the standing rulings on
+    this job from shared/job_rulings (<CompanyHealth>/job_rulings.json), so the
+    P&L itself says why a job went over: the why in col A, the $ the ruling
+    concerns in the value column, the bid line + document under it in grey.
+    First case RP6586: the 8" x 6' wall on the 2/4/2026 proposal ($23,180)
+    fell and was redone at our cost. Writes nothing when the job has no
+    ruling. Returns the next free row (one blank row after the box)."""
+    rl = job_rulings.for_job(proj)
+    if not rl:
+        return r
+    top = r
+    hc = ws.cell(row=r, column=1,
+                 value="KNOWN LOSSES / RULINGS  (standing - why this job is where it is)")
+    hc.font = Font(bold=True, size=hsz, color="FFFFFF"); hc.fill = hero_fill
+    for cc in range(2, val_col + 1):
+        ws.cell(row=r, column=cc).fill = hero_fill
+    r += 1
+    for x in rl:
+        kind = str(x.get("kind") or "note").upper()
+        colour = RED if kind == "LOSS" else "000000"
+        lc = _write_cell(ws, r, 1, f"{kind}: {x.get('note') or ''}".strip())
+        lc.font = Font(bold=True, size=sz, color=colour)
+        lc.alignment = Alignment(wrap_text=True, vertical="top")
+        amt = x.get("amount")
+        if amt not in (None, ""):
+            vc = ws.cell(row=r, column=val_col, value=float(amt))
+            vc.number_format = CURR_FMT
+            vc.font = Font(bold=True, size=sz, color=colour)
+            vc.alignment = Alignment(vertical="top")
+        r += 1
+        detail = " · ".join(s for s in (str(x.get("line") or "").strip(),
+                                        str(x.get("source") or "").strip(),
+                                        (f"ruled {x['on']}" if x.get("on") else ""))
+                            if s)
+        if detail:
+            dc = _write_cell(ws, r, 1, "    " + detail)
+            dc.font = Font(italic=True, size=max(sz - 2, 8), color="595959")
+            dc.alignment = Alignment(wrap_text=True, vertical="top")
+            r += 1
+    if box is not None:
+        box(top, r - 1, 1, val_col)
+    return r + 1
+
+
 def build_sheet_job_rp(
     wb: Workbook, proj: str, cust_info: dict, wip_info: dict,
     invoices: List[dict], job_groups: dict, job_total: float,
@@ -6239,6 +6333,15 @@ def build_sheet_job_rp(
                  value=_wnum("etc_saved", "revised_etc", "original_etc", "etc"))
     ev.number_format = CURR_FMT; ev.font = Font(bold=True, size=SZ); ev.fill = YEL
     etc_row = r; r += 1
+    # Name the row the inputs came from when they were read off a division
+    # tab rather than Test-Master (the owner 2026-09-04: "sources sources
+    # sources"); a typed value on the prior sheet stands and needs no note.
+    if (wip_info.get("wip_source")
+            and _wnum("contract_saved") is None and _wnum("etc_saved") is None):
+        _sc = _write_cell(ws, r, 1, f"    contract + ETC from the WIP master · "
+                                    f"{wip_info['wip_source']}")
+        _sc.font = Font(italic=True, size=max(SZ - 2, 8), color="595959")
+        r += 1
 
     def _wrow(label, formula, fmt=CURR_FMT, color="000000"):
         nonlocal r
@@ -6257,6 +6360,8 @@ def build_sheet_job_rp(
           fmt="0%", color=GREEN)
     thick_box(wip_top, r - 1, 1, pcol)
     r += 1
+    # The owner's standing rulings on this job (known loss / accepted overrun).
+    r = _write_job_rulings(ws, r, proj, pcol, SZ, HSZ, HERO, thick_box)
 
     # ════════════ INVOICE ════════════
     ih = ws.cell(row=r, column=1, value="INVOICE")

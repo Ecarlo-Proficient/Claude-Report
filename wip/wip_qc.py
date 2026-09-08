@@ -44,6 +44,7 @@ from typing import Dict, List, Optional
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
+from shared import job_rulings  # noqa: E402  (standing rulings = automatic sign-off)
 
 from openpyxl import load_workbook
 from openpyxl.utils import range_boundaries
@@ -514,7 +515,11 @@ def apply_signoff(findings: List["Finding"], signoff: dict) -> None:
         keep = []
         for row in f.rows:
             job = row.split(" ")[0]
-            rec = signoff.get(f"{f.check}:{job}")
+            # The sign-off file first; then the owner's standing rulings
+            # register (shared/job_rulings) - a ruling that accepts this
+            # check retires it on every report, with its written reason.
+            rec = (signoff.get(f"{f.check}:{job}")
+                   or job_rulings.signoff_record(job, f.check))
             if rec:
                 f.accepted.append(f"{job} - {rec.get('reason', 'no reason given')} "
                                   f"[{rec.get('by', '?')} {rec.get('on', '?')}]")
@@ -574,6 +579,10 @@ def main() -> int:
         # stderr, so --json output stays parseable
         print(f"  sign-off file: {sp}  ({len(signoff)} accepted finding(s))",
               file=sys.stderr if args.json else sys.stdout)
+    _jr = job_rulings.load()
+    if _jr:
+        print(f"  job rulings: {job_rulings.RULES_FILE}  ({len(_jr)} job(s) with "
+              f"a standing ruling)", file=sys.stderr if args.json else sys.stdout)
     reports, results, cross = run(args.files, args.strict, signoff)
 
     if args.json:

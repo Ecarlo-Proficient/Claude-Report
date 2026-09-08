@@ -56,6 +56,7 @@ shared/                the ONLY importable common code
 ├─ cost_lines.py       cost-line category (Concrete/Labor/Materials) + bill-line combine
 ├─ draws.py            CP draw (AIA G702/G703) discovery + parsing (wip ↔ health)
 ├─ draw_moves.py       the PUSH: a bill carried into a later draw by agreement — <CompanyHealth>/draw_moves.json (project-pnl ↔ bill-tracker ↔ ledger)
+├─ job_rulings.py      the RULINGS: a known loss / accepted overrun the owner settled once — <CompanyHealth>/job_rulings.json (wip readers KNOWN: note ↔ wip_qc auto sign-off ↔ project-pnl block ↔ ledger over-budget rule + project page)
 ├─ takeoff_etc.py      blank ETC → takeoff cost sheet (rp_wip_reader ↔ schedule preview)
 ├─ xlsx_verify.py      Excel-corruption gate: every xlsx writer calls assert_clean before handing over
 ├─ pnl_paths.py        resolve a project's P&L workbook + "last pulled" mtime (ledger ↔ project-pnl)
@@ -976,7 +977,8 @@ exception to the plain-Excel rule — the user asked for an at-a-glance watchboa
 
 project-pnl reads the WIP master's **Test-Master** tab (the readers' unified MFD+CP+RP
 table) to pre-fill **Original Contract / ETC + Approved COs** (original = total − COs;
-revised rows are live formulas) and honor a **Closed** status (WIP close-out: % complete
+revised rows are live formulas; a job only on `Test - CP` / `Test - RP` is read off that
+tab instead, row named on the card - 2026-09-08) and honor a **Closed** status (WIP close-out: % complete
 forced to 100%). **Overhead is a % of the CONTRACT** - 10% company, 9% MFD view (the user
 2026-09-03); a job with no contract on file lets total billed stand in (and costs to date
 for the ETC), so a finished job's projection block is live, not zero. Per draw, the same

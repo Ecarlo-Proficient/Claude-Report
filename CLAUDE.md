@@ -103,7 +103,12 @@ restate them here. Business/strategic context lives in session memory, not in th
   report walker -> the 5 totals, exact-match locked + GP-NOI identity check; used by the ledger's
   `load_health.py`; qbo_health keeps its historical local copy until it retires), `breakeven.py`
   (the break-even model - `build_from_blocks` for the ledger, the xlsx `build()` for the legacy
-  tracker), `recurring.py` (the FIN-12 recurring-obligations register),
+  tracker), `recurring.py` (the FIN-12 recurring-obligations register), `job_rulings.py`
+  (the standing per-job rulings register `<CompanyHealth>/job_rulings.json` - a known loss /
+  accepted overrun the owner settled ONCE: the WIP readers print it as a `KNOWN:` NOTES
+  segment, `wip_qc` signs the accepted checks off with its reason, project-pnl writes the
+  KNOWN LOSSES / RULINGS block, the ledger drops the job from Over budget and shows it on
+  the project page; first case RP6586 2026-09-08),
   `setup_qbo.py` (`--status/--test/--rotate/--purge`).
 - **invoice-sync/** — the QBO → Notion AR invoice sync (was `automation-worker/`). Open invoices
   → two Notion DBs (MFD isolated; Res/Com combined) routed by project-# prefix; sweeps paid;

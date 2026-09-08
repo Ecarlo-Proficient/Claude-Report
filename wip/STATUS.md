@@ -4,9 +4,23 @@
 > (CLAUDE.md/AGENTS.md structure rule 7). Tool matters only — no business
 > findings, no dollar exposures, no owner-only analysis.
 
-Last updated: 2026-09-02
+Last updated: 2026-09-08
 
 ## DONE / FINALIZED
+
+- **STANDING JOB RULINGS -> `KNOWN:` IN NOTES + AUTOMATIC QC SIGN-OFF (2026-09-08).**
+  The owner asked for a permanent per-job note so an overrun he has already explained
+  is never flagged again. `shared/job_rulings.py` reads `<CompanyHealth>/job_rulings.json`
+  (owner-edited, outside the repo); `rp_wip_reader.read_rp_from_file` and
+  `cp_wip_reader.scan_cp_folders` call `annotate_rows` so every row with a ruling carries a
+  `KNOWN: <why> - <line> $<amount> - <document>` segment in NOTES on Test - RP / Test - CP and,
+  through them, Test-Master. `KNOWN:` joined `_SCRIPT_NOTE_RE` in `wip_writer` - it is
+  script-owned and regenerates from the register, so retiring a ruling retires the note on
+  the next sync and it is never mistaken for an owner-typed note to preserve. `wip_qc`
+  consults the register after the sign-off file: a ruling whose `accept` names the check
+  (`OVER_BUDGET` = `OVER_100_PCT` + `COSTS_OVER_CONTRACT`) signs that job's finding off with
+  the ruling's reason, so no hand entry in `wip-qc-signoff.json` is needed. Exact project #
+  match only - RP6586 and RP6586-FTW stay two jobs. First case RP6586.
 
 - **WIP Review direction rules (owner 2026-09-01: "projects where the CO/ETC/Contract reverse in
   direction").** `wip_review_common.py` now owns three rules the CP / RP / Master emit and apply

@@ -8,6 +8,33 @@ manual close), RP (no draws — expenses → invoice → profit).
 
 ## DONE / FINALIZED
 
+- **KNOWN LOSSES / RULINGS BLOCK (2026-09-08, first case RP6586).** The owner:
+  "this needs to be a note for that job permanently so when we do the WIP
+  report we don't flag ... we also need to put it in their P&L somewhere." A
+  job-specific fact had nowhere durable to live - the vault refuses job notes
+  by design, session memory dies, and the WIP NOTES column is regenerated -
+  so every report re-discovered the same overrun. Now ONE register,
+  `<CompanyHealth>/job_rulings.json` read through `shared/job_rulings.py`
+  (same pattern as `draw_moves.json`), feeds every reader: this tool writes a
+  **KNOWN LOSSES / RULINGS** box on the Job P&L (RP card: after WIP /
+  PROJECTION, before INVOICE; CP/MFD P&L sheet: between ① WIP and ② TOTALS) -
+  the why in col A (red when `kind` is `loss`), the $ the ruling concerns in
+  the value column, the bid line + document + ruling date in grey under it.
+  Nothing is written for a job with no ruling. `_write_job_rulings` is the
+  one writer for both templates. The register is owner-edited business data
+  and never enters the repo; `python3 shared/job_rulings.py RP6586` prints it.
+  **Same run, second defect:** RP6586 sat on `Test - RP` but not on `Test-Master`
+  (the master had not been re-run with it), and `load_wip_master` reads ONLY
+  Test-Master when it exists - so the card's Bid Proposal and ETC were blank
+  and the projection block was empty. The division-tab overlay (which already
+  supplied STATUS) now also carries a project that is ONLY on `Test - CP` /
+  `Test - RP`: ORIGINAL CONTRACT + APPROVED COs and ORIGINAL ESTIMATED COST +
+  CO COSTS (the tab's TOTAL columns are live formulas and read None from a
+  workbook saved without a recalc, so the parts are the fallback), with
+  `wip_source` = the tab and row, printed under the ETC input in grey
+  ("contract + ETC from the WIP master · 'Test - RP' row 25"). A job on
+  Test-Master is untouched; a typed value on the prior sheet still wins.
+
 - **THE CP AND RP OVERVIEWS WERE DEAD ON ARRIVAL (2026-09-04, caught by the CP
   batch).** `_formula` in `completed_pnl.build_bundle` returned a DICT LITERAL
   and indexed it - so every branch was evaluated, including `L['moh']`, the
@@ -799,6 +826,12 @@ manual close), RP (no draws — expenses → invoice → profit).
   a workbook that fails — rule 5b was never wired into this tool before.
 
 ## OPEN ISSUES
+
+- **`pnl_paths.find_pnl` does not know the RP workbook name.** The RP template saves
+  `<division>/<RP#### - Customer>/<RP#### - Customer>.xlsx` (the user 2026-06-26) while
+  `pnl_paths` looks for `Project_PnL_<job>.xlsx` / `<job> FINAL.xlsx`, so the ledger's "last
+  pulled" and the workbook link come back empty for every RP job (seen on RP6586, 2026-09-08).
+  Either the RP save moves to `pnl_filename` or `_candidates` learns the RP pattern - one rule.
 
 - **A DYING SMB SHARE HANGS A CP RUN SILENTLY (2026-09-03).** `active cp`
   ran 71 minutes with 6 seconds of CPU and three log lines: the Synology

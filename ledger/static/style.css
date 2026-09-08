@@ -1398,6 +1398,7 @@ html[data-theme="dark"] .bills-cap.pp-push { color: var(--warn-text); }
 .pp-unlock.ok, .pp-unlock .ok { border-color: color-mix(in srgb, var(--pos) 45%, var(--border)); background: color-mix(in srgb, var(--pos) 6%, var(--surface)); }
 .pp-unlock-b { margin-top: 4px; color: var(--text); }
 .pp-unlock-b.ok { color: var(--pos); }
+.pp-unlock.pp-rulings { border-color: color-mix(in srgb, var(--warn, #b8860b) 45%, var(--border)); background: color-mix(in srgb, var(--warn, #b8860b) 6%, var(--surface)); }
 .pp-draw { border-top: 1px solid var(--border); }
 .pp-draw.next .pp-draw-h { background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
 /* the draw band is a GRID row so every band lines up under one header (owner: "a column i can rely on") */

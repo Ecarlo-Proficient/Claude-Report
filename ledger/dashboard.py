@@ -46,6 +46,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 from shared import paths, pnl_paths, bill_marks, lien_clock, breakeven  # noqa: E402
 from shared import draw_moves      # the push: bills carried into a later draw by agreement
+from shared import job_rulings     # standing per-job rulings (known loss / accepted overrun) - <CompanyHealth>/job_rulings.json
 
 import registry_view  # noqa: E402  (local: parses the vault's process registry for the Systems tab)
 import vault_graph    # noqa: E402  (local: vault [[link]] graph + docs/ARCHITECTURE.md diagrams for the Graph tab)
@@ -1628,7 +1629,8 @@ def _fetch_project_page(con, pn: str) -> dict:
     draws.sort(key=lambda d: (0 if d.get("no_draw") else 1, ""), reverse=False)
     draws.sort(key=lambda d: (1 if d.get("no_draw") else 0, d.get("ar_date") or d.get("recency") or ""), reverse=True)
     return {"ok": True, "project": {"project_no": pn, "name": pr["name"] if pr else None, "division": pr["division"] if pr else pnl.get("division")},
-            "pnl": pnl, "draws": draws, "funding": funding}
+            "pnl": pnl, "draws": draws, "funding": funding,
+            "rulings": job_rulings.for_job(pn)}   # the owner's standing rulings on this job (known loss / accepted overrun)
 
 
 _ATT_CACHE = {"sig": None, "counts": {}}
@@ -2178,6 +2180,10 @@ def fetch_data(db_path: Path, scope: str = "full") -> dict:
         return {"error": f"Ledger schema not found ({e}). Run the loader first."}
     con.close()
     for r in rows:  # attach QBO cost rollup + the client onto each project row
+        # The owner's standing ruling: an accepted overrun leaves the Over
+        # budget list (isOverBudget in app.js) - he already knows why.
+        r["over_budget_accepted"] = job_rulings.accepts(r["project_no"], "OVER_BUDGET")
+        r["rulings_n"] = len(job_rulings.for_job(r["project_no"]))
         cp = costs["by_project"].get(r["project_no"])
         r["costs_loaded"] = cp["costs_loaded"] if cp else None
         r["sub_costs"] = cp["sub_costs"] if cp else None
