@@ -209,6 +209,12 @@ def _project_pnl(con, proj: str) -> dict:
         "SELECT COALESCE(cost_code,'(uncoded)') code, COALESCE(SUM(amount),0) amount, "
         "COUNT(*) lines, MAX(is_sub) is_sub FROM cost_line WHERE project_no = ? "
         "GROUP BY COALESCE(cost_code,'(uncoded)') ORDER BY amount DESC", (proj,))]
+    # job type (SL -> Slab) + cost-type name (1 -> Concrete) per code, so the UI can group "Slab > SL1 - Concrete"
+    from shared.qbo_costs import cost_code_meta, job_type_name
+    for c in by_code:
+        m = cost_code_meta(c["code"]) if c["code"] != "(uncoded)" else {"prefix": None, "number": None, "description": None}
+        c["prefix"], c["number"], c["name"] = m["prefix"], m["number"], m["description"]
+        c["job_type"] = job_type_name(m["prefix"]) if m["prefix"] else None
     billed = con.execute("SELECT COALESCE(SUM(amount),0) a FROM billing_event WHERE project_no = ?", (proj,)).fetchone()["a"] or 0
     # Every AR invoice (draw) this project has billed - the make-up of billed-to-date, oldest first.
     invoices = [dict(r) for r in con.execute(

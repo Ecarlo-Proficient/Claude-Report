@@ -238,6 +238,13 @@ tr.lien-row.u-info > td:first-child { border-left-color: var(--text-dim); }
 .pnl-code { display: flex; justify-content: space-between; gap: 10px; font-size: .86em; padding: 2px 0; font-variant-numeric: tabular-nums; }
 .pnl-code .pc-code { color: var(--text-dim); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .95em; }
 .pnl-code.uncoded .pc-code { color: var(--neg); }
+.pnl-code .pc-name { flex: 1; color: var(--text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pnl-code.in-grp { padding-left: 12px; }
+.pnl-codegrp { display: flex; justify-content: space-between; gap: 10px; font-size: .86em; font-weight: 700; margin-top: 6px; padding: 3px 0 2px; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+.pnl-codegrp:first-child { margin-top: 0; }
+/* "Last pulled" + its stamp side by side, the stamp boxed (owner 2026-09-08) */
+.drow.pnl-pulled { justify-content: flex-start; align-items: center; gap: 8px; }
+.drow.pnl-pulled .dv.pnl-stamp { display: inline-block; margin-left: 0; text-align: left; border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; background: var(--surface-2); font-size: .9em; font-variant-numeric: tabular-nums; }
 /* Every AR invoice (draw) that makes up billed-to-date, in the P&L expansion. */
 .pnl-invoices { display: flex; flex-direction: column; gap: 1px; margin-top: 2px; }
 .pnl-inv { display: grid; grid-template-columns: 74px 1fr auto auto; align-items: baseline; gap: 10px;
@@ -694,7 +701,8 @@ tr.bill-group .bg-sub { color: var(--text-dim); font-weight: 500; font-size: .85
    the left so it's always visible, never scrolled off the right of this wide table. */
 tr.bill-group .bg-cell { display: flex; align-items: baseline; gap: 12px; }
 /* the shared band grid (bandMetrics): name left, fixed metric columns right, value over label */
-.bg-cell.bg-grid { display: grid; grid-template-columns: minmax(200px, 1fr) repeat(var(--nm, 0), minmax(110px, 150px)); align-items: center; gap: 0 12px; }
+/* the name column is CAPPED so the numbers sit right next to the name, aligned down the table; free space goes to the right (owner 2026-09-08: "amounts are too far") */
+.bg-cell.bg-grid { display: grid; grid-template-columns: minmax(200px, 34ch) repeat(var(--nm, 0), minmax(104px, 140px)) 1fr; align-items: center; gap: 0 12px; }
 .bg-cell.bg-grid .bg-left, .bg-cell.bg-grid .bg-key, .bg-cell.bg-grid .sg-key, .bg-cell.bg-grid .g-cust { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bg-m { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.15; font-weight: 400; }
 .bg-m b { font-variant-numeric: tabular-nums; font-weight: 700; font-size: .98em; letter-spacing: -.01em; }
@@ -1382,8 +1390,17 @@ table.pp-bills { margin: 0 0 6px; }
 #btnPayRunGo.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); font-weight: 600; }
 
 .pp-all { display: inline-flex; align-items: center; gap: 4px; font-size: .9em; color: var(--text-dim); }
-tr.pp-sect > td { background: var(--surface-2); font-weight: 700; color: var(--text-dim); font-size: .88em; text-transform: none; }
-tr.pp-vendor > td { background: color-mix(in srgb, var(--surface-2) 60%, var(--surface)); }
+/* the draw's bill table reads as POCKETS (owner 2026-09-08: "no sub header distinction, it reads like a list"):
+   section band (Materials / Labor) > vendor pocket with an accent edge > its bills indented under it */
+tr.pp-sect > td { background: var(--surface-2); border-top: 2px solid var(--border); padding-top: 8px; padding-bottom: 6px; font-size: .92em; }
+tr.pp-sect .pp-sect-lab { display: inline-block; font-size: .8em; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; color: var(--text-dim); margin-right: 10px; }
+tr.pp-sect .ip-paid { font-weight: 700; }
+tr.pp-vendor > td { background: color-mix(in srgb, var(--accent) 7%, var(--surface-2)); border-top: 1px solid var(--border); padding-top: 7px; padding-bottom: 7px; }
+tr.pp-vendor > td:first-child { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent) 60%, transparent); }
+tr.pp-vendor .sg-key { font-weight: 800; }
+tr.pp-in-grp > td { background: color-mix(in srgb, var(--surface-2) 35%, var(--surface)); }
+tr.pp-in-grp > td:first-child { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent) 22%, transparent); }
+tr.pp-in-grp td.pp-vb { padding-left: 30px; }
 .pp-grp-cb { cursor: pointer; }
 
 /* the sync pill in the nav strip (2026-09-02: "the syncs and the timestamp on top always") */

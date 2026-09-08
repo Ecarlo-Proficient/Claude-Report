@@ -1904,3 +1904,5 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
 - **In-app Resync scope:** runs the ledger loaders (fresh QBO + Notion, re-reads the current WIP/Bill
   Tracker Excel). The WIP master + `Bill Tracker.xlsx` are still produced by their own flows (the owner
   / `sync-ap`); chaining those upstream syncs into the button is a possible future step.
+
+- 2026-09-08 · project page readability: draw bill table reads as pockets (section band > vendor with accent edge > indented bills, vendor name not repeated); Costs by code grouped by job type ("Slab > SL1 - Concrete", every code, `_project_pnl` by_code carries prefix/number/name/job_type); "Last pulled" stamp boxed beside its label; app-wide band grid caps the name column so the numbers sit next to the name (`.bg-cell.bg-grid`), and `bandMetrics` puts the full name on hover for truncated keys.

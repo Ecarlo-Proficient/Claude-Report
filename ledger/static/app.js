@@ -1768,6 +1768,7 @@ function bandMetrics(cell, metrics) {
     const s = document.createElement("small"); s.textContent = label || "";
     m.appendChild(b); m.appendChild(s); cell.appendChild(m);
   }
+  for (const k of cell.querySelectorAll(".bg-key, .sg-key, .g-cust")) if (!k.title) k.title = k.textContent || "";   // names truncate with an ellipsis in the grid - the full name on hover
   return cell;
 }
 
@@ -3599,15 +3600,14 @@ function _renderPpDraws() {
     hd.innerHTML = `<span></span><span>Draw</span><span>Invoiced</span><span>Billed</span><span>GC</span><span>Materials</span><span>Labor</span><span>Pay run</span><span>Stage</span>`; host.appendChild(hd); }
   const COLS = 10;
   const codeOf = b => (b.codes && b.codes.length) ? b.codes.join(", ") : "(uncoded)";
-  const billRow = (dr, b, isSub) => {
-    const tr = document.createElement("tr"); if (b.paid) tr.classList.add("inv-paid");
+  const billRow = (dr, b, isSub, inGrp) => {   // inGrp = under a vendor / code pocket: indented, and the vendor name is not repeated (owner 2026-09-08)
+    const tr = document.createElement("tr"); if (b.paid) tr.classList.add("inv-paid"); if (inGrp) tr.classList.add("pp-in-grp");
     const pc = document.createElement("td"); pc.className = "left";
     if (!b.paid && b.gates && b.bill_id) { const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = !!b.pay_selected; cb.title = "Put this bill on the pay run (Pay Bills) - local intent, never QuickBooks";
       cb.onclick = (e) => e.stopPropagation(); cb.onchange = () => _ppSetPay([b], cb.checked); pc.appendChild(cb); }
     else if (!b.gates) { const s = document.createElement("span"); s.className = "vg-tag"; s.textContent = "GC pays"; s.title = "Concrete pumping - paid by the GC directly"; pc.appendChild(s); }
     tr.appendChild(pc);
-    { const vb = document.createElement("td"); vb.className = "left pp-vb"; const v = document.createElement("span"); v.className = "pp-vend"; v.textContent = b.vendor || "–"; vb.appendChild(v);
-      vb.appendChild(document.createTextNode(" ")); const link = qboLinkCell(b.bill_ref || "–", isSub ? qboUrl(b.txn_type === "Expense" ? "expense" : "bill", b.bill_id) : qboBillHref(b.qbo_link), "Open this bill in QuickBooks");
+    { const vb = document.createElement("td"); vb.className = "left pp-vb"; if (!(inGrp && _pp.sort !== "code")) { const v = document.createElement("span"); v.className = "pp-vend"; v.textContent = b.vendor || "–"; vb.appendChild(v); vb.appendChild(document.createTextNode(" ")); } const link = qboLinkCell(b.bill_ref || "–", isSub ? qboUrl(b.txn_type === "Expense" ? "expense" : "bill", b.bill_id) : qboBillHref(b.qbo_link), "Open this bill in QuickBooks");
       while (link.firstChild) vb.appendChild(link.firstChild); if (b.att) { const ab = attBtn(isSub && b.txn_type === "Expense" ? "Purchase" : "Bill", b.bill_id, b.att, `${b.vendor || ""} · bill ${b.bill_ref || ""}`); ab.style.marginLeft = "6px"; vb.appendChild(ab); } tr.appendChild(vb); }
     { const cc = document.createElement("td"); cc.className = "left"; for (const c of (b.codes || [])) { const chip = document.createElement("span"); chip.className = "codechip"; chip.textContent = c; cc.appendChild(chip); cc.appendChild(document.createTextNode(" ")); } if (!(b.codes || []).length) { cc.textContent = "–"; cc.classList.add("dim"); } tr.appendChild(cc); }
     const ac = document.createElement("td"); ac.className = "ip-amt"; ac.appendChild(moneyCell(b.amount)); tr.appendChild(ac);
@@ -3631,7 +3631,7 @@ function _renderPpDraws() {
     const sr = document.createElement("tr"); sr.className = "pp-sect";
     const cbTd = document.createElement("td"); cbTd.className = "left"; cbTd.appendChild(_ppCheck(bills, label, `Tick every unpaid ${label.toLowerCase()} bill on this draw`)); sr.appendChild(cbTd);
     const td = document.createElement("td"); td.className = "left"; td.colSpan = COLS - 1;
-    td.innerHTML = `<b>${_ge(label)}</b> <span class="ip-paid ${paidCt === bills.length ? "ok" : "due"}">${_ge(money(tot))} · ${paidCt}/${bills.length} paid${owed > 0.005 ? " · " + _ge(money(owed)) + " to pay" : ""}</span>` + (sect === "labor" ? ` <span class="dim">QuickBooks bills dated in the draw period · paid = a bill payment applied this year</span>` : ` <span class="dim">Bill Tracker</span>`);
+    td.innerHTML = `<span class="pp-sect-lab">${_ge(label)}</span><span class="ip-paid ${paidCt === bills.length ? "ok" : "due"}">${_ge(money(tot))} · ${paidCt}/${bills.length} paid${owed > 0.005 ? " · " + _ge(money(owed)) + " to pay" : ""}</span>` + (sect === "labor" ? ` <span class="dim">QuickBooks bills dated in the draw period · paid = a bill payment applied this year</span>` : ` <span class="dim">Bill Tracker</span>`);
     sr.appendChild(td); tbody.appendChild(sr);
   };
   const groupedRows = (tbody, dr, bills, isSub, sect) => {   // bands by vendor or by cost code (collapsed) -> bills
@@ -3650,7 +3650,7 @@ function _renderPpDraws() {
       gtr.onclick = (e) => { if (e.target.closest("input")) return; if (_pp.openV.has("*")) { _pp.openV = new Set(); for (const d2 of _pp.d.draws) for (const s2 of ["materials", "labor"]) for (const b2 of (s2 === "labor" ? (d2.sub_bills || []) : d2.bills)) _pp.openV.add(`${d2.matched_invoice}|${s2}|${_pp.sort}|${keyOf(b2)}`); }
         if (_pp.openV.has(vkey)) _pp.openV.delete(vkey); else _pp.openV.add(vkey); _renderPpDraws(); };
       tbody.appendChild(gtr);
-      if (vopen) for (const b of list.sort((x, y) => (x.bill_date || "").localeCompare(y.bill_date || ""))) tbody.appendChild(billRow(dr, b, isSub));
+      if (vopen) for (const b of list.sort((x, y) => (x.bill_date || "").localeCompare(y.bill_date || ""))) tbody.appendChild(billRow(dr, b, isSub, true));
     }
   };
   const flatRows = (tbody, dr, bills, isSub) => {   // sorted by date or amount, no bands
@@ -5615,7 +5615,7 @@ function buildPnlGroup(proj) {
     rowP("Earned revenue", money(d.earned));
     rowP("Costs to date", money(d.cost));
     rowP(`Overhead (${d.overhead_basis})`, "(" + money(d.overhead) + ")");
-    const nr = rowP("Net margin", `${money(d.net)} · ${d.net_pct == null ? "—" : (d.net_pct * 100).toFixed(1) + "%"}`, "pnl-net");
+    const nr = rowP("Net margin", `${money(d.net)} · ${d.net_pct == null ? "–" : (d.net_pct * 100).toFixed(1) + "%"}`, "pnl-net");
     nr.classList.add(d.net >= 0 ? "pos" : "neg");
     rowP("Billed to GC (AR)", money(d.billed), "pnl-sub");
     // The make-up of billed-to-date: every AR invoice (draw) the project has, paid or open
@@ -5639,13 +5639,24 @@ function buildPnlGroup(proj) {
       pl.appendChild(tbl);
     }
     if (d.by_code && d.by_code.length) {
-      const cap = document.createElement("div"); cap.className = "pnl-cap"; cap.textContent = "Costs by code"; pl.appendChild(cap);
+      // grouped by JOB TYPE (owner 2026-09-08: "Slab > SL1 - Concrete"): the prefix is the pocket, each code
+      // carries its cost-type name; uncoded / unknown prefixes land in "Other", last. Every code shows.
+      const cap = document.createElement("div"); cap.className = "pnl-cap"; cap.textContent = "Costs by code · by job type"; pl.appendChild(cap);
       const tbl = document.createElement("div"); tbl.className = "pnl-codes";
-      for (const c of d.by_code.slice(0, 10)) {
-        const r = document.createElement("div"); r.className = "pnl-code" + (c.code === "(uncoded)" ? " uncoded" : "");
-        const nm = document.createElement("span"); nm.className = "pc-code"; nm.textContent = c.code + (c.is_sub ? " · sub" : "");
-        const am = document.createElement("span"); am.className = "pc-amt"; am.textContent = money(c.amount);
-        r.appendChild(nm); r.appendChild(am); tbl.appendChild(r);
+      const groups = new Map();
+      for (const c of d.by_code) { const g = c.job_type || c.prefix || "Other"; if (!groups.has(g)) groups.set(g, { total: 0, codes: [] }); const e = groups.get(g); e.total += num(c.amount); e.codes.push(c); }
+      const ordered = [...groups].sort((a, b) => ((a[0] === "Other") - (b[0] === "Other")) || (b[1].total - a[1].total));
+      for (const [g, e] of ordered) {
+        const gh = document.createElement("div"); gh.className = "pnl-codegrp";
+        const gn = document.createElement("span"); gn.textContent = g; const ga = document.createElement("span"); ga.textContent = money(e.total); gh.appendChild(gn); gh.appendChild(ga); tbl.appendChild(gh);
+        e.codes.sort((x, y) => ((parseInt(x.number, 10) || 999) - (parseInt(y.number, 10) || 999)) || String(x.code).localeCompare(String(y.code)));
+        for (const c of e.codes) {
+          const r = document.createElement("div"); r.className = "pnl-code in-grp" + (c.code === "(uncoded)" ? " uncoded" : "");
+          const nm = document.createElement("span"); nm.className = "pc-code"; nm.textContent = c.code;
+          const n2 = document.createElement("span"); n2.className = "pc-name"; n2.textContent = (c.name ? "- " + c.name : "") + (c.is_sub ? " · sub" : "");
+          const am = document.createElement("span"); am.className = "pc-amt"; am.textContent = money(c.amount);
+          r.appendChild(nm); r.appendChild(n2); r.appendChild(am); tbl.appendChild(r);
+        }
       }
       pl.appendChild(tbl);
     }
@@ -5661,9 +5672,9 @@ function buildPnlGroup(proj) {
 
   // ── detailed export (project-pnl Excel) — open / generate ──
   const cap2 = document.createElement("div"); cap2.className = "pnl-cap"; cap2.textContent = "Detailed export (project-pnl)"; g.appendChild(cap2);
-  const row = document.createElement("div"); row.className = "drow";
+  const row = document.createElement("div"); row.className = "drow pnl-pulled";   // the stamp sits in its own box right next to its label (owner 2026-09-08)
   const dk = document.createElement("span"); dk.className = "dk"; dk.textContent = "Last pulled";
-  const dv = document.createElement("span"); dv.className = "dv"; dv.textContent = "checking…";
+  const dv = document.createElement("span"); dv.className = "dv pnl-stamp"; dv.textContent = "checking…";
   row.appendChild(dk); row.appendChild(dv); g.appendChild(row);
   const acts = document.createElement("div"); acts.className = "pnl-actions";
   const openBtn = document.createElement("button"); openBtn.className = "btn small"; openBtn.textContent = "Open Excel"; openBtn.disabled = true;
@@ -5672,7 +5683,7 @@ function buildPnlGroup(proj) {
   const msg = document.createElement("div"); msg.className = "pnl-msg"; g.appendChild(msg);
 
   const refresh = () => fetch(`/api/pnl?proj=${encodeURIComponent(proj)}`).then(r => r.json()).then(d => {
-    if (d.error) { dv.textContent = "—"; return; }
+    if (d.error) { dv.textContent = "–"; return; }
     if (d.exists) {
       dv.textContent = `${timeAgo(d.mtime)} · ${fmtDate(d.mtime, true)}`;
       openBtn.disabled = false;
