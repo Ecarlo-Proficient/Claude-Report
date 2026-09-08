@@ -1152,6 +1152,11 @@ def _fetch_accounting_audits() -> dict:
                 "url": url, "group": sheet.replace("Audit - ", ""),
             })
     wb.close()
+    # what QuickBooks actually has on the line (owner 2026-09-08: "show me what QBO is showing"): the audit's
+    # Detail starts "Class <QBO class> · <why>", so the QBO class rides along as its own field
+    for f in findings:
+        m = re.match(r"Class\s+([A-Za-z][A-Za-z /-]*?)\s*·", f.get("detail") or "")
+        f["qbo_class"] = m.group(1).strip() if m else None
     # attachment count per finding, from the shared attachable index (disk cache, NO QBO
     # call). The UI shows a scan link only when att>0 and fetches fresh links on click, so
     # no-scan bills never trigger a lookup. Missing cache -> everything reads 0 (no links).

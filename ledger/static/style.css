@@ -1537,3 +1537,4 @@ td.pnl-expand .pnl-live .pnl-codegrp { break-after: avoid; }
 .attn .a-src { display: block; font-size: max(.72em, 12px); color: var(--text-dim); margin-top: 3px; }
 .wr-asof { font-variant-numeric: tabular-nums; }
 .wr-stale { color: var(--neg-text); font-weight: 700; }
+.acct-class-bad { color: var(--neg-text); font-weight: 700; }

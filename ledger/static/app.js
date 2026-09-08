@@ -7479,7 +7479,7 @@ function acctFilterDesc(shown, total) {
 // stack in click order, so Vendor-then-Date sorts by vendor, then by date within each vendor.
 const ACCT_SORT_KEYS = {
   "Issue": f => f.issue, "Vendor": f => f.vendor, "Bill #": f => f.bill_no,
-  "Date": f => f.date || "", "Project": f => f.project, "Class": f => f.division,
+  "Date": f => f.date || "", "Project": f => f.project, "Class": f => f.qbo_class || f.division,
   "Cost": f => f.cost_code, "Amount": f => (f.amount == null ? -Infinity : f.amount),
   "Line memo": f => f.memo, "Why flagged": f => f.detail,
 };
@@ -7551,7 +7551,7 @@ function renderAccounting() {
   // fixed meta widths (px) so one long outlier can't blow a column wide (the old wasted
   // space); the two text columns (null width) share the rest and wrap - nothing truncates.
   const cols = [["Issue", "left audit-soft", 126], ["Vendor", "left audit-soft", 148], ["Bill #", "left", 78],
-    ["📎", "left", 52], ["Date", "left", 104], ["Project", "left", 122], ["Class", "left", 104], ["Cost", "left", 64], ["Amount", "right", 92],
+    ["📎", "left", 52], ["Date", "left", 104], ["Project", "left", 122], ["Class (QuickBooks)", "left", 124], ["Cost", "left", 64], ["Amount", "right", 92],
     ["Line memo", "left audit-soft", null], ["Why flagged", "left audit-soft", null]];
   thead.innerHTML = ""; const htr = document.createElement("tr");
   const chTh = document.createElement("th"); chTh.className = "left acct-check"; chTh.style.width = "32px";
@@ -7601,7 +7601,9 @@ function renderAccounting() {
     tr.appendChild(sc);
     tr.appendChild(leftText(f.date ? fmtDateShort(f.date) : "–"));
     const pc = leftText(f.project || "–"); pc.title = f.project || ""; tr.appendChild(pc);
-    tr.appendChild(leftText(f.division || "–"));   // Class (QBO division)
+    { const cc = leftText(f.qbo_class || f.division || "–");   // what QuickBooks HAS on the line; red when it is not the job's division
+      if (f.qbo_class && f.division && f.qbo_class !== f.division) { cc.classList.add("acct-class-bad"); cc.title = `QuickBooks says ${f.qbo_class} - ${f.project} is a ${f.division} job`; }
+      tr.appendChild(cc); }
     tr.appendChild(leftText(f.cost_code || "–"));
     tr.appendChild(rightText(f.amount != null ? money(f.amount) : ""));
     const mc = document.createElement("td"); mc.className = "left audit-soft"; mc.textContent = f.memo || "–"; if (!f.memo) mc.classList.add("audit-dim"); tr.appendChild(mc);
@@ -7620,7 +7622,7 @@ function renderAccounting() {
 
 // Copy-as-table: the columns copied (headers + values), minus the checkbox and 📎 columns.
 const ACCT_COPY_COLS = [["Issue", f => f.issue], ["Vendor", f => f.vendor], ["Bill #", f => f.bill_no],
-  ["Date", f => f.date ? fmtDateShort(f.date) : ""], ["Project", f => f.project], ["Class", f => f.division],
+  ["Date", f => f.date ? fmtDateShort(f.date) : ""], ["Project", f => f.project], ["Class (QuickBooks)", f => f.qbo_class || f.division],
   ["Cost", f => f.cost_code], ["Amount", f => f.amount != null ? money(f.amount) : ""],
   ["Line memo", f => f.memo], ["Why flagged", f => f.detail]];
 
@@ -7659,6 +7661,21 @@ async function copyAcctTable(rows) {
   }
 }
 
+// "Copy for clerk" (owner 2026-09-08): one plain sentence per finding that says exactly what to change, ready to paste.
+function _acctClerkLine(f) {
+  const what = (f.qbo_class && f.division && f.qbo_class !== f.division)
+    ? `Class is ${f.qbo_class} in QuickBooks - change it to ${f.division} (${f.project} is a ${f.division} job)`
+    : (f.detail || f.issue || "").replace(/^Class\s+[A-Za-z /-]+\s*·\s*/, "");
+  return [`Bill ${f.bill_no || "?"}`, f.vendor, f.date ? fmtDateShort(f.date) : null, f.memo ? `"${f.memo}"` : null, f.amount != null ? money(f.amount) : null,
+          f.cost_code ? `code ${f.cost_code}` : null].filter(Boolean).join(" · ") + ` -> ${what}`;
+}
+async function _acctCopyClerk() {
+  const rows = acctSel.size ? ((ACCT && ACCT.findings) || []).filter(f => acctSel.has(f._k)) : _acctVisible;
+  if (!rows.length) return;
+  const txt = rows.map(_acctClerkLine).join("\n");
+  let ok = true; try { await navigator.clipboard.writeText(txt); } catch (e) { ok = false; }
+  const b = $("#btnAcctClerk"); if (b) { b.disabled = true; b.textContent = ok ? `Copied ${rows.length} ✓` : "Copy failed"; setTimeout(() => { b.disabled = false; b.textContent = "Copy for clerk"; }, 1400); }
+}
 async function _acctDoCopy() {
   const rows = acctSel.size ? ((ACCT && ACCT.findings) || []).filter(f => acctSel.has(f._k)) : _acctVisible;
   if (!rows.length) return;
@@ -7875,6 +7892,7 @@ function init() {
       { btn: el, prog: $("#healthProg"), fill: $("#healthFill"), step: $("#healthStep") }); }
   { const el = $("#btnAcctReload"); if (el) el.onclick = () => loadAccounting(true); }
   { const el = $("#btnAcctCopy"); if (el) el.onclick = _acctDoCopy; }
+  { const el = $("#btnAcctClerk"); if (el) el.onclick = _acctCopyClerk; }
   { const el = $("#btnAcctDownload"); if (el) el.onclick = _acctDoDownload; }
   for (const id of ["#acctSearch", "#acctDivision"]) { const el = $(id); if (el) el.addEventListener("input", () => { if (ACCT && ACCT.ok) renderAccounting(); }); }
   { const el = $("#wrCompute"); if (el) el.onclick = runWipReview; }
