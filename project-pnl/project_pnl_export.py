@@ -4704,59 +4704,14 @@ def load_g702(proj: str) -> Dict[str, object]:
 # it — then there's no budget to show). Codes col A (trailing spaces!), qty
 # col C (0/1), amount col D. FW codes belong to the -FTW project; SL/PR (and
 # the rest) to the slab project — mirrors the WIP master's RP#/RP#-FTW split.
-_RP_ROOT = Path(os.getenv("RP_ROOT", "/Volumes/Common/CURRENT PROJECTS/Residential"))
-_RP_SKIP_RE = re.compile(r"flatwork|invoice|estimate|measure", re.IGNORECASE)
-
-
-_RP_FILE_RE = re.compile(r"^(RP\d{4})_", re.IGNORECASE)
-_rp_index_cache: Optional[Dict[str, List[Path]]] = None
+# The RP takeoff index (RP#### -> takeoff files) lives in shared/pnl_paths.
 
 
 def _rp_takeoff_index() -> Dict[str, List[Path]]:
-    """ONE walk of the Residential tree (client/ + client/address/) → RP# →
-    candidate takeoff files. Parallel scandir (the NAS is slow serially —
-    same trick as rp_wip_reader) and cached for the process, so an
-    `active rp` batch scans once, not 74 times."""
-    global _rp_index_cache
-    if _rp_index_cache is not None:
-        return _rp_index_cache
-    from concurrent.futures import ThreadPoolExecutor
-    index: Dict[str, List[Path]] = {}
-
-    def _scan(folder: Path):
-        files: List[Path] = []
-        subdirs: List[Path] = []
-        try:
-            with os.scandir(folder) as it:
-                for e in it:
-                    if e.is_dir(follow_symlinks=False):
-                        subdirs.append(Path(e.path))
-                    elif e.is_file(follow_symlinks=False):
-                        files.append(Path(e.path))
-        except OSError:
-            pass
-        return files, subdirs
-
-    try:
-        clients = [d for d in _RP_ROOT.iterdir() if d.is_dir()]
-    except OSError:
-        clients = []
-    all_files: List[Path] = []
-    with ThreadPoolExecutor(max_workers=24) as ex:
-        level1 = list(ex.map(_scan, clients))
-        addr_dirs = [d for _, subs in level1 for d in subs]
-        all_files.extend(f for fs, _ in level1 for f in fs)
-        for fs, _ in ex.map(_scan, addr_dirs):
-            all_files.extend(fs)
-    for f in all_files:
-        if (f.suffix.lower() in (".xlsm", ".xlsx")
-                and not f.name.startswith("~$")
-                and not _RP_SKIP_RE.search(f.name)):
-            mm = _RP_FILE_RE.match(f.name)
-            if mm:
-                index.setdefault(mm.group(1).upper(), []).append(f)
-    _rp_index_cache = index
-    return index
+    """RP# -> candidate takeoff files. The walk lives in shared/pnl_paths
+    (2026-09-08) because the RP job folder now decides where the P&L is
+    written, and the Overview and the ledger need the same answer."""
+    return pnl_paths.rp_takeoff_index()
 
 
 def _find_rp_takeoff(proj: str) -> Optional[Path]:
@@ -6661,7 +6616,7 @@ def generate_project_pnl(
         return generate_project_pnl_rp(
             access, company_id, proj, cust_info, wip_info,
             start_date, end_date, out_dir, as_of,
-            dry_run=dry_run, overhead_pct=overhead_pct,
+            dry_run=dry_run, overhead_pct=overhead_pct, forced_out=forced_out,
         )
 
     # Each project gets ONE home folder named by its number (the user 2026-06-25):
@@ -7282,6 +7237,7 @@ def generate_project_pnl_rp(
     as_of: str,
     dry_run: bool = False,
     overhead_pct: float = 10.0,
+    forced_out: bool = False,
 ) -> Optional[Path]:
     """
     RESIDENTIAL "Job P&L" template — no draws, no retainage (the user 2026-06-09).
@@ -7479,9 +7435,23 @@ def generate_project_pnl_rp(
     _client = (_fqn.split(":")[0].strip() if ":" in _fqn else (cust_info.get("name") or ""))
     _client = re.sub(r'[:\\/?*\[\]<>|"]', "-", _client).strip()
     label = f"{proj} - {_client}" if _client else proj
-    # ...inside the division folder, same sharing rule as every other P&L
-    # (the user 2026-08-31) - see shared/pnl_paths.division_dir.
-    proj_dir = pnl_paths.division_dir(proj, out_dir) / label   # one home folder per project
+    # The workbook lives IN THE JOB FOLDER on the Common drive - '<builder>/
+    # <address>/Profit and Loss/' - exactly like CP (the owner 2026-09-08: "it
+    # should be in the current projects folder not the automation folder").
+    # The OneDrive division folder is the fallback only: drive not mounted, no
+    # takeoff naming the job, or an explicit --out (which always wins).
+    _rp_dir, _rp_note = ((None, "--out given, so the default route is bypassed")
+                         if forced_out else pnl_paths.rp_pnl_dir(proj))
+    if _rp_dir is not None:
+        proj_dir = _rp_dir
+        ui_event(f"job folder on the Common drive: {_rp_dir.parent.name}/"
+                 f"{pnl_paths.RP_PNL_SUBDIR}", icon="§", color=_CYAN)
+    else:
+        # ...inside the division folder, same sharing rule as every other P&L
+        # (the user 2026-08-31) - see shared/pnl_paths.division_dir.
+        proj_dir = pnl_paths.division_dir(proj, out_dir) / label   # one home folder per project
+        if _rp_note:
+            ui_event(_rp_note, icon="⚑", color=_YEL)
     proj_dir.mkdir(parents=True, exist_ok=True)
     out_path = proj_dir / f"{label}.xlsx"
     saved = safe_save(wb, out_path)

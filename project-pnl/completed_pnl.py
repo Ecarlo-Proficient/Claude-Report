@@ -985,6 +985,10 @@ def _find_workbook(folder: Path, proj: str) -> Optional[Path]:
             return cand
     if not folder.is_dir():
         return None
+    named = [x for x in sorted(folder.glob(f"{proj} - *.xlsx"))   # RP: '<RP#### - Customer>.xlsx'
+             if not x.name.startswith("~$")]
+    if len(named) == 1:
+        return named[0]
     loose = [x for x in sorted(folder.glob("*.xlsx"))
              if not x.name.startswith("~$") and "Job Result" not in x.name]
     return loose[0] if len(loose) == 1 else None
@@ -1037,13 +1041,26 @@ def _iter_jobs(div_dir: Path, prefix: str):
             for k in sorted(base.iterdir()):
                 if k.is_dir() and k.name.lower().startswith(pnl_paths.ARCHIVE_PREFIXES):
                     _walk(k, "Completed")
+    # RP P&Ls are WRITTEN to the job's address folder on the Common drive too
+    # (the owner 2026-09-08) - '<builder>/<address>/Profit and Loss/'. The
+    # address folder never carries the job #, so the shared takeoff index is
+    # the key. Same replace rule as CP: the share's copy is the live one.
+    if prefix.upper() == "RP":
+        for job, _files in pnl_paths.rp_takeoff_index().items():
+            folder = pnl_paths.rp_job_folder(job)
+            if folder is not None and (folder / pnl_paths.RP_PNL_SUBDIR).is_dir():
+                out.append((folder / pnl_paths.RP_PNL_SUBDIR, "Active", job))
     jobs: dict = {}
-    for folder, status in out:
-        name = folder.parent.name if folder.name == pnl_paths.CP_PNL_SUBDIR else folder.name
-        m = _JOB_RE.match(name)
-        if not m:
-            continue
-        proj = re.sub(r"[\s-]+", "", m.group(0).upper()).replace("FTW", "-FTW")
+    for entry in out:
+        folder, status = entry[0], entry[1]
+        if len(entry) > 2:                 # RP on the share: the job # is known, not in the path
+            proj = entry[2]
+        else:
+            name = folder.parent.name if folder.name == pnl_paths.CP_PNL_SUBDIR else folder.name
+            m = _JOB_RE.match(name)
+            if not m:
+                continue
+            proj = re.sub(r"[\s-]+", "", m.group(0).upper()).replace("FTW", "-FTW")
         if not proj.upper().startswith(prefix):
             continue
         wb = _find_workbook(folder, proj)

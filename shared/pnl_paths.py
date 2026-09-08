@@ -98,6 +98,95 @@ def job_folder(proj: str, builder: "str | None" = None):
     return None, "MFD moves a lot → filed in OneDrive, not Synology"
 
 
+# ── RP: the P&L lives IN THE JOB FOLDER on the Common drive, like CP ──────
+# (the owner 2026-09-08: "it should be in the current projects folder not the
+# automation folder"). An RP job folder is <Residential>/<builder>/<address>/
+# and the ONLY reliable key to it is the takeoff inside, named RP####_<ADDRESS>
+# - the address folder never carries the job #. One parallel walk of the tree
+# (client/ + client/address/, the NAS is slow serially), cached per process,
+# serves project-pnl, the RP Overview and the ledger's workbook finder alike.
+RP_PNL_SUBDIR = CP_PNL_SUBDIR
+_RP_TAKEOFF_RE = re.compile(r"^(RP\d{4})_", re.IGNORECASE)
+_RP_TAKEOFF_SKIP_RE = re.compile(r"flatwork|invoice|estimate|measure", re.IGNORECASE)
+_RP_FOLDER_SKIP_RE = re.compile(r"archive|old|invoice|backup|copy", re.IGNORECASE)
+_rp_index_cache: "dict | None" = None
+
+
+def rp_takeoff_index() -> "dict[str, list[Path]]":
+    """{RP#### -> [takeoff files]} across the Residential tree, two levels
+    deep. Empty when the drive is not mounted."""
+    global _rp_index_cache
+    if _rp_index_cache is not None:
+        return _rp_index_cache
+    from concurrent.futures import ThreadPoolExecutor
+    index: dict = {}
+
+    def _scan(folder: Path):
+        files, subdirs = [], []
+        try:
+            with os.scandir(folder) as it:
+                for e in it:
+                    if e.is_dir(follow_symlinks=False):
+                        subdirs.append(Path(e.path))
+                    elif e.is_file(follow_symlinks=False):
+                        files.append(Path(e.path))
+        except OSError:
+            pass
+        return files, subdirs
+
+    try:
+        clients = [d for d in RP_SOURCE_BASE.iterdir() if d.is_dir()]
+    except OSError:
+        clients = []
+    all_files: list = []
+    if clients:
+        with ThreadPoolExecutor(max_workers=24) as ex:
+            level1 = list(ex.map(_scan, clients))
+            addr_dirs = [d for _, subs in level1 for d in subs]
+            all_files.extend(f for fs, _ in level1 for f in fs)
+            for fs, _ in ex.map(_scan, addr_dirs):
+                all_files.extend(fs)
+    for f in all_files:
+        if (f.suffix.lower() in (".xlsm", ".xlsx") and not f.name.startswith("~$")
+                and not _RP_TAKEOFF_SKIP_RE.search(f.name)):
+            m = _RP_TAKEOFF_RE.match(f.name)
+            if m:
+                index.setdefault(m.group(1).upper(), []).append(f)
+    _rp_index_cache = index
+    return index
+
+
+def rp_job_folder(proj: str) -> "Path | None":
+    """The RP job's address folder on the Common drive (the takeoff's parent),
+    or None (drive not mounted / no takeoff names this job). -FTW shares the
+    base job's folder. A takeoff sitting in an ARCHIVE/OLD/COPY folder never
+    decides the home; the job's own folder wins."""
+    base = (proj or "").upper().replace("-FTW", "")
+    cands = rp_takeoff_index().get(base) or []
+    if not cands:
+        return None
+    parents = sorted({f.parent for f in cands},
+                     key=lambda d: (1 if _RP_FOLDER_SKIP_RE.search(d.name) else 0,
+                                    0 if d.parent != RP_SOURCE_BASE else 1,   # address folder first
+                                    str(d)))
+    return parents[0]
+
+
+def rp_pnl_dir(proj: str) -> "tuple[Path | None, str | None]":
+    """(folder, note): '<job folder>/Profit and Loss' on the Common drive, or
+    (None, why) so the caller can fall back to the OneDrive division folder."""
+    try:
+        mounted = RP_SOURCE_BASE.is_dir()
+    except OSError:
+        mounted = False
+    if not mounted:
+        return None, "Residential drive not mounted → OneDrive"
+    folder = rp_job_folder(proj)
+    if folder is None:
+        return None, f"no job folder on the Common drive for {proj} (no RP####_ takeoff) → OneDrive"
+    return folder / RP_PNL_SUBDIR, None
+
+
 def pnl_out_dir() -> Path:
     """The default P&L output root (ACB_PNL_OUT_DIR or OneDrive 'PROJECT P&Ls')."""
     return paths.get_path("ACB_PNL_OUT_DIR",
@@ -276,6 +365,10 @@ def resolve_project_out_dir(proj: str, out_dir: "Path | None" = None):
     `note` explains any CP → OneDrive fallback (surfaced in the UI)."""
     out_dir = out_dir or pnl_out_dir()
     base, dnote = division_dir_note(proj, out_dir)
+    if proj.upper().startswith("RP"):
+        # RP lives in its job folder on the Common drive (the owner 2026-09-08)
+        rp_dir, rp_note = rp_pnl_dir(proj)
+        return (rp_dir, None) if rp_dir else (base / proj, rp_note)
     if not proj.upper().startswith("CP"):
         return base / proj, dnote
     try:
@@ -364,6 +457,23 @@ def _candidates(proj: str):
     ob = paths.onedrive_base()
     add(ob / "PROJECT P&Ls" / proj / fname)              # older flat tree, subfolder
     add(ob / "PROJECT P&Ls" / fname)                     # older flat tree, root
+    if division_of(proj) == "RP":
+        # The RP template names its workbook '<RP#### - Customer>.xlsx' (the
+        # user 2026-06-26) - in the job folder's 'Profit and Loss' on the
+        # Common drive first, else in a same-named folder under the division.
+        rp_dir, _ = rp_pnl_dir(proj)
+        globs = [rp_dir] if rp_dir else []
+        for d in (division_dir(proj), pnl_out_dir() / DIVISION_DIRS["RP"]):
+            try:
+                globs.extend(x for x in d.glob(f"{proj} - *") if x.is_dir())
+            except OSError:
+                pass
+        for d in globs:
+            try:
+                for x in d.glob(f"{proj} - *.xlsx"):
+                    add(x)
+            except OSError:
+                pass
     return out
 
 

@@ -8,6 +8,24 @@ manual close), RP (no draws — expenses → invoice → profit).
 
 ## DONE / FINALIZED
 
+- **RP P&Ls LIVE IN THE JOB FOLDER ON THE COMMON DRIVE, LIKE CP (2026-09-08).** The
+  owner, on seeing RP6586 land in OneDrive: "it should be in the current projects
+  folder not the automation folder, common was mounted." An RP job folder is
+  `<Residential>/<builder>/<address>/` and the address never carries the job #, so
+  the only key is the takeoff inside (`RP####_<ADDRESS>.xlsm`). The takeoff walk
+  moved out of this tool into `shared/pnl_paths.rp_takeoff_index` (one parallel
+  scan, cached) and grew `rp_job_folder` / `rp_pnl_dir`: the workbook now goes to
+  `<job folder>/Profit and Loss/<RP#### - Customer>.xlsx`; the OneDrive division
+  folder is the fallback only (drive not mounted, no takeoff names the job, or an
+  explicit `--out`), and the run says which. `resolve_project_out_dir` answers the
+  same for RP, `_candidates` now also globs the RP name in both homes (so the
+  ledger's "last pulled" finds RP workbooks - the open issue below is closed), and
+  the RP Overview's `_iter_jobs` walks the share through the same index with the
+  CP replace rule (the share's copy is the live one). A takeoff filed under an
+  ARCHIVE/OLD/COPY folder never decides the home. RP6586 regenerated into its
+  job folder's `Profit and Loss/`; the OneDrive copy from earlier the same day
+  was deleted (one job, one P&L).
+
 - **KNOWN LOSSES / RULINGS BLOCK (2026-09-08, first case RP6586).** The owner:
   "this needs to be a note for that job permanently so when we do the WIP
   report we don't flag ... we also need to put it in their P&L somewhere." A
@@ -827,11 +845,6 @@ manual close), RP (no draws — expenses → invoice → profit).
 
 ## OPEN ISSUES
 
-- **`pnl_paths.find_pnl` does not know the RP workbook name.** The RP template saves
-  `<division>/<RP#### - Customer>/<RP#### - Customer>.xlsx` (the user 2026-06-26) while
-  `pnl_paths` looks for `Project_PnL_<job>.xlsx` / `<job> FINAL.xlsx`, so the ledger's "last
-  pulled" and the workbook link come back empty for every RP job (seen on RP6586, 2026-09-08).
-  Either the RP save moves to `pnl_filename` or `_candidates` learns the RP pattern - one rule.
 
 - **A DYING SMB SHARE HANGS A CP RUN SILENTLY (2026-09-03).** `active cp`
   ran 71 minutes with 6 seconds of CPU and three log lines: the Synology
