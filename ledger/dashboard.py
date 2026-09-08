@@ -196,7 +196,8 @@ def _project_pnl(con, proj: str) -> dict:
     proj = (proj or "").strip().upper()
     row = con.execute(
         "SELECT project_no, division, total_contract_price tcp, percent_complete pc, "
-        "costs_to_date ctd, estimated_total_costs etc FROM v_wip_latest WHERE project_no = ?",
+        "costs_to_date ctd, estimated_total_costs etc, billed_to_date btd, retainage_held ret "
+        "FROM v_wip_latest WHERE project_no = ?",
         (proj,)).fetchone()
     div = (row["division"] if row else None) or ("Multi Family" if proj.startswith("MFD")
            else "Commercial" if proj.startswith("CP") else "Residential")
@@ -221,15 +222,23 @@ def _project_pnl(con, proj: str) -> dict:
     invoices = [dict(r) for r in con.execute(
         "SELECT doc_number, qbo_txn_id, amount, balance, txn_date, status, paid_date, due_date, memo "
         "FROM billing_event WHERE project_no = ? ORDER BY txn_date, doc_number", (proj,))]
-    _base = contract or billed
+    # The P&L the owner reads (2026-09-08): billed (gross, the WIP report) - retainage held = NET billed
+    # (the QBO invoices, after retainage) - costs - overhead = net. Actuals, no earned-revenue proration.
+    gross = (row["btd"] if row else 0) or 0
+    ret = (row["ret"] if row else 0) or 0
+    net_billed = billed if billed else round(gross - ret, 2)
+    if not gross and net_billed:
+        gross = round(net_billed + ret, 2)
+    _base = contract or net_billed
     overhead = round((_OVERHEAD_MFD_COST if is_mfd else _OVERHEAD_REV) * _base, 2)
-    net = round(earned - cost - overhead, 2)
+    net = round(net_billed - cost - overhead, 2)
     return {
         "proj": proj, "division": div,
         "contract": contract, "pct_complete": pct, "earned": earned, "billed": billed,
+        "billed_gross": gross, "retainage": ret, "net_billed": net_billed,
         "cost": cost, "overhead": overhead,
         "overhead_basis": "9% of contract (MFD)" if is_mfd else "10% of contract",
-        "net": net, "net_pct": (net / earned) if earned else None,
+        "net": net, "net_pct": (net / net_billed) if net_billed else None,
         "by_code": by_code, "invoices": invoices,
         "has_wip": row is not None,
     }
@@ -242,7 +251,7 @@ def _portfolio_pnl(con) -> dict:
     per-project math as _project_pnl, batched into 3 aggregate reads."""
     wip = list(con.execute(
         "SELECT project_no, division, status, total_contract_price tcp, percent_complete pc, "
-        "builder_or_gc, project_name FROM v_wip_latest"))
+        "builder_or_gc, project_name, billed_to_date btd, retainage_held ret FROM v_wip_latest"))
     costs = {r["project_no"]: r["c"] for r in con.execute(
         "SELECT project_no, COALESCE(SUM(amount),0) c FROM cost_line GROUP BY project_no")}
     billed = {r["project_no"]: r["a"] for r in con.execute(
@@ -256,7 +265,7 @@ def _portfolio_pnl(con) -> dict:
     except sqlite3.OperationalError:
         cust_of = {}
     rows, div = [], {}
-    comp = {"earned": 0.0, "cost": 0.0, "overhead": 0.0, "net": 0.0, "billed": 0.0, "n": 0}
+    comp = {"earned": 0.0, "cost": 0.0, "overhead": 0.0, "net": 0.0, "billed": 0.0, "billed_gross": 0.0, "retainage": 0.0, "n": 0}
     for w in wip:
         st_raw = (w["status"] or "").strip()
         active = st_raw.lower() in ("", "active")    # blank = MFD (active by construction)
@@ -269,8 +278,12 @@ def _portfolio_pnl(con) -> dict:
         earned = round(contract * pc, 2)
         cost = costs.get(p, 0) or 0
         b = billed.get(p, 0) or 0
+        gross = w["btd"] or 0
+        ret = w["ret"] or 0
+        if not b and gross:                        # no QBO invoice loaded - the WIP's net stands in
+            b = round(gross - ret, 2)
         oh = round((_OVERHEAD_MFD_COST if is_mfd else _OVERHEAD_REV) * (contract or b), 2)
-        net = round(earned - cost - oh, 2)
+        net = round(b - cost - oh, 2)             # actuals: net billed - costs - overhead (owner 2026-09-08)
         try:                                             # ~4 stats/project (no glob) - cheap, cached client-side
             mtime = pnl_paths.find_pnl(p).get("mtime")
         except Exception:  # noqa: BLE001 - a path hiccup must never break the P&L
@@ -278,7 +291,7 @@ def _portfolio_pnl(con) -> dict:
         rows.append({"proj": p, "division": division, "contract": contract,
                      "pct_complete": pc, "earned": earned, "cost": cost,
                      "overhead": oh, "net": net,
-                     "net_pct": (net / earned) if earned else None, "billed": b,
+                     "net_pct": (net / b) if b else None, "billed": b, "billed_gross": gross, "retainage": ret,
                      "name": w["project_name"],                          # the job name / address
                      "client": client_of.get(p) or w["builder_or_gc"] or None,
                      "cust_id": cust_of.get(p), "pnl_mtime": mtime,
@@ -286,16 +299,16 @@ def _portfolio_pnl(con) -> dict:
         if not active:                               # Closed/Complete: shown + filterable, but OFF the totals
             continue
         d = div.setdefault(division, {"division": division, "earned": 0.0, "cost": 0.0,
-                                      "overhead": 0.0, "net": 0.0, "billed": 0.0, "n": 0})
-        for k, v in (("earned", earned), ("cost", cost), ("overhead", oh), ("net", net), ("billed", b)):
+                                      "overhead": 0.0, "net": 0.0, "billed": 0.0, "billed_gross": 0.0, "retainage": 0.0, "n": 0})
+        for k, v in (("earned", earned), ("cost", cost), ("overhead", oh), ("net", net), ("billed", b), ("billed_gross", gross), ("retainage", ret)):
             d[k] += v
             comp[k] += v
         d["n"] += 1
         comp["n"] += 1
     for d in list(div.values()) + [comp]:
-        d["net_pct"] = (d["net"] / d["earned"]) if d["earned"] else None
-    rows.sort(key=lambda r: r["net"])                # worst margin first — the ones to watch
-    by_div = sorted(div.values(), key=lambda d: -d["earned"])
+        d["net_pct"] = (d["net"] / d["billed"]) if d["billed"] else None
+    rows.sort(key=lambda r: r["net"])                # worst margin first - the ones to watch
+    by_div = sorted(div.values(), key=lambda d: -d["billed"])
     return {"rows": rows, "by_division": by_div, "company": comp}
 
 

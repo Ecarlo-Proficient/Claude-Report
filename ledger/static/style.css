@@ -1484,3 +1484,23 @@ main small, main .k-sub, main .k-label { font-size: max(.8em, 12px); }
 .ac-n { opacity: 1 !important; }
 .sys-chip-count { opacity: 1 !important; font-size: max(.8em, 12px); }
 .wr-mark { font-size: max(.72em, 12px); }
+
+/* project page: draws as TABS + the Coverage table of contents (owner 2026-09-08) */
+.pp-tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 18px 4px; }
+.pp-tab { display: inline-flex; flex-direction: column; align-items: flex-start; font: inherit; font-size: .9em; padding: 5px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); color: var(--text); cursor: pointer; line-height: 1.2; }
+.pp-tab small { font-size: max(.78em, 12px); color: var(--text-dim); }
+.pp-tab:hover { border-color: var(--text-dim); }
+.pp-tab.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); font-weight: 700; }
+.pp-tab.next:not(.on) { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.pp-tabs-hint { margin-left: auto; font-size: .82em; }
+.pp-cov-wrap { padding: 4px 18px 10px; }
+table.pp-cov tr.pp-cov-row { cursor: pointer; }
+table.pp-cov tr.pp-cov-row:hover > td { background: var(--row-hover); }
+table.pp-cov tr.pp-cov-row.next > td { background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
+table.pp-cov tr.pp-cov-total > td { font-weight: 700; border-top: 2px solid var(--border); }
+table.pp-cov td.neg { color: var(--neg-text); } table.pp-cov td.pos { color: var(--pos); }
+.pp-draw.open .pp-draw-h { cursor: default; }
+/* P&L columns: a caption never strands away from its list; a code group keeps its first rows */
+.pp-pnl .pnl-live .pnl-cap { break-after: avoid; break-inside: avoid; }
+.pp-pnl .pnl-live .pnl-codes { break-inside: auto; }
+.pp-pnl .pnl-live .pnl-codegrp { break-after: avoid; }
