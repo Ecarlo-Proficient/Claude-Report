@@ -7270,8 +7270,14 @@ function wrInitDecisions() {
 
 function renderWipReview() {
   const note = $("#wrNote"), body = $("#wrBody");
-  const g = WR.generated || {}, at = Object.values(g).map(x => x.at).filter(Boolean).sort().pop();
-  if (note) note.textContent = at ? `computed ${fmtDate(at, true)}` : "";
+  const g = WR.generated || {};
+  if (note) {   // one as-of PER DIVISION, the stale one in red with its reason (owner 2026-09-04: one date hid an 08/25 CP file)
+    note.innerHTML = "";
+    const parts = WR_DIV_ORDER.filter(dv => g[dv]).map(dv => { const v = g[dv]; const sp = document.createElement("span"); sp.className = "wr-asof" + (v.stale ? " wr-stale" : "");
+      sp.textContent = `${dv === "Multi-Family" ? "MFD" : dv === "Commercial" ? "CP" : "RP"} ${v.at ? fmtDate(v.at, true) : "–"}${v.stale ? " STALE" : ""}`; if (v.reason) sp.title = v.reason; return sp; });
+    note.append("computed "); parts.forEach((sp, i) => { if (i) note.append(" · "); note.appendChild(sp); });
+    const src = (WR.sources || {}).Commercial; if (src && !src.mounted) { const w = document.createElement("span"); w.className = "wr-stale"; w.textContent = " · CP source (Common drive) not mounted"; w.title = "Mount smb://10.27.10.100/Common, then Compute again"; note.appendChild(w); }
+  }
   $("#wrFilters").hidden = false; $("#wrSync").hidden = false;
   renderWrStats();
   const div = $("#wrDivision").value, st = $("#wrStatus").value;
@@ -7289,7 +7295,7 @@ function renderWipReview() {
     const gen = g[dv];
     const head = document.createElement("div");
     head.className = "wr-div-head";
-    head.innerHTML = `<span>${dv}</span><span class="wr-div-sub">${gen ? gen.tab : ""} · ${recs.length} shown</span>`;
+    head.innerHTML = `<span>${dv}</span><span class="wr-div-sub">${gen ? gen.tab : ""} · ${recs.length} shown${gen && gen.at ? " · computed " + _ge(fmtDate(gen.at, true)) : ""}${gen && gen.stale ? ` <span class="wr-stale" title="${_ge(gen.reason || "")}">STALE - ${_ge(gen.reason || "older than the other divisions")}</span>` : ""}</span>`;
     body.appendChild(head);
     for (const r of recs) { body.appendChild(wrJobCard(r)); shown++; }
   }
@@ -7429,6 +7435,8 @@ async function runWipReview() {
 async function syncWipReview() {
   let n = 0; for (const pn in wrDecisions) for (const k in wrDecisions[pn]) if (wrDecisions[pn][k]) n++;
   const dropped = wrDrop.size;
+  const stale = (WR && WR.stale) || [];
+  if (stale.length && !confirm(`WARNING: the ${stale.join(" and ")} review is OLDER than the others (${stale.map(d => fmtDate(((WR.generated || {})[d] || {}).at || "", true)).join(", ")}).\n\nWriting it would put old numbers on the tab. Recompute first, or continue anyway?`)) return;
   if (!confirm(`Write approved changes to the WIP master?\n\n${n} approved change(s) will be written to Test - CP, Test - RP and Test-Master. Unchecked changes keep the current tab value${dropped ? `; ${dropped} added job(s) will be left off` : ""}.\n\nThis writes the production WIP workbook (guarded) and pulls QuickBooks again (Touch ID).`)) return;
   const decisions = wrBuildDecisions();
   const r = await fetch("/api/wip/merge", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm: true, decisions }) });

@@ -1,5 +1,5 @@
 """
-wip_excel_guard.py — hard-baked safety rail for writes to WIP - MASTER.xlsx.
+wip_excel_guard.py - hard-baked safety rail for writes to WIP - MASTER.xlsx.
 
 The user's rule (2026-06-25): the script may only write to the "Test" sheet of
 the team's live WIP Excel file. Every other sheet (WIP Master, WIP - CP,
@@ -10,12 +10,12 @@ How to use:
     from wip_excel_guard import assert_write_allowed, open_wip_workbook_for_write
 
     wb = open_wip_workbook_for_write(path)       # raises if file missing
-    ws = wb["Test"]                              # OK — Test is allow-listed
+    ws = wb["Test"]                              # OK - Test is allow-listed
     assert_write_allowed(ws.title)               # belt-and-suspenders
     ws.cell(1, 1, value="hello")                 # safe
 
     ws2 = wb["WIP - CP"]
-    assert_write_allowed(ws2.title)              # RAISES — not allowed
+    assert_write_allowed(ws2.title)              # RAISES - not allowed
 
 Reading any sheet is fine; this module only guards WRITES.
 """
@@ -30,7 +30,7 @@ from openpyxl.workbook.workbook import Workbook
 
 # Hard-coded allow-list. Do NOT add sheets here without explicit user direction.
 # To graduate the script to write live tabs, the user must say so and we add
-# names here intentionally — never via config flag.
+# names here intentionally - never via config flag.
 #
 # 2026-06-30: expanded from {"Test"} to per-division test tabs. The user chose one
 # tab per division so each division's WIP can be sanity-checked independently
@@ -47,10 +47,10 @@ from openpyxl.workbook.workbook import Workbook
 # This is the documented graduation path, not a config flag.
 ALLOWED_WRITE_SHEETS: frozenset[str] = frozenset({
     "Test",
-    "Test-Master",         # legacy single-division sandbox — kept so existing tests pass
+    "Test-Master",         # legacy single-division sandbox - kept so existing tests pass
     "Test - CP",    # Commercial test tab
     "Test - RP",    # Residential test tab
-    "WIP - MFD",    # LIVE MFD division tab — graduated 2026-08-25, N..T only
+    "WIP - MFD",    # LIVE MFD division tab - graduated 2026-08-25, N..T only
 })
 
 
@@ -66,7 +66,7 @@ def assert_write_allowed(sheet_name: str) -> None:
         raise WipWriteDenied(
             f"Refusing to write to sheet {sheet_name!r}. "
             f"The WIP Excel script may only write to: {sorted(ALLOWED_WRITE_SHEETS)}. "
-            f"This rule is baked in at code level — change it only by editing "
+            f"This rule is baked in at code level - change it only by editing "
             f"ALLOWED_WRITE_SHEETS in wip_excel_guard.py after the user's explicit OK."
         )
 

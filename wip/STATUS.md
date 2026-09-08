@@ -1235,3 +1235,5 @@ number can be internally perfect and wrong at source. Passing is necessary, not 
   moved 13.0% → 29.5%, which is the one worth looking at first.
 - **`wip_qc` only reads the 19-column bank format.** The `Test - CP` / `Test - RP` /
   `Test-Master` tabs use `wip_writer`'s wider layout and are not checked by it yet.
+
+- 2026-09-08 · em-dash sweep (owner rule: never `—`): 372 in the wip tools, docstrings, prints and NOTES text alike; no parser split on one (checked before the sweep). NOTES segments now read "a - b".

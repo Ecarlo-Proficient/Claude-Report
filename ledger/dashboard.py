@@ -2663,6 +2663,18 @@ class Handler(BaseHTTPRequestHandler):
             out["decisions"] = json.loads(dec.read_text(encoding="utf-8")) if dec.exists() else {}
         except (OSError, ValueError):
             out["decisions"] = {}
+        # freshness per division (owner 2026-09-04: the tab said "computed 09/03" while CP was an 08/25 file):
+        # the newest emit is the reference; a division more than a day older is STALE, with the reason.
+        ats = [v["at"] for v in out["generated"].values() if v.get("at")]
+        newest = max(ats) if ats else None
+        common_ok = Path("/Volumes/Common").exists()
+        for div, v in out["generated"].items():
+            older = bool(newest and v.get("at") and (_dt.datetime.fromisoformat(newest) - _dt.datetime.fromisoformat(v["at"])).total_seconds() > 86400)
+            v["stale"] = older
+            v["reason"] = (("the Common drive is not mounted, so CP cannot recompute - mount smb://10.27.10.100/Common" if (div == "Commercial" and not common_ok)
+                           else f"not recomputed since {v['at'][:10]}") if older else None)
+        out["sources"] = {"Commercial": {"path": "/Volumes/Common", "mounted": common_ok}}
+        out["stale"] = [d for d, v in out["generated"].items() if v.get("stale")]
         changed = [r for r in out["records"] if r["status"] != "SAME"]
         out["counts"] = {"jobs": len(out["records"]), "changed": len(changed),
                          "reversed": sum(r["status"] == "REVERSED" for r in out["records"]),   # PM value went DOWN - needs a named source

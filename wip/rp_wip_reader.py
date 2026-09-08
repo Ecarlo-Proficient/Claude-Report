@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
 """
-rp_wip_reader.py — RP (Residential) WIP reader — v2 (the user 2026-07-13).
+rp_wip_reader.py - RP (Residential) WIP reader - v2 (the user 2026-07-13).
 
 MODEL (locked 2026-07-10, built 2026-07-13):
   • SOURCE = the General List workbook (READ-ONLY, never written): sheets
-    'General list - Alpha order' + 'Small Jobs' (identical layout — Small Jobs
+    'General list - Alpha order' + 'Small Jobs' (identical layout - Small Jobs
     holds the jobs kept out of Alpha to avoid clutter). Prices are entered
     there by hand: AI=SLAB BID $, AJ=SLAB COST $, AK=FLATWORK BID $,
     AL=FLATWORK COST $. Completion % in Z, job # in C.
-  • The WIP AUTO-SPLITS each RP job into TWO lines: RP#### (slab — contract=AI,
-    ETC=AJ) and RP####-FTW (flatwork — contract=AK, ETC=AL). Flatwork is
+  • The WIP AUTO-SPLITS each RP job into TWO lines: RP#### (slab - contract=AI,
+    ETC=AJ) and RP####-FTW (flatwork - contract=AK, ETC=AL). Flatwork is
     pre-bid and assumed to follow the slab; RP####-FTW is its own standalone
     QBO project. CP#### jobs in the list are STANDALONE (never -FTW): one
     line, contract=AI+AK, ETC=AJ+AL, billed under the plain CP#.
   • POUR FLATWORK (col AF) = "OTHER" ⇒ another contractor won the flatwork
-    (the user 2026-07-16): that scope NEVER enters the WIP — no -FTW line
+    (the user 2026-07-16): that scope NEVER enters the WIP - no -FTW line
     (and no flat $ in a CP standalone sum), even when prices were entered.
   • QBO enrich per line (read-only GET): Billed = P&L income of the line's
     own customer; Costs = COGS + expenses. A job is DONE when 100% complete
-    AND billed = contract (the RP manager's rule — billing is the truth).
+    AND billed = contract (the RP manager's rule - billing is the truth).
   • needs_review → RED numbers in Excel (the user 2026-07-13): billed over
     contract · 100% but not fully billed (punch work) · billed with no
     contract in the sheet · fully billed but <100% on the list · contract
@@ -46,7 +46,7 @@ from pathlib import Path
 
 from openpyxl import load_workbook
 
-# The shared report engine — same formatting/writer for every division.
+# The shared report engine - same formatting/writer for every division.
 # RP is a reader; it imports the engine, never another reader (2026-08-04).
 import wip_writer as W
 import wip_review_common as WR   # shared WIP-review diff/merge (ledger accept/merge flow)
@@ -54,17 +54,17 @@ from shared import job_rulings, paths, qbo_api
 from shared.takeoff_etc import find_takeoff_etc
 
 def _rp_cols():
-    """RP column set — the SAME standard every other Test tab uses.
+    """RP column set - the SAME standard every other Test tab uses.
 
     It must stay aligned (2026-08-03): this tool and
     `master_wip_test --rp-from-file` both write 'Test - RP', so a layout that
     drifts here silently regresses the tab the moment anyone runs this script.
-    That is exactly what happened — a run of this reader replaced the
+    That is exactly what happened - a run of this reader replaced the
     master-aligned tab with a header-on-row-1 layout that had no APPROVED COs
     column at all.
 
     APPROVED COs is kept (a change order is half the contract story), and the
-    old WHY (TEMP) column is gone — it was a file:// link into a Downloads
+    old WHY (TEMP) column is gone - it was a file:// link into a Downloads
     workbook, which the QBO-links-only rule no longer allows.
     """
     drop = {"retainage_held"}
@@ -92,31 +92,31 @@ RP_ROOT = Path(os.getenv(
 # General List column map (1-based), header row 4, data from row 6.
 COL_JOB, COL_HOUSE, COL_STREET, COL_CITY, COL_COMPLETION = 3, 4, 5, 6, 26
 COL_SLAB_BID, COL_SLAB_COST, COL_FLAT_BID, COL_FLAT_COST = 35, 36, 37, 38
-# AF = POUR FLATWORK: a date (we poured it), blank (not yet), or "OTHER" —
+# AF = POUR FLATWORK: a date (we poured it), blank (not yet), or "OTHER" -
 # someone ELSE won the flatwork (the user 2026-07-16) → that scope is NOT
 # ours: no -FTW line, even when flatwork prices were entered on the row.
 COL_POUR_FLAT = 32
 
-# RP#### (with optional suffix like -FTW already in the list) or CP#### —
+# RP#### (with optional suffix like -FTW already in the list) or CP#### -
 # CP jobs live here because the RP team runs them (standalone, never split).
 _JOB_RE = re.compile(r"^(RP\d{4}|CP\d{3,4})\b", re.IGNORECASE)
 _RP_RE = re.compile(r"RP\d{4}(?:-[A-Za-z]{2,6})?(?!\d)", re.IGNORECASE)
 
 # Home type (the user 2026-07-14): tract = production builders (repeat volume
-# work) — everyone else is custom. Edit these sets as builders come and go.
+# work) - everyone else is custom. Edit these sets as builders come and go.
 TRACT_CLIENTS = {"GRAND HOMES", "WILLIAM RYAN HOMES",
                  "DALLAS AREA HABITAT FOR HUMANITY",
-                 # Camden — named by the team as a tract builder in the
+                 # Camden - named by the team as a tract builder in the
                  # 2026-07-22 review (STATUS.md, "Team fixes round 1").
                  "CAMDEN HOMES"}
 TRACT_CODES = {"GRAND", "WRYAN", "DAHH"}
 
 # RP tab column layout (the user 2026-07-14): TYPE + CLIENT after the name;
-# no Approved COs / Retainage (those are draw-model columns — CP only);
+# no Approved COs / Retainage (those are draw-model columns - CP only);
 # temp WHY column links each row to the run's justification JSON dump.
 RP_COLS = None   # built after CP import below
 
-# Fully billed tolerance — within half a percent of contract counts as billed
+# Fully billed tolerance - within half a percent of contract counts as billed
 # out (retainage/rounding noise).
 _FULL_TOL = 0.005
 _VARIANCE_CLOSE = 1000.0   # 100% + billed within $1K of contract → Closed w/ variance
@@ -138,24 +138,24 @@ def _money(v):
 
 
 # ══════════════════════════════════════════════════════════════════════
-# THE OWNER'S RP WIP FILE — the binding RP source of truth
+# THE OWNER'S RP WIP FILE - the binding RP source of truth
 # ══════════════════════════════════════════════════════════════════════
 # The estimators' verified snapshot, not the General List. Lives HERE (not in
 # master_wip_test) so `rp_wip_reader.py` run on its own and the unified writer
-# produce the SAME 'Test - RP' tab from the SAME code — a copy in each was how
+# produce the SAME 'Test - RP' tab from the SAME code - a copy in each was how
 # the tab regressed on 2026-08-04.
 RP_WIP_FILE = paths.get_path(
     "RP_WIP_FILE", paths.onedrive_base() / "RP WIP TO FIX_Final.xlsx")
 
-# The owner's fixed RP WIP ('RP WIP' sheet) — band rows partition the lines.
+# The owner's fixed RP WIP ('RP WIP' sheet) - band rows partition the lines.
 # Band substring → (SECTION on the master, TYPE on Test - RP). None = excluded:
 # CP jobs belong to the CP folder scan, never the RP section (the user
 # 2026-07-29). TYPE wording is the user's (2026-07-31): the top section is
 # just GOOD; the other three bands are their own types.
 _RP_FILE_BANDS = (
     ("CP JOBS",                  None),
-    ("DROPPED OFF THE SCHEDULE", ("RP — DROPPED, UNBILLED", "DROPPED OFF SCHEDULE")),
-    ("FTW WITH COSTS",           ("FTW — OFF-SCHEDULE (COSTS)", "FTW WITH COSTS")),
+    ("DROPPED OFF THE SCHEDULE", ("RP - DROPPED, UNBILLED", "DROPPED OFF SCHEDULE")),
+    ("FTW WITH COSTS",           ("FTW - OFF-SCHEDULE (COSTS)", "FTW WITH COSTS")),
     ("FTW BACKLOG",              ("FTW BACKLOG", "FTW BACKLOG")),
 )
 # Fallback fixed positions. The owner rearranges his file (he added JOBTREAD +
@@ -180,7 +180,7 @@ _RP_HEADER = {
 
 def _resolve_rp_cols(ws, hdr_row: int = 2):
     """Column index per field, located BY HEADER NAME with a fixed-position
-    fallback — so the owner adding/moving columns can't misalign the read."""
+    fallback - so the owner adding/moving columns can't misalign the read."""
     labels = {str(ws.cell(hdr_row, c).value or "").strip().upper(): c
               for c in range(1, (ws.max_column or 0) + 1)}
     out = dict(_RP_FILE_COL)
@@ -193,39 +193,39 @@ def _resolve_rp_cols(ws, hdr_row: int = 2):
                 break
     return out
 
-# The owner's colour contract (rp_wip_update.py, the user 2026-07-30) — his
+# The owner's colour contract (rp_wip_update.py, the user 2026-07-30) - his
 # font-colour marks are authoritative and must SURVIVE into the test tabs
 # (the user 2026-07-31: "keep all the notes and colors since they mean
 # something"). theme 9 = the workbook's orange → written as literal orange.
-_OWNER_RGB = {"00B050": "00B050",     # green — the owner verified this number
-              "FF0000": "FF0000"}     # red   — the owner changed this number
-_OWNER_ORANGE = "ED7D31"              # theme 9 — ops manager must verify
+_OWNER_RGB = {"00B050": "00B050",     # green - the owner verified this number
+              "FF0000": "FF0000"}     # red   - the owner changed this number
+_OWNER_ORANGE = "ED7D31"              # theme 9 - ops manager must verify
 # ETC provenance (the user 2026-08-07): where each budget number came from.
 _ETC_TAKEOFF_ORANGE = "ED7D31"        # machine-read from the takeoff → verify
 _ETC_MANUAL_BLUE = "0070C0"           # estimator typed it in the RP WIP file
 
 
-# Divisions are SPELLED OUT on the report (the user 2026-08-03) — the codes
+# Divisions are SPELLED OUT on the report (the user 2026-08-03) - the codes
 # are internal shorthand, not something a reader of the WIP should decode.
 SECTION_LABEL = {
     "MFD": "Multi-Family",
     "CP": "Commercial",
-    "RP SLAB": "Residential — Slab",
-    "FTW — ACTIVE": "Residential — Flatwork",
-    "FTW — OFF-SCHEDULE (COSTS)": "Residential — Flatwork (off-schedule)",
-    "RP — DROPPED, UNBILLED": "Residential — Dropped, Unbilled",
-    "FTW BACKLOG": "Residential — Flatwork Backlog",
+    "RP SLAB": "Residential - Slab",
+    "FTW - ACTIVE": "Residential - Flatwork",
+    "FTW - OFF-SCHEDULE (COSTS)": "Residential - Flatwork (off-schedule)",
+    "RP - DROPPED, UNBILLED": "Residential - Dropped, Unbilled",
+    "FTW BACKLOG": "Residential - Flatwork Backlog",
 }
 
 
 def _rp_category(row) -> str:
     """The row's TYPE for a line from the owner's top section, decided AFTER
     the QBO pass (the user 2026-07-31: "rp7234-ftw is not good … there are no
-    costs" — the top band alone doesn't make a job good).
+    costs" - the top band alone doesn't make a job good).
 
     GOOD means work is actually underway: QBO shows costs or billing.
     Anything with no money moved yet is NOT STARTED when it's still on the
-    schedule, and — for flatwork — plain backlog when it isn't (the locked
+    schedule, and - for flatwork - plain backlog when it isn't (the locked
     FTW backlog rule: no activity AND not scheduled)."""
     if row.billed_to_date or row.costs_to_date:
         return "GOOD"
@@ -248,12 +248,12 @@ def _owner_mark(cell):
 
 def read_rp_from_file(xlsx_path: Path):
     """RP rows from the owner's verified RP WIP workbook (the user 2026-07-29:
-    'for RP, use this excel'). His contract/ETC/CO values are taken as-is —
+    'for RP, use this excel'). His contract/ETC/CO values are taken as-is -
     the file IS the RP source of record. Billed/Costs are pre-seeded from the
     file, then refreshed from QBO (QBO wins; the file value only survives a
     failed lookup). CP-numbered lines are EXCLUDED (they belong to the CP
     folder scan). Sections come from the file's band rows; lines above the
-    first band split RP SLAB vs FTW — ACTIVE by the -FTW suffix."""
+    first band split RP SLAB vs FTW - ACTIVE by the -FTW suffix."""
     import re as _re
     wb = load_workbook(xlsx_path, data_only=True)
     ws = wb["RP WIP"]
@@ -282,18 +282,18 @@ def read_rp_from_file(xlsx_path: Path):
         etc = _money(ws.cell(r, C["etc"]).value)
         if job in seen:
             # The file lists the line twice (e.g. under two warning bands).
-            # One WIP line per job — keep the FIRST (fuller) copy; if the
+            # One WIP line per job - keep the FIRST (fuller) copy; if the
             # duplicate carries DIFFERENT numbers, flag it red so a human
             # settles which contract/ETC is real.
             first = seen[job]
             if (contract, etc) != (first.base_contract, first.base_etc):
                 first.status_flags.append(
                     f"Duplicate line in the RP file with different numbers "
-                    f"(row {r}: contract {contract}, ETC {etc}) — verify")
-            print(f"    ⚠ {job}: duplicate line in the RP file (row {r}) — "
+                    f"(row {r}: contract {contract}, ETC {etc}) - verify")
+            print(f"    ⚠ {job}: duplicate line in the RP file (row {r}) - "
                   f"kept the first copy"
                   + ("" if (contract, etc) == (first.base_contract, first.base_etc)
-                     else " (NUMBERS DIFFER — flagged)"))
+                     else " (NUMBERS DIFFER - flagged)"))
             continue
         row = W.CpRow(
             job, str(ws.cell(r, C["addr"]).value or job).strip(), False,
@@ -315,7 +315,7 @@ def read_rp_from_file(xlsx_path: Path):
         if row.co_revenue is not None:
             WR.set_source(row, "approved_cos",
                           f"RP WIP file · 'RP WIP' row {r} · CO $", xlsx_path)
-        # TYPE = Tract / Custom (the user 2026-07-31 — it must not disappear
+        # TYPE = Tract / Custom (the user 2026-07-31 - it must not disappear
         # from the RP view). Same rule as the GL pipeline: production builders
         # (by name OR by the General-Lista code) are Tract, everyone else is
         # Custom.
@@ -326,11 +326,11 @@ def read_rp_from_file(xlsx_path: Path):
         if section:
             row.section, row.rp_type = section
         else:
-            row.section = ("FTW — ACTIVE" if job.endswith("-FTW") else "RP SLAB")
-            row.rp_type = None          # decided after QBO — see _rp_category()
+            row.section = ("FTW - ACTIVE" if job.endswith("-FTW") else "RP SLAB")
+            row.rp_type = None          # decided after QBO - see _rp_category()
         # The owner's notes + colour marks travel with the row (the user
         # 2026-07-31). A red/green/orange mark on Billed/Costs also means
-        # HIS number stands — the QBO refresh must not overwrite it.
+        # HIS number stands - the QBO refresh must not overwrite it.
         row.action_note = str(ws.cell(r, C["action"]).value or "").strip() or None
         row.notes_from_source = True     # his file is authoritative for NOTES
         row.cell_marks, row.qbo_protect = {}, {}
@@ -343,7 +343,7 @@ def read_rp_from_file(xlsx_path: Path):
                 if fld in ("billed_to_date", "costs_to_date"):
                     row.qbo_protect[fld] = getattr(row, fld)
         # ETC provenance colour (the user 2026-08-07): a budget the estimator
-        # typed into the RP WIP file is BLUE. A blank cell gets no mark now —
+        # typed into the RP WIP file is BLUE. A blank cell gets no mark now -
         # classify_from_file may fill it from the takeoff and paint it ORANGE.
         if etc is not None:
             row.cell_marks["base_etc"] = _ETC_MANUAL_BLUE   # writer col key
@@ -380,13 +380,13 @@ def read_rp_from_file(xlsx_path: Path):
 def fill_missing_etc_from_takeoff(rows, root: Path = None):
     """Blank ETC → pull the budget from the job's takeoff (the user 2026-08-07:
     "if it's empty ok try to find it"). The estimator's manual entry ALWAYS
-    wins — this runs only where the RP file left ETC blank. Uses the same
+    wins - this runs only where the RP file left ETC blank. Uses the same
     verified extractor the schedule preview uses (shared.takeoff_etc); folder
     resolution is this module's own index_residential / match_by_address.
 
     A recovered budget is a MACHINE GUESS, not a confirmed number: it fills
     base_etc, paints the ETC cell ORANGE ('verify'), and notes the source
-    sheet. A job whose folder has no takeoff cost sheet stays blank — the
+    sheet. A job whose folder has no takeoff cost sheet stays blank - the
     caller flags it. Does nothing (no expensive folder walk) when nothing is
     blank or the Residential volume is not mounted."""
     empties = [r for r in rows if r.base_etc is None]
@@ -394,10 +394,10 @@ def fill_missing_etc_from_takeoff(rows, root: Path = None):
         return
     root = root or RP_ROOT
     if not root.exists():
-        print(f"  ⚠ ETC fallback skipped — Residential root not mounted "
+        print(f"  ⚠ ETC fallback skipped - Residential root not mounted "
               f"({root}); {len(empties)} blank ETC left as-is")
         return
-    print(f"  ETC fallback: {len(empties)} blank ETC — checking takeoffs …")
+    print(f"  ETC fallback: {len(empties)} blank ETC - checking takeoffs …")
     rp_to_folders, addr_folders = index_residential(root)
     filled = 0
     for row in empties:
@@ -414,7 +414,7 @@ def fill_missing_etc_from_takeoff(rows, root: Path = None):
                  "street": parts[1] if len(parts) > 1 else row.project_name},
                 addr_folders)
         if folder is None:
-            row.notes.append("ETC blank — no project folder found for the takeoff")
+            row.notes.append("ETC blank - no project folder found for the takeoff")
             continue
         tk, etc, note, _frag = find_takeoff_etc(folder, base, scope, "")
         if etc:
@@ -428,29 +428,29 @@ def fill_missing_etc_from_takeoff(rows, root: Path = None):
                           f"takeoff · {Path(tk).name} ({note}) · orange, verify", tk)
             row.notes.append(
                 f"ETC ${etc:,.0f} read from takeoff '{Path(tk).name}' "
-                f"({note}) — VERIFY")
-            print(f"    • {job}: ETC ${etc:,.0f} from takeoff — orange (verify)")
+                f"({note}) - VERIFY")
+            print(f"    • {job}: ETC ${etc:,.0f} from takeoff - orange (verify)")
             filled += 1
         else:
-            row.audit_etc_src = f"BLANK — {note}"
-            row.notes.append(f"ETC blank — {note}")
+            row.audit_etc_src = f"BLANK - {note}"
+            row.notes.append(f"ETC blank - {note}")
     print(f"  ETC fallback: filled {filled} of {len(empties)} from takeoffs "
-          f"({len(empties) - filled} still blank — no cost sheet)")
+          f"({len(empties) - filled} still blank - no cost sheet)")
 
 
 def classify_from_file(rows):
     """Post-QBO pass over rows from the owner's file → rows in report order.
 
-    (1) An owner-marked Billed/Costs value stands — undo the QBO overwrite.
+    (1) An owner-marked Billed/Costs value stands - undo the QBO overwrite.
     (2) LOCKED backlog rule: a backlog line with ANY costs/billing is not
         backlog.  (3) The top section's CATEGORY is decided from the DATA, not
-        from the band it sat in.  (4) Backlog lines never render red — having
+        from the band it sat in.  (4) Backlog lines never render red - having
         no QBO project is their normal state, not a must-fix.
     (5) A blank ETC is filled from the takeoff first (orange), then whatever
         is still blank is flagged.
     """
-    order = ["RP SLAB", "FTW — ACTIVE", "FTW — OFF-SCHEDULE (COSTS)",
-             "RP — DROPPED, UNBILLED", "FTW BACKLOG"]
+    order = ["RP SLAB", "FTW - ACTIVE", "FTW - OFF-SCHEDULE (COSTS)",
+             "RP - DROPPED, UNBILLED", "FTW BACKLOG"]
     fill_missing_etc_from_takeoff(rows)
     for row in rows:
         for fld, val in (getattr(row, "qbo_protect", None) or {}).items():
@@ -462,9 +462,9 @@ def classify_from_file(rows):
                                         "QBO refresh discarded")
         if (row.section == "FTW BACKLOG"
                 and (row.billed_to_date or row.costs_to_date)):
-            row.section = "FTW — OFF-SCHEDULE (COSTS)"
+            row.section = "FTW - OFF-SCHEDULE (COSTS)"
             row.rp_type = "FTW WITH COSTS"
-            print(f"    ⚠ {row.project_num}: QBO shows activity — "
+            print(f"    ⚠ {row.project_num}: QBO shows activity - "
                   f"reclassed out of FTW BACKLOG")
         if row.rp_type is None:                 # owner's top section
             row.rp_type = _rp_category(row)
@@ -473,7 +473,7 @@ def classify_from_file(rows):
                       f"{row.rp_type} (was in the top section)")
         if row.base_etc is None:
             row.status_flags.append(
-                "No budget (ETC) — blank in the RP file and no takeoff cost "
+                "No budget (ETC) - blank in the RP file and no takeoff cost "
                 "sheet to read it from")
         row.needs_review = (bool(row.status_flags)
                             and row.section != "FTW BACKLOG")
@@ -481,7 +481,7 @@ def classify_from_file(rows):
 
 
 def rp_tab_cols():
-    """'Test - RP' columns — the LEAN working view (the user 2026-08-07: "make
+    """'Test - RP' columns - the LEAN working view (the user 2026-08-07: "make
     Test - RP leaner so I can just spot the project numbers more easily").
 
     Identity + core WIP numbers, then the three "where is it at?" marks from
@@ -509,22 +509,22 @@ def rp_tab_cols():
 
 
 RP_TAB_LEGEND = [
-    ("LEGEND — CATEGORY (what each row's TYPE means):", None, True),
-    ("GOOD — work is underway: QBO shows costs and/or billing", None, False),
-    ("NOT STARTED — on the schedule / priced, but no costs and no billing yet", None, False),
-    ("FTW WITH COSTS — flatwork started off-schedule (has costs) — belongs on the schedule", None, False),
-    ("DROPPED OFF SCHEDULE — left the schedule with money still on the table", None, False),
-    ("FTW BACKLOG — flatwork priced with the slab, no activity and not scheduled (expected wins)", None, False),
+    ("LEGEND - CATEGORY (what each row's TYPE means):", None, True),
+    ("GOOD - work is underway: QBO shows costs and/or billing", None, False),
+    ("NOT STARTED - on the schedule / priced, but no costs and no billing yet", None, False),
+    ("FTW WITH COSTS - flatwork started off-schedule (has costs) - belongs on the schedule", None, False),
+    ("DROPPED OFF SCHEDULE - left the schedule with money still on the table", None, False),
+    ("FTW BACKLOG - flatwork priced with the slab, no activity and not scheduled (expected wins)", None, False),
     ("COLORS:  GREEN = the owner verified this number", "00B050", True),
     ("RED = the owner changed this number", "FF0000", True),
     ("ORANGE = ops manager must verify", "ED7D31", True),
     ("ETC in BLUE = the estimator's manual budget from the RP WIP file", "0070C0", True),
-    ("ETC in ORANGE = read from the job's takeoff — VERIFY it", "ED7D31", True),
+    ("ETC in ORANGE = read from the job's takeoff - VERIFY it", "ED7D31", True),
 ]
 
 
 def write_rp_tab(rows, dry_run: bool = False) -> bool:
-    """Write 'Test - RP'. The ONLY writer of that tab — both this script and
+    """Write 'Test - RP'. The ONLY writer of that tab - both this script and
     master_wip_test come through here, so the two can't drift apart."""
     type_order = ["GOOD", "NOT STARTED", "FTW WITH COSTS",
                   "DROPPED OFF SCHEDULE", "FTW BACKLOG"]
@@ -538,7 +538,7 @@ def write_rp_tab(rows, dry_run: bool = False) -> bool:
         # A working tab: the roll-ups are live formulas so an edited
         # ORIGINAL COST / CO COST adds up on the spot.
         live_formulas=True,
-        # Highlight GP% over 30% (the user 2026-08-07) — a red flag for a
+        # Highlight GP% over 30% (the user 2026-08-07) - a red flag for a
         # missing cost.
         gp_highlight_over=0.30)
     if not dry_run and wrote:
@@ -562,7 +562,7 @@ def read_general_list(path: Path):
         ws = wb[sheet]
         hdr = _norm(ws.cell(4, COL_SLAB_BID).value)
         if "SLAB BID" not in hdr:
-            print(f"  ⚠ {sheet!r}: no SLAB BID header at col AI — "
+            print(f"  ⚠ {sheet!r}: no SLAB BID header at col AI - "
                   f"price columns missing, sheet skipped")
             continue
         for r in range(6, ws.max_row + 1):
@@ -594,7 +594,7 @@ def read_general_list(path: Path):
                             ("slab_bid", "slab_cost", "flat_bid", "flat_cost"))
             # PRICED ONLY (the user 2026-07-14): a job with no price for any
             # scope was SKIPPED on purpose ("unless we put the contract price
-            # there just to be done") — it does not enter the WIP. Kills the
+            # there just to be done") - it does not enter the WIP. Kills the
             # bloat of empty slab lines from Small Jobs / legacy Alpha rows.
             if has_price:
                 seen.add(job)
@@ -613,8 +613,8 @@ _SCHED_FILE_RE = re.compile(r"Schedule (\d{1,2})-(\d{1,2})-(\d{2})\.xlsx$",
 def read_schedule_flatwork(sched_dir: Path):
     """Latest daily schedule → the set of normalized ADDRESSES whose crew
     description mentions flatwork (the user 2026-07-14: anything on the
-    schedule under Flatwork is won and being worked — never backlog).
-    Returns (set_of_norm_addresses, schedule_label) — empty set if the
+    schedule under Flatwork is won and being worked - never backlog).
+    Returns (set_of_norm_addresses, schedule_label) - empty set if the
     schedule can't be found/read (backlog rule then falls back to $-only)."""
     best = None
     try:
@@ -731,13 +731,13 @@ def _classify(row: W.CpRow, completion) -> None:
         row.notes.append(f"{completion * 100:.0f}% complete (list)")
 
     if K and B is None and row.qbo_customer_id is None and row.status_flags:
-        # QBO enrich already flagged (no project / fetch failed) — red it.
+        # QBO enrich already flagged (no project / fetch failed) - red it.
         row.needs_review = True
         return
     if not K:
-        # No contract on this line — ANY QBO activity is a red flag
+        # No contract on this line - ANY QBO activity is a red flag
         # (the user 2026-07-14, RP5542: slab line had no bid yet QBO carried
-        # $9.6K of costs — either the bid was never entered or the costs are
+        # $9.6K of costs - either the bid was never entered or the costs are
         # coded to the wrong project/scope).
         activity = []
         if B:
@@ -747,7 +747,7 @@ def _classify(row: W.CpRow, completion) -> None:
         if activity:
             row.status_flags.append(
                 "No contract in the list but QBO has "
-                + " · ".join(activity) + " — enter the bid or fix the coding")
+                + " · ".join(activity) + " - enter the bid or fix the coding")
             row.needs_review = True
         return
     if B is None:
@@ -760,14 +760,14 @@ def _classify(row: W.CpRow, completion) -> None:
             # The done-rule (RP manager): 100% complete AND fully billed →
             # STATUS reads 'Closed' (the user 2026-07-14: STATUS was hardcoded
             # Active for every line; it must derive from this rule).
-            row.notes.append("CLOSED — fully billed + 100%")
+            row.notes.append("CLOSED - fully billed + 100%")
             row.is_completed = True
         else:
-            row.notes.append("Fully billed but list <100% — update completion")
+            row.notes.append("Fully billed but list <100% - update completion")
             row.needs_review = True
     elif B == 0:
         if c100:
-            row.notes.append("100% but $0 billed — punch/flatwork backlog")
+            row.notes.append("100% but $0 billed - punch/flatwork backlog")
             row.needs_review = True
         else:
             row.notes.append("Not billed yet")
@@ -777,21 +777,21 @@ def _classify(row: W.CpRow, completion) -> None:
             if gap <= _VARIANCE_CLOSE:
                 # Materiality rule (the user 2026-07-14): 100% + billed within
                 # $1K of contract = close with a documented small variance
-                # (builder fee like WRH's 1.5%, or an approved write-down) —
+                # (builder fee like WRH's 1.5%, or an approved write-down) -
                 # amber note, NOT red. Over the threshold: chase the billing.
                 row.notes.append(
-                    f"CLOSED — small variance ${gap:,.0f} (fee/write-down)")
+                    f"CLOSED - small variance ${gap:,.0f} (fee/write-down)")
                 row.is_completed = True
             else:
-                row.notes.append(f"100% but only ${B:,.0f} billed — bill the rest")
+                row.notes.append(f"100% but only ${B:,.0f} billed - bill the rest")
                 row.needs_review = True
         else:
-            row.notes.append("Partially billed — treat as draw")
+            row.notes.append("Partially billed - treat as draw")
 
 
 def build_lines(records, rp_to_folders, addr_folders):
     """General List records → CpRow lines. RP splits slab/-FTW; CP stays one
-    standalone line (never -FTW — the user 2026-07-13)."""
+    standalone line (never -FTW - the user 2026-07-13)."""
     rows = []
     # Learn builder-code → full client name from every record whose folder
     # DID resolve (the user 2026-07-14: 'MARVE' leaking through = a job with
@@ -836,7 +836,7 @@ def build_lines(records, rp_to_folders, addr_folders):
             return row
 
         # POUR FLATWORK = OTHER (list col AF): the flatwork went to another
-        # contractor (the user 2026-07-16) — the flatwork scope never enters
+        # contractor (the user 2026-07-16) - the flatwork scope never enters
         # the WIP, priced or not. The slab line (if priced) is still ours.
         flat_other = rec.get("flat_other")
 
@@ -851,18 +851,18 @@ def build_lines(records, rp_to_folders, addr_folders):
             row = _mk(rec["job"], contract, etc)
             row.notes.append("CP standalone (never -FTW)")
             if flat_other:
-                row.notes.append("Flatwork = OTHER on the list — excluded")
+                row.notes.append("Flatwork = OTHER on the list - excluded")
             rows.append((row, rec["completion"], rec))
             continue
 
         # A line exists ONLY for a scope that has pricing (the user
-        # 2026-07-14): Small Jobs entries are usually flatwork-only — the
+        # 2026-07-14): Small Jobs entries are usually flatwork-only - the
         # clerk confirmed what is real by pricing it. No slab price → no
         # slab line (e.g. RP5542: take only the -FTW line).
         if rec["slab_bid"] or rec["slab_cost"]:
             row = _mk(rec["job"], rec["slab_bid"], rec["slab_cost"])
             if flat_other:
-                row.notes.append("Flatwork = OTHER on the list — no -FTW line")
+                row.notes.append("Flatwork = OTHER on the list - no -FTW line")
             rows.append((row, rec["completion"], rec))
         if (rec["flat_bid"] or rec["flat_cost"]) and not flat_other:
             rows.append((_mk(rec["job"] + "-FTW", rec["flat_bid"],
@@ -871,7 +871,7 @@ def build_lines(records, rp_to_folders, addr_folders):
 
 
 def enrich_with_qbo(pairs) -> None:
-    """Billed (P&L income) + Costs (COGS+expenses) per LINE customer —
+    """Billed (P&L income) + Costs (COGS+expenses) per LINE customer -
     read-only GETs. Sets W.QBO_REALM so the writer builds QBO deep links."""
     try:
         access, company_id = qbo_api.load_credentials()
@@ -927,17 +927,17 @@ def write_justification(pairs, backlog, out_path: Path) -> None:
         sheet = "Alpha" if "Alpha" in rec["source"] else "Small Jobs"
         src = f"General List '{sheet}' row {rec['gl_row']}"
         if in_backlog:
-            return (f"{src}: flatwork bid ${K:,.0f} entered with the slab — "
+            return (f"{src}: flatwork bid ${K:,.0f} entered with the slab - "
                     f"$0 billed AND $0 costs under -FTW, not on the schedule "
                     f"→ true backlog (expected win; bills when poured).")
         if row.is_completed:
             gap = (K - b) if (K and b is not None) else None
             if gap is not None and abs(gap) < K * _FULL_TOL:
                 return (f"{src}: {cs} complete; contract ${K:,.2f}; QBO billed "
-                        f"${b:,.2f} — EQUAL → done-rule met (100% + fully "
+                        f"${b:,.2f} - EQUAL → done-rule met (100% + fully "
                         f"billed) → CLOSED.")
             return (f"{src}: {cs} complete; contract ${K:,.2f}; QBO billed "
-                    f"${b:,.2f} — ${gap:,.0f} under (≤$1K materiality) → "
+                    f"${b:,.2f} - ${gap:,.0f} under (≤$1K materiality) → "
                     f"CLOSED with small variance (builder fee / write-down).")
         why = "; ".join(row.status_flags or row.notes or ["in progress"])
         base = f"{src}: {cs} complete"
@@ -952,12 +952,12 @@ def write_justification(pairs, backlog, out_path: Path) -> None:
     # Never clobber the workbook while it is open in Excel.
     lock = out_path.with_name("~$" + out_path.name)
     if lock.exists():
-        print(f"  ⚠ {out_path.name} open in Excel — justification not refreshed")
+        print(f"  ⚠ {out_path.name} open in Excel - justification not refreshed")
         return None
     wb = Workbook()
     ws = wb.active
     ws.title = "JUSTIFICATION"
-    ws["A1"] = ("RP WIP — LINE-BY-LINE JUSTIFICATION (regenerated every run). "
+    ws["A1"] = ("RP WIP - LINE-BY-LINE JUSTIFICATION (regenerated every run). "
                 "Source: General List (Alpha + Small Jobs) → QBO per line → "
                 "Test - RP. Priced scopes only.")
     ws["A1"].font = Font(bold=True)
@@ -1014,7 +1014,7 @@ def write_justification(pairs, backlog, out_path: Path) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(
-        description="RP WIP — General List (Alpha + Small Jobs) → slab/-FTW "
+        description="RP WIP - General List (Alpha + Small Jobs) → slab/-FTW "
                     "lines → QBO billed/costs → 'Test - RP' tab.")
     ap.add_argument("--alpha", help="override General List path")
     ap.add_argument("--root", help="override Residential root")
@@ -1024,7 +1024,7 @@ def main() -> int:
     ap.add_argument("--general-list", action="store_true",
                     help="LEGACY: build RP from the General List instead of "
                          "the owner's RP WIP file. The file is the source of "
-                         "truth — only use this to inspect the old pipeline.")
+                         "truth - only use this to inspect the old pipeline.")
     ap.add_argument("--file", help="override the RP WIP file path")
     ap.add_argument("--emit-review", metavar="JSON",
                     help="Ledger WIP Review: compute as usual, then write a "
@@ -1042,7 +1042,7 @@ def main() -> int:
     if not args.general_list:
         rp_file = Path(args.file) if args.file else RP_WIP_FILE
         print()
-        print("  RP WIP Reader — the owner's RP WIP file → 'Test - RP'")
+        print("  RP WIP Reader - the owner's RP WIP file → 'Test - RP'")
         print(f"  file:  {rp_file}")
         print("  " + "─" * 74)
         if not rp_file.exists():
@@ -1085,7 +1085,7 @@ def main() -> int:
     root = Path(args.root) if args.root else RP_ROOT
 
     print()
-    print("  RP WIP Reader — General List → slab/-FTW lines → Test - RP")
+    print("  RP WIP Reader - General List → slab/-FTW lines → Test - RP")
     print(f"  list:  {alpha}")
     print(f"  root:  {root}")
     print("  " + "─" * 74)
@@ -1095,14 +1095,14 @@ def main() -> int:
         return 1
     records, missing_sheets = read_general_list(alpha)
     for s in missing_sheets:
-        print(f"  ⚠ sheet {s!r} not in the workbook — skipped")
+        print(f"  ⚠ sheet {s!r} not in the workbook - skipped")
     print(f"  Jobs in scope (priced or active): {len(records)}")
 
     rp_to_folders, addr_folders = ({}, [])
     if root.exists():
         rp_to_folders, addr_folders = index_residential(root)
     else:
-        print(f"  ⚠ Residential root not found: {root} — no folder links")
+        print(f"  ⚠ Residential root not found: {root} - no folder links")
 
     pairs = build_lines(records, rp_to_folders, addr_folders)
     n_other = sum(1 for rec in records
@@ -1116,7 +1116,7 @@ def main() -> int:
                  if t[0].project_num in (pf, f"{pf}-FTW")]
     print(f"  Lines (slab + -FTW + CP standalone): {len(pairs)}")
     if not pairs:
-        print("  No RP lines to process — exiting")
+        print("  No RP lines to process - exiting")
         return 0
 
     if not args.no_qbo:
@@ -1126,12 +1126,12 @@ def main() -> int:
         _classify(row, comp)
 
     # FTW backlog → its own section at the BOTTOM of the tab (the user
-    # 2026-07-14): flatwork bid together with the slab but not poured yet —
+    # 2026-07-14): flatwork bid together with the slab but not poured yet -
     # effectively unwon-but-expected work (~95% follows the slab). Not an
     # error state, so no red; invoiced under RP#-FTW when the pour lands.
     sched_addrs, sched_label = read_schedule_flatwork(SCHEDULE_DIR)
     if sched_label:
-        print(f"  Schedule check: {sched_label} — "
+        print(f"  Schedule check: {sched_label} - "
               f"{len(sched_addrs)} flatwork address(es)")
     main_rows, backlog = [], []
     for row, comp, rec in pairs:
@@ -1143,13 +1143,13 @@ def main() -> int:
             addr_n == a or a.startswith(addr_n) or addr_n.startswith(a)
             for a in sched_addrs)
         has_activity = bool(row.billed_to_date) or bool(row.costs_to_date)
-        # WON + WORKING when there is ANY QBO activity (billed OR costs —
+        # WON + WORKING when there is ANY QBO activity (billed OR costs -
         # the user 2026-07-14: "how can this be a backlog if there are
         # costs? we won it!") or the job is on today's flatwork schedule.
         if has_activity or on_sched:
             if on_sched:
                 row.notes.append(
-                    f"On the {sched_label} schedule — flatwork crew")
+                    f"On the {sched_label} schedule - flatwork crew")
             main_rows.append(row)
         else:
             row.needs_review = False   # expected pre-pour state, not an error
@@ -1159,7 +1159,7 @@ def main() -> int:
     print(f"  Review (red): {n_red} line(s) · FTW backlog: {len(backlog)}")
 
     # Justification workbook (the user 2026-07-15: no JSON, human-readable,
-    # in Downloads) — one row per line: where it was found in the General
+    # in Downloads) - one row per line: where it was found in the General
     # List, completion, contract, QBO billed/costs, and the rule behind the
     # status. The WHY (TEMP) column links here. Overwritten every run.
     justify_path = Path(os.getenv(
@@ -1172,7 +1172,7 @@ def main() -> int:
         # Jump straight to THIS line's row in the workbook (the user
         # 2026-07-15), not just the file.
         row.why_fragment = W._sheet_fragment("JUSTIFICATION", f"A{jr}") if jr else None
-        # Red must explain itself in NOTES (the user 2026-07-14) — flags carry
+        # Red must explain itself in NOTES (the user 2026-07-14) - flags carry
         # the must-fix reason; mirror it so the notes column reads standalone.
         if row.needs_review:
             reason = "; ".join(row.status_flags) or (row.notes[-1] if row.notes else "")
@@ -1183,7 +1183,7 @@ def main() -> int:
         wrote = W.write_test_cp(
             main_rows, W.WIP_EXCEL_PATH,
             dry_run=args.dry_run, tab_name="Test - RP",
-            appendix=("FTW BACKLOG — flatwork bid with the slab, NOT poured "
+            appendix=("FTW BACKLOG - flatwork bid with the slab, NOT poured "
                       "yet (expected wins; invoice under RP#-FTW when poured)",
                       backlog),
             cols=_rp_cols(), default_filter_active=True)

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-cp_wip_reader.py — the CP (Commercial) WIP READER.
+cp_wip_reader.py - the CP (Commercial) WIP READER.
 
 Scans the CP project folders on Synology, reads each job's latest G702 draw
 (or, pre-Draw-#1, the signed proposal PDF then the takeoff), enriches with QBO
 billed/costs, and writes the 'Test - CP' tab.
 
-This file is ONLY the CP reader. The shared report engine — CpRow,
-write_test_cp, formatting, the change audit, edit-tracking, QC — lives in
+This file is ONLY the CP reader. The shared report engine - CpRow,
+write_test_cp, formatting, the change audit, edit-tracking, QC - lives in
 wip_writer.py; every division tool imports it from there (never from here).
 """
 from __future__ import annotations
@@ -40,7 +40,7 @@ import wip_writer as W
 import wip_review_common as WR   # shared WIP-review diff/merge (ledger accept/merge flow)
 # CpRow (the shared data model) and the terminal-output helpers are used
 # pervasively here; the WRITER itself (write_test_cp / WipWriteDenied) is NOT
-# re-exported — call it as W.write_test_cp so no other tool can ever reach the
+# re-exported - call it as W.write_test_cp so no other tool can ever reach the
 # writer through cp_wip_reader again (that shortcut is what tangled these files).
 from wip_writer import CpRow, WIP_EXCEL_PATH, TEST_TAB, _Term, _section, _kv, _shorten
 
@@ -66,7 +66,7 @@ from shared.draws import (                                    # noqa: E402
     read_draw_g702,
 )
 
-# Project # from folder name — e.g. "CP672 - FIRESTONE RED OAK" → "CP672"
+# Project # from folder name - e.g. "CP672 - FIRESTONE RED OAK" → "CP672"
 _CP_FOLDER_RE = re.compile(r"^(CP\d{3,4})\b", re.IGNORECASE)
 
 log = logging.getLogger("cp_wip_reader")
@@ -111,7 +111,7 @@ def _read_number_to_right(ws_data, ws_formula, row: int, start_col: int,
     aren't the top-left anchor, and cells that hold just a currency
     symbol like '$'. This handles two real-world CP takeoff patterns:
 
-      1. TOTAL: label lives in a merged cell — the value sits past the
+      1. TOTAL: label lives in a merged cell - the value sits past the
          merge's right edge, not one column right of the label anchor.
       2. Currency symbol is a separate cell from the number:
              [ ...merged label... ] [ $ ] [ 3,840.00 ]
@@ -125,7 +125,7 @@ def _read_number_to_right(ws_data, ws_formula, row: int, start_col: int,
             ref = f"{get_column_letter(col)}{row}"
         except ValueError:
             return None
-        # Try the smart reader first — handles cached values + formula refs.
+        # Try the smart reader first - handles cached values + formula refs.
         v = _read_number_smart(ws_data, ws_formula, ref)
         if v is not None:
             return v
@@ -136,9 +136,9 @@ def _read_number_to_right(ws_data, ws_formula, row: int, start_col: int,
         if raw is None or raw == "":
             continue
         s = str(raw).strip()
-        if s in ("$", "USD", "€", "£", "-", "—"):
+        if s in ("$", "USD", "€", "£", "-", "-"):
             continue
-        # Non-numeric text (like a next-row label) — bail.
+        # Non-numeric text (like a next-row label) - bail.
         return None
     return None
 
@@ -149,7 +149,7 @@ def _read_number_to_right(ws_data, ws_formula, row: int, start_col: int,
 # LibreOffice, or a Python tool), the cache is empty and formula cells come
 # back as None. In that case we open a SECOND view of the workbook (data_only
 # =False) to see the formula string, then evaluate it dynamically against the
-# cached view — so we NEVER hardcode the specific cell-relationship (the
+# cached view - so we NEVER hardcode the specific cell-relationship (the
 # estimators can change AP1961's formula without breaking us).
 _CELL_REF_RE = re.compile(r"^[A-Z]+\d+$")
 _TOKEN_RE    = re.compile(r"[A-Z]+\d+|[+\-]")
@@ -173,7 +173,7 @@ def _read_number_smart(ws_data, ws_formula, cell_ref: str, depth: int = 0) -> Op
         if coerced is not None:
             return coerced
 
-    # Cached is missing / non-numeric — try the formula view.
+    # Cached is missing / non-numeric - try the formula view.
     try:
         raw = ws_formula[cell_ref].value
     except (KeyError, ValueError):
@@ -218,7 +218,7 @@ _WIP_TAG_RE = re.compile(r"\bwip\b", re.IGNORECASE)
 _AUX_XLSX_RE = re.compile(r"cost\s*code|explanation", re.IGNORECASE)
 
 
-# Takeoff flags that only concern the CONTRACT figure — dropped when the
+# Takeoff flags that only concern the CONTRACT figure - dropped when the
 # proposal PDF supplied it, so a pre-draw job doesn't carry a complaint about a
 # source we no longer needed.
 _CONTRACT_FLAG_RE = re.compile(
@@ -227,9 +227,9 @@ _CONTRACT_FLAG_RE = re.compile(
 
 def _find_contract_total(ws_data, ws_formula):
     """Read the contract total off a proposal sheet. Templates are inconsistent
-    (the user 2026-07-02) — the overall total is labeled 'GRAND TOTAL', 'SUB TOTAL',
+    (the user 2026-07-02) - the overall total is labeled 'GRAND TOTAL', 'SUB TOTAL',
     or just 'TOTAL'. Match is EXACT (normalized, colon-stripped) so 'TOTAL SQFT',
-    'TOTAL YARDS', etc. are NOT caught — only cells that are exactly one of the
+    'TOTAL YARDS', etc. are NOT caught - only cells that are exactly one of the
     three dollar-total labels. Collect every value from all three and take the
     **largest** = the overall contract total (an overall is ≥ any section
     subtotal). Returns (value_or_None, label_used_or_None)."""
@@ -257,7 +257,7 @@ def _select_proposal_sheet(wb):
     RESIDENTIAL PROPOSAL TABS ARE NEVER READ HERE (the user 2026-08-04:
     "residential proposal is only used for RP, if CP use the commercial 100%").
     The takeoff template ships with both tabs, so a CP job would otherwise look
-    like two competing proposals and get skipped — which is exactly why CP910
+    like two competing proposals and get skipped - which is exactly why CP910
     came through with a blank contract.
 
     Returns (sheet_name_or_None, flag_or_None)."""
@@ -266,27 +266,27 @@ def _select_proposal_sheet(wb):
         return None, "Missing Proposal Sheet"
     cp_tabs = [s for s in prop_tabs if "residential" not in s.lower()]
     if not cp_tabs:
-        return None, ("Only a RESIDENTIAL proposal tab in a CP takeoff — "
+        return None, ("Only a RESIDENTIAL proposal tab in a CP takeoff - "
                       "commercial pricing belongs on the Commercial tab")
     prop_tabs = cp_tabs
     finals = [s for s in prop_tabs if "final" in s.lower()]
     if len(finals) == 1:
         return finals[0], None
     if len(finals) > 1:
-        return finals[0], f"Multiple FINAL proposals — used '{finals[0]}'"
+        return finals[0], f"Multiple FINAL proposals - used '{finals[0]}'"
     if len(prop_tabs) == 1:
         return prop_tabs[0], None
     commercial = [s for s in prop_tabs if "commercial" in s.lower()]
     if len(commercial) == 1:
         return commercial[0], None          # CP ⇒ the Commercial tab, always
-    return None, (f"Multiple proposals ({len(prop_tabs)}), none marked FINAL — "
+    return None, (f"Multiple proposals ({len(prop_tabs)}), none marked FINAL - "
                   f"mark the final one: {', '.join(prop_tabs[:4])}"
                   f"{'...' if len(prop_tabs) > 4 else ''}")
 
 
 def _parse_one_takeoff(tk: Path):
     """Read Contract Price (final proposal Grand Total) + ETC (Bid!AP1961)
-    from ONE takeoff file. Change Orders are NOT read here — approved COs only
+    from ONE takeoff file. Change Orders are NOT read here - approved COs only
     ever come from a draw, and a no-draw project (the only caller of this path)
     has no COs yet. Returns (contract, etc, flags). Never raises."""
     flags: List[str] = []
@@ -352,12 +352,12 @@ def _select_takeoffs(folder: Path):
             takeoffs = non_aux
         else:
             return [], (f"No takeoff file identified ({len(xlsx_files)} xlsx, none "
-                        f"named 'takeoff') — rename the takeoff to include 'takeoff'")
+                        f"named 'takeoff') - rename the takeoff to include 'takeoff'")
     if len(takeoffs) == 1:
         return takeoffs, None
     included = [p for p in takeoffs if _WIP_TAG_RE.search(p.name)]
     if not included:
-        return [], (f"Multiple takeoffs ({len(takeoffs)}) — none tagged 'WIP'; "
+        return [], (f"Multiple takeoffs ({len(takeoffs)}) - none tagged 'WIP'; "
                     f"estimator must tag the one(s) to include")
     return included, None
 
@@ -372,7 +372,7 @@ def _takeoff_label(included) -> str:
 
 def parse_takeoff(folder: Path, row: CpRow) -> None:
     """Extract Contract Price + ETC into `row` from the takeoff. Used when the
-    project has NO draw yet (pre-Draw#1) — contract comes from the proposal
+    project has NO draw yet (pre-Draw#1) - contract comes from the proposal
     Grand/Sub Total, ETC from Bid!AP1961. No COs are read: a project that
     hasn't started billing has no approved change orders yet (COs come from a
     draw). Appends to row.status_flags on any failure; never raises."""
@@ -410,7 +410,7 @@ def parse_takeoff(folder: Path, row: CpRow) -> None:
     # CONTRACT SOURCE ORDER for a pre-draw job (the user 2026-08-04):
     # the signed proposal PDF FIRST, the takeoff only as a fallback. The PDF is
     # the document the customer agreed to; the takeoff is an internal file whose
-    # template ships several proposal tabs, so it is often ambiguous — CP910 read
+    # template ships several proposal tabs, so it is often ambiguous - CP910 read
     # as a blank contract for exactly that reason while its PDF said $105,815.
     pdf_amt, pdf_note = proposals.contract_from_folder(folder)
     if pdf_amt is not None:
@@ -425,12 +425,12 @@ def parse_takeoff(folder: Path, row: CpRow) -> None:
         if takeoff_contract is None:
             row.notes.append(f"Contract from the {pdf_note}")
         elif abs(takeoff_contract - pdf_amt) < 1:
-            row.notes.append(f"Contract from the {pdf_note} — "
+            row.notes.append(f"Contract from the {pdf_note} - "
                              f"matches the Commercial Proposal tab ✓")
         else:
             row.status_flags.append(
                 f"Proposal PDF ${pdf_amt:,.0f} vs Commercial Proposal tab "
-                f"${takeoff_contract:,.0f} — they disagree, verify")
+                f"${takeoff_contract:,.0f} - they disagree, verify")
             row.notes.append(f"Contract from the {pdf_note}")
         # The takeoff's contract complaints are moot once the PDF answered.
         row.status_flags = [f for f in row.status_flags
@@ -438,7 +438,7 @@ def parse_takeoff(folder: Path, row: CpRow) -> None:
     else:
         row.base_contract = takeoff_contract
         if takeoff_contract is not None:
-            row.notes.append(f"Contract from the takeoff — {pdf_note}")
+            row.notes.append(f"Contract from the takeoff - {pdf_note}")
             WR.set_source(row, "orig_contract", _takeoff_label(included), included[0])
 
     if multi:
@@ -451,7 +451,7 @@ def parse_takeoff(folder: Path, row: CpRow) -> None:
 def parse_takeoff_etc(folder: Path, row: CpRow) -> None:
     """Read ONLY the ETC (Bid!AP1961) from the project's takeoff. Used when a
     DRAW supplies contract/CO/billed/retainage but the cost estimate still
-    lives in the takeoff (the user 2026-07-09: "ETC — still keep the takeoff
+    lives in the takeoff (the user 2026-07-09: "ETC - still keep the takeoff
     costs"). The proposal/contract/CO parsing is skipped, so a draw-backed row
     isn't cluttered with contract-side takeoff flags. Never raises."""
     included, flag = _select_takeoffs(folder)
@@ -497,7 +497,7 @@ def parse_takeoff_etc(folder: Path, row: CpRow) -> None:
 def parse_draw(project_folder: Path, row: CpRow) -> bool:
     """If the project has a draw, read the LATEST one's G702 into `row`
     (contract, CO, billed, retainage) and return True. ETC still comes from the
-    takeoff and costs from QBO — those are handled by the caller. Returns False
+    takeoff and costs from QBO - those are handled by the caller. Returns False
     when there's no draw yet (caller falls back to the takeoff proposal)."""
     found = find_latest_draw(project_folder)
     if not found:
@@ -510,10 +510,10 @@ def parse_draw(project_folder: Path, row: CpRow) -> bool:
     for f in flags:
         row.status_flags.append(f"Draw #{draw_num}: {f}")
     if data is None or data["contract_to_date"] is None or data["billed"] is None:
-        # A draw exists but is unreadable — do NOT fall through to takeoff/QBO
+        # A draw exists but is unreadable - do NOT fall through to takeoff/QBO
         # for billing (that would silently mix sources). Flag for triage.
         row.status_flags.append(
-            f"Draw #{draw_num} unreadable — contract/billed left blank for review")
+            f"Draw #{draw_num} unreadable - contract/billed left blank for review")
         return True
 
     row.base_contract = data["orig_contract"]
@@ -563,7 +563,7 @@ def scan_cp_folders(root: Path, is_completed: bool) -> List[CpRow]:
 
         proj_num = _project_num_from_folder(entry)
         if not proj_num:
-            continue  # not a CP folder — skip silently
+            continue  # not a CP folder - skip silently
 
         row = CpRow(
             project_num=proj_num,
@@ -577,7 +577,7 @@ def scan_cp_folders(root: Path, is_completed: bool) -> List[CpRow]:
         )
 
         # Draw-first (the user 2026-07-09): if the project has a draw (AIA G702/G703
-        # payment application), the LATEST draw IS the WIP update — it supplies
+        # payment application), the LATEST draw IS the WIP update - it supplies
         # Contract Price, Approved COs, Billed-to-Date (gross), and Retainage
         # Held. ETC still comes from the takeoff; Costs from QBO. Only before
         # Draw #1 lands do we fall back to the takeoff proposal for contract/CO
@@ -586,11 +586,11 @@ def scan_cp_folders(root: Path, is_completed: bool) -> List[CpRow]:
             row.folder_path = entry                 # project-name link target
             parse_takeoff_etc(entry, row)           # ETC (Bid!AP1961) only
         else:
-            # No draw yet — takeoff proposal drives contract; QBO drives
+            # No draw yet - takeoff proposal drives contract; QBO drives
             # billed/retainage (in enrich_with_qbo). No COs: a project that
             # hasn't started its first draw has no approved change orders yet,
             # so the Change Orders/ sub-folder is intentionally not read.
-            row.notes.append("No draw yet — contract from takeoff proposal")
+            row.notes.append("No draw yet - contract from takeoff proposal")
             parse_takeoff(entry, row)
 
         rows.append(row)
@@ -601,7 +601,7 @@ def scan_cp_folders(root: Path, is_completed: bool) -> List[CpRow]:
 
 
 # ─────────────────────── QBO join ──────────────────────────────────
-# Retainage detection — case-insensitive match on "Retainage Not Billed"
+# Retainage detection - case-insensitive match on "Retainage Not Billed"
 # anywhere in the invoice's PrivateNote (memo field). Pattern harvested
 # from legacy wip/wip_sync.py; see [[reference-wip-qbo-aggregation-patterns]].
 _RETAINAGE_NOT_BILLED_RE = re.compile(r"retainage\s+not\s+billed", re.IGNORECASE)
@@ -621,7 +621,7 @@ def _linked_txn_types(inv: dict) -> List[str]:
 
 
 def _cleared_by_journal_entry(inv: dict) -> bool:
-    """True if a Journal Entry is linked to this invoice — the reclass that
+    """True if a Journal Entry is linked to this invoice - the reclass that
     moves the balance into the Retainage Receivable account (i.e. it was NOT
     settled by a real customer cash payment)."""
     return "journalentry" in _linked_txn_types(inv)
@@ -632,14 +632,14 @@ def _is_retainage_receivable_invoice(inv: dict) -> bool:
     is retainage HELD (not collectible cash). It is excluded from Billed's
     net-collectible component and surfaces in the RETAINAGE HELD column.
 
-    Keyed on the 'Retainage Not Billed' memo — the user's explicit tag for
+    Keyed on the 'Retainage Not Billed' memo - the user's explicit tag for
     retainage moved to (or awaiting) the Retainage Receivable account.
 
     CORRECTED 2026-07-02 (live run): an earlier version ALSO required a
     Journal Entry on the invoice's LinkedTxn. That left retainage held
     understated by an order of magnitude on CP672 because the JE
     that reclasses AR → Retainage Receivable is applied to the invoice via a
-    PAYMENT (the "Payment on 12/31/25" that carries the JE credit) — so the
+    PAYMENT (the "Payment on 12/31/25" that carries the JE credit) - so the
     JE never appears directly in Invoice.LinkedTxn and the check missed it.
     The memo is the reliable signal and correctly handles BOTH methods:
       * standalone 'Retainage Not Billed' invoice → matched here → held.
@@ -662,7 +662,7 @@ def _fetch_billed_ex_retainage(pnl, access: str, company_id: str,
     try:
         invoices = pnl.fetch_customer_invoices(access, company_id, customer_id)
     except Exception as e:
-        log.warning("Invoice fetch failed for customer %s: %s — falling back to 0",
+        log.warning("Invoice fetch failed for customer %s: %s - falling back to 0",
                     customer_id, e)
         return 0.0
 
@@ -675,7 +675,7 @@ def _fetch_billed_ex_retainage(pnl, access: str, company_id: str,
             amt = inv.get("TotalAmt", "?")
             types = _linked_txn_types(inv) or ["<none>"]
             je = "direct" if _cleared_by_journal_entry(inv) else "via-payment/none"
-            log.info("  EXCL retainage-receivable inv #%s ($%s) — memo-tagged "
+            log.info("  EXCL retainage-receivable inv #%s ($%s) - memo-tagged "
                      "(LinkedTxn=%s, JE=%s) → counts as Retainage Held",
                      doc, amt, ",".join(types), je)
             continue
@@ -689,7 +689,7 @@ def _fetch_billed_ex_retainage(pnl, access: str, company_id: str,
 
 def enrich_with_qbo(rows: List[CpRow]) -> None:
     """Fetch QBO Billed/Costs per project and populate rows in-place.
-    All-time window (start_date = 2019-01-01, end_date = today) — CP is
+    All-time window (start_date = 2019-01-01, end_date = today) - CP is
     slow-turn commercial work, worth the extra API cost. Never raises.
     Side effect: records the realm + per-row customer id so the Excel writer
     can attach QBO deep links to the Billed/Costs cells."""
@@ -697,7 +697,7 @@ def enrich_with_qbo(rows: List[CpRow]) -> None:
     try:
         access, company_id = pnl.load_credentials()
     except SystemExit:
-        log.error("QBO auth failed — leaving Billed/Costs blank on all rows")
+        log.error("QBO auth failed - leaving Billed/Costs blank on all rows")
         for r in rows:
             r.status_flags.append("QBO Auth Failed")
         return
@@ -752,13 +752,13 @@ def enrich_with_qbo(rows: List[CpRow]) -> None:
                 log.info("  %s billed(gross)=%.2f net-collectible=%.2f retainage-held=%.2f (QBO)",
                          row.project_num, gross_billed, net_collectible, row.retainage_held)
             else:
-                log.info("  %s billed/retainage from Draw #%s — QBO billing skipped",
+                log.info("  %s billed/retainage from Draw #%s - QBO billing skipped",
                          row.project_num, row.draw_num)
             # Costs = COGS + Expenses. QBO Projects UI sums both; per GAAP
             # job costing, direct project spending is a project cost
             # regardless of which account category it lands in. Coding
             # errors in QBO (bills posted to Expenses instead of COGS)
-            # should NOT hide costs from the WIP — the WIP should surface
+            # should NOT hide costs from the WIP - the WIP should surface
             # true total spend so the coding error becomes visible.
             row.costs_to_date = (
                 (totals.get("cogs", 0.0) or 0.0)
@@ -768,7 +768,7 @@ def enrich_with_qbo(rows: List[CpRow]) -> None:
             # Over-budget is NOT flagged: it's a business observation the WIP
             # report surfaces itself (Costs > ETC, and the uncapped % column).
             # Flags are reserved for things the script could not confirm as
-            # fact and a human must fix — not report readings. % stays UNCAPPED
+            # fact and a human must fix - not report readings. % stays UNCAPPED
             # so the overage remains visible in the numbers.
         except Exception as e:
             row.status_flags.append(f"QBO P&L Failed: {type(e).__name__}")
@@ -848,7 +848,7 @@ def main() -> int:
 
     if not rows:
         print()
-        print(_Term.color(_Term.AMBER, "  No CP projects to process — exiting"))
+        print(_Term.color(_Term.AMBER, "  No CP projects to process - exiting"))
         return 0
 
     # ── QBO enrichment ──
@@ -886,7 +886,7 @@ def main() -> int:
     # ── Write / dry-run report ──
     try:
         # Active-only default view (the user 2026-07-31: "don't want to see
-        # Closed on default open") — same as the master tab.
+        # Closed on default open") - same as the master tab.
         wrote = W.write_test_cp(rows, WIP_EXCEL_PATH, dry_run=args.dry_run,
                               default_filter_active=True,
                               title="CP WIP REPORT", summary=True,

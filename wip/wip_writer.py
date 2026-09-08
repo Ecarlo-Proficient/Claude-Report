@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-wip_writer.py — the shared WIP report ENGINE.
+wip_writer.py - the shared WIP report ENGINE.
 
 Everything that turns CpRow objects into a formatted, edit-tracked, audited
 'Test-*' tab lives here: the CpRow data model, the column layout (COLS), all
@@ -9,14 +9,14 @@ QC check.
 
 WHY THIS FILE EXISTS (2026-08-04): this engine used to live inside
 cp_wip_reader.py, so every division tool that wanted the same formatting did
-`import cp_wip_reader as CP` — a tool importing a tool, which the repo rules
+`import cp_wip_reader as CP` - a tool importing a tool, which the repo rules
 forbid (shared/ is the only importable common code; tools never import tools).
 That buried MFD and RP logic in a file named "cp" and let the layout drift.
 The engine now has its own honest home; the readers import it, not each other:
-  cp_wip_reader.py   — CP folder scan / draws / takeoffs
-  rp_wip_reader.py   — the owner's RP WIP file
-  master_wip_test.py — MFD off 'WIP Master' + orchestrates all three
-This file is pure output machinery — it never reads a division's source.
+  cp_wip_reader.py   - CP folder scan / draws / takeoffs
+  rp_wip_reader.py   - the owner's RP WIP file
+  master_wip_test.py - MFD off 'WIP Master' + orchestrates all three
+This file is pure output machinery - it never reads a division's source.
 """
 from __future__ import annotations
 
@@ -66,7 +66,7 @@ QBO_REALM = ""
 log = logging.getLogger("wip_writer")
 
 class _Term:
-    """Small ANSI helper — degrades gracefully when stdout isn't a TTY."""
+    """Small ANSI helper - degrades gracefully when stdout isn't a TTY."""
     ENABLED = sys.stdout.isatty()
 
     RESET = "\033[0m"     if ENABLED else ""
@@ -113,19 +113,19 @@ def _kv(label: str, value, indent: int = 2) -> None:
 def _fmt_money(v: Optional[float]) -> str:
     """Money as a plain (uncolored) string. Coloring happens at pad time."""
     if v is None:
-        return "—"
+        return "-"
     return f"${v:,.2f}"
 
 
 def _fmt_pct(v: Optional[float]) -> str:
     if v is None:
-        return "—"
+        return "-"
     return f"{v*100:.1f}%"
 
 
 def _dim_if_dash(s: str) -> str:
     """Dim the em-dash placeholder so real numbers pop; leave money plain."""
-    return _Term.color(_Term.DIM, s) if s == "—" else s
+    return _Term.color(_Term.DIM, s) if s == "-" else s
 
 
 # ─────────────────────── config / paths ────────────────────────────
@@ -140,17 +140,17 @@ class CpRow:
     base_contract: Optional[float]   # from Commercial Proposal Grand Total (audit)
     co_revenue: Optional[float]      # approved COs from the draw (G702 Line 2);
                                      # None until Draw #1 (no draw ⇒ no COs yet)
-    base_etc: Optional[float]        # from Bid!AP1961 (audit — pre-CO)
+    base_etc: Optional[float]        # from Bid!AP1961 (audit - pre-CO)
     billed_to_date: Optional[float]  # QBO P&L income = GROSS billed (incl retainage)
     costs_to_date: Optional[float]   # from QBO P&L COGS + Expenses
     retainage_held: Optional[float] = None  # gross billed − net collectible (retainage receivable)
     status_flags: List[str] = field(default_factory=list)  # TRUE flags only: the script
                                           # hit something it could not confirm as fact and a
                                           # human must fix it (unreadable takeoff, QBO failure,
-                                          # ambiguous proposal). NOT business observations —
+                                          # ambiguous proposal). NOT business observations -
                                           # the WIP report shows over-budget / CO $ itself.
     notes: List[str] = field(default_factory=list)  # informational; the script IS certain
-                                          # (e.g. 'Draw #6…', 'No draw yet') — never a flag.
+                                          # (e.g. 'Draw #6…', 'No draw yet') - never a flag.
     takeoff_path: Optional[Path] = None   # audit trail: first included takeoff (hyperlink anchor)
     included_takeoffs: List[Path] = field(default_factory=list)  # takeoff(s) summed into this row
     folder_path: Optional[Path] = None   # explicit folder for the project-name link
@@ -163,9 +163,9 @@ class CpRow:
     client: Optional[str] = None         # builder/client display name (RP tab)
     home_type: Optional[str] = None      # 'Tract' / 'Custom' (RP tab)
     why_link: Optional[str] = None       # path to the justification workbook (temp WHY column)
-    why_fragment: Optional[str] = None   # "#'SHEET'!A<row>" — jump straight to this line's row
+    why_fragment: Optional[str] = None   # "#'SHEET'!A<row>" - jump straight to this line's row
     src_link: Optional[str] = None       # source workbook the numbers came from (PROJECT # cell link)
-    src_fragment: Optional[str] = None   # "#'SHEET'!C<row>" — exact source row (the user 2026-07-15)
+    src_fragment: Optional[str] = None   # "#'SHEET'!C<row>" - exact source row (the user 2026-07-15)
     section: Optional[str] = None        # master-sheet grouping (SECTION column)
     co_cost_override: Optional[float] = None  # owner typed a CO cost onto the WIP
 
@@ -173,7 +173,7 @@ class CpRow:
     def contract_price(self) -> Optional[float]:
         """Total Contract Price = base contract + summed COs. Returns None when
         the base is undetermined (e.g. Missing Grand Total / contract not yet
-        decided) — a CO-only total would be misleading, so the cell stays blank
+        decided) - a CO-only total would be misleading, so the cell stays blank
         and the flag explains why."""
         if self.base_contract is None:
             return None
@@ -182,7 +182,7 @@ class CpRow:
     @property
     def co_cost_estimate(self) -> Optional[float]:
         """CO Cost is None until estimators add a real cost cell to the CO
-        template. No proxy — the user's rule (2026-07-01): "no false numbers,
+        template. No proxy - the user's rule (2026-07-01): "no false numbers,
         don't populate if there is no source. If no CO costs, don't put
         it, just flag it."
 
@@ -192,7 +192,7 @@ class CpRow:
         template change that adds a CO cost line).
 
         EXCEPTION (2026-08-03): if the owner types a CO cost straight onto the
-        WIP, that override is carried in `co_cost_override` and wins — it is a
+        WIP, that override is carried in `co_cost_override` and wins - it is a
         real number from the person who owns the estimate, and until the CO
         template carries a cost line it is the only source there is."""
         return self.co_cost_override
@@ -203,12 +203,12 @@ class CpRow:
         - No COs → equals Base ETC (revised == base is truthful here).
         - COs present but no CO Cost data → defaults to Base ETC and the
           row is flagged provisional (the user 2026-07-02). This WIP is a
-          MONITORING view, fully script-driven from takeoffs — no manual
+          MONITORING view, fully script-driven from takeoffs - no manual
           entry. Defaulting to Original ETC keeps the row alive and
           surfaces the over-budget signal (Costs > Original ETC) instead
           of going dark. The bounded error (excludes the CO's cost) is
-          disclosed by the `% based on Original ETC — excludes CO cost`
-          flag. We still never FABRICATE a CO cost — the base ETC is a
+          disclosed by the `% based on Original ETC - excludes CO cost`
+          flag. We still never FABRICATE a CO cost - the base ETC is a
           real number, just scoped pre-CO. See [[project-cp-wip-takeoff-extraction]]."""
         if self.base_etc is None:
             return None
@@ -220,7 +220,7 @@ class CpRow:
 
     @property
     def has_missing_co_cost(self) -> bool:
-        """True when the project has CO Revenue but no CO Cost data — a
+        """True when the project has CO Revenue but no CO Cost data - a
         signal that Revised ETC (and the % / Earned / Over-Under derived
         from it) is PROVISIONAL: computed off Original ETC, which excludes
         the CO's cost. Drives the provisional flag."""
@@ -250,7 +250,7 @@ DATA_FONT = Font(name=MASTER_FONT_NAME, size=MASTER_FONT_SIZE)
 FLAG_FILL = PatternFill("solid", fgColor="FFF2CC")       # flag cell
 FLAG_FONT = Font(name=MASTER_FONT_NAME, size=MASTER_FONT_SIZE,
                  italic=True, color="7F6000")
-INPUT_FILL = PatternFill("solid", fgColor="FFFF99")      # light yellow — SOURCED inputs
+INPUT_FILL = PatternFill("solid", fgColor="FFFF99")      # light yellow - SOURCED inputs
 LINK_FONT = Font(name=MASTER_FONT_NAME, size=MASTER_FONT_SIZE,
                  color="0563C1", underline="single")     # Excel link
 _SIDE = Side(style="thin", color="BFBFBF")
@@ -278,12 +278,12 @@ _PCT_FIELDS = frozenset({"_pct_complete", "gross_profit_pct"})
 # fill so they're visually distinct from the white CALCULATED cells (Excel
 # formulas). The user 2026-07-02: "yellow = metrics that have sources, calculations
 # leave white." Identifier/metadata columns (project #, name, status, flags,
-# last synced) stay white — they're not metrics.
+# last synced) stay white - they're not metrics.
 _SOURCE_FIELDS = frozenset({
     "base_contract",     # ORIGINAL CONTRACT
     "contract_price",    # TOTAL CONTRACT PRICE (Original + COs)
     "base_etc",          # ORIGINAL ESTIMATED COST
-    "co_cost_estimate",  # CO COSTS — yellow + EMPTY = an input nobody filled
+    "co_cost_estimate",  # CO COSTS - yellow + EMPTY = an input nobody filled
     "etc",               # ESTIMATED TOTAL COSTS (Revised ETC)
     "billed_to_date",    # QBO (gross income)
     "costs_to_date",     # QBO
@@ -316,7 +316,7 @@ def _apply_hyperlink(cell, target: Optional[Path], fragment: str = "") -> None:
 
     The sheet/cell jump goes in the hyperlink's `location` ATTRIBUTE, never
     appended to the URI (2026-07-21): a fragment like #'Small Jobs'!C7 puts
-    raw spaces into the .rels target URI — invalid XML that makes Excel
+    raw spaces into the .rels target URI - invalid XML that makes Excel
     demand a repair on open."""
     from openpyxl.worksheet.hyperlink import Hyperlink
     if target is None:
@@ -326,7 +326,7 @@ def _apply_hyperlink(cell, target: Optional[Path], fragment: str = "") -> None:
     try:
         uri = target.as_uri()
     except (ValueError, OSError):
-        # Path can't be converted to URI (unusual on macOS/Linux) — skip
+        # Path can't be converted to URI (unusual on macOS/Linux) - skip
         # rather than crash the whole run.
         return
     loc = fragment.lstrip("#") if fragment else None
@@ -338,7 +338,7 @@ def _apply_hyperlink(cell, target: Optional[Path], fragment: str = "") -> None:
 # against Marcum LLP / Construction Executive, Wouch Maloney CPAs, CFMA/
 # AICPA-referenced guidance. Billed to Date is GROSS (incl retainage); a
 # separate RETAINAGE HELD column keeps the cash-collection timeline visible.
-# Column order mirrors the team's WIP schedule — reads left→right as a story:
+# Column order mirrors the team's WIP schedule - reads left→right as a story:
 # the deal (contract, cost) → progress (billed, spent) → projection (cost to
 # complete, profit) → recognition (% , earned) → billing position (over/under,
 # left to bill) → profitability (GP%, future profit, job borrow). The four
@@ -350,7 +350,7 @@ COLS = [
     ("PROJECT #",                                       12, "project_num"),
     ("PROJECT NAME",                                    30, "project_name"),
     # PROJECT FOLDER / DATA SOURCE link columns REMOVED (the user 2026-07-29:
-    # file hyperlinks weigh the workbook down — the only links anywhere are
+    # file hyperlinks weigh the workbook down - the only links anywhere are
     # the QBO deep links on Billed/Costs).
     ("STATUS",                                          10, "_active_status"),
     # Columns are GROUPED left→right the way a WIP schedule reads (the user
@@ -358,12 +358,12 @@ COLS = [
     # ANALYSIS. `_COL_GROUPS` below maps each group to its first field so the
     # writer can draw a vertical rule at every boundary and print a column
     # guide at the bottom. Header NAMES are the 'WIP Master' vocabulary and
-    # must not be renamed — five other tools read this tab by header name.
-    # A change order moves BOTH sides — the contract AND the budget. The two
+    # must not be renamed - five other tools read this tab by header name.
+    # A change order moves BOTH sides - the contract AND the budget. The two
     # trios below mirror each other on purpose (researched 2026-08-03; Dean
     # Dorton lists "adding the change order to the contract amount but not
     # adjusting the project's cost budget" as a top WIP mistake). CO COSTS has
-    # no source yet, so it sits EMPTY — a blank yellow input cell says
+    # no source yet, so it sits EMPTY - a blank yellow input cell says
     # "nobody has costed this CO" more plainly than any flag would.
     # NOTE: 'TOTAL CONTRACT PRICE' IS the revised contract and 'ESTIMATED
     # TOTAL COSTS' IS the revised estimated cost. Those two names are read by
@@ -396,7 +396,7 @@ COLS = [
     ("FUTURE PROFIT TO EARN",                           15, "future_profit"),      # S = G-M
     ("PURE JOB BORROW",                                 14, "job_borrow"),         # T
     ("LAST SYNCED",                                     18, "_last_synced"),
-    # ONE commentary column (the user 2026-07-31: "stick to one" — NOTES and
+    # ONE commentary column (the user 2026-07-31: "stick to one" - NOTES and
     # FLAGS were two columns saying overlapping things). Informational notes
     # (Draw #, no-draw, the owner's ACTION text) and genuine script must-fix
     # flags now share this cell; the cell turns yellow/italic when it carries
@@ -412,20 +412,20 @@ _COL_GROUPS = [
     ("PROFIT",   "original_profit"),
     ("COSTS",    "costs_to_date"),
     ("EARNED",   "_earned_revenue"),
-    # LEFT TO BILL sits INSIDE the billing box (the user 2026-08-03) — it is a
+    # LEFT TO BILL sits INSIDE the billing box (the user 2026-08-03) - it is a
     # billing position, not a separate section.
     ("BILLING",  "billed_to_date"),
     ("ANALYSIS", "future_profit"),
 ]
 
 # Column guide printed at the bottom: field → (letter, what it does). Mirrors
-# the reference WIP the user supplied — every column says how it is derived so
+# the reference WIP the user supplied - every column says how it is derived so
 # anyone reading the report can follow the maths (the user 2026-08-03).
 _COL_LETTERS = {
     "base_contract": ("A", "original contract, before change orders"),
     "co_revenue": ("B", "approved change orders"),
     "contract_price": ("C", "C = A + B   the REVISED contract"),
-    "base_etc": ("D", "original estimated cost — the bid budget"),
+    "base_etc": ("D", "original estimated cost - the bid budget"),
     "co_cost_estimate": ("E", "cost of the approved change orders "
                               "(blank = the CO has not been costed)"),
     "etc": ("F", "F = D + E   the REVISED estimated cost"),
@@ -468,7 +468,7 @@ FORMULA_FIELDS: frozenset = frozenset({
 
 # The two ROLL-UPS. They are normally written as VALUES because four tools read
 # this workbook with data_only=True, and an openpyxl-written formula carries no
-# cached value — it would read back as None and silently zero them (exactly how
+# cached value - it would read back as None and silently zero them (exactly how
 # MFD's budget went blank, 2026-08-03).
 #
 # On the tabs the owner EDITS they are written as live formulas instead (the
@@ -528,13 +528,13 @@ def _build_formula(field_name: str, row_num: int,
     if field_name == "left_to_bill":
         return f'=IF(OR({F}="",{J}=""),"",{F}-{J})'
     if field_name == "overbillings":
-        # BIE — billings in excess of earned revenue (liability). 0 if underbilled.
+        # BIE - billings in excess of earned revenue (liability). 0 if underbilled.
         return f'=IF(OR({J}="",{ER}=""),"",MAX({J}-{ER},0))'
     if field_name == "underbillings":
-        # CIE — earned revenue in excess of billings (asset). 0 if overbilled.
+        # CIE - earned revenue in excess of billings (asset). 0 if overbilled.
         return f'=IF(OR({ER}="",{J}=""),"",MAX({ER}-{J},0))'
     if field_name == "job_borrow":
-        # Pure Job Borrow — remaining costs in excess of remaining billing
+        # Pure Job Borrow - remaining costs in excess of remaining billing
         # capacity (Wouch Maloney CPAs): costs-to-complete beyond what's left
         # to bill = cash this job must borrow from others. 0 if none.
         return f'=IF(OR({CTC}="",{LTB}=""),"",MAX({CTC}-{LTB},0))'
@@ -547,7 +547,7 @@ def _row_display_value(row: CpRow, field_name: str, sync_ts: str):
     if field_name == "_active_status":
         return "Closed" if row.is_completed else "Active"
     if field_name == "_bonded":
-        # Bank-report BONDED column — "N" on every job (none bonded; the user
+        # Bank-report BONDED column - "N" on every job (none bonded; the user
         # 2026-08-06). A per-job bonded source would replace the constant.
         return "N"
     if field_name == "why_link":
@@ -566,7 +566,7 @@ def _row_display_value(row: CpRow, field_name: str, sync_ts: str):
         # owner's ACTION text arrives as one string that already contains
         # ' · ' separators, so whole-string matching let the same sentence
         # come back twice. Split everything to segments first, compare on a
-        # normalised key, and keep the FIRST wording seen — the message is
+        # normalised key, and keep the FIRST wording seen - the message is
         # never reworded, only the redundant 'note:' label is dropped (the
         # column is already called NOTES).
         parts, seen = [], set()
@@ -578,7 +578,7 @@ def _row_display_value(row: CpRow, field_name: str, sync_ts: str):
                     if seg.startswith(lead):
                         seg = seg[len(lead):].strip()
                 if _MUTED_NOTE_RE.search(seg):
-                    continue                  # known/accepted — not a finding
+                    continue                  # known/accepted - not a finding
                 key = re.sub(r"\s+", " ", seg).lower()
                 if seg and key not in seen:
                     seen.add(key)
@@ -586,7 +586,7 @@ def _row_display_value(row: CpRow, field_name: str, sync_ts: str):
         return " · ".join(parts) or None
     if field_name == "status":
         # RED numbers must explain themselves (the user 2026-07-16): a red
-        # row with no script flag showed "OK" — surface the classify reason
+        # row with no script flag showed "OK" - surface the classify reason
         # here instead (tabs without a NOTES column had nowhere else).
         if row.status_flags:
             return "; ".join(row.status_flags)
@@ -601,13 +601,13 @@ def _row_display_value(row: CpRow, field_name: str, sync_ts: str):
 # ───────────────── change audit (the user 2026-07-31) ─────────────
 # Every sync must state, per division, what moved: jobs added, jobs removed,
 # original contract/ETC changes, revised contract/ETC changes. The owner
-# audits this on every run — it is never optional and never summarised away.
+# audits this on every run - it is never optional and never summarised away.
 AUDIT_XLSX = Path.home() / "Downloads" / "WIP Changes.xlsx"
 
 # Note segments the SCRIPT writes. Anything else in a NOTES cell was typed by
 # a human and is carried forward across the full-replace (the user
 # 2026-07-31: "be sure to preserve any notes").
-# Notes for KNOWN, ACCEPTED conditions — suppressed rather than shown, because
+# Notes for KNOWN, ACCEPTED conditions - suppressed rather than shown, because
 # they describe how the takeoffs are built, not something anyone will act on.
 # "proposal quotes PIERS but no PR cost": pier costs sit inside the Piers
 # takeoff sheet's overall costs and were never broken out per code (the user
@@ -627,7 +627,7 @@ _SCRIPT_NOTE_RE = re.compile(
 #
 # Mechanism: every editable input is mirrored into a HIDDEN column holding
 # exactly what the script last wrote (the "baseline"). Excel conditional
-# formatting compares the live cell to its baseline — differ ⇒ red. That runs
+# formatting compares the live cell to its baseline - differ ⇒ red. That runs
 # inside Excel with no macro, so it fires the instant he types. On the next
 # sync the same comparison tells the script which cells he overrode, and those
 # values are carried forward instead of being overwritten.
@@ -650,7 +650,7 @@ def _apply_edit_formatting(ws, cols_, hdr_row: int, first_row: int,
     """Mirror each editable input into a hidden baseline column and add the
     conditional-format rule that reddens any cell differing from it.
 
-    The baseline holds what the DATA SOURCES say — never the owner's override.
+    The baseline holds what the DATA SOURCES say - never the owner's override.
     If it held the override, the cell would match its baseline on the next run,
     the red would clear and the script would quietly put the source value back.
     Keeping the source in the baseline means an override stays marked and stays
@@ -690,7 +690,7 @@ def _apply_edit_formatting(ws, cols_, hdr_row: int, first_row: int,
 def _clear_stale_columns(ws, last_used: int) -> None:
     """Drop column widths / hidden flags to the RIGHT of last_used. When a tab
     is rewritten NARROWER than a previous run (e.g. the lean 'Test - RP'), the
-    old layout's column dimensions linger as orphan tiny columns — this removes
+    old layout's column dimensions linger as orphan tiny columns - this removes
     them so the sheet has nothing floating past its data (the user 2026-08-07:
     'a lot of columns hidden aka width is tiny')."""
     for L in [c for c in list(ws.column_dimensions.keys())
@@ -701,7 +701,7 @@ def _clear_stale_columns(ws, last_used: int) -> None:
 def read_owner_edits(ws, hdr_row: Optional[int],
                      cols_: Optional[List] = None) -> Dict[str, dict]:
     """Cells the owner changed since the last sync: {project #: {field: value}}.
-    A cell differing from its hidden baseline IS an owner edit — that is the
+    A cell differing from its hidden baseline IS an owner edit - that is the
     same test Excel used to colour it red, so what the script preserves and
     what he sees marked are always the same set."""
     if not hdr_row:
@@ -721,14 +721,14 @@ def read_owner_edits(ws, hdr_row: Optional[int],
     # TRUST CHECK (2026-08-03): only believe the baselines if the tab was last
     # written by THIS layout. Several tools write these tabs, and after a
     # foreign write the numbers sitting under our headers came from a different
-    # pipeline — every difference would then look like an owner edit and get
+    # pipeline - every difference would then look like an owner edit and get
     # locked in as one. Seen for real: a run of rp_wip_reader left 'Test - RP'
     # in its own layout and the next sync reported 28 phantom edits.
     if cols_ is not None:
         want = {f for _l, _w, f in cols_ if f in _OVERRIDE_FIELDS}
         if want - {f for f, _b, _c in pairs}:
             print(_Term.color(_Term.AMBER,
-                  "  ⚠ this tab was last written by a DIFFERENT layout — its "
+                  "  ⚠ this tab was last written by a DIFFERENT layout - its "
                   "baselines aren't ours, so edit detection is skipped for "
                   "this run (your next edits will track normally)"))
             return {}
@@ -783,7 +783,7 @@ def _snapshot_tab(ws, hdr_row: Optional[int]) -> Dict[str, dict]:
     for r in range(hdr_row + 1, (ws.max_row or 0) + 1):
         first = ws.cell(r, 1).value
         if isinstance(first, str) and first.strip() == "TOTALS":
-            break                       # summary block — not data
+            break                       # summary block - not data
         pnum = ws.cell(r, pcol).value
         if not pnum or not str(pnum).strip():
             continue
@@ -845,16 +845,16 @@ def audit_changes(prior: Dict[str, dict], rows: List["CpRow"]) -> Dict[str, dict
 
 
 def _fmt(v) -> str:
-    return "—" if v is None else f"${v:,.0f}"
+    return "-" if v is None else f"${v:,.0f}"
 
 
 def print_audit(audit: Dict[str, dict], tab_name: str) -> None:
     """The always-on change report. Loud, per division, never summarised away."""
     print()
-    print(_Term.color(_Term.BOLD, f"  WIP CHANGE AUDIT — {tab_name}"))
+    print(_Term.color(_Term.BOLD, f"  WIP CHANGE AUDIT - {tab_name}"))
     print("  " + "=" * 66)
     if not audit:
-        print("  (no previous data on this tab — this run sets the baseline)")
+        print("  (no previous data on this tab - this run sets the baseline)")
         return
     total = 0
     for div in ("MFD", "CP", "RP", "OTHER"):
@@ -889,7 +889,7 @@ def write_audit_xlsx(audit: Dict[str, dict], tab_name: str,
     from openpyxl import Workbook
     if out_path.with_name("~$" + out_path.name).exists():
         print(_Term.color(_Term.AMBER,
-              f"  ⚠ {out_path.name} is open in Excel — change file not written"))
+              f"  ⚠ {out_path.name} is open in Excel - change file not written"))
         return None
     wb = Workbook()
     ws = wb.active
@@ -959,7 +959,7 @@ def _master_title_prefix(wb) -> str:
 
 def _find_header_row(ws) -> Optional[int]:
     """Locate the table header row (the one holding 'PROJECT #') in the first
-    few rows — row 1 on plain tabs, below the title banner (and any legend
+    few rows - row 1 on plain tabs, below the title banner (and any legend
     block) on branded ones."""
     for r in range(1, min(ws.max_row or 0, 15) + 1):
         for c in range(1, (ws.max_column or 0) + 1):
@@ -973,7 +973,7 @@ def _write_summary(ws, cols_, col_letter_by_field, data_start: int,
     """WIP-master-style TOTALS row + FUTURE WIP CASH FLOW block (the user
     2026-07-16), written BELOW the table/appendix.
 
-    TOTALS uses SUBTOTAL(109, …) over the table's data rows — it counts only
+    TOTALS uses SUBTOTAL(109, …) over the table's data rows - it counts only
     VISIBLE rows, so filtering the table (e.g. hiding FTW BACKLOG or Closed)
     re-totals live. The cash-flow block derives everything from the TOTALS
     cells:  rev left = contract − earned · GP left = rev left − CTC ·
@@ -1011,7 +1011,7 @@ def _write_summary(ws, cols_, col_letter_by_field, data_start: int,
 
     # ── FUTURE WIP CASH FLOW block ──
     # Needs the earned-revenue + over/under-billing columns. A LEAN layout
-    # (Test - RP, the user 2026-08-07) drops them, so skip the block there —
+    # (Test - RP, the user 2026-08-07) drops them, so skip the block there -
     # the TOTALS row above is enough. Returns the first free row.
     if not all(L(f) for f in ("_earned_revenue", "underbillings",
                               "overbillings", "cost_to_complete")):
@@ -1071,12 +1071,12 @@ def _write_bottom_notes(ws, cols_, start_row: int,
     """The reference blocks that live UNDER the report (the user 2026-08-03:
     "put the rp legend in the bottom of the sheet"):
 
-      COLUMN GUIDE — every money column, its letter and how it is derived, in
+      COLUMN GUIDE - every money column, its letter and how it is derived, in
       the same CONTRACT/BUDGET/COSTS/… groups as the columns themselves, so a
       reader can follow the maths without asking.
-      LEGEND — the caller's own rows (RP categories, colour meanings).
+      LEGEND - the caller's own rows (RP categories, colour meanings).
 
-    Plain single-font cells throughout — inline rich text corrupts the file."""
+    Plain single-font cells throughout - inline rich text corrupts the file."""
     _bold = Font(name=MASTER_FONT_NAME, size=MASTER_FONT_SIZE, bold=True)
     fields = [f for _l, _w, f in cols_]
     group_of = {}
@@ -1134,31 +1134,31 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
     file is open in Excel).
 
     `appendix` = (section title, rows): written BELOW the main table under a
-    gray band — RP uses it for the FTW backlog (bid with the slab, not poured
+    gray band - RP uses it for the FTW backlog (bid with the slab, not poured
     yet; the user 2026-07-14: separated at the bottom, they read as expected
     wins rather than in-progress jobs).
 
     `title` (the user 2026-07-16): report banner across the top ("WIP REPORT
-    as of …") with the two banner rows reserved as logo space — embedded
+    as of …") with the two banner rows reserved as logo space - embedded
     images (the logo) survive every sync (openpyxl round-trips them; the
     rewrite only touches cells). `summary` adds the WIP-master-style TOTALS
-    row under the table (live SUBTOTALs — they follow the table filter) plus
+    row under the table (live SUBTOTALs - they follow the table filter) plus
     the FUTURE WIP CASH FLOW block derived from it.
 
-    `qbo_links_only` (the user 2026-07-29, now the DEFAULT — file hyperlinks
+    `qbo_links_only` (the user 2026-07-29, now the DEFAULT - file hyperlinks
     weigh the workbook down): suppress every file:// hyperlink (Synology
-    folders, takeoffs, draws, source workbooks, WHY) — the only links on the
+    folders, takeoffs, draws, source workbooks, WHY) - the only links on the
     report are the QBO deep links on the Billed/Costs cells. Pass False to
     restore the full click-to-verify link set.
 
     `legend` (the user 2026-07-31): rows of (text, font_rgb_or_None, bold)
     rendered under the banner, one plain single-font cell per row (rich text
-    is banned — it corrupts the workbook). Rows carrying `cell_marks`
-    ({field: rgb}) get the owner's colour re-applied to those cells — his
+    is banned - it corrupts the workbook). Rows carrying `cell_marks`
+    ({field: rgb}) get the owner's colour re-applied to those cells - his
     verified/changed/verify-me marks survive the sync.
 
     `plain_report` (the user 2026-08-06): the clean look for the bank-facing
-    Test-Master. Everything colour/working-tool is dropped — no coloured fonts
+    Test-Master. Everything colour/working-tool is dropped - no coloured fonts
     (no red review, no blue links), no QBO hyperlinks, no yellow input fills,
     no medium group rules, no edit-tracking baselines, no bottom column guide.
     Kept: the grey header, the thin grid, and the TOTALS + cash-flow summary a
@@ -1179,12 +1179,12 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
     # Never clobber a workbook that's open in Excel. Excel drops a
     # ~$<name> owner-lock file next to an open workbook (project-pnl
     # safe_save pattern, the user 2026-06-23). If present, skip with a clear
-    # message rather than writing underneath the open file — a
+    # message rather than writing underneath the open file - a
     # last-writer-wins save would silently lose the sync or the user's edits.
     lock = wip_path.with_name("~$" + wip_path.name)
     if lock.exists():
         print(_Term.color(_Term.AMBER,
-              f"  ⚠ {wip_path.name} looks OPEN in Excel — skipped the write to "
+              f"  ⚠ {wip_path.name} looks OPEN in Excel - skipped the write to "
               f"avoid overwriting it. Close the file and re-run."))
         return False
 
@@ -1198,7 +1198,7 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
         # A SHEET-level AutoFilter cannot coexist with the Table's own filter:
         # Excel calls the workbook damaged ("We found a problem with some
         # content…") and repairs it on open. A previous tool's filter survives
-        # the cell wipe — 'Test - RP' still carried A2:L69 from the old
+        # the cell wipe - 'Test - RP' still carried A2:L69 from the old
         # 12-column layout (2026-07-31). Clearing the ref also drops the
         # hidden _xlnm._FilterDatabase defined name openpyxl derives from it.
         ws.auto_filter.ref = None
@@ -1208,8 +1208,8 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
         ws.conditional_formatting = ConditionalFormattingList()
 
         # PRESERVE USER CELL COMMENTS across the full-replace (the user
-        # 2026-07-16: review notes typed on cells — e.g. "add the missing
-        # $5k" on a contract price — must survive every sync). Harvest them
+        # 2026-07-16: review notes typed on cells - e.g. "add the missing
+        # $5k" on a contract price - must survive every sync). Harvest them
         # keyed by (PROJECT #, header label) before the wipe; re-attach to
         # the same project/column after the rewrite. A comment whose project
         # left the tab is PRINTED, never silently dropped.
@@ -1251,7 +1251,7 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
         if owner_edits:
             print(_Term.color(_Term.AMBER,
                   f"  ✎ {len(owner_edits)} job(s) carry cell edits you made on "
-                  f"'{tab_name}' — keeping your values:"))
+                  f"'{tab_name}' - keeping your values:"))
             for _p, _f in sorted(owner_edits.items()):
                 print(f"      {_p}: " + ", ".join(
                     f"{k}={'blank' if v is None else format(v, ',.0f')}"
@@ -1260,7 +1260,7 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                                        else (appendix or []))
                       for r in (ap or [])]
         for row in list(rows) + _sect_rows:
-            # Snapshot what the SOURCES say BEFORE any override is applied —
+            # Snapshot what the SOURCES say BEFORE any override is applied -
             # this is what goes in the baseline column.
             row.src_vals = {f: getattr(row, f, None) for f in _OVERRIDE_FIELDS}
             for _f, _v in (owner_edits.get(row.project_num.strip().upper())
@@ -1285,10 +1285,10 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
         # attribute (value, hyperlink, number_format, fill, font) up to the
         # prior extent so leftovers can't leak into new rows.
         # openpyxl's delete_rows sometimes leaves formatting or hyperlinks
-        # behind on cells that were populated before — belt-and-suspenders
+        # behind on cells that were populated before - belt-and-suspenders
         # clear here to guarantee a clean slate.
         # Merged cells (a prior run's title banner) must be unmerged before
-        # the clear — writing to a MergedCell raises in openpyxl.
+        # the clear - writing to a MergedCell raises in openpyxl.
         for rng in list(ws.merged_cells.ranges):
             ws.unmerge_cells(str(rng))
         prior_max_row = ws.max_row or 0
@@ -1309,7 +1309,7 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                 cell.comment = None   # harvested above; stale ones must not linger
         if prior_max_row > 0:
             ws.delete_rows(1, prior_max_row)
-        # Reset stale hidden flags — rows shift between runs, and a hidden
+        # Reset stale hidden flags - rows shift between runs, and a hidden
         # flag left on the wrong row would silently hide live data.
         # Row HEIGHTS reset too (2026-08-03): the header/banner moves between
         # layouts, and a leftover 30pt height on what is now a blank or legend
@@ -1320,11 +1320,11 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
 
         # Title banner (the user 2026-07-16): "WIP REPORT as of …" across the
         # table width, two tall rows that double as the logo's parking space
-        # (the logo image floats over the cells — the rewrite never touches
+        # (the logo image floats over the cells - the rewrite never touches
         # it, so it stays put run after run).
         hdr_row = 1 + off
         if title:
-            # TITLE BLOCK — copied from the real 'WIP Master' sheet and
+            # TITLE BLOCK - copied from the real 'WIP Master' sheet and
             # BINDING (the user 2026-07-31: "keep the same format as the
             # original WIP Master sheet"). B1 = company + report name,
             # B2 = REPORT DATE, both Tahoma 8 bold and LEFT-aligned, a medium
@@ -1341,7 +1341,7 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                 ws.cell(row=1, column=c).border = Border(top=_MEDIUM)
                 ws.cell(row=2, column=c).border = Border(bottom=_MEDIUM)
 
-        # Header row — gray, bold, centered + wrapped, bordered. A MEDIUM
+        # Header row - gray, bold, centered + wrapped, bordered. A MEDIUM
         # vertical rule opens each column group (CONTRACT / BUDGET / COSTS /
         # PROFIT / BILLING / REMAINING / ANALYSIS) so the groups read as boxes
         # the way the owner's reference WIP does (the user 2026-08-03).
@@ -1360,7 +1360,7 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
         # Force a SINGLE valid selection on the frozen view. A reused tab can
         # carry stale sheet-view selections (a spurious `topRight` with no
         # vertical split, or duplicate `bottomLeft`) that survive the cell wipe
-        # exactly like the old auto-filter did — Excel then repairs the sheet
+        # exactly like the old auto-filter did - Excel then repairs the sheet
         # "View" ("Repaired Records: View from /xl/worksheets/sheetN.xml", the
         # user 2026-08-07). A top-only freeze has one bottomLeft pane.
         from openpyxl.worksheet.views import Selection
@@ -1389,7 +1389,7 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                 row, "_notes_all", sync_ts)
             # Re-attach any NOTES text a human typed on this job's row last
             # time (script segments regenerate themselves; only human text is
-            # carried) — the user 2026-07-31: "be sure to preserve any notes".
+            # carried) - the user 2026-07-31: "be sure to preserve any notes".
             # With a baseline column we know EXACTLY what the script wrote last
             # time, so a note deleted at its source can't resurrect (it was in
             # the baseline) and a note he typed here is always kept. Only when
@@ -1407,17 +1407,17 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
             # be worse than surfacing the issue.
             if row.co_revenue is None and row.co_cost_estimate is not None:
                 log.warning(
-                    "%s: CO Cost populated ($%s) with no CO Revenue — "
+                    "%s: CO Cost populated ($%s) with no CO Revenue - "
                     "refusing to write CO Cost. Investigate parse logic.",
                     row.project_num, row.co_cost_estimate
                 )
-                row.status_flags.append("Data integrity: CO Cost without CO Rev — dropped")
+                row.status_flags.append("Data integrity: CO Cost without CO Rev - dropped")
 
             _formula_now = (FORMULA_FIELDS | _LIVE_ROLLUP_FIELDS
                             if live_formulas else FORMULA_FIELDS)
             for c, (_label, _width, field_name) in enumerate(cols_, start=1):
                 if field_name in _formula_now:
-                    # Derived cell — write an Excel formula referencing
+                    # Derived cell - write an Excel formula referencing
                     # the input cells in the same row. Excel evaluates on
                     # open/edit so any input change auto-recalculates.
                     val = _build_formula(field_name, i, col_letter_by_field)
@@ -1433,7 +1433,7 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                 elif field_name in _PCT_FIELDS:
                     cell.number_format = PCT_FMT
                 # Yellow = sourced input (raw from takeoff / QBO); white = calc.
-                # A roll-up written as a live formula IS a calc — leave it white
+                # A roll-up written as a live formula IS a calc - leave it white
                 # so the yellow still means "a number came from a source".
                 if plain_report:
                     pass                       # bank report: no fills at all
@@ -1449,7 +1449,7 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
             # user 2026-07-16: links moved OFF the # and name cells into their
             # own columns so the identifiers can be selected/copied without
             # Excel navigating away. (file:// links still get rewritten by
-            # Windows/OneDrive Excel — kept for the Mac, the trace point.)
+            # Windows/OneDrive Excel - kept for the Mac, the trace point.)
             # Folder target: explicit folder_path (RP) else takeoff's parent (CP).
             if not qbo_links_only:
                 link_folder = (row.folder_path if row.folder_path is not None
@@ -1474,7 +1474,7 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                     _apply_hyperlink(ws.cell(row=i, column=col_idx["why_link"]),
                                      Path(row.why_link),
                                      row.why_fragment or "")
-            # QBO deep links on Billed/Costs — suppressed on the bank report
+            # QBO deep links on Billed/Costs - suppressed on the bank report
             # (internal links a bank can't use, and blue = font colour).
             if row.qbo_customer_id and QBO_REALM and not plain_report:
                 _cu = qbo_api.customer_url(row.qbo_customer_id, QBO_REALM)
@@ -1491,7 +1491,7 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
             # Review pass LAST so it wins over link styling: numbers that don't
             # look right (row.needs_review) render RED (the user 2026-07-13);
             # underline is kept where the cell carries a link. Skipped on the
-            # bank report — no coloured fonts there.
+            # bank report - no coloured fonts there.
             if row.needs_review and not plain_report:
                 for _f in (_MONEY_FIELDS | _PCT_FIELDS):
                     if _f in col_idx:
@@ -1501,7 +1501,7 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                             color="C00000",
                             underline=("single" if _c.hyperlink else None))
 
-            # The owner's colour marks are applied LAST — they outrank link
+            # The owner's colour marks are applied LAST - they outrank link
             # and review styling (the user 2026-07-31: "keep all the notes
             # and colors since they mean something"). Suppressed on the bank
             # report: his verified/changed marks are an internal working aid,
@@ -1521,7 +1521,7 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
             _emit(i, row)
             written_rows[row.project_num] = i
 
-        # Wrap the range in an Excel Table — gives filter/sort dropdowns and a
+        # Wrap the range in an Excel Table - gives filter/sort dropdowns and a
         # structured, clean look. Explicit gray header + borders above override
         # the table style, so it stays clean (no row stripes).
         last_row = len(rows) + hdr_row
@@ -1536,7 +1536,7 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
             showRowStripes=False, showColumnStripes=False)
         if default_filter_active and "_active_status" in col_idx:
             # Default view = Active only (the user 2026-07-14): apply the
-            # STATUS filter on the table AND hide the Closed rows — Excel
+            # STATUS filter on the table AND hide the Closed rows - Excel
             # shows them again with one filter click.
             from openpyxl.worksheet.filters import (AutoFilter, FilterColumn,
                                                      Filters)
@@ -1571,7 +1571,7 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
             next_row = band + len(ap_rows) + 2
 
         # Baseline mirror + the auto-colour rule (must run BEFORE the summary,
-        # so it sees only real data rows). Skipped on the bank report — it is
+        # so it sees only real data rows). Skipped on the bank report - it is
         # the locked deliverable, never edited, so edit-tracking is pointless
         # and its conditional formatting would add colour back.
         if not plain_report:
@@ -1582,7 +1582,7 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
             _clear_stale_columns(ws, len(cols_))
 
         # Flag unusually high margins (the user 2026-08-07: highlight any
-        # GROSS PROFIT % over 30% — too good to be true usually means a
+        # GROSS PROFIT % over 30% - too good to be true usually means a
         # missing cost). Amber fill via conditional formatting.
         if (gp_highlight_over is not None and "gross_profit_pct" in col_idx
                 and last_row >= data_start):
@@ -1604,8 +1604,8 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
 
         # LOCK the finished report (the user 2026-08-03: Test-Master "should be
         # locked by default because it's a read only" roll-up of the CP/RP tabs
-        # and the WIP Master MFD section). No password — Review ▸ Unprotect
-        # Sheet is one click — so this stops accidental typing, it doesn't take
+        # and the WIP Master MFD section). No password - Review ▸ Unprotect
+        # Sheet is one click - so this stops accidental typing, it doesn't take
         # the sheet away. Filtering, sorting and selecting stay enabled.
         if protect:
             ws.protection.sheet = True         # no password: one-click unprotect
@@ -1626,16 +1626,16 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
             else:
                 print(_Term.color(_Term.AMBER,
                       f"  ⚠ comment on {pnum} / {label} has no row this run "
-                      f"(line left the tab) — text was: {text!r}"))
+                      f"(line left the tab) - text was: {text!r}"))
 
-        # Atomic write — save to a temp file then os.replace() so a crash
+        # Atomic write - save to a temp file then os.replace() so a crash
         # or interruption can't leave a half-written WIP (safe_save pattern).
         tmp = wip_path.with_name(wip_path.name + ".tmp")
         wb.save(str(tmp))
         # Corruption gate (the user 2026-08-08): verify the freshly-written temp
         # against the Excel-repair checklist BEFORE swapping it in. If it would
         # trip "we found a problem with some content", raise and leave the good
-        # file untouched — a bad WIP never reaches the owner.
+        # file untouched - a bad WIP never reaches the owner.
         try:
             assert_clean(tmp)
         except ValueError:
@@ -1672,7 +1672,7 @@ def _qc_check(wip_path: Path, tab_name: str, expected_rows: int,
               active_only: bool) -> None:
     """Visual QC after EVERY write (the user 2026-07-15): re-open the saved
     file and verify what the reader believes matches what Excel will show.
-    Never raises — prints ✓/⚠ lines so a bad write is loud, not silent."""
+    Never raises - prints ✓/⚠ lines so a bad write is loud, not silent."""
     try:
         wb = load_workbook(wip_path)
         ws = wb[tab_name]
@@ -1686,7 +1686,7 @@ def _qc_check(wip_path: Path, tab_name: str, expected_rows: int,
         last_data = hdr
         for r in range(hdr + 1, ws.max_row + 1):
             # The summary block (TOTALS + FUTURE WIP CASH FLOW) is written
-            # below the data in column 1 — on a tab whose first column IS
+            # below the data in column 1 - on a tab whose first column IS
             # 'PROJECT #' its labels would otherwise be miscounted as data
             # rows. Everything from TOTALS down is the summary; stop there.
             first = ws.cell(r, 1).value
@@ -1715,7 +1715,7 @@ def _qc_check(wip_path: Path, tab_name: str, expected_rows: int,
         probs = []
         if sheet_filter:
             probs.append(f"sheet AutoFilter {sheet_filter} coexists with the "
-                         f"table filter — Excel will demand a repair")
+                         f"table filter - Excel will demand a repair")
         if n != expected_rows:
             probs.append(f"rows {n} ≠ expected {expected_rows}")
         if active_only and vis_closed:
@@ -1723,7 +1723,7 @@ def _qc_check(wip_path: Path, tab_name: str, expected_rows: int,
         if not tbl_ok:
             probs.append("table does not span all data rows")
         if lcols and links == 0 and n:
-            # Only meaningful when the layout HAS link columns — the master
+            # Only meaningful when the layout HAS link columns - the master
             # tab dropped them (qbo_links_only, the user 2026-07-29).
             probs.append("no source links found")
         if probs:
@@ -1747,7 +1747,7 @@ def _shorten(path: Path, max_len: int = 70) -> str:
 
 
 def _wip_metrics(r: CpRow) -> Dict[str, Optional[float]]:
-    """Compute the derived WIP numbers in Python for TERMINAL DISPLAY only —
+    """Compute the derived WIP numbers in Python for TERMINAL DISPLAY only -
     mirrors the Excel formulas exactly (same blank-propagation), so the
     dry-run preview matches what the workbook will show after recalc."""
     F = r.contract_price          # Revised Contract
@@ -1781,14 +1781,14 @@ def _print_rows_table(rows: List[CpRow], wip_path: Path, tab_name: str = TEST_TA
     """Dry-run preview. Vertical per-project detail for small runs (the
     single-project verify case), compact table for bulk runs. Values match
     the Excel formulas via _wip_metrics."""
-    _section(f"DRY RUN — would write {len(rows)} row(s) to {tab_name!r}")
+    _section(f"DRY RUN - would write {len(rows)} row(s) to {tab_name!r}")
     print(f"  target: {_Term.color(_Term.DIM, _shorten(wip_path))}")
 
     clean = sum(1 for r in rows if not r.status_flags)
     flagged = len(rows) - clean
 
     if len(rows) <= 3:
-        # Full vertical WIP card per project — every column, easy to verify.
+        # Full vertical WIP card per project - every column, easy to verify.
         for r in rows:
             m = _wip_metrics(r)
             status = "Closed" if r.is_completed else "Active"
@@ -1827,7 +1827,7 @@ def _print_rows_table(rows: List[CpRow], wip_path: Path, tab_name: str = TEST_TA
             else:
                 print(_Term.color(_Term.GREEN, "    ✓ no flags"))
     else:
-        # Compact table — the headline columns for scanning many jobs.
+        # Compact table - the headline columns for scanning many jobs.
         # NOTES (informational: Draw #, no-draw) and FLAGS (true script must-fix
         # issues) are kept in separate trailing columns.
         W_P, W_N, W_M, W_PC, W_NOTE = 8, 24, 13, 6, 44
@@ -1874,7 +1874,7 @@ def _print_rows_table(rows: List[CpRow], wip_path: Path, tab_name: str = TEST_TA
           f"{_Term.color(_Term.GREEN, str(clean) + ' clean')}  ·  "
           f"{_Term.color(_Term.AMBER, str(flagged) + ' flagged')}")
 
-    # Audit trail — file paths the reader touched. Shown when small enough
+    # Audit trail - file paths the reader touched. Shown when small enough
     # to be useful (≤ 5 projects), so single-project runs always get it.
     if len(rows) <= 5:
         print()

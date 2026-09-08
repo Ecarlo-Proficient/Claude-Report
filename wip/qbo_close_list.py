@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """
-qbo_close_list.py — Diff the user's "really open" project list vs QBO's active customers.
+qbo_close_list.py - Diff the user's "really open" project list vs QBO's active customers.
 
 Outputs three sections:
 
-  CLOSE THESE        — active in QBO, NOT in the user's open list. Mark inactive in QBO.
-                       MFD projects are EXCLUDED from this list — the user handles MFD
+  CLOSE THESE        - active in QBO, NOT in the user's open list. Mark inactive in QBO.
+                       MFD projects are EXCLUDED from this list - the user handles MFD
                        closures manually. They appear in MFD ACTIVE instead.
-  MFD ACTIVE         — every active MFD customer in QBO (manual review).
-  KEEP ACTIVE        — exact matches between the user's list and QBO.
-  QUESTIONS          — in the user's open list but NOT found as active in QBO.
+  MFD ACTIVE         - every active MFD customer in QBO (manual review).
+  KEEP ACTIVE        - exact matches between the user's list and QBO.
+  QUESTIONS          - in the user's open list but NOT found as active in QBO.
                        Either inactive (needs reactivation) or never project-tagged,
                        OR base name like "CP861" when QBO only has "CP861-7E" / "CP861-BP".
 
-Matching is **strict** — exact project # only. -FTW is a separate project,
+Matching is **strict** - exact project # only. -FTW is a separate project,
 not a variant of the base. So if you want both `RP7186` and `RP7186-FTW` open,
 both must be in your list explicitly.
 
@@ -47,7 +47,7 @@ _PROJ_RE = re.compile(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# The user's open list — the source of truth.
+# The user's open list - the source of truth.
 # ──────────────────────────────────────────────────────────────────────────────
 TED_OPEN_PROJECTS = """
 MFD133
@@ -270,13 +270,13 @@ def main() -> int:
     print(f"[info] active project-tagged: {len(active_by_proj)} unique project numbers")
     print(f"[info] inactive project-tagged: {len(inactive_by_proj)} unique project numbers")
 
-    # Strict matching — exact project # only. -FTW is a separate project.
+    # Strict matching - exact project # only. -FTW is a separate project.
     def is_open(qbo_proj: str) -> bool:
         return qbo_proj in open_list
 
-    close_these: List[Tuple[str, str, str]] = []   # (proj, cust_id, name) — to auto-close (NO MFDs)
+    close_these: List[Tuple[str, str, str]] = []   # (proj, cust_id, name) - to auto-close (NO MFDs)
     keep_active: List[Tuple[str, str, str]] = []
-    mfd_active: List[Tuple[str, str, str]] = []    # ALL active MFDs — the user handles manually
+    mfd_active: List[Tuple[str, str, str]] = []    # ALL active MFDs - the user handles manually
 
     for proj, customers in sorted(active_by_proj.items()):
         is_mfd = proj.upper().startswith("MFD")
@@ -290,7 +290,7 @@ def main() -> int:
             else:
                 close_these.append((proj, cust_id, name))
 
-    # In the user's list but not active in QBO (strict only — exact match)
+    # In the user's list but not active in QBO (strict only - exact match)
     qbo_active_set = set(active_by_proj.keys())
     qbo_inactive_set = set(inactive_by_proj.keys())
     questions: List[Tuple[str, str]] = []
@@ -303,7 +303,7 @@ def main() -> int:
 
     # ── Output ────────────────────────────────────────────────────────────────
     print("\n" + "=" * 70)
-    print(f"  CLOSE THESE — {len(close_these)} active QBO customers to auto-close (NO MFDs)")
+    print(f"  CLOSE THESE - {len(close_these)} active QBO customers to auto-close (NO MFDs)")
     print("=" * 70)
     print(f"  {'Project #':<16} {'Customer ID':<10}  Display Name")
     print(f"  {'-'*16} {'-'*10}  {'-'*40}")
@@ -311,7 +311,7 @@ def main() -> int:
         print(f"  {proj:<16} {cust_id:<10}  {name}")
 
     print("\n" + "=" * 70)
-    print(f"  MFD ACTIVE — {len(mfd_active)} active MFD customers (your manual review)")
+    print(f"  MFD ACTIVE - {len(mfd_active)} active MFD customers (your manual review)")
     print("=" * 70)
     print(f"  {'Project #':<16} {'Customer ID':<10}  Display Name")
     print(f"  {'-'*16} {'-'*10}  {'-'*40}")
@@ -319,7 +319,7 @@ def main() -> int:
         print(f"  {proj:<16} {cust_id:<10}  {name}")
 
     print("\n" + "=" * 70)
-    print(f"  KEEP ACTIVE — {len(keep_active)} customers matched (exact) to your open list")
+    print(f"  KEEP ACTIVE - {len(keep_active)} customers matched (exact) to your open list")
     print("=" * 70)
     print(f"  {'Project #':<16} {'Customer ID':<10}  Display Name")
     print(f"  {'-'*16} {'-'*10}  {'-'*40}")
@@ -327,9 +327,9 @@ def main() -> int:
         print(f"  {proj:<16} {cust_id:<10}  {name}")
 
     print("\n" + "=" * 70)
-    print(f"  QUESTIONS — {len(questions)} projects in your list NOT exact-matched in QBO")
+    print(f"  QUESTIONS - {len(questions)} projects in your list NOT exact-matched in QBO")
     print("=" * 70)
-    print(f"  (e.g. 'CP861' here means QBO has CP861-7E and CP861-BP — list those instead)")
+    print(f"  (e.g. 'CP861' here means QBO has CP861-7E and CP861-BP - list those instead)")
     for proj, status in questions:
         print(f"  {proj:<16}  {status}")
 

@@ -1,10 +1,10 @@
-"""WIP pre-write AUDIT — the inspect-before-you-write report (the user
+"""WIP pre-write AUDIT - the inspect-before-you-write report (the user
 2026-08-07: "how can I verify what you're picking up before you update the WIP,
 and I need an audit/log of the add/remove-jobs logic and the non-QBO values").
 
 READ-ONLY. Given the rows the pipeline is ABOUT to write, the prior tab's job
-set, and the full classified set, it writes one plain workbook — one row per
-job — showing, for the NON-QBO parts you can't take on faith:
+set, and the full classified set, it writes one plain workbook - one row per
+job - showing, for the NON-QBO parts you can't take on faith:
 
   · Δ vs the current report: ADDED / REMOVED / SAME, with the REASON
   · CONTRACT + the exact source cell it came from
@@ -51,7 +51,7 @@ def _contract_src(row) -> str:
         return s
     d = _div(row.project_num)
     return ("CP folder draw (G702)" if d == "Commercial"
-            else "'WIP Master' tab" if d == "Multi-Family" else "—")
+            else "'WIP Master' tab" if d == "Multi-Family" else "-")
 
 
 def _etc_src(row) -> str:
@@ -60,7 +60,7 @@ def _etc_src(row) -> str:
         return s
     d = _div(row.project_num)
     return ("CP folder draw / proposal" if d == "Commercial"
-            else "'WIP Master' tab" if d == "Multi-Family" else "—")
+            else "'WIP Master' tab" if d == "Multi-Family" else "-")
 
 
 def build_rows(new_rows: List, prior: Dict[str, dict],
@@ -77,7 +77,7 @@ def build_rows(new_rows: List, prior: Dict[str, dict],
         seen.add(pn)
         was = prior.get(pn)
         status = "SAME" if was else "ADDED"
-        reason = "" if was else f"new — {getattr(row, 'audit_origin', 'in source')}"
+        reason = "" if was else f"new - {getattr(row, 'audit_origin', 'in source')}"
         out.append(dict(
             pn=row.project_num, name=row.project_name or "",
             section=getattr(row, "section", "") or "",
@@ -94,12 +94,12 @@ def build_rows(new_rows: List, prior: Dict[str, dict],
         if pn in seen:
             continue
         if pn in excluded_jobs:
-            reason = "REMOVED by rule — on the bank-exclude list"
+            reason = "REMOVED by rule - on the bank-exclude list"
         elif pn in classified_by:
-            reason = (f"off the bank report — section "
+            reason = (f"off the bank report - section "
                       f"'{classified_by[pn].section}' (kept on the working tab)")
         else:
-            reason = "left the source — no longer in the RP file / folders"
+            reason = "left the source - no longer in the RP file / folders"
         out.append(dict(
             pn=pn, name=was.get("name") or "", section="", status="REMOVED",
             reason=reason, contract=was.get("rev_contract"), contract_src="(prior value)",
@@ -117,7 +117,7 @@ def write_audit(new_rows: List, prior: Dict[str, dict], all_classified: List,
     wb = Workbook()
     ws = wb.active
     ws.title = "WIP Audit"
-    ws.cell(1, 1, f"WIP PRE-WRITE AUDIT — {tab_name}").font = Font(name=FONT, size=10, bold=True)
+    ws.cell(1, 1, f"WIP PRE-WRITE AUDIT - {tab_name}").font = Font(name=FONT, size=10, bold=True)
     ws.cell(2, 1, f"{sum(r['status']=='ADDED' for r in rows)} added · "
                   f"{sum(r['status']=='REMOVED' for r in rows)} removed · "
                   f"{sum(r['status']=='SAME' for r in rows)} unchanged   "
