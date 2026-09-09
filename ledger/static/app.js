@@ -7172,8 +7172,12 @@ let WR = null;
 let wrDecisions = {};
 let wrDrop = new Set();
 let wrPoll = null;
+let wrView = "slides";        // "slides" = one job at a time (default) · "list" = every job
+let wrIdx = 0;                // the slide being shown
+let wrTouched = {};           // pn -> "acc" | "skip" once the owner decided the whole job
 
 const WR_DIV_ORDER = ["Commercial", "Residential", "Multi-Family"];
+const WR_DIV_SHORT = { "Commercial": "CP", "Residential": "RP", "Multi-Family": "MFD" };
 const wrChanged = c => c.filter(f => f.changed);
 function wrDelta(f) {
   const a = f.was == null ? null : Number(f.was), b = f.now == null ? null : Number(f.now);
@@ -7205,7 +7209,7 @@ async function loadWipReview(force) {
 
 function wrInitDecisions() {
   // Fresh review → default marks: QBO facts approved, PM fields left for an answer.
-  wrDecisions = {}; wrDrop = new Set();
+  wrDecisions = {}; wrDrop = new Set(); wrTouched = {}; wrIdx = 0;
   for (const r of WR.records) {
     if (r.status === "SAME") continue;
     const marks = {};
@@ -7226,6 +7230,7 @@ function renderWipReview() {
   }
   $("#wrFilters").hidden = false; $("#wrSync").hidden = false;
   renderWrStats();
+  if (wrView === "slides") { renderWrSlides(); return; }
   const div = $("#wrDivision").value, st = $("#wrStatus").value;
   const q = ($("#wrSearch").value || "").trim().toLowerCase();
   const changedOnly = $("#wrChangedOnly").checked;
@@ -7248,6 +7253,114 @@ function renderWipReview() {
   if (!shown) body.innerHTML = `<div class="wr-empty"><p>Nothing matches the filters.</p></div>`;
   wrUpdateApproveCount();
 }
+
+// ── one job at a time ────────────────────────────────────────────────────────
+function wrVisible() {
+  // The same filters as the list, but ONE mixed stream (no division bands): what
+  // changes first, then new jobs, then the ones coming off; job # inside each.
+  const div = $("#wrDivision").value, st = $("#wrStatus").value;
+  const q = ($("#wrSearch").value || "").trim().toLowerCase();
+  const changedOnly = $("#wrChangedOnly").checked;
+  const order = { CHANGED: 0, REVERSED: 0, ADDED: 1, REMOVED: 2, SAME: 3 };
+  return WR.records.filter(r => (!div || r.division === div) && (!changedOnly || r.status !== "SAME")
+      && (!st || r.status === st) && (!q || (r.project_num + " " + r.name).toLowerCase().includes(q)))
+    .sort((a, b) => (order[a.status] - order[b.status]) || a.project_num.localeCompare(b.project_num));
+}
+
+function wrWhat(r) {
+  // The one line the owner reads first, in plain words.
+  if (r.status === "ADDED") return "New on the WIP";
+  if (r.status === "REMOVED") return "Comes off the WIP";
+  const ch = wrChanged(r.fields).map(f => f.label.toLowerCase());
+  if (!ch.length) return "No change";
+  return "Changes: " + ch.join(", ");
+}
+
+function wrWhy(r) {
+  // Why, from the row's own notes/flags and the section it sits in - never invented.
+  const bits = [];
+  if (r.section) bits.push(r.section);
+  if (r.flags) bits.push(r.flags);
+  const rev = wrChanged(r.fields).filter(f => f.reversed);
+  if (rev.length) bits.push("Went DOWN: " + rev.map(f => f.label.toLowerCase()).join(", ") + " - the source is named on the line");
+  return bits.join(" · ");
+}
+
+function renderWrSlides() {
+  const body = $("#wrBody");
+  const recs = wrVisible();
+  body.innerHTML = "";
+  if (!recs.length) { body.innerHTML = `<div class="wr-empty"><p>Nothing matches the filters.</p></div>`; wrUpdateApproveCount(); return; }
+  if (wrIdx >= recs.length) wrIdx = recs.length - 1;
+  if (wrIdx < 0) wrIdx = 0;
+  const r = recs[wrIdx];
+  const decided = Object.keys(wrTouched).filter(pn => recs.some(x => x.project_num === pn)).length;
+  const nav = document.createElement("div"); nav.className = "wr-slide-nav";
+  nav.innerHTML = `<button class="btn small" id="wrPrev" type="button" ${wrIdx === 0 ? "disabled" : ""}>← Previous</button>
+    <span>${wrIdx + 1} of ${recs.length} · ${decided} decided</span>
+    <button class="btn small" id="wrNext" type="button" ${wrIdx >= recs.length - 1 ? "disabled" : ""}>Next →</button>`;
+  body.appendChild(nav);
+  body.appendChild(wrSlide(r));
+  $("#wrPrev").onclick = () => { wrIdx--; renderWrSlides(); };
+  $("#wrNext").onclick = () => { wrIdx++; renderWrSlides(); };
+  wrUpdateApproveCount();
+}
+
+function wrSlide(r) {
+  const card = document.createElement("div");
+  card.className = "wr-slide wr-" + r.status.toLowerCase();
+  const gen = (WR.generated || {})[r.division] || {};
+  const asof = gen.at ? fmtDate(gen.at, true) : "";
+  const removed = r.status === "REMOVED", added = r.status === "ADDED";
+  const state = wrTouched[r.project_num];
+  let html = `<div class="wr-slide-head"><span class="wr-slide-pn">${_ge(r.project_num)}</span>
+      <span class="wr-slide-name">${_ge(r.name)}</span>
+      <span class="wr-slide-div">${_ge(WR_DIV_SHORT[r.division] || r.division)} · ${_ge(r.tab || "")}</span></div>
+    <div class="wr-slide-what">${_ge(wrWhat(r))}</div>`;
+  const why = wrWhy(r); if (why) html += `<div class="wr-slide-why">${_ge(why)}</div>`;
+  html += `<table class="wr-tbl"><thead><tr><th></th><th>On the WIP now${asof ? " (" + _ge(asof) + ")" : ""}</th><th>After this update</th><th style="text-align:left">Where the new number comes from</th></tr></thead><tbody>`;
+  for (const f of r.fields || []) {
+    const chg = f.changed, cls = (chg ? "chg" : "") + (f.reversed ? " rev" : "");
+    const src = chg ? (f.source || "") + (f.note ? (f.source ? " · " : "") + f.note : "") : "";
+    html += `<tr class="${cls}"><td>${_ge(f.label)}</td><td class="was">${money(f.was)}</td><td class="now">${chg ? money(f.now) : ""}</td><td class="src">${_ge(src)}</td></tr>`;
+  }
+  html += `</tbody></table>`;
+  html += `<div class="wr-slide-actions">
+      <button class="btn big primary" id="wrAcc" type="button">${added ? "Add it" : removed ? "Take it off" : "Accept"}</button>
+      <button class="btn big" id="wrSkip" type="button">${added ? "Leave it off" : removed ? "Keep it on" : "Keep as is"}</button>
+      <span class="wr-slide-state ${state === "acc" ? "acc" : state === "skip" ? "skip" : ""}">${state === "acc" ? "✓ accepted" : state === "skip" ? "kept as is" : "not decided"}</span></div>
+    <div class="wr-slide-keys">Keys: A accept · S keep · ← → move · Sync writes when you are done</div>`;
+  card.innerHTML = html;
+  card.querySelector("#wrAcc").onclick = () => wrDecideJob(r, true);
+  card.querySelector("#wrSkip").onclick = () => wrDecideJob(r, false);
+  return card;
+}
+
+function wrDecideJob(r, yes) {
+  // Whole-job decision: every changed field approved (or none), an added job kept on
+  // (or left off). A REMOVED job has no approvable fields - "keep it on" is honoured by
+  // the writer through the decisions' revert values, so it is recorded here only.
+  if (r.status === "ADDED") { if (yes) wrDrop.delete(r.project_num); else wrDrop.add(r.project_num); }
+  for (const f of wrChanged(r.fields)) wrSet(r.project_num, f.key, yes);
+  wrTouched[r.project_num] = yes ? "acc" : "skip";
+  const recs = wrVisible();
+  if (wrIdx < recs.length - 1) wrIdx++;
+  renderWrSlides();
+}
+
+document.addEventListener("keydown", e => {
+  if (wrView !== "slides" || !WR || !WR.ready) return;
+  const page = document.querySelector('.tab-page[data-tab="wipreview"]');
+  if (!page || page.hidden) return;
+  if (/input|textarea|select/i.test((e.target && e.target.tagName) || "")) return;
+  const recs = wrVisible(); if (!recs.length) return;
+  if (e.key === "ArrowRight") { if (wrIdx < recs.length - 1) { wrIdx++; renderWrSlides(); } }
+  else if (e.key === "ArrowLeft") { if (wrIdx > 0) { wrIdx--; renderWrSlides(); } }
+  else if (e.key === "a" || e.key === "A") wrDecideJob(recs[wrIdx], true);
+  else if (e.key === "s" || e.key === "S") wrDecideJob(recs[wrIdx], false);
+  else return;
+  e.preventDefault();
+});
 
 function renderWrStats() {
   const el = $("#wrStats"); if (!el) return;
@@ -7896,6 +8009,11 @@ function init() {
   { const el = $("#btnAcctDownload"); if (el) el.onclick = _acctDoDownload; }
   for (const id of ["#acctSearch", "#acctDivision"]) { const el = $(id); if (el) el.addEventListener("input", () => { if (ACCT && ACCT.ok) renderAccounting(); }); }
   { const el = $("#wrCompute"); if (el) el.onclick = runWipReview; }
+  document.querySelectorAll("#wrView .seg-btn").forEach(b => b.onclick = () => {
+    wrView = b.dataset.view; wrIdx = 0;
+    document.querySelectorAll("#wrView .seg-btn").forEach(x => x.classList.toggle("on", x === b));
+    if (WR && WR.ready) renderWipReview();
+  });
   { const el = $("#wrSync"); if (el) el.onclick = syncWipReview; }
   { const el = $("#wrApproveQbo"); if (el) el.onclick = () => wrBulk("qbo"); }
   { const el = $("#wrApproveAll"); if (el) el.onclick = () => wrBulk("all"); }

@@ -1538,3 +1538,36 @@ td.pnl-expand .pnl-live .pnl-codegrp { break-after: avoid; }
 .wr-asof { font-variant-numeric: tabular-nums; }
 .wr-stale { color: var(--neg-text); font-weight: 700; }
 .acct-class-bad { color: var(--neg-text); font-weight: 700; }
+
+/* ── WIP Review · one job at a time (owner 2026-09-09: "one slide = one job, where it was on
+   the WIP and what changed, braindead simple") - same decisions model as the list view ── */
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.seg-btn { border: 0; background: transparent; color: var(--text-dim); padding: 5px 10px; font: inherit; font-size: .86em; cursor: pointer; }
+.seg-btn.on { background: var(--accent); color: #fff; }
+.wr-slide { border: 1px solid var(--border); border-radius: 12px; background: var(--surface); padding: 18px 22px; margin: 10px auto 0; max-width: 820px; }
+.wr-slide-nav { display: flex; align-items: center; justify-content: space-between; max-width: 820px; margin: 0 auto; padding: 4px 2px; color: var(--text-dim); font-size: .9em; }
+.wr-slide-nav .btn { min-width: 84px; }
+.wr-slide-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.wr-slide-pn { font-size: 1.45em; font-weight: 700; font-variant-numeric: tabular-nums; }
+.wr-slide-name { font-size: 1.05em; }
+.wr-slide-div { margin-left: auto; color: var(--text-dim); font-size: .86em; }
+.wr-slide-what { margin: 10px 0 4px; font-size: 1.05em; font-weight: 600; }
+.wr-slide-why { color: var(--text-dim); margin-bottom: 12px; line-height: 1.45; }
+.wr-tbl { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.wr-tbl th { text-align: right; font-weight: 600; color: var(--text-dim); font-size: .8em; text-transform: uppercase; letter-spacing: .04em; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.wr-tbl th:first-child, .wr-tbl td:first-child { text-align: left; }
+.wr-tbl td { padding: 8px; text-align: right; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); }
+.wr-tbl tr.chg td { font-weight: 700; }
+.wr-tbl tr.chg td:first-child { font-weight: 600; }
+.wr-tbl td.was { color: var(--text-dim); }
+.wr-tbl tr.chg td.was { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--text-dim) 55%, transparent); }
+.wr-tbl td.src { text-align: left; color: var(--text-dim); font-size: .82em; font-weight: 400; max-width: 260px; }
+.wr-tbl tr.rev td.now { color: var(--neg-text); }
+.wr-slide-actions { display: flex; gap: 10px; align-items: center; margin-top: 16px; }
+.wr-slide-actions .btn.big { padding: 9px 22px; font-size: 1em; }
+.wr-slide-state { margin-left: auto; font-weight: 600; }
+.wr-slide-state.acc { color: var(--pos); }
+.wr-slide-state.skip { color: var(--text-dim); }
+.wr-slide-keys { color: var(--text-dim); font-size: .78em; margin-top: 8px; }
+.wr-slide.wr-removed { border-left: 4px solid var(--neg); }
+.wr-slide.wr-added { border-left: 4px solid var(--accent); }

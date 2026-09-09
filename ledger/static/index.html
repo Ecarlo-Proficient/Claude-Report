@@ -241,6 +241,10 @@
           <b>Test-Master</b> (all three). Read-only until you hit Sync.</p>
         <div class="kpi-row" id="wrStats"></div>
         <div class="filters" id="wrFilters" hidden>
+          <span class="seg" id="wrView" title="One job at a time, or the whole list">
+            <button type="button" class="seg-btn on" data-view="slides">One job at a time</button>
+            <button type="button" class="seg-btn" data-view="list">All jobs</button>
+          </span>
           <input type="search" id="wrSearch" placeholder="Find a job #, name…" autocomplete="off">
           <select id="wrDivision"><option value="">All divisions</option><option>Commercial</option><option>Residential</option><option>Multi-Family</option></select>
           <select id="wrStatus"><option value="">All changes</option><option value="CHANGED">Changed</option><option value="REVERSED">Reversed (went down)</option><option value="ADDED">Added</option><option value="REMOVED">Removed</option></select>
