@@ -793,6 +793,18 @@ marks (merged by txn id) and prunes long-cleared checks. Output `~/Documents/Com
 Money Out Register.xlsx` (chmod 600); the aged-&gt;30-days unmarked checks are the chase
 list, surfaced on the company dashboard.
 
+**`one-offs/wip_month_end.py`** (read-only master + QBO, 2026-09-09) - the month-end WIP
+report as of a cutoff date in the bank layout the 12-31-25 / 3-31-26 reports use, plus the
+RP jobs that closed that month. Population, contract, ETC, type and bonded come from the
+live master's `Test-Master` tab (nothing invented); costs and billed are the SAME project
+P&L pull the WIP readers do (`shared/qbo_api.fetch_project_pl`), date-bounded to the cutoff.
+Sheet 2 lists closed RP jobs from evidence, since `Test - RP` carries no Closed status:
+billed out (billed reaches the contract, final invoice in the month or left the crew
+schedule), left the schedule with billing open, and invoiced-but-not-on-the-WIP. Schedules
+read from `OPERATIONS/SCHEDULE` (`Main Schedule` tab, prior month-end vs cutoff). Output
+`<WIP History>/WIP m-d-yy.xlsx`, fingerprint-scrubbed and `xlsx_verify` clean; gate it with
+`wip/wip_qc.py` alongside the earlier reports before it is sent.
+
 **`one-offs/sales_rep_leads_report.py`** (read-only ledger) - one outreach rep's live book,
 rendered for the estimators so nobody cold-calls an account that is mid-conversation. Reads
 `customer` + `sales_touch` (the Notion Customer List feed, `ledger/load_customers.py`) and
