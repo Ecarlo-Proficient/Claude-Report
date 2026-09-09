@@ -9,7 +9,8 @@ HOW THE REPORT IS BUILT (the standard split - see the wip-schedule-standard
 reference: estimator data from the master / the folder, accounting data from QBO):
   * MFD + CP: population, contract, ETC, type and bonded = the live master's
     Test-Master tab. Nothing invented. (CP/MFD add a job rarely; the master is
-    current for them.)
+    current for them.) A row the master cannot price takes its JobTread
+    approved proposal (price + cost), named on stdout - CP997, 2026-09-09.
   * RP: every daily schedule from the prior month-end through the cutoff is
     read ('Main Schedule' tab, PROJECT column, section bands; FLATWORK rows and
     flatwork WRECK rows are the -FTW line). That roster - plus the lines the RP
@@ -676,6 +677,23 @@ def main() -> int:
                 tab = row.get(f"tab_{fld}")
                 if tab is not None and row[fld] > tab + 1:
                     ahead.append((row["proj"], fld, row[fld], tab))
+    # A CP/MFD row the master cannot price (no draw, no proposal PDF in the folder)
+    # takes its JobTread approved proposal, the way RP does (CP997, 2026-09-09).
+    unpriced = [r for r in fixed_rows if not (r["contract"] and r["etc"])]
+    if unpriced:
+        jt_fixed = jt_proposals({r["proj"] for r in unpriced})
+        for r in unpriced:
+            docs = jt_fixed.get(r["proj"])
+            if not docs:
+                continue
+            price = round(sum(pr for pr, _c, _d in docs), 2)
+            cost = round(sum(c for _p, c, _d in docs), 2)
+            if not r["contract"] and price:
+                r["contract"] = price
+            if not r["etc"] and cost:
+                r["etc"] = cost
+            print(f"    {r['proj']}: contract {price:,.0f} / ETC {cost:,.0f} from the JobTread approved "
+                  f"proposal ({max(d for _p, _c, d in docs)}) - not in the master yet")
     print(f"  MFD/CP: {len(fixed_rows)} jobs pulled"
           + (f" · no QBO project: {', '.join(missing)}" if missing else "")
           + (f" · {len(ahead)} figure(s) higher than the live tab (bills dated in the month, entered after the sync)" if ahead else ""))
