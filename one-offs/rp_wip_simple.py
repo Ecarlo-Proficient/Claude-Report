@@ -718,6 +718,28 @@ def main() -> int:
     dropped = kept
     print(f"  dropped AND unbilled: {len(dropped)}")
 
+    # 4c) ONE JOB = ONE LINE across every band (the user 2026-09-09: RP6938-FTW
+    # printed under DROPPED with the proposal's 75,682 AND under FTW WITH COSTS
+    # with the General Lista's 12,128.50 - two contracts for one job, and the
+    # master then read the first). A line already on the main table, the CP
+    # band or the dropped band never repeats in the started band: the dropped
+    # row keeps its place and says what the other test found.
+    taken = {r["line"]: r for r in rows + cp_rows + dropped}
+    still_started = []
+    for r in started:
+        first = taken.get(r["line"])
+        if first is None:
+            still_started.append(r)
+            continue
+        k = r.get("contract")
+        first["action"] = ((first.get("action") or "") +
+                           " · also FTW WITH COSTS (General Lista price "
+                           + (f"${k:,.0f}" if isinstance(k, (int, float)) else "n/a")
+                           + ") - one job, one line; settle the contract")
+        print(f"  GATE: {r['line']} is already a line ({first.get('section')}) - "
+              f"not repeated under FTW WITH COSTS")
+    started = still_started
+
     # 5) render --------------------------------------------------------
     def fill(ws, title):
         ws["A1"] = title
