@@ -88,9 +88,13 @@ from rp_schedule_wip_preview import (                          # noqa: E402
     _is_tract, find_proposal, read_main_schedule)
 from rp_jobtread_coverage import ORG_ID as JT_ORG, pave as jt_pave   # noqa: E402
 
+_WIP_DIR = paths.onedrive_base() / "Company Files - WIP Report"
+# The master was renamed 'WIP - MASTER new.xlsx' -> 'WIP - MASTER.xlsx' on 2026-09-09;
+# take whichever exists so neither name breaks a run (WIP_EXCEL_PATH still wins).
 MASTER = paths.get_path(
     "WIP_EXCEL_PATH",
-    paths.onedrive_base() / "Company Files - WIP Report" / "WIP - MASTER new.xlsx")
+    next((f for f in (_WIP_DIR / "WIP - MASTER.xlsx", _WIP_DIR / "WIP - MASTER new.xlsx") if f.exists()),
+         _WIP_DIR / "WIP - MASTER.xlsx"))
 HISTORY = paths.get_path(
     "WIP_HISTORY_DIR",
     paths.onedrive_base() / "Company Files - WIP Report" / "WIP History")
