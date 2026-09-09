@@ -8,6 +8,31 @@ manual close), RP (no draws — expenses → invoice → profit).
 
 ## DONE / FINALIZED
 
+- **A BUSINESS-DEVELOPMENT CUT IS NOT A JOB COST (2026-09-09).** Some outside
+  parties are paid a cut of the work they bring in and invoice it against
+  whichever job is open, writing the job number on the line themselves in their
+  own coding. Those lines were landing in job cost, so the jobs that happened to
+  be open read as losers and the jobs that were not read as winners - and which
+  jobs got hit depended on the FLAG the run used (`--legacy` reads line text and
+  picks them up, `--class-project` does not), not on anything real. The owner:
+  "is it a job cost or not. it's not it's overhead."
+  `shared/bizdev_cut.is_cut(vendor, account, text)` is the ONE test, and
+  `gather_transactions.take()` diverts a matching line before it can reach
+  `cogs`/`exp`, so the Job P&L totals AND the division Overview built from those
+  workbooks are both clean and nobody's pay is printed on a workbook they can
+  open. The Job P&L carries one grey line under Costs to Date - the amount
+  excluded and nothing else, no vendor, no breakdown. The test is one question,
+  "did this line build the job?": their draw, commission, allowance, estimating
+  fee, software and their own staff's hours are overhead even with a job number
+  and a job cost code on the line; material, fuel, safety, rentals and forms/
+  batters they laid out for the job stay in cost. **The ACCOUNT is not the test** -
+  the same cut has been booked to a COGS account and an operating account on the
+  same job, and real fronted material has been booked to the COGS one. The
+  register (`<CompanyHealth>/bizdev_cut.json`, `ACB_BIZDEV_CUT_FILE`) lives
+  outside the repo because it names vendors; **with no register `is_cut()` is
+  always False and no report changes**, deliberately - a missing file must never
+  silently move money. Self-test: `python3 shared/bizdev_cut.py`.
+
 - **SCOPE-BASED RP JOBS GET A SHEET PER INVOICE (2026-09-08, RP6586 the test
   subject).** The owner: "we have two different types, a one invoice one job vs a
   scope based invoices for one job like this one. the P&L should have sheets like

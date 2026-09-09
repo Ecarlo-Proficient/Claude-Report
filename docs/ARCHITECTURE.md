@@ -58,6 +58,7 @@ shared/                the ONLY importable common code
 ├─ draw_moves.py       the PUSH: a bill carried into a later draw by agreement — <CompanyHealth>/draw_moves.json (project-pnl ↔ bill-tracker ↔ ledger)
 ├─ rp_invoicing.py     one-invoice vs scope-based RP job, off the invoice memos (project-pnl ↔ one-offs/rp_stage_scan)
 ├─ job_rulings.py      the RULINGS: a known loss / accepted overrun the owner settled once — <CompanyHealth>/job_rulings.json (wip readers KNOWN: note ↔ wip_qc auto sign-off ↔ project-pnl block ↔ ledger over-budget rule + project page)
+├─ bizdev_cut.py      the ONE test for a BUSINESS-DEVELOPMENT CUT (their draw/fee/estimating/staff hours = overhead, only what they fronted for the job is job cost) — <CompanyHealth>/bizdev_cut.json (project-pnl keeps it out of job cost ↔ the division Overview built from those workbooks ↔ the owner's own cut analysis)
 ├─ takeoff_etc.py      blank ETC → takeoff cost sheet (rp_wip_reader ↔ schedule preview)
 ├─ xlsx_verify.py      Excel-corruption gate: every xlsx writer calls assert_clean before handing over
 ├─ pnl_paths.py        resolve a project's P&L workbook + "last pulled" mtime (ledger ↔ project-pnl); RP job folder via the takeoff index (RP P&L → <builder>/<address>/Profit and Loss on Common, 2026-09-08)

@@ -94,6 +94,7 @@ from shared import pnl_paths
 from shared.draws import read_pay_app, learn_period_shape, infer_period_tag
 from shared import draw_moves
 from shared import job_rulings   # standing per-job rulings -> KNOWN LOSSES / RULINGS block
+from shared import bizdev_cut   # the ONE test for a business-development cut
 from shared import rp_invoicing  # one-invoice vs scope-based RP job, off the invoices
 from shared.qbo_api import (
     API_BASE, MINOR_VERSION, PROJ_RE,
@@ -1902,6 +1903,7 @@ def gather_transactions(
 
     cogs: Dict[str, list] = {}
     exp: Dict[str, list] = {}
+    bizdev: List[dict] = []        # cut lines kept OUT of job cost, totalled for the note
     cogs_accounts: Dict[str, float] = {}   # account name -> total (for P&L)
     exp_accounts: Dict[str, float] = {}
 
@@ -1941,6 +1943,18 @@ def gather_transactions(
                    "date": date, "desc": _xml_clean((ln.get("Description") or memo or "").strip()),
                    "memo": memo,   # bill PrivateNote — its own column on the sheet
                    "account": name, "amount": amt}
+            # A BUSINESS-DEVELOPMENT CUT IS NOT A JOB COST (the owner 2026-09-09:
+            # "is it a job cost or not. it's not it's overhead"). Some outside
+            # parties invoice their draw against whichever job is open and write
+            # the job number on the line themselves, so it lands in job cost and
+            # the jobs that happened to be open look like losers. shared/bizdev_cut
+            # is the ONE test; with no register nothing is diverted. It never
+            # reaches cogs/exp, so the P&L totals AND the division Overview built
+            # from them are both clean, and nobody's pay is printed on a workbook
+            # they can open.
+            if bizdev_cut.is_cut(vendor, name, rec["desc"]):
+                bizdev.append(rec)
+                continue
             if is_cogs:
                 cogs.setdefault(vendor, []).append(rec)
                 cogs_accounts[name] = cogs_accounts.get(name, 0.0) + amt
@@ -1971,6 +1985,7 @@ def gather_transactions(
             "not_billed_ret": sum(i.get("not_billed_ret", 0.0) for i in income),
             "cogs": sum(r["amount"] for v in cogs.values() for r in v),
             "exp": sum(r["amount"] for v in exp.values() for r in v),
+            "bizdev": sum(r["amount"] for r in bizdev),
         },
     }
 
@@ -3089,6 +3104,7 @@ def build_sheet_pl(
     underbill_total: float = 0.0,
     underbill_count: int = 0,
     income_rows: Optional[List[dict]] = None,
+    bizdev_total: float = 0.0,   # cut kept OUT of job cost - shown as a note
     simple: bool = False,
     acct_anchors: Optional[Dict[str, int]] = None,
     realm: str = "",
@@ -3479,6 +3495,13 @@ def build_sheet_pl(
         bd_row = row("Billed to Date (incl. retainage)", formula=f"={Btot}", bold=True)
         _qbo_link(bd_row, _cust_url)
         ctd_row = row("Costs to Date", None)
+        # Say that something was left out, without saying who was paid. These
+        # workbooks are shared with the people the cut goes to, so the note
+        # carries the amount and nothing else (the owner 2026-09-09).
+        _bd = float(bizdev_total or 0.0)
+        if abs(_bd) >= 0.5:
+            row(bizdev_cut.note(_bd), None, indent=1, size=BASE_SIZE - 1,
+                color="808080")
         if c_ref is None:                    # see the _no_projection branch above
             c_ref = f"$B${bd_row}"
             e_ref = f"$B${ctd_row}"
@@ -7378,6 +7401,7 @@ def generate_project_pnl(
         alt_overhead_pct=_alt_oh, underbill_total=underbill_total,
         underbill_count=underbill_count, income_rows=tx.get("income"),
         simple=simple, acct_anchors=acct_anchors, realm=company_id,
+        bizdev_total=float((tx.get("tot") or {}).get("bizdev", 0.0) or 0.0),
     )
     # Order (the user 2026-07-16; Labor/Concrete first among the analysis tabs
     # 2026-07-29 — they're the PM/ops manager's main view): P&L, Transactions,
