@@ -221,21 +221,38 @@ def read_master():
 
 def read_rp_file():
     """Every RP line in the owner's RP WIP file (all bands): contract / ETC /
-    address / builder by project #. First copy wins on duplicates."""
-    out = {}
+    address / builder by project #, plus the DUPLICATE GATE: a job listed on
+    two rows is recorded with every copy (row, contract, ETC) in `dups` so
+    the snapshot names them and nothing picks a copy silently. The first
+    copy is what the numbers come from - the same rule the master's reader
+    applies - but a disagreeing duplicate is a finding, never a choice made
+    here (RP6938-FTW, 2026-09-09: 75,682 on one row, 12,128.50 on another)."""
+    out, dups = {}, {}
     if not RP_FILE.exists():
-        return out
+        return out, dups
     wb = load_workbook(RP_FILE, data_only=True)
     ws = wb["RP WIP"] if "RP WIP" in wb.sheetnames else wb.worksheets[0]
     for r in range(1, ws.max_row + 1):
         job = str(ws.cell(r, 1).value or "").strip().upper()
-        if not re.match(r"^RP\d{4}(-FTW)?$", job) or job in out:
+        if not re.match(r"^RP\d{4}(-FTW)?$", job):
             continue
-        out[job] = {"address": str(ws.cell(r, 2).value or "").strip(),
-                    "builder": str(ws.cell(r, 3).value or "").strip(),
-                    "contract": _num(ws.cell(r, 4).value), "etc": _num(ws.cell(r, 5).value)}
+        rec = {"row": r, "address": str(ws.cell(r, 2).value or "").strip(),
+               "builder": str(ws.cell(r, 3).value or "").strip(),
+               "contract": _num(ws.cell(r, 4).value), "etc": _num(ws.cell(r, 5).value)}
+        if job in out:
+            dups.setdefault(job, [out[job]]).append(rec)
+            continue
+        out[job] = rec
     wb.close()
-    return out
+    return out, dups
+
+
+def dup_note(copies) -> str:
+    """One sentence naming every row a duplicated job sits on."""
+    parts = [f"row {c['row']}: contract {c['contract'] or 0:,.0f} / ETC {c['etc'] or 0:,.0f}" for c in copies]
+    same = len({(c["contract"], c["etc"]) for c in copies}) == 1
+    return ("DUPLICATE IN THE RP FILE (" + "; ".join(parts) + ") - "
+            + ("same numbers, one row must go" if same else "NUMBERS DIFFER - settle which is real; first row used"))
 
 
 def _qbo_name(proj_map, proj):
@@ -649,7 +666,11 @@ def main() -> int:
         return 2
 
     company, master_rows = read_master()
-    rp_file = read_rp_file()
+    rp_file, rp_dups = read_rp_file()
+    if rp_dups:
+        print(f"  GATE - {len(rp_dups)} job(s) listed more than once in the RP file:")
+        for job, copies in rp_dups.items():
+            print(f"    {job}: {dup_note(copies)}")
     master_rp = {r["proj"]: r for r in master_rows if r["proj"].startswith("RP")}
     fixed_rows = [r for r in master_rows if not r["proj"].startswith("RP")]
     print(f"Test-Master: {len(master_rows)} jobs ({len(master_rp)} RP) · RP file: {len(rp_file)} lines · cutoff {cutoff_iso}")
@@ -783,6 +804,8 @@ def main() -> int:
             elif m and "Custom" in m["type"]:
                 home = "Custom"
             notes = "; ".join(x for x in (detail, note) if x)
+            if ln in rp_dups:
+                notes = dup_note(rp_dups[ln]) + ("; " + notes if notes else "")
             if not K:
                 notes += "; NO CONTRACT - estimator to price"
             if not E:
