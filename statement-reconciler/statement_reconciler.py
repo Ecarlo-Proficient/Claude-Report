@@ -232,7 +232,11 @@ QBO_CUSTOMER_OPEN_BAL_LINE_RE = re.compile(
     (?P<amount>\(?-?[\d,]+\.\d{2}\)?)\s*$""",
     re.VERBOSE | re.MULTILINE,
 )
-QBO_GRAND_TOTAL_RE = re.compile(r"^\s*TOTAL\s+([\d,]+\.\d{2})\s*$", re.MULTILINE)
+# Some CoB reports print the grand total across TWO columns ("Open Balance" +
+# "Amount"), e.g. "TOTAL 383,940.69 383,940.69" - allow the extra trailing
+# amount(s) or the total goes undetected and Amount Due reads $0 (Estrada CoB).
+QBO_GRAND_TOTAL_RE = re.compile(
+    r"^\s*TOTAL\s+([\d,]+\.\d{2})(?:\s+\(?-?[\d,]+\.\d{2}\)?)*\s*$", re.MULTILINE)
 # Allow asterisks/lowercase in body so QBO's "**EXEMPT" / "*EXEMPT" markers
 # and " - Other" suffix on the parent customer header still register as
 # sub-customers. (Example: "Dallas Area Habitat for Humanity **EXEMPT".)
@@ -1773,6 +1777,22 @@ def parse_statement_qbo_statement(full_text: str) -> Tuple[str, str, float, List
                 tail = tail[:50].rsplit(" ", 1)[0]
             addr = tail
         lines.append(StmtLine(date=date, ref=ref, amount=amount, po=po, address=addr))
+
+    # A "Balance forward" row rolls all prior-period open items into one opening
+    # amount. It has no invoice ref and no running-balance pair, so STMT_LINE_RE
+    # skips it - but it MUST be counted or the line sum falls short of Amount Due
+    # by the entire carried balance (CowTown 09-01: a 638,262.39 forward on an
+    # 810,837.10 statement). It is a lump - prior invoices aren't itemized here -
+    # so it carries no ref to match against a QBO bill.
+    bf = re.search(
+        r"^\s*(\d{1,2}/\d{1,2}/\d{2,4})\s+Balance\s+forward\s+"
+        r"(\(?-?[\d,]+\.\d{2}\)?)\s*$",
+        full_text, re.I | re.MULTILINE)
+    if bf and _paren_amount(bf.group(2)) != 0.0:
+        lines.insert(0, StmtLine(
+            date=_norm_date(bf.group(1)), ref="",
+            amount=_paren_amount(bf.group(2)),
+            address="Balance forward (prior open balance, not itemized)"))
 
     return vendor, stmt_date, amt_due, lines
 
