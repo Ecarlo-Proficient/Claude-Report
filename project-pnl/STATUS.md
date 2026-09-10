@@ -8,6 +8,30 @@ manual close), RP (no draws — expenses → invoice → profit).
 
 ## DONE / FINALIZED
 
+- **MFD IS 9%, AND THE P&L BLOCK READS TOP TO BOTTOM (2026-09-10).** The owner:
+  "do 9% moving forward for MFD and remove 10% everywhere. let's just use 9%."
+  An MFD workbook used to carry BOTH a 9% MFD view and a 10% company view, plus a
+  `SNAPSHOT - MFD vs COMPANY` block, so every figure had two answers and the reader
+  picked one. `_alt_oh` is gone: MFD sets `overhead_pct = 9.0` and there is no second
+  view on any division. **CP and RP still run the 10% company rate** - this moved MFD
+  only, confirmed with the owner.
+  ACTUALS now reads **Billed -> Costs -> Gross Profit -> Gross Profit % -> less
+  Overhead -> Net Profit -> Net Profit %**: the percentage sits with the number it
+  belongs to. "REAL" is gone from the P&L rows and the draw KPI cards - with one rate
+  there is nothing for it to distinguish.
+
+- **ONE ZOOM, ONE LABEL WIDTH - both post-passes in `safe_save` (2026-09-10).**
+  `_apply_zoom` sets 110 on every sheet. Set per call-site it drifted: Transactions,
+  By Account, Reconciliations and Draw Data never set one at all (Excel opened them
+  at whatever it liked) and a draw tab had wandered to 138. `_wrap_long_labels` wraps
+  a label rather than widening the column for it, and runs BEFORE `_apply_left_gutter`
+  while the label column is still A. A column has ONE width, so the longest string in
+  it sets the width for every row below - the P&L label column was 52 wide because of
+  a few long COGS account names while the block the owner reads tops out at 36
+  ("do they really have to be this wide? does it mess with the below cells?").
+  The column is now 40 in code (43.6 delivered) and 11 labels wrap instead. Rows with
+  an explicit height are skipped so nothing is squashed.
+
 - **A BUSINESS-DEVELOPMENT CUT IS NOT A JOB COST (2026-09-09).** Some outside
   parties are paid a cut of the work they bring in and invoice it against
   whichever job is open, writing the job number on the line themselves in their

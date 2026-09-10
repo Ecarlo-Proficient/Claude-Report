@@ -1669,6 +1669,45 @@ def _ref_first_row(ref: str) -> int:
     return int(digits) if digits else 0
 
 
+def _apply_zoom(wb: Workbook, zoom: int = 110) -> None:
+    """One zoom for the whole workbook (the owner 2026-09-10: "default zoom
+    should be 110").
+
+    Set per call-site it drifts: four sheets never set one at all, so Excel
+    opened them at whatever it felt like, and one draw tab had wandered to 138.
+    Doing it here means a new sheet cannot be born at the wrong zoom."""
+    for ws in wb.worksheets:
+        ws.sheet_view.zoomScale = zoom
+        ws.sheet_view.zoomScaleNormal = zoom
+
+
+def _wrap_long_labels(wb: Workbook, col: int = 1, slack: float = 1.0) -> None:
+    """Wrap a label instead of widening the column for it.
+
+    A column has ONE width, so the longest string in it sets the width for every
+    row below - which is why the P&L label column was 52 wide when the block the
+    owner reads needs 36 (2026-09-10: "do they really have to be this wide? does
+    it mess with the below cells?"). The few long account names now wrap onto a
+    second line and the column stays narrow. Runs BEFORE the gutter insert, so
+    the label column is still column A. Rows with an explicit height are left
+    alone - Excel auto-fits the rest."""
+    from openpyxl.utils import get_column_letter
+    for ws in wb.worksheets:
+        d = ws.column_dimensions.get(get_column_letter(col))
+        if not d or not d.width:
+            continue
+        limit = d.width - slack
+        for row in ws.iter_rows(min_col=col, max_col=col):
+            c = row[0]
+            if not isinstance(c.value, str) or len(c.value) <= limit:
+                continue
+            if ws.row_dimensions[c.row].height:
+                continue
+            a = c.alignment
+            c.alignment = Alignment(horizontal=a.horizontal, vertical=a.vertical,
+                                    indent=a.indent, wrap_text=True)
+
+
 def _apply_left_gutter(wb: Workbook, n: int = 1, width: float = GUTTER_W) -> None:
     """Insert `n` narrow columns at the left of every sheet that doesn't
     already have one, and hang the row-1 title back into the gutter.
@@ -1790,7 +1829,9 @@ def safe_save(wb: Workbook, out_path: Path) -> Optional[Path]:
               f"overwriting it. Close it and re-run.")
         return None
     _normalise_body_font(wb)
+    _wrap_long_labels(wb)     # before the gutter: the label column is still A
     _apply_left_gutter(wb)
+    _apply_zoom(wb)
     tmp = out_path.with_name(out_path.name + ".tmp")
     wb.save(str(tmp))
     # Rule 5b: never hand over a workbook that hasn't passed the corruption
@@ -2460,7 +2501,7 @@ def build_sheet_transactions(
     SZ = BASE_SIZE - 1
     ws = wb.create_sheet("Transactions")
     ws.sheet_view.showGridLines = False
-    ws.sheet_view.zoomScale = 100
+    ws.sheet_view.zoomScale = 110
     ws.sheet_properties.outlinePr.summaryBelow = False  # +/- sits on vendor row
     for col, w in (("A", 18), ("B", 15), ("C", 44), ("D", 18),
                    ("E", 18), ("F", 18), ("G", 18), ("H", 11)):
@@ -3119,7 +3160,11 @@ def build_sheet_pl(
     ws = wb.create_sheet("P&L")
     ws.sheet_view.showGridLines = False
     ws.sheet_view.zoomScale = 110
-    ws.column_dimensions["A"].width = 48
+    # 40, not 48: the block the owner actually reads tops out at 36 characters
+    # ("less: Overhead (9% of contract)"). The old 48 was sized for a handful of
+    # long COGS account names, and _wrap_long_labels now wraps those instead of
+    # making every row on the sheet that wide (the owner 2026-09-10).
+    ws.column_dimensions["A"].width = 40
     ws.column_dimensions["B"].width = 22
 
     oh = overhead_pct / 100.0          # e.g. 0.11
@@ -3505,9 +3550,14 @@ def build_sheet_pl(
         if c_ref is None:                    # see the _no_projection branch above
             c_ref = f"$B${bd_row}"
             e_ref = f"$B${ctd_row}"
-        gpa_row = row("Gross Profit (to date)",
+        gpa_row = row("Gross Profit",
                       formula=f"=B{bd_row}-B{ctd_row}",
                       bold=True, border=TOP_BORDER)
+        # The % sits with the number it belongs to (the owner 2026-09-10):
+        # "billed to date, costs to date, gross profit and then the %. then put
+        # the oh and Net Profit."
+        row("Gross Profit %", formula=f'=IF(B{bd_row}=0,"",B{gpa_row}/B{bd_row})',
+            fmt=PCT_FMT, bold=True)
         # The one line that was wrong (the user 2026-09-03: "the oh number
         # never adds up to the % of the contract"): it charged 10% of BILLED,
         # so it moved with every draw. Overhead is 10% of the CONTRACT - the
@@ -3520,10 +3570,12 @@ def build_sheet_pl(
                       f"less: Overhead ({overhead_pct:.0f}% of total billed — "
                       f"no contract on any WIP report)",
                       formula=f"=-{oh}*{c_ref}", indent=1, color="595959")
-        rnp_row = row("REAL Net Profit (to date)",
+        # "don't say real just put the net profit" (the owner 2026-09-10) - there
+        # is one overhead rate now, so there is nothing for REAL to distinguish.
+        rnp_row = row("Net Profit",
                       formula=f"=B{gpa_row}+B{aoh_row}",
                       bold=True, border=TOP_BORDER)
-        row("REAL Net Profit %",
+        row("Net Profit %",
             formula=f'=IF(B{bd_row}=0,"",B{rnp_row}/B{bd_row})',
             fmt=PCT_FMT, bold=True)
         # Two progress metrics (the user 2026-07-16): cost-based drives Earned
@@ -4058,8 +4110,8 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
                  ("GROSS PROFIT\nincome − costs", gp, KPI_FMT, True),
                  ("GROSS MARGIN %", (gp / rev if rev else 0), "0.0%", True),
                  (_oh_label, -oh, KPI_FMT, False),
-                 ("REAL NET PROFIT", npf, KPI_FMT, True),
-                 ("REAL NET %", (npf / rev if rev else 0), "0.0%", True)]
+                 ("NET PROFIT", npf, KPI_FMT, True),
+                 ("NET %", (npf / rev if rev else 0), "0.0%", True)]
         band(r, KPI_COLS[0], KPI_COLS[-1] + KPI_SPAN - 1,
              f"{title}   ·   {periodtxt}")
         r += 1
@@ -5071,7 +5123,7 @@ def build_sheet_labor_concrete(
 
     ws = wb.create_sheet(kind)
     ws.sheet_view.showGridLines = False
-    ws.sheet_view.zoomScale = 100
+    ws.sheet_view.zoomScale = 110
     SZ = BASE_SIZE                                    # flat 12 — no 11pt anywhere
     ROW_H = 17
 
@@ -6847,10 +6899,14 @@ def generate_project_pnl(
     # doesn't use it, so don't litter CP folders with it (the user 2026-07-02). rd_dir
     # stays defined so index_pm_reports() just finds nothing for non-MFD.
     is_mfd = proj.upper().startswith("MFD")
-    # Dual overhead view (MFD 9% on costs vs Company 10% on revenue) is MFD-only —
-    # MFD is a different player. CP (and any non-MFD draw job) shows ONLY the company
-    # overhead; keep MFD out of it (the user 2026-07-02). None => single company view.
-    _alt_oh = 9.0 if is_mfd else None
+    # MFD IS 9% AND ONLY 9% (the owner 2026-09-10: "do 9% moving forward for MFD
+    # and remove 10% everywhere. let's just use 9%"). The workbook used to carry
+    # BOTH a 9% MFD view and a 10% company view side by side, which meant every
+    # MFD figure had two answers and the reader had to pick one. One rate, one
+    # answer. CP and RP keep the 10% company rate - this flag only moves MFD.
+    if is_mfd:
+        overhead_pct = 9.0
+    _alt_oh = None      # no second view on any division
     # CP drops into the awarded-project folder on the Common drive; MFD stays in the
     # OneDrive tree (the user 2026-07-02).
     proj_dir, _cp_note = _resolve_project_out_dir(proj, out_dir, forced_out)
