@@ -4,6 +4,17 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Boot is ~30x faster + funding-box polish (owner 2026-09-10).** Three things off one screenshot:
+  (1) **"The ledger is getting slower and slower to open."** `_att_counts` was called once PER ROW
+  inside the bills / invoices / payments loops, and every call re-ran its cache-signature query
+  (`COUNT(*)` + `MAX(loaded_at)` over the 77k-row attachment table). `_fetch_ap` alone ran it 3,304
+  times = **6.85 s**; it grew with every table. A 2 s time-guard on the signature check (the table
+  can't change within a request) drops `_fetch_ap` to **173 ms** and `/api/data?light` (the boot
+  load) from **7.1 s to 0.22 s**, with identical output. (2) **Coverage table:** "Period covered" is
+  now the FIRST column. (3) **Funding box colour** encodes OUR side only - red only when we owe money
+  on an earlier draw, amber when earlier bills show $0 open / no pay date, green otherwise (it was red
+  on every awaiting-funding draw). (4) An **× to dismiss** the funding message + a "Show funding
+  status" button to bring it back, remembered per browser (`localStorage ppFundingHidden`).
 - **Draws headline the MONTH and show the period they cover (owner 2026-09-10: "tell me the draw
   month it says on the invoice ... no period is anywhere").** MFD bills monthly draws ("September
   Draw 2026"), so the old `draw\s*#?\s*(\d+)` parse read the YEAR as the draw number and every draw

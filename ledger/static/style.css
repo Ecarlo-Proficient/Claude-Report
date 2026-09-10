@@ -1393,8 +1393,12 @@ html[data-theme="dark"] .bills-cap.pp-push { color: var(--warn-text); }
 .datef-reset { margin-left: 4px; }
 
 /* the project page (2026-09-02) */
-.pp-unlock { margin: 0 18px 10px; padding: 12px 14px; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--neg) 45%, var(--border)); background: color-mix(in srgb, var(--neg) 6%, var(--surface)); font-size: 1.02em; }
+.pp-unlock { position: relative; margin: 0 18px 10px; padding: 12px 32px 12px 14px; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--neg) 45%, var(--border)); background: color-mix(in srgb, var(--neg) 6%, var(--surface)); font-size: 1.02em; }
 .pp-unlock.ok, .pp-unlock .ok { border-color: color-mix(in srgb, var(--pos) 45%, var(--border)); background: color-mix(in srgb, var(--pos) 6%, var(--surface)); }
+.pp-unlock.caution { border-color: color-mix(in srgb, var(--warn, #b8860b) 45%, var(--border)); background: color-mix(in srgb, var(--warn, #b8860b) 6%, var(--surface)); }
+.pp-x { position: absolute; top: 6px; right: 8px; width: 20px; height: 20px; padding: 0; line-height: 18px; border: 0; border-radius: 6px; background: transparent; color: color-mix(in srgb, var(--text) 45%, transparent); font-size: 16px; cursor: pointer; }
+.pp-x:hover { background: color-mix(in srgb, var(--text) 10%, transparent); color: var(--text); }
+.pp-funding-show { margin: 0 18px 10px; }
 .pp-unlock-b { margin-top: 4px; color: var(--text); }
 .pp-unlock-b.ok { color: var(--pos); }
 .pp-unlock.pp-rulings { border-color: color-mix(in srgb, var(--warn, #b8860b) 45%, var(--border)); background: color-mix(in srgb, var(--warn, #b8860b) 6%, var(--surface)); }

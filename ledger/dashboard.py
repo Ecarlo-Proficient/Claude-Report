@@ -1709,14 +1709,27 @@ def _audits_for(pn: str) -> list:
         return []
 
 
-_ATT_CACHE = {"sig": None, "counts": {}}
+_ATT_CACHE = {"sig": None, "counts": {}, "checked": 0.0}
+_ATT_SIG_TTL = 2.0   # seconds - see the docstring
 def _att_counts(con) -> dict:
     """{(etype, txn_id) -> file count} from the attachment table, cached per table state (row count +
-    latest load) so every payload can stamp a 📎 without a join per row. {} until the loader has run."""
+    latest load) so every payload can stamp a 📎 without a join per row. {} until the loader has run.
+
+    The signature query itself - COUNT(*) + MAX(loaded_at) over the WHOLE attachment table (77k rows
+    and climbing) - is the expensive part when this is called once PER ROW inside a bills / invoices /
+    payments loop: it was re-scanning the table thousands of times per request and was essentially the
+    entire ~7 s boot cost (owner 2026-09-10: "the ledger is getting slower and slower to open"). The
+    table cannot change within one request, so re-check the signature at most once every _ATT_SIG_TTL
+    seconds and otherwise hand back the map already in hand. A reload is still picked up on the next
+    request - a fresh connection, always more than the TTL later - so a 📎 is never more than ~2 s stale."""
+    now = time.monotonic()
+    if _ATT_CACHE["counts"] and (now - _ATT_CACHE["checked"]) < _ATT_SIG_TTL:
+        return _ATT_CACHE["counts"]
     try:
         sig = con.execute("SELECT COUNT(*), MAX(loaded_at) FROM attachment").fetchone()
     except sqlite3.OperationalError:
         return {}
+    _ATT_CACHE["checked"] = now
     sig = tuple(sig)
     if _ATT_CACHE["sig"] != sig:
         counts: dict = {}

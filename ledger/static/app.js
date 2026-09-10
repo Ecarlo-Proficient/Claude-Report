@@ -3657,16 +3657,29 @@ async function openProjectPage(pn) {
   const F = d.funding || {}, nx = F.next_draw;
   const nInv = d.draws.filter(x => !x.no_draw).length, nNo = d.draws.length - nInv;   // the same count the P&L block shows, plus the not-yet-drawn bucket named
   const s2 = sec("How we get funded", `${nInv} draw${nInv === 1 ? "" : "s"} invoiced${nNo ? ` + ${nNo} not yet drawn` : ""} · GC owes ${money(d.draws.reduce((s, x) => s + num(x.ar_open), 0))} · ${srcText("Bill Tracker", syncedAt("sync-ap"), "loaded")} · ${srcText("QuickBooks invoices", loadedAt("AR (invoices)"), "loaded")}`);
-  const unlock = document.createElement("div"); unlock.className = "pp-unlock" + (nx ? "" : " ok");
+  // Colour encodes OUR side only (owner 2026-09-10: "why is the box red?" - it was red on every
+  // awaiting-funding draw, even when nothing blocked it). Red only when we owe money on an earlier
+  // draw; amber when earlier bills show $0 open / no pay date (confirm); green otherwise.
+  const blk = nx ? (F.blockers || []) : [];
+  const blocked = nx && (F.blockers_total || 0) > 0.005;
+  const caution = nx && blk.length && !blocked;
+  const unlock = document.createElement("div"); unlock.className = "pp-unlock" + (blocked ? "" : caution ? " caution" : " ok");
   if (nx) {
-    const blk = F.blockers || [];
     unlock.innerHTML = `<div class="pp-unlock-h">Next money in: <b>${_ge(nx.label.split(/\s+[\u2014\u2013-]\s+/)[0])}${_ge(drawTag(nx))}</b> · GC owes <b>${_ge(money(nx.ar_open))}</b>${nx.ar_date ? " · invoiced " + _ge(fmtDate(nx.ar_date)) : ""}${drawSpan(nx) ? " · covers " + _ge(drawSpan(nx)) : ""}</div>`
-      + (blk.length ? (F.blockers_total > 0.005
+      + (blk.length ? (blocked
             ? `<div class="pp-unlock-b">Blocked by <b>${blk.length}</b> unpaid bill${blk.length === 1 ? "" : "s"} on earlier draws · <b>${_ge(money(F.blockers_total))}</b> to pay (their unconditional waivers release this draw)</div>`
             : `<div class="pp-unlock-b"><b>${blk.length}</b> bill${blk.length === 1 ? "" : "s"} on earlier draws show no payment date yet ($0 open) - confirm they are paid and collect the waivers, then this draw is clear on our side</div>`)
                     : `<div class="pp-unlock-b ok">No unpaid bills on earlier draws - nothing on our side blocks this draw${F.own_unpaid > 0.005 ? `; ${_ge(money(F.own_unpaid))} of its own bills still to pay once funded` : ""}.</div>`);
   } else unlock.innerHTML = `<div class="pp-unlock-h ok">Nothing outstanding - the GC has paid every draw on file.</div>`;
-  s2.appendChild(unlock);
+  // owner 2026-09-10: an × to dismiss this message, and a button to bring it back (remembered per browser).
+  const _fundHidden = () => { try { return localStorage.getItem("ppFundingHidden") === "1"; } catch (e) { return false; } };
+  const reopen = document.createElement("button"); reopen.type = "button"; reopen.className = "btn small pp-funding-show"; reopen.textContent = "Show funding status";
+  const xb = document.createElement("button"); xb.type = "button"; xb.className = "pp-x"; xb.title = "Hide the funding status"; xb.setAttribute("aria-label", "Hide the funding status"); xb.textContent = "×";
+  xb.onclick = () => { try { localStorage.setItem("ppFundingHidden", "1"); } catch (e) { /* private mode */ } unlock.hidden = true; reopen.hidden = false; };
+  reopen.onclick = () => { try { localStorage.removeItem("ppFundingHidden"); } catch (e) { /* private mode */ } unlock.hidden = false; reopen.hidden = true; };
+  unlock.appendChild(xb);
+  unlock.hidden = _fundHidden(); reopen.hidden = !unlock.hidden;
+  s2.appendChild(unlock); s2.appendChild(reopen);
   const tools = document.createElement("div"); tools.className = "ip-tools";
   const seg = document.createElement("div"); seg.className = "seg";
   for (const [k, lbl] of [["unpaid", "Unpaid bills"], ["all", "All bills"]]) { const b = document.createElement("button"); b.type = "button"; b.className = "seg-btn" + (k === "unpaid" ? " on" : ""); b.textContent = lbl;
@@ -3784,7 +3797,7 @@ function _ppTabs(d, nxInv) {
 function _ppCoverage(d, nxInv) {
   const wrap = document.createElement("div"); wrap.className = "table-scroll pp-cov-wrap";
   const t = document.createElement("table"); t.className = "grid pp-cov";
-  t.innerHTML = "<thead><tr><th class='left'>Draw</th><th class='left'>Invoice</th><th class='left'>Date</th><th class='left'>Period covered</th><th class='right'>Net billed</th><th class='left'>GC</th><th class='right'>Costs</th><th class='right'>Gross</th><th class='right'>Margin</th><th class='right'>Overhead</th><th class='right'>Net</th><th class='left'>Stage</th></tr></thead>";
+  t.innerHTML = "<thead><tr><th class='left'>Period covered</th><th class='left'>Draw</th><th class='left'>Invoice</th><th class='left'>Date</th><th class='right'>Net billed</th><th class='left'>GC</th><th class='right'>Costs</th><th class='right'>Gross</th><th class='right'>Margin</th><th class='right'>Overhead</th><th class='right'>Net</th><th class='left'>Stage</th></tr></thead>";
   const tb = document.createElement("tbody");
   const tot = { income: 0, costs: 0, gross: 0, overhead: 0, net: 0, unbilled: 0 };
   const rt = (v, cls) => { const td = document.createElement("td"); td.className = "right" + (cls ? " " + cls : ""); td.textContent = v; return td; };
@@ -3792,10 +3805,10 @@ function _ppCoverage(d, nxInv) {
     const p = dr.pl || {}; const costs = dr.no_draw ? num(dr.gate_amt) + num(dr.subs_amt) : num(p.costs);
     const tr = document.createElement("tr"); tr.className = "pp-cov-row" + (dr.invoice_no && dr.invoice_no === nxInv ? " next" : ""); tr.title = "Open this draw on its own";
     tr.onclick = () => { _pp.view = dr.matched_invoice; _renderPpDraws(); };
+    { const td = leftText(drawSpan(dr) || "–"); if (!drawSpan(dr)) td.classList.add("dim"); tr.appendChild(td); }
     tr.appendChild(leftText(drawTitle(dr)));
     tr.appendChild(leftText(dr.no_draw ? "–" : (dr.invoice_no || "–")));
     tr.appendChild(leftText(dr.ar_date ? fmtDateShort(dr.ar_date) : "–"));
-    { const td = leftText(drawSpan(dr) || "–"); if (!drawSpan(dr)) td.classList.add("dim"); tr.appendChild(td); }
     tr.appendChild(rt(dr.no_draw ? "–" : money(p.income)));
     { const td = document.createElement("td"); td.className = "left"; const sp = document.createElement("span"); sp.className = dr.no_draw ? "dim" : dr.gc_paid ? "ar-paid" : "ar-open"; sp.textContent = dr.no_draw ? "–" : dr.gc_paid ? "paid" : "owes " + money(dr.ar_open); td.appendChild(sp); tr.appendChild(td); }
     tr.appendChild(rt(money(costs)));
@@ -3809,14 +3822,14 @@ function _ppCoverage(d, nxInv) {
     tb.appendChild(tr);
   }
   const tr = document.createElement("tr"); tr.className = "pp-cov-total";
-  tr.appendChild(leftText("All draws")); tr.appendChild(leftText("")); tr.appendChild(leftText("")); tr.appendChild(leftText(""));
+  tr.appendChild(leftText("")); tr.appendChild(leftText("All draws")); tr.appendChild(leftText("")); tr.appendChild(leftText(""));
   tr.appendChild(rt(money(tot.income))); tr.appendChild(leftText(""));
   tr.appendChild(rt(money(tot.costs + tot.unbilled)));
   tr.appendChild(rt(money(tot.gross), tot.gross < 0 ? "neg" : "")); tr.appendChild(rt(tot.income ? (tot.gross / tot.income * 100).toFixed(1) + "%" : "–", tot.gross < 0 ? "neg" : ""));
   tr.appendChild(rt(money(tot.overhead))); tr.appendChild(rt(money(tot.net), tot.net < 0 ? "neg" : "pos"));
   { const td = leftText(tot.unbilled > 0.005 ? `${money(tot.unbilled)} of costs not on a draw yet` : ""); td.classList.add("dim"); tr.appendChild(td); }
   tb.appendChild(tr); t.appendChild(tb); wrap.appendChild(t);
-  const cap = document.createElement("div"); cap.className = "bills-cap"; cap.textContent = "Draw = the month (MFD) or number (CP) on the invoice · Period covered = the billing window stated on the invoice · Net billed = the invoice after retainage · Costs = materials we pay + labor dated in the draw period · Overhead = the draw's share · click a row to open that draw on its own.";
+  const cap = document.createElement("div"); cap.className = "bills-cap"; cap.textContent = "Period covered = the billing window stated on the invoice · Draw = the month (MFD) or number (CP) on the invoice · Net billed = the invoice after retainage · Costs = materials we pay + labor dated in the draw period · Overhead = the draw's share · click a row to open that draw on its own.";
   wrap.appendChild(cap);
   return wrap;
 }
