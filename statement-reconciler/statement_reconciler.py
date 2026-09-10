@@ -141,19 +141,31 @@ STATEMENT_EMBED_MAX_PAGES = 20   # cap embedded statement pages to keep xlsx siz
 STATEMENT_EMBED_MAX_WIDTH = 900  # px — target on-sheet width per embedded page
 
 # ── Template: QuickBooks Statement (vendor-issued) ─────────────
-# Layout: a leading date and an "INV #<num>. Due <date>" anchor on every line.
-# Example line:   02/25/2026 INV #589898. Due 03/15/2026 ...  80,620.00  84,770.31
+# Layout: a leading date + a transaction-type marker anchor every row.
+#   Invoice: 02/25/2026 INV #589898. Due 03/15/2026 ...  80,620.00  84,770.31
+#   Payment: 10/16/2025 PMT #23225.                        -38.49    -38.49
+# PAYMENTS and CREDIT MEMOS (PMT/CM/…) have NO due-date column and a NEGATIVE
+# amount (leading "-" or in parentheses).
 QBO_STATEMENT_SIG = re.compile(r"INV\s*\#\d+\.\s*Due\s+\d", re.I)
+# Match EVERY transaction row, not just invoices. Summing only INV rows drops
+# credits/payments, so the line total comes out too HIGH by the credit and the
+# tie-out to "Amount Due" falsely fails. This mirrors the 2026-08-12 fix to the
+# Customer Open Balance parser (QBO_CUSTOMER_OPEN_BAL_LINE_RE) — the twin
+# QBO-Statement parser never received it, so a Bee Line statement carrying a
+# -38.49 payment tripped it (2026-09-10). The type token is generic so any QBO
+# abbreviation (INV/PMT/CM/FC/…) is caught; amount and balance accept a sign or
+# parentheses, and the due-date is folded into the optional "..." middle.
 STMT_LINE_RE = re.compile(
     r"""
     ^\s*
     (?P<date>\d{1,2}/\d{1,2}/\d{2,4})           # 02/25/2026
     \s+
-    INV\s*\#?(?P<ref>\d+)\.?                    # INV #589898.
-    .*?                                          # ... description ...
-    (?P<amount>[\d,]+\.\d{2})                   # 80,620.00 (line amount)
+    (?P<type>[A-Z]{2,8})                        # INV / PMT / CM / FC ...
+    \s*\#?(?P<ref>\d+)\.?                       # #589898.  /  #23225.
+    .*?                                          # ... Due <date> / description ...
+    (?P<amount>\(?-?[\d,]+\.\d{2}\)?)           # 80,620.00 / -38.49 / (38.49)
     \s+
-    (?P<balance>[\d,]+\.\d{2})\s*$              # 84,770.31 (running balance)
+    (?P<balance>\(?-?[\d,]+\.\d{2}\)?)\s*$      # running balance (may be negative)
     """,
     re.VERBOSE | re.MULTILINE,
 )
@@ -1718,9 +1730,12 @@ def parse_statement_qbo_statement(full_text: str) -> Tuple[str, str, float, List
     for m in STMT_LINE_RE.finditer(full_text):
         date = _norm_date(m.group("date"))
         ref = m.group("ref")
-        amount = float(m.group("amount").replace(",", ""))
-        # Pull PO and address from the matched line+surrounding chars
-        line_blob = full_text[max(0, m.start() - 20): m.end() + 200]
+        amount = _paren_amount(m.group("amount"))   # signed: credits/payments net out
+        # Pull PO and address from the matched line+surrounding chars — invoice
+        # rows only. The 200-char look-ahead (needed for addresses that wrap
+        # across rows) would otherwise bleed the NEXT invoice's PO/address onto
+        # a credit/payment row, which carries neither.
+        line_blob = full_text[max(0, m.start() - 20): m.end() + 200] if amount > 0 else ""
         po_m = PO_RE.search(line_blob)
         po = po_m.group(1).strip() if po_m else ""
         # Address: text between "Orig. Amount $X.XX." and the start of the
