@@ -8,6 +8,31 @@ manual close), RP (no draws — expenses → invoice → profit).
 
 ## DONE / FINALIZED
 
+- **A RUN PULLS QBO ONCE, NOT ONCE PER JOB (2026-09-10).** 13 regenerations took
+  39 minutes because `generate_project_pnl` runs per project and every call
+  re-downloaded the whole Bill and Purchase universe, plus Account and Item.
+  Batching into one process saved nothing. Each job narrows the pull to its OWN
+  activity window, so a cache keyed on the query never hits - `_txn_pull` caches a
+  SUPERSET instead: the first job pulls its window, a job inside that window is
+  served from memory, and a wider window re-pulls the union ONCE and replaces the
+  cache. Peak memory is one entity list for the widest window, no worse than a single
+  job costs today. `_list_pull` does Account and Item once per run (4 and 3 call sites).
+  `_reset_txn_cache()` exists for tests only. **A batch shares the cache only within
+  one process** - the per-job flag recipe still forces separate invocations for
+  MFD172, MFD228 and MFD295.
+
+- **`_wrap_long_labels` HAS THREE GUARDS NOW - it shipped broken (2026-09-10).**
+  It wrapped a 50-character title inside the ~3-wide GUTTER column, which renders one
+  letter per line down forty rows, on every sheet of all 14 workbooks. Three causes,
+  three guards: `min_width` (draw sheets already carry their own narrow first column
+  so `_apply_left_gutter` skips them and the pass met the real gutter head-on), row 1
+  is never wrapped (`_apply_left_gutter` deliberately hangs the title back into the
+  gutter afterwards and carried the wrap with it), and merged cells are never wrapped
+  (the text already spans columns, so width was never the constraint).
+  **It got through because the test checked the four properties that had been changed
+  instead of opening the workbook** - see the standing rule that checking a property
+  is not checking the file.
+
 - **TRANSACTIONS READS AT 14, NOTHING GOES OVER 16 (2026-09-10).** The owner:
   "default pnl to font size 14 for transactions. don't let it go over 16 anywhere."
   `BODY_SIZE_BY_SHEET = {"Transactions": 14}` in `_normalise_body_font`, which

@@ -652,6 +652,54 @@ def _line_belongs(det: dict, ln: dict, txn: dict, customer_id: str) -> bool:
     return (det.get("CustomerRef") or {}).get("value") == customer_id
 
 
+# ── THE RUN-LEVEL TRANSACTION CACHE ──────────────────────────────────────────
+# Every job used to re-download the whole Bill and Purchase universe: 13 jobs
+# meant 13 full pulls, about four minutes each, and batching them into one
+# process saved nothing (the owner 2026-09-10: "been too long ... figure out why
+# this happens"). Each job narrows the pull to its OWN activity window, so a
+# plain cache keyed on the query never hits.
+#
+# So cache a SUPERSET and slice it. The first job pulls its window; the next one
+# is usually inside that window and is served from memory. A wider window
+# re-pulls the union ONCE and replaces the cache. Peak memory is one entity list
+# for the widest window - no worse than a single job costs today.
+_TXN_CACHE: Dict[str, Tuple[str, str, List[dict]]] = {}
+_TXN_STATS = {"pulls": 0, "hits": 0}
+
+
+def _txn_pull(access: str, company_id: str, entity: str,
+              start: str, end: str) -> List[dict]:
+    """Every `entity` txn dated [start, end], from cache when possible."""
+    got = _TXN_CACHE.get(entity)
+    if got and got[0] <= start and end <= got[1]:
+        _TXN_STATS["hits"] += 1
+        rows = got[2]
+    else:
+        lo = min(start, got[0]) if got else start
+        hi = max(end, got[1]) if got else end
+        rows = query_all(access, company_id, entity,
+                         where=f"TxnDate >= '{lo}' AND TxnDate <= '{hi}'")
+        _TXN_CACHE[entity] = (lo, hi, rows)
+        _TXN_STATS["pulls"] += 1
+    return [r for r in rows if start <= str(r.get("TxnDate") or "") <= end]
+
+
+def _reset_txn_cache() -> None:
+    """Drop the cache. Only for a test that wants a cold pull - a run keeps it."""
+    _TXN_CACHE.clear()
+    _TXN_STATS.update(pulls=0, hits=0)
+
+
+_LIST_CACHE: Dict[str, List[dict]] = {}
+
+
+def _list_pull(access: str, company_id: str, entity: str) -> List[dict]:
+    """A whole small entity (Account, Item), pulled once per run."""
+    if entity not in _LIST_CACHE:
+        _LIST_CACHE[entity] = query_all(access, company_id, entity)
+    return _LIST_CACHE[entity]
+
+
 def fetch_customer_bills_and_purchases(
     access: str, company_id: str, customer_id: str,
     start_date: str, end_date: str,
@@ -677,9 +725,10 @@ def fetch_customer_bills_and_purchases(
                 return True
         return False
 
-    where = f"TxnDate >= '{start_date}' AND TxnDate <= '{end_date}'"
-    bills = [b for b in query_all(access, company_id, "Bill", where=where) if has_customer_line(b)]
-    purchases = [p for p in query_all(access, company_id, "Purchase", where=where) if has_customer_line(p)]
+    bills = [b for b in _txn_pull(access, company_id, "Bill", start_date, end_date)
+             if has_customer_line(b)]
+    purchases = [p for p in _txn_pull(access, company_id, "Purchase", start_date, end_date)
+                 if has_customer_line(p)]
     return bills, purchases
 
 
@@ -1218,7 +1267,7 @@ def fetch_retainage_held(
         accts = accounts
     else:
         try:
-            accts = query_all(access, company_id, "Account")
+            accts = _list_pull(access, company_id, "Account")
         except RuntimeError:
             accts = []
     retainage_acct_name = None
@@ -1705,27 +1754,39 @@ def _apply_zoom(wb: Workbook, zoom: int = 110) -> None:
         ws.sheet_view.zoomScaleNormal = zoom
 
 
-def _wrap_long_labels(wb: Workbook, col: int = 1, slack: float = 1.0) -> None:
+def _wrap_long_labels(wb: Workbook, col: int = 1, slack: float = 1.0,
+                      min_width: float = 20.0) -> None:
     """Wrap a label instead of widening the column for it.
 
     A column has ONE width, so the longest string in it sets the width for every
     row below - which is why the P&L label column was 52 wide when the block the
-    owner reads needs 36 (2026-09-10: "do they really have to be this wide? does
-    it mess with the below cells?"). The few long account names now wrap onto a
-    second line and the column stays narrow. Runs BEFORE the gutter insert, so
-    the label column is still column A. Rows with an explicit height are left
-    alone - Excel auto-fits the rest."""
+    owner reads needs 36 (2026-09-10: "do they really have to be this wide?").
+    The few long account names wrap onto a second line and the column stays
+    narrow.
+
+    THREE GUARDS, each one a bug this pass shipped on 2026-09-10:
+      · min_width - a gutter column is ~3 wide, and wrapping a 50-character
+        title in it renders ONE LETTER PER LINE down forty rows. Draw sheets
+        already carry their own narrow first column, so _apply_left_gutter skips
+        them and this pass met the real gutter head-on.
+      · row 1 is never wrapped - _apply_left_gutter deliberately hangs the title
+        back into the gutter afterwards, and it would carry the wrap with it.
+      · merged cells are never wrapped - the text spans columns already, so the
+        column width was never the constraint.
+    Runs BEFORE the gutter insert, while the label column is still column A.
+    Rows with an explicit height are left alone; Excel auto-fits the rest."""
     from openpyxl.utils import get_column_letter
     for ws in wb.worksheets:
         d = ws.column_dimensions.get(get_column_letter(col))
-        if not d or not d.width:
+        if not d or not d.width or d.width < min_width:
             continue
+        merged = {c for rng in ws.merged_cells.ranges for c in rng.cells}
         limit = d.width - slack
         for row in ws.iter_rows(min_col=col, max_col=col):
             c = row[0]
-            if not isinstance(c.value, str) or len(c.value) <= limit:
+            if c.row == 1 or not isinstance(c.value, str) or len(c.value) <= limit:
                 continue
-            if ws.row_dimensions[c.row].height:
+            if (c.row, c.column) in merged or ws.row_dimensions[c.row].height:
                 continue
             a = c.alignment
             c.alignment = Alignment(horizontal=a.horizontal, vertical=a.vertical,
@@ -7015,7 +7076,7 @@ def generate_project_pnl(
                  f"COGS ${pl_totals['cogs']:,.0f} · "
                  f"GP ${pl_totals['gross_profit']:,.0f}")
 
-    accounts = query_all(access, company_id, "Account")
+    accounts = _list_pull(access, company_id, "Account")
     parent_map = build_account_parent_map(accounts)
     account_names = {a.get("Id"): a.get("Name")
                      for a in accounts if a.get("Id")}
@@ -7026,7 +7087,7 @@ def generate_project_pnl(
                    for a in accounts if a.get("Id")}
     acct_type = build_account_type_map(accounts)
 
-    items = query_all(access, company_id, "Item")
+    items = _list_pull(access, company_id, "Item")
     item_account = {it.get("Id"): (it.get("ExpenseAccountRef") or {}).get("value")
                     for it in items if it.get("Id")}
     ui_event(f"{len(accounts)} accounts · {len(items)} items")
@@ -7595,7 +7656,7 @@ def generate_project_pnl_rp(
     ui_event(f"{len(invoices)} invoice(s) · billed ${billed_total:,.0f} · "
              f"invoice date {invoice_date}")
 
-    accounts = query_all(access, company_id, "Account")
+    accounts = _list_pull(access, company_id, "Account")
     parent_map = build_account_parent_map(accounts)
     account_names = {a.get("Id"): a.get("Name") for a in accounts if a.get("Id")}
     account_fqn = {a.get("Id"): ((a.get("FullyQualifiedName") or a.get("Name") or "")
@@ -7603,7 +7664,7 @@ def generate_project_pnl_rp(
                    for a in accounts if a.get("Id")}
     acct_type = build_account_type_map(accounts)
 
-    items = query_all(access, company_id, "Item")
+    items = _list_pull(access, company_id, "Item")
     item_account = {it.get("Id"): (it.get("ExpenseAccountRef") or {}).get("value")
                     for it in items if it.get("Id")}
 
@@ -8057,9 +8118,9 @@ def _qbo_project_cost_lines(access, company_id, customer_id, start, end) -> list
     paid_map = {b.get("Id"): (float(b.get("Balance", 0) or 0),
                               float(b.get("TotalAmt", 0) or 0)) for b in bills}
     paid_map.update({pch.get("Id"): (0.0, 0.0) for pch in purchases})
-    accounts = query_all(access, company_id, "Account")
+    accounts = _list_pull(access, company_id, "Account")
     anames = {a.get("Id"): a.get("Name") for a in accounts if a.get("Id")}
-    items = query_all(access, company_id, "Item")
+    items = _list_pull(access, company_id, "Item")
     item_acct = {it.get("Id"): (it.get("ExpenseAccountRef") or {}).get("value")
                  for it in items if it.get("Id")}
     return _qbo_lines_from_fetched(bills, purchases, customer_id, anames, item_acct)
