@@ -416,6 +416,15 @@ def apply_decisions(rows: List, decisions: dict, prior: Optional[Dict[str, dict]
                 continue                            # approved -> keep fresh value
             revert = d.get("revert") if isinstance(d, dict) else None
             setattr(row, FIELD_BY_KEY[key]["attr"], revert)   # disapproved -> what they saw
+            if tab_kind == "master":
+                # On the master `revert` IS the revised total. A change-order part
+                # carried a moment ago (carry_pm_fields) would now sit on top of it
+                # - CP800's ETC doubled that way on 2026-09-10 - so it is cleared:
+                # the reverted total stands alone.
+                if key == "orig_contract":
+                    row.co_revenue = None
+                elif key == "orig_etc":
+                    row.co_cost_override = None
         kept.append(row)
     return kept
 
