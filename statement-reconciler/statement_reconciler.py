@@ -990,8 +990,12 @@ def parse_statement_croell(full_text: str) -> Tuple[str, str, float, List[StmtLi
 
     lines: List[StmtLine] = []
     for m in CROELL_ROW_RE.finditer(full_text):
+        # Use the BALANCE column (the still-open amount), not the first "Amount"
+        # column (the original charge). A partly-paid invoice reads e.g. charge
+        # 14,846.55 / balance 16.44 - summing the charge overshoots the tie-out
+        # (INV 1080594, 2026-09-10). Balance == charge for a fully-open invoice.
         lines.append(StmtLine(date=_norm_date(m.group("date")), ref=m.group("num"),
-                              amount=_paren_amount(m.group("amount")),
+                              amount=_paren_amount(m.group("balance")),
                               address=m.group("desc").strip()))
     if not amt_due:
         amt_due = round(sum(l.amount for l in lines), 2)
@@ -1019,8 +1023,12 @@ _STAPLE_VENDORS: List[Tuple[str, List[str]]] = [
     ("Bobcat of North Texas", ["bobcatntx", "bobntx"]),
     # Cowtown Redi Mix: one statement variant is a past-due letter that only
     # shows its letterhead address; another is a QBO statement listing our own
-    # name as bill-to. Match the address or the brand spelling.
-    ("Cowtown Redi Mix Concrete", ["3400 bethlehem", "cowtown", "redi mix"]),
+    # name as bill-to. Match ONLY tokens unique to Cowtown - its brand word or
+    # its letterhead address. NEVER on "redi mix" / "ready mix": that phrase is
+    # on nearly every concrete vendor's statement, so it hard-mapped a Sunrise
+    # Redi Mix statement to Cowtown (2026-09-10) - and a wrong staple map
+    # reconciles against the wrong QBO vendor, which can clear the wrong bills.
+    ("Cowtown Redi Mix Concrete", ["3400 bethlehem", "cowtown"]),
 ]
 
 
@@ -1583,55 +1591,46 @@ def parse_statement_vendor_columnar(pdf_path: Path) -> Tuple[str, str, float, Li
         key = (w["page"], round(w["top"] / 3))  # bucket by 3-pixel y-band
         rows_by_pos.setdefault(key, []).append(w)
 
-    # For each row, sort words left-to-right and extract:
-    #   • First date (MM/DD/YYYY)
-    #   • Description containing "Invoice #..." or similar ref pattern
-    #   • Rightmost numeric (balance) — but we want CHARGE column not balance
-    #   • Skip rows without a date
-    # Require explicit "Invoice" keyword so Payment / Credit Memo / Balance
-    # Forward rows aren't matched as invoices (they have their own descriptors
-    # and would otherwise be picked up by a bare `#` alternation).
-    REF_IN_DESC = re.compile(r"\bInvoice\s*#?\s*(\w+\d+)", re.I)
-    AMOUNT_RE_LINE = re.compile(r"^-?[\d,]+\.\d{2}$")
+    # Each data row's RIGHTMOST number is the running Balance. A line's amount is
+    # the balance DELTA from the previous row. That nets credit memos, payments
+    # and partial payments - and gets their SIGN right - without needing to know
+    # which of the Charge / Payment / Open-Amount columns is populated, so the
+    # line sum always ties to the closing balance / Amount Due.
+    #   Was: "leftmost positive numeric = charge", which summed GROSS charges and
+    #   dropped every non-"Invoice" row, overshooting the tie-out by the paid-down
+    #   and credit amounts (Sunrise Redi Mix, Preferred Materials, 2026-09-10).
+    MONEY_TOKEN = re.compile(r"^\(?-?\$?[\d,]+\.\d{2}\)?$")
     DATE_TOKEN = re.compile(r"^\d{1,2}/\d{1,2}/\d{2,4}$")
-    total_charge = 0.0
+    REF_RE = re.compile(r"#\s*([A-Za-z0-9_\-]+)")
+    prev_balance = 0.0
     for key, words in sorted(rows_by_pos.items()):
         words.sort(key=lambda w: w["x0"])
         tokens = [w["text"] for w in words]
-        # Find date as FIRST token matching MM/DD/YYYY
+        # Data rows lead with a date; header / bill-to / aging-footer rows don't.
         date_token = next((t for t in tokens if DATE_TOKEN.match(t)), None)
         if not date_token:
             continue
-        # Find ref# — look for "Invoice #XXX" patterns in concatenated tokens
+        money = [t for t in tokens if MONEY_TOKEN.match(t)]
+        if not money:
+            continue
+        balance = _paren_amount(money[-1])            # rightmost column = running balance
         row_text = " ".join(tokens)
-        ref_m = REF_IN_DESC.search(row_text)
-        if not ref_m:
+        # "Balance Forward" seeds the running total but is not an invoice line.
+        if re.search(r"balance\s+forward", row_text, re.I):
+            prev_balance = balance
             continue
-        # Find all numeric values on the row
-        nums = [t for t in tokens if AMOUNT_RE_LINE.match(t.lstrip("-"))]
-        if not nums:
-            continue
-        # Take the LEFTMOST positive numeric as the CHARGE (the original invoice amount).
-        # Avoids picking running-balance which would over-count.
-        charge_val = None
-        for n in nums:
-            try:
-                v = float(n.replace(",", ""))
-            except ValueError:
-                continue
-            if v > 0:
-                charge_val = v
-                break
-        if charge_val is None or charge_val <= 0:
-            continue
+        amount = round(balance - prev_balance, 2)     # nets credits / payments / partials
+        prev_balance = balance
+        if amount == 0.0:
+            continue                                  # $0 / informational row
+        ref_m = REF_RE.search(row_text)
         lines.append(StmtLine(
             date=_norm_date(date_token),
-            ref=ref_m.group(1),
-            amount=charge_val,
+            ref=ref_m.group(1) if ref_m else "",
+            amount=amount,
             po="",
             address="",
         ))
-        total_charge += charge_val
 
     amt_due = 0.0
     if amt_due_text:
@@ -1640,7 +1639,7 @@ def parse_statement_vendor_columnar(pdf_path: Path) -> Tuple[str, str, float, Li
         except ValueError:
             pass
     if amt_due == 0.0:
-        amt_due = round(total_charge, 2)
+        amt_due = round(prev_balance, 2)              # closing running balance
 
     return vendor, stmt_date, amt_due, lines
 
