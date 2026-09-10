@@ -1044,6 +1044,28 @@ function drawPeriod(mi) {
   return "";
 }
 function drawPeriodFull(mi) { const m = String(mi || "").match(/Period:\s*([\d/]+\s*-\s*[\d/]+)/i); return m ? "Period " + m[1].replace(/\s+/g, " ") : ""; }
+// A draw's headline: the MONTH the invoice bills ("September 2026" - MFD draws are monthly and carry
+// no number), or "Draw #N" when the GC numbers them (CP), else "No draw yet" / "Draw". Prefers the
+// backend parse (draw_month / draw_no), falls back to the memo (owner 2026-09-10: the tab was showing
+// "Draw #2026", the year, and no period).
+function drawTitle(dr) {
+  if (!dr) return "Draw";
+  if (dr.no_draw) return "No draw yet";
+  if (dr.draw_month) return dr.draw_month;
+  const p = drawPeriod(dr.matched_invoice); if (p && !/^Draw #/.test(p)) return p;   // month from the memo
+  if (dr.draw_no) return "Draw #" + dr.draw_no;
+  return "Draw";
+}
+// The span a draw covers, "08/02/2026 – 09/04/2026" (mm/dd/yyyy), from the backend period or the
+// "(Period: … - …)" in the memo. "" when neither carries one.
+function drawSpan(dr) {
+  if (!dr) return "";
+  if (dr.period_start && dr.period_end) return fmtDate(dr.period_start) + " – " + fmtDate(dr.period_end);
+  const m = String(dr.matched_invoice || "").match(/Period:\s*([\d/]+)\s*-\s*([\d/]+)/i);
+  return m ? m[1] + " – " + m[2] : "";
+}
+// " · September 2026" / " · Draw #4" suffix for a one-line label; "" when the draw has no specific name.
+function drawTag(dr) { const t = drawTitle(dr); return (t && t !== "Draw" && t !== "No draw yet") ? " · " + t : ""; }
 // Resolve each PROJECT to one canonical client (GC) for grouping. billing_event customers are
 // inconsistent - a project's draws can carry the GC ("JPI Construction, LLC") on some and a
 // project-prefixed sub-customer ("MFD325 - BRIARWOOD") on others - so per project we PREFER a clean GC
@@ -3638,7 +3660,7 @@ async function openProjectPage(pn) {
   const unlock = document.createElement("div"); unlock.className = "pp-unlock" + (nx ? "" : " ok");
   if (nx) {
     const blk = F.blockers || [];
-    unlock.innerHTML = `<div class="pp-unlock-h">Next money in: <b>${_ge(nx.label.split(/\s+[\u2014\u2013-]\s+/)[0])}${nx.draw_no ? " · Draw #" + nx.draw_no : ""}</b> · GC owes <b>${_ge(money(nx.ar_open))}</b>${nx.ar_date ? " · invoiced " + _ge(fmtDate(nx.ar_date)) : ""}</div>`
+    unlock.innerHTML = `<div class="pp-unlock-h">Next money in: <b>${_ge(nx.label.split(/\s+[\u2014\u2013-]\s+/)[0])}${_ge(drawTag(nx))}</b> · GC owes <b>${_ge(money(nx.ar_open))}</b>${nx.ar_date ? " · invoiced " + _ge(fmtDate(nx.ar_date)) : ""}${drawSpan(nx) ? " · covers " + _ge(drawSpan(nx)) : ""}</div>`
       + (blk.length ? (F.blockers_total > 0.005
             ? `<div class="pp-unlock-b">Blocked by <b>${blk.length}</b> unpaid bill${blk.length === 1 ? "" : "s"} on earlier draws · <b>${_ge(money(F.blockers_total))}</b> to pay (their unconditional waivers release this draw)</div>`
             : `<div class="pp-unlock-b"><b>${blk.length}</b> bill${blk.length === 1 ? "" : "s"} on earlier draws show no payment date yet ($0 open) - confirm they are paid and collect the waivers, then this draw is clear on our side</div>`)
@@ -3751,7 +3773,8 @@ function _ppTabs(d, nxInv) {
     b.innerHTML = `<span>${_ge(lbl)}</span>${sub ? `<small>${_ge(sub)}</small>` : ""}`; b.title = title || ""; b.onclick = () => { _pp.view = key; _renderPpDraws(); }; return b; };
   strip.appendChild(mk("coverage", "Coverage", `${d.draws.length} draw${d.draws.length === 1 ? "" : "s"}`, "Every draw on one table - what it billed, cost and made"));
   for (const dr of d.draws) {
-    const b = mk(dr.matched_invoice, dr.no_draw ? "No draw yet" : (dr.draw_no ? `Draw #${dr.draw_no}` : "Draw"), dr.no_draw ? "" : `Inv ${dr.invoice_no || "?"}`, dr.stage || "");
+    const span = drawSpan(dr);
+    const b = mk(dr.matched_invoice, drawTitle(dr), dr.no_draw ? "" : `Inv ${dr.invoice_no || "?"}`, [span ? "Covers " + span : "", dr.stage || ""].filter(Boolean).join(" · "));
     if (dr.invoice_no && dr.invoice_no === nxInv) b.classList.add("next");
     strip.appendChild(b);
   }
@@ -3761,7 +3784,7 @@ function _ppTabs(d, nxInv) {
 function _ppCoverage(d, nxInv) {
   const wrap = document.createElement("div"); wrap.className = "table-scroll pp-cov-wrap";
   const t = document.createElement("table"); t.className = "grid pp-cov";
-  t.innerHTML = "<thead><tr><th class='left'>Draw</th><th class='left'>Invoice</th><th class='left'>Date</th><th class='right'>Net billed</th><th class='left'>GC</th><th class='right'>Costs</th><th class='right'>Gross</th><th class='right'>Margin</th><th class='right'>Overhead</th><th class='right'>Net</th><th class='left'>Stage</th></tr></thead>";
+  t.innerHTML = "<thead><tr><th class='left'>Draw</th><th class='left'>Invoice</th><th class='left'>Date</th><th class='left'>Period covered</th><th class='right'>Net billed</th><th class='left'>GC</th><th class='right'>Costs</th><th class='right'>Gross</th><th class='right'>Margin</th><th class='right'>Overhead</th><th class='right'>Net</th><th class='left'>Stage</th></tr></thead>";
   const tb = document.createElement("tbody");
   const tot = { income: 0, costs: 0, gross: 0, overhead: 0, net: 0, unbilled: 0 };
   const rt = (v, cls) => { const td = document.createElement("td"); td.className = "right" + (cls ? " " + cls : ""); td.textContent = v; return td; };
@@ -3769,9 +3792,10 @@ function _ppCoverage(d, nxInv) {
     const p = dr.pl || {}; const costs = dr.no_draw ? num(dr.gate_amt) + num(dr.subs_amt) : num(p.costs);
     const tr = document.createElement("tr"); tr.className = "pp-cov-row" + (dr.invoice_no && dr.invoice_no === nxInv ? " next" : ""); tr.title = "Open this draw on its own";
     tr.onclick = () => { _pp.view = dr.matched_invoice; _renderPpDraws(); };
-    tr.appendChild(leftText(dr.no_draw ? "No draw yet" : (dr.draw_no ? `Draw #${dr.draw_no}` : "Draw")));
+    tr.appendChild(leftText(drawTitle(dr)));
     tr.appendChild(leftText(dr.no_draw ? "–" : (dr.invoice_no || "–")));
     tr.appendChild(leftText(dr.ar_date ? fmtDateShort(dr.ar_date) : "–"));
+    { const td = leftText(drawSpan(dr) || "–"); if (!drawSpan(dr)) td.classList.add("dim"); tr.appendChild(td); }
     tr.appendChild(rt(dr.no_draw ? "–" : money(p.income)));
     { const td = document.createElement("td"); td.className = "left"; const sp = document.createElement("span"); sp.className = dr.no_draw ? "dim" : dr.gc_paid ? "ar-paid" : "ar-open"; sp.textContent = dr.no_draw ? "–" : dr.gc_paid ? "paid" : "owes " + money(dr.ar_open); td.appendChild(sp); tr.appendChild(td); }
     tr.appendChild(rt(money(costs)));
@@ -3785,14 +3809,14 @@ function _ppCoverage(d, nxInv) {
     tb.appendChild(tr);
   }
   const tr = document.createElement("tr"); tr.className = "pp-cov-total";
-  tr.appendChild(leftText("All draws")); tr.appendChild(leftText("")); tr.appendChild(leftText(""));
+  tr.appendChild(leftText("All draws")); tr.appendChild(leftText("")); tr.appendChild(leftText("")); tr.appendChild(leftText(""));
   tr.appendChild(rt(money(tot.income))); tr.appendChild(leftText(""));
   tr.appendChild(rt(money(tot.costs + tot.unbilled)));
   tr.appendChild(rt(money(tot.gross), tot.gross < 0 ? "neg" : "")); tr.appendChild(rt(tot.income ? (tot.gross / tot.income * 100).toFixed(1) + "%" : "–", tot.gross < 0 ? "neg" : ""));
   tr.appendChild(rt(money(tot.overhead))); tr.appendChild(rt(money(tot.net), tot.net < 0 ? "neg" : "pos"));
   { const td = leftText(tot.unbilled > 0.005 ? `${money(tot.unbilled)} of costs not on a draw yet` : ""); td.classList.add("dim"); tr.appendChild(td); }
   tb.appendChild(tr); t.appendChild(tb); wrap.appendChild(t);
-  const cap = document.createElement("div"); cap.className = "bills-cap"; cap.textContent = "Net billed = the invoice after retainage · Costs = materials we pay + labor dated in the draw period · Overhead = the draw's share · click a row to open that draw on its own.";
+  const cap = document.createElement("div"); cap.className = "bills-cap"; cap.textContent = "Draw = the month (MFD) or number (CP) on the invoice · Period covered = the billing window stated on the invoice · Net billed = the invoice after retainage · Costs = materials we pay + labor dated in the draw period · Overhead = the draw's share · click a row to open that draw on its own.";
   wrap.appendChild(cap);
   return wrap;
 }
@@ -3906,7 +3930,7 @@ function _renderPpDraws() {
     const nSub = (dr.sub_bills || []).length;
     const cell2 = (a, b, cls) => `<span class="pp-c ${cls || ""}"><span class="pp-c1">${a}</span><span class="pp-c2">${b}</span></span>`;
     head.innerHTML = `<span class="bg-caret"></span>
-      <span class="pp-lab">${_ge(dr.no_draw ? "No draw yet" : "Invoice " + (dr.invoice_no || dr.label.split(/\s+[\u2014\u2013-]\s+/)[0]))}${dr.draw_no ? `<small class="pp-drawno">Draw #${dr.draw_no}</small>` : ""}${dr.pushed_in ? `<small class="pp-drawno push" title="${_ge(dr.pushed_in.note || "Bills the supplier agreed to carry into this draw from the one before")}">${dr.pushed_in.count} bill${dr.pushed_in.count === 1 ? "" : "s"} moved in from the draw before</small>` : ""}${dr.pushed_out ? `<small class="pp-drawno push" title="${_ge(dr.pushed_out.note || "Bills carried to the next draw by agreement with the supplier")}">${dr.pushed_out.count} bill${dr.pushed_out.count === 1 ? "" : "s"} moved to the next draw</small>` : ""}</span>
+      <span class="pp-lab">${_ge(drawTitle(dr))}${dr.no_draw ? "" : `<small class="pp-drawno">Invoice ${_ge(dr.invoice_no || dr.label.split(/\s+[\u2014\u2013-]\s+/)[0])}</small>`}${drawSpan(dr) ? `<small class="pp-drawno">Covers ${_ge(drawSpan(dr))}</small>` : ""}${dr.pushed_in ? `<small class="pp-drawno push" title="${_ge(dr.pushed_in.note || "Bills the supplier agreed to carry into this draw from the one before")}">${dr.pushed_in.count} bill${dr.pushed_in.count === 1 ? "" : "s"} moved in from the draw before</small>` : ""}${dr.pushed_out ? `<small class="pp-drawno push" title="${_ge(dr.pushed_out.note || "Bills carried to the next draw by agreement with the supplier")}">${dr.pushed_out.count} bill${dr.pushed_out.count === 1 ? "" : "s"} moved to the next draw</small>` : ""}</span>
       <span class="pp-dt">${_ge(dr.ar_date ? fmtDate(dr.ar_date) : "–")}</span>
       <span class="pp-billed">${dr.no_draw ? "–" : _ge(money(dr.billed))}</span>
       <span class="pp-gc ${dr.no_draw ? "" : dr.gc_paid ? "ok" : "due"}">${dr.no_draw ? "–" : dr.gc_paid ? "paid" : "owes " + _ge(money(dr.ar_open))}</span>
@@ -3961,13 +3985,13 @@ function _ppMarkBlockers() {
 }
 function _ppExport() {
   const d = _pp.d, rows = [];
-  for (const dr of d.draws) for (const b of _ppBillsOf(dr)) if (b.pay_selected) rows.push([dr.no_draw ? "No draw yet" : "Invoice " + (dr.invoice_no || "") + (dr.draw_no ? " · Draw #" + dr.draw_no : ""), b.vendor, b.bill_ref, b.bill_date, num(b.amount), num(b.open), b.pay_date ? "Paid " + fmtDate(b.pay_date) : (b.pay_status || (b.paid ? "Paid" : "Open")), dr.sub_bills && dr.sub_bills.includes(b) ? "labor" : (b.waiver ? "received" : "needed")]);
+  for (const dr of d.draws) for (const b of _ppBillsOf(dr)) if (b.pay_selected) rows.push([dr.no_draw ? "No draw yet" : "Invoice " + (dr.invoice_no || "") + drawTag(dr), b.vendor, b.bill_ref, b.bill_date, num(b.amount), num(b.open), b.pay_date ? "Paid " + fmtDate(b.pay_date) : (b.pay_status || (b.paid ? "Paid" : "Open")), dr.sub_bills && dr.sub_bills.includes(b) ? "labor" : (b.waiver ? "received" : "needed")]);
   if (!rows.length) { toast("Nothing ticked to pay on this job yet - tick bills (or Mark blockers) first"); return; }
   if (!confirm(`Export ${rows.length} bill${rows.length === 1 ? "" : "s"} ticked to pay (${money(rows.reduce((s, r) => s + num(r[5]), 0))} open) as the pay-list report?\n\nThe list above the draws shows exactly what is ticked.`)) return;
   const nx = (d.funding || {}).next_draw, toPay = rows.reduce((s, r) => s + num(r[5]), 0);
-  const footer = nx ? [{ label: `Unlocks ${nx.invoice_no || ""}${nx.draw_no ? " · Draw #" + nx.draw_no : ""}`, value: num(nx.ar_open) },
+  const footer = nx ? [{ label: `Unlocks ${nx.invoice_no || ""}${drawTag(nx)}`, value: num(nx.ar_open) },
                        { label: "Net = unlock - to pay", value: num(nx.ar_open) - toPay, cls: num(nx.ar_open) - toPay >= 0 ? "pos" : "neg" }] : [];
-  const body = { name: `Pay list ${_pp.pn}`, sheet: "Pay list", title: `${_pp.pn} - bills to pay to unlock the next draw${nx ? " " + money(nx.ar_open) + " - Invoice " + (nx.invoice_no || "") + (nx.draw_no ? " · Draw #" + nx.draw_no : "") : ""}`, footer,
+  const body = { name: `Pay list ${_pp.pn}`, sheet: "Pay list", title: `${_pp.pn} - bills to pay to unlock the next draw${nx ? " " + money(nx.ar_open) + " - Invoice " + (nx.invoice_no || "") + drawTag(nx) : ""}`, footer,
     subtitle: `${rows.length} bills ticked on the pay run · exported ${fmtDate(new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 19), true)}`,
     columns: [{ label: "Draw" }, { label: "Vendor" }, { label: "Bill #" }, { label: "Bill date" }, { label: "Amount", type: "money" }, { label: "Open", type: "money" }, { label: "Status" }, { label: "Waiver" }],
     rows, group_by: 0, fmt: rows.map((r, i) => ({ r: i, c: 5, cls: r[5] > 0 ? "neg" : "pos" })) };

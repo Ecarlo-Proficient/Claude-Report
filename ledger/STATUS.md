@@ -4,6 +4,16 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Draws headline the MONTH and show the period they cover (owner 2026-09-10: "tell me the draw
+  month it says on the invoice ... no period is anywhere").** MFD bills monthly draws ("September
+  Draw 2026"), so the old `draw\s*#?\s*(\d+)` parse read the YEAR as the draw number and every draw
+  tab showed "Draw #2026". `/api/project/page` now parses two ways: `draw_month` ("September 2026")
+  from the "<Month> Draw <YYYY>" memo, and `draw_no` only from a real "Draw #N" / "Draw # N" (CP),
+  never a 4-digit year; it also lifts `period_start` / `period_end` per draw and onto
+  `funding.next_draw`. `app.js` gained `drawTitle` / `drawSpan` / `drawTag`, used by the draw tabs,
+  the Coverage table (new **Period covered** column), the open-draw header ("Covers mm/dd/yyyy –
+  mm/dd/yyyy"), the "Next money in" box and the pay-list export - all now headline the month (or
+  "Draw #N" for CP) and show the span. Verified live against MFD177 (monthly) and CP800 (numbered).
 - **Standing job rulings (2026-09-08).** `shared/job_rulings` (`<CompanyHealth>/job_rulings.json`) now
   rides the project rows: `over_budget_accepted` + `rulings_n` on every `/api/projects` row, and
   `isOverBudget` in `app.js` returns false for an accepted job - the owner already knows why, so it leaves

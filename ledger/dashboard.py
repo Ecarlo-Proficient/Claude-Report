@@ -1645,8 +1645,16 @@ def _fetch_project_page(con, pn: str) -> dict:
         d["vendors_total"] = len(gate)
         for b in d["bills"]:
             b["paid"] = _bill_paid(b)
-        m = re.search(r"draw\s*#?\s*(\d+)", d.get("label") or d.get("matched_invoice") or "", re.I)
-        d["draw_no"] = int(m.group(1)) if m else None   # "Draw #4" from the invoice memo (owner 2026-09-02: "add Draw #")
+        # The invoice memo names the draw two ways: MFD bills a MONTH ("September Draw 2026" - no
+        # number), CP/most bill a NUMBER ("Draw #4" / "Draw # 4"). Never read the year as a draw
+        # number (owner 2026-09-10: it was showing "Draw #2026", the year). Carry the month and the
+        # period it covers so the page can say which month and what span each draw is (owner 2026-09-10).
+        _mi = d.get("label") or d.get("matched_invoice") or ""
+        _mm = re.search(r"([A-Z][a-z]+)\s+Draw\s+(\d{4})", _mi)
+        d["draw_month"] = f"{_mm.group(1)} {_mm.group(2)}" if _mm else None   # "September 2026"
+        m = re.search(r"draw\s*#\s*(\d+)", _mi, re.I) or (None if _mm else re.search(r"\bdraw\s+(\d{1,3})\b", _mi, re.I))
+        d["draw_no"] = int(m.group(1)) if m else None   # a real draw number ("Draw #4"), never the year
+        d["period_start"], d["period_end"] = p0, p1     # the span the draw covers, from the memo
         d["vendors_paid"] = sum(1 for b in gate if b["paid"])
         d["paid_amt"] = round(sum((b["amount"] or 0) for b in gate if b["paid"]), 2)
         d["gate_amt"] = round(sum((b["amount"] or 0) for b in gate), 2)
@@ -1681,6 +1689,7 @@ def _fetch_project_page(con, pn: str) -> dict:
     if nxt and blk_total > 0.005:   # the stage says WHY the money is stuck, not just that it is awaited (owner 2026-09-04)
         nxt["stage"] = f"Blocked - pay ${blk_total:,.0f} on earlier draws first"
     funding = {"next_draw": ({"label": nxt.get("label"), "invoice_no": nxt.get("invoice_no"), "ar_open": nxt.get("ar_open"), "draw_no": nxt.get("draw_no"),
+                              "draw_month": nxt.get("draw_month"), "period_start": nxt.get("period_start"), "period_end": nxt.get("period_end"),
                               "billed": nxt.get("billed"), "ar_date": nxt.get("ar_date"), "stage": nxt.get("stage")} if nxt else None),
                "blockers": blockers, "blockers_total": round(blk_total, 2),
                "own_unpaid": (round(nxt["unpaid_amt"], 2) if nxt else 0.0)}
