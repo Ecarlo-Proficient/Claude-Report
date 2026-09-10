@@ -646,7 +646,8 @@ EDIT_FONT = Font(name=MASTER_FONT_NAME, size=MASTER_FONT_SIZE,
 
 
 def _apply_edit_formatting(ws, cols_, hdr_row: int, first_row: int,
-                           last_row: int, src_by_row: Dict[int, dict]) -> int:
+                           last_row: int, src_by_row: Dict[int, dict],
+                           sync_ts: str = "") -> int:
     """Mirror each editable input into a hidden baseline column and add the
     conditional-format rule that reddens any cell differing from it.
 
@@ -656,13 +657,23 @@ def _apply_edit_formatting(ws, cols_, hdr_row: int, first_row: int,
     Keeping the source in the baseline means an override stays marked and stays
     honoured until the source itself catches up with it.
 
-    Returns the first column index used by the baseline block."""
+    Also writes the visible EDITED column right after the table (the owner
+    2026-09-09: "if someone enters a number in the editable cell that cell
+    changes color and just says the date edited"): a formula per row that
+    reads "edited after <sync date>" the moment any tracked cell differs from
+    its baseline. Excel cannot stamp the exact minute or the editor without a
+    macro - the sync date bounds WHEN, and OneDrive's version history on the
+    file names WHO.
+
+    Returns the last column index used by the baseline block."""
     from openpyxl.formatting.rule import FormulaRule
     if last_row < first_row:
         return len(cols_) + 1
-    base_col = len(cols_) + 2                   # one spacer column
+    edit_col = len(cols_) + 1                   # visible: EDITED
+    base_col = len(cols_) + 3                   # hidden spacer at +2, then the baselines
     idx = {f: i + 1 for i, (_l, _w, f) in enumerate(cols_)}
     n = 0
+    pairs = []
     for field in _OVERRIDE_FIELDS + ("_notes_all",):
         c = idx.get(field)
         if not c:
@@ -676,15 +687,38 @@ def _apply_edit_formatting(ws, cols_, hdr_row: int, first_row: int,
         ws.column_dimensions[bL].hidden = True
         if field == "_notes_all":
             continue                    # notes are preserved, not reddened
+        pairs.append((cL, bL))
         ws.conditional_formatting.add(
             f"{cL}{first_row}:{cL}{last_row}",
             FormulaRule(formula=[f"{cL}{first_row}<>{bL}{first_row}"],
                         fill=EDIT_FILL, font=EDIT_FONT, stopIfTrue=False))
-    # The spacer between the visible table and the hidden baseline block is
-    # hidden too, so the tab ends cleanly at its last real column (the user
-    # 2026-08-07). Stale widths further right are cleared by the caller.
-    ws.column_dimensions[get_column_letter(len(cols_) + 1)].hidden = True
-    return base_col + n - 1 if n else len(cols_)
+    eL = get_column_letter(edit_col)
+    when = sync_ts[:10]
+    try:                                        # mm/dd/yyyy, never year-first
+        when = dt.datetime.strptime(when, "%Y-%m-%d").strftime("%m/%d/%Y")
+    except ValueError:
+        pass
+    hc = ws.cell(hdr_row, edit_col, "EDITED")
+    hc.font = HDR_FONT
+    hc.fill = HDR_FILL
+    hc.border = CELL_BORDER
+    hc.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    for r in range(first_row, last_row + 1):
+        test = ",".join(f"{cL}{r}<>{bL}{r}" for cL, bL in pairs)
+        cell = ws.cell(r, edit_col, f'=IF(OR({test}),"edited after {when}","")' if pairs else None)
+        cell.font = DATA_FONT
+        cell.border = CELL_BORDER
+    ws.column_dimensions[eL].hidden = False
+    ws.column_dimensions[eL].width = 24
+    if pairs:
+        ws.conditional_formatting.add(
+            f"{eL}{first_row}:{eL}{last_row}",
+            FormulaRule(formula=[f'{eL}{first_row}<>""'], font=EDIT_FONT, stopIfTrue=False))
+    # The spacer between the EDITED column and the hidden baseline block is
+    # hidden too, so the tab ends cleanly (the user 2026-08-07). Stale widths
+    # further right are cleared by the caller.
+    ws.column_dimensions[get_column_letter(len(cols_) + 2)].hidden = True
+    return base_col + n - 1 if n else edit_col
 
 
 def _clear_stale_columns(ws, last_used: int) -> None:
@@ -1576,7 +1610,7 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
         # and its conditional formatting would add colour back.
         if not plain_report:
             base_last = _apply_edit_formatting(ws, cols_, hdr_row, data_start,
-                                               last_row, src_by_row)
+                                               last_row, src_by_row, sync_ts)
             _clear_stale_columns(ws, base_last)
         else:
             _clear_stale_columns(ws, len(cols_))

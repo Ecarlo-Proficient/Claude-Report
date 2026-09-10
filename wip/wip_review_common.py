@@ -262,6 +262,29 @@ def carry_pm_fields(rows: List, prior: Dict[str, dict], *,
             setattr(row, f["attr"], old)
             set_source(row, f["key"], CARRIED_SOURCE)
             carried[(pn, f["key"])] = old
+        if tab_kind == "master":
+            # The master holds the REVISED totals (the owner 2026-09-09: "master
+            # only reads the revised contract/etc and calls it contract/etc").
+            # A fresh row can carry the base with NO change-order part (no draw,
+            # no CO cost line this run); written as-is it would drop the tab's
+            # revised total back to the base - CP961 lost its 24,822 of COs that
+            # way on the 9/1 write. So the CO part is carried: whatever the tab's
+            # total exceeds the base by is the change orders the reader could not
+            # source, kept on the row until a document says otherwise.
+            base_k = _num(getattr(row, "base_contract", None))
+            tab_k = _num(was.get("orig_contract"))
+            if (base_k is not None and tab_k is not None
+                    and getattr(row, "co_revenue", None) is None and tab_k > base_k + 0.5):
+                row.co_revenue = round(tab_k - base_k, 2)
+                set_source(row, "approved_cos", CARRIED_SOURCE)
+                carried[(pn, "approved_cos")] = row.co_revenue
+            base_e = _num(getattr(row, "base_etc", None))
+            tab_e = _num(was.get("orig_etc"))
+            if (base_e is not None and tab_e is not None
+                    and getattr(row, "co_cost_override", None) is None and tab_e > base_e + 0.5):
+                row.co_cost_override = round(tab_e - base_e, 2)
+                set_source(row, "co_costs", CARRIED_SOURCE)
+                carried[(pn, "co_costs")] = row.co_cost_override
     return carried
 
 

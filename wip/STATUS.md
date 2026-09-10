@@ -8,6 +8,32 @@ Last updated: 2026-09-08
 
 ## DONE / FINALIZED
 
+- **CATEGORY on 'Test - RP' = source + last date on it (the owner 2026-09-09: "idk what
+  GOOD means in type, it should say where it came from ... and as of").** The column now
+  prints `Schedule m-d-yy` (the last daily crew schedule the job or its -FTW line appeared
+  on), `General List FTW backlog m-d-yy` (the two General-List bands, dated by the list
+  file) or `RP WIP file m-d-yy` (carried by the owner's file only). The schedule dates come
+  from **`shared/schedule_index.py`** - every 'Main Schedule' tab parsed ONCE into a JSON
+  cache in Application Support (`schedule-index.json`, ~4 min the first time, ~10 s after),
+  keyed by file mtime; a flatwork band row indexes the -FTW line too. `rp_type`
+  (GOOD / NOT STARTED / ...) is still computed for row ordering and the ledger, it just no
+  longer prints. Legend rewritten to match.
+- **EDITED column on the working tabs (the owner 2026-09-09: "if someone enters a number in
+  the editable cell that cell changes color and just says the date edited").** The edit
+  colour already existed (hidden baseline + conditional format); `wip_writer` now also
+  writes a visible EDITED column right after the table with a per-row formula that reads
+  `edited after mm/dd/yyyy` (the sync date) the moment any tracked cell differs from its
+  baseline, red via conditional formatting. Excel cannot stamp the minute or the editor
+  without a macro; the sync date bounds WHEN and OneDrive version history names WHO. Not
+  on Test-Master (plain report).
+- **Test-Master carries the change-order part of a revised total (2026-09-10).** The master
+  holds REVISED contract / ETC; a fresh CP/RP row with the base but no CO part (no draw, no
+  CO cost line this run) used to write the base and drop the tab's revised total - CP961
+  lost 24,822 of COs on the 9/1 write, CP765 / CP861 / RP7083 their CO costs.
+  `wip_review_common.carry_pm_fields(tab_kind="master")` now carries the difference into
+  `co_revenue` / `co_cost_override` (source "carried from tab") so the revised total on the
+  tab survives until a document says otherwise.
+
 - **STANDING JOB RULINGS -> `KNOWN:` IN NOTES + AUTOMATIC QC SIGN-OFF (2026-09-08).**
   The owner asked for a permanent per-job note so an overrun he has already explained
   is never flagged again. `shared/job_rulings.py` reads `<CompanyHealth>/job_rulings.json`

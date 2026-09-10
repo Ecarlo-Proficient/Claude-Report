@@ -51,6 +51,7 @@ from openpyxl import load_workbook
 import wip_writer as W
 import wip_review_common as WR   # shared WIP-review diff/merge (ledger accept/merge flow)
 from shared import job_rulings, paths, qbo_api
+from shared import schedule_index as SI
 from shared.takeoff_etc import find_takeoff_etc
 
 def _rp_cols():
@@ -438,6 +439,43 @@ def fill_missing_etc_from_takeoff(rows, root: Path = None):
           f"({len(empties) - filled} still blank - no cost sheet)")
 
 
+def _file_stamp(path: Path) -> str:
+    try:
+        return SI.label(dt.date.fromtimestamp(Path(path).stat().st_mtime))
+    except OSError:
+        return "n/a"
+
+
+def stamp_source_asof(rows) -> None:
+    """CATEGORY on 'Test - RP' = WHERE the line comes from + the LAST DATE it was
+    on that source (the owner 2026-09-09: "idk what GOOD means ... it should say
+    where it came from, Schedule / General List / General List ftw backlog and as
+    of"). Order of truth: the last daily crew schedule the job (or its -FTW line)
+    appeared on, from the schedule index; else the General List for the two
+    General-List bands (flatwork backlog / flatwork with costs), dated by the
+    list file; else the owner's RP WIP file itself, dated by that file. The old
+    GOOD / NOT STARTED words stay on the row (rp_type) for ordering and the
+    ledger; they are no longer what the column prints."""
+    try:
+        seen = SI.last_seen(SCHEDULE_DIR)
+    except Exception as e:                 # the share is down: answer from the cache
+        print(f"    schedule index: {type(e).__name__} - using the cache only")
+        seen = SI.last_seen(SCHEDULE_DIR, refresh=False)
+    gl_stamp = _file_stamp(ALPHA_PATH)
+    file_stamp = _file_stamp(RP_WIP_FILE)
+    for row in rows:
+        job = row.project_num.strip().upper()
+        d = seen.get(job)
+        if d is None and job.endswith("-FTW"):
+            d = seen.get(job[:-4])              # flatwork on a slab-only sighting
+        if d is not None:
+            row.source_asof = f"Schedule {SI.label(d)}"
+        elif row.section in ("FTW BACKLOG", "FTW - OFF-SCHEDULE (COSTS)"):
+            row.source_asof = f"General List FTW backlog {gl_stamp}"
+        else:
+            row.source_asof = f"RP WIP file {file_stamp}"
+
+
 def classify_from_file(rows):
     """Post-QBO pass over rows from the owner's file → rows in report order.
 
@@ -452,6 +490,7 @@ def classify_from_file(rows):
     order = ["RP SLAB", "FTW - ACTIVE", "FTW - OFF-SCHEDULE (COSTS)",
              "RP - DROPPED, UNBILLED", "FTW BACKLOG"]
     fill_missing_etc_from_takeoff(rows)
+    stamp_source_asof(rows)
     for row in rows:
         for fld, val in (getattr(row, "qbo_protect", None) or {}).items():
             if getattr(row, fld) != val:
@@ -492,7 +531,7 @@ def rp_tab_cols():
     drop = {"retainage_held", "notes_text", "_last_synced", "_notes_all",
             "_earned_revenue", "profit_earned", "overbillings", "underbillings",
             "future_profit", "job_borrow"}
-    cols = [("CATEGORY", 20, "rp_type")]
+    cols = [("CATEGORY", 24, "source_asof")]   # source + last date on it (owner 2026-09-09)
     for label, width, field in W.COLS:
         if field in drop:
             continue
@@ -509,12 +548,11 @@ def rp_tab_cols():
 
 
 RP_TAB_LEGEND = [
-    ("LEGEND - CATEGORY (what each row's TYPE means):", None, True),
-    ("GOOD - work is underway: QBO shows costs and/or billing", None, False),
-    ("NOT STARTED - on the schedule / priced, but no costs and no billing yet", None, False),
-    ("FTW WITH COSTS - flatwork started off-schedule (has costs) - belongs on the schedule", None, False),
-    ("DROPPED OFF SCHEDULE - left the schedule with money still on the table", None, False),
-    ("FTW BACKLOG - flatwork priced with the slab, no activity and not scheduled (expected wins)", None, False),
+    ("LEGEND - CATEGORY = where the line comes from + the last date it was on that source:", None, True),
+    ("Schedule m-d-yy - the last daily crew schedule the job appeared on (Main Schedule tab)", None, False),
+    ("General List FTW backlog m-d-yy - flatwork priced in the General List, not on any schedule yet (list file date)", None, False),
+    ("RP WIP file m-d-yy - carried by the RP WIP file only, never seen on a schedule (file date)", None, False),
+    ("EDITED column (far right) - names the sync date a red cell was changed after; who changed it = OneDrive version history on the file", None, False),
     ("COLORS:  GREEN = the owner verified this number", "00B050", True),
     ("RED = the owner changed this number", "FF0000", True),
     ("ORANGE = ops manager must verify", "ED7D31", True),
