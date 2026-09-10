@@ -1618,22 +1618,24 @@ def parse_statement_vendor_columnar(pdf_path: Path) -> Tuple[str, str, float, Li
         if not money:
             continue
         balance = _paren_amount(money[-1])            # rightmost column = running balance
-        row_text = " ".join(tokens)
-        # "Balance Forward" seeds the running total but is not an invoice line.
-        if re.search(r"balance\s+forward", row_text, re.I):
-            prev_balance = balance
-            continue
-        amount = round(balance - prev_balance, 2)     # nets credits / payments / partials
+        amount = round(balance - prev_balance, 2)     # delta nets credits / payments / partials
         prev_balance = balance
         if amount == 0.0:
             continue                                  # $0 / informational row
-        ref_m = REF_RE.search(row_text)
+        row_text = " ".join(tokens)
+        # A "Balance Forward" row carries a prior open balance (often a credit,
+        # e.g. -645.91). It has no invoice ref, but it MUST count toward the sum
+        # or the tie-out is off by the whole forward - so it flows through as a
+        # normal delta line (balance - 0), just labelled and ref-less. A $0.00
+        # forward nets to 0 above and is dropped.
+        is_fwd = re.search(r"balance\s+forward", row_text, re.I)
+        ref_m = None if is_fwd else REF_RE.search(row_text)
         lines.append(StmtLine(
             date=_norm_date(date_token),
             ref=ref_m.group(1) if ref_m else "",
             amount=amount,
             po="",
-            address="",
+            address="Balance forward (prior open balance, not itemized)" if is_fwd else "",
         ))
 
     amt_due = 0.0
@@ -1677,13 +1679,13 @@ def parse_statement_vendor_whitecap(full_text: str) -> Tuple[str, str, float, Li
         except ValueError:
             pass
 
-    # Only skip U (Unapplied Payment — vendor accounting, no invoice ref to
-    # match). Credit Memos (C) are kept as negative-amount lines so the sum
-    # ties to Total Due — they're real items the vendor expects to net out,
-    # and if QBO has a matching credit memo Bill with negative balance, the
-    # reconciler will match it; if not, it'll surface as MISSING_IN_QBO so AP
-    # knows to enter the credit.
-    SKIP_TYPES = {"U"}
+    # Keep EVERY type as a line, credits/payments included (negative amounts).
+    # Unapplied Payments (U) and Credit Memos (C) are netted into the vendor's
+    # Total Due, so dropping them makes the line sum overshoot and the tie-out
+    # fail (White Cap 07-01: a -3,173.96 type-U payment). They carry no invoice
+    # ref, so they surface as MISSING_IN_QBO - which is correct: AP sees the
+    # open credit/payment. (Was: skip U, which broke the tie-out.)
+    SKIP_TYPES: set = set()
     lines: List[StmtLine] = []
     for m in WHITECAP_ROW_RE.finditer(full_text):
         tp = m.group("tp").rstrip("*")  # strip "*" in-review marker
