@@ -1617,9 +1617,19 @@ def _has_gutter(ws, width: float) -> bool:
     return d is not None and d.width is not None and d.width <= width + 1.5
 
 
-def _normalise_body_font(wb: Workbook, size: int = 12) -> None:
-    """Body text is size 12 on every sheet (the user 2026-08-31: "make all
-    standard fonts (text font, transaction, etc) all size 12").
+# Sheets that read bigger than the rest. Transactions is the densest sheet in
+# the book and the one the owner actually scans line by line (2026-09-10:
+# "default pnl to font size 14 for transactions").
+BODY_SIZE_BY_SHEET = {"Transactions": 14}
+# Nothing on a P&L goes above this - titles included (2026-09-10: "don't let it
+# go over 16 anywhere"). Enforced as a CLAMP, not a convention, so a call site
+# cannot reintroduce a 20pt banner later.
+MAX_FONT_PT = 16
+
+
+def _normalise_body_font(wb: Workbook, size_default: int = 12) -> None:
+    """Body text is size 12 on every sheet, 14 on the ones in
+    BODY_SIZE_BY_SHEET, and nothing anywhere goes over MAX_FONT_PT.
 
     A PASS, not ~50 edits at the call sites, for two reasons: the delivered
     size then has exactly one home, and bumping a size without widening the
@@ -1631,6 +1641,7 @@ def _normalise_body_font(wb: Workbook, size: int = 12) -> None:
     footnotes are annotations, not text, and shouting them helps nobody.
     """
     for ws in wb.worksheets:
+        size = BODY_SIZE_BY_SHEET.get(ws.title, size_default)
         counts: Dict[float, int] = {}
         for row in ws.iter_rows():
             for c in row:
@@ -1660,6 +1671,19 @@ def _normalise_body_font(wb: Workbook, size: int = 12) -> None:
         for d in list(ws.column_dimensions.values()):
             if d.width:
                 d.width = round(d.width * ratio, 1)
+
+    # The clamp runs LAST and over everything, so a title written at 18 by some
+    # call site still lands at 16 in the delivered file.
+    for ws in wb.worksheets:
+        for row in ws.iter_rows():
+            for c in row:
+                f = c.font
+                if f is None or not f.size or float(f.size) <= MAX_FONT_PT:
+                    continue
+                c.font = Font(name=f.name, size=MAX_FONT_PT, bold=f.bold,
+                              italic=f.italic, color=f.color,
+                              underline=f.underline, strike=f.strike,
+                              vertAlign=f.vertAlign)
 
 
 def _ref_first_row(ref: str) -> int:

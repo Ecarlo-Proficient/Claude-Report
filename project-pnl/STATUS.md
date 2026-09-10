@@ -8,6 +8,16 @@ manual close), RP (no draws — expenses → invoice → profit).
 
 ## DONE / FINALIZED
 
+- **TRANSACTIONS READS AT 14, NOTHING GOES OVER 16 (2026-09-10).** The owner:
+  "default pnl to font size 14 for transactions. don't let it go over 16 anywhere."
+  `BODY_SIZE_BY_SHEET = {"Transactions": 14}` in `_normalise_body_font`, which
+  already scales that sheet's column widths by the same ratio - a size bump without
+  the widths clips the text. Every other sheet stays at 12. `MAX_FONT_PT = 16` is a
+  CLAMP that runs last over every cell, so a call site cannot reintroduce an 18 or 20
+  point banner later. Verified offline against the delivered MFD177 workbook (8,489
+  Transactions cells 12 -> 14, widths scaled, P&L and By Account byte-identical at
+  12, nothing above 16) before spending a QBO run on it.
+
 - **MFD IS 9%, AND THE P&L BLOCK READS TOP TO BOTTOM (2026-09-10).** The owner:
   "do 9% moving forward for MFD and remove 10% everywhere. let's just use 9%."
   An MFD workbook used to carry BOTH a 9% MFD view and a 10% company view, plus a
