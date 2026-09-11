@@ -97,6 +97,7 @@ except ImportError:
 
 from shared import qbo_vault as kc
 from shared import paths
+from shared import xlsx_verify
 
 # ───────────────────────── constants ─────────────────────────
 
@@ -2345,7 +2346,9 @@ def _embed_statement_tab(wb, src: Path) -> Optional[Path]:
 
 def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
                 qbo_bills: List[QboBill], rows: List[ReconRow],
-                statement_src: Optional[Path] = None) -> None:
+                statement_src: Optional[Path] = None,
+                line_sum: Optional[float] = None,
+                tieout_ok: bool = True) -> None:
     # QBO open as-of stmt_date: exclude post-statement bills from the displayed
     # total so the reconciliation math lines up with the statement snapshot.
     def _as_of(b: QboBill) -> bool:
@@ -2404,11 +2407,40 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
 
     stmt_row = r
     _tieout_row(r, "Statement total", stmt_total, BODY_FONT); r += 1
+
+    # Parse completeness: the sum of the statement lines we actually parsed must
+    # equal the statement's own Amount Due. When it doesn't, the parse dropped or
+    # duplicated lines (e.g. an unsupported multi-page layout) and the whole
+    # reconciliation is unreliable — surface the gap here and banner it below.
+    if line_sum is not None:
+        ls_row = r
+        _tieout_row(r, "Sum of parsed lines", round(line_sum, 2), BODY_FONT); r += 1
+        _tieout_row(r, "Parse gap (lines − statement total)",
+                    f"=E{ls_row}-E{stmt_row}", LABEL_FONT,
+                    fill=(SUBTOTAL_FILL if tieout_ok else BAD_FILL)); r += 1
+
     qbo_label = (f"QBO open as of {stmt_date} ({len(qbo_bills_asof)} bills)"
                  if stmt_date else f"QBO open ({len(qbo_bills_asof)} open Bills)")
     qbo_row = r
     _tieout_row(r, qbo_label, qbo_total, BODY_FONT); r += 1
     _tieout_row(r, "Reconciling difference", f"=E{stmt_row}-E{qbo_row}", LABEL_FONT, fill=SUBTOTAL_FILL); r += 1
+
+    # Loud, unmissable banner when the parse did not tie out. The report is still
+    # written (a human may want to see the partial match) but it is marked NOT
+    # reliable, and the caller keeps the source out of DONE.
+    if not tieout_ok:
+        gap = round((line_sum or 0.0) - stmt_total, 2)
+        msg = (f"⚠ TIE-OUT FAILED — parse incomplete: parsed lines total "
+               f"${(line_sum or 0.0):,.2f} but the statement's Amount Due is "
+               f"${stmt_total:,.2f} (gap ${gap:,.2f}). This reconciliation is NOT "
+               f"reliable — do not action it until the statement is re-parsed.")
+        c = s.cell(row=r, column=1, value=msg)
+        c.font = Font(bold=True, name="Arial", size=12, color="FFFFFF")
+        c.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+        c.fill = PatternFill("solid", start_color="C62828")
+        s.merge_cells(start_row=r, start_column=1, end_row=r, end_column=12)
+        s.row_dimensions[r].height = 42
+        r += 1
 
     # FYI: post-statement bills excluded from the tie-out (wrap text, tall row)
     if post_stmt_bills:
@@ -2622,6 +2654,9 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
     wb.save(out_path)
     if cleanup_dir:
         shutil.rmtree(cleanup_dir, ignore_errors=True)
+    # Binding guard (repo rule 5b): never hand over an xlsx that would trip
+    # Excel's "we found a problem with some content" repair prompt.
+    xlsx_verify.assert_clean(out_path)
 
 # ───────────────────────── interactive helpers ─────────────────────────
 
@@ -2796,11 +2831,11 @@ def process_pdf(pdf_path: Path, args: argparse.Namespace,
         except (EOFError, KeyboardInterrupt):
             print()
             _fail("vendor input required — aborted.")
-            return False, {}
+            return False, {}, True
 
     if not vendor_guess:
         _fail("no vendor identified — aborted.")
-        return False, {}
+        return False, {}, True
 
     # Always log which source the vendor came from (helps debug surprises)
     print(f"  {_Term.color(_Term.G, '✓')} Vendor candidate: "
@@ -2824,7 +2859,7 @@ def process_pdf(pdf_path: Path, args: argparse.Namespace,
         for label in TEMPLATE_LABELS.values():
             print(f"      • {label}")
         print("    If this is a new format, share it so a parser can be added.")
-        return False, {}
+        return False, {}, True
 
     line_sum = round(sum(l.amount for l in lines), 2)
     sum_matches = abs(line_sum - amt_due) <= 0.50
@@ -2850,16 +2885,16 @@ def process_pdf(pdf_path: Path, args: argparse.Namespace,
 
     if not vendor_hint:
         _fail("could not identify vendor. Re-run with --vendor \"Exact Vendor Name\".")
-        return False, {}
+        return False, {}, True
     if not stmt_date:
         _fail("could not identify statement date from PDF.")
-        return False, {}
+        return False, {}, True
     if not sum_matches:
         _warn("line sum differs from Amount Due — parse may be incomplete.")
 
     if not _confirm("Parse looks correct — proceed to QBO lookup?", default_yes=sum_matches, skip=args.yes):
         print(_Term.color(_Term.R, "✗ aborted by user."))
-        return False, {}
+        return False, {}, True
 
     # ── vendor resolve (uses alias cache when available) ────
     print()
@@ -2880,7 +2915,7 @@ def process_pdf(pdf_path: Path, args: argparse.Namespace,
     if getattr(args, "inbox_cached_only", False) and not from_cache and not args.vendor:
         _fail(f"vendor '{vendor_name}' is not in the alias cache yet — skipping in unattended "
               "inbox mode. Run it once manually (statement-reconcile <file>) to confirm + cache it.")
-        return False, {}
+        return False, {}, True
 
     # ── confirm #2: vendor match — skipped on cache hit ─────
     if from_cache:
@@ -2895,7 +2930,7 @@ def process_pdf(pdf_path: Path, args: argparse.Namespace,
         _hr()
         if not _confirm("Is this the correct vendor?", default_yes=True, skip=args.yes):
             print(_Term.color(_Term.R, "✗ aborted."))
-            return False, {}
+            return False, {}, True
         if not args.no_cache:
             remember_vendor(vendor_hint, vendor_id, vendor_name)
             print(f"  {_Term.color(_Term.DIM, '(remembered this vendor — future statements will skip this step)')}")
@@ -2997,7 +3032,7 @@ def process_pdf(pdf_path: Path, args: argparse.Namespace,
 
     if args.dry_run:
         print(_Term.color(_Term.DIM, "--dry-run set; no Excel written."))
-        return True, counts
+        return True, counts, sum_matches
 
     # ── write Excel ─────────────────────────────────────────
     print()
@@ -3005,8 +3040,13 @@ def process_pdf(pdf_path: Path, args: argparse.Namespace,
     base_out_dir = getattr(args, "out_dir", None) or OUTDIR_DEFAULT
     out = args.out or (base_out_dir / f"Statement_Reconciliation_{stmt_date}_{_slug(vendor_name)}.xlsx")
     statement_src = pdf_path if getattr(args, "embed", False) else None
-    write_excel(out, vendor_name, stmt_date, amt_due, bills, rows, statement_src=statement_src)
+    write_excel(out, vendor_name, stmt_date, amt_due, bills, rows,
+                statement_src=statement_src, line_sum=line_sum, tieout_ok=sum_matches)
     _done(t0, f"Saved to {_Term.color(_Term.C, str(out))}")
+    if not sum_matches:
+        _fail(f"TIE-OUT FAILED — parsed lines ${line_sum:,.2f} vs statement ${amt_due:,.2f} "
+              f"(gap ${line_sum - amt_due:,.2f}). Report written WITH a red warning banner and "
+              f"will NOT be archived to DONE. A human must re-parse this statement.")
 
     # ── clerk performance log (append one row) ──────────────
     t0 = _phase("Appending clerk-performance history")
@@ -3020,7 +3060,7 @@ def process_pdf(pdf_path: Path, args: argparse.Namespace,
     if not args.no_open:
         _open_file(out)
         print(f"  {_Term.color(_Term.DIM, '(Excel opened in default app)')}")
-    return True, counts
+    return True, counts, sum_matches
 
 
 def _resolve_workflow_dirs(base: Path, strict: bool = True
@@ -3113,17 +3153,24 @@ def run_inbox(args: argparse.Namespace, access: str, cid: str,
 
     moved: List[str] = []       # reconciled AND archived to DONE
     kept: List[str] = []        # reconciled but left in place (not an inbox file)
+    held: List[str] = []        # reconciled but tie-out FAILED — kept out of DONE
     failed: List[Tuple[str, str]] = []
     for i, f in enumerate(files, 1):
         print(_Term.color(_Term.BOLD, f"\n[{i}/{len(files)}] {f.name}"))
         try:
-            ok, _counts = process_pdf(f, args, access, cid)
+            ok, _counts, tieout_ok = process_pdf(f, args, access, cid)
         except Exception as e:
             _fail(f"{f.name}: {e}")
             failed.append((f.name, str(e)))
             continue
         if not ok:
             failed.append((f.name, "skipped (see message above)"))
+            continue
+        # Parse tie-out failed: the report exists (with a red banner) but its
+        # numbers can't be trusted, so it stays OUT of DONE for a human to re-parse.
+        if not tieout_ok:
+            print(_Term.color(_Term.R, "    ⚠ tie-out failed — report kept OUT of DONE for review"))
+            held.append(f.name)
             continue
         # Archive to DONE only when the source actually lives in the inbox — and
         # never on a dry-run (nothing was written, so nothing should move).
@@ -3152,15 +3199,19 @@ def run_inbox(args: argparse.Namespace, access: str, cid: str,
     if kept:
         note = "reconciled (dry-run)" if args.dry_run else "reconciled, left in place"
         print(_Term.color(_Term.G, f"  {note+':':28} {len(kept)}"))
-    if not moved and not kept:
+    if not moved and not kept and not held:
         print(_Term.color(_Term.DIM, "  Reconciled:                  0"))
+    if held:
+        print(_Term.color(_Term.R, f"  Tie-out FAILED (re-parse):   {len(held)}"))
+        for name in held:
+            print(_Term.color(_Term.DIM, f"    · {name} — parsed lines ≠ statement total; report banded, not archived"))
     if failed:
         print(_Term.color(_Term.R, f"  Left for a human:            {len(failed)}"))
         for name, why in failed:
             print(_Term.color(_Term.DIM, f"    · {name} — {why}"))
     print(f"\n  {_Term.color(_Term.BOLD, 'Excels:')} {_term_link(str(recon), recon)}")
     _hr()
-    return 0 if not failed else 1
+    return 0 if not failed and not held else 1
 
 
 def main() -> int:

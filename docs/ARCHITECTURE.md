@@ -241,7 +241,7 @@ flowchart LR
     GL -- "RP draw matching" --> BT
     POT -- "Unused PO reconcile" --> BT
     QBO --> SR
-    NAS --> SR --> RX
+    NAS --> SR -- "tie-out gate: lines must sum to Amount Due,\nelse banded + held out of DONE" --> RX
 ```
 
 Full pull (2026-08-06): the tracker pulls every bill incl. subs. Subs are kept off the
