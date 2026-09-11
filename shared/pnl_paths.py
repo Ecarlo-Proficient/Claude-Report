@@ -297,7 +297,9 @@ def _listable(d: Path) -> bool:
         return False
 
 
-# ── the OneDrive 'Automations-' tree is RETIRED (the owner 2026-09-11) ──
+# ── the OneDrive 'Automations-' tree is RETIRED FOR P&Ls (the owner 2026-09-11) ──
+# P&Ls, Overviews and the cut page only - Bill Tracker, Open_Invoices and the
+# statement reconciles keep their homes there ("i said only for the P&L").
 # "Automations folder I'm retiring, only should be used if no mount exists and
 # i deliberately say bypass by sending to automations." So it is never a home
 # and never a SILENT fallback: when a division's real home (its Teams channel,

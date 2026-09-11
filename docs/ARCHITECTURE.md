@@ -870,8 +870,8 @@ Summary; plain, `assert_clean`).
 **The OneDrive `Automations-` tree is RETIRED (the owner 2026-09-11).** `shared/pnl_paths`
 resolves the real home first (MFD -> the Project Financials channel; CP / RP -> the job folder
 on the Common drive) and REFUSES to fall back into `Automations-` (`HomeNotMounted`) unless the
-run says `--to-automations`; reads of old files there still work. Bill Tracker, Open_Invoices
-and the statement reconciles still live there pending new homes.
+run says `--to-automations`; reads of old files there still work. **P&Ls only** - Bill Tracker,
+Open_Invoices and the statement reconciles keep their Automations- homes (the owner 2026-09-11).
 
 **`project-pnl/bizdev_cut_view.py`** (reads the P&L workbooks + one QBO pull per registered
 vendor) - the OWNER'S copy of the Overview page with the DIRECTOR'S cut charged at the end: the

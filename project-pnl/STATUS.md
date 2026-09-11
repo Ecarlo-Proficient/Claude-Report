@@ -20,8 +20,8 @@ manual close), RP (no draws — expenses → invoice → profit).
   when it is missing. READS are unaffected: `find_pnl`, `_candidates`, `_archive_dirs`
   pass `bypass=True` so old files there are still found. `bizdev_cut_view` prints
   "stopped" and exits 1 rather than building the owner's page from stale copies.
-  Still living in Automations- and NOT covered here (they need homes the owner has not
-  named): `Bill Tracker.xlsx`, `Open_Invoices.xlsx`, `statement reconciles/`.
+  **P&L ONLY** (the owner, same day: "i said only for the P&L never said everything else") -
+  Bill Tracker, Open_Invoices and the statement reconciles keep their Automations- homes.
 
 - **`bizdev_cut_view.py` - THE OWNER'S INTERNAL P&L WITH THE DIRECTOR'S CUT AT THE END
   (2026-09-11, reworked the same day).** The owner: "take mfd overview and make sure the
