@@ -1,22 +1,29 @@
 #!/usr/bin/env python3
 """
-bizdev_cut_view.py - the owner's INTERNAL division P&L with the business-
-development cut charged at the end, in the exact shape of the division
-Overview, with every cut line linked to its transaction in QuickBooks.
+bizdev_cut_view.py - the owner's INTERNAL division P&L with the director's cut
+charged at the end, in the exact shape of the division Overview, with every
+cut line linked to its transaction in QuickBooks.
 
 WHAT IT IS
 The division Overview (`completed_pnl.py`) is the shared report: one row per
 job, contract / billed / cost / gross profit, then the 10% and 9% overhead
 views. It never shows what the outside parties in the cut register
 (`shared/bizdev_cut.py`) were paid, because PMs read it. This workbook is
-the same page for the OWNER ONLY, with three things added at the end of every
-row: each registered vendor's cut on that job, and the REAL NET after it at
-both overhead rates (the owner 2026-09-11: "exactly how it is but add the
-director's cut at the end to see the final net profit"). Click a job and its
-sheet lists every line of the cut - date, reference, what the line says, the
-account, how it was tied to the job - each reference a deep link into
-QuickBooks, so the question "how did his money get coded to that job?" is
-answered by the transaction itself, not by us.
+the same page for the OWNER ONLY, with the director's cut added at the end of
+every row and the REAL NET after it at both overhead rates (the owner
+2026-09-11: "exactly how it is but add the director's cut at the end to see
+the final net profit"). Click a job and its sheet lists every line of the cut -
+date, reference, what the line says, the account, how it was tied to the job -
+each reference a deep link into QuickBooks, so the question "how did his money
+get coded to that job?" is answered by the transaction itself, not by us.
+
+STRAIGHT DIRECTOR ONLY (the owner 2026-09-11: "put jordan's cut in the costs of
+the project instead, we want straight director only"). The register names the
+director; every OTHER registered vendor's cut is charged into that job's COST
+on this page, and the job sheet shows those lines under "in job cost" so the
+owner can still see them. No overhead model lives here - the rate ladder and
+the overhead review are gone from this file (the review is its own workbook,
+`<DIV> OH Calculations.xlsx`).
 
 WHERE THE NUMBERS COME FROM
   * contract / billed / cost: READ OUT OF THE GENERATED P&L WORKBOOKS through
@@ -34,12 +41,12 @@ WHERE THE NUMBERS COME FROM
     the sheet says so. Dates are stripped before matching so `03/10/2023`
     never reads as a job.
   * a cut line the P&L workbook still carries in job cost is stripped out of
-    COST here (the register test again), so the cut is charged ONCE.
+    COST here (the register test again), so every cut is counted ONCE: the
+    director's in his column, the others' inside COST.
 
 LOCAL ONLY. The file lives in <CompanyHealth>, never on OneDrive, Teams or in
-the repo (the owner 2026-09-04: "do not put anywhere just local"). Other sheets
-already in that workbook (the overhead review, its drivers) are kept as they
-are; only the P&L page and the per-job cut sheets are rebuilt.
+the repo (the owner 2026-09-04: "do not put anywhere just local"). It is
+rebuilt from scratch every run.
 
 USAGE
   python3 project-pnl/bizdev_cut_view.py                 # MFD, default file
@@ -54,7 +61,7 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-from openpyxl import Workbook, load_workbook
+from openpyxl import Workbook
 from openpyxl.styles import Border, Font
 from openpyxl.utils import get_column_letter
 
@@ -73,8 +80,7 @@ OUT_NAME = "{label} PnL - Internal - Director Cut.xlsx"
 PNL_SHEET = "{label} P&L"
 OLDER_SHEET = "Older {label} jobs"
 NOJOB_SHEET = "No job named"
-# the overhead rates the fixed block below the table walks through
-RATE_LADDER = (0.05, 0.06, 0.07, 0.08, 0.09, 0.10, 0.11)
+DETAIL_W = (13, 12, 22, 60, 30, 15, 18, 40)      # the line grid, B..I
 
 # ─────────────────────────── the cut, from QBO ───────────────────────────
 _DATE = re.compile(r"\b\d{1,2}/\d{1,2}(?:/\d{2,4})?\b")
@@ -130,7 +136,8 @@ def _vendor_txn_ids(access: str, realm: str, vendor_id: str) -> Dict[str, List[s
 
 def pull_cut_lines(prefix: str) -> Tuple[List[dict], str]:
     """Every line of every Bill / Check / Expense on the registered vendors,
-    already tested (cut vs fronted) and tied to a job. Returns (lines, realm)."""
+    already tested (cut vs fronted), tied to a job, and marked director or
+    not. Returns (lines, realm)."""
     reg = bizdev_cut.load()
     if not reg["vendors"]:
         raise SystemExit("no vendors in the cut register - nothing to build")
@@ -181,6 +188,7 @@ def pull_cut_lines(prefix: str) -> Tuple[List[dict], str]:
                 for job in (sorted(jobs) or [""]):
                     lines.append({
                         "job": job, "vendor": vname, "label": bizdev_cut.label(vname),
+                        "director": bizdev_cut.is_director(vname),
                         "date": str(txn.get("TxnDate") or ""),
                         "ref": str(txn.get("DocNumber") or "").strip() or
                                {"bill": "bill", "check": "check", "expense": "ACH / card"}[kind],
@@ -196,7 +204,7 @@ def pull_cut_lines(prefix: str) -> Tuple[List[dict], str]:
 
 def _strip_cut_from_cost(src: dict) -> float:
     """A cut line the P&L workbook still carries in job cost comes OUT of the
-    sections here, so the cut is charged once. Returns what was removed."""
+    sections here, so every cut is counted once. Returns what was removed."""
     removed = 0.0
     for sec in src["sections"]:
         for acct in sec["accounts"]:
@@ -219,7 +227,7 @@ def _strip_cut_from_cost(src: dict) -> float:
 def _label(job: str, title: str) -> str:
     """The Overview's job label, with its em dash swapped for a hyphen - nothing
     this tool writes carries one (the owner's standing rule)."""
-    return job_label(job, title).replace(" \u2014 ", " - ").replace("\u2014", "-")
+    return job_label(job, title).replace(" — ", " - ").replace("—", "-")
 
 
 def _hdr(ws, r, c, text, align="right", indent=0):
@@ -227,17 +235,25 @@ def _hdr(ws, r, c, text, align="right", indent=0):
               fill=F_HDR, align=align, wrap=True, indent=indent)
 
 
-def _lines_table(ws, r: int, rows: List[dict], labels: List[str],
-                 title: str, first_col: int = C0) -> Tuple[int, Dict[str, str], str, int]:
+def _who(ln: dict) -> str:
+    """The Who column: the director's label as is; anyone else's cut is
+    marked as job cost, which is where this page puts it."""
+    lab = ln["label"] or ln["vendor"]
+    return lab if ln["director"] or not ln["cut"] else f"{lab} (in job cost)"
+
+
+def _lines_table(ws, r: int, rows: List[dict], dlabel: str, title: str,
+                 first_col: int = C0) -> Tuple[int, str, str, str]:
     """The cut lines, one grid: ref (linked) · date · who · what it says ·
-    account · cut · they fronted it · how it was tied to the job.
-    Returns (next row, {label: total cell}, fronted total cell, first data row)."""
+    account · the director's cut · in job cost · how it was tied to the job.
+    Returns (next row, director total cell, other-cut-in-cost total cell,
+    fronted total cell)."""
     B = first_col
     _t(ws, r, B, title, size=SZ + 2, bold=True, color=NAVY)
     r += 1
     heads = (("Ref #", "left"), ("Date", "left"), ("Who", "left"),
              ("What the line says", "left"), ("Account", "left"),
-             ("Cut", "right"), ("They fronted it (stays in job cost)", "right"),
+             (dlabel, "right"), ("In job cost", "right"),
              ("How it was tied to this job", "left"))
     for i, (h, al) in enumerate(heads):
         _hdr(ws, r, B + i, h, align=al, indent=1 if i == 0 else 0)
@@ -252,12 +268,12 @@ def _lines_table(ws, r: int, rows: List[dict], labels: List[str],
         d = _t(ws, r, B + 1, dt.date.fromisoformat(ln["date"]) if ln["date"] else "",
                size=SZ_SMALL, align="left")
         d.number_format = "mm/dd/yyyy"
-        _t(ws, r, B + 2, ln["label"] or ln["vendor"], size=SZ_SMALL)
+        _t(ws, r, B + 2, _who(ln), size=SZ_SMALL)
         _t(ws, r, B + 3, ln["text"][:120], size=SZ_SMALL)
         _t(ws, r, B + 4, ln["acct"][:40], size=SZ_SMALL)
-        _t(ws, r, B + 5, ln["amt"] if ln["cut"] else None, size=SZ_SMALL, fmt=MONEY_C,
-           align="right")
-        _t(ws, r, B + 6, None if ln["cut"] else ln["amt"], size=SZ_SMALL, fmt=MONEY_C,
+        his = ln["cut"] and ln["director"]
+        _t(ws, r, B + 5, ln["amt"] if his else None, size=SZ_SMALL, fmt=MONEY_C, align="right")
+        _t(ws, r, B + 6, None if his else ln["amt"], size=SZ_SMALL, fmt=MONEY_C,
            align="right", color=GREY)
         _t(ws, r, B + 7, ln["how"], size=SZ_SMALL - 1, color=GREY)
         if r % 2 == 0:
@@ -270,24 +286,26 @@ def _lines_table(ws, r: int, rows: List[dict], labels: List[str],
         _t(ws, r, B, "nothing from them on this job", size=SZ_SMALL, color=GREY, indent=1)
         r += 1
         last = first          # an empty SUM range still has to be a real range
-    who, cut, fr = (get_column_letter(B + 2), get_column_letter(B + 5),
-                    get_column_letter(B + 6))
+    who, cut, inc = (get_column_letter(B + 2), get_column_letter(B + 5),
+                     get_column_letter(B + 6))
     for c in range(B, B + 8):
         ws.cell(row=r, column=c).border = Border(top=RULE)
-    totals: Dict[str, str] = {}
-    for lab in labels:
-        _t(ws, r, B, f"{lab} on this job", size=SZ, bold=True, color=NAVY, indent=1)
-        cell = _t(ws, r, B + 5, f'=SUMIF({who}{first}:{who}{last},"{lab}",{cut}{first}:{cut}{last})',
-                  size=SZ, bold=True, color=NAVY, fmt=MONEY, align="right")
-        totals[lab] = cell.coordinate
-        ws.row_dimensions[r].height = 24
-        r += 1
-    _t(ws, r, B, "they fronted for the job - already in COST, not a cut", size=SZ_SMALL,
+    _t(ws, r, B, f"{dlabel} on this job", size=SZ, bold=True, color=NAVY, indent=1)
+    d_cell = _t(ws, r, B + 5, f"=SUM({cut}{first}:{cut}{last})", size=SZ, bold=True,
+                color=NAVY, fmt=MONEY, align="right")
+    ws.row_dimensions[r].height = 24
+    r += 1
+    _t(ws, r, B, "other cuts charged into this job's COST", size=SZ_SMALL, color=GREY, indent=1)
+    o_cell = _t(ws, r, B + 6, f'=SUMIF({who}{first}:{who}{last},"*(in job cost)",'
+                              f'{inc}{first}:{inc}{last})',
+                size=SZ_SMALL, bold=True, color=GREY, fmt=MONEY, align="right")
+    r += 1
+    _t(ws, r, B, "fronted for the job - already in COST, not a cut", size=SZ_SMALL,
        color=GREY, indent=1)
-    fcell = _t(ws, r, B + 6, f"=SUM({fr}{first}:{fr}{last})", size=SZ_SMALL, bold=True,
-               color=GREY, fmt=MONEY, align="right")
+    f_cell = _t(ws, r, B + 6, f"=SUM({inc}{first}:{inc}{last})-{o_cell.coordinate}",
+                size=SZ_SMALL, bold=True, color=GREY, fmt=MONEY, align="right")
     r += 2
-    return r, totals, fcell.coordinate, first
+    return r, d_cell.coordinate, o_cell.coordinate, f_cell.coordinate
 
 
 def _page_setup(ws):
@@ -298,64 +316,63 @@ def _page_setup(ws):
     ws.print_options.horizontalCentered = True
 
 
-def build(jobs: List[tuple], cut_lines: List[dict], out: Path, div: dict,
-          div_dir: Path) -> dict:
+def _detail_sheet(wb, name: str, title: str, pnl_name: str):
+    ws = wb.create_sheet(name[:31])
+    ws.sheet_view.showGridLines = False
+    _t(ws, 1, 1, title, size=SZ_TITLE - 2, bold=True, color=NAVY)
+    back = _t(ws, 1, C0 + 7, f"← back to {pnl_name}", size=SZ_SMALL, align="right")
+    back.hyperlink = f"#'{pnl_name}'!A1"
+    back.font = Font(size=SZ_SMALL, color=LINK, underline="single")
+    for c in range(1, C0 + 8):
+        ws.cell(row=2, column=c).border = Border(bottom=HAIR)
+    ws.row_dimensions[1].height = 30
+    ws.row_dimensions[3].height = 8
+    ws.column_dimensions["A"].width = GUTTER_W
+    for col, w in zip("BCDEFGHI", DETAIL_W):
+        ws.column_dimensions[col].width = w
+    _page_setup(ws)
+    return ws
+
+
+def build(jobs: List[tuple], cut_lines: List[dict], out: Path, div: dict) -> dict:
     """jobs = [(job, src, totals, src_path)] from completed_pnl.load_division,
-    with the cut already stripped from each src. Writes `out` IN PLACE: the
-    P&L page and the per-job sheets are rebuilt, every other sheet kept."""
+    with every registered cut already stripped from each src. Writes `out`
+    from scratch."""
     label = div["label"]
     pnl_name = PNL_SHEET.format(label=label)
     older_name = OLDER_SHEET.format(label=label)
-    labels = [lab for lab in dict.fromkeys(bizdev_cut.label(ln["vendor"]) for ln in cut_lines)
-              if lab]
+    dlabel = next((ln["label"] for ln in cut_lines if ln["director"] and ln["label"]),
+                  "DIRECTOR CUT")
+    dword = dlabel.replace(" CUT", "").strip().title() or "Director"
     by_job: Dict[str, List[dict]] = {}
     for ln in cut_lines:
         by_job.setdefault(ln["job"], []).append(ln)
     known = {j for j, _s, _t2, _p in jobs}
 
-    # ── the workbook: keep whatever else is in it ──
-    if out.exists():
-        wb = load_workbook(str(out))
-        drop = {pnl_name, older_name, NOJOB_SHEET, "The Cut"} | known
-        for name in list(wb.sheetnames):
-            if name in drop:
-                del wb[name]
-        if not wb.sheetnames:
-            wb.create_sheet("_")
-        sm = wb.create_sheet(pnl_name, 0)
-        if "_" in wb.sheetnames:
-            del wb["_"]
-    else:
-        wb = Workbook()
-        sm = wb.active
-        sm.title = pnl_name
+    wb = Workbook()
+    sm = wb.active
+    sm.title = pnl_name
     sm.sheet_view.showGridLines = False
-    wb.active = 0
 
-    # ── columns: the Overview's, then the cut at the end ──
+    # ── columns: the Overview's, then the director's cut at the end ──
     cols = [("CONTRACT", "contract", MONEY, 18),
             ("BILLED", "billed", MONEY, 18), ("COST", "cost", MONEY, 18),
             ("GROSS PROFIT", "gp", MONEY, 18), ("GP %", "gpm", PCT, 11),
             (f"{OVERHEAD_PCT:.0%} OH", "oh", MONEY, 16),
             (f"FINAL NET  ({OVERHEAD_PCT:.0%} OH)", "net", MONEY, 20),
             (f"{MFD_OVERHEAD_PCT:.0%} OH", "moh", MONEY, 16),
-            (f"FINAL NET  ({MFD_OVERHEAD_PCT:.0%} OH)", "mnet", MONEY, 20)]
-    cut_keys = []
-    for i, lab in enumerate(labels):
-        k = f"cut{i}"
-        cut_keys.append(k)
-        cols.append((lab, k, MONEY, 17))
-    cols += [(f"REAL NET  ({OVERHEAD_PCT:.0%} OH)", "rnet", MONEY, 20),
-             (f"REAL NET  ({MFD_OVERHEAD_PCT:.0%} OH)", "rmnet", MONEY, 20),
-             (f"REAL NET %  ({MFD_OVERHEAD_PCT:.0%} OH)", "rmnetm", PCT, 13)]
-    L = {k: get_column_letter(C0 + 1 + i) for i, (_h, k, _f, _w) in enumerate(cols)}
+            (f"FINAL NET  ({MFD_OVERHEAD_PCT:.0%} OH)", "mnet", MONEY, 20),
+            (dlabel, "cut", MONEY, 17),
+            (f"REAL NET  ({OVERHEAD_PCT:.0%} OH)", "rnet", MONEY, 20),
+            (f"REAL NET  ({MFD_OVERHEAD_PCT:.0%} OH)", "rmnet", MONEY, 20),
+            (f"REAL NET %  ({MFD_OVERHEAD_PCT:.0%} OH)", "rmnetm", PCT, 13)]
+    keys = [k for _h, k, _f, _w in cols]
+    L = {k: get_column_letter(C0 + 1 + i) for i, k in enumerate(keys)}
     LAST = C0 + len(cols) + 1
-    first_cut_col = C0 + 1 + [k for _h, k, _f, _w in cols].index(cut_keys[0]) if cut_keys \
-        else C0 + 1 + len(cols)
-    cut_sum = "+".join(f"{L[k]}{{rr}}" for k in cut_keys) or "0"
+    first_cut_col = C0 + 1 + keys.index("cut")
 
     def _formula(k, rr, ranges=None):
-        if k in ("contract", "billed", "cost") or k in cut_keys:
+        if k in ("contract", "billed", "cost", "cut"):
             if not ranges:
                 return None
             return "=" + "+".join(f"SUM({L[k]}{a}:{L[k]}{b})" for a, b in ranges)
@@ -372,40 +389,46 @@ def build(jobs: List[tuple], cut_lines: List[dict], out: Path, div: dict,
         if k == "mnet":
             return f"={L['gp']}{rr}-{L['moh']}{rr}"
         if k == "rnet":
-            return f"={L['net']}{rr}-({cut_sum.format(rr=rr)})"
+            return f"={L['net']}{rr}-{L['cut']}{rr}"
         if k == "rmnet":
-            return f"={L['mnet']}{rr}-({cut_sum.format(rr=rr)})"
+            return f"={L['mnet']}{rr}-{L['cut']}{rr}"
         if k == "rmnetm":
             return f'=IF({L["billed"]}{rr}=0,"",{L["rmnet"]}{rr}/{L["billed"]}{rr})'
         raise KeyError(k)
 
-    # python-side figures for the colours (the cells themselves are formulas)
+    # python-side figures for the colours (the cells themselves are formulas).
+    # COST here = the workbook's cost + the OTHER vendors' cut on the job.
     fig: Dict[str, dict] = {}
     for job, src, t, _p in jobs:
+        mine = by_job.get(job, [])
+        other = sum(ln["amt"] for ln in mine if ln["cut"] and not ln["director"])
         d = dict(t)
-        for i, lab in enumerate(labels):
-            d[f"cut{i}"] = sum(ln["amt"] for ln in by_job.get(job, [])
-                               if ln["cut"] and ln["label"] == lab)
-        tot_cut = sum(d[k] for k in cut_keys)
-        d["rnet"], d["rmnet"] = d["net"] - tot_cut, d["mnet"] - tot_cut
+        d["base_cost"] = t["cost"]
+        d["other"] = other
+        d["cost"] = t["cost"] + other
+        d["gp"] = d["billed"] - d["cost"]
+        d["gpm"] = d["gp"] / d["billed"] if d["billed"] else 0.0
+        d["net"], d["mnet"] = d["gp"] - d["oh"], d["gp"] - d["moh"]
+        d["cut"] = sum(ln["amt"] for ln in mine if ln["cut"] and ln["director"])
+        d["rnet"], d["rmnet"] = d["net"] - d["cut"], d["mnet"] - d["cut"]
         d["rmnetm"] = d["rmnet"] / d["billed"] if d["billed"] else 0.0
         fig[job] = d
 
     def _sum(sel):
         d = {k: sum(fig[j][k] for j, _s, _t2, _p in sel)
              for k in ("contract", "billed", "cost", "gp", "oh", "net", "moh", "mnet",
-                       "rnet", "rmnet", *cut_keys)}
+                       "cut", "rnet", "rmnet", "other")}
         for a, b in (("gpm", "gp"), ("netm", "net"), ("mnetm", "mnet"), ("rmnetm", "rmnet")):
             d[a] = d[b] / d["billed"] if d["billed"] else 0
         return d
 
     tot = _sum(jobs)
     n_act = sum(1 for _j, s, _t2, _p in jobs if s.get("status") == "Active")
-    _t(sm, 1, 1, f"{label} P&L - INTERNAL - THE CUT AT THE END", size=SZ_TITLE, bold=True,
-       color=NAVY)
+    _t(sm, 1, 1, f"{label} P&L - INTERNAL - THE {dword.upper()}'S CUT AT THE END",
+       size=SZ_TITLE, bold=True, color=NAVY)
     _t(sm, 2, C0, f"{n_act} active · {len(jobs) - n_act} completed · the Overview's page "
-                  f"with the cut charged after overhead · click a job for every line of "
-                  f"the cut with its QuickBooks link · internal only",
+                  f"with the {dword.lower()}'s cut charged after overhead · click a job for "
+                  f"every line with its QuickBooks link · internal only",
        size=SZ_SMALL, color=GREY)
     _t(sm, 1, LAST, f"Generated {dt.datetime.now():%m/%d/%Y %I:%M %p}", size=SZ_SMALL,
        color=GREY, align="right")
@@ -467,8 +490,7 @@ def build(jobs: List[tuple], cut_lines: List[dict], out: Path, div: dict,
             _job_row(j, s, fig[j])
         sec_ranges.append((first, r - 1))
         _t(sm, r, C0, f"subtotal - {len(sel)} job(s)", size=SZ, bold=True, color=NAVY)
-        _row_figures(r, _sum(sel), bold_keys=tuple(k for _h, k, _f, _w in cols),
-                     ranges=[(first, r - 1)])
+        _row_figures(r, _sum(sel), bold_keys=tuple(keys), ranges=[(first, r - 1)])
         for c in range(C0, LAST + 1):
             sm.cell(row=r, column=c).border = Border(top=HAIR)
         r += 2
@@ -478,7 +500,7 @@ def build(jobs: List[tuple], cut_lines: List[dict], out: Path, div: dict,
     _section("ACTIVE - in progress", active, "costs to date only - not finished")
     _section("COMPLETED", done)
     _t(sm, r, C0, f"ALL {label} - {len(jobs)} JOBS", size=SZ, bold=True, color=NAVY)
-    _row_figures(r, tot, bold_keys=tuple(k for _h, k, _f, _w in cols), ranges=sec_ranges)
+    _row_figures(r, tot, bold_keys=tuple(keys), ranges=sec_ranges)
     for c in range(C0, LAST + 1):
         sm.cell(row=r, column=c).border = Border(top=RULE)
     sm.row_dimensions[r].height = 24
@@ -504,7 +526,7 @@ def build(jobs: List[tuple], cut_lines: List[dict], out: Path, div: dict,
     spans7 = _spans(C0, LAST, 7)
     r2 = 7
     heads = ("AFTER OVERHEAD, THEN THE CUT", "OVERHEAD", "FINAL NET PROFIT", "NET MARGIN",
-             "THE CUT", "REAL NET PROFIT", "REAL MARGIN")
+             dlabel, "REAL NET PROFIT", "REAL MARGIN")
     for span, txt in zip(spans7, heads):
         sm.merge_cells(start_row=r2, start_column=span[0], end_row=r2, end_column=span[1])
         _t(sm, r2, span[0], txt, size=SZ_SMALL - 1, bold=True, color=GREY,
@@ -522,8 +544,7 @@ def build(jobs: List[tuple], cut_lines: List[dict], out: Path, div: dict,
                 (f"={L[netk]}{all_row}", MONEY, GREEN if netv >= 0 else RED),
                 (f'=IF({L["billed"]}{all_row}=0,"",{L[netk]}{all_row}/{L["billed"]}{all_row})',
                  PCT, GREEN if netv >= 0 else RED),
-                ("=-(" + "+".join(f"{L[k]}{all_row}" for k in cut_keys) + ")" if cut_keys else 0,
-                 MONEY, GREY),
+                (f"=-{L['cut']}{all_row}", MONEY, GREY),
                 (f"={L[rk]}{all_row}", MONEY, GREEN if rv >= 0 else RED),
                 (f'=IF({L["billed"]}{all_row}=0,"",{L[rk]}{all_row}/{L["billed"]}{all_row})',
                  PCT, GREEN if rv >= 0 else RED))
@@ -538,62 +559,23 @@ def build(jobs: List[tuple], cut_lines: List[dict], out: Path, div: dict,
                     left=cur.left, right=cur.right, bottom=cur.bottom, top=THICK)
     _thick_box(sm, r2, r2 + 2, spans7[0][0], spans7[-1][1])
 
-    # ── below the table: the same jobs at other overhead rates ──
-    _t(sm, r, C0, "THE SAME JOBS AT OTHER OVERHEAD RATES", size=SZ + 1, bold=True, color=NAVY)
-    r += 1
-    for i, h in enumerate(("OH RATE", "OVERHEAD", "NET AFTER OH", "THE CUT", "REAL NET",
-                           "REAL NET %")):
-        _hdr(sm, r, C0 + i, h, align="left" if i == 0 else "right", indent=1 if i == 0 else 0)
-    r += 1
-    cut_all = "(" + "+".join(f"{L[k]}{all_row}" for k in cut_keys) + ")" if cut_keys else "0"
-    for rate in RATE_LADDER:
-        bold = rate in (OVERHEAD_PCT, MFD_OVERHEAD_PCT)
-        c_rate = _t(sm, r, C0, rate, size=SZ, bold=bold, fmt="0%", align="left", indent=1)
-        rl = c_rate.coordinate
-        oh_c = _t(sm, r, C0 + 1, f"={L['contract']}{all_row}*{rl}", size=SZ, bold=bold,
-                  fmt=MONEY, align="right", color=INK)
-        net_c = _t(sm, r, C0 + 2, f"={L['gp']}{all_row}-{oh_c.coordinate}", size=SZ,
-                   bold=bold, fmt=MONEY, align="right", color=INK)
-        _t(sm, r, C0 + 3, f"={cut_all}", size=SZ, bold=bold, fmt=MONEY, align="right",
-           color=GREY)
-        real = tot["gp"] - tot["contract"] * rate - sum(tot[k] for k in cut_keys)
-        rn = _t(sm, r, C0 + 4, f"={net_c.coordinate}-{cut_all}", size=SZ, bold=bold,
-                fmt=MONEY, align="right", color=GREEN if real >= 0 else RED)
-        _t(sm, r, C0 + 5, f'=IF({L["billed"]}{all_row}=0,"",{rn.coordinate}/{L["billed"]}{all_row})',
-           size=SZ, bold=bold, fmt=PCT, align="right", color=GREEN if real >= 0 else RED)
-        if r % 2 == 0:
-            for c in range(C0, C0 + 6):
-                sm.cell(row=r, column=c).fill = F_BAND
-        r += 1
-    r += 1
-
     # ── per-job sheets, then the two catch-alls ──
-    job_tot: Dict[str, Dict[str, str]] = {}
+    job_cells: Dict[str, Tuple[str, str]] = {}
     for job, src, _t2, _p in sorted(jobs, key=lambda x: -fig[x[0]]["billed"]):
-        ws = wb.create_sheet(job[:31])
-        ws.sheet_view.showGridLines = False
-        JLAST = C0 + 7
-        _t(ws, 1, 1, _label(job, src.get("title", "")), size=SZ_TITLE - 2, bold=True,
-           color=NAVY)
-        back = _t(ws, 1, JLAST, f"← back to {pnl_name}", size=SZ_SMALL, align="right")
-        back.hyperlink = f"#'{pnl_name}'!A1"
-        back.font = Font(size=SZ_SMALL, color=LINK, underline="single")
-        who = src["title"].replace("PROJECT P&L \u2014 ", "").replace("\u2014", "-")
+        ws = _detail_sheet(wb, job, _label(job, src.get("title", "")), pnl_name)
+        who = src["title"].replace("PROJECT P&L — ", "").replace("—", "-")
         _t(ws, 2, C0, f"{src.get('status', 'Completed').lower()} job · {who} · click a ref # "
                       f"to open that transaction in QuickBooks", size=SZ_SMALL, color=GREY)
-        for c in range(1, JLAST + 1):
-            ws.cell(row=2, column=c).border = Border(bottom=HAIR)
-        ws.row_dimensions[1].height = 30
-        ws.row_dimensions[3].height = 8
+        JLAST = C0 + 7
         jr = job_rows[job]
         P = f"'{pnl_name}'!"
-        sp = _spans(C0, JLAST, 4)
+        f = fig[job]
         _tiles(ws, 4, [
             ("BILLED", f"={P}{L['billed']}{jr}", MONEY, NAVY),
             ("COST", f"={P}{L['cost']}{jr}", MONEY, NAVY),
-            ("GROSS PROFIT", f"={P}{L['gp']}{jr}", MONEY, GREEN if fig[job]["gp"] >= 0 else RED),
-            ("GROSS MARGIN", f"={P}{L['gpm']}{jr}", PCT, GREEN if fig[job]["gp"] >= 0 else RED)],
-            sp)
+            ("GROSS PROFIT", f"={P}{L['gp']}{jr}", MONEY, GREEN if f["gp"] >= 0 else RED),
+            ("GROSS MARGIN", f"={P}{L['gpm']}{jr}", PCT, GREEN if f["gp"] >= 0 else RED)],
+            _spans(C0, JLAST, 4))
         sp7 = _spans(C0, JLAST, 7)
         for span, txt in zip(sp7, heads):
             ws.merge_cells(start_row=7, start_column=span[0], end_row=7, end_column=span[1])
@@ -605,13 +587,11 @@ def build(jobs: List[tuple], cut_lines: List[dict], out: Path, div: dict,
             rr = 8 + i
             ws.merge_cells(start_row=rr, start_column=sp7[0][0], end_row=rr, end_column=sp7[0][1])
             _t(ws, rr, sp7[0][0], lbl, size=SZ, bold=(i == 1), color=INK, indent=1)
-            f = fig[job]
             vals = ((f"=-{P}{L[ohk]}{jr}", MONEY, GREY),
                     (f"={P}{L[netk]}{jr}", MONEY, GREEN if f[netk] >= 0 else RED),
                     (f'=IF({P}{L["billed"]}{jr}=0,"",{P}{L[netk]}{jr}/{P}{L["billed"]}{jr})',
                      PCT, GREEN if f[netk] >= 0 else RED),
-                    ("=-(" + "+".join(f"{P}{L[k]}{jr}" for k in cut_keys) + ")" if cut_keys else 0,
-                     MONEY, GREY),
+                    (f"=-{P}{L['cut']}{jr}", MONEY, GREY),
                     (f"={P}{L[rk]}{jr}", MONEY, GREEN if f[rk] >= 0 else RED),
                     (f'=IF({P}{L["billed"]}{jr}=0,"",{P}{L[rk]}{jr}/{P}{L["billed"]}{jr})',
                      PCT, GREEN if f[rk] >= 0 else RED))
@@ -622,107 +602,79 @@ def build(jobs: List[tuple], cut_lines: List[dict], out: Path, div: dict,
                    align="right")
             ws.row_dimensions[rr].height = 26
         _thick_box(ws, 7, 9, sp7[0][0], sp7[-1][1])
-        _r, totals, _fc, _first = _lines_table(
-            ws, 12, by_job.get(job, []), labels,
-            "THE CUT - every line, newest first")
-        job_tot[job] = totals
-        ws.column_dimensions["A"].width = GUTTER_W
-        for col, w in zip("BCDEFGHI", (13, 12, 16, 62, 30, 15, 18, 40)):
-            ws.column_dimensions[col].width = w
-        _page_setup(ws)
+        _r, d_cell, o_cell, _fc = _lines_table(
+            ws, 12, by_job.get(job, []), dlabel, "EVERY LINE - newest first")
+        job_cells[job] = (d_cell, o_cell)
 
-    # the P&L page's cut cells POINT AT the job sheets' totals, so a figure
-    # and the lines behind it can never disagree
-    for job, totals in job_tot.items():
-        for i, lab in enumerate(labels):
-            sm.cell(row=job_rows[job], column=C0 + 1 + [k for _h, k, _f, _w in cols]
-                    .index(f"cut{i}")).value = f"='{job}'!{totals[lab]}"
+    # the P&L page's cut and COST cells POINT AT the job sheets' totals, so a
+    # figure and the lines behind it can never disagree
+    for job, (d_cell, o_cell) in job_cells.items():
+        rr = job_rows[job]
+        sm.cell(row=rr, column=C0 + 1 + keys.index("cut")).value = f"='{job}'!{d_cell}"
+        base = round(fig[job]["base_cost"], 2)
+        sm.cell(row=rr, column=C0 + 1 + keys.index("cost")).value = \
+            f"={base}+'{job}'!{o_cell}" if fig[job]["other"] else base
 
     older = {j: v for j, v in by_job.items() if j and j not in known}
     nojob = by_job.get("", [])
-    ws = wb.create_sheet(older_name)
-    ws.sheet_view.showGridLines = False
-    _t(ws, 1, 1, f"OLDER {label} JOBS - no P&L workbook on file", size=SZ_TITLE - 2,
-       bold=True, color=NAVY)
-    back = _t(ws, 1, C0 + 7, f"← back to {pnl_name}", size=SZ_SMALL, align="right")
-    back.hyperlink = f"#'{pnl_name}'!A1"
-    back.font = Font(size=SZ_SMALL, color=LINK, underline="single")
-    for c in range(1, C0 + 8):
-        ws.cell(row=2, column=c).border = Border(bottom=HAIR)
+    ws = _detail_sheet(wb, older_name, f"OLDER {label} JOBS - no P&L workbook on file", pnl_name)
     rr = 4
     older_cells: List[str] = []
     for job in sorted(older, key=lambda j: -sum(x["amt"] for x in older[j] if x["cut"])):
-        rr, totals, _fc, _first = _lines_table(ws, rr, older[job], labels, job)
-        older_cells += list(totals.values())
-    ws.column_dimensions["A"].width = GUTTER_W
-    for col, w in zip("BCDEFGHI", (13, 12, 16, 62, 30, 15, 18, 40)):
-        ws.column_dimensions[col].width = w
-    _page_setup(ws)
+        rr, d_cell, _o, _f = _lines_table(ws, rr, older[job], dlabel, job)
+        older_cells.append(d_cell)
+    ws = _detail_sheet(wb, NOJOB_SHEET, "NO JOB NAMED ON THE LINE OR THE BILL", pnl_name)
+    _rr, nojob_cell, _o, _f = _lines_table(
+        ws, 4, nojob, dlabel, "retainers, estimating, pay periods - nothing ties them to a job")
 
-    ws = wb.create_sheet(NOJOB_SHEET)
-    ws.sheet_view.showGridLines = False
-    _t(ws, 1, 1, "NO JOB NAMED ON THE LINE OR THE BILL", size=SZ_TITLE - 2, bold=True,
-       color=NAVY)
-    back = _t(ws, 1, C0 + 7, f"← back to {pnl_name}", size=SZ_SMALL, align="right")
-    back.hyperlink = f"#'{pnl_name}'!A1"
-    back.font = Font(size=SZ_SMALL, color=LINK, underline="single")
-    for c in range(1, C0 + 8):
-        ws.cell(row=2, column=c).border = Border(bottom=HAIR)
-    _rr, nojob_tot, nojob_fr, _first = _lines_table(
-        ws, 4, nojob, labels, "retainers, estimating, pay periods - nothing ties them to a job")
-    ws.column_dimensions["A"].width = GUTTER_W
-    for col, w in zip("BCDEFGHI", (13, 12, 16, 62, 30, 15, 18, 40)):
-        ws.column_dimensions[col].width = w
-    _page_setup(ws)
-
-    # ── every dollar paid to them, reconciled on the page ──
-    paid = sum(ln["amt"] for ln in cut_lines)
-    dates = sorted(ln["date"] for ln in cut_lines if ln["date"])
+    # ── every dollar paid to the director, reconciled on the page ──
+    his = [ln for ln in cut_lines if ln["director"]]
+    paid = sum(ln["amt"] for ln in his)
+    dates = sorted(ln["date"] for ln in his if ln["date"])
     _mdy = lambda iso: f"{iso[5:7]}/{iso[8:10]}/{iso[:4]}" if len(iso) >= 10 else iso  # noqa: E731
-    _t(sm, r, C0, f"EVERY DOLLAR PAID TO THEM - {_mdy(dates[0]) if dates else ''} to "
-                  f"{_mdy(dates[-1]) if dates else ''} - where it went", size=SZ + 1,
+    _t(sm, r, C0, f"EVERY DOLLAR PAID TO THE {dword.upper()} - {_mdy(dates[0]) if dates else ''} "
+                  f"to {_mdy(dates[-1]) if dates else ''} - where it went", size=SZ + 1,
        bold=True, color=NAVY)
     r += 1
+    # the label spills across C:F, the amount sits in G - nothing gets clipped
+    AMT = C0 + 5
     recon_first = r
     rows_ = [
-        ("on these {n} jobs (the cut columns above)".format(n=len(jobs)),
-         "=" + "+".join(f"{L[k]}{all_row}" for k in cut_keys), None),
+        (f"on these {len(jobs)} jobs (the {dlabel} column above)", f"={L['cut']}{all_row}", None),
         (f"on older {label} jobs with no P&L on file",
          "=" + ("+".join(f"'{older_name}'!{c}" for c in older_cells) or "0"),
          f"#'{older_name}'!A1"),
-        ("no job named on the line or the bill",
-         "=" + "+".join(f"'{NOJOB_SHEET}'!{c}" for c in nojob_tot.values()),
+        ("no job named on the line or the bill", f"='{NOJOB_SHEET}'!{nojob_cell}",
          f"#'{NOJOB_SHEET}'!A1"),
-        ("they fronted for the jobs - inside COST, not a cut",
-         round(sum(ln["amt"] for ln in cut_lines if not ln["cut"]), 2), None),
+        ("fronted for the jobs - inside COST, not a cut",
+         round(sum(ln["amt"] for ln in his if not ln["cut"]), 2), None),
     ]
     for lbl, val, link in rows_:
         c1 = _t(sm, r, C0, lbl, size=SZ, indent=1)
         if link:
             c1.hyperlink = link
             c1.font = Font(size=SZ, color=LINK, underline="single")
-        _t(sm, r, C0 + 1, val, size=SZ, fmt=MONEY, align="right", color=INK)
+        _t(sm, r, AMT, val, size=SZ, fmt=MONEY, align="right", color=INK)
         r += 1
     rec_last = r - 1
-    _t(sm, r, C0, "TOTAL PAID TO THEM, every bill, check and expense in QuickBooks",
+    _t(sm, r, C0, f"TOTAL PAID TO THE {dword.upper()} - every bill, check and expense in QuickBooks",
        size=SZ, bold=True, color=NAVY, indent=1)
-    _t(sm, r, C0 + 1, round(paid, 2), size=SZ, bold=True, fmt=MONEY, align="right", color=NAVY)
-    for c in (C0, C0 + 1):
+    _t(sm, r, AMT, round(paid, 2), size=SZ, bold=True, fmt=MONEY, align="right", color=NAVY)
+    for c in range(C0, AMT + 1):
         sm.cell(row=r, column=c).border = Border(top=RULE)
-    tot_cell = f"{get_column_letter(C0 + 1)}{r}"
+    tot_cell = f"{get_column_letter(AMT)}{r}"
     r += 1
     _t(sm, r, C0, "check - the four lines above less the total (must be zero)", size=SZ_SMALL,
        color=GREY, indent=1)
-    _t(sm, r, C0 + 1, f"=SUM({get_column_letter(C0 + 1)}{recon_first}:"
-                      f"{get_column_letter(C0 + 1)}{rec_last})-{tot_cell}",
-       size=SZ_SMALL, fmt=MONEY_C, align="right", color=GREY)
-    r += 1
+    _t(sm, r, AMT, f"=SUM({get_column_letter(AMT)}{recon_first}:{get_column_letter(AMT)}{rec_last})"
+                   f"-{tot_cell}", size=SZ_SMALL, fmt=MONEY_C, align="right", color=GREY)
+    r += 2
+    if tot["other"]:
+        _t(sm, r, C0, f"COST above includes {tot['other']:,.0f} of other business-development "
+                      f"cuts charged into the jobs - see 'in job cost' on each job sheet",
+           size=SZ_SMALL, color=GREY, indent=1)
+        r += 1
 
-    # the sheets this tool did not build (the overhead review, its drivers)
-    # go to the back, behind the job sheets they are not part of
-    built = {pnl_name, older_name, NOJOB_SHEET} | known
-    for name in [n for n in wb.sheetnames if n not in built]:
-        wb.move_sheet(name, offset=len(wb.sheetnames) - 1 - wb.sheetnames.index(name))
     sm.column_dimensions["A"].width = GUTTER_W
     sm.column_dimensions[get_column_letter(C0)].width = 34
     for i, (_h, _k, _f, w) in enumerate(cols):
@@ -735,11 +687,10 @@ def build(jobs: List[tuple], cut_lines: List[dict], out: Path, div: dict,
     wb.save(str(tmp))
     assert_clean(tmp)
     for msg in lint_layout(wb, first_col=C0):
-        if not msg.startswith(("OH Review", "Drivers")):
-            print(f"    ⚑ layout: {msg}")
+        print(f"    ⚑ layout: {msg}")
     tmp.replace(out)
     return {"path": out, "jobs": len(jobs), "paid": round(paid, 2),
-            "cut_on_jobs": round(sum(tot[k] for k in cut_keys), 2),
+            "cut_on_jobs": round(tot["cut"], 2), "other_in_cost": round(tot["other"], 2),
             "rnet": round(tot["rnet"], 2), "rmnet": round(tot["rmnet"], 2)}
 
 
@@ -748,7 +699,7 @@ def main(argv=None) -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--division", choices=sorted(cp.DIVISIONS), default="mfd")
     ap.add_argument("--out", type=Path, default=None,
-                    help="the workbook to (re)build in place; default "
+                    help="the workbook to build; default "
                          "<CompanyHealth>/<DIV> PnL - Internal - Director Cut.xlsx")
     a = ap.parse_args(argv)
     div = cp.DIVISIONS[a.division]
@@ -763,14 +714,15 @@ def main(argv=None) -> int:
     for job, src, _t2, src_path in loaded:
         removed = _strip_cut_from_cost(src)
         if removed:
-            print(f"  {job}: {removed:,.2f} of the cut was inside job cost - taken out")
+            print(f"  {job}: {removed:,.2f} of a registered cut was inside job cost - taken out")
         src["rel"] = cp._link_target(src_path, out.parent)
         jobs.append((job, src, cp._totals(src), src_path))
     print("pulling the cut from QuickBooks")
     lines, _realm = pull_cut_lines(div["prefix"])
-    res = build(jobs, lines, out, div, div_dir)
-    print(f"✓ {res['path']}\n  {res['jobs']} jobs · paid to them {res['paid']:,.2f} · on these "
-          f"jobs {res['cut_on_jobs']:,.2f} · real net {OVERHEAD_PCT:.0%} {res['rnet']:,.0f} / "
+    res = build(jobs, lines, out, div)
+    print(f"✓ {res['path']}\n  {res['jobs']} jobs · paid to the director {res['paid']:,.2f} · on "
+          f"these jobs {res['cut_on_jobs']:,.2f} · other cuts charged into COST "
+          f"{res['other_in_cost']:,.2f} · real net {OVERHEAD_PCT:.0%} {res['rnet']:,.0f} / "
           f"{MFD_OVERHEAD_PCT:.0%} {res['rmnet']:,.0f}")
     return 0
 

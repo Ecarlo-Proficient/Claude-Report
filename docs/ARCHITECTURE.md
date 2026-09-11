@@ -868,12 +868,13 @@ OneDrive `Works In Progress/QBO Audits/Concrete Cost Code Audit.xlsx` (Vendors Â
 Summary; plain, `assert_clean`).
 
 **`project-pnl/bizdev_cut_view.py`** (reads the P&L workbooks + one QBO pull per registered
-vendor) - the OWNER'S copy of the Overview page with the business-development cut charged at
-the end: the same reader as the Overview, then a column per vendor in `shared/bizdev_cut` and
-REAL NET at 10% and 9%; a sheet per job lists every cut line with its QBO deep link and how it
-was tied to the job; the page reconciles every dollar paid to them. Writes
-`<CompanyHealth>/<DIV> PnL - Internal - Director Cut.xlsx` in place, keeps the other sheets in
-it, never lands on the share (2026-09-11).
+vendor) - the OWNER'S copy of the Overview page with the DIRECTOR'S cut charged at the end: the
+same reader as the Overview, then one cut column (the register's `director`) and REAL NET at 10%
+and 9%; every other registered vendor's cut is charged into the job's COST; a sheet per job lists
+every line with its QBO deep link and how it was tied to the job; the page reconciles every dollar
+paid to the director. No overhead model here - that is the owner's separate `<DIV> OH
+Calculations.xlsx`. Writes `<CompanyHealth>/<DIV> PnL - Internal - Director Cut.xlsx` from
+scratch, never lands on the share (2026-09-11).
 
 **`project-pnl/completed_pnl.py`** (read-only, no QBO) â€” `<DIV> Overview.xlsx`: one row per
 job with contract/ETC/billed/cost/GP over a sheet per job, all links internal so it survives

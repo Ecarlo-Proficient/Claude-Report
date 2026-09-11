@@ -39,6 +39,10 @@ Register format:
                                    ever hold their own compensation
   "labels": {"<vendor key>": "<column header>"}          optional - what the
                                    owner's own cut workbook calls each one
+  "director": "<vendor key>"                              optional - the one whose
+                                   cut that workbook charges AFTER overhead; every
+                                   other registered vendor's cut is charged into
+                                   the job's COST there (the owner 2026-09-11)
 }
 A line from a registered vendor is a CUT when its account is one of
 `pay_accounts` and its text does not match `fronted`. A line in any other
@@ -82,14 +86,14 @@ def load(path: Optional[Path] = None) -> dict:
     try:
         key = (str(p), p.stat().st_mtime_ns)
     except OSError:
-        return {"vendors": (), "fronted": None, "pay_accounts": (), "labels": {}}
+        return {"vendors": (), "fronted": None, "pay_accounts": (), "labels": {}, "director": ""}
     if _cache is not None and _cache_key == key:
         return _cache
     try:
         raw = json.loads(p.read_text(encoding="utf-8"))
     except (ValueError, OSError) as e:
         print(f"  (business-development register unreadable: {p}: {e})", file=sys.stderr)
-        return {"vendors": (), "fronted": None, "pay_accounts": (), "labels": {}}
+        return {"vendors": (), "fronted": None, "pay_accounts": (), "labels": {}, "director": ""}
     pats: List[str] = [str(x) for x in (raw.get("fronted") or []) if str(x).strip()]
     try:
         fronted = re.compile("|".join(f"(?:{x})" for x in pats), re.I) if pats else None
@@ -104,6 +108,7 @@ def load(path: Optional[Path] = None) -> dict:
                               if str(a).strip()),
         "labels": {str(k).strip().upper(): str(v).strip()
                    for k, v in (raw.get("labels") or {}).items() if str(v).strip()},
+        "director": str(raw.get("director") or "").strip().upper(),
     }
     _cache, _cache_key = out, key
     return out
@@ -141,6 +146,17 @@ def vendor_key(vendor: str, path: Optional[Path] = None) -> str:
         if w in v:
             return w
     return ""
+
+
+def is_director(vendor: str, path: Optional[Path] = None) -> bool:
+    """Is this the registered director - the one cut charged after overhead on
+    the owner's page? With no `director` in the register, every registered
+    vendor counts (the page then carries one column each)."""
+    key = vendor_key(vendor, path)
+    if not key:
+        return False
+    d = load(path)["director"]
+    return key == d if d else True
 
 
 def label(vendor: str, path: Optional[Path] = None) -> str:
