@@ -164,6 +164,15 @@ def pull_cut_lines(prefix: str) -> Tuple[List[dict], str]:
                 kind = "check"
             memo = str(txn.get("PrivateNote") or "")
             memo_jobs, memo_how = _jobs_in(memo, prefix)
+            # The clerk sometimes puts the draw code on a DESCRIPTION-ONLY line
+            # under the amount line (the owner 2026-09-11, bill 129: line 1
+            # "1/23 - 1/27" 3,810, line 2 "129-0-20-1"). Those companion lines
+            # name the job for every amount line on the bill that names none.
+            comp_jobs: set = set()
+            for ln in txn.get("Line") or []:
+                if not (ln.get("AccountBasedExpenseLineDetail")
+                        or ln.get("ItemBasedExpenseLineDetail")):
+                    comp_jobs |= _jobs_in(str(ln.get("Description") or ""), prefix)[0]
             for ln in txn.get("Line") or []:
                 det = (ln.get("AccountBasedExpenseLineDetail")
                        or ln.get("ItemBasedExpenseLineDetail"))
@@ -179,6 +188,8 @@ def pull_cut_lines(prefix: str) -> Tuple[List[dict], str]:
                     jobs, how = {f"{prefix}{m.group(2)}"}, "coded to the job in QuickBooks"
                 else:
                     jobs, how = _jobs_in(desc, prefix)
+                    if not jobs and comp_jobs:
+                        jobs, how = set(comp_jobs), "draw code on a line below it on the bill"
                     if not jobs:
                         jobs, how = memo_jobs, (f"bill memo: {memo_how}" if memo_jobs else "")
                 n = max(1, len(jobs))
