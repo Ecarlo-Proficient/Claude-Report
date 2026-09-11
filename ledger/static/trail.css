@@ -1,0 +1,48 @@
+/* ── trail.css - "where every dollar went" page (ledger/static/trail.js) ─────────
+   15px, tabular numerals, colour only for state: red = gap / over the budget line. */
+.tr-note { padding: 18px 8px; color: var(--text-dim); font-size: 1em; }
+.tr-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.tr-chip { border: 1px solid var(--border); border-radius: 999px; padding: 4px 12px; background: var(--surface); font-variant-numeric: tabular-nums; font-size: .93em; }
+.tr-pairs { display: flex; flex-wrap: wrap; gap: 14px; }
+.tr-pair { display: flex; gap: 0; flex: 1 1 420px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); overflow: hidden; }
+.tr-pair .tr-fig { flex: 1 1 50%; padding: 14px 18px; }
+.tr-pair .tr-fig + .tr-fig { border-left: 1px solid var(--border); }
+.tr-pair.gap { border-color: color-mix(in srgb, var(--neg) 55%, var(--border)); }
+.tr-pair.gap .tr-fig + .tr-fig .tr-as { color: var(--neg); font-weight: 600; }
+.tr-pair.ok .tr-fig + .tr-fig .tr-as { color: var(--pos); }
+.tr-lab { color: var(--text-dim); font-size: .93em; }
+.tr-val { font-size: 1.6em; font-weight: 700; letter-spacing: -.02em; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.tr-as { color: var(--text-dim); font-size: .9em; margin-top: 2px; }
+.tr-tools { gap: 10px; flex-wrap: wrap; }
+.tr-tools .seg { display: inline-flex; gap: 2px; }
+.tr-kind.on { background: color-mix(in srgb, var(--accent) 14%, var(--surface)); border-color: var(--accent); font-weight: 600; }
+.tr-search { font: inherit; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); min-width: 260px; }
+.tr-spacer { flex: 1 1 auto; }
+table.tr-table { font-size: 1em; }
+table.tr-table th.tr-sortable { cursor: pointer; user-select: none; }
+table.tr-table td.tr-txt { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+table.tr-table td.tr-doc { cursor: copy; font-variant-numeric: tabular-nums; }
+.tr-money.neg { color: var(--neg); }
+.tr-run { color: var(--text-dim); }
+tr.tr-msum > td { background: var(--surface-2); font-weight: 600; }
+tr.tr-total > td { border-top: 2px solid var(--accent); font-weight: 700; }
+tr.tr-billed > td:first-child { border-left: 3px solid color-mix(in srgb, var(--accent) 55%, transparent); }
+.tr-tag { font-size: .8em; border-radius: 999px; padding: 1px 7px; margin-left: 6px; border: 1px solid var(--border); color: var(--text-dim); vertical-align: middle; }
+.tr-tag.inv { border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); color: var(--accent); }
+.tr-part { font-size: .85em; color: var(--text-dim); margin-left: 6px; }
+.tr-scan { padding: 1px 6px; }
+/* the chart */
+.tr-svg { width: 100%; height: auto; display: block; }
+.tr-grid { stroke: var(--border); stroke-width: 1; }
+.tr-ax { fill: var(--text-dim); font-size: 12px; }
+.tr-ref { stroke: var(--neg); stroke-width: 1.5; stroke-dasharray: 6 4; }
+.tr-ref.billed { stroke-dasharray: 2 4; }
+.tr-reflab { fill: var(--neg); font-size: 12px; font-weight: 600; }
+.tr-line { fill: none; stroke: var(--text); stroke-width: 2; }
+.tr-line.billed { stroke: var(--accent); }
+.tr-cross { fill: var(--neg); stroke: var(--surface); stroke-width: 2; }
+.tr-crosslab { fill: var(--neg); font-size: 12px; font-weight: 600; }
+.tr-legend { display: flex; gap: 16px; padding: 6px 0 2px; font-size: .9em; color: var(--text-dim); flex-wrap: wrap; }
+.tr-lg::before { content: ""; display: inline-block; width: 18px; height: 0; border-top: 2px solid var(--text); margin-right: 6px; vertical-align: middle; }
+.tr-lg.billed::before { border-top-color: var(--accent); }
+.tr-lg.ref::before { border-top: 2px dashed var(--neg); }

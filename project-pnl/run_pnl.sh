@@ -12,9 +12,11 @@
 #
 # Usage (pass project #s and/or a dropped report straight through):
 #   project-pnl MFD177 RP7186 CP672
+#   project-pnl active cp            # every Active CP project (WIP master)
+#   project-pnl active rp mfd        # Active RP + MFD batch
 #   project-pnl --dry-run MFD177
 set -u
-DIR="/Users/sebas/Documents/Claude/Projects/Automate Concrete Business/project-pnl"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # self-locating — works from any clone, any user
 cd "$DIR"
 
 # stdout is a terminal → run with the script's built-in styled output.

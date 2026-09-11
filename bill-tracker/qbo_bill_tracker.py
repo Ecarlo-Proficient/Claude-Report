@@ -27,6 +27,7 @@ import base64
 import datetime as dt
 import re
 import sys
+import time
 import traceback
 from collections import defaultdict
 from pathlib import Path
@@ -50,8 +51,8 @@ except ImportError:
     print("✗ pip3 install --break-system-packages openpyxl")
     sys.exit(1)
 
-import qbo_vault as kc
-import paths
+from shared import qbo_vault as kc
+from shared import paths
 
 # ───────────────────────── constants ─────────────────────────
 
@@ -67,7 +68,7 @@ RETAINAGE_NOT_BILLED_RE = re.compile(r"retainage\s+not\s+billed", re.IGNORECASE)
 RETAINAGE_RE = re.compile(r"\bretainage\b", re.IGNORECASE)
 SUB_RE = re.compile(r"\bsub\b", re.IGNORECASE)
 
-# Status values — plain-English pipeline state. Ted 2026-06-03: re-split
+# Status values — plain-English pipeline state. The user 2026-06-03: re-split
 # AWAITING into PAYMENT vs INVOICE because lumping them lost the signal:
 #   - "Awaiting Invoice" = we owe the bill, GC hasn't been billed yet
 #   - "Awaiting Payment" = we owe the bill, GC was billed but hasn't paid us
@@ -84,11 +85,50 @@ STATUS_PAID = "Bill paid"
 # "is it fully funded" question is line-aggregated. Partial paid signals
 # "some lines funded, AP can decide to float the remainder or wait."
 STATUS_PARTIAL_PAID = "Partial paid"
+# 2026-08-12 (the user): the GC has paid PART of a matched invoice (0 < balance
+# < total) — distinct from "Awaiting Payment" (nothing paid yet). Its own AR
+# label so the owner sees "some money landed, remainder still due." Colored
+# NEUTRAL (Excel-tan) on the Bills sheet.
+STATUS_PARTIALLY_PAID_REMAINDER = "Partially Paid/Awaiting Remainder"
+
+# 2026-07-13: the single Status split into two axes (the user). PAY STATUS is the AP
+# side (did WE pay the vendor) from the bill balance; INVOICE STATUS is the AR
+# side (did the GC fund us) computed INDEPENDENTLY of payment, so a paid bill
+# still shows whether we've been reimbursed ("fronted").
+STATUS_UNPAID = "Unpaid"          # pay status: bill balance == full total
+
+
+def compute_pay_status(bill: dict) -> str:
+    """AP side — did we pay the vendor. From the bill balance alone."""
+    total = float(bill.get("TotalAmt") or 0)
+    bal = float(bill.get("Balance") or 0)
+    if bal == 0:
+        return STATUS_PAID              # "Bill paid"
+    if 0 < bal < total:
+        return STATUS_PARTIAL_PAID      # "Partial paid"
+    return STATUS_UNPAID                # "Unpaid"
+
+
+def compute_invoice_status(matched: Optional[dict], division: Optional[str]) -> str:
+    """AR side — has the GC funded this draw. Independent of the bill balance,
+    so it stays visible even after we've paid the vendor."""
+    if not division:
+        return STATUS_NO_PROJECT
+    if matched is None:
+        return STATUS_AWAITING_INVOICE
+    bal = float(matched.get("Balance") or 0)
+    if bal == 0:
+        return STATUS_OK_TO_PAY         # "Invoice paid" — GC funded in full
+    total = float(matched.get("TotalAmt") or 0)
+    if 0 < bal < total:
+        return STATUS_PARTIALLY_PAID_REMAINDER   # GC paid part; remainder due
+    return STATUS_AWAITING_PAYMENT      # bal == total → nothing paid yet
 OVERRIDE_VALUES = [STATUS_OK_TO_PAY, "ON HOLD", "REVIEW", "DISPUTED"]
 
 # Color fills
 COLOR_OK_TO_PAY = "C6EFCE"           # green
 COLOR_AWAITING_PAYMENT = "FFEB9C"    # yellow
+COLOR_PARTIAL_REMAINDER = "FFEB9C"   # neutral tan (Excel "Neutral")
 COLOR_AWAITING_INVOICE = "FFF8DC"    # beige
 COLOR_NO_PROJECT = "FFC7CE"          # red
 COLOR_PAID = "D9D9D9"                # grey
@@ -102,6 +142,7 @@ COLOR_SUBTOTAL = "E7E6E6"            # light grey
 STATUS_FILL_MAP = {
     STATUS_OK_TO_PAY: COLOR_OK_TO_PAY,
     STATUS_AWAITING_PAYMENT: COLOR_AWAITING_PAYMENT,
+    STATUS_PARTIALLY_PAID_REMAINDER: COLOR_PARTIAL_REMAINDER,
     STATUS_AWAITING_INVOICE: COLOR_AWAITING_INVOICE,
     STATUS_NO_PROJECT: COLOR_NO_PROJECT,
     STATUS_PAID: COLOR_PAID,
@@ -168,16 +209,37 @@ def load_credentials() -> Tuple[str, str]:
     basic = base64.b64encode(
         f"{creds['QBO_CLIENT_ID']}:{creds['QBO_CLIENT_SECRET']}".encode()
     ).decode()
-    r = requests.post(
-        "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
-        headers={
-            "Authorization": f"Basic {basic}",
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Accept": "application/json",
-        },
-        data={"grant_type": "refresh_token", "refresh_token": creds["QBO_REFRESH_TOKEN"]},
-        timeout=30,
-    )
+    # Retry the bearer refresh on transient network/Intuit blips. The OAuth
+    # endpoint occasionally times out its TLS handshake; a single POST used to
+    # crash the whole run (Ted 2026-07-15). Retry timeouts/connection errors +
+    # 5xx; a real 4xx (e.g. an expired refresh token) fails fast, no retry.
+    r = None
+    last = ""
+    for attempt in range(4):                    # 1 try + 3 retries
+        try:
+            r = requests.post(
+                "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
+                headers={
+                    "Authorization": f"Basic {basic}",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Accept": "application/json",
+                },
+                data={"grant_type": "refresh_token",
+                      "refresh_token": creds["QBO_REFRESH_TOKEN"]},
+                timeout=30,
+            )
+            if r.status_code < 500:
+                break                           # 200 or a real 4xx — done
+            last = f"status={r.status_code}"
+        except requests.exceptions.RequestException as e:
+            last = type(e).__name__
+            r = None
+        if attempt < 3:
+            time.sleep((attempt + 1) * 3)       # 3s, 6s, 9s
+    if r is None:
+        print(f"✗ token refresh failed after retries — {last} "
+              "(network/Intuit timeout; just run it again)")
+        sys.exit(1)
     if r.status_code != 200:
         print(f"✗ token refresh status={r.status_code} body={r.text[:300]}")
         sys.exit(1)
@@ -390,13 +452,22 @@ def get_line_customer_ref(line: dict) -> dict:
 
 _PUMP_RE = re.compile(r"\bpump", re.IGNORECASE)
 
-# RP amount-aware matching (Ted 2026-06-18). A concrete bill is our COST; the
+# RP amount-aware matching (the user 2026-06-18). A concrete bill is our COST; the
 # invoice is what we billed the GC for that scope, so the bill must not exceed
 # the invoice. Among same-project invoices within this forward window, keep
 # only those that COVER the bill amount and take the LARGEST; if none cover,
 # leave unmatched (→ Awaiting Invoice) rather than pin it to a too-small one.
 _RP_MATCH_FWD_DAYS = 60          # invoice TxnDate must be within 60 days AFTER the bill
 _RP_COVER_TOLERANCE = 0.01       # 1-cent slack so an exact-equal invoice still covers
+_RP_FULL_TOLERANCE = 0.01        # billed within a penny of the contract == fully billed
+
+# match_basis — which rule authorized a bill's matched invoice. Surfaced on the
+# Bills sheet so AP can see WHY a status applies (2026-07-13, RP draw semantics).
+MATCH_BASIS_COVER = "cover"      # invoice covers the bill amount (today's behavior)
+MATCH_BASIS_DRAW = "draw"        # RP partial-billed: the NEXT draw authorizes the bill
+MATCH_BASIS_FINAL = "final"      # RP fully-billed: attach a late bill to the LAST draw
+MATCH_BASIS_PERIOD = "period"    # MFD/CP: bill date falls inside the invoice's draw period
+MATCH_BASIS_PUSHED = "pushed"    # MFD/CP: carried into a later draw by agreement (shared/draw_moves)
 
 
 def _invoice_scope(inv: dict) -> str:
@@ -411,37 +482,68 @@ def _invoice_scope(inv: dict) -> str:
     return parts[1].strip() if len(parts) == 2 else memo
 
 
-def find_matching_invoice(
+def rp_billed_total(customer_id: str,
+                    invoices_by_customer: Dict[str, List[dict]]) -> float:
+    """Total invoiced (sum of TotalAmt) for a project's QBO customer. The pool
+    is already retainage-excluded and TxnDate ≥ INVOICE_CUTOFF_DATE (filtered by
+    the caller), so any undercount only makes the 'full' test more conservative
+    (degrades toward today's stricter behavior)."""
+    return sum(float(inv.get("TotalAmt") or 0)
+               for inv in invoices_by_customer.get(customer_id, []))
+
+
+def rp_gl_state(project_num: Optional[str], customer_id: str,
+                invoices_by_customer: Dict[str, List[dict]],
+                gl_contracts: Optional[Dict[str, float]]) -> Optional[str]:
+    """How far a signed RP contract has been billed:
+      None       — no General List / no contract on file → keep today's behavior
+      'unbilled' — contract exists, nothing billed yet (no draw exists)
+      'partial'  — some billed, under the contract  → existing invoices are draws
+      'full'     — billed to (≈) the contract total → billing complete
+    """
+    if not gl_contracts or not project_num:
+        return None
+    contract = gl_contracts.get(project_num.upper())
+    if contract is None or contract <= 0:
+        return None
+    billed = rp_billed_total(customer_id, invoices_by_customer)
+    if billed <= _RP_COVER_TOLERANCE:
+        return "unbilled"
+    if billed >= contract - _RP_FULL_TOLERANCE:
+        return "full"
+    return "partial"
+
+
+def find_matching_invoice_ex(
     bill_date: dt.date,
     division: str,
     customer_id: str,
     invoices_by_customer: Dict[str, List[dict]],
     bill_text: str = "",
     bill_amount: float = 0.0,
-) -> Optional[dict]:
-    """Apply division-specific matching rules. Return matched invoice or None.
+    project_num: Optional[str] = None,
+    gl_contracts: Optional[Dict[str, float]] = None,
+) -> Tuple[Optional[dict], str]:
+    """Division-specific matching. Returns (matched_invoice_or_None, match_basis).
 
-    `bill_text` — bill description + account name concatenated, used by the
-    RP branch to keep pump-truck bills from being matched to non-pump
-    invoices and vice versa. RP projects can have several scoped invoices
-    on the same house (Pump Charges, Foundation, Driveway, …); matching
-    purely by date proximity puts pump bills on foundation invoices etc.
-    Ted 2026-06-04: only the pump case has burned us; broader scope
-    matching is deferred.
+    `bill_text` — bill description + account name, so the RP pump filter keeps
+    pump-truck bills off non-pump invoices and vice versa.
 
-    `bill_amount` — the cost being attributed to this project (the line
-    amount). RP matching is amount-aware (Ted 2026-06-18): the bill must not
-    exceed the invoice it's matched to, so we only consider invoices that
-    COVER the bill amount and pick the largest. See `_RP_MATCH_FWD_DAYS`.
+    `bill_amount` — the cost attributed to this project (line amount); the RP
+    COVER pass requires the invoice to cover it.
+
+    `project_num` + `gl_contracts` — General List draw semantics (2026-07-13).
+    RP jobs bill at completion, so an early cost's authorizing invoice is the
+    NEXT draw (an invoice dated on/after the bill), amount-cover waived. Applied
+    only when the GL shows a contract and QBO shows partial billing; `gl_contracts
+    is None` (share unmounted) degrades to exactly the cover-only behavior.
     """
     candidates = invoices_by_customer.get(customer_id, [])
     if not candidates:
-        return None
+        return None, ""
 
     if division == "RP":
-        # Two-way pump filter: pump bill ↔ pump invoice; non-pump bill ↔
-        # non-pump invoice. Only applied when there's any pump invoice for
-        # this customer — otherwise we'd over-filter ourselves to no match.
+        # Two-way pump filter (unchanged): pump bill ↔ pump invoice.
         bill_is_pump = bool(_PUMP_RE.search(bill_text or ""))
         any_pump_inv = any(_PUMP_RE.search(_invoice_scope(inv)) for inv in candidates)
         if any_pump_inv:
@@ -450,34 +552,54 @@ def find_matching_invoice(
                 if bool(_PUMP_RE.search(_invoice_scope(inv))) == bill_is_pump
             ]
             if not candidates:
-                return None
+                return None, ""
 
-        # Date window: invoice on/after the bill, within the forward window.
+        # 1) COVER pass (unchanged) — within the 60-day forward window, the
+        #    largest invoice that covers the bill amount. Strict superset: every
+        #    bill that matches today still matches here first.
         window_end = bill_date + dt.timedelta(days=_RP_MATCH_FWD_DAYS)
-        eligible = []
-        for inv in candidates:
-            d = parse_date(inv.get("TxnDate"))
-            if d is not None and bill_date <= d <= window_end:
-                eligible.append(inv)
-        if not eligible:
-            return None
-
-        # Amount-aware: a bill (our cost) must not exceed the invoice (what we
-        # billed the GC for that scope). Keep only invoices that COVER the bill
-        # amount; among those take the LARGEST. If none cover, leave unmatched
-        # so it surfaces as Awaiting Invoice instead of pinning to a too-small
-        # invoice (e.g. $2,703 concrete cost wrongly stuck on a $246 invoice).
+        eligible = [
+            inv for inv in candidates
+            if (d := parse_date(inv.get("TxnDate"))) is not None
+            and bill_date <= d <= window_end
+        ]
         covering = [
             inv for inv in eligible
             if float(inv.get("TotalAmt") or 0) >= bill_amount - _RP_COVER_TOLERANCE
         ]
-        if not covering:
-            return None
-        covering.sort(key=lambda inv: (
-            -float(inv.get("TotalAmt") or 0),                             # largest first
-            abs(((parse_date(inv.get("TxnDate")) or bill_date) - bill_date).days),  # then closest date
-        ))
-        return covering[0]
+        if covering:
+            covering.sort(key=lambda inv: (
+                -float(inv.get("TotalAmt") or 0),
+                abs(((parse_date(inv.get("TxnDate")) or bill_date) - bill_date).days),
+            ))
+            return covering[0], MATCH_BASIS_COVER
+
+        # 2) Draw semantics from the General List.
+        state = rp_gl_state(project_num, customer_id, invoices_by_customer, gl_contracts)
+        if state == "partial":
+            # The NEXT draw: earliest invoice dated ON/AFTER the bill (a draw
+            # dated before the cost can't have captured it). No forward cap —
+            # await the next draw however long it takes. Cover waived.
+            forward = sorted(
+                ((d, inv) for inv in candidates
+                 if (d := parse_date(inv.get("TxnDate"))) is not None and d >= bill_date),
+                key=lambda t: t[0],
+            )
+            if forward:
+                return forward[0][1], MATCH_BASIS_DRAW
+            return None, ""            # no next draw yet → stay Awaiting Invoice
+        if state == "full":
+            # Fully billed → no next draw; a late cost attaches to the LAST draw.
+            dated = sorted(
+                ((d, inv) for inv in candidates
+                 if (d := parse_date(inv.get("TxnDate"))) is not None),
+                key=lambda t: t[0],
+            )
+            if dated:
+                return dated[-1][1], MATCH_BASIS_FINAL
+            return None, ""
+        # state None / 'unbilled' → today's behavior (cover already failed).
+        return None, ""
 
     if division in ("MFD", "CP"):
         for inv in candidates:
@@ -486,10 +608,27 @@ def find_matching_invoice(
                 continue
             start, end = period
             if start <= bill_date <= end:
-                return inv
-        return None
+                return inv, MATCH_BASIS_PERIOD
+        return None, ""
 
-    return None
+    return None, ""
+
+
+def find_matching_invoice(
+    bill_date: dt.date,
+    division: str,
+    customer_id: str,
+    invoices_by_customer: Dict[str, List[dict]],
+    bill_text: str = "",
+    bill_amount: float = 0.0,
+) -> Optional[dict]:
+    """Back-compat wrapper for callers predating draw semantics (this module's
+    own build_rows). Returns just the invoice."""
+    inv, _ = find_matching_invoice_ex(
+        bill_date, division, customer_id, invoices_by_customer,
+        bill_text=bill_text, bill_amount=bill_amount,
+    )
+    return inv
 
 
 def compute_status(bill: dict, matched: Optional[dict], division: Optional[str]) -> str:
@@ -867,7 +1006,7 @@ def main() -> int:
     # 2) auth
     print("→ authenticating to QBO (Touch ID) …")
     access, cid = load_credentials()
-    print(f"  ok. company_id={cid}")
+    print("  ok.")   # never echo the company_id / realm (consistent with sync-ar)
 
     # 3) reference data
     print("→ fetching vendors …")

@@ -1,15 +1,15 @@
-# Invoice Sync — Docker package · **v1.0.0**
+# Invoice Sync — Docker package · **v1.1.0**
 
-This directory holds the Docker package for the AR invoice sync — the **v1.0.0 "true release."** It moves the sync off the user's Mac onto an always-on Synology container. The container runs `run_invoice_sync.py` on a 15-minute loop: pulls open invoices from QuickBooks Online, upserts them into two Notion databases, sweeps for paid invoices, archives invoices deleted in QBO (CDC), and posts MFD payment events to a Teams channel.
+This directory holds the Docker package for the AR invoice sync — the **"true release"** (currently **v1.1.0** — same code as v1.0.0, repo paths renamed in the 2026-07 restructure). It moves the sync off the user's Mac onto an always-on Synology container. The container runs `run_invoice_sync.py` on a 15-minute loop: pulls open invoices from QuickBooks Online, upserts them into two Notion databases, sweeps for paid invoices, archives invoices deleted in QBO (CDC), and posts MFD payment events to a Teams channel.
 
 ## Versioning
 
 | Line | Version | What it is |
 |---|---|---|
-| **Docker** | `v1.0.0` | The true release — this package. Set via `APP_VERSION=1.0.0` baked into the image. Production target. |
+| **Docker** | `v1.1.0` | The true release — this package. Set via `APP_VERSION=1.1.0` baked into the image. Production target. |
 | **Mac** | `mvN` | The Mac-only lineage (manual `sync-ar` + visual viewer). Currently `mv1`; bump on Mac-side changes. Stays live as dev/fallback while Docker is tested. |
 
-Every run logs its identity (`Starting … [v1.0.0 (docker)]` or `[mv1 (mac)]`) and every Teams alert names the runtime — so while both run during testing, you always know which instance is talking. The label comes from `automation-worker/version.py`.
+Every run logs its identity (`Starting … [v1.0.0 (docker)]` or `[mv1 (mac)]`) and every Teams alert names the runtime — so while both run during testing, you always know which instance is talking. The label comes from `invoice-sync/version.py`.
 
 > **Coexistence note:** during testing, Excel export is **disabled in the container** (`SKIP_EXCEL_EXPORT=1`) so the Mac keeps owning the Excel mirror and the two don't fight over the OneDrive file. The container does the core QBO→Notion work; the Mac `sync-ar` continues as today.
 
@@ -17,7 +17,7 @@ Every run logs its identity (`Starting … [v1.0.0 (docker)]` or `[mv1 (mac)]`) 
 
 ## What this container does
 
-Runs `automation-worker/run_invoice_sync.py` on a 15-minute loop. Each pass:
+Runs `invoice-sync/run_invoice_sync.py` on a 15-minute loop. Each pass:
 
 1. Authenticates to QuickBooks Online via OAuth refresh token
 2. Pulls open invoices (`Balance > 0`) from QBO
@@ -106,7 +106,7 @@ The QBO refresh token rotates periodically. The container persists rotations to 
 |---|---|---|
 | Named volume `proficient-invoice-sync-state` | `/data` | Rotated QBO refresh tokens (`qbo_secrets.json`) **and** `/data/state` (sync + CDC-deletion watermarks). Must survive container restarts — without persisted state, CDC re-scans the last 30 days every recreate. |
 | Bind mount | `/data/onedrive` | The Excel mirror (`Open_Invoices.xlsx`) lands here every sync. IT bind-mounts this to a Synology folder that **Cloud Sync** mirrors to OneDrive. See "OneDrive bridge" below. |
-| Named volume `proficient-invoice-sync-logs` | `/app/automation-worker/logs` | Human-readable file logs alongside `docker logs`. Optional — `docker logs` alone is sufficient. |
+| Named volume `proficient-invoice-sync-logs` | `/app/invoice-sync/logs` | Human-readable file logs alongside `docker logs`. Optional — `docker logs` alone is sufficient. |
 
 Named volumes are used for state and logs so IT doesn't need to manage UID/GID on the host filesystem. The OneDrive bridge is a bind mount because it has to be in the Cloud-Sync-watched folder. The container runs as UID 1000 by default; override via the `APP_UID` / `APP_GID` build args in `docker-compose.yml` if needed.
 

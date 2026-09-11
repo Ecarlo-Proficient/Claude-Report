@@ -24,10 +24,12 @@ __pycache__/
 .ruff_cache/
 
 # State / runtime — must NEVER be baked into an image
-automation-worker/logs/
-automation-worker/state/
-automation-worker/.env
-automation-worker/.env.secrets
+invoice-sync/logs/
+invoice-sync/state/
+invoice-sync/.env
+invoice-sync/.env.secrets
+# pre-2026-07 layout leftovers (untracked files linger after the rename)
+automation-worker/
 Open_Invoices*.xlsx
 
 # Secrets

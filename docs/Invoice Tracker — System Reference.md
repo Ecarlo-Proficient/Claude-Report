@@ -1,5 +1,10 @@
 # Invoice Tracker — System Reference
 
+> **2026-07-13 restructure:** the code folder was renamed `automation-worker/` → `invoice-sync/`
+> (shared vault/paths now live in `shared/`). The log directory keeps its historical name
+> (`~/Library/Logs/Proficient/automation-worker/`), as does the Keychain service
+> (`proficient-automation-worker`). Paths below reflect the new layout.
+
 System for tracking Proficient Concrete's open AR in Notion, mirrored from QuickBooks Online every 15 minutes. Replaces the prior Excel-based AR clerk workflow. Augments QBO data with collections-workflow layer (status, notes, follow-ups, ownership, litigation tracking).
 
 ---
@@ -22,15 +27,15 @@ Invoice Tracker keeps QBO data live and adds the workflow layer on top, in a sin
                                          └─────────────────────┘
                                                     │
                                                     ├─ Customer relations → Customer List / MFD Client List
-                                                    ├─ Notion automations → Eduardo + team notifications
+                                                    ├─ Notion automations → the developer + team notifications
                                                     ├─ Teams Workflows webhook → MFD paid / short-pay cards
                                                     ├─ Excel sidecar → Open_Invoices.xlsx on OneDrive
-                                                    └─ Daily Triage view → Eduardo's morning queue
+                                                    └─ Daily Triage view → the developer's morning queue
 ```
 
 **Direction:** QBO → Notion only. Notion is downstream; nothing writes back to QBO. Manual notes / ownership / status flips stay in Notion as the AR collaboration layer.
 
-> **Run cadence (current):** the every-15-min launchd schedule is **paused** — a macOS update broke it and it hasn't been revived. Ted now triggers each sync **manually** with the `sync-ar` shell alias. The permanent fix (self-host on Mac, moving the runtime out of `~/Documents`) is queued — see **Deployment status** and **Open items / to-dos** below. A full graph of the live flow is at the bottom of this doc.
+> **Run cadence (current):** the every-15-min launchd schedule is **paused** — a macOS update broke it and it hasn't been revived. The user now triggers each sync **manually** with the `sync-ar` shell alias. The permanent fix (self-host on Mac, moving the runtime out of `~/Documents`) is queued — see **Deployment status** and **Open items / to-dos** below. A full graph of the live flow is at the bottom of this doc.
 
 ---
 
@@ -69,7 +74,7 @@ Each invoice has a `Customer` relation populated by the sync. The sync resolves 
 
 On a full miss: the `Customer` relation stays empty, `Customer (raw)` text still populates, and the sync logs a red WARNING naming the unmatched customer and invoice. Add the customer to the right Notion list and the next sync auto-links it.
 
-### Code (`automation-worker/`)
+### Code (`invoice-sync/`)
 
 | File | Purpose |
 |---|---|
@@ -79,15 +84,15 @@ On a full miss: the `Customer` relation stays empty, `Customer (raw)` text still
 | `run_invoice_sync.py` | CLI entrypoint with `--dry-run` flag |
 | `run_invoice_sync.sh` | Bash wrapper invoked by launchd |
 | `verify_invoices.py` | Audit script: pulls live QBO + Notion, compares invoice-by-invoice, generates markdown report |
-| `export_invoices_xlsx.py` | Notion → Excel one-way mirror. Writes `Open_Invoices.xlsx` to OneDrive every sync. Read-only sidecar for Eduardo's ad-hoc summing + copy-paste-to-email workflow |
+| `export_invoices_xlsx.py` | Notion → Excel one-way mirror. Writes `Open_Invoices.xlsx` to OneDrive every sync. Read-only sidecar for the developer's ad-hoc summing + copy-paste-to-email workflow |
 | `verify_excel_export.py` | Three-way audit (Excel ↔ Notion ↔ QBO). Confirms the OneDrive file is a true mirror of Notion open invoices and that Notion contains every routable QBO open invoice |
 | `config.py` | Loads env vars + Keychain secrets, used by all worker scripts |
 
 ### Scheduling
 
-**Current: manual.** Ted runs each sync by hand with the `sync-ar` shell alias (mirrors `sync-ap` for the bill tracker). The alias calls `automation-worker/run_invoice_sync.sh`.
+**Current: manual.** the user runs each sync by hand with the `sync-ar` shell alias (mirrors `sync-ap` for the bill tracker). The alias calls `invoice-sync/run_invoice_sync.sh`.
 
-The `~/Library/LaunchAgents/com.proficient.invoice-sync.plist` LaunchAgent (fires every 900 s / 15 min) **is no longer running** — a macOS update broke it and a prior attempt to repair it failed. The plist still exists in `automation-worker/launchd/` and was repointed to the current log path on 2026-06-10 in case the schedule is revived. Until then, do not assume any automatic cadence — sync only happens when Ted runs `sync-ar`. The permanent fix is in **Open items / to-dos**.
+The `~/Library/LaunchAgents/com.proficient.invoice-sync.plist` LaunchAgent (fires every 900 s / 15 min) **is no longer running** — a macOS update broke it and a prior attempt to repair it failed. The plist still exists in `invoice-sync/launchd/` and was repointed to the current log path on 2026-06-10 in case the schedule is revived. Until then, do not assume any automatic cadence — sync only happens when the user runs `sync-ar`. The permanent fix is in **Open items / to-dos**.
 
 ### Logs
 
@@ -161,16 +166,16 @@ Each 15-min fire executes:
 | View | Filter | Purpose |
 |---|---|---|
 | RP Aging / CP Aging | Division-scoped, Status≠Paid, group by Aging Bucket | Division-specific daily collections |
-| Daily Triage | Status≠Paid, Litigation≠true, Next Follow-Up≤today, group by Assignee | Eduardo's command view — see ALL pending items grouped by who owns them |
+| Daily Triage | Status≠Paid, Litigation≠true, Next Follow-Up≤today, group by Assignee | the developer's command view — see ALL pending items grouped by who owns them |
 | My Queue | `Assignee = Me`, due today | Personal daily queue (each user sees only their assigned items) |
 | Paid | Status=Paid, group by Paid Date (relative) | Recent payment history |
 | Litigation | Litigation=checked, group by Customer | Disputed AR workflow |
 
 ### Automations
 
-- **Sync stale check** (planned): notify Eduardo if any Last Synced > 1 hour ago
-- **Paid notification**: when CP or MFD invoice flips to Paid → notify Eduardo
-- **Short-pay notification**: when CP or MFD invoice flips to Partially Paid → notify Eduardo
+- **Sync stale check** (planned): notify the developer if any Last Synced > 1 hour ago
+- **Paid notification**: when CP or MFD invoice flips to Paid → notify the developer
+- **Short-pay notification**: when CP or MFD invoice flips to Partially Paid → notify the developer
 - **Teams MFD payment events**: sync script POSTs paid + short-pay events to a Teams channel via a Microsoft Power Automate Workflows webhook. Independent from the Notion automation above — both fire. Configured by `TEAMS_WEBHOOK_MFD_PAID` env var; leave empty to disable. Phase 1 scope: MFD only. See "Teams notifications" section below.
 - **Follow-up date arrived**: notify Assignee at the moment of date (limited, see automation docs)
 
@@ -189,7 +194,7 @@ Notion's parallel "Paid notification" automation still fires too — the Teams p
 2. Pick the template **"Post to a channel when a webhook request is received"** → **Next**.
 3. Confirm the team and channel → **Add workflow**.
 4. Copy the generated `https://prod-xx.westus.logic.azure.com:443/workflows/...` URL.
-5. Paste into `automation-worker/.env` (Mac) or `docker/.env.docker` (Synology):
+5. Paste into `invoice-sync/.env` (Mac) or `docker/.env.docker` (Synology):
 
 ```
 TEAMS_WEBHOOK_MFD_PAID=https://prod-xx.westus.logic.azure.com:443/workflows/...
@@ -199,7 +204,7 @@ The URL is tied to one specific channel and can't be guessed, but treat it like 
 
 **Payload shape:**
 
-The script POSTs a full **Adaptive Card** wrapped as `{type: "message", attachments: [{contentType: "application/vnd.microsoft.card.adaptive", content: {…}}]}`. The Workflow template's "Post card" action consumes this directly with no template editing. Green accent for paid, orange/yellow for short-pay; info only (no "Open in QuickBooks" button, per Ted). An earlier flat `{title, text, …}` JSON version was accepted with a 2xx but rendered nothing — that's why `teams_notify.py` sends the full card structure. Exact schema is in `automation-worker/teams_notify.py::notify_invoice_event()`; fire a safe test with `test_teams_webhook.py` after any URL rotation.
+The script POSTs a full **Adaptive Card** wrapped as `{type: "message", attachments: [{contentType: "application/vnd.microsoft.card.adaptive", content: {…}}]}`. The Workflow template's "Post card" action consumes this directly with no template editing. Green accent for paid, orange/yellow for short-pay; info only (no "Open in QuickBooks" button, per the user). An earlier flat `{title, text, …}` JSON version was accepted with a 2xx but rendered nothing — that's why `teams_notify.py` sends the full card structure. Exact schema is in `invoice-sync/teams_notify.py::notify_invoice_event()`; fire a safe test with `test_teams_webhook.py` after any URL rotation.
 
 **No duplicate fires:** the flip sweep excludes already-paid invoices, and the short-pay path requires `prior_status == Unpaid`, so consecutive partial payments don't re-notify — only the first Unpaid → Partially Paid transition.
 
@@ -214,8 +219,8 @@ Teams webhook calls are best-effort. Network failures, 4xx/5xx responses, and ti
 ```
 [date] · [name] · [method: call/email/text] · [what happened] → [next step]
 
-2026-05-04 · Eduardo · email · sent reminder + waiver request → no response
-2026-05-09 · Eduardo · escalated to John (PM) · Liz needs builder approval → John following up
+2026-05-04 · the developer · email · sent reminder + waiver request → no response
+2026-05-09 · the developer · escalated to John (PM) · Liz needs builder approval → John following up
 2026-05-12 · John · phone · Confirmed waiver coming Monday → next follow-up 5/16
 ```
 
@@ -228,7 +233,7 @@ Enforced by convention, not by Notion. Audit trail lives long-term.
 After each sync, `export_invoices_xlsx.py` pulls open invoices from both Notion trackers and writes a fresh Excel file to:
 
 ```
-/Users/sebas/Library/CloudStorage/OneDrive-ProficientConcrete,LLC/Collections/Open_Invoices.xlsx
+~/Library/CloudStorage/OneDrive-ProficientConcrete,LLC/Collections/Open_Invoices.xlsx
 ```
 
 OneDrive picks up the change and syncs to cloud automatically (the worker does not touch OneDrive credentials — it only writes a file).
@@ -242,9 +247,9 @@ OneDrive picks up the change and syncs to cloud automatically (the worker does n
 | Paid invoices | **Excluded by filter.** Only `Status in [Unpaid, Partially Paid]` rows are exported. When an invoice flips to Paid, it disappears from the next file. |
 | Clerk-side sorts/filters | Wiped each sync. The auto-filter dropdown stays (it's set by the export on row 1), so re-sorting is one click. Persistent sort state does NOT survive. |
 | Clerk-side cell edits (notes, color, etc.) | Wiped each sync. **Excel is read-only by design.** All edit-worthy data (Quick Status, Follow-Up Date, Assignee, Litigation) lives in Notion. |
-| Eduardo's manual copy (`Open_Invoices copy.xlsx`) | Untouched by the script. Safe place to scribble, but goes stale immediately. |
+| The developer's manual copy (`Open_Invoices copy.xlsx`) | Untouched by the script. Safe place to scribble, but goes stale immediately. |
 
-If Eduardo needs a stable working file, he should keep his notes in **Notion** (Quick Status / Collection Log) — not the Excel.
+If the developer needs a stable working file, he should keep his notes in **Notion** (Quick Status / Collection Log) — not the Excel.
 
 ### Columns (left-to-right)
 
@@ -254,17 +259,17 @@ PM, Quick Status, and QBO Link live only in Notion. **Past Due** is a signed day
 
 ### Configuration
 
-`automation-worker/.env`:
+`invoice-sync/.env`:
 
 ```
-INVOICE_EXPORT_PATH=/Users/sebas/Library/CloudStorage/OneDrive-ProficientConcrete,LLC/Collections/Open_Invoices.xlsx
+INVOICE_EXPORT_PATH=~/Library/CloudStorage/OneDrive-ProficientConcrete,LLC/Collections/Open_Invoices.xlsx
 ```
 
 Change the path here to repoint (Synology, Desktop, etc.) — no code change required.
 
 ### "Excel is open" guard
 
-Before writing, the export checks for Excel's lock file (`~$Open_Invoices.xlsx`) in the same folder. Excel auto-creates that hidden file whenever anyone has the workbook open (Eduardo, Ted, anyone) and OneDrive syncs it across machines.
+Before writing, the export checks for Excel's lock file (`~$Open_Invoices.xlsx`) in the same folder. Excel auto-creates that hidden file whenever anyone has the workbook open (the developer, the user, anyone) and OneDrive syncs it across machines.
 
 - **Lock present** → skip the Excel write, log a loud WARNING with re-run instructions. The QBO→Notion sync still completes. Close the file and re-run `sync-ar` to refresh the Excel mirror.
 - **No lock** → write normally.
@@ -318,18 +323,18 @@ Colors and the bar auto-disable when output isn't a terminal (plain fallback).
 Generates a markdown audit report comparing live QBO open invoices to Notion state.
 
 ```bash
-cd "/Users/sebas/Documents/Claude/Projects/Automate Concrete Business/automation-worker"
+cd "/ABSOLUTE/PATH/TO/Automate Concrete Business/invoice-sync"
 python3 verify_invoices.py --out "reports/audit-$(date +%Y-%m-%d).md"
 ```
 
-Saves to `automation-worker/reports/`. Report includes top-line numbers, match rate, and any drift.
+Saves to `invoice-sync/reports/`. Report includes top-line numbers, match rate, and any drift.
 
 ### Verify Excel mirror
 
 Three-way audit confirming the OneDrive Excel is a true mirror of Notion open invoices, and that Notion covers every routable QBO open invoice.
 
 ```bash
-cd "/Users/sebas/Documents/Claude/Projects/Automate Concrete Business/automation-worker"
+cd "/ABSOLUTE/PATH/TO/Automate Concrete Business/invoice-sync"
 python3 verify_excel_export.py
 # or, save to file:
 python3 verify_excel_export.py --out "reports/excel-audit-$(date +%Y-%m-%d).md"
@@ -379,12 +384,12 @@ Where the worker runs today and where it's headed. **Update (2026-06-26): Docker
 **Operations / reliability**
 
 - [ ] **Run `pip-audit` on dependencies** (task #35) — quick win, do this week.
-- [ ] **Execute the App Support runtime move** — relocate `automation-worker/` to `~/Library/Application Support/proficient-automation/`, add the `sync-deploy` rsync alias, then re-enable launchd from there so sync stops depending on a manual `sync-ar` and survives macOS updates.
-- [ ] **Stale-sync health alert** — notify Eduardo if `Last Synced` on any open invoice is more than 1 hour old. Catches silent sync failures (matters more now that runs are manual).
+- [ ] **Execute the App Support runtime move** — relocate `invoice-sync/` to `~/Library/Application Support/proficient-automation/`, add the `sync-deploy` rsync alias, then re-enable launchd from there so sync stops depending on a manual `sync-ar` and survives macOS updates.
+- [ ] **Stale-sync health alert** — notify the developer if `Last Synced` on any open invoice is more than 1 hour old. Catches silent sync failures (matters more now that runs are manual).
 
 **Feature / workflow**
 
-- [ ] **Send Statement deep-link** — URL property per invoice → customer's QBO page. Eduardo clicks → Create Statement → email. Cuts the send workflow to ~30 sec per customer.
+- [ ] **Send Statement deep-link** — URL property per invoice → customer's QBO page. The developer clicks → Create Statement → email. Cuts the send workflow to ~30 sec per customer.
 - [ ] **Bill Tracker QBO→Notion sync** — Bill Tracker is still xlsx-only; mirror this Invoice Tracker architecture. DBs already exist (Bill Tracker — RP/CP + Bill Tracker — MFD).
 - [ ] **Bill ↔ Invoice relation swap** — change Bill Tracker `Matched Invoice #` from text to a Relation pointing at the Invoice Tracker DBs, then add rollups (Invoice Date, Total, Open Bal, Status) once the relation is live.
 - [ ] **Payment DB (TBD)** — only if the AR clerk needs multi-invoice deposit reconciliation or payment-method tracking; sync from QBO Payment objects.
@@ -401,8 +406,8 @@ Where the worker runs today and where it's headed. **Update (2026-06-26): Docker
 | ↳ routable (with project #) | 128 |
 | ↳ unroutable (equipment lease etc.) | 33 |
 | Notion invoices in trackers | 136 |
-| Open balance — routable | $4,443,347.89 |
-| Open balance — unroutable | $124,121.61 |
+| Open balance — routable | *(redacted 2026-07-30 — dollar totals don't belong in the repo; pull live via `sync-ar` / QBO)* |
+| Open balance — unroutable | *(redacted 2026-07-30)* |
 | Routable match rate | **100.0%** |
 
 Verdict: PASS. Every routable QBO open invoice is present in Notion. Re-runnable anytime via `verify_invoices.py`.
@@ -423,9 +428,9 @@ Verdict: PASS. Every routable QBO open invoice is present in Notion. Re-runnable
 
 ## Code ownership / escalation
 
-System owner: **Ted Cairo**. 
-Primary user: **Eduardo Rivera** (AR clerk).
-Code at: `/Users/sebas/Documents/Claude/Projects/Automate Concrete Business/automation-worker/`.
+System owner: **the user Cairo**. 
+Primary user: **the developer Rivera** (AR clerk).
+Code at: `/ABSOLUTE/PATH/TO/Automate Concrete Business/invoice-sync/`.
 For sync stops or audit failures: check `~/Library/Logs/Proficient/automation-worker/invoice_sync.log`, then re-run `verify_invoices.py`.
 
 ---
@@ -438,7 +443,7 @@ flowchart TD
         QBO["QuickBooks Online<br/>open invoices (Balance > 0)"]
     end
 
-    TRIG["Ted runs sync-ar<br/>(manual · 15-min schedule paused)"] --> RUN
+    TRIG["the user runs sync-ar<br/>(manual · 15-min schedule paused)"] --> RUN
 
     subgraph RUN["invoice_sync.py — one run"]
         AUTH["Auth to QBO via Keychain<br/>(Touch ID once per reboot)"]
@@ -467,7 +472,7 @@ flowchart TD
 
     subgraph DOWN["Downstream of Notion"]
         VIEWS["Views: Daily Triage,<br/>RP/CP Aging, My Queue, Litigation"]
-        AUTOM["Notion automations<br/>paid / short-pay -> Eduardo"]
+        AUTOM["Notion automations<br/>paid / short-pay -> the developer"]
         XLSX["export_invoices_xlsx.py<br/>Open_Invoices.xlsx -> OneDrive<br/>(open-file guard)"]
     end
 
@@ -489,4 +494,4 @@ flowchart TD
     class MFDDB,RPCPDB notion
 ```
 
-**Reading the graph:** Ted kicks off a run with `sync-ar`. The worker authenticates to QBO, walks the customer hierarchy, pulls open invoices, parses each Project #, and routes MFD to its isolated DB and RP/CP to the combined DB. The three-pass matcher fills the Customer relation. After upserting, a sweep flips anything no longer open in QBO to Paid and archives old paid rows. Notion then feeds the clerk views, the Notion automations, the OneDrive Excel sidecar, and — for MFD paid/short-pay events — a Teams card. The human collections layer (status, follow-ups, notes) lives only in Notion and is never overwritten by the sync.
+**Reading the graph:** the user kicks off a run with `sync-ar`. The worker authenticates to QBO, walks the customer hierarchy, pulls open invoices, parses each Project #, and routes MFD to its isolated DB and RP/CP to the combined DB. The three-pass matcher fills the Customer relation. After upserting, a sweep flips anything no longer open in QBO to Paid and archives old paid rows. Notion then feeds the clerk views, the Notion automations, the OneDrive Excel sidecar, and — for MFD paid/short-pay events — a Teams card. The human collections layer (status, follow-ups, notes) lives only in Notion and is never overwritten by the sync.

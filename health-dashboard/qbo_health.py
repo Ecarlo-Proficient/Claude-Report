@@ -61,15 +61,15 @@ except ImportError:
     sys.exit(1)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-import qbo_vault as kc
-import paths
+from shared import qbo_vault as kc
+from shared import paths
 
 # ────────────────────────── constants ──────────────────────────
 
 API_BASE = "https://quickbooks.api.intuit.com"
 MINOR_VERSION = "70"
 
-DEFAULT_OUTPUT = paths.companyhealth_dir() / "health_dashboard.xlsx"
+DEFAULT_OUTPUT = paths.companyhealth_sources_dir() / "health_dashboard.xlsx"
 DEFAULT_OVERRIDES = paths.companyhealth_dir() / "customer_overrides.xlsx"
 
 # Aging bucket boundaries, in days — matches QBO's default Aged Receivables/Payables.
@@ -213,8 +213,21 @@ def report(access: str, company_id: str, name: str, params: Optional[dict] = Non
 
 # ────────────────────────── data shaping ──────────────────────────
 
+# Every date window in this report (MTD, YTD, prior-year, aging, burn, recurring)
+# derives from _today(), so overriding it here shifts the whole report to a
+# chosen as-of date. That makes a month-end close reproducible: re-running on
+# the 3rd with --as-of 2026-07-31 reproduces the July close exactly, instead of
+# quietly folding in the first days of August (the user 2026-08-03).
+_AS_OF: Optional[dt.date] = None
+
+
+def set_as_of(d: Optional[dt.date]) -> None:
+    global _AS_OF
+    _AS_OF = d
+
+
 def _today() -> dt.date:
-    return dt.date.today()
+    return _AS_OF or dt.date.today()
 
 
 def _days_between(a: dt.date, b: dt.date) -> int:
@@ -3697,6 +3710,9 @@ def build_workbook(
 
     # Meta sheet for provenance
     ws_meta["A1"] = "Generated"; ws_meta["B1"] = now.isoformat()
+    ws_meta["A6"] = "As-of date"
+    ws_meta["B6"] = (_AS_OF.isoformat() if _AS_OF
+                     else f"{_today().isoformat()} (live run)")
     ws_meta["A2"] = "Script"; ws_meta["B2"] = "qbo_health.py"
     ws_meta["A3"] = "Sigma threshold"; ws_meta["B3"] = sigma
     ws_meta["A4"] = "Output path"; ws_meta["B4"] = str(out_path)
@@ -3877,7 +3893,19 @@ def main() -> int:
     ap.add_argument("--no-lock", action="store_true", help="Skip chmod 600 on the output file")
     ap.add_argument("--anomaly-sigma", type=float, default=2.0,
                     help="Sigma threshold for overhead spike flagging (default 2.0)")
+    ap.add_argument("--as-of", metavar="YYYY-MM-DD",
+                    help="Report as of this date instead of today — every window "
+                         "(MTD, YTD, prior year, aging, burn) shifts with it. Use "
+                         "for reproducible month-end closes, e.g. --as-of 2026-07-31.")
     args = ap.parse_args()
+
+    if args.as_of:
+        try:
+            set_as_of(dt.date.fromisoformat(args.as_of))
+        except ValueError:
+            print(f"✗ --as-of must be YYYY-MM-DD (got {args.as_of!r})")
+            return 2
+        print(f"  ⏱  reporting AS OF {args.as_of} (not today)")
 
     out_path = Path(args.out).expanduser() if args.out else DEFAULT_OUTPUT
     overrides_path = Path(args.overrides).expanduser() if args.overrides else DEFAULT_OVERRIDES
@@ -3887,7 +3915,7 @@ def main() -> int:
     print("━" * 60)
 
     access, company_id = load_credentials()
-    print(f"  ✓ authenticated  (company={company_id})")
+    print("  ✓ authenticated.")   # never echo the company_id / realm
 
     print(f"  → loading override annotations...")
     overrides = load_overrides(overrides_path)
