@@ -218,6 +218,12 @@ def _find_awarded_cp_folder(base: Path, proj: str) -> Optional[Path]:
     return numbered
 
 
+# The retired Automations- tree is written only when a run says so (the owner
+# 2026-09-11) - `--to-automations` sets this once in main(); see
+# shared/pnl_paths.AUTOMATIONS_RULE. Everything below reads it.
+TO_AUTOMATIONS = False
+
+
 def _resolve_project_out_dir(proj: str, out_dir: Path,
                              forced: bool = False) -> Tuple[Path, Optional[str]]:
     """Where a project's workbook folder should live. CP → Common-drive awarded
@@ -231,15 +237,15 @@ def _resolve_project_out_dir(proj: str, out_dir: Path,
     one rule lives in shared/pnl_paths.division_dir — which also routes a
     division to its TEAMS CHANNEL when one is mapped and synced (MFD →
     'Project Financials', the user 2026-09-03)."""
-    _div, _dnote = pnl_paths.division_dir_note(proj, out_dir, forced=forced)
+    if forced:
+        return pnl_paths.division_dir(proj, out_dir, forced=True) / proj, \
+            "--out given, so the default route is bypassed"
     # An EXPLICIT --out wins over every default route (2026-09-03). It used to
     # be ignored for CP, which routes to the Common-drive awarded folder
     # whenever the drive is mounted, and for any job already filed under an
     # archive - so a run aimed at a scratch directory silently overwrote the
     # live workbook instead. If someone names an output folder, that is the
     # output folder.
-    if forced:
-        return _div / proj, "--out given, so the default route is bypassed"
     if not proj.upper().startswith("CP"):
         # If this job has already been FILED under an archive subfolder
         # ("completed mfd project p&l"), regenerate it THERE — otherwise a
@@ -248,15 +254,12 @@ def _resolve_project_out_dir(proj: str, out_dir: Path,
         # division, so this finds the one inside the Teams channel too.
         for _arch in pnl_paths._archive_dirs():
             if (_arch / proj).is_dir():
-                _n = f"filed under {_arch.name}"
-                return _arch / proj, (f"{_n}; {_dnote}" if _dnote else _n)
+                return _arch / proj, f"filed under {_arch.name}"
+        _div, _dnote = pnl_paths.division_dir_note(proj, out_dir, bypass=TO_AUTOMATIONS)
         return _div / proj, _dnote
-    if not CP_AWARDED_BASE.exists():
-        return _div / proj, "Common drive not mounted → OneDrive"
-    folder = _find_awarded_cp_folder(CP_AWARDED_BASE, proj)
-    if folder is None:
-        return _div / proj, f"no awarded folder for {proj} → OneDrive"
-    return folder / CP_PNL_SUBDIR, None
+    # CP: the awarded folder on the Common drive is the home; anything else is
+    # the retired tree and refuses unless the run said --to-automations.
+    return pnl_paths.resolve_project_out_dir(proj, out_dir, bypass=TO_AUTOMATIONS)
 
 
 # ─────────── regexes ───────────
@@ -7898,7 +7901,7 @@ def generate_project_pnl_rp(
     else:
         # ...inside the division folder, same sharing rule as every other P&L
         # (the user 2026-08-31) - see shared/pnl_paths.division_dir.
-        proj_dir = pnl_paths.division_dir(proj, out_dir) / label   # one home folder per project
+        proj_dir = pnl_paths.division_dir(proj, out_dir, bypass=TO_AUTOMATIONS) / label
         if _rp_note:
             ui_event(_rp_note, icon="⚑", color=_YEL)
     proj_dir.mkdir(parents=True, exist_ok=True)
@@ -8358,11 +8361,17 @@ def main() -> int:
                          "don't, instead of falling back to the calendar month. "
                          "The draw's MONTH still comes from the memo's own "
                          "wording. Retainage invoices are left untagged.")
+    ap.add_argument("--to-automations", action="store_true",
+                    help="the division's real home is not mounted and the owner said "
+                         "to file this run in the retired OneDrive Automations- folder "
+                         "anyway. Without it a missing home STOPS the job.")
     ap.add_argument("--no-prompt", action="store_true",
                     help="Don't pause to ask about mistyped invoice period "
                          "dates (skip them and warn instead). Use for "
                          "unattended/scheduled runs.")
     args = ap.parse_args()
+    global TO_AUTOMATIONS
+    TO_AUTOMATIONS = bool(args.to_automations)
 
     # Drag/drop of a .xlsx report → cross-check mode; bare names → P&L export.
     def _is_report(a):
@@ -8521,7 +8530,7 @@ def main() -> int:
         import completed_pnl as _CP
         for _d in sorted(d for d in touched_divs if d):
             try:
-                _res = _CP.rebuild_overview(_d.lower())
+                _res = _CP.rebuild_overview(_d.lower(), to_automations=TO_AUTOMATIONS)
             except Exception as e:                 # never fail a good P&L run
                 ui_fail(f"{_d} Overview not rebuilt: {e}")
                 continue

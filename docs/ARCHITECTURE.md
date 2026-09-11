@@ -867,6 +867,12 @@ ready-mix MEMO line must be `*1`) - then flags every line that breaks its type's
 OneDrive `Works In Progress/QBO Audits/Concrete Cost Code Audit.xlsx` (Vendors · Miscoded Lines ·
 Summary; plain, `assert_clean`).
 
+**The OneDrive `Automations-` tree is RETIRED (the owner 2026-09-11).** `shared/pnl_paths`
+resolves the real home first (MFD -> the Project Financials channel; CP / RP -> the job folder
+on the Common drive) and REFUSES to fall back into `Automations-` (`HomeNotMounted`) unless the
+run says `--to-automations`; reads of old files there still work. Bill Tracker, Open_Invoices
+and the statement reconciles still live there pending new homes.
+
 **`project-pnl/bizdev_cut_view.py`** (reads the P&L workbooks + one QBO pull per registered
 vendor) - the OWNER'S copy of the Overview page with the DIRECTOR'S cut charged at the end: the
 same reader as the Overview, then one cut column (the register's `director`) and REAL NET at 10%

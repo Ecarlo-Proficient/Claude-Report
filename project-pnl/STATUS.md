@@ -8,6 +8,21 @@ manual close), RP (no draws — expenses → invoice → profit).
 
 ## DONE / FINALIZED
 
+- **THE AUTOMATIONS- TREE IS RETIRED - A MISSING HOME STOPS THE RUN (2026-09-11).** The
+  owner: "Automations folder I'm retiring, only should be used if no mount exists and i
+  deliberately say bypass by sending to automations." `shared/pnl_paths` now refuses to
+  resolve a P&L, Overview or cut page INTO the OneDrive `Automations-` tree
+  (`HomeNotMounted`, message names the reason and the rule) unless the run carries
+  **`--to-automations`** (project_pnl_export, completed_pnl) - an explicit `--out` still
+  wins, an `ACB_PNL_DIR_<DIV>` override still wins, and an `ACB_PNL_OUT_DIR` outside that
+  tree is untouched. The real home is tried FIRST (Teams channel for MFD, the awarded /
+  address folder on the Common drive for CP / RP) and the division folder only consulted
+  when it is missing. READS are unaffected: `find_pnl`, `_candidates`, `_archive_dirs`
+  pass `bypass=True` so old files there are still found. `bizdev_cut_view` prints
+  "stopped" and exits 1 rather than building the owner's page from stale copies.
+  Still living in Automations- and NOT covered here (they need homes the owner has not
+  named): `Bill Tracker.xlsx`, `Open_Invoices.xlsx`, `statement reconciles/`.
+
 - **`bizdev_cut_view.py` - THE OWNER'S INTERNAL P&L WITH THE DIRECTOR'S CUT AT THE END
   (2026-09-11, reworked the same day).** The owner: "take mfd overview and make sure the
   director cut looks like that ... add both 9 and 10% ... add the director's cut at the end

@@ -180,10 +180,10 @@ def rp_pnl_dir(proj: str) -> "tuple[Path | None, str | None]":
     except OSError:
         mounted = False
     if not mounted:
-        return None, "Residential drive not mounted → OneDrive"
+        return None, "Residential drive not mounted"
     folder = rp_job_folder(proj)
     if folder is None:
-        return None, f"no job folder on the Common drive for {proj} (no RP####_ takeoff) → OneDrive"
+        return None, f"no job folder on the Common drive for {proj} (no RP####_ takeoff)"
     return folder / RP_PNL_SUBDIR, None
 
 
@@ -297,19 +297,50 @@ def _listable(d: Path) -> bool:
         return False
 
 
+# ── the OneDrive 'Automations-' tree is RETIRED (the owner 2026-09-11) ──
+# "Automations folder I'm retiring, only should be used if no mount exists and
+# i deliberately say bypass by sending to automations." So it is never a home
+# and never a SILENT fallback: when a division's real home (its Teams channel,
+# the job folder on the Common drive) is not on this Mac, a run STOPS and says
+# so. Only a run that carries `--to-automations` files there, and it says that
+# too. Reads of old files already in that tree (the P&L finder) are unaffected.
+AUTOMATIONS_RULE = ("the Automations- folder is retired - it is written only when the real "
+                    "home is not mounted AND the run says so with --to-automations")
+
+
+class HomeNotMounted(RuntimeError):
+    """The division's real home is not reachable and the run did not say
+    --to-automations. Carries the reason in its message."""
+
+
+def _in_automations(p: Path) -> bool:
+    return any(part.lower().startswith("automations-") for part in p.parts)
+
+
+def _fallback(default: Path, why: str, bypass: bool):
+    """(folder, note) for a fallback INTO the retired tree - or refuse."""
+    if not _in_automations(default):          # an ACB_PNL_OUT_DIR elsewhere is fine
+        return default, why
+    if bypass:
+        return default, f"{why} -> filed in {default} (--to-automations)"
+    raise HomeNotMounted(f"{why}; {AUTOMATIONS_RULE}")
+
+
 def division_dir(proj: str, out_dir: "Path | None" = None,
-                 forced: bool = False) -> Path:
-    """The division folder a project's P&L belongs in."""
-    return division_dir_note(proj, out_dir, forced)[0]
+                 forced: bool = False, bypass: bool = False) -> Path:
+    """The division folder a project's P&L belongs in. Raises HomeNotMounted
+    when that is the retired Automations- tree and `bypass` is not set."""
+    return division_dir_note(proj, out_dir, forced, bypass)[0]
 
 
 def division_dir_note(proj: str, out_dir: "Path | None" = None,
-                      forced: bool = False):
+                      forced: bool = False, bypass: bool = False):
     """(folder, note) — the division folder, and why, when it isn't the default.
 
     Resolution order: an explicit --out (`forced`) beats every route · an
     `ACB_PNL_DIR_<DIV>` override · the division's Teams channel when synced ·
-    the OneDrive division folder.
+    the OneDrive division folder - which, inside the retired Automations-
+    tree, is refused (HomeNotMounted) unless `bypass` says --to-automations.
 
     An unrecognised project # stays at the root rather than being filed into
     the wrong division - a misfiled P&L is exactly the leak this rule exists
@@ -328,14 +359,14 @@ def division_dir_note(proj: str, out_dir: "Path | None" = None,
         found = channel_dir(channel)
         if found is not None:
             return found, None
-        # Fall back rather than fail a run - but SAY SO. A silent fallback is
-        # how the owner ends up sharing a channel link to a folder the numbers
-        # never reached.
-        return default, (f"Teams channel '{channel}' is not readable on this Mac "
-                         f"(not synced, or synced as a shared library this app "
-                         f"cannot list) → wrote to {default.name} on OneDrive "
-                         f"instead")
-    return default, None
+        # The channel is the home. Not readable = STOP (or --to-automations).
+        return _fallback(default, f"Teams channel '{channel}' is not readable on this "
+                                  f"Mac (not synced, or synced as a shared library this "
+                                  f"app cannot list)", bypass)
+    if not name:                       # not a project # at all: the caller's root
+        return default, None
+    return _fallback(default, f"{div} has no home mapped beyond the retired "
+                              f"Automations- folder", bypass)
 
 
 def _find_awarded_cp_folder(base: Path, proj: str):
@@ -360,32 +391,39 @@ def _find_awarded_cp_folder(base: Path, proj: str):
     return numbered
 
 
-def resolve_project_out_dir(proj: str, out_dir: "Path | None" = None):
+def resolve_project_out_dir(proj: str, out_dir: "Path | None" = None,
+                            bypass: bool = False):
     """(folder, note) — where project-pnl would put this project's workbook.
-    `note` explains any CP → OneDrive fallback (surfaced in the UI)."""
+    `note` explains a fallback. The real home is tried FIRST; only when it is
+    missing is the division folder consulted, which refuses the retired
+    Automations- tree unless `bypass` (HomeNotMounted)."""
     out_dir = out_dir or pnl_out_dir()
-    base, dnote = division_dir_note(proj, out_dir)
     if proj.upper().startswith("RP"):
         # RP lives in its job folder on the Common drive (the owner 2026-09-08)
         rp_dir, rp_note = rp_pnl_dir(proj)
-        return (rp_dir, None) if rp_dir else (base / proj, rp_note)
+        if rp_dir:
+            return rp_dir, None
+        base, _ = division_dir_note(proj, out_dir, bypass=True)
+        return _fallback(base / proj, rp_note or "no RP home", bypass)
     if not proj.upper().startswith("CP"):
+        base, dnote = division_dir_note(proj, out_dir, bypass=bypass)
         return base / proj, dnote
     try:
         mounted = CP_AWARDED_BASE.exists()
     except OSError:
         mounted = False
-    if not mounted:
-        return base / proj, "Common drive not mounted → OneDrive"
-    folder = _find_awarded_cp_folder(CP_AWARDED_BASE, proj)
-    if folder is None:
-        return base / proj, f"no awarded folder for {proj} → OneDrive"
-    return folder / CP_PNL_SUBDIR, None
+    if mounted:
+        folder = _find_awarded_cp_folder(CP_AWARDED_BASE, proj)
+        if folder is not None:
+            return folder / CP_PNL_SUBDIR, None
+    base, _ = division_dir_note(proj, out_dir, bypass=True)
+    why = "Common drive not mounted" if not mounted else f"no awarded folder for {proj}"
+    return _fallback(base / proj, why, bypass)
 
 
-def pnl_path(proj: str, out_dir: "Path | None" = None) -> Path:
+def pnl_path(proj: str, out_dir: "Path | None" = None, bypass: bool = False) -> Path:
     """The exact workbook path project-pnl would write for this project."""
-    folder, _ = resolve_project_out_dir(proj, out_dir)
+    folder, _ = resolve_project_out_dir(proj, out_dir, bypass=bypass)
     return folder / pnl_filename(proj, is_archived_dir(folder))
 
 
@@ -412,7 +450,10 @@ def _archive_dirs():
     # nobody reads any more while the channel kept the morning's copies.
     bases = []
     for _d in DIVISION_DIRS:
-        _r = division_dir(_d)
+        try:
+            _r = division_dir(_d, bypass=True)
+        except HomeNotMounted:
+            continue
         if _r not in bases:
             bases.append(_r)
     for _b in [root] + [root / n for n in DIVISION_DIRS.values()]:
@@ -442,8 +483,8 @@ def _candidates(proj: str):
 
     fname = PNL_FILE.format(proj=proj)
     fnames = (fname, PNL_FILE_FINAL.format(proj=proj))
-    add(pnl_path(proj))                                   # exact resolved path
-    add(division_dir(proj) / proj / fname)                # division-sorted
+    add(pnl_path(proj, bypass=True))                     # exact resolved path (a READ)
+    add(division_dir(proj, bypass=True) / proj / fname)   # division-sorted (read)
     _dn = DIVISION_DIRS.get(division_of(proj))
     if _dn:                                              # pre-Teams-move home
         add(pnl_out_dir() / _dn / proj / fname)
@@ -463,7 +504,7 @@ def _candidates(proj: str):
         # Common drive first, else in a same-named folder under the division.
         rp_dir, _ = rp_pnl_dir(proj)
         globs = [rp_dir] if rp_dir else []
-        for d in (division_dir(proj), pnl_out_dir() / DIVISION_DIRS["RP"]):
+        for d in (division_dir(proj, bypass=True), pnl_out_dir() / DIVISION_DIRS["RP"]):
             try:
                 globs.extend(x for x in d.glob(f"{proj} - *") if x.is_dir())
             except OSError:
@@ -481,7 +522,10 @@ def find_pnl(proj: str) -> dict:
     """{exists, path, mtime, note} for the NEWEST existing P&L workbook of `proj`.
     `mtime` is ISO-minutes local time — the "last pulled" the owner asked to see;
     None when nothing has been generated yet."""
-    _, note = resolve_project_out_dir(proj)
+    try:
+        _, note = resolve_project_out_dir(proj)
+    except HomeNotMounted as e:
+        note = str(e)
     best = None
     for p in _candidates(proj):
         try:
@@ -491,7 +535,8 @@ def find_pnl(proj: str) -> dict:
         if best is None or st.st_mtime > best[1]:
             best = (p, st.st_mtime)
     if best is None:
-        return {"exists": False, "path": str(pnl_path(proj)), "mtime": None, "note": note}
+        return {"exists": False, "path": str(pnl_path(proj, bypass=True)), "mtime": None,
+            "note": note}
     p, m = best
     return {"exists": True, "path": str(p),
             "mtime": _dt.datetime.fromtimestamp(m).isoformat(timespec="minutes"),

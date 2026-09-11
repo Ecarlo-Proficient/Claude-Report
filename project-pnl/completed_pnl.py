@@ -1125,7 +1125,7 @@ def load_division(found, div_dir: Path, year):
 
 
 def rebuild_overview(division: str, div_dir: "Path | None" = None,
-                     year=_DEFAULT_YEAR) -> "dict | None":
+                     year=_DEFAULT_YEAR, to_automations: bool = False) -> "dict | None":
     """Rebuild `<DIV> Overview.xlsx` from the workbooks on disk. Returns
     {path, jobs, billed, cost} or None when there is nothing to bundle.
 
@@ -1136,7 +1136,7 @@ def rebuild_overview(division: str, div_dir: "Path | None" = None,
     describing a P&L that has since moved."""
     div = DIVISIONS[division]
     div_dir = (Path(div_dir).expanduser() if div_dir
-               else pnl_paths.division_dir(div["prefix"]))
+               else pnl_paths.division_dir(div["prefix"], bypass=to_automations))
     year = resolve_year(div, year)
     loaded, _ = load_division(_iter_jobs(div_dir, div["prefix"]), div_dir, year)
     if not loaded:
@@ -1162,13 +1162,16 @@ def main() -> int:
                          "current year for CP and RP, all for MFD.")
     ap.add_argument("--folder", default=None,
                     help="override the division folder (rarely needed)")
+    ap.add_argument("--to-automations", action="store_true",
+                    help="the division's home is not mounted and the owner said to "
+                         "build in the retired OneDrive Automations- folder anyway")
     a = ap.parse_args()
     div = DIVISIONS[a.division]
     # The overview lands in the DIVISION folder, not the archive inside it: it
     # covers live and finished jobs alike, so filing it under "completed" put
     # it somewhere it did not belong (the user 2026-08-31).
     div_dir = (Path(a.folder).expanduser() if a.folder
-               else pnl_paths.division_dir(div["prefix"]))
+               else pnl_paths.division_dir(div["prefix"], bypass=a.to_automations))
     year = resolve_year(div, a.year if a.year is not None else _DEFAULT_YEAR)
 
     found = _iter_jobs(div_dir, div["prefix"])

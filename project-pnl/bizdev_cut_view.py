@@ -703,7 +703,11 @@ def main(argv=None) -> int:
                          "<CompanyHealth>/<DIV> PnL - Internal - Director Cut.xlsx")
     a = ap.parse_args(argv)
     div = cp.DIVISIONS[a.division]
-    div_dir = pnl_paths.division_dir(div["prefix"])
+    try:
+        div_dir = pnl_paths.division_dir(div["prefix"])
+    except pnl_paths.HomeNotMounted as e:
+        print(f"stopped: {e}")           # never read the retired tree for this page
+        return 1
     out = a.out or (paths.companyhealth_dir() / OUT_NAME.format(label=div["label"]))
     print(f"reading the {div['label']} P&L workbooks in {div_dir}")
     loaded, _skipped = cp.load_division(cp._iter_jobs(div_dir, div["prefix"]), div_dir, None)
