@@ -73,7 +73,7 @@ import completed_pnl as cp                                        # noqa: E402
 from completed_pnl import (C0, F_BAND, F_HDR, GREEN, GREY, GUTTER_W, HAIR,   # noqa: E402
                            INK, LINK, MFD_OVERHEAD_PCT, MONEY, MONEY_C, NAVY,
                            OVERHEAD_PCT, PCT, RED, RULE, SZ, SZ_SMALL,
-                           SZ_TITLE, THICK, _spans, _t, _thick_box, _tiles,
+                           SZ_TITLE, THICK, _spans, _t, _tiles,
                            job_label, lint_layout)
 
 OUT_NAME = "{label} PnL - Internal - Director Cut.xlsx"
@@ -280,27 +280,58 @@ def _lines_table(ws, r: int, rows: List[dict], dlabel: str, title: str,
     ws.row_dimensions[r].height = 30
     r += 1
     first = r
-    for ln in sorted(rows, key=lambda x: (x["date"], x["ref"]), reverse=True):
-        c1 = _t(ws, r, B, ln["ref"], size=SZ_SMALL, align="left", indent=1)
-        if ln["url"]:
-            c1.hyperlink = ln["url"]
-            c1.font = Font(size=SZ_SMALL, color=LINK, underline="single")
-        d = _t(ws, r, B + 1, dt.date.fromisoformat(ln["date"]) if ln["date"] else "",
-               size=SZ_SMALL, align="left")
-        d.number_format = "mm/dd/yyyy"
-        _t(ws, r, B + 2, ln["category"] if ln["cut"] else "Fronted", size=SZ_SMALL)
-        _t(ws, r, B + 3, _who(ln), size=SZ_SMALL)
-        _t(ws, r, B + 4, ln["text"][:120], size=SZ_SMALL)
-        _t(ws, r, B + 5, ln["acct"][:40], size=SZ_SMALL)
-        his = ln["cut"] and ln["director"]
-        _t(ws, r, B + 6, ln["amt"] if his else None, size=SZ_SMALL, fmt=MONEY_C, align="right")
-        _t(ws, r, B + 7, None if his else ln["amt"], size=SZ_SMALL, fmt=MONEY_C,
-           align="right", color=GREY)
-        _t(ws, r, B + 8, ln["how"], size=SZ_SMALL - 1, color=GREY)
-        if r % 2 == 0:
-            for c in range(B, B + 9):
-                ws.cell(row=r, column=c).fill = F_BAND
-        ws.row_dimensions[r].height = 20
+    # GROUPED BY CATEGORY (the owner 2026-09-11: "grouped by category not just
+    # shown as a list"): a header row per category, its lines newest first, a
+    # subtotal. Subtotal rows carry no Category / Goes to, so the SUMIFs below
+    # over those columns never double count them.
+    def _cat(ln):
+        return ln["category"] if ln["cut"] else "Fronted (job cost)"
+    groups: Dict[str, list] = {}
+    for ln in rows:
+        groups.setdefault(_cat(ln), []).append(ln)
+    order = sorted(groups, key=lambda c: (c == "Fronted (job cost)",
+                                          -sum(x["amt"] for x in groups[c])))
+    cut_col, inc_col = get_column_letter(B + 6), get_column_letter(B + 7)
+    for c_name in order:
+        g = groups[c_name]
+        goes = _who(g[0])
+        _t(ws, r, B, c_name.upper(), size=SZ_SMALL, bold=True, color=NAVY, indent=1)
+        _t(ws, r, B + 3, goes, size=SZ_SMALL - 1, bold=True,
+           color=RED if g[0]["cut"] and g[0]["director"] and g[0]["who"] == "ask the director"
+           else GREY)
+        for c in range(B, B + 9):
+            ws.cell(row=r, column=c).fill = F_BAND
+            ws.cell(row=r, column=c).border = Border(top=HAIR)
+        ws.row_dimensions[r].height = 21
+        r += 1
+        g_first = r
+        for ln in sorted(g, key=lambda x: (x["date"], x["ref"]), reverse=True):
+            c1 = _t(ws, r, B, ln["ref"], size=SZ_SMALL, align="left", indent=2)
+            if ln["url"]:
+                c1.hyperlink = ln["url"]
+                c1.font = Font(size=SZ_SMALL, color=LINK, underline="single")
+            d = _t(ws, r, B + 1, dt.date.fromisoformat(ln["date"]) if ln["date"] else "",
+                   size=SZ_SMALL, align="left")
+            d.number_format = "mm/dd/yyyy"
+            _t(ws, r, B + 2, c_name if ln["cut"] else "Fronted", size=SZ_SMALL, color=GREY)
+            _t(ws, r, B + 3, _who(ln), size=SZ_SMALL, color=GREY)
+            _t(ws, r, B + 4, ln["text"][:120], size=SZ_SMALL)
+            _t(ws, r, B + 5, ln["acct"][:40], size=SZ_SMALL)
+            his = ln["cut"] and ln["director"]
+            _t(ws, r, B + 6, ln["amt"] if his else None, size=SZ_SMALL, fmt=MONEY_C,
+               align="right")
+            _t(ws, r, B + 7, None if his else ln["amt"], size=SZ_SMALL, fmt=MONEY_C,
+               align="right", color=GREY)
+            _t(ws, r, B + 8, ln["how"], size=SZ_SMALL - 1, color=GREY)
+            ws.row_dimensions[r].height = 20
+            r += 1
+        _t(ws, r, B, f"   {c_name} subtotal", size=SZ_SMALL, bold=True, color=INK, indent=2)
+        _t(ws, r, B + 6, f"=SUM({cut_col}{g_first}:{cut_col}{r - 1})", size=SZ_SMALL,
+           bold=True, fmt=MONEY, align="right", color=INK)
+        _t(ws, r, B + 7, f"=SUM({inc_col}{g_first}:{inc_col}{r - 1})", size=SZ_SMALL,
+           bold=True, fmt=MONEY, align="right", color=GREY)
+        for c in range(B, B + 9):
+            ws.cell(row=r, column=c).border = Border(top=HAIR)
         r += 1
     last = r - 1
     if not rows:
@@ -312,8 +343,9 @@ def _lines_table(ws, r: int, rows: List[dict], dlabel: str, title: str,
     for c in range(B, B + 9):
         ws.cell(row=r, column=c).border = Border(top=RULE)
     _t(ws, r, B, f"{dlabel} on this job", size=SZ, bold=True, color=NAVY, indent=1)
-    d_cell = _t(ws, r, B + 6, f"=SUM({cut}{first}:{cut}{last})", size=SZ, bold=True,
-                color=NAVY, fmt=MONEY, align="right")
+    # the total is the SUM of the three exact-label splits below it - no
+    # wildcard SUMIF, so a subtotal row can never be counted twice
+    d_cell = _t(ws, r, B + 6, None, size=SZ, bold=True, color=NAVY, fmt=MONEY, align="right")
     ws.row_dimensions[r].height = 24
     r += 1
     who_cells: Dict[str, str] = {}
@@ -324,26 +356,7 @@ def _lines_table(ws, r: int, rows: List[dict], dlabel: str, title: str,
                size=SZ_SMALL, bold=True, color=INK, fmt=MONEY, align="right")
         who_cells[w] = c.coordinate
         r += 1
-    cat_col = get_column_letter(B + 2)
-    present = []
-    for ln in rows:                          # categories on THIS job, biggest first
-        if ln["cut"] and ln["director"] and ln["category"] not in present:
-            present.append(ln["category"])
-    present.sort(key=lambda c: -sum(x["amt"] for x in rows
-                                    if x["cut"] and x["director"] and x["category"] == c))
-    if present:
-        _t(ws, r, B, "by category", size=SZ_SMALL, bold=True, color=GREY, indent=1)
-        r += 1
-        for c_name in present:
-            goes = next((x["who"] for x in rows if x["category"] == c_name and x["cut"]), "")
-            ask = goes == "ask the director"
-            _t(ws, r, B, f"   {c_name}", size=SZ_SMALL, color=INK, indent=1)
-            _t(ws, r, B + 3, bizdev_cut.who_label(goes), size=SZ_SMALL - 1,
-               color=RED if ask else GREY)
-            _t(ws, r, B + 6, f'=SUMIF({cat_col}{first}:{cat_col}{last},"{c_name}",'
-                             f'{cut}{first}:{cut}{last})',
-               size=SZ_SMALL, fmt=MONEY, align="right", color=INK)
-            r += 1
+    d_cell.value = "=" + "+".join(who_cells[w] for w in WHO_ORDER)
     _t(ws, r, B, "other cuts charged into this job's COST", size=SZ_SMALL, color=GREY, indent=1)
     o_cell = _t(ws, r, B + 7, f'=SUMIF({who}{first}:{who}{last},"*(in job cost)",'
                               f'{inc}{first}:{inc}{last})',
@@ -351,7 +364,9 @@ def _lines_table(ws, r: int, rows: List[dict], dlabel: str, title: str,
     r += 1
     _t(ws, r, B, "fronted for the job - already in COST, not a cut", size=SZ_SMALL,
        color=GREY, indent=1)
-    f_cell = _t(ws, r, B + 7, f"=SUM({inc}{first}:{inc}{last})-{o_cell.coordinate}",
+    f_cell = _t(ws, r, B + 7, f'=SUMIF({who}{first}:{who}{last},"{bizdev_cut.who_label("the job")}",'
+                              f'{inc}{first}:{inc}{last})',
+                              
                 size=SZ_SMALL, bold=True, color=GREY, fmt=MONEY, align="right")
     r += 2
     return r, d_cell.coordinate, who_cells, o_cell.coordinate, f_cell.coordinate
@@ -544,11 +559,18 @@ def build(jobs: List[tuple], cut_lines: List[dict], out: Path, div: dict) -> dic
             sm.cell(row=r, column=c).border = Border(top=HAIR)
         r += 2
 
-    active = [j for j in jobs if j[1].get("status") == "Active"]
-    done = [j for j in jobs if j[1].get("status") != "Active"]
+    # A job he was never paid on cannot be judged against his cut - it reads
+    # as pure job performance and sits in its own section, OUT of the judged
+    # total (the owner 2026-09-11).
+    no_cut = [j for j in jobs if fig[j[0]]["cut"] == 0]
+    judged = [j for j in jobs if fig[j[0]]["cut"] != 0]
+    active = [j for j in judged if j[1].get("status") == "Active"]
+    done = [j for j in judged if j[1].get("status") != "Active"]
     _section("ACTIVE - in progress", active, "costs to date only - not finished")
     _section("COMPLETED", done)
-    _t(sm, r, C0, f"ALL {label} - {len(jobs)} JOBS", size=SZ, bold=True, color=NAVY)
+    tot = _sum(judged)
+    _t(sm, r, C0, f"ALL {label} WITH HIS CUT - {len(judged)} JOBS", size=SZ, bold=True,
+       color=NAVY)
     _row_figures(r, tot, bold_keys=tuple(keys), ranges=sec_ranges)
     for c in range(C0, LAST + 1):
         sm.cell(row=r, column=c).border = Border(top=RULE)
@@ -561,6 +583,9 @@ def build(jobs: List[tuple], cut_lines: List[dict], out: Path, div: dict) -> dic
         sm.cell(row=rr, column=first_cut_col).border = Border(
             left=THICK, right=cur.right, top=cur.top, bottom=cur.bottom)
     r += 2
+    sec_ranges.clear()
+    _section(f"NO {dlabel} ON FILE - pure job performance, his cost unavailable", no_cut,
+             "nothing was billed to these jobs by him, so they cannot be judged against his cut")
 
     # ── the strip at the top: tiles, then one box with both views ──
     spans4 = _spans(C0, LAST, 4)
@@ -603,10 +628,7 @@ def build(jobs: List[tuple], cut_lines: List[dict], out: Path, div: dict) -> dic
         sm.row_dimensions[rr].height = 26
         if i:
             for cc in range(spans7[0][0], spans7[-1][1] + 1):
-                cur = sm.cell(row=rr, column=cc).border
-                sm.cell(row=rr, column=cc).border = Border(
-                    left=cur.left, right=cur.right, bottom=cur.bottom, top=THICK)
-    _thick_box(sm, r2, r2 + 2, spans7[0][0], spans7[-1][1])
+                sm.cell(row=rr, column=cc).border = Border(top=HAIR)
 
     # ── per-job sheets, then the two catch-alls ──
     job_cells: Dict[str, Tuple[str, Dict[str, str], str]] = {}
@@ -650,7 +672,9 @@ def build(jobs: List[tuple], cut_lines: List[dict], out: Path, div: dict) -> dic
                 _t(ws, rr, span[0], val, size=SZ + 2, bold=True, fmt=fmt, color=col,
                    align="right")
             ws.row_dimensions[rr].height = 26
-        _thick_box(ws, 7, 9, sp7[0][0], sp7[-1][1])
+            if i:
+                for cc in range(sp7[0][0], sp7[-1][1] + 1):
+                    ws.cell(row=rr, column=cc).border = Border(top=HAIR)
         _r, d_cell, who_cells, o_cell, _fc = _lines_table(
             ws, 12, by_job.get(job, []), dlabel, "EVERY LINE - newest first")
         job_cells[job] = (d_cell, who_cells, o_cell)
@@ -689,7 +713,7 @@ def build(jobs: List[tuple], cut_lines: List[dict], out: Path, div: dict) -> dic
     AMT = C0 + 5
     recon_first = r
     rows_ = [
-        (f"on these {len(jobs)} jobs (the {dlabel} column above)", f"={L['cut']}{all_row}", None),
+        (f"on the {len(judged)} jobs above with his cut (the {dlabel} column)", f"={L['cut']}{all_row}", None),
         (f"on older {label} jobs with no P&L on file",
          "=" + ("+".join(f"'{older_name}'!{c}" for c in older_cells) or "0"),
          f"#'{older_name}'!A1"),

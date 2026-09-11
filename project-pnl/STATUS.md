@@ -8,6 +8,16 @@ manual close), RP (no draws — expenses → invoice → profit).
 
 ## DONE / FINALIZED
 
+- **NO-CUT JOBS SIT APART, LINES GROUP BY CATEGORY, NO BOX ON THE STRIP (2026-09-11).** The
+  owner: a job he was never paid on "we can't judge due to not knowing his cost, so it should be
+  as a pure job performance" - those jobs (MFD281, MFD295, MFD183 today) sit in their own section
+  under COMPLETED, out of the judged `ALL <DIV> WITH HIS CUT` total the strip reads. Each job
+  sheet groups its lines by category (header, lines newest first, subtotal) instead of a flat
+  list; the sheet's DIRECTOR CUT total is the SUM of the three exact-label GOES TO splits, never
+  a wildcard SUMIF (the `formulas` engine counted blank cells as "?*" matches and doubled every
+  job - caught by the check cells before shipping). The heavy box around the KPI strip is gone;
+  a hairline separates the two overhead views.
+
 - **CATEGORIES OF THE CUT, AND WHO IT GOES TO (2026-09-11).** The owner: "how do you suggest we
   create categories of his cut? that way when we open the MFD report we see how it's really
   getting split off, either to him or to his junior estimator." The register gained
