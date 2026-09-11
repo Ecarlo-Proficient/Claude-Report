@@ -54,18 +54,22 @@ def workbook_cost(path: Path):
     wb = load_workbook(str(path), data_only=False)
     try:
         ws = wb["Transactions"]
-        hdr = next((r for r in range(1, 60)
-                    if str(ws.cell(r, 1).value or "").strip() == "Inv #"), None)
-        end = next((r for r in range(hdr + 1, ws.max_row + 1)
-                    if str(ws.cell(r, 1).value or "").startswith("TOTAL")), None)
-        if hdr is None or end is None:
+        # content starts in column B since the gutter (2026-08-31); find it
+        c0 = next((c for c in (1, 2) for r in range(1, 60)
+                   if str(ws.cell(r, c).value or "").strip() == "Inv #"), None)
+        if c0 is None:
             return None, 0
-        tot = n = 0.0, 0
+        hdr = next((r for r in range(1, 60)
+                    if str(ws.cell(r, c0).value or "").strip() == "Inv #"), None)
+        end = next((r for r in range(hdr + 1, ws.max_row + 1)
+                    if str(ws.cell(r, c0).value or "").startswith("TOTAL")), None)
+        if end is None:
+            return None, 0
         s = 0.0
         n = 0
         for r in range(end + 1, ws.max_row + 1):
-            v = ws.cell(r, 5).value
-            if isinstance(v, (int, float)) and ws.cell(r, 4).value:
+            v = ws.cell(r, c0 + 4).value
+            if isinstance(v, (int, float)) and ws.cell(r, c0 + 3).value:
                 s += float(v)
                 n += 1
         return round(s, 2), n
@@ -81,8 +85,11 @@ def main() -> int:
               # inside the DIVISION folder - P&Ls are sorted by division so a
               # folder link can be shared with one PM (the user 2026-08-31)
               else pnl_paths.division_dir("MFD") / "completed mfd project p&l")
-    jobs = sorted(d.name for d in folder.iterdir()
-                  if d.is_dir() and (d / f"Project_PnL_{d.name}.xlsx").exists())
+    # '<job> FINAL.xlsx' is the archived name since 2026-09-04; live jobs keep
+    # 'Project_PnL_<job>.xlsx' - pnl_paths knows both
+    books = {d.name: pnl_paths._find_workbook(d, d.name)
+             for d in folder.iterdir() if d.is_dir()}
+    jobs = sorted(j for j, b in books.items() if b is not None)
     if not jobs:
         print(f"✗  no project workbooks under {folder}")
         return 1
@@ -127,7 +134,7 @@ def main() -> int:
                 partial += 1
         bill_tot = round(sum(bills.values()), 2)
         line_tot = round(line_tot, 2)
-        wb_cost, wb_n = workbook_cost(folder / j / f"Project_PnL_{j}.xlsx")
+        wb_cost, wb_n = workbook_cost(books[j])
         ok = wb_cost is not None and abs(wb_cost - line_tot) < 1.0
         if not ok:
             bad.append((j, line_tot, wb_cost))
