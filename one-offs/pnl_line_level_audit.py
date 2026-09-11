@@ -87,8 +87,13 @@ def main() -> int:
               else pnl_paths.division_dir("MFD") / "completed mfd project p&l")
     # '<job> FINAL.xlsx' is the archived name since 2026-09-04; live jobs keep
     # 'Project_PnL_<job>.xlsx' - pnl_paths knows both
-    books = {d.name: pnl_paths._find_workbook(d, d.name)
-             for d in folder.iterdir() if d.is_dir()}
+    def _book(d: Path):
+        for archived in (True, False):
+            cand = d / pnl_paths.pnl_filename(d.name, archived)
+            if cand.exists():
+                return cand
+        return None
+    books = {d.name: _book(d) for d in folder.iterdir() if d.is_dir()}
     jobs = sorted(j for j, b in books.items() if b is not None)
     if not jobs:
         print(f"✗  no project workbooks under {folder}")
