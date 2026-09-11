@@ -2202,9 +2202,19 @@ def reconcile_iter(lines: List[StmtLine],
     if no_doc_bills:
         _warn(f"{len(no_doc_bills)} open QBO bill(s) have empty DocNumber — cannot match by Ref#.")
 
-    # Detect duplicate Ref# on the statement
+    # Non-invoice statement rows are NOT bills to match against QBO: a Balance
+    # forward (ref == "") lumps prior-period open items into one opening amount,
+    # and payment/credit rows (amount < 0) are money the vendor applied, not bills
+    # to enter. Matching either produces bogus MISSING_IN_QBO rows (CowTown 09-01:
+    # a six-figure balance-forward + 18 payment rows all false-flagged "enter in QBO").
+    # They stay in the tie-out (process_pdf's line_sum covers them) but are not
+    # reconciled line-by-line here. Only real invoice rows are matched.
+    invoice_lines = [l for l in lines if l.ref and l.amount >= 0]
+
+    # Detect duplicate Ref# on the statement (invoice rows only — the shared
+    # payment check-# would otherwise false-trigger this warning).
     seen_stmt: Dict[str, int] = {}
-    for l in lines:
+    for l in invoice_lines:
         seen_stmt[l.ref] = seen_stmt.get(l.ref, 0) + 1
     dup_stmt = [r for r, n in seen_stmt.items() if n > 1]
     if dup_stmt:
@@ -2212,34 +2222,52 @@ def reconcile_iter(lines: List[StmtLine],
 
     by_doc = {b.doc_number: b for b in bills if b.doc_number}
     paid_by_doc = {b.doc_number: b for b in (paid_bills or []) if b.doc_number}
-    stmt_refs = {l.ref for l in lines}
+    stmt_refs = {l.ref for l in invoice_lines}
 
-    # MISSING_ON_STATEMENT: open in QBO, no matching ref on stmt, AND dated on
-    # or before the statement's as-of date. Post-statement bills are excluded —
-    # they couldn't have been on a statement that hadn't been printed yet.
+    # Balance-forward date: QBO bills dated on/before it are folded into the
+    # forward lump, so they are covered by the statement, not "missing" from it.
+    bf_line = next((l for l in lines if l.ref == ""), None)
+    bf_date = bf_line.date if bf_line else ""
+
+    # MISSING_ON_STATEMENT: open in QBO, no matching ref on stmt, dated on/before
+    # the statement's as-of date, AND after the balance-forward date. Post-stmt
+    # bills couldn't have been on a statement that wasn't printed yet; pre-forward
+    # bills are already carried in the balance-forward lump.
     def _on_or_before_stmt(b: QboBill) -> bool:
         if not stmt_date or not b.txn_date:
             return True   # no cutoff info → don't filter (preserve old behavior)
         return b.txn_date <= stmt_date
 
+    def _covered_by_forward(b: QboBill) -> bool:
+        return bool(bf_date) and bool(b.txn_date) and b.txn_date <= bf_date
+
     missing_on_stmt: List[QboBill] = []
     post_stmt_excluded = 0
+    bf_covered: List[QboBill] = []
     for b in bills:
         if not b.doc_number or b.doc_number in stmt_refs:
             continue
-        if _on_or_before_stmt(b):
-            missing_on_stmt.append(b)
-        else:
+        if not _on_or_before_stmt(b):
             post_stmt_excluded += 1
+            continue
+        if _covered_by_forward(b):
+            bf_covered.append(b)
+            continue
+        missing_on_stmt.append(b)
     if post_stmt_excluded:
         _warn(f"excluded {post_stmt_excluded} QBO bill(s) dated AFTER stmt {stmt_date} "
               "from MISSING_ON_STATEMENT (can't be missing — statement is older).")
+    if bf_covered:
+        _warn(f"{len(bf_covered)} QBO bill(s) dated on/before the balance-forward date "
+              f"{bf_date} (${sum(b.open_balance for b in bf_covered):,.2f}) are covered by "
+              "the balance forward — excluded from MISSING_ON_STATEMENT.")
 
-    no_doc_bills_filtered = [b for b in no_doc_bills if _on_or_before_stmt(b)]
-    total = len(lines) + len(missing_on_stmt) + len(no_doc_bills_filtered)
+    no_doc_bills_filtered = [b for b in no_doc_bills
+                             if _on_or_before_stmt(b) and not _covered_by_forward(b)]
+    total = len(invoice_lines) + len(missing_on_stmt) + len(no_doc_bills_filtered)
 
     idx = 0
-    for sl in lines:
+    for sl in invoice_lines:
         idx += 1
         open_match = by_doc.get(sl.ref)
         paid_match = paid_by_doc.get(sl.ref) if open_match is None else None
@@ -2348,7 +2376,9 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
                 qbo_bills: List[QboBill], rows: List[ReconRow],
                 statement_src: Optional[Path] = None,
                 line_sum: Optional[float] = None,
-                tieout_ok: bool = True) -> None:
+                tieout_ok: bool = True,
+                bf_amount: float = 0.0,
+                payments_total: float = 0.0) -> None:
     # QBO open as-of stmt_date: exclude post-statement bills from the displayed
     # total so the reconciliation math lines up with the statement snapshot.
     def _as_of(b: QboBill) -> bool:
@@ -2415,6 +2445,16 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
     if line_sum is not None:
         ls_row = r
         _tieout_row(r, "Sum of parsed lines", round(line_sum, 2), BODY_FONT); r += 1
+        # Decompose the parsed total when the statement carries a balance-forward
+        # lump and/or payment rows, so "Sum of parsed lines" reconciles visibly to
+        # the itemized invoices shown in the sections below.
+        if bf_amount or payments_total:
+            itemized = round(line_sum - bf_amount - payments_total, 2)
+            _tieout_row(r, "   · itemized invoices (this statement)", itemized, BODY_FONT); r += 1
+            if bf_amount:
+                _tieout_row(r, "   · balance forward (prior, not itemized)", bf_amount, BODY_FONT); r += 1
+            if payments_total:
+                _tieout_row(r, "   · payments / credits on statement", payments_total, BODY_FONT); r += 1
         _tieout_row(r, "Parse gap (lines − statement total)",
                     f"=E{ls_row}-E{stmt_row}", LABEL_FONT,
                     fill=(SUBTOTAL_FILL if tieout_ok else BAD_FILL)); r += 1
@@ -2863,6 +2903,11 @@ def process_pdf(pdf_path: Path, args: argparse.Namespace,
 
     line_sum = round(sum(l.amount for l in lines), 2)
     sum_matches = abs(line_sum - amt_due) <= 0.50
+    # Non-invoice components of the statement total (shown in the tie-out, kept
+    # out of the per-invoice reconciliation): a Balance-forward lump (ref == "")
+    # and payment/credit rows (amount < 0).
+    bf_amount = round(sum(l.amount for l in lines if not l.ref), 2)
+    payments_total = round(sum(l.amount for l in lines if l.ref and l.amount < 0), 2)
     _done(t0, f"Extracted {_Term.color(_Term.BOLD, f'{len(lines)} bill lines')} totaling "
               f"{_Term.color(_Term.BOLD, f'${line_sum:,.2f}')}")
 
@@ -3006,6 +3051,13 @@ def process_pdf(pdf_path: Path, args: argparse.Namespace,
     print(_Term.color(_Term.BOLD, "  RECONCILIATION SUMMARY"))
     _hr()
     print(f"  Statement total:           ${amt_due:,.2f}")
+    if bf_amount or payments_total:
+        itemized = round(line_sum - bf_amount - payments_total, 2)
+        print(_Term.color(_Term.DIM, f"    · itemized invoices:      ${itemized:,.2f}"))
+        if bf_amount:
+            print(_Term.color(_Term.DIM, f"    · balance forward:        ${bf_amount:,.2f}"))
+        if payments_total:
+            print(_Term.color(_Term.DIM, f"    · payments/credits:       ${payments_total:,.2f}"))
     qbo_label = f"QBO open as of {stmt_date}:" if stmt_date else "QBO open total:"
     print(f"  {qbo_label:25s}  ${qbo_total:,.2f}  ({len(bills_asof)} bills)")
     diff = amt_due - qbo_total
@@ -3041,7 +3093,8 @@ def process_pdf(pdf_path: Path, args: argparse.Namespace,
     out = args.out or (base_out_dir / f"Statement_Reconciliation_{stmt_date}_{_slug(vendor_name)}.xlsx")
     statement_src = pdf_path if getattr(args, "embed", False) else None
     write_excel(out, vendor_name, stmt_date, amt_due, bills, rows,
-                statement_src=statement_src, line_sum=line_sum, tieout_ok=sum_matches)
+                statement_src=statement_src, line_sum=line_sum, tieout_ok=sum_matches,
+                bf_amount=bf_amount, payments_total=payments_total)
     _done(t0, f"Saved to {_Term.color(_Term.C, str(out))}")
     if not sum_matches:
         _fail(f"TIE-OUT FAILED — parsed lines ${line_sum:,.2f} vs statement ${amt_due:,.2f} "
