@@ -412,6 +412,8 @@ def build(jobs: List[tuple], cut_lines: List[dict], out: Path, div: dict) -> dic
     for ln in cut_lines:
         by_job.setdefault(ln["job"], []).append(ln)
     known = {j for j, _s, _t2, _p in jobs}
+    his = [ln for ln in cut_lines if ln["director"]]
+    paid_all = round(sum(ln["amt"] for ln in his), 2)
 
     wb = Workbook()
     sm = wb.active
@@ -427,6 +429,7 @@ def build(jobs: List[tuple], cut_lines: List[dict], out: Path, div: dict) -> dic
             (f"{MFD_OVERHEAD_PCT:.0%} OH", "moh", MONEY, 16),
             (f"FINAL NET  ({MFD_OVERHEAD_PCT:.0%} OH)", "mnet", MONEY, 20),
             (dlabel, "cut", MONEY, 17),
+            ("CUT % OF BILLED", "cutm", PCT, 11),
             (f"REAL NET  ({OVERHEAD_PCT:.0%} OH)", "rnet", MONEY, 20),
             (f"REAL NET  ({MFD_OVERHEAD_PCT:.0%} OH)", "rmnet", MONEY, 20),
             (f"REAL NET %  ({MFD_OVERHEAD_PCT:.0%} OH)", "rmnetm", PCT, 13)]
@@ -452,6 +455,8 @@ def build(jobs: List[tuple], cut_lines: List[dict], out: Path, div: dict) -> dic
             return f"={L['contract']}{rr}*{MFD_OVERHEAD_PCT}"
         if k == "mnet":
             return f"={L['gp']}{rr}-{L['moh']}{rr}"
+        if k == "cutm":
+            return f'=IF({L["billed"]}{rr}=0,"",{L["cut"]}{rr}/{L["billed"]}{rr})'
         if k == "rnet":
             return f"={L['net']}{rr}-{L['cut']}{rr}"
         if k == "rmnet":
@@ -476,13 +481,15 @@ def build(jobs: List[tuple], cut_lines: List[dict], out: Path, div: dict) -> dic
         d["cut"] = sum(ln["amt"] for ln in mine if ln["cut"] and ln["director"])
         d["rnet"], d["rmnet"] = d["net"] - d["cut"], d["mnet"] - d["cut"]
         d["rmnetm"] = d["rmnet"] / d["billed"] if d["billed"] else 0.0
+        d["cutm"] = d["cut"] / d["billed"] if d["billed"] else 0.0
         fig[job] = d
 
     def _sum(sel):
         d = {k: sum(fig[j][k] for j, _s, _t2, _p in sel)
              for k in ("contract", "billed", "cost", "gp", "oh", "net", "moh", "mnet",
                        "cut", "rnet", "rmnet", "other")}
-        for a, b in (("gpm", "gp"), ("netm", "net"), ("mnetm", "mnet"), ("rmnetm", "rmnet")):
+        for a, b in (("gpm", "gp"), ("netm", "net"), ("mnetm", "mnet"), ("rmnetm", "rmnet"),
+                     ("cutm", "cut")):
             d[a] = d[b] / d["billed"] if d["billed"] else 0
         return d
 
@@ -516,10 +523,11 @@ def build(jobs: List[tuple], cut_lines: List[dict], out: Path, div: dict) -> dic
     def _row_figures(rr, t, bold_keys=("gp", "mnet", "rmnet"), ranges=None):
         for i, (_h, k, fmt, _w) in enumerate(cols):
             pos = k in ("gp", "gpm", "net", "mnet", "rnet", "rmnet", "rmnetm")
+            grey = k == "cutm"
             f = _formula(k, rr, ranges)
             _t(sm, rr, C0 + 1 + i, f if f is not None else t[k], size=SZ, fmt=fmt,
                align="right", bold=k in bold_keys,
-               color=(GREEN if t[k] >= 0 else RED) if pos else INK)
+               color=GREY if grey else ((GREEN if t[k] >= 0 else RED) if pos else INK))
 
     def _job_row(job, src, t):
         nonlocal r
@@ -700,9 +708,137 @@ def build(jobs: List[tuple], cut_lines: List[dict], out: Path, div: dict) -> dic
     _rr, nojob_cell, _w, _o, _f = _lines_table(
         ws, 4, nojob, dlabel, "retainers, estimating, pay periods - nothing ties them to a job")
 
+    # ── every one of his lines on one sheet, grouped by where it went ──
+    all_name = "All his lines"
+    ws = _detail_sheet(wb, all_name, f"EVERY LINE PAID TO THE {dword.upper()} - where each one went",
+                       pnl_name)
+    _t(ws, 2, C0, "every bill, check and ACH on his vendor in QuickBooks, grouped by the job it "
+                  "was tied to · the matrix reads the list below it · click a ref # to open it",
+       size=SZ_SMALL, color=GREY)
+    labels_by_job = {j: _label(j, s2.get("title", "")) for j, s2, _t3, _p in jobs}
+    def _dest(ln):
+        if not ln["cut"]:
+            return "Fronted for a job (in job cost)"
+        if ln["job"] in labels_by_job:
+            return labels_by_job[ln["job"]]
+        if ln["job"]:
+            return f"{ln['job']} (older job, no P&L on file)"
+        return "No job named"
+    dests: Dict[str, list] = {}
+    for ln in his:
+        dests.setdefault(_dest(ln), []).append(ln)
+    years = sorted({ln["date"][:4] for ln in his if ln["date"]})
+    order = sorted(dests, key=lambda d: (d.startswith("Fronted"), d == "No job named",
+                                         -sum(x["amt"] for x in dests[d])))
+    # the list sits below the matrix; lay the list out first in memory to know
+    # its range, then write the matrix over the reserved rows
+    top = 4
+    mat_rows = len(order) + 3
+    list_hdr = top + mat_rows + 3
+    lr = list_hdr
+    heads = (("Ref #", "left"), ("Date", "left"), ("Year", "left"), ("Where it went", "left"),
+             ("Category", "left"), ("Goes to", "left"), ("What the line says", "left"),
+             ("Account", "left"), (dlabel, "right"), ("In job cost", "right"),
+             ("How it was tied", "left"))
+    for i, (h, al) in enumerate(heads):
+        _hdr(ws, lr, C0 + i, h, align=al, indent=1 if i == 0 else 0)
+    ws.row_dimensions[lr].height = 30
+    lr += 1
+    l_first = lr
+    Y, DST, CUTC, INC = (get_column_letter(C0 + 2), get_column_letter(C0 + 3),
+                         get_column_letter(C0 + 8), get_column_letter(C0 + 9))
+    for d_name in order:
+        g = dests[d_name]
+        _t(ws, lr, C0, d_name.upper(), size=SZ_SMALL, bold=True, color=NAVY, indent=1)
+        for c in range(C0, C0 + 11):
+            ws.cell(row=lr, column=c).fill = F_BAND
+            ws.cell(row=lr, column=c).border = Border(top=HAIR)
+        lr += 1
+        g_first = lr
+        for ln in sorted(g, key=lambda x: (x["date"], x["ref"]), reverse=True):
+            c1 = _t(ws, lr, C0, ln["ref"], size=SZ_SMALL, align="left", indent=2)
+            if ln["url"]:
+                c1.hyperlink = ln["url"]
+                c1.font = Font(size=SZ_SMALL, color=LINK, underline="single")
+            dc = _t(ws, lr, C0 + 1, dt.date.fromisoformat(ln["date"]) if ln["date"] else "",
+                    size=SZ_SMALL, align="left")
+            dc.number_format = "mm/dd/yyyy"
+            _t(ws, lr, C0 + 2, ln["date"][:4], size=SZ_SMALL, align="left", color=GREY)
+            _t(ws, lr, C0 + 3, d_name, size=SZ_SMALL, color=GREY)
+            _t(ws, lr, C0 + 4, ln["category"] if ln["cut"] else "Fronted", size=SZ_SMALL,
+               color=GREY)
+            _t(ws, lr, C0 + 5, _who(ln), size=SZ_SMALL, color=GREY)
+            _t(ws, lr, C0 + 6, ln["text"][:120], size=SZ_SMALL)
+            _t(ws, lr, C0 + 7, ln["acct"][:40], size=SZ_SMALL)
+            _t(ws, lr, C0 + 8, ln["amt"] if ln["cut"] else None, size=SZ_SMALL, fmt=MONEY_C,
+               align="right")
+            _t(ws, lr, C0 + 9, None if ln["cut"] else ln["amt"], size=SZ_SMALL, fmt=MONEY_C,
+               align="right", color=GREY)
+            _t(ws, lr, C0 + 10, ln["how"], size=SZ_SMALL - 1, color=GREY)
+            ws.row_dimensions[lr].height = 20
+            lr += 1
+        _t(ws, lr, C0, f"   {d_name} subtotal", size=SZ_SMALL, bold=True, color=INK, indent=2)
+        _t(ws, lr, C0 + 8, f"=SUM({CUTC}{g_first}:{CUTC}{lr - 1})", size=SZ_SMALL, bold=True,
+           fmt=MONEY, align="right", color=INK)
+        _t(ws, lr, C0 + 9, f"=SUM({INC}{g_first}:{INC}{lr - 1})", size=SZ_SMALL, bold=True,
+           fmt=MONEY, align="right", color=GREY)
+        for c in range(C0, C0 + 11):
+            ws.cell(row=lr, column=c).border = Border(top=HAIR)
+        lr += 1
+    l_last = lr - 1
+    # the matrix: where it went x year, SUMIFS over the list (subtotal rows have
+    # no Where-it-went, so they never count)
+    r0 = top
+    _t(ws, r0, C0, "WHERE IT WENT, BY YEAR", size=SZ + 2, bold=True, color=NAVY)
+    r0 += 1
+    _hdr(ws, r0, C0, "WHERE IT WENT", align="left", indent=1)
+    for i, y in enumerate(years):
+        _hdr(ws, r0, C0 + 1 + i, y)
+    _hdr(ws, r0, C0 + 1 + len(years), "ALL TIME")
+    _hdr(ws, r0, C0 + 2 + len(years), "SHARE")
+    tot_col = get_column_letter(C0 + 1 + len(years))
+    r0 += 1
+    m_first = r0
+    for d_name in order:
+        _t(ws, r0, C0, d_name, size=SZ_SMALL, indent=1)
+        amt_col = INC if d_name.startswith("Fronted") else CUTC
+        for i, y in enumerate(years):
+            _t(ws, r0, C0 + 1 + i,
+               f'=SUMIFS({amt_col}{l_first}:{amt_col}{l_last},{DST}{l_first}:{DST}{l_last},'
+               f'"{d_name}",{Y}{l_first}:{Y}{l_last},"{y}")',
+               size=SZ_SMALL, fmt=MONEY, align="right", color=INK)
+        yc0, yc1 = get_column_letter(C0 + 1), get_column_letter(C0 + len(years))
+        _t(ws, r0, C0 + 1 + len(years), f"=SUM({yc0}{r0}:{yc1}{r0})", size=SZ_SMALL, bold=True,
+           fmt=MONEY, align="right", color=INK)
+        if r0 % 2 == 0:
+            for c in range(C0, C0 + 3 + len(years)):
+                ws.cell(row=r0, column=c).fill = F_BAND
+        r0 += 1
+    m_last = r0 - 1
+    for rr in range(m_first, m_last + 1):
+        _t(ws, rr, C0 + 2 + len(years),
+           f'=IF({tot_col}${m_last + 1}=0,"",{tot_col}{rr}/{tot_col}${m_last + 1})',
+           size=SZ_SMALL, fmt=PCT, align="right", color=GREY)
+    _t(ws, r0, C0, "TOTAL PAID TO HIM", size=SZ, bold=True, color=NAVY, indent=1)
+    for i in range(len(years) + 1):
+        col = get_column_letter(C0 + 1 + i)
+        _t(ws, r0, C0 + 1 + i, f"=SUM({col}{m_first}:{col}{m_last})", size=SZ, bold=True,
+           fmt=MONEY, align="right", color=NAVY)
+    for c in range(C0, C0 + 3 + len(years)):
+        ws.cell(row=r0, column=c).border = Border(top=RULE)
+    all_total_cell = f"'{all_name}'!{tot_col}{r0}"
+    r0 += 1
+    _t(ws, r0, C0, "check - this total less every dollar QuickBooks holds on his vendor (must be zero)",
+       size=SZ_SMALL, color=GREY, indent=1)
+    _t(ws, r0, C0 + 1 + len(years), f"={tot_col}{r0 - 1}-{round(paid_all, 2)}", size=SZ_SMALL,
+       fmt=MONEY_C, align="right", color=GREY)
+    ws.column_dimensions["A"].width = GUTTER_W
+    for col, w in zip("BCDEFGHIJKL", (13, 12, 7, 30, 17, 18, 52, 26, 15, 15, 34)):
+        ws.column_dimensions[col].width = w
+    ws.freeze_panes = f"A{list_hdr + 1}"
+
     # ── every dollar paid to the director, reconciled on the page ──
-    his = [ln for ln in cut_lines if ln["director"]]
-    paid = sum(ln["amt"] for ln in his)
+    paid = paid_all
     dates = sorted(ln["date"] for ln in his if ln["date"])
     _mdy = lambda iso: f"{iso[5:7]}/{iso[8:10]}/{iso[:4]}" if len(iso) >= 10 else iso  # noqa: E731
     _t(sm, r, C0, f"EVERY DOLLAR PAID TO THE {dword.upper()} - {_mdy(dates[0]) if dates else ''} "
@@ -732,7 +868,7 @@ def build(jobs: List[tuple], cut_lines: List[dict], out: Path, div: dict) -> dic
     rec_last = r - 1
     _t(sm, r, C0, f"TOTAL PAID TO THE {dword.upper()} - every bill, check and expense in QuickBooks",
        size=SZ, bold=True, color=NAVY, indent=1)
-    _t(sm, r, AMT, round(paid, 2), size=SZ, bold=True, fmt=MONEY, align="right", color=NAVY)
+    _t(sm, r, AMT, f"={all_total_cell}", size=SZ, bold=True, fmt=MONEY, align="right", color=NAVY)
     for c in range(C0, AMT + 1):
         sm.cell(row=r, column=c).border = Border(top=RULE)
     tot_cell = f"{get_column_letter(AMT)}{r}"
