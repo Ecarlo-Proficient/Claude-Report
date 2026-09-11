@@ -324,10 +324,10 @@ def _lines_table(ws, r: int, rows: List[dict], dlabel: str, title: str,
         _t(ws, r, B, "by category", size=SZ_SMALL, bold=True, color=GREY, indent=1)
         r += 1
         for c_name in present:
-            who = next((x["who"] for x in rows if x["category"] == c_name and x["cut"]), "")
-            ask = who == "ask the director"
+            goes = next((x["who"] for x in rows if x["category"] == c_name and x["cut"]), "")
+            ask = goes == "ask the director"
             _t(ws, r, B, f"   {c_name}", size=SZ_SMALL, color=INK, indent=1)
-            _t(ws, r, B + 3, bizdev_cut.who_label(who), size=SZ_SMALL - 1,
+            _t(ws, r, B + 3, bizdev_cut.who_label(goes), size=SZ_SMALL - 1,
                color=RED if ask else GREY)
             _t(ws, r, B + 6, f'=SUMIF({cat_col}{first}:{cat_col}{last},"{c_name}",'
                              f'{cut}{first}:{cut}{last})',
