@@ -878,7 +878,7 @@ vendor) - the OWNER'S copy of the Overview page with the DIRECTOR'S cut charged 
 same reader as the Overview, then one cut column (the register's `director`) and REAL NET at 10%
 and 9%; every other registered vendor's cut is charged into the job's COST; a sheet per job lists
 every line with its QBO deep link and how it was tied to the job; the page reconciles every dollar
-paid to the director. No overhead model here - that is the owner's separate `<DIV> OH
+paid to the director; every line carries a CATEGORY and who it goes to (`bizdev_cut.categorize`, rules in the register) and the page splits the cut into his / the junior estimator's / to confirm. No overhead model here - that is the owner's separate `<DIV> OH
 Calculations.xlsx`. Writes `<CompanyHealth>/<DIV> PnL - Internal - Director Cut.xlsx` from
 scratch, never lands on the share (2026-09-11).
 

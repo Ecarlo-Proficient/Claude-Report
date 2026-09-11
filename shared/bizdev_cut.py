@@ -39,6 +39,9 @@ Register format:
                                    ever hold their own compensation
   "labels": {"<vendor key>": "<column header>"}          optional - what the
                                    owner's own cut workbook calls each one
+  "categories": [{"name", "who", "pattern", "memo"?}]     optional - categories of
+                                   the cut, first match wins (see categorize)
+  "who_labels": {"<who>": "<column header>"}              optional
   "director": "<vendor key>"                              optional - the one whose
                                    cut that workbook charges AFTER overhead; every
                                    other registered vendor's cut is charged into
@@ -62,7 +65,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 _HERE = Path(__file__).resolve().parent
 if str(_HERE.parent) not in sys.path:
@@ -86,14 +89,16 @@ def load(path: Optional[Path] = None) -> dict:
     try:
         key = (str(p), p.stat().st_mtime_ns)
     except OSError:
-        return {"vendors": (), "fronted": None, "pay_accounts": (), "labels": {}, "director": ""}
+        return {"vendors": (), "fronted": None, "pay_accounts": (), "labels": {}, "director": "",
+                "categories": (), "who_labels": {}}
     if _cache is not None and _cache_key == key:
         return _cache
     try:
         raw = json.loads(p.read_text(encoding="utf-8"))
     except (ValueError, OSError) as e:
         print(f"  (business-development register unreadable: {p}: {e})", file=sys.stderr)
-        return {"vendors": (), "fronted": None, "pay_accounts": (), "labels": {}, "director": ""}
+        return {"vendors": (), "fronted": None, "pay_accounts": (), "labels": {}, "director": "",
+                "categories": (), "who_labels": {}}
     pats: List[str] = [str(x) for x in (raw.get("fronted") or []) if str(x).strip()]
     try:
         fronted = re.compile("|".join(f"(?:{x})" for x in pats), re.I) if pats else None
@@ -109,9 +114,62 @@ def load(path: Optional[Path] = None) -> dict:
         "labels": {str(k).strip().upper(): str(v).strip()
                    for k, v in (raw.get("labels") or {}).items() if str(v).strip()},
         "director": str(raw.get("director") or "").strip().upper(),
+        "categories": _compile_categories(raw.get("categories") or []),
+        "who_labels": {str(k).strip().lower(): str(v).strip()
+                       for k, v in (raw.get("who_labels") or {}).items() if str(v).strip()},
     }
     _cache, _cache_key = out, key
     return out
+
+
+def _compile_categories(raw_list) -> tuple:
+    """[(name, who, desc regex, memo regex|None), ...] in register order."""
+    out = []
+    for item in raw_list:
+        try:
+            name = str(item.get("name") or "").strip()
+            who = str(item.get("who") or "").strip().lower()
+            pat = re.compile(str(item.get("pattern") or ""), re.I)
+            mpat = re.compile(str(item["memo"]), re.I) if item.get("memo") else None
+        except (AttributeError, re.error, KeyError) as e:
+            print(f"  (business-development category skipped: {item!r}: {e})", file=sys.stderr)
+            continue
+        if name and who:
+            out.append((name, who, pat, mpat))
+    return tuple(out)
+
+
+def categorize(vendor: str, account: str, text: str, memo: str = "",
+               path: Optional[Path] = None) -> Tuple[str, str]:
+    """(category, who) for ONE line of a registered vendor - the owner's
+    "categories of his cut" (2026-09-11): draw, weekly pay, allowances, bonus,
+    estimating, estimating software, and the three he will ask the director
+    about (burden, sub service, hourly help). First match wins on the line
+    text; memo-only rules run when the text matched nothing. A line the
+    `fronted` test catches is job cost before any category; no rule at all is
+    "Other" and a blank line is "Blank line", both "ask the director" so
+    nothing is silently filed."""
+    if not is_vendor(vendor, path):
+        return "", ""
+    if not is_cut(vendor, account, text or memo, path):
+        return "Fronted (job cost)", "the job"
+    reg = load(path)
+    t, m = text or "", memo or ""
+    for name, who, pat, _m in reg["categories"]:
+        if pat.search(t):
+            return name, who
+    for name, who, _p, mpat in reg["categories"]:
+        if mpat is not None and mpat.search(m):
+            return name, who
+    if not t.strip() and not m.strip():
+        return "Blank line", "ask the director"
+    return "Other", "ask the director"
+
+
+def who_label(who: str, path: Optional[Path] = None) -> str:
+    """The column header for a `who` - the register's `who_labels`, else the
+    word itself in capitals."""
+    return load(path)["who_labels"].get((who or "").lower()) or (who or "").upper()
 
 
 def is_vendor(vendor: str, path: Optional[Path] = None) -> bool:

@@ -8,6 +8,22 @@ manual close), RP (no draws — expenses → invoice → profit).
 
 ## DONE / FINALIZED
 
+- **CATEGORIES OF THE CUT, AND WHO IT GOES TO (2026-09-11).** The owner: "how do you suggest we
+  create categories of his cut? that way when we open the MFD report we see how it's really
+  getting split off, either to him or to his junior estimator." The register gained
+  `categories` (name, who, pattern, memo) and `who_labels`; `shared/bizdev_cut.categorize`
+  is the one test (first match on the line text, then memo-only rules; a fronted line is job
+  cost before any category; no rule = Other, blank = Blank line, both "ask the director" so
+  nothing files silently). The page now carries HIS CUT · JUNIOR ESTIMATOR · TO CONFIRM
+  beside the DIRECTOR CUT total (a formula of the three), each pointing at the job sheet's
+  SUMIF over its GOES TO column; the job sheet lists CATEGORY and GOES TO per line; a
+  category table under the reconciliation shows on-these-jobs / all-time / share with two
+  check cells (against the cut column and against total paid less fronted). Burden, Sub
+  service and Hourly help are deliberately NOT tied to anyone - the owner is asking the
+  director. Validation: 2025 draws tie to the director's own billing tally within 174 on
+  185,625 and estimating within 120 on 11,260; the residual bucket is 750 and was read line
+  by line. Petty cash, reimbursements, notary and registration fees joined `fronted`.
+
 - **THE AUTOMATIONS- TREE IS RETIRED - A MISSING HOME STOPS THE RUN (2026-09-11).** The
   owner: "Automations folder I'm retiring, only should be used if no mount exists and i
   deliberately say bypass by sending to automations." `shared/pnl_paths` now refuses to
