@@ -37,6 +37,8 @@ Register format:
                                    job" - checked FIRST, wins over everything
   "pay_accounts": ["<account name prefix>", ...]         accounts that can only
                                    ever hold their own compensation
+  "labels": {"<vendor key>": "<column header>"}          optional - what the
+                                   owner's own cut workbook calls each one
 }
 A line from a registered vendor is a CUT when its account is one of
 `pay_accounts` and its text does not match `fronted`. A line in any other
@@ -80,14 +82,14 @@ def load(path: Optional[Path] = None) -> dict:
     try:
         key = (str(p), p.stat().st_mtime_ns)
     except OSError:
-        return {"vendors": (), "fronted": None, "pay_accounts": ()}
+        return {"vendors": (), "fronted": None, "pay_accounts": (), "labels": {}}
     if _cache is not None and _cache_key == key:
         return _cache
     try:
         raw = json.loads(p.read_text(encoding="utf-8"))
     except (ValueError, OSError) as e:
         print(f"  (business-development register unreadable: {p}: {e})", file=sys.stderr)
-        return {"vendors": (), "fronted": None, "pay_accounts": ()}
+        return {"vendors": (), "fronted": None, "pay_accounts": (), "labels": {}}
     pats: List[str] = [str(x) for x in (raw.get("fronted") or []) if str(x).strip()]
     try:
         fronted = re.compile("|".join(f"(?:{x})" for x in pats), re.I) if pats else None
@@ -100,6 +102,8 @@ def load(path: Optional[Path] = None) -> dict:
         "fronted": fronted,
         "pay_accounts": tuple(str(a).strip().upper() for a in (raw.get("pay_accounts") or [])
                               if str(a).strip()),
+        "labels": {str(k).strip().upper(): str(v).strip()
+                   for k, v in (raw.get("labels") or {}).items() if str(v).strip()},
     }
     _cache, _cache_key = out, key
     return out
@@ -128,6 +132,25 @@ def is_cut(vendor: str, account: str, text: str, path: Optional[Path] = None) ->
     if reg["fronted"] is not None and reg["fronted"].search(text or ""):
         return False                      # the text says they laid it out
     return True
+
+
+def vendor_key(vendor: str, path: Optional[Path] = None) -> str:
+    """The register key a vendor DisplayName matched ("" when none)."""
+    v = (vendor or "").upper()
+    for w in load(path)["vendors"]:
+        if w in v:
+            return w
+    return ""
+
+
+def label(vendor: str, path: Optional[Path] = None) -> str:
+    """What the owner's own cut workbook calls this vendor's column - the
+    register's `labels` entry, else "<vendor> CUT". Only that workbook ever
+    uses it; every shared report keeps `note()` and names nobody."""
+    key = vendor_key(vendor, path)
+    if not key:
+        return ""
+    return load(path)["labels"].get(key) or f"{key.title()} CUT"
 
 
 def note(total: float) -> str:

@@ -71,7 +71,7 @@ bill-tracker/          AP bills (FULL pull incl. subs) → Excel tracker + 3 the
 statement-reconciler/  vendor statement PDFs ↔ QBO open bills
 wip/                   ALL WIP tooling: wip_writer.py (shared engine) + CP/RP readers + close scripts
 ledger/                canonical project DB: schema.sql spine + loaders (WIP · Bill Tracker · costs · AR invoices · customers) + dashboard
-project-pnl/           per-project P&L workbooks → OneDrive
+project-pnl/           per-project P&L workbooks → OneDrive (+ completed_pnl Overview; bizdev_cut_view = the owner's local cut page)
 debt-schedule/         equipment debt workbook + loan_sync (writes beside itself)
 health-dashboard/      local company-health xlsx (private, chmod 600)
 qbo-export/            one-row-per-line-item txn export → OneDrive inbox
@@ -866,6 +866,14 @@ ready-mix MEMO line must be `*1`) - then flags every line that breaks its type's
 (`<companyhealth>/concrete_suppliers.json`, `{concrete/material/both/exclude}`). Output
 OneDrive `Works In Progress/QBO Audits/Concrete Cost Code Audit.xlsx` (Vendors · Miscoded Lines ·
 Summary; plain, `assert_clean`).
+
+**`project-pnl/bizdev_cut_view.py`** (reads the P&L workbooks + one QBO pull per registered
+vendor) - the OWNER'S copy of the Overview page with the business-development cut charged at
+the end: the same reader as the Overview, then a column per vendor in `shared/bizdev_cut` and
+REAL NET at 10% and 9%; a sheet per job lists every cut line with its QBO deep link and how it
+was tied to the job; the page reconciles every dollar paid to them. Writes
+`<CompanyHealth>/<DIV> PnL - Internal - Director Cut.xlsx` in place, keeps the other sheets in
+it, never lands on the share (2026-09-11).
 
 **`project-pnl/completed_pnl.py`** (read-only, no QBO) — `<DIV> Overview.xlsx`: one row per
 job with contract/ETC/billed/cost/GP over a sheet per job, all links internal so it survives

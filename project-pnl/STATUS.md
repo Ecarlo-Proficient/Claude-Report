@@ -8,6 +8,23 @@ manual close), RP (no draws — expenses → invoice → profit).
 
 ## DONE / FINALIZED
 
+- **`bizdev_cut_view.py` - THE OWNER'S INTERNAL P&L WITH THE CUT AT THE END (2026-09-11).**
+  The owner: "take mfd overview and make sure the director cut looks like that ... add both
+  9 and 10% ... add the director's cut at the end to see the final net profit. then have it
+  hyper link to those transactions." One page in the Overview's exact shape (same reader,
+  `completed_pnl.read_source` + `_totals`, so it cannot disagree with it), then one column
+  per registered vendor in `shared/bizdev_cut` and REAL NET at both rates. Every cut cell is
+  a formula pointing at the job's own sheet, where each line carries its QBO deep link, the
+  account, and how it was tied to the job (project on the line, draw code, bill memo, split
+  N ways). Below the table: the same jobs at 5%-11%, and a reconciliation that ties every
+  dollar paid to them to the page (14 jobs + older jobs + no job + fronted = total paid).
+  The cut comes from ONE pull per vendor - the TransactionList report by vendor names the
+  checks and expenses a Purchase query cannot find. Writes `<CompanyHealth>/<DIV> PnL -
+  Internal - Director Cut.xlsx` IN PLACE and keeps every sheet it did not build. Local only,
+  never on the share. Verified with the `formulas` engine (5,500+ cells, zero errors) and
+  `assert_clean`. The register gained an optional `labels` map (`bizdev_cut.label`) for the
+  column headers; shared reports still use `note()` and name nobody.
+
 - **A RUN PULLS QBO ONCE, NOT ONCE PER JOB (2026-09-10).** 13 regenerations took
   39 minutes because `generate_project_pnl` runs per project and every call
   re-downloaded the whole Bill and Purchase universe, plus Account and Item.
