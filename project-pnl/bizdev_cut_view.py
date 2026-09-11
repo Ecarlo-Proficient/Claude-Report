@@ -313,6 +313,26 @@ def _lines_table(ws, r: int, rows: List[dict], dlabel: str, title: str,
                size=SZ_SMALL, bold=True, color=INK, fmt=MONEY, align="right")
         who_cells[w] = c.coordinate
         r += 1
+    cat_col = get_column_letter(B + 2)
+    present = []
+    for ln in rows:                          # categories on THIS job, biggest first
+        if ln["cut"] and ln["director"] and ln["category"] not in present:
+            present.append(ln["category"])
+    present.sort(key=lambda c: -sum(x["amt"] for x in rows
+                                    if x["cut"] and x["director"] and x["category"] == c))
+    if present:
+        _t(ws, r, B, "by category", size=SZ_SMALL, bold=True, color=GREY, indent=1)
+        r += 1
+        for c_name in present:
+            who = next((x["who"] for x in rows if x["category"] == c_name and x["cut"]), "")
+            ask = who == "ask the director"
+            _t(ws, r, B, f"   {c_name}", size=SZ_SMALL, color=INK, indent=1)
+            _t(ws, r, B + 3, bizdev_cut.who_label(who), size=SZ_SMALL - 1,
+               color=RED if ask else GREY)
+            _t(ws, r, B + 6, f'=SUMIF({cat_col}{first}:{cat_col}{last},"{c_name}",'
+                             f'{cut}{first}:{cut}{last})',
+               size=SZ_SMALL, fmt=MONEY, align="right", color=INK)
+            r += 1
     _t(ws, r, B, "other cuts charged into this job's COST", size=SZ_SMALL, color=GREY, indent=1)
     o_cell = _t(ws, r, B + 7, f'=SUMIF({who}{first}:{who}{last},"*(in job cost)",'
                               f'{inc}{first}:{inc}{last})',
@@ -380,9 +400,6 @@ def build(jobs: List[tuple], cut_lines: List[dict], out: Path, div: dict) -> dic
             (f"FINAL NET  ({OVERHEAD_PCT:.0%} OH)", "net", MONEY, 20),
             (f"{MFD_OVERHEAD_PCT:.0%} OH", "moh", MONEY, 16),
             (f"FINAL NET  ({MFD_OVERHEAD_PCT:.0%} OH)", "mnet", MONEY, 20),
-            (bizdev_cut.who_label("him"), "cut_him", MONEY, 16),
-            (bizdev_cut.who_label("junior estimator"), "cut_je", MONEY, 16),
-            (bizdev_cut.who_label("ask the director"), "cut_ask", MONEY, 16),
             (dlabel, "cut", MONEY, 17),
             (f"REAL NET  ({OVERHEAD_PCT:.0%} OH)", "rnet", MONEY, 20),
             (f"REAL NET  ({MFD_OVERHEAD_PCT:.0%} OH)", "rmnet", MONEY, 20),
@@ -390,16 +407,13 @@ def build(jobs: List[tuple], cut_lines: List[dict], out: Path, div: dict) -> dic
     keys = [k for _h, k, _f, _w in cols]
     L = {k: get_column_letter(C0 + 1 + i) for i, k in enumerate(keys)}
     LAST = C0 + len(cols) + 1
-    first_cut_col = C0 + 1 + keys.index("cut_him")
-    WHO_KEY = dict(zip(WHO_ORDER, ("cut_him", "cut_je", "cut_ask")))
+    first_cut_col = C0 + 1 + keys.index("cut")
 
     def _formula(k, rr, ranges=None):
-        if k in ("contract", "billed", "cost", "cut_him", "cut_je", "cut_ask"):
+        if k in ("contract", "billed", "cost", "cut"):
             if not ranges:
                 return None
             return "=" + "+".join(f"SUM({L[k]}{a}:{L[k]}{b})" for a, b in ranges)
-        if k == "cut":
-            return f"={L['cut_him']}{rr}+{L['cut_je']}{rr}+{L['cut_ask']}{rr}"
         if k == "gp":
             return f"={L['billed']}{rr}-{L['cost']}{rr}"
         if k == "gpm":
@@ -433,8 +447,6 @@ def build(jobs: List[tuple], cut_lines: List[dict], out: Path, div: dict) -> dic
         d["gp"] = d["billed"] - d["cost"]
         d["gpm"] = d["gp"] / d["billed"] if d["billed"] else 0.0
         d["net"], d["mnet"] = d["gp"] - d["oh"], d["gp"] - d["moh"]
-        for w, k in WHO_KEY.items():
-            d[k] = sum(ln["amt"] for ln in mine if ln["cut"] and ln["director"] and ln["who"] == w)
         d["cut"] = sum(ln["amt"] for ln in mine if ln["cut"] and ln["director"])
         d["rnet"], d["rmnet"] = d["net"] - d["cut"], d["mnet"] - d["cut"]
         d["rmnetm"] = d["rmnet"] / d["billed"] if d["billed"] else 0.0
@@ -443,7 +455,7 @@ def build(jobs: List[tuple], cut_lines: List[dict], out: Path, div: dict) -> dic
     def _sum(sel):
         d = {k: sum(fig[j][k] for j, _s, _t2, _p in sel)
              for k in ("contract", "billed", "cost", "gp", "oh", "net", "moh", "mnet",
-                       "cut", "cut_him", "cut_je", "cut_ask", "rnet", "rmnet", "other")}
+                       "cut", "rnet", "rmnet", "other")}
         for a, b in (("gpm", "gp"), ("netm", "net"), ("mnetm", "mnet"), ("rmnetm", "rmnet")):
             d[a] = d[b] / d["billed"] if d["billed"] else 0
         return d
@@ -636,8 +648,7 @@ def build(jobs: List[tuple], cut_lines: List[dict], out: Path, div: dict) -> dic
     # figure and the lines behind it can never disagree
     for job, (d_cell, who_cells, o_cell) in job_cells.items():
         rr = job_rows[job]
-        for w, k in WHO_KEY.items():
-            sm.cell(row=rr, column=C0 + 1 + keys.index(k)).value = f"='{job}'!{who_cells[w]}"
+        sm.cell(row=rr, column=C0 + 1 + keys.index("cut")).value = f"='{job}'!{d_cell}"
         base = round(fig[job]["base_cost"], 2)
         sm.cell(row=rr, column=C0 + 1 + keys.index("cost")).value = \
             f"={base}+'{job}'!{o_cell}" if fig[job]["other"] else base
@@ -695,57 +706,6 @@ def build(jobs: List[tuple], cut_lines: List[dict], out: Path, div: dict) -> dic
        color=GREY, indent=1)
     _t(sm, r, AMT, f"=SUM({get_column_letter(AMT)}{recon_first}:{get_column_letter(AMT)}{rec_last})"
                    f"-{tot_cell}", size=SZ_SMALL, fmt=MONEY_C, align="right", color=GREY)
-    r += 2
-    # ── the cut by category: what it is and who it goes to ──
-    _t(sm, r, C0, "THE CUT BY CATEGORY - what it is, and who it goes to", size=SZ + 1,
-       bold=True, color=NAVY)
-    r += 1
-    for i, h in enumerate(("CATEGORY", "GOES TO", f"ON THESE {len(jobs)} JOBS", "ALL TIME",
-                           "SHARE")):
-        _hdr(sm, r, C0 + i, h, align="left" if i < 2 else "right", indent=1 if i == 0 else 0)
-    r += 1
-    cats: Dict[Tuple[str, str], list] = {}
-    for ln in his:
-        if not ln["cut"]:
-            continue
-        key = (ln["category"], ln["who"])
-        cats.setdefault(key, [0.0, 0.0])
-        cats[key][1] += ln["amt"]
-        if ln["job"] in known:
-            cats[key][0] += ln["amt"]
-    cut_all = sum(v[1] for v in cats.values())
-    cat_first = r
-    for (name, who), (on_jobs, alltime) in sorted(cats.items(), key=lambda kv: -kv[1][1]):
-        ask = who == "ask the director"
-        _t(sm, r, C0, name, size=SZ, bold=ask, color=INK, indent=1)
-        _t(sm, r, C0 + 1, bizdev_cut.who_label(who), size=SZ, bold=ask, color=RED if ask else INK)
-        _t(sm, r, C0 + 2, round(on_jobs, 2), size=SZ, fmt=MONEY, align="right", color=INK)
-        _t(sm, r, C0 + 3, round(alltime, 2), size=SZ, fmt=MONEY, align="right", color=INK)
-        _t(sm, r, C0 + 4, alltime / cut_all if cut_all else 0, size=SZ, fmt=PCT, align="right",
-           color=GREY)
-        if r % 2 == 0:
-            for c in range(C0, C0 + 5):
-                sm.cell(row=r, column=c).fill = F_BAND
-        r += 1
-    for c in range(C0, C0 + 5):
-        sm.cell(row=r, column=c).border = Border(top=RULE)
-    _t(sm, r, C0, "total - must equal the cut column and the total paid less fronted",
-       size=SZ_SMALL, color=GREY, indent=1)
-    c2, c3 = get_column_letter(C0 + 2), get_column_letter(C0 + 3)
-    _t(sm, r, C0 + 2, f"=SUM({c2}{cat_first}:{c2}{r - 1})", size=SZ, bold=True, fmt=MONEY,
-       align="right", color=NAVY)
-    _t(sm, r, C0 + 3, f"=SUM({c3}{cat_first}:{c3}{r - 1})", size=SZ, bold=True, fmt=MONEY,
-       align="right", color=NAVY)
-    r += 1
-    _t(sm, r, C0, "check - the two totals less the cut column and the total paid (must be zero)",
-       size=SZ_SMALL, color=GREY, indent=1)
-    _t(sm, r, C0 + 2, f"={c2}{r - 1}-{L['cut']}{all_row}", size=SZ_SMALL, fmt=MONEY_C,
-       align="right", color=GREY)
-    _t(sm, r, C0 + 3, f"={c3}{r - 1}-({tot_cell}-{get_column_letter(AMT)}{rec_last})",
-       size=SZ_SMALL, fmt=MONEY_C, align="right", color=GREY)
-    r += 1
-    _t(sm, r, C0, "TO CONFIRM = burden, sub service and hourly help - the owner is asking the "
-                  "director whose these are", size=SZ_SMALL, color=GREY, indent=1)
     r += 2
     if tot["other"]:
         _t(sm, r, C0, f"COST above includes {tot['other']:,.0f} of other business-development "

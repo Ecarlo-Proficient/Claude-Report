@@ -14,11 +14,10 @@ manual close), RP (no draws — expenses → invoice → profit).
   `categories` (name, who, pattern, memo) and `who_labels`; `shared/bizdev_cut.categorize`
   is the one test (first match on the line text, then memo-only rules; a fronted line is job
   cost before any category; no rule = Other, blank = Blank line, both "ask the director" so
-  nothing files silently). The page now carries HIS CUT · JUNIOR ESTIMATOR · TO CONFIRM
-  beside the DIRECTOR CUT total (a formula of the three), each pointing at the job sheet's
-  SUMIF over its GOES TO column; the job sheet lists CATEGORY and GOES TO per line; a
-  category table under the reconciliation shows on-these-jobs / all-time / share with two
-  check cells (against the cut column and against total paid less fronted). Burden, Sub
+  nothing files silently). The PAGE stays combined - one DIRECTOR CUT column (the owner: "in the actual
+  project sheets, not the overview ... once he wants to see it we pull the details"); each
+  JOB SHEET lists CATEGORY and GOES TO per line and closes with the split (his / junior
+  estimator / to confirm) and a by-category block, all SUMIF formulas over the lines. Burden, Sub
   service and Hourly help are deliberately NOT tied to anyone - the owner is asking the
   director. Validation: 2025 draws tie to the director's own billing tally within 174 on
   185,625 and estimating within 120 on 11,260; the residual bucket is 750 and was read line
