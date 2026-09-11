@@ -739,18 +739,18 @@ def build(jobs: List[tuple], cut_lines: List[dict], out: Path, div: dict) -> dic
     heads = (("Ref #", "left"), ("Date", "left"), ("Year", "left"), ("Where it went", "left"),
              ("Category", "left"), ("Goes to", "left"), ("What the line says", "left"),
              ("Account", "left"), (dlabel, "right"), ("In job cost", "right"),
-             ("How it was tied", "left"))
+             ("How it was tied", "left"), ("Key", "left"))
     for i, (h, al) in enumerate(heads):
         _hdr(ws, lr, C0 + i, h, align=al, indent=1 if i == 0 else 0)
     ws.row_dimensions[lr].height = 30
     lr += 1
     l_first = lr
-    Y, DST, CUTC, INC = (get_column_letter(C0 + 2), get_column_letter(C0 + 3),
-                         get_column_letter(C0 + 8), get_column_letter(C0 + 9))
+    CUTC, INC, KEY = (get_column_letter(C0 + 8), get_column_letter(C0 + 9),
+                      get_column_letter(C0 + 11))
     for d_name in order:
         g = dests[d_name]
         _t(ws, lr, C0, d_name.upper(), size=SZ_SMALL, bold=True, color=NAVY, indent=1)
-        for c in range(C0, C0 + 11):
+        for c in range(C0, C0 + 12):
             ws.cell(row=lr, column=c).fill = F_BAND
             ws.cell(row=lr, column=c).border = Border(top=HAIR)
         lr += 1
@@ -775,6 +775,9 @@ def build(jobs: List[tuple], cut_lines: List[dict], out: Path, div: dict) -> dic
             _t(ws, lr, C0 + 9, None if ln["cut"] else ln["amt"], size=SZ_SMALL, fmt=MONEY_C,
                align="right", color=GREY)
             _t(ws, lr, C0 + 10, ln["how"], size=SZ_SMALL - 1, color=GREY)
+            # the key the matrix sums on: where it went | year (SUMIF, which
+            # every engine evaluates; SUMIFS the checker cannot)
+            _t(ws, lr, C0 + 11, f"{d_name}|{ln['date'][:4]}", size=SZ_SMALL - 2, color=GREY)
             ws.row_dimensions[lr].height = 20
             lr += 1
         _t(ws, lr, C0, f"   {d_name} subtotal", size=SZ_SMALL, bold=True, color=INK, indent=2)
@@ -782,7 +785,7 @@ def build(jobs: List[tuple], cut_lines: List[dict], out: Path, div: dict) -> dic
            fmt=MONEY, align="right", color=INK)
         _t(ws, lr, C0 + 9, f"=SUM({INC}{g_first}:{INC}{lr - 1})", size=SZ_SMALL, bold=True,
            fmt=MONEY, align="right", color=GREY)
-        for c in range(C0, C0 + 11):
+        for c in range(C0, C0 + 12):
             ws.cell(row=lr, column=c).border = Border(top=HAIR)
         lr += 1
     l_last = lr - 1
@@ -804,8 +807,8 @@ def build(jobs: List[tuple], cut_lines: List[dict], out: Path, div: dict) -> dic
         amt_col = INC if d_name.startswith("Fronted") else CUTC
         for i, y in enumerate(years):
             _t(ws, r0, C0 + 1 + i,
-               f'=SUMIFS({amt_col}{l_first}:{amt_col}{l_last},{DST}{l_first}:{DST}{l_last},'
-               f'"{d_name}",{Y}{l_first}:{Y}{l_last},"{y}")',
+               f'=SUMIF({KEY}{l_first}:{KEY}{l_last},"{d_name}|{y}",'
+               f'{amt_col}{l_first}:{amt_col}{l_last})',
                size=SZ_SMALL, fmt=MONEY, align="right", color=INK)
         yc0, yc1 = get_column_letter(C0 + 1), get_column_letter(C0 + len(years))
         _t(ws, r0, C0 + 1 + len(years), f"=SUM({yc0}{r0}:{yc1}{r0})", size=SZ_SMALL, bold=True,
@@ -833,7 +836,7 @@ def build(jobs: List[tuple], cut_lines: List[dict], out: Path, div: dict) -> dic
     _t(ws, r0, C0 + 1 + len(years), f"={tot_col}{r0 - 1}-{round(paid_all, 2)}", size=SZ_SMALL,
        fmt=MONEY_C, align="right", color=GREY)
     ws.column_dimensions["A"].width = GUTTER_W
-    for col, w in zip("BCDEFGHIJKL", (13, 12, 7, 30, 17, 18, 52, 26, 15, 15, 34)):
+    for col, w in zip("BCDEFGHIJKLM", (13, 12, 7, 30, 17, 18, 52, 26, 15, 15, 34, 30)):
         ws.column_dimensions[col].width = w
     ws.freeze_panes = f"A{list_hdr + 1}"
 
