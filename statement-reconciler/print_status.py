@@ -134,6 +134,7 @@ class PrintedIndex:
     printed_count: int = 0
     max_lastmod: str = ""               # max lastModifiedDateTime seen (incremental floor)
     source: str = ""                    # where this index came from (for the sheet)
+    health: List[str] = field(default_factory=list)   # sanity warnings (empty = healthy)
 
     # ---- loaders -------------------------------------------------------
     @classmethod
@@ -357,8 +358,23 @@ def _graph_token(creds: dict) -> str:
 
 
 # Live-search fallback state: a reused token + a per-invoice result cache so a
-# statement (and a whole sweep) never searches the same number twice.
-_SEARCH: dict = {"token": None, "creds": None, "cache": {}}
+# statement (and a whole sweep) never searches the same number twice, plus
+# telemetry so a Graph OUTAGE is never silently recorded as "not printed".
+_SEARCH: dict = {"token": None, "creds": None, "cache": {},
+                 "stats": {"calls": 0, "hits": 0, "notfound": 0, "errors": 0}}
+
+# Sentinel: the backup could NOT determine an answer (Graph error/timeout), as
+# opposed to a definite "no printed email" (None). A caller must treat this as
+# "unverified", never as "not printed".
+SEARCH_ERROR = object()
+
+
+def reset_search_stats() -> None:
+    _SEARCH["stats"] = {"calls": 0, "hits": 0, "notfound": 0, "errors": 0}
+
+
+def search_stats() -> dict:
+    return dict(_SEARCH["stats"])
 
 
 def live_search_printed(ref: str, creds: Optional[dict] = None,
@@ -369,10 +385,12 @@ def live_search_printed(ref: str, creds: Optional[dict] = None,
     the PDF - e.g. a bundled email with a generic filename (Croell 'Croell
     Invocies' -> 'Proficient Concrete Invoices 1.pdf'). We never download the PDF.
 
-    Returns the printed email (subject/date for the sheet) or None. Per-number
-    cached; a transient failure returns None WITHOUT caching, so a later line can
-    retry. So a "NOT PRINTED" that survives this check means the number is in no
-    printed email at all - the genuine finding, not a reader blind spot."""
+    Returns the printed email (found), None (definitively no printed email), or
+    the SEARCH_ERROR sentinel (Graph couldn't answer - the caller must treat that
+    as "unverified", NEVER as "not printed"). Definite answers are per-number
+    cached; an error is not cached, so a later line can retry. A "NOT PRINTED"
+    that survives this check means the number is in no printed email at all - the
+    genuine finding, not a reader blind spot."""
     import requests
     # Search the longest alphanumeric SEGMENT, not digits-only: Graph tokenizes
     # "RW786083" and "188673772-0001" as whole words, so a digits-only term
@@ -386,6 +404,7 @@ def live_search_printed(ref: str, creds: Optional[dict] = None,
         return None
     if term in _SEARCH["cache"]:
         return _SEARCH["cache"][term]
+    _SEARCH["stats"]["calls"] += 1
     try:
         if creds is None:
             if _SEARCH["creds"] is None:
@@ -415,9 +434,11 @@ def live_search_printed(ref: str, creds: Optional[dict] = None,
                                    categories=cats)
                 break
         _SEARCH["cache"][term] = hit             # cache the definite answer (hit or None)
+        _SEARCH["stats"]["hits" if hit else "notfound"] += 1
         return hit
     except Exception:
-        return None                              # transient: don't cache, allow a retry
+        _SEARCH["stats"]["errors"] += 1
+        return SEARCH_ERROR                      # unverified: not cached, allow a retry
 
 
 _INDEX_CACHE: dict = {}
@@ -456,7 +477,19 @@ def printed_index(force: bool = False, since_days: int = 550) -> Optional["Print
                 prior = PrintedIndex.from_dict(json.loads(cp.read_text()), received_floor=floor)
             except Exception:
                 prior = None            # corrupt/old cache -> full rebuild
+        prior_count = prior.printed_count if prior is not None else None
         idx = PrintedIndex.from_graph(since_days=since_days, prior=prior)
+        # Index-health sanity (check 2): a pull that silently returns nothing, or a
+        # printer-category label that stopped matching "printed", would zero out or
+        # gut the index and mark EVERY bill NOT PRINTED. Flag that loudly instead.
+        if idx.printed_count == 0:
+            idx.health.append("printed-email index is EMPTY - mailbox pull or the "
+                              "'printed' category match likely broke; print status is "
+                              "unreliable this run.")
+        elif prior_count and idx.printed_count < prior_count * 0.6:
+            idx.health.append(f"printed-email count dropped sharply "
+                              f"({prior_count} -> {idx.printed_count}) - verify the "
+                              f"mailbox pull and the printed-category labels.")
         try:
             cp.write_text(json.dumps(idx.to_dict()))
         except Exception:
@@ -479,10 +512,20 @@ class PrintRow:
     printed: bool
     email_date: str = ""
     email_subject: str = ""
+    in_qbo: Optional[bool] = None       # matched a QBO bill in the reconcile? (agreement gate)
+    unverified: bool = False            # backup couldn't determine (Graph error) - NOT "not printed"
+
+    @property
+    def reader_suspect(self) -> bool:
+        """In QBO but no printed email found: the bill is real enough to be entered,
+        yet the reader can't find its email -> a likely reader blind spot (a vendor
+        format we don't handle), NOT a genuinely un-printed bill. This is the
+        tie-out analog - an independent source (QBO) disagreeing with the reader."""
+        return bool(self.in_qbo) and not self.printed and not self.unverified
 
 
 def build_print_rows(statement_lines, index: PrintedIndex,
-                     search_fn=None) -> List[PrintRow]:
+                     search_fn=None, qbo_refs=None) -> List[PrintRow]:
     """Cross-reference every parsed statement invoice against the printed index.
     Lines with no ref (e.g. a Balance-forward lump) are skipped - nothing to
     match. Credits/payments (negative) are skipped too; they aren't printed bills.
@@ -490,19 +533,30 @@ def build_print_rows(statement_lines, index: PrintedIndex,
     `search_fn` (e.g. `live_search_printed`): a fallback called only for invoices
     the pre-built index misses. It reads inside PDF attachments server-side, so a
     bill printed as a generically-named PDF is still found. With it, a remaining
-    "NOT PRINTED" means the number is in no printed email at all."""
+    "NOT PRINTED" means the number is in no printed email at all.
+
+    `qbo_refs`: normalized refs the reconcile matched to a QBO bill, for the
+    agreement gate (see PrintRow.reader_suspect)."""
+    qset = {_norm_ref(x) for x in qbo_refs} if qbo_refs else None
     out: List[PrintRow] = []
     for l in statement_lines:
         if not getattr(l, "ref", "") or getattr(l, "amount", 0) <= 0:
             continue
         em = index.status_for(l.ref)
+        unverified = False
         if em is None and search_fn is not None:
-            em = search_fn(l.ref)
+            hit = search_fn(l.ref)
+            if hit is SEARCH_ERROR:
+                unverified = True        # Graph couldn't answer - don't call it "not printed"
+            else:
+                em = hit
         out.append(PrintRow(
             date=getattr(l, "date", ""), ref=l.ref, amount=l.amount,
             printed=em is not None,
             email_date=em.received if em else "",
             email_subject=em.subject if em else "",
+            in_qbo=(_norm_ref(l.ref) in qset) if qset is not None else None,
+            unverified=unverified,
         ))
     return out
 
@@ -541,3 +595,69 @@ def write_print_status_sheet(wb, statement_lines, index: PrintedIndex,
     for col, w in zip("ABCDEF", (12, 16, 14, 14, 14, 60)):
         ws.column_dimensions[col].width = w
     return ws
+
+
+def classify_print_rows(rows: List[PrintRow]) -> dict:
+    """Split print rows into the four workflow buckets the Summary + audit use:
+    printed (done), genuine (no printed email + not in QBO = real intake gap),
+    suspect (in QBO but not found = likely reader blind spot / agreement gate),
+    unverified (backup couldn't answer = don't call it un-printed)."""
+    return {
+        "printed":    [r for r in rows if r.printed],
+        "genuine":    [r for r in rows if not r.printed and not r.unverified and not r.reader_suspect],
+        "suspect":    [r for r in rows if r.reader_suspect],
+        "unverified": [r for r in rows if r.unverified],
+    }
+
+
+def audit_print_status(pdf_paths, use_backup: bool = True) -> int:
+    """Self-audit (check 4): the print-status regression test. Sweeps the given
+    reconciled statement PDFs and reports the reader's coverage per statement -
+    run it after ANY matcher change, the print-status analog of the parser's
+    'sweep ALL PDFs' rule. Reader-only (no QBO pull); the QBO agreement gate runs
+    in the live reconcile. Returns a nonzero exit code if the index is unhealthy."""
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import statement_reconciler as sr
+
+    reset_search_stats()
+    idx = printed_index()
+    if idx is None:
+        print(f"print-status index UNAVAILABLE: {_INDEX_CACHE.get('err', 'unknown')}")
+        return 1
+    print(f"index: {idx.printed_count} printed emails  |  source: {idx.source}")
+    for h in idx.health:
+        print(f"  HEALTH WARNING: {h}")
+
+    fn = live_search_printed if use_backup else None
+    tot_inv = tot_matched = tot_genuine = tot_unverified = 0
+    worst = []
+    for p in sorted(pdf_paths):
+        p = Path(p)
+        try:
+            _v, _d, _amt, lines = sr.parse_statement(p)
+        except Exception:
+            continue
+        rows = build_print_rows(lines, idx, search_fn=fn)
+        if not rows:
+            continue
+        c = classify_print_rows(rows)
+        n = len(rows)
+        matched = len(c["printed"])
+        tot_inv += n; tot_matched += matched
+        tot_genuine += len(c["genuine"]); tot_unverified += len(c["unverified"])
+        miss = n - matched
+        print(f"  {matched:>3}/{n:<3}  {p.name[:42]:42}"
+              + (f"  <-- {len(c['genuine'])} not-printed"
+                 f"{', '+str(len(c['unverified']))+' unverified' if c['unverified'] else ''}"
+                 if miss else ""))
+        if miss:
+            worst.append((miss, p.name))
+
+    st = search_stats()
+    print(f"\ntotals: {tot_matched}/{tot_inv} matched  |  "
+          f"{tot_genuine} genuinely not-printed  |  {tot_unverified} unverified")
+    print(f"backup $search: {st['calls']} calls  ·  {st['hits']} recovered  ·  "
+          f"{st['notfound']} confirmed-absent  ·  {st['errors']} errors"
+          + ("   <-- ERRORS: some rows are unverified, not confirmed" if st["errors"] else ""))
+    return 1 if idx.health else 0

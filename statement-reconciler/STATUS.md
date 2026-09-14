@@ -5,6 +5,30 @@ to this tool. Tool-only scope: no business/owner analyses or dollar-exposure
 findings here — those live in the owner's vault.
 
 ## DONE / FINALIZED
+- **Print-status future-proofing + Summary restructure (2026-09-14).**
+  - **QBO↔printed agreement gate (the tie-out analog).** Each statement invoice
+    carries two independent facts: is it in QBO (the reconcile matched a bill) and
+    did the reader find a printed email? A "NOT PRINTED" that is ALSO in QBO is a
+    *reader blind spot* (a format we don't handle), not a genuine gap - it raises a
+    red banner in the Summary, exactly like TIE-OUT FAILED. `build_print_rows`
+    takes `qbo_refs`; `PrintRow.reader_suspect` flags the disagreement. This would
+    have caught the Croell bundled-PDF issue on its own.
+  - **Index-health sanity.** The disk cache stores the printed-email count; a fresh
+    pull that is empty or drops >40% raises a health warning (catches a truncated
+    mailbox pull or a printer-category label that stopped matching "printed").
+  - **Backup telemetry, error vs not-found.** `live_search_printed` now returns a
+    `SEARCH_ERROR` sentinel on a Graph error (never silently "not printed"); those
+    rows show "unverified". `search_stats()` tracks calls/hits/notfound/errors.
+  - **Self-audit mode** `--audit-print-status`: sweeps every statement (inbox +
+    DONE) and reports reader coverage per statement + backup telemetry + index
+    health. Run after ANY matcher change (the print-status analog of the parser's
+    "sweep ALL PDFs" rule). 2026-09-14 baseline: 2405/2465 matched, 0 errors.
+  - **Summary restructure (the owner 2026-09-14).** Print status moved OUT of a
+    separate tab and INTO the Summary as the FIRST section, split into two grouped
+    sub-lists: "Printed bills check" (collapsed) and "Unprinted bills" (open by
+    default, with an "In QBO?" column and a yellow "Printed ✓" box the bill clerk
+    marks - the workbook doubles as her worklist; the invoice clerk works the QBO
+    buckets below). Empty QBO buckets (0 bills) are no longer rendered at all.
 - **Print Status tab — print-status verification (2026-09-14, opt-in).**
   `print_status.py` ties AP-03 → AP-01: for every parsed statement invoice it asks
   the billings mailbox "was this bill ever received-and-printed?" (an untagged

@@ -2643,16 +2643,128 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
             if i == 11 and approved_fill is not None:
                 c.fill = approved_fill
 
+    # ── PRINT STATUS (first section) ──────────────────────────────────────
+    # Was each statement invoice ever received-and-printed? (AP-03 -> AP-01).
+    # OPT-IN while we test-and-see (PRINT_STATUS=1) so a normal reconcile never
+    # triggers a mailbox pull until it's proven. The bill clerk works the
+    # "Unprinted bills" group (open by default, with a box to mark once printed -
+    # so this workbook doubles as her worklist); the invoice clerk works the QBO
+    # buckets below. Best-effort: any Graph failure skips the section, never breaks
+    # the reconcile.
+    _ps_on = os.environ.get("PRINT_STATUS", "").strip().lower() in ("1", "true", "yes", "on")
+    if _ps_on and stmt_lines:
+        _ps = None
+        _idx = None
+        try:
+            import print_status as _ps
+            _idx = _ps.printed_index()
+        except Exception as e:
+            _warn(f"Print Status skipped ({e}).")
+        if _ps is not None and _idx is None:
+            _warn(f"Print Status skipped: {_ps._INDEX_CACHE.get('err', 'index unavailable')}")
+        elif _idx is not None:
+            _qbo_present = ("MATCHED_APPROVED", "MATCHED_NOT_APPROVED", "VENDOR_TAX_VIOLATION",
+                           "CLERK_AMOUNT_MISMATCH", "LIKELY_VENDOR_LAG")
+            _qbo_refs = {rr.stmt_ref for k in _qbo_present for rr in cats[k] if rr.stmt_ref}
+            _prows = _ps.build_print_rows(stmt_lines, _idx,
+                                          search_fn=_ps.live_search_printed, qbo_refs=_qbo_refs)
+            _pc = _ps.classify_print_rows(_prows)
+            _printed, _to_print = _pc["printed"], (_pc["genuine"] + _pc["suspect"] + _pc["unverified"])
+
+            _write_section_header_row(
+                r, f"PRINT STATUS  —  {len(_prows)} invoices  ·  {len(_printed)} printed  "
+                   f"·  {len(_to_print)} to check", HEADER_FILL)
+            r += 1
+
+            # Agreement-gate + index-health banners (the future-proof alarms)
+            _alerts = [f"⚠ index health: {h}" for h in _idx.health]
+            if _pc["suspect"]:
+                _alerts.append(f"⚠ {len(_pc['suspect'])} bill(s) are IN QBO but no printed email "
+                               f"was found - likely a reader blind spot for this vendor's format; "
+                               f"verify before treating as un-printed.")
+            if _pc["unverified"]:
+                _alerts.append(f"⚠ {len(_pc['unverified'])} bill(s) UNVERIFIED (mailbox search "
+                               f"error) - re-run; not counted as un-printed.")
+            for _msg in _alerts:
+                c = s.cell(row=r, column=1, value=_msg)
+                c.font = Font(bold=True, name="Arial", size=10, color="C62828")
+                c.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+                c.fill = PatternFill("solid", start_color="FFE5E5")
+                s.merge_cells(start_row=r, start_column=1, end_row=r, end_column=SUMMARY_NCOLS)
+                s.row_dimensions[r].height = 28
+                r += 1
+
+            # Group 1: Printed bills check (collapsed by default - the boring pile)
+            _write_section_header_row(r, f"✓ Printed bills check  —  {len(_printed)}", OK_FILL)
+            r += 1
+            if _printed:
+                _ph = ["", "Date", "Invoice #", "", "Amount", "", "", "Email date",
+                       "Email subject", "", "", ""]
+                for i, h in enumerate(_ph, 1):
+                    cc = s.cell(row=r, column=i, value=h)
+                    cc.font = Font(bold=True, name="Arial", size=10, color="404040")
+                    cc.alignment = CENTER; cc.fill = SUBTOTAL_FILL; cc.border = BORDER
+                s.row_dimensions[r].outline_level = 1; s.row_dimensions[r].hidden = True
+                r += 1
+                for pr in _printed:
+                    s.cell(row=r, column=2, value=pr.date).font = BODY_FONT
+                    s.cell(row=r, column=3, value=pr.ref).font = BODY_FONT
+                    cc = s.cell(row=r, column=5, value=pr.amount or None)
+                    cc.number_format = MONEY; cc.alignment = RIGHT; cc.font = BODY_FONT
+                    s.cell(row=r, column=8, value=pr.email_date).font = BODY_FONT
+                    sc = s.cell(row=r, column=9, value=pr.email_subject)
+                    sc.alignment = LEFT; sc.font = BODY_FONT
+                    s.merge_cells(start_row=r, start_column=9, end_row=r, end_column=SUMMARY_NCOLS)
+                    for col in range(1, SUMMARY_NCOLS + 1):
+                        s.cell(row=r, column=col).border = BORDER
+                    s.row_dimensions[r].outline_level = 1; s.row_dimensions[r].hidden = True
+                    r += 1
+            r += 1
+
+            # Group 2: Unprinted bills (OPEN by default; a box she marks once printed)
+            _write_section_header_row(
+                r, f"✗ Unprinted bills  —  {len(_to_print)}  ·  print, then mark the box", BAD_FILL)
+            r += 1
+            if _to_print:
+                _uh = ["", "Date", "Invoice #", "", "Amount", "", "In QBO?", "Printed ✓",
+                       "Note", "", "", ""]
+                for i, h in enumerate(_uh, 1):
+                    cc = s.cell(row=r, column=i, value=h)
+                    cc.font = Font(bold=True, name="Arial", size=10, color="404040")
+                    cc.alignment = CENTER; cc.fill = SUBTOTAL_FILL; cc.border = BORDER
+                r += 1
+                _INPUT_FILL = PatternFill("solid", start_color="FFF9C4")
+                for pr in _to_print:
+                    note = ("in QBO - verify; may already be printed" if pr.reader_suspect
+                            else "unverified - mailbox search error, re-run" if pr.unverified
+                            else "")
+                    s.cell(row=r, column=2, value=pr.date).font = BODY_FONT
+                    s.cell(row=r, column=3, value=pr.ref).font = BODY_FONT
+                    cc = s.cell(row=r, column=5, value=pr.amount or None)
+                    cc.number_format = MONEY; cc.alignment = RIGHT; cc.font = BODY_FONT
+                    inq = "Yes" if pr.in_qbo else ("No" if pr.in_qbo is False else "—")
+                    s.cell(row=r, column=7, value=inq).alignment = CENTER
+                    s.cell(row=r, column=7).font = BODY_FONT
+                    box = s.cell(row=r, column=8, value=""); box.fill = _INPUT_FILL; box.alignment = CENTER
+                    nt = s.cell(row=r, column=9, value=note); nt.alignment = LEFT
+                    nt.font = DIM_FONT if note else BODY_FONT
+                    s.merge_cells(start_row=r, start_column=9, end_row=r, end_column=SUMMARY_NCOLS)
+                    for col in range(1, SUMMARY_NCOLS + 1):
+                        s.cell(row=r, column=col).border = BORDER
+                    s.row_dimensions[r].outline_level = 1; s.row_dimensions[r].hidden = False
+                    r += 1
+            r += 1
+
     for key, label, fill, collapse_by_default in CAT_DEFS:
         bucket = cats[key]
         n = len(bucket)
+        if n == 0:
+            continue                     # drop empty buckets entirely - no clutter
         stmt_sum = round(sum(rr.stmt_amount for rr in bucket), 2)
         qbo_sum  = round(sum(rr.qbo_amount  for rr in bucket), 2)
 
         _write_section_header_row(r, _section_header_text(label, n, stmt_sum, qbo_sum), fill)
         r += 1
-        if n == 0:
-            continue
 
         # Sub-header and data rows — all at outline_level=1, grouped under the header
         sub_head_row = r
@@ -2690,29 +2802,6 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
             cleanup_dir = _embed_statement_tab(wb, statement_src)
         except Exception as e:
             _warn(f"could not embed statement image ({e}); Excel saved without it.")
-
-    # Print Status tab (AP-03 -> AP-01): for every statement invoice, was the bill
-    # ever received-and-printed in the billings inbox? Best-effort — a Graph outage
-    # or unconfigured mailbox must never break the reconcile, so any failure just
-    # skips the tab with a dim note.
-    # OPT-IN while we test-and-see (set PRINT_STATUS=1). Off by default so a normal
-    # reconcile - anyone's, incl. the developer's - never triggers a mailbox pull /
-    # Touch ID until it's proven on a vendor or two.
-    _ps_on = os.environ.get("PRINT_STATUS", "").strip().lower() in ("1", "true", "yes", "on")
-    if stmt_lines and _ps_on:
-        try:
-            import print_status as _ps
-            _idx = _ps.printed_index()
-            if _idx is not None:
-                # live_search_printed = fallback for a miss: reads inside PDF
-                # attachments server-side, so a bill printed as a generically-named
-                # PDF is still found and only a true absence stays "NOT PRINTED".
-                _ps.write_print_status_sheet(wb, stmt_lines, _idx,
-                                             search_fn=_ps.live_search_printed)
-            else:
-                _warn(f"Print Status tab skipped: {_ps._INDEX_CACHE.get('err', 'index unavailable')}")
-        except Exception as e:
-            _warn(f"Print Status tab skipped ({e}).")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(out_path)
@@ -3321,6 +3410,10 @@ def main() -> int:
                    help="Embed the source statement's pages as a 'Statement' tab (self-contained xlsx).")
     p.add_argument("--no-embed", action="store_true",
                    help="In --inbox mode, do NOT embed the statement image (smaller files).")
+    p.add_argument("--audit-print-status", action="store_true",
+                   help="Self-audit: sweep every reconciled statement (inbox + DONE) and report "
+                        "print-status reader coverage per statement. No QBO, no files written. "
+                        "Run this after any print_status matcher change.")
     args = p.parse_args()
 
     if args.no_color:
@@ -3344,6 +3437,19 @@ def main() -> int:
             return 0
         print(_Term.color(_Term.Y, f"⚠ no alias matched: {args.forget_vendor}"))
         return 1
+
+    # ── print-status self-audit mode (no QBO, no files) ─────
+    if args.audit_print_status:
+        import glob
+        base = args.inbox_root or INBOX_ROOT
+        inbox, done, _recon = _resolve_workflow_dirs(base)
+        pdfs = sorted(set(glob.glob(str(inbox / "*.pdf")) + glob.glob(str(done / "*.pdf"))))
+        _hr()
+        print(_Term.color(_Term.BOLD, "  STATEMENT RECONCILER  ·  PRINT-STATUS SELF-AUDIT"))
+        _hr()
+        print(f"  Corpus: {len(pdfs)} statement PDF(s) under {inbox}\n")
+        import print_status as _ps
+        return _ps.audit_print_status(pdfs)
 
     # ── inbox automation mode ───────────────────────────────
     if args.inbox:
