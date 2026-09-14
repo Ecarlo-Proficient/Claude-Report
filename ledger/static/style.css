@@ -1520,6 +1520,10 @@ td.pnl-expand .pnl-live .pnl-codegrp { break-after: avoid; }
 .proj-grid .tag-borrow { background: color-mix(in srgb, #b8860b 18%, transparent); color: var(--warn-text); }
 .proj-grid tr.proj-band { cursor: pointer; }
 .proj-grid tr.proj-band .bg-key { display: inline-flex; align-items: center; gap: 4px; }
+.proj-grid tr.proj-band > td { font-weight: 700; font-variant-numeric: tabular-nums; }
+.proj-grid tr.proj-band > td.neg { color: var(--neg-text); }
+.proj-grid tr.proj-band > td.pos { color: var(--pos); }
+.proj-grid tr.proj-band .bg-n { color: var(--text-dim); font-weight: 500; font-size: .9em; }
 .set-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 #settings .fresh-row { padding: 0; }
 #settings .fresh { min-width: 0; flex: 1 1 46%; }

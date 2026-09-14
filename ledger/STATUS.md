@@ -4,6 +4,7 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-14 · Projects grid: a division / completed band is one cell per column, so every subtotal sits under its column (contract · costs · billed · band costs/ETC as % complete · net over/(under) · open AR; the job count in the Name column). The merged chip strip the band used to carry did not line up with the grid (owner screenshot).
 - **Two views (owner 2026-09-13: "consolidate to two menus/views - projects and give me
   everything").** The 7 groups / 16 tabs / 2 hidden pages became **Projects · Company · the gear**.
   *Projects* is the WIP as the page: a Portfolio strip (contract, costs, billed, left to bill,

@@ -5203,17 +5203,28 @@ function renderProjects() {
   for (const b of projBands(rows)) {
     const open = (b.key in _projBands) ? !!_projBands[b.key] : b.open;
     const gtr = document.createElement("tr"); gtr.className = "bill-group proj-band" + (open ? "" : " grp-closed");
-    const gtd = document.createElement("td"); gtd.colSpan = PROJ_COLS.length;
-    const cell = document.createElement("div"); cell.className = "bg-cell";
-    const key = document.createElement("span"); key.className = "bg-key";
-    const caret = document.createElement("span"); caret.className = "grp-caret"; caret.textContent = open ? "▾" : "▸"; key.appendChild(caret);
-    key.appendChild(document.createTextNode(b.label)); if (b.title) key.title = b.title;
-    cell.appendChild(key);
+    // One cell per column, so every subtotal sits UNDER its column (owner 2026-09-14: the merged
+    // band strip did not line up with the grid). Name + count in the first cells; the number columns
+    // carry the band's sums; % complete is the band's costs / ETC; Next stays blank.
     const sumOf = k => b.list.reduce((t, r) => t + num(r[k]), 0);
-    const under = sumOf("underbillings"), ar = sumOf("_ar");
-    bandMetrics(cell, [[b.list.length, "jobs"], [money(sumOf("total_contract_price")), "contract"], [money(sumOf("costs_to_date")), "costs"], [money(sumOf("billed_to_date")), "billed"],
-                       [money(under), "underbilled", under > 0 ? "neg" : ""], [money(ar), "open AR", ar > 0 ? "neg" : ""]]);
-    gtd.appendChild(cell); gtr.appendChild(gtd);
+    const contract = sumOf("total_contract_price"), costs = sumOf("costs_to_date"), billed = sumOf("billed_to_date"),
+          overUnder = sumOf("overbillings") - sumOf("underbillings"), ar = sumOf("_ar"), etc = sumOf("estimated_total_costs");
+    const caret = document.createElement("span"); caret.className = "grp-caret"; caret.textContent = open ? "▾" : "▸";
+    for (const c of PROJ_COLS) {
+      const td = document.createElement("td");
+      if (c.k === "project_no") { td.className = "left"; const key = document.createElement("span"); key.className = "bg-key"; key.appendChild(caret);
+        key.appendChild(document.createTextNode(b.label)); if (b.title) key.title = b.title; td.appendChild(key); }
+      else if (c.k === "project_name") { td.className = "left"; const n = document.createElement("span"); n.className = "bg-n"; n.textContent = `${b.list.length} job${b.list.length === 1 ? "" : "s"}`; td.appendChild(n); }
+      else if (c.k === "total_contract_price") { td.className = "right"; td.textContent = money(contract); }
+      else if (c.k === "costs_to_date") { td.className = "right"; td.textContent = money(costs); }
+      else if (c.k === "billed_to_date") { td.className = "right"; td.textContent = money(billed); }
+      else if (c.k === "percent_complete") { td.className = "right"; td.textContent = etc > 0 ? pct(costs / etc) : "–"; if (etc > 0) td.title = "Band costs to date / band ETC"; }
+      else if (c.k === "_overunder") { td.className = "right" + (overUnder < 0 ? " neg" : overUnder > 0 ? " pos" : ""); td.textContent = overUnder ? money(overUnder) : "–";
+        td.title = overUnder < 0 ? "Net underbilled across the band" : overUnder > 0 ? "Net overbilled across the band" : ""; }
+      else if (c.k === "_ar") { td.className = "right" + (ar > 0.005 ? " neg" : ""); td.textContent = ar > 0.005 ? money(ar) : "–"; }
+      else td.className = "left";
+      gtr.appendChild(td);
+    }
     const kids = [];
     gtr.onclick = () => { const o = gtr.classList.contains("grp-closed"); gtr.classList.toggle("grp-closed", !o); caret.textContent = o ? "▾" : "▸"; kids.forEach(k => k.hidden = !o); _projBands[b.key] = o; try { localStorage.setItem(PROJ_BANDS_LS, JSON.stringify(_projBands)); } catch { /* ignore */ } };
     tbody.appendChild(gtr);
