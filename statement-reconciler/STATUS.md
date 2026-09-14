@@ -99,12 +99,11 @@ findings here — those live in the owner's vault.
   scanned-image PDF (no text) is not full-text-indexed by Graph, so it could still
   show a false "NOT PRINTED"; the whole-statement-0% "unverified" caveat remains
   the safety net for that case.
-- **First-run sweep (2026-09-14) surfaced ~9 recent genuinely-not-printed bills**
-  (on current statements, no printed email even via PDF search) - e.g. Croell
-  1127694 (PRINT PENDING) + 1114037, Sunbelt 188673772-0001, Cowtown 397531, RCI
-  RW786083/RW785360/MCK777696/LF071526G1. These are real AP-01 intake gaps for the
-  bill clerk, NOT tool bugs. The rest of the misses are old invoices on old
-  statements (pre-tagging / pre-mailbox-horizon).
+- **First-run sweep (2026-09-14) behaves as designed:** after the backup, the
+  surviving "NOT PRINTED" rows are genuine (no printed email at all) and split into
+  old invoices on old statements (pre-tagging / pre-mailbox-horizon) and a small
+  number on current statements that are real AP-01 intake gaps, not tool bugs. The
+  specific bills go to the owner, never into this repo (STATUS scope rule).
 
 ## VERIFICATION NOTES
 - The 12 current reports (statements 08-26 → 09-08) were audited 2026-09-10/11:
