@@ -4,6 +4,33 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- **Two views (owner 2026-09-13: "consolidate to two menus/views - projects and give me
+  everything").** The 7 groups / 16 tabs / 2 hidden pages became **Projects · Company · the gear**.
+  *Projects* is the WIP as the page: a Portfolio strip (contract, costs, billed, left to bill,
+  underbilled, over budget - the last two open the Needs-attention view), then ONE grid - active jobs
+  banded by division (open), then "Completed recently" (closed but still carrying an open invoice or
+  bill), then "Completed · settled" (folded); columns Project · Name · Client · Contract · Costs ·
+  Billed · % compl. · Over/(under) · Open AR · Next (ETC and open AP dropped on the owner's say-so -
+  both sit on the project page); chips = division + Active / Needs attention / Completed /
+  Everything; a row opens the project page; the P&L by job is a fold under the grid. *Company* is
+  the whole business, no job filter: a five-tile strip (open AR, open AP, lien notices, draws to
+  collect, net P&L - each a click into its page) over Clients (Customer Center + Invoices, with
+  Payments and Sales as folds), Vendors (Vendor Center + Bill Tracker, Audit as a fold) and Money
+  (Health, the P&L totals + by division, WIP by division + cost mix, Costs by code and Sub LOC as
+  folds). *The gear* is the ONE sync entry (every feed's stamp + Resync / Refresh / Full cost
+  reload), the write actions (WIP Review, Console), Systems, and theme + density - accent, font, text
+  size, width, widget sizes, per-table columns and the "Set as default" baseline are gone. Retired
+  with their code: the Overview board (widget S/M/L/Full, hidden-widget strip, widget chooser),
+  Action items, Needs attention tiles, Margins & burn, the WIP report tab (`renderWip`, `WIP_COLS`,
+  column resize), the Funding / Draws tab (`renderFunding`, `renderDraws`, `buildBillsTable`, the
+  draw multi-select filters), the old select-based project filters. `TAB_ALIAS` maps every old tab
+  name (overview, wip, pnl, draws, costs, customers, invoices, payments, sales, bills, accounting,
+  health, subloc, graph) to its page + section, so every `setTab(...)` deep link in the app and the
+  saved-tab localStorage keep working; a fold that a link lands on opens itself. The stale P&L hint
+  (earned revenue × %complete, overhead on revenue/costs) is replaced by the owner's rule (10% of
+  contract). Pay run and Lien register stay as pages reached from Bills. Exported CSV on Projects
+  carries the band, division and status columns. Verified in the browser: every page renders with no
+  console error in both themes, aliases land and scroll, a row opens the project page.
 - **Boot is ~30x faster + funding-box polish (owner 2026-09-10).** Three things off one screenshot:
   (1) **"The ledger is getting slower and slower to open."** `_att_counts` was called once PER ROW
   inside the bills / invoices / payments loops, and every call re-ran its cache-signature query

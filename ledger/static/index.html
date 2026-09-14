@@ -19,11 +19,9 @@
       <span class="brand" title="Project Ledger"><span class="dot"></span>Ledger</span>
       <nav class="tabs" id="groupbar"></nav>
       <div class="topbar-actions">
-        <span class="sync-pill" id="syncPill" title="Last sync per feed"><span class="dot"></span><span id="syncPillText">…</span></span>
-        <button class="btn" id="btnResyncTop" title="Pull fresh data into the app - runs every loader (a couple of QBO steps prompt Touch ID)">⟳ Resync</button>
-        <button class="btn" id="btnExport" title="Export the current table to CSV">Export CSV</button>
-        <button class="btn" id="btnRefresh" title="Re-read the ledger now (instant). For new numbers, run a sync - see Data freshness.">Refresh</button>
-        <button class="btn icon" id="btnSettings" title="Customize">⚙</button>
+        <button class="btn" id="btnExport" title="Export the table you are looking at to CSV, as filtered">Export CSV</button>
+        <button class="sync-pill" id="syncPill" title="Last sync per feed - click for the sync panel"><span class="dot"></span><span id="syncPillText">…</span></button>
+        <button class="btn icon" id="btnSettings" title="Sync, WIP update, Console, Systems, appearance">⚙</button>
       </div>
     </div>
     <nav class="subtabs" id="subtabbar" hidden></nav>
@@ -32,155 +30,46 @@
   <main class="wrap" id="wrap">
     <div id="errorBanner" class="error-banner" hidden></div>
 
-    <!-- ══════════════ TAB: OVERVIEW (merged - My view + Overview) ══════════════ -->
-    <div class="tab-page" data-tab="overview">
-
-    <!-- ── Data freshness + one-click Resync (was My view) ──────────── -->
-    <section class="widget" id="widget-fresh">
-      <div class="widget-head">
-        <h2>Data freshness <span class="count" id="metaLine">loading…</span><span class="count" id="homeFreshNote"></span></h2>
-        <span class="fresh-actions">
-          <button class="btn small" id="btnCostsFull" title="Full cost reload from QuickBooks: every project, all history, deleted or re-coded bills drop out. 30 to 40 minutes.">Full cost reload</button>
-          <button class="btn small" id="btnResync" title="Pull fresh data into the app - runs every loader. A couple of QBO steps prompt Touch ID on this Mac. No terminal needed.">⟳&nbsp;Resync</button>
-        </span>
-      </div>
-      <div class="fresh-row" id="homeFresh"></div>
-      <div class="sync-progress" id="syncProgress" hidden>
-        <div class="sync-bar"><div class="sync-bar-fill" id="syncBarFill"></div></div>
-        <div class="sync-step" id="syncStep"></div>
-      </div>
-    </section>
-
-    <!-- ── Action items (was My view) ───────────────────────────────── -->
-    <section class="widget" id="widget-actions">
-      <div class="widget-head"><h2>Action items <span class="count">- click to jump in</span></h2></div>
-      <div class="action-row" id="homeActions"></div>
-    </section>
-
-    <!-- ── KPI widgets ──────────────────────────────────────────────── -->
+    <!-- ══════════════ VIEW 1: PROJECTS - the WIP as the page (owner 2026-09-13: two views, no back-and-forth) ══════════════ -->
+    <div class="tab-page" data-tab="projects">
     <section class="widget" id="widget-kpis">
-      <div class="widget-head"><h2>Portfolio</h2></div>
-      <div class="kpi-row" id="kpiRow"></div>
+      <div class="widget-head"><h2>Portfolio <span class="count" id="metaLine">loading…</span></h2></div>
+      <div class="kpi-row kpi-strip" id="kpiRow"></div>
     </section>
-
-    <!-- ── Needs attention ──────────────────────────────────────────── -->
-    <section class="widget" id="widget-attention">
-      <div class="widget-head">
-        <h2>Needs attention</h2>
-        <button class="btn small" id="btnClearRule" hidden>Clear filter</button>
-      </div>
-      <div class="attn-row" id="attnRow"></div>
-    </section>
-
-    <!-- ── Cost mix (summary bar; full tree + pivot live on the Costs tab) ── -->
-    <section class="widget" id="widget-costs">
-      <div class="widget-head">
-        <h2>Cost mix <span class="count" id="costCount"></span></h2>
-      </div>
-      <div class="costmix" id="costMix"></div>
-    </section>
-
-    <!-- ── Margins & burn (from QBO costs) ──────────────────────────── -->
-    <section class="widget" id="widget-margins">
-      <div class="widget-head">
-        <h2>Margins &amp; burn <span class="count" id="marginNote"></span></h2>
-      </div>
-      <div class="kpi-row" id="marginStats"></div>
-      <div class="table-scroll">
-        <table class="grid clickable" id="marginTable"><thead></thead><tbody></tbody></table>
-      </div>
-    </section>
-
-    <!-- ── Division rollup ──────────────────────────────────────────── -->
-    <section class="widget" id="widget-divisions">
-      <div class="widget-head"><h2>By division</h2></div>
-      <div class="table-scroll">
-        <table class="grid" id="divTable">
-          <thead></thead><tbody></tbody>
-        </table>
-      </div>
-    </section>
-
-    <!-- ── Projects ─────────────────────────────────────────────────── -->
     <section class="widget" id="widget-projects">
       <div class="widget-head">
         <h2>Projects <span class="count" id="projCount"></span></h2>
+        <span class="wh-right"><span class="count" id="projSrc"></span></span>
       </div>
-      <div class="filters">
-        <input type="search" id="search" placeholder="Search project #, name, builder…" autocomplete="off">
-        <select id="fDivision"><option value="">All divisions</option></select>
-        <select id="fStatus"><option value="">All statuses</option></select>
-        <select id="fCategory"><option value="">All categories</option></select>
-        <label class="chk"><input type="checkbox" id="fActive"> Active only</label>
+      <div class="filters proj-filters">
+        <input type="search" id="search" placeholder="Find a job #, name, client…" autocomplete="off">
+        <span class="seg" id="projDiv" title="Division">
+          <button type="button" class="seg-btn on" data-div="">All</button>
+          <button type="button" class="seg-btn" data-div="Multi Family">Multi Family</button>
+          <button type="button" class="seg-btn" data-div="Commercial">Commercial</button>
+          <button type="button" class="seg-btn" data-div="Residential">Residential</button>
+        </span>
+        <span class="seg" id="projView" title="Which jobs">
+          <button type="button" class="seg-btn on" data-view="active" title="Active jobs by division, then the jobs completed recently, then older closed jobs folded away">Active</button>
+          <button type="button" class="seg-btn" data-view="attention" title="Over budget, underbilled, or borrowing cash">Needs attention</button>
+          <button type="button" class="seg-btn" data-view="completed" title="Closed jobs only">Completed</button>
+          <button type="button" class="seg-btn" data-view="all" title="Every job, every status">Everything</button>
+        </span>
       </div>
-      <div class="table-scroll">
-        <table class="grid clickable" id="projTable">
-          <thead></thead><tbody></tbody>
-        </table>
+      <div class="table-scroll proj-scroll">
+        <table class="grid clickable proj-grid" id="projTable"><thead></thead><tbody></tbody></table>
+      </div>
+      <div class="wip-legend" id="projLegend">
+        <span class="wip-lg"><i class="wip-sw neg"></i>Underbilled - financing the job · over budget</span>
+        <span class="wip-lg"><i class="wip-sw pos"></i>Overbilled - holding the GC's cash</span>
+        <span class="wip-lg"><i class="wip-sw bar"></i>% complete</span>
+        <span class="wip-lg wip-lg-dim">Click a row to open the job · click a column to sort · click a band to fold it</span>
       </div>
     </section>
-
-    <div class="ov-hidden" id="ovHidden" hidden></div>
-    </div><!-- /tab: overview -->
-
-    <!-- ══════════════ TAB: HEALTH (company-health metric layer) ══════════════
-         Money In / Money Out / Position / Break-Even + Recurring & Debt - the fold-in of the
-         retired Company Tracker/Dashboard. Sections are assembled SERVER-SIDE (/api/healthtab);
-         this page renders them verbatim so the model can never fork. -->
-    <div class="tab-page" data-tab="health" hidden>
+    <section class="subpage fold" data-sec="pnl" id="sec-pnl">
+      <div class="fold-head"><h2>Project P&amp;L by job</h2><span class="count" id="pnlNote"></span><span class="fold-caret">▸</span></div>
       <section class="widget">
-        <div class="widget-head">
-          <h2>Company health <span class="count" id="healthNote"></span></h2>
-          <button class="btn small" id="btnHealthPull"
-                  title="Pull the QBO-only numbers (cash, P&amp;L, 13-wk cash flow, recurring register) into the ledger. Touch ID on this Mac. Everything else on this page is already live from the ledger.">⟳&nbsp;Pull QBO metrics</button>
-        </div>
-        <p class="hint">Live from the ledger - AR, AP, WIP backlog, draws and Sub LOC read the same tables as
-          their tabs. Cash, margins, burn and the recurring register come from the last
-          <b>Pull QBO metrics</b> run and carry its date: QBO bank balances only move when uploads
-          are entered, so treat cash as of its stamp, not as of now.</p>
-        <div class="sync-progress" id="healthProg" hidden>
-          <div class="sync-bar"><div class="sync-bar-fill" id="healthFill"></div></div>
-          <div class="sync-step" id="healthStep"></div>
-        </div>
-      </section>
-      <div id="healthSections"></div>
-      <section class="widget" id="healthRecWidget" hidden>
-        <div class="widget-head"><h2>Recurring &amp; Debt <span class="count" id="healthRecNote"></span></h2></div>
-        <p class="hint">The fixed obligations behind break-even, with what <b>CHANGED / STOPPED / NEW</b>
-          since last month. Debt payments are read off the liability balance drop; MCA rows are shown
-          for review but never counted (their balance moves are refinance entries, not cash out).</p>
-        <div class="kpi-row" id="healthRecKpis"></div>
-        <div id="healthRecAlerts"></div>
-        <details class="health-details" id="healthRecDetails">
-          <summary>Full register - every obligation by month</summary>
-          <div class="table-scroll"><table class="grid" id="healthRecTable"><thead></thead><tbody></tbody></table></div>
-        </details>
-      </section>
-      <section class="widget" id="healthAuditWidget" hidden>
-        <details class="health-details">
-          <summary>Break-even audit trail - where every figure came from</summary>
-          <div class="table-scroll"><table class="grid" id="healthAuditTable"><thead></thead><tbody></tbody></table></div>
-        </details>
-      </section>
-    </div><!-- /tab: health -->
-
-    <!-- ══════════════ TAB: P&L (portfolio - live per-job P&L + totals) ══════════════ -->
-    <div class="tab-page" data-tab="pnl" hidden>
-      <section class="widget">
-        <div class="widget-head"><h2>Project P&amp;L <span class="count" id="pnlNote"></span></h2></div>
-        <div class="kpi-row" id="pnlTotals"></div>
-        <p class="hint">Live from the ledger spine - <b>earned revenue</b> (contract × %complete) −
-          <b>costs</b> (QBO, incl. subs) − <b>overhead</b> (10% of revenue; MFD 9% of costs). Reconciles
-          with the project-pnl Excel. Active jobs only (Closed/Complete excluded). Click a row for the full P&amp;L.</p>
-      </section>
-      <section class="widget">
-        <div class="widget-head"><h2>By division <span class="count">- where the margin is</span></h2></div>
-        <div class="table-scroll">
-          <table class="grid" id="pnlDivTable"><thead></thead><tbody></tbody></table>
-        </div>
-      </section>
-      <section class="widget">
-        <div class="widget-head"><h2>By job <span class="count" id="pnlJobNote">- click a header to sort · worst margin first</span></h2></div>
+        <div class="widget-head"><h2>By job <span class="count" id="pnlJobNote">- net billed − costs − overhead · worst margin first</span></h2></div>
         <div class="filters">
           <label class="fld"><span>Project #</span><input type="search" id="pnlFProj" placeholder="CP800" autocomplete="off"></label>
           <label class="fld"><span>Client</span><input type="search" id="pnlFClient" placeholder="Firestone" autocomplete="off"></label>
@@ -201,105 +90,24 @@
           <table class="grid clickable" id="pnlJobTable"><thead></thead><tbody></tbody></table>
         </div>
       </section>
-    </div><!-- /tab: pnl -->
+    </section><!-- /sec: pnl -->
+    </div><!-- /tab: projects -->
 
-    <!-- ══════════════ TAB: COSTS (pivot - code → jobs) ══════════════ -->
-    <div class="tab-page" data-tab="wip" hidden>
-      <section class="widget">
-        <div class="widget-head">
-          <h2>WIP report <span class="count" id="wipNote"></span></h2>
-          <label class="inline-check"><input type="checkbox" id="wipActive" checked> Active only</label>
-        </div>
-        <p class="hint" id="wipHint"></p>
-        <div class="wip-legend" id="wipLegend">
-          <span class="wip-lg"><i class="wip-sw pos"></i>Overbilled - holding the GC's cash</span>
-          <span class="wip-lg"><i class="wip-sw neg"></i>Underbilled / job borrow - financing the job</span>
-          <span class="wip-lg"><i class="wip-sw gp-lo"></i>GP thin<i class="wip-sw gp-ok"></i>healthy<i class="wip-sw gp-hi"></i>&gt;30% (verify)</span>
-          <span class="wip-lg"><i class="wip-sw bar"></i>% complete</span>
-          <span class="wip-lg wip-lg-dim">Drag a header divider to resize · click a row to open the job</span>
-        </div>
-        <div class="table-scroll wip-scroll">
-          <table class="grid wip-grid" id="wipTable"><thead></thead><tbody></tbody></table>
-        </div>
-      </section>
-    </div><!-- /tab: wip -->
+    <!-- ══════════════ VIEW 2: COMPANY - the whole business, no job filter: Clients · Vendors · Money ══════════════ -->
+    <div class="company-head" id="companyHead" hidden><div class="kpi-row kpi-strip" id="companyKpis"></div></div>
 
-    <!-- ══════════════ TAB: WIP REVIEW (pending update → approve/disapprove → write 3 tabs) ══════════════ -->
-    <div class="tab-page" data-tab="wipreview" hidden>
+    <div class="tab-page" data-tab="clients" hidden>
+    <section class="subpage" data-sec="customers" id="sec-customers">
       <section class="widget">
-        <div class="widget-head">
-          <h2>WIP Review <span class="count" id="wrNote"></span></h2>
-          <div class="console-actions">
-            <button class="btn small" id="wrCompute" title="Run the WIP pipeline and show every change before it is written">Compute pending update</button>
-            <button class="btn small primary" id="wrSync" title="Write the approved changes to Test - CP, Test - RP and Test-Master" hidden>Sync approved →</button>
-          </div>
-        </div>
-        <p class="hint">The pending WIP update as a before/after. <b>Accept (QBO)</b> = costs / billed /
-          retainage, pulled from QuickBooks - checked by default. <b>PM answers</b> = contract / COs / ETC -
-          left <b>unchecked</b> until confirmed. Approve a change to write the new value; leave it off to keep
-          what's on the tab. Approved changes sync to <b>Test - CP</b> (CP), <b>Test - RP</b> (RP) and
-          <b>Test-Master</b> (all three). Read-only until you hit Sync.</p>
-        <div class="kpi-row" id="wrStats"></div>
-        <div class="filters" id="wrFilters" hidden>
-          <span class="seg" id="wrView" title="One job at a time, or the whole list">
-            <button type="button" class="seg-btn on" data-view="slides">One job at a time</button>
-            <button type="button" class="seg-btn" data-view="list">All jobs</button>
-          </span>
-          <input type="search" id="wrSearch" placeholder="Find a job #, name…" autocomplete="off">
-          <select id="wrDivision"><option value="">All divisions</option><option>Commercial</option><option>Residential</option><option>Multi-Family</option></select>
-          <select id="wrStatus"><option value="">All changes</option><option value="CHANGED">Changed</option><option value="REVERSED">Reversed (went down)</option><option value="ADDED">Added</option><option value="REMOVED">Removed</option></select>
-          <label class="check"><input type="checkbox" id="wrChangedOnly" checked> Changed only</label>
-          <span class="wr-bulk">
-            <button class="btn tiny" id="wrApproveQbo" title="Approve every QBO change (costs / billed / retainage)">Approve all QBO</button>
-            <button class="btn tiny" id="wrApproveAll" title="Approve every change shown">Approve all shown</button>
-            <button class="btn tiny" id="wrClearAll" title="Uncheck every change (keep the tabs as they are)">Clear all</button>
-          </span>
-        </div>
-        <div id="wrBody" class="wr-body"></div>
-      </section>
-    </div><!-- /tab: wipreview -->
-
-    <div class="tab-page" data-tab="costs" hidden>
-      <section class="widget">
-        <div class="widget-head"><h2>Cost type ▸ job type <span class="count">- click a code to see every job that spent it</span></h2></div>
+        <div class="widget-head"><h2>Customer Center <span class="count" id="custNote"></span></h2></div>
+        <p class="hint">Your current clients ranked by <b>open AR</b> (what they still owe you). Click a client to see just their open invoices.</p>
+        <div class="kpi-row" id="custStats"></div>
         <div class="table-scroll">
-          <table class="grid clickable" id="costTreeTable"><thead></thead><tbody></tbody></table>
+          <table class="grid clickable" id="custTable"><thead></thead><tbody></tbody></table>
         </div>
       </section>
-      <section class="widget" id="codeJobsWidget" hidden>
-        <div class="widget-head"><h2 id="codeJobsTitle">Jobs</h2></div>
-        <div class="table-scroll">
-          <table class="grid clickable" id="codeJobsTable"><thead></thead><tbody></tbody></table>
-        </div>
-      </section>
-    </div><!-- /tab: costs -->
-
-    <!-- ══════════════ TAB: DRAWS (race-through worklist) ══════════════ -->
-    <div class="tab-page" data-tab="draws" hidden>
-      <section class="widget">
-        <div class="widget-head">
-          <h2>Funding by project <span class="count" id="drawsNote"></span></h2>
-          <button class="btn small" id="btnClearDrawStage" hidden>Show all</button>
-        </div>
-        <div class="kpi-row" id="drawsStats"></div>
-        <p class="hint">One row per job: the <b>next draw the GC owes</b>, what <b>blocks</b> it (unpaid bills on
-          earlier draws - their waivers release the money), and the latest draw's vendors paid. Click a row to
-          open the project page, where the draws, bills, pay-to-unlock and the pay list live.
-          <b>RP is excluded</b> - residential bills at completion / milestones, not formal draws.</p>
-        <div class="filters">
-          <div class="msel" id="dfClientMsel"><button type="button" class="msel-btn" id="dfClientBtn">All clients</button><div class="msel-menu wide" id="dfClientMenu" hidden></div></div>
-          <div class="msel" id="dfProjMsel"><button type="button" class="msel-btn" id="dfProjBtn">All projects</button><div class="msel-menu" id="dfProjMenu" hidden></div></div>
-          <div class="msel" id="dfVendorMsel"><button type="button" class="msel-btn" id="dfVendorBtn">All vendors</button><div class="msel-menu wide" id="dfVendorMenu" hidden></div></div>
-          <div class="msel" id="dfInvMsel"><button type="button" class="msel-btn" id="dfInvBtn">All invoices</button><div class="msel-menu" id="dfInvMenu" hidden></div></div>
-          <div class="msel" id="dfDivMsel"><button type="button" class="msel-btn" id="dfDivBtn">All divisions</button><div class="msel-menu" id="dfDivMenu" hidden></div></div>
-          <div class="datef" id="dfDate"></div>
-        </div>
-        <div id="drawList"></div>
-      </section>
-    </div><!-- /tab: draws -->
-
-    <!-- ══════════════ TAB: OPEN INVOICES (AR aging - what the GC still owes you) ══════════════ -->
-    <div class="tab-page" data-tab="invoices" hidden>
+    </section><!-- /sec: customers -->
+    <section class="subpage" data-sec="invoices" id="sec-invoices">
       <section class="widget">
         <div class="widget-head">
           <h2><span id="invHeading">Open invoices</span> <span class="count" id="invNote"></span></h2>
@@ -373,10 +181,69 @@
           <table class="grid aging-grid" id="invTable"><thead></thead><tbody></tbody></table>
         </div>
       </section>
-    </div><!-- /tab: invoices -->
+    </section><!-- /sec: invoices -->
+    <section class="subpage fold" data-sec="payments" id="sec-payments">
+      <div class="fold-head"><h2>Payments received</h2><span class="count">money in, and the bills each payment unlocks</span><span class="fold-caret">▸</span></div>
+      <section class="widget">
+        <div class="widget-head"><h2>Payments <span class="count" id="payNote"></span></h2></div>
+        <div id="payBody"></div>
+      </section>
+    </section><!-- /sec: payments -->
+    <section class="subpage fold" data-sec="sales" id="sec-sales">
+      <div class="fold-head"><h2>Sales pipeline</h2><span class="count">leads, warm accounts and outreach - from the Notion Customer List</span><span class="fold-caret">▸</span></div>
+      <section class="widget">
+        <div class="widget-head"><h2>Sales pipeline <span class="count" id="salesNote"></span></h2></div>
+        <div class="kpi-row" id="salesStats"></div>
+        <p class="hint">Read-only from the Notion Customer List (loaded by <code>load_customers.py</code>).
+          Attribution is Notion's own “Last edited by”. Update statuses/notes in Notion, not here.</p>
+      </section>
+      <section class="widget">
+        <div class="widget-head"><h2>Pipeline <span class="count">- customers by stage</span></h2></div>
+        <div class="table-scroll">
+          <table class="grid clickable" id="salesFunnel"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+      <section class="widget">
+        <div class="widget-head"><h2>Activity by rep <span class="count">- who worked what (by last editor) · click a rep</span></h2></div>
+        <div class="table-scroll">
+          <table class="grid clickable" id="salesRepTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+      <section class="widget">
+        <div class="widget-head"><h2>Rep activity <span class="count" id="repActNote"></span></h2></div>
+        <div id="repActivity"></div>
+      </section>
+      <section class="widget">
+        <div class="widget-head"><h2>Warm accounts <span class="count" id="salesWarmNote"></span></h2></div>
+        <div id="salesWarm"></div>
+      </section>
+      <section class="widget">
+        <div class="widget-head"><h2>All customers <span class="count" id="salesCustNote"></span></h2></div>
+        <div class="filters">
+          <input type="search" id="salesSearch" placeholder="Search client, contact, rep…" autocomplete="off">
+          <select id="salesStage"><option value="">All stages</option></select>
+          <select id="salesDivision"><option value="">All divisions</option></select>
+        </div>
+        <div class="table-scroll">
+          <table class="grid clickable" id="salesTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </section><!-- /sec: sales -->
+    </div><!-- /tab: clients -->
 
-    <!-- ══════════════ TAB: BILLS (the full Bill Tracker - Excel-dense, per-field filters) ══════════════ -->
-    <div class="tab-page" data-tab="bills" hidden>
+    <div class="tab-page" data-tab="vendors" hidden>
+    <section class="subpage" data-sec="vendors" id="sec-vendors">
+      <section class="widget">
+        <div class="widget-head"><h2>Vendor Center <span class="count" id="vendorsNote"></span></h2></div>
+        <div class="filters"><input type="search" id="vendorSearch" placeholder="Search vendor…" autocomplete="off">
+          <label class="chk"><input type="checkbox" id="vendorGroupType"> Group by type</label>
+          <button class="btn small" id="vendorExpandAll" style="display:none">Expand all</button></div>
+        <div class="table-scroll">
+          <table class="grid clickable" id="vendorTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </section><!-- /sec: vendors -->
+    <section class="subpage" data-sec="bills" id="sec-bills">
       <!-- Lien-mark Save bar: sticky top-right, scrolls with this page, only on Bills -->
       <div class="savebar" id="billSaveBar">
         <span class="sb-warn">●</span>
@@ -451,7 +318,174 @@
           <table class="grid bills-grid" id="billTable"><thead></thead><tbody></tbody></table>
         </div>
       </section>
-    </div><!-- /tab: bills -->
+    </section><!-- /sec: bills -->
+    <section class="subpage fold" data-sec="accounting" id="sec-accounting">
+      <div class="fold-head"><h2>Audit - bills to fix</h2><span class="count">what the AP sync flagged in QuickBooks</span><span class="fold-caret">▸</span></div>
+      <section class="widget">
+        <div class="widget-head">
+          <h2>Audit <span class="count" id="acctNote"></span></h2>
+          <button class="btn small" id="btnAcctReload" title="Re-read the Bill Tracker audits">Reload</button>
+        </div>
+        <p class="hint">Bills the AP sync flagged to fix. Pick an audit below to filter; <b>📎</b> opens the scan, the bill # copies (↗ for QBO).</p>
+        <div class="kpi-row" id="acctStats"></div>
+        <div class="acct-filters" id="acctFilters"></div>
+        <div class="filters">
+          <input type="search" id="acctSearch" placeholder="Find a vendor, project #, bill ref…" autocomplete="off">
+          <select id="acctDivision"><option value="">All divisions</option></select>
+          <div class="msel" id="acctVendorMsel"><button type="button" class="msel-btn" id="acctVendorBtn" title="Tick the vendors to show">All vendors</button><div class="msel-menu wide" id="acctVendorMenu" hidden></div></div>
+          <button class="btn small" id="btnAcctCopy" title="Copy the selected rows (or all shown) as a table with headers - paste into Excel, Google Sheets, or an email">Copy all</button>
+          <button class="btn small" id="btnAcctClerk" title="One plain sentence per finding saying what QuickBooks has and what to change it to - paste straight to the clerk">Copy for clerk</button>
+          <button class="btn small" id="btnAcctDownload" title="Download the selected rows' bill scans into a folder and open it - drag them into the message to the responsible party" disabled>Download scans</button>
+        </div>
+        <div class="table-scroll">
+          <table class="grid" id="acctTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </section><!-- /sec: accounting -->
+    </div><!-- /tab: vendors -->
+
+    <div class="tab-page" data-tab="money" hidden>
+    <section class="subpage" data-sec="health" id="sec-health">
+      <section class="widget">
+        <div class="widget-head">
+          <h2>Company health <span class="count" id="healthNote"></span></h2>
+          <button class="btn small" id="btnHealthPull"
+                  title="Pull the QBO-only numbers (cash, P&amp;L, 13-wk cash flow, recurring register) into the ledger. Touch ID on this Mac. Everything else on this page is already live from the ledger.">⟳&nbsp;Pull QBO metrics</button>
+        </div>
+        <p class="hint">Live from the ledger - AR, AP, WIP backlog, draws and Sub LOC read the same tables as
+          their tabs. Cash, margins, burn and the recurring register come from the last
+          <b>Pull QBO metrics</b> run and carry its date: QBO bank balances only move when uploads
+          are entered, so treat cash as of its stamp, not as of now.</p>
+        <div class="sync-progress" id="healthProg" hidden>
+          <div class="sync-bar"><div class="sync-bar-fill" id="healthFill"></div></div>
+          <div class="sync-step" id="healthStep"></div>
+        </div>
+      </section>
+      <div id="healthSections"></div>
+      <section class="widget" id="healthRecWidget" hidden>
+        <div class="widget-head"><h2>Recurring &amp; Debt <span class="count" id="healthRecNote"></span></h2></div>
+        <p class="hint">The fixed obligations behind break-even, with what <b>CHANGED / STOPPED / NEW</b>
+          since last month. Debt payments are read off the liability balance drop; MCA rows are shown
+          for review but never counted (their balance moves are refinance entries, not cash out).</p>
+        <div class="kpi-row" id="healthRecKpis"></div>
+        <div id="healthRecAlerts"></div>
+        <details class="health-details" id="healthRecDetails">
+          <summary>Full register - every obligation by month</summary>
+          <div class="table-scroll"><table class="grid" id="healthRecTable"><thead></thead><tbody></tbody></table></div>
+        </details>
+      </section>
+      <section class="widget" id="healthAuditWidget" hidden>
+        <details class="health-details">
+          <summary>Break-even audit trail - where every figure came from</summary>
+          <div class="table-scroll"><table class="grid" id="healthAuditTable"><thead></thead><tbody></tbody></table></div>
+        </details>
+      </section>
+    </section><!-- /sec: health -->
+    <section class="subpage" data-sec="pnltop" id="sec-pnltop">
+      <section class="widget">
+        <div class="widget-head"><h2>Project P&amp;L <span class="count" id="pnlNote2"></span></h2></div>
+        <div class="kpi-row" id="pnlTotals"></div>
+        <p class="hint">Net billed (QuickBooks invoices, after retainage) − costs (QuickBooks, incl. subs) − overhead (10% of contract; MFD 9%) = net. Active jobs only. The by-job list is on Projects.</p>
+      </section>
+      <section class="widget">
+        <div class="widget-head"><h2>By division <span class="count">- where the margin is</span></h2></div>
+        <div class="table-scroll">
+          <table class="grid" id="pnlDivTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </section><!-- /sec: pnltop -->
+    <section class="subpage" data-sec="wipdiv" id="sec-wipdiv">
+    <!-- ── Division rollup ──────────────────────────────────────────── -->
+    <section class="widget" id="widget-divisions">
+      <div class="widget-head"><h2>By division</h2></div>
+      <div class="table-scroll">
+        <table class="grid" id="divTable">
+          <thead></thead><tbody></tbody>
+        </table>
+      </div>
+    </section>
+    <!-- ── Cost mix (summary bar; full tree + pivot live on the Costs tab) ── -->
+    <section class="widget" id="widget-costs">
+      <div class="widget-head">
+        <h2>Cost mix <span class="count" id="costCount"></span></h2>
+      </div>
+      <div class="costmix" id="costMix"></div>
+    </section>
+    </section><!-- /sec: wipdiv -->
+    <section class="subpage fold" data-sec="costs" id="sec-costs">
+      <div class="fold-head"><h2>Costs by code</h2><span class="count">cost type ▸ job type ▸ the jobs that spent it - QuickBooks</span><span class="fold-caret">▸</span></div>
+      <section class="widget">
+        <div class="widget-head"><h2>Cost type ▸ job type <span class="count">- click a code to see every job that spent it</span></h2></div>
+        <div class="table-scroll">
+          <table class="grid clickable" id="costTreeTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+      <section class="widget" id="codeJobsWidget" hidden>
+        <div class="widget-head"><h2 id="codeJobsTitle">Jobs</h2></div>
+        <div class="table-scroll">
+          <table class="grid clickable" id="codeJobsTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </section><!-- /sec: costs -->
+    <section class="subpage fold" data-sec="subloc" id="sec-subloc">
+      <div class="fold-head"><h2>Sub LOC</h2><span class="count">what the company has fronted to subs, by division and project</span><span class="fold-caret">▸</span></div>
+      <section class="widget">
+        <div class="widget-head"><h2>Sub LOC <span class="count" id="sublocNote"></span></h2></div>
+        <div class="kpi-row" id="sublocStats"></div>
+        <p class="hint" id="sublocHint"></p>
+      </section>
+      <!-- By division at the TOP, ungrouped (always shown) -->
+      <section class="widget">
+        <div class="widget-head"><h2>By division <span class="count">still fronted + the peak each hit</span></h2></div>
+        <div class="table-scroll"><table class="grid" id="sublocDivTable"><thead></thead><tbody></tbody></table></div>
+      </section>
+      <!-- By project: the top few most in the hole; expand for the rest (a dashboard, not a long list) -->
+      <section class="widget">
+        <div class="widget-head"><h2>By project <span class="count">most fronted first &middot; click a project # for its open subs by draw</span></h2></div>
+        <div class="table-scroll"><table class="grid clickable" id="sublocProjTable"><thead></thead><tbody></tbody></table></div>
+        <div id="sublocProjMore" class="more-row"></div>
+      </section>
+      <section class="widget">
+        <div class="widget-head"><h2>Repayment feed <span class="count">a client payment paid off these fronted subs &middot; click a row for the line items</span></h2></div>
+        <div id="sublocFeed"></div>
+      </section>
+    </section><!-- /sec: subloc -->
+    </div><!-- /tab: money -->
+
+    <!-- ══════════════ TAB: WIP REVIEW (pending update → approve/disapprove → write 3 tabs) ══════════════ -->
+    <div class="tab-page" data-tab="wipreview" hidden>
+      <section class="widget">
+        <div class="widget-head">
+          <h2>WIP Review <span class="count" id="wrNote"></span></h2>
+          <div class="console-actions">
+            <button class="btn small" id="wrCompute" title="Run the WIP pipeline and show every change before it is written">Compute pending update</button>
+            <button class="btn small primary" id="wrSync" title="Write the approved changes to Test - CP, Test - RP and Test-Master" hidden>Sync approved →</button>
+          </div>
+        </div>
+        <p class="hint">The pending WIP update as a before/after. <b>Accept (QBO)</b> = costs / billed /
+          retainage, pulled from QuickBooks - checked by default. <b>PM answers</b> = contract / COs / ETC -
+          left <b>unchecked</b> until confirmed. Approve a change to write the new value; leave it off to keep
+          what's on the tab. Approved changes sync to <b>Test - CP</b> (CP), <b>Test - RP</b> (RP) and
+          <b>Test-Master</b> (all three). Read-only until you hit Sync.</p>
+        <div class="kpi-row" id="wrStats"></div>
+        <div class="filters" id="wrFilters" hidden>
+          <span class="seg" id="wrView" title="One job at a time, or the whole list">
+            <button type="button" class="seg-btn on" data-view="slides">One job at a time</button>
+            <button type="button" class="seg-btn" data-view="list">All jobs</button>
+          </span>
+          <input type="search" id="wrSearch" placeholder="Find a job #, name…" autocomplete="off">
+          <select id="wrDivision"><option value="">All divisions</option><option>Commercial</option><option>Residential</option><option>Multi-Family</option></select>
+          <select id="wrStatus"><option value="">All changes</option><option value="CHANGED">Changed</option><option value="REVERSED">Reversed (went down)</option><option value="ADDED">Added</option><option value="REMOVED">Removed</option></select>
+          <label class="check"><input type="checkbox" id="wrChangedOnly" checked> Changed only</label>
+          <span class="wr-bulk">
+            <button class="btn tiny" id="wrApproveQbo" title="Approve every QBO change (costs / billed / retainage)">Approve all QBO</button>
+            <button class="btn tiny" id="wrApproveAll" title="Approve every change shown">Approve all shown</button>
+            <button class="btn tiny" id="wrClearAll" title="Uncheck every change (keep the tabs as they are)">Clear all</button>
+          </span>
+        </div>
+        <div id="wrBody" class="wr-body"></div>
+      </section>
+    </div><!-- /tab: wipreview -->
 
     <!-- ══════════════ TAB: PAY BILLS (check-run worksheet) ══════════════ -->
     <div class="tab-page" data-tab="paybills" hidden>
@@ -547,104 +581,6 @@
       </section>
     </div><!-- /tab: liens -->
 
-    <!-- ══════════════ TAB: VENDORS (spend) ══════════════ -->
-    <div class="tab-page" data-tab="vendors" hidden>
-      <section class="widget">
-        <div class="widget-head"><h2>Vendor Center <span class="count" id="vendorsNote"></span></h2></div>
-        <div class="filters"><input type="search" id="vendorSearch" placeholder="Search vendor…" autocomplete="off">
-          <label class="chk"><input type="checkbox" id="vendorGroupType"> Group by type</label>
-          <button class="btn small" id="vendorExpandAll" style="display:none">Expand all</button></div>
-        <div class="table-scroll">
-          <table class="grid clickable" id="vendorTable"><thead></thead><tbody></tbody></table>
-        </div>
-      </section>
-    </div><!-- /tab: vendors -->
-
-    <!-- ══════════════ TAB: SUB LOC (subcontractor float we've fronted) ══════════════ -->
-    <div class="tab-page" data-tab="subloc" hidden>
-      <section class="widget">
-        <div class="widget-head"><h2>Sub LOC <span class="count" id="sublocNote"></span></h2></div>
-        <div class="kpi-row" id="sublocStats"></div>
-        <p class="hint" id="sublocHint"></p>
-      </section>
-      <!-- By division at the TOP, ungrouped (always shown) -->
-      <section class="widget">
-        <div class="widget-head"><h2>By division <span class="count">still fronted + the peak each hit</span></h2></div>
-        <div class="table-scroll"><table class="grid" id="sublocDivTable"><thead></thead><tbody></tbody></table></div>
-      </section>
-      <!-- By project: the top few most in the hole; expand for the rest (a dashboard, not a long list) -->
-      <section class="widget">
-        <div class="widget-head"><h2>By project <span class="count">most fronted first &middot; click a project # for its open subs by draw</span></h2></div>
-        <div class="table-scroll"><table class="grid clickable" id="sublocProjTable"><thead></thead><tbody></tbody></table></div>
-        <div id="sublocProjMore" class="more-row"></div>
-      </section>
-      <section class="widget">
-        <div class="widget-head"><h2>Repayment feed <span class="count">a client payment paid off these fronted subs &middot; click a row for the line items</span></h2></div>
-        <div id="sublocFeed"></div>
-      </section>
-    </div><!-- /tab: subloc -->
-
-    <!-- ══════════════ TAB: SALES (CRM pipeline - read-only from Notion) ══════════════ -->
-    <div class="tab-page" data-tab="sales" hidden>
-      <section class="widget">
-        <div class="widget-head"><h2>Sales pipeline <span class="count" id="salesNote"></span></h2></div>
-        <div class="kpi-row" id="salesStats"></div>
-        <p class="hint">Read-only from the Notion Customer List (loaded by <code>load_customers.py</code>).
-          Attribution is Notion's own “Last edited by”. Update statuses/notes in Notion, not here.</p>
-      </section>
-      <section class="widget">
-        <div class="widget-head"><h2>Pipeline <span class="count">- customers by stage</span></h2></div>
-        <div class="table-scroll">
-          <table class="grid clickable" id="salesFunnel"><thead></thead><tbody></tbody></table>
-        </div>
-      </section>
-      <section class="widget">
-        <div class="widget-head"><h2>Activity by rep <span class="count">- who worked what (by last editor) · click a rep</span></h2></div>
-        <div class="table-scroll">
-          <table class="grid clickable" id="salesRepTable"><thead></thead><tbody></tbody></table>
-        </div>
-      </section>
-      <section class="widget">
-        <div class="widget-head"><h2>Rep activity <span class="count" id="repActNote"></span></h2></div>
-        <div id="repActivity"></div>
-      </section>
-      <section class="widget">
-        <div class="widget-head"><h2>Warm accounts <span class="count" id="salesWarmNote"></span></h2></div>
-        <div id="salesWarm"></div>
-      </section>
-      <section class="widget">
-        <div class="widget-head"><h2>All customers <span class="count" id="salesCustNote"></span></h2></div>
-        <div class="filters">
-          <input type="search" id="salesSearch" placeholder="Search client, contact, rep…" autocomplete="off">
-          <select id="salesStage"><option value="">All stages</option></select>
-          <select id="salesDivision"><option value="">All divisions</option></select>
-        </div>
-        <div class="table-scroll">
-          <table class="grid clickable" id="salesTable"><thead></thead><tbody></tbody></table>
-        </div>
-      </section>
-    </div><!-- /tab: sales -->
-
-    <!-- ══════════════ TAB: CUSTOMERS (top clients by open AR) ══════════════ -->
-    <div class="tab-page" data-tab="customers" hidden>
-      <section class="widget">
-        <div class="widget-head"><h2>Customer Center <span class="count" id="custNote"></span></h2></div>
-        <p class="hint">Your current clients ranked by <b>open AR</b> (what they still owe you). Click a client to see just their open invoices.</p>
-        <div class="kpi-row" id="custStats"></div>
-        <div class="table-scroll">
-          <table class="grid clickable" id="custTable"><thead></thead><tbody></tbody></table>
-        </div>
-      </section>
-    </div><!-- /tab: customers -->
-
-    <!-- ══════════════ TAB: PAYMENTS (received payments + the AP due out under them) ══════════════ -->
-    <div class="tab-page" data-tab="payments" hidden>
-      <section class="widget">
-        <div class="widget-head"><h2>Payments <span class="count" id="payNote"></span></h2></div>
-        <div id="payBody"></div>
-      </section>
-    </div><!-- /tab: payments -->
-
     <!-- ══════════════ TAB: SYSTEMS (the process registry, read live from the vault) ══════════════ -->
     <div class="tab-page" data-tab="systems" hidden>
       <section class="widget">
@@ -689,30 +625,6 @@
         </div>
       </section>
     </div><!-- /tab: systems -->
-
-    <!-- ══════════════ TAB: ACCOUNTING (Bill Tracker audits - the fixes to make) ══════════════ -->
-    <div class="tab-page" data-tab="accounting" hidden>
-      <section class="widget">
-        <div class="widget-head">
-          <h2>Audit <span class="count" id="acctNote"></span></h2>
-          <button class="btn small" id="btnAcctReload" title="Re-read the Bill Tracker audits">Reload</button>
-        </div>
-        <p class="hint">Bills the AP sync flagged to fix. Pick an audit below to filter; <b>📎</b> opens the scan, the bill # copies (↗ for QBO).</p>
-        <div class="kpi-row" id="acctStats"></div>
-        <div class="acct-filters" id="acctFilters"></div>
-        <div class="filters">
-          <input type="search" id="acctSearch" placeholder="Find a vendor, project #, bill ref…" autocomplete="off">
-          <select id="acctDivision"><option value="">All divisions</option></select>
-          <div class="msel" id="acctVendorMsel"><button type="button" class="msel-btn" id="acctVendorBtn" title="Tick the vendors to show">All vendors</button><div class="msel-menu wide" id="acctVendorMenu" hidden></div></div>
-          <button class="btn small" id="btnAcctCopy" title="Copy the selected rows (or all shown) as a table with headers - paste into Excel, Google Sheets, or an email">Copy all</button>
-          <button class="btn small" id="btnAcctClerk" title="One plain sentence per finding saying what QuickBooks has and what to change it to - paste straight to the clerk">Copy for clerk</button>
-          <button class="btn small" id="btnAcctDownload" title="Download the selected rows' bill scans into a folder and open it - drag them into the message to the responsible party" disabled>Download scans</button>
-        </div>
-        <div class="table-scroll">
-          <table class="grid" id="acctTable"><thead></thead><tbody></tbody></table>
-        </div>
-      </section>
-    </div><!-- /tab: accounting -->
 
     <!-- ══════════════ TAB: CONSOLE (control plane - run the pipelines) ══════════════ -->
     <div class="tab-page" data-tab="console" hidden>
@@ -865,17 +777,40 @@
     <div class="panel-body" id="vendorDetailBody"></div>
   </aside>
 
-  <!-- ── Settings slide-over ────────────────────────────────────────── -->
+  <!-- ── The gear: sync + tools + appearance (every run button in ONE place, 2026-09-13) ── -->
   <aside class="panel panel-right" id="settings" hidden>
     <div class="panel-head">
-      <div class="panel-title">Customize <span class="brand-ver" id="appVersion" title="Dashboard build version"></span></div>
+      <div class="panel-title">Sync &amp; tools <span class="brand-ver" id="appVersion" title="Dashboard build version"></span></div>
       <div class="panel-head-actions">
-        <button class="btn" id="btnSetDefault" title="Save the current view (theme, width, widgets, columns) as your default">Set as default</button>
-        <button class="btn" id="btnReset" title="Reset to your saved default">Reset</button>
         <button class="btn icon" id="btnCloseSettings" title="Close">✕</button>
       </div>
     </div>
     <div class="panel-body" id="settingsBody">
+      <div class="set-group">
+        <h3>Data freshness <span class="count" id="homeFreshNote"></span></h3>
+        <div class="fresh-row" id="homeFresh"></div>
+      <div class="sync-progress" id="syncProgress" hidden>
+        <div class="sync-bar"><div class="sync-bar-fill" id="syncBarFill"></div></div>
+        <div class="set-actions">
+          <button class="btn small primary" id="btnResync" title="Pull fresh data into the app - runs every loader. A couple of QBO steps prompt Touch ID on this Mac.">⟳&nbsp;Resync</button>
+          <button class="btn small" id="btnRefresh" title="Re-read the ledger now (instant). For new numbers, run a Resync.">Refresh view</button>
+          <button class="btn small" id="btnCostsFull" title="Full cost reload from QuickBooks: every project, all history, deleted or re-coded bills drop out. 30 to 40 minutes.">Full cost reload</button>
+        </div>
+      </div>
+      <div class="set-group">
+        <h3>Write actions</h3>
+        <div class="set-actions">
+          <button class="btn small" id="btnGearWip" title="Compute the pending WIP update and approve what gets written to the master">Update WIP · review changes</button>
+          <button class="btn small" id="btnGearConsole" title="Run the pipelines: AP + AR sync, full refresh, P&amp;L workbooks">Console</button>
+        </div>
+        <p class="set-hint">WIP Review and the pipelines are actions you start, not places you visit.</p>
+      </div>
+      <div class="set-group">
+        <h3>Reference</h3>
+        <div class="set-actions">
+          <button class="btn small" id="btnGearSystems" title="The systems &amp; process registry, live from the vault">Systems &amp; processes</button>
+        </div>
+      </div>
       <div class="set-group">
         <h3>Appearance</h3>
         <label class="set-row">Theme
@@ -885,44 +820,12 @@
             <option value="dark">Dark</option>
           </select>
         </label>
-        <label class="set-row">Accent
-          <input type="color" id="setAccent">
-        </label>
-        <label class="set-row">Font
-          <select id="setFont">
-            <option value="system">System</option>
-            <option value="inter">Grotesque sans</option>
-            <option value="serif">Serif</option>
-            <option value="mono">Monospace</option>
-          </select>
-        </label>
-        <label class="set-row">Text size <span class="val" id="fsVal"></span>
-          <input type="range" id="setFontSize" min="11" max="20" step="1">
-        </label>
         <label class="set-row">Density
           <select id="setDensity">
             <option value="comfortable">Comfortable</option>
             <option value="compact">Compact</option>
           </select>
         </label>
-        <label class="set-row">Width
-          <select id="setWidth">
-            <option value="full">Full width</option>
-            <option value="medium">Medium</option>
-            <option value="boxed">Boxed</option>
-          </select>
-        </label>
-      </div>
-
-      <div class="set-group">
-        <h3>Overview widgets</h3>
-        <p class="set-hint">Tick what shows; pick a width (S = a third, M = half, L = two thirds, Full). The same controls sit on each widget's header.</p>
-        <div id="widgetChooser" class="col-chooser widget-chooser"></div>
-      </div>
-
-      <div class="set-group">
-        <h3>Table columns</h3>
-        <div id="colChooser" class="col-chooser"></div>
       </div>
     </div>
   </aside>

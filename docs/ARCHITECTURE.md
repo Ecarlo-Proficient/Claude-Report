@@ -461,7 +461,7 @@ flowchart LR
     LOADER["load_wip_master.py\nCP←Test-CP · RP←Test-RP · MFD←Test-Master\nfilter to real project #s · idempotent upsert"]:::tool
     APLOAD["load_bill_tracker.py\nAP pay status + lien clock → ap_bill_line\n(NOT cost truth — subs excluded)"]:::tool
     DB[("ledger.sqlite3\nproject + wip_snapshot + ap_bill_line\n→ v_wip_latest · v_ap_by_project")]:::out
-    DASH["dashboard.py + static/\nlocal web UI (127.0.0.1) - READ-ONLY except the owner's marks + WIP Review writes.\nTabs: Console · Overview · P&L · WIP · WIP Review · Costs · Draws · Bills · Pay Bills\n(Notion-style saved views) · Audit · Liens · Vendors · Sub LOC · Sales · Systems"]:::tool
+    DASH["dashboard.py + static/\nlocal web UI (127.0.0.1) - READ-ONLY except the owner's marks + WIP Review writes.\nTWO views (2026-09-13): Projects = the WIP as the page (row → project page)\n· Company = Clients / Vendors / Money · the gear = sync + WIP Review + Console + Systems"]:::tool
     REG[("AI Brain_Vault/02_processes/*.md\neight domain files — the process registry\n(read-only source, never written)")]:::src
     REGVIEW["registry_view.py\nparses the markdown row tables per request\nhealth · state · life — no cache, no DB table"]:::tool
     VGRAPH["vault_graph.py\nwhole-vault wiki-links → org map (ROSTER excluded)\n+ docs/ARCHITECTURE.md mermaid → the Graph tab\nlive, no cache, no DB table"]:::tool
@@ -609,7 +609,7 @@ the app's aging and division palettes (colour encodes, never decorates).
 **Now also the CONTROL PLANE (2026-08-12).** Beyond reading, the dashboard runs the data pipelines
 FROM the UI so the owner never touches a terminal. The **Console** tab is a **pipeline registry**
 (`_pipelines()` / `_resolve_steps`): each pipeline = producer(s) + loader, run as **subprocesses**
-(tools never IMPORT tools). The **Resync** (My view) runs the LOADERS ONLY (`reload` - read-only,
+(tools never IMPORT tools). The **Resync** (the gear panel) runs the LOADERS ONLY (`reload` - read-only,
 incremental 90-day cost pull); a Console **Run** also fires the real **producer** (`run_invoice_sync`
 for AR -> Notion/Teams, `qbo_bill_tracker` for AP -> Excel; Touch ID). **WIP** loads the current draft;
 generating a new **draft WIP** (the `wip/` readers -> Test tabs for PM review) is a separate,

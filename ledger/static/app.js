@@ -10,34 +10,6 @@ const $  = (sel, el = document) => el.querySelector(sel);
 const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
 
 // ── Column catalog ────────────────────────────────────────────────────────
-const COLUMNS = [
-  { key: "project_no",            label: "Project #",     type: "text",   align: "left", always: true },
-  { key: "division",              label: "Division",      type: "text",   align: "left", def: true },
-  { key: "project_name",          label: "Name",          type: "text",   align: "left", def: true },
-  { key: "client",                label: "Client",        type: "text",   align: "left", always: true },   // always shown (owner: "always see client")
-  { key: "status",                label: "Status",        type: "status", align: "left", def: true },
-  { key: "rp_category",           label: "Category",      type: "text",   align: "left" },
-  { key: "builder_or_gc",         label: "Builder / GC",  type: "text",   align: "left" },
-  { key: "total_contract_price",  label: "Contract",      type: "money",  def: true },
-  { key: "estimated_total_costs", label: "ETC",           type: "money",  def: true },
-  { key: "costs_to_date",         label: "Costs",         type: "money",  def: true },
-  { key: "percent_complete",      label: "% Complete",    type: "pct",    def: true },
-  { key: "billed_to_date",        label: "Billed",        type: "money",  def: true },
-  { key: "left_to_bill",          label: "Left to Bill",  type: "money",  def: true },
-  { key: "overbillings",          label: "Over",          type: "money" },
-  { key: "underbillings",         label: "Under",         type: "money" },
-  { key: "retainage_held",        label: "Retainage",     type: "money" },
-  { key: "gross_profit_pct",      label: "GP %",          type: "pct" },
-  { key: "original_profit",       label: "Orig. Profit",  type: "money" },
-  { key: "costs_loaded",          label: "QBO Costs",     type: "money" },
-  { key: "sub_costs",             label: "Subs (QBO)",    type: "money" },
-  { key: "budget_burn",           label: "Budget Burn",   type: "pct" },
-  { key: "markup_pct",            label: "Markup %",      type: "pct" },
-  { key: "margin_pct",            label: "Margin %",      type: "pct" },
-  { key: "qbo_margin",            label: "Margin $ (QBO)", type: "money" },
-  { key: "actual_markup_pct",     label: "Actual Markup %", type: "pct" },
-  { key: "subs_pct",              label: "Subs %",        type: "pct" },
-];
 
 // Derived per-job metrics from the REAL QBO costs - computed once at load time.
 // Only for jobs that actually have costs loaded; others stay null (blank).
@@ -59,27 +31,9 @@ function deriveMetrics(r) {
 
 // ── Settings ──────────────────────────────────────────────────────────────
 const LS_KEY = "proficient-ledger-settings-v1";
-const DEFAULTS = {
-  theme: "light", accent: "#3E7A5C", font: "system", fontSize: 15,   // light by default (owner 2026-09-02); a saved choice still wins   // 15px base (owner 2026-09-01: older Excel readers)
-  density: "comfortable", width: "medium",
-  widgets: { fresh: true, actions: true, kpis: true, attention: true, ap: true, costs: true, margins: true, divisions: true, projects: true },
-  sizes: {},   // widget key -> s | m | l | xl (a third / half / two thirds / full width of the Overview board); blank = the widget's default
-  columns: COLUMNS.filter(c => c.always || c.def).map(c => c.key),
-};
-// The Overview is a BOARD (owner 2026-09-08: the mission-control layout): every widget is a card on a
-// 12-column grid, sized S/M/L/Full and shown or hidden per the owner's choice, both remembered here.
-const WIDGET_DEFS = [
-  { key: "fresh", id: "widget-fresh", label: "Data freshness", size: "l" },
-  { key: "actions", id: "widget-actions", label: "Action items", size: "s" },
-  { key: "kpis", id: "widget-kpis", label: "Portfolio", size: "xl" },
-  { key: "attention", id: "widget-attention", label: "Needs attention", size: "m" },
-  { key: "costs", id: "widget-costs", label: "Cost mix", size: "m" },
-  { key: "margins", id: "widget-margins", label: "Margins & burn", size: "l" },
-  { key: "divisions", id: "widget-divisions", label: "By division", size: "s" },
-  { key: "projects", id: "widget-projects", label: "Projects", size: "xl" },
-];
-const WIDGET_SIZES = [["s", "S", "a third"], ["m", "M", "half"], ["l", "L", "two thirds"], ["xl", "Full", "full width"]];
-function widgetSize(key) { const d = WIDGET_DEFS.find(x => x.key === key); return (settings.sizes || {})[key] || (d ? d.size : "m"); }
+// Two settings, one owner (2026-09-13: accent, font, text size, width, widget sizes and per-table
+// columns are gone - "one look, one owner"). Light by default (owner 2026-09-02); a saved choice wins.
+const DEFAULTS = { theme: "light", density: "comfortable" };
 
 // Lien state → urgency css class (most urgent first), for the AP watchlist.
 const LIEN_CLASS = {
@@ -124,86 +78,22 @@ const RULES = [
 ];
 let settings = loadSettings();
 
-const LS_DEF = "proficient-ledger-defaults-v1";   // the user's saved "default view" baseline
-function baseDefaults() {
-  // What Reset returns to, and what a fresh browser opens with: the user's own
-  // saved default (via "Set as default") if present, else the shipped DEFAULTS.
-  try {
-    const d = JSON.parse(localStorage.getItem(LS_DEF));
-    if (d) return { ...structuredClone(DEFAULTS), ...d,
-                    widgets: { ...DEFAULTS.widgets, ...(d.widgets || {}) }, sizes: { ...(d.sizes || {}) },
-                    columns: Array.isArray(d.columns) && d.columns.length ? d.columns : DEFAULTS.columns };
-  } catch { /* ignore */ }
-  return structuredClone(DEFAULTS);
-}
 function loadSettings() {
-  const base = baseDefaults();
   try {
-    const s = JSON.parse(localStorage.getItem(LS_KEY));
-    if (!s) return base;
-    return { ...base, ...s,
-             widgets: { ...base.widgets, ...(s.widgets || {}) }, sizes: { ...(base.sizes || {}), ...(s.sizes || {}) },
-             columns: Array.isArray(s.columns) && s.columns.length ? s.columns : base.columns };
-  } catch { return base; }
+    const s = JSON.parse(localStorage.getItem(LS_KEY)) || {};
+    return { theme: ["auto", "light", "dark"].includes(s.theme) ? s.theme : DEFAULTS.theme,
+             density: s.density === "compact" ? "compact" : DEFAULTS.density };
+  } catch { return { ...DEFAULTS }; }
 }
 function saveSettings() { localStorage.setItem(LS_KEY, JSON.stringify(settings)); }
 
-const FONTS = { system: "var(--font-system)", inter: "var(--font-inter)",
-                serif: "var(--font-serif)", mono: "var(--font-mono)" };
-
 function applySettings() {
   const root = document.documentElement;
-  // theme
   const dark = settings.theme === "dark" ||
     (settings.theme === "auto" && matchMedia("(prefers-color-scheme: dark)").matches);
   root.setAttribute("data-theme", dark ? "dark" : "light");
-  // typographic + layout vars
-  root.style.setProperty("--font", FONTS[settings.font] || FONTS.system);
-  root.style.setProperty("--fs", settings.fontSize + "px");
-  root.style.setProperty("--accent", settings.accent);
   root.style.setProperty("--row-pad", settings.density === "compact" ? "5px 10px" : "10px 12px");
-  root.style.setProperty("--row-pad-dense", settings.density === "compact" ? "3px 8px" : "5px 9px");   // the dense grids (WIP, pay run) follow the same setting
-  root.style.setProperty("--maxw", settings.width === "boxed" ? "1180px"
-    : settings.width === "medium" ? "1500px" : "100%");   // medium sits between boxed and full
-  // Overview board: show / hide + width per widget, and the header tools that change them
-  for (const d of WIDGET_DEFS) {
-    const el = document.getElementById(d.id); if (!el) continue;
-    el.hidden = settings.widgets[d.key] === false;
-    const sz = widgetSize(d.key); el.dataset.size = sz;
-    _widgetTools(el, d);
-    el.querySelectorAll(".wtools .wsz").forEach(b => b.classList.toggle("on", b.dataset.sz === sz));
-  }
-  _renderOvHidden();
-}
-function _widgetTools(el, d) {   // S M L Full + hide, on the widget header (built once, state synced by applySettings)
-  const head = el.querySelector(".widget-head"); if (!head || head.querySelector(".wtools")) return;
-  const tools = document.createElement("span"); tools.className = "wtools"; tools.title = "Width of this card on the board";
-  for (const [k, lbl, words] of WIDGET_SIZES) { const b = document.createElement("button"); b.type = "button"; b.className = "wsz"; b.dataset.sz = k; b.textContent = lbl; b.title = `${words} of the board`;
-    b.onclick = (e) => { e.stopPropagation(); settings.sizes = settings.sizes || {}; settings.sizes[d.key] = k; saveSettings(); applySettings(); }; tools.appendChild(b); }
-  const x = document.createElement("button"); x.type = "button"; x.className = "whide"; x.textContent = "×"; x.title = `Hide ${d.label} (bring it back from the strip at the bottom, or Settings)`;
-  x.onclick = (e) => { e.stopPropagation(); settings.widgets[d.key] = false; saveSettings(); applySettings(); if (typeof renderWidgetChooser === "function") renderWidgetChooser(); toast(`${d.label} hidden`); };
-  tools.appendChild(x); head.appendChild(tools);
-}
-function _renderOvHidden() {   // the hidden widgets, one "+ name" chip each, so nothing is ever lost
-  const host = document.getElementById("ovHidden"); if (!host) return; host.innerHTML = "";
-  const hidden = WIDGET_DEFS.filter(d => settings.widgets[d.key] === false);
-  host.hidden = !hidden.length; if (!hidden.length) return;
-  const lab = document.createElement("span"); lab.className = "dim"; lab.textContent = "Hidden:"; host.appendChild(lab);
-  for (const d of hidden) { const b = document.createElement("button"); b.type = "button"; b.className = "btn small subtle"; b.textContent = "+ " + d.label; b.title = "Show this widget again";
-    b.onclick = () => { settings.widgets[d.key] = true; saveSettings(); applySettings(); if (typeof renderWidgetChooser === "function") renderWidgetChooser(); }; host.appendChild(b); }
-}
-function renderWidgetChooser() {   // Settings > Overview widgets: tick + width per widget
-  const host = document.getElementById("widgetChooser"); if (!host) return; host.innerHTML = "";
-  for (const d of WIDGET_DEFS) {
-    const row = document.createElement("label"); row.className = "wc-row";
-    const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = settings.widgets[d.key] !== false;
-    cb.onchange = () => { settings.widgets[d.key] = cb.checked; saveSettings(); applySettings(); };
-    const nm = document.createElement("span"); nm.className = "wc-name"; nm.textContent = d.label;
-    const sel = document.createElement("select"); sel.className = "wc-size";
-    for (const [k, lbl, words] of WIDGET_SIZES) { const o = document.createElement("option"); o.value = k; o.textContent = `${lbl} · ${words}`; sel.appendChild(o); }
-    sel.value = widgetSize(d.key); sel.onchange = () => { settings.sizes = settings.sizes || {}; settings.sizes[d.key] = sel.value; saveSettings(); applySettings(); };
-    row.appendChild(cb); row.appendChild(nm); row.appendChild(sel); host.appendChild(row);
-  }
+  root.style.setProperty("--row-pad-dense", settings.density === "compact" ? "3px 8px" : "5px 9px");   // the dense grids follow the same setting
 }
 
 
@@ -332,29 +222,30 @@ let drawVendorExpanded = new Set();   // (draw|vendor) groups expanded inside a 
 // bring the per-bill "Waiver in hand" column + caption back. It never gated a draw's stage/color.
 const WAIVERS_ENABLED = false;
 
-// ── Tabs (two-level grouped nav) ─────────────────────────────────────────────
-// Parent groups on the top row; the active group's tabs on the second row. The whole
-// structure lives here, so adding/moving a tab is a one-line edit (owner 2026-08-19).
-const NAV_GROUPS = [   // order (owner 2026-08-31): Overview · Customer · Vendor · Financials · Health · IT · Console (Console last)
-  { id: "overview",   label: "Overview",      tabs: ["overview"] },
-  { id: "customers",  label: "Customer",      tabs: ["customers", "invoices", "draws", "payments", "sales"] },
-  { id: "vendors",    label: "Vendor",        tabs: ["vendors", "bills", "accounting", "subloc"] },   // Pay Bills + Liens fold under Bills (owner 2026-09-02)
-  { id: "financials", label: "Financials",    tabs: ["pnl", "wip", "wipreview", "costs"] },
-  { id: "health",     label: "Health",        tabs: ["health"] },
-  { id: "it",         label: "IT",            tabs: ["systems"] },
-  { id: "console",    label: "Console",       tabs: ["console"] },
+// ── Nav: TWO views (owner 2026-09-13: "consolidate to two menus/views - projects, and give me
+// everything") plus a tools group that only the gear reaches. Projects = the WIP as the page;
+// Company = the whole business as Clients / Vendors / Money. Every old tab is an alias that lands on
+// its new page and scrolls to the section it became, so every deep link in the app still works.
+const NAV_GROUPS = [
+  { id: "projects", label: "Projects", tabs: ["projects"] },
+  { id: "company",  label: "Company",  tabs: ["clients", "vendors", "money"] },
+  { id: "tools",    label: "Tools",    tabs: ["wipreview", "console", "systems"], hidden: true },   // from the gear, not the bar
 ];
 const TAB_LABELS = {
-  overview: "Overview", health: "Health", pnl: "Project P&L", wip: "WIP report", wipreview: "WIP Review", costs: "Costs",
-  customers: "Customer Center", invoices: "Invoices", draws: "Funding", payments: "Payments", sales: "Sales Outreach",
-  vendors: "Vendor Center", bills: "Bills", paybills: "Pay Bills", accounting: "Audit", subloc: "Sub LOC", liens: "Liens",
-  systems: "Systems", console: "Console",
+  projects: "Projects", clients: "Clients", vendors: "Vendors", money: "Money",
+  wipreview: "WIP Review", console: "Console", systems: "Systems", paybills: "Pay run", liens: "Lien register",
 };
-const HIDDEN_TAB_GROUP = { paybills: "vendors", liens: "vendors" };   // pages without a sub-tab: opened from Bills
+const HIDDEN_TAB_GROUP = { paybills: "company", liens: "company" };   // pages without a sub-tab (opened from Bills): the Company group stays lit
+// old tab -> the page it lives on now (the section id is the old name, so setTab scrolls to it)
+const TAB_ALIAS = { overview: "projects", home: "projects", wip: "projects", pnl: "projects", draws: "projects",
+                    customers: "clients", invoices: "clients", payments: "clients", sales: "clients",
+                    bills: "vendors", accounting: "vendors", health: "money", subloc: "money", costs: "money", graph: "systems" };
+const KNOWN_TABS = new Set([...NAV_GROUPS.flatMap(g => g.tabs), ...Object.keys(HIDDEN_TAB_GROUP)]);
 const groupOf = t => NAV_GROUPS.find(g => g.tabs.includes(t)) || NAV_GROUPS.find(g => g.id === HIDDEN_TAB_GROUP[t]) || NAV_GROUPS[0];
 function buildGroupBar() {
   const bar = $("#groupbar"); if (!bar) return; bar.innerHTML = "";
   for (const g of NAV_GROUPS) {
+    if (g.hidden) continue;
     const b = document.createElement("button"); b.className = "tab"; b.dataset.group = g.id; b.textContent = g.label;
     b.onclick = () => setTab(g.tabs[0]);   // a group opens its landing (first) tab
     bar.appendChild(b);
@@ -370,8 +261,11 @@ function buildSubTabs(g, active) {
     bar.appendChild(b);
   }
 }
-let activeTab = "overview";
+let activeTab = "projects";
 function setTab(t) {
+  const sec = TAB_ALIAS[t] ? t : null;          // an old tab name: land on its page, then scroll to its section
+  if (sec) t = TAB_ALIAS[t];
+  if (!KNOWN_TABS.has(t)) t = "projects";
   activeTab = t;
   try { localStorage.setItem("proficient-ledger-tab", t); } catch { /* ignore */ }
   { const rv = $("#recordView"); if (rv) rv.hidden = true; }   // leaving a record view when a tab is picked
@@ -379,18 +273,31 @@ function setTab(t) {
   const g = groupOf(t);
   $$("#groupbar .tab").forEach(b => b.classList.toggle("active", b.dataset.group === g.id));
   buildSubTabs(g, t);
-  if (t === "pnl") renderPnl();     // portfolio P&L is computed server-side, lazy-loaded
-  if (t === "health") loadHealth(); // company health is computed server-side, lazy-loaded
-  if (t === "wip") renderWip();
+  { const ch = $("#companyHead"); if (ch) ch.hidden = g.id !== "company"; }
+  if (t === "projects") renderPnl();          // the P&L by job fold (server-computed, cached until the next load)
+  if (t === "clients") { renderCustomers(); renderPayments(); }
+  if (t === "vendors") loadAccounting();
+  if (t === "money") { loadHealth(); renderPnl(); }
   if (t === "wipreview") loadWipReview();
   if (t === "console") renderConsole();
   if (t === "systems") loadSystems();
-  if (t === "accounting") loadAccounting();
-  if (t === "customers") renderCustomers();
-  if (t === "payments") renderPayments();
   if (t === "paybills") renderPayBills();
   if (typeof _csClear === "function") _csClear();   // drop any cell selection when the tab changes
   window.scrollTo(0, 0);
+  if (sec) { const el = document.getElementById("sec-" + sec); if (el) { if (el.classList.contains("fold")) foldSet(el, true); requestAnimationFrame(() => el.scrollIntoView({ behavior: "smooth", block: "start" })); } }
+}
+// ── Folds: a section that opens on its head (Payments, Sales, Audit, Costs by code, Sub LOC, P&L by job).
+// Closed by default, remembered per section, and opened by any deep link that lands on it.
+const FOLD_LS = "proficient-ledger-folds-v1";
+let _folds = (() => { try { return JSON.parse(localStorage.getItem(FOLD_LS)) || {}; } catch { return {}; } })();
+function foldSet(el, open) {
+  el.classList.toggle("closed", !open);
+  const c = el.querySelector(":scope > .fold-head .fold-caret"); if (c) c.textContent = open ? "▾" : "▸";
+  _folds[el.id] = open; try { localStorage.setItem(FOLD_LS, JSON.stringify(_folds)); } catch { /* ignore */ }
+}
+function initFolds() {
+  for (const el of $$(".subpage.fold")) foldSet(el, _folds[el.id] === true);
+  document.addEventListener("click", e => { const h = e.target.closest(".fold-head"); if (!h) return; const el = h.parentElement; foldSet(el, el.classList.contains("closed")); });
 }
 let PNL = null;                       // cached /api/pnl/portfolio result (invalidated on reload)
 let pnlSort = { key: "net", dir: 1 }; // net ascending = worst margin first
@@ -401,11 +308,7 @@ const nameOf = pn => (ALL.find(r => r.project_no === pn) || {}).project_name || 
 // Matches _portfolio_pnl on the server so every "active" count agrees, MFD included.
 const isActive = r => ["", "active"].includes((r.status || "").toLowerCase());
 let meta = {};
-let sortKey = "total_contract_price";
-let sortDir = -1;   // -1 desc, 1 asc
-let activeRule = null;   // key of a RULES entry currently filtering the table
 let activeLien = null;   // lien stage currently filtering the Liens table (null = all)
-let activeDrawStage = null; // draw stage currently filtering the Draws list (null = all)
 let activeRep = null;    // rep whose activity drill is shown (null = auto: the outreach rep)
 
 // ── Load ──────────────────────────────────────────────────────────────────
@@ -471,8 +374,7 @@ async function loadHeavy() {
 // Lazy tabs dispatched by setTab (not render()) that read the /api/data globals. pnl/systems/console
 // fetch their OWN data on open, so they self-refresh; these three read ALL / PAY / BILLS synchronously.
 function _renderLazyTab(t) {
-  const map = { wip: renderWip, payments: renderPayments, paybills: renderPayBills,
-                health: () => loadHealth(true) };
+  const map = { clients: renderPayments, paybills: renderPayBills, money: () => loadHealth(true) };
   if (map[t]) map[t]();
 }
 function showError(msg) {
@@ -692,9 +594,6 @@ async function renderConsole() {
 
 // ── Filters ───────────────────────────────────────────────────────────────
 function buildFilterOptions() {
-  fillSelect("#fDivision", uniq(ALL.map(r => r.division)));
-  fillSelect("#fStatus",   uniq(ALL.map(r => r.status)));
-  fillSelect("#fCategory", uniq(ALL.map(r => r.rp_category)));
   if ($("#salesStage")) fillSelect("#salesStage", uniq((SALES.customers || []).map(c => c.sales_status)));
   if ($("#salesDivision")) fillSelect("#salesDivision", uniq((SALES.customers || []).map(c => c.division)));
 }
@@ -704,55 +603,12 @@ function fillSelect(sel, values) {
   el.innerHTML = ""; el.appendChild(keep);
   for (const v of values) { const o = document.createElement("option"); o.value = v; o.textContent = v; el.appendChild(o); }
 }
-function currentFilters() {
-  return {
-    q: $("#search").value.trim().toLowerCase(),
-    division: $("#fDivision").value,
-    status: $("#fStatus").value,
-    category: $("#fCategory").value,
-    activeOnly: $("#fActive").checked,
-  };
-}
-function filtered() {
-  const f = currentFilters();
-  const rule = activeRule ? RULES.find(x => x.key === activeRule) : null;
-  let rows = ALL.filter(r => {
-    if (rule && !rule.test(r)) return false;
-    if (f.division && r.division !== f.division) return false;
-    if (f.status && r.status !== f.status) return false;
-    if (f.category && r.rp_category !== f.category) return false;
-    if (f.activeOnly && !isActive(r)) return false;
-    if (f.q) {
-      const hay = [r.project_no, r.project_name, r.builder_or_gc, r.client].filter(Boolean).join(" ").toLowerCase();
-      if (!hay.includes(f.q)) return false;
-    }
-    return true;
-  });
-  const col = COLUMNS.find(c => c.key === sortKey) || COLUMNS[0];
-  rows.sort((a, b) => {
-    const av = a[sortKey], bv = b[sortKey];
-    const na = av === null || av === undefined || av === "";
-    const nb = bv === null || bv === undefined || bv === "";
-    if (na && nb) return 0;
-    if (na) return 1;   // nulls ALWAYS last, regardless of sort direction
-    if (nb) return -1;
-    return cmpVal(av, bv, col.type) * sortDir;
-  });
-  return rows;
-}
-function cmpVal(a, b, type) {
-  if (type === "money" || type === "pct") return Number(a) - Number(b);
-  return String(a).localeCompare(String(b));
-}
-
 // ── Render ────────────────────────────────────────────────────────────────
-function visibleColumns() {
-  return COLUMNS.filter(c => c.always || settings.columns.includes(c.key));
-}
 function render() {
-  renderHome();
-  renderKPIs(); renderAttention(); renderCosts(); renderMargins(); renderDivisions();
-  renderProjects(); renderLiens(); renderVendors(); renderFunding(); renderBills(); renderOpenInvoices(); renderSubLoc(); renderSales(); renderCustomers();
+  renderSync();
+  renderKPIs(); renderCosts(); renderDivisions();
+  renderProjects(); renderLiens(); renderVendors(); renderBills(); renderOpenInvoices(); renderSubLoc(); renderSales(); renderCustomers();
+  renderCompanyHead();
 }
 
 function timeAgo(iso) {
@@ -814,12 +670,10 @@ function renderSyncPill() {
   if (stale.length) txt.textContent += ` · ${stale.length} stale`;
   pill.title = feeds.map(([n, w]) => `${n}: ${w ? fmtDate(w, true) + " (" + timeAgo(w) + ")" : "never"}`).join("\n") + (stale.length ? "\n\nStale (over 48 business hours): " + stale.join(", ") : "\n\nEvery feed is within 48 business hours");
 }
-function renderHome() {
+function renderSync() {
   renderSyncPill();
-  // ── data freshness ──
+  // ── data freshness (the gear panel) ──
   const fr = meta.freshness || { ledger: {}, sources: {} };
-  // Every feed _freshness() computes - the three source files and each ledger load - so AR, payments,
-  // CRM, Sub LOC and Health staleness are visible too (owner 2026-09-02: "4 of 8 feeds shown").
   const S = fr.sources || {}, L = fr.ledger || {};
   const items = [
     ["sync-ap (AP bills)", S["sync-ap"]],
@@ -832,7 +686,7 @@ function renderHome() {
     ["Sub LOC computed", L["Sub LOC"]],
     ["Health pulled (QBO)", L["Health (QBO)"]],
   ];
-  const box = $("#homeFresh"); box.innerHTML = "";
+  const box = $("#homeFresh"); if (!box) return; box.innerHTML = "";
   let needSync = 0;
   for (const [label, when] of items) {
     const el = document.createElement("div"); el.className = "fresh";
@@ -846,71 +700,11 @@ function renderHome() {
     el.querySelector(".f-label").textContent = label;
     el.querySelector(".f-when").textContent = when ? fmtDate(when, true) : "never";
     el.querySelector(".f-ago").textContent = when ? timeAgo(when) : "not loaded yet";
-    if (stale) {
-      const b = document.createElement("div"); b.className = "sync-rec"; b.textContent = "⟳ Sync recommended";
-      el.appendChild(b);
-    }
+    if (stale) { const b = document.createElement("div"); b.className = "sync-rec"; b.textContent = "⟳ Sync recommended"; el.appendChild(b); }
     box.appendChild(el);
   }
   const freshNote = $("#homeFreshNote");
-  if (freshNote) freshNote.textContent = needSync
-    ? `- ${needSync} recommended to sync (over 48h, weekends aside)` : "";   // each card says its own as-of; no blanket "all current" (owner 2026-09-01)
-  // ── action items (click → jump to the work) ──
-  const pastDue = (AP.lien_watch || []).filter(r => r.lien_status === "Notice PAST due").length;
-  const dueSoon = (AP.lien_watch || []).filter(r => r.lien_status === "Notice due in ≤7d").length;
-  const readyDraws = (DRAWS.draws || []).filter(d => d.stage === "Ready to turn in").length;
-  const overB = ALL.filter(isOverBudget).length;
-  const underB = ALL.filter(r => num(r.underbillings) > 0).length;
-  const goRule = (key) => { setTab("overview"); activeRule = key; renderAttention(); renderProjects(); $("#btnClearRule").hidden = false; window.scrollTo(0, 0); };
-  const acts = [
-    ["Bills past lien date", pastDue, true, () => setTab("liens"),
-      "Unpaid bills YOU owe (AP) whose vendor/supplier lien-notice deadline has passed - they can lien the project. Pay to clear. This is money OUT, not your AR."],
-    ["Lien date in ≤7d", dueSoon, true, () => setTab("liens"),
-      "Unpaid bills you owe that are within 7 days of the vendor's lien-notice deadline."],
-    ["Draws ready to turn in", readyDraws, false, () => setTab("draws"),
-      "Draws with every bill paid - turn in to unlock the next draw."],
-    ["Over budget", overB, true, () => goRule("overbudget"),
-      "Jobs where cost-to-date has passed the ETC budget."],
-    ["Underbilled (can invoice)", underB, false, () => goRule("underbilled"),
-      "Jobs earning ahead of what's been billed - you could invoice more."],
-  ];
-  const ar = $("#homeActions"); ar.innerHTML = "";
-  for (const [label, n, warn, go, tip] of acts) {
-    const el = document.createElement("div"); el.className = "action" + (warn && n ? " warn" : "") + (n ? "" : " none");
-    el.innerHTML = `<span class="a-n"></span><span class="a-lab"></span>`;
-    el.querySelector(".a-n").textContent = n;
-    el.querySelector(".a-lab").textContent = label;
-    if (tip) el.title = tip;
-    if (n) el.onclick = go;
-    ar.appendChild(el);
-  }
-  // ── working on (active projects) - only if the section exists. It was merged into the
-  //    Overview's Projects section (which has search + filters), so on the merged tab this
-  //    block simply no-ops. ──
-  const sel = $("#homeDivision");
-  if (!sel || !$("#homeWorkingTable")) return;
-  if (sel && sel.options.length <= 1) for (const d of uniq(ALL.map(r => r.division))) { const o = document.createElement("option"); o.value = d; o.textContent = d; sel.appendChild(o); }
-  const div = sel ? sel.value : "";
-  const active = ALL.filter(r => isActive(r) && (!div || r.division === div))
-    .sort((a, b) => num(b.total_contract_price) - num(a.total_contract_price));
-  $("#homeWorkingNote").textContent = `(${active.length} active)`;
-  const cols = [["Project", "left"], ["Division", "left"], ["Name", "left"], ["Contract", "right"], ["% Complete", "right"], ["Costs", "right"]];
-  const thead = $("#homeWorkingTable thead"), tbody = $("#homeWorkingTable tbody");
-  thead.innerHTML = ""; tbody.innerHTML = "";
-  const htr = document.createElement("tr");
-  for (const [c, al] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
-  thead.appendChild(htr);
-  for (const r of active.slice(0, 60)) {
-    const tr = document.createElement("tr");
-    tr.onclick = (e) => { if (!e.target.closest(".cell")) openDetail(r); };
-    tr.appendChild(leftText(r.project_no));
-    tr.appendChild(leftText(r.division || ""));
-    tr.appendChild(leftText(r.project_name || ""));
-    const cc = document.createElement("td"); cc.appendChild(cellFor({ key: "total_contract_price", type: "money" }, r.total_contract_price)); tr.appendChild(cc);
-    const pc = document.createElement("td"); pc.appendChild(cellFor({ key: "percent_complete", type: "pct" }, r.percent_complete)); tr.appendChild(pc);
-    const co = document.createElement("td"); co.appendChild(cellFor({ key: "costs_to_date", type: "money" }, r.costs_to_date)); tr.appendChild(co);
-    tbody.appendChild(tr);
-  }
+  if (freshNote) freshNote.textContent = needSync ? `- ${needSync} recommended to sync (over 48h, weekends aside)` : "";
 }
 
 const DRAW_STAGE_CLASS = {
@@ -1008,31 +802,6 @@ const DRAW_STAGE_SHORT = {
 // bills), so it carries its own pass; the rest key one value per draw.
 const DIV_LABEL = { MFD: "Multi Family", CP: "Commercial", RP: "Residential" };
 function _drawDiv(d) { const m = String(d.project_no || "").toUpperCase().match(/^(MFD|CP|RP)/); return m ? m[1] : ""; }
-const drawMSel = {};
-let _drawMSelSig = null;
-const DRAW_MSEL = [
-  { id: "dfClient", all: "All clients",   get: d => d.customer || "",   search: true, lbl: v => v || "(no client)" },
-  { id: "dfProj",   all: "All projects",  get: d => d.project_no || "", search: true, lbl: v => v || "(none)" },
-  { id: "dfVendor", all: "All vendors",   get: v => v, vendors: true,   search: true, lbl: v => v || "(none)" },
-  { id: "dfInv",    all: "All invoices",  get: d => d.invoice_no || "", search: true, lbl: v => v || "(none)" },
-  { id: "dfDiv",    all: "All divisions", get: d => _drawDiv(d),                      lbl: v => DIV_LABEL[v] || v || "(none)" },
-];
-function buildDrawFilters() {
-  const draws = DRAWS.draws || [];
-  const sig = String(draws.length);
-  if (sig === _drawMSelSig && $("#dfClientMenu") && $("#dfClientMenu").querySelector(".msel-opt")) return;
-  _drawMSelSig = sig;
-  const vendors = [...new Set(draws.flatMap(d => (d.bills || []).map(b => b.vendor || "").filter(Boolean)))];
-  for (const cfg of DRAW_MSEL) buildMSel(cfg, cfg.vendors ? vendors : draws, drawMSel, renderDraws);
-}
-function drawMselPasses(d) {
-  for (const cfg of DRAW_MSEL) {
-    const s = drawMSel[cfg.id]; if (!s || !s.size) continue;
-    if (cfg.vendors) { if (!(d.bills || []).some(b => s.has(b.vendor || ""))) return false; }
-    else if (!s.has(cfg.get(d))) return false;
-  }
-  return true;
-}
 // The draw period lives in the matched-invoice text (the ledger's draw_period field is empty -
 // it's a QBO PrivateNote value that isn't loaded). Pull a short label: "August 2026", "Draw #4",
 // or the period end date; the full "(Period: start - end)" range goes in the tooltip.
@@ -1084,20 +853,9 @@ function _buildDrawClientMap(draws) {
 function _drawCustomer(d) { return _drawClientByProj[d.project_no || ""] || "(no client)"; }
 // When a filter is active, the tab's description says WHAT it's filtering; with no filter it stays the
 // generic blurb (owner 2026-08-28: "change the desc to show what it's filtering ... All = generic").
-const _DRAW_FLABEL = { dfClient: "client", dfProj: "project", dfVendor: "vendor", dfInv: "invoice", dfDiv: "division" };
-function drawFilterSummary(shownCount) {
-  const parts = [];
-  for (const cfg of DRAW_MSEL) {
-    const s = drawMSel[cfg.id];    // ≤2: name the values; more: "3 vendors" (the values, not the field label)
-    if (s && s.size) parts.push(s.size <= 2 ? [...s].map(cfg.lbl).join(", ") : `${s.size} ${_DRAW_FLABEL[cfg.id]}s`);
-  }
-  if (activeDrawStage) parts.push(DRAW_STAGE_SHORT[activeDrawStage] || activeDrawStage);
-  if (!parts.length) return "";
-  return `${shownCount} draw${shownCount === 1 ? "" : "s"} · ${parts.join(" · ")}`;
-}
 // Swap a tab's `.hint` between its generic blurb and a live "Showing: ..." filter summary.
 function _setHintFilter(tab, summary) {
-  const h = document.querySelector(`.tab-page[data-tab="${tab}"] .hint`); if (!h) return;
+  const h = document.querySelector(`.tab-page[data-tab="${tab}"] .hint, [data-sec="${tab}"] .hint`); if (!h) return;
   if (!h.dataset.generic) h.dataset.generic = h.innerHTML;   // capture the generic blurb once
   if (summary) { h.innerHTML = `<b>Showing:</b> ${_ge(summary)} <span class="hint-clear-note">- clear the filters for the full list</span>`; h.classList.add("hint-filtered"); }
   else { h.innerHTML = h.dataset.generic; h.classList.remove("hint-filtered"); }
@@ -1107,9 +865,8 @@ function _setHintFilter(tab, summary) {
 // the next draw the GC owes, what blocks it (unpaid bills on EARLIER draws - the funding chain),
 // and the latest draw's vendors paid. Click a row -> the project page, where the work happens.
 const _isPaidBill = b => !!b.pay_date || (b.pay_status || "").toLowerCase().startsWith("bill paid") || (num(b.open) <= 0.005 && !!b.pay_status);
-let fundingStage = null;
 function _fundingRows() {
-  const draws = (DRAWS.draws || []).filter(d => drawMselPasses(d) && (!drawDate || drawDate.passes(d.ar_date || d.recency)));
+  const draws = DRAWS.draws || [];
   const byP = new Map();
   for (const d of draws) { const k = d.project_no || "(none)"; if (!byP.has(k)) byP.set(k, []); byP.get(k).push(d); }
   const rows = [];
@@ -1133,259 +890,7 @@ function _fundingRows() {
   rows.sort((a, b) => b.gcOwes - a.gcOwes || a.pn.localeCompare(b.pn, undefined, { numeric: true }));
   return rows;
 }
-function renderFunding() {
-  buildDrawFilters();
-  _buildDrawClientMap(DRAWS.draws || []);   // the project -> GC map the old Draws view built (clean GC name wins)
-  if (!drawDate) drawDate = dateFilter("dfDate", () => (DRAWS.draws || []).map(d => d.ar_date || d.recency), renderFunding);
-  drawDate.build();
-  const all = _fundingRows();
-  const shown = fundingStage ? all.filter(r => r.status === fundingStage) : all;
-  $("#drawsNote").textContent = (DRAWS.draws || []).length ? `(${shown.length} of ${all.length} projects · GC owes ${money(shown.reduce((s, r) => s + r.gcOwes, 0))} · ${srcText("Bill Tracker", syncedAt("sync-ap"), "loaded")} · ${srcText("QuickBooks invoices", loadedAt("AR (invoices)"), "loaded")})` : "(no draw data - run load_bill_tracker.py)";
-  _setHintFilter("draws", drawFilterSummary(shown.length));
-  const stats = $("#drawsStats"); stats.innerHTML = "";
-  for (const [st, sub] of [["Ready to collect", "nothing blocks the next draw"], ["Blocked - pay vendors first", "earlier-draw bills unpaid"], ["Settled", "GC has paid every draw"], ["No draw yet", "bills in, nothing invoiced"]]) {
-    const n = all.filter(r => r.status === st).length, amt = all.filter(r => r.status === st).reduce((s, r) => s + r.gcOwes, 0);
-    const k = document.createElement("div"); k.className = "kpi kpi-click" + (fundingStage === st ? " kpi-fc" : "") + (st.startsWith("Blocked") && n ? " pnl-kpi-neg" : "");
-    k.innerHTML = `<div class="k-label"></div><div class="k-value"></div><div class="k-sub"></div>`;
-    k.querySelector(".k-label").textContent = st; k.querySelector(".k-value").textContent = String(n); k.querySelector(".k-sub").textContent = amt ? `${money(amt)} owed · ${sub}` : sub;
-    k.appendChild(srcChip(srcText("Bill Tracker", syncedAt("sync-ap"), "loaded"), "Stage from the Bill Tracker's bill-to-invoice match: the next draw the GC still owes is unlocked by paying the unpaid bills on earlier draws; GC paid from the QuickBooks invoice balance"));
-    k.onclick = () => { fundingStage = fundingStage === st ? null : st; renderFunding(); }; stats.appendChild(k);
-  }
-  { const b = $("#btnClearDrawStage"); if (b) { b.hidden = !fundingStage; b.onclick = () => { fundingStage = null; renderFunding(); }; } }
-  const host = $("#drawList"); host.innerHTML = "";
-  if (!shown.length) { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = all.length ? "No projects match." : "No draw data yet."; host.appendChild(p); return; }
-  const scroll = document.createElement("div"); scroll.className = "table-scroll";
-  const table = document.createElement("table"); table.className = "grid clickable"; const thead = document.createElement("thead"), tbody = document.createElement("tbody");
-  const htr = document.createElement("tr");
-  for (const [c, al] of [["Project", "left"], ["Client", "left"], ["Draws", "right"], ["GC owes", "right"], ["Next draw", "left"], ["Blocked by", "left"], ["Latest draw vendors", "left"], ["Status", "left"]]) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
-  thead.appendChild(htr);
-  for (const r of shown) {
-    const tr = document.createElement("tr"); tr.style.cursor = "pointer"; tr.title = "Open the project page";
-    tr.onclick = (e) => { if (e.target.closest("a") || e.target.closest(".cell")) return; openProjectPage(r.pn); };
-    const pc = leftText(r.pn); const nm = nameOf(r.pn); if (nm) { const s = document.createElement("span"); s.className = "g-sub"; s.textContent = " · " + nm; pc.appendChild(s); } tr.appendChild(pc);
-    tr.appendChild(leftText(r.client || "–"));
-    tr.appendChild(rightText(String(r.n)));
-    const oc = document.createElement("td"); oc.className = "right ip-amt"; oc.textContent = r.gcOwes > 0.005 ? money(r.gcOwes) : "–"; if (r.gcOwes > 0.005) oc.style.color = "var(--neg)"; tr.appendChild(oc);
-    tr.appendChild(leftText(r.next ? `${r.next.invoice_no || ""} · ${money(r.next.ar_open)}${r.next.ar_date ? " · " + fmtDateShort(r.next.ar_date) : ""}` : (r.n ? "all paid" : "–")));
-    const bc = document.createElement("td"); bc.className = "left"; if (r.blockers) { bc.textContent = `${r.blockers} bill${r.blockers === 1 ? "" : "s"} · ${money(r.blockAmt)}`; bc.style.color = "var(--neg)"; bc.style.fontWeight = "600"; } else bc.textContent = r.next ? "nothing" : "–"; tr.appendChild(bc);
-    const vc = document.createElement("td"); vc.className = "left"; const sp = document.createElement("span"); sp.className = "ip-paid " + (r.gateN && r.paidCt === r.gateN ? "ok" : "due"); sp.textContent = r.gateN ? `${r.paidCt}/${r.gateN} paid${r.unpaidLatest > 0.005 ? " · " + money(r.unpaidLatest) + " to pay" : ""}` : "–"; vc.appendChild(sp); tr.appendChild(vc);
-    const sc = leftText(r.status); if (r.status.startsWith("Blocked")) sc.style.color = "var(--neg)"; else if (r.status === "Ready to collect") sc.style.color = "var(--pos)"; tr.appendChild(sc);
-    tbody.appendChild(tr);
-  }
-  table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table); host.appendChild(scroll);
-}
-function renderDraws() {
-  buildDrawFilters();                              // (re)build the multi-selects when the draw set changes
-  if (!drawDate) drawDate = dateFilter("dfDate", () => (DRAWS.draws || []).map(d => d.ar_date || d.recency), renderDraws);
-  drawDate.build();
-  const all = (DRAWS.draws || []).filter(d => drawMselPasses(d) && drawDate.passes(d.ar_date || d.recency));   // Client · Project · Vendor · Invoice · Division · Date (AND)
-  const shown = activeDrawStage ? all.filter(d => d.stage === activeDrawStage) : all;
-  _setHintFilter("draws", drawFilterSummary(shown.length));   // count + what's filtered (generic when nothing selected)
-  $("#drawsNote").textContent = (DRAWS.draws || []).length
-    ? `(${shown.length} shown of ${DRAWS.total} · most recent first)`
-    : "(no draw data - run load_bill_tracker.py)";
-  // Clickable stage tiles → filter the draw list. Counts come from `all` (all stages);
-  // subs spell out the money direction (GC pays us in → we pay vendors out → waivers).
-  const stats = [
-    ["All paid", "All paid", "GC paid you + vendors paid"],
-    ["Collect from GC", "Ready to turn in", "vendors paid, GC still owes"],
-    ["Pay vendors", "Fund in - pay vendors", "GC funded, vendors not paid yet"],   // pump bills don't gate this
-    ["Awaiting GC", "Awaiting GC funding", "not funded by the GC yet"],
-    ["No draw yet", "No draw yet", "bills in, no draw invoice yet"],   // e.g. a job still 'Awaiting Invoice' in the tracker
-  ];
-  const sr = $("#drawsStats"); sr.innerHTML = "";
-  for (const [label, stageKey, sub] of stats) {
-    const n = all.filter(d => d.stage === stageKey).length;
-    const el = document.createElement("div");
-    el.className = "kpi kpi-click" + (activeDrawStage === stageKey ? " active" : "") + (n ? "" : " none");
-    el.innerHTML = `<div class="k-label"></div><div class="k-value"></div><div class="k-sub"></div>`;
-    el.querySelector(".k-label").textContent = label;
-    el.querySelector(".k-value").textContent = String(n);
-    el.querySelector(".k-sub").textContent = sub;
-    if (n) el.onclick = () => { activeDrawStage = activeDrawStage === stageKey ? null : stageKey; renderFunding(); };
-    sr.appendChild(el);
-  }
-  { const cb = $("#btnClearDrawStage"); if (cb) cb.hidden = !activeDrawStage; }
-  // One row per draw (table). Click a row → its bills open underneath. Green = done =
-  // every bill PAID (waivers are tracked per bill but don't gate the color). "Billed
-  // (in)" = the GC pays you; "Paid out" = you pay vendors - money-in vs money-out.
-  const box = $("#drawList"); box.innerHTML = "";
-  if (!shown.length) { box.innerHTML = '<p class="hint" style="padding:14px 18px">No draws match.</p>'; return; }
-  // Grouped by CUSTOMER (GC), then by project # within each; newest draw first within a project.
-  _buildDrawClientMap(DRAWS.draws || []);   // resolve each project to one canonical GC (stable across filters)
-  const grouped = [...shown].sort((a, b) =>
-    _drawCustomer(a).localeCompare(_drawCustomer(b)) ||
-    (a.project_no || "").localeCompare(b.project_no || "") ||
-    String(b.ar_date || b.recency || "").localeCompare(String(a.ar_date || a.recency || "")));
-  const scroll = document.createElement("div"); scroll.className = "table-scroll";
-  const table = document.createElement("table"); table.className = "grid draws-table";
-  const thead = document.createElement("thead"), tbody = document.createElement("tbody");
-  const cols = [["", "left"], ["Draw memo", "left"], ["Period", "left"], ["Billed (in)", "right"], ["Status", "left"],
-                ["Invoice #", "left"], ["Date", "left"], ["Paid out", "right"], ["Net", "right"], ["Stage", "left"]];
-  const htr = document.createElement("tr");
-  for (const [c, al] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
-  thead.appendChild(htr);
-  let curCust = null, curProj = null;
-  for (const d of grouped) {
-    const cust = _drawCustomer(d);
-    if (cust !== curCust) {                               // customer (GC) group header
-      curCust = cust; curProj = null;
-      const cg = grouped.filter(x => _drawCustomer(x) === cust);
-      const cIn = cg.reduce((t, x) => t + (x.billed || 0), 0);
-      const cOut = cg.reduce((t, x) => t + (x.total_gate != null ? x.total_gate : (x.total || 0)), 0);
-      const nProj = new Set(cg.map(x => x.project_no)).size;
-      const ctr = document.createElement("tr"); ctr.className = "draw-cust";
-      const ctd = document.createElement("td"); ctd.colSpan = cols.length;
-      const cs = document.createElement("span"); cs.className = "g-cust"; cs.textContent = cust;
-      const csub = document.createElement("span"); csub.className = "g-sub";
-      csub.textContent = ` · ${nProj} project${nProj > 1 ? "s" : ""} · ${cg.length} draw${cg.length > 1 ? "s" : ""} · ${money(cIn)} in / ${money(cOut)} out / ${money(cIn - cOut)} net`;
-      ctd.appendChild(cs); ctd.appendChild(csub); ctr.appendChild(ctd); tbody.appendChild(ctr);
-    }
-    if (d.project_no !== curProj) {                       // project group header (within the customer)
-      curProj = d.project_no;
-      const g = grouped.filter(x => x.project_no === curProj && _drawCustomer(x) === cust);
-      const gIn = g.reduce((t, x) => t + (x.billed || 0), 0);
-      const gOut = g.reduce((t, x) => t + (x.total_gate != null ? x.total_gate : (x.total || 0)), 0);
-      const gtr = document.createElement("tr"); gtr.className = "draw-group";
-      const gtd = document.createElement("td"); gtd.colSpan = cols.length;
-      const sp = document.createElement("span"); sp.className = "g-proj"; sp.textContent = curProj || "-";
-      const sub = document.createElement("span"); sub.className = "g-sub";
-      const nm = nameOf(curProj);
-      sub.textContent = `${nm ? " · " + nm : ""} · ${g.length} draw${g.length > 1 ? "s" : ""} · ${money(gIn)} in / ${money(gOut)} out / ${money(gIn - gOut)} net`;
-      gtr.style.cursor = "pointer"; gtr.title = "Open the project page"; gtr.onclick = () => openProjectPage(curProj);
-      gtd.appendChild(sp); gtd.appendChild(sub); gtr.appendChild(gtd); tbody.appendChild(gtr);
-    }
-    const done = d.stage === "All paid";   // green row only when fully settled (GC paid + vendors paid)
-    const open = drawsExpanded.has(d.matched_invoice);
-    const tr = document.createElement("tr"); tr.className = "draw-row" + (done ? " done" : "");
-    tr.style.cursor = "pointer";
-    tr.onclick = (e) => { if (e.target.closest(".cell") || e.target.closest("a")) return;
-      open ? drawsExpanded.delete(d.matched_invoice) : drawsExpanded.add(d.matched_invoice); renderFunding(); };
-    const cc = document.createElement("td"); cc.className = "left draw-caret"; cc.textContent = open ? "▾" : "▸"; tr.appendChild(cc);
-    const memo = (d.label || "").replace(/^\s*\S+\s*-\s*/, "").replace(/^\s*(MFD|CP|RP)\d+(-FTW)?\s*-\s*/i, "").trim() || d.label || "-";
-    tr.appendChild(leftText(memo));
-    const per = drawPeriod(d.matched_invoice); const perCell = leftText(per || "-");
-    if (per) perCell.title = drawPeriodFull(d.matched_invoice) || per; tr.appendChild(perCell);
-    const bt = document.createElement("td");
-    if (d.billed != null) { const mc = moneyCell(d.billed); mc.classList.add("draw-in"); bt.appendChild(mc); }
-    else bt.appendChild(document.createTextNode("-"));
-    tr.appendChild(bt);
-    // AR pay status - its own column (green Paid / amber still-owed), not crammed onto the amount
-    const stt = document.createElement("td"); stt.className = "left";
-    if (d.ar_status) { const s = document.createElement("span"); s.className = d.ar_status === "Paid" ? "ar-paid" : "ar-open"; s.textContent = d.ar_status; stt.appendChild(s); }
-    else stt.appendChild(document.createTextNode("-"));
-    tr.appendChild(stt);
-    // Invoice #: click the number for the memo + details in the sidebar (owner: "same info in
-    // the sidebar for draws"), the ↗ for QuickBooks. Row click still expands the vendor bills.
-    tr.appendChild(invNoCell(d.inv || (d.invoice_no ? { doc_number: d.invoice_no, qbo_txn_id: d.ar_qbo_id } : null)));
-    tr.appendChild(leftText(fmtDate(d.ar_date || d.recency)));
-    // Pay-out excludes MCP/CORE concrete pumping (we don't pay them) - the gating total/count.
-    const payTotal = d.total_gate != null ? d.total_gate : d.total;
-    const ot = document.createElement("td"); const mo = moneyCell(payTotal); mo.classList.add("draw-out"); ot.appendChild(mo);
-    const pc = document.createElement("span"); pc.className = "paidcnt"; pc.textContent = ` ${d.paid_gate != null ? d.paid_gate : d.paid}/${d.n_gate != null ? d.n_gate : d.n}`; ot.appendChild(pc); tr.appendChild(ot);
-    // Net = billed in minus the vendor bills we actually pay (excl. pump; not what's been paid) - the margin
-    const nt = document.createElement("td");
-    if (d.billed != null) { const net = (d.billed || 0) - payTotal; const nc = moneyCell(net); if (net < 0) nc.style.color = "var(--neg)"; nc.title = "billed in minus vendor bills we pay (excl. pump)"; nt.appendChild(nc); }
-    else nt.appendChild(document.createTextNode("-"));
-    tr.appendChild(nt);
-    const st = document.createElement("td"); st.className = "left";
-    const pill = document.createElement("span"); pill.className = "lien " + (DRAW_STAGE_CLASS[d.stage] || "info"); pill.textContent = DRAW_STAGE_SHORT[d.stage] || DRAW_STAGE_LABEL[d.stage] || d.stage; pill.title = DRAW_STAGE_LABEL[d.stage] || d.stage; st.appendChild(pill);
-    if (d.action && d.action.url) { const a = document.createElement("a"); a.className = "notion-link"; a.href = d.action.url; a.target = "_blank"; a.rel = "noopener"; a.textContent = " 📄"; a.title = "Notion · " + (d.action.status || "Open"); st.appendChild(a); }
-    tr.appendChild(st);
-    tbody.appendChild(tr);
-    if (open) {
-      const br = document.createElement("tr"); br.className = "draw-bills-row";
-      const btd = document.createElement("td"); btd.colSpan = cols.length; btd.appendChild(buildBillsTable(d));
-      br.appendChild(btd); tbody.appendChild(br);
-    }
-  }
-  table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table); box.appendChild(scroll);
-}
 
-function buildBillsTable(d) {
-  const wrap = document.createElement("div"); wrap.className = "bills-sub";
-  const payTotal = d.total_gate != null ? d.total_gate : d.total;   // excl MCP/CORE pumping (not paid by us)
-  const subsT = d.subs_total || 0;
-  const totalOut = payTotal + subsT;               // materials + subs (labor) = the full picture
-  const net = (d.billed || 0) - totalOut;
-  // Report header: a summary line + a Copy button (paste the draw + its subs to people). Inline - no
-  // side panel (owner 2026-08-28); built from the draw data already loaded, so no extra fetch / bloat.
-  const rh = document.createElement("div"); rh.className = "draw-rep-head";
-  const sm = document.createElement("div"); sm.className = "draw-rep-sum";
-  sm.innerHTML = `<b>${_ge(_drawCustomer(d))}</b> · ${_ge(d.project_no || "")}`
-    + (drawPeriod(d.matched_invoice) ? " · " + _ge(drawPeriod(d.matched_invoice)) : "")
-    + ` &nbsp;·&nbsp; Billed in <b>${_ge(d.billed != null ? money(d.billed) : "-")}</b> · Materials <b>${_ge(money(payTotal))}</b>`
-    + (subsT ? ` · Subs <b>${_ge(money(subsT))}</b> · Total out <b>${_ge(money(totalOut))}</b>` : "")
-    + ` · Net <b>${_ge(d.billed != null ? money(net) : "-")}</b> · ${_ge(DRAW_STAGE_SHORT[d.stage] || d.stage || "")}`;
-  if (d.project_no) { const pp = document.createElement("button"); pp.type = "button"; pp.className = "btn small primary"; pp.textContent = "Project page"; pp.style.marginLeft = "8px"; pp.onclick = (e) => { e.stopPropagation(); openProjectPage(d.project_no); }; sm.appendChild(pp); }
-  const cpBtn = document.createElement("button"); cpBtn.type = "button"; cpBtn.className = "btn small"; cpBtn.textContent = "Copy report";
-  cpBtn.title = "Copy this draw + its subs as a table to paste to people";
-  cpBtn.onclick = (e) => { e.stopPropagation(); copyDrawReport(d, cpBtn); };
-  rh.appendChild(sm); rh.appendChild(cpBtn); wrap.appendChild(rh);
-  const cap = document.createElement("div"); cap.className = "bills-cap";
-  cap.textContent = `${d.n} bills · ${money(payTotal)} to pay · ${(d.paid_gate != null ? d.paid_gate : d.paid)}/${(d.n_gate != null ? d.n_gate : d.n)} paid`
-    + (d.total - payTotal > 0.5 ? ` · ${money(d.total - payTotal)} pump (not paid by us)` : "")
-    + (WAIVERS_ENABLED ? ` · ${d.waivers}/${d.n} waivers in` : "");
-  wrap.appendChild(cap);
-  const scroll = document.createElement("div"); scroll.className = "table-scroll";
-  const table = document.createElement("table"); table.className = "grid";
-  const thead = document.createElement("thead"), tbody = document.createElement("tbody");
-  const cols = [["Vendor", "left"], ["Bill #", "left"], ["Bill date", "left"], ["Amount", "right"], ["Paid", "left"], ["GC funded", "left"]];
-  if (WAIVERS_ENABLED) cols.push(["Waiver in hand", "left"]);
-  const htr = document.createElement("tr");
-  for (const [c, al] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
-  thead.appendChild(htr);
-  // Sub-group by vendor: each vendor is a header row with its total (biggest first), collapsed;
-  // open it to see that vendor's bills underneath (owner 2026-08-27: "totals first, open for bills").
-  const byVendor = new Map();
-  for (const b of d.bills) { const v = b.vendor || "-"; if (!byVendor.has(v)) byVendor.set(v, []); byVendor.get(v).push(b); }
-  const vendors = [...byVendor.keys()].sort((a, b) =>
-    byVendor.get(b).reduce((t, x) => t + (x.amount || 0), 0) - byVendor.get(a).reduce((t, x) => t + (x.amount || 0), 0));
-  for (const v of vendors) {
-    const bills = byVendor.get(v);
-    const vtot = bills.reduce((t, x) => t + (x.amount || 0), 0);
-    const vpaid = bills.filter(x => x.pay_date).length;
-    const vkey = d.matched_invoice + "|" + v;
-    const vopen = drawVendorExpanded.has(vkey);
-    const vtr = document.createElement("tr"); vtr.className = "vgroup"; vtr.style.cursor = "pointer";
-    vtr.onclick = () => { vopen ? drawVendorExpanded.delete(vkey) : drawVendorExpanded.add(vkey); renderFunding(); };
-    const vtd = document.createElement("td"); vtd.colSpan = cols.length; vtd.className = "left";
-    const car = document.createElement("span"); car.className = "vg-caret"; car.textContent = vopen ? "▾ " : "▸ ";
-    const nm = document.createElement("span"); nm.className = "vg-name"; nm.textContent = v;
-    const mt = document.createElement("span"); mt.className = "vg-meta";
-    mt.textContent = ` · ${bills.length} bill${bills.length > 1 ? "s" : ""} · ${money(vtot)} · ${vpaid}/${bills.length} paid`;
-    vtd.appendChild(car); vtd.appendChild(nm); vtd.appendChild(mt);
-    // MCP/CORE concrete pumping: shown for completeness but NOT paid by us - excluded from the
-    // "Pay vendors" stage AND from the pay-out total/count/net (owner 2026-08-28).
-    if (bills.length && bills[0].gates === false) {
-      const tag = document.createElement("span"); tag.className = "vg-tag"; tag.textContent = "not paid by us";
-      vtd.appendChild(tag);
-    }
-    vtr.appendChild(vtd); tbody.appendChild(vtr);
-    if (!vopen) continue;
-    for (const b of bills) {
-      const tr = document.createElement("tr"); tr.className = "vbill";
-      tr.appendChild(leftText(""));                         // vendor cell blank - grouped in the header above
-      tr.appendChild(qboLinkCell(b.bill_ref, qboBillHref(b.qbo_link), "Open this bill in QuickBooks")); if (b.att) { const _ab = attBtn("Bill", b.bill_id || (qboBillHref(b.qbo_link) || "").replace(/.*txnId=(\d+).*/, "$1"), b.att, `${b.vendor || ""} · bill ${b.bill_ref || ""}`); _ab.style.marginLeft = "6px"; tr.lastElementChild.appendChild(_ab); }
-      tr.appendChild(leftText(fmtDate(b.bill_date)));
-      const av = document.createElement("td"); av.appendChild(moneyCell(b.amount)); tr.appendChild(av);
-      tr.appendChild(leftText(b.pay_date ? "✓ " + fmtDate(b.pay_date) : "-"));
-      tr.appendChild(leftText(b.gc_paid ? "✓ " + fmtDate(b.gc_paid) : "-"));
-      if (WAIVERS_ENABLED) {
-        const wtd = document.createElement("td"); wtd.className = "left";
-        const lab = document.createElement("label"); lab.className = "chk";
-        const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = !!b.waiver;
-        cb.onchange = () => setWaiver(d, b, cb);
-        lab.appendChild(cb); lab.appendChild(document.createTextNode(b.waiver ? " in hand" : " mark"));
-        wtd.appendChild(lab); tr.appendChild(wtd);
-      }
-      tbody.appendChild(tr);
-    }
-  }
-  table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table); wrap.appendChild(scroll);
-  if ((d.subs || []).length) wrap.appendChild(_drawSubsTable(d));   // the labor side (subs), so it's the full picture
-  return wrap;
-}
 // Subs (labor) on a draw - is_sub cost lines matched by project + draw period, grouped by sub. Not in
 // ap_bill_line (the Bill Tracker excludes subs from the display sheets), so this is the labor side.
 function _drawSubsTable(d) {
@@ -1459,69 +964,13 @@ async function setWaiver(draw, bill, cb) {
     bill.waiver = received;                       // update local state
     draw.waivers = draw.bills.filter(b => b.waiver).length;   // caption only - doesn't gate the stage
     toast(received ? "Waiver marked in hand" : "Waiver cleared");
-    renderFunding();
+    renderProjects();
   } catch (e) {
     cb.checked = !received;                        // revert on failure
     toast("Could not save: " + e.message);
   }
 }
 
-function renderMargins() {
-  // portfolio, over jobs that actually have QBO costs loaded
-  const loaded = ALL.filter(r => r.costs_loaded != null);
-  const cost = loaded.reduce((t, r) => t + num(r.costs_loaded), 0);
-  const billed = loaded.reduce((t, r) => t + num(r.billed_to_date), 0);
-  const subs = loaded.reduce((t, r) => t + num(r.sub_costs), 0);
-  const margin = billed - cost;
-  const overBudget = loaded.filter(isOverBudget).length;
-  const cSum = loaded.reduce((t, r) => t + num(r.total_contract_price), 0);
-  const eSum = loaded.reduce((t, r) => t + num(r.estimated_total_costs), 0);
-  const pct1 = (n, d) => d ? (n / d * 100).toFixed(1) + "%" : "-";
-  $("#marginNote").textContent = loaded.length ? `(${loaded.length} jobs with QBO costs)` : "(no cost data - run load_costs.py)";
-  const stats = [
-    ["Planned markup", pct1(cSum - eSum, eSum), "contract vs ETC (on cost)"],
-    ["Planned margin", pct1(cSum - eSum, cSum), "GP ÷ contract"],
-    ["Actual markup", pct1(billed - cost, cost), "billed ÷ QBO cost"],
-    ["Margin to date", money(margin), "billed − QBO cost"],
-    ["Subs share", cost ? (subs / cost * 100).toFixed(0) + "%" : "-", "of QBO cost"],
-    ["Over budget", String(overBudget), "cost > ETC (flatwork soft <$15k)"],
-  ];
-  const sr = $("#marginStats"); sr.innerHTML = "";
-  const qboSrc = srcText("QuickBooks costs", loadedAt("Costs (QBO)"), "loaded"), wipSrc2 = srcText("WIP master", meta.report_date, "report");
-  for (const [label, value, sub] of stats) {
-    const el = document.createElement("div"); el.className = "kpi";
-    el.innerHTML = `<div class="k-label"></div><div class="k-value"></div><div class="k-sub"></div>`;
-    el.querySelector(".k-label").textContent = label;
-    el.querySelector(".k-value").textContent = value;
-    el.querySelector(".k-sub").textContent = sub;
-    el.appendChild(srcChip(/planned/i.test(label) ? wipSrc2 : qboSrc, sub + (/planned/i.test(label) ? " - contract and ETC from the WIP master" : " - QuickBooks cost lines summed by job, billed from the WIP master")));
-    sr.appendChild(el);
-  }
-  // OVER-BUDGET jobs - cost past the full ETC, with the flatwork-budget tolerance
-  // applied (small -FTW jobs excluded; slab / CP / MFD / big flatwork kept). Worst first.
-  const watch = loaded
-    .filter(isOverBudget)
-    .sort((a, b) => b.budget_burn - a.budget_burn).slice(0, 10);
-  const cols = [["Project", "left"], ["Name", "left"], ["Burn", "right"], ["QBO Cost", "right"], ["ETC", "right"]];
-  const thead = $("#marginTable thead"), tbody = $("#marginTable tbody");
-  thead.innerHTML = ""; tbody.innerHTML = "";
-  const htr = document.createElement("tr");
-  for (const [c, al] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
-  thead.appendChild(htr);
-  for (const r of watch) {
-    const tr = document.createElement("tr");
-    tr.onclick = (e) => { if (!e.target.closest(".cell")) openDetail(r); };
-    tr.appendChild(leftText(r.project_no));
-    tr.appendChild(leftText(r.project_name || ""));
-    const bt = document.createElement("td");
-    const bS = document.createElement("span"); bS.className = "cell neg"; bS.textContent = pct(r.budget_burn);
-    bS.title = "Click to copy"; bS.onclick = (e) => { e.stopPropagation(); copy(String(r.budget_burn)); };
-    bt.appendChild(bS); tr.appendChild(bt);
-    const cv = document.createElement("td"); cv.appendChild(moneyCell(r.costs_loaded)); tr.appendChild(cv);
-    const ev = document.createElement("td"); ev.appendChild(moneyCell(r.estimated_total_costs)); tr.appendChild(ev);
-    tbody.appendChild(tr);
-  }
-}
 
 function renderCosts() {
   // Grouped: cost TYPE (parent) → job TYPE (sub) - the JobTread model. Material
@@ -2118,7 +1567,7 @@ function dateFilter(id, getDates, onChange) {
   st.clear = () => { st.months = null; st.from = ""; st.to = ""; from.value = ""; to.value = ""; st.build(); };
   return st;
 }
-let billDate = null, drawDate = null;
+let billDate = null;
 // Dropdown menus live inside cards that clip (`.widget { overflow: hidden }`), so an open menu is
 // pinned to the viewport at its button instead - it can never be cut off by the card, and it gets
 // as much height as the screen below (or above) the button allows. Closed on scroll / resize.
@@ -4624,8 +4073,8 @@ function renderCustomers() {
   for (const i of invs) { const ms = expectedMs(i); if (ms == null) continue; const out = (ms - _now) / _DAYMS; const bal = oiBal(i);
     if (out <= 30) { f30 += bal; f60 += bal; f90 += bal; } else if (out <= 60) { f60 += bal; f90 += bal; } else if (out <= 90) { f90 += bal; } }
   { const stats = $("#custStats"); if (stats) { stats.innerHTML = "";
-      const tiles = [["Open AR", money(total)], ["Clients", String(clients.size)]];
-      for (const d of order) tiles.push([d, money(divOpen(d))]);       // per-division open AR (replaces the useless "biggest client")
+      const tiles = [];   // Open AR + client count sit on the Company strip above (2026-09-13) - no double
+      for (const d of order) tiles.push([d, money(divOpen(d))]);       // per-division open AR
       if (paySpeed.all_avg != null) tiles.push(["Cash-in ≤30d", money(f30), "fc"], ["≤60d", money(f60), "fc"], ["≤90d", money(f90), "fc"]);
       const arSrc = srcText("QuickBooks AR", loadedAt("AR (invoices)"), "loaded");
       for (const [l, v, cls] of tiles) {
@@ -5389,30 +4838,7 @@ function el2(tag, cls, txt) { const e = document.createElement(tag); if (cls) e.
 // Bonded is intentionally NOT here - dropped from the dashboard WIP view (the user
 // 2026-08-20); the Excel Test tabs keep it. `cf` marks a column that carries a
 // job-performance conditional format (see _wipCond).
-const WIP_COLS = [
-  { k: "project_no", label: "Project #", t: "text" },
-  { k: "project_name", label: "Name", t: "text" },
-  { k: "total_contract_price", label: "Total Contract", t: "money" },
-  { k: "estimated_total_costs", label: "Est. Total Costs", t: "money" },
-  { k: "original_profit", label: "Original Profit", t: "money" },
-  { k: "gross_profit_pct", label: "GP %", t: "pct", cf: "gp" },
-  { k: "costs_to_date", label: "Costs to Date", t: "money" },
-  { k: "cost_to_complete", label: "Cost to Complete", t: "money" },
-  { k: "percent_complete", label: "% Complete", t: "pct", cf: "pctbar" },
-  { k: "revenues_earned_to_date", label: "Revenues Earned", t: "money" },
-  { k: "profit_earned_to_date", label: "Profit Earned", t: "money", cf: "neg0" },
-  { k: "billed_to_date", label: "Billed", t: "money" },
-  { k: "overbillings", label: "Overbillings", t: "money", cf: "over" },
-  { k: "underbillings", label: "Underbillings", t: "money", cf: "under" },
-  { k: "left_to_bill", label: "Left to Bill", t: "money" },
-  { k: "future_profit_to_earn", label: "Future Profit", t: "money", cf: "future" },
-  { k: "pure_job_borrow", label: "Pure Job Borrow", t: "money", cf: "borrow" },
-];
 const WIP_DIV_ORDER = ["Multi Family", "Commercial", "Residential"];
-function _wipFmt(c, v) {
-  if (c.t === "pct") return v == null || v === "" ? "–" : (v * 100).toFixed(1) + "%";
-  return v == null || v === "" ? "–" : String(v);
-}
 
 // ── WIP column widths (drag a header divider; persists per person) ──────────
 const WIP_COL_DEFAULTS = { "Project #": 88, "Name": 190, "Total Contract": 122,
@@ -5420,26 +4846,6 @@ const WIP_COL_DEFAULTS = { "Project #": 88, "Name": 190, "Total Contract": 122,
   "Cost to Complete": 128, "% Complete": 96, "Revenues Earned": 128, "Profit Earned": 116,
   "Billed": 112, "Overbillings": 116, "Underbillings": 118, "Left to Bill": 112,
   "Future Profit": 116, "Pure Job Borrow": 128 };
-function loadWipColWidths() {
-  try { return { ...WIP_COL_DEFAULTS, ...JSON.parse(localStorage.getItem("proficient-ledger-wipcols") || "{}") }; }
-  catch { return { ...WIP_COL_DEFAULTS }; }
-}
-let wipColW = loadWipColWidths();
-function saveWipColWidths() { try { localStorage.setItem("proficient-ledger-wipcols", JSON.stringify(wipColW)); } catch { /* ignore */ } }
-function startWipColResize(e, idx, label) {
-  e.preventDefault(); e.stopPropagation();
-  const table = $("#wipTable"); const cg = table.querySelector("colgroup"); if (!cg) return;
-  const col = cg.children[idx]; const startX = e.clientX; const startW = parseFloat(col.style.width) || col.offsetWidth;
-  document.body.classList.add("col-resizing");
-  const onMove = (ev) => {
-    const w = Math.max(48, Math.round(startW + (ev.clientX - startX)));
-    col.style.width = w + "px"; wipColW[label] = w;
-    let s = 0; for (const c of cg.children) s += parseFloat(c.style.width) || 0; table.style.width = s + "px";
-  };
-  const onUp = () => { document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp);
-    document.body.classList.remove("col-resizing"); saveWipColWidths(); };
-  document.addEventListener("mousemove", onMove); document.addEventListener("mouseup", onUp);
-}
 
 // ── Conditional formatting: encode job health with color, never decoration ──
 // Returns {bg, fg, bold, bar, title} for one cell, or null. Sign conventions come
@@ -5497,82 +4903,6 @@ function _wipCond(kind, r, key) {
   return null;
 }
 
-function renderWip() {
-  const thead = $("#wipTable thead"), tbody = $("#wipTable tbody"); if (!thead || !tbody) return;
-  const activeOnly = $("#wipActive") ? $("#wipActive").checked : true;
-  const isActive = r => { const s = (r.status || "").trim().toLowerCase(); return s === "" || s === "active"; };
-  const rows = (ALL || []).filter(r => !activeOnly || isActive(r));
-  if ($("#wipNote")) $("#wipNote").textContent = `(${rows.length} job${rows.length === 1 ? "" : "s"} · report ${meta && meta.report_date ? fmtDate(meta.report_date) : "–"})`;
-  if ($("#wipHint")) $("#wipHint").innerHTML = "The company Work-in-Progress schedule, live from the ledger (loaded from the WIP master's Test tabs). Columns mirror <b>Test-Master</b>; grouped by division with subtotals. Read-only here - edit the WIP in the master workbook.";
-  const byDiv = new Map();
-  for (const r of rows) { const d = r.division || "Other"; if (!byDiv.has(d)) byDiv.set(d, []); byDiv.get(d).push(r); }
-  const order = [...byDiv.keys()].sort((a, b) => { const ia = WIP_DIV_ORDER.indexOf(a), ib = WIP_DIV_ORDER.indexOf(b); return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib) || a.localeCompare(b); });
-  thead.innerHTML = ""; tbody.innerHTML = "";
-  // Fixed layout + a <colgroup> so widths are exact and draggable; the sticky
-  // thead (base .grid rule) then freezes as the bounded container scrolls.
-  const table = $("#wipTable");
-  { const oldCg = table.querySelector("colgroup"); if (oldCg) oldCg.remove(); }
-  const colgroup = document.createElement("colgroup");
-  const htr = document.createElement("tr");
-  let wsum = 0;
-  WIP_COLS.forEach((c, i) => {
-    const th = document.createElement("th"); if (c.t === "text") th.className = "left"; th.textContent = c.label;
-    const grip = document.createElement("div"); grip.className = "col-resize"; grip.title = "Drag to resize this column";
-    grip.addEventListener("mousedown", (e) => startWipColResize(e, i, c.label));
-    th.appendChild(grip); htr.appendChild(th);
-    const w = Math.max(48, wipColW[c.label] || 110); const col = document.createElement("col"); col.style.width = w + "px";
-    colgroup.appendChild(col); wsum += w;
-  });
-  table.insertBefore(colgroup, table.firstChild);
-  table.style.width = wsum + "px";
-  thead.appendChild(htr);
-  if (!rows.length) { const tr = document.createElement("tr"); const td = document.createElement("td"); td.colSpan = WIP_COLS.length; td.className = "left"; td.style.color = "var(--text-dim)"; td.style.padding = "14px 12px"; td.textContent = "No WIP data - run load_wip_master.py."; tr.appendChild(td); tbody.appendChild(tr); return; }
-  const sumRow = (label, list, cls) => {
-    const tr = document.createElement("tr"); tr.className = cls;
-    WIP_COLS.forEach((c, i) => { const td = document.createElement("td");
-      if (i === 0) { td.className = "left"; td.textContent = label; td.colSpan = 2; }   // label spans Project # + Name (was cut at 88px)
-      else if (i === 1) return;
-      else if (c.t === "money") { td.className = "right"; td.appendChild(moneyCell(list.reduce((t, r) => t + num(r[c.k]), 0))); }
-      else td.className = c.t === "text" ? "left" : "right";
-      tr.appendChild(td); });
-    return tr;
-  };
-  for (const div of order) {
-    const list = byDiv.get(div);
-    const gtr = document.createElement("tr"); gtr.className = "bill-group";
-    const gtd = document.createElement("td"); gtd.colSpan = WIP_COLS.length;
-    const cell = document.createElement("div"); cell.className = "bg-cell";
-    const key = document.createElement("span"); key.className = "bg-key"; key.textContent = div;
-    cell.appendChild(key);
-    const sumOf = k2 => list.reduce((t2, r) => t2 + num(r[k2]), 0);
-    bandMetrics(cell, [[list.length, "jobs"], [money(sumOf("total_contract_price")), "contract"], [money(sumOf("costs_to_date")), "costs to date"], [money(sumOf("billed_to_date")), "billed"], [money(sumOf("underbillings")), "underbilled", sumOf("underbillings") > 0 ? "neg" : ""]]);
-    gtd.appendChild(cell); gtr.appendChild(gtd); tbody.appendChild(gtr);
-    for (const r of list) {
-      const tr = document.createElement("tr"); tr.style.cursor = "pointer"; tr.title = "Open this project";
-      tr.onclick = (e) => { if (e.target.closest(".cell")) return; openDetail(r); };
-      for (const c of WIP_COLS) {
-        const td = document.createElement("td");
-        if (c.t === "money") td.appendChild(moneyCell(r[c.k]));
-        else if (c.t === "text") { td.className = "left"; const s = document.createElement("span"); s.textContent = _wipFmt(c, r[c.k]); s.title = _wipFmt(c, r[c.k]); td.appendChild(s); }
-        else { td.className = "right"; td.textContent = _wipFmt(c, r[c.k]); }
-        if (c.cf) {
-          const cond = _wipCond(c.cf, r, c.k);
-          if (cond) {
-            if (cond.bar != null) { td.classList.add("wip-bar"); td.style.setProperty("--bar", cond.bar + "%"); }
-            if (cond.bg) td.style.background = cond.bg;
-            if (cond.fg) td.style.color = cond.fg;
-            if (cond.bold) td.style.fontWeight = "700";
-            if (cond.title) td.title = cond.title;
-          }
-        }
-        tr.appendChild(td);
-      }
-      tbody.appendChild(tr);
-    }
-    tbody.appendChild(sumRow(div + " total", list, "wip-subtotal"));
-  }
-  tbody.appendChild(sumRow("GRAND TOTAL", rows, "wip-total"));
-}
 function renderPnl() {
   if (!PNL) {
     const n = $("#pnlNote"); if (n) n.textContent = "computing…";
@@ -5584,6 +4914,8 @@ function renderPnl() {
   const rows = PNL.rows || [], divs = PNL.by_division || [], comp = PNL.company || {};
   const pctTxt = p => (p == null ? "–" : (p * 100).toFixed(1) + "%");
   $("#pnlNote").textContent = rows.length ? `(${comp.n || 0} active jobs · ${money(comp.billed)} net billed · WIP report ${meta.report_date ? fmtDate(meta.report_date) : "–"} · QBO costs loaded ${loadedAt("Costs (QBO)") ? fmtDate(loadedAt("Costs (QBO)"), true) : "–"})` : "(no P&L data - load WIP + costs)";
+  { const n2 = $("#pnlNote2"); if (n2) n2.textContent = $("#pnlNote").textContent; }
+  renderCompanyHead();
 
   // company totals
   const tiles = [["Billed (gross)", money(comp.billed_gross)], ["Retainage held", money(comp.retainage)], ["Net billed", money(comp.billed)], ["Costs", money(comp.cost)],
@@ -5681,57 +5013,34 @@ function renderPnl() {
   if (!shown.length) { const row = document.createElement("tr"); const td = document.createElement("td"); td.colSpan = cols.length; td.className = "left"; td.style.color = "var(--text-dim)"; td.textContent = rows.length ? "No jobs match this filter." : "No P&L data yet."; row.appendChild(td); tbody.appendChild(row); }
 }
 
-function renderAttention() {
-  const row = $("#attnRow"); row.innerHTML = "";
-  for (const rule of RULES) {
-    const hits = ALL.filter(rule.test);
-    const total = hits.reduce((t, r) => t + rule.amt(r), 0);
-    const el = document.createElement("div");
-    el.className = "attn" + (rule.warn ? " warn" : "") + (activeRule === rule.key ? " active" : "") + (hits.length ? "" : " none");
-    el.innerHTML = `<span class="a-count"></span><span class="a-label"></span><span class="a-sub"></span>`;
-    el.querySelector(".a-count").textContent = hits.length;
-    el.querySelector(".a-label").textContent = rule.label;
-    el.querySelector(".a-sub").textContent = hits.length ? money(total) : rule.hint;
-    { const sp = document.createElement("span"); sp.className = "a-src"; sp.textContent = srcText("WIP master", meta.report_date, "report"); el.appendChild(sp); }
-    el.title = rule.hint + (hits.length ? " - click to filter the table" : "");
-    if (hits.length) el.onclick = () => {
-      activeRule = activeRule === rule.key ? null : rule.key;
-      renderAttention(); renderProjects();
-      $("#btnClearRule").hidden = !activeRule;
-    };
-    row.appendChild(el);
-  }
-  $("#btnClearRule").hidden = !activeRule;
-}
 
 function renderKPIs() {
   const rows = ALL;
   const sum = k => rows.reduce((t, r) => t + (isNum(r[k]) ? r[k] : Number(r[k]) || 0), 0);
   const contract = sum("total_contract_price"), costs = sum("costs_to_date"),
-        billed = sum("billed_to_date"), left = sum("left_to_bill"),
-        over = sum("overbillings"), under = sum("underbillings"),
+        billed = sum("billed_to_date"), left = sum("left_to_bill"), under = sum("underbillings");
+  const underN = rows.filter(r => num(r.underbillings) > 0).length, overN = rows.filter(isOverBudget).length,
         active = rows.filter(isActive).length;
-  const net = over - under;
-  // Every card says where its number comes from and as of when (owner 2026-09-01: an Excel-only
-  // reader who does not trust a figure until he sees its source). These six are the WIP master's
-  // own columns, summed - not QuickBooks (that total is on the Cost mix widget, labelled).
+  // Every card says where its number comes from and as of when (owner 2026-09-01). The WIP master's own
+  // columns, summed; the two flags open the Needs-attention view of the grid below.
   const wipSrc = srcText("WIP master", meta.report_date, "report");
   const cards = [
-    ["Total Contract", money(contract), `${rows.length} jobs`, wipSrc, "sum of Total Contract Price across the WIP rows"],
-    ["Costs to Date (WIP report)", money(costs), contract ? `${(costs / contract * 100).toFixed(0)}% of contract` : "", wipSrc, "sum of the WIP master's Costs to Date column - the report-date cut, not live QuickBooks"],
-    ["Billed to Date", money(billed), contract ? `${(billed / contract * 100).toFixed(0)}% of contract` : "", wipSrc, "sum of Billed to Date (gross, incl. retainage)"],
-    ["Left to Bill", money(left), "", wipSrc, "sum of Left to Bill = contract - billed"],
-    ["Net Over/(Under)", money(net), net >= 0 ? "overbilled" : "underbilled", wipSrc, "overbillings minus underbillings"],
-    ["Active Jobs", String(active), `of ${rows.length}`, wipSrc, "STATUS = Active on the Test tabs (blank = MFD, active by construction)"],
+    ["Total contract", money(contract), `${active} active of ${rows.length} jobs`, wipSrc, "sum of Total Contract Price across the WIP rows", null],
+    ["Costs to date", money(costs), contract ? `${(costs / contract * 100).toFixed(0)}% of contract` : "", wipSrc, "sum of the WIP master's Costs to Date column - the report-date cut, not live QuickBooks", null],
+    ["Billed to date", money(billed), contract ? `${(billed / contract * 100).toFixed(0)}% of contract` : "", wipSrc, "sum of Billed to Date (gross, incl. retainage)", null],
+    ["Left to bill", money(left), "", wipSrc, "sum of Left to Bill = contract - billed", null],
+    ["Underbilled (can invoice)", money(under), `${underN} job${underN === 1 ? "" : "s"} · financing the GC`, wipSrc, "earned ahead of billed - work you could invoice now; click to list the jobs", underN ? "attention" : null],
+    ["Over budget", String(overN), overN ? "cost past the ETC · flatwork soft under $15k" : "no job past its ETC", srcText("QuickBooks costs", loadedAt("Costs (QBO)"), "loaded"), "cost to date over the ETC budget (a standing ruling takes a job off this list); click to list the jobs", overN ? "attention" : null],
   ];
-  const row = $("#kpiRow"); row.innerHTML = "";
-  for (const [label, value, sub, src, how] of cards) {
-    const el = document.createElement("div"); el.className = "kpi";
+  const row = $("#kpiRow"); if (!row) return; row.innerHTML = "";
+  for (const [label, value, sub, src, how, go] of cards) {
+    const el = document.createElement("div"); el.className = "kpi" + (go ? " kpi-click" : "") + (/under|over/i.test(label) && value !== "0" && value !== "$0" ? " kpi-neg" : "");
     el.innerHTML = `<div class="k-label"></div><div class="k-value"></div><div class="k-sub"></div>`;
     el.querySelector(".k-label").textContent = label;
     el.querySelector(".k-value").textContent = value;
     el.querySelector(".k-sub").textContent = sub;
     el.appendChild(srcChip(src, how));
+    if (go) el.onclick = () => { projView = go; syncProjChips(); renderProjects(); $("#widget-projects").scrollIntoView({ behavior: "smooth", block: "start" }); };
     row.appendChild(el);
   }
 }
@@ -5758,7 +5067,7 @@ function syncedAt(src) { const v = ((meta.freshness || {}).sources || {})[src]; 
 
 function renderDivisions() {
   { const h = document.querySelector("#widget-divisions .widget-head h2"); if (h) { let c = h.querySelector(".count"); if (!c) { c = document.createElement("span"); c.className = "count"; h.appendChild(c); }
-      c.textContent = " " + srcText("WIP master", meta.report_date, "report") + " - contract, costs and billed are the report's own columns; the QuickBooks cost total is on Cost mix and Margins & burn"; } }   // two costs on one page: say which is which
+      c.textContent = " " + srcText("WIP master", meta.report_date, "report") + " - contract, costs and billed are the report's own columns; the QuickBooks cost total is on Cost mix"; } }   // two costs on one page: say which is which
   const groups = {};
   for (const r of ALL) {
     const d = r.division || "-";
@@ -5777,8 +5086,8 @@ function renderDivisions() {
     const g = groups[d];
     const tr = document.createElement("tr");
     tr.style.cursor = "pointer";
-    tr.title = "Show this division's active projects";
-    tr.onclick = (e) => { if (!e.target.closest(".cell")) drillDivision(d); };
+    tr.title = "Show this division's projects";
+    tr.onclick = (e) => { if (!e.target.closest(".cell")) { projDiv = d; setTab("projects"); renderProjects(); } };
     [textCell(d, true), textCell(String(g.jobs)), moneyCell(g.contract), moneyCell(g.costs),
      moneyCell(g.billed), moneyCell(g.over), moneyCell(g.under)].forEach((c, i) => {
       const td = document.createElement("td"); if (i === 0) td.className = "left"; td.appendChild(c); tr.appendChild(td);
@@ -5787,44 +5096,172 @@ function renderDivisions() {
   }
 }
 // Big-picture → zoom: click a division rollup row → its active projects.
-function drillDivision(div) {
-  $("#fDivision").value = div;
-  $("#fActive").checked = true;
-  renderProjects();
-  $("#widget-projects").scrollIntoView({ behavior: "smooth", block: "start" });
-  toast(`${div} - active projects`);
-}
 const num = v => (isNum(v) ? v : Number(v) || 0);
 
+
+// ── Projects: the WIP as the page (owner 2026-09-13) ─────────────────────
+// One grid, every job. Active jobs by division (open), then "Completed recently" (closed but still
+// carrying an open invoice or bill), then the settled closed jobs (folded). Columns = the WIP's own
+// numbers plus what the job still owes / is owed: the ETC and open AP were dropped on purpose (owner:
+// "drop ETC and open AP" - both are one click away on the project page). Row click opens the project page.
+const PROJ_COLS = [
+  { k: "project_no", label: "Project", t: "text" },
+  { k: "project_name", label: "Name", t: "text" },
+  { k: "client", label: "Client", t: "text" },
+  { k: "total_contract_price", label: "Contract", t: "money" },
+  { k: "costs_to_date", label: "Costs", t: "money" },
+  { k: "billed_to_date", label: "Billed", t: "money" },
+  { k: "percent_complete", label: "% compl.", t: "pct" },
+  { k: "_overunder", label: "Over / (under)", t: "money" },
+  { k: "_ar", label: "Open AR", t: "money" },
+  { k: "_next", label: "Next", t: "text" },
+];
+let projView = "active";   // active | attention | completed | all
+let projDiv = "";          // "" = every division
+let projSort = { key: "total_contract_price", dir: -1 };
+const PROJ_BANDS_LS = "proficient-ledger-projbands-v1";
+let _projBands = (() => { try { return JSON.parse(localStorage.getItem(PROJ_BANDS_LS)) || {}; } catch { return {}; } })();
+const isClosed = r => !isActive(r);
+const needsAttention = r => isOverBudget(r) || num(r.underbillings) > 0 || num(r.pure_job_borrow) > 0;
+function syncProjChips() {
+  $$("#projView .seg-btn").forEach(b => b.classList.toggle("on", b.dataset.view === projView));
+  $$("#projDiv .seg-btn").forEach(b => b.classList.toggle("on", b.dataset.div === projDiv));
+}
+function _projOpenAR() {   // project -> open AR (the QuickBooks invoices still unpaid)
+  const m = {}; for (const i of (OI.invoices || [])) { const k = i.project_no || ""; if (!k) continue; m[k] = (m[k] || 0) + oiBal(i); } return m;
+}
+function _projNext() {     // project -> the funding position (CP/MFD draws; RP bills at completion, no draws)
+  const m = {}; _buildDrawClientMap(DRAWS.draws || []);
+  for (const f of _fundingRows()) m[f.pn] = f; return m;
+}
+function _projDerived() {
+  const ar = _projOpenAR(), nx = _projNext();
+  for (const r of ALL) {
+    r._ar = ar[r.project_no] || 0;
+    r._overunder = num(r.overbillings) - num(r.underbillings);
+    const ap = AP.by_project && AP.by_project[r.project_no];
+    r._apOpen = ap ? num(ap.open_balance) : 0;
+    const f = nx[r.project_no];
+    if (isClosed(r)) r._next = "Closed";
+    else if (f) r._next = f.status === "Ready to collect" ? `Collect ${money(f.gcOwes)}${f.next && f.next.invoice_no ? " · #" + f.next.invoice_no : ""}`
+      : f.status.startsWith("Blocked") ? `Blocked · pay ${money(f.blockAmt)} first`
+      : f.status === "Settled" ? "Draws settled" : f.status === "No draw yet" ? "No draw yet" : f.status;
+    else r._next = r._ar > 0.005 ? `Collect ${money(r._ar)}` : (String(r.project_no).startsWith("RP") ? "" : "");
+    r._recent = isClosed(r) && (r._ar > 0.005 || r._apOpen > 0.005);   // closed but still settling
+  }
+}
+function projRows() {
+  const q = ($("#search") ? $("#search").value : "").trim().toLowerCase();
+  return ALL.filter(r => {
+    if (projDiv && r.division !== projDiv) return false;
+    if (projView === "attention" && !needsAttention(r)) return false;
+    if (projView === "completed" && !isClosed(r)) return false;
+    if (q) { const hay = [r.project_no, r.project_name, r.builder_or_gc, r.client].filter(Boolean).join(" ").toLowerCase(); if (!hay.includes(q)) return false; }
+    return true;
+  });
+}
+function projSorted(list) {
+  const c = PROJ_COLS.find(x => x.k === projSort.key) || PROJ_COLS[3];
+  return [...list].sort((a, b) => {
+    const av = a[c.k], bv = b[c.k];
+    const na = av == null || av === "", nb = bv == null || bv === "";
+    if (na && nb) return 0; if (na) return 1; if (nb) return -1;   // blanks always last
+    return (c.t === "text" ? String(av).localeCompare(String(bv), undefined, { numeric: true }) : Number(av) - Number(bv)) * projSort.dir;
+  });
+}
+function projBands(rows) {   // [{key, label, title, list, open}]
+  const byDiv = list => WIP_DIV_ORDER.concat([...new Set(list.map(r => r.division || "Other"))].filter(d => !WIP_DIV_ORDER.includes(d)))
+    .map(d => ({ key: d, label: d, list: list.filter(r => (r.division || "Other") === d), open: true })).filter(b => b.list.length);
+  const recent = rows.filter(r => r._recent), settled = rows.filter(r => isClosed(r) && !r._recent);
+  const done = [
+    { key: "recent", label: "Completed recently", title: "Closed on the WIP but still carrying an open invoice or an open bill", list: recent, open: true },
+    { key: "settled", label: "Completed · settled", title: "Closed on the WIP, nothing open either way", list: settled, open: false },
+  ].filter(b => b.list.length);
+  if (projView === "completed") return done;
+  if (projView === "all") return byDiv(rows);
+  if (projView === "attention") return byDiv(rows.filter(r => !isClosed(r))).concat(byDiv(rows.filter(isClosed)).map(b => ({ ...b, key: "closed:" + b.key, label: b.label + " · closed", open: false })));
+  return byDiv(rows.filter(r => !isClosed(r))).concat(done);
+}
 function renderProjects() {
-  const rows = filtered();
-  $("#projCount").textContent = `(${rows.length})`;
-  const cols = visibleColumns();
-  const thead = $("#projTable thead"), tbody = $("#projTable tbody");
+  const thead = $("#projTable thead"), tbody = $("#projTable tbody"); if (!thead || !tbody) return;
+  _projDerived();
+  const rows = projRows();
+  { const c = $("#projCount"); if (c) c.textContent = `(${rows.length} of ${ALL.length})`; }
+  { const sN = $("#projSrc"); if (sN) sN.textContent = `${srcText("WIP master", meta.report_date, "report")} · open AR ${srcText("QuickBooks", loadedAt("AR (invoices)"), "loaded")} · draws ${srcText("Bill Tracker", syncedAt("sync-ap"), "loaded")}`; }
   thead.innerHTML = ""; tbody.innerHTML = "";
-  // header
   const htr = document.createElement("tr");
-  for (const c of cols) {
-    const th = document.createElement("th");
-    if (c.align === "left") th.className = "left";
-    th.textContent = c.label;
-    if (sortKey === c.key) { const a = document.createElement("span"); a.className = "arrow"; a.textContent = sortDir === 1 ? " ▲" : " ▼"; th.appendChild(a); }
-    th.onclick = () => { if (sortKey === c.key) sortDir = -sortDir; else { sortKey = c.key; sortDir = c.type === "text" || c.type === "status" ? 1 : -1; } renderProjects(); };
+  for (const c of PROJ_COLS) {
+    const th = document.createElement("th"); th.className = c.t === "text" ? "left" : "right"; th.textContent = c.label;
+    if (projSort.key === c.k) { const a = document.createElement("span"); a.className = "arrow"; a.textContent = projSort.dir === 1 ? " ▲" : " ▼"; th.appendChild(a); }
+    th.title = "Sort by " + c.label;
+    th.onclick = () => { if (projSort.key === c.k) projSort.dir = -projSort.dir; else projSort = { key: c.k, dir: c.t === "text" ? 1 : -1 }; renderProjects(); };
     htr.appendChild(th);
   }
   thead.appendChild(htr);
-  // body
-  for (const r of rows) {
-    const tr = document.createElement("tr");
-    tr.onclick = (e) => { if (!e.target.closest(".cell")) openDetail(r); };
-    for (const c of cols) {
-      const td = document.createElement("td");
-      if (c.align === "left") td.className = "left";
-      td.appendChild(cellFor(c, r[c.key]));
-      tr.appendChild(td);
+  if (!ALL.length) { const tr = document.createElement("tr"); const td = document.createElement("td"); td.colSpan = PROJ_COLS.length; td.className = "left"; td.style.color = "var(--text-dim)"; td.style.padding = "14px 12px"; td.textContent = "No WIP data - run load_wip_master.py."; tr.appendChild(td); tbody.appendChild(tr); return; }
+  if (!rows.length) { const tr = document.createElement("tr"); const td = document.createElement("td"); td.colSpan = PROJ_COLS.length; td.className = "left"; td.style.color = "var(--text-dim)"; td.style.padding = "14px 12px"; td.textContent = "No jobs match."; tr.appendChild(td); tbody.appendChild(tr); return; }
+  for (const b of projBands(rows)) {
+    const open = (b.key in _projBands) ? !!_projBands[b.key] : b.open;
+    const gtr = document.createElement("tr"); gtr.className = "bill-group proj-band" + (open ? "" : " grp-closed");
+    const gtd = document.createElement("td"); gtd.colSpan = PROJ_COLS.length;
+    const cell = document.createElement("div"); cell.className = "bg-cell";
+    const key = document.createElement("span"); key.className = "bg-key";
+    const caret = document.createElement("span"); caret.className = "grp-caret"; caret.textContent = open ? "▾" : "▸"; key.appendChild(caret);
+    key.appendChild(document.createTextNode(b.label)); if (b.title) key.title = b.title;
+    cell.appendChild(key);
+    const sumOf = k => b.list.reduce((t, r) => t + num(r[k]), 0);
+    const under = sumOf("underbillings"), ar = sumOf("_ar");
+    bandMetrics(cell, [[b.list.length, "jobs"], [money(sumOf("total_contract_price")), "contract"], [money(sumOf("costs_to_date")), "costs"], [money(sumOf("billed_to_date")), "billed"],
+                       [money(under), "underbilled", under > 0 ? "neg" : ""], [money(ar), "open AR", ar > 0 ? "neg" : ""]]);
+    gtd.appendChild(cell); gtr.appendChild(gtd);
+    const kids = [];
+    gtr.onclick = () => { const o = gtr.classList.contains("grp-closed"); gtr.classList.toggle("grp-closed", !o); caret.textContent = o ? "▾" : "▸"; kids.forEach(k => k.hidden = !o); _projBands[b.key] = o; try { localStorage.setItem(PROJ_BANDS_LS, JSON.stringify(_projBands)); } catch { /* ignore */ } };
+    tbody.appendChild(gtr);
+    for (const r of projSorted(b.list)) {
+      const tr = document.createElement("tr"); tr.hidden = !open; tr.title = "Open this project";
+      tr.onclick = (e) => { if (e.target.closest(".cell, a, button")) return; openProjectPage(r.project_no); };
+      for (const c of PROJ_COLS) {
+        const td = document.createElement("td"); const v = r[c.k];
+        if (c.k === "project_no") { td.className = "left pn"; const sp = document.createElement("span"); sp.textContent = r.project_no; td.appendChild(sp);
+          if (isOverBudget(r)) { const t = document.createElement("span"); t.className = "tag tag-ob"; t.textContent = "over budget"; t.title = `cost ${money(budgetCost(r))} vs ETC ${money(r.estimated_total_costs)}`; td.appendChild(t); }
+          else if (r.over_budget_accepted) { const t = document.createElement("span"); t.className = "tag tag-known"; t.textContent = "known"; t.title = "A standing ruling: the owner settled this overrun once (job_rulings.json)"; td.appendChild(t); }
+          if (num(r.pure_job_borrow) > 0) { const t = document.createElement("span"); t.className = "tag tag-borrow"; t.textContent = "borrowing"; t.title = "Cost to complete exceeds what is left to bill - " + money(r.pure_job_borrow); td.appendChild(t); } }
+        else if (c.t === "text") { td.className = "left"; const sp = document.createElement("span"); sp.className = "nm"; sp.textContent = v == null || v === "" ? "–" : String(v); sp.title = sp.textContent; td.appendChild(sp); }
+        else if (c.k === "percent_complete") { td.className = "right"; td.textContent = pct(v); const cond = _wipCond("pctbar", r); if (cond) { if (cond.bar != null) { td.classList.add("wip-bar"); td.style.setProperty("--bar", cond.bar + "%"); } if (cond.bg) td.style.background = cond.bg; if (cond.fg) td.style.color = cond.fg; if (cond.title) td.title = cond.title; } }
+        else if (c.k === "_overunder") { td.className = "right"; const n = num(v); const sp = document.createElement("span"); sp.className = "cell" + (n < 0 ? " neg" : n > 0 ? " pos" : ""); sp.textContent = n ? money(n) : "–"; sp.title = n < 0 ? "Underbilled - earned ahead of billed, you are financing the job (click to copy)" : n > 0 ? "Overbilled - billed ahead of earned, holding the GC's cash (click to copy)" : ""; sp.onclick = () => copy(String(Math.round(n))); td.appendChild(sp);
+          const cond = _wipCond(n < 0 ? "under" : "over", r); if (cond && cond.bg) td.style.background = cond.bg; }
+        else if (c.k === "_ar") { td.className = "right"; if (num(v) > 0.005) { const mc = moneyCell(v); mc.classList.add("ar-open-amt"); td.appendChild(mc); } else td.textContent = "–"; }
+        else if (c.k === "costs_to_date") { td.className = "right"; td.appendChild(moneyCell(v)); if (r.costs_loaded != null) td.title = `WIP report ${money(v)} · QuickBooks ${money(r.costs_loaded)}${loadedAt("Costs (QBO)") ? " (loaded " + fmtDate(loadedAt("Costs (QBO)"), true) + ")" : ""}`; }
+        else { td.className = "right"; td.appendChild(moneyCell(v)); }
+        tr.appendChild(td);
+      }
+      tbody.appendChild(tr); kids.push(tr);
     }
-    tbody.appendChild(tr);
   }
+}
+// ── Company: the strip above Clients / Vendors / Money - the whole business in five numbers ──
+function renderCompanyHead() {
+  const host = $("#companyKpis"); if (!host) return; host.innerHTML = "";
+  const invs = OI.invoices || []; const ar = invs.reduce((t, i) => t + oiBal(i), 0); const clients = new Set(invs.map(i => i.customer).filter(Boolean)).size;
+  const ap = AP.summary || {};
+  const pastDue = (AP.lien_watch || []).filter(r => r.lien_status === "Notice PAST due").length;
+  const dueSoon = (AP.lien_watch || []).filter(r => r.lien_status === "Notice due in ≤7d").length;
+  let collect = 0, collectAmt = 0; try { _buildDrawClientMap(DRAWS.draws || []); for (const f of _fundingRows()) if (f.status === "Ready to collect") { collect++; collectAmt += f.gcOwes; } } catch { /* no draws */ }
+  const comp = (PNL && PNL.company) || null;
+  const tiles = [
+    ["Open AR", money(ar), `${clients} client${clients === 1 ? "" : "s"} · what they owe you`, srcText("QuickBooks", loadedAt("AR (invoices)"), "loaded"), "open balance of the QuickBooks invoices loaded", () => setTab("clients"), false],
+    ["Open AP", money(ap.open_balance), `${ap.open_lines || 0} open bill${ap.open_lines === 1 ? "" : "s"} · what you owe vendors`, srcText("Bill Tracker", syncedAt("sync-ap"), "loaded"), "open balance of the vendor bills in the Bill Tracker (subs excluded)", () => setTab("vendors"), false],
+    ["Lien notices", `${pastDue} past · ${dueSoon} soon`, "unpaid bills past the notice deadline, or within 7 days", srcText("Bill Tracker", syncedAt("sync-ap"), "loaded"), "bills you owe whose vendor lien-notice deadline has passed, or is within 7 days", () => setTab("liens"), pastDue > 0],
+    ["Draws to collect", collect ? `${collect} · ${money(collectAmt)}` : "0", collect ? "nothing blocks them - collect from the GC" : "no draw is waiting on the GC", srcText("Bill Tracker + invoices", syncedAt("sync-ap"), "loaded"), "draws whose earlier-draw bills are paid: the GC owes the next one", () => { projView = "active"; syncProjChips(); setTab("projects"); }, false],
+    ["Net P&L · active jobs", comp ? `${money(comp.net)} · ${comp.net_pct == null ? "–" : (comp.net_pct * 100).toFixed(1) + "%"}` : "computing…", comp ? `${comp.n || 0} jobs · net billed − costs − 10% of contract` : "", srcText("QuickBooks", loadedAt("Costs (QBO)"), "loaded"), "the live project P&L, active jobs only", () => setTab("money"), comp ? comp.net < 0 : false],
+  ];
+  for (const [label, value, sub, src, how, go, bad] of tiles) {
+    const el = document.createElement("div"); el.className = "kpi kpi-click" + (bad ? " kpi-neg" : "");
+    el.innerHTML = `<div class="k-label"></div><div class="k-value"></div><div class="k-sub"></div>`;
+    el.querySelector(".k-label").textContent = label; el.querySelector(".k-value").textContent = value; el.querySelector(".k-sub").textContent = sub;
+    el.appendChild(srcChip(src, how)); el.onclick = go; host.appendChild(el);
+  }
+  if (!comp && !PNL && typeof renderPnl === "function" && $("#pnlTotals")) renderPnl();   // fetch once; renderPnl re-paints this strip when it lands
 }
 
 // ── cell builders ─────────────────────────────────────────────────────────
@@ -6177,7 +5614,7 @@ async function copy(text) {
 // the Overview projects table.
 function _csvTable() {
   const nz = v => v == null ? "" : v;
-  if (activeTab === "invoices") {
+  if (activeTab === "clients") {
     const rows = _invRows();
     return { name: "invoices", rows, cols: [
       ["Client", i => i.customer], ["Project", i => i.project_no], ["Invoice #", i => i.doc_number], ["Date", i => i.txn_date],
@@ -6186,7 +5623,7 @@ function _csvTable() {
       ["Next follow-up", i => i.next_followup], ["Collections note", i => i.note], ["Lien", i => i.lien_status],
       ["Notice deadline", i => i.lien_due_label], ["Notion page", i => i.notion_url]].map(([l, g]) => [l, r => nz(g(r))]) };
   }
-  if (activeTab === "bills") {
+  if (activeTab === "vendors") {
     const view = billView(), f = billFilterValues();
     const rows = (BILLS || []).filter(b => view.pred(b) && billPassesFilters(b, f));
     return { name: "bills", rows, cols: [
@@ -6196,21 +5633,17 @@ function _csvTable() {
       ["Invoice", b => b.invoice_no], ["Invoice status", b => b.invoice_status], ["GC paid", b => b.gc_paid_date],
       ["Approved", b => b.approved], ["Lien", b => b.lien_status], ["Description", b => b.description]].map(([l, g]) => [l, r => nz(g(r))]) };
   }
-  if (activeTab === "wip") {
-    const activeOnly = $("#wipActive") ? $("#wipActive").checked : true;
-    const rows = (ALL || []).filter(r => !activeOnly || ["", "active"].includes((r.status || "").toLowerCase()));
-    return { name: "wip", rows, cols: WIP_COLS.map(c => [c.label, r => nz(r[c.k])]) };
-  }
-  const cols = visibleColumns();
-  return { name: "projects", rows: filtered(), cols: cols.map(c => [c.label, r => raw(c, r[c.key])]) };
+  _projDerived();
+  const rows = projBands(projRows()).flatMap(b => projSorted(b.list).map(r => ({ ...r, _band: b.label })));
+  return { name: "projects", rows, cols: [["Band", r => r._band], ["Division", r => r.division], ["Status", r => r.status]]
+    .concat(PROJ_COLS.map(c => [c.label, r => c.t === "money" || c.t === "pct" ? (r[c.k] == null || r[c.k] === "" ? "" : Number(r[c.k])) : nz(r[c.k])])) };
 }
 // Export dialog (owner 2026-09-02): Excel (a grouped report that keeps the state colours) or CSV, and
 // "how would you like it grouped" - defaults to the grouping on screen (Bills: the Group by select).
 const EXPORT_GROUPS = {
   bills: [["", "None"], ["Vendor", "Vendor"], ["Project", "Project"], ["Client", "Client"], ["Division", "Division"], ["Invoice", "Draw / invoice"]],
   invoices: [["", "None"], ["Client", "Client"], ["Project", "Project"], ["Status", "Status"]],
-  wip: [["", "None"], ["Division", "Division"]],
-  projects: [["", "None"], ["Division", "Division"], ["Client", "Client"]],
+  projects: [["", "None"], ["Band", "Band"], ["Division", "Division"], ["Client", "Client"]],
 };
 function exportCSV() {
   const spec = _csvTable();
@@ -6247,7 +5680,7 @@ function _stateFmt(name, row, label) {   // the on-screen colour for a cell, as 
 }
 async function exportXlsx(spec, grp) {
   const { name, rows, cols } = spec;
-  const moneyLabels = new Set(["This line", "Bill total", "Open balance", "Invoice total", "Amount", ...WIP_COLS.filter(c => c.t === "money").map(c => c.label)]);
+  const moneyLabels = new Set(["This line", "Bill total", "Open balance", "Invoice total", "Amount", ...PROJ_COLS.filter(c => c.t === "money").map(c => c.label)]);
   const columns = cols.map(([l]) => ({ label: l, type: moneyLabels.has(l) ? "money" : "text" }));
   const gi = grp ? cols.findIndex(([l]) => l === grp) : -1;
   const data = rows.map(r => cols.map(([, g]) => g(r)));
@@ -6296,39 +5729,12 @@ function exportCsvPlain(spec, grp) {
 // ── Settings UI ───────────────────────────────────────────────────────────
 function syncSettingsUI() {
   $("#setTheme").value = settings.theme;
-  $("#setAccent").value = settings.accent;
-  $("#setFont").value = settings.font;
-  $("#setFontSize").value = settings.fontSize;
-  $("#fsVal").textContent = settings.fontSize + "px";
   $("#setDensity").value = settings.density;
-  $("#setWidth").value = settings.width;
-  renderWidgetChooser();
-  const cc = $("#colChooser"); cc.innerHTML = "";
-  for (const c of COLUMNS) {
-    const lab = document.createElement("label");
-    const cb = document.createElement("input"); cb.type = "checkbox";
-    cb.checked = c.always || settings.columns.includes(c.key);
-    cb.disabled = !!c.always;
-    cb.onchange = () => {
-      const set = new Set(settings.columns);
-      cb.checked ? set.add(c.key) : set.delete(c.key);
-      settings.columns = COLUMNS.filter(x => set.has(x.key) || x.always).map(x => x.key);
-      saveSettings(); renderProjects();
-    };
-    lab.appendChild(cb); lab.appendChild(document.createTextNode(" " + c.label));
-    cc.appendChild(lab);
-  }
 }
 function wireSettings() {
   const on = (sel, ev, fn) => $(sel).addEventListener(ev, fn);
   on("#setTheme", "change", e => { settings.theme = e.target.value; saveSettings(); applySettings(); });
-  on("#setAccent", "input", e => { settings.accent = e.target.value; saveSettings(); applySettings(); });
-  on("#setFont", "change", e => { settings.font = e.target.value; saveSettings(); applySettings(); });
-  on("#setFontSize", "input", e => { settings.fontSize = +e.target.value; $("#fsVal").textContent = settings.fontSize + "px"; saveSettings(); applySettings(); });
   on("#setDensity", "change", e => { settings.density = e.target.value; saveSettings(); applySettings(); });
-  on("#setWidth", "change", e => { settings.width = e.target.value; saveSettings(); applySettings(); });
-  on("#btnReset", "click", () => { settings = baseDefaults(); saveSettings(); applySettings(); syncSettingsUI(); render(); toast("Reset to your default"); });
-  on("#btnSetDefault", "click", () => { localStorage.setItem(LS_DEF, JSON.stringify(settings)); toast("Saved as your default view"); });
 }
 
 // ── Wire up ───────────────────────────────────────────────────────────────
@@ -7913,22 +7319,20 @@ function init() {
   applySettings();
   syncSettingsUI();
   wireSettings();
-  ["#search", "#fDivision", "#fStatus", "#fCategory", "#fActive"].forEach(sel =>
-    $(sel).addEventListener("input", renderProjects));
-  // Draws filters are multi-selects now (built by buildDrawFilters, toggled via _mselWraps below).
+  { const q = $("#search"); let tq = null; if (q) q.addEventListener("input", () => { clearTimeout(tq); tq = setTimeout(renderProjects, 120); }); }
+  $$("#projView .seg-btn").forEach(b => b.onclick = () => { projView = b.dataset.view; syncProjChips(); renderProjects(); });
+  $$("#projDiv .seg-btn").forEach(b => b.onclick = () => { projDiv = b.dataset.div; syncProjChips(); renderProjects(); });
   { const el = $("#vendorSearch"); if (el) el.addEventListener("input", renderVendors); }
   { const el = $("#vendorGroupType"); if (el) el.addEventListener("change", renderVendors); }
   { const el = $("#vendorExpandAll"); if (el) el.onclick = _vendorToggleAll; }
   { const el = $("#lienFProj"); if (el) el.addEventListener("input", renderLiens); }   // the other lien filters are multi-selects now
-  { const el = $("#wipActive"); if (el) el.addEventListener("change", renderWip); }
   { const el = $("#billSort"); if (el) el.addEventListener("change", renderBills); }
   // Month + Vendor + every categorical multi-select: the button toggles the checkbox menu; a click outside closes it.
-  const _mselWraps = [["#bfDateBtn", "#bfDateMenu", "#bfDateMsel"], ["#dfDateBtn", "#dfDateMenu", "#dfDateMsel"], ["#bfVendorBtn", "#bfVendorMenu", "#bfVendorMsel"],
+  const _mselWraps = [["#bfDateBtn", "#bfDateMenu", "#bfDateMsel"], ["#bfVendorBtn", "#bfVendorMenu", "#bfVendorMsel"],
     ...BILL_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`]),
     ...LIEN_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`]),
     ...PAY_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`]),
-    ...INV_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`]), ["#ifMonthBtn", "#ifMonthMenu", "#ifMonthMsel"], ["#acctVendorBtn", "#acctVendorMenu", "#acctVendorMsel"],
-    ...DRAW_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`])];
+    ...INV_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`]), ["#ifMonthBtn", "#ifMonthMenu", "#ifMonthMsel"], ["#acctVendorBtn", "#acctVendorMenu", "#acctVendorMsel"]];
   const _closeMsels = (except) => { for (const [, mId] of _mselWraps) { const m = $(mId); if (m && mId !== except) m.hidden = true; } };
   for (const [btnId, menuId, wrapId] of _mselWraps) {
     const btn = $(btnId), menu = $(menuId);
@@ -7953,7 +7357,7 @@ function init() {
       q.addEventListener("keydown", e => { if (e.key === "Escape") { q.value = ""; invQuick = ""; renderOpenInvoices(); q.blur(); e.stopPropagation(); } }); }
     document.addEventListener("keydown", e => {
       if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "f" || e.altKey) return;
-      if (activeTab !== "invoices" || !$("#ifQuick")) return;
+      if (activeTab !== "clients" || !$("#ifQuick")) return;
       if (document.querySelector(".panel:not([hidden])")) return;          // a side panel is open - leave the browser's find alone
       e.preventDefault(); const el = $("#ifQuick"); el.focus(); el.select();
     }); }
@@ -8000,13 +7404,13 @@ function init() {
         cost: { key: "cost", dir: -1 }, contract: { key: "contract", dir: -1 }, name: { key: "proj", dir: 1 } }[el.value];
       if (m) pnlSort = m; renderPnl(); }); }
   { const el = $("#btnClearLien"); if (el) el.onclick = () => { activeLien = null; renderLiens(); }; }
-  { const el = $("#btnClearDrawStage"); if (el) el.onclick = () => { activeDrawStage = null; renderFunding(); }; }
-  { const el = $("#homeDivision"); if (el) el.addEventListener("input", renderHome); }
   $("#btnExport").onclick = exportCSV;
   $("#btnRefresh").onclick = manualRefresh;
   { const el = $("#btnResync"); if (el) el.onclick = startResync; }
-  { const el = $("#btnResyncTop"); if (el) el.onclick = startResync; }   // the same reload, from the strip that is always on screen
-  { const p = $("#syncPill"); if (p) p.onclick = () => { setTab("overview"); const w = $("#homeFresh"); if (w) w.scrollIntoView({ behavior: "smooth", block: "center" }); }; }
+  { const p = $("#syncPill"); if (p) p.onclick = () => openPanel("#settings"); }   // the pill opens the gear: every feed's stamp + every run button
+  { const el = $("#btnGearWip"); if (el) el.onclick = () => { closePanels(); setTab("wipreview"); }; }
+  { const el = $("#btnGearConsole"); if (el) el.onclick = () => { closePanels(); setTab("console"); }; }
+  { const el = $("#btnGearSystems"); if (el) el.onclick = () => { closePanels(); setTab("systems"); }; }
   setInterval(renderSyncPill, 5000);   // reflects "Syncing…" while a run is in flight and the age as time passes
   // Bills: the secondary filters live behind "More filters" (owner 2026-09-01: "10 dropdowns + 8 pills
   // above the fold"); remembered per person, and forced open while one of them is active.
@@ -8028,7 +7432,6 @@ function init() {
   { const el = $("#btnFullRefresh"); if (el) el.onclick = () => runPipeline("all",
       "Full refresh - run EVERY pipeline?\n\nRuns the source producers (AR sync -> Notion/Teams, AP sync -> Bill Tracker.xlsx) AND the loaders, in order. Real writes; expect multiple Touch ID prompts; takes a few minutes.",
       { ..._consoleEls(), btn: el }); }
-  $("#btnClearRule").onclick = () => { activeRule = null; renderAttention(); renderProjects(); };
   $("#btnSettings").onclick = () => openPanel("#settings");
   { const el = $("#btnSysReload"); if (el) el.onclick = () => loadSystems(true); }
   for (const id of ["#sysSearch", "#sysOwner", "#sysHealth", "#sysState", "#sysLife", "#sysRetired"]) {
@@ -8058,11 +7461,13 @@ function init() {
   for (const id of ["#wrSearch", "#wrDivision", "#wrStatus", "#wrChangedOnly"]) {
     const el = $(id); if (el) el.addEventListener("input", () => { if (WR && WR.ready) renderWipReview(); });
   }
-  buildGroupBar();   // generate the two-level nav (top groups; sub-tabs render on setTab)
-  let savedTab = "overview";
-  try { savedTab = localStorage.getItem("proficient-ledger-tab") || "overview"; } catch { /* ignore */ }
-  if (savedTab === "home" || savedTab === "graph") savedTab = "overview";   // merged/removed tabs
-  setTab(savedTab);
+  buildGroupBar();   // the two views (sub-tabs render on setTab)
+  initFolds();
+  syncProjChips();
+  let savedTab = "projects";
+  try { savedTab = localStorage.getItem("proficient-ledger-tab") || "projects"; } catch { /* ignore */ }
+  if (["wipreview", "console", "systems"].includes(savedTab)) savedTab = "projects";   // tool pages never reopen on their own
+  setTab(TAB_ALIAS[savedTab] || savedTab);
   initCellSelect();   // Excel-style click/drag cell selection + running-sum bar
   setInterval(() => { if (!syncing && !pendingBillMarks.size && !payDraft.size) load(true); }, 90000);   // soft auto-refresh (paused during a resync or while lien / pay-run marks are unsaved)
   $("#btnCloseSettings").onclick = closePanels;
