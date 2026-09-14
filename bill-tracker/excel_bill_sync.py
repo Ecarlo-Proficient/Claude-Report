@@ -2112,6 +2112,7 @@ def _cost_code_findings(all_rows: List[dict], po_index: Optional[Dict[str, dict]
         recs.append({"vendor": r.get("vendor", "") or "", "number": number,
                      "cost_code": raw.split(":")[-1].strip(), "cost_name": cost_name,
                      "desc": r.get("line_desc", "") or "", "account": r.get("account", "") or "",
+                     "bill_memo": r.get("bill_memo", "") or "",
                      "bill_id": r.get("bill_id", ""), "bill_doc": r.get("bill_doc", ""),
                      "date": r.get("bill_date"), "project": r.get("project_num", "") or "",
                      "amount": r.get("line_amount") or 0.0, "po_num": r.get("po_num", "") or ""})

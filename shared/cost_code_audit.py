@@ -7,7 +7,9 @@ Sheet + shared/qbo_costs): 1 Concrete (ready-mix) · 2 Rebar · 3 Formwork/Lumbe
 4 Aggregates · 5 Equip/51 Pump/52 Saw · 6 Labor · 7 Specialty · 8 Fuel · 9 Supplies.
 
 Vendor coding TYPES + their rule:
-  • concrete supplier (ready-mix, e.g. Cowtown) → every line must be *1.
+  • concrete supplier (ready-mix, e.g. Cowtown) → every line must be *1, except
+    *4 aggregate on a bill whose MEMO reads as aggregate (read the whole bill:
+    the pea-gravel line vouches for its surcharge / environmental / tax lines).
   • material supplier (e.g. RCI = lumber/rebar) → *2/*3/*4 only; NEVER *1
     (concrete), *5/*51/*52 (equipment), or *6 (labor).
   • both (e.g. Preferred Materials) → sells concrete AND material, so a line whose
@@ -19,7 +21,8 @@ it. This module is PURE (no QBO/IO) so it unit-tests offline and is shared by BO
 bill-tracker's `Audit - Cost Code` sheet (folded into sync-ap).
 
 Row shape the functions expect (build it from whatever source):
-  {vendor, number, cost_code, cost_name, desc, account, …passthrough}
+  {vendor, number, cost_code, cost_name, desc, account, bill_id, …passthrough}
+  optional `bill_memo` (the bill's PrivateNote) widens the memo read to the bill.
 `number`/`cost_name` come from `code_families(raw_item_name)`.
 """
 from __future__ import annotations
@@ -44,7 +47,7 @@ MATERIAL_FORBIDDEN = CONCRETE | EQUIP | LABOR
 # or sack mix. For a both-supplier such a line must be coded *1.
 _CONCRETE_MEMO_RE = re.compile(
     r"\b(?:\d+(?:\.\d+)?\s*(?:C\.?Y\.?|CU\.?\s*YD|YDS?|YARDS?|CUBIC)"
-    r"|SACKS?|SCK|SACK\s*MIX|CONCRETE|READY[\s-]*MIX|REDI[\s-]*MIX|REDIMIX)\b",
+    r"|\d+\s*PSI|SACKS?|SCK|SACK\s*MIX|CONCRETE|READY[\s-]*MIX|REDI[\s-]*MIX|REDIMIX)\b",
     re.IGNORECASE)
 # Non-job charges that legitimately post to an EXPENSE ACCOUNT, not a cost code
 # (the user 2026-08-25): credit-card / finance / bank / late fees. Read the memo,
@@ -189,11 +192,26 @@ def classify_vendors(rows: List[dict], threshold: float = 0.60, min_lines: int =
     return agg, vtype
 
 
+def aggregate_bills(rows: List[dict]) -> set:
+    """bill_ids whose MEMO reads as aggregate: any line description, or the bill
+    memo (`bill_memo`, optional). A bill is read as a WHOLE (the user 2026-09-14,
+    Bodin 235198: "20yds of exposed pea gravel" + FUEL SURCHARGE + ENVIRONMENTAL +
+    TAXES, all FW4) - the add-on lines ride the product, so they are aggregate too."""
+    out = set()
+    for r in rows:
+        bid = r.get("bill_id")
+        if bid and (aggregate_memo(r.get("desc") or "")
+                    or aggregate_memo(r.get("bill_memo") or "")):
+            out.add(bid)
+    return out
+
+
 def flag_lines(rows: List[dict], vtype: Dict[str, str]) -> List[dict]:
     """Per-type miscodes. 'review' vendors are never auto-flagged (surfaced only on
     the vendor summary for the owner to type via the override). Each flagged row is
     the original dict + {reason, vtype}."""
     out: List[dict] = []
+    agg_bills = aggregate_bills(rows)
     for r in rows:
         t = vtype.get(r["vendor"].upper())
         if t in (None, "review"):
@@ -211,8 +229,18 @@ def flag_lines(rows: List[dict], vtype: Dict[str, str]) -> List[dict]:
         if t == "concrete":
             if n == "1":
                 continue
-            if n == "4" and aggregate_memo(r.get("desc") or ""):
-                continue   # aggregate (pea gravel/sand/base) - ready-mix hauls it, memo confirms
+            if n == "4":
+                desc = r.get("desc") or ""
+                if aggregate_memo(desc):
+                    continue   # aggregate (pea gravel/sand/base) - ready-mix hauls it
+                if not concrete_memo(desc) and (
+                        aggregate_memo(r.get("bill_memo") or "")
+                        or r.get("bill_id") in agg_bills):
+                    # The BILL's memo vouches for its add-on lines (the surcharge /
+                    # environmental / tax lines of a pea-gravel bill). A line whose
+                    # own memo reads as concrete yardage ("9yds of 3000psi") is
+                    # never vouched - that one is the miscode.
+                    continue
             if n is not None:
                 reason = f"{code} = {name} (expected *1 Concrete)"
             elif code:

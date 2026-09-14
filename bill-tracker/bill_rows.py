@@ -372,6 +372,7 @@ def build_rows(
                 "cost_code": cost_code,
                 "line_amount": line_amt,
                 "line_desc": line_desc,
+                "bill_memo": (bill.get("PrivateNote") or "").strip(),
                 "inv_doc": inv_doc,
                 "inv_id": inv_id,
                 "inv_memo": inv_memo,

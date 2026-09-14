@@ -124,6 +124,7 @@ def pull_lines(access: str, cid: str, since: str) -> Tuple[List[dict], int]:
                 "account": _line_account(ln, amap),
                 "amount": float(ln.get("Amount") or 0),
                 "desc": (ln.get("Description") or "").strip(),
+                "bill_memo": (b.get("PrivateNote") or "").strip(),
             })
     return rows, len(bills)
 

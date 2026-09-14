@@ -132,6 +132,24 @@ no business findings, dollar exposures, or owner analyses (those live in the own
   fill, flex base, crushed, asphalt, dirt…). A `*4` with no aggregate memo still flags, as do rebar/
   lumber/pump/labor. Owner: NOT a blanket `*4` pass - memo-gated. Pump (`*51`) still flags per prior
   call. In `shared/cost_code_audit.flag_lines`.
+- **Cost Code: the aggregate memo is read per BILL, not per line (2026-09-14, owner).** Bodin
+  235198 (RP7433-FTW, all `FW4`): "20yds of exposed pea gravel" passed the gate but its ENVIRONMENTAL
+  and TAXES lines flagged - "must read memo before saying it's a wrong cost code". Now a `*4` line
+  passes when ITS memo, the BILL memo (`PrivateNote`, new `bill_memo` on every `bill_rows` line),
+  or any SIBLING line on the same `bill_id` reads as aggregate (`aggregate_bills` in
+  `shared/cost_code_audit`). Still memo-gated: a `*4` bill with no aggregate memo anywhere flags,
+  one bill never vouches for another, and a line whose OWN memo reads as concrete yardage
+  ("9yds of 3000psi regular rock" - `\d+ PSI` added to `concrete_memo`) is never vouched by a
+  pea-gravel sibling - that line is the miscode (Bodin 235213 stays flagged on purpose). First
+  offline tests for the module: `tests/test_cost_code_audit.py` (6). Same fix reaches
+  `one-offs/concrete_cost_code_audit.py`. The three false Bodin entries were removed from
+  `cost_code_history.json` so the clerk's error rate isn't charged for a rule the audit got wrong.
+- **OPEN ISSUE (2026-09-14): Excel holding `Bill Tracker.xlsx` open reverts every sync.** The
+  workbook on OneDrive read as of 09/08 after five later runs (mtime = the run, `lastModifiedBy`
+  = Excel, `created` = the 09/08 run): Excel's open copy re-saves over the script's write within
+  the minute. `lsof` on the path before a run; a save while Excel has it open is a no-op for the
+  owner. Also seen: the PO-tracker default path (`Purchase Orders/Copy 05 dic.xlsx`) is gone -
+  `ACB_PO_TRACKER_XLSX` needs pointing at the live `1.0purchase-order-tracker.xlsx`.
 - **`Audit - History` — persistent cost-code miscode log (2026-09-01, owner).** "I need this logged
   in the system - how often the clerk is making the mistakes, and what got fixed after refreshing."
   New module `cost_code_history.py` (pure state, no QBO) + a fourth audit sheet. State =
