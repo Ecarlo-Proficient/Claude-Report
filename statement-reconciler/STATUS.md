@@ -20,6 +20,17 @@ findings here — those live in the owner's vault.
     all-digits-0-stripped), most-precise-first, so a ref matches however it's
     written. `_is_printed_category` = whole-word "printed" (catches ITZ/GISELLE
     PRINTED, excludes PRINT PENDING); no personal name hard-coded.
+  - **Multi-bill / PDF-only backup (`live_search_printed`, 2026-09-14).** For an
+    invoice the pre-built index misses, a fallback runs a Graph `$search` for the
+    invoice #'s longest alphanumeric SEGMENT before flagging it. `$search` reads
+    INSIDE PDF attachments server-side, so a bill that arrived bundled with others
+    in ONE printed email whose PDF has a generic filename (Croell "Croell Invocies"
+    -> "Proficient Concrete Invoices 1.pdf") is still found - no PDF download. The
+    segment (not digits-only) term is required because Graph tokenizes "RW786083"
+    and "188673772-0001" as whole words. Proven: Croell 09-08 9/14 -> 12/14 (3
+    recovered from the bundle); a "NOT PRINTED" that survives the backup means the
+    # is in no printed email at all. Per-# cached; only misses trigger it (a few
+    calls per statement).
   - **Auth:** MS Graph client-credentials, keys in the ONE automation-qbo blob
     (GRAPH_TENANT_ID/CLIENT_ID/CLIENT_SECRET/BILLING_MAILBOX, all `required=False`
     in `shared/setup_qbo.py` so the QBO auth test never demands them).
@@ -82,9 +93,18 @@ findings here — those live in the owner's vault.
 - **Least-privilege lockdown not yet applied.** The Graph app can currently read
   ALL mailboxes; restrict it to the billings mailbox with an Exchange
   `New-ApplicationAccessPolicy` (owner/IT step, provided, not run).
-- **Ellis-type vendors (invoice # only inside the PDF)** are shown "unverified",
-  not confirmed. Reading the PDF bytes to close them is out of scope for now
-  (the owner: statement reconcile should avoid opening each PDF).
+- **Ellis-type vendors (invoice # only inside the PDF)** are now largely handled
+  by the `live_search_printed` backup (Graph reads inside the PDF), PROVIDED the
+  invoice email is printed-tagged and the PDF has a real text layer. A pure
+  scanned-image PDF (no text) is not full-text-indexed by Graph, so it could still
+  show a false "NOT PRINTED"; the whole-statement-0% "unverified" caveat remains
+  the safety net for that case.
+- **First-run sweep (2026-09-14) surfaced ~9 recent genuinely-not-printed bills**
+  (on current statements, no printed email even via PDF search) - e.g. Croell
+  1127694 (PRINT PENDING) + 1114037, Sunbelt 188673772-0001, Cowtown 397531, RCI
+  RW786083/RW785360/MCK777696/LF071526G1. These are real AP-01 intake gaps for the
+  bill clerk, NOT tool bugs. The rest of the misses are old invoices on old
+  statements (pre-tagging / pre-mailbox-horizon).
 
 ## VERIFICATION NOTES
 - The 12 current reports (statements 08-26 → 09-08) were audited 2026-09-10/11:

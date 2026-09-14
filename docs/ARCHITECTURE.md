@@ -232,7 +232,7 @@ flowchart LR
     BT["excel_bill_sync.py\nBills/Inventory/Liens + 3 themed Audit sheets + History log"]:::tool
     JCA["job_coding_audit.py\non-demand per-job drill"]:::tool
     SR["statement_reconciler.py"]:::tool
-    PS["print_status.py\ninvoice # from subject/full body/attachment name\ndisk-cached, incremental by lastModifiedDateTime"]:::tool
+    PS["print_status.py\ninvoice # from subject/full body/attachment name\n+ $search backup reads INSIDE bundled PDFs\ndisk-cached, incremental by lastModifiedDateTime"]:::tool
     BX[("Bill Tracker.xlsx\nOneDrive/Automations-\ndisplay = non-sub · audit = incl. subs")]:::out
     CCH[("cost_code_history.json\nCompanyHealth · cost-code miscode log")]:::out
     RX[("reconciliation xlsx\n+ Print Status tab (opt-in PRINT_STATUS=1)\n→ back to NAS")]:::out

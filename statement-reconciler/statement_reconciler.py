@@ -2704,7 +2704,11 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
             import print_status as _ps
             _idx = _ps.printed_index()
             if _idx is not None:
-                _ps.write_print_status_sheet(wb, stmt_lines, _idx)
+                # live_search_printed = fallback for a miss: reads inside PDF
+                # attachments server-side, so a bill printed as a generically-named
+                # PDF is still found and only a true absence stays "NOT PRINTED".
+                _ps.write_print_status_sheet(wb, stmt_lines, _idx,
+                                             search_fn=_ps.live_search_printed)
             else:
                 _warn(f"Print Status tab skipped: {_ps._INDEX_CACHE.get('err', 'index unavailable')}")
         except Exception as e:

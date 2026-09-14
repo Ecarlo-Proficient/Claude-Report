@@ -180,21 +180,10 @@ class PrintedIndex:
             _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
             from shared import qbo_vault as kc
             creds = kc.get_all()
-        tenant = creds["GRAPH_TENANT_ID"]
-        client = creds["GRAPH_CLIENT_ID"]
-        secret = creds["GRAPH_CLIENT_SECRET"]
         mailbox = mailbox or creds.get("GRAPH_BILLING_MAILBOX", "")
         if not mailbox:
             raise ValueError("no mailbox: set GRAPH_BILLING_MAILBOX or pass mailbox=")
-
-        tok = requests.post(
-            f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token",
-            data={"grant_type": "client_credentials", "client_id": client,
-                  "client_secret": secret,
-                  "scope": "https://graph.microsoft.com/.default"},
-            timeout=30)
-        tok.raise_for_status()
-        access = tok.json()["access_token"]
+        access = _graph_token(creds)
 
         idx = cls(source=f"Graph: {mailbox}")
         # Seed from the prior cache so an incremental pull only has to apply the
@@ -353,6 +342,84 @@ class PrintedIndex:
         return self.by_alldigits.get(ad) if len(ad) >= 5 else None
 
 
+def _graph_token(creds: dict) -> str:
+    """One client-credentials access token for the Graph mailbox reads."""
+    import requests
+    r = requests.post(
+        f"https://login.microsoftonline.com/{creds['GRAPH_TENANT_ID']}/oauth2/v2.0/token",
+        data={"grant_type": "client_credentials",
+              "client_id": creds["GRAPH_CLIENT_ID"],
+              "client_secret": creds["GRAPH_CLIENT_SECRET"],
+              "scope": "https://graph.microsoft.com/.default"},
+        timeout=30)
+    r.raise_for_status()
+    return r.json()["access_token"]
+
+
+# Live-search fallback state: a reused token + a per-invoice result cache so a
+# statement (and a whole sweep) never searches the same number twice.
+_SEARCH: dict = {"token": None, "creds": None, "cache": {}}
+
+
+def live_search_printed(ref: str, creds: Optional[dict] = None,
+                        mailbox: Optional[str] = None) -> Optional["PrintedEmail"]:
+    """Fallback for an invoice the pre-built index missed: ask Graph whether ANY
+    printed email contains this number. Graph's $search reads INSIDE PDF
+    attachments server-side, so it catches invoices whose number appears only in
+    the PDF - e.g. a bundled email with a generic filename (Croell 'Croell
+    Invocies' -> 'Proficient Concrete Invoices 1.pdf'). We never download the PDF.
+
+    Returns the printed email (subject/date for the sheet) or None. Per-number
+    cached; a transient failure returns None WITHOUT caching, so a later line can
+    retry. So a "NOT PRINTED" that survives this check means the number is in no
+    printed email at all - the genuine finding, not a reader blind spot."""
+    import requests
+    # Search the longest alphanumeric SEGMENT, not digits-only: Graph tokenizes
+    # "RW786083" and "188673772-0001" as whole words, so a digits-only term
+    # ("786083" / "1886737720001") never matches. The longest segment
+    # ("RW786083", "188673772") is how the number is actually indexed.
+    segs = [s for s in re.split(r"[^A-Za-z0-9]+", ref or "") if s]
+    term = max(segs, key=len) if segs else ""
+    if len(term) < 5:
+        term = _norm_ref(ref)
+    if not term or len(term) < 5:
+        return None
+    if term in _SEARCH["cache"]:
+        return _SEARCH["cache"][term]
+    try:
+        if creds is None:
+            if _SEARCH["creds"] is None:
+                import sys as _sys
+                _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+                from shared import qbo_vault as kc
+                _SEARCH["creds"] = kc.get_all()
+            creds = _SEARCH["creds"]
+        mailbox = mailbox or creds.get("GRAPH_BILLING_MAILBOX", "")
+        if _SEARCH["token"] is None:
+            _SEARCH["token"] = _graph_token(creds)
+        H = {"Authorization": f"Bearer {_SEARCH['token']}", "ConsistencyLevel": "eventual"}
+        u = (f"https://graph.microsoft.com/v1.0/users/{mailbox}/messages"
+             f'?$search="{term}"&$select=subject,categories,receivedDateTime&$top=10')
+        r = requests.get(u, headers=H, timeout=60)
+        if r.status_code == 401:                 # token aged out mid-run -> refresh once
+            _SEARCH["token"] = _graph_token(creds)
+            H["Authorization"] = f"Bearer {_SEARCH['token']}"
+            r = requests.get(u, headers=H, timeout=60)
+        r.raise_for_status()
+        hit = None
+        for m in r.json().get("value", []):
+            cats = ", ".join(m.get("categories") or [])
+            if _is_printed_category(cats):
+                hit = PrintedEmail(subject=(m.get("subject") or "").strip(),
+                                   received=(m.get("receivedDateTime") or "")[:10],
+                                   categories=cats)
+                break
+        _SEARCH["cache"][term] = hit             # cache the definite answer (hit or None)
+        return hit
+    except Exception:
+        return None                              # transient: don't cache, allow a retry
+
+
 _INDEX_CACHE: dict = {}
 
 
@@ -414,15 +481,23 @@ class PrintRow:
     email_subject: str = ""
 
 
-def build_print_rows(statement_lines, index: PrintedIndex) -> List[PrintRow]:
+def build_print_rows(statement_lines, index: PrintedIndex,
+                     search_fn=None) -> List[PrintRow]:
     """Cross-reference every parsed statement invoice against the printed index.
     Lines with no ref (e.g. a Balance-forward lump) are skipped - nothing to
-    match. Credits/payments (negative) are skipped too; they aren't printed bills."""
+    match. Credits/payments (negative) are skipped too; they aren't printed bills.
+
+    `search_fn` (e.g. `live_search_printed`): a fallback called only for invoices
+    the pre-built index misses. It reads inside PDF attachments server-side, so a
+    bill printed as a generically-named PDF is still found. With it, a remaining
+    "NOT PRINTED" means the number is in no printed email at all."""
     out: List[PrintRow] = []
     for l in statement_lines:
         if not getattr(l, "ref", "") or getattr(l, "amount", 0) <= 0:
             continue
         em = index.status_for(l.ref)
+        if em is None and search_fn is not None:
+            em = search_fn(l.ref)
         out.append(PrintRow(
             date=getattr(l, "date", ""), ref=l.ref, amount=l.amount,
             printed=em is not None,
@@ -433,12 +508,14 @@ def build_print_rows(statement_lines, index: PrintedIndex) -> List[PrintRow]:
 
 
 def write_print_status_sheet(wb, statement_lines, index: PrintedIndex,
-                             title_font=None, header_fill=None) -> None:
+                             title_font=None, header_fill=None,
+                             search_fn=None) -> None:
     """Add a plain 'Print Status' sheet to an open workbook. Follows the repo's
     plain-Excel rule (white/black, label+amount on a row). Green/red is state,
-    not decoration, so a single Printed? column is fine as text for now."""
+    not decoration, so a single Printed? column is fine as text for now.
+    `search_fn` is the live PDF-content fallback (see build_print_rows)."""
     from openpyxl.styles import Font, Alignment
-    rows = build_print_rows(statement_lines, index)
+    rows = build_print_rows(statement_lines, index, search_fn=search_fn)
     # Whole-statement 0% match: this vendor almost certainly carries the invoice #
     # only INSIDE the PDF (e.g. Ellis) - subject/body/filename never expose it. Do
     # NOT cry "NOT PRINTED" on every line (a wall of false alarms for the clerk);
