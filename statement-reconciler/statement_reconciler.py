@@ -2378,7 +2378,8 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
                 line_sum: Optional[float] = None,
                 tieout_ok: bool = True,
                 bf_amount: float = 0.0,
-                payments_total: float = 0.0) -> None:
+                payments_total: float = 0.0,
+                stmt_lines: Optional[list] = None) -> None:
     # QBO open as-of stmt_date: exclude post-statement bills from the displayed
     # total so the reconciliation math lines up with the statement snapshot.
     def _as_of(b: QboBill) -> bool:
@@ -2689,6 +2690,25 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
             cleanup_dir = _embed_statement_tab(wb, statement_src)
         except Exception as e:
             _warn(f"could not embed statement image ({e}); Excel saved without it.")
+
+    # Print Status tab (AP-03 -> AP-01): for every statement invoice, was the bill
+    # ever received-and-printed in the billings inbox? Best-effort — a Graph outage
+    # or unconfigured mailbox must never break the reconcile, so any failure just
+    # skips the tab with a dim note.
+    # OPT-IN while we test-and-see (set PRINT_STATUS=1). Off by default so a normal
+    # reconcile - anyone's, incl. the developer's - never triggers a mailbox pull /
+    # Touch ID until it's proven on a vendor or two.
+    _ps_on = os.environ.get("PRINT_STATUS", "").strip().lower() in ("1", "true", "yes", "on")
+    if stmt_lines and _ps_on:
+        try:
+            import print_status as _ps
+            _idx = _ps.printed_index()
+            if _idx is not None:
+                _ps.write_print_status_sheet(wb, stmt_lines, _idx)
+            else:
+                _warn(f"Print Status tab skipped: {_ps._INDEX_CACHE.get('err', 'index unavailable')}")
+        except Exception as e:
+            _warn(f"Print Status tab skipped ({e}).")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(out_path)
@@ -3094,7 +3114,7 @@ def process_pdf(pdf_path: Path, args: argparse.Namespace,
     statement_src = pdf_path if getattr(args, "embed", False) else None
     write_excel(out, vendor_name, stmt_date, amt_due, bills, rows,
                 statement_src=statement_src, line_sum=line_sum, tieout_ok=sum_matches,
-                bf_amount=bf_amount, payments_total=payments_total)
+                bf_amount=bf_amount, payments_total=payments_total, stmt_lines=lines)
     _done(t0, f"Saved to {_Term.color(_Term.C, str(out))}")
     if not sum_matches:
         _fail(f"TIE-OUT FAILED — parsed lines ${line_sum:,.2f} vs statement ${amt_due:,.2f} "

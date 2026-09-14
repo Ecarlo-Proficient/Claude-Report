@@ -228,12 +228,14 @@ flowchart LR
     NAS[("Synology NAS\nvendor statement PDFs")]:::src
     GL[("General List xlsx\nSynology · READ-ONLY")]:::src
     POT[("PO tracker xlsx\nOneDrive · READ-ONLY\nvia po_tracker.py")]:::src
+    MBX[("MS Graph\nbillings mailbox\nprinted-category tags")]:::src
     BT["excel_bill_sync.py\nBills/Inventory/Liens + 3 themed Audit sheets + History log"]:::tool
     JCA["job_coding_audit.py\non-demand per-job drill"]:::tool
     SR["statement_reconciler.py"]:::tool
+    PS["print_status.py\ninvoice # from subject/full body/attachment name\ndisk-cached, incremental by lastModifiedDateTime"]:::tool
     BX[("Bill Tracker.xlsx\nOneDrive/Automations-\ndisplay = non-sub · audit = incl. subs")]:::out
     CCH[("cost_code_history.json\nCompanyHealth · cost-code miscode log")]:::out
-    RX[("reconciliation xlsx\n→ back to NAS")]:::out
+    RX[("reconciliation xlsx\n+ Print Status tab (opt-in PRINT_STATUS=1)\n→ back to NAS")]:::out
 
     QBO --> BT --> BX
     BT -. "miscode log (read+write each run)" .-> CCH
@@ -242,6 +244,7 @@ flowchart LR
     POT -- "Unused PO reconcile" --> BT
     QBO --> SR
     NAS --> SR -- "tie-out gate: lines must sum to Amount Due,\nelse banded + held out of DONE" --> RX
+    MBX --> PS -. "was each statement invoice ever printed?" .-> SR
 ```
 
 Full pull (2026-08-06): the tracker pulls every bill incl. subs. Subs are kept off the

@@ -49,10 +49,22 @@ class KeySpec:
     min_len: int
     max_len: int
     shape: Optional[Callable[[str], bool]] = None
+    required: bool = True     # False = optional add-on; the QBO auth test won't demand it
 
 
 def _is_digits(v: str) -> bool:
     return v.isdigit()
+
+
+def _is_guid(v: str) -> bool:
+    parts = v.split("-")
+    return (len(parts) == 5
+            and [len(p) for p in parts] == [8, 4, 4, 4, 12]
+            and all(c in "0123456789abcdefABCDEF" for p in parts for c in p))
+
+
+def _is_email(v: str) -> bool:
+    return "@" in v and "." in v.rsplit("@", 1)[-1]
 
 
 # Production only. Sandbox support has been intentionally removed to eliminate
@@ -89,6 +101,33 @@ SPECS = [
         "JobTread > Settings > Integrations > JobTread API > New Grant Key (read access)",
         "opaque alphanumeric string",
         10, 200, None,
+    ),
+    # Microsoft Graph — billings-inbox print-status scan (statement-reconciler).
+    # Optional add-on, required=False so the QBO auth test never demands them.
+    # Same blob (key-library rule). GRAPH_BILLING_MAILBOX is which inbox to read.
+    KeySpec(
+        "GRAPH_TENANT_ID",
+        "Entra admin center > App registrations > your app > Overview > Directory (tenant) ID",
+        "GUID (8-4-4-4-12 hex)",
+        36, 36, _is_guid, required=False,
+    ),
+    KeySpec(
+        "GRAPH_CLIENT_ID",
+        "Entra > App registrations > your app > Overview > Application (client) ID",
+        "GUID (8-4-4-4-12 hex)",
+        36, 36, _is_guid, required=False,
+    ),
+    KeySpec(
+        "GRAPH_CLIENT_SECRET",
+        "Entra > your app > Certificates & secrets > the client secret VALUE (not the Secret ID)",
+        "opaque ~40 chars, shown once at creation",
+        20, 200, None, required=False,
+    ),
+    KeySpec(
+        "GRAPH_BILLING_MAILBOX",
+        "The billings mailbox the reconciler reads for printed-status tags",
+        "an email address",
+        5, 120, _is_email, required=False,
     ),
 ]
 
@@ -158,12 +197,14 @@ def run_test() -> int:
         print(f"  ✗ could not read blob: {e}")
         return 1
 
-    missing = [s.name for s in SPECS if s.name not in creds or not creds[s.name]]
+    missing = [s.name for s in SPECS
+               if s.required and (s.name not in creds or not creds[s.name])]
     if missing:
         print(f"  ✗ missing keys in blob: {', '.join(missing)}")
         print(f"    fix:  python3 setup_qbo.py")
         return 1
-    print(f"  ✓ all {len(SPECS)} keys present in blob")
+    n_req = sum(1 for s in SPECS if s.required)
+    print(f"  ✓ all {n_req} required keys present in blob")
 
     cid = creds["QBO_CLIENT_ID"]
     sec = creds["QBO_CLIENT_SECRET"]

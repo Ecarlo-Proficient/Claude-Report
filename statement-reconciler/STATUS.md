@@ -5,6 +5,35 @@ to this tool. Tool-only scope: no business/owner analyses or dollar-exposure
 findings here — those live in the owner's vault.
 
 ## DONE / FINALIZED
+- **Print Status tab — print-status verification (2026-09-14, opt-in).**
+  `print_status.py` ties AP-03 → AP-01: for every parsed statement invoice it asks
+  the billings mailbox "was this bill ever received-and-printed?" (an untagged
+  email is an invisible bill). Findings, all verified by a full inbox+DONE sweep:
+  - **Source per vendor, not RCI-only.** The invoice # is pulled from the email
+    subject, the FULL body (HTML stripped), AND attachment filenames - because
+    each vendor encodes it differently. Verified: White Cap **0 → 100%** (its #
+    sits in the body table, past the 255-char bodyPreview - full body was the fix),
+    CMC 100% + Sunbelt 88–100% (filename decode), Cowtown 94% (QBO-desktop body).
+    No vendor regressed. Moderate rates (Sunrise/Croell) are the OLDEST statements
+    only (pre-tagging invoices); every recent statement hits ~100%.
+  - **Matching:** three keys per token (full normalized, longest digit run,
+    all-digits-0-stripped), most-precise-first, so a ref matches however it's
+    written. `_is_printed_category` = whole-word "printed" (catches ITZ/GISELLE
+    PRINTED, excludes PRINT PENDING); no personal name hard-coded.
+  - **Auth:** MS Graph client-credentials, keys in the ONE automation-qbo blob
+    (GRAPH_TENANT_ID/CLIENT_ID/CLIENT_SECRET/BILLING_MAILBOX, all `required=False`
+    in `shared/setup_qbo.py` so the QBO auth test never demands them).
+  - **Perf:** first build ~514s (full body, all messages); then a disk cache
+    (`~/Library/Application Support/Proficient/print-status/`, override
+    `PRINT_STATUS_CACHE_DIR`) makes each run an **~11s incremental** pull, floored
+    on `lastModifiedDateTime` so a newly-printed OLD bill is still caught and an
+    un-tagged email is dropped.
+  - **Wiring:** `write_excel` gained `stmt_lines=` and writes a plain "Print Status"
+    tab (Date · Invoice # · Amount · Printed? · Email date · Email subject),
+    passing `assert_clean`. **OFF by default; set `PRINT_STATUS=1` to enable** while
+    we test on a vendor or two. Any Graph failure skips the tab, never breaks the
+    reconcile. A whole-statement 0% match (e.g. Ellis, invoice # only inside the
+    PDF) shows "unverified" + a caveat instead of a wall of false "NOT PRINTED".
 - **Parse tie-out gate (2026-09-11).** Every report now shows a `Sum of parsed
   lines` row and a `Parse gap (lines − statement total)` row in the TIE-OUT
   block. When the parsed lines do not sum to the statement's own Amount Due
@@ -42,7 +71,20 @@ findings here — those live in the owner's vault.
     the older single-line CowTown layout.
 
 ## OPEN ISSUES
-- (none)
+- **Print Status is opt-in (`PRINT_STATUS=1`) pending a test-and-see on 1–2
+  vendors** (the owner 2026-09-14). Flip the default on once proven.
+- **"Who's done" workflow script HELD (the owner 2026-09-14, "hold - don't build
+  yet").** Design agreed: a script that DERIVES each statement's state - the bill
+  clerk's fix-the-bad-bills side from the reconciliation xlsx (tie-out held /
+  MISSING_IN_QBO) + folder location (`Reconciliations/waiting for actions` →
+  `Old-Done`), and the print side from the Print Status scan - with NOBODY
+  maintaining a tracker. Not started.
+- **Least-privilege lockdown not yet applied.** The Graph app can currently read
+  ALL mailboxes; restrict it to the billings mailbox with an Exchange
+  `New-ApplicationAccessPolicy` (owner/IT step, provided, not run).
+- **Ellis-type vendors (invoice # only inside the PDF)** are shown "unverified",
+  not confirmed. Reading the PDF bytes to close them is out of scope for now
+  (the owner: statement reconcile should avoid opening each PDF).
 
 ## VERIFICATION NOTES
 - The 12 current reports (statements 08-26 → 09-08) were audited 2026-09-10/11:
