@@ -7550,8 +7550,7 @@ function rrWire() {
 
 function rrPaintMode() {
   $$("#rrMode .seg-btn").forEach(b => b.classList.toggle("on", b.dataset.mode === rrMode));
-  const h = document.querySelector('.tab-page[data-tab="rpreview"] h2');
-  if (h) { let badge = h.querySelector(".rr-ops-badge"); if (rrMode === "ops") { if (!badge) { badge = document.createElement("span"); badge.className = "rr-ops-badge"; badge.textContent = "OPS Manager is here"; h.appendChild(badge); } } else if (badge) badge.remove(); }
+  // no badge - the toggle itself says who is here (owner 2026-09-15)
 }
 
 function rrMark(x, kind) { return (RR.marks || {})[`${x.line}|${kind}`] || null; }
