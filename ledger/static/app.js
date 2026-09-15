@@ -7595,12 +7595,14 @@ function rrVisible() {
 }
 
 let rrOpenLine = null;   // the job whose full page is open (null = the list)
+let rrLastLine = null;   // the job you last had open - the list scrolls back to it and marks the row (owner 2026-09-15)
 
 function rrRenderCards() {
   const body = $("#rrBody"); if (!body || !RR) return;
   const kind = rrSection, list = rrVisible();
   const cnt = $("#rrCount"); if (cnt) cnt.textContent = `${list.length} shown`;
   body.innerHTML = "";
+  if (rrOpenLine) rrLastLine = rrOpenLine;
   if (rrOpenLine) {
     const x = list.find(r => r.line === rrOpenLine) || (kind === "current" ? RR.current : RR.finished).find(r => r.line === rrOpenLine);
     if (x) { rrRenderPage(x, kind, list); return; }
@@ -7615,7 +7617,8 @@ function rrRenderCards() {
   const tb = document.createElement("tbody");
   for (const x of list) {
     const m = rrMark(x, kind), due = rrIsDue(m);
-    const tr = document.createElement("tr"); tr.className = (m && !due && (m.decision === "confirmed" || m.decision === "agree")) ? "rr-ok-row" : (x.problem ? "rr-prob-row" : "");
+    const tr = document.createElement("tr"); tr.className = ((m && !due && (m.decision === "confirmed" || m.decision === "agree")) ? "rr-ok-row" : (x.problem ? "rr-prob-row" : "")) + (x.line === rrLastLine ? " rr-here" : "");
+    if (x.line === rrLastLine) tr.title = "you were here";
     // the list's mark: ✓ only for Confirmed / Agreed; a fix or a keep shows "!"; a plain note shows "…";
     // deselect the verdict and Save = unconfirmed (owner 2026-09-15)
     const who = m ? (m.mode === "ops" ? "OPS Manager + you" : "You") + " · " + fmtDate(m.at, true) : "";
@@ -7623,7 +7626,7 @@ function rrRenderCards() {
     const mark = !m ? "" : due ? `<span class="rr-check due" title="answered ${fmtDate(m.at)} - due again">↻</span>`
       : verdictOk ? `<span class="rr-check" title="${_ge(who)}">✓</span>`
       : (m.decision === "fix" || m.decision === "keep") ? `<span class="rr-check fix" title="${_ge(who)}">!</span>`
-      : `<span class="rr-check note" title="${_ge("noted, no verdict · " + who)}">…</span>`;
+      : "";
     const ans = m ? `${_ge({ confirmed: "Confirmed", fix: "Needs a fix", agree: "Agreed done", keep: "Kept", noted: "Noted, not confirmed" }[m.decision] || m.decision)}<div class="d">${m.mode === "ops" ? "OPS Manager + you" : "You"} · ${fmtDate(m.at)}</div>` : `<span class="rr-nojt">not yet</span>`;
     const tail = kind === "current"
       ? `<td class="n">${money(x.costs)}</td><td class="n">${money(x.billed)}</td><td class="${x.stale ? "rr-stale" : ""}">${x.last_seen ? fmtDate(x.last_seen) : "–"}</td><td class="rr-list-flags">${(x.flags || []).length ? `${x.flags.length} · ${_ge(x.flags[0])}${x.flags.length > 1 ? "…" : ""}` : ""}</td>`
@@ -7633,6 +7636,7 @@ function rrRenderCards() {
     tb.appendChild(tr);
   }
   t.appendChild(tb); body.appendChild(t);
+  const here = t.querySelector("tr.rr-here"); if (here) requestAnimationFrame(() => here.scrollIntoView({ block: "center" }));
 }
 
 function rrRenderPage(x, kind, list) {

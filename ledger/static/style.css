@@ -1645,3 +1645,5 @@ html[data-theme="dark"] .rr-src.master, html[data-theme="dark"] .rr-src.manual {
 .rr-profit { flex-basis: 100%; font-size: .9em; color: var(--text-dim); margin-top: 2px; }
 .rr-profit b { color: var(--text); font-variant-numeric: tabular-nums; }
 .rr-profit b.neg { color: var(--neg-text); }
+.rr-list tr.rr-here td { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.rr-list tr.rr-here td.rr-markcell::before { content: "▶"; color: var(--accent-text); font-size: .8em; }
