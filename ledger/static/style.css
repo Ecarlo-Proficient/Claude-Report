@@ -1594,3 +1594,42 @@ html[data-theme="dark"] .rr-src.master, html[data-theme="dark"] .rr-src.manual {
 .rr-stamp.rr-stamp-ops b { color: var(--accent-text); }
 .rr-empty { padding: 28px 8px; color: var(--text-dim); max-width: 620px; }
 .rr-actions .btn.on { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent); font-weight: 700; }
+/* RP review - pictures + timeline (owner 2026-09-15: "a literal screenshot of the file with the file name") */
+.rr-links { margin-left: auto; display: inline-flex; gap: 6px; align-items: center; }
+.rr-nojt { font-size: .8em; color: var(--text-dim); }
+.btn.tiny { padding: 2px 8px; font-size: .76em; text-decoration: none; }
+.rr-sec { margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--border); }
+.rr-sec-title { font-weight: 700; font-size: .92em; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.rr-sec-line { font-size: .84em; color: var(--text-dim); margin: 3px 0 6px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.rr-sec-line b { color: var(--text); }
+.rr-tl-sum { font-size: .86em; color: var(--text-dim); margin: 4px 0; }
+.rr-tl { border-collapse: collapse; font-size: .82em; margin: 2px 0 8px; }
+.rr-tl th { text-align: left; color: var(--text-dim); font-weight: 600; padding: 2px 10px 2px 0; border-bottom: 1px solid var(--border); }
+.rr-tl td { padding: 2px 10px 2px 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent); vertical-align: top; }
+.rr-tl td.n { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.rr-pics { display: flex; gap: 12px; flex-wrap: wrap; }
+.rr-pic { margin: 6px 0; max-width: 100%; }
+.rr-pic figcaption { font-size: .8em; color: var(--text-dim); margin-bottom: 4px; }
+.rr-pic figcaption b { color: var(--text); }
+.rr-picnote { color: var(--neg-text); }
+.rr-pic img { display: block; max-width: 100%; max-height: 640px; border: 1px solid var(--border); border-radius: 6px; background: #fff; box-shadow: var(--shadow); }
+.rr-more { margin-top: 10px; font-size: .88em; }
+.rr-more summary { cursor: pointer; color: var(--text-dim); }
+.rr-dec .seg-btn { font-size: .84em; padding: 5px 12px; }
+/* RP review - the list, one row per job; a row opens the job's full page (owner 2026-09-15) */
+.rr-list { width: 100%; border-collapse: collapse; font-size: .9em; }
+.rr-list th { text-align: left; font-size: .76em; text-transform: uppercase; letter-spacing: .04em; color: var(--text-dim); padding: 8px 8px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--surface); }
+.rr-list td { padding: 8px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.rr-list td.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rr-list tbody tr { cursor: pointer; }
+.rr-list tbody tr:hover td { background: var(--row-hover); }
+.rr-list tr.rr-ok-row td.rr-markcell, .rr-list tr.rr-ok-row td.wr-pn { color: var(--pos); }
+.rr-list tr.rr-prob-row td.wr-pn { box-shadow: inset 3px 0 0 var(--neg); }
+.rr-markcell { width: 26px; text-align: center; }
+.rr-check { font-weight: 800; color: var(--pos); font-size: 1.05em; }
+.rr-check.due { color: var(--warn-text); }
+.rr-list-flags { color: var(--neg-text); font-size: .86em; max-width: 320px; }
+.rr-ans .d { color: var(--text-dim); font-size: .8em; }
+.rr-list td.rr-stale { color: var(--neg-text); font-weight: 600; }
+.rr-pagenav { display: flex; gap: 8px; align-items: center; margin: 4px 0 10px; position: sticky; top: 0; background: var(--surface); padding: 6px 0; z-index: 2; }
+.rr-pagepos { color: var(--text-dim); font-size: .86em; margin: 0 auto 0 4px; }

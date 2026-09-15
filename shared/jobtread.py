@@ -40,28 +40,42 @@ def grant_key() -> Optional[str]:
         return None
 
 
+JOB_URL = "https://app.jobtread.com/jobs/{id}"
+
+
 def approved_proposals(numbers: Iterable[str], key: Optional[str] = None,
                        log=None) -> Dict[str, List[Tuple[float, float, str]]]:
-    """{job# -> [(price, cost, created yyyy-mm-dd)]} of APPROVED customerOrder documents,
-    one query per job number. {} when there is no key. A failing number is logged and
-    skipped, never raised - a report must not die on one bad job."""
+    """{job# -> [(price, cost, created yyyy-mm-dd)]} of APPROVED customerOrder documents.
+    Kept for callers that only want the proposals; see `jobs()` for the ids + links."""
+    return {n: v["docs"] for n, v in jobs(numbers, key, log).items() if v["docs"]}
+
+
+def jobs(numbers: Iterable[str], key: Optional[str] = None, log=None) -> Dict[str, dict]:
+    """{job# -> {id, url, docs: [(price, cost, created yyyy-mm-dd)]}} for every job number
+    JobTread knows (docs = its APPROVED customerOrder documents, [] when none). One query
+    per number. {} when there is no key. A failing number is logged and skipped, never
+    raised - a report must not die on one bad job."""
     key = key or grant_key()
-    out: Dict[str, List[Tuple[float, float, str]]] = {}
+    out: Dict[str, dict] = {}
     if not key:
         return out
     for n in sorted(set(numbers)):
         try:
             r = pave(key, {"organization": {"$": {"id": ORG_ID}, "jobs": {
                 "$": {"size": 3, "where": {"and": [["number", "=", n]]}},
-                "nodes": {"documents": {"$": {"size": 50}, "nodes": {
+                "nodes": {"id": {}, "documents": {"$": {"size": 50}, "nodes": {
                     "type": {}, "status": {}, "price": {}, "cost": {}, "createdAt": {}}}}}}})
         except Exception as e:                                 # noqa: BLE001
             if log:
                 log(f"    JobTread {n}: {type(e).__name__}")
             continue
-        docs = [d for j in r["organization"]["jobs"]["nodes"] for d in j["documents"]["nodes"]
+        nodes = r["organization"]["jobs"]["nodes"]
+        if not nodes:
+            continue
+        jid = str(nodes[0].get("id") or "")
+        docs = [d for j in nodes for d in j["documents"]["nodes"]
                 if d.get("type") == "customerOrder" and d.get("status") == "approved"]
-        if docs:
-            out[n] = [(float(d.get("price") or 0), float(d.get("cost") or 0),
-                       str(d.get("createdAt") or "")[:10]) for d in docs]
+        out[n] = {"id": jid, "url": JOB_URL.format(id=jid) if jid else "",
+                  "docs": [(float(d.get("price") or 0), float(d.get("cost") or 0),
+                            str(d.get("createdAt") or "")[:10]) for d in docs]}
     return out

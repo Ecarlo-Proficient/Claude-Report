@@ -213,7 +213,8 @@ The dashboard is a view. It never writes the database or the Excel sheet.
 Gear -> **RP review**. `ledger/rp_review.py` builds the page's JSON: every RP line on the master's RP
 tab, where each number was grabbed from, a cut of the source spreadsheet (max 5 rows, the row
 highlighted), the crew-schedule row on the job's last day, JobTread's approved price / cost, and the
-finished lines from the RP file's Removed log. The prepared numbers are read-only on the page; the
+finished lines from the RP file's Removed log - every source as a picture of the real file (PDF page, or the
+sheet drawn cell for cell) with the file name on it, plus Finder / JobTread buttons. The prepared numbers are read-only on the page; the
 owner and the ops manager answer in **Our numbers** (prepopulated, a check or X per number, a note)
 and every answer is stamped with the **Me / OPS Manager** mode and the time in `rp_review_mark`
 (+ `rp_review_mark_log`). `python3 ledger/rp_review.py --answers` prints the answers as text.

@@ -4,6 +4,19 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-15 (later) · RP review page, second pass on the owner's say-so: the source is now a PICTURE of the
+  real file with its name on it - the proposal PDF page (pdftoppm), the takeoff bid / cost sheet drawn cell
+  for cell (values, fills, bold, column widths, row numbers; PIL, no Excel needed) with the rows outlined, the
+  job's own row on the crew schedule on its first and last day, the WIP master row and the RP file row
+  (`_render_sheet`, `_pdf_page_png`, `_sheet_page_png`, `_row_strip_png`; PNGs under `rp-review/img/<job>/`,
+  served by `/api/rp/img/<job>/<file>.png`). Card order is the owner's: 1 the crew schedule (every day the job
+  was on it, folded into runs of the same section + task, `_timeline` over the schedule index + memoised
+  parses), 2 the contract and its page, 3 the ETC and its cost sheet; the master / RP-file rows fold under
+  "more". "Open job folder" and "Show file in folder" call `/api/rp/reveal` (Finder `open -R` on the exact
+  document; paths only under Common or the OneDrive base); "Open in JobTread" links the job (`shared/jobtread.jobs`
+  now returns the JobTread id + url beside the approved proposals). The answer block lost its title and the
+  green default: Contract / ETC inputs + ✓ ✗, a note, a Confirmed / Needs a fix segment with NOTHING selected,
+  and an explicit **Save** (a save with no verdict is stored as `noted`); Clear asks first.
 - 2026-09-15 · `sync-all` "always hangs" on its last step (Attachments -> ledger) and had to be killed. It was not hung: `load_attachments.py --refresh` walked every Attachable with `SELECT *` - measured 5-10 s and 7 MB per 1,000-row page, 79 pages, sequential, no output = 6-13 min of silence. `shared/qbo_attachments._sweep` now selects only `Id, FileName, AttachableRef` (170 KB a page), reads 5 pages at a time off a `COUNT(*)` plan (tail re-read to a short page), and prints a page counter; `build_index` takes the retrying GET + a `progress` callable instead of `query_all`. Same index (checked row-for-row against the day-old cache: 52 new, 2 deleted). Real run: 45 s end to end.
 - 2026-09-15 · **RP review page** (gear -> "RP review · with the ops manager"; tab `rpreview`). The weekly
   sit-down: one card per RP line - the four numbers on the WIP with a SOURCE pill each (Proposal PDF /

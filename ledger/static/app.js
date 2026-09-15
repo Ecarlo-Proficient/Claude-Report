@@ -7524,7 +7524,7 @@ async function loadRpReview() {
 function rrWire() {
   if (rrWired) return; rrWired = true;
   $$("#rrMode .seg-btn").forEach(b => { b.onclick = () => { rrMode = b.dataset.mode; try { localStorage.setItem("proficient-ledger-rrmode", rrMode); } catch { /* ignore */ } rrPaintMode(); }; });
-  $$("#rrSection .seg-btn").forEach(b => { b.onclick = () => { rrSection = b.dataset.sec; $$("#rrSection .seg-btn").forEach(x => x.classList.toggle("on", x === b)); rrRenderCards(); }; });
+  $$("#rrSection .seg-btn").forEach(b => { b.onclick = () => { rrSection = b.dataset.sec; rrOpenLine = null; $$("#rrSection .seg-btn").forEach(x => x.classList.toggle("on", x === b)); rrRenderCards(); }; });
   { const q = $("#rrSearch"); if (q) q.oninput = rrRenderCards; }
   { const c = $("#rrDueOnly"); if (c) c.onchange = rrRenderCards; }
   { const c = $("#rrProbOnly"); if (c) c.onchange = rrRenderCards; }
@@ -7558,7 +7558,7 @@ function rrRenderStats() {
   const answered = cur.filter(x => !rrIsDue(rrMark(x, "current"))).length + fin.filter(x => !rrIsDue(rrMark(x, "finished"))).length;
   const due = cur.length + fin.length - answered;
   const tiles = [["Current lines", cur.length, ""], ["Finished lines", fin.length, ""], ["Answered this week", answered, answered ? "green" : ""],
-                 ["Due", due, due ? "amber" : ""], ["Typed on the master", c.typed || 0, c.typed ? "red" : ""], ["Not in JobTread", cur.length - (c.in_jobtread || 0), "amber"]];
+                 ["Due", due, due ? "amber" : ""], ["Typed on the master", c.typed || 0, c.typed ? "red" : ""], ["No approved JobTread proposal", cur.length - (c.in_jobtread || 0), "amber"]];
   el.innerHTML = "";
   for (const [label, val, cls] of tiles) {
     const d = document.createElement("div"); d.className = "kpi" + (cls ? " wr-kpi-" + cls : "");
@@ -7578,47 +7578,99 @@ function rrVisible() {
   });
 }
 
+let rrOpenLine = null;   // the job whose full page is open (null = the list)
+
 function rrRenderCards() {
   const body = $("#rrBody"); if (!body || !RR) return;
   const kind = rrSection, list = rrVisible();
   const cnt = $("#rrCount"); if (cnt) cnt.textContent = `${list.length} shown`;
   body.innerHTML = "";
+  if (rrOpenLine) {
+    const x = list.find(r => r.line === rrOpenLine) || (kind === "current" ? RR.current : RR.finished).find(r => r.line === rrOpenLine);
+    if (x) { rrRenderPage(x, kind, list); return; }
+    rrOpenLine = null;
+  }
   if (!list.length) { body.innerHTML = `<div class="rr-empty">Nothing to show with these filters.</div>`; return; }
-  for (const x of list) body.appendChild(rrCard(x, kind));
+  const t = document.createElement("table"); t.className = "rr-list";
+  const cols = kind === "current"
+    ? ["", "Job", "Address", "Builder", "Contract", "ETC", "Costs", "Billed", "Last on schedule", "To settle", "Answer"]
+    : ["", "Job", "Address", "Builder", "Contract", "ETC", "Billed", "Costs", "Last day", "Why it left", "Answer"];
+  t.innerHTML = `<thead><tr>${cols.map(c => `<th>${c}</th>`).join("")}</tr></thead>`;
+  const tb = document.createElement("tbody");
+  for (const x of list) {
+    const m = rrMark(x, kind), due = rrIsDue(m);
+    const tr = document.createElement("tr"); tr.className = m && !due ? "rr-ok-row" : (x.problem ? "rr-prob-row" : "");
+    const mark = m && !due ? `<span class="rr-check" title="${_ge((m.mode === "ops" ? "OPS Manager + you" : "You") + " · " + fmtDate(m.at, true))}">✓</span>` : (m ? `<span class="rr-check due" title="answered ${fmtDate(m.at)} - due again">↻</span>` : "");
+    const ans = m ? `${_ge({ confirmed: "Confirmed", fix: "Needs a fix", agree: "Agreed done", keep: "Kept", noted: "Noted" }[m.decision] || m.decision)}<div class="d">${m.mode === "ops" ? "OPS Manager + you" : "You"} · ${fmtDate(m.at)}</div>` : `<span class="rr-nojt">not yet</span>`;
+    const tail = kind === "current"
+      ? `<td class="n">${money(x.costs)}</td><td class="n">${money(x.billed)}</td><td class="${x.stale ? "rr-stale" : ""}">${x.last_seen ? fmtDate(x.last_seen) : "–"}</td><td class="rr-list-flags">${(x.flags || []).length ? `${x.flags.length} · ${_ge(x.flags[0])}${x.flags.length > 1 ? "…" : ""}` : ""}</td>`
+      : `<td class="n">${money(x.billed)}</td><td class="n">${money(x.costs)}</td><td>${_ge(x.last_day || "–")}</td><td class="rr-list-flags">${_ge(x.why || "")}</td>`;
+    tr.innerHTML = `<td class="rr-markcell">${mark}</td><td class="wr-pn">${_ge(x.line)}</td><td>${_ge(x.name || "")}</td><td>${_ge(x.builder || "")}</td><td class="n">${x.contract == null ? '<span class="miss">blank</span>' : money(x.contract)}</td><td class="n">${x.etc == null ? '<span class="miss">blank</span>' : money(x.etc)}</td>${tail}<td class="rr-ans">${ans}</td>`;
+    tr.onclick = () => { rrOpenLine = x.line; rrRenderCards(); window.scrollTo(0, 0); };
+    tb.appendChild(tr);
+  }
+  t.appendChild(tb); body.appendChild(t);
+}
+
+function rrRenderPage(x, kind, list) {
+  const body = $("#rrBody");
+  const i = list.findIndex(r => r.line === x.line);
+  const nav = document.createElement("div"); nav.className = "rr-pagenav";
+  nav.innerHTML = `<button type="button" class="btn small" id="rrBack">← Back to the list</button>
+    <span class="rr-pagepos">${i >= 0 ? `${i + 1} of ${list.length}` : ""}</span>
+    <button type="button" class="btn small" id="rrPrev" ${i <= 0 ? "disabled" : ""}>← Previous</button>
+    <button type="button" class="btn small" id="rrNext" ${i < 0 || i >= list.length - 1 ? "disabled" : ""}>Next →</button>`;
+  body.appendChild(nav);
+  body.appendChild(rrCard(x, kind));
+  $("#rrBack").onclick = () => { rrOpenLine = null; rrRenderCards(); };
+  $("#rrPrev").onclick = () => { if (i > 0) { rrOpenLine = list[i - 1].line; rrRenderCards(); window.scrollTo(0, 0); } };
+  $("#rrNext").onclick = () => { if (i < list.length - 1) { rrOpenLine = list[i + 1].line; rrRenderCards(); window.scrollTo(0, 0); } };
 }
 
 function rrPill(src) { return src ? `<span class="rr-src ${_ge(src.kind)}" title="${_ge(src.detail || "")}">${_ge(src.label)}</span>` : ""; }
 function rrMoney(v) { return v == null ? `<span class="miss">blank</span>` : money(v); }
 
-function rrSnapHtml(s, title) {
-  if (!s) return "";
-  const head = `<div class="rr-snap-title"><b>${_ge(title)}</b> · ${_ge(s.file)}${s.sheet ? " · sheet " + _ge(s.sheet) : ""} · ${_ge(s.anchor || "")}${s.note ? " · <i>" + _ge(s.note) + "</i>" : ""}</div>`;
-  if (s.kind === "pdf") {
-    return head + `<table class="snap"><tbody>${s.rows.map(r => `<tr class="${r.hi ? "hi" : ""}"><td class="rn">${r.n}</td><td>${_ge(r.cells[0] || "")}</td></tr>`).join("")}</tbody></table>`;
-  }
-  const isNumTxt = t => /^-?[\d,]+(\.\d+)?$/.test(t || "");
-  return head + `<table class="snap"><thead><tr><th class="rn"></th>${s.cols.map(c => `<th>${_ge(c)}</th>`).join("")}</tr></thead><tbody>` +
-    s.rows.map(r => `<tr class="${r.hi ? "hi" : ""}"><td class="rn">${r.n}</td>${r.cells.map(c => `<td class="${isNumTxt(c) ? "n" : ""}">${_ge(c)}</td>`).join("")}</tr>`).join("") + `</tbody></table>`;
+function rrPic(pic, caption) {
+  if (!pic || !pic.img) return "";
+  const src = "/api/rp/img/" + pic.img.split("/").map(encodeURIComponent).join("/");
+  const sub = [pic.file ? _ge(pic.file) : "", pic.sheet ? "sheet " + _ge(pic.sheet) : (pic.page ? `page ${pic.page} of ${pic.pages}` : ""), pic.anchor ? _ge(pic.anchor) : "", pic.note ? `<i class="rr-picnote">${_ge(pic.note)}</i>` : ""].filter(Boolean).join(" · ");
+  return `<figure class="rr-pic"><figcaption><b>${_ge(caption)}</b>${sub ? " · " + sub : ""}</figcaption><a href="${src}" target="_blank" rel="noopener" title="Open full size"><img src="${src}" loading="lazy" alt="${_ge(caption)}"></a></figure>`;
 }
 
-const RR_SNAP_LABELS = { contract: "Contract - where it sits", etc: "ETC - where it sits", master: "WIP master row", rpfile: "RP WIP file row", schedule: "Crew schedule row", removed: "Removed log row" };
+function rrSrcLine(sr) {   // the source's explanation, unless it is just the file name shown next to it
+  const d = (sr && sr.detail) || "", f = (sr && sr.file) ? sr.file.split("/").pop() : "";
+  return d && d !== f ? _ge(d) + " · " : "";
+}
+
+function rrTimeline(sc) {
+  if (!sc || !sc.days) return `<div class="hint" style="margin:4px 0">Never on a crew schedule.</div>`;
+  const rows = (sc.runs || []).map(r => `<tr><td class="n">${fmtDate(r.from)}${r.days > 1 ? ` to ${fmtDate(r.to)}` : ""}</td><td class="n">${r.days}</td><td>${_ge(r.section || "")}</td><td>${_ge(r.stage || "")}</td></tr>`).join("");
+  return `<div class="rr-tl-sum">${sc.days} day${sc.days === 1 ? "" : "s"} on the crew schedule · first ${fmtDate(sc.first)} · last ${fmtDate(sc.last)}</div>
+    <table class="rr-tl"><thead><tr><th>When</th><th>Days</th><th>Section</th><th>Task</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+async function rrReveal(path) {
+  if (!path) return;
+  let res; try { res = await (await fetch("/api/rp/reveal", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }) })).json(); }
+  catch { toast("could not open"); return; }
+  if (!res.ok) toast(res.error || "could not open");
+}
 
 function rrCard(x, kind) {
   const m = rrMark(x, kind), due = rrIsDue(m);
   const card = document.createElement("div");
   card.className = "rr-card " + (m && !due ? "rr-done" : (x.problem ? "rr-prob" : "rr-due"));
-  const seen = kind === "current" ? `<span class="rr-seen ${x.stale ? "rr-stale" : ""}">last on the schedule ${x.last_seen ? fmtDate(x.last_seen) : "–"}</span>`
-                                  : `<span class="rr-seen">last day on the schedule ${_ge(x.last_day || "–")} · last invoice ${_ge(x.last_invoice || "–")}</span>`;
-  const jt = x.jt || {};
-  const jtCell = jt.price != null ? `${money(jt.price)} / ${money(jt.cost)}<div class="d">approved ${fmtDate(jt.date)}${jt.scope_note ? " · " + _ge(jt.scope_note) : ""}</div>` : `<span class="miss">not in JobTread</span>`;
-  const src = x.src || {};
+  const jt = x.jt || {}, src = x.src || {}, pics = x.pics || {};
   const link = (v, href) => href ? `<a href="${_ge(href)}" target="_blank" rel="noopener" title="Open in QuickBooks">${rrMoney(v)}</a>` : rrMoney(v);
+  const jtLink = jt.url ? `<a class="btn tiny" href="${_ge(jt.url)}" target="_blank" rel="noopener">Open in JobTread</a>` : `<span class="rr-nojt">not in JobTread</span>`;
+  const folderBtn = x.folder ? `<button type="button" class="btn tiny" data-reveal="${_ge(x.folder)}" title="${_ge(x.folder)}">Open job folder</button>` : "";
+  const jtCell = jt.price != null ? `${money(jt.price)} / ${money(jt.cost)}<div class="d">approved ${fmtDate(jt.date)}${jt.scope_note ? " · " + _ge(jt.scope_note) : ""}</div>` : `<span class="miss">${jt.exists ? "no approved proposal" : "not in JobTread"}</span>`;
   let nums;
   if (kind === "current") {
-    nums = `<div class="rr-num"><div class="l">Contract</div><div class="v ${x.contract == null ? "miss" : ""}">${rrMoney(x.contract)}</div>${rrPill(src.contract)}<div class="d">${_ge(src.contract?.detail || "")}</div></div>
-      <div class="rr-num"><div class="l">ETC (budget)</div><div class="v ${x.etc == null ? "miss" : ""}">${rrMoney(x.etc)}</div>${rrPill(src.etc)}<div class="d">${_ge(src.etc?.detail || "")}</div></div>
-      <div class="rr-num"><div class="l">Costs to date</div><div class="v">${link(x.costs, x.costs_link)}</div>${rrPill(src.costs)}<div class="d">${_ge(src.costs?.detail || "")}</div></div>
-      <div class="rr-num"><div class="l">Billed to date</div><div class="v">${link(x.billed, x.billed_link)}</div>${rrPill(src.billed)}<div class="d">${_ge(src.billed?.detail || "")}</div></div>
+    nums = `<div class="rr-num"><div class="l">Contract</div><div class="v ${x.contract == null ? "miss" : ""}">${rrMoney(x.contract)}</div>${rrPill(src.contract)}</div>
+      <div class="rr-num"><div class="l">ETC (budget)</div><div class="v ${x.etc == null ? "miss" : ""}">${rrMoney(x.etc)}</div>${rrPill(src.etc)}</div>
+      <div class="rr-num"><div class="l">Costs to date</div><div class="v">${link(x.costs, x.costs_link)}</div>${rrPill(src.costs)}</div>
+      <div class="rr-num"><div class="l">Billed to date</div><div class="v">${link(x.billed, x.billed_link)}</div>${rrPill(src.billed)}</div>
       <div class="rr-num"><div class="l">JobTread price / cost</div><div class="v">${jtCell}</div><span class="rr-src jt">JobTread</span></div>`;
   } else {
     nums = `<div class="rr-num"><div class="l">Contract</div><div class="v">${rrMoney(x.contract)}</div><span class="rr-src master">RP WIP file</span></div>
@@ -7628,33 +7680,48 @@ function rrCard(x, kind) {
       <div class="rr-num"><div class="l">JobTread price / cost</div><div class="v">${jtCell}</div><span class="rr-src jt">JobTread</span></div>`;
   }
   const flags = kind === "current" ? (x.flags || []) : [x.why].filter(Boolean);
-  const snapKeys = Object.keys(x.snaps || {}).filter(k => RR_SNAP_LABELS[k]);
-  const first = snapKeys.includes("contract") ? "contract" : snapKeys[0];
-  const tabs = snapKeys.length ? `<div class="rr-tabs">${snapKeys.map(k => `<button type="button" class="rr-tab ${k === first ? "on" : ""}" data-snap="${k}">${_ge(RR_SNAP_LABELS[k])}</button>`).join("")}</div>` +
-    snapKeys.map(k => `<div class="rr-snap" data-snap="${k}" ${k === first ? "" : "hidden"}>${rrSnapHtml(x.snaps[k], RR_SNAP_LABELS[k])}</div>`).join("") : `<div class="hint">No source sheet could be cut for this line.</div>`;
+  // 1. the schedule - where the project came from
+  const schedBlock = `<div class="rr-sec"><div class="rr-sec-title">1 · On the crew schedule</div>${rrTimeline(x.schedule)}
+    <div class="rr-pics">${rrPic(pics.sched_first, "First day " + (pics.sched_first ? fmtDate(pics.sched_first.date) : ""))}${pics.sched_last && (!pics.sched_first || pics.sched_last.date !== pics.sched_first.date) ? rrPic(pics.sched_last, "Last day " + fmtDate(pics.sched_last.date)) : ""}</div></div>`;
+  // 2. the contract - the file and the page it sits on
+  const fileBtn = (f, label) => f ? `<button type="button" class="btn tiny" data-reveal="${_ge(f)}" title="Open the folder and highlight this file">${_ge(label)}</button>` : "";
+  let contractBlock = "", etcBlock = "", moreBlock = "";
+  if (kind === "current") {
+    contractBlock = `<div class="rr-sec"><div class="rr-sec-title">2 · Contract ${rrMoney(x.contract)} ${rrPill(src.contract)}</div>
+      <div class="rr-sec-line">${rrSrcLine(src.contract)}${src.contract?.file ? `<b>${_ge(src.contract.file.split("/").pop())}</b> ${fileBtn(src.contract.file, "Show file in folder")}` : ""}</div>
+      ${rrPic(pics.contract, "Where the contract sits")}</div>`;
+    etcBlock = `<div class="rr-sec"><div class="rr-sec-title">3 · ETC ${rrMoney(x.etc)} ${rrPill(src.etc)}</div>
+      <div class="rr-sec-line">${rrSrcLine(src.etc)}${src.etc?.file ? `<b>${_ge(src.etc.file.split("/").pop())}</b> ${fileBtn(src.etc.file, "Show file in folder")}` : ""}</div>
+      ${rrPic(pics.etc, "Where the ETC sits")}</div>`;
+    moreBlock = (pics.master || pics.rpfile) ? `<details class="rr-more"><summary>The WIP master row and the RP file row</summary>${rrPic(pics.master, "WIP master")}${rrPic(pics.rpfile, "RP WIP file")}</details>` : "";
+  } else {
+    contractBlock = `<div class="rr-sec"><div class="rr-sec-title">2 · Why it left the WIP</div><div class="rr-sec-line">${_ge(x.why || "")}</div>${rrPic(pics.removed, "Removed log")}</div>`;
+  }
   const ourK = m && m.our_contract != null ? m.our_contract : x.contract, ourE = m && m.our_etc != null ? m.our_etc : x.etc;
   const okBtn = (f, val) => `<span class="rr-ok" data-f="${f}"><button type="button" class="yes ${val === 1 ? "on" : ""}" data-v="1" title="right">✓</button><button type="button" class="no ${val === 0 ? "on" : ""}" data-v="0" title="wrong">✗</button></span>`;
-  const dec = kind === "current" ? [["confirmed", "Confirmed", "primary"], ["fix", "Needs a fix", ""]] : [["agree", "Agree - done", "primary"], ["keep", "Keep on the WIP", ""]];
-  const stamp = m ? `<span class="rr-stamp ${m.mode === "ops" ? "rr-stamp-ops" : ""}"><b>${m.decision === "confirmed" ? "Confirmed" : m.decision === "fix" ? "Needs a fix" : m.decision === "agree" ? "Agreed done" : "Kept on the WIP"}</b> · ${m.mode === "ops" ? "OPS Manager + you" : "You"} · ${fmtDate(m.at, true)}${due ? " · <i>due again</i>" : ""}</span>` : `<span class="rr-stamp"><i>no answer yet</i></span>`;
-  card.innerHTML = `<div class="rr-head"><span class="wr-pn">${_ge(x.line)}</span><span class="wr-name">${_ge(x.name || "")}</span><span class="wr-name">· ${_ge(x.builder || "")}</span>${x.rp_status ? `<span class="wr-badge changed" title="status in the RP WIP file">${_ge(x.rp_status)}</span>` : ""}${seen}</div>
+  const dec = kind === "current" ? [["confirmed", "Confirmed"], ["fix", "Needs a fix"]] : [["agree", "Agree - done"], ["keep", "Keep on the WIP"]];
+  const decLabel = { confirmed: "Confirmed", fix: "Needs a fix", agree: "Agreed done", keep: "Kept on the WIP", noted: "Noted" };
+  const stamp = m ? `<span class="rr-stamp ${m.mode === "ops" ? "rr-stamp-ops" : ""}"><b>${decLabel[m.decision] || _ge(m.decision)}</b> · ${m.mode === "ops" ? "OPS Manager + you" : "You"} · ${fmtDate(m.at, true)}${due ? " · <i>due again</i>" : ""}</span>` : `<span class="rr-stamp"><i>not saved yet</i></span>`;
+  card.innerHTML = `<div class="rr-head"><span class="wr-pn">${_ge(x.line)}</span><span class="wr-name">${_ge(x.name || "")}</span><span class="wr-name">· ${_ge(x.builder || "")}</span>${x.rp_status ? `<span class="wr-badge changed" title="status in the RP WIP file">${_ge(x.rp_status)}</span>` : ""}<span class="rr-links">${folderBtn}${jtLink}</span></div>
     <div class="rr-nums">${nums}</div>
     ${flags.length ? `<div class="rr-flags">${flags.map(f => `<div>${_ge(f)}</div>`).join("")}</div>` : ""}
-    ${tabs}
-    <div class="rr-ours"><div class="rr-ours-title">Our numbers · ${_ge(rrMode === "ops" ? "OPS Manager + you" : "you")}</div>
+    ${schedBlock}${contractBlock}${etcBlock}${moreBlock}
+    <div class="rr-ours">
       <div class="rr-ours-row">
         <label class="rr-field">Contract<input type="text" data-f="our_contract" value="${ourK == null ? "" : Number(ourK).toLocaleString()}"></label>${okBtn("contract_ok", m ? m.contract_ok : null)}
         <label class="rr-field">ETC<input type="text" data-f="our_etc" value="${ourE == null ? "" : Number(ourE).toLocaleString()}"></label>${okBtn("etc_ok", m ? m.etc_ok : null)}
         <label class="rr-field rr-note">Notes - what changed, what could not be settled<textarea data-f="note">${_ge(m?.note || "")}</textarea></label>
       </div>
-      <div class="rr-actions">${dec.map(([d, l, c]) => `<button type="button" class="btn small ${c} ${m && m.decision === d ? "on" : ""}" data-dec="${d}">${l}</button>`).join("")}${m ? `<button type="button" class="btn small subtle" data-dec="">Clear</button>` : ""}${stamp}</div>
+      <div class="rr-actions"><span class="seg rr-dec">${dec.map(([d, l]) => `<button type="button" class="seg-btn ${m && m.decision === d ? "on" : ""}" data-dec="${d}">${l}</button>`).join("")}</span>
+        <button type="button" class="btn small primary" data-save="1">Save</button>${m ? `<button type="button" class="btn small subtle" data-clear="1">Clear</button>` : ""}${stamp}</div>
     </div>`;
-  // snapshot tabs
-  card.querySelectorAll(".rr-tab").forEach(b => { b.onclick = () => { card.querySelectorAll(".rr-tab").forEach(t => t.classList.toggle("on", t === b)); card.querySelectorAll(".rr-snap").forEach(d => d.hidden = d.dataset.snap !== b.dataset.snap); }; });
-  // our numbers: mark a typed value that differs from the prepared one
+  card.querySelectorAll("[data-reveal]").forEach(b => { b.onclick = () => rrReveal(b.dataset.reveal); });
   card.querySelectorAll('input[data-f]').forEach(inp => { const base = inp.dataset.f === "our_contract" ? x.contract : x.etc;
     const paint = () => { const v = Number(String(inp.value).replace(/[$,]/g, "")); inp.classList.toggle("changed", inp.value.trim() !== "" && !Number.isNaN(v) && base != null && Math.abs(v - base) > 0.5); }; inp.oninput = paint; paint(); });
   card.querySelectorAll(".rr-ok button").forEach(b => { b.onclick = () => { const on = b.classList.contains("on"); b.parentElement.querySelectorAll("button").forEach(o => o.classList.remove("on")); if (!on) b.classList.add("on"); }; });
-  card.querySelectorAll("[data-dec]").forEach(b => { b.onclick = () => rrSave(card, x, kind, b.dataset.dec); });
+  card.querySelectorAll(".rr-dec .seg-btn").forEach(b => { b.onclick = () => { const on = b.classList.contains("on"); card.querySelectorAll(".rr-dec .seg-btn").forEach(o => o.classList.remove("on")); if (!on) b.classList.add("on"); }; });
+  card.querySelector("[data-save]").onclick = () => { const on = card.querySelector(".rr-dec .seg-btn.on"); rrSave(card, x, kind, on ? on.dataset.dec : "noted"); };
+  { const c = card.querySelector("[data-clear]"); if (c) c.onclick = () => { if (confirm(`Clear the saved answer on ${x.line}?`)) rrSave(card, x, kind, ""); }; }
   return card;
 }
 
@@ -7673,7 +7740,8 @@ async function rrSave(card, x, kind, decision) {
   else delete RR.marks[`${x.line}|${kind}`];
   toast(decision ? `${x.line} saved · ${rrMode === "ops" ? "OPS Manager + you" : "you"}` : `${x.line} cleared`);
   rrRenderStats();
-  const fresh = rrCard(x, kind); card.replaceWith(fresh);
+  if (decision) { rrOpenLine = null; rrRenderCards(); window.scrollTo(0, 0); }   // back to the list: the ✓ is there
+  else { const fresh = rrCard(x, kind); card.replaceWith(fresh); }
 }
 
 async function rrRebuild() {

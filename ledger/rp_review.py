@@ -44,6 +44,7 @@ _REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO))
 
 from openpyxl import load_workbook                     # noqa: E402
+from PIL import Image, ImageDraw, ImageFont            # noqa: E402
 from shared import paths, schedule as SCH, schedule_index as SI, jobtread, takeoff_etc as TK  # noqa: E402
 
 OUT_DIR = Path(os.environ.get("ACB_RP_REVIEW_DIR",
@@ -54,7 +55,11 @@ RP_TABS = ("Test - RP", "WIP-RP")
 MAX_ROWS = 5
 MAX_COLS = 8
 STALE_DAYS = 14
-SNAP_VER = 2                 # bump when the snapshot shape changes - old cache entries are then ignored
+SNAP_VER = 3                 # bump when the snapshot shape changes - old cache entries are then ignored
+IMG_DIR = OUT_DIR / "img"
+_FONT = "/System/Library/Fonts/Supplemental/Arial.ttf"
+_FONT_B = "/System/Library/Fonts/Supplemental/Arial Bold.ttf"
+_THEME = {0: "FFFFFF", 1: "000000", 2: "E7E6E6", 3: "44546A", 4: "4472C4", 5: "ED7D31", 6: "A5A5A5", 7: "FFC000", 8: "5B9BD5", 9: "70AD47"}
 
 _log_lines: List[str] = []
 _WB: Dict[str, object] = {}          # in-run memo: data_only workbooks by path (the master is opened once, not 94 times)
@@ -321,6 +326,281 @@ def _find_in_folder(folder: Path, value: float, cache: SnapCache, want: str) -> 
     return None
 
 
+
+# ───────────────────────────── pictures (the owner 2026-09-15: "a literal screenshot of the file with the file name") ─────
+def _font(size: int, bold: bool = False):
+    try:
+        return ImageFont.truetype(_FONT_B if bold and Path(_FONT_B).exists() else _FONT, size)
+    except OSError:
+        return ImageFont.load_default()
+
+
+def _rgb(color):
+    """An openpyxl Color -> (r, g, b) or None (indexed / auto colours are skipped)."""
+    if color is None:
+        return None
+    try:
+        if color.type == "rgb" and isinstance(color.rgb, str) and len(color.rgb) >= 6:
+            h = color.rgb[-6:]
+        elif color.type == "theme" and color.theme in _THEME:
+            h = _THEME[color.theme]
+        else:
+            return None
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+        t = float(color.tint or 0)
+        if t > 0:
+            r, g, b = (int(v + (255 - v) * t) for v in (r, g, b))
+        elif t < 0:
+            r, g, b = (int(v * (1 + t)) for v in (r, g, b))
+        return (r, g, b)
+    except (AttributeError, ValueError, TypeError):
+        return None
+
+
+def _render_sheet(ws, rows: List[int], cols: List[int], hi_rows: List[int], title: str, out: Path) -> Optional[str]:
+    """Draw the cells as Excel shows them - values, fills, bold, font colour, column widths,
+    row numbers and column letters - with the file name on top and the highlighted rows
+    outlined. Returns the PNG path (relative to IMG_DIR) or None."""
+    if not rows:
+        return None
+    widths = []
+    for c in cols:
+        w = ws.column_dimensions[_col_letter(c)].width if _col_letter(c) in ws.column_dimensions else None
+        widths.append(max(66, min(300, int((w or 8.43) * 7.4))))
+    row_h, hdr_h, rn_w, title_h = 22, 20, 36, 28
+    W = rn_w + sum(widths) + 2
+    H = title_h + hdr_h + row_h * len(rows) + 2
+    img = Image.new("RGB", (W, H), "white")
+    d = ImageDraw.Draw(img)
+    f, fb, fs = _font(12), _font(12, True), _font(11)
+    d.rectangle([0, 0, W, title_h], fill=(31, 36, 48))
+    d.text((9, 7), title[:140], fill="white", font=fb)
+    y0 = title_h
+    d.rectangle([0, y0, W, y0 + hdr_h], fill=(236, 238, 241))
+    x = rn_w
+    for c, w in zip(cols, widths):
+        d.text((x + w / 2 - 4, y0 + 4), _col_letter(c), fill=(95, 95, 95), font=fs)
+        d.line([x, y0, x, H], fill=(214, 214, 214))
+        x += w
+    merged = {}
+    _NONE = object()
+    for rng in ws.merged_cells.ranges:
+        merged[(rng.min_row, rng.min_col)] = rng
+        for r in range(rng.min_row, rng.max_row + 1):
+            for c in range(rng.min_col, rng.max_col + 1):
+                if (r, c) != (rng.min_row, rng.min_col):
+                    merged[(r, c)] = None
+    for i, r in enumerate(rows):
+        y = y0 + hdr_h + i * row_h
+        d.rectangle([0, y, rn_w, y + row_h], fill=(236, 238, 241))
+        d.text((6, y + 5), str(r), fill=(95, 95, 95), font=fs)
+        x = rn_w
+        for c, w in zip(cols, widths):
+            cell = ws.cell(r, c)
+            fill = _rgb(cell.fill.fgColor) if (cell.fill is not None and cell.fill.fill_type == "solid") else None
+            if fill and fill != (255, 255, 255):
+                d.rectangle([x, y, x + w, y + row_h], fill=fill)
+            m = merged.get((r, c), _NONE)
+            if m is None:                                   # inside a merge, not its first cell
+                x += w
+                continue
+            span_w = w
+            if m is not _NONE:
+                span_w = sum(ww for cc, ww in zip(cols, widths) if m.min_col <= cc <= m.max_col)
+            txt = _fmt(cell.value)
+            if txt:
+                fc = _rgb(cell.font.color) if cell.font is not None else None
+                fnt = fb if (cell.font is not None and cell.font.b) else f
+                while txt and d.textlength(txt, font=fnt) > span_w - 8:
+                    txt = txt[:-2] + "…" if len(txt) > 3 else ""
+                tw = d.textlength(txt, font=fnt)
+                right = isinstance(cell.value, (int, float)) and not isinstance(cell.value, bool)
+                tx = x + span_w - 5 - tw if right else x + 5
+                d.text((tx, y + 5), txt, fill=fc or (0, 0, 0), font=fnt)
+            x += w
+        d.line([0, y + row_h, W, y + row_h], fill=(214, 214, 214))
+    for i, r in enumerate(rows):
+        if r in hi_rows:
+            y = y0 + hdr_h + i * row_h
+            d.rectangle([rn_w + 1, y + 1, W - 2, y + row_h - 1], outline=(232, 122, 0), width=3)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    img.save(out, optimize=True)
+    return str(out.relative_to(IMG_DIR))
+
+
+def _pdf_page_png(path: Path, value: Optional[float], out: Path) -> Optional[dict]:
+    """The proposal page that carries the amount (else the SUB TOTAL page) as a PNG."""
+    try:
+        info = subprocess.run(["pdfinfo", str(path)], capture_output=True, text=True, timeout=30).stdout   # noqa: S603,S607
+        pages = int(re.search(r"Pages:\s+(\d+)", info).group(1))
+    except (OSError, subprocess.SubprocessError, AttributeError, ValueError):
+        pages = 1
+    needle = f"{value:,.2f}" if value is not None else None
+    pick, found, says = None, False, ""
+    for pg in range(1, min(pages, 8) + 1):
+        try:
+            txt = subprocess.run(["pdftotext", "-f", str(pg), "-l", str(pg), "-layout", str(path), "-"],   # noqa: S603,S607
+                                 capture_output=True, text=True, timeout=30).stdout
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if needle and needle in txt:
+            pick, found = pg, True
+            break
+        if pick is None and "SUB TOTAL" in txt.upper():
+            pick = pg
+            m = re.search(r"SUB TOTAL:?\s*\$?\s*([\d,]+\.\d{2})", txt.upper())
+            says = m.group(1) if m else ""
+    if pick is None:
+        return None
+    out.parent.mkdir(parents=True, exist_ok=True)
+    stem = out.with_suffix("")
+    try:
+        subprocess.run(["pdftoppm", "-png", "-r", "72", "-f", str(pick), "-l", str(pick), "-singlefile", str(path), str(stem)],   # noqa: S603,S607
+                       capture_output=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if not out.exists():
+        return None
+    return {"kind": "pdf", "file": path.name, "path": str(path), "page": pick, "pages": pages, "found": found,
+            "img": str(out.relative_to(IMG_DIR)),
+            "note": "" if found else (f"this proposal says {says}, not {needle}" if (says and needle) else "the amount is not on this proposal")}
+
+
+def _find_value_cell(path: Path, value: float, sheets_like: Optional[str] = None):
+    """(sheet name, row, col) of the first cell equal to `value` (bid / cost sheets first)."""
+    try:
+        wb = _wb(path)
+    except Exception:                                             # noqa: BLE001
+        return None
+    order = sorted(wb.sheetnames, key=lambda n: (0 if (sheets_like and sheets_like in n.upper()) else
+                                                 1 if ("BID" in n.upper() or "COST" in n.upper()) else 2))
+    for n in order:
+        ws = wb[n]
+        for row in ws.iter_rows(min_row=1, max_row=min(ws.max_row, 400)):
+            for c in row:
+                v = c.value
+                if isinstance(v, (int, float)) and not isinstance(v, bool) and abs(v - value) < 0.6:
+                    return n, c.row, c.column
+    return None
+
+
+def _sheet_page_png(path: Path, sheet: str, hi_rows: List[int], out: Path, whole: bool = True) -> Optional[dict]:
+    """The sheet as a picture: the whole used page (up to 70 rows x 10 columns) with the
+    rows highlighted, or only those rows when whole=False."""
+    try:
+        ws = _wb(path)[sheet]
+    except Exception:                                             # noqa: BLE001
+        return None
+    last = max(hi_rows) if hi_rows else 1
+    if whole:
+        top = 1
+        bottom = min(ws.max_row, max(last + 4, 24), 70)
+        rows = list(range(top, bottom + 1))
+    else:
+        rows = sorted(set(hi_rows))
+    cols = list(range(1, min(ws.max_column, 10) + 1))
+    rel = _render_sheet(ws, rows, cols, hi_rows, f"{path.name}  ·  sheet {sheet}", out)
+    if not rel:
+        return None
+    return {"kind": "xlsx", "file": path.name, "path": str(path), "sheet": sheet, "img": rel,
+            "anchor": ", ".join(f"row {r}" for r in hi_rows)}
+
+
+def _row_strip_png(path: Path, sheet: str, row: int, cols: List[int], out: Path, header_row: Optional[int] = None) -> Optional[dict]:
+    """One row of a sheet as a picture (plus its header row when given)."""
+    try:
+        ws = _wb(path)[sheet]
+    except Exception:                                             # noqa: BLE001
+        return None
+    rows = ([header_row] if header_row else []) + [row]
+    rel = _render_sheet(ws, rows, cols, [row], f"{path.name}  ·  sheet {sheet}", out)
+    return {"kind": "xlsx", "file": path.name, "path": str(path), "sheet": sheet, "img": rel, "anchor": f"row {row}"} if rel else None
+
+
+_SCHED_RECS: Dict[str, list] = {}
+
+
+def _sched_recs(path: Path) -> list:
+    k = str(path)
+    if k not in _SCHED_RECS:
+        try:
+            _SCHED_RECS[k] = SCH.parse_main_schedule(path)
+        except Exception as e:                                    # noqa: BLE001
+            log(f"    ! schedule {path.name}: {type(e).__name__}")
+            _SCHED_RECS[k] = []
+    return _SCHED_RECS[k]
+
+
+def _sched_row_of(path: Path, base: str, want_ftw: bool):
+    """(sheet name, header row, job row) on that day's Main Schedule for the slab or the flatwork line."""
+    try:
+        wb = _wb(path)
+        name = next((n for n in wb.sheetnames if "MAIN" in n.upper()), wb.sheetnames[0])
+        ws = wb[name]
+    except Exception:                                             # noqa: BLE001
+        return None
+    hdr = None
+    hits = []
+    section = ""
+    for row in ws.iter_rows(min_row=1, max_row=min(ws.max_row, 600)):
+        texts = [str(c.value or "").strip().upper() for c in row[:12]]
+        if hdr is None and "ADDRESS" in texts:
+            hdr = row[0].row
+        first = texts[0] if texts else ""
+        if first and all(not t for t in texts[1:6]):
+            section = first
+        if any(t == base or t.startswith(base + " ") for t in texts):
+            stage = " ".join(texts)
+            hits.append((row[0].row, bool(SI._FTW_RE.search(section + " " + stage))))
+    if not hits:
+        return None
+    pick = next((r for r, ftw in hits if ftw == want_ftw), hits[0][0])
+    return name, hdr, pick
+
+
+def _timeline(line: str, files_by_date: Dict[dt.date, Path], index_files: dict) -> List[dict]:
+    """Every day the line was on a crew schedule: [{date, section, stage}] oldest first."""
+    base = line.replace("-FTW", "")
+    want_ftw = line.endswith("-FTW")
+    days = []
+    for key, rec in index_files.items():
+        if line not in rec.get("jobs", []):
+            continue
+        try:
+            d = dt.date.fromisoformat(rec["date"])
+        except (KeyError, ValueError):
+            continue
+        f = files_by_date.get(d) or Path(key)
+        if not f.exists():
+            continue
+        recs = [r for r in _sched_recs(f) if (r.get("proj") or "").upper() == base]
+        pick = None
+        for r in recs:
+            is_ftw = bool(SI._FTW_RE.search(f"{r.get('section', '')} {r.get('stage', '')}"))
+            if is_ftw == want_ftw:
+                pick = r
+                break
+        if pick is None and recs and not want_ftw:
+            pick = recs[0]
+        if pick is None:
+            continue
+        days.append({"date": d.isoformat(), "section": (pick.get("section") or "").strip(), "stage": (pick.get("stage") or "").strip()})
+    days.sort(key=lambda x: x["date"])
+    return days
+
+
+def _runs(days: List[dict]) -> List[dict]:
+    """Consecutive schedule days with the same section + task folded into one line."""
+    out = []
+    for d in days:
+        if out and out[-1]["section"] == d["section"] and out[-1]["stage"] == d["stage"]:
+            out[-1]["to"] = d["date"]
+            out[-1]["days"] += 1
+        else:
+            out.append({"from": d["date"], "to": d["date"], "days": 1, "section": d["section"], "stage": d["stage"]})
+    return out
+
+
 # ───────────────────────────── readers ─────────────────────────────
 def read_master(path: Path) -> dict:
     wb = load_workbook(path)                       # formulas kept: we read INPUT cells + base columns
@@ -466,11 +746,28 @@ def build(no_jobtread: bool = False, no_snapshots: bool = False, limit: int = 0)
         log(f"  schedule index unavailable: {type(e).__name__}"); seen = {}
     sched_files = {d: f for d, f in SCH.all_schedule_files()} if Path(str(SCH.SCHEDULE_DIR)).exists() else {}
 
-    jt: Dict[str, list] = {}
+    jt: Dict[str, dict] = {}
     if not no_jobtread:
         nums = {ln.replace("-FTW", "") for ln in M["rows"]} | {str(x.get("JOB #") or "").upper().replace("-FTW", "") for x in F["removed"]}
-        jt = jobtread.approved_proposals(nums, log=log)
-        log(f"JobTread: {len(jt)} of {len(nums)} jobs have an approved proposal")
+        jt = jobtread.jobs(nums, log=log)
+        log(f"JobTread: {sum(1 for v in jt.values() if v['docs'])} of {len(nums)} jobs have an approved proposal; {len(jt)} exist there")
+    index_files = SI._load(SI.CACHE).get("files", {})
+
+    def folder_of(r: dict) -> Optional[str]:
+        for k in ("contract_file", "etc_file"):
+            v = str(r.get(k) or "")
+            if v:
+                pth = Path(v)
+                return str(pth if pth.is_dir() else pth.parent)
+        return None
+
+    def jt_block(base: str, line: str) -> dict:
+        j = jt.get(base) or {}
+        docs = j.get("docs") or []
+        price, cost, date = (docs[-1] if docs else (None, None, ""))
+        return {"price": price, "cost": cost, "date": date, "count": len(docs), "url": j.get("url") or "",
+                "exists": bool(j),
+                "scope_note": "the base job's proposal - may be the slab, not the flatwork" if (docs and line.endswith("-FTW")) else ""}
 
     as_of = dt.date.today()
     current = []
@@ -484,9 +781,11 @@ def build(no_jobtread: bool = False, no_snapshots: bool = False, limit: int = 0)
         kc, kl, kd = classify_contract(line, d, r, typed_k)
         ec, el, ed = classify_etc(line, d, r, typed_e)
         base = line.replace("-FTW", "")
-        docs = jt.get(base) or []
-        jt_price, jt_cost, jt_date = (docs[-1] if docs else (None, None, ""))
-        last = seen.get(line) or seen.get(base)
+        jtb = jt_block(base, line)
+        jt_price = jtb["price"]
+        days = _timeline(line, sched_files, index_files) if sched_files else []
+        last = dt.date.fromisoformat(days[-1]["date"]) if days else (seen.get(line) or seen.get(base))
+        first = dt.date.fromisoformat(days[0]["date"]) if days else None
         stale = bool(last and (as_of - last).days > STALE_DAYS)
         costs, billed = _num(d.get("COSTS TO DATE")), _num(d.get("BILLED TO DATE"))
         flags = []
@@ -499,8 +798,8 @@ def build(no_jobtread: bool = False, no_snapshots: bool = False, limit: int = 0)
             flags.append(f"the RP file says ETC {fe:,.0f}")
         if jt_price and K and not line.endswith("-FTW") and abs(jt_price - K) > 1:
             flags.append(f"JobTread price {jt_price:,.0f} differs from the WIP")
-        if not docs:
-            flags.append("not in JobTread")
+        if not jtb["count"] and not no_jobtread:
+            flags.append("no approved proposal in JobTread" if jtb["exists"] else "not in JobTread")
         if stale:
             flags.append(f"not on the schedule since {last.strftime('%m/%d/%Y')}")
         if K and billed and billed >= K * 0.99 and not stale:
@@ -508,63 +807,118 @@ def build(no_jobtread: bool = False, no_snapshots: bool = False, limit: int = 0)
         if K and costs and E and costs > E:
             flags.append(f"costs {costs:,.0f} already over the ETC {E:,.0f}")
 
-        snaps = {}
+        pics = {}
+        src_k, src_e = r.get("contract_file"), r.get("etc_file")
         if not no_snapshots:
-            # where the CONTRACT sits
-            src = r.get("contract_file")
-            if kc == "pdf" and src and Path(src).exists():
-                snaps["contract"] = _snap_pdf(Path(src), K, cache)
-            elif kc == "takeoff" and src and Path(src).exists():
-                snaps["contract"] = _snap_xlsx_value(Path(src), K, cache, "BID")
-            elif kc == "folder" and src and K:
-                snaps["contract"] = _find_in_folder(Path(src), K, cache, "contract")
-            elif kc in ("typed", "master") and K:
-                snaps["contract"] = None
-            if kc in ("pdf", "takeoff", "folder") and K and not snaps.get("contract"):
-                flags.append("contract amount not found in the folder's proposal or takeoff")
-            elif snaps.get("contract") and snaps["contract"].get("kind") == "pdf" and not snaps["contract"].get("found"):
-                flags.append(snaps["contract"].get("note") or "the proposal PDF says a different number")
-            # where the ETC sits
-            src = r.get("etc_file")
-            if ec == "takeoff" and src and Path(src).exists() and E:
-                snaps["etc"] = _snap_xlsx_value(Path(src), E, cache, "COST") or _snap_cost_bands(Path(src), E, cache)
-            elif ec == "folder" and src and E:
-                snaps["etc"] = _find_in_folder(Path(src), E, cache, "etc")
-            if ec in ("takeoff", "folder") and E and not snaps.get("etc"):
-                flags.append("ETC amount not found in the folder's cost sheet")
-            # the master row, the RP file row, the schedule row
+            jd = IMG_DIR / line
+            # 1. the schedule: the job's own row on its first and last day
+            for tag, day in (("first", first), ("last", last)):
+                f = sched_files.get(day) if day else None
+                if not f:
+                    continue
+                hit = _sched_row_of(f, base, line.endswith("-FTW"))
+                if hit:
+                    name, hdr, row = hit
+                    pics["sched_" + tag] = _row_strip_png(f, name, row, list(range(2, 8)), jd / f"sched_{tag}.png", hdr)
+                    if pics["sched_" + tag]:
+                        pics["sched_" + tag]["date"] = day.isoformat()
+            # 2. the contract: the page it sits on
+            if K and kc in ("pdf", "takeoff", "folder"):
+                cand = None
+                if kc == "pdf" and src_k and Path(src_k).exists():
+                    cand = _pdf_page_png(Path(src_k), K, jd / "contract.png")
+                elif kc == "takeoff" and src_k and Path(src_k).exists():
+                    hit = _find_value_cell(Path(src_k), K, "BID")
+                    if hit:
+                        cand = _sheet_page_png(Path(src_k), hit[0], [hit[1]], jd / "contract.png")
+                elif kc == "folder" and src_k:
+                    folder = Path(src_k)
+                    try:
+                        items = sorted(folder.iterdir(), key=lambda q: q.stat().st_mtime, reverse=True) if folder.is_dir() else []
+                    except OSError:
+                        items = []
+                    for q in [x for x in items if x.suffix.lower() == ".pdf" and re.search(r"proposal|bid|flatwork|ftw", x.name, re.I)][:6]:
+                        c2 = _pdf_page_png(q, K, jd / "contract.png")
+                        if c2 and c2.get("found"):
+                            cand = c2
+                            break
+                    if not cand:
+                        for q in [x for x in items if x.suffix.lower() in (".xlsm", ".xlsx") and not x.name.startswith("~$")][:6]:
+                            hit = _find_value_cell(q, K, "BID")
+                            if hit:
+                                cand = _sheet_page_png(q, hit[0], [hit[1]], jd / "contract.png")
+                                break
+                if cand:
+                    pics["contract"] = cand
+                    src_k = cand["path"]                        # the exact file the number sits in
+                    if cand.get("kind") == "pdf" and not cand.get("found"):
+                        flags.append(cand.get("note") or "the proposal PDF says a different number")
+                else:
+                    flags.append("contract amount not found in the folder's proposal or takeoff")
+            # 3. the ETC: the cost sheet page (the band subtotals that add up)
+            if E and ec in ("takeoff", "folder"):
+                cand = None
+                files = []
+                if ec == "takeoff" and src_e and Path(src_e).exists():
+                    files = [Path(src_e)]
+                elif ec == "folder" and src_e:
+                    folder = Path(src_e)
+                    try:
+                        files = sorted([x for x in folder.iterdir() if x.suffix.lower() in (".xlsm", ".xlsx") and not x.name.startswith("~$")],
+                                       key=lambda q: q.stat().st_mtime, reverse=True)[:6] if folder.is_dir() else []
+                    except OSError:
+                        files = []
+                for q in files:
+                    hit = _find_value_cell(q, E, "COST")
+                    if hit:
+                        cand = _sheet_page_png(q, hit[0], [hit[1]], jd / "etc.png")
+                    else:
+                        bands = _snap_cost_bands(q, E, cache)
+                        if bands:
+                            cand = _sheet_page_png(q, bands["sheet"], [row["n"] for row in bands["rows"] if row["hi"]], jd / "etc.png")
+                            if cand:
+                                cand["note"] = bands.get("note", "")
+                    if cand:
+                        break
+                if cand:
+                    pics["etc"] = cand
+                    src_e = cand["path"]
+                else:
+                    flags.append("ETC amount not found in the folder's cost sheet")
+            # 4. the WIP master row and the RP file row
             hdr = M["hdr"]
             cols = [hdr[k] for k in ("PROJECT #", "PROJECT NAME", "ORIGINAL CONTRACT", "APPROVED COs",
                                      "ORIGINAL ESTIMATED COST", "CO COSTS", "COSTS TO DATE", "BILLED TO DATE") if k in hdr]
-            snaps["master"] = _snap_xlsx_row(mp, M["tab"], d["_row"], cols, cache, hdr.get("ORIGINAL CONTRACT", 2))
+            hr_row = next(rr for rr in range(1, 16) if _wb(mp)[M["tab"]].cell(rr, 2).value == "PROJECT #")
+            pics["master"] = _row_strip_png(mp, M["tab"], d["_row"], cols, jd / "master.png", hr_row)
             if r:
-                snaps["rpfile"] = _snap_xlsx_row(fp, "RP WIP", r["row"], list(range(1, 9)), cache, 4)
-            snaps["schedule"] = _schedule_snap(line, last, sched_files, cache)
+                pics["rpfile"] = _row_strip_png(fp, "RP WIP", r["row"], list(range(1, 8)), jd / "rpfile.png", 2)
 
         current.append({
             "line": line, "ftw": line.endswith("-FTW"), "name": d.get("PROJECT NAME"), "builder": d.get("BUILDER"),
             "type": d.get("TYPE"), "status": d.get("STATUS"), "category": d.get("CATEGORY"),
             "contract": K, "etc": E, "costs": costs, "billed": billed,
             "costs_link": d.get("COSTS TO DATE LINK"), "billed_link": d.get("BILLED TO DATE LINK"),
-            "src": {"contract": {"kind": kc, "label": kl, "detail": kd, "file": r.get("contract_file")},
-                    "etc": {"kind": ec, "label": el, "detail": ed, "file": r.get("etc_file")},
+            "folder": folder_of(r),
+            "src": {"contract": {"kind": kc, "label": kl, "detail": kd, "file": src_k},
+                    "etc": {"kind": ec, "label": el, "detail": ed, "file": src_e},
                     "costs": {"kind": "qbo", "label": "QuickBooks", "detail": f"project P&L, synced {M['report_date']}"},
                     "billed": {"kind": "qbo", "label": "QuickBooks", "detail": f"invoices on the project, synced {M['report_date']}"}},
-            "jt": {"price": jt_price, "cost": jt_cost, "date": jt_date, "count": len(docs),
-                   "scope_note": "the base job's proposal - may be the slab, not the flatwork" if (docs and line.endswith("-FTW")) else ""},
+            "jt": jtb,
             "rp_status": r.get("status"), "rp_action": r.get("action"), "band": r.get("band"),
+            "schedule": {"days": len(days), "first": first.isoformat() if first else None,
+                         "last": last.isoformat() if last else None, "runs": _runs(days)},
             "last_seen": last.isoformat() if last else None, "stale": stale,
             "flags": flags, "problem": bool(flags) or not K or not E,
-            "snaps": {k: v for k, v in snaps.items() if v},
+            "pics": {k: v for k, v in pics.items() if v},
         })
         if i % 10 == 0:
-            log(f"  {i}/{len(lines)} lines · {time.time() - t0:.0f}s · cache hits {cache.hits}")
+            log(f"  {i}/{len(lines)} lines · {time.time() - t0:.0f}s")
 
     finished = []
     for x in F["removed"]:
         job = str(x.get("JOB #") or "").upper()
         base = job.replace("-FTW", "")
-        docs = jt.get(base) or []
         last_day = x.get("LAST DAY ON SCHEDULE")
         ld = None
         if isinstance(last_day, (dt.date, dt.datetime)):
@@ -573,10 +927,21 @@ def build(no_jobtread: bool = False, no_snapshots: bool = False, limit: int = 0)
             m = re.match(r"(\d{2})/(\d{2})/(\d{4})", str(last_day or ""))
             if m:
                 ld = dt.date(int(m.group(3)), int(m.group(1)), int(m.group(2)))
-        snaps = {}
+        days = _timeline(job, sched_files, index_files) if sched_files else []
+        pics = {}
         if not no_snapshots:
-            snaps["removed"] = _snap_xlsx_row(fp, "Removed log", x["_row"], [2, 3, 5, 6, 7, 8, 9, 10], cache, 7)
-            snaps["schedule"] = _schedule_snap(job, ld, sched_files, cache)
+            jd = IMG_DIR / job
+            pics["removed"] = _row_strip_png(fp, "Removed log", x["_row"], [2, 3, 5, 6, 7, 8, 9, 10, 11], jd / "removed.png", 1)
+            for tag, day in (("first", dt.date.fromisoformat(days[0]["date"]) if days else None), ("last", ld or (dt.date.fromisoformat(days[-1]["date"]) if days else None))):
+                f = sched_files.get(day) if day else None
+                if not f:
+                    continue
+                hit = _sched_row_of(f, base, job.endswith("-FTW"))
+                if hit:
+                    name, hdr, row = hit
+                    pics["sched_" + tag] = _row_strip_png(f, name, row, list(range(2, 8)), jd / f"sched_{tag}.png", hdr)
+                    if pics["sched_" + tag]:
+                        pics["sched_" + tag]["date"] = day.isoformat()
         finished.append({
             "line": job, "ftw": job.endswith("-FTW"), "name": x.get("ADDRESS"), "builder": x.get("BUILDER"),
             "contract": _num(x.get("CONTRACT $")), "etc": _num(x.get("ETC $")),
@@ -584,8 +949,9 @@ def build(no_jobtread: bool = False, no_snapshots: bool = False, limit: int = 0)
             "last_invoice": _fmt(x.get("LAST INVOICE")), "last_day": _fmt(last_day), "last_stage": x.get("LAST STAGE"),
             "why": x.get("WHY REMOVED"), "source": x.get("SOURCE"), "removed_on": _fmt(x.get("REMOVED ON")),
             "approved_by": x.get("APPROVED BY"),
-            "jt": {"price": docs[-1][0] if docs else None, "cost": docs[-1][1] if docs else None, "date": docs[-1][2] if docs else ""},
-            "snaps": {k: v for k, v in snaps.items() if v},
+            "jt": jt_block(base, job),
+            "schedule": {"days": len(days), "first": days[0]["date"] if days else None, "last": days[-1]["date"] if days else None, "runs": _runs(days)},
+            "pics": {k: v for k, v in pics.items() if v},
         })
 
     cache.save()
@@ -597,11 +963,12 @@ def build(no_jobtread: bool = False, no_snapshots: bool = False, limit: int = 0)
         "master": {"file": mp.name, "tab": M["tab"], "renamed": M["renamed"], "report_date": M["report_date"],
                    "mtime": dt.datetime.fromtimestamp(mp.stat().st_mtime).isoformat(timespec="seconds")},
         "rp_file": {"file": fp.name, "mtime": dt.datetime.fromtimestamp(fp.stat().st_mtime).isoformat(timespec="seconds")},
-        "jobtread": {"queried": not no_jobtread, "approved": len(jt)},
+        "jobtread": {"queried": not no_jobtread, "approved": sum(1 for v in jt.values() if v["docs"]), "exists": len(jt)},
         "schedule_mounted": bool(sched_files),
         "counts": {"current": len(current), "finished": len(finished), "contract_kinds": kinds,
                    "problems": sum(1 for c in current if c["problem"]),
                    "in_jobtread": sum(1 for c in current if c["jt"]["count"]),
+                   "jt_exists": sum(1 for c in current if c["jt"]["exists"]),
                    "typed": sum(1 for c in current if c["src"]["contract"]["kind"] == "typed" or c["src"]["etc"]["kind"] == "typed"),
                    "stale": sum(1 for c in current if c["stale"])},
         "current": current, "finished": finished,
@@ -631,7 +998,7 @@ def load() -> Optional[dict]:
 #   contract_ok / etc_ok     1 = check, 0 = X, NULL = not answered
 #   note       free text - what could not be settled, what changed
 MODES = ("ops", "me")
-DECISIONS = {"current": ("confirmed", "fix"), "finished": ("agree", "keep")}
+DECISIONS = {"current": ("confirmed", "fix", "noted"), "finished": ("agree", "keep", "noted")}
 _COLS = "project_no, kind, decision, mode, note, at, our_contract, our_etc, contract_ok, etc_ok"
 
 

@@ -40,7 +40,7 @@ import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -77,6 +77,7 @@ CONTENT_TYPES = {
     ".js": "application/javascript; charset=utf-8",
     ".css": "text/css; charset=utf-8",
     ".svg": "image/svg+xml",
+    ".png": "image/png",
 }
 
 # ── P&L link (project-pnl) ──────────────────────────────────────────────────
@@ -2447,6 +2448,8 @@ class Handler(BaseHTTPRequestHandler):
             self._graph()
         elif path == "/api/rp/review":     # the RP review page (sources + snapshots JSON + the standing answers)
             self._rp_review_get()
+        elif path.startswith("/api/rp/img/"):   # a source picture cut by rp_review (only files under its img dir)
+            self._rp_img(path[len("/api/rp/img/"):])
         elif path == "/api/rp/answers":    # the answers as text (what a later session reads to make sense of them)
             self._send(200, rp_review.answers_report().encode("utf-8"), "text/plain; charset=utf-8")
         elif path == "/api/wip/review":    # the WIP Review tab (pending before/after diff, merged)
@@ -2519,6 +2522,8 @@ class Handler(BaseHTTPRequestHandler):
             self._rp_mark()
         elif p == "/api/rp/refresh":      # rebuild the RP review JSON (sources + snapshots; JobTread = Touch ID)
             self._rp_refresh()
+        elif p == "/api/rp/reveal":       # open the job folder on Common in Finder and highlight the file the number came from
+            self._rp_reveal()
         elif p == "/api/export/xlsx":          # the table on screen -> a grouped Excel report in ~/Downloads (revealed)
             self._export_xlsx()
         elif p == "/api/attachment/download":  # save selected bills' scans to a folder + reveal it
@@ -2727,6 +2732,45 @@ class Handler(BaseHTTPRequestHandler):
         except sqlite3.OperationalError as e:
             return self._json({"error": f"write failed: {e}"}, 500)
         self._json({"ok": True, "project_no": pn, "kind": kind, "decision": decision, "mode": mode, "at": now})
+
+    def _rp_img(self, rel: str):
+        """Serve one PNG cut by rp_review - only from its img dir, no traversal."""
+        root = rp_review.IMG_DIR.resolve()
+        target = (root / unquote(rel)).resolve()
+        if root not in target.parents or not target.is_file() or target.suffix.lower() != ".png":
+            return self._send(404, b"not found", "text/plain; charset=utf-8")
+        self._send(200, target.read_bytes(), "image/png")
+
+    def _rp_reveal(self):
+        """Finder: reveal + highlight the document a number came from (a file), or open the
+        job folder (a directory). Only paths under the Common share or the OneDrive base."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except (ValueError, json.JSONDecodeError):
+            return self._json({"error": "bad request"}, 400)
+        raw = str(body.get("path") or "").strip()
+        if not raw:
+            return self._json({"error": "path required"}, 400)
+        target = Path(raw)
+        roots = [Path("/Volumes/Common")]
+        try:
+            roots.append(paths.onedrive_base())
+        except Exception:                                      # noqa: BLE001
+            pass
+        ok = any(str(target).startswith(str(r)) for r in roots)
+        if not ok:
+            return self._json({"error": "not a job folder path"}, 400)
+        if not target.exists():
+            return self._json({"error": "not mounted or gone", "path": raw}, 404)
+        try:
+            if target.is_dir():
+                subprocess.run(["open", str(target)], check=False, timeout=10)          # noqa: S603,S607
+            else:
+                subprocess.run(["open", "-R", str(target)], check=False, timeout=10)    # noqa: S603,S607
+        except (OSError, subprocess.SubprocessError) as e:
+            return self._json({"error": str(e)}, 500)
+        self._json({"ok": True, "path": raw, "kind": "folder" if target.is_dir() else "file"})
 
     def _rp_refresh(self):
         """Rebuild rp_review.json as a sync step (single run-lock, progress on /api/sync/status)."""
