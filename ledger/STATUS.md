@@ -4,6 +4,11 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-15 (evening) · Browser Back works inside the app: opening a record view (project page, invoice,
+  vendor) or an RP review job page pushes a history entry (`_pushView`), popstate closes it in place, and the
+  in-app Back buttons pop their own entry (`_popViewIfOwn`) so the browser stack stays in step; Previous /
+  Next on the RP page replace the entry. The RP job page gained the tool row the owner reviews with: Project
+  page (the ledger's own), Open job folder, Open in QuickBooks (the project), QBO P&L (costs), Open in JobTread.
 - 2026-09-15 (later) · RP review page, second pass on the owner's say-so: the source is now a PICTURE of the
   real file with its name on it - the proposal PDF page (pdftoppm), the takeoff bid / cost sheet drawn cell
   for cell (values, fills, bold, column widths, row numbers; PIL, no Excel needed) with the rows outlined, the

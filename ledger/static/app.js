@@ -5598,7 +5598,23 @@ function closePanels() { $("#overlay").hidden = true; $("#detail").hidden = true
 // Full-page record view (app-style, like JobTread) - takes over the main content area instead of a
 // narrow side slide-over, so wide detail has room to read (owner 2026-08-28: "side view squishes too
 // much"). Opening hides the tab-pages; Back restores the tab you came from (activeTab is unchanged).
+// Browser Back works inside the app (owner 2026-09-15: "i can't use my back button without it refreshing
+// all"): opening a record view or an RP job page pushes a history entry; popstate closes it in place.
+let _histSkip = false;
+function _pushView(state) { try { history.pushState(state, ""); } catch { /* ignore */ } }
+function _popViewIfOwn(kind) {   // the in-app Back: pop our own entry so the browser's stack stays in step
+  if (history.state && history.state.v === kind) { _histSkip = false; history.back(); return true; }
+  return false;
+}
+window.addEventListener("popstate", () => {
+  if (_histSkip) { _histSkip = false; return; }
+  const rv = $("#recordView");
+  if (rv && !rv.hidden) { closeRecord(); return; }
+  if (activeTab === "rpreview" && typeof rrOpenLine !== "undefined" && rrOpenLine) { rrOpenLine = null; rrRenderCards(); window.scrollTo(0, 0); }
+});
+
 function openRecord(title, sub) {
+  if (!($("#recordView") && !$("#recordView").hidden)) _pushView({ v: "record" });   // one entry per open, not per re-render
   $$(".tab-page").forEach(p => { p.hidden = true; });
   $("#recordView").hidden = false;
   $("#recordTitle").textContent = title || "";
@@ -7393,7 +7409,7 @@ function init() {
   { const el = $("#btnLienReview"); if (el) el.onclick = openLienReview; }   // saved marks on file, reviewed on demand
   { const el = $("#btnCloseSublocDetail"); if (el) el.onclick = closePanels; }
   { const el = $("#btnCloseVendorDetail"); if (el) el.onclick = closePanels; }
-  { const el = $("#recordBack"); if (el) el.onclick = closeRecord; }
+  { const el = $("#recordBack"); if (el) el.onclick = () => { if (!_popViewIfOwn("record")) closeRecord(); }; }
   { const el = $("#btnSaveBillMarks"); if (el) el.onclick = saveBillMarks; }
   { const el = $("#btnDiscardBillMarks"); if (el) el.onclick = discardBillMarks; }
   // Pay Bills (check-run worksheet)
@@ -7606,7 +7622,7 @@ function rrRenderCards() {
       ? `<td class="n">${money(x.costs)}</td><td class="n">${money(x.billed)}</td><td class="${x.stale ? "rr-stale" : ""}">${x.last_seen ? fmtDate(x.last_seen) : "–"}</td><td class="rr-list-flags">${(x.flags || []).length ? `${x.flags.length} · ${_ge(x.flags[0])}${x.flags.length > 1 ? "…" : ""}` : ""}</td>`
       : `<td class="n">${money(x.billed)}</td><td class="n">${money(x.costs)}</td><td>${_ge(x.last_day || "–")}</td><td class="rr-list-flags">${_ge(x.why || "")}</td>`;
     tr.innerHTML = `<td class="rr-markcell">${mark}</td><td class="wr-pn">${_ge(x.line)}</td><td>${_ge(x.name || "")}</td><td>${_ge(x.builder || "")}</td><td class="n">${x.contract == null ? '<span class="miss">blank</span>' : money(x.contract)}</td><td class="n">${x.etc == null ? '<span class="miss">blank</span>' : money(x.etc)}</td>${tail}<td class="rr-ans">${ans}</td>`;
-    tr.onclick = () => { rrOpenLine = x.line; rrRenderCards(); window.scrollTo(0, 0); };
+    tr.onclick = () => { rrOpenLine = x.line; _pushView({ v: "rr", line: x.line }); rrRenderCards(); window.scrollTo(0, 0); };
     tb.appendChild(tr);
   }
   t.appendChild(tb); body.appendChild(t);
@@ -7622,9 +7638,9 @@ function rrRenderPage(x, kind, list) {
     <button type="button" class="btn small" id="rrNext" ${i < 0 || i >= list.length - 1 ? "disabled" : ""}>Next →</button>`;
   body.appendChild(nav);
   body.appendChild(rrCard(x, kind));
-  $("#rrBack").onclick = () => { rrOpenLine = null; rrRenderCards(); };
-  $("#rrPrev").onclick = () => { if (i > 0) { rrOpenLine = list[i - 1].line; rrRenderCards(); window.scrollTo(0, 0); } };
-  $("#rrNext").onclick = () => { if (i < list.length - 1) { rrOpenLine = list[i + 1].line; rrRenderCards(); window.scrollTo(0, 0); } };
+  $("#rrBack").onclick = () => { if (!_popViewIfOwn("rr")) { rrOpenLine = null; rrRenderCards(); } };
+  $("#rrPrev").onclick = () => { if (i > 0) { rrOpenLine = list[i - 1].line; try { history.replaceState({ v: "rr", line: rrOpenLine }, ""); } catch { /* ignore */ } rrRenderCards(); window.scrollTo(0, 0); } };
+  $("#rrNext").onclick = () => { if (i < list.length - 1) { rrOpenLine = list[i + 1].line; try { history.replaceState({ v: "rr", line: rrOpenLine }, ""); } catch { /* ignore */ } rrRenderCards(); window.scrollTo(0, 0); } };
 }
 
 function rrPill(src) { return src ? `<span class="rr-src ${_ge(src.kind)}" title="${_ge(src.detail || "")}">${_ge(src.label)}</span>` : ""; }
@@ -7664,6 +7680,9 @@ function rrCard(x, kind) {
   const link = (v, href) => href ? `<a href="${_ge(href)}" target="_blank" rel="noopener" title="Open in QuickBooks">${rrMoney(v)}</a>` : rrMoney(v);
   const jtLink = jt.url ? `<a class="btn tiny" href="${_ge(jt.url)}" target="_blank" rel="noopener">Open in JobTread</a>` : `<span class="rr-nojt">not in JobTread</span>`;
   const folderBtn = x.folder ? `<button type="button" class="btn tiny" data-reveal="${_ge(x.folder)}" title="${_ge(x.folder)}">Open job folder</button>` : "";
+  const pageBtn = `<button type="button" class="btn tiny" data-project="${_ge(x.line)}" title="This job's page in the ledger: invoices, draws, bills, costs">Project page</button>`;
+  const qboBtn = x.billed_link ? `<a class="btn tiny" href="${_ge(x.billed_link)}" target="_blank" rel="noopener" title="The project in QuickBooks (invoices)">Open in QuickBooks</a>` : "";
+  const qboPl = x.costs_link ? `<a class="btn tiny" href="${_ge(x.costs_link)}" target="_blank" rel="noopener" title="The project's P&L in QuickBooks (costs)">QBO P&amp;L</a>` : "";
   const jtCell = jt.price != null ? `${money(jt.price)} / ${money(jt.cost)}<div class="d">approved ${fmtDate(jt.date)}${jt.scope_note ? " · " + _ge(jt.scope_note) : ""}</div>` : `<span class="miss">${jt.exists ? "no approved proposal" : "not in JobTread"}</span>`;
   let nums;
   if (kind === "current") {
@@ -7702,7 +7721,7 @@ function rrCard(x, kind) {
   const dec = kind === "current" ? [["confirmed", "Confirmed"], ["fix", "Needs a fix"]] : [["agree", "Agree - done"], ["keep", "Keep on the WIP"]];
   const decLabel = { confirmed: "Confirmed", fix: "Needs a fix", agree: "Agreed done", keep: "Kept on the WIP", noted: "Noted" };
   const stamp = m ? `<span class="rr-stamp ${m.mode === "ops" ? "rr-stamp-ops" : ""}"><b>${decLabel[m.decision] || _ge(m.decision)}</b> · ${m.mode === "ops" ? "OPS Manager + you" : "You"} · ${fmtDate(m.at, true)}${due ? " · <i>due again</i>" : ""}</span>` : `<span class="rr-stamp"><i>not saved yet</i></span>`;
-  card.innerHTML = `<div class="rr-head"><span class="wr-pn">${_ge(x.line)}</span><span class="wr-name">${_ge(x.name || "")}</span><span class="wr-name">· ${_ge(x.builder || "")}</span>${x.rp_status ? `<span class="wr-badge changed" title="status in the RP WIP file">${_ge(x.rp_status)}</span>` : ""}<span class="rr-links">${folderBtn}${jtLink}</span></div>
+  card.innerHTML = `<div class="rr-head"><span class="wr-pn">${_ge(x.line)}</span><span class="wr-name">${_ge(x.name || "")}</span><span class="wr-name">· ${_ge(x.builder || "")}</span>${x.rp_status ? `<span class="wr-badge changed" title="status in the RP WIP file">${_ge(x.rp_status)}</span>` : ""}<span class="rr-links">${pageBtn}${folderBtn}${qboBtn}${qboPl}${jtLink}</span></div>
     <div class="rr-nums">${nums}</div>
     ${flags.length ? `<div class="rr-flags">${flags.map(f => `<div>${_ge(f)}</div>`).join("")}</div>` : ""}
     ${schedBlock}${contractBlock}${etcBlock}${moreBlock}
@@ -7716,6 +7735,7 @@ function rrCard(x, kind) {
         <button type="button" class="btn small primary" data-save="1">Save</button>${m ? `<button type="button" class="btn small subtle" data-clear="1">Clear</button>` : ""}${stamp}</div>
     </div>`;
   card.querySelectorAll("[data-reveal]").forEach(b => { b.onclick = () => rrReveal(b.dataset.reveal); });
+  { const b = card.querySelector("[data-project]"); if (b) b.onclick = () => openProjectPage(b.dataset.project); }
   card.querySelectorAll('input[data-f]').forEach(inp => { const base = inp.dataset.f === "our_contract" ? x.contract : x.etc;
     const paint = () => { const v = Number(String(inp.value).replace(/[$,]/g, "")); inp.classList.toggle("changed", inp.value.trim() !== "" && !Number.isNaN(v) && base != null && Math.abs(v - base) > 0.5); }; inp.oninput = paint; paint(); });
   card.querySelectorAll(".rr-ok button").forEach(b => { b.onclick = () => { const on = b.classList.contains("on"); b.parentElement.querySelectorAll("button").forEach(o => o.classList.remove("on")); if (!on) b.classList.add("on"); }; });
@@ -7740,7 +7760,7 @@ async function rrSave(card, x, kind, decision) {
   else delete RR.marks[`${x.line}|${kind}`];
   toast(decision ? `${x.line} saved · ${rrMode === "ops" ? "OPS Manager + you" : "you"}` : `${x.line} cleared`);
   rrRenderStats();
-  if (decision) { rrOpenLine = null; rrRenderCards(); window.scrollTo(0, 0); }   // back to the list: the ✓ is there
+  if (decision) { if (!_popViewIfOwn("rr")) { rrOpenLine = null; rrRenderCards(); window.scrollTo(0, 0); } }   // back to the list: the ✓ is there
   else { const fresh = rrCard(x, kind); card.replaceWith(fresh); }
 }
 
