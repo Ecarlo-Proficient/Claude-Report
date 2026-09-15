@@ -316,6 +316,40 @@ CREATE TABLE IF NOT EXISTS bill_mark (
     updated_at  TEXT NOT NULL
 );
 
+-- ── rp_review_mark / rp_review_mark_log : the weekly RP review answers (2026-09-15) ────
+-- The owner and the RP ops manager go through every RP line once a week on the dashboard's
+-- RP review page (ledger/rp_review.py builds the page's JSON: every number's source + a cut of
+-- the source sheet). They never edit the prepared numbers; each line gets ONE standing answer
+-- here (their own numbers, a check / X per number, a note, who decided, when) and every answer
+-- ever given lands in the log. mode 'ops' = the ops manager was present, deciding together;
+-- 'me' = the owner alone. decision: current lines confirmed | fix; finished lines agree | keep.
+CREATE TABLE IF NOT EXISTS rp_review_mark (
+    project_no   TEXT NOT NULL,
+    kind         TEXT NOT NULL,          -- 'current' | 'finished'
+    decision     TEXT NOT NULL,
+    mode         TEXT NOT NULL,          -- 'ops' | 'me'
+    note         TEXT,
+    at           TEXT NOT NULL,
+    our_contract NUMERIC,                -- THEIR number (prepopulated with the prepared one)
+    our_etc      NUMERIC,
+    contract_ok  INTEGER,                -- 1 = check, 0 = X, NULL = not answered
+    etc_ok       INTEGER,
+    PRIMARY KEY (project_no, kind)
+);
+CREATE TABLE IF NOT EXISTS rp_review_mark_log (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_no   TEXT NOT NULL,
+    kind         TEXT NOT NULL,
+    decision     TEXT NOT NULL,          -- 'cleared' when the standing answer was removed
+    mode         TEXT NOT NULL,
+    note         TEXT,
+    at           TEXT NOT NULL,
+    our_contract NUMERIC,
+    our_etc      NUMERIC,
+    contract_ok  INTEGER,
+    etc_ok       INTEGER
+);
+
 -- ── sub_loc_event / sub_loc_run : the subcontractor LOC float model ──────────
 -- How much we have FRONTED to subs before the client repaid us (money out to subs, netted
 -- against client payments per project+draw-period, FIFO, chronological). The engine is

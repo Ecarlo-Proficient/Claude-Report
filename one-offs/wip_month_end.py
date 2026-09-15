@@ -87,7 +87,7 @@ from shared.xlsx_verify import assert_clean                    # noqa: E402
 import rp_wip_reader as RP                                     # noqa: E402
 from rp_schedule_wip_preview import (                          # noqa: E402
     _is_tract, find_proposal, read_main_schedule)
-from rp_jobtread_coverage import ORG_ID as JT_ORG, pave as jt_pave   # noqa: E402
+from shared.jobtread import ORG_ID as JT_ORG, pave as jt_pave   # noqa: E402
 
 _WIP_DIR = paths.onedrive_base() / "Company Files - WIP Report"
 # The master was renamed 'WIP - MASTER new.xlsx' -> 'WIP - MASTER.xlsx' on 2026-09-09;

@@ -4,6 +4,23 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-15 · **RP review page** (gear -> "RP review · with the ops manager"; tab `rpreview`). The weekly
+  sit-down: one card per RP line - the four numbers on the WIP with a SOURCE pill each (Proposal PDF /
+  Takeoff bid sheet / Takeoff cost sheet / Job folder / General List / WIP master / Typed on the master /
+  BLANK; QuickBooks with the deep links for costs and billed; JobTread approved price + cost), a cut of the
+  source spreadsheet around the row the number sits in (max 5 rows, that row highlighted; a proposal PDF
+  as its 5 text lines; an ETC found as the cost bands that add up to it), the crew-schedule row on the
+  job's last day, the WIP master row and the RP file row; plus the 40 finished lines from the RP file's
+  Removed log. **Our numbers** = the owner's / ops manager's own space: prepopulated with the prepared
+  value, a check or X per number, a note, Confirmed / Needs a fix (current) or Agree / Keep (finished).
+  A **Me / OPS Manager** toggle stamps every answer with who decided and when (`rp_review_mark` +
+  `rp_review_mark_log`); a card with no answer in 7 days is due again. Builder `ledger/rp_review.py`
+  (-> `~/Library/Application Support/Proficient/rp-review/rp_review.json` + a snapshot cache keyed by
+  file mtime + value; `--answers` prints every answer as text for the next session to act on).
+  Endpoints `/api/rp/review` (GET), `/api/rp/answers` (GET, text), `/api/rp/mark` (POST), `/api/rp/refresh`
+  (POST, a sync step under the single run-lock). The JobTread client moved to `shared/jobtread.py`
+  (the one-offs import it back). The builder reads the RP tab under either name (`Test - RP` or the
+  hand-renamed `WIP-RP`) and says so in the page header.
 - 2026-09-14 · Projects grid: a division / completed band is one cell per column, so every subtotal sits under its column (contract · costs · billed · band costs/ETC as % complete · net over/(under) · open AR; the job count in the Name column). The merged chip strip the band used to carry did not line up with the grid (owner screenshot).
 - **Two views (owner 2026-09-13: "consolidate to two menus/views - projects and give me
   everything").** The 7 groups / 16 tabs / 2 hidden pages became **Projects · Company · the gear**.

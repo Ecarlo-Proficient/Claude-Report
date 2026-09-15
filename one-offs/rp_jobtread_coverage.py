@@ -42,16 +42,7 @@ from shared import qbo_vault
 import rp_wip_reader as RP
 import rp_schedule_wip_preview as P
 
-ORG_ID = os.getenv("JT_ORG_ID", "22PFAfqHLF3a")   # Proficient Concrete LLC
-API_URL = "https://api.jobtread.com/pave"
-
-
-def pave(key: str, query: dict) -> dict:
-    body = json.dumps({"query": {"$": {"grantKey": key}, **query}}).encode()
-    req = urllib.request.Request(API_URL, data=body,
-                                 headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=60) as r:
-        return json.loads(r.read().decode())
+from shared.jobtread import ORG_ID, API_URL, pave   # noqa: E402,F401 - the ONE client (shared since 2026-09-15)
 
 
 def job_coverage(key: str, number: str):

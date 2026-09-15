@@ -51,6 +51,7 @@ from shared import job_rulings     # standing per-job rulings (known loss / acce
 import registry_view  # noqa: E402  (local: parses the vault's process registry for the Systems tab)
 import vault_graph    # noqa: E402  (local: vault [[link]] graph + docs/ARCHITECTURE.md diagrams for the Graph tab)
 import trail          # noqa: E402  (local: the money trail - every QBO line behind a project's Costs / Billed, /api/trail)
+import rp_review      # noqa: E402  (local: the weekly RP review - sources + snapshots JSON, the ops-manager marks)
 import notion_page    # noqa: E402  (local: one Notion page, whole, for the invoice side panel - /api/invoice/notion)
 import table_export   # noqa: E402  (local: a filtered table -> grouped Excel report in ~/Downloads, POST /api/export/xlsx)
 
@@ -2443,6 +2444,10 @@ class Handler(BaseHTTPRequestHandler):
             self._processes()
         elif path == "/api/graph":         # the Graph tab (vault link-graph + system diagrams, live)
             self._graph()
+        elif path == "/api/rp/review":     # the RP review page (sources + snapshots JSON + the standing answers)
+            self._rp_review_get()
+        elif path == "/api/rp/answers":    # the answers as text (what a later session reads to make sense of them)
+            self._send(200, rp_review.answers_report().encode("utf-8"), "text/plain; charset=utf-8")
         elif path == "/api/wip/review":    # the WIP Review tab (pending before/after diff, merged)
             self._wip_review_get()
         elif path == "/api/accounting":    # the Audit tab (Bill Tracker audits, live)
@@ -2509,6 +2514,10 @@ class Handler(BaseHTTPRequestHandler):
             self._wip_review_run()
         elif p == "/api/wip/merge":       # WIP Review: write approved changes to the 3 Test tabs (gated)
             self._wip_merge()
+        elif p == "/api/rp/mark":         # a ledger write - the owner's / ops manager's answer on one RP line
+            self._rp_mark()
+        elif p == "/api/rp/refresh":      # rebuild the RP review JSON (sources + snapshots; JobTread = Touch ID)
+            self._rp_refresh()
         elif p == "/api/export/xlsx":          # the table on screen -> a grouped Excel report in ~/Downloads (revealed)
             self._export_xlsx()
         elif p == "/api/attachment/download":  # save selected bills' scans to a folder + reveal it
@@ -2670,6 +2679,65 @@ class Handler(BaseHTTPRequestHandler):
         if not body.get("confirm"):
             return self._json({"error": "confirm required"}, 400)
         return self._launch(_wip_review_steps("emit"), "wip-review")
+
+    # ── RP review endpoints (the weekly sit-down with the ops manager) ──────
+    def _rp_review_get(self):
+        """The last build (rp_review.json) + every standing answer keyed '<job>|<kind>'."""
+        data = rp_review.load()
+        if not data:
+            return self._json({"ok": True, "ready": False, "marks": {}})
+        data["ok"] = True
+        data["ready"] = True
+        data["marks"] = rp_review.read_marks()
+        self._json(data)
+
+    def _rp_mark(self):
+        """One answer on one RP line: decision + mode (ops / me) + their numbers + check/X + note.
+        Stamped server-side; every write also lands in rp_review_mark_log (the weekly history)."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except (ValueError, json.JSONDecodeError):
+            return self._json({"error": "bad request"}, 400)
+        pn = str(body.get("project_no") or "").strip().upper()
+        kind = str(body.get("kind") or "current")
+        decision = str(body.get("decision") or "").strip()
+        mode = str(body.get("mode") or "me")
+        if not _PROJ_RE.match(pn):
+            return self._json({"error": "bad or missing project"}, 400)
+        if kind not in rp_review.DECISIONS or mode not in rp_review.MODES:
+            return self._json({"error": "bad kind or mode"}, 400)
+        if decision and decision not in rp_review.DECISIONS[kind]:
+            return self._json({"error": f"decision must be one of {rp_review.DECISIONS[kind]} or empty"}, 400)
+
+        def _n(v):
+            try:
+                return None if v in (None, "") else float(str(v).replace(",", "").replace("$", ""))
+            except ValueError:
+                return None
+
+        def _ok(v):
+            return None if v in (None, "") else (1 if v in (1, True, "1", "true") else 0)
+        now = _dt.datetime.now().isoformat(timespec="seconds")
+        try:
+            rp_review.set_mark(pn, kind, decision, mode, str(body.get("note") or "").strip()[:2000], now,
+                               _n(body.get("our_contract")), _n(body.get("our_etc")),
+                               _ok(body.get("contract_ok")), _ok(body.get("etc_ok")))
+        except sqlite3.OperationalError as e:
+            return self._json({"error": f"write failed: {e}"}, 500)
+        self._json({"ok": True, "project_no": pn, "kind": kind, "decision": decision, "mode": mode, "at": now})
+
+    def _rp_refresh(self):
+        """Rebuild rp_review.json as a sync step (single run-lock, progress on /api/sync/status)."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except (ValueError, json.JSONDecodeError):
+            return self._json({"error": "bad request"}, 400)
+        if not body.get("confirm"):
+            return self._json({"error": "confirm required"}, 400)
+        return self._launch([{"label": "Build RP review (master, RP file, folders, JobTread - Touch ID)",
+                              "script": "ledger/rp_review.py", "args": []}], "rp-review")
 
     def _wip_review_get(self):
         """Merge the three emit JSONs into one review payload for the UI."""

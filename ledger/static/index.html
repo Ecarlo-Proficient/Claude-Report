@@ -486,6 +486,37 @@
         <div id="wrBody" class="wr-body"></div>
       </section>
     </div><!-- /tab: wipreview -->
+    <div class="tab-page" data-tab="rpreview" hidden>
+      <section class="widget">
+        <div class="widget-head">
+          <h2>RP review <span class="count" id="rrNote"></span></h2>
+          <div class="console-actions">
+            <span class="seg" id="rrMode" title="Who is deciding right now - stamped on every answer">
+              <button type="button" class="seg-btn" data-mode="me">Me</button>
+              <button type="button" class="seg-btn" data-mode="ops">OPS Manager</button>
+            </span>
+            <button class="btn small" id="rrRebuild" title="Re-read the master, the RP file, JobTread and the schedules; cut fresh snapshots. A few minutes; one Touch ID.">Rebuild</button>
+          </div>
+        </div>
+        <p class="hint">One card per job: the numbers on the WIP, <b>where each one was grabbed from</b>, and a cut of
+          the source spreadsheet with that row highlighted. The prepared numbers are never edited here. <b>Our numbers</b>
+          is your space: it starts filled with the prepared value - leave it, or type yours; tick <b>✓</b> when it is right,
+          <b>✗</b> when it is not, and write a note when it cannot be settled. Every answer is stamped with who decided
+          (<b>Me</b>, or <b>OPS Manager</b> when he is here) and when. Once a week, go through every card.</p>
+        <div class="kpi-row" id="rrStats"></div>
+        <div class="filters" id="rrFilters" hidden>
+          <span class="seg" id="rrSection">
+            <button type="button" class="seg-btn on" data-sec="current">Current projects</button>
+            <button type="button" class="seg-btn" data-sec="finished">Finished in August</button>
+          </span>
+          <input type="search" id="rrSearch" placeholder="Find a job #, address, builder…" autocomplete="off">
+          <label class="check"><input type="checkbox" id="rrDueOnly"> Due only (no answer in 7 days)</label>
+          <label class="check"><input type="checkbox" id="rrProbOnly"> Problems only</label>
+          <span class="rr-count" id="rrCount"></span>
+        </div>
+        <div id="rrBody" class="wr-body"></div>
+      </section>
+    </div><!-- /tab: rpreview -->
 
     <!-- ══════════════ TAB: PAY BILLS (check-run worksheet) ══════════════ -->
     <div class="tab-page" data-tab="paybills" hidden>
@@ -801,6 +832,7 @@
         <h3>Write actions</h3>
         <div class="set-actions">
           <button class="btn small" id="btnGearWip" title="Compute the pending WIP update and approve what gets written to the master">Update WIP · review changes</button>
+          <button class="btn small" id="btnGearRp" title="The weekly RP sit-down: every RP line, where each number came from, a cut of the source sheet, your answers">RP review · with the ops manager</button>
           <button class="btn small" id="btnGearConsole" title="Run the pipelines: AP + AR sync, full refresh, P&amp;L workbooks">Console</button>
         </div>
         <p class="set-hint">WIP Review and the pipelines are actions you start, not places you visit.</p>

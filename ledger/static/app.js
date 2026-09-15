@@ -229,11 +229,11 @@ const WAIVERS_ENABLED = false;
 const NAV_GROUPS = [
   { id: "projects", label: "Projects", tabs: ["projects"] },
   { id: "company",  label: "Company",  tabs: ["clients", "vendors", "money"] },
-  { id: "tools",    label: "Tools",    tabs: ["wipreview", "console", "systems"], hidden: true },   // from the gear, not the bar
+  { id: "tools",    label: "Tools",    tabs: ["wipreview", "rpreview", "console", "systems"], hidden: true },   // from the gear, not the bar
 ];
 const TAB_LABELS = {
   projects: "Projects", clients: "Clients", vendors: "Vendors", money: "Money",
-  wipreview: "WIP Review", console: "Console", systems: "Systems", paybills: "Pay run", liens: "Lien register",
+  wipreview: "WIP Review", rpreview: "RP review", console: "Console", systems: "Systems", paybills: "Pay run", liens: "Lien register",
 };
 const HIDDEN_TAB_GROUP = { paybills: "company", liens: "company" };   // pages without a sub-tab (opened from Bills): the Company group stays lit
 // old tab -> the page it lives on now (the section id is the old name, so setTab scrolls to it)
@@ -279,6 +279,7 @@ function setTab(t) {
   if (t === "vendors") loadAccounting();
   if (t === "money") { loadHealth(); renderPnl(); }
   if (t === "wipreview") loadWipReview();
+  if (t === "rpreview") loadRpReview();
   if (t === "console") renderConsole();
   if (t === "systems") loadSystems();
   if (t === "paybills") renderPayBills();
@@ -7420,6 +7421,7 @@ function init() {
   { const el = $("#btnResync"); if (el) el.onclick = startResync; }
   { const p = $("#syncPill"); if (p) p.onclick = () => openPanel("#settings"); }   // the pill opens the gear: every feed's stamp + every run button
   { const el = $("#btnGearWip"); if (el) el.onclick = () => { closePanels(); setTab("wipreview"); }; }
+  { const el = $("#btnGearRp"); if (el) el.onclick = () => { closePanels(); setTab("rpreview"); }; }
   { const el = $("#btnGearConsole"); if (el) el.onclick = () => { closePanels(); setTab("console"); }; }
   { const el = $("#btnGearSystems"); if (el) el.onclick = () => { closePanels(); setTab("systems"); }; }
   setInterval(renderSyncPill, 5000);   // reflects "Syncing…" while a run is in flight and the age as time passes
@@ -7477,7 +7479,7 @@ function init() {
   syncProjChips();
   let savedTab = "projects";
   try { savedTab = localStorage.getItem("proficient-ledger-tab") || "projects"; } catch { /* ignore */ }
-  if (["wipreview", "console", "systems"].includes(savedTab)) savedTab = "projects";   // tool pages never reopen on their own
+  if (["wipreview", "rpreview", "console", "systems"].includes(savedTab)) savedTab = "projects";   // tool pages never reopen on their own
   setTab(TAB_ALIAS[savedTab] || savedTab);
   initCellSelect();   // Excel-style click/drag cell selection + running-sum bar
   setInterval(() => { if (!syncing && !pendingBillMarks.size && !payDraft.size) load(true); }, 90000);   // soft auto-refresh (paused during a resync or while lien / pay-run marks are unsaved)
@@ -7490,3 +7492,201 @@ function init() {
   load();
 }
 init();
+
+
+// ── RP review: the weekly sit-down with the ops manager (owner 2026-09-15) ──────────────
+// One card per RP line: the numbers on the WIP, WHERE each was grabbed from (a source pill), a
+// cut of the source spreadsheet with that row highlighted (max 5 rows), and "Our numbers" -
+// the owner's / ops manager's own space: prepopulated with the prepared value, a check or an X
+// per number, a note for what could not be settled. Every answer is stamped with the MODE
+// (Me = the owner alone, OPS Manager = he is here, deciding together) and the time, and kept
+// in rp_review_mark (+ a log). The prepared numbers are never edited from here.
+let RR = null, rrPoll = null, rrWired = false;
+let rrMode = (() => { try { return localStorage.getItem("proficient-ledger-rrmode") || "me"; } catch { return "me"; } })();
+let rrSection = "current";
+const RR_DUE_DAYS = 7;
+
+async function loadRpReview() {
+  const body = $("#rrBody"); if (!body) return;
+  rrWire();
+  if (rrPoll) return;
+  try { RR = await (await fetch("/api/rp/review")).json(); }
+  catch { body.innerHTML = `<div class="rr-empty">could not load</div>`; return; }
+  if (!RR.ready) {
+    $("#rrFilters").hidden = true; $("#rrStats").innerHTML = "";
+    body.innerHTML = `<div class="rr-empty"><p>No review built yet.</p><p class="hint">Hit <b>Rebuild</b>: it reads the master's RP tab,
+      the RP WIP file, every job folder, JobTread and the crew schedules, and cuts a snapshot of the source sheet for every number. A few minutes.</p></div>`;
+    return;
+  }
+  rrRender();
+}
+
+function rrWire() {
+  if (rrWired) return; rrWired = true;
+  $$("#rrMode .seg-btn").forEach(b => { b.onclick = () => { rrMode = b.dataset.mode; try { localStorage.setItem("proficient-ledger-rrmode", rrMode); } catch { /* ignore */ } rrPaintMode(); }; });
+  $$("#rrSection .seg-btn").forEach(b => { b.onclick = () => { rrSection = b.dataset.sec; $$("#rrSection .seg-btn").forEach(x => x.classList.toggle("on", x === b)); rrRenderCards(); }; });
+  { const q = $("#rrSearch"); if (q) q.oninput = rrRenderCards; }
+  { const c = $("#rrDueOnly"); if (c) c.onchange = rrRenderCards; }
+  { const c = $("#rrProbOnly"); if (c) c.onchange = rrRenderCards; }
+  { const b = $("#rrRebuild"); if (b) b.onclick = rrRebuild; }
+  rrPaintMode();
+}
+
+function rrPaintMode() {
+  $$("#rrMode .seg-btn").forEach(b => b.classList.toggle("on", b.dataset.mode === rrMode));
+  const h = document.querySelector('.tab-page[data-tab="rpreview"] h2');
+  if (h) { let badge = h.querySelector(".rr-ops-badge"); if (rrMode === "ops") { if (!badge) { badge = document.createElement("span"); badge.className = "rr-ops-badge"; badge.textContent = "OPS Manager is here"; h.appendChild(badge); } } else if (badge) badge.remove(); }
+}
+
+function rrMark(x, kind) { return (RR.marks || {})[`${x.line}|${kind}`] || null; }
+function rrIsDue(m) { if (!m || !m.at) return true; return (Date.now() - new Date(m.at).getTime()) > RR_DUE_DAYS * 86400e3; }
+
+function rrRender() {
+  const note = $("#rrNote");
+  if (note) {
+    const m = RR.master || {};
+    note.textContent = `built ${fmtDate(RR.built_at, true)} · master ${m.tab || ""} (saved ${fmtDate(m.mtime, true)})` + (m.renamed ? " · tab renamed - the sync writes Test - RP" : "");
+  }
+  $("#rrFilters").hidden = false;
+  rrRenderStats();
+  rrRenderCards();
+}
+
+function rrRenderStats() {
+  const el = $("#rrStats"); if (!el) return;
+  const c = RR.counts || {}, cur = RR.current || [], fin = RR.finished || [];
+  const answered = cur.filter(x => !rrIsDue(rrMark(x, "current"))).length + fin.filter(x => !rrIsDue(rrMark(x, "finished"))).length;
+  const due = cur.length + fin.length - answered;
+  const tiles = [["Current lines", cur.length, ""], ["Finished lines", fin.length, ""], ["Answered this week", answered, answered ? "green" : ""],
+                 ["Due", due, due ? "amber" : ""], ["Typed on the master", c.typed || 0, c.typed ? "red" : ""], ["Not in JobTread", cur.length - (c.in_jobtread || 0), "amber"]];
+  el.innerHTML = "";
+  for (const [label, val, cls] of tiles) {
+    const d = document.createElement("div"); d.className = "kpi" + (cls ? " wr-kpi-" + cls : "");
+    d.innerHTML = `<div class="k-label">${_ge(label)}</div><div class="k-value">${val}</div>`; el.appendChild(d);
+  }
+}
+
+function rrVisible() {
+  const q = ($("#rrSearch")?.value || "").trim().toLowerCase();
+  const dueOnly = $("#rrDueOnly")?.checked, probOnly = $("#rrProbOnly")?.checked;
+  const kind = rrSection, list = kind === "current" ? (RR.current || []) : (RR.finished || []);
+  return list.filter(x => {
+    if (q && !`${x.line} ${x.name || ""} ${x.builder || ""}`.toLowerCase().includes(q)) return false;
+    if (dueOnly && !rrIsDue(rrMark(x, kind))) return false;
+    if (probOnly && kind === "current" && !x.problem) return false;
+    return true;
+  });
+}
+
+function rrRenderCards() {
+  const body = $("#rrBody"); if (!body || !RR) return;
+  const kind = rrSection, list = rrVisible();
+  const cnt = $("#rrCount"); if (cnt) cnt.textContent = `${list.length} shown`;
+  body.innerHTML = "";
+  if (!list.length) { body.innerHTML = `<div class="rr-empty">Nothing to show with these filters.</div>`; return; }
+  for (const x of list) body.appendChild(rrCard(x, kind));
+}
+
+function rrPill(src) { return src ? `<span class="rr-src ${_ge(src.kind)}" title="${_ge(src.detail || "")}">${_ge(src.label)}</span>` : ""; }
+function rrMoney(v) { return v == null ? `<span class="miss">blank</span>` : money(v); }
+
+function rrSnapHtml(s, title) {
+  if (!s) return "";
+  const head = `<div class="rr-snap-title"><b>${_ge(title)}</b> · ${_ge(s.file)}${s.sheet ? " · sheet " + _ge(s.sheet) : ""} · ${_ge(s.anchor || "")}${s.note ? " · <i>" + _ge(s.note) + "</i>" : ""}</div>`;
+  if (s.kind === "pdf") {
+    return head + `<table class="snap"><tbody>${s.rows.map(r => `<tr class="${r.hi ? "hi" : ""}"><td class="rn">${r.n}</td><td>${_ge(r.cells[0] || "")}</td></tr>`).join("")}</tbody></table>`;
+  }
+  const isNumTxt = t => /^-?[\d,]+(\.\d+)?$/.test(t || "");
+  return head + `<table class="snap"><thead><tr><th class="rn"></th>${s.cols.map(c => `<th>${_ge(c)}</th>`).join("")}</tr></thead><tbody>` +
+    s.rows.map(r => `<tr class="${r.hi ? "hi" : ""}"><td class="rn">${r.n}</td>${r.cells.map(c => `<td class="${isNumTxt(c) ? "n" : ""}">${_ge(c)}</td>`).join("")}</tr>`).join("") + `</tbody></table>`;
+}
+
+const RR_SNAP_LABELS = { contract: "Contract - where it sits", etc: "ETC - where it sits", master: "WIP master row", rpfile: "RP WIP file row", schedule: "Crew schedule row", removed: "Removed log row" };
+
+function rrCard(x, kind) {
+  const m = rrMark(x, kind), due = rrIsDue(m);
+  const card = document.createElement("div");
+  card.className = "rr-card " + (m && !due ? "rr-done" : (x.problem ? "rr-prob" : "rr-due"));
+  const seen = kind === "current" ? `<span class="rr-seen ${x.stale ? "rr-stale" : ""}">last on the schedule ${x.last_seen ? fmtDate(x.last_seen) : "–"}</span>`
+                                  : `<span class="rr-seen">last day on the schedule ${_ge(x.last_day || "–")} · last invoice ${_ge(x.last_invoice || "–")}</span>`;
+  const jt = x.jt || {};
+  const jtCell = jt.price != null ? `${money(jt.price)} / ${money(jt.cost)}<div class="d">approved ${fmtDate(jt.date)}${jt.scope_note ? " · " + _ge(jt.scope_note) : ""}</div>` : `<span class="miss">not in JobTread</span>`;
+  const src = x.src || {};
+  const link = (v, href) => href ? `<a href="${_ge(href)}" target="_blank" rel="noopener" title="Open in QuickBooks">${rrMoney(v)}</a>` : rrMoney(v);
+  let nums;
+  if (kind === "current") {
+    nums = `<div class="rr-num"><div class="l">Contract</div><div class="v ${x.contract == null ? "miss" : ""}">${rrMoney(x.contract)}</div>${rrPill(src.contract)}<div class="d">${_ge(src.contract?.detail || "")}</div></div>
+      <div class="rr-num"><div class="l">ETC (budget)</div><div class="v ${x.etc == null ? "miss" : ""}">${rrMoney(x.etc)}</div>${rrPill(src.etc)}<div class="d">${_ge(src.etc?.detail || "")}</div></div>
+      <div class="rr-num"><div class="l">Costs to date</div><div class="v">${link(x.costs, x.costs_link)}</div>${rrPill(src.costs)}<div class="d">${_ge(src.costs?.detail || "")}</div></div>
+      <div class="rr-num"><div class="l">Billed to date</div><div class="v">${link(x.billed, x.billed_link)}</div>${rrPill(src.billed)}<div class="d">${_ge(src.billed?.detail || "")}</div></div>
+      <div class="rr-num"><div class="l">JobTread price / cost</div><div class="v">${jtCell}</div><span class="rr-src jt">JobTread</span></div>`;
+  } else {
+    nums = `<div class="rr-num"><div class="l">Contract</div><div class="v">${rrMoney(x.contract)}</div><span class="rr-src master">RP WIP file</span></div>
+      <div class="rr-num"><div class="l">ETC</div><div class="v">${rrMoney(x.etc)}</div><span class="rr-src master">RP WIP file</span></div>
+      <div class="rr-num"><div class="l">Billed</div><div class="v">${rrMoney(x.billed)}</div><span class="rr-src qbo">QuickBooks</span><div class="d">as of 09/09/2026</div></div>
+      <div class="rr-num"><div class="l">Costs</div><div class="v">${rrMoney(x.costs)}</div><span class="rr-src qbo">QuickBooks</span><div class="d">as of 09/09/2026</div></div>
+      <div class="rr-num"><div class="l">JobTread price / cost</div><div class="v">${jtCell}</div><span class="rr-src jt">JobTread</span></div>`;
+  }
+  const flags = kind === "current" ? (x.flags || []) : [x.why].filter(Boolean);
+  const snapKeys = Object.keys(x.snaps || {}).filter(k => RR_SNAP_LABELS[k]);
+  const first = snapKeys.includes("contract") ? "contract" : snapKeys[0];
+  const tabs = snapKeys.length ? `<div class="rr-tabs">${snapKeys.map(k => `<button type="button" class="rr-tab ${k === first ? "on" : ""}" data-snap="${k}">${_ge(RR_SNAP_LABELS[k])}</button>`).join("")}</div>` +
+    snapKeys.map(k => `<div class="rr-snap" data-snap="${k}" ${k === first ? "" : "hidden"}>${rrSnapHtml(x.snaps[k], RR_SNAP_LABELS[k])}</div>`).join("") : `<div class="hint">No source sheet could be cut for this line.</div>`;
+  const ourK = m && m.our_contract != null ? m.our_contract : x.contract, ourE = m && m.our_etc != null ? m.our_etc : x.etc;
+  const okBtn = (f, val) => `<span class="rr-ok" data-f="${f}"><button type="button" class="yes ${val === 1 ? "on" : ""}" data-v="1" title="right">✓</button><button type="button" class="no ${val === 0 ? "on" : ""}" data-v="0" title="wrong">✗</button></span>`;
+  const dec = kind === "current" ? [["confirmed", "Confirmed", "primary"], ["fix", "Needs a fix", ""]] : [["agree", "Agree - done", "primary"], ["keep", "Keep on the WIP", ""]];
+  const stamp = m ? `<span class="rr-stamp ${m.mode === "ops" ? "rr-stamp-ops" : ""}"><b>${m.decision === "confirmed" ? "Confirmed" : m.decision === "fix" ? "Needs a fix" : m.decision === "agree" ? "Agreed done" : "Kept on the WIP"}</b> · ${m.mode === "ops" ? "OPS Manager + you" : "You"} · ${fmtDate(m.at, true)}${due ? " · <i>due again</i>" : ""}</span>` : `<span class="rr-stamp"><i>no answer yet</i></span>`;
+  card.innerHTML = `<div class="rr-head"><span class="wr-pn">${_ge(x.line)}</span><span class="wr-name">${_ge(x.name || "")}</span><span class="wr-name">· ${_ge(x.builder || "")}</span>${x.rp_status ? `<span class="wr-badge changed" title="status in the RP WIP file">${_ge(x.rp_status)}</span>` : ""}${seen}</div>
+    <div class="rr-nums">${nums}</div>
+    ${flags.length ? `<div class="rr-flags">${flags.map(f => `<div>${_ge(f)}</div>`).join("")}</div>` : ""}
+    ${tabs}
+    <div class="rr-ours"><div class="rr-ours-title">Our numbers · ${_ge(rrMode === "ops" ? "OPS Manager + you" : "you")}</div>
+      <div class="rr-ours-row">
+        <label class="rr-field">Contract<input type="text" data-f="our_contract" value="${ourK == null ? "" : Number(ourK).toLocaleString()}"></label>${okBtn("contract_ok", m ? m.contract_ok : null)}
+        <label class="rr-field">ETC<input type="text" data-f="our_etc" value="${ourE == null ? "" : Number(ourE).toLocaleString()}"></label>${okBtn("etc_ok", m ? m.etc_ok : null)}
+        <label class="rr-field rr-note">Notes - what changed, what could not be settled<textarea data-f="note">${_ge(m?.note || "")}</textarea></label>
+      </div>
+      <div class="rr-actions">${dec.map(([d, l, c]) => `<button type="button" class="btn small ${c} ${m && m.decision === d ? "on" : ""}" data-dec="${d}">${l}</button>`).join("")}${m ? `<button type="button" class="btn small subtle" data-dec="">Clear</button>` : ""}${stamp}</div>
+    </div>`;
+  // snapshot tabs
+  card.querySelectorAll(".rr-tab").forEach(b => { b.onclick = () => { card.querySelectorAll(".rr-tab").forEach(t => t.classList.toggle("on", t === b)); card.querySelectorAll(".rr-snap").forEach(d => d.hidden = d.dataset.snap !== b.dataset.snap); }; });
+  // our numbers: mark a typed value that differs from the prepared one
+  card.querySelectorAll('input[data-f]').forEach(inp => { const base = inp.dataset.f === "our_contract" ? x.contract : x.etc;
+    const paint = () => { const v = Number(String(inp.value).replace(/[$,]/g, "")); inp.classList.toggle("changed", inp.value.trim() !== "" && !Number.isNaN(v) && base != null && Math.abs(v - base) > 0.5); }; inp.oninput = paint; paint(); });
+  card.querySelectorAll(".rr-ok button").forEach(b => { b.onclick = () => { const on = b.classList.contains("on"); b.parentElement.querySelectorAll("button").forEach(o => o.classList.remove("on")); if (!on) b.classList.add("on"); }; });
+  card.querySelectorAll("[data-dec]").forEach(b => { b.onclick = () => rrSave(card, x, kind, b.dataset.dec); });
+  return card;
+}
+
+async function rrSave(card, x, kind, decision) {
+  const val = f => { const el = card.querySelector(`[data-f="${f}"]`); return el ? el.value : ""; };
+  const ok = f => { const on = card.querySelector(`.rr-ok[data-f="${f}"] button.on`); return on ? on.dataset.v : ""; };
+  const body = { project_no: x.line, kind, decision, mode: rrMode, note: val("note"), our_contract: val("our_contract"), our_etc: val("our_etc"), contract_ok: ok("contract_ok"), etc_ok: ok("etc_ok") };
+  let res;
+  try { res = await (await fetch("/api/rp/mark", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })).json(); }
+  catch { toast("could not save"); return; }
+  if (!res.ok) { toast(res.error || "could not save"); return; }
+  RR.marks = RR.marks || {};
+  if (decision) RR.marks[`${x.line}|${kind}`] = { decision, mode: rrMode, note: body.note, at: res.at,
+    our_contract: body.our_contract === "" ? null : Number(String(body.our_contract).replace(/[$,]/g, "")), our_etc: body.our_etc === "" ? null : Number(String(body.our_etc).replace(/[$,]/g, "")),
+    contract_ok: body.contract_ok === "" ? null : Number(body.contract_ok), etc_ok: body.etc_ok === "" ? null : Number(body.etc_ok) };
+  else delete RR.marks[`${x.line}|${kind}`];
+  toast(decision ? `${x.line} saved · ${rrMode === "ops" ? "OPS Manager + you" : "you"}` : `${x.line} cleared`);
+  rrRenderStats();
+  const fresh = rrCard(x, kind); card.replaceWith(fresh);
+}
+
+async function rrRebuild() {
+  if (!confirm("Rebuild the RP review? It re-reads the master, the RP file, every job folder, JobTread (Touch ID) and the schedules. A few minutes.")) return;
+  let res; try { res = await (await fetch("/api/rp/refresh", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm: true }) })).json(); }
+  catch { toast("could not start"); return; }
+  if (!res.ok) { toast(res.error || "could not start"); return; }
+  const body = $("#rrBody"); $("#rrRebuild").disabled = true;
+  body.innerHTML = `<div class="wr-run"><div class="wr-run-label">Building the RP review…</div><div class="pl-bar"><div class="pl-fill" id="rrFill"></div></div><div class="hint" id="rrRunHint">Reading the folders on Common and JobTread - a Touch ID prompt appears on the Mac.</div></div>`;
+  if (rrPoll) clearInterval(rrPoll);
+  rrPoll = setInterval(async () => {
+    let s; try { s = await (await fetch("/api/sync/status")).json(); } catch { return; }
+    const fill = $("#rrFill"); if (fill) fill.style.width = s.state === "running" ? "60%" : "100%";
+    if (s.state !== "running") { clearInterval(rrPoll); rrPoll = null; $("#rrRebuild").disabled = false; if (s.state === "error") toast("build failed - see the sync log"); loadRpReview(); }
+  }, 1500);
+}
