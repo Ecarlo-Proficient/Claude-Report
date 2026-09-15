@@ -7571,9 +7571,10 @@ function rrRender() {
 function rrRenderStats() {
   const el = $("#rrStats"); if (!el) return;
   const c = RR.counts || {}, cur = RR.current || [], fin = RR.finished || [];
-  const answered = cur.filter(x => !rrIsDue(rrMark(x, "current"))).length + fin.filter(x => !rrIsDue(rrMark(x, "finished"))).length;
+  const okm = m => m && !rrIsDue(m) && (m.decision === "confirmed" || m.decision === "agree");
+  const answered = cur.filter(x => okm(rrMark(x, "current"))).length + fin.filter(x => okm(rrMark(x, "finished"))).length;
   const due = cur.length + fin.length - answered;
-  const tiles = [["Current lines", cur.length, ""], ["Finished lines", fin.length, ""], ["Answered this week", answered, answered ? "green" : ""],
+  const tiles = [["Current lines", cur.length, ""], ["Finished lines", fin.length, ""], ["Confirmed this week", answered, answered ? "green" : ""],
                  ["Due", due, due ? "amber" : ""], ["Typed on the master", c.typed || 0, c.typed ? "red" : ""], ["No approved JobTread proposal", cur.length - (c.in_jobtread || 0), "amber"]];
   el.innerHTML = "";
   for (const [label, val, cls] of tiles) {
@@ -7615,9 +7616,16 @@ function rrRenderCards() {
   const tb = document.createElement("tbody");
   for (const x of list) {
     const m = rrMark(x, kind), due = rrIsDue(m);
-    const tr = document.createElement("tr"); tr.className = m && !due ? "rr-ok-row" : (x.problem ? "rr-prob-row" : "");
-    const mark = m && !due ? `<span class="rr-check" title="${_ge((m.mode === "ops" ? "OPS Manager + you" : "You") + " · " + fmtDate(m.at, true))}">✓</span>` : (m ? `<span class="rr-check due" title="answered ${fmtDate(m.at)} - due again">↻</span>` : "");
-    const ans = m ? `${_ge({ confirmed: "Confirmed", fix: "Needs a fix", agree: "Agreed done", keep: "Kept", noted: "Noted" }[m.decision] || m.decision)}<div class="d">${m.mode === "ops" ? "OPS Manager + you" : "You"} · ${fmtDate(m.at)}</div>` : `<span class="rr-nojt">not yet</span>`;
+    const tr = document.createElement("tr"); tr.className = (m && !due && (m.decision === "confirmed" || m.decision === "agree")) ? "rr-ok-row" : (x.problem ? "rr-prob-row" : "");
+    // the list's mark: ✓ only for Confirmed / Agreed; a fix or a keep shows "!"; a plain note shows "…";
+    // deselect the verdict and Save = unconfirmed (owner 2026-09-15)
+    const who = m ? (m.mode === "ops" ? "OPS Manager + you" : "You") + " · " + fmtDate(m.at, true) : "";
+    const verdictOk = m && (m.decision === "confirmed" || m.decision === "agree");
+    const mark = !m ? "" : due ? `<span class="rr-check due" title="answered ${fmtDate(m.at)} - due again">↻</span>`
+      : verdictOk ? `<span class="rr-check" title="${_ge(who)}">✓</span>`
+      : (m.decision === "fix" || m.decision === "keep") ? `<span class="rr-check fix" title="${_ge(who)}">!</span>`
+      : `<span class="rr-check note" title="${_ge("noted, no verdict · " + who)}">…</span>`;
+    const ans = m ? `${_ge({ confirmed: "Confirmed", fix: "Needs a fix", agree: "Agreed done", keep: "Kept", noted: "Noted, not confirmed" }[m.decision] || m.decision)}<div class="d">${m.mode === "ops" ? "OPS Manager + you" : "You"} · ${fmtDate(m.at)}</div>` : `<span class="rr-nojt">not yet</span>`;
     const tail = kind === "current"
       ? `<td class="n">${money(x.costs)}</td><td class="n">${money(x.billed)}</td><td class="${x.stale ? "rr-stale" : ""}">${x.last_seen ? fmtDate(x.last_seen) : "–"}</td><td class="rr-list-flags">${(x.flags || []).length ? `${x.flags.length} · ${_ge(x.flags[0])}${x.flags.length > 1 ? "…" : ""}` : ""}</td>`
       : `<td class="n">${money(x.billed)}</td><td class="n">${money(x.costs)}</td><td>${_ge(x.last_day || "–")}</td><td class="rr-list-flags">${_ge(x.why || "")}</td>`;
@@ -7675,7 +7683,7 @@ async function rrReveal(path) {
 function rrCard(x, kind) {
   const m = rrMark(x, kind), due = rrIsDue(m);
   const card = document.createElement("div");
-  card.className = "rr-card " + (m && !due ? "rr-done" : (x.problem ? "rr-prob" : "rr-due"));
+  card.className = "rr-card " + ((m && !due && (m.decision === "confirmed" || m.decision === "agree")) ? "rr-done" : (x.problem ? "rr-prob" : "rr-due"));
   const jt = x.jt || {}, src = x.src || {}, pics = x.pics || {};
   const link = (v, href) => href ? `<a href="${_ge(href)}" target="_blank" rel="noopener" title="Open in QuickBooks">${rrMoney(v)}</a>` : rrMoney(v);
   const jtLink = jt.url ? `<a class="btn tiny" href="${_ge(jt.url)}" target="_blank" rel="noopener">Open in JobTread</a>` : `<span class="rr-nojt">not in JobTread</span>`;
@@ -7719,7 +7727,7 @@ function rrCard(x, kind) {
   const ourK = m && m.our_contract != null ? m.our_contract : x.contract, ourE = m && m.our_etc != null ? m.our_etc : x.etc;
   const okBtn = (f, val) => `<span class="rr-ok" data-f="${f}"><button type="button" class="yes ${val === 1 ? "on" : ""}" data-v="1" title="right">✓</button><button type="button" class="no ${val === 0 ? "on" : ""}" data-v="0" title="wrong">✗</button></span>`;
   const dec = kind === "current" ? [["confirmed", "Confirmed"], ["fix", "Needs a fix"]] : [["agree", "Agree - done"], ["keep", "Keep on the WIP"]];
-  const decLabel = { confirmed: "Confirmed", fix: "Needs a fix", agree: "Agreed done", keep: "Kept on the WIP", noted: "Noted" };
+  const decLabel = { confirmed: "Confirmed", fix: "Needs a fix", agree: "Agreed done", keep: "Kept on the WIP", noted: "Noted, not confirmed" };
   const stamp = m ? `<span class="rr-stamp ${m.mode === "ops" ? "rr-stamp-ops" : ""}"><b>${decLabel[m.decision] || _ge(m.decision)}</b> · ${m.mode === "ops" ? "OPS Manager + you" : "You"} · ${fmtDate(m.at, true)}${due ? " · <i>due again</i>" : ""}</span>` : `<span class="rr-stamp"><i>not saved yet</i></span>`;
   card.innerHTML = `<div class="rr-head"><span class="wr-pn">${_ge(x.line)}</span><span class="wr-name">${_ge(x.name || "")}</span><span class="wr-name">· ${_ge(x.builder || "")}</span>${x.rp_status ? `<span class="wr-badge changed" title="status in the RP WIP file">${_ge(x.rp_status)}</span>` : ""}<span class="rr-links">${pageBtn}${folderBtn}${qboBtn}${qboPl}${jtLink}</span></div>
     <div class="rr-nums">${nums}</div>
@@ -7732,7 +7740,7 @@ function rrCard(x, kind) {
         <label class="rr-field rr-note">Notes - what changed, what could not be settled<textarea data-f="note">${_ge(m?.note || "")}</textarea></label>
       </div>
       <div class="rr-actions"><span class="seg rr-dec">${dec.map(([d, l]) => `<button type="button" class="seg-btn ${m && m.decision === d ? "on" : ""}" data-dec="${d}">${l}</button>`).join("")}</span>
-        <button type="button" class="btn small primary" data-save="1">Save</button>${m ? `<button type="button" class="btn small subtle" data-clear="1">Clear</button>` : ""}${stamp}</div>
+        <button type="button" class="btn small primary" data-save="1">Save</button>${m ? `<button type="button" class="btn small subtle" data-clear="1">Clear answer</button>` : ""}${stamp}</div>
     </div>`;
   card.querySelectorAll("[data-reveal]").forEach(b => { b.onclick = () => rrReveal(b.dataset.reveal); });
   { const b = card.querySelector("[data-project]"); if (b) b.onclick = () => openProjectPage(b.dataset.project); }
@@ -7740,7 +7748,7 @@ function rrCard(x, kind) {
     const paint = () => { const v = Number(String(inp.value).replace(/[$,]/g, "")); inp.classList.toggle("changed", inp.value.trim() !== "" && !Number.isNaN(v) && base != null && Math.abs(v - base) > 0.5); }; inp.oninput = paint; paint(); });
   card.querySelectorAll(".rr-ok button").forEach(b => { b.onclick = () => { const on = b.classList.contains("on"); b.parentElement.querySelectorAll("button").forEach(o => o.classList.remove("on")); if (!on) b.classList.add("on"); }; });
   card.querySelectorAll(".rr-dec .seg-btn").forEach(b => { b.onclick = () => { const on = b.classList.contains("on"); card.querySelectorAll(".rr-dec .seg-btn").forEach(o => o.classList.remove("on")); if (!on) b.classList.add("on"); }; });
-  card.querySelector("[data-save]").onclick = () => { const on = card.querySelector(".rr-dec .seg-btn.on"); rrSave(card, x, kind, on ? on.dataset.dec : "noted"); };
+  card.querySelector("[data-save]").onclick = () => { const on = card.querySelector(".rr-dec .seg-btn.on"); rrSave(card, x, kind, on ? on.dataset.dec : "noted"); };   // no verdict = "noted": numbers + note kept, the ✓ comes off
   { const c = card.querySelector("[data-clear]"); if (c) c.onclick = () => { if (confirm(`Clear the saved answer on ${x.line}?`)) rrSave(card, x, kind, ""); }; }
   return card;
 }

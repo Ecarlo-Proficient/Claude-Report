@@ -1633,3 +1633,5 @@ html[data-theme="dark"] .rr-src.master, html[data-theme="dark"] .rr-src.manual {
 .rr-list td.rr-stale { color: var(--neg-text); font-weight: 600; }
 .rr-pagenav { display: flex; gap: 8px; align-items: center; margin: 4px 0 10px; position: sticky; top: 0; background: var(--surface); padding: 6px 0; z-index: 2; }
 .rr-pagepos { color: var(--text-dim); font-size: .86em; margin: 0 auto 0 4px; }
+.rr-check.fix { color: var(--warn-text); }
+.rr-check.note { color: var(--text-dim); }
