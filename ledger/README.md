@@ -208,6 +208,22 @@ on the network). What it shows:
 
 The dashboard is a view. It never writes the database or the Excel sheet.
 
+### RP review (weekly, with the ops manager) - 2026-09-15
+
+Gear -> **RP review**. `ledger/rp_review.py` builds the page's JSON: every RP line on the master's RP
+tab, where each number was grabbed from, a cut of the source spreadsheet (max 5 rows, the row
+highlighted), the crew-schedule row on the job's last day, JobTread's approved price / cost, and the
+finished lines from the RP file's Removed log. The prepared numbers are read-only on the page; the
+owner and the ops manager answer in **Our numbers** (prepopulated, a check or X per number, a note)
+and every answer is stamped with the **Me / OPS Manager** mode and the time in `rp_review_mark`
+(+ `rp_review_mark_log`). `python3 ledger/rp_review.py --answers` prints the answers as text.
+
+```
+python3 ledger/rp_review.py                 # full build (JobTread = one Touch ID), a few minutes
+python3 ledger/rp_review.py --no-jobtread   # without JobTread
+python3 ledger/rp_review.py --answers       # what the owner / ops manager answered
+```
+
 ## Safety
 
 - The Excel workbook is opened **read-only** — this tool never writes the sheet.

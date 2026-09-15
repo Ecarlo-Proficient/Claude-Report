@@ -9,7 +9,7 @@
 > picture (open it in a browser after pulling). Refresh it when structure meaningfully changes;
 > THIS file is the always-current source of truth.
 
-Last updated: 2026-09-02 (ledger/: NEW **money trail** - `ledger/trail.py` + `static/trail.js`, `/api/trail`: every QBO line behind a project's Costs / Billed with the running total against ETC and contract; `cost_line` gained bill #, memo, line #, bill total, vendor/class ids, sub evidence, scan flag. 2026-08-25: NEW **Graph tab** — the org as a map (`ledger/vault_graph.py`,
+Last updated: 2026-09-15 (ledger/: NEW **RP review page** - `ledger/rp_review.py` builds `rp-review/rp_review.json` (every RP line's numbers + source + a 5-row cut of the source sheet, JobTread via `shared/jobtread.py`, the Removed log), `/api/rp/review|answers|mark|refresh`; answers in `rp_review_mark` + `_log` with the Me / OPS Manager stamp. Previously 2026-09-02 (ledger/: NEW **money trail** - `ledger/trail.py` + `static/trail.js`, `/api/trail`: every QBO line behind a project's Costs / Billed with the running total against ETC and contract; `cost_line` gained bill #, memo, line #, bill total, vendor/class ids, sub evidence, scan flag. 2026-08-25: NEW **Graph tab** — the org as a map (`ledger/vault_graph.py`,
 `/api/graph`) AND NEW **WIP Review tab** — the WIP update as accept/merge. Each wip reader +
 `master_wip_test` gained `--emit-review` (diff a Test tab, no write) and `--apply-review` (write
 only approved values) modes backed by `wip/wip_review_common.py`; the ledger orchestrates them by
@@ -50,6 +50,7 @@ shared/                the ONLY importable common code
 ├─ qbo_vault.py        QBO Keychain blob — one Touch ID unlocks all keys
 ├─ paths.py            per-machine output paths (machine.env at REPO ROOT)
 ├─ qbo_api.py          QBO auth + retrying GET, query_all, P&L walkers, PROJ_RE
+├─ jobtread.py         the ONE JobTread (Pave) client: pave + approved_proposals — ledger rp_review ↔ one-offs (2026-09-15)
 ├─ qbo_costs.py        cost_leaf (the ONE cost-code resolver) + iter_cost_lines — shared w/ ledger
 ├─ qbo_attachments.py  Attachable index + fresh scan links (7-day cache reused from P&L) — ledger Audit 📎
 ├─ notion_client.py    thin Notion API client (create/query/update pages) — used by ledger/sync_actions
