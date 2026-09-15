@@ -1635,3 +1635,13 @@ html[data-theme="dark"] .rr-src.master, html[data-theme="dark"] .rr-src.manual {
 .rr-pagepos { color: var(--text-dim); font-size: .86em; margin: 0 auto 0 4px; }
 .rr-check.fix { color: var(--warn-text); }
 .rr-check.note { color: var(--text-dim); }
+/* RP review - the numbers as one line + the profit line (owner 2026-09-15) */
+.rr-strip { display: flex; flex-wrap: wrap; gap: 6px 22px; align-items: baseline; margin: 10px 0 4px; }
+.rr-n .l { font-size: .74em; text-transform: uppercase; letter-spacing: .05em; color: var(--text-dim); }
+.rr-n .v { font-weight: 700; font-variant-numeric: tabular-nums; font-size: 1.05em; margin: 0 4px 0 2px; }
+.rr-n .v a { color: var(--accent-text); text-decoration: none; }
+.rr-n .v a:hover { text-decoration: underline; }
+.rr-n .v .miss { color: var(--neg-text); font-weight: 600; font-size: .9em; }
+.rr-profit { flex-basis: 100%; font-size: .9em; color: var(--text-dim); margin-top: 2px; }
+.rr-profit b { color: var(--text); font-variant-numeric: tabular-nums; }
+.rr-profit b.neg { color: var(--neg-text); }

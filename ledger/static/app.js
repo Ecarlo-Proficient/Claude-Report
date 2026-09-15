@@ -7691,20 +7691,18 @@ function rrCard(x, kind) {
   const qboBtn = x.billed_link ? `<a class="btn tiny" href="${_ge(x.billed_link)}" target="_blank" rel="noopener" title="The project in QuickBooks (invoices)">Open in QuickBooks</a>` : "";
   const qboPl = x.costs_link ? `<a class="btn tiny" href="${_ge(x.costs_link)}" target="_blank" rel="noopener" title="The project's P&L in QuickBooks (costs)">QBO P&amp;L</a>` : "";
   const jtCell = jt.price != null ? `${money(jt.price)} / ${money(jt.cost)}<div class="d">approved ${fmtDate(jt.date)}${jt.scope_note ? " · " + _ge(jt.scope_note) : ""}</div>` : `<span class="miss">${jt.exists ? "no approved proposal" : "not in JobTread"}</span>`;
-  let nums;
-  if (kind === "current") {
-    nums = `<div class="rr-num"><div class="l">Contract</div><div class="v ${x.contract == null ? "miss" : ""}">${rrMoney(x.contract)}</div>${rrPill(src.contract)}</div>
-      <div class="rr-num"><div class="l">ETC (budget)</div><div class="v ${x.etc == null ? "miss" : ""}">${rrMoney(x.etc)}</div>${rrPill(src.etc)}</div>
-      <div class="rr-num"><div class="l">Costs to date</div><div class="v">${link(x.costs, x.costs_link)}</div>${rrPill(src.costs)}</div>
-      <div class="rr-num"><div class="l">Billed to date</div><div class="v">${link(x.billed, x.billed_link)}</div>${rrPill(src.billed)}</div>
-      <div class="rr-num"><div class="l">JobTread price / cost</div><div class="v">${jtCell}</div><span class="rr-src jt">JobTread</span></div>`;
-  } else {
-    nums = `<div class="rr-num"><div class="l">Contract</div><div class="v">${rrMoney(x.contract)}</div><span class="rr-src master">RP WIP file</span></div>
-      <div class="rr-num"><div class="l">ETC</div><div class="v">${rrMoney(x.etc)}</div><span class="rr-src master">RP WIP file</span></div>
-      <div class="rr-num"><div class="l">Billed</div><div class="v">${rrMoney(x.billed)}</div><span class="rr-src qbo">QuickBooks</span><div class="d">as of 09/09/2026</div></div>
-      <div class="rr-num"><div class="l">Costs</div><div class="v">${rrMoney(x.costs)}</div><span class="rr-src qbo">QuickBooks</span><div class="d">as of 09/09/2026</div></div>
-      <div class="rr-num"><div class="l">JobTread price / cost</div><div class="v">${jtCell}</div><span class="rr-src jt">JobTread</span></div>`;
-  }
+  // one line of numbers, each with its source, then the profit line (owner 2026-09-15: "remove big
+  // block just show the numbers and below it gross profit - oh 10% net"). GP = contract - ETC (the WIP's
+  // original profit), overhead = 10% of the contract, net = GP - overhead.
+  const cell = (l, v, pill) => `<span class="rr-n"><span class="l">${l}</span> <span class="v">${v}</span>${pill || ""}</span>`;
+  const K = x.contract, E = x.etc;
+  const gp = (K != null && E != null) ? K - E : null, oh = K != null ? K * 0.10 : null, net = (gp != null && oh != null) ? gp - oh : null;
+  const pctTxt = (gp != null && K) ? ` (${(gp / K * 100).toFixed(1)}%)` : "";
+  const profit = K != null ? `<div class="rr-profit">Gross profit <b class="${gp != null && gp < 0 ? "neg" : ""}">${gp == null ? "–" : money(gp)}</b>${pctTxt} · overhead 10% <b>${money(oh)}</b> · net <b class="${net != null && net < 0 ? "neg" : ""}">${net == null ? "–" : money(net)}</b></div>` : "";
+  const nums = (kind === "current"
+    ? cell("Contract", rrMoney(K), rrPill(src.contract)) + cell("ETC", rrMoney(E), rrPill(src.etc)) + cell("Costs", link(x.costs, x.costs_link), rrPill(src.costs)) + cell("Billed", link(x.billed, x.billed_link), rrPill(src.billed)) + cell("JobTread", jt.price != null ? `${money(jt.price)} / ${money(jt.cost)}` : `<span class="miss">${jt.exists ? "no approved proposal" : "not in JobTread"}</span>`, jt.price != null ? `<span class="rr-src jt" title="approved ${fmtDate(jt.date)}${jt.scope_note ? " · " + _ge(jt.scope_note) : ""}">${fmtDate(jt.date)}</span>` : "")
+    : cell("Contract", rrMoney(K), `<span class="rr-src master">RP WIP file</span>`) + cell("ETC", rrMoney(E), `<span class="rr-src master">RP WIP file</span>`) + cell("Billed", rrMoney(x.billed), `<span class="rr-src qbo" title="as of 09/09/2026">QuickBooks</span>`) + cell("Costs", rrMoney(x.costs), `<span class="rr-src qbo" title="as of 09/09/2026">QuickBooks</span>`) + cell("JobTread", jt.price != null ? `${money(jt.price)} / ${money(jt.cost)}` : `<span class="miss">${jt.exists ? "no approved proposal" : "not in JobTread"}</span>`, ""))
+    + profit;
   const flags = kind === "current" ? (x.flags || []) : [x.why].filter(Boolean);
   // 1. the schedule - where the project came from
   const schedBlock = `<div class="rr-sec"><div class="rr-sec-title">1 · On the crew schedule</div>${rrTimeline(x.schedule)}
@@ -7729,7 +7727,7 @@ function rrCard(x, kind) {
   const decLabel = { confirmed: "Confirmed", fix: "Needs a fix", agree: "Agreed done", keep: "Kept on the WIP", noted: "Noted, not confirmed" };
   const stamp = m ? `<span class="rr-stamp ${m.mode === "ops" ? "rr-stamp-ops" : ""}"><b>${decLabel[m.decision] || _ge(m.decision)}</b> · ${m.mode === "ops" ? "OPS Manager + you" : "You"} · ${fmtDate(m.at, true)}${due ? " · <i>due again</i>" : ""}</span>` : `<span class="rr-stamp"><i>not saved yet</i></span>`;
   card.innerHTML = `<div class="rr-head"><span class="wr-pn">${_ge(x.line)}</span><span class="wr-name">${_ge(x.name || "")}</span><span class="wr-name">· ${_ge(x.builder || "")}</span>${x.rp_status ? `<span class="wr-badge changed" title="status in the RP WIP file">${_ge(x.rp_status)}</span>` : ""}<span class="rr-links">${pageBtn}${folderBtn}${qboBtn}${qboPl}${jtLink}</span></div>
-    <div class="rr-nums">${nums}</div>
+    <div class="rr-strip">${nums}</div>
     ${flags.length ? `<div class="rr-flags">${flags.map(f => `<div>${_ge(f)}</div>`).join("")}</div>` : ""}
     ${schedBlock}${contractBlock}${etcBlock}${moreBlock}
     <div class="rr-ours">

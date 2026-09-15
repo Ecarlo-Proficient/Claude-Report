@@ -770,6 +770,7 @@ def build(no_jobtread: bool = False, no_snapshots: bool = False, limit: int = 0)
                 "scope_note": "the base job's proposal - may be the slab, not the flatwork" if (docs and line.endswith("-FTW")) else ""}
 
     as_of = dt.date.today()
+    newest = max(sched_files) if sched_files else None          # the latest crew schedule on file
     current = []
     lines = list(M["rows"].items())[:limit] if limit else list(M["rows"].items())
     for i, (line, d) in enumerate(lines, 1):
@@ -802,8 +803,11 @@ def build(no_jobtread: bool = False, no_snapshots: bool = False, limit: int = 0)
             flags.append("no approved proposal in JobTread" if jtb["exists"] else "not in JobTread")
         if stale:
             flags.append(f"not on the schedule since {last.strftime('%m/%d/%Y')}")
-        if K and billed and billed >= K * 0.99 and not stale:
-            flags.append("billed out, still on the schedule")
+        if K and billed and billed >= K * 0.99:
+            if newest and last == newest:
+                flags.append("billed out, still on today's schedule")
+            elif last:
+                flags.append(f"billed out; last on the schedule {last.strftime('%m/%d/%Y')} - finished?")
         if K and costs and E and costs > E:
             flags.append(f"costs {costs:,.0f} already over the ETC {E:,.0f}")
 
@@ -965,6 +969,7 @@ def build(no_jobtread: bool = False, no_snapshots: bool = False, limit: int = 0)
         "rp_file": {"file": fp.name, "mtime": dt.datetime.fromtimestamp(fp.stat().st_mtime).isoformat(timespec="seconds")},
         "jobtread": {"queried": not no_jobtread, "approved": sum(1 for v in jt.values() if v["docs"]), "exists": len(jt)},
         "schedule_mounted": bool(sched_files),
+        "newest_schedule": newest.isoformat() if newest else None,
         "counts": {"current": len(current), "finished": len(finished), "contract_kinds": kinds,
                    "problems": sum(1 for c in current if c["problem"]),
                    "in_jobtread": sum(1 for c in current if c["jt"]["count"]),
