@@ -2524,6 +2524,11 @@ class Handler(BaseHTTPRequestHandler):
             self._rp_refresh()
         elif p == "/api/rp/reveal":       # open the job folder on Common in Finder and highlight the file the number came from
             self._rp_reveal()
+        elif p == "/api/rp/finalize":     # the saved answers -> the finalize package (no master write here)
+            try:
+                self._json({"ok": True, "package": rp_review.finalize_package()})
+            except (OSError, sqlite3.OperationalError) as e:
+                self._json({"ok": False, "error": str(e)}, 500)
         elif p == "/api/export/xlsx":          # the table on screen -> a grouped Excel report in ~/Downloads (revealed)
             self._export_xlsx()
         elif p == "/api/attachment/download":  # save selected bills' scans to a folder + reveal it

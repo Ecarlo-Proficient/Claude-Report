@@ -1648,3 +1648,10 @@ html[data-theme="dark"] .rr-src.master, html[data-theme="dark"] .rr-src.manual {
 .rr-list tr.rr-here td { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .rr-list tr.rr-here td.rr-markcell::before { content: "▶"; color: var(--accent-text); font-size: .8em; }
 .rr-saved { display: inline-block; font-size: .74em; font-weight: 700; padding: 1px 7px; border-radius: 999px; background: color-mix(in srgb, var(--pos) 18%, transparent); color: var(--pos); margin-left: 4px; }
+.rr-quick { display: flex; gap: 6px; align-items: center; margin-top: 4px; }
+.rr-quick .seg-btn { font-size: .76em; padding: 3px 8px; }
+.rr-final h3 { font-size: .95em; margin: 14px 0 4px; }
+.rr-final ul { margin: 0 0 6px 18px; padding: 0; font-size: .9em; }
+.rr-warn { color: var(--neg-text); font-weight: 600; }
+.rr-list td.n .d { color: var(--text-dim); font-size: .78em; font-weight: 400; }
+.rr-list td.n.neg { color: var(--neg-text); }

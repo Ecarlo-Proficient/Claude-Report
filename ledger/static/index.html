@@ -495,16 +495,10 @@
               <button type="button" class="seg-btn" data-mode="me">Me</button>
               <button type="button" class="seg-btn" data-mode="ops">OPS Manager</button>
             </span>
-            <button class="btn small" id="rrRebuild" title="Re-read the master, the RP file, JobTread and the schedules; cut fresh snapshots. A few minutes; one Touch ID.">Rebuild</button>
+            <button class="btn small primary" id="rrFinalize" title="Turn the saved answers into the WIP update package and show what changes">Finalize to WIP Report</button>
           </div>
         </div>
-        <p class="hint">One card per job, in this order: <b>1</b> the crew schedule (every day it was on, and its own row on the
-          first and last day), <b>2</b> the contract and the page of the file it came from, <b>3</b> the ETC and its cost sheet.
-          Every picture is the real file, with the file name on it; click one to open it full size, and "Show file in folder"
-          opens the job folder on Common with that file highlighted. The prepared numbers are never edited here. Under each card:
-          your own Contract and ETC (prefilled with the prepared value - leave or type yours), ✓ right / ✗ wrong, a note for what
-          cannot be settled, Confirmed or Needs a fix, then <b>Save</b>. Nothing is kept until you hit Save. Every saved answer is
-          stamped with who decided (<b>Me</b>, or <b>OPS Manager</b> when he is here) and when. Once a week, go through every card.</p>
+
         <div class="kpi-row" id="rrStats"></div>
         <div class="filters" id="rrFilters" hidden>
           <span class="seg" id="rrSection">
@@ -835,6 +829,7 @@
         <div class="set-actions">
           <button class="btn small" id="btnGearWip" title="Compute the pending WIP update and approve what gets written to the master">Update WIP · review changes</button>
           <button class="btn small" id="btnGearRp" title="The weekly RP sit-down: every RP line, where each number came from, a cut of the source sheet, your answers">RP review · with the ops manager</button>
+          <button class="btn small" id="rrRebuild" title="Re-read the master, the RP file, every job folder, JobTread and the schedules; redraw every picture. A few minutes; one Touch ID.">Rebuild RP review data</button>
           <button class="btn small" id="btnGearConsole" title="Run the pipelines: AP + AR sync, full refresh, P&amp;L workbooks">Console</button>
         </div>
         <p class="set-hint">WIP Review and the pipelines are actions you start, not places you visit.</p>

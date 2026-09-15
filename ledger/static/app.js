@@ -7544,7 +7544,8 @@ function rrWire() {
   { const q = $("#rrSearch"); if (q) q.oninput = rrRenderCards; }
   { const c = $("#rrDueOnly"); if (c) c.onchange = rrRenderCards; }
   { const c = $("#rrProbOnly"); if (c) c.onchange = rrRenderCards; }
-  { const b = $("#rrRebuild"); if (b) b.onclick = rrRebuild; }
+  { const b = $("#rrRebuild"); if (b) b.onclick = () => { closePanels(); setTab("rpreview"); rrRebuild(); }; }
+  { const b = $("#rrFinalize"); if (b) b.onclick = rrFinalize; }
   rrPaintMode();
 }
 
@@ -7612,7 +7613,7 @@ function rrRenderCards() {
   const t = document.createElement("table"); t.className = "rr-list";
   const cols = kind === "current"
     ? ["", "Job", "Address", "Builder", "Contract", "ETC", "Costs", "Billed", "Last on schedule", "To settle", "Answer"]
-    : ["", "Job", "Address", "Builder", "Contract", "ETC", "Billed", "Costs", "Last day", "Why it left", "Answer"];
+    : ["", "Job", "Address", "Builder", "Contract", "Billed", "Costs", "Gross profit", "Net (10% OH)", "Last day", "Answer"];
   t.innerHTML = `<thead><tr>${cols.map(c => `<th>${c}</th>`).join("")}</tr></thead>`;
   const tb = document.createElement("tbody");
   for (const x of list) {
@@ -7630,9 +7631,17 @@ function rrRenderCards() {
     const ans = m ? `${_ge({ confirmed: "Confirmed", fix: "Needs a fix", agree: "Agreed done", keep: "Kept", noted: "Noted, not confirmed" }[m.decision] || m.decision)}${x.line === rrJustSaved ? ` <span class="rr-saved">saved ✓</span>` : ""}<div class="d">${m.mode === "ops" ? "OPS Manager + you" : "You"} · ${fmtDate(m.at, true)}</div>` : `<span class="rr-nojt">not yet</span>`;
     const tail = kind === "current"
       ? `<td class="n">${money(x.costs)}</td><td class="n">${money(x.billed)}</td><td class="${x.stale ? "rr-stale" : ""}">${x.last_seen ? fmtDate(x.last_seen) : "–"}</td><td class="rr-list-flags">${(x.flags || []).length ? `${x.flags.length} · ${_ge(x.flags[0])}${x.flags.length > 1 ? "…" : ""}` : ""}</td>`
-      : `<td class="n">${money(x.billed)}</td><td class="n">${money(x.costs)}</td><td>${_ge(x.last_day || "–")}</td><td class="rr-list-flags">${_ge(x.why || "")}</td>`;
-    tr.innerHTML = `<td class="rr-markcell">${mark}</td><td class="wr-pn">${_ge(x.line)}</td><td>${_ge(x.name || "")}</td><td>${_ge(x.builder || "")}</td><td class="n">${x.contract == null ? '<span class="miss">blank</span>' : money(x.contract)}</td><td class="n">${x.etc == null ? '<span class="miss">blank</span>' : money(x.etc)}</td>${tail}<td class="rr-ans">${ans}</td>`;
-    tr.onclick = () => { rrOpenLine = x.line; _pushView({ v: "rr", line: x.line }); rrRenderCards(); window.scrollTo(0, 0); };
+      : (() => { const gp = (x.billed != null && x.costs != null) ? x.billed - x.costs : null, net = (gp != null && x.contract != null) ? gp - x.contract * 0.10 : null;
+          return `<td class="n">${money(x.billed)}</td><td class="n">${money(x.costs)}</td><td class="n ${gp != null && gp < 0 ? "neg" : ""}">${gp == null ? "–" : money(gp)}${gp != null && x.billed ? `<div class="d">${(gp / x.billed * 100).toFixed(1)}%</div>` : ""}</td><td class="n ${net != null && net < 0 ? "neg" : ""}">${net == null ? "–" : money(net)}</td><td>${_ge(x.last_day || "–")}</td>`; })();
+    const etcCell = kind === "current" ? `<td class="n">${x.etc == null ? '<span class="miss">blank</span>' : money(x.etc)}</td>` : "";
+    // answer right on the list (owner 2026-09-15: "we only click if we need details"): the verdict + Save;
+    // numbers and notes stay on the job page
+    const dec = kind === "current" ? [["confirmed", "Confirmed"], ["fix", "Needs a fix"]] : [["agree", "Agree - done"], ["keep", "Keep on the WIP"]];
+    const quick = `<div class="rr-quick"><span class="seg rr-dec">${dec.map(([d, l]) => `<button type="button" class="seg-btn ${m && m.decision === d ? "on" : ""}" data-dec="${d}">${l}</button>`).join("")}</span><button type="button" class="btn tiny primary" data-save="1">Save</button></div>`;
+    tr.innerHTML = `<td class="rr-markcell">${mark}</td><td class="wr-pn">${_ge(x.line)}</td><td>${_ge(x.name || "")}</td><td>${_ge(x.builder || "")}</td><td class="n">${x.contract == null ? '<span class="miss">blank</span>' : money(x.contract)}</td>${etcCell}${tail}<td class="rr-ans">${ans}${quick}</td>`;
+    tr.onclick = (e) => { if (e.target.closest(".rr-quick")) return; rrOpenLine = x.line; _pushView({ v: "rr", line: x.line }); rrRenderCards(); window.scrollTo(0, 0); };
+    tr.querySelectorAll(".rr-dec .seg-btn").forEach(b => { b.onclick = (e) => { e.stopPropagation(); const on = b.classList.contains("on"); tr.querySelectorAll(".rr-dec .seg-btn").forEach(o => o.classList.remove("on")); if (!on) b.classList.add("on"); }; });
+    tr.querySelector("[data-save]").onclick = (e) => { e.stopPropagation(); const on = tr.querySelector(".rr-dec .seg-btn.on"); rrSaveQuick(tr, x, kind, on ? on.dataset.dec : "noted"); };
     tb.appendChild(tr);
   }
   t.appendChild(tb); body.appendChild(t);
@@ -7700,9 +7709,13 @@ function rrCard(x, kind) {
   // original profit), overhead = 10% of the contract, net = GP - overhead.
   const cell = (l, v, pill) => `<span class="rr-n"><span class="l">${l}</span> <span class="v">${v}</span>${pill || ""}</span>`;
   const K = x.contract, E = x.etc;
-  const gp = (K != null && E != null) ? K - E : null, oh = K != null ? K * 0.10 : null, net = (gp != null && oh != null) ? gp - oh : null;
-  const pctTxt = (gp != null && K) ? ` (${(gp / K * 100).toFixed(1)}%)` : "";
-  const profit = K != null ? `<div class="rr-profit">Gross profit <b class="${gp != null && gp < 0 ? "neg" : ""}">${gp == null ? "–" : money(gp)}</b>${pctTxt} · overhead 10% <b>${money(oh)}</b> · net <b class="${net != null && net < 0 ? "neg" : ""}">${net == null ? "–" : money(net)}</b></div>` : "";
+  // current: GP = contract - ETC (the WIP's original profit); finished: GP = billed - costs (actuals)
+  const fin = kind === "finished";
+  const gp = fin ? ((x.billed != null && x.costs != null) ? x.billed - x.costs : null) : ((K != null && E != null) ? K - E : null);
+  const oh = K != null ? K * 0.10 : null, net = (gp != null && oh != null) ? gp - oh : null;
+  const base = fin ? x.billed : K;
+  const pctTxt = (gp != null && base) ? ` (${(gp / base * 100).toFixed(1)}%)` : "";
+  const profit = K != null ? `<div class="rr-profit">Gross profit${fin ? " (billed - costs)" : ""} <b class="${gp != null && gp < 0 ? "neg" : ""}">${gp == null ? "–" : money(gp)}</b>${pctTxt} · overhead 10% <b>${money(oh)}</b> · net <b class="${net != null && net < 0 ? "neg" : ""}">${net == null ? "–" : money(net)}</b></div>` : "";
   const nums = (kind === "current"
     ? cell("Contract", rrMoney(K), rrPill(src.contract)) + cell("ETC", rrMoney(E), rrPill(src.etc)) + cell("Costs", link(x.costs, x.costs_link), rrPill(src.costs)) + cell("Billed", link(x.billed, x.billed_link), rrPill(src.billed)) + cell("JobTread", jt.price != null ? `${money(jt.price)} / ${money(jt.cost)}` : `<span class="miss">${jt.exists ? "no approved proposal" : "not in JobTread"}</span>`, jt.price != null ? `<span class="rr-src jt" title="approved ${fmtDate(jt.date)}${jt.scope_note ? " · " + _ge(jt.scope_note) : ""}">${fmtDate(jt.date)}</span>` : "")
     : cell("Contract", rrMoney(K), `<span class="rr-src master">RP WIP file</span>`) + cell("ETC", rrMoney(E), `<span class="rr-src master">RP WIP file</span>`) + cell("Billed", rrMoney(x.billed), `<span class="rr-src qbo" title="as of 09/09/2026">QuickBooks</span>`) + cell("Costs", rrMoney(x.costs), `<span class="rr-src qbo" title="as of 09/09/2026">QuickBooks</span>`) + cell("JobTread", jt.price != null ? `${money(jt.price)} / ${money(jt.cost)}` : `<span class="miss">${jt.exists ? "no approved proposal" : "not in JobTread"}</span>`, ""))
@@ -7780,6 +7793,37 @@ async function rrSave(card, x, kind, decision) {
   rrRenderStats();
   if (decision) { if (!_popViewIfOwn("rr")) { rrOpenLine = null; rrRenderCards(); window.scrollTo(0, 0); } }   // back to the list: the row shows the answer read back
   else { const fresh2 = rrCard(x, kind); card.replaceWith(fresh2); }
+}
+
+async function rrSaveQuick(tr, x, kind, decision) {
+  const m = rrMark(x, kind) || {};
+  const body = { project_no: x.line, kind, decision, mode: rrMode, note: m.note || "", our_contract: m.our_contract != null ? m.our_contract : (x.contract != null ? x.contract : ""), our_etc: m.our_etc != null ? m.our_etc : (x.etc != null ? x.etc : ""), contract_ok: m.contract_ok != null ? m.contract_ok : "", etc_ok: m.etc_ok != null ? m.etc_ok : "" };
+  const btn = tr.querySelector("[data-save]"); if (btn) { btn.disabled = true; btn.textContent = "Saving…"; }
+  let res; try { res = await (await fetch("/api/rp/mark", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })).json(); } catch { res = { error: "no answer from the server" }; }
+  if (!res || !res.ok) { if (btn) { btn.disabled = false; btn.textContent = "Save"; } toast("NOT saved - " + ((res && res.error) || "could not reach the server"), 5000); return; }
+  let fresh = null; try { fresh = await (await fetch("/api/rp/review")).json(); } catch { fresh = null; }
+  const stored = fresh && fresh.marks ? fresh.marks[`${x.line}|${kind}`] : undefined;
+  if (fresh && fresh.marks) RR.marks = fresh.marks;
+  if (!(stored && stored.at === res.at)) { if (btn) { btn.disabled = false; btn.textContent = "Save"; } toast(`NOT saved - ${x.line} did not read back from the database`, 6000); return; }
+  const label = { confirmed: "Confirmed", fix: "Needs a fix", agree: "Agreed done", keep: "Kept on the WIP", noted: "Noted, not confirmed" }[decision] || decision;
+  toast(`Saved ✓ ${x.line} · ${label} · ${rrMode === "ops" ? "OPS Manager + you" : "you"} · ${fmtDate(res.at, true)}`, 4000);
+  rrJustSaved = x.line; rrLastLine = x.line; rrRenderStats(); rrRenderCards();
+}
+
+async function rrFinalize() {
+  let res; try { res = await (await fetch("/api/rp/finalize", { method: "POST" })).json(); } catch { toast("could not build the package"); return; }
+  if (!res.ok) { toast(res.error || "could not build the package"); return; }
+  const p = res.package, body = $("#rrBody"); rrOpenLine = null;
+  const li = arr => arr.length ? `<ul>${arr.map(a => `<li>${_ge(typeof a === "string" ? a : a.line + (a.field ? ` · ${a.field} ${money(a.from)} → ${money(a.to)}` : "") + (a.note ? ` · "${a.note}"` : ""))}</li>`).join("")}</ul>` : `<div class="hint" style="margin:2px 0 8px">none</div>`;
+  body.innerHTML = `<div class="rr-final"><div class="rr-pagenav"><button type="button" class="btn small" id="rrFinalBack">← Back to the list</button><span class="rr-pagepos">Finalize package · ${fmtDate(p.generated, true)} · ${p.answered} line(s) answered</span></div>
+    <h3>Numbers you changed (go to the WIP master through the guarded WIP writer)</h3>${li(p.changes)}
+    <h3>Confirmed as they are (${p.confirmed.length})</h3>${li(p.confirmed)}
+    <h3>Need a fix (${p.fixes.length})</h3>${li(p.fixes)}
+    <h3>Finished - agreed done (${p.finished_agreed.length}) · keep on the WIP (${p.finished_keep.length})</h3>${li(p.finished_agreed)}${li(p.finished_keep)}
+    <h3>Notes (${p.notes.length})</h3>${li(p.notes.map(n => ({ line: n.line, note: n.note })))}
+    ${p.master_renamed ? `<p class="rr-warn">The master's RP tab is named "${_ge(p.master_tab)}"; the WIP writer writes "Test - RP". Rename it back before anything is written.</p>` : ""}
+    <p class="hint" style="margin:10px 0 0">The package is on disk (finalize.json, decisions_rp.json, answers.txt). Nothing has been written to the master from here.</p></div>`;
+  $("#rrFinalBack").onclick = () => rrRenderCards();
 }
 
 async function rrRebuild() {

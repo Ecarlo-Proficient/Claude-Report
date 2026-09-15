@@ -1107,15 +1107,58 @@ def answers_report() -> str:
     return "\n".join(out)
 
 
+def finalize_package() -> dict:
+    """What the saved answers mean for the WIP report, as a package the guarded WIP writer can
+    apply (rp-review/finalize.json + decisions_rp.json in the --apply-review shape). Nothing is
+    written to the master here - the dashboard never touches the workbook (repo rule)."""
+    data = load() or {}
+    marks = read_marks()
+    cur = {c["line"]: c for c in data.get("current", [])}
+    fin = {f["line"]: f for f in data.get("finished", [])}
+    changes, confirmed, fixes, done, keep, notes = [], [], [], [], [], []
+    fields = {}
+    for key, m in marks.items():
+        pn, kind = key.split("|")
+        if kind == "current" and pn in cur:
+            c = cur[pn]
+            if m["decision"] == "confirmed":
+                confirmed.append(pn)
+            elif m["decision"] == "fix":
+                fixes.append({"line": pn, "note": m["note"] or ""})
+            for fld, ours, prepared, dkey in (("contract", m["our_contract"], c.get("contract"), "orig_contract"),
+                                              ("etc", m["our_etc"], c.get("etc"), "orig_etc")):
+                if ours is not None and (prepared is None or abs(ours - prepared) > 0.5):
+                    changes.append({"line": pn, "field": fld, "from": prepared, "to": ours, "who": m["mode"], "at": m["at"], "note": m["note"] or ""})
+                    fields.setdefault(pn, {})[dkey] = {"approved": False, "revert": ours}
+        elif kind == "finished" and pn in fin:
+            (done if m["decision"] == "agree" else keep if m["decision"] == "keep" else []).append(pn)
+        if m["note"]:
+            notes.append({"line": pn, "kind": kind, "note": m["note"], "who": m["mode"], "at": m["at"]})
+    pkg = {"generated": dt.datetime.now().isoformat(timespec="seconds"), "build": data.get("built_at"),
+           "answered": len(marks), "confirmed": sorted(confirmed), "fixes": fixes, "changes": changes,
+           "finished_agreed": sorted(done), "finished_keep": sorted(keep), "notes": notes,
+           "master_tab": (data.get("master") or {}).get("tab"), "master_renamed": (data.get("master") or {}).get("renamed")}
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    (OUT_DIR / "finalize.json").write_text(json.dumps(pkg, indent=1, default=str), encoding="utf-8")
+    (OUT_DIR / "decisions_rp.json").write_text(json.dumps({"fields": fields, "drop_added": []}, indent=1), encoding="utf-8")
+    (OUT_DIR / "answers.txt").write_text(answers_report(), encoding="utf-8")
+    return pkg
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--no-jobtread", action="store_true", help="skip the JobTread pull")
     ap.add_argument("--no-snapshots", action="store_true", help="skip the source snapshots (fast)")
     ap.add_argument("--limit", type=int, default=0, help="first N lines only (testing)")
     ap.add_argument("--answers", action="store_true", help="print the owner's / ops manager's answers and stop")
+    ap.add_argument("--finalize", action="store_true", help="write the finalize package (finalize.json + decisions_rp.json + answers.txt) and stop")
     a = ap.parse_args()
     if a.answers:
         print(answers_report())
+        return 0
+    if a.finalize:
+        pkg = finalize_package()
+        print(json.dumps({k: (v if not isinstance(v, list) else len(v)) for k, v in pkg.items()}, indent=1))
         return 0
     build(a.no_jobtread, a.no_snapshots, a.limit)
     return 0

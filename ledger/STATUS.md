@@ -4,6 +4,16 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-15 (late) · RP review, owner's review-day asks: answer straight from the list (verdict + Save per row;
+  numbers and notes stay on the job page), Save reads the answer back from the database before it says
+  Saved ✓ (a failed write says NOT saved and stays), the list scrolls back to and marks the job you left,
+  ✓ only for Confirmed / Agreed (deselect + Save = unconfirmed, "Noted, not confirmed"), no instructions
+  block, no "OPS Manager is here" badge, numbers as one line with gross profit / 10% overhead / net (finished
+  lines: billed - costs), "billed out, still on the schedule" only when the job is on the NEWEST schedule.
+  **Finalize to WIP Report** (replaces Rebuild on the page; Rebuild moved to the gear) turns the saved answers
+  into the package `rp-review/finalize.json` + `decisions_rp.json` (the `--apply-review` shape: their numbers as
+  reverts) + `answers.txt`, and shows what changes. It writes NOTHING to the master - the dashboard never
+  touches the workbook; the guarded WIP writer applies the package (and needs the RP tab back at 'Test - RP').
 - 2026-09-15 (evening) · Browser Back works inside the app: opening a record view (project page, invoice,
   vendor) or an RP review job page pushes a history entry (`_pushView`), popstate closes it in place, and the
   in-app Back buttons pop their own entry (`_popViewIfOwn`) so the browser stack stays in step; Previous /
