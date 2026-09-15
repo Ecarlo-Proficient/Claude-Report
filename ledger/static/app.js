@@ -5629,9 +5629,9 @@ function closeRecord() {
 
 // ── Copy + CSV + toast ────────────────────────────────────────────────────
 let toastTimer = null;
-function toast(msg) {
+function toast(msg, ms) {
   const t = $("#toast"); t.textContent = msg; t.hidden = false;
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.hidden = true), 1400);
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.hidden = true), ms || 1400);
 }
 async function copy(text) {
   try { await navigator.clipboard.writeText(text); toast("Copied: " + text.slice(0, 40)); }
@@ -7627,7 +7627,7 @@ function rrRenderCards() {
       : verdictOk ? `<span class="rr-check" title="${_ge(who)}">✓</span>`
       : (m.decision === "fix" || m.decision === "keep") ? `<span class="rr-check fix" title="${_ge(who)}">!</span>`
       : "";
-    const ans = m ? `${_ge({ confirmed: "Confirmed", fix: "Needs a fix", agree: "Agreed done", keep: "Kept", noted: "Noted, not confirmed" }[m.decision] || m.decision)}<div class="d">${m.mode === "ops" ? "OPS Manager + you" : "You"} · ${fmtDate(m.at)}</div>` : `<span class="rr-nojt">not yet</span>`;
+    const ans = m ? `${_ge({ confirmed: "Confirmed", fix: "Needs a fix", agree: "Agreed done", keep: "Kept", noted: "Noted, not confirmed" }[m.decision] || m.decision)}${x.line === rrJustSaved ? ` <span class="rr-saved">saved ✓</span>` : ""}<div class="d">${m.mode === "ops" ? "OPS Manager + you" : "You"} · ${fmtDate(m.at, true)}</div>` : `<span class="rr-nojt">not yet</span>`;
     const tail = kind === "current"
       ? `<td class="n">${money(x.costs)}</td><td class="n">${money(x.billed)}</td><td class="${x.stale ? "rr-stale" : ""}">${x.last_seen ? fmtDate(x.last_seen) : "–"}</td><td class="rr-list-flags">${(x.flags || []).length ? `${x.flags.length} · ${_ge(x.flags[0])}${x.flags.length > 1 ? "…" : ""}` : ""}</td>`
       : `<td class="n">${money(x.billed)}</td><td class="n">${money(x.costs)}</td><td>${_ge(x.last_day || "–")}</td><td class="rr-list-flags">${_ge(x.why || "")}</td>`;
@@ -7754,23 +7754,32 @@ function rrCard(x, kind) {
   return card;
 }
 
+let rrJustSaved = null;   // the line whose answer was just written and read back - tagged on the list
+
 async function rrSave(card, x, kind, decision) {
   const val = f => { const el = card.querySelector(`[data-f="${f}"]`); return el ? el.value : ""; };
   const ok = f => { const on = card.querySelector(`.rr-ok[data-f="${f}"] button.on`); return on ? on.dataset.v : ""; };
   const body = { project_no: x.line, kind, decision, mode: rrMode, note: val("note"), our_contract: val("our_contract"), our_etc: val("our_etc"), contract_ok: ok("contract_ok"), etc_ok: ok("etc_ok") };
+  const saveBtn = card.querySelector("[data-save]"); if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = "Saving…"; }
   let res;
   try { res = await (await fetch("/api/rp/mark", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })).json(); }
-  catch { toast("could not save"); return; }
-  if (!res.ok) { toast(res.error || "could not save"); return; }
-  RR.marks = RR.marks || {};
-  if (decision) RR.marks[`${x.line}|${kind}`] = { decision, mode: rrMode, note: body.note, at: res.at,
-    our_contract: body.our_contract === "" ? null : Number(String(body.our_contract).replace(/[$,]/g, "")), our_etc: body.our_etc === "" ? null : Number(String(body.our_etc).replace(/[$,]/g, "")),
-    contract_ok: body.contract_ok === "" ? null : Number(body.contract_ok), etc_ok: body.etc_ok === "" ? null : Number(body.etc_ok) };
-  else delete RR.marks[`${x.line}|${kind}`];
-  toast(decision ? `${x.line} saved · ${rrMode === "ops" ? "OPS Manager + you" : "you"}` : `${x.line} cleared`);
+  catch { res = { error: "no answer from the server" }; }
+  if (!res || !res.ok) { if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = "Save"; } toast("NOT saved - " + ((res && res.error) || "could not reach the server"), 5000); return; }
+  // Read it back from the server (owner 2026-09-15: "show me that it was saved instead of trusting that
+  // i clicked it") - the list is rebuilt from what the database returns, not from what was typed.
+  let fresh = null;
+  try { fresh = await (await fetch("/api/rp/review")).json(); } catch { fresh = null; }
+  const key = `${x.line}|${kind}`;
+  const stored = fresh && fresh.marks ? fresh.marks[key] : undefined;
+  if (fresh && fresh.marks) RR.marks = fresh.marks;
+  const verified = decision ? (stored && stored.at === res.at) : (stored === undefined);
+  if (!verified) { if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = "Save"; } toast(`NOT saved - ${x.line} did not read back from the database`, 6000); return; }
+  const label = { confirmed: "Confirmed", fix: "Needs a fix", agree: "Agreed done", keep: "Kept on the WIP", noted: "Noted, not confirmed" }[decision] || (decision ? decision : "cleared");
+  toast(`Saved ✓ ${x.line} · ${label} · ${rrMode === "ops" ? "OPS Manager + you" : "you"} · ${fmtDate(res.at, true)}`, 4000);
+  rrJustSaved = decision ? x.line : null;
   rrRenderStats();
-  if (decision) { if (!_popViewIfOwn("rr")) { rrOpenLine = null; rrRenderCards(); window.scrollTo(0, 0); } }   // back to the list: the ✓ is there
-  else { const fresh = rrCard(x, kind); card.replaceWith(fresh); }
+  if (decision) { if (!_popViewIfOwn("rr")) { rrOpenLine = null; rrRenderCards(); window.scrollTo(0, 0); } }   // back to the list: the row shows the answer read back
+  else { const fresh2 = rrCard(x, kind); card.replaceWith(fresh2); }
 }
 
 async function rrRebuild() {
