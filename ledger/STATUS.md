@@ -4,6 +4,7 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-15 · `sync-all` "always hangs" on its last step (Attachments -> ledger) and had to be killed. It was not hung: `load_attachments.py --refresh` walked every Attachable with `SELECT *` - measured 5-10 s and 7 MB per 1,000-row page, 79 pages, sequential, no output = 6-13 min of silence. `shared/qbo_attachments._sweep` now selects only `Id, FileName, AttachableRef` (170 KB a page), reads 5 pages at a time off a `COUNT(*)` plan (tail re-read to a short page), and prints a page counter; `build_index` takes the retrying GET + a `progress` callable instead of `query_all`. Same index (checked row-for-row against the day-old cache: 52 new, 2 deleted). Real run: 45 s end to end.
 - 2026-09-14 · Projects grid: a division / completed band is one cell per column, so every subtotal sits under its column (contract · costs · billed · band costs/ETC as % complete · net over/(under) · open AR; the job count in the Name column). The merged chip strip the band used to carry did not line up with the grid (owner screenshot).
 - **Two views (owner 2026-09-13: "consolidate to two menus/views - projects and give me
   everything").** The 7 groups / 16 tabs / 2 hidden pages became **Projects · Company · the gear**.

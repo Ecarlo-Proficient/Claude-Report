@@ -2,7 +2,8 @@
 
 QBO serves an attachment only through a `TempDownloadUri` that EXPIRES in minutes, so a
 durable link can't be stored. Instead we keep a disk INDEX of every Attachable,
-`(entity type, txn id) -> [{Id, FileName}]` (a slow company-wide sweep, cached a week),
+`(entity type, txn id) -> [{Id, FileName}]` (a company-wide sweep - field-limited, paged
+in parallel, ~40 s - cached a week),
 and fetch a FRESH `TempDownloadUri` per file at click-time by re-reading that attachable
 by its Id.
 
@@ -64,16 +65,54 @@ def index_from_cache(company_id: str = "") -> Optional[Index]:
     return _read(cands[0])
 
 
-def build_index(access: str, company_id: str, query_all, force: bool = False) -> Index:
-    """The index from a fresh cache if we have one, else a full Attachable sweep (slow:
-    every scan ever uploaded), which is then cached a week. `query_all` is injected to
-    avoid importing the QBO client at module load. `force` skips the cache (a new sweep)."""
+_FIELDS = "Id, FileName, AttachableRef"   # all the index stores; SELECT * is 40x the bytes per page
+_PAGE = 1000                               # QBO's max page
+_WORKERS = 5                               # pages in flight (QBO allows ~10 concurrent per realm)
+
+
+def _sweep(access: str, company_id: str, api_get, progress=None) -> List[dict]:
+    """Every Attachable as `{Id, FileName, AttachableRef}`: field-limited and paged in
+    parallel, with a progress line every 10 pages. Measured 2026-09-15 on 79 pages:
+    `SELECT *` = 5-10 s and 7 MB per page, sequential and silent = 6-13 min that read as a
+    hang (`sync-all` "always hangs" - owner); this = ~2.4 s / 170 KB per page, 5 at a time
+    = ~40 s. Same rows, same index. Pages are read by a fixed STARTPOSITION plan off
+    COUNT(*), then the tail is re-read sequentially until a short page, so a file uploaded
+    mid-sweep is still caught."""
+    import math
+    from concurrent.futures import ThreadPoolExecutor
+
+    def q(sql: str) -> dict:
+        return api_get(f"/v3/company/{company_id}/query", access, {"query": sql}).get("QueryResponse", {})
+
+    def page(i: int) -> List[dict]:
+        return q(f"SELECT {_FIELDS} FROM Attachable ORDERBY Id "
+                 f"STARTPOSITION {i * _PAGE + 1} MAXRESULTS {_PAGE}").get("Attachable", [])
+
+    total = int(q("SELECT COUNT(*) FROM Attachable").get("totalCount") or 0)
+    pages = max(1, math.ceil(total / _PAGE))
+    rows: List[dict] = []
+    with ThreadPoolExecutor(max_workers=_WORKERS) as ex:
+        for i, batch in enumerate(ex.map(page, range(pages)), 1):
+            rows.extend(batch)
+            if progress and (i % 10 == 0 or i == pages):
+                progress(f"  attachments: page {i}/{pages} ({len(rows):,} of ~{total:,} records)")
+    nxt = pages
+    while len(batch) == _PAGE:                         # grew during the sweep: read on to a short page
+        batch = page(nxt); rows.extend(batch); nxt += 1
+    return rows
+
+
+def build_index(access: str, company_id: str, api_get, force: bool = False, progress=None) -> Index:
+    """The index from a fresh cache if we have one, else a full Attachable sweep (every
+    scan ever uploaded - `_sweep`, ~40 s), which is then cached a week. `api_get` (the
+    retrying GET) is injected to avoid importing the QBO client at module load; `progress`
+    is a print-like callable for the page counter (None = silent). `force` skips the cache."""
     got = None if force else index_from_cache(company_id)
     if got is not None:
         return got
     by_key: Index = {}
     items = []
-    for a in query_all(access, company_id, "Attachable"):
+    for a in _sweep(access, company_id, api_get, progress):
         if not a.get("FileName"):
             continue                                   # a bare note, not a file
         refs = [((r.get("EntityRef") or {}).get("type"),

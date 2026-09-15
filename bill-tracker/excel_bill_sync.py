@@ -1081,10 +1081,14 @@ def _finalize_sheet(ws, table_name: str, last_row: int,
     # Default view = the "what do we still owe" working set: Pay Status Unpaid /
     # Partial paid (hide Bill paid). Set the AutoFilter funnel AND physically
     # hide paid rows to match — Excel trusts each row's hidden flag on open and
-    # ignores the filter criteria until the user toggles it. A Bill-paid row with
-    # an OUTSTANDING lien stays visible (a lien outlives payment). To review paid
-    # / fronted bills, check "Bill paid" in the Pay Status filter — the row color
-    # + Invoice Status then flag the fronted ones.
+    # ignores the filter criteria until the user toggles it. The hidden set must
+    # equal the filter EXACTLY: it used to leave a Bill-paid row with an
+    # outstanding lien visible, so the sheet opened with paid rows showing under
+    # an Unpaid/Partial-paid funnel and only snapped into shape once the filter
+    # was touched (owner 2026-09-15: "it never shows the default view"). Paid
+    # bills with an open lien live on the Liens sheet. To review paid / fronted
+    # bills, check "Bill paid" in the Pay Status filter — the row color +
+    # Invoice Status then flag the fronted ones.
     if hide_paid_default:
         tbl.autoFilter = AutoFilter(ref=table_ref)
         tbl.autoFilter.filterColumn = [
@@ -1093,11 +1097,8 @@ def _finalize_sheet(ws, table_name: str, last_row: int,
         ]
         for r in range(DATA_START, last_row + 1):
             # Pay Status is "Bill paid" or "Bill paid (fronted)/(collected)".
-            if not str(ws.cell(row=r, column=PAY_STATUS_COL_INDEX).value or "").startswith("Bill paid"):
-                continue
-            if ws.cell(row=r, column=LIEN_COL_INDEX).value in LIEN_OUTSTANDING:
-                continue
-            ws.row_dimensions[r].hidden = True
+            if str(ws.cell(row=r, column=PAY_STATUS_COL_INDEX).value or "").startswith("Bill paid"):
+                ws.row_dimensions[r].hidden = True
     ws.add_table(tbl)
 
     # Universal CF — color by RECONCILIATION (Pay Status × Invoice Status):

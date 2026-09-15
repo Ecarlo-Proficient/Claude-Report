@@ -5,6 +5,13 @@ no business findings, dollar exposures, or owner analyses (those live in the own
 
 ## DONE / FINALIZED
 
+- **Bills opens on its default view (2026-09-15).** The Pay Status funnel says Unpaid /
+  Partial paid, but `_finalize_sheet` left Bill-paid rows with an outstanding lien
+  un-hidden, so the sheet opened with paid rows showing and only snapped into shape once
+  the filter was touched (owner: "it never shows the default view"). Every Bill-paid row
+  is hidden now - the hidden set equals the filter exactly; paid bills with an open lien
+  are on the Liens sheet. Note for the run: Excel holding `Bill Tracker.xlsx` open
+  re-saves over the sync (the 09:13 save overwrote the 08:46 run today) - close it first.
 - **The PUSH match basis (2026-09-02).** `MATCH_BASIS_PUSHED`: a CP/MFD bill the
   supplier agreed to carry into a later draw (rule in `<CompanyHealth>/draw_moves.json`,
   read by `shared/draw_moves.py`) is matched AS OF the rule's date, so `Matched

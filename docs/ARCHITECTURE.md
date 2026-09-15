@@ -523,7 +523,7 @@ flowchart LR
     RECURMOD -.->|"build()"| HLOAD
     BEMOD["shared/breakeven.py\nbreak-even model - build_from_blocks()\n(also read by company_tracker until it retires)"]:::tool
     BEMOD -.->|"/api/healthtab computes live"| DASH
-    QATT["shared/qbo_attachments.py\nAttachable INDEX (entity,txn)→[Id,FileName]\n7-day disk cache (REUSED from the P&L, no re-sweep)\n+ FRESH TempDownloadUri per file"]:::tool
+    QATT["shared/qbo_attachments.py\nAttachable INDEX (entity,txn)→[Id,FileName]\nfield-limited parallel sweep ~40 s (fresh on every sync), 7-day disk cache otherwise\n+ FRESH TempDownloadUri per file"]:::tool
     ATTLOAD["attachments.py\nbill txnId → fresh scan link(s) as JSON\nSUBPROCESSED by /api/attachment, never imported"]:::tool
     DASH -.->|"/api/attachment (📎 click on the Audit tab)"| ATTLOAD
     ATTLOAD -.->|"index_from_cache + fresh_links"| QATT

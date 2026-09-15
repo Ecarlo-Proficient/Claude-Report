@@ -8,7 +8,9 @@ week-cached disk index; this loader writes that index into the ledger as `attach
 attachable_id, file_name)` so EVERY row the dashboard renders can carry a scan count with one join,
 and the click resolves a fresh (minutes-lived) download link through /api/attachment.
 
-Read-only on QBO. `--refresh` forces a new sweep instead of the disk cache. `--selftest` offline.
+Read-only on QBO. `--refresh` forces a new sweep instead of the disk cache (~40 s: the shared
+sweep is field-limited and paged in parallel, and prints a page counter - it used to be a silent
+6-13 min `SELECT *` walk that `sync-all` looked hung on, owner 2026-09-15). `--selftest` offline.
 """
 from __future__ import annotations
 
@@ -54,10 +56,11 @@ def write_index(con: sqlite3.Connection, idx: dict, now: str) -> dict:
 
 
 def run(db_path: Path, refresh: bool, dry_run: bool) -> None:
-    from shared.qbo_api import load_credentials, query_all
+    from shared.qbo_api import _api_get, load_credentials
     access, company_id = load_credentials()
     print("  authenticated.")                          # never echo the realm / company id
-    idx = qbo_attachments.build_index(access, company_id, query_all, force=refresh)
+    idx = qbo_attachments.build_index(access, company_id, _api_get, force=refresh,
+                                      progress=lambda m: print(m, flush=True))
     n = sum(len(v) for v in idx.values())
     print(f"Index: {len(idx)} transactions with files · {n} file links" + (" (fresh sweep)" if refresh else " (disk cache if fresh, else swept)"))
     if dry_run:
