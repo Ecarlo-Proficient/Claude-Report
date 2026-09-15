@@ -151,6 +151,16 @@ no business findings, dollar exposures, or owner analyses (those live in the own
   offline tests for the module: `tests/test_cost_code_audit.py` (6). Same fix reaches
   `one-offs/concrete_cost_code_audit.py`. The three false Bodin entries were removed from
   `cost_code_history.json` so the clerk's error rate isn't charged for a rule the audit got wrong.
+- **Draw period tag: parentheses optional (2026-09-15, owner).** "Why is this bill not being
+  matched to the invoice?" - RCI K756910 (CP785, 6/1) sat on Awaiting Invoice with a PAST-due lien
+  notice while draw 34432 covered 05/21-06/20. The period regex required `(Period: … )` WITH
+  parentheses; the three CP785 draws and the CP997 draw were typed `Draw #1 - Period:05/21/2026 -
+  06/20/2026`, so no CP785 bill ever matched (4 of 83 tagged 2026 invoices). THE parser is now
+  `shared/draws.PERIOD_TAG_RE` + `parse_period_tag` (parens optional, 2- or 4-digit years, hyphen
+  or en dash); `qbo_bill_tracker.DRAW_PERIOD_RE`/`parse_draw_period` and project-pnl's
+  `DRAW_PERIOD_RE` are aliases of it (three private copies retired). Tests:
+  `tests/test_period_tag.py` (5). Verified live: all 29 CP785 bills match draws 1-3; K756910 =
+  Invoice paid on 34432. The Excel-open revert (below) had ALSO been hiding this since 09/08.
 - **OPEN ISSUE (2026-09-14): Excel holding `Bill Tracker.xlsx` open reverts every sync.** The
   workbook on OneDrive read as of 09/08 after five later runs (mtime = the run, `lastModifiedBy`
   = Excel, `created` = the 09/08 run): Excel's open copy re-saves over the script's write within

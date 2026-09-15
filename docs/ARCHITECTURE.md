@@ -55,7 +55,7 @@ shared/                the ONLY importable common code
 ├─ qbo_attachments.py  Attachable index + fresh scan links (7-day cache reused from P&L) — ledger Audit 📎
 ├─ notion_client.py    thin Notion API client (create/query/update pages) — used by ledger/sync_actions
 ├─ cost_lines.py       cost-line category (Concrete/Labor/Materials) + bill-line combine
-├─ draws.py            CP draw (AIA G702/G703) discovery + parsing (wip ↔ health)
+├─ draws.py            CP draw (AIA G702/G703) discovery + parsing + THE period-tag parser (wip ↔ health ↔ bill-tracker ↔ project-pnl)
 ├─ draw_moves.py       the PUSH: a bill carried into a later draw by agreement — <CompanyHealth>/draw_moves.json (project-pnl ↔ bill-tracker ↔ ledger)
 ├─ rp_invoicing.py     one-invoice vs scope-based RP job, off the invoice memos (project-pnl ↔ one-offs/rp_stage_scan)
 ├─ schedule_index.py   job # -> last day on a daily crew schedule, every 'Main Schedule' parsed once into a JSON cache (Test - RP CATEGORY; 2026-09-09)
@@ -413,7 +413,7 @@ at read time (`rp_wip_reader` tags each row's `audit_contract_src` / `audit_etc_
 the invoices that carry a `(Period:…)` tag and write the same tag onto the ones that don't,
 so a job whose window straddles month end (MFD295 bills the 21st→20th) stops falling back
 to the calendar month. The draw's month comes from the memo's own wording, not the invoice
-date; retainage invoices stay untagged.
+date; retainage invoices stay untagged. **It is also THE draw-period tag parser (2026-09-15):** `PERIOD_TAG_RE` / `parse_period_tag` read `(Period: MM/DD/YYYY - MM/DD/YYYY)` with the parentheses OPTIONAL (the CP785/CP997 draws were typed without them and every CP785 bill sat unmatched); `bill-tracker/qbo_bill_tracker.py` and `project-pnl/project_pnl_export.py` alias it - no private copies.
 
 **`shared/job_lines.py`** — the ONE test for "does this expense line belong to this job".
 STRICT by default (the line's `CustomerRef` is the project customer, exactly what every

@@ -53,6 +53,7 @@ except ImportError:
 
 from shared import qbo_vault as kc
 from shared import paths
+from shared import draws
 
 # ───────────────────────── constants ─────────────────────────
 
@@ -60,10 +61,8 @@ API_BASE = "https://quickbooks.api.intuit.com"
 MINOR_VERSION = "70"
 
 PROJECT_NUM_RE = re.compile(r"\b((?:MFD|CP|RP)\d+(?:-FTW)?)\b", re.IGNORECASE)
-DRAW_PERIOD_RE = re.compile(
-    r"\(\s*Period\s*:\s*(\d{1,2}/\d{1,2}/\d{2,4})\s*[-–]\s*(\d{1,2}/\d{1,2}/\d{2,4})\s*\)",
-    re.IGNORECASE,
-)
+# THE period-tag regex lives in shared/draws (parentheses optional, 2026-09-15).
+DRAW_PERIOD_RE = draws.PERIOD_TAG_RE
 RETAINAGE_NOT_BILLED_RE = re.compile(r"retainage\s+not\s+billed", re.IGNORECASE)
 RETAINAGE_RE = re.compile(r"\bretainage\b", re.IGNORECASE)
 SUB_RE = re.compile(r"\bsub\b", re.IGNORECASE)
@@ -394,16 +393,9 @@ def get_division(project_num: Optional[str]) -> Optional[str]:
 
 
 def parse_draw_period(invoice: dict) -> Optional[Tuple[dt.date, dt.date]]:
-    """Pull (start, end) from invoice PrivateNote like '(Period: MM/DD/YY - MM/DD/YY)'."""
-    pn = invoice.get("PrivateNote", "") or ""
-    m = DRAW_PERIOD_RE.search(pn)
-    if not m:
-        return None
-    s = parse_date(m.group(1))
-    e = parse_date(m.group(2))
-    if s and e and s <= e:
-        return (s, e)
-    return None
+    """(start, end) from the invoice PrivateNote's Period tag - '(Period: MM/DD/YY -
+    MM/DD/YY)' or the same without parentheses. ONE parser: shared/draws."""
+    return draws.parse_period_tag(invoice.get("PrivateNote", "") or "")
 
 
 def is_sub_bill(bill: dict) -> bool:

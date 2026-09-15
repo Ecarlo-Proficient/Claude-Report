@@ -93,6 +93,7 @@ from shared import paths
 from shared import pnl_paths
 from shared.draws import read_pay_app, learn_period_shape, infer_period_tag
 from shared import draw_moves
+from shared import draws
 from shared import job_rulings   # standing per-job rulings -> KNOWN LOSSES / RULINGS block
 from shared import bizdev_cut   # the ONE test for a business-development cut
 from shared import rp_invoicing  # one-invoice vs scope-based RP job, off the invoices
@@ -263,10 +264,8 @@ def _resolve_project_out_dir(proj: str, out_dir: Path,
 
 
 # ─────────── regexes ───────────
-DRAW_PERIOD_RE = re.compile(
-    r"\(\s*Period\s*:\s*(\d{1,2}/\d{1,2}/\d{2,4})\s*[-–]\s*(\d{1,2}/\d{1,2}/\d{2,4})\s*\)",
-    re.IGNORECASE,
-)
+# THE period-tag regex lives in shared/draws (parentheses optional, 2026-09-15).
+DRAW_PERIOD_RE = draws.PERIOD_TAG_RE
 # Draw NUMBER from the invoice memo: "Draw 11" / "Draw #11". 1–3 digits only,
 # and NOT followed by another digit, so a year ("April Draw 2026") is ignored.
 DRAW_NUM_RE = re.compile(r"Draw\s*#?\s*(\d{1,3})(?!\d)", re.IGNORECASE)

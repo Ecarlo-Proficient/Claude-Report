@@ -426,9 +426,35 @@ _MONTHS = {m.lower(): i for i, m in enumerate(
      "August", "September", "October", "November", "December"], 1)}
 _MONTH_YEAR_RE = re.compile(
     r"\b(" + "|".join(_MONTHS) + r")\b[^0-9]{0,14}(\d{4})?", re.IGNORECASE)
-_PERIOD_TAG_RE = re.compile(
-    r"\(\s*Period\s*:\s*(\d{1,2}/\d{1,2}/\d{2,4})\s*[-–]\s*(\d{1,2}/\d{1,2}/\d{2,4})\s*\)",
+# THE draw-period tag: "(Period: MM/DD/YYYY - MM/DD/YYYY)". The parentheses are
+# OPTIONAL (the user 2026-09-15): the CP785 and CP997 draws were typed
+# "Draw #1 - Period:05/21/2026 - 06/20/2026" and a parens-only regex left every
+# CP785 bill on Awaiting Invoice. bill-tracker and project-pnl import this one.
+PERIOD_TAG_RE = re.compile(
+    r"\(?\s*Period\s*:\s*(\d{1,2}/\d{1,2}/\d{2,4})\s*[-–]\s*(\d{1,2}/\d{1,2}/\d{2,4})\s*\)?",
     re.IGNORECASE)
+_PERIOD_TAG_RE = PERIOD_TAG_RE
+
+
+def _tag_date(tok: str) -> Optional["_dt.date"]:
+    for fmt in ("%m/%d/%Y", "%m/%d/%y"):
+        try:
+            return _dt.datetime.strptime(tok, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def parse_period_tag(text: str) -> Optional[Tuple["_dt.date", "_dt.date"]]:
+    """(start, end) from a memo's Period tag, parentheses or not; None when the
+    memo has no tag, a date is mistyped, or start > end."""
+    m = PERIOD_TAG_RE.search(text or "")
+    if not m:
+        return None
+    s, e = _tag_date(m.group(1)), _tag_date(m.group(2))
+    if s and e and s <= e:
+        return (s, e)
+    return None
 _RETAINAGE_ONLY_RE = re.compile(r"retainage", re.IGNORECASE)
 
 

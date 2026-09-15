@@ -8,6 +8,12 @@ manual close), RP (no draws — expenses → invoice → profit).
 
 ## DONE / FINALIZED
 
+- **Draw period tag parser moved to `shared/draws` (2026-09-15).** `DRAW_PERIOD_RE` is now an
+  alias of `shared.draws.PERIOD_TAG_RE`, which accepts the tag with OR without parentheses
+  (`Draw #1 - Period:05/21/2026 - 06/20/2026` as typed on the CP785/CP997 draws). Draw grouping
+  and the memo-strip on the invoice lines behave the same; the lenient mistyped-date fallback is
+  unchanged. Same fix as the bill-tracker's (a CP785 bill showed Awaiting Invoice).
+
 - **NO-CUT JOBS SIT APART, LINES GROUP BY CATEGORY, NO BOX ON THE STRIP (2026-09-11).** The
   owner: a job he was never paid on "we can't judge due to not knowing his cost, so it should be
   as a pure job performance" - those jobs (MFD281, MFD295, MFD183 today) sit in their own section
