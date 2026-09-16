@@ -253,11 +253,15 @@ client name opens the client page.
 
 Every invoice on the job is income. Invoices that name the same draw month (MFD192 bills its base,
 HUDSONWOOD and OFFSITE contracts every month) or, failing a named month, that carry the same date are
-**one draw** - income is their sum, the bills are what the Bill Tracker matched to any of them. RP
-jobs, which bill at completion, are one "Job to date" bucket. The Coverage table and the draw boxes stay
-on top; a click opens that draw underneath as the **equation** the owner reads (invoices = Income −
-Materials − Labor = Gross profit − Overhead = Net) over the bills, all bills by default, sortable by
-vendor name, total amount, cost code or date. **Pay bills** (off to the right) reveals the pay-run
+**one draw** - income is their sum, the bills are what the Bill Tracker matched to any of them. **An RP
+job has no draws: each invoice is a scope** and its costs are the bills (tracker and sub) dated after
+the previous invoice up to its own date; bills after the last invoice sit in "Not yet invoiced". The
+Coverage table and the draw / scope boxes stay on top; a click opens that one underneath as the
+**equation** the owner reads (invoices = Income − Materials − Labor = Gross profit − Overhead = Net)
+over the bills - all bills by default, plain section rows with Materials total / Labor total / Total at
+the bottom, sortable by vendor name, total amount, cost code or date. Above it, "How it's doing" is one
+table: **Projected (WIP master) next to Actual (QuickBooks)**, row by row. **Add a note** keeps the
+owner's notes on the job (`project_note`). **Pay bills** (off to the right) reveals the pay-run
 controls; ticks are a draft until **Save** (Discard drops them), and the page will not let you leave
 with unsaved ticks.
 

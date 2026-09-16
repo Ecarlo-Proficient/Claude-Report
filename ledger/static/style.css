@@ -1341,14 +1341,12 @@ table.pp-bills { margin: 0 0 6px; }
 .pp-all { display: inline-flex; align-items: center; gap: 4px; font-size: .9em; color: var(--text-dim); }
 /* the draw's bill table reads as POCKETS (owner 2026-09-08: "no sub header distinction, it reads like a list"):
    section band (Materials / Labor) > vendor pocket with an accent edge > its bills indented under it */
-tr.pp-sect > td { background: var(--surface-2); border-top: 2px solid var(--border); padding-top: 8px; padding-bottom: 6px; font-size: .92em; }
+tr.pp-sect > td { border-top: 2px solid var(--border); padding-top: 10px; padding-bottom: 4px; font-size: .92em; }   /* plain - no row highlight (owner 2026-09-16) */
 tr.pp-sect .pp-sect-lab { display: inline-block; font-size: .8em; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; color: var(--text-dim); margin-right: 10px; }
 tr.pp-sect .ip-paid { font-weight: 700; }
-tr.pp-vendor > td { background: color-mix(in srgb, var(--accent) 7%, var(--surface-2)); border-top: 1px solid var(--border); padding-top: 7px; padding-bottom: 7px; }
-tr.pp-vendor > td:first-child { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent) 60%, transparent); }
+tr.pp-vendor > td { border-top: 1px solid var(--border); padding-top: 7px; padding-bottom: 7px; }   /* no tint (owner 2026-09-16) */
 tr.pp-vendor .sg-key { font-weight: 800; }
-tr.pp-in-grp > td { background: color-mix(in srgb, var(--surface-2) 35%, var(--surface)); }
-tr.pp-in-grp > td:first-child { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent) 22%, transparent); }
+tr.pp-in-grp > td { border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent); }
 tr.pp-in-grp td.pp-vb { padding-left: 30px; }
 .pp-grp-cb { cursor: pointer; }
 
@@ -1732,3 +1730,40 @@ td.bill-inv .st { margin-left: 8px; font-size: .9em; }
 .cp-tools { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 2px 0 12px; }
 .cp-projs { margin-left: auto; font-size: .86em; }
 .cp-grid td.status-col { white-space: nowrap; }
+
+/* ── project page, third pass (owner 2026-09-16): projected vs actual, Excel-style totals, notes ── */
+.pp-pva-wrap { padding: 4px 18px 10px; overflow-x: auto; }
+table.pp-pva { border-collapse: collapse; min-width: 640px; font-variant-numeric: tabular-nums; }
+table.pp-pva th { text-align: right; font-size: .76em; text-transform: uppercase; letter-spacing: .05em; color: var(--text-dim); padding: 4px 14px 6px 0; border-bottom: 1px solid var(--border); }
+table.pp-pva th.left { text-align: left; }
+table.pp-pva th small { display: block; text-transform: none; letter-spacing: 0; font-weight: 500; font-size: max(.9em, 12px); }
+table.pp-pva td { padding: 6px 14px 6px 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent); vertical-align: baseline; }
+table.pp-pva td.pp-pva-lab { min-width: 150px; font-weight: 600; }
+table.pp-pva td.pp-pva-lab small { display: block; font-weight: 400; color: var(--text-dim); font-size: max(.8em, 12px); }
+table.pp-pva td.pp-pva-proj { text-align: right; min-width: 150px; color: var(--text-dim); font-weight: 500; }
+table.pp-pva td.pp-pva-act { text-align: right; min-width: 170px; font-weight: 700; }
+table.pp-pva td.pp-pva-act.big { font-size: 1.6em; letter-spacing: -.02em; line-height: 1.1; }
+table.pp-pva td.pp-pva-act small { display: block; font-size: max(.5em, 12px); font-weight: 500; color: var(--text-dim); letter-spacing: 0; }
+table.pp-pva td.pp-pva-diff { font-size: .9em; color: var(--text-dim); min-width: 160px; }
+table.pp-pva td.pp-pva-diff.neg { color: var(--neg-text); font-weight: 600; }
+table.pp-pva td.pp-pva-diff.pos { color: var(--pos); font-weight: 600; }
+table.pp-pva td.pp-pva-diff.warn { color: var(--warn-text); font-weight: 600; }
+table.pp-pva tr.pp-pva-total td { border-top: 2px solid var(--text); border-bottom: 0; font-weight: 800; }
+table.pp-pva tr.pp-pva-total td.pp-pva-act { font-size: 1.15em; }
+table.pp-bills tr.pp-tot > td { border-top: 1px solid var(--text); font-weight: 700; padding-top: 7px; padding-bottom: 7px; }
+table.pp-bills tr.pp-tot td.pp-tot-amt { text-align: right; font-variant-numeric: tabular-nums; }
+table.pp-bills tr.pp-grand > td { border-top: 3px double var(--text); font-size: 1.04em; }
+.pp-topay { color: var(--neg-text); font-weight: 700; }
+.pp-notes { margin: 0 18px 10px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.pp-notes[hidden] { display: none; }
+.pp-note-form { display: grid; grid-template-columns: 220px 1fr auto; gap: 8px; align-items: start; margin-bottom: 8px; }
+.pp-note-about, .pp-note-text { font: inherit; padding: 6px 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--text); }
+.pp-note-text { resize: vertical; }
+.pp-note { padding: 6px 0; border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }
+.pp-note-h { display: flex; gap: 8px; align-items: center; font-size: .84em; color: var(--text-dim); }
+.pp-note-h b { color: var(--text); }
+.pp-note-h .btn { margin-left: auto; }
+.pp-note-t { white-space: pre-wrap; margin-top: 2px; }
+.pp-note-empty { font-size: .88em; }
+#ppNotesBtn.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); font-weight: 600; }
+@media (max-width: 900px) { .pp-note-form { grid-template-columns: 1fr; } }

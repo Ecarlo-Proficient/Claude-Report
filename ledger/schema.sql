@@ -310,6 +310,13 @@ CREATE TABLE IF NOT EXISTS waiver (
 -- (= Bill Tracker's hidden _Key), so a mark survives ap_bill_line reloads AND joins
 -- cleanly back to the workbook: the dashboard writes it here instantly, and the next
 -- excel_bill_sync run mirrors it into the workbook's Lien cell. lien '' = cleared.
+CREATE TABLE IF NOT EXISTS project_note (        -- the owner's notes on a job (ledger project page, 2026-09-16)
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_no  TEXT NOT NULL,
+    about       TEXT,                                -- the draw / scope it concerns (free text, optional)
+    text        TEXT NOT NULL,
+    at          TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS bill_mark (
     bill_id     TEXT PRIMARY KEY,      -- QBO bill TxnId (the workbook _Key)
     lien        TEXT,                  -- 'Notice Sent' | 'Lien Filed' | '✓ Released' | '' (cleared)

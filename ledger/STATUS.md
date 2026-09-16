@@ -4,6 +4,20 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-16 (third pass, owner's screenshots) · **Project page.** (1) The "How it's doing" tiles are gone; in their
+  place `_ppProjectedVsActual`: one table, **Projected (WIP master)** next to **Actual (QuickBooks)** row by row -
+  Revenue (contract · billed to date, big), Retainage held, Net billed, Costs (ETC · costs to date, big, over / under
+  budget + % complete), Gross profit, Overhead, Net - with the difference in words; the P&L block below it stays.
+  (2) **RP jobs have no draws - each invoice is a SCOPE** (owner, RP6586: "it's really scopes"): `_draws_by_invoice`
+  (`scopes=`) gives every RP invoice a window from the day after the previous invoice to its own date, and the scope's
+  costs are the tracker bills + sub bills dated inside it; bills after the last invoice sit in "Not yet invoiced". The
+  page says Scope / All scopes / "costs dated …" for RP (`_ppTitle`, `_ppSpan`, `_ppStage`). (3) The Materials /
+  Labor section rows are plain (no tinted rows, no accent edge); the totals sit at the bottom like a sheet -
+  **Materials total**, **Labor total**, **Total** under the Amount column with x/y paid and "$ to pay". (4) **Notes**:
+  a button on the funding tools row opens the notes box - free text + an optional "about" prefilled with the open
+  draw / scope, stamped, deletable; `project_note` table (schema.sql), `/api/project/note` + `/note/delete`, the page
+  payload carries `notes`. (5) **"Show every dollar" is removed everywhere** (project page + the WIP row detail);
+  `trail.js` and `/api/trail` stay for later.
 - 2026-09-16 · **Vendor page = the Bill Tracker filtered to the vendor; client page = the Open invoices filtered to the
   client (owner: "i need to see the invoice it's associated to and if it's been paid. basically the bill tracker within
   here ... vendors where i can dial in by vendor but also have bill tracker be able to filter. same thing for open

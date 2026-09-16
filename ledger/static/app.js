@@ -3151,7 +3151,7 @@ async function openProjectPage(pn) {
   // draw boxes stay on top whatever is open (owner 2026-09-15). filter = all | unpaid (all by default - "i need to be
   // able to see all bills"). sort = vendor (A-Z) | amount (band total) | code | date. payMode = the pay-run controls,
   // off until "Pay bills" is clicked; payDraft = ticks not yet saved (bill_id -> selected).
-  _pp = { d, pn, view: "all", openV: new Set(), filter: "all", sort: "vendor", payMode: false, payDraft: new Map() };
+  _pp = { d, pn, view: "all", openV: new Set(), filter: "all", sort: "vendor", payMode: false, payDraft: new Map(), isRp: /^RP/i.test(pn), notesOpen: false };
   body.innerHTML = "";
   if (!r0.project_name && d.project && d.project.name) $("#recordTitle").textContent = `${pn} · ${d.project.name}`;
   const sec = (title, note) => { const w = document.createElement("section"); w.className = "widget ip-sec";
@@ -3163,16 +3163,8 @@ async function openProjectPage(pn) {
     host.appendChild(strip); };
   // ── 1. how it's doing ──
   const p = d.pnl || {};
-  const s1 = sec("How it's doing", `WIP master report ${r0.report_date ? fmtDate(r0.report_date) : "–"} · QuickBooks costs loaded ${loadedAt("Costs (QBO)") ? fmtDate(loadedAt("Costs (QBO)"), true) : "–"}`);
-  const gp = num(r0.total_contract_price) - num(r0.estimated_total_costs);
-  kpi(s1, [
-    ["Contract", money(p.contract || r0.total_contract_price), r0.approved_cos ? `incl. COs ${money(r0.approved_cos)}` : ""],
-    ["ETC (budget)", money(r0.estimated_total_costs), r0.total_contract_price ? `planned GP ${money(gp)} · ${(gp / num(r0.total_contract_price) * 100).toFixed(1)}%` : ""],
-    ["Costs to date (QuickBooks)", money(p.cost), r0.costs_to_date != null ? `WIP report ${money(r0.costs_to_date)}${_whySince(p, "cost")}` : "", num(p.cost) > num(r0.estimated_total_costs) && r0.estimated_total_costs ? "pnl-kpi-neg" : ""],
-    ["Billed (gross)", money(p.billed_gross), (p.retainage ? `retainage held ${money(p.retainage)} · ` : "") + "WIP report" + _whySince(p, "billed")],
-    ["Net billed", money(p.net_billed), (p.billed_gap ? `WIP report shows ${money(p.billed_gap)} more - Resync` : "QuickBooks invoices · after retainage"), p.billed_gap ? "pnl-kpi-warn" : ""],
-    ["Net (live P&L)", money(p.net), p.net_pct != null ? `${(p.net_pct * 100).toFixed(1)}% of net billed · overhead ${p.overhead_basis || ""}` : "", num(p.net) < 0 ? "pnl-kpi-neg" : "pnl-kpi-pos"],
-  ]);
+  const s1 = sec("How it's doing", `projected = WIP master ${r0.report_date ? fmtDate(r0.report_date) : "–"} · actual = QuickBooks, costs loaded ${loadedAt("Costs (QBO)") ? fmtDate(loadedAt("Costs (QBO)"), true) : "–"}`);
+  s1.appendChild(_ppProjectedVsActual(p, r0, pn));   // what we projected next to what actually happened (owner 2026-09-16: "put what we projected and what the actual are side by side")
   if ((d.rulings || []).length) {   // the owner's standing rulings (job_rulings.json): the why, so nobody re-flags it
     const rb = document.createElement("div"); rb.className = "pp-unlock pp-rulings";
     rb.innerHTML = `<div class="pp-unlock-h">Known - the owner ruled on this job</div>` + d.rulings.map(x =>
@@ -3182,16 +3174,15 @@ async function openProjectPage(pn) {
     s1.appendChild(rb);
   }
   const acts1 = document.createElement("div"); acts1.className = "ip-actions";
-  const trailBtn = document.createElement("button"); trailBtn.className = "btn small"; trailBtn.textContent = "Show every dollar"; trailBtn.onclick = () => openTrail(pn); acts1.appendChild(trailBtn);
   if (r0.project_no) { const dr = document.createElement("button"); dr.className = "btn small"; dr.textContent = "WIP row detail"; dr.onclick = () => openDetail(r0); acts1.appendChild(dr); }
   s1.appendChild(acts1);
   const plWrap = document.createElement("div"); plWrap.className = "ip-top pp-pnl"; plWrap.appendChild(buildPnlGroup(pn)); s1.appendChild(plWrap);   // 3 columns (owner: save vertical space)
   // ── 2. how we get funded ──
   const F = d.funding || {}, nx = F.next_draw;
   const isRp = /^RP/i.test(pn);
-  const nInv = d.draws.filter(x => !x.no_draw && !x.whole_job).length, nNo = d.draws.filter(x => x.no_draw).length;   // the same count the P&L block shows, plus the not-yet-drawn bucket named
+  const nInv = d.draws.filter(x => !x.no_draw).length, nNo = d.draws.filter(x => x.no_draw).length;   // the same count the P&L block shows, plus the not-yet-drawn bucket named
   const owes = d.draws.reduce((s, x) => s + num(x.ar_open), 0);
-  const s2 = sec("How we get funded", (isRp ? "RP bills at completion - the job is one bucket" : `${nInv} draw${nInv === 1 ? "" : "s"} invoiced${nNo ? ` + ${nNo} not yet drawn` : ""}`)
+  const s2 = sec("How we get funded", (isRp ? `${nInv} scope${nInv === 1 ? "" : "s"} invoiced${nNo ? " + bills not yet invoiced" : ""} - an RP job has no draws: each invoice is a scope, its costs the bills dated up to it` : `${nInv} draw${nInv === 1 ? "" : "s"} invoiced${nNo ? ` + ${nNo} not yet drawn` : ""}`)
     + ` · GC owes ${money(owes)} · ${srcText("Bill Tracker", syncedAt("sync-ap"), "loaded")} · ${srcText("QuickBooks invoices", loadedAt("AR (invoices)"), "loaded")}`);
   // Colour encodes OUR side only (owner 2026-09-10: "why is the box red?" - it was red on every
   // awaiting-funding draw, even when nothing blocked it). Red only when we owe money on an earlier
@@ -3224,8 +3215,10 @@ async function openProjectPage(pn) {
   const sseg = document.createElement("div"); sseg.className = "seg"; sseg.id = "ppSortSeg"; tools.appendChild(sseg);
   const exp = document.createElement("button"); exp.type = "button"; exp.className = "btn small"; exp.id = "ppExpand"; exp.onclick = () => { _pp.openV = _pp.openV.has("*") ? new Set() : new Set(["*"]); _renderPpDraws(); }; tools.appendChild(exp);
   const sp = document.createElement("span"); sp.className = "pp-spacer"; tools.appendChild(sp);
+  const nb = document.createElement("button"); nb.type = "button"; nb.className = "btn small"; nb.id = "ppNotesBtn"; nb.onclick = () => { _pp.notesOpen = !_pp.notesOpen; _ppRenderNotes(); }; tools.appendChild(nb);   // owner 2026-09-16: "give me a button to add notes"
   const payBtn = document.createElement("button"); payBtn.type = "button"; payBtn.className = "btn small pp-paybtn"; payBtn.id = "ppPayBtn"; payBtn.onclick = _ppTogglePay; tools.appendChild(payBtn);
   s2.appendChild(tools);
+  const notesBox = document.createElement("div"); notesBox.className = "pp-notes"; notesBox.id = "ppNotes"; notesBox.hidden = true; s2.appendChild(notesBox);
   const paybar = document.createElement("div"); paybar.className = "pp-paybar"; paybar.id = "ppPayBar"; paybar.hidden = true; s2.appendChild(paybar);
   const host = document.createElement("div"); host.id = "ppDraws"; s2.appendChild(host);
   _renderPpDraws();
@@ -3271,6 +3264,72 @@ async function openProjectPage(pn) {
   const qurl = qboCustomerUrl(cid); if (qurl) { const a = document.createElement("a"); a.className = "btn small"; a.href = qurl; a.target = "_blank"; a.rel = "noopener"; a.textContent = "Project in QuickBooks ↗"; acts3.appendChild(a); }
   s3.appendChild(acts3);
 }
+// What we projected (the WIP master: contract, ETC) next to what actually happened (QuickBooks: billed, costs), row by
+// row, the big numbers first (owner 2026-09-16: "remove the big blocks ... make the numbers that are important jump
+// out like billed to date, costs to date, put what we projected and what the actual are side by side").
+function _ppProjectedVsActual(p, r0, pn) {
+  const wrap = document.createElement("div"); wrap.className = "pp-pva-wrap";
+  const t = document.createElement("table"); t.className = "pp-pva";
+  t.innerHTML = `<thead><tr><th class="left"></th><th class="right">Projected <small>WIP master</small></th><th class="right">Actual <small>QuickBooks</small></th><th class="left">Difference</th></tr></thead>`;
+  const tb = document.createElement("tbody");
+  const contract = num(p.contract || r0.total_contract_price), etc = num(r0.estimated_total_costs);
+  const ret = num(p.retainage), netB = num(p.net_billed), cost = num(p.cost);
+  // actual billed = the QuickBooks invoices (net + retainage) when they run past the WIP report's figure (invoices dated after the report)
+  const billedW = num(p.billed_gross), billedG = Math.max(billedW, netB + ret), billedNote = billedG > billedW + 0.5 ? `WIP report ${money(billedW)}` : "";
+  const rate = /^MFD/i.test(pn) ? 0.09 : 0.10;
+  const ohP = contract * rate, gpP = contract - etc, netP = gpP - ohP;
+  const gpA = netB - cost, ohA = num(p.overhead), netA = num(p.net);
+  const pctOf = (v, base) => base ? ` (${(v / base * 100).toFixed(1)}%)` : "";
+  const row = (label, proj, act, diff, opts = {}) => {
+    const tr = document.createElement("tr"); if (opts.cls) tr.className = opts.cls;
+    const l = document.createElement("td"); l.className = "left pp-pva-lab"; l.textContent = label; if (opts.sub) { const s = document.createElement("small"); s.textContent = opts.sub; l.appendChild(s); } tr.appendChild(l);
+    const a = document.createElement("td"); a.className = "right pp-pva-proj"; a.textContent = proj; tr.appendChild(a);
+    const b = document.createElement("td"); b.className = "right pp-pva-act" + (opts.big ? " big" : ""); b.textContent = act; if (opts.actSub) { const s = document.createElement("small"); s.textContent = opts.actSub; b.appendChild(s); } tr.appendChild(b);
+    const c = document.createElement("td"); c.className = "left pp-pva-diff" + (opts.dcls ? " " + opts.dcls : ""); c.textContent = diff || ""; tr.appendChild(c);
+    tb.appendChild(tr);
+  };
+  const left = contract - billedG;
+  row("Revenue", money(contract), money(billedG), left > 0.5 ? `${money(left)} left to bill` : left < -0.5 ? `${money(-left)} billed over the contract` : "billed out",
+      { sub: "contract" + (r0.approved_cos ? ` incl. COs ${money(r0.approved_cos)}` : "") + " · billed to date (gross)", big: true, dcls: left < -0.5 ? "warn" : "", actSub: billedNote });
+  if (ret) row("Retainage held", "", "(" + money(ret) + ")", "", { sub: "held by the GC until release" });
+  row("Net billed", "", money(netB), p.billed_gap ? `WIP report shows ${money(p.billed_gap)} more - Resync` : "", { sub: "the invoices after retainage", dcls: p.billed_gap ? "warn" : "" });
+  const over = cost - etc;
+  row("Costs", money(etc), money(cost), etc ? (over > 0.5 ? `${money(over)} over budget` : `${money(-over)} under budget`) + ` · ${(cost / etc * 100).toFixed(1)}% complete` : "", { sub: "ETC (budget) · costs to date", big: true, dcls: over > 0.5 ? "neg" : "pos" });
+  row("Gross profit", money(gpP) + pctOf(gpP, contract), money(gpA) + pctOf(gpA, netB), etc && netB ? `${gpA - gpP >= 0 ? "+" : "−"}${money(Math.abs(gpA - gpP))} vs projected` : "", { sub: "contract − ETC · net billed − costs", dcls: gpA < 0 ? "neg" : "" });
+  row("Overhead", "(" + money(ohP) + ")", "(" + money(ohA) + ")", "", { sub: p.overhead_basis || `${Math.round(rate * 100)}% of contract` });
+  row("Net", money(netP) + pctOf(netP, contract), money(netA) + (p.net_pct != null ? ` (${(p.net_pct * 100).toFixed(1)}%)` : ""), etc && netB ? `${netA - netP >= 0 ? "+" : "−"}${money(Math.abs(netA - netP))} vs projected` : "", { cls: "pp-pva-total", dcls: netA < 0 ? "neg" : "pos" });
+  t.appendChild(tb); wrap.appendChild(t);
+  return wrap;
+}
+// Notes on the job (owner 2026-09-16: "give me a button to add notes") - free text, stamped, an optional "about" prefilled
+// with the draw / scope that is open. Stored in the ledger (project_note), never QuickBooks.
+function _ppRenderNotes() {
+  const box = $("#ppNotes"), btn = $("#ppNotesBtn"); if (!box || !btn) return;
+  const notes = _pp.d.notes || [];
+  btn.textContent = notes.length ? `Notes · ${notes.length}` : "Add a note"; btn.classList.toggle("on", _pp.notesOpen);
+  box.hidden = !_pp.notesOpen; box.innerHTML = ""; if (!_pp.notesOpen) return;
+  const cur = _pp.view === "all" ? null : _pp.d.draws.find(x => x.matched_invoice === _pp.view);
+  const form = document.createElement("div"); form.className = "pp-note-form";
+  const about = document.createElement("input"); about.type = "text"; about.className = "pp-note-about"; about.placeholder = "about (optional)"; about.value = cur ? _ppTitle(cur) : ""; about.maxLength = 200;
+  const ta = document.createElement("textarea"); ta.className = "pp-note-text"; ta.placeholder = "Write the note…"; ta.rows = 2;
+  const save = document.createElement("button"); save.type = "button"; save.className = "btn small primary"; save.textContent = "Save note";
+  save.onclick = async () => { const text = ta.value.trim(); if (!text) { toast("Write the note first"); ta.focus(); return; } save.disabled = true;
+    let r; try { r = await (await fetch("/api/project/note", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_no: _pp.pn, about: about.value.trim(), text }) })).json(); } catch (e) { r = { error: String(e) }; }
+    save.disabled = false; if (!(r && r.ok)) { toast("NOT saved - " + ((r && r.error) || "could not reach the server"), 5000); return; }
+    _pp.d.notes = [r.note, ...(_pp.d.notes || [])]; toast("Note saved ✓"); _ppRenderNotes(); };
+  form.appendChild(about); form.appendChild(ta); form.appendChild(save); box.appendChild(form);
+  if (!notes.length) { const p = document.createElement("div"); p.className = "dim pp-note-empty"; p.textContent = "No notes on this job yet."; box.appendChild(p); }
+  for (const n of notes) {
+    const row = document.createElement("div"); row.className = "pp-note";
+    const h = document.createElement("div"); h.className = "pp-note-h"; h.innerHTML = `<b>${_ge(fmtDate(n.at, true))}</b>${n.about ? ` · ${_ge(n.about)}` : ""}`;
+    const x = document.createElement("button"); x.type = "button"; x.className = "btn tiny subtle"; x.textContent = "delete"; x.onclick = async () => { if (!confirm("Delete this note?")) return;
+      let r; try { r = await (await fetch("/api/project/note/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: n.id }) })).json(); } catch (e) { r = { error: String(e) }; }
+      if (!(r && r.ok)) { toast("could not delete"); return; } _pp.d.notes = (_pp.d.notes || []).filter(m => m.id !== n.id); _ppRenderNotes(); };
+    h.appendChild(x); row.appendChild(h);
+    const tx = document.createElement("div"); tx.className = "pp-note-t"; tx.textContent = n.text; row.appendChild(tx);
+    box.appendChild(row);
+  }
+}
 // ── project page helpers: what is shown, what is ticked, the pay draft ──
 function _ppBillShown(b) { return _pp.filter === "all" || !b.paid; }
 function _ppBillsOf(dr) { return [...(dr.bills || []), ...(dr.sub_bills || [])]; }
@@ -3279,7 +3338,21 @@ function _ppAllRows(draws) {   // every bill on the given draws as {dr, b, isSub
   for (const dr of draws) { for (const b of (dr.bills || [])) out.push({ dr, b, isSub: false }); for (const b of (dr.sub_bills || [])) out.push({ dr, b, isSub: true }); }
   return out;
 }
-function _ppTitle(dr) { return dr.whole_job ? "Job to date" : drawTitle(dr); }
+function _ppTitle(dr) {   // RP = scopes, not draws (owner 2026-09-16); a scope is named by its invoice
+  if (dr.scope) { if (dr.no_draw) return "Not yet invoiced"; const nos = dr.invoice_nos || (dr.invoice_no ? [dr.invoice_no] : []); return nos.length ? "Scope · Inv " + nos.join(", ") : "Scope"; }
+  return drawTitle(dr);
+}
+function _ppSpan(dr) {   // the window a scope's costs come from ("through 05/12/2026", "05/13/2026 – 06/12/2026", "after 06/12/2026"); draws keep their memo period
+  if (!dr.scope) return drawSpan(dr);
+  const a = dr.period_start, b = dr.period_end;
+  if (!a && !b) return "";
+  if (a === "1900-01-01") return b && b !== "9999-12-31" ? "through " + fmtDate(b) : "";
+  if (b === "9999-12-31") return "after " + fmtDate(new Date(new Date(a).getTime() - 86400000).toISOString().slice(0, 10));
+  return fmtDate(a) + " – " + fmtDate(b);
+}
+function _ppStage(dr) { return dr.scope && dr.no_draw ? "Not yet invoiced" : (dr.stage || ""); }
+function _ppAllLabel() { return _pp.isRp ? "All scopes" : "All draws"; }
+function _ppUnit(n) { return _pp.isRp ? (n === 1 ? "scope" : "scopes") : (n === 1 ? "draw" : "draws"); }
 function _ppInvLabel(dr) { const nos = dr.invoice_nos || (dr.invoice_no ? [dr.invoice_no] : []); return !nos.length ? "" : nos.length === 1 ? "Inv " + nos[0] : `${nos.length} invoices`; }
 function _ppPayable(b) { return !b.paid && b.gates && b.bill_id; }
 function _ppSel(b) { return _pp.payDraft.has(b.bill_id) ? _pp.payDraft.get(b.bill_id) : !!b.pay_selected; }   // effective tick = the draft over the saved run
@@ -3378,21 +3451,21 @@ function _ppTabs(d, nxInv) {
   const mk = (key, lbl, sub, title) => { const b = document.createElement("button"); b.type = "button"; b.className = "pp-tab" + (_pp.view === key ? " on" : "");
     b.innerHTML = `<span>${_ge(lbl)}</span>${sub ? `<small>${_ge(sub)}</small>` : ""}`; b.title = title || ""; b.onclick = () => { _pp.view = key; _renderPpDraws(); _ppScrollDetail(); }; return b; };
   const n = d.draws.filter(x => !x.no_draw).length;
-  strip.appendChild(mk("all", "All draws", `${n} draw${n === 1 ? "" : "s"} · ${_ppAllRows(d.draws).length} bills`, "Every bill on the job, with the draw it sits under"));
+  strip.appendChild(mk("all", _ppAllLabel(), `${n} ${_ppUnit(n)} · ${_ppAllRows(d.draws).length} bills`, `Every bill on the job, with the ${_pp.isRp ? "scope" : "draw"} it sits under`));
   for (const dr of d.draws) {
-    const span = drawSpan(dr);
-    const b = mk(dr.matched_invoice, _ppTitle(dr), dr.no_draw ? `${_ppBillsOf(dr).length} bills` : _ppInvLabel(dr), [span ? "Covers " + span : "", dr.stage || ""].filter(Boolean).join(" · "));
+    const span = _ppSpan(dr);
+    const b = mk(dr.matched_invoice, _ppTitle(dr), dr.no_draw ? `${_ppBillsOf(dr).length} bills` : (dr.scope ? (span || _ppInvLabel(dr)) : _ppInvLabel(dr)), [span ? "Covers " + span : "", _ppStage(dr)].filter(Boolean).join(" · "));
     if (dr.invoice_no && dr.invoice_no === nxInv) b.classList.add("next");
     strip.appendChild(b);
   }
-  const hint = document.createElement("span"); hint.className = "pp-tabs-hint dim"; hint.textContent = "← → flips draws"; strip.appendChild(hint);
+  const hint = document.createElement("span"); hint.className = "pp-tabs-hint dim"; hint.textContent = `← → flips ${_pp.isRp ? "scopes" : "draws"}`; strip.appendChild(hint);
   return strip;
 }
 function _ppScrollDetail() { const el = $("#ppDetail"); if (el) requestAnimationFrame(() => el.scrollIntoView({ behavior: "smooth", block: "start" })); }
 function _ppCoverage(d, nxInv) {
   const wrap = document.createElement("div"); wrap.className = "table-scroll pp-cov-wrap";
   const t = document.createElement("table"); t.className = "grid pp-cov";
-  t.innerHTML = "<thead><tr><th class='left'>Period covered</th><th class='left'>Draw</th><th class='left'>Invoice</th><th class='left'>Date</th><th class='right'>Net billed</th><th class='left'>GC</th><th class='right'>Costs</th><th class='right'>Gross</th><th class='right'>Margin</th><th class='right'>Overhead</th><th class='right'>Net</th><th class='left'>Stage</th></tr></thead>";
+  t.innerHTML = `<thead><tr><th class='left'>${_pp.isRp ? "Costs dated" : "Period covered"}</th><th class='left'>${_pp.isRp ? "Scope" : "Draw"}</th><th class='left'>Invoice</th><th class='left'>Date</th><th class='right'>Net billed</th><th class='left'>GC</th><th class='right'>Costs</th><th class='right'>Gross</th><th class='right'>Margin</th><th class='right'>Overhead</th><th class='right'>Net</th><th class='left'>Stage</th></tr></thead>`;
   const tb = document.createElement("tbody");
   const tot = { income: 0, costs: 0, gross: 0, overhead: 0, net: 0, unbilled: 0 };
   const rt = (v, cls) => { const td = document.createElement("td"); td.className = "right" + (cls ? " " + cls : ""); td.textContent = v; return td; };
@@ -3400,7 +3473,7 @@ function _ppCoverage(d, nxInv) {
     const p = dr.pl || {}; const costs = dr.no_draw ? num(dr.gate_amt) + num(dr.subs_amt) : num(p.costs);
     const tr = document.createElement("tr"); tr.className = "pp-cov-row" + (dr.invoice_no && dr.invoice_no === nxInv ? " next" : "") + (_pp.view === dr.matched_invoice ? " sel" : ""); tr.title = "Open this draw underneath";
     tr.onclick = () => { _pp.view = dr.matched_invoice; _renderPpDraws(); _ppScrollDetail(); };
-    { const td = leftText(drawSpan(dr) || "–"); if (!drawSpan(dr)) td.classList.add("dim"); tr.appendChild(td); }
+    { const td = leftText(_ppSpan(dr) || "–"); if (!_ppSpan(dr)) td.classList.add("dim"); tr.appendChild(td); }
     tr.appendChild(leftText(_ppTitle(dr)));
     { const nos = dr.invoice_nos || (dr.invoice_no ? [dr.invoice_no] : []); const td = leftText(dr.no_draw ? "–" : (nos.join(", ") || "–")); if (nos.length > 1) td.title = `${nos.length} invoices dated the same day - one draw`; tr.appendChild(td); }
     tr.appendChild(leftText(dr.ar_date ? fmtDateShort(dr.ar_date) : "–"));
@@ -3413,19 +3486,21 @@ function _ppCoverage(d, nxInv) {
       tr.appendChild(rt(money(p.overhead))); tr.appendChild(rt(money(p.net), num(p.net) < 0 ? "neg" : "pos"));
       tot.income += num(p.income); tot.costs += costs; tot.gross += num(p.gross); tot.overhead += num(p.overhead); tot.net += num(p.net);
     }
-    { const td = leftText(dr.stage || "–"); td.classList.add("dim"); tr.appendChild(td); }
+    { const td = leftText(_ppStage(dr) || "–"); td.classList.add("dim"); tr.appendChild(td); }
     tb.appendChild(tr);
   }
   const tr = document.createElement("tr"); tr.className = "pp-cov-total pp-cov-row" + (_pp.view === "all" ? " sel" : ""); tr.title = "Every bill on the job underneath";
   tr.onclick = () => { _pp.view = "all"; _renderPpDraws(); _ppScrollDetail(); };
-  tr.appendChild(leftText("")); tr.appendChild(leftText("All draws")); tr.appendChild(leftText("")); tr.appendChild(leftText(""));
+  tr.appendChild(leftText("")); tr.appendChild(leftText(_ppAllLabel())); tr.appendChild(leftText("")); tr.appendChild(leftText(""));
   tr.appendChild(rt(money(tot.income))); tr.appendChild(leftText(""));
   tr.appendChild(rt(money(tot.costs + tot.unbilled)));
   tr.appendChild(rt(money(tot.gross), tot.gross < 0 ? "neg" : "")); tr.appendChild(rt(tot.income ? (tot.gross / tot.income * 100).toFixed(1) + "%" : "–", tot.gross < 0 ? "neg" : ""));
   tr.appendChild(rt(money(tot.overhead))); tr.appendChild(rt(money(tot.net), tot.net < 0 ? "neg" : "pos"));
-  { const td = leftText(tot.unbilled > 0.005 ? `${money(tot.unbilled)} of costs not on a draw yet` : ""); td.classList.add("dim"); tr.appendChild(td); }
+  { const td = leftText(tot.unbilled > 0.005 ? `${money(tot.unbilled)} of costs not ${_pp.isRp ? "invoiced" : "on a draw"} yet` : ""); td.classList.add("dim"); tr.appendChild(td); }
   tb.appendChild(tr); t.appendChild(tb); wrap.appendChild(t);
-  const cap = document.createElement("div"); cap.className = "bills-cap"; cap.textContent = "Period covered = the billing window stated on the invoice · Draw = the month (MFD) or number (CP) on the invoice; invoices dated the same day are one draw · Net billed = the invoices after retainage · Costs = materials we pay + labor dated in the draw period · Overhead = the draw's share · click a row to open that draw underneath.";
+  const cap = document.createElement("div"); cap.className = "bills-cap"; cap.textContent = _pp.isRp
+    ? "An RP job has no draws: each invoice is a scope · Costs dated = the bills (materials we pay + subs) dated after the previous invoice up to this one · Net billed = the invoice after retainage · Overhead = the scope's share · click a row to open that scope underneath."
+    : "Period covered = the billing window stated on the invoice · Draw = the month (MFD) or number (CP) on the invoice; invoices of the same draw are one draw · Net billed = the invoices after retainage · Costs = materials we pay + labor dated in the draw period · Overhead = the draw's share · click a row to open that draw underneath.";
   wrap.appendChild(cap);
   return wrap;
 }
@@ -3469,18 +3544,18 @@ function _ppEquation(cur) {
       }
     } else if (!dr.no_draw) {
       const nos = dr.invoice_nos || (dr.invoice_no ? [dr.invoice_no] : []);
-      const tr = row("", _ppTitle(dr), `${nos.length === 1 ? "invoice " + nos[0] : nos.length + " invoices " + nos.join(", ")}${dr.ar_date ? " · " + fmtDateShort(dr.ar_date) : ""}`, dr.billed, "pp-eq-inv pp-eq-click", gcNode(dr.gc_paid, dr.ar_open));
-      tr.title = "Open this draw"; tr.onclick = () => { _pp.view = dr.matched_invoice; _renderPpDraws(); _ppScrollDetail(); };
+      const tr = row("", _ppTitle(dr), `${dr.scope ? "" : (nos.length === 1 ? "invoice " + nos[0] : nos.length + " invoices " + nos.join(", "))}${dr.ar_date ? (dr.scope ? "invoiced " : " · ") + fmtDateShort(dr.ar_date) : ""}${dr.scope && _ppSpan(dr) ? " · costs " + _ppSpan(dr) : ""}`, dr.billed, "pp-eq-inv pp-eq-click", gcNode(dr.gc_paid, dr.ar_open));
+      tr.title = `Open this ${dr.scope ? "scope" : "draw"}`; tr.onclick = () => { _pp.view = dr.matched_invoice; _renderPpDraws(); _ppScrollDetail(); };
     }
     income += num(dr.billed); mat += num(dr.gate_amt); lab += num(dr.subs_amt);
     nMat += (dr.bills || []).filter(b => b.gates).length; nLab += (dr.sub_bills || []).length;
     if (dr.pl) { oh += num(dr.pl.overhead); basis = basis || dr.pl.overhead_basis || ""; }
   }
   const gcAll = draws.filter(x => !x.no_draw), owed = gcAll.reduce((s, x) => s + num(x.ar_open), 0);
-  row("=", "Income", cur ? (cur.whole_job ? "net billed on the job" : "net billed on this draw") : "net billed on the job", income, "pp-eq-sum", gcAll.length ? gcNode(owed <= 0.005, owed) : null);
+  row("=", "Income", cur ? (cur.scope ? "net billed on this scope" : "net billed on this draw") : "net billed on the job", income, "pp-eq-sum", gcAll.length ? gcNode(owed <= 0.005, owed) : null);
   const gcPays = draws.reduce((s, dr) => s + (dr.bills || []).filter(b => !b.gates).length, 0);
   row("−", "Materials", `${nMat} bill${nMat === 1 ? "" : "s"} we pay · Bill Tracker${gcPays ? ` · ${gcPays} pumping bill${gcPays === 1 ? "" : "s"} the GC pays left out` : ""}`, -mat);
-  row("−", "Labor (subs)", `${nLab} bill${nLab === 1 ? "" : "s"} · QuickBooks${cur && !cur.whole_job && !cur.no_draw ? ", dated in the draw period" : ""}`, -lab);
+  row("−", "Labor (subs)", `${nLab} bill${nLab === 1 ? "" : "s"} · QuickBooks${cur && !cur.no_draw ? (cur.scope ? ", dated in this scope's window" : ", dated in the draw period") : ""}`, -lab);
   const gross = income - mat - lab;
   row("=", "Gross profit", income ? `${(gross / income * 100).toFixed(1)}% of income` : "", gross, "pp-eq-sum" + (gross < -0.005 ? " neg" : ""));
   row("−", "Overhead", basis || (/^MFD/.test(_pp.pn) ? "9% of income (MFD)" : "10% of income"), -oh);
@@ -3502,9 +3577,9 @@ function _renderPpDraws() {
   const det = document.createElement("div"); det.className = "pp-detail" + (cur && cur.invoice_no && cur.invoice_no === nxInv ? " next" : ""); det.id = "ppDetail";
   // the head: which draw is open, its invoices, what it covers, where it stands
   { const h = document.createElement("div"); h.className = "pp-det-h";
-    if (!cur) h.innerHTML = `<b>All draws</b> <span class="dim">· every bill on the job, with the draw it sits under</span>`;
+    if (!cur) h.innerHTML = `<b>${_ppAllLabel()}</b> <span class="dim">· every bill on the job, with the ${_pp.isRp ? "scope" : "draw"} it sits under</span>`;
     else { const nos = cur.invoice_nos || (cur.invoice_no ? [cur.invoice_no] : []);
-      const bits = [cur.no_draw ? "bills the Bill Tracker has not matched to a draw yet" : nos.length ? (nos.length === 1 ? "Invoice " + nos[0] : "Invoices " + nos.join(", ")) : "", drawSpan(cur) ? "covers " + drawSpan(cur) : "", cur.ar_date ? "invoiced " + fmtDate(cur.ar_date) : "", cur.stage || ""].filter(Boolean);
+      const bits = [cur.no_draw ? (cur.scope ? "bills dated after the last invoice - not invoiced yet" : "bills the Bill Tracker has not matched to a draw yet") : nos.length ? (nos.length === 1 ? "Invoice " + nos[0] : "Invoices " + nos.join(", ")) : "", _ppSpan(cur) ? (cur.scope ? "costs dated " : "covers ") + _ppSpan(cur) : "", cur.ar_date ? "invoiced " + fmtDate(cur.ar_date) : "", _ppStage(cur)].filter(Boolean);
       h.innerHTML = `<b>${_ge(_ppTitle(cur))}</b> <span class="dim">· ${bits.map(_ge).join(" · ")}</span>`;
       for (const [k, word] of [["pushed_in", "moved into this draw from the one before"], ["pushed_out", "moved on to the next draw"]]) { const p = cur[k]; if (!p) continue;
         const cap = document.createElement("div"); cap.className = "bills-cap pp-push"; cap.textContent = `${p.count} bill${p.count === 1 ? "" : "s"} · ${money(p.total)} ${word}: ${p.note || ""}`; h.appendChild(cap); } }
@@ -3512,6 +3587,7 @@ function _renderPpDraws() {
   det.appendChild(_ppEquation(cur));
   det.appendChild(_ppBillsTable(cur));
   host.appendChild(det);
+  _ppRenderNotes();
 }
 function _ppBillsTable(cur) {
   const d = _pp.d, rows = _ppAllRows(cur ? [cur] : d.draws).filter(x => _ppBillShown(x.b));
@@ -3555,20 +3631,30 @@ function _ppBillsTable(cur) {
       if (isSub && !b.paid) pill.title = "No QuickBooks bill payment applied to this bill in the loaded window (this year)"; st.appendChild(pill); tr.appendChild(st); }
     { const dc = leftText(b.description || "–"); dc.className += " inv-memo"; dc.title = b.description || ""; if (!b.description) dc.classList.add("dim"); tr.appendChild(dc); }
     if (pay) { const wc = document.createElement("td"); wc.className = "left";
-      if (dr.no_draw || dr.whole_job || isSub) wc.textContent = "–";
+      if (dr.no_draw || dr.scope || isSub) wc.textContent = "–";
       else { const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = !!b.waiver; cb.title = "Tick when the vendor's unconditional waiver is in hand";
         cb.onclick = (e) => e.stopPropagation(); cb.onchange = () => { setWaiver(dr, b, cb); b.waiver = cb.checked; }; wc.appendChild(cb); if (!b.waiver && !b.paid) { const s = document.createElement("span"); s.className = "inv-late"; s.textContent = " needed"; wc.appendChild(s); } }
       tr.appendChild(wc); }
     return tr;
   };
-  const sectionRow = (label, xs, sect) => {   // the section total (Materials $X / Labor $Y) with its own select-all in pay mode
+  const iAmt = (pay ? 1 : 0) + 2;   // the Amount column's index - the totals line up under it
+  const sectionRow = (label, xs, sect) => {   // a plain section label (owner 2026-09-16: no highlighted rows); the totals sit at the bottom
     const bills = xs.map(x => x.b);
-    const paidCt = bills.filter(b => b.paid).length, tot = bills.reduce((s, b) => s + num(b.amount), 0), owed = bills.reduce((s, b) => s + (b.paid ? 0 : num(b.open)), 0);
     const sr = document.createElement("tr"); sr.className = "pp-sect";
     if (pay) { const cbTd = document.createElement("td"); cbTd.className = "left"; cbTd.appendChild(_ppCheck(bills, label, `Tick every unpaid ${label.toLowerCase()} bill shown`)); sr.appendChild(cbTd); }
     const td = document.createElement("td"); td.className = "left"; td.colSpan = COLS - (pay ? 1 : 0);
-    td.innerHTML = `<span class="pp-sect-lab">${_ge(label)}</span><span class="ip-paid ${paidCt === bills.length ? "ok" : "due"}">${_ge(money(tot))} · ${paidCt}/${bills.length} paid${owed > 0.005 ? " · " + _ge(money(owed)) + " to pay" : ""}</span>` + (sect === "labor" ? ` <span class="dim">QuickBooks bills · paid = a bill payment applied this year</span>` : ` <span class="dim">Bill Tracker</span>`);
+    td.innerHTML = `<span class="pp-sect-lab">${_ge(label)}</span>` + (sect === "labor" ? ` <span class="dim">QuickBooks bills · paid = a bill payment applied this year</span>` : ` <span class="dim">Bill Tracker</span>`);
     sr.appendChild(td); tbody.appendChild(sr);
+  };
+  const totalRow = (label, xs, grand) => {   // Materials total / Labor total / Total - amount under Amount, what is still to pay beside it, like a real sheet
+    const bills = xs.map(x => x.b), paidCt = bills.filter(b => b.paid).length;
+    const tot = bills.reduce((s, b) => s + num(b.amount), 0), owed = bills.reduce((s, b) => s + (b.paid ? 0 : num(b.open)), 0);
+    const tr = document.createElement("tr"); tr.className = "pp-tot" + (grand ? " pp-grand" : "");
+    const l = document.createElement("td"); l.className = "left"; l.colSpan = iAmt; l.textContent = label; tr.appendChild(l);
+    const a = document.createElement("td"); a.className = "ip-amt pp-tot-amt"; a.textContent = money(tot); tr.appendChild(a);
+    const r = document.createElement("td"); r.className = "left"; r.colSpan = COLS - iAmt - 1;
+    r.innerHTML = `<span class="${paidCt === bills.length ? "ip-paid ok" : "dim"}">${paidCt}/${bills.length} paid</span>` + (owed > 0.005 ? ` · <span class="pp-topay">${_ge(money(owed))} to pay</span>` : "");
+    tr.appendChild(r); tbody.appendChild(tr);
   };
   const groupedRows = (xs, sect) => {   // bands by vendor (A to Z or by total) or by cost code; collapsed until opened
     const keyOf = _pp.sort === "code" ? (x => codeOf(x.b)) : (x => x.b.vendor || "?");
@@ -3596,8 +3682,9 @@ function _ppBillsTable(cur) {
   const flatRows = (xs) => { for (const x of [...xs].sort((p, q) => (p.b.bill_date || "").localeCompare(q.b.bill_date || ""))) tbody.appendChild(billRow(x, false)); };
   const mat = rows.filter(x => !x.isSub), subs = rows.filter(x => x.isSub);
   const flat = _pp.sort === "date";
-  if (mat.length) { sectionRow("Materials", mat, "materials"); if (flat) flatRows(mat); else groupedRows(mat, "materials"); }
-  if (subs.length) { sectionRow("Labor (subs)", subs, "labor"); if (flat) flatRows(subs); else groupedRows(subs, "labor"); }
+  if (mat.length) { sectionRow("Materials", mat, "materials"); if (flat) flatRows(mat); else groupedRows(mat, "materials"); totalRow("Materials total", mat); }
+  if (subs.length) { sectionRow("Labor (subs)", subs, "labor"); if (flat) flatRows(subs); else groupedRows(subs, "labor"); totalRow("Labor total", subs); }
+  if (mat.length && subs.length) totalRow("Total", rows, true);
   thead.hidden = !flat && !_pp.openV.has("*") && ![..._pp.openV].some(k => k.startsWith(`${cur ? cur.matched_invoice : "all"}|`));   // headers only once bills show
   table.appendChild(thead); table.appendChild(tbody); box.appendChild(table);
   return box;
@@ -3610,7 +3697,7 @@ function _ppMarkBlockers() {
 }
 function _ppExport() {
   const d = _pp.d, rows = [];
-  for (const dr of d.draws) for (const b of _ppBillsOf(dr)) if (b.bill_id && _ppSel(b)) rows.push([dr.no_draw ? "No draw yet" : dr.whole_job ? "Job to date" : "Invoice " + (dr.invoice_no || "") + drawTag(dr), b.vendor, b.bill_ref, b.bill_date, num(b.amount), num(b.open), b.pay_date ? "Paid " + fmtDate(b.pay_date) : (b.pay_status || (b.paid ? "Paid" : "Open")), dr.sub_bills && dr.sub_bills.includes(b) ? "labor" : (b.waiver ? "received" : "needed")]);
+  for (const dr of d.draws) for (const b of _ppBillsOf(dr)) if (b.bill_id && _ppSel(b)) rows.push([dr.no_draw ? (dr.scope ? "Not yet invoiced" : "No draw yet") : dr.scope ? _ppTitle(dr) : "Invoice " + (dr.invoice_no || "") + drawTag(dr), b.vendor, b.bill_ref, b.bill_date, num(b.amount), num(b.open), b.pay_date ? "Paid " + fmtDate(b.pay_date) : (b.pay_status || (b.paid ? "Paid" : "Open")), dr.sub_bills && dr.sub_bills.includes(b) ? "labor" : (b.waiver ? "received" : "needed")]);
   if (!rows.length) { toast("Nothing ticked to pay on this job yet - tick bills (or Mark blockers) first"); return; }
   const unsaved = _pp.payDraft.size ? `\n\n${_pp.payDraft.size} tick(s) are not saved yet - the export follows what is ticked on screen.` : "";
   if (!confirm(`Export ${rows.length} bill${rows.length === 1 ? "" : "s"} ticked to pay (${money(rows.reduce((s, r) => s + num(r[5]), 0))} open) as the pay-list report?${unsaved}`)) return;
@@ -5735,11 +5822,7 @@ function openDetail(r) {
     body.appendChild(g);
   }
   body.appendChild(buildPnlGroup(r.project_no));
-  if (window.openTrail) {   // the money trail (trail.js): every QBO line behind Costs / Billed, with the running total
-    const g = document.createElement("div"); g.className = "dgroup"; const b = document.createElement("button"); b.className = "btn";
-    b.textContent = "Show every dollar"; b.title = "Every QBO line behind Costs to date and Billed to date, with a running total against the budget";
-    b.onclick = () => { closePanels(); openTrail(r.project_no); }; g.appendChild(b); body.appendChild(g);
-  }
+  // "Show every dollar" (the money trail) is parked everywhere for now (owner 2026-09-16: "not good ... remove for now"); trail.js stays
   const ap = AP.by_project && AP.by_project[r.project_no];
   if (ap) {
     const g = document.createElement("div"); g.className = "dgroup";

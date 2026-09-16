@@ -1664,15 +1664,31 @@ def _recount_draw(d: dict) -> None:
     d["stage"] = stage
 
 
-def _draws_by_invoice(con, pn: str, division, raw: list, whole_job: bool) -> list:
+def _project_notes(con, pn: str) -> list:
+    """The owner's notes on a job (project_note): free text, an optional 'about' (a draw / scope), newest first."""
+    try:
+        return [dict(r) for r in con.execute("SELECT id, project_no, about, text, at FROM project_note WHERE project_no = ? ORDER BY at DESC", (pn,))]
+    except sqlite3.OperationalError:
+        return []
+
+
+def _next_day(iso: str) -> str:
+    try:
+        return (_dt.date.fromisoformat(iso[:10]) + _dt.timedelta(days=1)).isoformat()
+    except ValueError:
+        return iso
+
+
+def _draws_by_invoice(con, pn: str, division, raw: list, scopes: bool) -> list:
     """The job's draws keyed by the DRAW the invoices belong to (owner 2026-09-15: "MFD192 needs to
     combine multiple invoices into one draw ... they are all the same date, combine the income into one
     income"). Every invoice on the job is income; invoices naming the same draw month (MFD: "September
     Draw 2026" on the base, HUDSONWOOD and OFFSITE contracts) or, failing a named month, dated the same
     day are ONE draw - the Bill Tracker matches the bills to one of them. The draw's income is the sum of its invoices, its bills the union of what
     the tracker matched to any of them; an invoice with no matched bill still shows (income with
-    nothing against it yet). RP (whole_job): RP bills at completion, no draws - the job is ONE bucket
-    holding every invoice and every bill, so the page shows all of them with the same equation."""
+    nothing against it yet). RP (scopes): an RP job has no draws (owner 2026-09-16, RP6586: "it's really
+    scopes") - each invoice is a SCOPE and its costs are every bill (tracker and sub) dated after the previous
+    invoice up to its own date; bills dated after the last invoice sit in a "not yet invoiced" bucket."""
     invs = _project_invoices(con, pn)
     by_inv: dict = {}
     for d in raw:
@@ -1699,7 +1715,7 @@ def _draws_by_invoice(con, pn: str, division, raw: list, whole_job: bool) -> lis
         return f"{m.group(1)} {m.group(2)}" if m else (iv["txn_date"] or iv["doc_number"])
 
     for iv in invs:
-        key = "job" if whole_job else _key(iv)
+        key = _key(iv)
         g = groups.get(key)
         if g is None:
             g = groups[key] = _new(iv["doc_number"])
@@ -1714,12 +1730,7 @@ def _draws_by_invoice(con, pn: str, division, raw: list, whole_job: bool) -> lis
                     g[k] = m[k]
             for b in m["bills"]:
                 _add_bill(g, b)
-    if whole_job:   # RP: the tracker's bills on the job (never draw-matched) all sit in the one bucket
-        g = groups.get("job")
-        if g is None:
-            g = groups["job"] = _new(None)
-            out.append(g)
-        g["whole_job"] = True
+    if scopes:   # RP: each invoice is a scope; its costs are the tracker bills dated after the previous invoice up to its own date
         try:
             rows = con.execute(
                 "SELECT vendor, bill_ref, MAX(bill_total) amount, MAX(open_balance) open_bal, pay_status, invoice_status, "
@@ -1727,11 +1738,31 @@ def _draws_by_invoice(con, pn: str, division, raw: list, whole_job: bool) -> lis
                 "FROM ap_bill_line WHERE project_no = ? GROUP BY vendor, bill_ref", (pn,)).fetchall()
         except sqlite3.OperationalError:
             rows = []
-        for r in rows:
-            _add_bill(g, {"vendor": r["vendor"], "bill_ref": r["bill_ref"], "amount": r["amount"] or 0, "open": r["open_bal"] or 0,
-                          "pay_status": r["pay_status"], "invoice_status": r["invoice_status"], "gc_paid": r["gc"],
-                          "pay_date": r["pd"], "bill_date": r["bd"], "qbo_link": r["qbo_link"], "waiver_key": None,
-                          "waiver": False, "gates": _gates_stage(r["vendor"]), "pushed": "", "pushed_note": ""})
+        tracker = [{"vendor": r["vendor"], "bill_ref": r["bill_ref"], "amount": r["amount"] or 0, "open": r["open_bal"] or 0,
+                    "pay_status": r["pay_status"], "invoice_status": r["invoice_status"], "gc_paid": r["gc"],
+                    "pay_date": r["pd"], "bill_date": r["bd"], "qbo_link": r["qbo_link"], "waiver_key": None,
+                    "waiver": False, "gates": _gates_stage(r["vendor"]), "pushed": "", "pushed_note": ""} for r in rows]
+        prev = "1900-01-01"
+        for g in sorted(out, key=lambda x: (x["invoices"][0]["txn_date"] or "")):
+            end = max((i["txn_date"] or "") for i in g["invoices"]) or prev
+            g["scope"] = True
+            g["period"] = (prev if prev == "1900-01-01" else _next_day(prev), end)
+            for b in tracker:
+                if g["period"][0] <= (b["bill_date"] or "") <= end:
+                    _add_bill(g, b)
+            prev = end
+        late = [b for b in tracker if (b["bill_date"] or "") > prev]
+        try:   # sub bills dated after the last invoice need the bucket too (they are matched by period in the page loop)
+            last_sub = con.execute("SELECT MAX(txn_date) FROM cost_line WHERE is_sub=1 AND project_no = ?", (pn,)).fetchone()[0] or ""
+        except sqlite3.OperationalError:
+            last_sub = ""
+        if late or not out or last_sub > prev:
+            g = _new(None)
+            g.update({"no_draw": True, "scope": True, "scope_open": True, "matched_invoice": f"(not yet invoiced) - {pn}",
+                      "period": (_next_day(prev) if prev != "1900-01-01" else prev, "9999-12-31")})
+            for b in late:
+                _add_bill(g, b)
+            out.append(g)
     for lst in by_inv.values():        # bills matched to an invoice the ledger has no row for: as they are
         out.extend(lst)
     out.extend(d for d in raw if d.get("no_draw"))
@@ -1739,9 +1770,10 @@ def _draws_by_invoice(con, pn: str, division, raw: list, whole_job: bool) -> lis
         g.pop("_seen", None)
         if not g.get("matched_invoice"):
             iv0 = (g.get("invoices") or [{}])[0]
-            g["matched_invoice"] = "Job to date" if g.get("whole_job") else f"{iv0.get('doc_number', '')} - {iv0.get('memo_head', '')}".strip(" -")
-        period = next(((a, b) for a, b in (_draw_period_range(i["memo"]) for i in (g.get("invoices") or [])) if a and b), None)
-        g["period"] = period or _draw_period_range(g["matched_invoice"] or "")
+            g["matched_invoice"] = f"{iv0.get('doc_number', '')} - {iv0.get('memo_head', '')}".strip(" -")
+        if not g.get("scope"):
+            period = next(((a, b) for a, b in (_draw_period_range(i["memo"]) for i in (g.get("invoices") or [])) if a and b), None)
+            g["period"] = period or _draw_period_range(g["matched_invoice"] or "")
         _recount_draw(g)
     return out
 
@@ -1761,7 +1793,7 @@ def _fetch_project_page(con, pn: str) -> dict:
     division = pr["division"] if pr else pnl.get("division")
     is_rp = pn.startswith("RP")
     raw = [] if is_rp else [d for d in _fetch_draws(con, limit=100000)["draws"] if (d.get("project_no") or "").upper() == pn]
-    draws = _draws_by_invoice(con, pn, division, raw, whole_job=is_rp)   # same-day invoices = one draw; RP = one bucket
+    draws = _draws_by_invoice(con, pn, division, raw, scopes=is_rp)   # same-draw invoices = one draw; RP = scopes between invoice dates
     # draw order = invoice date, then recency; the "no draw yet" bucket last
     draws.sort(key=lambda d: (1 if d.get("no_draw") else 0, d.get("ar_date") or d.get("recency") or ""))
     pay = bill_marks.read_pay_marks()
@@ -1806,11 +1838,10 @@ def _fetch_project_page(con, pn: str) -> dict:
             b["description"] = (e["desc"] if e else None)
             b["att"] = _att_counts(con).get(("Bill", str(bid)), 0) if bid else 0
         p0, p1 = d.get("period") or _draw_period_range(d.get("matched_invoice") or "")
-        whole = bool(d.get("whole_job"))            # RP: every sub bill on the job, no period
         subs: dict = {}
-        if (p0 and p1) or whole:
+        if p0 and p1:
             for ln in sub_lines:
-                if not whole and not (p0 <= (ln["txn_date"] or "") <= p1):
+                if not (p0 <= (ln["txn_date"] or "") <= p1):
                     continue
                 sb = subs.get(ln["qbo_txn_id"])
                 if not sb:
@@ -1890,6 +1921,7 @@ def _fetch_project_page(con, pn: str) -> dict:
     draws.sort(key=lambda d: (1 if d.get("no_draw") else 0, d.get("ar_date") or d.get("recency") or ""), reverse=True)
     return {"ok": True, "project": {"project_no": pn, "name": pr["name"] if pr else None, "division": pr["division"] if pr else pnl.get("division")},
             "pnl": pnl, "draws": draws, "funding": funding,
+            "notes": _project_notes(con, pn),     # the owner's notes on the job (owner 2026-09-16: "give me a button to add notes")
             "rulings": job_rulings.for_job(pn),   # the owner's standing rulings on this job (known loss / accepted overrun)
             "audits": _audits_for(pn)}            # every Bill Tracker audit finding on this job (owner 2026-09-08: "if the project is in any audit page, have it there")
 
@@ -2695,6 +2727,10 @@ class Handler(BaseHTTPRequestHandler):
             self._save_pay_run()
         elif p == "/api/pay-run/clear":   # empty the whole pay run (after the check run is done)
             self._clear_pay_run()
+        elif p == "/api/project/note":    # a ledger write - a note on a job (project_note)
+            self._project_note()
+        elif p == "/api/project/note/delete":
+            self._project_note_delete()
         elif p == "/api/pnl/open":        # open the P&L workbook (or ?folder=1 → its folder), cross-platform
             self._pnl_open(self._query().get("proj", ""), folder=self._query().get("folder") == "1")
         elif p == "/api/job/open":        # open the SOURCE job folder (Synology CP/RP, OneDrive MFD)
@@ -3234,6 +3270,47 @@ class Handler(BaseHTTPRequestHandler):
             d = _ensure_lien_vendor_dir(vendor)
             folder = str(d) if d is not None else None
         self._json({"ok": True, "bill_id": bill_id, "lien": lien, "folder": folder})
+
+    def _project_note(self):
+        """Add a note on a job: free text + an optional 'about' (the draw / scope it concerns). Local, never QBO."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except (ValueError, json.JSONDecodeError):
+            return self._json({"error": "bad request"}, 400)
+        pn = str(body.get("project_no") or "").strip().upper()
+        text = str(body.get("text") or "").strip()[:4000]
+        about = str(body.get("about") or "").strip()[:200]
+        if not _PROJ_RE.match(pn) or not text:
+            return self._json({"error": "project and text required"}, 400)
+        now = _dt.datetime.now().isoformat(timespec="seconds")
+        try:
+            con = sqlite3.connect(self.db_path)
+            con.execute("CREATE TABLE IF NOT EXISTS project_note (id INTEGER PRIMARY KEY AUTOINCREMENT, project_no TEXT NOT NULL, "
+                        "about TEXT, text TEXT NOT NULL, at TEXT NOT NULL)")
+            cur = con.execute("INSERT INTO project_note (project_no, about, text, at) VALUES (?,?,?,?)", (pn, about, text, now))
+            con.commit(); nid = cur.lastrowid; con.close()
+        except sqlite3.OperationalError as e:
+            return self._json({"error": f"write failed: {e}"}, 500)
+        self._json({"ok": True, "note": {"id": nid, "project_no": pn, "about": about, "text": text, "at": now}})
+
+    def _project_note_delete(self):
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except (ValueError, json.JSONDecodeError):
+            return self._json({"error": "bad request"}, 400)
+        try:
+            nid = int(body.get("id"))
+        except (TypeError, ValueError):
+            return self._json({"error": "id required"}, 400)
+        try:
+            con = sqlite3.connect(self.db_path)
+            n = con.execute("DELETE FROM project_note WHERE id = ?", (nid,)).rowcount
+            con.commit(); con.close()
+        except sqlite3.OperationalError as e:
+            return self._json({"error": f"write failed: {e}"}, 500)
+        self._json({"ok": True, "deleted": n})
 
     def _save_pay_run(self):
         """Persist the check-run worksheet: which bills to pay + a partial amount override.
