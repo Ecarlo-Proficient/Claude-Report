@@ -5,6 +5,13 @@ to this tool. Tool-only scope: no business/owner analyses or dollar-exposure
 findings here — those live in the owner's vault.
 
 ## DONE / FINALIZED
+- **Abatix Corp parser added (2026-09-16).** New template `vendor_abatix`
+  (`ABATIX_SIG` = the doubled "Invoice Amount" header; parser reads Invoice Date |
+  Due Date | Invoice No | PO | Amount Due | Enclosed No). All 3 filed Abatix
+  statements tie out exactly (452.49 / 1,691.42 / 2,069.75); no other vendor
+  mis-routes to it. `--refresh` now includes a no-recon month when its PDF matches
+  a supported template (so a newly-added parser is picked up), and still skips
+  unsupported source-only months (Void Forms etc.) rather than loudly re-failing.
 - **Refresh-in-place + Teams task cards - the fix/refresh loop (2026-09-16, owner).**
   Closes the "who re-runs, and how does nobody forget" gap without migrating to
   Synology (deferred). The loop: clerk pings the owner -> owner runs it -> the

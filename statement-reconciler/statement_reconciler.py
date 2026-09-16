@@ -568,6 +568,7 @@ TEMPLATE_LABELS = {
     "vendor_cowtown":            "Vendor Statement, past-due letter (PDF — Job | Inv. No. | Inv. Date | Due Date | Inv. Amount | Balance)",
     "vendor_sunbelt":            "Vendor Statement, Sunbelt Rentals (PDF — Date | Invoice | Job Description | Amount Due)",
     "vendor_croell":             "Vendor Statement, Croell Inc (PDF — Date | Cd | Invoice | Description | Amount | Balance doubled register/remittance layout)",
+    "vendor_abatix":             "Vendor Statement, Abatix Corp (PDF — Invoice Date | Due Date | Invoice No | PO | Amount Due | Enclosed No)",
 }
 
 
@@ -607,6 +608,8 @@ def detect_template(text: str) -> str:
     # tabular/columnar sigs (its "Finance Charge" wording trips columnar).
     if CROELL_SIG.search(text):
         return "vendor_croell"
+    if ABATIX_SIG.search(text):
+        return "vendor_abatix"
     # Vendor tabular statement (Date Invoice Due Date Amount ... Balance header)
     if VENDOR_STMT_TABULAR_SIG.search(text):
         return "vendor_stmt_tabular"
@@ -817,6 +820,9 @@ BURNCO_SIG  = re.compile(r"Delivery Address\s+PO Number\s+Type", re.I)
 CINTAS_SIG  = re.compile(r"DATE\s+SOLD-TO\s+DESCRIPTION\s+REFERENCE\s+AMOUNT DUE\s+DUE DATE", re.I)
 COWTOWN_SIG = re.compile(r"Inv\.\s*No\.\s+Inv\.\s*Date\s+Due Date", re.I)
 SUNBELT_SIG = re.compile(r"DATE\s+INVOICE\s+JOB\s+DESCRIPTION\s+AMOUNT\s+DUE", re.I)
+# Abatix Corp — columnar statement, distinctive doubled "Invoice Amount" header
+# (Invoice Date | Due Date | Invoice No | PO | Amount Due | Enclosed #).
+ABATIX_SIG = re.compile(r"Invoice\s+Due\s+Invoice\s+Amount\s+Invoice\s+Amount", re.I)
 
 # ── Template: Croell Inc statement (added 2026-08-12) ─────────────────
 # pdfplumber merges the left register and the right remittance stub onto one
@@ -928,6 +934,30 @@ def parse_statement_cintas(full_text: str) -> Tuple[str, str, float, List[StmtLi
             continue
         lines.append(StmtLine(date=_norm_date(m["d"]), ref=m["ref"],
                               amount=float(m["amt"].replace(",", ""))))
+    if not amt_due:
+        amt_due = round(sum(l.amount for l in lines), 2)
+    return "", stmt_date, amt_due, lines
+
+
+def parse_statement_abatix(full_text: str) -> Tuple[str, str, float, List[StmtLine]]:
+    """Abatix Corp columnar statement:
+       Invoice Date | Due Date | Invoice No | PO Number | Amount Due | Enclosed No
+    The Amount Due (e.g. '2,069.75') is the net per invoice; the trailing Enclosed
+    number is the invoice # repeated. Tie-out = sum of Amount Due = Total."""
+    stmt_date = _norm_date(_grab(r"As of Date:\s*(\d{1,2}/\d{1,2}/\d{4})", full_text))
+    amt_due = 0.0
+    m = re.search(r"Total Amount Due:\s*([\d,]+\.\d{2})", full_text, re.I)
+    if m:
+        amt_due = float(m.group(1).replace(",", ""))
+    rx = re.compile(r"^(?P<d>\d{1,2}/\d{1,2}/\d{4})\s+\d{1,2}/\d{1,2}/\d{4}\s+"
+                    r"(?P<ref>\d+)\s+.*?\s+(?P<amt>-?[\d,]+\.\d{2})\s+\d+\s*$")
+    lines: List[StmtLine] = []
+    for ln in full_text.splitlines():
+        m2 = rx.match(ln.strip())
+        if not m2:
+            continue
+        lines.append(StmtLine(date=_norm_date(m2["d"]), ref=m2["ref"],
+                              amount=float(m2["amt"].replace(",", ""))))
     if not amt_due:
         amt_due = round(sum(l.amount for l in lines), 2)
     return "", stmt_date, amt_due, lines
@@ -1097,6 +1127,8 @@ def parse_statement(path: Path) -> Tuple[str, str, float, List[StmtLine]]:
         result = parse_statement_sunbelt(full_text)
     elif template == "vendor_croell":
         result = parse_statement_croell(full_text)
+    elif template == "vendor_abatix":
+        result = parse_statement_abatix(full_text)
     else:
         # No supported template detected — return empty so the caller surfaces
         # the unsupported-template error with the full list of supported formats.
@@ -3358,13 +3390,8 @@ def _gather_open_sources(root: Path, inbox: Path) -> List[Path]:
             if not mon.is_dir() or re.search(r"\bDONE\b", mon.name, re.I):
                 continue                      # skip finalized months
             month_files = list(mon.iterdir())
-            # Only re-check months that were actually reconciled before. A month
-            # with source statements but NO reconciliation was never machine-
-            # reconciled (e.g. an unsupported vendor format handled by hand) -
-            # refreshing it just re-fails, so skip it.
-            if not any(f.name.startswith("Statement_Reconciliation_")
-                       and f.suffix.lower() == ".xlsx" for f in month_files):
-                continue
+            has_recon = any(f.name.startswith("Statement_Reconciliation_")
+                            and f.suffix.lower() == ".xlsx" for f in month_files)
             for f in sorted(month_files):
                 if not f.is_file():
                     continue
@@ -3373,8 +3400,21 @@ def _gather_open_sources(root: Path, inbox: Path) -> List[Path]:
                     continue
                 if n.startswith("Statement_Reconciliation_"):
                     continue                  # that's the output, not a source
-                if f.suffix.lower() in INBOX_SUPPORTED_EXTS:
+                if f.suffix.lower() not in INBOX_SUPPORTED_EXTS:
+                    continue
+                # Re-check a source when its month was already reconciled (fast
+                # path) OR when it's a PDF that now matches a supported template
+                # (so a newly-added parser like Abatix gets picked up). A source
+                # with no recon and no supported template (e.g. Void Forms, an
+                # unsupported vendor handled by hand) is skipped - no loud re-fail.
+                if has_recon:
                     out.append(f)
+                elif f.suffix.lower() == ".pdf":
+                    try:
+                        if detect_template(_pdf_text(f)):
+                            out.append(f)
+                    except Exception:
+                        pass
     return out
 
 
