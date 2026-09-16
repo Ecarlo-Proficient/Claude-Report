@@ -1767,3 +1767,48 @@ table.pp-bills tr.pp-grand > td { border-top: 3px double var(--text); font-size:
 .pp-note-empty { font-size: .88em; }
 #ppNotesBtn.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); font-weight: 600; }
 @media (max-width: 900px) { .pp-note-form { grid-template-columns: 1fr; } }
+
+/* ── project page, fourth pass (owner 2026-09-16): the P&L look on top, groups that stand apart, the bill viewer ── */
+table.pp-pva { min-width: 720px; width: 100%; }
+table.pp-pva th { font-size: .78em; text-transform: none; letter-spacing: 0; font-weight: 600; padding: 2px 14px 6px 0; border-bottom: 1px dashed var(--border); }
+table.pp-pva td { border-bottom: 1px dashed var(--border); padding: 9px 14px 9px 0; }
+table.pp-pva td.pp-pva-lab { font-weight: 500; color: var(--text); font-size: 1.02em; }
+table.pp-pva td.pp-pva-lab small { font-size: max(.78em, 12px); }
+table.pp-pva td.pp-pva-proj { font-weight: 400; color: var(--text); }
+table.pp-pva td.pp-pva-act { font-weight: 800; }
+table.pp-pva td.pp-pva-act.big { font-size: 1.35em; }
+table.pp-pva td.pp-pva-diff { min-width: 220px; }
+.pp-diff-txt { display: block; font-variant-numeric: tabular-nums; font-weight: 600; }
+table.pp-pva td.pp-pva-diff.pos .pp-diff-txt { color: var(--pos); }
+table.pp-pva td.pp-pva-diff.neg .pp-diff-txt { color: var(--neg-text); }
+table.pp-pva td.pp-pva-diff.neutral .pp-diff-txt { color: var(--text); }
+.pp-bar { display: block; height: 6px; width: 160px; margin-top: 4px; border-radius: 3px; background: color-mix(in srgb, var(--border) 70%, transparent); overflow: hidden; }
+.pp-bar i { display: block; height: 100%; border-radius: 3px; background: var(--text-dim); }
+table.pp-pva td.pp-pva-diff.pos .pp-bar i { background: var(--pos); }
+table.pp-pva td.pp-pva-diff.neg .pp-bar i { background: var(--neg); }
+table.pp-pva td.pp-pva-diff.neutral .pp-bar i { background: var(--accent); }
+table.pp-pva tr.pp-pva-total td { border-top: 2px solid var(--text); border-bottom: 0; }
+tr.pp-sect > td { border-top: 3px solid var(--text); padding-top: 14px; padding-bottom: 6px; }
+tr.pp-sect .pp-sect-lab { font-size: .95em; color: var(--text); letter-spacing: .08em; }
+table.pp-bills tr.pp-tot > td { border-bottom: 2px solid var(--text); }
+table.pp-bills tr.pp-gap > td { height: 18px; border: 0; background: transparent; padding: 0; }
+.bv-dlg { width: min(1500px, 96vw); height: min(90vh, 980px); }
+.bv-body { display: grid; grid-template-columns: minmax(360px, 34%) 1fr; gap: 14px; flex: 1 1 auto; min-height: 0; }
+.bv-info { overflow: auto; padding-right: 6px; }
+.bv-scan { display: grid; grid-template-rows: auto 1fr; gap: 8px; min-height: 0; }
+.bv-scan .att-list { flex-direction: row; flex-wrap: wrap; }
+.bv-scan .att-list[hidden] { display: none; }
+.bv-kv .drow { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; border-bottom: 1px dashed var(--border); }
+.bv-kv .dk { color: var(--text-dim); }
+.bv-kv .dv { text-align: right; font-weight: 600; }
+.bv-kv .dv.bv-big { font-size: 1.3em; font-weight: 800; }
+.bv-kv .dv.neg { color: var(--neg-text); } .bv-kv .dv.pos { color: var(--pos); }
+.bv-lines { margin: 10px 0; font-size: .9em; width: 100%; }
+.bv-lines tr.bv-tot td { font-weight: 700; border-top: 2px solid var(--text); }
+.bv-pos { font-size: .86em; color: var(--text-dim); min-width: 52px; text-align: center; }
+.att-head h3 { margin-left: 8px; }
+.pp-eq-toggle { cursor: pointer; user-select: none; }
+.pp-eq-toggle:hover { color: var(--accent); }
+.pp-eq-caret { color: var(--text-dim); font-size: .9em; margin-left: 2px; }
+table.pp-eq tr.pp-eq-fold td.pp-eq-lab { padding-left: 18px; font-weight: 400; }
+table.pp-eq tr.pp-eq-fold td { border-bottom: 1px dashed color-mix(in srgb, var(--border) 70%, transparent); }

@@ -1849,8 +1849,10 @@ def _fetch_project_page(con, pn: str) -> dict:
                     sb = subs[ln["qbo_txn_id"]] = {"vendor": ln["vendor"], "bill_id": str(ln["qbo_txn_id"]), "txn_type": ln["txn_type"] or "Bill",
                                                     "bill_ref": ln["doc_number"], "bill_date": ln["txn_date"], "memo": ln["memo"], "amount": 0.0,
                                                     "paid": bool(pd), "pay_date": pd[0] if pd else None, "paid_amt": pd[1] if pd else 0,
-                                                    "pay_selected": bool(pay.get(str(ln["qbo_txn_id"]))), "codes": set(), "gates": True}
+                                                    "pay_selected": bool(pay.get(str(ln["qbo_txn_id"]))), "codes": set(), "gates": True, "_descs": []}
                 sb["amount"] += float(ln["amount"] or 0)
+                if ln.get("description") and ln["description"] not in sb["_descs"]:
+                    sb["_descs"].append(ln["description"])
                 if ln["cost_code"]:
                     sb["codes"].add(ln["cost_code"])
         for sb in subs.values():
@@ -1860,7 +1862,7 @@ def _fetch_project_page(con, pn: str) -> dict:
         d["subs_amt"] = round(sum(x["amount"] for x in d["sub_bills"]), 2)
         d["subs_unpaid_amt"] = round(sum(x["amount"] for x in d["sub_bills"] if not x["paid"]), 2)
         for sb in d["sub_bills"]:
-            sb["description"] = sb.get("memo") or (codes_by_txn.get(sb["bill_id"], {}).get("desc"))
+            sb["description"] = "; ".join(sb.pop("_descs", [])) or (codes_by_txn.get(sb["bill_id"], {}).get("desc")) or sb.get("memo")   # the LINE description, never the memo (owner 2026-09-16)
             sb["att"] = _att_counts(con).get(("Purchase" if sb.get("txn_type") == "Expense" else "Bill", sb["bill_id"]), 0)
 
         gate = [b for b in d["bills"] if b["gates"]]
@@ -2559,6 +2561,56 @@ class Handler(BaseHTTPRequestHandler):
     def _query(self) -> dict:
         return {k: v[0] for k, v in parse_qs(urlparse(self.path).query).items()}
 
+    def _bill_info(self, q: dict) -> None:
+        """Everything the ledger holds on one bill, for the viewer beside its scan (owner 2026-09-16: "a bigger
+        version of the bill info so we see all and can flip through multiple bills"): the header from cost_line
+        (+ the Bill Tracker row when it has one: pay status, invoice, approval, lien) and every line."""
+        bid = str(q.get("id") or "").strip()
+        if not bid.isdigit():
+            return self._json({"ok": False, "error": "bad transaction id"}, 400)
+        con = _connect(self.db_path)
+        try:
+            have = {r[1] for r in con.execute("PRAGMA table_info(cost_line)")}
+            doc = "doc_number" if "doc_number" in have else "NULL"
+            memo = "memo" if "memo" in have else "NULL"
+            tot = "bill_total" if "bill_total" in have else "NULL"
+            lines = [dict(r) for r in con.execute(
+                f"SELECT qbo_line_id, line_no, txn_type, txn_date, vendor, {doc} doc_number, {memo} memo, {tot} bill_total, "
+                "project_no, cost_code, account, description, amount, is_sub FROM cost_line WHERE qbo_txn_id = ? "
+                "ORDER BY line_no, qbo_line_id", (bid,))]
+            trk = con.execute(
+                "SELECT vendor, bill_ref, bill_date, bill_total, open_balance, pay_status, pay_date, approved, lien_status, "
+                "invoice_status, invoice_no, gc_paid_date, project_no, description, line_amount FROM ap_bill_line "
+                "WHERE qbo_link LIKE ? ORDER BY line_amount DESC", (f"%txnId={bid}%",)).fetchall()
+            inv = None
+            if trk and trk[0]["invoice_no"]:
+                r = con.execute("SELECT doc_number, amount, balance, status, txn_date, qbo_txn_id FROM billing_event WHERE doc_number = ?",
+                                (str(trk[0]["invoice_no"]).strip(),)).fetchone()
+                inv = dict(r) if r else None
+            proj_customer = _project_customer_map(con)
+        except sqlite3.OperationalError as e:
+            con.close()
+            return self._json({"ok": False, "error": str(e)}, 500)
+        con.close()
+        if not lines and not trk:
+            return self._json({"ok": False, "error": "this bill is not in the ledger (run the cost / AP loads)"})
+        h = lines[0] if lines else {}
+        t0 = dict(trk[0]) if trk else {}
+        projects = sorted({ln["project_no"] for ln in lines if ln.get("project_no")} | {r["project_no"] for r in trk if r["project_no"]})
+        if not lines:   # a tracker-only bill: its lines are the tracker rows
+            lines = [{"description": r["description"], "project_no": r["project_no"], "amount": r["line_amount"], "cost_code": None, "account": None} for r in trk]
+        self._json({"ok": True, "id": bid, "txn_type": h.get("txn_type") or "Bill",
+                    "vendor": h.get("vendor") or t0.get("vendor"), "bill_ref": h.get("doc_number") or t0.get("bill_ref"),
+                    "date": h.get("txn_date") or t0.get("bill_date"), "memo": h.get("memo"),
+                    "total": h.get("bill_total") if h.get("bill_total") is not None else (t0.get("bill_total") if t0 else round(sum(float(ln.get("amount") or 0) for ln in lines), 2)),
+                    "open": t0.get("open_balance"), "pay_status": t0.get("pay_status"), "pay_date": t0.get("pay_date"),
+                    "approved": t0.get("approved"), "lien_status": t0.get("lien_status"), "invoice_status": t0.get("invoice_status"),
+                    "invoice_no": t0.get("invoice_no"), "gc_paid_date": t0.get("gc_paid_date"), "invoice": inv,
+                    "projects": projects, "clients": sorted({proj_customer[p] for p in projects if proj_customer.get(p)}),
+                    "is_sub": bool(any(ln.get("is_sub") for ln in lines)),
+                    "lines": [{"description": ln.get("description"), "cost_code": ln.get("cost_code"), "account": ln.get("account"),
+                               "project_no": ln.get("project_no"), "amount": ln.get("amount")} for ln in lines]})
+
     def _attachment(self, q: dict) -> None:
         """Resolve a bill's QBO scan link(s) on demand - subprocess the loader (never an
         import), which prints JSON {ok, files:[{name,url}]} with fresh TempDownloadUris."""
@@ -2684,6 +2736,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "findings": [], "error": f"audit read failed: {e}"})
         elif path == "/api/healthtab":     # the Health tab (company-health metric layer, live)
             self._healthtab()
+        elif path == "/api/bill/info":     # the bill viewer: header + every line (description, cost code, project, amount) from the ledger
+            self._bill_info(self._query())
         elif path == "/api/attachment":    # a bill's scan link(s), resolved fresh from QBO on click
             self._attachment(self._query())
         elif path == "/api/subloc/project":  # on-demand: one project's LOC event chain (the source)

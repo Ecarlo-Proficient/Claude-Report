@@ -750,12 +750,80 @@ function qboBillHref(link) {
 // Every transaction row gets the same 📎 (owner 2026-09-03: "every transaction needs an attachment
 // that we can view on the ledger and open"): `attBtn(type, id, n)` shows the count from the ledger's
 // attachment index and opens the viewer - fresh QBO links are fetched on click (they expire in minutes).
-function attBtn(type, id, n, title) {
+function attBtn(type, id, n, title, ctx) {   // ctx = {items: [{type, id, n, title}], index} - the bills to flip through in the viewer
   const b = document.createElement("button"); b.type = "button"; b.className = "att-btn" + (n ? "" : " none");
-  b.textContent = n > 1 ? "📎" + n : "📎"; b.title = n ? `${n} attachment${n === 1 ? "" : "s"} in QuickBooks - click to view` : "No attachment on file in QuickBooks";
-  if (n && id) b.onclick = (e) => { e.stopPropagation(); openAttachmentViewer(type, String(id), title || "", n); };
+  b.textContent = n > 1 ? "📎" + n : "📎"; b.title = n ? `${n} attachment${n === 1 ? "" : "s"} in QuickBooks - click to view the bill and its scan` : "No attachment on file in QuickBooks";
+  if (id && (n || (ctx && ctx.items && ctx.items.length))) { b.disabled = false; b.onclick = (e) => { e.stopPropagation(); if (ctx && ctx.items && ctx.items.length) openBillViewer(ctx.items, ctx.index || 0); else openBillViewer([{ type, id: String(id), n, title: title || "" }], 0); }; }
   else b.disabled = true;
   return b;
+}
+// The bill VIEWER (owner 2026-09-16: "a bigger version of the bill info so we see all and can flip through multiple
+// bills without clicking out of it"): the bill's header, every line (description · cost code · project · amount), the
+// Bill Tracker's pay / invoice / approval / lien state, and the scan beside it; ← → flip through the list handed in.
+let _bv = null;
+async function openBillViewer(items, index) {
+  _bv = { items, i: Math.max(0, Math.min(index || 0, items.length - 1)) };
+  let ov = $("#attViewer");
+  if (!ov) { ov = document.createElement("div"); ov.id = "attViewer"; ov.className = "xdlg-ov"; document.body.appendChild(ov); ov.onclick = (e) => { if (e.target === ov) { ov.remove(); _bv = null; } }; }
+  if (!window.__bvKeys) { window.__bvKeys = true; document.addEventListener("keydown", (e) => { if (!_bv || !$("#attViewer")) return; if (e.key === "ArrowRight") _bvGo(1); else if (e.key === "ArrowLeft") _bvGo(-1); else if (e.key === "Escape") { $("#attViewer").remove(); _bv = null; } else return; e.preventDefault(); }); }
+  _bvRender();
+}
+function _bvGo(step) { if (!_bv) return; const n = _bv.i + step; if (n < 0 || n >= _bv.items.length) return; _bv.i = n; _bvRender(); }
+async function _bvRender() {
+  const ov = $("#attViewer"); if (!ov || !_bv) return;
+  const it = _bv.items[_bv.i], many = _bv.items.length > 1;
+  ov.innerHTML = `<div class="xdlg att-dlg bv-dlg" role="dialog">
+    <div class="att-head"><button class="btn small" id="bvPrev" ${_bv.i === 0 ? "disabled" : ""} title="Previous bill (←)">←</button><span class="bv-pos">${many ? `${_bv.i + 1} of ${_bv.items.length}` : ""}</span><button class="btn small" id="bvNext" ${_bv.i >= _bv.items.length - 1 ? "disabled" : ""} title="Next bill (→)">→</button>
+      <h3 id="bvTitle">${_ge(it.title || (it.type + " " + it.id))}</h3><span class="dim" id="attStatus">loading…</span><button class="btn small" id="attClose">Close</button></div>
+    <div class="bv-body"><div class="bv-info" id="bvInfo"><div class="tr-note">Loading the bill…</div></div><div class="bv-scan"><div class="att-list" id="attList"></div><div class="att-view" id="attView"><div class="tr-note">Fetching the scan from QuickBooks…</div></div></div></div></div>`;
+  $("#attClose").onclick = () => { ov.remove(); _bv = null; };
+  $("#bvPrev").onclick = () => _bvGo(-1); $("#bvNext").onclick = () => _bvGo(1);
+  const mine = _bv.i;
+  // the bill's info from the ledger, and the scan from QuickBooks, side by side
+  fetch(`/api/bill/info?id=${encodeURIComponent(it.id)}`).then(r => r.json()).then(b => {
+    if (!_bv || _bv.i !== mine) return;
+    const host = $("#bvInfo"); if (!host) return; host.innerHTML = "";
+    if (!b || !b.ok) { host.innerHTML = `<div class="tr-note">${_ge((b && b.error) || "no bill info")}</div>`; return; }
+    $("#bvTitle").textContent = `${b.vendor || ""} · bill ${b.bill_ref || it.id}`;
+    const kv = document.createElement("div"); kv.className = "bv-kv";
+    const add = (k, v, cls) => { if (v == null || v === "") return; const r = document.createElement("div"); r.className = "drow"; const a = document.createElement("span"); a.className = "dk"; a.textContent = k; const c = document.createElement("span"); c.className = "dv" + (cls ? " " + cls : ""); if (v instanceof Node) c.appendChild(v); else c.textContent = v; r.appendChild(a); r.appendChild(c); kv.appendChild(r); };
+    add("Vendor", b.vendor); add("Bill #", b.bill_ref); add("Date", b.date ? fmtDate(b.date) : null); add("Amount", money(b.total), "bv-big");
+    if (b.open != null) add("Open", money(b.open), num(b.open) > 0.005 ? "neg" : "pos");
+    add("Paid", b.pay_date ? "Paid " + fmtDate(b.pay_date) : (b.pay_status || (b.is_sub ? "see QuickBooks (sub bill)" : null)));
+    if (b.invoice_no) { const s = document.createElement("span"); s.textContent = `Invoice ${b.invoice_no}`; if (b.invoice) { const paid = (b.invoice.balance || 0) <= 0.005; s.appendChild(document.createTextNode(" · ")); s.appendChild(stText(paid ? "GC paid" : "GC owes " + money(b.invoice.balance), paid ? "st-ok" : "st-warn")); } add("On invoice", s); }
+    if (b.invoice_status) add("Tracker", b.invoice_status);
+    if (b.approved) add("Approved", b.approved === "approved" ? "Yes" : b.approved);
+    if (b.lien_status) add("Lien", b.lien_status);
+    add("Project", (b.projects || []).join(", ") || null); add("Client", (b.clients || []).join(", ") || null);
+    if (b.memo) add("Memo", b.memo);
+    host.appendChild(kv);
+    const t = document.createElement("table"); t.className = "grid bv-lines";
+    t.innerHTML = "<thead><tr><th class='left'>Line item</th><th class='left'>Cost code</th><th class='left'>Project</th><th class='right'>Amount</th></tr></thead>";
+    const tb = document.createElement("tbody");
+    for (const ln of (b.lines || [])) { const tr = document.createElement("tr");
+      tr.appendChild(leftText(ln.description || "–"));
+      { const cc = document.createElement("td"); cc.className = "left"; if (ln.cost_code) { const ch = document.createElement("span"); ch.className = "codechip"; ch.textContent = ln.cost_code; cc.appendChild(ch); } else { cc.textContent = ln.account ? ln.account.split(":").pop().trim() : "–"; cc.classList.add("dim"); } tr.appendChild(cc); }
+      tr.appendChild(leftText(ln.project_no || "–"));
+      tr.appendChild(rightText(money(ln.amount)));
+      tb.appendChild(tr); }
+    const tot = document.createElement("tr"); tot.className = "bv-tot"; tot.innerHTML = `<td class="left" colspan="3">${(b.lines || []).length} line${(b.lines || []).length === 1 ? "" : "s"}</td><td class="right">${_ge(money((b.lines || []).reduce((s, l) => s + num(l.amount), 0)))}</td>`; tb.appendChild(tot);
+    t.appendChild(tb); host.appendChild(t);
+    const a = document.createElement("a"); a.className = "btn small"; a.href = qboUrl(b.txn_type === "Expense" ? "expense" : "bill", it.id); a.target = "_blank"; a.rel = "noopener"; a.textContent = "Open in QuickBooks ↗"; host.appendChild(a);
+  }).catch(() => { const host = $("#bvInfo"); if (host) host.innerHTML = `<div class="tr-note">could not load the bill</div>`; });
+  let r;
+  try { r = await (await fetch(`/api/attachment?id=${encodeURIComponent(it.id)}&type=${encodeURIComponent(it.type || "Bill")}`)).json(); }
+  catch (e) { r = { ok: false, error: String(e) }; }
+  if (!_bv || _bv.i !== mine) return;
+  const files = (r && r.files) || [];
+  const st = $("#attStatus"), list = $("#attList"), view = $("#attView"); if (!st) return;
+  if (!r || !r.ok || !files.length) { st.textContent = (r && r.error) || (it.n ? "The file(s) counted here were deleted in QuickBooks since the last sync - Resync to refresh the count" : "No scan on file"); view.innerHTML = `<div class="tr-note">${_ge(st.textContent)}</div>`; return; }
+  st.textContent = `${files.length} file${files.length === 1 ? "" : "s"} · links expire in a few minutes`;
+  const show = (f, btn) => { list.querySelectorAll(".att-file").forEach(x => x.classList.toggle("on", x === btn));
+    const isImg = /\.(png|jpe?g|gif|webp|heic)(\?|$)/i.test(f.name || ""); const isPdf = /\.pdf(\?|$)/i.test(f.name || "");
+    view.innerHTML = `<div class="att-tools"><b>${_ge(f.name || "attachment")}</b><a class="btn small" href="${_ge(f.url)}" target="_blank" rel="noopener">Open in a new tab ↗</a><a class="btn small" href="${_ge(f.url)}" download>Download</a></div>`
+      + (isImg ? `<img class="att-img" src="${_ge(f.url)}" alt="">` : `<iframe class="att-frame" src="${_ge(f.url)}${isPdf ? "#toolbar=1" : ""}" title="attachment"></iframe>`); };
+  files.forEach((f, k) => { const b = document.createElement("button"); b.type = "button"; b.className = "att-file"; b.textContent = f.name || ("file " + (k + 1)); b.onclick = () => show(f, b); list.appendChild(b); if (k === 0) show(f, b); });
+  list.hidden = files.length < 2;
 }
 async function openAttachmentViewer(type, id, title, expected) {
   let ov = $("#attViewer");
@@ -1850,7 +1918,10 @@ function billRow(b) {
   } else { ptd.appendChild(document.createTextNode("–")); }
   tr.appendChild(ptd);
   // Bill # (QBO deep link)
-  tr.appendChild(qboLinkCell(b.bill_ref, qboBillHref(b.qbo_link), "Open this bill in QuickBooks")); if (b.att) { const _ab = attBtn("Bill", b.bill_id || (qboBillHref(b.qbo_link) || "").replace(/.*txnId=(\d+).*/, "$1"), b.att, `${b.vendor || ""} · bill ${b.bill_ref || ""}`); _ab.style.marginLeft = "6px"; tr.lastElementChild.appendChild(_ab); }
+  tr.appendChild(qboLinkCell(b.bill_ref, qboBillHref(b.qbo_link), "Open this bill in QuickBooks"));
+  { const bid = b.bill_id || (qboBillHref(b.qbo_link) || "").replace(/.*txnId=(\d+).*/, "$1");
+    if (bid) { const same = (BILLS || []).filter(y => y.vendor === b.vendor && y.bill_id).map(y => ({ type: "Bill", id: String(y.bill_id), n: y.att || 0, title: `${y.vendor || ""} · bill ${y.bill_ref || ""}` }));
+      const _ab = attBtn("Bill", bid, b.att, `${b.vendor || ""} · bill ${b.bill_ref || ""}`, { items: same, index: Math.max(0, same.findIndex(y => y.id === String(bid))) }); _ab.style.marginLeft = "6px"; tr.lastElementChild.appendChild(_ab); } }
   tr.appendChild(_billInvCell(b));   // the draw / AR invoice this bill is matched to, and whether the GC paid it (owner 2026-09-16)
   // Date (MM/DD/YY) + age badge once a bill is 2+ months old
   const dtd = document.createElement("td"); dtd.className = "left bill-date";
@@ -3163,7 +3234,7 @@ async function openProjectPage(pn) {
     host.appendChild(strip); };
   // ── 1. how it's doing ──
   const p = d.pnl || {};
-  const s1 = sec("How it's doing", `projected = WIP master ${r0.report_date ? fmtDate(r0.report_date) : "–"} · actual = QuickBooks, costs loaded ${loadedAt("Costs (QBO)") ? fmtDate(loadedAt("Costs (QBO)"), true) : "–"}`);
+  const s1 = sec("Profit & Loss", `projected = WIP master ${r0.report_date ? fmtDate(r0.report_date) : "–"} · actual = QuickBooks, costs loaded ${loadedAt("Costs (QBO)") ? fmtDate(loadedAt("Costs (QBO)"), true) : "–"}`);
   s1.appendChild(_ppProjectedVsActual(p, r0, pn));   // what we projected next to what actually happened (owner 2026-09-16: "put what we projected and what the actual are side by side")
   if ((d.rulings || []).length) {   // the owner's standing rulings (job_rulings.json): the why, so nobody re-flags it
     const rb = document.createElement("div"); rb.className = "pp-unlock pp-rulings";
@@ -3270,7 +3341,7 @@ async function openProjectPage(pn) {
 function _ppProjectedVsActual(p, r0, pn) {
   const wrap = document.createElement("div"); wrap.className = "pp-pva-wrap";
   const t = document.createElement("table"); t.className = "pp-pva";
-  t.innerHTML = `<thead><tr><th class="left"></th><th class="right">Projected <small>WIP master</small></th><th class="right">Actual <small>QuickBooks</small></th><th class="left">Difference</th></tr></thead>`;
+  t.innerHTML = `<thead><tr><th class="left"></th><th class="right">Projected</th><th class="right">Actual</th><th class="left">Difference</th></tr></thead>`;
   const tb = document.createElement("tbody");
   const contract = num(p.contract || r0.total_contract_price), etc = num(r0.estimated_total_costs);
   const ret = num(p.retainage), netB = num(p.net_billed), cost = num(p.cost);
@@ -3280,24 +3351,33 @@ function _ppProjectedVsActual(p, r0, pn) {
   const ohP = contract * rate, gpP = contract - etc, netP = gpP - ohP;
   const gpA = netB - cost, ohA = num(p.overhead), netA = num(p.net);
   const pctOf = (v, base) => base ? ` (${(v / base * 100).toFixed(1)}%)` : "";
-  const row = (label, proj, act, diff, opts = {}) => {
+  // one row = label · projected · actual (bold) · the difference as a number, the % off, and a little bar of how far off
+  // the projection it is (owner 2026-09-16: "real difference conditional format cell little graph in the cell")
+  const row = (label, proj, act, delta, opts = {}) => {
     const tr = document.createElement("tr"); if (opts.cls) tr.className = opts.cls;
     const l = document.createElement("td"); l.className = "left pp-pva-lab"; l.textContent = label; if (opts.sub) { const s = document.createElement("small"); s.textContent = opts.sub; l.appendChild(s); } tr.appendChild(l);
-    const a = document.createElement("td"); a.className = "right pp-pva-proj"; a.textContent = proj; tr.appendChild(a);
+    const a = document.createElement("td"); a.className = "right pp-pva-proj"; a.textContent = proj == null ? "" : proj; tr.appendChild(a);
     const b = document.createElement("td"); b.className = "right pp-pva-act" + (opts.big ? " big" : ""); b.textContent = act; if (opts.actSub) { const s = document.createElement("small"); s.textContent = opts.actSub; b.appendChild(s); } tr.appendChild(b);
-    const c = document.createElement("td"); c.className = "left pp-pva-diff" + (opts.dcls ? " " + opts.dcls : ""); c.textContent = diff || ""; tr.appendChild(c);
-    tb.appendChild(tr);
+    const c = document.createElement("td"); c.className = "left pp-pva-diff";
+    if (delta && delta.base) {   // delta = {v: actual - projected, base: projected, good: +1 (over is good) | -1 (over is bad) | 0 (neutral), word}
+      const pct = delta.v / delta.base * 100, good = delta.good === 0 ? "" : ((delta.v >= 0) === (delta.good > 0) ? "pos" : "neg");
+      c.classList.add(good || "neutral");
+      const txt = document.createElement("span"); txt.className = "pp-diff-txt"; txt.textContent = `${delta.v >= 0 ? "+" : "−"}${money(Math.abs(delta.v))} · ${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%${delta.word ? " · " + delta.word : ""}`;
+      const bar = document.createElement("span"); bar.className = "pp-bar"; const fill = document.createElement("i"); fill.style.width = Math.min(100, Math.abs(pct)).toFixed(1) + "%"; bar.appendChild(fill); bar.title = `${Math.abs(pct).toFixed(1)}% off the projection`;
+      c.appendChild(txt); c.appendChild(bar);
+    } else if (delta && delta.word) { c.textContent = delta.word; if (delta.cls) c.classList.add(delta.cls); }
+    tr.appendChild(c); tb.appendChild(tr);
   };
   const left = contract - billedG;
-  row("Revenue", money(contract), money(billedG), left > 0.5 ? `${money(left)} left to bill` : left < -0.5 ? `${money(-left)} billed over the contract` : "billed out",
-      { sub: "contract" + (r0.approved_cos ? ` incl. COs ${money(r0.approved_cos)}` : "") + " · billed to date (gross)", big: true, dcls: left < -0.5 ? "warn" : "", actSub: billedNote });
-  if (ret) row("Retainage held", "", "(" + money(ret) + ")", "", { sub: "held by the GC until release" });
-  row("Net billed", "", money(netB), p.billed_gap ? `WIP report shows ${money(p.billed_gap)} more - Resync` : "", { sub: "the invoices after retainage", dcls: p.billed_gap ? "warn" : "" });
+  row("Contract · Billed to date", money(contract), money(billedG), { v: billedG - contract, base: contract, good: 0, word: left > 0.5 ? `${money(left)} left to bill` : (left < -0.5 ? "billed past the contract" : "billed out") },
+      { sub: (r0.approved_cos ? `contract incl. COs ${money(r0.approved_cos)}` : "") , big: true, actSub: billedNote });
+  if (ret) row("Retainage held", null, "(" + money(ret) + ")", null);
+  row("Net billed", null, money(netB), p.billed_gap ? { word: `WIP report shows ${money(p.billed_gap)} more - Resync`, cls: "warn" } : null, { sub: "after retainage" });
   const over = cost - etc;
-  row("Costs", money(etc), money(cost), etc ? (over > 0.5 ? `${money(over)} over budget` : `${money(-over)} under budget`) + ` · ${(cost / etc * 100).toFixed(1)}% complete` : "", { sub: "ETC (budget) · costs to date", big: true, dcls: over > 0.5 ? "neg" : "pos" });
-  row("Gross profit", money(gpP) + pctOf(gpP, contract), money(gpA) + pctOf(gpA, netB), etc && netB ? `${gpA - gpP >= 0 ? "+" : "−"}${money(Math.abs(gpA - gpP))} vs projected` : "", { sub: "contract − ETC · net billed − costs", dcls: gpA < 0 ? "neg" : "" });
-  row("Overhead", "(" + money(ohP) + ")", "(" + money(ohA) + ")", "", { sub: p.overhead_basis || `${Math.round(rate * 100)}% of contract` });
-  row("Net", money(netP) + pctOf(netP, contract), money(netA) + (p.net_pct != null ? ` (${(p.net_pct * 100).toFixed(1)}%)` : ""), etc && netB ? `${netA - netP >= 0 ? "+" : "−"}${money(Math.abs(netA - netP))} vs projected` : "", { cls: "pp-pva-total", dcls: netA < 0 ? "neg" : "pos" });
+  row("ETC · Costs to date", money(etc), money(cost), etc ? { v: over, base: etc, good: -1, word: (over > 0.5 ? "over budget" : "under budget") + ` · ${(cost / etc * 100).toFixed(1)}% complete` } : null, { big: true });
+  row("Gross profit", money(gpP) + pctOf(gpP, contract), money(gpA) + pctOf(gpA, netB), etc && netB ? { v: gpA - gpP, base: Math.abs(gpP) || contract, good: 1 } : null, { sub: "contract − ETC · net billed − costs", dcls: gpA < 0 ? "neg" : "" });
+  row("Overhead", "(" + money(ohP) + ")", "(" + money(ohA) + ")", null, { sub: p.overhead_basis || `${Math.round(rate * 100)}% of contract` });
+  row("Net", money(netP) + pctOf(netP, contract), money(netA) + (p.net_pct != null ? ` (${(p.net_pct * 100).toFixed(1)}%)` : ""), etc && netB ? { v: netA - netP, base: Math.abs(netP) || contract, good: 1 } : null, { cls: "pp-pva-total" });
   t.appendChild(tb); wrap.appendChild(t);
   return wrap;
 }
@@ -3534,25 +3614,41 @@ function _ppEquation(cur) {
   };
   const gcNode = (paid, bal) => { const s = document.createElement("span"); s.className = paid ? "ar-paid" : "ar-open"; s.textContent = paid ? "GC paid" : "GC owes " + money(bal); return s; };
   let income = 0, mat = 0, lab = 0, nMat = 0, nLab = 0, oh = 0, basis = "";
+  let incomeLabel = null, incomeDetail = null;   // a single invoice folds into the Income line (owner 2026-09-16: "Income | Inv # = this")
+  const folded = [];   // the invoice / draw lines that sit under the Income toggle when there is more than one
   for (const dr of draws) {
-    if (cur) {
+    if (cur && (dr.invoices || []).length === 1) {
+      const iv = dr.invoices[0];
+      incomeLabel = document.createElement("span"); incomeLabel.textContent = "Income · ";
+      const a = document.createElement("a"); a.href = "#"; a.className = "qbo-link"; a.textContent = `Invoice ${iv.doc_number}`; a.title = "Open this invoice's page";
+      a.onclick = (e) => { e.preventDefault(); if (typeof openInvoicePage === "function") openInvoicePage({ doc_number: iv.doc_number, project_no: _pp.pn }); }; incomeLabel.appendChild(a);
+      if (iv.qbo_txn_id) { const q = document.createElement("a"); q.href = qboUrl("invoice", iv.qbo_txn_id); q.target = "_blank"; q.rel = "noopener"; q.className = "qbo-link pp-eq-qbo"; q.textContent = "↗"; q.title = "Open in QuickBooks"; incomeLabel.appendChild(q); }
+      incomeDetail = [iv.tag || "", iv.txn_date ? "invoiced " + fmtDateShort(iv.txn_date) : "", cur.scope ? "net billed on this scope" : "net billed on this draw"].filter(Boolean).join(" · ");
+    } else if (cur) {   // several invoices on one draw: they fold under the Income line (owner 2026-09-16: "make it toggle ... so it stays clean")
       for (const iv of (dr.invoices || [])) {
         const lbl = document.createElement("span"); const a = document.createElement("a"); a.href = "#"; a.className = "qbo-link"; a.textContent = `Invoice ${iv.doc_number}`; a.title = "Open this invoice's page";
         a.onclick = (e) => { e.preventDefault(); if (typeof openInvoicePage === "function") openInvoicePage({ doc_number: iv.doc_number, project_no: _pp.pn }); }; lbl.appendChild(a);
         if (iv.qbo_txn_id) { const q = document.createElement("a"); q.href = qboUrl("invoice", iv.qbo_txn_id); q.target = "_blank"; q.rel = "noopener"; q.className = "qbo-link pp-eq-qbo"; q.textContent = "↗"; q.title = "Open in QuickBooks"; lbl.appendChild(q); }
-        row("", lbl, [iv.tag || ((dr.invoices || []).length > 1 ? "base contract" : ""), iv.txn_date ? fmtDateShort(iv.txn_date) : ""].filter(Boolean).join(" · "), iv.amount, "pp-eq-inv", gcNode(iv.paid, iv.balance));
+        folded.push(() => row("", lbl, [iv.tag || ((dr.invoices || []).length > 1 ? "base contract" : ""), iv.txn_date ? fmtDateShort(iv.txn_date) : ""].filter(Boolean).join(" · "), iv.amount, "pp-eq-inv pp-eq-fold", gcNode(iv.paid, iv.balance)));
       }
-    } else if (!dr.no_draw) {
+    } else if (!dr.no_draw) {   // the whole job: one line per draw / scope, folded under Income
       const nos = dr.invoice_nos || (dr.invoice_no ? [dr.invoice_no] : []);
-      const tr = row("", _ppTitle(dr), `${dr.scope ? "" : (nos.length === 1 ? "invoice " + nos[0] : nos.length + " invoices " + nos.join(", "))}${dr.ar_date ? (dr.scope ? "invoiced " : " · ") + fmtDateShort(dr.ar_date) : ""}${dr.scope && _ppSpan(dr) ? " · costs " + _ppSpan(dr) : ""}`, dr.billed, "pp-eq-inv pp-eq-click", gcNode(dr.gc_paid, dr.ar_open));
-      tr.title = `Open this ${dr.scope ? "scope" : "draw"}`; tr.onclick = () => { _pp.view = dr.matched_invoice; _renderPpDraws(); _ppScrollDetail(); };
+      folded.push(() => { const tr = row("", _ppTitle(dr), `${dr.scope ? "" : (nos.length === 1 ? "invoice " + nos[0] : nos.length + " invoices " + nos.join(", "))}${dr.ar_date ? (dr.scope ? "invoiced " : " · ") + fmtDateShort(dr.ar_date) : ""}${dr.scope && _ppSpan(dr) ? " · costs " + _ppSpan(dr) : ""}`, dr.billed, "pp-eq-inv pp-eq-fold pp-eq-click", gcNode(dr.gc_paid, dr.ar_open));
+        tr.title = `Open this ${dr.scope ? "scope" : "draw"}`; tr.onclick = () => { _pp.view = dr.matched_invoice; _renderPpDraws(); _ppScrollDetail(); }; return tr; });
     }
     income += num(dr.billed); mat += num(dr.gate_amt); lab += num(dr.subs_amt);
     nMat += (dr.bills || []).filter(b => b.gates).length; nLab += (dr.sub_bills || []).length;
     if (dr.pl) { oh += num(dr.pl.overhead); basis = basis || dr.pl.overhead_basis || ""; }
   }
   const gcAll = draws.filter(x => !x.no_draw), owed = gcAll.reduce((s, x) => s + num(x.ar_open), 0);
-  row("=", "Income", cur ? (cur.scope ? "net billed on this scope" : "net billed on this draw") : "net billed on the job", income, "pp-eq-sum", gcAll.length ? gcNode(owed <= 0.005, owed) : null);
+  if (folded.length && !incomeLabel) {   // "Income · 3 invoices ▸" - click to list them, click again to fold (remembered while the page is open)
+    incomeLabel = document.createElement("span"); incomeLabel.className = "pp-eq-toggle";
+    const n = folded.length, what = cur ? `invoice${n === 1 ? "" : "s"}` : _ppUnit(n);
+    incomeLabel.innerHTML = `Income · ${n} ${_ge(what)} <span class="pp-eq-caret">${_pp.eqOpen ? "▾" : "▸"}</span>`; incomeLabel.title = _pp.eqOpen ? "Fold the list" : `List the ${what}`;
+    incomeLabel.onclick = () => { _pp.eqOpen = !_pp.eqOpen; const y = window.scrollY; _renderPpDraws(); window.scrollTo(0, y); };
+  }
+  const incomeRow = row("=", incomeLabel || "Income", incomeDetail || (cur ? (cur.scope ? "net billed on this scope" : "net billed on this draw") : "net billed on the job"), income, "pp-eq-sum", gcAll.length ? gcNode(owed <= 0.005, owed) : null);
+  if (folded.length && _pp.eqOpen) { let anchor = incomeRow; for (const f of folded) { const tr = f(); anchor.after(tr); anchor = tr; } }   // listed right under Income, in order
   const gcPays = draws.reduce((s, dr) => s + (dr.bills || []).filter(b => !b.gates).length, 0);
   row("−", "Materials", `${nMat} bill${nMat === 1 ? "" : "s"} we pay · Bill Tracker${gcPays ? ` · ${gcPays} pumping bill${gcPays === 1 ? "" : "s"} the GC pays left out` : ""}`, -mat);
   row("−", "Labor (subs)", `${nLab} bill${nLab === 1 ? "" : "s"} · QuickBooks${cur && !cur.no_draw ? (cur.scope ? ", dated in this scope's window" : ", dated in the draw period") : ""}`, -lab);
@@ -3614,7 +3710,11 @@ function _ppBillsTable(cur) {
       tr.appendChild(pc); }
     { const vb = document.createElement("td"); vb.className = "left pp-vb"; if (!(inGrp && _pp.sort !== "code")) { const v = document.createElement("span"); v.className = "pp-vend"; v.textContent = b.vendor || "–"; vb.appendChild(v); vb.appendChild(document.createTextNode(" ")); }
       const link = qboLinkCell(b.bill_ref || "–", isSub ? qboUrl(b.txn_type === "Expense" ? "expense" : "bill", b.bill_id) : qboBillHref(b.qbo_link), "Open this bill in QuickBooks");
-      while (link.firstChild) vb.appendChild(link.firstChild); if (b.att) { const ab = attBtn(isSub && b.txn_type === "Expense" ? "Purchase" : "Bill", b.bill_id, b.att, `${b.vendor || ""} · bill ${b.bill_ref || ""}`); ab.style.marginLeft = "6px"; vb.appendChild(ab); }
+      while (link.firstChild) vb.appendChild(link.firstChild);
+      if (b.bill_id) {   // the viewer flips through this vendor's bills in the view you are looking at (owner 2026-09-16)
+        const same = rows.filter(y => (y.b.vendor || "") === (b.vendor || "") && y.b.bill_id).map(y => ({ type: y.isSub && y.b.txn_type === "Expense" ? "Purchase" : "Bill", id: String(y.b.bill_id), n: y.b.att || 0, title: `${y.b.vendor || ""} · bill ${y.b.bill_ref || ""}` }));
+        const ab = attBtn(isSub && b.txn_type === "Expense" ? "Purchase" : "Bill", b.bill_id, b.att, `${b.vendor || ""} · bill ${b.bill_ref || ""}`, { items: same, index: Math.max(0, same.findIndex(y => y.id === String(b.bill_id))) });
+        ab.style.marginLeft = "6px"; vb.appendChild(ab); }
       if (!pay && !b.gates) { const s = document.createElement("span"); s.className = "vg-tag"; s.textContent = "GC pays"; s.title = "Concrete pumping - paid by the GC directly"; s.style.marginLeft = "6px"; vb.appendChild(s); }
       tr.appendChild(vb); }
     { const cc = document.createElement("td"); cc.className = "left"; for (const c of (b.codes || [])) { const chip = document.createElement("span"); chip.className = "codechip"; chip.textContent = c; cc.appendChild(chip); cc.appendChild(document.createTextNode(" ")); } if (!(b.codes || []).length) { cc.textContent = "–"; cc.classList.add("dim"); } tr.appendChild(cc); }
@@ -3682,8 +3782,9 @@ function _ppBillsTable(cur) {
   const flatRows = (xs) => { for (const x of [...xs].sort((p, q) => (p.b.bill_date || "").localeCompare(q.b.bill_date || ""))) tbody.appendChild(billRow(x, false)); };
   const mat = rows.filter(x => !x.isSub), subs = rows.filter(x => x.isSub);
   const flat = _pp.sort === "date";
-  if (mat.length) { sectionRow("Materials", mat, "materials"); if (flat) flatRows(mat); else groupedRows(mat, "materials"); totalRow("Materials total", mat); }
-  if (subs.length) { sectionRow("Labor (subs)", subs, "labor"); if (flat) flatRows(subs); else groupedRows(subs, "labor"); totalRow("Labor total", subs); }
+  const gap = () => { const tr = document.createElement("tr"); tr.className = "pp-gap"; const td = document.createElement("td"); td.colSpan = COLS; tr.appendChild(td); tbody.appendChild(tr); };
+  if (mat.length) { sectionRow("Materials", mat, "materials"); if (flat) flatRows(mat); else groupedRows(mat, "materials"); totalRow("Materials total", mat); gap(); }
+  if (subs.length) { sectionRow("Labor (subs)", subs, "labor"); if (flat) flatRows(subs); else groupedRows(subs, "labor"); totalRow("Labor total", subs); gap(); }
   if (mat.length && subs.length) totalRow("Total", rows, true);
   thead.hidden = !flat && !_pp.openV.has("*") && ![..._pp.openV].some(k => k.startsWith(`${cur ? cur.matched_invoice : "all"}|`));   // headers only once bills show
   table.appendChild(thead); table.appendChild(tbody); box.appendChild(table);
@@ -5662,8 +5763,9 @@ let detailRow = null;
 // confirm dialog here and a `confirm` flag the server also requires.
 function buildPnlGroup(proj) {
   const g = document.createElement("div"); g.className = "dgroup";
-  const h = document.createElement("h4"); h.textContent = "P&L"; g.appendChild(h);
-  if (!(_pp && _pp.pn === proj && $("#recordView") && !$("#recordView").hidden)) {   // not when already ON the project page
+  const onPage = !!(_pp && _pp.pn === proj && $("#recordView") && !$("#recordView").hidden);   // on the project page the Profit & Loss table above already shows these rows
+  if (!onPage) { const h = document.createElement("h4"); h.textContent = "P&L"; g.appendChild(h); }
+  if (!onPage) {   // not when already ON the project page
     const b = document.createElement("button"); b.className = "btn small primary"; b.textContent = "Open project page"; b.style.marginBottom = "8px";
     b.onclick = (e) => { e.stopPropagation(); closePanels(); openProjectPage(proj); }; g.appendChild(b); }
 
@@ -5678,8 +5780,9 @@ function buildPnlGroup(proj) {
       const b = document.createElement("span"); b.className = "dv"; b.textContent = v;
       r.appendChild(a); r.appendChild(b); pl.appendChild(r); return r;
     };
-    if (!d.has_wip) rowP("Revenue basis", "no WIP snapshot", "pnl-sub");
+    if (!d.has_wip && !onPage) rowP("Revenue basis", "no WIP snapshot", "pnl-sub");
     // the owner's reading order (2026-09-08): billed (gross) - retainage = net billed - costs - overhead = net
+    if (!onPage) {
     rowP("Contract", money(d.contract));
     rowP("% complete", ((d.pct_complete || 0) * 100).toFixed(1) + "%", "pnl-sub");
     rowP("Billed to GC (gross)", money(d.billed_gross));
@@ -5690,6 +5793,7 @@ function buildPnlGroup(proj) {
     rowP(`Overhead (${d.overhead_basis})`, "(" + money(d.overhead) + ")");
     const nr = rowP("Net", `${money(d.net)} · ${d.net_pct == null ? "–" : (d.net_pct * 100).toFixed(1) + "%"}`, "pnl-net");
     nr.classList.add(d.net >= 0 ? "pos" : "neg");
+    }
     // The make-up of billed-to-date: every AR invoice (draw) the project has, paid or open
     // (owner 2026-08-21: "I need to see all the invoices the project has"). Oldest first.
     if (d.invoices && d.invoices.length) {
@@ -5764,7 +5868,7 @@ function buildPnlGroup(proj) {
     } else {
       dv.textContent = "not generated yet"; openBtn.disabled = true;
     }
-    msg.textContent = d.note || "";
+    msg.textContent = "";   // operator detail (mounts, fallbacks) stays off the page (owner 2026-09-16: "useless info")
   }).catch(() => { dv.textContent = "unavailable"; });
 
   genBtn.onclick = () => {

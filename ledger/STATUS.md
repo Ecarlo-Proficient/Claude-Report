@@ -4,6 +4,18 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-16 (fourth pass, owner's screenshots) · **Project page.** The top table is titled **Profit & Loss** and wears
+  the P&L block's clean look (dashed rows, plain labels, actuals bold); the Difference column is a real number, the %
+  off the projection and a **little bar** of how far off it is, coloured by whether over is good (net, gross profit)
+  or bad (costs) - neutral for billed vs contract. The P&L block under it no longer repeats those rows on the project
+  page (it keeps the invoices list, costs by code, the job folder and the Excel export) and its operator note ("drive
+  not mounted…") is off the page. The equation folds a single invoice into the Income line ("Income · Invoice 34436 ↗"
+  ). Materials and Labor read as separate groups (heavy rule on top, the total closes the group, a gap after). Sub
+  bills show the **line-item description**, never the memo. **The bill viewer** (`openBillViewer`, `/api/bill/info`):
+  the 📎 opens the bill beside its scan - vendor, bill #, date, amount, open, paid, the invoice it sits on and whether
+  the GC paid it, tracker status, approval, lien, project, client, and every line (description · cost code · project ·
+  amount) - with ← → (and the arrow keys) flipping through that vendor's bills in the view you clicked from (the
+  project page: the vendor's bills on the draw / scope / job; the trackers: the vendor's rows on screen).
 - 2026-09-16 (third pass, owner's screenshots) · **Project page.** (1) The "How it's doing" tiles are gone; in their
   place `_ppProjectedVsActual`: one table, **Projected (WIP master)** next to **Actual (QuickBooks)** row by row -
   Revenue (contract · billed to date, big), Retainage held, Net billed, Costs (ETC · costs to date, big, over / under
