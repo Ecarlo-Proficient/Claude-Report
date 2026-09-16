@@ -173,12 +173,31 @@ def _read_invoices(ws, c0: int) -> tuple:
         v = ws.cell(rr, cc).value
         return float(v) if isinstance(v, (int, float)) else 0.0
 
+    # A job with a standing `draws` ruling (MFD192, 2026-09-16) writes ONE bold
+    # line per draw with its invoices folded under it at outline level 1. The
+    # draw line carries the SUM of those invoices, so reading every row would
+    # count the draw twice (MFD192 read double its billed). Read the
+    # invoices, skip the head, and remember which draw each invoice sits in so
+    # the job sheet can show the same shape.
+    def _lvl(rr):
+        return int(ws.row_dimensions[rr].outline_level or 0) if rr in ws.row_dimensions else 0
+
+    draw = None
     for r in range(hdr + 1, end):
+        lvl = _lvl(r)
+        if lvl == 0 and r + 1 < end and _lvl(r + 1) >= 1:
+            memo = str(ws.cell(r, MEMO).value or "")
+            draw = (re.sub(r"\s*·\s*\d+\s+invoices? combined\s*$", "", memo).strip()
+                    or str(ws.cell(r, DOC).value or "draw"))
+            continue                                   # the head: its invoices follow
+        if lvl == 0:
+            draw = None
         inv.append({"doc": ws.cell(r, DOC).value, "date": ws.cell(r, DATE).value,
                     "memo": ws.cell(r, MEMO).value or "",
                     "gross": f(r, GROSS), "withheld": f(r, WHELD),
                     "ret_billed": f(r, RETB),
                     "paid": ws.cell(r, PAID).value or "",
+                    "draw": draw,
                     "url": (ws.cell(r, DOC).hyperlink.target
                             if ws.cell(r, DOC).hyperlink else None)})
     # Rows between the income total and the first cost block, with no account:
@@ -781,11 +800,16 @@ def build_bundle(jobs: List[tuple], out: Path, div: dict) -> None:
             ws.cell(row=r, column=c).fill = F_HDR
         ws.row_dimensions[r].height = 22
         r += 1
-        for inv in sorted(src["invoices"], key=lambda i: str(i["date"]), reverse=True):
+        inv_top_rows: List[int] = []       # the rows the INVOICED total sums
+
+        def _inv_row(inv, indent=0):
+            nonlocal r
+            if not indent:
+                inv_top_rows.append(r)
             # An invoice number is an IDENTIFIER, so it reads left. Numeric
             # right-alignment parked it at the far edge of a wide column,
             # disconnected from its own header.
-            c1 = _t(ws, r, C0, inv["doc"], size=SZ_SMALL, align="left")
+            c1 = _t(ws, r, C0, inv["doc"], size=SZ_SMALL, align="left", indent=indent)
             c1.number_format = "0"
             if inv["url"]:                      # → the invoice in QBO
                 c1.hyperlink = inv["url"]
@@ -802,6 +826,43 @@ def build_bundle(jobs: List[tuple], out: Path, div: dict) -> None:
                     ws.cell(row=r, column=c).fill = F_BAND
             ws.row_dimensions[r].height = 20
             r += 1
+
+        # The same shape the P&L shows (MFD192, 2026-09-16): a job whose draws
+        # are several invoices gets ONE bold line per draw - the draw's total,
+        # its invoice count, paid when every invoice is paid - with the
+        # invoices under it, each still linked. Every other job is unchanged.
+        invs = sorted(src["invoices"], key=lambda i: str(i["date"]), reverse=True)
+        groups: List[tuple] = []           # [(draw label or None, [invoices])], newest first
+        by_draw: Dict[str, list] = {}
+        for inv in invs:
+            d = inv.get("draw")
+            if not d:
+                groups.append((None, [inv]))
+            elif d in by_draw:
+                by_draw[d].append(inv)
+            else:
+                by_draw[d] = [inv]
+                groups.append((d, by_draw[d]))
+        for d, items in groups:
+            if d is None:
+                _inv_row(items[0])
+                continue
+            paid_all = all(str(i["paid"]).startswith("PAID") for i in items)
+            inv_top_rows.append(r)
+            _t(ws, r, C0, d, size=SZ_SMALL, bold=True, align="left")
+            _d0 = min((i["date"] for i in items if i["date"]), key=str, default=None)
+            dc = _t(ws, r, C0 + 1, _d0, size=SZ_SMALL, align="left")   # the draw's first invoice date
+            dc.number_format = "mm/dd/yyyy"
+            _t(ws, r, C0 + 2, f"{len(items)} invoices: " + " · ".join(str(i["doc"]) for i in items),
+               size=SZ_SMALL, bold=True)
+            _t(ws, r, C0 + 5, sum(i["gross"] + i["ret_billed"] for i in items),
+               size=SZ_SMALL, bold=True, fmt=MONEY, align="right")
+            _t(ws, r, C0 + 6, "PAID" if paid_all else "UNPAID", size=SZ_SMALL, bold=True,
+               align="center", color=GREY if paid_all else RED)
+            ws.row_dimensions[r].height = 20
+            r += 1
+            for inv in items:
+                _inv_row(inv, indent=2)
         if src["not_billed"]:
             _t(ws, r, C0, "(journal entry)", size=SZ_SMALL, color=GREY, align="left")
             _t(ws, r, C0 + 2, "retainage moved by journal entry", size=SZ_SMALL,
@@ -809,7 +870,12 @@ def build_bundle(jobs: List[tuple], out: Path, div: dict) -> None:
             _t(ws, r, C0 + 5, src["not_billed"], size=SZ_SMALL, fmt=MONEY,
                align="right", color=GREY)
             r += 1
-        if r - 1 >= inv_first:
+        # A combined draw carries its invoices' total, so the INVOICED total sums
+        # the TOP rows only - the draw lines and the standalone invoices - never
+        # the invoices folded under a draw (that read double on MFD192).
+        if inv_top_rows and any(d for d, _ in groups):
+            inv_tot.value = "=SUM(" + ",".join(f"{AMT}{rr}" for rr in inv_top_rows) + ")"
+        elif r - 1 >= inv_first:
             inv_tot.value = f"=SUM({AMT}{inv_first}:{AMT}{r - 1})"
         r += 1
 

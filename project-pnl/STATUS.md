@@ -8,6 +8,16 @@ manual close), RP (no draws — expenses → invoice → profit).
 
 ## DONE / FINALIZED
 
+- **Overview reader follows the combined draws (2026-09-16).** `completed_pnl._read_invoices`
+  read every row of the Transactions INCOME list, so a job with a `draws` ruling (MFD192) would
+  have counted each draw twice on the next rebuild - the bold draw line plus the invoices folded
+  under it (the reader returned double the job's billed). It now treats a level-0 row followed
+  by outline-level-1 rows as the draw head: skips it, reads the invoices, and tags each with its
+  draw. The MFD192 job sheet in `MFD Overview.xlsx` shows the same shape as the P&L - one bold
+  line per draw (its total, invoice count, PAID only when every invoice is) with the invoices
+  indented under it, each still linked; every other job renders as before. MFD Overview rebuilt
+  from the worktree: MFD192 billed ties to its workbook, `assert_clean` green.
+
 - **Draw sheets reworked on the owner's MFD192 review (2026-09-16).** Four asks, one
   sheet: (1) **the KPI tiles are one cell each** - no more merged pairs; nine tiles sit on
   B..J, the same columns the bills table uses, so nothing merges and any column selects.
