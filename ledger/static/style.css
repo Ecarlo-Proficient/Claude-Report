@@ -1674,7 +1674,7 @@ html[data-theme="dark"] .rr-src.master, html[data-theme="dark"] .rr-src.manual {
 .pp-detail.next { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
 .pp-det-h { padding: 10px 14px 6px; font-size: 1.02em; }
 .pp-det-h .bills-cap { padding: 4px 0 0; }
-table.pp-cov tr.pp-cov-row.sel > td { background: color-mix(in srgb, var(--accent) 14%, var(--surface)); box-shadow: inset 3px 0 0 var(--accent); }
+table.pp-cov tr.pp-cov-row.sel > td { background: color-mix(in srgb, var(--accent) 14%, var(--surface)); }
 table.pp-cov tr.pp-cov-total.pp-cov-row { cursor: pointer; }
 table.pp-cov tr.pp-cov-total.pp-cov-row:hover > td { background: var(--row-hover); }
 .pp-eq-wrap { padding: 4px 14px 10px; }
@@ -1812,3 +1812,11 @@ table.pp-bills tr.pp-gap > td { height: 18px; border: 0; background: transparent
 .pp-eq-caret { color: var(--text-dim); font-size: .9em; margin-left: 2px; }
 table.pp-eq tr.pp-eq-fold td.pp-eq-lab { padding-left: 18px; font-weight: 400; }
 table.pp-eq tr.pp-eq-fold td { border-bottom: 1px dashed color-mix(in srgb, var(--border) 70%, transparent); }
+
+/* Coverage table = a proper sheet (owner 2026-09-16): gridlines on every column, a darker grey header row, no partial accent lines */
+table.pp-cov { border-collapse: collapse; border: 1px solid color-mix(in srgb, var(--text) 30%, var(--border)); }
+table.pp-cov th, table.pp-cov td { border: 1px solid color-mix(in srgb, var(--text) 22%, var(--border)); }
+table.pp-cov thead th { background: color-mix(in srgb, var(--text) 14%, var(--surface)); color: var(--text); font-weight: 700; border-bottom: 2px solid color-mix(in srgb, var(--text) 40%, var(--border)); }
+html[data-theme="dark"] table.pp-cov thead th { background: color-mix(in srgb, var(--text) 18%, var(--surface)); }
+table.pp-cov tr.pp-cov-total > td { background: color-mix(in srgb, var(--text) 6%, var(--surface)); border-top: 2px solid color-mix(in srgb, var(--text) 40%, var(--border)); }
+table.pp-cov tr.pp-cov-total.pp-cov-row.sel > td { background: color-mix(in srgb, var(--accent) 14%, var(--surface)); }
