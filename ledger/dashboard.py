@@ -1479,6 +1479,10 @@ def _fetch_vendor(con, vendor: str) -> dict:
             "FROM ap_bill_line WHERE vendor = ? ORDER BY bill_date DESC, bill_ref", (vendor,)).fetchall()
     except sqlite3.OperationalError as e:                    # noqa: BLE001
         return {"ok": False, "error": str(e), "bills": []}
+    proj_customer = _project_customer_map(con)   # project -> client (the GC), the shared resolver
+    have = {r[1] for r in con.execute("PRAGMA table_info(cost_line)")}
+    doc = "doc_number" if "doc_number" in have else "NULL"
+    memo = "memo" if "memo" in have else "description"
     bills: dict = {}
     for r in rows:
         key = (r["bill_ref"] or "?") + "|" + (r["bill_date"] or "")   # a bill_ref can recur on another date
@@ -1491,6 +1495,7 @@ def _fetch_vendor(con, vendor: str) -> dict:
                 "qbo_link": r["qbo_link"], "lines": [], "_projs": set(),
                 "att": _att_counts(con).get(("Bill", str(bill_marks.bill_id_from_link(r["qbo_link"]) or "")), 0)}
         b["lines"].append({"project_no": r["project_no"], "division": r["division"],
+                           "client": proj_customer.get(r["project_no"]) if r["project_no"] else None,
                            "description": r["description"], "amount": r["line_amount"]})
         if r["project_no"]:
             b["_projs"].add(r["project_no"])
@@ -1499,6 +1504,10 @@ def _fetch_vendor(con, vendor: str) -> dict:
         projs = sorted(b.pop("_projs"))
         b["project"] = projs[0] if len(projs) == 1 else ("multiple" if len(projs) > 1 else "")
         b["projects"] = projs
+        # the client(s) behind the project(s) (owner 2026-09-15: "i need to see project, clients")
+        cl = sorted({proj_customer[p] for p in projs if proj_customer.get(p)})
+        b["client"] = cl[0] if len(cl) == 1 else ("multiple" if len(cl) > 1 else None)
+        b["clients"] = cl
         b["amount"] = b["bill_total"] if b["bill_total"] is not None else sum((ln["amount"] or 0) for ln in b["lines"])
         b["paid"] = bool(b["pay_date"])
         out.append(b)
@@ -1515,6 +1524,31 @@ def _fetch_vendor(con, vendor: str) -> dict:
             d["n_bills"] = pln.get(r["qbo_txn_id"], 0)
             d["att"] = _att_counts(con).get(("BillPayment", str(r["qbo_txn_id"])), 0)
             payments.append(d)
+        # the bills each payment paid, with their project + client (owner 2026-09-15: "for bill payments i
+        # need to see the bill paid and the project"). A bill id resolves through cost_line (subs included)
+        # or, failing that, the Bill Tracker row's QuickBooks link.
+        bill_meta: dict = {}
+        for r in con.execute(f"SELECT qbo_txn_id, {doc} doc_number, project_no FROM cost_line WHERE vendor = ? "
+                             "GROUP BY qbo_txn_id, project_no", (vendor,)):
+            e = bill_meta.setdefault(str(r["qbo_txn_id"]), {"bill_ref": r["doc_number"], "projects": []})
+            if r["project_no"] and r["project_no"] not in e["projects"]:
+                e["projects"].append(r["project_no"])
+        for b in out:
+            bid = bill_marks.bill_id_from_link(b.get("qbo_link"))
+            if bid and bid not in bill_meta:
+                bill_meta[bid] = {"bill_ref": b["bill_ref"], "projects": list(b["projects"])}
+        lines_by_pay: dict = {}
+        for r in con.execute("SELECT l.payment_id, l.bill_id, l.amount FROM bill_payment_line l "
+                             "JOIN bill_payment p ON p.qbo_txn_id = l.payment_id WHERE p.vendor = ?", (vendor,)):
+            m = bill_meta.get(str(r["bill_id"]), {})
+            projs = sorted(m.get("projects", []))
+            lines_by_pay.setdefault(r["payment_id"], []).append({
+                "bill_id": r["bill_id"], "bill_ref": m.get("bill_ref"), "projects": projs,
+                "clients": sorted({proj_customer[p] for p in projs if proj_customer.get(p)}), "amount": r["amount"]})
+        for p in payments:
+            p["bills"] = lines_by_pay.get(p["qbo_txn_id"], [])
+            p["projects"] = sorted({x for b in p["bills"] for x in b["projects"]})
+            p["clients"] = sorted({x for b in p["bills"] for x in b["clients"]})
     except sqlite3.OperationalError:
         pass
     # QuickBooks' own open AP for this vendor (vendor_ap: every vendor incl. subs) - shown BESIDE the
@@ -1530,9 +1564,6 @@ def _fetch_vendor(con, vendor: str) -> dict:
     # does): grouped per document, newest first, so a sub gets a real page instead of "No bills".
     qbo_bills: list = []
     try:
-        have = {r[1] for r in con.execute("PRAGMA table_info(cost_line)")}
-        doc = "doc_number" if "doc_number" in have else "NULL"
-        memo = "memo" if "memo" in have else "description"
         grp: dict = {}
         for r in con.execute(
                 f"SELECT qbo_txn_id, txn_type, txn_date, {doc} doc_number, {memo} memo, project_no, amount "
@@ -1562,6 +1593,159 @@ def _fetch_vendor(con, vendor: str) -> dict:
             "pay_count": len(payments)}
 
 
+_CONTRACT_TAG_RE = re.compile(r"([A-Z][A-Z0-9 &/'.-]*?\s+CONTRACT)\b")
+
+
+def _project_invoices(con, pn: str) -> list:
+    """Every invoice on the job, oldest first, from billing_event (the QBO invoices load). A voided
+    invoice ($0, nothing open) is left out. `tag` names the contract the memo bills when a job carries
+    several (MFD192: base / HUDSONWOOD CONTRACT / OFFSITE CONTRACT) or 'Retainage'."""
+    try:
+        rows = con.execute("SELECT qbo_txn_id, doc_number, memo, amount, balance, status, txn_date, customer "
+                           "FROM billing_event WHERE project_no = ? AND doc_number IS NOT NULL "
+                           "ORDER BY txn_date, doc_number", (pn,)).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    out = []
+    for r in rows:
+        amt, bal = float(r["amount"] or 0), float(r["balance"] or 0)
+        if amt <= 0.005 and bal <= 0.005:
+            continue
+        memo = (r["memo"] or "").strip()
+        head = memo.split("\n")[0].strip()
+        m = _CONTRACT_TAG_RE.search(head)
+        tag = m.group(1).strip() if m else ("Retainage" if (re.search(r"retainage", head, re.I) and not re.search(r"\bdraw\b", head, re.I)) else "")
+        out.append({"doc_number": str(r["doc_number"]).strip(), "qbo_txn_id": r["qbo_txn_id"], "memo": memo, "memo_head": head,
+                    "amount": amt, "balance": bal, "status": r["status"], "txn_date": r["txn_date"], "customer": r["customer"],
+                    "tag": tag, "paid": bal <= 0.005})
+    return out
+
+
+def _recount_draw(d: dict) -> None:
+    """Re-derive a draw's counts, money-in and stage from its bills + invoices (the same rules as
+    _fetch_draws, applied after invoices were grouped / bills merged)."""
+    bills = d.get("bills") or []
+    invs = d.get("invoices") or []
+    if invs:
+        d["billed"] = round(sum(i["amount"] for i in invs), 2)
+        d["ar_open"] = round(sum(i["balance"] for i in invs), 2)
+        n_paid = sum(1 for i in invs if i["paid"])
+        part = any((not i["paid"]) and i["balance"] < i["amount"] - 0.005 for i in invs)
+        d["ar_status"] = "Paid" if n_paid == len(invs) else ("Partially Paid" if (n_paid or part) else "Unpaid")
+        d["ar_date"] = invs[0]["txn_date"]
+        prim = next((i for i in invs if i["doc_number"] == str(d.get("invoice_no") or "")), invs[0])
+        d["ar_qbo_id"] = prim["qbo_txn_id"]
+        d["customer"] = prim["customer"]
+        d["inv"] = prim
+        d["gc_paid_in"] = d["ar_open"] <= 0.005
+        d["invoice_nos"] = [i["doc_number"] for i in invs]
+    gate = [b for b in bills if b.get("gates")] or bills
+    d["n"] = len(bills)
+    d["paid"] = sum(1 for b in bills if _bill_paid(b))
+    d["n_gate"] = len(gate)
+    d["paid_gate"] = sum(1 for b in gate if _bill_paid(b))
+    d["funded"] = any(b.get("gc_paid") for b in bills) or bool(d.get("gc_paid_in"))
+    d["parked"] = sum(1 for b in bills if not b.get("gates") and not _bill_paid(b))
+    d["waivers"] = sum(1 for b in bills if b.get("waiver"))
+    d["total"] = round(sum((b.get("amount") or 0) for b in bills), 2)
+    d["total_gate"] = round(sum((b.get("amount") or 0) for b in bills if b.get("gates")), 2)
+    d["recency"] = max([(b.get("gc_paid") or b.get("pay_date") or b.get("bill_date") or "") for b in bills] + [d.get("ar_date") or ""])
+    d["label"] = (d.get("matched_invoice") or "").split("\n")[0].strip()
+    if d.get("no_draw"):
+        stage = "No draw yet"
+    elif not d["funded"]:
+        stage = "Awaiting GC funding"
+    elif d["paid_gate"] < d["n_gate"]:
+        stage = "Fund in - pay vendors"
+    elif d.get("gc_paid_in"):
+        stage = "All paid"
+    else:
+        stage = "Ready to turn in"
+    d["stage"] = stage
+
+
+def _draws_by_invoice(con, pn: str, division, raw: list, whole_job: bool) -> list:
+    """The job's draws keyed by the DRAW the invoices belong to (owner 2026-09-15: "MFD192 needs to
+    combine multiple invoices into one draw ... they are all the same date, combine the income into one
+    income"). Every invoice on the job is income; invoices naming the same draw month (MFD: "September
+    Draw 2026" on the base, HUDSONWOOD and OFFSITE contracts) or, failing a named month, dated the same
+    day are ONE draw - the Bill Tracker matches the bills to one of them. The draw's income is the sum of its invoices, its bills the union of what
+    the tracker matched to any of them; an invoice with no matched bill still shows (income with
+    nothing against it yet). RP (whole_job): RP bills at completion, no draws - the job is ONE bucket
+    holding every invoice and every bill, so the page shows all of them with the same equation."""
+    invs = _project_invoices(con, pn)
+    by_inv: dict = {}
+    for d in raw:
+        if not d.get("no_draw"):
+            by_inv.setdefault(str(d.get("invoice_no") or "").strip(), []).append(d)
+    out, groups = [], {}
+
+    def _new(inv_no):
+        return {"matched_invoice": None, "project_no": pn, "division": division, "invoice_no": inv_no, "bills": [],
+                "invoices": [], "no_draw": False, "subs": [], "subs_total": 0.0, "waivers": 0, "_seen": set()}
+
+    def _add_bill(g, b):
+        bk = bill_marks.bill_id_from_link(b.get("qbo_link")) or f"{b.get('vendor')}|{b.get('bill_ref')}"
+        if bk in g["_seen"]:
+            return
+        g["_seen"].add(bk)
+        g["bills"].append(b)
+
+    def _key(iv):
+        # the draw the memo names (MFD bills "September Draw 2026" - the OFFSITE contract's invoice can land days
+        # after the base one), else the invoice date (CP numbers its draws per contract, so the owner's rule -
+        # same date = one draw - decides there)
+        m = re.search(r"([A-Z][a-z]+)\s+Draw\s+(\d{4})", iv["memo_head"] or "")
+        return f"{m.group(1)} {m.group(2)}" if m else (iv["txn_date"] or iv["doc_number"])
+
+    for iv in invs:
+        key = "job" if whole_job else _key(iv)
+        g = groups.get(key)
+        if g is None:
+            g = groups[key] = _new(iv["doc_number"])
+            out.append(g)
+        g["invoices"].append(iv)
+        for m in by_inv.pop(iv["doc_number"], []):
+            if not g["bills"] and m["bills"]:          # the invoice the tracker matched the bills to leads the group
+                g["invoice_no"] = iv["doc_number"]
+                g["matched_invoice"] = m["matched_invoice"]
+            for k in ("pushed_in", "pushed_out"):
+                if m.get(k) and not g.get(k):
+                    g[k] = m[k]
+            for b in m["bills"]:
+                _add_bill(g, b)
+    if whole_job:   # RP: the tracker's bills on the job (never draw-matched) all sit in the one bucket
+        g = groups.get("job")
+        if g is None:
+            g = groups["job"] = _new(None)
+            out.append(g)
+        g["whole_job"] = True
+        try:
+            rows = con.execute(
+                "SELECT vendor, bill_ref, MAX(bill_total) amount, MAX(open_balance) open_bal, pay_status, invoice_status, "
+                "MAX(gc_paid_date) gc, MAX(pay_date) pd, MAX(bill_date) bd, MAX(qbo_link) qbo_link "
+                "FROM ap_bill_line WHERE project_no = ? GROUP BY vendor, bill_ref", (pn,)).fetchall()
+        except sqlite3.OperationalError:
+            rows = []
+        for r in rows:
+            _add_bill(g, {"vendor": r["vendor"], "bill_ref": r["bill_ref"], "amount": r["amount"] or 0, "open": r["open_bal"] or 0,
+                          "pay_status": r["pay_status"], "invoice_status": r["invoice_status"], "gc_paid": r["gc"],
+                          "pay_date": r["pd"], "bill_date": r["bd"], "qbo_link": r["qbo_link"], "waiver_key": None,
+                          "waiver": False, "gates": _gates_stage(r["vendor"]), "pushed": "", "pushed_note": ""})
+    for lst in by_inv.values():        # bills matched to an invoice the ledger has no row for: as they are
+        out.extend(lst)
+    out.extend(d for d in raw if d.get("no_draw"))
+    for g in out:
+        g.pop("_seen", None)
+        if not g.get("matched_invoice"):
+            iv0 = (g.get("invoices") or [{}])[0]
+            g["matched_invoice"] = "Job to date" if g.get("whole_job") else f"{iv0.get('doc_number', '')} - {iv0.get('memo_head', '')}".strip(" -")
+        period = next(((a, b) for a, b in (_draw_period_range(i["memo"]) for i in (g.get("invoices") or [])) if a and b), None)
+        g["period"] = period or _draw_period_range(g["matched_invoice"] or "")
+        _recount_draw(g)
+    return out
+
+
 def _fetch_project_page(con, pn: str) -> dict:
     """The PROJECT page (owner 2026-09-02): everything about one job in one place. Section 1 = how
     it's doing (`_project_pnl`); section 2 = how we get funded - the job's draws in order, each with
@@ -1574,7 +1758,10 @@ def _fetch_project_page(con, pn: str) -> dict:
         return {"ok": False, "error": "project required"}
     pr = con.execute("SELECT project_no, name, division FROM project WHERE project_no = ?", (pn,)).fetchone()
     pnl = _project_pnl(con, pn)
-    draws = [d for d in _fetch_draws(con, limit=100000)["draws"] if (d.get("project_no") or "").upper() == pn]
+    division = pr["division"] if pr else pnl.get("division")
+    is_rp = pn.startswith("RP")
+    raw = [] if is_rp else [d for d in _fetch_draws(con, limit=100000)["draws"] if (d.get("project_no") or "").upper() == pn]
+    draws = _draws_by_invoice(con, pn, division, raw, whole_job=is_rp)   # same-day invoices = one draw; RP = one bucket
     # draw order = invoice date, then recency; the "no draw yet" bucket last
     draws.sort(key=lambda d: (1 if d.get("no_draw") else 0, d.get("ar_date") or d.get("recency") or ""))
     pay = bill_marks.read_pay_marks()
@@ -1618,11 +1805,12 @@ def _fetch_project_page(con, pn: str) -> dict:
             b["codes"] = e["codes"] if e else []
             b["description"] = (e["desc"] if e else None)
             b["att"] = _att_counts(con).get(("Bill", str(bid)), 0) if bid else 0
-        p0, p1 = _draw_period_range(d.get("matched_invoice") or "")
+        p0, p1 = d.get("period") or _draw_period_range(d.get("matched_invoice") or "")
+        whole = bool(d.get("whole_job"))            # RP: every sub bill on the job, no period
         subs: dict = {}
-        if p0 and p1:
+        if (p0 and p1) or whole:
             for ln in sub_lines:
-                if not (p0 <= (ln["txn_date"] or "") <= p1):
+                if not whole and not (p0 <= (ln["txn_date"] or "") <= p1):
                     continue
                 sb = subs.get(ln["qbo_txn_id"])
                 if not sb:
@@ -1671,7 +1859,8 @@ def _fetch_project_page(con, pn: str) -> dict:
                    "margin_pct": (gross / income) if income else None, "overhead": overhead,
                    "overhead_basis": "9% of income (MFD)" if is_mfd else "10% of income",
                    "net": round(gross - overhead, 2), "net_pct": ((gross - overhead) / income) if income else None,
-                   "period": {"start": _draw_period_range(d.get("matched_invoice") or "")[0], "end": _draw_period_range(d.get("matched_invoice") or "")[1]}}
+                   "materials": round(float(d.get("gate_amt") or 0), 2), "labor": d["subs_amt"],
+                   "period": {"start": p0, "end": p1}}
         d["waivers_total"] = len(gate)
         d["gc_paid"] = bool(d.get("gc_paid_in"))
     # funding chain: the OLDEST draw the GC has not paid us; its blockers = unpaid gating bills on every EARLIER draw
@@ -2446,8 +2635,10 @@ class Handler(BaseHTTPRequestHandler):
             self._processes()
         elif path == "/api/graph":         # the Graph tab (vault link-graph + system diagrams, live)
             self._graph()
+        elif path == "/api/review":        # the WIP review page, one division at a time (?div=RP|CP|MFD) + the standing answers
+            self._review_get(self._query().get("div", "RP"))
         elif path == "/api/rp/review":     # the RP review page (sources + snapshots JSON + the standing answers)
-            self._rp_review_get()
+            self._review_get("RP")
         elif path.startswith("/api/rp/img/"):   # a source picture cut by rp_review (only files under its img dir)
             self._rp_img(path[len("/api/rp/img/"):])
         elif path == "/api/rp/answers":    # the answers as text (what a later session reads to make sense of them)
@@ -2518,10 +2709,12 @@ class Handler(BaseHTTPRequestHandler):
             self._wip_review_run()
         elif p == "/api/wip/merge":       # WIP Review: write approved changes to the 3 Test tabs (gated)
             self._wip_merge()
-        elif p == "/api/rp/mark":         # a ledger write - the owner's / ops manager's answer on one RP line
+        elif p in ("/api/rp/mark", "/api/review/mark"):   # a ledger write - the owner's / PM's answer on one WIP line (any division)
             self._rp_mark()
         elif p == "/api/rp/refresh":      # rebuild the RP review JSON (sources + snapshots; JobTread = Touch ID)
-            self._rp_refresh()
+            self._review_refresh("RP")
+        elif p == "/api/review/refresh":  # rebuild one division's review data (RP: rp_review.py; CP / MFD: the WIP tool's --emit-review)
+            self._review_refresh(None)
         elif p == "/api/rp/reveal":       # open the job folder on Common in Finder and highlight the file the number came from
             self._rp_reveal()
         elif p == "/api/rp/finalize":     # the saved answers -> the finalize package (no master write here)
@@ -2692,13 +2885,31 @@ class Handler(BaseHTTPRequestHandler):
         return self._launch(_wip_review_steps("emit"), "wip-review")
 
     # ── RP review endpoints (the weekly sit-down with the ops manager) ──────
-    def _rp_review_get(self):
-        """The last build (rp_review.json) + every standing answer keyed '<job>|<kind>'."""
-        data = rp_review.load()
+    def _review_get(self, div: str):
+        """One division's review page + every standing answer keyed '<job>|<kind>'. RP = the last
+        rp_review.json build (sources, pictures, schedule); CP / MFD = cards adapted from the WIP tool's
+        --emit-review JSON (every number with the document it came from: the draw G702 for the contract
+        and COs, the takeoff for the ETC, QuickBooks for costs and billed; MFD's contract / ETC are typed
+        on the master by design). Same answers table, same Me / PM stamp for every division."""
+        div = (div or "RP").strip().upper()
+        if div not in rp_review.DIVISIONS:
+            return self._json({"error": "div must be RP, CP or MFD"}, 400)
+        if div == "RP":
+            data = rp_review.load()
+        else:
+            con = _connect(self.db_path)
+            try:
+                names = {r["project_no"]: {"name": r["name"]} for r in con.execute("SELECT project_no, name FROM project")}
+                for pn, cl in _project_customer_map(con).items():
+                    names.setdefault(pn, {})["client"] = cl
+            finally:
+                con.close()
+            data = rp_review.division_cards(div, _WIP_REVIEW_DIR, names)
         if not data:
-            return self._json({"ok": True, "ready": False, "marks": {}})
+            return self._json({"ok": True, "ready": False, "division": div, "marks": {}})
         data["ok"] = True
         data["ready"] = True
+        data["division"] = div
         data["marks"] = rp_review.read_marks()
         self._json(data)
 
@@ -2713,7 +2924,7 @@ class Handler(BaseHTTPRequestHandler):
         pn = str(body.get("project_no") or "").strip().upper()
         kind = str(body.get("kind") or "current")
         decision = str(body.get("decision") or "").strip()
-        mode = str(body.get("mode") or "me")
+        mode = rp_review.norm_mode(str(body.get("mode") or "me"))
         if not _PROJ_RE.match(pn):
             return self._json({"error": "bad or missing project"}, 400)
         if kind not in rp_review.DECISIONS or mode not in rp_review.MODES:
@@ -2733,7 +2944,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             rp_review.set_mark(pn, kind, decision, mode, str(body.get("note") or "").strip()[:2000], now,
                                _n(body.get("our_contract")), _n(body.get("our_etc")),
-                               _ok(body.get("contract_ok")), _ok(body.get("etc_ok")))
+                               _ok(body.get("contract_ok")), _ok(body.get("etc_ok")),
+                               _n(body.get("our_cos")), _ok(body.get("cos_ok")))
         except sqlite3.OperationalError as e:
             return self._json({"error": f"write failed: {e}"}, 500)
         self._json({"ok": True, "project_no": pn, "kind": kind, "decision": decision, "mode": mode, "at": now})
@@ -2777,8 +2989,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": str(e)}, 500)
         self._json({"ok": True, "path": raw, "kind": "folder" if target.is_dir() else "file"})
 
-    def _rp_refresh(self):
-        """Rebuild rp_review.json as a sync step (single run-lock, progress on /api/sync/status)."""
+    def _review_refresh(self, div):
+        """Rebuild one division's review data as a sync step (single run-lock, progress on
+        /api/sync/status). RP = rp_review.py (folders, JobTread - Touch ID); CP = cp_wip_reader
+        --emit-review (the Common share, QuickBooks - Touch ID); MFD = master_wip_test --emit-review."""
         try:
             length = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(length) or b"{}")
@@ -2786,8 +3000,16 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": "bad request"}, 400)
         if not body.get("confirm"):
             return self._json({"error": "confirm required"}, 400)
-        return self._launch([{"label": "Build RP review (master, RP file, folders, JobTread - Touch ID)",
-                              "script": "ledger/rp_review.py", "args": []}], "rp-review")
+        div = (div or str(body.get("div") or "RP")).strip().upper()
+        if div not in rp_review.DIVISIONS:
+            return self._json({"error": "div must be RP, CP or MFD"}, 400)
+        if div == "RP":
+            steps = [{"label": "Build RP review (master, RP file, folders, JobTread - Touch ID)",
+                      "script": "ledger/rp_review.py", "args": []}]
+        else:
+            want = "cp_wip_reader" if div == "CP" else "master_wip_test"
+            steps = [st for st in _wip_review_steps("emit") if want in st["script"]]
+        return self._launch(steps, f"review-{div.lower()}")
 
     def _wip_review_get(self):
         """Merge the three emit JSONs into one review payload for the UI."""

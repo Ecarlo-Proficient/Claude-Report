@@ -229,17 +229,18 @@ const WAIVERS_ENABLED = false;
 const NAV_GROUPS = [
   { id: "projects", label: "Projects", tabs: ["projects"] },
   { id: "company",  label: "Company",  tabs: ["clients", "vendors", "money"] },
-  { id: "tools",    label: "Tools",    tabs: ["wipreview", "rpreview", "console", "systems"], hidden: true },   // from the gear, not the bar
+  { id: "tools",    label: "Tools",    tabs: ["wipreview", "review", "console", "systems"], hidden: true },   // from the gear, not the bar
 ];
 const TAB_LABELS = {
   projects: "Projects", clients: "Clients", vendors: "Vendors", money: "Money",
-  wipreview: "WIP Review", rpreview: "RP review", console: "Console", systems: "Systems", paybills: "Pay run", liens: "Lien register",
+  wipreview: "WIP Review", review: "WIP review", console: "Console", systems: "Systems", paybills: "Pay run", liens: "Lien register",
 };
 const HIDDEN_TAB_GROUP = { paybills: "company", liens: "company" };   // pages without a sub-tab (opened from Bills): the Company group stays lit
 // old tab -> the page it lives on now (the section id is the old name, so setTab scrolls to it)
 const TAB_ALIAS = { overview: "projects", home: "projects", wip: "projects", pnl: "projects", draws: "projects",
                     customers: "clients", invoices: "clients", payments: "clients", sales: "clients",
-                    bills: "vendors", accounting: "vendors", health: "money", subloc: "money", costs: "money", graph: "systems" };
+                    bills: "vendors", accounting: "vendors", health: "money", subloc: "money", costs: "money", graph: "systems",
+                    rpreview: "review" };   // the RP review became the per-division WIP review (2026-09-15)
 const KNOWN_TABS = new Set([...NAV_GROUPS.flatMap(g => g.tabs), ...Object.keys(HIDDEN_TAB_GROUP)]);
 const groupOf = t => NAV_GROUPS.find(g => g.tabs.includes(t)) || NAV_GROUPS.find(g => g.id === HIDDEN_TAB_GROUP[t]) || NAV_GROUPS[0];
 function buildGroupBar() {
@@ -263,6 +264,7 @@ function buildSubTabs(g, active) {
 }
 let activeTab = "projects";
 function setTab(t) {
+  if (typeof _ppLeaveBlocked === "function" && _ppLeaveBlocked()) return;   // an unsaved pay run on the project page: Save or Discard first
   const sec = TAB_ALIAS[t] ? t : null;          // an old tab name: land on its page, then scroll to its section
   if (sec) t = TAB_ALIAS[t];
   if (!KNOWN_TABS.has(t)) t = "projects";
@@ -279,7 +281,7 @@ function setTab(t) {
   if (t === "vendors") loadAccounting();
   if (t === "money") { loadHealth(); renderPnl(); }
   if (t === "wipreview") loadWipReview();
-  if (t === "rpreview") loadRpReview();
+  if (t === "review") loadReview();
   if (t === "console") renderConsole();
   if (t === "systems") loadSystems();
   if (t === "paybills") renderPayBills();
@@ -1286,16 +1288,18 @@ function renderVendors() {
   $("#vendorsNote").textContent = (COST.by_vendor || []).length
     ? `(${vends.length} vendors · ${money(totalOpen)} open · ${srcText("QuickBooks", loadedAt("Costs (QBO)"), "loaded")})`
     : "(no cost data - run load_costs.py)";
-  const cols = [["Vendor", "left"], ["Type", "left"], ["Jobs", "right"], ["Open bills (QBO)", "right"], ["Open $ (QBO)", "right"]];   // labelled: QuickBooks open AP, subs included
+  const cols = [["Vendor", "left"], ["Type", "left"], ["Jobs", "right"], ["Total spend (QBO)", "right"], ["Open bills (QBO)", "right"], ["Open $ (QBO)", "right"]];   // labelled: QuickBooks open AP, subs included
   const thead = $("#vendorTable thead"), tbody = $("#vendorTable tbody");
   thead.innerHTML = ""; tbody.innerHTML = "";
   const htr = document.createElement("tr");
   for (const [c, al] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
   thead.appendChild(htr);
   const gType = v => (v.vtype || "-").split(":")[0].trim();   // Sub | Service | Supplier
-  const rows = [...vends].sort(grouped
-    ? (a, b) => gType(a).localeCompare(gType(b)) || (b.open_bal || 0) - (a.open_bal || 0)
-    : (a, b) => (b.open_bal || 0) - (a.open_bal || 0));       // default: most owed first
+  const vs = ($("#vendorSort") && $("#vendorSort").value) || "open";   // open $ (default) | name A-Z | total spend
+  const cmp = vs === "name" ? ((a, b) => (a.vendor || "").localeCompare(b.vendor || ""))
+    : vs === "spend" ? ((a, b) => (b.spend || 0) - (a.spend || 0) || (a.vendor || "").localeCompare(b.vendor || ""))
+    : ((a, b) => (b.open_bal || 0) - (a.open_bal || 0) || (a.vendor || "").localeCompare(b.vendor || ""));   // default: most owed first
+  const rows = [...vends].sort(grouped ? ((a, b) => gType(a).localeCompare(gType(b)) || cmp(a, b)) : cmp);
   const vendorRow = v => {
     const tr = document.createElement("tr");
     tr.classList.add("row-click"); tr.title = "Open this vendor's page";
@@ -1305,6 +1309,7 @@ function renderVendors() {
     const pill = document.createElement("span"); pill.className = "vtype" + (v.vtype === "Sub" ? " sub" : (v.vtype === "Service" ? " service" : ""));
     pill.textContent = v.vtype || "-"; ty.appendChild(pill); tr.appendChild(ty);
     tr.appendChild(rightText(String(v.jobs || 0)));
+    { const sc = document.createElement("td"); sc.appendChild(moneyCell(v.spend || 0)); tr.appendChild(sc); }
     tr.appendChild(rightText(v.open_bills ? String(v.open_bills) : "–"));
     const oc = document.createElement("td");
     if (v.open_bal > 0.5) oc.appendChild(moneyCell(v.open_bal)); else oc.appendChild(document.createTextNode("–"));
@@ -1896,6 +1901,7 @@ function findBillForLien(r) {
 let _vendorData = null, _vendorType = "all", _vendorView = "bills";   // bills | payments
 const _vendorBillOpen = new Set();
 async function openVendorPage(vendor) {
+  if (_ppLeaveBlocked()) return;   // unsaved pay ticks on the project page: Save or Discard first
   openRecord(vendor, "loading…"); skeletonInto($("#recordBody"), 6);
   const body = $("#recordBody"); body.innerHTML = "";
   _vendorData = null; _vendorType = "all"; _vendorView = "bills"; _vendorBillOpen.clear();
@@ -1936,7 +1942,7 @@ function renderVendorPage() {
   const scroll = document.createElement("div"); scroll.className = "table-scroll";
   const table = document.createElement("table"); table.className = "grid"; const thead = document.createElement("thead"), tbody = document.createElement("tbody");
   const htr = document.createElement("tr");
-  for (const [c, al] of [["", "left"], ["Date", "left"], ["Bill #", "left"], ["Project", "left"], ["Amount", "right"], ["Status", "left"]]) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
+  for (const [c, al] of [["", "left"], ["Date", "left"], ["Bill #", "left"], ["Project", "left"], ["Client", "left"], ["Amount", "right"], ["Status", "left"]]) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
   thead.appendChild(htr);
   bills.forEach((b, i) => {
     const key = (b.bill_ref || "?") + "|" + (b.bill_date || "") + "|" + i;
@@ -1946,15 +1952,13 @@ function renderVendorPage() {
     const cc = document.createElement("td"); cc.className = "left draw-caret"; cc.textContent = multi ? (open ? "▾" : "▸") : ""; tr.appendChild(cc);
     tr.appendChild(leftText(fmtDateShort(b.bill_date)));
     tr.appendChild(qboLinkCell(b.bill_ref, qboBillHref(b.qbo_link), "Open this bill in QuickBooks")); if (b.att) { const _ab = attBtn("Bill", b.bill_id || (qboBillHref(b.qbo_link) || "").replace(/.*txnId=(\d+).*/, "$1"), b.att, `${b.vendor || ""} · bill ${b.bill_ref || ""}`); _ab.style.marginLeft = "6px"; tr.lastElementChild.appendChild(_ab); }
-    const pcell = document.createElement("td"); pcell.className = "left";
-    if (b.project === "multiple") { const s = document.createElement("span"); s.className = "vp-multi"; s.textContent = "multiple"; s.title = "Click the bill to see all line items + project #s"; pcell.appendChild(s); }
-    else pcell.appendChild(document.createTextNode(b.project || "–"));
-    tr.appendChild(pcell);
+    tr.appendChild(_vpProjCell(b.projects || [], "Click the bill to see the line items per project"));   // every project #, each a link to its page (owner 2026-09-15: a bare "multiple" is useless)
+    { const cc = leftText((b.clients || []).length > 1 ? b.clients.join(", ") : (b.client || "–")); if (!(b.clients || []).length) cc.classList.add("dim"); cc.title = (b.clients || []).join(", "); tr.appendChild(cc); }
     const amt = document.createElement("td"); amt.appendChild(moneyCell(b.amount)); tr.appendChild(amt);
     const st = document.createElement("td"); st.className = "left";
     const stp = document.createElement("span"); stp.className = b.paid ? "ar-paid" : "ar-open"; stp.textContent = b.paid ? ("Paid " + fmtDateShort(b.pay_date)) : (b.pay_status || "Open"); st.appendChild(stp); tr.appendChild(st);
     tbody.appendChild(tr);
-    if (multi && open) { const lr = document.createElement("tr"); const ltd = document.createElement("td"); ltd.colSpan = 6; ltd.appendChild(_vendorLines(b)); lr.appendChild(ltd); tbody.appendChild(lr); }
+    if (multi && open) { const lr = document.createElement("tr"); const ltd = document.createElement("td"); ltd.colSpan = 7; ltd.appendChild(_vendorLines(b)); lr.appendChild(ltd); tbody.appendChild(lr); }
   });
   table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table); body.appendChild(scroll);
 }
@@ -1980,16 +1984,32 @@ function _renderVendorQboBills(d, body) {
   }
   table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table); body.appendChild(scroll);
 }
+function _vpCapped(host, nodes, n, what) {   // the first n nodes, then a "+N more" that reveals the rest in place
+  nodes.slice(0, n).forEach(x => host.appendChild(x));
+  if (nodes.length <= n) return;
+  const rest = document.createElement("div"); rest.hidden = true; nodes.slice(n).forEach(x => rest.appendChild(x));
+  const more = document.createElement("button"); more.type = "button"; more.className = "btn tiny subtle vp-more"; more.textContent = `+${nodes.length - n} more ${what}`;
+  more.onclick = (e) => { e.stopPropagation(); rest.hidden = !rest.hidden; more.textContent = rest.hidden ? `+${nodes.length - n} more ${what}` : "show fewer"; };
+  host.appendChild(more); host.appendChild(rest);
+}
+function _vpProjCell(projs, title) {   // a cell of project #s, each opening its project page
+  const td = document.createElement("td"); td.className = "left vp-projs";
+  if (!projs.length) { td.textContent = "–"; td.classList.add("dim"); return td; }
+  projs.forEach((p, i) => { if (i) td.appendChild(document.createTextNode(", ")); const a = document.createElement("a"); a.href = "#"; a.className = "vp-proj"; a.textContent = p; a.title = title || "Open this project's page";
+    a.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openProjectPage(p); }; td.appendChild(a); });
+  return td;
+}
 function _vendorLines(b) {
   const wrap = document.createElement("div"); wrap.className = "bills-sub";
   const cap = document.createElement("div"); cap.className = "bills-cap"; cap.textContent = `${b.lines.length} line items on bill ${b.bill_ref || ""}${b.projects.length > 1 ? " · " + b.projects.filter(p => p !== "(multiple)").join(", ") : ""}`; wrap.appendChild(cap);
   const scroll = document.createElement("div"); scroll.className = "table-scroll";
   const table = document.createElement("table"); table.className = "grid"; const thead = document.createElement("thead"), tbody = document.createElement("tbody");
   const htr = document.createElement("tr");
-  for (const [c, al] of [["Project #", "left"], ["Description", "left"], ["Amount", "right"]]) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
+  for (const [c, al] of [["Project #", "left"], ["Client", "left"], ["Description", "left"], ["Amount", "right"]]) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
   thead.appendChild(htr);
   for (const ln of b.lines) { const tr = document.createElement("tr");
-    tr.appendChild(leftText(ln.project_no || "–"));
+    tr.appendChild(_vpProjCell(ln.project_no ? [ln.project_no] : []));
+    tr.appendChild(leftText(ln.client || "–"));
     tr.appendChild(leftText(ln.description || "–"));
     tr.appendChild(rightText(money(ln.amount)));
     tbody.appendChild(tr);
@@ -2004,14 +2024,28 @@ function _renderVendorPayments(d, body) {
   const scroll = document.createElement("div"); scroll.className = "table-scroll";
   const table = document.createElement("table"); table.className = "grid"; const thead = document.createElement("thead"), tbody = document.createElement("tbody");
   const htr = document.createElement("tr");
-  for (const [c, al] of [["Date", "left"], ["Ref / cheque #", "left"], ["Type", "left"], ["Bills paid", "right"], ["Amount", "right"]]) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
+  // the bill(s) each payment paid, with the project and the client (owner 2026-09-15: "for bill payments i need to
+  // see the bill paid and the project") - one cheque can cover several bills, so each is its own line in the cell
+  for (const [c, al] of [["Date", "left"], ["Ref / cheque #", "left"], ["Type", "left"], ["Bills paid", "left"], ["Project", "left"], ["Client", "left"], ["Amount", "right"]]) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
   thead.appendChild(htr);
   for (const p of pays) {
     const tr = document.createElement("tr");
     tr.appendChild(leftText(fmtDateShort(p.txn_date)));
-    tr.appendChild(qboLinkCell(p.ref_no || "–", null, ""));   // ref # copyable
+    { const rc = qboLinkCell(p.ref_no || "–", null, ""); if (p.att) { const ab = attBtn("BillPayment", p.qbo_txn_id, p.att, `payment ${p.ref_no || ""}`); ab.style.marginLeft = "6px"; rc.appendChild(ab); } tr.appendChild(rc); }   // ref # copyable
     tr.appendChild(leftText(p.pay_type || "–"));
-    tr.appendChild(rightText(String(p.n_bills || 0)));
+    { const bc = document.createElement("td"); bc.className = "left vp-paybills";
+      const bl = p.bills || [];
+      if (!bl.length) { bc.textContent = p.n_bills ? `${p.n_bills} bill${p.n_bills === 1 ? "" : "s"}` : "–"; bc.classList.add("dim"); }
+      const lines = bl.map(b => { const line = document.createElement("div"); line.className = "vp-payline";
+        const a = document.createElement("a"); a.href = qboUrl("bill", b.bill_id); a.target = "_blank"; a.rel = "noopener"; a.className = "qbo-link"; a.textContent = b.bill_ref || ("bill " + b.bill_id); a.title = "Open this bill in QuickBooks"; line.appendChild(a);
+        if (bl.length > 1) { const s = document.createElement("span"); s.className = "dim"; s.textContent = " " + money(b.amount); line.appendChild(s); }
+        if ((b.projects || []).length) { const pr = document.createElement("span"); pr.className = "dim"; pr.textContent = " · " + b.projects.join(", "); line.appendChild(pr); }
+        return line; });
+      _vpCapped(bc, lines, 6, "bills");   // a 129-bill cheque (RCI 25745) would otherwise be a wall - the first 6, then "+123 more"
+      tr.appendChild(bc); }
+    { const pc = _vpProjCell((p.projects || []).slice(0, 8)); const rest = (p.projects || []).length - 8;
+      if (rest > 0) { const m = document.createElement("span"); m.className = "dim"; m.textContent = ` +${rest} more`; m.title = (p.projects || []).slice(8).join(", "); pc.appendChild(m); } tr.appendChild(pc); }
+    { const cl = p.clients || []; const cc = leftText(cl.slice(0, 4).join(", ") + (cl.length > 4 ? ` +${cl.length - 4} more` : "") || "–"); if (!cl.length) cc.classList.add("dim"); cc.title = cl.join(", "); tr.appendChild(cc); }
     const amt = document.createElement("td"); amt.appendChild(moneyCell(p.total_amt)); tr.appendChild(amt);
     tbody.appendChild(tr);
   }
@@ -3061,6 +3095,7 @@ function _whySince(p, kind) {
 async function openProjectPage(pn) {
   if (!pn || !/^(MFD|CP|RP)\d/i.test(String(pn))) { if (pn) toast(`"${pn}" is not a project # - nothing to open`); return; }   // e.g. the "(multiple)" bucket
   pn = String(pn).toUpperCase();
+  if (_ppLeaveBlocked()) return;   // unsaved pay ticks on the page that is open: Save or Discard first
   const r0 = (ALL || []).find(x => x.project_no === pn) || {};
   openRecord(pn + (r0.project_name ? " · " + r0.project_name : ""), [r0.division, r0.status ? "WIP status " + r0.status : ""].filter(Boolean).join(" · "));
   const body = $("#recordBody"); body.innerHTML = ""; skeletonInto(body, 6);
@@ -3068,7 +3103,11 @@ async function openProjectPage(pn) {
   try { d = await (await fetch(`/api/project/page?no=${encodeURIComponent(pn)}`)).json(); }
   catch (e) { body.textContent = "could not load this project"; return; }
   if (!d || !d.ok) { body.textContent = (d && d.error) || "no data for this project"; return; }
-  _pp = { d, pn, view: "coverage", open: new Set(), openV: new Set(), filter: "unpaid", sort: "vendor" };   // view = coverage | one draw's key (tabs, owner 2026-09-08)   // open = draws, openV = groups (collapsed by default, always); sort = vendor | code | date | amount
+  // view = "all" (every bill on the job, with the draw each sits under) | one draw's key. The Coverage table and the
+  // draw boxes stay on top whatever is open (owner 2026-09-15). filter = all | unpaid (all by default - "i need to be
+  // able to see all bills"). sort = vendor (A-Z) | amount (band total) | code | date. payMode = the pay-run controls,
+  // off until "Pay bills" is clicked; payDraft = ticks not yet saved (bill_id -> selected).
+  _pp = { d, pn, view: "all", openV: new Set(), filter: "all", sort: "vendor", payMode: false, payDraft: new Map() };
   body.innerHTML = "";
   if (!r0.project_name && d.project && d.project.name) $("#recordTitle").textContent = `${pn} · ${d.project.name}`;
   const sec = (title, note) => { const w = document.createElement("section"); w.className = "widget ip-sec";
@@ -3105,8 +3144,11 @@ async function openProjectPage(pn) {
   const plWrap = document.createElement("div"); plWrap.className = "ip-top pp-pnl"; plWrap.appendChild(buildPnlGroup(pn)); s1.appendChild(plWrap);   // 3 columns (owner: save vertical space)
   // ── 2. how we get funded ──
   const F = d.funding || {}, nx = F.next_draw;
-  const nInv = d.draws.filter(x => !x.no_draw).length, nNo = d.draws.length - nInv;   // the same count the P&L block shows, plus the not-yet-drawn bucket named
-  const s2 = sec("How we get funded", `${nInv} draw${nInv === 1 ? "" : "s"} invoiced${nNo ? ` + ${nNo} not yet drawn` : ""} · GC owes ${money(d.draws.reduce((s, x) => s + num(x.ar_open), 0))} · ${srcText("Bill Tracker", syncedAt("sync-ap"), "loaded")} · ${srcText("QuickBooks invoices", loadedAt("AR (invoices)"), "loaded")}`);
+  const isRp = /^RP/i.test(pn);
+  const nInv = d.draws.filter(x => !x.no_draw && !x.whole_job).length, nNo = d.draws.filter(x => x.no_draw).length;   // the same count the P&L block shows, plus the not-yet-drawn bucket named
+  const owes = d.draws.reduce((s, x) => s + num(x.ar_open), 0);
+  const s2 = sec("How we get funded", (isRp ? "RP bills at completion - the job is one bucket" : `${nInv} draw${nInv === 1 ? "" : "s"} invoiced${nNo ? ` + ${nNo} not yet drawn` : ""}`)
+    + ` · GC owes ${money(owes)} · ${srcText("Bill Tracker", syncedAt("sync-ap"), "loaded")} · ${srcText("QuickBooks invoices", loadedAt("AR (invoices)"), "loaded")}`);
   // Colour encodes OUR side only (owner 2026-09-10: "why is the box red?" - it was red on every
   // awaiting-funding draw, even when nothing blocked it). Red only when we owe money on an earlier
   // draw; amber when earlier bills show $0 open / no pay date (confirm); green otherwise.
@@ -3115,7 +3157,7 @@ async function openProjectPage(pn) {
   const caution = nx && blk.length && !blocked;
   const unlock = document.createElement("div"); unlock.className = "pp-unlock" + (blocked ? "" : caution ? " caution" : " ok");
   if (nx) {
-    unlock.innerHTML = `<div class="pp-unlock-h">Next money in: <b>${_ge(nx.label.split(/\s+[\u2014\u2013-]\s+/)[0])}${_ge(drawTag(nx))}</b> · GC owes <b>${_ge(money(nx.ar_open))}</b>${nx.ar_date ? " · invoiced " + _ge(fmtDate(nx.ar_date)) : ""}${drawSpan(nx) ? " · covers " + _ge(drawSpan(nx)) : ""}</div>`
+    unlock.innerHTML = `<div class="pp-unlock-h">Next money in: <b>${_ge(nx.label.split(/\s+[—–-]\s+/)[0])}${_ge(drawTag(nx))}</b> · GC owes <b>${_ge(money(nx.ar_open))}</b>${nx.ar_date ? " · invoiced " + _ge(fmtDate(nx.ar_date)) : ""}${drawSpan(nx) ? " · covers " + _ge(drawSpan(nx)) : ""}</div>`
       + (blk.length ? (blocked
             ? `<div class="pp-unlock-b">Blocked by <b>${blk.length}</b> unpaid bill${blk.length === 1 ? "" : "s"} on earlier draws · <b>${_ge(money(F.blockers_total))}</b> to pay (their unconditional waivers release this draw)</div>`
             : `<div class="pp-unlock-b"><b>${blk.length}</b> bill${blk.length === 1 ? "" : "s"} on earlier draws show no payment date yet ($0 open) - confirm they are paid and collect the waivers, then this draw is clear on our side</div>`)
@@ -3130,27 +3172,17 @@ async function openProjectPage(pn) {
   unlock.appendChild(xb);
   unlock.hidden = _fundHidden(); reopen.hidden = !unlock.hidden;
   s2.appendChild(unlock); s2.appendChild(reopen);
-  const tools = document.createElement("div"); tools.className = "ip-tools";
-  const seg = document.createElement("div"); seg.className = "seg";
-  for (const [k, lbl] of [["unpaid", "Unpaid bills"], ["all", "All bills"]]) { const b = document.createElement("button"); b.type = "button"; b.className = "seg-btn" + (k === "unpaid" ? " on" : ""); b.textContent = lbl;
-    b.onclick = () => { _pp.filter = k; seg.querySelectorAll(".seg-btn").forEach(x => x.classList.toggle("on", x === b)); _renderPpDraws(); }; seg.appendChild(b); }
-  // three views (owner 2026-09-02): Draws = bands only · Vendors = every draw open, vendor totals collapsed · Bills = everything open
-  const tog = document.createElement("div"); tog.className = "seg"; tog.id = "ppToggle";
-  for (const [k, lbl, title] of [["draws", "Coverage", "Every draw on one table"], ["vendors", "Vendors", "The open draw, vendor totals"], ["bills", "Bills", "The open draw, every bill"]]) {
-    const b = document.createElement("button"); b.type = "button"; b.className = "seg-btn" + (k === "draws" ? " on" : ""); b.dataset.v = k; b.textContent = lbl; b.title = title;
-    b.onclick = () => { const keys = d.draws.map(x => x.matched_invoice);
-      if (k === "draws") { _pp.view = "coverage"; _pp.openV = new Set(); }
-      else { if (_pp.view === "coverage" && keys.length) _pp.view = keys[0]; _pp.openV = k === "bills" ? new Set(["*"]) : new Set(); }
-      _renderPpDraws(); };
-    tog.appendChild(b);
-  }
-  const mk = document.createElement("button"); mk.type = "button"; mk.className = "btn small"; mk.textContent = "Mark blockers to pay"; mk.title = "Tick every unpaid bill on the draws before the next one the GC owes - they go on the pay run";
-  mk.onclick = () => _ppMarkBlockers();
-  const ex = document.createElement("button"); ex.type = "button"; ex.className = "btn small"; ex.textContent = "Export pay list"; ex.title = "Excel report of the bills ticked to pay on this job, grouped by draw";
-  ex.onclick = () => _ppExport();
-  const pb = document.createElement("button"); pb.type = "button"; pb.className = "btn small subtle"; pb.textContent = "Open Pay Bills"; pb.onclick = () => setTab("paybills");
-  tools.appendChild(seg); tools.appendChild(tog); tools.appendChild(mk); tools.appendChild(ex); tools.appendChild(pb); s2.appendChild(tools);
-  const sel = document.createElement("div"); sel.id = "ppSelected"; sel.className = "pp-selected"; s2.appendChild(sel);   // what is ticked, at a glance, before any export
+  // the tools row: the bills filter (big, with counts - owner 2026-09-15: "this toggle ... be more present"), the sort,
+  // Expand / Collapse, and "Pay bills" off to the right - the pay-run controls stay hidden until it is clicked
+  const tools = document.createElement("div"); tools.className = "ip-tools pp-tools";
+  const fseg = document.createElement("div"); fseg.className = "seg big"; fseg.id = "ppFilterSeg"; tools.appendChild(fseg);
+  const sl = document.createElement("span"); sl.className = "dim pp-sortlab"; sl.textContent = "Sort by"; tools.appendChild(sl);
+  const sseg = document.createElement("div"); sseg.className = "seg"; sseg.id = "ppSortSeg"; tools.appendChild(sseg);
+  const exp = document.createElement("button"); exp.type = "button"; exp.className = "btn small"; exp.id = "ppExpand"; exp.onclick = () => { _pp.openV = _pp.openV.has("*") ? new Set() : new Set(["*"]); _renderPpDraws(); }; tools.appendChild(exp);
+  const sp = document.createElement("span"); sp.className = "pp-spacer"; tools.appendChild(sp);
+  const payBtn = document.createElement("button"); payBtn.type = "button"; payBtn.className = "btn small pp-paybtn"; payBtn.id = "ppPayBtn"; payBtn.onclick = _ppTogglePay; tools.appendChild(payBtn);
+  s2.appendChild(tools);
+  const paybar = document.createElement("div"); paybar.className = "pp-paybar"; paybar.id = "ppPayBar"; paybar.hidden = true; s2.appendChild(paybar);
   const host = document.createElement("div"); host.id = "ppDraws"; s2.appendChild(host);
   _renderPpDraws();
   // ── 3. audit findings on this job (the Audit tab, filtered to this project) ──
@@ -3195,55 +3227,124 @@ async function openProjectPage(pn) {
   const qurl = qboCustomerUrl(cid); if (qurl) { const a = document.createElement("a"); a.className = "btn small"; a.href = qurl; a.target = "_blank"; a.rel = "noopener"; a.textContent = "Project in QuickBooks ↗"; acts3.appendChild(a); }
   s3.appendChild(acts3);
 }
-function _ppBillShown(b) { const paid = !!b.paid; return _pp.filter === "all" || !paid; }
-function _renderPpSelected() {
-  const box = $("#ppSelected"); if (!box) return;
-  const picked = _ppAllSelected();
-  box.innerHTML = "";
-  if (!picked.length) { box.classList.add("empty"); box.textContent = "Nothing ticked to pay on this job yet - tick bills below, or Mark blockers to pay."; return; }
-  box.classList.remove("empty");
-  const tot = picked.reduce((s, x) => s + num(x.b.open), 0);
-  const h = document.createElement("div"); h.className = "pp-sel-h"; h.textContent = `Selected to pay: ${picked.length} bill${picked.length === 1 ? "" : "s"} · ${money(tot)}`; box.appendChild(h);
-  const ul = document.createElement("div"); ul.className = "pp-sel-list";
-  const byV = new Map(); for (const x of picked) { const k = x.b.vendor || "?"; if (!byV.has(k)) byV.set(k, []); byV.get(k).push(x); }
-  for (const [v, xs] of [...byV].sort((a, b) => a[0].localeCompare(b[0]))) {
-    const li = document.createElement("div"); li.className = "pp-sel-v";
-    li.innerHTML = `<b>${_ge(v)}</b> · ${xs.length} bill${xs.length === 1 ? "" : "s"} · ${_ge(money(xs.reduce((s, x) => s + num(x.b.open), 0)))} <span class="dim">(${xs.map(x => _ge(x.b.bill_ref || "?") + " on " + _ge(x.dr.invoice_no ? "inv " + x.dr.invoice_no : "no draw")).join(", ")})</span>`;
-    ul.appendChild(li);
-  }
-  box.appendChild(ul);
-  const clr = document.createElement("button"); clr.type = "button"; clr.className = "btn small subtle"; clr.textContent = "Untick all on this job"; clr.onclick = () => _ppSetPay(picked.map(x => x.b), false); box.appendChild(clr);
-}
+// ── project page helpers: what is shown, what is ticked, the pay draft ──
+function _ppBillShown(b) { return _pp.filter === "all" || !b.paid; }
 function _ppBillsOf(dr) { return [...(dr.bills || []), ...(dr.sub_bills || [])]; }
-function _ppAllSelected() { const out = []; for (const dr of _pp.d.draws) for (const b of _ppBillsOf(dr)) if (b.pay_selected) out.push({ dr, b }); return out; }
-function _ppCheck(bills, label, title) {   // a select-all checkbox for a group of bills (unpaid, payable by us)
-  const payable = bills.filter(b => !b.paid && b.gates && b.bill_id);
+function _ppAllRows(draws) {   // every bill on the given draws as {dr, b, isSub}
+  const out = [];
+  for (const dr of draws) { for (const b of (dr.bills || [])) out.push({ dr, b, isSub: false }); for (const b of (dr.sub_bills || [])) out.push({ dr, b, isSub: true }); }
+  return out;
+}
+function _ppTitle(dr) { return dr.whole_job ? "Job to date" : drawTitle(dr); }
+function _ppInvLabel(dr) { const nos = dr.invoice_nos || (dr.invoice_no ? [dr.invoice_no] : []); return !nos.length ? "" : nos.length === 1 ? "Inv " + nos[0] : `${nos.length} invoices`; }
+function _ppPayable(b) { return !b.paid && b.gates && b.bill_id; }
+function _ppSel(b) { return _pp.payDraft.has(b.bill_id) ? _pp.payDraft.get(b.bill_id) : !!b.pay_selected; }   // effective tick = the draft over the saved run
+function _ppAllSelected() { const out = []; for (const dr of _pp.d.draws) for (const b of _ppBillsOf(dr)) if (b.bill_id && _ppSel(b)) out.push({ dr, b }); return out; }
+function _ppDraftSet(bills, selected) {   // tick / untick into the DRAFT - nothing reaches the server until Save (owner 2026-09-15)
+  let n = 0;
+  for (const b of bills) { if (!b.bill_id) continue; n++; if (!!b.pay_selected === !!selected) _pp.payDraft.delete(b.bill_id); else _pp.payDraft.set(b.bill_id, !!selected); }
+  if (!n) { toast("These bills have no QuickBooks link to key the pay run on"); return; }
+  const y = window.scrollY; _renderPpDraws(); window.scrollTo(0, y);
+}
+function _ppCheck(bills, label, title) {   // a select-all checkbox for a group of bills (unpaid, payable by us) - pay mode only
+  const payable = bills.filter(_ppPayable);
   const cb = document.createElement("input"); cb.type = "checkbox"; cb.className = "pp-grp-cb";
-  cb.checked = payable.length > 0 && payable.every(b => b.pay_selected);
-  cb.indeterminate = !cb.checked && payable.some(b => b.pay_selected);
+  cb.checked = payable.length > 0 && payable.every(_ppSel);
+  cb.indeterminate = !cb.checked && payable.some(_ppSel);
   cb.disabled = !payable.length; cb.title = title || `Tick every unpaid bill in ${label}`;
   cb.onclick = (e) => e.stopPropagation();
-  cb.onchange = () => _ppSetPay(payable, cb.checked);
+  cb.onchange = () => _ppDraftSet(payable, cb.checked);
   return cb;
 }
-
-// The draws as TABS (owner 2026-09-08: "each one in its own page where no other clutter gets in the
-// way"): the Coverage table is the table of contents - one row per draw with what it billed, cost and
-// made - and each draw then opens alone. Left / right arrow keys flip between them.
+function _ppLeaveBlocked() {   // an unsaved pay run never walks away with you (owner 2026-09-15: "don't let leave without saving or discarding")
+  if (!(typeof _pp !== "undefined" && _pp && _pp.payDraft && _pp.payDraft.size)) return false;
+  const rv = $("#recordView"); if (!rv || rv.hidden || !$("#ppDraws")) return false;
+  const n = _pp.payDraft.size;
+  toast(`${n} unsaved pay tick${n === 1 ? "" : "s"} on ${_pp.pn} - Save or Discard first`, 3200);
+  const bar = $("#ppPayBar"); if (bar) { bar.classList.add("flash"); setTimeout(() => bar.classList.remove("flash"), 1000); bar.scrollIntoView({ block: "center", behavior: "smooth" }); }
+  return true;
+}
+function _ppTogglePay() {
+  if (_pp.payMode && _pp.payDraft.size) { _ppLeaveBlocked(); return; }
+  _pp.payMode = !_pp.payMode;
+  if (!_pp.payMode) _pp.payDraft = new Map();
+  _renderPpDraws();
+}
+async function _ppSavePay() {
+  const items = [..._pp.payDraft].map(([bill_id, selected]) => ({ bill_id, selected, amount: null }));
+  if (!items.length) return;
+  const btn = $("#ppPaySave"); if (btn) { btn.disabled = true; btn.textContent = "Saving…"; }
+  let r;
+  try { r = await (await fetch("/api/pay-run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ items }) })).json(); }
+  catch (e) { r = { error: String(e) }; }
+  if (!(r && r.ok)) { if (btn) { btn.disabled = false; btn.textContent = "Save"; } toast("NOT saved - " + ((r && r.error) || "could not reach the server"), 5000); return; }
+  for (const dr of _pp.d.draws) for (const b of _ppBillsOf(dr)) if (b.bill_id && _pp.payDraft.has(b.bill_id)) b.pay_selected = _pp.payDraft.get(b.bill_id);
+  _pp.payDraft = new Map();
+  toast(`Saved ✓ pay run · ${items.length} change${items.length === 1 ? "" : "s"} on ${_pp.pn}`, 3000);
+  const y = window.scrollY; _renderPpDraws(); window.scrollTo(0, y);
+}
+function _ppDiscardPay() { const n = _pp.payDraft.size; _pp.payDraft = new Map(); const y = window.scrollY; _renderPpDraws(); window.scrollTo(0, y); if (n) toast("Discarded unsaved pay ticks"); }
+function _ppPaintTools() {
+  const d = _pp.d, all = _ppAllRows(d.draws);
+  const nAll = all.length, nUnpaid = all.filter(x => !x.b.paid).length;
+  const fseg = $("#ppFilterSeg");
+  if (fseg) { fseg.innerHTML = "";
+    for (const [k, lbl] of [["all", `All bills · ${nAll}`], ["unpaid", `Unpaid · ${nUnpaid}`]]) { const b = document.createElement("button"); b.type = "button"; b.className = "seg-btn" + (_pp.filter === k ? " on" : ""); b.textContent = lbl;
+      b.title = k === "all" ? "Every bill on the job, paid or not, with the draw it sits under" : "Only what is still owed to vendors"; b.onclick = () => { _pp.filter = k; _renderPpDraws(); }; fseg.appendChild(b); } }
+  const sseg = $("#ppSortSeg");
+  if (sseg) { sseg.innerHTML = "";
+    for (const [k, l, t] of [["vendor", "Name", "Vendors A to Z"], ["amount", "Total amount", "Vendors by what they billed on this job, largest first"], ["code", "Cost code", "Bands by cost code"], ["date", "Date", "Every bill in date order, no bands"]]) { const b = document.createElement("button"); b.type = "button"; b.className = "seg-btn" + (_pp.sort === k ? " on" : ""); b.textContent = l; b.title = t;
+      b.onclick = () => { _pp.sort = k; if (k === "date") _pp.openV = new Set(["*"]); _renderPpDraws(); }; sseg.appendChild(b); } }
+  const exp = $("#ppExpand"); if (exp) { exp.textContent = _pp.openV.has("*") ? "Collapse all" : "Expand all"; exp.hidden = _pp.sort === "date"; }
+  const pb = $("#ppPayBtn");
+  if (pb) { const n = _ppAllSelected().length; pb.classList.toggle("on", _pp.payMode);
+    pb.textContent = _pp.payMode ? "Paying bills · Done" : (n ? `Pay bills · ${n} on the run` : "Pay bills");
+    pb.title = _pp.payMode ? "Leave the pay-run controls (Save or Discard first)" : "Tick the bills to pay on this job - the pay-run controls appear"; }
+}
+function _ppPaintPayBar() {
+  const bar = $("#ppPayBar"); if (!bar) return;
+  bar.hidden = !_pp.payMode; bar.innerHTML = ""; if (!_pp.payMode) return;
+  const picked = _ppAllSelected(), tot = picked.reduce((s, x) => s + num(x.b.open), 0), dirty = _pp.payDraft.size;
+  bar.classList.toggle("dirty", dirty > 0);
+  const st = document.createElement("span"); st.className = "pp-paystat";
+  st.innerHTML = `<b>${picked.length}</b> bill${picked.length === 1 ? "" : "s"} ticked to pay · <b>${_ge(money(tot))}</b>` + (dirty ? ` · <span class="pp-dirty">${dirty} unsaved change${dirty === 1 ? "" : "s"}</span>` : ` · <span class="dim">saved</span>`);
+  bar.appendChild(st);
+  const mk = (lbl, cls, fn, title, id) => { const b = document.createElement("button"); b.type = "button"; b.className = "btn small " + (cls || ""); b.textContent = lbl; if (title) b.title = title; if (id) b.id = id; b.onclick = fn; bar.appendChild(b); return b; };
+  mk("Mark blockers to pay", "", _ppMarkBlockers, "Tick every unpaid bill on the draws before the next one the GC owes - their waivers unlock it");
+  mk("Export pay list", "", _ppExport, "Excel report of the bills ticked to pay on this job, grouped by draw");
+  mk("Open Pay run", "subtle", () => { if (!_ppLeaveBlocked()) setTab("paybills"); }, "The check-run worksheet across every job");
+  const sv = mk("Save", "primary", _ppSavePay, "Write the ticks to the pay run (local intent only - never QuickBooks)", "ppPaySave"); sv.disabled = !dirty;
+  const dc = mk("Discard", "", _ppDiscardPay, "Drop the unsaved ticks"); dc.hidden = !dirty;
+  if (picked.length) {   // what is ticked, by vendor - at a glance before any export
+    const ul = document.createElement("div"); ul.className = "pp-sel-list";
+    const byV = new Map(); for (const x of picked) { const k = x.b.vendor || "?"; if (!byV.has(k)) byV.set(k, []); byV.get(k).push(x); }
+    for (const [v, xs] of [...byV].sort((a, b) => a[0].localeCompare(b[0]))) {
+      const li = document.createElement("div"); li.className = "pp-sel-v";
+      li.innerHTML = `<b>${_ge(v)}</b> · ${xs.length} bill${xs.length === 1 ? "" : "s"} · ${_ge(money(xs.reduce((s, x) => s + num(x.b.open), 0)))} <span class="dim">(${xs.map(x => _ge(x.b.bill_ref || "?") + " on " + _ge(x.dr.no_draw ? "no draw" : _ppTitle(x.dr))).join(", ")})</span>`;
+      ul.appendChild(li);
+    }
+    bar.appendChild(ul);
+  }
+}
+// The draw boxes + the Coverage table sit on top whatever is open; a click on a box or a row opens that draw's
+// details underneath and the boxes stay (owner 2026-09-15). "All draws" = every bill on the job with the draw it
+// sits under. Left / right arrow keys flip between them.
 function _ppTabs(d, nxInv) {
   const strip = document.createElement("div"); strip.className = "pp-tabs";
   const mk = (key, lbl, sub, title) => { const b = document.createElement("button"); b.type = "button"; b.className = "pp-tab" + (_pp.view === key ? " on" : "");
-    b.innerHTML = `<span>${_ge(lbl)}</span>${sub ? `<small>${_ge(sub)}</small>` : ""}`; b.title = title || ""; b.onclick = () => { _pp.view = key; _renderPpDraws(); }; return b; };
-  strip.appendChild(mk("coverage", "Coverage", `${d.draws.length} draw${d.draws.length === 1 ? "" : "s"}`, "Every draw on one table - what it billed, cost and made"));
+    b.innerHTML = `<span>${_ge(lbl)}</span>${sub ? `<small>${_ge(sub)}</small>` : ""}`; b.title = title || ""; b.onclick = () => { _pp.view = key; _renderPpDraws(); _ppScrollDetail(); }; return b; };
+  const n = d.draws.filter(x => !x.no_draw).length;
+  strip.appendChild(mk("all", "All draws", `${n} draw${n === 1 ? "" : "s"} · ${_ppAllRows(d.draws).length} bills`, "Every bill on the job, with the draw it sits under"));
   for (const dr of d.draws) {
     const span = drawSpan(dr);
-    const b = mk(dr.matched_invoice, drawTitle(dr), dr.no_draw ? "" : `Inv ${dr.invoice_no || "?"}`, [span ? "Covers " + span : "", dr.stage || ""].filter(Boolean).join(" · "));
+    const b = mk(dr.matched_invoice, _ppTitle(dr), dr.no_draw ? `${_ppBillsOf(dr).length} bills` : _ppInvLabel(dr), [span ? "Covers " + span : "", dr.stage || ""].filter(Boolean).join(" · "));
     if (dr.invoice_no && dr.invoice_no === nxInv) b.classList.add("next");
     strip.appendChild(b);
   }
   const hint = document.createElement("span"); hint.className = "pp-tabs-hint dim"; hint.textContent = "← → flips draws"; strip.appendChild(hint);
   return strip;
 }
+function _ppScrollDetail() { const el = $("#ppDetail"); if (el) requestAnimationFrame(() => el.scrollIntoView({ behavior: "smooth", block: "start" })); }
 function _ppCoverage(d, nxInv) {
   const wrap = document.createElement("div"); wrap.className = "table-scroll pp-cov-wrap";
   const t = document.createElement("table"); t.className = "grid pp-cov";
@@ -3253,11 +3354,11 @@ function _ppCoverage(d, nxInv) {
   const rt = (v, cls) => { const td = document.createElement("td"); td.className = "right" + (cls ? " " + cls : ""); td.textContent = v; return td; };
   for (const dr of d.draws) {
     const p = dr.pl || {}; const costs = dr.no_draw ? num(dr.gate_amt) + num(dr.subs_amt) : num(p.costs);
-    const tr = document.createElement("tr"); tr.className = "pp-cov-row" + (dr.invoice_no && dr.invoice_no === nxInv ? " next" : ""); tr.title = "Open this draw on its own";
-    tr.onclick = () => { _pp.view = dr.matched_invoice; _renderPpDraws(); };
+    const tr = document.createElement("tr"); tr.className = "pp-cov-row" + (dr.invoice_no && dr.invoice_no === nxInv ? " next" : "") + (_pp.view === dr.matched_invoice ? " sel" : ""); tr.title = "Open this draw underneath";
+    tr.onclick = () => { _pp.view = dr.matched_invoice; _renderPpDraws(); _ppScrollDetail(); };
     { const td = leftText(drawSpan(dr) || "–"); if (!drawSpan(dr)) td.classList.add("dim"); tr.appendChild(td); }
-    tr.appendChild(leftText(drawTitle(dr)));
-    tr.appendChild(leftText(dr.no_draw ? "–" : (dr.invoice_no || "–")));
+    tr.appendChild(leftText(_ppTitle(dr)));
+    { const nos = dr.invoice_nos || (dr.invoice_no ? [dr.invoice_no] : []); const td = leftText(dr.no_draw ? "–" : (nos.join(", ") || "–")); if (nos.length > 1) td.title = `${nos.length} invoices dated the same day - one draw`; tr.appendChild(td); }
     tr.appendChild(leftText(dr.ar_date ? fmtDateShort(dr.ar_date) : "–"));
     tr.appendChild(rt(dr.no_draw ? "–" : money(p.income)));
     { const td = document.createElement("td"); td.className = "left"; const sp = document.createElement("span"); sp.className = dr.no_draw ? "dim" : dr.gc_paid ? "ar-paid" : "ar-open"; sp.textContent = dr.no_draw ? "–" : dr.gc_paid ? "paid" : "owes " + money(dr.ar_open); td.appendChild(sp); tr.appendChild(td); }
@@ -3271,7 +3372,8 @@ function _ppCoverage(d, nxInv) {
     { const td = leftText(dr.stage || "–"); td.classList.add("dim"); tr.appendChild(td); }
     tb.appendChild(tr);
   }
-  const tr = document.createElement("tr"); tr.className = "pp-cov-total";
+  const tr = document.createElement("tr"); tr.className = "pp-cov-total pp-cov-row" + (_pp.view === "all" ? " sel" : ""); tr.title = "Every bill on the job underneath";
+  tr.onclick = () => { _pp.view = "all"; _renderPpDraws(); _ppScrollDetail(); };
   tr.appendChild(leftText("")); tr.appendChild(leftText("All draws")); tr.appendChild(leftText("")); tr.appendChild(leftText(""));
   tr.appendChild(rt(money(tot.income))); tr.appendChild(leftText(""));
   tr.appendChild(rt(money(tot.costs + tot.unbilled)));
@@ -3279,178 +3381,195 @@ function _ppCoverage(d, nxInv) {
   tr.appendChild(rt(money(tot.overhead))); tr.appendChild(rt(money(tot.net), tot.net < 0 ? "neg" : "pos"));
   { const td = leftText(tot.unbilled > 0.005 ? `${money(tot.unbilled)} of costs not on a draw yet` : ""); td.classList.add("dim"); tr.appendChild(td); }
   tb.appendChild(tr); t.appendChild(tb); wrap.appendChild(t);
-  const cap = document.createElement("div"); cap.className = "bills-cap"; cap.textContent = "Period covered = the billing window stated on the invoice · Draw = the month (MFD) or number (CP) on the invoice · Net billed = the invoice after retainage · Costs = materials we pay + labor dated in the draw period · Overhead = the draw's share · click a row to open that draw on its own.";
+  const cap = document.createElement("div"); cap.className = "bills-cap"; cap.textContent = "Period covered = the billing window stated on the invoice · Draw = the month (MFD) or number (CP) on the invoice; invoices dated the same day are one draw · Net billed = the invoices after retainage · Costs = materials we pay + labor dated in the draw period · Overhead = the draw's share · click a row to open that draw underneath.";
   wrap.appendChild(cap);
   return wrap;
 }
-if (!window.__ppKeys) { window.__ppKeys = true;   // ← → flip between Coverage and the draws while a project page is open
+if (!window.__ppKeys) { window.__ppKeys = true;   // ← → flip between All draws and each draw while a project page is open
   document.addEventListener("keydown", (e) => {
     if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
     if (typeof _pp === "undefined" || !_pp || !_pp.d) return;
     const rv = $("#recordView"); if (!rv || rv.hidden || !$("#ppDraws")) return;
     const t = e.target; if (t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
-    const keys = ["coverage", ..._pp.d.draws.map(x => x.matched_invoice)];
-    let i = keys.indexOf(_pp.view || "coverage"); if (i < 0) i = 0;
+    const keys = ["all", ..._pp.d.draws.map(x => x.matched_invoice)];
+    let i = keys.indexOf(_pp.view || "all"); if (i < 0) i = 0;
     i = e.key === "ArrowRight" ? Math.min(keys.length - 1, i + 1) : Math.max(0, i - 1);
     _pp.view = keys[i]; _renderPpDraws(); e.preventDefault();
   });
 }
+// The draw's money as the EQUATION the owner reads (2026-09-15: "make it into an equation, we need to see the
+// minus ... and see the invoice that makes up the income on top"): every invoice on the draw, = income, − materials,
+// − labor, = gross profit, − overhead, = net. The same arithmetic as the P&L workbook's draw sheet.
+function _ppEquation(cur) {
+  const d = _pp.d, draws = cur ? [cur] : d.draws;
+  const wrap = document.createElement("div"); wrap.className = "pp-eq-wrap";
+  const t = document.createElement("table"); t.className = "pp-eq"; const tb = document.createElement("tbody");
+  const row = (op, label, detail, amt, cls, rightNode) => {
+    const tr = document.createElement("tr"); if (cls) tr.className = cls;
+    const o = document.createElement("td"); o.className = "pp-eq-op"; o.textContent = op; tr.appendChild(o);
+    const l = document.createElement("td"); l.className = "pp-eq-lab"; if (label instanceof Node) l.appendChild(label); else l.textContent = label;
+    if (detail) { const s = document.createElement("small"); s.textContent = detail; l.appendChild(s); } tr.appendChild(l);
+    const a = document.createElement("td"); a.className = "pp-eq-amt" + (amt < -0.005 ? " neg" : ""); a.textContent = amt == null ? "–" : (amt < -0.005 ? "− " + money(-amt) : money(amt)); tr.appendChild(a);
+    const r = document.createElement("td"); r.className = "pp-eq-right"; if (rightNode) { if (rightNode instanceof Node) r.appendChild(rightNode); else r.textContent = rightNode; } tr.appendChild(r);
+    tb.appendChild(tr); return tr;
+  };
+  const gcNode = (paid, bal) => { const s = document.createElement("span"); s.className = paid ? "ar-paid" : "ar-open"; s.textContent = paid ? "GC paid" : "GC owes " + money(bal); return s; };
+  let income = 0, mat = 0, lab = 0, nMat = 0, nLab = 0, oh = 0, basis = "";
+  for (const dr of draws) {
+    if (cur) {
+      for (const iv of (dr.invoices || [])) {
+        const lbl = document.createElement("span"); const a = document.createElement("a"); a.href = "#"; a.className = "qbo-link"; a.textContent = `Invoice ${iv.doc_number}`; a.title = "Open this invoice's page";
+        a.onclick = (e) => { e.preventDefault(); if (typeof openInvoicePage === "function") openInvoicePage({ doc_number: iv.doc_number, project_no: _pp.pn }); }; lbl.appendChild(a);
+        if (iv.qbo_txn_id) { const q = document.createElement("a"); q.href = qboUrl("invoice", iv.qbo_txn_id); q.target = "_blank"; q.rel = "noopener"; q.className = "qbo-link pp-eq-qbo"; q.textContent = "↗"; q.title = "Open in QuickBooks"; lbl.appendChild(q); }
+        row("", lbl, [iv.tag || ((dr.invoices || []).length > 1 ? "base contract" : ""), iv.txn_date ? fmtDateShort(iv.txn_date) : ""].filter(Boolean).join(" · "), iv.amount, "pp-eq-inv", gcNode(iv.paid, iv.balance));
+      }
+    } else if (!dr.no_draw) {
+      const nos = dr.invoice_nos || (dr.invoice_no ? [dr.invoice_no] : []);
+      const tr = row("", _ppTitle(dr), `${nos.length === 1 ? "invoice " + nos[0] : nos.length + " invoices " + nos.join(", ")}${dr.ar_date ? " · " + fmtDateShort(dr.ar_date) : ""}`, dr.billed, "pp-eq-inv pp-eq-click", gcNode(dr.gc_paid, dr.ar_open));
+      tr.title = "Open this draw"; tr.onclick = () => { _pp.view = dr.matched_invoice; _renderPpDraws(); _ppScrollDetail(); };
+    }
+    income += num(dr.billed); mat += num(dr.gate_amt); lab += num(dr.subs_amt);
+    nMat += (dr.bills || []).filter(b => b.gates).length; nLab += (dr.sub_bills || []).length;
+    if (dr.pl) { oh += num(dr.pl.overhead); basis = basis || dr.pl.overhead_basis || ""; }
+  }
+  const gcAll = draws.filter(x => !x.no_draw), owed = gcAll.reduce((s, x) => s + num(x.ar_open), 0);
+  row("=", "Income", cur ? (cur.whole_job ? "net billed on the job" : "net billed on this draw") : "net billed on the job", income, "pp-eq-sum", gcAll.length ? gcNode(owed <= 0.005, owed) : null);
+  const gcPays = draws.reduce((s, dr) => s + (dr.bills || []).filter(b => !b.gates).length, 0);
+  row("−", "Materials", `${nMat} bill${nMat === 1 ? "" : "s"} we pay · Bill Tracker${gcPays ? ` · ${gcPays} pumping bill${gcPays === 1 ? "" : "s"} the GC pays left out` : ""}`, -mat);
+  row("−", "Labor (subs)", `${nLab} bill${nLab === 1 ? "" : "s"} · QuickBooks${cur && !cur.whole_job && !cur.no_draw ? ", dated in the draw period" : ""}`, -lab);
+  const gross = income - mat - lab;
+  row("=", "Gross profit", income ? `${(gross / income * 100).toFixed(1)}% of income` : "", gross, "pp-eq-sum" + (gross < -0.005 ? " neg" : ""));
+  row("−", "Overhead", basis || (/^MFD/.test(_pp.pn) ? "9% of income (MFD)" : "10% of income"), -oh);
+  const net = gross - oh;
+  row("=", "Net", income ? `${(net / income * 100).toFixed(1)}% of income` : "", net, "pp-eq-total" + (net < -0.005 ? " neg" : " pos"));
+  t.appendChild(tb); wrap.appendChild(t);
+  return wrap;
+}
 function _renderPpDraws() {
-  const { d, host } = { d: _pp.d, host: $("#ppDraws") }; if (!host) return; host.innerHTML = "";
-  _renderPpSelected();
-  if (!d.draws.length) { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = "No draws or bills on this job in the Bill Tracker yet."; host.appendChild(p); return; }
+  const d = _pp.d, host = $("#ppDraws"); if (!host) return; host.innerHTML = "";
+  _ppPaintTools(); _ppPaintPayBar();
+  if (!d.draws.length) { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = "No invoices or bills on this job in the ledger yet."; return host.appendChild(p); }
   const nxInv = d.funding && d.funding.next_draw ? d.funding.next_draw.invoice_no : null;
-  const keys = d.draws.map(x => x.matched_invoice);
-  if (!_pp.view || (_pp.view !== "coverage" && !keys.includes(_pp.view))) _pp.view = "coverage";
-  const cur = _pp.view === "coverage" ? null : d.draws.find(x => x.matched_invoice === _pp.view);
-  _pp.open = cur ? new Set([cur.matched_invoice]) : new Set();
-  { const tg = $("#ppToggle"); if (tg) { const v = !cur ? "draws" : _pp.openV.has("*") ? "bills" : "vendors"; tg.querySelectorAll(".seg-btn").forEach(b => b.classList.toggle("on", b.dataset.v === v)); } }
+  const keys = ["all", ...d.draws.map(x => x.matched_invoice)];
+  if (!keys.includes(_pp.view)) _pp.view = "all";
+  const cur = _pp.view === "all" ? null : d.draws.find(x => x.matched_invoice === _pp.view);
   host.appendChild(_ppTabs(d, nxInv));
-  if (!cur) { host.appendChild(_ppCoverage(d, nxInv)); return; }
-  { const hd = document.createElement("div"); hd.className = "pp-draw-h pp-cols";
-    hd.innerHTML = `<span></span><span>Draw</span><span>Invoiced</span><span>Billed</span><span>GC</span><span>Materials</span><span>Labor</span><span>Pay run</span><span>Stage</span>`; host.appendChild(hd); }
-  const COLS = 10;
+  host.appendChild(_ppCoverage(d, nxInv));
+  const det = document.createElement("div"); det.className = "pp-detail" + (cur && cur.invoice_no && cur.invoice_no === nxInv ? " next" : ""); det.id = "ppDetail";
+  // the head: which draw is open, its invoices, what it covers, where it stands
+  { const h = document.createElement("div"); h.className = "pp-det-h";
+    if (!cur) h.innerHTML = `<b>All draws</b> <span class="dim">· every bill on the job, with the draw it sits under</span>`;
+    else { const nos = cur.invoice_nos || (cur.invoice_no ? [cur.invoice_no] : []);
+      const bits = [cur.no_draw ? "bills the Bill Tracker has not matched to a draw yet" : nos.length ? (nos.length === 1 ? "Invoice " + nos[0] : "Invoices " + nos.join(", ")) : "", drawSpan(cur) ? "covers " + drawSpan(cur) : "", cur.ar_date ? "invoiced " + fmtDate(cur.ar_date) : "", cur.stage || ""].filter(Boolean);
+      h.innerHTML = `<b>${_ge(_ppTitle(cur))}</b> <span class="dim">· ${bits.map(_ge).join(" · ")}</span>`;
+      for (const [k, word] of [["pushed_in", "moved into this draw from the one before"], ["pushed_out", "moved on to the next draw"]]) { const p = cur[k]; if (!p) continue;
+        const cap = document.createElement("div"); cap.className = "bills-cap pp-push"; cap.textContent = `${p.count} bill${p.count === 1 ? "" : "s"} · ${money(p.total)} ${word}: ${p.note || ""}`; h.appendChild(cap); } }
+    det.appendChild(h); }
+  det.appendChild(_ppEquation(cur));
+  det.appendChild(_ppBillsTable(cur));
+  host.appendChild(det);
+}
+function _ppBillsTable(cur) {
+  const d = _pp.d, rows = _ppAllRows(cur ? [cur] : d.draws).filter(x => _ppBillShown(x.b));
+  const box = document.createElement("div"); box.className = "pp-billsbox";
+  if (!rows.length) { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = _pp.filter === "unpaid" ? "Every bill here is paid." : "No bills."; box.appendChild(p); return box; }
+  const pay = _pp.payMode, showDraw = !cur;
+  const cols = [];
+  if (pay) cols.push(["Pay", "left"]);
+  cols.push(["Vendor / Bill #", "left"], ["Code", "left"], ["Amount", "right"], ["Date", "left"]);
+  if (showDraw) cols.push(["Draw", "left"]);
+  cols.push(["Where / status", "left"], ["Paid?", "left"], ["Description", "left"]);
+  if (pay) cols.push(["Waiver", "left"]);
+  const COLS = cols.length;
   const codeOf = b => (b.codes && b.codes.length) ? b.codes.join(", ") : "(uncoded)";
-  const billRow = (dr, b, isSub, inGrp) => {   // inGrp = under a vendor / code pocket: indented, and the vendor name is not repeated (owner 2026-09-08)
-    const tr = document.createElement("tr"); if (b.paid) tr.classList.add("inv-paid"); if (inGrp) tr.classList.add("pp-in-grp");
-    const pc = document.createElement("td"); pc.className = "left";
-    if (!b.paid && b.gates && b.bill_id) { const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = !!b.pay_selected; cb.title = "Put this bill on the pay run (Pay Bills) - local intent, never QuickBooks";
-      cb.onclick = (e) => e.stopPropagation(); cb.onchange = () => _ppSetPay([b], cb.checked); pc.appendChild(cb); }
-    else if (!b.gates) { const s = document.createElement("span"); s.className = "vg-tag"; s.textContent = "GC pays"; s.title = "Concrete pumping - paid by the GC directly"; pc.appendChild(s); }
-    tr.appendChild(pc);
-    { const vb = document.createElement("td"); vb.className = "left pp-vb"; if (!(inGrp && _pp.sort !== "code")) { const v = document.createElement("span"); v.className = "pp-vend"; v.textContent = b.vendor || "–"; vb.appendChild(v); vb.appendChild(document.createTextNode(" ")); } const link = qboLinkCell(b.bill_ref || "–", isSub ? qboUrl(b.txn_type === "Expense" ? "expense" : "bill", b.bill_id) : qboBillHref(b.qbo_link), "Open this bill in QuickBooks");
-      while (link.firstChild) vb.appendChild(link.firstChild); if (b.att) { const ab = attBtn(isSub && b.txn_type === "Expense" ? "Purchase" : "Bill", b.bill_id, b.att, `${b.vendor || ""} · bill ${b.bill_ref || ""}`); ab.style.marginLeft = "6px"; vb.appendChild(ab); } tr.appendChild(vb); }
+  const table = document.createElement("table"); table.className = "grid pp-bills"; const thead = document.createElement("thead"), tbody = document.createElement("tbody");
+  thead.innerHTML = "<tr>" + cols.map(([c, al]) => `<th class="${al}">${_ge(c)}</th>`).join("") + "</tr>";
+  const billRow = (x, inGrp) => {   // inGrp = under a vendor / code band: indented, and the vendor name is not repeated (owner 2026-09-08)
+    const { dr, b, isSub } = x;
+    const tr = document.createElement("tr"); if (b.paid) tr.classList.add("inv-paid"); if (inGrp) tr.classList.add("pp-in-grp"); if (pay && _ppPayable(b) && _ppSel(b)) tr.classList.add("pp-ticked");
+    if (pay) { const pc = document.createElement("td"); pc.className = "left";
+      if (_ppPayable(b)) { const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = _ppSel(b); cb.title = "Put this bill on the pay run (Pay Bills) - local intent, never QuickBooks";
+        cb.onclick = (e) => e.stopPropagation(); cb.onchange = () => _ppDraftSet([b], cb.checked); pc.appendChild(cb); }
+      else if (!b.gates) { const s = document.createElement("span"); s.className = "vg-tag"; s.textContent = "GC pays"; s.title = "Concrete pumping - paid by the GC directly"; pc.appendChild(s); }
+      tr.appendChild(pc); }
+    { const vb = document.createElement("td"); vb.className = "left pp-vb"; if (!(inGrp && _pp.sort !== "code")) { const v = document.createElement("span"); v.className = "pp-vend"; v.textContent = b.vendor || "–"; vb.appendChild(v); vb.appendChild(document.createTextNode(" ")); }
+      const link = qboLinkCell(b.bill_ref || "–", isSub ? qboUrl(b.txn_type === "Expense" ? "expense" : "bill", b.bill_id) : qboBillHref(b.qbo_link), "Open this bill in QuickBooks");
+      while (link.firstChild) vb.appendChild(link.firstChild); if (b.att) { const ab = attBtn(isSub && b.txn_type === "Expense" ? "Purchase" : "Bill", b.bill_id, b.att, `${b.vendor || ""} · bill ${b.bill_ref || ""}`); ab.style.marginLeft = "6px"; vb.appendChild(ab); }
+      if (!pay && !b.gates) { const s = document.createElement("span"); s.className = "vg-tag"; s.textContent = "GC pays"; s.title = "Concrete pumping - paid by the GC directly"; s.style.marginLeft = "6px"; vb.appendChild(s); }
+      tr.appendChild(vb); }
     { const cc = document.createElement("td"); cc.className = "left"; for (const c of (b.codes || [])) { const chip = document.createElement("span"); chip.className = "codechip"; chip.textContent = c; cc.appendChild(chip); cc.appendChild(document.createTextNode(" ")); } if (!(b.codes || []).length) { cc.textContent = "–"; cc.classList.add("dim"); } tr.appendChild(cc); }
     const ac = document.createElement("td"); ac.className = "ip-amt"; ac.appendChild(moneyCell(b.amount)); tr.appendChild(ac);
     tr.appendChild(leftText(fmtDateShort(b.bill_date)));
+    if (showDraw) { const dc = document.createElement("td"); dc.className = "left pp-draw-col"; const a = document.createElement("a"); a.href = "#"; a.textContent = dr.no_draw ? "No draw yet" : _ppTitle(dr); a.title = dr.no_draw ? "Not matched to a draw in the Bill Tracker yet" : `${_ppInvLabel(dr)}${drawSpan(dr) ? " · covers " + drawSpan(dr) : ""} - open this draw`;
+      a.onclick = (e) => { e.preventDefault(); _pp.view = dr.matched_invoice; _renderPpDraws(); _ppScrollDetail(); }; dc.appendChild(a);
+      if (!dr.no_draw && dr.invoice_no) { const s = document.createElement("small"); s.className = "dim"; s.textContent = " " + _ppInvLabel(dr); dc.appendChild(s); } tr.appendChild(dc); }
     { const wc = leftText(isSub ? "QuickBooks · labor" : [b.invoice_status, b.approved ? (b.approved === "approved" ? "approved" : b.approved) : null].filter(Boolean).join(" · ") || "Bill Tracker"); wc.classList.add("dim");
-      if (b.pushed) { const s = document.createElement("span"); s.className = "vg-tag push"; s.textContent = b.pushed; s.title = b.pushed_note || "carried into this draw by agreement with the supplier"; wc.prepend(document.createTextNode(" ")); wc.prepend(s); }   // the push: rides this draw by agreement, keeps its own date
+      if (b.pushed) { const s = document.createElement("span"); s.className = "vg-tag push"; s.textContent = b.pushed; s.title = b.pushed_note || "carried into this draw by agreement with the supplier"; wc.prepend(document.createTextNode(" ")); wc.prepend(s); }
       tr.appendChild(wc); }
     { const st = document.createElement("td"); st.className = "left"; const pill = document.createElement("span"); pill.className = b.paid ? "ar-paid" : "ar-open";
       pill.textContent = isSub ? (b.paid ? "Paid " + fmtDateShort(b.pay_date) : "No") : (b.pay_date ? "Paid " + fmtDateShort(b.pay_date) : (b.paid ? "Yes (no date)" : "No" + (num(b.open) > 0.005 ? " · " + money(b.open) + " open" : "")));
       if (isSub && !b.paid) pill.title = "No QuickBooks bill payment applied to this bill in the loaded window (this year)"; st.appendChild(pill); tr.appendChild(st); }
     { const dc = leftText(b.description || "–"); dc.className += " inv-memo"; dc.title = b.description || ""; if (!b.description) dc.classList.add("dim"); tr.appendChild(dc); }
-    { const wc = document.createElement("td"); wc.className = "left";
-      if (dr.no_draw || isSub) wc.textContent = "–";
+    if (pay) { const wc = document.createElement("td"); wc.className = "left";
+      if (dr.no_draw || dr.whole_job || isSub) wc.textContent = "–";
       else { const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = !!b.waiver; cb.title = "Tick when the vendor's unconditional waiver is in hand";
         cb.onclick = (e) => e.stopPropagation(); cb.onchange = () => { setWaiver(dr, b, cb); b.waiver = cb.checked; }; wc.appendChild(cb); if (!b.waiver && !b.paid) { const s = document.createElement("span"); s.className = "inv-late"; s.textContent = " needed"; wc.appendChild(s); } }
       tr.appendChild(wc); }
     return tr;
   };
-  const sectionRow = (tbody, dr, label, bills, sect) => {   // the section total (Materials $X / Labor $Y) with its own select-all
+  const sectionRow = (label, xs, sect) => {   // the section total (Materials $X / Labor $Y) with its own select-all in pay mode
+    const bills = xs.map(x => x.b);
     const paidCt = bills.filter(b => b.paid).length, tot = bills.reduce((s, b) => s + num(b.amount), 0), owed = bills.reduce((s, b) => s + (b.paid ? 0 : num(b.open)), 0);
     const sr = document.createElement("tr"); sr.className = "pp-sect";
-    const cbTd = document.createElement("td"); cbTd.className = "left"; cbTd.appendChild(_ppCheck(bills, label, `Tick every unpaid ${label.toLowerCase()} bill on this draw`)); sr.appendChild(cbTd);
-    const td = document.createElement("td"); td.className = "left"; td.colSpan = COLS - 1;
-    td.innerHTML = `<span class="pp-sect-lab">${_ge(label)}</span><span class="ip-paid ${paidCt === bills.length ? "ok" : "due"}">${_ge(money(tot))} · ${paidCt}/${bills.length} paid${owed > 0.005 ? " · " + _ge(money(owed)) + " to pay" : ""}</span>` + (sect === "labor" ? ` <span class="dim">QuickBooks bills dated in the draw period · paid = a bill payment applied this year</span>` : ` <span class="dim">Bill Tracker</span>`);
+    if (pay) { const cbTd = document.createElement("td"); cbTd.className = "left"; cbTd.appendChild(_ppCheck(bills, label, `Tick every unpaid ${label.toLowerCase()} bill shown`)); sr.appendChild(cbTd); }
+    const td = document.createElement("td"); td.className = "left"; td.colSpan = COLS - (pay ? 1 : 0);
+    td.innerHTML = `<span class="pp-sect-lab">${_ge(label)}</span><span class="ip-paid ${paidCt === bills.length ? "ok" : "due"}">${_ge(money(tot))} · ${paidCt}/${bills.length} paid${owed > 0.005 ? " · " + _ge(money(owed)) + " to pay" : ""}</span>` + (sect === "labor" ? ` <span class="dim">QuickBooks bills · paid = a bill payment applied this year</span>` : ` <span class="dim">Bill Tracker</span>`);
     sr.appendChild(td); tbody.appendChild(sr);
   };
-  const groupedRows = (tbody, dr, bills, isSub, sect) => {   // bands by vendor or by cost code (collapsed) -> bills
-    const keyOf = _pp.sort === "code" ? codeOf : (b => b.vendor || "?");
-    const byK = new Map(); for (const b of bills) { const k = keyOf(b); if (!byK.has(k)) byK.set(k, []); byK.get(k).push(b); }
-    for (const [v, list] of [...byK].sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true }))) {
-      const vkey = `${dr.matched_invoice}|${sect}|${_pp.sort}|${v}`, vopen = _pp.openV.has("*") || _pp.openV.has(vkey);
-      const paidCt = list.filter(b => b.paid).length, tot = list.reduce((s, b) => s + num(b.amount), 0), owed = list.reduce((s, b) => s + (b.paid ? 0 : num(b.open)), 0);
+  const groupedRows = (xs, sect) => {   // bands by vendor (A to Z or by total) or by cost code; collapsed until opened
+    const keyOf = _pp.sort === "code" ? (x => codeOf(x.b)) : (x => x.b.vendor || "?");
+    const byK = new Map(); for (const x of xs) { const k = keyOf(x); if (!byK.has(k)) byK.set(k, []); byK.get(k).push(x); }
+    const bands = [...byK]; const totOf = list => list.reduce((s, x) => s + num(x.b.amount), 0);
+    bands.sort(_pp.sort === "amount" ? ((a, b) => totOf(b[1]) - totOf(a[1]) || a[0].localeCompare(b[0])) : ((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true })));
+    for (const [v, list] of bands) {
+      const vkey = `${cur ? cur.matched_invoice : "all"}|${sect}|${_pp.sort}|${v}`, vopen = _pp.openV.has("*") || _pp.openV.has(vkey);
+      const bills = list.map(x => x.b), paidCt = bills.filter(b => b.paid).length, tot = totOf(list), owed = bills.reduce((s, b) => s + (b.paid ? 0 : num(b.open)), 0);
       const gtr = document.createElement("tr"); gtr.className = "bill-subgroup pp-vendor"; gtr.style.cursor = "pointer"; gtr.title = vopen ? "Click to collapse" : "Click to see the bills";
-      const cbTd = document.createElement("td"); cbTd.className = "left"; cbTd.appendChild(_ppCheck(list, v)); gtr.appendChild(cbTd);
-      const vt = document.createElement("td"); vt.className = "left"; vt.colSpan = COLS - 1;
+      if (pay) { const cbTd = document.createElement("td"); cbTd.className = "left"; cbTd.appendChild(_ppCheck(bills, v)); gtr.appendChild(cbTd); }
+      const vt = document.createElement("td"); vt.className = "left"; vt.colSpan = COLS - (pay ? 1 : 0);
       const cell = document.createElement("div"); cell.className = "bg-cell"; const leftP = document.createElement("span"); leftP.className = "bg-left";
       const caret = document.createElement("span"); caret.className = "bg-caret"; caret.textContent = vopen ? "▾ " : "▸ "; const k = document.createElement("span"); k.className = "sg-key"; k.textContent = v; leftP.appendChild(caret); leftP.appendChild(k); cell.appendChild(leftP);
-      bandMetrics(cell, [[money(tot), "total"], [list.length, "bills"], [`${paidCt}/${list.length}${paidCt === list.length ? " ✓" : ""}`, "paid", paidCt === list.length ? "ok" : "due"], [owed > 0.005 ? money(owed) : "–", "to pay", owed > 0.005 ? "neg" : ""]]);
+      const nDraws = new Set(list.map(x => x.dr.matched_invoice)).size;
+      bandMetrics(cell, [[money(tot), "total"], [list.length, "bills"], showDraw ? [nDraws, nDraws === 1 ? "draw" : "draws"] : null, [`${paidCt}/${list.length}${paidCt === list.length ? " ✓" : ""}`, "paid", paidCt === list.length ? "ok" : "due"], [owed > 0.005 ? money(owed) : "–", "to pay", owed > 0.005 ? "neg" : ""]]);
       vt.appendChild(cell); gtr.appendChild(vt);
-      gtr.onclick = (e) => { if (e.target.closest("input")) return; if (_pp.openV.has("*")) { _pp.openV = new Set(); for (const d2 of _pp.d.draws) for (const s2 of ["materials", "labor"]) for (const b2 of (s2 === "labor" ? (d2.sub_bills || []) : d2.bills)) _pp.openV.add(`${d2.matched_invoice}|${s2}|${_pp.sort}|${keyOf(b2)}`); }
-        if (_pp.openV.has(vkey)) _pp.openV.delete(vkey); else _pp.openV.add(vkey); _renderPpDraws(); };
+      gtr.onclick = (e) => { if (e.target.closest("input")) return;
+        if (_pp.openV.has("*")) { _pp.openV = new Set(); for (const x2 of _ppAllRows(cur ? [cur] : d.draws)) _pp.openV.add(`${cur ? cur.matched_invoice : "all"}|${x2.isSub ? "labor" : "materials"}|${_pp.sort}|${keyOf(x2)}`); }
+        if (_pp.openV.has(vkey)) _pp.openV.delete(vkey); else _pp.openV.add(vkey); const y = window.scrollY; _renderPpDraws(); window.scrollTo(0, y); };
       tbody.appendChild(gtr);
-      if (vopen) for (const b of list.sort((x, y) => (x.bill_date || "").localeCompare(y.bill_date || ""))) tbody.appendChild(billRow(dr, b, isSub, true));
+      if (vopen) for (const x of list.sort((p, q) => (p.b.bill_date || "").localeCompare(q.b.bill_date || ""))) tbody.appendChild(billRow(x, true));
     }
   };
-  const flatRows = (tbody, dr, bills, isSub) => {   // sorted by date or amount, no bands
-    const sorted = [...bills].sort(_pp.sort === "amount" ? ((x, y) => num(y.amount) - num(x.amount)) : ((x, y) => (x.bill_date || "").localeCompare(y.bill_date || "")));
-    for (const b of sorted) tbody.appendChild(billRow(dr, b, isSub));
-  };
-  const drawStrip = (dr) => {   // DRAW SUMMARY, the same cells as the P&L workbook's draw sheet
-    const p = dr.pl || {}; const strip = document.createElement("div"); strip.className = "kpi-row pp-strip pp-drawpl";
-    const items = [["Income · billed this draw", money(p.income), "the net invoice - cash to collect"], ["Costs · " + (p.bills || 0) + " bills", money(p.costs), "materials we pay + labor in period"],
-      ["Gross profit", money(p.gross), "income − costs", num(p.gross) < 0 ? "pnl-kpi-neg" : ""], ["Gross margin %", p.margin_pct != null ? (p.margin_pct * 100).toFixed(1) + "%" : "–", "", num(p.gross) < 0 ? "pnl-kpi-neg" : ""],
-      ["Overhead", money(p.overhead), p.overhead_basis || ""], ["Real net profit", money(p.net), p.net_pct != null ? (p.net_pct * 100).toFixed(1) + "% of income" : "", num(p.net) < 0 ? "pnl-kpi-neg" : "pnl-kpi-pos"]];
-    for (const [l, v, sub, cls] of items) { const k = document.createElement("div"); k.className = "kpi" + (cls ? " " + cls : ""); k.innerHTML = `<div class="k-label"></div><div class="k-value"></div><div class="k-sub"></div>`;
-      k.querySelector(".k-label").textContent = l; k.querySelector(".k-value").textContent = v; k.querySelector(".k-sub").textContent = sub || ""; strip.appendChild(k); }
-    return strip;
-  };
-  const sortBar = () => {
-    const bar = document.createElement("div"); bar.className = "pp-sortbar";
-    const lab = document.createElement("span"); lab.className = "dim"; lab.textContent = "Sort / group by"; bar.appendChild(lab);
-    const seg = document.createElement("span"); seg.className = "seg tiny";
-    for (const [k, l] of [["vendor", "Vendor"], ["code", "Cost code"], ["date", "Date"], ["amount", "Amount"]]) { const b = document.createElement("button"); b.type = "button"; b.className = "seg-btn" + (_pp.sort === k ? " on" : ""); b.textContent = l;
-      b.onclick = (e) => { e.stopPropagation(); _pp.sort = k; if (k === "date" || k === "amount") _pp.openV = new Set(["*"]); _renderPpDraws(); }; seg.appendChild(b); }
-    bar.appendChild(seg); return bar;
-  };
-  for (const dr of [cur]) {   // ONE draw at a time - the tab strip above picks it
-    const key = dr.matched_invoice, open = true;
-    const band = document.createElement("div"); band.className = "pp-draw open" + (dr.invoice_no && dr.invoice_no === nxInv ? " next" : "");
-    const head = document.createElement("div"); head.className = "pp-draw-h";
-    const paidAll = dr.vendors_total > 0 && dr.vendors_paid === dr.vendors_total;
-    const nSub = (dr.sub_bills || []).length;
-    const cell2 = (a, b, cls) => `<span class="pp-c ${cls || ""}"><span class="pp-c1">${a}</span><span class="pp-c2">${b}</span></span>`;
-    head.innerHTML = `<span class="bg-caret"></span>
-      <span class="pp-lab">${_ge(drawTitle(dr))}${dr.no_draw ? "" : `<small class="pp-drawno">Invoice ${_ge(dr.invoice_no || dr.label.split(/\s+[\u2014\u2013-]\s+/)[0])}</small>`}${drawSpan(dr) ? `<small class="pp-drawno">Covers ${_ge(drawSpan(dr))}</small>` : ""}${dr.pushed_in ? `<small class="pp-drawno push" title="${_ge(dr.pushed_in.note || "Bills the supplier agreed to carry into this draw from the one before")}">${dr.pushed_in.count} bill${dr.pushed_in.count === 1 ? "" : "s"} moved in from the draw before</small>` : ""}${dr.pushed_out ? `<small class="pp-drawno push" title="${_ge(dr.pushed_out.note || "Bills carried to the next draw by agreement with the supplier")}">${dr.pushed_out.count} bill${dr.pushed_out.count === 1 ? "" : "s"} moved to the next draw</small>` : ""}</span>
-      <span class="pp-dt">${_ge(dr.ar_date ? fmtDate(dr.ar_date) : "–")}</span>
-      <span class="pp-billed">${dr.no_draw ? "–" : _ge(money(dr.billed))}</span>
-      <span class="pp-gc ${dr.no_draw ? "" : dr.gc_paid ? "ok" : "due"}">${dr.no_draw ? "–" : dr.gc_paid ? "paid" : "owes " + _ge(money(dr.ar_open))}</span>
-      ${cell2(_ge(money(dr.gate_amt)), `${dr.vendors_paid}/${dr.vendors_total} paid${dr.unpaid_amt > 0.005 ? " · " + _ge(money(dr.unpaid_amt)) + " to pay" : ""}`, "ip-paid " + (paidAll ? "ok" : "due"))}
-      ${nSub ? cell2(_ge(money(dr.subs_amt)), `${dr.subs_paid_ct}/${nSub} paid${dr.subs_unpaid_amt > 0.005 ? " · " + _ge(money(dr.subs_unpaid_amt)) + " to pay" : ""}`, "ip-paid " + (dr.subs_paid_ct === nSub ? "ok" : "due")) : cell2("$0", dr.no_draw ? "" : "none in period", "dim")}
-      <span class="pp-allcell"></span>
-      <span class="pp-stage">${_ge(dr.stage)}</span>`;
-    // draw-level select-all: every unpaid bill we pay on this draw (materials + labor)
-    const allCb = _ppCheck(_ppBillsOf(dr), "this draw", "Tick every unpaid bill on this draw (materials and labor)");
-    const allWrap = document.createElement("label"); allWrap.className = "pp-all"; allWrap.title = allCb.title; allWrap.onclick = (e) => e.stopPropagation();
-    { const payable = _ppBillsOf(dr).filter(b => !b.paid && b.gates && b.bill_id), ticked = payable.filter(b => b.pay_selected).length;   // what the column actually says (owner: "all unpaid" read wrong)
-      allWrap.appendChild(allCb); allWrap.appendChild(document.createTextNode(" " + (!payable.length ? "nothing to pay" : ticked ? `${ticked} of ${payable.length} ticked` : `none of ${payable.length} ticked`))); }
-    head.querySelector(".pp-allcell").appendChild(allWrap);
-    band.appendChild(head);
-    if (open) {
-      if (!dr.no_draw) band.appendChild(drawStrip(dr));
-      // the push, on the band's face: what rode in / what left, and why (the same sentence the P&L draw sheet carries)
-      for (const [k, word] of [["pushed_in", "moved into this draw from the one before"], ["pushed_out", "moved on to the next draw"]]) { const p = dr[k]; if (!p) continue;
-        const cap = document.createElement("div"); cap.className = "bills-cap pp-push"; cap.textContent = `${p.count} bill${p.count === 1 ? "" : "s"} · ${money(p.total)} ${word}: ${p.note || ""}`; band.appendChild(cap); }
-      band.appendChild(sortBar());
-      const mat = dr.bills.filter(_ppBillShown), subs = (dr.sub_bills || []).filter(_ppBillShown);
-      if (!mat.length && !subs.length) { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = _pp.filter === "unpaid" ? "Every bill on this draw is paid." : "No bills."; band.appendChild(p); }
-      else {
-        const table = document.createElement("table"); table.className = "grid pp-bills"; const thead = document.createElement("thead"), tbody = document.createElement("tbody");
-        thead.innerHTML = "<tr><th class='left'>Pay</th><th class='left'>Vendor / Bill #</th><th class='left'>Code</th><th class='right'>Amount</th><th class='left'>Date</th><th class='left'>Where / status</th><th class='left'>Paid?</th><th class='left'>Description</th><th class='left'>Waiver</th></tr>";
-        const flat = _pp.sort === "date" || _pp.sort === "amount";
-        if (mat.length) { sectionRow(tbody, dr, "Materials", mat, "materials"); if (flat) flatRows(tbody, dr, mat, false); else groupedRows(tbody, dr, mat, false, "materials"); }
-        if (subs.length) { sectionRow(tbody, dr, "Labor (subs)", subs, "labor"); if (flat) flatRows(tbody, dr, subs, true); else groupedRows(tbody, dr, subs, true, "labor"); }
-        const keyOf = _pp.sort === "code" ? codeOf : (b => b.vendor || "?");
-        thead.hidden = !flat && ![...mat, ...subs].some(b => _pp.openV.has("*") || _pp.openV.has(`${dr.matched_invoice}|${dr.sub_bills && dr.sub_bills.includes(b) ? "labor" : "materials"}|${_pp.sort}|${keyOf(b)}`));   // headers only once bills show
-        table.appendChild(thead); table.appendChild(tbody); band.appendChild(table);
-      }
-    }
-    host.appendChild(band);
-  }
-}
-async function _ppSetPay(bills, selected) {
-  const items = bills.filter(b => b.bill_id).map(b => ({ bill_id: b.bill_id, selected, amount: null }));
-  if (!items.length) { toast("These bills have no QuickBooks link to key the pay run on"); return; }
-  try {
-    const r = await (await fetch("/api/pay-run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ items }) })).json();
-    if (r && r.ok) { for (const b of bills) b.pay_selected = selected; toast(selected ? `${items.length} bill${items.length === 1 ? "" : "s"} added to the pay run` : "Removed from the pay run"); }
-    else toast("Could not save: " + ((r && r.error) || "unknown"));
-  } catch (e) { toast("Could not save: " + e); }
-  _renderPpDraws();
+  const flatRows = (xs) => { for (const x of [...xs].sort((p, q) => (p.b.bill_date || "").localeCompare(q.b.bill_date || ""))) tbody.appendChild(billRow(x, false)); };
+  const mat = rows.filter(x => !x.isSub), subs = rows.filter(x => x.isSub);
+  const flat = _pp.sort === "date";
+  if (mat.length) { sectionRow("Materials", mat, "materials"); if (flat) flatRows(mat); else groupedRows(mat, "materials"); }
+  if (subs.length) { sectionRow("Labor (subs)", subs, "labor"); if (flat) flatRows(subs); else groupedRows(subs, "labor"); }
+  thead.hidden = !flat && !_pp.openV.has("*") && ![..._pp.openV].some(k => k.startsWith(`${cur ? cur.matched_invoice : "all"}|`));   // headers only once bills show
+  table.appendChild(thead); table.appendChild(tbody); box.appendChild(table);
+  return box;
 }
 function _ppMarkBlockers() {
   const F = _pp.d.funding || {}, ids = new Set((F.blockers || []).map(b => b.bill_id).filter(Boolean));
   const bills = []; for (const dr of _pp.d.draws) for (const b of _ppBillsOf(dr)) if (ids.has(b.bill_id)) bills.push(b);
   if (!bills.length) { toast("No blockers to mark"); return; }
-  _ppSetPay(bills, true);
+  _ppDraftSet(bills, true);
 }
 function _ppExport() {
   const d = _pp.d, rows = [];
-  for (const dr of d.draws) for (const b of _ppBillsOf(dr)) if (b.pay_selected) rows.push([dr.no_draw ? "No draw yet" : "Invoice " + (dr.invoice_no || "") + drawTag(dr), b.vendor, b.bill_ref, b.bill_date, num(b.amount), num(b.open), b.pay_date ? "Paid " + fmtDate(b.pay_date) : (b.pay_status || (b.paid ? "Paid" : "Open")), dr.sub_bills && dr.sub_bills.includes(b) ? "labor" : (b.waiver ? "received" : "needed")]);
+  for (const dr of d.draws) for (const b of _ppBillsOf(dr)) if (b.bill_id && _ppSel(b)) rows.push([dr.no_draw ? "No draw yet" : dr.whole_job ? "Job to date" : "Invoice " + (dr.invoice_no || "") + drawTag(dr), b.vendor, b.bill_ref, b.bill_date, num(b.amount), num(b.open), b.pay_date ? "Paid " + fmtDate(b.pay_date) : (b.pay_status || (b.paid ? "Paid" : "Open")), dr.sub_bills && dr.sub_bills.includes(b) ? "labor" : (b.waiver ? "received" : "needed")]);
   if (!rows.length) { toast("Nothing ticked to pay on this job yet - tick bills (or Mark blockers) first"); return; }
-  if (!confirm(`Export ${rows.length} bill${rows.length === 1 ? "" : "s"} ticked to pay (${money(rows.reduce((s, r) => s + num(r[5]), 0))} open) as the pay-list report?\n\nThe list above the draws shows exactly what is ticked.`)) return;
+  const unsaved = _pp.payDraft.size ? `\n\n${_pp.payDraft.size} tick(s) are not saved yet - the export follows what is ticked on screen.` : "";
+  if (!confirm(`Export ${rows.length} bill${rows.length === 1 ? "" : "s"} ticked to pay (${money(rows.reduce((s, r) => s + num(r[5]), 0))} open) as the pay-list report?${unsaved}`)) return;
   const nx = (d.funding || {}).next_draw, toPay = rows.reduce((s, r) => s + num(r[5]), 0);
   const footer = nx ? [{ label: `Unlocks ${nx.invoice_no || ""}${drawTag(nx)}`, value: num(nx.ar_open) },
                        { label: "Net = unlock - to pay", value: num(nx.ar_open) - toPay, cls: num(nx.ar_open) - toPay >= 0 ? "pos" : "neg" }] : [];
@@ -3558,6 +3677,7 @@ function _renderIpBills() {
   }
 }
 async function openInvoicePage(inv) {
+  if (_ppLeaveBlocked()) return;   // unsaved pay ticks on the project page: Save or Discard first
   const docn = inv.doc_number || inv.invoice_no || "";
   openRecord(`Invoice ${docn}`, [inv.customer, [inv.project_no, nameOf(inv.project_no)].filter(Boolean).join(" "), inv.division].filter(Boolean).join(" · "));   // the ONE identity line (owner: no repeats)
   const body = $("#recordBody"); body.innerHTML = ""; skeletonInto(body, 6);
@@ -5215,7 +5335,10 @@ function renderProjects() {
       const td = document.createElement("td");
       if (c.k === "project_no") { td.className = "left"; const key = document.createElement("span"); key.className = "bg-key"; key.appendChild(caret);
         key.appendChild(document.createTextNode(b.label)); if (b.title) key.title = b.title; td.appendChild(key); }
-      else if (c.k === "project_name") { td.className = "left"; const n = document.createElement("span"); n.className = "bg-n"; n.textContent = `${b.list.length} job${b.list.length === 1 ? "" : "s"}`; td.appendChild(n); }
+      else if (c.k === "project_name") { td.className = "left"; const n = document.createElement("span"); n.className = "bg-n"; n.textContent = `${b.list.length} job${b.list.length === 1 ? "" : "s"}`; td.appendChild(n);
+        const dv = /resid/i.test(b.label) ? "RP" : /commer/i.test(b.label) ? "CP" : /multi/i.test(b.label) ? "MFD" : null;
+        if (dv) { const rb = document.createElement("button"); rb.type = "button"; rb.className = "btn tiny proj-review"; rb.textContent = "WIP review →"; rb.title = `The weekly ${dv} review with the PM: every line, where each number came from, your answers`;
+          rb.onclick = (e) => { e.stopPropagation(); openReviewDiv(dv); }; td.appendChild(rb); } }
       else if (c.k === "total_contract_price") { td.className = "right"; td.textContent = money(contract); }
       else if (c.k === "costs_to_date") { td.className = "right"; td.textContent = money(costs); }
       else if (c.k === "billed_to_date") { td.className = "right"; td.textContent = money(billed); }
@@ -5609,11 +5732,12 @@ function _popViewIfOwn(kind) {   // the in-app Back: pop our own entry so the br
 window.addEventListener("popstate", () => {
   if (_histSkip) { _histSkip = false; return; }
   const rv = $("#recordView");
-  if (rv && !rv.hidden) { closeRecord(); return; }
-  if (activeTab === "rpreview" && typeof rrOpenLine !== "undefined" && rrOpenLine) { rrOpenLine = null; rrRenderCards(); window.scrollTo(0, 0); }
+  if (rv && !rv.hidden) { if (typeof _ppLeaveBlocked === "function" && _ppLeaveBlocked()) { _pushView({ v: "record" }); return; } closeRecord(); return; }
+  if (activeTab === "review" && typeof rrOpenLine !== "undefined" && rrOpenLine) { rrOpenLine = null; rrRenderCards(); window.scrollTo(0, 0); }
 });
 
 function openRecord(title, sub) {
+  if (typeof _ppLeaveBlocked === "function" && _ppLeaveBlocked()) return false;   // an unsaved pay run never walks away with you
   if (!($("#recordView") && !$("#recordView").hidden)) _pushView({ v: "record" });   // one entry per open, not per re-render
   $$(".tab-page").forEach(p => { p.hidden = true; });
   $("#recordView").hidden = false;
@@ -5622,6 +5746,7 @@ function openRecord(title, sub) {
   window.scrollTo(0, 0);
 }
 function closeRecord() {
+  if (typeof _ppLeaveBlocked === "function" && _ppLeaveBlocked()) return;
   const rv = $("#recordView"); if (rv) rv.hidden = true;
   $$(".tab-page").forEach(p => { p.hidden = p.dataset.tab !== activeTab; });
   window.scrollTo(0, 0);
@@ -7352,6 +7477,7 @@ function init() {
   $$("#projDiv .seg-btn").forEach(b => b.onclick = () => { projDiv = b.dataset.div; syncProjChips(); renderProjects(); });
   { const el = $("#vendorSearch"); if (el) el.addEventListener("input", renderVendors); }
   { const el = $("#vendorGroupType"); if (el) el.addEventListener("change", renderVendors); }
+  { const el = $("#vendorSort"); if (el) el.addEventListener("change", renderVendors); }
   { const el = $("#vendorExpandAll"); if (el) el.onclick = _vendorToggleAll; }
   { const el = $("#lienFProj"); if (el) el.addEventListener("input", renderLiens); }   // the other lien filters are multi-selects now
   { const el = $("#billSort"); if (el) el.addEventListener("change", renderBills); }
@@ -7420,7 +7546,7 @@ function init() {
   { const el = $("#pfExport"); if (el) el.onclick = exportPayList; }
   { const el = $("#btnSavePayRun"); if (el) el.onclick = savePayRun; }
   { const el = $("#btnDiscardPayRun"); if (el) el.onclick = discardPayRun; }
-  window.addEventListener("beforeunload", (e) => { if (pendingBillMarks.size || payDraft.size) { e.preventDefault(); e.returnValue = ""; } });
+  window.addEventListener("beforeunload", (e) => { if (pendingBillMarks.size || payDraft.size || (typeof _pp !== "undefined" && _pp && _pp.payDraft && _pp.payDraft.size)) { e.preventDefault(); e.returnValue = ""; } });
   $$(".sec-head").forEach(h => h.onclick = () => { const k = h.dataset.sec;
     if (sublocCollapsed.has(k)) sublocCollapsed.delete(k); else sublocCollapsed.add(k); applySublocSections(); });
   try { const bv = localStorage.getItem("proficient-ledger-billview"); if (bv && BILL_VIEWS.some(v => v.id === bv)) activeBillView = bv; } catch { /* ignore */ }
@@ -7437,7 +7563,7 @@ function init() {
   { const el = $("#btnResync"); if (el) el.onclick = startResync; }
   { const p = $("#syncPill"); if (p) p.onclick = () => openPanel("#settings"); }   // the pill opens the gear: every feed's stamp + every run button
   { const el = $("#btnGearWip"); if (el) el.onclick = () => { closePanels(); setTab("wipreview"); }; }
-  { const el = $("#btnGearRp"); if (el) el.onclick = () => { closePanels(); setTab("rpreview"); }; }
+  { const el = $("#btnGearRp"); if (el) el.onclick = () => { closePanels(); setTab("review"); }; }
   { const el = $("#btnGearConsole"); if (el) el.onclick = () => { closePanels(); setTab("console"); }; }
   { const el = $("#btnGearSystems"); if (el) el.onclick = () => { closePanels(); setTab("systems"); }; }
   setInterval(renderSyncPill, 5000);   // reflects "Syncing…" while a run is in flight and the age as time passes
@@ -7495,7 +7621,7 @@ function init() {
   syncProjChips();
   let savedTab = "projects";
   try { savedTab = localStorage.getItem("proficient-ledger-tab") || "projects"; } catch { /* ignore */ }
-  if (["wipreview", "rpreview", "console", "systems"].includes(savedTab)) savedTab = "projects";   // tool pages never reopen on their own
+  if (["wipreview", "rpreview", "review", "console", "systems"].includes(savedTab)) savedTab = "projects";   // tool pages never reopen on their own
   setTab(TAB_ALIAS[savedTab] || savedTab);
   initCellSelect();   // Excel-style click/drag cell selection + running-sum bar
   setInterval(() => { if (!syncing && !pendingBillMarks.size && !payDraft.size) load(true); }, 90000);   // soft auto-refresh (paused during a resync or while lien / pay-run marks are unsaved)
@@ -7510,47 +7636,72 @@ function init() {
 init();
 
 
-// ── RP review: the weekly sit-down with the ops manager (owner 2026-09-15) ──────────────
-// One card per RP line: the numbers on the WIP, WHERE each was grabbed from (a source pill), a
-// cut of the source spreadsheet with that row highlighted (max 5 rows), and "Our numbers" -
-// the owner's / ops manager's own space: prepopulated with the prepared value, a check or an X
-// per number, a note for what could not be settled. Every answer is stamped with the MODE
-// (Me = the owner alone, OPS Manager = he is here, deciding together) and the time, and kept
-// in rp_review_mark (+ a log). The prepared numbers are never edited from here.
+// ── WIP review: the weekly sit-down with the division PM (owner 2026-09-15) ─────────────────
+// ONE page per division - RP, CP, MFD - the same system for all three ("that way we all can use
+// the same system and update together"). One card per WIP line: the numbers on the WIP, WHERE each
+// was grabbed from (a source pill + the file), and "Our numbers" - the owner's / PM's own space:
+// prepopulated with the prepared value, a check or an X per number, a note for what could not be
+// settled. Every answer is stamped with the MODE (Me = the owner alone, PM = the division PM is here,
+// deciding together) and the time, and kept in rp_review_mark (+ a log). The prepared numbers are
+// never edited from here. RP carries the crew schedule and pictures of the real files; CP and MFD
+// have no schedule - their cards show the contract and approved COs from the draw G702, the ETC from
+// the takeoff, costs and billed from QuickBooks (MFD's contract / ETC are typed on the master by design).
 let RR = null, rrPoll = null, rrWired = false;
-let rrMode = (() => { try { return localStorage.getItem("proficient-ledger-rrmode") || "me"; } catch { return "me"; } })();
+let rrMode = (() => { try { const m = localStorage.getItem("proficient-ledger-rrmode") || "me"; return m === "ops" ? "pm" : m; } catch { return "me"; } })();
+let rrDiv = (() => { try { return localStorage.getItem("proficient-ledger-rrdiv") || "RP"; } catch { return "RP"; } })();
 let rrSection = "current";
 const RR_DUE_DAYS = 7;
+const RR_DIV_NAME = { RP: "Residential", CP: "Commercial", MFD: "Multi Family" };
+const rrWho = () => rrMode === "pm" ? "PM + you" : "You";
+const rrWhoLow = () => rrMode === "pm" ? "PM + you" : "you";
+const rrApi = () => `/api/review?div=${encodeURIComponent(rrDiv)}`;
 
-async function loadRpReview() {
+async function loadReview(force) {
   const body = $("#rrBody"); if (!body) return;
   rrWire();
-  if (rrPoll) return;
-  try { RR = await (await fetch("/api/rp/review")).json(); }
+  if (rrPoll && !force) return;
+  try { RR = await (await fetch(rrApi())).json(); }
   catch { body.innerHTML = `<div class="rr-empty">could not load</div>`; return; }
+  { const t = $("#rrTitle"); if (t) t.textContent = `WIP review · ${rrDiv}`; }
+  { const s = $("#rrSection"); if (s) s.hidden = rrDiv !== "RP"; }
+  { const f = $("#rrFinalize"); if (f) f.hidden = rrDiv !== "RP"; }
+  { const w = $("#rrWipReview"); if (w) w.hidden = rrDiv === "RP"; }
+  if (rrDiv !== "RP") rrSection = "current";
   if (!RR.ready) {
     $("#rrFilters").hidden = true; $("#rrStats").innerHTML = "";
-    body.innerHTML = `<div class="rr-empty"><p>No review built yet.</p><p class="hint">Hit <b>Rebuild</b>: it reads the master's RP tab,
-      the RP WIP file, every job folder, JobTread and the crew schedules, and cuts a snapshot of the source sheet for every number. A few minutes.</p></div>`;
+    { const note = $("#rrNote"); if (note) note.textContent = ""; }
+    body.innerHTML = rrDiv === "RP"
+      ? `<div class="rr-empty"><p>No RP review built yet.</p><p class="hint">Hit <b>Rebuild review data</b> in the gear: it reads the master's RP tab,
+        the RP WIP file, every job folder, JobTread and the crew schedules, and pictures the source file for every number. A few minutes.</p></div>`
+      : `<div class="rr-empty"><p>No ${rrDiv} update computed yet.</p><p class="hint">Hit <b>Rebuild review data</b> in the gear: it runs the ${rrDiv} WIP reader
+        (${rrDiv === "CP" ? "the job folders on Common - draw G702s and takeoffs - plus QuickBooks" : "the master's MFD rows plus QuickBooks"}; Touch ID) and lays every line out here with the document each number came from. A few minutes.</p></div>`;
     return;
   }
   rrRender();
 }
+const loadRpReview = loadReview;   // the old name, for any deep link that still uses it
 
 function rrWire() {
   if (rrWired) return; rrWired = true;
   $$("#rrMode .seg-btn").forEach(b => { b.onclick = () => { rrMode = b.dataset.mode; try { localStorage.setItem("proficient-ledger-rrmode", rrMode); } catch { /* ignore */ } rrPaintMode(); }; });
+  $$("#rrDiv .seg-btn").forEach(b => { b.onclick = () => { rrDiv = b.dataset.div; try { localStorage.setItem("proficient-ledger-rrdiv", rrDiv); } catch { /* ignore */ } rrOpenLine = null; rrLastLine = null; rrJustSaved = null; rrPaintMode(); loadReview(true); }; });
   $$("#rrSection .seg-btn").forEach(b => { b.onclick = () => { rrSection = b.dataset.sec; rrOpenLine = null; $$("#rrSection .seg-btn").forEach(x => x.classList.toggle("on", x === b)); rrRenderCards(); }; });
   { const q = $("#rrSearch"); if (q) q.oninput = rrRenderCards; }
   { const c = $("#rrDueOnly"); if (c) c.onchange = rrRenderCards; }
   { const c = $("#rrProbOnly"); if (c) c.onchange = rrRenderCards; }
-  { const b = $("#rrRebuild"); if (b) b.onclick = () => { closePanels(); setTab("rpreview"); rrRebuild(); }; }
+  { const b = $("#rrRebuild"); if (b) b.onclick = () => { closePanels(); setTab("review"); rrRebuild(); }; }
   { const b = $("#rrFinalize"); if (b) b.onclick = rrFinalize; }
+  { const b = $("#rrWipReview"); if (b) b.onclick = () => setTab("wipreview"); }
   rrPaintMode();
+}
+function openReviewDiv(div) {   // from the Projects page: a division band's Review button
+  if (div && RR_DIV_NAME[div]) { rrDiv = div; try { localStorage.setItem("proficient-ledger-rrdiv", rrDiv); } catch { /* ignore */ } rrOpenLine = null; rrLastLine = null; }
+  setTab("review");
 }
 
 function rrPaintMode() {
   $$("#rrMode .seg-btn").forEach(b => b.classList.toggle("on", b.dataset.mode === rrMode));
+  $$("#rrDiv .seg-btn").forEach(b => b.classList.toggle("on", b.dataset.div === rrDiv));
   // no badge - the toggle itself says who is here (owner 2026-09-15)
 }
 
@@ -7561,7 +7712,9 @@ function rrRender() {
   const note = $("#rrNote");
   if (note) {
     const m = RR.master || {};
-    note.textContent = `built ${fmtDate(RR.built_at, true)} · master ${m.tab || ""} (saved ${fmtDate(m.mtime, true)})` + (m.renamed ? " · tab renamed - the sync writes Test - RP" : "");
+    note.textContent = rrDiv === "RP"
+      ? `built ${fmtDate(RR.built_at, true)} · master ${m.tab || ""} (saved ${fmtDate(m.mtime, true)})` + (m.renamed ? " · tab renamed - the sync writes Test - RP" : "")
+      : `pending update computed ${fmtDate(RR.built_at, true)} · ${m.tab || ""} · ${RR_DIV_NAME[rrDiv]}`;
   }
   $("#rrFilters").hidden = false;
   rrRenderStats();
@@ -7574,8 +7727,11 @@ function rrRenderStats() {
   const okm = m => m && !rrIsDue(m) && (m.decision === "confirmed" || m.decision === "agree");
   const answered = cur.filter(x => okm(rrMark(x, "current"))).length + fin.filter(x => okm(rrMark(x, "finished"))).length;
   const due = cur.length + fin.length - answered;
-  const tiles = [["Current lines", cur.length, ""], ["Finished lines", fin.length, ""], ["Confirmed this week", answered, answered ? "green" : ""],
-                 ["Due", due, due ? "amber" : ""], ["Typed on the master", c.typed || 0, c.typed ? "red" : ""], ["No approved JobTread proposal", cur.length - (c.in_jobtread || 0), "amber"]];
+  const tiles = rrDiv === "RP"
+    ? [["Current lines", cur.length, ""], ["Finished lines", fin.length, ""], ["Confirmed this week", answered, answered ? "green" : ""],
+       ["Due", due, due ? "amber" : ""], ["Typed on the master", c.typed || 0, c.typed ? "red" : ""], ["No approved JobTread proposal", cur.length - (c.in_jobtread || 0), "amber"]]
+    : [[`${rrDiv} lines`, cur.length, ""], ["Changed by this update", c.changed || 0, c.changed ? "amber" : ""], ["Confirmed this week", answered, answered ? "green" : ""],
+       ["Due", due, due ? "amber" : ""], [rrDiv === "MFD" ? "Typed on the master" : "Problems", rrDiv === "MFD" ? (c.typed || 0) : (c.problems || 0), (rrDiv === "MFD" ? c.typed : c.problems) ? "amber" : ""]];
   el.innerHTML = "";
   for (const [label, val, cls] of tiles) {
     const d = document.createElement("div"); d.className = "kpi" + (cls ? " wr-kpi-" + cls : "");
@@ -7597,6 +7753,7 @@ function rrVisible() {
 
 let rrOpenLine = null;   // the job whose full page is open (null = the list)
 let rrLastLine = null;   // the job you last had open - the list scrolls back to it and marks the row (owner 2026-09-15)
+const RR_DEC_LABEL = { confirmed: "Confirmed", fix: "Needs a fix", agree: "Agreed done", keep: "Kept on the WIP", noted: "Noted, not confirmed" };
 
 function rrRenderCards() {
   const body = $("#rrBody"); if (!body || !RR) return;
@@ -7611,34 +7768,45 @@ function rrRenderCards() {
   }
   if (!list.length) { body.innerHTML = `<div class="rr-empty">Nothing to show with these filters.</div>`; return; }
   const t = document.createElement("table"); t.className = "rr-list";
-  const cols = kind === "current"
-    ? ["", "Job", "Address", "Builder", "Contract", "ETC", "Costs", "Billed", "Last on schedule", "To settle", "Answer"]
-    : ["", "Job", "Address", "Builder", "Contract", "Billed", "Costs", "Gross profit", "Net (10% OH)", "Last day", "Answer"];
+  const isRp = rrDiv === "RP";
+  const cols = !isRp
+    ? ["", "Job", "Name", "Client", "Contract", "Approved COs", "ETC", "Costs", "Billed", "This update", "Answer"]
+    : kind === "current"
+      ? ["", "Job", "Address", "Builder", "Contract", "ETC", "Costs", "Billed", "Last on schedule", "To settle", "Answer"]
+      : ["", "Job", "Address", "Builder", "Contract", "Billed", "Costs", "Gross profit", "Net (10% OH)", "Last day", "Answer"];
   t.innerHTML = `<thead><tr>${cols.map(c => `<th>${c}</th>`).join("")}</tr></thead>`;
   const tb = document.createElement("tbody");
   for (const x of list) {
     const m = rrMark(x, kind), due = rrIsDue(m);
     const tr = document.createElement("tr"); tr.className = ((m && !due && (m.decision === "confirmed" || m.decision === "agree")) ? "rr-ok-row" : (x.problem ? "rr-prob-row" : "")) + (x.line === rrLastLine ? " rr-here" : "");
     if (x.line === rrLastLine) tr.title = "you were here";
-    // the list's mark: ✓ only for Confirmed / Agreed; a fix or a keep shows "!"; a plain note shows "…";
+    // the list's mark: ✓ only for Confirmed / Agreed; a fix or a keep shows "!"; a plain note shows nothing;
     // deselect the verdict and Save = unconfirmed (owner 2026-09-15)
-    const who = m ? (m.mode === "ops" ? "OPS Manager + you" : "You") + " · " + fmtDate(m.at, true) : "";
+    const who = m ? (m.mode === "pm" ? "PM + you" : "You") + " · " + fmtDate(m.at, true) : "";
     const verdictOk = m && (m.decision === "confirmed" || m.decision === "agree");
     const mark = !m ? "" : due ? `<span class="rr-check due" title="answered ${fmtDate(m.at)} - due again">↻</span>`
       : verdictOk ? `<span class="rr-check" title="${_ge(who)}">✓</span>`
       : (m.decision === "fix" || m.decision === "keep") ? `<span class="rr-check fix" title="${_ge(who)}">!</span>`
       : "";
-    const ans = m ? `${_ge({ confirmed: "Confirmed", fix: "Needs a fix", agree: "Agreed done", keep: "Kept", noted: "Noted, not confirmed" }[m.decision] || m.decision)}${x.line === rrJustSaved ? ` <span class="rr-saved">saved ✓</span>` : ""}<div class="d">${m.mode === "ops" ? "OPS Manager + you" : "You"} · ${fmtDate(m.at, true)}</div>` : `<span class="rr-nojt">not yet</span>`;
-    const tail = kind === "current"
-      ? `<td class="n">${money(x.costs)}</td><td class="n">${money(x.billed)}</td><td class="${x.stale ? "rr-stale" : ""}">${x.last_seen ? fmtDate(x.last_seen) : "–"}</td><td class="rr-list-flags">${(x.flags || []).length ? `${x.flags.length} · ${_ge(x.flags[0])}${x.flags.length > 1 ? "…" : ""}` : ""}</td>`
-      : (() => { const gp = (x.billed != null && x.costs != null) ? x.billed - x.costs : null, net = (gp != null && x.contract != null) ? gp - x.contract * 0.10 : null;
-          return `<td class="n">${money(x.billed)}</td><td class="n">${money(x.costs)}</td><td class="n ${gp != null && gp < 0 ? "neg" : ""}">${gp == null ? "–" : money(gp)}${gp != null && x.billed ? `<div class="d">${(gp / x.billed * 100).toFixed(1)}%</div>` : ""}</td><td class="n ${net != null && net < 0 ? "neg" : ""}">${net == null ? "–" : money(net)}</td><td>${_ge(x.last_day || "–")}</td>`; })();
-    const etcCell = kind === "current" ? `<td class="n">${x.etc == null ? '<span class="miss">blank</span>' : money(x.etc)}</td>` : "";
+    const ans = m ? `${_ge(RR_DEC_LABEL[m.decision] || m.decision)}${x.line === rrJustSaved ? ` <span class="rr-saved">saved ✓</span>` : ""}<div class="d">${m.mode === "pm" ? "PM + you" : "You"} · ${fmtDate(m.at, true)}</div>` : `<span class="rr-nojt">not yet</span>`;
+    let mid;
+    if (!isRp) {
+      const pend = x.pending || [];
+      const pendTxt = pend.length ? `${pend.length} · ${pend.map(f => f.label.toLowerCase()).join(", ")}` : (x.status === "ADDED" ? "new on the WIP" : "");
+      mid = `<td class="n">${x.contract == null ? '<span class="miss">blank</span>' : money(x.contract)}</td><td class="n">${x.cos == null ? "–" : money(x.cos)}</td><td class="n">${x.etc == null ? '<span class="miss">blank</span>' : money(x.etc)}</td>`
+        + `<td class="n">${money(x.costs)}</td><td class="n">${money(x.billed)}</td><td class="rr-list-flags">${_ge(pendTxt)}${(x.flags || []).length ? `<div class="d">${_ge(x.flags[0])}${x.flags.length > 1 ? "…" : ""}</div>` : ""}</td>`;
+    } else if (kind === "current") {
+      mid = `<td class="n">${x.contract == null ? '<span class="miss">blank</span>' : money(x.contract)}</td><td class="n">${x.etc == null ? '<span class="miss">blank</span>' : money(x.etc)}</td>`
+        + `<td class="n">${money(x.costs)}</td><td class="n">${money(x.billed)}</td><td class="${x.stale ? "rr-stale" : ""}">${x.last_seen ? fmtDate(x.last_seen) : "–"}</td><td class="rr-list-flags">${(x.flags || []).length ? `${x.flags.length} · ${_ge(x.flags[0])}${x.flags.length > 1 ? "…" : ""}` : ""}</td>`;
+    } else {
+      const gp = (x.billed != null && x.costs != null) ? x.billed - x.costs : null, net = (gp != null && x.contract != null) ? gp - x.contract * 0.10 : null;
+      mid = `<td class="n">${x.contract == null ? '<span class="miss">blank</span>' : money(x.contract)}</td><td class="n">${money(x.billed)}</td><td class="n">${money(x.costs)}</td><td class="n ${gp != null && gp < 0 ? "neg" : ""}">${gp == null ? "–" : money(gp)}${gp != null && x.billed ? `<div class="d">${(gp / x.billed * 100).toFixed(1)}%</div>` : ""}</td><td class="n ${net != null && net < 0 ? "neg" : ""}">${net == null ? "–" : money(net)}</td><td>${_ge(x.last_day || "–")}</td>`;
+    }
     // answer right on the list (owner 2026-09-15: "we only click if we need details"): the verdict + Save;
     // numbers and notes stay on the job page
     const dec = kind === "current" ? [["confirmed", "Confirmed"], ["fix", "Needs a fix"]] : [["agree", "Agree - done"], ["keep", "Keep on the WIP"]];
     const quick = `<div class="rr-quick"><span class="seg rr-dec">${dec.map(([d, l]) => `<button type="button" class="seg-btn ${m && m.decision === d ? "on" : ""}" data-dec="${d}">${l}</button>`).join("")}</span><button type="button" class="btn tiny primary" data-save="1">Save</button></div>`;
-    tr.innerHTML = `<td class="rr-markcell">${mark}</td><td class="wr-pn">${_ge(x.line)}</td><td>${_ge(x.name || "")}</td><td>${_ge(x.builder || "")}</td><td class="n">${x.contract == null ? '<span class="miss">blank</span>' : money(x.contract)}</td>${etcCell}${tail}<td class="rr-ans">${ans}${quick}</td>`;
+    tr.innerHTML = `<td class="rr-markcell">${mark}</td><td class="wr-pn">${_ge(x.line)}</td><td>${_ge(x.name || "")}</td><td>${_ge(x.builder || "")}</td>${mid}<td class="rr-ans">${ans}${quick}</td>`;
     tr.onclick = (e) => { if (e.target.closest(".rr-quick")) return; rrOpenLine = x.line; _pushView({ v: "rr", line: x.line }); rrRenderCards(); window.scrollTo(0, 0); };
     tr.querySelectorAll(".rr-dec .seg-btn").forEach(b => { b.onclick = (e) => { e.stopPropagation(); const on = b.classList.contains("on"); tr.querySelectorAll(".rr-dec .seg-btn").forEach(o => o.classList.remove("on")); if (!on) b.classList.add("on"); }; });
     tr.querySelector("[data-save]").onclick = (e) => { e.stopPropagation(); const on = tr.querySelector(".rr-dec .seg-btn.on"); rrSaveQuick(tr, x, kind, on ? on.dataset.dec : "noted"); };
@@ -7657,7 +7825,7 @@ function rrRenderPage(x, kind, list) {
     <button type="button" class="btn small" id="rrPrev" ${i <= 0 ? "disabled" : ""}>← Previous</button>
     <button type="button" class="btn small" id="rrNext" ${i < 0 || i >= list.length - 1 ? "disabled" : ""}>Next →</button>`;
   body.appendChild(nav);
-  body.appendChild(rrCard(x, kind));
+  body.appendChild(rrDiv === "RP" ? rrCard(x, kind) : rrCardDiv(x));
   $("#rrBack").onclick = () => { if (!_popViewIfOwn("rr")) { rrOpenLine = null; rrRenderCards(); } };
   $("#rrPrev").onclick = () => { if (i > 0) { rrOpenLine = list[i - 1].line; try { history.replaceState({ v: "rr", line: rrOpenLine }, ""); } catch { /* ignore */ } rrRenderCards(); window.scrollTo(0, 0); } };
   $("#rrNext").onclick = () => { if (i < list.length - 1) { rrOpenLine = list[i + 1].line; try { history.replaceState({ v: "rr", line: rrOpenLine }, ""); } catch { /* ignore */ } rrRenderCards(); window.scrollTo(0, 0); } };
@@ -7692,7 +7860,37 @@ async function rrReveal(path) {
   if (!res.ok) toast(res.error || "could not open");
 }
 
-function rrCard(x, kind) {
+// "Our numbers" + the verdict, the same block on every division's card
+function rrOursHtml(x, kind, m, due, withCos) {
+  const ourK = m && m.our_contract != null ? m.our_contract : x.contract, ourE = m && m.our_etc != null ? m.our_etc : x.etc, ourC = m && m.our_cos != null ? m.our_cos : x.cos;
+  const okBtn = (f, val) => `<span class="rr-ok" data-f="${f}"><button type="button" class="yes ${val === 1 ? "on" : ""}" data-v="1" title="right">✓</button><button type="button" class="no ${val === 0 ? "on" : ""}" data-v="0" title="wrong">✗</button></span>`;
+  const dec = kind === "current" ? [["confirmed", "Confirmed"], ["fix", "Needs a fix"]] : [["agree", "Agree - done"], ["keep", "Keep on the WIP"]];
+  const stamp = m ? `<span class="rr-stamp ${m.mode === "pm" ? "rr-stamp-ops" : ""}"><b>${RR_DEC_LABEL[m.decision] || _ge(m.decision)}</b> · ${m.mode === "pm" ? "PM + you" : "You"} · ${fmtDate(m.at, true)}${due ? " · <i>due again</i>" : ""}</span>` : `<span class="rr-stamp"><i>not saved yet</i></span>`;
+  const fmtN = v => v == null ? "" : Number(v).toLocaleString();
+  return `<div class="rr-ours">
+      <div class="rr-ours-row">
+        <label class="rr-field">Contract<input type="text" data-f="our_contract" value="${fmtN(ourK)}"></label>${okBtn("contract_ok", m ? m.contract_ok : null)}
+        ${withCos ? `<label class="rr-field">Approved COs<input type="text" data-f="our_cos" value="${fmtN(ourC)}"></label>${okBtn("cos_ok", m ? m.cos_ok : null)}` : ""}
+        <label class="rr-field">ETC<input type="text" data-f="our_etc" value="${fmtN(ourE)}"></label>${okBtn("etc_ok", m ? m.etc_ok : null)}
+        <label class="rr-field rr-note">Notes - what changed, what could not be settled<textarea data-f="note">${_ge(m?.note || "")}</textarea></label>
+      </div>
+      <div class="rr-actions"><span class="seg rr-dec">${dec.map(([d, l]) => `<button type="button" class="seg-btn ${m && m.decision === d ? "on" : ""}" data-dec="${d}">${l}</button>`).join("")}</span>
+        <button type="button" class="btn small primary" data-save="1">Save</button>${m ? `<button type="button" class="btn small subtle" data-clear="1">Clear answer</button>` : ""}${stamp}</div>
+    </div>`;
+}
+function rrWireOurs(card, x, kind) {
+  card.querySelectorAll("[data-reveal]").forEach(b => { b.onclick = () => rrReveal(b.dataset.reveal); });
+  { const b = card.querySelector("[data-project]"); if (b) b.onclick = () => openProjectPage(b.dataset.project); }
+  { const b = card.querySelector("[data-wipreview]"); if (b) b.onclick = () => setTab("wipreview"); }
+  card.querySelectorAll('input[data-f]').forEach(inp => { const base = inp.dataset.f === "our_contract" ? x.contract : inp.dataset.f === "our_cos" ? x.cos : x.etc;
+    const paint = () => { const v = Number(String(inp.value).replace(/[$,]/g, "")); inp.classList.toggle("changed", inp.value.trim() !== "" && !Number.isNaN(v) && base != null && Math.abs(v - base) > 0.5); }; inp.oninput = paint; paint(); });
+  card.querySelectorAll(".rr-ok button").forEach(b => { b.onclick = () => { const on = b.classList.contains("on"); b.parentElement.querySelectorAll("button").forEach(o => o.classList.remove("on")); if (!on) b.classList.add("on"); }; });
+  card.querySelectorAll(".rr-dec .seg-btn").forEach(b => { b.onclick = () => { const on = b.classList.contains("on"); card.querySelectorAll(".rr-dec .seg-btn").forEach(o => o.classList.remove("on")); if (!on) b.classList.add("on"); }; });
+  card.querySelector("[data-save]").onclick = () => { const on = card.querySelector(".rr-dec .seg-btn.on"); rrSave(card, x, kind, on ? on.dataset.dec : "noted"); };   // no verdict = "noted": numbers + note kept, the ✓ comes off
+  { const c = card.querySelector("[data-clear]"); if (c) c.onclick = () => { if (confirm(`Clear the saved answer on ${x.line}?`)) rrSave(card, x, kind, ""); }; }
+}
+
+function rrCard(x, kind) {   // the RP card: schedule first, then the contract and the ETC with pictures of the real files
   const m = rrMark(x, kind), due = rrIsDue(m);
   const card = document.createElement("div");
   card.className = "rr-card " + ((m && !due && (m.decision === "confirmed" || m.decision === "agree")) ? "rr-done" : (x.problem ? "rr-prob" : "rr-due"));
@@ -7703,7 +7901,6 @@ function rrCard(x, kind) {
   const pageBtn = `<button type="button" class="btn tiny" data-project="${_ge(x.line)}" title="This job's page in the ledger: invoices, draws, bills, costs">Project page</button>`;
   const qboBtn = x.billed_link ? `<a class="btn tiny" href="${_ge(x.billed_link)}" target="_blank" rel="noopener" title="The project in QuickBooks (invoices)">Open in QuickBooks</a>` : "";
   const qboPl = x.costs_link ? `<a class="btn tiny" href="${_ge(x.costs_link)}" target="_blank" rel="noopener" title="The project's P&L in QuickBooks (costs)">QBO P&amp;L</a>` : "";
-  const jtCell = jt.price != null ? `${money(jt.price)} / ${money(jt.cost)}<div class="d">approved ${fmtDate(jt.date)}${jt.scope_note ? " · " + _ge(jt.scope_note) : ""}</div>` : `<span class="miss">${jt.exists ? "no approved proposal" : "not in JobTread"}</span>`;
   // one line of numbers, each with its source, then the profit line (owner 2026-09-15: "remove big
   // block just show the numbers and below it gross profit - oh 10% net"). GP = contract - ETC (the WIP's
   // original profit), overhead = 10% of the contract, net = GP - overhead.
@@ -7716,9 +7913,10 @@ function rrCard(x, kind) {
   const base = fin ? x.billed : K;
   const pctTxt = (gp != null && base) ? ` (${(gp / base * 100).toFixed(1)}%)` : "";
   const profit = K != null ? `<div class="rr-profit">Gross profit${fin ? " (billed - costs)" : ""} <b class="${gp != null && gp < 0 ? "neg" : ""}">${gp == null ? "–" : money(gp)}</b>${pctTxt} · overhead 10% <b>${money(oh)}</b> · net <b class="${net != null && net < 0 ? "neg" : ""}">${net == null ? "–" : money(net)}</b></div>` : "";
+  const jtTxt = jt.price != null ? `${money(jt.price)} / ${money(jt.cost)}` : `<span class="miss">${jt.exists ? "no approved proposal" : "not in JobTread"}</span>`;
   const nums = (kind === "current"
-    ? cell("Contract", rrMoney(K), rrPill(src.contract)) + cell("ETC", rrMoney(E), rrPill(src.etc)) + cell("Costs", link(x.costs, x.costs_link), rrPill(src.costs)) + cell("Billed", link(x.billed, x.billed_link), rrPill(src.billed)) + cell("JobTread", jt.price != null ? `${money(jt.price)} / ${money(jt.cost)}` : `<span class="miss">${jt.exists ? "no approved proposal" : "not in JobTread"}</span>`, jt.price != null ? `<span class="rr-src jt" title="approved ${fmtDate(jt.date)}${jt.scope_note ? " · " + _ge(jt.scope_note) : ""}">${fmtDate(jt.date)}</span>` : "")
-    : cell("Contract", rrMoney(K), `<span class="rr-src master">RP WIP file</span>`) + cell("ETC", rrMoney(E), `<span class="rr-src master">RP WIP file</span>`) + cell("Billed", rrMoney(x.billed), `<span class="rr-src qbo" title="as of 09/09/2026">QuickBooks</span>`) + cell("Costs", rrMoney(x.costs), `<span class="rr-src qbo" title="as of 09/09/2026">QuickBooks</span>`) + cell("JobTread", jt.price != null ? `${money(jt.price)} / ${money(jt.cost)}` : `<span class="miss">${jt.exists ? "no approved proposal" : "not in JobTread"}</span>`, ""))
+    ? cell("Contract", rrMoney(K), rrPill(src.contract)) + cell("ETC", rrMoney(E), rrPill(src.etc)) + cell("Costs", link(x.costs, x.costs_link), rrPill(src.costs)) + cell("Billed", link(x.billed, x.billed_link), rrPill(src.billed)) + cell("JobTread", jtTxt, jt.price != null ? `<span class="rr-src jt" title="approved ${fmtDate(jt.date)}${jt.scope_note ? " · " + _ge(jt.scope_note) : ""}">${fmtDate(jt.date)}</span>` : "")
+    : cell("Contract", rrMoney(K), `<span class="rr-src master">RP WIP file</span>`) + cell("ETC", rrMoney(E), `<span class="rr-src master">RP WIP file</span>`) + cell("Billed", rrMoney(x.billed), `<span class="rr-src qbo" title="as of 09/09/2026">QuickBooks</span>`) + cell("Costs", rrMoney(x.costs), `<span class="rr-src qbo" title="as of 09/09/2026">QuickBooks</span>`) + cell("JobTread", jtTxt, ""))
     + profit;
   const flags = kind === "current" ? (x.flags || []) : [x.why].filter(Boolean);
   // 1. the schedule - where the project came from
@@ -7738,32 +7936,54 @@ function rrCard(x, kind) {
   } else {
     contractBlock = `<div class="rr-sec"><div class="rr-sec-title">2 · Why it left the WIP</div><div class="rr-sec-line">${_ge(x.why || "")}</div>${rrPic(pics.removed, "Removed log")}</div>`;
   }
-  const ourK = m && m.our_contract != null ? m.our_contract : x.contract, ourE = m && m.our_etc != null ? m.our_etc : x.etc;
-  const okBtn = (f, val) => `<span class="rr-ok" data-f="${f}"><button type="button" class="yes ${val === 1 ? "on" : ""}" data-v="1" title="right">✓</button><button type="button" class="no ${val === 0 ? "on" : ""}" data-v="0" title="wrong">✗</button></span>`;
-  const dec = kind === "current" ? [["confirmed", "Confirmed"], ["fix", "Needs a fix"]] : [["agree", "Agree - done"], ["keep", "Keep on the WIP"]];
-  const decLabel = { confirmed: "Confirmed", fix: "Needs a fix", agree: "Agreed done", keep: "Kept on the WIP", noted: "Noted, not confirmed" };
-  const stamp = m ? `<span class="rr-stamp ${m.mode === "ops" ? "rr-stamp-ops" : ""}"><b>${decLabel[m.decision] || _ge(m.decision)}</b> · ${m.mode === "ops" ? "OPS Manager + you" : "You"} · ${fmtDate(m.at, true)}${due ? " · <i>due again</i>" : ""}</span>` : `<span class="rr-stamp"><i>not saved yet</i></span>`;
   card.innerHTML = `<div class="rr-head"><span class="wr-pn">${_ge(x.line)}</span><span class="wr-name">${_ge(x.name || "")}</span><span class="wr-name">· ${_ge(x.builder || "")}</span>${x.rp_status ? `<span class="wr-badge changed" title="status in the RP WIP file">${_ge(x.rp_status)}</span>` : ""}<span class="rr-links">${pageBtn}${folderBtn}${qboBtn}${qboPl}${jtLink}</span></div>
     <div class="rr-strip">${nums}</div>
     ${flags.length ? `<div class="rr-flags">${flags.map(f => `<div>${_ge(f)}</div>`).join("")}</div>` : ""}
     ${schedBlock}${contractBlock}${etcBlock}${moreBlock}
-    <div class="rr-ours">
-      <div class="rr-ours-row">
-        <label class="rr-field">Contract<input type="text" data-f="our_contract" value="${ourK == null ? "" : Number(ourK).toLocaleString()}"></label>${okBtn("contract_ok", m ? m.contract_ok : null)}
-        <label class="rr-field">ETC<input type="text" data-f="our_etc" value="${ourE == null ? "" : Number(ourE).toLocaleString()}"></label>${okBtn("etc_ok", m ? m.etc_ok : null)}
-        <label class="rr-field rr-note">Notes - what changed, what could not be settled<textarea data-f="note">${_ge(m?.note || "")}</textarea></label>
-      </div>
-      <div class="rr-actions"><span class="seg rr-dec">${dec.map(([d, l]) => `<button type="button" class="seg-btn ${m && m.decision === d ? "on" : ""}" data-dec="${d}">${l}</button>`).join("")}</span>
-        <button type="button" class="btn small primary" data-save="1">Save</button>${m ? `<button type="button" class="btn small subtle" data-clear="1">Clear answer</button>` : ""}${stamp}</div>
-    </div>`;
-  card.querySelectorAll("[data-reveal]").forEach(b => { b.onclick = () => rrReveal(b.dataset.reveal); });
-  { const b = card.querySelector("[data-project]"); if (b) b.onclick = () => openProjectPage(b.dataset.project); }
-  card.querySelectorAll('input[data-f]').forEach(inp => { const base = inp.dataset.f === "our_contract" ? x.contract : x.etc;
-    const paint = () => { const v = Number(String(inp.value).replace(/[$,]/g, "")); inp.classList.toggle("changed", inp.value.trim() !== "" && !Number.isNaN(v) && base != null && Math.abs(v - base) > 0.5); }; inp.oninput = paint; paint(); });
-  card.querySelectorAll(".rr-ok button").forEach(b => { b.onclick = () => { const on = b.classList.contains("on"); b.parentElement.querySelectorAll("button").forEach(o => o.classList.remove("on")); if (!on) b.classList.add("on"); }; });
-  card.querySelectorAll(".rr-dec .seg-btn").forEach(b => { b.onclick = () => { const on = b.classList.contains("on"); card.querySelectorAll(".rr-dec .seg-btn").forEach(o => o.classList.remove("on")); if (!on) b.classList.add("on"); }; });
-  card.querySelector("[data-save]").onclick = () => { const on = card.querySelector(".rr-dec .seg-btn.on"); rrSave(card, x, kind, on ? on.dataset.dec : "noted"); };   // no verdict = "noted": numbers + note kept, the ✓ comes off
-  { const c = card.querySelector("[data-clear]"); if (c) c.onclick = () => { if (confirm(`Clear the saved answer on ${x.line}?`)) rrSave(card, x, kind, ""); }; }
+    ${rrOursHtml(x, kind, m, due, false)}`;
+  rrWireOurs(card, x, kind);
+  return card;
+}
+
+// The CP / MFD card: no schedule (owner 2026-09-15: "CP will obv not have the schedule ... it's just the change
+// order location, the takeoff contract etc"). The contract and approved COs from the draw G702, the ETC from the
+// takeoff, costs and billed from QuickBooks - each with the document it came from and a Finder button; then the
+// pending update (was -> now, where the new number comes from) when this update changes the line.
+function rrCardDiv(x) {
+  const kind = "current", m = rrMark(x, kind), due = rrIsDue(m);
+  const card = document.createElement("div");
+  card.className = "rr-card " + ((m && !due && m.decision === "confirmed") ? "rr-done" : (x.problem ? "rr-prob" : "rr-due"));
+  const src = x.src || {};
+  const pageBtn = `<button type="button" class="btn tiny" data-project="${_ge(x.line)}" title="This job's page in the ledger: invoices, draws, bills, costs">Project page</button>`;
+  const wrBtn = (x.pending || []).length ? `<button type="button" class="btn tiny" data-wipreview="1" title="The WIP Review tab writes the approved changes to the tabs">Write in WIP Review</button>` : "";
+  const cell = (l, v, pill) => `<span class="rr-n"><span class="l">${l}</span> <span class="v">${v}</span>${pill || ""}</span>`;
+  const K = x.contract, C = x.cos, E = x.etc, tot = K != null ? K + (C || 0) : null;
+  const rate = rrDiv === "MFD" ? 0.09 : 0.10;
+  const gp = (tot != null && E != null) ? tot - E - (x.co_costs || 0) : null;
+  const oh = tot != null ? tot * rate : null, net = (gp != null && oh != null) ? gp - oh : null;
+  const pctTxt = (gp != null && tot) ? ` (${(gp / tot * 100).toFixed(1)}%)` : "";
+  const profit = tot != null ? `<div class="rr-profit">Contract incl. COs <b>${money(tot)}</b> · gross profit (contract - ETC${x.co_costs ? " - CO costs" : ""}) <b class="${gp != null && gp < 0 ? "neg" : ""}">${gp == null ? "–" : money(gp)}</b>${pctTxt} · overhead ${Math.round(rate * 100)}% <b>${money(oh)}</b> · net <b class="${net != null && net < 0 ? "neg" : ""}">${net == null ? "–" : money(net)}</b></div>` : "";
+  const nums = cell("Contract", rrMoney(K), rrPill(src.contract)) + cell("Approved COs", C == null ? "–" : money(C), rrPill(src.cos)) + cell("ETC", rrMoney(E), rrPill(src.etc))
+    + cell("Costs", rrMoney(x.costs), rrPill(src.costs)) + cell("Billed", rrMoney(x.billed), rrPill(src.billed)) + (x.retainage ? cell("Retainage held", money(x.retainage), "") : "") + profit;
+  const fileBtn = (f, label) => f ? `<button type="button" class="btn tiny" data-reveal="${_ge(f)}" title="Open the folder and highlight this file">${_ge(label)}</button>` : "";
+  const secBlock = (n, title, v, sr) => `<div class="rr-sec"><div class="rr-sec-title">${n} · ${title} ${v} ${rrPill(sr)}</div>
+      <div class="rr-sec-line">${rrSrcLine(sr)}${sr && sr.file ? `<b>${_ge(sr.file.split("/").pop())}</b> ${fileBtn(sr.file, "Show file in folder")}` : (sr && sr.detail ? "" : "<i>no document named</i>")}</div></div>`;
+  const pend = x.pending || [];
+  const pendBlock = pend.length ? `<div class="rr-sec"><div class="rr-sec-title">This update changes the line</div>
+      <table class="rr-pend"><thead><tr><th></th><th class="n">On the WIP now</th><th class="n">After this update</th><th>Where the new number comes from</th></tr></thead><tbody>
+      ${pend.map(f => `<tr class="${f.reversed ? "rev" : ""}"><td>${_ge(f.label)}</td><td class="n was">${money(f.was)}</td><td class="n now">${money(f.now)}${f.reversed ? ' <span class="wr-mark rev">REVERSED</span>' : f.decreased ? ' <span class="wr-mark dec">decreased</span>' : ""}</td><td class="src">${_ge(f.source || "")}${f.note ? (f.source ? " · " : "") + `<i>${_ge(f.note)}</i>` : ""}</td></tr>`).join("")}
+      </tbody></table></div>` : `<div class="rr-sec"><div class="rr-sec-line">This update leaves the line as it is on the WIP.</div></div>`;
+  const badge = x.status && x.status !== "SAME" ? `<span class="wr-badge ${_ge(String(x.status).toLowerCase())}">${_ge(x.status)}</span>` : "";
+  card.innerHTML = `<div class="rr-head"><span class="wr-pn">${_ge(x.line)}</span><span class="wr-name">${_ge(x.name || "")}</span><span class="wr-name">· ${_ge(x.builder || "")}</span>${badge}<span class="rr-links">${pageBtn}${wrBtn}</span></div>
+    <div class="rr-strip">${nums}</div>
+    ${(x.flags || []).length ? `<div class="rr-flags">${x.flags.map(f => `<div>${_ge(f)}</div>`).join("")}</div>` : ""}
+    ${(x.notes || []).length ? `<div class="rr-sec-line rr-notes">${x.notes.map(_ge).join(" · ")}</div>` : ""}
+    ${secBlock(1, "Contract", rrMoney(K), src.contract)}
+    ${secBlock(2, "Approved change orders", C == null ? "–" : money(C), src.cos)}
+    ${secBlock(3, "ETC", rrMoney(E), src.etc)}
+    ${pendBlock}
+    ${rrOursHtml(x, kind, m, due, true)}`;
+  rrWireOurs(card, x, kind);
   return card;
 }
 
@@ -7772,41 +7992,41 @@ let rrJustSaved = null;   // the line whose answer was just written and read bac
 async function rrSave(card, x, kind, decision) {
   const val = f => { const el = card.querySelector(`[data-f="${f}"]`); return el ? el.value : ""; };
   const ok = f => { const on = card.querySelector(`.rr-ok[data-f="${f}"] button.on`); return on ? on.dataset.v : ""; };
-  const body = { project_no: x.line, kind, decision, mode: rrMode, note: val("note"), our_contract: val("our_contract"), our_etc: val("our_etc"), contract_ok: ok("contract_ok"), etc_ok: ok("etc_ok") };
+  const body = { project_no: x.line, kind, decision, mode: rrMode, note: val("note"), our_contract: val("our_contract"), our_etc: val("our_etc"), our_cos: val("our_cos"), contract_ok: ok("contract_ok"), etc_ok: ok("etc_ok"), cos_ok: ok("cos_ok") };
   const saveBtn = card.querySelector("[data-save]"); if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = "Saving…"; }
   let res;
-  try { res = await (await fetch("/api/rp/mark", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })).json(); }
+  try { res = await (await fetch("/api/review/mark", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })).json(); }
   catch { res = { error: "no answer from the server" }; }
   if (!res || !res.ok) { if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = "Save"; } toast("NOT saved - " + ((res && res.error) || "could not reach the server"), 5000); return; }
   // Read it back from the server (owner 2026-09-15: "show me that it was saved instead of trusting that
   // i clicked it") - the list is rebuilt from what the database returns, not from what was typed.
   let fresh = null;
-  try { fresh = await (await fetch("/api/rp/review")).json(); } catch { fresh = null; }
+  try { fresh = await (await fetch(rrApi())).json(); } catch { fresh = null; }
   const key = `${x.line}|${kind}`;
   const stored = fresh && fresh.marks ? fresh.marks[key] : undefined;
   if (fresh && fresh.marks) RR.marks = fresh.marks;
   const verified = decision ? (stored && stored.at === res.at) : (stored === undefined);
   if (!verified) { if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = "Save"; } toast(`NOT saved - ${x.line} did not read back from the database`, 6000); return; }
-  const label = { confirmed: "Confirmed", fix: "Needs a fix", agree: "Agreed done", keep: "Kept on the WIP", noted: "Noted, not confirmed" }[decision] || (decision ? decision : "cleared");
-  toast(`Saved ✓ ${x.line} · ${label} · ${rrMode === "ops" ? "OPS Manager + you" : "you"} · ${fmtDate(res.at, true)}`, 4000);
+  const label = RR_DEC_LABEL[decision] || (decision ? decision : "cleared");
+  toast(`Saved ✓ ${x.line} · ${label} · ${rrWhoLow()} · ${fmtDate(res.at, true)}`, 4000);
   rrJustSaved = decision ? x.line : null;
   rrRenderStats();
   if (decision) { if (!_popViewIfOwn("rr")) { rrOpenLine = null; rrRenderCards(); window.scrollTo(0, 0); } }   // back to the list: the row shows the answer read back
-  else { const fresh2 = rrCard(x, kind); card.replaceWith(fresh2); }
+  else { const fresh2 = rrDiv === "RP" ? rrCard(x, kind) : rrCardDiv(x); card.replaceWith(fresh2); }
 }
 
 async function rrSaveQuick(tr, x, kind, decision) {
   const m = rrMark(x, kind) || {};
-  const body = { project_no: x.line, kind, decision, mode: rrMode, note: m.note || "", our_contract: m.our_contract != null ? m.our_contract : (x.contract != null ? x.contract : ""), our_etc: m.our_etc != null ? m.our_etc : (x.etc != null ? x.etc : ""), contract_ok: m.contract_ok != null ? m.contract_ok : "", etc_ok: m.etc_ok != null ? m.etc_ok : "" };
+  const keep = (mv, xv) => mv != null ? mv : (xv != null ? xv : "");
+  const body = { project_no: x.line, kind, decision, mode: rrMode, note: m.note || "", our_contract: keep(m.our_contract, x.contract), our_etc: keep(m.our_etc, x.etc), our_cos: keep(m.our_cos, x.cos), contract_ok: m.contract_ok != null ? m.contract_ok : "", etc_ok: m.etc_ok != null ? m.etc_ok : "", cos_ok: m.cos_ok != null ? m.cos_ok : "" };
   const btn = tr.querySelector("[data-save]"); if (btn) { btn.disabled = true; btn.textContent = "Saving…"; }
-  let res; try { res = await (await fetch("/api/rp/mark", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })).json(); } catch { res = { error: "no answer from the server" }; }
+  let res; try { res = await (await fetch("/api/review/mark", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })).json(); } catch { res = { error: "no answer from the server" }; }
   if (!res || !res.ok) { if (btn) { btn.disabled = false; btn.textContent = "Save"; } toast("NOT saved - " + ((res && res.error) || "could not reach the server"), 5000); return; }
-  let fresh = null; try { fresh = await (await fetch("/api/rp/review")).json(); } catch { fresh = null; }
+  let fresh = null; try { fresh = await (await fetch(rrApi())).json(); } catch { fresh = null; }
   const stored = fresh && fresh.marks ? fresh.marks[`${x.line}|${kind}`] : undefined;
   if (fresh && fresh.marks) RR.marks = fresh.marks;
   if (!(stored && stored.at === res.at)) { if (btn) { btn.disabled = false; btn.textContent = "Save"; } toast(`NOT saved - ${x.line} did not read back from the database`, 6000); return; }
-  const label = { confirmed: "Confirmed", fix: "Needs a fix", agree: "Agreed done", keep: "Kept on the WIP", noted: "Noted, not confirmed" }[decision] || decision;
-  toast(`Saved ✓ ${x.line} · ${label} · ${rrMode === "ops" ? "OPS Manager + you" : "you"} · ${fmtDate(res.at, true)}`, 4000);
+  toast(`Saved ✓ ${x.line} · ${RR_DEC_LABEL[decision] || decision} · ${rrWhoLow()} · ${fmtDate(res.at, true)}`, 4000);
   rrJustSaved = x.line; rrLastLine = x.line; rrRenderStats(); rrRenderCards();
 }
 
@@ -7827,16 +8047,19 @@ async function rrFinalize() {
 }
 
 async function rrRebuild() {
-  if (!confirm("Rebuild the RP review? It re-reads the master, the RP file, every job folder, JobTread (Touch ID) and the schedules. A few minutes.")) return;
-  let res; try { res = await (await fetch("/api/rp/refresh", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm: true }) })).json(); }
+  const what = rrDiv === "RP" ? "Rebuild the RP review? It re-reads the master, the RP file, every job folder, JobTread (Touch ID) and the schedules. A few minutes."
+    : rrDiv === "CP" ? "Recompute the CP update? It reads every CP job folder on Common (draw G702s, takeoffs) and pulls costs / billed from QuickBooks (Touch ID). A few minutes; nothing is written."
+    : "Recompute the MFD update? It reads the master's MFD rows and pulls costs / billed from QuickBooks (Touch ID). Nothing is written.";
+  if (!confirm(what)) return;
+  let res; try { res = await (await fetch("/api/review/refresh", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm: true, div: rrDiv }) })).json(); }
   catch { toast("could not start"); return; }
   if (!res.ok) { toast(res.error || "could not start"); return; }
   const body = $("#rrBody"); $("#rrRebuild").disabled = true;
-  body.innerHTML = `<div class="wr-run"><div class="wr-run-label">Building the RP review…</div><div class="pl-bar"><div class="pl-fill" id="rrFill"></div></div><div class="hint" id="rrRunHint">Reading the folders on Common and JobTread - a Touch ID prompt appears on the Mac.</div></div>`;
+  body.innerHTML = `<div class="wr-run"><div class="wr-run-label">Building the ${rrDiv} review…</div><div class="pl-bar"><div class="pl-fill" id="rrFill"></div></div><div class="hint" id="rrRunHint">${rrDiv === "RP" ? "Reading the folders on Common and JobTread - a Touch ID prompt appears on the Mac." : "Running the WIP reader - a Touch ID prompt appears on the Mac."}</div></div>`;
   if (rrPoll) clearInterval(rrPoll);
   rrPoll = setInterval(async () => {
     let s; try { s = await (await fetch("/api/sync/status")).json(); } catch { return; }
     const fill = $("#rrFill"); if (fill) fill.style.width = s.state === "running" ? "60%" : "100%";
-    if (s.state !== "running") { clearInterval(rrPoll); rrPoll = null; $("#rrRebuild").disabled = false; if (s.state === "error") toast("build failed - see the sync log"); loadRpReview(); }
+    if (s.state !== "running") { clearInterval(rrPoll); rrPoll = null; $("#rrRebuild").disabled = false; if (s.state === "error") toast("build failed - see the sync log"); loadReview(true); }
   }, 1500);
 }

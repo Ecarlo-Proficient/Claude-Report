@@ -1,10 +1,19 @@
 #!/usr/bin/env python3
 """
-rp_review.py - the weekly RP review with the ops manager: every RP line on the WIP, WHERE
+rp_review.py - the weekly WIP review with the division PM: every line on the WIP, WHERE
 each number was grabbed from, and a SNAPSHOT of the source spreadsheet cut around the row
 the number sits in (max 5 rows, that row highlighted) - the way the owner wants to see it
 (2026-09-15: "instead of only showing the source file, create a snapshot of the excel of
 only where it's at, max 5 rows with its row highlighted").
+
+ONE REVIEW PER DIVISION (owner 2026-09-15: "instead of making the RP wip update, make it in
+the projects for each division ... change ops to PM standard, that way we all can use the
+same system and update together"). RP is built here (folders, pictures, the crew schedule).
+CP and MFD need no schedule: their cards come from the WIP tool's --emit-review JSON
+(`division_cards`) - the contract and the approved COs from the draw G702, the ETC from the
+takeoff, costs and billed from QuickBooks, every number with the document it came from;
+MFD's contract / ETC are typed on the master by design. The answers table and the Me / PM
+stamp are the same for all three.
 
 WHAT IT READS (all read-only)
   * the WIP master's RP tab ('Test - RP', or 'WIP-RP' if the office renamed it) - the four
@@ -998,13 +1007,103 @@ def load() -> Optional[dict]:
 # or mark x with notes/changes and you read and make sense of it"). Each line keeps ONE
 # standing answer (rp_review_mark) plus every answer ever given (rp_review_mark_log):
 #   decision   current: confirmed | fix        finished: agree | keep       '' clears
-#   mode       ops (the ops manager is here, deciding together) | me (the owner alone)
-#   our_contract / our_etc   THEIR numbers (prepopulated with the prepared value)
-#   contract_ok / etc_ok     1 = check, 0 = X, NULL = not answered
+#   mode       pm (the division PM is here, deciding together) | me (the owner alone).
+#              'ops' = the name the RP mode carried until 2026-09-15 evening; read as 'pm'.
+#   our_contract / our_etc / our_cos   THEIR numbers (prepopulated with the prepared value)
+#   contract_ok / etc_ok / cos_ok      1 = check, 0 = X, NULL = not answered
 #   note       free text - what could not be settled, what changed
-MODES = ("ops", "me")
+MODES = ("pm", "me")
+_LEGACY_MODE = {"ops": "pm"}
+DIVISIONS = ("RP", "CP", "MFD")
 DECISIONS = {"current": ("confirmed", "fix", "noted"), "finished": ("agree", "keep", "noted")}
-_COLS = "project_no, kind, decision, mode, note, at, our_contract, our_etc, contract_ok, etc_ok"
+_COLS = "project_no, kind, decision, mode, note, at, our_contract, our_etc, contract_ok, etc_ok, our_cos, cos_ok"
+WIP_REVIEW_DIR = Path(os.environ.get("ACB_WIP_REVIEW_DIR",
+                                     Path.home() / "Library" / "Application Support" / "Proficient" / "wip-review"))
+_WIP_FILES = {"CP": ("cp.json", "CP"), "MFD": ("master.json", "MFD")}
+
+
+def norm_mode(mode: str) -> str:
+    return _LEGACY_MODE.get(mode, mode)
+
+
+def _src_kind(label, default: str, div: str):
+    """(kind, label, detail) for a review field's source text as the WIP tools write it."""
+    s = (label or "").strip()
+    low = s.lower()
+    if not s:
+        return (default, "QuickBooks" if default == "qbo" else "WIP master", "" if default == "qbo" else "no source named this run")
+    if "g702" in low or low.startswith("draw"):
+        return ("draw", "Draw G702", s)
+    if "takeoff" in low:
+        return ("takeoff", "Takeoff", s)
+    if "proposal" in low or low.endswith(".pdf"):
+        return ("pdf", "Proposal PDF", s)
+    if "quickbooks" in low:
+        return ("qbo", "QuickBooks", s)
+    if low == "carried from tab":
+        return ("master", "WIP master", "carried from the tab - no document read this run")
+    if "wip - master" in low or "wip master" in low:
+        return ("typed", "Typed on the master", "MFD enters it by hand (by design)" if div == "MFD" else s)
+    if low.endswith((".xlsx", ".xlsm")):
+        return ("takeoff", "Takeoff", s)
+    return ("folder", "Job folder", s)
+
+
+def division_cards(div: str, wip_dir=None, names: Optional[dict] = None) -> Optional[dict]:
+    """CP / MFD review cards from the WIP tool's --emit-review JSON (cp.json / master.json): one card
+    per line, the numbers the update proposes with the document each came from, and the pending
+    was -> now changes. None until the JSON exists (the gear's Rebuild computes it)."""
+    fn, prefix = _WIP_FILES[div]
+    p = Path(wip_dir or WIP_REVIEW_DIR) / fn
+    try:
+        j = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    built = dt.datetime.fromtimestamp(p.stat().st_mtime).isoformat(timespec="seconds")
+    cards = []
+    for r in j.get("records", []):
+        pn = str(r.get("project_num") or "").upper()
+        if not pn.startswith(prefix) or r.get("status") == "REMOVED":
+            continue
+        f = {x["key"]: x for x in r.get("fields", [])}
+
+        def now(k):
+            x = f.get(k)
+            if not x:
+                return None
+            return x["now"] if x.get("now") is not None else x.get("was")
+
+        def src(k, default):
+            x = f.get(k) or {}
+            kind, label, detail = _src_kind(x.get("source"), default, div)
+            return {"kind": kind, "label": label, "detail": detail, "file": x.get("source_path")}
+        pending = [{"key": x["key"], "label": x["label"], "block": x.get("block"), "was": x.get("was"), "now": x.get("now"),
+                    "reversed": bool(x.get("reversed")), "decreased": bool(x.get("decreased")),
+                    "source": x.get("source"), "note": x.get("note")} for x in r.get("fields", []) if x.get("changed")]
+        K, C, E = now("orig_contract"), now("approved_cos"), now("orig_etc")
+        notes = [r["flags"]] if r.get("flags") else []      # the reader's own line about the row (which draw, which paper) - information, not a problem
+        flags = []
+        if r.get("status") == "REVERSED":
+            flags.append("a contract / CO / ETC value went DOWN this update - the document is named on the line")
+        for x in pending:
+            if x["block"] == "pm" and not x["source"]:
+                flags.append(f"{x['label']} changed with no document named")
+        nm = (names or {}).get(pn, {})
+        cards.append({"line": pn, "ftw": False, "name": r.get("name") or nm.get("name"), "builder": nm.get("client"),
+                      "division": div, "tab": r.get("tab"), "status": r.get("status"),
+                      "contract": K, "cos": C, "etc": E, "co_costs": now("co_costs"),
+                      "costs": now("costs"), "billed": now("billed"), "retainage": now("retainage"),
+                      "src": {"contract": src("orig_contract", "master"), "cos": src("approved_cos", "master"),
+                              "etc": src("orig_etc", "master"), "costs": src("costs", "qbo"), "billed": src("billed", "qbo")},
+                      "pending": pending, "flags": flags, "notes": notes, "problem": bool(flags) or not K or not E,
+                      "jt": {}, "pics": {}, "schedule": None})
+    cards.sort(key=lambda c: c["line"])
+    return {"built_at": built, "division": div,
+            "master": {"tab": j.get("tab"), "file": fn, "mtime": built, "renamed": False},
+            "counts": {"current": len(cards), "finished": 0, "problems": sum(1 for c in cards if c["problem"]),
+                       "changed": sum(1 for c in cards if c["pending"]),
+                       "typed": sum(1 for c in cards if c["src"]["contract"]["kind"] == "typed"), "in_jobtread": 0},
+            "current": cards, "finished": []}
 
 
 def _ensure(con: sqlite3.Connection) -> None:
@@ -1018,14 +1117,26 @@ def _ensure(con: sqlite3.Connection) -> None:
                 "our_contract REAL, our_etc REAL, contract_ok INTEGER, etc_ok INTEGER)")
     for t in ("rp_review_mark", "rp_review_mark_log"):        # older tables: add the answer columns
         have = {r[1] for r in con.execute(f"PRAGMA table_info({t})")}
-        for c, typ in (("our_contract", "REAL"), ("our_etc", "REAL"), ("contract_ok", "INTEGER"), ("etc_ok", "INTEGER")):
+        for c, typ in (("our_contract", "REAL"), ("our_etc", "REAL"), ("contract_ok", "INTEGER"), ("etc_ok", "INTEGER"),
+                       ("our_cos", "REAL"), ("cos_ok", "INTEGER")):
             if c not in have:
                 con.execute(f"ALTER TABLE {t} ADD COLUMN {c} {typ}")
 
 
 def _rowdict(r) -> dict:
-    return {"project_no": r[0], "kind": r[1], "decision": r[2], "mode": r[3], "note": r[4], "at": r[5],
-            "our_contract": r[6], "our_etc": r[7], "contract_ok": r[8], "etc_ok": r[9]}
+    return {"project_no": r[0], "kind": r[1], "decision": r[2], "mode": norm_mode(r[3]), "note": r[4], "at": r[5],
+            "our_contract": r[6], "our_etc": r[7], "contract_ok": r[8], "etc_ok": r[9], "our_cos": r[10], "cos_ok": r[11]}
+
+
+def _select(con: sqlite3.Connection, sql: str, args=()):
+    """SELECT the answer columns; a database from before the COs columns existed gets them added
+    first (read-only connections fall back to NULLs for the two new columns)."""
+    try:
+        return con.execute(sql, args).fetchall()
+    except sqlite3.OperationalError as e:
+        if "our_cos" not in str(e) and "cos_ok" not in str(e):
+            raise
+        return [tuple(r) + (None, None) for r in con.execute(sql.replace(", our_cos, cos_ok", ""), args).fetchall()]
 
 
 def read_marks() -> dict:
@@ -1035,7 +1146,7 @@ def read_marks() -> dict:
     try:
         con = sqlite3.connect(f"file:{LEDGER_DB}?mode=ro", uri=True)
         try:
-            rows = con.execute(f"SELECT {_COLS} FROM rp_review_mark").fetchall()
+            rows = _select(con, f"SELECT {_COLS} FROM rp_review_mark")
         finally:
             con.close()
     except sqlite3.OperationalError:
@@ -1049,7 +1160,7 @@ def read_mark_log(limit: int = 400) -> list:
     try:
         con = sqlite3.connect(f"file:{LEDGER_DB}?mode=ro", uri=True)
         try:
-            rows = con.execute(f"SELECT {_COLS} FROM rp_review_mark_log ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+            rows = _select(con, f"SELECT {_COLS} FROM rp_review_mark_log ORDER BY id DESC LIMIT ?", (limit,))
         finally:
             con.close()
     except sqlite3.OperationalError:
@@ -1058,22 +1169,23 @@ def read_mark_log(limit: int = 400) -> list:
 
 
 def set_mark(project_no: str, kind: str, decision: str, mode: str, note: str, now: str,
-             our_contract=None, our_etc=None, contract_ok=None, etc_ok=None) -> None:
+             our_contract=None, our_etc=None, contract_ok=None, etc_ok=None, our_cos=None, cos_ok=None) -> None:
     """Write one answer (and append it to the log). decision '' clears the standing mark."""
     LEDGER_DB.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(str(LEDGER_DB))
     try:
         _ensure(con)
-        vals = (project_no, kind, decision, mode, note, now, our_contract, our_etc, contract_ok, etc_ok)
+        mode = norm_mode(mode)
+        vals = (project_no, kind, decision, mode, note, now, our_contract, our_etc, contract_ok, etc_ok, our_cos, cos_ok)
         if decision:
-            con.execute(f"INSERT INTO rp_review_mark ({_COLS}) VALUES (?,?,?,?,?,?,?,?,?,?) "
+            con.execute(f"INSERT INTO rp_review_mark ({_COLS}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) "
                         "ON CONFLICT(project_no, kind) DO UPDATE SET decision=excluded.decision, mode=excluded.mode, "
                         "note=excluded.note, at=excluded.at, our_contract=excluded.our_contract, our_etc=excluded.our_etc, "
-                        "contract_ok=excluded.contract_ok, etc_ok=excluded.etc_ok", vals)
+                        "contract_ok=excluded.contract_ok, etc_ok=excluded.etc_ok, our_cos=excluded.our_cos, cos_ok=excluded.cos_ok", vals)
         else:
             con.execute("DELETE FROM rp_review_mark WHERE project_no=? AND kind=?", (project_no, kind))
-        con.execute(f"INSERT INTO rp_review_mark_log ({_COLS}) VALUES (?,?,?,?,?,?,?,?,?,?)",
-                    (project_no, kind, decision or "cleared", mode, note, now, our_contract, our_etc, contract_ok, etc_ok))
+        con.execute(f"INSERT INTO rp_review_mark_log ({_COLS}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (project_no, kind, decision or "cleared", mode, note, now, our_contract, our_etc, contract_ok, etc_ok, our_cos, cos_ok))
         con.commit()
     finally:
         con.close()
@@ -1086,16 +1198,20 @@ def answers_report() -> str:
     data = load() or {}
     prepared = {c["line"]: c for c in data.get("current", [])}
     prepared.update({f["line"] + "|finished": f for f in data.get("finished", [])})
+    for dv in ("CP", "MFD"):                       # the other divisions' prepared numbers (from the WIP tools' emit JSON)
+        cards = division_cards(dv) or {}
+        prepared.update({c["line"]: c for c in cards.get("current", [])})
     marks = read_marks()
     if not marks:
         return "no answers yet"
-    out = [f"RP review answers - {len(marks)} line(s) marked (build {data.get('built_at', '?')})", ""]
+    out = [f"WIP review answers - {len(marks)} line(s) marked (RP build {data.get('built_at', '?')})", ""]
     for key in sorted(marks):
         m = marks[key]; pn, kind = key.split("|")
         p = prepared.get(pn if kind == "current" else pn + "|finished", {})
-        who = "OPS MANAGER + owner" if m["mode"] == "ops" else "owner alone"
+        who = "PM + owner" if m["mode"] == "pm" else "owner alone"
         bits = [f"{pn} [{kind}] {m['decision'].upper()} by {who} on {m['at'][:16].replace('T', ' ')}"]
-        for fld, ok, ours in (("contract", m["contract_ok"], m["our_contract"]), ("etc", m["etc_ok"], m["our_etc"])):
+        for fld, ok, ours in (("contract", m["contract_ok"], m["our_contract"]), ("cos", m.get("cos_ok"), m.get("our_cos")),
+                              ("etc", m["etc_ok"], m["our_etc"])):
             mine = p.get(fld)
             mark = {1: "check", 0: "X"}.get(ok, "-")
             diff = f" THEIR {fld.upper()} {ours:,.2f} vs prepared {mine:,.2f}" if (ours is not None and mine is not None and abs(ours - mine) > 0.5) else ""
@@ -1126,6 +1242,7 @@ def finalize_package() -> dict:
             elif m["decision"] == "fix":
                 fixes.append({"line": pn, "note": m["note"] or ""})
             for fld, ours, prepared, dkey in (("contract", m["our_contract"], c.get("contract"), "orig_contract"),
+                                              ("cos", m.get("our_cos"), c.get("cos"), "approved_cos"),
                                               ("etc", m["our_etc"], c.get("etc"), "orig_etc")):
                 if ours is not None and (prepared is None or abs(ours - prepared) > 0.5):
                     changes.append({"line": pn, "field": fld, "from": prepared, "to": ours, "who": m["mode"], "at": m["at"], "note": m["note"] or ""})
@@ -1150,7 +1267,7 @@ def main() -> int:
     ap.add_argument("--no-jobtread", action="store_true", help="skip the JobTread pull")
     ap.add_argument("--no-snapshots", action="store_true", help="skip the source snapshots (fast)")
     ap.add_argument("--limit", type=int, default=0, help="first N lines only (testing)")
-    ap.add_argument("--answers", action="store_true", help="print the owner's / ops manager's answers and stop")
+    ap.add_argument("--answers", action="store_true", help="print the owner's / PM's answers (every division) and stop")
     ap.add_argument("--finalize", action="store_true", help="write the finalize package (finalize.json + decisions_rp.json + answers.txt) and stop")
     a = ap.parse_args()
     if a.answers:

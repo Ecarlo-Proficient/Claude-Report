@@ -237,6 +237,11 @@
         <div class="widget-head"><h2>Vendor Center <span class="count" id="vendorsNote"></span></h2></div>
         <div class="filters"><input type="search" id="vendorSearch" placeholder="Search vendor…" autocomplete="off">
           <label class="chk"><input type="checkbox" id="vendorGroupType"> Group by type</label>
+          <label class="fld"><span>Sort</span><select id="vendorSort" title="Order the vendors">
+            <option value="open">Open $ (most owed first)</option>
+            <option value="name">Name A to Z</option>
+            <option value="spend">Total spend</option>
+          </select></label>
           <button class="btn small" id="vendorExpandAll" style="display:none">Expand all</button></div>
         <div class="table-scroll">
           <table class="grid clickable" id="vendorTable"><thead></thead><tbody></tbody></table>
@@ -486,16 +491,22 @@
         <div id="wrBody" class="wr-body"></div>
       </section>
     </div><!-- /tab: wipreview -->
-    <div class="tab-page" data-tab="rpreview" hidden>
+    <div class="tab-page" data-tab="review" hidden>
       <section class="widget">
         <div class="widget-head">
-          <h2>RP review <span class="count" id="rrNote"></span></h2>
+          <h2><span id="rrTitle">WIP review</span> <span class="count" id="rrNote"></span></h2>
           <div class="console-actions">
+            <span class="seg" id="rrDiv" title="Which division's WIP lines - the same review for all three">
+              <button type="button" class="seg-btn on" data-div="RP">RP</button>
+              <button type="button" class="seg-btn" data-div="CP">CP</button>
+              <button type="button" class="seg-btn" data-div="MFD">MFD</button>
+            </span>
             <span class="seg" id="rrMode" title="Who is deciding right now - stamped on every answer">
               <button type="button" class="seg-btn" data-mode="me">Me</button>
-              <button type="button" class="seg-btn" data-mode="ops">OPS Manager</button>
+              <button type="button" class="seg-btn" data-mode="pm">PM</button>
             </span>
             <button class="btn small primary" id="rrFinalize" title="Turn the saved answers into the WIP update package and show what changes">Finalize to WIP Report</button>
+            <button class="btn small primary" id="rrWipReview" title="The WIP Review tab writes the approved changes to the Test tabs" hidden>Write approved changes (WIP Review)</button>
           </div>
         </div>
 
@@ -512,7 +523,7 @@
         </div>
         <div id="rrBody" class="wr-body"></div>
       </section>
-    </div><!-- /tab: rpreview -->
+    </div><!-- /tab: review -->
 
     <!-- ══════════════ TAB: PAY BILLS (check-run worksheet) ══════════════ -->
     <div class="tab-page" data-tab="paybills" hidden>
@@ -828,8 +839,8 @@
         <h3>Write actions</h3>
         <div class="set-actions">
           <button class="btn small" id="btnGearWip" title="Compute the pending WIP update and approve what gets written to the master">Update WIP · review changes</button>
-          <button class="btn small" id="btnGearRp" title="The weekly RP sit-down: every RP line, where each number came from, a cut of the source sheet, your answers">RP review · with the ops manager</button>
-          <button class="btn small" id="rrRebuild" title="Re-read the master, the RP file, every job folder, JobTread and the schedules; redraw every picture. A few minutes; one Touch ID.">Rebuild RP review data</button>
+          <button class="btn small" id="btnGearRp" title="The weekly sit-down with the division PM - RP, CP or MFD: every WIP line, where each number came from, your answers">WIP review · with the PM</button>
+          <button class="btn small" id="rrRebuild" title="Rebuild the review data for the division open on the page: RP re-reads the master, the RP file, every job folder, JobTread and the schedules; CP / MFD run the WIP reader. A few minutes; one Touch ID.">Rebuild review data</button>
           <button class="btn small" id="btnGearConsole" title="Run the pipelines: AP + AR sync, full refresh, P&amp;L workbooks">Console</button>
         </div>
         <p class="set-hint">WIP Review and the pipelines are actions you start, not places you visit.</p>

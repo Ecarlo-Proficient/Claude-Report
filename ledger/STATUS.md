@@ -4,6 +4,51 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-16 · **Project page, the funding section rebuilt on the owner's review (2026-09-15: "Project Ledger needs
+  a lot of work")** - `openProjectPage` section 2 in `app.js`, `_fetch_project_page` + three helpers in `dashboard.py`.
+  (1) **Draws are keyed by the DRAW the invoices belong to, not by the matched bill**: every invoice on the job is
+  income (`_project_invoices`); invoices naming the same draw month ("September Draw 2026" on MFD192's base,
+  HUDSONWOOD and OFFSITE contracts) or, failing a named month, dated the same day are ONE draw (`_draws_by_invoice`)
+  - income = the sum, bills = the union of what the tracker matched to any of them, an invoice with no matched bill
+  still shows. MFD192: 9 buckets (8 draws + not-yet-drawn) instead of 10 half-draws; September = 34637 + 34638 =
+  $67,666. RP jobs (never draw-matched) get ONE "Job to date" bucket with every invoice, every tracker bill and
+  every sub bill, so the RP page finally shows its bills. `_recount_draw` re-derives counts, money-in and the stage
+  after grouping. (2) **All bills by default** (`filter: "all"`), the Unpaid / All toggle is a big segmented
+  control with counts, first in the tools row. (3) **The Coverage table and the draw boxes stay on top**; a box or
+  a row opens that draw underneath (`#ppDetail`, highlighted `.sel` row); "All draws" = every bill on the job with
+  a **Draw column** naming the draw each bill sits under. (4) **The KPI strip became the equation** (`_ppEquation`):
+  every invoice on the draw (tag = base / HUDSONWOOD CONTRACT / OFFSITE CONTRACT / Retainage, GC paid / owes) =
+  Income − Materials (n bills we pay; pumping the GC pays left out) − Labor (subs) = Gross profit − Overhead = Net,
+  with the minus signs and the percentages; the same arithmetic as the P&L draw sheet. (5) **Sort by Name / Total
+  amount / Cost code / Date** - vendor bands A to Z or largest first. (6) **"Pay bills" off to the right**: the
+  pay-run controls (checkboxes, select-alls, Mark blockers, Export pay list, Open Pay run, the waiver ticks) are
+  hidden until it is clicked; while active the button is filled ("Paying bills · Done") and a pay bar shows what is
+  ticked; ticks go into a DRAFT (`_pp.payDraft`) and reach `/api/pay-run` only on **Save**; **Discard** drops them;
+  `_ppLeaveBlocked` stops Back, a tab change, another record and the browser's back / unload while ticks are
+  unsaved (toast + the bar flashes). The RP whole-job bucket has no waiver column and no draw period.
+- 2026-09-16 · **Vendor Center + vendor page (owner: "i need to see project, clients ... for bill payments i need to
+  see the bill paid and the project")**. Vendor Center gained a **Sort** select (Open $ · Name A to Z · Total spend)
+  and a Total spend column. The vendor page's bills table gained a **Client** column and lists every project # as a
+  link to its page (never a bare "multiple"); the line-item drill shows the client per line; the **Payments** view
+  now lists, per cheque, **each bill it paid** (QuickBooks link, its slice when several), the **project(s)** and the
+  **client(s)** - `_fetch_vendor` resolves bill ids through `cost_line` (subs included) or the tracker row's link,
+  and clients through `_project_customer_map`.
+- 2026-09-16 · **The RP review became the WIP review, one page per division (owner 2026-09-15: "instead of making
+  the RP wip update, make it in the projects for each division ... change ops to PM standard, that way we all can use
+  the same system and update together")**. Tab `review` (alias `rpreview` keeps old links) with an **RP · CP · MFD**
+  segment and **Me / PM** modes (`pm` replaces `ops`; old answers read back as `pm`). RP = the rp_review.json build
+  as before (schedule, pictures, Finalize). **CP / MFD** = `rp_review.division_cards()` adapting the WIP tool's
+  `--emit-review` JSON (`wip-review/cp.json`, `master.json`): one card per line with the contract and **approved
+  COs from the draw G702**, the **ETC from the takeoff**, costs and billed from QuickBooks - each a source pill +
+  the file name + "Show file in folder" (Finder reveal) - and a **This update changes the line** table (was → now,
+  where the new number comes from); no schedule, no pictures. MFD's contract / ETC show "Typed on the master (MFD
+  enters it by hand, by design)". The reader's own note about the row is information, not a problem; problems are a
+  REVERSED value, a PM change with no document, a blank contract / ETC. **Our numbers** gained **Approved COs**
+  (`our_cos` / `cos_ok` columns, added by `_ensure`); Save reads back from `/api/review?div=`. Endpoints:
+  `/api/review?div=` (GET), `/api/review/mark` (POST), `/api/review/refresh` (POST `{div}`: RP → rp_review.py, CP →
+  cp_wip_reader --emit-review, MFD → master_wip_test --emit-review); `/api/rp/*` stay as aliases. The Projects page's
+  division bands carry a **WIP review →** button that opens that division's page; the gear says "WIP review · with
+  the PM" and "Rebuild review data" (the division open on the page). `--answers` covers every division.
 - 2026-09-15 (late) · RP review, owner's review-day asks: answer straight from the list (verdict + Save per row;
   numbers and notes stay on the job page), Save reads the answer back from the database before it says
   Saved ✓ (a failed write says NOT saved and stays), the list scrolls back to and marks the job you left,

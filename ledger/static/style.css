@@ -1655,3 +1655,63 @@ html[data-theme="dark"] .rr-src.master, html[data-theme="dark"] .rr-src.manual {
 .rr-warn { color: var(--neg-text); font-weight: 600; }
 .rr-list td.n .d { color: var(--text-dim); font-size: .78em; font-weight: 400; }
 .rr-list td.n.neg { color: var(--neg-text); }
+
+/* ── project page, 2026-09-15: the Coverage stays on top, the equation, the pay mode (owner) ─── */
+.seg.big .seg-btn { font-size: .95em; padding: 7px 16px; font-weight: 600; }
+.seg.big .seg-btn.on { background: var(--accent); color: #fff; }
+.pp-tools { flex-wrap: wrap; row-gap: 8px; }
+.pp-sortlab { margin-left: 6px; font-size: .86em; }
+.pp-spacer { flex: 1 1 auto; }
+.pp-paybtn { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); font-weight: 600; }
+.pp-paybtn.on { background: var(--accent); color: #fff; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent); }
+.pp-paybar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 18px 10px; padding: 10px 14px; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border)); background: color-mix(in srgb, var(--accent) 6%, var(--surface)); }
+.pp-paybar[hidden] { display: none; }
+.pp-paybar.dirty { border-color: color-mix(in srgb, #b8860b 65%, var(--border)); background: color-mix(in srgb, #b8860b 7%, var(--surface)); }
+.pp-paybar.flash { animation: ppflash .9s ease-in-out; }
+@keyframes ppflash { 0%, 100% { box-shadow: none; } 40% { box-shadow: 0 0 0 4px color-mix(in srgb, #b8860b 55%, transparent); } }
+.pp-paystat { font-size: .92em; margin-right: auto; }
+.pp-dirty { color: var(--warn-text); font-weight: 700; }
+.pp-paybar .pp-sel-list { flex-basis: 100%; font-size: .88em; }
+.pp-detail { margin: 6px 18px 12px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.pp-detail.next { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.pp-det-h { padding: 10px 14px 6px; font-size: 1.02em; }
+.pp-det-h .bills-cap { padding: 4px 0 0; }
+table.pp-cov tr.pp-cov-row.sel > td { background: color-mix(in srgb, var(--accent) 14%, var(--surface)); box-shadow: inset 3px 0 0 var(--accent); }
+table.pp-cov tr.pp-cov-total.pp-cov-row { cursor: pointer; }
+table.pp-cov tr.pp-cov-total.pp-cov-row:hover > td { background: var(--row-hover); }
+.pp-eq-wrap { padding: 4px 14px 10px; }
+table.pp-eq { border-collapse: collapse; font-variant-numeric: tabular-nums; min-width: 520px; }
+table.pp-eq td { padding: 4px 10px 4px 0; vertical-align: baseline; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }
+table.pp-eq td.pp-eq-op { width: 22px; text-align: center; color: var(--text-dim); font-weight: 700; font-size: 1.05em; }
+table.pp-eq td.pp-eq-lab { min-width: 220px; }
+table.pp-eq td.pp-eq-lab small { display: block; color: var(--text-dim); font-size: max(.8em, 12px); }
+table.pp-eq td.pp-eq-amt { text-align: right; min-width: 120px; font-weight: 600; white-space: nowrap; }
+table.pp-eq td.pp-eq-amt.neg { color: var(--neg-text); }
+table.pp-eq td.pp-eq-right { padding-left: 14px; font-size: .86em; }
+table.pp-eq tr.pp-eq-inv td.pp-eq-amt { font-weight: 500; }
+table.pp-eq tr.pp-eq-click { cursor: pointer; }
+table.pp-eq tr.pp-eq-click:hover td { background: var(--row-hover); }
+table.pp-eq tr.pp-eq-sum td { border-top: 1px solid var(--text-dim); border-bottom: 0; font-weight: 700; }
+table.pp-eq tr.pp-eq-sum.neg td.pp-eq-amt { color: var(--neg-text); }
+table.pp-eq tr.pp-eq-total td { border-top: 2px solid var(--text); border-bottom: 0; font-weight: 800; font-size: 1.08em; }
+table.pp-eq tr.pp-eq-total.neg td.pp-eq-amt { color: var(--neg-text); }
+table.pp-eq tr.pp-eq-total.pos td.pp-eq-amt { color: var(--pos); }
+.pp-eq-qbo { margin-left: 6px; font-size: .85em; }
+.pp-billsbox { border-top: 1px solid var(--border); }
+table.pp-bills tr.pp-ticked > td { background: color-mix(in srgb, var(--pos) 8%, transparent); }
+td.pp-draw-col a { color: var(--accent-text); text-decoration: none; font-weight: 600; }
+td.pp-draw-col a:hover { text-decoration: underline; }
+.proj-grid .proj-review { margin-left: 10px; vertical-align: middle; }
+/* vendor page: projects as links, the bills a payment covered */
+td.vp-projs a.vp-proj { color: var(--accent-text); text-decoration: none; font-weight: 600; }
+td.vp-projs a.vp-proj:hover { text-decoration: underline; }
+.vp-payline { white-space: nowrap; line-height: 1.5; }
+/* WIP review: the pending-update table on a CP / MFD card */
+.rr-pend { border-collapse: collapse; font-size: .86em; margin: 4px 0 2px; }
+.rr-pend th { text-align: left; color: var(--text-dim); font-weight: 600; padding: 2px 12px 2px 0; border-bottom: 1px solid var(--border); }
+.rr-pend th.n, .rr-pend td.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rr-pend td { padding: 3px 12px 3px 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent); vertical-align: top; }
+.rr-pend td.was { color: var(--text-dim); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--text-dim) 55%, transparent); }
+.rr-pend td.now { font-weight: 700; }
+.rr-pend td.src { color: var(--text-dim); }
+.rr-pend tr.rev td { background: color-mix(in srgb, var(--neg) 6%, transparent); }

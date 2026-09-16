@@ -208,22 +208,48 @@ on the network). What it shows:
 
 The dashboard is a view. It never writes the database or the Excel sheet.
 
-### RP review (weekly, with the ops manager) - 2026-09-15
+### WIP review (weekly, with the division PM) - 2026-09-15/16
 
-Gear -> **RP review**. `ledger/rp_review.py` builds the page's JSON: every RP line on the master's RP
-tab, where each number was grabbed from, a cut of the source spreadsheet (max 5 rows, the row
-highlighted), the crew-schedule row on the job's last day, JobTread's approved price / cost, and the
-finished lines from the RP file's Removed log - every source as a picture of the real file (PDF page, or the
-sheet drawn cell for cell) with the file name on it, plus Finder / JobTread buttons. The prepared numbers are read-only on the page; the
-owner and the ops manager answer in **Our numbers** (prepopulated, a check or X per number, a note)
-and every answer is stamped with the **Me / OPS Manager** mode and the time in `rp_review_mark`
-(+ `rp_review_mark_log`). `python3 ledger/rp_review.py --answers` prints the answers as text.
+Gear -> **WIP review · with the PM**, or the **WIP review →** button on a division band of the Projects
+page. One page per division - **RP · CP · MFD** - the same system for all three. Every line on the WIP
+is a card: the numbers, **where each one was grabbed from** (a source pill + the file, with a Finder
+"Show file in folder" button), and **Our numbers** - the owner's / PM's own space (prepopulated,
+a check or X per number, a note, Confirmed / Needs a fix, an explicit Save that reads the answer back).
+Every answer is stamped **Me** (the owner alone) or **PM** (the division PM is here, deciding together)
+plus the time, in `rp_review_mark` (+ `rp_review_mark_log`); a line with no answer in 7 days is due again.
+
+- **RP** - `ledger/rp_review.py` builds `rp-review/rp_review.json`: every RP line on the master's RP tab,
+  the crew schedule (every day the job was on it), the proposal PDF / takeoff bid sheet / cost sheet the
+  number came from as a **picture of the real file**, JobTread's approved price / cost, and the finished
+  lines from the RP file's Removed log. **Finalize to WIP Report** turns the answers into the package the
+  guarded WIP writer applies (nothing is written from here).
+- **CP / MFD** - no schedule (the awarded-projects folders are kept current): `rp_review.division_cards()`
+  adapts the WIP tool's `--emit-review` JSON (`wip-review/cp.json`, `master.json`) - the contract and the
+  **approved change orders from the draw G702**, the **ETC from the takeoff**, costs and billed from
+  QuickBooks, and the pending update's was → now per field with the document the new number came from.
+  MFD's contract / ETC are typed on the master by design and say so. Approved changes are written from the
+  **WIP Review** tab as before.
 
 ```
-python3 ledger/rp_review.py                 # full build (JobTread = one Touch ID), a few minutes
+python3 ledger/rp_review.py                 # full RP build (JobTread = one Touch ID), a few minutes
 python3 ledger/rp_review.py --no-jobtread   # without JobTread
-python3 ledger/rp_review.py --answers       # what the owner / ops manager answered
+python3 ledger/rp_review.py --answers       # what the owner / PM answered, every division
 ```
+
+Endpoints: `/api/review?div=RP|CP|MFD`, `/api/review/mark`, `/api/review/refresh` (`{div}`); the old
+`/api/rp/*` routes stay as aliases.
+
+### The project page's funding section (2026-09-16)
+
+Every invoice on the job is income. Invoices that name the same draw month (MFD192 bills its base,
+HUDSONWOOD and OFFSITE contracts every month) or, failing a named month, that carry the same date are
+**one draw** - income is their sum, the bills are what the Bill Tracker matched to any of them. RP
+jobs, which bill at completion, are one "Job to date" bucket. The Coverage table and the draw boxes stay
+on top; a click opens that draw underneath as the **equation** the owner reads (invoices = Income −
+Materials − Labor = Gross profit − Overhead = Net) over the bills, all bills by default, sortable by
+vendor name, total amount, cost code or date. **Pay bills** (off to the right) reveals the pay-run
+controls; ticks are a draft until **Save** (Discard drops them), and the page will not let you leave
+with unsaved ticks.
 
 ## Safety
 
