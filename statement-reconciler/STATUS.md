@@ -5,6 +5,30 @@ to this tool. Tool-only scope: no business/owner analyses or dollar-exposure
 findings here — those live in the owner's vault.
 
 ## DONE / FINALIZED
+- **Refresh-in-place + Teams task cards - the fix/refresh loop (2026-09-16, owner).**
+  Closes the "who re-runs, and how does nobody forget" gap without migrating to
+  Synology (deferred). The loop: clerk pings the owner -> owner runs it -> the
+  script posts a Teams task card PER open vendor-month -> clerk reacts ✅ on each
+  as she finishes -> owner runs `--refresh` -> re-checks and posts "clean -> mark
+  DONE" or the still-open cards.
+  - **`--refresh`**: re-reconciles every OPEN (non-DONE) vendor-month IN PLACE
+    (the source statement is already filed there) - nothing is moved back to the
+    Inbox. `_gather_open_sources` skips DONE months, the Inbox, and the recon
+    Excels. So after the clerk fixes bills / prints, one `--refresh` re-derives
+    every open month against current QBO; fixed items leave their buckets.
+  - **Teams cards, ONE per vendor-month** (owner: "needs to be multiple messages
+    so she can react to each"). `shared/teams_notify.py` (the ONE shared poster;
+    invoice-sync keeps its own) posts an Adaptive Card per open vendor-month with
+    the fix-list (to enter / not approved / mismatch / unprinted). Grouped by
+    (vendor, month) so two statements in a month = one card. On `--refresh`, a
+    month that comes back with nothing open gets a green "clean -> mark DONE" card.
+    Webhook = `TEAMS_STMT_WEBHOOK` in the automation-qbo keychain blob (key-library
+    rule; `setup_qbo` KeySpec added, required=False). No webhook -> silent no-op,
+    so nothing breaks before the channel exists.
+  - Clerk marks a card done with a ✅ reaction (zero Teams setup); a real Submit
+    button is a later Power Automate add-on. Verified: `--refresh --dry-run` gathers
+    the open months; the card builder + no-op path unit-tested. Live Teams post is
+    untested until the owner creates the channel Workflows webhook.
 - **New folder layout + filing + DONE workflow (2026-09-16, owner).** The whole
   Vendor Statements folder moved into the Accounting share's new `Accounts Payable/`
   parent: `INBOX_ROOT = /Volumes/Accounting/Accounts Payable/Vendor Statements`.

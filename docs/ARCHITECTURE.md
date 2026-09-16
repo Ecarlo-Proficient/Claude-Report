@@ -237,6 +237,7 @@ flowchart LR
     BX[("Bill Tracker.xlsx\nAccounting share / Accounts Payable\n(paths.bill_tracker_xlsx)\ndisplay = non-sub · audit = incl. subs")]:::out
     CCH[("cost_code_history.json\nCompanyHealth · cost-code miscode log")]:::out
     RX[("filed under <Vendor>/<MM-YYYY>/\nExcel + source statement together\n+ Print Status = 1st Summary section (opt-in PRINT_STATUS=1)\nclerk renames month folder '<MM-YYYY> DONE' = final, re-runs skip it")]:::out
+    TEAMS[("Teams channel\n1 task card / open vendor-month\nclerk reacts ✅ when done")]:::out
 
     QBO --> BT --> BX
     BT -. "miscode log (read+write each run)" .-> CCH
@@ -245,6 +246,7 @@ flowchart LR
     POT -- "Unused PO reconcile" --> BT
     QBO --> SR
     NAS --> SR -- "tie-out gate: lines must sum to Amount Due,\nelse banded + source held in Inbox" --> RX
+    SR -- "--refresh re-checks open months in place;\n1 card per open vendor (shared/teams_notify)" --> TEAMS
     MBX --> PS -. "was each statement invoice ever printed?" .-> SR
 ```
 

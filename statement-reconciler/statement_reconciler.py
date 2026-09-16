@@ -3254,6 +3254,37 @@ def process_pdf(pdf_path: Path, args: argparse.Namespace,
             except Exception as e:
                 _warn(f"reconciled but couldn't move the source statement: {e}")
 
+    # Per-vendor actionable summary for the Teams task card (run_inbox posts one
+    # card per vendor-month). The clerk's fix-list: bills to enter, approvals to
+    # chase, amount/tax mismatches, and - if print-status ran - unprinted bills.
+    not_approved = sum(1 for r in rows
+                       if r.category == "MATCHED" and not _is_approved(r.qbo_memo))
+    open_items = {
+        "To enter (missing in QBO)": counts.get("MISSING_IN_QBO", 0),
+        "Not approved (chase PM)": not_approved,
+        "Amount mismatch": counts.get("CLERK_AMOUNT_MISMATCH", 0),
+        "Tax violation (8.25%)": counts.get("VENDOR_TAX_VIOLATION", 0),
+    }
+    if os.environ.get("PRINT_STATUS", "").strip().lower() in ("1", "true", "yes", "on") and lines:
+        try:
+            import print_status as _ps
+            _idx = _ps.printed_index()
+            if _idx is not None:
+                _qref = {r.stmt_ref for r in rows
+                         if r.category in ("MATCHED", "VENDOR_TAX_VIOLATION",
+                                           "CLERK_AMOUNT_MISMATCH", "LIKELY_VENDOR_LAG")
+                         and r.stmt_ref}
+                _pc = _ps.classify_print_rows(
+                    _ps.build_print_rows(lines, _idx,
+                                         search_fn=_ps.live_search_printed, qbo_refs=_qref))
+                open_items["Unprinted"] = len(_pc["genuine"]) + len(_pc["suspect"])
+        except Exception:
+            pass
+    result["vendor"] = vendor_name
+    result["month"] = _month_folder(stmt_date)
+    result["open_items"] = {k: v for k, v in open_items.items() if v}
+    result["clean"] = (not result["open_items"]) and sum_matches
+
     # ── clerk performance log (append one row) ──────────────
     t0 = _phase("Appending clerk-performance history")
     csv_path = append_clerk_perf(rows, vendor_name, stmt_date, amt_due)
@@ -3314,6 +3345,31 @@ def _gather_inbox_files(inbox: Path) -> List[Path]:
     return out
 
 
+def _gather_open_sources(root: Path, inbox: Path) -> List[Path]:
+    """Source statements filed under OPEN (non-DONE) vendor-months - the set the
+    refresh re-checks in place. Skips the Inbox, DONE-marked month folders, the
+    reconciliation Excels themselves, and temp/lock files."""
+    out: List[Path] = []
+    inbox_r = inbox.resolve() if inbox else None
+    for vend in sorted(root.iterdir()):
+        if not vend.is_dir() or (inbox_r and vend.resolve() == inbox_r):
+            continue
+        for mon in sorted(vend.iterdir()):
+            if not mon.is_dir() or re.search(r"\bDONE\b", mon.name, re.I):
+                continue                      # skip finalized months
+            for f in sorted(mon.iterdir()):
+                if not f.is_file():
+                    continue
+                n = f.name
+                if n.startswith(".") or n.startswith("~$") or n.endswith("#"):
+                    continue
+                if n.startswith("Statement_Reconciliation_"):
+                    continue                  # that's the output, not a source
+                if f.suffix.lower() in INBOX_SUPPORTED_EXTS:
+                    out.append(f)
+    return out
+
+
 def _unique_dest(dest_dir: Path, name: str) -> Path:
     """A non-colliding path in dest_dir for `name` (adds ' (2)', ' (3)', …)."""
     if not (dest_dir / name).exists():
@@ -3352,6 +3408,43 @@ def _month_done_dir(vendor_dir: Path, month: str) -> Optional[Path]:
     return None
 
 
+def _post_teams_tasks(results: List[dict], is_refresh: bool = False) -> None:
+    """Post ONE Teams card per open vendor-month so the bill clerk can react ✅ to
+    each vendor independently. Grouped by (vendor, month) - two statements in the
+    same month become one card. On a refresh, a month that came back with nothing
+    open gets a green 'clean → mark DONE' card. Best-effort: no webhook (key
+    TEAMS_STMT_WEBHOOK in the keychain) or any failure is a silent no-op."""
+    try:
+        webhook = (kc.get_all() or {}).get("TEAMS_STMT_WEBHOOK", "") or ""
+    except Exception:
+        webhook = ""
+    if not webhook:
+        return
+    try:
+        from shared import teams_notify
+    except Exception:
+        return
+    groups: Dict[Tuple[str, str], dict] = {}
+    for res in results:
+        if res.get("action") != "filed" or not res.get("vendor"):
+            continue
+        key = (res["vendor"], res.get("month", ""))
+        g = groups.setdefault(key, {"open": {}, "clean_all": True})
+        for k, v in (res.get("open_items") or {}).items():
+            g["open"][k] = g["open"].get(k, 0) + v
+        if not res.get("clean"):
+            g["clean_all"] = False
+    posted = 0
+    for (vendor, month), g in groups.items():
+        if g["open"]:
+            if teams_notify.post_statement_task(webhook, vendor, month, g["open"]):
+                posted += 1
+        elif is_refresh and g["clean_all"]:
+            teams_notify.post_month_clean(webhook, vendor, month)
+    if posted:
+        print(_Term.color(_Term.DIM, f"  (posted {posted} task card(s) to Teams)"))
+
+
 def run_inbox(args: argparse.Namespace, access: str, cid: str,
               inbox: Optional[Path], base: Optional[Path],
               files: List[Path]) -> int:
@@ -3374,6 +3467,7 @@ def run_inbox(args: argparse.Namespace, access: str, cid: str,
     skipped: List[str] = []     # already final (marked DONE) — left untouched
     held: List[str] = []        # reconciled but tie-out FAILED — source kept in inbox
     failed: List[Tuple[str, str]] = []
+    results: List[dict] = []    # per-file result dicts, for the Teams task cards
     for i, f in enumerate(files, 1):
         print(_Term.color(_Term.BOLD, f"\n[{i}/{len(files)}] {f.name}"))
         result: dict = {}
@@ -3383,6 +3477,7 @@ def run_inbox(args: argparse.Namespace, access: str, cid: str,
             _fail(f"{f.name}: {e}")
             failed.append((f.name, str(e)))
             continue
+        results.append(result)
         action = result.get("action")
         if action == "skipped_done":
             skipped.append(f.name)
@@ -3392,6 +3487,8 @@ def run_inbox(args: argparse.Namespace, access: str, cid: str,
             held.append(f.name)
         else:
             filed.append(f.name)
+
+    _post_teams_tasks(results, is_refresh=getattr(args, "refresh", False))
 
     print()
     _hr()
@@ -3451,6 +3548,10 @@ def main() -> int:
                    help="Self-audit: sweep every reconciled statement (inbox + DONE) and report "
                         "print-status reader coverage per statement. No QBO, no files written. "
                         "Run this after any print_status matcher change.")
+    p.add_argument("--refresh", action="store_true",
+                   help="Re-reconcile every OPEN (non-DONE) vendor-month in place (after the clerk "
+                        "fixes bills / prints), rewriting each Excel and posting a Teams task card "
+                        "per still-open vendor. Nothing to move; DONE months are skipped.")
     args = p.parse_args()
 
     if args.no_color:
@@ -3487,6 +3588,27 @@ def main() -> int:
         print(f"  Corpus: {len(pdfs)} statement PDF(s) filed under {root}\n")
         import print_status as _ps
         return _ps.audit_print_status(pdfs)
+
+    # ── refresh mode: re-check every OPEN (non-DONE) month in place ──
+    if args.refresh:
+        base = args.inbox_root or INBOX_ROOT
+        inbox, root = _resolve_workflow_dirs(base)
+        files = _gather_open_sources(root, inbox)
+        _hr()
+        print(_Term.color(_Term.BOLD, "  STATEMENT RECONCILER  ·  REFRESH OPEN MONTHS"))
+        _hr()
+        print(f"  Re-checking {len(files)} statement(s) in open (non-DONE) months under {root}\n")
+        if not files:
+            print("  No open months — everything is marked DONE.")
+            return 0
+        if args.dry_run:
+            for f in files:
+                print(_Term.color(_Term.DIM, f"  DRY-RUN would re-reconcile: {f.relative_to(root)}"))
+            return 0
+        t0 = _phase("Authenticating to QBO (Touch ID may prompt)")
+        access, cid = load_credentials()
+        _done(t0, "Authenticated")
+        return run_inbox(args, access, cid, inbox, root, files)
 
     # ── inbox automation mode ───────────────────────────────
     if args.inbox:

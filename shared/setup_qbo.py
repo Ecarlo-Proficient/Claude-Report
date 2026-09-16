@@ -67,6 +67,10 @@ def _is_email(v: str) -> bool:
     return "@" in v and "." in v.rsplit("@", 1)[-1]
 
 
+def _is_https_url(v: str) -> bool:
+    return v.startswith("https://") and "." in v
+
+
 # Production only. Sandbox support has been intentionally removed to eliminate
 # the class of "wrong tab" mistakes that produce `invalid_client` errors.
 SPECS = [
@@ -128,6 +132,14 @@ SPECS = [
         "The billings mailbox the reconciler reads for printed-status tags",
         "an email address",
         5, 120, _is_email, required=False,
+    ),
+    # Teams channel webhook for the statement-reconciler's per-vendor task cards.
+    KeySpec(
+        "TEAMS_STMT_WEBHOOK",
+        "Teams channel > ⋯ > Workflows > 'Post to a channel when a webhook request "
+        "is received' > the URL it gives back",
+        "an https Power Automate / Workflows URL",
+        20, 2000, _is_https_url, required=False,
     ),
 ]
 
