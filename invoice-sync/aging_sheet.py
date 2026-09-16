@@ -85,13 +85,11 @@ TITLE_PT = 14
 # The cap stops a long memo or note from creating a column you have to scroll.
 MAX_COL_WIDTH = 62
 
-# The bill-tracker's Excel output. Same env key the bill-tracker itself uses,
-# so a machine.env override moves both together. We read the FILE, not the
-# bill-tracker's code — tools never import tools (repo rule 3).
-BILL_TRACKER_PATH = paths.get_path(
-    "ACB_BILL_TRACKER_XLSX",
-    paths.onedrive_base() / "Automations-" / "Bill Tracker.xlsx",
-)
+# The bill-tracker's Excel output, via the ONE shared resolver so the path can't
+# drift between writer and reader. We read the FILE, not the bill-tracker's code
+# (tools never import tools, repo rule 3). NOTE: the Dockerized invoice-sync must
+# set ACB_BILL_TRACKER_XLSX to wherever the AP file is mounted in-container.
+BILL_TRACKER_PATH = paths.bill_tracker_xlsx()
 
 # Previous-draw verdicts. The funding chain (the user 2026-08-05): the GC funds
 # draw N, we pay draw N's vendor bills, the vendors issue unconditional waivers,

@@ -987,7 +987,7 @@ def _freshness(con) -> dict:
             return None
 
     ob = paths.onedrive_base()
-    bt = paths.get_path("ACB_BILL_TRACKER_XLSX", ob / "Automations-/Bill Tracker.xlsx")
+    bt = paths.bill_tracker_xlsx()
     wm = paths.get_path("WIP_EXCEL_PATH", ob / "Company Files - WIP Report/WIP - MASTER new.xlsx")
     out["sources"]["sync-ap"] = mtime(bt)
     out["sources"]["WIP master"] = mtime(wm)
@@ -1054,7 +1054,7 @@ def _fetch_accounting_audits() -> dict:
     FULL bill data (incl subs + cost codes) that ap_bill_line doesn't carry, so the ledger
     reads the sheets rather than recomputing. Read-only; a missing file is reported, not raised."""
     from openpyxl import load_workbook
-    bt = paths.get_path("ACB_BILL_TRACKER_XLSX", paths.onedrive_base() / "Automations-/Bill Tracker.xlsx")
+    bt = paths.bill_tracker_xlsx()
     out = {"ok": False, "source": str(bt), "findings": [], "counts": {}}
     if not bt.exists():
         out["error"] = f"Bill Tracker.xlsx not found ({bt}). Run the AP sync first."
@@ -1197,7 +1197,7 @@ _NON_GATING_VENDOR_RE = re.compile(
 _ACCT_RAW = _fetch_accounting_audits
 _ACCT_CACHE = {"mtime": None, "data": None}
 def _fetch_accounting_audits() -> dict:   # cached per workbook mtime - the project page reads it per request (2026-09-08)
-    bt = paths.get_path("ACB_BILL_TRACKER_XLSX", paths.onedrive_base() / "Automations-/Bill Tracker.xlsx")
+    bt = paths.bill_tracker_xlsx()
     try:
         mt = bt.stat().st_mtime
     except OSError:

@@ -78,8 +78,7 @@ WIP_EXCEL_PATH = paths.get_path(
 # MUST use the same path key/default as bill-tracker/excel_bill_sync.py — the
 # canonical file lives in OneDrive/Automations-, NOT the old CompanyHealth copy
 # (the user 2026-07-24: we were reading a 7-week-stale duplicate).
-BILL_TRACKER_PATH = paths.get_path(
-    "ACB_BILL_TRACKER_XLSX", paths.onedrive_base() / "Automations-/Bill Tracker.xlsx")
+BILL_TRACKER_PATH = paths.bill_tracker_xlsx()
 MFD_ROOT = paths.get_path(
     "MFD_PROJECTS_DIR",
     "/Volumes/Multi Family/MULTY FAMILY DIVISION PROJECTS",

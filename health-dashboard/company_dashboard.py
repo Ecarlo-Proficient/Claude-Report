@@ -49,8 +49,7 @@ MOR_PATH = SRC / "Money Out Register.xlsx"
 HEALTH_PATH = SRC / "health_dashboard.xlsx"
 # canonical Bill Tracker lives in OneDrive/Automations- (bill-tracker writes it
 # there) — not the stale CompanyHealth copy (the user 2026-07-24)
-BILL_PATH = paths.get_path(
-    "ACB_BILL_TRACKER_XLSX", paths.onedrive_base() / "Automations-/Bill Tracker.xlsx")
+BILL_PATH = paths.bill_tracker_xlsx()
 WIP_PATH = paths.get_path(
     "WIP_EXCEL_PATH",
     paths.onedrive_base() / "Company Files - WIP Report/WIP - MASTER new.xlsx")

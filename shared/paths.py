@@ -90,11 +90,29 @@ _DEFAULT_ONEDRIVE_BASE = (
 )
 _DEFAULT_COMPANYHEALTH = Path.home() / "Documents" / "CompanyHealth"
 _DEFAULT_VAULT = Path.home() / "Documents" / "Claude" / "AI Brain_Vault"
+_DEFAULT_ACCOUNTING_BASE = Path("/Volumes/Accounting")
 
 
 def onedrive_base() -> Path:
     """Local mirror of the company OneDrive. Override: ACB_ONEDRIVE_BASE."""
     return get_path("ACB_ONEDRIVE_BASE", _DEFAULT_ONEDRIVE_BASE)
+
+
+def accounting_base() -> Path:
+    """The Accounting file share (Synology, must be mounted). Override:
+    ACB_ACCOUNTING_BASE. Home of Accounts Payable/ (Vendor Statements + the Bill
+    Tracker) and Accounts Receivable/."""
+    return get_path("ACB_ACCOUNTING_BASE", _DEFAULT_ACCOUNTING_BASE)
+
+
+def bill_tracker_xlsx() -> Path:
+    """The AP Bill Tracker workbook - the ONE resolver every tool that reads or
+    writes it shares, so the path can never drift. Moved 2026-09-16 into the
+    Accounting share's Accounts Payable/ folder (was OneDrive Automations-/).
+    Override: ACB_BILL_TRACKER_XLSX (e.g. the Dockerized invoice-sync points it at
+    its own in-container mount)."""
+    return get_path("ACB_BILL_TRACKER_XLSX",
+                    accounting_base() / "Accounts Payable" / "Bill Tracker.xlsx")
 
 
 def companyhealth_dir() -> Path:

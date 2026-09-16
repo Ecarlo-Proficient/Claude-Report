@@ -5,6 +5,33 @@ to this tool. Tool-only scope: no business/owner analyses or dollar-exposure
 findings here — those live in the owner's vault.
 
 ## DONE / FINALIZED
+- **New folder layout + filing + DONE workflow (2026-09-16, owner).** The whole
+  Vendor Statements folder moved into the Accounting share's new `Accounts Payable/`
+  parent: `INBOX_ROOT = /Volumes/Accounting/Accounts Payable/Vendor Statements`.
+  - **Filing:** the Inbox is a pure dump. `process_pdf` now files BOTH the Excel
+    and the source statement together under `<root>/<Vendor>/<MM-YYYY>/` (vendor =
+    resolved QBO name via `_vendor_folder`; month = `MM-YYYY`, month-first per the
+    owner's no-year-first rule). The old flat `Reconciliations/` + inbox `DONE/`
+    are retired; `run_inbox` no longer moves to DONE (filing is centralized in
+    `process_pdf`), and `_resolve_workflow_dirs` now returns `(inbox, root)`.
+  - **Finalize = the clerk marks the MONTH FOLDER done** (owner 2026-09-16, "if a
+    excel/statement was put in DONE folder mark the month folder done"). When a
+    vendor's `<MM-YYYY>` folder is renamed to `<MM-YYYY> DONE`, the whole month is
+    left untouched on re-runs (`_month_done_dir`, checked right after vendor
+    resolve, before the QBO bill pull - a re-drop of a finished statement costs
+    nothing and stays in the Inbox for a human to notice). Un-done months
+    regenerate in place. Tie-out failures leave the source in the Inbox (held).
+  - **Migration:** one-offs (scratchpad, not committed) routed all 125 existing
+    files into the new tree, then marked the 35 fully-reconciled month folders
+    `<MM-YYYY> DONE` (from the old Old-Done / DONE FOR REAL). Verified live: an
+    inbox sweep filed a fresh Cowtown 09-01, and re-dropping a Cowtown 07 or a
+    White Cap 06 statement was skipped ("month already marked DONE").
+  - **Bill Tracker moved too (same day):** out of OneDrive `Automations-/` into
+    `<Accounting>/Accounts Payable/Bill Tracker.xlsx`, via the new ONE resolver
+    `shared/paths.bill_tracker_xlsx()` that every reader/writer shares (bill-tracker,
+    ledger, invoice-sync, health-dashboard). **Dockerized invoice-sync must set
+    `ACB_BILL_TRACKER_XLSX` to its in-container mount** or the AR-aging tab won't
+    find it.
 - **Print-status future-proofing + Summary restructure (2026-09-14).**
   - **QBO↔printed agreement gate (the tie-out analog).** Each statement invoice
     carries two independent facts: is it in QBO (the reconcile matched a bill) and

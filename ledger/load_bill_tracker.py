@@ -46,10 +46,7 @@ DEFAULT_DB = paths.get_path(
     "ACB_LEDGER_DB",
     Path.home() / "Library" / "Application Support" / "Proficient" / "ledger.sqlite3",
 )
-DEFAULT_EXCEL = paths.get_path(
-    "ACB_BILL_TRACKER_XLSX",
-    paths.onedrive_base() / "Automations-/Bill Tracker.xlsx",
-)
+DEFAULT_EXCEL = paths.bill_tracker_xlsx()
 
 SHEETS = ("Bills", "Inventory")   # the line-level display sheets
 HEADER_ROW = 2                    # row 1 is the grouped banner; real headers are row 2

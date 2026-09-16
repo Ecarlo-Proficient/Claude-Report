@@ -2,7 +2,8 @@
 """
 excel_bill_sync.py — daily QBO → xlsx AP bill tracker.
 
-Output: ~/Documents/CompanyHealth/Bill Tracker.xlsx  (chmod 600)
+Output: <Accounting share>/Accounts Payable/Bill Tracker.xlsx  (chmod 600)
+        (via shared.paths.bill_tracker_xlsx; override ACB_BILL_TRACKER_XLSX)
 
 Five sheets, every one an Excel Table with AutoFilter on every column.
 Same column set across all five, sorted differently per sheet:
@@ -99,10 +100,7 @@ from shared.cost_code_audit import (
 
 # ─────────────────────── constants ───────────────────────
 
-OUTPUT_PATH = paths.get_path(
-    "ACB_BILL_TRACKER_XLSX",
-    paths.onedrive_base() / "Automations-/Bill Tracker.xlsx",
-)
+OUTPUT_PATH = paths.bill_tracker_xlsx()   # Accounting share > Accounts Payable/
 BACKUP_RETENTION_DAYS = 14
 
 # Paid bills lookback. Per the user 2026-05-27: trailing 12mo was too much; use

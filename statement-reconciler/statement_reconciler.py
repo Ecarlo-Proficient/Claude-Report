@@ -133,10 +133,12 @@ CLERK_PERF_CSV = OUTDIR_DEFAULT / "clerk_performance.csv"
 QBO_BILL_URL_TEMPLATE = "https://qbo.intuit.com/app/bill?txnId={bill_id}"
 
 # ── Inbox automation (Synology) ────────────────────────────────
-# Folder-driven workflow root on the Synology share (must be mounted). The
-# sweep reads statements from the Inbox, writes each Excel to Reconciliations,
-# and moves the processed source file into the Inbox's DONE subfolder.
-INBOX_ROOT = Path("/Volumes/Accounting/Automations/Vendor Statements")
+# Folder-driven workflow root on the Accounting share (must be mounted). The
+# Inbox is a pure dump: the sweep reads each statement, then FILES both the Excel
+# and the source statement together under <root>/<Vendor>/<MM-YYYY>/. A statement
+# whose reconciliation the clerk has marked DONE is left untouched on re-runs.
+# (Moved 2026-09-16 from Automations/ into the new Accounts Payable/ folder.)
+INBOX_ROOT = Path("/Volumes/Accounting/Accounts Payable/Vendor Statements")
 INBOX_SUPPORTED_EXTS = {".pdf", ".png", ".jpg", ".jpeg", ".heic", ".heif", ".xlsx", ".xls"}
 STATEMENT_EMBED_MAX_PAGES = 20   # cap embedded statement pages to keep xlsx size sane
 STATEMENT_EMBED_MAX_WIDTH = 900  # px — target on-sheet width per embedded page
@@ -2916,9 +2918,14 @@ def append_clerk_perf(rows: List["ReconRow"], vendor_name: str, stmt_date: str,
 # ───────────────────────── main ─────────────────────────
 
 def process_pdf(pdf_path: Path, args: argparse.Namespace,
-                access: str, cid: str) -> Tuple[bool, Dict[str, int]]:
-    """Run the full pipeline for one PDF. Returns (ok, counts).
-    Assumes QBO is already authenticated; caller provides access + cid."""
+                access: str, cid: str, result: Optional[dict] = None
+                ) -> Tuple[bool, Dict[str, int]]:
+    """Run the full pipeline for one PDF. Returns (ok, counts, tieout_ok).
+    Assumes QBO is already authenticated; caller provides access + cid.
+    `result` (optional dict) is filled with result['action'] = one of
+    'filed' / 'held' / 'skipped_done' so the caller can tally the sweep."""
+    if result is None:
+        result = {}
     print(_Term.color(_Term.BOLD, "━" * min(60, _width())))
     print(_Term.color(_Term.BOLD, f"  STATEMENT RECONCILER  ·  {pdf_path.name}"))
     print(_Term.color(_Term.BOLD, "━" * min(60, _width())))
@@ -3066,6 +3073,20 @@ def process_pdf(pdf_path: Path, args: argparse.Namespace,
     cache_marker = _Term.color(_Term.Y, " ★ from saved alias") if from_cache else ""
     _done(t0, f"Matched {_Term.color(_Term.BOLD, vendor_name)}  (id={vendor_id}){cache_marker}")
 
+    # Already finalized? If the clerk marked this vendor-month's folder DONE (e.g.
+    # renamed it '07-2026 DONE'), leave the whole month untouched — a re-run is a
+    # no-op. Checked here (before the QBO bill pull) so re-dropping a finished
+    # statement costs nothing.
+    _base_dir = getattr(args, "base_dir", None)
+    if _base_dir and not getattr(args, "out", None):
+        _done_dir = _month_done_dir(_base_dir / _vendor_folder(vendor_name),
+                                    _month_folder(stmt_date))
+        if _done_dir is not None:
+            print(_Term.color(_Term.G, f"  ✓ month already marked DONE "
+                                       f"({_done_dir.name}) — left untouched."))
+            result["action"] = "skipped_done"
+            return True, {}, True
+
     # Unattended inbox mode: only auto-process vendors already confirmed in the
     # alias cache. A first-time vendor is left in the inbox so a human runs it
     # once (which caches it) — avoids reconciling against a wrong fuzzy match
@@ -3202,17 +3223,36 @@ def process_pdf(pdf_path: Path, args: argparse.Namespace,
     # ── write Excel ─────────────────────────────────────────
     print()
     t0 = _phase("Writing Excel report")
-    base_out_dir = getattr(args, "out_dir", None) or OUTDIR_DEFAULT
-    out = args.out or (base_out_dir / f"Statement_Reconciliation_{stmt_date}_{_slug(vendor_name)}.xlsx")
+    stem = f"Statement_Reconciliation_{stmt_date}_{_slug(vendor_name)}"
+    if getattr(args, "out", None):
+        out = args.out
+    elif _base_dir:                       # file under <root>/<Vendor>/<MM-YYYY>/
+        out = _base_dir / _vendor_folder(vendor_name) / _month_folder(stmt_date) / f"{stem}.xlsx"
+    else:
+        out = (getattr(args, "out_dir", None) or OUTDIR_DEFAULT) / f"{stem}.xlsx"
     statement_src = pdf_path if getattr(args, "embed", False) else None
     write_excel(out, vendor_name, stmt_date, amt_due, bills, rows,
                 statement_src=statement_src, line_sum=line_sum, tieout_ok=sum_matches,
                 bf_amount=bf_amount, payments_total=payments_total, stmt_lines=lines)
     _done(t0, f"Saved to {_Term.color(_Term.C, str(out))}")
     if not sum_matches:
+        result["action"] = "held"
         _fail(f"TIE-OUT FAILED — parsed lines ${line_sum:,.2f} vs statement ${amt_due:,.2f} "
-              f"(gap ${line_sum - amt_due:,.2f}). Report written WITH a red warning banner and "
-              f"will NOT be archived to DONE. A human must re-parse this statement.")
+              f"(gap ${line_sum - amt_due:,.2f}). Report written WITH a red warning banner; the "
+              f"source statement is left in the Inbox (not filed). A human must re-parse it.")
+    else:
+        result["action"] = "filed"
+        # File the source statement next to its reconciliation (only when it came
+        # from the Inbox; a manually-passed file is left where it is).
+        inbox_dir = getattr(args, "inbox_dir", None)
+        if (_base_dir and inbox_dir and not args.dry_run
+                and pdf_path.resolve().parent == inbox_dir.resolve()):
+            try:
+                shutil.move(str(pdf_path), str(_unique_dest(out.parent, pdf_path.name)))
+                print(f"  {_Term.color(_Term.G, '✓ filed statement + report →')} "
+                      f"{_Term.color(_Term.C, str(out.parent))}")
+            except Exception as e:
+                _warn(f"reconciled but couldn't move the source statement: {e}")
 
     # ── clerk performance log (append one row) ──────────────
     t0 = _phase("Appending clerk-performance history")
@@ -3230,46 +3270,33 @@ def process_pdf(pdf_path: Path, args: argparse.Namespace,
 
 
 def _resolve_workflow_dirs(base: Path, strict: bool = True
-                           ) -> Tuple[Optional[Path], Optional[Path], Optional[Path]]:
-    """Resolve (inbox, done, reconciliations) under `base`, tolerant of the
-    exact folder spelling/spacing. With strict=True (the --inbox sweep) exits
-    with a clear message if the share isn't mounted or the folders can't be
-    found. With strict=False (a manually-passed file) returns (None, None, None)
-    instead, so the caller can fall back to the default output dir and skip the
-    DONE move rather than abort."""
-    def _bail(msg: str) -> Tuple[None, None, None]:
+                           ) -> Tuple[Optional[Path], Optional[Path]]:
+    """Resolve (inbox, root) under `base`. `root` is where the per-vendor folders
+    live (the Vendor Statements root); `inbox` is the dump subfolder inside it.
+    Tolerant of the exact inbox spelling/spacing. With strict=True (the --inbox
+    sweep) exits with a clear message if the share isn't mounted or the inbox
+    can't be found; with strict=False returns (None, None) so a manually-passed
+    file falls back to the default output dir instead of aborting."""
+    def _bail(msg: str) -> Tuple[None, None]:
         if strict:
             sys.exit(_Term.color(_Term.R, msg))
-        return None, None, None
+        return None, None
 
     if not base.exists():
         return _bail(f"✗ not found: {base}\n"
-                     "  Is the Synology share mounted? (Finder → Go → Connect to Server)")
+                     "  Is the Accounting share mounted? (Finder → Go → Connect to Server)")
     entries = [d for d in base.iterdir() if d.is_dir()]
 
-    def _find(*needles: str) -> Optional[Path]:
-        for d in entries:
-            norm = d.name.lower().strip().strip("-").strip()
-            if any(n in norm for n in needles):
-                return d
-        return None
-
-    inbox = _find("statement inbox", "inbox")
-    recon = _find("reconciliation")
-    if not inbox or not recon:
-        found = ", ".join(sorted(d.name for d in entries)) or "(none)"
-        return _bail(f"✗ couldn't find the Inbox / Reconciliations folders under {base}\n"
-                     f"  Folders present: {found}")
-
-    done = None
-    for d in inbox.iterdir():
-        if d.is_dir() and d.name.lower().strip() == "done":
-            done = d
+    inbox = None
+    for d in entries:
+        if "inbox" in d.name.lower():
+            inbox = d
             break
-    if done is None:
-        done = inbox / "DONE"
-        done.mkdir(exist_ok=True)   # safe: the archive subfolder within a confirmed inbox
-    return inbox, done, recon
+    if not inbox:
+        found = ", ".join(sorted(d.name for d in entries)) or "(none)"
+        return _bail(f"✗ couldn't find the Statement Inbox folder under {base}\n"
+                     f"  Folders present: {found}")
+    return inbox, base
 
 
 def _gather_inbox_files(inbox: Path) -> List[Path]:
@@ -3298,16 +3325,44 @@ def _unique_dest(dest_dir: Path, name: str) -> Path:
     return dest_dir / f"{stem} ({i}){suf}"
 
 
+def _vendor_folder(name: str) -> str:
+    """Filesystem-safe vendor folder from the resolved QBO vendor name. macOS is
+    case-insensitive, so casing differences never make a duplicate folder."""
+    s = re.sub(r'[\\/:*?"<>|]+', " ", name or "Vendor")
+    return re.sub(r"\s+", " ", s).strip() or "Vendor"
+
+
+def _month_folder(stmt_date: str) -> str:
+    """MM-YYYY from an ISO statement date - month-first, never year-first (owner
+    rule); 'undated' if the date can't be parsed."""
+    m = re.match(r"(\d{4})-(\d{2})-\d{2}", stmt_date or "")
+    return f"{m.group(2)}-{m.group(1)}" if m else "undated"
+
+
+def _month_done_dir(vendor_dir: Path, month: str) -> Optional[Path]:
+    """The finalized folder for this vendor-month if the clerk marked the MONTH
+    folder DONE (renamed it e.g. '07-2026 DONE'), else None. A done month is left
+    untouched on re-runs - the clerk's DONE on the folder is the final word."""
+    if not vendor_dir.exists():
+        return None
+    for d in vendor_dir.iterdir():
+        if (d.is_dir() and d.name.split(maxsplit=1)[0] == month
+                and re.search(r"\bDONE\b", d.name, re.I)):
+            return d
+    return None
+
+
 def run_inbox(args: argparse.Namespace, access: str, cid: str,
-              inbox: Optional[Path], done: Optional[Path], recon: Path,
+              inbox: Optional[Path], base: Optional[Path],
               files: List[Path]) -> int:
-    """Reconcile each file → Excel into `recon` with the inbox presentation
-    ([i/N] header + INBOX SUMMARY). A source file that lives in `inbox` is moved
-    to `done` on success; a file passed from elsewhere is reconciled and left in
-    place. Failures are never moved. Used by both the --inbox sweep and manual
-    single/multi-file runs. Returns an exit code."""
+    """Reconcile each file with the inbox presentation ([i/N] header + INBOX
+    SUMMARY). process_pdf files each Excel + its source statement under
+    <base>/<Vendor>/<MM-YYYY>/ and skips any statement the clerk marked DONE.
+    Used by both the --inbox sweep and manual single/multi-file runs. Returns an
+    exit code."""
     args.out = None
-    args.out_dir = recon
+    args.base_dir = base
+    args.inbox_dir = inbox
     args.no_open = True
     args.embed = not getattr(args, "no_embed", False)
     # Interactive by default: a new/unknown vendor stops and asks the operator to
@@ -3315,67 +3370,49 @@ def run_inbox(args: argparse.Namespace, access: str, cid: str,
     # auto-skip unknowns (cached-only) so nothing is guessed with nobody watching.
     args.inbox_cached_only = args.yes
 
-    inbox_r = inbox.resolve() if inbox else None
-
-    moved: List[str] = []       # reconciled AND archived to DONE
-    kept: List[str] = []        # reconciled but left in place (not an inbox file)
-    held: List[str] = []        # reconciled but tie-out FAILED — kept out of DONE
+    filed: List[str] = []       # reconciled AND filed under <Vendor>/<Month>/
+    skipped: List[str] = []     # already final (marked DONE) — left untouched
+    held: List[str] = []        # reconciled but tie-out FAILED — source kept in inbox
     failed: List[Tuple[str, str]] = []
     for i, f in enumerate(files, 1):
         print(_Term.color(_Term.BOLD, f"\n[{i}/{len(files)}] {f.name}"))
+        result: dict = {}
         try:
-            ok, _counts, tieout_ok = process_pdf(f, args, access, cid)
+            ok, _counts, tieout_ok = process_pdf(f, args, access, cid, result=result)
         except Exception as e:
             _fail(f"{f.name}: {e}")
             failed.append((f.name, str(e)))
             continue
-        if not ok:
+        action = result.get("action")
+        if action == "skipped_done":
+            skipped.append(f.name)
+        elif not ok:
             failed.append((f.name, "skipped (see message above)"))
-            continue
-        # Parse tie-out failed: the report exists (with a red banner) but its
-        # numbers can't be trusted, so it stays OUT of DONE for a human to re-parse.
-        if not tieout_ok:
-            print(_Term.color(_Term.R, "    ⚠ tie-out failed — report kept OUT of DONE for review"))
+        elif not tieout_ok or action == "held":
             held.append(f.name)
-            continue
-        # Archive to DONE only when the source actually lives in the inbox — and
-        # never on a dry-run (nothing was written, so nothing should move).
-        in_inbox = (done is not None and inbox_r is not None
-                    and f.resolve().parent == inbox_r)
-        if args.dry_run or not in_inbox:
-            if not args.dry_run:
-                print(_Term.color(_Term.DIM, "    ✓ reconciled — left in place (not in inbox)"))
-            kept.append(f.name)
-            continue
-        dest = _unique_dest(done, f.name)
-        try:
-            shutil.move(str(f), str(dest))
-            print(_Term.color(_Term.G, f"    ✓ done → {dest.name}"))
-            moved.append(f.name)
-        except Exception as e:
-            _warn(f"reconciled but couldn't move to DONE: {e}")
-            kept.append(f.name)
+        else:
+            filed.append(f.name)
 
     print()
     _hr()
     print(_Term.color(_Term.BOLD, "  INBOX SUMMARY"))
     _hr()
-    if moved:
-        print(_Term.color(_Term.G, f"  Reconciled + moved to DONE:  {len(moved)}"))
-    if kept:
-        note = "reconciled (dry-run)" if args.dry_run else "reconciled, left in place"
-        print(_Term.color(_Term.G, f"  {note+':':28} {len(kept)}"))
-    if not moved and not kept and not held:
-        print(_Term.color(_Term.DIM, "  Reconciled:                  0"))
+    if filed:
+        print(_Term.color(_Term.G, f"  Reconciled + filed to Vendor/Month:  {len(filed)}"))
+    if skipped:
+        print(_Term.color(_Term.DIM, f"  Already final (DONE), left as-is:    {len(skipped)}"))
+    if not filed and not skipped and not held:
+        print(_Term.color(_Term.DIM, "  Reconciled:                          0"))
     if held:
-        print(_Term.color(_Term.R, f"  Tie-out FAILED (re-parse):   {len(held)}"))
+        print(_Term.color(_Term.R, f"  Tie-out FAILED (re-parse):           {len(held)}"))
         for name in held:
-            print(_Term.color(_Term.DIM, f"    · {name} — parsed lines ≠ statement total; report banded, not archived"))
+            print(_Term.color(_Term.DIM, f"    · {name} — parsed lines ≠ statement total; report banded, source left in inbox"))
     if failed:
-        print(_Term.color(_Term.R, f"  Left for a human:            {len(failed)}"))
+        print(_Term.color(_Term.R, f"  Left for a human:                    {len(failed)}"))
         for name, why in failed:
             print(_Term.color(_Term.DIM, f"    · {name} — {why}"))
-    print(f"\n  {_Term.color(_Term.BOLD, 'Excels:')} {_term_link(str(recon), recon)}")
+    if base is not None:
+        print(f"\n  {_Term.color(_Term.BOLD, 'Filed under:')} {_term_link(str(base), base)}")
     _hr()
     return 0 if not failed and not held else 1
 
@@ -3440,28 +3477,27 @@ def main() -> int:
 
     # ── print-status self-audit mode (no QBO, no files) ─────
     if args.audit_print_status:
-        import glob
         base = args.inbox_root or INBOX_ROOT
-        inbox, done, _recon = _resolve_workflow_dirs(base)
-        pdfs = sorted(set(glob.glob(str(inbox / "*.pdf")) + glob.glob(str(done / "*.pdf"))))
+        inbox, root = _resolve_workflow_dirs(base)
+        # every filed statement PDF lives under <root>/<Vendor>/<MM-YYYY>/ (not the inbox)
+        pdfs = sorted(p for p in root.rglob("*.pdf") if inbox not in p.parents)
         _hr()
         print(_Term.color(_Term.BOLD, "  STATEMENT RECONCILER  ·  PRINT-STATUS SELF-AUDIT"))
         _hr()
-        print(f"  Corpus: {len(pdfs)} statement PDF(s) under {inbox}\n")
+        print(f"  Corpus: {len(pdfs)} statement PDF(s) filed under {root}\n")
         import print_status as _ps
         return _ps.audit_print_status(pdfs)
 
     # ── inbox automation mode ───────────────────────────────
     if args.inbox:
         base = args.inbox_root or INBOX_ROOT
-        inbox, done, recon = _resolve_workflow_dirs(base)
+        inbox, root = _resolve_workflow_dirs(base)
         files = _gather_inbox_files(inbox)
         _hr()
         print(_Term.color(_Term.BOLD, "  STATEMENT RECONCILER  ·  INBOX SWEEP"))
         _hr()
         print(f"  Inbox:  {inbox}")
-        print(f"  Out:    {recon}")
-        print(f"  Done:   {done}\n")
+        print(f"  Files → {root}/<Vendor>/<MM-YYYY>/\n")
         if not files:
             print("  Inbox empty — nothing to reconcile.")
             return 0
@@ -3469,14 +3505,14 @@ def main() -> int:
         if args.dry_run:
             for f in files:
                 print(_Term.color(_Term.DIM,
-                    f"  DRY-RUN {f.name}: would reconcile → {recon.name}/, "
-                    f"then move source → {done.name}/"))
+                    f"  DRY-RUN {f.name}: would reconcile and file the Excel + source "
+                    f"under <Vendor>/<MM-YYYY>/"))
             print(_Term.color(_Term.DIM, "\n  (dry-run: no QBO calls, nothing written or moved.)"))
             return 0
         t0 = _phase("Authenticating to QBO (Touch ID may prompt)")
         access, cid = load_credentials()
         _done(t0, "Authenticated")
-        return run_inbox(args, access, cid, inbox, done, recon, files)
+        return run_inbox(args, access, cid, inbox, root, files)
 
     if not args.pdf:
         p.error("Statement file path required (.pdf / .xlsx / .png) — or use --list-aliases / --forget-vendor.")
@@ -3487,18 +3523,17 @@ def main() -> int:
             sys.exit(_Term.color(_Term.R, f"✗ not found: {pp}"))
 
     # Manually-passed files get the SAME treatment as an --inbox sweep: each is
-    # reconciled, its Excel written to the Reconciliations folder, and — if the
-    # source actually lives in the inbox — the original archived to DONE. The run
-    # ends with the INBOX SUMMARY. The inbox workflow dirs are resolved leniently
-    # (strict=False): if the Synology share isn't mounted we fall back to the
-    # default output dir and simply skip the archive move.
+    # reconciled and its Excel filed under <root>/<Vendor>/<MM-YYYY>/; a source
+    # that actually lives in the inbox is filed alongside it. The run ends with the
+    # INBOX SUMMARY. The workflow dirs resolve leniently (strict=False): if the
+    # Accounting share isn't mounted we fall back to the default output dir.
     if args.out:
         _warn("--out is ignored in inbox-style single-file mode; "
-              "the Excel goes to the Reconciliations folder.")
+              "the Excel is filed under <Vendor>/<MM-YYYY>/.")
     base = args.inbox_root or INBOX_ROOT
-    inbox, done, recon = _resolve_workflow_dirs(base, strict=False)
-    if recon is None:
-        recon = OUTDIR_DEFAULT   # share not mounted → local default, no DONE move
+    inbox, root = _resolve_workflow_dirs(base, strict=False)
+    if root is None:
+        root = OUTDIR_DEFAULT   # share not mounted → local default (flat)
 
     print(_Term.color(_Term.BOLD, "━" * min(60, _width())))
     if len(pdf_paths) == 1:
@@ -3506,9 +3541,7 @@ def main() -> int:
     else:
         print(_Term.color(_Term.BOLD, f"  STATEMENT RECONCILER  ·  {len(pdf_paths)} FILES"))
     print(_Term.color(_Term.BOLD, "━" * min(60, _width())))
-    print(f"  Out:   {recon}")
-    if done:
-        print(f"  Done:  {done}  (only files already in the inbox are moved)")
+    print(f"  Files → {root}/<Vendor>/<MM-YYYY>/")
     print()
     if args.dry_run:
         print(_Term.color(_Term.DIM,
@@ -3518,7 +3551,7 @@ def main() -> int:
     access, cid = load_credentials()
     _done(t0, "Authenticated")
 
-    return run_inbox(args, access, cid, inbox, done, recon, pdf_paths)
+    return run_inbox(args, access, cid, inbox, root, pdf_paths)
 
 
 

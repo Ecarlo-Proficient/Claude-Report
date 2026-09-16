@@ -226,7 +226,7 @@ flowchart LR
     classDef out fill:#dfeae2,stroke:#3E7A5C,color:#1f2937
 
     QBO[("QBO\nALL bills (incl. subs) + invoices + POs")]:::src
-    NAS[("Synology NAS\nvendor statement PDFs")]:::src
+    NAS[("Accounting share\nAccounts Payable / Vendor Statements\n- Statement Inbox - (dump)")]:::src
     GL[("General List xlsx\nSynology · READ-ONLY")]:::src
     POT[("PO tracker xlsx\nOneDrive · READ-ONLY\nvia po_tracker.py")]:::src
     MBX[("MS Graph\nbillings mailbox\nprinted-category tags")]:::src
@@ -234,9 +234,9 @@ flowchart LR
     JCA["job_coding_audit.py\non-demand per-job drill"]:::tool
     SR["statement_reconciler.py"]:::tool
     PS["print_status.py\ninvoice # from subject/full body/attachment name\n+ $search backup reads INSIDE bundled PDFs\n+ QBO-agreement gate · index-health · --audit-print-status\ndisk-cached, incremental by lastModifiedDateTime"]:::tool
-    BX[("Bill Tracker.xlsx\nOneDrive/Automations-\ndisplay = non-sub · audit = incl. subs")]:::out
+    BX[("Bill Tracker.xlsx\nAccounting share / Accounts Payable\n(paths.bill_tracker_xlsx)\ndisplay = non-sub · audit = incl. subs")]:::out
     CCH[("cost_code_history.json\nCompanyHealth · cost-code miscode log")]:::out
-    RX[("reconciliation xlsx\n+ Print Status = 1st Summary section (opt-in PRINT_STATUS=1)\nPrinted / Unprinted groups · clerk marks a box\n→ back to NAS")]:::out
+    RX[("filed under <Vendor>/<MM-YYYY>/\nExcel + source statement together\n+ Print Status = 1st Summary section (opt-in PRINT_STATUS=1)\nclerk renames month folder '<MM-YYYY> DONE' = final, re-runs skip it")]:::out
 
     QBO --> BT --> BX
     BT -. "miscode log (read+write each run)" .-> CCH
@@ -244,7 +244,7 @@ flowchart LR
     GL -- "RP draw matching" --> BT
     POT -- "Unused PO reconcile" --> BT
     QBO --> SR
-    NAS --> SR -- "tie-out gate: lines must sum to Amount Due,\nelse banded + held out of DONE" --> RX
+    NAS --> SR -- "tie-out gate: lines must sum to Amount Due,\nelse banded + source held in Inbox" --> RX
     MBX --> PS -. "was each statement invoice ever printed?" .-> SR
 ```
 
