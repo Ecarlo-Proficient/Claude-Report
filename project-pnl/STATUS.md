@@ -8,6 +8,38 @@ manual close), RP (no draws — expenses → invoice → profit).
 
 ## DONE / FINALIZED
 
+- **Draw sheets reworked on the owner's MFD192 review (2026-09-16).** Four asks, one
+  sheet: (1) **the KPI tiles are one cell each** - no more merged pairs; nine tiles sit on
+  B..J, the same columns the bills table uses, so nothing merges and any column selects.
+  (2) **INVOICES THIS DRAW sits under the strip, above the costs** - one linked row per
+  QBO invoice (MFD192's draws are 2-3), Gross / Retainage withheld / Retainage billed /
+  Net (cash) / Paid? / Memo, with a TOTAL row; the INCOME, RETAINAGE and OVERHEAD tiles
+  are now FORMULAS off that row, so the strip traces to the invoices on its face.
+  Caught in the process: INCOME had been the net-of-retainage total (TotalAmt), so the
+  strip held retainage back a second time and NET DRAW read low by exactly the
+  retainage on every draw; `rev` is now gross + retainage billed = net + withheld, and
+  gross profit / overhead ride the gross the way the P&L sheet does. (3) **Cost code and Cost type columns on every
+  bill row, and three grouped cuts** of the same bills: by vendor; by cost code, then
+  vendor; by cost type (Concrete / Materials / Labor, then the cost family, then vendor
+  - a family that only repeats its category, Concrete or Labor, gets no extra row).
+  Each cut is an outline collapsed to its top rows; openpyxl cannot author a PivotTable,
+  so the cuts are written out (the Draw Data sheet stays the flat pivot source). The
+  MFD reconciliation blocks (MATCHED / QBO ONLY / PM ONLY) keep their vendor grouping
+  and gain the two extra cuts over all QBO bills of the draw. One writer, `detail()`,
+  takes the level spec; `_bill_row` is the one bill line. (4) **Auto-fit at close-out**
+  (the owner: "look how much space bill # has ... remember to auto size when closing
+  out"): `_autofit` over B..I measuring only the table rows, floor 16 for the tiles,
+  cap 40; Description (J) stays at 16 and spills. Bill # went from a fixed 30 to what
+  its ids need. Bill and invoice numbers that are all digits are written as real
+  numbers (`idc`, format `0`, left-aligned with an indent) - no more green
+  "number stored as text" triangles; `_autofit` measures such ids as plain digits. An
+  account-based line shows a blank Cost code and its account name as the cost type
+  (it was landing the account name in the Cost code column, 29 wide). Verified on a
+  scratch build of MFD192 (the live workbook was open in Excel, so it was not
+  rewritten): September draw = 2 invoices totalling to the tiles, 106 bills in each of
+  the three cuts with equal totals, no merged cells but the title, no text ids,
+  `assert_clean` green. Print area A..J, freeze under the strip unchanged.
+
 - **ONE income line per draw for a job whose standing `draws` ruling says its invoices
   combine (2026-09-16).** MFD192 bills three contracts (main / HUDSONWOOD / OFFSITE) as
   2-3 invoices dated together every month; the draw sheets already summed them, but the

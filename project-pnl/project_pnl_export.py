@@ -4193,6 +4193,22 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
             c.number_format = "mm/dd/yyyy"
         c.font = _font()
 
+    def idc(row, col, s, *, indent=0, link=None):
+        """A bill / invoice number: digits become a real number (no 'number
+        stored as text' triangle - the owner 2026-09-16), left-aligned with an
+        Excel indent so it still reads as an id, linked when a link is given."""
+        s = str(s or "").strip()
+        if s.isdigit() and len(s) <= 15:
+            c = ws.cell(row=row, column=col, value=int(s))
+            c.number_format = "0"
+        else:
+            c = _write_cell(ws, row, col, s or "(no #)")
+        c.font = _font(False, LINK if link else "000000", None, bool(link))
+        c.alignment = Alignment(horizontal="left", indent=indent)
+        if link:
+            c.hyperlink = link
+        return c
+
     def band(row, c0, c1, label, fill=HDR_FILL):
         wc(row, c0, label, bold=True, color="FFFFFF", fill=fill, size=BASE_SIZE)
         for c in range(c0, c1 + 1):
@@ -4216,7 +4232,14 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
     pm_total = round(sum(l["amount"] for l in pm_lines), 2)
     qbo_bills = _draw_flat_bills(draw_cost)
     qbo_total = round(sum(b["amount"] for b in qbo_bills), 2)
-    rev = net                                            # billed invoice (both sides)
+    # INCOME billed this draw = the GROSS work billed + any retainage billed
+    # back: what the invoices say before the GC holds retainage. It used to be
+    # the net (TotalAmt) total, so the strip held retainage back a SECOND time
+    # and NET DRAW read low by the retainage - caught 2026-09-16 the moment the
+    # invoices were listed on the sheet. net = gross - withheld + billed, so
+    # gross + billed = net + withheld. Overwritten below by the invoice block's
+    # formulas; this constant only seeds the PM strip's math.
+    rev = round(net + abs(held), 2)                      # billed invoice (both sides)
 
     pm_ct = Counter(keyb(l) for l in pm_lines)
     qbo_ct = Counter(keyb(b) for b in qbo_bills)
@@ -4245,29 +4268,24 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
     # retainage → net draw → costs → profit → overhead → REAL net, read left to
     # right, big, with the profit cells colored by sign. MFD (which has a PM
     # report to argue with) gets a second strip so both perspectives stay.
-    # Each KPI is a MERGED PAIR of columns, so the strip carries its own width
-    # and never dictates the bills table below it (the user 2026-08-31 — it was
-    # forcing the table's Paid?/status columns to 18). Nine tiles over columns
-    # B..S, contiguous, no gap between GROSS PROFIT and GROSS MARGIN %.
-    # They START IN B so they line up with the bills table beneath them and
-    # leave column A as the gutter (the user 2026-08-31, reviewing the gutter
-    # preview: "move the KPI to B"). Only the row-1/row-2 titles stay in A.
-    KPI_COLS = [2, 4, 6, 8, 10, 12, 14, 16, 18]
-    KPI_SPAN = 2
+    # ONE cell per tile, no merges (the owner 2026-09-16: "make this just one
+    # cell not 2 merged"). Nine tiles over B..J, the same columns the bills
+    # table uses below; the autofit at the end keeps B..J at least 16 wide so
+    # a tile never shows ####. Column A stays the gutter for the outline +/-.
+    KPI_COLS = list(range(2, 11))
+    KPI_SPAN = 1
+    _tile_cells: List[Tuple[str, str, str]] = []   # (INCOME, RETAINAGE, OVERHEAD) cell per strip
     # Overhead on a draw is a % of the draw's INCOME for both views - per-draw
     # income sums to the contract, so this is the contract rule sliced by
     # draw (the user 2026-09-03). MFD's 9% used to ride costs here.
-    _oh_label = (f"OVERHEAD\n{alt_overhead_pct:.0f}% of income"
-                 if alt_overhead_pct is not None
-                 else f"OVERHEAD\n{overhead_pct:.0f}% of income")
+    _oh_pct = alt_overhead_pct if alt_overhead_pct is not None else overhead_pct
+    _oh_label = f"OVERHEAD\n{_oh_pct:.0f}% of income"
 
     def kpi_strip(title, costs_val, n_bills, periodtxt):
         """One perspective as a label row + a value row. Returns the next row."""
         nonlocal r
         gp = round(rev - costs_val, 2)
-        oh = round(((alt_overhead_pct / 100.0) * rev)
-                   if alt_overhead_pct is not None
-                   else (overhead_pct / 100.0) * rev, 2)
+        oh = round((_oh_pct / 100.0) * rev, 2)
         npf = round(gp - oh, 2)
         KPI_FMT = '"$"#,##0;[Red]-"$"#,##0'
         cells = [("INCOME\nbilled this draw", rev, KPI_FMT, False),
@@ -4283,22 +4301,20 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
              f"{title}   ·   {periodtxt}")
         r += 1
         for col, (label, _v, _f, _s) in zip(KPI_COLS, cells):
-            ws.merge_cells(start_row=r, start_column=col,
-                           end_row=r, end_column=col + KPI_SPAN - 1)
             c = ws.cell(row=r, column=col, value=label)
             c.font = Font(bold=True, size=BASE_SIZE, color="FFFFFF")
             c.fill = PatternFill("solid", fgColor="44546A")
             c.alignment = Alignment(horizontal="center", vertical="center",
                                     wrap_text=True)
-            for _cc in range(col, col + KPI_SPAN):
-                ws.cell(row=r, column=_cc).border = THIN_BORDER
-                ws.cell(row=r, column=_cc).fill = PatternFill("solid", fgColor="44546A")
-        ws.row_dimensions[r].height = 32
+            c.border = THIN_BORDER
+        ws.row_dimensions[r].height = 48
         r += 1
-        # The derived figures are FORMULAS so the derivation is visible —
+        # The derived figures are FORMULAS so the derivation is visible -
         # gross profit is income − costs, NOT net draw − costs (the user
         # 2026-08-31: "i want to see if you are getting the gross from total
-        # income or net draw"). Column letters follow KPI_COLS.
+        # income or net draw"). Column letters follow KPI_COLS. INCOME,
+        # RETAINAGE and OVERHEAD are rewritten as formulas off the invoice
+        # block once it is written (below), so every tile traces.
         _L = [get_column_letter(c) for c in KPI_COLS]
         _INC, _RET, _NET, _CST, _GP, _GM, _OH, _NP, _NM = _L
         _formula = {
@@ -4311,16 +4327,14 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
         signed = []
         for col, (_l, value, fmt, sign) in zip(KPI_COLS, cells):
             _lt = get_column_letter(col)
-            ws.merge_cells(start_row=r, start_column=col,
-                           end_row=r, end_column=col + KPI_SPAN - 1)
             c = ws.cell(row=r, column=col, value=_formula.get(_lt, value))
             c.number_format = fmt
             c.font = Font(bold=True, size=BASE_SIZE + 4)
             c.alignment = Alignment(horizontal="center", vertical="center")
-            for _cc in range(col, col + KPI_SPAN):
-                ws.cell(row=r, column=_cc).border = THIN_BORDER
+            c.border = THIN_BORDER
             if sign:
-                signed.append(get_column_letter(col) + str(r))
+                signed.append(_lt + str(r))
+        _tile_cells.append((f"{_INC}{r}", f"{_RET}{r}", f"{_OH}{r}"))
         ws.row_dimensions[r].height = 26
         if signed:
             ref = " ".join(signed)
@@ -4366,122 +4380,242 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
     ws.freeze_panes = ws.cell(row=r, column=1)
     r += 2
 
-    # ── BILL-LEVEL RECONCILIATION ──
-    def detail(title, items, color, kind):
-        """kind: 'qbo' rows are QBO bills; 'pm' rows are report lines. GROUPED BY
-        VENDOR (the user 2026-06-26 — every transaction listing groups by vendor); every
-        bill links (QBO deep-link for QBO rows, the source PM report for PM rows)."""
+    # ── INVOICES THIS DRAW ── what the INCOME tile adds up (the owner
+    # 2026-09-16: "I need the invoice that is adding up to the draw amount
+    # above the costs"). MFD192 bills three contracts, so a draw is 2-3
+    # invoices; every row is one QBO invoice (linked), and the tiles above are
+    # FORMULAS off the total row, so the strip traces to the invoices.
+    _hdr_rows: List[int] = []
+    _inv_band = r
+    band(r, 2, 10, f"INVOICES THIS DRAW  -  what INCOME adds up  ({len(invoices or [])})",
+         fill=SUBHDR_FILL)
+    ws.cell(row=r, column=2).font = _font(bold=True, color=NAVY)
+    r += 1
+    for c, h in ((2, "Invoice #"), (3, "Date"), (4, "Gross billed"),
+                 (5, "Retainage withheld"), (6, "Retainage billed"),
+                 (7, "Net (cash)"), (8, "Paid?"), (10, "Memo")):
+        wc(r, c, h, bold=True, color=NAVY).border = BOTTOM_BORDER
+    _hdr_rows.append(r)
+    r += 1
+    _inv_first = r
+    for inv in sorted(invoices or [], key=lambda i: (str(i.get("date") or ""),
+                                                     str(i.get("doc_num") or ""))):
+        idc(r, 2, inv.get("doc_num", ""),
+            link=_qbo_txn_url("invoice", inv.get("id", ""), realm))
+        wdate(r, 3, inv.get("date", ""))
+        wc(r, 4, float(inv.get("gross", 0) or 0), fmt=CURR_FMT)
+        wc(r, 5, float(inv.get("retainage", 0) or 0), fmt=CURR_FMT, color="C0504D")
+        wc(r, 6, float(inv.get("retainage_billed", 0) or 0), fmt=CURR_FMT, color=GREEN)
+        wc(r, 7, f"=D{r}-E{r}+F{r}", fmt=CURR_FMT, bold=True)
+        _pl, _pc = _pay_state(inv.get("balance"), float(inv.get("amount", 0) or 0))
+        if _pl:
+            wc(r, 8, _pl, bold=True, color=_pc)
+        _memo = re.sub(r"\s+", " ", DRAW_PERIOD_RE.sub("", str(inv.get("memo") or ""))).strip(" -–·")
+        wc(r, 10, _clean_cost_text(_memo, _known_words), color="595959")
+        r += 1
+    _inv_tot = r
+    wc(r, 2, "TOTAL  -  the INCOME / RETAINAGE / NET DRAW tiles above", bold=True)
+    for c in (4, 5, 6, 7):
+        _Lc = get_column_letter(c)
+        tc = wc(r, c, f"=SUM({_Lc}{_inv_first}:{_Lc}{r - 1})" if r > _inv_first else 0,
+                fmt=CURR_FMT, bold=True)
+        tc.border = TOP_BORDER
+    r += 2
+    for _inc, _ret, _ohc in _tile_cells:
+        ws[_inc].value = f"=D{_inv_tot}+F{_inv_tot}"       # gross billed + retainage billed back
+        ws[_ret].value = f"=-E{_inv_tot}"                    # what the GC holds back
+        ws[_ohc].value = f"=-{_inc}*{_oh_pct / 100.0}"       # % of that income
+
+    # ── BILLS ── every listing is an OUTLINE: the top group rows show, all
+    # under them opens on the [+]. `levels` is the cut, outermost first:
+    # by vendor; by cost code then vendor; by cost type (concrete · materials
+    # · labor, then the cost family) then vendor (the owner 2026-09-16: "group
+    # by cost type, labor & materials, cost code - all three; if I group by
+    # cost code I need to sub group by vendor after"). openpyxl cannot author
+    # a PivotTable, so each cut is written out here; the Draw Data sheet stays
+    # the flat table for a pivot of your own. Every bill row carries its cost
+    # code and cost type, whichever cut it sits in.
+    (COL_GROUP, COL_NUM, COL_CODE, COL_TYPE, COL_AMT, COL_DATE,
+     COL_NOTE, COL_PAID, COL_DESC) = range(2, 11)
+
+    def _vendor(i):
+        return i.get("vendor") or "(no vendor)"
+
+    def _ccode(i):
+        """The cost code, or '' for an account-based line (its bucket is the
+        account name, which is its cost TYPE, not a code)."""
+        c = str(i.get("code") or "")
+        return c if _is_cost_code(c) else ""
+
+    def _ctype(i):
+        return i.get("cat") or (_cost_category(i["code"]) if i.get("code") else "") or "(no cost code)"
+
+    def _coarse(i):
+        return line_category(i.get("code") or "") if i.get("code") else "(no cost code)"
+
+    LEVELS = {
+        "vendor": [(_vendor, lambda g: -g["total"])],
+        "code": [(lambda i: f"{_ccode(i) or '(no cost code)'}  -  {_ctype(i)}",
+                  lambda g: (_cost_category_sort_key(_ctype(g["items"][0])), g["label"])),
+                 (_vendor, lambda g: -g["total"])],
+        "type": [(_coarse, lambda g: (CATEGORY_ORDER.get(g["label"], 9), g["label"])),
+                 (_ctype, lambda g: (_cost_category_sort_key(g["label"]), g["label"])),
+                 (_vendor, lambda g: -g["total"])],
+    }
+    GROUP_HEAD = {"vendor": "Vendor", "code": "Cost code  >  vendor",
+                  "type": "Cost type  >  vendor"}
+
+    def detail(title, items, color, kind, levels="vendor"):
+        """kind: 'qbo' rows are QBO bills, 'pm' rows are report lines, 'plain'
+        is a job with no PM reports. Every bill links (QBO deep-link for QBO
+        rows, the source PM report for PM rows)."""
         nonlocal r
-        # Column A is an empty gutter so the vendor name is not jammed against
-        # the sheet edge, and so the outline +/- controls have somewhere to sit
-        # (the user 2026-08-31). Everything below shifts one column right.
         tot = round(sum(i["amount"] for i in items), 2)
-        band(r, 2, 7, f"{title}", fill=(WARN_FILL if color == RED else SUBHDR_FILL))
-        ws.cell(row=r, column=2).font = _font(bold=True, color=(RED if color == RED else NAVY))
-        ws.cell(row=r, column=3).value = tot
-        ws.cell(row=r, column=3).number_format = CURR_FMT
-        ws.cell(row=r, column=3).font = _font(bold=True, color=(RED if color == RED else NAVY))
+        band(r, COL_GROUP, COL_DESC, f"{title}",
+             fill=(WARN_FILL if color == RED else SUBHDR_FILL))
+        ws.cell(row=r, column=COL_GROUP).font = _font(bold=True, color=(RED if color == RED else NAVY))
+        tc = ws.cell(row=r, column=COL_AMT, value=tot)
+        tc.number_format = CURR_FMT
+        tc.font = _font(bold=True, color=(RED if color == RED else NAVY))
         r += 1
-        for c, h in ((2, "Vendor / Bill #"), (3, "Amount"), (4, "Date"),
-                     (5, "Where / status"), (6, "Paid?"), (7, "Description")):
+        for c, h in ((COL_GROUP, GROUP_HEAD[levels]), (COL_NUM, "Bill #"),
+                     (COL_CODE, "Cost code"), (COL_TYPE, "Cost type"),
+                     (COL_AMT, "Amount"), (COL_DATE, "Date"),
+                     (COL_NOTE, "Where / status"), (COL_PAID, "Paid?"),
+                     (COL_DESC, "Description")):
             wc(r, c, h, bold=True, color=NAVY).border = BOTTOM_BORDER
+        _hdr_rows.append(r)
         r += 1
-        byv = {}
-        for i in items:
-            byv.setdefault(i.get("vendor") or "(no vendor)", []).append(i)
-        for vend in sorted(byv, key=lambda v: -sum(i["amount"] for i in byv[v])):
-            vit = byv[vend]
-            wc(r, 2, f"{vend}  ({len(vit)})", bold=True, color=color)
-            wc(r, 3, round(sum(i["amount"] for i in vit), 2), fmt=CURR_FMT,
-               bold=True, color=color)
+        spec = LEVELS[levels]
+        depth_n = len(spec)
+
+        def _bill_row(i, lvl):
+            nonlocal r
+            if kind == "plain":                      # no PM reports (CP): neutral
+                blink = _qbo_txn_url(i.get("tx_type", ""), i.get("txn_id", ""), realm)
+                note, ncol, nlink = ("in this draw", "595959", None)
+            elif kind == "qbo":
+                blink = _qbo_txn_url(i.get("tx_type", ""), i.get("txn_id", ""), realm)
+                other = sorted(report_index.get(keyb(i), set())
+                               - ({pm_name} if pm_name else set()))
+                if other:
+                    note, ncol, nlink = (f"on {other[0]}", "BF8F00",
+                                         f"{reports_relpath}/{other[0]}")
+                elif not report_index.get(keyb(i)):
+                    note, ncol, nlink = ("⚠ on NO report - underbilled", RED, None)
+                else:
+                    note, ncol, nlink = ("on this report", "595959", None)
+            else:                                    # pm-only report line
+                blink = f"{reports_relpath}/{pm_name}" if pm_name else None
+                loc = qbo_loc.get(keyb(i))
+                if loc and loc != name:
+                    note, ncol, nlink = (f"-> in QBO {loc}", "375623", None)
+                elif loc == name:
+                    note, ncol, nlink = ("in this draw (count differs)", "595959", None)
+                else:
+                    note, ncol, nlink = ("⚠ not in QBO (orphan -> Reconciliations)",
+                                         RED, None)
+            if kind != "pm" and i.get("pushed"):
+                # the supplier agreed to carry it into this draw - say so
+                # on the row; the bill keeps its own date beside it
+                note = (i["pushed"] if note == "in this draw"
+                        else f"{i['pushed']} · {note}")
+                ncol, nlink = "BF8F00", None
+            idc(r, COL_NUM, i.get("num", ""), indent=1, link=blink)
+            if i.get("code"):
+                wc(r, COL_CODE, _ccode(i))
+                wc(r, COL_TYPE, _ctype(i))
+            wc(r, COL_AMT, i["amount"], fmt=CURR_FMT, color=color)
+            wdate(r, COL_DATE, i.get("date", ""))
+            wc(r, COL_NOTE, note, color=ncol, link=nlink)
+            wc(r, COL_DESC, _clean_cost_text(i.get("desc", ""), _known_words))
+            # AP payment state (the user 2026-08-05); PM report lines have
+            # no QBO bill to check.
+            if kind != "pm" and paid_map is not None:
+                _pd = paid_map.get(i.get("txn_id"))
+                if _pd is not None:
+                    # `_pd` is a (balance, total) TUPLE - always truthy - so
+                    # the colour comes from _pay_state, never from truthiness.
+                    _lbl, _col = _pay_state(_pd[0], _pd[1])
+                    wc(r, COL_PAID, _lbl or "", bold=True, color=_col or RED)
+            # COLLAPSED BY DEFAULT - the sheet opens on the top group totals,
+            # the way the Project Ledger does; click + to open one group
+            # (the user 2026-08-31).
+            ws.row_dimensions[r].outline_level = lvl
+            ws.row_dimensions[r].hidden = True
             r += 1
-            # DATE order within the vendor (the user 2026-09-02: "the
-            # transactions for the draws are not sorted by date"). A draw is a
-            # period, so its bills read as a run of dates; biggest-first was
-            # fine for one vendor in isolation and wrong for reading a month.
-            for i in sorted(vit, key=lambda x: (str(x.get("date") or ""),
-                                                -x["amount"])):
-                if kind == "plain":                      # no PM reports (CP): neutral
-                    blink = _qbo_txn_url(i.get("tx_type", ""), i.get("txn_id", ""), realm)
-                    note, ncol, nlink = ("in this draw", "595959", None)
-                elif kind == "qbo":
-                    blink = _qbo_txn_url(i.get("tx_type", ""), i.get("txn_id", ""), realm)
-                    other = sorted(report_index.get(keyb(i), set())
-                                   - ({pm_name} if pm_name else set()))
-                    if other:
-                        note, ncol, nlink = (f"on {other[0]}", "BF8F00",
-                                             f"{reports_relpath}/{other[0]}")
-                    elif not report_index.get(keyb(i)):
-                        note, ncol, nlink = ("⚠ on NO report — underbilled", RED, None)
-                    else:
-                        note, ncol, nlink = ("on this report", "595959", None)
-                else:                                    # pm-only report line
-                    blink = f"{reports_relpath}/{pm_name}" if pm_name else None
-                    loc = qbo_loc.get(keyb(i))
-                    if loc and loc != name:
-                        note, ncol, nlink = (f"→ in QBO {loc}", "375623", None)
-                    elif loc == name:
-                        note, ncol, nlink = ("in this draw (count differs)", "595959", None)
-                    else:
-                        note, ncol, nlink = ("⚠ not in QBO (orphan → Reconciliations)",
-                                             RED, None)
-                if kind != "pm" and i.get("pushed"):
-                    # the supplier agreed to carry it into this draw - say so
-                    # on the row; the bill keeps its own date beside it
-                    note = (i["pushed"] if note == "in this draw"
-                            else f"{i['pushed']} · {note}")
-                    ncol, nlink = "BF8F00", None
-                wc(r, 2, str(i["num"]) or "(no #)", indent=1, link=blink)
-                wc(r, 3, i["amount"], fmt=CURR_FMT, color=color)
-                wdate(r, 4, i.get("date", ""))
-                wc(r, 5, note, color=ncol, link=nlink)
-                wc(r, 7, _clean_cost_text(i.get("desc", ""), _known_words))
-                # AP payment state (the user 2026-08-05); PM report lines have
-                # no QBO bill to check.
-                if kind != "pm" and paid_map is not None:
-                    _pd = paid_map.get(i.get("txn_id"))
-                    if _pd is not None:
-                        # Use the colour _pay_state returns. `_pd` is a
-                        # (balance, total) TUPLE — always truthy — so the old
-                        # `GREEN if _pd else RED` painted UNPAID green.
-                        _lbl, _col = _pay_state(_pd[0], _pd[1])
-                        wc(r, 6, _lbl or "", bold=True, color=_col or RED)
-                # COLLAPSED BY DEFAULT — the sheet opens on vendor totals, the
-                # way the Project Ledger does; click + to open one vendor
-                # (the user 2026-08-31).
-                ws.row_dimensions[r].outline_level = 1
-                ws.row_dimensions[r].hidden = True
+
+        def _write(items_, d, parent_label=None):
+            """Group rows at depth d (outline level d, hidden below the top),
+            recursing to the bills at depth len(spec). DATE order within the
+            deepest group (the user 2026-09-02: a draw is a period, so its
+            bills read as a run of dates)."""
+            nonlocal r
+            if d == depth_n:
+                for i in sorted(items_, key=lambda x: (str(x.get("date") or ""),
+                                                       -x["amount"])):
+                    _bill_row(i, d)
+                return
+            key_fn, sort_fn = spec[d]
+            groups = {}
+            for i in items_:
+                groups.setdefault(key_fn(i), []).append(i)
+            gl = [{"label": k, "items": v,
+                   "total": round(sum(i["amount"] for i in v), 2)}
+                  for k, v in groups.items()]
+            for g in sorted(gl, key=sort_fn):
+                if parent_label is not None and g["label"] == parent_label:
+                    # Concrete > Concrete, Labor > Labor: the cost family IS
+                    # the category - no second row saying the same thing.
+                    _write(g["items"], d + 1, g["label"])
+                    continue
+                wc(r, COL_GROUP, f"{g['label']}  ({len(g['items'])})",
+                   bold=True, color=color, indent=d)
+                wc(r, COL_AMT, g["total"], fmt=CURR_FMT, bold=True, color=color)
+                if d:
+                    ws.row_dimensions[r].outline_level = d
+                    ws.row_dimensions[r].hidden = True
                 r += 1
+                _write(g["items"], d + 1, g["label"])
+
+        _write(items, 0)
         r += 1
 
     if has_pm:
         if matched:
-            detail(f"MATCHED — on PM report AND in QBO this draw  ({len(matched)})",
+            detail(f"MATCHED - on the PM report AND in QBO this draw  ({len(matched)})",
                    matched, GREEN, "qbo")
         if qbo_only:
-            detail(f"QBO ONLY — in QBO this draw, not on the PM report  ({len(qbo_only)})",
+            detail(f"QBO ONLY - in QBO this draw, not on the PM report  ({len(qbo_only)})",
                    qbo_only, RED, "qbo")
         if pm_only:
-            detail(f"PM ONLY — on the PM report, not in QBO this draw  ({len(pm_only)})",
+            detail(f"PM ONLY - on the PM report, not in QBO this draw  ({len(pm_only)})",
                    pm_only, "BF8F00", "pm")
-    elif qbo_bills:                                   # CP: just the draw's bills, by vendor
-        detail(f"BILLS THIS DRAW — grouped by vendor  ({len(qbo_bills)})",
+        if qbo_bills:
+            detail(f"ALL QBO BILLS THIS DRAW  -  by cost code, then vendor  ({len(qbo_bills)})",
+                   qbo_bills, NAVY, "qbo", levels="code")
+            detail(f"ALL QBO BILLS THIS DRAW  -  by cost type (concrete · materials · labor), "
+                   f"then vendor  ({len(qbo_bills)})", qbo_bills, NAVY, "qbo", levels="type")
+    elif qbo_bills:                                   # CP / no PM reports: the draw's bills, three cuts
+        detail(f"BILLS THIS DRAW  -  by vendor  ({len(qbo_bills)})",
                qbo_bills, NAVY, "plain")
+        detail(f"BILLS THIS DRAW  -  by cost code, then vendor  ({len(qbo_bills)})",
+               qbo_bills, NAVY, "plain", levels="code")
+        detail(f"BILLS THIS DRAW  -  by cost type (concrete · materials · labor), "
+               f"then vendor  ({len(qbo_bills)})", qbo_bills, NAVY, "plain", levels="type")
 
-    # A = gutter for the outline +/-; the table is CONTIGUOUS B..G with no
-    # reserved spill columns — those were a 64-character void on every row
-    # (the user 2026-08-31: "this is what i mean by extra space"). H..R exist
-    # only to give the merged KPI pairs above their width.
-    # Money first, date second, DESCRIPTION LAST so it spills right over the
-    # empty columns (the user 2026-08-31) — the same convention the
-    # Labor/Concrete ledger uses. Because it spills, G stays narrow, which is
-    # what keeps the merged KPI pairs above roughly even.
-    for _c, _w in zip("ABCDEFGHIJKLMNOPQRS",
-                      (3, 30, 17, 12, 20, 14, 15,
-                       15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15)):
-        ws.column_dimensions[_c].width = _w
+    # A = gutter for the outline +/-; the table is CONTIGUOUS B..J, DESCRIPTION
+    # LAST so it spills right over the empty columns (the user 2026-08-31).
+    # Widths are FITTED at write time (the owner 2026-09-16: "auto size when
+    # closing out" - the Bill # column had been 30 wide for a 12-character
+    # id): the tiles need 16 to show a seven-figure amount at their size, so that is
+    # the floor for B..J; the table rows set anything wider; J (Description)
+    # stays at the floor and spills.
+    ws.column_dimensions["A"].width = 3
+    _autofit(ws, 2, 9, _hdr_rows, [(_inv_band, r)], min_w=16.0, max_w=40.0)
+    ws.column_dimensions["J"].width = 16
     ws.sheet_properties.outlinePr.summaryBelow = False
-    _setup_print(ws, 12)
+    _setup_print(ws, 10)
     return r, missed_total, len(missed)
 
 
@@ -5228,6 +5362,8 @@ def _autofit(ws, first_col: int, last_col: int, header_rows: List[int],
                 longest = max(longest, max(len(l) for l in lines))
                 if cell.row in deepest and len(lines) > 1:
                     deepest[cell.row] = max(deepest[cell.row], len(lines))
+            elif isinstance(v, int) and cell.number_format == "0":
+                longest = max(longest, len(str(v)))      # an id, shown as plain digits
             elif isinstance(v, (int, float)):
                 longest = max(longest, len(f"{v:,.2f}"))
         if longest:
