@@ -8,6 +8,32 @@ manual close), RP (no draws — expenses → invoice → profit).
 
 ## DONE / FINALIZED
 
+- **ONE income line per draw for a job whose standing `draws` ruling says its invoices
+  combine (2026-09-16).** MFD192 bills three contracts (main / HUDSONWOOD / OFFSITE) as
+  2-3 invoices dated together every month; the draw sheets already summed them, but the
+  P&L sheet's Income detail and the Transactions INCOME list ran one line per invoice
+  (20 lines for 8 draws). The owner: "combine the income into one income only for this
+  project" - so it is gated by the job rulings register, kind `draws` (`combine: month`,
+  `shared/job_rulings.draw_combine`), never by a generic same-date rule.
+  `gather_transactions(combine_draws=, draw_names=)` emits one record per draw group with
+  the invoices riding along as `docs`; the Transactions sheet writes the draw as a bold
+  line (Inv # = the invoice numbers, memo = the draw name, summed columns, Paid? from the
+  combined balance) with its invoices collapsed under it on the [+], each still a QBO
+  link, and TOTAL INCOME sums the draw lines only (`=SUM(E7,E10,...)`); the P&L sheet's
+  Income detail writes the draw at outline level 1 and its invoices at level 2. A
+  one-invoice draw, the retainage-billed and untagged buckets, and every job without the
+  ruling render exactly as before. `_write_job_rulings` reads `job_rulings.findings()`
+  (new - every kind but `draws`), so a billing convention never prints in KNOWN LOSSES /
+  RULINGS. **Draw names now come from the memo's own month**
+  (`shared/draws.draw_month_from_memo`); the period END month only when no invoice names
+  one. MFD192's January window is its "February Draw", so the old rule filed it under
+  "Draw – January 2026" and left no May sheet; the sheets now run February..September.
+  Jobs with "Draw #N" memos, or whose memo month equals the period-end month, are
+  unchanged. Verified on the regenerated MFD192 workbook: 22 invoices (2 voided dropped)
+  -> 8 draw lines, Transactions TOTAL INCOME ties to the per-invoice sum, the QBO P&L
+  through 09/01 ties once the 09/07 invoice is added back, `assert_clean` passes. The
+  ledger was deliberately not changed (the owner: "leave the ledger alone").
+
 - **Draw period tag parser moved to `shared/draws` (2026-09-15).** `DRAW_PERIOD_RE` is now an
   alias of `shared.draws.PERIOD_TAG_RE`, which accepts the tag with OR without parentheses
   (`Draw #1 - Period:05/21/2026 - 06/20/2026` as typed on the CP785/CP997 draws). Draw grouping

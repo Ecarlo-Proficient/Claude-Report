@@ -59,7 +59,7 @@ shared/                the ONLY importable common code
 ├─ draw_moves.py       the PUSH: a bill carried into a later draw by agreement — <CompanyHealth>/draw_moves.json (project-pnl ↔ bill-tracker ↔ ledger)
 ├─ rp_invoicing.py     one-invoice vs scope-based RP job, off the invoice memos (project-pnl ↔ one-offs/rp_stage_scan)
 ├─ schedule_index.py   job # -> last day on a daily crew schedule, every 'Main Schedule' parsed once into a JSON cache (Test - RP CATEGORY; 2026-09-09)
-├─ job_rulings.py      the RULINGS: a known loss / accepted overrun the owner settled once — <CompanyHealth>/job_rulings.json (wip readers KNOWN: note ↔ wip_qc auto sign-off ↔ project-pnl block ↔ ledger over-budget rule + project page)
+├─ job_rulings.py      the RULINGS: a known loss / accepted overrun the owner settled once — <CompanyHealth>/job_rulings.json (wip readers KNOWN: note ↔ wip_qc auto sign-off ↔ project-pnl block ↔ ledger over-budget rule + project page) · kind `draws` = how a job BILLS, not a finding (MFD192: 2-3 invoices per draw) → project-pnl writes ONE income line per draw; findings() keeps it out of every KNOWN: note
 ├─ bizdev_cut.py      the ONE test for a BUSINESS-DEVELOPMENT CUT (their draw/fee/estimating/staff hours = overhead, only what they fronted for the job is job cost) — <CompanyHealth>/bizdev_cut.json (project-pnl keeps it out of job cost ↔ the division Overview built from those workbooks ↔ the owner's own cut analysis)
 ├─ takeoff_etc.py      blank ETC → takeoff cost sheet (rp_wip_reader ↔ schedule preview)
 ├─ xlsx_verify.py      Excel-corruption gate: every xlsx writer calls assert_clean before handing over

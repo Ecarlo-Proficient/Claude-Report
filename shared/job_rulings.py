@@ -22,7 +22,9 @@ Who reads it (ONE register, so every reader tells the same story):
   project-pnl       -> the KNOWN LOSSES / RULINGS block on the Job P&L sheet
                        (RP card and the CP/MFD P&L sheet alike).
   ledger            -> `over_budget_accepted` on the project row (the Over budget
-                       rule skips it) + the rulings shown on the project page.
+                       rule skips it) + the rulings shown on the project page;
+                       a `draws` ruling folds the project P&L's invoices into
+                       ONE income line per draw (dashboard `_combine_draws`).
 
 Register format:
 {
@@ -36,7 +38,13 @@ Register format:
   ]
 }
   on      the date the ruling was made (YYYY-MM-DD)
-  kind    loss | overrun | scope | note      (loss = money we will not get back)
+  kind    loss | overrun | scope | note | draws
+          (loss = money we will not get back; draws = how the job BILLS, not a
+           finding - it never prints as KNOWN:, see NON_FINDING_KINDS)
+  combine (draws only) "month": every invoice dated to the same draw month is
+          ONE draw. MFD192 bills three contracts (main / HUDSONWOOD / OFFSITE)
+          as 2-3 invoices per draw; the owner reads that as one income line
+          (2026-09-16: "combine the income into one income only for this project")
   amount  optional $ the ruling concerns (the bid line, the write-down ...)
   line    the bid / draw line it concerns, as written on the document
   source  the document (proposal date, draw #, CO #)
@@ -114,6 +122,30 @@ def known_losses(proj, path: Optional[Path] = None) -> List[dict]:
     return [x for x in for_job(proj, path) if str(x.get("kind", "")).lower() == "loss"]
 
 
+# A ruling is normally a FINDING the owner settled (loss / overrun / scope / note)
+# and prints wherever the job is reported. `draws` is the one kind that is not:
+# it says how the job BILLS ("combine": "month" = the invoices dated to the same
+# draw month are ONE draw), so the ledger's project P&L folds them into one
+# income line. Nothing went wrong on the job, so it never prints as a KNOWN:
+# note on the WIP tabs, in the Excel P&L's rulings block, or in the page's
+# Known block - those read findings(), not for_job().
+NON_FINDING_KINDS = frozenset({"draws"})
+
+
+def findings(proj, path: Optional[Path] = None) -> List[dict]:
+    """The rulings that are FINDINGS on this job - every kind but `draws`."""
+    return [x for x in for_job(proj, path)
+            if str(x.get("kind", "")).lower() not in NON_FINDING_KINDS]
+
+
+def draw_combine(proj, path: Optional[Path] = None) -> Optional[dict]:
+    """The `draws` ruling on this job ({"combine": "month", "note": ...}), or None."""
+    for x in for_job(proj, path):
+        if str(x.get("kind", "")).lower() == "draws":
+            return x
+    return None
+
+
 def _accepted_checks(ruling: dict) -> frozenset:
     out = set()
     for a in ruling.get("accept") or ():
@@ -167,7 +199,7 @@ def signoff_record(proj, check: str, path: Optional[Path] = None) -> Optional[di
 
 def note_segments(proj, path: Optional[Path] = None) -> List[str]:
     """The NOTES-column segments for a job: 'KNOWN: <summary>' per ruling."""
-    return [NOTE_PREFIX + summary(x) for x in for_job(proj, path)]
+    return [NOTE_PREFIX + summary(x) for x in findings(proj, path)]
 
 
 def annotate_rows(rows, attr: str = "project_num", path: Optional[Path] = None) -> int:
@@ -177,7 +209,7 @@ def annotate_rows(rows, attr: str = "project_num", path: Optional[Path] = None) 
     n = 0
     for row in rows or ():
         job = getattr(row, attr, None)
-        rl = for_job(job, path)
+        rl = findings(job, path)         # a `draws` ruling is not a note on the WIP
         setattr(row, "rulings", rl)
         if not rl:
             continue

@@ -1989,6 +1989,8 @@ def gather_transactions(
     account_names: Optional[Dict[str, str]] = None,
     acct_type: Optional[Dict[str, str]] = None,
     item_account: Optional[Dict[str, str]] = None,
+    combine_draws: Optional[dict] = None,
+    draw_names: Optional[Dict[str, str]] = None,
 ) -> dict:
     """
     Every project transaction, for the Transactions sheet (the user 2026-06-22 — show
@@ -2018,8 +2020,9 @@ def gather_transactions(
                                "withheld": 0.0, "billed_ret": 0.0,
                                "not_billed_ret": amt})
             continue
+        recs = []
         for inv in grp.get("invoices", []):
-            income.append({
+            recs.append({
                 "doc": inv.get("doc_num", ""), "id": inv.get("id", ""),
                 "date": inv.get("date", ""),
                 "memo": inv.get("memo", ""),
@@ -2027,6 +2030,31 @@ def gather_transactions(
                 "billed": float(inv.get("gross", 0) or 0),
                 "withheld": float(inv.get("retainage", 0) or 0),
                 "billed_ret": float(inv.get("retainage_billed", 0) or 0)})
+        # ONE record per draw when the job's standing `draws` ruling says its
+        # invoices combine (job_rulings.json - MFD192 bills three contracts,
+        # main / HUDSONWOOD / OFFSITE, as 2-3 invoices dated together every
+        # month; the owner 2026-09-16: "combine the income into one income only
+        # for this project"). The invoices ride along as `docs`, so the
+        # Transactions and P&L sheets fold them under their draw, each still a
+        # QBO link. A one-invoice draw stays a plain line; the special buckets
+        # (retainage billed, untagged) are not draws and never combine.
+        if combine_draws and not k.startswith("__") and len(recs) > 1:
+            recs.sort(key=lambda x: _parse_date(x.get("date", "")) or dt.date.min,
+                      reverse=True)
+            _dates = [d for d in (_parse_date(x.get("date", "")) for x in recs) if d]
+            _name = (draw_names or {}).get(k) or k
+            income.append({
+                "draw": _name,
+                "doc": ", ".join(x["doc"] for x in recs), "id": "",
+                "date": min(_dates).isoformat() if _dates else recs[-1].get("date", ""),
+                "memo": f"{_name} · {len(recs)} invoices combined",
+                "balance": round(sum(x["balance"] for x in recs), 2),
+                "billed": round(sum(x["billed"] for x in recs), 2),
+                "withheld": round(sum(x["withheld"] for x in recs), 2),
+                "billed_ret": round(sum(x["billed_ret"] for x in recs), 2),
+                "docs": recs})
+        else:
+            income.extend(recs)
     income.sort(key=lambda x: _parse_date(x.get("date", "")) or dt.date.min, reverse=True)
 
     cogs: Dict[str, list] = {}
@@ -2672,20 +2700,26 @@ def build_sheet_transactions(
     # retainage-not-billed rows are shown in their own block below the income
     # total (they are NOT billed income), so keep them out of the summed rows.
     nb_rows = [inv for inv in tx["income"] if inv.get("not_billed_ret")]
-    for inv in tx["income"]:
-        if inv.get("not_billed_ret"):
-            continue
-        ic = idcell(r, 1, inv.get("doc", ""))
-        url = _qbo_txn_url("invoice", inv.get("id", ""), realm)
+    top_rows: List[int] = []     # what TOTAL INCOME sums - a combined draw counts once
+    any_draw = False
+
+    def _income_row(rr, inv, *, sub=False, head=False):
+        """One income line. head = a combined draw (bold, no link of its own - the
+        invoices follow it, collapsed, each with its QBO link); sub = one of them."""
+        ic = idcell(rr, 1, inv.get("doc", ""), indent=sub)
+        url = None if head else _qbo_txn_url("invoice", inv.get("id", ""), realm)
         if url:
             ic.hyperlink = url
             ic.font = Font(size=SZ, color=LINK, underline="single")
-        ddate(r, 2, inv.get("date", ""))
-        cell(r, 3, inv.get("memo", ""))
-        cell(r, 4, float(inv.get("billed", 0) or 0), fmt=CURR_FMT)
-        cell(r, 5, float(inv.get("withheld", 0) or 0), fmt=CURR_FMT, color="C0504D")
-        cell(r, 6, f"=D{r}-E{r}+G{r}", bold=True, fmt=CURR_FMT)     # NET = TotalAmt
-        cell(r, 7, float(inv.get("billed_ret", 0) or 0), fmt=CURR_FMT, color=GREEN)
+        elif head:
+            ic.font = Font(size=SZ, bold=True)
+        ddate(rr, 2, inv.get("date", ""))
+        grey = "595959" if sub else "000000"
+        cell(rr, 3, inv.get("memo", ""), bold=head, color=grey)
+        cell(rr, 4, float(inv.get("billed", 0) or 0), fmt=CURR_FMT, bold=head, color=grey)
+        cell(rr, 5, float(inv.get("withheld", 0) or 0), fmt=CURR_FMT, bold=head, color="C0504D")
+        cell(rr, 6, f"=D{rr}-E{rr}+G{rr}", bold=True, fmt=CURR_FMT, color=grey)   # NET = TotalAmt
+        cell(rr, 7, float(inv.get("billed_ret", 0) or 0), fmt=CURR_FMT, bold=head, color=GREEN)
         # AR payment state (the user 2026-08-05): Balance 0 = collected;
         # part-paid shows what is still open (the user 2026-08-27).
         _lbl, _col = _pay_state(inv.get("balance"),
@@ -2693,12 +2727,31 @@ def build_sheet_transactions(
                                 + float(inv.get("billed_ret", 0) or 0)
                                 - float(inv.get("withheld", 0) or 0))
         if _lbl:
-            cell(r, 8, _lbl, bold=True, color=_col)
+            cell(rr, 8, _lbl, bold=True, color=_col)
+
+    for inv in tx["income"]:
+        if inv.get("not_billed_ret"):
+            continue
+        # A combined draw (the job's standing `draws` ruling - MFD192): ONE line
+        # for the draw, its invoices collapsed under it on the [+].
+        subs = inv.get("docs") or []
+        _income_row(r, inv, head=bool(subs))
+        top_rows.append(r)
         r += 1
+        for sub in subs:
+            any_draw = True
+            _income_row(r, sub, sub=True)
+            ws.row_dimensions[r].outline_level = 1
+            ws.row_dimensions[r].hidden = True
+            r += 1
     cell(r, 1, "TOTAL INCOME", bold=True, border=TOP_BORDER)
     for c in (4, 5, 6, 7):
-        t = cell(r, c, f"=SUM({get_column_letter(c)}{istart}:{get_column_letter(c)}{r-1})"
-                 if r > istart else 0, bold=True, fmt=CURR_FMT, border=TOP_BORDER)
+        L = get_column_letter(c)
+        if any_draw:     # the draw lines only - never the invoices folded under them
+            _f = "=SUM(" + ",".join(f"{L}{rr}" for rr in top_rows) + ")"
+        else:
+            _f = f"=SUM({L}{istart}:{L}{r-1})" if r > istart else 0
+        t = cell(r, c, _f, bold=True, fmt=CURR_FMT, border=TOP_BORDER)
     refs["billed"] = f"Transactions!D{r}"
     refs["withheld"] = f"Transactions!E{r}"
     refs["net"] = f"Transactions!F{r}"
@@ -3715,32 +3768,59 @@ def build_sheet_pl(
         # p&l totals"). Total on the bar, detail underneath — same shape as
         # COGS. Amounts are each invoice's CONTRIBUTION to the bar: gross work
         # billed + retainage billed back, or the retainage moved by JE.
-        for _inv in sorted(income_rows or [],
-                           key=lambda i: str(i.get("date") or ""), reverse=True):
-            _amt = (float(_inv.get("billed", 0) or 0)
-                    + float(_inv.get("billed_ret", 0) or 0)
-                    + float(_inv.get("not_billed_ret", 0) or 0))
-            if abs(_amt) < 0.005:
-                continue
-            _doc = str(_inv.get("doc") or _inv.get("id") or "")
+        def _inv_amt(iv):
+            return (float(iv.get("billed", 0) or 0)
+                    + float(iv.get("billed_ret", 0) or 0)
+                    + float(iv.get("not_billed_ret", 0) or 0))
+
+        def _inv_label(iv):
+            _doc = str(iv.get("doc") or iv.get("id") or "")
             # One clean line: memos carry an embedded newline + the Period tag,
             # and repeat the project name on every invoice. Drop all three —
             # the tag is the draw's identity, already the row above it.
-            _raw = DRAW_PERIOD_RE.sub("", str(_inv.get("memo") or ""))
+            _raw = DRAW_PERIOD_RE.sub("", str(iv.get("memo") or ""))
             _raw = re.sub(r"\s+", " ", _raw).strip(" -–·")
             _memo = _clean_cost_text(_raw, _project_name_words(cust_info.get("name", "")))
-            _lbl = f"#{_doc} — {_memo}" if _memo else f"#{_doc}"
-            _ir = row(_lbl, _amt, indent=1, size=BASE_SIZE - 1, color="375623")
+            return f"#{_doc} — {_memo}" if _memo else f"#{_doc}"
+
+        def _inv_link(rr, iv):
+            _iu = _qbo_txn_url("invoice", iv.get("id", ""), realm)
+            if _iu:
+                _c = ws.cell(row=rr, column=1)
+                _c.hyperlink = _iu
+                _c.font = Font(size=BASE_SIZE - 1, color=LINK, underline="single")
+
+        for _inv in sorted(income_rows or [],
+                           key=lambda i: str(i.get("date") or ""), reverse=True):
+            _amt = _inv_amt(_inv)
+            if abs(_amt) < 0.005:
+                continue
+            # A combined draw (the job's standing `draws` ruling - MFD192 bills
+            # three contracts as 2-3 invoices dated together; the owner
+            # 2026-09-16: "combine the income into one income") is ONE line;
+            # its invoices sit one level deeper, each still a QBO link.
+            _subs = _inv.get("docs") or []
+            if _subs:
+                _lbl = (f"{_inv.get('draw')} - {len(_subs)} invoices: "
+                        + " · ".join("#" + str(x.get("doc") or x.get("id") or "")
+                                     for x in _subs))
+            else:
+                _lbl = _inv_label(_inv)
+            _ir = row(_lbl, _amt, indent=1, size=BASE_SIZE - 1, color="375623",
+                      bold=bool(_subs))
             # GROUPED UNDER INCOME and collapsed (the owner 2026-09-04: "group
             # the invoices under income") - the total leads, the draws that make
             # it up open on the [+], the same way the cost detail reads.
             ws.row_dimensions[_ir].outline_level = 1
             ws.row_dimensions[_ir].hidden = True
-            _iu = _qbo_txn_url("invoice", _inv.get("id", ""), realm)
-            if _iu:
-                _c = ws.cell(row=_ir, column=1)
-                _c.hyperlink = _iu
-                _c.font = Font(size=BASE_SIZE - 1, color=LINK, underline="single")
+            if not _subs:
+                _inv_link(_ir, _inv)
+            for _s in _subs:
+                _sr = row(_inv_label(_s), _inv_amt(_s), indent=2,
+                          size=BASE_SIZE - 1, color="375623")
+                ws.row_dimensions[_sr].outline_level = 2
+                ws.row_dimensions[_sr].hidden = True
+                _inv_link(_sr, _s)
         cogs_row = acct_lines("Cost of Goods Sold", tx_refs.get("cogs_accts") or [],
                               "Total Cost of Goods Sold", COGS_FILL)
         _qbo_link(cogs_row, _costs_url)
@@ -6271,7 +6351,7 @@ def _write_job_rulings(ws, r: int, proj: str, val_col: int, sz: int, hsz: int,
     First case RP6586: the 8" x 6' wall on the 2/4/2026 proposal ($23,180)
     fell and was redone at our cost. Writes nothing when the job has no
     ruling. Returns the next free row (one blank row after the box)."""
-    rl = job_rulings.for_job(proj)
+    rl = job_rulings.findings(proj)      # findings only - a `draws` ruling is billing shape, not a loss
     if not rl:
         return r
     top = r
@@ -7247,9 +7327,22 @@ def generate_project_pnl(
         elif draw_no is not None:
             name = f"Draw {draw_no}"
         else:
-            month = income_groups[lbl]["period"][1].strftime("%B %Y")  # period END
+            # The draw's month is the memo's own wording ("February Draw 2026" -
+            # shared/draws.draw_month_from_memo, the one parser); the period END
+            # month only when no invoice names one. MFD192 bills its January
+            # window as the "February Draw": the period-end rule filed it under
+            # January, one month off the name the GC and the owner use, and left
+            # no May sheet at all (the owner 2026-09-16, "one draw").
+            _ym = None
+            for inv in income_groups[lbl].get("invoices") or []:
+                _ym = draws.draw_month_from_memo(inv.get("memo", ""), None)
+                if _ym:
+                    break
+            month = (dt.date(_ym[0], _ym[1], 1) if _ym
+                     else income_groups[lbl]["period"][1]).strftime("%B %Y")
             name = f"Draw – {month}"
-            ui_warn(f"no draw # in memo for {lbl} — labeled '{name}' by date")
+            ui_warn(f"no draw # in memo for {lbl} - labeled '{name}' by "
+                    f"{'the memo' if _ym else 'date'}")
         draw_rows.append((name, lbl, net, costs, held, billed))
         cov_s = f"{net / costs * 100:.0f}%" if costs else "—"
         ui_event(f"{name}  {_DIM}{lbl}{_RESET}  billed ${net:,.0f} · "
@@ -7313,9 +7406,23 @@ def generate_project_pnl(
     # Transactions sheet FIRST — its subtotal cells are the source the P&L's
     # Income/Retainage/COGS SUM-link to (the user 2026-06-22). Build it before the
     # P&L so the cell refs exist.
+    # ONE income line per draw when the job's standing `draws` ruling says its
+    # invoices combine (job_rulings.json - MFD192: main / HUDSONWOOD / OFFSITE
+    # contracts, 2-3 invoices dated together every month; the owner 2026-09-16,
+    # "combine the income into one income only for this project"). The draw
+    # sheets already sum them; this folds the P&L's Income detail and the
+    # Transactions INCOME list the same way, invoices collapsed under the draw.
+    _combine = job_rulings.draw_combine(proj)
     tx = gather_transactions(income_groups, bills, purchases, cust_info["id"],
                              parent_map, account_names=account_fqn,
-                             acct_type=acct_type, item_account=item_account)
+                             acct_type=acct_type, item_account=item_account,
+                             combine_draws=_combine,
+                             draw_names={lbl: nm for nm, lbl, *_ in draw_rows})
+    if _combine:
+        _nd = sum(1 for x in tx["income"] if x.get("docs"))
+        _ni = sum(len(x["docs"]) for x in tx["income"] if x.get("docs"))
+        ui_event(f"income combined per draw (standing ruling): {_ni} invoices -> "
+                 f"{_nd} draws", icon="⚑", color=_YEL)
     tx_refs = build_sheet_transactions(wb, proj, cust_info, wip_info, tx, as_of,
                                        paid_map=paid_map,
                                        realm=company_id)
