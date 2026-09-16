@@ -3357,7 +3357,15 @@ def _gather_open_sources(root: Path, inbox: Path) -> List[Path]:
         for mon in sorted(vend.iterdir()):
             if not mon.is_dir() or re.search(r"\bDONE\b", mon.name, re.I):
                 continue                      # skip finalized months
-            for f in sorted(mon.iterdir()):
+            month_files = list(mon.iterdir())
+            # Only re-check months that were actually reconciled before. A month
+            # with source statements but NO reconciliation was never machine-
+            # reconciled (e.g. an unsupported vendor format handled by hand) -
+            # refreshing it just re-fails, so skip it.
+            if not any(f.name.startswith("Statement_Reconciliation_")
+                       and f.suffix.lower() == ".xlsx" for f in month_files):
+                continue
+            for f in sorted(month_files):
                 if not f.is_file():
                     continue
                 n = f.name
