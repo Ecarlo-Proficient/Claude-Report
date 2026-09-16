@@ -4,6 +4,21 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-16 · **Vendor page = the Bill Tracker filtered to the vendor; client page = the Open invoices filtered to the
+  client (owner: "i need to see the invoice it's associated to and if it's been paid. basically the bill tracker within
+  here ... vendors where i can dial in by vendor but also have bill tracker be able to filter. same thing for open
+  invoices")**. `billRow` gained an **Invoice #** cell (`_billInvCell`): the draw the Bill Tracker matched the bill to,
+  opening the invoice page, with the invoice's LIVE QuickBooks state - **GC paid** or **GC owes $X** (from the
+  `inv_ar_status` / `inv_balance` every tracker row already carried); the Bill Tracker grid shows the column too. The
+  vendor name on a tracker row opens the vendor page, the client name opens the client page. **Vendor page** (Bills
+  view): the tracker's own rows for that vendor (`BILLS` filtered, `billRow` minus the vendor column) - All / Unpaid /
+  Paid with counts, an invoice filter (Any · GC paid · GC owes · No invoice yet), project bands (billed · open · bills ·
+  paid · invoices) or a flat list, and **Open in Bill Tracker** (sets the tracker's vendor multi-select to this vendor).
+  Subs with no tracker rows keep the QuickBooks-bills view. **Client page** (`openClientPage`, from a Customer Center
+  row or a client name on a bill): the aging grid's own rows for that client (`invRow` minus the client column, plus
+  Amount and Status - Paid mm/dd / Nd past due / Open), Open invoices · All invoices (paid included, the shared
+  `/api/invoices/all` cache), project bands, the bucket totals, and **Open in Invoices** (sets the tracker's client
+  multi-select). No server change - both pages read the data the trackers already load.
 - 2026-09-16 · **Project page, the funding section rebuilt on the owner's review (2026-09-15: "Project Ledger needs
   a lot of work")** - `openProjectPage` section 2 in `app.js`, `_fetch_project_page` + three helpers in `dashboard.py`.
   (1) **Draws are keyed by the DRAW the invoices belong to, not by the matched bill**: every invoice on the job is

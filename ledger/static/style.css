@@ -1715,3 +1715,20 @@ td.vp-projs a.vp-proj:hover { text-decoration: underline; }
 .rr-pend td.now { font-weight: 700; }
 .rr-pend td.src { color: var(--text-dim); }
 .rr-pend tr.rev td { background: color-mix(in srgb, var(--neg) 6%, transparent); }
+
+/* ── vendor page = the Bill Tracker filtered to the vendor; client page = the Open invoices filtered to the client (2026-09-16) ── */
+.bill-vendor.lnk, .bill-name.lnk { cursor: pointer; }
+.bill-vendor.lnk:hover, .bill-name.lnk:hover { color: var(--accent); text-decoration: underline; }
+td.bill-inv { white-space: nowrap; }
+td.bill-inv .st { margin-left: 8px; font-size: .9em; }
+.vp-grid { font-size: .88em; }
+.vp-grid .bill-vendor { font-weight: 600; }
+.vp-grid .bill-name { color: var(--text-dim); margin-left: 6px; }
+.vp-grid .bill-age { color: var(--text-dim); font-size: .82em; margin-left: 6px; white-space: nowrap; }
+.vp-grid .cell.open-zero { color: var(--text-dim); }
+.vp-grid tbody tr.bill-row:hover { background: var(--row-hover); }
+.vp-grid td.status-col, .vp-grid .st { font-weight: 600; }
+.vp-grid tr.bill-row.risk > td:first-child { box-shadow: inset 3px 0 0 var(--neg); }
+.cp-tools { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 2px 0 12px; }
+.cp-projs { margin-left: auto; font-size: .86em; }
+.cp-grid td.status-col { white-space: nowrap; }

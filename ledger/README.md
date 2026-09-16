@@ -239,6 +239,16 @@ python3 ledger/rp_review.py --answers       # what the owner / PM answered, ever
 Endpoints: `/api/review?div=RP|CP|MFD`, `/api/review/mark`, `/api/review/refresh` (`{div}`); the old
 `/api/rp/*` routes stay as aliases.
 
+### Vendor page and client page (2026-09-16)
+
+A vendor's page IS the Bill Tracker filtered to that vendor - the same rows and columns, every bill with
+its project, client, the **invoice (draw) it is matched to and whether the GC has paid it**, our pay
+status, lien and approval; All / Unpaid / Paid, an invoice filter (GC paid · GC owes · no invoice yet),
+project bands, and **Open in Bill Tracker** to carry the vendor into the tracker's own filters. A client's
+page IS the Open invoices grid filtered to that client (Open · All incl. paid, project bands, bucket
+totals) with **Open in Invoices**. On the trackers, the vendor name opens the vendor page and the
+client name opens the client page.
+
 ### The project page's funding section (2026-09-16)
 
 Every invoice on the job is income. Invoices that name the same draw month (MFD192 bills its base,
