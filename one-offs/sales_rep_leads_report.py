@@ -5,9 +5,16 @@ sales_rep_leads_report.py - one rep's live outreach book, as a shareable page.
 WHY
 Estimators need to know which builders/GCs an outreach rep already has a thread
 with, so nobody cold-calls an account that is mid-conversation. This renders that
-book from the ledger (fed by the Notion Customer List) as a single self-contained
-HTML file: the accounts in active conversation as detail cards, then a searchable
-A-Z index of the whole working set.
+book from the ledger (fed by the Notion Customer List) as a PDF: the accounts in
+active conversation as detail cards, then a searchable A-Z index of the whole
+working set.
+
+OUTPUT FORMAT
+`--out` decides it, by suffix. `.pdf` is the deliverable (the owner 2026-08-31,
+"html format is the wrong format for this") - the page is rendered through
+headless Chrome and the intermediate HTML is written to a temp dir and deleted,
+so no build leftovers land next to the report. `.html` still works for debugging
+the markup, but nothing downstream expects it.
 
 ATTRIBUTION
 A rep's working set = customer rows whose Notion "Last edited by" is that rep
@@ -15,21 +22,26 @@ A rep's working set = customer rows whose Notion "Last edited by" is that rep
 --rep exactly as Notion spells it; run --list-reps to see the options.
 
 SAFETY
-  * READ-ONLY on the ledger. Writes one HTML file and nothing else.
+  * READ-ONLY on the ledger. Writes one output file and nothing else.
   * No names are hard-coded here - the rep is a runtime argument.
 
 USAGE
   python3 one-offs/sales_rep_leads_report.py --list-reps
-  python3 one-offs/sales_rep_leads_report.py --rep "<Notion display name>" --out ~/path/Report.html
+  python3 one-offs/sales_rep_leads_report.py --all --out ~/path/Report.pdf
+  python3 one-offs/sales_rep_leads_report.py --rep "<Notion display name>" --out ~/path/Report.pdf
 """
 from __future__ import annotations
 
 import argparse
 import datetime as dt
 import html
+import json
 import re
+import shutil
 import sqlite3
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -179,6 +191,80 @@ def fetch(db: Path, rep: str | None):
     return rows, touches, live
 
 
+# ── week-over-week: what is NEW since the last report ────────────────────────
+# The report is written in place, so there is no old file to diff. Instead each
+# run drops a snapshot {customer_key: last_contacted} and the next run diffs
+# against it - that is the only way to answer "did they reach out to anyone new
+# since the list I already sent". Snapshots live outside the repo with the other
+# tool state; they are disposable, and losing them costs one week of delta.
+SNAP_DIR = Path.home() / "Library" / "Application Support" / "Proficient" / "sales-report"
+SNAP_KEEP = 12          # ~3 months of weeklies
+FALLBACK_WINDOW = 7     # days, when there is no prior snapshot to diff
+
+
+def _scope(rep: str | None) -> str:
+    """Snapshot key - per rep, so a rep's book and the all-reps list keep separate history."""
+    return "all" if not rep else (re.sub(r"[^a-z0-9]+", "-", rep.lower()).strip("-") or "rep")
+
+
+def load_prev_snapshot(rep: str | None, today: dt.date):
+    """Newest snapshot from BEFORE today -> (date, {key: last_contacted}), else (None, None).
+
+    Same-day files are skipped so re-running the report twice on Monday still
+    diffs against last Monday rather than against the run five minutes ago."""
+    if not SNAP_DIR.is_dir():
+        return None, None
+    stamp = today.isoformat()
+    best = None
+    for f in SNAP_DIR.glob(f"{_scope(rep)}-*.json"):
+        d = f.stem.split("-", 1)[1]
+        if d < stamp and (best is None or d > best[0]):
+            best = (d, f)
+    if not best:
+        return None, None
+    try:
+        data = json.loads(best[1].read_text())
+    except (OSError, json.JSONDecodeError):
+        return None, None
+    return dt.date.fromisoformat(best[0]), data.get("accounts", {})
+
+
+def save_snapshot(rep: str | None, rows, today: dt.date) -> None:
+    """Record this week's state, then prune to the last SNAP_KEEP."""
+    SNAP_DIR.mkdir(parents=True, exist_ok=True)
+    payload = {"date": today.isoformat(), "rep": rep,
+               "accounts": {r["customer_key"]: (r["last_contacted"] or "") for r in rows}}
+    (SNAP_DIR / f"{_scope(rep)}-{today.isoformat()}.json").write_text(json.dumps(payload), encoding="utf-8")
+    olds = sorted(SNAP_DIR.glob(f"{_scope(rep)}-*.json"))
+    for f in olds[:-SNAP_KEEP]:
+        try:
+            f.unlink()
+        except OSError:
+            pass
+
+
+def compute_delta(rows, prev_date, prev_map, today: dt.date):
+    """Split the book into what is new since the last report and what is not.
+
+    `added`   - accounts absent from the last report entirely (a brand-new name).
+    `touched` - accounts already on it whose last-contact date has since moved.
+    With no prior snapshot neither is knowable, so we fall back to a plain
+    N-day window on last_contacted and say so on the page."""
+    if prev_map is None:
+        cut = today - dt.timedelta(days=FALLBACK_WINDOW)
+        touched = [r for r in rows
+                   if r["last_contacted"] and dt.date.fromisoformat(r["last_contacted"]) > cut]
+        return [], touched, None
+    added, touched = [], []
+    for r in rows:
+        k = r["customer_key"]
+        if k not in prev_map:
+            added.append(r)
+        elif (r["last_contacted"] or "") > (prev_map[k] or ""):
+            touched.append(r)
+    return added, touched, prev_date
+
+
 def _tag(label: str, cls: str) -> str:
     return '<span class="tag %s">%s</span>' % (cls, label) if label else ""
 
@@ -187,7 +273,48 @@ def _log_li(date_txt: str, note: str) -> str:
     return '<li><span class="d">%s</span>%s</li>' % (date_txt or "-", note)
 
 
-def render(rep: str | None, rows, touches, live, today: dt.date) -> str:
+def _new_block(delta, live, today: dt.date, rep: str | None) -> str:
+    """The 'what changed since the list you already sent' panel, top of the report."""
+    e = html.escape
+    if delta is None:
+        return ""
+    added, touched, prev_date = delta
+
+    def li(r, kind: str) -> str:
+        label, _cls = div_tag(r["division"])
+        bits = [f'<b>{e(nice(r["name"]))}</b>']
+        if label:
+            bits.append(f'<span class="meta">{e(label)}</span>')
+        bits.append(f'<span class="meta">{e(r["sales_status"] or "-")}</span>')
+        if r["last_contacted"]:
+            bits.append(f'<span class="meta">{e(fmt_date(r["last_contacted"]))}</span>')
+        if not rep and r["last_edited_by"]:
+            bits.append(f'<span class="meta">by {e(r["last_edited_by"])}</span>')
+        if r["customer_key"] in live:
+            bits.append('<span class="mini">live client</span>')
+        return "<li>" + " &middot; ".join(bits) + "</li>"
+
+    groups = []
+    if added:
+        groups.append('<div class="grp"><span class="lbl">New accounts &middot; %d</span><ul>%s</ul></div>'
+                      % (len(added), "".join(li(r, "added") for r in added)))
+    if touched:
+        groups.append('<div class="grp"><span class="lbl">Fresh outreach &middot; %d</span><ul>%s</ul></div>'
+                      % (len(touched), "".join(li(r, "touched") for r in touched)))
+    if not groups:
+        body = '<p class="none">Nothing new this week.</p>'
+    else:
+        body = "".join(groups)
+    # NOTE: nothing about snapshots, fallbacks or how the delta was derived belongs on
+    # this page (the owner 2026-08-31). It is read by people outside the company - the
+    # tool's own bookkeeping is not their business and reads as an excuse. Header states
+    # the period; that is all the reader needs.
+    head = ("What&rsquo;s new since %s" % prev_date.strftime("%m/%d/%Y")) if prev_date \
+        else "New this week"
+    return '<div class="new"><h3>' + head + "</h3>" + body + "</div>"
+
+
+def render(rep: str | None, rows, touches, live, today: dt.date, delta=None) -> str:
     e = html.escape
     ordered = sorted(
         rows,
@@ -316,6 +443,16 @@ def render(rep: str | None, rows, touches, live, today: dt.date) -> str:
  .mini{{font-size:9.5px;font-weight:700;color:var(--dead);background:#fdecec;padding:1px 5px;border-radius:4px;
   margin-left:6px;text-transform:uppercase;letter-spacing:.03em;vertical-align:middle;
   white-space:nowrap;display:inline-block;}}
+ .new{{border:1px solid #cfe0cf;background:#f5faf5;border-radius:8px;padding:14px 16px;margin:0 0 22px;}}
+ .new h3{{margin:0 0 8px;font-size:13px;letter-spacing:.02em;text-transform:uppercase;color:#2c6b3f;}}
+ .new h3 + p.none{{margin:0;color:var(--muted);font-size:12.5px;}}
+ .new .grp{{margin:0 0 10px;}} .new .grp:last-child{{margin-bottom:0;}}
+ .new .lbl{{font-size:11px;font-weight:700;color:#2c6b3f;text-transform:uppercase;letter-spacing:.03em;}}
+ .new ul{{list-style:none;margin:4px 0 0;padding:0;}}
+ .new li{{padding:3px 0;font-size:12.5px;border-bottom:1px dotted #dbe7db;}}
+ .new li:last-child{{border-bottom:none;}}
+ .new li b{{font-weight:600;}}
+ .new .meta{{color:var(--muted);}}
  .foot{{margin-top:20px;font-size:11.5px;color:var(--muted);border-top:1px solid var(--line);padding-top:10px;}}
  @media print{{body{{background:#fff}} .wrap{{max-width:none;padding:0}} .tools{{display:none}}
   .acct,table{{border-color:#ccc}} h2{{break-after:avoid}} tr{{break-inside:avoid}}
@@ -328,6 +465,7 @@ def render(rep: str | None, rows, touches, live, today: dt.date) -> str:
      &middot; as of {today.strftime('%m/%d/%Y')} &middot; {len(rows)} accounts</p>
 </header>
 
+{_new_block(delta, live, today, rep)}
 <h2>Active now</h2>
 {''.join(cards)}
 
@@ -350,7 +488,7 @@ on an active job.</p>
 </body></html>"""
 
 
-def render_email(rep: str | None, rows, touches, live, today: dt.date) -> str:
+def render_email(rep: str | None, rows, touches, live, today: dt.date, delta=None) -> str:
     """The same book as plain, allowlist-safe HTML for an email body.
 
     Outlook sanitizes away <style>, <span> and every inline colour, so nothing here
@@ -360,6 +498,31 @@ def render_email(rep: str | None, rows, touches, live, today: dt.date) -> str:
     out = [f"<h2>{'Outreach Accounts in Play' if rep else 'Accounts Being Worked'}</h2>",
            f"<p>{who}as of {today.strftime('%m/%d/%Y')} &middot; {len(rows)} accounts"
            f"{'' if rep else ' that someone has contacted'}.</p>"]
+
+    if delta is not None:
+        added, touched, prev_date = delta
+        out.append("<h3>%s</h3>" % (("What&rsquo;s new since " + prev_date.strftime("%m/%d/%Y"))
+                                     if prev_date else "New this week"))
+        for head, group in (("New accounts", added), ("Fresh outreach", touched)):
+            if not group:
+                continue
+            out.append(f"<p><b>{head} ({len(group)})</b></p><ul>")
+            for r in group:
+                label, _cls = div_tag(r["division"])
+                bits = [f"<b>{e(nice(r['name']))}</b>"]
+                if label:
+                    bits.append(label)
+                bits.append(e(r["sales_status"] or "-"))
+                if r["last_contacted"]:
+                    bits.append(fmt_date(r["last_contacted"]))
+                if not rep and r["last_edited_by"]:
+                    bits.append("by " + e(r["last_edited_by"]))
+                if r["customer_key"] in live:
+                    bits.append("<i>already a live client</i>")
+                out.append("<li>" + " &middot; ".join(bits) + "</li>")
+            out.append("</ul>")
+        if not added and not touched:
+            out.append("<p>Nothing new this week.</p>")
 
     active = [r for r in rows if r["sales_status"] == IN_PLAY]
     active.sort(key=lambda r: r["last_contacted"] or "", reverse=True)
@@ -395,6 +558,73 @@ def render_email(rep: str | None, rows, touches, live, today: dt.date) -> str:
     return "\n".join(out)
 
 
+CHROME_CANDIDATES = (
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+)
+
+
+def _find_chrome() -> str | None:
+    """First headless-capable browser on this machine, or None."""
+    for c in CHROME_CANDIDATES:
+        if Path(c).exists():
+            return c
+    return shutil.which("google-chrome") or shutil.which("chromium")
+
+
+def write_pdf(markup: str, out: Path) -> None:
+    """Render `markup` to `out` as a PDF via headless Chrome.
+
+    The HTML is a build intermediate, not a deliverable, so it goes to a temp
+    dir and dies with it - the report folder only ever sees the PDF. Chrome
+    needs a real file (it will not take HTML on stdin), hence the temp file
+    rather than a pipe.
+    """
+    chrome = _find_chrome()
+    if not chrome:
+        raise RuntimeError(
+            "no headless browser found - install Google Chrome, or pass --out with a "
+            ".html suffix to get the markup instead"
+        )
+    with tempfile.TemporaryDirectory(prefix="sales-report-") as tmp:
+        src = Path(tmp) / "report.html"
+        src.write_text(markup, encoding="utf-8")
+        proc = subprocess.run(
+            [chrome, "--headless", "--disable-gpu", "--no-pdf-header-footer",
+             f"--print-to-pdf={out}", src.as_uri()],
+            capture_output=True, text=True, timeout=180,
+        )
+    # Chrome exits 0 and chatters on stderr even when it worked; trust the file.
+    if not out.exists() or out.stat().st_size == 0:
+        raise RuntimeError(
+            f"chrome produced no PDF (exit {proc.returncode})\n{proc.stderr.strip()[:800]}"
+        )
+
+
+def archive_previous(out: Path) -> Path | None:
+    """File the outgoing report into `History/` before it is overwritten.
+
+    The deliverable stays ONE file at ONE path - `History/` is an archive, not a
+    v2/v3 fork of the live report. It matters because the ledger full-replaces and
+    keeps no history: once a rendered report is gone, the week it described cannot
+    be reconstructed, and the week-over-week diff has nothing to appeal to
+    (`one-offs/sales_report_baseline_import.py` reads exactly these files).
+    Dated by mtime - when that copy was actually produced."""
+    if not out.exists():
+        return None
+    hist = out.parent / "History"
+    hist.mkdir(parents=True, exist_ok=True)
+    stamp = dt.date.fromtimestamp(out.stat().st_mtime).isoformat()
+    dest = hist / f"{stamp} {out.name}"
+    n = 2
+    while dest.exists():
+        dest = hist / f"{stamp} {out.stem} ({n}){out.suffix}"
+        n += 1
+    out.replace(dest)
+    return dest
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--rep", help="Notion display name of the rep (exact)")
@@ -402,9 +632,14 @@ def main() -> int:
                     help="emit allowlist-safe HTML for an email body (no CSS) instead of the styled page")
     ap.add_argument("--all", action="store_true",
                     help="every rep's touched accounts (the collision list), with a Worked-by column")
-    ap.add_argument("--out", type=Path, help="output .html path")
+    ap.add_argument("--out", type=Path,
+                    help="output path; .pdf (the deliverable) or .html (markup only)")
     ap.add_argument("--db", type=Path, default=DEFAULT_DB)
     ap.add_argument("--list-reps", action="store_true", help="show who has a working set, then exit")
+    ap.add_argument("--no-snapshot", action="store_true",
+                    help="do not record this run as the baseline for next week's diff (test runs)")
+    ap.add_argument("--no-archive", action="store_true",
+                    help="overwrite the previous report instead of filing it into History/")
     a = ap.parse_args()
 
     if not a.db.exists():
@@ -432,11 +667,36 @@ def main() -> int:
         print(f"no accounts found for {who} - check --list-reps for the exact spelling", file=sys.stderr)
         return 1
 
+    today = dt.date.today()
+    prev_date, prev_map = load_prev_snapshot(a.rep, today)
+    delta = compute_delta(rows, prev_date, prev_map, today)
+
     a.out.parent.mkdir(parents=True, exist_ok=True)
+    archived = None if a.no_archive else archive_previous(a.out)
     make = render_email if a.email_body else render
-    a.out.write_text(make(a.rep if a.rep else None, rows, touches, live, dt.date.today()), encoding="utf-8")
+    markup = make(a.rep if a.rep else None, rows, touches, live, today, delta)
+
+    if a.out.suffix.lower() == ".pdf":
+        if a.email_body:
+            ap.error("--email-body is bare markup for pasting; use an .html --out for it")
+        try:
+            write_pdf(markup, a.out)
+        except Exception as e:
+            print(f"PDF render failed: {e}", file=sys.stderr)
+            return 3
+    else:
+        a.out.write_text(markup, encoding="utf-8")
+
+    if not a.no_snapshot:
+        save_snapshot(a.rep, rows, today)
+
+    added, touched, basis = delta
+    since = f"since {basis:%m/%d/%Y}" if basis else f"last {FALLBACK_WINDOW}d (no prior report)"
     print(f"wrote {a.out}  ({len(rows)} accounts, {sum(len(v) for v in touches.values())} logged touches, "
           f"{len(live)} already-live-client flags)")
+    print(f"  what's new {since}: {len(added)} new accounts, {len(touched)} with fresh outreach")
+    if archived:
+        print(f"  previous report filed -> History/{archived.name}")
     return 0
 
 

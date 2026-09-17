@@ -108,6 +108,8 @@ def read_division(xlsb_path: Path, tab: str, colspec):
         proj = r[idx["PROJECT"]] if idx.get("PROJECT") is not None and len(r) > idx["PROJECT"] else None
         if not proj or not str(proj).strip():
             continue
+        if not any(ch.isdigit() for ch in str(proj)):
+            continue                       # section label / footer (e.g. "BILLING TRACKING"), not a job
         # ACTIVE = still billing as of the snapshot. The tab is a cumulative
         # ledger (mostly completed jobs kept for reference), and the col-A
         # COMPLETED tag is only on some — so key off % complete: < 100% billed
@@ -464,6 +466,43 @@ def _index_cp_folders():
     return idx
 
 
+def _combine_by_project(rows, division):
+    """Merge snapshot rows that are the SAME QBO project (the user 2026-08-08:
+    'COMBINE, it holds all contracts') — e.g. MFD192's HUDSON/OFFSITE/008 phases
+    are one project in QBO, so one cost can't be split across three rows. Sum the
+    dollar fields into one row, matching how the live Test-Master shows MFD192 as
+    a single line. Rows that don't map to a QBO key are left untouched."""
+    from collections import OrderedDict
+    groups, singles = OrderedDict(), []
+    for i, r in enumerate(rows):
+        key = _proj_key(division, r.get("PROJECT"))
+        if key:
+            groups.setdefault(key, []).append(r)
+        else:
+            singles.append((i, r))
+    SUM = ["CONTRACT", "CHANGE ORDERS", "REVISED CONTRACT", "BILLED TO DATE",
+           "BALANCE TO FINISH", "RETAINAGE"]
+    out = []
+    for key, grp in groups.items():
+        if len(grp) == 1:
+            out.append(grp[0])
+            continue
+        merged = dict(grp[0])
+        base = " - ".join(str(grp[0].get("PROJECT") or "").split(" - ")[:-1]) \
+            or str(grp[0].get("PROJECT") or key)
+        merged["PROJECT"] = f"{base} (combined {len(grp)} phases)"
+        for f in SUM:
+            s = sum(g.get(f) or 0 for g in grp)
+            merged[f] = s or None
+        rev = merged.get("REVISED CONTRACT") or 0
+        merged["% COMPLETE"] = ((merged.get("BILLED TO DATE") or 0) / rev) if rev else None
+        out.append(merged)
+    # keep the un-keyed rows (e.g. RP-numbered CP jobs the regex didn't catch)
+    for _i, r in singles:
+        out.append(r)
+    return out
+
+
 def _enrich_division(rows, division, end_iso, access, cid, proj_map, cost_cache, cp_folders):
     """Add QBO COSTS (dated on/before end_iso) and ETC (from the takeoff) to the
     snapshot rows. A QBO project shared by phases is credited once (first row).
@@ -502,6 +541,8 @@ def _gather(date_key, qbo, folders_idx, cp_folders, cost_cache):
         raise FileNotFoundError(f"snapshot not found: {xlsb}")
     cp, _ = read_division(xlsb, "WIP - CP", CP_COLS)
     mfd, _ = read_division(xlsb, "WIP - MFD", MFD_COLS)
+    cp = _combine_by_project(cp, "CP")             # one row per QBO project …
+    mfd = _combine_by_project(mfd, "MFD")          # … so a phased job's cost isn't split
     rp = []
     if qbo and folders_idx:
         end_iso = SCHEDULES[date_key][1]

@@ -23,6 +23,7 @@ so you can watch your actual data live in a database instead of a spreadsheet.
 | `load_customers.py` | Notion "Customer List" → `customer` + `sales_touch` (CRM leads/clients + outreach touch log, read-only). |
 | `load_health.py` | QBO pull → `health_snapshot`: bank cash, retainage GL, P&L blocks, 13-wk cash flow, recurring register - the Health tab's QBO-only layer. |
 | `dashboard.py` | Local web dashboard over the ledger — the browser UI (read-only). |
+| `registry_view.py` | Parses the vault's systems & process registry (`02_processes/*.md`) for the Systems tab. Read-only, no DB. |
 
 The cost engine itself lives in **`shared/qbo_costs.py`** (`cost_leaf` + `iter_cost_lines`) — the
 SAME resolver project-pnl uses, so the ledger and the P&L can never drift.
@@ -218,6 +219,22 @@ on the network). What it shows:
   (**boxed by default**), which widgets show, and which table columns show. Saved per person in the
   browser; **Set as default** snapshots the current view as the baseline that Reset (and a fresh
   browser) restores to.
+
+- **Systems** (the systems & process registry, read-only from the vault) — every process the
+  business runs, one row each, read **live** from `AI Brain_Vault/02_processes/*.md`. Three axes are
+  kept separate because the registry keeps them separate: a **health dot** (running / fragile /
+  broken / nothing to fail yet), a **state pill** (how sure the description is — confirmed ·
+  inferred · proposed), and a **life tag** shown only when a row is not live (idea · agreed ·
+  building), which is how "agreed but never built" stops being invisible. Filter by domain, owner,
+  health, state or life; **Reload** re-reads the files. Owners show as role handles exactly as
+  stored — the roster is never read and no name enters the UI.
+
+  It is a window, not a copy: `registry_view.py` re-parses the markdown on every request, so the
+  update loop is *edit the vault file, hit Reload*. Nothing is stored in `ledger.sqlite3` and
+  nothing is written back — the vault stays the source of truth. Point it elsewhere with
+  `ACB_VAULT_DIR` in `machine.env`; a machine with no vault just shows a one-line note on that tab.
+  **This replaced the daily 06:38 markdown digest** (disabled 2026-08-19; `digest-log.md` kept as
+  history).
 
 The dashboard is a view. It never writes the database or the Excel sheet.
 
