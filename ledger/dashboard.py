@@ -2162,6 +2162,71 @@ def _health_asof_label(iso: str) -> str:
         return iso or ""
 
 
+def _concrete_waste():
+    """Concrete-waste headline for the Health tab, read from the two waste
+    workbooks in the CompanyHealth folder (RP: General List based; MFD: PO
+    tracker based). Raw value columns only - the derived cells are formulas,
+    so we recompute totals here. Returns a Health section, or None when the
+    workbooks are not present (e.g. the developer's clone)."""
+    import openpyxl as _ox
+    ch = paths.companyhealth_dir()
+    rp_p = ch / "Concrete_Waste_2026.xlsx"
+    mfd_p = ch / "Concrete_Waste_MFD_2026.xlsx"
+    try:
+        rp_plan = rp_real = rp_over = 0.0; rp_n = 0; sup: dict = {}
+        if rp_p.exists():                       # By Job: plan(10) actual(13) concrete$(19) super(3)
+            ws = _ox.load_workbook(rp_p, data_only=True, read_only=True)["By Job"]
+            for r in ws.iter_rows(min_row=2, values_only=True):
+                if not r or not r[0]:
+                    continue
+                plan, real, cost = (r[9] or 0), (r[12] or 0), (r[18] or 0)
+                if not (plan and real):
+                    continue
+                ov = (real - plan) * (cost / real)
+                rp_n += 1; rp_plan += plan; rp_real += real; rp_over += ov
+                s = (r[2] or "").strip()
+                if s:
+                    a = sup.setdefault(s, [0.0, 0.0, 0.0]); a[0] += plan; a[1] += real; a[2] += ov
+        mfd_ord = mfd_del = 0.0; mfd_n = 0
+        if mfd_p.exists():                      # By PO: ordered(8) delivered(9)
+            ws = _ox.load_workbook(mfd_p, data_only=True, read_only=True)["By PO"]
+            for r in ws.iter_rows(min_row=2, values_only=True):
+                o, d = (r[7] if r else None), (r[8] if r else None)
+                if isinstance(o, (int, float)) and isinstance(d, (int, float)) and o and d:
+                    mfd_n += 1; mfd_ord += o; mfd_del += d
+    except Exception:
+        return None
+    if not rp_n and not mfd_n:
+        return None
+    rp_pct = (rp_real / rp_plan - 1) if rp_plan else None
+    mfd_pct = (mfd_del / mfd_ord - 1) if mfd_ord else None
+    rp_tone = "r" if (rp_pct or 0) > 0.20 else "a"
+    worst = max(sup.items(), key=lambda kv: kv[1][2]) if sup else None
+    heroes = [["RP over plan", _hpct(rp_pct), rp_tone],
+              ["RP concrete $ over", _hm(rp_over), "r"],
+              ["MFD deliv vs order", _hpct(mfd_pct), "a"]]
+    rows = []
+    if rp_n:
+        rows.append(["RP - poured over takeoff plan", _hpct(rp_pct),
+                     f"{rp_n} slabs · ~{_hm(rp_over)} of concrete over the plan", rp_tone, None])
+        if worst:
+            wp = (worst[1][1] / worst[1][0] - 1) if worst[1][0] else None
+            rows.append([f"RP - hottest super: {worst[0]}", _hpct(wp),
+                         f"~{_hm(worst[1][2])} over plan on his jobs", "a", None])
+    if mfd_n:
+        dirn = "orders run over delivery (conservative)" if (mfd_pct or 0) < 0 else "delivered over ordered (add-on trucks)"
+        rows.append(["MFD - delivered vs ordered", _hpct(mfd_pct),
+                     f"{mfd_n} concrete POs · {dirn}", "a", None])
+    bars = []
+    if sup:
+        bars = [["RP concrete $ over plan by super",
+                 [[s, round(v[2]), f"bk{i}", ""] for i, (s, v) in
+                  enumerate(sorted(sup.items(), key=lambda kv: -kv[1][2])) if v[2] > 0]]]
+    return {"title": "Concrete Waste - poured / ordered vs plan", "tone": "out",
+            "heroes": heroes, "rows": rows, "bars": bars,
+            "note": "From the concrete-waste workbooks in the CompanyHealth folder; refresh with the waste builders."}
+
+
 def _fetch_health(con) -> dict:
     """Assemble the Health tab payload: preformatted sections + the recurring
     register + the break-even audit trail. Every figure is either derived from
@@ -2373,6 +2438,9 @@ def _fetch_health(con) -> dict:
         "bars": [],
     }
     sections = [money_in, money_out, position]
+    _cw = _concrete_waste()          # concrete-leak card (RP over-plan, MFD order-vs-deliver)
+    if _cw:
+        sections.append(_cw)
 
     # ── Break-even (shared/breakeven off the live P&L blocks)
     be_audit = []

@@ -72,7 +72,7 @@ invoice-sync/          QBO → Notion AR sync + Teams cards   (was automation-wo
 bill-tracker/          AP bills (FULL pull incl. subs) → Excel tracker + 3 themed Audit sheets (Coding · PO · Bills) + cost-code History log + job_coding_audit drill
 statement-reconciler/  vendor statement PDFs ↔ QBO open bills
 wip/                   ALL WIP tooling: wip_writer.py (shared engine) + CP/RP readers + close scripts
-ledger/                canonical project DB: schema.sql spine + loaders (WIP · Bill Tracker · costs · AR invoices · customers) + dashboard
+ledger/                canonical project DB: schema.sql spine + loaders (WIP · Bill Tracker · costs · AR invoices · customers) + dashboard; Health tab folds in the CompanyHealth concrete-waste workbooks (Concrete_Waste_2026 RP / _MFD_2026, read-only, _concrete_waste 2026-09-17)
 project-pnl/           per-project P&L workbooks → OneDrive (+ completed_pnl Overview; bizdev_cut_view = the owner's local cut page)
 debt-schedule/         equipment debt workbook + loan_sync (writes beside itself)
 health-dashboard/      local company-health xlsx (private, chmod 600)
