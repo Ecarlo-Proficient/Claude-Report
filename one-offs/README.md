@@ -17,6 +17,7 @@ occasional audits, experiments, and tools whose driver isn't built yet.
 
 | Script | Status |
 |---|---|
+| `mirror_parity.py` | **Proof for the raw QBO mirror**: 30 (entity, WHERE) shapes the tools use, pulled live and from the mirror, compared {Id: SyncToken}; any missing/extra/stale row fails. Run after any change to `shared/qbo_mirror` or before trusting a rewritten tool. |
 | `qbo_recode_review.py` | Audit-gated job-cost recoder (export → the user audits → apply). `get_auth()` is still an env-var stub — wire to `shared.qbo_vault` before real use. |
 | `rp_wip_update.py` | **Updates the OWNER'S live RP WIP** in OneDrive in place (never regenerates). Refreshes SCHEDULE/billed/costs/GP% only; his colour marks (orange=verify, green=verified, red=changed) are never overwritten. Dry run → Downloads; `--commit` writes OneDrive. |
 | `jobtread_schedule_writer.py` | **Writes to JobTread**: daily schedule → dated tasks using the estimator's own stage names. Upsert by (job, task); never deletes. Dry run by default. |

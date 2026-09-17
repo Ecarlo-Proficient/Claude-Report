@@ -138,3 +138,71 @@ def test_status_counts(monkeypatch):
     s = m.status(con)
     assert s["entities"]["Invoice"] == {"alive": 1, "deleted": 1, "newest": "2026-09-16T10:00:00-05:00"}
     assert s["size_mb"] == 0.0
+
+
+# ───────── serving query_all: the WHERE grammar the tools use ─────────
+
+def _inv(i, date, bal, cust="12", doc=None, active=True):
+    return {"Id": str(i), "SyncToken": "0", "TxnDate": date, "Balance": bal, "DocNumber": doc or f"I{i}",
+            "CustomerRef": {"value": cust, "name": "GC:RP1"}, "Active": active,
+            "MetaData": {"LastUpdatedTime": "2026-09-16T10:00:00-05:00"}}
+
+
+def test_parse_where_grammar():
+    t = m.parse_where("Balance = '0' AND TxnDate >= '2026-01-01'")
+    assert t == [("Balance", "=", "0"), ("TxnDate", ">=", "2026-01-01")]
+    assert m.parse_where("Active IN (true, false)") == [("Active", "IN", [True, False])]
+    assert m.parse_where("AccountType IN ('Bank','Credit Card') AND Active=true") == [
+        ("AccountType", "IN", ["Bank", "Credit Card"]), ("Active", "=", True)]
+    assert m.parse_where("DisplayName LIKE '%Ready Mix AND Sons%'") == [("DisplayName", "LIKE", "%Ready Mix AND Sons%")]
+    assert m.parse_where("") == []
+    import pytest
+    with pytest.raises(m.WhereError):
+        m.parse_where("TxnDate BETWEEN 'a' AND 'b'")
+
+
+def test_match_where_terms():
+    r = _inv(1, "2026-06-01", 250.5)
+    ok = lambda w: m.match_where(r, m.parse_where(w))   # noqa: E731
+    assert ok("Balance > '0'") and not ok("Balance = '0'")
+    assert ok("TxnDate >= '2026-06-01' AND TxnDate <= '2026-06-30'") and not ok("TxnDate < '2026-06-01'")
+    assert ok("CustomerRef = '12'") and not ok("VendorRef = '12'")
+    assert ok("Id IN ('1','7')") and ok("DocNumber IN ('I1')") and not ok("Id IN ('7')")
+    assert ok("Active = true") and ok("Active IN (true, false)") and not ok("Active = false")
+    assert m.match_where({"DisplayName": "Cowtown Ready Mix"}, m.parse_where("DisplayName LIKE '%Ready%'"))
+    assert not m.match_where({"DisplayName": "Cowtown"}, m.parse_where("DisplayName LIKE '%Ready%'"))
+    assert m.match_where({"DisplayName": "ACME concrete"}, m.parse_where("DisplayName LIKE '%Concrete%'"))  # QBO LIKE ignores case
+    assert m.match_where({"AccountType": "Bank", "Active": True},
+                         m.parse_where("AccountType IN ('Bank','Credit Card') AND Active=true"))
+    assert m.match_where({"Classification": "Liability"}, m.parse_where("Classification = 'Liability'"))
+
+
+def test_query_matches_qbo_semantics_and_pushdown(monkeypatch):
+    con = m.connect(":memory:")
+    m.upsert_many(con, "Invoice", [_inv(1, "2026-01-05", 0), _inv(2, "2026-06-01", 10.0),
+                                   _inv(3, "2026-07-01", 5.0, cust="99")], "t")
+    m.mark_deleted(con, "Invoice", ["3"], "t")
+    m._meta_set(con, "last_refresh", "2026-09-17T12:00:00Z")
+    monkeypatch.setattr(m, "_STAMP_SHOWN", [True])
+    ids = lambda w: sorted(r["Id"] for r in m.query("Invoice", w, con=con))   # noqa: E731
+    assert ids("") == ["1", "2"]                                   # deleted never served
+    assert ids("Balance > '0'") == ["2"]
+    assert ids("TxnDate >= '2026-01-01' AND TxnDate <= '2026-01-31'") == ["1"]
+    assert ids("DocNumber IN ('I1','I2')") == ["1", "2"]
+    # a name list hides inactive rows unless Active is mentioned - QBO's default
+    m.upsert_many(con, "Customer", [{"Id": "5", "DisplayName": "A", "Active": True, "SyncToken": "0", "MetaData": {}},
+                                    {"Id": "6", "DisplayName": "B", "Active": False, "SyncToken": "0", "MetaData": {}}], "t")
+    assert [r["Id"] for r in m.query("Customer", "", con=con)] == ["5"]
+    assert [r["Id"] for r in m.query("Customer", "Active = false", con=con)] == ["6"]
+    assert sorted(r["Id"] for r in m.query("Customer", "Active IN (true, false)", con=con)) == ["5", "6"]
+
+
+def test_serves_respects_live_switch_and_missing_mirror(monkeypatch, tmp_path):
+    monkeypatch.setattr(m, "db_path", lambda: tmp_path / "none.sqlite3")
+    assert m.serves("Bill") is False                               # never seeded here
+    con = m.connect(tmp_path / "none.sqlite3")
+    m._meta_set(con, "last_refresh", "2026-09-17T12:00:00Z"); con.commit(); con.close()
+    assert m.serves("Bill") is True
+    assert m.serves("Attachable") is False                         # outside the mirror
+    monkeypatch.setenv("ACB_QBO_LIVE", "1")
+    assert m.serves("Bill") is False

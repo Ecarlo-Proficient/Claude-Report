@@ -226,6 +226,22 @@ def _api_get(path: str, access: str, params: Optional[dict] = None) -> dict:
 
 
 def query_all(access: str, company_id: str, entity: str, where: str = "") -> List[dict]:
+    """SELECT * FROM <entity> [WHERE …]. Answered from THE raw QBO mirror
+    (shared/qbo_mirror) for every mirrored entity - one read of QBO for every
+    tool (the owner 2026-09-17); live only when the mirror cannot serve
+    (ACB_QBO_LIVE=1, not seeded on this machine, an entity outside the mirror,
+    or a WHERE the mirror does not understand)."""
+    from shared import qbo_mirror
+    if qbo_mirror.serves(entity):
+        try:
+            return qbo_mirror.query(entity, where)
+        except qbo_mirror.WhereError as e:
+            print(f"      mirror cannot read WHERE ({e}) - asking QBO live")
+    return query_all_live(access, company_id, entity, where)
+
+
+def query_all_live(access: str, company_id: str, entity: str, where: str = "") -> List[dict]:
+    """The direct QBO pull - the parity check and the mirror itself use it."""
     # MAXRESULTS 1000 is QBO's max page size — fewer round-trips than 500.
     PAGE = 1000
     out: List[dict] = []

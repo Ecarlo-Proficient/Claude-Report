@@ -15,6 +15,7 @@ so you can watch your actual data live in a database instead of a spreadsheet.
 | File | What it is |
 |------|-----------|
 | `schema.sql` | The whole 6-table spine. **Portable — runs on SQLite and PostgreSQL unchanged.** |
+| `sync_all.sh` | **THE sync** behind the `sync-all` alias: mirror refresh (Sundays + reconcile) -> AP -> AR -> ledger reload. |
 | `refresh_mirror.py` | **The raw QBO mirror** (`shared/qbo_mirror`): `--seed` once, then the change feed; `--reconcile`, `--status`. Step 0 of sync-all once tools read it. |
 | `load_wip_master.py` | Reads the FINAL WIP master (the Test tabs) → fills `project` + `wip_snapshot`. |
 | `load_bill_tracker.py` | Reads `Bill Tracker.xlsx` (Bills + Inventory) → fills `ap_bill_line` (AP + liens). |
@@ -35,8 +36,9 @@ name lists), one row per record with the full JSON as QBO returned it, deletes f
 and never dropped. `python3 ledger/refresh_mirror.py --seed` once (~20 min, 296k records);
 `python3 ledger/refresh_mirror.py` after that reads QBO's change feed since the last stamp
 (seconds). `--reconcile` checks a count per entity; `--status` shows what the file holds.
-Tools read it with `shared.qbo_mirror.load("Bill")` instead of `query_all(...)` - the rewrite
-order is in `STATUS.md`. QBO stays the source of truth; nothing writes to QBO from here.
+Every tool reads it already: `shared.qbo_api.query_all` is answered from the mirror (QBO WHERE
+evaluated in Python; `ACB_QBO_LIVE=1` forces QBO). `one-offs/mirror_parity.py` proves the two
+agree shape by shape. What is left per tool is in `STATUS.md`. QBO stays the source of truth; nothing writes to QBO from here.
 
 ## The schema (6 tables + 1 view)
 

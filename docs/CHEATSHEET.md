@@ -106,7 +106,7 @@ python3 ledger/load_wip_master.py && python3 ledger/load_costs.py --active --sin
 The `--since` date makes the cost pull incremental (any date ~90 days back); drop it to pull the
 full history (slower, but also reaps txns deleted in QBO). In the app, **Console → Full refresh**
 is the full sync above and **Resync** (My view) is the loaders-only reload. `sync-ap`, `sync-ar`,
-and `sync-all` (AP→AR) are your shell aliases for just the producer steps.
+are the producer aliases; **`sync-all`** is THE sync (`ledger/sync_all.sh`: QBO mirror refresh, AP, AR, ledger reload - the mirror refresh is the only QBO pull now, every tool reads the mirror).
 
 ---
 

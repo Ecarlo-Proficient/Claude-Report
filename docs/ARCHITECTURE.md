@@ -49,8 +49,8 @@ duplicate/item-no-project/sub-bill audit scripts; cost codes captured audit-only
 shared/                the ONLY importable common code
 ├─ qbo_vault.py        QBO Keychain blob — one Touch ID unlocks all keys
 ├─ paths.py            per-machine output paths (machine.env at REPO ROOT)
-├─ qbo_api.py          QBO auth + retrying GET, query_all, P&L walkers, PROJ_RE
-├─ qbo_mirror.py       THE raw QBO mirror: every entity in qbo_mirror.sqlite3, change-feed refresh; load(entity) = the ONE read of QBO for every tool (2026-09-17; rewrite in progress, ledger STATUS)
+├─ qbo_api.py          QBO auth + retrying GET, P&L walkers, PROJ_RE · query_all is ANSWERED FROM THE MIRROR (query_all_live = the direct pull; ACB_QBO_LIVE=1 forces it)
+├─ qbo_mirror.py       THE raw QBO mirror: every entity in qbo_mirror.sqlite3, change-feed refresh; query(entity, where) serves every query_all in the repo (QBO WHERE evaluated in Python); proof = one-offs/mirror_parity.py 30/30 (2026-09-17)
 ├─ jobtread.py         the ONE JobTread (Pave) client: pave + approved_proposals — ledger rp_review ↔ one-offs (2026-09-15)
 ├─ qbo_costs.py        cost_leaf (the ONE cost-code resolver) + iter_cost_lines — shared w/ ledger
 ├─ qbo_attachments.py  Attachable index + fresh scan links (7-day cache reused from P&L) — ledger Audit 📎
@@ -477,7 +477,9 @@ flowchart LR
     MIRROR[("qbo_mirror.sqlite3\nTHE raw mirror: 21 entities, full JSON,\ndeletes flagged · seed once, /cdc refresh in seconds")]:::src
     MREF["refresh_mirror.py\n--seed · refresh (change feed) · --reconcile · --status"]:::tool
     QBO --> MREF --> MIRROR
-    MIRROR -. "every loader + tool reads here\nonce rewritten (STATUS: the 10-step order)" .-> COSTLOAD
+    MIRROR -- "every query_all in the repo is answered here\n(shared/qbo_api routes; ACB_QBO_LIVE=1 = live)" --> COSTLOAD
+    SYNCALL["ledger/sync_all.sh = the sync-all alias\n0 mirror refresh · 1 AP · 2 AR · 3 ledger reload"]:::tool
+    SYNCALL --> MREF
     QCOSTS["shared/qbo_costs.py\ncost_leaf + iter_cost_lines\n(the ONE resolver — shared with project-pnl)"]:::tool
     COSTLOAD["load_costs.py\ncost_line by cost code · incl. subs ·\n+ the trail columns (bill # · memo · line # · bill total · scan) ·\nreconciles to wip_snapshot · --selftest"]:::tool
     NPAGE["notion_page.py\n/api/invoice/notion: one Invoice Tracker page, whole\n(properties · body · comments) for the invoice drawer · read-only · 60 s cache"]:::tool

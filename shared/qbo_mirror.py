@@ -503,3 +503,220 @@ def status(con: Optional[sqlite3.Connection] = None) -> dict:
     finally:
         if own:
             con.close()
+
+
+# ───────────────────────── serving query_all from the mirror ─────────────────────────
+# `shared.qbo_api.query_all(access, cid, entity, where)` routes here for every
+# mirrored entity, so every reader in the repo flips at once (the owner
+# 2026-09-17: "rewrite ALL codes"). The QBO WHERE grammar the tools actually use
+# is small and AND-only: `Field op value` with op in = != < <= > >= IN LIKE, over
+# TxnDate / Balance / Active / Id / DocNumber / *Ref / DisplayName / AccountType /
+# Classification / MetaData.LastUpdatedTime. Anything else raises - never a
+# silent mismatch. `ACB_QBO_LIVE=1` sends every query to QBO (the parity check,
+# or a machine without the mirror); a missing or empty mirror also falls back.
+
+import os as _os
+import re as _re
+
+MAX_AGE_HOURS = 12                         # older than this -> loud warning
+_STAMP_SHOWN = [False]
+_TERM_RE = _re.compile(r"^\s*([A-Za-z_.]+)\s*(>=|<=|!=|=|>|<|IN|LIKE)\s*(.+?)\s*$", _re.I)
+_PUSHDOWN = {"txndate": "txn_date", "id": "id", "docnumber": "doc_number"}
+
+
+class WhereError(ValueError):
+    """A QBO WHERE clause the mirror does not understand - route it live."""
+
+
+def _split_and(where: str) -> List[str]:
+    """Split on AND outside quotes/parentheses."""
+    parts, buf, q, depth = [], [], False, 0
+    i, s = 0, where
+    while i < len(s):
+        c = s[i]
+        if c == "'":
+            q = not q
+        elif not q and c == "(":
+            depth += 1
+        elif not q and c == ")":
+            depth -= 1
+        if not q and depth == 0 and s[i:i + 5].upper() == " AND ":
+            parts.append("".join(buf))
+            buf = []
+            i += 5
+            continue
+        buf.append(c)
+        i += 1
+    parts.append("".join(buf))
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _parse_value(tok: str):
+    tok = tok.strip()
+    if tok.startswith("(") and tok.endswith(")"):
+        inner, items, buf, q = tok[1:-1], [], [], False
+        for c in inner:
+            if c == "'":
+                q = not q
+            if c == "," and not q:
+                items.append("".join(buf))
+                buf = []
+            else:
+                buf.append(c)
+        items.append("".join(buf))
+        return [_parse_value(x) for x in items if x.strip()]
+    if len(tok) >= 2 and tok[0] == "'" and tok[-1] == "'":
+        return tok[1:-1].replace("''", "'")
+    low = tok.lower()
+    if low in ("true", "false"):
+        return low == "true"
+    try:
+        return float(tok)
+    except ValueError:
+        raise WhereError(f"unreadable value {tok!r}")
+
+
+def parse_where(where: str) -> List[Tuple[str, str, object]]:
+    """'TxnDate >= '2026-01-01' AND Balance > '0'' -> [(field, OP, value), ...]"""
+    out = []
+    for term in _split_and(where or ""):
+        m = _TERM_RE.match(term)
+        if not m:
+            raise WhereError(f"unreadable term {term!r}")
+        out.append((m.group(1), m.group(2).upper(), _parse_value(m.group(3))))
+    return out
+
+
+def _field(rec: dict, name: str):
+    cur = rec
+    for part in name.split("."):
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(part)
+    if isinstance(cur, dict) and "value" in cur:      # a Ref
+        return cur.get("value")
+    return cur
+
+
+def _norm(actual, expected):
+    """Bring both sides to one type: numbers when either is numeric-looking,
+    bools, else strings (dates/ids/doc numbers compare as text, like QBO)."""
+    if isinstance(expected, bool):
+        return bool(actual) if actual is not None else False, expected
+    if isinstance(actual, bool):
+        return actual, str(expected).lower() == "true"
+    if isinstance(actual, (int, float)):
+        try:
+            return float(actual), float(expected)
+        except (TypeError, ValueError):
+            return str(actual), str(expected)
+    if isinstance(expected, float):
+        try:
+            return float(actual), expected
+        except (TypeError, ValueError):
+            return actual, expected
+    return ("" if actual is None else str(actual)), str(expected)
+
+
+def _like(actual: str, pattern: str) -> bool:
+    """QBO's LIKE is case-insensitive (parity check 2026-09-17: '%Concrete%'
+    returned 98 vendors live, 53 case-sensitively)."""
+    rx = "^" + ".*".join(_re.escape(p) for p in pattern.split("%")) + "$"
+    return _re.match(rx, actual, _re.S | _re.I) is not None
+
+
+def match_where(rec: dict, terms: List[Tuple[str, str, object]]) -> bool:
+    for field, op, expected in terms:
+        actual = _field(rec, field)
+        if op == "IN":
+            vals = expected if isinstance(expected, list) else [expected]
+            if not any(_norm(actual, v)[0] == _norm(actual, v)[1] for v in vals):
+                return False
+            continue
+        if op == "LIKE":
+            if actual is None or not _like(str(actual), str(expected)):
+                return False
+            continue
+        a, e = _norm(actual, expected)
+        if actual is None and op in (">", ">=", "<", "<="):
+            return False
+        ok = {"=": a == e, "!=": a != e, ">": a > e, ">=": a >= e, "<": a < e, "<=": a <= e}[op]
+        if not ok:
+            return False
+    return True
+
+
+def _pushdown(terms) -> Tuple[str, list]:
+    """Terms on TxnDate / Id / DocNumber also run as SQL on the summary columns
+    so a 100k-row entity is not decompressed for a one-week window."""
+    sql, params = [], []
+    for field, op, expected in terms:
+        col = _PUSHDOWN.get(field.lower())
+        if not col:
+            continue
+        if op == "IN" and isinstance(expected, list):
+            vals = [str(v) for v in expected]
+            sql.append(f"{col} IN ({','.join('?' * len(vals))})")
+            params.extend(vals)
+        elif op in ("=", "!=", ">", ">=", "<", "<=") and not isinstance(expected, list):
+            sql.append(f"{col} {op} ?")
+            params.append(str(expected))
+    return " AND ".join(sql), params
+
+
+def stamp(con: Optional[sqlite3.Connection] = None) -> Optional[dt.datetime]:
+    own = con is None
+    con = con or connect()
+    try:
+        s = _meta_get(con, "last_refresh")
+        return parse_iso(s) if s else None
+    finally:
+        if own:
+            con.close()
+
+
+def serves(entity: str) -> bool:
+    """Should `query_all` answer this entity from the mirror? No when the owner
+    forces live (ACB_QBO_LIVE=1), the entity is not mirrored, or the mirror has
+    never been seeded on this machine."""
+    if _os.environ.get("ACB_QBO_LIVE", "").strip() in ("1", "true", "yes"):
+        return False
+    if entity not in ENTITIES or not db_path().exists():
+        return False
+    return stamp() is not None
+
+
+def announce(con: Optional[sqlite3.Connection] = None) -> None:
+    """Print the mirror's stamp once per process; loud when stale."""
+    if _STAMP_SHOWN[0]:
+        return
+    _STAMP_SHOWN[0] = True
+    t = stamp(con)
+    if t is None:
+        return
+    age = now_utc() - t
+    hours = age.total_seconds() / 3600
+    local = t.astimezone().strftime("%m/%d/%Y %I:%M %p")
+    print(f"   QBO mirror as of {local} ({hours:.1f} h ago)")
+    if hours > MAX_AGE_HOURS:
+        print(f"   WARNING: mirror is older than {MAX_AGE_HOURS} h - run sync-all "
+              f"(or ledger/refresh_mirror.py) before trusting these numbers")
+
+
+def query(entity: str, where: str = "", con: Optional[sqlite3.Connection] = None) -> List[dict]:
+    """The mirror's answer to `SELECT * FROM <entity> [WHERE …]`. Same rows QBO
+    would return: deleted rows excluded; a name list hides inactive rows unless
+    the WHERE mentions Active (QBO's own default)."""
+    terms = parse_where(where)
+    own = con is None
+    con = con or connect()
+    try:
+        announce(con)
+        sql, params = _pushdown(terms)
+        rows = load(entity, sql, tuple(params), con=con)
+    finally:
+        if own:
+            con.close()
+    if ENTITIES[entity]["list"] and not any(f.lower() == "active" for f, _, _ in terms):
+        rows = [r for r in rows if r.get("Active", True) is not False]
+    return [r for r in rows if match_where(r, terms)]

@@ -5,6 +5,20 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
 
 ## DONE / FINALIZED
 
+- **Every reader now reads the mirror (2026-09-17, round 2).** `shared.qbo_api.query_all` routes
+  to `qbo_mirror.query(entity, where)` for every mirrored entity; the direct pull is
+  `query_all_live`. The mirror evaluates the tools' QBO WHERE grammar in Python (`parse_where` /
+  `match_where`: AND-joined `Field op value`, op in = != < <= > >= IN LIKE, Refs compare by
+  `.value`, LIKE case-insensitive like QBO, a name list hides inactive rows unless Active is
+  named - QBO's own default) with TxnDate/Id/DocNumber pushed down to SQL; an unreadable WHERE
+  raises and the call goes live, never a silent mismatch. `ACB_QBO_LIVE=1` forces live (the
+  parity check, or a clone with no mirror; an unseeded machine also falls back). The stamp is
+  printed once per process and warns past 12 h. bill-tracker's own `query_all` delegates the same
+  way. **Proof:** `one-offs/mirror_parity.py` pulls 30 (entity, WHERE) shapes live and from the
+  mirror and compares {Id: SyncToken} - 30/30 identical (33,460 invoices, 13,277 payments, ...).
+  **`ledger/sync_all.sh`** is now THE sync (step 0 = mirror refresh, Sundays + reconcile; then AP,
+  AR, ledger reload); the `sync-all` alias is one line pointing at it.
+
 - **The raw QBO mirror (2026-09-17, owner: "a full data pull of all transactions in QBO ...
   back it up into a database").** `shared/qbo_mirror.py` + `ledger/refresh_mirror.py`. One SQLite
   file outside the repo (`~/Library/Application Support/Proficient/qbo_mirror.sqlite3`, override
@@ -2072,7 +2086,7 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
 - Owner to validate the producer Runs (AR/AP) and the draft-WIP button with a real click (real syncs + Touch ID).
 
 ## TO DO
-- **Rewrite every QBO read to the mirror (the plan, 2026-09-17).** Rule: no tool opens QBO for a
+- **Rewrite every QBO read to the mirror - what is LEFT after the routing (2026-09-17).** The routing above flipped every `query_all` caller at once; what remains per tool is (a) an output diff live-vs-mirror as proof, (b) dropping auth where a tool no longer needs QBO at all, (c) the tool-local clients that do not go through `query_all` (`invoice-sync/qbo_client.py`, `one-offs/qbo_recode_review.py`'s wrapper), (d) single-record `_api_get` reads, and (e) the report walkers, which stay live. Original plan: Rule: no tool opens QBO for a
   READ; `qbo_mirror.load()` is the read. Only the three WRITERS (`qbo_recode_review --commit`,
   `qbo_bulk_close`, loans-to-subs reclass) and the REPORT walkers (`shared/qbo_pl`, `qbo_health`,
   `fetch_project_pl`) keep the API. sync-all = refresh mirror -> loaders -> renderers; every tool

@@ -151,6 +151,10 @@ no business findings, dollar exposures, or owner analyses (those live in the own
   offline tests for the module: `tests/test_cost_code_audit.py` (6). Same fix reaches
   `one-offs/concrete_cost_code_audit.py`. The three false Bodin entries were removed from
   `cost_code_history.json` so the clerk's error rate isn't charged for a rule the audit got wrong.
+- **Reads the raw QBO mirror (2026-09-17).** `qbo_bill_tracker.query_all` (and the shared one
+  `bill_rows` uses) answer from `shared/qbo_mirror` when it can serve; `ACB_QBO_LIVE=1` = the old
+  direct pull. Proof: `one-offs/mirror_parity.py` (every shape this tool asks for is in it) plus a
+  full Bill Tracker.xlsx built live and from the mirror back-to-back and diffed (ledger STATUS).
 - **Draw period tag: parentheses optional (2026-09-15, owner).** "Why is this bill not being
   matched to the invoice?" - RCI K756910 (CP785, 6/1) sat on Awaiting Invoice with a PAST-due lien
   notice while draw 34432 covered 05/21-06/20. The period regex required `(Period: … )` WITH

@@ -303,8 +303,18 @@ def query(access: str, cid: str, q: str) -> dict:
 
 def query_all(access: str, cid: str, entity: str, where: str = "",
               verbose: bool = True) -> List[dict]:
-    """Paginated SELECT * FROM <entity> [WHERE ...]. Logs page-by-page
-    progress so the user can see the sync isn't stuck during long pulls."""
+    """Paginated SELECT * FROM <entity> [WHERE ...]. Answered from THE raw QBO
+    mirror when it can serve (shared/qbo_mirror, 2026-09-17); the live path
+    below logs page-by-page progress so a long pull is visibly alive."""
+    from shared import qbo_mirror
+    if qbo_mirror.serves(entity):
+        try:
+            rows = qbo_mirror.query(entity, where)
+            if verbose:
+                print(f"    {len(rows)} {entity} from the mirror", flush=True)
+            return rows
+        except qbo_mirror.WhereError as e:
+            print(f"    mirror cannot read WHERE ({e}) - asking QBO live", flush=True)
     out: List[dict] = []
     start = 1
     page = 500
