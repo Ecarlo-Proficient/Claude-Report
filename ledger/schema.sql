@@ -323,6 +323,26 @@ CREATE TABLE IF NOT EXISTS bill_mark (
     updated_at  TEXT NOT NULL
 );
 
+-- ── wip_field_audit : the WIP change log (2026-09-17) ───────────────────────────
+-- Every contract / approved-CO / ETC / CO-cost / billed / costs change the guarded WIP writer made
+-- on a tab (and a line appearing or leaving it), with the field's SOURCE, the run and the actor -
+-- readable per job on the dashboard "just like QuickBooks' audit log" (owner). Written by
+-- wip/wip_writer via shared/wip_audit.py; read by /api/wip/audit. Append-only.
+CREATE TABLE IF NOT EXISTS wip_field_audit (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    at          TEXT NOT NULL,
+    tab         TEXT,
+    project_no  TEXT NOT NULL,
+    field       TEXT NOT NULL,           -- contract | approved_cos | etc | co_costs | billed | costs | retainage | line
+    old         NUMERIC,
+    new         NUMERIC,
+    source      TEXT,                    -- the document the reader stamped / 'QuickBooks' / 'typed on the tab (kept by the sync)'
+    actor       TEXT,                    -- 'sync' (WIP_AUDIT_ACTOR overrides) / a hand fix / the office
+    run         TEXT,
+    note        TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_wip_field_audit_proj ON wip_field_audit (project_no, id);
+
 -- ── rp_review_mark / rp_review_mark_log : the weekly RP review answers (2026-09-15) ────
 -- The owner and the RP ops manager go through every RP line once a week on the dashboard's
 -- RP review page (ledger/rp_review.py builds the page's JSON: every number's source + a cut of

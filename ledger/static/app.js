@@ -3325,6 +3325,8 @@ async function openProjectPage(pn) {
     }
   }
   // ── 4. bills + links ──
+  { const sL = sec("Change log · contract, COs, ETC, billed, costs", "every change the WIP writer made, with its source, plus the review answers");
+    const box = document.createElement("div"); box.className = "ip-audit"; sL.appendChild(box); fillAuditInto(box, pn); }
   const s3 = sec("Bills and links", "");
   const acts3 = document.createElement("div"); acts3.className = "ip-actions";
   const bb = document.createElement("button"); bb.className = "btn small"; bb.textContent = "Bills on this job"; bb.title = "The Bill Tracker filtered to this project";
@@ -8055,6 +8057,41 @@ function rrVisible() {
   });
 }
 
+
+// ── The WIP change log (owner 2026-09-17: "an audit log of the etc/contract changing that can be
+// pulled up easily just like qbo"): every contract / CO / ETC / billed / costs change the WIP writer
+// made (with its source) plus every answer saved on the review page, newest first, per job.
+const AUDIT_FIELD = { contract: "Contract", approved_cos: "Approved COs", etc: "ETC", co_costs: "CO costs", billed: "Billed to date", costs: "Costs to date", retainage: "Retainage", line: "Line" };
+async function loadAuditLog(pn) {
+  try { return await (await fetch(`/api/wip/audit?no=${encodeURIComponent(pn)}&limit=300`)).json(); } catch { return null; }
+}
+function auditTable(d) {
+  const rows = [];
+  for (const e of (d && d.entries) || []) {
+    const isLine = e.field === "line";
+    rows.push({ at: e.at, what: AUDIT_FIELD[e.field] || e.field, change: isLine ? _ge(e.note || (e.new ? "added" : "removed")) : `${e.old == null ? "blank" : money(e.old)} → <b>${e.new == null ? "blank" : money(e.new)}</b>`, src: e.source || "", who: e.actor || "", run: e.run || "" });
+  }
+  for (const a of (d && d.answers) || []) {
+    const bits = [];
+    if (a.decision) bits.push({ confirmed: "Confirmed", fix: "Needs a fix", agree: "Agreed done", keep: "Kept on the WIP", noted: "Noted", cleared: "Answer cleared" }[a.decision] || a.decision);
+    if (a.contract_ok != null) bits.push(`contract ${a.contract_ok ? "✓" : "✗"}`);
+    if (a.etc_ok != null) bits.push(`ETC ${a.etc_ok ? "✓" : "✗"}`);
+    if (a.our_contract != null) bits.push(`their contract ${money(a.our_contract)}`);
+    if (a.our_etc != null) bits.push(`their ETC ${money(a.our_etc)}`);
+    rows.push({ at: a.at, what: "Review answer", change: _ge(bits.join(" · ")), src: a.note ? `"${_ge(a.note)}"` : "", who: a.mode === "ops" || a.mode === "pm" ? "PM + owner" : "owner", run: "review page" });
+  }
+  rows.sort((x, y) => String(y.at).localeCompare(String(x.at)));
+  if (!rows.length) return `<div class="hint" style="margin:4px 0">No changes logged yet for this job.</div>`;
+  return `<table class="rr-tl audit-tl"><thead><tr><th>When</th><th>What</th><th>Change</th><th>Source</th><th>Who</th><th>Run</th></tr></thead><tbody>` +
+    rows.map(r => `<tr><td class="n">${fmtDate(r.at, true)}</td><td>${_ge(r.what)}</td><td>${r.change}</td><td>${typeof r.src === "string" && r.src.startsWith('"') ? r.src : _ge(r.src)}</td><td>${_ge(r.who)}</td><td class="d">${_ge(r.run)}</td></tr>`).join("") + `</tbody></table>`;
+}
+async function fillAuditInto(el, pn) {
+  if (!el) return;
+  el.innerHTML = `<div class="hint" style="margin:4px 0">loading the change log…</div>`;
+  const d = await loadAuditLog(pn);
+  el.innerHTML = d ? auditTable(d) : `<div class="hint" style="margin:4px 0">could not load the change log</div>`;
+}
+
 let rrOpenLine = null;   // the job whose full page is open (null = the list)
 let rrLastLine = null;   // the job you last had open - the list scrolls back to it and marks the row (owner 2026-09-15)
 const RR_DEC_LABEL = { confirmed: "Confirmed", fix: "Needs a fix", agree: "Agreed done", keep: "Kept on the WIP", noted: "Noted, not confirmed" };
@@ -8185,6 +8222,7 @@ function rrOursHtml(x, kind, m, due, withCos) {
 function rrWireOurs(card, x, kind) {
   card.querySelectorAll("[data-reveal]").forEach(b => { b.onclick = () => rrReveal(b.dataset.reveal); });
   { const b = card.querySelector("[data-project]"); if (b) b.onclick = () => openProjectPage(b.dataset.project); }
+  if (rrOpenLine === x.line) fillAuditInto(card.querySelector("[data-audit]"), x.line);   // the full page only, not list rows
   { const b = card.querySelector("[data-wipreview]"); if (b) b.onclick = () => setTab("wipreview"); }
   card.querySelectorAll('input[data-f]').forEach(inp => { const base = inp.dataset.f === "our_contract" ? x.contract : inp.dataset.f === "our_cos" ? x.cos : x.etc;
     const paint = () => { const v = Number(String(inp.value).replace(/[$,]/g, "")); inp.classList.toggle("changed", inp.value.trim() !== "" && !Number.isNaN(v) && base != null && Math.abs(v - base) > 0.5); }; inp.oninput = paint; paint(); });
@@ -8244,6 +8282,7 @@ function rrCard(x, kind) {   // the RP card: schedule first, then the contract a
     <div class="rr-strip">${nums}</div>
     ${flags.length ? `<div class="rr-flags">${flags.map(f => `<div>${_ge(f)}</div>`).join("")}</div>` : ""}
     ${schedBlock}${contractBlock}${etcBlock}${moreBlock}
+    <div class="rr-sec"><div class="rr-sec-title">${kind === "current" ? "4" : "3"} · Change log</div><div class="rr-audit" data-audit="${_ge(x.line)}"></div></div>
     ${rrOursHtml(x, kind, m, due, false)}`;
   rrWireOurs(card, x, kind);
   return card;

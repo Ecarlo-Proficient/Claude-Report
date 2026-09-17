@@ -1820,3 +1820,7 @@ table.pp-cov thead th { background: color-mix(in srgb, var(--text) 14%, var(--su
 html[data-theme="dark"] table.pp-cov thead th { background: color-mix(in srgb, var(--text) 18%, var(--surface)); }
 table.pp-cov tr.pp-cov-total > td { background: color-mix(in srgb, var(--text) 6%, var(--surface)); border-top: 2px solid color-mix(in srgb, var(--text) 40%, var(--border)); }
 table.pp-cov tr.pp-cov-total.pp-cov-row.sel > td { background: color-mix(in srgb, var(--accent) 14%, var(--surface)); }
+/* the WIP change log (per job) */
+.audit-tl { width: 100%; }
+.audit-tl td.d { color: var(--text-dim); font-size: .8em; }
+.ip-audit { padding: 4px 14px 12px; }

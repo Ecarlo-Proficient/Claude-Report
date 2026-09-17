@@ -830,6 +830,10 @@ def _snapshot_tab(ws, hdr_row: Optional[int]) -> Dict[str, dict]:
         ncol = idx.get("NOTES")
         prior[str(pnum).strip().upper()] = {
             "name": ws.cell(r, idx["PROJECT NAME"]).value if idx.get("PROJECT NAME") else None,
+            # the INPUT cells as they stand - what the change log (shared/wip_audit) compares against
+            "in_contract": val("ORIGINAL CONTRACT"), "in_cos": val("APPROVED COs"),
+            "in_etc": val("ORIGINAL ESTIMATED COST"), "in_co_costs": val("CO COSTS"),
+            "in_billed": val("BILLED TO DATE"), "in_costs": val("COSTS TO DATE"),
             "rev_contract": rev_k,
             "orig_contract": (rev_k - cos) if rev_k is not None else None,
             "rev_etc": etc,
@@ -1683,6 +1687,32 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                       wip_path.name, e, tmp.name)
             raise
         log.info("Wrote %d rows to %s in %s", len(rows), tab_name, wip_path)
+        # The WIP change log (the owner 2026-09-17: "an audit log of the etc/contract changing that
+        # can be pulled up easily just like qbo"): every input that differs from the tab as it stood
+        # goes to shared/wip_audit with its source. Never fails the write.
+        try:
+            from shared import wip_audit as _wa
+            try:
+                from wip_review_common import row_source as _rs
+                def _src(row, key):
+                    r = _rs(row, key)
+                    return r[0] if r else None
+            except Exception:                                  # noqa: BLE001
+                _src = None
+            _prior_a = {pn: {"contract": p.get("in_contract"), "approved_cos": p.get("in_cos"),
+                             "etc": p.get("in_etc"), "co_costs": p.get("in_co_costs"),
+                             "billed": p.get("in_billed"), "costs": p.get("in_costs")}
+                        for pn, p in prior_state.items()}
+            _all_a = list(rows) + [r for _t, ap in ([appendix] if isinstance(appendix, tuple)
+                                                     else (appendix or [])) for r in (ap or [])]
+            _run = " ".join([Path(sys.argv[0]).name] + [a for a in sys.argv[1:] if a.startswith("--")][:1])
+            _n = _wa.log_changes(_wa.diff_entries(
+                _prior_a, _all_a, tab_name, _run, dt.datetime.now().isoformat(timespec="seconds"),
+                os.environ.get("WIP_AUDIT_ACTOR", "sync"), owner_edits, _src))
+            if _n:
+                print(_Term.color(_Term.DIM, f"  change log: {_n} entr{'y' if _n == 1 else 'ies'} → ledger wip_field_audit"))
+        except Exception as _e:                                # noqa: BLE001
+            print(_Term.color(_Term.AMBER, f"  ⚠ change log not written: {_e}"))
         if audit:
             _sections = ([appendix] if isinstance(appendix, tuple)
                          else (appendix or []))

@@ -52,6 +52,7 @@ shared/                the ONLY importable common code
 ├─ qbo_api.py          QBO auth + retrying GET, P&L walkers, PROJ_RE · query_all is ANSWERED FROM THE MIRROR (query_all_live = the direct pull; ACB_QBO_LIVE=1 forces it)
 ├─ qbo_mirror.py       THE raw QBO mirror: every entity in qbo_mirror.sqlite3, change-feed refresh; query(entity, where) serves every query_all in the repo (QBO WHERE evaluated in Python); proof = one-offs/mirror_parity.py 30/30 (2026-09-17)
 ├─ jobtread.py         the ONE JobTread (Pave) client: pave + approved_proposals — ledger rp_review ↔ one-offs (2026-09-15)
+├─ wip_audit.py        the WIP change log (wip_field_audit): wip_writer appends every contract/CO/ETC/billed/costs change with its source; the ledger reads it per job (2026-09-17)
 ├─ qbo_costs.py        cost_leaf (the ONE cost-code resolver) + iter_cost_lines — shared w/ ledger
 ├─ qbo_attachments.py  Attachable index + fresh scan links (7-day cache reused from P&L) — ledger Audit 📎
 ├─ notion_client.py    thin Notion API client (create/query/update pages) — used by ledger/sync_actions

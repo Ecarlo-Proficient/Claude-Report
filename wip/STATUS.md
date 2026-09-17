@@ -7,6 +7,16 @@
 Last updated: 2026-09-08
 
 ## DONE / FINALIZED
+- 2026-09-17 · **The WIP change log.** `wip_writer.write_test_cp` now diffs the tab's INPUT cells as they
+  stood (`_snapshot_tab` gained `in_contract / in_cos / in_etc / in_co_costs / in_billed / in_costs`) against
+  the rows it wrote and appends one entry per changed field to `shared/wip_audit.py` (`wip_field_audit` in the
+  ledger DB): field, old -> new, the field's source (`wip_review_common.row_source`; "typed on the tab (kept by
+  the sync)" for an owner edit; "QuickBooks" for money), actor (`WIP_AUDIT_ACTOR`, default sync), run; a line
+  appearing or leaving the tab is field `line`. Never fails the write (absent DB = nothing logged, one amber
+  line). The ledger shows it per job (`/api/wip/audit?no=`).
+- 2026-09-17 · RP WIP updated by the owner's three verifiable kinds only (schedule adds, JobTread contract/ETC
+  trusted, off-the-schedule + billed-out removals; QBO up-only): RP file edited in place, emit -> decisions ->
+  `--apply-review`; the master's RP tab renamed back from the hand-renamed `WIP-RP` to `Test - RP` first.
 
 - **CATEGORY on 'Test - RP' = source + last date on it (the owner 2026-09-09: "idk what
   GOOD means in type, it should say where it came from ... and as of").** The column now

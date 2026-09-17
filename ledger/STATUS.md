@@ -4,6 +4,11 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-17 · **Change log per job** (owner: "an audit log of the etc/contract changing that can be pulled up
+  easily just like qbo"): `/api/wip/audit?no=<job>` = `shared/wip_audit.read` (every field change the WIP writer
+  made, with source / actor / run) + the review answers from `rp_review_mark_log`; shown as "Change log" on the
+  RP review job page (section 4) and on the project page. Backfilled with the 09/11 hand-typed values and the
+  09/17 update (JobTread trust, adds, removals, QBO increases).
 
 - **Mirror encrypted at rest (2026-09-17, owner: "how do we keep the data safe so nobody can just
   steal the file").** Every record's JSON is AES-256-GCM encrypted with `MIRROR_KEY` from the ONE

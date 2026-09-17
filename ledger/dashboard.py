@@ -44,7 +44,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
-from shared import paths, pnl_paths, bill_marks, lien_clock, breakeven  # noqa: E402
+from shared import paths, pnl_paths, bill_marks, lien_clock, breakeven, wip_audit  # noqa: E402
 from shared import draw_moves      # the push: bills carried into a later draw by agreement
 from shared import job_rulings     # standing per-job rulings (known loss / accepted overrun) - <CompanyHealth>/job_rulings.json
 
@@ -2793,6 +2793,16 @@ class Handler(BaseHTTPRequestHandler):
             self._review_get("RP")
         elif path.startswith("/api/rp/img/"):   # a source picture cut by rp_review (only files under its img dir)
             self._rp_img(path[len("/api/rp/img/"):])
+        elif path == "/api/wip/audit":     # the WIP change log: every contract / CO / ETC / billed / costs change, per job (like QBO's audit log)
+            q = self._query()
+            pn = (q.get("no") or "").strip().upper() or None
+            try:
+                lim = max(1, min(int(q.get("limit") or 500), 5000))
+            except ValueError:
+                lim = 500
+            entries = wip_audit.read(pn, lim, q.get("since") or None)
+            answers = [a for a in rp_review.read_mark_log(2000) if (not pn or a["project_no"] == pn)][:lim]
+            self._json({"ok": True, "project_no": pn, "entries": entries, "answers": answers})
         elif path == "/api/rp/answers":    # the answers as text (what a later session reads to make sense of them)
             self._send(200, rp_review.answers_report().encode("utf-8"), "text/plain; charset=utf-8")
         elif path == "/api/wip/review":    # the WIP Review tab (pending before/after diff, merged)
