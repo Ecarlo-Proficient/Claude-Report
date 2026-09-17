@@ -33,7 +33,10 @@ cd "$HOME/Library/Caches/com.vorssaint.utils/Copied Screenshots" && for f in Scr
    Downscale to <= 1900 px wide and embed as `data:image/png;base64` so the HTML is one file.
    If a screenshot needs a line the capture lacks (e.g. the REVISED memo line), type it ONTO
    the crop with `ImageDraw` in a matching font and say so in the reply.
-3. **ALWAYS read the rendered PDF back before sending** - `Read` the `.pdf` with `pages`.
+3. **ALWAYS read the rendered PDF back before sending, EVERY iteration** - count pages with
+   a regex over the PDF bytes first (`/Type /Page` minus `/Pages`), then `Read` page 1. In the
+   bill-approval round this loop ran ~15 times; every single render that skipped the read had a
+   defect (blank page, clipped image, arrowhead on top of text). Read the rendered PDF back before sending - `Read` the `.pdf` with `pages`.
    Check the page count and look at every page. A tall image plus a keep-together rule pushed
    one screenshot to page 2 and left page 1 blank; nobody caught it because nobody looked.
    Shipping unreviewed output is the defect the owner called out ("can you not view pdf???").
@@ -54,12 +57,30 @@ cd "$HOME/Library/Caches/com.vorssaint.utils/Copied Screenshots" && for f in Scr
 - **Crop tight to the wording.** Cut a screenshot down to the part that carries the message:
   the icon cluster with the arrow, the memo label plus its two lines, a panel trimmed to two
   cards plus its footer. Empty canvas around the words is what costs the page.
-- Choice cards in a 3-column grid with `align-items:start`; the **snippet (button / memo
-  crop) sits directly under that card's steps**, not pushed to the card bottom with
-  `margin-top:auto`. A tip that belongs to a screenshot goes under the screenshot, not in the
-  step text.
+- **Simple choices side by side, the branching choice as its own full-width block underneath.**
+  Approve and Reject are two half-width cards; Revise (the one with a decision in it) is a
+  wide card below them laid out left to right: steps and question | the decision boxes |
+  the screenshot. Never leave a tall card next to short ones - the empty space under the
+  short cards is what the owner circles in red.
+- **A decision is drawn as a flow, not two boxes in a row.** From the question, a real LINE
+  with an arrowhead to each outcome, in the outcome's colour (orange to "Yes, total changed",
+  green down to "No, same total"), and the line stops SHORT of the box - an arrowhead touching
+  or overlapping a border reads as a defect. Draw it with a flex row: question text, then a
+  `flex:1 0 26px` 2px bar with a CSS-triangle `::after`, `margin-right:10px` for the gap; the
+  question span must be allowed to shrink (`flex:0 1 auto`) or the bar overflows into the
+  next column and lands on top of the box text.
+- **Everything that belongs to an outcome lives INSIDE that outcome's box.** The tip sits in
+  the orange box beside the Yes text behind a vertical divider, and the memo screenshot sits in
+  the same orange box under a horizontal divider - the box says "this is all one path".
+- **Snippets sit directly under a card's steps**, never pushed to the card bottom with
+  `margin-top:auto`.
 - Do not use `break-inside: avoid` on tall figures; it is what creates the blank page.
-- Owner colour language on cards: green Approve, amber Revise, red Reject (top border + pill).
+- **Fitting one page is done by trimming the where-to-click screenshots first** (bar 2.5in,
+  panel 1.25in worked), never by shrinking the decision block - that block is the point.
+- No "Effective <date>" line, no subtitle. Title, then the flow.
+- Owner colour language: green Approve, red Reject, orange Revise (top border + pill); in the
+  flow strip the AP boxes' labels are orange, QuickBooks green, You blue. Start the flow at AP,
+  not the vendor.
 
 ## Build and render
 
