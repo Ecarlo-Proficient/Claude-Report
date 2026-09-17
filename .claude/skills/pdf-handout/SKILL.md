@@ -72,10 +72,11 @@ cd "$HOME/Library/Caches/com.vorssaint.utils/Copied Screenshots" && for f in Scr
 - **Everything that belongs to an outcome lives INSIDE that outcome's box.** The tip sits in
   the orange box beside the Yes text behind a vertical divider, and the memo screenshot sits in
   the same orange box under a horizontal divider - the box says "this is all one path".
-- **The button screenshots (Approve / Reject) go in ONE labelled row below all the cards**, not
-  inside each card - that keeps the simple cards short and hands the vertical room to the
-  decision block, which is where the real information is. Snippets that stay in a card sit
-  directly under its steps, never pushed to the card bottom with `margin-top:auto`.
+- **The button screenshot sits bare, directly under step 3 of its own card** - no "Bottom of
+  the bill" box around it, no label, no row at the foot of the page. The owner's words were
+  "put the sc of the buttons below the 3" and I read "the 3" as the three cards instead of
+  step 3; **when an instruction names a number, it is the numbered step, not a count of
+  blocks.** Keep the simple cards short so the decision block gets the vertical room.
 - **Outcome headers slightly bigger than body (14px vs 13px)** so Yes / No catch the eye, and
   the outcome text gets breathing room (`line-height:1.5`, a gap before "Save, then Approve").
 - Do not use `break-inside: avoid` on tall figures; it is what creates the blank page.
