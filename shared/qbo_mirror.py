@@ -130,12 +130,75 @@ def connect(path: Optional[Path | str] = None) -> sqlite3.Connection:
     return con
 
 
+# ── at rest: every record is AES-256-GCM encrypted (the owner 2026-09-17: "how do
+# we keep the data safe so nobody can just steal the file"). The key lives in the
+# ONE Keychain library (`MIRROR_KEY`, `shared/setup_qbo.py --rotate MIRROR_KEY`),
+# so a copied file is unreadable off this Mac. Blob = b"ENC1" + 12-byte nonce +
+# ciphertext(zlib(json)). A legacy plain zlib blob still reads (it starts with
+# 0x78); `encrypt_existing` rewrites those once.
+_MAGIC = b"ENC1"
+_KEY = [None]
+
+
+def _key() -> bytes:
+    if _KEY[0] is None:
+        import base64
+        from shared import qbo_vault
+        try:
+            raw = base64.b64decode(qbo_vault.get("MIRROR_KEY"))
+        except qbo_vault.SecretsError as e:
+            raise RuntimeError("the mirror's MIRROR_KEY is not in the Keychain library - "
+                               "run: python3 shared/setup_qbo.py --rotate MIRROR_KEY") from e
+        if len(raw) != 32:
+            raise RuntimeError("MIRROR_KEY must be 32 bytes (base64 of os.urandom(32))")
+        _KEY[0] = raw
+    return _KEY[0]
+
+
 def _pack(rec: dict) -> bytes:
-    return zlib.compress(json.dumps(rec, separators=(",", ":")).encode("utf-8"))
+    import os
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    plain = zlib.compress(json.dumps(rec, separators=(",", ":")).encode("utf-8"))
+    nonce = os.urandom(12)
+    return _MAGIC + nonce + AESGCM(_key()).encrypt(nonce, plain, None)
 
 
 def _unpack(blob: bytes) -> dict:
-    return json.loads(zlib.decompress(blob).decode("utf-8"))
+    blob = bytes(blob)
+    if blob[:4] == _MAGIC:
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        plain = AESGCM(_key()).decrypt(blob[4:16], blob[16:], None)
+    else:
+        plain = blob                       # legacy: plain zlib
+    return json.loads(zlib.decompress(plain).decode("utf-8"))
+
+
+def encrypt_existing(con, progress: Progress = print) -> int:
+    """Rewrite every legacy (plain zlib) row encrypted. Idempotent."""
+    say = progress or (lambda s: None)
+    total = 0
+    for e in ENTITIES:
+        t = table(e)
+        rows = con.execute(f"SELECT id, json FROM {t} WHERE substr(json,1,4) != ?", (_MAGIC,)).fetchall()
+        if not rows:
+            continue
+        con.executemany(f"UPDATE {t} SET json=? WHERE id=?",
+                        [(_pack(_unpack(r[1])), r[0]) for r in rows])
+        con.commit()
+        total += len(rows)
+        say(f"  {e}: {len(rows):,} rows encrypted")
+    return total
+
+
+def encryption_status(con) -> Tuple[int, int]:
+    """(encrypted rows, plain rows) across every table."""
+    enc = plain = 0
+    for e in ENTITIES:
+        r = con.execute(f"SELECT SUM(substr(json,1,4)=?), SUM(substr(json,1,4)!=?) FROM {table(e)}",
+                        (_MAGIC, _MAGIC)).fetchone()
+        enc += r[0] or 0
+        plain += r[1] or 0
+    return enc, plain
 
 
 def _meta_get(con, key: str) -> Optional[str]:

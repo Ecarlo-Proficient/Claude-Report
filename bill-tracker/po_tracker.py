@@ -31,8 +31,10 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 from shared import paths  # noqa: E402
 
-# Tracker of record (the user 2026-08-25). Override with ACB_PO_TRACKER_XLSX.
-DEFAULT_TRACKER = paths.onedrive_base() / "Purchase Orders" / "Copy 05 dic.xlsx"
+# Tracker of record (the user 2026-08-25; LIVE file named 2026-09-17: the office's
+# `1.0purchase-order-tracker.xlsx` on OneDrive). Override with ACB_PO_TRACKER_XLSX.
+DEFAULT_TRACKER = (paths.onedrive_base() / "Proficient Office - Purchase Orders"
+                   / "1.0purchase-order-tracker.xlsx")
 TRACKER_SHEET = "Orders"
 
 STALE_DAYS = 60                      # Open+unbilled older than this → "Stale"

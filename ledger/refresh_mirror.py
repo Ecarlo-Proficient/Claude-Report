@@ -26,6 +26,13 @@ from shared import qbo_mirror as mirror    # noqa: E402
 def _status() -> int:
     s = mirror.status()
     print(f"mirror: {s['db']} ({s['size_mb']} MB)")
+    con = mirror.connect()
+    try:
+        enc, plain = mirror.encryption_status(con)
+    finally:
+        con.close()
+    print(f"  at rest: {enc:,} rows encrypted (AES-256-GCM, key in the Keychain library)"
+          + (f" · {plain:,} PLAIN - run --encrypt" if plain else ""))
     print(f"  seeded {s['seeded_at'] or '-'} · last refresh {s['last_refresh'] or '-'}")
     tot = 0
     for e, r in s["entities"].items():
@@ -41,10 +48,21 @@ def main(argv=None) -> int:
     g.add_argument("--seed", action="store_true", help="full pull of every entity")
     g.add_argument("--reconcile", action="store_true", help="count check per entity, sweep drift")
     g.add_argument("--status", action="store_true", help="what the mirror holds (no QBO call)")
+    g.add_argument("--encrypt", action="store_true",
+                   help="encrypt any plain rows with the Keychain MIRROR_KEY (one-time migration; no QBO call)")
     ap.add_argument("--entities", default="", help="comma list, --seed only")
     a = ap.parse_args(argv)
     if a.status:
         return _status()
+    if a.encrypt:
+        con = mirror.connect()
+        try:
+            n = mirror.encrypt_existing(con)
+            enc, plain = mirror.encryption_status(con)
+        finally:
+            con.close()
+        print(f"done: {n:,} rows encrypted this run · {enc:,} encrypted · {plain:,} plain")
+        return 0 if plain == 0 else 1
     access = qbo_api.refresh_access()
     _, cid = qbo_api.load_credentials()
     con = mirror.connect()

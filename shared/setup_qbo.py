@@ -106,6 +106,16 @@ SPECS = [
         "opaque alphanumeric string",
         10, 200, None,
     ),
+    # The raw QBO mirror's at-rest key (2026-09-17): every record in
+    # qbo_mirror.sqlite3 is AES-GCM encrypted with it, so a copied file is
+    # useless off this Mac. 32 random bytes, base64. Generated, never typed:
+    #   python3 -c "import os,base64;print(base64.b64encode(os.urandom(32)).decode())"
+    KeySpec(
+        "MIRROR_KEY",
+        "generated locally (see comment above) - the mirror's AES-256-GCM key",
+        "44-char base64",
+        40, 48, None, required=False,
+    ),
     # Microsoft Graph — billings-inbox print-status scan (statement-reconciler).
     # Optional add-on, required=False so the QBO auth test never demands them.
     # Same blob (key-library rule). GRAPH_BILLING_MAILBOX is which inbox to read.

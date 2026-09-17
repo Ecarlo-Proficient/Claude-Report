@@ -7,6 +7,30 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from shared import qbo_mirror as m  # noqa: E402
 
+m._KEY[0] = b"\x07" * 32          # tests never touch the Keychain
+
+
+def test_records_are_encrypted_at_rest_and_legacy_rows_still_read():
+    import zlib, json
+    con = m.connect(":memory:")
+    m.upsert_many(con, "Bill", [_bill(1)], "t")
+    raw = con.execute("SELECT json FROM qbo_bill WHERE id='1'").fetchone()[0]
+    assert bytes(raw[:4]) == b"ENC1" and b"RCI" not in bytes(raw)
+    # a legacy plain-zlib row reads, and encrypt_existing converts it
+    con.execute("INSERT INTO qbo_bill(id, json) VALUES ('9', ?)",
+                (zlib.compress(json.dumps(_bill(9)).encode()),))
+    assert m.get("Bill", "9", con=con)["Id"] == "9"
+    assert m.encryption_status(con) == (1, 1)
+    assert m.encrypt_existing(con, progress=None) == 1
+    assert m.encryption_status(con) == (2, 0)
+    assert m.get("Bill", "9", con=con)["TotalAmt"] == 10.0
+    # a different key cannot read it
+    m._KEY[0] = b"\x08" * 32
+    import pytest
+    with pytest.raises(Exception):
+        m.get("Bill", "1", con=con)
+    m._KEY[0] = b"\x07" * 32
+
 
 def _bill(i, total=10.0, upd="2026-09-16T10:00:00-05:00", tok=0):
     return {"Id": str(i), "SyncToken": str(tok), "TxnDate": "2026-09-01", "DocNumber": f"B{i}",

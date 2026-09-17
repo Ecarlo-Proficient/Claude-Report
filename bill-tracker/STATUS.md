@@ -151,6 +151,10 @@ no business findings, dollar exposures, or owner analyses (those live in the own
   offline tests for the module: `tests/test_cost_code_audit.py` (6). Same fix reaches
   `one-offs/concrete_cost_code_audit.py`. The three false Bodin entries were removed from
   `cost_code_history.json` so the clerk's error rate isn't charged for a rule the audit got wrong.
+- **PO tracker path fixed (2026-09-17, owner).** `po_tracker.DEFAULT_TRACKER` pointed at a dead
+  `Purchase Orders/Copy 05 dic.xlsx`, so every sync since ran the PO checks QBO-only. Now the live
+  office file `Proficient Office - Purchase Orders/1.0purchase-order-tracker.xlsx` under the
+  OneDrive base (6,990 POs load). Override stays `ACB_PO_TRACKER_XLSX`.
 - **Reads the raw QBO mirror (2026-09-17).** `qbo_bill_tracker.query_all` (and the shared one
   `bill_rows` uses) answer from `shared/qbo_mirror` when it can serve; `ACB_QBO_LIVE=1` = the old
   direct pull. Proof: `one-offs/mirror_parity.py` (every shape this tool asks for is in it) plus a
