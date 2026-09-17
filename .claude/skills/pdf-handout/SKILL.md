@@ -77,8 +77,12 @@ cd "$HOME/Library/Caches/com.vorssaint.utils/Copied Screenshots" && for f in Scr
   "put the sc of the buttons below the 3" and I read "the 3" as the three cards instead of
   step 3; **when an instruction names a number, it is the numbered step, not a count of
   blocks.** Keep the simple cards short so the decision block gets the vertical room.
-- **Outcome headers slightly bigger than body (14px vs 13px)** so Yes / No catch the eye, and
-  the outcome text gets breathing room (`line-height:1.5`, a gap before "Save, then Approve").
+- **Yes and No boxes share one type size, a step above the page body** (headers 15px, text 13px)
+  so both outcomes catch the eye equally; outcome text gets breathing room (`line-height:1.5`).
+- **No dead gap inside a box.** A text column beside a divider is `max-content`, not a `fr`
+  share, so the divider and the tip sit right after the text. The owner checks for gaps -
+  look for them in the rendered PDF before sending.
+- QBO memo new line is **Shift+Enter** (owner 2026-09-17), not Ctrl+Enter.
 - Do not use `break-inside: avoid` on tall figures; it is what creates the blank page.
 - **Fitting one page is done by trimming the where-to-click screenshots first** (bar 2.5in,
   panel 1.25in worked), never by shrinking the decision block - that block is the point.
