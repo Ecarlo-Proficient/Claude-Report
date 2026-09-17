@@ -7,6 +7,19 @@
 Last updated: 2026-09-08
 
 ## DONE / FINALIZED
+- 2026-09-17 · **NEWEST DOCUMENT WINS** for RP contract / ETC (owner, after "trust JobTread" moved two
+  contracts down on 2025 proposals while the folder held newer paper). `shared/rp_price.py` = the ONE
+  resolver: candidates are JobTread's approved proposal (price/cost, its date), the newest proposal PDF for
+  the scope in the job folder (SUB TOTAL + the DATE printed on it), the takeoff cost sheet (file date);
+  newest wins per field. Guards: a pick below what is already billed is held; a documented value on file
+  only moves for STRICTLY newer paper (`source_date` of the RP file's CONTRACT FILE / ETC FILE text);
+  a folder with 3+ different proposal amounts is a multi-scope job - contract held; a machine-read ETC
+  is used only when believable (`sane_etc`: between a quarter of the contract and the contract, not
+  3x the current); an older JobTread cost never beats a newer proposal. `wip/rp_price_sync.py` applies
+  it to the RP WIP file (dry-run by default, `--write` = backup + file + change log via shared/wip_audit,
+  `--json` dumps every candidate) and prints the estimator's JobTread list (missing / no approved
+  proposal / older than the folder / below billed). First run: 20 lines changed, 10 held; the blind
+  first pass would have written 40 incl. an ETC of 720,040 and three of 238 - the guards exist for that.
 - 2026-09-17 · **The WIP change log.** `wip_writer.write_test_cp` now diffs the tab's INPUT cells as they
   stood (`_snapshot_tab` gained `in_contract / in_cos / in_etc / in_co_costs / in_billed / in_costs`) against
   the rows it wrote and appends one entry per changed field to `shared/wip_audit.py` (`wip_field_audit` in the
