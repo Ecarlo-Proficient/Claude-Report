@@ -2039,7 +2039,7 @@ def validate_cached_vendor(access: str, cid: str, qbo_id: str) -> Optional[str]:
 
 
 def find_vendor_id_cached(access: str, cid: str, pdf_vendor: str,
-                          override: str = "") -> Tuple[str, str, bool]:
+                          override: str = "", strict: bool = True) -> Tuple[str, str, bool]:
     """Resolve vendor → (id, current_display_name, from_cache).
     - If --vendor override is set, use it directly (no cache lookup).
     - Else check alias cache; validate via QBO; on hit return (id, name, True).
@@ -2047,7 +2047,7 @@ def find_vendor_id_cached(access: str, cid: str, pdf_vendor: str,
     Caller is responsible for saving the alias after user confirmation.
     """
     if override:
-        return (*find_vendor_id(access, cid, override), False)
+        return (*find_vendor_id(access, cid, override, strict=strict), False)
     aliases = load_aliases()
     cached = aliases.get(_alias_key(pdf_vendor))
     cached_id = cached.get("qbo_id") if cached else None
@@ -2056,11 +2056,16 @@ def find_vendor_id_cached(access: str, cid: str, pdf_vendor: str,
         if current_name:
             return cached_id, current_name, True
         _warn(f"cached vendor id {cached_id} ({cached.get('qbo_name')}) no longer in QBO — re-resolving.")
-    return (*find_vendor_id(access, cid, pdf_vendor), False)
+    return (*find_vendor_id(access, cid, pdf_vendor, strict=strict), False)
 
 
-def find_vendor_id(access: str, cid: str, vendor_name_hint: str) -> Tuple[str, str]:
-    """Returns (vendor_id, vendor_display_name).
+def find_vendor_id(access: str, cid: str, vendor_name_hint: str,
+                   strict: bool = True) -> Tuple[str, str]:
+    """Returns (vendor_id, vendor_display_name), or ("", "") when strict=False and
+    nothing resolves (so an unattended batch can SKIP one vendor instead of
+    aborting the whole run - a bare no-match sys.exit is a SystemExit that slips
+    past run_inbox's `except Exception`). strict=True keeps the fatal, helpful
+    message for interactive single-file use.
     Tries progressively-relaxed LIKE searches against QBO Vendor.DisplayName:
       1. first 2 whitespace tokens with internal punctuation preserved
          ('Post-Tension Services' — handles hyphens/ampersands cleanly)
@@ -2070,10 +2075,14 @@ def find_vendor_id(access: str, cid: str, vendor_name_hint: str) -> Tuple[str, s
     Trailing punctuation like commas/periods is stripped from each token
     so 'Ready Cable, Inc' → tokens ['Ready', 'Cable', 'Inc']."""
     if not vendor_name_hint:
+        if not strict:
+            return "", ""
         sys.exit("✗ could not identify vendor from PDF. Pass --vendor explicitly.")
     raw_tokens = vendor_name_hint.split()
     tokens = [t.rstrip(",.;:") for t in raw_tokens if t.rstrip(",.;:")]
     if not tokens:
+        if not strict:
+            return "", ""
         sys.exit(f"✗ vendor hint '{vendor_name_hint}' contains no usable tokens.")
 
     # Build the ordered list of needles to try. Dedup while preserving order.
@@ -2115,6 +2124,9 @@ def find_vendor_id(access: str, cid: str, vendor_name_hint: str) -> Tuple[str, s
 
     if not found_rows:
         tried = ", ".join(repr(n) for _, n in attempts)
+        if not strict:
+            _warn(f"no QBO vendor matches. Tried: {tried}.")
+            return "", ""
         sys.exit(f"✗ no QBO vendor matches. Tried: {tried}. "
                  "Pass --vendor with exact display name.")
     if len(found_rows) > 1:
@@ -3096,12 +3108,19 @@ def process_pdf(pdf_path: Path, args: argparse.Namespace,
     # ── vendor resolve (uses alias cache when available) ────
     print()
     t0 = _phase("Resolving vendor in QBO")
+    # strict=False: an unresolvable vendor returns "" and we SKIP this one file
+    # rather than sys.exit and abort the whole batch (SystemExit slips past
+    # run_inbox's except). The run's summary lists it for a human.
     if args.no_cache:
-        vendor_id, vendor_name = find_vendor_id(access, cid, args.vendor or vendor_hint)
+        vendor_id, vendor_name = find_vendor_id(access, cid, args.vendor or vendor_hint, strict=False)
         from_cache = False
     else:
         vendor_id, vendor_name, from_cache = find_vendor_id_cached(
-            access, cid, vendor_hint, override=args.vendor)
+            access, cid, vendor_hint, override=args.vendor, strict=False)
+    if not vendor_id:
+        _fail(f"no QBO vendor match for '{vendor_hint}' — skipped (add an alias or pass "
+              "--vendor with the exact QBO display name). Left in place.")
+        return False, {}, True
     cache_marker = _Term.color(_Term.Y, " ★ from saved alias") if from_cache else ""
     _done(t0, f"Matched {_Term.color(_Term.BOLD, vendor_name)}  (id={vendor_id}){cache_marker}")
 
