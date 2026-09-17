@@ -701,6 +701,14 @@ def parse_statement_qbo_customer_open_balance(full_text: str) -> Tuple[str, str,
                 break
             except ValueError:
                 continue
+    # Fallback: the newer Customer Open Balance layout prints the as-of date as a
+    # bare MM/DD/YY on the line right under the "Customer Open Balance" title
+    # (Estrada / Post-Tension), with no "As of" wording.
+    if not stmt_date:
+        m = re.search(r"Customer Open Balance\s*[\r\n]+\s*(\d{1,2}/\d{1,2}/\d{2,4})",
+                      full_text, re.I)
+        if m:
+            stmt_date = _norm_date(m.group(1))
 
     # Grand total — "TOTAL <amount>" at end (not "Total <name> <amount>" — must be standalone TOTAL)
     amt_due = 0.0

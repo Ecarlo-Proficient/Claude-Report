@@ -5,6 +5,15 @@ to this tool. Tool-only scope: no business/owner analyses or dollar-exposure
 findings here — those live in the owner's vault.
 
 ## DONE / FINALIZED
+- **QBO Customer Open Balance date fallback + batch robustness (2026-09-17).**
+  The newer Customer Open Balance layout prints the as-of date as a bare MM/DD/YY
+  under the title (no "As of" wording) - Estrada 09-03 and Post-Tension 08-18
+  parsed lines + tied out but returned no date and were skipped. Added a fallback
+  that reads the MM/DD/YY under "Customer Open Balance"; both now date + tie out.
+  Also: `find_vendor_id(strict=)` so an unresolvable vendor SKIPS instead of
+  sys.exit-aborting a whole `--refresh` (a SystemExit slipped past run_inbox).
+  Vendor aliases cached for Abatix (30145), Carder Concrete (30733), Gonzalez
+  Brothers Batch Plant LP (28894, incl. the 'GONZALES' misspelling) - local cache.
 - **Abatix Corp parser added (2026-09-16).** New template `vendor_abatix`
   (`ABATIX_SIG` = the doubled "Invoice Amount" header; parser reads Invoice Date |
   Due Date | Invoice No | PO | Amount Due | Enclosed No). All 3 filed Abatix
