@@ -164,7 +164,9 @@ def parse_iso(s: str) -> dt.datetime:
 
 def _summary(rec: dict) -> tuple:
     md = rec.get("MetaData") or {}
-    name = rec.get("DisplayName") or rec.get("Name") or rec.get("FullyQualifiedName")
+    # the name QBO sorts a list by: DisplayName (vendors/customers), else the
+    # fully qualified name (accounts/items nest under parents), else Name (classes)
+    name = rec.get("DisplayName") or rec.get("FullyQualifiedName") or rec.get("Name")
     total = rec.get("TotalAmt")
     if total is None:
         total = rec.get("Amount")
@@ -470,6 +472,14 @@ def load(entity: str, where_sql: str = "", params: Tuple = (), include_deleted: 
         sql = f"SELECT json FROM {t}"
         if parts:
             sql += " WHERE " + " AND ".join(parts)
+        # QBO's own result order, so a tool that takes the FIRST candidate
+        # (draw matching, PO index) picks the same row it always did (bill
+        # tracker diff 2026-09-17): transactions newest-edited first, name lists
+        # alphabetical (case-insensitive).
+        if ENTITIES[entity]["list"]:
+            sql += " ORDER BY lower(name), CAST(id AS INTEGER)"
+        else:
+            sql += " ORDER BY last_updated DESC, CAST(id AS INTEGER) DESC"
         return [_unpack(r[0]) for r in con.execute(sql, params)]
     finally:
         if own:

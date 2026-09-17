@@ -5,6 +5,25 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
 
 ## DONE / FINALIZED
 
+- **Mirror proofs, tool by tool (2026-09-17, round 3).** Steps 1-2 of the rewrite plan are PROVEN:
+  (1) the cost engine - `load_costs.py --active --since 2026-06-19` live vs mirror on scratch copies
+  of the ledger: 10,481 `cost_line` rows, 0 differences; (2) the bill tracker - `Bill Tracker.xlsx`
+  built live (`ACB_QBO_LIVE=1`) and from the mirror into scratch paths (`ACB_BILL_TRACKER_XLSX`),
+  every sheet cell-identical except the History run counter. **Timings: bill tracker 137 s live ->
+  12 s mirror; the earlier failed pair 349 s -> 18 s.** Three things the diffs taught, all fixed:
+  (a) the mirror must return rows in QBO's own result order, because tools take the FIRST candidate
+  (draw matching, PO index) - transactions newest-`LastUpdatedTime` first (id desc on ties, 1242/1242
+  live ties agree), name lists alphabetical case-insensitive with accounts/items in TREE order
+  (parent, its children, next sibling = sort on the FQN split at ':'), classes flat by Name;
+  sequences verified identical live vs mirror for PurchaseOrder/Bill/Invoice/Payment/Vendor/Item;
+  (b) `po_tracker.reconcile_unused_pos` iterated a SET, so the Audit - PO tie order changed run to
+  run even live - now `sorted`; (c) EIGHT project #s carry two QBO customers, and QBO's list order
+  (irreproducible on ties) decided which one `build_project_customer_map` used - RP7074 and
+  RP7074-FTW were pointed at an EMPTY duplicate. `pick_customer` now decides explicitly: exact
+  DisplayName, then the customer the invoices are on, then the older record; identical live vs
+  mirror (1,552 projects), and three moved to the customer carrying the work (RP7074, RP7074-FTW,
+  RP7401-FTW). Tests: `tests/test_qbo_api_customers.py` (3) + order tests in `test_qbo_mirror.py`.
+
 - **Every reader now reads the mirror (2026-09-17, round 2).** `shared.qbo_api.query_all` routes
   to `qbo_mirror.query(entity, where)` for every mirrored entity; the direct pull is
   `query_all_live`. The mirror evaluates the tools' QBO WHERE grammar in Python (`parse_where` /

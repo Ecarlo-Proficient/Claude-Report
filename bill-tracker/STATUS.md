@@ -155,6 +155,11 @@ no business findings, dollar exposures, or owner analyses (those live in the own
   `bill_rows` uses) answer from `shared/qbo_mirror` when it can serve; `ACB_QBO_LIVE=1` = the old
   direct pull. Proof: `one-offs/mirror_parity.py` (every shape this tool asks for is in it) plus a
   full Bill Tracker.xlsx built live and from the mirror back-to-back and diffed (ledger STATUS).
+  **Proven 2026-09-17:** every sheet cell-identical, 137 s live -> 12 s mirror. Side fix:
+  `po_tracker.reconcile_unused_pos` iterated a set, so Audit - PO tie order differed run to run
+  (even live) - now sorted. Note: the tracker on the Accounting share fails the save with
+  `Errno 35` while Excel holds it open (the lock file `~$Bill Tracker.xlsx` beside it) - loud, not
+  silent like the OneDrive revert was; close Excel and rerun.
 - **Draw period tag: parentheses optional (2026-09-15, owner).** "Why is this bill not being
   matched to the invoice?" - RCI K756910 (CP785, 6/1) sat on Awaiting Invoice with a PAST-due lien
   notice while draw 34432 covered 05/21-06/20. The period regex required `(Period: … )` WITH

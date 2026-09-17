@@ -284,19 +284,47 @@ def build_project_customer_map(access: str, company_id: str) -> Dict[str, dict]:
     Strict project # match per [[feedback_ftw_separate_project]] — no family rollup.
     """
     customers = query_all(access, company_id, "Customer")
-    by_proj: Dict[str, dict] = {}
+    cands: Dict[str, List[dict]] = {}
     for c in customers:
         name = c.get("DisplayName") or c.get("CompanyName") or ""
         proj = extract_proj(name)
-        if proj and proj not in by_proj:
-            by_proj[proj] = {
-                "id": c["Id"],
-                "name": name,
-                "fully_qualified_name": c.get("FullyQualifiedName", name),
-                "balance": float(c.get("Balance", 0) or 0),
-                "parent_id": (c.get("ParentRef") or {}).get("value"),
-            }
+        if proj:
+            cands.setdefault(proj, []).append(c)
+    by_proj: Dict[str, dict] = {}
+    for proj, cs in cands.items():
+        c = cs[0]
+        if len(cs) > 1:
+            # Eight project #s carry TWO QBO customers (2026-09-17 audit). The
+            # old first-wins took whichever QBO listed first - an arbitrary order
+            # that pointed RP7074 at an empty duplicate. Resolve it explicitly:
+            # exact name, then the customer the invoices are on, then the older
+            # record (the later one is the duplicate).
+            inv = {x["Id"]: len(query_all(access, company_id, "Invoice",
+                                           f"CustomerRef = '{x['Id']}'")) for x in cs}
+            c = pick_customer(proj, cs, inv)
+            print(f"      duplicate customers for {proj}: "
+                  + ", ".join(f"{x.get('FullyQualifiedName') or x.get('DisplayName')} ({inv[x['Id']]} inv)" for x in cs)
+                  + f" -> using {c['Id']}")
+        name = c.get("DisplayName") or c.get("CompanyName") or ""
+        by_proj[proj] = {
+            "id": c["Id"],
+            "name": name,
+            "fully_qualified_name": c.get("FullyQualifiedName", name),
+            "balance": float(c.get("Balance", 0) or 0),
+            "parent_id": (c.get("ParentRef") or {}).get("value"),
+        }
     return by_proj
+
+
+def pick_customer(proj: str, cs: List[dict], invoices_by_id: Dict[str, int]) -> dict:
+    """The ONE customer for a project # that has several: exact DisplayName
+    match first (drops 'RP7340 -FT' typos), then the most invoices, then the
+    oldest record. Pure, so it unit-tests offline."""
+    def key(c):
+        exact = (c.get("DisplayName") or "").strip().upper() == proj.upper()
+        created = (c.get("MetaData") or {}).get("CreateTime") or "9999"
+        return (0 if exact else 1, -invoices_by_id.get(c["Id"], 0), created, int(c["Id"]))
+    return sorted(cs, key=key)[0]
 
 
 # ────────────────────────── P&L report ──────────────────────────

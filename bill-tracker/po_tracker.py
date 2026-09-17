@@ -195,7 +195,9 @@ def reconcile_unused_pos(
     into one flagged-row-per-PO list. Pure — no IO. Only POs with ≥1 reason are
     returned. See module docstring for the flag definitions."""
     out: List[dict] = []
-    for key in set(po_by_doc) | set(tracker_by_po):
+    # sorted: a set iterates in hash order, which made the Audit - PO tie order
+    # differ run to run (found diffing two same-day builds, 2026-09-17)
+    for key in sorted(set(po_by_doc) | set(tracker_by_po)):
         q = po_by_doc.get(key)
         t = tracker_by_po.get(key)
         reasons: List[str] = []

@@ -34,7 +34,7 @@ def test_deleted_rows_are_kept_but_hidden_and_come_back_alive():
     assert [r["Id"] for r in m.load("Bill", con=con)] == ["1"]
     assert len(m.load("Bill", con=con, include_deleted=True)) == 2
     m.upsert_many(con, "Bill", [_bill(2, tok=3)], "t4")               # QBO restored it
-    assert [r["Id"] for r in m.load("Bill", con=con)] == ["1", "2"]
+    assert sorted(r["Id"] for r in m.load("Bill", con=con)) == ["1", "2"]
 
 
 def test_load_where_over_summary_columns():
@@ -113,7 +113,7 @@ def test_refresh_past_feed_reach_falls_back_to_updated_plus_sweep(monkeypatch):
     assert res["mode"] == "updated+sweep"
     ids = {r["Id"]: r["TotalAmt"] for r in m.load("Bill", con=con)}
     assert ids == {"2": 42.0, "3": 10.0}
-    assert m.load("Bill", con=con, include_deleted=True)[0]["Id"] == "1"
+    assert [r["Id"] for r in m.load("Bill", "id = ?", ("1",), con=con, include_deleted=True)] == ["1"]
     assert any(e == "Customer" and "Active IN (true, false)" in w for e, w, _ in seen)
 
 
@@ -206,3 +206,16 @@ def test_serves_respects_live_switch_and_missing_mirror(monkeypatch, tmp_path):
     assert m.serves("Attachable") is False                         # outside the mirror
     monkeypatch.setenv("ACB_QBO_LIVE", "1")
     assert m.serves("Bill") is False
+
+
+def test_load_returns_qbo_result_order():
+    # transactions: newest LastUpdatedTime first (QBO's default); lists: A-Z, case-insensitive
+    con = m.connect(":memory:")
+    m.upsert_many(con, "Bill", [_bill(1, upd="2026-09-01T00:00:00-05:00"),
+                                _bill(2, upd="2026-09-03T00:00:00-05:00"),
+                                _bill(3, upd="2026-09-02T00:00:00-05:00")], "t")
+    assert [r["Id"] for r in m.load("Bill", con=con)] == ["2", "3", "1"]
+    m.upsert_many(con, "Vendor", [{"Id": "1", "DisplayName": "beta", "SyncToken": "0", "MetaData": {}},
+                                  {"Id": "2", "DisplayName": "Alpha", "SyncToken": "0", "MetaData": {}},
+                                  {"Id": "3", "DisplayName": "121 EXPRESS", "SyncToken": "0", "MetaData": {}}], "t")
+    assert [r["DisplayName"] for r in m.load("Vendor", con=con)] == ["121 EXPRESS", "Alpha", "beta"]
