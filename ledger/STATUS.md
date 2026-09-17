@@ -2105,6 +2105,12 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
 - Owner to validate the producer Runs (AR/AP) and the draft-WIP button with a real click (real syncs + Touch ID).
 
 ## TO DO
+- **Mirror at rest: encrypt the records (owner 2026-09-17, "how do we keep the data safe").** Today:
+  `qbo_mirror.sqlite3` and `ledger.sqlite3` are mode 600 (owner-only), on a FileVault disk, outside
+  every synced folder, realm never stored. A stolen file is still readable by whoever has the Mac
+  login. Next step: encrypt each record's JSON with a key held in the ONE Keychain library
+  (`automation-qbo` blob, `--rotate MIRROR_KEY`), so the file is useless off this Mac; `_pack` /
+  `_unpack` are the only two places that touch the bytes. Cost: one Keychain read per process.
 - **Rewrite every QBO read to the mirror - what is LEFT after the routing (2026-09-17).** The routing above flipped every `query_all` caller at once; what remains per tool is (a) an output diff live-vs-mirror as proof, (b) dropping auth where a tool no longer needs QBO at all, (c) the tool-local clients that do not go through `query_all` (`invoice-sync/qbo_client.py`, `one-offs/qbo_recode_review.py`'s wrapper), (d) single-record `_api_get` reads, and (e) the report walkers, which stay live. Original plan: Rule: no tool opens QBO for a
   READ; `qbo_mirror.load()` is the read. Only the three WRITERS (`qbo_recode_review --commit`,
   `qbo_bulk_close`, loans-to-subs reclass) and the REPORT walkers (`shared/qbo_pl`, `qbo_health`,
