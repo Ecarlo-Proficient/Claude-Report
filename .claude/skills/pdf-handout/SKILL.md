@@ -47,9 +47,13 @@ cd "$HOME/Library/Caches/com.vorssaint.utils/Copied Screenshots" && for f in Scr
 
 - `@page { size: Letter portrait; margin: 0.4in 0.5in }`, body 13px system sans, `.page` max
   7.5in. No web fonts needed for print.
-- **Caption ABOVE its screenshot**, numbered ("1. Click the Tasks icon", "2. The Tasks panel").
-  Put a wide-short capture and a tall-narrow capture side by side in a grid
-  (`grid-template-columns: 1fr 1.85in`), never stacked - stacking is what overflows the page.
+- **"Where to click" is a numbered LIST, stacked** - caption, then its screenshot under it,
+  next item. The owner rejected a side-by-side grid ("idk why you are putting it to the right").
+  Keep the page by cropping, not by re-flowing: give each image a fixed print width
+  (`width: 3.4in` for a bar, `2.3in` for a panel).
+- **Crop tight to the wording.** Cut a screenshot down to the part that carries the message:
+  the icon cluster with the arrow, the memo label plus its two lines, a panel trimmed to two
+  cards plus its footer. Empty canvas around the words is what costs the page.
 - Choice cards in a 3-column grid with `align-items:start`; the **snippet (button / memo
   crop) sits directly under that card's steps**, not pushed to the card bottom with
   `margin-top:auto`. A tip that belongs to a screenshot goes under the screenshot, not in the
