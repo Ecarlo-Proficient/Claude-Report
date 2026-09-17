@@ -50,6 +50,7 @@ shared/                the ONLY importable common code
 ├─ qbo_vault.py        QBO Keychain blob — one Touch ID unlocks all keys
 ├─ paths.py            per-machine output paths (machine.env at REPO ROOT)
 ├─ qbo_api.py          QBO auth + retrying GET, query_all, P&L walkers, PROJ_RE
+├─ qbo_mirror.py       THE raw QBO mirror: every entity in qbo_mirror.sqlite3, change-feed refresh; load(entity) = the ONE read of QBO for every tool (2026-09-17; rewrite in progress, ledger STATUS)
 ├─ jobtread.py         the ONE JobTread (Pave) client: pave + approved_proposals — ledger rp_review ↔ one-offs (2026-09-15)
 ├─ qbo_costs.py        cost_leaf (the ONE cost-code resolver) + iter_cost_lines — shared w/ ledger
 ├─ qbo_attachments.py  Attachable index + fresh scan links (7-day cache reused from P&L) — ledger Audit 📎
@@ -473,6 +474,10 @@ flowchart LR
     VGRAPH["vault_graph.py\nwhole-vault wiki-links → org map (ROSTER excluded)\n+ docs/ARCHITECTURE.md mermaid → the Graph tab\nlive, no cache, no DB table"]:::tool
     BROWSER[("Browser\nhttp://127.0.0.1:8787")]:::out
     QBO[("QBO\nBills + Purchases\n(read-only pull, Touch ID)")]:::src
+    MIRROR[("qbo_mirror.sqlite3\nTHE raw mirror: 21 entities, full JSON,\ndeletes flagged · seed once, /cdc refresh in seconds")]:::src
+    MREF["refresh_mirror.py\n--seed · refresh (change feed) · --reconcile · --status"]:::tool
+    QBO --> MREF --> MIRROR
+    MIRROR -. "every loader + tool reads here\nonce rewritten (STATUS: the 10-step order)" .-> COSTLOAD
     QCOSTS["shared/qbo_costs.py\ncost_leaf + iter_cost_lines\n(the ONE resolver — shared with project-pnl)"]:::tool
     COSTLOAD["load_costs.py\ncost_line by cost code · incl. subs ·\n+ the trail columns (bill # · memo · line # · bill total · scan) ·\nreconciles to wip_snapshot · --selftest"]:::tool
     NPAGE["notion_page.py\n/api/invoice/notion: one Invoice Tracker page, whole\n(properties · body · comments) for the invoice drawer · read-only · 60 s cache"]:::tool

@@ -15,6 +15,7 @@ so you can watch your actual data live in a database instead of a spreadsheet.
 | File | What it is |
 |------|-----------|
 | `schema.sql` | The whole 6-table spine. **Portable — runs on SQLite and PostgreSQL unchanged.** |
+| `refresh_mirror.py` | **The raw QBO mirror** (`shared/qbo_mirror`): `--seed` once, then the change feed; `--reconcile`, `--status`. Step 0 of sync-all once tools read it. |
 | `load_wip_master.py` | Reads the FINAL WIP master (the Test tabs) → fills `project` + `wip_snapshot`. |
 | `load_bill_tracker.py` | Reads `Bill Tracker.xlsx` (Bills + Inventory) → fills `ap_bill_line` (AP + liens). |
 | `load_costs.py` | QBO pull → `cost_line` by cost code (incl. subs), via `shared/qbo_costs`. |
@@ -26,6 +27,16 @@ The cost engine itself lives in **`shared/qbo_costs.py`** (`cost_leaf` + `iter_c
 SAME resolver project-pnl uses, so the ledger and the P&L can never drift.
 | `static/` | The dashboard front-end (`index.html`, `style.css`, `app.js`) — no build step. |
 | `requirements.txt` | `openpyxl` (SQLite + the web server are stdlib — nothing else to install). |
+
+## The raw QBO mirror (2026-09-17)
+
+`qbo_mirror.sqlite3` beside the ledger: every QBO entity (21 - all transaction types plus the
+name lists), one row per record with the full JSON as QBO returned it, deletes flagged with a date
+and never dropped. `python3 ledger/refresh_mirror.py --seed` once (~20 min, 296k records);
+`python3 ledger/refresh_mirror.py` after that reads QBO's change feed since the last stamp
+(seconds). `--reconcile` checks a count per entity; `--status` shows what the file holds.
+Tools read it with `shared.qbo_mirror.load("Bill")` instead of `query_all(...)` - the rewrite
+order is in `STATUS.md`. QBO stays the source of truth; nothing writes to QBO from here.
 
 ## The schema (6 tables + 1 view)
 

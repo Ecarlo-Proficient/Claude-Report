@@ -4,6 +4,21 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+
+- **The raw QBO mirror (2026-09-17, owner: "a full data pull of all transactions in QBO ...
+  back it up into a database").** `shared/qbo_mirror.py` + `ledger/refresh_mirror.py`. One SQLite
+  file outside the repo (`~/Library/Application Support/Proficient/qbo_mirror.sqlite3`, override
+  `ACB_QBO_MIRROR_DB`), one table per QBO entity (21: every transaction type + the name lists),
+  one row per record with the full JSON (zlib) plus summary columns (txn_date, doc_number, total,
+  name, sync_token, last_updated). Deletes are FLAGGED (`deleted`, `deleted_at`), never dropped.
+  Three verbs: `--seed` (full pull; measured 296,370 records, ~3.7 s per 1000-row page, ~20 min),
+  refresh (default; QBO `/cdc` since the last stamp, adds + edits + deletes, cap-continuation per
+  entity; stamp older than 29 days -> LastUpdatedTime queries + id sweep), `--reconcile` (COUNT(*)
+  per entity vs the mirror, drift -> id sweep). `--status` reads the file only. Read side for tools:
+  `qbo_mirror.load(entity, where_sql, params)` / `get(entity, id)` = the stand-in for
+  `query_all`. Separate file from `ledger.sqlite3` on purpose (raw vs derived; the ledger is
+  rebuildable from it). Live-tested: 2-day refresh = 395 records in 3 s. Offline tests:
+  `tests/test_qbo_mirror.py` (8). Realm never printed.
 - 2026-09-16 (fourth pass, owner's screenshots) · **Project page.** The top table is titled **Profit & Loss** and wears
   the P&L block's clean look (dashed rows, plain labels, actuals bold); the Difference column is a real number, the %
   off the projection and a **little bar** of how far off it is, coloured by whether over is good (net, gross profit)
@@ -2057,6 +2072,20 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
 - Owner to validate the producer Runs (AR/AP) and the draft-WIP button with a real click (real syncs + Touch ID).
 
 ## TO DO
+- **Rewrite every QBO read to the mirror (the plan, 2026-09-17).** Rule: no tool opens QBO for a
+  READ; `qbo_mirror.load()` is the read. Only the three WRITERS (`qbo_recode_review --commit`,
+  `qbo_bulk_close`, loans-to-subs reclass) and the REPORT walkers (`shared/qbo_pl`, `qbo_health`,
+  `fetch_project_pl`) keep the API. sync-all = refresh mirror -> loaders -> renderers; every tool
+  prints the mirror stamp and refuses a stale one. Each move is proven by diffing the tool's output
+  against a same-day direct pull. Order: (1) `shared/qbo_costs.iter_cost_lines` - project-pnl and
+  `load_costs` flip together, proof = `pnl_line_level_audit` + wip_snapshot reconcile; (2) bill-tracker;
+  (3) `load_bill_payments` / `load_payments` / `load_invoices` / `load_health` non-report parts;
+  (4) invoice-sync Mac path (Docker keeps `qbo_client`); (5) project-pnl's remaining pulls
+  (Attachable stays on its 7-day cache - not in the feed); (6) WIP readers + close lists;
+  (7) debt-schedule, qbo-export, statement-reconciler, `shared/sub_loc`, `shared/recurring`;
+  (8) one-offs as each is next run; (9) retire `shared/qbo_cache.py`; (10) reports from the mirror,
+  a later project. Full table in the vault task `2026-09-17_qbo-mirror`.
+- Weekly `refresh_mirror.py --reconcile` (launchd or the sync-all Sunday run) once INF-13 is confirmed.
 - **Sync-diff view (owner building an HTML prototype separately, 2026-08-20):** a "what changed since the
   last sync" view. Owner is drafting the HTML on their side and will hand it over to merge into the dashboard
   later - parked here so it is not lost; no action until the owner shares it.
