@@ -72,8 +72,12 @@ cd "$HOME/Library/Caches/com.vorssaint.utils/Copied Screenshots" && for f in Scr
 - **Everything that belongs to an outcome lives INSIDE that outcome's box.** The tip sits in
   the orange box beside the Yes text behind a vertical divider, and the memo screenshot sits in
   the same orange box under a horizontal divider - the box says "this is all one path".
-- **Snippets sit directly under a card's steps**, never pushed to the card bottom with
-  `margin-top:auto`.
+- **The button screenshots (Approve / Reject) go in ONE labelled row below all the cards**, not
+  inside each card - that keeps the simple cards short and hands the vertical room to the
+  decision block, which is where the real information is. Snippets that stay in a card sit
+  directly under its steps, never pushed to the card bottom with `margin-top:auto`.
+- **Outcome headers slightly bigger than body (14px vs 13px)** so Yes / No catch the eye, and
+  the outcome text gets breathing room (`line-height:1.5`, a gap before "Save, then Approve").
 - Do not use `break-inside: avoid` on tall figures; it is what creates the blank page.
 - **Fitting one page is done by trimming the where-to-click screenshots first** (bar 2.5in,
   panel 1.25in worked), never by shrinking the decision block - that block is the point.
