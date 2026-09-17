@@ -83,6 +83,10 @@ cd "$HOME/Library/Caches/com.vorssaint.utils/Copied Screenshots" && for f in Scr
   share, so the divider and the tip sit right after the text. The owner checks for gaps -
   look for them in the rendered PDF before sending.
 - QBO memo new line is **Shift+Enter** (owner 2026-09-17), not Ctrl+Enter.
+- QBO **Reject opens "Add comments to the rejection - this will be shared via email"**: the reject
+  reason goes there (it emails the bill clerk), never in the memo. When a product behaviour is
+  unconfirmed, say so in one line and ask the owner to click it - he had the answer in a minute;
+  two web searches did not.
 - Do not use `break-inside: avoid` on tall figures; it is what creates the blank page.
 - **Fitting one page is done by trimming the where-to-click screenshots first** (bar 2.5in,
   panel 1.25in worked), never by shrinking the decision block - that block is the point.
