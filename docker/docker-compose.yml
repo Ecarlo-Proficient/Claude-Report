@@ -16,14 +16,14 @@ services:
   invoice-sync:
     container_name: proficient-invoice-sync
     build:
-      context: ..            # project root — includes qbo_vault.py + automation-worker/
+      context: ..            # project root — includes shared/ + invoice-sync/
       dockerfile: docker/Dockerfile
       args:
         # Optional: match these to the UID/GID of the host user that owns the
         # bind-mounted volumes below. IT can advise.
         APP_UID: 1000
         APP_GID: 1000
-    image: proficient-invoice-sync:1.0.0
+    image: proficient-invoice-sync:1.1.0
     restart: unless-stopped
     env_file:
       - .env.docker          # secrets + Notion DS IDs — chmod 600 on the host
@@ -40,7 +40,7 @@ services:
     volumes:
       - invoice-sync-state:/data
       - /volume1/docker/invoice-sync/onedrive:/data/onedrive    # IT may need to adjust this path to their Cloud Sync target folder
-      - invoice-sync-logs:/app/automation-worker/logs
+      - invoice-sync-logs:/app/invoice-sync/logs
 
     # Light resource caps — sized for a Synology that also runs other things.
     deploy:

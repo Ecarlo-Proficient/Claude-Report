@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-qbo_bulk_close.py — Mark a list of QBO customers Inactive via the API.
+qbo_bulk_close.py - Mark a list of QBO customers Inactive via the API.
 
 INPUT:
     wip/qbo_close_list.json  (produced by qbo_close_list.py)
@@ -17,7 +17,7 @@ To process only the first N customers for a small test batch:
 SAFETY:
 - Default is dry-run. --execute required for any writes.
 - Typed-confirmation prompt with exact count must match.
-- QBO refuses to deactivate customers with open balance — those are
+- QBO refuses to deactivate customers with open balance - those are
   logged as 'skipped: open balance' and the script continues.
 - Throttled to 5 requests/sec to stay well under QBO's rate limit.
 - Every action (success, skip, error) is logged to
@@ -37,10 +37,10 @@ from typing import Dict, List, Optional, Tuple
 import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-import qbo_vault as kc
+from shared import qbo_vault as kc
 
 API_BASE = "https://quickbooks.api.intuit.com"
-RATE_LIMIT_DELAY_S = 0.2  # 5 req/sec — well under QBO's 500/min/realm limit.
+RATE_LIMIT_DELAY_S = 0.2  # 5 req/sec - well under QBO's 500/min/realm limit.
 
 
 def load_credentials() -> Tuple[str, str]:
@@ -187,7 +187,7 @@ def main() -> int:
     # ── Auth ─────────────────────────────────────────────────────────────────
     print("\n  Authenticating to QBO (Touch ID)...")
     access, company_id = load_credentials()
-    print(f"  ok — company {company_id}")
+    print("  ok.")   # never echo the company_id / realm
 
     # ── Process ──────────────────────────────────────────────────────────────
     results = []
@@ -201,7 +201,7 @@ def main() -> int:
         proj = entry["project"]
         name = entry["name"]
 
-        # Refetch to get current SyncToken — couple seconds upfront beats a 400 on stale token mid-run.
+        # Refetch to get current SyncToken - couple seconds upfront beats a 400 on stale token mid-run.
         cust = fetch_customer(access, company_id, cust_id)
         if not cust:
             counts["skipped_no_token"] += 1

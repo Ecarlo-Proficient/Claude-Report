@@ -10,7 +10,7 @@
 In your Cowork global CLAUDE.md, under the **Tools & Systems** section, between the Obsidian vault entry and the Project outputs entry, add this bullet:
 
 ```markdown
-- **AI Brain_Vault** (`/Users/sebas/Documents/Claude/AI Brain_Vault`): Writable working space for AI-collaborative knowledge — index, running log, per-task notes. Drafts intended for the read-only Obsidian Main Vault go to `AI Brain_Vault/drafts/vault-fills/` mirroring vault structure. Has its own `.obsidian/` so Obsidian can open it as a vault. NOT the Main Vault — Main Vault remains read-only and untouched.
+- **AI Brain_Vault** (`~/Documents/Claude/AI Brain_Vault`): Writable working space for AI-collaborative knowledge — index, running log, per-task notes. Drafts intended for the read-only Obsidian Main Vault go to `AI Brain_Vault/drafts/vault-fills/` mirroring vault structure. Has its own `.obsidian/` so Obsidian can open it as a vault. NOT the Main Vault — Main Vault remains read-only and untouched.
 ```
 
 The Obsidian Main Vault entry stays exactly as it is — that vault is still read-only and at the same path.
