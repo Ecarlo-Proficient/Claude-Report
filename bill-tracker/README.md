@@ -50,6 +50,7 @@ the audit only; they are **never** shown as a column on the display sheets.
 |---|---|---|
 | `Bills` | bill | one row per bill; multi-project bills show `(multiple)`, drill to Inventory |
 | `Inventory` | line | per-line drill-down for multi-project bills |
+| `Bill List` | bill | the SIMPLE sheet: Date · Vendor · Ref · Amount · Memo · Project · Approved, one Excel Table, newest first, subs included. `Approved` = `approved` / `not approved` (memo starts NOT APPROVED) / `check QBO` (entered since the QBO approval workflow, 09/16/2026, and unpaid - QBO's API does not return approval status, so the answer is in QBO Tasks) |
 | `Liens` | — | live Excel FILTER over the Bills table (Lien set) |
 | `Audit - Coding` / `Audit - PO` / `Audit - Bills` | mixed | THREE themed Excel Tables, each with an `Issue` filter — see below |
 | `Audit - History` | miscode | persistent cost-code miscode log — how often + what got fixed (see below) |
@@ -73,7 +74,7 @@ from `audit_exclusions.json`, which *hides* an item — the mark keeps it visibl
 |---|---|
 | `Audit - Coding` | **Data Entry** (empty/mismatched Class, line-desc project mismatch) · **Missing Project** (uncoded job cost, no project #) · **FW Misplaced** (FW code on a CP/MFD/base-`RP####` slab) · **Sub No Project** (sub cost-code line, no project #) · **Cost Code** (wrong cost-code FAMILY for the vendor's type; `Detail` carries the type + PO origin) |
 | `Audit - PO` | **Unused PO** (`Open, no bill` · `Stale >60d` · `On tracker, not in QBO`) · **Missing PO** (a real COGS bill — not a sub, not expense-only — with NO PO, last 90 days). PO rows link to the QBO PO, bill rows to the bill |
-| `Audit - Bills` | **Not Approved** (stale NOT APPROVED bills) · **Duplicate** (same bill # within a vendor tree) |
+| `Audit - Bills` | **Not Approved** (stale NOT APPROVED bills) · **Revised** (memo line 2 `REVISED - <reason>`: the PM fixed the bill in QBO and the total changed - the bill clerk's weekly vendor follow-up) · **Duplicate** (same bill # within a vendor tree) |
 
 **Cost-code detail:** the cost-code NUMBER is the family (1 concrete · 2/3/4 material · 5/51/52
 equip · 6 labor). Each vendor's TYPE is auto-captured from its `*1`-vs-`*2/3/4` split —

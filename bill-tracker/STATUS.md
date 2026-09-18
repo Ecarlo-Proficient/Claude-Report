@@ -5,6 +5,30 @@ no business findings, dollar exposures, or owner analyses (those live in the own
 
 ## DONE / FINALIZED
 
+- **`Bill List` sheet + `Revised` in the bill audit (2026-09-18).** The owner: "bill tracker needs a
+  simple sheet that only shows bill data like date, ref, amount, memo, project, and if it is approved"
+  and "report will be done in bill audit". `build_bill_list_sheet` writes ONE Excel Table
+  (`tblBillList`), one row per bill, newest first: Date · Vendor · Ref · Amount · Memo · Project ·
+  Approved. Subs are ON this sheet (they are most of what waits on a PM; the audit sheets already
+  list them). `Approved` is three states from `bill_rows.approval_state`: `not approved` (memo starts
+  NOT APPROVED - the paper-era tag, still live until that backlog is cleared), `check QBO` (entered
+  on/after `APPROVAL_WORKFLOW_START` = 2026-09-16 and unpaid), `approved` (everything else). Red /
+  amber conditional fill, state only; columns fitted last; a numeric Ref is written as a number.
+  **Why `check QBO` exists: QBO's API does not return a bill's approval status** - read a bill sitting
+  in the approval queue at minor versions 70 and 75, same 18 fields as any bill, nothing about
+  approval. And AP stopped typing NOT APPROVED the day the workflow went on (09/16: 1 tagged of 15
+  entered), so the memo says nothing either. Guessing "approved" would be wrong exactly where it matters.
+  `Audit - Bills` gained the **Revised** issue = the bill clerk's weekly vendor follow-up:
+  `bill_rows.revised_reason` reads a `REVISED - <reason>` memo line from LINE 2 on (line 1 only for a
+  bill entered under the workflow) - 16 paper-era bills open line 1 with REVISED followed by the
+  project line, which is not a reason. Detail = the reason + days since the bill date.
+  Verified on a scratch build (`ACB_BILL_TRACKER_XLSX`): 4,160 bills, counts tie to the mirror
+  (29 entered since 09/16 = 16 paid + 3 tagged + 10 check QBO), `assert_clean` passes.
+- **`shared/xlsx_verify` false alarm fixed (2026-09-18).** The header-vs-table-column check compared
+  raw XML text, so the divider glyph written as `&#9474;` on the sheet "disagreed" with `│` in the
+  table and this workbook failed `assert_clean` on 4 columns it had always had. Both sides are
+  XML-unescaped now; a real mismatch is still caught (tested by blanking a header).
+
 - **Bills opens on its default view (2026-09-15).** The Pay Status funnel says Unpaid /
   Partial paid, but `_finalize_sheet` left Bill-paid rows with an outstanding lien
   un-hidden, so the sheet opened with paid rows showing and only snapped into shape once

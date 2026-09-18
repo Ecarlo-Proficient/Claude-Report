@@ -21,12 +21,14 @@ Vectors (each has bitten us at least once):
     non-blank so the blank-name check never fires. The table is internally
     valid and still disagrees with its sheet, and Excel repairs it. CP800,
     2026-09-03: a column-insert pass blanked B1 while the ref still began at B1.
+    Both sides are XML-unescaped first: `&#9474;` on the sheet IS `│` in the table.
   · Cells out of ascending column order within a <row>, duplicate cell refs,
     or <row> elements out of order — ECMA-376 requires ascending order and Excel
     silently drops/repairs the row. Bit us 2026-08-26 when a hand-XML edit
     inserted new <c> elements at the START of a row instead of at their
     column position (the mileage template repair).
 """
+import html
 import re
 import zipfile
 
@@ -260,7 +262,12 @@ def verify_xlsx(path) -> list:
                     cells = _row_cells(z.read(n).decode("utf-8", "replace"),
                                        hrow, shared_strings)
                     for k, cname in enumerate(cols_named):
-                        actual = (cells.get(c0 + k) or "").strip()
+                        # The same glyph can be written as a character reference on one
+                        # side (sheet: `&#9474;`) and literally on the other (table: `│`).
+                        # Decode both before comparing - they are the same text, and the
+                        # Bill Tracker's divider columns tripped this for weeks (2026-09-18).
+                        actual = html.unescape((cells.get(c0 + k) or "")).strip()
+                        cname = html.unescape(cname)
                         where = f"{_col_name(c0 + k)}{hrow}"
                         if not actual:
                             issues.append(

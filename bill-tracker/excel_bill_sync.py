@@ -88,7 +88,8 @@ from qbo_bill_tracker import (
 )
 from bill_rows import (
     build_account_maps, build_po_index, build_payment_map, build_rows,
-    approved_text,
+    approved_text, revised_reason,
+    APPROVAL_NO, APPROVAL_CHECK, APPROVAL_WORKFLOW_START,
     collapse_rows, multi_project_bill_ids, MULTI_MARKER,
 )
 from po_tracker import load_po_tracker, reconcile_unused_pos, index_by_doc, _norm_po
@@ -2139,6 +2140,74 @@ def _cost_code_findings(all_rows: List[dict], po_index: Optional[Dict[str, dict]
     return rows, vtype, flags
 
 
+def _bill_ref(doc: str):
+    """A bill # as a real number when it is one (no green 'number stored as text'
+    triangle), else the text as typed. Leading zeros and long ids stay text."""
+    d = (doc or "").strip()
+    if d.isdigit() and not d.startswith("0") and len(d) <= 15:
+        return int(d)
+    return d
+
+
+def build_bill_list_sheet(wb, line_rows: List[dict]) -> int:
+    """`Bill List` - the simple sheet (the user 2026-09-18: "only shows bill data
+    like date, ref, amount, memo, project, and if it is approved"). One row per
+    bill, newest first, one Excel Table, nothing derived except Approved:
+
+      approved      no NOT APPROVED tag, and either an old-process bill or paid
+      not approved  the memo starts NOT APPROVED
+      check QBO     entered since the QBO approval workflow went on and still
+                    unpaid - QBO's API does not return approval status, so the
+                    answer is in QBO Tasks, not here
+
+    Colour encodes state only (red / amber). Columns are fitted last."""
+    by_bill: Dict[str, dict] = {}
+    for r in line_rows:
+        bid = r.get("bill_id") or ""
+        if not bid:
+            continue
+        b = by_bill.setdefault(bid, {"first": r, "projects": []})
+        p = (r.get("project_num") or "").strip()
+        if p and p not in b["projects"]:
+            b["projects"].append(p)
+    bills = sorted(by_bill.values(),
+                   key=lambda b: (b["first"].get("bill_date") or dt.date.min,
+                                  str(b["first"].get("bill_doc") or "")), reverse=True)
+    data = []
+    for b in bills:
+        f = b["first"]
+        data.append([f.get("bill_date"), f.get("vendor", ""), _bill_ref(f.get("bill_doc", "")),
+                     float(f.get("bill_total") or 0.0),
+                     " / ".join((f.get("bill_memo") or "").splitlines()),
+                     ", ".join(b["projects"]), f.get("approval") or ""])
+    headers = ["Date", "Vendor", "Ref", "Amount", "Memo", "Project", "Approved"]
+    _audit_table_sheet(wb, "Bill List", "tblBillList", headers,
+                       ["date", "text", "text", "money", "text", "text", "text"],
+                       data, [11, 24, 12, 13, 50, 14, 13])
+    ws = wb["Bill List"]
+    if data:
+        last = len(data) + 1
+        rng = f"A2:G{last}"
+        ws.conditional_formatting.add(
+            rng, _cf_fill_rule(f'$G2="{APPROVAL_NO}"', "F8CBAD", bold=True, stop_if_true=True))
+        ws.conditional_formatting.add(
+            rng, _cf_fill_rule(f'$G2="{APPROVAL_CHECK}"', "FFE699"))
+        for r_i in range(2, last + 1):                 # a numeric Ref reads left like the text ones
+            ws.cell(row=r_i, column=3).alignment = ALIGN_LEFT
+    # Fit columns LAST (owner 2026-09-16), memo capped so one long note can't own the sheet.
+    caps = {5: 70, 6: 30}
+    for c_i, name in enumerate(headers, 1):
+        longest = max([len(name) + 3] + [
+            len(v.strftime("%m/%d/%Y")) if isinstance(v, (dt.date, dt.datetime))
+            else len(f"{v:,.2f}") + 2 if isinstance(v, float) else len(str(v))
+            for v in (row[c_i - 1] for row in data)])
+        ws.column_dimensions[_col_letter(c_i)].width = min(max(longest + 2, 9), caps.get(c_i, 40))
+    n_check = sum(1 for row in data if row[6] == APPROVAL_CHECK)
+    n_no = sum(1 for row in data if row[6] == APPROVAL_NO)
+    print(f"  bill list: {len(data)} bills · {n_no} not approved · {n_check} check QBO")
+    return len(data)
+
+
 def build_audits(wb, all_rows: List[dict],
                  po_index: Optional[Dict[str, dict]] = None,
                  tracker_by_po: Optional[Dict[str, dict]] = None,
@@ -2152,7 +2221,7 @@ def build_audits(wb, all_rows: List[dict],
     family of checks:
       Audit - Coding : Data Entry · Missing Project · FW Misplaced · Sub No Project · Cost Code
       Audit - PO     : Unused PO · Missing PO
-      Audit - Bills  : Not Approved · Duplicates
+      Audit - Bills  : Not Approved · Revised · Duplicates
     All the finding logic is unchanged — only the rendering is consolidated."""
     today = dt.date.today()
     display_rows = [r for r in all_rows if not r.get("is_sub")]
@@ -2285,6 +2354,24 @@ def build_audits(wb, all_rows: List[dict],
                       s["project_num"] or (s["customer_name"] or ""), "",
                       f"{_aging_bucket_for(s['days_old'])} · {s['days_old']}d old",
                       _bill_url(s["bill_id"])])
+    # Revised (the user 2026-09-17/18): a bill the PM fixed in QBO where the TOTAL
+    # changed carries a `REVISED - <reason>` memo line. This is the bill clerk's
+    # weekly vendor follow-up list - the vendor must re-issue to match. Subs included.
+    seen_rev: set = set()
+    for r in all_rows:
+        bid = r.get("bill_id") or ""
+        created = r.get("bill_created")
+        reason = revised_reason(r.get("bill_memo") or "",
+                                allow_first_line=bool(created and created >= APPROVAL_WORKFLOW_START))
+        if not reason or bid in seen_rev:
+            continue
+        seen_rev.add(bid)
+        age = (today - r["bill_date"]).days if r.get("bill_date") else None
+        bills.append(["Revised", r.get("vendor", ""), r.get("bill_doc", ""), r.get("bill_date"),
+                      r.get("project_num", "") or (r.get("customer_name", "") or ""),
+                      round(float(r.get("bill_total") or 0.0), 2),
+                      reason + (f" · {age}d since bill date" if age is not None else ""),
+                      _bill_url(bid)])
     for g in _duplicate_bill_groups(all_rows, vendor_root, vendor_map):
         same_amt = len({round(b["bill_total"], 2) for b in g}) == 1
         flag = "same $" if same_amt else "amounts differ"
@@ -2492,6 +2579,9 @@ def main() -> int:
     ws_bills = wb.create_sheet("Bills")
     ws_liens = wb.create_sheet("Liens")
     ws_inv   = wb.create_sheet("Inventory")
+    # The simple one-row-per-bill sheet. Subs are ON here (unlike Bills/Inventory/Liens): sub bills
+    # are most of what waits on a PM, and the audit sheets in this workbook already list them.
+    build_bill_list_sheet(wb, all_rows)
     # The audit is now THREE themed Excel Tables (build_audits): Coding · PO ·
     # Bills — created after the display sheets, below.
     # MFD/RP/CP division sheets removed 2026-07-13 (unused; Project # is on Bills).

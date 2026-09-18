@@ -216,6 +216,12 @@ restate them here. Business/strategic context lives in session memory, not in th
   it re-derives every job from QBO at line level and fails if a delivered workbook disagrees.
 - **Bills carry the project # in memo / PrivateNote** (not a period tag); subs are flagged by `"sub"` in
   the bill memo.
+- **QBO's API does NOT return a bill's approval status** (checked 2026-09-18, minor versions 70 and 75,
+  on a bill sitting in the approval queue: the same 18 fields as any bill). Bill approval runs in a QBO
+  custom Workflow since 2026-09-16 and AP stopped typing `NOT APPROVED` that day, so for an unpaid bill
+  entered since then NOTHING outside QBO knows - report it as `check QBO`
+  (`bill-tracker/bill_rows.approval_state`), never as approved. A PM's fix that changes the total is a
+  memo LINE 2 `REVISED - <reason>` (`revised_reason`); QBO removed Tags.
 - **Ref fields come back as an ID ONLY (`{value: "65"}`, no `name`) - resolve the name yourself** by
   pulling that entity once into an `{id -> name}` map. Bit us on `PaymentMethodRef` (all 846 payments
   showed a blank "Payment Type" until we pulled the `PaymentMethod` entity -> Check/ACH/Wire/…). Same
