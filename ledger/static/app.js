@@ -6607,7 +6607,18 @@ function renderSystems() {
     hd.appendChild(dot); tr.appendChild(hd);
 
     const idc = document.createElement("td"); idc.className = "left sys-id";
-    idc.textContent = r.id; tr.appendChild(idc);
+    idc.textContent = r.id;
+    // The one-page guide for this process (vault assets/processes) sits under the ID, the same
+    // spot on every row - trailing the process text it was lost at the end of a long cell.
+    if (r.guide && r.guide.length) {
+      const g = document.createElement("a");
+      g.className = "sys-guide"; g.textContent = "Guide";
+      g.href = "/api/process-guide?id=" + encodeURIComponent(r.id) + "&fmt=" + r.guide[0];
+      g.target = "_blank"; g.rel = "noopener";
+      g.title = "Open the one-page guide for " + r.id;
+      idc.appendChild(g);
+    }
+    tr.appendChild(idc);
 
     const pc = document.createElement("td"); pc.className = "left sys-process";
     pc.textContent = r.process;
@@ -6617,15 +6628,6 @@ function renderSystems() {
       tag.textContent = r.life_key;
       tag.title = "Decided, but not running yet";
       pc.appendChild(tag);
-    }
-    // The one-page guide for this process (vault assets/processes), when one exists.
-    if (r.guide && r.guide.length) {
-      const g = document.createElement("a");
-      g.className = "sys-guide"; g.textContent = "Guide";
-      g.href = "/api/process-guide?id=" + encodeURIComponent(r.id) + "&fmt=" + r.guide[0];
-      g.target = "_blank"; g.rel = "noopener";
-      g.title = "Open the one-page guide for " + r.id;
-      pc.appendChild(g);
     }
     tr.appendChild(pc);
 

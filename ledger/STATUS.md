@@ -8,7 +8,8 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   this ... include these in ledger"). The vault gained `assets/processes/` - one printed page per process,
   named `<PROCESS-ID>_<slug>.html` + `.pdf` (built with the repo skill `pdf-handout`). `shared/paths.
   process_guides_dir()` resolves it; `registry_view.guides()` lists the folder per request and hangs
-  `guide: [fmt…]` on each row; a row with a guide shows a quiet **Guide** link that opens
+  `guide: [fmt…]` on each row; a row with a guide shows a quiet **Guide** link under its ID (same spot
+  on every row - trailing the process text it got lost in a long cell) that opens
   `/api/process-guide?id=<ID>&fmt=pdf|html` in a new tab. The file is looked up BY ID in the folder
   listing (`registry_view.guide_path`) - a request never carries a path. Same contract as the rest of
   the Systems tab: live, no cache, no DB table, never written back. `LEDGER_VERSION` 1.3.0.

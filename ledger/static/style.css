@@ -931,8 +931,8 @@ tr.sys-retired .sys-process { text-decoration: line-through; }
 html[data-theme="dark"] .sys-life { color: var(--warn-text); }
 /* A row's one-page process guide (vault assets/processes) - a quiet link, accent as text. */
 .sys-guide {
-  display: inline-block; margin-left: 8px; padding: 0 7px; border-radius: 4px;
-  font-size: .8em; font-weight: 600; text-decoration: none; vertical-align: middle;
+  display: block; width: max-content; margin: 4px 0 0; padding: 0 7px; border-radius: 4px;
+  font-family: var(--font); font-size: .92em; font-weight: 600; text-decoration: none;
   color: var(--accent-text); border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
 }
 .sys-guide:hover { background: var(--row-hover); border-color: var(--accent); }
