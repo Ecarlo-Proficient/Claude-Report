@@ -23,7 +23,7 @@ so you can watch your actual data live in a database instead of a spreadsheet.
 | `load_customers.py` | Notion "Customer List" → `customer` + `sales_touch` (CRM leads/clients + outreach touch log, read-only). |
 | `load_health.py` | QBO pull → `health_snapshot`: bank cash, retainage GL, P&L blocks, 13-wk cash flow, recurring register - the Health tab's QBO-only layer. |
 | `dashboard.py` | Local web dashboard over the ledger — the browser UI (read-only). |
-| `registry_view.py` | Parses the vault's systems & process registry (`02_processes/*.md`) for the Systems tab. Read-only, no DB. |
+| `registry_view.py` | Parses the vault's systems & process registry (`02_processes/*.md`) for the Systems tab, and links each row to its one-page guide in the vault's `assets/processes/` (`<ID>_<slug>.pdf`/`.html`, served by `/api/process-guide`). Read-only, no DB. |
 
 The cost engine itself lives in **`shared/qbo_costs.py`** (`cost_leaf` + `iter_cost_lines`) — the
 SAME resolver project-pnl uses, so the ledger and the P&L can never drift.

@@ -65,7 +65,8 @@ STATIC = HERE / "static"
 # 1.2.0 = Health tab - the company-health metric layer (folds the retired
 #         Company Tracker/Dashboard model in: Money In / Money Out / Position /
 #         Break-Even + the FIN-12 Recurring & Debt register).
-LEDGER_VERSION = "1.2.0"
+# 1.3.0 = Systems rows link to their one-page process guide (vault assets/processes).
+LEDGER_VERSION = "1.3.0"
 
 DEFAULT_DB = paths.get_path(
     "ACB_LEDGER_DB",
@@ -2785,6 +2786,9 @@ class Handler(BaseHTTPRequestHandler):
             self._pipelines_list()
         elif path == "/api/processes":     # the Systems tab (vault process registry, live)
             self._processes()
+        elif path == "/api/process-guide":  # a registry row's one-page guide (vault assets/processes, read-only)
+            q = self._query()
+            self._process_guide(q.get("id", ""), q.get("fmt", "pdf"))
         elif path == "/api/graph":         # the Graph tab (vault link-graph + system diagrams, live)
             self._graph()
         elif path == "/api/review":        # the WIP review page, one division at a time (?div=RP|CP|MFD) + the standing answers
@@ -2972,6 +2976,22 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:                      # noqa: BLE001
             self._json({"ok": False, "domains": [], "rows": [],
                         "error": f"registry parse failed: {e}"})
+
+    def _process_guide(self, proc_id: str, fmt: str):
+        """Serve one process guide from the vault's assets/processes/. The file is
+        looked up BY PROCESS ID in the folder listing (registry_view.guide_path) -
+        a request never carries a path, so nothing else on disk is reachable."""
+        ctype = registry_view.GUIDE_TYPES.get(fmt)
+        target = registry_view.guide_path(proc_id, fmt) if ctype else None
+        if not target or not target.is_file():
+            self._send(404, b"no guide for that process", "text/plain; charset=utf-8")
+            return
+        try:
+            body = target.read_bytes()
+        except OSError:
+            self._send(404, b"guide could not be read", "text/plain; charset=utf-8")
+            return
+        self._send(200, body, ctype)
 
     def _graph(self):
         """The org map (vault notes + [[wikilinks]]) and the imported system

@@ -9,7 +9,7 @@
 > picture (open it in a browser after pulling). Refresh it when structure meaningfully changes;
 > THIS file is the always-current source of truth.
 
-Last updated: 2026-09-16 (ledger/: the **RP review became the WIP review, one page per division** - `/api/review?div=RP|CP|MFD` + `/api/review/mark|refresh`, Me / PM modes, `rp_review.division_cards()` adapts the WIP tools' `--emit-review` JSON for CP / MFD (contract + COs from the draw G702, ETC from the takeoff, QBO costs / billed); the **project page's funding section** groups invoices into draws by the named draw month or the invoice date (`_project_invoices` / `_draws_by_invoice` / `_recount_draw`), reads as the equation, keeps Coverage on top, and gates the pay run behind "Pay bills" with a Save / Discard draft; the vendor page carries project + client per bill and the bills each BillPayment paid. Previously 2026-09-15 (ledger/: NEW **RP review page** - `ledger/rp_review.py` builds `rp-review/rp_review.json` (every RP line's numbers + source + a 5-row cut of the source sheet, JobTread via `shared/jobtread.py`, the Removed log), `/api/rp/review|answers|mark|refresh`; answers in `rp_review_mark` + `_log` with the Me / OPS Manager stamp. Previously 2026-09-02 (ledger/: NEW **money trail** - `ledger/trail.py` + `static/trail.js`, `/api/trail`: every QBO line behind a project's Costs / Billed with the running total against ETC and contract; `cost_line` gained bill #, memo, line #, bill total, vendor/class ids, sub evidence, scan flag. 2026-08-25: NEW **Graph tab** — the org as a map (`ledger/vault_graph.py`,
+Last updated: 2026-09-18 (ledger/: **Systems rows link to their one-page process guide** - the vault gained `assets/processes/` (`<PROCESS-ID>_<slug>.pdf` + `.html`, built with the `pdf-handout` skill); `shared/paths.process_guides_dir()`, `registry_view.guides()` / `guide_path()`, `/api/process-guide?id=&fmt=`, looked up by ID, read-only, no cache. Previously 2026-09-16 (ledger/: the **RP review became the WIP review, one page per division** - `/api/review?div=RP|CP|MFD` + `/api/review/mark|refresh`, Me / PM modes, `rp_review.division_cards()` adapts the WIP tools' `--emit-review` JSON for CP / MFD (contract + COs from the draw G702, ETC from the takeoff, QBO costs / billed); the **project page's funding section** groups invoices into draws by the named draw month or the invoice date (`_project_invoices` / `_draws_by_invoice` / `_recount_draw`), reads as the equation, keeps Coverage on top, and gates the pay run behind "Pay bills" with a Save / Discard draft; the vendor page carries project + client per bill and the bills each BillPayment paid. Previously 2026-09-15 (ledger/: NEW **RP review page** - `ledger/rp_review.py` builds `rp-review/rp_review.json` (every RP line's numbers + source + a 5-row cut of the source sheet, JobTread via `shared/jobtread.py`, the Removed log), `/api/rp/review|answers|mark|refresh`; answers in `rp_review_mark` + `_log` with the Me / OPS Manager stamp. Previously 2026-09-02 (ledger/: NEW **money trail** - `ledger/trail.py` + `static/trail.js`, `/api/trail`: every QBO line behind a project's Costs / Billed with the running total against ETC and contract; `cost_line` gained bill #, memo, line #, bill total, vendor/class ids, sub evidence, scan flag. 2026-08-25: NEW **Graph tab** — the org as a map (`ledger/vault_graph.py`,
 `/api/graph`) AND NEW **WIP Review tab** — the WIP update as accept/merge. Each wip reader +
 `master_wip_test` gained `--emit-review` (diff a Test tab, no write) and `--apply-review` (write
 only approved values) modes backed by `wip/wip_review_common.py`; the ledger orchestrates them by
@@ -472,7 +472,8 @@ flowchart LR
     DB[("ledger.sqlite3\nproject + wip_snapshot + ap_bill_line\n→ v_wip_latest · v_ap_by_project")]:::out
     DASH["dashboard.py + static/\nlocal web UI (127.0.0.1) - READ-ONLY except the owner's marks + WIP Review writes.\nTWO views (2026-09-13): Projects = the WIP as the page (row → project page)\n· Company = Clients / Vendors / Money · the gear = sync + WIP Review + Console + Systems"]:::tool
     REG[("AI Brain_Vault/02_processes/*.md\neight domain files — the process registry\n(read-only source, never written)")]:::src
-    REGVIEW["registry_view.py\nparses the markdown row tables per request\nhealth · state · life — no cache, no DB table"]:::tool
+    GUIDES[("AI Brain_Vault/assets/processes/\n<PROCESS-ID>_<slug>.pdf + .html\nthe one-page process guides (read-only)")]:::src
+    REGVIEW["registry_view.py\nparses the markdown row tables per request\nhealth · state · life — no cache, no DB table\n+ links a row to its one-page guide (/api/process-guide)"]:::tool
     VGRAPH["vault_graph.py\nwhole-vault wiki-links → org map (ROSTER excluded)\n+ docs/ARCHITECTURE.md mermaid → the Graph tab\nlive, no cache, no DB table"]:::tool
     BROWSER[("Browser\nhttp://127.0.0.1:8787")]:::out
     QBO[("QBO\nBills + Purchases\n(read-only pull, Touch ID)")]:::src
@@ -493,6 +494,7 @@ flowchart LR
     FUTURE["later: budget_line (takeoff by code)\n· billing_event (AR / draws)"]:::future
 
     REG --> REGVIEW --> DASH
+    GUIDES --> REGVIEW
     REG --> VGRAPH --> DASH
     TEST --> LOADER
     BT --> APLOAD

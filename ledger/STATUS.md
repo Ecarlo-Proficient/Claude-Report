@@ -4,6 +4,16 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-18 · **Systems rows link to their one-page process guide** (owner: "processes should be like
+  this ... include these in ledger"). The vault gained `assets/processes/` - one printed page per process,
+  named `<PROCESS-ID>_<slug>.html` + `.pdf` (built with the repo skill `pdf-handout`). `shared/paths.
+  process_guides_dir()` resolves it; `registry_view.guides()` lists the folder per request and hangs
+  `guide: [fmt…]` on each row; a row with a guide shows a quiet **Guide** link that opens
+  `/api/process-guide?id=<ID>&fmt=pdf|html` in a new tab. The file is looked up BY ID in the folder
+  listing (`registry_view.guide_path`) - a request never carries a path. Same contract as the rest of
+  the Systems tab: live, no cache, no DB table, never written back. `LEDGER_VERSION` 1.3.0.
+  Self-check: `python3 ledger/registry_view.py` prints the rows that have a guide. First guide: AP-09.
+
 - 2026-09-17 · **Change log per job** (owner: "an audit log of the etc/contract changing that can be pulled up
   easily just like qbo"): `/api/wip/audit?no=<job>` = `shared/wip_audit.read` (every field change the WIP writer
   made, with source / actor / run) + the review answers from `rp_review_mark_log`; shown as "Change log" on the

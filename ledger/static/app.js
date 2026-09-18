@@ -6618,6 +6618,15 @@ function renderSystems() {
       tag.title = "Decided, but not running yet";
       pc.appendChild(tag);
     }
+    // The one-page guide for this process (vault assets/processes), when one exists.
+    if (r.guide && r.guide.length) {
+      const g = document.createElement("a");
+      g.className = "sys-guide"; g.textContent = "Guide";
+      g.href = "/api/process-guide?id=" + encodeURIComponent(r.id) + "&fmt=" + r.guide[0];
+      g.target = "_blank"; g.rel = "noopener";
+      g.title = "Open the one-page guide for " + r.id;
+      pc.appendChild(g);
+    }
     tr.appendChild(pc);
 
     for (const k of ["owner", "touchers", "record", "automation", "cadence"]) {

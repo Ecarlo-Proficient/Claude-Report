@@ -173,6 +173,35 @@ def _parse_file(path: Path) -> dict | None:
             "file": path.name, "rows": rows}
 
 
+# A guide file is named by the process it documents: AP-09_bill-approval.pdf.
+_GUIDE = re.compile(r"^([A-Z]{2,4}-\d{2,3})_[A-Za-z0-9._-]+\.(html|pdf)$")
+GUIDE_TYPES = {"pdf": "application/pdf", "html": "text/html; charset=utf-8"}
+
+
+def guides(root: Path | None = None) -> dict[str, dict[str, str]]:
+    """{process id -> {fmt -> filename}} for every one-page guide in the vault's
+    assets/processes/. A missing folder is simply no guides - never an error."""
+    base = Path(root) if root else paths.process_guides_dir()
+    found: dict[str, dict[str, str]] = {}
+    try:
+        names = sorted(p.name for p in base.iterdir() if p.is_file())
+    except OSError:
+        return found
+    for name in names:
+        m = _GUIDE.match(name)
+        if m:
+            found.setdefault(m.group(1), {}).setdefault(m.group(2), name)
+    return found
+
+
+def guide_path(proc_id: str, fmt: str = "pdf", root: Path | None = None) -> Path | None:
+    """The file for one process guide, looked up BY ID from the folder listing -
+    the caller never supplies a path, so nothing outside the folder is reachable."""
+    base = Path(root) if root else paths.process_guides_dir()
+    name = guides(base).get((proc_id or "").strip().upper(), {}).get(fmt)
+    return (base / name) if name else None
+
+
 def load_registry(root: Path | None = None) -> dict:
     """Parse every domain file. Always returns a dict; missing vault -> ok=False."""
     base = Path(root) if root else paths.process_registry_dir()
@@ -190,9 +219,15 @@ def load_registry(root: Path | None = None) -> dict:
         domains.append(parsed)
         rows.extend(parsed["rows"])
 
+    # Hang each row's one-page guide on it (the formats that exist, pdf first).
+    have = guides()
+    for r in rows:
+        fmts = have.get(r["id"].strip().upper(), {})
+        r["guide"] = [f for f in ("pdf", "html") if f in fmts]
+
     domains.sort(key=lambda d: (d["num"] or 99, d["title"]))
     return {"ok": True, "source": str(base), "domains": domains, "rows": rows,
-            "missing": missing,
+            "missing": missing, "guides": sum(1 for r in rows if r["guide"]),
             "counts": _counts(rows), "owners": _owners(rows)}
 
 
@@ -234,6 +269,8 @@ if __name__ == "__main__":
     print(f"health : {c['health']}")
     print(f"state  : {c['state']}")
     print(f"life   : {c['life']}")
+    print(f"guides : {data['guides']} row(s) with a one-page guide "
+          f"({', '.join(r['id'] for r in data['rows'] if r['guide']) or 'none'})")
     if data["missing"]:
         print(f"MISSING: {', '.join(data['missing'])}")
     for d in data["domains"]:

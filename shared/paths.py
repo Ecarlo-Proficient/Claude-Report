@@ -134,6 +134,13 @@ def process_registry_dir() -> Path:
     return vault_dir() / "02_processes"
 
 
+def process_guides_dir() -> Path:
+    """The one-page process guides (assets/processes/) inside the vault:
+    `<PROCESS-ID>_<slug>.html` (source) + `.pdf` (the handout). READ-ONLY from
+    this repo - the ledger's Systems tab links a registry row to its guide."""
+    return vault_dir() / "assets" / "processes"
+
+
 def companyhealth_sources_dir() -> Path:
     """Where the intermediate tracker workbooks live (the data layer the one
     workbook reads). Kept out of the top level so only the deliverables show
