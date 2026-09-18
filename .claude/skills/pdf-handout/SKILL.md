@@ -16,8 +16,13 @@ description: >-
 ## Hard rules
 
 1. **Never publish a hosted Artifact page.** The owner: shared claude.ai pages get Google-indexed.
-   The deliverable is a local file - `~/Documents/CompanyHealth/<Name>.html` + `.pdf` - sent with
-   SendUserFile. Skip the Artifact quickstart entirely.
+   The deliverable is a local file sent with SendUserFile. Skip the Artifact quickstart entirely.
+   **A PROCESS guide lives in the vault: `AI Brain_Vault/assets/processes/<PROCESS-ID>_<slug>.html`
+   + `.pdf`** (owner 2026-09-18: "processes should be like this, not the weird flow charts ... add
+   to assets/processes and include these in ledger"). The ID prefix is the link - the ledger's
+   Systems tab shows a **Guide** pill under that row's ID and serves the file live
+   (`/api/process-guide`), so naming it right IS publishing it. Add the row to that folder's
+   README table. A handout that is not a registered process goes to `~/Documents/CompanyHealth/`.
 2. **Use the owner's real screenshots. Never redraw a screen you were given.** A mock is only
    acceptable when no capture exists, and it must say so. Pasted images are NOT attached as files
    in chat, but the screenshot utility keeps them on disk - find them by time and size:
@@ -98,7 +103,7 @@ cd "$HOME/Library/Caches/com.vorssaint.utils/Copied Screenshots" && for f in Scr
 ## Build and render
 
 ```bash
-cd "$HOME/Documents/CompanyHealth" && "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --disable-gpu --no-pdf-header-footer --print-to-pdf="$HOME/Documents/CompanyHealth/<Name>.pdf" "file://$HOME/Documents/CompanyHealth/<Name>.html"
+cd "$HOME/Documents/Claude/AI Brain_Vault/assets/processes" && "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --disable-gpu --no-pdf-header-footer --print-to-pdf="$PWD/<ID>_<slug>.pdf" "file://$PWD/<ID>_<slug>.html"
 ```
 
 Then `Read` the PDF (pages 1-2), fix, re-render, read again. Send the PDF only (the HTML is
@@ -108,3 +113,9 @@ the source, mention it once).
 
 A process handout means the process changed: update the vault registry
 (`AI Brain_Vault/02_processes/`) and `log.md` in the same session, per the global upkeep rule.
+**Keep the registry row a verb phrase** - the detail goes in the guide and the domain file's
+chain section; a row that grows into a paragraph buries the Guide pill and the columns. And
+**never put a `|` inside a registry table cell** (a `[[note|alias]]` wikilink did it once and
+shifted every column) - re-parse with `python3 ledger/registry_view.py` after any row edit.
+This one-page guide IS the standard for documenting a process; do not draw mermaid or ASCII
+flow charts for a process again.
