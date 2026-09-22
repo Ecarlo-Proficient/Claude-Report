@@ -4,6 +4,81 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-22 (late) · **Vendor page Date filter + visible funnels** (owner: "date????? i need to be able to filter by
+  date with the months" - the month funnel in the header rendered as a dot and was not what he asked for). The vendor
+  page carries the Bill Tracker's own **Date** control (`dateFilter`, Month multi-select | Date from-to, Reset) beside
+  the Project box, on Bills AND Payments; `dateFilter` gained a `prev` argument so the state survives the page's
+  re-render. The header funnels are a real funnel glyph in a bordered 18px button, not a "▾".
+  Same message, next ask: the **Project # box suggests this vendor's projects** (bills + payments, `# · client`),
+  ArrowDown / ArrowUp highlight, Enter picks (a single match picks on Enter too), Escape closes then clears; the
+  list is rendered as part of the page so the type-to-filter re-render keeps it open and the caret in place.
+- 2026-09-22 (night) · **Bill memo column, Project box, ⌘F** (owner: "need the bill MEMO in there as well. i need to be
+  able to filter by date with the months. make project a standalone box and keep the one you have there that defaults
+  to cmd+f so it's a broad search"). `_bill_memos` puts every bill's QBO memo (PrivateNote) on the bills payload from
+  the mirror (the workbook never carried it, cost_line had half; 3.4k decrypts = 0.3 s inside a 0.6 s /api/data);
+  **Memo** is a column on the Bill Tracker (default width 260, resizable) and the vendor page's Bills view, ellipsised
+  with the full text on hover, and part of both searches. The Date funnel lists MONTHS (mm/yyyy, newest first) - the
+  month filter on both tables. Vendor page: a standalone **Project #** box (project # or job name, narrows Bills AND
+  Payments) beside the broad search; **⌘F / Ctrl+F** focuses the broad search - the vendor page's when it is open,
+  else the Bill Tracker's (the Invoices tab already had its own).
+- 2026-09-22 (evening) · **Bill tables: flat like the Excel, Excel-style column filters, search** (owner: "why does
+  this page look so bad? need ability to search on both pages" then "i don't want to see it grouped by anything, the
+  bill tracker should just show the bills as a list just like the excel, and give me the ability to filter/search down
+  just like i do with excel table filtering"). ONE header-filter mechanism (`hfDecorate` / `hfPasses` / `HF_BILL_COLS`
+  in app.js): a funnel in each header opens that column's distinct values with counts (computed over the rows the
+  OTHER columns leave - Excel's behaviour), a value search, Select all / None / Clear; state per table, per session;
+  the menu floats under the header (position fixed, so the scroll box never clips it). Used by the **Bill Tracker**
+  tab (Group by now defaults to None = flat list; a search box at the head of the filter bar; "Clear column filters")
+  and by the **vendor page's Bills view** (band and the Flat list / Group by project toggle removed; funnels + the
+  page search). The vendor page's **Payments view** shares the same search box (ref, date, client, project, bill #,
+  amount, "voided"). The old project band's value/label grid (billed under Bill #, open under Invoice #) is gone.
+- 2026-09-22 (later still) · **Payments view grouped + multi-select + voided** (owner: "make the payments a
+  group ... the collapsed group should just show the ref, date, client and amount. I need a box to check in
+  case I want to select multiple payments. voided checks need to say voided"). Vendor page > Payments: each
+  payment is a group header (`tr.vp-pay`, registered in `GRP_KINDS` as a `sib` kind, closed by default,
+  caret inside the ref's `.bg-key`) - ref · date · type · client · amount · stub - and the bills it paid are
+  the expansion (`tr.vp-bill`: bill # -> QBO, project, client, amount applied). A checkbox per payment +
+  select-all in the header feed **Print N stubs** (sequential POSTs, one toast, history reload). Voided
+  payments (`_mark_voided_payments`: QBO zeroes the payment, memo "Voided…", lines gone - read from the
+  mirror, total-0 + no bills as the tell without it) show a red **VOIDED** pill, the memo under the ref,
+  "voided" in the amount column, no print button, checkbox disabled.
+- 2026-09-22 (later) · **Bill payment stubs IN the ledger + the print history** (owner: "now wire into project
+  ledger, it needs a history as well, in case a bill payment gets changed, deleted, voided and us still see
+  those historical"). Vendor page > Payments view: a **Stub** column with `Print stub` / `Print again` per
+  payment (POST `/api/bill-payment/stub` -> `bill_payment_stub.print_stub`: mirror -> PDF in the vendor
+  folder, one file per payment, `<Vendor> - Bill Payment Stub <ref> <mm-dd-yyyy>.pdf`), a **Stub columns**
+  picker (the registry as checkboxes, QBO's six by default, remembered in localStorage, applies to the next
+  print), and under each payment its prints (date, opens the PDF) with a status pill judged against the
+  mirror NOW: current / changed in QBO / voided in QBO / deleted in QBO. NEW table `bill_payment_stub`
+  (schema.sql + self-created by `ledger_connect`): one row per print - the stub record as printed
+  (snapshot JSON), the columns, the QBO SyncToken + LastUpdatedTime at print time, the vendor-folder path
+  AND `archive_path` = this print's own immutable copy (`~/Library/Application Support/Proficient/
+  bill-payment-stubs/<id>.pdf`; a re-print overwrites the vendor file, never the archive) - `GET
+  /api/bill-payment/stub/file?id=` serves the archive copy, so an older print opens as it went out.
+  `GET /api/bill-payment/stubs?vendor=|payment=` = the history + the registry. Payments no longer in the
+  ledger's list (deleted / voided / outside the year window) but with prints appear under **"Printed stubs
+  for payments no longer in this list"** with a `Print again` that rebuilds from the mirror's copy (the
+  mirror keeps deleted rows). The dashboard opens the ledger read-only; this module's `ledger_connect` is
+  the one writer for the history. `LEDGER_VERSION` 1.4.0. Lesson: QBO's first SyncToken is 0 - `x or ""`
+  turned it into "missing" and every first-print read "changed" (`_tok`). Proof: printed both Cowtown
+  09/21 payments through the API, history `current`, archive copies on disk, 404 on an unknown id, 400 on a
+  bad column / unknown payment.
+- 2026-09-22 · **Bill payment stub generator** (owner: "print check bill payment stub ... look like qbo
+  format, but we need the payment on top and the bills it's paying below ... ability to remove/add
+  columns"). `ledger/bill_payment_stub.py`: one stub per BillPayment, one per Letter page - a payment
+  block on top (paid-to print name + address, date, Check / Credit card, check # or reference, amount -
+  no account line, the owner's own stub has none) and QBO's "Bills and Applied Payments" table below (grey vendor band, bill rows, bold total
+  that ties to the payment). Columns are a registry (`COLUMNS` / `DEFAULT_COLUMNS` = date · type ·
+  number · memo · amount · open_balance; optional project · due_date · bill_total) edited with
+  `--columns` / `--add` / `--drop`; `amount` = what THIS payment applied (ties to the total), a bill
+  paid only in part gets a "partial payment - bill amount X" line under its memo. Reads the mirror only
+  (BillPayment -> Line.LinkedTxn -> Bill, Vendor); HTML printed by Chrome headless to
+  `Accounting/Accounts Payable/Bill Payment Stubs/<QBO vendor name>/<Vendor> - Bill Payment Stub <check # | ref> <mm-dd-yyyy>.pdf`
+  (owner 2026-09-22; `shared/paths.bill_payment_stubs_dir()`, **one PDF per payment** - "if there are two
+  payments on the same day, i need both separated", missing mount = STOP). Company name on the stub =
+  `ACB_COMPANY_NAME` in machine.env (new key; the repo stays neutral). Offline proof: `--selftest` +
+  `tests/test_bill_payment_stub.py`. First run: the two Cowtown payments of 09/21/2026 (AMEX + check),
+  handed to the owner to judge the format BEFORE the ledger gets the button.
 - 2026-09-18 · **Systems rows link to their one-page process guide** (owner: "processes should be like
   this ... include these in ledger"). The vault gained `assets/processes/` - one printed page per process,
   named `<PROCESS-ID>_<slug>.html` + `.pdf` (built with the repo skill `pdf-handout`). `shared/paths.

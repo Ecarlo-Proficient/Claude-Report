@@ -54,6 +54,7 @@ import trail          # noqa: E402  (local: the money trail - every QBO line beh
 import rp_review      # noqa: E402  (local: the weekly RP review - sources + snapshots JSON, the ops-manager marks)
 import notion_page    # noqa: E402  (local: one Notion page, whole, for the invoice side panel - /api/invoice/notion)
 import table_export   # noqa: E402  (local: a filtered table -> grouped Excel report in ~/Downloads, POST /api/export/xlsx)
+import bill_payment_stub  # noqa: E402  (local: the check / bill-payment stub - print from the mirror into the vendor folder + the print history)
 
 HERE = Path(__file__).resolve().parent
 STATIC = HERE / "static"
@@ -66,7 +67,7 @@ STATIC = HERE / "static"
 #         Company Tracker/Dashboard model in: Money In / Money Out / Position /
 #         Break-Even + the FIN-12 Recurring & Debt register).
 # 1.3.0 = Systems rows link to their one-page process guide (vault assets/processes).
-LEDGER_VERSION = "1.3.0"
+LEDGER_VERSION = "1.4.0"
 
 DEFAULT_DB = paths.get_path(
     "ACB_LEDGER_DB",
@@ -599,6 +600,29 @@ def _project_customer_map(con) -> dict:
     return out
 
 
+def _bill_memos(bills: list) -> None:
+    """Put each bill's QuickBooks memo (PrivateNote) on its row, from the mirror (the Bill Tracker workbook
+    never carried it; cost_line has it for half the bills only). ~3k decrypts = well under a second."""
+    ids = {str(b["bill_id"]) for b in bills if b.get("bill_id")}
+    memos: dict = {}
+    if ids:
+        try:
+            from shared import qbo_mirror
+            if qbo_mirror.db_path().exists():
+                mcon = qbo_mirror.connect()
+                try:
+                    for bid in ids:
+                        rec = qbo_mirror.get("Bill", bid, con=mcon)
+                        if rec:
+                            memos[bid] = str(rec.get("PrivateNote") or "")
+                finally:
+                    mcon.close()
+        except Exception:                                   # noqa: BLE001 - no mirror = no memo column, nothing else breaks
+            pass
+    for b in bills:
+        b["memo"] = memos.get(str(b.get("bill_id") or ""), "")
+
+
 def _fetch_ap(con) -> dict:
     """AP + lien view from ap_bill_line; empty (not an error) if the table is absent."""
     ap = {"summary": {"open_balance": 0, "open_lines": 0, "watch_count": 0},
@@ -669,6 +693,7 @@ def _fetch_ap(con) -> dict:
             b["inv_date"] = inv["txn_date"]
             b["inv_customer"] = inv["customer"]
         bills.append(b)
+    _bill_memos(bills)                           # the QBO bill memo (PrivateNote) - a column + searchable (owner 2026-09-22)
     ap["bills"] = bills
     # The lien WATCHLIST = the enriched bills that are on the clock OR marked (any LIEN_RANK status),
     # so the Liens page carries the client, bill date, the AR invoice + its pay status - not just the
@@ -1469,6 +1494,32 @@ def _fetch_sales(con) -> dict:
     return out
 
 
+def _mark_voided_payments(payments: list) -> None:
+    """Flag a voided BillPayment (total 0 in QBO) and carry its memo. Read from the mirror; a machine
+    without the mirror just gets total-0 + no bills as the tell."""
+    zero = [p for p in payments if not (p.get("total_amt") or 0)]
+    if not zero:
+        return
+    notes: dict = {}
+    try:
+        from shared import qbo_mirror
+        if qbo_mirror.db_path().exists():
+            mcon = qbo_mirror.connect()
+            try:
+                for p in zero:
+                    rec = qbo_mirror.get("BillPayment", str(p["qbo_txn_id"]), con=mcon)
+                    if rec:
+                        notes[str(p["qbo_txn_id"])] = str(rec.get("PrivateNote") or "")
+            finally:
+                mcon.close()
+    except Exception:                                   # noqa: BLE001 - the flag still lands on the tell
+        pass
+    for p in zero:
+        note = notes.get(str(p["qbo_txn_id"]), "")
+        p["voided"] = note.strip().upper().startswith("VOID") or not p.get("n_bills")
+        p["memo"] = note
+
+
 def _fetch_vendor(con, vendor: str) -> dict:
     """On-demand: one vendor's bills, grouped from ap_bill_line lines (the vendor page). Each bill
     carries its lines (with project # each), so a multi-project bill shows 'multiple' and drills to
@@ -1550,6 +1601,9 @@ def _fetch_vendor(con, vendor: str) -> dict:
             p["bills"] = lines_by_pay.get(p["qbo_txn_id"], [])
             p["projects"] = sorted({x for b in p["bills"] for x in b["projects"]})
             p["clients"] = sorted({x for b in p["bills"] for x in b["clients"]})
+        # voided (owner 2026-09-22: "voided checks need to say voided"): QBO voids a bill payment by zeroing it
+        # (TotalAmt 0, lines gone, memo "Voided…"); the memo is the only word on why, so it rides along.
+        _mark_voided_payments(payments)
     except sqlite3.OperationalError:
         pass
     # QuickBooks' own open AP for this vendor (vendor_ap: every vendor incl. subs) - shown BESIDE the
@@ -2826,6 +2880,10 @@ class Handler(BaseHTTPRequestHandler):
             self._subloc_project(self._query().get("p", ""))
         elif path == "/api/vendor":          # on-demand: one vendor's bills (the vendor page)
             self._vendor(self._query().get("v", ""))
+        elif path == "/api/bill-payment/stubs":     # the printed-stub history for a vendor / payment (status vs QBO now) + the column registry
+            self._bp_stubs(self._query())
+        elif path == "/api/bill-payment/stub/file":  # one printed stub's PDF, by history id (the file as it went out, even if QBO changed)
+            self._bp_stub_file(self._query().get("id", ""))
         elif path == "/api/trail":           # the money trail: every cost / billed line behind a project's totals (&csv=1 for Excel)
             con = _connect(self.db_path)
             try:
@@ -2894,6 +2952,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": True, "package": rp_review.finalize_package()})
             except (OSError, sqlite3.OperationalError) as e:
                 self._json({"ok": False, "error": str(e)}, 500)
+        elif p == "/api/bill-payment/stub":    # print a bill payment stub (mirror -> PDF in the vendor folder) + record it in the history
+            self._bp_stub_print()
         elif p == "/api/export/xlsx":          # the table on screen -> a grouped Excel report in ~/Downloads (revealed)
             self._export_xlsx()
         elif p == "/api/attachment/download":  # save selected bills' scans to a folder + reveal it
@@ -2944,6 +3004,58 @@ class Handler(BaseHTTPRequestHandler):
             self._json(_fetch_vendor(con, vendor))
         finally:
             con.close()
+
+    # ── bill payment stubs (payment on top, bills below) + their print history ──────────────
+    def _bp_stubs(self, q: dict):
+        """Every stub printed for a vendor (or one payment), newest first, each judged against the mirror
+        NOW (current / changed / voided / deleted) - so a payment QuickBooks no longer shows keeps its
+        stubs. Plus the column registry for the picker."""
+        vendor = (q.get("vendor") or "").strip()
+        payment = (q.get("payment") or "").strip()
+        try:
+            con = bill_payment_stub.ledger_connect(self.db_path)
+            try:
+                rows = bill_payment_stub.history(con, vendor, payment)
+            finally:
+                con.close()
+        except sqlite3.OperationalError as e:
+            return self._json({"ok": False, "error": str(e), "prints": [], "columns": bill_payment_stub.columns_registry()})
+        self._json({"ok": True, "prints": rows, "columns": bill_payment_stub.columns_registry()})
+
+    def _bp_stub_file(self, hist_id: str):
+        """Serve one printed stub's PDF by its history id - the path comes from the table, never the request."""
+        try:
+            con = bill_payment_stub.ledger_connect(self.db_path)
+            try:
+                snap = bill_payment_stub.history_snapshot(con, int(hist_id))
+            finally:
+                con.close()
+        except (ValueError, sqlite3.OperationalError):
+            snap = None
+        target = Path(snap["served_path"]) if snap and snap.get("served_path") else None
+        if not target or not target.is_file():
+            self._send(404, b"that stub's PDF is not on disk (is the Accounting share mounted?)", "text/plain; charset=utf-8")
+            return
+        self._send(200, target.read_bytes(), "application/pdf")
+
+    def _bp_stub_print(self):
+        """POST {payment_id, columns:[keys]} -> build from the mirror, PDF into the vendor folder, history row."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except (ValueError, json.JSONDecodeError):
+            return self._json({"ok": False, "error": "bad request"}, 400)
+        pid = str(body.get("payment_id") or "").strip()
+        if not pid:
+            return self._json({"ok": False, "error": "payment_id required"}, 400)
+        cols = body.get("columns") or None
+        try:
+            res = bill_payment_stub.print_stub(pid, cols, paths.get("ACB_COMPANY_NAME", ""), self.db_path)
+        except (ValueError, FileNotFoundError, OSError, sqlite3.OperationalError) as e:
+            return self._json({"ok": False, "error": str(e)}, 400)
+        if res.get("ok"):
+            res.pop("stub", None)
+        self._json(res, 200 if res.get("ok") else 500)
 
     def _pnl_portfolio(self):
         con = _connect(self.db_path)

@@ -115,6 +115,14 @@ def bill_tracker_xlsx() -> Path:
                     accounting_base() / "Accounts Payable" / "Bill Tracker.xlsx")
 
 
+def bill_payment_stubs_dir() -> Path:
+    """Where printed bill payment stubs live (owner 2026-09-22): the Accounting share's
+    Accounts Payable/Bill Payment Stubs/<vendor>/. Override: ACB_BILL_PAYMENT_STUBS_DIR.
+    The share must be mounted - a missing mount is a STOP, never a fallback."""
+    return get_path("ACB_BILL_PAYMENT_STUBS_DIR",
+                    accounting_base() / "Accounts Payable" / "Bill Payment Stubs")
+
+
 def companyhealth_dir() -> Path:
     """Local (non-synced) company-health folder. Override: ACB_COMPANYHEALTH_DIR.
     Holds only the two things the owner opens — Company Tracker.xlsx and

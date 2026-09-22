@@ -104,6 +104,7 @@ function applySettings() {
 // toggle (an `onclick` of their own) are left alone. Kinds and their default state:
 const GRP_KINDS = [
   { sel: "tr.bill-group", kind: "band", open: false },        // vendor / client / division bands in tables
+  { sel: "tr.vp-pay", kind: "sib", open: false, until: "tr.vp-pay" },   // vendor page Payments: a payment over the bills it paid (owner 2026-09-22)
   { sel: "tr.sys-group", kind: "band", open: false },         // Systems: a domain
   { sel: "tr.tr-msum", kind: "band", open: false },           // the money trail: a month
   { sel: ".pnl-codegrp", kind: "sib", open: false, until: ".pnl-codegrp" },   // P&L: a job type over its cost codes
@@ -340,7 +341,7 @@ async function load(isAuto) {
     costCollapsed = new Set((COST.by_cost_type || []).map(g => g.parent));
     drawsCollapsed = new Set((DRAWS.draws || []).map(d => d.matched_invoice));
     // Bills open COLLAPSED by default (owner 2026-08-18) - scan vendor + amount, expand on demand.
-    const bgrp = $("#billGroup") ? $("#billGroup").value : "vendor";
+    const bgrp = $("#billGroup") ? $("#billGroup").value : "none";
     billsCollapsed = bgrp === "none" ? new Set() : new Set((BILLS || []).map(b => billGroupKey(b, bgrp)));
   }
   meta = data.meta || {};
@@ -368,7 +369,7 @@ async function loadHeavy() {
   if (h.sub_loc) SUBLOC = h.sub_loc;
   if (h.payments) PAY = h.payments;
   if (h.sales) SALES = h.sales;
-  const bgrp = $("#billGroup") ? $("#billGroup").value : "vendor";   // bills open collapsed by default
+  const bgrp = $("#billGroup") ? $("#billGroup").value : "none";   // a flat list by default (owner 2026-09-22); a chosen grouping opens collapsed
   billsCollapsed = bgrp === "none" ? new Set() : new Set((BILLS || []).map(b => billGroupKey(b, bgrp)));
   buildFilterOptions();
   render();
@@ -1448,7 +1449,7 @@ function fmtDateShort(v) {   // mm/dd/yyyy (owner 2026-08-21: 4-digit year every
 }
 // Per-column widths for the Bills grid - drag the divider between headers to resize;
 // a squished column wraps its text instead of clipping. Widths persist per person.
-const BILL_COL_DEFAULTS = { "Vendor": 210, "Project": 300, "Bill #": 100, "Date": 110, "Amount": 100,
+const BILL_COL_DEFAULTS = { "Vendor": 210, "Project": 300, "Bill #": 100, "Memo": 260, "Date": 110, "Amount": 100,
   "Open": 100, "Paid": 90, "Invoice": 120, "Lien": 130, "Appr": 70 };
 function loadBillColWidths() {
   try { return { ...BILL_COL_DEFAULTS, ...JSON.parse(localStorage.getItem("proficient-ledger-billcols") || "{}") }; }
@@ -1503,6 +1504,74 @@ function apprText(b) { const v = b.approved || ""; if (!v) return null;
   return v === "approved" ? stText("Yes", "st-ok", "Approved for payment") : stText("No", "st-warn", "Not approved for payment"); }
 // A dim placeholder for a genuinely empty status cell (so blank = "none for this bill", unambiguous).
 function dimDash() { const s = document.createElement("span"); s.className = "st-none"; s.textContent = "–"; return s; }
+// ── Excel-style column filters (owner 2026-09-22: "the bill tracker should just show the bills as a list just like the
+// excel, and give me the ability to filter/search down just like i do with excel table filtering"). One mechanism for
+// every bill table: a funnel in each header opens that column's distinct values (with counts, computed over the rows
+// the OTHER columns leave - Excel's behaviour), a search box, Select all / None / Clear. State per table, per session.
+const _hf = {};                                     // tableKey -> { colKey -> Set(values) }
+const HF_BILL_COLS = {                              // colKey -> [getter, label of a value]
+  vendor:  [b => b.vendor || "", v => v || "(no vendor)"],
+  project: [b => b.project_no || "", v => v || "(no project #)"],
+  client:  [b => b.client || "", v => v || "(no client)"],
+  bill:    [b => b.bill_ref || "", v => v || "(no bill #)"],
+  invoice: [b => b.invoice_no || "", v => v || "(no invoice)"],
+  date:    [b => (b.bill_date ? String(b.bill_date).slice(0, 7) : ""), v => v ? v.slice(5, 7) + "/" + v.slice(0, 4) : "(no date)"],
+  open:    [b => (bOpen(b) > 0.005 ? "Open" : "Paid off"), v => v],
+  pay:     [b => b.pay_status || "", v => v || "(none)"],
+  inv:     [b => b.invoice_status || "", v => v || "(none)"],
+  lien:    [b => b.lien_status || "", v => v ? (LIEN_SHORT[v] || v) : "(no lien clock)"],
+  appr:    [b => b.approved || "", v => v === "approved" ? "Approved" : (v === "not approved" ? "Not approved" : (v || "(blank)"))],
+};
+function hfState(tableKey) { return _hf[tableKey] || (_hf[tableKey] = {}); }
+function hfPasses(tableKey, b, except) {
+  const st = hfState(tableKey);
+  for (const k in st) { if (k === except || !st[k].size) continue; const get = HF_BILL_COLS[k][0]; if (!st[k].has(get(b))) return false; }
+  return true;
+}
+function hfActive(tableKey) { const st = hfState(tableKey); return Object.keys(st).some(k => st[k].size); }
+function hfClear(tableKey) { const st = hfState(tableKey); for (const k in st) st[k].clear(); }
+let _hfOpen = null;   // the one open menu
+function hfCloseMenu() { if (_hfOpen) { _hfOpen.remove(); _hfOpen = null; } }
+document.addEventListener("click", (e) => { if (_hfOpen && !e.target.closest(".hf-menu, .hf-btn")) hfCloseMenu(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") hfCloseMenu(); });
+function hfDecorate(th, tableKey, colKey, rowsFn, rerender) {   // rowsFn() = the rows before THIS column's filter (after every other filter)
+  if (!HF_BILL_COLS[colKey]) return;
+  const [get, lbl] = HF_BILL_COLS[colKey];
+  const st = hfState(tableKey); const sel = st[colKey] || (st[colKey] = new Set());
+  const btn = document.createElement("button"); btn.type = "button"; btn.className = "hf-btn" + (sel.size ? " on" : "");
+  btn.innerHTML = '<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M1.5 2.5h13l-5 6v4.5l-3 1.5V8.5z" fill="currentColor"/></svg>';   // the Excel funnel
+  btn.title = sel.size ? `Filtered: ${sel.size} value${sel.size === 1 ? "" : "s"} - click to change` : "Filter this column";
+  btn.onclick = (e) => {
+    e.stopPropagation(); e.preventDefault();
+    if (_hfOpen && _hfOpen._for === btn) { hfCloseMenu(); return; }
+    hfCloseMenu();
+    const rows = rowsFn();
+    const counts = new Map(); for (const b of rows) { const v = get(b); counts.set(v, (counts.get(v) || 0) + 1); }
+    for (const v of [...sel]) if (!counts.has(v)) counts.set(v, 0);   // a picked value that no longer appears still shows, so it can be unpicked
+    const vals = [...counts.keys()].sort((a, b) => colKey === "date" ? b.localeCompare(a) : lbl(a).localeCompare(lbl(b), undefined, { numeric: true }));
+    const menu = document.createElement("div"); menu.className = "msel-menu hf-menu wide"; menu._for = btn;
+    const q = document.createElement("input"); q.type = "search"; q.className = "msel-search"; q.placeholder = "Search values";
+    q.oninput = () => { const t = q.value.toLowerCase(); for (const lab of menu.querySelectorAll(".msel-opt")) lab.hidden = t && !lab.textContent.toLowerCase().includes(t); }; menu.appendChild(q);
+    const tools = document.createElement("div"); tools.className = "msel-tools";
+    const visible = () => [...menu.querySelectorAll(".msel-opt")].filter(l => !l.hidden).map(l => l.dataset.val);
+    const all = document.createElement("button"); all.type = "button"; all.className = "msel-tool"; all.textContent = "Select all"; all.onclick = () => { visible().forEach(v => sel.add(v)); rerender(); hfCloseMenu(); };
+    const none = document.createElement("button"); none.type = "button"; none.className = "msel-tool"; none.textContent = "None"; none.onclick = () => { visible().forEach(v => sel.delete(v)); rerender(); hfCloseMenu(); };
+    const clr = document.createElement("button"); clr.type = "button"; clr.className = "msel-tool"; clr.textContent = "Clear"; clr.onclick = () => { sel.clear(); rerender(); hfCloseMenu(); };
+    const cnt = document.createElement("span"); cnt.className = "msel-count"; cnt.textContent = `${vals.length} value${vals.length === 1 ? "" : "s"}`;
+    tools.appendChild(all); tools.appendChild(none); tools.appendChild(clr); tools.appendChild(cnt); menu.appendChild(tools);
+    for (const v of vals) {
+      const lab = document.createElement("label"); lab.className = "msel-opt"; lab.dataset.val = v;
+      const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = sel.has(v);
+      cb.onchange = () => { if (cb.checked) sel.add(v); else sel.delete(v); rerender(); };
+      const t = document.createElement("span"); t.className = "hf-val"; t.textContent = lbl(v);
+      const c = document.createElement("span"); c.className = "hf-cnt"; c.textContent = String(counts.get(v) || 0);
+      lab.appendChild(cb); lab.appendChild(t); lab.appendChild(c); menu.appendChild(lab);
+    }
+    const r = btn.getBoundingClientRect(); menu.style.position = "fixed"; menu.style.top = (r.bottom + 4) + "px"; menu.style.left = Math.min(r.left, window.innerWidth - 300) + "px"; menu.hidden = false;
+    document.body.appendChild(menu); _hfOpen = menu; q.focus();
+  };
+  th.appendChild(btn); th.classList.add("hf-th");
+}
 function statusCell(node) { const td = document.createElement("td"); td.className = "left status-col"; td.appendChild(node || dimDash()); return td; }
 
 // ── the six per-field filter dropdowns (each a component, not a search box) ──
@@ -1591,14 +1660,15 @@ function buildBillFilters() {
 // ── Date filter shared by Bills and Draws (owner 2026-09-02): two modes. MONTH = every month ticked
 // by default with Select all / Deselect all; DATE = a from / to pair with the native calendar (pick a
 // day or type it) - "as of July 25" is just a To date. Switching modes re-renders at once.
-function dateFilter(id, getDates, onChange) {
-  const st = { mode: "month", months: null, from: "", to: "" };   // months: null = all
+function dateFilter(id, getDates, onChange, prev) {   // prev = an earlier state to keep (the host was re-rendered)
+  const st = { mode: prev ? prev.mode : "month", months: prev ? prev.months : null, from: prev ? prev.from : "", to: prev ? prev.to : "" };   // months: null = all
   const host = $("#" + id); if (!host) return st;
   host.innerHTML = `<span class="seg tiny"><button type="button" class="seg-btn on" data-m="month">Month</button><button type="button" class="seg-btn" data-m="date">Date</button></span>
     <span class="datef-month msel" id="${id}Msel"><button type="button" class="msel-btn" id="${id}Btn">All months</button><div class="msel-menu" id="${id}Menu" hidden></div></span>
     <span class="datef-range" hidden><input type="date" id="${id}From" title="From (leave blank for no lower bound)"> <span class="dim">to</span> <input type="date" id="${id}To" title="To - a statement 'as of' a day is just this box"></span>
     <button type="button" class="btn small datef-reset" id="${id}Reset" title="Back to all dates" hidden>Reset</button>`;
   const btn = $("#" + id + "Btn"), menu = $("#" + id + "Menu"), from = $("#" + id + "From"), to = $("#" + id + "To");
+  from.value = st.from; to.value = st.to;
   const paintMode = () => { host.querySelectorAll(".seg-btn").forEach(b => b.classList.toggle("on", b.dataset.m === st.mode));
     host.querySelector(".datef-month").hidden = st.mode !== "month"; host.querySelector(".datef-range").hidden = st.mode !== "date"; };
   host.querySelectorAll(".seg-btn").forEach(b => b.onclick = () => { st.mode = b.dataset.m; paintMode(); onChange(); });
@@ -1742,8 +1812,10 @@ function billPassesFilters(b, f) {
   if (!billMSelPasses(b)) return false;                        // Client / Division / Pay / Invoice / Approved / Lien
   return true;
 }
+let _billQ = "";   // the Bill Tracker search box (owner 2026-09-22)
 function billClearFilters() {
   for (const cfg of BILL_MSEL) (billMSel[cfg.id] || (billMSel[cfg.id] = new Set())).clear();
+  hfClear("bills"); _billQ = ""; { const q = $("#bfQuick"); if (q) q.value = ""; }
   if (billDate) billDate.clear();
   billVendorHidden = new Set(billVendorDefault);   // back to the default (pumps hidden), not "show everything"
   buildBillFilters();
@@ -1782,8 +1854,11 @@ function renderBills() {
   const f = billFilterValues();
   { const cb = $("#bfClear"); if (cb) cb.hidden = !Object.values(f).some(x => x); }
 
-  // filter (view predicate AND every dropdown), then sort
-  let rows = bills.filter(b => view.pred(b) && billPassesFilters(b, f));
+  // filter (view predicate AND every dropdown AND the search AND the Excel-style header filters), then sort
+  const baseRows = bills.filter(b => view.pred(b) && billPassesFilters(b, f) && _vq(_billQ, [b.vendor, b.project_no, nameOf(b.project_no), b.client, b.bill_ref, b.memo, b.invoice_no, fmtDateShort(b.bill_date), b.bill_date,
+    Math.round(num(b.line_amount)), money(b.line_amount), Math.round(bOpen(b)), b.pay_status, b.invoice_status, b.lien_status, b.approved, b.division]));
+  let rows = baseRows.filter(b => hfPasses("bills", b));
+  { const hc = $("#bfHfClear"); if (hc) { hc.hidden = !hfActive("bills"); } }
   const sortKey = $("#billSort") ? $("#billSort").value : "oldest";
   rows = [...rows].sort(BILL_SORTS[sortKey] || BILL_SORTS.oldest);
 
@@ -1795,13 +1870,14 @@ function renderBills() {
 
   // table. Each status is its OWN column (Paid / Invoice / Lien / Appr) so a blank in
   // one never hides a missing value by being merged with the others.
-  const group = $("#billGroup") ? $("#billGroup").value : "vendor";
+  const group = $("#billGroup") ? $("#billGroup").value : "none";   // a flat list like the Excel, unless the owner picks a grouping
   const thead = $("#billTable thead"), tbody = $("#billTable tbody");
   thead.innerHTML = "";
   thead.hidden = false; tbody.innerHTML = "";
   const cols = [["Vendor", "left", ""], ["Project", "left", ""], ["Bill #", "left", "Bill number - opens the bill in QuickBooks"],
+                ["Memo", "left", "The bill's memo in QuickBooks (project, address, client - what AP typed)"],
                 ["Invoice #", "left", "The draw (AR invoice) this bill is matched to - opens the invoice page; GC paid / GC owes is the live QuickBooks state of that invoice"],
-                ["Date", "left", "Bill date (MM/DD/YY)"], ["Amount", "right", "Bill amount"], ["Open", "right", "Open balance we still owe"],
+                ["Date", "left", "Bill date - the funnel filters by month"], ["Amount", "right", "Bill amount"], ["Open", "right", "Open balance we still owe"],
                 ["Paid", "left", "Did we pay the vendor?"], ["Invoice", "left", "Was the AR invoice (draw) paid by the GC?"],
                 ["Lien", "left", "Texas lien-notice clock"], ["Appr", "left", "Approved for payment?"]];
   // Fixed layout + a <colgroup> so column widths are exact and draggable; each header
@@ -1811,8 +1887,10 @@ function renderBills() {
   const colgroup = document.createElement("colgroup");
   const htr = document.createElement("tr");
   let wsum = 0;
+  const HF_KEYS = { "Vendor": "vendor", "Project": "project", "Bill #": "bill", "Invoice #": "invoice", "Date": "date", "Open": "open", "Paid": "pay", "Invoice": "inv", "Lien": "lien", "Appr": "appr" };
   cols.forEach(([c, al, tip], i) => {
     const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; if (tip) th.title = tip;
+    if (HF_KEYS[c]) hfDecorate(th, "bills", HF_KEYS[c], () => baseRows.filter(b => hfPasses("bills", b, HF_KEYS[c])), renderBills);
     const grip = document.createElement("div"); grip.className = "col-resize"; grip.title = "Drag to resize this column";
     grip.addEventListener("mousedown", (e) => startBillColResize(e, i, c));
     th.appendChild(grip); htr.appendChild(th);
@@ -1922,6 +2000,7 @@ function billRow(b) {
   { const bid = b.bill_id || (qboBillHref(b.qbo_link) || "").replace(/.*txnId=(\d+).*/, "$1");
     if (bid) { const same = (BILLS || []).filter(y => y.vendor === b.vendor && y.bill_id).map(y => ({ type: "Bill", id: String(y.bill_id), n: y.att || 0, title: `${y.vendor || ""} · bill ${y.bill_ref || ""}` }));
       const _ab = attBtn("Bill", bid, b.att, `${b.vendor || ""} · bill ${b.bill_ref || ""}`, { items: same, index: Math.max(0, same.findIndex(y => y.id === String(bid))) }); _ab.style.marginLeft = "6px"; tr.lastElementChild.appendChild(_ab); } }
+  { const mt = document.createElement("td"); mt.className = "left bill-memo"; const ms = document.createElement("span"); ms.textContent = b.memo || ""; ms.title = b.memo || ""; mt.appendChild(ms); if (!b.memo) mt.classList.add("dim"); tr.appendChild(mt); }   // the QBO memo (owner 2026-09-22)
   tr.appendChild(_billInvCell(b));   // the draw / AR invoice this bill is matched to, and whether the GC paid it (owner 2026-09-16)
   // Date (MM/DD/YY) + age badge once a bill is 2+ months old
   const dtd = document.createElement("td"); dtd.className = "left bill-date";
@@ -1990,12 +2069,17 @@ function findBillForLien(r) {
 // page like qbo ... see the bill its paying and the project ... if multiple say multiple, click for lines".
 let _vendorData = null, _vendorType = "all", _vendorView = "bills";   // bills | payments
 let _vendorInv = "any", _vendorGroup = true;   // the vendor page's invoice filter (any | gcpaid | gcowes | none) and project bands
+let _vendorQ = "";   // the vendor page search - one box, filters whichever view is up (owner 2026-09-22: "need ability to search on both pages")
+let _vendorDate = null;   // the vendor page Date filter (Month | Date from-to), same component as the Bill Tracker's; state survives re-renders
+let _vendorProjOpen = false, _vendorProjIdx = -1;   // the Project box's suggestion list: open? which row is highlighted (ArrowDown / ArrowUp, Enter picks)
+let _vendorProj = "";   // the standalone Project box beside it (owner 2026-09-22: "make project a standalone box") - project # or job name, both views
+const _vq = (q, parts) => { q = (q || "").trim().toLowerCase(); if (!q) return true; const hay = parts.filter(x => x != null && x !== "").map(x => String(x).toLowerCase()).join(" \u0001 "); return q.split(/\s+/).every(w => hay.includes(w)); };
 const _vendorBillOpen = new Set();
 async function openVendorPage(vendor) {
   if (_ppLeaveBlocked()) return;   // unsaved pay ticks on the project page: Save or Discard first
   openRecord(vendor, "loading…"); skeletonInto($("#recordBody"), 6);
   const body = $("#recordBody"); body.innerHTML = "";
-  _vendorData = null; _vendorType = "all"; _vendorView = "bills"; _vendorBillOpen.clear();
+  _vendorData = null; _vendorType = "all"; _vendorView = "bills"; _vendorQ = ""; _vendorProj = ""; _vendorDate = null; _vendorBillOpen.clear();
   let data;
   try { data = await (await fetch("/api/vendor?v=" + encodeURIComponent(vendor))).json(); }
   catch (e) { body.textContent = "could not load this vendor"; return; }
@@ -2012,7 +2096,44 @@ function renderVendorPage() {
     const b = document.createElement("button"); b.type = "button"; b.className = "seg-btn" + (_vendorView === k ? " on" : ""); b.textContent = lbl;
     b.onclick = () => { _vendorView = k; renderVendorPage(); }; vseg.appendChild(b);
   }
+  { const wrap = document.createElement("span"); wrap.className = "vp-projwrap";
+    const pj = document.createElement("input"); pj.type = "search"; pj.id = "vpProj"; pj.className = "msel-search vendor-proj"; pj.value = _vendorProj; pj.placeholder = "Project #"; pj.autocomplete = "off";
+    pj.title = "Narrow to a project # - type, then ArrowDown and Enter to pick one of this vendor's projects; both views";
+    // this vendor's projects (bills + payments), the list the box suggests from
+    const projs = new Map();
+    for (const b of (BILLS || []).filter(b => (b.vendor || "") === d.vendor)) if (b.project_no) projs.set(b.project_no, b.client || nameOf(b.project_no) || "");
+    for (const p of (d.payments || [])) for (const no of (p.projects || [])) if (!projs.has(no)) projs.set(no, nameOf(no) || "");
+    const matches = () => { const t = _vendorProj.trim(); return [...projs].filter(([no, nm]) => !t || _vq(t, [no, nm, nameOf(no)])).sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true })).slice(0, 12); };
+    const refocus = () => { const n = $("#vpProj"); if (n) { n.focus(); const pos = n.value.length; try { n.setSelectionRange(pos, pos); } catch {} } };
+    const pick = (no) => { _vendorProj = no; _vendorProjOpen = false; _vendorProjIdx = -1; renderVendorPage(); refocus(); };
+    pj.oninput = () => { _vendorProj = pj.value; _vendorProjOpen = true; _vendorProjIdx = -1; clearTimeout(pj._t); pj._t = setTimeout(() => { const pos = pj.selectionStart; renderVendorPage(); const n = $("#vpProj"); if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch {} } }, 160); };
+    pj.onfocus = () => { if (!_vendorProjOpen) { _vendorProjOpen = true; renderVendorPage(); refocus(); } };
+    pj.onkeydown = (e) => {
+      const m = matches();
+      if (e.key === "ArrowDown") { e.preventDefault(); _vendorProjOpen = true; _vendorProjIdx = Math.min(m.length - 1, _vendorProjIdx + 1); renderVendorPage(); refocus(); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); _vendorProjIdx = Math.max(-1, _vendorProjIdx - 1); renderVendorPage(); refocus(); }
+      else if (e.key === "Enter") { e.preventDefault(); if (_vendorProjIdx >= 0 && m[_vendorProjIdx]) pick(m[_vendorProjIdx][0]); else if (m.length === 1) pick(m[0][0]); else { _vendorProjOpen = false; renderVendorPage(); refocus(); } }
+      else if (e.key === "Escape") { e.preventDefault(); if (_vendorProjOpen) { _vendorProjOpen = false; renderVendorPage(); refocus(); } else { pj.value = ""; _vendorProj = ""; renderVendorPage(); refocus(); } }
+    };
+    pj.onblur = () => { setTimeout(() => { if (_vendorProjOpen && document.activeElement !== $("#vpProj") && !document.activeElement.closest(".vp-projlist")) { _vendorProjOpen = false; const l = document.querySelector(".vp-projlist"); if (l) l.remove(); } }, 150); };
+    wrap.appendChild(pj);
+    if (_vendorProjOpen) { const m = matches(); if (m.length) {
+      const list = document.createElement("div"); list.className = "msel-menu vp-projlist"; list.hidden = false;
+      m.forEach(([no, nm], i) => { const row = document.createElement("div"); row.className = "vp-projopt" + (i === _vendorProjIdx ? " on" : ""); row.tabIndex = -1;
+        const a = document.createElement("b"); a.textContent = no; const b = document.createElement("span"); b.className = "dim"; b.textContent = nm ? " · " + nm : "";
+        row.appendChild(a); row.appendChild(b); row.onmousedown = (e) => { e.preventDefault(); pick(no); }; list.appendChild(row); });
+      wrap.appendChild(list); } }
+    vseg.appendChild(wrap); }
+  { const fld = document.createElement("span"); fld.className = "fld vp-datefld"; const lb = document.createElement("span"); lb.textContent = "Date"; fld.appendChild(lb);
+    const host = document.createElement("span"); host.className = "datef"; host.id = "vpDate"; fld.appendChild(host); vseg.appendChild(fld); }
+  { const q = document.createElement("input"); q.type = "search"; q.id = "vpSearch"; q.className = "msel-search vendor-search"; q.value = _vendorQ;
+    q.placeholder = _vendorView === "payments" ? "Search payments (⌘F) - ref, date, client, project, bill #, amount" : "Search bills (⌘F) - anything on the row: client, bill #, memo, invoice #, date, amount";
+    q.oninput = () => { _vendorQ = q.value; clearTimeout(q._t); q._t = setTimeout(() => { const pos = q.selectionStart; renderVendorPage(); const n = $("#vpSearch"); if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch {} } }, 160); };
+    q.onkeydown = (e) => { if (e.key === "Escape") { q.value = ""; _vendorQ = ""; renderVendorPage(); } };
+    vseg.appendChild(q); }
   body.appendChild(vseg);
+  { const dates = () => _vendorView === "payments" ? (d.payments || []).map(p => p.txn_date) : (BILLS || []).filter(b => (b.vendor || "") === d.vendor).map(b => b.bill_date);
+    _vendorDate = dateFilter("vpDate", dates, renderVendorPage, _vendorDate); _vendorDate.build(); }   // after the bar is in the document - the control binds to #vpDate
   if (_vendorView === "payments") {
     $("#recordSub").textContent = `${d.pay_count || 0} payments · ${money(d.pay_total || 0)} paid out this year`;
     return _renderVendorPayments(d, body);
@@ -2041,34 +2162,56 @@ function renderVendorPage() {
     b.onclick = () => { _vendorInv = k; renderVendorPage(); }; iseg.appendChild(b);
   }
   tools.appendChild(iseg);
-  const grp = document.createElement("button"); grp.type = "button"; grp.className = "btn small"; grp.textContent = _vendorGroup ? "Flat list" : "Group by project"; grp.onclick = () => { _vendorGroup = !_vendorGroup; renderVendorPage(); }; tools.appendChild(grp);
+  { const hc = document.createElement("button"); hc.type = "button"; hc.className = "btn small"; hc.textContent = "Clear column filters"; hc.hidden = !hfActive("vendorBills"); hc.onclick = () => { hfClear("vendorBills"); renderVendorPage(); }; tools.appendChild(hc); }
   const bt = document.createElement("button"); bt.type = "button"; bt.className = "btn small"; bt.textContent = "Open in Bill Tracker"; bt.title = "The Bill Tracker with its vendor filter set to this vendor - every other filter is there";
   bt.onclick = () => { if (_ppLeaveBlocked()) return; billVendorHidden = new Set(_billVendors().filter(v => v !== d.vendor)); activeBillView = "all"; closeRecord(); setTab("bills"); buildBillVendorFilter(); renderBills(); };
   tools.appendChild(bt);
   body.appendChild(tools);
   let rows = rowsAll.filter(b => _vendorType === "all" || (_vendorType === "paid" ? isPaid(b) : !isPaid(b)));
   if (_vendorInv !== "any") rows = rows.filter(b => invState(b) === _vendorInv);
+  if (_vendorDate && _vendorDate.active()) rows = rows.filter(b => _vendorDate.passes(b.bill_date));   // Month | Date (from / to)
+  if (_vendorProj.trim()) rows = rows.filter(b => _vq(_vendorProj, [b.project_no, nameOf(b.project_no)]));   // the standalone Project box
+  if (_vendorQ.trim()) rows = rows.filter(b => _vq(_vendorQ, [b.project_no, nameOf(b.project_no), b.client, b.bill_ref, b.memo, b.invoice_no, fmtDateShort(b.bill_date), b.bill_date,
+    Math.round(num(b.line_amount)), money(b.line_amount), Math.round(bOpen(b)), b.lien_status, b.division, isPaid(b) ? "paid" : "unpaid", invState(b) === "gcpaid" ? "gc paid" : invState(b) === "gcowes" ? "gc owes" : "no invoice"]));
   rows.sort((a, b) => String(b.bill_date || "").localeCompare(String(a.bill_date || "")) || String(a.bill_ref || "").localeCompare(String(b.bill_ref || "")));
-  if (!rows.length) { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = rowsAll.length ? "No bills match this filter." : "No Bill Tracker rows for this vendor."; body.appendChild(p); return; }
+  const baseRows = rows;                                   // before the header filters - what each funnel lists
+  rows = rows.filter(b => hfPasses("vendorBills", b));
+  if (!rows.length) { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = rowsAll.length ? (_vendorQ.trim() ? `No bills match "${_vendorQ.trim()}".` : "No bills match this filter.") : "No Bill Tracker rows for this vendor."; body.appendChild(p); return; }
   const scroll = document.createElement("div"); scroll.className = "table-scroll";
   const table = document.createElement("table"); table.className = "grid vp-grid"; const thead = document.createElement("thead"), tbody = document.createElement("tbody");
   const cols = [["Project", "left", "Project + client - the client opens the client's page"], ["Bill #", "left", "Bill number - opens the bill in QuickBooks"],
+                ["Memo", "left", "The bill's memo in QuickBooks"],
                 ["Invoice #", "left", "The draw (AR invoice) this bill is matched to - opens the invoice page; GC paid / GC owes is the live QuickBooks state of that invoice"],
-                ["Date", "left", "Bill date"], ["Amount", "right", "Bill amount"], ["Open", "right", "Open balance we still owe"],
+                ["Date", "left", "Bill date - the funnel filters by month"], ["Amount", "right", "Bill amount"], ["Open", "right", "Open balance we still owe"],
                 ["Paid", "left", "Did we pay the vendor?"], ["Invoice", "left", "The Bill Tracker's invoice pipeline status"], ["Lien", "left", "Texas lien-notice clock"], ["Appr", "left", "Approved for payment?"]];
-  thead.innerHTML = "<tr>" + cols.map(([c, al, tip]) => `<th class="${al}" title="${_ge(tip)}">${_ge(c)}</th>`).join("") + "</tr>";
+  { const HF_KEYS = { "Project": "project", "Bill #": "bill", "Invoice #": "invoice", "Date": "date", "Open": "open", "Paid": "pay", "Invoice": "inv", "Lien": "lien", "Appr": "appr" };
+    const htr = document.createElement("tr");
+    for (const [c, al, tip] of cols) { const th = document.createElement("th"); th.className = al; th.title = tip; th.textContent = c;
+      if (HF_KEYS[c]) hfDecorate(th, "vendorBills", HF_KEYS[c], () => baseRows.filter(b => hfPasses("vendorBills", b, HF_KEYS[c])), renderVendorPage);
+      htr.appendChild(th); }
+    thead.appendChild(htr); }
   const row = b => { const tr = billRow(b); tr.removeChild(tr.firstElementChild); return tr; };   // the tracker's row without the vendor column - it is the vendor's page
-  if (_vendorGroup) {
+  // a flat list like the Excel (owner 2026-09-22: "i don't want to see it grouped by anything") - the funnels do the narrowing
+  if (false) {
     const byP = new Map(); for (const b of rows) { const k = b.project_no || "(no project)"; if (!byP.has(k)) byP.set(k, []); byP.get(k).push(b); }
     for (const [p, list] of [...byP].sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true }))) {
       const gtr = document.createElement("tr"); gtr.className = "bill-subgroup"; gtr.style.cursor = p !== "(no project)" ? "pointer" : "default"; gtr.title = p !== "(no project)" ? "Open the project page" : "";
       gtr.onclick = () => { if (p !== "(no project)") openProjectPage(p); };
-      const td = document.createElement("td"); td.colSpan = cols.length; const cell = document.createElement("div"); cell.className = "bg-cell";
-      const key = document.createElement("span"); key.className = "sg-key"; key.textContent = p + (nameOf(p) ? " · " + nameOf(p) : "") + (list[0].client ? " · " + list[0].client : ""); cell.appendChild(key);
+      // the band's numbers sit UNDER the column they summarize (owner 2026-09-22: "why does this page look so bad?" -
+      // the old value/label grid floated billed under Bill #, open under Invoice #, counts under Date)
       const gOpen = list.reduce((t, b) => t + bOpen(b), 0), gAmt = list.reduce((t, b) => t + num(b.line_amount), 0);
-      const invs = [...new Set(list.map(b => b.invoice_no).filter(Boolean))];
-      bandMetrics(cell, [[money(gAmt), "billed"], [money(gOpen), "open", gOpen > 0.005 ? "neg" : ""], [list.length, "bills"], [list.filter(isPaid).length, "paid"], [invs.length ? `${invs.length}` : "–", invs.length === 1 ? "invoice" : "invoices"]]);
-      td.appendChild(cell); gtr.appendChild(td); tbody.appendChild(gtr);
+      const invs = [...new Set(list.map(b => b.invoice_no).filter(Boolean))], nPaid = list.filter(isPaid).length;
+      { const td = document.createElement("td"); td.className = "left"; const key = document.createElement("span"); key.className = "sg-key";
+        key.textContent = p + (nameOf(p) ? " · " + nameOf(p) : "") + (list[0].client ? " · " + list[0].client : ""); td.appendChild(key); gtr.appendChild(td); }
+      const dimCell = (t, cls) => { const td = document.createElement("td"); td.className = (cls || "left") + " bg-n"; td.textContent = t; return td; };
+      gtr.appendChild(dimCell(`${list.length} bill${list.length === 1 ? "" : "s"}`));
+      gtr.appendChild(dimCell(invs.length ? `${invs.length} invoice${invs.length === 1 ? "" : "s"}` : ""));
+      gtr.appendChild(dimCell(""));
+      { const td = document.createElement("td"); td.className = "bg-amt"; td.textContent = money(gAmt); gtr.appendChild(td); }
+      { const td = document.createElement("td"); td.className = "bg-amt" + (gOpen > 0.005 ? " neg" : " dim"); td.textContent = money(gOpen); gtr.appendChild(td); }
+      gtr.appendChild(dimCell(`${nPaid} of ${list.length} paid`));
+      for (let i = 0; i < 3; i++) gtr.appendChild(dimCell(""));
+      tbody.appendChild(gtr);
       for (const b of list) tbody.appendChild(row(b));
     }
   } else for (const b of rows) tbody.appendChild(row(b));
@@ -2133,35 +2276,183 @@ function _vendorLines(b) {
   return wrap;
 }
 // Vendor payments view: the QBO BillPayments (money out) this year, from the local bill_payment table.
-function _renderVendorPayments(d, body) {
-  const pays = d.payments || [];
-  if (!pays.length) { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = "No bill payments recorded this year (run the AP / bill-payments sync to pull them)."; body.appendChild(p); return; }
+// + the bill payment STUB (owner 2026-09-22): "Print stub" per payment -> the PDF in the vendor's folder on the
+// Accounting share, one file per payment; a column picker (QBO's six on by default); and the print HISTORY -
+// every stub as printed, judged against QBO now (current / changed / voided / deleted), so a payment
+// QuickBooks no longer shows keeps its stubs. History + registry come from /api/bill-payment/stubs.
+const STUB_COLS_LS = "ledger.stubColumns";
+let _stubCols = (() => { try { return JSON.parse(localStorage.getItem(STUB_COLS_LS)) || null; } catch { return null; } })();
+let _stubHist = { vendor: null, prints: [], columns: [] };
+async function _loadStubHistory(vendor) {
+  try { const j = await (await fetch("/api/bill-payment/stubs?vendor=" + encodeURIComponent(vendor))).json();
+    _stubHist = { vendor, prints: (j && j.prints) || [], columns: (j && j.columns) || [] }; }
+  catch { _stubHist = { vendor, prints: [], columns: [] }; }
+  if (!_stubCols && _stubHist.columns.length) _stubCols = _stubHist.columns.filter(c => c.default).map(c => c.key);
+}
+function _stubPill(status) {
+  const s = document.createElement("span"); s.className = "stub-pill " + (status || "current");
+  s.textContent = { current: "current", changed: "changed in QBO", voided: "voided in QBO", deleted: "deleted in QBO" }[status] || status;
+  s.title = { current: "QuickBooks still shows this payment exactly as printed", changed: "The payment was edited in QuickBooks after this stub was printed - the stub is what went out",
+    voided: "The payment was voided in QuickBooks after this stub was printed", deleted: "The payment no longer exists in QuickBooks - this stub is the record of it" }[status] || "";
+  return s;
+}
+function _stubLink(h) {   // one printed stub: opens the PDF as it went out
+  const a = document.createElement("a"); a.className = "stub-link"; a.target = "_blank"; a.rel = "noopener";
+  a.href = "/api/bill-payment/stub/file?id=" + encodeURIComponent(h.id);
+  a.textContent = fmtDate(h.printed_at, true); a.title = h.file_path || "";
+  if (h.file_exists === false) { a.classList.add("dim"); a.title = "PDF not on disk (Accounting share unmounted?) - " + (h.file_path || ""); }
+  return a;
+}
+async function _printStub(paymentId, btn) {
+  const was = btn.textContent; btn.disabled = true; btn.textContent = "Printing…";
+  try {
+    const res = await fetch("/api/bill-payment/stub", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ payment_id: paymentId, columns: _stubCols || undefined }) });
+    const j = await res.json();
+    if (!j.ok) throw new Error(j.error || "print failed");
+    toast("Stub printed - " + (j.file || "").split("/").pop());
+    window.open("/api/bill-payment/stub/file?id=" + encodeURIComponent(j.id), "_blank", "noopener");
+    await _loadStubHistory(_stubHist.vendor); renderVendorPage();
+  } catch (e) { toast("Could not print the stub: " + e.message); btn.disabled = false; btn.textContent = was; }
+}
+function _stubColumnPicker() {   // the registry as checkboxes; the choice sticks (localStorage) and applies to the next print
+  const wrap = document.createElement("details"); wrap.className = "stub-cols";
+  const sum = document.createElement("summary"); sum.textContent = "Stub columns"; wrap.appendChild(sum);
+  const box = document.createElement("div"); box.className = "stub-cols-box";
+  for (const c of _stubHist.columns) {
+    const lab = document.createElement("label"); const cb = document.createElement("input"); cb.type = "checkbox";
+    cb.checked = (_stubCols || []).includes(c.key);
+    cb.onchange = () => { const order = _stubHist.columns.map(x => x.key); const set = new Set(_stubCols || []);
+      if (cb.checked) set.add(c.key); else set.delete(c.key);
+      _stubCols = order.filter(k => set.has(k)); if (!_stubCols.length) { _stubCols = [c.key]; cb.checked = true; }
+      try { localStorage.setItem(STUB_COLS_LS, JSON.stringify(_stubCols)); } catch {} };
+    lab.appendChild(cb); lab.appendChild(document.createTextNode(" " + c.label + (c.default ? "" : " (optional)"))); box.appendChild(lab);
+  }
+  const reset = document.createElement("button"); reset.type = "button"; reset.className = "btn tiny subtle"; reset.textContent = "QuickBooks default";
+  reset.onclick = () => { _stubCols = _stubHist.columns.filter(c => c.default).map(c => c.key); try { localStorage.setItem(STUB_COLS_LS, JSON.stringify(_stubCols)); } catch {} renderVendorPage(); };
+  box.appendChild(reset); wrap.appendChild(box);
+  return wrap;
+}
+let _stubSel = new Set();   // payment ids ticked for a multi-print (owner 2026-09-22: "a box to check in case I want to select multiple payments")
+async function _printStubsSelected(btn) {
+  const ids = [..._stubSel]; if (!ids.length) return;
+  btn.disabled = true; const was = btn.textContent;
+  let done = 0, failed = [];
+  for (const pid of ids) {
+    btn.textContent = `Printing ${done + 1} of ${ids.length}…`;
+    try {
+      const res = await fetch("/api/bill-payment/stub", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ payment_id: pid, columns: _stubCols || undefined }) });
+      const j = await res.json(); if (!j.ok) throw new Error(j.error || "print failed");
+      done++;
+    } catch (e) { failed.push(pid + ": " + e.message); }
+  }
+  toast(`${done} stub${done === 1 ? "" : "s"} printed to the vendor folder` + (failed.length ? ` · ${failed.length} failed` : ""), 5000);
+  if (failed.length) console.warn("stub prints failed", failed);
+  _stubSel.clear(); btn.textContent = was;
+  await _loadStubHistory(_stubHist.vendor); renderVendorPage();
+}
+async function _renderVendorPayments(d, body) {
+  if (_stubHist.vendor !== d.vendor) { await _loadStubHistory(d.vendor); _stubSel.clear(); }
+  if (_vendorView !== "payments" || _vendorData !== d) return;   // the owner moved on while the history loaded
+  const pays = (d.payments || []).filter(p => (!_vendorDate || !_vendorDate.active() || _vendorDate.passes(p.txn_date))
+    && (!_vendorProj.trim() || _vq(_vendorProj, [...(p.projects || []), ...(p.projects || []).map(nameOf)]))
+    && _vq(_vendorQ, [p.ref_no, fmtDateShort(p.txn_date), p.txn_date, p.pay_type === "CreditCard" ? "credit card" : p.pay_type, ...(p.clients || []), ...(p.projects || []),
+    ...(p.bills || []).map(b => b.bill_ref), Math.round(num(p.total_amt)), money(p.total_amt), p.voided ? "voided" : "", p.memo]));
+  const byPay = new Map(); for (const h of _stubHist.prints) { if (!byPay.has(h.payment_id)) byPay.set(h.payment_id, []); byPay.get(h.payment_id).push(h); }
+  // toolbar: the column picker + the multi-print button (lives on the selection)
+  const bar = document.createElement("div"); bar.className = "stub-bar";
+  if (_stubHist.columns.length) bar.appendChild(_stubColumnPicker());
+  const selBtn = document.createElement("button"); selBtn.type = "button"; selBtn.className = "btn small stub-sel-btn";
+  const selLabel = () => { const n = _stubSel.size; selBtn.textContent = n ? `Print ${n} stub${n === 1 ? "" : "s"}` : "Print stubs for selected"; selBtn.disabled = !n; };
+  selLabel(); selBtn.onclick = () => _printStubsSelected(selBtn); bar.appendChild(selBtn);
+  body.appendChild(bar);
+  if (!pays.length) { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = (d.payments || []).length ? `No payments match "${_vendorQ.trim()}".` : "No bill payments recorded this year (run the AP / bill-payments sync to pull them)."; body.appendChild(p); _renderStubOrphans(body, pays, byPay); return; }
+  const scroll = document.createElement("div"); scroll.className = "table-scroll";
+  const table = document.createElement("table"); table.className = "grid vp-paytable"; const thead = document.createElement("thead"), tbody = document.createElement("tbody");
+  const htr = document.createElement("tr");
+  // GROUPED (owner 2026-09-22): the payment is the row - ref, date, client, amount - and the bills it paid open under it
+  // (GRP_KINDS "tr.vp-pay": caret in the ref, remembered state, children hidden while closed).
+  { const th = document.createElement("th"); th.className = "left vp-ck"; const all = document.createElement("input"); all.type = "checkbox"; all.title = "Select every payment (voided ones can't be printed)";
+    const printable = pays.filter(p => !p.voided).map(p => String(p.qbo_txn_id));
+    all.checked = printable.length > 0 && printable.every(id => _stubSel.has(id));
+    all.onchange = () => { if (all.checked) printable.forEach(id => _stubSel.add(id)); else _stubSel.clear(); renderVendorPage(); };
+    th.appendChild(all); htr.appendChild(th); }
+  for (const [c, al] of [["Ref / cheque #", "left"], ["Date", "left"], ["Type", "left"], ["Client", "left"], ["Amount", "right"], ["Stub", "left"]]) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
+  thead.appendChild(htr);
+  for (const p of pays) {
+    const pid = String(p.qbo_txn_id);
+    const tr = document.createElement("tr"); tr.className = "vp-pay" + (p.voided ? " vp-void" : "");
+    { const td = document.createElement("td"); td.className = "left vp-ck"; const cb = document.createElement("input"); cb.type = "checkbox";
+      cb.checked = _stubSel.has(pid); cb.disabled = !!p.voided; cb.title = p.voided ? "Voided - nothing to print" : "Select for a multi-print";
+      cb.onchange = () => { if (cb.checked) _stubSel.add(pid); else _stubSel.delete(pid); selLabel(); const all = thead.querySelector("input"); if (all) all.checked = pays.filter(x => !x.voided).every(x => _stubSel.has(String(x.qbo_txn_id))); };
+      td.appendChild(cb); tr.appendChild(td); }
+    { const rc = document.createElement("td"); rc.className = "left"; const key = document.createElement("span"); key.className = "bg-key"; key.textContent = p.ref_no || "–"; rc.appendChild(key);   // the caret lands inside .bg-key
+      if (p.voided) { const v = document.createElement("span"); v.className = "stub-pill voided vp-voidpill"; v.textContent = "VOIDED"; v.title = p.memo || "Voided in QuickBooks"; rc.appendChild(v); }
+      if (p.att) { const ab = attBtn("BillPayment", p.qbo_txn_id, p.att, `payment ${p.ref_no || ""}`); ab.style.marginLeft = "6px"; rc.appendChild(ab); }
+      if (p.voided && p.memo && !/^voided\.?$/i.test(p.memo.trim())) { const m = document.createElement("div"); m.className = "dim vp-memo"; m.textContent = p.memo; rc.appendChild(m); }
+      tr.appendChild(rc); }
+    tr.appendChild(leftText(fmtDateShort(p.txn_date)));
+    tr.appendChild(leftText(p.pay_type === "CreditCard" ? "Credit card" : (p.pay_type || "–")));
+    { const cl = p.clients || []; const cc = leftText(cl.slice(0, 4).join(", ") + (cl.length > 4 ? ` +${cl.length - 4} more` : "") || (p.voided ? "" : "–")); if (!cl.length) cc.classList.add("dim"); cc.title = cl.join(", "); tr.appendChild(cc); }
+    { const amt = document.createElement("td"); if (p.voided) { const z = document.createElement("span"); z.className = "cell dim"; z.textContent = "voided"; amt.appendChild(z); } else amt.appendChild(moneyCell(p.total_amt)); tr.appendChild(amt); }
+    { const sc = document.createElement("td"); sc.className = "left vp-stub"; const hist = byPay.get(pid) || [];
+      if (!p.voided) { const b = document.createElement("button"); b.type = "button"; b.className = "btn tiny"; b.textContent = hist.length ? "Print again" : "Print stub";
+        b.title = "Payment on top, the bills it paid below - the PDF lands in this vendor's folder under Accounting / Accounts Payable / Bill Payment Stubs";
+        b.onclick = (e) => { e.stopPropagation(); _printStub(pid, b); }; sc.appendChild(b); }
+      if (hist.length) { const hl = document.createElement("div"); hl.className = "stub-hist";
+        const lines = hist.map(h => { const ln = document.createElement("div"); ln.className = "stub-histline"; ln.appendChild(_stubLink(h)); ln.appendChild(_stubPill(h.status)); return ln; });
+        _vpCapped(hl, lines, 3, "prints"); sc.appendChild(hl); }
+      tr.appendChild(sc); }
+    tbody.appendChild(tr);
+    // the expansion: one row per bill this payment paid (bill # -> QuickBooks, its project, its client, the amount applied)
+    const bl = p.bills || [];
+    if (!bl.length && !p.voided) { const br = document.createElement("tr"); br.className = "vp-bill"; const td = document.createElement("td"); td.colSpan = 7; td.className = "left dim"; td.textContent = p.n_bills ? `${p.n_bills} bill${p.n_bills === 1 ? "" : "s"} (details not loaded - run the AP sync)` : "no bills on this payment"; br.appendChild(td); tbody.appendChild(br); }
+    for (const b of bl) {
+      const br = document.createElement("tr"); br.className = "vp-bill";
+      br.appendChild(document.createElement("td"));
+      { const td = document.createElement("td"); td.className = "left"; const a = document.createElement("a"); a.href = qboUrl("bill", b.bill_id); a.target = "_blank"; a.rel = "noopener"; a.className = "qbo-link"; a.textContent = b.bill_ref || ("bill " + b.bill_id); a.title = "Open this bill in QuickBooks"; td.appendChild(a); br.appendChild(td); }
+      br.appendChild(leftText(""));
+      br.appendChild(_vpProjCell(b.projects || []));
+      { const cl = b.clients || []; const cc = leftText(cl.join(", ") || "–"); if (!cl.length) cc.classList.add("dim"); br.appendChild(cc); }
+      { const td = document.createElement("td"); td.appendChild(moneyCell(b.amount)); br.appendChild(td); }
+      br.appendChild(document.createElement("td"));
+      tbody.appendChild(br);
+    }
+  }
+  table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table); body.appendChild(scroll);
+  _renderStubOrphans(body, pays, byPay);
+}
+// Stubs printed for payments the ledger's payment list no longer carries (deleted or voided in QuickBooks, or outside
+// this year's window): the history keeps the stub as printed, so they are listed here, never lost.
+function _renderStubOrphans(body, pays, byPay) {
+  const have = new Set(pays.map(p => String(p.qbo_txn_id)));
+  const orphans = [...byPay.entries()].filter(([pid]) => !have.has(pid));
+  if (!orphans.length) return;
+  const h = document.createElement("h3"); h.className = "stub-orph-h"; h.textContent = "Printed stubs for payments no longer in this list"; body.appendChild(h);
+  const cap = document.createElement("div"); cap.className = "bills-cap"; cap.textContent = "Changed, voided or deleted in QuickBooks after printing (or outside this year's window). Each stub opens as it went out."; body.appendChild(cap);
   const scroll = document.createElement("div"); scroll.className = "table-scroll";
   const table = document.createElement("table"); table.className = "grid"; const thead = document.createElement("thead"), tbody = document.createElement("tbody");
   const htr = document.createElement("tr");
-  // the bill(s) each payment paid, with the project and the client (owner 2026-09-15: "for bill payments i need to
-  // see the bill paid and the project") - one cheque can cover several bills, so each is its own line in the cell
-  for (const [c, al] of [["Date", "left"], ["Ref / cheque #", "left"], ["Type", "left"], ["Bills paid", "left"], ["Project", "left"], ["Client", "left"], ["Amount", "right"]]) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
+  for (const [c, al] of [["Paid", "left"], ["Ref / cheque #", "left"], ["Type", "left"], ["Bills", "right"], ["Amount as printed", "right"], ["QBO now", "left"], ["Prints", "left"]]) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
   thead.appendChild(htr);
-  for (const p of pays) {
-    const tr = document.createElement("tr");
-    tr.appendChild(leftText(fmtDateShort(p.txn_date)));
-    { const rc = qboLinkCell(p.ref_no || "–", null, ""); if (p.att) { const ab = attBtn("BillPayment", p.qbo_txn_id, p.att, `payment ${p.ref_no || ""}`); ab.style.marginLeft = "6px"; rc.appendChild(ab); } tr.appendChild(rc); }   // ref # copyable
-    tr.appendChild(leftText(p.pay_type || "–"));
-    { const bc = document.createElement("td"); bc.className = "left vp-paybills";
-      const bl = p.bills || [];
-      if (!bl.length) { bc.textContent = p.n_bills ? `${p.n_bills} bill${p.n_bills === 1 ? "" : "s"}` : "–"; bc.classList.add("dim"); }
-      const lines = bl.map(b => { const line = document.createElement("div"); line.className = "vp-payline";
-        const a = document.createElement("a"); a.href = qboUrl("bill", b.bill_id); a.target = "_blank"; a.rel = "noopener"; a.className = "qbo-link"; a.textContent = b.bill_ref || ("bill " + b.bill_id); a.title = "Open this bill in QuickBooks"; line.appendChild(a);
-        if (bl.length > 1) { const s = document.createElement("span"); s.className = "dim"; s.textContent = " " + money(b.amount); line.appendChild(s); }
-        if ((b.projects || []).length) { const pr = document.createElement("span"); pr.className = "dim"; pr.textContent = " · " + b.projects.join(", "); line.appendChild(pr); }
-        return line; });
-      _vpCapped(bc, lines, 6, "bills");   // a 129-bill cheque (RCI 25745) would otherwise be a wall - the first 6, then "+123 more"
-      tr.appendChild(bc); }
-    { const pc = _vpProjCell((p.projects || []).slice(0, 8)); const rest = (p.projects || []).length - 8;
-      if (rest > 0) { const m = document.createElement("span"); m.className = "dim"; m.textContent = ` +${rest} more`; m.title = (p.projects || []).slice(8).join(", "); pc.appendChild(m); } tr.appendChild(pc); }
-    { const cl = p.clients || []; const cc = leftText(cl.slice(0, 4).join(", ") + (cl.length > 4 ? ` +${cl.length - 4} more` : "") || "–"); if (!cl.length) cc.classList.add("dim"); cc.title = cl.join(", "); tr.appendChild(cc); }
-    const amt = document.createElement("td"); amt.appendChild(moneyCell(p.total_amt)); tr.appendChild(amt);
+  for (const [pid, hist] of orphans) {
+    const h0 = hist[0]; const tr = document.createElement("tr");
+    tr.appendChild(leftText(fmtDateShort(h0.txn_date)));
+    tr.appendChild(qboLinkCell(h0.ref || "–", null, ""));
+    tr.appendChild(leftText(h0.method || "–"));
+    { const td = document.createElement("td"); td.textContent = h0.n_bills != null ? String(h0.n_bills) : "–"; tr.appendChild(td); }
+    { const td = document.createElement("td"); td.appendChild(moneyCell(h0.total)); tr.appendChild(td); }
+    { const td = document.createElement("td"); td.className = "left"; td.appendChild(_stubPill(h0.status));
+      if (h0.status === "changed" && h0.qbo_total_now != null) { const s = document.createElement("span"); s.className = "dim"; s.textContent = " now " + money(h0.qbo_total_now); td.appendChild(s); }
+      if (h0.status === "deleted" && h0.deleted_at) { const s = document.createElement("span"); s.className = "dim"; s.textContent = " " + fmtDateShort(h0.deleted_at); td.appendChild(s); }
+      tr.appendChild(td); }
+    { const td = document.createElement("td"); td.className = "left vp-stub"; const hl = document.createElement("div"); hl.className = "stub-hist";
+      const lines = hist.map(h => { const ln = document.createElement("div"); ln.className = "stub-histline"; ln.appendChild(_stubLink(h)); return ln; });
+      _vpCapped(hl, lines, 3, "prints"); td.appendChild(hl);
+      const b = document.createElement("button"); b.type = "button"; b.className = "btn tiny subtle"; b.textContent = "Print again"; b.title = "Re-print from the mirror's copy of the payment (kept even after a QuickBooks delete)";
+      b.onclick = (e) => { e.stopPropagation(); _printStub(pid, b); }; td.appendChild(b);
+      tr.appendChild(td); }
     tbody.appendChild(tr);
   }
   table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table); body.appendChild(scroll);
@@ -7818,6 +8109,9 @@ function init() {
     billsCollapsed = grp === "none" ? new Set() : new Set((BILLS || []).map(b => billGroupKey(b, grp)));
     renderBills(); }); }
   { const el = $("#bfClear"); if (el) el.onclick = billClearFilters; }
+  { const el = $("#bfHfClear"); if (el) el.onclick = () => { hfClear("bills"); renderBills(); }; }
+  { const q = $("#bfQuick"); if (q) { let t = null; q.addEventListener("input", () => { _billQ = q.value; clearTimeout(t); t = setTimeout(renderBills, 160); });
+    q.addEventListener("keydown", (e) => { if (e.key === "Escape") { q.value = ""; _billQ = ""; renderBills(); } }); } }
   { const el = $("#bfCollapse"); if (el) el.onclick = billToggleAll; }
   ["#ifDivision", "#ifLien", "#ifLienClock", "#ifLitig", "#ifSort"].forEach(sel => { const el = $(sel); if (el) el.addEventListener("change", renderOpenInvoices); });
   { const el = $("#ifClear"); if (el) el.onclick = invClearFilters; }
@@ -7832,6 +8126,15 @@ function init() {
       if (document.querySelector(".panel:not([hidden])")) return;          // a side panel is open - leave the browser's find alone
       e.preventDefault(); const el = $("#ifQuick"); el.focus(); el.select();
     }); }
+  // ⌘F / Ctrl+F = the broad search box: the vendor page's when it is open, else the Bill Tracker's (owner 2026-09-22)
+  document.addEventListener("keydown", e => {
+    if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "f" || e.altKey) return;
+    if (document.querySelector(".panel:not([hidden])")) return;
+    const vis = x => !!(x && x.offsetParent);                 // on screen right now (the Bill Tracker is a section of the Company view, not a tab of its own)
+    const el = vis($("#vpSearch")) ? $("#vpSearch") : (vis($("#bfQuick")) ? $("#bfQuick") : null);   // vpSearch = the vendor PAGE box (vendorSearch is the Vendors list's)
+    if (!el) return;
+    e.preventDefault(); el.focus(); el.select();
+  });
   // Saved views: the current filters + sort + scope + quick find under a name (localStorage, per person).
   buildInvViews();
   { const sv = $("#ifSaveView"); if (sv) sv.onclick = invSaveView; }

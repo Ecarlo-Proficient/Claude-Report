@@ -203,6 +203,32 @@ CREATE TABLE IF NOT EXISTS bill_payment_line (
     amount      NUMERIC,                          -- money applied to THIS bill from THIS payment
     PRIMARY KEY (payment_id, bill_id)
 );
+-- ── bill_payment_stub : every printed bill payment stub, as printed (2026-09-22) ──
+-- The owner's history: a payment later changed, voided or deleted in QBO keeps the
+-- stubs it was printed with. One row per print; `snapshot` is the stub record
+-- (payment header + bill rows) exactly as it went on paper, `sync_token` /
+-- `last_updated` are the QBO record at print time so a later edit is detectable
+-- against the mirror. Written by ledger/bill_payment_stub.py only.
+CREATE TABLE IF NOT EXISTS bill_payment_stub (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    payment_id   TEXT NOT NULL,                  -- QBO BillPayment Id
+    vendor       TEXT,
+    vendor_id    TEXT,
+    txn_date     TEXT,
+    method       TEXT,                           -- Check | Credit card
+    ref          TEXT,                           -- check # or card reference
+    total        NUMERIC,                        -- the payment total as printed
+    n_bills      INTEGER,
+    sync_token   TEXT,                           -- QBO SyncToken at print time
+    last_updated TEXT,                           -- QBO MetaData.LastUpdatedTime at print time
+    columns      TEXT NOT NULL,                  -- the column keys printed, comma-joined
+    snapshot     TEXT NOT NULL,                  -- the stub record (JSON) as printed
+    file_path    TEXT,                           -- the vendor-folder PDF (the LATEST print, a re-print overwrites it)
+    archive_path TEXT,                           -- this print's own immutable copy (beside the ledger DB) - what history serves
+    printed_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_bpstub_payment ON bill_payment_stub (payment_id);
+CREATE INDEX IF NOT EXISTS ix_bpstub_vendor ON bill_payment_stub (vendor);
 -- ── vendor_ap : open AP per vendor, straight from QBO (Bill.Balance > 0) ──────
 -- The Vendor Center's "Open $" / "Open bills". Pulled by load_bill_payments from
 -- QBO Bills so it covers EVERY vendor (incl. subs, which the Bill Tracker sheets

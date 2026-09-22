@@ -271,6 +271,17 @@ Endpoints: `/api/review?div=RP|CP|MFD`, `/api/review/mark`, `/api/review/refresh
 
 ### Vendor page and client page (2026-09-16)
 
+**2026-09-22 - flat like the Excel, Excel-style filters.** The Bill Tracker tab and the vendor page's Bills view are
+flat lists by default (Group by = None; the vendor page has no bands at all). Every column header carries a funnel
+that opens the column's distinct values with counts, a value search, Select all / None / Clear - one mechanism
+(`hfDecorate` in app.js), the values reflecting what the other columns leave, like an Excel table. A search box
+narrows either list by any word on the row; the vendor page's box works on Payments too.
+Every bill row carries its QuickBooks **memo** (from the mirror, `_bill_memos`) as a column and in the search; the
+Date funnel filters by month; the vendor page adds a standalone Project # box beside the broad search, and ⌘F lands
+in the broad search (vendor page when open, else the Bill Tracker).
+The vendor page also carries the Bill Tracker's Date control (Month multi-select or a from-to range) on both views.
+Its Project # box suggests the vendor's projects as you type - ArrowDown, Enter to pick.
+
 A vendor's page IS the Bill Tracker filtered to that vendor - the same rows and columns, every bill with
 its project, client, the **invoice (draw) it is matched to and whether the GC has paid it**, our pay
 status, lien and approval; All / Unpaid / Paid, an invoice filter (GC paid · GC owes · no invoice yet),
@@ -278,6 +289,35 @@ project bands, and **Open in Bill Tracker** to carry the vendor into the tracker
 page IS the Open invoices grid filtered to that client (Open · All incl. paid, project bands, bucket
 totals) with **Open in Invoices**. On the trackers, the vendor name opens the vendor page and the
 client name opens the client page.
+
+### Bill payment stubs (2026-09-22)
+
+`ledger/bill_payment_stub.py` prints a check / bill-payment stub the way QuickBooks lays out its
+"Bills and Applied Payments" report, with the PAYMENT on top and the bills it paid below - one
+payment per Letter page. `--vendor COWTOWN --date 2026-09-21` (or `--from/--to`, or `--payment <id>`)
+reads the mirror (BillPayment -> the bills it linked, the vendor's print name and address) and writes
+`Accounting/Accounts Payable/Bill Payment Stubs/<QBO vendor name>/<Vendor> - Bill Payment Stub <check # or card reference> <mm-dd-yyyy>.pdf`
+(`shared/paths.bill_payment_stubs_dir()`; **one payment = one file**, two payments on a day are two files; the share must be mounted) through Chrome headless. Columns are a
+registry: the default six are QBO's (date · type · number · memo · amount · open balance);
+`--add project,bill_total,due_date` / `--drop type` / `--columns ...` change the set; `--list-columns`
+shows it. `amount` is what that payment applied to the bill, so the column ties to the payment; a bill
+covered only in part says so under its memo. The company name on the stub is `ACB_COMPANY_NAME` in
+`machine.env`. `--selftest` proves it offline.
+
+**In the ledger:** vendor page > Payments view, the **Stub** column - `Print stub` per payment (POST
+`/api/bill-payment/stub`), a **Stub columns** picker (the registry as checkboxes, QBO's six by default,
+remembered per browser), and the **print history** under each payment. Every print is a row in
+`bill_payment_stub` with the stub as printed (snapshot), the columns, the QBO SyncToken at print time and
+its own archived PDF copy beside the ledger DB - `GET /api/bill-payment/stub/file?id=` serves that copy, so
+a print opens as it went out even after a re-print. The status pill is judged live against the mirror:
+current · changed in QBO · voided in QBO · deleted in QBO. Payments the ledger's list no longer carries
+(deleted, voided, outside the year window) but which have prints are listed under "Printed stubs for
+payments no longer in this list", each re-printable from the mirror's copy. `--history` shows the same
+on the command line.
+The Payments view itself is grouped (owner 2026-09-22): a payment is the row - ref, date, type, client,
+amount, stub - and the bills it paid open under it (the central group mechanism, `tr.vp-pay` in
+`GRP_KINDS`). A checkbox per payment and a select-all feed **Print N stubs** for a multi-print. A payment
+voided in QuickBooks (zeroed, memo "Voided…") shows a red VOIDED pill with its memo and cannot be printed.
 
 ### The project page's funding section (2026-09-16)
 

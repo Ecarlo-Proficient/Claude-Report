@@ -265,6 +265,7 @@
         </div>
         <div class="bill-views" id="billViews"></div>
         <div class="bill-filters" id="billFilters">
+          <div class="fld"><span>Search</span><input type="search" id="bfQuick" class="msel-search bf-quick" placeholder="⌘F - anything on the row: vendor, project, client, bill #, memo, invoice #, date, amount" title="Type to narrow the list - every word must match somewhere on the row; Esc clears"></div>
           <div class="fld"><span>Date</span><div class="datef" id="bfDate"></div></div>
           <span class="bf-sep"></span>
           <div class="fld"><span>Project #</span>
@@ -297,8 +298,8 @@
           <span class="bf-sep"></span>
           <label class="fld"><span>Group by</span>
             <select id="billGroup">
+              <option value="none" selected>None (flat list)</option>
               <option value="vendor">Vendor</option>
-              <option value="none">None</option>
               <option value="client">Customer</option>
               <option value="division">Division</option>
               <option value="project_no">Project</option>
@@ -316,6 +317,7 @@
             </select>
           </label>
           <button class="btn small" id="bfCollapse">Collapse all</button>
+          <button class="btn small" id="bfHfClear" hidden title="Clear the column (header) filters">Clear column filters</button>
           <button class="btn small" id="bfClear" hidden>Clear filters</button>
           <button class="btn small subtle" id="btnLienReview" title="The lien marks you have saved on bills - review them">Lien marks on file</button>
         </div>

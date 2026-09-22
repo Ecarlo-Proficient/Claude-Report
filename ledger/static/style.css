@@ -236,7 +236,26 @@ td.pnl-expand .dgroup > h4:first-child { display: none; }   /* the row already s
 .refcopy:hover { color: var(--accent); border-bottom-color: var(--accent); }
 /* Vendor page: "multiple" projects drill to line items; the pay-status filter segment. */
 .vp-multi { color: var(--accent); cursor: pointer; border-bottom: 1px dotted var(--accent); }
-.vendor-seg { margin: 2px 0 12px; }
+.vendor-seg { margin: 2px 0 12px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.vendor-search { min-width: 22em; max-width: 34em; flex: 1 1 22em; }
+.vendor-proj { width: 9em; flex: 0 0 auto; }
+.vp-datefld { display: inline-flex; align-items: center; gap: 6px; }
+.vp-projwrap { position: relative; display: inline-block; }
+.vp-projlist { top: calc(100% + 2px); left: 2px; min-width: 260px; max-height: 300px; padding: 4px; }
+.vp-projopt { padding: 5px 8px; border-radius: 6px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vp-projopt:hover, .vp-projopt.on { background: var(--row-hover); }
+.vp-projopt.on { outline: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.vp-datefld > span:first-child { color: var(--text-dim); font-size: .85em; }
+.bill-memo { max-width: 0; }
+.bill-memo span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vp-grid .bill-memo { max-width: 26em; }
+/* vendor page project bands: each total under the column it summarizes, one quiet line */
+.vp-grid tr.bill-subgroup > td { background: var(--surface-2); border-top: 1px solid var(--border); }
+.vp-grid tr.bill-subgroup .sg-key { font-weight: 700; }
+.vp-grid tr.bill-subgroup .bg-n { color: var(--text-dim); font-size: .85em; font-weight: 500; white-space: nowrap; }
+.vp-grid tr.bill-subgroup .bg-amt { font-weight: 700; }
+.vp-grid tr.bill-subgroup .bg-amt.neg { color: var(--neg); }
+.vp-grid tr.bill-subgroup .bg-amt.dim { color: var(--text-dim); font-weight: 500; }
 .notion-link { font-size: .82em; padding: 2px 10px; border-radius: 999px; text-decoration: none;
   border: 1px solid var(--border); background: var(--surface-2); color: var(--text); white-space: nowrap; }
 .notion-link:hover { border-color: var(--accent); }
@@ -587,6 +606,18 @@ a.ri-name:hover { text-decoration: underline; }
 .msel-tool:hover { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
 .msel-count { margin-left: auto; font-size: .8em; color: var(--text-dim); align-self: center; padding-right: 3px; font-variant-numeric: tabular-nums; }
 .msel-menu.wide { min-width: 240px; }
+/* Excel-style header filters (every bill table): the funnel sits in the header, the menu floats under it */
+th.hf-th { padding-right: 24px; position: relative; }
+.hf-btn { position: absolute; right: 3px; top: 50%; transform: translateY(-50%); display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; padding: 0; border-radius: 4px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text-dim); cursor: pointer; }
+.hf-btn svg { display: block; }
+.hf-btn:hover { color: var(--text); border-color: var(--border); background: var(--surface-2); }
+.hf-btn.on { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); background: color-mix(in srgb, var(--accent) 10%, var(--surface-2)); }
+.hf-menu { max-height: 340px; }
+.hf-menu .msel-opt { text-transform: none; font-weight: 400; letter-spacing: 0; }
+.hf-val { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hf-cnt { color: var(--text-dim); font-size: .85em; font-variant-numeric: tabular-nums; }
+.bf-quick { min-width: 22em; margin: 0; }
 .msel-search { font: inherit; font-size: .85em; padding: 5px 8px; margin: 1px 2px 5px; border-radius: 6px;
   border: 1px solid var(--border); background: var(--surface-2); color: var(--text); }
 /* The Draws menus sit inside `.filters`, whose `input[type=search]{flex:1 1 240px}` rule would make
@@ -1712,6 +1743,32 @@ td.pp-draw-col a:hover { text-decoration: underline; }
 td.vp-projs a.vp-proj { color: var(--accent-text); text-decoration: none; font-weight: 600; }
 td.vp-projs a.vp-proj:hover { text-decoration: underline; }
 .vp-payline { white-space: nowrap; line-height: 1.5; }
+/* bill payment stubs (vendor page, Payments view) - the print button, the print history, the column picker */
+.vp-stub { white-space: nowrap; }
+.stub-hist { margin-top: 4px; }
+.stub-histline { line-height: 1.6; font-size: .9em; }
+.stub-link { color: var(--accent); text-decoration: none; }
+.stub-link:hover { text-decoration: underline; }
+.stub-link.dim { color: var(--text-dim); }
+.stub-pill { display: inline-block; margin-left: 6px; padding: 0 7px; border-radius: 999px; font-size: .8em; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-dim); }
+.stub-pill.current { color: var(--pos); border-color: color-mix(in srgb, var(--pos) 40%, var(--border)); }
+.stub-pill.changed { color: var(--warn-text); border-color: color-mix(in srgb, var(--warn-text) 40%, var(--border)); }
+.stub-pill.voided, .stub-pill.deleted { color: var(--neg); border-color: color-mix(in srgb, var(--neg) 40%, var(--border)); }
+.stub-cols { margin: 0 0 10px; font-size: .85em; color: var(--text-dim); }
+.stub-cols summary { cursor: pointer; user-select: none; }
+.stub-cols-box { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; padding: 6px 2px 2px; color: var(--text); }
+.stub-cols-box label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.stub-orph-h { font-size: 1em; margin: 18px 0 2px; }
+.stub-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 10px; }
+.stub-bar .stub-cols { margin: 0; }
+.vp-paytable .vp-ck { width: 28px; padding-right: 0; }
+.vp-paytable .vp-ck input { vertical-align: middle; }
+tr.vp-pay { cursor: pointer; }
+tr.vp-pay > td { background: var(--surface-2); font-weight: 500; }
+tr.vp-pay.vp-void > td { color: var(--text-dim); }
+tr.vp-bill > td { font-size: .92em; }
+.vp-voidpill { margin-left: 8px; font-weight: 600; letter-spacing: .04em; }
+.vp-memo { font-size: .82em; font-weight: 400; white-space: normal; max-width: 34em; }
 /* WIP review: the pending-update table on a CP / MFD card */
 .rr-pend { border-collapse: collapse; font-size: .86em; margin: 4px 0 2px; }
 .rr-pend th { text-align: left; color: var(--text-dim); font-weight: 600; padding: 2px 12px 2px 0; border-bottom: 1px solid var(--border); }
