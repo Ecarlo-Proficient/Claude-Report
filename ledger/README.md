@@ -183,6 +183,26 @@ body — the outreach touch log, with the date parsed when the line carries one)
 
 ## The dashboard (browser UI)
 
+### UI rules - the register (owner 2026-09-22: "if i tell you something about the project ledger, i expect it to save across the whole thing")
+
+The ledger is ONE app: a behaviour the owner approved on one page is the standard on every page. Reuse the
+component below; never rebuild one from scratch, and add to this list when a new rule is settled.
+
+- **Date filter = `dateFilter()`** (Month multi-select | Date from-to, Reset). The month list STAYS OPEN while
+  ticking; unticking the last month means all; newest month first. On a page that re-renders its body, pass
+  the previous state (`prev`) and reopen the menu after the render (`_dateMenuWasOpen` in `renderVendorPage`).
+- **Every multi-select stays open while selecting** (the filter-bar menus, the header funnels, the months).
+  Close on an outside click or Esc, never on a tick.
+- **Column filters = `hfDecorate()`**: an Excel-style funnel in each header - distinct values with counts over
+  what the other columns leave, a value search, Select all / None / Clear. New tables get these, not bands.
+- **Bill tables are flat lists like the Excel** (Group by = None); the funnels and the search do the narrowing.
+- **Search on every view of a page**: a broad box (⌘F / Ctrl+F lands in it, Esc clears, every word must match
+  somewhere on the row, memo included) and a standalone Project # box that suggests the page's projects
+  (ArrowDown / ArrowUp, Enter picks).
+- **Payments are groups**: collapsed = ref, date, type, client, amount, stub; the bills paid are the expansion;
+  a checkbox per row and a select-all for bulk actions; a voided payment says VOIDED.
+- Groups elsewhere follow the central `GRP_KINDS` mechanism; two views only (Projects · Company + the gear).
+
 ```bash
 cd "/Users/sebas/Documents/Claude/Projects/Automate Concrete Business" && python3 ledger/dashboard.py
 ```

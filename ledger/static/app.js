@@ -2089,6 +2089,9 @@ async function openVendorPage(vendor) {
 }
 function renderVendorPage() {
   const d = _vendorData; if (!d) return;
+  // a filter STAYS OPEN while the owner ticks values (owner 2026-09-22): the page re-renders on every change, so
+  // remember which menus were open before the body is rebuilt and reopen them after
+  const _dateMenuWasOpen = !!($("#vpDateMenu") && !$("#vpDateMenu").hidden);
   const body = $("#recordBody"); body.innerHTML = "";
   // Bills | Payments view toggle
   const vseg = document.createElement("div"); vseg.className = "seg vendor-seg";
@@ -2133,7 +2136,8 @@ function renderVendorPage() {
     vseg.appendChild(q); }
   body.appendChild(vseg);
   { const dates = () => _vendorView === "payments" ? (d.payments || []).map(p => p.txn_date) : (BILLS || []).filter(b => (b.vendor || "") === d.vendor).map(b => b.bill_date);
-    _vendorDate = dateFilter("vpDate", dates, renderVendorPage, _vendorDate); _vendorDate.build(); }   // after the bar is in the document - the control binds to #vpDate
+    _vendorDate = dateFilter("vpDate", dates, renderVendorPage, _vendorDate); _vendorDate.build();   // after the bar is in the document - the control binds to #vpDate
+    if (_dateMenuWasOpen) { const m = $("#vpDateMenu"), b = $("#vpDateBtn"); if (m && b) { m.hidden = false; _placeMenu(b, m); } } }
   if (_vendorView === "payments") {
     $("#recordSub").textContent = `${d.pay_count || 0} payments · ${money(d.pay_total || 0)} paid out this year`;
     return _renderVendorPayments(d, body);

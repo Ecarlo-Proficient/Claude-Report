@@ -4,6 +4,12 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-22 (last) · **Filters stay open while ticking + the UI rules register** (owner: "when i say filter by
+  date, i expect the filter to STAY open when i select ... we've already built this date filter exactly, but you
+  are starting from scratch every time"). The vendor page remembers whether the month menu was open before its
+  re-render and reopens it after (`_dateMenuWasOpen`), so ticking months behaves like the Bill Tracker's. README
+  gained **"UI rules - the register"**: the proven components (dateFilter, hfDecorate, flat bill lists, the
+  search pair, payment groups) and the rule that an approved behaviour applies to every page - reuse, never rebuild.
 - 2026-09-22 (late) · **Vendor page Date filter + visible funnels** (owner: "date????? i need to be able to filter by
   date with the months" - the month funnel in the header rendered as a dot and was not what he asked for). The vendor
   page carries the Bill Tracker's own **Date** control (`dateFilter`, Month multi-select | Date from-to, Reset) beside
