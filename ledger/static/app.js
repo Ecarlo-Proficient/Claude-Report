@@ -1534,6 +1534,13 @@ let _hfOpen = null;   // the one open menu
 function hfCloseMenu() { if (_hfOpen) { _hfOpen.remove(); _hfOpen = null; } }
 document.addEventListener("click", (e) => { if (_hfOpen && !e.target.closest(".hf-menu, .hf-btn")) hfCloseMenu(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") hfCloseMenu(); });
+// Every multi-select menu (filter bar, the date months, the vendor page) closes on a click OUTSIDE it or on Esc - and
+// never on a tick inside it (owner 2026-09-22: "i expect the filter to STAY open when i select"). One closer, app-wide.
+document.addEventListener("click", (e) => {
+  if (e.target.closest(".msel, .datef, .hf-menu, .hf-btn, .vp-projwrap")) return;
+  document.querySelectorAll(".msel-menu:not(.hf-menu):not(.vp-projlist)").forEach(m => { if (!m.hidden) m.hidden = true; });
+});
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") document.querySelectorAll(".msel-menu:not(.hf-menu):not(.vp-projlist)").forEach(m => { if (!m.hidden) m.hidden = true; }); });
 function hfDecorate(th, tableKey, colKey, rowsFn, rerender) {   // rowsFn() = the rows before THIS column's filter (after every other filter)
   if (!HF_BILL_COLS[colKey]) return;
   const [get, lbl] = HF_BILL_COLS[colKey];
