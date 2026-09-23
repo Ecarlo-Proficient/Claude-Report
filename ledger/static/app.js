@@ -7357,10 +7357,47 @@ async function loadWipReview(force) {
       prompts) and takes a few minutes.</p></div>`;
     return;
   }
+  if (!wrChosen && !force) { wrChooser(); return; }
   wrInitDecisions();
   renderWipReview();
 }
 
+// Opening WIP Review asks first (owner 2026-09-23: "it says last computed this day and time - would you like to
+// recompute or continue with this compute? so that every time i click it it doesn't need to compute"). Once per
+// page load; the stamps come per division, and a review computed before the WIP file's last save is called out.
+let wrChosen = false;
+function wrChooser() {
+  const body = $("#wrBody"), g = WR.generated || {};
+  $("#wrFilters").hidden = true; $("#wrSync").hidden = true; $("#wrStats").innerHTML = "";
+  const ats = WR_DIV_ORDER.filter(d => g[d] && g[d].at).map(d => g[d].at);
+  const oldest = ats.length ? ats.slice().sort()[0] : null;
+  const behind = WR.wip_file_at && oldest && WR.wip_file_at > oldest;
+  const today = new Date().toISOString().slice(0, 10);
+  const lines = WR_DIV_ORDER.filter(d => g[d]).map(d => {
+    const v = g[d], old = v.at && v.at.slice(0, 10) < today;
+    return `<div class="wr-ch-row"><span class="wr-ch-div">${d === "Multi-Family" ? "MFD" : d === "Commercial" ? "CP" : "RP"}</span>
+      <span class="${old ? "wr-stale" : ""}">${v.at ? fmtDate(v.at, true) : "–"}${old ? " · not today" : ""}</span></div>`;
+  }).join("");
+  body.innerHTML = `<div class="wr-chooser">
+      <div class="wr-ch-title">Last computed</div>${lines}
+      ${behind ? `<div class="wr-ch-warn">The WIP file was saved after this (${_ge(fmtDate(WR.wip_file_at, true))}) - recompute before you sync.</div>` : ""}
+      <div class="wr-ch-actions">
+        <button class="btn big ${behind ? "" : "primary"}" id="wrUse" type="button">Use this one</button>
+        <button class="btn big ${behind ? "primary" : ""}" id="wrRecompute" type="button">Recompute (about 3 min)</button>
+      </div></div>`;
+  $("#wrUse").onclick = () => { wrChosen = true; wrInitDecisions(); renderWipReview(); };
+  $("#wrRecompute").onclick = () => { wrChosen = true; runWipReview(true); };
+}
+
+// The owner's Accept / Keep choices survive a page refresh (owner 2026-09-23: "if i refresh will it save the
+// original choice of the previous project?"). Kept in this browser, keyed to the review they were made on -
+// a fresh Compute has a new stamp, so old choices never ride onto new numbers. Sync still writes from memory.
+const WR_LS = "proficient-wip-review-choices-v1";
+const wrStamp = () => JSON.stringify(Object.entries((WR && WR.generated) || {}).map(([d, v]) => [d, v.at]).sort());
+function wrSaveChoices() {
+  try { localStorage.setItem(WR_LS, JSON.stringify({ stamp: wrStamp(), decisions: wrDecisions, drop: [...wrDrop], touched: wrTouched, idx: wrIdx })); }
+  catch { /* private window - choices live until the refresh */ }
+}
 function wrInitDecisions() {
   // Fresh review → default marks: QBO facts approved, PM fields left for an answer.
   wrDecisions = {}; wrDrop = new Set(); wrTouched = {}; wrIdx = 0;
@@ -7370,6 +7407,13 @@ function wrInitDecisions() {
     for (const f of wrChanged(r.fields)) marks[f.key] = (f.block === "qbo");
     wrDecisions[r.project_num] = marks;
   }
+  try {   // then the choices already made on THIS review, if the page was refreshed
+    const saved = JSON.parse(localStorage.getItem(WR_LS) || "null");
+    if (saved && saved.stamp === wrStamp()) {
+      for (const pn in saved.decisions || {}) if (wrDecisions[pn]) Object.assign(wrDecisions[pn], saved.decisions[pn]);
+      wrDrop = new Set(saved.drop || []); wrTouched = saved.touched || {}; wrIdx = saved.idx || 0;
+    }
+  } catch { /* nothing saved */ }
 }
 
 function renderWipReview() {
@@ -7396,6 +7440,7 @@ function renderWipReview() {
     if (changedOnly) recs = recs.filter(r => r.status !== "SAME");
     if (st) recs = recs.filter(r => r.status === st);
     if (q) recs = recs.filter(r => (r.project_num + " " + r.name).toLowerCase().includes(q));
+    recs = recs.filter(r => wrHasBlock(r, wrBlockSel()));
     if (!recs.length) continue;
     const gen = g[dv];
     const head = document.createElement("div");
@@ -7408,6 +7453,44 @@ function renderWipReview() {
   wrUpdateApproveCount();
 }
 
+// Show: QuickBooks + PM / QuickBooks only / PM questions only (owner 2026-09-23: "a filter for PM questions").
+// A job is shown when it has a change in that block; the list card shows only that block.
+const wrBlockSel = () => ($("#wrBlock") && $("#wrBlock").value) || "";
+const wrHasBlock = (r, b) => !b || r.status === "REMOVED" || wrChanged(r.fields || []).some(f => f.block === b);
+// "blank" and $0 are the same answer for a change-order field - never a question for a PM
+const wrPmTrivial = f => (f.key === "approved_cos" || f.key === "co_costs") && !Number(f.was || 0) && !Number(f.now || 0);
+
+// The PM questions as a Teams message, one block per division, for the jobs the filters show
+// (owner 2026-09-23: "copy for all divisions to send via Teams so they can approve on their own time").
+function wrCopyPmQuestions() {
+  const div = $("#wrDivision").value, q = ($("#wrSearch").value || "").trim().toLowerCase();
+  const m = v => v == null || v === "" ? "blank" : money(v);
+  const out = [`WIP update - PM questions (${fmtDateShort(new Date().toISOString().slice(0, 10))})`,
+    "Reply OK, or the right number and the document it comes from, for each line.", ""];
+  let n = 0;
+  for (const dv of WR_DIV_ORDER) {
+    if (div && div !== dv) continue;
+    const jobs = WR.records.filter(r => r.division === dv && r.status !== "SAME"
+      && (!q || (r.project_num + " " + r.name).toLowerCase().includes(q)))
+      .map(r => [r, wrChanged(r.fields || []).filter(f => f.block === "pm" && !wrPmTrivial(f))])
+      .filter(([, fs]) => fs.length)
+      .sort((a, b) => a[0].project_num.localeCompare(b[0].project_num));
+    if (!jobs.length) continue;
+    out.push(`${dv.toUpperCase()}`);
+    for (const [r, fs] of jobs) {
+      out.push(`${r.project_num} ${r.name || ""}`.trim());
+      for (const f of fs) {
+        const src = [f.source, f.note].filter(Boolean).join(" · ");
+        out.push(`  - ${f.label}: ${m(f.was)} now, ${m(f.now)} proposed${f.reversed ? " (GOES DOWN)" : ""}${src ? " - from " + src : ""}`);
+        n++;
+      }
+    }
+    out.push("");
+  }
+  if (!n) { toast("No PM questions in what is shown"); return; }
+  copy(out.join("\n").trim().replace(/\u2014/g, "-")).then(() => toast(`Copied ${n} PM question${n === 1 ? "" : "s"} - paste in Teams`));
+}
+
 // ── one job at a time ────────────────────────────────────────────────────────
 function wrVisible() {
   // The same filters as the list, but ONE mixed stream (no division bands): what
@@ -7416,8 +7499,9 @@ function wrVisible() {
   const q = ($("#wrSearch").value || "").trim().toLowerCase();
   const changedOnly = $("#wrChangedOnly").checked;
   const order = { CHANGED: 0, REVERSED: 0, ADDED: 1, REMOVED: 2, SAME: 3 };
+  const blk = wrBlockSel();
   return WR.records.filter(r => (!div || r.division === div) && (!changedOnly || r.status !== "SAME")
-      && (!st || r.status === st) && (!q || (r.project_num + " " + r.name).toLowerCase().includes(q)))
+      && (!st || r.status === st) && (!q || (r.project_num + " " + r.name).toLowerCase().includes(q)) && wrHasBlock(r, blk))
     .sort((a, b) => (order[a.status] - order[b.status]) || a.project_num.localeCompare(b.project_num));
 }
 
@@ -7608,6 +7692,7 @@ function wrJobCard(r) {
   }
   const changed = wrChanged(r.fields);
   for (const block of ["qbo", "pm"]) {
+    if (wrBlockSel() && wrBlockSel() !== block) continue;   // the Show filter
     const fs = changed.filter(f => f.block === block);
     if (!fs.length) continue;
     const wrap = document.createElement("div"); wrap.className = "wr-block";
@@ -7658,6 +7743,7 @@ function wrFieldRow(r, f, removed) {
 function wrSet(pn, key, val) { (wrDecisions[pn] = wrDecisions[pn] || {})[key] = val; }
 
 function wrUpdateApproveCount() {
+  wrSaveChoices();
   let n = 0;
   for (const pn in wrDecisions) for (const k in wrDecisions[pn]) if (wrDecisions[pn][k]) n++;
   const btn = $("#wrSync");
@@ -7684,8 +7770,9 @@ function wrBulk(mode) {
   renderWipReview();
 }
 
-async function runWipReview() {
-  if (WR && WR.ready && !confirm("Recompute the pending WIP update?\n\nThis re-runs the WIP pipeline (CP folders, RP file, MFD) and pulls Billed/Costs from QuickBooks - expect a few Touch ID prompts and a few minutes. Nothing is written.")) return;
+async function runWipReview(asked) {
+  if (asked) { /* the choice card already asked */ }
+  else if (WR && WR.ready && !confirm("Recompute the pending WIP update?\n\nThis re-runs the WIP pipeline (CP folders, RP file, MFD) and pulls Billed/Costs from QuickBooks - expect a few Touch ID prompts and a few minutes. Nothing is written.")) return;
   else if (!(WR && WR.ready) && !confirm("Compute the pending WIP update?\n\nRuns the WIP pipeline and pulls Billed/Costs from QuickBooks (a few Touch ID prompts, a few minutes). Nothing is written - you review the changes first.")) return;
   const r = await fetch("/api/wip/review", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm: true }) });
   if (r.status === 409) { alert("A sync is already running - let it finish first."); return; }
@@ -7703,7 +7790,43 @@ async function syncWipReview() {
   const r = await fetch("/api/wip/merge", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm: true, decisions }) });
   if (r.status === 409) { alert("A sync is already running - let it finish first."); return; }
   if (!r.ok) { alert("Could not start the sync."); return; }
-  wrRunProgress("Writing the approved changes", () => loadWipReview(true));
+  const started = wrLocalIso(new Date(Date.now() - 5000));
+  wrRunProgress("Writing the approved changes", () => wrSynced(started));
+}
+
+// After a Sync, say what was WRITTEN - never re-show the review it was made from (owner 2026-09-23: "why when i
+// update the wip it goes back and shows the page before i clicked sync? did my changes land?"). The review's
+// before-values are the old tab now, so it is spent: the saved choices are cleared and the page offers Recompute.
+const wrLocalIso = d => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 19);
+async function wrSynced(since) {
+  const body = $("#wrBody"); if (!body) return;
+  try { localStorage.removeItem(WR_LS); } catch { /* nothing saved */ }
+  wrChosen = false;
+  let st = {}, entries = [];
+  try { st = await (await fetch("/api/sync/status")).json(); } catch { /* shown as unknown */ }
+  try { entries = ((await (await fetch(`/api/wip/audit?since=${encodeURIComponent(since)}&limit=5000`)).json()).entries || []); } catch { entries = []; }
+  const ok = st.state !== "error" && !(st.steps || []).some(x => x.state === "error");
+  const moved = entries.filter(e => e.field !== "line" && e.old != null && e.actor === "sync");
+  const lines = entries.filter(e => e.field === "line").length;
+  const byTab = {}; for (const e of moved) byTab[e.tab] = (byTab[e.tab] || 0) + 1;
+  const LBL = { costs: "Costs", billed: "Billed", retainage: "Retainage", contract: "Contract", approved_cos: "Approved COs", etc: "ETC", co_costs: "CO costs" };
+  const byJob = {}; for (const e of moved.slice().reverse()) (byJob[e.project_no] = byJob[e.project_no] || []).push(e);
+  const steps = (st.steps || []).map(x => `<div class="wr-step ${x.state}">${x.state === "done" ? "✓" : x.state === "error" ? "✕" : "·"} ${_ge(x.label)}</div>`).join("");
+  const jobs = Object.keys(byJob).sort().map(pn => {
+    const seen = new Set(), fs = byJob[pn].filter(e => !seen.has(e.field) && seen.add(e.field));   // a change logged on two tabs shows once
+    return `<div class="wr-done-job"><b>${_ge(pn)}</b> ${fs.map(e => `${_ge(LBL[e.field] || e.field)} ${money(e.old)} → ${money(e.new)}`).join(" · ")}</div>`;
+  }).join("");
+  $("#wrFilters").hidden = true; $("#wrSync").hidden = true; $("#wrStats").innerHTML = "";
+  body.innerHTML = `<div class="wr-done">
+      <div class="wr-done-head ${ok ? "ok" : "bad"}"><span class="wr-done-icon">${ok ? "✓" : "✕"}</span>
+        <div><div class="wr-done-title">${ok ? "WIP updated" : "Sync did not finish - see the steps"}</div>
+        <div class="wr-done-when">${_ge(fmtDate(wrLocalIso(new Date()), true))}</div></div></div>
+      <div class="wr-steps">${steps}</div>
+      <div class="wr-done-sum">${moved.length} value${moved.length === 1 ? "" : "s"} changed${Object.keys(byTab).length ? " (" + Object.entries(byTab).map(([t, n]) => `${_ge(t)} ${n}`).join(" · ") + ")" : ""}${lines ? ` · ${lines} line${lines === 1 ? "" : "s"} added or removed` : ""}. Anything you left unchecked stayed as it was on the tab.</div>
+      <div class="wr-done-jobs">${jobs || "<i>No value changed.</i>"}</div>
+      <div class="wr-ch-actions"><button class="btn big primary" id="wrAfterRecompute" type="button">Recompute to see what is left</button></div>
+    </div>`;
+  $("#wrAfterRecompute").onclick = () => { wrChosen = true; runWipReview(true); };
 }
 
 function wrBuildDecisions() {
@@ -7732,13 +7855,17 @@ function wrRunProgress(label, onDone) {
   body.innerHTML = `<div class="wr-run"><div class="wr-run-label">${_ge(label)}…</div>
     <div class="wr-steps" id="wrSteps"></div>
     <div class="pl-bar"><div class="pl-fill" id="wrFill"></div></div>
+    <div class="wr-now" id="wrNow"></div>
     <div class="hint" id="wrRunHint">Running - this can take a few minutes; Touch ID prompts appear on the Mac.</div></div>`;
   if (wrPoll) clearInterval(wrPoll);
   wrPoll = setInterval(async () => {
     let s; try { s = await (await fetch("/api/sync/status")).json(); } catch { return; }
     const steps = s.steps || [];
     const done = steps.filter(x => x.state === "done").length;
-    const fill = $("#wrFill"); if (fill) fill.style.width = steps.length ? Math.round(done / steps.length * 100) + "%" : "0%";
+    const dt = s.detail, part = dt && dt.i && dt.n ? Math.min(dt.i / dt.n, 1) : 0;   // how far into the running step
+    const fill = $("#wrFill"); if (fill) fill.style.width = steps.length ? Math.round((done + part) / steps.length * 100) + "%" : "0%";
+    const now = $("#wrNow");   // one live line: the job and what is happening to it - replaced as it goes, gone when done
+    if (now) now.innerHTML = dt && dt.project ? `<b>${_ge(dt.project)}</b> · ${_ge(dt.what || "")}${dt.i && dt.n ? ` <span class="wr-now-n">${dt.i} of ${dt.n}</span>` : ""}` : "";
     const box = $("#wrSteps");
     if (box) box.innerHTML = steps.map(x => `<div class="wr-step ${x.state}">${x.state === "done" ? "✓" : x.state === "error" ? "✕" : x.state === "running" ? "▶" : "·"} ${_ge(x.label)}</div>`).join("");
     if (s.state !== "running") {
@@ -8368,9 +8495,10 @@ function init() {
   { const el = $("#wrApproveQbo"); if (el) el.onclick = () => wrBulk("qbo"); }
   { const el = $("#wrApproveAll"); if (el) el.onclick = () => wrBulk("all"); }
   { const el = $("#wrClearAll"); if (el) el.onclick = () => wrBulk("clear"); }
-  for (const id of ["#wrSearch", "#wrDivision", "#wrStatus", "#wrChangedOnly"]) {
+  for (const id of ["#wrSearch", "#wrDivision", "#wrStatus", "#wrChangedOnly", "#wrBlock"]) {
     const el = $(id); if (el) el.addEventListener("input", () => { if (WR && WR.ready) renderWipReview(); });
   }
+  if ($("#wrCopyPm")) $("#wrCopyPm").onclick = () => { if (WR && WR.ready) wrCopyPmQuestions(); };
   buildGroupBar();   // the two views (sub-tabs render on setTab)
   initFolds();
   syncProjChips();

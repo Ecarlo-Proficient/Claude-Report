@@ -4,6 +4,40 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-23 · **After a Sync: a "WIP updated ✓" page, not the old review** (owner: "why does it go back and show the
+  page before i clicked sync? did my changes land?" / "an after-sync page that shows a check and a summary of all
+  changes"). The review JSON is the pre-write state, and the saved choices restored it click for click - so a Sync
+  looked like it did nothing. Now the Sync ends on a check + each step's result + every value that changed, job by
+  job (from `wip_field_audit` since the sync started; a change logged on two tabs shows once), then Recompute. Saved
+  choices are cleared - the review is spent. OPEN: the audit logs Test-Master contract/ETC cells that already had a
+  value as "blank -> value" on every write; the page leaves those out of the count until that is fixed.
+- 2026-09-23 · **WIP Review Sync also updates the MFD tab's QBO block** (4th step, `wip/mfd_wip_test.py`) - only the
+  green QBO columns on `WIP - MFD`; the columns the MFD team types are never touched.
+- 2026-09-23 · **WIP Review: Show filter + "Copy PM questions for Teams"** (owner: "a filter for PM questions that i can
+  copy for all divisions to send via Teams"). Show = QuickBooks + PM / QuickBooks only / PM questions only (jobs with a
+  change in that block; the list card shows only that block). The copy button builds one message, a block per division,
+  job by job: field, value now, value proposed, GOES DOWN when it drops, and the document it comes from - honouring the
+  division + search filters. A blank -> 0 change-order field is not a question and is left out; em dashes are stripped.
+- 2026-09-23 · **WIP Review: "last computed" card + a live line under the bar** (owner: "it says last computed this
+  day and time, would you like to recompute or continue" / "show what project it's on and the thing it's changing").
+  Opening WIP Review shows each division's compute stamp with Use this one / Recompute (once per page load; a review
+  older than the WIP file's last save is called out and Recompute becomes the default). `_run_sync` now reads each
+  step's output live: an `@@P` line (`wip_review_common.progress`) becomes `detail` on `/api/sync/status` - the job,
+  what is happening to it, i of n - shown under the bar, filling it within the step, cleared when the step ends.
+- 2026-09-23 · **Class-rule jobs in the cost pull** - the job's costs = its QBO project + every line on its OWN class with no project, via a `costs` ruling
+  (`kind: costs, rule: class`) in the job rulings register (owner 2026-09-23 on MFD295: "why aren't you combining all
+  the real costs?"). MFD295: most of its cost sits on `Elite Construction:MFD295` with no project (129 lines, Dec 2024 -
+  Jul 2025, entered before project coding) - none of those lines carries any project, so nothing counts twice.
+  `load_costs` routes a no-project line on a ruled job's class to that job (`shared/qbo_costs.job_class_map`), after
+  the project and before the memo fallback. MFD295 in the ledger runs a little above the WIP (the difference is the
+  standing memo fallback - bills whose memo names MFD295 with no project and a different or no class).
+- 2026-09-23 · **WIP Review list: REVERSED pill no longer covers the amount** - beside a 7-figure "after" value the
+  pill overran the fixed 110px column onto the delta (a 7-figure value + its delta). The pill now sits on its
+  own line under the number; checked on all 8 REVERSED rows.
+- 2026-09-23 · **WIP Review choices survive a refresh** (owner: "if i refresh will it save the original choice of
+  the previous project?" - it did not; choices lived in page memory until Sync). Accept / Keep / checkbox marks, the
+  left-off list and the slide position are saved in the browser (localStorage), keyed to the review's computed
+  stamps, and restored on load; a fresh Compute has a new stamp so old choices never apply to new numbers.
 - 2026-09-23 · **QBO Audit: the re-apply list for a check that lost its bills** (owner: "this is exactly the kind of
   things i need checked for the deleted audit"). Deleting ONE paid bill in QBO strips EVERY bill off the check that paid
   it (Core bill 1353 -> check 25730 lost 15 bills; CMC 16018K -> check 25766 lost 6). `_attach_payment_repairs` rebuilds
@@ -14,11 +48,11 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   checks) still shows what it has applied now and whether it paid only that bill. New stat "Checks to re-apply".
 - 2026-09-23 · **Routine cost pull fixed: window on ENTERED/EDITED, not bill date** (owner flagged CP742 on the WIP Review
   slide: "+$400, 0 QuickBooks lines"). Resync / `reload_ledger.sh` ran `load_costs --active --since <90d>`, a TxnDate
-  window - JCP #909/#910 (MS6, $200 each) were entered 09/03 but dated 01/01/2026, so they never reached `cost_line`
+  window - two small trip bills entered 09/03 but dated 01/01/2026 never reached `cost_line`
   while the WIP reader (a full read) had them. Now `--changed-since <90d>` = `MetaData.LastUpdatedTime` (shared/qbo_costs
   `pull_expense_txns(changed_since=)`), and every txn the pull saw + every Bill/Purchase the mirror marks deleted is
   re-stated from scratch, so an edited / moved / deleted bill cannot leave a stale line. One full `--active` pull run
-  09/23 to clear the backlog (29 jobs held stale lines, MFD295 was missing most of its history). The slide line also
+  09/23 to clear the backlog (29 jobs held stale lines). The slide line also
   says "entered mm/dd" when a bill is dated 45+ days before it was entered.
 - 2026-09-23 · **WIP Review slide: direction + the lines behind the change** (owner: "a symbol in the middle that shows
   if it went up or down" + "the line transactions of what is adding/removing, grouped underneath"). A ▲ / ▼ / = column
@@ -29,7 +63,7 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   the WIP number was true; the lines that differ since then are the change (new = per cost line, edited = the difference
   with "was", deleted = negative). The head says "adds up" or how much of the change is not in QuickBooks' history
   (the change log only starts 09/17, and a stale review can hold a number QBO no longer has). Verified CP672: WIP
-  294,832.89 + bill C761098 (3 SL2 lines, 181.95, entered 09/09) = 295,014.84 = QBO, to the cent.
+  the WIP value + one bill entered after it = QBO, to the cent.
 - 2026-09-23 · **Bug QC on the 09/22 work** (two reviewers over the stub module, the handlers and the vendor-page JS;
   everything below verified and fixed). Stub: a payment with no check # (ACH / card) now names its file by the QBO id, so
   two same-day payments never overwrite each other; lines are merged per linked transaction (a bill on two lines = one

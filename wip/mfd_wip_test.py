@@ -91,6 +91,8 @@ from openpyxl.utils import get_column_letter
 
 import mfd_wip_cols as C
 from shared import paths, xlsx_verify
+from shared import job_rulings, qbo_costs   # the class rule for a job whose old cost sits on its class (MFD295)
+import wip_review_common as WR           # progress lines for the ledger bar
 from wip_excel_guard import assert_write_allowed, open_wip_workbook_for_write
 
 WIP_EXCEL_PATH = paths.get_path(
@@ -637,6 +639,14 @@ def fetch_qbo(jobs: List[str]) -> Dict[str, dict]:
             "billed": _num(totals.get("income")),
             "retainage": retainage.get(job),
         }
+        # a job whose older cost sits on its own class with no project (a `costs` ruling,
+        # shared/job_rulings - MFD295): the SAME addition the WIP readers make
+        rule = job_rulings.cost_rule(job)
+        if rule and str(rule.get("rule", "")).lower() == "class":
+            extra, n, _names = qbo_costs.class_only_cost(access, company_id, job)
+            out[job]["costs"] += extra
+            print(f"  {job}: + {extra:,.2f} from {n} class-only lines (job ruling)")
+        WR.progress(job, "QuickBooks - costs, billed, retainage")
         ret = out[job]["retainage"]
         ret_txt = f"{ret:>13,.2f}" if ret is not None else "          n/a"
         print(f"  {job}: costs {out[job]['costs']:>14,.2f}   "
@@ -668,6 +678,15 @@ def write_qbo(ws, rows: List[int], cols: Dict[str, int], data: Dict[str, dict],
                          ("qbo_retain", "retainage")):
             cell = ws.cell(row=anchor, column=C.index(key))
             amount = vals.get(src)
+            prev = cell.value if isinstance(cell.value, (int, float)) else None
+            # the owner's up-only rule (2026-09-09): costs / billed never go below what the tab carries
+            if src in ("costs", "billed") and prev is not None and amount is not None and amount < prev - 0.01:
+                print(f"  {job}: QBO {src} {amount:,.2f} is BELOW the tab's {prev:,.2f} - kept the tab (up-only)")
+                amount = prev
+            if prev is None or amount is None or abs((amount or 0) - prev) >= 0.01:
+                WR.progress(job, f"{'Costs' if src == 'costs' else 'Billed' if src == 'billed' else 'Retainage'} "
+                                 f"{'blank' if prev is None else f'${prev:,.0f}'} → "
+                                 f"{'blank' if amount is None else f'${amount:,.0f}'}")
             _style(cell, QBO_CELL_FONT, QBO_CELL_FILL, CURRENCY)
             cell.value = None if amount is None else round(amount, 2)
             note = QBO_NOTE
@@ -729,6 +748,18 @@ def main() -> int:
     if RETIRED_TAB in wb.sheetnames and not args.dry_run:
         del wb[RETIRED_TAB]
         print(f"  removed the retired '{RETIRED_TAB}' tab")
+
+    # Find the header row instead of assuming it (2026-09-23: the MFD team removed a
+    # top row after 08/25 - headers moved 6 -> 5 and this tool silently stopped for a
+    # month). The banner sits on the row above the headers; data starts below them.
+    global HDR_ROW, FIRST_DATA_ROW, BANNER_ROW
+    for r in range(1, 16):
+        texts = {_norm(ws.cell(row=r, column=c).value) for c in range(1, ws.max_column + 1)}
+        if "PROJECT" in texts and "COSTS TO DATE" in texts:
+            if r != HDR_ROW:
+                print(f"  header row is {r} (was {HDR_ROW}) - following the sheet")
+            HDR_ROW, FIRST_DATA_ROW, BANNER_ROW = r, r + 1, r - 1
+            break
 
     # Read the sheet as it stands, BY HEADER NAME - this is what lets the column
     # order change without the old and new layouts having to agree.

@@ -34,6 +34,7 @@ from shared import job_rulings   # standing per-job rulings -> KNOWN: in NOTES
 from shared import paths
 from shared import proposals  # signed bid-proposal PDF → contract price
 from shared import qbo_api
+from shared import qbo_costs   # class-only lines for a job with a `costs` class ruling (MFD295)
 
 # The shared report engine. CP is a reader; it feeds these, never redefines them.
 import wip_writer as W
@@ -555,7 +556,8 @@ def scan_cp_folders(root: Path, is_completed: bool) -> List[CpRow]:
         log.warning("CP root does not exist: %s (Synology unmounted?)", root)
         return rows
 
-    for entry in sorted(root.iterdir()):
+    entries = sorted(root.iterdir())
+    for i, entry in enumerate(entries, 1):
         if not entry.is_dir():
             continue
         if entry.name == "Completed Projects":  # handled in a separate pass
@@ -564,6 +566,7 @@ def scan_cp_folders(root: Path, is_completed: bool) -> List[CpRow]:
         proj_num = _project_num_from_folder(entry)
         if not proj_num:
             continue  # not a CP folder - skip silently
+        WR.progress(proj_num, "reading the job folder - draw + takeoff", i, len(entries))
 
         row = CpRow(
             project_num=proj_num,
@@ -719,7 +722,8 @@ def enrich_with_qbo(rows: List[CpRow]) -> None:
     start_date = "2019-01-01"
     end_date = dt.date.today().isoformat()
 
-    for row in rows:
+    for i, row in enumerate(rows, 1):
+        WR.progress(row.project_num, "QuickBooks - billed + costs", i, len(rows))
         cust = proj_map.get(row.project_num)
         if not cust:
             row.status_flags.append("QBO Not Found")
@@ -765,6 +769,17 @@ def enrich_with_qbo(rows: List[CpRow]) -> None:
                 + (totals.get("expenses", 0.0) or 0.0)
             )
             WR.set_source(row, "costs", "QuickBooks · project P&L, COGS + expenses")
+            # A job whose older cost sits on its own CLASS with no project (a `costs` ruling,
+            # shared/job_rulings - MFD295): the project P&L cannot see those lines, so add them.
+            rule = job_rulings.cost_rule(row.project_num)
+            if rule and str(rule.get("rule", "")).lower() == "class":
+                extra, n, names = qbo_costs.class_only_cost(access, company_id, row.project_num)
+                if extra:
+                    row.costs_to_date += extra
+                    WR.set_source(row, "costs", f"QuickBooks · project P&L + {n} lines on the job's class "
+                                                f"with no project ({', '.join(names)})")
+                    log.info("  %s costs + %.2f from %d class-only lines (%s)",
+                             row.project_num, extra, n, ", ".join(names))
             # Over-budget is NOT flagged: it's a business observation the WIP
             # report surfaces itself (Costs > ETC, and the uncapped % column).
             # Flags are reserved for things the script could not confirm as

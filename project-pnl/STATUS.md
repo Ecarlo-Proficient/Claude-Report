@@ -7,6 +7,11 @@ manual close), RP (no draws — expenses → invoice → profit).
 ---
 
 ## DONE / FINALIZED
+- 2026-09-23 · **A `costs` class ruling switches the class/project lookup on by itself** - the job's costs = its QBO project + every line on its OWN class with no project, via a `costs` ruling
+  (`kind: costs, rule: class`) in the job rulings register (owner 2026-09-23 on MFD295: "why aren't you combining all
+  the real costs?"). MFD295: most of its cost sits on `Elite Construction:MFD295` with no project (129 lines, Dec 2024 -
+  Jul 2025, entered before project coding) - none of those lines carries any project, so nothing counts twice.
+  So an `active mfd` batch rebuild of MFD295 can never fall back to project-only (the 09/11 FINAL was built with the lookup by hand).
 
 - **Overview reader follows the combined draws (2026-09-16).** `completed_pnl._read_invoices`
   read every row of the Transactions INCOME list, so a job with a `draws` ruling (MFD192) would

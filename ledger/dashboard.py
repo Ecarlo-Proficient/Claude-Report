@@ -525,6 +525,9 @@ def _wip_review_steps(mode: str):
         {"label": "Write RP → Test - RP", "script": "wip/rp_wip_reader.py", "args": ["--apply-review", dec], "side": True},
         {"label": "Write all → Test-Master", "script": "wip/master_wip_test.py",
          "args": ["--apply-review", dec, "--rp-from-file", str(_rp_wip_file())], "side": True},
+        # the MFD team's own tab: only its green QBO block (costs / billed / retainage, up-only) - the
+        # columns they type are never touched (owner 2026-09-23: "why doesn't the mfd sheet get updated?")
+        {"label": "Update MFD QBO columns → WIP - MFD", "script": "wip/mfd_wip_test.py", "args": [], "side": True},
     ]
 
 
@@ -548,19 +551,35 @@ def _run_sync(steps) -> None:
             logf.write(f"\n===== {step['label']} ({step['script']}) =====\n")
             logf.flush()
             try:
-                rc = subprocess.call([sys.executable, str(PROJECT_ROOT / step["script"])] + step.get("args", []),
-                                     cwd=str(PROJECT_ROOT), stdout=logf, stderr=subprocess.STDOUT)
+                # read the output line by line: an `@@P` line (wip_review_common.progress) is the live
+                # "which job, what is changing" line under the progress bar; everything goes to the log
+                proc = subprocess.Popen([sys.executable, "-u", str(PROJECT_ROOT / step["script"])] + step.get("args", []),
+                                        cwd=str(PROJECT_ROOT), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                        text=True, encoding="utf-8", errors="replace", bufsize=1)
+                for line in proc.stdout:
+                    logf.write(line)
+                    if line.startswith("@@P\t"):
+                        parts = (line.rstrip("\n").split("\t") + [""] * 5)[1:5]
+                        with _SYNC_LOCK:
+                            _SYNC["detail"] = {"i": int(parts[0]) if parts[0].isdigit() else None,
+                                               "n": int(parts[1]) if parts[1].isdigit() else None,
+                                               "project": parts[2], "what": parts[3]}
+                    else:
+                        logf.flush()
+                rc = proc.wait()
             except OSError as e:
                 logf.write(f"launch failed: {e}\n")
                 rc = 1
             with _SYNC_LOCK:
                 _SYNC["steps"][i]["state"] = "done" if rc == 0 else "error"
+                _SYNC["detail"] = None
             if rc != 0:
                 ok = False
                 break
     with _SYNC_LOCK:
         _SYNC["state"] = "done" if ok else "error"
         _SYNC["current"] = -1
+        _SYNC["detail"] = None
 
 
 # lien states that put a bill on the action watchlist, most-urgent first
@@ -3304,6 +3323,7 @@ class Handler(BaseHTTPRequestHandler):
                    "steps": [dict(s) for s in _SYNC["steps"]]}
             if _SYNC["state"] == "running":
                 out["elapsed"] = int(time.time() - _SYNC["started"])
+                out["detail"] = _SYNC.get("detail")
         self._json(out)
 
     def _sync_start(self):
@@ -3528,6 +3548,11 @@ class Handler(BaseHTTPRequestHandler):
             v["reason"] = (("the Common drive is not mounted, so CP cannot recompute - mount smb://10.27.10.100/Common" if (div == "Commercial" and not common_ok)
                            else f"not recomputed since {v['at'][:10]}") if older else None)
         out["sources"] = {"Commercial": {"path": "/Volumes/Common", "mounted": common_ok}}
+        try:   # when the WIP workbook was last saved - a review computed BEFORE that is behind the tab
+            wm = paths.get_path("WIP_EXCEL_PATH", paths.onedrive_base() / "Company Files - WIP Report/WIP - MASTER.xlsx")
+            out["wip_file_at"] = _dt.datetime.fromtimestamp(Path(wm).stat().st_mtime).isoformat(timespec="seconds")
+        except Exception:                  # noqa: BLE001 - no file / no mount = no stamp
+            out["wip_file_at"] = None
         out["stale"] = [d for d, v in out["generated"].items() if v.get("stale")]
         changed = [r for r in out["records"] if r["status"] != "SAME"]
         out["counts"] = {"jobs": len(out["records"]), "changed": len(changed),

@@ -38,13 +38,19 @@ Register format:
   ]
 }
   on      the date the ruling was made (YYYY-MM-DD)
-  kind    loss | overrun | scope | note | draws
+  kind    loss | overrun | scope | note | draws | costs
           (loss = money we will not get back; draws = how the job BILLS, not a
            finding - it never prints as KNOWN:, see NON_FINDING_KINDS)
   combine (draws only) "month": every invoice dated to the same draw month is
           ONE draw. MFD192 bills three contracts (main / HUDSONWOOD / OFFSITE)
           as 2-3 invoices per draw; the owner reads that as one income line
           (2026-09-16: "combine the income into one income only for this project")
+  rule    (costs only) "class": the job's costs = its QBO project PLUS every expense line
+          that carries the job's OWN class and no project at all. For a job that ran
+          across the project-coding switchover (MFD295: 1,358,477 of 2024-25 cost on the
+          class `Elite Construction:MFD295` with no project) - the owner 2026-09-23:
+          "why aren't you combining all the real costs?". Read by the WIP readers,
+          the ledger cost pull and project-pnl (class/project lookup switched on).
   amount  optional $ the ruling concerns (the bid line, the write-down ...)
   line    the bid / draw line it concerns, as written on the document
   source  the document (proposal date, draw #, CO #)
@@ -129,7 +135,7 @@ def known_losses(proj, path: Optional[Path] = None) -> List[dict]:
 # income line. Nothing went wrong on the job, so it never prints as a KNOWN:
 # note on the WIP tabs, in the Excel P&L's rulings block, or in the page's
 # Known block - those read findings(), not for_job().
-NON_FINDING_KINDS = frozenset({"draws"})
+NON_FINDING_KINDS = frozenset({"draws", "costs"})
 
 
 def findings(proj, path: Optional[Path] = None) -> List[dict]:
@@ -144,6 +150,21 @@ def draw_combine(proj, path: Optional[Path] = None) -> Optional[dict]:
         if str(x.get("kind", "")).lower() == "draws":
             return x
     return None
+
+
+def cost_rule(proj, path: Optional[Path] = None) -> Optional[dict]:
+    """The `costs` ruling on this job ({"rule": "class", "note": ...}), or None."""
+    for x in for_job(proj, path):
+        if str(x.get("kind", "")).lower() == "costs":
+            return x
+    return None
+
+
+def class_rule_jobs(path: Optional[Path] = None) -> List[str]:
+    """Every job whose costs include its own class (a `costs` ruling with rule "class")."""
+    return sorted(j for j, rs in load(path).items()
+                  if any(str(x.get("kind", "")).lower() == "costs"
+                         and str(x.get("rule", "")).lower() == "class" for x in rs))
 
 
 def _accepted_checks(ruling: dict) -> frozenset:

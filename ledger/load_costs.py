@@ -349,9 +349,14 @@ def run(db_path: Path, division, active, projects, since, dry_run, show, changed
     customer_to_project = {v["id"]: p for p, v in proj_map.items()}
     print(f"  {len(account_names)} accounts · {len(customer_to_project)} project customers")
 
+    from shared import job_rulings
+    class_to_project = qc.job_class_map(access, company_id, job_rulings.class_rule_jobs())
+    if class_to_project:
+        print(f"  class rule (job rulings): {', '.join(sorted(set(class_to_project.values())))} - "
+              "their own class lines with no project count as theirs")
     seen: set = set()
     records = list(qc.iter_cost_lines(access, company_id, account_names, customer_to_project, since,
-                                      changed_since, seen))
+                                      changed_since, seen, class_to_project))
     if changed_since:
         seen |= _mirror_deleted_since(changed_since)
     in_scope = [r for r in records if r["project_no"] in targets]

@@ -8692,8 +8692,12 @@ def main() -> int:
         # +class / --class: find the job's OWN class from the job number,
         # active or not, and key on its ID so a QBO reactivate-rename can't
         # break it (the user 2026-08-25 - QBO renames on reactivate).
+        # A `costs` class ruling (shared/job_rulings - MFD295) switches the class/project
+        # lookup on for that job by itself, so a batch rebuild never falls back to project-only.
+        _rule = job_rulings.cost_rule(proj)
+        _cp = args.class_project or bool(_rule and str(_rule.get("rule", "")).lower() == "class")
         _cls = {}
-        if args.use_class or args.class_project:
+        if args.use_class or _cp:
             if _ALL_CLASSES[0] is None:              # one pull, reused by a batch
                 _ALL_CLASSES[0] = (query_all(access, company_id, "Class")
                                    + query_all(access, company_id, "Class",
@@ -8705,24 +8709,24 @@ def main() -> int:
         try:
             _set_legacy_matcher(
                 proj, cust_map[proj]["id"],
-                args.legacy or args.class_project or args.use_class,
+                args.legacy or _cp or args.use_class,
                 args.alias, args.job_class,
                 # +class alone = project ∪ class ("the whole P&L, plus the
                 # class lines"). Adding --legacy/--alias turns the line-text
                 # and bill-memo rules back on as well.
-                text_rules=not (args.class_project
+                text_rules=not (_cp
                                 or (args.use_class and not args.legacy)),
                 class_ids=list(_cls.keys()))
         except ValueError as e:
             ui_fail(f"{proj}: {e}")
             return 1
-        if args.class_project and not (args.job_class or _cls):
+        if _cp and not (args.job_class or _cls):
             ui_fail(f"{proj}: no class found for this job — the class/project "
                     f"lookup would be project-only.")
             return 1
-        if args.legacy or args.class_project or args.use_class:
+        if args.legacy or _cp or args.use_class:
             _cn = ", ".join(sorted(_cls.values())) or args.job_class
-            ui_event(("CLASS/PROJECT lookup ON for " if args.class_project
+            ui_event(("CLASS/PROJECT lookup ON for " if _cp
                       else "legacy attribution ON for ") + proj
                      + (f"  · class: {_cn}" if _cn else "")
                      + (f"  · aliases: {', '.join(args.alias)}"

@@ -7,6 +7,27 @@
 Last updated: 2026-09-08
 
 ## DONE / FINALIZED
+- 2026-09-23 · **`mfd_wip_test.py` runs again, and runs with every WIP Review Sync** - it had silently stopped after
+  08/26: the MFD team removed a top row, headers moved 6 -> 5, and the fixed `HDR_ROW` found no PROJECT column. It now
+  finds the header row (PROJECT + COSTS TO DATE in rows 1-15) and follows it. QBO costs add the job-rulings class
+  lines (same as the WIP readers); costs / billed never go below the tab (up-only); progress lines for the bar.
+  Wired as the 4th step of the ledger's WIP Review Sync. Columns checked identical to `mfd_wip_cols` before wiring.
+- 2026-09-23 · **Progress lines for the ledger's bar** - `wip_review_common.progress(pn, what, i, n)` prints an `@@P`
+  marker: the CP folder scan and both QBO passes (CP/MFD, RP) report the job they are on; `apply_decisions` reports
+  each value going onto the tab ("Costs to date <was> -> <now>").
+- 2026-09-23 · **WIP Review write: only approved fields are written; the tab wins otherwise** (defect found after the
+  owner's 12:09 sync on a stale review - CP/MFD emits from 09/09, RP 09/17). `apply_decisions` used to set a "keep"
+  field to the review's stored `revert` (MFD295 was not on the 09/09 Test-Master, so revert = blank: the sync blanked
+  its whole row) and wrote every field nobody reviewed (~80 values incl. decreases: CP803 billed down, RP ETCs
+  a five-figure ETC down to a few hundred). Now, for a job already on the tab: approved = the fresh value (MFD/CP billed + costs never below
+  the tab - the up-only rule, enforced here too); keep AND not-reviewed = the value on the tab now. New jobs keep
+  the old behaviour. Offline-checked on the five failing shapes.
+- 2026-09-23 · **WIP costs for class-rule jobs** - the job's costs = its QBO project + every line on its OWN class with no project, via a `costs` ruling
+  (`kind: costs, rule: class`) in the job rulings register (owner 2026-09-23 on MFD295: "why aren't you combining all
+  the real costs?"). MFD295: most of its cost sits on `Elite Construction:MFD295` with no project (129 lines, Dec 2024 -
+  Jul 2025, entered before project coding) - none of those lines carries any project, so nothing counts twice.
+  `cp_wip_reader.enrich_with_qbo` (CP + MFD rows) adds `shared/qbo_costs.class_only_cost` to the project P&L;
+  the Costs source says so. Checked with `master_wip_test --emit-review` to a scratch file: MFD295 costs rose to project + class as expected.
 - 2026-09-17 · **NEWEST DOCUMENT WINS** for RP contract / ETC (owner, after "trust JobTread" moved two
   contracts down on 2025 proposals while the folder held newer paper). `shared/rp_price.py` = the ONE
   resolver: candidates are JobTread's approved proposal (price/cost, its date), the newest proposal PDF for

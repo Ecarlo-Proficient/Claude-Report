@@ -926,6 +926,7 @@ def enrich_with_qbo(pairs) -> None:
     W.QBO_REALM = company_id
     start, end = "2019-01-01", dt.date.today().isoformat()
     for n, (row, *_rest) in enumerate(pairs, 1):
+        WR.progress(row.project_num, "QuickBooks - billed + costs", n, len(pairs))
         cust = proj_map.get(row.project_num)
         if not cust:
             if row.base_contract:

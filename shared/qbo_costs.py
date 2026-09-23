@@ -130,12 +130,57 @@ def pull_expense_txns(access: str, company_id: str, since: Optional[str] = None,
             query_all(access, company_id, "Purchase", where))
 
 
+def _line_class_id(det: dict, ln: dict, txn: dict) -> str:
+    return str((det.get("ClassRef") or ln.get("ClassRef") or txn.get("ClassRef") or {}).get("value") or "")
+
+
+def job_class_map(access: str, company_id: str, projects: Iterable[str]) -> Dict[str, str]:
+    """{class id -> project #} for the jobs whose costs include their own class (a `costs`
+    ruling, shared/job_rulings). Active AND inactive classes - a job's class is often
+    inactive by the time anyone looks. Empty when no job has the rule."""
+    from shared.job_lines import discover_job_classes
+    projects = [p for p in projects if p]
+    if not projects:
+        return {}
+    classes = (query_all(access, company_id, "Class")
+               + query_all(access, company_id, "Class", "Active = false"))
+    out: Dict[str, str] = {}
+    for proj in projects:
+        for cid in discover_job_classes(classes, proj):
+            out[str(cid)] = proj
+    return out
+
+
+def class_only_cost(access: str, company_id: str, project: str) -> Tuple[float, int, List[str]]:
+    """The job's class lines that carry NO project - the part a project P&L report cannot see.
+    (total, line count, class names). Lines coded to any project are left to that project,
+    so nothing is counted on two jobs."""
+    from shared.job_lines import discover_job_classes
+    classes = (query_all(access, company_id, "Class")
+               + query_all(access, company_id, "Class", "Active = false"))
+    ids = discover_job_classes(classes, project)
+    if not ids:
+        return 0.0, 0, []
+    tot, n = 0.0, 0
+    bills, purchases = pull_expense_txns(access, company_id)
+    for t in bills + purchases:
+        for ln in t.get("Line") or []:
+            det = ln.get("AccountBasedExpenseLineDetail") or ln.get("ItemBasedExpenseLineDetail")
+            if not det or (det.get("CustomerRef") or {}).get("value"):
+                continue
+            if _line_class_id(det, ln, t) in ids:
+                tot += float(ln.get("Amount", 0) or 0)
+                n += 1
+    return round(tot, 2), n, sorted(ids.values())
+
+
 def cost_lines_from_txns(
     txns: Iterable[dict],
     tx_type: str,
     vendor_field: str,
     account_names: Dict[str, str],
     customer_to_project: Dict[str, str],
+    class_to_project: Optional[Dict[str, str]] = None,
 ) -> Iterator[dict]:
     """Yield one structured cost-line dict per attributable expense line.
 
@@ -178,6 +223,8 @@ def cost_lines_from_txns(
                 continue
             cust_id = (det.get("CustomerRef") or {}).get("value")
             proj = customer_to_project.get(cust_id) if cust_id else None
+            if not proj and not cust_id and class_to_project:   # a class-rule job's own class, no project on the line
+                proj = class_to_project.get(_line_class_id(det, ln, t))
             if not proj:
                 proj = extract_proj(memo)
             leaf = cost_leaf(det, account_names, fallback="(unclassified)")
@@ -221,11 +268,12 @@ def iter_cost_lines(
     since: Optional[str] = None,
     changed_since: Optional[str] = None,
     seen: Optional[set] = None,
+    class_to_project: Optional[Dict[str, str]] = None,
 ) -> Iterator[dict]:
     """Pull Bills + Purchases and yield every attributable cost line. `seen` (a set) collects
     the Id of EVERY txn pulled, job line or not - an incremental writer clears those first."""
     bills, purchases = pull_expense_txns(access, company_id, since, changed_since)
     if seen is not None:
         seen.update(str(t.get("Id")) for t in bills + purchases)
-    yield from cost_lines_from_txns(bills, "Bill", "VendorRef", account_names, customer_to_project)
-    yield from cost_lines_from_txns(purchases, "Expense", "EntityRef", account_names, customer_to_project)
+    yield from cost_lines_from_txns(bills, "Bill", "VendorRef", account_names, customer_to_project, class_to_project)
+    yield from cost_lines_from_txns(purchases, "Expense", "EntityRef", account_names, customer_to_project, class_to_project)

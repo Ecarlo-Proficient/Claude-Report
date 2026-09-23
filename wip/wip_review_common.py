@@ -144,6 +144,13 @@ def _key(key_or_attr: str) -> str:
 
 
 # ── read the current tab (the "before") ──────────────────────────────────────
+def progress(pn, what: str, i: Optional[int] = None, n: Optional[int] = None) -> None:
+    """One live line for the ledger's progress bar: which job, what is happening to it
+    (owner 2026-09-23: "show what project it's on and the thing it's changing as it goes").
+    A tab-separated marker the dashboard reads off stdout; harmless in a terminal."""
+    print(f"@@P\t{i or ''}\t{n or ''}\t{pn or ''}\t{what}", flush=True)
+
+
 def snapshot_tab(wip_path: Path, tab_name: str, tab_kind: str) -> Dict[str, dict]:
     """{PROJECT# -> {field_key: value, '_name':, '_notes':}} straight off the tab
     as it stands now. tab_kind is 'working' or 'master' (picks the header set).
@@ -403,12 +410,42 @@ def apply_decisions(rows: List, decisions: dict, prior: Optional[Dict[str, dict]
                   f"this run): " + ", ".join(f"{pn} {key}" for pn, key in sorted(carried)))
     field_dec = (decisions or {}).get("fields", {}) or {}
     drop = {p.upper() for p in ((decisions or {}).get("drop_added", []) or [])}
-    kept = []
+    here = {f["key"] for f in _fields_for(tab_kind)}
+    kept, held = [], []
     for row in rows:
         pn = row.project_num.strip().upper()
         if pn in drop:                              # rejected brand-new job
             continue
-        for key, d in field_dec.get(pn, {}).items():
+        tab = (prior or {}).get(pn)
+        decs = field_dec.get(pn, {})
+        # THE TAB WINS UNLESS THE OWNER APPROVED (2026-09-23: a sync run on a 09/09 review blanked
+        # MFD295's whole Test-Master row and wrote ~80 numbers nobody reviewed). When the job is on
+        # the tab: a field is written ONLY when it was approved; "keep" and "never reviewed" both
+        # mean the value on the tab NOW - never the stored `revert`, which is only what an older
+        # review saw. MFD / CP billed + costs never go below the tab (the owner's up-only rule).
+        if tab is not None:
+            for key in here:
+                d = decs.get(key)
+                approved = (d.get("approved", True) if isinstance(d, dict) else bool(d)) if d is not None else False
+                fresh, cur = row_value(row, key), tab.get(key)
+                if approved:
+                    if (key in ("costs", "billed") and pn.startswith(("MFD", "CP"))
+                            and cur is not None and fresh is not None and fresh < cur - _EPS):
+                        setattr(row, FIELD_BY_KEY[key]["attr"], cur)
+                        held.append(f"{pn} {key} {fresh:,.2f} < tab {cur:,.2f} (up-only)")
+                    continue
+                if not _changed(cur, fresh):
+                    continue
+                setattr(row, FIELD_BY_KEY[key]["attr"], cur)
+                held.append(f"{pn} {key} kept at the tab" + (" (not reviewed)" if d is None else ""))
+                if tab_kind == "master":            # the tab's value IS the revised total
+                    if key == "orig_contract":
+                        row.co_revenue = None
+                    elif key == "orig_etc":
+                        row.co_cost_override = None
+            kept.append(row)
+            continue
+        for key, d in decs.items():
             if key not in FIELD_BY_KEY:
                 continue
             approved = d.get("approved", True) if isinstance(d, dict) else bool(d)
@@ -426,6 +463,19 @@ def apply_decisions(rows: List, decisions: dict, prior: Optional[Dict[str, dict]
                 elif key == "orig_etc":
                     row.co_cost_override = None
         kept.append(row)
+    # what is going onto the tab, job by job, for the progress line
+    for row in kept:
+        pn = row.project_num.strip().upper()
+        tab = (prior or {}).get(pn)
+        for f in _fields_for(tab_kind):
+            fresh = row_value(row, f["key"])
+            cur = tab.get(f["key"]) if tab else None
+            if _changed(cur, fresh):
+                money_ = lambda v: "blank" if v is None else f"${v:,.0f}"   # noqa: E731
+                progress(pn, f"{f['label']} {money_(cur)} → {money_(fresh)}")
+    if held:
+        print(f"  · held {len(held)} value(s) at the tab (only approved fields are written): "
+              + "; ".join(held[:40]) + (" ..." if len(held) > 40 else ""))
     return kept
 
 

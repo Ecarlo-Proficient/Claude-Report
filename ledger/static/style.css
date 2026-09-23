@@ -1100,6 +1100,8 @@ html[data-theme="dark"] .wr-block-title.pm { color: #7fb0e0; }
 .wr-was { color: var(--text-dim); text-align: right; text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--text-dim) 55%, transparent); }
 .wr-arrow { color: var(--text-dim); text-align: center; }
 .wr-now { font-weight: 700; text-align: right; }
+/* the REVERSED / decreased pill sits UNDER the number: beside a 7-figure amount it overran the fixed 110px column onto the delta (owner 2026-09-23) */
+.wr-now .wr-mark { display: block; width: fit-content; margin: 2px 0 0 auto; }
 .wr-delta { font-size: .8em; text-align: right; color: var(--text-dim); }
 .wr-delta.up { color: var(--pos); }
 .wr-delta.down { color: var(--neg); }
@@ -1112,6 +1114,24 @@ html[data-theme="dark"] .wr-block-title.pm { color: #7fb0e0; }
 .wr-step.running { color: var(--text); font-weight: 600; }
 .wr-step.done { color: var(--pos); }
 .wr-step.error { color: var(--neg); }
+.wr-now { min-height: 1.4em; margin-top: 8px; font-size: .88em; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.wr-now b { color: var(--text); font-weight: 600; }
+.wr-now-n { margin-left: 6px; }
+.wr-chooser { max-width: 420px; padding: 16px 4px; }
+.wr-ch-title { font-weight: 600; margin-bottom: 8px; }
+.wr-ch-row { display: flex; gap: 12px; font-size: .92em; padding: 2px 0; font-variant-numeric: tabular-nums; }
+.wr-ch-div { width: 3.2em; color: var(--text-dim); font-weight: 600; }
+.wr-ch-warn { margin-top: 10px; font-size: .88em; color: var(--warn-text); }
+.wr-ch-actions { display: flex; gap: 8px; margin-top: 14px; }
+.wr-done { max-width: 760px; padding: 16px 4px; }
+.wr-done-sum { margin: 6px 0 10px; font-size: .9em; }
+.wr-done-head { display: flex; align-items: center; gap: 14px; margin-bottom: 12px; }
+.wr-done-icon { width: 44px; height: 44px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 24px; font-weight: 700; color: #fff; background: var(--pos); flex: none; }
+.wr-done-head.bad .wr-done-icon { background: var(--neg); }
+.wr-done-title { font-size: 1.15em; font-weight: 700; }
+.wr-done-when { font-size: .86em; color: var(--text-dim); }
+.wr-done-jobs { font-size: .86em; font-variant-numeric: tabular-nums; max-height: 50vh; overflow: auto; }
+.wr-done-job { padding: 3px 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); }
 .pl-bar { height: 6px; border-radius: 999px; background: var(--border); overflow: hidden; }
 .pl-fill { height: 100%; background: var(--accent); width: 0; transition: width .4s ease; }
 
