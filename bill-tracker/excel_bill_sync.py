@@ -2402,6 +2402,8 @@ def main() -> int:
     started = dt.datetime.now()
     print(f"→ {started:%Y-%m-%d %H:%M:%S}  excel bill sync starting")
     print(f"   output: {OUTPUT_PATH}")
+    if not args.dry_run:
+        paths.require_accounting_share("the Bill Tracker sync")   # a dropped share is a STOP before any QBO work, not a mkdir traceback
 
     print("→ authenticating to QBO (Touch ID) …")
     qbo_access, qbo_cid = load_credentials()

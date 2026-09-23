@@ -105,6 +105,20 @@ def accounting_base() -> Path:
     return get_path("ACB_ACCOUNTING_BASE", _DEFAULT_ACCOUNTING_BASE)
 
 
+def require_accounting_share(what: str = "this run") -> Path:
+    """STOP, in plain words, when the Accounting share is not mounted - never a traceback
+    and never a fallback path (owner 2026-09-23, the bill sync died in mkdir on
+    /Volumes/Accounting after the share dropped). Returns the base when it is there."""
+    base = accounting_base()
+    if base.is_dir():
+        return base
+    raise SystemExit(
+        f"STOP - the Accounting share is not mounted, so {what} has nowhere to write.\n"
+        f"   expected: {base}\n"
+        f"   Reconnect it in Finder (Go > Connect to Server, the Synology Accounting share), "
+        f"then run again. Nothing was changed.")
+
+
 def bill_tracker_xlsx() -> Path:
     """The AP Bill Tracker workbook - the ONE resolver every tool that reads or
     writes it shares, so the path can never drift. Moved 2026-09-16 into the

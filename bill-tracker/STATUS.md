@@ -4,6 +4,9 @@ Shared progression record (the user's sessions ↔ the developer's). Tool scope 
 no business findings, dollar exposures, or owner analyses (those live in the owner's vault).
 
 ## DONE / FINALIZED
+- 2026-09-23 · **Unmounted Accounting share = a plain STOP** (the sync crashed in `mkdir` on `/Volumes/Accounting`
+  after the share dropped - twice, 09/18 and 09/23). `shared/paths.require_accounting_share()` checks the share
+  before any QBO work and exits with the reconnect instruction; nothing else changed.
 
 - **`Bill List` sheet + `Revised` in the bill audit (2026-09-18).** The owner: "bill tracker needs a
   simple sheet that only shows bill data like date, ref, amount, memo, project, and if it is approved"
