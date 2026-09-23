@@ -110,6 +110,7 @@ const GRP_KINDS = [
   { sel: ".pnl-codegrp", kind: "sib", open: false, until: ".pnl-codegrp" },   // P&L: a job type over its cost codes
   { sel: ".pnl-invcap", kind: "sib", open: false, until: ".pnl-cap" },         // P&L: "Invoices - all draws" over the list (closed by default, owner 2026-09-23)
   { sel: ".wr-div-head", kind: "sib", open: true, until: ".wr-div-head" },    // WIP Review: a division (approval work - open)
+  { sel: "tr.wr-lines-head", kind: "sib", open: true, until: "tr:not(.wr-line)" },   // WIP Review slide: the QBO lines under a Costs / Billed change (owner 2026-09-23)
   { sel: ".dgroup > h4", kind: "parent", open: true },        // record panels: a titled block (content - open)
   { sel: ".warm-head", kind: "parent", open: false },         // Sales: an account card
   { sel: ".pl-head", kind: "parent", open: true },            // Console: a pipeline card (has the buttons - open)
@@ -7459,6 +7460,53 @@ function renderWrSlides() {
   wrUpdateApproveCount();
 }
 
+// Direction between "on the WIP now" and "after this update": up / down / level. A drop is
+// coloured because on MFD/CP billed and costs only move up - a lower number is a finding.
+function wrDir(was, now) {
+  const a = Number(was) || 0, b = Number(now) || 0;
+  if (b > a) return '<span class="wr-dir up" title="Goes up">▲</span>';
+  if (b < a) return '<span class="wr-dir down" title="Goes down">▼</span>';
+  return '<span class="wr-dir" title="No change">=</span>';
+}
+
+// The QBO lines behind a Costs / Billed change, grouped under its row (owner 2026-09-23: "i want to see the
+// line transactions of what is adding/removing"). /api/wip/lines walks QBO's history (entered / edited /
+// deleted, from the mirror) back to the moment the WIP number was true; the lines that differ since then
+// ARE the change, and the head says whether they add up to it.
+const asofRaw = gen => gen && gen.at ? gen.at : "";
+const wrLinesWanted = f => f.changed && (f.key === "costs" || (f.key === "billed" && /quickbooks/i.test(f.source || "")));
+const WR_TAG = { new: "+ new", edited: "edited", deleted: "− deleted" };
+async function wrAttachLines(row, r, f, since) {
+  if (!row) return;
+  const q = new URLSearchParams({ no: r.project_num, field: f.key, was: f.was || 0, now: f.now || 0, since });
+  let d;
+  try { d = await (await fetch("/api/wip/lines?" + q)).json(); } catch { d = { ok: false, error: "no answer from the server" }; }
+  if (!row.isConnected) return;
+  const tr = (cls, cells) => { const e = document.createElement("tr"); e.className = cls; e.innerHTML = cells; return e; };
+  const frag = document.createDocumentFragment();
+  if (!d.ok) { frag.appendChild(tr("wr-lines-note", `<td colspan="5">Could not list the lines - ${_ge(d.error || "")}</td>`)); row.after(frag); return; }
+  const n = d.lines.length;
+  const tie = d.ties ? `<span class="wr-tie ok">adds up</span>`
+    : `<span class="wr-tie gap">${money(Math.abs(d.gap))} of the change is not in QuickBooks' history</span>`;
+  const sinceTxt = d.since ? ` · entered since ${fmtDateShort(d.since.slice(0, 10))}` : "";
+  const head = tr("wr-lines-head", `<td colspan="5"><span class="wr-lh-key">${n} QuickBooks line${n === 1 ? "" : "s"}</span> · ${money(d.explained)}${sinceTxt} · ${tie}</td>`);
+  head.dataset.grpkey = `${r.project_num}|${f.key}`;
+  frag.appendChild(head);
+  for (const l of d.lines) {
+    const ref = l.doc_number ? (l.qbo_url ? `<a href="${_ge(l.qbo_url)}" target="_blank" rel="noopener" title="Open in QuickBooks">#${_ge(l.doc_number)}</a>` : `#${_ge(l.doc_number)}`) : "";
+    // a bill dated well before it was entered is flagged - that is what hid CP742's JCP bills (dated 01/01, entered 09/03)
+    const backdated = l.entered && l.date && (new Date(l.entered) - new Date(l.date)) > 45 * 864e5 ? `entered ${fmtDateShort(l.entered)}` : "";
+    const what = [l.code, l.description, l.was != null ? `was ${money(l.was)}` : "", !l.code && !l.description ? l.memo : "", backdated].filter(Boolean).map(_ge).join(" · ");
+    frag.appendChild(tr(`wr-line ${l.tag}`,
+      `<td><span class="wr-line-tag">${WR_TAG[l.tag] || ""}</span> ${_ge(l.party || "")} ${ref}</td>`
+      + `<td class="wr-line-date">${l.date ? fmtDateShort(l.date) : ""}</td>`
+      + `<td class="dir">${wrDir(0, l.amount)}</td>`
+      + `<td class="wr-line-amt">${money(l.amount)}</td>`
+      + `<td class="src">${what}</td>`));
+  }
+  row.after(frag);
+}
+
 function wrSlide(r) {
   const card = document.createElement("div");
   card.className = "wr-slide wr-" + r.status.toLowerCase();
@@ -7471,11 +7519,11 @@ function wrSlide(r) {
       <span class="wr-slide-div">${_ge(WR_DIV_SHORT[r.division] || r.division)} · ${_ge(r.tab || "")}</span></div>
     <div class="wr-slide-what">${_ge(wrWhat(r))}</div>`;
   const why = wrWhy(r); if (why) html += `<div class="wr-slide-why">${_ge(why)}</div>`;
-  html += `<table class="wr-tbl"><thead><tr><th></th><th>On the WIP now${asof ? " (" + _ge(asof) + ")" : ""}</th><th>After this update</th><th style="text-align:left">Where the new number comes from</th></tr></thead><tbody>`;
+  html += `<table class="wr-tbl"><thead><tr><th></th><th>On the WIP now${asof ? " (" + _ge(asof) + ")" : ""}</th><th class="dir"></th><th>After this update</th><th style="text-align:left">Where the new number comes from</th></tr></thead><tbody>`;
   for (const f of r.fields || []) {
     const chg = f.changed, cls = (chg ? "chg" : "") + (f.reversed ? " rev" : "");
     const src = chg ? (f.source || "") + (f.note ? (f.source ? " · " : "") + f.note : "") : "";
-    html += `<tr class="${cls}"><td>${_ge(f.label)}</td><td class="was">${money(f.was)}</td><td class="now">${chg ? money(f.now) : ""}</td><td class="src">${_ge(src)}</td></tr>`;
+    html += `<tr class="${cls}" data-fkey="${_ge(f.key)}"><td>${_ge(f.label)}</td><td class="was">${money(f.was)}</td><td class="dir">${chg ? wrDir(f.was, f.now) : ""}</td><td class="now">${chg ? money(f.now) : ""}</td><td class="src">${_ge(src)}</td></tr>`;
   }
   html += `</tbody></table>`;
   html += `<div class="wr-slide-actions">
@@ -7484,6 +7532,7 @@ function wrSlide(r) {
       <span class="wr-slide-state ${state === "acc" ? "acc" : state === "skip" ? "skip" : ""}">${state === "acc" ? "✓ accepted" : state === "skip" ? "kept as is" : "not decided"}</span></div>
     <div class="wr-slide-keys">Keys: A accept · S keep · ← → move · Sync writes when you are done</div>`;
   card.innerHTML = html;
+  for (const f of r.fields || []) if (wrLinesWanted(f)) wrAttachLines(card.querySelector(`.wr-tbl tr[data-fkey="${f.key}"]`), r, f, asofRaw(gen));
   card.querySelector("#wrAcc").onclick = () => wrDecideJob(r, true);
   card.querySelector("#wrSkip").onclick = () => wrDecideJob(r, false);
   return card;
@@ -8667,8 +8716,8 @@ function rrCardDiv(x) {
       <div class="rr-sec-line">${rrSrcLine(sr)}${sr && sr.file ? `<b>${_ge(sr.file.split("/").pop())}</b> ${fileBtn(sr.file, "Show file in folder")}` : (sr && sr.detail ? "" : "<i>no document named</i>")}</div></div>`;
   const pend = x.pending || [];
   const pendBlock = pend.length ? `<div class="rr-sec"><div class="rr-sec-title">This update changes the line</div>
-      <table class="rr-pend"><thead><tr><th></th><th class="n">On the WIP now</th><th class="n">After this update</th><th>Where the new number comes from</th></tr></thead><tbody>
-      ${pend.map(f => `<tr class="${f.reversed ? "rev" : ""}"><td>${_ge(f.label)}</td><td class="n was">${money(f.was)}</td><td class="n now">${money(f.now)}${f.reversed ? ' <span class="wr-mark rev">REVERSED</span>' : f.decreased ? ' <span class="wr-mark dec">decreased</span>' : ""}</td><td class="src">${_ge(f.source || "")}${f.note ? (f.source ? " · " : "") + `<i>${_ge(f.note)}</i>` : ""}</td></tr>`).join("")}
+      <table class="rr-pend"><thead><tr><th></th><th class="n">On the WIP now</th><th class="dir"></th><th class="n">After this update</th><th>Where the new number comes from</th></tr></thead><tbody>
+      ${pend.map(f => `<tr class="${f.reversed ? "rev" : ""}"><td>${_ge(f.label)}</td><td class="n was">${money(f.was)}</td><td class="dir">${wrDir(f.was, f.now)}</td><td class="n now">${money(f.now)}${f.reversed ? ' <span class="wr-mark rev">REVERSED</span>' : f.decreased ? ' <span class="wr-mark dec">decreased</span>' : ""}</td><td class="src">${_ge(f.source || "")}${f.note ? (f.source ? " · " : "") + `<i>${_ge(f.note)}</i>` : ""}</td></tr>`).join("")}
       </tbody></table></div>` : `<div class="rr-sec"><div class="rr-sec-line">This update leaves the line as it is on the WIP.</div></div>`;
   const badge = x.status && x.status !== "SAME" ? `<span class="wr-badge ${_ge(String(x.status).toLowerCase())}">${_ge(x.status)}</span>` : "";
   card.innerHTML = `<div class="rr-head"><span class="wr-pn">${_ge(x.line)}</span><span class="wr-name">${_ge(x.name || "")}</span><span class="wr-name">· ${_ge(x.builder || "")}</span>${badge}<span class="rr-links">${pageBtn}${wrBtn}</span></div>

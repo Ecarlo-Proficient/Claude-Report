@@ -171,6 +171,152 @@ def respond(con, query: dict):
     return 200, json.dumps(payload, default=str).encode("utf-8"), "application/json; charset=utf-8"
 
 
+# ── the delta: which QBO lines move the WIP number to the new one ─────────────
+# WIP Review (owner 2026-09-23: "i want to see the line transactions of what is adding/removing").
+# The WIP holds `was`; QBO now adds up to `now`. Walk back through QBO's own history - when each
+# transaction was ENTERED (the mirror's created stamp), and every edit / delete in the mirror's
+# change log with the record as it stood before - to the newest moment T where
+# "QBO then" = "QBO now" - (now - was). The lines that differ between T and now ARE the change,
+# and they tie to the dollar or the answer says by how much they do not.
+_MIRROR_ENT = {"Bill": "Bill", "Expense": "Purchase", "Invoice": "Invoice"}
+_TIE = 0.51
+
+
+def _ts(s):
+    if not s:
+        return None
+    try:
+        from shared.qbo_mirror import parse_iso
+        t = parse_iso(str(s))
+        if t.tzinfo is None:
+            import datetime as _d
+            t = t.replace(tzinfo=_d.timezone.utc)
+        return t
+    except ValueError:
+        return None
+
+
+def _rec_amount(rec: dict, kind: str, cust_ids: set) -> float:
+    """This job's share of one raw QBO record (a before-image from the change log): cost = the
+    expense LINES whose own CustomerRef is the job; billed = the invoice's positive sales lines
+    (gross, retainage lines excluded) when the invoice is on the job."""
+    tot = 0.0
+    if kind == "billed":
+        if str((rec.get("CustomerRef") or {}).get("value") or "") not in cust_ids:
+            return 0.0
+        for ln in rec.get("Line") or []:
+            if ln.get("DetailType") == "SalesItemLineDetail" and (_f(ln.get("Amount")) or 0) > 0:
+                tot += _f(ln.get("Amount")) or 0.0
+        return round(tot, 2)
+    for ln in rec.get("Line") or []:
+        det = ln.get("ItemBasedExpenseLineDetail") or ln.get("AccountBasedExpenseLineDetail") or {}
+        if str((det.get("CustomerRef") or {}).get("value") or "") in cust_ids:
+            tot += _f(ln.get("Amount")) or 0.0
+    return round(tot, 2)
+
+
+def delta(con, mcon, project: str, kind: str, was: float, now: float, since: Optional[str] = None) -> dict:
+    """The lines behind a WIP Costs / Billed change. `mcon` = the QBO mirror (None = no history)."""
+    kind = "billed" if kind == "billed" else "costs"
+    target = round(float(now) - float(was), 2)
+    base = build(con, project, kind) or {"lines": []}
+    lines = [d for d in base["lines"] if d["kind"] == ("billed" if kind == "billed" else "cost")]
+    recs: dict = {}                                   # (entity, id) -> {cur, lines, created, changes, ...}
+    for d in lines:
+        ent = _MIRROR_ENT.get(d["txn_type"] or "Bill", "Bill")
+        r = recs.setdefault((ent, str(d["txn_id"])), {"cur": 0.0, "lines": [], "created": None, "changes": [],
+                                                      "deleted": False, "head": d})
+        r["cur"] = round(r["cur"] + d["amount"], 2)
+        r["lines"].append(d)
+    cust_ids = {str(r[0]) for r in con.execute(
+        "SELECT DISTINCT customer_id FROM cost_line WHERE project_no = ? AND customer_id IS NOT NULL",
+        ((project or "").upper(),))} if kind == "costs" else set()
+    if mcon is not None:
+        for (ent, rid), r in recs.items():
+            row = mcon.execute(f"SELECT created, json FROM qbo_{ent.lower()} WHERE id = ?", (rid,)).fetchone()
+            if not row:
+                continue
+            r["created"] = _ts(row[0])
+            if kind == "billed":                       # WIP billed is GROSS: the invoice's positive sales lines
+                from shared.qbo_mirror import _unpack
+                rec = _unpack(row[1])
+                cust_ids.add(str((rec.get("CustomerRef") or {}).get("value") or ""))
+                g = _rec_amount(rec, "billed", cust_ids)
+                if g:
+                    r["cur"] = g
+        from shared.qbo_mirror import _unpack
+        ents = ("Invoice",) if kind == "billed" else ("Bill", "Purchase")
+        for ch in mcon.execute(
+                f"SELECT id, entity, rec_id, kind, changed_at, before_json FROM mirror_change "
+                f"WHERE entity IN ({','.join('?' * len(ents))}) AND kind IN ('edited','deleted') "
+                f"AND before_json IS NOT NULL ORDER BY changed_at", ents):
+            key = (ch[1], str(ch[2]))
+            if key not in recs and ch[3] != "deleted":
+                continue
+            before = _unpack(ch[5])
+            amt = _rec_amount(before, kind, cust_ids)
+            if key not in recs:
+                if not amt:
+                    continue
+                recs[key] = {"cur": 0.0, "lines": [], "created": _ts((before.get("MetaData") or {}).get("CreateTime")),
+                             "changes": [], "deleted": True, "head": {
+                                 "date": before.get("TxnDate"), "doc_number": before.get("DocNumber"),
+                                 "party": ((before.get("VendorRef") or before.get("EntityRef") or before.get("CustomerRef")
+                                            or {}).get("name")), "memo": before.get("PrivateNote"),
+                                 "txn_type": "Invoice" if ch[1] == "Invoice" else ("Expense" if ch[1] == "Purchase" else "Bill"),
+                                 "txn_id": str(ch[2]), "qbo_url": None}}
+            if ch[3] == "deleted":
+                recs[key]["deleted"] = True
+            recs[key]["changes"].append((_ts(ch[4]), amt))
+
+    def amount_at(r, t):
+        if r["created"] is not None and r["created"] > t:
+            return 0.0
+        for when, amt in r["changes"]:              # the record as it stood at t = the before-image of the first change after t
+            if when is not None and when > t:
+                return amt
+        return 0.0 if r["deleted"] else r["cur"]
+
+    def cur_of(r):
+        return 0.0 if r["deleted"] else r["cur"]
+
+    moments = sorted({t for r in recs.values() for t in [r["created"]] + [c[0] for c in r["changes"]] if t is not None},
+                     reverse=True)
+    import datetime as _d
+    found = None
+    for m in moments[:1500]:
+        t = m - _d.timedelta(seconds=1)              # just before this moment: the moment itself counts as the change
+        if abs(sum(cur_of(r) - amount_at(r, t) for r in recs.values()) - target) < _TIE:
+            found = t
+            break
+    cut = found or _ts(since)
+    items, explained = [], 0.0
+    if cut is not None:
+        for r in recs.values():
+            before, after = amount_at(r, cut), cur_of(r)
+            diff = round(after - before, 2)
+            if abs(diff) < 0.005:
+                continue
+            explained += diff
+            h = r["head"]
+            tag = "deleted" if r["deleted"] else ("new" if before == 0 else "edited")
+            base_row = {"tag": tag, "date": h.get("date"), "party": h.get("party"), "doc_number": h.get("doc_number"),
+                        "memo": h.get("memo"), "txn_type": h.get("txn_type"), "txn_id": h.get("txn_id"),
+                        "qbo_url": h.get("qbo_url"), "entered": r["created"].date().isoformat() if r["created"] else None}
+            if tag == "new" and kind == "costs":
+                for d in r["lines"]:
+                    items.append({**base_row, "code": d["cost_code"] or d["account"], "description": d["description"],
+                                  "amount": d["amount"], "was": None})
+            else:
+                items.append({**base_row, "code": None, "description": None, "amount": diff,
+                              "was": before if tag == "edited" else None})
+    items.sort(key=lambda x: (x["entered"] or x["date"] or ""), reverse=True)
+    explained = round(explained, 2)
+    return {"project": (project or "").upper(), "kind": kind, "was": was, "now": now, "target": target,
+            "since": cut.isoformat() if cut else None, "ties": found is not None and abs(explained - target) < _TIE,
+            "explained": explained, "gap": round(target - explained, 2), "history": mcon is not None, "lines": items}
+
+
 # ── selftest (offline, in-memory) ────────────────────────────────────────────
 def _selftest() -> None:
     con = sqlite3.connect(":memory:")

@@ -10,7 +10,7 @@
 # working due to it needing data ... payments not showing recent payments"). It used to skip the two
 # QBO-direct loaders (costs, payments) to stay quick, which is exactly why the P&L and Payments went
 # stale while everything else was fresh. They are IN now; the incremental windows keep them cheap:
-#   - load_costs   --active --since <90 days>   (only active jobs, last 90 days)
+#   - load_costs   --active --changed-since <90 days>   (active jobs: every bill entered or edited in 90 days, any bill date)
 #   - load_payments --months 12                 (rolling year; load_payments DELETE+reloads its
 #                                                window, so the window IS the Payments history depth)
 # For a fuller/shorter view run either loader by hand with a different window. Continues past a single
@@ -29,7 +29,7 @@ step "WIP master -> ledger";  python3 ledger/load_wip_master.py             || r
 step "Bills -> ledger";       python3 ledger/load_bill_tracker.py           || rc=1
 step "Invoices -> ledger";    python3 ledger/load_invoices.py --no-qbo      || rc=1
 step "Customers -> ledger";   python3 ledger/load_customers.py              || rc=1
-step "Costs -> ledger";       python3 ledger/load_costs.py --active --since "$since" || rc=1
+step "Costs -> ledger";       python3 ledger/load_costs.py --active --changed-since "$since" || rc=1
 step "Payments -> ledger";    python3 ledger/load_payments.py --months 12   || rc=1
 step "Bill payments -> ledger"; python3 ledger/load_bill_payments.py         || rc=1
 step "Sub LOC -> ledger";      python3 ledger/load_sub_loc.py               || rc=1

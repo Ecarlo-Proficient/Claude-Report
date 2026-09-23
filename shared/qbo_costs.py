@@ -117,10 +117,15 @@ def build_account_map(access: str, company_id: str) -> Dict[str, str]:
     return out
 
 
-def pull_expense_txns(access: str, company_id: str,
-                      since: Optional[str] = None) -> Tuple[List[dict], List[dict]]:
-    """Fetch (bills, purchases). `since` is an inclusive ISO date on TxnDate."""
-    where = f"TxnDate >= '{since}'" if since else ""
+def pull_expense_txns(access: str, company_id: str, since: Optional[str] = None,
+                      changed_since: Optional[str] = None) -> Tuple[List[dict], List[dict]]:
+    """Fetch (bills, purchases). `since` is an inclusive ISO date on TxnDate; `changed_since`
+    is one on QBO's MetaData.LastUpdatedTime - every txn ENTERED or EDITED since then, whatever
+    its date. The incremental ledger pull uses `changed_since`: a bill entered today but dated
+    back months (JCP #909/#910 on CP742, entered 09/03/2026, dated 01/01/2026) never lands in a
+    TxnDate window."""
+    where = (f"MetaData.LastUpdatedTime >= '{changed_since}'" if changed_since
+             else f"TxnDate >= '{since}'" if since else "")
     return (query_all(access, company_id, "Bill", where),
             query_all(access, company_id, "Purchase", where))
 
@@ -214,8 +219,13 @@ def iter_cost_lines(
     account_names: Dict[str, str],
     customer_to_project: Dict[str, str],
     since: Optional[str] = None,
+    changed_since: Optional[str] = None,
+    seen: Optional[set] = None,
 ) -> Iterator[dict]:
-    """Pull Bills + Purchases and yield every attributable cost line."""
-    bills, purchases = pull_expense_txns(access, company_id, since)
+    """Pull Bills + Purchases and yield every attributable cost line. `seen` (a set) collects
+    the Id of EVERY txn pulled, job line or not - an incremental writer clears those first."""
+    bills, purchases = pull_expense_txns(access, company_id, since, changed_since)
+    if seen is not None:
+        seen.update(str(t.get("Id")) for t in bills + purchases)
     yield from cost_lines_from_txns(bills, "Bill", "VendorRef", account_names, customer_to_project)
     yield from cost_lines_from_txns(purchases, "Expense", "EntityRef", account_names, customer_to_project)

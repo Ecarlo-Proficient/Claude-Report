@@ -33,7 +33,8 @@ USAGE
     python3 ledger/load_costs.py --active --show 20       # Active projects (Touch ID)
     python3 ledger/load_costs.py --division cp --dry-run  # pull + reconcile, write nothing
     python3 ledger/load_costs.py --project MFD177         # one project
-    python3 ledger/load_costs.py --since 2025-01-01       # limit the pull window
+    python3 ledger/load_costs.py --since 2025-01-01       # limit the pull window (by bill date)
+    python3 ledger/load_costs.py --active --changed-since 2026-06-25   # routine: entered/edited since
 """
 from __future__ import annotations
 
@@ -42,6 +43,7 @@ import datetime as dt
 import sqlite3
 import sys
 import tempfile
+from typing import Optional
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -122,14 +124,15 @@ def target_projects(con, division: str | None, active: bool, projects: list[str]
 
 
 def write_cost_lines(con, records: list[dict], targets: set, now: str,
-                     incremental: bool = False) -> dict:
+                     incremental: bool = False, refreshed: Optional[set] = None) -> dict:
     """Land source='qbo' cost_line for the target projects. Upserts cost_code first
     (FK), then cost_line by (txn,line).
 
     FULL (default): scoped-replace - DELETE the targets' qbo lines, then insert, so a
-    txn deleted in QBO drops out. INCREMENTAL (a `--since` window): SKIP the delete and
-    only upsert - recent lines add/update, OLDER lines are preserved (a windowed pull
-    can't see them). Run a full pull periodically to reap QBO deletions."""
+    txn deleted in QBO drops out. INCREMENTAL (a `--since` / `--changed-since` window): no
+    project-wide delete - lines the window cannot see are preserved. With `refreshed` (the
+    ids of every txn the pull saw + the mirror's deletions) those txns are re-stated from
+    scratch, so an edited or deleted bill cannot leave a stale line behind."""
     kept = [r for r in records if r["project_no"] in targets]
     # cost codes first (FK target)
     codes = {r["cost_code"] for r in kept if r["cost_code"]}
@@ -145,6 +148,14 @@ def write_cost_lines(con, records: list[dict], targets: set, now: str,
     ph = ",".join("?" for _ in targets)
     if targets and not incremental:
         con.execute(f"DELETE FROM cost_line WHERE source='qbo' AND project_no IN ({ph})", tuple(targets))
+    elif targets and refreshed:
+        # incremental: every txn this pull saw (or the mirror says QBO deleted) is re-stated from
+        # scratch, so a line moved off the job, removed from the bill, or a deleted bill drops out
+        ids = sorted(refreshed)
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            con.execute(f"DELETE FROM cost_line WHERE source='qbo' AND project_no IN ({ph}) "
+                        f"AND qbo_txn_id IN ({','.join('?' for _ in chunk)})", (*targets, *chunk))
     cols = ["qbo_txn_id", "qbo_line_id", "txn_type", "project_no", "cost_code", "account",
             "amount", "txn_date", "is_sub", "vendor", "description", "customer_id",
             *TRAIL_COLS, "source", "loaded_at"]
@@ -292,7 +303,24 @@ def _selftest() -> None:
           "3 lines / 25000 unchanged with the new keys.")
 
 
-def run(db_path: Path, division, active, projects, since, dry_run, show):
+def _mirror_deleted_since(when: str) -> set:
+    """Bill / Purchase ids QBO deleted since `when`, from the mirror (empty when there is none)."""
+    try:
+        from shared import qbo_mirror
+        if not qbo_mirror.db_path().exists():
+            return set()
+        mcon = qbo_mirror.connect()
+        try:
+            return {str(r[0]) for t in ("Bill", "Purchase") for r in mcon.execute(
+                f"SELECT id FROM {qbo_mirror.table(t)} WHERE deleted = 1 AND COALESCE(deleted_at, '') >= ?", (when,))}
+        finally:
+            mcon.close()
+    except Exception as e:                              # noqa: BLE001 - no mirror = deletions wait for a full pull
+        print(f"  (mirror unavailable, deleted bills drop out on the next full pull: {e})")
+        return set()
+
+
+def run(db_path: Path, division, active, projects, since, dry_run, show, changed_since=None):
     con = _connect(db_path)
     targets = target_projects(con, division, active, projects)
     if not targets:
@@ -302,7 +330,8 @@ def run(db_path: Path, division, active, projects, since, dry_run, show):
     scope = (f"division {division}" if division else
              "active" if active else
              f"{len(projects)} named" if projects else "all")
-    print(f"Target projects: {len(targets)} ({scope}){' since ' + since if since else ''}")
+    print(f"Target projects: {len(targets)} ({scope}){' since ' + since if since else ''}"
+          f"{' entered or changed since ' + changed_since if changed_since else ''}")
 
     print("Authenticating to QBO (Touch ID)…")
     from shared.qbo_api import load_credentials, build_project_customer_map
@@ -320,7 +349,11 @@ def run(db_path: Path, division, active, projects, since, dry_run, show):
     customer_to_project = {v["id"]: p for p, v in proj_map.items()}
     print(f"  {len(account_names)} accounts · {len(customer_to_project)} project customers")
 
-    records = list(qc.iter_cost_lines(access, company_id, account_names, customer_to_project, since))
+    seen: set = set()
+    records = list(qc.iter_cost_lines(access, company_id, account_names, customer_to_project, since,
+                                      changed_since, seen))
+    if changed_since:
+        seen |= _mirror_deleted_since(changed_since)
     in_scope = [r for r in records if r["project_no"] in targets]
     print(f"Pulled {len(records)} cost lines · {len(in_scope)} in scope")
     att = annotate_attachments(records, qbo_attachments.index_from_cache(company_id))
@@ -351,8 +384,10 @@ def run(db_path: Path, division, active, projects, since, dry_run, show):
         return
 
     now = dt.datetime.now().isoformat(timespec="seconds")
-    res = write_cost_lines(con, records, targets, now, incremental=bool(since))
-    mode = f"incremental since {since}" if since else "full replace"
+    res = write_cost_lines(con, records, targets, now, incremental=bool(since or changed_since),
+                           refreshed=seen if changed_since else None)
+    mode = (f"incremental: entered or changed since {changed_since}" if changed_since
+            else f"incremental since {since}" if since else "full replace")
     print(f"\nWrote {res['lines']} cost lines · {res['codes']} cost codes ({mode}) -> {db_path}")
     reconcile(con, targets, show)
     con.close()
@@ -365,6 +400,8 @@ def main():
     ap.add_argument("--active", action="store_true", help="Only Active projects (+ MFD).")
     ap.add_argument("--project", nargs="+", help="Only these project #s.")
     ap.add_argument("--since", help="Inclusive ISO date filter on TxnDate (e.g. 2025-01-01).")
+    ap.add_argument("--changed-since", help="Incremental: every txn ENTERED or EDITED in QBO since this ISO date, "
+                                            "whatever its bill date (the routine Resync pull).")
     ap.add_argument("--dry-run", action="store_true", help="Pull + reconcile; write nothing.")
     ap.add_argument("--show", type=int, default=15, help="Reconciliation rows to print.")
     ap.add_argument("--selftest", action="store_true", help="Offline pipeline proof (no QBO).")
@@ -372,7 +409,7 @@ def main():
     if args.selftest:
         _selftest()
         return
-    run(args.db, args.division, args.active, args.project, args.since, args.dry_run, args.show)
+    run(args.db, args.division, args.active, args.project, args.since, args.dry_run, args.show, args.changed_since)
 
 
 if __name__ == "__main__":

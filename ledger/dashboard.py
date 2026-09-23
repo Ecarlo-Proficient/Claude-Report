@@ -410,7 +410,7 @@ def _pipelines():
         # view). It STAYS in the reload/all chains so Resync keeps costs fresh for the Project P&L
         # (which reads cost_line); it just isn't a standalone button any more.
         {"key": "costs", "label": "Costs (QBO, 90d)", "hidden": True, "steps": [
-            {"label": "Pull costs (90d, Touch ID)", "script": "ledger/load_costs.py", "args": ["--active", "--since", since]},
+            {"label": "Pull costs (90d, Touch ID)", "script": "ledger/load_costs.py", "args": ["--active", "--changed-since", since]},
         ]},
         {"key": "ap", "label": "AP - bills + liens", "steps": [
             {"label": "Sync bills (QBO -> Bill Tracker.xlsx)", "script": "bill-tracker/excel_bill_sync.py", "args": [], "side": True},
@@ -2951,6 +2951,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(*trail.respond(con, self._query()))
             finally:
                 con.close()
+        elif path == "/api/wip/lines":       # WIP Review: the QBO lines behind one Costs / Billed change (was -> now), tied to the dollar
+            self._wip_lines(self._query())
         elif path == "/api/invoices/all":    # on-demand: ALL invoices incl. paid (the "show all" toggle)
             self._invoices_all()
         elif path == "/api/invoice/notion":  # on-demand: the invoice's whole Notion page (properties + body + comments), 60 s cache
@@ -3379,6 +3381,25 @@ class Handler(BaseHTTPRequestHandler):
             want = "cp_wip_reader" if div == "CP" else "master_wip_test"
             steps = [st for st in _wip_review_steps("emit") if want in st["script"]]
         return self._launch(steps, f"review-{div.lower()}")
+
+    def _wip_lines(self, q: dict):
+        try:
+            was, now = float(q.get("was")), float(q.get("now"))
+        except (TypeError, ValueError):
+            return self._json({"ok": False, "error": "was / now required"}, 400)
+        con, mcon = _connect(self.db_path), None
+        try:
+            from shared import qbo_mirror
+            if qbo_mirror.db_path().exists():
+                mcon = qbo_mirror.connect()
+            out = trail.delta(con, mcon, q.get("no", ""), q.get("field", "costs"), was, now, q.get("since"))
+            self._json({"ok": True, **out})
+        except Exception as e:             # noqa: BLE001 - a failed lookup never breaks the slide
+            self._json({"ok": False, "error": f"line lookup failed: {e}"})
+        finally:
+            con.close()
+            if mcon is not None:
+                mcon.close()
 
     def _wip_review_get(self):
         """Merge the three emit JSONs into one review payload for the UI."""

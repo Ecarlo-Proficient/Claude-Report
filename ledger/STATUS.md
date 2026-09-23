@@ -4,6 +4,24 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-23 · **Routine cost pull fixed: window on ENTERED/EDITED, not bill date** (owner flagged CP742 on the WIP Review
+  slide: "+$400, 0 QuickBooks lines"). Resync / `reload_ledger.sh` ran `load_costs --active --since <90d>`, a TxnDate
+  window - JCP #909/#910 (MS6, $200 each) were entered 09/03 but dated 01/01/2026, so they never reached `cost_line`
+  while the WIP reader (a full read) had them. Now `--changed-since <90d>` = `MetaData.LastUpdatedTime` (shared/qbo_costs
+  `pull_expense_txns(changed_since=)`), and every txn the pull saw + every Bill/Purchase the mirror marks deleted is
+  re-stated from scratch, so an edited / moved / deleted bill cannot leave a stale line. One full `--active` pull run
+  09/23 to clear the backlog (29 jobs held stale lines, MFD295 was missing most of its history). The slide line also
+  says "entered mm/dd" when a bill is dated 45+ days before it was entered.
+- 2026-09-23 · **WIP Review slide: direction + the lines behind the change** (owner: "a symbol in the middle that shows
+  if it went up or down" + "the line transactions of what is adding/removing, grouped underneath"). A ▲ / ▼ / = column
+  sits between "On the WIP now" and "After this update" (also on the review page's pending table; a drop is red, since
+  MFD/CP billed and costs only move up). Under a changed Costs (or QuickBooks-sourced Billed) row, a group lists the QBO
+  lines that make up the change: `/api/wip/lines` -> `trail.delta()` walks QBO's history from the mirror (when each
+  transaction was entered, plus every edit / delete in `mirror_change` with its before-image) back to the newest moment
+  the WIP number was true; the lines that differ since then are the change (new = per cost line, edited = the difference
+  with "was", deleted = negative). The head says "adds up" or how much of the change is not in QuickBooks' history
+  (the change log only starts 09/17, and a stale review can hold a number QBO no longer has). Verified CP672: WIP
+  294,832.89 + bill C761098 (3 SL2 lines, 181.95, entered 09/09) = 295,014.84 = QBO, to the cent.
 - 2026-09-23 · **Bug QC on the 09/22 work** (two reviewers over the stub module, the handlers and the vendor-page JS;
   everything below verified and fixed). Stub: a payment with no check # (ACH / card) now names its file by the QBO id, so
   two same-day payments never overwrite each other; lines are merged per linked transaction (a bill on two lines = one
