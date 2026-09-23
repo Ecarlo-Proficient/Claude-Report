@@ -22,7 +22,7 @@ c() { printf '\n\033[36m\033[1m== %s ==\033[0m\n' "$1"; }
 ok() { printf '  \033[32m✓\033[0m %s\n' "$1"; }
 bad() { printf '  \033[31m✗\033[0m %s (exit %s)\n' "$1" "$2"; }
 
-# STOP before any work when a drive is missing (owner 2026-09-23: "that way i don't waste time")
+# A missing drive PAUSES before any work: reconnect, Enter to retry, q to close (owner 2026-09-23)
 python3 "$base/shared/paths.py" --require accounting,onedrive --for "sync-all" || exit 2
 
 c "0/4  QBO mirror - refresh (the one read of QBO)"

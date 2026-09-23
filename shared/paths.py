@@ -277,10 +277,26 @@ if __name__ == "__main__":
         # python3 shared/paths.py --require accounting,onedrive --for "sync-all"   -> exit 2 + STOP when one is missing
         names = [n for n in _sys.argv[2].split(",") if n]
         what = _sys.argv[4] if len(_sys.argv) > 4 and _sys.argv[3] == "--for" else "this run"
-        try:
-            require_mounts(names, what)
-        except SystemExit as e:
-            print(e)
-            _sys.exit(2)
-        _sys.exit(0)
+        # In a terminal it PAUSES instead of quitting (owner 2026-09-23: "it should just pause, and ask to
+        # resync or close"): reconnect the drive, press Enter to check again, q to close. Unattended
+        # (no tty) it still STOPs with exit 2.
+        while True:
+            gone = missing_mounts(names)
+            if not gone:
+                _sys.exit(0)
+            print(f"PAUSED - {what} needs a drive that is not mounted right now. Nothing has run yet.")
+            for n, path, desc in gone:
+                print(f"   missing: {path}   ({desc})")
+            if not _sys.stdin.isatty():
+                print("   Reconnect it, then run again.")
+                _sys.exit(2)
+            try:
+                ans = input("   Reconnect it, then press Enter to try again  (q + Enter closes): ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                _sys.exit(2)
+            if ans in ("q", "quit", "close", "n", "no"):
+                print("   Closed - nothing was run.")
+                _sys.exit(2)
+            print("   checking again...")
     _self_check()

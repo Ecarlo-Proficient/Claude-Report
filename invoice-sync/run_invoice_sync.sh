@@ -14,7 +14,7 @@ cd "$DIR"
 
 # stdout is a terminal → show the visual front-end.
 base="$(cd "$DIR/.." && pwd)"
-# STOP before any work when a drive is missing (owner 2026-09-23: "that way i don't waste time")
+# A missing drive PAUSES before any work: reconnect, Enter to retry, q to close (owner 2026-09-23)
 python3 "$base/shared/paths.py" --require onedrive,accounting --for "sync-ar (Open_Invoices.xlsx on OneDrive; the AR Aging tab reads the Bill Tracker on the Accounting share)" || exit 2
 
 if [ -t 1 ]; then

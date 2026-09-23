@@ -25,7 +25,7 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # self-locating — works 
 cd "$DIR"
 
 base="$(cd "$DIR/.." && pwd)"
-# STOP before any work when a drive is missing (owner 2026-09-23: "that way i don't waste time")
+# A missing drive PAUSES before any work: reconnect, Enter to retry, q to close (owner 2026-09-23)
 python3 "$base/shared/paths.py" --require accounting --for "sync-ap (the Bill Tracker)" || exit 2
 
 # exec so the viewer's exit code propagates straight through to the caller.
