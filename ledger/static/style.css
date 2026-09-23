@@ -541,7 +541,7 @@ td .cell:hover { background: color-mix(in srgb, var(--accent) 16%, transparent);
 .rw-val { text-align: right; font-variant-numeric: tabular-nums; }
 /* recent-touch log */
 .rep-log { display: flex; flex-direction: column; }
-.rep-touch { display: grid; grid-template-columns: 60px 1fr; gap: 10px; padding: 5px 0; border-bottom: 1px solid var(--border); font-size: .86em; }
+.rep-touch { display: grid; grid-template-columns: max-content 1fr; gap: 10px; padding: 5px 0; border-bottom: 1px solid var(--border); font-size: .86em; }
 .rt-date { color: var(--text-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .rt-body { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .rt-cust { font-weight: 600; }
@@ -1181,7 +1181,6 @@ html[data-theme="dark"] .acct-pill.info { color: color-mix(in srgb, var(--accent
 #acctTable { table-layout: fixed; }
 #acctTable th, #acctTable td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: top; line-height: 1.4; }
 #acctTable th.audit-soft, #acctTable td.audit-soft { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: break-word; }
-#acctTable .acct-pill { white-space: normal; font-size: .8em; }
 #acctTable td.audit-dim { color: var(--text-dim); }
 #acctTable th.acct-check, #acctTable td.acct-check { text-align: center; overflow: visible; padding-left: 4px; padding-right: 4px; }
 #acctTable .acct-check input { cursor: pointer; margin: 0; vertical-align: middle; }
@@ -1938,3 +1937,31 @@ tr.qa-repair > td { background: var(--surface-2); padding: 8px 14px 12px 28px; w
 table.qa-repair-tbl { border-collapse: collapse; width: auto; }
 table.qa-repair-tbl th, table.qa-repair-tbl td { padding: 3px 12px 3px 0; border: 0; background: transparent; }
 table.qa-repair-tbl th { font-weight: 600; color: var(--text-dim); font-size: .85em; }
+
+/* vendor Payments: the client invoice behind each bill (owner 2026-09-23) - colour encodes paid / not paid only */
+.vp-inv { white-space: nowrap; font-size: .9em; }
+.stub-pill.vp-inv-paid { background: color-mix(in srgb, var(--pos) 14%, transparent); color: var(--pos); }
+.stub-pill.vp-inv-open { background: color-mix(in srgb, #b7791f 16%, transparent); color: var(--warn-text); }
+
+/* Bills to fix: the four groups are the main filter (owner 2026-09-23) - big, one line, the count first */
+.acct-help { margin: 0 0 8px; }
+.acct-help summary { cursor: pointer; color: var(--text-dim); list-style: none; width: fit-content; font-size: .95em; }
+.acct-help summary::-webkit-details-marker { display: none; }
+.acct-groups { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 4px 0 12px; }
+.acct-group { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; text-align: left; padding: 10px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text); cursor: pointer; font-family: var(--font); }
+.acct-group:hover { border-color: var(--accent); }
+.acct-group.on { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
+.acct-group .ag-n { font-size: 1.5em; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.acct-group .ag-l { font-weight: 600; }
+.acct-group .ag-w { font-size: .8em; color: var(--text-dim); }
+@media (max-width: 720px) { .acct-groups { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+#acctTable tr.acct-band td { font-weight: 600; padding: 8px; background: var(--surface-2); cursor: pointer; }
+.acct-band-n { margin-left: 10px; font-weight: 400; color: var(--text-dim); font-size: .9em; }
+
+/* every pill / tag stays on ONE line, everywhere (owner 2026-09-23: "fix these tags, it always cuts out ... it still needs fix for all") */
+.pill, .stub-pill, .qa-flag, .wr-mark, .wr-badge, .acct-pill, .acct-src, .rr-src, .rr-saved, .vg-tag, .proj-grid .tag,
+.vtype, .pl-step, .notion-link, .wr-tie, .acct-chip { white-space: nowrap; }
+/* a narrow window scrolls the table sideways instead of crushing the two text columns to a few letters a line */
+#acctTable { min-width: 1340px; }
+#acctTable th:nth-last-child(-n+2), #acctTable td:nth-last-child(-n+2) { min-width: 220px; }
+#acctTable tr.acct-band td { min-width: 0; }

@@ -235,18 +235,18 @@ const NAV_GROUPS = [
   { id: "projects",  label: "Projects",  tabs: ["projects"] },
   { id: "vendors",   label: "Vendors",   tabs: ["bills", "vendorcenter"] },
   { id: "customers", label: "Customers", tabs: ["invoices", "customercenter", "payments", "sales"] },
-  { id: "company",   label: "Company",   tabs: ["money", "qboaudit"] },
+  { id: "company",   label: "Company",   tabs: ["money", "billaudit", "qboaudit"] },   // the two audits are two pages (owner 2026-09-23)
   { id: "tools",     label: "Tools",     tabs: ["wipreview", "review", "console", "systems"], hidden: true },   // from the gear, not the bar
 ];
 const TAB_LABELS = {
   projects: "Projects", bills: "Bill Tracker", vendorcenter: "Vendor Center", invoices: "Invoice Tracker", customercenter: "Customer Center",
-  payments: "Payments received", sales: "Sales pipeline", money: "Money", qboaudit: "QBO Audit",
+  payments: "Payments received", sales: "Sales pipeline", money: "Money", billaudit: "Bills to fix", qboaudit: "QBO changes",
   wipreview: "WIP Review", review: "WIP review", console: "Console", systems: "Systems", paybills: "Pay run", liens: "Lien register",
 };
 const HIDDEN_TAB_GROUP = { paybills: "vendors", liens: "vendors" };   // pages without a sub-tab (opened from the Bill Tracker): the Vendors group stays lit
 // old tab -> the page it lives on now (where the old tab became a section, its id is the old name and setTab scrolls to it)
 const TAB_ALIAS = { overview: "projects", home: "projects", wip: "projects", pnl: "projects", draws: "projects",
-                    clients: "invoices", customers: "customercenter", vendors: "vendorcenter", accounting: "qboaudit",
+                    clients: "invoices", customers: "customercenter", vendors: "vendorcenter", accounting: "billaudit",
                     health: "money", subloc: "money", costs: "money", graph: "systems",
                     rpreview: "review" };   // the RP review became the per-division WIP review (2026-09-15)
 const KNOWN_TABS = new Set([...NAV_GROUPS.flatMap(g => g.tabs), ...Object.keys(HIDDEN_TAB_GROUP)]);
@@ -278,7 +278,7 @@ function setTab(t) {
   if (!KNOWN_TABS.has(t)) t = "projects";
   activeTab = t;
   try { localStorage.setItem("proficient-ledger-tab", t); } catch { /* ignore */ }
-  { const rv = $("#recordView"); if (rv) rv.hidden = true; }   // leaving a record view when a tab is picked
+  { const rv = $("#recordView"); if (rv) { if (!rv.hidden) _recSave(null); rv.hidden = true; } }   // leaving a record view when a tab is picked (a refresh no longer reopens it)
   $$(".tab-page").forEach(p => { p.hidden = p.dataset.tab !== t; });
   const g = groupOf(t);
   $$("#groupbar .tab").forEach(b => b.classList.toggle("active", b.dataset.group === g.id));
@@ -287,7 +287,8 @@ function setTab(t) {
   if (t === "projects") renderPnl();          // the P&L by job fold (server-computed, cached until the next load)
   if (t === "customercenter") renderCustomers();
   if (t === "payments") renderPayments();
-  if (t === "qboaudit") { loadAccounting(); loadQboAudit(); }
+  if (t === "billaudit") loadAccounting();
+  if (t === "qboaudit") loadQboAudit();
   if (t === "money") { loadHealth(); renderPnl(); }
   if (t === "wipreview") loadWipReview();
   if (t === "review") loadReview();
@@ -2104,6 +2105,7 @@ const _vendorBillOpen = new Set();
 async function openVendorPage(vendor) {
   if (_ppLeaveBlocked()) return;   // unsaved pay ticks on the project page: Save or Discard first
   openRecord(vendor, "loading…"); skeletonInto($("#recordBody"), 6);
+  _recSave({ k: "vendor", id: vendor, view: "bills" });
   const body = $("#recordBody");
   _vendorData = null; _vendorType = "all"; _vendorView = "bills"; _vendorInv = "any"; _vendorQ = ""; _vendorProj = ""; _vendorDate = null; _vendorBillOpen.clear();
   hfClear("vendorBills"); _stubSel.clear(); _vendorProjOpen = false; _vendorProjIdx = -1;   // nothing carries over from the last vendor
@@ -2128,7 +2130,7 @@ function renderVendorPage() {
   const vseg = document.createElement("div"); vseg.className = "seg vendor-seg";
   for (const [k, lbl] of [["bills", `Bills (${d.count})`], ["payments", `Payments (${d.pay_count || 0})`]]) {
     const b = document.createElement("button"); b.type = "button"; b.className = "seg-btn" + (_vendorView === k ? " on" : ""); b.textContent = lbl;
-    b.onclick = () => { _vendorView = k; renderVendorPage(); }; vseg.appendChild(b);
+    b.onclick = () => { _vendorView = k; _recSave({ k: "vendor", id: d.vendor, view: k }); renderVendorPage(); }; vseg.appendChild(b);
   }
   { const wrap = document.createElement("span"); wrap.className = "vp-projwrap";
     const pj = document.createElement("input"); pj.type = "search"; pj.id = "vpProj"; pj.className = "msel-search vendor-proj"; pj.value = _vendorProj; pj.placeholder = "Project #"; pj.autocomplete = "off";
@@ -2372,7 +2374,7 @@ async function _renderVendorPayments(d, body, seq) {
   const pays = (d.payments || []).filter(p => (!_vendorDate || !_vendorDate.active() || _vendorDate.passes(p.txn_date))
     && (!_vendorProj.trim() || _vq(_vendorProj, [...(p.projects || []), ...(p.projects || []).map(nameOf)]))
     && _vq(_vendorQ, [p.ref_no, fmtDateShort(p.txn_date), p.txn_date, p.pay_type === "CreditCard" ? "credit card" : p.pay_type, ...(p.clients || []), ...(p.projects || []),
-    ...(p.bills || []).map(b => b.bill_ref), Math.round(num(p.total_amt)), money(p.total_amt), p.voided ? "voided" : "", p.memo]));
+    ...(p.bills || []).map(b => b.bill_ref), ...(p.bills || []).map(b => b.bill_date ? fmtDateShort(b.bill_date) : ""), Math.round(num(p.total_amt)), money(p.total_amt), p.voided ? "voided" : "", p.memo]));
   { const visible = new Set(pays.map(p => String(p.qbo_txn_id))); for (const id of [..._stubSel]) if (!visible.has(id)) _stubSel.delete(id); }   // a pick you can't see is not a pick
   const byPay = new Map(); for (const h of _stubHist.prints) { if (!byPay.has(h.payment_id)) byPay.set(h.payment_id, []); byPay.get(h.payment_id).push(h); }
   // toolbar: the column picker + the multi-print button (lives on the selection)
@@ -2393,7 +2395,7 @@ async function _renderVendorPayments(d, body, seq) {
     all.checked = printable.length > 0 && printable.every(id => _stubSel.has(id));
     all.onchange = () => { if (all.checked) printable.forEach(id => _stubSel.add(id)); else printable.forEach(id => _stubSel.delete(id)); renderVendorPage(); };
     th.appendChild(all); htr.appendChild(th); }
-  for (const [c, al] of [["Ref / cheque #", "left"], ["Date", "left"], ["Type", "left"], ["Client", "left"], ["Amount", "right"], ["Stub", "left"]]) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
+  for (const [c, al] of [["Ref / cheque #", "left"], ["Date", "left"], ["Type", "left"], ["Client", "left"], ["Client invoice", "left"], ["Amount", "right"], ["Stub", "left"]]) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
   thead.appendChild(htr);
   for (const p of pays) {
     const pid = String(p.qbo_txn_id);
@@ -2410,6 +2412,7 @@ async function _renderVendorPayments(d, body, seq) {
     tr.appendChild(leftText(fmtDateShort(p.txn_date)));
     tr.appendChild(leftText(p.pay_type === "CreditCard" ? "Credit card" : (p.pay_type || "–")));
     { const cl = p.clients || []; const cc = leftText(cl.slice(0, 4).join(", ") + (cl.length > 4 ? ` +${cl.length - 4} more` : "") || (p.voided ? "" : "–")); if (!cl.length) cc.classList.add("dim"); cc.title = cl.join(", "); tr.appendChild(cc); }
+    tr.appendChild(_vpInvTally(p.bills || []));
     { const amt = document.createElement("td"); if (p.voided) { const z = document.createElement("span"); z.className = "cell dim"; z.textContent = "voided"; amt.appendChild(z); } else amt.appendChild(moneyCell(p.total_amt)); tr.appendChild(amt); }
     { const sc = document.createElement("td"); sc.className = "left vp-stub"; const hist = byPay.get(pid) || [];
       if (!p.voided) { const b = document.createElement("button"); b.type = "button"; b.className = "btn tiny"; b.textContent = hist.length ? "Print again" : "Print stub";
@@ -2422,14 +2425,15 @@ async function _renderVendorPayments(d, body, seq) {
     tbody.appendChild(tr);
     // the expansion: one row per bill this payment paid (bill # -> QuickBooks, its project, its client, the amount applied)
     const bl = p.bills || [];
-    if (!bl.length && !p.voided) { const br = document.createElement("tr"); br.className = "vp-bill"; const td = document.createElement("td"); td.colSpan = 7; td.className = "left dim"; td.textContent = p.n_bills ? `${p.n_bills} bill${p.n_bills === 1 ? "" : "s"} (details not loaded - run the AP sync)` : "no bills on this payment"; br.appendChild(td); tbody.appendChild(br); }
+    if (!bl.length && !p.voided) { const br = document.createElement("tr"); br.className = "vp-bill"; const td = document.createElement("td"); td.colSpan = 8; td.className = "left dim"; td.textContent = p.n_bills ? `${p.n_bills} bill${p.n_bills === 1 ? "" : "s"} (details not loaded - run the AP sync)` : "no bills on this payment"; br.appendChild(td); tbody.appendChild(br); }
     for (const b of bl) {
       const br = document.createElement("tr"); br.className = "vp-bill";
       br.appendChild(document.createElement("td"));
       { const td = document.createElement("td"); td.className = "left"; const a = document.createElement("a"); a.href = qboUrl("bill", b.bill_id); a.target = "_blank"; a.rel = "noopener"; a.className = "qbo-link"; a.textContent = b.bill_ref || ("bill " + b.bill_id); a.title = "Open this bill in QuickBooks"; td.appendChild(a); br.appendChild(td); }
-      br.appendChild(leftText(""));
+      { const dc = leftText(b.bill_date ? fmtDateShort(b.bill_date) : "–"); dc.title = "Bill date"; if (!b.bill_date) dc.classList.add("dim"); br.appendChild(dc); }   // the bill's own date (owner 2026-09-23)
       br.appendChild(_vpProjCell(b.projects || []));
       { const cl = b.clients || []; const cc = leftText(cl.join(", ") || "–"); if (!cl.length) cc.classList.add("dim"); br.appendChild(cc); }
+      br.appendChild(_vpInvCell(b));
       { const td = document.createElement("td"); td.appendChild(moneyCell(b.amount)); br.appendChild(td); }
       br.appendChild(document.createElement("td"));
       tbody.appendChild(br);
@@ -2437,6 +2441,35 @@ async function _renderVendorPayments(d, body, seq) {
   }
   table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table); body.appendChild(scroll);
   _renderStubOrphans(body, d.payments || [], byPay);   // "no longer in the list" = not in the vendor's payments at all, never "filtered out"
+}
+// The client invoice a bill is billed through and whether the client paid it (owner 2026-09-23: "also show the
+// invoice paid status"). Live from QuickBooks' invoice when the ledger has it, else the Bill Tracker's paid date.
+const VP_INV_OTHER = {
+  awaiting: ["Not invoiced yet", "On the Bill Tracker as Awaiting Invoice - not billed to the client yet"],
+  noproject: ["No project #", "The bill carries no project #, so no client invoice"],
+  untracked: ["Not tracked", "Not on the Bill Tracker (older bills, subs, overhead) - no client invoice on file"],
+};
+function _vpInvCell(b) {
+  const td = document.createElement("td"); td.className = "left vp-inv";
+  if (!b.invoice_state || VP_INV_OTHER[b.invoice_state]) {
+    const [t, tip] = VP_INV_OTHER[b.invoice_state] || ["–", "No client invoice on file"];
+    if (b.invoice_state === "awaiting") { const pill = document.createElement("span"); pill.className = "stub-pill vp-inv-open"; pill.textContent = t; td.appendChild(pill); }
+    else { td.textContent = t; td.classList.add("dim"); }
+    td.title = tip; return td;
+  }
+  const pill = document.createElement("span"); pill.className = "stub-pill " + (b.invoice_state === "paid" ? "vp-inv-paid" : "vp-inv-open");
+  pill.textContent = b.invoice_state === "paid" ? "Paid" + (b.invoice_paid_on ? " " + fmtDateShort(b.invoice_paid_on) : "") : "Not paid";
+  if (b.invoice_no) { const n = document.createElement("span"); n.textContent = "#" + b.invoice_no + " "; td.appendChild(n); }
+  td.appendChild(pill); td.title = b.invoice_state === "paid" ? "The client paid this invoice" : "The client has not paid this invoice yet";
+  return td;
+}
+function _vpInvTally(bills) {
+  const withInv = bills.filter(b => b.invoice_state === "paid" || b.invoice_state === "open" || b.invoice_state === "awaiting"), paid = withInv.filter(b => b.invoice_state === "paid").length;
+  const td = document.createElement("td"); td.className = "left vp-inv";
+  if (!withInv.length) { td.textContent = bills.length ? "–" : ""; td.classList.add("dim"); return td; }
+  const pill = document.createElement("span"); pill.className = "stub-pill " + (paid === withInv.length ? "vp-inv-paid" : "vp-inv-open");
+  pill.textContent = paid === withInv.length ? (withInv.length === 1 ? "Paid" : `All ${paid} paid`) : `${paid} of ${withInv.length} paid`;
+  td.appendChild(pill); return td;
 }
 // Stubs printed for payments the ledger's payment list no longer carries (deleted or voided in QuickBooks, or outside
 // this year's window): the history keeps the stub as printed, so they are listed here, never lost.
@@ -3518,6 +3551,7 @@ async function openProjectPage(pn) {
   pn = String(pn).toUpperCase();
   if (_ppLeaveBlocked()) return;   // unsaved pay ticks on the page that is open: Save or Discard first
   const r0 = (ALL || []).find(x => x.project_no === pn) || {};
+  _recSave({ k: "project", id: pn });
   openRecord(pn + (r0.project_name ? " · " + r0.project_name : ""), [r0.division, r0.status ? "WIP status " + r0.status : ""].filter(Boolean).join(" · "));
   const body = $("#recordBody"); body.innerHTML = ""; skeletonInto(body, 6);
   let d;
@@ -4718,6 +4752,7 @@ async function openClientPage(client) {
   client = String(client || "").trim(); if (!client) return;
   if (_ppLeaveBlocked()) return;   // unsaved pay ticks on the project page: Save or Discard first
   openRecord(client, "loading…");
+  _recSave({ k: "client", id: client });
   const anyOpen = (OI.invoices || []).some(i => (i.customer || "") === client && oiBal(i) > 0.005);
   _cp = { client, scope: anyOpen ? "open" : "all", group: true };   // nothing open -> start on every invoice, not an empty page
   renderClientPage();
@@ -6283,6 +6318,19 @@ window.addEventListener("popstate", () => {
   if (activeTab === "review" && typeof rrOpenLine !== "undefined" && rrOpenLine) { rrOpenLine = null; rrRenderCards(); window.scrollTo(0, 0); }
 });
 
+// A refresh reopens the page you were on (owner 2026-09-23: "why can't it remember where i was when i click
+// refresh in the sub menus?"). The tab was always kept (localStorage); an opened vendor / project / client page
+// and the vendor page's Bills | Payments view were not. Kept per browser tab (sessionStorage), cleared on Back.
+const REC_SS = "proficient-ledger-record";
+function _recSave(rec) { try { if (rec) sessionStorage.setItem(REC_SS, JSON.stringify(rec)); else sessionStorage.removeItem(REC_SS); } catch { /* private window */ } }
+function _recLoad() { try { return JSON.parse(sessionStorage.getItem(REC_SS) || "null"); } catch { return null; } }
+async function _recRestore(r) {
+  if (!r || !r.id) return;
+  if (r.k === "vendor") { await openVendorPage(r.id); if (r.view && r.view !== _vendorView && _vendorData) { _vendorView = r.view; renderVendorPage(); _recSave(r); } }
+  else if (r.k === "project") await openProjectPage(r.id);
+  else if (r.k === "client") await openClientPage(r.id);
+}
+
 function openRecord(title, sub) {
   if (typeof _ppLeaveBlocked === "function" && _ppLeaveBlocked()) return false;   // an unsaved pay run never walks away with you
   if (!($("#recordView") && !$("#recordView").hidden)) _pushView({ v: "record" });   // one entry per open, not per re-render
@@ -6294,6 +6342,7 @@ function openRecord(title, sub) {
 }
 function closeRecord() {
   if (typeof _ppLeaveBlocked === "function" && _ppLeaveBlocked()) return;
+  _recSave(null);
   const rv = $("#recordView"); if (rv) rv.hidden = true;
   $$(".tab-page").forEach(p => { p.hidden = p.dataset.tab !== activeTab; });
   window.scrollTo(0, 0);
@@ -8012,6 +8061,16 @@ function qaRepairRow(rep, span) {
 // ── Accounting fixes: the Bill Tracker audits, filterable by audit type ───────
 let ACCT = null;            // cached /api/accounting payload
 let acctIssue = null;       // the audit-type filter currently active (null = all)
+// Four groups by WHO fixes it (owner 2026-09-23: "audit needs a ton of work and simplification") - the group is the
+// main filter (one bold line, counts); inside it, one collapsible row per issue with its bills under it.
+const ACCT_GROUPS = [
+  { id: "coding",   label: "Coding",                who: "fix in QuickBooks - the bill clerk" },
+  { id: "approval", label: "Approval",              who: "not approved - PMs / owner" },
+  { id: "po",       label: "Purchase orders",       who: "purchasing" },
+  { id: "tracker",  label: "Tracker vs QuickBooks", who: "on the Bill Tracker, not in QuickBooks" },
+];
+const acctGroupOf = f => /not in qbo/i.test(f.issue || "") ? "tracker" : /not approved/i.test(f.issue || "") ? "approval" : f.group === "PO" ? "po" : "coding";
+let acctGroup = "coding";
 const ACCT_VENDOR_MSEL = { id: "acctVendor", all: "All vendors", get: f => f.vendor || "", search: true, lbl: v => v || "(no vendor)" };
 const acctMSel = {}; let _acctVendorSig = null;
 let acctSel = new Set();    // selected finding keys (f._k) for copy-as-table
@@ -8040,7 +8099,7 @@ function _acctPillClass(issue) {
 // Plain-language "what's shown", not the filter-widget labels (owner 2026-08-28: "tell the user
 // what it's filtering"). Leads with the result count, then the actual values (no "Issue:"/"Class:").
 function acctFilterDesc(shown, total) {
-  const parts = [];
+  const parts = [(ACCT_GROUPS.find(g => g.id === acctGroup) || {}).label];
   if (acctIssue) parts.push(acctIssue);
   const dv = $("#acctDivision") ? $("#acctDivision").value : ""; if (dv) parts.push(dv);
   const q = ($("#acctSearch").value || "").trim(); if (q) parts.push(`matching "${q}"`);
@@ -8087,45 +8146,47 @@ function renderAccounting() {
   }
   const all = ACCT.findings || [];
   if (note) note.textContent = `${all.length} to fix · Bill Tracker audits${syncedAt("sync-ap") ? " · synced " + fmtDate(syncedAt("sync-ap"), true) : ""}`;
-  const counts = ACCT.counts || {};
-  // stat tiles: total + per themed group
-  const groups = {};
-  for (const f of all) groups[f.group] = (groups[f.group] || 0) + 1;
-  stats.innerHTML = "";
-  const tile = (label, val, cls) => { const k = document.createElement("div"); k.className = "kpi" + (cls ? " " + cls : ""); k.innerHTML = `<div class="k-label">${_ge(label)}</div><div class="k-value">${val}</div>`; stats.appendChild(k); };
-  tile("All fixes", all.length, all.length ? "wr-kpi-amber" : "");
-  for (const g of ["Coding", "Bills", "PO"]) if (groups[g]) tile(g, groups[g]);
-  // filter chips by audit type (with counts)
+  // the four groups: the main filter, pronounced (owner 2026-09-23: "make the filter portion more pronounced so i know what im seeing")
+  if (stats) stats.innerHTML = "";
+  const gbox = $("#acctGroups"); gbox.innerHTML = "";
+  const gCount = {}; for (const f of all) { const g = acctGroupOf(f); gCount[g] = (gCount[g] || 0) + 1; }
+  for (const g of ACCT_GROUPS) {
+    const b = document.createElement("button"); b.type = "button"; b.className = "acct-group" + (acctGroup === g.id ? " on" : "");
+    b.innerHTML = `<span class="ag-n">${gCount[g.id] || 0}</span><span class="ag-l">${_ge(g.label)}</span><span class="ag-w">${_ge(g.who)}</span>`;
+    b.onclick = () => { acctGroup = g.id; acctIssue = null; renderAccounting(); };
+    gbox.appendChild(b);
+  }
+  const inGroup = all.filter(f => acctGroupOf(f) === acctGroup);
+  // the issues inside the group, as small chips (only when there is more than one)
   filt.innerHTML = "";
-  const chip = (label, key, n) => {
-    const b = document.createElement("button"); b.className = "acct-chip" + (acctIssue === key ? " active" : "");
-    b.innerHTML = `${_ge(label)} <span class="ac-n">${n}</span>`;
-    b.onclick = () => { acctIssue = acctIssue === key ? null : key; renderAccounting(); };
-    filt.appendChild(b);
-  };
-  chip("All", null, all.length);
-  // two labelled sections (owner 2026-09-02): the BILL audits (Coding + Bills sheets) and the PO audits
-  const issGroup = {}; for (const f of all) issGroup[f.issue] = f.group;
-  const sect = (label) => { const s = document.createElement("span"); s.className = "acct-sect"; s.textContent = label; filt.appendChild(s); };
-  const byCount = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
-  const billIss = byCount.filter(i => issGroup[i] !== "PO"), poIss = byCount.filter(i => issGroup[i] === "PO");
-  if (billIss.length) { sect("Bills"); for (const iss of billIss) chip(iss, iss, counts[iss]); }
-  if (poIss.length) { sect("POs"); for (const iss of poIss) chip(iss, iss, counts[iss]); }
+  const iCount = {}; for (const f of inGroup) iCount[f.issue] = (iCount[f.issue] || 0) + 1;
+  const issues = Object.keys(iCount).sort((a, b) => iCount[b] - iCount[a]);
+  if (acctIssue && !iCount[acctIssue]) acctIssue = null;
+  if (issues.length > 1) {
+    const chip = (label, key, n) => {
+      const b = document.createElement("button"); b.className = "acct-chip" + (acctIssue === key ? " active" : "");
+      b.innerHTML = `${_ge(label)} <span class="ac-n">${n}</span>`;
+      b.onclick = () => { acctIssue = acctIssue === key ? null : key; renderAccounting(); };
+      filt.appendChild(b);
+    };
+    chip("All " + (ACCT_GROUPS.find(g => g.id === acctGroup) || {}).label.toLowerCase(), null, inGroup.length);
+    for (const iss of issues) chip(iss, iss, iCount[iss]);
+  }
   // vendor checkbox filter (same multi-select as the other tabs)
   { const sig = String(all.length); if (sig !== _acctVendorSig || !($("#acctVendorMenu") && $("#acctVendorMenu").querySelector(".msel-opt"))) { _acctVendorSig = sig; buildMSel(ACCT_VENDOR_MSEL, all, acctMSel, renderAccounting); } }
   // division filter
   const dsel = $("#acctDivision");
   if (dsel && dsel.options.length <= 1) for (const d of [...new Set(all.map(f => f.division).filter(Boolean))].sort()) { const o = document.createElement("option"); o.value = d; o.textContent = d; dsel.appendChild(o); }
   const dv = dsel ? dsel.value : "", q = ($("#acctSearch").value || "").trim().toLowerCase();
-  const rows = all.filter(f => (!acctIssue || f.issue === acctIssue) && (!dv || f.division === dv) && mselPasses(f, [ACCT_VENDOR_MSEL], acctMSel)
+  const rows = inGroup.filter(f => (!acctIssue || f.issue === acctIssue) && (!dv || f.division === dv) && mselPasses(f, [ACCT_VENDOR_MSEL], acctMSel)
     && (!q || (f.vendor + " " + f.project + " " + f.bill_no + " " + (f.memo || "") + " " + f.detail).toLowerCase().includes(q)));
   _setHintFilter("accounting", acctFilterDesc(rows.length, all.length));   // count + what's filtered (generic when All)
   if (acctSort.length) rows.sort(_acctCmp);   // multi-column sort (applied before the render cap)
   _acctVisible = rows;
   // fixed meta widths (px) so one long outlier can't blow a column wide (the old wasted
   // space); the two text columns (null width) share the rest and wrap - nothing truncates.
-  const cols = [["Issue", "left audit-soft", 126], ["Vendor", "left audit-soft", 148], ["Bill #", "left", 78],
-    ["📎", "left", 52], ["Date", "left", 104], ["Project", "left", 122], ["Class (QuickBooks)", "left", 124], ["Cost", "left", 64], ["Amount", "right", 92],
+  const cols = [["Vendor", "left audit-soft", 160], ["Bill #", "left", 118],
+    ["📎", "left", 44], ["Date", "left", 112], ["Project", "left", 140], ["Class (QuickBooks)", "left", 124], ["Cost", "left", 64], ["Amount", "right", 92],
     ["Line memo", "left audit-soft", null], ["Why flagged", "left audit-soft", null]];
   thead.innerHTML = ""; const htr = document.createElement("tr");
   const chTh = document.createElement("th"); chTh.className = "left acct-check"; chTh.style.width = "32px";
@@ -8151,17 +8212,27 @@ function renderAccounting() {
     td.textContent = all.length ? "Nothing matches the filters." : "No audit findings - everything's clean.";
     tr.appendChild(td); tbody.appendChild(tr); _acctUpdateSelAll(); _acctUpdateCopyBtn(); _acctUpdateDownloadBtn(); return;
   }
-  const ACCT_CAP = 250;   // render cap - all ~1900 rows (each w/ a checkbox + scan button) crashed the tab
+  const ACCT_CAP = 150;   // render cap PER issue - all ~1900 rows (each w/ a checkbox + scan button) crashed the tab
   const frag = document.createDocumentFragment();
-  for (const f of rows.slice(0, ACCT_CAP)) {
+  // one collapsible band per issue (GRP_KINDS tr.bill-group), its bills under it - the issue is said ONCE, not squeezed into every row
+  // every issue gets its band; the render cap applies PER issue (a total cap hid whole issues past the first 250 rows)
+  const byIssue = new Map();
+  for (const f of rows) { if (!byIssue.has(f.issue)) byIssue.set(f.issue, []); byIssue.get(f.issue).push(f); }
+  const allByIssue = {}; for (const [iss, l] of byIssue) allByIssue[iss] = l.length;
+  const bands = [...byIssue.entries()].sort((a, b) => b[1].length - a[1].length);
+  for (const [iss, full] of bands) {
+  const list = full.slice(0, ACCT_CAP);
+  { const hr = document.createElement("tr"); hr.className = "bill-group acct-band"; hr.dataset.grpkey = "acct:" + iss;
+    const td = document.createElement("td"); td.colSpan = cols.length + 1; td.className = "left";
+    const k = document.createElement("span"); k.className = "bg-key"; k.textContent = iss; td.appendChild(k);
+    const n = document.createElement("span"); n.className = "acct-band-n"; n.textContent = `${allByIssue[iss]} bill${allByIssue[iss] === 1 ? "" : "s"}`; td.appendChild(n);
+    hr.appendChild(td); frag.appendChild(hr); }
+  for (const f of list) {
     const tr = document.createElement("tr");
     const chTd = document.createElement("td"); chTd.className = "left acct-check";
     const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = acctSel.has(f._k);
     cb.onchange = () => { if (cb.checked) acctSel.add(f._k); else acctSel.delete(f._k); _acctUpdateSelAll(); _acctUpdateCopyBtn(); _acctUpdateDownloadBtn(); };
     chTd.appendChild(cb); tr.appendChild(chTd);
-    const ic = document.createElement("td"); ic.className = "left audit-soft";
-    { const src = document.createElement("span"); src.className = "acct-src " + (f.group === "PO" ? "po" : "bill"); src.textContent = f.group === "PO" ? "PO" : "Bill"; src.title = f.group === "PO" ? "A purchase-order finding (Audit - PO)" : `A bill finding (Audit - ${f.group})`; ic.appendChild(src); }
-    const pill = document.createElement("span"); pill.className = "acct-pill " + _acctPillClass(f.issue); pill.textContent = f.issue; ic.appendChild(pill); tr.appendChild(ic);
     const vc = leftText(f.vendor || "–"); vc.classList.add("audit-soft"); tr.appendChild(vc);
     tr.appendChild(qboLinkCell(f.bill_no, f.url, "Open this bill in QuickBooks"));
     const sc = document.createElement("td"); sc.className = "left";
@@ -8184,13 +8255,14 @@ function renderAccounting() {
     const dc = document.createElement("td"); dc.className = "left audit-soft"; dc.textContent = f.detail || ""; tr.appendChild(dc);
     frag.appendChild(tr);
   }
-  tbody.appendChild(frag);
-  if (rows.length > ACCT_CAP) {
+  if (full.length > ACCT_CAP) {
     const tr = document.createElement("tr"), td = document.createElement("td");
-    td.colSpan = cols.length + 1; td.className = "left"; td.style.cssText = "padding:12px 14px;color:var(--text-dim)";
-    td.textContent = `Showing the first ${ACCT_CAP} of ${rows.length} - narrow with a chip, division, or the search above (Copy still takes all ${rows.length}).`;
-    tr.appendChild(td); tbody.appendChild(tr);
+    td.colSpan = cols.length + 1; td.className = "left"; td.style.cssText = "padding:10px 14px;color:var(--text-dim)";
+    td.textContent = `Showing the first ${ACCT_CAP} of ${full.length} - narrow with the division, vendor or search above (Copy still takes all ${full.length}).`;
+    tr.appendChild(td); frag.appendChild(tr);
   }
+  }
+  tbody.appendChild(frag);
   _acctUpdateSelAll(); _acctUpdateCopyBtn(); _acctUpdateDownloadBtn();
 }
 
@@ -8502,6 +8574,7 @@ function init() {
   buildGroupBar();   // the two views (sub-tabs render on setTab)
   initFolds();
   syncProjChips();
+  const bootRec = _recLoad();   // read BEFORE the first setTab (which clears it)
   let savedTab = "projects";
   try { savedTab = localStorage.getItem("proficient-ledger-tab") || "projects"; } catch { /* ignore */ }
   if (["wipreview", "rpreview", "review", "console", "systems"].includes(savedTab)) savedTab = "projects";   // tool pages never reopen on their own
@@ -8514,7 +8587,7 @@ function init() {
   $("#overlay").onclick = closePanels;
   document.addEventListener("keydown", e => { if (e.key === "Escape") closePanels(); });
   matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { if (settings.theme === "auto") applySettings(); });
-  load();
+  Promise.resolve(load()).then(() => _recRestore(bootRec)).catch(() => { /* the tab still shows */ });
 }
 init();
 

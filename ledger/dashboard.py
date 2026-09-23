@@ -1697,7 +1697,7 @@ def _fetch_vendor(con, vendor: str) -> dict:
     try:
         rows = con.execute(
             "SELECT bill_ref, bill_date, project_no, division, description, line_amount, bill_total, "
-            "open_balance, pay_status, pay_date, gc_paid_date, matched_invoice, invoice_no, qbo_link "
+            "open_balance, pay_status, pay_date, gc_paid_date, matched_invoice, invoice_no, qbo_link, invoice_status "
             "FROM ap_bill_line WHERE vendor = ? ORDER BY bill_date DESC, bill_ref", (vendor,)).fetchall()
     except sqlite3.OperationalError as e:                    # noqa: BLE001
         return {"ok": False, "error": str(e), "bills": []}
@@ -1714,6 +1714,7 @@ def _fetch_vendor(con, vendor: str) -> dict:
                 "bill_ref": r["bill_ref"], "bill_date": r["bill_date"], "bill_total": r["bill_total"],
                 "open_balance": r["open_balance"], "pay_status": r["pay_status"], "pay_date": r["pay_date"],
                 "gc_paid": r["gc_paid_date"], "invoice_no": r["invoice_no"], "matched_invoice": r["matched_invoice"],
+                "invoice_status": r["invoice_status"],
                 "qbo_link": r["qbo_link"], "lines": [], "_projs": set(),
                 "att": _att_counts(con).get(("Bill", str(bill_marks.bill_id_from_link(r["qbo_link"]) or "")), 0)}
         b["lines"].append({"project_no": r["project_no"], "division": r["division"],
@@ -1750,23 +1751,78 @@ def _fetch_vendor(con, vendor: str) -> dict:
         # need to see the bill paid and the project"). A bill id resolves through cost_line (subs included)
         # or, failing that, the Bill Tracker row's QuickBooks link.
         bill_meta: dict = {}
-        for r in con.execute(f"SELECT qbo_txn_id, {doc} doc_number, project_no FROM cost_line WHERE vendor = ? "
-                             "GROUP BY qbo_txn_id, project_no", (vendor,)):
-            e = bill_meta.setdefault(str(r["qbo_txn_id"]), {"bill_ref": r["doc_number"], "projects": []})
+        for r in con.execute(f"SELECT qbo_txn_id, {doc} doc_number, project_no, MAX(txn_date) txn_date FROM cost_line "
+                             "WHERE vendor = ? GROUP BY qbo_txn_id, project_no", (vendor,)):
+            e = bill_meta.setdefault(str(r["qbo_txn_id"]), {"bill_ref": r["doc_number"], "projects": [],
+                                                              "bill_date": r["txn_date"]})
             if r["project_no"] and r["project_no"] not in e["projects"]:
                 e["projects"].append(r["project_no"])
+        inv_of: dict = {}   # bill id -> the client invoice (draw) it is billed through, from the Bill Tracker
         for b in out:
             bid = bill_marks.bill_id_from_link(b.get("qbo_link"))
             if bid and bid not in bill_meta:
-                bill_meta[bid] = {"bill_ref": b["bill_ref"], "projects": list(b["projects"])}
+                bill_meta[bid] = {"bill_ref": b["bill_ref"], "projects": list(b["projects"]),
+                                  "bill_date": b.get("bill_date")}
+            if bid:
+                inv_of[bid] = {"invoice_no": b.get("invoice_no"), "gc_paid": b.get("gc_paid"),
+                               "tracker_status": b.get("invoice_status"), "tracked": True}
+        # the invoice's LIVE state from QuickBooks (billing_event), over the Bill Tracker's last word
+        inv_live: dict = {}
+        nos = sorted({str(v["invoice_no"]) for v in inv_of.values() if v.get("invoice_no")})
+        for i in range(0, len(nos), 500):
+            chunk = nos[i:i + 500]
+            for r in con.execute(f"SELECT doc_number, status, balance, paid_date FROM billing_event WHERE doc_number IN "
+                                 f"({','.join('?' * len(chunk))})", chunk):
+                inv_live[str(r["doc_number"])] = {"status": r["status"], "balance": r["balance"], "paid_date": r["paid_date"]}
         lines_by_pay: dict = {}
-        for r in con.execute("SELECT l.payment_id, l.bill_id, l.amount FROM bill_payment_line l "
-                             "JOIN bill_payment p ON p.qbo_txn_id = l.payment_id WHERE p.vendor = ?", (vendor,)):
+        pay_lines = con.execute("SELECT l.payment_id, l.bill_id, l.amount FROM bill_payment_line l "
+                                "JOIN bill_payment p ON p.qbo_txn_id = l.payment_id WHERE p.vendor = ?", (vendor,)).fetchall()
+        # the bill's own date (owner 2026-09-23: "i need the bill dates on the payments") - a bill neither the
+        # cost lines nor the Bill Tracker know (overhead, not job-costed) is read from the QBO mirror
+        need = {str(r["bill_id"]) for r in pay_lines if r["bill_id"] and not bill_meta.get(str(r["bill_id"]), {}).get("bill_date")}
+        if need:
+            try:
+                from shared import qbo_mirror
+                if qbo_mirror.db_path().exists():
+                    mcon = qbo_mirror.connect()
+                    try:
+                        ids = sorted(need)
+                        for i in range(0, len(ids), 500):
+                            chunk = ids[i:i + 500]
+                            for mr in mcon.execute(f"SELECT id, txn_date, doc_number FROM qbo_bill WHERE id IN "
+                                                   f"({','.join('?' * len(chunk))})", chunk):
+                                e = bill_meta.setdefault(str(mr[0]), {"bill_ref": mr[2], "projects": []})
+                                e["bill_date"] = mr[1]
+                                e["bill_ref"] = e.get("bill_ref") or mr[2]
+                    finally:
+                        mcon.close()
+            except Exception:                           # noqa: BLE001 - no mirror = the date stays blank
+                pass
+        for r in pay_lines:
             m = bill_meta.get(str(r["bill_id"]), {})
             projs = sorted(m.get("projects", []))
+            iv = inv_of.get(str(r["bill_id"])) or {}
+            live = inv_live.get(str(iv.get("invoice_no") or "")) or {}
+            ts = str(iv.get("tracker_status") or "")
+            if live:
+                inv_state = "paid" if live.get("status") == "Paid" else "open"
+                inv_paid_on = live.get("paid_date") or iv.get("gc_paid")
+            elif iv.get("gc_paid"):
+                inv_state, inv_paid_on = "paid", iv.get("gc_paid")
+            elif iv.get("invoice_no"):
+                inv_state, inv_paid_on = "open", None
+            elif ts.lower().startswith("awaiting invoice"):
+                inv_state, inv_paid_on = "awaiting", None   # on the Bill Tracker, not billed to the client yet
+            elif ts.lower().startswith("no project"):
+                inv_state, inv_paid_on = "noproject", None
+            elif iv.get("tracked"):
+                inv_state, inv_paid_on = "open" if ts else None, None
+            else:
+                inv_state, inv_paid_on = "untracked", None  # not on the Bill Tracker (older bills, subs, overhead)
             lines_by_pay.setdefault(r["payment_id"], []).append({
-                "bill_id": r["bill_id"], "bill_ref": m.get("bill_ref"), "projects": projs,
-                "clients": sorted({proj_customer[p] for p in projs if proj_customer.get(p)}), "amount": r["amount"]})
+                "bill_id": r["bill_id"], "bill_ref": m.get("bill_ref"), "bill_date": m.get("bill_date"), "projects": projs,
+                "clients": sorted({proj_customer[p] for p in projs if proj_customer.get(p)}), "amount": r["amount"],
+                "invoice_no": iv.get("invoice_no"), "invoice_state": inv_state, "invoice_paid_on": inv_paid_on})
         for p in payments:
             p["bills"] = lines_by_pay.get(p["qbo_txn_id"], [])
             p["projects"] = sorted({x for b in p["bills"] for x in b["projects"]})

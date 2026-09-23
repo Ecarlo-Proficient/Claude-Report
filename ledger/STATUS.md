@@ -4,6 +4,27 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-23 · **Bills to fix, simplified: four groups by who fixes it** (owner: "build it with those four groups" /
+  "fix these tags, it always cuts out ... make the filter portion more pronounced"). The groups are the main filter - one
+  line of four big buttons, count first, who fixes it underneath: Coding (the bill clerk) · Approval · Purchase orders ·
+  Tracker vs QuickBooks; opens on Coding. Inside a group: the issue chips (only when 2+), then ONE collapsible band per
+  issue with its bills under it - the Issue column and its pill are gone from the rows (the issue is said once). The
+  render cap is per issue (a total cap hid whole issues). The explanation sits behind an (i). A narrow window scrolls the
+  table sideways instead of crushing the memo / why-flagged text. Every pill / tag in the app is `white-space: nowrap`
+  (the table had forced the issue pill to wrap). "On tracker, not in QBO" carries group PO in the data - the issue decides.
+- 2026-09-23 · **Company: the two audits are two pages** (owner: "i have to scroll past the deleted section just to
+  get to the bill audit") - Company = Money · Bills to fix · QBO changes; `accounting` alias -> Bills to fix. Also: the
+  Sales "Recent touches" date column sized to the date (a fixed 60px was made for 2-digit years; mm/dd/yyyy ran into the name).
+- 2026-09-23 · **Vendor Payments: client-invoice status per bill + a refresh reopens where you were** (owner: "also show
+  the invoice paid status" / "why can't it remember where i was when i click refresh in the sub menus?"). New Client
+  invoice column: each bill = its invoice # + Paid <date> / Not paid (live from billing_event, else the Bill Tracker's
+  paid date), or Not invoiced yet / No project # / Not tracked (older bills, subs, overhead - not on the Bill Tracker);
+  the payment row tallies "n of m paid". Refresh: the tab was always kept; an opened vendor / project / client page and
+  the vendor Bills | Payments view now are too (sessionStorage, per browser tab), reopened after the first load and
+  cleared on Back or when another tab is picked.
+- 2026-09-23 · **Vendor page Payments: each bill shows its bill date** (owner: "i need the bill dates on the payments of
+  the vendors"). The bill row under a payment fills the Date column with the bill's own date - from cost_line, else
+  the Bill Tracker row, else the QBO mirror's Bill (overhead bills that are not job-costed). Searchable too.
 - 2026-09-23 · **After a Sync: a "WIP updated ✓" page, not the old review** (owner: "why does it go back and show the
   page before i clicked sync? did my changes land?" / "an after-sync page that shows a check and a summary of all
   changes"). The review JSON is the pre-write state, and the saved choices restored it click for click - so a Sync
