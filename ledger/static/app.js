@@ -7786,8 +7786,9 @@ function renderQboAudit() {
     k.querySelector(".k-label").textContent = label; k.querySelector(".k-value").textContent = val; k.querySelector(".k-sub").textContent = sub || ""; stats.appendChild(k); };
   const dels = all.filter(c => c.kind === "deleted");
   tile("Deleted", dels.length, dels.length ? money(dels.reduce((s, c) => s + num(c.total_before), 0)) + " of transactions" : "nothing deleted", dels.length > 0);
-  tile("Paid bills deleted", fc["deleted paid bill"] || 0, "their payment lost that bill", !!fc["deleted paid bill"]);
-  tile("Payments unapplied", fc["payment unapplied"] || 0, "a payment lost bills - they reopen", !!fc["payment unapplied"]);
+  tile("Paid bills deleted", fc["deleted paid bill"] || 0, "the check that paid it lost EVERY bill on it", !!fc["deleted paid bill"]);
+  { const reps = all.filter(c => c.repair && c.repair.left), owed = reps.reduce((s, c) => s + num(c.repair.to_apply), 0);
+    tile("Checks to re-apply", reps.length, reps.length ? money(owed) + " of bills to put back" : "none waiting", reps.length > 0); }
   tile("Reopened", fc["reopened"] || 0, "a paid bill or invoice open again", !!fc["reopened"]);
   tile("Voided", fc["voided"] || 0, "", false);
   tile("Edited", kc.edited || 0, "any change to a record on file", false);
@@ -7812,6 +7813,13 @@ function renderQboAudit() {
     { const td = document.createElement("td"); td.className = "left qa-what";
       if (!c.flags.length) { const s = document.createElement("span"); s.className = "st st-dim"; s.textContent = c.kind; td.appendChild(s); }
       for (const f of c.flags) { const s = document.createElement("span"); s.className = "qa-flag " + qaFlagCls(f); s.textContent = f; td.appendChild(s); }
+      if (c.knocked_out) { const k = c.knocked_out, d = document.createElement("div"); d.className = "qa-knock";
+        d.textContent = k.no_history
+          ? `check #${k.check || "?"} (${qaCents(k.check_total)}) has ${qaCents(k.applied_now)} applied now` +
+            (k.only_this_bill ? ` - it paid only this bill: re-apply it to ${k.replacement ? "the re-entered copy #" + k.replacement.doc_number + " once approved" : "the bill once re-entered and approved"}`
+                              : " - it paid other bills too; this was stripped before the log kept the full list")
+          : k.left ? `check #${k.check} lost all ${k.bills} bills - re-apply list under that check` : `check #${k.check} re-applied`;
+        td.appendChild(d); }
       tr.appendChild(td); }
     tr.appendChild(leftText(QA_ENTITY[c.entity] || c.entity));
     { const url = c.deleted_now || !QA_QBO_KIND[c.entity] ? null : qboUrl(QA_QBO_KIND[c.entity], c.rec_id);
@@ -7831,9 +7839,47 @@ function renderQboAudit() {
     { const td = document.createElement("td"); td.className = "left"; const s = document.createElement("span"); s.className = "st " + (c.deleted_now ? "st-bad" : "st-dim");
       s.textContent = c.deleted_now ? "deleted in QuickBooks" : "on file"; if (c.has_before) s.title = "The record as it was before this change is kept in the mirror (the repair material)"; td.appendChild(s); tr.appendChild(td); }
     frag.appendChild(tr);
+    if (c.repair) frag.appendChild(qaRepairRow(c.repair, cols.length));
   }
   tbody.appendChild(frag);
   if (rows.length > 600) { const tr = document.createElement("tr"); const td = document.createElement("td"); td.colSpan = cols.length; td.className = "left dim"; td.style.padding = "10px 14px"; td.textContent = `${rows.length - 600} more - narrow the search`; tr.appendChild(td); tbody.appendChild(tr); }
+}
+
+// A check that lost its bills (deleting ONE paid bill unapplies the WHOLE check - owner 2026-09-23, Core
+// bill 1353 -> check 25730 lost 15). The list comes from the mirror's before copy: every bill it paid, the
+// amount to tick, and what the bill is now. A re-entered copy starts QBO approval over - paying it before a
+// PM approves skips the approval (paying does NOT approve it), so it is called out, never just listed.
+const QA_REPAIR_STATE = { "open": ["re-apply", "warn"], "re-applied": ["re-applied", "ok"], "copy re-applied": ["copy re-applied", "ok"],
+  "copy needs approval": ["re-entered copy - get it approved, then re-apply", "neg"], "deleted, no copy": ["deleted - not re-entered yet", "neg"] };
+// cents: these are the amounts typed back into the check, to the penny
+const qaCents = v => v == null || v === "" || Number.isNaN(Number(v)) ? "–" : "$" + Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+function qaRepairRow(rep, span) {
+  const tr = document.createElement("tr"); tr.className = "qa-repair";
+  const td = document.createElement("td"); td.colSpan = span; td.className = "left";
+  const h = document.createElement("div"); h.className = "qa-repair-head";
+  h.textContent = rep.left
+    ? `Re-apply check #${rep.check}: ${rep.left} of ${rep.bills.length} bill${rep.bills.length === 1 ? "" : "s"}, ${qaCents(rep.to_apply)} of ${qaCents(rep.total)}` +
+      (rep.caused_by.length ? ` · lost when paid bill ${rep.caused_by.map(d => "#" + d).join(", ")} was deleted` : "")
+    : `Check #${rep.check} is whole again - all ${rep.bills.length} bills re-applied`;
+  td.appendChild(h);
+  if (rep.left) {
+    const t = document.createElement("table"); t.className = "qa-repair-tbl";
+    t.innerHTML = `<thead><tr><th class="left">Bill #</th><th class="left">Bill date</th><th class="right">Apply</th><th class="right">Open now</th><th class="left">Status</th></tr></thead>`;
+    const tb = document.createElement("tbody");
+    for (const b of rep.bills) {
+      const r = document.createElement("tr"), rp = b.replacement;
+      const id = rp ? rp.id : (b.deleted ? null : b.bill_id);
+      r.appendChild(qboLinkCell(rp ? rp.doc_number : b.doc_number, id ? qboUrl("bill", id) : null, "Open the bill in QuickBooks"));
+      r.appendChild(leftText(b.txn_date ? fmtDateShort(b.txn_date) : "–"));
+      { const c = document.createElement("td"); c.className = "right"; c.textContent = qaCents(b.amount); r.appendChild(c); }
+      { const c = document.createElement("td"); c.className = "right"; const v = rp ? rp.balance : (b.deleted ? null : b.balance); c.textContent = v == null ? "–" : qaCents(v); if (v == null) c.classList.add("dim"); r.appendChild(c); }
+      { const c = document.createElement("td"); c.className = "left"; const [lbl, cls] = QA_REPAIR_STATE[b.state] || [b.state, "warn"];
+        const s = document.createElement("span"); s.className = "qa-flag " + cls; s.textContent = lbl; c.appendChild(s); r.appendChild(c); }
+      tb.appendChild(r);
+    }
+    t.appendChild(tb); td.appendChild(t);
+  }
+  tr.appendChild(td); return tr;
 }
 
 // ── Accounting fixes: the Bill Tracker audits, filterable by audit type ───────

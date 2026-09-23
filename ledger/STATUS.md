@@ -4,6 +4,14 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-23 · **QBO Audit: the re-apply list for a check that lost its bills** (owner: "this is exactly the kind of
+  things i need checked for the deleted audit"). Deleting ONE paid bill in QBO strips EVERY bill off the check that paid
+  it (Core bill 1353 -> check 25730 lost 15 bills; CMC 16018K -> check 25766 lost 6). `_attach_payment_repairs` rebuilds
+  each stripped check from the mirror's before copy: every bill, the amount to tick (cents), open now, and a status -
+  re-apply / re-applied / the re-entered copy (matched by vendor + bill # ignoring case), which is flagged "get it
+  approved, then re-apply" because a re-entered bill starts QBO approval over and paying does NOT approve it. The deleted
+  bill's row names the check it knocked out; a check stripped before the log kept a before copy (the 09/18 Escobar
+  checks) still shows what it has applied now and whether it paid only that bill. New stat "Checks to re-apply".
 - 2026-09-23 · **Routine cost pull fixed: window on ENTERED/EDITED, not bill date** (owner flagged CP742 on the WIP Review
   slide: "+$400, 0 QuickBooks lines"). Resync / `reload_ledger.sh` ran `load_costs --active --since <90d>`, a TxnDate
   window - JCP #909/#910 (MS6, $200 each) were entered 09/03 but dated 01/01/2026, so they never reached `cost_line`

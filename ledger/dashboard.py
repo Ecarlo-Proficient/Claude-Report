@@ -1234,6 +1234,100 @@ _NON_GATING_VENDOR_RE = re.compile(
 
 _ACCT_RAW = _fetch_accounting_audits
 _ACCT_CACHE = {"mtime": None, "data": None}
+_PAY_LINK_TYPES = ("BillPaymentCheck", "BillPaymentCreditCard", "BillPayment")
+
+
+def _attach_payment_repairs(con, rows: list) -> None:
+    """Deleting ONE paid bill strips EVERY bill off the check that paid it (seen 2026-09-23: Core
+    bill 1353 deleted -> check 25730 lost all 15 bills). For each bill payment that lost bill lines,
+    rebuild the repair list from the mirror's BEFORE copy: every bill it paid, the amount, and what
+    that bill is now (still open / already re-applied / deleted -> its re-entered copy, whose approval
+    starts over in QBO). Each deleted paid bill is tied to the check it knocked out. Read-only."""
+    from shared import qbo_mirror as mirror
+
+    def replacement(old_id: str, doc: str, vendor_id: str):
+        if not doc:
+            return None
+        for r in con.execute("SELECT id, doc_number, txn_date, total FROM qbo_bill WHERE lower(doc_number)=lower(?) "
+                             "AND deleted=0 AND id<>? ORDER BY CAST(id AS INTEGER) DESC", (doc, old_id)):
+            rec = mirror.get("Bill", r[0], con) or {}
+            if str((rec.get("VendorRef") or {}).get("value") or "") == vendor_id:
+                return {"id": r[0], "doc_number": r[1], "txn_date": r[2], "total": r[3], "balance": rec.get("Balance")}
+        return None
+
+    by_pay = {}                                    # payment id -> its repair (for the deleted-bill rows)
+    for r in rows:
+        if r["entity"] != "BillPayment" or not r.get("has_before"):
+            continue
+        if not ("payment unapplied" in r["flags"] or (r.get("lines_before") or 0) > (r.get("lines_after") or 0)):
+            continue
+        before = mirror.change_before(con, r["id"]) or {}
+        now = mirror.get("BillPayment", r["rec_id"], con) or {}
+        vendor_id = str((before.get("VendorRef") or {}).get("value") or "")
+        applied_now = {}
+        for ln in now.get("Line") or []:
+            for lt in ln.get("LinkedTxn") or []:
+                if lt.get("TxnType") == "Bill":
+                    k = str(lt.get("TxnId"))
+                    applied_now[k] = applied_now.get(k, 0) + float(ln.get("Amount") or 0)
+        bills = []
+        for ln in before.get("Line") or []:
+            for lt in ln.get("LinkedTxn") or []:
+                if lt.get("TxnType") != "Bill":
+                    continue
+                bid, amt = str(lt.get("TxnId")), round(float(ln.get("Amount") or 0), 2)
+                x = con.execute("SELECT doc_number, txn_date, total, deleted FROM qbo_bill WHERE id=?", (bid,)).fetchone()
+                rec = (mirror.get("Bill", bid, con) or {}) if x else {}
+                b = {"bill_id": bid, "amount": amt, "doc_number": x[0] if x else None, "txn_date": x[1] if x else None,
+                     "total": x[2] if x else None, "deleted": bool(x and x[3]), "balance": rec.get("Balance"),
+                     "state": "open"}
+                if b["deleted"]:
+                    rp = replacement(bid, b["doc_number"], vendor_id)
+                    b["replacement"] = rp
+                    b["state"] = ("copy re-applied" if rp and applied_now.get(rp["id"], 0) >= amt - 0.005
+                                  else "copy needs approval" if rp else "deleted, no copy")
+                elif applied_now.get(bid, 0) >= amt - 0.005:
+                    b["state"] = "re-applied"
+                bills.append(b)
+        if not bills:
+            continue
+        left = [b for b in bills if b["state"] not in ("re-applied", "copy re-applied")]
+        rep = {"check": r.get("doc_number"), "payment_id": r["rec_id"], "bills": bills,
+               "to_apply": round(sum(b["amount"] for b in left), 2), "left": len(left),
+               "total": round(sum(b["amount"] for b in bills), 2),
+               "caused_by": [b["doc_number"] for b in bills if b["deleted"]]}
+        r["repair"] = rep
+        by_pay[r["rec_id"]] = rep
+    for r in rows:                                 # the deleted paid bill -> the check it knocked out
+        if r["entity"] != "Bill" or r["kind"] != "deleted" or not r.get("has_before"):
+            continue
+        before = mirror.change_before(con, r["id"]) or {}
+        for lt in before.get("LinkedTxn") or []:
+            if lt.get("TxnType") not in _PAY_LINK_TYPES:
+                continue
+            pid = str(lt.get("TxnId"))
+            if pid in by_pay:
+                p = by_pay[pid]
+                r["knocked_out"] = {"check": p["check"], "payment_id": pid,
+                                    "bills": len(p["bills"]), "left": p["left"], "to_apply": p["to_apply"]}
+                continue
+            # the check was stripped before the change log kept its before copy (pre-09/23): say what
+            # is still knowable - the check, what it has applied now, and the re-entered copy
+            pay = mirror.get("BillPayment", pid, con)
+            if not pay:
+                continue
+            applied = round(sum(float(ln.get("Amount") or 0) for ln in pay.get("Line") or []
+                                if any(t.get("TxnType") == "Bill" for t in ln.get("LinkedTxn") or [])), 2)
+            total = round(float(pay.get("TotalAmt") or 0), 2)
+            if applied >= total - 0.005:
+                continue                           # whole again
+            vid = str((before.get("VendorRef") or {}).get("value") or "")
+            r["knocked_out"] = {"check": pay.get("DocNumber"), "payment_id": pid, "check_total": total,
+                                "applied_now": applied, "no_history": True,
+                                "only_this_bill": abs(total - float(before.get("TotalAmt") or 0)) < 0.005,
+                                "replacement": replacement(r["rec_id"], r.get("doc_number"), vid)}
+
+
 def _fetch_qbo_changes(days: int = 30) -> dict:
     """The QBO Audit page's watch: the mirror's change log (shared/qbo_mirror.mirror_change) for the
     last `days` days - every record QBO deleted, edited, restored or created since the previous
@@ -1263,6 +1357,7 @@ def _fetch_qbo_changes(days: int = 30) -> dict:
             r.update(alive[k])
             if not r.get("ref_name") and r.get("ref_id"):
                 r["ref_name"] = names.get((r.get("ref_type"), r["ref_id"]), "")
+        _attach_payment_repairs(con, rows)
         out["last_refresh"] = mirror._meta_get(con, "last_refresh")
         out["backfilled"] = mirror._meta_get(con, "changes_backfilled")
         runs = con.execute("SELECT started, mode, upserted, deleted FROM mirror_run ORDER BY id DESC LIMIT 1").fetchone()

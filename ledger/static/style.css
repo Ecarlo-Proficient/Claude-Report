@@ -1912,3 +1912,9 @@ table.pp-cov.all-sel tr.pp-cov-row > td { background: color-mix(in srgb, var(--a
 .qa-flag.warn { color: var(--warn-text); border-color: color-mix(in srgb, var(--warn-text) 45%, var(--border)); }
 .qa-flag.ok { color: var(--pos); border-color: color-mix(in srgb, var(--pos) 45%, var(--border)); }
 td.qa-what { white-space: normal; max-width: 260px; }
+.qa-knock { font-size: .8em; color: var(--neg-text); margin-top: 2px; }
+tr.qa-repair > td { background: var(--surface-2); padding: 8px 14px 12px 28px; white-space: normal; }
+.qa-repair-head { font-weight: 600; margin-bottom: 6px; }
+table.qa-repair-tbl { border-collapse: collapse; width: auto; }
+table.qa-repair-tbl th, table.qa-repair-tbl td { padding: 3px 12px 3px 0; border: 0; background: transparent; }
+table.qa-repair-tbl th { font-weight: 600; color: var(--text-dim); font-size: .85em; }
