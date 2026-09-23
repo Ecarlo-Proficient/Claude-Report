@@ -115,7 +115,7 @@ Row = Dict[str, object]
 
 COLUMNS: Dict[str, Tuple[str, str, Callable[[Row], str]]] = {
     "date":         ("Date",               "left",  lambda r: mdy(r["bill_date"])),
-    "type":         ("Transaction type",   "left",  lambda r: "Bill"),
+    "type":         ("Transaction type",   "left",  lambda r: str(r.get("type") or "Bill")),
     "number":       ("Transaction number", "left",  lambda r: str(r["number"] or "")),
     "memo":         ("Memo/Description",   "left",  lambda r: str(r["memo"] or "")),
     "project":      ("Project",            "left",  lambda r: str(r["project"] or "")),
@@ -162,9 +162,20 @@ def _pay_method(bp: dict) -> Tuple[str, str, str]:
     return ptype or "Payment", ref, ""
 
 
-def build_stub(bp: dict, bill_of: Callable[[str], Optional[dict]],
+TYPE_LABEL = {"Bill": "Bill", "VendorCredit": "Vendor credit", "Deposit": "Deposit", "JournalEntry": "Journal entry", "Purchase": "Expense"}
+
+
+def _natural(s) -> tuple:
+    import re
+    return tuple((0, int(t)) if t.isdigit() else (1, t.lower()) for t in re.findall(r"\d+|\D+", str(s or "")))
+
+
+def build_stub(bp: dict, txn_of: Callable[[str, str], Optional[dict]],
                vendor: Optional[dict] = None) -> dict:
-    """One BillPayment (as QBO returned it) -> the stub record: header + rows + total."""
+    """One BillPayment (as QBO returned it) -> the stub record: header + rows + total. `txn_of(type, id)`
+    resolves a linked transaction (Bill, or a VendorCredit / Deposit / JournalEntry QBO applied). Lines are
+    merged per linked transaction (a bill linked on two lines is ONE row) and an amount applied to nothing
+    is its own "Unapplied" row, so the rows always add up to the payment."""
     method, ref, acct = _pay_method(bp)
     vref = bp.get("VendorRef") or {}
     vendor = vendor or {}
@@ -174,27 +185,39 @@ def build_stub(bp: dict, bill_of: Callable[[str], Optional[dict]],
     if city:
         addr_lines.append(city)
     rows: List[Row] = []
+    agg: Dict[Tuple[str, str], float] = {}
+    unapplied = 0.0
     for ln in bp.get("Line", []) or []:
         paid = _num(ln.get("Amount"))
-        linked = [t for t in (ln.get("LinkedTxn") or []) if t.get("TxnType") == "Bill"]
+        linked = [t for t in (ln.get("LinkedTxn") or []) if t.get("TxnId")]
         if not linked:
+            unapplied = round(unapplied + paid, 2)
             continue
-        bid = str(linked[0].get("TxnId"))
-        bill = bill_of(bid) or {}
-        total = _num(bill.get("TotalAmt"))
+        key = (str(linked[0].get("TxnType") or "Bill"), str(linked[0]["TxnId"]))
+        agg[key] = round(agg.get(key, 0.0) + paid, 2)
+    for (ttype, tid), paid in agg.items():
+        rec = txn_of(ttype, tid) or {}
+        total = _num(rec.get("TotalAmt"))
+        is_bill = ttype == "Bill"
         rows.append({
-            "bill_id": bid,
-            "bill_date": bill.get("TxnDate"),
-            "due_date": bill.get("DueDate"),
-            "number": bill.get("DocNumber") or "",
-            "memo": bill.get("PrivateNote") or "",
-            "project": _projects_of_bill(bill),
+            "bill_id": tid,
+            "txn_type": ttype,
+            "type": TYPE_LABEL.get(ttype, ttype),
+            "bill_date": rec.get("TxnDate"),
+            "due_date": rec.get("DueDate"),
+            "number": rec.get("DocNumber") or "",
+            "memo": rec.get("PrivateNote") or "",
+            "project": _projects_of_bill(rec) if is_bill else "",
             "bill_total": total,
             "paid": paid,
-            "open_balance": _num(bill.get("Balance")),
-            "partial": bool(bill) and abs(total - paid) > 0.005,
+            "open_balance": _num(rec.get("Balance")),
+            "partial": is_bill and bool(rec) and abs(total - paid) > 0.005,
         })
-    rows.sort(key=lambda r: (str(r["bill_date"] or ""), str(r["number"])))
+    rows.sort(key=lambda r: (str(r["bill_date"] or ""), _natural(r["number"])))
+    if abs(unapplied) > 0.005:
+        rows.append({"bill_id": "", "txn_type": "", "type": "Unapplied", "bill_date": bp.get("TxnDate"), "due_date": None,
+                     "number": "", "memo": "amount not applied to a bill", "project": "", "bill_total": unapplied,
+                     "paid": unapplied, "open_balance": 0.0, "partial": False})
     total_paid = round(sum(r["paid"] for r in rows), 2)   # type: ignore[misc]
     return {
         "payment_id": str(bp.get("Id")),
@@ -234,19 +257,19 @@ def load_payments(vendor: str = "", date_from: str = "", date_to: str = "",
                 v = vendor.lower()
                 bps = [b for b in bps if v in ((b.get("VendorRef") or {}).get("name") or "").lower()]
         vendors: Dict[str, Optional[dict]] = {}
-        bills: Dict[str, Optional[dict]] = {}
+        txns: Dict[Tuple[str, str], Optional[dict]] = {}
 
-        def bill_of(bid: str) -> Optional[dict]:
-            if bid not in bills:
-                bills[bid] = mirror.get("Bill", bid, con=con)
-            return bills[bid]
+        def txn_of(ttype: str, tid: str) -> Optional[dict]:
+            if (ttype, tid) not in txns:
+                txns[(ttype, tid)] = mirror.get(ttype, tid, con=con) if ttype in mirror.ENTITIES else None
+            return txns[(ttype, tid)]
 
         out = []
         for bp in bps:
             vid = str((bp.get("VendorRef") or {}).get("value") or "")
             if vid and vid not in vendors:
                 vendors[vid] = mirror.get("Vendor", vid, con=con)
-            st = build_stub(bp, bill_of, vendors.get(vid))
+            st = build_stub(bp, txn_of, vendors.get(vid))
             st["vendor_id"] = vid
             st["_raw"] = {"SyncToken": bp.get("SyncToken"), "MetaData": bp.get("MetaData")}
             out.append(st)
@@ -328,8 +351,7 @@ def mirror_state(payment_id: str, con=None) -> dict:
         if not r:
             return {"present": False, "deleted": False, "voided": False, "sync_token": None, "total": None}
         rec = mirror._unpack(r[5])
-        note = str(rec.get("PrivateNote") or "")
-        voided = _num(r[2]) == 0 and (note.upper().startswith("VOID") or bool(rec.get("Line")))
+        voided = is_voided(rec)
         return {"present": True, "deleted": bool(r[3]), "deleted_at": r[4], "voided": voided,
                 "sync_token": _tok(r[0]), "last_updated": r[1], "total": _num(r[2])}
     finally:
@@ -340,6 +362,13 @@ def mirror_state(payment_id: str, con=None) -> dict:
 def _tok(x) -> str:
     """A SyncToken as text. QBO's first token is 0 - falsy - so never `x or ""`."""
     return "" if x is None else str(x)
+
+
+def is_voided(rec: dict) -> bool:
+    """QBO voids a bill payment by zeroing it, writing "Voided…" in the memo and dropping its lines - the ONE
+    rule (the vendor page's `_mark_voided_payments` applies the same tell)."""
+    note = str(rec.get("PrivateNote") or "")
+    return _num(rec.get("TotalAmt")) == 0 and (note.strip().upper().startswith("VOID") or not rec.get("Line"))
 
 
 def print_status(row: dict, now: dict) -> str:
@@ -376,14 +405,16 @@ def history(con: sqlite3.Connection, vendor: str = "", payment_id: str = "") -> 
     try:
         for r in rows:
             pid = r["payment_id"]
-            if pid not in states:
-                states[pid] = mirror_state(pid, mcon) if mcon else {"present": True, "deleted": False, "voided": False,
-                                                                      "sync_token": r["sync_token"], "total": r["total"]}
-            now = states[pid]
-            r["status"] = print_status(r, now)
-            r["qbo_total_now"] = now.get("total")
-            r["deleted_at"] = now.get("deleted_at")
-            r["file_exists"] = any(bool(x) and Path(x).is_file() for x in (r["archive_path"], r["file_path"]))
+            if mcon and pid not in states:
+                states[pid] = mirror_state(pid, mcon)
+            now = states.get(pid)
+            r["checked"] = bool(now)
+            r["status"] = print_status(r, now) if now else "unchecked"     # no mirror on this machine: nothing to judge against
+            r["qbo_total_now"] = now.get("total") if now else None
+            r["deleted_at"] = now.get("deleted_at") if now else None
+            # a print with an archive copy exists only if THAT copy is there; the vendor-folder file is the latest
+            # print and stands in only for rows made before the archive existed
+            r["file_exists"] = Path(r["archive_path"]).is_file() if r["archive_path"] else bool(r["file_path"] and Path(r["file_path"]).is_file())
             r["columns"] = r["columns"].split(",") if r["columns"] else list(DEFAULT_COLUMNS)
     finally:
         if mcon:
@@ -395,8 +426,12 @@ def history_snapshot(con: sqlite3.Connection, hist_id: int) -> Optional[dict]:
     r = con.execute("SELECT snapshot, columns, file_path, archive_path FROM bill_payment_stub WHERE id=?", (int(hist_id),)).fetchone()
     if not r:
         return None
-    # the print AS IT WENT OUT: the archived copy first, the vendor-folder file (the latest print) as fallback
-    served = next((x for x in (r[3], r[2]) if x and Path(x).is_file()), None)
+    # the print AS IT WENT OUT: the archived copy; the vendor-folder file (the LATEST print) stands in only for a
+    # row made before the archive existed - never for a row whose own copy is missing (that would show a newer print)
+    if r[3]:
+        served = r[3] if Path(r[3]).is_file() else None
+    else:
+        served = r[2] if r[2] and Path(r[2]).is_file() else None
     return {"stub": json.loads(r[0]), "columns": r[1].split(","), "file_path": r[2], "archive_path": r[3], "served_path": served}
 
 
@@ -411,9 +446,11 @@ def print_stub(payment_id: str, columns: Optional[Sequence[str]] = None, company
         raw = mirror.get("BillPayment", str(payment_id), con=mcon)
         if not raw:
             return {"ok": False, "error": f"payment {payment_id} is not in the mirror"}
+        if is_voided(raw):
+            return {"ok": False, "error": f"payment {raw.get('DocNumber') or payment_id} is voided in QuickBooks - nothing to print"}
         vid = str((raw.get("VendorRef") or {}).get("value") or "")
         vendor = mirror.get("Vendor", vid, con=mcon) if vid else None
-        stub = build_stub(raw, lambda bid: mirror.get("Bill", bid, con=mcon), vendor)
+        stub = build_stub(raw, lambda t, i: mirror.get(t, i, con=mcon) if t in mirror.ENTITIES else None, vendor)
         stub["vendor_id"] = vid
     finally:
         mcon.close()
@@ -560,7 +597,10 @@ def render_pdf(html_path: Path, pdf_path: Path) -> bool:
         return False
     cmd = [exe, "--headless=new", "--disable-gpu", "--no-pdf-header-footer",
            f"--print-to-pdf={pdf_path}", html_path.resolve().as_uri()]
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    except (subprocess.TimeoutExpired, OSError):
+        return False
     return r.returncode == 0 and pdf_path.exists() and pdf_path.stat().st_size > 0
 
 
@@ -573,7 +613,7 @@ def pdf_page_count(pdf_path: Path) -> int:
 # ───────────────────────── CLI ─────────────────────────
 
 def _safe_name(s: str) -> str:
-    return "".join("-" if c in '/\\:*?"<>|' else c for c in s).strip() or "vendor"
+    return "".join("-" if c in '/\\:*?"<>|' else c for c in s).strip().lstrip(".") or "vendor"
 
 
 def _file_name(stub: dict) -> str:
@@ -582,7 +622,7 @@ def _file_name(stub: dict) -> str:
     The vendor is the QBO name (same as the folder); the ref is the check # or the card reference."""
     vend = stub.get("vendor") or "vendor"
     tag = mdy(stub["txn_date"]).replace("/", "-") if stub.get("txn_date") else dt.date.today().strftime("%m-%d-%Y")
-    ref = stub["ref"] or stub["method"]
+    ref = stub["ref"] or f"{stub['method']} {stub['payment_id']}"   # no check # (ACH, card): the QBO id keeps two same-day payments apart
     return f"{_safe_name(vend)} - Bill Payment Stub {_safe_name(ref)} {tag}.pdf"
 
 
@@ -590,8 +630,14 @@ def default_out(stub: dict) -> Path:
     """Accounting/Accounts Payable/Bill Payment Stubs/<QBO vendor name>/<file>.pdf, one file per
     payment. The share must be mounted: a missing mount raises so a stub never lands elsewhere."""
     base = paths.bill_payment_stubs_dir()
-    if not base.parent.exists():
-        raise FileNotFoundError(f"the Accounting share is not mounted ({base.parent}) - mount it and rerun")
+    if paths.get("ACB_BILL_PAYMENT_STUBS_DIR", ""):
+        if not base.parent.exists():
+            raise FileNotFoundError(f"the stub folder's parent does not exist ({base.parent})")
+    else:
+        try:
+            paths.require_accounting_share("the bill payment stub")
+        except SystemExit as e:
+            raise FileNotFoundError(str(e)) from None
     return base / _safe_name(stub["vendor"]) / _file_name(stub)
 
 
@@ -611,7 +657,7 @@ def _selftest() -> int:
                    {"Amount": 300.0, "LinkedTxn": [{"TxnType": "Bill", "TxnId": "b2"}]}]}
     vendor = {"DisplayName": "TEST VENDOR", "PrintOnCheckName": "TEST VENDOR INC",
               "BillAddr": {"Line1": "PO BOX 1", "City": "FORT WORTH", "CountrySubDivisionCode": "TX", "PostalCode": "76100"}}
-    s = build_stub(bp, bills.get, vendor)
+    s = build_stub(bp, lambda t, i: bills.get(i) if t == "Bill" else None, vendor)
     assert s["ties"] and s["rows_total"] == 1300.0, s
     assert [r["number"] for r in s["rows"]] == ["1001", "1002"]
     assert s["rows"][1]["partial"] and not s["rows"][0]["partial"]
@@ -635,11 +681,22 @@ def _selftest() -> int:
     assert "Account" not in page and "Test Bank" not in page          # the owner's stub shows no account
     assert _file_name(s) == "TEST VENDOR - Bill Payment Stub 25760 09-21-2026.pdf"
     assert _file_name(dict(s, method="Credit card", ref="AMEX-0000")) == "TEST VENDOR - Bill Payment Stub AMEX-0000 09-21-2026.pdf"
+    assert _file_name(dict(s, ref="")) == "TEST VENDOR - Bill Payment Stub Check p1 09-21-2026.pdf"   # no check #: the id keeps same-day payments apart
+    # a bill on two lines is ONE row; a vendor credit and an unapplied amount are rows of their own; everything still ties
+    bp2 = dict(bp, TotalAmt=1350.0, Line=[{"Amount": 600.0, "LinkedTxn": [{"TxnType": "Bill", "TxnId": "b1"}]},
+                                        {"Amount": 400.0, "LinkedTxn": [{"TxnType": "Bill", "TxnId": "b1"}]},
+                                        {"Amount": 300.0, "LinkedTxn": [{"TxnType": "VendorCredit", "TxnId": "vc1"}]},
+                                        {"Amount": 50.0}])
+    s2 = build_stub(bp2, lambda t, i: bills.get(i) if t == "Bill" else ({"DocNumber": "VC-9", "TxnDate": "2026-06-01", "TotalAmt": 300.0} if i == "vc1" else None), vendor)
+    assert s2["ties"] and [r["type"] for r in s2["rows"]] == ["Vendor credit", "Bill", "Unapplied"], s2["rows"]
+    assert s2["rows"][1]["paid"] == 1000.0 and not s2["rows"][1]["partial"]
+    assert "Vendor credit" in stub_html([s2]) and "Unapplied" in stub_html([s2])
+    assert not (_natural("1001") < _natural("999")) and _natural("999") < _natural("1001")
     assert _safe_name("A/B: C") == "A-B- C"
     assert "Bill amount" not in page and "Bill amount" in stub_html([s], columns=["number", "bill_total", "amount"])
     assert "check this payment" not in stub_html([s])
     bp_bad = dict(bp, TotalAmt=1400.0)
-    assert "check this payment" in stub_html([build_stub(bp_bad, bills.get, vendor)])
+    assert "check this payment" in stub_html([build_stub(bp_bad, lambda t, i: bills.get(i) if t == "Bill" else None, vendor)])
     with tempfile.TemporaryDirectory() as td:
         p = Path(td) / "stub.html"
         p.write_text(page, encoding="utf-8")
@@ -653,12 +710,16 @@ def _selftest() -> int:
         assert snap["served_path"] == str(Path(td) / "archive" / f"{hid}.pdf") and Path(snap["served_path"]).read_bytes() == p.read_bytes()
         p.write_text("overwritten by a re-print", encoding="utf-8")            # the vendor file moves on, the archive does not
         assert Path(snap["served_path"]).read_text(encoding="utf-8") == page
+        Path(snap["served_path"]).unlink()                                     # its own copy gone -> nothing served, never the newer print
+        assert history_snapshot(con, hid)["served_path"] is None
+        assert history(con)[0]["status"] in ("unchecked", "current", "changed", "deleted", "voided") and "checked" in history(con)[0]
         row = {"total": 1300.0, "sync_token": "3"}
         assert print_status(row, {"present": True, "deleted": False, "voided": False, "sync_token": "3", "total": 1300.0}) == "current"
         assert print_status(row, {"present": True, "deleted": False, "voided": False, "sync_token": "4", "total": 1300.0}) == "changed"
         assert print_status(row, {"present": True, "deleted": False, "voided": True, "sync_token": "4", "total": 0.0}) == "voided"
         assert print_status(row, {"present": True, "deleted": True, "voided": False, "sync_token": "3", "total": 1300.0}) == "deleted"
         assert print_status(row, {"present": False}) == "deleted"
+        assert is_voided({"TotalAmt": 0, "PrivateNote": "Voided", "Line": []}) and is_voided({"TotalAmt": 0, "Line": []}) and not is_voided(bp)
         assert print_status({"total": 1.0, "sync_token": "0"}, {"present": True, "deleted": False, "voided": False, "sync_token": 0, "total": 1.0}) == "current"   # token 0 is not "missing"
         con.close()
         assert [c["key"] for c in columns_registry() if c["default"]] == list(DEFAULT_COLUMNS)
@@ -693,7 +754,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if a.history:
         con = ledger_connect()
         try:
-            rows = history(con, a.vendor if not a.payment else "", a.payment[0] if a.payment else "")
+            rows = history(con, "", a.payment[0] if a.payment else "")
         finally:
             con.close()
         if a.vendor and not a.payment:
@@ -730,6 +791,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     for group in groups:
         try:
             out = Path(a.out).expanduser() if a.out else default_out(group[0])
+            if a.out and out.suffix.lower() != ".pdf":
+                out = out.with_suffix(".pdf")           # the .html beside it is the source; --out names the PDF
         except FileNotFoundError as e:
             print(f"error: {e}", file=sys.stderr)
             return 1

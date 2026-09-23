@@ -603,25 +603,34 @@ def _project_customer_map(con) -> dict:
     return out
 
 
+_MEMO_CACHE: dict = {"stamp": None, "memos": {}}   # bill id -> memo, per mirror refresh stamp (re-read only when the mirror moved)
+
+
 def _bill_memos(bills: list) -> None:
     """Put each bill's QuickBooks memo (PrivateNote) on its row, from the mirror (the Bill Tracker workbook
-    never carried it; cost_line has it for half the bills only). ~3k decrypts = well under a second."""
+    never carried it; cost_line has it for half the bills only). Cached per mirror stamp, so the 90 s
+    refresh costs nothing until the mirror actually changes; a failed read is said once on stderr."""
     ids = {str(b["bill_id"]) for b in bills if b.get("bill_id")}
-    memos: dict = {}
+    memos: dict = _MEMO_CACHE["memos"]
     if ids:
         try:
             from shared import qbo_mirror
             if qbo_mirror.db_path().exists():
-                mcon = qbo_mirror.connect()
-                try:
-                    for bid in ids:
-                        rec = qbo_mirror.get("Bill", bid, con=mcon)
-                        if rec:
-                            memos[bid] = str(rec.get("PrivateNote") or "")
-                finally:
-                    mcon.close()
-        except Exception:                                   # noqa: BLE001 - no mirror = no memo column, nothing else breaks
-            pass
+                stamp = str(qbo_mirror.stamp() or "")
+                missing = ids - set(memos) if stamp == _MEMO_CACHE["stamp"] else ids
+                if missing:
+                    mcon = qbo_mirror.connect()
+                    try:
+                        for bid in missing:
+                            rec = qbo_mirror.get("Bill", bid, con=mcon)
+                            memos[bid] = str((rec or {}).get("PrivateNote") or "")
+                    finally:
+                        mcon.close()
+                    _MEMO_CACHE["stamp"] = stamp
+        except Exception as e:                              # noqa: BLE001 - no mirror = no memo column, nothing else breaks
+            if not _MEMO_CACHE.get("warned"):
+                print(f"[memo] bill memos unavailable from the mirror: {e}", file=sys.stderr)
+                _MEMO_CACHE["warned"] = True
     for b in bills:
         b["memo"] = memos.get(str(b.get("bill_id") or ""), "")
 
@@ -3064,13 +3073,15 @@ class Handler(BaseHTTPRequestHandler):
         stubs. Plus the column registry for the picker."""
         vendor = (q.get("vendor") or "").strip()
         payment = (q.get("payment") or "").strip()
+        if not Path(self.db_path).exists():               # never create a ledger file on a GET
+            return self._json({"ok": True, "prints": [], "columns": bill_payment_stub.columns_registry()})
         try:
             con = bill_payment_stub.ledger_connect(self.db_path)
             try:
                 rows = bill_payment_stub.history(con, vendor, payment)
             finally:
                 con.close()
-        except sqlite3.OperationalError as e:
+        except Exception as e:                            # noqa: BLE001 - a missing mirror key / locked DB is an answer, not a dropped request
             return self._json({"ok": False, "error": str(e), "prints": [], "columns": bill_payment_stub.columns_registry()})
         self._json({"ok": True, "prints": rows, "columns": bill_payment_stub.columns_registry()})
 
@@ -3082,7 +3093,7 @@ class Handler(BaseHTTPRequestHandler):
                 snap = bill_payment_stub.history_snapshot(con, int(hist_id))
             finally:
                 con.close()
-        except (ValueError, sqlite3.OperationalError):
+        except Exception:                                 # noqa: BLE001
             snap = None
         target = Path(snap["served_path"]) if snap and snap.get("served_path") else None
         if not target or not target.is_file():
@@ -3097,14 +3108,20 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(length) or b"{}")
         except (ValueError, json.JSONDecodeError):
             return self._json({"ok": False, "error": "bad request"}, 400)
+        if not isinstance(body, dict):
+            return self._json({"ok": False, "error": "bad request"}, 400)
         pid = str(body.get("payment_id") or "").strip()
         if not pid:
             return self._json({"ok": False, "error": "payment_id required"}, 400)
         cols = body.get("columns") or None
+        if cols is not None and not (isinstance(cols, list) and all(isinstance(c, str) for c in cols)):
+            return self._json({"ok": False, "error": "columns must be a list of column keys"}, 400)
         try:
             res = bill_payment_stub.print_stub(pid, cols, paths.get("ACB_COMPANY_NAME", ""), self.db_path)
-        except (ValueError, FileNotFoundError, OSError, sqlite3.OperationalError) as e:
+        except (ValueError, FileNotFoundError) as e:
             return self._json({"ok": False, "error": str(e)}, 400)
+        except Exception as e:                            # noqa: BLE001 - locked DB, missing mirror key, a hung Chrome: still an answer
+            return self._json({"ok": False, "error": str(e)}, 500)
         if res.get("ok"):
             res.pop("stub", None)
         self._json(res, 200 if res.get("ok") else 500)

@@ -123,6 +123,7 @@ function _grpChildren(h, def) {
   return [...h.parentElement.children].filter(c => c !== h);   // parent: everything in the card but the head
 }
 function _grpKeyOf(h, def) {   // keyed on the NAME (not the caret, not the amounts that change every sync) so the choice sticks
+  if (h.dataset && h.dataset.grpkey) return `${def.sel}|${h.dataset.grpkey}`;   // a row with its own stable key (payments: the QBO id)
   const nm = h.querySelector(".bg-key, .sg-key, .g-cust, .warm-name, .pl-name") || h.querySelector("td, span") || h;
   const t = (nm.textContent || "").replace(/[▸▾]/g, "").replace(/\s+/g, " ").trim().slice(0, 80);
   return `${def.sel}|${typeof activeTab === "undefined" ? "" : activeTab}|${t}`;
@@ -1516,13 +1517,17 @@ function dimDash() { const s = document.createElement("span"); s.className = "st
 // every bill table: a funnel in each header opens that column's distinct values (with counts, computed over the rows
 // the OTHER columns leave - Excel's behaviour), a search box, Select all / None / Clear. State per table, per session.
 const _hf = {};                                     // tableKey -> { colKey -> Set(values) }
+function _ym(d) {   // "YYYY-MM" from an ISO date, or from a typed m/d/yyyy the workbook let through; "" when neither
+  const t = String(d || ""); if (/^\d{4}-\d{2}/.test(t)) return t.slice(0, 7);
+  const m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/); return m ? `${m[3]}-${m[1].padStart(2, "0")}` : "";
+}
 const HF_BILL_COLS = {                              // colKey -> [getter, label of a value]
   vendor:  [b => b.vendor || "", v => v || "(no vendor)"],
   project: [b => b.project_no || "", v => v || "(no project #)"],
   client:  [b => b.client || "", v => v || "(no client)"],
   bill:    [b => b.bill_ref || "", v => v || "(no bill #)"],
   invoice: [b => b.invoice_no || "", v => v || "(no invoice)"],
-  date:    [b => (b.bill_date ? String(b.bill_date).slice(0, 7) : ""), v => v ? v.slice(5, 7) + "/" + v.slice(0, 4) : "(no date)"],
+  date:    [b => _ym(b.bill_date), v => v ? v.slice(5, 7) + "/" + v.slice(0, 4) : "(no date)"],
   open:    [b => (bOpen(b) > 0.005 ? "Open" : "Paid off"), v => v],
   pay:     [b => b.pay_status || "", v => v || "(none)"],
   inv:     [b => b.invoice_status || "", v => v || "(none)"],
@@ -1541,6 +1546,7 @@ let _hfOpen = null;   // the one open menu
 function hfCloseMenu() { if (_hfOpen) { _hfOpen.remove(); _hfOpen = null; } }
 document.addEventListener("click", (e) => { if (_hfOpen && !e.target.closest(".hf-menu, .hf-btn")) hfCloseMenu(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") hfCloseMenu(); });
+window.addEventListener("scroll", (e) => { if (_hfOpen && !(e.target && e.target.nodeType === 1 && _hfOpen.contains(e.target))) hfCloseMenu(); }, true);   // the page scrolled (not the list itself)
 // Every multi-select menu (filter bar, the date months, the vendor page) closes on a click OUTSIDE it or on Esc - and
 // never on a tick inside it (owner 2026-09-22: "i expect the filter to STAY open when i select"). One closer, app-wide.
 document.addEventListener("click", (e) => {
@@ -1557,8 +1563,9 @@ function hfDecorate(th, tableKey, colKey, rowsFn, rerender) {   // rowsFn() = th
   btn.title = sel.size ? `Filtered: ${sel.size} value${sel.size === 1 ? "" : "s"} - click to change` : "Filter this column";
   btn.onclick = (e) => {
     e.stopPropagation(); e.preventDefault();
-    if (_hfOpen && _hfOpen._for === btn) { hfCloseMenu(); return; }
+    if (_hfOpen && _hfOpen.isConnected && !_hfOpen.hidden && _hfOpen._for === btn) { hfCloseMenu(); return; }
     hfCloseMenu();
+    document.querySelectorAll(".msel-menu:not(.hf-menu)").forEach(m => { m.hidden = true; });   // one menu at a time
     const rows = rowsFn();
     const counts = new Map(); for (const b of rows) { const v = get(b); counts.set(v, (counts.get(v) || 0) + 1); }
     for (const v of [...sel]) if (!counts.has(v)) counts.set(v, 0);   // a picked value that no longer appears still shows, so it can be unpicked
@@ -1675,7 +1682,7 @@ function buildBillFilters() {
 // by default with Select all / Deselect all; DATE = a from / to pair with the native calendar (pick a
 // day or type it) - "as of July 25" is just a To date. Switching modes re-renders at once.
 function dateFilter(id, getDates, onChange, prev) {   // prev = an earlier state to keep (the host was re-rendered)
-  const st = { mode: prev ? prev.mode : "month", months: prev ? prev.months : null, from: prev ? prev.from : "", to: prev ? prev.to : "" };   // months: null = all
+  const st = { mode: prev ? prev.mode : "month", months: prev && prev.months ? new Set(prev.months) : null, from: prev ? prev.from : "", to: prev ? prev.to : "" };   // months: null = all; copied, never shared
   const host = $("#" + id); if (!host) return st;
   host.innerHTML = `<span class="seg tiny"><button type="button" class="seg-btn on" data-m="month">Month</button><button type="button" class="seg-btn" data-m="date">Date</button></span>
     <span class="datef-month msel" id="${id}Msel"><button type="button" class="msel-btn" id="${id}Btn">All months</button><div class="msel-menu" id="${id}Menu" hidden></div></span>
@@ -1691,8 +1698,9 @@ function dateFilter(id, getDates, onChange, prev) {   // prev = an earlier state
   $("#" + id + "Reset").onclick = () => { st.clear(); onChange(); };
   st.build = () => {
     const asc = [...new Set(getDates().map(x => String(x || "").slice(0, 7)).filter(x => /^\d{4}-\d{2}$/.test(x)))].sort();
-    if (st.months) for (const m of [...st.months]) if (!asc.includes(m)) st.months.delete(m);
-    const sel = st.months === null ? new Set(asc) : st.months;
+    // months picked on another view of the same page stay picked (the vendor page swaps bill dates for payment dates);
+    // the list shows the ones this view has
+    const sel = st.months === null ? new Set(asc) : new Set([...st.months].filter(m => asc.includes(m)));
     menu.innerHTML = "";
     const tools = document.createElement("div"); tools.className = "msel-tools";
     const all = document.createElement("button"); all.type = "button"; all.className = "msel-tool"; all.textContent = "Select all"; all.onclick = () => { st.months = null; st.build(); onChange(); };
@@ -1703,7 +1711,8 @@ function dateFilter(id, getDates, onChange, prev) {   // prev = an earlier state
       const lab = document.createElement("label"); lab.className = "msel-opt";
       const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = sel.has(ym);
       cb.onchange = () => { const s2 = new Set(st.months === null ? asc : st.months); if (cb.checked) s2.add(ym); else s2.delete(ym);
-        st.months = (s2.size === asc.length || s2.size === 0) ? null : s2;   // unticking the last one goes back to ALL (owner 2026-09-02)
+        const here = [...s2].filter(m => asc.includes(m)).length;
+        st.months = (here === asc.length || here === 0) ? null : s2;   // unticking the last one goes back to ALL (owner 2026-09-02)
         st.build(); onChange(); };
       lab.appendChild(cb); lab.appendChild(document.createTextNode(" " + billMonthLabel(ym))); menu.appendChild(lab);
     }
@@ -1737,7 +1746,7 @@ function _placeMenu(btn, menu) {
   else { menu.style.bottom = (window.innerHeight - r.top + 4) + "px"; menu.style.maxHeight = Math.max(160, Math.min(420, above)) + "px"; }
 }
 (function () {
-  const closeAll = () => document.querySelectorAll(".msel-menu:not([hidden])").forEach(m => { m.hidden = true; });
+  const closeAll = () => document.querySelectorAll(".msel-menu:not([hidden]):not(.hf-menu)").forEach(m => { m.hidden = true; });   // the funnel menu has its own closer (it may scroll itself)
   window.addEventListener("resize", closeAll);
   window.addEventListener("scroll", closeAll, true);   // any scrolling container - the pinned menu would drift otherwise
 })();
@@ -1869,8 +1878,9 @@ function renderBills() {
   { const cb = $("#bfClear"); if (cb) cb.hidden = !Object.values(f).some(x => x); }
 
   // filter (view predicate AND every dropdown AND the search AND the Excel-style header filters), then sort
-  const baseRows = bills.filter(b => view.pred(b) && billPassesFilters(b, f) && _vq(_billQ, [b.vendor, b.project_no, nameOf(b.project_no), b.client, b.bill_ref, b.memo, b.invoice_no, fmtDateShort(b.bill_date), b.bill_date,
-    Math.round(num(b.line_amount)), money(b.line_amount), Math.round(bOpen(b)), b.pay_status, b.invoice_status, b.lien_status, b.approved, b.division]));
+  const qOK = !_billQ.trim() ? () => true : b => _vq(_billQ, [b.vendor, b.project_no, nameOf(b.project_no), b.client, b.bill_ref, b.memo, b.invoice_no, fmtDateShort(b.bill_date), b.bill_date,
+    Math.round(num(b.line_amount)), money(b.line_amount), Math.round(bOpen(b)), b.pay_status, b.invoice_status, b.lien_status, b.approved, b.division]);
+  const baseRows = bills.filter(b => view.pred(b) && billPassesFilters(b, f) && qOK(b));
   let rows = baseRows.filter(b => hfPasses("bills", b));
   { const hc = $("#bfHfClear"); if (hc) { hc.hidden = !hfActive("bills"); } }
   const sortKey = $("#billSort") ? $("#billSort").value : "oldest";
@@ -1919,6 +1929,7 @@ function renderBills() {
     const tr = document.createElement("tr"); const td = document.createElement("td");
     td.colSpan = cols.length; td.className = "left"; td.style.color = "var(--text-dim)"; td.style.padding = "14px 12px";
     if (!bills.length) td.textContent = "No AP data - run load_bill_tracker.py.";
+    else if (_billQ.trim() || hfActive("bills")) td.textContent = _billQ.trim() ? `No bills match "${_billQ.trim()}"${hfActive("bills") ? " with the column filters" : ""}.` : "No bills match the column filters.";
     else {   // say what is hiding them: the view pill (e.g. Open AP hides paid bills) is easy to miss (owner 2026-09-02)
       const byFilters = bills.filter(b => billPassesFilters(b, f)).length;
       td.textContent = byFilters ? `No bills match - ${byFilters} bill${byFilters === 1 ? "" : "s"} pass${byFilters === 1 ? "es" : ""} the filters but ${byFilters === 1 ? "is" : "are"} hidden by the "${view.name}" view above. Pick "All bills" to see ${byFilters === 1 ? "it" : "them"}.` : "No bills match these filters.";
@@ -2082,7 +2093,7 @@ function findBillForLien(r) {
 // item + project #. Filter by pay status. Owner 2026-08-28: "vendor center open into its own vendor
 // page like qbo ... see the bill its paying and the project ... if multiple say multiple, click for lines".
 let _vendorData = null, _vendorType = "all", _vendorView = "bills";   // bills | payments
-let _vendorInv = "any", _vendorGroup = true;   // the vendor page's invoice filter (any | gcpaid | gcowes | none) and project bands
+let _vendorInv = "any";   // the vendor page's invoice filter (any | gcpaid | gcowes | none)
 let _vendorQ = "";   // the vendor page search - one box, filters whichever view is up (owner 2026-09-22: "need ability to search on both pages")
 let _vendorDate = null;   // the vendor page Date filter (Month | Date from-to), same component as the Bill Tracker's; state survives re-renders
 let _vendorProjOpen = false, _vendorProjIdx = -1;   // the Project box's suggestion list: open? which row is highlighted (ArrowDown / ArrowUp, Enter picks)
@@ -2092,17 +2103,22 @@ const _vendorBillOpen = new Set();
 async function openVendorPage(vendor) {
   if (_ppLeaveBlocked()) return;   // unsaved pay ticks on the project page: Save or Discard first
   openRecord(vendor, "loading…"); skeletonInto($("#recordBody"), 6);
-  const body = $("#recordBody"); body.innerHTML = "";
-  _vendorData = null; _vendorType = "all"; _vendorView = "bills"; _vendorQ = ""; _vendorProj = ""; _vendorDate = null; _vendorBillOpen.clear();
+  const body = $("#recordBody");
+  _vendorData = null; _vendorType = "all"; _vendorView = "bills"; _vendorInv = "any"; _vendorQ = ""; _vendorProj = ""; _vendorDate = null; _vendorBillOpen.clear();
+  hfClear("vendorBills"); _stubSel.clear(); _vendorProjOpen = false; _vendorProjIdx = -1;   // nothing carries over from the last vendor
   let data;
   try { data = await (await fetch("/api/vendor?v=" + encodeURIComponent(vendor))).json(); }
-  catch (e) { body.textContent = "could not load this vendor"; return; }
+  catch (e) { body.innerHTML = ""; body.textContent = "could not load this vendor"; return; }
+  body.innerHTML = "";
   if (!data || !data.ok) { body.textContent = (data && data.error) || "no data for this vendor"; return; }
   _vendorData = data;
   renderVendorPage();
 }
+let _vpSeq = 0;   // bumps on every vendor render; an async step that finds it moved on stops (no double table, no painting over another page)
+function _vendorPageShowing(d) { const rv = $("#recordView"); return !!(d && _vendorData === d && rv && !rv.hidden && ($("#recordTitle") || {}).textContent === d.vendor); }
 function renderVendorPage() {
   const d = _vendorData; if (!d) return;
+  const seq = ++_vpSeq;
   // a filter STAYS OPEN while the owner ticks values (owner 2026-09-22): the page re-renders on every change, so
   // remember which menus were open before the body is rebuilt and reopen them after
   const _dateMenuWasOpen = !!($("#vpDateMenu") && !$("#vpDateMenu").hidden);
@@ -2130,7 +2146,7 @@ function renderVendorPage() {
       if (e.key === "ArrowDown") { e.preventDefault(); _vendorProjOpen = true; _vendorProjIdx = Math.min(m.length - 1, _vendorProjIdx + 1); renderVendorPage(); refocus(); }
       else if (e.key === "ArrowUp") { e.preventDefault(); _vendorProjIdx = Math.max(-1, _vendorProjIdx - 1); renderVendorPage(); refocus(); }
       else if (e.key === "Enter") { e.preventDefault(); if (_vendorProjIdx >= 0 && m[_vendorProjIdx]) pick(m[_vendorProjIdx][0]); else if (m.length === 1) pick(m[0][0]); else { _vendorProjOpen = false; renderVendorPage(); refocus(); } }
-      else if (e.key === "Escape") { e.preventDefault(); if (_vendorProjOpen) { _vendorProjOpen = false; renderVendorPage(); refocus(); } else { pj.value = ""; _vendorProj = ""; renderVendorPage(); refocus(); } }
+      else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); if (_vendorProjOpen) { _vendorProjOpen = false; renderVendorPage(); refocus(); } else { pj.value = ""; _vendorProj = ""; renderVendorPage(); refocus(); } }
     };
     pj.onblur = () => { setTimeout(() => { if (_vendorProjOpen && document.activeElement !== $("#vpProj") && !document.activeElement.closest(".vp-projlist")) { _vendorProjOpen = false; const l = document.querySelector(".vp-projlist"); if (l) l.remove(); } }, 150); };
     wrap.appendChild(pj);
@@ -2154,7 +2170,7 @@ function renderVendorPage() {
     if (_dateMenuWasOpen) { const m = $("#vpDateMenu"), b = $("#vpDateBtn"); if (m && b) { m.hidden = false; _placeMenu(b, m); } } }
   if (_vendorView === "payments") {
     $("#recordSub").textContent = `${d.pay_count || 0} payments · ${money(d.pay_total || 0)} paid out this year`;
-    return _renderVendorPayments(d, body);
+    return _renderVendorPayments(d, body, seq);
   }
   // Two systems, two labels (owner 2026-09-02: the list said one "open", the page another): QuickBooks
   // open AP covers every vendor incl. subs; the Bill Tracker excludes subs.
@@ -2210,29 +2226,7 @@ function renderVendorPage() {
     thead.appendChild(htr); }
   const row = b => { const tr = billRow(b); tr.removeChild(tr.firstElementChild); return tr; };   // the tracker's row without the vendor column - it is the vendor's page
   // a flat list like the Excel (owner 2026-09-22: "i don't want to see it grouped by anything") - the funnels do the narrowing
-  if (false) {
-    const byP = new Map(); for (const b of rows) { const k = b.project_no || "(no project)"; if (!byP.has(k)) byP.set(k, []); byP.get(k).push(b); }
-    for (const [p, list] of [...byP].sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true }))) {
-      const gtr = document.createElement("tr"); gtr.className = "bill-subgroup"; gtr.style.cursor = p !== "(no project)" ? "pointer" : "default"; gtr.title = p !== "(no project)" ? "Open the project page" : "";
-      gtr.onclick = () => { if (p !== "(no project)") openProjectPage(p); };
-      // the band's numbers sit UNDER the column they summarize (owner 2026-09-22: "why does this page look so bad?" -
-      // the old value/label grid floated billed under Bill #, open under Invoice #, counts under Date)
-      const gOpen = list.reduce((t, b) => t + bOpen(b), 0), gAmt = list.reduce((t, b) => t + num(b.line_amount), 0);
-      const invs = [...new Set(list.map(b => b.invoice_no).filter(Boolean))], nPaid = list.filter(isPaid).length;
-      { const td = document.createElement("td"); td.className = "left"; const key = document.createElement("span"); key.className = "sg-key";
-        key.textContent = p + (nameOf(p) ? " · " + nameOf(p) : "") + (list[0].client ? " · " + list[0].client : ""); td.appendChild(key); gtr.appendChild(td); }
-      const dimCell = (t, cls) => { const td = document.createElement("td"); td.className = (cls || "left") + " bg-n"; td.textContent = t; return td; };
-      gtr.appendChild(dimCell(`${list.length} bill${list.length === 1 ? "" : "s"}`));
-      gtr.appendChild(dimCell(invs.length ? `${invs.length} invoice${invs.length === 1 ? "" : "s"}` : ""));
-      gtr.appendChild(dimCell(""));
-      { const td = document.createElement("td"); td.className = "bg-amt"; td.textContent = money(gAmt); gtr.appendChild(td); }
-      { const td = document.createElement("td"); td.className = "bg-amt" + (gOpen > 0.005 ? " neg" : " dim"); td.textContent = money(gOpen); gtr.appendChild(td); }
-      gtr.appendChild(dimCell(`${nPaid} of ${list.length} paid`));
-      for (let i = 0; i < 3; i++) gtr.appendChild(dimCell(""));
-      tbody.appendChild(gtr);
-      for (const b of list) tbody.appendChild(row(b));
-    }
-  } else for (const b of rows) tbody.appendChild(row(b));
+  for (const b of rows) tbody.appendChild(row(b));
   table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table); body.appendChild(scroll);
   const cap = document.createElement("div"); cap.className = "bills-cap";
   cap.textContent = `${rows.length} bill${rows.length === 1 ? "" : "s"} · ${money(rows.reduce((t, b) => t + num(b.line_amount), 0))} billed · ${money(rows.reduce((t, b) => t + bOpen(b), 0))} open · Invoice # = the draw the Bill Tracker matched the bill to; GC paid / GC owes = that invoice's live QuickBooks balance · click a row for the bill's detail, the invoice # for the invoice page, the client for the client's page.`;
@@ -2309,9 +2303,10 @@ async function _loadStubHistory(vendor) {
 }
 function _stubPill(status) {
   const s = document.createElement("span"); s.className = "stub-pill " + (status || "current");
-  s.textContent = { current: "current", changed: "changed in QBO", voided: "voided in QBO", deleted: "deleted in QBO" }[status] || status;
+  s.textContent = { current: "current", changed: "changed in QBO", voided: "voided in QBO", deleted: "deleted in QBO", unchecked: "not checked" }[status] || status;
   s.title = { current: "QuickBooks still shows this payment exactly as printed", changed: "The payment was edited in QuickBooks after this stub was printed - the stub is what went out",
-    voided: "The payment was voided in QuickBooks after this stub was printed", deleted: "The payment no longer exists in QuickBooks - this stub is the record of it" }[status] || "";
+    voided: "The payment was voided in QuickBooks after this stub was printed", deleted: "The payment no longer exists in QuickBooks - this stub is the record of it",
+    unchecked: "No QuickBooks mirror on this machine, so this print could not be compared to QuickBooks" }[status] || "";
   return s;
 }
 function _stubLink(h) {   // one printed stub: opens the PDF as it went out
@@ -2330,7 +2325,7 @@ async function _printStub(paymentId, btn) {
     if (!j.ok) throw new Error(j.error || "print failed");
     toast("Stub printed - " + (j.file || "").split("/").pop());
     window.open("/api/bill-payment/stub/file?id=" + encodeURIComponent(j.id), "_blank", "noopener");
-    await _loadStubHistory(_stubHist.vendor); renderVendorPage();
+    const d = _vendorData; await _loadStubHistory(_stubHist.vendor); if (_vendorPageShowing(d)) renderVendorPage();   // never paint over a page the owner opened meanwhile
   } catch (e) { toast("Could not print the stub: " + e.message); btn.disabled = false; btn.textContent = was; }
 }
 function _stubColumnPicker() {   // the registry as checkboxes; the choice sticks (localStorage) and applies to the next print
@@ -2368,15 +2363,16 @@ async function _printStubsSelected(btn) {
   toast(`${done} stub${done === 1 ? "" : "s"} printed to the vendor folder` + (failed.length ? ` · ${failed.length} failed` : ""), 5000);
   if (failed.length) console.warn("stub prints failed", failed);
   _stubSel.clear(); btn.textContent = was;
-  await _loadStubHistory(_stubHist.vendor); renderVendorPage();
+  const d = _vendorData; await _loadStubHistory(_stubHist.vendor); if (_vendorPageShowing(d)) renderVendorPage();
 }
-async function _renderVendorPayments(d, body) {
+async function _renderVendorPayments(d, body, seq) {
   if (_stubHist.vendor !== d.vendor) { await _loadStubHistory(d.vendor); _stubSel.clear(); }
-  if (_vendorView !== "payments" || _vendorData !== d) return;   // the owner moved on while the history loaded
+  if (seq !== _vpSeq || _vendorView !== "payments" || !_vendorPageShowing(d)) return;   // a newer render (or another page) took over while the history loaded
   const pays = (d.payments || []).filter(p => (!_vendorDate || !_vendorDate.active() || _vendorDate.passes(p.txn_date))
     && (!_vendorProj.trim() || _vq(_vendorProj, [...(p.projects || []), ...(p.projects || []).map(nameOf)]))
     && _vq(_vendorQ, [p.ref_no, fmtDateShort(p.txn_date), p.txn_date, p.pay_type === "CreditCard" ? "credit card" : p.pay_type, ...(p.clients || []), ...(p.projects || []),
     ...(p.bills || []).map(b => b.bill_ref), Math.round(num(p.total_amt)), money(p.total_amt), p.voided ? "voided" : "", p.memo]));
+  { const visible = new Set(pays.map(p => String(p.qbo_txn_id))); for (const id of [..._stubSel]) if (!visible.has(id)) _stubSel.delete(id); }   // a pick you can't see is not a pick
   const byPay = new Map(); for (const h of _stubHist.prints) { if (!byPay.has(h.payment_id)) byPay.set(h.payment_id, []); byPay.get(h.payment_id).push(h); }
   // toolbar: the column picker + the multi-print button (lives on the selection)
   const bar = document.createElement("div"); bar.className = "stub-bar";
@@ -2385,7 +2381,7 @@ async function _renderVendorPayments(d, body) {
   const selLabel = () => { const n = _stubSel.size; selBtn.textContent = n ? `Print ${n} stub${n === 1 ? "" : "s"}` : "Print stubs for selected"; selBtn.disabled = !n; };
   selLabel(); selBtn.onclick = () => _printStubsSelected(selBtn); bar.appendChild(selBtn);
   body.appendChild(bar);
-  if (!pays.length) { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = (d.payments || []).length ? `No payments match "${_vendorQ.trim()}".` : "No bill payments recorded this year (run the AP / bill-payments sync to pull them)."; body.appendChild(p); _renderStubOrphans(body, pays, byPay); return; }
+  if (!pays.length) { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = (d.payments || []).length ? (_vendorQ.trim() ? `No payments match "${_vendorQ.trim()}".` : "No payments match these filters.") : "No bill payments recorded this year (run the AP / bill-payments sync to pull them)."; body.appendChild(p); _renderStubOrphans(body, d.payments || [], byPay); return; }
   const scroll = document.createElement("div"); scroll.className = "table-scroll";
   const table = document.createElement("table"); table.className = "grid vp-paytable"; const thead = document.createElement("thead"), tbody = document.createElement("tbody");
   const htr = document.createElement("tr");
@@ -2394,13 +2390,13 @@ async function _renderVendorPayments(d, body) {
   { const th = document.createElement("th"); th.className = "left vp-ck"; const all = document.createElement("input"); all.type = "checkbox"; all.title = "Select every payment (voided ones can't be printed)";
     const printable = pays.filter(p => !p.voided).map(p => String(p.qbo_txn_id));
     all.checked = printable.length > 0 && printable.every(id => _stubSel.has(id));
-    all.onchange = () => { if (all.checked) printable.forEach(id => _stubSel.add(id)); else _stubSel.clear(); renderVendorPage(); };
+    all.onchange = () => { if (all.checked) printable.forEach(id => _stubSel.add(id)); else printable.forEach(id => _stubSel.delete(id)); renderVendorPage(); };
     th.appendChild(all); htr.appendChild(th); }
   for (const [c, al] of [["Ref / cheque #", "left"], ["Date", "left"], ["Type", "left"], ["Client", "left"], ["Amount", "right"], ["Stub", "left"]]) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
   thead.appendChild(htr);
   for (const p of pays) {
     const pid = String(p.qbo_txn_id);
-    const tr = document.createElement("tr"); tr.className = "vp-pay" + (p.voided ? " vp-void" : "");
+    const tr = document.createElement("tr"); tr.className = "vp-pay" + (p.voided ? " vp-void" : ""); tr.dataset.grpkey = "pay:" + pid;
     { const td = document.createElement("td"); td.className = "left vp-ck"; const cb = document.createElement("input"); cb.type = "checkbox";
       cb.checked = _stubSel.has(pid); cb.disabled = !!p.voided; cb.title = p.voided ? "Voided - nothing to print" : "Select for a multi-print";
       cb.onchange = () => { if (cb.checked) _stubSel.add(pid); else _stubSel.delete(pid); selLabel(); const all = thead.querySelector("input"); if (all) all.checked = pays.filter(x => !x.voided).every(x => _stubSel.has(String(x.qbo_txn_id))); };
@@ -2439,7 +2435,7 @@ async function _renderVendorPayments(d, body) {
     }
   }
   table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table); body.appendChild(scroll);
-  _renderStubOrphans(body, pays, byPay);
+  _renderStubOrphans(body, d.payments || [], byPay);   // "no longer in the list" = not in the vendor's payments at all, never "filtered out"
 }
 // Stubs printed for payments the ledger's payment list no longer carries (deleted or voided in QuickBooks, or outside
 // this year's window): the history keeps the stub as printed, so they are listed here, never lost.

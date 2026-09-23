@@ -4,6 +4,26 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-23 · **Bug QC on the 09/22 work** (two reviewers over the stub module, the handlers and the vendor-page JS;
+  everything below verified and fixed). Stub: a payment with no check # (ACH / card) now names its file by the QBO id, so
+  two same-day payments never overwrite each other; lines are merged per linked transaction (a bill on two lines = one
+  row, no double partial / double totals), a vendor credit / deposit / journal entry QBO applied is its own typed row and
+  an amount applied to nothing is an "Unapplied" row - the rows always add to the payment, no false "check this payment";
+  the voided rule is ONE rule in both modules (total 0 + memo "Voided…" or no lines left); `--history --vendor` is a
+  substring again; `--out` always names a .pdf; a hung Chrome is a failed print, not a dead request; a print whose own
+  archive copy is gone serves nothing rather than a newer print; `history()` says `checked: false` / status
+  `unchecked` when no mirror is on the machine; `default_out` uses `paths.require_accounting_share`. Dashboard: the
+  three stub handlers always answer (any exception -> JSON), the print body is validated (dict, columns = list of
+  keys), a GET never creates a ledger file, and `_bill_memos` is cached per mirror stamp (the 90 s refresh no longer
+  decrypts 3.4k bills each time; a failed mirror read is said once on stderr). Vendor page: a render sequence stops a
+  stale async payments render (no double table) and a print's re-render never paints over another page; "no longer in
+  this list" is judged against ALL the vendor's payments, never the filtered ones; column filters, invoice filter,
+  picks and the Project suggestions reset when a new vendor opens; picks are pruned to visible rows and select-all
+  unticks only what it ticked; payment groups are keyed on the QBO id (two ACH payments with no ref no longer
+  open together); the funnel menu survives its own scrolling, closes on page scroll / Esc, and opens alone; the
+  Date control's months survive the Bills <-> Payments switch (display the intersection, never prune); `bill_date`
+  typed as m/d/yyyy still buckets by month; the Bill Tracker's empty state names the search / column filters; the
+  search parts are built only when there is a search; the dead band branch and `_vendorGroup` are gone.
 - 2026-09-23 · **Every sync alias PAUSES before any work when a drive is missing** (reconnect, Enter to try again, q to close; unattended = exit 2) (owner: "change sync-all, sync-ap,
   sync-ar to STOP if something isn't mounted, that way i don't waste time"). `shared/paths.MOUNTS` names the two roots
   (the Accounting share, the OneDrive mirror); `paths.require_mounts()` / `python3 shared/paths.py --require a,b --for
