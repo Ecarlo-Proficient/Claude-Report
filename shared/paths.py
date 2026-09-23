@@ -284,19 +284,14 @@ if __name__ == "__main__":
             gone = missing_mounts(names)
             if not gone:
                 _sys.exit(0)
-            print(f"PAUSED - {what} needs a drive that is not mounted right now. Nothing has run yet.")
-            for n, path, desc in gone:
-                print(f"   missing: {path}   ({desc})")
+            print("Mount " + ", ".join(str(path) for _, path, _ in gone))
             if not _sys.stdin.isatty():
-                print("   Reconnect it, then run again.")
                 _sys.exit(2)
             try:
-                ans = input("   Reconnect it, then press Enter to try again  (q + Enter closes): ").strip().lower()
+                ans = input("Enter = try again · q = close: ").strip().lower()
             except (EOFError, KeyboardInterrupt):
                 print()
                 _sys.exit(2)
             if ans in ("q", "quit", "close", "n", "no"):
-                print("   Closed - nothing was run.")
                 _sys.exit(2)
-            print("   checking again...")
     _self_check()
