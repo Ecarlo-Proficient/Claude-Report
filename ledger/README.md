@@ -32,6 +32,14 @@ SAME resolver project-pnl uses, so the ledger and the P&L can never drift.
 
 ## The raw QBO mirror (2026-09-17)
 
+**The change log (2026-09-23).** Every refresh (never the seed) diffs each record QBO hands back against the copy the
+mirror holds and writes one `mirror_change` row per record that moved - `created` · `edited` · `deleted` · `restored` -
+stamped with QBO's own time (`MetaData.LastUpdatedTime`, or the change feed's deletion time), the before / after
+summary (total, balance, money applied, line count, party), plain-word flags from `change_flags()` and the BEFORE
+record encrypted like the rest (`change_before(con, id)` = the repair material). `changes(con, since=, entity=)`
+reads it; `backfill_changes()` runs once for the deletions flagged before the log existed;
+`refresh_mirror.py --changes [N]` prints the last N days. Serves the ledger's QBO Audit page.
+
 `qbo_mirror.sqlite3` beside the ledger: every QBO entity (21 - all transaction types plus the
 name lists), one row per record with the full JSON as QBO returned it, deletes flagged with a date
 and never dropped. `python3 ledger/refresh_mirror.py --seed` once (~20 min, 296k records);
@@ -201,7 +209,12 @@ component below; never rebuild one from scratch, and add to this list when a new
   (ArrowDown / ArrowUp, Enter picks).
 - **Payments are groups**: collapsed = ref, date, type, client, amount, stub; the bills paid are the expansion;
   a checkbox per row and a select-all for bulk actions; a voided payment says VOIDED.
-- Groups elsewhere follow the central `GRP_KINDS` mechanism; two views only (Projects · Company + the gear).
+- Groups elsewhere follow the central `GRP_KINDS` mechanism.
+- **Four views** (owner 2026-09-23): Projects · Vendors (Bill Tracker · Vendor Center) · Customers (Invoice Tracker ·
+  Customer Center · Payments received · Sales pipeline) · Company (Money · QBO Audit) + the gear. A new company-wide
+  list is a sub-tab of the view it belongs to, never a fifth view.
+- **Stats are one line each** (label · value · note · source), never boxed tiles - "no big waste spacer blocks".
+- **A click never scrolls the page** (a draw, a group, a filter): re-render in place, restore `scrollY`.
 
 ```bash
 cd "/Users/sebas/Documents/Claude/Projects/Automate Concrete Business" && python3 ledger/dashboard.py
@@ -234,6 +247,11 @@ on the network). What it shows:
   never writes.
 - **Projects** — searchable, filterable (division / status / category / active-only), sortable;
   click any row for the full job detail (Contract / Budget / Costs / Earned / Billing / Notes).
+- **QBO Audit** (Company) — what changed in QuickBooks: the mirror's change log (`/api/qboaudit?days=`), every
+  record deleted / edited / restored / added since the previous refresh with QuickBooks' own time and plain-word
+  flags (deleted paid bill, payment unapplied, reopened, voided, class dropped…), tiles + chips + search, **Refresh
+  from QuickBooks** (the `mirror` pipeline); the Bill Tracker audits sit underneath. QuickBooks' API never says who -
+  the audit log inside QuickBooks does. Born 2026-09-18 (a connected app's deletions were logged as the owner).
 - **Copy & export** — click any number to copy it; **Export CSV** downloads the current view.
 - **Customize** (⚙) — theme (auto/light/dark), accent color, font, text size, density, width
   (**boxed by default**), which widgets show, and which table columns show. Saved per person in the

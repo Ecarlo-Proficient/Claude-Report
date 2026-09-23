@@ -96,7 +96,8 @@
     <!-- ══════════════ VIEW 2: COMPANY - the whole business, no job filter: Clients · Vendors · Money ══════════════ -->
     <div class="company-head" id="companyHead" hidden><div class="kpi-row kpi-strip" id="companyKpis"></div></div>
 
-    <div class="tab-page" data-tab="clients" hidden>
+    <!-- ══════════════ CUSTOMERS: Invoice Tracker · Customer Center · Payments received · Sales pipeline (owner 2026-09-23: their own view) ══════════════ -->
+    <div class="tab-page" data-tab="customercenter" hidden>
     <section class="subpage" data-sec="customers" id="sec-customers">
       <section class="widget">
         <div class="widget-head"><h2>Customer Center <span class="count" id="custNote"></span></h2></div>
@@ -107,6 +108,9 @@
         </div>
       </section>
     </section><!-- /sec: customers -->
+    </div><!-- /tab: customercenter -->
+
+    <div class="tab-page" data-tab="invoices" hidden>
     <section class="subpage" data-sec="invoices" id="sec-invoices">
       <section class="widget">
         <div class="widget-head">
@@ -182,15 +186,19 @@
         </div>
       </section>
     </section><!-- /sec: invoices -->
-    <section class="subpage fold" data-sec="payments" id="sec-payments">
-      <div class="fold-head"><h2>Payments received</h2><span class="count">money in, and the bills each payment unlocks</span><span class="fold-caret">▸</span></div>
+    </div><!-- /tab: invoices -->
+
+    <div class="tab-page" data-tab="payments" hidden>
+    <section class="subpage" data-sec="payments" id="sec-payments">
       <section class="widget">
         <div class="widget-head"><h2>Payments <span class="count" id="payNote"></span></h2></div>
         <div id="payBody"></div>
       </section>
     </section><!-- /sec: payments -->
-    <section class="subpage fold" data-sec="sales" id="sec-sales">
-      <div class="fold-head"><h2>Sales pipeline</h2><span class="count">leads, warm accounts and outreach - from the Notion Customer List</span><span class="fold-caret">▸</span></div>
+    </div><!-- /tab: payments -->
+
+    <div class="tab-page" data-tab="sales" hidden>
+    <section class="subpage" data-sec="sales" id="sec-sales">
       <section class="widget">
         <div class="widget-head"><h2>Sales pipeline <span class="count" id="salesNote"></span></h2></div>
         <div class="kpi-row" id="salesStats"></div>
@@ -229,9 +237,10 @@
         </div>
       </section>
     </section><!-- /sec: sales -->
-    </div><!-- /tab: clients -->
+    </div><!-- /tab: sales -->
 
-    <div class="tab-page" data-tab="vendors" hidden>
+    <!-- ══════════════ VENDORS: Bill Tracker · Vendor Center (owner 2026-09-23: their own view) ══════════════ -->
+    <div class="tab-page" data-tab="vendorcenter" hidden>
     <section class="subpage" data-sec="vendors" id="sec-vendors">
       <section class="widget">
         <div class="widget-head"><h2>Vendor Center <span class="count" id="vendorsNote"></span></h2></div>
@@ -248,6 +257,9 @@
         </div>
       </section>
     </section><!-- /sec: vendors -->
+    </div><!-- /tab: vendorcenter -->
+
+    <div class="tab-page" data-tab="bills" hidden>
     <section class="subpage" data-sec="bills" id="sec-bills">
       <!-- Lien-mark Save bar: sticky top-right, scrolls with this page, only on Bills -->
       <div class="savebar" id="billSaveBar">
@@ -326,11 +338,44 @@
         </div>
       </section>
     </section><!-- /sec: bills -->
-    <section class="subpage fold" data-sec="accounting" id="sec-accounting">
-      <div class="fold-head"><h2>Audit - bills to fix</h2><span class="count">what the AP sync flagged in QuickBooks</span><span class="fold-caret">▸</span></div>
+    </div><!-- /tab: bills -->
+
+    <!-- ══════════════ COMPANY > QBO AUDIT: what changed in QuickBooks (the mirror's change log) + the Bill Tracker audits (owner 2026-09-23) ══════════════ -->
+    <div class="tab-page" data-tab="qboaudit" hidden>
+    <section class="subpage" data-sec="qboaudit" id="sec-qboaudit">
       <section class="widget">
         <div class="widget-head">
-          <h2>Audit <span class="count" id="acctNote"></span></h2>
+          <h2>QBO Audit - what changed in QuickBooks <span class="count" id="qaNote"></span></h2>
+          <span class="wh-right">
+            <span class="seg" id="qaDays" title="How far back">
+              <button type="button" class="seg-btn" data-days="7">7 days</button>
+              <button type="button" class="seg-btn on" data-days="30">30 days</button>
+              <button type="button" class="seg-btn" data-days="90">90 days</button>
+            </span>
+            <button class="btn small" id="btnQaRefresh" title="Refresh the mirror from QuickBooks (the change feed - seconds, Touch ID) and re-read the log">⟳&nbsp;Refresh from QuickBooks</button>
+            <button class="btn small" id="btnQaReload" title="Re-read the change log (no QuickBooks call)">Reload</button>
+          </span>
+        </div>
+        <div class="sync-progress" id="qaProg" hidden>
+          <div class="sync-bar"><div class="sync-bar-fill" id="qaFill"></div></div>
+          <div class="sync-step" id="qaStep"></div>
+        </div>
+        <p class="hint">Every record QuickBooks <b>deleted, edited, restored or added</b> since the previous mirror refresh, stamped with QuickBooks' own time and flagged in plain words - a paid bill deleted, a payment that lost its bills, a bill reopened, a void. The mirror keeps each record as it was before the change. QuickBooks' API never says <i>who</i> - the audit log inside QuickBooks does.</p>
+        <div class="kpi-row" id="qaStats"></div>
+        <div class="acct-filters" id="qaFilters"></div>
+        <div class="filters">
+          <input type="search" id="qaSearch" placeholder="Find a vendor, client, number, amount…" autocomplete="off">
+          <label class="chk"><input type="checkbox" id="qaFlaggedOnly" checked> Flagged only</label>
+        </div>
+        <div class="table-scroll">
+          <table class="grid" id="qaTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </section><!-- /sec: qboaudit -->
+    <section class="subpage" data-sec="accounting" id="sec-accounting">
+      <section class="widget">
+        <div class="widget-head">
+          <h2>Audit - bills to fix <span class="count" id="acctNote"></span></h2>
           <button class="btn small" id="btnAcctReload" title="Re-read the Bill Tracker audits">Reload</button>
         </div>
         <p class="hint">Bills the AP sync flagged to fix. Pick an audit below to filter; <b>📎</b> opens the scan, the bill # copies (↗ for QBO).</p>
@@ -349,7 +394,7 @@
         </div>
       </section>
     </section><!-- /sec: accounting -->
-    </div><!-- /tab: vendors -->
+    </div><!-- /tab: qboaudit -->
 
     <div class="tab-page" data-tab="money" hidden>
     <section class="subpage" data-sec="health" id="sec-health">

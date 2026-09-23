@@ -4,6 +4,22 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-23 (last) · **Nav reworked to four views + the QBO Audit page + compact stats** (owner: "Remove Vendors and
+  Customers from Company and reinstate them back as their own ... Company i need a QBO Audit section ... I hate these
+  big blobs"). `NAV_GROUPS`: **Projects** · **Vendors** (Bill Tracker · Vendor Center) · **Customers** (Invoice Tracker ·
+  Customer Center · Payments received · Sales pipeline) · **Company** (Money · QBO Audit); every old tab is a `TAB_ALIAS`
+  (clients -> invoices, customers / vendors -> the centers, accounting -> qboaudit), Payments / Sales / Audit are no
+  longer folds. **QBO Audit** = `/api/qboaudit?days=` over the mirror's NEW change log (`shared/qbo_mirror.mirror_change`:
+  every refresh diffs each record QBO hands back against the copy held and logs created / edited / deleted / restored
+  with QBO's own time, plain-word flags via `change_flags()` - deleted paid bill · payment unapplied · reopened · voided ·
+  class dropped · amount / date / vendor / number / lines changed - and the encrypted BEFORE record, `change_before()`;
+  `backfill_changes()` once for deletions flagged before the log existed; `refresh_mirror.py --changes [N]` prints it)
+  + the Bill Tracker audits underneath; tiles, flag chips, search, Flagged only, 7/30/90 days, **Refresh from QuickBooks**
+  (the new `mirror` pipeline) - the mirror never says WHO (QBO's API does not carry the user). Project page: the
+  All-draws / draw head + equation under Coverage removed (the table is the P&L per draw), **All draws lights the whole
+  Coverage table, a clicked draw its row**, and a click never scrolls the page; the P&L block's **Invoices - all draws**
+  is a fold closed by default with date · # · memo · amount · Paid <date>. `.kpi` tiles app-wide are one compact line
+  each (label · value · note · source), no boxes. LEDGER_VERSION 1.5.0; tests: `tests/test_qbo_mirror.py` (+2).
 - 2026-09-22 (last) · **Filters stay open while ticking + the UI rules register** (owner: "when i say filter by
   date, i expect the filter to STAY open when i select ... we've already built this date filter exactly, but you
   are starting from scratch every time"). The vendor page remembers whether the month menu was open before its

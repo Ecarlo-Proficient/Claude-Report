@@ -243,3 +243,68 @@ def test_load_returns_qbo_result_order():
                                   {"Id": "2", "DisplayName": "Alpha", "SyncToken": "0", "MetaData": {}},
                                   {"Id": "3", "DisplayName": "121 EXPRESS", "SyncToken": "0", "MetaData": {}}], "t")
     assert [r["DisplayName"] for r in m.load("Vendor", con=con)] == ["121 EXPRESS", "Alpha", "beta"]
+
+
+def _bp(i, bills, total=None, tok=0, upd="2026-09-18T10:26:00-05:00"):
+    """A BillPayment applied to `bills` = [(bill_id, amount)]."""
+    total = sum(a for _, a in bills) if total is None else total
+    return {"Id": str(i), "SyncToken": str(tok), "TxnDate": "2026-02-13", "DocNumber": "23414", "TotalAmt": total,
+            "VendorRef": {"value": "7", "name": "RCI"}, "PayType": "Check",
+            "MetaData": {"CreateTime": "2026-02-13T12:00:00-05:00", "LastUpdatedTime": upd},
+            "Line": [{"Amount": a, "LinkedTxn": [{"TxnId": str(b), "TxnType": "Bill"}]} for b, a in bills]}
+
+
+def test_refresh_change_log_records_before_and_flags():
+    con = m.connect(":memory:")
+    # the seed never tracks
+    b1 = _bill(1, total=100.0); b1["Balance"] = 0.0
+    b1["Line"] = [{"Amount": 100.0, "DetailType": "ItemBasedExpenseLineDetail",
+                   "ItemBasedExpenseLineDetail": {"ClassRef": {"value": "1", "name": "Residential"}}}]
+    b2 = _bill(2, total=50.0); b2["Balance"] = 0.0
+    assert m.upsert_many(con, "Bill", [b1, b2], "seed") == 2
+    m.upsert_many(con, "BillPayment", [_bp(9, [(1, 100.0), (2, 50.0)])], "seed")
+    assert con.execute("SELECT COUNT(*) FROM mirror_change").fetchone()[0] == 0
+    # a refresh: same token = nothing logged
+    m.upsert_many(con, "Bill", [b1], "r1", track=True)
+    assert con.execute("SELECT COUNT(*) FROM mirror_change").fetchone()[0] == 0
+    # the payment loses its bills (token bump), the bills reopen, one bill loses its class
+    m.upsert_many(con, "BillPayment", [_bp(9, [], total=150.0, tok=1)], "r2", track=True)
+    b1b = dict(b1, SyncToken="1", Balance=100.0, Line=[{"Amount": 100.0, "DetailType": "ItemBasedExpenseLineDetail",
+                                                        "ItemBasedExpenseLineDetail": {}}])
+    b1b["MetaData"] = dict(b1["MetaData"], LastUpdatedTime="2026-09-18T10:26:05-05:00")
+    m.upsert_many(con, "Bill", [b1b], "r2", track=True)
+    # the other paid bill is deleted, with QBO's own deletion time
+    assert m.mark_deleted(con, "Bill", ["2"], "r3", track=True, when_by_id={"2": "2026-09-18T11:36:37-05:00"}) == 1
+    # a brand-new record
+    m.upsert_many(con, "Bill", [_bill(3, tok=0)], "r4", track=True)
+    ch = {(c["entity"], c["rec_id"]): c for c in m.changes(con)}
+    pay = ch[("BillPayment", "9")]
+    assert pay["kind"] == "edited" and pay["flags"] == ["payment unapplied"]
+    assert (pay["applied_before"], pay["applied_after"], pay["token_before"], pay["token_after"]) == (150.0, 0.0, 0, 1)
+    assert pay["ref_name"] == "RCI" and pay["has_before"]
+    bill = ch[("Bill", "1")]
+    assert bill["kind"] == "edited" and bill["flags"] == ["reopened", "class dropped"]
+    assert (bill["balance_before"], bill["balance_after"]) == (0.0, 100.0)
+    gone = ch[("Bill", "2")]
+    assert gone["kind"] == "deleted" and gone["flags"] == ["deleted paid bill"] and gone["changed_at"] == "2026-09-18T11:36:37-05:00"
+    assert gone["total_before"] == 50.0 and gone["has_before"]
+    assert ch[("Bill", "3")]["kind"] == "created" and ch[("Bill", "3")]["flags"] == []
+    # the before record is whole - the repair material
+    before = m.change_before(con, pay["id"])
+    assert [ln["LinkedTxn"][0]["TxnId"] for ln in before["Line"]] == ["1", "2"]
+    # a restore of the deleted bill
+    m.upsert_many(con, "Bill", [_bill(2, tok=5, upd="2026-09-18T12:00:00-05:00")], "r5", track=True)
+    assert m.changes(con, entity="Bill")[0]["kind"] == "restored"
+    # since-filter and ordering (newest first)
+    assert [c["rec_id"] for c in m.changes(con, since="2026-09-18T11:00:00")][:1] == ["2"]
+
+
+def test_backfill_changes_logs_earlier_deletions_once():
+    con = m.connect(":memory:")
+    b = _bill(4, total=20.0); b["Balance"] = 0.0
+    m.upsert_many(con, "Bill", [b], "seed")
+    m.mark_deleted(con, "Bill", ["4"], "2026-09-17T19:15:23Z")          # flagged before the log existed
+    assert m.backfill_changes(con, "now") == 1
+    assert m.backfill_changes(con, "now") == 0
+    c = m.changes(con)[0]
+    assert (c["kind"], c["changed_at"], c["flags"]) == ("deleted", "2026-09-17T19:15:23Z", ["deleted paid bill"])

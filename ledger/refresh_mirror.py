@@ -6,6 +6,8 @@ refresh_mirror.py - keep the raw QBO mirror current (shared/qbo_mirror).
   python3 ledger/refresh_mirror.py --seed          full pull (first time, or a rebuild; ~20 min)
   python3 ledger/refresh_mirror.py --reconcile     COUNT(*) per entity vs the mirror, sweep drift
   python3 ledger/refresh_mirror.py --status        counts, stamps, size - no QBO call
+  python3 ledger/refresh_mirror.py --changes [N]   the change log for the last N days (30) - no QBO call:
+                                                   what was deleted / edited / unapplied, with QBO's time
   --entities Bill,Invoice                          limit --seed to some entities
 
 Read-only on QBO. Writes only the mirror file (outside the repo). Never prints
@@ -42,18 +44,52 @@ def _status() -> int:
     return 0
 
 
+def _changes(days: int) -> int:
+    import datetime as dt
+    since = mirror.iso_z(mirror.now_utc() - dt.timedelta(days=days))
+    con = mirror.connect()
+    try:
+        if not mirror._meta_get(con, "changes_backfilled"):
+            n0 = mirror.backfill_changes(con)
+            mirror._meta_set(con, "changes_backfilled", mirror.iso_z(mirror.now_utc()))
+            con.commit()
+            if n0:
+                print(f"change log: {n0} earlier deletion(s) backfilled")
+        rows = mirror.changes(con, since=since)
+    finally:
+        con.close()
+    flagged = [r for r in rows if r["flags"]]
+    print(f"change log: {len(rows)} change(s) in the last {days} days · {len(flagged)} flagged "
+          f"(edits with nothing to flag and new records are the rest)")
+    print(f"  {'QBO time':25s} {'what':22s} {'entity':12s} {'no.':14s} {'party':30s} {'before':>12s} {'after':>12s}")
+    for r in flagged:
+        tb, ta = r["total_before"], r["total_after"]
+        if "payment unapplied" in r["flags"]:
+            tb, ta = r["applied_before"], r["applied_after"]
+        elif "reopened" in r["flags"]:
+            tb, ta = r["balance_before"], r["balance_after"]
+        f = lambda v: "" if v is None else f"{v:,.2f}"   # noqa: E731
+        print(f"  {r['changed_at'] or '':25s} {', '.join(r['flags'])[:22]:22s} {r['entity']:12s} "
+              f"{str(r['doc_number'] or '')[:14]:14s} {(r['ref_name'] or '')[:30]:30s} {f(tb):>12s} {f(ta):>12s}")
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     g = ap.add_mutually_exclusive_group()
     g.add_argument("--seed", action="store_true", help="full pull of every entity")
     g.add_argument("--reconcile", action="store_true", help="count check per entity, sweep drift")
     g.add_argument("--status", action="store_true", help="what the mirror holds (no QBO call)")
+    g.add_argument("--changes", nargs="?", const=30, type=int, metavar="DAYS",
+                   help="print the change log for the last DAYS days (default 30; no QBO call)")
     g.add_argument("--encrypt", action="store_true",
                    help="encrypt any plain rows with the Keychain MIRROR_KEY (one-time migration; no QBO call)")
     ap.add_argument("--entities", default="", help="comma list, --seed only")
     a = ap.parse_args(argv)
     if a.status:
         return _status()
+    if a.changes is not None:
+        return _changes(a.changes)
     if a.encrypt:
         con = mirror.connect()
         try:

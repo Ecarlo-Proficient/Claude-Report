@@ -15,6 +15,16 @@ Rows are never dropped: a deleted transaction is flagged `deleted=1` with the
 date, so the mirror is also the history QBO does not keep. QBO stays the source
 of truth; the mirror is a stamped copy and nothing writes to QBO from here.
 
+  changes   every refresh diffs what QBO hands back against the copy it holds and
+            writes one `mirror_change` row per record that moved: created, edited
+            (with the BEFORE record kept, encrypted like the rest), deleted,
+            restored - stamped with QBO's own time, flagged in plain words
+            (deleted paid bill, payment unapplied, bill reopened, voided, class
+            dropped, amount / date / vendor changed). The ledger's QBO Audit page
+            reads it (`changes()`); `change_before()` hands back the pre-change
+            record for a repair. Born 2026-09-18, the day the audit log blamed
+            the owner for deletions a connected app made.
+
 Table per entity `qbo_<entity>`: id, sync_token, created, last_updated,
 txn_date, doc_number, total, name, deleted, deleted_at, seen_at, json (zlib).
 `load(entity)` hands a tool the parsed records - the replacement for
@@ -114,6 +124,33 @@ CREATE TABLE IF NOT EXISTS mirror_run (
     deleted  INTEGER NOT NULL DEFAULT 0,
     note     TEXT
 );
+CREATE TABLE IF NOT EXISTS mirror_change (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity         TEXT NOT NULL,
+    rec_id         TEXT NOT NULL,
+    kind           TEXT NOT NULL,
+    changed_at     TEXT,
+    seen_at        TEXT,
+    token_before   INTEGER,
+    token_after    INTEGER,
+    doc_number     TEXT,
+    txn_date       TEXT,
+    ref_type       TEXT,
+    ref_id         TEXT,
+    ref_name       TEXT,
+    total_before   REAL,
+    total_after    REAL,
+    balance_before REAL,
+    balance_after  REAL,
+    applied_before REAL,
+    applied_after  REAL,
+    lines_before   INTEGER,
+    lines_after    INTEGER,
+    flags          TEXT,
+    before_json    BLOB
+);
+CREATE INDEX IF NOT EXISTS mirror_change_at  ON mirror_change(changed_at);
+CREATE INDEX IF NOT EXISTS mirror_change_rec ON mirror_change(entity, rec_id);
 """
 
 
@@ -243,16 +280,154 @@ def _summary(rec: dict) -> tuple:
     )
 
 
-def upsert_many(con, entity: str, recs: Iterable[dict], seen_at: str) -> int:
+def _ref_of(rec: dict) -> Tuple[str, str, str]:
+    """(type, id, name) of the party on a transaction: the vendor of a bill / bill
+    payment / purchase, the customer of an invoice / payment / credit memo."""
+    for k in ("VendorRef", "CustomerRef", "EntityRef"):
+        r = rec.get(k)
+        if isinstance(r, dict) and (r.get("value") or r.get("name")):
+            return k[:-3].lower(), str(r.get("value") or ""), str(r.get("name") or "")
+    return "", "", ""
+
+
+def _applied(rec: dict) -> Optional[float]:
+    """Money a payment-side record has applied to other transactions (the bills a
+    BillPayment paid, the invoices a Payment covered). None for everything else."""
+    lines = rec.get("Line")
+    if not isinstance(lines, list) or "TotalAmt" not in rec or "Balance" in rec:
+        return None
+    tot = 0.0
+    for ln in lines:
+        if isinstance(ln, dict) and ln.get("LinkedTxn"):
+            tot += float(ln.get("Amount") or 0)
+    return round(tot, 2)
+
+
+def _n_lines(rec: dict) -> Optional[int]:
+    lines = rec.get("Line")
+    return len([ln for ln in lines if isinstance(ln, dict) and ln.get("DetailType") != "SubTotalLineDetail"]) if isinstance(lines, list) else None
+
+
+def _has_class(rec: dict) -> bool:
+    for ln in rec.get("Line") or []:
+        if not isinstance(ln, dict):
+            continue
+        det = ln.get("ItemBasedExpenseLineDetail") or ln.get("AccountBasedExpenseLineDetail") or ln.get("SalesItemLineDetail") or {}
+        if isinstance(det, dict) and det.get("ClassRef"):
+            return True
+    return False
+
+
+def _num(v) -> Optional[float]:
+    try:
+        return None if v in (None, "") else float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def change_flags(entity: str, kind: str, before: Optional[dict], after: Optional[dict]) -> List[str]:
+    """Plain-words flags for one change, worst first. What the QBO Audit page and the
+    refresh printout show; the raw before / after stay in the row for anyone who asks."""
+    fl: List[str] = []
+    b, a = before or {}, after or {}
+    if kind == "deleted":
+        if entity == "Bill" and _num(b.get("TotalAmt")) and (_num(b.get("Balance")) or 0) <= 0.005:
+            fl.append("deleted paid bill")
+        elif entity in ("BillPayment", "Payment"):
+            fl.append("payment deleted")
+        else:
+            fl.append("deleted")
+        return fl
+    if kind == "restored":
+        return ["restored"]
+    if kind == "created":
+        return []
+    tb, ta = _num(b.get("TotalAmt")), _num(a.get("TotalAmt"))
+    if tb is not None and ta is not None and abs(tb - ta) > 0.005:
+        fl.append("voided" if abs(ta) <= 0.005 and abs(tb) > 0.005 else "amount changed")
+    note_a = str(a.get("PrivateNote") or "").lower().startswith("voided")
+    note_b = str(b.get("PrivateNote") or "").lower().startswith("voided")
+    if note_a and not note_b and "voided" not in fl:
+        fl.append("voided")
+    bb, ba = _num(b.get("Balance")), _num(a.get("Balance"))
+    if bb is not None and ba is not None and ba > bb + 0.005:
+        fl.append("reopened")
+    pb, pa = _applied(b), _applied(a)
+    if pb is not None and pa is not None and pa < pb - 0.005:
+        fl.append("payment unapplied")
+    if entity in ("Bill", "Purchase", "Invoice") and _has_class(b) and not _has_class(a) and (a.get("Line") or []):
+        fl.append("class dropped")
+    if b.get("TxnDate") and a.get("TxnDate") and b.get("TxnDate") != a.get("TxnDate"):
+        fl.append("date changed")
+    if _ref_of(b)[1] and _ref_of(a)[1] and _ref_of(b)[1] != _ref_of(a)[1]:
+        fl.append("vendor changed" if _ref_of(a)[0] == "vendor" else "customer changed")
+    if str(b.get("DocNumber") or "") != str(a.get("DocNumber") or "") and (b.get("DocNumber") or a.get("DocNumber")):
+        fl.append("number changed")
+    nb, na = _n_lines(b), _n_lines(a)
+    if nb is not None and na is not None and nb != na and "payment unapplied" not in fl:
+        fl.append("lines changed")
+    return fl
+
+
+def _log_change(con, entity: str, rec_id: str, kind: str, before: Optional[dict], after: Optional[dict],
+                seen_at: str, changed_at: Optional[str] = None) -> None:
+    src = after or before or {}
+    rt, rid, rname = _ref_of(src)
+    if before and not rname:
+        rt, rid, rname = _ref_of(before)
+    md_after = (after or {}).get("MetaData") or {}
+    when = changed_at or md_after.get("LastUpdatedTime") or seen_at
+    tb = str((before or {}).get("SyncToken") or "")
+    ta = str((after or {}).get("SyncToken") or "")
+    con.execute(
+        "INSERT INTO mirror_change(entity, rec_id, kind, changed_at, seen_at, token_before, token_after, "
+        "doc_number, txn_date, ref_type, ref_id, ref_name, total_before, total_after, balance_before, "
+        "balance_after, applied_before, applied_after, lines_before, lines_after, flags, before_json) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (entity, str(rec_id), kind, when, seen_at,
+         int(tb) if tb.isdigit() else None, int(ta) if ta.isdigit() else None,
+         src.get("DocNumber"), src.get("TxnDate"), rt, rid, rname,
+         _num((before or {}).get("TotalAmt")), _num((after or {}).get("TotalAmt")),
+         _num((before or {}).get("Balance")), _num((after or {}).get("Balance")),
+         _applied(before) if before else None, _applied(after) if after else None,
+         _n_lines(before) if before else None, _n_lines(after) if after else None,
+         ",".join(change_flags(entity, kind, before, after)),
+         _pack(before) if before else None))
+
+
+def upsert_many(con, entity: str, recs: Iterable[dict], seen_at: str, track: bool = False) -> int:
     """Write records as QBO returned them; a record that comes back is alive
-    again (deleted=0). Last writer wins - the feed always hands us the latest."""
+    again (deleted=0). Last writer wins - the feed always hands us the latest.
+    track=True (every refresh; never the seed) diffs each record against the copy
+    held and logs the change with the BEFORE record - see `changes()`."""
     t = table(entity)
     rows = []
+    recs = list(recs)
+    have: Dict[str, tuple] = {}
+    if track:
+        ids = [str(r.get("Id")) for r in recs if r.get("Id")]
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            for r in con.execute(f"SELECT id, sync_token, last_updated, deleted, json FROM {t} WHERE id IN "
+                                 f"({','.join('?' * len(chunk))})", chunk):
+                have[r[0]] = (r[1], r[2], r[3], r[4])
     for rec in recs:
         rid = rec.get("Id")
         if not rid:
             continue
-        rows.append((str(rid), *_summary(rec), seen_at, _pack(rec)))
+        rid = str(rid)
+        if track:
+            prev = have.get(rid)
+            upd = (rec.get("MetaData") or {}).get("LastUpdatedTime")
+            tok = str(rec.get("SyncToken") or "")
+            tok_i = int(tok) if tok.isdigit() else None
+            if prev is None:
+                _log_change(con, entity, rid, "created", None, rec, seen_at)
+            elif prev[2]:
+                _log_change(con, entity, rid, "restored", _unpack(prev[3]) if prev[3] else None, rec, seen_at)
+            elif prev[0] != tok_i or (upd and prev[1] != upd):
+                _log_change(con, entity, rid, "edited", _unpack(prev[3]) if prev[3] else None, rec, seen_at)
+        rows.append((rid, *_summary(rec), seen_at, _pack(rec)))
     if not rows:
         return 0
     con.executemany(
@@ -262,8 +437,11 @@ def upsert_many(con, entity: str, recs: Iterable[dict], seen_at: str) -> int:
     return len(rows)
 
 
-def mark_deleted(con, entity: str, ids: Iterable[str], when: str) -> int:
-    """Flag rows QBO no longer has. Rows are kept - that is the history."""
+def mark_deleted(con, entity: str, ids: Iterable[str], when: str, track: bool = False,
+                 when_by_id: Optional[Dict[str, str]] = None) -> int:
+    """Flag rows QBO no longer has. Rows are kept - that is the history. track=True
+    logs each deletion with the record as it was; `when_by_id` carries QBO's own
+    deletion time per id (the change feed reports it) over the run stamp."""
     ids = [str(i) for i in ids if i]
     if not ids:
         return 0
@@ -271,11 +449,62 @@ def mark_deleted(con, entity: str, ids: Iterable[str], when: str) -> int:
     n = 0
     for i in range(0, len(ids), 500):
         chunk = ids[i:i + 500]
-        cur = con.execute(
-            f"UPDATE {t} SET deleted=1, deleted_at=? WHERE deleted=0 AND id IN "
-            f"({','.join('?' * len(chunk))})", (when, *chunk))
+        marks = f"({','.join('?' * len(chunk))})"
+        if track:
+            for r in con.execute(f"SELECT id, json FROM {t} WHERE deleted=0 AND id IN {marks}", chunk):
+                before = _unpack(r[1]) if r[1] else None
+                _log_change(con, entity, r[0], "deleted", before, None, when, (when_by_id or {}).get(r[0]) or when)
+        cur = con.execute(f"UPDATE {t} SET deleted=1, deleted_at=? WHERE deleted=0 AND id IN {marks}", (when, *chunk))
         n += cur.rowcount
     return n
+
+
+def backfill_changes(con, seen_at: Optional[str] = None) -> int:
+    """One-time: every row already flagged deleted (before the change log existed)
+    becomes a `deleted` change with the record as held. Idempotent."""
+    seen_at = seen_at or iso_z(now_utc())
+    n = 0
+    for e in ENTITIES:
+        t = table(e)
+        for r in con.execute(f"SELECT id, deleted_at, json FROM {t} WHERE deleted=1 AND id NOT IN "
+                             f"(SELECT rec_id FROM mirror_change WHERE entity=? AND kind='deleted')", (e,)).fetchall():
+            _log_change(con, e, r[0], "deleted", _unpack(r[2]) if r[2] else None, None, seen_at, r[1] or seen_at)
+            n += 1
+    return n
+
+
+def changes(con, since: Optional[str] = None, limit: int = 5000, entity: Optional[str] = None) -> List[dict]:
+    """The change log, newest first, without the before record (see change_before)."""
+    sql = ("SELECT id, entity, rec_id, kind, changed_at, seen_at, token_before, token_after, doc_number, txn_date, "
+           "ref_type, ref_id, ref_name, total_before, total_after, balance_before, balance_after, applied_before, "
+           "applied_after, lines_before, lines_after, flags, before_json IS NOT NULL AS has_before FROM mirror_change")
+    parts, params = [], []
+    if since:
+        parts.append("changed_at >= ?")
+        params.append(since)
+    if entity:
+        parts.append("entity = ?")
+        params.append(entity)
+    if parts:
+        sql += " WHERE " + " AND ".join(parts)
+    sql += " ORDER BY changed_at DESC, id DESC LIMIT ?"
+    params.append(int(limit))
+    cols = ["id", "entity", "rec_id", "kind", "changed_at", "seen_at", "token_before", "token_after", "doc_number",
+            "txn_date", "ref_type", "ref_id", "ref_name", "total_before", "total_after", "balance_before",
+            "balance_after", "applied_before", "applied_after", "lines_before", "lines_after", "flags", "has_before"]
+    out = []
+    for r in con.execute(sql, params):
+        d = dict(zip(cols, r))
+        d["flags"] = [f for f in (d["flags"] or "").split(",") if f]
+        d["has_before"] = bool(d["has_before"])
+        out.append(d)
+    return out
+
+
+def change_before(con, change_id: int) -> Optional[dict]:
+    """The record as it was BEFORE that change (the repair material)."""
+    r = con.execute("SELECT before_json FROM mirror_change WHERE id=?", (int(change_id),)).fetchone()
+    return _unpack(r[0]) if r and r[0] else None
 
 
 def _log_run(con, started: str, mode: str, upserted: int, deleted: int, note: str = "") -> None:
@@ -401,6 +630,12 @@ def refresh(con, access: str, cid: str, progress: Progress = print) -> dict:
         return seed(con, access, cid, progress=progress)
     last_dt = parse_iso(last)
     started = now_utc()
+    if not _meta_get(con, "changes_backfilled"):     # first refresh with the change log: the deletions already on file
+        n0 = backfill_changes(con, iso_z(started))
+        _meta_set(con, "changes_backfilled", iso_z(started))
+        if n0:
+            say(f"change log: {n0} earlier deletion{'s' if n0 != 1 else ''} backfilled")
+    n_before = con.execute("SELECT COUNT(*) FROM mirror_change").fetchone()[0]
     age = started - last_dt
     if age > dt.timedelta(days=CDC_MAX_DAYS):
         say(f"stamp is {age.days} days old - past the feed's reach; using LastUpdatedTime + id sweep")
@@ -414,7 +649,14 @@ def refresh(con, access: str, cid: str, progress: Progress = print) -> dict:
     _meta_set(con, "last_refresh", iso_z(started))
     _log_run(con, iso_z(started), mode, res["upserted"], res["deleted"], json.dumps(res.get("per", {})))
     con.commit()
-    return {"mode": mode, "started": iso_z(started), **res}
+    flagged = con.execute("SELECT kind, flags, entity, ref_name, doc_number, total_before, total_after FROM mirror_change "
+                          "WHERE id > (SELECT COALESCE(MAX(id),0) - ? FROM mirror_change) AND flags <> '' "
+                          "ORDER BY id", (con.execute("SELECT COUNT(*) FROM mirror_change").fetchone()[0] - n_before,)).fetchall()
+    if flagged:
+        say(f"  change log: {len(flagged)} flagged change{'s' if len(flagged) != 1 else ''} this refresh")
+        for k, fl, e, nm, dn, tb, ta in flagged[:12]:
+            say(f"    {fl.replace(',', ', '):22s} {e} {dn or ''} {nm or ''} {tb if tb is not None else ''}{' -> ' + str(ta) if ta is not None and tb != ta else ''}")
+    return {"mode": mode, "started": iso_z(started), "flagged": len(flagged), **res}
 
 
 def _refresh_cdc(con, access: str, cid: str, since: str, say) -> dict:
@@ -425,8 +667,9 @@ def _refresh_cdc(con, access: str, cid: str, since: str, say) -> dict:
     pending = list(parsed.items())
     while pending:
         entity, slot = pending.pop(0)
-        n_up = upsert_many(con, entity, slot["alive"], seen_at)
-        n_de = mark_deleted(con, entity, [i for i, _ in slot["deleted"]], seen_at)
+        n_up = upsert_many(con, entity, slot["alive"], seen_at, track=True)
+        n_de = mark_deleted(con, entity, [i for i, _ in slot["deleted"]], seen_at, track=True,
+                            when_by_id={i: w for i, w in slot["deleted"] if w})
         con.commit()
         p = per.setdefault(entity, {"upserted": 0, "deleted": 0})
         p["upserted"] += n_up
@@ -456,7 +699,7 @@ def _refresh_by_updated(con, access: str, cid: str, since_dt: dt.datetime, say) 
         n = 0
         where = _and(f"MetaData.LastUpdatedTime > '{since}'", _list_where(e))
         for batch in _query_pages(access, cid, e, where):
-            n += upsert_many(con, e, batch, seen_at)
+            n += upsert_many(con, e, batch, seen_at, track=True)
             con.commit()
         if n:
             say(f"  {e}: {n} updated since {since}")
@@ -484,13 +727,13 @@ def sweep_deleted(con, access: str, cid: str, entities: List[str], say=None) -> 
         mine = {r[0] for r in con.execute(f"SELECT id FROM {table(e)} WHERE deleted=0")}
         gone = mine - qbo_ids
         missing = sorted(qbo_ids - mine, key=lambda s: int(s) if s.isdigit() else 0)
-        n_del = mark_deleted(con, e, gone, seen_at)
+        n_del = mark_deleted(con, e, gone, seen_at, track=True)
         n_fetch = 0
         for i in range(0, len(missing), FETCH_CHUNK):
             chunk = missing[i:i + FETCH_CHUNK]
             where = _and("Id IN (" + ",".join(f"'{x}'" for x in chunk) + ")", _list_where(e))
             for batch in _query_pages(access, cid, e, where):
-                n_fetch += upsert_many(con, e, batch, seen_at)
+                n_fetch += upsert_many(con, e, batch, seen_at, track=True)
         con.commit()
         if n_del or n_fetch:
             say(f"  {e}: {n_del} deleted, {n_fetch} fetched")

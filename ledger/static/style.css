@@ -153,25 +153,22 @@ body {
    line up. Backgrounds stay on the theme tokens - the style is the grid and the type, not the colour. */
 .set-hint { color: var(--text-dim); font-size: .85em; margin: 0 0 6px; }
 
-/* ── KPI cards ─────────────────────────────────────────────────────────── */
-.kpi-row {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 12px; padding: 8px 18px 18px;
-}
-.kpi {
-  border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px;
-  background: var(--surface-2);
-}
-.kpi.kpi-click { cursor: pointer; transition: background .12s, outline-color .12s; outline: 2px solid transparent; outline-offset: -2px; }
+/* ── KPI stats - one compact line each, no boxes (owner 2026-09-23: "I hate these big blobs, i like simplicity and
+   easy to see, not big waste spacer blocks"). LABEL  value  · note  · source, a hairline between stats, wraps as needed.
+   The same classes every renderer already emits (.kpi / .k-label / .k-value / .k-sub / .k-src), so this is app-wide. */
+.kpi-row { display: flex; flex-wrap: wrap; gap: 4px 0; padding: 4px 18px 10px; align-items: baseline; }
+.kpi { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px; padding: 3px 14px 3px 12px;
+  border-left: 1px solid var(--border); border-radius: 0; background: transparent; min-width: 0; }
+.kpi:first-child { border-left: 0; padding-left: 0; }
+.kpi.kpi-click { cursor: pointer; transition: background .12s; border-radius: 6px; }
 .kpi.kpi-click:hover { background: var(--row-hover); }
-/* Forecast tiles (expected cash-in): tinted with the accent so they read as a projection, not a fact. */
-.kpi.kpi-fc { background: color-mix(in srgb, var(--accent) 9%, var(--surface-2)); border-color: color-mix(in srgb, var(--accent) 32%, var(--border)); }
 .kpi.kpi-fc .k-value { color: var(--accent); }
-.kpi.kpi-click.active { outline-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+.kpi.kpi-click.active .k-value { text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 3px; }
 .kpi.kpi-click.none { opacity: .5; cursor: default; }
-.kpi .k-label { color: var(--text-dim); font-size: .8em; text-transform: uppercase; letter-spacing: .04em; }
-.kpi .k-value { font-size: 1.5em; font-weight: 700; margin-top: 4px; letter-spacing: -.02em; }
-.kpi .k-sub { color: var(--text-dim); font-size: .8em; margin-top: 2px; }
+.kpi .k-label { color: var(--text-dim); font-size: .76em; text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; }
+.kpi .k-value { font-size: 1.05em; font-weight: 700; margin: 0; letter-spacing: -.01em; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.kpi .k-sub { color: var(--text-dim); font-size: .8em; margin: 0; }
+.kpi .k-sub:not(:empty)::before { content: "· "; }
 
 /* ── Attention chips ───────────────────────────────────────────────────── */
 tr.lien-row > td:first-child { border-left: 3px solid transparent; }
@@ -207,7 +204,7 @@ tr.lien-row.u-info > td:first-child { border-left-color: var(--text-dim); }
 .drow.pnl-pulled .dv.pnl-stamp { display: inline-block; margin-left: 0; text-align: left; border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; background: var(--surface-2); font-size: .9em; font-variant-numeric: tabular-nums; }
 /* Every AR invoice (draw) that makes up billed-to-date, in the P&L expansion. */
 .pnl-invoices { display: flex; flex-direction: column; gap: 1px; margin-top: 2px; }
-.pnl-inv { display: grid; grid-template-columns: 74px 1fr auto auto; align-items: baseline; gap: 10px;
+.pnl-inv { display: grid; grid-template-columns: 74px auto minmax(0, 1fr) auto auto; align-items: baseline; gap: 10px;
   font-size: .86em; padding: 2px 0; font-variant-numeric: tabular-nums; }
 .pnl-inv .pi-date { color: var(--text-dim); }
 .pnl-inv .pi-no { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -874,7 +871,7 @@ tr.ag-total > td.ag0, tr.ag-total > td.ag1, tr.ag-total > td.ag2, tr.ag-total > 
 
 /* ── QoL: clickable KPI tiles + inline row links ─────────────────────────── */
 .kpi.clickable { cursor: pointer; transition: border-color .12s, background .12s; }
-.kpi.clickable:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
+.kpi.clickable:hover { background: var(--row-hover); }
 .row-link { color: var(--accent-text); text-decoration: none; }
 .row-link:hover { text-decoration: underline; }
 
@@ -1278,7 +1275,8 @@ table.grid td.inv-note { max-width: 300px; white-space: normal; }
 .bar .bar-txt { font-weight: 600; }
 
 /* provenance chip under a KPI (2026-09-02) */
-.kpi .k-src { margin-top: 6px; font-size: .8em; color: var(--text-dim); border-top: 1px dashed var(--border); padding-top: 4px; }
+.kpi .k-src { margin: 0; font-size: .76em; color: var(--text-dim); border-top: 0; padding-top: 0; opacity: .8; }
+.kpi .k-src:not(:empty)::before { content: "· "; }
 .fresh-actions { display: inline-flex; gap: 6px; }
 .bf-more:not([hidden]) { display: contents; }
 #bfMoreBtn.on { background: color-mix(in srgb, var(--accent) 12%, var(--surface)); border-color: var(--accent); }
@@ -1533,9 +1531,9 @@ td.pnl-expand .pnl-live .pnl-codegrp { break-after: avoid; }
 .subpage.fold:not(.closed) > .fold-head { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
 .company-head { margin: 0 0 18px; }
 .company-head[hidden] { display: none; }
-.kpi-strip { padding: 10px 18px 16px; }
+.kpi-strip { padding: 6px 18px 10px; }
 .company-head .kpi-strip { padding: 0; }
-.kpi-strip .k-value { font-family: var(--font-mono); font-size: 1.45em; letter-spacing: -.03em; }
+.kpi-strip .k-value { font-family: var(--font-mono); font-size: 1.05em; letter-spacing: -.02em; }
 .kpi.kpi-neg .k-value { color: var(--neg); }
 .proj-filters { align-items: center; }
 .proj-filters .seg-btn { font-size: .85em; padding: 5px 12px; }
@@ -1889,3 +1887,15 @@ table.pp-cov tr.pp-cov-total.pp-cov-row.sel > td { background: color-mix(in srgb
 .audit-tl { width: 100%; }
 .audit-tl td.d { color: var(--text-dim); font-size: .8em; }
 .ip-audit { padding: 4px 14px 12px; }
+
+/* ── 2026-09-23: Coverage table - All draws lights every row, one draw lights its row; P&L invoices fold with the memo */
+table.pp-cov.all-sel tr.pp-cov-row > td { background: color-mix(in srgb, var(--accent) 14%, var(--surface)); }
+.pnl-inv .pi-memo { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); font-size: .92em; }
+.pnl-cap.pnl-invcap { cursor: pointer; }
+.pnl-cap.pnl-invcap:hover { color: var(--text); }
+/* ── QBO Audit: flags as pills, colour = severity only */
+.qa-flag { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: .8em; font-weight: 600; margin: 1px 4px 1px 0; border: 1px solid var(--border); background: var(--surface-2); white-space: nowrap; }
+.qa-flag.neg { color: var(--neg-text); border-color: color-mix(in srgb, var(--neg) 45%, var(--border)); background: color-mix(in srgb, var(--neg) 8%, var(--surface)); }
+.qa-flag.warn { color: var(--warn-text); border-color: color-mix(in srgb, var(--warn-text) 45%, var(--border)); }
+.qa-flag.ok { color: var(--pos); border-color: color-mix(in srgb, var(--pos) 45%, var(--border)); }
+td.qa-what { white-space: normal; max-width: 260px; }

@@ -108,6 +108,7 @@ const GRP_KINDS = [
   { sel: "tr.sys-group", kind: "band", open: false },         // Systems: a domain
   { sel: "tr.tr-msum", kind: "band", open: false },           // the money trail: a month
   { sel: ".pnl-codegrp", kind: "sib", open: false, until: ".pnl-codegrp" },   // P&L: a job type over its cost codes
+  { sel: ".pnl-invcap", kind: "sib", open: false, until: ".pnl-cap" },         // P&L: "Invoices - all draws" over the list (closed by default, owner 2026-09-23)
   { sel: ".wr-div-head", kind: "sib", open: true, until: ".wr-div-head" },    // WIP Review: a division (approval work - open)
   { sel: ".dgroup > h4", kind: "parent", open: true },        // record panels: a titled block (content - open)
   { sel: ".warm-head", kind: "parent", open: false },         // Sales: an account card
@@ -223,24 +224,28 @@ let drawVendorExpanded = new Set();   // (draw|vendor) groups expanded inside a 
 // bring the per-bill "Waiver in hand" column + caption back. It never gated a draw's stage/color.
 const WAIVERS_ENABLED = false;
 
-// ── Nav: TWO views (owner 2026-09-13: "consolidate to two menus/views - projects, and give me
-// everything") plus a tools group that only the gear reaches. Projects = the WIP as the page;
-// Company = the whole business as Clients / Vendors / Money. Every old tab is an alias that lands on
-// its new page and scrolls to the section it became, so every deep link in the app still works.
+// ── Nav (owner 2026-09-23: "remove Vendors and Customers from Company and reinstate them as their own"):
+// Projects = the WIP as the page · Vendors = Bill Tracker / Vendor Center · Customers = Invoice Tracker / Customer
+// Center / Payments received / Sales pipeline · Company = Money / QBO Audit · a tools group only the gear reaches.
+// Every old tab name is an alias that lands on its page (and scrolls to its section where it became one), so every
+// deep link in the app still works.
 const NAV_GROUPS = [
-  { id: "projects", label: "Projects", tabs: ["projects"] },
-  { id: "company",  label: "Company",  tabs: ["clients", "vendors", "money"] },
-  { id: "tools",    label: "Tools",    tabs: ["wipreview", "review", "console", "systems"], hidden: true },   // from the gear, not the bar
+  { id: "projects",  label: "Projects",  tabs: ["projects"] },
+  { id: "vendors",   label: "Vendors",   tabs: ["bills", "vendorcenter"] },
+  { id: "customers", label: "Customers", tabs: ["invoices", "customercenter", "payments", "sales"] },
+  { id: "company",   label: "Company",   tabs: ["money", "qboaudit"] },
+  { id: "tools",     label: "Tools",     tabs: ["wipreview", "review", "console", "systems"], hidden: true },   // from the gear, not the bar
 ];
 const TAB_LABELS = {
-  projects: "Projects", clients: "Clients", vendors: "Vendors", money: "Money",
+  projects: "Projects", bills: "Bill Tracker", vendorcenter: "Vendor Center", invoices: "Invoice Tracker", customercenter: "Customer Center",
+  payments: "Payments received", sales: "Sales pipeline", money: "Money", qboaudit: "QBO Audit",
   wipreview: "WIP Review", review: "WIP review", console: "Console", systems: "Systems", paybills: "Pay run", liens: "Lien register",
 };
-const HIDDEN_TAB_GROUP = { paybills: "company", liens: "company" };   // pages without a sub-tab (opened from Bills): the Company group stays lit
-// old tab -> the page it lives on now (the section id is the old name, so setTab scrolls to it)
+const HIDDEN_TAB_GROUP = { paybills: "vendors", liens: "vendors" };   // pages without a sub-tab (opened from the Bill Tracker): the Vendors group stays lit
+// old tab -> the page it lives on now (where the old tab became a section, its id is the old name and setTab scrolls to it)
 const TAB_ALIAS = { overview: "projects", home: "projects", wip: "projects", pnl: "projects", draws: "projects",
-                    customers: "clients", invoices: "clients", payments: "clients", sales: "clients",
-                    bills: "vendors", accounting: "vendors", health: "money", subloc: "money", costs: "money", graph: "systems",
+                    clients: "invoices", customers: "customercenter", vendors: "vendorcenter", accounting: "qboaudit",
+                    health: "money", subloc: "money", costs: "money", graph: "systems",
                     rpreview: "review" };   // the RP review became the per-division WIP review (2026-09-15)
 const KNOWN_TABS = new Set([...NAV_GROUPS.flatMap(g => g.tabs), ...Object.keys(HIDDEN_TAB_GROUP)]);
 const groupOf = t => NAV_GROUPS.find(g => g.tabs.includes(t)) || NAV_GROUPS.find(g => g.id === HIDDEN_TAB_GROUP[t]) || NAV_GROUPS[0];
@@ -278,8 +283,9 @@ function setTab(t) {
   buildSubTabs(g, t);
   { const ch = $("#companyHead"); if (ch) ch.hidden = g.id !== "company"; }
   if (t === "projects") renderPnl();          // the P&L by job fold (server-computed, cached until the next load)
-  if (t === "clients") { renderCustomers(); renderPayments(); }
-  if (t === "vendors") loadAccounting();
+  if (t === "customercenter") renderCustomers();
+  if (t === "payments") renderPayments();
+  if (t === "qboaudit") { loadAccounting(); loadQboAudit(); }
   if (t === "money") { loadHealth(); renderPnl(); }
   if (t === "wipreview") loadWipReview();
   if (t === "review") loadReview();
@@ -495,6 +501,7 @@ function pollSync(steps, els, pipeline) {
 async function finishSync(els, msg, reload) {
   syncing = false; runningPipeline = null; if (els.btn) els.btn.disabled = false;
   if (reload) { try { await load(true); if (typeof renderConsole === "function" && activeTab === "console") renderConsole(); } catch { /* ignore */ } }
+  if (typeof els.after === "function") { try { els.after(reload); } catch { /* ignore */ } }   // the page that started the run re-reads its own feed
   if (msg) toast(msg);
   // Keep the bar up if another run is queued (it starts right away); else tidy it after a beat.
   if (!syncQueue.length && !/(failed|lost|Lost)/.test(msg)) setTimeout(() => { els.prog.hidden = true; els.fill.style.width = "0%"; }, 2600);
@@ -3845,10 +3852,10 @@ function _ppTabs(d, nxInv) {
   const hint = document.createElement("span"); hint.className = "pp-tabs-hint dim"; hint.textContent = `← → flips ${_pp.isRp ? "scopes" : "draws"}`; strip.appendChild(hint);
   return strip;
 }
-function _ppScrollDetail() { const el = $("#ppDetail"); if (el) requestAnimationFrame(() => el.scrollIntoView({ behavior: "smooth", block: "start" })); }
+function _ppScrollDetail() { /* the page stays put when a draw is picked (owner 2026-09-23: "when i click a draw do not make my screen go down") */ }
 function _ppCoverage(d, nxInv) {
   const wrap = document.createElement("div"); wrap.className = "table-scroll pp-cov-wrap";
-  const t = document.createElement("table"); t.className = "grid pp-cov";
+  const t = document.createElement("table"); t.className = "grid pp-cov" + (_pp.view === "all" ? " all-sel" : "");   // All draws = the whole table lit; one draw = its row (owner 2026-09-23)
   t.innerHTML = `<thead><tr><th class='left'>${_pp.isRp ? "Costs dated" : "Period covered"}</th><th class='left'>${_pp.isRp ? "Scope" : "Draw"}</th><th class='left'>Invoice</th><th class='left'>Date</th><th class='right'>Net billed</th><th class='left'>GC</th><th class='right'>Costs</th><th class='right'>Gross</th><th class='right'>Margin</th><th class='right'>Overhead</th><th class='right'>Net</th><th class='left'>Stage</th></tr></thead>`;
   const tb = document.createElement("tbody");
   const tot = { income: 0, costs: 0, gross: 0, overhead: 0, net: 0, unbilled: 0 };
@@ -3900,72 +3907,9 @@ if (!window.__ppKeys) { window.__ppKeys = true;   // ← → flip between All dr
     _pp.view = keys[i]; _renderPpDraws(); e.preventDefault();
   });
 }
-// The draw's money as the EQUATION the owner reads (2026-09-15: "make it into an equation, we need to see the
-// minus ... and see the invoice that makes up the income on top"): every invoice on the draw, = income, − materials,
-// − labor, = gross profit, − overhead, = net. The same arithmetic as the P&L workbook's draw sheet.
-function _ppEquation(cur) {
-  const d = _pp.d, draws = cur ? [cur] : d.draws;
-  const wrap = document.createElement("div"); wrap.className = "pp-eq-wrap";
-  const t = document.createElement("table"); t.className = "pp-eq"; const tb = document.createElement("tbody");
-  const row = (op, label, detail, amt, cls, rightNode) => {
-    const tr = document.createElement("tr"); if (cls) tr.className = cls;
-    const o = document.createElement("td"); o.className = "pp-eq-op"; o.textContent = op; tr.appendChild(o);
-    const l = document.createElement("td"); l.className = "pp-eq-lab"; if (label instanceof Node) l.appendChild(label); else l.textContent = label;
-    if (detail) { const s = document.createElement("small"); s.textContent = detail; l.appendChild(s); } tr.appendChild(l);
-    const a = document.createElement("td"); a.className = "pp-eq-amt" + (amt < -0.005 ? " neg" : ""); a.textContent = amt == null ? "–" : (amt < -0.005 ? "− " + money(-amt) : money(amt)); tr.appendChild(a);
-    const r = document.createElement("td"); r.className = "pp-eq-right"; if (rightNode) { if (rightNode instanceof Node) r.appendChild(rightNode); else r.textContent = rightNode; } tr.appendChild(r);
-    tb.appendChild(tr); return tr;
-  };
-  const gcNode = (paid, bal) => { const s = document.createElement("span"); s.className = paid ? "ar-paid" : "ar-open"; s.textContent = paid ? "GC paid" : "GC owes " + money(bal); return s; };
-  let income = 0, mat = 0, lab = 0, nMat = 0, nLab = 0, oh = 0, basis = "";
-  let incomeLabel = null, incomeDetail = null;   // a single invoice folds into the Income line (owner 2026-09-16: "Income | Inv # = this")
-  const folded = [];   // the invoice / draw lines that sit under the Income toggle when there is more than one
-  for (const dr of draws) {
-    if (cur && (dr.invoices || []).length === 1) {
-      const iv = dr.invoices[0];
-      incomeLabel = document.createElement("span"); incomeLabel.textContent = "Income · ";
-      const a = document.createElement("a"); a.href = "#"; a.className = "qbo-link"; a.textContent = `Invoice ${iv.doc_number}`; a.title = "Open this invoice's page";
-      a.onclick = (e) => { e.preventDefault(); if (typeof openInvoicePage === "function") openInvoicePage({ doc_number: iv.doc_number, project_no: _pp.pn }); }; incomeLabel.appendChild(a);
-      if (iv.qbo_txn_id) { const q = document.createElement("a"); q.href = qboUrl("invoice", iv.qbo_txn_id); q.target = "_blank"; q.rel = "noopener"; q.className = "qbo-link pp-eq-qbo"; q.textContent = "↗"; q.title = "Open in QuickBooks"; incomeLabel.appendChild(q); }
-      incomeDetail = [iv.tag || "", iv.txn_date ? "invoiced " + fmtDateShort(iv.txn_date) : "", cur.scope ? "net billed on this scope" : "net billed on this draw"].filter(Boolean).join(" · ");
-    } else if (cur) {   // several invoices on one draw: they fold under the Income line (owner 2026-09-16: "make it toggle ... so it stays clean")
-      for (const iv of (dr.invoices || [])) {
-        const lbl = document.createElement("span"); const a = document.createElement("a"); a.href = "#"; a.className = "qbo-link"; a.textContent = `Invoice ${iv.doc_number}`; a.title = "Open this invoice's page";
-        a.onclick = (e) => { e.preventDefault(); if (typeof openInvoicePage === "function") openInvoicePage({ doc_number: iv.doc_number, project_no: _pp.pn }); }; lbl.appendChild(a);
-        if (iv.qbo_txn_id) { const q = document.createElement("a"); q.href = qboUrl("invoice", iv.qbo_txn_id); q.target = "_blank"; q.rel = "noopener"; q.className = "qbo-link pp-eq-qbo"; q.textContent = "↗"; q.title = "Open in QuickBooks"; lbl.appendChild(q); }
-        folded.push(() => row("", lbl, [iv.tag || ((dr.invoices || []).length > 1 ? "base contract" : ""), iv.txn_date ? fmtDateShort(iv.txn_date) : ""].filter(Boolean).join(" · "), iv.amount, "pp-eq-inv pp-eq-fold", gcNode(iv.paid, iv.balance)));
-      }
-    } else if (!dr.no_draw) {   // the whole job: one line per draw / scope, folded under Income
-      const nos = dr.invoice_nos || (dr.invoice_no ? [dr.invoice_no] : []);
-      folded.push(() => { const tr = row("", _ppTitle(dr), `${dr.scope ? "" : (nos.length === 1 ? "invoice " + nos[0] : nos.length + " invoices " + nos.join(", "))}${dr.ar_date ? (dr.scope ? "invoiced " : " · ") + fmtDateShort(dr.ar_date) : ""}${dr.scope && _ppSpan(dr) ? " · costs " + _ppSpan(dr) : ""}`, dr.billed, "pp-eq-inv pp-eq-fold pp-eq-click", gcNode(dr.gc_paid, dr.ar_open));
-        tr.title = `Open this ${dr.scope ? "scope" : "draw"}`; tr.onclick = () => { _pp.view = dr.matched_invoice; _renderPpDraws(); _ppScrollDetail(); }; return tr; });
-    }
-    income += num(dr.billed); mat += num(dr.gate_amt); lab += num(dr.subs_amt);
-    nMat += (dr.bills || []).filter(b => b.gates).length; nLab += (dr.sub_bills || []).length;
-    if (dr.pl) { oh += num(dr.pl.overhead); basis = basis || dr.pl.overhead_basis || ""; }
-  }
-  const gcAll = draws.filter(x => !x.no_draw), owed = gcAll.reduce((s, x) => s + num(x.ar_open), 0);
-  if (folded.length && !incomeLabel) {   // "Income · 3 invoices ▸" - click to list them, click again to fold (remembered while the page is open)
-    incomeLabel = document.createElement("span"); incomeLabel.className = "pp-eq-toggle";
-    const n = folded.length, what = cur ? `invoice${n === 1 ? "" : "s"}` : _ppUnit(n);
-    incomeLabel.innerHTML = `Income · ${n} ${_ge(what)} <span class="pp-eq-caret">${_pp.eqOpen ? "▾" : "▸"}</span>`; incomeLabel.title = _pp.eqOpen ? "Fold the list" : `List the ${what}`;
-    incomeLabel.onclick = () => { _pp.eqOpen = !_pp.eqOpen; const y = window.scrollY; _renderPpDraws(); window.scrollTo(0, y); };
-  }
-  const incomeRow = row("=", incomeLabel || "Income", incomeDetail || (cur ? (cur.scope ? "net billed on this scope" : "net billed on this draw") : "net billed on the job"), income, "pp-eq-sum", gcAll.length ? gcNode(owed <= 0.005, owed) : null);
-  if (folded.length && _pp.eqOpen) { let anchor = incomeRow; for (const f of folded) { const tr = f(); anchor.after(tr); anchor = tr; } }   // listed right under Income, in order
-  const gcPays = draws.reduce((s, dr) => s + (dr.bills || []).filter(b => !b.gates).length, 0);
-  row("−", "Materials", `${nMat} bill${nMat === 1 ? "" : "s"} we pay · Bill Tracker${gcPays ? ` · ${gcPays} pumping bill${gcPays === 1 ? "" : "s"} the GC pays left out` : ""}`, -mat);
-  row("−", "Labor (subs)", `${nLab} bill${nLab === 1 ? "" : "s"} · QuickBooks${cur && !cur.no_draw ? (cur.scope ? ", dated in this scope's window" : ", dated in the draw period") : ""}`, -lab);
-  const gross = income - mat - lab;
-  row("=", "Gross profit", income ? `${(gross / income * 100).toFixed(1)}% of income` : "", gross, "pp-eq-sum" + (gross < -0.005 ? " neg" : ""));
-  row("−", "Overhead", basis || (/^MFD/.test(_pp.pn) ? "9% of income (MFD)" : "10% of income"), -oh);
-  const net = gross - oh;
-  row("=", "Net", income ? `${(net / income * 100).toFixed(1)}% of income` : "", net, "pp-eq-total" + (net < -0.005 ? " neg" : " pos"));
-  t.appendChild(tb); wrap.appendChild(t);
-  return wrap;
-}
 function _renderPpDraws() {
   const d = _pp.d, host = $("#ppDraws"); if (!host) return; host.innerHTML = "";
+  const y0 = window.scrollY;   // re-rendering never moves the page (owner 2026-09-23)
   _ppPaintTools(); _ppPaintPayBar();
   if (!d.draws.length) { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = "No invoices or bills on this job in the ledger yet."; return host.appendChild(p); }
   const nxInv = d.funding && d.funding.next_draw ? d.funding.next_draw.invoice_no : null;
@@ -3975,19 +3919,14 @@ function _renderPpDraws() {
   host.appendChild(_ppTabs(d, nxInv));
   host.appendChild(_ppCoverage(d, nxInv));
   const det = document.createElement("div"); det.className = "pp-detail" + (cur && cur.invoice_no && cur.invoice_no === nxInv ? " next" : ""); det.id = "ppDetail";
-  // the head: which draw is open, its invoices, what it covers, where it stands
-  { const h = document.createElement("div"); h.className = "pp-det-h";
-    if (!cur) h.innerHTML = `<b>${_ppAllLabel()}</b> <span class="dim">· every bill on the job, with the ${_pp.isRp ? "scope" : "draw"} it sits under</span>`;
-    else { const nos = cur.invoice_nos || (cur.invoice_no ? [cur.invoice_no] : []);
-      const bits = [cur.no_draw ? (cur.scope ? "bills dated after the last invoice - not invoiced yet" : "bills the Bill Tracker has not matched to a draw yet") : nos.length ? (nos.length === 1 ? "Invoice " + nos[0] : "Invoices " + nos.join(", ")) : "", _ppSpan(cur) ? (cur.scope ? "costs dated " : "covers ") + _ppSpan(cur) : "", cur.ar_date ? "invoiced " + fmtDate(cur.ar_date) : "", _ppStage(cur)].filter(Boolean);
-      h.innerHTML = `<b>${_ge(_ppTitle(cur))}</b> <span class="dim">· ${bits.map(_ge).join(" · ")}</span>`;
-      for (const [k, word] of [["pushed_in", "moved into this draw from the one before"], ["pushed_out", "moved on to the next draw"]]) { const p = cur[k]; if (!p) continue;
-        const cap = document.createElement("div"); cap.className = "bills-cap pp-push"; cap.textContent = `${p.count} bill${p.count === 1 ? "" : "s"} · ${money(p.total)} ${word}: ${p.note || ""}`; h.appendChild(cap); } }
-    det.appendChild(h); }
-  det.appendChild(_ppEquation(cur));
+  // No head and no equation under the table any more (owner 2026-09-23: "remove this, we already have this info on top
+  // in the table") - the Coverage table IS the P&L per draw and lights what is open; only a draw's push notes stay.
+  if (cur) for (const [k, word] of [["pushed_in", "moved into this draw from the one before"], ["pushed_out", "moved on to the next draw"]]) { const p = cur[k]; if (!p) continue;
+    const cap = document.createElement("div"); cap.className = "bills-cap pp-push"; cap.textContent = `${p.count} bill${p.count === 1 ? "" : "s"} · ${money(p.total)} ${word}: ${p.note || ""}`; det.appendChild(cap); }
   det.appendChild(_ppBillsTable(cur));
   host.appendChild(det);
   _ppRenderNotes();
+  window.scrollTo(0, y0);
 }
 function _ppBillsTable(cur) {
   const d = _pp.d, rows = _ppAllRows(cur ? [cur] : d.draws).filter(x => _ppBillShown(x.b));
@@ -5993,8 +5932,8 @@ function renderCompanyHead() {
   let collect = 0, collectAmt = 0; try { _buildDrawClientMap(DRAWS.draws || []); for (const f of _fundingRows()) if (f.status === "Ready to collect") { collect++; collectAmt += f.gcOwes; } } catch { /* no draws */ }
   const comp = (PNL && PNL.company) || null;
   const tiles = [
-    ["Open AR", money(ar), `${clients} client${clients === 1 ? "" : "s"} · what they owe you`, srcText("QuickBooks", loadedAt("AR (invoices)"), "loaded"), "open balance of the QuickBooks invoices loaded", () => setTab("clients"), false],
-    ["Open AP", money(ap.open_balance), `${ap.open_lines || 0} open bill${ap.open_lines === 1 ? "" : "s"} · what you owe vendors`, srcText("Bill Tracker", syncedAt("sync-ap"), "loaded"), "open balance of the vendor bills in the Bill Tracker (subs excluded)", () => setTab("vendors"), false],
+    ["Open AR", money(ar), `${clients} client${clients === 1 ? "" : "s"} · what they owe you`, srcText("QuickBooks", loadedAt("AR (invoices)"), "loaded"), "open balance of the QuickBooks invoices loaded", () => setTab("invoices"), false],
+    ["Open AP", money(ap.open_balance), `${ap.open_lines || 0} open bill${ap.open_lines === 1 ? "" : "s"} · what you owe vendors`, srcText("Bill Tracker", syncedAt("sync-ap"), "loaded"), "open balance of the vendor bills in the Bill Tracker (subs excluded)", () => setTab("bills"), false],
     ["Lien notices", `${pastDue} past · ${dueSoon} soon`, "unpaid bills past the notice deadline, or within 7 days", srcText("Bill Tracker", syncedAt("sync-ap"), "loaded"), "bills you owe whose vendor lien-notice deadline has passed, or is within 7 days", () => setTab("liens"), pastDue > 0],
     ["Draws to collect", collect ? `${collect} · ${money(collectAmt)}` : "0", collect ? "nothing blocks them - collect from the GC" : "no draw is waiting on the GC", srcText("Bill Tracker + invoices", syncedAt("sync-ap"), "loaded"), "draws whose earlier-draw bills are paid: the GC owes the next one", () => { projView = "active"; syncProjChips(); setTab("projects"); }, false],
     ["Net P&L · active jobs", comp ? `${money(comp.net)} · ${comp.net_pct == null ? "–" : (comp.net_pct * 100).toFixed(1) + "%"}` : "computing…", comp ? `${comp.n || 0} jobs · net billed − costs − 10% of contract` : "", srcText("QuickBooks", loadedAt("Costs (QBO)"), "loaded"), "the live project P&L, active jobs only", () => setTab("money"), comp ? comp.net < 0 : false],
@@ -6101,7 +6040,9 @@ function buildPnlGroup(proj) {
     // The make-up of billed-to-date: every AR invoice (draw) the project has, paid or open
     // (owner 2026-08-21: "I need to see all the invoices the project has"). Oldest first.
     if (d.invoices && d.invoices.length) {
-      const cap = document.createElement("div"); cap.className = "pnl-cap"; cap.textContent = `Invoices - all draws (${d.invoices.length})`; pl.appendChild(cap);
+      // a fold, closed by default; date · invoice # · MEMO · amount · Paid <date> (owner 2026-09-23: "all draws collapsed by
+      // default, include memo in between the invoice # and the amount. Paid needs a date after it")
+      const cap = document.createElement("div"); cap.className = "pnl-cap pnl-invcap"; cap.textContent = `Invoices - all draws (${d.invoices.length})`; cap.title = "Click to list the invoices"; pl.appendChild(cap);
       const tbl = document.createElement("div"); tbl.className = "pnl-invoices";
       for (const iv of d.invoices) {
         const r = document.createElement("div"); r.className = "pnl-inv";
@@ -6109,12 +6050,13 @@ function buildPnlGroup(proj) {
         const no = document.createElement("span"); no.className = "pi-no";
         if (iv.doc_number && iv.qbo_txn_id) { const a = document.createElement("a"); a.href = qboInvoiceUrl(iv.qbo_txn_id); a.target = "_blank"; a.rel = "noopener"; a.className = "qbo-link"; a.textContent = iv.doc_number; a.title = "Open this invoice in QuickBooks"; no.appendChild(a); }
         else no.textContent = iv.doc_number || "–";
+        const memo = document.createElement("span"); memo.className = "pi-memo" + (iv.memo ? "" : " dim"); memo.textContent = iv.memo || "–"; memo.title = iv.memo || "";
         const am = document.createElement("span"); am.className = "pi-amt"; am.appendChild(moneyCell(iv.amount));
         const paid = num(iv.balance) <= 0;
         const st = document.createElement("span"); st.className = "pi-st";
-        st.appendChild(stText(paid ? "Paid" : "Open", paid ? "st-ok" : "st-warn",
-          paid ? (iv.paid_date ? "GC paid " + fmtDateShort(iv.paid_date) : "GC paid") : ("Open AR balance " + money(iv.balance))));
-        r.appendChild(dt); r.appendChild(no); r.appendChild(am); r.appendChild(st); tbl.appendChild(r);
+        st.appendChild(stText(paid ? "Paid" + (iv.paid_date ? " " + fmtDateShort(iv.paid_date) : "") : "Open", paid ? "st-ok" : "st-warn",
+          paid ? (iv.paid_date ? "GC paid " + fmtDateShort(iv.paid_date) : "GC paid (no payment date on file)") : ("Open AR balance " + money(iv.balance))));
+        r.appendChild(dt); r.appendChild(no); r.appendChild(memo); r.appendChild(am); r.appendChild(st); tbl.appendChild(r);
       }
       pl.appendChild(tbl);
     }
@@ -6375,7 +6317,7 @@ async function copy(text) {
 // the Overview projects table.
 function _csvTable() {
   const nz = v => v == null ? "" : v;
-  if (activeTab === "clients") {
+  if (activeTab === "invoices") {
     const rows = _invRows();
     return { name: "invoices", rows, cols: [
       ["Client", i => i.customer], ["Project", i => i.project_no], ["Invoice #", i => i.doc_number], ["Date", i => i.txn_date],
@@ -6384,7 +6326,7 @@ function _csvTable() {
       ["Next follow-up", i => i.next_followup], ["Collections note", i => i.note], ["Lien", i => i.lien_status],
       ["Notice deadline", i => i.lien_due_label], ["Notion page", i => i.notion_url]].map(([l, g]) => [l, r => nz(g(r))]) };
   }
-  if (activeTab === "vendors") {
+  if (activeTab === "bills") {
     const view = billView(), f = billFilterValues();
     const rows = (BILLS || []).filter(b => view.pred(b) && billPassesFilters(b, f));
     return { name: "bills", rows, cols: [
@@ -7763,6 +7705,92 @@ function wrRunProgress(label, onDone) {
   }, 1500);
 }
 
+
+// ── QBO Audit: the mirror's change log (owner 2026-09-23: "a QBO Audit section where I am watching the usual audit and
+// this now with the deletions"). /api/qboaudit = every record QuickBooks deleted / edited / restored / added since the
+// previous refresh, with QuickBooks' own time and plain-word flags (shared/qbo_mirror.change_flags); the mirror keeps
+// the before record. Born of 2026-09-18, when the audit log blamed the owner for deletions a connected app made.
+let QA = null, qaDays = 30, qaFlag = null;
+const QA_ENTITY = { Bill: "Bill", BillPayment: "Bill payment", Purchase: "Expense", Invoice: "Invoice", Payment: "Payment received", JournalEntry: "Journal entry",
+  VendorCredit: "Vendor credit", CreditMemo: "Credit memo", Deposit: "Deposit", Transfer: "Transfer", PurchaseOrder: "Purchase order", Estimate: "Estimate",
+  Customer: "Customer", Vendor: "Vendor", Account: "Account", Item: "Item", Class: "Class", Term: "Term", PaymentMethod: "Payment method" };
+const QA_QBO_KIND = { Bill: "bill", BillPayment: "billpayment", Purchase: "expense", Invoice: "invoice", Payment: "recvpayment", JournalEntry: "journal", VendorCredit: "vendorcredit", CreditMemo: "creditmemo", Deposit: "deposit", Transfer: "transfer", PurchaseOrder: "purchaseorder", Estimate: "estimate" };
+const qaFlagCls = f => /deleted|unapplied|reopened|voided/.test(f) ? "neg" : (/restored/.test(f) ? "ok" : "warn");
+async function loadQboAudit(force) {
+  const note = $("#qaNote"), table = $("#qaTable"); if (!table) return;
+  if (QA && QA.ok && QA.days === qaDays && !force) { renderQboAudit(); return; }
+  if (note) note.textContent = "loading…";
+  skeletonInto(table.tBodies[0] || table, 6);
+  try { QA = await (await fetch(`/api/qboaudit?days=${qaDays}`)).json(); } catch (e) { QA = { ok: false, error: String(e) }; }
+  renderQboAudit();
+}
+function renderQboAudit() {
+  const note = $("#qaNote"), stats = $("#qaStats"), filt = $("#qaFilters"), table = $("#qaTable"); if (!table) return;
+  const thead = table.querySelector("thead"), tbody = table.querySelector("tbody");
+  $$("#qaDays .seg-btn").forEach(b => b.classList.toggle("on", Number(b.dataset.days) === qaDays));
+  if (!QA || !QA.ok) {
+    if (note) note.textContent = QA && QA.error ? "unavailable" : "";
+    stats.innerHTML = ""; filt.innerHTML = ""; thead.innerHTML = "";
+    tbody.innerHTML = QA && QA.error ? `<tr><td class="left" style="padding:14px;color:var(--text-dim)">${_ge(QA.error)}</td></tr>` : "";
+    return;
+  }
+  const all = QA.changes || [], flagged = all.filter(c => c.flags.length), fc = QA.flag_counts || {}, kc = QA.counts || {};
+  if (note) note.textContent = `${all.length} change${all.length === 1 ? "" : "s"} in ${qaDays} days · ${flagged.length} flagged · mirror refreshed ${QA.last_refresh ? fmtDate(QA.last_refresh, true) : "never"}`;
+  stats.innerHTML = "";
+  const tile = (label, val, sub, bad) => { const k = document.createElement("div"); k.className = "kpi" + (bad ? " kpi-neg" : ""); k.innerHTML = `<div class="k-label"></div><div class="k-value"></div><div class="k-sub"></div>`;
+    k.querySelector(".k-label").textContent = label; k.querySelector(".k-value").textContent = val; k.querySelector(".k-sub").textContent = sub || ""; stats.appendChild(k); };
+  const dels = all.filter(c => c.kind === "deleted");
+  tile("Deleted", dels.length, dels.length ? money(dels.reduce((s, c) => s + num(c.total_before), 0)) + " of transactions" : "nothing deleted", dels.length > 0);
+  tile("Paid bills deleted", fc["deleted paid bill"] || 0, "their payment lost that bill", !!fc["deleted paid bill"]);
+  tile("Payments unapplied", fc["payment unapplied"] || 0, "a payment lost bills - they reopen", !!fc["payment unapplied"]);
+  tile("Reopened", fc["reopened"] || 0, "a paid bill or invoice open again", !!fc["reopened"]);
+  tile("Voided", fc["voided"] || 0, "", false);
+  tile("Edited", kc.edited || 0, "any change to a record on file", false);
+  tile("Added", kc.created || 0, "new records", false);
+  filt.innerHTML = "";
+  const chip = (label, key, n) => { const b = document.createElement("button"); b.className = "acct-chip" + (qaFlag === key ? " active" : ""); b.innerHTML = `${_ge(label)} <span class="ac-n">${n}</span>`;
+    b.onclick = () => { qaFlag = qaFlag === key ? null : key; renderQboAudit(); }; filt.appendChild(b); };
+  chip("All flagged", null, flagged.length);
+  for (const f of Object.keys(fc).sort((a, b) => fc[b] - fc[a])) chip(f, f, fc[f]);
+  const q = (($("#qaSearch") || {}).value || "").trim().toLowerCase();
+  const flaggedOnly = !!($("#qaFlaggedOnly") && $("#qaFlaggedOnly").checked);
+  const rows = all.filter(c => (!flaggedOnly || c.flags.length) && (!qaFlag || c.flags.includes(qaFlag))
+    && (!q || [c.ref_name, c.doc_number, QA_ENTITY[c.entity], c.entity, c.rec_id, c.kind, c.flags.join(" "), c.total_before, c.total_after, c.txn_date].join(" ").toLowerCase().includes(q)));
+  const cols = [["When (QuickBooks time)", "left"], ["What", "left"], ["Type", "left"], ["No.", "left"], ["Vendor / client", "left"], ["Txn date", "left"], ["Before", "right"], ["After", "right"], ["Open now", "right"], ["Record", "left"]];
+  thead.innerHTML = "<tr>" + cols.map(([c, al]) => `<th class="${al}">${_ge(c)}</th>`).join("") + "</tr>";
+  tbody.innerHTML = "";
+  if (!rows.length) { tbody.innerHTML = `<tr><td colspan="${cols.length}" class="left" style="padding:14px;color:var(--text-dim)">${all.length ? "Nothing matches." : "No changes in this window - refresh the mirror to check again."}</td></tr>`; return; }
+  const frag = document.createDocumentFragment();
+  for (const c of rows.slice(0, 600)) {
+    const tr = document.createElement("tr");
+    tr.appendChild(leftText(c.changed_at ? fmtDate(c.changed_at, true) : "–"));
+    { const td = document.createElement("td"); td.className = "left qa-what";
+      if (!c.flags.length) { const s = document.createElement("span"); s.className = "st st-dim"; s.textContent = c.kind; td.appendChild(s); }
+      for (const f of c.flags) { const s = document.createElement("span"); s.className = "qa-flag " + qaFlagCls(f); s.textContent = f; td.appendChild(s); }
+      tr.appendChild(td); }
+    tr.appendChild(leftText(QA_ENTITY[c.entity] || c.entity));
+    { const url = c.deleted_now || !QA_QBO_KIND[c.entity] ? null : qboUrl(QA_QBO_KIND[c.entity], c.rec_id);
+      const td = qboLinkCell(c.doc_number || (c.entity === "Purchase" ? "(expense)" : "–"), url, "Open in QuickBooks"); if (!c.doc_number) td.classList.add("dim"); tr.appendChild(td); }
+    { const td = document.createElement("td"); td.className = "left";
+      if (c.ref_name && c.ref_type === "vendor" && typeof openVendorPage === "function") { const a = document.createElement("a"); a.href = "#"; a.textContent = c.ref_name; a.title = "Open the vendor page"; a.onclick = (e) => { e.preventDefault(); openVendorPage(c.ref_name); }; td.appendChild(a); }
+      else if (c.ref_name && c.ref_type === "customer" && typeof openClientPage === "function") { const a = document.createElement("a"); a.href = "#"; a.textContent = c.ref_name; a.title = "Open the client page"; a.onclick = (e) => { e.preventDefault(); openClientPage(c.ref_name); }; td.appendChild(a); }
+      else { td.textContent = c.ref_name || "–"; if (!c.ref_name) td.classList.add("dim"); }
+      tr.appendChild(td); }
+    tr.appendChild(leftText(c.txn_date ? fmtDateShort(c.txn_date) : "–"));
+    // before / after = what the flag is about: the money applied for a payment, the open balance for a reopen, else the total
+    let vb = c.total_before, va = c.total_after, what = "total";
+    if (c.flags.includes("payment unapplied")) { vb = c.applied_before; va = c.applied_after; what = "applied to bills"; }
+    else if (c.flags.includes("reopened")) { vb = c.balance_before; va = c.balance_after; what = "open balance"; }
+    for (const v of [vb, va]) { const td = document.createElement("td"); td.className = "right"; td.title = what; if (v == null) { td.textContent = "–"; td.classList.add("dim"); } else td.appendChild(moneyCell(v)); tr.appendChild(td); }
+    { const td = document.createElement("td"); td.className = "right"; const v = c.kind === "deleted" ? null : c.balance_after; if (v == null) { td.textContent = "–"; td.classList.add("dim"); } else td.textContent = money(v); tr.appendChild(td); }
+    { const td = document.createElement("td"); td.className = "left"; const s = document.createElement("span"); s.className = "st " + (c.deleted_now ? "st-bad" : "st-dim");
+      s.textContent = c.deleted_now ? "deleted in QuickBooks" : "on file"; if (c.has_before) s.title = "The record as it was before this change is kept in the mirror (the repair material)"; td.appendChild(s); tr.appendChild(td); }
+    frag.appendChild(tr);
+  }
+  tbody.appendChild(frag);
+  if (rows.length > 600) { const tr = document.createElement("tr"); const td = document.createElement("td"); td.colSpan = cols.length; td.className = "left dim"; td.style.padding = "10px 14px"; td.textContent = `${rows.length - 600} more - narrow the search`; tr.appendChild(td); tbody.appendChild(tr); }
+}
+
 // ── Accounting fixes: the Bill Tracker audits, filterable by audit type ───────
 let ACCT = null;            // cached /api/accounting payload
 let acctIssue = null;       // the audit-type filter currently active (null = all)
@@ -8133,7 +8161,7 @@ function init() {
       q.addEventListener("keydown", e => { if (e.key === "Escape") { q.value = ""; invQuick = ""; renderOpenInvoices(); q.blur(); e.stopPropagation(); } }); }
     document.addEventListener("keydown", e => {
       if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "f" || e.altKey) return;
-      if (activeTab !== "clients" || !$("#ifQuick")) return;
+      if (activeTab !== "invoices" || !$("#ifQuick")) return;
       if (document.querySelector(".panel:not([hidden])")) return;          // a side panel is open - leave the browser's find alone
       e.preventDefault(); const el = $("#ifQuick"); el.focus(); el.select();
     }); }
@@ -8230,6 +8258,11 @@ function init() {
       "Pull QBO health metrics now?\n\nOne loader: bank balances, P&L blocks, 13 weeks of cash flow, and the recurring-obligations register - read-only against QuickBooks, Touch ID on this Mac, under a minute. Everything else on the Health tab is already live from the ledger.",
       { btn: el, prog: $("#healthProg"), fill: $("#healthFill"), step: $("#healthStep") }); }
   { const el = $("#btnAcctReload"); if (el) el.onclick = () => loadAccounting(true); }
+  { const el = $("#qaSearch"); if (el) { el.addEventListener("input", renderQboAudit); el.addEventListener("keydown", e => { if (e.key === "Escape") { el.value = ""; renderQboAudit(); } }); } }
+  { const el = $("#qaFlaggedOnly"); if (el) el.onchange = renderQboAudit; }
+  $$("#qaDays .seg-btn").forEach(b => { b.onclick = () => { qaDays = Number(b.dataset.days); loadQboAudit(true); }; });
+  { const el = $("#btnQaReload"); if (el) el.onclick = () => loadQboAudit(true); }
+  { const el = $("#btnQaRefresh"); if (el) el.onclick = () => runPipeline("mirror", null, { btn: el, prog: $("#qaProg"), fill: $("#qaFill"), step: $("#qaStep"), after: () => loadQboAudit(true) }); }
   { const el = $("#btnAcctCopy"); if (el) el.onclick = _acctDoCopy; }
   { const el = $("#btnAcctClerk"); if (el) el.onclick = _acctCopyClerk; }
   { const el = $("#btnAcctDownload"); if (el) el.onclick = _acctDoDownload; }

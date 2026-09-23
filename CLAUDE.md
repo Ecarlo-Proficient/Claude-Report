@@ -109,6 +109,9 @@ restate them here. Business/strategic context lives in session memory, not in th
   segment, `wip_qc` signs the accepted checks off with its reason, project-pnl writes the
   KNOWN LOSSES / RULINGS block, the ledger drops the job from Over budget and shows it on
   the project page; first case RP6586 2026-09-08),
+  `qbo_mirror.py` (THE raw QBO mirror + its **change log** `mirror_change`: every refresh diffs QBO's
+  records against the copy held - created / edited / deleted / restored, QBO's own time, plain-word
+  flags, the encrypted BEFORE record; `changes()`, `change_before()`; feeds the ledger's QBO Audit),
   `setup_qbo.py` (`--status/--test/--rotate/--purge`).
 - **invoice-sync/** — the QBO → Notion AR invoice sync (was `automation-worker/`). Open invoices
   → two Notion DBs (MFD isolated; Res/Com combined) routed by project-# prefix; sweeps paid;
@@ -157,11 +160,12 @@ restate them here. Business/strategic context lives in session memory, not in th
   `health-dashboard/`'s Company Tracker/Dashboard, 2026-08-31).
   `sync_actions.py` mirrors action items (draws-ready MVP) to the Notion "Ledger Actions" DB via
   `shared/notion_client` (needs `ACB_ACTIONS_DS_ID` + the DB shared with the "Automation Integrator"
-  integration). `dashboard.py` + `static/` = a local web UI (127.0.0.1) — **TWO views (the user
-  2026-09-13: "consolidate to two menus")**: **Projects** = the WIP as the page (active jobs by
-  division, then Completed recently, then settled closed jobs folded; a row opens the project page,
-  which is where every per-job feature lives) and **Company** = Clients / Vendors / Money (the whole
-  business, no job filter); the **gear** holds sync (every feed stamp + every run button), WIP
+  integration). `dashboard.py` + `static/` = a local web UI (127.0.0.1) — **FOUR views (the user
+  2026-09-23)**: **Projects** = the WIP as the page (a row opens the project page, which is where every
+  per-job feature lives) · **Vendors** = Bill Tracker / Vendor Center · **Customers** = Invoice Tracker /
+  Customer Center / Payments received / Sales pipeline · **Company** = Money / **QBO Audit** (the mirror's
+  change log: what QBO deleted / edited / unapplied, `/api/qboaudit`); the **gear** holds sync (every feed
+  stamp + every run button), WIP
   Review, Console and Systems. Every old tab name is a `TAB_ALIAS` in `app.js` that lands on its
   page and scrolls to its section, so deep links keep working. READ-ONLY except the owner's marks
   (waiver / lien / pay-run) and the WIP Review write; `open_ledger.command` launcher (co-located in `~/Documents/CompanyHealth/`). **`registry_view.py` + the `Systems` tab** render the vault's systems & process registry (`AI Brain_Vault/02_processes/*.md`) LIVE - parsed per request, never cached, never written back, no ledger table; vault path via `shared/paths.vault_dir()` (`ACB_VAULT_DIR`), read-only. It **replaced the daily markdown digest** (disabled 2026-08-19). **`vault_graph.py` + the `Graph` tab** render the org as a map the SAME way (live, no cache): the whole vault's `[[wikilinks]]` as a force-directed org graph (`ROSTER.md` excluded - no names) plus the mermaid system diagrams IMPORTED from `docs/ARCHITECTURE.md`, all in one self-contained canvas viewer (no JS libraries); `/api/graph` serves it. **The `WIP Review`

@@ -67,7 +67,7 @@ STATIC = HERE / "static"
 #         Company Tracker/Dashboard model in: Money In / Money Out / Position /
 #         Break-Even + the FIN-12 Recurring & Debt register).
 # 1.3.0 = Systems rows link to their one-page process guide (vault assets/processes).
-LEDGER_VERSION = "1.4.0"
+LEDGER_VERSION = "1.5.0"
 
 DEFAULT_DB = paths.get_path(
     "ACB_LEDGER_DB",
@@ -403,6 +403,9 @@ def _pipelines():
             {"label": "Draft CP WIP", "script": "wip/cp_wip_reader.py", "args": [], "side": True},
             {"label": "Draft RP WIP", "script": "wip/rp_wip_reader.py", "args": [], "side": True},
         ]}},
+        {"key": "mirror", "label": "QBO mirror (change feed)", "steps": [
+            {"label": "Refresh the mirror (QBO change feed, Touch ID)", "script": "ledger/refresh_mirror.py", "args": []},
+        ]},
         # Hidden as its own Console card (owner 2026-08-19 - costs belong in a future "Company P&L"
         # view). It STAYS in the reload/all chains so Resync keeps costs fresh for the Project P&L
         # (which reads cost_line); it just isn't a standalone button any more.
@@ -1222,6 +1225,50 @@ _NON_GATING_VENDOR_RE = re.compile(
 
 _ACCT_RAW = _fetch_accounting_audits
 _ACCT_CACHE = {"mtime": None, "data": None}
+def _fetch_qbo_changes(days: int = 30) -> dict:
+    """The QBO Audit page's watch: the mirror's change log (shared/qbo_mirror.mirror_change) for the
+    last `days` days - every record QBO deleted, edited, restored or created since the previous
+    refresh, flagged in plain words. Read-only on the mirror; the party's name is resolved from the
+    mirror's vendor / customer lists when QBO sent only the id. No QBO call: the refresh (sync-all
+    step 0) is what feeds it."""
+    from shared import qbo_mirror as mirror
+    out = {"ok": False, "changes": [], "days": days, "last_refresh": None, "counts": {}, "flag_counts": {}}
+    try:
+        con = mirror.connect()
+    except Exception as e:                       # noqa: BLE001
+        out["error"] = f"mirror unavailable: {e}"
+        return out
+    try:
+        since = mirror.iso_z(mirror.now_utc() - _dt.timedelta(days=days))
+        rows = mirror.changes(con, since=since, limit=20000)
+        names = {}
+        for t, kind in (("qbo_vendor", "vendor"), ("qbo_customer", "customer")):
+            for r in con.execute(f"SELECT id, name FROM {t}"):
+                names[(kind, str(r[0]))] = r[1]
+        alive = {}
+        for r in rows:
+            k = (r["entity"], r["rec_id"])
+            if k not in alive:
+                x = con.execute(f"SELECT deleted, deleted_at, sync_token FROM {mirror.table(r['entity'])} WHERE id=?", (r["rec_id"],)).fetchone()
+                alive[k] = {"deleted_now": bool(x and x[0]), "token_now": x[2] if x else None}
+            r.update(alive[k])
+            if not r.get("ref_name") and r.get("ref_id"):
+                r["ref_name"] = names.get((r.get("ref_type"), r["ref_id"]), "")
+        out["last_refresh"] = mirror._meta_get(con, "last_refresh")
+        out["backfilled"] = mirror._meta_get(con, "changes_backfilled")
+        runs = con.execute("SELECT started, mode, upserted, deleted FROM mirror_run ORDER BY id DESC LIMIT 1").fetchone()
+        out["last_run"] = dict(zip(("started", "mode", "upserted", "deleted"), runs)) if runs else None
+    finally:
+        con.close()
+    counts, fc = {}, {}
+    for r in rows:
+        counts[r["kind"]] = counts.get(r["kind"], 0) + 1
+        for f in r["flags"]:
+            fc[f] = fc.get(f, 0) + 1
+    out.update({"ok": True, "changes": rows, "counts": counts, "flag_counts": fc, "since": since})
+    return out
+
+
 def _fetch_accounting_audits() -> dict:   # cached per workbook mtime - the project page reads it per request (2026-09-08)
     bt = paths.bill_tracker_xlsx()
     try:
@@ -2870,6 +2917,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(_fetch_accounting_audits())
             except Exception as e:         # noqa: BLE001
                 self._json({"ok": False, "findings": [], "error": f"audit read failed: {e}"})
+        elif path == "/api/qboaudit":      # the QBO Audit page: the mirror's change log (deleted / edited / unapplied), flagged
+            try:
+                self._json(_fetch_qbo_changes(int(self._query().get("days") or 30)))
+            except Exception as e:         # noqa: BLE001
+                self._json({"ok": False, "changes": [], "error": f"change log read failed: {e}"})
         elif path == "/api/healthtab":     # the Health tab (company-health metric layer, live)
             self._healthtab()
         elif path == "/api/bill/info":     # the bill viewer: header + every line (description, cost code, project, amount) from the ledger
