@@ -105,6 +105,40 @@ def accounting_base() -> Path:
     return get_path("ACB_ACCOUNTING_BASE", _DEFAULT_ACCOUNTING_BASE)
 
 
+# The roots a run cannot do without. A sync that starts with one of these missing wastes
+# the owner's time (Touch ID, a QBO pull, then a mkdir traceback) - so every sync alias
+# checks first and STOPs in plain words (owner 2026-09-23: "change sync-all, sync-ap,
+# sync-ar to STOP if something isn't mounted, that way i don't waste time").
+MOUNTS = {
+    "accounting": (accounting_base, "the Accounting share (Synology) - Bill Tracker, vendor statements, stubs"),
+    "onedrive":   (onedrive_base,   "the OneDrive mirror - Open_Invoices.xlsx, the WIP master, P&Ls"),
+}
+
+
+def missing_mounts(names) -> list:
+    """[(name, path, description)] of the named roots that are not on disk right now."""
+    out = []
+    for n in names:
+        fn, desc = MOUNTS[n]
+        path = fn()
+        if not path.is_dir():
+            out.append((n, path, desc))
+    return out
+
+
+def require_mounts(names, what: str = "this run") -> None:
+    """STOP (exit 2) with one plain message naming every missing root, before any work."""
+    gone = missing_mounts(names)
+    if not gone:
+        return
+    lines = [f"STOP - {what} needs a drive that is not mounted right now. Nothing was run."]
+    for n, path, desc in gone:
+        lines.append(f"   missing: {path}   ({desc})")
+    lines.append("   Reconnect it (Finder > Go > Connect to Server for the Synology share; open OneDrive for "
+                 "the mirror), then run again.")
+    raise SystemExit("\n".join(lines))
+
+
 def require_accounting_share(what: str = "this run") -> Path:
     """STOP, in plain words, when the Accounting share is not mounted - never a traceback
     and never a fallback path (owner 2026-09-23, the bill sync died in mkdir on
@@ -238,4 +272,15 @@ def _self_check() -> None:
 
 
 if __name__ == "__main__":
+    import sys as _sys
+    if len(_sys.argv) > 1 and _sys.argv[1] == "--require":
+        # python3 shared/paths.py --require accounting,onedrive --for "sync-all"   -> exit 2 + STOP when one is missing
+        names = [n for n in _sys.argv[2].split(",") if n]
+        what = _sys.argv[4] if len(_sys.argv) > 4 and _sys.argv[3] == "--for" else "this run"
+        try:
+            require_mounts(names, what)
+        except SystemExit as e:
+            print(e)
+            _sys.exit(2)
+        _sys.exit(0)
     _self_check()

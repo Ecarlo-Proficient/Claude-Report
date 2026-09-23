@@ -10,7 +10,7 @@
 #     (there is no scheduler — the launchd auto-run was scrapped)
 #
 # Output workbook:
-#   ~/Library/CloudStorage/OneDrive-ProficientConcrete,LLC/Automations-/Bill Tracker.xlsx
+#   /Volumes/Accounting/Accounts Payable/Bill Tracker.xlsx (the Accounting share - since 2026-09-16)
 #
 # Logs live OUTSIDE the project folder (sync_view.py owns run.log):
 #   ~/Library/Logs/Proficient/bill-tracker/
@@ -23,6 +23,10 @@
 set -u
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # self-locating — works from any clone, any user
 cd "$DIR"
+
+base="$(cd "$DIR/.." && pwd)"
+# STOP before any work when a drive is missing (owner 2026-09-23: "that way i don't waste time")
+python3 "$base/shared/paths.py" --require accounting --for "sync-ap (the Bill Tracker)" || exit 2
 
 # exec so the viewer's exit code propagates straight through to the caller.
 exec /usr/bin/env python3 "$DIR/sync_view.py" "$@"

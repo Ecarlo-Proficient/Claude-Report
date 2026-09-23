@@ -19,6 +19,9 @@ set -uo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
+base="$root"
+# STOP before any work when a drive is missing (owner 2026-09-23: "that way i don't waste time")
+python3 "$base/shared/paths.py" --require accounting,onedrive --for "the ledger reload (Bill Tracker on the Accounting share, the WIP master on OneDrive)" || exit 2
 rc=0
 since="$(date -v-90d +%F)"   # macOS/BSD date: 90 days ago, for the incremental cost pull
 step() { printf '\n\033[36m-- %s --\033[0m\n' "$1"; }

@@ -4,6 +4,12 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-23 · **Every sync alias STOPs before any work when a drive is missing** (owner: "change sync-all, sync-ap,
+  sync-ar to STOP if something isn't mounted, that way i don't waste time"). `shared/paths.MOUNTS` names the two roots
+  (the Accounting share, the OneDrive mirror); `paths.require_mounts()` / `python3 shared/paths.py --require a,b --for
+  "<alias>"` prints one message naming every missing root and exits 2. Wired first in `ledger/sync_all.sh`,
+  `bill-tracker/run_tracker.sh` (accounting), `invoice-sync/run_invoice_sync.sh` (onedrive + accounting - the AR Aging
+  tab reads the Bill Tracker) and `ledger/reload_ledger.sh`. No Touch ID, no QBO pull, no traceback.
 - 2026-09-23 (last) · **Nav reworked to four views + the QBO Audit page + compact stats** (owner: "Remove Vendors and
   Customers from Company and reinstate them back as their own ... Company i need a QBO Audit section ... I hate these
   big blobs"). `NAV_GROUPS`: **Projects** · **Vendors** (Bill Tracker · Vendor Center) · **Customers** (Invoice Tracker ·
