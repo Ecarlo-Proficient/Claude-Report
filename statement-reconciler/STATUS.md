@@ -29,9 +29,12 @@ findings here — those live in the owner's vault.
   DONE" or the still-open cards.
   - **`--refresh`**: re-reconciles every OPEN (non-DONE) vendor-month IN PLACE
     (the source statement is already filed there) - nothing is moved back to the
-    Inbox. `_gather_open_sources` skips DONE months, the Inbox, and the recon
-    Excels. So after the clerk fixes bills / prints, one `--refresh` re-derives
-    every open month against current QBO; fixed items leave their buckets.
+    Inbox. `_gather_open_sources` skips DONE months, the Inbox, the recon
+    Excels, and any source file whose OWN name carries a `DONE` marker (the clerk
+    can finalize a single statement inside a still-open month by renaming the
+    file, not just the folder - QC 2026-09-23). So after the clerk fixes bills /
+    prints, one `--refresh` re-derives every open month against current QBO;
+    fixed items leave their buckets.
   - **Teams cards, ONE per vendor-month** (owner: "needs to be multiple messages
     so she can react to each"). `shared/teams_notify.py` (the ONE shared poster;
     invoice-sync keeps its own) posts an Adaptive Card per open vendor-month with

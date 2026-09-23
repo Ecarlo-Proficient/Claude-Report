@@ -2971,7 +2971,7 @@ def append_clerk_perf(rows: List["ReconRow"], vendor_name: str, stmt_date: str,
 
 def process_pdf(pdf_path: Path, args: argparse.Namespace,
                 access: str, cid: str, result: Optional[dict] = None
-                ) -> Tuple[bool, Dict[str, int]]:
+                ) -> Tuple[bool, Dict[str, int], bool]:
     """Run the full pipeline for one PDF. Returns (ok, counts, tieout_ok).
     Assumes QBO is already authenticated; caller provides access + cid.
     `result` (optional dict) is filled with result['action'] = one of
@@ -3425,6 +3425,8 @@ def _gather_open_sources(root: Path, inbox: Path) -> List[Path]:
                 n = f.name
                 if n.startswith(".") or n.startswith("~$") or n.endswith("#"):
                     continue
+                if re.search(r"\bDONE\b", n, re.I):
+                    continue                  # clerk marked THIS statement done — final
                 if n.startswith("Statement_Reconciliation_"):
                     continue                  # that's the output, not a source
                 if f.suffix.lower() not in INBOX_SUPPORTED_EXTS:
