@@ -1466,15 +1466,12 @@ def _fold_side_effects(con, rows: list) -> None:
         if r["entity"] == "BillPayment" and r["kind"] == "edited":
             pays.setdefault(r["rec_id"], []).append(r)
     for r in rows:
-        if "number changed" in r["flags"] and r.get("has_before"):
-            # the owner 2026-09-24 ("it's saying the numbers changed but nothing changed?"): the flag is the check /
-            # doc NUMBER, not the amount. A blank number getting one is a check being printed / numbered - routine,
-            # not a change; a real renumber shows the old and new number in Before / After.
-            nb = str((mirror.change_before(con, r["id"]) or {}).get("DocNumber") or "")
-            if not nb:
-                r["flags"] = [f for f in r["flags"] if f != "number changed"]
-            else:
-                r["doc_before"] = nb
+        if "number changed" in r["flags"]:
+            # the owner 2026-09-24: the flag is the check NUMBER, not the money ("just needs to say ck # changed") - and it
+            # stays flagged even when a blank number got one ("i need to see why it was done that way, what if they made a
+            # mistake?"). Before / After show the old and new number.
+            r["flags"] = ["ck # changed" if f == "number changed" else f for f in r["flags"]]
+            r["doc_before"] = str((mirror.change_before(con, r["id"]) or {}).get("DocNumber") or "") if r.get("has_before") else None
         if r["entity"] in ("Vendor", "Customer"):
             r["flags"] = [f for f in r["flags"] if f != "reopened"]
             continue
@@ -1495,7 +1492,22 @@ def _fold_side_effects(con, rows: list) -> None:
                 break
 
 
-def _fetch_qbo_changes(days: int = 30) -> dict:
+def _qbo_ok_marks(db_path) -> dict:
+    """{mirror_change id -> marked_at} the owner OK'd (qbo_change_ok, the ledger's own table)."""
+    if not db_path:
+        return {}
+    try:
+        lc = sqlite3.connect(str(db_path))
+        try:
+            lc.execute("CREATE TABLE IF NOT EXISTS qbo_change_ok (change_id INTEGER PRIMARY KEY, marked_at TEXT NOT NULL)")
+            return {int(a): b for a, b in lc.execute("SELECT change_id, marked_at FROM qbo_change_ok")}
+        finally:
+            lc.close()
+    except sqlite3.Error:
+        return {}
+
+
+def _fetch_qbo_changes(days: int = 30, db_path=None) -> dict:
     """The QBO Audit page's watch: the mirror's change log (shared/qbo_mirror.mirror_change) for the
     last `days` days - every record QBO deleted, edited, restored or created since the previous
     refresh, flagged in plain words. Read-only on the mirror; the party's name is resolved from the
@@ -1532,10 +1544,17 @@ def _fetch_qbo_changes(days: int = 30) -> dict:
         out["last_run"] = dict(zip(("started", "mode", "upserted", "deleted"), runs)) if runs else None
     finally:
         con.close()
+    oks = _qbo_ok_marks(db_path)
+    for r in rows:
+        if r["id"] in oks:
+            r["ok_at"] = oks[r["id"]]
+    for r in rows:                                 # a check the owner OK'd takes the bills it reopened with it
+        if r.get("parent_id") in oks:
+            r["ok_at"] = oks[r["parent_id"]]
     counts, fc = {}, {}
     for r in rows:
-        if r.get("parent_id"):
-            continue                               # a bill reopened only because its check lost it - counted on the check
+        if r.get("parent_id") or r.get("ok_at"):
+            continue                               # folded under its check, or OK'd by the owner - not counted
         counts[r["kind"]] = counts.get(r["kind"], 0) + 1
         for f in r["flags"]:
             fc[f] = fc.get(f, 0) + 1
@@ -3310,7 +3329,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "findings": [], "error": f"audit read failed: {e}"})
         elif path == "/api/qboaudit":      # the QBO Audit page: the mirror's change log (deleted / edited / unapplied), flagged
             try:
-                self._json(_fetch_qbo_changes(int(self._query().get("days") or 30)))
+                self._json(_fetch_qbo_changes(int(self._query().get("days") or 30), self.db_path))
             except Exception as e:         # noqa: BLE001
                 self._json({"ok": False, "changes": [], "error": f"change log read failed: {e}"})
         elif path == "/api/uncleared":     # Uncleared checks: not matched / not deposited in QuickBooks (owner 2026-09-24)
@@ -3377,6 +3396,8 @@ class Handler(BaseHTTPRequestHandler):
             self._save_pay_run()
         elif p == "/api/pay-run/clear":   # empty the whole pay run (after the check run is done)
             self._clear_pay_run()
+        elif p == "/api/qboaudit/ok":     # a ledger write - the owner's "that's OK" on a QBO change (hides it next run)
+            self._qbo_change_ok()
         elif p == "/api/project/note":    # a ledger write - a note on a job (project_note)
             self._project_note()
         elif p == "/api/project/note/delete":
@@ -4023,6 +4044,29 @@ class Handler(BaseHTTPRequestHandler):
             d = _ensure_lien_vendor_dir(vendor)
             folder = str(d) if d is not None else None
         self._json({"ok": True, "bill_id": bill_id, "lien": lien, "folder": folder})
+
+    def _qbo_change_ok(self):
+        """Mark (ok=true) or un-mark (ok=false) QBO changes as reviewed: {ids: [mirror_change id, ...], ok}. Local only."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+            ids = [int(i) for i in (body.get("ids") or [])]
+        except (ValueError, TypeError, json.JSONDecodeError):
+            return self._json({"error": "bad request"}, 400)
+        if not ids:
+            return self._json({"error": "no ids"}, 400)
+        now = _dt.datetime.now().isoformat(timespec="seconds")
+        try:
+            con = sqlite3.connect(self.db_path)
+            con.execute("CREATE TABLE IF NOT EXISTS qbo_change_ok (change_id INTEGER PRIMARY KEY, marked_at TEXT NOT NULL)")
+            if body.get("ok", True):
+                con.executemany("INSERT OR REPLACE INTO qbo_change_ok (change_id, marked_at) VALUES (?, ?)", [(i, now) for i in ids])
+            else:
+                con.executemany("DELETE FROM qbo_change_ok WHERE change_id = ?", [(i,) for i in ids])
+            con.commit(); con.close()
+        except sqlite3.OperationalError as e:
+            return self._json({"error": f"write failed: {e}"}, 500)
+        self._json({"ok": True, "ids": ids, "marked_at": now if body.get("ok", True) else None})
 
     def _project_note(self):
         """Add a note on a job: free text + an optional 'about' (the draw / scope it concerns). Local, never QBO."""

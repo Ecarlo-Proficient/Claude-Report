@@ -649,3 +649,10 @@ CREATE TABLE IF NOT EXISTS bank_match (
     feed_matched     INTEGER,                       -- 0 = never matched to a bank feed (Joint Checks Account)
     loaded_at        TEXT
 );
+
+-- The owner's "that's OK" on a QBO change (owner 2026-09-24: "need a way to click to say that it's ok and to discard
+-- for next run"). One row per mirror_change id he reviewed; the QBO changes page hides it unless "Show OK'd" is on.
+CREATE TABLE IF NOT EXISTS qbo_change_ok (
+    change_id   INTEGER PRIMARY KEY,               -- qbo_mirror.sqlite3 mirror_change.id
+    marked_at   TEXT NOT NULL
+);

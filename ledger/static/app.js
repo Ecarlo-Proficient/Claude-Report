@@ -8037,7 +8037,7 @@ function wrRunProgress(label, onDone) {
 // this now with the deletions"). /api/qboaudit = every record QuickBooks deleted / edited / restored / added since the
 // previous refresh, with QuickBooks' own time and plain-word flags (shared/qbo_mirror.change_flags); the mirror keeps
 // the before record. Born of 2026-09-18, when the audit log blamed the owner for deletions a connected app made.
-let QA = null, qaDays = 30, qaFlag = null;
+let QA = null, qaDays = 30, qaFlag = null, qaShowOk = false;
 const QA_ENTITY = { Bill: "Bill", BillPayment: "Bill payment", Purchase: "Expense", Invoice: "Invoice", Payment: "Payment received", JournalEntry: "Journal entry",
   VendorCredit: "Vendor credit", CreditMemo: "Credit memo", Deposit: "Deposit", Transfer: "Transfer", PurchaseOrder: "Purchase order", Estimate: "Estimate",
   Customer: "Customer", Vendor: "Vendor", Account: "Account", Item: "Item", Class: "Class", Term: "Term", PaymentMethod: "Payment method" };
@@ -8051,6 +8051,17 @@ async function loadQboAudit(force) {
   try { QA = await (await fetch(`/api/qboaudit?days=${qaDays}`)).json(); } catch (e) { QA = { ok: false, error: String(e) }; }
   renderQboAudit();
 }
+async function qaSetOk(c, ok) {   // a ledger write (qbo_change_ok) - never QuickBooks; the row leaves the list in place, no scroll
+  try {
+    const r = await (await fetch("/api/qboaudit/ok", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids: [c.id], ok }) })).json();
+    if (!r.ok) throw new Error(r.error || "failed");
+    c.ok_at = ok ? r.marked_at : null;
+    for (const k of (QA.changes || [])) if (k.parent_id === c.id) k.ok_at = c.ok_at;
+    if (ok && c.flags) for (const f of c.flags) if (QA.flag_counts && QA.flag_counts[f]) QA.flag_counts[f] -= 1;
+    if (!ok && c.flags) for (const f of c.flags) if (QA.flag_counts) QA.flag_counts[f] = (QA.flag_counts[f] || 0) + 1;
+    const y = window.scrollY; renderQboAudit(); window.scrollTo(0, y);
+  } catch (e) { toast ? toast("Could not save: " + e.message) : alert("Could not save: " + e.message); }
+}
 function renderQboAudit() {
   const note = $("#qaNote"), stats = $("#qaStats"), filt = $("#qaFilters"), table = $("#qaTable"); if (!table) return;
   const thead = table.querySelector("thead"), tbody = table.querySelector("tbody");
@@ -8063,7 +8074,8 @@ function renderQboAudit() {
   }
   const everything = QA.changes || [], fc = QA.flag_counts || {};
   const kids = {}; for (const c of everything) if (c.parent_id) (kids[c.parent_id] = kids[c.parent_id] || []).push(c);   // bills a check lost, under the check
-  const all = everything.filter(c => !c.parent_id), flagged = all.filter(c => c.flags.length);
+  const okd = everything.filter(c => !c.parent_id && c.ok_at);   // the owner's "that's OK" - off the list unless asked for
+  const all = everything.filter(c => !c.parent_id && (qaShowOk || !c.ok_at)), flagged = all.filter(c => c.flags.length && !c.ok_at);
   if (note) note.textContent = `${all.length} change${all.length === 1 ? "" : "s"} in ${qaDays} days · ${flagged.length} flagged · mirror refreshed ${QA.last_refresh ? fmtDate(QA.last_refresh, true) : "never"}`;
   stats.innerHTML = "";
   const tile = (label, val, sub, bad) => { const k = document.createElement("div"); k.className = "kpi" + (bad ? " kpi-neg" : ""); k.innerHTML = `<div class="k-label"></div><div class="k-value"></div><div class="k-sub"></div>`;
@@ -8078,11 +8090,13 @@ function renderQboAudit() {
     b.onclick = () => { qaFlag = qaFlag === key ? null : key; renderQboAudit(); }; filt.appendChild(b); };
   chip("All flagged", null, flagged.length);
   for (const f of Object.keys(fc).sort((a, b) => fc[b] - fc[a])) chip(f, f, fc[f]);
+  if (okd.length) { const b = document.createElement("button"); b.className = "acct-chip" + (qaShowOk ? " active" : ""); b.title = "Changes you marked OK - hidden until you show them";
+    b.innerHTML = `Show OK'd <span class="ac-n">${okd.length}</span>`; b.onclick = () => { qaShowOk = !qaShowOk; const y = window.scrollY; renderQboAudit(); window.scrollTo(0, y); }; filt.appendChild(b); }
   const q = (($("#qaSearch") || {}).value || "").trim().toLowerCase();
   const flaggedOnly = !!($("#qaFlaggedOnly") && $("#qaFlaggedOnly").checked);
   const rows = all.filter(c => (!flaggedOnly || c.flags.length) && (!qaFlag || c.flags.includes(qaFlag))
     && (!q || [c.ref_name, c.doc_number, QA_ENTITY[c.entity], c.entity, c.rec_id, c.kind, c.flags.join(" "), c.total_before, c.total_after, c.txn_date].join(" ").toLowerCase().includes(q)));
-  const cols = [["When (QuickBooks time)", "left"], ["What", "left"], ["Type", "left"], ["No.", "left"], ["Vendor / client", "left"], ["Txn date", "left"], ["Before", "right"], ["After", "right"], ["Open now", "right"], ["Record", "left"]];
+  const cols = [["When (QuickBooks time)", "left"], ["What", "left"], ["Type", "left"], ["No.", "left"], ["Vendor / client", "left"], ["Txn date", "left"], ["Before", "right"], ["After", "right"], ["Open now", "right"], ["Record", "left"], ["", "left"]];
   thead.innerHTML = "<tr>" + cols.map(([c, al]) => `<th class="${al}">${_ge(c)}</th>`).join("") + "</tr>";
   tbody.innerHTML = "";
   if (!rows.length) { tbody.innerHTML = `<tr><td colspan="${cols.length}" class="left" style="padding:14px;color:var(--text-dim)">${all.length ? "Nothing matches." : "No changes in this window - refresh the mirror to check again."}</td></tr>`; return; }
@@ -8118,8 +8132,8 @@ function renderQboAudit() {
     tr.appendChild(leftText(c.txn_date ? fmtDateShort(c.txn_date) : "–"));
     // before / after = what the flag is about: the money applied for a payment, the open balance for a reopen, else the total
     let vb = c.total_before, va = c.total_after, what = "total";
-    if (c.flags.includes("number changed") && c.flags.length === 1 && c.doc_before) {   // the NUMBER changed, not the money: show the numbers
-      for (const v of [c.doc_before, c.doc_number]) { const td = document.createElement("td"); td.className = "right"; td.title = "number"; td.textContent = "#" + (v || "–"); tr.appendChild(td); }
+    if (c.flags.includes("ck # changed") && c.flags.length === 1 && c.doc_before != null) {   // the NUMBER changed, not the money: show the numbers
+      for (const v of [c.doc_before, c.doc_number]) { const td = document.createElement("td"); td.className = "right"; td.title = "check #"; td.textContent = v ? "#" + v : "(none)"; if (!v) td.classList.add("dim"); tr.appendChild(td); }
       vb = va = undefined; what = null;
     }
     else if (c.flags.includes("payment unapplied")) { vb = c.applied_before; va = c.applied_after; what = "applied to bills"; }
@@ -8128,6 +8142,15 @@ function renderQboAudit() {
     { const td = document.createElement("td"); td.className = "right"; const v = c.kind === "deleted" ? null : c.balance_after; if (v == null) { td.textContent = "–"; td.classList.add("dim"); } else td.textContent = money(v); tr.appendChild(td); }
     { const td = document.createElement("td"); td.className = "left"; const s = document.createElement("span"); s.className = "st " + (c.deleted_now ? "st-bad" : "st-dim");
       s.textContent = c.deleted_now ? "deleted in QuickBooks" : "on file"; if (c.has_before) s.title = "The record as it was before this change is kept in the mirror (the repair material)"; td.appendChild(s); tr.appendChild(td); }
+    { const td = document.createElement("td"); td.className = "left qa-okcell";   // the owner's review: OK = seen, fine, off the list next run
+      if (!child && c.ok_at) {
+        const s = document.createElement("span"); s.className = "st st-dim"; s.textContent = `OK'd ${fmtDateShort(c.ok_at)}`; td.appendChild(s);
+        const u = document.createElement("a"); u.href = "#"; u.className = "qa-undo"; u.textContent = "undo"; u.onclick = (e) => { e.preventDefault(); e.stopPropagation(); qaSetOk(c, false); }; td.appendChild(u);
+      } else if (!child && c.flags.length) {
+        const b = document.createElement("button"); b.className = "btn small qa-ok"; b.textContent = "OK"; b.title = "Seen it, it's fine - hide it from the next run";
+        b.onclick = (e) => { e.stopPropagation(); qaSetOk(c, true); }; td.appendChild(b);
+      }
+      tr.appendChild(td); }
     return tr;
   };
   for (const c of rows.slice(0, 600)) {

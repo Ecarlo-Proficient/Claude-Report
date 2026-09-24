@@ -2040,3 +2040,5 @@ table.pp-pva .pp-diff-txt { white-space: nowrap; }
 .pp-drawpl { margin: 2px 0 12px; }
 table.pp-drawpl-t td.pp-pva-act.neg { color: var(--neg-text); }
 table.pp-drawpl-t td.pp-pva-diff { color: var(--text); }
+.qa-okcell { white-space: nowrap; }
+.qa-undo { margin-left: 8px; font-size: .85em; }

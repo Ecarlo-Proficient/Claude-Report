@@ -4,10 +4,12 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
-- 2026-09-24 · **QBO changes: "number changed" means the NUMBER** (owner: "it's saying the numbers changed but nothing
-  changed? maybe cents?"). The flag is the check / doc number, but Before / After showed the (unchanged) amount. A blank
-  number getting one (a check printed / numbered - 48403, 48404) is no longer flagged; a real renumber shows the old
-  and new number in Before / After (`doc_before` from the change log's before copy).
+- 2026-09-24 · **QBO changes: "ck # changed" + the owner's OK** (owner: "it's ok that it flagged it then, i need to see
+  why it was done that way, what if they made a mistake? just needs to say ck # changed then. and need a way to click to
+  say that it's ok and to discard for next run"). The flag reads "ck # changed" and Before / After show the old and new
+  number ("(none)" when the check had none - still flagged). Every flagged row has an **OK** button: `POST
+  /api/qboaudit/ok {ids, ok}` -> `qbo_change_ok` (ledger, local only; a check's folded bills go with it); OK'd rows leave
+  the list and the counts, a "Show OK'd" chip brings them back with undo.
 - 2026-09-24 · **QBO changes, tidied** (owner: "fix this mess, it's just too much, why is it saying to reapply cutting
   the table?"). The re-apply blocks were full-width rows INSIDE the table - gone; the fix lives on ONE page (Checks QBO
   changed) and each check row links there ("fix ↗", pre-filtered to that check). A check that lost its bills reopened
