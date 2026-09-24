@@ -37,6 +37,42 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   payments skipped. Subs chip default, funnel on Vendor, broad search; each check folds (vp-pay group) over its numbered
   fix + the lines to re-apply with QBO links. Read-only. CLI: `python3 ledger/check_drift.py --check <#>`. Load ~8 s
   (decrypts every bill); cache if it becomes a nuisance.
+- 2026-09-23 · **Net profit on GROSS billed, like the Excel job P&L** (owner: "i need to see gross billed, retained, net
+  billed, and use the gross total billed as the factor to see net profit ... you also don't list what oh% you are
+  using"). `_invoices_split` (mirror): gross = invoice lines except the retainage item (QuickBooks income); net = invoice
+  TotalAmt, fresh (billing_event lagged an edit on one invoice), a "Retainage Not Billed" record excluded; retained =
+  gross - net. `_project_pnl`, `_portfolio_pnl` and each draw's `pl`: net = gross - costs - overhead, net % on gross.
+  Project page table: Contract · Gross billed / Retained / Net billed / ETC · Costs / Gross profit / Overhead · N% of
+  contract / Net profit. **A picked draw shows its own P&L above its bills** (gross, retained, net billed + GC status,
+  costs split materials / labor, gross profit, overhead · N% of gross billed, net profit). Supersedes the 09/08
+  net-billed basis.
+- 2026-09-23 · **Project page polish** - (a) clicking a draw no longer scrolls: `_renderPpDraws` read scrollY AFTER
+  emptying the host (the page had already shortened and the browser pulled it up ~400px); now read before + the host's
+  height held while it redraws. (b) Profit & Loss table compact: sized to its content, one font size (actual in bold),
+  one line a row (the notes are hover tips), solid hairlines. (c) Group arrows app-wide are full-size text triangles
+  (U+25B6 / U+25BC + VS15), black; the old `.bg-caret` arrows match; the remembered-state key strips them. (d) The
+  Invoices / Costs-by-code headings are black. (e) The Known box (and `rulings_n`) shows only FINDING rulings -
+  a `draws` / `costs` rule is how the job works, not a Known note.
+- 2026-09-23 · **Owner burst (9 asks) + the WIP Sync now reloads the ledger.**
+  1. Customer Center division rows use the real columns (name + client count / Open AR / invoices); Payments period
+     rows too. 2. One side inset for every panel (`--pad-x` 24px, page margin 32px, table edge cells inset). 3. Payments'
+     "each row is a payment" paragraph -> a hover tip. 4. NO load / sync stamps in the page any more (`srcText` prints only
+     a WIP REPORT date); they live in the Synced pill's breakdown - grouped QuickBooks (incl. the mirror's refresh) /
+     Bill Tracker / Invoice Tracker / WIP / Notion, a dot per feed. 5. Bill Tracker default = Vendor A-Z then newest,
+     flat. 6. Project draw table on GROSS billed incl. retainage (per-invoice positive sales lines from the mirror;
+     `pl.net_billed` / `pl.retainage` ride along) - the project P&L's basis. 6.1 One highlight only (the "next draw" tint
+     is gone). 6.2 Click Materials / Labor (subs) to open every vendor in it. 7. Audit findings + Change log sections fold
+     closed. 8. Costs by code folds like Invoices; the two folds sit side by side full width (was 3 CSS columns, 2 empty).
+     9. The filter / sort / expand bar sits ON the bill list it drives, not above the draw table.
+  WIP Review Sync step 5 = `load_wip_master.py` (the page showed the 09/17 WIP after a 15:06 write - the ledger was
+  never reloaded); the after-sync page re-pulls the data.
+- 2026-09-23 · **Secondary text is solid grey, never faded** (owner: "get rid of this font color, it's very hard to see,
+  use Apple aesthetics"). The "QuickBooks AR · loaded ..." source stamps (`.k-src`) were --text-dim x 80% opacity at .76em;
+  now solid --text-dim at 12px (about 6:1 on white). Same fix for other faded TEXT (chip counts, graph sub-labels, legend,
+  Systems chip counts); opacity stays only on disabled / empty states.
+- 2026-09-23 · **Bills to fix mirrors the two new audit skips** ($0 lines, inventory yards - read from the same
+  `audit_exclusions.json`, the yard class checked on the bill itself via the mirror) so the page is right before the
+  next AP sync; em dashes stripped from finding text. **Project page: the open draw tab survives a refresh** too.
 - 2026-09-23 · **Bills to fix, simplified: four groups by who fixes it** (owner: "build it with those four groups" /
   "fix these tags, it always cuts out ... make the filter portion more pronounced"). The groups are the main filter - one
   line of four big buttons, count first, who fixes it underneath: Coding (the bill clerk) · Approval · Purchase orders ·

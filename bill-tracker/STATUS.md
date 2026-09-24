@@ -4,6 +4,10 @@ Shared progression record (the user's sessions ↔ the developer's). Tool scope 
 no business findings, dollar exposures, or owner analyses (those live in the owner's vault).
 
 ## DONE / FINALIZED
+- 2026-09-23 · **Coding audits skip $0 lines and our inventory yard(s)** (owner: "it's a $0 line item, i would just leave it
+  off" / "our yard. it's for us. should go to inventory"). Data Entry, Missing Project, FW Misplaced and Sub No Project
+  skip a line whose amount is $0, or that sits on an inventory yard's class or names its address in the bill memo /
+  line text (`inventory_yards` in CompanyHealth `audit_exclusions.json`). Em dashes removed from the finding text.
 - 2026-09-23 · **Unmounted Accounting share = a plain STOP** (the sync crashed in `mkdir` on `/Volumes/Accounting`
   after the share dropped - twice, 09/18 and 09/23). `shared/paths.require_accounting_share()` checks the share
   before any QBO work and exits with the reconnect instruction; nothing else changed.

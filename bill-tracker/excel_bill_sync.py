@@ -355,7 +355,7 @@ def _invoice_cell(inv_doc: str, inv_memo: str, match_basis: str = "",
     elif match_basis == MATCH_BASIS_PUSHED:
         prefix = "[" + ((match_note or "pushed").replace("pushed", "PUSHED", 1)) + "] "
     memo = (inv_memo or "").strip()
-    body = inv_doc if not memo else f"{inv_doc} — {memo}"
+    body = inv_doc if not memo else f"{inv_doc} - {memo}"
     return prefix + body
 
 
@@ -1791,7 +1791,7 @@ def _uncoded_job_cost(r: dict) -> Optional[Tuple[str, str]]:
     if code_m:
         hints.append(f"desc says {code_m.group(0).upper()}")
     if hints:
-        reason += " — " + ", ".join(hints)
+        reason += " - " + ", ".join(hints)   # never an em dash in what the owner reads
     return reason, (class_div or "(none)")
 
 
@@ -1818,9 +1818,9 @@ def _fw_misplaced(r: dict) -> Optional[str]:
         return None
     code = (r.get("cost_code") or "").split(":")[-1].strip().upper()
     if div in ("CP", "MFD"):
-        return f"FW code {code} on a {div} job ({proj}) — flatwork belongs to RP"
+        return f"FW code {code} on a {div} job ({proj}) - flatwork belongs to RP"
     if div == "RP" and not proj.endswith("-FTW"):
-        return f"FW code {code} on RP slab {proj} — FW belongs on the -FTW project"
+        return f"FW code {code} on RP slab {proj} - FW belongs on the -FTW project"
     return None
 
 
@@ -2059,6 +2059,34 @@ def _load_audit_exclusions() -> Dict[str, Dict[str, list]]:
     return out
 
 
+def _load_inventory_yards() -> List[dict]:
+    """Our own yards (the owner 2026-09-23: "our yard. it's for us. should go to inventory") from the same
+    audit_exclusions.json: [{"name", "classes": [...], "addresses": [...]}]. Missing file -> none."""
+    p = paths.companyhealth_dir() / "audit_exclusions.json"
+    try:
+        data = json.loads(p.read_text()) if p.exists() else {}
+    except (OSError, json.JSONDecodeError):
+        data = {}
+    out = []
+    for y in data.get("inventory_yards", []) or []:
+        if isinstance(y, dict):
+            out.append({"name": str(y.get("name") or "inventory yard"),
+                        "classes": [str(x).strip().upper() for x in y.get("classes", []) if str(x).strip()],
+                        "addresses": [str(x).strip().upper() for x in y.get("addresses", []) if str(x).strip()]})
+    return out
+
+
+def _yard_of(r: dict, yards: List[dict]) -> Optional[str]:
+    """The inventory yard a line belongs to (its QBO class, or its bill memo / line text naming the yard's
+    address), or None. Such a line is company inventory - not a job with a missing project."""
+    cls = (r.get("class_name") or "").upper()
+    text = " ".join([r.get("bill_memo") or "", r.get("line_desc") or ""]).upper()
+    for y in yards:
+        if any(c and c in cls for c in y["classes"]) or any(a and a in text for a in y["addresses"]):
+            return y["name"]
+    return None
+
+
 def _excluded(r: dict, excl: Dict[str, list]) -> bool:
     """True if the row's vendor or QBO class matches an exclusion (substring, ci)."""
     vend = (r.get("vendor") or "").upper()
@@ -2233,7 +2261,21 @@ def build_audits(wb, all_rows: List[dict],
     # Each row ends with the raw bill_id (last element) so the Status mark can be
     # keyed to the bill and preserved across runs.
     coding: List[list] = []
+    # a $0 line changes no cost - never a coding finding (the owner 2026-09-23: "it's a $0 line item,
+    # i would just leave it off, it's not something important to change")
+    yards = _load_inventory_yards()
+
+    def _skip(r) -> bool:
+        # a $0 line, or a line for our own inventory yard: neither is a coding finding
+        if yards and _yard_of(r, yards):
+            return True
+        try:
+            return abs(float(r.get("line_amount") or 0)) < 0.005
+        except (TypeError, ValueError):
+            return False
     for r in display_rows:
+        if _skip(r):
+            continue
         issues = _audit_row_checks(r)
         if issues:
             coding.append(["Data Entry", r.get("vendor", ""), r.get("bill_doc", ""),
@@ -2250,6 +2292,8 @@ def build_audits(wb, all_rows: List[dict],
                            "", r.get("line_amount") or 0.0, uc[0],
                            _bill_url(r.get("bill_id", "")), r.get("bill_id", "")])
     for r in all_rows:
+        if _skip(r):
+            continue
         reason = _fw_misplaced(r)
         if reason:
             coding.append(["FW Misplaced", r.get("vendor", ""), r.get("bill_doc", ""),
@@ -2259,6 +2303,8 @@ def build_audits(wb, all_rows: List[dict],
                            ("SUB · " if r.get("is_sub") else "") + reason,
                            _bill_url(r.get("bill_id", "")), r.get("bill_id", "")])
     for r in sub_rows:
+        if _skip(r):
+            continue
         if not (r.get("project_num") or "").strip() and r.get("bill_type") == "COGS":
             coding.append(["Sub No Project", r.get("vendor", ""), r.get("bill_doc", ""),
                            r.get("bill_date"), "(none)",

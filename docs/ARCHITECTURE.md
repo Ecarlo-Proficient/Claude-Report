@@ -324,7 +324,7 @@ flowchart LR
     MFDT -->|"script-owned cols, in place"| MFDTAB
     MFDTAB -.->|"typed ETC wins over\n'WIP Master' contract÷markup"| MASTER
     MFDT --> MFDLOG
-    WRSYNC["ledger WIP Review → Sync\n(4 steps: CP · RP · Master · MFD QBO block)"]:::tool
+    WRSYNC["ledger WIP Review → Sync\n(5 steps: CP · RP · Master · MFD QBO block ·\nreload the ledger: load_wip_master)"]:::tool
     WRSYNC -->|"--apply-review"| CPR & RPR & MASTER
     WRSYNC -->|"4th step: QBO cols only,\nup-only, header row found live"| MFDT
     JR[("job_rulings.json\ncosts/class rule (MFD295)")]:::src

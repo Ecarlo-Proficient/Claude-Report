@@ -254,20 +254,30 @@ def _project_pnl(con, proj: str) -> dict:
     net_billed = billed or 0
     billed_src = "QuickBooks invoices"
     billed_gap = round(wip_net - net_billed, 2) if wip_net - net_billed > 1000 else 0.0
-    if not gross and net_billed:
-        gross = round(net_billed + ret, 2)
-    _base = contract or net_billed
-    overhead = round((_OVERHEAD_MFD_COST if is_mfd else _OVERHEAD_REV) * _base, 2)
-    net = round(net_billed - cost - overhead, 2)
+    # GROSS billed = the same QuickBooks invoices BEFORE retainage (each invoice's positive sales lines), the Excel job
+    # P&L's basis; retained = gross - net. Net profit = GROSS billed - costs - overhead (owner 2026-09-23: "use the gross
+    # total billed as the factor to see net profit. that's the real net profit") - supersedes net-billed (09/08).
+    wip_gross = gross
+    q_gross, q_net = _invoices_split(invoices)
+    if q_net is not None:
+        net_billed = q_net                            # fresh from the mirror (the ledger's copy can lag an edit)
+    gross = q_gross if q_gross is not None else round(net_billed + ret, 2)
+    ret = round(gross - net_billed, 2)
+    _base = contract or gross
+    rate = _OVERHEAD_MFD_COST if is_mfd else _OVERHEAD_REV
+    overhead = round(rate * _base, 2)
+    gross_profit = round(gross - cost, 2)
+    net = round(gross - cost - overhead, 2)
     return {
         "proj": proj, "division": div,
         "contract": contract, "pct_complete": pct, "earned": earned, "billed": billed,
         "billed_gross": gross, "retainage": ret, "net_billed": net_billed, "billed_src": billed_src, "billed_gap": billed_gap,
+        "wip_billed_gross": wip_gross, "gross_profit": gross_profit, "overhead_rate": rate,
         "since_wip": since,
         "invoices_loaded": billed,
         "cost": cost, "overhead": overhead,
-        "overhead_basis": "9% of contract (MFD)" if is_mfd else "10% of contract",
-        "net": net, "net_pct": (net / net_billed) if net_billed else None,
+        "overhead_basis": f"{rate * 100:g}% of contract" + (" (MFD)" if is_mfd else ""),
+        "net": net, "net_pct": (net / gross) if gross else None,
         "by_code": by_code, "invoices": invoices,
         "has_wip": row is not None,
     }
@@ -286,6 +296,9 @@ def _portfolio_pnl(con) -> dict:
     billed = {r["project_no"]: r["a"] for r in con.execute(
         "SELECT project_no, COALESCE(SUM(amount),0) a FROM billing_event "
         "WHERE project_no IS NOT NULL GROUP BY project_no")}
+    inv_by_p: dict = {}
+    for r in con.execute("SELECT project_no, qbo_txn_id, amount FROM billing_event WHERE project_no IS NOT NULL"):
+        inv_by_p.setdefault(r["project_no"], []).append({"qbo_txn_id": r["qbo_txn_id"], "amount": r["amount"]})
     client_of = _project_customer_map(con)   # the shared client resolver (same as Bills/Liens/projects)
     try:  # project → QBO customer id (CustomerRef.value) for the project# deep link; absent-safe
         cust_of = {r["project_no"]: r["customer_id"] for r in con.execute(
@@ -309,9 +322,14 @@ def _portfolio_pnl(con) -> dict:
         b = billed.get(p, 0) or 0
         gross = w["btd"] or 0
         ret = w["ret"] or 0
-        b = b or 0                                 # the QuickBooks invoices - the same population the P&L bills from
-        oh = round((_OVERHEAD_MFD_COST if is_mfd else _OVERHEAD_REV) * (contract or b), 2)
-        net = round(b - cost - oh, 2)             # actuals: net billed - costs - overhead (owner 2026-09-08)
+        b = b or 0                                 # NET billed: the QuickBooks invoices after retainage
+        qg, qn = _invoices_split(inv_by_p.get(p, [])) if inv_by_p.get(p) else (None, None)
+        if qn is not None:
+            b = qn                                 # NET billed, fresh from the mirror
+        gross = qg if qg is not None else round(b + ret, 2)   # GROSS billed: QuickBooks income, before retainage
+        ret = round(gross - b, 2)
+        oh = round((_OVERHEAD_MFD_COST if is_mfd else _OVERHEAD_REV) * (contract or gross), 2)
+        net = round(gross - cost - oh, 2)         # actuals: GROSS billed - costs - overhead (owner 2026-09-23, the Excel P&L)
         try:                                             # ~4 stats/project (no glob) - cheap, cached client-side
             mtime = pnl_paths.find_pnl(p).get("mtime")
         except Exception:  # noqa: BLE001 - a path hiccup must never break the P&L
@@ -319,7 +337,7 @@ def _portfolio_pnl(con) -> dict:
         rows.append({"proj": p, "division": division, "contract": contract,
                      "pct_complete": pc, "earned": earned, "cost": cost,
                      "overhead": oh, "net": net,
-                     "net_pct": (net / b) if b else None, "billed": b, "billed_gross": gross, "retainage": ret,
+                     "net_pct": (net / gross) if gross else None, "billed": b, "billed_gross": gross, "retainage": ret,
                      "name": w["project_name"],                          # the job name / address
                      "client": client_of.get(p) or w["builder_or_gc"] or None,
                      "cust_id": cust_of.get(p), "pnl_mtime": mtime,
@@ -334,7 +352,7 @@ def _portfolio_pnl(con) -> dict:
         d["n"] += 1
         comp["n"] += 1
     for d in list(div.values()) + [comp]:
-        d["net_pct"] = (d["net"] / d["billed"]) if d["billed"] else None
+        d["net_pct"] = (d["net"] / d["billed_gross"]) if d["billed_gross"] else None   # on GROSS billed (owner 2026-09-23)
     rows.sort(key=lambda r: r["net"])                # worst margin first - the ones to watch
     by_div = sorted(div.values(), key=lambda d: -d["billed"])
     return {"rows": rows, "by_division": by_div, "company": comp}
@@ -533,6 +551,9 @@ def _wip_review_steps(mode: str):
         # the MFD team's own tab: only its green QBO block (costs / billed / retainage, up-only) - the
         # columns they type are never touched (owner 2026-09-23: "why doesn't the mfd sheet get updated?")
         {"label": "Update MFD QBO columns → WIP - MFD", "script": "wip/mfd_wip_test.py", "args": [], "side": True},
+        # last: read the tabs just written back INTO the ledger, so the project pages show the new WIP at once
+        # (owner 2026-09-23: "why did the project page not update with the wip update if we did it within the ledger")
+        {"label": "Reload the ledger from the WIP master", "script": "ledger/load_wip_master.py", "args": []},
     ]
 
 
@@ -1065,6 +1086,15 @@ def _freshness(con) -> dict:
         if m:
             out["sources"]["sync-ar"] = m
             break
+    # the QuickBooks mirror's last refresh (every QBO read comes from it) - the sync pill's QuickBooks line
+    try:
+        from shared import qbo_mirror
+        if qbo_mirror.db_path().exists():
+            st = qbo_mirror.stamp()
+            if st:
+                out["sources"]["QBO mirror"] = _dt.datetime.fromtimestamp(st.timestamp()).isoformat(timespec="minutes")
+    except Exception:                                  # noqa: BLE001 - no mirror = no line
+        pass
     return out
 
 
@@ -1234,6 +1264,53 @@ def _fetch_accounting_audits() -> dict:
     except Exception:                                  # noqa: BLE001 - never let counts break the audit
         for f in findings:
             f["att"] = 0
+    # a $0 LINE is never a coding finding (owner 2026-09-23: "it's a $0 line item, i would just leave it off") -
+    # bill-tracker drops them at the source too; this keeps the page right until the next AP sync
+    _line_checks = ("Data Entry", "Missing Project", "FW Misplaced", "Sub No Project")
+    findings = [f for f in findings if not (f.get("issue") in _line_checks and f.get("amount") is not None
+                                            and abs(f["amount"]) < 0.005)]
+    # our own inventory yard(s) (audit_exclusions.json `inventory_yards`, owner 2026-09-23 - 3116 Balch Springs Rd):
+    # a yard line is inventory, never a coding finding. bill-tracker skips them too; this covers the gap until the next AP sync.
+    try:
+        _ax = json.loads((paths.companyhealth_dir() / "audit_exclusions.json").read_text())
+        _yards = [y for y in (_ax.get("inventory_yards") or []) if isinstance(y, dict)]
+    except (OSError, ValueError):
+        _yards = []
+    if _yards:
+        _keys = [str(k).upper() for y in _yards for k in (y.get("classes") or []) + (y.get("addresses") or []) if str(k).strip()]
+        findings = [f for f in findings if not (f.get("issue") in _line_checks and any(
+            k in " ".join(str(f.get(x) or "") for x in ("qbo_class", "memo", "detail", "project")).upper() for k in _keys))]
+        # the audit sheet does not carry every line's class - read the bill itself from the mirror
+        try:
+            from shared import qbo_mirror
+            if qbo_mirror.db_path().exists():
+                mcon = qbo_mirror.connect()
+                try:
+                    def _yard_bill(bid):
+                        rec = qbo_mirror.get("Bill", bid, con=mcon) if bid else None
+                        if not rec:
+                            return False
+                        txt = [str(rec.get("PrivateNote") or "")]
+                        for ln in rec.get("Line") or []:
+                            det = ln.get("ItemBasedExpenseLineDetail") or ln.get("AccountBasedExpenseLineDetail") or {}
+                            txt.append(str((det.get("ClassRef") or {}).get("name") or ""))
+                        up = " ".join(txt).upper()
+                        return any(k in up for k in _keys)
+                    _cache: dict = {}
+                    def _is_yard(f):
+                        bid = bill_marks.bill_id_from_link(f.get("url"))
+                        if bid not in _cache:
+                            _cache[bid] = _yard_bill(bid)
+                        return _cache[bid]
+                    findings = [f for f in findings if not (f.get("issue") in _line_checks and _is_yard(f))]
+                finally:
+                    mcon.close()
+        except Exception:                               # noqa: BLE001 - no mirror = the text match above only
+            pass
+    for f in findings:   # never an em dash on the page (the owner's standing rule); older workbooks still carry them
+        for k in ("detail", "memo"):
+            if isinstance(f.get(k), str):
+                f[k] = f[k].replace("\u2014", "-")
     counts = {}
     for f in findings:
         counts[f["issue"]] = counts.get(f["issue"], 0) + 1
@@ -1967,6 +2044,62 @@ def _project_invoices(con, pn: str) -> list:
     return out
 
 
+_INV_GROSS: dict = {"stamp": None, "by_id": {}}
+_RET_ITEM = re.compile(r"retainage", re.I)
+_RET_RECORD = re.compile(r"retainage\s+not\s+billed", re.I)
+
+
+def _invoices_split(invs: list):
+    """(gross, net) of a set of invoices, read from the QBO mirror (fresh - the ledger's billing_event can lag an edit):
+      gross = every line EXCEPT the retainage item ('99 - Retainage'): QuickBooks' INCOME, the Excel job P&L's
+              "Income (incl. retainage)"; a retainage release (a positive retainage line) is collecting, not billing
+      net   = the invoice totals (what the GC is asked to pay), without a "Retainage Not Billed" record invoice
+    (None, None) when the mirror is missing - the caller falls back. Cached per mirror stamp."""
+    try:
+        from shared import qbo_mirror
+        if not qbo_mirror.db_path().exists():
+            return None, None
+        stamp = str(qbo_mirror.stamp() or "")
+        if stamp != _INV_GROSS["stamp"]:
+            _INV_GROSS.update(stamp=stamp, by_id={})
+        cache = _INV_GROSS["by_id"]
+        need = [str(i.get("qbo_txn_id")) for i in invs if i.get("qbo_txn_id") and str(i.get("qbo_txn_id")) not in cache]
+        if need:
+            mcon = qbo_mirror.connect()
+            try:
+                for iid in need:
+                    rec = qbo_mirror.get("Invoice", iid, con=mcon)
+                    if rec is None:
+                        cache[iid] = None
+                        continue
+                    g = 0.0
+                    for ln in rec.get("Line") or []:
+                        if ln.get("DetailType") != "SalesItemLineDetail":
+                            continue
+                        item = str(((ln.get("SalesItemLineDetail") or {}).get("ItemRef") or {}).get("name") or "")
+                        if not _RET_ITEM.search(item):
+                            g += float(ln.get("Amount") or 0)
+                    record = bool(_RET_RECORD.search(str(rec.get("PrivateNote") or "") + " " + str(rec.get("CustomerMemo", {}).get("value") if isinstance(rec.get("CustomerMemo"), dict) else "")))
+                    cache[iid] = (round(g, 2), 0.0 if record else round(float(rec.get("TotalAmt") or 0), 2))
+            finally:
+                mcon.close()
+        gross = net = 0.0
+        for i in invs:
+            c = cache.get(str(i.get("qbo_txn_id")))
+            if c is None:                               # not in the mirror: its ledger amount, both ways
+                gross += float(i.get("amount") or 0); net += float(i.get("amount") or 0)
+            else:
+                gross += c[0]; net += c[1]
+        return round(gross, 2), round(net, 2)
+    except Exception:                                   # noqa: BLE001 - no split = the caller's fallback
+        return None, None
+
+
+def _invoices_gross(invs: list):
+    """Gross billed of a set of invoices (see _invoices_split); None without the mirror."""
+    return _invoices_split(invs)[0]
+
+
 def _recount_draw(d: dict) -> None:
     """Re-derive a draw's counts, money-in and stage from its bills + invoices (the same rules as
     _fetch_draws, applied after invoices were grouped / bills merged)."""
@@ -2229,14 +2362,19 @@ def _fetch_project_page(con, pn: str) -> dict:
         d["paid_amt"] = round(sum((b["amount"] or 0) for b in gate if b["paid"]), 2)
         d["gate_amt"] = round(sum((b["amount"] or 0) for b in gate), 2)
         d["unpaid_amt"] = round(sum((b["open"] or 0) for b in gate if not b["paid"]), 2)
-        # the draw's own P&L strip - the same arithmetic as the P&L workbook's draw sheet
-        income = float(d.get("billed") or 0)                       # the net invoice = cash to collect
+        # the draw's own P&L strip - GROSS billed incl. retainage, the project P&L's basis (owner 2026-09-23: "the draw
+        # table should show the gross with retainage, not the net - it should mirror the project P&L")
+        net_billed = float(d.get("billed") or 0)                   # the net invoice = cash to collect
+        gross_billed, q_net = _invoices_split(d.get("invoices") or [])
+        if q_net is not None:
+            net_billed = q_net                                      # fresh from the mirror
+        income = gross_billed if gross_billed is not None else net_billed
         costs = round(float(d.get("gate_amt") or 0) + d["subs_amt"], 2)
         gross = round(income - costs, 2)
         overhead = round((_OVERHEAD_MFD_COST if is_mfd else _OVERHEAD_REV) * income, 2)   # the draw's slice of the contract
-        d["pl"] = {"income": income, "costs": costs, "bills": len(d["bills"]) + len(d["sub_bills"]), "gross": gross,
+        d["pl"] = {"income": income, "net_billed": round(net_billed, 2), "retainage": round(income - net_billed, 2), "costs": costs, "bills": len(d["bills"]) + len(d["sub_bills"]), "gross": gross,
                    "margin_pct": (gross / income) if income else None, "overhead": overhead,
-                   "overhead_basis": "9% of income (MFD)" if is_mfd else "10% of income",
+                   "overhead_basis": "9% of gross billed (MFD)" if is_mfd else "10% of gross billed",
                    "net": round(gross - overhead, 2), "net_pct": ((gross - overhead) / income) if income else None,
                    "materials": round(float(d.get("gate_amt") or 0), 2), "labor": d["subs_amt"],
                    "period": {"start": p0, "end": p1}}
@@ -2270,7 +2408,7 @@ def _fetch_project_page(con, pn: str) -> dict:
     return {"ok": True, "project": {"project_no": pn, "name": pr["name"] if pr else None, "division": pr["division"] if pr else pnl.get("division")},
             "pnl": pnl, "draws": draws, "funding": funding,
             "notes": _project_notes(con, pn),     # the owner's notes on the job (owner 2026-09-16: "give me a button to add notes")
-            "rulings": job_rulings.for_job(pn),   # the owner's standing rulings on this job (known loss / accepted overrun)
+            "rulings": job_rulings.findings(pn),   # the owner's standing rulings that are FINDINGS (known loss / accepted overrun) - a draws / costs rule is how the job works, not a Known note
             "audits": _audits_for(pn)}            # every Bill Tracker audit finding on this job (owner 2026-09-08: "if the project is in any audit page, have it there")
 
 
@@ -2912,7 +3050,7 @@ def fetch_data(db_path: Path, scope: str = "full") -> dict:
         # The owner's standing ruling: an accepted overrun leaves the Over
         # budget list (isOverBudget in app.js) - he already knows why.
         r["over_budget_accepted"] = job_rulings.accepts(r["project_no"], "OVER_BUDGET")
-        r["rulings_n"] = len(job_rulings.for_job(r["project_no"]))
+        r["rulings_n"] = len(job_rulings.findings(r["project_no"]))
         cp = costs["by_project"].get(r["project_no"])
         r["costs_loaded"] = cp["costs_loaded"] if cp else None
         r["sub_costs"] = cp["sub_costs"] if cp else None
