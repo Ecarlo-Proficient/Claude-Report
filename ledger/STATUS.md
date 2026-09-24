@@ -4,6 +4,16 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-24 · **Checks QBO changed learns the patterns** (owner: "learn the patterns, do an analysis to help detect this
+  better" / "don't use Jobtread ever for this. only qbo"). QuickBooks-only evidence, per check: `pattern` = paid bill
+  deleted · paid bill edited (the change log shows the bill's CONTENT changed around the strip) · check rewritten (the
+  bill never changed - the check lost it) · put on a later bill · credit dropped · before the change log (pre-09/23: no
+  evidence, never guessed - a bill stamped minutes before its check is NOT proof of an edit; 25745 was saved 10 times
+  and all 129 of its bills moved at the first save). A strip the change log caught rebuilds the exact bills from the
+  check's before copy (no amount guessing). `sessions` = checks changed within 15 min of each other; 3+ = a burst chip
+  (Central time - QBO stamps Pacific) that filters the table. `multi_project` = the risk profile: every stripped check
+  with a known bill paid a bill charged to 2+ projects (16/21; 15/15 exact) vs 43% of untouched 2026 checks. Fix lines
+  are worded by pattern; 6+ bills collapse to one line with the list underneath.
 - 2026-09-24 · **Checks QBO changed - its own audit page** (Company, beside QBO changes; owner: "qbo freaks out when a
   bill paid gets changed and does automatic changes without ever consenting or warning ... subs it happens to the most" /
   "it's an audit in the Project Ledger" / "all year round"). `ledger/check_drift.py` over the mirror, every year on file,

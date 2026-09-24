@@ -56,6 +56,8 @@ EPS = 0.005
 MIN_FLOAT = 1.00           # cents of rounding on old checks are not drift
 SINCE = ""                 # every year on file - the audit runs all year round (owner 2026-09-24)
 IMPORT_DONE = dt.datetime(2025, 6, 1, tzinfo=dt.timezone.utc)   # the 05/2025 import re-stamped CreateTime: entry order before it is unknowable
+BURST_GAP_MIN = 15         # checks stripped within this many minutes of each other = one session (a burst)
+SIDE_EFFECT = {"Balance", "LinkedTxn", "MetaData", "SyncToken"}   # what a strip itself changes on the bill
 REOPEN_DAYS = 60           # a bill the check paid is dated within this many days before the check
 
 
@@ -119,6 +121,9 @@ def audit(con=None, since: str = SINCE, check: str | None = None, subs_only: boo
 def _audit(con, since: str, check: str | None, subs_only: bool) -> dict:
     bills = {r["Id"]: r for r in mirror.load("Bill", include_deleted=True, con=con)}
     deleted_bills = {r[0] for r in con.execute("SELECT id FROM qbo_bill WHERE deleted=1")}
+    for bid in deleted_bills:
+        if bid in bills:
+            bills[bid]["_deleted"] = True
     credits = mirror.load("VendorCredit", con=con)
     pays = [p for p in mirror.load("BillPayment", con=con) if str(p.get("TxnDate") or "") >= since]
 
@@ -224,6 +229,7 @@ def _audit(con, since: str, check: str | None, subs_only: bool) -> dict:
             "freed": freed, "cause": cause, "applied_lines": applied, "_cands": cands,
         })
     _assign(rows)
+    _patterns(con, rows, bills, killed_by)
     for r in rows:
         _finish(r)
     rows.sort(key=lambda r: (not r["sub"], -(r["floating"] + r["late_amt"])))
@@ -235,9 +241,141 @@ def _audit(con, since: str, check: str | None, subs_only: bool) -> dict:
         "late_n": sum(1 for r in rows if r["late"]), "late": round(sum(r["late_amt"] for r in rows), 2),
         "copies_n": sum(len(r["copies"]) for r in rows), "copies": round(sum(r["copies_amt"] for r in rows), 2),
         "reopened_n": sum(len(r["reopened"]) for r in rows), "reopened": round(sum(r["reopened_amt"] for r in rows), 2),
+        "patterns": dict(sorted(((k, sum(1 for r in rows if r["pattern"] == k)) for k in {r["pattern"] for r in rows}),
+                                key=lambda kv: -kv[1])),
+        "multi_project": sum(1 for r in rows if r["multi_project"]),
+        "matched": sum(1 for r in rows if r["reopened"] or r["copies"]),
     }
-    return {"ok": True, "since": since, "rows": rows, "summary": summary,
+    return {"ok": True, "since": since, "rows": rows, "summary": summary, "sessions": _sessions(rows),
             "last_refresh": mirror._meta_get(con, "last_refresh")}
+
+
+def _content_changed(before: dict, after: dict) -> bool:
+    """True when a bill changed beyond what a strip itself does (balance + payment links)."""
+    keys = (set(before) | set(after)) - SIDE_EFFECT
+    return any(before.get(k) != after.get(k) for k in keys)
+
+
+def _projects(b: dict) -> set:
+    out = set()
+    for ln in b.get("Line") or []:
+        d = ln.get("ItemBasedExpenseLineDetail") or ln.get("AccountBasedExpenseLineDetail") or {}
+        c = (d.get("CustomerRef") or {}).get("value")
+        if c:
+            out.add(c)
+    return out
+
+
+def _patterns(con, rows: list, bills: dict, killed_by: dict) -> None:
+    """What happened to each check, from QuickBooks alone (the owner 2026-09-24: "only qbo"):
+      paid bill deleted      - a deleted bill named the check, or its re-entered copy is open
+      paid bill edited       - the bill it paid changed content in the change log around the strip,
+                               or (before the log, 09/23) was touched minutes BEFORE the check
+      check rewritten        - the bill it paid did not change; the check lost its lines on its own
+                               (the 09/23 6:11-6:25 pm burst: 15 checks, 8-20 s apart, no bill edited)
+      credit dropped         - only the vendor credit came off (the small 2025 loan-repayment cases)
+      put on a later bill    - floating money QBO applied to a bill dated after the check
+      unknown                - before the change log and nothing to tie it to
+    The risk profile (2026-09-24 analysis): every stripped check with a known bill paid a bill
+    charged to 2+ projects (15/15, vs 43% of untouched 2026 checks) - `multi_project`."""
+    bill_changes = defaultdict(list)
+    for c in mirror.changes(con, entity="Bill", limit=200000):
+        if c["kind"] == "edited" and c["has_before"]:
+            bill_changes[c["rec_id"]].append(c)
+    pay_strips = defaultdict(list)
+    for c in mirror.changes(con, entity="BillPayment", limit=200000):
+        if c["has_before"] and ("payment unapplied" in c["flags"] or (c.get("lines_before") or 0) > (c.get("lines_after") or 0)):
+            pay_strips[c["rec_id"]].append(c)
+    row0 = con.execute("SELECT min(seen_at) FROM mirror_change WHERE kind='edited'").fetchone()
+    log_start = _t(row0[0]) if row0 and row0[0] else None
+    for r in rows:
+        strip_at = _t(r["last_changed"])
+        logged_strip = sorted(pay_strips.get(r["payment_id"], []), key=lambda c: c["changed_at"])
+        if logged_strip:                               # the change log kept the check as it was: the exact bills
+            _from_before(con, r, logged_strip[-1], bills, bill_changes)
+            continue
+        known = [b for b in r["reopened"] + r["copies"] if b.get("exact")] or r["reopened"] + r["copies"]
+        r["multi_project"] = any(len(_projects(bills.get(b["id"]) or {})) >= 2 for b in known)
+        pat = None
+        if killed_by.get(r["payment_id"]) or any(b.get("exact") for b in r["copies"]):
+            pat = "paid bill deleted"
+        for b in r["reopened"]:
+            if pat:
+                break
+            logged = [c for c in bill_changes.get(b["id"], [])
+                      if strip_at and _t(c["changed_at"]) and abs((_t(c["changed_at"]) - strip_at).total_seconds()) <= 1800]
+            if logged:
+                cur = bills.get(b["id"]) or {}
+                edited = [c for c in logged if _content_changed(mirror.change_before(con, c["id"]) or {}, cur)]
+                pat = "paid bill edited" if edited else "check rewritten"
+                for c in edited[:1]:
+                    r["cause"].append(f"bill {b['doc_number']} edited {_clock(c['changed_at'])}, check changed {_clock(r['last_changed'])}")
+        if not pat and r["floating"] > MIN_FLOAT and r["freed"] and abs(r["floating"] - sum(c["balance"] for c in r["freed"])) < 0.01:
+            pat = "credit dropped"
+        if not pat and r["late"] and r["floating"] <= MIN_FLOAT:
+            pat = "put on a later bill"
+        if not pat:
+            pat = "before the change log" if (log_start and strip_at and strip_at < log_start) else "unknown"
+        r["pattern"] = pat
+
+
+def _from_before(con, r: dict, strip: dict, bills: dict, bill_changes: dict) -> None:
+    """A strip the change log caught: the check's before copy names every bill it paid and how much.
+    Those bills replace the amount-matched guesses; the pattern is read off what happened to them."""
+    before = mirror.change_before(con, strip["id"]) or {}
+    at = _t(strip["changed_at"])
+    now_applied = {a["id"]: a["amount"] for a in r["applied_lines"] if a["type"] == "Bill"}
+    reopened, deleted, edited = [], [], False
+    for typ, bid, amt in _links(before):
+        if typ != "Bill":
+            continue
+        b = bills.get(bid) or {}
+        if not b or b.get("_deleted") or bid not in bills:
+            deleted.append(bid)
+            continue
+        if now_applied.get(bid, 0) >= amt - EPS:
+            continue                                   # already back on the check
+        ref = _bill_ref(b)
+        ref.update(exact=True, kind="reopened", amount=amt, edited=(b.get("MetaData") or {}).get("LastUpdatedTime"))
+        reopened.append(ref)
+        for c in bill_changes.get(bid, []):
+            ct = _t(c["changed_at"])
+            if ct and at and abs((ct - at).total_seconds()) <= 1800 and _content_changed(mirror.change_before(con, c["id"]) or {}, b):
+                if not edited:
+                    r["cause"].append(f"bill {ref['doc_number']} edited {_clock(c['changed_at'])}, check changed {_clock(strip['changed_at'])}")
+                edited = True
+    r["reopened"], r["copies"] = reopened, [c for c in r["copies"] if c.get("exact")]
+    r["reopened_amt"] = round(sum(b["balance"] for b in reopened), 2)
+    r["copies_amt"] = round(sum(b["balance"] for b in r["copies"]), 2)
+    r["multi_project"] = any(len(_projects(bills.get(b["id"]) or {})) >= 2 for b in reopened)
+    r["pattern"] = ("paid bill deleted" if deleted or r["copies"] else "paid bill edited" if edited else "check rewritten")
+
+
+def _sessions(rows: list) -> list:
+    """Strips that happened together: checks QBO changed within BURST_GAP_MIN of each other. A burst
+    is someone (or something) working through checks - the 09/22 and 09/23 bursts were 6 and 15."""
+    ev = sorted((r for r in rows if r["floating"] > MIN_FLOAT and r["last_changed"]), key=lambda r: r["last_changed"])
+    out, cur = [], []
+    for r in ev:
+        if cur and (_t(r["last_changed"]) - _t(cur[-1]["last_changed"])).total_seconds() > BURST_GAP_MIN * 60:
+            out.append(cur)
+            cur = []
+        cur.append(r)
+    if cur:
+        out.append(cur)
+    sessions = []
+    for i, grp in enumerate(out):
+        sid = f"s{i}"
+        for r in grp:
+            r["session"] = sid
+        sessions.append({"id": sid, "start": _local(grp[0]["last_changed"]), "end": _local(grp[-1]["last_changed"]),
+                         "checks": len(grp), "amount": round(sum(r["floating"] for r in grp), 2),
+                         "subs": sum(1 for r in grp if r["sub"]), "burst": len(grp) >= 3,
+                         "patterns": sorted({r["pattern"] for r in grp})})
+    for r in rows:
+        r.setdefault("session", None)
+        r["changed_local"] = _local(r["last_changed"])
+    return sorted(sessions, key=lambda x: x["start"], reverse=True)
 
 
 def _assign(rows: list) -> None:
@@ -264,24 +402,34 @@ def _assign(rows: list) -> None:
         r["reopened_amt"] = round(sum(b["balance"] for b in r["reopened"]), 2)
 
 
+def _local(iso) -> str | None:
+    """QBO stamps times in its own (Pacific) offset; the owner reads Central - this machine's clock."""
+    t = _t(iso)
+    return t.astimezone().isoformat() if t else None
+
+
+def _clock(iso) -> str:
+    t = _t(iso)
+    t = t.astimezone() if t else None
+    return f"{_fmt(t)} {t.strftime('%I:%M %p').lstrip('0')}" if t else ""
+
+
+def _bill_list(bills: list, key: str) -> str:
+    if len(bills) <= 5:
+        return ", ".join(f"{b['doc_number']} ({_fmt(_d(b['txn_date']))}, {_money(b.get(key) or b['balance'])})" for b in bills)
+    return f"its {len(bills)} bills ({_money(sum(b.get(key) or b['balance'] for b in bills))}) - listed below"
+
+
 def _finish(r: dict) -> None:
-    """The cause an edit left behind + the plain-words fix list."""
-    p_upd = _t(r["last_changed"])
-    for b in r["reopened"]:                            # the edit that stripped it: minutes apart
-        be = _t(b["edited"])
-        if be and p_upd and abs((p_upd - be).total_seconds()) <= 1800:
-            r["cause"].append(f"bill {b['doc_number']} edited {_fmt(be)} {be.strftime('%I:%M %p').lstrip('0')}, "
-                              f"check changed {p_upd.strftime('%I:%M %p').lstrip('0')}")
+    """The plain-words fix list, worded by what happened (the pattern)."""
     todo = []
-    maybe = lambda b: "" if b["exact"] else " - possible, check it is the one"   # noqa: E731
+    why = {"paid bill edited": "the bill was edited after it was paid",
+           "check rewritten": "the bill did not change - the check lost it"}.get(r.get("pattern"), "the bill it paid is open again")
+    maybe = "" if all(b.get("exact") for b in r["reopened"]) else " - possible, check it is the one"
     if r["reopened"]:
-        todo.append("Re-apply this check to " + ", ".join(
-            f"{b['doc_number']} ({_fmt(_d(b['txn_date']))}, open {_money(b['balance'])}){maybe(b)}" for b in r["reopened"])
-            + " - the bill was edited after it was paid; do NOT pay it again")
+        todo.append(f"Re-apply this check to {_bill_list(r['reopened'], 'amount')}{maybe} - {why}; do NOT pay again")
     if r["copies"]:
-        todo.append("Re-apply this check to " + ", ".join(
-            f"{b['doc_number']} ({_fmt(_d(b['txn_date']))}, open {_money(b['balance'])}){maybe(b)}" for b in r["copies"])
-            + " - the re-entered copy; do NOT pay it again")
+        todo.append(f"Re-apply this check to the re-entered copy {_bill_list(r['copies'], 'balance')} - do NOT pay the copy again")
     if r["freed"]:
         todo.append("Put back credit " + ", ".join(f"{c['doc_number'] or c['id']} {_money(c['balance'])}" for c in r["freed"]))
     for L in r["late"]:
@@ -290,6 +438,7 @@ def _finish(r: dict) -> None:
     if r["floating"] > MIN_FLOAT and not (r["copies"] or r["reopened"] or r["late"]):
         todo.append("Find the bill(s) this check paid and re-apply it")
     r["todo"] = todo
+    r["cause"] = list(dict.fromkeys(r["cause"]))
 
 
 def _story(r: dict) -> None:
@@ -310,6 +459,7 @@ def _story(r: dict) -> None:
               f"edited {_fmt(_t(b['edited']))}{'' if b['exact'] else ' (not an exact match)'}")
     for c in r["freed"]:
         print(f"  CREDIT FREED: {c['doc_number'] or c['id']} {_money(c['balance'])} ({c['memo'][:60]})")
+    print(f"  pattern: {r['pattern']}{' · bill charged to 2+ projects' if r['multi_project'] else ''}")
     if r["cause"]:
         print(f"  cause: {'; '.join(r['cause'])}")
     print("  to fix: " + ("; ".join(r["todo"]) or "-"))
@@ -335,7 +485,14 @@ def main() -> int:
           f"(subs {_money(s['floating_subs'])})")
     print(f"  auto-applied to a bill dated after the check: {s['late_n']} checks, {_money(s['late'])}")
     print(f"  re-entered copy sitting OPEN (double-pay risk): {s['copies_n']} bills, {_money(s['copies'])}")
-    print(f"  paid bill edited and reopened (double-pay risk): {s['reopened_n']} bills, {_money(s['reopened'])}")
+    print(f"  bills the check lost, open again (double-pay risk): {s['reopened_n']} bills, {_money(s['reopened'])}")
+    print("  patterns: " + " · ".join(f"{k} {v}" for k, v in s["patterns"].items()))
+    print(f"  bill charged to 2+ projects: {s['multi_project']} of {s['matched']} checks with a matched bill")
+    print("  bursts (3+ checks changed within minutes):")
+    for x in out["sessions"]:
+        if x["burst"]:
+            print(f"    {_t(x['start']).strftime('%m/%d/%Y %I:%M %p')} - {_t(x['end']).strftime('%I:%M %p')} (Central) "
+                  f"{x['checks']} checks {_money(x['amount'])} · {', '.join(x['patterns'])}")
     for r in out["rows"][:25]:
         print(f"  {'Sub' if r['sub'] else '':<3} {r['check']:<8} {_fmt(_d(r['txn_date']))} {r['vendor'][:28]:<28} "
               f"total {_money(r['total']):>12}  floating {_money(r['floating']):>11}")

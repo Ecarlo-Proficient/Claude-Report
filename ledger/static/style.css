@@ -1969,3 +1969,4 @@ table.qa-repair-tbl th { font-weight: 600; color: var(--text-dim); font-size: .8
 /* Checks QBO changed (2026-09-24): the fix steps under a check */
 ol.cd-fix { margin: 2px 0 8px 18px; padding: 0; }
 ol.cd-fix li { margin: 1px 0; }
+.cd-burst-lab { color: var(--text-dim); font-size: .76em; text-transform: uppercase; letter-spacing: .04em; margin: 0 4px 0 10px; align-self: center; }
