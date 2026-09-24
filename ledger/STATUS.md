@@ -4,6 +4,17 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-24 · **Checks QBO changed - its own audit page** (Company, beside QBO changes; owner: "qbo freaks out when a
+  bill paid gets changed and does automatic changes without ever consenting or warning ... subs it happens to the most" /
+  "it's an audit in the Project Ledger" / "all year round"). `ledger/check_drift.py` over the mirror, every year on file,
+  `/api/checkdrift`: a check whose money floats (applied to nothing); the bill it paid EDITED and open again (check 47436:
+  UC015 edited 09/22 7:23, check stripped 7:26); its deleted-and-re-entered copy open (check 48314: UC41); the freed loan
+  credit; floating money QBO put on a bill dated AFTER the check (48314 -> UC044 $135.40). One open bill belongs to one
+  check (exact amount claims first, nearest date wins - a sub's weekly $2,200 bill no longer lands under every $2,200
+  check). Late links only for checks written after the 05/2025 import (it re-stamped entry times); card-fee bills on Amex
+  payments skipped. Subs chip default, funnel on Vendor, broad search; each check folds (vp-pay group) over its numbered
+  fix + the lines to re-apply with QBO links. Read-only. CLI: `python3 ledger/check_drift.py --check <#>`. Load ~8 s
+  (decrypts every bill); cache if it becomes a nuisance.
 - 2026-09-23 · **Bills to fix, simplified: four groups by who fixes it** (owner: "build it with those four groups" /
   "fix these tags, it always cuts out ... make the filter portion more pronounced"). The groups are the main filter - one
   line of four big buttons, count first, who fixes it underneath: Coding (the bill clerk) · Approval · Purchase orders ·

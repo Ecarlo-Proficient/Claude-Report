@@ -251,6 +251,10 @@ on the network). What it shows:
   flags (deleted paid bill, payment unapplied, reopened, voided, class dropped…), tiles + chips + search, **Refresh
   from QuickBooks** (the `mirror` pipeline); the Bill Tracker audits sit underneath. QuickBooks' API never says who -
   the audit log inside QuickBooks does. Born 2026-09-18 (a connected app's deletions were logged as the owner).
+- **Checks QBO changed** (Company) - checks QuickBooks rewrote on its own after they were paid (edit or delete a
+  paid bill and QBO takes the check off it without a warning): money floating, the paid bill or its re-entered copy
+  reading as owed again, the freed loan credit, floating money put on a later bill. Every year on file, subs first,
+  one bill per check, the fix per check. `ledger/check_drift.py` (`/api/checkdrift`; `--check <#>` on the command line).
 - **Copy & export** — click any number to copy it; **Export CSV** downloads the current view.
 - **Customize** (⚙) — theme (auto/light/dark), accent color, font, text size, density, width
   (**boxed by default**), which widgets show, and which table columns show. Saved per person in the

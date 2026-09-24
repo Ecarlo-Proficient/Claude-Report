@@ -55,6 +55,7 @@ import rp_review      # noqa: E402  (local: the weekly RP review - sources + sna
 import notion_page    # noqa: E402  (local: one Notion page, whole, for the invoice side panel - /api/invoice/notion)
 import table_export   # noqa: E402  (local: a filtered table -> grouped Excel report in ~/Downloads, POST /api/export/xlsx)
 import bill_payment_stub  # noqa: E402  (local: the check / bill-payment stub - print from the mirror into the vendor folder + the print history)
+import check_drift        # noqa: E402  (local: checks QBO rewrote after they were paid - the Checks QBO changed audit, /api/checkdrift)
 
 HERE = Path(__file__).resolve().parent
 STATIC = HERE / "static"
@@ -3101,6 +3102,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(_fetch_qbo_changes(int(self._query().get("days") or 30)))
             except Exception as e:         # noqa: BLE001
                 self._json({"ok": False, "changes": [], "error": f"change log read failed: {e}"})
+        elif path == "/api/checkdrift":    # Checks QBO changed: paid checks QBO unapplied / moved on its own (owner 2026-09-24, check 48314)
+            try:
+                self._json(check_drift.audit(since=self._query().get("since") or check_drift.SINCE))
+            except Exception as e:         # noqa: BLE001
+                self._json({"ok": False, "rows": [], "error": f"check audit failed: {e}"})
         elif path == "/api/healthtab":     # the Health tab (company-health metric layer, live)
             self._healthtab()
         elif path == "/api/bill/info":     # the bill viewer: header + every line (description, cost code, project, amount) from the ledger

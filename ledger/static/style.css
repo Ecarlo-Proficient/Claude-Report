@@ -1965,3 +1965,7 @@ table.qa-repair-tbl th { font-weight: 600; color: var(--text-dim); font-size: .8
 #acctTable { min-width: 1340px; }
 #acctTable th:nth-last-child(-n+2), #acctTable td:nth-last-child(-n+2) { min-width: 220px; }
 #acctTable tr.acct-band td { min-width: 0; }
+
+/* Checks QBO changed (2026-09-24): the fix steps under a check */
+ol.cd-fix { margin: 2px 0 8px 18px; padding: 0; }
+ol.cd-fix li { margin: 1px 0; }

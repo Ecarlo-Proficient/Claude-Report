@@ -374,6 +374,34 @@
     </section><!-- /sec: qboaudit -->
     </div><!-- /tab: qboaudit -->
 
+    <!-- Checks QBO changed: paid checks QuickBooks rewrote on its own (owner 2026-09-24, check 48314 / 47436) -->
+    <div class="tab-page" data-tab="checkdrift" hidden>
+    <section class="subpage" data-sec="checkdrift" id="sec-checkdrift">
+      <section class="widget">
+        <div class="widget-head">
+          <h2>Audit - checks QuickBooks changed after they were paid <span class="count" id="cdNote"></span></h2>
+          <span class="wh-right">
+            <button class="btn small" id="btnCdRefresh" title="Refresh the mirror from QuickBooks (the change feed - seconds, Touch ID) and re-run the audit">⟳&nbsp;Refresh from QuickBooks</button>
+            <button class="btn small" id="btnCdReload" title="Re-run the audit on the mirror (no QuickBooks call)">Reload</button>
+          </span>
+        </div>
+        <div class="sync-progress" id="cdProg" hidden>
+          <div class="sync-bar"><div class="sync-bar-fill" id="cdFill"></div></div>
+          <div class="sync-step" id="cdStep"></div>
+        </div>
+        <details class="acct-help"><summary title="How this page works">ⓘ</summary><p class="hint">Edit or delete a <b>paid</b> bill and QuickBooks takes the check off it on its own - no warning. The check's money floats on the vendor, the bill (or its re-entered copy) reads as owed again, the loan credit on the check is freed, and later QuickBooks drops the floating money onto the vendor's <i>next</i> bill, so that week's check goes out short. Every year on file, subs first. Open a row for the fix. Nothing here writes to QuickBooks.</p></details>
+        <div class="kpi-row" id="cdStats"></div>
+        <div class="acct-filters" id="cdFilters"></div>
+        <div class="filters">
+          <input type="search" id="cdSearch" placeholder="Find a vendor, check #, bill #, amount…" autocomplete="off">
+        </div>
+        <div class="table-scroll">
+          <table class="grid" id="cdTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </section><!-- /sec: checkdrift -->
+    </div><!-- /tab: checkdrift -->
+
     <!-- Bills to fix: its own page (owner 2026-09-23: "i have to scroll past the deleted section just to get to the bill audit") -->
     <div class="tab-page" data-tab="billaudit" hidden>
     <section class="subpage" data-sec="accounting" id="sec-accounting">

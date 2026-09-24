@@ -235,12 +235,12 @@ const NAV_GROUPS = [
   { id: "projects",  label: "Projects",  tabs: ["projects"] },
   { id: "vendors",   label: "Vendors",   tabs: ["bills", "vendorcenter"] },
   { id: "customers", label: "Customers", tabs: ["invoices", "customercenter", "payments", "sales"] },
-  { id: "company",   label: "Company",   tabs: ["money", "billaudit", "qboaudit"] },   // the two audits are two pages (owner 2026-09-23)
+  { id: "company",   label: "Company",   tabs: ["money", "billaudit", "qboaudit", "checkdrift"] },   // each audit is its own page (owner 2026-09-23 / 09-24)
   { id: "tools",     label: "Tools",     tabs: ["wipreview", "review", "console", "systems"], hidden: true },   // from the gear, not the bar
 ];
 const TAB_LABELS = {
   projects: "Projects", bills: "Bill Tracker", vendorcenter: "Vendor Center", invoices: "Invoice Tracker", customercenter: "Customer Center",
-  payments: "Payments received", sales: "Sales pipeline", money: "Money", billaudit: "Bills to fix", qboaudit: "QBO changes",
+  payments: "Payments received", sales: "Sales pipeline", money: "Money", billaudit: "Bills to fix", qboaudit: "QBO changes", checkdrift: "Checks QBO changed",
   wipreview: "WIP Review", review: "WIP review", console: "Console", systems: "Systems", paybills: "Pay run", liens: "Lien register",
 };
 const HIDDEN_TAB_GROUP = { paybills: "vendors", liens: "vendors" };   // pages without a sub-tab (opened from the Bill Tracker): the Vendors group stays lit
@@ -289,6 +289,7 @@ function setTab(t) {
   if (t === "payments") renderPayments();
   if (t === "billaudit") loadAccounting();
   if (t === "qboaudit") loadQboAudit();
+  if (t === "checkdrift") loadCheckDrift();
   if (t === "money") { loadHealth(); renderPnl(); }
   if (t === "wipreview") loadWipReview();
   if (t === "review") loadReview();
@@ -8058,6 +8059,112 @@ function qaRepairRow(rep, span) {
   tr.appendChild(td); return tr;
 }
 
+// ── Checks QBO changed (owner 2026-09-24: "qbo freaks out when a bill paid gets changed and does automatic changes
+// without ever consenting or warning ... subs it happens to the most"). /api/checkdrift = ledger/check_drift.py over
+// the mirror, every year on file: a check whose money floats (applied to nothing), the bill it paid now open again
+// (edited: 47436 / UC015) or its re-entered copy open (deleted: 48314 / UC41), the freed loan credit, and floating
+// money QuickBooks dropped onto a LATER bill (48314 -> UC044 $135.40). One bill belongs to one check. Read-only.
+let CD = null, cdFilter = "subs";
+const CD_FILTERS = [["subs", "Subs", r => r.sub], ["all", "Everyone", () => true],
+  ["floating", "Money floating", r => r.floating > 1], ["owed", "Bill reads as owed again", r => r.reopened.length || r.copies.length],
+  ["late", "Put on a later bill", r => r.late.length]];
+async function loadCheckDrift(force) {
+  const note = $("#cdNote"), table = $("#cdTable"); if (!table) return;
+  if (CD && CD.ok && !force) { renderCheckDrift(); return; }
+  if (note) note.textContent = "loading…";
+  skeletonInto(table.tBodies[0] || table, 6);
+  try { CD = await (await fetch("/api/checkdrift")).json(); } catch (e) { CD = { ok: false, error: String(e) }; }
+  renderCheckDrift();
+}
+function renderCheckDrift() {
+  const note = $("#cdNote"), stats = $("#cdStats"), filt = $("#cdFilters"), table = $("#cdTable"); if (!table) return;
+  const thead = table.querySelector("thead"), tbody = table.querySelector("tbody");
+  if (!CD || !CD.ok) {
+    if (note) note.textContent = CD && CD.error ? "unavailable" : "";
+    stats.innerHTML = ""; filt.innerHTML = ""; thead.innerHTML = "";
+    tbody.innerHTML = CD && CD.error ? `<tr><td class="left" style="padding:14px;color:var(--text-dim)">${_ge(CD.error)}</td></tr>` : "";
+    return;
+  }
+  const all = CD.rows || [], sm = CD.summary || {};
+  if (note) note.textContent = `${all.length} check${all.length === 1 ? "" : "s"} · ${sm.subs || 0} subs · every year on file · mirror refreshed ${CD.last_refresh ? fmtDate(CD.last_refresh, true) : "never"}`;
+  stats.innerHTML = "";
+  const stat = (label, val, sub, bad) => { const k = document.createElement("div"); k.className = "kpi" + (bad ? " kpi-neg" : ""); k.innerHTML = `<div class="k-label"></div><div class="k-value"></div><div class="k-sub"></div>`;
+    k.querySelector(".k-label").textContent = label; k.querySelector(".k-value").textContent = val; k.querySelector(".k-sub").textContent = sub || ""; stats.appendChild(k); };
+  stat("Money floating", money(sm.floating || 0), `${sm.floating_n || 0} checks · subs ${money(sm.floating_subs || 0)}`, (sm.floating || 0) > 0);
+  stat("Bills owed again", money((sm.reopened || 0) + (sm.copies || 0)), `${(sm.reopened_n || 0) + (sm.copies_n || 0)} bills - don't pay twice`, ((sm.reopened_n || 0) + (sm.copies_n || 0)) > 0);
+  stat("Put on a later bill", money(sm.late || 0), `${sm.late_n || 0} checks - that week went out short`, (sm.late_n || 0) > 0);
+  filt.innerHTML = "";
+  for (const [key, label, fn] of CD_FILTERS) {
+    const b = document.createElement("button"); b.className = "acct-chip" + (cdFilter === key ? " active" : "");
+    b.innerHTML = `${_ge(label)} <span class="ac-n">${all.filter(fn).length}</span>`;
+    b.onclick = () => { cdFilter = key; const y = window.scrollY; renderCheckDrift(); window.scrollTo(0, y); }; filt.appendChild(b);
+  }
+  const fn = (CD_FILTERS.find(f => f[0] === cdFilter) || CD_FILTERS[0])[2];
+  const q = (($("#cdSearch") || {}).value || "").trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const hay = r => [r.vendor, r.check, r.txn_date, r.total, r.floating, ...r.reopened.map(b => b.doc_number + " " + b.balance),
+    ...r.copies.map(b => b.doc_number + " " + b.balance), ...r.late.map(b => b.doc_number + " " + b.amount), ...r.cause, ...r.todo].join(" ").toLowerCase();
+  const base = all.filter(r => fn(r) && (!q.length || q.every(w => hay(r).includes(w))));
+  const rows = base.filter(r => hfPasses("checkdrift", r));
+  const cols = [["Vendor", "left", "vendor"], ["Check #", "left"], ["Check date", "left"], ["Check total", "right"], ["Applied now", "right"],
+    ["Floating", "right"], ["Bill it paid (open again)", "left"], ["Put on a later bill", "left"], ["What happened", "left"]];
+  thead.innerHTML = "";
+  { const tr = document.createElement("tr");
+    for (const [c, al, hk] of cols) { const th = document.createElement("th"); th.className = al; th.textContent = c;
+      if (hk) hfDecorate(th, "checkdrift", hk, () => base.filter(r => hfPasses("checkdrift", r, hk)), renderCheckDrift); tr.appendChild(th); }
+    thead.appendChild(tr); }
+  tbody.innerHTML = "";
+  if (!rows.length) { tbody.innerHTML = `<tr><td colspan="${cols.length}" class="left" style="padding:14px;color:var(--text-dim)">${all.length ? "Nothing matches." : "No check QuickBooks changed - every paid check still sits on its bills."}</td></tr>`; return; }
+  const frag = document.createDocumentFragment();
+  const billTxt = b => `#${b.doc_number} ${fmtDateShort(b.txn_date)} ${qaCents(b.balance)}` + (b.exact ? "" : " (possible)");
+  for (const r of rows) {
+    const tr = document.createElement("tr"); tr.className = "vp-pay";
+    { const td = document.createElement("td"); td.className = "left"; const sp = document.createElement("span");
+      if (typeof openVendorPage === "function") { const a = document.createElement("a"); a.href = "#"; a.textContent = r.vendor || "–"; a.title = "Open the vendor page"; a.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openVendorPage(r.vendor); }; sp.appendChild(a); }
+      else sp.textContent = r.vendor || "–";
+      td.appendChild(sp);
+      if (r.sub) { const s = document.createElement("span"); s.className = "st st-dim"; s.style.marginLeft = "6px"; s.textContent = "sub"; td.appendChild(s); }
+      tr.appendChild(td); }
+    tr.appendChild(qboLinkCell(r.check || "–", qboUrl("billpayment", r.payment_id), "Open the check in QuickBooks"));
+    tr.appendChild(leftText(r.txn_date ? fmtDateShort(r.txn_date) : "–"));
+    for (const v of [r.total, r.applied]) { const td = document.createElement("td"); td.className = "right"; td.textContent = qaCents(v); tr.appendChild(td); }
+    { const td = document.createElement("td"); td.className = "right"; td.textContent = r.floating > 1 ? qaCents(r.floating) : "–"; if (r.floating > 1) td.classList.add("neg"); else td.classList.add("dim"); tr.appendChild(td); }
+    { const owed = [...r.reopened, ...r.copies]; const td = leftText(owed.length ? owed.map(billTxt).join(" · ") : "–"); if (!owed.length) td.classList.add("dim"); tr.appendChild(td); }
+    { const td = leftText(r.late.length ? r.late.map(b => `#${b.doc_number} ${qaCents(b.amount)}`).join(" · ") : "–"); if (!r.late.length) td.classList.add("dim"); tr.appendChild(td); }
+    { const what = r.reopened.some(b => b.exact) ? "bill edited after it was paid" : r.copies.some(b => b.exact) ? "bill deleted and re-entered"
+        : r.late.length && r.floating <= 1 ? "floating money put on a later bill" : r.cause.length ? r.cause[0] : "check lost its bills";
+      const td = document.createElement("td"); td.className = "left"; const s = document.createElement("span"); s.className = "qa-flag " + (r.floating > 1 ? "neg" : "warn"); s.textContent = what; td.appendChild(s); tr.appendChild(td); }
+    frag.appendChild(tr);
+    frag.appendChild(cdFixRow(r, cols.length));
+  }
+  tbody.appendChild(frag);
+}
+// the fix under a check (a vp-pay group: collapsed by default, the caret opens it)
+function cdFixRow(r, span) {
+  const tr = document.createElement("tr"); tr.className = "qa-repair";
+  const td = document.createElement("td"); td.colSpan = span; td.className = "left";
+  const h = document.createElement("div"); h.className = "qa-repair-head";
+  h.textContent = `Check #${r.check}: ${qaCents(r.total)}, ${qaCents(r.applied)} applied now` + (r.cause.length ? ` · ${r.cause.join(" · ")}` : "");
+  td.appendChild(h);
+  const ol = document.createElement("ol"); ol.className = "cd-fix";
+  for (const step of r.todo) { const li = document.createElement("li"); li.textContent = step; ol.appendChild(li); }
+  td.appendChild(ol);
+  const t = document.createElement("table"); t.className = "qa-repair-tbl";
+  t.innerHTML = `<thead><tr><th class="left">What</th><th class="left">No.</th><th class="left">Date</th><th class="right">Amount</th><th class="left"></th></tr></thead>`;
+  const tb = document.createElement("tbody");
+  const line = (what, no, url, date, amt, note, cls) => { const x = document.createElement("tr");
+    x.appendChild(leftText(what)); x.appendChild(qboLinkCell(no || "–", url, "Open in QuickBooks")); x.appendChild(leftText(date ? fmtDateShort(date) : "–"));
+    { const c = document.createElement("td"); c.className = "right"; c.textContent = qaCents(amt); x.appendChild(c); }
+    { const c = document.createElement("td"); c.className = "left"; if (note) { const s = document.createElement("span"); s.className = "qa-flag " + (cls || "warn"); s.textContent = note; c.appendChild(s); } x.appendChild(c); }
+    tb.appendChild(x); };
+  for (const a of r.applied_lines) line(a.type === "VendorCredit" ? "Applied: credit" : "Applied now", a.doc_number || a.id, a.type === "Bill" ? qboUrl("bill", a.id) : (a.type === "VendorCredit" ? qboUrl("vendorcredit", a.id) : null), a.txn_date, a.amount, "", "");
+  for (const b of r.reopened) line("Paid bill, open again", b.doc_number, qboUrl("bill", b.id), b.txn_date, b.balance, b.exact ? "edited after paid - re-apply" : "possible - check it is the one", b.exact ? "neg" : "warn");
+  for (const b of r.copies) line("Re-entered copy, open", b.doc_number, qboUrl("bill", b.id), b.txn_date, b.balance, b.exact ? "don't pay - re-apply" : "possible - check it is the one", b.exact ? "neg" : "warn");
+  for (const c of r.freed) line("Credit freed", c.doc_number || c.id, qboUrl("vendorcredit", c.id), c.txn_date, c.balance, "put back on the check", "warn");
+  for (const b of r.late) line("Put on a later bill", b.doc_number, qboUrl("bill", b.id), b.txn_date, b.amount, "take off - that week went out short", "neg");
+  t.appendChild(tb); td.appendChild(t);
+  tr.appendChild(td); return tr;
+}
+
 // ── Accounting fixes: the Bill Tracker audits, filterable by audit type ───────
 let ACCT = null;            // cached /api/accounting payload
 let acctIssue = null;       // the audit-type filter currently active (null = all)
@@ -8552,6 +8659,9 @@ function init() {
   { const el = $("#qaFlaggedOnly"); if (el) el.onchange = renderQboAudit; }
   $$("#qaDays .seg-btn").forEach(b => { b.onclick = () => { qaDays = Number(b.dataset.days); loadQboAudit(true); }; });
   { const el = $("#btnQaReload"); if (el) el.onclick = () => loadQboAudit(true); }
+  { const el = $("#btnCdReload"); if (el) el.onclick = () => loadCheckDrift(true); }
+  { const el = $("#btnCdRefresh"); if (el) el.onclick = () => runPipeline("mirror", null, { btn: el, prog: $("#cdProg"), fill: $("#cdFill"), step: $("#cdStep"), after: () => loadCheckDrift(true) }); }
+  { const el = $("#cdSearch"); if (el) { el.addEventListener("input", renderCheckDrift); el.addEventListener("keydown", e => { if (e.key === "Escape") { el.value = ""; renderCheckDrift(); } }); } }
   { const el = $("#btnQaRefresh"); if (el) el.onclick = () => runPipeline("mirror", null, { btn: el, prog: $("#qaProg"), fill: $("#qaFill"), step: $("#qaStep"), after: () => loadQboAudit(true) }); }
   { const el = $("#btnAcctCopy"); if (el) el.onclick = _acctDoCopy; }
   { const el = $("#btnAcctClerk"); if (el) el.onclick = _acctCopyClerk; }
