@@ -56,7 +56,6 @@ EPS = 0.005
 MIN_FLOAT = 1.00           # cents of rounding on old checks are not drift
 SINCE = ""                 # every year on file - the audit runs all year round (owner 2026-09-24)
 IMPORT_DONE = dt.datetime(2025, 6, 1, tzinfo=dt.timezone.utc)   # the 05/2025 import re-stamped CreateTime: entry order before it is unknowable
-BURST_GAP_MIN = 15         # checks stripped within this many minutes of each other = one session (a burst)
 SIDE_EFFECT = {"Balance", "LinkedTxn", "MetaData", "SyncToken"}   # what a strip itself changes on the bill
 REOPEN_DAYS = 60           # a bill the check paid is dated within this many days before the check
 
@@ -232,6 +231,7 @@ def _audit(con, since: str, check: str | None, subs_only: bool) -> dict:
     _patterns(con, rows, bills, killed_by)
     for r in rows:
         _finish(r)
+        r["changed_local"] = _local(r["last_changed"])
     rows.sort(key=lambda r: (not r["sub"], -(r["floating"] + r["late_amt"])))
     fl = [r for r in rows if r["floating"] > MIN_FLOAT]
     summary = {
@@ -243,10 +243,8 @@ def _audit(con, since: str, check: str | None, subs_only: bool) -> dict:
         "reopened_n": sum(len(r["reopened"]) for r in rows), "reopened": round(sum(r["reopened_amt"] for r in rows), 2),
         "patterns": dict(sorted(((k, sum(1 for r in rows if r["pattern"] == k)) for k in {r["pattern"] for r in rows}),
                                 key=lambda kv: -kv[1])),
-        "multi_project": sum(1 for r in rows if r["multi_project"]),
-        "matched": sum(1 for r in rows if r["reopened"] or r["copies"]),
     }
-    return {"ok": True, "since": since, "rows": rows, "summary": summary, "sessions": _sessions(rows),
+    return {"ok": True, "since": since, "rows": rows, "summary": summary,
             "last_refresh": mirror._meta_get(con, "last_refresh")}
 
 
@@ -256,28 +254,15 @@ def _content_changed(before: dict, after: dict) -> bool:
     return any(before.get(k) != after.get(k) for k in keys)
 
 
-def _projects(b: dict) -> set:
-    out = set()
-    for ln in b.get("Line") or []:
-        d = ln.get("ItemBasedExpenseLineDetail") or ln.get("AccountBasedExpenseLineDetail") or {}
-        c = (d.get("CustomerRef") or {}).get("value")
-        if c:
-            out.add(c)
-    return out
-
-
 def _patterns(con, rows: list, bills: dict, killed_by: dict) -> None:
     """What happened to each check, from QuickBooks alone (the owner 2026-09-24: "only qbo"):
       paid bill deleted      - a deleted bill named the check, or its re-entered copy is open
       paid bill edited       - the bill it paid changed content in the change log around the strip,
                                or (before the log, 09/23) was touched minutes BEFORE the check
       check rewritten        - the bill it paid did not change; the check lost its lines on its own
-                               (the 09/23 6:11-6:25 pm burst: 15 checks, 8-20 s apart, no bill edited)
       credit dropped         - only the vendor credit came off (the small 2025 loan-repayment cases)
       put on a later bill    - floating money QBO applied to a bill dated after the check
-      unknown                - before the change log and nothing to tie it to
-    The risk profile (2026-09-24 analysis): every stripped check with a known bill paid a bill
-    charged to 2+ projects (15/15, vs 43% of untouched 2026 checks) - `multi_project`."""
+      unknown                - before the change log and nothing to tie it to"""
     bill_changes = defaultdict(list)
     for c in mirror.changes(con, entity="Bill", limit=200000):
         if c["kind"] == "edited" and c["has_before"]:
@@ -294,8 +279,6 @@ def _patterns(con, rows: list, bills: dict, killed_by: dict) -> None:
         if logged_strip:                               # the change log kept the check as it was: the exact bills
             _from_before(con, r, logged_strip[-1], bills, bill_changes)
             continue
-        known = [b for b in r["reopened"] + r["copies"] if b.get("exact")] or r["reopened"] + r["copies"]
-        r["multi_project"] = any(len(_projects(bills.get(b["id"]) or {})) >= 2 for b in known)
         pat = None
         if killed_by.get(r["payment_id"]) or any(b.get("exact") for b in r["copies"]):
             pat = "paid bill deleted"
@@ -347,35 +330,7 @@ def _from_before(con, r: dict, strip: dict, bills: dict, bill_changes: dict) -> 
     r["reopened"], r["copies"] = reopened, [c for c in r["copies"] if c.get("exact")]
     r["reopened_amt"] = round(sum(b["balance"] for b in reopened), 2)
     r["copies_amt"] = round(sum(b["balance"] for b in r["copies"]), 2)
-    r["multi_project"] = any(len(_projects(bills.get(b["id"]) or {})) >= 2 for b in reopened)
     r["pattern"] = ("paid bill deleted" if deleted or r["copies"] else "paid bill edited" if edited else "check rewritten")
-
-
-def _sessions(rows: list) -> list:
-    """Strips that happened together: checks QBO changed within BURST_GAP_MIN of each other. A burst
-    is someone (or something) working through checks - the 09/22 and 09/23 bursts were 6 and 15."""
-    ev = sorted((r for r in rows if r["floating"] > MIN_FLOAT and r["last_changed"]), key=lambda r: r["last_changed"])
-    out, cur = [], []
-    for r in ev:
-        if cur and (_t(r["last_changed"]) - _t(cur[-1]["last_changed"])).total_seconds() > BURST_GAP_MIN * 60:
-            out.append(cur)
-            cur = []
-        cur.append(r)
-    if cur:
-        out.append(cur)
-    sessions = []
-    for i, grp in enumerate(out):
-        sid = f"s{i}"
-        for r in grp:
-            r["session"] = sid
-        sessions.append({"id": sid, "start": _local(grp[0]["last_changed"]), "end": _local(grp[-1]["last_changed"]),
-                         "checks": len(grp), "amount": round(sum(r["floating"] for r in grp), 2),
-                         "subs": sum(1 for r in grp if r["sub"]), "burst": len(grp) >= 3,
-                         "patterns": sorted({r["pattern"] for r in grp})})
-    for r in rows:
-        r.setdefault("session", None)
-        r["changed_local"] = _local(r["last_changed"])
-    return sorted(sessions, key=lambda x: x["start"], reverse=True)
 
 
 def _assign(rows: list) -> None:
@@ -459,7 +414,7 @@ def _story(r: dict) -> None:
               f"edited {_fmt(_t(b['edited']))}{'' if b['exact'] else ' (not an exact match)'}")
     for c in r["freed"]:
         print(f"  CREDIT FREED: {c['doc_number'] or c['id']} {_money(c['balance'])} ({c['memo'][:60]})")
-    print(f"  pattern: {r['pattern']}{' · bill charged to 2+ projects' if r['multi_project'] else ''}")
+    print(f"  what happened: {r['pattern']}")
     if r["cause"]:
         print(f"  cause: {'; '.join(r['cause'])}")
     print("  to fix: " + ("; ".join(r["todo"]) or "-"))
@@ -486,13 +441,7 @@ def main() -> int:
     print(f"  auto-applied to a bill dated after the check: {s['late_n']} checks, {_money(s['late'])}")
     print(f"  re-entered copy sitting OPEN (double-pay risk): {s['copies_n']} bills, {_money(s['copies'])}")
     print(f"  bills the check lost, open again (double-pay risk): {s['reopened_n']} bills, {_money(s['reopened'])}")
-    print("  patterns: " + " · ".join(f"{k} {v}" for k, v in s["patterns"].items()))
-    print(f"  bill charged to 2+ projects: {s['multi_project']} of {s['matched']} checks with a matched bill")
-    print("  bursts (3+ checks changed within minutes):")
-    for x in out["sessions"]:
-        if x["burst"]:
-            print(f"    {_t(x['start']).strftime('%m/%d/%Y %I:%M %p')} - {_t(x['end']).strftime('%I:%M %p')} (Central) "
-                  f"{x['checks']} checks {_money(x['amount'])} · {', '.join(x['patterns'])}")
+    print("  what happened: " + " · ".join(f"{k} {v}" for k, v in s["patterns"].items()))
     for r in out["rows"][:25]:
         print(f"  {'Sub' if r['sub'] else '':<3} {r['check']:<8} {_fmt(_d(r['txn_date']))} {r['vendor'][:28]:<28} "
               f"total {_money(r['total']):>12}  floating {_money(r['floating']):>11}")

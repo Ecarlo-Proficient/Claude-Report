@@ -8064,7 +8064,7 @@ function qaRepairRow(rep, span) {
 // the mirror, every year on file: a check whose money floats (applied to nothing), the bill it paid now open again
 // (edited: 47436 / UC015) or its re-entered copy open (deleted: 48314 / UC41), the freed loan credit, and floating
 // money QuickBooks dropped onto a LATER bill (48314 -> UC044 $135.40). One bill belongs to one check. Read-only.
-let CD = null, cdFilter = "subs", cdSession = null;
+let CD = null, cdFilter = "subs";
 const CD_PAT_CLS = { "paid bill deleted": "neg", "paid bill edited": "neg", "check rewritten": "neg", "put on a later bill": "warn", "credit dropped": "warn" };
 const CD_FILTERS = [["subs", "Subs", r => r.sub], ["all", "Everyone", () => true],
   ["floating", "Money floating", r => r.floating > 1], ["owed", "Bill reads as owed again", r => r.reopened.length || r.copies.length],
@@ -8094,26 +8094,14 @@ function renderCheckDrift() {
   stat("Money floating", money(sm.floating || 0), `${sm.floating_n || 0} checks · subs ${money(sm.floating_subs || 0)}`, (sm.floating || 0) > 0);
   stat("Bills owed again", money((sm.reopened || 0) + (sm.copies || 0)), `${(sm.reopened_n || 0) + (sm.copies_n || 0)} bills - don't pay twice`, ((sm.reopened_n || 0) + (sm.copies_n || 0)) > 0);
   stat("Put on a later bill", money(sm.late || 0), `${sm.late_n || 0} checks - that week went out short`, (sm.late_n || 0) > 0);
-  stat("Risk profile", `${sm.multi_project || 0} of ${sm.matched || 0}`, "stripped checks paid a bill charged to 2+ projects", false);
   filt.innerHTML = "";
   for (const [key, label, fn] of CD_FILTERS) {
     const b = document.createElement("button"); b.className = "acct-chip" + (cdFilter === key ? " active" : "");
     b.innerHTML = `${_ge(label)} <span class="ac-n">${all.filter(fn).length}</span>`;
     b.onclick = () => { cdFilter = key; const y = window.scrollY; renderCheckDrift(); window.scrollTo(0, y); }; filt.appendChild(b);
   }
-  // bursts: 3+ checks QuickBooks changed within minutes of each other - one session of someone (or something) working checks
-  const bursts = (CD.sessions || []).filter(x => x.burst);
-  if (bursts.length) {
-    const lab = document.createElement("span"); lab.className = "cd-burst-lab"; lab.textContent = "Bursts:"; filt.appendChild(lab);
-    for (const x of bursts) {
-      const b = document.createElement("button"); b.className = "acct-chip" + (cdSession === x.id ? " active" : "");
-      b.title = `${x.checks} checks changed between ${fmtDate(x.start, true)} and ${fmtDate(x.end, true)} · ${x.patterns.join(", ")}`;
-      b.innerHTML = `${_ge(fmtDate(x.start, true))} <span class="ac-n">${x.checks}</span>`;
-      b.onclick = () => { cdSession = cdSession === x.id ? null : x.id; const y = window.scrollY; renderCheckDrift(); window.scrollTo(0, y); }; filt.appendChild(b);
-    }
-  }
   const fn0 = (CD_FILTERS.find(f => f[0] === cdFilter) || CD_FILTERS[0])[2];
-  const fn = r => fn0(r) && (!cdSession || r.session === cdSession);
+  const fn = fn0;
   const q = (($("#cdSearch") || {}).value || "").trim().toLowerCase().split(/\s+/).filter(Boolean);
   const hay = r => [r.vendor, r.check, r.txn_date, r.total, r.floating, r.pattern, ...r.reopened.map(b => b.doc_number + " " + b.balance),
     ...r.copies.map(b => b.doc_number + " " + b.balance), ...r.late.map(b => b.doc_number + " " + b.amount), ...r.cause, ...r.todo].join(" ").toLowerCase();
@@ -8145,7 +8133,6 @@ function renderCheckDrift() {
     { const owed = [...r.reopened, ...r.copies];
       const td = leftText(!owed.length ? "–" : owed.length > 3 ? `${owed.length} bills · ${qaCents(owed.reduce((t, b) => t + num(b.amount || b.balance), 0))}` : owed.map(billTxt).join(" · "));
       if (!owed.length) td.classList.add("dim");
-      if (r.multi_project) { const s = document.createElement("span"); s.className = "st st-dim"; s.style.marginLeft = "6px"; s.title = "The bill is charged to 2+ projects - every stripped check with a known bill paid one"; s.textContent = "multi-project"; td.appendChild(s); }
       tr.appendChild(td); }
     { const td = leftText(r.late.length ? r.late.map(b => `#${b.doc_number} ${qaCents(b.amount)}`).join(" · ") : "–"); if (!r.late.length) td.classList.add("dim"); tr.appendChild(td); }
     { const td = document.createElement("td"); td.className = "left"; const s = document.createElement("span"); s.className = "qa-flag " + (CD_PAT_CLS[r.pattern] || "st-dim"); s.textContent = r.pattern; td.appendChild(s); tr.appendChild(td); }
