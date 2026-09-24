@@ -4,6 +4,12 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-24 · **No number rows on the audit pages** (owner: "i also don't like the new kpi text you put ... it's not
+  simplified and/or doesn't need to be there and is just creating clutter. like on the audit, why do i need to see those
+  numbers on top?"). QBO changes, Checks QBO changed and Uncleared checks lose their stat rows - the chips already carry
+  the counts; the heading note is just "refreshed <time>"; Uncleared's matched-through dates moved into its (i).
+  Bills to fix's four group boxes and the Company head stay (owner-approved earlier). **Rule for new pages: no stat row
+  unless asked - counts ride on the filter chips.**
 - 2026-09-24 · **Visual QC fixes** (owner: "the i is messed up on all pages. let's add a visual qc after you are done
   instead of editing and shipping right away"). (a) The page help (i) was a `<details>` on its own line hanging off the
   panel edge (Bills to fix, QBO changes, Checks QBO changed, Uncleared checks): now `button.help-i` right after the

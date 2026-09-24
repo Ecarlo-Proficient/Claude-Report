@@ -361,7 +361,6 @@
           <div class="sync-step" id="qaStep"></div>
         </div>
         <p class="hint help-pop" hidden>What QuickBooks deleted, edited or added, with its own time. A check that lost its bills is one row - the bills it reopened fold under it; the fix is on <b>Checks QBO changed</b>. QuickBooks' own audit log says who.</p>
-        <div class="kpi-row" id="qaStats"></div>
         <div class="acct-filters" id="qaFilters"></div>
         <div class="filters">
           <input type="search" id="qaSearch" placeholder="Find a vendor, client, number, amount…" autocomplete="off">
@@ -390,7 +389,6 @@
           <div class="sync-step" id="cdStep"></div>
         </div>
         <p class="hint help-pop" hidden>Edit or delete a <b>paid</b> bill and QuickBooks takes the check off it on its own - no warning. The check's money floats on the vendor, the bill (or its re-entered copy) reads as owed again, the loan credit on the check is freed, and later QuickBooks drops the floating money onto the vendor's <i>next</i> bill, so that week's check goes out short. Every year on file, subs first. <b>What happened</b> is read off QuickBooks only: <i>paid bill deleted</i>, <i>paid bill edited</i>, <i>check rewritten</i> (the bill never changed - the check lost it), <i>put on a later bill</i>, <i>credit dropped</i>, or <i>before the change log</i> (09/23 on keeps the evidence). QuickBooks' own audit log (Settings > Audit log) names who. Open a row for the fix. Nothing here writes to QuickBooks.</p>
-        <div class="kpi-row" id="cdStats"></div>
         <div class="acct-filters" id="cdFilters"></div>
         <div class="filters">
           <input type="search" id="cdSearch" placeholder="Find a vendor, check #, bill #, amount…" autocomplete="off">
@@ -416,8 +414,7 @@
           <div class="sync-bar"><div class="sync-bar-fill" id="ucFill"></div></div>
           <div class="sync-step" id="ucStep"></div>
         </div>
-        <p class="hint help-pop" hidden>Every check QuickBooks still shows as <b>uncleared</b> - in QuickBooks "not matched" and "not deposited" are the same flag. Each bank account shows how far its bank-feed matching has got; a check older than that date was not cashed, or was cashed and never matched. Accounts that are never matched to a bank feed (Joint Checks) are kept apart. Nothing here writes to QuickBooks.</p>
-        <div class="kpi-row" id="ucStats"></div>
+        <p class="hint help-pop" hidden>Every check QuickBooks still shows as <b>uncleared</b> - in QuickBooks "not matched" and "not deposited" are the same flag. Each bank account shows how far its bank-feed matching has got; a check older than that date was not cashed, or was cashed and never matched. Accounts that are never matched to a bank feed (Joint Checks) are kept apart. Nothing here writes to QuickBooks. <span id="ucMatched"></span></p>
         <div class="acct-filters" id="ucFilters"></div>
         <div class="filters">
           <input type="search" id="ucSearch" placeholder="Find a payee, check #, amount…" autocomplete="off">

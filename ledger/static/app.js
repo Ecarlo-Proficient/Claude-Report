@@ -8077,7 +8077,7 @@ function renderQboAudit() {
   $$("#qaDays .seg-btn").forEach(b => b.classList.toggle("on", Number(b.dataset.days) === qaDays));
   if (!QA || !QA.ok) {
     if (note) note.textContent = QA && QA.error ? "unavailable" : "";
-    stats.innerHTML = ""; filt.innerHTML = ""; thead.innerHTML = "";
+    if (stats) stats.innerHTML = ""; filt.innerHTML = ""; thead.innerHTML = "";
     tbody.innerHTML = QA && QA.error ? `<tr><td class="left" style="padding:14px;color:var(--text-dim)">${_ge(QA.error)}</td></tr>` : "";
     return;
   }
@@ -8085,15 +8085,8 @@ function renderQboAudit() {
   const kids = {}; for (const c of everything) if (c.parent_id) (kids[c.parent_id] = kids[c.parent_id] || []).push(c);   // bills a check lost, under the check
   const okd = everything.filter(c => !c.parent_id && c.ok_at);   // the owner's "that's OK" - off the list unless asked for
   const all = everything.filter(c => !c.parent_id && (qaShowOk || !c.ok_at)), flagged = all.filter(c => c.flags.length && !c.ok_at);
-  if (note) note.textContent = `${all.length} change${all.length === 1 ? "" : "s"} in ${qaDays} days · ${flagged.length} flagged · mirror refreshed ${QA.last_refresh ? fmtDate(QA.last_refresh, true) : "never"}`;
-  stats.innerHTML = "";
-  const tile = (label, val, sub, bad) => { const k = document.createElement("div"); k.className = "kpi" + (bad ? " kpi-neg" : ""); k.innerHTML = `<div class="k-label"></div><div class="k-value"></div><div class="k-sub"></div>`;
-    k.querySelector(".k-label").textContent = label; k.querySelector(".k-value").textContent = val; k.querySelector(".k-sub").textContent = sub || ""; stats.appendChild(k); };
-  const dels = all.filter(c => c.kind === "deleted" && !c.parent_id);
-  tile("Deleted", dels.length, dels.length ? money(dels.reduce((s, c) => s + num(c.total_before), 0)) : "nothing deleted", dels.length > 0);
-  tile("Paid bills deleted", fc["deleted paid bill"] || 0, "", !!fc["deleted paid bill"]);
-  tile("Checks that lost bills", fc["payment unapplied"] || 0, "fix on Checks QBO changed", !!fc["payment unapplied"]);
-  tile("Voided", fc["voided"] || 0, "", false);
+  if (note) note.textContent = `refreshed ${QA.last_refresh ? fmtDate(QA.last_refresh, true) : "never"}`;
+  if (stats) stats.innerHTML = "";
   filt.innerHTML = "";
   const chip = (label, key, n) => { const b = document.createElement("button"); b.className = "acct-chip" + (qaFlag === key ? " active" : ""); b.innerHTML = `${_ge(label)} <span class="ac-n">${n}</span>`;
     b.onclick = () => { qaFlag = qaFlag === key ? null : key; renderQboAudit(); }; filt.appendChild(b); };
@@ -8196,18 +8189,13 @@ function renderCheckDrift() {
   const thead = table.querySelector("thead"), tbody = table.querySelector("tbody");
   if (!CD || !CD.ok) {
     if (note) note.textContent = CD && CD.error ? "unavailable" : "";
-    stats.innerHTML = ""; filt.innerHTML = ""; thead.innerHTML = "";
+    if (stats) stats.innerHTML = ""; filt.innerHTML = ""; thead.innerHTML = "";
     tbody.innerHTML = CD && CD.error ? `<tr><td class="left" style="padding:14px;color:var(--text-dim)">${_ge(CD.error)}</td></tr>` : "";
     return;
   }
-  const all = CD.rows || [], sm = CD.summary || {};
-  if (note) note.textContent = `${all.length} check${all.length === 1 ? "" : "s"} · ${sm.subs || 0} subs · every year on file · mirror refreshed ${CD.last_refresh ? fmtDate(CD.last_refresh, true) : "never"}`;
-  stats.innerHTML = "";
-  const stat = (label, val, sub, bad) => { const k = document.createElement("div"); k.className = "kpi" + (bad ? " kpi-neg" : ""); k.innerHTML = `<div class="k-label"></div><div class="k-value"></div><div class="k-sub"></div>`;
-    k.querySelector(".k-label").textContent = label; k.querySelector(".k-value").textContent = val; k.querySelector(".k-sub").textContent = sub || ""; stats.appendChild(k); };
-  stat("Money floating", money(sm.floating || 0), `${sm.floating_n || 0} checks · subs ${money(sm.floating_subs || 0)}`, (sm.floating || 0) > 0);
-  stat("Bills owed again", money((sm.reopened || 0) + (sm.copies || 0)), `${(sm.reopened_n || 0) + (sm.copies_n || 0)} bills - don't pay twice`, ((sm.reopened_n || 0) + (sm.copies_n || 0)) > 0);
-  stat("Put on a later bill", money(sm.late || 0), `${sm.late_n || 0} checks - that week went out short`, (sm.late_n || 0) > 0);
+  const all = CD.rows || [];
+  if (note) note.textContent = `refreshed ${CD.last_refresh ? fmtDate(CD.last_refresh, true) : "never"}`;
+  if (stats) stats.innerHTML = "";
   filt.innerHTML = "";
   for (const [key, label, fn] of CD_FILTERS) {
     const b = document.createElement("button"); b.className = "acct-chip" + (cdFilter === key ? " active" : "");
@@ -8302,21 +8290,14 @@ function renderUncleared() {
   const note = $("#ucNote"), stats = $("#ucStats"), filt = $("#ucFilters"), table = $("#ucTable"); if (!table) return;
   const thead = table.querySelector("thead"), tbody = table.querySelector("tbody");
   if (!UC || !UC.ok) {
-    if (note) note.textContent = ""; stats.innerHTML = ""; filt.innerHTML = ""; thead.innerHTML = "";
+    if (note) note.textContent = ""; if (stats) stats.innerHTML = ""; filt.innerHTML = ""; thead.innerHTML = "";
     tbody.innerHTML = `<tr><td class="left" style="padding:14px;color:var(--text-dim)">${_ge((UC && UC.error) || "")}</td></tr>`;
     return;
   }
   const all = UC.checks || [];
-  if (note) note.textContent = `pulled ${UC.loaded_at ? fmtDate(UC.loaded_at, true) : "never"}`;
-  stats.innerHTML = "";
-  const stat = (label, val, sub, bad) => { const k = document.createElement("div"); k.className = "kpi" + (bad ? " kpi-neg" : ""); k.innerHTML = `<div class="k-label"></div><div class="k-value"></div><div class="k-sub"></div>`;
-    k.querySelector(".k-label").textContent = label; k.querySelector(".k-value").textContent = val; k.querySelector(".k-sub").textContent = sub || ""; stats.appendChild(k); };
-  const sum = xs => xs.reduce((t, c) => t + num(c.amount), 0);
-  const old = all.filter(UC_FILTERS[0][2]), bank = all.filter(UC_FILTERS[1][2]), other = all.filter(UC_FILTERS[3][2]);
-  stat("Older than 30 days", money(sum(old)), `${old.length} checks - not cashed, or cashed and never matched`, old.length > 0);
-  stat("All bank checks", money(sum(bank)), `${bank.length} checks`, false);
-  for (const a of UC.accounts || []) if (a.feed_matched) stat(a.account.replace(/\*+/g, " "), a.matched_through ? fmtDateShort(a.matched_through) : "–", "matched through", false);
-  stat("Never feed-matched", money(sum(other)), `${other.length} checks · Joint Checks and others`, false);
+  if (note) note.textContent = `refreshed ${UC.loaded_at ? fmtDate(UC.loaded_at, true) : "never"}`;
+  if (stats) stats.innerHTML = "";
+  { const m = $("#ucMatched"); if (m) m.textContent = "Matched through: " + (UC.accounts || []).filter(a => a.feed_matched).map(a => `${a.account.replace(/\*+.*$/, "").trim()} ${a.matched_through ? fmtDateShort(a.matched_through) : "–"}`).join(" · ") + "."; }
   filt.innerHTML = "";
   for (const [key, label, fn] of UC_FILTERS) {
     const b = document.createElement("button"); b.className = "acct-chip" + (ucFilter === key ? " active" : "");
