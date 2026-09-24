@@ -201,7 +201,7 @@ class PrintedIndex:
         # lastModifiedDateTime so it fetches only what changed.
         import datetime as _dt
         from urllib.parse import quote
-        floor = (_dt.datetime.utcnow() - _dt.timedelta(days=since_days)).strftime("%Y-%m-%dT00:00:00Z")
+        floor = (_dt.datetime.now(_dt.UTC) - _dt.timedelta(days=since_days)).strftime("%Y-%m-%dT00:00:00Z")
         filt = f"receivedDateTime ge {floor}"
         if prior is not None and prior.max_lastmod:
             filt += f" and lastModifiedDateTime gt {prior.max_lastmod}"
@@ -468,7 +468,7 @@ def printed_index(force: bool = False, since_days: int = 550) -> Optional["Print
         return _INDEX_CACHE["v"]
     import datetime as _dt
     import json
-    floor = (_dt.datetime.utcnow() - _dt.timedelta(days=since_days)).strftime("%Y-%m-%d")
+    floor = (_dt.datetime.now(_dt.UTC) - _dt.timedelta(days=since_days)).strftime("%Y-%m-%d")
     prior = None
     try:
         cp = _cache_path()

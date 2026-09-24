@@ -42,6 +42,10 @@ the SAME commit as any change to this folder.
 - **The developer's clone:** the owner is advising them. Two commands after pulling dev:
   `brew install python@3.14`, then `bash python-env/setup.sh`.
 
+- **Pre-push gate 5/5 = the tests (2026-09-24).** `.github/preflight.sh` now runs `pytest tests` on
+  python-env's pinned pytest, the same rule as CI's "Run tests" step, so a red test stops the push
+  instead of turning GitHub red.
+
 ## OPEN ISSUES
 
 - (none on the Mac side)

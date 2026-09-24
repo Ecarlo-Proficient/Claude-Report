@@ -232,7 +232,7 @@ def main() -> int:
 
     # ── Save audit log ───────────────────────────────────────────────────────
     out = {
-        "run_at": dt.datetime.utcnow().isoformat() + "Z",
+        "run_at": dt.datetime.now(dt.UTC).replace(tzinfo=None).isoformat() + "Z",
         "input_file": str(in_path),
         "total_customers": n,
         "elapsed_seconds": round(elapsed, 1),

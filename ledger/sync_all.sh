@@ -27,11 +27,10 @@ bad() { printf '  \033[31m✗\033[0m %s (exit %s)\n' "$1" "$2"; }
 "$ACB_PY" "$base/shared/paths.py" --require accounting,onedrive --for "sync-all" || exit 2
 
 c "0/4  QBO mirror - refresh (the one read of QBO)"
-"$ACB_PY" ledger/refresh_mirror.py; mir=$?
-if [[ "$(date +%u)" == "7" && $mir -eq 0 ]]; then
-  c "0/4  QBO mirror - Sunday reconcile"
-  "$ACB_PY" ledger/refresh_mirror.py --reconcile || mir=$?
-fi
+# The progress view (ledger/sync_view.py): one line per step, the same look as AP / AR.
+# Sundays it also reconciles (COUNT(*) per entity vs the mirror), never after a failed refresh.
+recon=""; [[ "$(date +%u)" == "7" ]] && recon="--reconcile"
+"$ACB_PY" ledger/sync_view.py mirror $recon; mir=$?
 
 c "1/4  AP - bill tracker (must precede AR)"
 bash "$base/bill-tracker/run_tracker.sh" "$@"; ap=$?
@@ -43,7 +42,7 @@ c "3/4  Ledger - reload the spine (so the dashboard matches)"
 if [[ "$*" == *dry-run* ]]; then
   echo "  (dry-run: skipping ledger reload)"; led=0
 else
-  bash "$base/ledger/reload_ledger.sh"; led=$?
+  ACB_DRIVES_CHECKED=1 bash "$base/ledger/reload_ledger.sh"; led=$?
 fi
 
 c "summary"
@@ -51,6 +50,5 @@ c "summary"
 (( ap  == 0 )) && ok "AP      bill tracker"        || bad "AP      bill tracker" "$ap"
 (( ar  == 0 )) && ok "AR      invoice sync"        || bad "AR      invoice sync" "$ar"
 (( led == 0 )) && ok "LEDGER  reload -> dashboard" || bad "LEDGER  reload" "$led"
-"$ACB_PY" ledger/refresh_mirror.py --status 2>/dev/null | sed -n 2p
 (( mir || ap || ar || led )) && exit 1
 exit 0

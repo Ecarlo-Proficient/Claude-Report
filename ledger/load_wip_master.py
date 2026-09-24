@@ -53,8 +53,11 @@ HERE = Path(__file__).resolve().parent
 SCHEMA_SQL = HERE / "schema.sql"
 
 # Default local database - outside the repo (never committed), created on demand.
-DEFAULT_DB = (
-    Path.home() / "Library" / "Application Support" / "Proficient" / "ledger.sqlite3"
+# ACB_LEDGER_DB overrides it, the same as every other loader (it was ignored here until
+# 2026-09-24, so a test reload against a scratch copy still wrote this one file to the real ledger).
+DEFAULT_DB = paths.get_path(
+    "ACB_LEDGER_DB",
+    Path.home() / "Library" / "Application Support" / "Proficient" / "ledger.sqlite3",
 )
 
 # Same default the WIP writer uses, so this reads the exact file the readers write.
