@@ -14,9 +14,10 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: '3.11'
+          # The SAME version and package list the Mac runs (python-env/).
+          python-version-file: python-env/PYTHON_VERSION
       - name: Install dependencies
-        run: pip install -r requirements.txt pytest ruff==0.15.21
+        run: pip install -r python-env/requirements.txt
       - name: Syntax check (every .py file must parse)
         run: python -m compileall -q -x '/(\.venv|venv|env|node_modules|\.git)(/|$)' .
       - name: Critical lint (undefined names, unreachable code, bad comparisons)
@@ -27,6 +28,9 @@ jobs:
         # CI and the hook can never drift. Edit the script, never inline a
         # regex here.
         run: bash .github/leak_guard.sh
+      - name: Interpreter guard (no bare python3 in any entry point)
+        # One copy of the rules, shared with .github/preflight.sh.
+        run: bash .github/interpreter_guard.sh
       - name: Run tests
         run: |
           if [ -d tests ] && find tests -name 'test_*.py' -o -name '*_test.py' | grep -q .; then

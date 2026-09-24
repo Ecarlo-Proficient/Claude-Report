@@ -8,9 +8,10 @@
 set -u
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # self-locating — works from any clone, any user
 cd "$DIR"
+. "$DIR/../python-env/python.sh"   # THE interpreter -> $ACB_PY (never a bare python3)
 
 if [ -t 1 ]; then
-  exec /usr/bin/env python3 "$DIR/cp_wip_reader.py" "$@"
+  exec "$ACB_PY" "$DIR/cp_wip_reader.py" "$@"
 fi
 
 LOG_DIR="$HOME/Library/Logs/Proficient/automation-worker"
@@ -23,7 +24,7 @@ TS="$(date +'%Y-%m-%d %H:%M:%S')"
   echo "  CP WIP READER RUN @ $TS"
   echo "========================================================================"
 } | tee -a "$LOG_FILE"
-/usr/bin/env python3 "$DIR/cp_wip_reader.py" "$@" 2>&1 | tee -a "$LOG_FILE"
+"$ACB_PY" "$DIR/cp_wip_reader.py" "$@" 2>&1 | tee -a "$LOG_FILE"
 EXIT=${PIPESTATUS[0]}
 {
   echo ""

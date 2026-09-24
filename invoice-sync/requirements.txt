@@ -1,4 +1,7 @@
-requests>=2.31.0
-python-dotenv>=1.0.0
-keyring>=24.0.0
-openpyxl>=3.1.0
+# The CONTAINER's packages (docker/Dockerfile) - the subset invoice-sync needs.
+# On the Mac every tool runs on python-env (python-env/requirements.txt); these
+# pins must match that file exactly (.github/interpreter_guard.sh checks it).
+requests==2.34.2
+python-dotenv==1.2.3
+keyring==25.7.0
+openpyxl==3.1.5

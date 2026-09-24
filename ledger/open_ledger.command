@@ -7,6 +7,7 @@ set -e
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PORT="${ACB_LEDGER_PORT:-8787}"
 URL="http://127.0.0.1:${PORT}"
+. "$HERE/../python-env/python.sh"   # THE interpreter -> $ACB_PY (never a bare python3)
 
 if ! curl -s -o /dev/null "${URL}/api/health" 2>/dev/null; then
   echo "Starting the ledger dashboard…"
@@ -17,7 +18,7 @@ if ! curl -s -o /dev/null "${URL}/api/health" 2>/dev/null; then
   # to a log outside the repo so a failed start is never silent.
   LOG_DIR="$HOME/Library/Logs/Proficient/ledger-dashboard"
   mkdir -p "$LOG_DIR"
-  python3 "${HERE}/dashboard.py" --no-open --background --port "${PORT}" </dev/null >>"$LOG_DIR/server.log" 2>&1
+  "$ACB_PY" "${HERE}/dashboard.py" --no-open --background --port "${PORT}" </dev/null >>"$LOG_DIR/server.log" 2>&1
   for _ in $(seq 1 25); do
     curl -s -o /dev/null "${URL}/api/health" 2>/dev/null && break
     sleep 0.3

@@ -37,6 +37,10 @@ if [ ! -f .github/workflows/ci.yml ]; then
   exit 1
 fi
 
+# THE interpreter (python-env): the gates run on the same Python and the same
+# pinned ruff as the tools and CI - never whatever python3 is first on PATH.
+. "$repo_root/python-env/python.sh"
+
 # ---- what to scan: the working tree, or the commit being pushed? ----
 # git invokes pre-push as `pre-push <remote> <url>` with the pushed refs on
 # stdin ("<local-ref> <local-sha> <remote-ref> <remote-sha>"). In that mode,
@@ -70,35 +74,27 @@ fi
 
 fail=0
 
-echo "== 1/3 syntax (compileall) =="
+echo "== 1/4 syntax (compileall) =="
 # -x mirrors ci.yml: skip venvs/node_modules so a local env can't fail a gate
-# CI never sees. Note local python may be older than CI's 3.11 - that is a
-# FEATURE: the repo floor is 3.9+, and 3.9 parsing here enforces it.
+# CI never sees. python-env and CI run the SAME version (python-env/PYTHON_VERSION),
+# so a file that parses here parses there.
 CA_SKIP='/(\.venv|venv|env|node_modules|\.git)(/|$)'
-if python3 -m compileall -q -x "$CA_SKIP" . >/dev/null 2>&1; then
+if "$ACB_PY" -m compileall -q -x "$CA_SKIP" . >/dev/null 2>&1; then
   echo "   ok"
 else
   echo "   FAIL - a .py file does not parse:"
-  python3 -m compileall -q -x "$CA_SKIP" . 2>&1 | head -20
+  "$ACB_PY" -m compileall -q -x "$CA_SKIP" . 2>&1 | head -20
   fail=1
 fi
 
-echo "== 2/3 critical lint (ruff E9,F63,F7,F82) =="
-# CI pins ruff (see ci.yml) so a new release can't newly flag old code. Warn
-# when the local copy drifts from the pin - a newer local ruff can block a
-# push CI would pass, an older one can miss what CI will catch.
-pin="$(sed -n 's/.*ruff==\([0-9][0-9.]*\).*/\1/p' .github/workflows/ci.yml | head -1)"
-have="$(python3 -m ruff --version 2>/dev/null | awk '{print $2}')"
-if [ -n "$pin" ] && [ -n "$have" ] && [ "$pin" != "$have" ]; then
-  echo "   note: local ruff $have != CI pin $pin - align with:"
-  echo "         pip3 install --break-system-packages ruff==$pin"
-fi
-if ! python3 -c "import ruff" >/dev/null 2>&1; then
-  echo "   NOT INSTALLED - and this is the gate that fails most often."
-  echo "   Install it:  pip3 install --break-system-packages ruff"
+echo "== 2/4 critical lint (ruff E9,F63,F7,F82) =="
+# ruff is pinned in python-env/requirements.txt, which CI installs too, so the
+# local copy and CI's are the same release by construction.
+if ! "$ACB_PY" -c "import ruff" >/dev/null 2>&1; then
+  echo "   NOT INSTALLED - rebuild the environment:  bash python-env/setup.sh --rebuild"
   fail=1
 else
-  out="$(python3 -m ruff check --select E9,F63,F7,F82 . 2>&1)"
+  out="$("$ACB_PY" -m ruff check --select E9,F63,F7,F82 . 2>&1)"
   rc=$?
   echo "$out"
   if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q "No Python files found"; then
@@ -116,7 +112,7 @@ else
   fi
 fi
 
-echo "== 3/3 data-leak guard =="
+echo "== 3/4 data-leak guard =="
 # The patterns live in .github/leak_guard.sh - the ONE copy, shared with
 # ci.yml, so this gate and CI can never drift. Edit the script, never here.
 GUARD=.github/leak_guard.sh
@@ -140,6 +136,10 @@ leak_scan "working tree"
 if ! git diff --cached --quiet 2>/dev/null; then
   leak_scan "staged" --cached
 fi
+
+echo "== 4/4 interpreter guard (no bare python3) =="
+# The rules live in .github/interpreter_guard.sh - the ONE copy, shared with ci.yml.
+bash .github/interpreter_guard.sh || fail=1
 
 if [ "$fail" -eq 0 ]; then
   echo "preflight: clean"

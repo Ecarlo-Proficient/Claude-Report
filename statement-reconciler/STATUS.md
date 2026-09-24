@@ -5,6 +5,8 @@ to this tool. Tool-only scope: no business/owner analyses or dollar-exposure
 findings here — those live in the owner's vault.
 
 ## DONE / FINALIZED
+- **Runs on python-env (2026-09-24).** The reconciler (the `statement-reconcile` shell helper) now starts through `python-env/python.sh` (`"$ACB_PY"`, Python 3.14, every package pinned), never a bare `python3` - a `brew install ffmpeg` on 09/23 swapped `python3` and broke every sync step. Missing-package hints now say `bash python-env/setup.sh`. Verified by a dry run on 3.14. See `python-env/STATUS.md`.
+
 - **QBO Customer Open Balance date fallback + batch robustness (2026-09-17).**
   The newer Customer Open Balance layout prints the as-of date as a bare MM/DD/YY
   under the title (no "As of" wording) - Estrada 09-03 and Post-Tension 08-18

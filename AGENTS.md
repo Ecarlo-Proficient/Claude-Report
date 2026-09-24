@@ -55,6 +55,10 @@ restate them here. Business/strategic context lives in session memory, not in th
 
 ## Subsystem map (detail in each README)
 
+- **python-env/** - THE Python for every tool: `PYTHON_VERSION` (3.14, Homebrew `python@3.14`),
+  `requirements.txt` (every package pinned; CI installs the same file), `setup.sh`
+  (`--ensure/--check/--rebuild`, env at `~/.venvs/proficient`), `python.sh` (sourced by every
+  wrapper -> `$ACB_PY`; heals or stops with one line). Guarded by `.github/interpreter_guard.sh`.
 - **shared/** — the common package: `qbo_vault.py` (Keychain blob, one Touch ID per run),
   `paths.py` (per-machine path resolution), `qbo_api.py` (QBO auth + retrying GET, `query_all`,
   report walkers, `PROJ_RE` — used by project-pnl and the WIP readers), `setup_qbo.py`
@@ -159,8 +163,16 @@ restate them here. Business/strategic context lives in session memory, not in th
   sed install one-liner (see the plist header comment).
 - **Vault drafts never live in this repo** — stage them in the AI working vault's
   `drafts/vault-fills/` (outside the repo), mirroring the Main Vault structure.
-- Python 3.9+; deps via `pip3 install --break-system-packages -r requirements.txt` (per subfolder).
-- Each subsystem keeps its own README, `requirements.txt`/venv, and `launchd/` plist where scheduled.
+- **Python = `python-env/` (binding, the user 2026-09-24 - "never letting this happen again").**
+  One pinned interpreter (`python-env/PYTHON_VERSION`, Homebrew `python@X.Y`) and one pinned package
+  list (`python-env/requirements.txt`) in `~/.venvs/proficient`. Every shell entry point sources
+  `python-env/python.sh` and runs `"$ACB_PY"`; Python code starts children with `sys.executable`.
+  **NEVER a bare `python3`** in a wrapper, launcher, plist or subprocess: on 09/23 a `brew install
+  ffmpeg` swapped `python3` for a Python with no packages and sync-all died on every step.
+  `.github/interpreter_guard.sh` fails the push and CI. New package = add an exact pin to
+  `python-env/requirements.txt` (the next run installs it). Claude sessions run tools with
+  `~/.venvs/proficient/bin/python`, never `/usr/bin/python3` or `pip3 install --break-system-packages`.
+- Each subsystem keeps its own README and `launchd/` plist where scheduled.
 - Build the core happy-path first; don't pre-add heartbeats/fallback monitors before the core is proven.
 
 ---

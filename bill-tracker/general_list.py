@@ -27,7 +27,7 @@ from shared import paths
 try:
     from openpyxl import load_workbook
 except ImportError:
-    print("pip3 install --break-system-packages openpyxl")
+    print("bash python-env/setup.sh")
     sys.exit(1)
 
 # READ-ONLY. Never write. Per-machine override: ACB_GENERAL_LIST_XLSX.

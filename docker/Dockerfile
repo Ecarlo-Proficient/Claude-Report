@@ -8,7 +8,7 @@
 # Build context = project root (one level up from this Dockerfile). The build
 # command lives in docker/README.md; do not run `docker build` from here.
 # ─────────────────────────────────────────────────────────────────────────────
-FROM python:3.11-slim AS base
+FROM python:3.14-slim AS base
 
 # Container metadata. v1.1.0 = the 2026-07 repo restructure (code identical,
 # paths renamed: automation-worker/ → invoice-sync/, vault → shared/). The

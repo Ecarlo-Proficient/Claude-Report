@@ -165,9 +165,7 @@ alongside this folder guide).
 
 ```
 cd "/ABSOLUTE/PATH/TO/Automate Concrete Business/invoice-sync"
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+bash ../python-env/setup.sh
 cp .env.example .env
 ```
 

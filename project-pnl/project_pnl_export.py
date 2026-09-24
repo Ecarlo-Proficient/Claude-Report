@@ -51,7 +51,7 @@ OPTIONS
     --dry-run        Print what would be written, don't save files.
 
 DEPENDENCIES
-    pip3 install --break-system-packages openpyxl requests xlrd
+    bash python-env/setup.sh
     (xlrd reads the legacy .xls G702 pay applications; without it the contract
      price falls back to the WIP master and the run says so.)
 """
@@ -85,7 +85,7 @@ try:
     # make Mac Excel offer to "repair" the file (shared/xlsx_verify.py). Style
     # the cell, never runs inside it.
 except ImportError:
-    print("✗  pip3 install --break-system-packages openpyxl requests")
+    print("✗  bash python-env/setup.sh")
     sys.exit(1)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))

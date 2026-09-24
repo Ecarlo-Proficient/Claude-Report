@@ -32,9 +32,9 @@ REPO = os.environ.get("ACB_LEDGER_REPO") or os.path.dirname(
 LEDGER_DIR = os.path.join(REPO, "ledger")
 LOG_DIR = os.path.expanduser("~/Library/Logs/Proficient/ledger-dashboard")
 
-# py2app injects PYTHONPATH/PYTHONHOME into our environment; the child server is a
-# plain /usr/bin/python3 and must NOT inherit them (they hide its site-packages,
-# e.g. `requests`). Hand it a cleaned environment.
+# py2app injects PYTHONPATH/PYTHONHOME into our environment; the child server runs
+# on the suite's own Python (python-env) and must NOT inherit them (they hide its
+# site-packages, e.g. `requests`). Hand it a cleaned environment.
 _PY_ENV_STRIP = ("PYTHONPATH", "PYTHONHOME", "PYTHONEXECUTABLE", "PYTHONNOUSERSITE",
                  "PYTHONDONTWRITEBYTECODE", "PYTHONSTARTUP", "RESOURCEPATH", "ARGVZERO")
 
@@ -56,9 +56,12 @@ def _start_server() -> None:
     os.makedirs(LOG_DIR, exist_ok=True)
     logf = open(os.path.join(LOG_DIR, "server.log"), "a")
     env = {k: v for k, v in os.environ.items() if k not in _PY_ENV_STRIP}
+    # Through python-env/python.sh like every other entry point: it resolves THE
+    # interpreter (and heals the environment if needed) - never a bare python3.
     _proc = subprocess.Popen(
-        ["/usr/bin/python3", os.path.join(LEDGER_DIR, "dashboard.py"),
-         "--no-open", "--port", PORT],
+        ["/bin/bash", "-c",
+         '. "$1/python-env/python.sh" && exec "$ACB_PY" "$1/ledger/dashboard.py" --no-open --port "$2"',
+         "ledger-server", REPO, PORT],
         cwd=REPO, stdout=logf, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, env=env)
 
 

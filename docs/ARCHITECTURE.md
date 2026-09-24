@@ -85,6 +85,7 @@ job-auditor/           DESIGN + prototypes: audits proposal scope vs takeoff cos
 one-offs/              occasional / not-yet-developed tools (never the repo root)
 synology/              NAS file-tree audit (always --exclude the sensitive path)
 docker/                invoice-sync container package (v1.1.0)
+python-env/            THE Python: one pinned interpreter (PYTHON_VERSION) + one pinned package list; every entry point sources python.sh -> "$ACB_PY" (never a bare python3); .github/interpreter_guard.sh enforces it (2026-09-24)
 docs/                  this map + system references
 ```
 
@@ -1180,6 +1181,10 @@ create → read-back → delete round-trip on the CP000 placeholder job.
 
 ## Machine notes
 
+- **Python** is `python-env/`: Homebrew `python@<PYTHON_VERSION>` -> `~/.venvs/proficient`,
+  every package pinned. Every wrapper sources `python-env/python.sh` and runs `"$ACB_PY"`, which
+  heals the environment or stops with one line. New machines: `brew install python@3.14`, then
+  `bash python-env/setup.sh`. Nothing may start a bare `python3` (the 09/23 ffmpeg breakage).
 - Output paths (OneDrive folders, `~/Documents/CompanyHealth/`) resolve through
   **`shared/paths.py`**: process env > `machine.env` (REPO ROOT, gitignored, per-machine) >
   owner's original defaults. New machines: `cp machine.env.example machine.env`, then

@@ -52,7 +52,7 @@ INTERACTIVE FLOW
   a clickable link to the Reconciliations folder. Does not auto-open the Excel.
 
 DEPENDENCIES
-  pip3 install --break-system-packages pdfplumber requests openpyxl
+  bash python-env/setup.sh
 """
 from __future__ import annotations
 
@@ -78,13 +78,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 try:
     import requests
 except ImportError:
-    print("✗ pip3 install --break-system-packages requests")
+    print("✗ bash python-env/setup.sh")
     sys.exit(1)
 
 try:
     import pdfplumber
 except ImportError:
-    print("✗ pip3 install --break-system-packages pdfplumber")
+    print("✗ bash python-env/setup.sh")
     sys.exit(1)
 
 try:
@@ -92,7 +92,7 @@ try:
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     from openpyxl.utils import get_column_letter
 except ImportError:
-    print("✗ pip3 install --break-system-packages openpyxl")
+    print("✗ bash python-env/setup.sh")
     sys.exit(1)
 
 from shared import qbo_vault as kc
@@ -520,7 +520,7 @@ def _image_to_text(img_path: Path) -> str:
         sys.exit(_Term.color(_Term.R,
             f"✗ Image OCR needs Tesseract + Python wrappers. Install once:\n"
             f"    brew install tesseract\n"
-            f"    pip3 install pytesseract pillow pillow-heif\n"
+            f"    bash python-env/setup.sh\n"
             f"  (missing: {e.name})"))
     # Verify the tesseract binary itself is reachable
     try:
@@ -537,7 +537,7 @@ def _image_to_text(img_path: Path) -> str:
         except ImportError:
             sys.exit(_Term.color(_Term.R,
                 "✗ HEIC images need the pillow-heif backend. Install once:\n"
-                "    pip3 install pillow-heif"))
+                "    bash python-env/setup.sh"))
     try:
         img = Image.open(img_path)
         # --psm 6: assume a single uniform block of text. Critical for
@@ -1264,10 +1264,8 @@ def _xls_to_xlsx_temp(xls_path: Path) -> Path:
         import xlrd
     except ImportError:
         sys.exit(_Term.color(_Term.R,
-            "✗ Legacy .xls support needs xlrd. Install once into the venv:\n"
-            f"    cd '{Path(__file__).resolve().parent.parent / 'bill-tracker'}'\n"
-            "    .venv/bin/python -m pip install 'xlrd<2'\n"
-            "  (Pin to <2.0 — xlrd 2.0+ dropped .xls support for security reasons.)"))
+            "✗ Legacy .xls support needs xlrd (pinned in python-env). Repair the environment:\n"
+            "    bash python-env/setup.sh"))
     from openpyxl import Workbook
 
     try:

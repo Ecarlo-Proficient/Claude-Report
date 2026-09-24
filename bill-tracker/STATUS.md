@@ -232,6 +232,8 @@ no business findings, dollar exposures, or owner analyses (those live in the own
   `qbo-export`, `health-dashboard`, and `wip/qbo_bulk_close.py`. **Rule: never echo the QBO
   company_id / realm to stdout or a tee'd log.**
 
+- **Runs on python-env (2026-09-24).** `run_tracker.sh` (`sync-ap`) now starts through `python-env/python.sh` (`"$ACB_PY"`, Python 3.14, every package pinned), never a bare `python3` - a `brew install ffmpeg` on 09/23 swapped `python3` and broke every sync step. Missing-package hints now say `bash python-env/setup.sh`. Verified by a dry run on 3.14. See `python-env/STATUS.md`.
+
 ## OPEN ISSUES
 
 - **Parity check pending a live run.** The folded sections should reproduce the retired

@@ -49,7 +49,7 @@ from typing import Any, Dict, List, Optional, Tuple
 try:
     import requests
 except ImportError:
-    print("missing dependency. Run: pip3 install --break-system-packages requests openpyxl")
+    print("missing dependency. Run: bash python-env/setup.sh")
     sys.exit(1)
 
 try:
@@ -57,7 +57,7 @@ try:
     from openpyxl.styles import Alignment, Font, PatternFill
     from openpyxl.worksheet.worksheet import Worksheet
 except ImportError:
-    print("missing dependency. Run: pip3 install --break-system-packages requests openpyxl")
+    print("missing dependency. Run: bash python-env/setup.sh")
     sys.exit(1)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))

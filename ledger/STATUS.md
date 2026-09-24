@@ -2329,6 +2329,8 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
     crew schedule vs off) already exists; a true Active/Closed for RP would mean loading closed RP jobs from a
     source that carries them (not the active-only Test-RP). See [[ledger-expansion-backlog]].
 
+- **Runs on python-env (2026-09-24).** `sync_all.sh`, `reload_ledger.sh`, `open_ledger.command`, `build_ledger_app.command` and the Project Ledger app's server launch (was a hard-coded `/usr/bin/python3`) now start through `python-env/python.sh` (`"$ACB_PY"`, Python 3.14, every package pinned), never a bare `python3` - a `brew install ffmpeg` on 09/23 swapped `python3` and broke every sync step. Missing-package hints now say `bash python-env/setup.sh`. Verified by a dry run on 3.14. See `python-env/STATUS.md`.
+
 ## IN PROGRESS
 - **Lien-mark workbook mirror (Phase 2 above):** add the `bill_marks.resolve_lien` call to
   `bill-tracker/excel_bill_sync.py`'s Lien preservation once that file has no foreign uncommitted changes.

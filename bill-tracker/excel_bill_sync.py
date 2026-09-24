@@ -61,7 +61,7 @@ from shared import paths
 try:
     import requests  # noqa: F401  (used transitively by QBO extraction)
 except ImportError:
-    print("✗ pip3 install --break-system-packages requests")
+    print("✗ bash python-env/setup.sh")
     sys.exit(1)
 
 try:
@@ -75,7 +75,7 @@ try:
     from openpyxl.formatting.rule import Rule
     from openpyxl.worksheet.formula import ArrayFormula
 except ImportError:
-    print("✗ pip3 install --break-system-packages openpyxl")
+    print("✗ bash python-env/setup.sh")
     sys.exit(1)
 
 from qbo_bill_tracker import (

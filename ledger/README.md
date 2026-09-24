@@ -28,7 +28,6 @@ so you can watch your actual data live in a database instead of a spreadsheet.
 The cost engine itself lives in **`shared/qbo_costs.py`** (`cost_leaf` + `iter_cost_lines`) — the
 SAME resolver project-pnl uses, so the ledger and the P&L can never drift.
 | `static/` | The dashboard front-end (`index.html`, `style.css`, `app.js`) — no build step. |
-| `requirements.txt` | `openpyxl` (SQLite + the web server are stdlib — nothing else to install). |
 
 ## The raw QBO mirror (2026-09-17)
 

@@ -51,7 +51,7 @@ where each path resolved from and flags anything missing or not writable.
 blob (service `automation-qbo`) — one Touch ID per run unlocks everything:
 
 ```bash
-pip3 install --break-system-packages -r requirements.txt
+bash python-env/setup.sh              # THE Python environment (see python-env/README.md)
 python3 shared/setup_qbo.py            # interactive setup + auth test
 python3 shared/setup_qbo.py --status   # what's stored
 python3 shared/setup_qbo.py --test     # auth test only
@@ -61,5 +61,6 @@ Production only — no sandbox, no env selector (`quickbooks.api.intuit.com`
 is hardcoded by design). Notion/Teams secrets are separate blobs owned by
 the invoice sync — see `invoice-sync/README.md`.
 
-**3. Per-tool setup.** Each tool folder has its own README and (where needed)
-`requirements.txt` / venv. Start with the README of the tool you're touching.
+**3. Per-tool setup.** Each tool folder has its own README. Packages are NOT
+per tool: every tool runs on the one environment in `python-env/` (one pinned
+Python, one pinned package list). Start with the README of the tool you're touching.

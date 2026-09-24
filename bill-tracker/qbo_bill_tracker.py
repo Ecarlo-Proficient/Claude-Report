@@ -39,7 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 try:
     import requests
 except ImportError:
-    print("✗ pip3 install --break-system-packages requests")
+    print("✗ bash python-env/setup.sh")
     sys.exit(1)
 
 try:
@@ -48,7 +48,7 @@ try:
     from openpyxl.utils import get_column_letter
     from openpyxl.worksheet.datavalidation import DataValidation
 except ImportError:
-    print("✗ pip3 install --break-system-packages openpyxl")
+    print("✗ bash python-env/setup.sh")
     sys.exit(1)
 
 from shared import qbo_vault as kc

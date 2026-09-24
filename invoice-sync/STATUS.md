@@ -7,6 +7,8 @@ mirror. Update this in the SAME commit as any change to this tool.
 
 ## DONE / FINALIZED
 
+- **Runs on python-env (2026-09-24).** `run_invoice_sync.sh` now starts through `python-env/python.sh` (`"$ACB_PY"`, Python 3.14, every package pinned), never a bare `python3` - a `brew install ffmpeg` on 09/23 swapped `python3` and broke every sync step. Missing-package hints now say `bash python-env/setup.sh`. Verified by a dry run on 3.14. See `python-env/STATUS.md`.
+
 - **AR Aging lien clock now two-stage (2026-08-19).** `export_invoices_xlsx.py` passes the invoice's
   Notion Lien Tracker status into `shared/lien_clock.lien_state(lien_status=...)`. Once a notice is
   **Mailed**, the aging tab's lien cell advances from the notice deadline to the **lien-affidavit

@@ -20,21 +20,22 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
 base="$root"
+. "$base/python-env/python.sh"   # THE interpreter -> $ACB_PY (never a bare python3)
 # A missing drive PAUSES before any work: reconnect, Enter to retry, q to close (owner 2026-09-23)
-python3 "$base/shared/paths.py" --require accounting,onedrive --for "the ledger reload (Bill Tracker on the Accounting share, the WIP master on OneDrive)" || exit 2
+"$ACB_PY" "$base/shared/paths.py" --require accounting,onedrive --for "the ledger reload (Bill Tracker on the Accounting share, the WIP master on OneDrive)" || exit 2
 rc=0
 since="$(date -v-90d +%F)"   # macOS/BSD date: 90 days ago, for the incremental cost pull
 step() { printf '\n\033[36m-- %s --\033[0m\n' "$1"; }
-step "WIP master -> ledger";  python3 ledger/load_wip_master.py             || rc=1
-step "Bills -> ledger";       python3 ledger/load_bill_tracker.py           || rc=1
-step "Invoices -> ledger";    python3 ledger/load_invoices.py --no-qbo      || rc=1
-step "Customers -> ledger";   python3 ledger/load_customers.py              || rc=1
-step "Costs -> ledger";       python3 ledger/load_costs.py --active --changed-since "$since" || rc=1
-step "Payments -> ledger";    python3 ledger/load_payments.py --months 12   || rc=1
-step "Bill payments -> ledger"; python3 ledger/load_bill_payments.py         || rc=1
-step "Sub LOC -> ledger";      python3 ledger/load_sub_loc.py               || rc=1
-step "Health -> ledger";       python3 ledger/load_health.py                || rc=1
-step "Attachments -> ledger";  python3 ledger/load_attachments.py --refresh || rc=1
+step "WIP master -> ledger";  "$ACB_PY" ledger/load_wip_master.py             || rc=1
+step "Bills -> ledger";       "$ACB_PY" ledger/load_bill_tracker.py           || rc=1
+step "Invoices -> ledger";    "$ACB_PY" ledger/load_invoices.py --no-qbo      || rc=1
+step "Customers -> ledger";   "$ACB_PY" ledger/load_customers.py              || rc=1
+step "Costs -> ledger";       "$ACB_PY" ledger/load_costs.py --active --changed-since "$since" || rc=1
+step "Payments -> ledger";    "$ACB_PY" ledger/load_payments.py --months 12   || rc=1
+step "Bill payments -> ledger"; "$ACB_PY" ledger/load_bill_payments.py         || rc=1
+step "Sub LOC -> ledger";      "$ACB_PY" ledger/load_sub_loc.py               || rc=1
+step "Health -> ledger";       "$ACB_PY" ledger/load_health.py                || rc=1
+step "Attachments -> ledger";  "$ACB_PY" ledger/load_attachments.py --refresh || rc=1
 
 if [ "$rc" -eq 0 ]; then
   printf '\n\033[32mledger reload: OK\033[0m\n'

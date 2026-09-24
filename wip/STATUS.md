@@ -7,6 +7,8 @@
 Last updated: 2026-09-08
 
 ## DONE / FINALIZED
+- **Runs on python-env (2026-09-24).** `run_cp_wip.sh` now starts through `python-env/python.sh` (`"$ACB_PY"`, Python 3.14, every package pinned), never a bare `python3` - a `brew install ffmpeg` on 09/23 swapped `python3` and broke every sync step. Missing-package hints now say `bash python-env/setup.sh`. Verified by a dry run on 3.14. See `python-env/STATUS.md`.
+
 - 2026-09-23 · **`mfd_wip_test.py` runs again, and runs with every WIP Review Sync** - it had silently stopped after
   08/26: the MFD team removed a top row, headers moved 6 -> 5, and the fixed `HDR_ROW` found no PROJECT column. It now
   finds the header row (PROJECT + COSTS TO DATE in rows 1-15) and follows it. QBO costs add the job-rulings class

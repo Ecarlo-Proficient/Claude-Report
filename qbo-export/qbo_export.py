@@ -37,7 +37,7 @@ try:
     from openpyxl.styles import Font, PatternFill, Alignment
     from openpyxl.utils import get_column_letter
 except ImportError:
-    print("missing dependency. Run: pip3 install --break-system-packages openpyxl requests")
+    print("missing dependency. Run: bash python-env/setup.sh")
     sys.exit(1)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))

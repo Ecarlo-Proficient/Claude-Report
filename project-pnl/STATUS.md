@@ -7,6 +7,8 @@ manual close), RP (no draws — expenses → invoice → profit).
 ---
 
 ## DONE / FINALIZED
+- **Runs on python-env (2026-09-24).** `run_pnl.sh` now starts through `python-env/python.sh` (`"$ACB_PY"`, Python 3.14, every package pinned), never a bare `python3` - a `brew install ffmpeg` on 09/23 swapped `python3` and broke every sync step. Missing-package hints now say `bash python-env/setup.sh`. Verified by a dry run on 3.14. See `python-env/STATUS.md`.
+
 - 2026-09-23 · **A `costs` class ruling switches the class/project lookup on by itself** - the job's costs = its QBO project + every line on its OWN class with no project, via a `costs` ruling
   (`kind: costs, rule: class`) in the job rulings register (owner 2026-09-23 on MFD295: "why aren't you combining all
   the real costs?"). MFD295: most of its cost sits on `Elite Construction:MFD295` with no project (129 lines, Dec 2024 -

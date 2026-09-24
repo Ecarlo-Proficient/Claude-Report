@@ -209,7 +209,7 @@ def main() -> int:
         import keyring
     except ImportError:
         print("The `keyring` package isn't installed. Run:", file=sys.stderr)
-        print("  pip install -r requirements.txt", file=sys.stderr)
+        print("  bash python-env/setup.sh   (from the repo root)", file=sys.stderr)
         return 2
 
     service = os.getenv("KEYSTORE_SERVICE", "proficient-automation-worker")

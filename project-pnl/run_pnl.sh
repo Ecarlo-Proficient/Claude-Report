@@ -18,10 +18,11 @@
 set -u
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # self-locating — works from any clone, any user
 cd "$DIR"
+. "$DIR/../python-env/python.sh"   # THE interpreter -> $ACB_PY (never a bare python3)
 
 # stdout is a terminal → run with the script's built-in styled output.
 if [ -t 1 ]; then
-  exec /usr/bin/env python3 "$DIR/project_pnl_export.py" "$@"
+  exec "$ACB_PY" "$DIR/project_pnl_export.py" "$@"
 fi
 
 # Otherwise (scheduled / piped) → plain run, banner + tee to the log file.
@@ -37,7 +38,7 @@ TS="$(date +'%Y-%m-%d %H:%M:%S')"
   echo "========================================================================"
 } | tee -a "$LOG_FILE"
 
-/usr/bin/env python3 "$DIR/project_pnl_export.py" "$@" 2>&1 | tee -a "$LOG_FILE"
+"$ACB_PY" "$DIR/project_pnl_export.py" "$@" 2>&1 | tee -a "$LOG_FILE"
 EXIT=${PIPESTATUS[0]}
 
 {

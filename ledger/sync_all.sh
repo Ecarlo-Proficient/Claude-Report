@@ -18,18 +18,19 @@
 set -uo pipefail
 base="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$base"
+. "$base/python-env/python.sh"   # THE interpreter -> $ACB_PY (never a bare python3)
 c() { printf '\n\033[36m\033[1m== %s ==\033[0m\n' "$1"; }
 ok() { printf '  \033[32m✓\033[0m %s\n' "$1"; }
 bad() { printf '  \033[31m✗\033[0m %s (exit %s)\n' "$1" "$2"; }
 
 # A missing drive PAUSES before any work: reconnect, Enter to retry, q to close (owner 2026-09-23)
-python3 "$base/shared/paths.py" --require accounting,onedrive --for "sync-all" || exit 2
+"$ACB_PY" "$base/shared/paths.py" --require accounting,onedrive --for "sync-all" || exit 2
 
 c "0/4  QBO mirror - refresh (the one read of QBO)"
-python3 ledger/refresh_mirror.py; mir=$?
+"$ACB_PY" ledger/refresh_mirror.py; mir=$?
 if [[ "$(date +%u)" == "7" && $mir -eq 0 ]]; then
   c "0/4  QBO mirror - Sunday reconcile"
-  python3 ledger/refresh_mirror.py --reconcile || mir=$?
+  "$ACB_PY" ledger/refresh_mirror.py --reconcile || mir=$?
 fi
 
 c "1/4  AP - bill tracker (must precede AR)"
@@ -50,6 +51,6 @@ c "summary"
 (( ap  == 0 )) && ok "AP      bill tracker"        || bad "AP      bill tracker" "$ap"
 (( ar  == 0 )) && ok "AR      invoice sync"        || bad "AR      invoice sync" "$ar"
 (( led == 0 )) && ok "LEDGER  reload -> dashboard" || bad "LEDGER  reload" "$led"
-python3 ledger/refresh_mirror.py --status 2>/dev/null | sed -n 2p
+"$ACB_PY" ledger/refresh_mirror.py --status 2>/dev/null | sed -n 2p
 (( mir || ap || ar || led )) && exit 1
 exit 0

@@ -4,6 +4,8 @@ Shared progression record (see repo CLAUDE.md). Tool-scoped only — no dollar
 exposures or business analysis here (those live in the owner's vault).
 
 ## DONE / FINALIZED
+- **Runs on python-env (2026-09-24).** `qbo_health.py`'s missing-package hint now says `bash python-env/setup.sh` (the suite's one pinned Python 3.14 environment) instead of `pip3 install --break-system-packages`. See `python-env/STATUS.md`.
+
 - **`money_bleeds.py`** — the current company-health report (an exceptions
   "watchboard", supersedes the KPI idea). Read-only. Output
   `~/Documents/CompanyHealth/Money Bleeds.xlsx`, chmod 600. Sheets:

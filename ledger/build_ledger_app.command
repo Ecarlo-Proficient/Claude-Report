@@ -23,11 +23,9 @@ LOG_DIR="$HOME/Library/Logs/Proficient/ledger-dashboard"
 BUILDLOG="$LOG_DIR/build.log"
 mkdir -p "$LOG_DIR" "$DEST"
 
-# One-time: make sure the Mac-app toolkit is installed.
-if ! /usr/bin/python3 -c "import AppKit, py2app" >/dev/null 2>&1; then
-  echo "Installing the Mac app toolkit (one-time — this can take a minute)…"
-  /usr/bin/python3 -m pip install --break-system-packages --quiet pyobjc-framework-Cocoa py2app
-fi
+# The Mac-app toolkit (PyObjC + py2app) is pinned in python-env/requirements.txt;
+# sourcing the resolver builds/updates the environment if needed -> $ACB_PY.
+. "$HERE/../python-env/python.sh"
 
 # Optional custom icon: app_icon.png -> app_icon.icns (built-in tools only).
 if [ -f "$APPDIR/app_icon.png" ] && { [ ! -f "$APPDIR/app_icon.icns" ] || [ "$APPDIR/app_icon.png" -nt "$APPDIR/app_icon.icns" ]; }; then
@@ -45,7 +43,7 @@ fi
 cd "$APPDIR"
 rm -rf build dist
 echo "Building Project Ledger.app…"
-if ! /usr/bin/python3 setup.py py2app -A >"$BUILDLOG" 2>&1; then
+if ! "$ACB_PY" setup.py py2app -A >"$BUILDLOG" 2>&1; then
   echo "Build failed — last lines of $BUILDLOG:"; tail -15 "$BUILDLOG"; exit 1
 fi
 rm -rf "$DEST/Project Ledger.app"
