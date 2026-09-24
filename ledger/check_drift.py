@@ -16,8 +16,8 @@ its own - no prompt, no warning, the audit log says "Indirect edit by System":
     the next real check goes out short by that amount.
 Subs get hit hardest (weekly bills + loan credits on every check). The worked
 example is check 48314 (the owner 2026-09-24): paid UC41 on 08/28, UC41 was
-deleted 09/17 and re-entered 09/18, the check floated $4,635.70 and QBO then
-put $135.40 of it on UC044 (09/15).
+deleted 09/17 and re-entered 09/18, the whole check floated and QBO then
+put part of it on UC044 (09/15).
 
 For every bill payment since --since this flags:
   FLOATING   check total > what it applies to bills (net of credits)
