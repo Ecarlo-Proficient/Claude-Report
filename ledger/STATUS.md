@@ -19,8 +19,8 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   "it's an audit in the Project Ledger" / "all year round"). `ledger/check_drift.py` over the mirror, every year on file,
   `/api/checkdrift`: a check whose money floats (applied to nothing); the bill it paid EDITED and open again (check 47436:
   UC015 edited 09/22 7:23, check stripped 7:26); its deleted-and-re-entered copy open (check 48314: UC41); the freed loan
-  credit; floating money QBO put on a bill dated AFTER the check (48314 -> UC044 $135.40). One open bill belongs to one
-  check (exact amount claims first, nearest date wins - a sub's weekly $2,200 bill no longer lands under every $2,200
+  credit; floating money QBO put on a bill dated AFTER the check (48314 -> UC044). One open bill belongs to one
+  check (exact amount claims first, nearest date wins - a sub's same-amount weekly bill no longer lands under every same-amount
   check). Late links only for checks written after the 05/2025 import (it re-stamped entry times); card-fee bills on Amex
   payments skipped. Subs chip default, funnel on Vendor, broad search; each check folds (vp-pay group) over its numbered
   fix + the lines to re-apply with QBO links. Read-only. CLI: `python3 ledger/check_drift.py --check <#>`. Load ~8 s
