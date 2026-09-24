@@ -4,6 +4,14 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-24 · **Projects = a true WIP report** (owner: "for the project page, i need a true wip report, and remove that
+  'next' column. i need to see how my projects are doing"). `PROJ_COLS` is the standard schedule, straight from the WIP
+  master's own columns (no recompute): Project · Name · Contract · ETC · Est. profit · GP % · Costs · Cost to finish ·
+  % compl. · Earned · Profit earned · Billed · Overbilled · Underbilled · Left to bill · Profit to come · Job borrow
+  (header tips = the formula / bank name). Next, Client and Open AR are off (not WIP; one click away on the project
+  page). Division bands subtotal every money column; GP % and % compl. are the band's own ratios. Losses, job borrow and
+  underbilled read red. Compact cells; Project + Name pinned while the numbers scroll (Project only on a phone); the
+  band's pinned cells solid. Export CSV follows the same columns. Visual QC: 1600px + phone, light + dark, scrolled.
 - 2026-09-24 · **No number rows on the audit pages** (owner: "i also don't like the new kpi text you put ... it's not
   simplified and/or doesn't need to be there and is just creating clutter. like on the audit, why do i need to see those
   numbers on top?"). QBO changes, Checks QBO changed and Uncleared checks lose their stat rows - the chips already carry

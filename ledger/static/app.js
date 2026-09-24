@@ -5912,17 +5912,24 @@ const num = v => (isNum(v) ? v : Number(v) || 0);
 // carrying an open invoice or bill), then the settled closed jobs (folded). Columns = the WIP's own
 // numbers plus what the job still owes / is owed: the ETC and open AP were dropped on purpose (owner:
 // "drop ETC and open AP" - both are one click away on the project page). Row click opens the project page.
-const PROJ_COLS = [
+const PROJ_COLS = [   // the standard WIP schedule (owner 2026-09-24: "i need a true wip report, and remove that next column")
   { k: "project_no", label: "Project", t: "text" },
   { k: "project_name", label: "Name", t: "text" },
-  { k: "client", label: "Client", t: "text" },
-  { k: "total_contract_price", label: "Contract", t: "money" },
-  { k: "costs_to_date", label: "Costs", t: "money" },
-  { k: "billed_to_date", label: "Billed", t: "money" },
-  { k: "percent_complete", label: "% compl.", t: "pct" },
-  { k: "_overunder", label: "Over / (under)", t: "money" },
-  { k: "_ar", label: "Open AR", t: "money" },
-  { k: "_next", label: "Next", t: "text" },
+  { k: "total_contract_price", label: "Contract", t: "money", tip: "Total contract price - original contract + approved change orders" },
+  { k: "estimated_total_costs", label: "ETC", t: "money", tip: "Estimated total costs - the estimator's budget, + CO costs (never actual cost)" },
+  { k: "original_profit", label: "Est. profit", t: "money", tip: "Contract - ETC" },
+  { k: "gross_profit_pct", label: "GP %", t: "pct", tip: "(Contract - ETC) / Contract - costs to date never touch the margin" },
+  { k: "costs_to_date", label: "Costs", t: "money", tip: "Costs to date (QuickBooks)" },
+  { k: "cost_to_complete", label: "Cost to finish", t: "money", tip: "ETC - costs to date" },
+  { k: "percent_complete", label: "% compl.", t: "pct", tip: "Costs to date / ETC (can run past 100% on an overrun)" },
+  { k: "revenues_earned_to_date", label: "Earned", t: "money", tip: "Revenue earned to date - contract x % complete" },
+  { k: "profit_earned_to_date", label: "Profit earned", t: "money", tip: "Earned - costs to date" },
+  { k: "billed_to_date", label: "Billed", t: "money", tip: "Billed to date (QuickBooks)" },
+  { k: "overbillings", label: "Overbilled", t: "money", tip: "Billings in excess of costs and estimated earnings - billed ahead of earned (a liability)" },
+  { k: "underbillings", label: "Underbilled", t: "money", tip: "Costs and estimated earnings in excess of billings - earned ahead of billed, you are financing the job" },
+  { k: "left_to_bill", label: "Left to bill", t: "money", tip: "Contract - billed to date" },
+  { k: "future_profit_to_earn", label: "Profit to come", t: "money", tip: "Est. profit - profit earned" },
+  { k: "pure_job_borrow", label: "Job borrow", t: "money", tip: "Cost to finish beyond what is left to bill - cash the job borrows from the company" },
 ];
 let projView = "active";   // active | attention | completed | all
 let projDiv = "";          // "" = every division
@@ -5938,23 +5945,12 @@ function syncProjChips() {
 function _projOpenAR() {   // project -> open AR (the QuickBooks invoices still unpaid)
   const m = {}; for (const i of (OI.invoices || [])) { const k = i.project_no || ""; if (!k) continue; m[k] = (m[k] || 0) + oiBal(i); } return m;
 }
-function _projNext() {     // project -> the funding position (CP/MFD draws; RP bills at completion, no draws)
-  const m = {}; _buildDrawClientMap(DRAWS.draws || []);
-  for (const f of _fundingRows()) m[f.pn] = f; return m;
-}
 function _projDerived() {
-  const ar = _projOpenAR(), nx = _projNext();
+  const ar = _projOpenAR();
   for (const r of ALL) {
     r._ar = ar[r.project_no] || 0;
-    r._overunder = num(r.overbillings) - num(r.underbillings);
     const ap = AP.by_project && AP.by_project[r.project_no];
     r._apOpen = ap ? num(ap.open_balance) : 0;
-    const f = nx[r.project_no];
-    if (isClosed(r)) r._next = "Closed";
-    else if (f) r._next = f.status === "Ready to collect" ? `Collect ${money(f.gcOwes)}${f.next && f.next.invoice_no ? " · #" + f.next.invoice_no : ""}`
-      : f.status.startsWith("Blocked") ? `Blocked · pay ${money(f.blockAmt)} first`
-      : f.status === "Settled" ? "Draws settled" : f.status === "No draw yet" ? "No draw yet" : f.status;
-    else r._next = r._ar > 0.005 ? `Collect ${money(r._ar)}` : (String(r.project_no).startsWith("RP") ? "" : "");
     r._recent = isClosed(r) && (r._ar > 0.005 || r._apOpen > 0.005);   // closed but still settling
   }
 }
@@ -5990,6 +5986,8 @@ function projBands(rows) {   // [{key, label, title, list, open}]
   if (projView === "attention") return byDiv(rows.filter(r => !isClosed(r))).concat(byDiv(rows.filter(isClosed)).map(b => ({ ...b, key: "closed:" + b.key, label: b.label + " · closed", open: false })));
   return byDiv(rows.filter(r => !isClosed(r))).concat(done);
 }
+// a WIP number that reads as trouble: a loss (negative profit), cash the job borrows, money you are financing (underbilled)
+function _wipBad(k, v) { return (v < -0.5 && /profit/.test(k)) || (k === "pure_job_borrow" && v > 0.5) || (k === "underbillings" && v > 0.5); }
 function renderProjects() {
   const thead = $("#projTable thead"), tbody = $("#projTable tbody"); if (!thead || !tbody) return;
   _projDerived();
@@ -6001,7 +5999,7 @@ function renderProjects() {
   for (const c of PROJ_COLS) {
     const th = document.createElement("th"); th.className = c.t === "text" ? "left" : "right"; th.textContent = c.label;
     if (projSort.key === c.k) { const a = document.createElement("span"); a.className = "arrow"; a.textContent = projSort.dir === 1 ? " ▲" : " ▼"; th.appendChild(a); }
-    th.title = "Sort by " + c.label;
+    th.title = (c.tip ? c.tip + " · " : "") + "click to sort";
     th.onclick = () => { if (projSort.key === c.k) projSort.dir = -projSort.dir; else projSort = { key: c.k, dir: c.t === "text" ? 1 : -1 }; renderProjects(); };
     htr.appendChild(th);
   }
@@ -6015,8 +6013,7 @@ function renderProjects() {
     // band strip did not line up with the grid). Name + count in the first cells; the number columns
     // carry the band's sums; % complete is the band's costs / ETC; Next stays blank.
     const sumOf = k => b.list.reduce((t, r) => t + num(r[k]), 0);
-    const contract = sumOf("total_contract_price"), costs = sumOf("costs_to_date"), billed = sumOf("billed_to_date"),
-          overUnder = sumOf("overbillings") - sumOf("underbillings"), ar = sumOf("_ar"), etc = sumOf("estimated_total_costs");
+    const contract = sumOf("total_contract_price"), costs = sumOf("costs_to_date"), etc = sumOf("estimated_total_costs");
     const caret = document.createElement("span"); caret.className = "grp-caret"; caret.textContent = open ? "\u25BC\uFE0E" : "\u25B6\uFE0E";
     for (const c of PROJ_COLS) {
       const td = document.createElement("td");
@@ -6026,13 +6023,9 @@ function renderProjects() {
         const dv = /resid/i.test(b.label) ? "RP" : /commer/i.test(b.label) ? "CP" : /multi/i.test(b.label) ? "MFD" : null;
         if (dv) { const rb = document.createElement("button"); rb.type = "button"; rb.className = "btn tiny proj-review"; rb.textContent = "WIP review →"; rb.title = `The weekly ${dv} review with the PM: every line, where each number came from, your answers`;
           rb.onclick = (e) => { e.stopPropagation(); openReviewDiv(dv); }; td.appendChild(rb); } }
-      else if (c.k === "total_contract_price") { td.className = "right"; td.textContent = money(contract); }
-      else if (c.k === "costs_to_date") { td.className = "right"; td.textContent = money(costs); }
-      else if (c.k === "billed_to_date") { td.className = "right"; td.textContent = money(billed); }
+      else if (c.k === "gross_profit_pct") { td.className = "right"; const g = contract > 0 ? (contract - etc) / contract : null; td.textContent = g == null ? "–" : pct(g); if (g != null && g < 0) td.classList.add("neg"); td.title = "Band (contract - ETC) / contract"; }
       else if (c.k === "percent_complete") { td.className = "right"; td.textContent = etc > 0 ? pct(costs / etc) : "–"; if (etc > 0) td.title = "Band costs to date / band ETC"; }
-      else if (c.k === "_overunder") { td.className = "right" + (overUnder < 0 ? " neg" : overUnder > 0 ? " pos" : ""); td.textContent = overUnder ? money(overUnder) : "–";
-        td.title = overUnder < 0 ? "Net underbilled across the band" : overUnder > 0 ? "Net overbilled across the band" : ""; }
-      else if (c.k === "_ar") { td.className = "right" + (ar > 0.005 ? " neg" : ""); td.textContent = ar > 0.005 ? money(ar) : "–"; }
+      else if (c.t === "money") { const v = sumOf(c.k); td.className = "right" + (_wipBad(c.k, v) ? " neg" : ""); td.textContent = v ? money(v) : "–"; }
       else td.className = "left";
       gtr.appendChild(td);
     }
@@ -6050,10 +6043,12 @@ function renderProjects() {
           if (num(r.pure_job_borrow) > 0) { const t = document.createElement("span"); t.className = "tag tag-borrow"; t.textContent = "borrowing"; t.title = "Cost to complete exceeds what is left to bill - " + money(r.pure_job_borrow); td.appendChild(t); } }
         else if (c.t === "text") { td.className = "left"; const sp = document.createElement("span"); sp.className = "nm"; sp.textContent = v == null || v === "" ? "–" : String(v); sp.title = sp.textContent; td.appendChild(sp); }
         else if (c.k === "percent_complete") { td.className = "right"; td.textContent = pct(v); const cond = _wipCond("pctbar", r); if (cond) { if (cond.bar != null) { td.classList.add("wip-bar"); td.style.setProperty("--bar", cond.bar + "%"); } if (cond.bg) td.style.background = cond.bg; if (cond.fg) td.style.color = cond.fg; if (cond.title) td.title = cond.title; } }
-        else if (c.k === "_overunder") { td.className = "right"; const n = num(v); const sp = document.createElement("span"); sp.className = "cell" + (n < 0 ? " neg" : n > 0 ? " pos" : ""); sp.textContent = n ? money(n) : "–"; sp.title = n < 0 ? "Underbilled - earned ahead of billed, you are financing the job (click to copy)" : n > 0 ? "Overbilled - billed ahead of earned, holding the GC's cash (click to copy)" : ""; sp.onclick = () => copy(String(Math.round(n))); td.appendChild(sp);
-          const cond = _wipCond(n < 0 ? "under" : "over", r); if (cond && cond.bg) td.style.background = cond.bg; }
-        else if (c.k === "_ar") { td.className = "right"; if (num(v) > 0.005) { const mc = moneyCell(v); mc.classList.add("ar-open-amt"); td.appendChild(mc); } else td.textContent = "–"; }
+        else if (c.k === "gross_profit_pct") { td.className = "right" + (v != null && v !== "" && num(v) < 0 ? " neg" : ""); td.textContent = v == null || v === "" ? "–" : pct(v); }
+        else if (c.k === "overbillings" || c.k === "underbillings") { td.className = "right"; const n0 = num(v);
+          if (n0 > 0.5) { const mc = moneyCell(v); if (c.k === "underbillings") mc.classList.add("neg"); td.appendChild(mc); const cond = _wipCond(c.k === "underbillings" ? "under" : "over", r); if (cond && cond.bg) td.style.background = cond.bg; }
+          else { td.textContent = "–"; td.classList.add("dim"); } }
         else if (c.k === "costs_to_date") { td.className = "right"; td.appendChild(moneyCell(v)); if (r.costs_loaded != null) td.title = `WIP report ${money(v)} · QuickBooks ${money(r.costs_loaded)}${loadedAt("Costs (QBO)") ? " (loaded " + fmtDate(loadedAt("Costs (QBO)"), true) + ")" : ""}`; }
+        else if (c.t === "money") { td.className = "right"; if (v == null || v === "") { td.textContent = "–"; td.classList.add("dim"); } else { const mc = moneyCell(v); if (_wipBad(c.k, num(v))) mc.classList.add("neg"); td.appendChild(mc); } }
         else { td.className = "right"; td.appendChild(moneyCell(v)); }
         tr.appendChild(td);
       }

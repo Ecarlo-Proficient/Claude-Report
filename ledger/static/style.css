@@ -2056,3 +2056,22 @@ p.help-pop { margin-top: 0; }
 /* a plain link inside a table (vendor / payee names that open their page) uses the contrast-safe accent, never the
    browser's default blue - it was near-invisible in dark mode (2026-09-24 visual QC) */
 table.grid td a:not([class]) { color: var(--accent-text); }
+/* Projects = the full WIP schedule, 17 columns (2026-09-24): compact so it fits a normal screen - tighter cells, the
+   name capped (full name on hover); Project stays pinned when it does scroll sideways */
+.proj-grid { font-size: .86em; }
+.proj-grid th, .proj-grid td { padding: 7px 7px; }
+.proj-grid thead th { font-size: .82em; }
+.proj-grid td:nth-child(2) .nm { max-width: 22ch; }
+/* Project AND Name pinned: the numbers scroll under them, the job never scrolls away */
+.proj-grid th:first-child, .proj-grid td:first-child { min-width: 150px; max-width: 150px; overflow: hidden; }
+.proj-grid th:nth-child(2), .proj-grid td:nth-child(2) { position: sticky; left: 150px; z-index: 1; background: var(--surface); box-shadow: 1px 0 0 var(--border); }
+.proj-grid tr:hover td:nth-child(2) { background: var(--row-hover); }
+.proj-grid tr.bill-group td:nth-child(2) { background: inherit; }
+.proj-grid thead th:first-child, .proj-grid thead th:nth-child(2) { z-index: 3; }
+/* the division band's pinned cells are SOLID (same tint as the band) - "inherit" left them see-through and the
+   scrolled numbers showed through the label (2026-09-24 visual QC) */
+.proj-grid tr.bill-group > td:first-child, .proj-grid tr.bill-group > td:nth-child(2) { background: color-mix(in srgb, var(--accent) 8%, var(--surface-2)); }
+@media (max-width: 720px) {   /* a phone: only Project stays pinned - two pinned columns would fill the screen */
+  .proj-grid th:nth-child(2), .proj-grid td:nth-child(2) { position: static; box-shadow: none; }
+  .proj-grid th:first-child, .proj-grid td:first-child { min-width: 0; max-width: 130px; }
+}
