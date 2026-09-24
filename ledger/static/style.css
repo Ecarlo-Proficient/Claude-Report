@@ -1945,7 +1945,7 @@ table.qa-repair-tbl th { font-weight: 600; color: var(--text-dim); font-size: .8
 .acct-help { margin: 0 0 8px; }
 .acct-help summary { cursor: pointer; color: var(--text-dim); list-style: none; width: fit-content; font-size: .95em; }
 .acct-help summary::-webkit-details-marker { display: none; }
-.acct-groups { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 4px 0 12px; }
+.acct-groups { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 4px var(--pad-x) 12px; }   /* inset like every other row (2026-09-24 visual QC) */
 .acct-group { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; text-align: left; padding: 10px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text); cursor: pointer; font-family: var(--font); }
 .acct-group:hover { border-color: var(--accent); }
 .acct-group.on { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
@@ -1973,7 +1973,7 @@ tr.qa-pay > td { font-weight: 500; }
 tr.qa-child > td { color: var(--text-dim); font-size: .92em; }
 tr.qa-child > td:first-child { padding-left: 28px; }
 .qa-sub { margin-top: 2px; font-size: .85em; color: var(--text-dim); white-space: nowrap; }
-.qa-sub a { color: var(--accent); }
+.qa-sub a { color: var(--accent-text); }
 
 /* Customer Center division rows use the real columns (owner 2026-09-23) */
 tr.cust-div td { font-weight: 600; }
@@ -2042,3 +2042,17 @@ table.pp-drawpl-t td.pp-pva-act.neg { color: var(--neg-text); }
 table.pp-drawpl-t td.pp-pva-diff { color: var(--text); }
 .qa-okcell { white-space: nowrap; }
 .qa-undo { margin-left: 8px; font-size: .85em; }
+
+/* page help (i) on the title line (2026-09-24) - was a <details> hanging off the panel's left edge */
+button.help-i { border: 0; background: none; padding: 0 2px; margin-left: 6px; font: inherit; font-weight: 400; font-size: .95em;
+  color: var(--text-dim); cursor: pointer; line-height: 1; vertical-align: 0; }
+button.help-i:hover, button.help-i.on { color: var(--accent); }
+p.help-pop { margin-top: 0; }
+/* a panel heading never crushes its controls (2026-09-24 visual QC: "90 days" was cut off, buttons broke in two) -
+   the controls stay one line each and drop under the title when the row is too narrow */
+.widget-head { flex-wrap: wrap; gap: 6px 12px; }
+.widget-head .wh-right { flex-wrap: wrap; }
+.widget-head .seg, .widget-head .seg-btn, .widget-head .btn { white-space: nowrap; }
+/* a plain link inside a table (vendor / payee names that open their page) uses the contrast-safe accent, never the
+   browser's default blue - it was near-invisible in dark mode (2026-09-24 visual QC) */
+table.grid td a:not([class]) { color: var(--accent-text); }

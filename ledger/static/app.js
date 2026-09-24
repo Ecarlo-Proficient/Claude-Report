@@ -170,6 +170,15 @@ if (window.MutationObserver && !window.__grpObs) {
   _grpDecorate(document.body);
 }
 
+// ── Page help (i) (owner 2026-09-24: the (i) hung off the panel edge on every page): the icon sits on the title line
+// (button.help-i inside the h2), the explanation is the panel's p.help-pop, shown / hidden in place - no scroll.
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("button.help-i"); if (!b) return;
+  e.preventDefault(); e.stopPropagation();
+  const w = b.closest(".widget"); const pop = w && w.querySelector("p.help-pop"); if (!pop) return;
+  pop.hidden = !pop.hidden; b.classList.toggle("on", !pop.hidden); b.setAttribute("aria-expanded", String(!pop.hidden));
+});
+
 // ── Formatting ────────────────────────────────────────────────────────────
 const isNum = v => typeof v === "number" && !Number.isNaN(v);
 function money(v) {
@@ -978,7 +987,7 @@ function _drawCustomer(d) { return _drawClientByProj[d.project_no || ""] || "(no
 // generic blurb (owner 2026-08-28: "change the desc to show what it's filtering ... All = generic").
 // Swap a tab's `.hint` between its generic blurb and a live "Showing: ..." filter summary.
 function _setHintFilter(tab, summary) {
-  const h = document.querySelector(`.tab-page[data-tab="${tab}"] .hint, [data-sec="${tab}"] .hint`); if (!h) return;
+  const h = document.querySelector(`.tab-page[data-tab="${tab}"] .hint:not(.help-pop), [data-sec="${tab}"] .hint:not(.help-pop)`); if (!h) return;   // never the (i) explanation
   if (!h.dataset.generic) h.dataset.generic = h.innerHTML;   // capture the generic blurb once
   if (summary) { h.innerHTML = `<b>Showing:</b> ${_ge(summary)} <span class="hint-clear-note">- clear the filters for the full list</span>`; h.classList.add("hint-filtered"); }
   else { h.innerHTML = h.dataset.generic; h.classList.remove("hint-filtered"); }
@@ -3323,11 +3332,11 @@ function renderInvAmounts(all, f) {
     const caret = document.createElement("span"); caret.className = "bg-caret"; caret.textContent = expanded ? "▾ " : "▸ ";
     { const gcb = document.createElement("input"); gcb.type = "checkbox"; gcb.className = "inv-pick-all"; gcb.title = "Pick every invoice of this client for the collections report";
       gcb.checked = g.rows.every(x => invPick.has(invKey(x))); gcb.indeterminate = !gcb.checked && g.rows.some(x => invPick.has(invKey(x)));
-      gcb.onclick = (e) => e.stopPropagation(); gcb.onchange = () => { for (const x of g.rows) { if (gcb.checked) invPick.add(invKey(x)); else invPick.delete(invKey(x)); } renderOpenInvoices(); }; caret.appendChild(gcb); }
+      gcb.onclick = (e) => e.stopPropagation(); gcb.onchange = () => { for (const x of g.rows) { if (gcb.checked) invPick.add(invKey(x)); else invPick.delete(invKey(x)); } renderOpenInvoices(); }; caret._pick = gcb; }   // beside the arrow, never inside it (the arrow is a fixed 1.25em box)
     const nm = document.createElement("span"); nm.className = "g-cust"; nm.textContent = g.client;
     const ad = invClientAvgDays(g.client);
     const sub = document.createElement("span"); sub.className = "g-sub"; sub.hidden = true;   // (the metrics grid replaced the text run)
-    const cellG = document.createElement("div"); cellG.className = "bg-cell"; const leftG = document.createElement("span"); leftG.className = "bg-left"; leftG.appendChild(caret); leftG.appendChild(nm); cellG.appendChild(leftG);
+    const cellG = document.createElement("div"); cellG.className = "bg-cell"; const leftG = document.createElement("span"); leftG.className = "bg-left"; leftG.appendChild(caret); if (caret._pick) leftG.appendChild(caret._pick); leftG.appendChild(nm); cellG.appendChild(leftG);
     bandMetrics(cellG, [[g.rows.length, "invoices"], [money(g.open), "open", (g.open > 0.005 ? "neg" : "") + " boxed"], [money(g.billed), "billed"], [ad != null ? ad + "d" : "–", "avg days to pay"]]);
     htd.appendChild(cellG); hr.appendChild(htd);
     hr.onclick = () => { if (invExpanded.has(g.client)) invExpanded.delete(g.client); else invExpanded.add(g.client); renderOpenInvoices(); };

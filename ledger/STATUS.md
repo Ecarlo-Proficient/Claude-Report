@@ -4,6 +4,15 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-24 · **Visual QC fixes** (owner: "the i is messed up on all pages. let's add a visual qc after you are done
+  instead of editing and shipping right away"). (a) The page help (i) was a `<details>` on its own line hanging off the
+  panel edge (Bills to fix, QBO changes, Checks QBO changed, Uncleared checks): now `button.help-i` right after the
+  title, toggling `p.help-pop` in place; `_setHintFilter` never writes into the help text. (b) Invoice Tracker client
+  rows: the pick-all checkbox was nested INSIDE the arrow (a fixed 1.25em box) and sat on the name - now beside it.
+  (c) Bills to fix group boxes inset like every other row. (d) A panel heading's controls stay one line each and drop
+  under the title when narrow ("90 days" was cut off). (e) Plain links in tables use `--accent-text` (the browser's
+  default blue was near-invisible in dark mode). Checked: the 4 audit pages + Invoice Tracker at desktop and phone
+  width, light and dark, before shipping.
 - 2026-09-24 · **QBO changes: "ck # changed" + the owner's OK** (owner: "it's ok that it flagged it then, i need to see
   why it was done that way, what if they made a mistake? just needs to say ck # changed then. and need a way to click to
   say that it's ok and to discard for next run"). The flag reads "ck # changed" and Before / After show the old and new
