@@ -360,7 +360,7 @@
           <div class="sync-bar"><div class="sync-bar-fill" id="qaFill"></div></div>
           <div class="sync-step" id="qaStep"></div>
         </div>
-        <p class="hint">Every record QuickBooks <b>deleted, edited, restored or added</b> since the previous mirror refresh, stamped with QuickBooks' own time and flagged in plain words - a paid bill deleted, a payment that lost its bills, a bill reopened, a void. The mirror keeps each record as it was before the change. QuickBooks' API never says <i>who</i> - the audit log inside QuickBooks does.</p>
+        <details class="acct-help"><summary title="How this page works">ⓘ</summary><p class="hint">What QuickBooks deleted, edited or added, with its own time. A check that lost its bills is one row - the bills it reopened fold under it; the fix is on <b>Checks QBO changed</b>. QuickBooks' own audit log says who.</p></details>
         <div class="kpi-row" id="qaStats"></div>
         <div class="acct-filters" id="qaFilters"></div>
         <div class="filters">
@@ -401,6 +401,33 @@
       </section>
     </section><!-- /sec: checkdrift -->
     </div><!-- /tab: checkdrift -->
+
+    <!-- Uncleared checks: not matched / not deposited in QuickBooks (owner 2026-09-24) -->
+    <div class="tab-page" data-tab="uncleared" hidden>
+    <section class="subpage" data-sec="uncleared" id="sec-uncleared">
+      <section class="widget">
+        <div class="widget-head">
+          <h2>Uncleared checks - not matched or not deposited <span class="count" id="ucNote"></span></h2>
+          <span class="wh-right">
+            <button class="btn small" id="btnUcRefresh" title="Pull the uncleared checks from QuickBooks (a few report calls, Touch ID)">⟳&nbsp;Refresh from QuickBooks</button>
+          </span>
+        </div>
+        <div class="sync-progress" id="ucProg" hidden>
+          <div class="sync-bar"><div class="sync-bar-fill" id="ucFill"></div></div>
+          <div class="sync-step" id="ucStep"></div>
+        </div>
+        <details class="acct-help"><summary title="How this page works">ⓘ</summary><p class="hint">Every check QuickBooks still shows as <b>uncleared</b> - in QuickBooks "not matched" and "not deposited" are the same flag. Each bank account shows how far its bank-feed matching has got; a check older than that date was not cashed, or was cashed and never matched. Accounts that are never matched to a bank feed (Joint Checks) are kept apart. Nothing here writes to QuickBooks.</p></details>
+        <div class="kpi-row" id="ucStats"></div>
+        <div class="acct-filters" id="ucFilters"></div>
+        <div class="filters">
+          <input type="search" id="ucSearch" placeholder="Find a payee, check #, amount…" autocomplete="off">
+        </div>
+        <div class="table-scroll">
+          <table class="grid" id="ucTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </section><!-- /sec: uncleared -->
+    </div><!-- /tab: uncleared -->
 
     <!-- Bills to fix: its own page (owner 2026-09-23: "i have to scroll past the deleted section just to get to the bill audit") -->
     <div class="tab-page" data-tab="billaudit" hidden>

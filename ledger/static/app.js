@@ -105,6 +105,7 @@ function applySettings() {
 const GRP_KINDS = [
   { sel: "tr.bill-group", kind: "band", open: false },        // vendor / client / division bands in tables
   { sel: "tr.vp-pay", kind: "sib", open: false, until: "tr.vp-pay" },   // vendor page Payments: a payment over the bills it paid (owner 2026-09-22)
+  { sel: "tr.qa-pay", kind: "sib", open: false, until: "tr:not(.qa-child)" },   // QBO changes: a check over the bills it lost (owner 2026-09-24: "it's just too much")
   { sel: "tr.sys-group", kind: "band", open: false },         // Systems: a domain
   { sel: "tr.tr-msum", kind: "band", open: false },           // the money trail: a month
   { sel: ".pnl-codegrp", kind: "sib", open: false, until: ".pnl-codegrp" },   // P&L: a job type over its cost codes
@@ -235,12 +236,12 @@ const NAV_GROUPS = [
   { id: "projects",  label: "Projects",  tabs: ["projects"] },
   { id: "vendors",   label: "Vendors",   tabs: ["bills", "vendorcenter"] },
   { id: "customers", label: "Customers", tabs: ["invoices", "customercenter", "payments", "sales"] },
-  { id: "company",   label: "Company",   tabs: ["money", "billaudit", "qboaudit", "checkdrift"] },   // each audit is its own page (owner 2026-09-23 / 09-24)
+  { id: "company",   label: "Company",   tabs: ["money", "billaudit", "qboaudit", "checkdrift", "uncleared"] },   // each audit is its own page (owner 2026-09-23 / 09-24)
   { id: "tools",     label: "Tools",     tabs: ["wipreview", "review", "console", "systems"], hidden: true },   // from the gear, not the bar
 ];
 const TAB_LABELS = {
   projects: "Projects", bills: "Bill Tracker", vendorcenter: "Vendor Center", invoices: "Invoice Tracker", customercenter: "Customer Center",
-  payments: "Payments received", sales: "Sales pipeline", money: "Money", billaudit: "Bills to fix", qboaudit: "QBO changes", checkdrift: "Checks QBO changed",
+  payments: "Payments received", sales: "Sales pipeline", money: "Money", billaudit: "Bills to fix", qboaudit: "QBO changes", checkdrift: "Checks QBO changed", uncleared: "Uncleared checks",
   wipreview: "WIP Review", review: "WIP review", console: "Console", systems: "Systems", paybills: "Pay run", liens: "Lien register",
 };
 const HIDDEN_TAB_GROUP = { paybills: "vendors", liens: "vendors" };   // pages without a sub-tab (opened from the Bill Tracker): the Vendors group stays lit
@@ -290,6 +291,7 @@ function setTab(t) {
   if (t === "billaudit") loadAccounting();
   if (t === "qboaudit") loadQboAudit();
   if (t === "checkdrift") loadCheckDrift();
+  if (t === "uncleared") loadUncleared();
   if (t === "money") { loadHealth(); renderPnl(); }
   if (t === "wipreview") loadWipReview();
   if (t === "review") loadReview();
@@ -7956,20 +7958,18 @@ function renderQboAudit() {
     tbody.innerHTML = QA && QA.error ? `<tr><td class="left" style="padding:14px;color:var(--text-dim)">${_ge(QA.error)}</td></tr>` : "";
     return;
   }
-  const all = QA.changes || [], flagged = all.filter(c => c.flags.length), fc = QA.flag_counts || {}, kc = QA.counts || {};
+  const everything = QA.changes || [], fc = QA.flag_counts || {};
+  const kids = {}; for (const c of everything) if (c.parent_id) (kids[c.parent_id] = kids[c.parent_id] || []).push(c);   // bills a check lost, under the check
+  const all = everything.filter(c => !c.parent_id), flagged = all.filter(c => c.flags.length);
   if (note) note.textContent = `${all.length} change${all.length === 1 ? "" : "s"} in ${qaDays} days · ${flagged.length} flagged · mirror refreshed ${QA.last_refresh ? fmtDate(QA.last_refresh, true) : "never"}`;
   stats.innerHTML = "";
   const tile = (label, val, sub, bad) => { const k = document.createElement("div"); k.className = "kpi" + (bad ? " kpi-neg" : ""); k.innerHTML = `<div class="k-label"></div><div class="k-value"></div><div class="k-sub"></div>`;
     k.querySelector(".k-label").textContent = label; k.querySelector(".k-value").textContent = val; k.querySelector(".k-sub").textContent = sub || ""; stats.appendChild(k); };
-  const dels = all.filter(c => c.kind === "deleted");
-  tile("Deleted", dels.length, dels.length ? money(dels.reduce((s, c) => s + num(c.total_before), 0)) + " of transactions" : "nothing deleted", dels.length > 0);
-  tile("Paid bills deleted", fc["deleted paid bill"] || 0, "the check that paid it lost EVERY bill on it", !!fc["deleted paid bill"]);
-  { const reps = all.filter(c => c.repair && c.repair.left), owed = reps.reduce((s, c) => s + num(c.repair.to_apply), 0);
-    tile("Checks to re-apply", reps.length, reps.length ? money(owed) + " of bills to put back" : "none waiting", reps.length > 0); }
-  tile("Reopened", fc["reopened"] || 0, "a paid bill or invoice open again", !!fc["reopened"]);
+  const dels = all.filter(c => c.kind === "deleted" && !c.parent_id);
+  tile("Deleted", dels.length, dels.length ? money(dels.reduce((s, c) => s + num(c.total_before), 0)) : "nothing deleted", dels.length > 0);
+  tile("Paid bills deleted", fc["deleted paid bill"] || 0, "", !!fc["deleted paid bill"]);
+  tile("Checks that lost bills", fc["payment unapplied"] || 0, "fix on Checks QBO changed", !!fc["payment unapplied"]);
   tile("Voided", fc["voided"] || 0, "", false);
-  tile("Edited", kc.edited || 0, "any change to a record on file", false);
-  tile("Added", kc.created || 0, "new records", false);
   filt.innerHTML = "";
   const chip = (label, key, n) => { const b = document.createElement("button"); b.className = "acct-chip" + (qaFlag === key ? " active" : ""); b.innerHTML = `${_ge(label)} <span class="ac-n">${n}</span>`;
     b.onclick = () => { qaFlag = qaFlag === key ? null : key; renderQboAudit(); }; filt.appendChild(b); };
@@ -7984,18 +7984,24 @@ function renderQboAudit() {
   tbody.innerHTML = "";
   if (!rows.length) { tbody.innerHTML = `<tr><td colspan="${cols.length}" class="left" style="padding:14px;color:var(--text-dim)">${all.length ? "Nothing matches." : "No changes in this window - refresh the mirror to check again."}</td></tr>`; return; }
   const frag = document.createDocumentFragment();
-  for (const c of rows.slice(0, 600)) {
+  const qaRow = (c, child) => {
     const tr = document.createElement("tr");
+    if (child) tr.className = "qa-child";
+    else if (kids[c.id]) { tr.className = "qa-pay"; tr.dataset.grpkey = c.rec_id + "|" + c.id; }
     tr.appendChild(leftText(c.changed_at ? fmtDate(c.changed_at, true) : "–"));
     { const td = document.createElement("td"); td.className = "left qa-what";
       if (!c.flags.length) { const s = document.createElement("span"); s.className = "st st-dim"; s.textContent = c.kind; td.appendChild(s); }
       for (const f of c.flags) { const s = document.createElement("span"); s.className = "qa-flag " + qaFlagCls(f); s.textContent = f; td.appendChild(s); }
-      if (c.knocked_out) { const k = c.knocked_out, d = document.createElement("div"); d.className = "qa-knock";
-        d.textContent = k.no_history
-          ? `check #${k.check || "?"} (${qaCents(k.check_total)}) has ${qaCents(k.applied_now)} applied now` +
-            (k.only_this_bill ? ` - it paid only this bill: re-apply it to ${k.replacement ? "the re-entered copy #" + k.replacement.doc_number + " once approved" : "the bill once re-entered and approved"}`
-                              : " - it paid other bills too; this was stripped before the log kept the full list")
-          : k.left ? `check #${k.check} lost all ${k.bills} bills - re-apply list under that check` : `check #${k.check} re-applied`;
+      const nk = (kids[c.id] || []).length;
+      const fixCheck = c.entity === "BillPayment" && (c.repair || c.flags.includes("payment unapplied")) ? c.doc_number : (c.knocked_out && c.knocked_out.check);
+      if (nk || fixCheck) {                          // one short line under the flag: how many bills it reopened + the fix (on ONE page: Checks QBO changed)
+        const d = document.createElement("div"); d.className = "qa-sub";
+        if (nk) d.append(`${nk} bill${nk === 1 ? "" : "s"} reopened`);
+        if (fixCheck && typeof loadCheckDrift === "function") {
+          if (nk) d.append(" · ");
+          const a = document.createElement("a"); a.href = "#"; a.textContent = c.entity === "BillPayment" ? "fix ↗" : `fix check #${fixCheck} ↗`;
+          a.onclick = (e) => { e.preventDefault(); e.stopPropagation(); const q = $("#cdSearch"); if (q) q.value = String(fixCheck); cdFilter = "all"; setTab("checkdrift"); };
+          d.appendChild(a); }
         td.appendChild(d); }
       tr.appendChild(td); }
     tr.appendChild(leftText(QA_ENTITY[c.entity] || c.entity));
@@ -8015,49 +8021,18 @@ function renderQboAudit() {
     { const td = document.createElement("td"); td.className = "right"; const v = c.kind === "deleted" ? null : c.balance_after; if (v == null) { td.textContent = "–"; td.classList.add("dim"); } else td.textContent = money(v); tr.appendChild(td); }
     { const td = document.createElement("td"); td.className = "left"; const s = document.createElement("span"); s.className = "st " + (c.deleted_now ? "st-bad" : "st-dim");
       s.textContent = c.deleted_now ? "deleted in QuickBooks" : "on file"; if (c.has_before) s.title = "The record as it was before this change is kept in the mirror (the repair material)"; td.appendChild(s); tr.appendChild(td); }
-    frag.appendChild(tr);
-    if (c.repair) frag.appendChild(qaRepairRow(c.repair, cols.length));
+    return tr;
+  };
+  for (const c of rows.slice(0, 600)) {
+    frag.appendChild(qaRow(c, false));
+    for (const k of kids[c.id] || []) frag.appendChild(qaRow(k, true));
   }
   tbody.appendChild(frag);
   if (rows.length > 600) { const tr = document.createElement("tr"); const td = document.createElement("td"); td.colSpan = cols.length; td.className = "left dim"; td.style.padding = "10px 14px"; td.textContent = `${rows.length - 600} more - narrow the search`; tr.appendChild(td); tbody.appendChild(tr); }
 }
 
-// A check that lost its bills (deleting ONE paid bill unapplies the WHOLE check - owner 2026-09-23, Core
-// bill 1353 -> check 25730 lost 15). The list comes from the mirror's before copy: every bill it paid, the
-// amount to tick, and what the bill is now. A re-entered copy starts QBO approval over - paying it before a
-// PM approves skips the approval (paying does NOT approve it), so it is called out, never just listed.
-const QA_REPAIR_STATE = { "open": ["re-apply", "warn"], "re-applied": ["re-applied", "ok"], "copy re-applied": ["copy re-applied", "ok"],
-  "copy needs approval": ["re-entered copy - get it approved, then re-apply", "neg"], "deleted, no copy": ["deleted - not re-entered yet", "neg"] };
 // cents: these are the amounts typed back into the check, to the penny
 const qaCents = v => v == null || v === "" || Number.isNaN(Number(v)) ? "–" : "$" + Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-function qaRepairRow(rep, span) {
-  const tr = document.createElement("tr"); tr.className = "qa-repair";
-  const td = document.createElement("td"); td.colSpan = span; td.className = "left";
-  const h = document.createElement("div"); h.className = "qa-repair-head";
-  h.textContent = rep.left
-    ? `Re-apply check #${rep.check}: ${rep.left} of ${rep.bills.length} bill${rep.bills.length === 1 ? "" : "s"}, ${qaCents(rep.to_apply)} of ${qaCents(rep.total)}` +
-      (rep.caused_by.length ? ` · lost when paid bill ${rep.caused_by.map(d => "#" + d).join(", ")} was deleted` : "")
-    : `Check #${rep.check} is whole again - all ${rep.bills.length} bills re-applied`;
-  td.appendChild(h);
-  if (rep.left) {
-    const t = document.createElement("table"); t.className = "qa-repair-tbl";
-    t.innerHTML = `<thead><tr><th class="left">Bill #</th><th class="left">Bill date</th><th class="right">Apply</th><th class="right">Open now</th><th class="left">Status</th></tr></thead>`;
-    const tb = document.createElement("tbody");
-    for (const b of rep.bills) {
-      const r = document.createElement("tr"), rp = b.replacement;
-      const id = rp ? rp.id : (b.deleted ? null : b.bill_id);
-      r.appendChild(qboLinkCell(rp ? rp.doc_number : b.doc_number, id ? qboUrl("bill", id) : null, "Open the bill in QuickBooks"));
-      r.appendChild(leftText(b.txn_date ? fmtDateShort(b.txn_date) : "–"));
-      { const c = document.createElement("td"); c.className = "right"; c.textContent = qaCents(b.amount); r.appendChild(c); }
-      { const c = document.createElement("td"); c.className = "right"; const v = rp ? rp.balance : (b.deleted ? null : b.balance); c.textContent = v == null ? "–" : qaCents(v); if (v == null) c.classList.add("dim"); r.appendChild(c); }
-      { const c = document.createElement("td"); c.className = "left"; const [lbl, cls] = QA_REPAIR_STATE[b.state] || [b.state, "warn"];
-        const s = document.createElement("span"); s.className = "qa-flag " + cls; s.textContent = lbl; c.appendChild(s); r.appendChild(c); }
-      tb.appendChild(r);
-    }
-    t.appendChild(tb); td.appendChild(t);
-  }
-  tr.appendChild(td); return tr;
-}
 
 // ── Checks QBO changed (owner 2026-09-24: "qbo freaks out when a bill paid gets changed and does automatic changes
 // without ever consenting or warning ... subs it happens to the most"). /api/checkdrift = ledger/check_drift.py over
@@ -8167,6 +8142,76 @@ function cdFixRow(r, span) {
   for (const b of r.late) line("Put on a later bill", b.doc_number, qboUrl("bill", b.id), b.txn_date, b.amount, "take off - that week went out short", "neg");
   t.appendChild(tb); td.appendChild(t);
   tr.appendChild(td); return tr;
+}
+
+// ── Uncleared checks (owner 2026-09-24: "a list of all unmatched checks and/or any checks that haven't been deposited").
+// /api/uncleared = ledger/load_uncleared_checks.py: QuickBooks' TransactionList `cleared=Uncleared` filter (the column
+// is hidden, the filter works). In QuickBooks "not matched" and "not deposited" are the same flag. Each account says
+// how far its bank-feed matching has got; Joint Checks is never feed-matched and stays apart. Read-only.
+let UC = null, ucFilter = "old";
+const UC_FILTERS = [["old", "Older than 30 days", c => c.feed_matched && c.days > 30], ["bank", "All bank checks", c => c.feed_matched],
+  ["recent", "Last 30 days", c => c.feed_matched && c.days <= 30], ["other", "Never feed-matched (Joint Checks …)", c => !c.feed_matched]];
+async function loadUncleared(force) {
+  const note = $("#ucNote"), table = $("#ucTable"); if (!table) return;
+  if (UC && UC.ok && !force) { renderUncleared(); return; }
+  if (note) note.textContent = "loading…";
+  skeletonInto(table.tBodies[0] || table, 6);
+  try { UC = await (await fetch("/api/uncleared")).json(); } catch (e) { UC = { ok: false, error: String(e) }; }
+  renderUncleared();
+}
+function renderUncleared() {
+  const note = $("#ucNote"), stats = $("#ucStats"), filt = $("#ucFilters"), table = $("#ucTable"); if (!table) return;
+  const thead = table.querySelector("thead"), tbody = table.querySelector("tbody");
+  if (!UC || !UC.ok) {
+    if (note) note.textContent = ""; stats.innerHTML = ""; filt.innerHTML = ""; thead.innerHTML = "";
+    tbody.innerHTML = `<tr><td class="left" style="padding:14px;color:var(--text-dim)">${_ge((UC && UC.error) || "")}</td></tr>`;
+    return;
+  }
+  const all = UC.checks || [];
+  if (note) note.textContent = `pulled ${UC.loaded_at ? fmtDate(UC.loaded_at, true) : "never"}`;
+  stats.innerHTML = "";
+  const stat = (label, val, sub, bad) => { const k = document.createElement("div"); k.className = "kpi" + (bad ? " kpi-neg" : ""); k.innerHTML = `<div class="k-label"></div><div class="k-value"></div><div class="k-sub"></div>`;
+    k.querySelector(".k-label").textContent = label; k.querySelector(".k-value").textContent = val; k.querySelector(".k-sub").textContent = sub || ""; stats.appendChild(k); };
+  const sum = xs => xs.reduce((t, c) => t + num(c.amount), 0);
+  const old = all.filter(UC_FILTERS[0][2]), bank = all.filter(UC_FILTERS[1][2]), other = all.filter(UC_FILTERS[3][2]);
+  stat("Older than 30 days", money(sum(old)), `${old.length} checks - not cashed, or cashed and never matched`, old.length > 0);
+  stat("All bank checks", money(sum(bank)), `${bank.length} checks`, false);
+  for (const a of UC.accounts || []) if (a.feed_matched) stat(a.account.replace(/\*+/g, " "), a.matched_through ? fmtDateShort(a.matched_through) : "–", "matched through", false);
+  stat("Never feed-matched", money(sum(other)), `${other.length} checks · Joint Checks and others`, false);
+  filt.innerHTML = "";
+  for (const [key, label, fn] of UC_FILTERS) {
+    const b = document.createElement("button"); b.className = "acct-chip" + (ucFilter === key ? " active" : "");
+    b.innerHTML = `${_ge(label)} <span class="ac-n">${all.filter(fn).length}</span>`;
+    b.onclick = () => { ucFilter = key; const y = window.scrollY; renderUncleared(); window.scrollTo(0, y); }; filt.appendChild(b);
+  }
+  const fn = (UC_FILTERS.find(f => f[0] === ucFilter) || UC_FILTERS[0])[2];
+  const q = (($("#ucSearch") || {}).value || "").trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const base = all.filter(c => fn(c) && (!q.length || q.every(w => [c.payee, c.check_no, c.account, c.amount, c.txn_date, fmtDateShort(c.txn_date)].join(" ").toLowerCase().includes(w))));
+  const rows = base.filter(c => hfPasses("uncleared", c));
+  const cols = [["Check #", "left"], ["Date", "left"], ["Payee", "left", "vendor"], ["Bank account", "left"], ["Amount", "right"], ["Days out", "right"], ["Type", "left"]];
+  thead.innerHTML = "";
+  { const tr = document.createElement("tr");
+    for (const [c, al, hk] of cols) { const th = document.createElement("th"); th.className = al; th.textContent = c;
+      if (hk) hfDecorate(th, "uncleared", hk, () => base.filter(r => hfPasses("uncleared", r, hk)), renderUncleared); tr.appendChild(th); }
+    thead.appendChild(tr); }
+  tbody.innerHTML = "";
+  if (!rows.length) { tbody.innerHTML = `<tr><td colspan="${cols.length}" class="left" style="padding:14px;color:var(--text-dim)">${all.length ? "Nothing matches." : "No uncleared checks."}</td></tr>`; return; }
+  const frag = document.createDocumentFragment();
+  for (const c of rows.slice(0, 1500)) {
+    const tr = document.createElement("tr");
+    tr.appendChild(qboLinkCell(c.check_no || "–", qboUrl(c.txn_type === "Check" ? "check" : "billpayment", c.qbo_txn_id), "Open in QuickBooks"));
+    tr.appendChild(leftText(c.txn_date ? fmtDateShort(c.txn_date) : "–"));
+    { const td = document.createElement("td"); td.className = "left";
+      if (c.payee && typeof openVendorPage === "function") { const a = document.createElement("a"); a.href = "#"; a.textContent = c.payee; a.title = "Open the vendor page"; a.onclick = (e) => { e.preventDefault(); openVendorPage(c.payee); }; td.appendChild(a); }
+      else td.textContent = c.payee || "–";
+      tr.appendChild(td); }
+    tr.appendChild(leftText(c.account || "–"));
+    { const td = document.createElement("td"); td.className = "right"; td.appendChild(moneyCell(c.amount)); tr.appendChild(td); }
+    { const td = document.createElement("td"); td.className = "right" + (c.feed_matched && c.days > 30 ? " neg" : ""); td.textContent = c.days == null ? "–" : String(c.days); tr.appendChild(td); }
+    tr.appendChild(leftText(c.txn_type === "Check" ? "Check" : "Bill payment"));
+    frag.appendChild(tr);
+  }
+  tbody.appendChild(frag);
 }
 
 // ── Accounting fixes: the Bill Tracker audits, filterable by audit type ───────
@@ -8664,6 +8709,8 @@ function init() {
   $$("#qaDays .seg-btn").forEach(b => { b.onclick = () => { qaDays = Number(b.dataset.days); loadQboAudit(true); }; });
   { const el = $("#btnQaReload"); if (el) el.onclick = () => loadQboAudit(true); }
   { const el = $("#btnCdReload"); if (el) el.onclick = () => loadCheckDrift(true); }
+  { const el = $("#btnUcRefresh"); if (el) el.onclick = () => runPipeline("uncleared", null, { btn: el, prog: $("#ucProg"), fill: $("#ucFill"), step: $("#ucStep"), after: () => loadUncleared(true) }); }
+  { const el = $("#ucSearch"); if (el) { el.addEventListener("input", renderUncleared); el.addEventListener("keydown", e => { if (e.key === "Escape") { el.value = ""; renderUncleared(); } }); } }
   { const el = $("#btnCdRefresh"); if (el) el.onclick = () => runPipeline("mirror", null, { btn: el, prog: $("#cdProg"), fill: $("#cdFill"), step: $("#cdStep"), after: () => loadCheckDrift(true) }); }
   { const el = $("#cdSearch"); if (el) { el.addEventListener("input", renderCheckDrift); el.addEventListener("keydown", e => { if (e.key === "Escape") { el.value = ""; renderCheckDrift(); } }); } }
   { const el = $("#btnQaRefresh"); if (el) el.onclick = () => runPipeline("mirror", null, { btn: el, prog: $("#qaProg"), fill: $("#qaFill"), step: $("#qaStep"), after: () => loadQboAudit(true) }); }

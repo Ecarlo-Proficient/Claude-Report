@@ -454,6 +454,10 @@ def _pipelines():
         {"key": "subloc", "label": "Sub LOC (QBO float)", "steps": [
             {"label": "Load sub LOC float (Touch ID)", "script": "ledger/load_sub_loc.py", "args": []},
         ]},
+        {"key": "uncleared", "label": "Uncleared checks (QBO)", "steps": [
+            # QBO's TransactionList `cleared=Uncleared` filter -> uncleared_check + bank_match (owner 2026-09-24)
+            {"label": "Pull uncleared checks (Touch ID)", "script": "ledger/load_uncleared_checks.py", "args": []},
+        ]},
         {"key": "healthpull", "label": "Health metrics (QBO)", "steps": [
             # Cash / P&L blocks / 13-wk flow / recurring register -> health_snapshot.
             # The Health tab derives everything else live from the other loaders' tables.
@@ -1348,6 +1352,63 @@ def _attach_payment_repairs(con, rows: list) -> None:
                                 "replacement": replacement(r["rec_id"], r.get("doc_number"), vid)}
 
 
+def _fetch_uncleared(con) -> dict:
+    """Checks QuickBooks shows as UNCLEARED (ledger/load_uncleared_checks.py). An account whose bank feed is matched
+    (bank_match.feed_matched) gets `past_match`: the check is older than the newest matched transaction there, so it
+    was not cashed or was cashed and never matched. Accounts never feed-matched (Joint Checks) come back apart."""
+    try:
+        chk = [dict(r) for r in con.execute("SELECT qbo_txn_id, txn_type, txn_date, check_no, payee, account, amount, "
+                                            "loaded_at FROM uncleared_check ORDER BY txn_date")]
+        acc = {r["account"]: dict(r) for r in con.execute("SELECT account, matched_through, feed_matched, loaded_at FROM bank_match")}
+    except sqlite3.OperationalError:
+        return {"ok": False, "error": "not pulled yet - Refresh from QuickBooks", "checks": [], "accounts": []}
+    today = _dt.date.today()
+    for c in chk:
+        a = acc.get(c["account"]) or {}
+        try:
+            c["days"] = (today - _dt.date.fromisoformat(c["txn_date"])).days
+        except (TypeError, ValueError):
+            c["days"] = None
+        c["feed_matched"] = bool(a.get("feed_matched"))
+        c["past_match"] = bool(a.get("matched_through") and c["txn_date"] and c["txn_date"] < a["matched_through"])
+        c["vendor"] = c["payee"]                   # the Vendor funnel reads .vendor
+    loaded = max((c["loaded_at"] for c in chk), default=None) or max((a.get("loaded_at") or "" for a in acc.values()), default=None)
+    return {"ok": True, "checks": chk, "accounts": sorted(acc.values(), key=lambda a: (not a["feed_matched"], a["account"])),
+            "loaded_at": loaded}
+
+
+def _fold_side_effects(con, rows: list) -> None:
+    """The owner 2026-09-24: "fix this mess, it's just too much". A check that loses its bills reopens EVERY bill it
+    paid, and each came through as its own "reopened" row (261 in 30 days). Those are one event, not 261: a Bill row
+    flagged only "reopened" whose before copy was linked to a bill payment that changed within the hour folds under
+    that payment (`parent_id`; the payment gets `children`). A vendor / customer balance moving is not a record
+    change - its "reopened" flag goes."""
+    from shared import qbo_mirror as mirror
+    pays = {}
+    for r in rows:
+        if r["entity"] == "BillPayment" and r["kind"] == "edited":
+            pays.setdefault(r["rec_id"], []).append(r)
+    for r in rows:
+        if r["entity"] in ("Vendor", "Customer"):
+            r["flags"] = [f for f in r["flags"] if f != "reopened"]
+            continue
+        if r["entity"] != "Bill" or r["kind"] != "edited" or r["flags"] != ["reopened"] or not r.get("has_before"):
+            continue
+        before = mirror.change_before(con, r["id"]) or {}
+        t = _dt.datetime.fromisoformat(str(r["changed_at"]).replace("Z", "+00:00")) if r.get("changed_at") else None
+        for lt in before.get("LinkedTxn") or []:
+            if lt.get("TxnType") not in _PAY_LINK_TYPES:
+                continue
+            for p in pays.get(str(lt.get("TxnId")), []):
+                pt = _dt.datetime.fromisoformat(str(p["changed_at"]).replace("Z", "+00:00")) if p.get("changed_at") else None
+                if t and pt and abs((pt - t).total_seconds()) <= 3600:
+                    r["parent_id"] = p["id"]
+                    p["children"] = p.get("children", 0) + 1
+                    break
+            if r.get("parent_id"):
+                break
+
+
 def _fetch_qbo_changes(days: int = 30) -> dict:
     """The QBO Audit page's watch: the mirror's change log (shared/qbo_mirror.mirror_change) for the
     last `days` days - every record QBO deleted, edited, restored or created since the previous
@@ -1378,6 +1439,7 @@ def _fetch_qbo_changes(days: int = 30) -> dict:
             if not r.get("ref_name") and r.get("ref_id"):
                 r["ref_name"] = names.get((r.get("ref_type"), r["ref_id"]), "")
         _attach_payment_repairs(con, rows)
+        _fold_side_effects(con, rows)
         out["last_refresh"] = mirror._meta_get(con, "last_refresh")
         out["backfilled"] = mirror._meta_get(con, "changes_backfilled")
         runs = con.execute("SELECT started, mode, upserted, deleted FROM mirror_run ORDER BY id DESC LIMIT 1").fetchone()
@@ -1386,6 +1448,8 @@ def _fetch_qbo_changes(days: int = 30) -> dict:
         con.close()
     counts, fc = {}, {}
     for r in rows:
+        if r.get("parent_id"):
+            continue                               # a bill reopened only because its check lost it - counted on the check
         counts[r["kind"]] = counts.get(r["kind"], 0) + 1
         for f in r["flags"]:
             fc[f] = fc.get(f, 0) + 1
@@ -3102,6 +3166,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(_fetch_qbo_changes(int(self._query().get("days") or 30)))
             except Exception as e:         # noqa: BLE001
                 self._json({"ok": False, "changes": [], "error": f"change log read failed: {e}"})
+        elif path == "/api/uncleared":     # Uncleared checks: not matched / not deposited in QuickBooks (owner 2026-09-24)
+            con = _connect(self.db_path)
+            try:
+                self._json(_fetch_uncleared(con))
+            finally:
+                con.close()
         elif path == "/api/checkdrift":    # Checks QBO changed: paid checks QBO unapplied / moved on its own (owner 2026-09-24, check 48314)
             try:
                 self._json(check_drift.audit(since=self._query().get("since") or check_drift.SINCE))

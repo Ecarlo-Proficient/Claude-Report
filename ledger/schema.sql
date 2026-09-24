@@ -629,3 +629,23 @@ CREATE TABLE IF NOT EXISTS attachment (
     PRIMARY KEY (etype, txn_id, attachable_id)
 );
 CREATE INDEX IF NOT EXISTS ix_attachment_txn ON attachment (etype, txn_id);
+
+-- Uncleared checks (owner 2026-09-24: "a list of all unmatched checks and/or any checks that haven't been
+-- deposited"). QBO hides cleared status as a column but its TransactionList report FILTERS on it
+-- (cleared=Uncleared): ledger/load_uncleared_checks.py reloads both tables whole each run. Read-only on QBO.
+CREATE TABLE IF NOT EXISTS uncleared_check (
+    qbo_txn_id  TEXT,                               -- the check / bill payment's QBO id
+    txn_type    TEXT,                               -- 'Check' | 'Bill Payment (Check)'
+    txn_date    TEXT,
+    check_no    TEXT,
+    payee       TEXT,
+    account     TEXT,                               -- the bank account it was written on
+    amount      NUMERIC,                            -- positive: money out
+    loaded_at   TEXT
+);
+CREATE TABLE IF NOT EXISTS bank_match (
+    account          TEXT PRIMARY KEY,
+    matched_through  TEXT,                          -- newest CLEARED transaction on the account = how current matching is
+    feed_matched     INTEGER,                       -- 0 = never matched to a bank feed (Joint Checks Account)
+    loaded_at        TEXT
+);

@@ -1969,3 +1969,10 @@ table.qa-repair-tbl th { font-weight: 600; color: var(--text-dim); font-size: .8
 /* Checks QBO changed (2026-09-24): the fix steps under a check */
 ol.cd-fix { margin: 2px 0 8px 18px; padding: 0; }
 ol.cd-fix li { margin: 1px 0; }
+
+/* QBO changes (2026-09-24): a check over the bills it lost - one row, the bills fold under it */
+tr.qa-pay > td { font-weight: 500; }
+tr.qa-child > td { color: var(--text-dim); font-size: .92em; }
+tr.qa-child > td:first-child { padding-left: 28px; }
+.qa-sub { margin-top: 2px; font-size: .85em; color: var(--text-dim); white-space: nowrap; }
+.qa-sub a { color: var(--accent); }

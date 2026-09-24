@@ -251,6 +251,9 @@ on the network). What it shows:
   flags (deleted paid bill, payment unapplied, reopened, voided, class dropped…), tiles + chips + search, **Refresh
   from QuickBooks** (the `mirror` pipeline); the Bill Tracker audits sit underneath. QuickBooks' API never says who -
   the audit log inside QuickBooks does. Born 2026-09-18 (a connected app's deletions were logged as the owner).
+- **Uncleared checks** (Company) - every check QuickBooks still shows as uncleared (not matched = not deposited),
+  from QBO's TransactionList `cleared=Uncleared` filter via `ledger/load_uncleared_checks.py`; each bank account's
+  matched-through date; accounts never matched to a bank feed (Joint Checks) kept apart. `/api/uncleared`.
 - **Checks QBO changed** (Company) - checks QuickBooks rewrote on its own after they were paid (edit or delete a
   paid bill and QBO takes the check off it without a warning): money floating, the paid bill or its re-entered copy
   reading as owed again, the freed loan credit, floating money put on a later bill. Every year on file, subs first,

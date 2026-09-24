@@ -4,6 +4,20 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-24 · **QBO changes, tidied** (owner: "fix this mess, it's just too much, why is it saying to reapply cutting
+  the table?"). The re-apply blocks were full-width rows INSIDE the table - gone; the fix lives on ONE page (Checks QBO
+  changed) and each check row links there ("fix ↗", pre-filtered to that check). A check that lost its bills reopened
+  every one of them, each its own "reopened" row: `_fold_side_effects` ties a Bill row flagged only "reopened" whose
+  before copy linked it to a bill payment changed within the hour to that payment (`parent_id` / `children`); the page
+  folds them under the check (`tr.qa-pay` in GRP_KINDS, closed) and the counts skip them. Vendor / customer balance moves
+  no longer flag "reopened". Stats cut to Deleted · Paid bills deleted · Checks that lost bills · Voided; the
+  explanation sits behind the (i). 312 flagged rows -> 52 on the day.
+- 2026-09-24 · **Uncleared checks page** (Company; owner: "a list of all unmatched checks and/or any checks that haven't
+  been deposited"). QBO hides cleared status as a column, but TransactionList FILTERS on it: `ledger/load_uncleared_checks.py`
+  pulls `cleared=Uncleared` year by year + each bank account's newest CLEARED txn (matched-through) into
+  `uncleared_check` / `bank_match` (reloaded whole; `uncleared` pipeline, in the reload chain). `/api/uncleared`; the page
+  opens on feed-matched checks older than 30 days, one-line stats with each account's matched-through date, chips (30+ /
+  all bank / last 30 / never feed-matched = Joint Checks etc., kept apart), Payee funnel, search. Read-only.
 - 2026-09-24 · **Checks QBO changed: what happened, per check - facts only** (owner: "only qbo" / "you are doing too
   much pattern recognition ... we've already fixed a lot as we went"). `pattern` per check from QuickBooks evidence:
   paid bill deleted · paid bill edited (the change log shows the bill's CONTENT changed) · check rewritten (the bill
