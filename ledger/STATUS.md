@@ -4,6 +4,10 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-24 · **QBO changes: "number changed" means the NUMBER** (owner: "it's saying the numbers changed but nothing
+  changed? maybe cents?"). The flag is the check / doc number, but Before / After showed the (unchanged) amount. A blank
+  number getting one (a check printed / numbered - 48403, 48404) is no longer flagged; a real renumber shows the old
+  and new number in Before / After (`doc_before` from the change log's before copy).
 - 2026-09-24 · **QBO changes, tidied** (owner: "fix this mess, it's just too much, why is it saying to reapply cutting
   the table?"). The re-apply blocks were full-width rows INSIDE the table - gone; the fix lives on ONE page (Checks QBO
   changed) and each check row links there ("fix ↗", pre-filtered to that check). A check that lost its bills reopened

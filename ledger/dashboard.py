@@ -1466,6 +1466,15 @@ def _fold_side_effects(con, rows: list) -> None:
         if r["entity"] == "BillPayment" and r["kind"] == "edited":
             pays.setdefault(r["rec_id"], []).append(r)
     for r in rows:
+        if "number changed" in r["flags"] and r.get("has_before"):
+            # the owner 2026-09-24 ("it's saying the numbers changed but nothing changed?"): the flag is the check /
+            # doc NUMBER, not the amount. A blank number getting one is a check being printed / numbered - routine,
+            # not a change; a real renumber shows the old and new number in Before / After.
+            nb = str((mirror.change_before(con, r["id"]) or {}).get("DocNumber") or "")
+            if not nb:
+                r["flags"] = [f for f in r["flags"] if f != "number changed"]
+            else:
+                r["doc_before"] = nb
         if r["entity"] in ("Vendor", "Customer"):
             r["flags"] = [f for f in r["flags"] if f != "reopened"]
             continue

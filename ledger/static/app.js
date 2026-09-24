@@ -8118,9 +8118,13 @@ function renderQboAudit() {
     tr.appendChild(leftText(c.txn_date ? fmtDateShort(c.txn_date) : "–"));
     // before / after = what the flag is about: the money applied for a payment, the open balance for a reopen, else the total
     let vb = c.total_before, va = c.total_after, what = "total";
-    if (c.flags.includes("payment unapplied")) { vb = c.applied_before; va = c.applied_after; what = "applied to bills"; }
+    if (c.flags.includes("number changed") && c.flags.length === 1 && c.doc_before) {   // the NUMBER changed, not the money: show the numbers
+      for (const v of [c.doc_before, c.doc_number]) { const td = document.createElement("td"); td.className = "right"; td.title = "number"; td.textContent = "#" + (v || "–"); tr.appendChild(td); }
+      vb = va = undefined; what = null;
+    }
+    else if (c.flags.includes("payment unapplied")) { vb = c.applied_before; va = c.applied_after; what = "applied to bills"; }
     else if (c.flags.includes("reopened")) { vb = c.balance_before; va = c.balance_after; what = "open balance"; }
-    for (const v of [vb, va]) { const td = document.createElement("td"); td.className = "right"; td.title = what; if (v == null) { td.textContent = "–"; td.classList.add("dim"); } else td.appendChild(moneyCell(v)); tr.appendChild(td); }
+    if (what !== null) for (const v of [vb, va]) { const td = document.createElement("td"); td.className = "right"; td.title = what; if (v == null) { td.textContent = "–"; td.classList.add("dim"); } else td.appendChild(moneyCell(v)); tr.appendChild(td); }
     { const td = document.createElement("td"); td.className = "right"; const v = c.kind === "deleted" ? null : c.balance_after; if (v == null) { td.textContent = "–"; td.classList.add("dim"); } else td.textContent = money(v); tr.appendChild(td); }
     { const td = document.createElement("td"); td.className = "left"; const s = document.createElement("span"); s.className = "st " + (c.deleted_now ? "st-bad" : "st-dim");
       s.textContent = c.deleted_now ? "deleted in QuickBooks" : "on file"; if (c.has_before) s.title = "The record as it was before this change is kept in the mirror (the repair material)"; td.appendChild(s); tr.appendChild(td); }
