@@ -37,15 +37,17 @@ the SAME commit as any change to this folder.
     dashboard (`/`, `/api/healthtab`, `/api/qboaudit`, `/api/graph` all 200);
     `project-pnl --dry-run CP672`; `--help` on the WIP readers, statement reconciler,
     job audit and loan sync; every `shared/` module imports.
+- **Old 3.9 leftovers removed (2026-09-24, owner OK).** `~/Library/Python/3.9` (the system-Python
+  packages) and `statement-reconciler/.venv` moved to the Trash; `sync-all --dry-run` green after.
+- **The developer's clone:** the owner is advising them. Two commands after pulling dev:
+  `brew install python@3.14`, then `bash python-env/setup.sh`.
 
 ## OPEN ISSUES
 
-- The Docker image (`docker/`) has not been rebuilt on `python:3.14-slim`. Rebuild and
-  run it once before the next container deploy.
-- The old system-Python packages (`~/Library/Python/3.9`) and the stale
-  `statement-reconciler/.venv` (3.9) are no longer used by anything. They are left on
-  disk until the owner OKs removing them.
+- (none on the Mac side)
 
 ## TO DO
 
-- (none)
+- **Container (the developer):** `docker/` moved to `python:3.14-slim` on paper but the image
+  has not been rebuilt. It is being reworked for a new architecture that also has to bring the
+  QBO mirror into the container. That is the developer's lane and a separate piece of work.
