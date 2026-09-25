@@ -56,6 +56,7 @@ import notion_page    # noqa: E402  (local: one Notion page, whole, for the invo
 import table_export   # noqa: E402  (local: a filtered table -> grouped Excel report in ~/Downloads, POST /api/export/xlsx)
 import bill_payment_stub  # noqa: E402  (local: the check / bill-payment stub - print from the mirror into the vendor folder + the print history)
 import check_drift        # noqa: E402  (local: checks QBO rewrote after they were paid - the Checks QBO changed audit, /api/checkdrift)
+import strip_history      # noqa: E402  (local: every stripped check kept for good + the QBO support PDF, /api/checkstrips)
 
 HERE = Path(__file__).resolve().parent
 STATIC = HERE / "static"
@@ -3343,6 +3344,18 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(check_drift.audit(since=self._query().get("since") or check_drift.SINCE))
             except Exception as e:         # noqa: BLE001
                 self._json({"ok": False, "rows": [], "error": f"check audit failed: {e}"})
+        elif path == "/api/checkstrips":   # Checks QBO changed > History: every strip on record, fixed or not (owner 2026-09-25)
+            self._json(strip_history.history())
+        elif path == "/api/checkstrips/pdf":  # the QBO support report, rebuilt from the history on every click
+            try:
+                r = strip_history.build_pdf()
+            except Exception as e:         # noqa: BLE001 - a locked mirror / hung Chrome is an answer
+                r = {"ok": False, "error": str(e)}
+            target = Path(r.get("path") or "")
+            if r.get("ok") and target.is_file():
+                self._send(200, target.read_bytes(), "application/pdf")
+            else:
+                self._send(500, f"report failed: {r.get('error')}".encode(), "text/plain; charset=utf-8")
         elif path == "/api/healthtab":     # the Health tab (company-health metric layer, live)
             self._healthtab()
         elif path == "/api/bill/info":     # the bill viewer: header + every line (description, cost code, project, amount) from the ledger

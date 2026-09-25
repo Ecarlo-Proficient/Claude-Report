@@ -4,6 +4,13 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-25 · **Strip history + QBO report** (owner: "don't just remove it once i fix it, it needs a history so that we
+  can pull that pdf at anytime with the updated info"). NEW `ledger/strip_history.py`: every paid check QBO left with no
+  bills, from the mirror's change log (unapplied checks; a deleted paid bill strips the check that paid it even when the
+  check itself has no log row) + pre-log strips in `CompanyHealth/check_strip_case.json`; skips voids and renumbers.
+  Per event: trigger, bills before, saves, status + re-applied date, "paid again" (a bill the check paid that a later
+  payment pays - the 48299/48379 double payment). Checks QBO changed gains a **History** chip and a **QBO report (PDF)**
+  button (rebuilt on every click from the live history). A sweep-found deletion time shows as "by" that time.
 - 2026-09-25 · **Checks QBO changed: the fix under a check is a white card** (owner: "this is hard to read ... grey
   everywhere, it blends, there's no distinction"). The fix steps + bill lines sit in a bordered white card with a red
   edge on the grey band; the inner table no longer inherits the grid's sticky white header (the white patches), rows get

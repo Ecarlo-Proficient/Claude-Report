@@ -258,6 +258,12 @@ on the network). What it shows:
   paid bill and QBO takes the check off it without a warning): money floating, the paid bill or its re-entered copy
   reading as owed again, the freed loan credit, floating money put on a later bill. Every year on file, subs first,
   one bill per check, the fix per check. `ledger/check_drift.py` (`/api/checkdrift`; `--check <#>` on the command line).
+  **History** keeps every check QuickBooks left with no bills, fixed or not: when, the trigger (a paid bill deleted /
+  check saved with no bill edited / before the change log), bills before, saves, status with the re-applied date, and
+  any bill paid a second time. **QBO report (PDF)** rebuilds the support report from it on every click, into
+  CompanyHealth. `ledger/strip_history.py` (`/api/checkstrips`, `/api/checkstrips/pdf`; `--pdf` on the command line).
+  Strips from before the change log (09/23/2026) and the report's narrative live in
+  `CompanyHealth/check_strip_case.json` (business data, never in the repo).
 - **Copy & export** — click any number to copy it; **Export CSV** downloads the current view.
 - **Customize** (⚙) — theme (auto/light/dark), accent color, font, text size, density, width
   (**boxed by default**), which widgets show, and which table columns show. Saved per person in the

@@ -8184,13 +8184,16 @@ let CD = null, cdFilter = "subs";
 const CD_PAT_CLS = { "paid bill deleted": "neg", "paid bill edited": "neg", "check rewritten": "neg", "put on a later bill": "warn", "credit dropped": "warn" };
 const CD_FILTERS = [["subs", "Subs", r => r.sub], ["all", "Everyone", () => true],
   ["floating", "Money floating", r => r.floating > 1], ["owed", "Bill reads as owed again", r => r.reopened.length || r.copies.length],
-  ["late", "Put on a later bill", r => r.late.length]];
+  ["late", "Put on a later bill", r => r.late.length], ["history", "History", null]];
+let CSH = null;                       // the strip history (/api/checkstrips): every check left with no bills, kept after the fix
 async function loadCheckDrift(force) {
   const note = $("#cdNote"), table = $("#cdTable"); if (!table) return;
   if (CD && CD.ok && !force) { renderCheckDrift(); return; }
   if (note) note.textContent = "loading…";
   skeletonInto(table.tBodies[0] || table, 6);
+  const hist = fetch("/api/checkstrips").then(r => r.json()).catch(e => ({ ok: false, error: String(e), events: [] }));
   try { CD = await (await fetch("/api/checkdrift")).json(); } catch (e) { CD = { ok: false, error: String(e) }; }
+  CSH = await hist;
   renderCheckDrift();
 }
 function renderCheckDrift() {
@@ -8208,9 +8211,10 @@ function renderCheckDrift() {
   filt.innerHTML = "";
   for (const [key, label, fn] of CD_FILTERS) {
     const b = document.createElement("button"); b.className = "acct-chip" + (cdFilter === key ? " active" : "");
-    b.innerHTML = `${_ge(label)} <span class="ac-n">${all.filter(fn).length}</span>`;
+    b.innerHTML = `${_ge(label)} <span class="ac-n">${fn ? all.filter(fn).length : (CSH && CSH.ok ? CSH.events.length : "–")}</span>`;
     b.onclick = () => { cdFilter = key; const y = window.scrollY; renderCheckDrift(); window.scrollTo(0, y); }; filt.appendChild(b);
   }
+  if (cdFilter === "history") { renderStripHistory(thead, tbody); return; }
   const fn0 = (CD_FILTERS.find(f => f[0] === cdFilter) || CD_FILTERS[0])[2];
   const fn = fn0;
   const q = (($("#cdSearch") || {}).value || "").trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -8253,6 +8257,40 @@ function renderCheckDrift() {
   }
   tbody.appendChild(frag);
 }
+// History (owner 2026-09-25: "don't just remove it once i fix it, it needs a history"): every check QuickBooks left
+// with no bills, oldest first, fixed or not - the same list the QBO report prints (ledger/strip_history.py)
+function renderStripHistory(thead, tbody) {
+  const cols = [["When (CT)", "left"], ["Check #", "left"], ["Vendor", "left"], ["Check date", "left"], ["Amount", "right"],
+    ["Bills before", "right"], ["Saves", "right"], ["Trigger", "left"], ["Status", "left"]];
+  thead.innerHTML = ""; tbody.innerHTML = "";
+  { const tr = document.createElement("tr");
+    for (const [c, al] of cols) { const th = document.createElement("th"); th.className = al; th.textContent = c; tr.appendChild(th); }
+    thead.appendChild(tr); }
+  if (!CSH || !CSH.ok) { tbody.innerHTML = `<tr><td colspan="${cols.length}" class="left" style="padding:14px;color:var(--text-dim)">${_ge((CSH && CSH.error) || "History unavailable.")}</td></tr>`; return; }
+  const q = (($("#cdSearch") || {}).value || "").trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const hay = e => [e.check, e.vendor, e.total, e.trigger, e.status, ...e.bills.map(b => b.doc_number), ...e.paid_again.map(a => a.check)].join(" ").toLowerCase();
+  const ev = CSH.events.filter(e => !q.length || q.every(w => hay(e).includes(w)));
+  if (!ev.length) { tbody.innerHTML = `<tr><td colspan="${cols.length}" class="left" style="padding:14px;color:var(--text-dim)">${CSH.events.length ? "Nothing matches." : "No check has been left without its bills."}</td></tr>`; return; }
+  const frag = document.createDocumentFragment();
+  for (const e of ev) {
+    const tr = document.createElement("tr");
+    tr.appendChild(leftText((e.time_known ? "" : "by ") + fmtDate(e.at, true)));
+    tr.appendChild(qboLinkCell(e.check || "–", qboUrl("billpayment", e.payment_id), "Open the check in QuickBooks"));
+    tr.appendChild(leftText(e.vendor || "–"));
+    tr.appendChild(leftText(e.check_date ? fmtDateShort(e.check_date) : "–"));
+    for (const v of [qaCents(e.total), e.bills_before ?? "–", e.saves || "–"]) { const td = document.createElement("td"); td.className = "right"; td.textContent = v; tr.appendChild(td); }
+    tr.appendChild(leftText(e.trigger));
+    { const td = document.createElement("td"); td.className = "left";
+      const s = document.createElement("span"); s.className = "qa-flag " + (e.status === "re-applied" ? "ok" : "neg");
+      s.textContent = e.status === "re-applied" ? `Re-applied${e.fixed_at ? " " + fmtDate(e.fixed_at) : ""}` : "Still unapplied";
+      td.appendChild(s);
+      for (const a of e.paid_again) { const x = document.createElement("span"); x.className = "qa-flag neg"; x.textContent = `Paid again: bill ${a.bill} by check ${a.check} ${qaCents(a.amount)}`; td.appendChild(x); }
+      tr.appendChild(td); }
+    frag.appendChild(tr);
+  }
+  tbody.appendChild(frag);
+}
+
 // the fix under a check (a vp-pay group: collapsed by default, the caret opens it)
 function cdFixRow(r, span) {
   const tr = document.createElement("tr"); tr.className = "qa-repair";
@@ -8311,7 +8349,7 @@ function renderUncleared() {
   filt.innerHTML = "";
   for (const [key, label, fn] of UC_FILTERS) {
     const b = document.createElement("button"); b.className = "acct-chip" + (ucFilter === key ? " active" : "");
-    b.innerHTML = `${_ge(label)} <span class="ac-n">${all.filter(fn).length}</span>`;
+    b.innerHTML = `${_ge(label)} <span class="ac-n">${fn ? all.filter(fn).length : (CSH && CSH.ok ? CSH.events.length : "–")}</span>`;
     b.onclick = () => { ucFilter = key; const y = window.scrollY; renderUncleared(); window.scrollTo(0, y); }; filt.appendChild(b);
   }
   const fn = (UC_FILTERS.find(f => f[0] === ucFilter) || UC_FILTERS[0])[2];

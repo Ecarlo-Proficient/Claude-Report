@@ -106,6 +106,7 @@ body {
 .btn.icon { padding: 7px 10px; font-size: 1em; }
 .btn.small { padding: 4px 10px; font-size: .82em; }
 .btn[hidden] { display: none; }
+a.btn { display: inline-block; text-decoration: none; }   /* a link dressed as a button (QBO report) reads like the others */
 
 /* ── Tabs (inside the nav strip) ───────────────────────────────────────── */
 .tabs { display: flex; gap: 2px; flex: 1 1 auto; min-width: 0; overflow-x: auto; overflow-y: hidden; }
