@@ -2091,3 +2091,4 @@ table.grid td a:not([class]) { color: var(--accent-text); }
 .hf-sort { border-top: 1px solid var(--border); padding-top: 6px; margin-top: 2px; }
 .msel-tool.on { border-color: var(--accent); color: var(--accent); font-weight: 600; }
 .hf-arrow { margin-left: 4px; color: var(--accent); font-weight: 700; }
+.cd-prio { display: inline-flex; gap: 6px; margin-left: 10px; padding-left: 10px; border-left: 1px solid var(--border); }   /* Checks QBO changed: All / Urgent / Low */

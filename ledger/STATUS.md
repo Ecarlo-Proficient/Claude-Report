@@ -4,6 +4,10 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-25 · **Checks QBO changed: Urgent / Low** (owner: "don't hide it but make a toggle or status of Urgent and Low").
+  Each check gets a Priority pill: Urgent when $100+ is at stake (the larger of floating, put on later bills, reading as
+  owed again), Low under it (the $0.20 / $28.97 rounding cases). An All / Urgent / Low toggle beside the chips, counted
+  inside the chip you are on. Nothing is hidden. Threshold = `CD_URGENT` in app.js.
 - 2026-09-25 · **Sort from the column menu** (owner: "give me ability to sort this by alphabetical order"). The funnel menu
   (one component: Bills, the vendor page's bills, Checks QBO changed, Uncleared checks) gains **Sort A → Z / Z → A**
   (dates: Oldest / Newest first) that sorts the table by that column; the header shows ↑/↓; click it again to undo.

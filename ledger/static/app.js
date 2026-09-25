@@ -8203,6 +8203,12 @@ const CD_PAT_CLS = { "paid bill deleted": "neg", "paid bill edited": "neg", "che
 const CD_FILTERS = [["subs", "Subs", r => r.sub], ["all", "Everyone", () => true],
   ["floating", "Money floating", r => r.floating > 1], ["owed", "Bill reads as owed again", r => r.reopened.length || r.copies.length],
   ["late", "Put on a later bill", r => r.late.length], ["history", "History", null]];
+// Priority (owner 2026-09-25: "don't hide it but make a toggle or status of Urgent and Low"): what is at stake on the
+// check - the money floating, put on later bills, or reading as owed again - at or over CD_URGENT is Urgent, else Low.
+const CD_URGENT = 100;
+let cdPrio = "all";
+function cdAtStake(r) { return Math.max(r.floating || 0, r.late_amt || 0, r.reopened_amt || 0, r.copies_amt || 0); }
+function cdPriority(r) { return cdAtStake(r) >= CD_URGENT ? "urgent" : "low"; }
 let CSH = null;                       // the strip history (/api/checkstrips): every check left with no bills, kept after the fix
 async function loadCheckDrift(force) {
   const note = $("#cdNote"), table = $("#cdTable"); if (!table) return;
@@ -8233,14 +8239,23 @@ function renderCheckDrift() {
     b.onclick = () => { cdFilter = key; const y = window.scrollY; renderCheckDrift(); window.scrollTo(0, y); }; filt.appendChild(b);
   }
   if (cdFilter === "history") { renderStripHistory(thead, tbody); return; }
+  { const seg = document.createElement("span"); seg.className = "cd-prio";   // the priority toggle, beside the chips
+    for (const [k, label] of [["all", "All"], ["urgent", "Urgent"], ["low", "Low"]]) {
+      const b = document.createElement("button"); b.className = "acct-chip" + (cdPrio === k ? " active" : "");
+      const f0 = (CD_FILTERS.find(f => f[0] === cdFilter) || CD_FILTERS[0])[2];   // counted inside the chip you are on
+      const n = k === "all" ? null : all.filter(r => f0(r) && cdPriority(r) === k).length;
+      b.innerHTML = `${_ge(label)}` + (n == null ? "" : ` <span class="ac-n">${n}</span>`);
+      b.title = k === "urgent" ? `$${CD_URGENT} or more at stake` : k === "low" ? `Under $${CD_URGENT} at stake` : "Every priority";
+      b.onclick = () => { cdPrio = k; const y = window.scrollY; renderCheckDrift(); window.scrollTo(0, y); }; seg.appendChild(b); }
+    filt.appendChild(seg); }
   const fn0 = (CD_FILTERS.find(f => f[0] === cdFilter) || CD_FILTERS[0])[2];
-  const fn = fn0;
+  const fn = r => fn0(r) && (cdPrio === "all" || cdPriority(r) === cdPrio);
   const q = (($("#cdSearch") || {}).value || "").trim().toLowerCase().split(/\s+/).filter(Boolean);
   const hay = r => [r.vendor, r.check, r.txn_date, r.total, r.floating, r.pattern, ...r.reopened.map(b => b.doc_number + " " + b.balance),
     ...r.copies.map(b => b.doc_number + " " + b.balance), ...r.late.map(b => b.doc_number + " " + b.amount), ...r.cause, ...r.todo].join(" ").toLowerCase();
   const base = all.filter(r => fn(r) && (!q.length || q.every(w => hay(r).includes(w))));
   const rows = hfSorted("checkdrift", base.filter(r => hfPasses("checkdrift", r)));
-  const cols = [["Vendor", "left", "vendor"], ["Check #", "left"], ["Check date", "left"], ["Check total", "right"], ["Applied now", "right"],
+  const cols = [["Vendor", "left", "vendor"], ["Priority", "left"], ["Check #", "left"], ["Check date", "left"], ["Check total", "right"], ["Applied now", "right"],
     ["Floating", "right"], ["Bill it paid (open again)", "left"], ["Put on a later bill", "left"], ["What happened", "left"], ["Changed", "left"]];
   thead.innerHTML = "";
   { const tr = document.createElement("tr");
@@ -8259,6 +8274,9 @@ function renderCheckDrift() {
       td.appendChild(sp);
       if (r.sub) { const s = document.createElement("span"); s.className = "st st-dim"; s.style.marginLeft = "6px"; s.textContent = "sub"; td.appendChild(s); }
       tr.appendChild(td); }
+    { const td = document.createElement("td"); td.className = "left"; const s = document.createElement("span"); const pr = cdPriority(r);
+      s.className = "qa-flag " + (pr === "urgent" ? "neg" : "st-dim"); s.textContent = pr === "urgent" ? "Urgent" : "Low";
+      s.title = `${qaCents(cdAtStake(r))} at stake`; td.appendChild(s); tr.appendChild(td); }
     tr.appendChild(qboLinkCell(r.check || "–", qboUrl("billpayment", r.payment_id), "Open the check in QuickBooks"));
     tr.appendChild(leftText(r.txn_date ? fmtDateShort(r.txn_date) : "–"));
     for (const v of [r.total, r.applied]) { const td = document.createElement("td"); td.className = "right"; td.textContent = qaCents(v); tr.appendChild(td); }
