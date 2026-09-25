@@ -1,0 +1,10 @@
+{
+  "_comment": "Format of rp_source_overrides.json (same folder, NOT tracked - it carries client/builder folder names and home addresses, so it stays owner-machine only; see .gitignore). Per-project corrected source paths on the mounted NAS, harvested from the team's RP WIP Fixes.xlsx; read by rp_schedule_wip_preview.py. Overrides win over the folder guess.",
+  "RP0000": {
+    "proposal": "/Volumes/Common/CURRENT PROJECTS/Residential/BUILDER FOLDER/PROJECT FOLDER/proposal.pdf",
+    "takeoff": "/Volumes/Common/CURRENT PROJECTS/Residential/BUILDER FOLDER/PROJECT FOLDER/takeoff.xlsm"
+  },
+  "RP0000-FTW": {
+    "proposal": "/Volumes/Common/CURRENT PROJECTS/Residential/BUILDER FOLDER/PROJECT FOLDER/flatwork proposal.pdf"
+  }
+}

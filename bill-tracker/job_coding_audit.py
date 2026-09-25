@@ -78,7 +78,7 @@ try:
     from openpyxl.styles import Alignment, Font
     from openpyxl.utils import get_column_letter
 except ImportError:
-    print("✗ pip3 install --break-system-packages openpyxl")
+    print("✗ bash python-env/setup.sh")
     sys.exit(1)
 
 

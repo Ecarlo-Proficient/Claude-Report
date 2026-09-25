@@ -24,7 +24,7 @@ shutdown() {
 }
 trap shutdown SIGTERM SIGINT
 
-cd /app/automation-worker
+cd /app/invoice-sync
 
 if [[ "$RUN_ONCE" == "1" ]]; then
     echo "[entrypoint] one-shot mode (SYNC_RUN_ONCE=1)"

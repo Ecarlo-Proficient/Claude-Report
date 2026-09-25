@@ -1,0 +1,38 @@
+# python-env/requirements.txt - THE package list for every tool in this repo.
+#
+# One environment for the whole suite (~/.venvs/proficient), built from the
+# interpreter named in PYTHON_VERSION. Every pin is exact: a package only
+# changes when someone edits this file on purpose. Editing it is all it takes -
+# the next run of any wrapper sees the change and installs it (python.sh).
+#
+# CI installs this same file, so GitHub tests exactly what the Mac runs.
+# The container (docker/) installs invoice-sync/requirements.txt - a subset whose
+# pins must match the ones here (the interpreter guard checks it).
+
+# --- QBO / Notion / Teams / Keychain ---
+requests==2.34.2
+python-dotenv==1.2.3
+keyring==25.7.0
+cryptography==50.0.1
+
+# --- Excel ---
+openpyxl==3.1.5
+pyxlsb==1.0.10
+xlrd==2.0.2
+formulas==1.3.4
+
+# --- PDFs, images, OCR (statement-reconciler, draws, proposals) ---
+pdfplumber==0.11.10
+pypdfium2==5.13.0
+pillow==12.3.0
+pillow_heif==1.8.0
+pytesseract==0.3.13
+
+# --- the Project Ledger Mac app (ledger/build_ledger_app.command) ---
+pyobjc-framework-Cocoa==12.2.2; sys_platform == "darwin"
+py2app==0.28.10; sys_platform == "darwin"
+setuptools==84.0.0
+
+# --- the gates (CI + .github/preflight.sh) ---
+ruff==0.15.21
+pytest==9.1.1
