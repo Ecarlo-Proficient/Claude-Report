@@ -1508,6 +1508,26 @@ def _qbo_ok_marks(db_path) -> dict:
         return {}
 
 
+_CD_MARK_DDL = ("CREATE TABLE IF NOT EXISTS check_drift_mark (payment_id TEXT PRIMARY KEY, kind TEXT NOT NULL, "
+                "note TEXT, marked_at TEXT NOT NULL)")
+
+
+def _check_drift_marks(db_path) -> dict:
+    """{BillPayment id -> {kind, note, marked_at}} - the owner's rulings on Checks QBO changed (check_drift_mark)."""
+    if not db_path:
+        return {}
+    try:
+        lc = sqlite3.connect(str(db_path))
+        try:
+            lc.execute(_CD_MARK_DDL)
+            return {a: {"kind": k, "note": n or "", "marked_at": m}
+                    for a, k, n, m in lc.execute("SELECT payment_id, kind, note, marked_at FROM check_drift_mark")}
+        finally:
+            lc.close()
+    except sqlite3.Error:
+        return {}
+
+
 def _fetch_qbo_changes(days: int = 30, db_path=None) -> dict:
     """The QBO Audit page's watch: the mirror's change log (shared/qbo_mirror.mirror_change) for the
     last `days` days - every record QBO deleted, edited, restored or created since the previous
@@ -3341,14 +3361,18 @@ class Handler(BaseHTTPRequestHandler):
                 con.close()
         elif path == "/api/checkdrift":    # Checks QBO changed: paid checks QBO unapplied / moved on its own (owner 2026-09-24, check 48314)
             try:
-                self._json(check_drift.audit(since=self._query().get("since") or check_drift.SINCE))
+                res = check_drift.audit(since=self._query().get("since") or check_drift.SINCE)
+                marks = _check_drift_marks(self.db_path)
+                for r in res.get("rows") or []:
+                    r["mark"] = marks.get(str(r.get("payment_id")))
+                self._json(res)
             except Exception as e:         # noqa: BLE001
                 self._json({"ok": False, "rows": [], "error": f"check audit failed: {e}"})
         elif path == "/api/checkstrips":   # Checks QBO changed > History: every strip on record, fixed or not (owner 2026-09-25)
-            self._json(strip_history.history())
+            self._json(strip_history.history(marks=_check_drift_marks(self.db_path), db_path=self.db_path))
         elif path == "/api/checkstrips/pdf":  # the QBO support report, rebuilt from the history on every click
             try:
-                r = strip_history.build_pdf()
+                r = strip_history.build_pdf(marks=_check_drift_marks(self.db_path), db_path=self.db_path)
             except Exception as e:         # noqa: BLE001 - a locked mirror / hung Chrome is an answer
                 r = {"ok": False, "error": str(e)}
             target = Path(r.get("path") or "")
@@ -3409,6 +3433,8 @@ class Handler(BaseHTTPRequestHandler):
             self._save_pay_run()
         elif p == "/api/pay-run/clear":   # empty the whole pay run (after the check run is done)
             self._clear_pay_run()
+        elif p == "/api/checkdrift/mark":  # a ledger write - the owner's ruling on a check (e.g. kept as credit); never QuickBooks
+            self._check_drift_mark()
         elif p == "/api/qboaudit/ok":     # a ledger write - the owner's "that's OK" on a QBO change (hides it next run)
             self._qbo_change_ok()
         elif p == "/api/project/note":    # a ledger write - a note on a job (project_note)
@@ -4057,6 +4083,31 @@ class Handler(BaseHTTPRequestHandler):
             d = _ensure_lien_vendor_dir(vendor)
             folder = str(d) if d is not None else None
         self._json({"ok": True, "bill_id": bill_id, "lien": lien, "folder": folder})
+
+    def _check_drift_mark(self):
+        """{payment_id, kind: "credit" | null, note} - mark a check kept on purpose (null clears it). Local only."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+            pid = str(body.get("payment_id") or "").strip()
+        except (ValueError, TypeError, json.JSONDecodeError):
+            return self._json({"error": "bad request"}, 400)
+        kind = body.get("kind")
+        if not pid.isdigit() or kind not in ("credit", None):
+            return self._json({"error": "bad request"}, 400)
+        now = _dt.datetime.now().isoformat(timespec="seconds")
+        try:
+            con = sqlite3.connect(self.db_path)
+            con.execute(_CD_MARK_DDL)
+            if kind:
+                con.execute("INSERT OR REPLACE INTO check_drift_mark (payment_id, kind, note, marked_at) VALUES (?, ?, ?, ?)",
+                            (pid, kind, str(body.get("note") or "")[:300], now))
+            else:
+                con.execute("DELETE FROM check_drift_mark WHERE payment_id = ?", (pid,))
+            con.commit(); con.close()
+        except sqlite3.OperationalError as e:
+            return self._json({"error": f"write failed: {e}"}, 500)
+        self._json({"ok": True, "payment_id": pid, "kind": kind, "marked_at": now if kind else None})
 
     def _qbo_change_ok(self):
         """Mark (ok=true) or un-mark (ok=false) QBO changes as reviewed: {ids: [mirror_change id, ...], ok}. Local only."""

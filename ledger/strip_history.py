@@ -207,10 +207,54 @@ def summary(ev: list) -> dict:
             "windows": wins}
 
 
-def history(con=None) -> dict:
+_DOUBLE_DDL = ("CREATE TABLE IF NOT EXISTS strip_double_payment (strip_payment_id TEXT NOT NULL, bill_id TEXT NOT NULL, "
+               "later_payment_id TEXT NOT NULL, bill TEXT, amount REAL, later_check TEXT, later_check_date TEXT, "
+               "first_seen TEXT NOT NULL, PRIMARY KEY (strip_payment_id, bill_id, later_payment_id))")
+
+
+def _keep_doubles(ev: list, db_path) -> list:
+    """A double payment is evidence: once seen it is kept in the ledger (strip_double_payment) and shown for good, even
+    after the bills are put right in QuickBooks and the live check no longer shows it (48299 / 48379, 09/25/2026)."""
+    if not db_path:
+        return ev
+    import sqlite3
+    con = sqlite3.connect(str(db_path))
+    try:
+        con.execute(_DOUBLE_DDL)
+        now = dt.datetime.now().isoformat(timespec="seconds")
+        for e in ev:
+            for a in e["paid_again"]:
+                con.execute("INSERT OR IGNORE INTO strip_double_payment VALUES (?,?,?,?,?,?,?,?)",
+                            (e["payment_id"], str(a["bill_id"]), str(a["payment_id"]), str(a["bill"]), a["amount"],
+                             str(a["check"]), a["check_date"], now))
+        con.commit()
+        kept = {}
+        for r in con.execute("SELECT strip_payment_id, bill_id, later_payment_id, bill, amount, later_check, later_check_date "
+                             "FROM strip_double_payment"):
+            kept.setdefault(r[0], []).append({"bill_id": r[1], "payment_id": r[2], "bill": r[3], "amount": r[4],
+                                              "check": r[5], "check_date": r[6]})
+    finally:
+        con.close()
+    for e in ev:
+        have = {(str(a["bill_id"]), str(a["payment_id"])) for a in e["paid_again"]}
+        e["paid_again"] += [k for k in kept.get(e["payment_id"], []) if (k["bill_id"], k["payment_id"]) not in have]
+    return ev
+
+
+def _apply_marks(ev: list, marks: dict | None) -> list:
+    """A later check the owner kept as a credit settles the double payment it made (check_drift_mark in the ledger)."""
+    for e in ev:
+        for a in e["paid_again"]:
+            m = (marks or {}).get(str(a.get("payment_id")))
+            a["kept_as_credit"] = bool(m and m.get("kind") == "credit")
+            a["credit_note"] = (m or {}).get("note") or ""
+    return ev
+
+
+def history(con=None, marks: dict | None = None, db_path=None) -> dict:
     """The ledger's /api/checkstrips payload."""
     try:
-        ev = events(con)
+        ev = _apply_marks(_keep_doubles(events(con), db_path), marks)
     except Exception as ex:                  # noqa: BLE001 - a locked mirror / missing key is an answer
         return {"ok": False, "events": [], "error": f"strip history failed: {ex}"}
     return {"ok": True, "events": ev, "summary": summary(ev), "case_file": str(case_path()),
@@ -251,7 +295,9 @@ def report_html(ev: list, case: dict) -> str:
     boxes = "".join(
         f"<div class=box><b>A double payment.</b> Check {e_(str(a['strip_check']))} paid bill {e_(str(a['bill']))} "
         f"({_m(a['amount'])}). After the check lost its bills, the bill showed as open and was paid again with check "
-        f"{e_(str(a['check']))} dated {_ymd(a['check_date'])}.</div>" for a in s["paid_again"])
+        f"{e_(str(a['check']))} dated {_ymd(a['check_date'])}."
+        + (" We are keeping that second check as a credit with the vendor for their next bill." if a.get("kept_as_credit") else "")
+        + "</div>" for a in s["paid_again"])
     boxes += (f"<div class=box><b>Books that no longer match the bank.</b> {s['still']} of these checks are still "
               f"unapplied today ({_m(s['still_total'])}): the bills they paid read as owed again.</div>")
     ul = lambda xs: "<ul>" + "".join(f"<li>{e_(x)}</li>" for x in xs) + "</ul>"   # noqa: E731
@@ -261,7 +307,7 @@ def report_html(ev: list, case: dict) -> str:
         f"<td class=c>{e['bills_before'] if e['bills_before'] is not None else '–'}</td><td class=c>{e['saves'] or '–'}</td>"
         f"<td>{e_(e['trigger'][0].upper() + e['trigger'][1:])}</td>"
         f"<td class=n>{'Re-applied ' + _d(e['fixed_at']) if e['status'] == 're-applied' else 'Still unapplied'}"
-        + (f"<br><b>Paid again</b> ({', '.join(str(a['check']) for a in e['paid_again'])})" if e["paid_again"] else "")
+        + "".join(f"<br><b>Paid again</b> ({a['check']})" + (" - kept as credit" if a.get("kept_as_credit") else "") for a in e["paid_again"])
         + "</td></tr>" for e in ev)
     return f"""<!doctype html><html><head><meta charset=utf-8><title>Unapplied bill payments</title><style>
 @page {{ size: letter; margin: 0.6in; }}
@@ -298,10 +344,10 @@ kept since 09/23/2026. "Saves" = how many times QuickBooks recorded the check be
 </body></html>"""
 
 
-def build_pdf(out: Path | None = None, con=None) -> dict:
+def build_pdf(out: Path | None = None, con=None, marks: dict | None = None, db_path=None) -> dict:
     """Rebuild the report from the live history -> <companyhealth>/QBO Support - Unapplied Bill Payments.pdf."""
     out = out or paths.companyhealth_dir() / PDF_NAME
-    ev = events(con)
+    ev = _apply_marks(_keep_doubles(events(con), db_path), marks)
     with tempfile.TemporaryDirectory() as tmp:
         h = Path(tmp) / "report.html"
         h.write_text(report_html(ev, load_case()))

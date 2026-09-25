@@ -652,6 +652,30 @@ CREATE TABLE IF NOT EXISTS bank_match (
 
 -- The owner's "that's OK" on a QBO change (owner 2026-09-24: "need a way to click to say that it's ok and to discard
 -- for next run"). One row per mirror_change id he reviewed; the QBO changes page hides it unless "Show OK'd" is on.
+-- The owner's ruling on a check on Checks QBO changed (owner 2026-09-25: "fix 48379 showing as error, remember we are
+-- using it as credit"). kind 'credit' = money left on the vendor ON PURPOSE (a double payment kept as a credit for the
+-- next bill): shown as Credit, not an error; the history / QBO report show the double payment as settled.
+CREATE TABLE IF NOT EXISTS check_drift_mark (
+    payment_id  TEXT PRIMARY KEY,                  -- QBO BillPayment id
+    kind        TEXT NOT NULL,                     -- 'credit'
+    note        TEXT,
+    marked_at   TEXT NOT NULL
+);
+
+-- A double payment found by the strip history (a bill the stripped check paid, paid again by a later check), kept for
+-- good once seen - fixing the bills in QuickBooks must not erase the evidence (48299 / 48379, 2026-09-25).
+CREATE TABLE IF NOT EXISTS strip_double_payment (
+    strip_payment_id  TEXT NOT NULL,               -- the check that lost its bills (QBO BillPayment id)
+    bill_id           TEXT NOT NULL,               -- the bill paid twice
+    later_payment_id  TEXT NOT NULL,               -- the check that paid it again
+    bill              TEXT,
+    amount            REAL,
+    later_check       TEXT,
+    later_check_date  TEXT,
+    first_seen        TEXT NOT NULL,
+    PRIMARY KEY (strip_payment_id, bill_id, later_payment_id)
+);
+
 CREATE TABLE IF NOT EXISTS qbo_change_ok (
     change_id   INTEGER PRIMARY KEY,               -- qbo_mirror.sqlite3 mirror_change.id
     marked_at   TEXT NOT NULL
