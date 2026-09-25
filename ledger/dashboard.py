@@ -495,6 +495,10 @@ def _resolve_steps(pipeline_key):
         return [s for p in pls for s in p["steps"]]
     if pipeline_key == "wip-draft":
         return next((p["draft"]["steps"] for p in pls if p["key"] == "wip" and p.get("draft")), [])
+    if pipeline_key == "billpay":             # the vendor page's Refresh: just-entered payments without a sync-all
+        # mirror first (the stub prints read it), then the bill_payment table the page lists
+        return [{"label": "Refresh the mirror (QBO change feed, Touch ID)", "script": "ledger/refresh_mirror.py", "args": []},
+                {"label": "Pull bill payments (QBO, this year)", "script": "ledger/load_bill_payments.py", "args": []}]
     if pipeline_key == "costs-full":          # explicit click only - never part of reload/all (30-40 min)
         return [{"label": "Full cost reload (every project, all history, Touch ID)",
                  "script": "ledger/load_costs.py", "args": []}]

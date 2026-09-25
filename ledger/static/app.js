@@ -2450,6 +2450,27 @@ async function _printStubsSelected(btn) {
   _stubSel.clear(); btn.textContent = was;
   const d = _vendorData; await _loadStubHistory(_stubHist.vendor); if (_vendorPageShowing(d)) renderVendorPage();
 }
+// Refresh from QuickBooks on the Payments view (owner 2026-09-25: "get the ones we just entered without having to
+// sync-all") - the 'billpay' pipeline: mirror change feed + load_bill_payments only. The button and bar are built ONCE
+// and re-attached on every render, so typing in a filter mid-run never loses the progress.
+const _vpRefresh = (() => {
+  const btn = document.createElement("button"); btn.type = "button"; btn.className = "btn small";
+  btn.innerHTML = "⟳&nbsp;Refresh from QuickBooks"; btn.title = "Pull the bill payments from QuickBooks now (the mirror + this year's payments, Touch ID) - no sync-all";
+  const prog = document.createElement("div"); prog.className = "sync-progress vp-refresh-prog"; prog.hidden = true;
+  const bar = document.createElement("div"); bar.className = "sync-bar"; const fill = document.createElement("div"); fill.className = "sync-bar-fill"; bar.appendChild(fill);
+  const step = document.createElement("div"); step.className = "sync-step"; prog.appendChild(bar); prog.appendChild(step);
+  btn.onclick = () => {
+    const vendor = _vendorData && _vendorData.vendor;
+    runPipeline("billpay", null, { btn, prog, fill, step, after: async (ok) => {
+      if (!ok || !vendor) return;
+      const was = _vendorData; let data;
+      try { data = await (await fetch("/api/vendor?v=" + encodeURIComponent(vendor))).json(); } catch { return; }
+      if (!data || !data.ok || !_vendorPageShowing(was)) return;   // the owner moved on - never paint over another page
+      _vendorData = data; renderVendorPage();
+    } });
+  };
+  return { btn, prog };
+})();
 async function _renderVendorPayments(d, body, seq) {
   if (_stubHist.vendor !== d.vendor) { await _loadStubHistory(d.vendor); _stubSel.clear(); }
   if (seq !== _vpSeq || _vendorView !== "payments" || !_vendorPageShowing(d)) return;   // a newer render (or another page) took over while the history loaded
@@ -2464,9 +2485,10 @@ async function _renderVendorPayments(d, body, seq) {
   if (_stubHist.columns.length) bar.appendChild(_stubColumnPicker());
   const selBtn = document.createElement("button"); selBtn.type = "button"; selBtn.className = "btn small stub-sel-btn";
   const selLabel = () => { const n = _stubSel.size; selBtn.textContent = n ? `Print ${n} stub${n === 1 ? "" : "s"}` : "Print stubs for selected"; selBtn.disabled = !n; };
-  selLabel(); selBtn.onclick = () => _printStubsSelected(selBtn); bar.appendChild(selBtn);
-  body.appendChild(bar);
-  if (!pays.length) { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = (d.payments || []).length ? (_vendorQ.trim() ? `No payments match "${_vendorQ.trim()}".` : "No payments match these filters.") : "No bill payments recorded this year (run the AP / bill-payments sync to pull them)."; body.appendChild(p); _renderStubOrphans(body, d.payments || [], byPay); return; }
+  selLabel(); selBtn.onclick = () => _printStubsSelected(selBtn);
+  { const right = document.createElement("span"); right.className = "stub-bar-right"; right.appendChild(_vpRefresh.btn); right.appendChild(selBtn); bar.appendChild(right); }
+  body.appendChild(bar); body.appendChild(_vpRefresh.prog);
+  if (!pays.length) { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = (d.payments || []).length ? (_vendorQ.trim() ? `No payments match "${_vendorQ.trim()}".` : "No payments match these filters.") : "No bill payments recorded this year - Refresh from QuickBooks to pull the latest."; body.appendChild(p); _renderStubOrphans(body, d.payments || [], byPay); return; }
   const scroll = document.createElement("div"); scroll.className = "table-scroll";
   const table = document.createElement("table"); table.className = "grid vp-paytable"; const thead = document.createElement("thead"), tbody = document.createElement("tbody");
   const htr = document.createElement("tr");

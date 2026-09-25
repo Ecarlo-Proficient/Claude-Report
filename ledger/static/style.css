@@ -1790,6 +1790,8 @@ td.vp-projs a.vp-proj:hover { text-decoration: underline; }
 .stub-orph-h { font-size: 1em; margin: 18px 0 2px; }
 .stub-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 10px; }
 .stub-bar .stub-cols { margin: 0; }
+.stub-bar-right { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; }
+.vp-refresh-prog { padding: 0; margin: -4px 0 10px; }
 .vp-paytable .vp-ck { width: 28px; padding-right: 0; }
 .vp-paytable .vp-ck input { vertical-align: middle; }
 tr.vp-pay { cursor: pointer; }

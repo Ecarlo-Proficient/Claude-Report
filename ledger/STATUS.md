@@ -4,6 +4,10 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-25 · **Vendor Payments: Refresh from QuickBooks** (owner: "refresh the vendor payments so i can get the ones we
+  just entered without having to sync-all"). A button in the vendor page's Payments toolbar runs the new `billpay`
+  pipeline (`_resolve_steps`): the mirror change feed (stub prints read it) + `load_bill_payments.py`, then re-reads the
+  vendor. ~15 s; the button/bar are built once so a filter re-render mid-run keeps the progress. Not in reload/all.
 - 2026-09-25 · **Keep as credit** (owner: "fix 48379 showing as error, remember we are using it as credit"). A check's fix
   card gets "Keep as credit with vendor" (optional note; Undo): a local ledger mark (`check_drift_mark`, never QBO) -> a
   green **Credit** priority (its own toggle option), the floating amount greyed, the card's step becomes "apply it to their
