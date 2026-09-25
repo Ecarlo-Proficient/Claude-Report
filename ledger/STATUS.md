@@ -4,6 +4,11 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-25 · **Checks QBO changed: the fix under a check is a white card** (owner: "this is hard to read ... grey
+  everywhere, it blends, there's no distinction"). The fix steps + bill lines sit in a bordered white card with a red
+  edge on the grey band; the inner table no longer inherits the grid's sticky white header (the white patches), rows get
+  a divider, headers are small caps; an empty bill table is not drawn; on a phone the card stays in view and wraps.
+  Checked light + dark, desktop + phone width.
 - 2026-09-25 · **Times show in local time** (owner: "why is this showing today at 1:34 if that's in the future?").
   `fmtDate` read the clock straight off the stamp, so a UTC refresh stamp (`...13:34:50Z`) printed 1:34 PM for an
   8:34 AM refresh. A stamp that names its zone (`Z` or `-07:00`) is now converted to the machine's local time, date

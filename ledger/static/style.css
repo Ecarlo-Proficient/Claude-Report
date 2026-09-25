@@ -1930,11 +1930,21 @@ table.pp-cov.all-sel tr.pp-cov-row > td { background: color-mix(in srgb, var(--a
 .qa-flag.ok { color: var(--pos); border-color: color-mix(in srgb, var(--pos) 45%, var(--border)); }
 td.qa-what { white-space: normal; max-width: 260px; }
 .qa-knock { font-size: .8em; color: var(--neg-text); margin-top: 2px; }
-tr.qa-repair > td { background: var(--surface-2); padding: 8px 14px 12px 28px; white-space: normal; }
-.qa-repair-head { font-weight: 600; margin-bottom: 6px; }
-table.qa-repair-tbl { border-collapse: collapse; width: auto; }
-table.qa-repair-tbl th, table.qa-repair-tbl td { padding: 3px 12px 3px 0; border: 0; background: transparent; }
-table.qa-repair-tbl th { font-weight: 600; color: var(--text-dim); font-size: .85em; }
+/* the fix under a row = a white card on the grey band (owner 2026-09-25: "grey everywhere, it blends, there's no
+   distinction"). The inner table must not inherit the grid's sticky white header - reset it here. */
+tr.qa-repair > td { background: var(--surface-2); padding: 10px 14px 14px 28px; white-space: normal; }
+.qa-repair-card { display: inline-block; max-width: 100%; background: var(--surface); border: 1px solid var(--border);
+  border-left: 3px solid var(--neg); border-radius: var(--radius); padding: 12px 16px;
+  position: sticky; left: 28px; max-width: min(100%, calc(100vw - 72px)); overflow-x: auto; }   /* stays in view while the wide table scrolls */
+.qa-repair-head { font-weight: 600; margin-bottom: 6px; color: var(--text); }
+table.qa-repair-tbl { border-collapse: collapse; width: auto; margin-top: 6px; }
+table.qa-repair-tbl th, table.qa-repair-tbl td,
+table.grid table.qa-repair-tbl thead th, table.grid table.qa-repair-tbl tbody td { padding: 6px 18px 6px 0; border: 0;
+  background: transparent; position: static; border-bottom: 1px solid var(--border); }
+table.grid table.qa-repair-tbl tbody tr:last-child td { border-bottom: 0; }
+table.grid table.qa-repair-tbl thead th { font-weight: 600; color: var(--text-dim); font-size: .8em; text-transform: uppercase;
+  letter-spacing: .03em; }
+table.grid table.qa-repair-tbl tbody td { color: var(--text); }
 
 /* vendor Payments: the client invoice behind each bill (owner 2026-09-23) - colour encodes paid / not paid only */
 .vp-inv { white-space: nowrap; font-size: .9em; }

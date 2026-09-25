@@ -8257,12 +8257,13 @@ function renderCheckDrift() {
 function cdFixRow(r, span) {
   const tr = document.createElement("tr"); tr.className = "qa-repair";
   const td = document.createElement("td"); td.colSpan = span; td.className = "left";
+  const card = document.createElement("div"); card.className = "qa-repair-card";
   const h = document.createElement("div"); h.className = "qa-repair-head";
   h.textContent = `Check #${r.check}: ${qaCents(r.total)}, ${qaCents(r.applied)} applied now` + (r.cause.length ? ` · ${r.cause.join(" · ")}` : "");
-  td.appendChild(h);
+  card.appendChild(h);
   const ol = document.createElement("ol"); ol.className = "cd-fix";
   for (const step of r.todo) { const li = document.createElement("li"); li.textContent = step; ol.appendChild(li); }
-  td.appendChild(ol);
+  card.appendChild(ol);
   const t = document.createElement("table"); t.className = "qa-repair-tbl";
   t.innerHTML = `<thead><tr><th class="left">What</th><th class="left">No.</th><th class="left">Date</th><th class="right">Amount</th><th class="left"></th></tr></thead>`;
   const tb = document.createElement("tbody");
@@ -8276,7 +8277,7 @@ function cdFixRow(r, span) {
   for (const b of r.copies) line("Re-entered copy, open", b.doc_number, qboUrl("bill", b.id), b.txn_date, b.balance, b.exact ? "don't pay - re-apply" : "possible - check it is the one", b.exact ? "neg" : "warn");
   for (const c of r.freed) line("Credit freed", c.doc_number || c.id, qboUrl("vendorcredit", c.id), c.txn_date, c.balance, "put back on the check", "warn");
   for (const b of r.late) line("Put on a later bill", b.doc_number, qboUrl("bill", b.id), b.txn_date, b.amount, "take off - that week went out short", "neg");
-  t.appendChild(tb); td.appendChild(t);
+  t.appendChild(tb); if (tb.rows.length) card.appendChild(t); td.appendChild(card);   // no lines -> no empty header
   tr.appendChild(td); return tr;
 }
 
