@@ -1953,6 +1953,7 @@ table.grid table.qa-repair-tbl tbody td { color: var(--text); }
 /* vendor Payments: the client invoice behind each bill (owner 2026-09-23) - colour encodes paid / not paid only */
 .vp-inv { white-space: nowrap; font-size: .9em; }
 .stub-pill.vp-inv-paid { background: color-mix(in srgb, var(--pos) 14%, transparent); color: var(--pos); }
+.stub-pill.vp-inv-later { background: color-mix(in srgb, #2b6cb0 14%, transparent); color: color-mix(in srgb, #2b6cb0 65%, var(--text)); }
 .stub-pill.vp-inv-open { background: color-mix(in srgb, #b7791f 16%, transparent); color: var(--warn-text); }
 
 /* Bills to fix: the four groups are the main filter (owner 2026-09-23) - big, one line, the count first */

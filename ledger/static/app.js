@@ -2535,7 +2535,7 @@ async function _renderVendorPayments(d, body, seq) {
     tr.appendChild(leftText(fmtDateShort(p.txn_date)));
     tr.appendChild(leftText(p.pay_type === "CreditCard" ? "Credit card" : (p.pay_type || "–")));
     { const cl = p.clients || []; const cc = leftText(cl.slice(0, 4).join(", ") + (cl.length > 4 ? ` +${cl.length - 4} more` : "") || (p.voided ? "" : "–")); if (!cl.length) cc.classList.add("dim"); cc.title = cl.join(", "); tr.appendChild(cc); }
-    tr.appendChild(_vpInvTally(p.bills || []));
+    tr.appendChild(_vpInvTally(p.bills || [], p.txn_date));
     { const amt = document.createElement("td"); if (p.voided) { const z = document.createElement("span"); z.className = "cell dim"; z.textContent = "voided"; amt.appendChild(z); } else amt.appendChild(moneyCell(p.total_amt)); tr.appendChild(amt); }
     { const sc = document.createElement("td"); sc.className = "left vp-stub"; const hist = byPay.get(pid) || [];
       if (!p.voided) { const b = document.createElement("button"); b.type = "button"; b.className = "btn tiny"; b.textContent = hist.length ? "Print again" : "Print stub";
@@ -2556,7 +2556,7 @@ async function _renderVendorPayments(d, body, seq) {
       { const dc = leftText(b.bill_date ? fmtDateShort(b.bill_date) : "–"); dc.title = "Bill date"; if (!b.bill_date) dc.classList.add("dim"); br.appendChild(dc); }   // the bill's own date (owner 2026-09-23)
       br.appendChild(_vpProjCell(b.projects || []));
       { const cl = b.clients || []; const cc = leftText(cl.join(", ") || "–"); if (!cl.length) cc.classList.add("dim"); br.appendChild(cc); }
-      br.appendChild(_vpInvCell(b));
+      br.appendChild(_vpInvCell(b, p.txn_date));
       { const td = document.createElement("td"); td.appendChild(moneyCell(b.amount)); br.appendChild(td); }
       br.appendChild(document.createElement("td"));
       tbody.appendChild(br);
@@ -2572,7 +2572,11 @@ const VP_INV_OTHER = {
   noproject: ["No project #", "The bill carries no project #, so no client invoice"],
   untracked: ["Not tracked", "Not on the Bill Tracker (older bills, subs, overhead) - no client invoice on file"],
 };
-function _vpInvCell(b) {
+// Judged against the day WE paid the vendor (owner 2026-09-25: a "Not paid" that the client pays later must not turn
+// into a plain "Paid" - it has to show we paid first). Paid on/before our payment = "Paid <date>" (green); paid AFTER it =
+// "Paid later <date>" (blue): the vendor got our money before the client's did. No client paid date = plain "Paid".
+const _vpPaidLater = (b, payDate) => b.invoice_state === "paid" && !!b.invoice_paid_on && !!payDate && String(b.invoice_paid_on).slice(0, 10) > String(payDate).slice(0, 10);
+function _vpInvCell(b, payDate) {
   const td = document.createElement("td"); td.className = "left vp-inv";
   if (!b.invoice_state || VP_INV_OTHER[b.invoice_state]) {
     const [t, tip] = VP_INV_OTHER[b.invoice_state] || ["–", "No client invoice on file"];
@@ -2580,18 +2584,24 @@ function _vpInvCell(b) {
     else { td.textContent = t; td.classList.add("dim"); }
     td.title = tip; return td;
   }
-  const pill = document.createElement("span"); pill.className = "stub-pill " + (b.invoice_state === "paid" ? "vp-inv-paid" : "vp-inv-open");
-  pill.textContent = b.invoice_state === "paid" ? "Paid" + (b.invoice_paid_on ? " " + fmtDateShort(b.invoice_paid_on) : "") : "Not paid";
+  const later = _vpPaidLater(b, payDate);
+  const pill = document.createElement("span"); pill.className = "stub-pill " + (later ? "vp-inv-later" : b.invoice_state === "paid" ? "vp-inv-paid" : "vp-inv-open");
+  pill.textContent = b.invoice_state === "paid" ? (later ? "Paid later " : "Paid") + (b.invoice_paid_on ? (later ? "" : " ") + fmtDateShort(b.invoice_paid_on) : "") : "Not paid";
   if (b.invoice_no) { const n = document.createElement("span"); n.textContent = "#" + b.invoice_no + " "; td.appendChild(n); }
-  td.appendChild(pill); td.title = b.invoice_state === "paid" ? "The client paid this invoice" : "The client has not paid this invoice yet";
+  td.appendChild(pill);
+  td.title = later ? `We paid the vendor ${fmtDateShort(payDate)}, before the client paid this invoice on ${fmtDateShort(b.invoice_paid_on)}`
+    : b.invoice_state === "paid" ? (b.invoice_paid_on && payDate ? `The client paid this invoice ${fmtDateShort(b.invoice_paid_on)}, before we paid the vendor ${fmtDateShort(payDate)}` : "The client paid this invoice")
+    : "The client has not paid this invoice yet";
   return td;
 }
-function _vpInvTally(bills) {
+function _vpInvTally(bills, payDate) {
   const withInv = bills.filter(b => b.invoice_state === "paid" || b.invoice_state === "open" || b.invoice_state === "awaiting"), paid = withInv.filter(b => b.invoice_state === "paid").length;
+  const later = withInv.filter(b => _vpPaidLater(b, payDate)).length;
   const td = document.createElement("td"); td.className = "left vp-inv";
   if (!withInv.length) { td.textContent = bills.length ? "–" : ""; td.classList.add("dim"); return td; }
-  const pill = document.createElement("span"); pill.className = "stub-pill " + (paid === withInv.length ? "vp-inv-paid" : "vp-inv-open");
-  pill.textContent = paid === withInv.length ? (withInv.length === 1 ? "Paid" : `All ${paid} paid`) : `${paid} of ${withInv.length} paid`;
+  const pill = document.createElement("span"); pill.className = "stub-pill " + (paid < withInv.length ? "vp-inv-open" : later ? "vp-inv-later" : "vp-inv-paid");
+  pill.textContent = (paid === withInv.length ? (withInv.length === 1 ? "Paid" : `All ${paid} paid`) : `${paid} of ${withInv.length} paid`) + (later ? ` · ${later} later` : "");
+  if (later) pill.title = `${later} of these invoices the client paid after we paid the vendor`;
   td.appendChild(pill); return td;
 }
 // Stubs printed for payments the ledger's payment list no longer carries (deleted or voided in QuickBooks, or outside

@@ -4,6 +4,10 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-25 · **Vendor Payments: client invoice judged against OUR payment date** (owner: a "Not paid" the client pays
+  later must not just say Paid - "show that we paid ... in a concise wording"). Client paid on/before our check = green
+  "Paid <date>"; paid AFTER it = blue **"Paid later <date>"** (tooltip: we paid the vendor <date>, before the client paid
+  on <date>); the payment row's tally adds "· N later". No client paid date = plain "Paid". `_vpPaidLater` in app.js.
 - 2026-09-25 · **Vendor Bills view: Refresh from QuickBooks + stub columns picked at print time** (owner: "add the same
   refresh button to the Bills view ... filter out the columns i don't want before making it a pdf ... sometimes i don't
   want to show the memo"). Bills view runs the new `billsync` pipeline (mirror -> `excel_bill_sync.py` -> Bill Tracker.xlsx
