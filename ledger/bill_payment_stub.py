@@ -48,6 +48,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -595,13 +596,41 @@ def render_pdf(html_path: Path, pdf_path: Path) -> bool:
     exe = chrome_path()
     if not exe:
         return False
-    cmd = [exe, "--headless=new", "--disable-gpu", "--no-pdf-header-footer",
-           f"--print-to-pdf={pdf_path}", html_path.resolve().as_uri()]
+    # a bare, throwaway printer: its own temp profile and no updater / first run / background network. Started by the
+    # ledger (Python), Chrome's updater reaching for Google Chrome.app trips macOS App Management ("python3.14 was
+    # prevented from modifying apps on your Mac", owner 2026-09-25). With its own profile Chrome writes the PDF and
+    # then never exits, so wait for its "bytes written to file" line and close it ourselves.
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-    except (subprocess.TimeoutExpired, OSError):
-        return False
-    return r.returncode == 0 and pdf_path.exists() and pdf_path.stat().st_size > 0
+        pdf_path.unlink()
+    except FileNotFoundError:
+        pass
+    with tempfile.TemporaryDirectory(prefix="ledger-chrome-") as prof:
+        cmd = [exe, "--headless=new", "--disable-gpu", "--no-pdf-header-footer", f"--user-data-dir={prof}",
+               "--use-mock-keychain", "--password-store=basic",    # a fresh profile otherwise asks the keychain and hangs
+               "--no-first-run", "--no-default-browser-check", "--disable-component-update",
+               "--disable-background-networking", "--disable-sync", "--disable-extensions",
+               f"--print-to-pdf={pdf_path}", html_path.resolve().as_uri()]
+        log = Path(prof) / "chrome.log"
+        with open(log, "w") as out:
+            try:
+                proc = subprocess.Popen(cmd, stdout=out, stderr=subprocess.STDOUT)
+            except OSError:
+                return False
+            try:
+                deadline = time.monotonic() + 120
+                while time.monotonic() < deadline:
+                    if proc.poll() is not None or "written to file" in log.read_text(errors="ignore"):
+                        break
+                    time.sleep(0.25)
+            finally:
+                if proc.poll() is None:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait()
+    return pdf_path.exists() and pdf_path.stat().st_size > 0
 
 
 def pdf_page_count(pdf_path: Path) -> int:

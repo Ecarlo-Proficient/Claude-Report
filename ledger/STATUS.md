@@ -4,6 +4,10 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-25 · **PDF printing no longer trips macOS App Management** (owner saw "python3.14 was prevented from modifying
+  apps on your Mac" after the QBO report button). `bill_payment_stub.render_pdf` (stubs + the QBO report) runs Chrome as a
+  bare printer: temp profile, mock keychain, no updater / first run / background network; it waits for Chrome's "written
+  to file" line and closes Chrome (with its own profile Chrome never exits on its own). ~2.5 s per PDF.
 - 2026-09-25 · **Strip history + QBO report** (owner: "don't just remove it once i fix it, it needs a history so that we
   can pull that pdf at anytime with the updated info"). NEW `ledger/strip_history.py`: every paid check QBO left with no
   bills, from the mirror's change log (unapplied checks; a deleted paid bill strips the check that paid it even when the
