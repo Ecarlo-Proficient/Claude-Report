@@ -8210,7 +8210,7 @@ function renderQboAudit() {
         if (fixCheck && typeof loadCheckDrift === "function") {
           if (nk) d.append(" · ");
           const a = document.createElement("a"); a.href = "#"; a.textContent = c.entity === "BillPayment" ? "fix ↗" : `fix check #${fixCheck} ↗`;
-          a.onclick = (e) => { e.preventDefault(); e.stopPropagation(); const q = $("#cdSearch"); if (q) q.value = String(fixCheck); cdFilter = "all"; setTab("checkdrift"); };
+          a.onclick = (e) => { e.preventDefault(); e.stopPropagation(); const q = $("#cdSearch"); if (q) q.value = String(fixCheck); cdFilter = "fix"; setTab("checkdrift"); };
           d.appendChild(a); }
         td.appendChild(d); }
       tr.appendChild(td); }
@@ -8262,20 +8262,27 @@ const qaCents = v => v == null || v === "" || Number.isNaN(Number(v)) ? "–" : 
 // the mirror, every year on file: a check whose money floats (applied to nothing), the bill it paid now open again
 // (edited: 47436 / UC015) or its re-entered copy open (deleted: 48314 / UC41), the freed loan credit, and floating
 // money QuickBooks dropped onto a LATER bill (48314 -> UC044 $135.40). One bill belongs to one check. Read-only.
-let CD = null, cdFilter = "subs";
+let CD = null, cdFilter = "fix";
 const CD_PAT_CLS = { "paid bill deleted": "neg", "paid bill edited": "neg", "check rewritten": "neg", "put on a later bill": "warn", "credit dropped": "warn" };
-const CD_FILTERS = [["subs", "Subs", r => r.sub], ["all", "Everyone", () => true],
-  ["floating", "Money floating", r => r.floating > 1], ["owed", "Bill reads as owed again", r => r.reopened.length || r.copies.length],
-  ["late", "Put on a later bill", r => r.late.length], ["history", "History", null]];
+// One row of chips, by what happened to the check (owner 2026-09-25: "filters are making this go everywhere ... it
+// should just be checks changed / unapplied"). Every vendor, subs sorted first; Urgent / Low is the row's tag, not a filter.
+const cdOpen = r => !r.mark;
+let cdKind = "all";                   // vendor type: all / subs / suppliers (owner 2026-09-25) - narrows every chip
+const CD_KINDS = [["all", "All vendors", () => true], ["subs", "Subs", r => r.sub], ["suppliers", "Suppliers", r => !r.sub]];
+const cdKindFn = () => (CD_KINDS.find(k => k[0] === cdKind) || CD_KINDS[0])[2];
+const CD_FILTERS = [["fix", "To fix", cdOpen], ["unapplied", "Unapplied", r => cdOpen(r) && r.floating > 1],
+  ["moved", "Moved to a newer bill", r => cdOpen(r) && r.late.length], ["credit", "Credit", r => r.mark && r.mark.kind === "credit"],
+  ["resolved", "Resolved", r => r.mark && r.mark.kind === "resolved"], ["history", "History", null]];
 // Priority (owner 2026-09-25: "don't hide it but make a toggle or status of Urgent and Low"): what is at stake on the
 // check - the money floating, put on later bills, or reading as owed again - at or over CD_URGENT is Urgent, else Low.
 const CD_URGENT = 100;
-let cdPrio = "all";
 function cdAtStake(r) { return Math.max(r.floating || 0, r.late_amt || 0, r.reopened_amt || 0, r.copies_amt || 0); }
-function cdPriority(r) { return r.mark && r.mark.kind === "credit" ? "credit" : cdAtStake(r) >= CD_URGENT ? "urgent" : "low"; }
+function cdPriority(r) { return r.mark && r.mark.kind === "resolved" ? "resolved" : r.mark && r.mark.kind === "credit" ? "credit" : cdAtStake(r) >= CD_URGENT ? "urgent" : "low"; }
 async function cdSetMark(r, kind) {   // a ledger write (check_drift_mark) - never QuickBooks
   let note = "";
-  if (kind) { note = prompt(`Keep check ${r.check} (${qaCents(r.floating)}) as a credit with ${r.vendor}? Add a note (optional):`, "");
+  if (kind) { note = prompt(kind === "resolved"
+      ? `Mark check ${r.check} (${r.vendor}) resolved? It leaves To fix; the Resolved chip keeps it. Add a note (optional):`
+      : `Keep check ${r.check} (${qaCents(r.floating)}) as a credit with ${r.vendor}? Add a note (optional):`, "");
     if (note === null) return; }
   try {
     const res = await (await fetch("/api/checkdrift/mark", { method: "POST", headers: { "Content-Type": "application/json" },
@@ -8311,28 +8318,23 @@ function renderCheckDrift() {
   filt.innerHTML = "";
   for (const [key, label, fn] of CD_FILTERS) {
     const b = document.createElement("button"); b.className = "acct-chip" + (cdFilter === key ? " active" : "");
-    b.innerHTML = `${_ge(label)} <span class="ac-n">${fn ? all.filter(fn).length : (CSH && CSH.ok ? CSH.events.length : "–")}</span>`;
+    b.innerHTML = `${_ge(label)} <span class="ac-n">${fn ? all.filter(r => fn(r) && cdKindFn()(r)).length : (CSH && CSH.ok ? CSH.events.length : "–")}</span>`;
     b.onclick = () => { cdFilter = key; const y = window.scrollY; renderCheckDrift(); window.scrollTo(0, y); }; filt.appendChild(b);
   }
-  if (cdFilter === "history") { renderStripHistory(thead, tbody); return; }
-  { const seg = document.createElement("span"); seg.className = "cd-prio";   // the priority toggle, beside the chips
-    for (const [k, label] of [["all", "All"], ["urgent", "Urgent"], ["low", "Low"], ["credit", "Credit"]]) {
-      const b = document.createElement("button"); b.className = "acct-chip" + (cdPrio === k ? " active" : "");
-      const f0 = (CD_FILTERS.find(f => f[0] === cdFilter) || CD_FILTERS[0])[2];   // counted inside the chip you are on
-      const n = k === "all" ? null : all.filter(r => f0(r) && cdPriority(r) === k).length;
-      b.innerHTML = `${_ge(label)}` + (n == null ? "" : ` <span class="ac-n">${n}</span>`);
-      b.title = k === "urgent" ? `$${CD_URGENT} or more at stake` : k === "low" ? `Under $${CD_URGENT} at stake` : k === "credit" ? "Kept as a credit with the vendor on purpose" : "Every priority";
-      b.onclick = () => { cdPrio = k; const y = window.scrollY; renderCheckDrift(); window.scrollTo(0, y); }; seg.appendChild(b); }
+  if (cdFilter !== "history") { const seg = document.createElement("span"); seg.className = "cd-prio";   // vendor type, beside the chips
+    for (const [k, label] of CD_KINDS) { const b = document.createElement("button"); b.className = "acct-chip" + (cdKind === k ? " active" : "");
+      b.textContent = label; b.onclick = () => { cdKind = k; const y = window.scrollY; renderCheckDrift(); window.scrollTo(0, y); }; seg.appendChild(b); }
     filt.appendChild(seg); }
+  if (cdFilter === "history") { renderStripHistory(thead, tbody); return; }
   const fn0 = (CD_FILTERS.find(f => f[0] === cdFilter) || CD_FILTERS[0])[2];
-  const fn = r => fn0(r) && (cdPrio === "all" || cdPriority(r) === cdPrio);
+  const fn = r => fn0(r) && cdKindFn()(r);
   const q = (($("#cdSearch") || {}).value || "").trim().toLowerCase().split(/\s+/).filter(Boolean);
   const hay = r => [r.vendor, r.check, r.txn_date, r.total, r.floating, r.pattern, ...r.reopened.map(b => b.doc_number + " " + b.balance),
     ...r.copies.map(b => b.doc_number + " " + b.balance), ...r.late.map(b => b.doc_number + " " + b.amount), ...r.cause, ...r.todo].join(" ").toLowerCase();
   const base = all.filter(r => fn(r) && (!q.length || q.every(w => hay(r).includes(w))));
   const rows = hfSorted("checkdrift", base.filter(r => hfPasses("checkdrift", r)));
   const cols = [["Vendor", "left", "vendor"], ["Priority", "left"], ["Check #", "left"], ["Check date", "left"], ["Check total", "right"], ["Applied now", "right"],
-    ["Floating", "right"], ["Bill it paid (open again)", "left"], ["Put on a later bill", "left"], ["What happened", "left"], ["Changed", "left"]];
+    ["Floating", "right"], ["Bill it paid (open again)", "left"], ["Moved to a newer bill", "left"], ["What happened", "left"], ["Changed", "left"]];
   thead.innerHTML = "";
   { const tr = document.createElement("tr");
     for (const [c, al, hk] of cols) { const th = document.createElement("th"); th.className = al; th.textContent = c;
@@ -8351,9 +8353,9 @@ function renderCheckDrift() {
       if (r.sub) { const s = document.createElement("span"); s.className = "st st-dim"; s.style.marginLeft = "6px"; s.textContent = "sub"; td.appendChild(s); }
       tr.appendChild(td); }
     { const td = document.createElement("td"); td.className = "left"; const s = document.createElement("span"); const pr = cdPriority(r);
-      s.className = "qa-flag " + (pr === "urgent" ? "neg" : pr === "credit" ? "ok" : "st-dim");
-      s.textContent = pr === "urgent" ? "Urgent" : pr === "credit" ? "Credit" : "Low";
-      s.title = pr === "credit" ? `Kept as a credit with the vendor${r.mark.note ? " - " + r.mark.note : ""}` : `${qaCents(cdAtStake(r))} at stake`; td.appendChild(s); tr.appendChild(td); }
+      s.className = "qa-flag " + (pr === "urgent" ? "neg" : pr === "credit" || pr === "resolved" ? "ok" : "st-dim");
+      s.textContent = pr === "urgent" ? "Urgent" : pr === "credit" ? "Credit" : pr === "resolved" ? "Resolved" : "Low";
+      s.title = pr === "resolved" ? `Resolved${r.mark.note ? " - " + r.mark.note : ""}` : pr === "credit" ? `Kept as a credit with the vendor${r.mark.note ? " - " + r.mark.note : ""}` : `${qaCents(cdAtStake(r))} at stake`; td.appendChild(s); tr.appendChild(td); }
     tr.appendChild(qboLinkCell(r.check || "–", qboUrl("billpayment", r.payment_id), "Open the check in QuickBooks"));
     tr.appendChild(leftText(r.txn_date ? fmtDateShort(r.txn_date) : "–"));
     for (const v of [r.total, r.applied]) { const td = document.createElement("td"); td.className = "right"; td.textContent = qaCents(v); tr.appendChild(td); }
@@ -8413,13 +8415,13 @@ function cdFixRow(r, span) {
   const td = document.createElement("td"); td.colSpan = span; td.className = "left";
   const card = document.createElement("div"); card.className = "qa-repair-card";
   const h = document.createElement("div"); h.className = "qa-repair-head";
-  const credit = r.mark && r.mark.kind === "credit";
+  const credit = r.mark && r.mark.kind === "credit", resolved = r.mark && r.mark.kind === "resolved";
   h.textContent = `Check #${r.check}: ${qaCents(r.total)}, ${qaCents(r.applied)} applied now` + (r.cause.length ? ` · ${r.cause.join(" · ")}` : "")
-    + (credit ? " · kept as a credit with the vendor" : "");
+    + (resolved ? " · resolved" : credit ? " · kept as a credit with the vendor" : "");
   if (credit) card.classList.add("credit");
   card.appendChild(h);
   const ol = document.createElement("ol"); ol.className = "cd-fix";
-  const steps = credit ? [`Kept as a credit with ${r.vendor} (marked ${fmtDate(r.mark.marked_at)}${r.mark.note ? " - " + r.mark.note : ""}). In QuickBooks, apply this check's ${qaCents(r.floating)} to their next bill instead of paying that bill again.`] : r.todo;
+  const steps = resolved ? [`Resolved (marked ${fmtDate(r.mark.marked_at)}${r.mark.note ? " - " + r.mark.note : ""}).`] : credit ? [`Kept as a credit with ${r.vendor} (marked ${fmtDate(r.mark.marked_at)}${r.mark.note ? " - " + r.mark.note : ""}). In QuickBooks, apply this check's ${qaCents(r.floating)} to their next bill instead of paying that bill again.`] : r.todo;
   for (const step of steps) { const li = document.createElement("li"); li.textContent = step; ol.appendChild(li); }
   card.appendChild(ol);
   const t = document.createElement("table"); t.className = "qa-repair-tbl";
@@ -8434,16 +8436,81 @@ function cdFixRow(r, span) {
   for (const b of r.reopened) line("Paid bill, open again", b.doc_number, qboUrl("bill", b.id), b.txn_date, b.amount || b.balance, b.exact ? "re-apply" : "possible - check it is the one", b.exact ? "neg" : "warn");
   for (const b of r.copies) line("Re-entered copy, open", b.doc_number, qboUrl("bill", b.id), b.txn_date, b.balance, b.exact ? "don't pay - re-apply" : "possible - check it is the one", b.exact ? "neg" : "warn");
   for (const c of r.freed) line("Credit freed", c.doc_number || c.id, qboUrl("vendorcredit", c.id), c.txn_date, c.balance, "put back on the check", "warn");
-  for (const b of r.late) line("Put on a later bill", b.doc_number, qboUrl("bill", b.id), b.txn_date, b.amount, "take off - that week went out short", "neg");
+  for (const b of r.late) line("Moved to a newer bill", b.doc_number, qboUrl("bill", b.id), b.txn_date, b.amount, "take off - that week went out short", "neg");
   t.appendChild(tb); if (tb.rows.length) card.appendChild(t);   // no lines -> no empty header
-  if (r.floating > 1) { const act = document.createElement("div"); act.className = "qa-repair-act";
-    const b = document.createElement("button"); b.type = "button"; b.className = "btn small";
-    b.textContent = credit ? "Undo: not a credit" : "Keep as credit with vendor";
-    b.title = credit ? "Take the Credit mark off - the check shows as a problem again" : "The floating money stays with the vendor on purpose (e.g. a double payment they will take off their next bill). Local mark, never QuickBooks.";
-    b.onclick = (e) => { e.stopPropagation(); cdSetMark(r, credit ? null : "credit"); };
-    act.appendChild(b); card.appendChild(act); }
+  { const act = document.createElement("div"); act.className = "qa-repair-act";
+    const btn = (label, title, fn) => { const b = document.createElement("button"); b.type = "button"; b.className = "btn small";
+      b.textContent = label; b.title = title; b.onclick = (e) => { e.stopPropagation(); fn(b); }; act.appendChild(b); return b; };
+    if (!r.mark && r.floating > 1) btn("Re-apply in QuickBooks…", "Put this check back on the bills it paid, from the copy kept before QuickBooks stripped it. Shows a dry run first; nothing is written until you confirm.",
+      b => cdReapplyDry(r, card, b));
+    if (r.floating > 1 && !resolved) btn(credit ? "Undo: not a credit" : "Keep as credit with vendor",
+      credit ? "Take the Credit mark off - the check shows as a problem again" : "The floating money stays with the vendor on purpose (e.g. a double payment they will take off their next bill). Local mark, never QuickBooks.",
+      () => cdSetMark(r, credit ? null : "credit"));
+    btn(resolved ? "Undo: not resolved" : "Mark resolved", resolved ? "Put the check back on To fix" : "Settled (e.g. the vendor applied it to another bill) - leaves To fix; the Resolved chip keeps it. Local mark, never QuickBooks.",
+      () => cdSetMark(r, resolved ? null : "resolved"));
+    card.appendChild(act); }
   td.appendChild(card);
   tr.appendChild(td); return tr;
+}
+
+// Re-apply in QuickBooks (owner 2026-09-25: "build it into the ledger ... ask are you sure before"). Step 1 is a dry run
+// read live from QuickBooks (/api/checkdrift/reapply, no write): what the check paid comes from the change log's before
+// copy, or for a check stripped before the log (09/23) a saved ledger copy that adds up to the check to the cent. Step 2
+// writes only after "Are you sure?", and the server refuses unless the plan is still exactly the one shown.
+async function cdReapplyDry(r, card, btn) {
+  const old = card.querySelector(".cd-reapply"); if (old) old.remove();
+  btn.disabled = true; const label = btn.textContent; btn.textContent = "Checking QuickBooks…";
+  let d;
+  try { d = await (await fetch(`/api/checkdrift/reapply?payment_id=${encodeURIComponent(r.payment_id)}`)).json(); }
+  catch (e) { d = { ok: false, error: String(e) }; }
+  btn.disabled = false; btn.textContent = label;
+  const box = document.createElement("div"); box.className = "cd-reapply";
+  const p = (text, cls) => { const x = document.createElement("div"); x.className = "cd-ra-line" + (cls ? " " + cls : ""); x.textContent = text; box.appendChild(x); return x; };
+  if (!d.ok) { p(`Dry run: ${d.error || "failed"}`, "neg"); card.appendChild(box); return; }
+  p(`Dry run, live from QuickBooks - nothing written. What it paid comes from ${d.before_source === "change log" ? "the copy kept when QuickBooks stripped it" : "a saved ledger copy"} (${fmtDate(d.before_from)}).`);
+  p(`${d.restore.length} bills go back on, ${qaCents(d.restore_amt)}. Applied ${qaCents(d.applied_now)} → ${qaCents(d.applied_after)} of ${qaCents(d.total)}; floating after ${qaCents(d.floating_after)}.`, d.floating_after > 0.005 ? "warn" : "ok");
+  const want = new Map(r.reopened.filter(b => b.exact).map(b => [String(b.id), b]));
+  if (want.size) {
+    const got = new Map(d.restore.map(x => [String(x.id), x]));
+    const off = [...got.keys()].filter(k => !want.has(k) || Math.abs((want.get(k).amount || 0) - got.get(k).amount) > 0.005).length
+      + [...want.keys()].filter(k => !got.has(k)).length;
+    p(off ? `Does NOT match the bills on this card: ${off} differ. Check before writing.` : `Matches the bills on this card: ${want.size} of ${want.size}, same amounts.`, off ? "neg" : "ok");
+  }
+  if (d.already) p(`${d.already} bill(s) already back on the check - kept as they are.`);
+  for (const s of d.skipped) p(`Skipped ${s.doc} ${qaCents(s.amount)} - ${s.why}`, "warn");
+  if (d.over) p("Restoring would apply more than the check amount - blocked.", "neg");
+  if (d.restore.length) {
+    const t = document.createElement("table"); t.className = "qa-repair-tbl";
+    t.innerHTML = `<thead><tr><th class="left">Bill</th><th class="left">Date</th><th class="right">Goes back on</th><th class="right">Open now</th><th class="left">Memo</th></tr></thead>`;
+    const tb = document.createElement("tbody");
+    for (const x of [...d.restore].sort((a, b) => String(a.date).localeCompare(String(b.date)))) { const tr = document.createElement("tr");
+      tr.appendChild(qboLinkCell(x.doc, qboUrl("bill", x.id), "Open in QuickBooks")); tr.appendChild(leftText(fmtDateShort(x.date)));
+      for (const v of [x.amount, x.balance]) { const c = document.createElement("td"); c.className = "right"; c.textContent = qaCents(v); tr.appendChild(c); }
+      tr.appendChild(leftText(x.memo)); tb.appendChild(tr); }
+    t.appendChild(tb); box.appendChild(t);
+  }
+  const act = document.createElement("div"); act.className = "qa-repair-act";
+  const w = document.createElement("button"); w.type = "button"; w.className = "btn small primary"; w.textContent = "Write to QuickBooks…";
+  w.disabled = !d.restore.length || d.over;
+  w.onclick = (e) => { e.stopPropagation(); cdReapplyWrite(d, w, box); };
+  act.appendChild(w); box.appendChild(act); card.appendChild(box);
+}
+async function cdReapplyWrite(d, btn, box) {
+  const msg = `Are you sure?\n\nThis writes to QuickBooks:\ncheck #${d.check} · ${d.vendor} · ${fmtDate(d.txn_date)} · ${qaCents(d.total)}\n`
+    + `gets ${d.restore.length} bills back on it, ${qaCents(d.restore_amt)} applied.\n\nOnly this check changes. It is backed up first.`;
+  if (!confirm(msg)) return;
+  btn.disabled = true; btn.textContent = "Writing…";
+  let res;
+  try { res = await (await fetch("/api/checkdrift/reapply", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ payment_id: d.payment_id, sync_token: d.sync_token, n: d.restore.length, amount: d.restore_amt, confirm: true }) })).json(); }
+  catch (e) { res = { ok: false, error: String(e) }; }
+  const x = document.createElement("div"); x.className = "cd-ra-line " + (res.ok ? "ok" : "neg");
+  x.textContent = res.ok ? `Written. QuickBooks now shows ${qaCents(res.applied)} applied on check #${res.check} (${res.lines} bills). It moves to History.`
+    + (res.mirror_refreshed ? "" : " Refresh from QuickBooks to update this page.") : `Not written: ${res.error || "failed"}`;
+  box.appendChild(x);
+  if (!res.ok) { btn.disabled = false; btn.textContent = "Write to QuickBooks…"; return; }
+  btn.textContent = "Written";
+  setTimeout(() => { const y = window.scrollY; loadCheckDrift(true).then(() => window.scrollTo(0, y)); }, 2500);
 }
 
 // ── Uncleared checks (owner 2026-09-24: "a list of all unmatched checks and/or any checks that haven't been deposited").

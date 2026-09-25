@@ -56,6 +56,7 @@ import notion_page    # noqa: E402  (local: one Notion page, whole, for the invo
 import table_export   # noqa: E402  (local: a filtered table -> grouped Excel report in ~/Downloads, POST /api/export/xlsx)
 import bill_payment_stub  # noqa: E402  (local: the check / bill-payment stub - print from the mirror into the vendor folder + the print history)
 import check_drift        # noqa: E402  (local: checks QBO rewrote after they were paid - the Checks QBO changed audit, /api/checkdrift)
+import reapply_check      # noqa: E402  (local: put a stripped check back on its bills - the ONE QBO write here, owner-confirmed)
 import strip_history      # noqa: E402  (local: every stripped check kept for good + the QBO support PDF, /api/checkstrips)
 
 HERE = Path(__file__).resolve().parent
@@ -3369,6 +3370,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(_fetch_uncleared(con))
             finally:
                 con.close()
+        elif path == "/api/checkdrift/reapply":   # dry run: what re-applying a stripped check would write (live QBO read, no write)
+            try:
+                self._json(reapply_check.dry_run(self._query().get("payment_id") or ""))
+            except Exception as e:         # noqa: BLE001
+                self._json({"ok": False, "error": str(e)})
         elif path == "/api/checkdrift":    # Checks QBO changed: paid checks QBO unapplied / moved on its own (owner 2026-09-24, check 48314)
             try:
                 res = check_drift.audit(since=self._query().get("since") or check_drift.SINCE)
@@ -3443,6 +3449,8 @@ class Handler(BaseHTTPRequestHandler):
             self._save_pay_run()
         elif p == "/api/pay-run/clear":   # empty the whole pay run (after the check run is done)
             self._clear_pay_run()
+        elif p == "/api/checkdrift/reapply":  # THE QBO WRITE: re-apply a stripped check, only the plan the owner confirmed
+            self._check_reapply()
         elif p == "/api/checkdrift/mark":  # a ledger write - the owner's ruling on a check (e.g. kept as credit); never QuickBooks
             self._check_drift_mark()
         elif p == "/api/qboaudit/ok":     # a ledger write - the owner's "that's OK" on a QBO change (hides it next run)
@@ -4094,8 +4102,29 @@ class Handler(BaseHTTPRequestHandler):
             folder = str(d) if d is not None else None
         self._json({"ok": True, "bill_id": bill_id, "lien": lien, "folder": folder})
 
+    def _check_reapply(self):
+        """{payment_id, sync_token, n, amount, confirm: true} -> write the dry run the owner saw and confirmed
+        ("Are you sure?"), then refresh the mirror so the page shows QuickBooks as it now is."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+            pid = str(body.get("payment_id") or "").strip()
+            n, amount = int(body.get("n")), float(body.get("amount"))
+        except (ValueError, TypeError, json.JSONDecodeError):
+            return self._json({"ok": False, "error": "bad request"}, 400)
+        if not pid.isdigit() or body.get("confirm") is not True or not body.get("sync_token"):
+            return self._json({"ok": False, "error": "not confirmed"}, 400)
+        try:
+            res = reapply_check.commit(pid, str(body["sync_token"]), n, amount)
+        except Exception as e:             # noqa: BLE001
+            return self._json({"ok": False, "error": str(e)})
+        if res.get("ok"):
+            r = subprocess.run([sys.executable, str(HERE / "refresh_mirror.py")], capture_output=True, text=True, timeout=600)
+            res["mirror_refreshed"] = r.returncode == 0
+        self._json(res)
+
     def _check_drift_mark(self):
-        """{payment_id, kind: "credit" | null, note} - mark a check kept on purpose (null clears it). Local only."""
+        """{payment_id, kind: "credit" | "resolved" | null, note} - the owner's ruling on a check (null clears it). Local only."""
         try:
             length = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(length) or b"{}")
@@ -4103,7 +4132,7 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, TypeError, json.JSONDecodeError):
             return self._json({"error": "bad request"}, 400)
         kind = body.get("kind")
-        if not pid.isdigit() or kind not in ("credit", None):
+        if not pid.isdigit() or kind not in ("credit", "resolved", None):
             return self._json({"error": "bad request"}, 400)
         now = _dt.datetime.now().isoformat(timespec="seconds")
         try:

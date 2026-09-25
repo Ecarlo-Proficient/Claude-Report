@@ -4,6 +4,15 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-25 · **Checks QBO changed: Re-apply in QuickBooks + one-row filters + Resolved** (owner: "can we build it into the
+  ledger? make sure to ask are you sure before"; "filters are making this go everywhere ... it should just be checks
+  changed / unapplied"; "subs/suppliers can be a filter"). `ledger/reapply_check.py` (graduated from one-offs the same day,
+  where it re-applied 25745 / 23466 by hand): card button -> dry run (live QBO, bill list, match vs the card) -> "Are you
+  sure?" -> write of that exact plan, then a mirror refresh. Pre-log strips (25510) read a saved ledger copy that adds up
+  to the check. Chips: To fix · Unapplied · Moved to a newer bill · Credit · Resolved · History + All vendors / Subs /
+  Suppliers; "Bill reads as owed again" dropped (a pre-log strip can't name its bills, so the chip missed them); the
+  Urgent/Low toggle became the row tag only. New mark kind `resolved` (48379: vendor applied the double payment to
+  another bill).
 - 2026-09-25 · **Menus stay open, app-wide** (owner: the stub-columns menu closed on every tick - "that shouldn't happen
   to any of these properties across the board"). Two root causes in the ONE closer: (1) it only spared clicks inside a
   hard-coded list of wrappers (`.msel`, `.datef`...), so a menu appended elsewhere closed on its own ticks - now a click

@@ -171,7 +171,7 @@ restate them here. Business/strategic context lives in session memory, not in th
   change log: what QBO deleted / edited / unapplied, `/api/qboaudit`); the **gear** holds sync (every feed
   stamp + every run button), WIP
   Review, Console and Systems. Every old tab name is a `TAB_ALIAS` in `app.js` that lands on its
-  page and scrolls to its section, so deep links keep working. READ-ONLY except the owner's marks
+  page and scrolls to its section, so deep links keep working. READ-ONLY except the owner's marks, the confirmed **Re-apply in QuickBooks** on Checks QBO changed (`ledger/reapply_check.py`, the one QBO write - dry run then "Are you sure?")
   (waiver / lien / pay-run) and the WIP Review write; `open_ledger.command` launcher (co-located in `~/Documents/CompanyHealth/`). **`registry_view.py` + the `Systems` tab** render the vault's systems & process registry (`AI Brain_Vault/02_processes/*.md`) LIVE - parsed per request, never cached, never written back, no ledger table; vault path via `shared/paths.vault_dir()` (`ACB_VAULT_DIR`), read-only. It **replaced the daily markdown digest** (disabled 2026-08-19). **`vault_graph.py` + the `Graph` tab** render the org as a map the SAME way (live, no cache): the whole vault's `[[wikilinks]]` as a force-directed org graph (`ROSTER.md` excluded - no names) plus the mermaid system diagrams IMPORTED from `docs/ARCHITECTURE.md`, all in one self-contained canvas viewer (no JS libraries); `/api/graph` serves it. **The `WIP Review`
   tab** is the WIP update as accept/merge: `/api/wip/review` runs each wip tool's `--emit-review`
   (diff each Test tab, no write), the tab shows every change as WAS→NOW split into **Accept·QBO**

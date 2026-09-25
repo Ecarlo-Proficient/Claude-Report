@@ -2095,6 +2095,15 @@ table.grid td a:not([class]) { color: var(--accent-text); }
 .hf-sort { border-top: 1px solid var(--border); padding-top: 6px; margin-top: 2px; }
 .msel-tool.on { border-color: var(--accent); color: var(--accent); font-weight: 600; }
 .hf-arrow { margin-left: 4px; color: var(--accent); font-weight: 700; }
-.cd-prio { display: inline-flex; gap: 6px; margin-left: 10px; padding-left: 10px; border-left: 1px solid var(--border); }   /* Checks QBO changed: All / Urgent / Low */
+.cd-prio { display: inline-flex; gap: 6px; margin-left: 10px; padding-left: 10px; border-left: 1px solid var(--border); }   /* Checks QBO changed: All vendors / Subs / Suppliers */
 .qa-repair-card.credit { border-left-color: var(--pos); }   /* a check kept as a credit on purpose: green edge, not red */
 .qa-repair-act { margin-top: 10px; }
+
+/* Checks QBO changed: the re-apply dry run inside a check's card */
+.cd-reapply { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
+.cd-ra-line { margin: 4px 0; }
+.cd-ra-line.ok { color: var(--pos-text, var(--pos)); }
+.cd-ra-line.neg { color: var(--neg-text, var(--neg)); }
+.cd-ra-line.warn { color: var(--warn-text, var(--warn)); }
+.cd-reapply .qa-repair-tbl { max-height: 360px; overflow: auto; display: block; }
+.cd-reapply .qa-repair-tbl td:last-child { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

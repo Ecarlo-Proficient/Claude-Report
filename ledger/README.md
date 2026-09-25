@@ -258,6 +258,16 @@ on the network). What it shows:
   paid bill and QBO takes the check off it without a warning): money floating, the paid bill or its re-entered copy
   reading as owed again, the freed loan credit, floating money put on a later bill. Every year on file, subs first,
   one bill per check, the fix per check. `ledger/check_drift.py` (`/api/checkdrift`; `--check <#>` on the command line).
+  Chips in ONE row by what happened: **To fix · Unapplied · Moved to a newer bill · Credit · Resolved · History**, plus
+  **All vendors / Subs / Suppliers**; Urgent / Low is the row's tag. **Re-apply in QuickBooks** on a check's card puts it
+  back on the bills it paid - **the one QBO write in the ledger**: a dry run first (live QBO, the bills listed, matched
+  against the card), then "Are you sure?", then `ledger/reapply_check.py` writes only that exact plan (same check
+  version, bill count and amount) and refreshes the mirror. What it paid = the change log's before copy, or for a check
+  stripped before the log (09/23/2026) a saved ledger copy (`ledger*.sqlite3*` `bill_payment_line`) adding up to the check
+  to the cent. Each bill re-read live (exists, same vendor, open balance covers it), never over the check total, the live
+  check backed up to `~/Library/Logs/Proficient/reapply-check/` first. `/api/checkdrift/reapply` (GET = dry run, POST =
+  write); CLI `python ledger/reapply_check.py <check#> [--list] [--commit]`. **Mark resolved** = a local mark (settled
+  outside the ledger, e.g. the vendor applied it to another bill).
   **History** keeps every check QuickBooks left with no bills, fixed or not: when, the trigger (a paid bill deleted /
   check saved with no bill edited / before the change log), bills before, saves, status with the re-applied date, and
   any bill paid a second time. **QBO report (PDF)** rebuilds the support report from it on every click, into
