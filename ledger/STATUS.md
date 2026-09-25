@@ -4,6 +4,8 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-25 · **Re-apply: a ledger copy only counts as evidence if it was saved BEFORE QBO last changed the check** (a later
+  copy, e.g. the live ledger loaded today, holds the stripped state and "confirmed" it). Found while sorting the To fix list.
 - 2026-09-25 · **Checks QBO changed: Re-apply in QuickBooks + one-row filters + Resolved** (owner: "can we build it into the
   ledger? make sure to ask are you sure before"; "filters are making this go everywhere ... it should just be checks
   changed / unapplied"; "subs/suppliers can be a filter"). `ledger/reapply_check.py` (graduated from one-offs the same day,

@@ -94,12 +94,17 @@ def _find_before(con, check: str, payment_id: str | None, change_id: int | None)
 def _from_snapshot(con, payment_id: str):
     """A check stripped BEFORE the change log (09/23/2026): the bills it paid from a saved copy of the ledger
     (its `bill_payment_line` table, loaded from QBO while the check was still whole). Used only when that
-    copy's lines add up to the check amount to the cent. Newest copy first."""
+    copy's lines add up to the check amount to the cent, and only copies saved BEFORE QBO last changed the check
+    (a later copy holds the stripped state). Newest copy first."""
     pay = next((p for p in mirror.load("BillPayment", con=con) if p["Id"] == payment_id), None)
     if not pay:
         return None
     total = round(float(pay.get("TotalAmt") or 0), 2)
+    changed = dt.datetime.fromisoformat(str((pay.get("MetaData") or {}).get("LastUpdatedTime")).replace("Z", "+00:00"))
     for f in sorted(mirror.db_path().parent.glob("ledger*.sqlite3*"), key=lambda f: f.stat().st_mtime, reverse=True):
+        taken = dt.datetime.fromtimestamp(f.stat().st_mtime, dt.timezone.utc)
+        if taken >= changed:                   # a copy saved AFTER QBO last changed the check shows the stripped state, not the evidence
+            continue
         try:
             lc = sqlite3.connect(f"file:{f}?mode=ro", uri=True)
             try:
