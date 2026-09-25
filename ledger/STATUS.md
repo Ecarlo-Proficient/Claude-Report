@@ -7,7 +7,7 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
 - 2026-09-25 · **Checks QBO changed: Re-apply in QuickBooks + one-row filters + Resolved** (owner: "can we build it into the
   ledger? make sure to ask are you sure before"; "filters are making this go everywhere ... it should just be checks
   changed / unapplied"; "subs/suppliers can be a filter"). `ledger/reapply_check.py` (graduated from one-offs the same day,
-  where it re-applied 25745 / 23466 by hand): card button -> dry run (live QBO, bill list, match vs the card) -> "Are you
+  where it re-applied 25745 / 23466 by hand): card button "See bills to re-apply" -> dry run (live QBO, bill list, match vs the card) -> "Are you
   sure?" -> write of that exact plan, then a mirror refresh. Pre-log strips (25510) read a saved ledger copy that adds up
   to the check. Chips: To fix · Unapplied · Moved to a newer bill · Credit · Resolved · History + All vendors / Subs /
   Suppliers; "Bill reads as owed again" dropped (a pre-log strip can't name its bills, so the chip missed them); the

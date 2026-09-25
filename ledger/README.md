@@ -259,7 +259,7 @@ on the network). What it shows:
   reading as owed again, the freed loan credit, floating money put on a later bill. Every year on file, subs first,
   one bill per check, the fix per check. `ledger/check_drift.py` (`/api/checkdrift`; `--check <#>` on the command line).
   Chips in ONE row by what happened: **To fix · Unapplied · Moved to a newer bill · Credit · Resolved · History**, plus
-  **All vendors / Subs / Suppliers**; Urgent / Low is the row's tag. **Re-apply in QuickBooks** on a check's card puts it
+  **All vendors / Subs / Suppliers**; Urgent / Low is the row's tag. **See bills to re-apply** on a check's card puts it
   back on the bills it paid - **the one QBO write in the ledger**: a dry run first (live QBO, the bills listed, matched
   against the card), then "Are you sure?", then `ledger/reapply_check.py` writes only that exact plan (same check
   version, bill count and amount) and refreshes the mirror. What it paid = the change log's before copy, or for a check

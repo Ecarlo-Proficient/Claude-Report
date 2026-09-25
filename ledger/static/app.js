@@ -8421,7 +8421,8 @@ function cdFixRow(r, span) {
   if (credit) card.classList.add("credit");
   card.appendChild(h);
   const ol = document.createElement("ol"); ol.className = "cd-fix";
-  const steps = resolved ? [`Resolved (marked ${fmtDate(r.mark.marked_at)}${r.mark.note ? " - " + r.mark.note : ""}).`] : credit ? [`Kept as a credit with ${r.vendor} (marked ${fmtDate(r.mark.marked_at)}${r.mark.note ? " - " + r.mark.note : ""}). In QuickBooks, apply this check's ${qaCents(r.floating)} to their next bill instead of paying that bill again.`] : r.todo;
+  const canSee = !r.mark && r.floating > 1;   // the server's "find the bills" step: the button below now finds them
+  const steps = canSee && !r.reopened.length ? ["Press See bills to re-apply to list the bills this check paid (nothing is written), then Write to QuickBooks to put them back."] : resolved ? [`Resolved (marked ${fmtDate(r.mark.marked_at)}${r.mark.note ? " - " + r.mark.note : ""}).`] : credit ? [`Kept as a credit with ${r.vendor} (marked ${fmtDate(r.mark.marked_at)}${r.mark.note ? " - " + r.mark.note : ""}). In QuickBooks, apply this check's ${qaCents(r.floating)} to their next bill instead of paying that bill again.`] : r.todo;
   for (const step of steps) { const li = document.createElement("li"); li.textContent = step; ol.appendChild(li); }
   card.appendChild(ol);
   const t = document.createElement("table"); t.className = "qa-repair-tbl";
@@ -8441,7 +8442,7 @@ function cdFixRow(r, span) {
   { const act = document.createElement("div"); act.className = "qa-repair-act";
     const btn = (label, title, fn) => { const b = document.createElement("button"); b.type = "button"; b.className = "btn small";
       b.textContent = label; b.title = title; b.onclick = (e) => { e.stopPropagation(); fn(b); }; act.appendChild(b); return b; };
-    if (!r.mark && r.floating > 1) btn("Re-apply in QuickBooks…", "Put this check back on the bills it paid, from the copy kept before QuickBooks stripped it. Shows a dry run first; nothing is written until you confirm.",
+    if (!r.mark && r.floating > 1) btn("See bills to re-apply…", "Lists the bills this check paid and what re-applying would do (a dry run, live from QuickBooks). Nothing is written until you press Write to QuickBooks and confirm.",
       b => cdReapplyDry(r, card, b));
     if (r.floating > 1 && !resolved) btn(credit ? "Undo: not a credit" : "Keep as credit with vendor",
       credit ? "Take the Credit mark off - the check shows as a problem again" : "The floating money stays with the vendor on purpose (e.g. a double payment they will take off their next bill). Local mark, never QuickBooks.",
@@ -8459,7 +8460,7 @@ function cdFixRow(r, span) {
 // writes only after "Are you sure?", and the server refuses unless the plan is still exactly the one shown.
 async function cdReapplyDry(r, card, btn) {
   const old = card.querySelector(".cd-reapply"); if (old) old.remove();
-  btn.disabled = true; const label = btn.textContent; btn.textContent = "Checking QuickBooks…";
+  btn.disabled = true; const label = btn.textContent; btn.textContent = "Finding the bills…";
   let d;
   try { d = await (await fetch(`/api/checkdrift/reapply?payment_id=${encodeURIComponent(r.payment_id)}`)).json(); }
   catch (e) { d = { ok: false, error: String(e) }; }
