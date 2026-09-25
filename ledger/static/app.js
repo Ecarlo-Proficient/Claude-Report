@@ -2285,7 +2285,8 @@ function renderVendorPage() {
   const bt = document.createElement("button"); bt.type = "button"; bt.className = "btn small"; bt.textContent = "Open in Bill Tracker"; bt.title = "The Bill Tracker with its vendor filter set to this vendor - every other filter is there";
   bt.onclick = () => { if (_ppLeaveBlocked()) return; billVendorHidden = new Set(_billVendors().filter(v => v !== d.vendor)); activeBillView = "all"; closeRecord(); setTab("bills"); buildBillVendorFilter(); renderBills(); };
   tools.appendChild(bt);
-  body.appendChild(tools);
+  { const sp = document.createElement("span"); sp.className = "vp-tools-right"; tools.appendChild(sp); _vpRefresh.attach(sp, body); }
+  body.insertBefore(tools, _vpRefresh.prog);
   let rows = rowsAll.filter(b => _vendorType === "all" || (_vendorType === "paid" ? isPaid(b) : !isPaid(b)));
   if (_vendorInv !== "any") rows = rows.filter(b => invState(b) === _vendorInv);
   if (_vendorDate && _vendorDate.active()) rows = rows.filter(b => _vendorDate.passes(b.bill_date));   // Month | Date (from / to)
@@ -2413,23 +2414,34 @@ async function _printStub(paymentId, btn) {
     const d = _vendorData; await _loadStubHistory(_stubHist.vendor); if (_vendorPageShowing(d)) renderVendorPage();   // never paint over a page the owner opened meanwhile
   } catch (e) { toast("Could not print the stub: " + e.message); btn.disabled = false; btn.textContent = was; }
 }
-function _stubColumnPicker() {   // the registry as checkboxes; the choice sticks (localStorage) and applies to the next print
-  const wrap = document.createElement("details"); wrap.className = "stub-cols";
-  const sum = document.createElement("summary"); sum.textContent = "Stub columns"; wrap.appendChild(sum);
-  const box = document.createElement("div"); box.className = "stub-cols-box";
-  for (const c of _stubHist.columns) {
-    const lab = document.createElement("label"); const cb = document.createElement("input"); cb.type = "checkbox";
-    cb.checked = (_stubCols || []).includes(c.key);
-    cb.onchange = () => { const order = _stubHist.columns.map(x => x.key); const set = new Set(_stubCols || []);
-      if (cb.checked) set.add(c.key); else set.delete(c.key);
-      _stubCols = order.filter(k => set.has(k)); if (!_stubCols.length) { _stubCols = [c.key]; cb.checked = true; }
-      try { localStorage.setItem(STUB_COLS_LS, JSON.stringify(_stubCols)); } catch {} };
-    lab.appendChild(cb); lab.appendChild(document.createTextNode(" " + c.label + (c.default ? "" : " (optional)"))); box.appendChild(lab);
+// Pick the columns AT PRINT TIME (owner 2026-09-25: "filter out the columns i don't want before making it a pdf ...
+// sometimes i don't want to show the memo"). Every Print button opens this checklist first; the choice sticks
+// (localStorage) and comes back ticked next time. Print runs the stub(s) with exactly the ticked columns.
+function _stubPrintMenu(btn, what, onPrint) {
+  document.querySelectorAll(".stub-print-menu").forEach(m => m.remove());
+  const cols = _stubHist.columns; if (!cols.length) return onPrint();   // no registry (older server): print as before
+  let pick = new Set(_stubCols || cols.filter(c => c.default).map(c => c.key));
+  const menu = document.createElement("div"); menu.className = "msel-menu stub-print-menu"; menu.hidden = false;
+  const h = document.createElement("div"); h.className = "spm-h"; h.textContent = "Columns on the stub"; menu.appendChild(h);
+  const boxes = [];
+  for (const c of cols) {
+    const lab = document.createElement("label"); lab.className = "spm-opt"; const cb = document.createElement("input"); cb.type = "checkbox";
+    cb.checked = pick.has(c.key); cb.onchange = () => { if (cb.checked) pick.add(c.key); else pick.delete(c.key); go.disabled = !pick.size; };
+    boxes.push([c, cb]); lab.appendChild(cb); lab.appendChild(document.createTextNode(" " + c.label)); menu.appendChild(lab);
   }
+  const foot = document.createElement("div"); foot.className = "spm-foot";
   const reset = document.createElement("button"); reset.type = "button"; reset.className = "btn tiny subtle"; reset.textContent = "QuickBooks default";
-  reset.onclick = () => { _stubCols = _stubHist.columns.filter(c => c.default).map(c => c.key); try { localStorage.setItem(STUB_COLS_LS, JSON.stringify(_stubCols)); } catch {} renderVendorPage(); };
-  box.appendChild(reset); wrap.appendChild(box);
-  return wrap;
+  reset.onclick = () => { pick = new Set(cols.filter(c => c.default).map(c => c.key)); for (const [c, cb] of boxes) cb.checked = pick.has(c.key); go.disabled = false; };
+  const cancel = document.createElement("button"); cancel.type = "button"; cancel.className = "btn tiny subtle"; cancel.textContent = "Cancel";
+  const go = document.createElement("button"); go.type = "button"; go.className = "btn tiny"; go.textContent = what;
+  const close = () => { menu.remove(); document.removeEventListener("mousedown", outside, true); document.removeEventListener("keydown", esc, true); };
+  const outside = (e) => { if (!menu.contains(e.target) && e.target !== btn) close(); };
+  const esc = (e) => { if (e.key === "Escape") { e.stopPropagation(); close(); } };
+  cancel.onclick = close;
+  go.onclick = () => { _stubCols = cols.map(c => c.key).filter(k => pick.has(k)); try { localStorage.setItem(STUB_COLS_LS, JSON.stringify(_stubCols)); } catch {} close(); onPrint(); };
+  foot.appendChild(reset); foot.appendChild(cancel); foot.appendChild(go); menu.appendChild(foot);
+  document.body.appendChild(menu); _placeMenu(btn, menu);
+  setTimeout(() => { document.addEventListener("mousedown", outside, true); document.addEventListener("keydown", esc, true); }, 0);
 }
 let _stubSel = new Set();   // payment ids ticked for a multi-print (owner 2026-09-22: "a box to check in case I want to select multiple payments")
 async function _printStubsSelected(btn) {
@@ -2450,26 +2462,34 @@ async function _printStubsSelected(btn) {
   _stubSel.clear(); btn.textContent = was;
   const d = _vendorData; await _loadStubHistory(_stubHist.vendor); if (_vendorPageShowing(d)) renderVendorPage();
 }
-// Refresh from QuickBooks on the Payments view (owner 2026-09-25: "get the ones we just entered without having to
-// sync-all") - the 'billpay' pipeline: mirror change feed + load_bill_payments only. The button and bar are built ONCE
-// and re-attached on every render, so typing in a filter mid-run never loses the progress.
+// Refresh from QuickBooks on the vendor page (owner 2026-09-25: "get the ones we just entered without having to
+// sync-all", then "add the same refresh button to the Bills view"). Payments view = 'billpay' (mirror change feed +
+// load_bill_payments); Bills view = 'billsync' (mirror + Bill Tracker.xlsx + load_bill_tracker + open AP). ONE button
+// and bar, built once and re-attached on every render, so a filter re-render mid-run never loses the progress.
 const _vpRefresh = (() => {
   const btn = document.createElement("button"); btn.type = "button"; btn.className = "btn small";
-  btn.innerHTML = "⟳&nbsp;Refresh from QuickBooks"; btn.title = "Pull the bill payments from QuickBooks now (the mirror + this year's payments, Touch ID) - no sync-all";
+  btn.innerHTML = "⟳&nbsp;Refresh from QuickBooks";
   const prog = document.createElement("div"); prog.className = "sync-progress vp-refresh-prog"; prog.hidden = true;
   const bar = document.createElement("div"); bar.className = "sync-bar"; const fill = document.createElement("div"); fill.className = "sync-bar-fill"; bar.appendChild(fill);
   const step = document.createElement("div"); step.className = "sync-step"; prog.appendChild(bar); prog.appendChild(step);
   btn.onclick = () => {
     const vendor = _vendorData && _vendorData.vendor;
-    runPipeline("billpay", null, { btn, prog, fill, step, after: async (ok) => {
-      if (!ok || !vendor) return;
+    runPipeline(_vendorView === "payments" ? "billpay" : "billsync", null, { btn, prog, fill, step, after: async (ok) => {
+      if (!ok) { step.textContent += " - if it stopped at Sync bills, Bill Tracker.xlsx is probably open in Excel: close it and refresh again."; return; }
+      if (!vendor) return;
       const was = _vendorData; let data;
       try { data = await (await fetch("/api/vendor?v=" + encodeURIComponent(vendor))).json(); } catch { return; }
       if (!data || !data.ok || !_vendorPageShowing(was)) return;   // the owner moved on - never paint over another page
       _vendorData = data; renderVendorPage();
     } });
   };
-  return { btn, prog };
+  const attach = (host, parent) => {   // host = where the button goes, parent = where the progress bar goes
+    btn.title = _vendorView === "payments"
+      ? "Pull the bill payments from QuickBooks now (the mirror + this year's payments) - no sync-all"
+      : "Pull the bills from QuickBooks now (the mirror, Bill Tracker.xlsx, the ledger, open AP; ~20 s) - no sync-all. Close Bill Tracker.xlsx in Excel first.";
+    host.appendChild(btn); parent.appendChild(prog);
+  };
+  return { btn, prog, attach };
 })();
 async function _renderVendorPayments(d, body, seq) {
   if (_stubHist.vendor !== d.vendor) { await _loadStubHistory(d.vendor); _stubSel.clear(); }
@@ -2482,12 +2502,11 @@ async function _renderVendorPayments(d, body, seq) {
   const byPay = new Map(); for (const h of _stubHist.prints) { if (!byPay.has(h.payment_id)) byPay.set(h.payment_id, []); byPay.get(h.payment_id).push(h); }
   // toolbar: the column picker + the multi-print button (lives on the selection)
   const bar = document.createElement("div"); bar.className = "stub-bar";
-  if (_stubHist.columns.length) bar.appendChild(_stubColumnPicker());
   const selBtn = document.createElement("button"); selBtn.type = "button"; selBtn.className = "btn small stub-sel-btn";
   const selLabel = () => { const n = _stubSel.size; selBtn.textContent = n ? `Print ${n} stub${n === 1 ? "" : "s"}` : "Print stubs for selected"; selBtn.disabled = !n; };
-  selLabel(); selBtn.onclick = () => _printStubsSelected(selBtn);
-  { const right = document.createElement("span"); right.className = "stub-bar-right"; right.appendChild(_vpRefresh.btn); right.appendChild(selBtn); bar.appendChild(right); }
-  body.appendChild(bar); body.appendChild(_vpRefresh.prog);
+  selLabel(); selBtn.onclick = () => _stubPrintMenu(selBtn, `Print ${_stubSel.size} stub${_stubSel.size === 1 ? "" : "s"}`, () => _printStubsSelected(selBtn));
+  { const right = document.createElement("span"); right.className = "stub-bar-right"; _vpRefresh.attach(right, body); right.appendChild(selBtn); bar.appendChild(right); }
+  body.insertBefore(bar, _vpRefresh.prog);
   if (!pays.length) { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = (d.payments || []).length ? (_vendorQ.trim() ? `No payments match "${_vendorQ.trim()}".` : "No payments match these filters.") : "No bill payments recorded this year - Refresh from QuickBooks to pull the latest."; body.appendChild(p); _renderStubOrphans(body, d.payments || [], byPay); return; }
   const scroll = document.createElement("div"); scroll.className = "table-scroll";
   const table = document.createElement("table"); table.className = "grid vp-paytable"; const thead = document.createElement("thead"), tbody = document.createElement("tbody");
@@ -2521,7 +2540,7 @@ async function _renderVendorPayments(d, body, seq) {
     { const sc = document.createElement("td"); sc.className = "left vp-stub"; const hist = byPay.get(pid) || [];
       if (!p.voided) { const b = document.createElement("button"); b.type = "button"; b.className = "btn tiny"; b.textContent = hist.length ? "Print again" : "Print stub";
         b.title = "Payment on top, the bills it paid below - the PDF lands in this vendor's folder under Accounting / Accounts Payable / Bill Payment Stubs";
-        b.onclick = (e) => { e.stopPropagation(); _printStub(pid, b); }; sc.appendChild(b); }
+        b.onclick = (e) => { e.stopPropagation(); _stubPrintMenu(b, "Print stub", () => _printStub(pid, b)); }; sc.appendChild(b); }
       if (hist.length) { const hl = document.createElement("div"); hl.className = "stub-hist";
         const lines = hist.map(h => { const ln = document.createElement("div"); ln.className = "stub-histline"; ln.appendChild(_stubLink(h)); ln.appendChild(_stubPill(h.status)); return ln; });
         _vpCapped(hl, lines, 3, "prints"); sc.appendChild(hl); }
@@ -2603,7 +2622,7 @@ function _renderStubOrphans(body, pays, byPay) {
       const lines = hist.map(h => { const ln = document.createElement("div"); ln.className = "stub-histline"; ln.appendChild(_stubLink(h)); return ln; });
       _vpCapped(hl, lines, 3, "prints"); td.appendChild(hl);
       const b = document.createElement("button"); b.type = "button"; b.className = "btn tiny subtle"; b.textContent = "Print again"; b.title = "Re-print from the mirror's copy of the payment (kept even after a QuickBooks delete)";
-      b.onclick = (e) => { e.stopPropagation(); _printStub(pid, b); }; td.appendChild(b);
+      b.onclick = (e) => { e.stopPropagation(); _stubPrintMenu(b, "Print again", () => _printStub(pid, b)); }; td.appendChild(b);
       tr.appendChild(td); }
     tbody.appendChild(tr);
   }

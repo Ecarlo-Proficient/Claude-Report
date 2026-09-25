@@ -499,6 +499,12 @@ def _resolve_steps(pipeline_key):
         # mirror first (the stub prints read it), then the bill_payment table the page lists
         return [{"label": "Refresh the mirror (QBO change feed, Touch ID)", "script": "ledger/refresh_mirror.py", "args": []},
                 {"label": "Pull bill payments (QBO, this year)", "script": "ledger/load_bill_payments.py", "args": []}]
+    if pipeline_key == "billsync":            # the vendor page's Bills-view Refresh: the Bill Tracker without a sync-all
+        # mirror -> Bill Tracker.xlsx (the Bills list's source; fails if the file is open in Excel) -> ledger -> QBO open AP
+        return [{"label": "Refresh the mirror (QBO change feed, Touch ID)", "script": "ledger/refresh_mirror.py", "args": []},
+                {"label": "Sync bills (QBO -> Bill Tracker.xlsx)", "script": "bill-tracker/excel_bill_sync.py", "args": [], "side": True},
+                {"label": "Load bills -> ledger", "script": "ledger/load_bill_tracker.py", "args": []},
+                {"label": "Pull bill payments + open AP (QBO, this year)", "script": "ledger/load_bill_payments.py", "args": []}]
     if pipeline_key == "costs-full":          # explicit click only - never part of reload/all (30-40 min)
         return [{"label": "Full cost reload (every project, all history, Touch ID)",
                  "script": "ledger/load_costs.py", "args": []}]

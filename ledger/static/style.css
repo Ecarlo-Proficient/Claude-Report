@@ -1783,13 +1783,14 @@ td.vp-projs a.vp-proj:hover { text-decoration: underline; }
 .stub-pill.current { color: var(--pos); border-color: color-mix(in srgb, var(--pos) 40%, var(--border)); }
 .stub-pill.changed { color: var(--warn-text); border-color: color-mix(in srgb, var(--warn-text) 40%, var(--border)); }
 .stub-pill.voided, .stub-pill.deleted { color: var(--neg); border-color: color-mix(in srgb, var(--neg) 40%, var(--border)); }
-.stub-cols { margin: 0 0 10px; font-size: .85em; color: var(--text-dim); }
-.stub-cols summary { cursor: pointer; user-select: none; }
-.stub-cols-box { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; padding: 6px 2px 2px; color: var(--text); }
-.stub-cols-box label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.stub-print-menu { z-index: 60; min-width: 200px; padding: 8px 10px; }
+.stub-print-menu .spm-h { font-weight: 600; font-size: .85em; color: var(--text-dim); margin: 0 0 6px; }
+.stub-print-menu .spm-opt { display: flex; align-items: center; gap: 6px; padding: 3px 0; cursor: pointer; }
+.stub-print-menu .spm-foot { display: flex; gap: 6px; justify-content: flex-end; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+.stub-print-menu .spm-foot .subtle:first-child { margin-right: auto; }
 .stub-orph-h { font-size: 1em; margin: 18px 0 2px; }
 .stub-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 10px; }
-.stub-bar .stub-cols { margin: 0; }
+.vp-tools-right { margin-left: auto; }
 .stub-bar-right { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; }
 .vp-refresh-prog { padding: 0; margin: -4px 0 10px; }
 .vp-paytable .vp-ck { width: 28px; padding-right: 0; }

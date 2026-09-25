@@ -4,6 +4,13 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-25 · **Vendor Bills view: Refresh from QuickBooks + stub columns picked at print time** (owner: "add the same
+  refresh button to the Bills view ... filter out the columns i don't want before making it a pdf ... sometimes i don't
+  want to show the memo"). Bills view runs the new `billsync` pipeline (mirror -> `excel_bill_sync.py` -> Bill Tracker.xlsx
+  -> `load_bill_tracker.py` -> `load_bill_payments.py`; stops at Sync bills when the workbook is open in Excel, and the bar
+  says so). Sub vendors (QBO cost_line page) get no button - their source is the multi-minute cost pull. Every Print
+  button (one stub, Print again, print selected) opens a column checklist first; the choice sticks. The old collapsed
+  "Stub columns" picker is gone (one mechanism). With Memo off, a partial-payment note moves to the first text column.
 - 2026-09-25 · **Vendor Payments: Refresh from QuickBooks** (owner: "refresh the vendor payments so i can get the ones we
   just entered without having to sync-all"). A button in the vendor page's Payments toolbar runs the new `billpay`
   pipeline (`_resolve_steps`): the mirror change feed (stub prints read it) + `load_bill_payments.py`, then re-reads the

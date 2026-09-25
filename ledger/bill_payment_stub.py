@@ -549,12 +549,14 @@ def stub_html(stubs: Sequence[dict], columns: Optional[Sequence[str]] = None,
             parts.append(f"<th class='{align[0]}{' memo' if k == 'memo' else ''}'{w}>{_esc(label)}</th>")
         parts.append("</tr></thead><tbody>")
         parts.append(f"<tr class='band'><td colspan='{len(cols)}'>{_esc(s['vendor'])}</td></tr>")
+        # the partial-payment note rides the memo; with memo off it moves to the first text column (never lost)
+        note_col = "memo" if "memo" in cols else next((k for k in ("number", "type", "project", "date") if k in cols), cols[0])
         for r in s["rows"]:
             parts.append("<tr class='row'>")
             for k in cols:
                 _, align, get = COLUMNS[k]
                 val = _esc(get(r))
-                if k == "memo" and r["partial"]:
+                if k == note_col and r["partial"]:
                     val += (f"<div class='partial'>partial payment - bill amount {money(r['bill_total'])}"
                             f", paid on this {'check' if s['method'] == 'Check' else 'payment'} "
                             f"{money(r['paid'])}</div>")
@@ -707,6 +709,8 @@ def _selftest() -> int:
                    "Memo/Description", "Open balance", money(1000), "partial payment", "$" + money(1300), "06/17/2026"):
         assert needle in page, needle
     assert "2026-09-21" not in page.replace("Bill Payment Stub", "")   # never year-first on the page
+    nomemo = stub_html([s], columns=["date", "number", "amount"])       # memo unticked at print time
+    assert "Memo/Description" not in nomemo and "partial payment" in nomemo   # the partial note survives
     assert "Account" not in page and "Test Bank" not in page          # the owner's stub shows no account
     assert _file_name(s) == "TEST VENDOR - Bill Payment Stub 25760 09-21-2026.pdf"
     assert _file_name(dict(s, method="Credit card", ref="AMEX-0000")) == "TEST VENDOR - Bill Payment Stub AMEX-0000 09-21-2026.pdf"
