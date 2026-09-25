@@ -2086,3 +2086,8 @@ table.grid td a:not([class]) { color: var(--accent-text); }
   .proj-grid th:nth-child(2), .proj-grid td:nth-child(2) { position: static; box-shadow: none; }
   .proj-grid th:first-child, .proj-grid td:first-child { min-width: 0; max-width: 130px; }
 }
+
+/* header menu sort (2026-09-25): Sort A to Z / Z to A under the value tools; the header shows the arrow */
+.hf-sort { border-top: 1px solid var(--border); padding-top: 6px; margin-top: 2px; }
+.msel-tool.on { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.hf-arrow { margin-left: 4px; color: var(--accent); font-weight: 700; }

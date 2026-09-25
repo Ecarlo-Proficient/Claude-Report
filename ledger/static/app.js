@@ -1606,6 +1606,15 @@ function hfPasses(tableKey, b, except) {
   for (const k in st) { if (k === except || !st[k].size) continue; const get = HF_BILL_COLS[k][0]; if (!st[k].has(get(b))) return false; }
   return true;
 }
+// Sort from the same menu (owner 2026-09-25: "give me ability to sort this by alphabetical order") - Excel's Sort A to Z /
+// Z to A on the column's values; one sort per table, stays until changed or cleared. Every table with funnels applies it.
+const _hfSort = {};                                 // tableKey -> { col, dir: 1 | -1 }
+function hfSorted(tableKey, rows) {
+  const s = _hfSort[tableKey]; if (!s || !HF_BILL_COLS[s.col]) return rows;
+  const [get, lbl] = HF_BILL_COLS[s.col];
+  const key = s.col === "date" ? (r => get(r)) : (r => lbl(get(r)));
+  return [...rows].sort((a, b) => s.dir * String(key(a)).localeCompare(String(key(b)), undefined, { numeric: true, sensitivity: "base" }));
+}
 function hfActive(tableKey) { const st = hfState(tableKey); return Object.keys(st).some(k => st[k].size); }
 function hfClear(tableKey) { const st = hfState(tableKey); for (const k in st) st[k].clear(); }
 let _hfOpen = null;   // the one open menu
@@ -1626,7 +1635,8 @@ function hfDecorate(th, tableKey, colKey, rowsFn, rerender) {   // rowsFn() = th
   const st = hfState(tableKey); const sel = st[colKey] || (st[colKey] = new Set());
   const btn = document.createElement("button"); btn.type = "button"; btn.className = "hf-btn" + (sel.size ? " on" : "");
   btn.innerHTML = '<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M1.5 2.5h13l-5 6v4.5l-3 1.5V8.5z" fill="currentColor"/></svg>';   // the Excel funnel
-  btn.title = sel.size ? `Filtered: ${sel.size} value${sel.size === 1 ? "" : "s"} - click to change` : "Filter this column";
+  btn.title = sel.size ? `Filtered: ${sel.size} value${sel.size === 1 ? "" : "s"} - click to change` : "Filter or sort this column";
+  { const so = _hfSort[tableKey]; if (so && so.col === colKey) { const ar = document.createElement("span"); ar.className = "hf-arrow"; ar.textContent = so.dir === 1 ? "↑" : "↓"; ar.title = "Sorted by this column"; th.appendChild(ar); } }
   btn.onclick = (e) => {
     e.stopPropagation(); e.preventDefault();
     if (_hfOpen && _hfOpen.isConnected && !_hfOpen.hidden && _hfOpen._for === btn) { hfCloseMenu(); return; }
@@ -1646,6 +1656,14 @@ function hfDecorate(th, tableKey, colKey, rowsFn, rerender) {   // rowsFn() = th
     const clr = document.createElement("button"); clr.type = "button"; clr.className = "msel-tool"; clr.textContent = "Clear"; clr.onclick = () => { sel.clear(); rerender(); hfCloseMenu(); };
     const cnt = document.createElement("span"); cnt.className = "msel-count"; cnt.textContent = `${vals.length} value${vals.length === 1 ? "" : "s"}`;
     tools.appendChild(all); tools.appendChild(none); tools.appendChild(clr); tools.appendChild(cnt); menu.appendChild(tools);
+    { const srt = document.createElement("div"); srt.className = "msel-tools hf-sort"; const cur = _hfSort[tableKey];
+      const lab2 = colKey === "date" ? ["Oldest first", "Newest first"] : ["Sort A → Z", "Sort Z → A"];
+      [[1, lab2[0]], [-1, lab2[1]]].forEach(([dir, text]) => {
+        const x = document.createElement("button"); x.type = "button"; x.className = "msel-tool" + (cur && cur.col === colKey && cur.dir === dir ? " on" : "");
+        x.textContent = text; x.title = "Sort the table by this column (click again to undo)";
+        x.onclick = () => { _hfSort[tableKey] = (cur && cur.col === colKey && cur.dir === dir) ? null : { col: colKey, dir }; rerender(); hfCloseMenu(); };
+        srt.appendChild(x); });
+      menu.appendChild(srt); }
     for (const v of vals) {
       const lab = document.createElement("label"); lab.className = "msel-opt"; lab.dataset.val = v;
       const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = sel.has(v);
@@ -1950,7 +1968,7 @@ function renderBills() {
   let rows = baseRows.filter(b => hfPasses("bills", b));
   { const hc = $("#bfHfClear"); if (hc) { hc.hidden = !hfActive("bills"); } }
   const sortKey = $("#billSort") ? $("#billSort").value : "vendor";
-  rows = [...rows].sort(BILL_SORTS[sortKey] || BILL_SORTS.vendor);
+  rows = hfSorted("bills", [...rows].sort(BILL_SORTS[sortKey] || BILL_SORTS.vendor));   // a header sort wins over the dropdown
 
   const openSum = rows.reduce((t, b) => t + bOpen(b), 0);
   const lienN = rows.filter(b => BILL_LIEN_RISK.has(b.lien_status)).length;
@@ -2276,7 +2294,7 @@ function renderVendorPage() {
     Math.round(num(b.line_amount)), money(b.line_amount), Math.round(bOpen(b)), b.lien_status, b.division, isPaid(b) ? "paid" : "unpaid", invState(b) === "gcpaid" ? "gc paid" : invState(b) === "gcowes" ? "gc owes" : "no invoice"]));
   rows.sort((a, b) => String(b.bill_date || "").localeCompare(String(a.bill_date || "")) || String(a.bill_ref || "").localeCompare(String(b.bill_ref || "")));
   const baseRows = rows;                                   // before the header filters - what each funnel lists
-  rows = rows.filter(b => hfPasses("vendorBills", b));
+  rows = hfSorted("vendorBills", rows.filter(b => hfPasses("vendorBills", b)));
   if (!rows.length) { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = rowsAll.length ? (_vendorQ.trim() ? `No bills match "${_vendorQ.trim()}".` : "No bills match this filter.") : "No Bill Tracker rows for this vendor."; body.appendChild(p); return; }
   const scroll = document.createElement("div"); scroll.className = "table-scroll";
   const table = document.createElement("table"); table.className = "grid vp-grid"; const thead = document.createElement("thead"), tbody = document.createElement("tbody");
@@ -8221,7 +8239,7 @@ function renderCheckDrift() {
   const hay = r => [r.vendor, r.check, r.txn_date, r.total, r.floating, r.pattern, ...r.reopened.map(b => b.doc_number + " " + b.balance),
     ...r.copies.map(b => b.doc_number + " " + b.balance), ...r.late.map(b => b.doc_number + " " + b.amount), ...r.cause, ...r.todo].join(" ").toLowerCase();
   const base = all.filter(r => fn(r) && (!q.length || q.every(w => hay(r).includes(w))));
-  const rows = base.filter(r => hfPasses("checkdrift", r));
+  const rows = hfSorted("checkdrift", base.filter(r => hfPasses("checkdrift", r)));
   const cols = [["Vendor", "left", "vendor"], ["Check #", "left"], ["Check date", "left"], ["Check total", "right"], ["Applied now", "right"],
     ["Floating", "right"], ["Bill it paid (open again)", "left"], ["Put on a later bill", "left"], ["What happened", "left"], ["Changed", "left"]];
   thead.innerHTML = "";
@@ -8355,7 +8373,7 @@ function renderUncleared() {
   const fn = (UC_FILTERS.find(f => f[0] === ucFilter) || UC_FILTERS[0])[2];
   const q = (($("#ucSearch") || {}).value || "").trim().toLowerCase().split(/\s+/).filter(Boolean);
   const base = all.filter(c => fn(c) && (!q.length || q.every(w => [c.payee, c.check_no, c.account, c.amount, c.txn_date, fmtDateShort(c.txn_date)].join(" ").toLowerCase().includes(w))));
-  const rows = base.filter(c => hfPasses("uncleared", c));
+  const rows = hfSorted("uncleared", base.filter(c => hfPasses("uncleared", c)));
   const cols = [["Check #", "left"], ["Date", "left"], ["Payee", "left", "vendor"], ["Bank account", "left"], ["Amount", "right"], ["Days out", "right"], ["Type", "left"]];
   thead.innerHTML = "";
   { const tr = document.createElement("tr");

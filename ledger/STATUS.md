@@ -4,6 +4,9 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-25 · **Sort from the column menu** (owner: "give me ability to sort this by alphabetical order"). The funnel menu
+  (one component: Bills, the vendor page's bills, Checks QBO changed, Uncleared checks) gains **Sort A → Z / Z → A**
+  (dates: Oldest / Newest first) that sorts the table by that column; the header shows ↑/↓; click it again to undo.
 - 2026-09-25 · **PDF printing no longer trips macOS App Management** (owner saw "python3.14 was prevented from modifying
   apps on your Mac" after the QBO report button). `bill_payment_stub.render_pdf` (stubs + the QBO report) runs Chrome as a
   bare printer: temp profile, mock keychain, no updater / first run / background network; it waits for Chrome's "written
