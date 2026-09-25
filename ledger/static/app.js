@@ -657,6 +657,20 @@ function fmtDate(v, withTime) {
   if (!v) return "–";
   const m = String(v).trim().match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?/);
   if (!m) return String(v);                      // not an ISO date → leave as-is
+  // A stamp that names its zone (refresh stamps end in "Z" = UTC, QBO's carry -07:00) is shown in
+  // this machine's local time - read raw, 13:34Z printed as "1:34 PM" for an 8:34 AM refresh.
+  if (/(?:Z|[+-]\d{2}:?\d{2})$/.test(String(v).trim())) {
+    const d = new Date(String(v).trim());
+    if (!isNaN(d)) {
+      const p = n => String(n).padStart(2, "0");
+      let out = `${p(d.getMonth() + 1)}/${p(d.getDate())}/${d.getFullYear()}`;
+      if (withTime && m[4] != null) {
+        let hr = d.getHours(); const ap = hr >= 12 ? "PM" : "AM"; hr = hr % 12 || 12;
+        out += ` · ${hr}:${p(d.getMinutes())} ${ap}`;
+      }
+      return out;
+    }
+  }
   const [, Y, Mo, D, H, Mi] = m;
   let out = `${Mo}/${D}/${Y}`;                    // mm/dd/yyyy, already zero-padded by the ISO source
   if (withTime && H != null) {

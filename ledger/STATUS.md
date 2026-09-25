@@ -4,6 +4,10 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-25 · **Times show in local time** (owner: "why is this showing today at 1:34 if that's in the future?").
+  `fmtDate` read the clock straight off the stamp, so a UTC refresh stamp (`...13:34:50Z`) printed 1:34 PM for an
+  8:34 AM refresh. A stamp that names its zone (`Z` or `-07:00`) is now converted to the machine's local time, date
+  included; plain dates and zone-less times are unchanged. Also puts QBO's Pacific stamps in Central.
 - 2026-09-24 · **Projects = a true WIP report** (owner: "for the project page, i need a true wip report, and remove that
   'next' column. i need to see how my projects are doing"). `PROJ_COLS` is the standard schedule, straight from the WIP
   master's own columns (no recompute): Project · Name · Contract · ETC · Est. profit · GP % · Costs · Cost to finish ·
