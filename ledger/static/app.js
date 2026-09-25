@@ -1624,8 +1624,10 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape") hfCloseMen
 window.addEventListener("scroll", (e) => { if (_hfOpen && !(e.target && e.target.nodeType === 1 && _hfOpen.contains(e.target))) hfCloseMenu(); }, true);   // the page scrolled (not the list itself)
 // Every multi-select menu (filter bar, the date months, the vendor page) closes on a click OUTSIDE it or on Esc - and
 // never on a tick inside it (owner 2026-09-22: "i expect the filter to STAY open when i select"). One closer, app-wide.
+// A click INSIDE any .msel-menu never closes it, wherever the menu lives (owner 2026-09-25, the stub-columns menu closed
+// on every tick: "that shouldn't happen to any of these properties across the board") - structural, not a per-menu list.
 document.addEventListener("click", (e) => {
-  if (e.target.closest(".msel, .datef, .hf-menu, .hf-btn, .vp-projwrap")) return;
+  if (e.target.closest(".msel-menu, .msel, .datef, .hf-menu, .hf-btn, .vp-projwrap")) return;
   document.querySelectorAll(".msel-menu:not(.hf-menu):not(.vp-projlist)").forEach(m => { if (!m.hidden) m.hidden = true; });
 });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") document.querySelectorAll(".msel-menu:not(.hf-menu):not(.vp-projlist)").forEach(m => { if (!m.hidden) m.hidden = true; }); });
@@ -1823,6 +1825,7 @@ let billDate = null;
 // pinned to the viewport at its button instead - it can never be cut off by the card, and it gets
 // as much height as the screen below (or above) the button allows. Closed on scroll / resize.
 function _placeMenu(btn, menu) {
+  menu._anchor = btn;   // the scroll handler re-pins the menu to this button instead of closing it
   const r = btn.getBoundingClientRect();
   menu.style.position = "fixed"; menu.style.top = ""; menu.style.bottom = ""; menu.style.left = Math.max(8, Math.min(r.left, window.innerWidth - menu.offsetWidth - 8)) + "px";
   const below = window.innerHeight - r.bottom - 12, above = r.top - 12;
@@ -1832,7 +1835,17 @@ function _placeMenu(btn, menu) {
 (function () {
   const closeAll = () => document.querySelectorAll(".msel-menu:not([hidden]):not(.hf-menu)").forEach(m => { m.hidden = true; });   // the funnel menu has its own closer (it may scroll itself)
   window.addEventListener("resize", closeAll);
-  window.addEventListener("scroll", closeAll, true);   // any scrolling container - the pinned menu would drift otherwise
+  // On scroll an open menu FOLLOWS its button (re-pinned) instead of closing (owner 2026-09-25: menus must stay open
+  // across the board) - a tick re-renders the page, the page shifts, and that shift is a scroll event. It closes only
+  // when its button is gone or scrolled off screen. Scrolling INSIDE a menu's own list is ignored.
+  const follow = (e) => {
+    if (e.target && e.target.closest && e.target.closest(".msel-menu")) return;
+    document.querySelectorAll(".msel-menu:not([hidden]):not(.hf-menu)").forEach(m => {
+      const a = m._anchor; const r = a && a.isConnected ? a.getBoundingClientRect() : null;
+      if (r && r.height && r.bottom > 0 && r.top < window.innerHeight) _placeMenu(a, m); else m.hidden = true;
+    });
+  };
+  window.addEventListener("scroll", follow, true);
 })();
 const _BMONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 function billMonthLabel(ym) { const [y, m] = ym.split("-"); return `${_BMONTHS[+m - 1]} ${y}`; }

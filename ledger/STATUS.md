@@ -4,6 +4,12 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-25 · **Menus stay open, app-wide** (owner: the stub-columns menu closed on every tick - "that shouldn't happen
+  to any of these properties across the board"). Two root causes in the ONE closer: (1) it only spared clicks inside a
+  hard-coded list of wrappers (`.msel`, `.datef`...), so a menu appended elsewhere closed on its own ticks - now a click
+  inside ANY `.msel-menu` never closes it; (2) any scroll closed every menu, and a tick that re-renders a scrolled page
+  shifts it (a scroll) - the Date menu closed that way. Now an open menu follows its button (`_placeMenu` records
+  `menu._anchor`) and closes only when the button is gone or off screen; scrolling inside a menu's list is ignored.
 - 2026-09-25 · **Vendor Payments: client invoice judged against OUR payment date** (owner: a "Not paid" the client pays
   later must not just say Paid - "show that we paid ... in a concise wording"). Client paid on/before our check = green
   "Paid <date>"; paid AFTER it = blue **"Paid later <date>"** (tooltip: we paid the vendor <date>, before the client paid
