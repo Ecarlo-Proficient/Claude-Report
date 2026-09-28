@@ -225,14 +225,25 @@ def _api_get(path: str, access: str, params: Optional[dict] = None) -> dict:
     raise RuntimeError(f"{path} → unreachable")
 
 
+def _is_mirror_company(company_id: str) -> bool:
+    """The mirror holds ONE company: the realm in the Keychain blob it is refreshed with. A query for any other
+    company file (a sister company read with its own token) must go live - answering it from the mirror hands
+    back THIS company's books under the other company's name (found 2026-09-28, silent since 09-17)."""
+    try:
+        own = (kc.get_all() or {}).get("QBO_COMPANY_ID")
+    except Exception:                                   # noqa: BLE001 - vault locked / absent: be safe, go live
+        return False
+    return bool(own) and str(company_id) == str(own)
+
+
 def query_all(access: str, company_id: str, entity: str, where: str = "") -> List[dict]:
     """SELECT * FROM <entity> [WHERE …]. Answered from THE raw QBO mirror
     (shared/qbo_mirror) for every mirrored entity - one read of QBO for every
     tool (the owner 2026-09-17); live only when the mirror cannot serve
     (ACB_QBO_LIVE=1, not seeded on this machine, an entity outside the mirror,
-    or a WHERE the mirror does not understand)."""
+    a company other than the mirror's own, or a WHERE the mirror does not understand)."""
     from shared import qbo_mirror
-    if qbo_mirror.serves(entity):
+    if qbo_mirror.serves(entity) and _is_mirror_company(company_id):
         try:
             return qbo_mirror.query(entity, where)
         except qbo_mirror.WhereError as e:
