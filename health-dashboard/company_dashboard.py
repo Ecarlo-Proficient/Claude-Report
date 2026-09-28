@@ -16,7 +16,7 @@ Sources: Money Bleeds.xlsx · Sub LOC Report.xlsx · Money Out Register.xlsx ·
 health_dashboard.xlsx (cash/AR/AP/margins) · WIP master Test-Master (backlog +
 over/under-billing). Each carries its freshness; stale ones are flagged.
 
-OUTPUT  ~/Documents/CompanyHealth/Company Dashboard.html  (chmod 600)
+OUTPUT  ~/Documents/CompanyHealth/Reports/Company Dashboard.html  (chmod 600)
 
 USAGE
   python3 health-dashboard/company_dashboard.py --open
@@ -41,7 +41,7 @@ from shared import paths
 from shared import schedule as sched
 from shared import breakeven as be
 
-CH = paths.companyhealth_dir()
+CH = paths.reports_dir()
 SRC = paths.companyhealth_sources_dir()      # data layer, out of the top level
 MB_PATH = SRC / "Money Bleeds.xlsx"
 LOC_PATH = SRC / "Sub LOC Report.xlsx"

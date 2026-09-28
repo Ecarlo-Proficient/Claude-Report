@@ -4,6 +4,7 @@ Shared progression record (the user's sessions ↔ the developer's). Tool scope 
 no business findings, dollar exposures, or owner analyses (those live in the owner's vault).
 
 ## DONE / FINALIZED
+- 2026-09-28 · **CompanyHealth is organized, not a dump** (owner: "a more organized automated folder system rather than a dump"). Every read/write there goes through a named folder in `shared/paths.py`: `register_file()` -> `Registers/` (the JSON rules), `reports_dir()` -> `Reports/` (every generated report), `analysis_dir(topic)` -> `Analysis/<topic> (mm-dd-yyyy)/` (session one-offs). `tests/test_companyhealth_layout.py` fails any module that joins a file onto `companyhealth_dir()`; `python3 shared/paths.py --organize [--apply]` sorts a root that filled up anyway. This tool: audit exclusions, concrete suppliers and the cost-code miscode history now read from `Registers/`.
 - 2026-09-23 · **Coding audits skip $0 lines and our inventory yard(s)** (owner: "it's a $0 line item, i would just leave it
   off" / "our yard. it's for us. should go to inventory"). Data Entry, Missing Project, FW Misplaced and Sub No Project
   skip a line whose amount is $0, or that sits on an inventory yard's class or names its address in the bill memo /
@@ -44,7 +45,7 @@ no business findings, dollar exposures, or owner analyses (those live in the own
   are on the Liens sheet. Note for the run: Excel holding `Bill Tracker.xlsx` open
   re-saves over the sync (the 09:13 save overwrote the 08:46 run today) - close it first.
 - **The PUSH match basis (2026-09-02).** `MATCH_BASIS_PUSHED`: a CP/MFD bill the
-  supplier agreed to carry into a later draw (rule in `<CompanyHealth>/draw_moves.json`,
+  supplier agreed to carry into a later draw (rule in `<CompanyHealth>/Registers/draw_moves.json`,
   read by `shared/draw_moves.py`) is matched AS OF the rule's date, so `Matched
   Invoice` names the later draw, prefixed `[PUSHED from Draw #a] ` the way `[DRAW]` /
   `[FULLY BILLED]` already mark the RP semantics. `bill_rows` carries `match_note`

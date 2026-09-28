@@ -1284,7 +1284,7 @@ def _fetch_accounting_audits() -> dict:
     # our own inventory yard(s) (audit_exclusions.json `inventory_yards`, owner 2026-09-23 - 3116 Balch Springs Rd):
     # a yard line is inventory, never a coding finding. bill-tracker skips them too; this covers the gap until the next AP sync.
     try:
-        _ax = json.loads((paths.companyhealth_dir() / "audit_exclusions.json").read_text())
+        _ax = json.loads((paths.register_file("audit_exclusions.json")).read_text())
         _yards = [y for y in (_ax.get("inventory_yards") or []) if isinstance(y, dict)]
     except (OSError, ValueError):
         _yards = []
@@ -2713,7 +2713,7 @@ def _concrete_waste():
     so we recompute totals here. Returns a Health section, or None when the
     workbooks are not present (e.g. the developer's clone)."""
     import openpyxl as _ox
-    ch = paths.companyhealth_dir()
+    ch = paths.reports_dir()
     rp_p = ch / "Concrete_Waste_2026.xlsx"
     mfd_p = ch / "Concrete_Waste_MFD_2026.xlsx"
     try:

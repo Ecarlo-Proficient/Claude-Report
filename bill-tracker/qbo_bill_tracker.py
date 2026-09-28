@@ -154,7 +154,7 @@ STATUS_FILL_MAP = {
 # standalone path below is legacy. DEFAULT_OUTPUT points OUTSIDE the project
 # folder so a stray standalone run can't drop real AP data into this
 # AI-visible/synced folder.
-DEFAULT_OUTPUT = paths.companyhealth_dir() / "_legacy_bill_payment_tracker.xlsx"
+DEFAULT_OUTPUT = paths.reports_dir() / "_legacy_bill_payment_tracker.xlsx"
 
 # Column headers in canonical order. (header, width)
 COLUMNS = [

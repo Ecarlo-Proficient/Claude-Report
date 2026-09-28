@@ -4,6 +4,7 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-28 · **CompanyHealth is organized, not a dump** (owner: "a more organized automated folder system rather than a dump"). Every read/write there goes through a named folder in `shared/paths.py`: `register_file()` -> `Registers/` (the JSON rules), `reports_dir()` -> `Reports/` (every generated report), `analysis_dir(topic)` -> `Analysis/<topic> (mm-dd-yyyy)/` (session one-offs). `tests/test_companyhealth_layout.py` fails any module that joins a file onto `companyhealth_dir()`; `python3 shared/paths.py --organize [--apply]` sorts a root that filled up anyway. This tool: job rulings / audit exclusions / check-strip case from `Registers/`, the concrete-waste workbooks and the QBO support PDF from `Reports/`.
 - 2026-09-25 · **Re-apply: a ledger copy only counts as evidence if it was saved BEFORE QBO last changed the check** (a later
   copy, e.g. the live ledger loaded today, holds the stripped state and "confirmed" it). Found while sorting the To fix list.
 - 2026-09-25 · **Checks QBO changed: Re-apply in QuickBooks + one-row filters + Resolved** (owner: "can we build it into the
@@ -55,7 +56,7 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
 - 2026-09-25 · **Strip history + QBO report** (owner: "don't just remove it once i fix it, it needs a history so that we
   can pull that pdf at anytime with the updated info"). NEW `ledger/strip_history.py`: every paid check QBO left with no
   bills, from the mirror's change log (unapplied checks; a deleted paid bill strips the check that paid it even when the
-  check itself has no log row) + pre-log strips in `CompanyHealth/check_strip_case.json`; skips voids and renumbers.
+  check itself has no log row) + pre-log strips in `CompanyHealth/Registers/check_strip_case.json`; skips voids and renumbers.
   Per event: trigger, bills before, saves, status + re-applied date, "paid again" (a bill the check paid that a later
   payment pays - the 48299/48379 double payment). Checks QBO changed gains a **History** chip and a **QBO report (PDF)**
   button (rebuilt on every click from the live history). A sweep-found deletion time shows as "by" that time.
@@ -625,7 +626,7 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   the Coverage table (new **Period covered** column), the open-draw header ("Covers mm/dd/yyyy –
   mm/dd/yyyy"), the "Next money in" box and the pay-list export - all now headline the month (or
   "Draw #N" for CP) and show the span. Verified live against MFD177 (monthly) and CP800 (numbered).
-- **Standing job rulings (2026-09-08).** `shared/job_rulings` (`<CompanyHealth>/job_rulings.json`) now
+- **Standing job rulings (2026-09-08).** `shared/job_rulings` (`<CompanyHealth>/Registers/job_rulings.json`) now
   rides the project rows: `over_budget_accepted` + `rulings_n` on every `/api/projects` row, and
   `isOverBudget` in `app.js` returns false for an accepted job - the owner already knows why, so it leaves
   the Over budget rule / KPI / list. `/api/project/page` returns `rulings`, rendered as a "Known - the
@@ -663,7 +664,7 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   and open in red, notes amber). Nothing picked = everything shown. Short all-caps tokens keep their
   case in the job name (JPI, LLC).
 - **The PUSH on the project page (2026-09-02).** A bill the supplier agreed to carry into a
-  later draw (rule in `<CompanyHealth>/draw_moves.json`, `shared/draw_moves.py`) arrives on
+  later draw (rule in `<CompanyHealth>/Registers/draw_moves.json`, `shared/draw_moves.py`) arrives on
   the later draw from the Bill Tracker match; `_fetch_draws` marks it live from the same rule
   (`pushed` = "pushed from Draw #a", `pushed_note` = the why) and gives the receiving band
   `pushed_in` {count, total, note} and the band it left `pushed_out` (found by the bill's own

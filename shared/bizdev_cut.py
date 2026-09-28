@@ -73,7 +73,7 @@ if str(_HERE.parent) not in sys.path:
 from shared import paths  # noqa: E402
 
 CUT_FILE: Path = paths.get_path("ACB_BIZDEV_CUT_FILE",
-                                paths.companyhealth_dir() / "bizdev_cut.json")
+                                paths.register_file("bizdev_cut.json"))
 
 _cache: Optional[dict] = None
 _cache_key = None

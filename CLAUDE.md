@@ -108,7 +108,7 @@ restate them here. Business/strategic context lives in session memory, not in th
   `load_health.py`; qbo_health keeps its historical local copy until it retires), `breakeven.py`
   (the break-even model - `build_from_blocks` for the ledger, the xlsx `build()` for the legacy
   tracker), `recurring.py` (the FIN-12 recurring-obligations register), `job_rulings.py`
-  (the standing per-job rulings register `<CompanyHealth>/job_rulings.json` - a known loss /
+  (the standing per-job rulings register `<CompanyHealth>/Registers/job_rulings.json` - a known loss /
   accepted overrun the owner settled ONCE: the WIP readers print it as a `KNOWN:` NOTES
   segment, `wip_qc` signs the accepted checks off with its reason, project-pnl writes the
   KNOWN LOSSES / RULINGS block, the ledger drops the job from Over budget and shows it on
@@ -307,6 +307,12 @@ restate them here. Business/strategic context lives in session memory, not in th
   `.github/interpreter_guard.sh` fails the push and CI. New package = add an exact pin to
   `python-env/requirements.txt` (the next run installs it). Claude sessions run tools with
   `~/.venvs/proficient/bin/python`, never `/usr/bin/python3` or `pip3 install --break-system-packages`.
+- **CompanyHealth (`~/Documents/CompanyHealth/`) is organized, never a dump (the user 2026-09-28).** Nothing is
+  written at its root (only the `Open Project Ledger.command` launcher lives there). Rules the tools read ->
+  `paths.register_file(name)` (`Registers/`); a report a tool generates -> `paths.reports_dir()` (`Reports/`);
+  a file a SESSION builds to answer one question (an Excel breakdown, a dry-run CSV, a handout) ->
+  `paths.analysis_dir("<topic>")` (`Analysis/<topic> (mm-dd-yyyy)/`). `tests/test_companyhealth_layout.py`
+  fails any module calling `companyhealth_dir()` directly; `python3 shared/paths.py --organize` shows strays.
 - Each subsystem keeps its own README and `launchd/` plist where scheduled.
 - Build the core happy-path first; don't pre-add heartbeats/fallback monitors before the core is proven.
 

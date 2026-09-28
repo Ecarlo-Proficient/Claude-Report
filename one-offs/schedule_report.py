@@ -11,8 +11,8 @@ week. Pricing is matched best-effort from the WIP master (RP project #/contract
 by address).
 
 READ-ONLY. Output (chmod 600):
-  ~/Documents/CompanyHealth/Weekly Schedule.xlsx
-  ~/Documents/CompanyHealth/Weekly Schedule.html
+  ~/Documents/CompanyHealth/Reports/Weekly Schedule.xlsx
+  ~/Documents/CompanyHealth/Reports/Weekly Schedule.html
 
 USAGE
   python3 one-offs/schedule_report.py --open
@@ -48,7 +48,7 @@ build_model = sched.build_model
 _STAGE_RULES = sched._STAGE_RULES
 _DEFAULT_STAGE = sched._DEFAULT_STAGE
 
-CH = paths.companyhealth_dir()
+CH = paths.reports_dir()
 XLSX_OUT = CH / "Weekly Schedule.xlsx"
 HTML_OUT = CH / "Weekly Schedule.html"
 

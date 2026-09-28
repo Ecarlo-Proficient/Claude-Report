@@ -45,7 +45,7 @@ try:                                   # sibling shared module (package import)
 except ImportError:                    # run with the repo root on sys.path
     import paths                       # type: ignore
 
-RULES_FILE: Path = paths.companyhealth_dir() / "draw_moves.json"
+RULES_FILE: Path = paths.register_file("draw_moves.json")
 
 DateLike = Union[str, dt.date, None]
 

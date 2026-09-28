@@ -105,7 +105,7 @@ Reads the line-level `Bills` + `Inventory` sheets of `Bill Tracker.xlsx` (overri
 pay status, and the Texas lien clock per bill. Read-only on Excel; each run **full-replaces**
 `source='bill_tracker'` so it mirrors the current file.
 
-The tracker prefixes `Matched Invoice` with a `[TAG] ` on special matches (`[DRAW]`, `[FULLY BILLED]`, `[PUSHED from Draw #3]` - the last is a bill the supplier agreed to carry into a later draw, rule in `<CompanyHealth>/draw_moves.json` via `shared/draw_moves.py`). The loader splits that tag into `match_tag` and keeps `matched_invoice` as the bare "invoice — memo", so every bill on one draw shares the same draw key.
+The tracker prefixes `Matched Invoice` with a `[TAG] ` on special matches (`[DRAW]`, `[FULLY BILLED]`, `[PUSHED from Draw #3]` - the last is a bill the supplier agreed to carry into a later draw, rule in `<CompanyHealth>/Registers/draw_moves.json` via `shared/draw_moves.py`). The loader splits that tag into `match_tag` and keeps `matched_invoice` as the bare "invoice — memo", so every bill on one draw shares the same draw key.
 
 > **Not the cost ledger.** Bill Tracker's display sheets EXCLUDE subs, and for a sub-based labor
 > company subs are most of the cost — measured 25–98% short of the QBO WIP truth per job. Job cost
@@ -273,7 +273,7 @@ on the network). What it shows:
   any bill paid a second time. **QBO report (PDF)** rebuilds the support report from it on every click, into
   CompanyHealth. `ledger/strip_history.py` (`/api/checkstrips`, `/api/checkstrips/pdf`; `--pdf` on the command line).
   Strips from before the change log (09/23/2026) and the report's narrative live in
-  `CompanyHealth/check_strip_case.json` (business data, never in the repo).
+  `CompanyHealth/Registers/check_strip_case.json` (business data, never in the repo).
 - **Copy & export** — click any number to copy it; **Export CSV** downloads the current view.
 - **Customize** (⚙) — theme (auto/light/dark), accent color, font, text size, density, width
   (**boxed by default**), which widgets show, and which table columns show. Saved per person in the

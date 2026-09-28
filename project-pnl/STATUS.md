@@ -7,6 +7,7 @@ manual close), RP (no draws — expenses → invoice → profit).
 ---
 
 ## DONE / FINALIZED
+- 2026-09-28 · **CompanyHealth is organized, not a dump** (owner: "a more organized automated folder system rather than a dump"). Every read/write there goes through a named folder in `shared/paths.py`: `register_file()` -> `Registers/` (the JSON rules), `reports_dir()` -> `Reports/` (every generated report), `analysis_dir(topic)` -> `Analysis/<topic> (mm-dd-yyyy)/` (session one-offs). `tests/test_companyhealth_layout.py` fails any module that joins a file onto `companyhealth_dir()`; `python3 shared/paths.py --organize [--apply]` sorts a root that filled up anyway. This tool: job rulings / draw moves / biz-dev cut read from `Registers/`; the director's cut workbook writes to `Reports/`.
 - **Runs on python-env (2026-09-24).** `run_pnl.sh` now starts through `python-env/python.sh` (`"$ACB_PY"`, Python 3.14, every package pinned), never a bare `python3` - a `brew install ffmpeg` on 09/23 swapped `python3` and broke every sync step. Missing-package hints now say `bash python-env/setup.sh`. Verified by a dry run on 3.14. See `python-env/STATUS.md`.
 
 - 2026-09-23 · **A `costs` class ruling switches the class/project lookup on by itself** - the job's costs = its QBO project + every line on its OWN class with no project, via a `costs` ruling
@@ -146,7 +147,7 @@ manual close), RP (no draws — expenses → invoice → profit).
   No rate ladder, no overhead model - the overhead review lives in its own local workbook
   (`<DIV> OH Calculations.xlsx`). The cut comes from ONE pull per vendor - the TransactionList
   report by vendor names the checks and expenses a Purchase query cannot find. Writes
-  `<CompanyHealth>/<DIV> PnL - Internal - Director Cut.xlsx` from scratch, local only, never
+  `<CompanyHealth>/Reports/<DIV> PnL - Internal - Director Cut.xlsx` from scratch, local only, never
   on the share. Verified with the `formulas` engine (zero errors) and `assert_clean`. The
   register gained `labels` (column headers) and `director` (`bizdev_cut.is_director`);
   shared reports still use `note()` and name nobody.
@@ -230,7 +231,7 @@ manual close), RP (no draws — expenses → invoice → profit).
   batters they laid out for the job stay in cost. **The ACCOUNT is not the test** -
   the same cut has been booked to a COGS account and an operating account on the
   same job, and real fronted material has been booked to the COGS one. The
-  register (`<CompanyHealth>/bizdev_cut.json`, `ACB_BIZDEV_CUT_FILE`) lives
+  register (`<CompanyHealth>/Registers/bizdev_cut.json`, `ACB_BIZDEV_CUT_FILE`) lives
   outside the repo because it names vendors; **with no register `is_cut()` is
   always False and no report changes**, deliberately - a missing file must never
   silently move money. Self-test: `python3 shared/bizdev_cut.py`.
@@ -266,7 +267,7 @@ manual close), RP (no draws — expenses → invoice → profit).
   sheets use, so a stage reads exactly like the job. Sheets sit between Job
   P&L and Transactions. Companion scan: `one-offs/rp_stage_scan.py` lists every
   RP job's kind off QBO (count, scope-named memos, span, WIP TYPE) to
-  `<CompanyHealth>/RP Invoicing Stages.xlsx`.
+  `<CompanyHealth>/Reports/RP Invoicing Stages.xlsx`.
 
 - **RP P&Ls LIVE IN THE JOB FOLDER ON THE COMMON DRIVE, LIKE CP (2026-09-08).** The
   owner, on seeing RP6586 land in OneDrive: "it should be in the current projects
@@ -292,7 +293,7 @@ manual close), RP (no draws — expenses → invoice → profit).
   job-specific fact had nowhere durable to live - the vault refuses job notes
   by design, session memory dies, and the WIP NOTES column is regenerated -
   so every report re-discovered the same overrun. Now ONE register,
-  `<CompanyHealth>/job_rulings.json` read through `shared/job_rulings.py`
+  `<CompanyHealth>/Registers/job_rulings.json` read through `shared/job_rulings.py`
   (same pattern as `draw_moves.json`), feeds every reader: this tool writes a
   **KNOWN LOSSES / RULINGS** box on the Job P&L (RP card: after WIP /
   PROJECTION, before INVOICE; CP/MFD P&L sheet: between ① WIP and ② TOTALS) -
@@ -578,7 +579,7 @@ manual close), RP (no draws — expenses → invoice → profit).
 - **The PUSH - a bill carried into a later draw by agreement (2026-09-02).**
   Bills land in a draw by date (TxnDate inside the invoice's Period tag). When the
   user agrees with a supplier to carry end-of-period bills into the next draw, a
-  rule in `<CompanyHealth>/draw_moves.json` (read by **`shared/draw_moves.py`** -
+  rule in `<CompanyHealth>/Registers/draw_moves.json` (read by **`shared/draw_moves.py`** -
   project + vendor substring + cutoff `after` / `through` + `move_to` date +
   draw numbers + why) makes `bucket_costs_by_draw_window` and `code_costs_by_draw`
   bucket those bills AS OF the rule's date. The bill keeps its real date; the

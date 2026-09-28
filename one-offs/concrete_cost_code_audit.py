@@ -59,7 +59,7 @@ QBO_BILL_URL = "https://qbo.intuit.com/app/bill?txnId={bill_id}"
 
 DEFAULT_OUT = (paths.onedrive_base() / "Works In Progress" / "QBO Audits"
                / "Concrete Cost Code Audit.xlsx")
-DEFAULT_OVERRIDE = paths.companyhealth_dir() / "concrete_suppliers.json"
+DEFAULT_OVERRIDE = paths.register_file("concrete_suppliers.json")
 
 DATE_FMT = "m/d/yyyy"
 MONEY_FMT = '"$"#,##0.00'

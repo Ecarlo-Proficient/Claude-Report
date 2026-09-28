@@ -920,7 +920,7 @@ def main(argv=None) -> int:
     except pnl_paths.HomeNotMounted as e:
         print(f"stopped: {e}")           # never read the retired tree for this page
         return 1
-    out = a.out or (paths.companyhealth_dir() / OUT_NAME.format(label=div["label"]))
+    out = a.out or (paths.reports_dir() / OUT_NAME.format(label=div["label"]))
     print(f"reading the {div['label']} P&L workbooks in {div_dir}")
     loaded, _skipped = cp.load_division(cp._iter_jobs(div_dir, div["prefix"]), div_dir, None)
     if not loaded:

@@ -94,7 +94,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--since", default="2025-01-01", help="invoices dated on/after (YYYY-MM-DD)")
     ap.add_argument("--out", type=Path,
-                    default=paths.companyhealth_dir() / "RP Invoicing Stages.xlsx")
+                    default=paths.reports_dir() / "RP Invoicing Stages.xlsx")
     a = ap.parse_args()
 
     access, cid = load_credentials()

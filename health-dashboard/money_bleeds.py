@@ -33,7 +33,7 @@ provably wrong and cost money (the user 2026-07-16):
        'Test - RP' tab (rp_wip_reader output — run the WIP readers first).
 
 OUTPUT
-  ~/Documents/CompanyHealth/Money Bleeds.xlsx  (chmod 600 after write)
+  ~/Documents/CompanyHealth/_sources/Money Bleeds.xlsx  (chmod 600 after write)
   Plain white/black formatting per repo rules. READ-ONLY everywhere else:
   QBO reads, WIP workbook reads, volume folder scans — no writes.
 

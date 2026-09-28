@@ -23,7 +23,7 @@ Running LOC balance = cumulative draws − cumulative applied repayments over
 time; its PEAK is the LOC you truly need. Averages: amount-weighted draw→repay
 lag, average draw, average repayment.
 
-READ-ONLY against QBO. Output: ~/Documents/CompanyHealth/Sub LOC Report.xlsx
+READ-ONLY against QBO. Output: ~/Documents/CompanyHealth/_sources/Sub LOC Report.xlsx
 (chmod 600). One Touch ID per run.
 
 USAGE

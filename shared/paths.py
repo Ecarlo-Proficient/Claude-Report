@@ -21,7 +21,9 @@ USAGE
 """
 from __future__ import annotations
 
+import datetime as dt
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -173,9 +175,107 @@ def bill_payment_stubs_dir() -> Path:
 
 def companyhealth_dir() -> Path:
     """Local (non-synced) company-health folder. Override: ACB_COMPANYHEALTH_DIR.
-    Holds only the two things the owner opens — Company Tracker.xlsx and
-    Company Dashboard.html; the workbooks that feed them live in _sources/."""
+
+    THE ROOT IS NOT A PLACE TO WRITE (the owner 2026-09-28: "a more organized
+    automated folder system rather than a dump for files"). Every file goes
+    through one of the named folders below; only the launcher sits at the root:
+
+      Open Project Ledger.command   the front door
+      Registers/   the JSON rules + state the tools read      register_file(name)
+      Reports/     every file a repo tool generates           reports_dir()
+      Analysis/    one folder per one-off question a session
+                   answers, "<topic> (mm-dd-yyyy)"            analysis_dir(topic)
+      Sales/       the weekly sales PDFs (+ History/)
+      _sources/    the data layer the legacy tracker reads    companyhealth_sources_dir()
+
+    `tests/test_companyhealth_layout.py` fails any tool that joins a file onto
+    this root; `python3 shared/paths.py --organize [--apply]` sorts a root that
+    filled up anyway."""
     return get_path("ACB_COMPANYHEALTH_DIR", _DEFAULT_COMPANYHEALTH)
+
+
+def _ch_sub(name: str) -> Path:
+    d = companyhealth_dir() / name
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+    return d
+
+
+def registers_dir() -> Path:
+    """CompanyHealth/Registers/ - the business rules and state the tools read and
+    the owner settles once (job_rulings, draw_moves, bizdev_cut, audit exclusions,
+    concrete suppliers, the cost-code miscode history, the check-strip case file).
+    Business data, never in the repo."""
+    return _ch_sub("Registers")
+
+
+def register_file(name: str) -> Path:
+    """One register file, e.g. register_file("job_rulings.json")."""
+    return registers_dir() / name
+
+
+def reports_dir() -> Path:
+    """CompanyHealth/Reports/ - every file a repo tool generates for the owner
+    (a one-off audit workbook, the weekly schedule, the director's cut, the QBO
+    support PDF, the concrete-waste workbooks). Regenerated in place, one file
+    per report (never v2/v3)."""
+    return _ch_sub("Reports")
+
+
+def analysis_dir(topic: str, when: "dt.date | None" = None) -> Path:
+    """CompanyHealth/Analysis/<topic> (mm-dd-yyyy)/ - where a session puts the
+    files it builds to answer one question (a joint-check breakdown, a dry-run
+    CSV, a red-team note). One folder per question, so the answer and its
+    working files stay together and the root never fills. Created on demand."""
+    safe = re.sub(r'[/\\:]+', "-", topic).strip() or "Analysis"
+    stamp = (when or dt.date.today()).strftime("%m-%d-%Y")
+    d = _ch_sub("Analysis") / f"{safe} ({stamp})"
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+    return d
+
+
+# Where each file the tools know by name belongs - `--organize` moves a root file
+# here; anything not listed is a session's one-off and goes to Analysis/.
+LAYOUT = {
+    "Registers": ("job_rulings.json", "draw_moves.json", "bizdev_cut.json",
+                  "audit_exclusions.json", "concrete_suppliers.json",
+                  "cost_code_history.json", "check_strip_case.json",
+                  "customer_overrides.xlsx"),
+    "Reports": ("Company Tracker.xlsx", "Company Dashboard.html",
+                "Weekly Schedule.xlsx", "Weekly Schedule.html",
+                "Invoices Off Project.xlsx", "RP Invoicing Stages.xlsx",
+                "QBO Support - Unapplied Bill Payments.pdf",
+                "Concrete_Waste_2026.xlsx", "Concrete_Waste_MFD_2026.xlsx",
+                "_legacy_bill_payment_tracker.xlsx"),
+}
+_ROOT_KEEP = {"Open Project Ledger.command", ".DS_Store", "Registers", "Reports",
+              "Analysis", "Sales", "_sources"}
+
+
+def organize_plan() -> list:
+    """[(source, target or None)] for every item sitting at the CompanyHealth root
+    that does not belong there. target None = a one-off with no known home: the
+    owner (or the session that made it) picks its Analysis/ topic."""
+    root = companyhealth_dir()
+    home = {n: sub for sub, names in LAYOUT.items() for n in names}
+    plan = []
+    if not root.is_dir():
+        return plan
+    for p in sorted(root.iterdir()):
+        if p.name in _ROOT_KEEP:
+            continue
+        if p.name in home:
+            plan.append((p, root / home[p.name] / p.name))
+        elif p.name.endswith(" PnL - Internal - Director Cut.xlsx"):
+            plan.append((p, root / "Reports" / p.name))
+        else:
+            plan.append((p, None))
+    return plan
 
 
 def vault_dir() -> Path:
@@ -294,4 +394,32 @@ if __name__ == "__main__":
                 _sys.exit(2)
             if ans in ("q", "quit", "close", "n", "no"):
                 _sys.exit(2)
+    if len(_sys.argv) > 1 and _sys.argv[1] == "--organize":
+        # python3 shared/paths.py --organize            show what moves (dry run)
+        # python3 shared/paths.py --organize --apply    move it; never overwrites
+        apply = "--apply" in _sys.argv
+        plan = organize_plan()
+        if not plan:
+            print(f"CompanyHealth root is clean: {companyhealth_dir()}")
+            _sys.exit(0)
+        moved = held = 0
+        for src, dst in plan:
+            if dst is None:
+                print(f"  NO HOME   {src.name}  -> a one-off: move it to Analysis/<topic>/")
+                held += 1
+                continue
+            if dst.exists():
+                print(f"  SKIP      {src.name}  (already in {dst.parent.name}/ - compare by hand)")
+                held += 1
+                continue
+            print(f"  {'MOVED' if apply else 'would move'}  {src.name}  -> {dst.parent.name}/")
+            if apply:
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                src.rename(dst)
+                moved += 1
+        if not apply:
+            print("\nDry run - nothing moved. Add --apply to move.")
+        else:
+            print(f"\n{moved} moved, {held} left for a person to place.")
+        _sys.exit(0)
     _self_check()

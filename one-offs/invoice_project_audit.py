@@ -110,7 +110,7 @@ def main() -> int:
                          "earlier ones report separately (default 2025-09-01, when "
                          "parent-billing of RP invoices stopped)")
     ap.add_argument("--out", type=Path,
-                    default=paths.companyhealth_dir() / "Invoices Off Project.xlsx")
+                    default=paths.reports_dir() / "Invoices Off Project.xlsx")
     a = ap.parse_args()
 
     access, realm = load_credentials()

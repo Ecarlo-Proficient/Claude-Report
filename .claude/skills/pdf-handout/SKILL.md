@@ -22,7 +22,7 @@ description: >-
    to assets/processes and include these in ledger"). The ID prefix is the link - the ledger's
    Systems tab shows a **Guide** pill under that row's ID and serves the file live
    (`/api/process-guide`), so naming it right IS publishing it. Add the row to that folder's
-   README table. A handout that is not a registered process goes to `~/Documents/CompanyHealth/`.
+   README table. A handout that is not a registered process goes to `~/Documents/CompanyHealth/Analysis/<topic> (mm-dd-yyyy)/` (`shared/paths.analysis_dir`).
 2. **Use the owner's real screenshots. Never redraw a screen you were given.** A mock is only
    acceptable when no capture exists, and it must say so. Pasted images are NOT attached as files
    in chat, but the screenshot utility keeps them on disk - find them by time and size:

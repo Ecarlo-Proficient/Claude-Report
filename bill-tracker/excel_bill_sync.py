@@ -2045,7 +2045,7 @@ def _load_audit_exclusions() -> Dict[str, Dict[str, list]]:
     (equipment rental, overhead, insurance) and classes that should never trip the
     Missing Project check. Shape: {"missing_project": {"vendors": [...],
     "classes": [...]}}. Missing/broken file → no exclusions."""
-    p = paths.companyhealth_dir() / "audit_exclusions.json"
+    p = paths.register_file("audit_exclusions.json")
     try:
         data = json.loads(p.read_text()) if p.exists() else {}
     except (OSError, json.JSONDecodeError):
@@ -2062,7 +2062,7 @@ def _load_audit_exclusions() -> Dict[str, Dict[str, list]]:
 def _load_inventory_yards() -> List[dict]:
     """Our own yards (the owner 2026-09-23: "our yard. it's for us. should go to inventory") from the same
     audit_exclusions.json: [{"name", "classes": [...], "addresses": [...]}]. Missing file -> none."""
-    p = paths.companyhealth_dir() / "audit_exclusions.json"
+    p = paths.register_file("audit_exclusions.json")
     try:
         data = json.loads(p.read_text()) if p.exists() else {}
     except (OSError, json.JSONDecodeError):
@@ -2144,7 +2144,7 @@ def _cost_code_findings(all_rows: List[dict], po_index: Optional[Dict[str, dict]
                      "bill_id": r.get("bill_id", ""), "bill_doc": r.get("bill_doc", ""),
                      "date": r.get("bill_date"), "project": r.get("project_num", "") or "",
                      "amount": r.get("line_amount") or 0.0, "po_num": r.get("po_num", "") or ""})
-    override = load_override(paths.companyhealth_dir() / "concrete_suppliers.json")
+    override = load_override(paths.register_file("concrete_suppliers.json"))
     _agg, vtype = classify_vendors(recs, override=override)
     flags = flag_lines(recs, vtype)
 
@@ -2341,7 +2341,7 @@ def build_audits(wb, all_rows: List[dict],
     # Persistent cost-code miscode log (the owner 2026-09-01): how often the
     # bill clerk miscodes over time + what got FIXED between refreshes. State is
     # a JSON OUTSIDE the repo; only a real run reaches here (dry-run bails first).
-    hp = history_path or (paths.companyhealth_dir() / "cost_code_history.json")
+    hp = history_path or (paths.register_file("cost_code_history.json"))
     try:
         hist = cchist.load(hp)
         recap = cchist.update(hist, cc_flags, today)

@@ -15,8 +15,8 @@ build_sections) so they can never disagree.
                   metric table + aging / LOC-by-division bars (Excel data bars).
 
 No QBO calls, no Touch ID, offline. Regenerate the source trackers first.
-OUTPUT  ~/Documents/CompanyHealth/Company Tracker.xlsx  (chmod 600)
-        ~/Documents/CompanyHealth/Company Dashboard.html (chmod 600)
+OUTPUT  ~/Documents/CompanyHealth/Reports/Company Tracker.xlsx  (chmod 600)
+        ~/Documents/CompanyHealth/Reports/Company Dashboard.html (chmod 600)
 
 USAGE
   python3 health-dashboard/company_tracker.py
@@ -44,7 +44,7 @@ from shared import recurring as rec
 import json
 import company_dashboard as cd    # same tool (health-dashboard/) — shared readers + model
 
-CH = paths.companyhealth_dir()
+CH = paths.reports_dir()
 XLSX_OUT = CH / "Company Tracker.xlsx"
 HTML_OUT = CH / "Company Dashboard.html"
 

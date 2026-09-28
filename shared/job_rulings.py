@@ -75,7 +75,7 @@ if str(_HERE.parent) not in sys.path:
 from shared import paths  # noqa: E402
 
 RULES_FILE: Path = paths.get_path("ACB_JOB_RULINGS_FILE",
-                                  paths.companyhealth_dir() / "job_rulings.json")
+                                  paths.register_file("job_rulings.json"))
 
 # A ruling says what it accepts in the owner's words; the QC checks have their
 # own names. OVER_BUDGET is the one people mean - it retires BOTH the % past

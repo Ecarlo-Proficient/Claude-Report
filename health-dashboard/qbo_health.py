@@ -17,7 +17,7 @@ SHEETS
   _Meta       — timestamp + run info (hidden)
 
 PRIVACY
-  Default output: ~/Documents/CompanyHealth/health_dashboard.xlsx
+  Default output: ~/Documents/CompanyHealth/_sources/health_dashboard.xlsx
     — NOT in OneDrive, NOT in iCloud, NOT in the project folder.
   After write: chmod 600 (owner-only read/write).
   For "password on open" defense-in-depth, create an encrypted .dmg
@@ -70,7 +70,7 @@ API_BASE = "https://quickbooks.api.intuit.com"
 MINOR_VERSION = "70"
 
 DEFAULT_OUTPUT = paths.companyhealth_sources_dir() / "health_dashboard.xlsx"
-DEFAULT_OVERRIDES = paths.companyhealth_dir() / "customer_overrides.xlsx"
+DEFAULT_OVERRIDES = paths.register_file("customer_overrides.xlsx")
 
 # Aging bucket boundaries, in days — matches QBO's default Aged Receivables/Payables.
 AGING_BUCKETS = [

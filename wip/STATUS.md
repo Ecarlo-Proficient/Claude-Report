@@ -84,7 +84,7 @@ Last updated: 2026-09-08
 
 - **STANDING JOB RULINGS -> `KNOWN:` IN NOTES + AUTOMATIC QC SIGN-OFF (2026-09-08).**
   The owner asked for a permanent per-job note so an overrun he has already explained
-  is never flagged again. `shared/job_rulings.py` reads `<CompanyHealth>/job_rulings.json`
+  is never flagged again. `shared/job_rulings.py` reads `<CompanyHealth>/Registers/job_rulings.json`
   (owner-edited, outside the repo); `rp_wip_reader.read_rp_from_file` and
   `cp_wip_reader.scan_cp_folders` call `annotate_rows` so every row with a ruling carries a
   `KNOWN: <why> - <line> $<amount> - <document>` segment in NOTES on Test - RP / Test - CP and,

@@ -15,7 +15,7 @@ drop off so the register stays the outstanding list.
 SOURCES (money out, check type only): BillPayment PayType=Check + Purchase
 PaymentType=Check.
 
-OUTPUT  ~/Documents/CompanyHealth/Money Out Register.xlsx  (chmod 600)
+OUTPUT  ~/Documents/CompanyHealth/_sources/Money Out Register.xlsx  (chmod 600)
 Read-only against QBO. One Touch ID per run.
 
 USAGE

@@ -33,7 +33,7 @@ trackers first, then run this.
 python3 health-dashboard/company_dashboard.py --open
 ```
 
-Output: `~/Documents/CompanyHealth/Company Dashboard.html` (chmod 600). Organised
+Output: `~/Documents/CompanyHealth/Reports/Company Dashboard.html` (chmod 600). Organised
 as **MONEY IN / MONEY OUT / POSITION** (the user 2026-07-17) — grouped tables with a
 few hero numbers per section, not repetitive boxes. Colour is semantic: money owed to us
 (AR, backlog, retainage) green; money out (AP, POs, checks, LOC) amber/red; position
@@ -60,7 +60,7 @@ python3 health-dashboard/money_bleeds.py
 python3 health-dashboard/money_bleeds.py --out /path/x.xlsx
 ```
 
-Output: `~/Documents/CompanyHealth/Money Bleeds.xlsx` (chmod 600). Read-only
+Output: `~/Documents/CompanyHealth/_sources/Money Bleeds.xlsx` (chmod 600). Read-only
 against QBO, the WIP workbook, and both volumes. Hard-fails up front if the
 `Multi Family` / `Common` volumes aren't mounted or the WIP workbook isn't
 synced.
@@ -116,7 +116,7 @@ python3 health-dashboard/qbo_health.py --anomaly-sigma 2.5 # tighten the spike t
 ## Default output (private, not synced)
 
 ```
-~/Documents/CompanyHealth/health_dashboard.xlsx   (chmod 600 after every write)
+~/Documents/CompanyHealth/_sources/health_dashboard.xlsx   (chmod 600 after every write)
 ```
 
 This path is intentionally outside OneDrive, iCloud Drive, and the project folder. `chmod 600` means only your Mac user can read it. Combined with FileVault, the file is encrypted on disk while the laptop is locked.

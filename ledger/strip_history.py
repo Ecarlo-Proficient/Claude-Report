@@ -56,7 +56,7 @@ CENTRAL = dt.timezone(dt.timedelta(hours=-5))   # the owner's clock (CDT); QBO s
 
 
 def case_path() -> Path:
-    return paths.companyhealth_dir() / CASE_FILE
+    return paths.register_file(CASE_FILE)
 
 
 def load_case() -> dict:
@@ -346,7 +346,7 @@ kept since 09/23/2026. "Saves" = how many times QuickBooks recorded the check be
 
 def build_pdf(out: Path | None = None, con=None, marks: dict | None = None, db_path=None) -> dict:
     """Rebuild the report from the live history -> <companyhealth>/QBO Support - Unapplied Bill Payments.pdf."""
-    out = out or paths.companyhealth_dir() / PDF_NAME
+    out = out or paths.reports_dir() / PDF_NAME
     ev = _apply_marks(_keep_doubles(events(con), db_path), marks)
     with tempfile.TemporaryDirectory() as tmp:
         h = Path(tmp) / "report.html"
