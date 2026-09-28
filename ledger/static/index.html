@@ -632,7 +632,7 @@
 
     <!-- ══════════════ TAB: PAY BILLS (check-run worksheet) ══════════════ -->
     <div class="tab-page" data-tab="paybills" hidden>
-      <div class="record-head"><button class="btn small" id="btnBackBillsPay">← Bills</button><div class="record-head-txt"><div class="record-title">Pay run</div><div class="record-sub">the check-run worksheet - local intent only, never QuickBooks</div></div></div>
+      <div class="record-head"><button class="btn small" id="btnBackBillsPay">← Bills</button><div class="record-head-txt"><div class="record-title">Pay run</div><div class="record-sub">the check run - tick and save, then pay it in QuickBooks from the Pay list</div></div></div>
       <!-- Pay-run save bar: sticky top-right, mirrors the Bills lien save bar -->
       <div class="savebar" id="paySaveBar">
         <span class="sb-warn">●</span>
@@ -646,9 +646,8 @@
           <span class="count" id="payQuickStat"></span>
         </div>
         <p class="hint">Mark the bills you're paying and set the amount (defaults to the full open balance - edit it
-          for a partial). Hit <b>Save pay run</b> to lock it in and generate the pay list below. This is a worksheet:
-          it records what you plan to pay, it does <b>not</b> pay anything in QuickBooks - record the actual payment
-          in QBO and the bill clears here on the next AP sync.</p>
+          for a partial). Hit <b>Save pay run</b> to lock it in and generate the pay list below. Saving pays nothing:
+          QuickBooks is only written when you press <b>Pay in QuickBooks…</b> on the pay list, review it and confirm.</p>
         <div class="bill-filters" id="payFilters">
           <label class="fld"><span>Search</span><input type="search" id="pfSearch" placeholder="project / bill #"></label>
           <div class="fld"><span>Client</span>
@@ -685,11 +684,28 @@
       <section class="widget" id="payListWidget" hidden>
         <div class="widget-head">
           <h2>Pay list <span class="count" id="payListNote"></span></h2>
-          <button class="btn small" id="pfExport">Export CSV</button>
+          <span class="pq-head-btns"><button class="btn small" id="pfExport">Export CSV</button>
+          <button class="btn small primary" id="btnPayQbo" title="Review the saved run live from QuickBooks, then write one bill payment per vendor">Pay in QuickBooks…</button></span>
         </div>
-        <p class="hint">The saved check run, grouped by vendor. Take this to QuickBooks / the bank to cut the payments.</p>
+        <p class="hint">The saved check run, grouped by vendor. <b>Pay in QuickBooks…</b> reviews it live and writes one bill payment per vendor.</p>
         <div class="table-scroll">
           <table class="grid pay-list-grid" id="payListTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+      <section class="widget" id="payQboWidget" hidden>
+        <div class="widget-head">
+          <h2>Pay in QuickBooks <span class="count" id="payQboNote"></span></h2>
+          <button class="btn small" id="btnPayQboClose">Close</button>
+        </div>
+        <div id="payQboBody"></div>
+      </section>
+      <section class="widget" id="payQueuedWidget" hidden>
+        <div class="widget-head">
+          <h2>Checks to print <span class="count" id="payQueuedNote"></span></h2>
+        </div>
+        <p class="hint">Checks waiting in QuickBooks' print queue. Once one is printed, type its check # and press <b>Save #</b>: it is marked printed in QuickBooks and its stub is filed in the vendor's folder.</p>
+        <div class="table-scroll">
+          <table class="grid" id="payQueuedTable"><thead></thead><tbody></tbody></table>
         </div>
       </section>
     </div><!-- /tab: paybills -->

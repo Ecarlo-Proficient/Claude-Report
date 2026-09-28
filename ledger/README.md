@@ -350,6 +350,26 @@ page IS the Open invoices grid filtered to that client (Open · All incl. paid, 
 totals) with **Open in Invoices**. On the trackers, the vendor name opens the vendor page and the
 client name opens the client page.
 
+### Pay in QuickBooks (2026-09-28)
+
+The Pay run view pays the SAVED pay run in QuickBooks (`ledger/pay_bills.py`). **Pay in QuickBooks…** on the pay
+list reads the run live from QBO (`GET /api/pay-bills/plan`, no write) and shows one band per vendor: the bills and
+amounts (a partial says of how much), each vendor's open credits unticked (a tick applies it), anything left out
+(paid elsewhere, deleted, balance smaller now) and bills entered since 09/16 as "check approval in QuickBooks" (the API
+does not return approval). The owner picks **Pay from** (active bank and card accounts, most used first), the
+**date**, and **how it's paid**: Check · print later (QBO's "To print" queue), Check · already written (the check #),
+ACH / wire (the reference, kept exactly as typed). A card account pays by card. QBO keeps 21 characters of a
+reference, so the box stops at 21 and the server refuses more. "Are you sure?" then `POST /api/pay-bills/commit`
+writes **one BillPayment per vendor**, each re-checked live and refused unless it matches the review exactly; a QBO
+`requestid` per vendor per review means a resend or double click returns the same payment. After each payment its
+bills leave the pay run, the payment and bills go into the mirror, the stub is filed in the vendor's folder (below),
+and the Bill Tracker refresh runs. QBO has no payment-method field on a bill payment, only check vs card, so ACH is a
+check-type payment whose reference says how it went.
+
+**Checks to print** lists every check in QBO's print queue. Type the number once it is printed and **Save #**
+(`POST /api/pay-bills/number`, after "Are you sure?"): it becomes that check #, marked printed, and its stub is filed.
+A number already used on the same account is refused. CLI: `ledger/pay_bills.py --plan | --queued | --selftest`.
+
 ### Bill payment stubs (2026-09-22)
 
 `ledger/bill_payment_stub.py` prints a check / bill-payment stub the way QuickBooks lays out its

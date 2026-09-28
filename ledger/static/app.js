@@ -103,6 +103,7 @@ function applySettings() {
 // (per header text, in localStorage), children hidden while closed. Headers that already run their own
 // toggle (an `onclick` of their own) are left alone. Kinds and their default state:
 const GRP_KINDS = [
+  { sel: "tr.bill-group.pq-band", kind: "band", open: true },   // Pay in QuickBooks review: a vendor's payment (approval work - open; before bill-group so it wins)
   { sel: "tr.bill-group", kind: "band", open: false },        // vendor / client / division bands in tables
   { sel: "tr.vp-pay", kind: "sib", open: false, until: "tr.vp-pay" },   // vendor page Payments: a payment over the bills it paid (owner 2026-09-22)
   { sel: "tr.qa-pay", kind: "sib", open: false, until: "tr:not(.qa-child)" },   // QBO changes: a check over the bills it lost (owner 2026-09-24: "it's just too much")
@@ -308,7 +309,7 @@ function setTab(t) {
   if (t === "review") loadReview();
   if (t === "console") renderConsole();
   if (t === "systems") loadSystems();
-  if (t === "paybills") renderPayBills();
+  if (t === "paybills") { renderPayBills(); loadPayQueued(); }
   if (typeof _csClear === "function") _csClear();   // drop any cell selection when the tab changes
   window.scrollTo(0, 0);
   if (sec) { const el = document.getElementById("sec-" + sec); if (el) { if (el.classList.contains("fold")) foldSet(el, true); requestAnimationFrame(() => el.scrollIntoView({ behavior: "smooth", block: "start" })); } }
@@ -3017,6 +3018,187 @@ function exportPayList() {
   const url = URL.createObjectURL(blob); const a = document.createElement("a");
   a.href = url; a.download = "pay-run.csv"; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+// ── Pay in QuickBooks (owner 2026-09-28): the SAVED pay run -> one QBO bill payment per vendor (ledger/pay_bills.py).
+// Step 1 reads the run live from QuickBooks (/api/pay-bills/plan, no write): per vendor the bills, the amounts, the
+// vendor's open credits (applied only when ticked) and what was skipped. The owner picks the account, the date and
+// how it goes out: check to print later ("To print"), check already written (its #), ACH / wire (the reference as
+// typed, 21 characters at most - QuickBooks' own limit), or card when a card account is picked. Step 2 writes only
+// after "Are you sure?", and the server re-checks every bill live before each payment. Each payment files its stub in
+// the vendor's folder; a "To print" check files it when its number is saved under Checks to print.
+let PQ = null;
+const PQ_METHODS = [["print", "Check · print later"], ["check", "Check · already written"], ["ach", "ACH / wire"]];
+async function openPayQbo() {
+  if (payDirtyCount()) { toast("Save or discard the pay run first - QuickBooks gets the saved run only"); return; }
+  if (!paySelectedBills().length) { toast("The pay run is empty"); return; }
+  const w = $("#payQboWidget"), body = $("#payQboBody"); w.hidden = false; body.innerHTML = "";
+  const wait = document.createElement("div"); wait.className = "cd-ra-line"; wait.textContent = "Reading the pay run live from QuickBooks…"; body.appendChild(wait);
+  w.scrollIntoView({ behavior: "smooth", block: "start" });
+  let d; try { d = await (await fetch("/api/pay-bills/plan")).json(); } catch (e) { d = { ok: false, error: String(e) }; }
+  if (!d.ok) { wait.className = "cd-ra-line neg"; wait.textContent = "Could not read QuickBooks: " + (d.error || "failed"); return; }
+  const acct = (d.accounts || []).find(a => a.type === "bank") || (d.accounts || [])[0];
+  PQ = { d, acct: acct ? acct.id : "", date: d.today, method: "print", refs: new Map(), credits: new Map() };
+  renderPayQbo();
+}
+function _pqAcct() { return PQ && (PQ.d.accounts || []).find(a => a.id === PQ.acct); }
+function _pqNet(v) {
+  const ids = PQ.credits.get(v.vendor_id) || new Set();
+  return Math.round((v.total - (v.credits || []).filter(c => ids.has(c.id)).reduce((t, c) => t + c.balance, 0)) * 100) / 100;
+}
+function _pqProblems() {
+  const out = [];
+  for (const v of PQ.d.vendors) {
+    const ref = (PQ.refs.get(v.vendor_id) || "").trim();
+    if ((PQ.method === "check" || PQ.method === "ach") && !ref) out.push(`${v.vendor}: needs its ${PQ.method === "ach" ? "ACH reference" : "check #"}`);
+    if (ref.length > PQ.d.ref_max) out.push(`${v.vendor}: reference is ${ref.length} characters (${PQ.d.ref_max} max)`);
+    if (_pqNet(v) <= 0.005) out.push(`${v.vendor}: the ticked credits cover the whole payment - apply those in QuickBooks`);
+  }
+  if (!PQ.acct) out.push("Pick the account to pay from");
+  if (!PQ.date) out.push("Pick the payment date");
+  return out;
+}
+function renderPayQbo() {
+  const body = $("#payQboBody"); body.innerHTML = ""; const d = PQ.d;
+  const note = $("#payQboNote"); if (note) note.textContent = `(${d.vendors.length} vendor${d.vendors.length !== 1 ? "s" : ""} · ${d.bills} bill${d.bills !== 1 ? "s" : ""})`;
+  const line = (text, cls) => { const x = document.createElement("div"); x.className = "cd-ra-line" + (cls ? " " + cls : ""); x.textContent = text; body.appendChild(x); return x; };
+  line("Review, live from QuickBooks - nothing is written until you confirm. One bill payment per vendor, like QuickBooks' Pay Bills.");
+  // the controls: account · date · how
+  const ctl = document.createElement("div"); ctl.className = "bill-filters pq-ctl";
+  const fld = (label, el) => { const f = document.createElement("label"); f.className = "fld"; const s = document.createElement("span"); s.textContent = label; f.appendChild(s); f.appendChild(el); ctl.appendChild(f); };
+  const sa = document.createElement("select");
+  for (const a of d.accounts || []) { const o = document.createElement("option"); o.value = a.id; o.textContent = a.name + (a.type === "card" ? " (card)" : ""); sa.appendChild(o); }
+  sa.value = PQ.acct; sa.onchange = () => { PQ.acct = sa.value; const card = (_pqAcct() || {}).type === "card";
+    if (card) PQ.method = "card"; else if (PQ.method === "card") PQ.method = "print"; renderPayQbo(); };
+  fld("Pay from", sa);
+  const di = document.createElement("input"); di.type = "date"; di.value = PQ.date; di.onchange = () => { PQ.date = di.value; renderPayQbo(); }; fld("Payment date", di);
+  const sm = document.createElement("select");
+  const card = (_pqAcct() || {}).type === "card";
+  for (const [k, l] of card ? [["card", "Credit card"]] : PQ_METHODS) { const o = document.createElement("option"); o.value = k; o.textContent = l; sm.appendChild(o); }
+  sm.value = PQ.method; sm.onchange = () => { PQ.method = sm.value; renderPayQbo(); }; fld("How it's paid", sm);
+  body.appendChild(ctl);
+  const flagged = d.vendors.reduce((t, v) => t + v.bills.filter(b => b.check_approval).length, 0);
+  if (flagged) line(`${flagged} bill${flagged !== 1 ? "s were" : " was"} entered since 09/16 - QuickBooks does not tell us whether ${flagged !== 1 ? "they are" : "it is"} approved. Check the approval in QuickBooks first.`, "warn");
+  for (const s of d.skipped || []) line(`Left out: ${s.vendor ? s.vendor + " · " : ""}bill ${s.doc || s.bill_id} - ${s.why}`, "warn");
+  if (!d.vendors.length) { line("Nothing left to pay in the saved run.", "neg"); return; }
+  // one band per vendor: the reference, the bills, the credits (unticked)
+  const t = document.createElement("table"); t.className = "grid pay-list-grid pq-grid";
+  t.innerHTML = `<thead><tr><th class="left"></th><th class="left">Bill #</th><th class="left">Date</th><th class="left">Memo</th><th class="left"></th><th class="right">Pays</th></tr></thead>`;
+  const tb = document.createElement("tbody");
+  for (const v of d.vendors) {
+    const gtr = document.createElement("tr"); gtr.className = "bill-group pq-band"; const gtd = document.createElement("td"); gtd.colSpan = 6;
+    const cell = document.createElement("div"); cell.className = "bg-cell";
+    const key = document.createElement("span"); key.className = "bg-key"; key.textContent = v.vendor; cell.appendChild(key);
+    bandMetrics(cell, [[v.bills.length, "bills"], [qaCents(_pqNet(v)), "payment"]]);
+    const rf = document.createElement("span"); rf.className = "pq-ref";
+    if (PQ.method === "print") { rf.textContent = "check # when printed"; rf.classList.add("dim"); }
+    else {
+      const inp = document.createElement("input"); inp.type = "text"; inp.maxLength = d.ref_max; inp.spellcheck = false;
+      inp.placeholder = PQ.method === "check" ? "check #" : PQ.method === "ach" ? "ACH reference" : "reference (optional)";
+      inp.value = PQ.refs.get(v.vendor_id) || "";
+      const cnt = document.createElement("span"); cnt.className = "pq-cnt";
+      const upd = () => { cnt.textContent = `${inp.value.length}/${d.ref_max}`; cnt.classList.toggle("full", inp.value.length >= d.ref_max); };
+      inp.oninput = () => { PQ.refs.set(v.vendor_id, inp.value); upd(); _pqFoot(); }; upd();
+      rf.appendChild(inp); rf.appendChild(cnt);
+    }
+    cell.appendChild(rf); gtd.appendChild(cell); gtr.appendChild(gtd); tb.appendChild(gtr);
+    for (const b of v.bills) {
+      const tr = document.createElement("tr"); tr.className = "pay-row";
+      tr.appendChild(leftText(""));
+      tr.appendChild(qboLinkCell(b.doc || b.bill_id, qboUrl("bill", b.bill_id), "Open this bill in QuickBooks"));
+      tr.appendChild(leftText(fmtDateShort(b.date))); tr.appendChild(leftText(b.memo || ""));
+      tr.appendChild(leftText([b.partial ? `part of ${qaCents(b.balance)}` : "", b.check_approval ? "check approval in QuickBooks" : ""].filter(Boolean).join(" · ")));
+      const c = document.createElement("td"); c.className = "right"; c.textContent = qaCents(b.amount); tr.appendChild(c); tb.appendChild(tr);
+    }
+    for (const cr of v.credits || []) {
+      const tr = document.createElement("tr"); tr.className = "pay-row pq-credit";
+      const c0 = document.createElement("td"); c0.style.textAlign = "center";
+      const cb = document.createElement("input"); cb.type = "checkbox"; cb.title = "Apply this credit to the payment";
+      cb.checked = (PQ.credits.get(v.vendor_id) || new Set()).has(cr.id);
+      cb.onchange = () => { const s = PQ.credits.get(v.vendor_id) || new Set(); cb.checked ? s.add(cr.id) : s.delete(cr.id); PQ.credits.set(v.vendor_id, s); renderPayQbo(); };
+      c0.appendChild(cb); tr.appendChild(c0);
+      tr.appendChild(qboLinkCell(`Credit ${cr.doc || cr.id}`, qboUrl("vendorcredit", cr.id), "Open this credit in QuickBooks"));
+      tr.appendChild(leftText(fmtDateShort(cr.date))); tr.appendChild(leftText(cr.memo || "")); tr.appendChild(leftText(cb.checked ? "applied" : "open credit - tick to apply"));
+      const c = document.createElement("td"); c.className = "right"; c.textContent = "-" + qaCents(cr.balance); if (!cb.checked) c.style.color = "var(--text-dim)"; tr.appendChild(c); tb.appendChild(tr);
+    }
+  }
+  t.appendChild(tb); const sc = document.createElement("div"); sc.className = "table-scroll"; sc.appendChild(t); body.appendChild(sc);
+  const act = document.createElement("div"); act.className = "qa-repair-act pq-act"; act.id = "pqAct"; body.appendChild(act);
+  _pqFoot();
+}
+function _pqFoot() {
+  const act = $("#pqAct"); if (!act || !PQ) return; act.innerHTML = "";
+  const total = PQ.d.vendors.reduce((t, v) => t + _pqNet(v), 0), probs = _pqProblems();
+  const btn = document.createElement("button"); btn.type = "button"; btn.className = "btn small primary";
+  btn.textContent = `Pay ${PQ.d.vendors.length} vendor${PQ.d.vendors.length !== 1 ? "s" : ""} · ${qaCents(total)} in QuickBooks…`;
+  btn.disabled = probs.length > 0; btn.onclick = () => payQboWrite(btn);
+  act.appendChild(btn);
+  if (probs.length) { const p = document.createElement("div"); p.className = "cd-ra-line warn"; p.textContent = probs.join(" · "); act.appendChild(p); }
+}
+async function payQboWrite(btn) {
+  const d = PQ.d, a = _pqAcct() || {}, how = PQ.method === "card" ? "Credit card" : (PQ_METHODS.find(m => m[0] === PQ.method) || [])[1];
+  const lines = d.vendors.map(v => `  ${v.vendor} · ${v.bills.length} bill${v.bills.length !== 1 ? "s" : ""} · ${qaCents(_pqNet(v))}`
+    + (PQ.method === "print" ? "" : (PQ.refs.get(v.vendor_id) || "").trim() ? ` · ref ${(PQ.refs.get(v.vendor_id) || "").trim()}` : ""));
+  const total = d.vendors.reduce((t, v) => t + _pqNet(v), 0);
+  if (!confirm(`Are you sure?\n\nThis writes ${d.vendors.length} bill payment${d.vendors.length !== 1 ? "s" : ""} to QuickBooks, ${qaCents(total)}:\n`
+    + `${lines.slice(0, 25).join("\n")}${lines.length > 25 ? `\n  … and ${lines.length - 25} more` : ""}\n\nFrom ${a.name} · ${fmtDate(PQ.date)} · ${how}`)) return;
+  btn.disabled = true; btn.textContent = "Writing to QuickBooks…";
+  const payload = { confirm: true, run_token: d.run_token, account_id: PQ.acct, date: PQ.date, method: PQ.method,
+    vendors: d.vendors.map(v => ({ vendor_id: v.vendor_id, ref: (PQ.refs.get(v.vendor_id) || "").trim(),
+      bills: v.bills.map(b => ({ bill_id: b.bill_id, amount: b.amount })), credits: [...(PQ.credits.get(v.vendor_id) || [])] })) };
+  let res; try { res = await (await fetch("/api/pay-bills/commit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })).json(); }
+  catch (e) { res = { ok: false, error: String(e) + " - check QuickBooks before trying again" }; }
+  const act = $("#pqAct"); act.innerHTML = "";
+  const say = (text, cls) => { const x = document.createElement("div"); x.className = "cd-ra-line" + (cls ? " " + cls : ""); x.textContent = text; act.appendChild(x); };
+  if (!res.results) { say("Nothing written: " + (res.error || "failed"), "neg"); btn.disabled = false; act.appendChild(btn); btn.textContent = "Try again…"; return; }
+  say(`${res.posted} payment${res.posted !== 1 ? "s" : ""} written to QuickBooks, ${qaCents(res.total)}${res.failed ? ` · ${res.failed} not written` : ""}.`, res.failed ? "warn" : "ok");
+  for (const r of res.results) {
+    if (!r.ok) { say(`${r.vendor}: not written - ${r.error}`, "neg"); continue; }
+    const st = r.stub || {};
+    say(`${r.vendor}: ${r.to_print ? "check queued to print" : "payment " + (r.ref || r.payment_id)} · ${r.bills} bill${r.bills !== 1 ? "s" : ""}${r.credits ? ` + ${r.credits} credit${r.credits !== 1 ? "s" : ""}` : ""} · ${qaCents(r.total)} · `
+      + (r.to_print ? "stub files when its check # is saved" : st.filed ? "stub filed" : `stub NOT filed (${st.error || "?"}) - print it from the vendor's Payments`), st.filed || r.to_print ? "ok" : "warn");
+  }
+  // the paid bills leave the run now; the Bill Tracker catches up through the vendor refresh chain
+  const prog = document.createElement("div"); prog.className = "sync-progress"; const bar = document.createElement("div"); bar.className = "sync-bar";
+  const fill = document.createElement("div"); fill.className = "sync-bar-fill"; bar.appendChild(fill); const step = document.createElement("div"); step.className = "sync-step";
+  prog.appendChild(bar); prog.appendChild(step); act.appendChild(prog);
+  await load(true); renderPayBills(); loadPayQueued();
+  runPipeline("billsync", null, { prog, fill, step, after: async (ok) => {
+    if (!ok) step.textContent += " - the payments are in QuickBooks; if it stopped at Sync bills, Bill Tracker.xlsx is open in Excel: close it and refresh.";
+    await load(true); renderPayBills(); } });
+}
+function closePayQbo() { const w = $("#payQboWidget"); if (w) w.hidden = true; PQ = null; }
+async function loadPayQueued() {
+  const w = $("#payQueuedWidget"); if (!w) return;
+  let d; try { d = await (await fetch("/api/pay-bills/queued")).json(); } catch { return; }
+  const rows = (d && d.rows) || []; w.hidden = !rows.length; if (!rows.length) return;
+  $("#payQueuedNote").textContent = `(${rows.length} · ${qaCents(rows.reduce((t, r) => t + r.total, 0))})`;
+  const thead = $("#payQueuedTable thead"), tbody = $("#payQueuedTable tbody");
+  thead.innerHTML = `<tr><th class="left">Vendor</th><th class="left">Date</th><th class="left">Account</th><th class="right">Bills</th><th class="right">Amount</th><th class="left">Check # once printed</th></tr>`;
+  tbody.innerHTML = "";
+  for (const r of rows) {
+    const tr = document.createElement("tr");
+    tr.appendChild(qboLinkCell(r.vendor, qboUrl("billpayment", r.payment_id), "Open this bill payment in QuickBooks"));
+    tr.appendChild(leftText(fmtDateShort(r.date))); tr.appendChild(leftText(r.account));
+    const cb = document.createElement("td"); cb.className = "right"; cb.textContent = r.bills; tr.appendChild(cb);
+    const ca = document.createElement("td"); ca.className = "right"; ca.textContent = qaCents(r.total); tr.appendChild(ca);
+    const cn = document.createElement("td"); cn.className = "left";
+    const inp = document.createElement("input"); inp.type = "text"; inp.maxLength = 21; inp.placeholder = "check #"; inp.className = "pq-num";
+    const sv = document.createElement("button"); sv.type = "button"; sv.className = "btn small"; sv.textContent = "Save #"; sv.disabled = true;
+    inp.oninput = () => { sv.disabled = !inp.value.trim(); };
+    sv.onclick = () => payQueuedNumber(r, inp, sv, cn);
+    cn.appendChild(inp); cn.appendChild(sv); tr.appendChild(cn); tbody.appendChild(tr);
+  }
+}
+async function payQueuedNumber(r, inp, btn, cell) {
+  const n = inp.value.trim(); if (!n) return;
+  if (!confirm(`Are you sure?\n\nThis writes to QuickBooks: the check to ${r.vendor} · ${fmtDate(r.date)} · ${qaCents(r.total)}\nbecomes check #${n}, marked printed. Its stub is filed in the vendor's folder.`)) return;
+  btn.disabled = true; btn.textContent = "Saving…";
+  let res; try { res = await (await fetch("/api/pay-bills/number", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm: true, payment_id: r.payment_id, number: n }) })).json(); }
+  catch (e) { res = { ok: false, error: String(e) }; }
+  if (!res.ok) { toast("Not saved: " + (res.error || "failed"), 5000); btn.disabled = false; btn.textContent = "Save #"; return; }
+  const st = res.stub || {};
+  toast(`Check #${res.number} saved in QuickBooks · ${st.filed ? "stub filed" : "stub NOT filed (" + (st.error || "?") + ")"}`, 5000);
+  loadPayQueued();
 }
 // Press the save-bar text → a review of the lien marks: what you STAGED (old → new, so nothing
 // saves blind) and what's already ON FILE, plus a jump to the Synology lien folder.
@@ -9071,6 +9253,8 @@ function init() {
   { const el = $("#pfExport"); if (el) el.onclick = exportPayList; }
   { const el = $("#btnSavePayRun"); if (el) el.onclick = savePayRun; }
   { const el = $("#btnDiscardPayRun"); if (el) el.onclick = discardPayRun; }
+  { const el = $("#btnPayQbo"); if (el) el.onclick = openPayQbo; }
+  { const el = $("#btnPayQboClose"); if (el) el.onclick = closePayQbo; }
   window.addEventListener("beforeunload", (e) => { if (pendingBillMarks.size || payDraft.size || (typeof _pp !== "undefined" && _pp && _pp.payDraft && _pp.payDraft.size)) { e.preventDefault(); e.returnValue = ""; } });
   $$(".sec-head").forEach(h => h.onclick = () => { const k = h.dataset.sec;
     if (sublocCollapsed.has(k)) sublocCollapsed.delete(k); else sublocCollapsed.add(k); applySublocSections(); });

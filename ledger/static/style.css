@@ -2108,3 +2108,20 @@ table.grid td a:not([class]) { color: var(--accent-text); }
 .cd-ra-line.warn { color: var(--warn-text, var(--warn)); }
 .cd-reapply .qa-repair-tbl { max-height: 360px; overflow: auto; display: block; }
 .cd-reapply .qa-repair-tbl td:last-child { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Pay in QuickBooks (the saved pay run -> bill payments): the controls, the per-vendor reference, the credits */
+.pq-head-btns { display: inline-flex; gap: 8px; }
+.pq-ctl { margin: 10px 0 6px; }
+.pq-ctl select, .pq-ctl input[type="date"] { min-width: 150px; }
+.pq-grid tr.bill-group .bg-cell { flex-wrap: wrap; }
+.pq-ref { margin-left: 28px; display: inline-flex; align-items: center; gap: 6px; font-weight: 400; }
+.pq-ref.dim { color: var(--text-dim); font-size: .9em; }
+.pq-ref input { width: 190px; font-variant-numeric: tabular-nums; }
+.pq-cnt { color: var(--text-dim); font-size: .8em; font-variant-numeric: tabular-nums; min-width: 3.2em; }
+.pq-cnt.full { color: var(--warn-text, var(--warn)); font-weight: 600; }
+.pq-credit td { color: var(--text-dim); }
+.pq-act .btn { margin-bottom: 6px; }
+.pq-num { width: 110px; margin-right: 6px; }
+.pq-grid td:nth-child(4) { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pq-grid td:nth-child(5) { color: var(--warn-text, var(--warn)); font-size: .85em; white-space: nowrap; }
+.pq-grid tr.bill-group td { max-width: none; }

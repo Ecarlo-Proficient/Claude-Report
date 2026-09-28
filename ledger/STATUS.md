@@ -31,6 +31,14 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   tests it with a parent check (`..` and `/Volumes/CommonX` got past the old string prefix) and, like every `_os_open`,
   refuses anything `open` would RUN (apps, scripts, installers, bare executables). Error text sent to the browser has
   the QBO company id stripped. `tests/test_ledger_request_gate.py` (7, incl. a real server round-trip).
+- 2026-09-28 · **Pay in QuickBooks from the Pay run** (owner: "move the pay bills in the project ledger ... a single
+  bill payment ... choose the account ... ready to print and/or assign check # after it's been printed / put ACH ...
+  bring in the bill payment stub to auto send to where it's supposed to go"; rulings: ACH keeps the reference as typed,
+  capped at QBO's 21 characters; credits only when ticked; Pay run view only). NEW `ledger/pay_bills.py`: the saved
+  run -> one BillPayment per vendor, review read live, "Are you sure?", each bill re-checked live, a QBO `requestid`
+  so nothing posts twice; stub filed in the vendor folder after each payment; **Checks to print** assigns a queued
+  check its # (marked printed) and files its stub. `/api/pay-bills/plan|queued|commit|number`. Tested read-only
+  (dry run live, every refusal, the payment body with the QBO write stubbed); the first real payment is the owner's.
 - 2026-09-28 · **Vendor types: Sub: Labor / Sub: Pump + an owner override register** (owner: "RGM Removal is not a
   concrete supplier, make it Sub: Pump ... for the subs who are labor sub: labor"). Labor subs read **Sub: Labor**; a
   pumping outfit (name matches pump) is **Sub: Pump**, no longer Service; `Registers/vendor_types.json`
