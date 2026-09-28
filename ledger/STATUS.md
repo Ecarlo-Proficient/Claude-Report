@@ -36,9 +36,16 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   bring in the bill payment stub to auto send to where it's supposed to go"; rulings: ACH keeps the reference as typed,
   capped at QBO's 21 characters; credits only when ticked; Pay run view only). NEW `ledger/pay_bills.py`: the saved
   run -> one BillPayment per vendor, review read live, "Are you sure?", each bill re-checked live, a QBO `requestid`
-  so nothing posts twice; stub filed in the vendor folder after each payment; **Checks to print** assigns a queued
-  check its # (marked printed) and files its stub. `/api/pay-bills/plan|queued|commit|number`. Tested read-only
+  so nothing posts twice; stub filed in the vendor folder after each payment; (first cut: **Checks to print** assigned a queued
+  check its # by hand - replaced in round 2 below). `/api/pay-bills/plan|queue|commit|number|mark`. Tested read-only
   (dry run live, every refusal, the payment body with the QBO write stubbed); the first real payment is the owner's.
+  Same day, round 2 (owner: "ask print later? ... new run will pick up the check # used to print and auto update it.
+  have a queue of all bill payments we pushed and wait to match. add a watcher ... if a bill payment gets deleted in
+  qbo, investigate and mark as resolved or keep in queue for x reason"): a check asks **Print later?** (on by default);
+  **Pushed payments** queue (`pay_push`) replaces Checks to print; `watch()` after every mirror refresh matches the
+  printed number, files the stub, flags deleted / voided / changed with what the bills show now; Resolved / Keep
+  (reason required). Typing a # stays only for a check printed outside QBO. Fixed in testing: the watcher held a
+  write on the ledger DB while the stub printer recorded its print (database locked) - it commits first now.
 - 2026-09-28 · **Vendor types: Sub: Labor / Sub: Pump + an owner override register** (owner: "RGM Removal is not a
   concrete supplier, make it Sub: Pump ... for the subs who are labor sub: labor"). Labor subs read **Sub: Labor**; a
   pumping outfit (name matches pump) is **Sub: Pump**, no longer Service; `Registers/vendor_types.json`

@@ -122,6 +122,14 @@ def main(argv=None) -> int:
         con.close()
     print(f"done: {res['mode']} · {res.get('upserted', res.get('fetched', 0)):,} written · "
           f"{res.get('deleted', 0):,} deleted · {time.time() - t0:.0f}s")
+    try:                                    # payments pushed from the ledger's Pay run: pick up printed check #s,
+        import pay_bills                    # noqa: PLC0415  file their stubs, flag any QBO deleted / voided / changed
+        w = pay_bills.watch()
+        if w["checked"]:
+            print(f"pay-bills watch: {w['checked']} pushed payments checked · {w['matched']} newly matched "
+                  f"({w['stubs']} stubs filed) · {w['flagged']} newly flagged")
+    except Exception as e:                  # noqa: BLE001  (never fails the refresh itself)
+        print(f"pay-bills watch skipped: {e}")
     return 0
 
 

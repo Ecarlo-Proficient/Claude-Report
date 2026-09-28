@@ -2125,3 +2125,10 @@ table.grid td a:not([class]) { color: var(--accent-text); }
 .pq-grid td:nth-child(4) { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pq-grid td:nth-child(5) { color: var(--warn-text, var(--warn)); font-size: .85em; white-space: nowrap; }
 .pq-grid tr.bill-group td { max-width: none; }
+.pq-later { align-self: flex-end; padding-bottom: 6px; }
+tr.pq-flag > td { background: color-mix(in srgb, var(--neg) 7%, transparent); }
+tr.pq-inv > td { background: color-mix(in srgb, var(--neg) 4%, transparent); padding: 4px 12px 10px 24px; }
+.pq-note { color: var(--text-dim); font-size: .85em; margin-top: 3px; max-width: 280px; white-space: normal; }
+.pq-actions { white-space: nowrap; }
+.pq-actions .btn { margin-right: 6px; }
+.pq-actions .linklike { background: none; border: 0; padding: 0; color: var(--text-dim); font-size: .85em; text-decoration: underline; cursor: pointer; }

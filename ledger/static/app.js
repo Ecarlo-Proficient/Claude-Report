@@ -3027,7 +3027,7 @@ function exportPayList() {
 // after "Are you sure?", and the server re-checks every bill live before each payment. Each payment files its stub in
 // the vendor's folder; a "To print" check files it when its number is saved under Checks to print.
 let PQ = null;
-const PQ_METHODS = [["print", "Check · print later"], ["check", "Check · already written"], ["ach", "ACH / wire"]];
+const PQ_METHODS = [["check", "Check"], ["ach", "ACH / wire"]];   // a check asks "print later?" (on by default = "print")
 async function openPayQbo() {
   if (payDirtyCount()) { toast("Save or discard the pay run first - QuickBooks gets the saved run only"); return; }
   if (!paySelectedBills().length) { toast("The pay run is empty"); return; }
@@ -3074,7 +3074,15 @@ function renderPayQbo() {
   const sm = document.createElement("select");
   const card = (_pqAcct() || {}).type === "card";
   for (const [k, l] of card ? [["card", "Credit card"]] : PQ_METHODS) { const o = document.createElement("option"); o.value = k; o.textContent = l; sm.appendChild(o); }
-  sm.value = PQ.method; sm.onchange = () => { PQ.method = sm.value; renderPayQbo(); }; fld("How it's paid", sm);
+  sm.value = PQ.method === "print" ? "check" : PQ.method;
+  sm.onchange = () => { PQ.method = sm.value === "check" ? "print" : sm.value; renderPayQbo(); }; fld("How it's paid", sm);
+  if (PQ.method === "print" || PQ.method === "check") {   // owner 2026-09-28: "ask print later?" - QuickBooks numbers it when printed
+    const lb = document.createElement("label"); lb.className = "inline-check pq-later";
+    const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = PQ.method === "print";
+    cb.onchange = () => { PQ.method = cb.checked ? "print" : "check"; renderPayQbo(); };
+    lb.appendChild(cb); lb.appendChild(document.createTextNode(" Print later? QuickBooks gives it the check # when you print it there"));
+    ctl.appendChild(lb);
+  }
   body.appendChild(ctl);
   const flagged = d.vendors.reduce((t, v) => t + v.bills.filter(b => b.check_approval).length, 0);
   if (flagged) line(`${flagged} bill${flagged !== 1 ? "s were" : " was"} entered since 09/16 - QuickBooks does not tell us whether ${flagged !== 1 ? "they are" : "it is"} approved. Check the approval in QuickBooks first.`, "warn");
@@ -3135,7 +3143,7 @@ function _pqFoot() {
   if (probs.length) { const p = document.createElement("div"); p.className = "cd-ra-line warn"; p.textContent = probs.join(" · "); act.appendChild(p); }
 }
 async function payQboWrite(btn) {
-  const d = PQ.d, a = _pqAcct() || {}, how = PQ.method === "card" ? "Credit card" : (PQ_METHODS.find(m => m[0] === PQ.method) || [])[1];
+  const d = PQ.d, a = _pqAcct() || {}, how = { print: "Check · print later in QuickBooks", check: "Check · already written", ach: "ACH / wire", card: "Credit card" }[PQ.method];
   const lines = d.vendors.map(v => `  ${v.vendor} · ${v.bills.length} bill${v.bills.length !== 1 ? "s" : ""} · ${qaCents(_pqNet(v))}`
     + (PQ.method === "print" ? "" : (PQ.refs.get(v.vendor_id) || "").trim() ? ` · ref ${(PQ.refs.get(v.vendor_id) || "").trim()}` : ""));
   const total = d.vendors.reduce((t, v) => t + _pqNet(v), 0);
@@ -3155,7 +3163,7 @@ async function payQboWrite(btn) {
     if (!r.ok) { say(`${r.vendor}: not written - ${r.error}`, "neg"); continue; }
     const st = r.stub || {};
     say(`${r.vendor}: ${r.to_print ? "check queued to print" : "payment " + (r.ref || r.payment_id)} · ${r.bills} bill${r.bills !== 1 ? "s" : ""}${r.credits ? ` + ${r.credits} credit${r.credits !== 1 ? "s" : ""}` : ""} · ${qaCents(r.total)} · `
-      + (r.to_print ? "stub files when its check # is saved" : st.filed ? "stub filed" : `stub NOT filed (${st.error || "?"}) - print it from the vendor's Payments`), st.filed || r.to_print ? "ok" : "warn");
+      + (r.to_print ? "waits in Pushed payments until printed in QuickBooks" : st.filed ? "stub filed" : `stub NOT filed (${st.error || "?"}) - print it from the vendor's Payments`), st.filed || r.to_print ? "ok" : "warn");
   }
   // the paid bills leave the run now; the Bill Tracker catches up through the vendor refresh chain
   const prog = document.createElement("div"); prog.className = "sync-progress"; const bar = document.createElement("div"); bar.className = "sync-bar";
@@ -3167,31 +3175,87 @@ async function payQboWrite(btn) {
     await load(true); renderPayBills(); } });
 }
 function closePayQbo() { const w = $("#payQboWidget"); if (w) w.hidden = true; PQ = null; }
+// ── Pushed payments (owner 2026-09-28): every payment pushed from here waits in this queue until it MATCHES - QuickBooks
+// shows its check # (a "To print" check gets it when printed in QuickBooks; the next mirror refresh picks it up) and its
+// stub is filed under that number. The watcher (pay_bills.watch, after every mirror refresh and on every load here) flags
+// a payment QuickBooks deleted / voided / changed, with what happened to its bills; the owner marks it Resolved or Keeps
+// it in the queue with a reason. Typing a # by hand is only for a check printed outside QuickBooks.
+let _pqShow = "active";
+const _pqRefresh = (() => {
+  const btn = document.createElement("button"); btn.type = "button"; btn.className = "btn small"; btn.innerHTML = "⟳&nbsp;Refresh from QuickBooks";
+  btn.title = "Pull QuickBooks' changes now (mirror + bill payments): picks up printed check #s, files stubs, flags deletes";
+  const prog = document.createElement("div"); prog.className = "sync-progress"; prog.hidden = true;
+  const bar = document.createElement("div"); bar.className = "sync-bar"; const fill = document.createElement("div"); fill.className = "sync-bar-fill"; bar.appendChild(fill);
+  const step = document.createElement("div"); step.className = "sync-step"; prog.appendChild(bar); prog.appendChild(step);
+  btn.onclick = () => runPipeline("billpay", null, { btn, prog, fill, step, after: async () => { loadPayQueued(); } });
+  return { btn, prog };
+})();
 async function loadPayQueued() {
   const w = $("#payQueuedWidget"); if (!w) return;
-  let d; try { d = await (await fetch("/api/pay-bills/queued")).json(); } catch { return; }
-  const rows = (d && d.rows) || []; w.hidden = !rows.length; if (!rows.length) return;
-  $("#payQueuedNote").textContent = `(${rows.length} · ${qaCents(rows.reduce((t, r) => t + r.total, 0))})`;
+  { const h = $("#payQueuedTools"); if (h && !h.contains(_pqRefresh.btn)) { h.appendChild(_pqRefresh.btn); w.querySelector(".widget-head").after(_pqRefresh.prog); } }
+  let d; try { d = await (await fetch("/api/pay-bills/queue?show=" + _pqShow)).json(); } catch { return; }
+  if (!d || !d.ok) return;
+  const rows = d.rows || [];
+  w.hidden = !rows.length && _pqShow === "active";
+  $("#payQueuedNote").textContent = rows.length ? `(${rows.length}${d.flagged ? ` · ${d.flagged} to investigate` : ""})` : "(none)";
   const thead = $("#payQueuedTable thead"), tbody = $("#payQueuedTable tbody");
-  thead.innerHTML = `<tr><th class="left">Vendor</th><th class="left">Date</th><th class="left">Account</th><th class="right">Bills</th><th class="right">Amount</th><th class="left">Check # once printed</th></tr>`;
+  thead.innerHTML = `<tr><th class="left">Pushed</th><th class="left">Vendor</th><th class="left">Paid</th><th class="left">How</th><th class="right">Amount</th><th class="left">Check # / ref</th><th class="left">Status</th><th class="left"></th></tr>`;
   tbody.innerHTML = "";
+  if (!rows.length) { const tr = document.createElement("tr"); const td = document.createElement("td"); td.colSpan = 8; td.className = "left";
+    td.style.color = "var(--text-dim)"; td.textContent = "Nothing pushed from here yet."; tr.appendChild(td); tbody.appendChild(tr); return; }
+  const HOW = { print: "Check · print", check: "Check", ach: "ACH / wire", card: "Card" };
   for (const r of rows) {
-    const tr = document.createElement("tr");
+    const tr = document.createElement("tr"); if (r.flagged && r.owner_state === "open") tr.className = "pq-flag";
+    tr.appendChild(leftText(fmtDateShort(r.pushed_at)));
     tr.appendChild(qboLinkCell(r.vendor, qboUrl("billpayment", r.payment_id), "Open this bill payment in QuickBooks"));
-    tr.appendChild(leftText(fmtDateShort(r.date))); tr.appendChild(leftText(r.account));
-    const cb = document.createElement("td"); cb.className = "right"; cb.textContent = r.bills; tr.appendChild(cb);
+    tr.appendChild(leftText(fmtDateShort(r.txn_date))); tr.appendChild(leftText(HOW[r.method] || r.method));
     const ca = document.createElement("td"); ca.className = "right"; ca.textContent = qaCents(r.total); tr.appendChild(ca);
-    const cn = document.createElement("td"); cn.className = "left";
-    const inp = document.createElement("input"); inp.type = "text"; inp.maxLength = 21; inp.placeholder = "check #"; inp.className = "pq-num";
-    const sv = document.createElement("button"); sv.type = "button"; sv.className = "btn small"; sv.textContent = "Save #"; sv.disabled = true;
-    inp.oninput = () => { sv.disabled = !inp.value.trim(); };
-    sv.onclick = () => payQueuedNumber(r, inp, sv, cn);
-    cn.appendChild(inp); cn.appendChild(sv); tr.appendChild(cn); tbody.appendChild(tr);
+    tr.appendChild(leftText(r.qbo_ref && r.qbo_ref !== "To print" ? r.qbo_ref : r.method === "print" ? "–" : (r.ref || "–")));
+    const cs = document.createElement("td"); cs.className = "left";
+    if (r.flagged) cs.appendChild(stText(r.state_words, "st-bad", `flagged ${fmtDate(r.flagged_at, true)}`));
+    else if (r.qbo_state === "to_print") cs.appendChild(stText("waiting to print", "st-warn", "Print it in QuickBooks - the next refresh picks up its check #"));
+    else if (r.qbo_state === "matched") cs.appendChild(stText(r.done ? "matched · stub filed" : "matched · stub not filed", r.done ? "st-ok" : "st-warn",
+      r.done ? (r.stub_file || "") : (r.stub_error || "the stub will be retried on the next refresh")));
+    else cs.appendChild(stText(r.state_words || "–", "st-warn"));
+    if (r.owner_state === "kept") { const k = document.createElement("div"); k.className = "pq-note"; k.textContent = "Kept: " + (r.owner_note || ""); cs.appendChild(k); }
+    if (r.owner_state === "resolved") { const k = document.createElement("div"); k.className = "pq-note"; k.textContent = "Resolved" + (r.owner_note ? ": " + r.owner_note : ""); cs.appendChild(k); }
+    tr.appendChild(cs);
+    const cx = document.createElement("td"); cx.className = "left pq-actions";
+    const mk = (label, fn, title) => { const b = document.createElement("button"); b.type = "button"; b.className = "btn small"; b.textContent = label; if (title) b.title = title; b.onclick = fn; cx.appendChild(b); return b; };
+    if (r.flagged && r.owner_state !== "resolved") {
+      mk("Resolved", () => _pqMark(r, "resolved"), "Investigated - take it off the queue (a note is optional)");
+      if (r.owner_state !== "kept") mk("Keep…", () => _pqMark(r, "kept"), "Leave it in the queue, with the reason");
+    } else if (r.owner_state === "kept") mk("Resolved", () => _pqMark(r, "resolved"));
+    if (r.qbo_state === "to_print" && !r.flagged) {
+      const link = document.createElement("button"); link.type = "button"; link.className = "linklike"; link.textContent = "printed outside QuickBooks?";
+      link.onclick = () => { link.remove(); const inp = document.createElement("input"); inp.type = "text"; inp.maxLength = 21; inp.placeholder = "check #"; inp.className = "pq-num";
+        const sv = mk("Save #", () => payQueuedNumber(r, inp, sv), "Write this check # to QuickBooks and mark it printed"); sv.disabled = true;
+        inp.oninput = () => { sv.disabled = !inp.value.trim(); }; cx.insertBefore(inp, sv); inp.focus(); };
+      cx.appendChild(link);
+    }
+    tr.appendChild(cx); tbody.appendChild(tr);
+    if (r.investigation && r.investigation.length) {
+      const itr = document.createElement("tr"); itr.className = "pq-inv"; const itd = document.createElement("td"); itd.colSpan = 8;
+      const head = document.createElement("div"); head.className = "cd-ra-line neg";
+      head.textContent = `QuickBooks ${r.qbo_state === "changed" ? "changed this payment - it no longer pays exactly what was pushed" : r.state_words.replace(" in QuickBooks", "") + " this payment"}. What its bills show now:`;
+      itd.appendChild(head);
+      for (const b of r.investigation) { const x = document.createElement("div"); x.className = "cd-ra-line"; x.textContent = `Bill ${b.doc} · ${qaCents(b.amount)} - ${b.now}`; itd.appendChild(x); }
+      itr.appendChild(itd); tbody.appendChild(itr);
+    }
   }
 }
-async function payQueuedNumber(r, inp, btn, cell) {
+async function _pqMark(r, state) {
+  let note = "";
+  if (state === "kept") { note = prompt(`Why does the ${r.vendor} payment stay in the queue?`); if (note == null) return; note = note.trim(); if (!note) { toast("Say why it stays"); return; } }
+  else { note = prompt(`Resolved - what happened? (optional)`, ""); if (note == null) return; }
+  let res; try { res = await (await fetch("/api/pay-bills/mark", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ payment_id: r.payment_id, state, note }) })).json(); }
+  catch (e) { res = { ok: false, error: String(e) }; }
+  if (!res.ok) { toast("Not saved: " + (res.error || "failed")); return; }
+  toast(state === "kept" ? "Kept in the queue" : "Resolved"); loadPayQueued();
+}
+async function payQueuedNumber(r, inp, btn) {
   const n = inp.value.trim(); if (!n) return;
-  if (!confirm(`Are you sure?\n\nThis writes to QuickBooks: the check to ${r.vendor} · ${fmtDate(r.date)} · ${qaCents(r.total)}\nbecomes check #${n}, marked printed. Its stub is filed in the vendor's folder.`)) return;
+  if (!confirm(`Are you sure?\n\nThis writes to QuickBooks: the check to ${r.vendor} · ${fmtDate(r.txn_date)} · ${qaCents(r.total)}\nbecomes check #${n}, marked printed. Its stub is filed in the vendor's folder.\n\nOnly for a check printed OUTSIDE QuickBooks - one printed in QuickBooks gets its # on the next refresh.`)) return;
   btn.disabled = true; btn.textContent = "Saving…";
   let res; try { res = await (await fetch("/api/pay-bills/number", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm: true, payment_id: r.payment_id, number: n }) })).json(); }
   catch (e) { res = { ok: false, error: String(e) }; }
@@ -9255,6 +9319,7 @@ function init() {
   { const el = $("#btnDiscardPayRun"); if (el) el.onclick = discardPayRun; }
   { const el = $("#btnPayQbo"); if (el) el.onclick = openPayQbo; }
   { const el = $("#btnPayQboClose"); if (el) el.onclick = closePayQbo; }
+  { const el = $("#payQueuedShow"); if (el) el.onchange = () => { _pqShow = el.value; loadPayQueued(); }; }
   window.addEventListener("beforeunload", (e) => { if (pendingBillMarks.size || payDraft.size || (typeof _pp !== "undefined" && _pp && _pp.payDraft && _pp.payDraft.size)) { e.preventDefault(); e.returnValue = ""; } });
   $$(".sec-head").forEach(h => h.onclick = () => { const k = h.dataset.sec;
     if (sublocCollapsed.has(k)) sublocCollapsed.delete(k); else sublocCollapsed.add(k); applySublocSections(); });

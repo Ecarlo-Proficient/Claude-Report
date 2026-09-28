@@ -357,8 +357,9 @@ list reads the run live from QBO (`GET /api/pay-bills/plan`, no write) and shows
 amounts (a partial says of how much), each vendor's open credits unticked (a tick applies it), anything left out
 (paid elsewhere, deleted, balance smaller now) and bills entered since 09/16 as "check approval in QuickBooks" (the API
 does not return approval). The owner picks **Pay from** (active bank and card accounts, most used first), the
-**date**, and **how it's paid**: Check · print later (QBO's "To print" queue), Check · already written (the check #),
-ACH / wire (the reference, kept exactly as typed). A card account pays by card. QBO keeps 21 characters of a
+**date**, and **how it's paid**: Check (with **Print later?**, on by default: it goes to QBO's "To print" queue and
+QBO gives it its number when you print it there; untick it for a check already written and type the #), or ACH / wire
+(the reference, kept exactly as typed). A card account pays by card. QBO keeps 21 characters of a
 reference, so the box stops at 21 and the server refuses more. "Are you sure?" then `POST /api/pay-bills/commit`
 writes **one BillPayment per vendor**, each re-checked live and refused unless it matches the review exactly; a QBO
 `requestid` per vendor per review means a resend or double click returns the same payment. After each payment its
@@ -366,9 +367,16 @@ bills leave the pay run, the payment and bills go into the mirror, the stub is f
 and the Bill Tracker refresh runs. QBO has no payment-method field on a bill payment, only check vs card, so ACH is a
 check-type payment whose reference says how it went.
 
-**Checks to print** lists every check in QBO's print queue. Type the number once it is printed and **Save #**
-(`POST /api/pay-bills/number`, after "Are you sure?"): it becomes that check #, marked printed, and its stub is filed.
-A number already used on the same account is refused. CLI: `ledger/pay_bills.py --plan | --queued | --selftest`.
+**Pushed payments** is the queue of every payment pushed from here (`pay_push` in the ledger DB, self-created). A
+payment waits there until it **matches**: QBO shows its number and its stub is filed under that number. Nobody types
+the number: `pay_bills.watch()` runs at the end of every mirror refresh (`refresh_mirror.py` - sync-all step 0, the
+vendor Refresh buttons, the queue's own **Refresh from QuickBooks**) and on every load of the queue; it reads the
+mirror only, picks up the number QBO gave the check when it was printed, and files the stub. It also **flags** a pushed
+payment QBO deleted, voided or changed (bills or amounts no longer what was pushed) with what each bill shows now (owes
+X now / paid by another payment / bill deleted); the owner marks it **Resolved** (note optional) or **Keep**s it in
+the queue with a reason (`POST /api/pay-bills/mark`, local only). `GET /api/pay-bills/queue?show=active|all`. A check
+printed OUTSIDE QBO can still get its # typed ("printed outside QuickBooks?" -> `POST /api/pay-bills/number`, after
+"Are you sure?"). CLI: `ledger/pay_bills.py --plan | --queue | --watch | --selftest`.
 
 ### Bill payment stubs (2026-09-22)
 

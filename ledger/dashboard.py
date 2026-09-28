@@ -3560,9 +3560,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(pay_bills.plan())
             except Exception as e:         # noqa: BLE001
                 self._json({"ok": False, "error": str(e)})
-        elif path == "/api/pay-bills/queued":   # checks sitting "To print" in QBO (the mirror)
+        elif path == "/api/pay-bills/queue":   # payments pushed from here until matched (+ flagged ones); watches first (mirror only)
             try:
-                self._json({"ok": True, "rows": pay_bills.queued()})
+                self._json(pay_bills.queue(self._query().get("show") or "active"))
             except Exception as e:         # noqa: BLE001
                 self._json({"ok": False, "error": str(e)})
         elif path == "/api/checkdrift/reapply":   # dry run: what re-applying a stripped check would write (live QBO read, no write)
@@ -3648,8 +3648,10 @@ class Handler(BaseHTTPRequestHandler):
             self._clear_pay_run()
         elif p == "/api/pay-bills/commit":   # QBO WRITE: the saved pay run as bill payments, only the review the owner confirmed
             self._pay_bills("commit")
-        elif p == "/api/pay-bills/number":   # QBO WRITE: a printed "To print" check gets its check #
+        elif p == "/api/pay-bills/number":   # QBO WRITE (fallback): a check printed outside QBO gets its check #
             self._pay_bills("number")
+        elif p == "/api/pay-bills/mark":     # a ledger write - the owner's ruling on a flagged pushed payment; never QuickBooks
+            self._pay_bills("mark")
         elif p == "/api/checkdrift/reapply":  # THE QBO WRITE: re-apply a stripped check, only the plan the owner confirmed
             self._check_reapply()
         elif p == "/api/checkdrift/mark":  # a ledger write - the owner's ruling on a check (e.g. kept as credit); never QuickBooks
@@ -4329,16 +4331,22 @@ class Handler(BaseHTTPRequestHandler):
 
     def _pay_bills(self, what: str):
         """commit: the pay-run review as the owner confirmed it ("Are you sure?") -> pay_bills.commit.
-        number: {payment_id, number} -> pay_bills.assign_number. Both refuse without confirm: true."""
+        number: {payment_id, number} -> pay_bills.assign_number. Both QBO writes refuse without confirm: true.
+        mark: {payment_id, state, note} -> pay_bills.mark (local only)."""
         try:
             length = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(length) or b"{}")
         except (ValueError, json.JSONDecodeError):
             return self._json({"ok": False, "error": "bad request"}, 400)
-        if not isinstance(body, dict) or body.get("confirm") is not True:
+        if not isinstance(body, dict) or (what != "mark" and body.get("confirm") is not True):
             return self._json({"ok": False, "error": "not confirmed"}, 400)
         try:
-            res = pay_bills.commit(body) if what == "commit" else pay_bills.assign_number(body.get("payment_id"), body.get("number"))
+            if what == "mark":
+                res = pay_bills.mark(body.get("payment_id"), body.get("state"), body.get("note"))
+            elif what == "commit":
+                res = pay_bills.commit(body)
+            else:
+                res = pay_bills.assign_number(body.get("payment_id"), body.get("number"))
         except Exception as e:             # noqa: BLE001
             res = {"ok": False, "error": str(e)}
         self._json(res)

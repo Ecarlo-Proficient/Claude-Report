@@ -9,11 +9,16 @@ turns that saved run into real QBO BillPayments, the same thing QuickBooks' Pay 
                         on the payment, the vendor's open credits (applied only when ticked), and
                         anything skipped (paid elsewhere, deleted, balance smaller now). Writes nothing.
     commit(body)        write it - only what the plan still says, re-checked live bill by bill.
-    queued()            checks sitting "To print" in QBO (any, not only the ledger's).
-    assign_number(...)  after a queued check is printed: give it its check # (marks it printed).
+    queue() / watch()   every payment pushed from here, until it MATCHES: QBO shows its number (a
+                        "To print" check gets it when printed in QBO - nobody types it) and its stub
+                        is filed. watch() runs after every mirror refresh; a payment QBO deleted,
+                        voided or changed is flagged with what happened to its bills, and stays
+                        until the owner marks it Resolved or Keeps it with a reason (mark()).
+    assign_number(...)  fallback: a check printed OUTSIDE QBO gets its # typed here.
 
 How it's paid (owner 2026-09-28):
-    print   check, print later  -> PrintStatus NeedToPrint, number "To print" (QBO's own marker)
+    print   check, print later  -> PrintStatus NeedToPrint, number "To print" (QBO's own marker);
+                                   print it in QBO, the next mirror refresh picks up the number
     check   check already written -> the check # the owner types
     ach     ACH / wire          -> the reference the owner types, kept as typed
     card    a credit-card account was picked -> the reference the owner types (optional)
@@ -29,7 +34,8 @@ mirror, and - unless it waits to be printed - its stub is filed in the vendor's 
 (bill_payment_stub.print_stub). A "To print" check files its stub when its number is assigned.
 
     ledger/pay_bills.py --plan              the dry run for the saved pay run, on the terminal
-    ledger/pay_bills.py --queued            checks waiting to be printed
+    ledger/pay_bills.py --queue             the pushed payments not matched yet, or flagged
+    ledger/pay_bills.py --watch             judge them against the mirror, file matched stubs
 """
 from __future__ import annotations
 
@@ -41,6 +47,7 @@ import sys
 import time
 import uuid
 from pathlib import Path
+from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -311,37 +318,198 @@ def commit(body: dict) -> dict:
                 _to_mirror("VendorCredit", list(_live_ids(access, cid, "VendorCredit", [c["id"] for c in credits]).values()))
         except Exception as e:                     # noqa: BLE001  (the payment is in QBO; the next refresh catches up)
             res["mirror_error"] = str(e)
-        res["stub"] = {"filed": False, "waiting": "files when the check # is assigned"} if method == "print" else _stub(pid)
+        _record_push(res, want, lv, credits, method, acct, date)
+        if method == "print":
+            res["stub"] = {"filed": False, "waiting": "files itself once QuickBooks shows the printed check #"}
+        else:
+            watch(only=pid)
+            con = _pcon()
+            try:
+                r = con.execute("SELECT stub_file, stub_ref, stub_error FROM pay_push WHERE payment_id=?", (pid,)).fetchone()
+            finally:
+                con.close()
+            res["stub"] = {"filed": bool(r and r["stub_file"] and not r["stub_error"]), "file": r and r["stub_file"], "error": r and r["stub_error"]}
     posted = [r for r in results if r.get("ok")]
     return {"ok": bool(posted), "posted": len(posted), "failed": len(results) - len(posted),
             "total": _r2(sum(r["total"] for r in posted)), "results": results,
             **({} if posted else {"error": "; ".join(f"{r['vendor']}: {r.get('error')}" for r in results) or "nothing to pay"})}
 
 
-# ───────────────────────── checks waiting to be printed ─────────────────────────
+# ───────────────────────── the pushed-payments queue + its watcher ─────────────────────────
+# Every payment pushed from here is a row in `pay_push` (ledger DB) until it is MATCHED: QBO shows its
+# number (a "To print" check gets one when it is printed in QBO - nobody types it) and its stub is filed
+# under that number. `watch()` runs after every mirror refresh (refresh_mirror.py) and whenever the queue
+# is opened; it reads the mirror only. A payment QBO deleted, voided or changed (bills / amounts not what
+# was pushed) is FLAGGED with what happened to its bills; the owner marks it Resolved (optional note) or
+# Keeps it in the queue with a reason (owner 2026-09-28).
+_PUSH_TABLE = """CREATE TABLE IF NOT EXISTS pay_push (
+    payment_id TEXT PRIMARY KEY, vendor_id TEXT, vendor TEXT, pushed_at TEXT NOT NULL, txn_date TEXT,
+    method TEXT, account TEXT, total REAL, ref TEXT, bills TEXT, credits TEXT,
+    qbo_state TEXT, qbo_ref TEXT, checked_at TEXT, flagged_at TEXT,
+    stub_file TEXT, stub_ref TEXT, stub_at TEXT, stub_error TEXT,
+    owner_state TEXT NOT NULL DEFAULT 'open', owner_note TEXT, noted_at TEXT)"""
+FLAGS = ("deleted", "voided", "changed", "missing")
+STATE_WORDS = {"to_print": "waiting to print", "matched": "matched", "deleted": "deleted in QuickBooks",
+               "voided": "voided in QuickBooks", "changed": "changed in QuickBooks", "missing": "not in the mirror"}
 
-def queued() -> list:
-    """Every bill payment QBO holds as a check "To print" (the mirror), newest first."""
-    con = mirror.connect()
+
+def _pcon():
+    import sqlite3                                  # noqa: PLC0415
+    con = sqlite3.connect(str(bill_marks.LEDGER_DB))
+    con.row_factory = sqlite3.Row
+    con.execute(_PUSH_TABLE)
+    return con
+
+
+def _now() -> str:
+    return dt.datetime.now().isoformat(timespec="seconds")
+
+
+def _record_push(res: dict, v: dict, lv: dict, credits: list, method: str, acct: dict, date: str) -> None:
+    docs = {r["bill_id"]: r["doc"] for r in (lv or {}).get("bills", [])}
+    bills = [{"bill_id": b, "doc": docs.get(b, ""), "amount": a} for b, a in v.items()]
+    con = _pcon()
     try:
-        out = []
-        for b in mirror.load("BillPayment", con=con):
-            cp = b.get("CheckPayment") or {}
-            if cp.get("PrintStatus") != "NeedToPrint":
-                continue
-            out.append({"payment_id": str(b["Id"]), "vendor": (b.get("VendorRef") or {}).get("name") or "",
-                        "date": b.get("TxnDate"), "total": _r2(b.get("TotalAmt")), "sync": b.get("SyncToken"),
-                        "account": (cp.get("BankAccountRef") or {}).get("name") or "",
-                        "bills": sum(1 for ln in b.get("Line") or [] for lt in ln.get("LinkedTxn") or []
-                                     if lt.get("TxnType") == "Bill")})
+        con.execute("INSERT OR REPLACE INTO pay_push (payment_id, vendor_id, vendor, pushed_at, txn_date, method, account,"
+                    " total, ref, bills, credits, qbo_state, qbo_ref, checked_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (res["payment_id"], res["vendor_id"], res["vendor"], _now(), date, method, acct["name"], res["total"],
+                     res["ref"], json.dumps(bills), json.dumps([{"id": c["id"], "doc": c["doc"], "amount": c["balance"]} for c in credits]),
+                     "to_print" if method == "print" else "matched", "" if method == "print" else res["ref"], _now()))
+        con.commit()
     finally:
         con.close()
-    out.sort(key=lambda r: (str(r["date"] or ""), r["payment_id"]), reverse=True)
+
+
+def _links_of(rec: dict) -> dict:
+    return {(lt.get("TxnType"), str(lt.get("TxnId"))): _r2(ln.get("Amount"))
+            for ln in rec.get("Line") or [] for lt in (ln.get("LinkedTxn") or [])[:1]}
+
+
+def _judge(row, rec: Optional[dict], mst: dict) -> tuple:
+    """(state, qbo ref) of one pushed payment against the mirror."""
+    if not mst.get("present") or not rec:
+        return "missing", ""
+    if mst.get("deleted"):
+        return "deleted", rec.get("DocNumber") or ""
+    if mst.get("voided"):
+        return "voided", rec.get("DocNumber") or ""
+    pushed = {("Bill", b["bill_id"]): _r2(b["amount"]) for b in json.loads(row["bills"] or "[]")}
+    pushed.update({("VendorCredit", c["id"]): _r2(c["amount"]) for c in json.loads(row["credits"] or "[]")})
+    if _links_of(rec) != pushed or abs(_r2(rec.get("TotalAmt")) - _r2(row["total"])) > EPS:
+        return "changed", rec.get("DocNumber") or ""
+    if (rec.get("CheckPayment") or {}).get("PrintStatus") == "NeedToPrint":
+        return "to_print", ""
+    return "matched", rec.get("DocNumber") or ""
+
+
+def watch(file_stubs: bool = True, only: str = "") -> dict:
+    """Judge every open pushed payment against the mirror; file the stub of a newly matched one."""
+    import bill_payment_stub as stubs               # noqa: PLC0415  (ledger-local module)
+    con, mcon = _pcon(), mirror.connect()
+    out = {"checked": 0, "matched": 0, "flagged": 0, "stubs": 0}
+    try:
+        rows = con.execute("SELECT * FROM pay_push WHERE owner_state != 'resolved'" + (" AND payment_id = ?" if only else ""),
+                           ((only,) if only else ())).fetchall()
+        for row in rows:
+            pid = row["payment_id"]
+            state, ref = _judge(row, mirror.get("BillPayment", pid, con=mcon), stubs.mirror_state(pid, con=mcon))
+            out["checked"] += 1
+            flagged_at = row["flagged_at"] if state in FLAGS else None
+            if state in FLAGS and not flagged_at:
+                flagged_at = _now()
+                out["flagged"] += 1
+            con.execute("UPDATE pay_push SET qbo_state=?, qbo_ref=?, checked_at=?, flagged_at=? WHERE payment_id=?",
+                        (state, ref, _now(), flagged_at, pid))
+            con.commit()                            # BEFORE the stub: print_stub records its print in this same DB
+            if state == "matched" and file_stubs and (not row["stub_at"] or (row["stub_ref"] or "") != ref):
+                st = _stub(pid)
+                con.execute("UPDATE pay_push SET stub_file=?, stub_ref=?, stub_at=?, stub_error=? WHERE payment_id=?",
+                            (st.get("file"), ref if st.get("filed") else row["stub_ref"], _now() if st.get("filed") else row["stub_at"],
+                             None if st.get("filed") else st.get("error"), pid))
+                out["stubs"] += bool(st.get("filed"))
+                out["matched"] += 1
+            con.commit()
+    finally:
+        con.close()
+        mcon.close()
     return out
 
 
+def _investigate(row, mcon) -> list:
+    """What happened to the bills a flagged payment paid: open again, paid by another payment, or deleted."""
+    bills = json.loads(row["bills"] or "[]")
+    ids = {b["bill_id"] for b in bills}
+    paid_by: dict = {}
+    since = (dt.date.fromisoformat(row["txn_date"]) - dt.timedelta(days=60)).isoformat() if row["txn_date"] else "2000-01-01"
+    for bp in mirror.load("BillPayment", "txn_date >= ?", (since,), con=mcon):
+        if str(bp["Id"]) == row["payment_id"]:
+            continue
+        for (t, i), a in _links_of(bp).items():
+            if t == "Bill" and i in ids:
+                paid_by.setdefault(i, []).append(f"{bp.get('DocNumber') or 'payment ' + str(bp['Id'])} ({bp.get('TxnDate')}, {a:,.2f})")
+    out = []
+    for b in bills:
+        r = mcon.execute("SELECT deleted, json FROM qbo_bill WHERE id=?", (b["bill_id"],)).fetchone()
+        rec = mirror._unpack(r[1]) if r else None
+        if not r:
+            what = "not in the mirror"
+        elif r[0]:
+            what = "bill deleted in QuickBooks"
+        elif paid_by.get(b["bill_id"]):
+            what = "paid by " + "; ".join(paid_by[b["bill_id"]])
+        elif _r2((rec or {}).get("Balance")) > EPS:
+            what = f"owes {_r2(rec.get('Balance')):,.2f} now"
+        else:
+            what = "shows paid, no other payment found"
+        out.append({"bill_id": b["bill_id"], "doc": b.get("doc") or b["bill_id"], "amount": b["amount"], "now": what})
+    return out
+
+
+def queue(show: str = "active") -> dict:
+    """The pushed payments. active = not matched-and-stubbed yet, or flagged, or kept; all = history too."""
+    watch()
+    con, mcon = _pcon(), mirror.connect()
+    try:
+        rows = con.execute("SELECT * FROM pay_push ORDER BY pushed_at DESC").fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["bills"] = json.loads(d["bills"] or "[]")
+            d["credits"] = json.loads(d["credits"] or "[]")
+            d["state_words"] = STATE_WORDS.get(d["qbo_state"] or "", d["qbo_state"] or "")
+            d["flagged"] = d["qbo_state"] in FLAGS
+            d["done"] = d["qbo_state"] == "matched" and bool(d["stub_at"]) and (d["stub_ref"] or "") == (d["qbo_ref"] or "")
+            if d["flagged"] and d["owner_state"] != "resolved":
+                d["investigation"] = _investigate(r, mcon)
+            active = d["owner_state"] != "resolved" and (not d["done"] or d["flagged"] or d["owner_state"] == "kept")
+            if show == "all" or active:
+                out.append(d)
+    finally:
+        con.close()
+        mcon.close()
+    return {"ok": True, "rows": out, "flagged": sum(1 for d in out if d["flagged"] and d["owner_state"] == "open")}
+
+
+def mark(payment_id: str, state: str, note: str = "") -> dict:
+    """The owner's ruling on a pushed payment: resolved (note optional) · kept (reason required) · open."""
+    note = str(note or "").strip()
+    if state not in ("resolved", "kept", "open"):
+        return {"ok": False, "error": "bad state"}
+    if state == "kept" and not note:
+        return {"ok": False, "error": "say why it stays in the queue"}
+    con = _pcon()
+    try:
+        n = con.execute("UPDATE pay_push SET owner_state=?, owner_note=?, noted_at=? WHERE payment_id=?",
+                        (state, note or None, _now(), str(payment_id))).rowcount
+        con.commit()
+    finally:
+        con.close()
+    return {"ok": bool(n), **({} if n else {"error": "not in the queue"})}
+
+
 def assign_number(payment_id: str, number: str) -> dict:
-    """A queued check was printed: give it its check # and mark it printed, then file its stub."""
+    """Fallback only: a check printed OUTSIDE QuickBooks gets its # typed here (QBO numbers the ones it prints
+    itself, and the watcher picks that up). Marks it printed, then the watcher files its stub."""
     pid, number = str(payment_id or "").strip(), str(number or "").strip()
     if not pid.isdigit():
         return {"ok": False, "error": "bad payment"}
@@ -379,8 +547,15 @@ def assign_number(payment_id: str, number: str) -> dict:
     try:
         _to_mirror("BillPayment", [done])
     except Exception as e:                         # noqa: BLE001
-        return {"ok": True, "payment_id": pid, "number": number, "mirror_error": str(e), "stub": {"filed": False}}
-    return {"ok": True, "payment_id": pid, "number": done.get("DocNumber"), "stub": _stub(pid)}
+        return {"ok": True, "payment_id": pid, "number": number, "mirror_error": str(e)}
+    watch(only=pid)
+    con = _pcon()
+    try:
+        r = con.execute("SELECT stub_ref, stub_error FROM pay_push WHERE payment_id=?", (pid,)).fetchone()
+    finally:
+        con.close()
+    return {"ok": True, "payment_id": pid, "number": done.get("DocNumber"),
+            "stub": {"filed": bool(r and r["stub_ref"] == number), "error": r and r["stub_error"]}}
 
 
 def _selftest() -> int:
@@ -403,14 +578,21 @@ def _selftest() -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--plan", action="store_true", help="dry run the saved pay run (live QBO read, no write)")
-    ap.add_argument("--queued", action="store_true", help="checks waiting to be printed")
+    ap.add_argument("--queue", action="store_true", help="the pushed payments still waiting to match, or flagged")
+    ap.add_argument("--watch", action="store_true", help="judge the pushed payments against the mirror, file matched stubs")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
     if a.selftest:
         return _selftest()
-    if a.queued:
-        for q in queued():
-            print(f"{q['payment_id']:>10}  {q['date']}  {q['vendor'][:40]:<40} {q['total']:>12,.2f}  {q['bills']} bills  {q['account']}")
+    if a.watch:
+        w = watch()
+        print(f"pay-bills watch: {w['checked']} pushed payments checked · {w['matched']} newly matched "
+              f"({w['stubs']} stubs filed) · {w['flagged']} newly flagged")
+        return 0
+    if a.queue:
+        for q in queue()["rows"]:
+            print(f"{q['payment_id']:>10}  {q['txn_date']}  {q['vendor'][:36]:<36} {q['total']:>12,.2f}  "
+                  f"{q['state_words']}{' #' + q['qbo_ref'] if q['qbo_ref'] else ''}  [{q['owner_state']}]")
         return 0
     if a.plan:
         p = plan()

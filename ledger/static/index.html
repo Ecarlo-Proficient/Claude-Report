@@ -701,9 +701,10 @@
       </section>
       <section class="widget" id="payQueuedWidget" hidden>
         <div class="widget-head">
-          <h2>Checks to print <span class="count" id="payQueuedNote"></span></h2>
+          <h2>Pushed payments <span class="count" id="payQueuedNote"></span></h2>
+          <span class="pq-head-btns" id="payQueuedTools"><select id="payQueuedShow"><option value="active">Waiting / to investigate</option><option value="all">All pushed</option></select></span>
         </div>
-        <p class="hint">Checks waiting in QuickBooks' print queue. Once one is printed, type its check # and press <b>Save #</b>: it is marked printed in QuickBooks and its stub is filed in the vendor's folder.</p>
+        <p class="hint">Every payment pushed from here waits here until it matches: QuickBooks shows its check # (print it in QuickBooks - the next refresh picks the number up) and its stub is filed under that number. A payment QuickBooks deletes, voids or changes is flagged with what happened to its bills: mark it <b>Resolved</b>, or <b>Keep</b> it here with the reason.</p>
         <div class="table-scroll">
           <table class="grid" id="payQueuedTable"><thead></thead><tbody></tbody></table>
         </div>
