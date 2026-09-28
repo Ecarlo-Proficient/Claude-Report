@@ -243,7 +243,7 @@ def analysis_dir(topic: str, when: "dt.date | None" = None) -> Path:
 # here; anything not listed is a session's one-off and goes to Analysis/.
 LAYOUT = {
     "Registers": ("job_rulings.json", "draw_moves.json", "bizdev_cut.json",
-                  "audit_exclusions.json", "concrete_suppliers.json",
+                  "audit_exclusions.json", "concrete_suppliers.json", "vendor_types.json",
                   "cost_code_history.json", "check_strip_case.json",
                   "customer_overrides.xlsx"),
     "Reports": ("Company Tracker.xlsx", "Company Dashboard.html",

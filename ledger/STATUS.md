@@ -4,6 +4,12 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-28 · **Vendor types: Sub: Labor / Sub: Pump + an owner override register** (owner: "RGM Removal is not a
+  concrete supplier, make it Sub: Pump ... for the subs who are labor sub: labor"). Labor subs read **Sub: Labor**; a
+  pumping outfit (name matches pump) is **Sub: Pump**, no longer Service; `Registers/vendor_types.json`
+  (`{"<vendor>": "<type>" | [types]}`, read fresh per request) overrides any vendor outright - first entry RGM Removal
+  (its bills are coded to SL1/SL51/FW1/FW51, so no rule can see it); the cost-code audit's
+  `Registers/concrete_suppliers.json` concrete / material / both lists are honoured too, so the two never disagree.
 - 2026-09-28 · **Vendors / Invoices / Company cleanup** (owner burst of 9): Vendors opens on **Vendor Center**; the
   vendor page's Bills open on **Unpaid, oldest to newest**; the column-menu **date sort uses the full day** (`_isoDay` -
   it sorted by the funnel's month value, so days inside a month kept the old order); Vendor Center drops **Total spend**

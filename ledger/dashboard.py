@@ -963,12 +963,45 @@ def _fetch_payments(con) -> dict:
 
 # Vendors whose SERVICE is in their name are a service, not a supplier (owner 2026-08-28:
 # "pump ... pier drilling ... saw cut ... it's a service"). Name-based, so it's obvious per row.
-def _vendor_types(vendor: str, sub_share: float, mix: dict) -> list:
-    """['Sub'] | ['Service'] | ['Concrete supplier'] | ['Material supplier'] | both suppliers (concrete first)."""
+def _vendor_type_overrides() -> tuple:
+    """The owner's per-vendor type calls, read fresh each time (both files are tiny, outside the repo):
+    Registers/vendor_types.json {"<vendor>": "Sub: Pump" | [types]} wins outright (owner 2026-09-28: RGM Removal is
+    a pump sub although its bills are coded to concrete items); Registers/concrete_suppliers.json (the cost-code
+    audit's register) lends its concrete / material / both lists so the two never disagree on a supplier."""
+    exact: dict = {}
+    sup: dict = {}
+    try:
+        raw = json.loads(paths.register_file("vendor_types.json").read_text(encoding="utf-8"))
+        for k, v in raw.items():
+            if not k.startswith("_"):
+                exact[k.strip().lower()] = [v] if isinstance(v, str) else list(v)
+    except (OSError, ValueError, AttributeError):
+        pass
+    try:
+        raw = json.loads(paths.register_file("concrete_suppliers.json").read_text(encoding="utf-8"))
+        for key, types in (("concrete", ["Concrete supplier"]), ("material", ["Material supplier"]),
+                           ("both", ["Concrete supplier", "Material supplier"])):
+            for name in raw.get(key) or []:
+                sup[str(name).strip().lower()] = types
+    except (OSError, ValueError, AttributeError):
+        pass
+    return exact, sup
+
+
+def _vendor_types(vendor: str, sub_share: float, mix: dict, overrides: tuple = ({}, {})) -> list:
+    """['Sub: Labor'] | ['Sub: Pump'] | ['Service'] | ['Concrete supplier'] | ['Material supplier'] | both (concrete first)."""
+    exact, sup = overrides
+    key = (vendor or "").strip().lower()
+    if key in exact:
+        return exact[key]
     if sub_share >= 0.5:
-        return ["Sub"]
+        return ["Sub: Labor"]
+    if _PUMP_RE.search(vendor or ""):            # a pumping outfit is a pump sub (owner 2026-09-28)
+        return ["Sub: Pump"]
     if _SERVICE_RE.search(vendor or ""):         # a service (in the name), not a supplier
         return ["Service"]
+    if key in sup:
+        return sup[key]
     tot = sum(a for a in mix.values() if a > 0)
     conc = sum(a for k, a in mix.items() if a > 0 and "concrete" in str(k).lower())
     share = conc / tot if tot else 0.0
@@ -977,7 +1010,8 @@ def _vendor_types(vendor: str, sub_share: float, mix: dict) -> list:
     return ["Material supplier"]
 
 
-_SERVICE_RE = re.compile(r"\b(pump\w*|pier|drill\w*|saw\w*|cutting|sealing|grind\w*)\b", re.I)
+_PUMP_RE = re.compile(r"\bpump\w*\b", re.I)
+_SERVICE_RE = re.compile(r"\b(pier|drill\w*|saw\w*|cutting|sealing|grind\w*)\b", re.I)
 
 
 def _fetch_costs(con) -> dict:
@@ -1058,6 +1092,7 @@ def _fetch_costs(con) -> dict:
             apo[r["vendor"]] = {"open": r["open_bal"] or 0.0, "open_bills": r["open_bills"] or 0}
     except sqlite3.OperationalError:
         pass
+    vt_over = _vendor_type_overrides()
     for v in vend:
         spend = v["spend"] or 0
         sub_share = (v["sub_spend"] or 0) / spend if spend else 0
@@ -1065,7 +1100,7 @@ def _fetch_costs(con) -> dict:
         # Two supplier types only (owner 2026-09-28): Concrete supplier (concrete is the majority of what we buy
         # from them) and Material supplier (everything else). A concrete supplier that also sells real material
         # (5%+ of spend - Preferred Materials, "they sell both") is BOTH. Sub and Service stay their own types.
-        v["vtypes"] = _vendor_types(v["vendor"], sub_share, vm)
+        v["vtypes"] = _vendor_types(v["vendor"], sub_share, vm, vt_over)
         v["vtype"] = " + ".join(v["vtypes"])
         a = apo.get(v["vendor"], {"open": 0.0, "open_bills": 0})
         v["open_bal"] = round(a["open"], 2)

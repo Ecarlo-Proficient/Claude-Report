@@ -1424,12 +1424,12 @@ function _vendorToggleAll() {
 }
 // Vendor TYPE filter (owner 2026-09-28: "give me filter to show what type of vendor i want to see") - the app's
 // multi-select; a vendor that is both a concrete and a material supplier matches either tick.
-const VC_TYPE_ORDER = ["Concrete supplier", "Material supplier", "Sub", "Service"];
+const VC_TYPE_ORDER = ["Concrete supplier", "Material supplier", "Sub: Labor", "Sub: Pump", "Service"];
 const vcMSel = {}; let _vcTypeSig = null;
 const VC_TYPE_CFG = { id: "vcType", all: "All types", get: t => t, lbl: t => t };
 const _vtypesOf = v => v.vtypes || (v.vtype ? [v.vtype] : []);
 function _vtypePill(t) {   // Concrete = the plain grey pill; Material = colour (owner 2026-09-28)
-  const p = document.createElement("span"); p.className = "vtype" + ({ "Sub": " sub", "Service": " service", "Material supplier": " material" }[t] || ""); p.textContent = t; return p;
+  const p = document.createElement("span"); p.className = "vtype" + (/^Sub\b/.test(t) ? " sub" : ({ "Service": " service", "Material supplier": " material" }[t] || "")); p.textContent = t; return p;
 }
 function renderVendors() {
   const q = ($("#vendorSearch") ? $("#vendorSearch").value : "").trim().toLowerCase();
