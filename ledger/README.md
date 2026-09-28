@@ -378,6 +378,35 @@ the queue with a reason (`POST /api/pay-bills/mark`, local only). `GET /api/pay-
 printed OUTSIDE QBO can still get its # typed ("printed outside QuickBooks?" -> `POST /api/pay-bills/number`, after
 "Are you sure?"). CLI: `ledger/pay_bills.py --plan | --queue | --watch | --selftest`.
 
+#### Guardrails on the QBO money writes (2026-09-28)
+
+The owner ruled: **only the owner, only this Mac, Touch ID on every write, no dollar cap.**
+- **Authority, fail closed.** `ledger/pay_bills.py --authorize-this-mac` (itself behind Touch ID) writes
+  `CompanyHealth/Registers/pay_authority.json` (chmod 600): a hash of this Mac's hardware id + the macOS account.
+  No file, or a different Mac / account -> every payment and check # write is refused; the review still works.
+  Running it on another Mac moves the authority there (one authorized Mac at a time). `--authority` shows the state.
+- **Presence.** Every write asks macOS' own dialog - Touch ID or the Mac password - titled "Presence Requested
+  Vendor Pay Approval", one pair of lines per vendor: vendor · amount · date, then account · check # / ACH ref /
+  to print. `ledger/presence.py` + `presence.swift` (compiled on first use into
+  `~/Library/Application Support/Proficient/bin/`, never committed). A web page cannot draw or click it.
+- **One review, one write.** The run token is issued by the review in the server process, lives 20 minutes, is
+  spent on use, and the write must be exactly what that review showed (bills, amounts, offered credits).
+- **One writer.** A process lock + a file lock around every QBO money write.
+- **The door.** Every request must name `127.0.0.1:<port>` / `localhost:<port>` as its Host (stops DNS
+  rebinding); every POST must carry `X-Ledger-Write: 1` (added by the page's fetch wrapper - another site cannot
+  add it without a CORS preflight this server never answers) and no foreign Origin. Blocked writes are logged.
+- **Data guards.** Not dated on or before QBO's books-closed date, nor more than 30 days ahead; only accounts that
+  paid bills in the last year are offered; a bill whose memo says NOT APPROVED is left out; a check # typed by hand
+  is refused if a bill payment OR a written check on that account already uses it; only payments pushed from
+  here can be numbered here.
+- **Nothing posted is ever lost.** If QBO never answers, the vendor's payment for that date with exactly those
+  lines is looked up (the requestid would return it too); anything after the post (pay-run clear, mirror, queue,
+  stub) is fenced so a posted payment is always reported as posted.
+- **Audit.** `~/Library/Logs/Proficient/pay-bills/audit.log`: one JSON line per attempt - written, failed,
+  refused (authority, token, Touch ID), blocked requests, marks, authorizations.
+- **What code cannot stop:** someone holding this code AND a QuickBooks connection of their own (another clone
+  with its own Intuit app). QuickBooks' user roles and who holds an Intuit connection are the real boundary.
+
 ### Bill payment stubs (2026-09-22)
 
 `ledger/bill_payment_stub.py` prints a check / bill-payment stub the way QuickBooks lays out its

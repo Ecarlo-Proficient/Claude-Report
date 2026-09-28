@@ -3330,6 +3330,35 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _request_ok(self, write: bool) -> bool:
+        """The door (owner 2026-09-28, the ledger can pay bills now). Every request must name THIS server as its
+        Host (a web page that points its own domain at 127.0.0.1 - DNS rebinding - is turned away). A write must
+        also carry the X-Ledger-Write header only this app's own page sends: a browser will not let another site
+        add a custom header without a CORS preflight, which this server never answers, so no web page the owner
+        visits can post here. A write from a foreign Origin is refused outright. Answers 403 and returns False."""
+        port = self.server.server_address[1]
+        allowed = {f"127.0.0.1:{port}", f"localhost:{port}"}
+        host = (self.headers.get("Host") or "").strip().lower()
+        why = ""
+        if host not in allowed:
+            why = "wrong host"
+        elif write:
+            origin = (self.headers.get("Origin") or "").strip().lower()
+            if origin and origin.split("://", 1)[-1] not in allowed:
+                why = "foreign origin"
+            elif self.headers.get("X-Ledger-Write") != "1":
+                why = "not from the ledger page"
+        if why:
+            if write:
+                try:
+                    pay_bills._audit("request", "blocked", {"path": self.path.split("?", 1)[0], "why": why,
+                                                            "host": host[:60], "origin": (self.headers.get("Origin") or "")[:80]})
+                except Exception:              # noqa: BLE001
+                    pass
+            self._send(403, json.dumps({"ok": False, "error": f"refused ({why})"}).encode(), "application/json; charset=utf-8")
+            return False
+        return True
+
     def _json(self, obj, code: int = 200):
         if isinstance(obj, dict) and isinstance(obj.get("error"), str):
             obj = {**obj, "error": _scrub(obj["error"])}
@@ -3489,7 +3518,7 @@ class Handler(BaseHTTPRequestHandler):
         self._json(res)
 
     def do_GET(self):
-        if self._blocked("GET"):
+        if self._blocked("GET") or not self._request_ok(write=False):   # the security gate, then the pay-bills door
             return
         path = self.path.split("?", 1)[0]
         if path == "/":
@@ -3635,7 +3664,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, b"not found", "text/plain; charset=utf-8")
 
     def do_POST(self):
-        if self._blocked("POST"):
+        if self._blocked("POST") or not self._request_ok(write=True):   # the security gate, then the pay-bills door
             return
         p = urlparse(self.path).path
         if p == "/api/waiver":            # a ledger write - the owner's waiver marks

@@ -41,9 +41,12 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import getpass
 import hashlib
 import json
+import subprocess
 import sys
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -61,6 +64,119 @@ TO_PRINT = "To print"             # what QBO itself writes on a queued check
 METHODS = ("print", "check", "ach", "card")
 APPROVAL_SINCE = "2026-09-16"     # bill approval moved into a QBO workflow the API cannot see
 LOG_DIR = Path.home() / "Library" / "Logs" / "Proficient" / "pay-bills"
+TOKEN_TTL = 20 * 60               # a review is good for 20 minutes, once
+FUTURE_DAYS = 30                  # a payment date may run this far ahead of today, no further
+ACCOUNT_DAYS = 365                # only accounts that paid bills in this window are offered
+
+
+# ───────────────────────── guardrails (owner 2026-09-28: "level 3 high access only") ─────────────────────────
+# Ruled: ONLY the owner, ONLY this Mac, Touch ID on EVERY write, no dollar cap.
+#  - authority: a register written once by `--authorize-this-mac` (itself behind Touch ID) holds a hash of this
+#    Mac's hardware id + the macOS account. Absent or different -> every write is refused (fails closed), so a
+#    clone on another machine can review but never pay.
+#  - presence: macOS' own Touch ID / password dialog, naming the vendor count, total and bank account.
+#  - one review, one write: the run_token is issued by plan() in THIS process, lives 20 minutes, is spent on use,
+#    and the write must be a subset of exactly what that review showed.
+#  - one writer at a time: a process lock + a file lock around every QBO write.
+#  - every attempt, refused or written, is a line in ~/Library/Logs/Proficient/pay-bills/audit.log.
+# What code cannot stop: someone with the code AND a QuickBooks connection of their own. QuickBooks' user roles
+# and who holds an Intuit connection are the real boundary around the books.
+_TOKENS: dict = {}
+_WRITE_LOCK = threading.Lock()
+
+
+def _machine_hash() -> str:
+    out = subprocess.run(["/usr/sbin/ioreg", "-rd1", "-c", "IOPlatformExpertDevice"], capture_output=True, text=True).stdout
+    uid = next((ln.split('"')[3] for ln in out.splitlines() if "IOPlatformUUID" in ln), "")
+    if not uid:
+        raise RuntimeError("could not read this Mac's hardware id")
+    return hashlib.sha256(f"acb-pay|{uid}".encode()).hexdigest()
+
+
+def _user_hash() -> str:
+    return hashlib.sha256(f"acb-pay|{getpass.getuser()}".encode()).hexdigest()
+
+
+def _auth_file() -> Path:
+    from shared import paths                        # noqa: PLC0415
+    return paths.register_file("pay_authority.json")
+
+
+def authorized() -> tuple:
+    """(True, "") when THIS Mac + macOS account is the one authorized to pay; (False, why) otherwise."""
+    try:
+        f = _auth_file()
+        if not f.exists():
+            return False, "payments from the ledger are locked on this Mac (not authorized)"
+        a = json.loads(f.read_text())
+        if a.get("machine") != _machine_hash() or a.get("user") != _user_hash():
+            return False, "payments from the ledger are authorized on a different Mac or account"
+        return True, ""
+    except Exception as e:                          # noqa: BLE001
+        return False, f"authority check failed: {e}"
+
+
+def authorize_this_mac() -> int:
+    import presence                                 # noqa: PLC0415  (ledger-local)
+    ok, why = presence.confirm("authorize THIS Mac to pay bills in QuickBooks from the Project Ledger")
+    if not ok:
+        _audit("authorize", "refused", why)
+        print(f"not authorized: {why}")
+        return 1
+    f = _auth_file()
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps({"machine": _machine_hash(), "user": _user_hash(), "authorized_at": _now_s()}, indent=1))
+    f.chmod(0o600)
+    _audit("authorize", "ok", "this Mac + account authorized (replaces any other)")
+    print("this Mac + macOS account can now pay bills from the ledger (any other is no longer authorized)")
+    return 0
+
+
+def _now_s() -> str:
+    return dt.datetime.now().isoformat(timespec="seconds")
+
+
+def _audit(action: str, result: str, detail="") -> None:
+    """One line per attempt - never raises."""
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        with open(LOG_DIR / "audit.log", "a") as fh:
+            fh.write(json.dumps({"at": _now_s(), "mac_user": getpass.getuser(), "action": action,
+                                 "result": result, "detail": detail}, default=str) + "\n")
+    except Exception:                               # noqa: BLE001
+        pass
+
+
+class _Locked:
+    """Process lock + file lock: one QBO money write at a time, across tabs and processes."""
+    def __enter__(self):
+        import fcntl                                # noqa: PLC0415
+        if not _WRITE_LOCK.acquire(blocking=False):
+            raise BlockingIOError
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        self.fh = open(LOG_DIR / ".write.lock", "w")
+        try:
+            fcntl.flock(self.fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            self.fh.close()
+            _WRITE_LOCK.release()
+            raise BlockingIOError from None
+        return self
+
+    def __exit__(self, *a):
+        import fcntl                                # noqa: PLC0415
+        fcntl.flock(self.fh, fcntl.LOCK_UN)
+        self.fh.close()
+        _WRITE_LOCK.release()
+
+
+def _close_date(access: str, cid: str) -> str:
+    """QBO's books-closed date ('' when none) - no payment is dated on or before it."""
+    try:
+        pref = qbo_api._api_get(f"/v3/company/{cid}/preferences", access).get("Preferences", {})
+        return str((pref.get("AccountingInfoPrefs") or {}).get("BookCloseDate") or "")[:10]
+    except Exception:                               # noqa: BLE001
+        return ""
 
 
 def _r2(x) -> float:
@@ -74,12 +190,13 @@ def _ref(v) -> str:
 # ───────────────────────── reads ─────────────────────────
 
 def accounts() -> list:
-    """Active bank + credit-card accounts to pay from, the most used (last 180 days) first."""
+    """Active bank + card accounts that paid bills in the last year (ACCOUNT_DAYS), the most used first.
+    An account never used to pay bills (money market, investments, clearing) is not offered."""
     con = mirror.connect()
     try:
         accts = [a for a in mirror.load("Account", con=con)
                  if a.get("AccountType") in ("Bank", "Credit Card") and a.get("Active", True)]
-        since = (dt.date.today() - dt.timedelta(days=180)).isoformat()
+        since = (dt.date.today() - dt.timedelta(days=ACCOUNT_DAYS)).isoformat()
         uses: dict = {}
         for b in mirror.load("BillPayment", "txn_date >= ?", (since,), con=con):
             aid = _ref((b.get("CheckPayment") or {}).get("BankAccountRef")) or \
@@ -90,7 +207,7 @@ def accounts() -> list:
         con.close()
     out = [{"id": str(a["Id"]), "name": a.get("FullyQualifiedName") or a.get("Name") or "",
             "type": "card" if a.get("AccountType") == "Credit Card" else "bank", "uses": uses.get(str(a["Id"]), 0)}
-           for a in accts]
+           for a in accts if uses.get(str(a["Id"]))]
     out.sort(key=lambda a: (-a["uses"], a["name"].lower()))
     return out
 
@@ -134,6 +251,9 @@ def _plan_live(access: str, cid: str) -> dict:
                "memo": (b.get("PrivateNote") or "").split("\n")[0][:80],
                "check_approval": str((b.get("MetaData") or {}).get("CreateTime") or "")[:10] >= APPROVAL_SINCE}
         vid, vname = _ref(b.get("VendorRef")), (b.get("VendorRef") or {}).get("name") or ""
+        if "NOT APPROVED" in (b.get("PrivateNote") or "").upper():
+            skipped.append({**row, "vendor": vname, "why": "its memo says NOT APPROVED - approve it in QuickBooks first"})
+            continue
         if bal <= EPS:
             skipped.append({**row, "vendor": vname, "why": "already paid in QuickBooks"})
             continue
@@ -158,8 +278,18 @@ def plan() -> dict:
     for v in p["vendors"].values():
         v["credits"] = _credits(access, cid, v["vendor_id"])
     vs = sorted(p["vendors"].values(), key=lambda v: v["vendor"].lower())
-    return {"ok": True, "run_token": uuid.uuid4().hex, "ref_max": REF_MAX, "accounts": accounts(),
-            "today": dt.date.today().isoformat(), "vendors": vs, "skipped": p["skipped"],
+    can, why = authorized()
+    token = uuid.uuid4().hex
+    now = time.time()
+    for t in [t for t, x in _TOKENS.items() if now - x["at"] > TOKEN_TTL]:
+        _TOKENS.pop(t, None)
+    _TOKENS[token] = {"at": now, "vendors": {v["vendor_id"]: {b["bill_id"]: b["amount"] for b in v["bills"]} for v in vs},
+                      "credits": {v["vendor_id"]: {c["id"]: c["balance"] for c in v["credits"]} for v in vs},
+                      "names": {v["vendor_id"]: v["vendor"] for v in vs}}
+    today = dt.date.today()
+    return {"ok": True, "run_token": token, "ref_max": REF_MAX, "accounts": accounts(), "can_pay": can, "why_not": why,
+            "today": today.isoformat(), "min_date": _close_date(access, cid),
+            "max_date": (today + dt.timedelta(days=FUTURE_DAYS)).isoformat(), "vendors": vs, "skipped": p["skipped"],
             "total": _r2(sum(v["total"] for v in vs)), "bills": sum(len(v["bills"]) for v in vs)}
 
 
@@ -233,7 +363,90 @@ def clean_ref(method: str, ref) -> str:
     return ref
 
 
+def _find_posted(access: str, cid: str, pay: dict) -> Optional[dict]:
+    """QBO never answered: did it create the payment anyway? The vendor's payment on that date that links
+    exactly these bills and amounts - then it is ours (a resend with the same requestid would return it too)."""
+    want = {(lt["TxnType"], str(lt["TxnId"])): _r2(ln["Amount"]) for ln in pay["Line"] for lt in ln["LinkedTxn"][:1]}
+    try:
+        rows = _live(access, cid, "BillPayment", f"VendorRef = '{pay['VendorRef']['value']}' AND TxnDate = '{pay['TxnDate']}'")
+    except Exception:                               # noqa: BLE001
+        return None
+    hits = [r for r in rows if _links_of(r) == want and abs(_r2(r.get("TotalAmt")) - _r2(pay["TotalAmt"])) < EPS]
+    return hits[0] if len(hits) == 1 else None
+
+
+def _after_post(res: dict, done: dict, want: dict, lv: dict, credits: list, method: str, acct: dict, date: str,
+                access: str, cid: str) -> None:
+    """Everything after QBO accepted a payment: off the pay run, into the mirror + the queue, the stub."""
+    pid = str(done["Id"])
+    bill_marks.set_pay_marks([{"bill_id": b, "selected": False} for b in want], _now_s())
+    try:
+        _to_mirror("BillPayment", [done])
+        _to_mirror("Bill", list(_live_ids(access, cid, "Bill", want).values()))
+        if credits:
+            _to_mirror("VendorCredit", list(_live_ids(access, cid, "VendorCredit", [c["id"] for c in credits]).values()))
+    except Exception as e:                          # noqa: BLE001  (the next refresh catches up)
+        res["mirror_error"] = str(e)
+    _record_push(res, want, lv, credits, method, acct, date)
+    if method == "print":
+        res["stub"] = {"filed": False, "waiting": "files itself once QuickBooks shows the printed check #"}
+        return
+    watch(only=pid)
+    con = _pcon()
+    try:
+        r = con.execute("SELECT stub_file, stub_error FROM pay_push WHERE payment_id=?", (pid,)).fetchone()
+    finally:
+        con.close()
+    res["stub"] = {"filed": bool(r and r["stub_file"] and not r["stub_error"]), "file": r and r["stub_file"],
+                   "error": r and r["stub_error"]}
+
+
 def commit(body: dict) -> dict:
+    """The guarded write: authority -> the review's own token (single use) -> one writer -> _commit()."""
+    ok, why = authorized()
+    if not ok:
+        _audit("pay", "refused", why)
+        return {"ok": False, "error": why}
+    t = _TOKENS.pop(str(body.get("run_token") or ""), None)      # spent now, whatever happens next
+    if not t or time.time() - t["at"] > TOKEN_TTL:
+        _audit("pay", "refused", "no live review token")
+        return {"ok": False, "error": "this review has expired or was already used - run Pay in QuickBooks again"}
+    for v in body.get("vendors") or []:
+        vid = str(v.get("vendor_id") or "")
+        shown = t["vendors"].get(vid)
+        want = {str(b.get("bill_id")): _r2(b.get("amount")) for b in v.get("bills") or []}
+        if shown is None or want != shown or not {str(c) for c in v.get("credits") or []} <= set(t["credits"].get(vid, {})):
+            _audit("pay", "refused", f"vendor {vid} is not what the review showed")
+            return {"ok": False, "error": "the payment asked for is not what the review showed - run Pay in QuickBooks again"}
+    try:
+        with _Locked():
+            return _commit(body, t)
+    except BlockingIOError:
+        return {"ok": False, "error": "another payment write is running - wait for it to finish"}
+
+
+def _mdy(iso: str) -> str:
+    try:
+        return dt.date.fromisoformat(str(iso)[:10]).strftime("%m/%d/%Y")
+    except ValueError:
+        return str(iso)
+
+
+def approval_text(lines: list, acct: str, how: str) -> str:
+    """What the macOS dialog says (owner 2026-09-28 layout): the title, then per vendor
+    "vendor · amount · date" over "account · ref # / print status"."""
+    out = ["approve these vendor payments:"]
+    for vendor, amount, date, ref in lines[:6]:
+        out.append(f"{vendor} · ${amount:,.2f} · {_mdy(date)}")
+        out.append(f"{acct} · {ref or how}")
+    if len(lines) > 6:
+        out.append(f"… and {len(lines) - 6} more (${sum(x[1] for x in lines[6:]):,.2f})")
+    if len(lines) > 1:
+        out.append(f"Total ${sum(x[1] for x in lines):,.2f}")
+    return "\n".join(out)
+
+
+def _commit(body: dict, t: Optional[dict] = None) -> dict:
     """body = {run_token, account_id, date, method, vendors: [{vendor_id, ref, bills: [{bill_id, amount}],
     credits: [credit ids ticked]}]}. Each vendor's payment is re-checked live against QBO and written
     only if it still matches the saved pay run exactly; one vendor failing never blocks the others."""
@@ -257,8 +470,29 @@ def commit(body: dict) -> dict:
     except (ValueError, KeyError) as e:
         return {"ok": False, "error": str(e)}
 
+    today = dt.date.today()
+    if date > (today + dt.timedelta(days=FUTURE_DAYS)).isoformat():
+        return {"ok": False, "error": f"the payment date is more than {FUTURE_DAYS} days ahead"}
     access, cid = qbo_api.load_credentials()
+    closed = _close_date(access, cid)
+    if closed and date <= closed:
+        return {"ok": False, "error": f"the books are closed through {closed} - pick a later payment date"}
     live = _plan_live(access, cid)["vendors"]
+
+    # Touch ID, naming exactly what leaves: macOS' own dialog, which a web page cannot draw or click
+    import presence                                 # noqa: PLC0415  (ledger-local)
+    how = {"print": "to print", "check": "check", "ach": "ACH", "card": "card"}[method]
+    plines = []
+    for v in asked:
+        vid = str(v.get("vendor_id") or "")
+        net = _r2(sum(_r2(b["amount"]) for b in v.get("bills") or [])
+                  - sum((t or {}).get("credits", {}).get(vid, {}).get(str(c), 0) for c in v.get("credits") or []))
+        ref = "to print" if method == "print" else (("check #" if method == "check" else f"{how} ") + refs[vid]).strip()
+        plines.append(((live.get(vid) or {}).get("vendor") or (t or {}).get("names", {}).get(vid) or vid, net, date, ref))
+    ok, why = presence.confirm(approval_text(plines, acct["name"], how))
+    if not ok:
+        _audit("pay", "refused", f"Touch ID: {why}")
+        return {"ok": False, "error": f"not confirmed on this Mac ({why}) - nothing was written"}
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     results = []
     for v in asked:
@@ -305,30 +539,21 @@ def commit(body: dict) -> dict:
         try:
             done = _post(cid, pay, rid)
         except RuntimeError as e:
-            res["error"] = str(e)
-            continue
+            done = _find_posted(access, cid, pay) if "did not answer" in str(e) else None
+            if not done:
+                res["error"] = str(e)
+                _audit("pay", "failed", {"vendor": vid, "error": str(e), "request_id": rid})
+                continue
         pid = str(done["Id"])
+        _audit("pay", "written", {"vendor": vid, "payment_id": pid, "total": _r2(done.get("TotalAmt")),
+                                  "ref": done.get("DocNumber"), "bills": list(want), "credits": [c["id"] for c in credits]})
         res.update({"ok": True, "payment_id": pid, "ref": done.get("DocNumber") or "", "total": _r2(done.get("TotalAmt")),
                     "bills": len(want), "credits": len(credits), "to_print": method == "print"})
-        bill_marks.set_pay_marks([{"bill_id": b, "selected": False} for b in want], dt.datetime.now().isoformat(timespec="seconds"))
-        try:
-            _to_mirror("BillPayment", [done])
-            _to_mirror("Bill", list(_live_ids(access, cid, "Bill", want).values()))
-            if credits:
-                _to_mirror("VendorCredit", list(_live_ids(access, cid, "VendorCredit", [c["id"] for c in credits]).values()))
-        except Exception as e:                     # noqa: BLE001  (the payment is in QBO; the next refresh catches up)
-            res["mirror_error"] = str(e)
-        _record_push(res, want, lv, credits, method, acct, date)
-        if method == "print":
-            res["stub"] = {"filed": False, "waiting": "files itself once QuickBooks shows the printed check #"}
-        else:
-            watch(only=pid)
-            con = _pcon()
-            try:
-                r = con.execute("SELECT stub_file, stub_ref, stub_error FROM pay_push WHERE payment_id=?", (pid,)).fetchone()
-            finally:
-                con.close()
-            res["stub"] = {"filed": bool(r and r["stub_file"] and not r["stub_error"]), "file": r and r["stub_file"], "error": r and r["stub_error"]}
+        try:                                            # the payment IS in QBO from here: nothing below may lose it
+            _after_post(res, done, want, lv, credits, method, acct, date, access, cid)
+        except Exception as e:                          # noqa: BLE001
+            res["after_error"] = f"written to QuickBooks, but the ledger's follow-up failed: {e}"
+            _audit("pay", "after_error", {"payment_id": pid, "error": str(e)})
     posted = [r for r in results if r.get("ok")]
     return {"ok": bool(posted), "posted": len(posted), "failed": len(results) - len(posted),
             "total": _r2(sum(r["total"] for r in posted)), "results": results,
@@ -504,10 +729,31 @@ def mark(payment_id: str, state: str, note: str = "") -> dict:
         con.commit()
     finally:
         con.close()
+    _audit("mark", state if n else "not found", {"payment_id": str(payment_id), "note": note})
     return {"ok": bool(n), **({} if n else {"error": "not in the queue"})}
 
 
 def assign_number(payment_id: str, number: str) -> dict:
+    """The guarded fallback write: authority -> one writer -> Touch ID (inside) -> _assign_number()."""
+    ok, why = authorized()
+    if not ok:
+        _audit("number", "refused", why)
+        return {"ok": False, "error": why}
+    con = _pcon()
+    try:
+        row = con.execute("SELECT vendor, total FROM pay_push WHERE payment_id=?", (str(payment_id),)).fetchone()
+    finally:
+        con.close()
+    if not row:                                     # only payments pushed from here are numbered here
+        return {"ok": False, "error": "that payment was not pushed from the ledger"}
+    try:
+        with _Locked():
+            return _assign_number(payment_id, number, row)
+    except BlockingIOError:
+        return {"ok": False, "error": "another payment write is running - wait for it to finish"}
+
+
+def _assign_number(payment_id: str, number: str, row) -> dict:
     """Fallback only: a check printed OUTSIDE QuickBooks gets its # typed here (QBO numbers the ones it prints
     itself, and the watcher picks that up). Marks it printed, then the watcher files its stub."""
     pid, number = str(payment_id or "").strip(), str(number or "").strip()
@@ -527,12 +773,20 @@ def assign_number(payment_id: str, number: str) -> dict:
     try:
         dup = [b for b in mirror.load("BillPayment", "doc_number = ?", (number,), con=con)
                if str(b["Id"]) != pid and _ref((b.get("CheckPayment") or {}).get("BankAccountRef")) == acct]
+        dup += [x for x in mirror.load("Purchase", "doc_number = ?", (number,), con=con)   # a written check (Expense) too
+                if _ref(x.get("AccountRef")) == acct]
     finally:
         con.close()
     if dup:
         d = dup[0]
-        return {"ok": False, "error": f"check #{number} is already used on this account "
-                                      f"({(d.get('VendorRef') or {}).get('name')}, {d.get('TxnDate')})"}
+        who = (d.get("VendorRef") or d.get("EntityRef") or {}).get("name")
+        return {"ok": False, "error": f"check #{number} is already used on this account ({who}, {d.get('TxnDate')})"}
+    import presence                                 # noqa: PLC0415  (ledger-local)
+    ok, why = presence.confirm(approval_text([(row["vendor"], _r2(row["total"]), live.get("TxnDate"), f"printed as check #{number}")],
+                                             (cp.get("BankAccountRef") or {}).get("name") or "", "check"))
+    if not ok:
+        _audit("number", "refused", f"Touch ID: {why}")
+        return {"ok": False, "error": f"not confirmed on this Mac ({why}) - nothing was written"}
     body = {k: val for k, val in live.items() if k not in ("MetaData", "domain", "sparse")}
     body["DocNumber"] = number
     body["CheckPayment"] = {**cp, "PrintStatus": "PrintComplete"}
@@ -543,7 +797,9 @@ def assign_number(payment_id: str, number: str) -> dict:
     try:
         done = _post(cid, body, rid)
     except RuntimeError as e:
+        _audit("number", "failed", {"payment_id": pid, "number": number, "error": str(e)})
         return {"ok": False, "error": str(e)}
+    _audit("number", "written", {"payment_id": pid, "number": number})
     try:
         _to_mirror("BillPayment", [done])
     except Exception as e:                         # noqa: BLE001
@@ -581,9 +837,18 @@ def main() -> int:
     ap.add_argument("--queue", action="store_true", help="the pushed payments still waiting to match, or flagged")
     ap.add_argument("--watch", action="store_true", help="judge the pushed payments against the mirror, file matched stubs")
     ap.add_argument("--selftest", action="store_true")
+    ap.add_argument("--authorize-this-mac", action="store_true",
+                    help="make THIS Mac + macOS account the one that can pay from the ledger (Touch ID; replaces any other)")
+    ap.add_argument("--authority", action="store_true", help="is this Mac authorized to pay?")
     a = ap.parse_args()
     if a.selftest:
         return _selftest()
+    if a.authorize_this_mac:
+        return authorize_this_mac()
+    if a.authority:
+        ok, why = authorized()
+        print("authorized: this Mac + account can pay from the ledger" if ok else f"NOT authorized: {why}")
+        return 0 if ok else 1
     if a.watch:
         w = watch()
         print(f"pay-bills watch: {w['checked']} pushed payments checked · {w['matched']} newly matched "

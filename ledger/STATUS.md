@@ -46,6 +46,14 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   printed number, files the stub, flags deleted / voided / changed with what the bills show now; Resolved / Keep
   (reason required). Typing a # stays only for a check printed outside QBO. Fixed in testing: the watcher held a
   write on the ledger DB while the stub printer recorded its print (database locked) - it commits first now.
+  Round 3, guardrails (owner: "level 3 high access only ... guardrails and security"; ruled only the owner, only
+  this Mac, Touch ID every write, no cap): authority register (fail closed, `--authorize-this-mac`), macOS
+  Touch ID / password dialog in the owner's layout ("Presence Requested Vendor Pay Approval", vendor · amount ·
+  date / account · ref), single-use 20-minute review tokens, one-writer lock, Host + Origin + X-Ledger-Write door
+  on every request, books-closed + 30-day date guard, accounts limited to ones that paid bills in a year, NOT
+  APPROVED memos left out, lost-response lookup, posted payments fenced from follow-up errors, check-# collision
+  also against written checks, audit.log. Every refusal tested with the QBO post stubbed; the door probed with
+  curl (no header / text-plain / foreign Origin / rebinding Host all 403, the page 200).
 - 2026-09-28 · **Vendor types: Sub: Labor / Sub: Pump + an owner override register** (owner: "RGM Removal is not a
   concrete supplier, make it Sub: Pump ... for the subs who are labor sub: labor"). Labor subs read **Sub: Labor**; a
   pumping outfit (name matches pump) is **Sub: Pump**, no longer Service; `Registers/vendor_types.json`

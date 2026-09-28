@@ -5,6 +5,14 @@
    in localStorage.
 --------------------------------------------------------------------------- */
 "use strict";
+// Every write this page sends carries X-Ledger-Write: the server refuses a write without it, and no other web page
+// can add it (a custom header needs a CORS preflight the server never answers) - the door, owner 2026-09-28.
+(() => { const f = window.fetch.bind(window);
+  window.fetch = (url, opts = {}) => {
+    const m = String((opts && opts.method) || "GET").toUpperCase();
+    if (m !== "GET" && m !== "HEAD") { const h = new Headers(opts.headers || {}); h.set("X-Ledger-Write", "1"); opts = { ...opts, headers: h }; }
+    return f(url, opts);
+  }; })();
 
 const $  = (sel, el = document) => el.querySelector(sel);
 const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
@@ -3053,15 +3061,19 @@ function _pqProblems() {
     if (ref.length > PQ.d.ref_max) out.push(`${v.vendor}: reference is ${ref.length} characters (${PQ.d.ref_max} max)`);
     if (_pqNet(v) <= 0.005) out.push(`${v.vendor}: the ticked credits cover the whole payment - apply those in QuickBooks`);
   }
+  if (!PQ.d.can_pay) out.push(PQ.d.why_not || "payments are locked on this Mac");
   if (!PQ.acct) out.push("Pick the account to pay from");
   if (!PQ.date) out.push("Pick the payment date");
+  else if (PQ.d.min_date && PQ.date <= PQ.d.min_date) out.push(`The books are closed through ${fmtDate(PQ.d.min_date)} - pick a later date`);
+  else if (PQ.d.max_date && PQ.date > PQ.d.max_date) out.push(`The date is more than 30 days ahead`);
   return out;
 }
 function renderPayQbo() {
   const body = $("#payQboBody"); body.innerHTML = ""; const d = PQ.d;
   const note = $("#payQboNote"); if (note) note.textContent = `(${d.vendors.length} vendor${d.vendors.length !== 1 ? "s" : ""} · ${d.bills} bill${d.bills !== 1 ? "s" : ""})`;
   const line = (text, cls) => { const x = document.createElement("div"); x.className = "cd-ra-line" + (cls ? " " + cls : ""); x.textContent = text; body.appendChild(x); return x; };
-  line("Review, live from QuickBooks - nothing is written until you confirm. One bill payment per vendor, like QuickBooks' Pay Bills.");
+  line("Review, live from QuickBooks - nothing is written until you confirm here AND with Touch ID on this Mac. One bill payment per vendor, like QuickBooks' Pay Bills.");
+  if (!d.can_pay) line(`Payments are locked: ${d.why_not}. The review still works; paying needs the authorized Mac.`, "neg");
   // the controls: account · date · how
   const ctl = document.createElement("div"); ctl.className = "bill-filters pq-ctl";
   const fld = (label, el) => { const f = document.createElement("label"); f.className = "fld"; const s = document.createElement("span"); s.textContent = label; f.appendChild(s); f.appendChild(el); ctl.appendChild(f); };
@@ -3070,7 +3082,9 @@ function renderPayQbo() {
   sa.value = PQ.acct; sa.onchange = () => { PQ.acct = sa.value; const card = (_pqAcct() || {}).type === "card";
     if (card) PQ.method = "card"; else if (PQ.method === "card") PQ.method = "print"; renderPayQbo(); };
   fld("Pay from", sa);
-  const di = document.createElement("input"); di.type = "date"; di.value = PQ.date; di.onchange = () => { PQ.date = di.value; renderPayQbo(); }; fld("Payment date", di);
+  const di = document.createElement("input"); di.type = "date"; di.value = PQ.date;
+  if (d.max_date) di.max = d.max_date;
+  if (d.min_date) { const m = new Date(d.min_date + "T12:00:00"); m.setDate(m.getDate() + 1); di.min = m.toISOString().slice(0, 10); } di.onchange = () => { PQ.date = di.value; renderPayQbo(); }; fld("Payment date", di);
   const sm = document.createElement("select");
   const card = (_pqAcct() || {}).type === "card";
   for (const [k, l] of card ? [["card", "Credit card"]] : PQ_METHODS) { const o = document.createElement("option"); o.value = k; o.textContent = l; sm.appendChild(o); }
@@ -3149,7 +3163,7 @@ async function payQboWrite(btn) {
   const total = d.vendors.reduce((t, v) => t + _pqNet(v), 0);
   if (!confirm(`Are you sure?\n\nThis writes ${d.vendors.length} bill payment${d.vendors.length !== 1 ? "s" : ""} to QuickBooks, ${qaCents(total)}:\n`
     + `${lines.slice(0, 25).join("\n")}${lines.length > 25 ? `\n  … and ${lines.length - 25} more` : ""}\n\nFrom ${a.name} · ${fmtDate(PQ.date)} · ${how}`)) return;
-  btn.disabled = true; btn.textContent = "Writing to QuickBooks…";
+  btn.disabled = true; btn.textContent = "Confirm with Touch ID on this Mac…";
   const payload = { confirm: true, run_token: d.run_token, account_id: PQ.acct, date: PQ.date, method: PQ.method,
     vendors: d.vendors.map(v => ({ vendor_id: v.vendor_id, ref: (PQ.refs.get(v.vendor_id) || "").trim(),
       bills: v.bills.map(b => ({ bill_id: b.bill_id, amount: b.amount })), credits: [...(PQ.credits.get(v.vendor_id) || [])] })) };
@@ -3162,6 +3176,7 @@ async function payQboWrite(btn) {
   for (const r of res.results) {
     if (!r.ok) { say(`${r.vendor}: not written - ${r.error}`, "neg"); continue; }
     const st = r.stub || {};
+    if (r.after_error) say(`${r.vendor}: ${r.after_error} - it is in QuickBooks; refresh before paying again`, "warn");
     say(`${r.vendor}: ${r.to_print ? "check queued to print" : "payment " + (r.ref || r.payment_id)} · ${r.bills} bill${r.bills !== 1 ? "s" : ""}${r.credits ? ` + ${r.credits} credit${r.credits !== 1 ? "s" : ""}` : ""} · ${qaCents(r.total)} · `
       + (r.to_print ? "waits in Pushed payments until printed in QuickBooks" : st.filed ? "stub filed" : `stub NOT filed (${st.error || "?"}) - print it from the vendor's Payments`), st.filed || r.to_print ? "ok" : "warn");
   }
