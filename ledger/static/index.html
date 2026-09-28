@@ -174,7 +174,6 @@
           </label>
           <button class="btn small" id="ifSaveView" title="Save the current filters, sort, scope and quick find as a named view">Save view</button>
           <button class="btn small" id="ifDelView" title="Delete the selected saved view" hidden>Delete view</button>
-          <button class="btn small" id="ifSubGroup" title="Group each client's invoices by project, or flatten to one list">Flatten</button>
           <button class="btn small" id="ifCollapse">Collapse all</button>
           <button class="btn small" id="ifStatement" title="Open a clean statement of the filtered open invoices to copy/paste to the client">Copy for client ↗</button>
           <button class="btn small primary" id="ifCollect" title="The status of the picked invoices (or everything shown), one line each, to copy - or as Excel for the cash-flow forecast">Collections report</button>
@@ -245,11 +244,11 @@
       <section class="widget">
         <div class="widget-head"><h2>Vendor Center <span class="count" id="vendorsNote"></span></h2></div>
         <div class="filters"><input type="search" id="vendorSearch" placeholder="Search vendor…" autocomplete="off">
+          <div class="fld"><span>Type</span><div class="msel" id="vcTypeMsel"><button type="button" class="msel-btn" id="vcTypeBtn" title="Show only these vendor types">All types</button><div class="msel-menu" id="vcTypeMenu" hidden></div></div></div>
           <label class="chk"><input type="checkbox" id="vendorGroupType"> Group by type</label>
           <label class="fld"><span>Sort</span><select id="vendorSort" title="Order the vendors">
             <option value="open">Open $ (most owed first)</option>
             <option value="name">Name A to Z</option>
-            <option value="spend">Total spend</option>
           </select></label>
           <button class="btn small" id="vendorExpandAll" style="display:none">Expand all</button></div>
         <div class="table-scroll">

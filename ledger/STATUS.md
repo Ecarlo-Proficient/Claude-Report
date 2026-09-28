@@ -4,6 +4,15 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-28 · **Vendors / Invoices / Company cleanup** (owner burst of 9): Vendors opens on **Vendor Center**; the
+  vendor page's Bills open on **Unpaid, oldest to newest**; the column-menu **date sort uses the full day** (`_isoDay` -
+  it sorted by the funnel's month value, so days inside a month kept the old order); Vendor Center drops **Total spend**
+  (column + sort) and gets a **Type** multi-select (`vcType`, the app's `buildMSel`); vendor types are now **Concrete
+  supplier** (grey) / **Material supplier** (blue) / Sub / Service (`_vendor_types` in dashboard.py: concrete >= 50% of
+  spend = concrete; a concrete supplier with 5%+ other material is BOTH - Preferred Materials, BURNCO, TITAN), replacing
+  ~30 "Supplier: <account>" labels; Open invoices lose the **project sub-boxes** (Flatten button gone) and the **boxed
+  amounts**; the Open AR / liens / draws **stats strip shows on Money only**, not the audit pages; the Money **bars** are
+  8px and inset to the panel padding.
 - 2026-09-28 · **CompanyHealth is organized, not a dump** (owner: "a more organized automated folder system rather than a dump"). Every read/write there goes through a named folder in `shared/paths.py`: `register_file()` -> `Registers/` (the JSON rules), `reports_dir()` -> `Reports/` (every generated report), `analysis_dir(topic)` -> `Analysis/<topic> (mm-dd-yyyy)/` (session one-offs). `tests/test_companyhealth_layout.py` fails any module that joins a file onto `companyhealth_dir()`; `python3 shared/paths.py --organize [--apply]` sorts a root that filled up anyway. This tool: job rulings / audit exclusions / check-strip case from `Registers/`, the concrete-waste workbooks and the QBO support PDF from `Reports/`.
 - 2026-09-25 · **Re-apply: a ledger copy only counts as evidence if it was saved BEFORE QBO last changed the check** (a later
   copy, e.g. the live ledger loaded today, holds the stripped state and "confirmed" it). Found while sorting the To fix list.

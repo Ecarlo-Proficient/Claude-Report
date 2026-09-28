@@ -245,7 +245,7 @@ const WAIVERS_ENABLED = false;
 // deep link in the app still works.
 const NAV_GROUPS = [
   { id: "projects",  label: "Projects",  tabs: ["projects"] },
-  { id: "vendors",   label: "Vendors",   tabs: ["bills", "vendorcenter"] },
+  { id: "vendors",   label: "Vendors",   tabs: ["vendorcenter", "bills"] },   // Vendor Center first (owner 2026-09-28)
   { id: "customers", label: "Customers", tabs: ["invoices", "customercenter", "payments", "sales"] },
   { id: "company",   label: "Company",   tabs: ["money", "billaudit", "qboaudit", "checkdrift", "uncleared"] },   // each audit is its own page (owner 2026-09-23 / 09-24)
   { id: "tools",     label: "Tools",     tabs: ["wipreview", "review", "console", "systems"], hidden: true },   // from the gear, not the bar
@@ -295,7 +295,7 @@ function setTab(t) {
   const g = groupOf(t);
   $$("#groupbar .tab").forEach(b => b.classList.toggle("active", b.dataset.group === g.id));
   buildSubTabs(g, t);
-  { const ch = $("#companyHead"); if (ch) ch.hidden = g.id !== "company"; }
+  { const ch = $("#companyHead"); if (ch) ch.hidden = t !== "money"; }   // Money only - the audit pages just show their list (owner 2026-09-28)
   if (t === "projects") renderPnl();          // the P&L by job fold (server-computed, cached until the next load)
   if (t === "customercenter") renderCustomers();
   if (t === "payments") renderPayments();
@@ -1422,25 +1422,40 @@ function _vendorToggleAll() {
   if (allExp) vendorTypeExpanded.clear(); else _vendorGroupKeys.forEach(k => vendorTypeExpanded.add(k));
   renderVendors();
 }
+// Vendor TYPE filter (owner 2026-09-28: "give me filter to show what type of vendor i want to see") - the app's
+// multi-select; a vendor that is both a concrete and a material supplier matches either tick.
+const VC_TYPE_ORDER = ["Concrete supplier", "Material supplier", "Sub", "Service"];
+const vcMSel = {}; let _vcTypeSig = null;
+const VC_TYPE_CFG = { id: "vcType", all: "All types", get: t => t, lbl: t => t };
+const _vtypesOf = v => v.vtypes || (v.vtype ? [v.vtype] : []);
+function _vtypePill(t) {   // Concrete = the plain grey pill; Material = colour (owner 2026-09-28)
+  const p = document.createElement("span"); p.className = "vtype" + ({ "Sub": " sub", "Service": " service", "Material supplier": " material" }[t] || ""); p.textContent = t; return p;
+}
 function renderVendors() {
   const q = ($("#vendorSearch") ? $("#vendorSearch").value : "").trim().toLowerCase();
   let vends = COST.by_vendor || [];
+  { const types = [...new Set((COST.by_vendor || []).flatMap(_vtypesOf))].sort((a, b) => (VC_TYPE_ORDER.indexOf(a) + 99 * (VC_TYPE_ORDER.indexOf(a) < 0)) - (VC_TYPE_ORDER.indexOf(b) + 99 * (VC_TYPE_ORDER.indexOf(b) < 0)));
+    const sig = types.join("|");
+    if (sig !== _vcTypeSig || !($("#vcTypeMenu") && $("#vcTypeMenu").querySelector(".msel-opt"))) {
+      _vcTypeSig = sig; buildMSel(VC_TYPE_CFG, types, vcMSel, renderVendors);
+      const m = $("#vcTypeMenu"); if (m) for (const t of VC_TYPE_ORDER.slice().reverse()) { const lab = m.querySelector(`.msel-opt[data-val="${t}"]`); if (lab) m.insertBefore(lab, m.querySelector(".msel-opt")); }   // fixed order, not A to Z
+    } }
+  { const sel = vcMSel.vcType; if (sel && sel.size) vends = vends.filter(v => _vtypesOf(v).some(t => sel.has(t))); }
   if (q) vends = vends.filter(v => (v.vendor || "").toLowerCase().includes(q));
   const grouped = $("#vendorGroupType") && $("#vendorGroupType").checked;
   const totalOpen = vends.reduce((t, v) => t + (v.open_bal || 0), 0);
   $("#vendorsNote").textContent = (COST.by_vendor || []).length
     ? `(${vends.length} vendors · ${money(totalOpen)} open)`
     : "(no cost data - run load_costs.py)";
-  const cols = [["Vendor", "left"], ["Type", "left"], ["Jobs", "right"], ["Total spend (QBO)", "right"], ["Open bills (QBO)", "right"], ["Open $ (QBO)", "right"]];   // labelled: QuickBooks open AP, subs included
+  const cols = [["Vendor", "left"], ["Type", "left"], ["Jobs", "right"], ["Open bills (QBO)", "right"], ["Open $ (QBO)", "right"]];   // no Total spend (owner 2026-09-28)   // labelled: QuickBooks open AP, subs included
   const thead = $("#vendorTable thead"), tbody = $("#vendorTable tbody");
   thead.innerHTML = ""; tbody.innerHTML = "";
   const htr = document.createElement("tr");
   for (const [c, al] of cols) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
   thead.appendChild(htr);
-  const gType = v => (v.vtype || "-").split(":")[0].trim();   // Sub | Service | Supplier
-  const vs = ($("#vendorSort") && $("#vendorSort").value) || "open";   // open $ (default) | name A-Z | total spend
+  const gType = v => _vtypesOf(v).join(" + ") || "-";   // Concrete supplier | Material supplier | both | Sub | Service
+  const vs = ($("#vendorSort") && $("#vendorSort").value) || "open";   // open $ (default) | name A-Z
   const cmp = vs === "name" ? ((a, b) => (a.vendor || "").localeCompare(b.vendor || ""))
-    : vs === "spend" ? ((a, b) => (b.spend || 0) - (a.spend || 0) || (a.vendor || "").localeCompare(b.vendor || ""))
     : ((a, b) => (b.open_bal || 0) - (a.open_bal || 0) || (a.vendor || "").localeCompare(b.vendor || ""));   // default: most owed first
   const rows = [...vends].sort(grouped ? ((a, b) => gType(a).localeCompare(gType(b)) || cmp(a, b)) : cmp);
   const vendorRow = v => {
@@ -1449,10 +1464,9 @@ function renderVendors() {
     tr.onclick = (e) => { if (e.target.closest(".cell")) return; openVendorPage(v.vendor); };
     tr.appendChild(leftText(v.vendor));
     const ty = document.createElement("td"); ty.className = "left";
-    const pill = document.createElement("span"); pill.className = "vtype" + (v.vtype === "Sub" ? " sub" : (v.vtype === "Service" ? " service" : ""));
-    pill.textContent = v.vtype || "-"; ty.appendChild(pill); tr.appendChild(ty);
+    ty.classList.add("vtype-cell"); const ts = _vtypesOf(v); if (ts.length) ts.forEach(t => ty.appendChild(_vtypePill(t))); else ty.textContent = "–";
+    tr.appendChild(ty);
     tr.appendChild(rightText(String(v.jobs || 0)));
-    { const sc = document.createElement("td"); sc.appendChild(moneyCell(v.spend || 0)); tr.appendChild(sc); }
     tr.appendChild(rightText(v.open_bills ? String(v.open_bills) : "–"));
     const oc = document.createElement("td");
     if (v.open_bal > 0.5) oc.appendChild(moneyCell(v.open_bal)); else oc.appendChild(document.createTextNode("–"));
@@ -1587,6 +1601,10 @@ function _ym(d) {   // "YYYY-MM" from an ISO date, or from a typed m/d/yyyy the 
   const t = String(d || ""); if (/^\d{4}-\d{2}/.test(t)) return t.slice(0, 7);
   const m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/); return m ? `${m[3]}-${m[1].padStart(2, "0")}` : "";
 }
+function _isoDay(d) {   // "YYYY-MM-DD" from an ISO date or a typed m/d/yyyy - the sortable day; "" when neither
+  const t = String(d || ""); if (/^\d{4}-\d{2}-\d{2}/.test(t)) return t.slice(0, 10);
+  const m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/); return m ? `${m[3]}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}` : "";
+}
 const HF_BILL_COLS = {                              // colKey -> [getter, label of a value]
   vendor:  [b => b.vendor || "", v => v || "(no vendor)"],
   project: [b => b.project_no || "", v => v || "(no project #)"],
@@ -1612,7 +1630,8 @@ const _hfSort = {};                                 // tableKey -> { col, dir: 1
 function hfSorted(tableKey, rows) {
   const s = _hfSort[tableKey]; if (!s || !HF_BILL_COLS[s.col]) return rows;
   const [get, lbl] = HF_BILL_COLS[s.col];
-  const key = s.col === "date" ? (r => get(r)) : (r => lbl(get(r)));
+  // dates sort by the FULL date (owner 2026-09-28: "it goes only to the month but not the date") - the funnel's value is the month
+  const key = s.col === "date" ? (r => _isoDay(r.bill_date)) : (r => lbl(get(r)));
   return [...rows].sort((a, b) => s.dir * String(key(a)).localeCompare(String(key(b)), undefined, { numeric: true, sensitivity: "base" }));
 }
 function hfActive(tableKey) { const st = hfState(tableKey); return Object.keys(st).some(k => st[k].size); }
@@ -2189,7 +2208,7 @@ function findBillForLien(r) {
 // in the bulk load). Each bill shows its project, or "multiple" -> click the bill to see every line
 // item + project #. Filter by pay status. Owner 2026-08-28: "vendor center open into its own vendor
 // page like qbo ... see the bill its paying and the project ... if multiple say multiple, click for lines".
-let _vendorData = null, _vendorType = "all", _vendorView = "bills";   // bills | payments
+let _vendorData = null, _vendorType = "open", _vendorView = "bills";   // bills | payments
 let _vendorInv = "any";   // the vendor page's invoice filter (any | gcpaid | gcowes | none)
 let _vendorQ = "";   // the vendor page search - one box, filters whichever view is up (owner 2026-09-22: "need ability to search on both pages")
 let _vendorDate = null;   // the vendor page Date filter (Month | Date from-to), same component as the Bill Tracker's; state survives re-renders
@@ -2202,7 +2221,7 @@ async function openVendorPage(vendor) {
   openRecord(vendor, "loading…"); skeletonInto($("#recordBody"), 6);
   _recSave({ k: "vendor", id: vendor, view: "bills" });
   const body = $("#recordBody");
-  _vendorData = null; _vendorType = "all"; _vendorView = "bills"; _vendorInv = "any"; _vendorQ = ""; _vendorProj = ""; _vendorDate = null; _vendorBillOpen.clear();
+  _vendorData = null; _vendorType = "open"; _vendorView = "bills"; _vendorInv = "any"; _vendorQ = ""; _vendorProj = ""; _vendorDate = null; _vendorBillOpen.clear();   // Unpaid by default (owner 2026-09-28)
   hfClear("vendorBills"); _stubSel.clear(); _vendorProjOpen = false; _vendorProjIdx = -1;   // nothing carries over from the last vendor
   let data;
   try { data = await (await fetch("/api/vendor?v=" + encodeURIComponent(vendor))).json(); }
@@ -2306,7 +2325,7 @@ function renderVendorPage() {
   if (_vendorProj.trim()) rows = rows.filter(b => _vq(_vendorProj, [b.project_no, nameOf(b.project_no)]));   // the standalone Project box
   if (_vendorQ.trim()) rows = rows.filter(b => _vq(_vendorQ, [b.project_no, nameOf(b.project_no), b.client, b.bill_ref, b.memo, b.invoice_no, fmtDateShort(b.bill_date), b.bill_date,
     Math.round(num(b.line_amount)), money(b.line_amount), Math.round(bOpen(b)), b.lien_status, b.division, isPaid(b) ? "paid" : "unpaid", invState(b) === "gcpaid" ? "gc paid" : invState(b) === "gcowes" ? "gc owes" : "no invoice"]));
-  rows.sort((a, b) => String(b.bill_date || "").localeCompare(String(a.bill_date || "")) || String(a.bill_ref || "").localeCompare(String(b.bill_ref || "")));
+  rows.sort((a, b) => _isoDay(a.bill_date).localeCompare(_isoDay(b.bill_date)) || String(a.bill_ref || "").localeCompare(String(b.bill_ref || "")));   // oldest to newest (owner 2026-09-28)
   const baseRows = rows;                                   // before the header filters - what each funnel lists
   rows = hfSorted("vendorBills", rows.filter(b => hfPasses("vendorBills", b)));
   if (!rows.length) { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = rowsAll.length ? (_vendorQ.trim() ? `No bills match "${_vendorQ.trim()}".` : "No bills match this filter.") : "No Bill Tracker rows for this vendor."; body.appendChild(p); return; }
@@ -3162,7 +3181,7 @@ function applySublocSections() {
 let invExpanded = new Set();      // customer groups the owner has EXPANDED (default: none = all collapsed, owner 2026-08-31)
 let invGroupKeys = [];            // customer groups on screen (drives Collapse/Expand-all)
 let invBucketFilter = null;       // aging bucket clicked in the stats row (null = all)
-let invSubGroup = true;           // sub-group a client's invoices by project (default) vs one flat list
+const invSubGroup = false;        // project sub-boxes REMOVED (owner 2026-09-28: "the project boxes are not fully done") - one flat list per client
 const invMSel = {};               // Client / Project # multi-select filters (owner 2026-08-21)
 let _invMSelSig = null;
 const INV_MSEL = [
@@ -3391,11 +3410,11 @@ function renderInvAmounts(all, f) {
     const mc = document.createElement("td"); mc.className = "left inv-memo";
     if (i.memo) { mc.textContent = i.memo; mc.title = i.memo; } else { mc.textContent = "–"; mc.classList.add("dim"); }
     tr.appendChild(mc);
-    const ob = document.createElement("td"); ob.className = "right amt-box";
+    const ob = document.createElement("td"); ob.className = "right";
     if (paid) { ob.textContent = "–"; ob.classList.add("dim"); }
     else { ob.textContent = money(oiBal(i)); if (i.days_past_due != null && i.days_past_due > 0) { ob.style.color = "var(--neg)"; ob.title = i.days_past_due + " days past due"; } }
     tr.appendChild(ob);
-    { const tc = rightText(money(i.amount)); tc.classList.add("amt-box", "amt-box-soft"); tr.appendChild(tc); }
+    { const tc = rightText(money(i.amount)); tr.appendChild(tc); }
     // The two dates collections runs on (Invoice Tracker "Last Action Date" / "Next Follow-Up"); an
     // overdue follow-up reads red (owner 2026-09-02).
     { const la = document.createElement("td"); la.className = "left"; la.textContent = i.last_action_date ? fmtDateShort(i.last_action_date) : "–"; if (!i.last_action_date) la.classList.add("dim"); tr.appendChild(la);
@@ -3433,7 +3452,7 @@ function renderInvAmounts(all, f) {
     const ad = invClientAvgDays(g.client);
     const sub = document.createElement("span"); sub.className = "g-sub"; sub.hidden = true;   // (the metrics grid replaced the text run)
     const cellG = document.createElement("div"); cellG.className = "bg-cell"; const leftG = document.createElement("span"); leftG.className = "bg-left"; leftG.appendChild(caret); if (caret._pick) leftG.appendChild(caret._pick); leftG.appendChild(nm); cellG.appendChild(leftG);
-    bandMetrics(cellG, [[g.rows.length, "invoices"], [money(g.open), "open", (g.open > 0.005 ? "neg" : "") + " boxed"], [money(g.billed), "billed"], [ad != null ? ad + "d" : "–", "avg days to pay"]]);
+    bandMetrics(cellG, [[g.rows.length, "invoices"], [money(g.open), "open", (g.open > 0.005 ? "neg" : "")], [money(g.billed), "billed"], [ad != null ? ad + "d" : "–", "avg days to pay"]]);
     htd.appendChild(cellG); hr.appendChild(htd);
     hr.onclick = () => { if (invExpanded.has(g.client)) invExpanded.delete(g.client); else invExpanded.add(g.client); renderOpenInvoices(); };
     tbody.appendChild(hr);
@@ -3492,8 +3511,7 @@ function renderOpenInvoices() {
   // Two views over the same filtered invoices (owner 2026-08-27): AMOUNTS = a clean list of what's
   // owed; AGING = the buckets + lien clock. Both group by client, sub-group by project, and collapse -
   // so the Collapse/Expand-all and Group-by-project buttons show in BOTH (owner 2026-08-31).
-  { const fl = $("#ifSubGroup"), cl = $("#ifCollapse");
-    if (fl) fl.style.display = ""; if (cl) cl.style.display = ""; }
+  { const cl = $("#ifCollapse"); if (cl) cl.style.display = ""; }
   { const el = $("#invAsOf"); if (el) el.textContent = (D.as_of ? "aged today " + fmtDate(D.as_of) : ""); }   // both views - load times live in the sync pill
   if (invView === "amounts") { renderInvAmounts(all, f); return; }
 
@@ -3575,7 +3593,7 @@ function renderOpenInvoices() {
     const key = document.createElement("span"); key.className = "bg-key"; key.textContent = k;
     left.appendChild(caret); left.appendChild(key);
     cell.appendChild(left);
-    bandMetrics(cell, [[money(gOpen), "open", (gOpen > 0.005 ? "neg" : "") + " boxed"], [g.length, "invoices"]]);
+    bandMetrics(cell, [[money(gOpen), "open", (gOpen > 0.005 ? "neg" : "")], [g.length, "invoices"]]);
     gtd.appendChild(cell); gtr.appendChild(gtd);
     gtr.onclick = () => { if (invExpanded.has(k)) invExpanded.delete(k); else invExpanded.add(k); renderOpenInvoices(); };
     tbody.appendChild(gtr);
@@ -3649,7 +3667,6 @@ function invRow(i, buckets) {
   tr.title = "Click for the invoice memo + details (no QuickBooks)";
   tr.onclick = (e) => { if (e.target.closest("a")) return; openInvoicePage(i); };
   if (invPick.has(invKey(i))) tr.classList.add("picked");
-  { const cells = tr.querySelectorAll("td.ag"); for (const c of cells) if (c.textContent.trim() && c.textContent.trim() !== "–") c.classList.add("amt-box"); }   // the open amount in a black line (owner 2026-09-08)
   return tr;
 }
 
@@ -4619,7 +4636,7 @@ function invStateApply(st) {
   const setv = (sel, v) => { const el = $(sel); if (el) el.value = v || ""; };
   setv("#ifDivision", st.div); setv("#ifLienClock", st.lienclk); setv("#ifLien", st.lien); setv("#ifLitig", st.litig || "ex"); setv("#ifSort", st.sort || "due");
   invQuick = st.quick || ""; { const q = $("#ifQuick"); if (q) q.value = invQuick; }
-  invSubGroup = st.subgroup !== false; invBucketFilter = st.bucket == null ? null : st.bucket;
+  invBucketFilter = st.bucket == null ? null : st.bucket;
   const clickSeg = (segSel, attr, val) => { const b = document.querySelector(`${segSel} .seg-btn[data-${attr}="${val}"]`); if (b && !b.classList.contains("on")) b.click(); };
   clickSeg("#invViewSeg", "view", st.view || "amounts");
   clickSeg("#invScopeSeg", "scope", st.scope || "open");             // "all" fetches the paid ones on demand
@@ -4723,7 +4740,6 @@ function invSubBand(proj, name, open, count, colspan) {
   td.appendChild(cell); tr.appendChild(td);
   return tr;
 }
-function invSubGroupToggle() { invSubGroup = !invSubGroup; const b = $("#ifSubGroup"); if (b) b.textContent = invSubGroup ? "Flatten" : "Group by project"; renderOpenInvoices(); }
 
 // ── Client statement: a clean, copy/paste-able table of the filtered open invoices ──
 // A "different view" the owner opens, picks which invoices to include (all checked by
@@ -8942,7 +8958,7 @@ function init() {
     ...BILL_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`]),
     ...LIEN_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`]),
     ...PAY_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`]),
-    ...INV_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`]), ["#ifMonthBtn", "#ifMonthMenu", "#ifMonthMsel"], ["#acctVendorBtn", "#acctVendorMenu", "#acctVendorMsel"]];
+    ...INV_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`]), ["#ifMonthBtn", "#ifMonthMenu", "#ifMonthMsel"], ["#acctVendorBtn", "#acctVendorMenu", "#acctVendorMsel"], ["#vcTypeBtn", "#vcTypeMenu", "#vcTypeMsel"]];
   const _closeMsels = (except) => { for (const [, mId] of _mselWraps) { const m = $(mId); if (m && mId !== except) m.hidden = true; } };
   for (const [btnId, menuId, wrapId] of _mselWraps) {
     const btn = $(btnId), menu = $(menuId);
@@ -8989,7 +9005,6 @@ function init() {
   { const dv = $("#ifDelView"); if (dv) dv.onclick = invDeleteView; }
   { const vs = $("#ifViews"); if (vs) vs.onchange = () => invApplyView(vs.value); }
   { const el = $("#ifCollapse"); if (el) el.onclick = invToggleAll; }
-  { const el = $("#ifSubGroup"); if (el) el.onclick = invSubGroupToggle; }
   { const el = $("#ifStatement"); if (el) el.onclick = openInvStatement; }
   { const el = $("#btnCopyStmt"); if (el) el.onclick = copyInvStatement; }
   { const seg = $("#invViewSeg"); if (seg) for (const b of seg.querySelectorAll(".seg-btn")) b.onclick = () => { invView = b.dataset.view; seg.querySelectorAll(".seg-btn").forEach(x => x.classList.toggle("on", x === b)); renderOpenInvoices(); }; }

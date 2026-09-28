@@ -963,6 +963,20 @@ def _fetch_payments(con) -> dict:
 
 # Vendors whose SERVICE is in their name are a service, not a supplier (owner 2026-08-28:
 # "pump ... pier drilling ... saw cut ... it's a service"). Name-based, so it's obvious per row.
+def _vendor_types(vendor: str, sub_share: float, mix: dict) -> list:
+    """['Sub'] | ['Service'] | ['Concrete supplier'] | ['Material supplier'] | both suppliers (concrete first)."""
+    if sub_share >= 0.5:
+        return ["Sub"]
+    if _SERVICE_RE.search(vendor or ""):         # a service (in the name), not a supplier
+        return ["Service"]
+    tot = sum(a for a in mix.values() if a > 0)
+    conc = sum(a for k, a in mix.items() if a > 0 and "concrete" in str(k).lower())
+    share = conc / tot if tot else 0.0
+    if share >= 0.5:
+        return ["Concrete supplier", "Material supplier"] if 1 - share >= 0.05 else ["Concrete supplier"]
+    return ["Material supplier"]
+
+
 _SERVICE_RE = re.compile(r"\b(pump\w*|pier|drill\w*|saw\w*|cutting|sealing|grind\w*)\b", re.I)
 
 
@@ -1048,10 +1062,11 @@ def _fetch_costs(con) -> dict:
         spend = v["spend"] or 0
         sub_share = (v["sub_spend"] or 0) / spend if spend else 0
         vm = mix.get(v["vendor"], {})
-        top = max(vm, key=vm.get) if vm else None
-        v["vtype"] = "Sub" if sub_share >= 0.5 else (f"Supplier: {top}" if top else "Supplier")
-        if _SERVICE_RE.search(v["vendor"] or ""):     # a service (in the name), not a supplier
-            v["vtype"] = "Service"
+        # Two supplier types only (owner 2026-09-28): Concrete supplier (concrete is the majority of what we buy
+        # from them) and Material supplier (everything else). A concrete supplier that also sells real material
+        # (5%+ of spend - Preferred Materials, "they sell both") is BOTH. Sub and Service stay their own types.
+        v["vtypes"] = _vendor_types(v["vendor"], sub_share, vm)
+        v["vtype"] = " + ".join(v["vtypes"])
         a = apo.get(v["vendor"], {"open": 0.0, "open_bills": 0})
         v["open_bal"] = round(a["open"], 2)
         v["open_bills"] = a["open_bills"]

@@ -323,6 +323,9 @@ html[data-theme="dark"] .bills-sub tr.vgroup .vg-tag { color: var(--warn-text); 
 .vtype.service { color: var(--warn-text); border-color: color-mix(in srgb, #d99a2b 45%, var(--border));
   background: color-mix(in srgb, #d99a2b 14%, transparent); }
 html[data-theme="dark"] .vtype.service { color: var(--warn-text); }
+.vtype.material { color: color-mix(in srgb, #2b6cb0 65%, var(--text)); border-color: color-mix(in srgb, #2b6cb0 45%, var(--border));
+  background: color-mix(in srgb, #2b6cb0 12%, transparent); }
+.vtype-cell .vtype + .vtype { margin-left: 4px; }
 
 /* ── Home / My view ────────────────────────────────────────────────────── */
 .fresh-row { display: flex; flex-wrap: wrap; gap: 10px; padding: 6px var(--pad-x) 16px; }
@@ -1228,9 +1231,9 @@ html[data-theme="dark"] .hv-a { color: #e8956a; }
 td.h-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 /* One proportional bar + its legend (AR/AP aging, Sub LOC by division). */
-.hbar-wrap { padding: 4px 2px 10px; }
+.hbar-wrap { padding: 6px var(--pad-x) 14px; }   /* the panel's own side inset (owner 2026-09-28: "too close to edge") */
 .hbar-head { font-size: .82em; font-weight: 600; color: var(--text-dim); margin: 6px 0 5px; }
-.hbar { display: flex; height: 14px; border-radius: 7px; overflow: hidden; background: var(--surface-2); }
+.hbar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--surface-2); }
 .hbar .hseg { display: block; height: 100%; }
 .hbar-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 6px;
   font-size: .82em; color: var(--text-dim); font-variant-numeric: tabular-nums; }
@@ -1484,13 +1487,6 @@ table.pp-audit { margin: 0; }
 .aging-grid tr.picked > td { background: color-mix(in srgb, var(--accent) 7%, var(--surface)); }
 .aging-grid tr.picked > td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .aging-grid tr.bill-subgroup > td { border-top: 2px solid var(--text); }
-.aging-grid tr.bill-subgroup > td:first-child, .aging-grid tr.in-proj > td:first-child { box-shadow: inset 2px 0 0 var(--text); }
-.aging-grid tr.bill-subgroup > td:last-child, .aging-grid tr.in-proj > td:last-child { box-shadow: inset -2px 0 0 var(--text); }
-.aging-grid tr.proj-last > td { border-bottom: 2px solid var(--text); }
-.aging-grid td.amt-box { box-shadow: inset 0 0 0 1.5px var(--text); font-weight: 700; }
-.aging-grid td.amt-box.amt-box-soft { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 55%, transparent); font-weight: 600; }
-.aging-grid tr.in-proj > td:first-child.amt-box { box-shadow: inset 2px 0 0 var(--text), inset 0 0 0 1.5px var(--text); }
-.bg-m.boxed b { outline: 2px solid var(--text); outline-offset: 2px; padding: 0 3px; border-radius: 2px; }
 /* P&L side peek (Financials > by job): the data fills the row in columns inside a fixed-height box that scrolls
    (owner 2026-09-08: "wasted space ... make it in columns and scrollable, a consistent widget box") */
 td.pnl-expand .dgroup { max-width: none; max-height: 460px; overflow: auto; padding-right: 6px; }
