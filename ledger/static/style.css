@@ -744,7 +744,7 @@ tr.wip-total > td { border-top: 2px solid var(--accent); font-weight: 800;
 .pay-grid tbody tr.pay-row.on { background: color-mix(in srgb, var(--pos) 8%, transparent); }
 .pay-grid tbody tr.pay-row.on:hover { background: color-mix(in srgb, var(--pos) 13%, transparent); }
 .pay-grid input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
-.pay-amt { width: 92px; text-align: right; font-variant-numeric: tabular-nums; padding: 2px 6px;
+.pay-amt { width: 118px; text-align: right; font-variant-numeric: tabular-nums; padding: 2px 6px;
   border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text);
   font-size: .95em; font-family: inherit; }
 .pay-amt:disabled { background: transparent; color: var(--text-dim); border-color: transparent; }
@@ -2131,3 +2131,5 @@ tr.pq-inv > td { background: color-mix(in srgb, var(--neg) 4%, transparent); pad
 .pq-actions { white-space: nowrap; }
 .pq-actions .btn { margin-right: 6px; }
 .pq-actions .linklike { background: none; border: 0; padding: 0; color: var(--text-dim); font-size: .85em; text-decoration: underline; cursor: pointer; }
+/* Ref # boxes (owner 2026-09-29): wide enough to read a pasted list */
+input.ref-search { min-width: 260px; }

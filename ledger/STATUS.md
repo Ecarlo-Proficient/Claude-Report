@@ -4,6 +4,17 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-29 · **Pay bills short pay + paste-to-tick; ref # search app-wide; cents on bills / invoices** (owner: "need the
+  ability to short pay a bill ... paste a excel copy of the ref # and it just select automatically ... cmd+f goes to
+  find in page ... search bar should only be for ref # ... project # needs to be a different toggle. this is database
+  wide" + "also need cents, never round for bills/invoices"). Pay bills: Open bal + Pay $ moved beside the bill (Pay $
+  sat past the right edge), typing an amount puts the bill on the run, amounts to the cent (`_paySetAmount` rounded to
+  whole dollars and snapped anything within 50c back to "full"); a pasted column of bill #s ticks every open match
+  (`payTickRefs`, exact match, toast names what was not found); new Project # filter. Every transaction list's search
+  is ref # only (`refHit`): Bill Tracker, vendor page (bills + payments), Invoices, Pay bills, QBO changes, Checks QBO
+  changed (+ history), Uncleared checks, Bills to fix (+ a Project # filter). One ⌘F handler for every page; a paste
+  into a `.ref-search` box keeps the lines apart. Cents: `moneyC` on 119 bill / invoice / payment / check displays and
+  the pay-run CSV.
 - 2026-09-29 · **Pay bills is its own sub-tab under Vendors** (owner: "i do not want that menu setting it should be a
   dedicated sub menu under vendors"). Vendors = Vendor Center · Bill Tracker · **Pay bills**; the Bill Tracker's
   "Pay run ->" button and the page's "<- Bills" back header are gone (`paybills` left `HIDDEN_TAB_GROUP`; `#paybills`

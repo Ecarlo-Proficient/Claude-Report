@@ -190,6 +190,15 @@ document.addEventListener("click", (e) => {
 
 // ── Formatting ────────────────────────────────────────────────────────────
 const isNum = v => typeof v === "number" && !Number.isNaN(v);
+// Bills, invoices, payments and checks show CENTS, never rounded (owner 2026-09-29: "also need cents, never round for
+// bills/invoices"). WIP / P&L / project / company money stays whole dollars via money().
+function moneyC(v) {
+  if (v === null || v === undefined || v === "") return "–";
+  const n = Number(v); if (Number.isNaN(n)) return "–";
+  const s = "$" + Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return n < 0 ? "(" + s + ")" : s;
+}
+function moneyCellC(v) { const s = document.createElement("span"); s.className = "cell" + (num(v) < 0 ? " neg" : ""); s.textContent = moneyC(v); s.onclick = () => copy(Number(num(v)).toFixed(2)); s.title = "Click to copy"; return s; }
 function money(v) {
   if (v != null && v !== "" && !Number.isNaN(Number(v)) && Math.abs(Number(v)) > 0 && Math.abs(Number(v)) < 0.5) { const n = Number(v); const s = "$" + Math.abs(n).toFixed(2); return n < 0 ? `(${s})` : s; }   // cents, never a misleading $0
   if (v === null || v === undefined || v === "") return "–";
@@ -871,10 +880,10 @@ async function _bvRender() {
     $("#bvTitle").textContent = `${b.vendor || ""} · bill ${b.bill_ref || it.id}`;
     const kv = document.createElement("div"); kv.className = "bv-kv";
     const add = (k, v, cls) => { if (v == null || v === "") return; const r = document.createElement("div"); r.className = "drow"; const a = document.createElement("span"); a.className = "dk"; a.textContent = k; const c = document.createElement("span"); c.className = "dv" + (cls ? " " + cls : ""); if (v instanceof Node) c.appendChild(v); else c.textContent = v; r.appendChild(a); r.appendChild(c); kv.appendChild(r); };
-    add("Vendor", b.vendor); add("Bill #", b.bill_ref); add("Date", b.date ? fmtDate(b.date) : null); add("Amount", money(b.total), "bv-big");
-    if (b.open != null) add("Open", money(b.open), num(b.open) > 0.005 ? "neg" : "pos");
+    add("Vendor", b.vendor); add("Bill #", b.bill_ref); add("Date", b.date ? fmtDate(b.date) : null); add("Amount", moneyC(b.total), "bv-big");
+    if (b.open != null) add("Open", moneyC(b.open), num(b.open) > 0.005 ? "neg" : "pos");
     add("Paid", b.pay_date ? "Paid " + fmtDate(b.pay_date) : (b.pay_status || (b.is_sub ? "see QuickBooks (sub bill)" : null)));
-    if (b.invoice_no) { const s = document.createElement("span"); s.textContent = `Invoice ${b.invoice_no}`; if (b.invoice) { const paid = (b.invoice.balance || 0) <= 0.005; s.appendChild(document.createTextNode(" · ")); s.appendChild(stText(paid ? "GC paid" : "GC owes " + money(b.invoice.balance), paid ? "st-ok" : "st-warn")); } add("On invoice", s); }
+    if (b.invoice_no) { const s = document.createElement("span"); s.textContent = `Invoice ${b.invoice_no}`; if (b.invoice) { const paid = (b.invoice.balance || 0) <= 0.005; s.appendChild(document.createTextNode(" · ")); s.appendChild(stText(paid ? "GC paid" : "GC owes " + moneyC(b.invoice.balance), paid ? "st-ok" : "st-warn")); } add("On invoice", s); }
     if (b.invoice_status) add("Tracker", b.invoice_status);
     if (b.approved) add("Approved", b.approved === "approved" ? "Yes" : b.approved);
     if (b.lien_status) add("Lien", b.lien_status);
@@ -888,9 +897,9 @@ async function _bvRender() {
       tr.appendChild(leftText(ln.description || "–"));
       { const cc = document.createElement("td"); cc.className = "left"; if (ln.cost_code) { const ch = document.createElement("span"); ch.className = "codechip"; ch.textContent = ln.cost_code; cc.appendChild(ch); } else { cc.textContent = ln.account ? ln.account.split(":").pop().trim() : "–"; cc.classList.add("dim"); } tr.appendChild(cc); }
       tr.appendChild(leftText(ln.project_no || "–"));
-      tr.appendChild(rightText(money(ln.amount)));
+      tr.appendChild(rightText(moneyC(ln.amount)));
       tb.appendChild(tr); }
-    const tot = document.createElement("tr"); tot.className = "bv-tot"; tot.innerHTML = `<td class="left" colspan="3">${(b.lines || []).length} line${(b.lines || []).length === 1 ? "" : "s"}</td><td class="right">${_ge(money((b.lines || []).reduce((s, l) => s + num(l.amount), 0)))}</td>`; tb.appendChild(tot);
+    const tot = document.createElement("tr"); tot.className = "bv-tot"; tot.innerHTML = `<td class="left" colspan="3">${(b.lines || []).length} line${(b.lines || []).length === 1 ? "" : "s"}</td><td class="right">${_ge(moneyC((b.lines || []).reduce((s, l) => s + num(l.amount), 0)))}</td>`; tb.appendChild(tot);
     t.appendChild(tb); host.appendChild(t);
     const a = document.createElement("a"); a.className = "btn small"; a.href = qboUrl(b.txn_type === "Expense" ? "expense" : "bill", it.id); a.target = "_blank"; a.rel = "noopener"; a.textContent = "Open in QuickBooks ↗"; host.appendChild(a);
   }).catch(() => { const host = $("#bvInfo"); if (host) host.innerHTML = `<div class="tr-note">could not load the bill</div>`; });
@@ -1051,7 +1060,7 @@ function _fundingRows() {
 function _drawSubsTable(d) {
   const wrap = document.createElement("div"); wrap.className = "draw-subs";
   const cap = document.createElement("div"); cap.className = "bills-cap";
-  cap.textContent = `Subs (labor) · ${money(d.subs_total)} · ${d.subs.length} sub${d.subs.length > 1 ? "s" : ""} · matched by project + draw period`;
+  cap.textContent = `Subs (labor) · ${moneyC(d.subs_total)} · ${d.subs.length} sub${d.subs.length > 1 ? "s" : ""} · matched by project + draw period`;
   wrap.appendChild(cap);
   const scroll = document.createElement("div"); scroll.className = "table-scroll";
   const table = document.createElement("table"); table.className = "grid";
@@ -1063,7 +1072,7 @@ function _drawSubsTable(d) {
     const tr = document.createElement("tr");
     tr.appendChild(leftText(s.vendor || "–"));
     tr.appendChild(rightText(String(s.n || 0)));
-    const tc = document.createElement("td"); tc.appendChild(moneyCell(s.total)); tr.appendChild(tc);
+    const tc = document.createElement("td"); tc.appendChild(moneyCellC(s.total)); tr.appendChild(tc);
     tbody.appendChild(tr);
   }
   table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table); wrap.appendChild(scroll);
@@ -1313,9 +1322,9 @@ function renderLiens() {
   const filed = watch.filter(r => r.lien_status === "Lien Filed");
   // ── summary KPIs ──
   const stats = [
-    ["Notices sent", String(sent.length), money(openOf(sent)) + " open"],
-    ["Liens filed", String(filed.length), money(openOf(filed)) + " open"],
-    ["Open $ at stake", money(openOf(watch)), `across ${watch.length} bill${watch.length === 1 ? "" : "s"}`],
+    ["Notices sent", String(sent.length), moneyC(openOf(sent)) + " open"],
+    ["Liens filed", String(filed.length), moneyC(openOf(filed)) + " open"],
+    ["Open $ at stake", moneyC(openOf(watch)), `across ${watch.length} bill${watch.length === 1 ? "" : "s"}`],
   ];
   const sr = $("#liensStats"); sr.innerHTML = "";
   for (const [label, value, sub] of stats) {
@@ -1336,7 +1345,7 @@ function renderLiens() {
     el.innerHTML = `<span class="a-count"></span><span class="a-label"></span><span class="a-sub"></span>`;
     el.querySelector(".a-count").textContent = n;
     el.querySelector(".a-label").textContent = label;
-    el.querySelector(".a-sub").textContent = money(open) + " open";
+    el.querySelector(".a-sub").textContent = moneyC(open) + " open";
     if (n || key === null) el.onclick = () => { activeLien = key; renderLiens(); };
     filters.appendChild(el);
   };
@@ -1389,7 +1398,7 @@ function renderLiens() {
     };
     tr.appendChild(leftText(r.vendor || "–"));                                    // Vendor
     tr.appendChild(leftText(r.bill_date ? fmtDateShort(r.bill_date) : "–"));      // Date
-    const amt = document.createElement("td"); const mc = moneyCell(r.open_balance); mc.classList.add("lien-amt"); amt.appendChild(mc); tr.appendChild(amt);   // Amount (open)
+    const amt = document.createElement("td"); const mc = moneyCellC(r.open_balance); mc.classList.add("lien-amt"); amt.appendChild(mc); tr.appendChild(amt);   // Amount (open)
     // Invoice # = the bill's own number → QBO bill
     const inv = document.createElement("td"); inv.className = "left"; let chip;
     if (r.qbo_link) { chip = document.createElement("a"); chip.href = qboBillHref(r.qbo_link); chip.target = "_blank"; chip.rel = "noopener"; chip.title = "Open this bill in QuickBooks"; chip.onclick = (e) => e.stopPropagation(); chip.className = "invno qbo-link"; }
@@ -1454,7 +1463,7 @@ function renderVendors() {
   const grouped = $("#vendorGroupType") && $("#vendorGroupType").checked;
   const totalOpen = vends.reduce((t, v) => t + (v.open_bal || 0), 0);
   $("#vendorsNote").textContent = (COST.by_vendor || []).length
-    ? `(${vends.length} vendors · ${money(totalOpen)} open)`
+    ? `(${vends.length} vendors · ${moneyC(totalOpen)} open)`
     : "(no cost data - run load_costs.py)";
   const cols = [["Vendor", "left"], ["Type", "left"], ["Jobs", "right"], ["Open bills (QBO)", "right"], ["Open $ (QBO)", "right"]];   // no Total spend (owner 2026-09-28)   // labelled: QuickBooks open AP, subs included
   const thead = $("#vendorTable thead"), tbody = $("#vendorTable tbody");
@@ -1478,7 +1487,7 @@ function renderVendors() {
     tr.appendChild(rightText(String(v.jobs || 0)));
     tr.appendChild(rightText(v.open_bills ? String(v.open_bills) : "–"));
     const oc = document.createElement("td");
-    if (v.open_bal > 0.5) oc.appendChild(moneyCell(v.open_bal)); else oc.appendChild(document.createTextNode("–"));
+    if (v.open_bal > 0.5) oc.appendChild(moneyCellC(v.open_bal)); else oc.appendChild(document.createTextNode("–"));
     tr.appendChild(oc);
     return tr;
   };
@@ -1495,7 +1504,7 @@ function renderVendors() {
       const caret = document.createElement("span"); caret.className = "bg-caret"; caret.textContent = expanded ? "▾ " : "▸ ";
       const gs = document.createElement("span"); gs.className = "g-cust"; gs.textContent = t;
       const cell = document.createElement("div"); cell.className = "bg-cell"; const left = document.createElement("span"); left.className = "bg-left"; left.appendChild(caret); left.appendChild(gs); cell.appendChild(left);
-      bandMetrics(cell, [[gv.length, "vendors"], [money(gopen), "open"]]);
+      bandMetrics(cell, [[gv.length, "vendors"], [moneyC(gopen), "open"]]);
       gtd.appendChild(cell); gtr.appendChild(gtd);
       gtr.onclick = () => { if (vendorTypeExpanded.has(t)) vendorTypeExpanded.delete(t); else vendorTypeExpanded.add(t); renderVendors(); };
       tbody.appendChild(gtr);
@@ -2010,8 +2019,7 @@ function renderBills() {
   { const cb = $("#bfClear"); if (cb) cb.hidden = !Object.values(f).some(x => x); }
 
   // filter (view predicate AND every dropdown AND the search AND the Excel-style header filters), then sort
-  const qOK = !_billQ.trim() ? () => true : b => _vq(_billQ, [b.vendor, b.project_no, nameOf(b.project_no), b.client, b.bill_ref, b.memo, b.invoice_no, fmtDateShort(b.bill_date), b.bill_date,
-    Math.round(num(b.line_amount)), money(b.line_amount), Math.round(bOpen(b)), b.pay_status, b.invoice_status, b.lien_status, b.approved, b.division]);
+  const qOK = !_billQ.trim() ? () => true : b => refHit(_billQ, [b.bill_ref, b.invoice_no]);   // ref # only
   const baseRows = bills.filter(b => view.pred(b) && billPassesFilters(b, f) && qOK(b));
   let rows = baseRows.filter(b => hfPasses("bills", b));
   { const hc = $("#bfHfClear"); if (hc) { hc.hidden = !hfActive("bills"); } }
@@ -2021,7 +2029,7 @@ function renderBills() {
   const openSum = rows.reduce((t, b) => t + bOpen(b), 0);
   const lienN = rows.filter(b => BILL_LIEN_RISK.has(b.lien_status)).length;
   $("#billsNote").textContent = bills.length ? `(${rows.length.toLocaleString()} of ${bills.length.toLocaleString()})` : "(no AP data - run load_bill_tracker.py)";
-  { const qs = $("#billsQuickStat"); if (qs) qs.textContent = bills.length ? `${money(openSum)} open · ${lienN} lien risk` : ""; }
+  { const qs = $("#billsQuickStat"); if (qs) qs.textContent = bills.length ? `${moneyC(openSum)} open · ${lienN} lien risk` : ""; }
 
   // table. Each status is its OWN column (Paid / Invoice / Lien / Appr) so a blank in
   // one never hides a missing value by being merged with the others.
@@ -2097,7 +2105,7 @@ function renderBills() {
       // Open $ + bill count at the SAME size/weight as the vendor (owner 2026-08-18) so the
       // amount is scannable down the collapsed list; right-aligned in the row.
       cell.appendChild(left);
-      bandMetrics(cell, [[money(gOpen), "open", gOpen > 0.005 ? "neg" : ""], [g.length, "bills"], [g.filter(b => b.pay_date).length, "paid"], [g.filter(b => BILL_LIEN_RISK.has(b.lien_status)).length || "–", "lien risk"]]);
+      bandMetrics(cell, [[moneyC(gOpen), "open", gOpen > 0.005 ? "neg" : ""], [g.length, "bills"], [g.filter(b => b.pay_date).length, "paid"], [g.filter(b => BILL_LIEN_RISK.has(b.lien_status)).length || "–", "lien risk"]]);
       gtd.appendChild(cell); gtr.appendChild(gtd);
       gtr.onclick = () => { if (billsCollapsed.has(k)) billsCollapsed.delete(k); else billsCollapsed.add(k); renderBills(); };
       tbody.appendChild(gtr);
@@ -2167,9 +2175,9 @@ function billRow(b) {
   if (mo != null && mo >= 2) { const a = document.createElement("span"); a.className = "bill-age"; a.textContent = mo + "mo"; dtd.appendChild(a); }
   tr.appendChild(dtd);
   // Amount
-  const atd = document.createElement("td"); atd.appendChild(moneyCell(b.line_amount)); tr.appendChild(atd);
+  const atd = document.createElement("td"); atd.appendChild(moneyCellC(b.line_amount)); tr.appendChild(atd);
   // Open balance
-  const otd = document.createElement("td"); const oc = moneyCell(b.open_balance);
+  const otd = document.createElement("td"); const oc = moneyCellC(b.open_balance);
   oc.classList.add(bOpen(b) > 0 ? "open-amt" : "open-zero"); otd.appendChild(oc); tr.appendChild(otd);
   // Four SEPARATE status columns - Paid / Invoice / Lien / Appr (blank = none, unambiguous)
   tr.appendChild(statusCell(payText(b)));
@@ -2188,8 +2196,8 @@ function _billInvCell(b) {
   td.appendChild(link);
   if (b.inv_ar_status != null || b.inv_balance != null) {
     const paid = b.inv_ar_status === "Paid" || num(b.inv_balance) <= 0.005;
-    td.appendChild(stText(paid ? "GC paid" : "GC owes " + money(b.inv_balance), paid ? "st-ok" : "st-warn",
-      paid ? "The GC has paid this invoice" + (b.inv_date ? " (invoiced " + fmtDateShort(b.inv_date) + ")" : "") : `Invoice ${b.invoice_no} is still open in QuickBooks - ${money(b.inv_balance)} of ${money(b.inv_amount)}`));
+    td.appendChild(stText(paid ? "GC paid" : "GC owes " + moneyC(b.inv_balance), paid ? "st-ok" : "st-warn",
+      paid ? "The GC has paid this invoice" + (b.inv_date ? " (invoiced " + fmtDateShort(b.inv_date) + ")" : "") : `Invoice ${b.invoice_no} is still open in QuickBooks - ${moneyC(b.inv_balance)} of ${moneyC(b.inv_amount)}`));
   }
   return td;
 }
@@ -2229,6 +2237,17 @@ let _vendorQ = "";   // the vendor page search - one box, filters whichever view
 let _vendorDate = null;   // the vendor page Date filter (Month | Date from-to), same component as the Bill Tracker's; state survives re-renders
 let _vendorProjOpen = false, _vendorProjIdx = -1;   // the Project box's suggestion list: open? which row is highlighted (ArrowDown / ArrowUp, Enter picks)
 let _vendorProj = "";   // the standalone Project box beside it (owner 2026-09-22: "make project a standalone box") - project # or job name, both views
+// Ref # search (owner 2026-09-29: "search bar should only be for ref #, it should not let me put project # that needs
+// to be a different toggle. this is database wide" - supersedes the broad box of 09-22). Every transaction list's
+// search box matches the record's own reference numbers ONLY (bill #, invoice #, check #); project, vendor, client,
+// memo and amount have their own filters. Paste a column from Excel: each line / comma / space is one ref, and a row
+// matching ANY of them shows. ⌘F lands in the page's box (see the one keydown handler at the bottom).
+const refTerms = q => String(q || "").split(/[\s,;]+/).map(t => t.trim().toLowerCase()).filter(Boolean);
+function refHit(q, refs) {
+  const t = refTerms(q); if (!t.length) return true;
+  const rs = refs.filter(x => x != null && x !== "").map(x => String(x).toLowerCase());
+  return t.some(w => rs.some(r => r.includes(w)));
+}
 const _vq = (q, parts) => { q = (q || "").trim().toLowerCase(); if (!q) return true; const hay = parts.filter(x => x != null && x !== "").map(x => String(x).toLowerCase()).join(" \u0001 "); return q.split(/\s+/).every(w => hay.includes(w)); };
 const _vendorBillOpen = new Set();
 async function openVendorPage(vendor) {
@@ -2292,7 +2311,8 @@ function renderVendorPage() {
   { const fld = document.createElement("span"); fld.className = "fld vp-datefld"; const lb = document.createElement("span"); lb.textContent = "Date"; fld.appendChild(lb);
     const host = document.createElement("span"); host.className = "datef"; host.id = "vpDate"; fld.appendChild(host); vseg.appendChild(fld); }
   { const q = document.createElement("input"); q.type = "search"; q.id = "vpSearch"; q.className = "msel-search vendor-search"; q.value = _vendorQ;
-    q.placeholder = _vendorView === "payments" ? "Search payments (⌘F) - ref, date, client, project, bill #, amount" : "Search bills (⌘F) - anything on the row: client, bill #, memo, invoice #, date, amount";
+    q.placeholder = _vendorView === "payments" ? "Ref # (⌘F) - check / payment ref or bill #; paste a column for many" : "Ref # (⌘F) - bill # or invoice #; paste a column for many";
+    q.classList.add("ref-search");
     q.oninput = () => { _vendorQ = q.value; clearTimeout(q._t); q._t = setTimeout(() => { const pos = q.selectionStart; renderVendorPage(); const n = $("#vpSearch"); if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch {} } }, 160); };
     q.onkeydown = (e) => { if (e.key === "Escape") { q.value = ""; _vendorQ = ""; renderVendorPage(); } };
     vseg.appendChild(q); }
@@ -2301,13 +2321,13 @@ function renderVendorPage() {
     _vendorDate = dateFilter("vpDate", dates, renderVendorPage, _vendorDate); _vendorDate.build();   // after the bar is in the document - the control binds to #vpDate
     if (_dateMenuWasOpen) { const m = $("#vpDateMenu"), b = $("#vpDateBtn"); if (m && b) { m.hidden = false; _placeMenu(b, m); } } }
   if (_vendorView === "payments") {
-    $("#recordSub").textContent = `${d.pay_count || 0} payments · ${money(d.pay_total || 0)} paid out this year`;
+    $("#recordSub").textContent = `${d.pay_count || 0} payments · ${moneyC(d.pay_total || 0)} paid out this year`;
     return _renderVendorPayments(d, body, seq);
   }
   // Two systems, two labels (owner 2026-09-02: the list said one "open", the page another): QuickBooks
   // open AP covers every vendor incl. subs; the Bill Tracker excludes subs.
-  $("#recordSub").textContent = (d.qbo_open != null ? `open ${money(d.qbo_open)} (QuickBooks, ${d.qbo_open_bills || 0} bills) · ` : "")
-    + `Bill Tracker: ${d.count} bills · ${money(d.total)} billed · ${money(d.open)} open · ${d.paid_ct} paid` + (d.count ? "" : " (subs are not in the Bill Tracker)");
+  $("#recordSub").textContent = (d.qbo_open != null ? `open ${moneyC(d.qbo_open)} (QuickBooks, ${d.qbo_open_bills || 0} bills) · ` : "")
+    + `Bill Tracker: ${d.count} bills · ${moneyC(d.total)} billed · ${moneyC(d.open)} open · ${d.paid_ct} paid` + (d.count ? "" : " (subs are not in the Bill Tracker)");
   // The Bill Tracker WITHIN the vendor page (owner 2026-09-16: "basically the bill tracker within here ... vendors where i can
   // dial in by vendor"): the same rows and columns as the tracker, filtered to this vendor - every bill with its project,
   // client, the invoice it sits on and whether the GC paid it, our pay status, lien and approval.
@@ -2338,8 +2358,7 @@ function renderVendorPage() {
   if (_vendorInv !== "any") rows = rows.filter(b => invState(b) === _vendorInv);
   if (_vendorDate && _vendorDate.active()) rows = rows.filter(b => _vendorDate.passes(b.bill_date));   // Month | Date (from / to)
   if (_vendorProj.trim()) rows = rows.filter(b => _vq(_vendorProj, [b.project_no, nameOf(b.project_no)]));   // the standalone Project box
-  if (_vendorQ.trim()) rows = rows.filter(b => _vq(_vendorQ, [b.project_no, nameOf(b.project_no), b.client, b.bill_ref, b.memo, b.invoice_no, fmtDateShort(b.bill_date), b.bill_date,
-    Math.round(num(b.line_amount)), money(b.line_amount), Math.round(bOpen(b)), b.lien_status, b.division, isPaid(b) ? "paid" : "unpaid", invState(b) === "gcpaid" ? "gc paid" : invState(b) === "gcowes" ? "gc owes" : "no invoice"]));
+  if (_vendorQ.trim()) rows = rows.filter(b => refHit(_vendorQ, [b.bill_ref, b.invoice_no]));   // ref # only
   rows.sort((a, b) => _isoDay(a.bill_date).localeCompare(_isoDay(b.bill_date)) || String(a.bill_ref || "").localeCompare(String(b.bill_ref || "")));   // oldest to newest (owner 2026-09-28)
   const baseRows = rows;                                   // before the header filters - what each funnel lists
   rows = hfSorted("vendorBills", rows.filter(b => hfPasses("vendorBills", b)));
@@ -2362,7 +2381,7 @@ function renderVendorPage() {
   for (const b of rows) tbody.appendChild(row(b));
   table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table); body.appendChild(scroll);
   const cap = document.createElement("div"); cap.className = "bills-cap";
-  cap.textContent = `${rows.length} bill${rows.length === 1 ? "" : "s"} · ${money(rows.reduce((t, b) => t + num(b.line_amount), 0))} billed · ${money(rows.reduce((t, b) => t + bOpen(b), 0))} open · Invoice # = the draw the Bill Tracker matched the bill to; GC paid / GC owes = that invoice's live QuickBooks balance · click a row for the bill's detail, the invoice # for the invoice page, the client for the client's page.`;
+  cap.textContent = `${rows.length} bill${rows.length === 1 ? "" : "s"} · ${moneyC(rows.reduce((t, b) => t + num(b.line_amount), 0))} billed · ${moneyC(rows.reduce((t, b) => t + bOpen(b), 0))} open · Invoice # = the draw the Bill Tracker matched the bill to; GC paid / GC owes = that invoice's live QuickBooks balance · click a row for the bill's detail, the invoice # for the invoice page, the client for the client's page.`;
   body.appendChild(cap);
 }
 // A vendor with no Bill Tracker rows (a sub, or a vendor the tracker doesn't carry): its bills straight
@@ -2382,7 +2401,7 @@ function _renderVendorQboBills(d, body) {
     { const lc = qboLinkCell(b.doc_number || "–", qboUrl(b.txn_type === "Expense" ? "expense" : "bill", b.txn_id), "Open this bill in QuickBooks"); if (b.att) { const ab = attBtn(b.txn_type === "Expense" ? "Purchase" : "Bill", b.txn_id, b.att, `bill ${b.doc_number || ""}`); ab.style.marginLeft = "6px"; lc.appendChild(ab); } tr.appendChild(lc); }
     tr.appendChild(leftText(b.projects.length > 1 ? b.projects.join(", ") : (b.projects[0] || "–")));
     const m = leftText(b.memo || "–"); m.title = b.memo || ""; m.className += " inv-memo"; tr.appendChild(m);
-    const amt = document.createElement("td"); amt.appendChild(moneyCell(b.amount)); tr.appendChild(amt);
+    const amt = document.createElement("td"); amt.appendChild(moneyCellC(b.amount)); tr.appendChild(amt);
     tbody.appendChild(tr);
   }
   table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table); body.appendChild(scroll);
@@ -2414,7 +2433,7 @@ function _vendorLines(b) {
     tr.appendChild(_vpProjCell(ln.project_no ? [ln.project_no] : []));
     tr.appendChild(leftText(ln.client || "–"));
     tr.appendChild(leftText(ln.description || "–"));
-    tr.appendChild(rightText(money(ln.amount)));
+    tr.appendChild(rightText(moneyC(ln.amount)));
     tbody.appendChild(tr);
   }
   table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table); wrap.appendChild(scroll);
@@ -2543,8 +2562,7 @@ async function _renderVendorPayments(d, body, seq) {
   if (seq !== _vpSeq || _vendorView !== "payments" || !_vendorPageShowing(d)) return;   // a newer render (or another page) took over while the history loaded
   const pays = (d.payments || []).filter(p => (!_vendorDate || !_vendorDate.active() || _vendorDate.passes(p.txn_date))
     && (!_vendorProj.trim() || _vq(_vendorProj, [...(p.projects || []), ...(p.projects || []).map(nameOf)]))
-    && _vq(_vendorQ, [p.ref_no, fmtDateShort(p.txn_date), p.txn_date, p.pay_type === "CreditCard" ? "credit card" : p.pay_type, ...(p.clients || []), ...(p.projects || []),
-    ...(p.bills || []).map(b => b.bill_ref), ...(p.bills || []).map(b => b.bill_date ? fmtDateShort(b.bill_date) : ""), Math.round(num(p.total_amt)), money(p.total_amt), p.voided ? "voided" : "", p.memo]));
+    && refHit(_vendorQ, [p.ref_no, ...(p.bills || []).map(b => b.bill_ref)]));   // ref # only: the check / payment ref or a bill it paid
   { const visible = new Set(pays.map(p => String(p.qbo_txn_id))); for (const id of [..._stubSel]) if (!visible.has(id)) _stubSel.delete(id); }   // a pick you can't see is not a pick
   const byPay = new Map(); for (const h of _stubHist.prints) { if (!byPay.has(h.payment_id)) byPay.set(h.payment_id, []); byPay.get(h.payment_id).push(h); }
   // toolbar: the column picker + the multi-print button (lives on the selection)
@@ -2583,7 +2601,7 @@ async function _renderVendorPayments(d, body, seq) {
     tr.appendChild(leftText(p.pay_type === "CreditCard" ? "Credit card" : (p.pay_type || "–")));
     { const cl = p.clients || []; const cc = leftText(cl.slice(0, 4).join(", ") + (cl.length > 4 ? ` +${cl.length - 4} more` : "") || (p.voided ? "" : "–")); if (!cl.length) cc.classList.add("dim"); cc.title = cl.join(", "); tr.appendChild(cc); }
     tr.appendChild(_vpInvTally(p.bills || [], p.txn_date));
-    { const amt = document.createElement("td"); if (p.voided) { const z = document.createElement("span"); z.className = "cell dim"; z.textContent = "voided"; amt.appendChild(z); } else amt.appendChild(moneyCell(p.total_amt)); tr.appendChild(amt); }
+    { const amt = document.createElement("td"); if (p.voided) { const z = document.createElement("span"); z.className = "cell dim"; z.textContent = "voided"; amt.appendChild(z); } else amt.appendChild(moneyCellC(p.total_amt)); tr.appendChild(amt); }
     { const sc = document.createElement("td"); sc.className = "left vp-stub"; const hist = byPay.get(pid) || [];
       if (!p.voided) { const b = document.createElement("button"); b.type = "button"; b.className = "btn tiny"; b.textContent = hist.length ? "Print again" : "Print stub";
         b.title = "Payment on top, the bills it paid below - the PDF lands in this vendor's folder under Accounting / Accounts Payable / Bill Payment Stubs";
@@ -2604,7 +2622,7 @@ async function _renderVendorPayments(d, body, seq) {
       br.appendChild(_vpProjCell(b.projects || []));
       { const cl = b.clients || []; const cc = leftText(cl.join(", ") || "–"); if (!cl.length) cc.classList.add("dim"); br.appendChild(cc); }
       br.appendChild(_vpInvCell(b, p.txn_date));
-      { const td = document.createElement("td"); td.appendChild(moneyCell(b.amount)); br.appendChild(td); }
+      { const td = document.createElement("td"); td.appendChild(moneyCellC(b.amount)); br.appendChild(td); }
       br.appendChild(document.createElement("td"));
       tbody.appendChild(br);
     }
@@ -2670,9 +2688,9 @@ function _renderStubOrphans(body, pays, byPay) {
     tr.appendChild(qboLinkCell(h0.ref || "–", null, ""));
     tr.appendChild(leftText(h0.method || "–"));
     { const td = document.createElement("td"); td.textContent = h0.n_bills != null ? String(h0.n_bills) : "–"; tr.appendChild(td); }
-    { const td = document.createElement("td"); td.appendChild(moneyCell(h0.total)); tr.appendChild(td); }
+    { const td = document.createElement("td"); td.appendChild(moneyCellC(h0.total)); tr.appendChild(td); }
     { const td = document.createElement("td"); td.className = "left"; td.appendChild(_stubPill(h0.status));
-      if (h0.status === "changed" && h0.qbo_total_now != null) { const s = document.createElement("span"); s.className = "dim"; s.textContent = " now " + money(h0.qbo_total_now); td.appendChild(s); }
+      if (h0.status === "changed" && h0.qbo_total_now != null) { const s = document.createElement("span"); s.className = "dim"; s.textContent = " now " + moneyC(h0.qbo_total_now); td.appendChild(s); }
       if (h0.status === "deleted" && h0.deleted_at) { const s = document.createElement("span"); s.className = "dim"; s.textContent = " " + fmtDateShort(h0.deleted_at); td.appendChild(s); }
       tr.appendChild(td); }
     { const td = document.createElement("td"); td.className = "left vp-stub"; const hl = document.createElement("div"); hl.className = "stub-hist";
@@ -2824,6 +2842,7 @@ let _payMSelSig = null;
 const PAY_MSEL = [
   { id: "pfClient", all: "All clients",   get: b => b.client || "",      search: true, lbl: v => v || "(no client)" },
   { id: "pfVendor", all: "All vendors",   get: b => b.vendor || "",      search: true, lbl: v => v || "(none)" },
+  { id: "pfProj",   all: "All projects",  get: b => b.project_no || "",  search: true, lbl: v => v || "(no project #)" },
   { id: "pfDiv",    all: "All divisions", get: b => b.division || "",     lbl: v => v || "(none)" },
   { id: "pfAppr",   all: "Any approval",  get: b => b.approved || "",     lbl: v => v === "approved" ? "Approved" : (v === "not approved" ? "Not approved" : (v || "(blank)")) },
   { id: "pfLien",   all: "Any lien",      get: b => b.lien_status || "",  lbl: v => v ? (LIEN_SHORT[v] || v) : "(no lien clock)" },
@@ -2836,8 +2855,7 @@ function _payFilterPass(b) {
   const show = $("#pfShow") ? $("#pfShow").value : "open";
   if (show === "run") { if (!st.selected) return false; }
   else if (num(b.open_balance) <= 0 && !st.selected) return false;   // "Open bills" (default): still owed
-  const q = ($("#pfSearch") ? $("#pfSearch").value : "").trim().toLowerCase();
-  if (q && !`${b.project_no || ""} ${b.bill_ref || ""} ${b.invoice_no || ""} ${b.vendor || ""} ${b.client || ""}`.toLowerCase().includes(q)) return false;
+  if (!refHit($("#pfSearch") ? $("#pfSearch").value : "", [b.bill_ref])) return false;   // ref # only; project is its own filter
   if ($("#pfFunded") && $("#pfFunded").checked && !payFunded(b)) return false;
   if (!mselPasses(b, PAY_MSEL, payMSel)) return false;              // Client / Vendor / Division / Approved / Lien
   return true;
@@ -2853,9 +2871,23 @@ function _paySetSelected(b, sel) {
   payDraft.set(b.bill_id, { selected: sel, amount: sel ? cur.amount : null });
   renderPayBills();
 }
+// Paste a column of bill #s into Pay bills' search: every matching open bill goes on the run (unsaved - Save to keep)
+// (owner 2026-09-29: "paste a excel copy of the ref # and it just select automatically"). Exact bill # match.
+function payTickRefs(refs) {
+  const want = new Set(refs.map(r => String(r).trim().toLowerCase()).filter(Boolean)); if (!want.size) return;
+  const hit = new Set(), n0 = paySelectedBills().length;
+  for (const b of _payMarkable()) {
+    const r = String(b.bill_ref || "").trim().toLowerCase();
+    if (!want.has(r) || num(b.open_balance) <= 0) continue;
+    hit.add(r); if (!payState(b).selected) payDraft.set(b.bill_id, { selected: true, amount: null });
+  }
+  renderPayBills();
+  const miss = [...want].filter(r => !hit.has(r));
+  toast(`${hit.size} of ${want.size} bill${want.size === 1 ? "" : "s"} ticked (${paySelectedBills().length - n0} new) - Save pay run to keep` + (miss.length ? ` · not found or paid: ${miss.slice(0, 5).join(", ")}${miss.length > 5 ? "…" : ""}` : ""));
+}
 function _paySetAmount(b, val) {           // live: update draft + save bar only (keep input focus)
-  let amt = val === "" ? null : Math.max(0, Math.round(num(val)));
-  if (amt != null && amt === Math.round(num(b.open_balance))) amt = null;   // exactly the full balance → "full"
+  let amt = val === "" ? null : Math.max(0, Math.round(num(val) * 100) / 100);   // to the cent - never rounded (owner 2026-09-29)
+  if (amt != null && Math.abs(amt - num(b.open_balance)) < 0.005) amt = null;     // exactly the full balance → "full"
   payDraft.set(b.bill_id, { selected: true, amount: amt });
   renderPaySaveBar(); renderPayList();
 }
@@ -2870,11 +2902,12 @@ function renderPayBills() {
   }
   let rows = _payMarkable().filter(_payFilterPass);
   rows.sort((a, b) => (a.vendor || "").localeCompare(b.vendor || "") || String(a.bill_date || "").localeCompare(String(b.bill_date || "")));
-  const cols = ["Pay", "Vendor", "Client", "Project #", "Bill #", "Date", "Open bal", "Pay $", "GC draw", "Invoice #", "Lien"];
+  // the amounts sit right after the bill (owner 2026-09-29: short pay "doesn't allow" - Pay $ was past the right edge)
+  const cols = ["Pay", "Vendor", "Bill #", "Date", "Open bal", "Pay $", "Project #", "Client", "GC draw", "Invoice #", "Lien"];
   thead.innerHTML = ""; tbody.innerHTML = "";
   const htr = document.createElement("tr");
   cols.forEach((c, i) => { const th = document.createElement("th");
-    if (![0, 6, 7].includes(i)) th.className = "left"; th.textContent = c; htr.appendChild(th); });
+    if (![0, 4, 5].includes(i)) th.className = "left"; th.textContent = c; htr.appendChild(th); });
   thead.appendChild(htr);
   if (!rows.length) { const tr = document.createElement("tr"); const td = document.createElement("td");
     td.colSpan = cols.length; td.className = "left"; td.style.color = "var(--text-dim)"; td.style.padding = "14px 12px";
@@ -2891,20 +2924,22 @@ function renderPayBills() {
     cb.onchange = () => _paySetSelected(b, cb.checked); c0.appendChild(cb); tr.appendChild(c0);
     // Vendor / Client / Project / Bill # / Date
     const cV = document.createElement("td"); cV.className = "left"; const vs = document.createElement("span"); vs.className = "bill-vendor"; vs.textContent = b.vendor || "–"; cV.appendChild(vs); tr.appendChild(cV);
-    const cC = document.createElement("td"); cC.className = "left"; cC.textContent = b.client || "–"; if (!b.client) cC.style.color = "var(--text-dim)"; tr.appendChild(cC);
-    const cP = document.createElement("td"); cP.className = "left"; cP.textContent = b.project_no || "–"; tr.appendChild(cP);
+    const cC = document.createElement("td"); cC.className = "left"; cC.textContent = b.client || "–"; if (!b.client) cC.style.color = "var(--text-dim)";
+    const cP = document.createElement("td"); cP.className = "left"; cP.textContent = b.project_no || "–";
     tr.appendChild(qboLinkCell(b.bill_ref, qboBillHref(b.qbo_link), "Open this bill in QuickBooks")); if (b.att) { const _ab = attBtn("Bill", b.bill_id || (qboBillHref(b.qbo_link) || "").replace(/.*txnId=(\d+).*/, "$1"), b.att, `${b.vendor || ""} · bill ${b.bill_ref || ""}`); _ab.style.marginLeft = "6px"; tr.lastElementChild.appendChild(_ab); }
     const cD = document.createElement("td"); cD.className = "left"; cD.textContent = fmtDateShort(b.bill_date); tr.appendChild(cD);
     // Open balance
-    const cO = document.createElement("td"); cO.className = "right"; cO.appendChild(moneyCell(b.open_balance)); tr.appendChild(cO);
+    const cO = document.createElement("td"); cO.className = "right"; cO.appendChild(moneyCellC(b.open_balance)); tr.appendChild(cO);
     // Pay $ (editable; disabled unless selected)
     const cPay = document.createElement("td"); cPay.className = "right";
-    const inp = document.createElement("input"); inp.type = "number"; inp.min = "0"; inp.step = "1"; inp.className = "pay-amt";
-    inp.value = String(Math.round(payAmountOf(b))); inp.disabled = !sel;
-    inp.oninput = () => { _paySetAmount(b, inp.value);
-      inp.classList.toggle("partial", inp.value !== "" && num(inp.value) !== Math.round(num(b.open_balance))); };
+    // typing an amount puts the bill on the run - no tick first (owner 2026-09-29: "need the ability to short pay")
+    const inp = document.createElement("input"); inp.type = "number"; inp.min = "0"; inp.step = "0.01"; inp.className = "pay-amt";
+    inp.value = payAmountOf(b).toFixed(2); inp.title = "Pay this much - type less than the open balance to short pay";
+    inp.oninput = () => { _paySetAmount(b, inp.value); cb.checked = true; tr.classList.add("on");
+      inp.classList.toggle("partial", inp.value !== "" && Math.abs(num(inp.value) - num(b.open_balance)) >= 0.005); };
     if (sel && st.amount != null) inp.classList.add("partial");   // an explicit custom amount (not the full balance)
     cPay.appendChild(inp); tr.appendChild(cPay);
+    tr.appendChild(cP); tr.appendChild(cC);
     // GC draw status / Invoice # / Lien
     const cAr = document.createElement("td"); cAr.className = "left"; const ar = payArCell(b); if (ar) cAr.appendChild(ar); else cAr.textContent = "–"; tr.appendChild(cAr);
     tr.appendChild(_payInvNoCell(b));
@@ -2930,11 +2965,11 @@ function renderPaySaveBar() {
   const bar = $("#paySaveBar"); if (bar) bar.classList.toggle("dirty", n > 0);
   const txt = $("#paySaveText");
   if (txt) txt.textContent = n
-    ? `${n} unsaved change${n > 1 ? "s" : ""} · run: ${sel.length} bill${sel.length !== 1 ? "s" : ""}, ${money(total)}`
-    : (sel.length ? `Pay run: ${sel.length} bill${sel.length !== 1 ? "s" : ""} · ${money(total)}` : "No bills in the pay run");
+    ? `${n} unsaved change${n > 1 ? "s" : ""} · run: ${sel.length} bill${sel.length !== 1 ? "s" : ""}, ${moneyC(total)}`
+    : (sel.length ? `Pay run: ${sel.length} bill${sel.length !== 1 ? "s" : ""} · ${moneyC(total)}` : "No bills in the pay run");
   { const s = $("#btnSavePayRun"); if (s) s.disabled = n === 0; }
   { const d = $("#btnDiscardPayRun"); if (d) d.hidden = n === 0; }
-  { const qs = $("#payQuickStat"); if (qs) qs.textContent = sel.length ? `${sel.length} selected · ${money(total)} to pay` : ""; }
+  { const qs = $("#payQuickStat"); if (qs) qs.textContent = sel.length ? `${sel.length} selected · ${moneyC(total)} to pay` : ""; }
   { const note = $("#payNote"); if (note) note.textContent = `(${_payMarkable().filter(b => num(b.open_balance) > 0).length} open bills)`; }
 }
 function renderPayList() {
@@ -2947,7 +2982,7 @@ function renderPayList() {
   const vendors = [...byV.keys()].sort((a, b) => a.localeCompare(b));
   const grand = sel.reduce((t, b) => t + payAmountOf(b), 0);
   const note = $("#payListNote");
-  if (note) note.textContent = `(${vendors.length} vendor${vendors.length !== 1 ? "s" : ""} · ${sel.length} bill${sel.length !== 1 ? "s" : ""} · ${money(grand)})`;
+  if (note) note.textContent = `(${vendors.length} vendor${vendors.length !== 1 ? "s" : ""} · ${sel.length} bill${sel.length !== 1 ? "s" : ""} · ${moneyC(grand)})`;
   const thead = $("#payListTable thead"), tbody = $("#payListTable tbody");
   thead.innerHTML = ""; tbody.innerHTML = "";
   const cols = ["Vendor", "Bill #", "Bill date", "Project #", "Client", "Invoice #", "GC draw", "Pay $"];
@@ -2961,7 +2996,7 @@ function renderPayList() {
     const cell = document.createElement("div"); cell.className = "bg-cell";
     const key = document.createElement("span"); key.className = "bg-key"; key.textContent = v;
     cell.appendChild(key);
-    bandMetrics(cell, [[list.length, "bills"], [money(sub), "total"]]);
+    bandMetrics(cell, [[list.length, "bills"], [moneyC(sub), "total"]]);
     gtd.appendChild(cell); gtr.appendChild(gtd); tbody.appendChild(gtr);
     for (const b of list) {
       const tr = document.createElement("tr"); tr.className = "pay-row";
@@ -2972,14 +3007,14 @@ function renderPayList() {
       const cC = document.createElement("td"); cC.className = "left"; cC.textContent = b.client || "–"; tr.appendChild(cC);
       tr.appendChild(_payInvNoCell(b));
       const cAr = document.createElement("td"); cAr.className = "left"; const ar = payArCell(b); if (ar) cAr.appendChild(ar); else cAr.textContent = "–"; tr.appendChild(cAr);
-      const cPay = document.createElement("td"); cPay.className = "right"; cPay.appendChild(moneyCell(payAmountOf(b))); tr.appendChild(cPay);
+      const cPay = document.createElement("td"); cPay.className = "right"; cPay.appendChild(moneyCellC(payAmountOf(b))); tr.appendChild(cPay);
       tbody.appendChild(tr);
     }
   }
   const gt = document.createElement("tr"); gt.className = "wip-total";
   cols.forEach((c, i) => { const td = document.createElement("td");
     if (i === 0) { td.className = "left"; td.textContent = "GRAND TOTAL"; }
-    else if (i === cols.length - 1) { td.className = "right"; td.appendChild(moneyCell(grand)); }
+    else if (i === cols.length - 1) { td.className = "right"; td.appendChild(moneyCellC(grand)); }
     else td.className = "left";
     gt.appendChild(td); });
   tbody.appendChild(gt);
@@ -3019,7 +3054,7 @@ function exportPayList() {
   const head = ["Vendor", "Bill #", "Bill date", "Division", "Project #", "Client", "Invoice #", "GC draw status", "Open balance", "Pay amount"];
   const lines = [head];
   for (const b of sel) lines.push([b.vendor || "", b.bill_ref || "", b.bill_date || "", b.division || "", b.project_no || "",
-    b.client || "", b.invoice_no || "", b.inv_ar_status || b.invoice_status || "", Math.round(num(b.open_balance)), Math.round(payAmountOf(b))]);
+    b.client || "", b.invoice_no || "", b.inv_ar_status || b.invoice_status || "", num(b.open_balance).toFixed(2), payAmountOf(b).toFixed(2)]);
   const csv = lines.map(r => r.map(c => { const s = String(c == null ? "" : c); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }).join(",")).join("\r\n");
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob); const a = document.createElement("a");
@@ -3359,9 +3394,9 @@ function openBillDetail(b) {
   row(gb, "Vendor", b.vendor);
   row(gb, "Bill #", b.bill_ref);
   row(gb, "Bill date", fmtDate(b.bill_date));
-  row(gb, "This line", money(b.line_amount));                                   // the tracker row is ONE line of the bill
-  if (b.bill_total != null && Math.abs(num(b.bill_total) - num(b.line_amount)) > 0.5) row(gb, "Bill total (what the qb link opens)", money(b.bill_total));
-  row(gb, "Open balance", money(b.open_balance), bOpen(b) > 0 ? "neg" : "");
+  row(gb, "This line", moneyC(b.line_amount));                                   // the tracker row is ONE line of the bill
+  if (b.bill_total != null && Math.abs(num(b.bill_total) - num(b.line_amount)) > 0.5) row(gb, "Bill total (what the qb link opens)", moneyC(b.bill_total));
+  row(gb, "Open balance", moneyC(b.open_balance), bOpen(b) > 0 ? "neg" : "");
   row(gb, "Paid the vendor?", b.pay_status);
   row(gb, "Approved?", b.approved === "approved" ? "Yes" : (b.approved ? "No" : ""));
   row(gb, "Lien clock", b.lien_status);
@@ -3402,8 +3437,8 @@ function openBillDetail(b) {
   row(gi, "Invoice status", b.invoice_status);
   if (b.inv_ar_status) row(gi, "GC paid the invoice?", b.inv_ar_status,
     /paid/i.test(b.inv_ar_status) && !/unpaid|partial/i.test(b.inv_ar_status) ? "pos" : "neg");
-  if (b.inv_amount != null) row(gi, "Invoice amount", money(b.inv_amount));
-  if (b.inv_balance != null) row(gi, "GC still owes", money(b.inv_balance), (b.inv_balance || 0) > 0.005 ? "neg" : "pos");
+  if (b.inv_amount != null) row(gi, "Invoice amount", moneyC(b.inv_amount));
+  if (b.inv_balance != null) row(gi, "GC still owes", moneyC(b.inv_balance), (b.inv_balance || 0) > 0.005 ? "neg" : "pos");
   if (b.gc_paid_date) row(gi, "GC funded", fmtDate(b.gc_paid_date));
   { const acts = document.createElement("div"); acts.className = "pnl-actions";
     if (b.inv_qbo_id) acts.appendChild(linkBtn("Open invoice in QuickBooks ↗", qboInvoiceUrl(b.inv_qbo_id)));
@@ -3562,23 +3597,7 @@ function invDatePasses(i) {
 // Quick find (⌘F / Ctrl+F on this tab): every word must match somewhere in invoice # · memo · amount ·
 // project # · client · note · status; a word starting with "-" must NOT match (filter it out).
 let invQuick = "";
-function _invHay(i) {
-  const amt = num(i.amount), bal = oiBal(i);
-  return [i.doc_number, i.memo, i.project_no, i.customer, i.note, i.status, i.division,
-          amt != null ? String(Math.round(amt)) : "", amt != null ? money(amt) : "",
-          bal != null ? String(Math.round(bal)) : "", bal != null ? money(bal) : ""].join(" ").toLowerCase();
-}
-function invQuickPasses(i) {
-  const terms = invQuick.toLowerCase().split(/\s+/).filter(Boolean);
-  if (!terms.length) return true;
-  const hay = _invHay(i), hayNum = hay.replace(/[$,]/g, "");
-  for (const raw of terms) {
-    const neg = raw.length > 1 && raw[0] === "-", term = neg ? raw.slice(1) : raw, tn = term.replace(/[$,]/g, "");
-    const hit = hay.includes(term) || (tn && hayNum.includes(tn));
-    if (neg ? hit : !hit) return false;
-  }
-  return true;
-}
+function invQuickPasses(i) { return refHit(invQuick, [i.doc_number]); }   // ref # only (owner 2026-09-29)
 function invPasses(i, f) {
   if (!invDatePasses(i)) return false;                   // Month (invoice date)
   if (!invQuickPasses(i)) return false;                  // quick find (⌘F)
@@ -3640,7 +3659,7 @@ function renderInvAmounts(all, f) {
   const totOpen = rows.reduce((t, i) => t + oiBal(i), 0);
   const totBilled = rows.reduce((t, i) => t + num(i.amount), 0);
   $("#invNote").textContent = all.length
-    ? `(${rows.length.toLocaleString()} of ${all.length.toLocaleString()} · ${money(totOpen)} open · ${clients.length} client${clients.length === 1 ? "" : "s"})` : "(no AR data)";
+    ? `(${rows.length.toLocaleString()} of ${all.length.toLocaleString()} · ${moneyC(totOpen)} open · ${clients.length} client${clients.length === 1 ? "" : "s"})` : "(no AR data)";
   { const anyMsel = INV_MSEL.some(c => (invMSel[c.id] || {}).size);
     const cb = $("#ifClear"); if (cb) cb.hidden = !(anyMsel || invMonthSel !== null || invQuick || f.div || f.lien || f.lienclk || f.litig !== "ex"); }
   const cols = [["Pick", "left"], ["Project", "left"], ["Invoice #", "left"], ["Date", "left"], ["Due", "left"], ["Memo", "left"], ["Open balance", "right"], ["Invoice total", "right"], ["Last action", "left"], ["Next follow-up", "left"], ["Collections note", "left"]];
@@ -3679,9 +3698,9 @@ function renderInvAmounts(all, f) {
     tr.appendChild(mc);
     const ob = document.createElement("td"); ob.className = "right";
     if (paid) { ob.textContent = "–"; ob.classList.add("dim"); }
-    else { ob.textContent = money(oiBal(i)); if (i.days_past_due != null && i.days_past_due > 0) { ob.style.color = "var(--neg)"; ob.title = i.days_past_due + " days past due"; } }
+    else { ob.textContent = moneyC(oiBal(i)); if (i.days_past_due != null && i.days_past_due > 0) { ob.style.color = "var(--neg)"; ob.title = i.days_past_due + " days past due"; } }
     tr.appendChild(ob);
-    { const tc = rightText(money(i.amount)); tr.appendChild(tc); }
+    { const tc = rightText(moneyC(i.amount)); tr.appendChild(tc); }
     // The two dates collections runs on (Invoice Tracker "Last Action Date" / "Next Follow-Up"); an
     // overdue follow-up reads red (owner 2026-09-02).
     { const la = document.createElement("td"); la.className = "left"; la.textContent = i.last_action_date ? fmtDateShort(i.last_action_date) : "–"; if (!i.last_action_date) la.classList.add("dim"); tr.appendChild(la);
@@ -3719,7 +3738,7 @@ function renderInvAmounts(all, f) {
     const ad = invClientAvgDays(g.client);
     const sub = document.createElement("span"); sub.className = "g-sub"; sub.hidden = true;   // (the metrics grid replaced the text run)
     const cellG = document.createElement("div"); cellG.className = "bg-cell"; const leftG = document.createElement("span"); leftG.className = "bg-left"; leftG.appendChild(caret); if (caret._pick) leftG.appendChild(caret._pick); leftG.appendChild(nm); cellG.appendChild(leftG);
-    bandMetrics(cellG, [[g.rows.length, "invoices"], [money(g.open), "open", (g.open > 0.005 ? "neg" : "")], [money(g.billed), "billed"], [ad != null ? ad + "d" : "–", "avg days to pay"]]);
+    bandMetrics(cellG, [[g.rows.length, "invoices"], [moneyC(g.open), "open", (g.open > 0.005 ? "neg" : "")], [moneyC(g.billed), "billed"], [ad != null ? ad + "d" : "–", "avg days to pay"]]);
     htd.appendChild(cellG); hr.appendChild(htd);
     hr.onclick = () => { if (invExpanded.has(g.client)) invExpanded.delete(g.client); else invExpanded.add(g.client); renderOpenInvoices(); };
     tbody.appendChild(hr);
@@ -3748,8 +3767,8 @@ function renderInvAmounts(all, f) {
   }
   const tr = document.createElement("tr"); tr.className = "inv-total-row";
   const td0 = document.createElement("td"); td0.className = "left"; td0.colSpan = 6; td0.textContent = "TOTAL"; tr.appendChild(td0);
-  tr.appendChild(rightText(money(totOpen)));
-  tr.appendChild(rightText(money(totBilled)));
+  tr.appendChild(rightText(moneyC(totOpen)));
+  tr.appendChild(rightText(moneyC(totBilled)));
   tr.appendChild(document.createElement("td")); tr.appendChild(document.createElement("td")); tr.appendChild(document.createElement("td"));
   tbody.appendChild(tr);
   updateInvCollapseBtn(); _invPickUpdate();
@@ -3796,7 +3815,7 @@ function renderOpenInvoices() {
     el.className = "attn ag-tile" + (active ? " active" : "") + (val > 0.005 || idx == null ? "" : " none");
     if (hex) el.style.borderLeftColor = hex;
     el.innerHTML = `<span class="a-count"></span><span class="a-label"></span>`;
-    el.querySelector(".a-count").textContent = money(val);
+    el.querySelector(".a-count").textContent = moneyC(val);
     el.querySelector(".a-label").textContent = label;
     el.onclick = () => { invBucketFilter = (idx == null || invBucketFilter === idx) ? null : idx; renderOpenInvoices(); };
     return el;
@@ -3809,7 +3828,7 @@ function renderOpenInvoices() {
 
   const shown = rows.reduce((t, i) => t + oiBal(i), 0);
   $("#invNote").textContent = all.length
-    ? `(${rows.length.toLocaleString()} of ${all.length.toLocaleString()} · ${money(shown)} open)`
+    ? `(${rows.length.toLocaleString()} of ${all.length.toLocaleString()} · ${moneyC(shown)} open)`
     : "(no AR data - run load_invoices.py)";
   { const el = $("#invAsOf"); if (el) el.textContent = (D.as_of ? "aged today " + fmtDate(D.as_of) : ""); }
   { const anyMsel = INV_MSEL.some(c => (invMSel[c.id] || {}).size);
@@ -3860,7 +3879,7 @@ function renderOpenInvoices() {
     const key = document.createElement("span"); key.className = "bg-key"; key.textContent = k;
     left.appendChild(caret); left.appendChild(key);
     cell.appendChild(left);
-    bandMetrics(cell, [[money(gOpen), "open", (gOpen > 0.005 ? "neg" : "")], [g.length, "invoices"]]);
+    bandMetrics(cell, [[moneyC(gOpen), "open", (gOpen > 0.005 ? "neg" : "")], [g.length, "invoices"]]);
     gtd.appendChild(cell); gtr.appendChild(gtd);
     gtr.onclick = () => { if (invExpanded.has(k)) invExpanded.delete(k); else invExpanded.add(k); renderOpenInvoices(); };
     tbody.appendChild(gtr);
@@ -3891,7 +3910,7 @@ function renderOpenInvoices() {
   const lead = document.createElement("td"); lead.className = "left"; lead.colSpan = 6; lead.textContent = "Total open"; ttr.appendChild(lead);
   buckets.forEach((b, k) => {
     const td = document.createElement("td"); td.className = "right ag";
-    if (grand[k] > 0.005) { td.textContent = money(grand[k]); td.classList.add("ag" + k); }
+    if (grand[k] > 0.005) { td.textContent = moneyC(grand[k]); td.classList.add("ag" + k); }
     ttr.appendChild(td);
   });
   tbody.appendChild(ttr);
@@ -3925,7 +3944,7 @@ function invRow(i, buckets) {
     const td = document.createElement("td"); td.className = "right ag";
     if (k === i.bucket_index) {
       td.classList.add("ag" + k);
-      td.appendChild(document.createTextNode(money(oiBal(i))));
+      td.appendChild(document.createTextNode(moneyC(oiBal(i))));
       if (i.litigation) { td.title = "In litigation"; const f = document.createElement("span"); f.className = "litig"; f.textContent = " ⚖"; td.appendChild(f); }
     }
     tr.appendChild(td);
@@ -4278,7 +4297,7 @@ function _ppPaintPayBar() {
   const picked = _ppAllSelected(), tot = picked.reduce((s, x) => s + num(x.b.open), 0), dirty = _pp.payDraft.size;
   bar.classList.toggle("dirty", dirty > 0);
   const st = document.createElement("span"); st.className = "pp-paystat";
-  st.innerHTML = `<b>${picked.length}</b> bill${picked.length === 1 ? "" : "s"} ticked to pay · <b>${_ge(money(tot))}</b>` + (dirty ? ` · <span class="pp-dirty">${dirty} unsaved change${dirty === 1 ? "" : "s"}</span>` : ` · <span class="dim">saved</span>`);
+  st.innerHTML = `<b>${picked.length}</b> bill${picked.length === 1 ? "" : "s"} ticked to pay · <b>${_ge(moneyC(tot))}</b>` + (dirty ? ` · <span class="pp-dirty">${dirty} unsaved change${dirty === 1 ? "" : "s"}</span>` : ` · <span class="dim">saved</span>`);
   bar.appendChild(st);
   const mk = (lbl, cls, fn, title, id) => { const b = document.createElement("button"); b.type = "button"; b.className = "btn small " + (cls || ""); b.textContent = lbl; if (title) b.title = title; if (id) b.id = id; b.onclick = fn; bar.appendChild(b); return b; };
   mk("Mark blockers to pay", "", _ppMarkBlockers, "Tick every unpaid bill on the draws before the next one the GC owes - their waivers unlock it");
@@ -4291,7 +4310,7 @@ function _ppPaintPayBar() {
     const byV = new Map(); for (const x of picked) { const k = x.b.vendor || "?"; if (!byV.has(k)) byV.set(k, []); byV.get(k).push(x); }
     for (const [v, xs] of [...byV].sort((a, b) => a[0].localeCompare(b[0]))) {
       const li = document.createElement("div"); li.className = "pp-sel-v";
-      li.innerHTML = `<b>${_ge(v)}</b> · ${xs.length} bill${xs.length === 1 ? "" : "s"} · ${_ge(money(xs.reduce((s, x) => s + num(x.b.open), 0)))} <span class="dim">(${xs.map(x => _ge(x.b.bill_ref || "?") + " on " + _ge(x.dr.no_draw ? "no draw" : _ppTitle(x.dr))).join(", ")})</span>`;
+      li.innerHTML = `<b>${_ge(v)}</b> · ${xs.length} bill${xs.length === 1 ? "" : "s"} · ${_ge(moneyC(xs.reduce((s, x) => s + num(x.b.open), 0)))} <span class="dim">(${xs.map(x => _ge(x.b.bill_ref || "?") + " on " + _ge(x.dr.no_draw ? "no draw" : _ppTitle(x.dr))).join(", ")})</span>`;
       ul.appendChild(li);
     }
     bar.appendChild(ul);
@@ -4392,7 +4411,7 @@ function _renderPpDraws() {
   // No head and no equation under the table any more (owner 2026-09-23: "remove this, we already have this info on top
   // in the table") - the Coverage table IS the P&L per draw and lights what is open; only a draw's push notes stay.
   if (cur) for (const [k, word] of [["pushed_in", "moved into this draw from the one before"], ["pushed_out", "moved on to the next draw"]]) { const p = cur[k]; if (!p) continue;
-    const cap = document.createElement("div"); cap.className = "bills-cap pp-push"; cap.textContent = `${p.count} bill${p.count === 1 ? "" : "s"} · ${money(p.total)} ${word}: ${p.note || ""}`; det.appendChild(cap); }
+    const cap = document.createElement("div"); cap.className = "bills-cap pp-push"; cap.textContent = `${p.count} bill${p.count === 1 ? "" : "s"} · ${moneyC(p.total)} ${word}: ${p.note || ""}`; det.appendChild(cap); }
   det.appendChild(_ppBillsTable(cur));
   host.appendChild(det);
   _ppPaintTools();
@@ -4459,7 +4478,7 @@ function _ppBillsTable(cur) {
       if (!pay && !b.gates) { const s = document.createElement("span"); s.className = "vg-tag"; s.textContent = "GC pays"; s.title = "Concrete pumping - paid by the GC directly"; s.style.marginLeft = "6px"; vb.appendChild(s); }
       tr.appendChild(vb); }
     { const cc = document.createElement("td"); cc.className = "left"; for (const c of (b.codes || [])) { const chip = document.createElement("span"); chip.className = "codechip"; chip.textContent = c; cc.appendChild(chip); cc.appendChild(document.createTextNode(" ")); } if (!(b.codes || []).length) { cc.textContent = "–"; cc.classList.add("dim"); } tr.appendChild(cc); }
-    const ac = document.createElement("td"); ac.className = "ip-amt"; ac.appendChild(moneyCell(b.amount)); tr.appendChild(ac);
+    const ac = document.createElement("td"); ac.className = "ip-amt"; ac.appendChild(moneyCellC(b.amount)); tr.appendChild(ac);
     tr.appendChild(leftText(fmtDateShort(b.bill_date)));
     if (showDraw) { const dc = document.createElement("td"); dc.className = "left pp-draw-col"; const a = document.createElement("a"); a.href = "#"; a.textContent = dr.no_draw ? "No draw yet" : _ppTitle(dr); a.title = dr.no_draw ? "Not matched to a draw in the Bill Tracker yet" : `${_ppInvLabel(dr)}${drawSpan(dr) ? " · covers " + drawSpan(dr) : ""} - open this draw`;
       a.onclick = (e) => { e.preventDefault(); _pp.view = dr.matched_invoice; _renderPpDraws(); _ppScrollDetail(); }; dc.appendChild(a);
@@ -4468,7 +4487,7 @@ function _ppBillsTable(cur) {
       if (b.pushed) { const s = document.createElement("span"); s.className = "vg-tag push"; s.textContent = b.pushed; s.title = b.pushed_note || "carried into this draw by agreement with the supplier"; wc.prepend(document.createTextNode(" ")); wc.prepend(s); }
       tr.appendChild(wc); }
     { const st = document.createElement("td"); st.className = "left"; const pill = document.createElement("span"); pill.className = b.paid ? "ar-paid" : "ar-open";
-      pill.textContent = isSub ? (b.paid ? "Paid " + fmtDateShort(b.pay_date) : "No") : (b.pay_date ? "Paid " + fmtDateShort(b.pay_date) : (b.paid ? "Yes (no date)" : "No" + (num(b.open) > 0.005 ? " · " + money(b.open) + " open" : "")));
+      pill.textContent = isSub ? (b.paid ? "Paid " + fmtDateShort(b.pay_date) : "No") : (b.pay_date ? "Paid " + fmtDateShort(b.pay_date) : (b.paid ? "Yes (no date)" : "No" + (num(b.open) > 0.005 ? " · " + moneyC(b.open) + " open" : "")));
       if (isSub && !b.paid) pill.title = "No QuickBooks bill payment applied to this bill in the loaded window (this year)"; st.appendChild(pill); tr.appendChild(st); }
     { const dc = leftText(b.description || "–"); dc.className += " inv-memo"; dc.title = b.description || ""; if (!b.description) dc.classList.add("dim"); tr.appendChild(dc); }
     if (pay) { const wc = document.createElement("td"); wc.className = "left";
@@ -4503,9 +4522,9 @@ function _ppBillsTable(cur) {
     const tot = bills.reduce((s, b) => s + num(b.amount), 0), owed = bills.reduce((s, b) => s + (b.paid ? 0 : num(b.open)), 0);
     const tr = document.createElement("tr"); tr.className = "pp-tot" + (grand ? " pp-grand" : "");
     const l = document.createElement("td"); l.className = "left"; l.colSpan = iAmt; l.textContent = label; tr.appendChild(l);
-    const a = document.createElement("td"); a.className = "ip-amt pp-tot-amt"; a.textContent = money(tot); tr.appendChild(a);
+    const a = document.createElement("td"); a.className = "ip-amt pp-tot-amt"; a.textContent = moneyC(tot); tr.appendChild(a);
     const r = document.createElement("td"); r.className = "left"; r.colSpan = COLS - iAmt - 1;
-    r.innerHTML = `<span class="${paidCt === bills.length ? "ip-paid ok" : "dim"}">${paidCt}/${bills.length} paid</span>` + (owed > 0.005 ? ` · <span class="pp-topay">${_ge(money(owed))} to pay</span>` : "");
+    r.innerHTML = `<span class="${paidCt === bills.length ? "ip-paid ok" : "dim"}">${paidCt}/${bills.length} paid</span>` + (owed > 0.005 ? ` · <span class="pp-topay">${_ge(moneyC(owed))} to pay</span>` : "");
     tr.appendChild(r); tbody.appendChild(tr);
   };
   const groupedRows = (xs, sect) => {   // bands by vendor (A to Z or by total) or by cost code; collapsed until opened
@@ -4522,7 +4541,7 @@ function _ppBillsTable(cur) {
       const cell = document.createElement("div"); cell.className = "bg-cell"; const leftP = document.createElement("span"); leftP.className = "bg-left";
       const caret = document.createElement("span"); caret.className = "bg-caret"; caret.textContent = vopen ? "▾ " : "▸ "; const k = document.createElement("span"); k.className = "sg-key"; k.textContent = v; leftP.appendChild(caret); leftP.appendChild(k); cell.appendChild(leftP);
       const nDraws = new Set(list.map(x => x.dr.matched_invoice)).size;
-      bandMetrics(cell, [[money(tot), "total"], [list.length, "bills"], showDraw ? [nDraws, nDraws === 1 ? "draw" : "draws"] : null, [`${paidCt}/${list.length}${paidCt === list.length ? " ✓" : ""}`, "paid", paidCt === list.length ? "ok" : "due"], [owed > 0.005 ? money(owed) : "–", "to pay", owed > 0.005 ? "neg" : ""]]);
+      bandMetrics(cell, [[moneyC(tot), "total"], [list.length, "bills"], showDraw ? [nDraws, nDraws === 1 ? "draw" : "draws"] : null, [`${paidCt}/${list.length}${paidCt === list.length ? " ✓" : ""}`, "paid", paidCt === list.length ? "ok" : "due"], [owed > 0.005 ? moneyC(owed) : "–", "to pay", owed > 0.005 ? "neg" : ""]]);
       vt.appendChild(cell); gtr.appendChild(vt);
       gtr.onclick = (e) => { if (e.target.closest("input")) return;
         if (_pp.openV.has("*")) { _pp.openV = new Set(); for (const x2 of _ppAllRows(cur ? [cur] : d.draws)) _pp.openV.add(`${cur ? cur.matched_invoice : "all"}|${x2.isSub ? "labor" : "materials"}|${_pp.sort}|${keyOf(x2)}`); }
@@ -4553,11 +4572,11 @@ function _ppExport() {
   for (const dr of d.draws) for (const b of _ppBillsOf(dr)) if (b.bill_id && _ppSel(b)) rows.push([dr.no_draw ? (dr.scope ? "Not yet invoiced" : "No draw yet") : dr.scope ? _ppTitle(dr) : "Invoice " + (dr.invoice_no || "") + drawTag(dr), b.vendor, b.bill_ref, b.bill_date, num(b.amount), num(b.open), b.pay_date ? "Paid " + fmtDate(b.pay_date) : (b.pay_status || (b.paid ? "Paid" : "Open")), dr.sub_bills && dr.sub_bills.includes(b) ? "labor" : (b.waiver ? "received" : "needed")]);
   if (!rows.length) { toast("Nothing ticked to pay on this job yet - tick bills (or Mark blockers) first"); return; }
   const unsaved = _pp.payDraft.size ? `\n\n${_pp.payDraft.size} tick(s) are not saved yet - the export follows what is ticked on screen.` : "";
-  if (!confirm(`Export ${rows.length} bill${rows.length === 1 ? "" : "s"} ticked to pay (${money(rows.reduce((s, r) => s + num(r[5]), 0))} open) as the pay-list report?${unsaved}`)) return;
+  if (!confirm(`Export ${rows.length} bill${rows.length === 1 ? "" : "s"} ticked to pay (${moneyC(rows.reduce((s, r) => s + num(r[5]), 0))} open) as the pay-list report?${unsaved}`)) return;
   const nx = (d.funding || {}).next_draw, toPay = rows.reduce((s, r) => s + num(r[5]), 0);
   const footer = nx ? [{ label: `Unlocks ${nx.invoice_no || ""}${drawTag(nx)}`, value: num(nx.ar_open) },
                        { label: "Net = unlock - to pay", value: num(nx.ar_open) - toPay, cls: num(nx.ar_open) - toPay >= 0 ? "pos" : "neg" }] : [];
-  const body = { name: `Pay list ${_pp.pn}`, sheet: "Pay list", title: `${_pp.pn} - bills to pay to unlock the next draw${nx ? " " + money(nx.ar_open) + " - Invoice " + (nx.invoice_no || "") + drawTag(nx) : ""}`, footer,
+  const body = { name: `Pay list ${_pp.pn}`, sheet: "Pay list", title: `${_pp.pn} - bills to pay to unlock the next draw${nx ? " " + moneyC(nx.ar_open) + " - Invoice " + (nx.invoice_no || "") + drawTag(nx) : ""}`, footer,
     subtitle: `${rows.length} bills ticked on the pay run · exported ${fmtDate(new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 19), true)}`,
     columns: [{ label: "Draw" }, { label: "Vendor" }, { label: "Bill #" }, { label: "Bill date" }, { label: "Amount", type: "money" }, { label: "Open", type: "money" }, { label: "Status" }, { label: "Waiver" }],
     rows, group_by: 0, fmt: rows.map((r, i) => ({ r: i, c: 5, cls: r[5] > 0 ? "neg" : "pos" })) };
@@ -4613,7 +4632,7 @@ function _renderIpBills() {
       const k = document.createElement("span"); k.className = "bg-key"; k.textContent = v.vendor;
       const leftV = document.createElement("span"); leftV.className = "bg-left"; leftV.appendChild(caret); leftV.appendChild(k); cell.appendChild(leftV);
       const allPaid = paidCt === v.bills.length;
-      bandMetrics(cell, [[`${paidCt}/${v.bills.length}${allPaid ? " ✓" : ""}`, "paid", allPaid ? "ok" : "due"], [opn > 0.005 ? money(opn) : "–", "still owed", opn > 0.005 ? "neg" : ""], [money(tot), "total"]]);
+      bandMetrics(cell, [[`${paidCt}/${v.bills.length}${allPaid ? " ✓" : ""}`, "paid", allPaid ? "ok" : "due"], [opn > 0.005 ? moneyC(opn) : "–", "still owed", opn > 0.005 ? "neg" : ""], [moneyC(tot), "total"]]);
       gtd.appendChild(cell); gtr.appendChild(gtd);
       gtr.onclick = () => { if (_ip.open.has(key)) _ip.open.delete(key); else _ip.open.add(key); _renderIpBills(); };
       tbody.appendChild(gtr);
@@ -4623,8 +4642,8 @@ function _renderIpBills() {
         const nm = leftText(""); if (!b.gates) { const s = document.createElement("span"); s.className = "vg-tag"; s.textContent = "not paid by us"; s.title = "Concrete pumping - the GC pays this vendor directly"; nm.appendChild(s); } tr.appendChild(nm);
         tr.appendChild(leftText(fmtDateShort(b.bill_date)));
         { const lc = qboLinkCell(b.bill_ref || "–", qboBillHref(b.qbo_link), "Open this bill in QuickBooks"); if (b.att) { const ab = attBtn("Bill", b.bill_id, b.att, `${v.vendor} · bill ${b.bill_ref || ""}`); ab.style.marginLeft = "6px"; lc.appendChild(ab); } tr.appendChild(lc); }
-        const ac = document.createElement("td"); ac.className = "ip-amt"; ac.appendChild(moneyCell(b.amount)); tr.appendChild(ac);
-        const oc = document.createElement("td"); oc.className = "right ip-amt"; oc.textContent = num(b.open) > 0.005 ? money(b.open) : "–"; if (num(b.open) > 0.005) oc.style.color = "var(--neg)"; else oc.classList.add("dim"); tr.appendChild(oc);
+        const ac = document.createElement("td"); ac.className = "ip-amt"; ac.appendChild(moneyCellC(b.amount)); tr.appendChild(ac);
+        const oc = document.createElement("td"); oc.className = "right ip-amt"; oc.textContent = num(b.open) > 0.005 ? moneyC(b.open) : "–"; if (num(b.open) > 0.005) oc.style.color = "var(--neg)"; else oc.classList.add("dim"); tr.appendChild(oc);
         const st = document.createElement("td"); st.className = "left"; const pill = document.createElement("span"); pill.className = b.pay_date ? "ar-paid" : "ar-open"; pill.textContent = b.pay_date ? "Paid " + fmtDateShort(b.pay_date) : (b.pay_status || "Open"); st.appendChild(pill); tr.appendChild(st);
         tr.appendChild(leftText(b.approved || "–"));
         tr.appendChild(leftText(b.lien_status || "–"));
@@ -4646,7 +4665,7 @@ function _renderIpBills() {
       const cell = document.createElement("div"); cell.className = "bg-cell"; const caret = document.createElement("span"); caret.className = "bg-caret"; caret.textContent = open ? "▾ " : "▸ ";
       const k = document.createElement("span"); k.className = "bg-key"; k.textContent = v.vendor;
       const leftS = document.createElement("span"); leftS.className = "bg-left"; leftS.appendChild(caret); leftS.appendChild(k); cell.appendChild(leftS);
-      bandMetrics(cell, [[v.lines.length, "lines"], [money(v.total), "total"]]);
+      bandMetrics(cell, [[v.lines.length, "lines"], [moneyC(v.total), "total"]]);
       gtd.appendChild(cell); gtr.appendChild(gtd);
       gtr.onclick = () => { if (_ip.open.has(key)) _ip.open.delete(key); else _ip.open.add(key); _renderIpBills(); };
       tbody.appendChild(gtr);
@@ -4655,7 +4674,7 @@ function _renderIpBills() {
         { const lc = qboLinkCell(l.doc_number || "–", qboUrl(l.txn_type === "Expense" ? "expense" : "bill", l.txn_id), "Open in QuickBooks"); if (l.att) { const ab = attBtn(l.txn_type === "Expense" ? "Purchase" : "Bill", l.txn_id, l.att, `${v.vendor} · bill ${l.doc_number || ""}`); ab.style.marginLeft = "6px"; lc.appendChild(ab); } tr.appendChild(lc); }
         const dc = leftText(l.description || "–"); dc.className += " inv-memo"; dc.title = l.description || ""; tr.appendChild(dc);
         const cc = document.createElement("td"); cc.className = "left"; if (l.cost_code) { const chip = document.createElement("span"); chip.className = "codechip"; chip.textContent = l.cost_code; cc.appendChild(chip); } tr.appendChild(cc);
-        const ac = document.createElement("td"); ac.appendChild(moneyCell(l.amount)); tr.appendChild(ac); tbody.appendChild(tr); }
+        const ac = document.createElement("td"); ac.appendChild(moneyCellC(l.amount)); tr.appendChild(ac); tbody.appendChild(tr); }
     }
     table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table); host.appendChild(scroll);
   }
@@ -4686,7 +4705,7 @@ async function openInvoicePage(inv) {
   const memoBox = document.createElement("div"); memoBox.className = "ip-memo" + (i.memo ? "" : " dim"); memoBox.textContent = i.memo || "(no memo on this invoice)"; memoBox.title = "Invoice memo"; top.appendChild(memoBox);
   const grid = document.createElement("div"); grid.className = "ip-grid"; top.appendChild(grid);
   const col = (title, rows) => { const c = document.createElement("div"); c.className = "dgroup"; const h = document.createElement("h4"); h.textContent = title; c.appendChild(h); kv(c, rows); grid.appendChild(c); };
-  col("Billing", [["Invoice #", docn], ["Amount billed", money(amt), "ip-big"], ["Open balance", money(bal), "ip-big" + (bal != null && bal > 0.005 ? " neg" : "")], paidAmt != null ? ["Paid", money(paidAmt)] : null, ["Status", i.status || (bal > 0.005 ? "Open" : "Paid")]].filter(Boolean));
+  col("Billing", [["Invoice #", docn], ["Amount billed", moneyC(amt), "ip-big"], ["Open balance", moneyC(bal), "ip-big" + (bal != null && bal > 0.005 ? " neg" : "")], paidAmt != null ? ["Paid", moneyC(paidAmt)] : null, ["Status", i.status || (bal > 0.005 ? "Open" : "Paid")]].filter(Boolean));
   col("Dates & terms", [["Invoice date", i.txn_date ? fmtDate(i.txn_date) : null], ["Due date", i.due_date ? fmtDate(i.due_date) : null],
     isOpen && i.days_past_due != null ? ["Days past due", i.days_past_due > 0 ? i.days_past_due + " days" : "current", i.days_past_due > 0 ? "neg" : ""] : null,
     ["Terms", i.net_terms], ["Draw period", d.period && d.period.start ? `${fmtDate(d.period.start)} – ${fmtDate(d.period.end)}` : i.draw_period], i.paid_date ? ["Paid date", fmtDate(i.paid_date)] : null].filter(Boolean));
@@ -4700,11 +4719,11 @@ async function openInvoicePage(inv) {
   s1.appendChild(acts);
   // ── 2. the bills on this draw, grouped by vendor, with pay status ──
   const T = d.totals || {};
-  const s2 = sec("Bills on this draw · Bill Tracker, subs from QuickBooks", `${T.bills_paid || 0}/${T.bills || 0} paid · ${money((T.materials || 0) - (T.materials_open || 0))} / ${money(T.materials)}` + ((T.materials_open || 0) > 0.005 ? ` · ${money(T.materials_open)} still owed` : ""));
+  const s2 = sec("Bills on this draw · Bill Tracker, subs from QuickBooks", `${T.bills_paid || 0}/${T.bills || 0} paid · ${moneyC((T.materials || 0) - (T.materials_open || 0))} / ${moneyC(T.materials)}` + ((T.materials_open || 0) > 0.005 ? ` · ${moneyC(T.materials_open)} still owed` : ""));
   { const cnt = s2.querySelector(".count"); if (cnt) cnt.classList.add("ip-paid", (T.bills_paid || 0) === (T.bills || 0) ? "ok" : "due"); }
   const strip = document.createElement("div"); strip.className = "kpi-row ip-strip";
-  for (const [l, v, sub] of [["Billed to the GC", money(T.billed), i.status || ""], ["Materials we pay", money(T.materials_we_pay), T.materials !== T.materials_we_pay ? `${money(T.materials)} incl. pump vendors the GC pays` : ""],
-                             ["Subs (labor)", money(T.subs), d.period && d.period.start ? "in the draw period" : "no period on the memo"], ["Net after bills + subs", money(T.net), T.net != null && T.net < 0 ? "bills exceed the draw" : ""]]) {
+  for (const [l, v, sub] of [["Billed to the GC", moneyC(T.billed), i.status || ""], ["Materials we pay", moneyC(T.materials_we_pay), T.materials !== T.materials_we_pay ? `${moneyC(T.materials)} incl. pump vendors the GC pays` : ""],
+                             ["Subs (labor)", moneyC(T.subs), d.period && d.period.start ? "in the draw period" : "no period on the memo"], ["Net after bills + subs", moneyC(T.net), T.net != null && T.net < 0 ? "bills exceed the draw" : ""]]) {
     const k = document.createElement("div"); k.className = "kpi" + (l.startsWith("Net") && T.net != null && T.net < 0 ? " pnl-kpi-neg" : "");
     k.innerHTML = `<div class="k-label"></div><div class="k-value"></div><div class="k-sub"></div>`;
     k.querySelector(".k-label").textContent = l; k.querySelector(".k-value").textContent = v; k.querySelector(".k-sub").textContent = sub; strip.appendChild(k);
@@ -4772,9 +4791,9 @@ function openInvoiceDetail(inv) {
   if (isOpen && dpd == null && inv.due_date) { const dd = Math.floor((Date.now() - Date.parse(inv.due_date)) / 86400000); if (!isNaN(dd)) dpd = dd; }
   const groups = [
     ["Billing", [
-      ["Amount billed", money(amt), false],
-      ["Open balance", money(bal), bal != null && bal > 0.005],
-      paid != null ? ["Paid", money(paid), false] : null,
+      ["Amount billed", moneyC(amt), false],
+      ["Open balance", moneyC(bal), bal != null && bal > 0.005],
+      paid != null ? ["Paid", moneyC(paid), false] : null,
       ["Status", inv.status || (bal != null && bal > 0.005 ? "Open" : "Paid"), false],
     ]],
     ["Dates & terms", [
@@ -4979,7 +4998,7 @@ function invCollectionsXlsx(rows) {
                               oiBal(i), num(i.amount), i.note || "", i.next_followup || "", i.last_action_date || "", i.lien_status || "", i.notion_url || ""]);
   const fmt = []; rows.forEach((i, r) => { if (i.days_past_due > 0) fmt.push({ r, c: 6, cls: "neg" }); fmt.push({ r, c: 7, cls: oiBal(i) > 0 ? "neg" : "pos" }); if (i.note) fmt.push({ r, c: 9, cls: "warn" }); });
   const tot = rows.reduce((s, i) => s + oiBal(i), 0);
-  const body = { name: "Collections report", sheet: "Collections", title: `Collections - ${rows.length} open invoice${rows.length === 1 ? "" : "s"} - ${money(tot)} open`,
+  const body = { name: "Collections report", sheet: "Collections", title: `Collections - ${rows.length} open invoice${rows.length === 1 ? "" : "s"} - ${moneyC(tot)} open`,
     subtitle: `status per invoice for the cash-flow forecast · exported ${fmtDate(new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 19), true)}`,
     columns: cols, rows: data, group_by: 0, fmt };
   toast("Building the Excel report…");
@@ -5003,7 +5022,7 @@ function invSubBand(proj, name, open, count, colspan) {
   const cell = document.createElement("div"); cell.className = "bg-cell";
   const key = document.createElement("span"); key.className = "sg-key"; key.textContent = proj + (name ? " · " + name : "");
   cell.appendChild(key);
-  bandMetrics(cell, [[money(open), "open", open > 0.005 ? "neg" : ""], [count, "invoices"]]);
+  bandMetrics(cell, [[moneyC(open), "open", open > 0.005 ? "neg" : ""], [count, "invoices"]]);
   td.appendChild(cell); tr.appendChild(td);
   return tr;
 }
@@ -5023,7 +5042,7 @@ function _stmtChecked() { return stmtRows.filter(i => stmtOn.has(invKey(i))); }
 function _stmtRowEls() { const b = $("#invStmtBody"); return b ? [...b.querySelectorAll("tr.stmt-row")] : []; }
 function _stmtTotalUpdate() {
   const t = _stmtChecked().reduce((s, i) => s + oiBal(i), 0);
-  { const el = $("#stmtTotalVal"); if (el) el.textContent = money(t); }
+  { const el = $("#stmtTotalVal"); if (el) el.textContent = moneyC(t); }
   { const el = $("#stmtCount"); if (el) el.textContent = `${stmtOn.size} of ${stmtRows.length} selected`; }
   { const b = $("#btnCopyStmt"); if (b) { b.textContent = stmtOn.size ? `Copy table (${stmtOn.size})` : "Copy table"; b.disabled = !stmtOn.size; } }
 }
@@ -5081,7 +5100,7 @@ function openInvStatement() {
     tr.appendChild(leftText(fmtDateShort(i.due_date)));
     const dpd = (i.days_past_due != null && i.days_past_due > 0) ? i.days_past_due + "d" : "–";
     const dc = leftText(dpd); if (i.days_past_due > 0) dc.style.color = "var(--neg)"; tr.appendChild(dc);
-    tr.appendChild(rightText(money(oiBal(i))));
+    tr.appendChild(rightText(moneyC(oiBal(i))));
     tbody.appendChild(tr);
   }
   const ttr = document.createElement("tr"); ttr.className = "ag-total";
@@ -5109,7 +5128,7 @@ async function copyInvStatement() {
       const dpd = (i.days_past_due != null && i.days_past_due > 0) ? String(i.days_past_due) : "";
       const amt = Math.round(oiBal(i)); grand += oiBal(i);
       tsv.push([c, proj, i.doc_number || "", fmtDateShort(i.txn_date), fmtDateShort(i.due_date), dpd, amt].join("\t"));
-      const htmlCells = [c, proj, i.doc_number || "", fmtDateShort(i.txn_date), fmtDateShort(i.due_date), dpd, money(amt)];
+      const htmlCells = [c, proj, i.doc_number || "", fmtDateShort(i.txn_date), fmtDateShort(i.due_date), dpd, moneyC(amt)];
       html += "<tr>" + htmlCells.map((x, idx) => `<td style="text-align:${idx === 6 ? "right" : "left"}">${_esc(String(x))}</td>`).join("") + "</tr>";
     }
   }
@@ -5140,8 +5159,8 @@ function _custForecastList(days, invs, expectedMs) {   // the invoices a Cash-in
   const tb = document.createElement("tbody"); let tot = 0;
   for (const { i, ms } of rows) { const tr = document.createElement("tr"); tr.style.cursor = "pointer"; tr.onclick = () => openInvoicePage(i);
     tr.appendChild(leftText(fmtDateShort(new Date(ms).toISOString().slice(0, 10)))); tr.appendChild(leftText(i.customer || "–")); tr.appendChild(leftText(i.project_no || "–")); tr.appendChild(leftText(i.doc_number || "–")); tr.appendChild(leftText(fmtDateShort(i.txn_date)));
-    const oc = document.createElement("td"); oc.className = "right"; oc.appendChild(moneyCell(oiBal(i))); tr.appendChild(oc); tot += oiBal(i); tb.appendChild(tr); }
-  const tr = document.createElement("tr"); tr.className = "ag-total"; const td = document.createElement("td"); td.className = "left"; td.colSpan = 5; td.textContent = "Total expected"; tr.appendChild(td); const oc = document.createElement("td"); oc.className = "right"; oc.appendChild(moneyCell(tot)); tr.appendChild(oc); tb.appendChild(tr);
+    const oc = document.createElement("td"); oc.className = "right"; oc.appendChild(moneyCellC(oiBal(i))); tr.appendChild(oc); tot += oiBal(i); tb.appendChild(tr); }
+  const tr = document.createElement("tr"); tr.className = "ag-total"; const td = document.createElement("td"); td.className = "left"; td.colSpan = 5; td.textContent = "Total expected"; tr.appendChild(td); const oc = document.createElement("td"); oc.className = "right"; oc.appendChild(moneyCellC(tot)); tr.appendChild(oc); tb.appendChild(tr);
   t.appendChild(tb); scroll.appendChild(t); body.appendChild(scroll);
 }
 function renderCustomers() {
@@ -5166,7 +5185,7 @@ function renderCustomers() {
   const divOpen = d => [...byDiv.get(d).values()].reduce((t, e) => t + e.open, 0);
   const clients = new Set(); let total = 0;
   for (const m of byDiv.values()) for (const e of m.values()) { clients.add(e.client); total += e.open; }
-  { const n = $("#custNote"); if (n) n.textContent = clients.size ? `(${clients.size} clients · ${money(total)} open)` : "(no AR data - load invoices)"; }
+  { const n = $("#custNote"); if (n) n.textContent = clients.size ? `(${clients.size} clients · ${moneyC(total)} open)` : "(no AR data - load invoices)"; }
   // ── Payment speed → future cash-in forecast (owner 2026-08-25) ──
   const paySpeed = OI.pay_speed || { by_client: {}, all_avg: null };
   const clientAvgDays = c => { const s = paySpeed.by_client[(c || "").toLowerCase()]; return (s && s.avg_days != null) ? s.avg_days : paySpeed.all_avg; };
@@ -5178,8 +5197,8 @@ function renderCustomers() {
     if (out <= 30) { f30 += bal; f60 += bal; f90 += bal; } else if (out <= 60) { f60 += bal; f90 += bal; } else if (out <= 90) { f90 += bal; } }
   { const stats = $("#custStats"); if (stats) { stats.innerHTML = "";
       const tiles = [];   // Open AR + client count sit on the Company strip above (2026-09-13) - no double
-      for (const d of order) tiles.push([d, money(divOpen(d))]);       // per-division open AR
-      if (paySpeed.all_avg != null) tiles.push(["Cash-in ≤30d", money(f30), "fc"], ["≤60d", money(f60), "fc"], ["≤90d", money(f90), "fc"]);
+      for (const d of order) tiles.push([d, moneyC(divOpen(d))]);       // per-division open AR
+      if (paySpeed.all_avg != null) tiles.push(["Cash-in ≤30d", moneyC(f30), "fc"], ["≤60d", moneyC(f60), "fc"], ["≤90d", moneyC(f90), "fc"]);
       const arSrc = srcText("QuickBooks AR", loadedAt("AR (invoices)"), "loaded");
       for (const [l, v, cls] of tiles) {
         const k = el2("div", "kpi" + (cls ? " kpi-" + cls : "")); k.appendChild(el2("div", "k-label", l)); k.appendChild(el2("div", "k-value", v));
@@ -5204,14 +5223,14 @@ function renderCustomers() {
       const key = document.createElement("span"); key.className = "bg-key"; key.textContent = div; td.appendChild(key);
       const n = document.createElement("span"); n.className = "cust-div-n"; n.textContent = ` ${rows.length} client${rows.length === 1 ? "" : "s"}`; td.appendChild(n);
       gtr.appendChild(td); }
-    { const td = rightText(money(divOpen(div))); td.classList.add("cust-div-amt"); gtr.appendChild(td); }
+    { const td = rightText(moneyC(divOpen(div))); td.classList.add("cust-div-amt"); gtr.appendChild(td); }
     gtr.appendChild(rightText(String(rows.reduce((a, r) => a + (r.n || 0), 0))));
     gtr.appendChild(leftText("")); gtr.appendChild(rightText(""));
     tb.appendChild(gtr);
     for (const r of rows) {
       const tr = document.createElement("tr"); tr.style.cursor = "pointer"; tr.title = "Open this client's page - its invoices, paid and open";
       tr.onclick = () => openClientPage(r.client);   // dial in by client (owner 2026-09-16); "Open in Invoices" on the page applies the filter to the tracker
-      tr.appendChild(leftText(r.client)); tr.appendChild(rightText(money(r.open)));
+      tr.appendChild(leftText(r.client)); tr.appendChild(rightText(moneyC(r.open)));
       tr.appendChild(rightText(String(r.n))); tr.appendChild(leftText(r.oldest ? fmtDateShort(r.oldest) : "–"));
       // Avg days to pay (from this client's paid history); dim the portfolio fallback so it reads as an estimate.
       const sp = paySpeed.by_client[(r.client || "").toLowerCase()];
@@ -5252,7 +5271,7 @@ async function renderClientPage() {
   const openInvs = (OI.invoices || []).filter(i => (i.customer || "") === _cp.client);
   const open = openInvs.reduce((t, i) => t + oiBal(i), 0);
   const ps = ((OI.pay_speed || {}).by_client || {})[_cp.client.toLowerCase()];
-  $("#recordSub").textContent = `${money(open)} open · ${openInvs.length} open invoice${openInvs.length === 1 ? "" : "s"}` + (ps && ps.avg_days != null ? ` · pays in ${ps.avg_days} days on average (${ps.n} paid)` : "")
+  $("#recordSub").textContent = `${moneyC(open)} open · ${openInvs.length} open invoice${openInvs.length === 1 ? "" : "s"}` + (ps && ps.avg_days != null ? ` · pays in ${ps.avg_days} days on average (${ps.n} paid)` : "")
     ;
   const tools = document.createElement("div"); tools.className = "cp-tools";
   const seg = document.createElement("div"); seg.className = "seg big";
@@ -5276,7 +5295,7 @@ async function renderClientPage() {
   const row = i => {   // the tracker's own row, minus the client column (it is the client's page), plus Amount + Status
     const tr = invRow(i, buckets); tr.removeChild(tr.firstElementChild);      // client
     const net = tr.children[3]; tr.removeChild(net);                          // net terms
-    const amt = document.createElement("td"); amt.className = "right"; amt.appendChild(moneyCell(i.amount));
+    const amt = document.createElement("td"); amt.className = "right"; amt.appendChild(moneyCellC(i.amount));
     const st = document.createElement("td"); st.className = "left status-col";
     const bal = oiBal(i), paid = bal <= 0.005;
     st.appendChild(stText(paid ? "Paid" + (i.paid_date ? " " + fmtDateShort(i.paid_date) : "") : (i.days_past_due > 0 ? `${i.days_past_due}d past due` : "Open"), paid ? "st-ok" : (i.days_past_due > 0 ? "st-warn" : "st-dim"),
@@ -5294,8 +5313,8 @@ async function renderClientPage() {
     }
   } else for (const i of invs) tbody.appendChild(row(i));
   const ttr = document.createElement("tr"); ttr.className = "ag-total";
-  const lead = document.createElement("td"); lead.className = "left"; lead.colSpan = 6; lead.textContent = `Total open · ${invs.length} invoice${invs.length === 1 ? "" : "s"} · ${money(invs.reduce((t, i) => t + num(i.amount), 0))} invoiced`; ttr.appendChild(lead);
-  buckets.forEach((b, k) => { const td = document.createElement("td"); td.className = "right ag"; if (grand[k] > 0.005) { td.textContent = money(grand[k]); td.classList.add("ag" + k); } ttr.appendChild(td); });
+  const lead = document.createElement("td"); lead.className = "left"; lead.colSpan = 6; lead.textContent = `Total open · ${invs.length} invoice${invs.length === 1 ? "" : "s"} · ${moneyC(invs.reduce((t, i) => t + num(i.amount), 0))} invoiced`; ttr.appendChild(lead);
+  buckets.forEach((b, k) => { const td = document.createElement("td"); td.className = "right ag"; if (grand[k] > 0.005) { td.textContent = moneyC(grand[k]); td.classList.add("ag" + k); } ttr.appendChild(td); });
   tbody.appendChild(ttr);
   table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table); body.appendChild(scroll);
 }
@@ -5340,11 +5359,11 @@ const HINT_PAYMENTS = "Each row is a payment received. Click it to see the invoi
 function renderPayments() {
   const body = $("#payBody"); if (!body) return;
   const pays = PAY.payments || [];
-  { const n = $("#payNote"); if (n) n.textContent = pays.length ? `(${pays.length} payments · ${money(PAY.total_received)} received)` : "(no payment data - run load_payments.py)"; }
+  { const n = $("#payNote"); if (n) n.textContent = pays.length ? `(${pays.length} payments · ${moneyC(PAY.total_received)} received)` : "(no payment data - run load_payments.py)"; }
   body.innerHTML = "";
   const drawIdx = payOpenBillsByDraw(), projIdx = payOpenBillsByProject();
   const stats = document.createElement("div"); stats.className = "kpi-row";
-  for (const [l, v] of [["Received (last 12 months)", money(PAY.total_received)], ["Payments", String(pays.length)],
+  for (const [l, v] of [["Received (last 12 months)", moneyC(PAY.total_received)], ["Payments", String(pays.length)],
                         ["Invoices paid", String(PAY.invoices_paid || 0)]]) {
     const k = el2("div", "kpi"); k.appendChild(el2("div", "k-label", l)); k.appendChild(el2("div", "k-value", v));
     k.appendChild(srcChip(srcText("QuickBooks payments", loadedAt("Payments"), "loaded"), "QBO Payment transactions (money in), a rolling 12-month window reloaded on every Resync")); stats.appendChild(k);
@@ -5408,7 +5427,7 @@ function renderPayments() {
           const td = document.createElement("td"); td.className = ci === iAmt ? "right" : "left";
           if (ci === 0) { td.classList.add("pay-per");
             td.innerHTML = `<span class="bg-caret">${pExp ? "▾" : "▸"}</span> <span class="bg-key">${_ge(per.label)}</span> <span class="cust-div-n">${perN[per.key]} payment${perN[per.key] === 1 ? "" : "s"}</span>`; }
-          else if (ci === iAmt) { td.classList.add("pay-per-amt"); td.textContent = money(perTot[per.key]); }
+          else if (ci === iAmt) { td.classList.add("pay-per-amt"); td.textContent = moneyC(perTot[per.key]); }
           gtr.appendChild(td);
         }
         tb.appendChild(gtr);
@@ -5437,14 +5456,14 @@ function renderPayments() {
     tr.appendChild(leftText(fmtDateShort(p.txn_date)));
     { const rc = leftText(p.ref_no || "–"); if (p.att) { const ab = attBtn("Payment", p.qbo_txn_id, p.att, `${p.parent_customer || p.customer || ""} · payment ${p.ref_no || ""}`); ab.style.marginLeft = "6px"; rc.appendChild(ab); } tr.appendChild(rc); }
     tr.appendChild(leftText(p.method || "–"));
-    tr.appendChild(rightText(money(p.total_amt)));
+    tr.appendChild(rightText(moneyC(p.total_amt)));
     // Unlocks (AP): open vendor bills on this payment's project(s) → click opens the side panel
     const uc = document.createElement("td"); uc.className = "right";
     const bills = payUnlockBills(p, drawIdx, projIdx);
     const apSum = bills.reduce((t, b) => t + num(b.open_balance), 0);
     if (bills.length) {
       const link = document.createElement("span"); link.className = "unlock-link";
-      link.textContent = `${money(apSum)} · ${bills.length}`;
+      link.textContent = `${moneyC(apSum)} · ${bills.length}`;
       link.title = "Open vendor bills on the draw(s) this payment paid - the AP it funds";
       link.onclick = (e) => { e.stopPropagation(); openPaymentBills(p, bills); };
       uc.appendChild(link);
@@ -5454,9 +5473,9 @@ function renderPayments() {
     // Negative = the AP owed on this draw/job exceeds what came in (this payment doesn't cover it).
     const net = num(p.total_amt) - apSum;
     const nc = document.createElement("td"); nc.className = "right"; nc.style.fontWeight = "600";
-    nc.textContent = money(net);
+    nc.textContent = moneyC(net);
     nc.title = bills.length
-      ? `${money(p.total_amt)} in − ${money(apSum)} AP = ${money(net)} left after paying those vendors`
+      ? `${moneyC(p.total_amt)} in − ${moneyC(apSum)} AP = ${moneyC(net)} left after paying those vendors`
       : "No AP tied to this payment - the full amount is net";
     if (net < -0.005) nc.style.color = "var(--neg)";
     tr.appendChild(nc);
@@ -5483,10 +5502,10 @@ function renderPayments() {
         { const mc = leftText(a.memo || "–"); mc.className += " inv-memo"; mc.title = a.memo || ""; r.appendChild(mc); }
         const oc = document.createElement("td"); oc.className = "right";
         if (a.invoice_open == null) oc.appendChild(document.createTextNode("–"));
-        else if (a.invoice_open > 0.005) { oc.textContent = money(a.invoice_open); oc.style.color = "var(--neg)"; }
+        else if (a.invoice_open > 0.005) { oc.textContent = moneyC(a.invoice_open); oc.style.color = "var(--neg)"; }
         else { oc.textContent = "paid"; oc.className = "right dim"; }
         r.appendChild(oc);
-        r.appendChild(rightText(money(a.amount)));
+        r.appendChild(rightText(moneyC(a.amount)));
         bod.appendChild(r);
       }
       box.appendChild(bod); std.appendChild(box); sr.appendChild(std); tb.appendChild(sr);
@@ -5500,7 +5519,7 @@ function openPaymentBills(p, bills) {
   $("#payBillsTitle").textContent = (p.parent_customer || p.customer || "Payment");
   const projs = [...new Set((p.applications || []).map(a => a.project_no).filter(Boolean))];
   const sum = bills.reduce((t, b) => t + num(b.open_balance), 0);
-  $("#payBillsSub").textContent = `${fmtDateShort(p.txn_date)} · ${money(p.total_amt)} in · unlocks ${money(sum)} AP across ${projs.length} job${projs.length === 1 ? "" : "s"}`;
+  $("#payBillsSub").textContent = `${fmtDateShort(p.txn_date)} · ${moneyC(p.total_amt)} in · unlocks ${moneyC(sum)} AP across ${projs.length} job${projs.length === 1 ? "" : "s"}`;
   const body = $("#payBillsBody"); body.innerHTML = "";
   const intro = document.createElement("p"); intro.className = "hint";
   intro.textContent = "Open vendor bills tied to the draw(s) this payment paid - the AP this cash-in actually funds (not the whole job).";
@@ -5511,7 +5530,7 @@ function openPaymentBills(p, bills) {
     list.sort((a, b) => num(b.open_balance) - num(a.open_balance));
     const g = document.createElement("div"); g.className = "dgroup";
     const h = document.createElement("h4");
-    h.textContent = `${proj}${nameOf(proj) ? " · " + nameOf(proj) : ""} · ${money(list.reduce((t, b) => t + num(b.open_balance), 0))} open`;
+    h.textContent = `${proj}${nameOf(proj) ? " · " + nameOf(proj) : ""} · ${moneyC(list.reduce((t, b) => t + num(b.open_balance), 0))} open`;
     g.appendChild(h);
     const t = document.createElement("table"); t.className = "sub-grid";
     t.innerHTML = "<thead><tr><th class='left'>Vendor</th><th class='left'>Bill #</th><th class='right'>Open</th><th class='left'>Status</th></tr></thead>";
@@ -5522,7 +5541,7 @@ function openPaymentBills(p, bills) {
       if (vend) { const vtd = document.createElement("td"); vtd.className = "left"; const a = document.createElement("a"); a.href = vend; a.target = "_blank"; a.rel = "noopener"; a.className = "qbo-link"; a.textContent = b.vendor || "–"; a.title = "Open bill in QuickBooks"; vtd.appendChild(a); r.appendChild(vtd); }
       else r.appendChild(leftText(b.vendor || "–"));
       r.appendChild(leftText(b.bill_ref || "–"));
-      const oc = document.createElement("td"); oc.className = "right"; oc.textContent = money(b.open_balance); oc.style.color = "var(--neg)"; r.appendChild(oc);
+      const oc = document.createElement("td"); oc.className = "right"; oc.textContent = moneyC(b.open_balance); oc.style.color = "var(--neg)"; r.appendChild(oc);
       r.appendChild(leftText(b.pay_status || "–"));
       tbb.appendChild(r);
     }
@@ -8483,8 +8502,7 @@ function renderQboAudit() {
   const q = (($("#qaSearch") || {}).value || "").trim().toLowerCase();
   const flaggedOnly = !!($("#qaFlaggedOnly") && $("#qaFlaggedOnly").checked);
   const base = all.filter(c => (!flaggedOnly || c.flags.length) && (!qaFlag || c.flags.includes(qaFlag))
-    && (!q || [c.ref_name, c.doc_number, QA_ENTITY[c.entity], c.entity, c.rec_id, c.kind, c.flags.join(" "), c.total_before, c.total_after, c.txn_date,
-      ...(c.jobs_before || []), ...(c.jobs_after || []), ...(c.classes_before || []), ...(c.classes_after || [])].join(" ").toLowerCase().includes(q)));
+    && refHit(q, [c.doc_number, c.doc_before]));   // ref # only - type / vendor / project / class are the column funnels
   const rows = hfSorted("qboaudit", base.filter(c => hfPasses("qboaudit", c)));
   const cols = [["When (QuickBooks time)", "left"], ["What", "left"], ["Type", "left", "qatype"], ["No.", "left"], ["Vendor / client", "left", "qaparty"], ["Project", "left", "qaproj"], ["Class", "left", "qaclass"],
     ["Txn date", "left"], ["Before", "right"], ["After", "right"], ["Open now", "right"], ["Record", "left"], ["", "left"]];
@@ -8537,8 +8555,8 @@ function renderQboAudit() {
     }
     else if (c.flags.includes("payment unapplied")) { vb = c.applied_before; va = c.applied_after; what = "applied to bills"; }
     else if (c.flags.includes("reopened")) { vb = c.balance_before; va = c.balance_after; what = "open balance"; }
-    if (what !== null) for (const v of [vb, va]) { const td = document.createElement("td"); td.className = "right"; td.title = what; if (v == null) { td.textContent = "–"; td.classList.add("dim"); } else td.appendChild(moneyCell(v)); tr.appendChild(td); }
-    { const td = document.createElement("td"); td.className = "right"; const v = c.kind === "deleted" ? null : c.balance_after; if (v == null) { td.textContent = "–"; td.classList.add("dim"); } else td.textContent = money(v); tr.appendChild(td); }
+    if (what !== null) for (const v of [vb, va]) { const td = document.createElement("td"); td.className = "right"; td.title = what; if (v == null) { td.textContent = "–"; td.classList.add("dim"); } else td.appendChild(moneyCellC(v)); tr.appendChild(td); }
+    { const td = document.createElement("td"); td.className = "right"; const v = c.kind === "deleted" ? null : c.balance_after; if (v == null) { td.textContent = "–"; td.classList.add("dim"); } else td.textContent = moneyC(v); tr.appendChild(td); }
     { const td = document.createElement("td"); td.className = "left"; const s = document.createElement("span"); s.className = "st " + (c.deleted_now ? "st-bad" : "st-dim");
       s.textContent = c.deleted_now ? "deleted in QuickBooks" : "on file"; if (c.has_before) s.title = "The record as it was before this change is kept in the mirror (the repair material)"; td.appendChild(s); tr.appendChild(td); }
     { const td = document.createElement("td"); td.className = "left qa-okcell";   // the owner's review: OK = seen, fine, off the list next run
@@ -8649,7 +8667,7 @@ function renderCheckDrift() {
   const q = (($("#cdSearch") || {}).value || "").trim().toLowerCase().split(/\s+/).filter(Boolean);
   const hay = r => [r.vendor, r.check, r.txn_date, r.total, r.floating, r.pattern, ...r.reopened.map(b => b.doc_number + " " + b.balance),
     ...r.copies.map(b => b.doc_number + " " + b.balance), ...r.late.map(b => b.doc_number + " " + b.amount), ...r.cause, ...r.todo].join(" ").toLowerCase();
-  const base = all.filter(r => fn(r) && (!q.length || q.every(w => hay(r).includes(w))));
+  const base = all.filter(r => fn(r) && refHit(q.join(" "), [r.check, ...r.reopened.map(b => b.doc_number), ...r.copies.map(b => b.doc_number), ...r.late.map(b => b.doc_number)]));
   const rows = hfSorted("checkdrift", base.filter(r => hfPasses("checkdrift", r)));
   const cols = [["Vendor", "left", "vendor"], ["Priority", "left"], ["Check #", "left"], ["Check date", "left"], ["Check total", "right"], ["Applied now", "right"],
     ["Floating", "right"], ["Bill it paid (open again)", "left"], ["Moved to a newer bill", "left"], ["What happened", "left"], ["Changed", "left"]];
@@ -8704,7 +8722,7 @@ function renderStripHistory(thead, tbody) {
   if (!CSH || !CSH.ok) { tbody.innerHTML = `<tr><td colspan="${cols.length}" class="left" style="padding:14px;color:var(--text-dim)">${_ge((CSH && CSH.error) || "History unavailable.")}</td></tr>`; return; }
   const q = (($("#cdSearch") || {}).value || "").trim().toLowerCase().split(/\s+/).filter(Boolean);
   const hay = e => [e.check, e.vendor, e.total, e.trigger, e.status, ...e.bills.map(b => b.doc_number), ...e.paid_again.map(a => a.check)].join(" ").toLowerCase();
-  const ev = CSH.events.filter(e => !q.length || q.every(w => hay(e).includes(w)));
+  const ev = CSH.events.filter(e => refHit(q.join(" "), [e.check, ...e.bills.map(b => b.doc_number), ...e.paid_again.map(a => a.check)]));
   if (!ev.length) { tbody.innerHTML = `<tr><td colspan="${cols.length}" class="left" style="padding:14px;color:var(--text-dim)">${CSH.events.length ? "Nothing matches." : "No check has been left without its bills."}</td></tr>`; return; }
   const frag = document.createDocumentFragment();
   for (const e of ev) {
@@ -8867,7 +8885,7 @@ function renderUncleared() {
   }
   const fn = (UC_FILTERS.find(f => f[0] === ucFilter) || UC_FILTERS[0])[2];
   const q = (($("#ucSearch") || {}).value || "").trim().toLowerCase().split(/\s+/).filter(Boolean);
-  const base = all.filter(c => fn(c) && (!q.length || q.every(w => [c.payee, c.check_no, c.account, c.amount, c.txn_date, fmtDateShort(c.txn_date)].join(" ").toLowerCase().includes(w))));
+  const base = all.filter(c => fn(c) && refHit(q.join(" "), [c.check_no]));   // ref # only
   const rows = hfSorted("uncleared", base.filter(c => hfPasses("uncleared", c)));
   const cols = [["Check #", "left"], ["Date", "left"], ["Payee", "left", "vendor"], ["Bank account", "left"], ["Amount", "right"], ["Days out", "right"], ["Type", "left"]];
   thead.innerHTML = "";
@@ -8887,7 +8905,7 @@ function renderUncleared() {
       else td.textContent = c.payee || "–";
       tr.appendChild(td); }
     tr.appendChild(leftText(c.account || "–"));
-    { const td = document.createElement("td"); td.className = "right"; td.appendChild(moneyCell(c.amount)); tr.appendChild(td); }
+    { const td = document.createElement("td"); td.className = "right"; td.appendChild(moneyCellC(c.amount)); tr.appendChild(td); }
     { const td = document.createElement("td"); td.className = "right" + (c.feed_matched && c.days > 30 ? " neg" : ""); td.textContent = c.days == null ? "–" : String(c.days); tr.appendChild(td); }
     tr.appendChild(leftText(c.txn_type === "Check" ? "Check" : "Bill payment"));
     frag.appendChild(tr);
@@ -8909,6 +8927,7 @@ const ACCT_GROUPS = [
 const acctGroupOf = f => /not in qbo/i.test(f.issue || "") ? "tracker" : /not approved/i.test(f.issue || "") ? "approval" : f.group === "PO" ? "po" : "coding";
 let acctGroup = "coding";
 const ACCT_VENDOR_MSEL = { id: "acctVendor", all: "All vendors", get: f => f.vendor || "", search: true, lbl: v => v || "(no vendor)" };
+const ACCT_PROJ_MSEL = { id: "acctProj", all: "All projects", get: f => f.project || "", search: true, lbl: v => v || "(no project #)" };
 const acctMSel = {}; let _acctVendorSig = null;
 let acctSel = new Set();    // selected finding keys (f._k) for copy-as-table
 let _acctVisible = [];      // the currently-filtered rows ("Copy all" copies these)
@@ -9010,13 +9029,13 @@ function renderAccounting() {
     for (const iss of issues) chip(iss, iss, iCount[iss]);
   }
   // vendor checkbox filter (same multi-select as the other tabs)
-  { const sig = String(all.length); if (sig !== _acctVendorSig || !($("#acctVendorMenu") && $("#acctVendorMenu").querySelector(".msel-opt"))) { _acctVendorSig = sig; buildMSel(ACCT_VENDOR_MSEL, all, acctMSel, renderAccounting); } }
+  { const sig = String(all.length); if (sig !== _acctVendorSig || !($("#acctVendorMenu") && $("#acctVendorMenu").querySelector(".msel-opt"))) { _acctVendorSig = sig; buildMSel(ACCT_VENDOR_MSEL, all, acctMSel, renderAccounting); buildMSel(ACCT_PROJ_MSEL, all, acctMSel, renderAccounting); } }
   // division filter
   const dsel = $("#acctDivision");
   if (dsel && dsel.options.length <= 1) for (const d of [...new Set(all.map(f => f.division).filter(Boolean))].sort()) { const o = document.createElement("option"); o.value = d; o.textContent = d; dsel.appendChild(o); }
   const dv = dsel ? dsel.value : "", q = ($("#acctSearch").value || "").trim().toLowerCase();
-  const rows = inGroup.filter(f => (!acctIssue || f.issue === acctIssue) && (!dv || f.division === dv) && mselPasses(f, [ACCT_VENDOR_MSEL], acctMSel)
-    && (!q || (f.vendor + " " + f.project + " " + f.bill_no + " " + (f.memo || "") + " " + f.detail).toLowerCase().includes(q)));
+  const rows = inGroup.filter(f => (!acctIssue || f.issue === acctIssue) && (!dv || f.division === dv) && mselPasses(f, [ACCT_VENDOR_MSEL, ACCT_PROJ_MSEL], acctMSel)
+    && refHit(q, [f.bill_no]));   // ref # only
   _setHintFilter("accounting", acctFilterDesc(rows.length, all.length));   // count + what's filtered (generic when All)
   if (acctSort.length) rows.sort(_acctCmp);   // multi-column sort (applied before the render cap)
   _acctVisible = rows;
@@ -9087,7 +9106,7 @@ function renderAccounting() {
       if (f.qbo_class && f.division && f.qbo_class !== f.division) { cc.classList.add("acct-class-bad"); cc.title = `QuickBooks says ${f.qbo_class} - ${f.project} is a ${f.division} job`; }
       tr.appendChild(cc); }
     tr.appendChild(leftText(f.cost_code || "–"));
-    tr.appendChild(rightText(f.amount != null ? money(f.amount) : ""));
+    tr.appendChild(rightText(f.amount != null ? moneyC(f.amount) : ""));
     const mc = document.createElement("td"); mc.className = "left audit-soft"; mc.textContent = f.memo || "–"; if (!f.memo) mc.classList.add("audit-dim"); tr.appendChild(mc);
     const dc = document.createElement("td"); dc.className = "left audit-soft"; dc.textContent = f.detail || ""; tr.appendChild(dc);
     frag.appendChild(tr);
@@ -9106,7 +9125,7 @@ function renderAccounting() {
 // Copy-as-table: the columns copied (headers + values), minus the checkbox and 📎 columns.
 const ACCT_COPY_COLS = [["Issue", f => f.issue], ["Vendor", f => f.vendor], ["Bill #", f => f.bill_no],
   ["Date", f => f.date ? fmtDateShort(f.date) : ""], ["Project", f => f.project], ["Class (QuickBooks)", f => f.qbo_class || f.division],
-  ["Cost", f => f.cost_code], ["Amount", f => f.amount != null ? money(f.amount) : ""],
+  ["Cost", f => f.cost_code], ["Amount", f => f.amount != null ? moneyC(f.amount) : ""],
   ["Line memo", f => f.memo], ["Why flagged", f => f.detail]];
 
 function _acctUpdateCopyBtn() {
@@ -9149,7 +9168,7 @@ function _acctClerkLine(f) {
   const what = (f.qbo_class && f.division && f.qbo_class !== f.division)
     ? `Class is ${f.qbo_class} in QuickBooks - change it to ${f.division} (${f.project} is a ${f.division} job)`
     : (f.detail || f.issue || "").replace(/^Class\s+[A-Za-z /-]+\s*·\s*/, "");
-  return [`Bill ${f.bill_no || "?"}`, f.vendor, f.date ? fmtDateShort(f.date) : null, f.memo ? `"${f.memo}"` : null, f.amount != null ? money(f.amount) : null,
+  return [`Bill ${f.bill_no || "?"}`, f.vendor, f.date ? fmtDateShort(f.date) : null, f.memo ? `"${f.memo}"` : null, f.amount != null ? moneyC(f.amount) : null,
           f.cost_code ? `code ${f.cost_code}` : null].filter(Boolean).join(" · ") + ` -> ${what}`;
 }
 async function _acctCopyClerk() {
@@ -9260,7 +9279,7 @@ function init() {
     ...BILL_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`]),
     ...LIEN_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`]),
     ...PAY_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`]),
-    ...INV_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`]), ["#ifMonthBtn", "#ifMonthMenu", "#ifMonthMsel"], ["#acctVendorBtn", "#acctVendorMenu", "#acctVendorMsel"], ["#vcTypeBtn", "#vcTypeMenu", "#vcTypeMsel"]];
+    ...INV_MSEL.map(c => [`#${c.id}Btn`, `#${c.id}Menu`, `#${c.id}Msel`]), ["#ifMonthBtn", "#ifMonthMenu", "#ifMonthMsel"], ["#acctVendorBtn", "#acctVendorMenu", "#acctVendorMsel"], ["#acctProjBtn", "#acctProjMenu", "#acctProjMsel"], ["#vcTypeBtn", "#vcTypeMenu", "#vcTypeMsel"]];
   const _closeMsels = (except) => { for (const [, mId] of _mselWraps) { const m = $(mId); if (m && mId !== except) m.hidden = true; } };
   for (const [btnId, menuId, wrapId] of _mselWraps) {
     const btn = $(btnId), menu = $(menuId);
@@ -9286,20 +9305,26 @@ function init() {
   { const q = $("#ifQuick"); let tq = null;
     if (q) { q.addEventListener("input", () => { clearTimeout(tq); tq = setTimeout(() => { invQuick = q.value.trim(); renderOpenInvoices(); }, 120); });
       q.addEventListener("keydown", e => { if (e.key === "Escape") { q.value = ""; invQuick = ""; renderOpenInvoices(); q.blur(); e.stopPropagation(); } }); }
-    document.addEventListener("keydown", e => {
-      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "f" || e.altKey) return;
-      if (activeTab !== "invoices" || !$("#ifQuick")) return;
-      if (document.querySelector(".panel:not([hidden])")) return;          // a side panel is open - leave the browser's find alone
-      e.preventDefault(); const el = $("#ifQuick"); el.focus(); el.select();
-    }); }
-  // ⌘F / Ctrl+F = the broad search box: the vendor page's when it is open, else the Bill Tracker's (owner 2026-09-22)
+    }
+  // ⌘F / Ctrl+F = this page's search box, on EVERY page (owner 2026-09-29: "cmd+f goes to find in page and not the search
+  // bar"): the vendor page's when it is open, else the open tab's ref # box, else the first search box on the tab.
   document.addEventListener("keydown", e => {
     if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "f" || e.altKey) return;
     if (document.querySelector(".panel:not([hidden])")) return;
-    const vis = x => !!(x && x.offsetParent);                 // on screen right now (the Bill Tracker is a section of the Company view, not a tab of its own)
-    const el = vis($("#vpSearch")) ? $("#vpSearch") : (vis($("#bfQuick")) ? $("#bfQuick") : null);   // vpSearch = the vendor PAGE box (vendorSearch is the Vendors list's)
+    const vis = x => !!(x && x.offsetParent);
+    const el = ["#vpSearch", "#bfQuick", "#ifQuick", "#pfSearch", "#qaSearch", "#cdSearch", "#ucSearch", "#acctSearch"].map(id => $(id)).find(vis)
+      || [...document.querySelectorAll('.tab-page:not([hidden]) input[type="search"]')].find(vis);
     if (!el) return;
     e.preventDefault(); el.focus(); el.select();
+  });
+  // Paste a column from Excel into a ref # box: the lines become one ref each (a text box would glue them together)
+  document.addEventListener("paste", e => {
+    const el = e.target; if (!(el && el.matches && el.matches("input.ref-search"))) return;
+    const txt = (e.clipboardData || window.clipboardData).getData("text"); if (!/[\r\n\t]/.test(txt)) return;
+    e.preventDefault();
+    const refs = txt.split(/[\s,;]+/).map(t => t.trim()).filter(Boolean);
+    el.value = refs.join(", "); el.dispatchEvent(new Event("input", { bubbles: true }));
+    if (el.id === "pfSearch") payTickRefs(refs);
   });
   // Saved views: the current filters + sort + scope + quick find under a name (localStorage, per person).
   buildInvViews();
@@ -9562,15 +9587,15 @@ function auditTable(d) {
   const rows = [];
   for (const e of (d && d.entries) || []) {
     const isLine = e.field === "line";
-    rows.push({ at: e.at, what: AUDIT_FIELD[e.field] || e.field, change: isLine ? _ge(e.note || (e.new ? "added" : "removed")) : `${e.old == null ? "blank" : money(e.old)} → <b>${e.new == null ? "blank" : money(e.new)}</b>`, src: e.source || "", who: e.actor || "", run: e.run || "" });
+    rows.push({ at: e.at, what: AUDIT_FIELD[e.field] || e.field, change: isLine ? _ge(e.note || (e.new ? "added" : "removed")) : `${e.old == null ? "blank" : moneyC(e.old)} → <b>${e.new == null ? "blank" : moneyC(e.new)}</b>`, src: e.source || "", who: e.actor || "", run: e.run || "" });
   }
   for (const a of (d && d.answers) || []) {
     const bits = [];
     if (a.decision) bits.push({ confirmed: "Confirmed", fix: "Needs a fix", agree: "Agreed done", keep: "Kept on the WIP", noted: "Noted", cleared: "Answer cleared" }[a.decision] || a.decision);
     if (a.contract_ok != null) bits.push(`contract ${a.contract_ok ? "✓" : "✗"}`);
     if (a.etc_ok != null) bits.push(`ETC ${a.etc_ok ? "✓" : "✗"}`);
-    if (a.our_contract != null) bits.push(`their contract ${money(a.our_contract)}`);
-    if (a.our_etc != null) bits.push(`their ETC ${money(a.our_etc)}`);
+    if (a.our_contract != null) bits.push(`their contract ${moneyC(a.our_contract)}`);
+    if (a.our_etc != null) bits.push(`their ETC ${moneyC(a.our_etc)}`);
     rows.push({ at: a.at, what: "Review answer", change: _ge(bits.join(" · ")), src: a.note ? `"${_ge(a.note)}"` : "", who: a.mode === "ops" || a.mode === "pm" ? "PM + owner" : "owner", run: "review page" });
   }
   rows.sort((x, y) => String(y.at).localeCompare(String(x.at)));

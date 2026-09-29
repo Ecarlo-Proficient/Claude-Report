@@ -203,9 +203,13 @@ component below; never rebuild one from scratch, and add to this list when a new
 - **Column filters = `hfDecorate()`**: an Excel-style funnel in each header - distinct values with counts over
   what the other columns leave, a value search, Select all / None / Clear. New tables get these, not bands.
 - **Bill tables are flat lists like the Excel** (Group by = None); the funnels and the search do the narrowing.
-- **Search on every view of a page**: a broad box (⌘F / Ctrl+F lands in it, Esc clears, every word must match
-  somewhere on the row, memo included) and a standalone Project # box that suggests the page's projects
-  (ArrowDown / ArrowUp, Enter picks).
+- **Search = REF # ONLY, on every transaction list** (owner 2026-09-29, superseding the 09-22 broad box): the box
+  matches the record's own numbers - bill #, invoice #, check # - never project, vendor, client, memo or amount;
+  those are their own filters (a Project # filter sits beside every ref box). ⌘F / Ctrl+F lands in the page's box on
+  every page, Esc clears. Paste a column from Excel: one ref per line, a row matching ANY shows (`refHit`,
+  `input.ref-search`); on Pay bills the pasted bill #s are ticked onto the run.
+- **Bills, invoices, payments and checks show cents** (`moneyC` / `moneyCellC`, owner 2026-09-29: "never round for
+  bills/invoices"); WIP / P&L / project / company figures stay whole dollars (`money`).
 - **Payments are groups**: collapsed = ref, date, type, client, amount, stub; the bills paid are the expansion;
   a checkbox per row and a select-all for bulk actions; a voided payment says VOIDED.
 - Groups elsewhere follow the central `GRP_KINDS` mechanism.
@@ -337,8 +341,8 @@ that opens the column's distinct values with counts, a value search, Select all 
 (`hfDecorate` in app.js), the values reflecting what the other columns leave, like an Excel table. A search box
 narrows either list by any word on the row; the vendor page's box works on Payments too.
 Every bill row carries its QuickBooks **memo** (from the mirror, `_bill_memos`) as a column and in the search; the
-Date funnel filters by month; the vendor page adds a standalone Project # box beside the broad search, and ⌘F lands
-in the broad search (vendor page when open, else the Bill Tracker).
+Date funnel filters by month; the vendor page adds a standalone Project # box beside the ref # search, and ⌘F lands
+in the ref # search (vendor page when open, else the open page's box).
 The vendor page also carries the Bill Tracker's Date control (Month multi-select or a from-to range) on both views.
 Its Project # box suggests the vendor's projects as you type - ArrowDown, Enter to pick.
 

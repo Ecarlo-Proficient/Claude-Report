@@ -128,8 +128,8 @@
           </div>
         </div>
         <div class="bill-filters" id="invFilters">
-          <label class="fld inv-quick-fld"><span>Find (⌘F)</span>
-            <input type="search" id="ifQuick" class="inv-quick" placeholder="invoice #, memo, amount, project · -word excludes" autocomplete="off">
+          <label class="fld inv-quick-fld"><span>Ref #</span>
+            <input type="search" id="ifQuick" class="inv-quick ref-search" placeholder="⌘F - invoice #; paste a column for many" autocomplete="off">
           </label>
           <div class="fld"><span>Month</span>
             <div class="msel" id="ifMonthMsel">
@@ -275,7 +275,7 @@
         </div>
         <div class="bill-views" id="billViews"></div>
         <div class="bill-filters" id="billFilters">
-          <div class="fld"><span>Search</span><input type="search" id="bfQuick" class="msel-search bf-quick" placeholder="⌘F - anything on the row: vendor, project, client, bill #, memo, invoice #, date, amount" title="Type to narrow the list - every word must match somewhere on the row; Esc clears"></div>
+          <div class="fld"><span>Ref #</span><input type="search" id="bfQuick" class="msel-search bf-quick ref-search" placeholder="⌘F - ref #: bill # or invoice #; paste a column for many" title="Bill # or invoice # only - project, vendor and client are their own filters; paste a column from Excel to match many; Esc clears"></div>
           <div class="fld"><span>Date</span><div class="datef" id="bfDate"></div></div>
           <span class="bf-sep"></span>
           <div class="fld"><span>Project #</span>
@@ -361,7 +361,7 @@
         <p class="hint help-pop" hidden>What QuickBooks deleted, edited or added, with its own time. A check that lost its bills is one row - the bills it reopened fold under it; the fix is on <b>Checks QBO changed</b>. QuickBooks' own audit log says who.</p>
         <div class="acct-filters" id="qaFilters"></div>
         <div class="filters">
-          <input type="search" id="qaSearch" placeholder="Find a vendor, client, number, amount…" autocomplete="off">
+          <input type="search" id="qaSearch" class="ref-search" placeholder="⌘F - ref #; paste a column for many" autocomplete="off">
           <label class="chk"><input type="checkbox" id="qaFlaggedOnly" checked> Flagged only</label>
         </div>
         <div class="table-scroll">
@@ -390,7 +390,7 @@
         <p class="hint help-pop" hidden>Edit or delete a <b>paid</b> bill and QuickBooks takes the check off it on its own - no warning. The check's money floats on the vendor, the bill (or its re-entered copy) reads as owed again, the loan credit on the check is freed, and later QuickBooks drops the floating money onto the vendor's <i>next</i> bill, so that week's check goes out short. Every year on file, subs first. <b>What happened</b> is read off QuickBooks only: <i>paid bill deleted</i>, <i>paid bill edited</i>, <i>check rewritten</i> (the bill never changed - the check lost it), <i>put on a later bill</i>, <i>credit dropped</i>, or <i>before the change log</i> (09/23 on keeps the evidence). QuickBooks' own audit log (Settings > Audit log) names who. Open a row for the fix. <b>History</b> keeps every check QuickBooks left with no bills, fixed or not, with the day it was fixed and any bill that got paid a second time; <b>QBO report (PDF)</b> rebuilds the support report from it. Nothing here writes to QuickBooks.</p>
         <div class="acct-filters" id="cdFilters"></div>
         <div class="filters">
-          <input type="search" id="cdSearch" placeholder="Find a vendor, check #, bill #, amount…" autocomplete="off">
+          <input type="search" id="cdSearch" class="ref-search" placeholder="⌘F - check # or bill #; paste a column for many" autocomplete="off">
         </div>
         <div class="table-scroll">
           <table class="grid" id="cdTable"><thead></thead><tbody></tbody></table>
@@ -416,7 +416,7 @@
         <p class="hint help-pop" hidden>Every check QuickBooks still shows as <b>uncleared</b> - in QuickBooks "not matched" and "not deposited" are the same flag. Each bank account shows how far its bank-feed matching has got; a check older than that date was not cashed, or was cashed and never matched. Accounts that are never matched to a bank feed (Joint Checks) are kept apart. Nothing here writes to QuickBooks. <span id="ucMatched"></span></p>
         <div class="acct-filters" id="ucFilters"></div>
         <div class="filters">
-          <input type="search" id="ucSearch" placeholder="Find a payee, check #, amount…" autocomplete="off">
+          <input type="search" id="ucSearch" class="ref-search" placeholder="⌘F - check #; paste a column for many" autocomplete="off">
         </div>
         <div class="table-scroll">
           <table class="grid" id="ucTable"><thead></thead><tbody></tbody></table>
@@ -437,8 +437,9 @@
         <div class="acct-groups" id="acctGroups"></div>
         <div class="acct-filters" id="acctFilters"></div>
         <div class="filters">
-          <input type="search" id="acctSearch" placeholder="Find a vendor, project #, bill ref…" autocomplete="off">
+          <input type="search" id="acctSearch" class="ref-search" placeholder="⌘F - bill #; paste a column for many" autocomplete="off">
           <select id="acctDivision"><option value="">All divisions</option></select>
+          <div class="msel" id="acctProjMsel"><button type="button" class="msel-btn" id="acctProjBtn" title="Tick the projects to show">All projects</button><div class="msel-menu wide" id="acctProjMenu" hidden></div></div>
           <div class="msel" id="acctVendorMsel"><button type="button" class="msel-btn" id="acctVendorBtn" title="Tick the vendors to show">All vendors</button><div class="msel-menu wide" id="acctVendorMenu" hidden></div></div>
           <button class="btn small" id="btnAcctCopy" title="Copy the selected rows (or all shown) as a table with headers - paste into Excel, Google Sheets, or an email">Copy all</button>
           <button class="btn small" id="btnAcctClerk" title="One plain sentence per finding saying what QuickBooks has and what to change it to - paste straight to the clerk">Copy for clerk</button>
@@ -647,12 +648,15 @@
           for a partial). Hit <b>Save pay run</b> to lock it in and generate the pay list below. Saving pays nothing:
           QuickBooks is only written when you press <b>Pay in QuickBooks…</b> on the pay list, review it and confirm.</p>
         <div class="bill-filters" id="payFilters">
-          <label class="fld"><span>Search</span><input type="search" id="pfSearch" placeholder="project / bill #"></label>
+          <label class="fld"><span>Ref #</span><input type="search" id="pfSearch" class="ref-search" placeholder="⌘F - bill #; paste a column to tick them all" autocomplete="off"></label>
           <div class="fld"><span>Client</span>
             <div class="msel" id="pfClientMsel"><button type="button" class="msel-btn" id="pfClientBtn">All clients</button><div class="msel-menu wide" id="pfClientMenu" hidden></div></div>
           </div>
           <div class="fld"><span>Vendor</span>
             <div class="msel" id="pfVendorMsel"><button type="button" class="msel-btn" id="pfVendorBtn">All vendors</button><div class="msel-menu wide" id="pfVendorMenu" hidden></div></div>
+          </div>
+          <div class="fld"><span>Project #</span>
+            <div class="msel" id="pfProjMsel"><button type="button" class="msel-btn" id="pfProjBtn">All projects</button><div class="msel-menu wide" id="pfProjMenu" hidden></div></div>
           </div>
           <div class="fld"><span>Division</span>
             <div class="msel" id="pfDivMsel"><button type="button" class="msel-btn" id="pfDivBtn">All divisions</button><div class="msel-menu" id="pfDivMenu" hidden></div></div>
