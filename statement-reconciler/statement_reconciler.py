@@ -96,6 +96,7 @@ except ImportError:
     sys.exit(1)
 
 from shared import qbo_vault as kc
+from shared import qbo_api  # noqa: E402  (the one QuickBooks login)
 from shared import paths
 from shared import xlsx_verify
 
@@ -1852,35 +1853,10 @@ def _norm_date(s: str) -> str:
 # ───────────────────────── QBO auth + queries ─────────────────────────
 
 def load_credentials() -> Tuple[str, str]:
-    """Returns (access_token, company_id). Mirrors qbo_bill_tracker.py."""
-    if not kc.has_credentials():
-        sys.exit("✗ no credentials. Run: python3 setup_qbo.py")
-    creds = kc.get_all()
-    required = ["QBO_CLIENT_ID", "QBO_CLIENT_SECRET", "QBO_COMPANY_ID", "QBO_REFRESH_TOKEN"]
-    if any(not creds.get(k) for k in required):
-        sys.exit("✗ blob incomplete. Run: python3 setup_qbo.py")
-    basic = base64.b64encode(
-        f"{creds['QBO_CLIENT_ID']}:{creds['QBO_CLIENT_SECRET']}".encode()
-    ).decode()
-    r = requests.post(
-        "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
-        headers={"Authorization": f"Basic {basic}",
-                 "Content-Type": "application/x-www-form-urlencoded",
-                 "Accept": "application/json"},
-        data={"grant_type": "refresh_token",
-              "refresh_token": creds["QBO_REFRESH_TOKEN"]},
-        timeout=30,
-    )
-    if r.status_code != 200:
-        sys.exit(f"✗ token refresh {r.status_code}: {r.text[:300]}")
-    body = r.json()
-    new_rt = body.get("refresh_token")
-    if new_rt and new_rt != creds["QBO_REFRESH_TOKEN"]:
-        try:
-            kc.put("QBO_REFRESH_TOKEN", new_rt)
-        except kc.SecretsError:
-            pass
-    return body["access_token"], creds["QBO_COMPANY_ID"]
+    """(access token, company id) from THE shared QuickBooks login (shared/qbo_api), which asks Key Helper
+    once the key library is adopted. This tool's own copy of the refresh-token exchange was retired
+    09/29/2026 (security review): one login path, and no tool ever holds the refresh token."""
+    return qbo_api.load_credentials()
 
 
 def _api_get(access: str, path: str, params: Optional[dict] = None) -> dict:

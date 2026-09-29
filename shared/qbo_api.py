@@ -27,8 +27,10 @@ import requests
 
 try:
     from . import qbo_vault as kc
+    from . import key_broker
 except ImportError:  # run outside the package (script dir on sys.path)
     import qbo_vault as kc  # type: ignore
+    import key_broker  # type: ignore
 
 
 API_BASE = "https://quickbooks.api.intuit.com"
@@ -88,22 +90,33 @@ def project_of_invoice(inv: dict) -> str:
 # job past the hour mark failed AuthenticationFailed, writing 0 workbooks).
 # `_api_get` now mints a fresh token on a 401 and retries, and every caller
 # reads it from here, so a stale token string held by a caller cannot outlive
-# the refresh. The Keychain read needs no prompt ("Always Allow"), so this is
-# silent and safe inside a long unattended run.
+# the refresh. After the Key Helper adoption the helper renews it, inside the
+# owner's unlocked work session, so a long run never prompts twice.
 _CURRENT_ACCESS: Optional[str] = None
 
 
-def _bearer_exchange() -> Tuple[str, str]:
-    """(access token, company id) from one refresh-token exchange."""
+class AuthError(RuntimeError):
+    """QuickBooks login failed - the message is safe to print (no token, no company id)."""
+
+
+def get_pass(fresh: bool = False) -> Tuple[str, str]:
+    """(access token, company id) - THE one QuickBooks login for every tool in this repo. Raises AuthError.
+
+    Once the key library is handed to Key Helper (keyhelper/, security review 09/29/2026) the helper renews
+    the login and hands back a one-hour pass; no tool ever sees the refresh token or the app secret again.
+    Before that (and on Linux) it is the refresh-token exchange below, as it always was."""
+    if key_broker.active():
+        try:
+            return key_broker.qbo_pass(fresh=fresh)
+        except key_broker.BrokerError as e:
+            raise AuthError(str(e))
     if not kc.has_credentials():
-        print("✗  No QBO credentials in Keychain. Run: python3 shared/setup_qbo.py")
-        sys.exit(1)
+        raise AuthError("No QBO credentials in Keychain. Run: python3 shared/setup_qbo.py")
     creds = kc.get_all()
     required = ["QBO_CLIENT_ID", "QBO_CLIENT_SECRET", "QBO_COMPANY_ID", "QBO_REFRESH_TOKEN"]
     missing = [k for k in required if not creds.get(k)]
     if missing:
-        print(f"✗  Missing credentials: {', '.join(missing)}")
-        sys.exit(1)
+        raise AuthError(f"Missing credentials: {', '.join(missing)}")
     basic = base64.b64encode(
         f"{creds['QBO_CLIENT_ID']}:{creds['QBO_CLIENT_SECRET']}".encode()
     ).decode()
@@ -135,20 +148,28 @@ def _bearer_exchange() -> Tuple[str, str]:
         if attempt < 3:
             time.sleep((attempt + 1) * 3)       # 3s, 6s, 9s
     if r is None:
-        print(f"✗  Token refresh failed after retries — {last} "
-              "(network/Intuit timeout; just run it again)")
-        sys.exit(1)
+        raise AuthError(f"Token refresh failed after retries — {last} "
+                        "(network/Intuit timeout; just run it again)")
     if r.status_code != 200:
-        print(f"✗  Token refresh failed ({r.status_code}): {r.text[:300]}")
-        sys.exit(1)
+        raise AuthError(f"Token refresh failed ({r.status_code}): {r.text[:300]}")
     body = r.json()
     new_rt = body.get("refresh_token")
     if new_rt and new_rt != creds["QBO_REFRESH_TOKEN"]:
         try:
             kc.put("QBO_REFRESH_TOKEN", new_rt)
         except kc.SecretsError:
-            pass
+            print("!  the renewed QuickBooks token could not be saved - the next run may need setup_qbo.py",
+                  file=sys.stderr)
     return body["access_token"], creds["QBO_COMPANY_ID"]
+
+
+def _bearer_exchange(fresh: bool = False) -> Tuple[str, str]:
+    """get_pass() for command-line tools: print the reason and stop."""
+    try:
+        return get_pass(fresh=fresh)
+    except AuthError as e:
+        print(f"✗  {e}")
+        sys.exit(1)
 
 
 def load_credentials() -> Tuple[str, str]:
@@ -161,7 +182,7 @@ def load_credentials() -> Tuple[str, str]:
 def refresh_access() -> str:
     """Mint a NEW access token mid-run and make it the one in force."""
     global _CURRENT_ACCESS
-    access, _ = _bearer_exchange()
+    access, _ = _bearer_exchange(fresh=True)
     _CURRENT_ACCESS = access
     return access
 

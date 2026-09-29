@@ -36,6 +36,7 @@ from typing import Callable, Dict, Optional
 
 import requests
 
+import qbo_api
 import qbo_vault as kc
 
 
@@ -213,65 +214,21 @@ def run_test() -> int:
         print("    fix:  python3 setup_qbo.py")
         return 1
 
-    try:
-        creds = kc.get_all()  # ← single Touch ID prompt
-    except kc.SecretsError as e:
-        print(f"  ✗ could not read blob: {e}")
-        return 1
-
-    missing = [s.name for s in SPECS
-               if s.required and (s.name not in creds or not creds[s.name])]
-    if missing:
-        print(f"  ✗ missing keys in blob: {', '.join(missing)}")
-        print(f"    fix:  python3 setup_qbo.py")
-        return 1
-    n_req = sum(1 for s in SPECS if s.required)
-    print(f"  ✓ all {n_req} required keys present in blob")
-
-    cid = creds["QBO_CLIENT_ID"]
-    sec = creds["QBO_CLIENT_SECRET"]
-    rt = creds["QBO_REFRESH_TOKEN"]
-    cmp_id = creds["QBO_COMPANY_ID"]
-
+    # THE login every tool uses (Key Helper after the adoption, the refresh-token exchange before it).
+    # The company id is not printed - never echo the realm (owner 2026-08-06).
     print(f"  → api base:   {API_BASE}  (production)")
-    print(f"  → company id: {cmp_id}")
-    print(f"  → attempting token refresh...")
-
-    basic = base64.b64encode(f"{cid}:{sec}".encode()).decode()
+    print("  → attempting token refresh...")
     try:
-        r = requests.post(
-            "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
-            headers={
-                "Authorization": f"Basic {basic}",
-                "Content-Type": "application/x-www-form-urlencoded",
-                "Accept": "application/json",
-            },
-            data={"grant_type": "refresh_token", "refresh_token": rt},
-            timeout=30,
-        )
-    except requests.RequestException as e:
-        print(f"  ✗ network error: {e}")
-        return 1
-
-    if r.status_code != 200:
-        body = (r.text or "")[:300]
-        print(f"  ✗ refresh failed  status={r.status_code}")
-        print(f"    body: {body}")
+        access, cmp_id = qbo_api.get_pass(fresh=True)
+    except qbo_api.AuthError as e:
+        msg = str(e)
+        print(f"  ✗ {msg}")
         print()
-        _diagnose_refresh_failure(r.status_code, body)
+        status = next((int(t) for t in msg.replace("(", " ").replace(")", " ").split() if t.isdigit()), 0)
+        if status:
+            _diagnose_refresh_failure(status, msg)
         return 1
-
-    data = r.json()
-    access = data["access_token"]
-    new_rt = data.get("refresh_token")
-    print(f"  ✓ token refresh ok  (access expires in {data.get('expires_in')}s)")
-
-    if new_rt and new_rt != rt:
-        try:
-            kc.put("QBO_REFRESH_TOKEN", new_rt)
-            print(f"  ✓ refresh token rotated — new one stored")
-        except kc.SecretsError as e:
-            print(f"  ⚠ new refresh token not stored: {e}")
+    print("  ✓ token refresh ok")
 
     # Company probe confirms Company ID matches this app's authorized realm
     print(f"  → probing company info...")
@@ -341,6 +298,12 @@ def _diagnose_company_failure(status: int, body: str) -> None:
 
 # ──────────────────────────  commands  ──────────────────────────
 
+def _stored() -> Dict[str, str]:
+    """{name: non-empty marker} of what the key library holds. Via Key Helper the master keys are never
+    handed out, so only the NAMES are asked for - enough to know what is stored."""
+    return {n: "stored" for n in kc.list_stored()}
+
+
 def run_setup(all_keys: bool) -> int:
     print("━" * 60)
     print("  QBO Credential Setup")
@@ -353,7 +316,7 @@ def run_setup(all_keys: bool) -> int:
     existing: Dict[str, str] = {}
     try:
         if kc.has_credentials():
-            existing = kc.get_all()
+            existing = _stored()
     except kc.SecretsError as e:
         print(f"  (existing blob unreadable — continuing fresh: {e})")
 
@@ -392,7 +355,7 @@ def run_rotate(key: str) -> int:
         return 2
 
     try:
-        existing = kc.get_all() if kc.has_credentials() else {}
+        existing = _stored() if kc.has_credentials() else {}
     except kc.SecretsError as e:
         print(f"✗ could not read blob: {e}")
         return 1

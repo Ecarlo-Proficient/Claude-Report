@@ -52,6 +52,7 @@ except ImportError:
     sys.exit(1)
 
 from shared import qbo_vault as kc
+from shared import qbo_api  # noqa: E402  (the one QuickBooks login)
 from shared import paths
 from shared import draws
 
@@ -197,59 +198,10 @@ THIN_BORDER = Border(
 # ───────────────────────── auth ─────────────────────────
 
 def load_credentials() -> Tuple[str, str]:
-    if not kc.has_credentials():
-        print("✗ no credentials. Run: python3 setup_qbo.py")
-        sys.exit(1)
-    creds = kc.get_all()
-    required = ["QBO_CLIENT_ID", "QBO_CLIENT_SECRET", "QBO_COMPANY_ID", "QBO_REFRESH_TOKEN"]
-    if any(not creds.get(k) for k in required):
-        print("✗ blob incomplete. Run: python3 setup_qbo.py")
-        sys.exit(1)
-    basic = base64.b64encode(
-        f"{creds['QBO_CLIENT_ID']}:{creds['QBO_CLIENT_SECRET']}".encode()
-    ).decode()
-    # Retry the bearer refresh on transient network/Intuit blips. The OAuth
-    # endpoint occasionally times out its TLS handshake; a single POST used to
-    # crash the whole run (Ted 2026-07-15). Retry timeouts/connection errors +
-    # 5xx; a real 4xx (e.g. an expired refresh token) fails fast, no retry.
-    r = None
-    last = ""
-    for attempt in range(4):                    # 1 try + 3 retries
-        try:
-            r = requests.post(
-                "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
-                headers={
-                    "Authorization": f"Basic {basic}",
-                    "Content-Type": "application/x-www-form-urlencoded",
-                    "Accept": "application/json",
-                },
-                data={"grant_type": "refresh_token",
-                      "refresh_token": creds["QBO_REFRESH_TOKEN"]},
-                timeout=30,
-            )
-            if r.status_code < 500:
-                break                           # 200 or a real 4xx — done
-            last = f"status={r.status_code}"
-        except requests.exceptions.RequestException as e:
-            last = type(e).__name__
-            r = None
-        if attempt < 3:
-            time.sleep((attempt + 1) * 3)       # 3s, 6s, 9s
-    if r is None:
-        print(f"✗ token refresh failed after retries — {last} "
-              "(network/Intuit timeout; just run it again)")
-        sys.exit(1)
-    if r.status_code != 200:
-        print(f"✗ token refresh status={r.status_code} body={r.text[:300]}")
-        sys.exit(1)
-    body = r.json()
-    new_rt = body.get("refresh_token")
-    if new_rt and new_rt != creds["QBO_REFRESH_TOKEN"]:
-        try:
-            kc.put("QBO_REFRESH_TOKEN", new_rt)
-        except kc.SecretsError:
-            pass
-    return body["access_token"], creds["QBO_COMPANY_ID"]
+    """(access token, company id) from THE shared QuickBooks login (shared/qbo_api), which asks Key Helper
+    once the key library is adopted. This tool's own copy of the refresh-token exchange was retired
+    09/29/2026 (security review): one login path, and no tool ever holds the refresh token."""
+    return qbo_api.load_credentials()
 
 
 # ───────────────────────── api ─────────────────────────

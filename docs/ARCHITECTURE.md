@@ -47,7 +47,8 @@ duplicate/item-no-project/sub-bill audit scripts; cost codes captured audit-only
 
 ```
 shared/                the ONLY importable common code
-├─ qbo_vault.py        QBO Keychain blob — one Touch ID unlocks all keys
+├─ qbo_vault.py        the key library (Keychain blob) — asks Key Helper once adopted, never reads the Keychain itself then
+├─ key_broker.py       client for keyhelper/ (Key Helper): one-hour QBO passes, read-only GETs, non-QBO keys - over a private socket
 ├─ paths.py            per-machine output paths (machine.env at REPO ROOT) + the CompanyHealth layout: Registers/ (register_file) · Reports/ (reports_dir) · Analysis/<topic> (analysis_dir) · _sources/ - nothing at the root (tests/test_companyhealth_layout.py; --organize)
 ├─ qbo_api.py          QBO auth + retrying GET, P&L walkers, PROJ_RE · query_all is ANSWERED FROM THE MIRROR (query_all_live = the direct pull; ACB_QBO_LIVE=1 forces it)
 ├─ qbo_mirror.py       THE raw QBO mirror: every entity in qbo_mirror.sqlite3, change-feed refresh; query(entity, where) serves every query_all in the repo (QBO WHERE evaluated in Python); proof = one-offs/mirror_parity.py 30/30 (2026-09-17)
@@ -93,9 +94,35 @@ docs/                  this map + system references
 importable common code · tools never import tools · one-offs live in `one-offs/` ·
 `machine.env` stays at the repo root.
 
-**Auth in one line:** every QBO script goes through the shared Keychain vault (single
-Touch ID per run); QBO is production-only; writers are gated (`--commit` / `CONFIRM=Y`) —
-everything else is read-only against QBO.
+**Auth in one line:** every QBO script gets its login from `shared/qbo_api.get_pass()` (the ONE login path -
+`tests/test_key_broker.py` fails any other file that calls Intuit's token endpoint); after the adoption that is
+Key Helper, which unlocks once per work session (Touch ID or password) and hands out one-hour passes; QBO is
+production-only; writers are gated (`--commit` / `CONFIRM=Y`) — everything else is read-only against QBO.
+
+## Keys — Key Helper (`keyhelper/`, 09/29/2026)
+
+```mermaid
+flowchart LR
+    classDef src fill:#dbe6f0,stroke:#4A6B8A,color:#1f2937
+    classDef tool fill:#f6f5f1,stroke:#4b5563,color:#1f2937
+    classDef out fill:#dfeae2,stroke:#3E7A5C,color:#1f2937
+
+    KC[("Keychain\nautomation-qbo\ntrusts ONLY Key Helper")]:::src
+    KH["Key Helper.app\nmenu bar · session unlock\nlogs every handout"]:::tool
+    OWNER(["owner\nTouch ID / password\nonce per session"]):::src
+    API["shared/qbo_api.get_pass()\nshared/qbo_vault · key_broker"]:::tool
+    TOOLS["every tool in this repo"]:::tool
+    PRIV["private workspace\n(registered: its own profiles +\nthis company READ-ONLY)"]:::tool
+    INTUIT[("Intuit\ntoken + QBO API")]:::out
+    LOG[("~/Library/Logs/Proficient/\nkeyhelper/handouts.log")]:::out
+
+    OWNER --> KH
+    KC -- "blob, in memory only" --> KH
+    KH -- "renews the login" --> INTUIT
+    TOOLS --> API -- "socket: pass / key" --> KH
+    PRIV -- "socket: pass (own profiles) · GET (read-only)" --> KH
+    KH --> LOG
+```
 
 ---
 

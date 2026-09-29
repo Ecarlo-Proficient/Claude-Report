@@ -75,6 +75,7 @@ except ImportError:
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from shared import qbo_vault as kc
+from shared import qbo_api  # noqa: E402  (the one QuickBooks login)
 
 # ───────────────────────────  config  ───────────────────────────
 
@@ -139,48 +140,10 @@ def out(msg: str) -> None:
 # ───────────────────────────  auth  ───────────────────────────
 
 def load_credentials() -> Tuple[str, str]:
-    """Single Touch ID prompt unlocks all QBO keys. Returns (access_token, company_id)."""
-    if not kc.has_credentials():
-        out("✗ no credentials stored.  fix:  python3 setup_qbo.py")
-        sys.exit(1)
-    try:
-        creds = kc.get_all()
-    except kc.SecretsError as e:
-        out(f"✗ Keychain read failed: {e}")
-        sys.exit(1)
-
-    required = ["QBO_CLIENT_ID", "QBO_CLIENT_SECRET", "QBO_COMPANY_ID", "QBO_REFRESH_TOKEN"]
-    missing = [k for k in required if not creds.get(k)]
-    if missing:
-        out(f"✗ incomplete blob. Missing: {', '.join(missing)}  fix:  python3 setup_qbo.py")
-        sys.exit(1)
-
-    basic = base64.b64encode(
-        f"{creds['QBO_CLIENT_ID']}:{creds['QBO_CLIENT_SECRET']}".encode()
-    ).decode()
-    r = requests.post(
-        "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
-        headers={
-            "Authorization": f"Basic {basic}",
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Accept": "application/json",
-        },
-        data={"grant_type": "refresh_token", "refresh_token": creds["QBO_REFRESH_TOKEN"]},
-        timeout=30,
-    )
-    if r.status_code != 200:
-        out(f"✗ token refresh failed  status={r.status_code}  body={r.text[:300]}")
-        out("  diagnose:  python3 setup_qbo.py --test")
-        sys.exit(1)
-
-    data = r.json()
-    new_rt = data.get("refresh_token")
-    if new_rt and new_rt != creds["QBO_REFRESH_TOKEN"]:
-        try:
-            kc.put("QBO_REFRESH_TOKEN", new_rt)
-        except kc.SecretsError:
-            pass
-    return data["access_token"], creds["QBO_COMPANY_ID"]
+    """(access token, company id) from THE shared QuickBooks login (shared/qbo_api), which asks Key Helper
+    once the key library is adopted. This tool's own copy of the refresh-token exchange was retired
+    09/29/2026 (security review): one login path, and no tool ever holds the refresh token."""
+    return qbo_api.load_credentials()
 
 # ───────────────────────────  api (with retry)  ───────────────────────────
 
@@ -493,7 +456,7 @@ def run_sync(since: str, dry_run: bool, company: str = DEFAULT_COMPANY) -> int:
         return 1
 
     access, company_id = load_credentials()
-    out(f"✓ authenticated  (QBO realm {company_id})  syncing company: {company}")
+    out(f"✓ authenticated  syncing company: {company}")
 
     wb = openpyxl.load_workbook(WORKBOOK)
     all_loans = _read_loans(wb)
@@ -602,7 +565,7 @@ def run_discover(company: str = DEFAULT_COMPANY) -> int:
         out(f"✗ workbook not found: {WORKBOOK}")
         return 1
     access, company_id = load_credentials()
-    out(f"✓ authenticated  (QBO realm {company_id})  mapping company: {company}")
+    out(f"✓ authenticated  mapping company: {company}")
     accounts = fetch_liability_accounts(access, company_id)
     out(f"✓ pulled {len(accounts)} liability accounts from QBO")
 

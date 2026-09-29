@@ -12,6 +12,11 @@ restate them here. Business/strategic context lives in session memory, not in th
 ## Safety rails (read first — this is where a session can do real damage)
 
 1. **QBO is the source of truth.** Never guess costs-to-date or billed-to-date; pull and verify against QBO.
+2a. **Key Helper (`keyhelper/`, 09/29/2026) owns the key library once adopted.** The Keychain item then
+   trusts ONLY the helper; every QBO login is `shared/qbo_api.get_pass()` (a one-hour pass from the helper -
+   no tool ever holds the refresh token or app secret again; `tests/test_key_broker.py` fails any other file
+   calling Intuit's token endpoint). Never click "Always Allow" on a macOS dialog for `automation-qbo` that is
+   not Key Helper - that reopens the silent-read hole. Never add a second login path.
 2. **Never read, ask for, or hard-code secrets.** Auth is a single encrypted Keychain blob via
    `qbo_vault.py` (service `automation-qbo`, label `credentials`) — one Touch ID per run unlocks all
    keys. **That blob is THE key library (the user 2026-07-17): every new integration's key goes in it**
@@ -85,6 +90,10 @@ restate them here. Business/strategic context lives in session memory, not in th
 
 ## Subsystem map (detail in each README)
 
+- **keyhelper/** - Key Helper, the Mac's key broker (Swift menu-bar app, built + installed by `install.sh`
+  outside the repo). One unlock per work session; one-hour QBO passes; read-only profiles get the GET run for
+  them; answers only the pinned Python in a registered workspace; logs every handout. Client:
+  `shared/key_broker.py`. The private workspace is registered too (its own profiles + this company read-only).
 - **python-env/** - THE Python for every tool: `PYTHON_VERSION` (3.14, Homebrew `python@3.14`),
   `requirements.txt` (every package pinned; CI installs the same file), `setup.sh`
   (`--ensure/--check/--rebuild`, env at `~/.venvs/proficient`), `python.sh` (sourced by every

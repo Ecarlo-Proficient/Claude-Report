@@ -24,7 +24,7 @@ import requests
 
 # Repo root on sys.path so `shared/` (vault etc.) is importable.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from shared import qbo_vault as kc  # noqa: E402
+from shared import qbo_api  # noqa: E402  (the one QuickBooks login)
 
 
 log = logging.getLogger("automation_worker.qbo")
@@ -67,80 +67,17 @@ def invoice_deep_link(company_id: str, txn_id: str) -> str:
 
 def load_qbo_credentials() -> QBOCredentials:
     """
-    Refresh the QBO access token using the stored refresh token.
+    A QuickBooks access token + company id from THE shared login (shared/qbo_api.get_pass), which asks
+    Key Helper once the key library is adopted (security review 09/29/2026) - this tool's own copy of the
+    refresh-token exchange is retired, and it never holds the refresh token.
 
-    Reads QBO_CLIENT_ID / QBO_CLIENT_SECRET / QBO_COMPANY_ID / QBO_REFRESH_TOKEN
-    from the qbo_vault Keychain blob (one login-keychain read; may prompt). Persists the
-    rotated refresh token if QBO returns a new one.
-
-    Raises QBOError if the blob is missing or the refresh fails.
+    Raises QBOError if the login fails.
     """
-    if not kc.has_credentials():
-        raise QBOError(
-            "No QBO credentials in Keychain. Run `python3 setup_qbo.py` "
-            "from project root once."
-        )
-    creds = kc.get_all()
-    required = ("QBO_CLIENT_ID", "QBO_CLIENT_SECRET", "QBO_COMPANY_ID", "QBO_REFRESH_TOKEN")
-    missing = [k for k in required if not creds.get(k)]
-    if missing:
-        raise QBOError(
-            f"QBO blob is incomplete (missing: {missing}). "
-            f"Run `python3 setup_qbo.py` from project root."
-        )
-
-    basic = base64.b64encode(
-        f"{creds['QBO_CLIENT_ID']}:{creds['QBO_CLIENT_SECRET']}".encode()
-    ).decode()
-    # Retry the bearer refresh on transient network/Intuit blips — the OAuth
-    # endpoint occasionally times out its TLS handshake and a single POST would
-    # crash the sync (Ted 2026-07-15). Retry timeouts/connection errors + 5xx;
-    # a real 4xx (e.g. an expired refresh token) fails fast.
-    r = None
-    last = ""
-    for attempt in range(4):                    # 1 try + 3 retries
-        try:
-            r = requests.post(
-                "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
-                headers={
-                    "Authorization": f"Basic {basic}",
-                    "Content-Type": "application/x-www-form-urlencoded",
-                    "Accept": "application/json",
-                },
-                data={"grant_type": "refresh_token",
-                      "refresh_token": creds["QBO_REFRESH_TOKEN"]},
-                timeout=30,
-            )
-            if r.status_code < 500:
-                break
-            last = f"status={r.status_code}"
-        except requests.exceptions.RequestException as e:
-            last = type(e).__name__
-            r = None
-        if attempt < 3:
-            time.sleep((attempt + 1) * 3)       # 3s, 6s, 9s
-    if r is None:
-        raise QBOError(
-            f"QBO token refresh failed after retries — {last} "
-            "(network/Intuit timeout; retry the sync)"
-        )
-    if r.status_code != 200:
-        raise QBOError(
-            f"QBO token refresh failed status={r.status_code} body={r.text[:300]}"
-        )
-    body = r.json()
-    new_rt = body.get("refresh_token")
-    if new_rt and new_rt != creds["QBO_REFRESH_TOKEN"]:
-        try:
-            kc.put("QBO_REFRESH_TOKEN", new_rt)
-            log.debug("Rotated QBO refresh token persisted to Keychain")
-        except kc.SecretsError as e:
-            log.warning("Could not persist rotated refresh token: %s", e)
-
-    return QBOCredentials(
-        access_token=body["access_token"],
-        company_id=creds["QBO_COMPANY_ID"],
-    )
+    try:
+        access, company_id = qbo_api.get_pass()
+    except qbo_api.AuthError as e:
+        raise QBOError(str(e))
+    return QBOCredentials(access_token=access, company_id=company_id)
 
 
 def _api_get(creds: QBOCredentials, path: str, params: Optional[dict] = None) -> dict:

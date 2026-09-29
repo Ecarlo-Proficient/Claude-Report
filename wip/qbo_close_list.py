@@ -37,6 +37,7 @@ import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from shared import qbo_vault as kc
+from shared import qbo_api  # noqa: E402  (the one QuickBooks login)
 
 API_BASE = "https://quickbooks.api.intuit.com"
 
@@ -180,29 +181,10 @@ def extract_project(text: str) -> Optional[str]:
 # QBO auth + customer fetch
 # ──────────────────────────────────────────────────────────────────────────────
 def load_credentials() -> Tuple[str, str]:
-    if not kc.has_credentials():
-        print("[ERR] No QBO credentials in Keychain")
-        sys.exit(1)
-    creds = kc.get_all()
-    basic = base64.b64encode(
-        f"{creds['QBO_CLIENT_ID']}:{creds['QBO_CLIENT_SECRET']}".encode()
-    ).decode()
-    r = requests.post(
-        "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
-        headers={
-            "Authorization": f"Basic {basic}",
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Accept": "application/json",
-        },
-        data={"grant_type": "refresh_token", "refresh_token": creds["QBO_REFRESH_TOKEN"]},
-        timeout=30,
-    )
-    r.raise_for_status()
-    body = r.json()
-    new_rt = body.get("refresh_token")
-    if new_rt and new_rt != creds["QBO_REFRESH_TOKEN"]:
-        kc.put("QBO_REFRESH_TOKEN", new_rt)
-    return body["access_token"], creds["QBO_COMPANY_ID"]
+    """(access token, company id) from THE shared QuickBooks login (shared/qbo_api), which asks Key Helper
+    once the key library is adopted. This tool's own copy of the refresh-token exchange was retired
+    09/29/2026 (security review): one login path, and no tool ever holds the refresh token."""
+    return qbo_api.load_credentials()
 
 
 def query_all(access: str, company_id: str, entity: str, where: str = "") -> List[dict]:

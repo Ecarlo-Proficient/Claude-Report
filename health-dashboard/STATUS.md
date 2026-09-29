@@ -4,6 +4,7 @@ Shared progression record (see repo CLAUDE.md). Tool-scoped only — no dollar
 exposures or business analysis here (those live in the owner's vault).
 
 ## DONE / FINALIZED
+- 2026-09-29 · **QuickBooks login moved to the shared one (security review).** This tool's own copy of the refresh-token exchange is retired; its login is `shared/qbo_api` (`load_credentials` / `get_pass`), which asks Key Helper (`keyhelper/`) once the key library is adopted - the tool never holds the refresh token.
 - 2026-09-28 · **CompanyHealth is organized, not a dump** (owner: "a more organized automated folder system rather than a dump"). Every read/write there goes through a named folder in `shared/paths.py`: `register_file()` -> `Registers/` (the JSON rules), `reports_dir()` -> `Reports/` (every generated report), `analysis_dir(topic)` -> `Analysis/<topic> (mm-dd-yyyy)/` (session one-offs). `tests/test_companyhealth_layout.py` fails any module that joins a file onto `companyhealth_dir()`; `python3 shared/paths.py --organize [--apply]` sorts a root that filled up anyway. This tool: Company Tracker / Company Dashboard write to `Reports/`, customer overrides read from `Registers/`.
 - **Runs on python-env (2026-09-24).** `qbo_health.py`'s missing-package hint now says `bash python-env/setup.sh` (the suite's one pinned Python 3.14 environment) instead of `pip3 install --break-system-packages`. See `python-env/STATUS.md`.
 

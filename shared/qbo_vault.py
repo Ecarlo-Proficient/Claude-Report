@@ -63,6 +63,11 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional
 
+try:
+    from shared import key_broker
+except ImportError:  # imported with shared/ itself on sys.path
+    import key_broker  # type: ignore
+
 SERVICE = "automation-qbo"
 LABEL = "credentials"
 ACCOUNT = os.environ.get("USER") or "user"
@@ -197,16 +202,36 @@ def _write_blob(data: Dict[str, str]) -> None:
         _write_blob_linux(data)
 
 
+def _brokered() -> bool:
+    """After the Key Helper adoption (keyhelper/, 09/29/2026) the Keychain item trusts only the helper:
+    every call below asks it instead of reading the Keychain. It never hands out the QuickBooks refresh
+    token or the app secret - QuickBooks passes come from shared/qbo_api.get_pass()."""
+    return _IS_MAC and key_broker.active()
+
+
+def _broker_call(fn, *a):
+    try:
+        return fn(*a)
+    except key_broker.BrokerError as e:
+        raise SecretsError(str(e))
+
+
 def get_all() -> Dict[str, str]:
     """Return all stored keys. Reads the login-keychain blob once per process
-    (a keychain access that MAY prompt; see module docstring), then caches it."""
+    (a keychain access that MAY prompt; see module docstring), then caches it.
+    Brokered: only the keys this workspace may read - never the QuickBooks master keys."""
     global _cache
     if _cache is None:
-        _cache = _read_blob()
+        _cache = _broker_call(key_broker.keys) if _brokered() else _read_blob()
     return dict(_cache)
 
 
 def get(key: str) -> str:
+    if _brokered():
+        v = _broker_call(key_broker.key, key)
+        if not v:
+            raise SecretsError(f"{key} not stored in Keychain")
+        return v
     data = get_all()
     if key not in data:
         raise SecretsError(f"{key} not stored in Keychain")
@@ -216,6 +241,10 @@ def get(key: str) -> str:
 def put(key: str, value: str) -> None:
     """Update one key. Reads current blob, mutates, writes back."""
     global _cache
+    if _brokered():
+        _broker_call(key_broker.put, {key: value})
+        _cache = None
+        return
     data = _read_blob()
     data[key] = value
     _write_blob(data)
@@ -225,6 +254,10 @@ def put(key: str, value: str) -> None:
 def put_all(values: Dict[str, str]) -> None:
     """Merge `values` into the blob and persist."""
     global _cache
+    if _brokered():
+        _broker_call(key_broker.put, dict(values))
+        _cache = None
+        return
     data = _read_blob()
     data.update(values)
     _write_blob(data)
@@ -233,6 +266,12 @@ def put_all(values: Dict[str, str]) -> None:
 
 def delete(key: str) -> bool:
     global _cache
+    if _brokered():
+        if key not in _broker_call(key_broker.names):
+            return False
+        _broker_call(key_broker.delete, [key])
+        _cache = None
+        return True
     data = _read_blob()
     if key not in data:
         return False
@@ -248,7 +287,7 @@ def delete(key: str) -> bool:
 def has_credentials() -> bool:
     """True if creds are present. Metadata-only on Mac (no blob read, no prompt)."""
     if _IS_MAC:
-        r = _sec("find-generic-password", "-a", ACCOUNT, "-s", SERVICE, "-l", LABEL)
+        r = _sec("find-generic-password", "-a", ACCOUNT, "-s", SERVICE, "-l", LABEL)   # attributes only
         return r.returncode == 0
     # Linux: have creds if env vars OR persisted file provide all required keys.
     blob = _read_blob_linux()
@@ -257,6 +296,8 @@ def has_credentials() -> bool:
 
 def list_stored() -> List[str]:
     """Keys actually present in the blob. Reads the blob on Mac (may prompt)."""
+    if _brokered():
+        return _broker_call(key_broker.names)
     return list(get_all().keys())
 
 
@@ -264,6 +305,9 @@ def purge_all() -> int:
     """Delete the entire blob. Returns 1 if deleted, 0 if nothing there."""
     global _cache
     _cache = {}
+    if _brokered():
+        _broker_call(key_broker.purge)
+        return 1
     if _IS_MAC:
         r = _sec("delete-generic-password", "-a", ACCOUNT, "-s", SERVICE, "-l", LABEL)
         return 1 if r.returncode == 0 else 0
