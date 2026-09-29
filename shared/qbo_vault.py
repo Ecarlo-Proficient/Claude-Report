@@ -115,17 +115,33 @@ def _read_blob_mac() -> Dict[str, str]:
     return data
 
 
+def _add_via_stdin(encoded: str) -> subprocess.CompletedProcess:
+    """`security add-generic-password` with the blob on STDIN (`security -i`), never on the command line:
+    an argv is readable by any process on the Mac (`ps`) while it runs, and this write happens on every
+    refresh-token rotation (security review 09/29/2026). Same item, same ACL as the argv form - verified by
+    comparing `dump-keychain -a` of both on throwaway items (no app trusted, `-T ""`)."""
+    for v in (ACCOUNT, SERVICE, LABEL):
+        if any(c in v for c in '"\\\n'):
+            raise SecretsError("keychain account/service/label contains a quote, backslash or newline")
+    # base64 is [A-Za-z0-9+/=] only, so it is safe inside the interactive parser's double quotes
+    line = (f'add-generic-password -a "{ACCOUNT}" -s "{SERVICE}" -l "{LABEL}" '
+            f'-w "{encoded}" -U -T ""\n')
+    return subprocess.run(["/usr/bin/security", "-i"], input=line, capture_output=True, text=True)
+
+
 def _write_blob_mac(data: Dict[str, str]) -> None:
     """Encode + store in the login keychain (security -T ""). Overwrites if
-    exists. NOT a biometric ACL - see the module docstring."""
+    exists. NOT a biometric ACL - see the module docstring. The blob travels on
+    stdin, never argv (see _add_via_stdin)."""
     encoded = base64.b64encode(json.dumps(data).encode()).decode()
     _sec("delete-generic-password", "-a", ACCOUNT, "-s", SERVICE, "-l", LABEL)
-    r = _sec(
-        "add-generic-password", "-a", ACCOUNT, "-s", SERVICE, "-l", LABEL,
-        "-w", encoded, "-U", "-T", "",
-    )
+    r = _add_via_stdin(encoded)
+    if r.returncode != 0:                   # the delete already ran - one retry before giving up
+        r = _add_via_stdin(encoded)
     if r.returncode != 0:
-        raise SecretsError(f"Keychain write failed: {r.stderr.strip() or 'unknown error'}")
+        err = (r.stderr or "").replace(encoded, "<blob>").strip()
+        raise SecretsError(f"Keychain write failed: {err or 'unknown error'} - "
+                           "the stored keys were removed; restore with shared/setup_qbo.py")
 
 
 # ────────── Linux (Docker) backend ──────────

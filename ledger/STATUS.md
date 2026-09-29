@@ -4,6 +4,15 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-29 · **Request gate + open-path guards (security review)**. The server answered any request that reached
+  127.0.0.1, so a page the owner visited could POST to it cross-site (start syncs, write WIP tabs, hide QBO Audit alerts)
+  or, through DNS rebinding, read everything and drive the QBO re-apply. `request_block_reason` now runs before every
+  GET/POST: Host must be `127.0.0.1:<port>` / `localhost:<port>`, a foreign `Origin` is refused, and a `Sec-Fetch-Site`
+  of cross-site / same-site is refused on POST and on every `/api/` GET (403 JSON). The ledger page, typed URLs,
+  bookmarks, the Dock app and local scripts/curl (no browser headers) all pass. `/api/rp/reveal` resolves the path and
+  tests it with a parent check (`..` and `/Volumes/CommonX` got past the old string prefix) and, like every `_os_open`,
+  refuses anything `open` would RUN (apps, scripts, installers, bare executables). Error text sent to the browser has
+  the QBO company id stripped. `tests/test_ledger_request_gate.py` (7, incl. a real server round-trip).
 - 2026-09-28 · **Vendor types: Sub: Labor / Sub: Pump + an owner override register** (owner: "RGM Removal is not a
   concrete supplier, make it Sub: Pump ... for the subs who are labor sub: labor"). Labor subs read **Sub: Labor**; a
   pumping outfit (name matches pump) is **Sub: Pump**, no longer Service; `Registers/vendor_types.json`

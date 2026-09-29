@@ -13,7 +13,8 @@ SAFETY
   * Reads open the database READ-ONLY (SQLite mode=ro). The ONLY writes are the owner's
     own marks, each to its own tiny overlay table (never to the mirrored source tables):
     waiver (draw waivers) and bill_mark (lien tags → mirrored to the workbook on sync-ap).
-  * The server binds to 127.0.0.1 only - it is not exposed on the network.
+  * The server binds to 127.0.0.1 only - it is not exposed on the network - and refuses any
+    request another website could send it (foreign Host / Origin, cross-site fetch; see request_block_reason).
 
 USAGE
   python3 ledger/dashboard.py                       # start + open your browser
@@ -104,11 +105,78 @@ _LIEN_FOLDER = paths.get_path("LIEN_FOLDER",
                               "/Volumes/Accounting/LIENS & MONTHLY NOTICES/Vendor Liens/2026")
 
 
+# Security review 09/29/2026: the server answered any request that reached 127.0.0.1, so a web page the
+# owner happened to visit could POST to it (cross-site) or, through DNS rebinding, read it and drive the
+# QBO re-apply. The gate below runs before every handler: the Host must be this machine, a POST must come
+# from the ledger's own page, and no other site may call /api/. Scripts and curl (no browser headers) on
+# this machine still work - they already run as the owner.
+_LOCAL_NAMES = ("127.0.0.1", "localhost")
+_SAME_SITE_OK = ("same-origin", "none")         # Sec-Fetch-Site: the ledger's own page, or typed / bookmarked
+
+
+def request_block_reason(method: str, path: str, headers, port: int) -> str | None:
+    """None when the request may run, else a short reason. `headers` is anything with .get()."""
+    hosts = {f"{n}:{port}" for n in _LOCAL_NAMES}
+    if (headers.get("Host") or "").strip().lower() not in hosts:
+        return "host"                                          # DNS rebinding: the page's own name, not ours
+    origin = (headers.get("Origin") or "").strip().lower()
+    if origin and origin not in {f"http://{h}" for h in hosts}:
+        return "origin"                                        # another site's script or form
+    site = (headers.get("Sec-Fetch-Site") or "").strip().lower()
+    if method == "POST" and site and site not in _SAME_SITE_OK:
+        return "cross-site"
+    if method == "GET" and path.startswith("/api/") and site and site not in _SAME_SITE_OK:
+        return "cross-site"                                    # an <img>/<script>/link from another site
+    return None
+
+
+# `open` RUNS these instead of showing them (an app, a script, an installer, a shortcut) - the ledger only
+# ever opens folders, PDFs and workbooks, so anything launchable is refused on every open path.
+_LAUNCHABLE = {".app", ".command", ".tool", ".sh", ".zsh", ".bash", ".terminal", ".pkg", ".mpkg", ".dmg",
+               ".workflow", ".scpt", ".scptd", ".applescript", ".prefpane", ".kext", ".plugin", ".bundle",
+               ".webloc", ".inetloc", ".fileloc", ".url", ".exe", ".bat", ".cmd", ".com", ".lnk", ".ps1",
+               ".vbs", ".js", ".jse", ".wsf", ".msi", ".scr", ".py", ".jar"}
+
+
+def _launchable(path) -> bool:
+    p = Path(path)
+    if any(Path(part).suffix.lower() in _LAUNCHABLE for part in p.parts):
+        return True
+    try:                                        # a bare program (no extension, executable) - `open` runs it in Terminal
+        return p.is_file() and not p.suffix and os.access(p, os.X_OK)
+    except OSError:
+        return False
+
+
+def _under(target: Path, roots) -> bool:
+    """True when target (symlinks and `..` resolved) is one of roots or inside one."""
+    t = target.resolve()
+    for r in roots:
+        try:
+            rr = Path(r).resolve()
+        except OSError:
+            continue
+        if t == rr or rr in t.parents:
+            return True
+    return False
+
+
+_REALM_IN_PATH = re.compile(r"/v3/company/\d+")
+
+
+def _scrub(text: str) -> str:
+    """Error text for the browser, without the QBO company id (never echoed - owner 2026-08-06)."""
+    return _REALM_IN_PATH.sub("/v3/company/<id>", text)
+
+
 def _os_open(path: str):
     """Open a file/folder in the host OS file manager. Cross-platform so the same
     dashboard works on Mac OR Windows - the LOCAL server opens it with the native
     command, so the browser never has to handle smb:// or \\\\server paths. Returns
-    None on success, an error string otherwise. Open-only - never executes."""
+    None on success, an error string otherwise. Open-only - never executes: an app,
+    script or installer is refused (`open` would run it)."""
+    if _launchable(path):
+        return "refused: not a folder or document"
     system = platform.system()
     try:
         if system == "Darwin":
@@ -3208,8 +3276,18 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _json(self, obj, code: int = 200):
+        if isinstance(obj, dict) and isinstance(obj.get("error"), str):
+            obj = {**obj, "error": _scrub(obj["error"])}
         self._send(code, json.dumps(obj, default=str).encode("utf-8"),
                    "application/json; charset=utf-8")
+
+    def _blocked(self, method: str) -> bool:
+        """The request gate (see request_block_reason). True = refused and already answered."""
+        why = request_block_reason(method, urlparse(self.path).path, self.headers, self.server.server_address[1])
+        if why is None:
+            return False
+        self._json({"error": "refused: this request did not come from the ledger page", "why": why}, 403)
+        return True
 
     def _static(self, name: str):
         # Serve only files that actually live in static/ (no traversal).
@@ -3356,6 +3434,8 @@ class Handler(BaseHTTPRequestHandler):
         self._json(res)
 
     def do_GET(self):
+        if self._blocked("GET"):
+            return
         path = self.path.split("?", 1)[0]
         if path == "/":
             self._static("index.html")
@@ -3490,6 +3570,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, b"not found", "text/plain; charset=utf-8")
 
     def do_POST(self):
+        if self._blocked("POST"):
+            return
         p = urlparse(self.path).path
         if p == "/api/waiver":            # a ledger write - the owner's waiver marks
             self._set_waiver()
@@ -3868,11 +3950,14 @@ class Handler(BaseHTTPRequestHandler):
             roots.append(paths.onedrive_base())
         except Exception:                                      # noqa: BLE001
             pass
-        ok = any(str(target).startswith(str(r)) for r in roots)
-        if not ok:
+        # resolved + parent test, not a string prefix: `<root>/../../Applications/X.app` and
+        # `/Volumes/CommonX` both passed the old startswith check (security review 09/29/2026)
+        if not target.is_absolute() or not _under(target, roots):
             return self._json({"error": "not a job folder path"}, 400)
         if not target.exists():
             return self._json({"error": "not mounted or gone", "path": raw}, 404)
+        if _launchable(target):
+            return self._json({"error": "refused: not a folder or document"}, 400)
         try:
             if target.is_dir():
                 subprocess.run(["open", str(target)], check=False, timeout=10)          # noqa: S603,S607
