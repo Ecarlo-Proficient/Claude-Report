@@ -392,6 +392,10 @@ The owner ruled: **only the owner, only this Mac, Touch ID on every write, no do
 - **One review, one write.** The run token is issued by the review in the server process, lives 20 minutes, is
   spent on use, and the write must be exactly what that review showed (bills, amounts, offered credits).
 - **One writer.** A process lock + a file lock around every QBO money write.
+- **Never twice.** The QBO `requestid` is the payment's content, and every write is a `pay_attempt` row before it
+  is sent; a bill on an attempt QBO never answered stays off every review until QBO is checked for it (found, or
+  15 minutes and not there). Each vendor's bills are re-read right before its write; a ticked credit must still
+  hold the balance the review showed.
 - **The door.** Every request must name `127.0.0.1:<port>` / `localhost:<port>` as its Host (stops DNS
   rebinding); every POST must carry `X-Ledger-Write: 1` (added by the page's fetch wrapper - another site cannot
   add it without a CORS preflight this server never answers) and no foreign Origin. Blocked writes are logged.

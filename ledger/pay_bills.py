@@ -27,8 +27,10 @@ record of how it went out. QBO cuts a reference at 21 characters (the owner hit 
 "25783-123456831813153", dash included) - REF_MAX, enforced here and in the page.
 
 Vendor credits go on only when the owner ticked them. Every write carries a QBO `requestid`
-derived from the dry run it came from, so a double click or a retried request can never post
-the same payment twice. The live bills are saved to ~/Library/Logs/Proficient/pay-bills/ before
+derived from the payment's own content (vendor, date, account, ref, bills + amounts, credits), so a
+double click, a retry or a second review of the same payment gets QBO's first payment back, never a
+second one; and every write is a `pay_attempt` row before it is sent, so a payment QBO never answered
+holds its bills off every review until QBO is checked (see `_held`). The live bills are saved to ~/Library/Logs/Proficient/pay-bills/ before
 any write. After each payment: its bills leave the pay run, the payment and bills go into the
 mirror, and - unless it waits to be printed - its stub is filed in the vendor's stub folder
 (bill_payment_stub.print_stub). A "To print" check files its stub when its number is assigned.
@@ -147,6 +149,106 @@ def _audit(action: str, result: str, detail="") -> None:
         pass
 
 
+def _login() -> tuple:
+    """get_pass() itself, never load_credentials(): that one sys.exit()s on a failed login, which would kill the
+    request thread mid-run (review 2026-09-29, finding 4). Here a failed login is an AuthError the page shows."""
+    access, cid = qbo_api.get_pass()
+    qbo_api._CURRENT_ACCESS = access
+    return access, cid
+
+
+def _renew() -> None:
+    qbo_api._CURRENT_ACCESS = qbo_api.get_pass(fresh=True)[0]
+
+
+def _get(path: str, access: str, params: Optional[dict] = None) -> dict:
+    """qbo_api._api_get, with its mid-run 401 renewal's sys.exit turned back into an error."""
+    try:
+        return qbo_api._api_get(path, access, params)
+    except SystemExit:
+        raise qbo_api.AuthError("the QuickBooks login could not be renewed - nothing more was written") from None
+
+
+# ───────────────────────── attempts: no bill is paid twice (review 2026-09-29, finding 1) ─────────────────────────
+# Every payment is an attempt row BEFORE it is sent: `sent` -> `written` (QBO took it) / `refused` (QBO said no,
+# nothing written) / `unknown` (no answer and not found - it may be in QBO). A bill on a `sent`/`unknown` attempt is
+# HELD out of every review until the attempt resolves: each review looks for it in QBO (the vendor's payment
+# linking exactly those bills and amounts) - found = written, not found after ATTEMPT_SETTLE = not written. A bill
+# on a `written` attempt is held while its pay-run tick is older than the payment (clearing the tick failed); a
+# tick saved after the payment is the owner asking again, and it goes through.
+ATTEMPT_SETTLE = 15 * 60
+_ATTEMPT_TABLE = """CREATE TABLE IF NOT EXISTS pay_attempt (
+    request_id TEXT PRIMARY KEY, vendor_id TEXT, vendor TEXT, at TEXT NOT NULL, state TEXT NOT NULL,
+    payment_id TEXT, bills TEXT, body TEXT, error TEXT, resolved_at TEXT)"""
+
+
+def _acon():
+    import sqlite3                                  # noqa: PLC0415
+    con = sqlite3.connect(str(bill_marks.LEDGER_DB), timeout=30)
+    con.row_factory = sqlite3.Row
+    con.execute(_ATTEMPT_TABLE)
+    return con
+
+
+def _attempt(rid: str, state: str, **kw) -> None:
+    con = _acon()
+    try:
+        if state == "sent":
+            con.execute("INSERT OR REPLACE INTO pay_attempt (request_id, vendor_id, vendor, at, state, bills, body) "
+                        "VALUES (?,?,?,?,?,?,?)", (rid, kw["vendor_id"], kw.get("vendor", ""), _now_s(), "sent",
+                                                   json.dumps(kw["bills"]), json.dumps(kw["body"], default=str)))
+        else:
+            con.execute("UPDATE pay_attempt SET state=?, payment_id=COALESCE(?, payment_id), error=?, resolved_at=? "
+                        "WHERE request_id=?", (state, kw.get("payment_id"), kw.get("error"), _now_s(), rid))
+        con.commit()
+    finally:
+        con.close()
+
+
+def _mark_times() -> dict:
+    con = _acon()
+    try:
+        return {str(b): str(u or "") for b, u in con.execute("SELECT bill_id, updated_at FROM pay_mark")}
+    except Exception:                               # noqa: BLE001  (no pay run table yet)
+        return {}
+    finally:
+        con.close()
+
+
+def _held(access: str, cid: str) -> dict:
+    """{bill_id -> why} for bills a payment may already cover. Resolves what it can first (see above)."""
+    con = _acon()
+    try:
+        rows = [dict(r) for r in con.execute("SELECT * FROM pay_attempt WHERE state IN ('sent','unknown','written')")]
+    finally:
+        con.close()
+    ticks, held = _mark_times(), {}
+    now = dt.datetime.now()
+    for a in rows:
+        bills = json.loads(a["bills"] or "{}")
+        if a["state"] in ("sent", "unknown"):
+            found = None
+            try:
+                found = _find_posted(access, cid, json.loads(a["body"] or "{}"))
+            except Exception:                       # noqa: BLE001
+                pass
+            if found:
+                _attempt(a["request_id"], "written", payment_id=str(found["Id"]))
+                a.update(state="written", payment_id=str(found["Id"]))
+                _audit("pay", "found", {"request_id": a["request_id"], "payment_id": found["Id"]})
+            elif (now - dt.datetime.fromisoformat(a["at"])).total_seconds() > ATTEMPT_SETTLE:
+                _attempt(a["request_id"], "not_written", error="not in QuickBooks after the settle time")
+                continue
+            else:
+                for b in bills:
+                    held[b] = f"a payment sent {a['at'][:16].replace('T', ' ')} got no answer - checking QuickBooks for it (clears within 15 minutes)"
+                continue
+        for b in bills:                             # written: held only while the tick predates the payment
+            if b in ticks and ticks[b] <= a["at"]:
+                held[b] = f"already paid from the ledger (payment {a['payment_id']}, {a['at'][:10]}) - untick and tick it again to pay more"
+    return held
+
+
 class _Locked:
     """Process lock + file lock: one QBO money write at a time, across tabs and processes."""
     def __enter__(self):
@@ -173,7 +275,7 @@ class _Locked:
 def _close_date(access: str, cid: str) -> str:
     """QBO's books-closed date ('' when none) - no payment is dated on or before it."""
     try:
-        pref = qbo_api._api_get(f"/v3/company/{cid}/preferences", access).get("Preferences", {})
+        pref = _get(f"/v3/company/{cid}/preferences", access).get("Preferences", {})
         return str((pref.get("AccountingInfoPrefs") or {}).get("BookCloseDate") or "")[:10]
     except Exception:                               # noqa: BLE001
         return ""
@@ -214,7 +316,7 @@ def accounts() -> list:
 
 def _live(access: str, cid: str, typ: str, where: str) -> list:
     q = f"SELECT * FROM {typ} WHERE {where} MAXRESULTS 1000"
-    return qbo_api._api_get(f"/v3/company/{cid}/query", access, {"query": q}).get("QueryResponse", {}).get(typ, [])
+    return _get(f"/v3/company/{cid}/query", access, {"query": q}).get("QueryResponse", {}).get(typ, [])
 
 
 def _live_ids(access: str, cid: str, typ: str, ids) -> dict:
@@ -238,9 +340,14 @@ def _plan_live(access: str, cid: str) -> dict:
     """The saved pay run against QBO right now: {vendor_id: {...}} + skipped rows."""
     marks = bill_marks.read_pay_marks()
     bills = _live_ids(access, cid, "Bill", marks) if marks else {}
+    held = _held(access, cid) if marks else {}
     vendors, skipped = {}, []
     for bid, m in marks.items():
         b = bills.get(bid)
+        if b and bid in held:
+            skipped.append({"bill_id": bid, "doc": b.get("DocNumber") or "", "vendor": (b.get("VendorRef") or {}).get("name") or "",
+                            "why": held[bid]})
+            continue
         if not b:
             skipped.append({"bill_id": bid, "why": "not in QuickBooks any more (deleted?)"})
             continue
@@ -273,7 +380,7 @@ def _plan_live(access: str, cid: str) -> dict:
 
 def plan() -> dict:
     """Dry run for the saved pay run. Writes nothing. The run_token keys the write's idempotency."""
-    access, cid = qbo_api.load_credentials()
+    access, cid = _login()
     p = _plan_live(access, cid)
     for v in p["vendors"].values():
         v["credits"] = _credits(access, cid, v["vendor_id"])
@@ -313,7 +420,7 @@ def _post(cid: str, body: dict, request_id: str) -> dict:
         if r.status_code == 200:
             return r.json()["BillPayment"]
         if r.status_code == 401 and attempt < 2:
-            qbo_api.refresh_access()
+            _renew()
             continue
         if r.status_code in (429, 500, 502, 503, 504):
             last = f"status {r.status_code}"
@@ -379,6 +486,7 @@ def _after_post(res: dict, done: dict, want: dict, lv: dict, credits: list, meth
                 access: str, cid: str) -> None:
     """Everything after QBO accepted a payment: off the pay run, into the mirror + the queue, the stub."""
     pid = str(done["Id"])
+    _record_push(res, want, lv, credits, method, acct, date)     # the queue row first: the watcher must see it
     bill_marks.set_pay_marks([{"bill_id": b, "selected": False} for b in want], _now_s())
     try:
         _to_mirror("BillPayment", [done])
@@ -387,7 +495,6 @@ def _after_post(res: dict, done: dict, want: dict, lv: dict, credits: list, meth
             _to_mirror("VendorCredit", list(_live_ids(access, cid, "VendorCredit", [c["id"] for c in credits]).values()))
     except Exception as e:                          # noqa: BLE001  (the next refresh catches up)
         res["mirror_error"] = str(e)
-    _record_push(res, want, lv, credits, method, acct, date)
     if method == "print":
         res["stub"] = {"filed": False, "waiting": "files itself once QuickBooks shows the printed check #"}
         return
@@ -411,6 +518,10 @@ def commit(body: dict) -> dict:
     if not t or time.time() - t["at"] > TOKEN_TTL:
         _audit("pay", "refused", "no live review token")
         return {"ok": False, "error": "this review has expired or was already used - run Pay in QuickBooks again"}
+    vids = [str(v.get("vendor_id") or "") for v in body.get("vendors") or []]
+    if len(set(vids)) != len(vids):                 # one payment per vendor (review 2026-09-29, finding 5)
+        _audit("pay", "refused", "a vendor listed twice")
+        return {"ok": False, "error": "a vendor is listed twice - run Pay in QuickBooks again"}
     for v in body.get("vendors") or []:
         vid = str(v.get("vendor_id") or "")
         shown = t["vendors"].get(vid)
@@ -473,7 +584,7 @@ def _commit(body: dict, t: Optional[dict] = None) -> dict:
     today = dt.date.today()
     if date > (today + dt.timedelta(days=FUTURE_DAYS)).isoformat():
         return {"ok": False, "error": f"the payment date is more than {FUTURE_DAYS} days ahead"}
-    access, cid = qbo_api.load_credentials()
+    access, cid = _login()
     closed = _close_date(access, cid)
     if closed and date <= closed:
         return {"ok": False, "error": f"the books are closed through {closed} - pick a later payment date"}
@@ -499,65 +610,122 @@ def _commit(body: dict, t: Optional[dict] = None) -> dict:
         vid = str(v.get("vendor_id") or "")
         res = {"vendor_id": vid, "vendor": (live.get(vid) or {}).get("vendor") or vid}
         results.append(res)
-        lv = live.get(vid)
-        want = {str(b["bill_id"]): _r2(b["amount"]) for b in v.get("bills") or []}
-        have = {r["bill_id"]: r["amount"] for r in (lv or {}).get("bills", [])}
-        if not want or want != have:
-            res["error"] = "the bills or amounts changed since the review (paid elsewhere, or the run was edited) - review again"
-            continue
-        credits = []
-        if v.get("credits"):
-            open_c = {c["id"]: c for c in _credits(access, cid, vid)}
-            missing = [c for c in v["credits"] if str(c) not in open_c]
-            if missing:
-                res["error"] = "a ticked credit is no longer open in QuickBooks - review again"
-                continue
-            credits = [open_c[str(c)] for c in v["credits"]]
-        bills_amt = _r2(sum(want.values()))
-        cred_amt = _r2(sum(c["balance"] for c in credits))
-        if cred_amt > bills_amt - EPS:      # a credit bigger than the payment: use only what the bills absorb
-            res["error"] = f"the ticked credits ({cred_amt:,.2f}) cover the whole {bills_amt:,.2f} - apply those in QuickBooks"
-            continue
-        lines = [{"Amount": a, "LinkedTxn": [{"TxnId": bid, "TxnType": "Bill"}]} for bid, a in want.items()]
-        lines += [{"Amount": c["balance"], "LinkedTxn": [{"TxnId": c["id"], "TxnType": "VendorCredit"}]} for c in credits]
-        pay = {"VendorRef": {"value": vid}, "TxnDate": date, "TotalAmt": _r2(bills_amt - cred_amt),
-               "DocNumber": refs[vid], "Line": lines}
-        if method == "card":
-            pay["PayType"] = "CreditCard"
-            pay["CreditCardPayment"] = {"CCAccountRef": {"value": acct_id}}
-            if not refs[vid]:
-                pay.pop("DocNumber")
-        else:
-            pay["PayType"] = "Check"
-            pay["CheckPayment"] = {"BankAccountRef": {"value": acct_id},
-                                   "PrintStatus": "NeedToPrint" if method == "print" else "NotSet"}
-        rid = hashlib.sha1(f"{token}|{vid}".encode()).hexdigest()[:36]
-        stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-        (LOG_DIR / f"{stamp}-{vid}.json").write_text(json.dumps(
-            {"request_id": rid, "payment": pay, "account": acct, "method": method, "credits": credits,
-             "bills_live": (lv or {}).get("bills")}, indent=1, default=str))
         try:
-            done = _post(cid, pay, rid)
-        except RuntimeError as e:
-            done = _find_posted(access, cid, pay) if "did not answer" in str(e) else None
-            if not done:
-                res["error"] = str(e)
-                _audit("pay", "failed", {"vendor": vid, "error": str(e), "request_id": rid})
-                continue
-        pid = str(done["Id"])
-        _audit("pay", "written", {"vendor": vid, "payment_id": pid, "total": _r2(done.get("TotalAmt")),
-                                  "ref": done.get("DocNumber"), "bills": list(want), "credits": [c["id"] for c in credits]})
-        res.update({"ok": True, "payment_id": pid, "ref": done.get("DocNumber") or "", "total": _r2(done.get("TotalAmt")),
-                    "bills": len(want), "credits": len(credits), "to_print": method == "print"})
-        try:                                            # the payment IS in QBO from here: nothing below may lose it
-            _after_post(res, done, want, lv, credits, method, acct, date, access, cid)
-        except Exception as e:                          # noqa: BLE001
-            res["after_error"] = f"written to QuickBooks, but the ledger's follow-up failed: {e}"
-            _audit("pay", "after_error", {"payment_id": pid, "error": str(e)})
+            _pay_vendor(v, vid, res, live.get(vid), t, token, method, acct, acct_id, date, refs, access, cid)
+        except qbo_api.AuthError as e:              # the login died mid-run: this vendor and the rest are not written
+            res["error"] = str(e)
+            _audit("pay", "failed", {"vendor": vid, "error": str(e)})
+            for rest in asked[asked.index(v) + 1:]:
+                results.append({"vendor_id": str(rest.get("vendor_id")), "vendor": str(rest.get("vendor_id")),
+                                "error": "not attempted - the QuickBooks login failed"})
+            break
     posted = [r for r in results if r.get("ok")]
     return {"ok": bool(posted), "posted": len(posted), "failed": len(results) - len(posted),
             "total": _r2(sum(r["total"] for r in posted)), "results": results,
             **({} if posted else {"error": "; ".join(f"{r['vendor']}: {r.get('error')}" for r in results) or "nothing to pay"})}
+
+
+def _number_taken(number: str, acct_id: str, exclude_pid: str = "") -> Optional[dict]:
+    """A check # already on this bank account (a bill payment or a written check) - from the mirror."""
+    con = mirror.connect()
+    try:
+        dup = [b for b in mirror.load("BillPayment", "doc_number = ?", (number,), con=con)
+               if str(b["Id"]) != exclude_pid and _ref((b.get("CheckPayment") or {}).get("BankAccountRef")) == acct_id]
+        dup += [x for x in mirror.load("Purchase", "doc_number = ?", (number,), con=con)   # a written check (Expense) too
+                if _ref(x.get("AccountRef")) == acct_id]
+    finally:
+        con.close()
+    return dup[0] if dup else None
+
+
+def _pay_vendor(v: dict, vid: str, res: dict, lv: Optional[dict], t: Optional[dict], token: str, method: str,
+                acct: dict, acct_id: str, date: str, refs: dict, access: str, cid: str) -> None:
+    """One vendor's payment: re-read live, build, attempt row, send, record. Sets res; raises only AuthError."""
+    want = {str(b["bill_id"]): _r2(b["amount"]) for b in v.get("bills") or []}
+    have = {r["bill_id"]: r["amount"] for r in (lv or {}).get("bills", [])}
+    if not want or want != have:
+        res["error"] = "the bills or amounts changed since the review (paid elsewhere, or the run was edited) - review again"
+        return
+    # re-read THIS vendor's bills right before its write (review 2026-09-29, finding 2): the Touch ID dialog and
+    # the vendors before this one take minutes; a bill paid in QuickBooks meanwhile must stop this payment
+    seen = {r["bill_id"]: r["balance"] for r in (lv or {}).get("bills", [])}
+    now_b = _live_ids(access, cid, "Bill", want)
+    moved = [b for b in want if b not in now_b or abs(_r2(now_b[b].get("Balance")) - seen.get(b, -1)) > EPS
+             or want[b] > _r2(now_b[b].get("Balance")) + EPS]
+    if moved:
+        docs = ", ".join("#" + ((now_b.get(b) or {}).get("DocNumber") or b) for b in moved)
+        res["error"] = f"bill {docs} changed in QuickBooks during the approval (paid or edited) - nothing written for this vendor, review again"
+        return
+    credits = []
+    if v.get("credits"):
+        open_c = {c["id"]: c for c in _credits(access, cid, vid)}
+        approved = (t or {}).get("credits", {}).get(vid, {})
+        missing = [c for c in v["credits"] if str(c) not in open_c]
+        if missing:
+            res["error"] = "a ticked credit is no longer open in QuickBooks - review again"
+            return
+        drift = [c for c in v["credits"] if abs(open_c[str(c)]["balance"] - _r2(approved.get(str(c), -1))) > EPS]
+        if drift:                                   # the check would differ from the one approved (finding 3)
+            res["error"] = "a ticked credit's balance changed since the review - nothing written for this vendor, review again"
+            return
+        credits = [open_c[str(c)] for c in v["credits"]]
+    bills_amt = _r2(sum(want.values()))
+    cred_amt = _r2(sum(c["balance"] for c in credits))
+    if cred_amt > bills_amt - EPS:      # a credit bigger than the payment: use only what the bills absorb
+        res["error"] = f"the ticked credits ({cred_amt:,.2f}) cover the whole {bills_amt:,.2f} - apply those in QuickBooks"
+        return
+    if method == "check":                           # a typed check # already used on this account (finding 6)
+        d = _number_taken(refs[vid], acct_id)
+        if d:
+            who = (d.get("VendorRef") or d.get("EntityRef") or {}).get("name")
+            res["error"] = f"check #{refs[vid]} is already used on this account ({who}, {d.get('TxnDate')})"
+            return
+    lines = [{"Amount": a, "LinkedTxn": [{"TxnId": bid, "TxnType": "Bill"}]} for bid, a in sorted(want.items())]
+    lines += [{"Amount": c["balance"], "LinkedTxn": [{"TxnId": c["id"], "TxnType": "VendorCredit"}]}
+              for c in sorted(credits, key=lambda c: c["id"])]
+    pay = {"VendorRef": {"value": vid}, "TxnDate": date, "TotalAmt": _r2(bills_amt - cred_amt),
+           "DocNumber": refs[vid], "Line": lines}
+    if method == "card":
+        pay["PayType"] = "CreditCard"
+        pay["CreditCardPayment"] = {"CCAccountRef": {"value": acct_id}}
+        if not refs[vid]:
+            pay.pop("DocNumber")
+    else:
+        pay["PayType"] = "Check"
+        pay["CheckPayment"] = {"BankAccountRef": {"value": acct_id},
+                               "PrintStatus": "NeedToPrint" if method == "print" else "NotSet"}
+    # the requestid is the payment's CONTENT, not the review (finding 1): a second review of the same payment
+    # sends the same id, and QuickBooks hands back the payment it already made instead of a second one
+    rid = hashlib.sha1(json.dumps(pay, sort_keys=True).encode()).hexdigest()[:36]
+    stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    (LOG_DIR / f"{stamp}-{vid}.json").write_text(json.dumps(
+        {"request_id": rid, "payment": pay, "account": acct, "method": method, "credits": credits,
+         "bills_live": (lv or {}).get("bills")}, indent=1, default=str))
+    _attempt(rid, "sent", vendor_id=vid, vendor=res["vendor"], bills=want, body=pay)   # held from here until resolved
+    try:
+        done = _post(cid, pay, rid)
+    except RuntimeError as e:
+        unknown = "did not answer" in str(e)
+        done = _find_posted(access, cid, pay) if unknown else None
+        if not done:
+            _attempt(rid, "unknown" if unknown else "refused", error=str(e))
+            res["error"] = str(e) + (" - its bills stay off the pay run until QuickBooks is checked (15 minutes at most)" if unknown else "")
+            _audit("pay", "unknown" if unknown else "failed", {"vendor": vid, "error": str(e), "request_id": rid})
+            return
+    except qbo_api.AuthError as e:
+        _attempt(rid, "unknown", error=str(e))
+        raise
+    pid = str(done["Id"])
+    _attempt(rid, "written", payment_id=pid)
+    _audit("pay", "written", {"vendor": vid, "payment_id": pid, "total": _r2(done.get("TotalAmt")), "request_id": rid,
+                              "ref": done.get("DocNumber"), "bills": list(want), "credits": [c["id"] for c in credits]})
+    res.update({"ok": True, "payment_id": pid, "ref": done.get("DocNumber") or "", "total": _r2(done.get("TotalAmt")),
+                "bills": len(want), "credits": len(credits), "to_print": method == "print"})
+    try:                                            # the payment IS in QBO from here: nothing below may lose it
+        _after_post(res, done, want, lv, credits, method, acct, date, access, cid)
+    except Exception as e:                          # noqa: BLE001
+        res["after_error"] = f"written to QuickBooks, but the ledger's follow-up failed: {e}"
+        _audit("pay", "after_error", {"payment_id": pid, "error": str(e)})
 
 
 # ───────────────────────── the pushed-payments queue + its watcher ─────────────────────────
@@ -763,22 +931,13 @@ def _assign_number(payment_id: str, number: str, row) -> dict:
         number = clean_ref("check", number)
     except ValueError as e:
         return {"ok": False, "error": str(e)}
-    access, cid = qbo_api.load_credentials()
-    live = qbo_api._api_get(f"/v3/company/{cid}/billpayment/{pid}", access)["BillPayment"]
+    access, cid = _login()
+    live = _get(f"/v3/company/{cid}/billpayment/{pid}", access)["BillPayment"]
     cp = live.get("CheckPayment") or {}
     if cp.get("PrintStatus") != "NeedToPrint":
         return {"ok": False, "error": f"that check is not waiting to be printed any more (it shows #{live.get('DocNumber') or '-'})"}
-    acct = _ref(cp.get("BankAccountRef"))
-    con = mirror.connect()
-    try:
-        dup = [b for b in mirror.load("BillPayment", "doc_number = ?", (number,), con=con)
-               if str(b["Id"]) != pid and _ref((b.get("CheckPayment") or {}).get("BankAccountRef")) == acct]
-        dup += [x for x in mirror.load("Purchase", "doc_number = ?", (number,), con=con)   # a written check (Expense) too
-                if _ref(x.get("AccountRef")) == acct]
-    finally:
-        con.close()
-    if dup:
-        d = dup[0]
+    d = _number_taken(number, _ref(cp.get("BankAccountRef")), pid)
+    if d:
         who = (d.get("VendorRef") or d.get("EntityRef") or {}).get("name")
         return {"ok": False, "error": f"check #{number} is already used on this account ({who}, {d.get('TxnDate')})"}
     import presence                                 # noqa: PLC0415  (ledger-local)
@@ -787,9 +946,11 @@ def _assign_number(payment_id: str, number: str, row) -> dict:
     if not ok:
         _audit("number", "refused", f"Touch ID: {why}")
         return {"ok": False, "error": f"not confirmed on this Mac ({why}) - nothing was written"}
-    body = {k: val for k, val in live.items() if k not in ("MetaData", "domain", "sparse")}
-    body["DocNumber"] = number
-    body["CheckPayment"] = {**cp, "PrintStatus": "PrintComplete"}
+    # a SPARSE update - the number and print status only; the lines are never re-sent (QuickBooks re-applies a
+    # payment's money when its lines come back, the "QBO rewrites paid checks" trap; review 2026-09-29)
+    body = {"Id": pid, "SyncToken": live.get("SyncToken"), "sparse": True, "PayType": "Check",
+            "VendorRef": live.get("VendorRef"), "TotalAmt": live.get("TotalAmt"), "DocNumber": number,
+            "CheckPayment": {**cp, "PrintStatus": "PrintComplete"}}
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     (LOG_DIR / f"{dt.datetime.now().strftime('%Y%m%d-%H%M%S')}-number-{pid}.json").write_text(
         json.dumps({"live_before": live, "number": number}, indent=1, default=str))

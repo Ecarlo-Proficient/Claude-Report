@@ -31,6 +31,19 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   tests it with a parent check (`..` and `/Volumes/CommonX` got past the old string prefix) and, like every `_os_open`,
   refuses anything `open` would RUN (apps, scripts, installers, bare executables). Error text sent to the browser has
   the QBO company id stripped. `tests/test_ledger_request_gate.py` (7, incl. a real server round-trip).
+- 2026-09-29 · **Pay in QuickBooks: review fixes before landing** (an independent review of the branch; the owner said
+  "review it and bring in pay bills"). (1) No bill paid twice: the QBO `requestid` is the payment's CONTENT, not the
+  review; every write is a `pay_attempt` row BEFORE it is sent (sent -> written / refused / unknown), and `_held()` keeps
+  a bill on an unresolved attempt out of every review - it looks for the payment in QBO each time (found = written; not
+  found after 15 minutes = not written); a written bill whose pay-run tick predates the payment stays held until it is
+  ticked again. (2) Each vendor's bills are re-read live right before its write - a bill paid or edited during the
+  Touch ID wait stops that vendor. (3) A ticked credit whose balance moved since the review stops that vendor (the
+  check would differ from the one approved). (4) The Pushed payments row is written first after QBO accepts; the login
+  is `get_pass()` directly and a failed mid-run renewal is an error on that vendor (it was a `sys.exit` that killed the
+  request thread). (5) A vendor listed twice is refused. (6) A typed check # already used on the account is refused on
+  the payment too (it was only on the fallback). The fallback check-# write is a SPARSE update (lines never re-sent).
+  To confirm with the first small real payment: QBO keeps "To print" as the queued check's number and assigns the
+  real one when printed; bills on two AP accounts under one vendor.
 - 2026-09-28 · **Pay in QuickBooks from the Pay run** (owner: "move the pay bills in the project ledger ... a single
   bill payment ... choose the account ... ready to print and/or assign check # after it's been printed / put ACH ...
   bring in the bill payment stub to auto send to where it's supposed to go"; rulings: ACH keeps the reference as typed,
