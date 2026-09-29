@@ -3,6 +3,11 @@
 Progression record. Update in the SAME commit as any change to this tool (repo rule).
 
 ## DONE / FINALIZED
+- 2026-09-29 · **Cutover done** with the owner at the Mac: `install.sh --adopt` - the Keychain item now trusts
+  exactly one program (Key Helper, pinned to its build); no temp copy left; marker written. Proven after:
+  `setup_qbo --test` AUTH OK through the helper, the ledger restarted (request gate still 403 for a foreign
+  Host), a mirror refresh, the private workspace's two profiles by pass and this company read-only by GET -
+  every one logged, no password prompt after the one unlock.
 - 2026-09-29 · **Key Helper built** (security review: the key library was silently readable by any program
   run as the owner). Swift menu-bar app: Unix socket in a 0700 folder; answers only the owner's user, the
   pinned Python, and scripts inside a registered workspace; one Touch ID / password per session, keys in
@@ -18,7 +23,6 @@ Progression record. Update in the SAME commit as any change to this tool (repo r
   full, this company read-only (a pass for it, its refresh token, changing it - all refused).
 
 ## IN PROGRESS
-- The cutover (`install.sh --adopt`) - needs the owner at the Mac (macOS dialog + password).
 
 ## TO DO
 - Move the Notion / Teams Keychain items into the same library behind the helper.
