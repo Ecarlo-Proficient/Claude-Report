@@ -5,7 +5,14 @@ to this tool. Tool-only scope: no business/owner analyses or dollar-exposure
 findings here — those live in the owner's vault.
 
 ## DONE / FINALIZED
-- 2026-09-29 · **Notion Vendor Statements board - full build (before the simplify pass).** One live Notion page per vendor-month replaces the Teams card-per-vendor: a checklist of every bill to fix, rewritten in place on each run (`notion_board.py`); cleared/still-open/kept-tick merge rules; Done mirrored with the month folder (`--sync-done`); one Teams digest per run. Superseded the same day by the simplified version below.
+- 2026-09-29 · **Notion Vendor Statements board replaces the Teams card per vendor (owner: "one card that keeps a live record of that statement").**
+  The Teams Workflows webhook is post-only - it can't read a ✅ reaction or edit a card - so the live record moved to Notion.
+  - `notion_board.py`: ONE page per vendor-month in the "Vendor Statements" database (`ACB_STATEMENTS_DS_ID` in machine.env; the database must be shared with the Notion integration). Body = one collapsible heading per kind of work (To enter · Not approved · Amount mismatch · Tax charged · Not printed · Approval pending? check QBO), one to-do per bill: ref linked to QBO, date mm/dd/yyyy, $, job. Plus a Cleared section.
+  - Every run (inbox, single file, `--refresh`) rewrites the page and merges it with the clerk's ticks: gone from QBO -> Cleared (dated); ticked but QBO still shows it -> unticked "still open in QBO"; unverifiable (approval pending in QBO's workflow, bills entered since 09/16) -> her tick is kept. Print items are carried forward when print status didn't run. Her own notes on the page are left alone.
+  - Status computed: Open / In progress / Clean / Tie-out failed; Done is set by a human and never overwritten. `--sync-done` mirrors Done both ways with the month folder (asks before renaming); every run prints what it would do.
+  - Teams: one digest card per run (`shared/teams_notify.post_statement_digest`), a line per vendor-month linked to its page + an "Open the board" button. The per-vendor cards are retired.
+  - Built full, then simplified the same day (owner: "build the max, then review to cut"): dropped per-kind count columns, $ totals/difference (noise - the statement total includes already-paid lines), tie-out checkbox, summary callout, a "for reference" section (158 already-paid lines on one RCI statement), run history, and PDF/Excel upload to Notion (copies of Synology). The full build is commit 822be06 if any of it is wanted back.
+  - Tests: `tests/test_statement_board.py` (merge rules, status, grouping, a fake-Notion create -> tick -> refresh round trip, the digest card).
 - 2026-09-29 · **Formula-injection guard (security review).** Outside text (vendor / QBO / Notion / email) this tool writes goes through `shared/xlsx_guard` - stored as text, never a live formula (statement refs, email-subject refs; the clerk-performance CSV via `csv_cell`); every workbook save also passes the shared guard, and `xlsx_verify` fails a risky formula.
 - 2026-09-29 · **QuickBooks login moved to the shared one (security review).** This tool's own copy of the refresh-token exchange is retired; its login is `shared/qbo_api` (`load_credentials` / `get_pass`), which asks Key Helper (`keyhelper/`) once the key library is adopted - the tool never holds the refresh token.
 - **`datetime.utcnow()` retired (2026-09-24).** `print_status.py`'s two date floors now use `datetime.now(UTC)`: same output, no deprecation warning (Python is removing `utcnow`).
@@ -183,6 +190,7 @@ findings here — those live in the owner's vault.
     the older single-line CowTown layout.
 
 ## OPEN ISSUES
+- **Notion board live write untested until the database is shared with the Notion integration** (Vendor Statements -> ⋯ -> Connections). The code is proven against a fake Notion and a live QBO read.
 - **Print Status is opt-in (`PRINT_STATUS=1`) pending a test-and-see on 1–2
   vendors** (the owner 2026-09-14). Flip the default on once proven.
 - **"Who's done" workflow script HELD (the owner 2026-09-14, "hold - don't build

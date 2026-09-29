@@ -166,7 +166,7 @@ restate them here. Business/strategic context lives in session memory, not in th
   name) are captured for the audit only, never a display column. The old `sub_bill_audit.py`,
   `item_no_project_audit.py`, `duplicate_bill_audit.py` were folded in and retired;
   `job_coding_audit.py` remains as the interactive `audit-job` per-job drill.
-- **statement-reconciler/** — vendor statement PDF ↔ QBO open bills.
+- **statement-reconciler/** - vendor statement PDF ↔ QBO open bills; each vendor-month is a live checklist page on the Notion "Vendor Statements" board (`notion_board.py`, `ACB_STATEMENTS_DS_ID`), one Teams digest per run.
 - **wip/** — ALL WIP tooling. Readers: `cp_wip_reader.py` / `rp_wip_reader.py` write ONLY the
   Test tabs of `WIP - MASTER new.xlsx` on SharePoint (guarded by `wip_excel_guard.py`);
   over/under-billing and job-borrow are computed columns in Excel. Close scripts:

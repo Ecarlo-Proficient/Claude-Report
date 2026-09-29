@@ -3289,9 +3289,7 @@ def process_pdf(pdf_path: Path, args: argparse.Namespace,
         if (_base_dir and inbox_dir and not args.dry_run
                 and pdf_path.resolve().parent == inbox_dir.resolve()):
             try:
-                _dest = _unique_dest(out.parent, pdf_path.name)
-                shutil.move(str(pdf_path), str(_dest))
-                result["source"] = str(_dest)
+                shutil.move(str(pdf_path), str(_unique_dest(out.parent, pdf_path.name)))
                 print(f"  {_Term.color(_Term.G, '✓ filed statement + report →')} "
                       f"{_Term.color(_Term.C, str(out.parent))}")
             except Exception as e:
@@ -3333,12 +3331,10 @@ def process_pdf(pdf_path: Path, args: argparse.Namespace,
     if "Unprinted" not in open_items:
         result["unchecked_kinds"] = ["print"]     # print status didn't run - keep last run's
     result.update({
-        "vendor_id": vendor_id, "stmt_date": stmt_date, "stmt_total": amt_due,
-        "qbo_open": qbo_total, "tieout": bool(sum_matches), "excel": str(out),
+        "vendor_id": vendor_id, "stmt_date": stmt_date, "tieout": bool(sum_matches),
         "folder": (f"{_vendor_folder(vendor_name)}/{_month_folder(stmt_date)}"
                    if _base_dir else ""),
     })
-    result.setdefault("source", str(pdf_path))
     result["open_items"] = {k: v for k, v in open_items.items() if v}
     result["clean"] = (not result["open_items"]) and sum_matches
 
@@ -3490,8 +3486,7 @@ def _board_items(rows: List["ReconRow"], bills: List["QboBill"], unprinted: list
     say, so it is listed as 'check QBO', never as approved."""
     by_id = {b.bill_id: b for b in bills}
     kind_of = {"MISSING_IN_QBO": "enter", "CLERK_AMOUNT_MISMATCH": "mismatch",
-               "VENDOR_TAX_VIOLATION": "tax", "MISSING_ON_STATEMENT": "notonstmt",
-               "LIKELY_VENDOR_LAG": "lag"}
+               "VENDOR_TAX_VIOLATION": "tax"}
     out: List[dict] = []
     for r in rows:
         kind = kind_of.get(r.category)
@@ -3557,7 +3552,7 @@ def _publish(results: List[dict], args: argparse.Namespace, root: Optional[Path]
         return
     from shared import teams_notify
     entries = synced or [{"name": f"{r['vendor']} · {r['month']}", "url": "",
-                          "open": sum(1 for i in r["items"] if i["kind"] not in nb.FYI_KINDS),
+                          "open": len(r["items"]),
                           "status": "Open"} for r in recs]
     if teams_notify.post_statement_digest(webhook, entries, board.url() if board else ""):
         print(_Term.color(_Term.DIM, "  (posted the Teams digest)"))

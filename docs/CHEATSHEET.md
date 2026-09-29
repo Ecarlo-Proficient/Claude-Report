@@ -64,6 +64,18 @@ python3 statement-reconciler/statement_reconciler.py --inbox --dry-run
 python3 statement-reconciler/statement_reconciler.py --inbox --inbox-root "/Volumes/Accounting/Automations/Vendor Statements"
 ```
 
+After the clerk fixes bills, re-check every open month (rewrites each Notion board page in place):
+
+```bash
+python3 statement-reconciler/statement_reconciler.py --refresh
+```
+
+Months the clerk set Done in Notion get their folder renamed `<MM-YYYY> DONE` (shows the list, asks first):
+
+```bash
+python3 statement-reconciler/statement_reconciler.py --sync-done
+```
+
 ---
 
 ## The ledger app (the super-database)

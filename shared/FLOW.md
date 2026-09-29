@@ -3,7 +3,7 @@
 Last changed: 09/30/2026 - NEW `qbo_trust.py`, the QuickBooks trust gate every WIP write passes
 (duplicate customers, name typos, costs with no project, flatwork on the slab, a stale copy). It
 also owns `duplicate_groups`, which the ledger's Duplicate customers page reads. Same day: `pnl_paths`
-finds a finished CP job's folder under `Completed Projects/<year>/` (active awarded folders first). Same day: `notion_client.py` gains block edits and file upload (for the statement reconciler's Notion Vendor Statements board); `teams_notify.py` posts ONE statement digest card per run instead of a card per vendor-month.
+finds a finished CP job's folder under `Completed Projects/<year>/` (active awarded folders first). Same day: `notion_client.py` keeps only the block edits the statement reconciler's Notion board uses (append / delete children, read a data source); `teams_notify.py` posts ONE statement digest card per run.
 
 `shared/` is the ONLY importable common code (repo rule): a tool imports from here, never from
 another tool. Update this chart - and the line above - in the same commit as any change to
@@ -64,7 +64,7 @@ flowchart LR
 
     subgraph LIEN["AP / AR helpers"]
         LC["lien_clock.py · lien_status.py<br/>bill_marks.py · sub_loc.py"]:::mod
-        NC["notion_client.py · notion_customers.py"]:::mod
+        NC["notion_client.py · notion_customers.py<br/>pages, block edits"]:::mod
         TN["teams_notify.py<br/>statement digest card"]:::mod
     end
     NOT --> NC

@@ -5,15 +5,13 @@ month is done - the live record of that statement, replacing the stack of Teams
 cards (owner 2026-09-29: "one card that keeps a live record of that statement
 and goes through work until it's shown as done").
 
-Page = properties (Status, counts, totals, dates, files) + a body the script owns:
+Page properties: Status · Open items · Statement date · First seen · Last checked
+· QBO vendor · Folder · Key (Days open is a Notion formula). Page body - one
+collapsible heading per kind of work, one to-do per bill (ref linked to QBO,
+date, $, job):
 
-  callout      one-line summary (statement $ · QBO $ · difference · last checked)
-  sections     one toggle heading per kind of work, one to-do per bill:
-                 To enter in QBO · Not approved - chase PM · Amount mismatch ·
-                 Tax charged · Not printed · Approval pending? check QBO
-  Cleared      items that have left QBO's problem list since the last run
-  For reference  in QBO but not on the statement / paid already (vendor lag)
-  History      one line per run
+  To enter in QBO · Not approved - chase PM · Amount mismatch · Tax charged ·
+  Not printed · Approval pending? check QBO · Cleared (what got fixed, dated)
 
 Every run re-derives the list from QBO and MERGES it with what the clerk ticked:
   * an item QBO no longer shows          -> moves to Cleared (ticked, dated)
@@ -23,16 +21,15 @@ Every run re-derives the list from QBO and MERGES it with what the clerk ticked:
                                           -> her tick is kept
 Status is computed (Open / In progress / Clean / Tie-out failed); Done is the
 human's call and is never overwritten. `sync_done` mirrors Done both ways with
-the month folder on the Accounting share (`<MM-YYYY> DONE`).
+the month folder on the Accounting share (`<MM-YYYY> DONE`). Anything else she
+writes on the page is left alone - only the headings above are rewritten.
 
 Setup: ACB_STATEMENTS_DS_ID (the data-source id) in machine.env, the database
-shared with the Notion integration. No id or no token -> the board is skipped
-with one line and the run carries on.
+shared with the Notion integration. No id -> the board is skipped with one line.
 """
 from __future__ import annotations
 
 import datetime as dt
-import hashlib
 import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -42,21 +39,19 @@ from shared.notion_client import NotionClient, NotionError
 
 QBO_BILL_URL = "https://qbo.intuit.com/app/bill?txnId={bill_id}"
 QBO_VENDOR_URL = "https://qbo.intuit.com/app/vendordetail?nameId={vendor_id}"
-MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 ITEMS_PER_SECTION = 99                    # Notion: 100 children per append
 
-# kind -> (section heading, short label for Cleared lines, Notion count property,
+# kind -> (section heading, short label on Cleared lines,
 #          verifiable: QBO can tell when it is fixed)
-KINDS: Dict[str, Tuple[str, str, str, bool]] = {
-    "enter":    ("To enter in QBO",               "Enter",    "To enter",        True),
-    "approve":  ("Not approved - chase PM",       "Approve",  "Not approved",    True),
-    "mismatch": ("Amount mismatch - fix the bill", "Amount",  "Amount mismatch", True),
-    "tax":      ("Tax charged - ask for a credit", "Tax",     "Tax violation",   True),
-    "print":    ("Not printed",                   "Print",    "Unprinted",       True),
-    "checkqbo": ("Approval pending? check QBO",   "Check",    "Check QBO",       False),
+KINDS: Dict[str, Tuple[str, str, bool]] = {
+    "enter":    ("To enter in QBO",                "Enter",   True),
+    "approve":  ("Not approved - chase PM",        "Approve", True),
+    "mismatch": ("Amount mismatch - fix the bill", "Amount",  True),
+    "tax":      ("Tax charged - ask for a credit", "Tax",     True),
+    "print":    ("Not printed",                    "Print",   True),
+    "checkqbo": ("Approval pending? check QBO",    "Check",   False),
 }
-FYI_KINDS = {"notonstmt": "In QBO, not on this statement", "lag": "Paid already (vendor lag)"}
-H_CLEARED, H_FYI, H_HISTORY = "Cleared", "For reference", "History"
+H_CLEARED = "Cleared"
 _LABEL_TO_KIND = {v[1]: k for k, v in KINDS.items()}
 
 
@@ -100,14 +95,10 @@ def _item_line(it: dict) -> str:
     return " · ".join(bits)
 
 
-def _todo(it: dict, checked: bool, note: str = "", prefix: str = "", strike: bool = False) -> dict:
+def _todo(it: dict, checked: bool, note: str = "") -> dict:
+    ref = it.get("ref") or "(no #)"
     url = QBO_BILL_URL.format(bill_id=it["bill_id"]) if it.get("bill_id") else ""
-    rest = _item_line(it)[len(it.get("ref") or "(no #)"):]
-    rich = []
-    if prefix:
-        rich.append(_rt(prefix, strikethrough=strike, color="gray"))
-    rich.append(_rt(it.get("ref") or "(no #)", url, strikethrough=strike))
-    rich.append(_rt(rest, strikethrough=strike))
+    rich = [_rt(ref, url), _rt(_item_line(it)[len(ref):])]
     if note:
         rich.append(_rt(f"  {note}", italic=True, color="gray"))
     return {"type": "to_do", "to_do": {"rich_text": rich, "checked": checked}}
@@ -119,12 +110,12 @@ def _toggle(title: str, children: list) -> dict:
 
 
 def _heading_kind(text: str) -> Optional[str]:
-    """Which managed section a heading's text belongs to ('' for none)."""
+    """Which managed section a heading's text belongs to (None = not ours)."""
     base = re.sub(r"\s*\(\d+\)\s*$", "", text).strip()
     for k, v in KINDS.items():
         if base == v[0]:
             return k
-    return {H_CLEARED: "_cleared", H_FYI: "_fyi", H_HISTORY: "_history"}.get(base)
+    return "_cleared" if base == H_CLEARED else None
 
 
 def _parse_ref(text: str) -> str:
@@ -142,44 +133,30 @@ class Board:
     @classmethod
     def from_env(cls) -> Optional["Board"]:
         ds = paths.get("ACB_STATEMENTS_DS_ID")
-        if not ds:
-            return None
-        return cls(ds)
+        return cls(ds) if ds else None
 
     def url(self) -> str:
-        """The board's own Notion link (for the Teams digest)."""
+        """The board's own Notion link (for the Teams digest button)."""
         if self._url is None:
             try:
-                dsrc = self.nc.retrieve_data_source(self.ds)
-                db = (dsrc.get("parent") or {}).get("database_id", "")
+                db = (self.nc.retrieve_data_source(self.ds).get("parent") or {}).get("database_id", "")
                 self._url = f"https://www.notion.so/{db.replace('-', '')}" if db else ""
             except NotionError:
                 self._url = ""
         return self._url
 
-    def find(self, key: str) -> Optional[dict]:
-        return self.nc.query_by_property(self.ds, "Key", "rich_text", key)
-
     # ── page body read-back ──
     def _read_body(self, page_id: str) -> dict:
-        """The managed blocks on a page and the state inside them."""
-        out = {"callout": None, "managed": [], "history": None,
-               "checked": {}, "cleared": {}}
+        """Our headings on the page and the state inside them."""
+        out: dict = {"managed": [], "checked": {}, "cleared": {}}
         for b in self.nc.block_children(page_id):
-            t = b.get("type")
-            if t == "callout" and out["callout"] is None:
-                out["callout"] = b["id"]
-                continue
-            if t != "heading_3":
+            if b.get("type") != "heading_3":
                 continue
             kind = _heading_kind(_plain(b))
             if kind is None:
                 continue
-            if kind == "_history":
-                out["history"] = b["id"]
-                continue
             out["managed"].append(b["id"])
-            if kind == "_fyi" or not b.get("has_children"):
+            if not b.get("has_children"):
                 continue
             for c in self.nc.block_children(b["id"]):
                 if c.get("type") != "to_do":
@@ -193,8 +170,8 @@ class Board:
                     d = re.search(r"cleared (\d\d/\d\d/\d{4})", text)
                     ref = _parse_ref(m.group(2))
                     out["cleared"][_item_key(k2, ref)] = {
-                        "kind": k2, "ref": ref, "line": m.group(2).split("  cleared")[0].strip(),
-                        "on": d.group(1) if d else ""}
+                        "kind": k2, "ref": ref, "on": d.group(1) if d else "",
+                        "line": m.group(2).split("  cleared")[0].strip()}
                 else:
                     out["checked"][_item_key(kind, _parse_ref(text))] = {
                         "checked": bool(c.get("to_do", {}).get("checked")),
@@ -210,25 +187,19 @@ class Board:
         unchecked_kinds: kinds this run did NOT evaluate (print status off) - their
         items are carried forward as they were, never "cleared" by absence."""
         today = _today()
-        now_keys = {}
+        now_keys: Dict[str, dict] = {}
         sections: Dict[str, list] = {k: [] for k in KINDS}
-        fyi: Dict[str, list] = {k: [] for k in FYI_KINDS}
         new = 0
         for it in items:
-            if it["kind"] in FYI_KINDS:
-                fyi[it["kind"]].append(it)
-                continue
             key = _item_key(it["kind"], it.get("ref", ""))
-            verifiable = KINDS[it["kind"]][3]
-            if key in now_keys:
-                continue                       # same bill on two statements of the month
+            if it["kind"] not in KINDS or key in now_keys:
+                continue                       # unknown kind / same bill on two statements
             now_keys[key] = it
-            was = (prior_checked.get(key) or {}).get("checked") if key in prior_checked else None
+            was = prior_checked[key]["checked"] if key in prior_checked else None
             if was is None:
                 new += 1
-                note = "back open" if key in prior_cleared else ""
-                sections[it["kind"]].append((it, False, note))
-            elif was and verifiable:
+                sections[it["kind"]].append((it, False, "back open" if key in prior_cleared else ""))
+            elif was and KINDS[it["kind"]][2]:
                 sections[it["kind"]].append((it, False, f"still open in QBO {today}"))
             else:
                 sections[it["kind"]].append((it, bool(was), ""))
@@ -239,16 +210,15 @@ class Board:
                 sections[kind].append((now_keys[key], bool(prev.get("checked")), ""))
         cleared = {k: v for k, v in prior_cleared.items() if k not in now_keys}
         cleared_now = 0
-        for key in prior_checked:
+        for key, prev in prior_checked.items():
             if key not in now_keys and key not in cleared:
                 kind, ref = key.split("|", 1)
-                cleared[key] = {"kind": kind, "ref": ref,
-                                "line": (prior_checked[key] or {}).get("line") or ref, "on": today}
+                cleared[key] = {"kind": kind, "ref": ref, "line": prev.get("line") or ref, "on": today}
                 cleared_now += 1
         open_n = sum(1 for rows in sections.values() for _it, chk, _n in rows if not chk)
         ticked = sum(1 for rows in sections.values() for _it, chk, _n in rows if chk)
-        return {"sections": sections, "fyi": fyi, "cleared": cleared,
-                "new": new, "cleared_now": cleared_now, "open": open_n, "ticked": ticked}
+        return {"sections": sections, "cleared": cleared, "new": new,
+                "cleared_now": cleared_now, "open": open_n, "ticked": ticked}
 
     @staticmethod
     def status(prev: str, m: dict, tieout: bool) -> str:
@@ -261,7 +231,8 @@ class Board:
         return "In progress" if (m["cleared"] or m["ticked"]) else "Open"
 
     # ── page body write ──
-    def _body_blocks(self, m: dict) -> list:
+    @staticmethod
+    def _body_blocks(m: dict) -> list:
         blocks = []
         for kind, rows in m["sections"].items():
             if not rows:
@@ -281,131 +252,48 @@ class Board:
                     _rt(f"{label}: {c.get('line') or c['ref']}", strikethrough=True, color="gray"),
                     _rt(f"  cleared {c.get('on') or _today()}", italic=True, color="gray")]}})
             blocks.append(_toggle(f"{H_CLEARED} ({len(m['cleared'])})", kids[:ITEMS_PER_SECTION]))
-        fyi_kids = []
-        for kind, rows in m["fyi"].items():
-            for it in rows:
-                fyi_kids.append({"type": "bulleted_list_item", "bulleted_list_item": {
-                    "rich_text": [_rt(f"{FYI_KINDS[kind]}: ", color="gray"),
-                                  _rt(_item_line(it),
-                                      QBO_BILL_URL.format(bill_id=it["bill_id"]) if it.get("bill_id") else "")]}})
-        if fyi_kids:
-            blocks.append(_toggle(f"{H_FYI} ({len(fyi_kids)})", fyi_kids[:ITEMS_PER_SECTION]))
         return blocks
 
     @staticmethod
-    def _callout(rec: dict, m: dict) -> dict:
-        diff = float(rec.get("stmt_total") or 0) - float(rec.get("qbo_open") or 0)
-        txt = (f"Statement ${float(rec.get('stmt_total') or 0):,.2f} · QBO open "
-               f"${float(rec.get('qbo_open') or 0):,.2f} · difference ${diff:,.2f} · "
-               f"{m['open']} open · checked {dt.datetime.now().strftime('%m/%d/%Y %I:%M %p')}")
-        if not rec.get("tieout", True):
-            txt = "Tie-out failed - the parsed lines don't add up to the statement total. " + txt
-        return {"rich_text": [_rt(txt)], "icon": {"type": "emoji", "emoji": "🧾"}}
-
-    def _props(self, rec: dict, m: dict, status: str, prev_props: dict) -> dict:
-        today_iso = dt.date.today().isoformat()
-        counts = {v[2]: 0 for v in KINDS.values()}
-        for kind, rows in m["sections"].items():
-            counts[KINDS[kind][2]] = sum(1 for _it, chk, _n in rows if not chk)
-        diff = float(rec.get("stmt_total") or 0) - float(rec.get("qbo_open") or 0)
-        name = f"{rec['vendor']} · {rec['month']}"
+    def _props(rec: dict, m: dict, status: str, prev_props: dict) -> dict:
         props = {
-            "Name": {"title": [_rt(name)]},
+            "Name": {"title": [_rt(f"{rec['vendor']} · {rec['month']}")]},
             "Key": {"rich_text": [_rt(rec["key"])]},
-            "Vendor": {"select": {"name": rec["vendor"][:100].replace(",", " ")}},
-            "Month": {"rich_text": [_rt(rec["month"])]},
             "Status": {"select": {"name": status}},
             "Open items": {"number": m["open"]},
-            "Cleared": {"number": len(m["cleared"])},
-            "Statement total": {"number": round(float(rec.get("stmt_total") or 0), 2)},
-            "QBO open": {"number": round(float(rec.get("qbo_open") or 0), 2)},
-            "Difference": {"number": round(diff, 2)},
-            "Tie-out": {"checkbox": bool(rec.get("tieout", True))},
             "Last checked": {"date": {"start": dt.datetime.now().astimezone().isoformat(timespec="minutes")}},
             "Folder": {"rich_text": [_rt(rec.get("folder", ""))]},
         }
-        props.update({k: {"number": v} for k, v in counts.items()})
         if rec.get("stmt_date"):
             props["Statement date"] = {"date": {"start": rec["stmt_date"]}}
         if rec.get("vendor_id"):
             props["QBO vendor"] = {"url": QBO_VENDOR_URL.format(vendor_id=rec["vendor_id"])}
         if not (prev_props.get("First seen") or {}).get("date"):
-            props["First seen"] = {"date": {"start": today_iso}}
-        was_clean = (prev_props.get("Clean since") or {}).get("date")
-        if status == "Clean" and not was_clean:
-            props["Clean since"] = {"date": {"start": today_iso}}
-        elif status not in ("Clean", "Done") and was_clean:
-            props["Clean since"] = {"date": None}
+            props["First seen"] = {"date": {"start": dt.date.today().isoformat()}}
         return props
-
-    def _files(self, rec: dict, prev_props: dict) -> dict:
-        """Attach the statement + reconciliation Excel when they changed."""
-        files = [Path(f) for f in rec.get("files", []) if f and Path(f).is_file()]
-        if not files:
-            return {}
-        sig = hashlib.sha1("|".join(f"{f.name}:{f.stat().st_size}:{int(f.stat().st_mtime)}"
-                                    for f in files).encode()).hexdigest()[:16]
-        prev_sig = "".join(r.get("plain_text", "") for r in
-                           (prev_props.get("Files hash") or {}).get("rich_text", []))
-        if sig == prev_sig:
-            return {}
-        att = []
-        for f in files:
-            if f.stat().st_size > MAX_UPLOAD_BYTES:
-                continue
-            ctype = ("application/pdf" if f.suffix.lower() == ".pdf" else
-                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                     if f.suffix.lower() == ".xlsx" else "application/octet-stream")
-            try:
-                att.append({"type": "file_upload", "name": f.name,
-                            "file_upload": {"id": self.nc.upload_file(f, ctype)}})
-            except NotionError:
-                continue
-        if not att:
-            return {}
-        return {"Files": {"files": att}, "Files hash": {"rich_text": [_rt(sig)]}}
 
     # ── one vendor-month ──
     def sync(self, rec: dict) -> dict:
         """Create or rewrite the page for one vendor-month. `rec` = {key, vendor,
-        month, items, stmt_total, qbo_open, tieout, stmt_date, vendor_id, folder,
-        files}. Returns {status, open, new, cleared_now, url, name}."""
-        page = self.find(rec["key"])
+        month, items, tieout, stmt_date, vendor_id, folder, unchecked_kinds}.
+        Returns {status, open, new, cleared_now, url, name}."""
+        page = self.nc.query_by_property(self.ds, "Key", "rich_text", rec["key"])
         prev_props = (page or {}).get("properties", {})
         prev_status = ((prev_props.get("Status") or {}).get("select") or {}).get("name", "")
-        body = self._read_body(page["id"]) if page else {
-            "callout": None, "managed": [], "history": None, "checked": {}, "cleared": {}}
+        body = self._read_body(page["id"]) if page else {"managed": [], "checked": {}, "cleared": {}}
         m = self.merge(rec.get("items", []), body["checked"], body["cleared"],
                        frozenset(rec.get("unchecked_kinds", ())))
         status = self.status(prev_status, m, rec.get("tieout", True))
         props = self._props(rec, m, status, prev_props)
-        props.update(self._files(rec, prev_props))
-        hist_line = {"type": "paragraph", "paragraph": {"rich_text": [_rt(
-            f"{dt.datetime.now().strftime('%m/%d/%Y %I:%M %p')} - {m['open']} open · "
-            f"{m['new']} new · {m['cleared_now']} cleared · {status}")]}}
         blocks = self._body_blocks(m)
-
         if page is None:
-            children = [{"type": "callout", "callout": self._callout(rec, m)}] + blocks + [
-                _toggle(H_HISTORY, [hist_line])]
-            page = self.nc.create_page(self.ds, props, children=children[:100])
+            page = self.nc.create_page(self.ds, props, children=blocks)
         else:
             self.nc.update_page(page["id"], props)
             for bid in body["managed"]:
                 self.nc.delete_block(bid)
-            if body["callout"]:
-                self.nc.update_block(body["callout"], {"callout": self._callout(rec, m)})
-                after = body["callout"]
-            else:
-                res = self.nc.append_children(page["id"], [
-                    {"type": "callout", "callout": self._callout(rec, m)}])
-                after = res["results"][0]["id"]
             if blocks:
-                self.nc.append_children(page["id"], blocks, after=after)
-            if body["history"]:
-                self.nc.append_children(body["history"], [hist_line])
-            else:
-                self.nc.append_children(page["id"], [_toggle(H_HISTORY, [hist_line])])
+                self.nc.append_children(page["id"], blocks)
         return {"status": status, "open": m["open"], "new": m["new"],
                 "cleared_now": m["cleared_now"], "url": page.get("url", ""),
                 "name": f"{rec['vendor']} · {rec['month']}"}
@@ -413,16 +301,16 @@ class Board:
     # ── Done <-> month folder ──
     def sync_done(self, root: Path, apply: bool, log=print) -> List[str]:
         """Mirror Done both ways with the month folder on the share:
-          Notion Done, folder open   -> rename the folder '<MM-YYYY> DONE' (apply only)
-          folder DONE, Notion not    -> set the page Done (apply only)
-        Returns the actions (done or, without apply, proposed)."""
+          Notion Done, folder open   -> rename the folder '<MM-YYYY> DONE'
+          folder DONE, Notion not    -> set the page Done
+        Nothing changes without apply. Returns the actions (done or proposed)."""
         acts: List[str] = []
         for page in self.nc.query_data_source(self.ds):
             props = page.get("properties", {})
             status = ((props.get("Status") or {}).get("select") or {}).get("name", "")
             folder = "".join(r.get("plain_text", "") for r in
                              (props.get("Folder") or {}).get("rich_text", []))
-            if not folder or "/" not in folder:
+            if "/" not in folder:
                 continue
             vend, month = folder.rsplit("/", 1)
             vdir = root / vend
@@ -447,7 +335,7 @@ class Board:
 
 def group_results(results: List[dict]) -> List[dict]:
     """Per-file reconcile results -> one record per vendor-month (two statements
-    in a month become one page; totals add, items concatenate)."""
+    in a month become one page; items concatenate, tie-out must hold for both)."""
     groups: Dict[str, dict] = {}
     for res in results:
         if res.get("action") not in ("filed", "held") or not res.get("vendor"):
@@ -455,16 +343,11 @@ def group_results(results: List[dict]) -> List[dict]:
         key = f"{res['vendor']}|{res.get('month', '')}".upper()
         g = groups.setdefault(key, {
             "key": key, "vendor": res["vendor"], "month": res.get("month", ""),
-            "items": [], "stmt_total": 0.0, "qbo_open": 0.0, "tieout": True,
-            "stmt_date": res.get("stmt_date", ""), "vendor_id": res.get("vendor_id", ""),
-            "folder": res.get("folder", ""), "files": []})
+            "items": [], "tieout": True, "stmt_date": res.get("stmt_date", ""),
+            "vendor_id": res.get("vendor_id", ""), "folder": res.get("folder", ""),
+            "unchecked_kinds": set()})
         g["items"] += res.get("items") or []
-        g["stmt_total"] += float(res.get("stmt_total") or 0)
-        # QBO open is the vendor's whole open balance as of each statement - two
-        # statements in one month would double it, so take the larger.
-        g["qbo_open"] = max(g["qbo_open"], float(res.get("qbo_open") or 0))
         g["tieout"] = g["tieout"] and bool(res.get("tieout", True))
         g["stmt_date"] = max(g["stmt_date"], res.get("stmt_date", ""))
-        g["files"] += [f for f in (res.get("source"), res.get("excel")) if f]
-        g.setdefault("unchecked_kinds", set()).update(res.get("unchecked_kinds") or ())
+        g["unchecked_kinds"].update(res.get("unchecked_kinds") or ())
     return list(groups.values())

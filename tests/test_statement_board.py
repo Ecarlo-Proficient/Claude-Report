@@ -18,8 +18,7 @@ def _it(kind, ref, amount=100.0, bill_id=""):
 
 def test_first_run_everything_new_and_open():
     m = nb.Board.merge([_it("enter", "A1"), _it("approve", "B2"), _it("lag", "C3")], {}, {})
-    assert m["open"] == 2 and m["new"] == 2 and m["cleared_now"] == 0
-    assert len(m["fyi"]["lag"]) == 1
+    assert m["open"] == 2 and m["new"] == 2 and m["cleared_now"] == 0   # unknown kind ignored
     assert nb.Board.status("", m, True) == "Open"
 
 
@@ -75,19 +74,18 @@ def test_heading_round_trip():
     for kind, (title, *_rest) in nb.KINDS.items():
         assert nb._heading_kind(f"{title} (12)") == kind
     assert nb._heading_kind("Cleared (3)") == "_cleared"
-    assert nb._heading_kind("History") == "_history"
+    assert nb._heading_kind("History") is None
     assert nb._heading_kind("My own notes") is None
 
 
 def test_group_results_one_record_per_vendor_month():
     base = {"action": "filed", "vendor": "RCI READY CABLE", "month": "08-2026",
-            "stmt_total": 100.0, "qbo_open": 500.0, "tieout": True, "items": [_it("enter", "A1")]}
-    recs = nb.group_results([base, dict(base, stmt_total=50.0, qbo_open=400.0, tieout=False),
+            "tieout": True, "items": [_it("enter", "A1")], "unchecked_kinds": ["print"]}
+    recs = nb.group_results([base, dict(base, tieout=False, unchecked_kinds=None),
                              {"action": "skipped_done", "vendor": "X"}])
     assert len(recs) == 1
     r = recs[0]
-    assert r["stmt_total"] == 150.0 and r["qbo_open"] == 500.0 and r["tieout"] is False
-    assert len(r["items"]) == 2
+    assert r["tieout"] is False and len(r["items"]) == 2 and r["unchecked_kinds"] == {"print"}
 
 
 def test_dates_never_year_first():
@@ -159,14 +157,8 @@ class FakeNotion:
             if bid in lst:
                 lst.remove(bid)
 
-    def update_block(self, bid, body):
-        for part in body.values():
-            for r in part.get("rich_text", []):
-                r["plain_text"] = r["text"]["content"]
-        self.blocks[bid].update(body)
-
-    def append_children(self, bid, children, after=None):
-        return self._store(bid, children, after)
+    def append_children(self, bid, children):
+        return self._store(bid, children)
 
     def tick(self, pid, ref):
         for hid in self.kids[pid]:
@@ -180,7 +172,7 @@ def test_sync_round_trip_through_the_page():
     fake = FakeNotion()
     board = nb.Board("ds", client=fake)
     rec = {"key": "RCI|08-2026", "vendor": "RCI", "month": "08-2026", "tieout": True,
-           "stmt_total": 300.0, "qbo_open": 200.0,
+           "folder": "RCI Ready Cable/08-2026",
            "items": [_it("enter", "A1"), _it("approve", "B2", bill_id="77"), _it("checkqbo", "C3")]}
     r1 = board.sync(rec)
     assert r1["status"] == "Open" and r1["open"] == 3
@@ -190,14 +182,14 @@ def test_sync_round_trip_through_the_page():
     rec2 = dict(rec, items=[_it("enter", "A1"), _it("checkqbo", "C3")])   # B2 approved
     r2 = board.sync(rec2)
     assert r2["cleared_now"] == 1 and r2["open"] == 1 and r2["status"] == "In progress"
-    props = fake.pages[pid]["properties"]
-    assert props["To enter"]["number"] == 1 and props["Not approved"]["number"] == 0
-    assert props["Cleared"]["number"] == 1
+    assert fake.pages[pid]["properties"]["Open items"]["number"] == 1
     heads = [nb._plain(b) for b in fake.block_children(pid)]
-    assert heads[0].startswith("Statement $300.00")          # callout stays first
-    assert "Cleared (1)" in heads and heads[-1] == "History"
-    hist = fake.block_children(fake.kids[pid][-1])
-    assert len(hist) == 2                                    # one line per run
+    assert heads == ["To enter in QBO (1)", "Approval pending? check QBO (0)", "Cleared (1)"]
+    note = nb._plain(fake.block_children(fake.kids[pid][0])[0])
+    assert note.startswith("A1 · 08/14/2026 · $100.00 · RP6612") and "still open in QBO" in note
+    fake.append_children(pid, [{"type": "paragraph", "paragraph": {"rich_text": [
+        {"type": "text", "text": {"content": "called the PM 09/29"}}]}}])
     r3 = board.sync(dict(rec, items=[_it("checkqbo", "C3")]))
+    assert "called the PM 09/29" in [nb._plain(b) for b in fake.block_children(pid)]
     assert r3["status"] == "Clean" and r3["open"] == 0
     assert fake.pages[pid]["properties"]["Status"]["select"]["name"] == "Clean"
