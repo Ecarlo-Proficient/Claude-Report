@@ -16,7 +16,7 @@ SAFETY
 
 SETUP (one-time)
   * ACB_ACTIONS_DS_ID = the "Ledger Actions" data-source id (set in machine.env).
-  * Notion secret in Keychain (proficient-automation-worker/notion) or NOTION_SECRET.
+  * Notion secret in the key library (NOTION_SECRET, via Key Helper) or the NOTION_SECRET env var.
 
 USAGE
   python3 ledger/sync_actions.py --dry-run

@@ -25,7 +25,7 @@ SAFETY
 
 SETUP (one-time)
   * ACB_CUSTOMER_LIST_DS_ID = the Customer List data-source id (set in machine.env).
-  * The Notion integration (Keychain proficient-automation-worker/notion, the same
+  * The Notion integration (key library NOTION_SECRET via Key Helper, the same
     token sync_actions.py uses) must have the Customer List shared with it.
 
 USAGE

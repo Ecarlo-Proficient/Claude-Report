@@ -131,3 +131,20 @@ def test_one_login_path():
         if re.search(r"oauth2/v1/tokens", p.read_text(errors="ignore")):
             hits.add(rel)
     assert hits <= allowed, f"a tool renews the QuickBooks login itself: {sorted(hits - allowed)}"
+
+
+def test_secret_lookup_order(fake_helper, monkeypatch):
+    monkeypatch.setenv("NOTION_SECRET", "from-env")
+    assert qbo_vault.get_secret("NOTION_SECRET") == "from-env"          # the office server / CI path
+    monkeypatch.delenv("NOTION_SECRET")
+    assert qbo_vault.get_secret("MIRROR_KEY") == "m-key"                # the helper, once adopted
+    assert fake_helper[-1] == {"op": "key", "name": "MIRROR_KEY"}
+
+
+def test_old_store_is_read_only_by_the_vault():
+    """The pre-09/29 keyring store: only qbo_vault (until the move) and the one-time move script read it."""
+    allowed = {"shared/qbo_vault.py", "keyhelper/migrate_keys.py"}
+    hits = {p.relative_to(ROOT).as_posix() for p in ROOT.rglob("*.py")
+            if ".git" not in p.parts and "tests" not in p.parts
+            and re.search(r"keyring\.get_password", p.read_text(errors="ignore"))}
+    assert hits <= allowed, f"reads the old Keychain store directly: {sorted(hits - allowed)}"

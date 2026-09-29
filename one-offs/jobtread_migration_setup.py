@@ -63,22 +63,12 @@ _JOBNO_RE = re.compile(r"^(RP|CP|MFD)\d{3,4}(?:-FTW)?", re.IGNORECASE)
 
 
 def notion_token() -> str:
-    """invoice-sync's Notion integration token — Keychain first, env second.
-    Read via the same service/key invoice-sync uses; we never import its code."""
-    svc = os.getenv("KEYSTORE_SERVICE", "proficient-automation-worker")
-    key = os.getenv("KEYSTORE_KEY_NOTION", "notion")
-    try:
-        import keyring
-        tok = keyring.get_password(svc, key)
-        if tok:
-            return tok
-    except Exception:
-        pass
-    tok = os.getenv("NOTION_SECRET")
+    """invoice-sync's Notion integration token, from the key library via Key Helper (or $NOTION_SECRET)
+    - shared/qbo_vault.get_secret; we never import invoice-sync's code."""
+    tok = qbo_vault.get_secret("NOTION_SECRET")
     if tok:
         return tok
-    raise SystemExit("No Notion token (Keychain proficient-automation-worker/"
-                     "notion or $NOTION_SECRET).")
+    raise SystemExit("No Notion token (key library NOTION_SECRET, or $NOTION_SECRET).")
 
 
 def notion_query(token: str, ds: str, body: dict) -> dict:

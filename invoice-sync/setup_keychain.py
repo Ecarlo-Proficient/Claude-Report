@@ -29,9 +29,9 @@ Why this file exists:
     on-screen, in shell history, or in any log.
   - The --from-env migration reads the value from .env *inside this script*
     (it is never printed) and removes it from .env once Keychain confirms it.
-  - After a secret is stored, the first worker run triggers a Keychain prompt
-    ("python3 wants to access key '…'"). Click "Always Allow" once; silent
-    access thereafter.
+  - Since 09/29/2026 the secret goes into the KEY LIBRARY (the `automation-qbo` item behind Key Helper,
+    keyhelper/) as NOTION_SECRET / TEAMS_WEBHOOK_MFD_PAID - not the older `proficient-automation-worker`
+    store. Saving asks for Touch ID / the password. Never click "Always Allow" on a Keychain dialog.
 
 Re-run any time to rotate — it overwrites.
 
@@ -48,26 +48,31 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from shared import qbo_vault as kc  # noqa: E402  (the key library)
+
 PROJECT_ROOT = Path(__file__).resolve().parent
 ENV_PATH = PROJECT_ROOT / ".env"
 load_dotenv(ENV_PATH)
 
 
 def _store(keyring, service: str, key_name: str, secret: str) -> int:
-    """Store one secret in Keychain and verify by length-only read-back."""
+    """Store one secret in the key library (Key Helper) and verify by read-back (never printed).
+    `keyring` / `service` are the pre-09/29 store's and are no longer written."""
+    name = {v: k for k, v in kc.LEGACY_ACCOUNTS.items()}.get(key_name, key_name.upper())
     try:
-        keyring.set_password(service, key_name, secret)
-    except Exception as e:
-        print(f"Failed to store in Keychain: {e}", file=sys.stderr)
+        kc.put(name, secret)
+    except kc.SecretsError as e:
+        print(f"Failed to store in the key library: {e}", file=sys.stderr)
         return 2
 
     try:
-        check = keyring.get_password(service, key_name) or ""
-    except Exception:
+        check = kc.get_secret(name)
+    except kc.SecretsError:
         check = ""
 
     if check == secret:
-        print(f"Stored OK under {service}/{key_name}. "
+        print(f"Stored OK in the key library as {name}. "
               f"({len(secret)} chars, not displayed.)")
         return 0
     print("Stored, but read-back failed. Check Keychain Access.app manually.",

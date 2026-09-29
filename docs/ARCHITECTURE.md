@@ -122,6 +122,9 @@ flowchart LR
     TOOLS --> API -- "socket: pass / key" --> KH
     PRIV -- "socket: pass (own profiles) · GET (read-only)" --> KH
     KH --> LOG
+    OLD[("older keyring store\nproficient-automation-worker\n(retired 09/29)")]:::src
+    MIG["keyhelper/migrate_keys.py\none-time: Notion token + Teams webhook"]:::tool
+    OLD -. "copy, verify, remove" .-> MIG --> KC
 ```
 
 ---

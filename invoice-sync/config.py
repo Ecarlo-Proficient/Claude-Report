@@ -22,6 +22,10 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+# Repo root on sys.path so `shared/` (the key library) is importable.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from shared import qbo_vault as kc  # noqa: E402
+
 
 # Project root = folder this file lives in (invoice-sync/)
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -102,107 +106,42 @@ def _require_env(name: str) -> str:
 
 def _get_notion_secret() -> str:
     """
-    Fetch the Notion integration secret.
-
-    Resolution order:
-      1. macOS → Keychain via `keyring` (service = KEYSTORE_SERVICE,
-         username = KEYSTORE_KEY_NOTION).
-      2. Linux / anything else → environment variable NOTION_SECRET
-         (expected to come from .env.secrets on the Pi, loaded above).
-      3. Fallback: if keyring backend is available on Linux (libsecret),
-         try that before giving up.
-
-    Never logs or prints the secret itself. Only raises descriptive errors.
+    The Notion integration token - env NOTION_SECRET (Linux / Docker), else the key library via
+    Key Helper (shared/qbo_vault.get_secret; moved there from the older Keychain store 09/29/2026).
+    Never logs or prints the secret itself.
     """
-    service = os.getenv("KEYSTORE_SERVICE", "proficient-automation-worker")
-    key_name = os.getenv("KEYSTORE_KEY_NOTION", "notion")
-
-    # Environment variable takes precedence on non-Mac platforms (Pi).
-    if sys.platform != "darwin":
-        env_val = os.getenv("NOTION_SECRET")
-        if env_val:
-            return env_val
-
-    # Keychain / libsecret path.
     try:
-        import keyring  # imported lazily so non-Mac installs without it still start
-    except ImportError:
-        keyring = None  # type: ignore
-
-    if keyring is not None:
-        try:
-            stored = keyring.get_password(service, key_name)
-        except Exception as e:
-            raise RuntimeError(
-                f"Keystore lookup failed for {service}/{key_name}: {e}. "
-                f"On Mac, run `python setup_keychain.py` to store the secret."
-            )
-        if stored:
-            return stored
-
-    # Last-chance environment fallback (handy for CI / debugging).
-    env_val = os.getenv("NOTION_SECRET")
-    if env_val:
-        return env_val
-
+        val = kc.get_secret("NOTION_SECRET")
+    except kc.SecretsError as e:
+        raise RuntimeError(f"Notion token lookup failed: {e}")
+    if val:
+        return val
     raise RuntimeError(
-        "Notion secret not found. "
-        "On Mac: run `python setup_keychain.py` once. "
-        "On Pi: put NOTION_SECRET=... in .env.secrets (chmod 600)."
+        "Notion secret not found. On Mac: python3 shared/setup_qbo.py --rotate NOTION_SECRET. "
+        "On Linux: put NOTION_SECRET=... in .env.secrets (chmod 600)."
     )
 
 
-def _get_optional_webhook(env_var: str, keystore_key_default: str,
-                          keystore_key_env: str) -> str:
+def _get_optional_webhook(env_var: str) -> str:
     """
-    Resolve an OPTIONAL Teams Workflows webhook URL (a posting credential).
-
-    Resolution order:
-      1. Non-Mac (Linux / Docker) → environment variable `env_var` (primary;
-         no Keychain there).
-      2. macOS → Keychain (service = KEYSTORE_SERVICE, username from
-         `keystore_key_env` env var, default `keystore_key_default`).
-      3. Fallback → `env_var` (e.g. value still in .env pre-migration).
-
-    Returns "" if nothing is configured — the feature is then silently disabled.
-    Never raises, never logs the value.
+    An OPTIONAL Teams Workflows webhook URL (a posting credential): env `env_var`, else the key library
+    via Key Helper (shared/qbo_vault.get_secret, same name). "" = not configured, the feature is then
+    silently disabled. Never raises, never logs the value.
     """
-    service = os.getenv("KEYSTORE_SERVICE", "proficient-automation-worker")
-    key_name = os.getenv(keystore_key_env, keystore_key_default)
-
-    if sys.platform != "darwin":
-        env_val = os.getenv(env_var, "").strip()
-        if env_val:
-            return env_val
-
     try:
-        import keyring  # lazy import so non-Mac installs without it still start
-    except ImportError:
-        keyring = None  # type: ignore
-
-    if keyring is not None:
-        try:
-            stored = keyring.get_password(service, key_name)
-        except Exception:
-            stored = None  # optional secret — never block the sync on a lookup error
-        if stored:
-            return stored.strip()
-
-    return os.getenv(env_var, "").strip()
+        return kc.get_secret(env_var)
+    except kc.SecretsError:
+        return ""   # optional secret - never block the sync on a lookup error
 
 
 def _get_teams_webhook() -> str:
     """MFD paid/short-pay notification webhook (env TEAMS_WEBHOOK_MFD_PAID)."""
-    return _get_optional_webhook(
-        "TEAMS_WEBHOOK_MFD_PAID", "teams_webhook_mfd_paid", "KEYSTORE_KEY_TEAMS_WEBHOOK"
-    )
+    return _get_optional_webhook("TEAMS_WEBHOOK_MFD_PAID")
 
 
 def _get_teams_alert_webhook() -> str:
     """Operations-alert webhook for sync failures/errors (env TEAMS_WEBHOOK_ALERTS)."""
-    return _get_optional_webhook(
-        "TEAMS_WEBHOOK_ALERTS", "teams_webhook_alerts", "KEYSTORE_KEY_TEAMS_ALERTS"
-    )
+    return _get_optional_webhook("TEAMS_WEBHOOK_ALERTS")
 
 
 def load_config() -> Config:

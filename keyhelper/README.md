@@ -24,7 +24,8 @@ was readable by any program running as the owner, silently, because "Always Allo
 |---|---|
 | `KeyHelper.swift` | the whole helper: socket server, caller check, session, Keychain, QuickBooks renewal + read proxy, menu bar |
 | `Info.plist` | app bundle metadata (menu-bar only, no Dock icon) |
-| `install.sh` | build + ad-hoc sign + install + register this workspace; `--adopt` = the cutover; `--status` |
+| `install.sh` | build + ad-hoc sign + install + register this workspace; `--adopt` = the cutover; `--status`; `--register` (no rebuild) |
+| `migrate_keys.py` | one-time move of the Notion token + Teams webhook out of the older `proficient-automation-worker` store (dry run by default) |
 | `../shared/key_broker.py` | the Python client every tool uses (through `qbo_api.get_pass()` / `qbo_vault`) |
 
 Outside the repo (never committed): the app at `~/Library/Application Support/Proficient/bin/Key Helper.app`;
@@ -62,5 +63,5 @@ a stray script): click **Deny**. "Always Allow" there reopens the hole this tool
   check sees the pinned Python, not which script is honest. It is logged and it never gets the master key.
 - Someone with admin control of the Mac can read any program's memory. FileVault + the login password
   protect that, not this tool.
-- The Notion and Teams items (`automation-notion`, `automation-teams`, `proficient-automation-worker`) are
-  still separate, older Keychain items - next step.
+- Every key now lives in the library. The Notion token and the Teams paid-notice webhook moved in on
+  09/29/2026 (`migrate_keys.py`); read any non-QuickBooks key with `shared/qbo_vault.get_secret(NAME)`.

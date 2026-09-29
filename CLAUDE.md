@@ -20,8 +20,10 @@ restate them here. Business/strategic context lives in session memory, not in th
 2. **Never read, ask for, or hard-code secrets.** Auth is a single encrypted Keychain blob via
    `qbo_vault.py` (service `automation-qbo`, label `credentials`) — one Touch ID per run unlocks all
    keys. **That blob is THE key library (the user 2026-07-17): every new integration's key goes in it**
-   (QBO keys + `JT_GRANT_KEY` for JobTread + `MIRROR_KEY`, the raw QBO mirror's at-rest key, so far; a key write resets the item's "Always Allow" - warn the user first) — never create a new per-service blob. Notion/Teams
-   blobs (`automation-notion`, `automation-teams`) predate the rule and stay as historical exceptions.
+   (QBO keys + `JT_GRANT_KEY` for JobTread + `MIRROR_KEY`, the raw QBO mirror's at-rest key, so far; a key write resets the item's "Always Allow" - warn the user first) — never create a new per-service blob. The last exceptions (the Notion token and
+   Teams paid-notice webhook in the older `proficient-automation-worker` store) moved into the library on
+   09/29/2026 as `NOTION_SECRET` / `TEAMS_WEBHOOK_MFD_PAID` (`keyhelper/migrate_keys.py`); every non-QBO key
+   is read with `qbo_vault.get_secret(NAME)` (env var, then Key Helper).
    Use the setup scripts (`shared/setup_qbo.py` — `--rotate <KEY>` adds/updates any library key —
    `invoice-sync/setup_keychain.py`) and metadata-only diagnostics.
 3. **QBO is production-only.** No sandbox/env toggle. `quickbooks.api.intuit.com` is hardcoded by design.

@@ -317,6 +317,42 @@ def purge_all() -> int:
     return 0
 
 
+# ────────── Non-QuickBooks keys (Notion, Teams) ──────────
+# Until 09/29/2026 the Notion token and the Teams paid-notice webhook sat in an older Keychain store
+# (`keyring`, service `proficient-automation-worker`) that any program could read. They now live in the key
+# library behind Key Helper under these names; keyhelper/migrate_keys.py moves them once.
+LEGACY_SERVICE = "proficient-automation-worker"
+LEGACY_ACCOUNTS = {                      # library name -> the old keyring account
+    "NOTION_SECRET": "notion",
+    "TEAMS_WEBHOOK_MFD_PAID": "teams_webhook_mfd_paid",
+    "TEAMS_WEBHOOK_ALERTS": "teams_webhook_alerts",
+}
+
+
+def get_secret(name: str) -> str:
+    """THE lookup for a non-QuickBooks key; "" when none is set (callers decide if that is fatal).
+    Order: the environment variable of the same name (Linux / the office server / CI, or a deliberate
+    override) -> Key Helper (Mac, once adopted) -> the old keyring item (only until migrate_keys.py runs)."""
+    env = (os.getenv(name) or "").strip()
+    if env:
+        return env
+    if _brokered():
+        try:
+            v = key_broker.key(name)
+        except key_broker.BrokerError as e:
+            raise SecretsError(str(e))
+        if v:
+            return v.strip()
+    acct = LEGACY_ACCOUNTS.get(name)
+    if acct and _IS_MAC:
+        try:
+            import keyring
+            return (keyring.get_password(LEGACY_SERVICE, acct) or "").strip()
+        except Exception:  # noqa: BLE001 - an absent / locked legacy item is simply "not set"
+            return ""
+    return ""
+
+
 def clear_cache() -> None:
     """Forget the in-process cache. Next get_all() re-reads the blob (may prompt)."""
     global _cache

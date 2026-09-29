@@ -22,24 +22,26 @@ API_BASE = "https://api.notion.com/v1"
 VERSION = "2025-09-03"
 
 
+try:
+    from shared import qbo_vault as kc
+except ImportError:  # imported with shared/ itself on sys.path
+    import qbo_vault as kc  # type: ignore
+
+
 class NotionError(Exception):
     """Raised on non-retryable Notion API errors."""
 
 
 def load_secret() -> str:
-    """NOTION_SECRET env var, else the Keychain (proficient-automation-worker/notion)."""
-    env = os.getenv("NOTION_SECRET")
-    if env:
-        return env
-    service = os.getenv("KEYSTORE_SERVICE", "proficient-automation-worker")
-    key = os.getenv("KEYSTORE_KEY_NOTION", "notion")
+    """The Notion integration token: NOTION_SECRET env var, else the key library via Key Helper
+    (shared/qbo_vault.get_secret - moved there from the older Keychain store 09/29/2026)."""
     try:
-        import keyring
-        secret = keyring.get_password(service, key)
-    except Exception as e:  # noqa: BLE001
-        raise NotionError(f"Could not read Notion secret from Keychain ({service}/{key}): {e}")
+        secret = kc.get_secret("NOTION_SECRET")
+    except kc.SecretsError as e:
+        raise NotionError(f"Could not read the Notion token: {e}")
     if not secret:
-        raise NotionError(f"No Notion secret in Keychain ({service}/{key}); set it or NOTION_SECRET.")
+        raise NotionError("No Notion token in the key library (NOTION_SECRET) - run "
+                          "shared/setup_qbo.py --rotate NOTION_SECRET, or set NOTION_SECRET.")
     return secret
 
 
