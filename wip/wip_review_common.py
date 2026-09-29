@@ -31,9 +31,14 @@ CO / ETC values that go backwards with no reason on screen"):
                 job's status becomes REVERSED (sorted between CHANGED and ADDED).
                 The UI leaves it unchecked - even under "Approve all shown" - and
                 names the document the new value came from.
-  * DECREASED - a QBO field going down stays an accepted fact (checked) but is
-                marked `decreased` with a note: a bill was voided, deleted or
-                re-coded, and the owner should see that.
+  * DECREASED - a QBO field going down is marked `decreased` with a note: a bill
+                was voided, deleted or re-coded, and the owner should see that.
+  * BLOCKED   - UP-ONLY, like a failed CI check (the user 2026-09-29: "the number can
+                only go up, if it goes down flag and don't allow to auto update";
+                MFD / CP since 2026-09-09, every division now). Costs / billed to date
+                going DOWN (or to blank) is `blocked`: never auto-approved, and
+                apply_decisions() keeps the tab value even when approved. The fix is
+                in QuickBooks, or typed on the tab by hand.
   * SOURCE    - every field cell carries `source` (a few words naming the document:
                 "Draw #4 G702 · <file>", "takeoff · <file>", "proposal PDF · <file>",
                 "RP WIP file · 'RP WIP' row N", "QuickBooks · project P&L",
@@ -82,6 +87,7 @@ FIELD_BY_KEY = {f["key"]: f for f in FIELDS}
 KEY_BY_ATTR = {f["attr"]: f["key"] for f in FIELDS}
 PM_KEYS = tuple(f["key"] for f in FIELDS if f["block"] == "pm")
 QBO_KEYS = tuple(f["key"] for f in FIELDS if f["block"] == "qbo")
+UP_ONLY_KEYS = ("costs", "billed")            # cumulative to-date numbers: they only ever go up
 _EPS = 0.01                                   # money equal within a cent
 
 # Job statuses in display order. REVERSED sits between CHANGED and ADDED.
@@ -99,6 +105,12 @@ DECREASE_NOTE = {
     "billed":    "decreased - an invoice was voided, deleted or credited?",
     "retainage": "decreased - retainage billed out, released or re-coded?",
 }
+BLOCKED_NOTE = "went down - blocked, the WIP keeps its number (find the voided / deleted / re-coded line in QuickBooks)"
+
+
+def is_blocked(key: str, was, now) -> bool:
+    """The up-only gate: a to-date QBO number that would go DOWN (or blank) on a job already on the tab."""
+    return key in UP_ONLY_KEYS and was is not None and (now is None or now < was - _EPS)
 
 
 def _num(v) -> Optional[float]:
@@ -299,7 +311,7 @@ def carry_pm_fields(rows: List, prior: Dict[str, dict], *,
 def _cell(f: dict, was, now, **kw) -> dict:
     """One field cell. Every cell has every key so the JSON shape never varies."""
     d = dict(key=f["key"], label=f["label"], block=f["block"], was=was, now=now,
-             changed=False, reversed=False, decreased=False, carried=False,
+             changed=False, reversed=False, decreased=False, blocked=False, carried=False,
              source=None, source_path=None, note=None)
     d.update(kw)
     return d
@@ -309,7 +321,7 @@ def diff_rows(new_rows: List, prior: Dict[str, dict], *, division: str,
               tab_name: str, tab_kind: str) -> List[dict]:
     """One record per job: status CHANGED / REVERSED / ADDED / REMOVED / SAME
     and, for each field that exists on this tab, a cell:
-      key · label · block · was · now · changed · reversed · decreased · carried
+      key · label · block · was · now · changed · reversed · decreased · blocked · carried
       · source · source_path · note
     QBO block first, PM block next. The carry rule runs FIRST and mutates the
     rows (see carry_pm_fields), so a carried PM field reads was == now,
@@ -344,6 +356,9 @@ def diff_rows(new_rows: List, prior: Dict[str, dict], *, division: str,
                         cell["note"] = DECREASE_NOTE.get(key, "decreased")
                 elif ch and now is None and f["block"] == "qbo":
                     cell["note"] = NO_QBO_NOTE
+                if ch and is_blocked(key, old, now):
+                    cell["blocked"] = True
+                    cell["note"] = BLOCKED_NOTE
             if cell["changed"] and f["block"] == "pm" and not src:
                 cell["note"] = NO_SOURCE_NOTE
             any_change = any_change or cell["changed"]
@@ -422,17 +437,18 @@ def apply_decisions(rows: List, decisions: dict, prior: Optional[Dict[str, dict]
         # MFD295's whole Test-Master row and wrote ~80 numbers nobody reviewed). When the job is on
         # the tab: a field is written ONLY when it was approved; "keep" and "never reviewed" both
         # mean the value on the tab NOW - never the stored `revert`, which is only what an older
-        # review saw. MFD / CP billed + costs never go below the tab (the owner's up-only rule).
+        # review saw. Billed + costs never go below the tab in ANY division (the owner's up-only rule,
+        # MFD / CP 2026-09-09, every division 2026-09-29) - not even when approved.
         if tab is not None:
             for key in here:
                 d = decs.get(key)
                 approved = (d.get("approved", True) if isinstance(d, dict) else bool(d)) if d is not None else False
                 fresh, cur = row_value(row, key), tab.get(key)
                 if approved:
-                    if (key in ("costs", "billed") and pn.startswith(("MFD", "CP"))
-                            and cur is not None and fresh is not None and fresh < cur - _EPS):
+                    if is_blocked(key, cur, fresh):
                         setattr(row, FIELD_BY_KEY[key]["attr"], cur)
-                        held.append(f"{pn} {key} {fresh:,.2f} < tab {cur:,.2f} (up-only)")
+                        shown = "blank" if fresh is None else f"{fresh:,.2f}"
+                        held.append(f"{pn} {key} {shown} < tab {cur:,.2f} (up-only)")
                     continue
                 if not _changed(cur, fresh):
                     continue
@@ -487,6 +503,7 @@ def write_review_json(out_path: Path, division: str, tab_name: str,
     payload = {"division": division, "tab": tab_name, "count": len(records),
                "changed": sum(r["status"] in CHANGED_STATUSES for r in records),
                "reversed": sum(r["status"] == "REVERSED" for r in records),
+               "blocked": sum(c.get("blocked", False) for r in records for c in r["fields"]),
                "carried": sum(c["carried"] for r in records for c in r["fields"]),
                "records": records}
     out_path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")

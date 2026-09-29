@@ -2133,3 +2133,27 @@ tr.pq-inv > td { background: color-mix(in srgb, var(--neg) 4%, transparent); pad
 .pq-actions .linklike { background: none; border: 0; padding: 0; color: var(--text-dim); font-size: .85em; text-decoration: underline; cursor: pointer; }
 /* Ref # boxes (owner 2026-09-29): wide enough to read a pasted list */
 input.ref-search { min-width: 260px; }
+
+/* WIP Review · QuickBooks changes: every QBO number as one table, gated like CI (owner 2026-09-29) */
+.wr-ci { display: flex; flex-wrap: wrap; gap: 8px 32px; align-items: baseline; margin: 12px 0 6px; padding: 0 12px; font-variant-numeric: tabular-nums; }
+.wr-ci-count { padding: 0 12px 14px; margin-bottom: 8px; border-bottom: 1px solid var(--border); color: var(--text-dim); font-size: .9em; }
+.wr-ci-item { font-weight: 600; color: var(--text-dim); }
+.wr-ci-item.bad { color: var(--neg-text); }
+.wr-ci-item.warn { color: var(--warn-text); }
+.wr-ci-item.ok { color: var(--pos); }
+.wr-qbo-wrap { overflow-x: auto; }
+.wr-qbo-tbl { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.wr-qbo-tbl th { text-align: left; font-weight: 600; color: var(--text-dim); font-size: .8em; text-transform: uppercase; letter-spacing: .04em; padding: 8px 14px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.wr-qbo-tbl td { padding: 10px 14px; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); vertical-align: top; }
+.wr-qbo-tbl .n { text-align: right; white-space: nowrap; }
+.wr-qbo-tbl td.neg { color: var(--neg-text); }
+.wr-qbo-name { color: var(--text-dim); }
+.wr-qbo-why { color: var(--text-dim); font-size: .82em; min-width: 200px; }
+.wr-qbo-cb { text-align: center; }
+.wr-gate { font-weight: 700; font-size: .85em; white-space: nowrap; }
+.wr-gate.blocked { color: var(--neg-text); }
+.wr-gate.check { color: var(--warn-text); }
+.wr-gate.pass { color: var(--pos); }
+tr.wr-qbo-blocked td { background: color-mix(in srgb, var(--neg) 6%, transparent); }
+.wr-legend { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 4px var(--pad-x) 12px; font-size: .88em; color: var(--text-dim); }
+.wr-legend > span:nth-child(odd) { font-weight: 600; color: var(--text); }

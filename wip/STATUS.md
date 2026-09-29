@@ -7,6 +7,7 @@
 Last updated: 2026-09-08
 
 ## DONE / FINALIZED
+- 2026-09-29 · **Up-only gate, every division.** `wip_review_common.is_blocked` is the ONE test: costs / billed to date going down (or blank) on a job already on the tab is `blocked` in the review JSON and `apply_decisions` keeps the tab value even when approved - RP now too (was MFD / CP only). Retainage is not gated. `tests/test_wip_up_only.py`.
 - 2026-09-29 · **QuickBooks login moved to the shared one (security review).** This tool's own copy of the refresh-token exchange is retired; its login is `shared/qbo_api` (`load_credentials` / `get_pass`), which asks Key Helper (`keyhelper/`) once the key library is adopted - the tool never holds the refresh token.
 - **`datetime.utcnow()` retired (2026-09-24).** `qbo_bulk_close.py`'s `run_at` stamp now use `datetime.now(UTC)`: same output, no deprecation warning (Python is removing `utcnow`).
 

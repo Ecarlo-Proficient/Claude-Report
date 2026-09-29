@@ -570,16 +570,17 @@
             <button class="btn small primary" id="wrSync" title="Write the approved changes to Test - CP, Test - RP and Test-Master" hidden>Sync approved →</button>
           </div>
         </div>
-        <p class="hint">The pending WIP update as a before/after. <b>Accept (QBO)</b> = costs / billed /
-          retainage, pulled from QuickBooks - checked by default. <b>PM answers</b> = contract / COs / ETC -
-          left <b>unchecked</b> until confirmed. Approve a change to write the new value; leave it off to keep
-          what's on the tab. Approved changes sync to <b>Test - CP</b> (CP), <b>Test - RP</b> (RP) and
-          <b>Test-Master</b> (all three). Read-only until you hit Sync.</p>
+        <div class="wr-legend">
+          <span>QuickBooks</span><span>Goes up: checked for you · Goes down: blocked, never written</span>
+          <span>PM</span><span>Contract, COs, ETC: unchecked until you confirm</span>
+          <span>Sync</span><span>Writes only what is checked, to Test - CP, Test - RP and Test-Master</span>
+        </div>
         <div class="kpi-row" id="wrStats"></div>
         <div class="filters" id="wrFilters" hidden>
           <span class="seg" id="wrView" title="One job at a time, or the whole list">
             <button type="button" class="seg-btn on" data-view="slides">One job at a time</button>
             <button type="button" class="seg-btn" data-view="list">All jobs</button>
+            <button type="button" class="seg-btn" data-view="qbo">QuickBooks changes</button>
           </span>
           <input type="search" id="wrSearch" placeholder="Find a job #, name…" autocomplete="off">
           <select id="wrDivision"><option value="">All divisions</option><option>Commercial</option><option>Residential</option><option>Multi-Family</option></select>
@@ -588,7 +589,7 @@
           <label class="check"><input type="checkbox" id="wrChangedOnly" checked> Changed only</label>
           <span class="wr-bulk">
             <button class="btn tiny" id="wrCopyPm" title="Copy the PM questions shown (by division) as a message to paste in Teams">Copy PM questions for Teams</button>
-            <button class="btn tiny" id="wrApproveQbo" title="Approve every QBO change (costs / billed / retainage)">Approve all QBO</button>
+            <button class="btn tiny" id="wrApproveQbo" title="Approve every QuickBooks change that went up (a drop is never approved)">Approve all QBO</button>
             <button class="btn tiny" id="wrApproveAll" title="Approve every change shown">Approve all shown</button>
             <button class="btn tiny" id="wrClearAll" title="Uncheck every change (keep the tabs as they are)">Clear all</button>
           </span>

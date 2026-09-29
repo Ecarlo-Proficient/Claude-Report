@@ -19,6 +19,7 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   dedicated sub menu under vendors"). Vendors = Vendor Center · Bill Tracker · **Pay bills**; the Bill Tracker's
   "Pay run ->" button and the page's "<- Bills" back header are gone (`paybills` left `HIDDEN_TAB_GROUP`; `#paybills`
   links still land there). The project page's button reads "Open Pay bills".
+- 2026-09-29 · **WIP Review: QuickBooks changes table** (3rd view beside One job at a time / All jobs, remembered per browser). Every QBO number that moves, gated like CI: ✓ Passed (went up or new job - approved on its own), ✕ Blocked (costs / billed down or blank - checkbox disabled, never written), ! Check (retainage down / no value - left for the owner). The gate (`wrGate`) also drives the other two views: nothing that goes down is approved by default or by the bulk buttons. The long hint became a 3-row legend; the table shows "N of M rows checked to write" (+ checked-but-filtered, + PM answers not in the table) and Sync reads "Sync N QuickBooks + M PM".
 - 2026-09-29 · **QBO changes: Type / Vendor / Project / Class funnels + Project and Class columns** (owner: "i need to be
   able to filter by transactions type ... bring in the rest of the columns like class and project OR only show me what
   changed, Class Before = x > Class after = y"). `/api/qboaudit` rows carry `jobs_before/after`, `classes_before/after`,

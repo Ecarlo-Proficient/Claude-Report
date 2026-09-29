@@ -7882,7 +7882,8 @@ let WR = null;
 let wrDecisions = {};
 let wrDrop = new Set();
 let wrPoll = null;
-let wrView = "slides";        // "slides" = one job at a time (default) · "list" = every job
+let wrView = "slides";        // "slides" = one job at a time (default) · "list" = every job · "qbo" = the QuickBooks changes table
+try { const v = localStorage.getItem("proficient-wip-review-view"); if (["slides", "list", "qbo"].includes(v)) wrView = v; } catch { /* default */ }
 let wrIdx = 0;                // the slide being shown
 let wrTouched = {};           // pn -> "acc" | "skip" once the owner decided the whole job
 
@@ -7897,6 +7898,21 @@ function wrDelta(f) {
   const d = b - a;
   return { txt: (d >= 0 ? "+" : "") + money(d), dir: d > 0 ? 1 : d < 0 ? -1 : 0 };
 }
+
+// THE UP-ONLY GATE, read like a CI check (owner 2026-09-29: "the number can only go up, if it goes down flag and
+// don't allow to auto update"). A QuickBooks change is PASS when it goes up (or the job is new) - approved on its
+// own; BLOCKED when costs / billed to date go down or blank - it can't be approved, and the writer keeps the tab
+// value anyway (wip_review_common.is_blocked); CHECK when retainage goes down or QuickBooks has no value - left
+// for the owner, never auto. Worked out from was / now so reviews computed before the gate read the same.
+const WR_UP_ONLY = new Set(["costs", "billed"]);
+function wrGate(f) {
+  if (!f || !f.changed || f.block !== "qbo") return null;
+  const a = f.was == null ? null : Number(f.was), b = f.now == null ? null : Number(f.now);
+  if (f.blocked || (WR_UP_ONLY.has(f.key) && a != null && (b == null || b < a - 0.01))) return "blocked";
+  if (a != null && (b == null || b < a - 0.01)) return "check";
+  return "pass";
+}
+const wrIsBlocked = (pn, key) => { const r = WR && WR.records.find(x => x.project_num === pn); const f = r && (r.fields || []).find(x => x.key === key); return wrGate(f) === "blocked"; };
 
 async function loadWipReview(force) {
   const note = $("#wrNote"), body = $("#wrBody");
@@ -7960,13 +7976,13 @@ function wrInitDecisions() {
   for (const r of WR.records) {
     if (r.status === "SAME") continue;
     const marks = {};
-    for (const f of wrChanged(r.fields)) marks[f.key] = (f.block === "qbo");
+    for (const f of wrChanged(r.fields)) marks[f.key] = wrGate(f) === "pass";   // only what goes UP is approved on its own
     wrDecisions[r.project_num] = marks;
   }
   try {   // then the choices already made on THIS review, if the page was refreshed
     const saved = JSON.parse(localStorage.getItem(WR_LS) || "null");
     if (saved && saved.stamp === wrStamp()) {
-      for (const pn in saved.decisions || {}) if (wrDecisions[pn]) Object.assign(wrDecisions[pn], saved.decisions[pn]);
+      for (const pn in saved.decisions || {}) if (wrDecisions[pn]) for (const k in saved.decisions[pn]) wrSet(pn, k, saved.decisions[pn][k]);
       wrDrop = new Set(saved.drop || []); wrTouched = saved.touched || {}; wrIdx = saved.idx || 0;
     }
   } catch { /* nothing saved */ }
@@ -7985,6 +8001,7 @@ function renderWipReview() {
   $("#wrFilters").hidden = false; $("#wrSync").hidden = false;
   renderWrStats();
   if (wrView === "slides") { renderWrSlides(); return; }
+  if (wrView === "qbo") { renderWrQbo(); return; }
   const div = $("#wrDivision").value, st = $("#wrStatus").value;
   const q = ($("#wrSearch").value || "").trim().toLowerCase();
   const changedOnly = $("#wrChangedOnly").checked;
@@ -8163,7 +8180,8 @@ function wrSlide(r) {
   for (const f of r.fields || []) {
     const chg = f.changed, cls = (chg ? "chg" : "") + (f.reversed ? " rev" : "");
     const src = chg ? (f.source || "") + (f.note ? (f.source ? " · " : "") + f.note : "") : "";
-    html += `<tr class="${cls}" data-fkey="${_ge(f.key)}"><td>${_ge(f.label)}</td><td class="was">${money(f.was)}</td><td class="dir">${chg ? wrDir(f.was, f.now) : ""}</td><td class="now">${chg ? money(f.now) : ""}</td><td class="src">${_ge(src)}</td></tr>`;
+    const blk = wrGate(f) === "blocked" ? ' <span class="wr-mark rev">BLOCKED</span>' : "";
+    html += `<tr class="${cls}" data-fkey="${_ge(f.key)}"><td>${_ge(f.label)}</td><td class="was">${money(f.was)}</td><td class="dir">${chg ? wrDir(f.was, f.now) : ""}</td><td class="now">${chg ? money(f.now) + blk : ""}</td><td class="src">${_ge(src)}</td></tr>`;
   }
   html += `</tbody></table>`;
   html += `<div class="wr-slide-actions">
@@ -8176,6 +8194,63 @@ function wrSlide(r) {
   card.querySelector("#wrAcc").onclick = () => wrDecideJob(r, true);
   card.querySelector("#wrSkip").onclick = () => wrDecideJob(r, false);
   return card;
+}
+
+// ── every QuickBooks change as one table, gated like CI (owner 2026-09-29) ──
+// One row per job x QuickBooks number that changes. PASS rows are approved on their own; BLOCKED rows can't be
+// approved at all; CHECK rows wait for the owner. Division / search filters apply; blocked first.
+const WR_GATE_TXT = { blocked: "✕ Blocked", check: "! Check", pass: "✓ Passed" };
+const WR_GATE_WHY = {
+  blocked: "Went down. Kept at the WIP number.",
+  check: "Went down or blank. Your call.",
+  pass: "Went up.",
+};
+function renderWrQbo() {
+  const body = $("#wrBody");
+  const div = $("#wrDivision").value, q = ($("#wrSearch").value || "").trim().toLowerCase();
+  const order = { blocked: 0, check: 1, pass: 2 };
+  const rows = [];
+  for (const r of WR.records) {
+    if (r.status === "SAME" || r.status === "REMOVED") continue;
+    if (div && r.division !== div) continue;
+    if (q && !(r.project_num + " " + r.name).toLowerCase().includes(q)) continue;
+    for (const f of wrChanged(r.fields || [])) { const g = wrGate(f); if (g) rows.push({ r, f, g }); }
+  }
+  rows.sort((a, b) => (order[a.g] - order[b.g]) || a.r.project_num.localeCompare(b.r.project_num) || a.f.label.localeCompare(b.f.label));
+  const n = k => rows.filter(x => x.g === k).length;
+  body.innerHTML = "";
+  const head = document.createElement("div"); head.className = "wr-ci";
+  head.innerHTML = `<span class="wr-ci-item ${n("blocked") ? "bad" : ""}">✕ ${n("blocked")} blocked</span>`
+    + `<span class="wr-ci-item ${n("check") ? "warn" : ""}">! ${n("check")} to check</span>`
+    + `<span class="wr-ci-item ok">✓ ${n("pass")} passed</span>`;
+  body.appendChild(head);
+  const cnt = document.createElement("div"); cnt.className = "wr-ci-count"; cnt.id = "wrQboCount";
+  cnt._rows = rows.map(x => ({ pn: x.r.project_num, key: x.f.key }));
+  body.appendChild(cnt);
+  if (!rows.length) { body.insertAdjacentHTML("beforeend", `<div class="wr-empty"><p>No QuickBooks changes in what is shown.</p></div>`); wrUpdateApproveCount(); return; }
+  const tbl = document.createElement("table"); tbl.className = "wr-qbo-tbl";
+  tbl.innerHTML = `<thead><tr><th>Check</th><th>Div</th><th>Job</th><th>Number</th><th class="n">On the WIP</th><th class="n">QuickBooks</th><th class="n">Change</th><th>Write</th><th>Why</th></tr></thead>`;
+  const tb = document.createElement("tbody");
+  for (const { r, f, g } of rows) {
+    const d = wrDelta(f), on = !!(wrDecisions[r.project_num] && wrDecisions[r.project_num][f.key]);
+    const tr = document.createElement("tr"); tr.className = "wr-qbo-" + g;
+    tr.innerHTML = `<td><span class="wr-gate ${g}">${WR_GATE_TXT[g]}</span></td>`
+      + `<td>${_ge(WR_DIV_SHORT[r.division] || r.division)}</td>`
+      + `<td><b>${_ge(r.project_num)}</b> <span class="wr-qbo-name">${_ge(r.name || "")}</span></td>`
+      + `<td>${_ge(f.label)}</td>`
+      + `<td class="n">${money(f.was)}</td><td class="n">${money(f.now)}</td>`
+      + `<td class="n ${d && d.dir < 0 ? "neg" : ""}">${d ? _ge(d.txt) : ""}</td>`
+      + `<td class="wr-qbo-cb"></td><td class="wr-qbo-why">${_ge(WR_GATE_WHY[g])}</td>`;
+    const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = on && g !== "blocked"; cb.disabled = g === "blocked";
+    cb.title = g === "blocked" ? "Never written - the WIP only goes up" : "Write this number to the WIP";
+    cb.onchange = () => { wrSet(r.project_num, f.key, cb.checked); wrUpdateApproveCount(); };
+    tr.querySelector(".wr-qbo-cb").appendChild(cb);
+    tb.appendChild(tr);
+  }
+  tbl.appendChild(tb);
+  const wrap = document.createElement("div"); wrap.className = "wr-qbo-wrap"; wrap.appendChild(tbl);
+  body.appendChild(wrap);
+  wrUpdateApproveCount();
 }
 
 function wrDecideJob(r, yes) {
@@ -8277,7 +8352,8 @@ function wrFieldRow(r, f, removed) {
   if (f.reversed) row.classList.add("wr-reversed");
   const src = f.source ? `<span class="wr-src" title="${_ge(f.source_path || f.source)}">${_ge(f.source)}</span>` : "";
   const note = f.note ? `<span class="wr-note">${_ge(f.note)}</span>` : "";
-  const mark = f.reversed ? `<span class="wr-mark rev">REVERSED</span>` : f.decreased ? `<span class="wr-mark dec">decreased</span>` : "";
+  const gate = wrGate(f);
+  const mark = gate === "blocked" ? `<span class="wr-mark rev">BLOCKED</span>` : f.reversed ? `<span class="wr-mark rev">REVERSED</span>` : f.decreased ? `<span class="wr-mark dec">decreased</span>` : "";
   row.innerHTML =
     `<span class="wr-fl">${_ge(f.label)}</span>`
     + `<span class="wr-was">${money(f.was)}</span><span class="wr-arrow">→</span>`
@@ -8287,6 +8363,7 @@ function wrFieldRow(r, f, removed) {
   if (!removed) {
     const cb = document.createElement("input");
     cb.type = "checkbox"; cb.className = "wr-check"; cb.checked = approved;
+    if (gate === "blocked") { cb.checked = false; cb.disabled = true; row.title = "Went down - the WIP only goes up, so this is never written. Fix it in QuickBooks."; }
     cb.onchange = () => { wrSet(r.project_num, f.key, cb.checked); row.classList.toggle("on", cb.checked); wrUpdateApproveCount(); };
     row.appendChild(cb);
     row.classList.toggle("on", approved);
@@ -8296,14 +8373,30 @@ function wrFieldRow(r, f, removed) {
   return row;
 }
 
-function wrSet(pn, key, val) { (wrDecisions[pn] = wrDecisions[pn] || {})[key] = val; }
+function wrSet(pn, key, val) { (wrDecisions[pn] = wrDecisions[pn] || {})[key] = val && !wrIsBlocked(pn, key); }   // a drop is never approved
 
+// What Sync will write, split so the count names what it is (owner 2026-09-29: "i need to see the count ... so i
+// know it is talking about the qbo changes / the ones i checked off and not something else hidden in a filter").
+function wrCounts() {
+  const blockOf = {};
+  for (const r of (WR && WR.records) || []) for (const f of r.fields || []) (blockOf[r.project_num] = blockOf[r.project_num] || {})[f.key] = f.block;
+  let qbo = 0, pm = 0;
+  for (const pn in wrDecisions) for (const k in wrDecisions[pn]) if (wrDecisions[pn][k]) { if ((blockOf[pn] || {})[k] === "pm") pm++; else qbo++; }
+  return { qbo, pm };
+}
 function wrUpdateApproveCount() {
   wrSaveChoices();
-  let n = 0;
-  for (const pn in wrDecisions) for (const k in wrDecisions[pn]) if (wrDecisions[pn][k]) n++;
+  const { qbo, pm } = wrCounts();
   const btn = $("#wrSync");
-  if (btn) btn.textContent = n ? `Sync ${n} approved →` : "Sync approved →";
+  if (btn) btn.textContent = qbo || pm ? `Sync ${[qbo ? qbo + " QuickBooks" : "", pm ? pm + " PM" : ""].filter(Boolean).join(" + ")} →` : "Sync →";
+  const el = $("#wrQboCount");
+  if (el && el._rows) {
+    const shown = el._rows.filter(x => wrDecisions[x.pn] && wrDecisions[x.pn][x.key]).length;
+    const hidden = qbo - shown;
+    el.textContent = `${shown} of ${el._rows.length} rows checked to write`
+      + (hidden > 0 ? ` · ${hidden} more checked but hidden by a filter` : "")
+      + (pm ? ` · ${pm} PM answer${pm === 1 ? "" : "s"} checked (not in this table)` : "");
+  }
 }
 
 function wrBulk(mode) {
@@ -8319,8 +8412,8 @@ function wrBulk(mode) {
     if (q && !(r.project_num + " " + r.name).toLowerCase().includes(q)) continue;
     for (const f of wrChanged(r.fields)) {
       if (mode === "clear") wrSet(r.project_num, f.key, false);
-      else if (mode === "all" && !f.reversed) wrSet(r.project_num, f.key, true);   // a reversal is never bulk-approved
-      else if (mode === "qbo" && f.block === "qbo") wrSet(r.project_num, f.key, true);
+      else if (mode === "all" && !f.reversed && wrGate(f) !== "check") wrSet(r.project_num, f.key, true);   // a reversal / a drop is never bulk-approved
+      else if (mode === "qbo" && wrGate(f) === "pass") wrSet(r.project_num, f.key, true);
     }
   }
   renderWipReview();
@@ -9428,9 +9521,11 @@ function init() {
   { const el = $("#wrCompute"); if (el) el.onclick = runWipReview; }
   document.querySelectorAll("#wrView .seg-btn").forEach(b => b.onclick = () => {
     wrView = b.dataset.view; wrIdx = 0;
+    try { localStorage.setItem("proficient-wip-review-view", wrView); } catch { /* default next time */ }
     document.querySelectorAll("#wrView .seg-btn").forEach(x => x.classList.toggle("on", x === b));
     if (WR && WR.ready) renderWipReview();
   });
+  document.querySelectorAll("#wrView .seg-btn").forEach(x => x.classList.toggle("on", x.dataset.view === wrView));   // the remembered view
   { const el = $("#wrSync"); if (el) el.onclick = syncWipReview; }
   { const el = $("#wrApproveQbo"); if (el) el.onclick = () => wrBulk("qbo"); }
   { const el = $("#wrApproveAll"); if (el) el.onclick = () => wrBulk("all"); }
