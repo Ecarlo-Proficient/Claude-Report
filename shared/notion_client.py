@@ -133,3 +133,41 @@ class NotionClient:
 
     def update_page(self, page_id: str, properties: dict) -> dict:
         return self._request("PATCH", f"/pages/{page_id}", {"properties": properties})
+
+    def update_page_full(self, page_id: str, body: dict) -> dict:
+        """PATCH a page with any top-level fields (properties, icon, archived…)."""
+        return self._request("PATCH", f"/pages/{page_id}", body)
+
+    def retrieve_data_source(self, ds_id: str) -> dict:
+        return self._request("GET", f"/data_sources/{ds_id}")
+
+    def append_children(self, block_id: str, children: list, after: Optional[str] = None) -> dict:
+        """Append blocks under a page/block (max 100 per call, 2 nesting levels),
+        optionally right after the sibling block `after`."""
+        body: dict = {"children": children}
+        if after:
+            body["after"] = after
+        return self._request("PATCH", f"/blocks/{block_id}/children", body)
+
+    def update_block(self, block_id: str, body: dict) -> dict:
+        return self._request("PATCH", f"/blocks/{block_id}", body)
+
+    def delete_block(self, block_id: str) -> dict:
+        """Move a block (and its children) to trash - recoverable from Notion's Trash."""
+        return self._request("DELETE", f"/blocks/{block_id}")
+
+    def upload_file(self, path, content_type: str = "application/octet-stream") -> str:
+        """Single-part Notion file upload (files up to 20 MB). Returns the
+        file_upload id to attach within the hour: {"type": "file_upload",
+        "file_upload": {"id": ...}, "name": ...} on a files property."""
+        from pathlib import Path as _P
+        p = _P(path)
+        up = self._request("POST", "/file_uploads",
+                           {"filename": p.name, "content_type": content_type})
+        headers = {k: v for k, v in self._headers.items() if k != "Content-Type"}
+        with p.open("rb") as fh:
+            r = self._session.post(up["upload_url"], headers=headers,
+                                   files={"file": (p.name, fh, content_type)}, timeout=120)
+        if not r.ok:
+            raise NotionError(f"Notion upload {r.status_code}: {r.text[:300]}")
+        return up["id"]

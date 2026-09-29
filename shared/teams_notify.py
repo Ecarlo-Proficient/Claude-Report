@@ -8,14 +8,15 @@ is received"), same envelope the invoice-sync poster uses.
 Best-effort: an empty webhook or any network error is a no-op that returns False
 and never raises, so a failed post can never break the run that called it.
 
-Statement-reconciler use: ONE card per open vendor-month, so the bill clerk can
-react ✅ to each vendor independently (a single combined message would make "done"
-ambiguous). Webhook lives in the automation-qbo keychain blob (key library rule)
+Statement-reconciler use: ONE digest card per run that points at the Notion
+"Vendor Statements" board, where each vendor-month is a live checklist page
+(2026-09-29 - the old card-per-vendor + ✅ reaction could not be read back or
+rewritten by a webhook). Webhook lives in the automation-qbo keychain blob (key library rule)
 as TEAMS_STMT_WEBHOOK.
 """
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import List
 
 import requests
 
@@ -46,32 +47,30 @@ def post(webhook_url: str, payload: dict) -> bool:
         return False
 
 
-def post_statement_task(webhook_url: str, vendor: str, month: str,
-                        items: Dict[str, int]) -> bool:
-    """One task card for a vendor-month that still needs work. `items` is a
-    label->count map (0s dropped). The clerk reacts ✅ on THIS message when this
-    vendor is fully entered/printed - one message per vendor keeps that clear."""
-    facts = [{"title": k, "value": str(v)} for k, v in items.items() if v]
-    if not facts:
+def post_statement_digest(webhook_url: str, entries: List[dict], board_url: str = "") -> bool:
+    """ONE compact card per run: a line per vendor-month (linked to its Notion page
+    when there is one) and a button to the board. The work itself - ticking bills
+    off - happens on the Notion page, which the next run rewrites in place, so
+    Teams is only the nudge. entries = [{name, status, open, url}]."""
+    if not entries:
         return False
-    body = [
-        {"type": "TextBlock", "size": "Medium", "weight": "Bolder",
-         "color": "Warning", "wrap": True, "text": f"🔧 {vendor} — {month}"},
-        {"type": "FactSet", "facts": facts},
-        {"type": "TextBlock", "size": "Small", "isSubtle": True, "wrap": True,
-         "text": "React ✅ on this message once this vendor is fully entered / printed."},
-    ]
-    return post(webhook_url, _envelope(body))
+    open_rows = [e for e in entries if e.get("status") not in ("Clean", "Done")]
+    clean = [e for e in entries if e.get("status") == "Clean"]
+    total = sum(int(e.get("open") or 0) for e in open_rows)
 
+    def _name(e: dict) -> str:
+        return f"[{e['name']}]({e['url']})" if e.get("url") else e["name"]
 
-def post_month_clean(webhook_url: str, vendor: str, month: str) -> bool:
-    """A green 'this vendor-month is clean' card after a refresh finds nothing left
-    - the owner's cue to rename the folder '<MM-YYYY> DONE'."""
-    body = [
-        {"type": "TextBlock", "size": "Medium", "weight": "Bolder",
-         "color": "Good", "wrap": True, "text": f"✅ {vendor} — {month} is clean"},
-        {"type": "TextBlock", "wrap": True,
-         "text": "Nothing left to fix or print. Rename the month folder "
-                 f"'{month} DONE' to finalize it."},
-    ]
-    return post(webhook_url, _envelope(body))
+    lines = [f"{_name(e)} · {e.get('open', 0)} open" + (" · tie-out failed"
+             if e.get("status") == "Tie-out failed" else "") for e in open_rows]
+    lines += [f"✅ {_name(e)} is clean - set it Done" for e in clean]
+    body = [{"type": "TextBlock", "weight": "Bolder", "wrap": True,
+             "text": (f"Vendor statements · {len(open_rows)} open · {total} items"
+                      if open_rows else "Vendor statements · all clean")},
+            {"type": "TextBlock", "wrap": True, "spacing": "Small",
+             "text": "\n\n".join(lines)}]
+    payload = _envelope(body)
+    if board_url:
+        payload["attachments"][0]["content"]["actions"] = [
+            {"type": "Action.OpenUrl", "title": "Open the board", "url": board_url}]
+    return post(webhook_url, payload)

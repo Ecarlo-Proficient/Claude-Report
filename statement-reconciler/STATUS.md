@@ -5,6 +5,7 @@ to this tool. Tool-only scope: no business/owner analyses or dollar-exposure
 findings here — those live in the owner's vault.
 
 ## DONE / FINALIZED
+- 2026-09-29 · **Notion Vendor Statements board - full build (before the simplify pass).** One live Notion page per vendor-month replaces the Teams card-per-vendor: a checklist of every bill to fix, rewritten in place on each run (`notion_board.py`); cleared/still-open/kept-tick merge rules; Done mirrored with the month folder (`--sync-done`); one Teams digest per run. Superseded the same day by the simplified version below.
 - 2026-09-29 · **Formula-injection guard (security review).** Outside text (vendor / QBO / Notion / email) this tool writes goes through `shared/xlsx_guard` - stored as text, never a live formula (statement refs, email-subject refs; the clerk-performance CSV via `csv_cell`); every workbook save also passes the shared guard, and `xlsx_verify` fails a risky formula.
 - 2026-09-29 · **QuickBooks login moved to the shared one (security review).** This tool's own copy of the refresh-token exchange is retired; its login is `shared/qbo_api` (`load_credentials` / `get_pass`), which asks Key Helper (`keyhelper/`) once the key library is adopted - the tool never holds the refresh token.
 - **`datetime.utcnow()` retired (2026-09-24).** `print_status.py`'s two date floors now use `datetime.now(UTC)`: same output, no deprecation warning (Python is removing `utcnow`).
