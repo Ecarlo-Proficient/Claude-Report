@@ -342,6 +342,11 @@ def change_flags(entity: str, kind: str, before: Optional[dict], after: Optional
         return ["restored"]
     if kind == "created":
         return []
+    if entity == "PurchaseOrder":
+        # a PO is an estimate that posts nothing: AP trues it up to the real bill and closes it (the owner
+        # 2026-09-29 - 45 of 57 "amount changed" rows were exactly that). Its edits are listed with their
+        # detail, never flagged; the BILL it became is what's watched.
+        return []
     tb, ta = _num(b.get("TotalAmt")), _num(a.get("TotalAmt"))
     if tb is not None and ta is not None and abs(tb - ta) > 0.005:
         fl.append("voided" if abs(ta) <= 0.005 and abs(tb) > 0.005 else "amount changed")
@@ -363,10 +368,189 @@ def change_flags(entity: str, kind: str, before: Optional[dict], after: Optional
         fl.append("vendor changed" if _ref_of(a)[0] == "vendor" else "customer changed")
     if str(b.get("DocNumber") or "") != str(a.get("DocNumber") or "") and (b.get("DocNumber") or a.get("DocNumber")):
         fl.append("number changed")
-    nb, na = _n_lines(b), _n_lines(a)
-    if nb is not None and na is not None and nb != na and "payment unapplied" not in fl:
+    # "lines changed" = a line's MONEY, job or cost code moved - never just the line count. A $0 line
+    # (QBO adds one when a purchase order is linked to a bill) or a reordering moves nothing (the owner
+    # 2026-09-29 on RCI MCK788142: "it looks the same? what changed specifically"). Only when the
+    # before copy has lines to compare; the stored flag (count-based, older rows) is recomputed at read.
+    if (b.get("Line") and a.get("Line") and "payment unapplied" not in fl
+            and _line_sigs(b) != _line_sigs(a)):
         fl.append("lines changed")
     return fl
+
+
+def _line_det(ln: dict) -> dict:
+    for k in ("ItemBasedExpenseLineDetail", "AccountBasedExpenseLineDetail", "SalesItemLineDetail",
+              "JournalEntryLineDetail", "DepositLineDetail", "GroupLineDetail"):
+        if isinstance(ln.get(k), dict):
+            return ln[k]
+    return {}
+
+
+def _job_of(ln: dict) -> str:
+    """The job a line is coded to: the project # (`Parent:CP800 - TOPAZ` -> CP800), else the name tail."""
+    det = _line_det(ln)
+    ref = det.get("CustomerRef") or (det.get("Entity") or {}).get("EntityRef") or {}
+    name = str(ref.get("name") or "")
+    tail = name.split(":")[-1].strip()
+    return tail.split(" - ")[0].strip() or tail
+
+
+def _code_of(ln: dict) -> str:
+    """The cost code (item name) or the account a line posts to."""
+    det = _line_det(ln)
+    for k in ("ItemRef", "AccountRef"):
+        r = det.get(k)
+        if isinstance(r, dict) and (r.get("name") or r.get("value")):
+            return str(r.get("name") or r.get("value")).split(":")[-1].strip()
+    return ""
+
+
+def _money_lines(rec: dict) -> List[dict]:
+    return [ln for ln in rec.get("Line") or [] if isinstance(ln, dict)
+            and ln.get("DetailType") not in ("SubTotalLineDetail", "DiscountLineDetail")]
+
+
+def _line_sigs(rec: dict) -> List[tuple]:
+    """What a record's lines SAY in money: (amount, job, code, posting side) per non-zero line, sorted -
+    order, line ids, descriptions and $0 lines don't count."""
+    out = []
+    for ln in _money_lines(rec):
+        amt = round(float(ln.get("Amount") or 0), 2)
+        if abs(amt) < 0.005:
+            continue
+        out.append((amt, _job_of(ln), _code_of(ln), str(_line_det(ln).get("PostingType") or "")))
+    return sorted(out)
+
+
+def _m(v) -> str:
+    try:
+        return "${:,.2f}".format(float(v))
+    except (TypeError, ValueError):
+        return "-"
+
+
+def _line_label(ln: dict) -> str:
+    bits = [str(ln.get("Description") or "").strip()[:48] or "(no description)"]
+    for x in (_code_of(ln), _job_of(ln)):
+        if x:
+            bits.append(x)
+    return " · ".join(bits)
+
+
+_TXN_WORD = {"BillPaymentCheck": "check", "BillPayment": "bill payment", "BillPaymentCreditCard": "card payment",
+             "Payment": "payment", "PurchaseOrder": "purchase order", "VendorCredit": "vendor credit",
+             "CreditMemo": "credit memo", "Deposit": "deposit", "Invoice": "invoice", "Bill": "bill",
+             "Estimate": "estimate", "ReimburseCharge": "reimburse charge", "Expense": "expense"}
+
+
+def _line_links(ln: dict) -> set:
+    return {(x.get("TxnType"), str(x.get("TxnId"))) for x in ln.get("LinkedTxn") or [] if isinstance(x, dict)}
+
+
+def change_detail(entity: str, before: Optional[dict], after: Optional[dict],
+                  doc_of: Optional[Callable[[str, str], str]] = None) -> List[str]:
+    """Plain words for WHAT changed between two copies of one record - the fields and the lines, each
+    with its old and new value, so a flag never has to be taken on trust (the owner 2026-09-29).
+    `doc_of(txn_type, id)` names a linked record by its number when the mirror has it."""
+    if not before or not after:
+        return []
+    out: List[str] = []
+
+    def name(t: str, i: str) -> str:
+        return (doc_of(t, i) if doc_of else "") or ""
+
+    def day(v) -> str:
+        v = str(v)
+        return f"{v[5:7]}/{v[8:10]}/{v[:4]}" if len(v) >= 10 and v[4] == "-" else v
+
+    def label(ln: dict) -> str:                 # a payment's line has no text - name the bill / invoice it pays
+        if not str(ln.get("Description") or "").strip():
+            for x in ln.get("LinkedTxn") or []:
+                d = name(str(x.get("TxnType")), str(x.get("TxnId")))
+                return f"{_TXN_WORD.get(x.get('TxnType'), x.get('TxnType'))} {('#' + d) if d else '(id ' + str(x.get('TxnId')) + ')'}"
+        return _line_label(ln)
+
+    def fld(label: str, vb, va, fmt=str):
+        if (vb or "") != (va or ""):
+            out.append(f"{label}: {fmt(vb) if vb not in (None, '') else '(blank)'} -> {fmt(va) if va not in (None, '') else '(blank)'}")
+
+    tb, ta = _num(before.get("TotalAmt")), _num(after.get("TotalAmt"))
+    if tb is not None and ta is not None and abs(tb - ta) > 0.005:
+        out.append(f"Total: {_m(tb)} -> {_m(ta)}")
+    if _ref_of(before)[1] != _ref_of(after)[1]:
+        fld(_ref_of(after)[0].capitalize() or "Party", _ref_of(before)[2] or _ref_of(before)[1], _ref_of(after)[2] or _ref_of(after)[1])
+    fld("Date", before.get("TxnDate"), after.get("TxnDate"), day)
+    fld("Due date", before.get("DueDate"), after.get("DueDate"), day)
+    fld("No.", before.get("DocNumber"), after.get("DocNumber"))
+    fld("Status", before.get("POStatus"), after.get("POStatus"))
+    fld("Memo", " ".join(str(before.get("PrivateNote") or "").split())[:200], " ".join(str(after.get("PrivateNote") or "").split())[:200])
+    bb, ba = _num(before.get("Balance")), _num(after.get("Balance"))
+    if bb is not None and ba is not None and abs(bb - ba) > 0.005:
+        out.append(f"Open balance: {_m(bb)} -> {_m(ba)}")
+
+    # payments linked to / removed from the record (a bill's checks, an invoice's payments)
+    def links(rec):
+        return {(str(lt.get("TxnType")), str(lt.get("TxnId"))) for lt in rec.get("LinkedTxn") or [] if isinstance(lt, dict)}
+    for verb, s in (("Unlinked", links(before) - links(after)), ("Linked", links(after) - links(before))):
+        for t, i in sorted(s):
+            d = name(t, i)
+            out.append(f"{verb} {_TXN_WORD.get(t, t)} {('#' + d) if d else '(id ' + i + ')'}")
+
+    # the lines, matched by QBO's line id
+    def key(ln: dict) -> str:                   # a payment's lines are renumbered by QBO - match those by what they pay
+        if not _line_det(ln) and ln.get("LinkedTxn"):
+            return "pay:" + ",".join(sorted(f"{x.get('TxnType')}:{x.get('TxnId')}" for x in ln["LinkedTxn"]))
+        return str(ln.get("Id"))
+    lb = {key(ln): ln for ln in _money_lines(before)}
+    la = {key(ln): ln for ln in _money_lines(after)}
+    for lid, ln in la.items():
+        if lid in lb:
+            continue
+        amt = float(ln.get("Amount") or 0)
+        po = [x for x in ln.get("LinkedTxn") or [] if x.get("TxnType") == "PurchaseOrder"]
+        why = ""
+        if po:
+            d = name("PurchaseOrder", str(po[0].get("TxnId")))
+            why = f" - pulled from purchase order {('#' + d) if d else ''}".rstrip()
+        out.append(f"Line added: {label(ln)} · {_m(amt)}{why}" + (" (no money)" if abs(amt) < 0.005 else ""))
+    for lid, ln in lb.items():
+        if lid not in la:
+            out.append(f"Line removed: {label(ln)} · {_m(ln.get('Amount'))}")
+    for lid, lnb in lb.items():
+        lna = la.get(lid)
+        if lna is None:
+            continue
+        diffs = []
+        if abs(float(lnb.get("Amount") or 0) - float(lna.get("Amount") or 0)) > 0.005:
+            diffs.append(f"amount {_m(lnb.get('Amount'))} -> {_m(lna.get('Amount'))}")
+        if _job_of(lnb) != _job_of(lna):
+            diffs.append(f"job {_job_of(lnb) or '(none)'} -> {_job_of(lna) or '(none)'}")
+        if _code_of(lnb) != _code_of(lna):
+            diffs.append(f"code {_code_of(lnb) or '(none)'} -> {_code_of(lna) or '(none)'}")
+        cb, ca = (_line_det(lnb).get("ClassRef") or {}).get("name"), (_line_det(lna).get("ClassRef") or {}).get("name")
+        if (cb or "") != (ca or ""):
+            diffs.append(f"class {cb or '(none)'} -> {ca or '(none)'}")
+        if str(lnb.get("Description") or "").strip() != str(lna.get("Description") or "").strip():
+            diffs.append("description reworded")
+        for t, i in sorted(_line_links(lnb) - _line_links(lna)):
+            d = name(t, i)
+            diffs.append(f"unlinked from {_TXN_WORD.get(t, t)} {('#' + d) if d else i}")
+        for t, i in sorted(_line_links(lna) - _line_links(lnb)):
+            d = name(t, i)
+            diffs.append(f"linked to {_TXN_WORD.get(t, t)} {('#' + d) if d else i}")
+        if diffs:
+            out.append(f"Line {label(lnb)}: " + "; ".join(diffs))
+    for verb, pre in (("Taken off", "Line removed: "), ("Put on", "Line added: ")):   # a check re-applied wholesale = one line
+        many = [x for x in out if x.startswith(pre) and " · $" in x and x[len(pre):].split(" ", 1)[0] in _TXN_WORD.values()]
+        if len(many) > 5:
+            tot = sum(float(x.rsplit("$", 1)[1].replace(",", "")) for x in many)
+            eg = ", ".join(x[len(pre):].split(" · ")[0].split(" ", 1)[1] for x in many[:3])
+            keep = [x for x in out if x not in many]
+            out[:] = keep + [f"{verb} {len(many)} {many[0][len(pre):].split(' ', 1)[0]}s · {_m(tot)} (e.g. {eg})"]
+    if not out and entity not in ("Vendor", "Customer", "Account", "Item", "Class", "Term", "PaymentMethod"):
+        out.append("Nothing tracked moved (amount, date, party, number, memo, lines, links) - a re-save, "
+                   "e.g. an approval step or an attachment")
+    return out
 
 
 def _log_change(con, entity: str, rec_id: str, kind: str, before: Optional[dict], after: Optional[dict],

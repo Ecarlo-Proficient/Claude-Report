@@ -4,6 +4,16 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-29 · **QBO changes say WHAT changed** (owner, on RCI MCK788142: "wdym the line changed? it looks the same?
+  what changed specifically and why are you flagging it?"). Every edit now carries `detail` - the fields and lines that
+  moved, old -> new (`shared/qbo_mirror.change_detail`: total, party, date, due date, no., PO status, memo, open balance,
+  linked / unlinked payments and POs, each line added / removed / re-coded with its job + cost code + amount; a check's
+  lines match by the bill they pay, a check stripped off many bills is one line), shown under the row. Flags are
+  recomputed at read from the two copies: **"lines changed" = a line's money, job or code moved**, never the line
+  COUNT (MCK788142 was a $0 line QBO adds when a PO is linked - now unflagged), and **purchase-order edits are never
+  flagged** (AP trues the estimate to the bill and closes it - 45 of 57 "amount changed" were that). An edit where
+  nothing tracked moved says so (a re-save). 30 days: flagged 89 (was ~170 before the PO / line-count rules).
+  Chip overflow fixed (`table.grid td.qa-what` - the grid's nowrap outranked it, chips spilled into Type).
 - 2026-09-29 · **Formula-injection guard (security review).** Outside text (vendor / QBO / Notion / email) this tool writes goes through `shared/xlsx_guard` - stored as text, never a live formula (the money-trail CSV download via `csv_cell`); every workbook save also passes the shared guard, and `xlsx_verify` fails a risky formula.
 - 2026-09-29 · **Request gate + open-path guards (security review)**. The server answered any request that reached
   127.0.0.1, so a page the owner visited could POST to it cross-site (start syncs, write WIP tabs, hide QBO Audit alerts)

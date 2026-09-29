@@ -1928,7 +1928,10 @@ table.pp-cov.all-sel tr.pp-cov-row > td { background: color-mix(in srgb, var(--a
 .qa-flag.neg { color: var(--neg-text); border-color: color-mix(in srgb, var(--neg) 45%, var(--border)); background: color-mix(in srgb, var(--neg) 8%, var(--surface)); }
 .qa-flag.warn { color: var(--warn-text); border-color: color-mix(in srgb, var(--warn-text) 45%, var(--border)); }
 .qa-flag.ok { color: var(--pos); border-color: color-mix(in srgb, var(--pos) 45%, var(--border)); }
-td.qa-what { white-space: normal; max-width: 260px; }
+table.grid td.qa-what { white-space: normal; min-width: 150px; max-width: 280px; }   /* `table.grid` outranks the grid's nowrap - chips wrap, never spill into Type */
+table.grid tr.qa-detail td { border-top: 0; padding-top: 0; white-space: normal; font-size: .86em; color: var(--text-dim); line-height: 1.45; }
+table.grid tr.qa-detail td > div { overflow-wrap: anywhere; }
+table.grid tr:has(+ tr.qa-detail) td { border-bottom: 0; }
 .qa-knock { font-size: .8em; color: var(--neg-text); margin-top: 2px; }
 /* the fix under a row = a white card on the grey band (owner 2026-09-25: "grey everywhere, it blends, there's no
    distinction"). The inner table must not inherit the grid's sticky white header - reset it here. */

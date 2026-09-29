@@ -8262,9 +8262,21 @@ function renderQboAudit() {
       tr.appendChild(td); }
     return tr;
   };
+  // what exactly changed, old -> new, under the row (owner 2026-09-29: "what changed specifically and why are you flagging it?")
+  const qaDetail = (c, child) => {
+    if (!c.detail || !c.detail.length) return null;
+    const tr = document.createElement("tr"); tr.className = "qa-detail" + (child ? " qa-child" : "");
+    tr.appendChild(document.createElement("td"));
+    const td = document.createElement("td"); td.className = "left"; td.colSpan = cols.length - 1;
+    const shown = c.detail.slice(0, 6);
+    for (const line of shown) { const d = document.createElement("div"); d.textContent = line.replace(/ -> /g, " → "); td.appendChild(d); }
+    if (c.detail.length > shown.length) { const d = document.createElement("div"); d.className = "dim"; d.textContent = `…and ${c.detail.length - shown.length} more`; td.appendChild(d); }
+    tr.appendChild(td); return tr;
+  };
   for (const c of rows.slice(0, 600)) {
     frag.appendChild(qaRow(c, false));
-    for (const k of kids[c.id] || []) frag.appendChild(qaRow(k, true));
+    { const d = qaDetail(c, false); if (d) frag.appendChild(d); }
+    for (const k of kids[c.id] || []) { frag.appendChild(qaRow(k, true)); const d = qaDetail(k, true); if (d) frag.appendChild(d); }
   }
   tbody.appendChild(frag);
   if (rows.length > 600) { const tr = document.createElement("tr"); const td = document.createElement("td"); td.colSpan = cols.length; td.className = "left dim"; td.style.padding = "10px 14px"; td.textContent = `${rows.length - 600} more - narrow the search`; tr.appendChild(td); tbody.appendChild(tr); }

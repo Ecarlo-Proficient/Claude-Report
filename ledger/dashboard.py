@@ -1622,6 +1622,55 @@ def _fold_side_effects(con, rows: list) -> None:
                 break
 
 
+_DOC_ENTITY = {"BillPaymentCheck": "BillPayment", "BillPaymentCreditCard": "BillPayment", "BillPayment": "BillPayment",
+               "PurchaseOrder": "PurchaseOrder", "Bill": "Bill", "Invoice": "Invoice", "Payment": "Payment",
+               "VendorCredit": "VendorCredit", "CreditMemo": "CreditMemo", "Deposit": "Deposit", "Estimate": "Estimate"}
+
+
+def _explain_changes(con, rows: list) -> None:
+    """The owner 2026-09-29: "wdym the line changed? it looks the same? what changed specifically and why are you
+    flagging it?". Every edit gets `detail` - the fields and lines that moved, old -> new (shared/qbo_mirror.
+    change_detail) - and its flags are recomputed from the two copies with today's rules, so an older row flagged on
+    a mere line COUNT (a $0 purchase-order line) stops reading as a problem. The AFTER copy of an edit is the next
+    change's BEFORE for the same record, or the record as the mirror holds it now."""
+    from shared import qbo_mirror as mirror
+    docs: dict = {}
+
+    def doc_of(txn_type: str, rec_id: str) -> str:
+        ent = _DOC_ENTITY.get(txn_type)
+        if not ent:
+            return ""
+        k = (ent, rec_id)
+        if k not in docs:
+            try:
+                x = con.execute(f"SELECT doc_number FROM {mirror.table(ent)} WHERE id=?", (rec_id,)).fetchone()
+            except (KeyError, sqlite3.Error):
+                x = None
+            docs[k] = (x[0] if x else "") or ""
+        return docs[k]
+
+    newer: dict = {}                              # (entity, rec_id) -> the BEFORE of the next-newer change (rows are newest first)
+    for r in rows:
+        k = (r["entity"], r["rec_id"])
+        before = None
+        if r["kind"] == "edited" and r.get("has_before"):
+            try:
+                before = mirror.change_before(con, r["id"])
+                after = newer[k] if k in newer else mirror.get(r["entity"], r["rec_id"], con)
+                if before and after:
+                    r["flags"] = mirror.change_flags(r["entity"], r["kind"], before, after)
+                    r["detail"] = mirror.change_detail(r["entity"], before, after, doc_of)
+            except Exception:                     # noqa: BLE001 - a record that won't open keeps its stored flags
+                before = None
+        if r.get("has_before"):
+            try:
+                newer[k] = before if before is not None else mirror.change_before(con, r["id"])
+            except Exception:                     # noqa: BLE001
+                newer[k] = None
+        elif r["kind"] == "created":
+            newer[k] = None
+
+
 def _qbo_ok_marks(db_path) -> dict:
     """{mirror_change id -> marked_at} the owner OK'd (qbo_change_ok, the ledger's own table)."""
     if not db_path:
@@ -1686,6 +1735,7 @@ def _fetch_qbo_changes(days: int = 30, db_path=None) -> dict:
             r.update(alive[k])
             if not r.get("ref_name") and r.get("ref_id"):
                 r["ref_name"] = names.get((r.get("ref_type"), r["ref_id"]), "")
+        _explain_changes(con, rows)
         _attach_payment_repairs(con, rows)
         _fold_side_effects(con, rows)
         out["last_refresh"] = mirror._meta_get(con, "last_refresh")

@@ -308,3 +308,53 @@ def test_backfill_changes_logs_earlier_deletions_once():
     assert m.backfill_changes(con, "now") == 0
     c = m.changes(con)[0]
     assert (c["kind"], c["changed_at"], c["flags"]) == ("deleted", "2026-09-17T19:15:23Z", ["deleted paid bill"])
+
+
+def _item_line(lid, desc, amt, code="PV2", job="Tri-C:CP800 - TOPAZ", po=None):
+    ln = {"Id": str(lid), "Description": desc, "Amount": amt, "DetailType": "ItemBasedExpenseLineDetail",
+          "ItemBasedExpenseLineDetail": {"ItemRef": {"name": code}, "CustomerRef": {"name": job}}}
+    if po:
+        ln["LinkedTxn"] = [{"TxnId": po, "TxnType": "PurchaseOrder"}]
+    return ln
+
+
+def test_zero_dollar_po_line_is_explained_not_flagged():
+    # the owner 2026-09-29, RCI MCK788142: a $0 line QBO adds when a PO is linked read "lines changed"
+    before = {"TotalAmt": 52.78, "VendorRef": {"value": "1"}, "Line": [_item_line(1, "ANCHOR", 48.76), _item_line(4, "TAXES", 4.02)]}
+    after = {"TotalAmt": 52.78, "VendorRef": {"value": "1"}, "LinkedTxn": [{"TxnId": "77", "TxnType": "PurchaseOrder"}],
+             "Line": [_item_line(1, "ANCHOR", 48.76), _item_line(5, "1 BOX EPOXY", 0, "PV3", po="77"), _item_line(4, "TAXES", 4.02)]}
+    assert m.change_flags("Bill", "edited", before, after) == []
+    d = m.change_detail("Bill", before, after, lambda t, i: "7878" if i == "77" else "")
+    assert "Linked purchase order #7878" in d
+    assert any(x.startswith("Line added: 1 BOX EPOXY · PV3 · CP800 · $0.00 - pulled from purchase order #7878") for x in d)
+
+
+def test_recoded_line_is_flagged_and_says_old_and_new():
+    before = {"TotalAmt": 30.0, "TxnDate": "2026-09-01", "Line": [_item_line(1, "10 YDS", 30.0, "WL1", "X:RP7241 - K ST")]}
+    after = {"TotalAmt": 30.0, "TxnDate": "2026-09-03", "Line": [_item_line(1, "10 YDS", 30.0, "WL1", "Y:CP785 - 7BREW")]}
+    assert m.change_flags("Bill", "edited", before, after) == ["date changed", "lines changed"]
+    d = m.change_detail("Bill", before, after)
+    assert "Date: 09/01/2026 -> 09/03/2026" in d
+    assert "Line 10 YDS · WL1 · RP7241: job RP7241 -> CP785" in d
+
+
+def test_purchase_order_edits_are_never_flagged():
+    before = {"TotalAmt": 24.0, "POStatus": "Open", "Line": [_item_line(1, "EPOXY", 24.0)]}
+    after = {"TotalAmt": 99.04, "POStatus": "Closed", "Line": [_item_line(1, "EPOXY", 99.04)]}
+    assert m.change_flags("PurchaseOrder", "edited", before, after) == []
+    assert "Status: Open -> Closed" in m.change_detail("PurchaseOrder", before, after)
+
+
+def test_payment_lines_match_by_the_bill_they_pay():
+    pay = lambda lid, bill, amt: {"Id": lid, "Amount": amt, "LinkedTxn": [{"TxnId": bill, "TxnType": "Bill"}]}  # noqa: E731
+    before = {"TotalAmt": 100.0, "Line": [pay("1", "A", 100.0)]}
+    after = {"TotalAmt": 150.0, "Line": [pay("1", "B", 50.0), pay("2", "A", 100.0)]}
+    d = m.change_detail("BillPayment", before, after, lambda t, i: i)
+    assert d == ["Total: $100.00 -> $150.00", "Line added: bill #B · $50.00"]
+
+
+def test_a_check_stripped_off_many_bills_is_one_line():
+    pay = lambda lid, bill, amt: {"Id": lid, "Amount": amt, "LinkedTxn": [{"TxnId": bill, "TxnType": "Bill"}]}  # noqa: E731
+    before = {"TotalAmt": 60.0, "Line": [pay(str(i), f"B{i}", 10.0) for i in range(6)]}
+    after = {"TotalAmt": 60.0, "Line": []}
+    assert m.change_detail("BillPayment", before, after, lambda t, i: i) == ["Taken off 6 bills · $60.00 (e.g. #B0, #B1, #B2)"]
