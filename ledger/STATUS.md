@@ -12,7 +12,7 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   recomputed at read from the two copies: **"lines changed" = a line's money, job or code moved**, never the line
   COUNT (MCK788142 was a $0 line QBO adds when a PO is linked - now unflagged), and **purchase-order edits are never
   flagged** (AP trues the estimate to the bill and closes it - 45 of 57 "amount changed" were that). An edit where
-  nothing tracked moved says so (a re-save). 30 days: flagged 89 (was ~170 before the PO / line-count rules).
+  nothing tracked moved says so (a re-save). 30 days: 89 flagged.
   Chip overflow fixed (`table.grid td.qa-what` - the grid's nowrap outranked it, chips spilled into Type).
 - 2026-09-29 · **Formula-injection guard (security review).** Outside text (vendor / QBO / Notion / email) this tool writes goes through `shared/xlsx_guard` - stored as text, never a live formula (the money-trail CSV download via `csv_cell`); every workbook save also passes the shared guard, and `xlsx_verify` fails a risky formula.
 - 2026-09-29 · **Request gate + open-path guards (security review)**. The server answered any request that reached
