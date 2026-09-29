@@ -1397,7 +1397,6 @@ table.pp-bills { margin: 0 0 6px; }
 .pp-selected.empty { color: var(--text-dim); border-style: dashed; background: transparent; }
 .pp-sel-h { font-weight: 700; margin-bottom: 4px; }
 .pp-sel-v { padding: 2px 0; }
-#btnPayRunGo.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); font-weight: 600; }
 
 .pp-all { display: inline-flex; align-items: center; gap: 4px; font-size: .9em; color: var(--text-dim); }
 /* the draw's bill table reads as POCKETS (owner 2026-09-08: "no sub header distinction, it reads like a list"):

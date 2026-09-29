@@ -254,7 +254,7 @@ const WAIVERS_ENABLED = false;
 // deep link in the app still works.
 const NAV_GROUPS = [
   { id: "projects",  label: "Projects",  tabs: ["projects"] },
-  { id: "vendors",   label: "Vendors",   tabs: ["vendorcenter", "bills"] },   // Vendor Center first (owner 2026-09-28)
+  { id: "vendors",   label: "Vendors",   tabs: ["vendorcenter", "bills", "paybills"] },   // Vendor Center first (owner 2026-09-28); Pay bills its own sub-tab (owner 2026-09-29: "a dedicated sub menu under vendors")
   { id: "customers", label: "Customers", tabs: ["invoices", "customercenter", "payments", "sales"] },
   { id: "company",   label: "Company",   tabs: ["money", "billaudit", "qboaudit", "checkdrift", "uncleared"] },   // each audit is its own page (owner 2026-09-23 / 09-24)
   { id: "tools",     label: "Tools",     tabs: ["wipreview", "review", "console", "systems"], hidden: true },   // from the gear, not the bar
@@ -262,9 +262,9 @@ const NAV_GROUPS = [
 const TAB_LABELS = {
   projects: "Projects", bills: "Bill Tracker", vendorcenter: "Vendor Center", invoices: "Invoice Tracker", customercenter: "Customer Center",
   payments: "Payments received", sales: "Sales pipeline", money: "Money", billaudit: "Bills to fix", qboaudit: "QBO changes", checkdrift: "Checks QBO changed", uncleared: "Uncleared checks",
-  wipreview: "WIP Review", review: "WIP review", console: "Console", systems: "Systems", paybills: "Pay run", liens: "Lien register",
+  wipreview: "WIP Review", review: "WIP review", console: "Console", systems: "Systems", paybills: "Pay bills", liens: "Lien register",
 };
-const HIDDEN_TAB_GROUP = { paybills: "vendors", liens: "vendors" };   // pages without a sub-tab (opened from the Bill Tracker): the Vendors group stays lit
+const HIDDEN_TAB_GROUP = { liens: "vendors" };   // pages without a sub-tab (opened from the Bill Tracker): the Vendors group stays lit
 // old tab -> the page it lives on now (where the old tab became a section, its id is the old name and setTab scrolls to it)
 const TAB_ALIAS = { overview: "projects", home: "projects", wip: "projects", pnl: "projects", draws: "projects",
                     clients: "invoices", customers: "customercenter", vendors: "vendorcenter", accounting: "billaudit",
@@ -2022,7 +2022,6 @@ function renderBills() {
   const lienN = rows.filter(b => BILL_LIEN_RISK.has(b.lien_status)).length;
   $("#billsNote").textContent = bills.length ? `(${rows.length.toLocaleString()} of ${bills.length.toLocaleString()})` : "(no AP data - run load_bill_tracker.py)";
   { const qs = $("#billsQuickStat"); if (qs) qs.textContent = bills.length ? `${money(openSum)} open · ${lienN} lien risk` : ""; }
-  { const pr = $("#btnPayRunGo"); if (pr) { const n = (BILLS || []).filter(b => b.pay_selected).length; pr.textContent = n ? `Pay run (${n}) →` : "Pay run →"; pr.classList.toggle("on", n > 0); } }
 
   // table. Each status is its OWN column (Paid / Invoice / Lien / Appr) so a blank in
   // one never hides a missing value by being merged with the others.
@@ -4284,7 +4283,7 @@ function _ppPaintPayBar() {
   const mk = (lbl, cls, fn, title, id) => { const b = document.createElement("button"); b.type = "button"; b.className = "btn small " + (cls || ""); b.textContent = lbl; if (title) b.title = title; if (id) b.id = id; b.onclick = fn; bar.appendChild(b); return b; };
   mk("Mark blockers to pay", "", _ppMarkBlockers, "Tick every unpaid bill on the draws before the next one the GC owes - their waivers unlock it");
   mk("Export pay list", "", _ppExport, "Excel report of the bills ticked to pay on this job, grouped by draw");
-  mk("Open Pay run", "subtle", () => { if (!_ppLeaveBlocked()) setTab("paybills"); }, "The check-run worksheet across every job");
+  mk("Open Pay bills", "subtle", () => { if (!_ppLeaveBlocked()) setTab("paybills"); }, "The check-run worksheet across every job");
   const sv = mk("Save", "primary", _ppSavePay, "Write the ticks to the pay run (local intent only - never QuickBooks)", "ppPaySave"); sv.disabled = !dirty;
   const dc = mk("Discard", "", _ppDiscardPay, "Drop the unsaved ticks"); dc.hidden = !dirty;
   if (picked.length) {   // what is ticked, by vendor - at a glance before any export
@@ -9366,9 +9365,8 @@ function init() {
       window._billMoreOpenIfActive = () => { if (!on && BILL_MSEL.some(c => (billMSel[c.id] || {}).size && more.contains($("#" + c.id + "Msel")))) { on = true; paint(); } };
       paint();
     } }
-  { const pr = $("#btnPayRunGo"); if (pr) pr.onclick = () => setTab("paybills"); }
   { const lr = $("#btnLienRegGo"); if (lr) lr.onclick = () => setTab("liens"); }
-  for (const id of ["btnBackBillsPay", "btnBackBillsLien"]) { const b = $("#" + id); if (b) b.onclick = () => setTab("bills"); }
+  for (const id of ["btnBackBillsLien"]) { const b = $("#" + id); if (b) b.onclick = () => setTab("bills"); }
   { const el = $("#btnCostsFull"); if (el) el.onclick = () => runPipeline("costs-full",
       "Reload ALL job costs from QuickBooks?\n\nEvery project, all history - a full replace, so bills that were deleted or re-coded in QuickBooks drop out (the 90-day Resync never removes them). Read-only on QuickBooks; one Touch ID; 30 to 40 minutes.",
       { btn: $("#btnCostsFull"), prog: $("#syncProgress"), fill: $("#syncBarFill"), step: $("#syncStep") }); }

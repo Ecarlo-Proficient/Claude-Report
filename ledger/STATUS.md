@@ -4,6 +4,10 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-29 · **Pay bills is its own sub-tab under Vendors** (owner: "i do not want that menu setting it should be a
+  dedicated sub menu under vendors"). Vendors = Vendor Center · Bill Tracker · **Pay bills**; the Bill Tracker's
+  "Pay run ->" button and the page's "<- Bills" back header are gone (`paybills` left `HIDDEN_TAB_GROUP`; `#paybills`
+  links still land there). The project page's button reads "Open Pay bills".
 - 2026-09-29 · **QBO changes: Type / Vendor / Project / Class funnels + Project and Class columns** (owner: "i need to be
   able to filter by transactions type ... bring in the rest of the columns like class and project OR only show me what
   changed, Class Before = x > Class after = y"). `/api/qboaudit` rows carry `jobs_before/after`, `classes_before/after`,
