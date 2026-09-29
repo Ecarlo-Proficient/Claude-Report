@@ -405,6 +405,28 @@ def _code_of(ln: dict) -> str:
     return ""
 
 
+def jobs_of(rec: Optional[dict]) -> List[str]:
+    """The jobs a record is coded to (project #s, sorted): every line's job, else the header customer (an
+    invoice / payment names its project there)."""
+    if not rec:
+        return []
+    out = {j for j in (_job_of(ln) for ln in _money_lines(rec)) if j}
+    if not out and rec.get("CustomerRef"):
+        tail = str(rec["CustomerRef"].get("name") or "").split(":")[-1].strip()
+        if tail:
+            out.add(tail.split(" - ")[0].strip() or tail)
+    return sorted(out)
+
+
+def classes_of(rec: Optional[dict]) -> List[str]:
+    """The classes on a record (header + every line), sorted."""
+    if not rec:
+        return []
+    out = {str((rec.get("ClassRef") or {}).get("name") or "")}
+    out |= {str((_line_det(ln).get("ClassRef") or {}).get("name") or "") for ln in _money_lines(rec)}
+    return sorted(c for c in out if c)
+
+
 def _money_lines(rec: dict) -> List[dict]:
     return [ln for ln in rec.get("Line") or [] if isinstance(ln, dict)
             and ln.get("DetailType") not in ("SubTotalLineDetail", "DiscountLineDetail")]

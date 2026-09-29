@@ -358,3 +358,12 @@ def test_a_check_stripped_off_many_bills_is_one_line():
     before = {"TotalAmt": 60.0, "Line": [pay(str(i), f"B{i}", 10.0) for i in range(6)]}
     after = {"TotalAmt": 60.0, "Line": []}
     assert m.change_detail("BillPayment", before, after, lambda t, i: i) == ["Taken off 6 bills · $60.00 (e.g. #B0, #B1, #B2)"]
+
+
+def test_jobs_and_classes_of_a_record():
+    ln = _item_line(1, "10 YDS", 30.0, "WL1", "X:RP7241 - K ST")
+    ln["ItemBasedExpenseLineDetail"]["ClassRef"] = {"name": "Residential"}
+    assert m.jobs_of({"Line": [ln, _item_line(2, "x", 5.0)]}) == ["CP800", "RP7241"]
+    assert m.classes_of({"ClassRef": {"name": "Commercial"}, "Line": [ln]}) == ["Commercial", "Residential"]
+    assert m.jobs_of({"CustomerRef": {"name": "GC:MFD192 - JPI"}, "Line": []}) == ["MFD192"]
+    assert m.jobs_of(None) == [] and m.classes_of(None) == []

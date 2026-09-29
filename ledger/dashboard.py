@@ -1652,21 +1652,25 @@ def _explain_changes(con, rows: list) -> None:
     newer: dict = {}                              # (entity, rec_id) -> the BEFORE of the next-newer change (rows are newest first)
     for r in rows:
         k = (r["entity"], r["rec_id"])
-        before = None
-        if r["kind"] == "edited" and r.get("has_before"):
-            try:
-                before = mirror.change_before(con, r["id"])
+        before = after = None
+        try:
+            before = mirror.change_before(con, r["id"]) if r.get("has_before") else None
+            if r["kind"] != "deleted":
                 after = newer[k] if k in newer else mirror.get(r["entity"], r["rec_id"], con)
-                if before and after:
-                    r["flags"] = mirror.change_flags(r["entity"], r["kind"], before, after)
-                    r["detail"] = mirror.change_detail(r["entity"], before, after, doc_of)
-            except Exception:                     # noqa: BLE001 - a record that won't open keeps its stored flags
-                before = None
+        except Exception:                         # noqa: BLE001 - a record that won't open keeps its stored flags
+            pass
+        if r["kind"] == "edited" and before and after:
+            r["flags"] = mirror.change_flags(r["entity"], r["kind"], before, after)
+            r["detail"] = mirror.change_detail(r["entity"], before, after, doc_of)
+        # the owner 2026-09-29: "bring in the rest of the columns like class and project ... Class Before = x > Class
+        # after = y" - each side's jobs / classes / date; the page shows one value, or before -> after when it moved
+        b_, a_ = before or after, after or before
+        r["jobs_before"], r["jobs_after"] = mirror.jobs_of(b_), mirror.jobs_of(a_)
+        r["classes_before"], r["classes_after"] = mirror.classes_of(b_), mirror.classes_of(a_)
+        r["date_before"] = before.get("TxnDate") if before and after else None
+        r["date_after"] = after.get("TxnDate") if before and after else None
         if r.get("has_before"):
-            try:
-                newer[k] = before if before is not None else mirror.change_before(con, r["id"])
-            except Exception:                     # noqa: BLE001
-                newer[k] = None
+            newer[k] = before
         elif r["kind"] == "created":
             newer[k] = None
 

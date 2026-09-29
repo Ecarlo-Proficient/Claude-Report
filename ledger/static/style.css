@@ -609,7 +609,7 @@ a.ri-name:hover { text-decoration: underline; }
 .msel-count { margin-left: auto; font-size: .8em; color: var(--text-dim); align-self: center; padding-right: 3px; font-variant-numeric: tabular-nums; }
 .msel-menu.wide { min-width: 240px; }
 /* Excel-style header filters (every bill table): the funnel sits in the header, the menu floats under it */
-th.hf-th { padding-right: 24px; position: relative; }
+th.hf-th, table.grid th.hf-th { padding-right: 24px; position: relative; }   /* `table.grid th` padding outranked it - the funnel sat on the label (TYP, VENDOR / CLIEN) */
 .hf-btn { position: absolute; right: 3px; top: 50%; transform: translateY(-50%); display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; padding: 0; border-radius: 4px;
   border: 1px solid var(--border); background: var(--surface); color: var(--text-dim); cursor: pointer; }
 .hf-btn svg { display: block; }
@@ -1929,6 +1929,8 @@ table.pp-cov.all-sel tr.pp-cov-row > td { background: color-mix(in srgb, var(--a
 .qa-flag.warn { color: var(--warn-text); border-color: color-mix(in srgb, var(--warn-text) 45%, var(--border)); }
 .qa-flag.ok { color: var(--pos); border-color: color-mix(in srgb, var(--pos) 45%, var(--border)); }
 table.grid td.qa-what { white-space: normal; min-width: 150px; max-width: 280px; }   /* `table.grid` outranks the grid's nowrap - chips wrap, never spill into Type */
+table.grid td.qa-val .qa-was { color: var(--text-dim); text-decoration: line-through; }
+table.grid td.qa-val .qa-now { color: var(--warn-text); font-weight: 600; }
 table.grid tr.qa-detail td { border-top: 0; padding-top: 0; white-space: normal; font-size: .86em; color: var(--text-dim); line-height: 1.45; }
 table.grid tr.qa-detail td > div { overflow-wrap: anywhere; }
 table.grid tr:has(+ tr.qa-detail) td { border-bottom: 0; }

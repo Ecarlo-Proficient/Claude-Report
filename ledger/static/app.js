@@ -1617,11 +1617,18 @@ const HF_BILL_COLS = {                              // colKey -> [getter, label 
   inv:     [b => b.invoice_status || "", v => v || "(none)"],
   lien:    [b => b.lien_status || "", v => v ? (LIEN_SHORT[v] || v) : "(no lien clock)"],
   appr:    [b => b.approved || "", v => v === "approved" ? "Approved" : (v === "not approved" ? "Not approved" : (v || "(blank)"))],
+  // QBO changes (owner 2026-09-29: "filter by transaction type ... class and project"). A getter may return a LIST (a record
+  // coded to two jobs, or recoded from one to another): the row passes when ANY of its values is picked.
+  qatype:  [c => QA_ENTITY[c.entity] || c.entity || "", v => v || "(none)"],
+  qaparty: [c => c.ref_name || "", v => v || "(none)"],
+  qaproj:  [c => [...new Set([...(c.jobs_before || []), ...(c.jobs_after || [])])], v => v || "(no project)"],
+  qaclass: [c => [...new Set([...(c.classes_before || []), ...(c.classes_after || [])])], v => v || "(no class)"],
 };
+const _hfVals = v => Array.isArray(v) ? (v.length ? v : [""]) : [v];
 function hfState(tableKey) { return _hf[tableKey] || (_hf[tableKey] = {}); }
 function hfPasses(tableKey, b, except) {
   const st = hfState(tableKey);
-  for (const k in st) { if (k === except || !st[k].size) continue; const get = HF_BILL_COLS[k][0]; if (!st[k].has(get(b))) return false; }
+  for (const k in st) { if (k === except || !st[k].size) continue; const get = HF_BILL_COLS[k][0]; if (!_hfVals(get(b)).some(v => st[k].has(v))) return false; }
   return true;
 }
 // Sort from the same menu (owner 2026-09-25: "give me ability to sort this by alphabetical order") - Excel's Sort A to Z /
@@ -1631,7 +1638,7 @@ function hfSorted(tableKey, rows) {
   const s = _hfSort[tableKey]; if (!s || !HF_BILL_COLS[s.col]) return rows;
   const [get, lbl] = HF_BILL_COLS[s.col];
   // dates sort by the FULL date (owner 2026-09-28: "it goes only to the month but not the date") - the funnel's value is the month
-  const key = s.col === "date" ? (r => _isoDay(r.bill_date)) : (r => lbl(get(r)));
+  const key = s.col === "date" ? (r => _isoDay(r.bill_date)) : (r => _hfVals(get(r)).map(lbl).join(", "));
   return [...rows].sort((a, b) => s.dir * String(key(a)).localeCompare(String(key(b)), undefined, { numeric: true, sensitivity: "base" }));
 }
 function hfActive(tableKey) { const st = hfState(tableKey); return Object.keys(st).some(k => st[k].size); }
@@ -1664,7 +1671,7 @@ function hfDecorate(th, tableKey, colKey, rowsFn, rerender) {   // rowsFn() = th
     hfCloseMenu();
     document.querySelectorAll(".msel-menu:not(.hf-menu)").forEach(m => { m.hidden = true; });   // one menu at a time
     const rows = rowsFn();
-    const counts = new Map(); for (const b of rows) { const v = get(b); counts.set(v, (counts.get(v) || 0) + 1); }
+    const counts = new Map(); for (const b of rows) for (const v of _hfVals(get(b))) counts.set(v, (counts.get(v) || 0) + 1);
     for (const v of [...sel]) if (!counts.has(v)) counts.set(v, 0);   // a picked value that no longer appears still shows, so it can be unpicked
     const vals = [...counts.keys()].sort((a, b) => colKey === "date" ? b.localeCompare(a) : lbl(a).localeCompare(lbl(b), undefined, { numeric: true }));
     const menu = document.createElement("div"); menu.className = "msel-menu hf-menu wide"; menu._for = btn;
@@ -8178,6 +8185,18 @@ async function qaSetOk(c, ok) {   // a ledger write (qbo_change_ok) - never Quic
     const y = window.scrollY; renderQboAudit(); window.scrollTo(0, y);
   } catch (e) { toast ? toast("Could not save: " + e.message) : alert("Could not save: " + e.message); }
 }
+// One value, or "before → after" when this change moved it (owner 2026-09-29: "Class Before = x > Class after = y").
+// Two+ values show the first two and "+N" (all of them in the tooltip).
+function qaMoved(b, a, what) {
+  const td = document.createElement("td"); td.className = "left qa-val";
+  const show = xs => !xs || !xs.length ? "–" : xs.slice(0, 2).join(", ") + (xs.length > 2 ? ` +${xs.length - 2}` : "");
+  const same = JSON.stringify(b || []) === JSON.stringify(a || []);
+  if (same) { td.textContent = show(a); if (!a || !a.length) td.classList.add("dim"); td.title = (a || []).join(", "); return td; }
+  const o = document.createElement("span"); o.className = "qa-was"; o.textContent = show(b);
+  const n = document.createElement("span"); n.className = "qa-now"; n.textContent = show(a);
+  td.append(o, " → ", n); td.title = `${what} changed: ${(b || []).join(", ") || "(none)"} → ${(a || []).join(", ") || "(none)"}`;
+  return td;
+}
 function renderQboAudit() {
   const note = $("#qaNote"), stats = $("#qaStats"), filt = $("#qaFilters"), table = $("#qaTable"); if (!table) return;
   const thead = table.querySelector("thead"), tbody = table.querySelector("tbody");
@@ -8203,10 +8222,17 @@ function renderQboAudit() {
     b.innerHTML = `Show OK'd <span class="ac-n">${okd.length}</span>`; b.onclick = () => { qaShowOk = !qaShowOk; const y = window.scrollY; renderQboAudit(); window.scrollTo(0, y); }; filt.appendChild(b); }
   const q = (($("#qaSearch") || {}).value || "").trim().toLowerCase();
   const flaggedOnly = !!($("#qaFlaggedOnly") && $("#qaFlaggedOnly").checked);
-  const rows = all.filter(c => (!flaggedOnly || c.flags.length) && (!qaFlag || c.flags.includes(qaFlag))
-    && (!q || [c.ref_name, c.doc_number, QA_ENTITY[c.entity], c.entity, c.rec_id, c.kind, c.flags.join(" "), c.total_before, c.total_after, c.txn_date].join(" ").toLowerCase().includes(q)));
-  const cols = [["When (QuickBooks time)", "left"], ["What", "left"], ["Type", "left"], ["No.", "left"], ["Vendor / client", "left"], ["Txn date", "left"], ["Before", "right"], ["After", "right"], ["Open now", "right"], ["Record", "left"], ["", "left"]];
-  thead.innerHTML = "<tr>" + cols.map(([c, al]) => `<th class="${al}">${_ge(c)}</th>`).join("") + "</tr>";
+  const base = all.filter(c => (!flaggedOnly || c.flags.length) && (!qaFlag || c.flags.includes(qaFlag))
+    && (!q || [c.ref_name, c.doc_number, QA_ENTITY[c.entity], c.entity, c.rec_id, c.kind, c.flags.join(" "), c.total_before, c.total_after, c.txn_date,
+      ...(c.jobs_before || []), ...(c.jobs_after || []), ...(c.classes_before || []), ...(c.classes_after || [])].join(" ").toLowerCase().includes(q)));
+  const rows = hfSorted("qboaudit", base.filter(c => hfPasses("qboaudit", c)));
+  const cols = [["When (QuickBooks time)", "left"], ["What", "left"], ["Type", "left", "qatype"], ["No.", "left"], ["Vendor / client", "left", "qaparty"], ["Project", "left", "qaproj"], ["Class", "left", "qaclass"],
+    ["Txn date", "left"], ["Before", "right"], ["After", "right"], ["Open now", "right"], ["Record", "left"], ["", "left"]];
+  thead.innerHTML = "";
+  { const tr = document.createElement("tr");
+    for (const [c, al, hk] of cols) { const th = document.createElement("th"); th.className = al; th.textContent = c;
+      if (hk) hfDecorate(th, "qboaudit", hk, () => base.filter(r => hfPasses("qboaudit", r, hk)), renderQboAudit); tr.appendChild(th); }
+    thead.appendChild(tr); }
   tbody.innerHTML = "";
   if (!rows.length) { tbody.innerHTML = `<tr><td colspan="${cols.length}" class="left" style="padding:14px;color:var(--text-dim)">${all.length ? "Nothing matches." : "No changes in this window - refresh the mirror to check again."}</td></tr>`; return; }
   const frag = document.createDocumentFragment();
@@ -8238,7 +8264,11 @@ function renderQboAudit() {
       else if (c.ref_name && c.ref_type === "customer" && typeof openClientPage === "function") { const a = document.createElement("a"); a.href = "#"; a.textContent = c.ref_name; a.title = "Open the client page"; a.onclick = (e) => { e.preventDefault(); openClientPage(c.ref_name); }; td.appendChild(a); }
       else { td.textContent = c.ref_name || "–"; if (!c.ref_name) td.classList.add("dim"); }
       tr.appendChild(td); }
-    tr.appendChild(leftText(c.txn_date ? fmtDateShort(c.txn_date) : "–"));
+    tr.appendChild(qaMoved(c.jobs_before, c.jobs_after, "project"));
+    tr.appendChild(qaMoved(c.classes_before, c.classes_after, "class"));
+    tr.appendChild(c.date_before && c.date_after && c.date_before !== c.date_after
+      ? qaMoved([fmtDateShort(c.date_before)], [fmtDateShort(c.date_after)], "date")
+      : leftText(c.txn_date ? fmtDateShort(c.txn_date) : "–"));
     // before / after = what the flag is about: the money applied for a payment, the open balance for a reopen, else the total
     let vb = c.total_before, va = c.total_after, what = "total";
     if (c.flags.includes("ck # changed") && c.flags.length === 1 && c.doc_before != null) {   // the NUMBER changed, not the money: show the numbers

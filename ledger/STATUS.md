@@ -4,6 +4,13 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-29 · **QBO changes: Type / Vendor / Project / Class funnels + Project and Class columns** (owner: "i need to be
+  able to filter by transactions type ... bring in the rest of the columns like class and project OR only show me what
+  changed, Class Before = x > Class after = y"). `/api/qboaudit` rows carry `jobs_before/after`, `classes_before/after`,
+  `date_before/after` (`shared/qbo_mirror.jobs_of` / `classes_of`); the table shows one value, or `was -> now` (old struck
+  through, new bold) when the change moved it - Txn date too. The funnels are the app's `hfDecorate`; a getter may now
+  return a LIST (a record on two jobs, or recoded between them - the row passes when any value is picked). Fixed on every
+  funnelled table: `table.grid th` padding outranked `th.hf-th`, so the funnel sat on the header text.
 - 2026-09-29 · **QBO changes say WHAT changed** (owner, on RCI MCK788142: "wdym the line changed? it looks the same?
   what changed specifically and why are you flagging it?"). Every edit now carries `detail` - the fields and lines that
   moved, old -> new (`shared/qbo_mirror.change_detail`: total, party, date, due date, no., PO status, memo, open balance,
