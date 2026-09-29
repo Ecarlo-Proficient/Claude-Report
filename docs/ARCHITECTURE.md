@@ -87,7 +87,7 @@ job-auditor/           DESIGN + prototypes: audits proposal scope vs takeoff cos
 one-offs/              occasional / not-yet-developed tools (never the repo root)
 synology/              NAS file-tree audit (always --exclude the sensitive path)
 docker/                invoice-sync container package (v1.1.0)
-python-env/            THE Python: one pinned interpreter (PYTHON_VERSION) + one pinned package list; every entry point sources python.sh -> "$ACB_PY" (never a bare python3); .github/interpreter_guard.sh enforces it (2026-09-24)
+python-env/            THE Python: one pinned interpreter (PYTHON_VERSION) + one pinned package list (requirements.txt -> lock.py -> requirements.lock: every package incl. dependencies, exact version + sha256, installed --require-hashes on the Mac AND in CI, 09/29/2026); every entry point sources python.sh -> "$ACB_PY" (never a bare python3); .github/interpreter_guard.sh enforces it (2026-09-24)
 docs/                  this map + system references
 ```
 

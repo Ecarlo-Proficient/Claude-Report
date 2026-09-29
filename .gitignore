@@ -72,3 +72,7 @@ ledger/app/build/
 ledger/app/dist/
 ledger/app/app_icon.icns
 ledger/app/__pycache__/
+
+# any env file with real values (.env.docker, .env.local, ...) - only the *.example templates are tracked
+.env.*
+!*.example

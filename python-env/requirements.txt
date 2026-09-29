@@ -5,7 +5,11 @@
 # changes when someone edits this file on purpose. Editing it is all it takes -
 # the next run of any wrapper sees the change and installs it (python.sh).
 #
-# CI installs this same file, so GitHub tests exactly what the Mac runs.
+# CI installs the same packages, so GitHub tests exactly what the Mac runs.
+#
+# This is the HUMAN list. What gets installed is requirements.lock, generated from it by lock.py:
+# every package incl. dependencies, exact version, every sha256 - installed with --require-hashes.
+# After editing this file run:  python3 python-env/lock.py   (the interpreter guard fails until you do).
 # The container (docker/) installs invoice-sync/requirements.txt - a subset whose
 # pins must match the ones here (the interpreter guard checks it).
 

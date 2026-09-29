@@ -103,7 +103,9 @@ restate them here. Business/strategic context lives in session memory, not in th
   them; answers only the pinned Python in a registered workspace; logs every handout. Client:
   `shared/key_broker.py`. The private workspace is registered too (its own profiles + this company read-only).
 - **python-env/** - THE Python for every tool: `PYTHON_VERSION` (3.14, Homebrew `python@3.14`),
-  `requirements.txt` (every package pinned; CI installs the same file), `setup.sh`
+  `requirements.txt` (the human pins) -> `lock.py` -> `requirements.lock` (every package incl. dependencies,
+  exact version + every sha256; the Mac AND CI install it with `--require-hashes`, 09/29/2026 - edit
+  requirements.txt, then `python3 python-env/lock.py`, or the interpreter guard fails), `setup.sh`
   (`--ensure/--check/--rebuild`, env at `~/.venvs/proficient`), `python.sh` (sourced by every
   wrapper -> `$ACB_PY`; heals or stops with one line). Guarded by `.github/interpreter_guard.sh`.
 - **shared/** — the common package: `qbo_vault.py` (Keychain blob, one Touch ID per run),
@@ -373,7 +375,8 @@ running, and after, for it to push and commit flawlessly"):**
 - **One-time per clone: install the CI gates as a pre-push hook** -
   `ln -sf ../../.github/preflight.sh "$(git rev-parse --git-dir)/hooks/pre-push"`.
   `preflight.sh` runs the same gates as CI (syntax, ruff, the data-leak guard in
-  `.github/leak_guard.sh` - the ONE copy of those patterns, never fork it), all of
+  `.github/leak_guard.sh` - the ONE copy of those patterns, never fork it; since 09/29/2026 it also
+  blocks keys and tokens - our key names with a value, Notion / Teams / Intuit / GitHub / AWS / private keys), all of
   them every run, so a red CI never starts on GitHub. Bypass once: `git push --no-verify`.
 - **Start of any session that will modify files: `git pull` on `dev` first** — the developer's pushes
   may have changed things. Working on a stale copy creates divergence.

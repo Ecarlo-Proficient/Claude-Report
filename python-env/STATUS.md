@@ -6,6 +6,13 @@ the SAME commit as any change to this folder.
 ---
 
 ## DONE / FINALIZED
+- 2026-09-29 · **Every package fingerprint-checked (security review).** `lock.py` builds `requirements.lock` from
+  requirements.txt: all 50 packages incl. dependencies, exact version, every sha256 PyPI publishes, platform
+  markers where the Mac and Linux CI differ (6 Mac-only, 2 Linux-only - keyring's SecretStorage / jeepney,
+  found by re-walking the tree under Linux markers). Unpinned dependencies keep the version this environment
+  already runs (no same-day releases). `setup.sh` and CI install it with `--require-hashes`; pip itself is in
+  the lock (no more unpinned `pip --upgrade`). The interpreter guard fails if requirements.txt changes without
+  a rebuilt lock. Proven: a fresh venv from the lock in strict mode = the live environment, package for package.
 
 - **Built and adopted (2026-09-24).** Trigger: a `brew install ffmpeg` on 09/23 made
   Homebrew's Python 3.14 the `python3` on PATH. The packages lived under the system

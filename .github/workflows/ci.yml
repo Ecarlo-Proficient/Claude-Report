@@ -6,18 +6,24 @@ on:
   push:
     branches: [dev]
 
+# Least privilege: the test job only reads the repo (security review 09/29/2026).
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 - pinned by commit (security review 09/29/2026)
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6 - pinned by commit
         with:
           # The SAME version and package list the Mac runs (python-env/).
           python-version-file: python-env/PYTHON_VERSION
-      - name: Install dependencies
-        run: pip install -r python-env/requirements.txt
+      - name: Install dependencies (every package fingerprint-checked)
+        # The lock is generated from requirements.txt by python-env/lock.py: every package, dependencies
+        # included, exact version + sha256. A file that does not match its hash fails the install.
+        run: pip install --require-hashes -r python-env/requirements.lock
       - name: Syntax check (every .py file must parse)
         run: python -m compileall -q -x '/(\.venv|venv|env|node_modules|\.git)(/|$)' .
       - name: Critical lint (undefined names, unreachable code, bad comparisons)

@@ -76,5 +76,19 @@ if [ -f "$lock" ] && [ -f "$sub" ]; then
   done < <(sed -E 's/[[:space:]]*#.*//' "$sub" | grep -vE '^[[:space:]]*$')
 fi
 
+# --- the hashed lock must be built from the current requirements.txt + PYTHON_VERSION ---
+lk=python-env/requirements.lock
+if [ ! -f "$lk" ]; then
+  echo "   $lk is missing - run: python3 python-env/lock.py"
+  fail=1
+else
+  want_d="$(cat python-env/requirements.txt python-env/PYTHON_VERSION | shasum -a 256 | awk '{print $1}')"
+  have_d="$(sed -nE 's/^# requirements-sha256: ([0-9a-f]{64})$/\1/p' "$lk")"
+  if [ "$want_d" != "$have_d" ]; then
+    echo "   requirements.txt / PYTHON_VERSION changed but $lk was not rebuilt - run: python3 python-env/lock.py"
+    fail=1
+  fi
+fi
+
 [ "$fail" -eq 0 ] && echo "   ok (every entry point runs through python-env)"
 exit "$fail"

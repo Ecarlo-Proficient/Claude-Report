@@ -21,7 +21,7 @@ set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 want="$(tr -d '[:space:]' < "$here/PYTHON_VERSION")"
-lock="$here/requirements.txt"
+lock="$here/requirements.lock"          # generated from requirements.txt by lock.py - hashed, installed strictly
 venv="${ACB_VENV:-$HOME/.venvs/proficient}"
 py="$venv/bin/python"
 stamp="$venv/.acb-stamp"
@@ -68,12 +68,13 @@ build() {
   fi
   mkdir -p "$(dirname "$venv")"
   "$base" -m venv "$venv" || die "could not create the environment"
-  "$py" -m pip install --quiet --disable-pip-version-check --upgrade pip || die "pip upgrade failed"
 }
 
 sync_packages() {
-  say "installing the package list (python-env/requirements.txt)"
-  "$py" -m pip install --quiet --disable-pip-version-check -r "$lock" \
+  say "installing the package list (python-env/requirements.lock - every file fingerprint-checked)"
+  # --require-hashes: a package whose file does not match its sha256 (tampered, swapped, or a cache gone
+  # bad) fails here instead of running. pip itself is in the lock, so it is pinned too.
+  "$py" -m pip install --quiet --disable-pip-version-check --require-hashes -r "$lock" \
     || die "package install failed - see the pip output above"
   "$py" -m pip check >/dev/null 2>&1 || say "note: pip check reports a dependency conflict (run: $py -m pip check)"
   want_stamp > "$stamp"
@@ -85,7 +86,7 @@ case "$mode" in
     if healthy; then echo "python-env: ok - $("$py" --version 2>&1) at $venv"; exit 0; fi
     [ -x "$py" ] || { echo "python-env: MISSING - $venv (run: bash python-env/setup.sh)"; exit 1; }
     [ "$(have_version)" = "$want" ] || { echo "python-env: WRONG VERSION - $(have_version), want $want (run: bash python-env/setup.sh)"; exit 1; }
-    echo "python-env: OUT OF DATE - requirements.txt changed since the last install (run: bash python-env/setup.sh)"
+    echo "python-env: OUT OF DATE - requirements.lock changed since the last install (run: bash python-env/setup.sh)"
     exit 1 ;;
   --rebuild)
     build; sync_packages ;;
