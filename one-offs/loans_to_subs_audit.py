@@ -68,6 +68,7 @@ import requests  # noqa: E402
 
 from shared import qbo_api  # noqa: E402
 from shared import paths  # noqa: E402
+from shared.xlsx_guard import csv_cell  # noqa: E402  (QBO text never runs in Excel)
 
 try:
     from openpyxl import Workbook, load_workbook
@@ -687,7 +688,7 @@ def apply_reclass(path, access, cid, account_name, commit, include_closed):
 
     out_csv = backup_dir / "apply_results.csv"
     with open(out_csv, "w", newline="") as f:
-        csv.writer(f).writerows(results)
+        csv.writer(f).writerows([[csv_cell(v) for v in r] for r in results])
 
     print()
     print(f"{'COMMIT' if commit else 'DRY-RUN'} summary:")

@@ -22,6 +22,8 @@ Vectors (each has bitten us at least once):
     valid and still disagrees with its sheet, and Excel repairs it. CP800,
     2026-09-03: a column-insert pass blanked B1 while the ref still began at B1.
     Both sides are XML-unescaped first: `&#9474;` on the sheet IS `│` in the table.
+  · A formula that calls the web / runs DDE / reads another workbook / links off Intuit - outside text
+    that became a formula (formula injection, security review 09/29/2026; shared/xlsx_guard).
   · Cells out of ascending column order within a <row>, duplicate cell refs,
     or <row> elements out of order — ECMA-376 requires ascending order and Excel
     silently drops/repairs the row. Bit us 2026-08-26 when a hand-XML edit
@@ -31,6 +33,11 @@ Vectors (each has bitten us at least once):
 import html
 import re
 import zipfile
+
+try:
+    from shared.xlsx_guard import formula_risk
+except ImportError:  # imported with shared/ itself on sys.path
+    from xlsx_guard import formula_risk  # type: ignore
 
 try:
     from openpyxl.utils import range_boundaries
@@ -216,6 +223,16 @@ def verify_xlsx(path) -> list:
             rows_seen = [int(v) for v in re.findall(r'<row r="(\d+)"', x)]
             if rows_seen != sorted(rows_seen):
                 issues.append(f"{n}: <row> elements are not in ascending order")
+
+            # ── formula injection (security review 09/29/2026): a formula that calls the web, runs DDE,
+            #    reads another workbook or links off Intuit is never one our tools write - it came in as
+            #    outside text. shared/xlsx_guard turns these into text at save; this is the tripwire. ──
+            for fm in re.finditer(r'<c r="([A-Z]+\d+)"[^>]*>\s*<f[^>]*>(.*?)</f>', x, re.S):
+                why = formula_risk(html.unescape(fm.group(2)))
+                if why:
+                    issues.append(f"{n}: cell {fm.group(1)} holds a formula that {why} "
+                                  "(outside text written as a formula - see shared/xlsx_guard)")
+                    break
 
         # ── table range must stay WITHIN its sheet's used rows. A stale table
         #    ref after a row insert/delete (ref points past the last row) is the

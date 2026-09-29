@@ -44,6 +44,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from shared import qbo_vault as kc
 from shared import qbo_api  # noqa: E402  (the one QuickBooks login)
 from shared import paths
+from shared.xlsx_guard import put as xl_text  # noqa: E402  (outside text never runs in Excel)
 
 # Production only — no env selector.
 API_BASE = "https://quickbooks.api.intuit.com"
@@ -335,7 +336,7 @@ def write_xlsx(rows: List[dict], path: Path) -> None:
     rows_sorted = sorted(rows, key=lambda r: r.get("Txn Date", ""))
     for r_idx, row in enumerate(rows_sorted, start=2):
         for c_idx, h in enumerate(HEADERS, start=1):
-            ws.cell(row=r_idx, column=c_idx, value=row.get(h, ""))
+            xl_text(ws, r_idx, c_idx, row.get(h, ""))   # QBO memo / description: text, never a formula
 
     amt_col = HEADERS.index("Amount") + 1
     for r in range(2, ws.max_row + 1):

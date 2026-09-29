@@ -49,6 +49,7 @@ duplicate/item-no-project/sub-bill audit scripts; cost codes captured audit-only
 shared/                the ONLY importable common code
 ├─ qbo_vault.py        the key library (Keychain blob) — asks Key Helper once adopted, never reads the Keychain itself then
 ├─ key_broker.py       client for keyhelper/ (Key Helper): one-hour QBO passes, read-only GETs, non-QBO keys - over a private socket
+├─ xlsx_guard.py       formula-injection guard: put()/csv_cell() at the sinks + a save-time guard on every workbook (armed by shared/__init__) + the rule xlsx_verify trips on
 ├─ paths.py            per-machine output paths (machine.env at REPO ROOT) + the CompanyHealth layout: Registers/ (register_file) · Reports/ (reports_dir) · Analysis/<topic> (analysis_dir) · _sources/ - nothing at the root (tests/test_companyhealth_layout.py; --organize)
 ├─ qbo_api.py          QBO auth + retrying GET, P&L walkers, PROJ_RE · query_all is ANSWERED FROM THE MIRROR (query_all_live = the direct pull; ACB_QBO_LIVE=1 forces it)
 ├─ qbo_mirror.py       THE raw QBO mirror: every entity in qbo_mirror.sqlite3, change-feed refresh; query(entity, where) serves every query_all in the repo (QBO WHERE evaluated in Python); proof = one-offs/mirror_parity.py 30/30 (2026-09-17)

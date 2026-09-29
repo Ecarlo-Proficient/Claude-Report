@@ -54,6 +54,7 @@ sys.path.insert(0, str(PROJECT_ROOT))           # qbo_vault.py
 sys.path.insert(0, str(BILL_TRACKER_DIR))       # qbo_bill_tracker.py
 
 from shared import paths
+from shared.xlsx_guard import put as xl_text  # noqa: E402  (outside text never runs in Excel)
 
 
 # ─────────────────────── deps ───────────────────────
@@ -961,7 +962,8 @@ def _write_bill_row(ws, r_i: int, r: dict, edits: Dict[str, Dict[str, str]],
         key,                                                     # 29 _Key
     ]
     for c_i, (val, kind) in enumerate(zip(values, KINDS), start=1):
-        c = ws.cell(row=r_i, column=c_i, value=val)
+        # our own link formula stays a formula; every other value (vendor / memo / GC text) is text only
+        c = ws.cell(row=r_i, column=c_i, value=val) if kind == "link" else xl_text(ws, r_i, c_i, val)
         _format_data_cell(c, kind)
 
     # Hyperlink the dedicated "Invoice #" cell → the QBO invoice (just the # is
@@ -2017,7 +2019,7 @@ def _audit_table_sheet(wb, sheet_name: str, table_name: str,
                                 value=(f'=HYPERLINK("{val}","↗")' if val else None))
                     _format_data_cell(c, "link")
                 else:
-                    c = ws.cell(row=r, column=c_i, value=val)
+                    c = xl_text(ws, r, c_i, val)     # QBO text on the audit sheets: text, never a formula
                     _format_data_cell(c, kind)
             r += 1
         last_row = r - 1

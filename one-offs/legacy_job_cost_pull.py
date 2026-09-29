@@ -57,6 +57,7 @@ from typing import Dict, List, Optional, Tuple
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from shared import qbo_api
 from shared.job_lines import JobMatcher
+from shared.xlsx_guard import csv_cell  # noqa: E402  (QBO text never runs in Excel)
 
 DEFAULT_SINCE = "2023-01-01"
 CACHE_DIR = Path.home() / "Library" / "Logs" / "Proficient" / "legacy-job-pull"
@@ -306,7 +307,7 @@ def main() -> int:
             with out.open("w", newline="") as fh:
                 w = csv.DictWriter(fh, fieldnames=list(rows[0].keys()))
                 w.writeheader()
-                w.writerows(rows)
+                w.writerows([{k: csv_cell(v) for k, v in r.items()} for r in rows])
             print(f"detail → {out}")
     return 0
 

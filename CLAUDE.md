@@ -60,6 +60,12 @@ restate them here. Business/strategic context lives in session memory, not in th
    NOT copy tables — so after any row surgery, reset every table's `ref` to its new data range (or drop the
    table), fix merges/formulas by hand, then let `assert_clean` catch what you missed. Kill rich-text/multi-run
    cells too. A repair prompt reaching the user is a defect, not a warning.
+5c. **Outside text never becomes a formula (security review 09/29/2026).** Vendor / QBO / Notion / email text
+   is written with `shared/xlsx_guard.put(ws, row, col, value)` (text, never a formula) and CSV cells with
+   `csv_cell()`. Every workbook saved by a process that imports `shared` passes the save guard (a formula that
+   calls the web, runs DDE, reads another workbook or links off Intuit is saved as text), and `xlsx_verify`
+   fails one. Our own links point only at `qbo.intuit.com`; a new link host must be added to
+   `ALLOWED_LINK_DOMAINS` on purpose.
 6. **Shell commands must be complete and copy-paste-ready, with NO inline `#` comments** (they break zsh paste).
    Put explanations in prose outside the code block.
 7. **Never overwrite a data file or write to QBO without an explicit confirm/dry-run gate.** Writers

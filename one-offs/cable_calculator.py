@@ -56,6 +56,7 @@ from pathlib import Path
 
 _REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO))
+import shared  # noqa: E402,F401  (arms shared/xlsx_guard before any workbook is saved)
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Border, Font, Side

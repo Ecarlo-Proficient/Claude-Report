@@ -53,6 +53,7 @@ from aging_sheet import (
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from shared import paths
+from shared.xlsx_guard import put as xl_text  # noqa: E402  (outside text never runs in Excel)
 from shared import lien_clock
 from shared import lien_status as liens
 from shared import notion_customers as customers
@@ -456,12 +457,12 @@ def export_open_invoices_xlsx(
     for page in res_com_pages:
         row = _row_for(page, "RP/CP", res_com_titles, today)
         for col_idx, value in enumerate(row, start=1):
-            ws.cell(row=row_num, column=col_idx, value=value)
+            xl_text(ws, row_num, col_idx, value)     # Notion / QBO text: stored as text, never a formula
         row_num += 1
     for page in mfd_pages:
         row = _row_for(page, "MFD", mfd_titles, today)
         for col_idx, value in enumerate(row, start=1):
-            ws.cell(row=row_num, column=col_idx, value=value)
+            xl_text(ws, row_num, col_idx, value)     # Notion / QBO text: stored as text, never a formula
         row_num += 1
 
     # Number / currency / date formatting (column indices match COLUMNS order)

@@ -98,6 +98,7 @@ except ImportError:
 from shared import qbo_vault as kc
 from shared import qbo_api  # noqa: E402  (the one QuickBooks login)
 from shared import paths
+from shared.xlsx_guard import csv_cell, put as xl_text  # noqa: E402  (outside text never runs in Excel)
 from shared import xlsx_verify
 
 # ───────────────────────── constants ─────────────────────────
@@ -2661,7 +2662,7 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
         ]
         # Compare cells occupy columns 2..12 (column 1 is the ↗ link above).
         for i, (val, align, font) in enumerate(cells, 2):
-            c = s.cell(row=row_idx, column=i, value=val)
+            c = xl_text(s, row_idx, i, val)          # vendor statement text: stored as text, never a formula
             c.font = font or BODY_FONT
             c.alignment = align
             c.border = BORDER
@@ -2736,7 +2737,7 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
                 r += 1
                 for pr in _printed:
                     s.cell(row=r, column=2, value=pr.date).font = BODY_FONT
-                    s.cell(row=r, column=3, value=pr.ref).font = BODY_FONT
+                    xl_text(s, r, 3, pr.ref).font = BODY_FONT   # from an email subject: text only
                     cc = s.cell(row=r, column=5, value=pr.amount or None)
                     cc.number_format = MONEY; cc.alignment = RIGHT; cc.font = BODY_FONT
                     s.cell(row=r, column=8, value=pr.email_date).font = BODY_FONT
@@ -2767,7 +2768,7 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
                             else "unverified - mailbox search error, re-run" if pr.unverified
                             else "")
                     s.cell(row=r, column=2, value=pr.date).font = BODY_FONT
-                    s.cell(row=r, column=3, value=pr.ref).font = BODY_FONT
+                    xl_text(s, r, 3, pr.ref).font = BODY_FONT   # from an email subject: text only
                     cc = s.cell(row=r, column=5, value=pr.amount or None)
                     cc.number_format = MONEY; cc.alignment = RIGHT; cc.font = BODY_FONT
                     inq = "Yes" if pr.in_qbo else ("No" if pr.in_qbo is False else "—")
@@ -2934,7 +2935,7 @@ def append_clerk_perf(rows: List["ReconRow"], vendor_name: str, stmt_date: str,
             w = _csv.DictWriter(f, fieldnames=list(row.keys()))
             if is_new:
                 w.writeheader()
-            w.writerow(row)
+            w.writerow({k: csv_cell(v) for k, v in row.items()})
         return CLERK_PERF_CSV
     except OSError as e:
         _warn(f"could not append clerk_performance.csv ({e})")

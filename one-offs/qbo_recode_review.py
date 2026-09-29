@@ -36,6 +36,10 @@ import os, re, sys, json, time, csv, argparse, logging
 from datetime import datetime
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import shared  # noqa: E402,F401  (arms shared/xlsx_guard: QBO text never becomes a live formula)
+from shared.xlsx_guard import csv_cell  # noqa: E402
+
 try:
     import requests
     from openpyxl import Workbook, load_workbook
@@ -273,7 +277,7 @@ def apply(q, path, commit, include_closed):
         except Exception as e:
             res.append((entity,tid,lid,"ERROR",str(e)[:200])); st["err"]+=1; log.error("ERR %s %s: %s",entity,tid,e)
     out=run/"apply_results.csv"
-    with open(out,"w",newline="") as f: csv.writer(f).writerows(res)
+    with open(out,"w",newline="") as f: csv.writer(f).writerows([[csv_cell(v) for v in r] for r in res])
     log.info("%s — %s", "COMMIT" if commit else "VALIDATE-ONLY", json.dumps(st)); log.info("Results: %s", out)
     if not commit: log.info("No writes made. Re-run with --commit to apply the approved rows.")
 

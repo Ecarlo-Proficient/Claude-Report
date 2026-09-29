@@ -4,6 +4,7 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-29 · **Formula-injection guard (security review).** Outside text (vendor / QBO / Notion / email) this tool writes goes through `shared/xlsx_guard` - stored as text, never a live formula (the money-trail CSV download via `csv_cell`); every workbook save also passes the shared guard, and `xlsx_verify` fails a risky formula.
 - 2026-09-29 · **Request gate + open-path guards (security review)**. The server answered any request that reached
   127.0.0.1, so a page the owner visited could POST to it cross-site (start syncs, write WIP tabs, hide QBO Audit alerts)
   or, through DNS rebinding, read everything and drive the QBO re-apply. `request_block_reason` now runs before every

@@ -12,3 +12,9 @@ Entry scripts (one folder deep) bootstrap with:
     from shared import qbo_vault as kc
     from shared import paths
 """
+
+# Every workbook saved by a process that imports `shared` is checked for formula injection first
+# (security review 09/29/2026) - see shared/xlsx_guard.py. Lazy: costs nothing until openpyxl is imported.
+from shared import xlsx_guard as _xlsx_guard  # noqa: E402
+
+_xlsx_guard.activate()

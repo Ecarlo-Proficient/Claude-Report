@@ -25,6 +25,7 @@ from pathlib import Path
 
 _REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO))
+from shared.xlsx_guard import csv_cell  # noqa: E402
 from shared.takeoff_etc import find_takeoff_etc                # noqa: E402
 
 HIST = Path(os.getenv("WIP_HISTORY_DIR",
@@ -235,7 +236,7 @@ def main():
         with open(out, "w", newline="") as f:
             wr = csv.DictWriter(f, fieldnames=list(rows[0].keys()) if rows else ["project"])
             wr.writeheader()
-            wr.writerows(rows)
+            wr.writerows([{k: csv_cell(v) for k, v in r.items()} for r in rows])
         print(f"  CSV -> {out}\n")
     return 0
 

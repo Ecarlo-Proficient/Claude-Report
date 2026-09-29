@@ -22,7 +22,11 @@ import io
 import json
 import sqlite3
 import sys
+from pathlib import Path
 from typing import Optional
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from shared.xlsx_guard import csv_cell  # noqa: E402  (formula-injection guard for the CSV download)
 
 KINDS = ("costs", "billed", "both")
 CSV_COLS = ["kind", "date", "party", "doc_number", "ref", "memo", "description", "cost_code",
@@ -153,7 +157,7 @@ def to_csv(payload: dict) -> bytes:
     w = csv.DictWriter(buf, fieldnames=CSV_COLS, extrasaction="ignore")
     w.writeheader()
     for d in payload["lines"]:
-        w.writerow({k: ("" if d.get(k) is None else d.get(k)) for k in CSV_COLS})
+        w.writerow({k: csv_cell("" if d.get(k) is None else d.get(k)) for k in CSV_COLS})   # QBO text never runs in Excel
     return ("﻿" + buf.getvalue()).encode("utf-8")
 
 
