@@ -4,6 +4,17 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-30 · **Project page polish** (owner: "something too amateurish or not right about it" -> "do 1-4", then "do the
+  changes and do 5-7"; and "color helps to distinguish different data in a compartmentalized way" - colour is WELCOME
+  in the ledger, plain is for files leaving). (1) A real header: the job name, ONE stat line (Contract · Billed % of
+  contract · Costs % of ETC · Net profit · GC owes, `_ppHeader`) and (4) ONE toolbar (Job folder · WIP detail · Bills ·
+  Invoices · QuickBooks · P&L workbook Open / Refresh / updated) - `#recordStats` / `#recordTools`, cleared by
+  `openRecord`; `buildPnlGroup` puts its buttons there on the project page; the loose buttons and the "Bills and links"
+  section are gone. (2) ONE table style - the draws table lost its gridlines / grey header (the 09-16 "proper sheet"),
+  the bills list its 3px / double rules and extra-bold names. (3) ONE heading style - sentence case, no "DETAILED
+  EXPORT (PROJECT-PNL)". (5) The bills list's metric labels ONCE per section (`tr.pp-colhead`), not under every number.
+  (6) A hue per section (`--hue-*`): P&L blue, funding green, Materials amber, Labor purple, audits red, change log grey.
+  (7) The P&L table uses the card's width; the draws footnote sits behind the (i); even gaps between sections.
 - 2026-09-30 · **Audit pages: the most recent on top + Group by None / Day / Month** (owner: "for checks changed or audits
   in general ... i need to see the most recent changes ... group by date/month then the regular how it is. the default
   should be the way it is but now put the most recent changes on top as a reminder"). QBO changes, Checks QBO changed,

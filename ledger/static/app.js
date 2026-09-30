@@ -4016,7 +4016,7 @@ async function openProjectPage(pn) {
   _pp = { d, pn, view: "all", openV: new Set(), filter: "all", sort: "vendor", payMode: false, payDraft: new Map(), isRp: /^RP/i.test(pn), notesOpen: false };
   body.innerHTML = "";
   if (!r0.project_name && d.project && d.project.name) $("#recordTitle").textContent = `${pn} · ${d.project.name}`;
-  const sec = (title, note) => { const w = document.createElement("section"); w.className = "widget ip-sec";
+  const sec = (title, note, hue) => { const w = document.createElement("section"); w.className = "widget ip-sec" + (hue ? " hue-" + hue : "");
     const h = document.createElement("div"); h.className = "widget-head"; h.innerHTML = `<h2>${_ge(title)} <span class="count">${_ge(note || "")}</span></h2>`; w.appendChild(h); body.appendChild(w); return w; };
   const kpi = (host, items) => { const strip = document.createElement("div"); strip.className = "kpi-row ip-strip";
     for (const [l, v, sub, cls] of items) { const k = document.createElement("div"); k.className = "kpi" + (cls ? " " + cls : "");
@@ -4025,7 +4025,7 @@ async function openProjectPage(pn) {
     host.appendChild(strip); };
   // ── 1. how it's doing ──
   const p = d.pnl || {};
-  const s1 = sec("Profit & Loss", `projected = WIP report ${r0.report_date ? fmtDate(r0.report_date) : "–"} · actual = QuickBooks`);
+  const s1 = sec("Profit & Loss", `projected = WIP report ${r0.report_date ? fmtDate(r0.report_date) : "–"} · actual = QuickBooks`, "blue");
   s1.appendChild(_ppProjectedVsActual(p, r0, pn));   // what we projected next to what actually happened (owner 2026-09-16: "put what we projected and what the actual are side by side")
   if ((d.rulings || []).length) {   // the owner's standing rulings (job_rulings.json): the why, so nobody re-flags it
     const rb = document.createElement("div"); rb.className = "pp-unlock pp-rulings";
@@ -4043,7 +4043,8 @@ async function openProjectPage(pn) {
   const nInv = d.draws.filter(x => !x.no_draw).length, nNo = d.draws.filter(x => x.no_draw).length;   // the same count the P&L block shows, plus the not-yet-drawn bucket named
   const owes = d.draws.reduce((s, x) => s + num(x.ar_open), 0);
   const s2 = sec("How we get funded", (isRp ? `${nInv} scope${nInv === 1 ? "" : "s"} invoiced${nNo ? " + bills not yet invoiced" : ""} - an RP job has no draws: each invoice is a scope, its costs the bills dated up to it` : `${nInv} draw${nInv === 1 ? "" : "s"} invoiced${nNo ? ` + ${nNo} not yet drawn` : ""}`)
-    + ` · GC owes ${money(owes)}`);
+    + ` · GC owes ${money(owes)}`, "green");
+  { const h2 = s2.querySelector(".widget-head h2"); const hi = document.createElement("button"); hi.type = "button"; hi.className = "help-i"; hi.title = "What the draws table's columns mean"; hi.setAttribute("aria-expanded", "false"); hi.textContent = "ⓘ"; h2.insertBefore(hi, h2.querySelector(".count")); }
   // Colour encodes OUR side only (owner 2026-09-10: "why is the box red?" - it was red on every
   // awaiting-funding draw, even when nothing blocked it). Red only when we owe money on an earlier
   // draw; amber when earlier bills show $0 open / no pay date (confirm); green otherwise.
@@ -4084,7 +4085,7 @@ async function openProjectPage(pn) {
   _renderPpDraws();
   // ── 3. audit findings on this job (the Audit tab, filtered to this project) ──
   { const au = d.audits || [];
-    const sA = sec("Audit findings on this job", au.length ? `${au.length} to fix · Bill Tracker audits` : "none open"); sA.classList.add("fold-sec");   // folded (owner 2026-09-23)
+    const sA = sec("Audit findings on this job", au.length ? `${au.length} to fix · Bill Tracker audits` : "none open", "red"); sA.classList.add("fold-sec");   // folded (owner 2026-09-23)
     if (!au.length) { const p0 = document.createElement("div"); p0.className = "bills-cap"; p0.textContent = "Nothing flagged on this job in the Bill Tracker audits."; sA.appendChild(p0); }
     else {
       const scroll = document.createElement("div"); scroll.className = "table-scroll"; scroll.style.padding = "0 18px 12px";
@@ -4114,7 +4115,7 @@ async function openProjectPage(pn) {
     }
   }
   // ── 4. bills + links ──
-  { const sL = sec("Change log · contract, COs, ETC, billed, costs", "every change the WIP writer made, with its source, plus the review answers"); sL.classList.add("fold-sec");   // folded (owner 2026-09-23)
+  { const sL = sec("Change log · contract, COs, ETC, billed, costs", "every change the WIP writer made, with its source, plus the review answers", "grey"); sL.classList.add("fold-sec");   // folded (owner 2026-09-23)
     const box = document.createElement("div"); box.className = "ip-audit"; sL.appendChild(box); fillAuditInto(box, pn); }
 }
 // The project page header (owner 2026-09-30: "something too amateurish ... not right about it"): the job name, ONE
@@ -4393,7 +4394,7 @@ function _ppCoverage(d, nxInv) {
   tr.appendChild(rt(money(tot.overhead))); tr.appendChild(rt(money(tot.net), tot.net < 0 ? "neg" : "pos"));
   { const td = leftText(tot.unbilled > 0.005 ? `${money(tot.unbilled)} of costs not ${_pp.isRp ? "invoiced" : "on a draw"} yet` : ""); td.classList.add("dim"); tr.appendChild(td); }
   tb.appendChild(tr); t.appendChild(tb); wrap.appendChild(t);
-  const cap = document.createElement("div"); cap.className = "bills-cap"; cap.textContent = _pp.isRp
+  const cap = document.createElement("p"); cap.className = "hint help-pop pp-cov-help"; cap.hidden = true; cap.textContent = _pp.isRp
     ? "An RP job has no draws: each invoice is a scope · Costs dated = the bills (materials we pay + subs) dated after the previous invoice up to this one · Billed (gross) = the invoice incl. retainage, the project P&L's basis · Overhead = the scope's share · click a row to open that scope underneath."
     : "Period covered = the billing window stated on the invoice · Draw = the month (MFD) or number (CP) on the invoice; invoices of the same draw are one draw · Billed (gross) = the invoices incl. retainage, the project P&L's basis · Costs = materials we pay + labor dated in the draw period · Overhead = the draw's share · click a row to open that draw underneath.";
   wrap.appendChild(cap);
@@ -4538,6 +4539,17 @@ function _ppBillsTable(cur) {
         for (const k of keys) { if (allOpen) _pp.openV.delete(k); else _pp.openV.add(k); }
         const y = window.scrollY; _renderPpDraws(); window.scrollTo(0, y); }; }
     sr.appendChild(td); tbody.appendChild(sr);
+    sr.classList.add("pp-sect-" + sect);                 // 6: a hue per section (Materials / Labor)
+    if (!flat) {   // 5: the metric labels ONCE, over the vendor rows (owner 2026-09-30: not a caption under every number)
+      const hr = document.createElement("tr"); hr.className = "pp-colhead pp-in-" + sect;
+      if (pay) hr.appendChild(document.createElement("td"));
+      const htd = document.createElement("td"); htd.className = "left"; htd.colSpan = COLS - (pay ? 1 : 0);
+      const labs = ["Total", "Bills", showDraw ? "Draws" : null, "Paid", "To pay"].filter(Boolean);
+      const cell = document.createElement("div"); cell.className = "bg-cell bg-grid"; cell.style.setProperty("--nm", String(labs.length));
+      cell.appendChild(Object.assign(document.createElement("span"), { className: "bg-left", textContent: _pp.sort === "code" ? "Cost code" : "Vendor" }));
+      for (const l of labs) { const m = document.createElement("span"); m.className = "bg-m"; const sm = document.createElement("small"); sm.textContent = l; m.appendChild(sm); cell.appendChild(m); }
+      htd.appendChild(cell); hr.appendChild(htd); tbody.appendChild(hr);
+    }
   };
   const totalRow = (label, xs, grand) => {   // Materials total / Labor total / Total - amount under Amount, what is still to pay beside it, like a real sheet
     const bills = xs.map(x => x.b), paidCt = bills.filter(b => b.paid).length;
@@ -4557,7 +4569,7 @@ function _ppBillsTable(cur) {
     for (const [v, list] of bands) {
       const vkey = `${cur ? cur.matched_invoice : "all"}|${sect}|${_pp.sort}|${v}`, vopen = _pp.openV.has("*") || _pp.openV.has(vkey);
       const bills = list.map(x => x.b), paidCt = bills.filter(b => b.paid).length, tot = totOf(list), owed = bills.reduce((s, b) => s + (b.paid ? 0 : num(b.open)), 0);
-      const gtr = document.createElement("tr"); gtr.className = "bill-subgroup pp-vendor"; gtr.style.cursor = "pointer"; gtr.title = vopen ? "Click to collapse" : "Click to see the bills";
+      const gtr = document.createElement("tr"); gtr.className = "bill-subgroup pp-vendor pp-in-" + sect; gtr.style.cursor = "pointer"; gtr.title = vopen ? "Click to collapse" : "Click to see the bills";
       if (pay) { const cbTd = document.createElement("td"); cbTd.className = "left"; cbTd.appendChild(_ppCheck(bills, v)); gtr.appendChild(cbTd); }
       const vt = document.createElement("td"); vt.className = "left"; vt.colSpan = COLS - (pay ? 1 : 0);
       const cell = document.createElement("div"); cell.className = "bg-cell"; const leftP = document.createElement("span"); leftP.className = "bg-left";

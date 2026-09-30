@@ -2202,3 +2202,29 @@ tr.dt-group.dt-recent .bg-key { color: var(--accent-text); }
 .rv-project table.pp-bills tr.pp-grand > td { border-top: 1px solid var(--text); font-size: 1em; font-weight: 700; }
 /* 3. one heading style: the P&L folds' labels in sentence case like every section title */
 .rv-project .pnl-cap { text-transform: none; letter-spacing: 0; font-size: .92em; font-weight: 600; color: var(--text); }
+
+/* 5-7 (owner 2026-09-30: "go ahead and do the changes and do 5-7"; colour is WELCOME here - it compartmentalizes) */
+:root { --hue-blue: #2f6fd6; --hue-green: #2e8b57; --hue-amber: #c07a12; --hue-purple: #7b54c9; --hue-red: #c2413b; --hue-grey: #7a8591; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --hue-blue: #6ea2f5; --hue-green: #5cc18b; --hue-amber: #e2a44a; --hue-purple: #a98bf0; --hue-red: #ec7a73; --hue-grey: #9aa4ae; } }
+:root[data-theme="dark"] { --hue-blue: #6ea2f5; --hue-green: #5cc18b; --hue-amber: #e2a44a; --hue-purple: #a98bf0; --hue-red: #ec7a73; --hue-grey: #9aa4ae; }
+/* 6. every section carries its hue: a coloured edge and a tinted title bar */
+.rv-project .ip-sec { --hue: var(--hue-grey); border-left: 4px solid var(--hue); margin-bottom: 16px; }
+.rv-project .ip-sec.hue-blue { --hue: var(--hue-blue); } .rv-project .ip-sec.hue-green { --hue: var(--hue-green); }
+.rv-project .ip-sec.hue-red { --hue: var(--hue-red); } .rv-project .ip-sec.hue-grey { --hue: var(--hue-grey); }
+.rv-project .ip-sec > .widget-head { background: color-mix(in srgb, var(--hue) 9%, var(--surface)); border-bottom: 1px solid color-mix(in srgb, var(--hue) 22%, var(--border)); }
+.rv-project .ip-sec > .widget-head h2 { color: color-mix(in srgb, var(--hue) 70%, var(--text)); }
+.rv-project .ip-sec.fold-sec > .widget-head { border-bottom: 0; }
+/* Materials amber, Labor purple - the section label, its column labels and its vendor rows carry the hue */
+.rv-project tr.pp-sect-materials .pp-sect-lab { color: var(--hue-amber); }
+.rv-project tr.pp-sect-labor .pp-sect-lab { color: var(--hue-purple); }
+.rv-project tr.pp-in-materials > td:first-child { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--hue-amber) 70%, transparent); }
+.rv-project tr.pp-in-labor > td:first-child { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--hue-purple) 70%, transparent); }
+/* 5. the metric labels once (the colhead row), not a caption under every number */
+.rv-project tr.pp-vendor .bg-m small { display: none; }
+.rv-project tr.pp-colhead > td { padding-top: 2px; padding-bottom: 4px; border-top: 0; }
+.rv-project tr.pp-colhead .bg-left, .rv-project tr.pp-colhead .bg-m small { color: var(--text-dim); font-size: .74em; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+.rv-project tr.pp-colhead .bg-left { padding-left: 18px; }
+/* 7. the P&L table uses the card's width; the draws footnote lives behind the (i) */
+.rv-project table.pp-pva { width: 100%; }
+.rv-project table.pp-pva td.pp-pva-diff { width: 42%; }
+.rv-project p.pp-cov-help { margin: 6px var(--pad-x) 10px; }
