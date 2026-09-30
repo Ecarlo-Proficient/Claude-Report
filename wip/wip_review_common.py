@@ -39,6 +39,14 @@ CO / ETC values that go backwards with no reason on screen"):
                 going DOWN (or to blank) is `blocked`: never auto-approved, and
                 apply_decisions() keeps the tab value even when approved. The fix is
                 in QuickBooks, or typed on the tab by hand.
+  * HELD      - QuickBooks not trusted for this job (shared/qbo_trust, the owner 2026-09-30:
+                "we can be certain these are real projects booked in qbo"): the job's customer is
+                duplicated / hidden behind a name typo, a cost of $1,000+ names the job with no
+                project, flatwork cost sits on the slab, or the QuickBooks copy is stale. The cell is
+                `held` with the reason: never approvable, never written - the tab keeps its number,
+                and a held job not yet on the tab is not added. Findings under $1,000 ride as a
+                `check` note and the number still updates. Pass trust= to diff_rows /
+                apply_decisions, or call hold_untrusted() before a direct write.
   * SOURCE    - every field cell carries `source` (a few words naming the document:
                 "Draw #4 G702 · <file>", "takeoff · <file>", "proposal PDF · <file>",
                 "RP WIP file · 'RP WIP' row N", "QuickBooks · project P&L",
@@ -105,6 +113,7 @@ DECREASE_NOTE = {
     "billed":    "decreased - an invoice was voided, deleted or credited?",
     "retainage": "decreased - retainage billed out, released or re-coded?",
 }
+HELD_PREFIX = "held - QuickBooks not trusted: "
 BLOCKED_NOTE = "went down - blocked, the WIP keeps its number (find the voided / deleted / re-coded line in QuickBooks)"
 
 
@@ -312,13 +321,13 @@ def _cell(f: dict, was, now, **kw) -> dict:
     """One field cell. Every cell has every key so the JSON shape never varies."""
     d = dict(key=f["key"], label=f["label"], block=f["block"], was=was, now=now,
              changed=False, reversed=False, decreased=False, blocked=False, carried=False,
-             source=None, source_path=None, note=None)
+             held=False, check=None, source=None, source_path=None, note=None)
     d.update(kw)
     return d
 
 
 def diff_rows(new_rows: List, prior: Dict[str, dict], *, division: str,
-              tab_name: str, tab_kind: str) -> List[dict]:
+              tab_name: str, tab_kind: str, trust=None) -> List[dict]:
     """One record per job: status CHANGED / REVERSED / ADDED / REMOVED / SAME
     and, for each field that exists on this tab, a cell:
       key · label · block · was · now · changed · reversed · decreased · blocked · carried
@@ -361,6 +370,14 @@ def diff_rows(new_rows: List, prior: Dict[str, dict], *, division: str,
                     cell["note"] = BLOCKED_NOTE
             if cell["changed"] and f["block"] == "pm" and not src:
                 cell["note"] = NO_SOURCE_NOTE
+            if trust is not None and key in UP_ONLY_KEYS:
+                why = trust.reasons(pn, key)
+                if why:
+                    cell["held"] = True
+                    cell["note"] = HELD_PREFIX + " · ".join(why)
+                small = trust.notes(pn, key)
+                if small:
+                    cell["check"] = " · ".join(small)
             any_change = any_change or cell["changed"]
             any_rev = any_rev or cell["reversed"]
             cells.append(cell)
@@ -370,7 +387,7 @@ def diff_rows(new_rows: List, prior: Dict[str, dict], *, division: str,
             project_num=row.project_num, name=(row.project_name or ""),
             division=division, tab=tab_name, tab_kind=tab_kind,
             section=(getattr(row, "section", None) or getattr(row, "rp_type", None) or ""),
-            status=status, fields=cells,
+            status=status, fields=cells, held=any(c["held"] for c in cells),
             flags="; ".join((getattr(row, "status_flags", None) or [])
                             + (getattr(row, "notes", None) or [])),
         ))
@@ -383,7 +400,7 @@ def diff_rows(new_rows: List, prior: Dict[str, dict], *, division: str,
         records.append(dict(
             project_num=pn, name=(was.get("_name") or ""), division=division,
             tab=tab_name, tab_kind=tab_kind, section="", status="REMOVED",
-            fields=cells, flags=""))
+            fields=cells, held=False, flags=""))
     records.sort(key=lambda d: (STATUS_ORDER[d["status"]], d["project_num"]))
     return records
 
@@ -393,12 +410,54 @@ def summarize(records: List[dict]) -> str:
     changed = sum(r["status"] in CHANGED_STATUSES for r in records)
     reversed_ = sum(r["status"] == "REVERSED" for r in records)
     carried = sum(c["carried"] for r in records for c in r["fields"])
-    return f"{changed} changed of {len(records)} · {reversed_} reversed · {carried} carried"
+    held = sum(bool(r.get("held")) for r in records)
+    return (f"{changed} changed of {len(records)} · {reversed_} reversed · {carried} carried"
+            + (f" · {held} held (QuickBooks not trusted)" if held else ""))
 
 
 # ── apply the owner's decisions before a real write ──────────────────────────
+def hold_untrusted(rows: List, trust, prior: Optional[Dict[str, dict]] = None) -> List:
+    """THE HELD RULE, before ANY write (review or direct): a costs / billed number QuickBooks is not
+    trusted for goes back to the tab value; a held job not yet on the tab is dropped - it is not a
+    job booked cleanly in QuickBooks yet. trust None = no gate (tests, --no-qbo). Returns the rows to write."""
+    if trust is None:
+        return rows
+    kept, said = [], []
+    for row in rows:
+        pn = row.project_num.strip().upper()
+        tab = (prior or {}).get(pn)
+        keys = [k for k in UP_ONLY_KEYS if trust.reasons(pn, k)]
+        if not keys:
+            kept.append(row)
+            continue
+        if tab is None:
+            said.append(f"{pn} not added")
+            progress(pn, "held - QuickBooks not trusted, not added")
+            continue
+        for k in keys:
+            setattr(row, FIELD_BY_KEY[k]["attr"], tab.get(k))
+        said.append(f"{pn} {'+'.join(keys)} kept at the tab")
+        progress(pn, "held - QuickBooks not trusted, kept the tab")
+        kept.append(row)
+    if trust.global_reason:
+        print(f"  · QuickBooks trust check: EVERY job held - {trust.global_reason}")
+    elif said:
+        print(f"  · QuickBooks trust check held {len(said)} job(s): " + "; ".join(said[:40])
+              + (" ..." if len(said) > 40 else ""))
+    return kept
+
+
+def assess_trust(rows: List):
+    """shared/qbo_trust.assess for these rows' jobs - the readers call it once, after the QBO pull."""
+    from shared import qbo_trust
+    t = qbo_trust.assess([r.project_num for r in rows])
+    held = sum(1 for r in rows if t.held(r.project_num))
+    print(f"  QuickBooks trust check: {'EVERY job held - ' + t.global_reason if t.global_reason else f'{held} of {len(rows)} job(s) held'}")
+    return t
+
+
 def apply_decisions(rows: List, decisions: dict, prior: Optional[Dict[str, dict]] = None,
-                    *, tab_kind: str = "working") -> List:
+                    *, tab_kind: str = "working", trust=None) -> List:
     """Return the row list to actually write, honouring the owner's marks.
 
     decisions = {
@@ -492,7 +551,7 @@ def apply_decisions(rows: List, decisions: dict, prior: Optional[Dict[str, dict]
     if held:
         print(f"  · held {len(held)} value(s) at the tab (only approved fields are written): "
               + "; ".join(held[:40]) + (" ..." if len(held) > 40 else ""))
-    return kept
+    return hold_untrusted(kept, trust, prior)
 
 
 # ── JSON on disk (what the tools write / the dashboard reads) ────────────────
@@ -504,6 +563,7 @@ def write_review_json(out_path: Path, division: str, tab_name: str,
                "changed": sum(r["status"] in CHANGED_STATUSES for r in records),
                "reversed": sum(r["status"] == "REVERSED" for r in records),
                "blocked": sum(c.get("blocked", False) for r in records for c in r["fields"]),
+               "held": sum(bool(r.get("held")) for r in records),
                "carried": sum(c["carried"] for r in records for c in r["fields"]),
                "records": records}
     out_path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")

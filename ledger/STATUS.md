@@ -4,6 +4,12 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-30 · **WIP Review: Held** (owner: "we need to first have a ci check that qbo is good to trust"). The
+  QuickBooks changes table gains a fourth gate, **■ Held** (sorted first, counted in the header): a cell the review
+  JSON marks `held` (wip_review_common + `shared/qbo_trust`) - checkbox disabled, `wrIsBlocked` treats it like a drop
+  so no bulk button or slide Accept can approve it, the reason in the Why column; a small finding rides as
+  `Check: ...`. Slides and the list view mark it HELD. The legend names it. `dup_customers.py` now reads
+  `qbo_trust.duplicate_groups` (the same code the gate holds on). NEW `ledger/FLOW.md` (the tool's flow chart).
 - 2026-09-30 · **Duplicate customers audit page** (owner, after the sync printed "duplicate customers for RP2583 ...":
   "make a new audit for this in project ledger"). Company > Duplicate customers: `ledger/dup_customers.py` reads the
   mirror - active customers grouped by project # (`extract_proj`), the one the tools use (`pick_customer`, the same

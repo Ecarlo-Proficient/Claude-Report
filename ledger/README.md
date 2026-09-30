@@ -335,6 +335,12 @@ plus the time, in `rp_review_mark` (+ `rp_review_mark_log`); a line with no answ
   QuickBooks, and the pending update's was → now per field with the document the new number came from.
   MFD's contract / ETC are typed on the master by design and say so. Approved changes are written from the
   **WIP Review** tab as before.
+- **Held (QuickBooks trust gate, 2026-09-30)** - the WIP Review's QuickBooks changes carry a fourth result
+  beside Passed / Check / Blocked: **Held** = QuickBooks is not trusted for that job yet (`shared/qbo_trust`:
+  duplicate customer with money on the skipped one, a customer hidden by a name typo, $1,000+ of cost naming
+  the job with no project, $1,000+ of FW cost on the slab while the -FTW twin exists, or a stale QuickBooks
+  copy). The box is disabled and the reason names the documents; the writer keeps the WIP number anyway.
+  Findings under $1,000 show as a `Check:` line and the number still updates. Flow: `wip/FLOW.md`.
 
 ```
 python3 ledger/rp_review.py                 # full RP build (JobTread = one Touch ID), a few minutes

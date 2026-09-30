@@ -2,7 +2,7 @@
 # preflight.sh - run the CI gates locally, BEFORE pushing.
 #
 # Mirrors .github/workflows/ci.yml step for step. Every red CI run so far has
-# been one of these three catching something a local run would have caught in
+# been one of these gates catching something a local run would have caught in
 # five seconds - the gates only ever ran on GitHub, after the push.
 #
 # The gates are SEQUENTIAL on GitHub: the first failure hides the rest. This
@@ -74,7 +74,7 @@ fi
 
 fail=0
 
-echo "== 1/5 syntax (compileall) =="
+echo "== 1/6 syntax (compileall) =="
 # -x mirrors ci.yml: skip venvs/node_modules so a local env can't fail a gate
 # CI never sees. python-env and CI run the SAME version (python-env/PYTHON_VERSION),
 # so a file that parses here parses there.
@@ -87,7 +87,7 @@ else
   fail=1
 fi
 
-echo "== 2/5 critical lint (ruff E9,F63,F7,F82) =="
+echo "== 2/6 critical lint (ruff E9,F63,F7,F82) =="
 # ruff is pinned in python-env/requirements.txt, which CI installs too, so the
 # local copy and CI's are the same release by construction.
 if ! "$ACB_PY" -c "import ruff" >/dev/null 2>&1; then
@@ -112,7 +112,7 @@ else
   fi
 fi
 
-echo "== 3/5 data-leak guard =="
+echo "== 3/6 data-leak guard =="
 # The patterns live in .github/leak_guard.sh - the ONE copy, shared with
 # ci.yml, so this gate and CI can never drift. Edit the script, never here.
 GUARD=.github/leak_guard.sh
@@ -137,11 +137,11 @@ if ! git diff --cached --quiet 2>/dev/null; then
   leak_scan "staged" --cached
 fi
 
-echo "== 4/5 interpreter guard (no bare python3) =="
+echo "== 4/6 interpreter guard (no bare python3) =="
 # The rules live in .github/interpreter_guard.sh - the ONE copy, shared with ci.yml.
 bash .github/interpreter_guard.sh || fail=1
 
-echo "== 5/5 tests (pytest) =="
+echo "== 5/6 tests (pytest) =="
 # Same rule as ci.yml's "Run tests" step: run tests/ when it holds any. Runs on
 # python-env's pinned pytest, so a red test is caught here, before the push.
 if [ -d tests ] && find tests -name 'test_*.py' -o -name '*_test.py' | grep -q .; then
@@ -154,6 +154,17 @@ if [ -d tests ] && find tests -name 'test_*.py' -o -name '*_test.py' | grep -q .
   fi
 else
   echo "   ok (no tests yet)"
+fi
+
+echo "== 6/6 flow charts (a tool change carries its FLOW.md) =="
+# The rule lives in .github/flow_guard.sh - the ONE copy, shared with ci.yml. Push mode judges every
+# commit being pushed (each must carry its tools' charts); a manual run judges the working tree.
+if [ "$MODE" = "push" ]; then
+  base="$(git merge-base origin/dev "$sha" 2>/dev/null)"
+  if [ -n "$base" ]; then bash .github/flow_guard.sh "$base..$sha" || fail=1
+  else echo "   flow guard: no merge-base with origin/dev - skipped"; fi
+else
+  bash .github/flow_guard.sh || fail=1
 fi
 
 if [ "$fail" -eq 0 ]; then

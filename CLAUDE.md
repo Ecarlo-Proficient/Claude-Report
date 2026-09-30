@@ -95,6 +95,12 @@ restate them here. Business/strategic context lives in session memory, not in th
    as the ARCHITECTURE.md rule). **Scope filter (binding):** only what pertains to the tool itself —
    business/management findings, dollar exposures, and owner-only analyses NEVER go in a STATUS.md
    or anywhere else in this repo; those live in the user's local vault only.
+8. **Every tool has a flow chart, `<tool>/FLOW.md` (Mermaid), and it moves with the code** (the user
+   2026-09-30: "every tool should have a flow chart that shows how it works and that chart should be
+   updated with every commit to dev"). A commit that changes a tool changes its FLOW.md in the same
+   commit - the chart and its top `Last changed:` line - same standard as STATUS.md. Enforced by
+   `.github/flow_guard.sh` (preflight gate 6/6 + CI): a tool touched without its FLOW.md fails the push.
+   Tools without a chart yet are listed as MISSING; once all have one, set `STRICT_MISSING=1` there.
 
 ## Subsystem map (detail in each README)
 
@@ -132,6 +138,11 @@ restate them here. Business/strategic context lives in session memory, not in th
   segment, `wip_qc` signs the accepted checks off with its reason, project-pnl writes the
   KNOWN LOSSES / RULINGS block, the ledger drops the job from Over budget and shows it on
   the project page; first case RP6586 2026-09-08),
+  `qbo_trust.py` (THE QuickBooks trust gate, 2026-09-30: before the WIP overwrites a job's costs / billed -
+  stale or unreadable mirror = every job held; duplicate customer with money on the skipped one or a name
+  typo = costs + billed held; $1,000+ of cost naming the job with no project, or of FW cost on the slab
+  with an -FTW twin = costs held, less = a check note. `wip_writer.write_test_cp` enforces it on every write;
+  `duplicate_groups` also feeds the ledger's Duplicate customers page. Flow: `wip/FLOW.md`),
   `qbo_mirror.py` (THE raw QBO mirror + its **change log** `mirror_change`: every refresh diffs QBO's
   records against the copy held - created / edited / deleted / restored, QBO's own time, plain-word
   flags, the encrypted BEFORE record; `changes()`, `change_before()`; feeds the ledger's QBO Audit),

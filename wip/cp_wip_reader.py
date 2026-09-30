@@ -887,7 +887,8 @@ def main() -> int:
     if args.emit_review:
         prior = WR.snapshot_tab(WIP_EXCEL_PATH, TEST_TAB, "working")
         recs = WR.diff_rows(rows, prior, division="Commercial",
-                            tab_name=TEST_TAB, tab_kind="working")
+                            tab_name=TEST_TAB, tab_kind="working",
+                            trust=None if args.no_qbo else WR.assess_trust(rows))
         WR.write_review_json(args.emit_review, "Commercial", TEST_TAB, recs)
         print(f"  ✓ WIP review emitted → {args.emit_review} ({WR.summarize(recs)})")
         return 0

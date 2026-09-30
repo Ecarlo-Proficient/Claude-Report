@@ -7954,14 +7954,18 @@ function wrDelta(f) {
 // value anyway (wip_review_common.is_blocked); CHECK when retainage goes down or QuickBooks has no value - left
 // for the owner, never auto. Worked out from was / now so reviews computed before the gate read the same.
 const WR_UP_ONLY = new Set(["costs", "billed"]);
+// HELD (owner 2026-09-30: "we can be certain these are real projects booked in qbo") comes first: QuickBooks is not
+// trusted for this job's costs / billed (shared/qbo_trust - duplicate customer, name typo, $1,000+ cost with no
+// project, flatwork on the slab, a stale QuickBooks copy). Never approvable; the writer keeps the WIP number anyway.
 function wrGate(f) {
   if (!f || !f.changed || f.block !== "qbo") return null;
+  if (f.held) return "held";
   const a = f.was == null ? null : Number(f.was), b = f.now == null ? null : Number(f.now);
   if (f.blocked || (WR_UP_ONLY.has(f.key) && a != null && (b == null || b < a - 0.01))) return "blocked";
   if (a != null && (b == null || b < a - 0.01)) return "check";
   return "pass";
 }
-const wrIsBlocked = (pn, key) => { const r = WR && WR.records.find(x => x.project_num === pn); const f = r && (r.fields || []).find(x => x.key === key); return wrGate(f) === "blocked"; };
+const wrIsBlocked = (pn, key) => { const r = WR && WR.records.find(x => x.project_num === pn); const f = r && (r.fields || []).find(x => x.key === key); const g = wrGate(f); return g === "blocked" || g === "held"; };
 
 async function loadWipReview(force) {
   const note = $("#wrNote"), body = $("#wrBody");
@@ -8229,7 +8233,7 @@ function wrSlide(r) {
   for (const f of r.fields || []) {
     const chg = f.changed, cls = (chg ? "chg" : "") + (f.reversed ? " rev" : "");
     const src = chg ? (f.source || "") + (f.note ? (f.source ? " · " : "") + f.note : "") : "";
-    const blk = wrGate(f) === "blocked" ? ' <span class="wr-mark rev">BLOCKED</span>' : "";
+    const blk = wrGate(f) === "held" ? ' <span class="wr-mark rev">HELD</span>' : wrGate(f) === "blocked" ? ' <span class="wr-mark rev">BLOCKED</span>' : "";
     html += `<tr class="${cls}" data-fkey="${_ge(f.key)}"><td>${_ge(f.label)}</td><td class="was">${money(f.was)}</td><td class="dir">${chg ? wrDir(f.was, f.now) : ""}</td><td class="now">${chg ? money(f.now) + blk : ""}</td><td class="src">${_ge(src)}</td></tr>`;
   }
   html += `</tbody></table>`;
@@ -8248,8 +8252,9 @@ function wrSlide(r) {
 // ── every QuickBooks change as one table, gated like CI (owner 2026-09-29) ──
 // One row per job x QuickBooks number that changes. PASS rows are approved on their own; BLOCKED rows can't be
 // approved at all; CHECK rows wait for the owner. Division / search filters apply; blocked first.
-const WR_GATE_TXT = { blocked: "✕ Blocked", check: "! Check", pass: "✓ Passed" };
+const WR_GATE_TXT = { held: "■ Held", blocked: "✕ Blocked", check: "! Check", pass: "✓ Passed" };
 const WR_GATE_WHY = {
+  held: "QuickBooks not trusted for this job. Kept at the WIP number.",
   blocked: "Went down. Kept at the WIP number.",
   check: "Went down or blank. Your call.",
   pass: "Went up.",
@@ -8257,7 +8262,7 @@ const WR_GATE_WHY = {
 function renderWrQbo() {
   const body = $("#wrBody");
   const div = $("#wrDivision").value, q = ($("#wrSearch").value || "").trim().toLowerCase();
-  const order = { blocked: 0, check: 1, pass: 2 };
+  const order = { held: 0, blocked: 1, check: 2, pass: 3 };
   const rows = [];
   for (const r of WR.records) {
     if (r.status === "SAME" || r.status === "REMOVED") continue;
@@ -8269,7 +8274,8 @@ function renderWrQbo() {
   const n = k => rows.filter(x => x.g === k).length;
   body.innerHTML = "";
   const head = document.createElement("div"); head.className = "wr-ci";
-  head.innerHTML = `<span class="wr-ci-item ${n("blocked") ? "bad" : ""}">✕ ${n("blocked")} blocked</span>`
+  head.innerHTML = `<span class="wr-ci-item ${n("held") ? "bad" : ""}" title="QuickBooks is not trusted for these jobs yet - fix the reason in QuickBooks, then compute again">■ ${n("held")} held</span>`
+    + `<span class="wr-ci-item ${n("blocked") ? "bad" : ""}">✕ ${n("blocked")} blocked</span>`
     + `<span class="wr-ci-item ${n("check") ? "warn" : ""}">! ${n("check")} to check</span>`
     + `<span class="wr-ci-item ok">✓ ${n("pass")} passed</span>`;
   body.appendChild(head);
@@ -8289,9 +8295,10 @@ function renderWrQbo() {
       + `<td>${_ge(f.label)}</td>`
       + `<td class="n">${money(f.was)}</td><td class="n">${money(f.now)}</td>`
       + `<td class="n ${d && d.dir < 0 ? "neg" : ""}">${d ? _ge(d.txt) : ""}</td>`
-      + `<td class="wr-qbo-cb"></td><td class="wr-qbo-why">${_ge(WR_GATE_WHY[g])}</td>`;
-    const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = on && g !== "blocked"; cb.disabled = g === "blocked";
-    cb.title = g === "blocked" ? "Never written - the WIP only goes up" : "Write this number to the WIP";
+      + `<td class="wr-qbo-cb"></td><td class="wr-qbo-why">${_ge(g === "held" ? (f.note || WR_GATE_WHY.held).replace(/^held - /, "") : WR_GATE_WHY[g])}${f.check ? `<div class="wr-qbo-check">Check: ${_ge(f.check)}</div>` : ""}</td>`;
+    const stop = g === "blocked" || g === "held";
+    const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = on && !stop; cb.disabled = stop;
+    cb.title = g === "held" ? "Never written - QuickBooks is not trusted for this job yet" : g === "blocked" ? "Never written - the WIP only goes up" : "Write this number to the WIP";
     cb.onchange = () => { wrSet(r.project_num, f.key, cb.checked); wrUpdateApproveCount(); };
     tr.querySelector(".wr-qbo-cb").appendChild(cb);
     tb.appendChild(tr);
@@ -8402,7 +8409,7 @@ function wrFieldRow(r, f, removed) {
   const src = f.source ? `<span class="wr-src" title="${_ge(f.source_path || f.source)}">${_ge(f.source)}</span>` : "";
   const note = f.note ? `<span class="wr-note">${_ge(f.note)}</span>` : "";
   const gate = wrGate(f);
-  const mark = gate === "blocked" ? `<span class="wr-mark rev">BLOCKED</span>` : f.reversed ? `<span class="wr-mark rev">REVERSED</span>` : f.decreased ? `<span class="wr-mark dec">decreased</span>` : "";
+  const mark = gate === "held" ? `<span class="wr-mark rev">HELD</span>` : gate === "blocked" ? `<span class="wr-mark rev">BLOCKED</span>` : f.reversed ? `<span class="wr-mark rev">REVERSED</span>` : f.decreased ? `<span class="wr-mark dec">decreased</span>` : "";
   row.innerHTML =
     `<span class="wr-fl">${_ge(f.label)}</span>`
     + `<span class="wr-was">${money(f.was)}</span><span class="wr-arrow">→</span>`
@@ -8413,6 +8420,7 @@ function wrFieldRow(r, f, removed) {
     const cb = document.createElement("input");
     cb.type = "checkbox"; cb.className = "wr-check"; cb.checked = approved;
     if (gate === "blocked") { cb.checked = false; cb.disabled = true; row.title = "Went down - the WIP only goes up, so this is never written. Fix it in QuickBooks."; }
+    if (gate === "held") { cb.checked = false; cb.disabled = true; row.title = (f.note || "QuickBooks not trusted for this job") + " - never written until it is fixed in QuickBooks."; }
     cb.onchange = () => { wrSet(r.project_num, f.key, cb.checked); row.classList.toggle("on", cb.checked); wrUpdateApproveCount(); };
     row.appendChild(cb);
     row.classList.toggle("on", approved);

@@ -270,7 +270,8 @@ def main() -> int:
         prior = WR.snapshot_tab(W.WIP_EXCEL_PATH, "Test-Master", "master")
         mfd_prior = {p: v for p, v in prior.items() if p.startswith("MFD")}
         recs = WR.diff_rows(mfd_rows, mfd_prior, division="Multi-Family",
-                            tab_name="Test-Master", tab_kind="master")
+                            tab_name="Test-Master", tab_kind="master",
+                            trust=WR.assess_trust(mfd_rows))
         WR.write_review_json(args.emit_review, "Multi-Family", "Test-Master", recs)
         print(f"  ✓ WIP review emitted → {args.emit_review} "
               f"({sum(r['status'] != 'SAME' for r in recs)} MFD changed of {len(recs)})")

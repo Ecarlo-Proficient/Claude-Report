@@ -2151,7 +2151,9 @@ input.ref-search { min-width: 260px; }
 .wr-qbo-why { color: var(--text-dim); font-size: .82em; min-width: 200px; }
 .wr-qbo-cb { text-align: center; }
 .wr-gate { font-weight: 700; font-size: .85em; white-space: nowrap; }
-.wr-gate.blocked { color: var(--neg-text); }
+.wr-gate.blocked, .wr-gate.held { color: var(--neg-text); }
+tr.wr-qbo-held td { background: color-mix(in srgb, var(--neg) 6%, transparent); }
+.wr-qbo-check { color: var(--warn-text); font-size: .9em; margin-top: 2px; }
 .wr-gate.check { color: var(--warn-text); }
 .wr-gate.pass { color: var(--pos); }
 tr.wr-qbo-blocked td { background: color-mix(in srgb, var(--neg) 6%, transparent); }

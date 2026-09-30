@@ -1165,7 +1165,8 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
                   protect: bool = False,
                   live_formulas: bool = False,
                   plain_report: bool = False,
-                  gp_highlight_over: Optional[float] = None) -> bool:
+                  gp_highlight_over: Optional[float] = None,
+                  trust=None) -> bool:
     """Write rows to the given WIP tab (default 'Test - CP'; RP passes
     'Test - RP'). Same structure/formatting for every division. Guarded by
     wip_excel_guard. Returns True if written, False if skipped (dry-run, or the
@@ -1200,9 +1201,21 @@ def write_test_cp(rows: List[CpRow], wip_path: Path, dry_run: bool = False,
     (no red review, no blue links), no QBO hyperlinks, no yellow input fills,
     no medium group rules, no edit-tracking baselines, no bottom column guide.
     Kept: the grey header, the thin grid, and the TOTALS + cash-flow summary a
-    bank wants. Working tabs (Test - CP / Test - RP) leave this False."""
+    bank wants. Working tabs (Test - CP / Test - RP) leave this False.
+
+    THE QUICKBOOKS TRUST GATE (the owner 2026-09-30) runs HERE, the one door every
+    WIP write goes through - review apply, a direct CLI run, the legacy RP path:
+    shared/qbo_trust.assess() over the rows, then wip_review_common.hold_untrusted()
+    puts a held job's costs / billed back to what the tab shows (a held job not on
+    the tab is not added). `trust` = an assessment already made this run (reused);
+    None = assess now. It fails closed: a mirror that cannot be read holds every job."""
     assert_write_allowed(tab_name)  # tripwire before we even open the workbook
     cols_ = cols or COLS
+    import wip_review_common as _WR
+    if trust is None:
+        trust = _WR.assess_trust(rows)
+    rows = _WR.hold_untrusted(rows, trust, _WR.snapshot_tab(
+        wip_path, tab_name, "master" if tab_name == "Test-Master" else "working"))
 
     if dry_run:
         _print_rows_table(rows, wip_path, tab_name)

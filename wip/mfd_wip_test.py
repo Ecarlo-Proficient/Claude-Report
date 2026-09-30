@@ -651,6 +651,16 @@ def fetch_qbo(jobs: List[str]) -> Dict[str, dict]:
         ret_txt = f"{ret:>13,.2f}" if ret is not None else "          n/a"
         print(f"  {job}: costs {out[job]['costs']:>14,.2f}   "
               f"billed {out[job]['billed']:>14,.2f}   retainage {ret_txt}")
+    # THE QUICKBOOKS TRUST GATE (the owner 2026-09-30): a job QuickBooks is not trusted for keeps
+    # the tab's number for that field - write_qbo reads `_held` and leaves those cells as they are.
+    from shared import qbo_trust
+    trust = qbo_trust.assess(list(out))
+    for job in out:
+        held = [k for k in ("costs", "billed") if trust.reasons(job, k)]
+        if held:
+            out[job]["_held"] = held
+            why = dict.fromkeys(w for k in held for w in trust.reasons(job, k))
+            print(f"  {job}: {'+'.join(held)} HELD - QuickBooks not trusted, kept the tab: " + " · ".join(why))
     return out
 
 
@@ -679,6 +689,8 @@ def write_qbo(ws, rows: List[int], cols: Dict[str, int], data: Dict[str, dict],
             cell = ws.cell(row=anchor, column=C.index(key))
             amount = vals.get(src)
             prev = cell.value if isinstance(cell.value, (int, float)) else None
+            if src in vals.get("_held", ()):
+                continue                    # QuickBooks not trusted for this job's number: the cell stays
             # the owner's up-only rule (2026-09-09): costs / billed never go below what the tab carries
             if src in ("costs", "billed") and prev is not None and amount is not None and amount < prev - 0.01:
                 print(f"  {job}: QBO {src} {amount:,.2f} is BELOW the tab's {prev:,.2f} - kept the tab (up-only)")

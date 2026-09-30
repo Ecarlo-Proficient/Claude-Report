@@ -7,6 +7,20 @@
 Last updated: 2026-09-08
 
 ## DONE / FINALIZED
+- 2026-09-30 · **QuickBooks trust gate** (owner: "we need to first have a ci check that qbo is good to trust ... that
+  way we can trust that when we overwrite the costs/billed we can be certain these are real projects booked in
+  qbo"). `shared/qbo_trust.assess(project_nums)` over the mirror, before any costs / billed is overwritten: a stale
+  (> 12 h) or unreadable mirror holds EVERY job (fails closed); a project # on two active customers with money on
+  the skipped one, or a customer hidden behind a name typo (`RP7340 -FTW`), holds costs + billed; a cost naming
+  the job (and only it) in its description / class / memo with no project on the line, or FW cost on the slab
+  while the -FTW twin exists, holds costs from $1,000 (the owner's line - below it a `check` note rides and the
+  number still updates). Wiring: the three `--emit-review` paths pass `trust=` to `diff_rows` (cells `held` +
+  `check`, record `held`, JSON `held` count); `apply_decisions(trust=)` / `hold_untrusted()` put a held field back
+  to the tab value and drop a held job not yet on the tab; **`wip_writer.write_test_cp` runs the gate itself** -
+  the one door every write passes (review apply, a direct CLI run, the legacy RP path, one-offs); `mfd_wip_test`
+  leaves held fields on `WIP - MFD` as they are. First CP emit: 19 of 51 jobs held, mostly old closed jobs whose
+  costs predate projects (holding keeps the tab). `tests/test_qbo_trust_gate.py`. NEW `wip/FLOW.md` - the tool's
+  flow chart, guarded by `.github/flow_guard.sh`.
 - 2026-09-29 · **Up-only gate, every division.** `wip_review_common.is_blocked` is the ONE test: costs / billed to date going down (or blank) on a job already on the tab is `blocked` in the review JSON and `apply_decisions` keeps the tab value even when approved - RP now too (was MFD / CP only). Retainage is not gated. `tests/test_wip_up_only.py`.
 - 2026-09-29 · **QuickBooks login moved to the shared one (security review).** This tool's own copy of the refresh-token exchange is retired; its login is `shared/qbo_api` (`load_credentials` / `get_pass`), which asks Key Helper (`keyhelper/`) once the key library is adopted - the tool never holds the refresh token.
 - **`datetime.utcnow()` retired (2026-09-24).** `qbo_bulk_close.py`'s `run_at` stamp now use `datetime.now(UTC)`: same output, no deprecation warning (Python is removing `utcnow`).
