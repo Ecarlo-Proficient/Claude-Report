@@ -199,6 +199,15 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   `fmtDate` read the clock straight off the stamp, so a UTC refresh stamp (`...13:34:50Z`) printed 1:34 PM for an
   8:34 AM refresh. A stamp that names its zone (`Z` or `-07:00`) is now converted to the machine's local time, date
   included; plain dates and zone-less times are unchanged. Also puts QBO's Pacific stamps in Central.
+- 2026-09-25 · **sync-all audit: the reload now keeps billed history and Closed-job costs current** (owner: "do an audit on
+  this system instead of trying to make a new system"). Two holes found by diffing the ledger against the mirror:
+  (1) `load_invoices` ran `--no-qbo`, which also skipped `load_history_from_qbo`, so billed history froze at the last
+  hand run (09/08) and lost every paid invoice that aged out of the tracker or was created and paid between syncs
+  (2 invoices at audit). (2) `load_costs --active` never kept lines for a Closed job, so a bill entered on
+  one after it closed never landed (CP786, entered 09/03). `reload_ledger.sh` now runs `load_invoices` with
+  no flag (history + gap fill, both read from the mirror) and `load_costs --changed-since` over every job (the window
+  already bounds the pull). Verified on a scratch ledger: 0 QBO invoices on a job missing, 0 of 180 jobs differ from a
+  full cost pull (one live edit mid-audit explained). Invoices step 8s -> 23s; costs unchanged at 17s.
 - 2026-09-24 · **Projects = a true WIP report** (owner: "for the project page, i need a true wip report, and remove that
   'next' column. i need to see how my projects are doing"). `PROJ_COLS` is the standard schedule, straight from the WIP
   master's own columns (no recompute): Project · Name · Contract · ETC · Est. profit · GP % · Costs · Cost to finish ·

@@ -478,6 +478,43 @@ def _near_set_equal(a: frozenset, b: frozenset) -> bool:
     return all(_covered(x, b) for x in a) and all(_covered(y, a) for y in b)
 
 
+def _fuzzy_ok(qbo_name: str, entry_name: str) -> bool:
+    """
+    May a NON-exact keyword match stand? One shared word is not a match: the
+    audit of 2026-09-25 found 25 of 32 fuzzy links since 2024 were two
+    different customers sharing a first name or one word ('JAMES ANDREWS
+    CUSTOM HOMES' -> 'JAMES NELSON', 'NATIONAL HOME CORPORATION' -> 'GGC
+    NATIONAL CONTRACTORS'). A match stands only when one of these holds:
+
+      A. the two names' distinctive words agree BOTH ways, up to plural/typo
+         drift ('FOURTEEN' ~ 'FOURTEN', 'Peterson Constuction' ~ 'PETERSON
+         CONSTRUCTION')
+      B. every distinctive QBO word is found and at least two are shared
+         ('Perry Guest Construction' ~ 'PERRY GUEST COMPANIES')
+      C. the Notion name is the leading words of the QBO name ('DHI' ~ 'DHI
+         Communities Construction of Texas', 'Embrey Builders LLC' ~ 'Embrey
+         Builders LLC-Champions Way DFW LP')
+
+    A word that is a misspelled stopword ('Constuction') counts as the stopword.
+    Anything else is left unlinked and the sync warns - a person adds or links
+    the customer, the matcher never guesses.
+    """
+    def _kw(name: str) -> frozenset:
+        return frozenset(t for t in _keywords(name)
+                         if not any(_tokens_near(t, w) for w in _STOPWORDS))
+
+    def _covers(xs: frozenset, ys: frozenset) -> bool:
+        return all(x in ys or any(_tokens_near(x, y) for y in ys) for x in xs)
+
+    q, e = _kw(qbo_name), _kw(entry_name)
+    if q and _covers(q, e) and _covers(e, q):
+        return True
+    if q and _covers(q, e) and len(q & e) >= 2:
+        return True
+    nq, ne = _normalize_name(qbo_name).split(), _normalize_name(entry_name).split()
+    return bool(e) and bool(ne) and len(nq) > len(ne) and nq[:len(ne)] == ne
+
+
 def _compressed_form(name: str) -> str:
     """
     Compressed match form — alphanumerics only, joined, lowercase, business
@@ -606,6 +643,8 @@ def _lookup_customer_id(
             continue
         union = len(qbo_kw | entry.keywords)
         jaccard = overlap / union if union else 0.0
+        if jaccard < 0.999 and not _fuzzy_ok(qbo_name, entry.raw_name):
+            continue   # one shared word is not the same customer (audit 2026-09-25)
         if best is None or overlap > best.overlap or (
             overlap == best.overlap and jaccard > best.jaccard
         ):
@@ -633,6 +672,8 @@ def _lookup_customer_id(
                 continue
             union = len(qbo_kw | entry.keywords)
             jaccard = near / union if union else 0.0
+            if not _fuzzy_ok(qbo_name, entry.raw_name):
+                continue
             if best is None or near > best.overlap or (
                 near == best.overlap and jaccard > best.jaccard
             ):

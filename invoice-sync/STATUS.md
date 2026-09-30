@@ -12,6 +12,15 @@ mirror. Update this in the SAME commit as any change to this tool.
   now saves into the library (as NOTION_SECRET / TEAMS_WEBHOOK_MFD_PAID) and no longer advises "Always Allow".
 - 2026-09-29 · **QuickBooks login moved to the shared one (security review).** This tool's own copy of the refresh-token exchange is retired; its login is `shared/qbo_api` (`load_credentials` / `get_pass`), which asks Key Helper (`keyhelper/`) once the key library is adopted - the tool never holds the refresh token.
 
+- **Customer matcher: one shared word is no longer a match (2026-09-25).** The sync-all audit found 25 of the 32
+  fuzzy customer links made since 2024 were two different customers sharing one word ('NATIONAL HOME CORPORATION' ->
+  'GGC NATIONAL CONTRACTORS', 40 invoices; 'Tri-Star Construction' -> 'Tri-C Construction'; first-name-only links on
+  homeowner jobs). `_fuzzy_ok` now gates every non-exact candidate: names agree both ways up to typo/plural drift, OR
+  every QBO word is found with 2+ shared, OR the Notion name is the leading words of the QBO name (DHI, Embrey).
+  Otherwise the invoice is left unlinked and the existing "No Notion customer match - add to Customer list" warning
+  fires. Checked old vs new on all 250 parent customers since 2024: exactly those 25 change, the 7 right fuzzy links
+  and the other 218 are untouched. `tests/test_invoice_customer_match.py`.
+
 - **Runs on python-env (2026-09-24).** `run_invoice_sync.sh` now starts through `python-env/python.sh` (`"$ACB_PY"`, Python 3.14, every package pinned), never a bare `python3` - a `brew install ffmpeg` on 09/23 swapped `python3` and broke every sync step. Missing-package hints now say `bash python-env/setup.sh`. Verified by a dry run on 3.14. See `python-env/STATUS.md`.
 
 - **AR Aging lien clock now two-stage (2026-08-19).** `export_invoices_xlsx.py` passes the invoice's
@@ -217,6 +226,11 @@ mirror. Update this in the SAME commit as any change to this tool.
   wants newest-first, that needs a read-reorder-rewrite of the page body.
 
 ## OPEN ISSUES
+
+- **Wrong customer links made before 2026-09-25 are still on their Notion pages.** A no-match never writes the
+  Customer relation (by design - it must not wipe a link a person set by hand), so the stricter matcher stops NEW
+  wrong links but cannot undo the old ones on the 25 customers' invoices. Clearing them is a Notion write - owner's
+  call; once cleared, the sync warns on each so a person adds or links the right customer.
 
 - **THE LIEN COLUMN IS A WATCHLIST, NOT LEGAL ADVICE — and its weakest link is
   the work month.** Every Ch. 53 deadline runs from the month the labor was

@@ -244,7 +244,8 @@ carry a project #, not a contract.
 > is loaded by a SEPARATE set of loaders, so a `sync-all` used to leave the dashboard
 > on the last ledger snapshot (a paid invoice still showing open). `sync-all` now
 > calls **`ledger/reload_ledger.sh`** as its final step - the loader half (WIP · bills
-> · invoices `--no-qbo` · customers; costs stay on the dashboard Resync). So terminal
+> · invoices (billed history + gap fill from the QBO mirror) · customers · costs on every job,
+> Active or Closed, entered/edited in 90 days - audit 2026-09-25). So terminal
 > `sync-all` and the dashboard's Resync run the same loaders and can't drift. (The
 > `sync-all` wiring lives in the machine's `~/.zshrc`, not the repo; the script is
 > repo-tracked.)
@@ -778,7 +779,7 @@ the same number `ap_bill_line.invoice_no` carries, so the Draws view puts **bill
 **paid-to-vendors (out)** on every draw. `TotalAmt` = net billed; `Status`/`Balance` give Paid/Partially/
 Unpaid. A **QBO gap-fallback** then fills ONLY the CP/MFD draws whose invoice was never entered in the
 tracker — `fill_gaps_from_qbo` pulls just those by `DocNumber` (`source='qbo_fallback'`, ONE Touch ID;
-skip with `--no-qbo`). Read-only on Notion + QBO; full-replace per source; `--selftest` proves it offline.
+skip with `--no-qbo`, which also skips the billed history - `sync-all` no longer passes it, audit 2026-09-25). Read-only on Notion + QBO; full-replace per source; `--selftest` proves it offline.
 `dashboard.py::_fetch_draws` joins it by Invoice #; the **Draws tab is a table** — one row per draw
 (Project # · memo · billed-in · invoice # · date · paid-out · stage), green when fully done, click a row
 to open its bills. Each invoice also captures **due date + net terms + Notion's aging bucket**, and by

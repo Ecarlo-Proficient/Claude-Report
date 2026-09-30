@@ -1,9 +1,10 @@
 # ledger/ - how the Project Ledger works
 
-Last changed: 09/30/2026 - after **Pay in QuickBooks** the follow-up refresh runs `billpay` (mirror +
-bill payments + open AP) instead of `billsync`: the Bill Tracker.xlsx rebuild left the payment path, so a
-workbook open in Excel can no longer fail a payment's follow-up. Before that, same day: WIP Review's **Held**
-result (`shared/qbo_trust`) and the Duplicate customers page on `qbo_trust.duplicate_groups`.
+Last changed: 09/30/2026 - the reload (`reload_ledger.sh`) keeps billed history and Closed-job costs
+current: `load_invoices` runs with the QuickBooks history + gap fill (no `--no-qbo`), and `load_costs
+--changed-since` covers every job, Active or Closed (the 09/25 sync-all audit). Earlier the same day: the
+Pay in QuickBooks follow-up runs `billpay`; WIP Review's **Held** result; Duplicate customers on
+`qbo_trust.duplicate_groups`.
 
 Update this chart - and the line above - in the same commit as any change to `ledger/`
 (`.github/flow_guard.sh` fails the push otherwise). The full system map is `docs/ARCHITECTURE.md`.
@@ -29,7 +30,7 @@ flowchart TD
         RM["refresh_mirror.py"]:::tool
         LW["load_wip_master.py"]:::tool
         LB["load_bill_tracker.py"]:::tool
-        LC["load_costs.py · load_invoices.py<br/>load_payments.py · load_bill_payments.py"]:::tool
+        LC["load_costs.py - every job, 90-day window<br/>load_invoices.py - + QuickBooks billed history<br/>load_payments.py · load_bill_payments.py"]:::tool
         LH["load_health.py · load_customers.py<br/>load_uncleared_checks.py · load_sub_loc.py"]:::tool
     end
     QBO --> RM --> MIR

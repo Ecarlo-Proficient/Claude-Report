@@ -10,7 +10,17 @@
 # working due to it needing data ... payments not showing recent payments"). It used to skip the two
 # QBO-direct loaders (costs, payments) to stay quick, which is exactly why the P&L and Payments went
 # stale while everything else was fresh. They are IN now; the incremental windows keep them cheap:
-#   - load_costs   --active --changed-since <90 days>   (active jobs: every bill entered or edited in 90 days, any bill date)
+#   - load_costs   --changed-since <90 days>   (EVERY job, Active or Closed: every bill entered or
+#                                                edited in 90 days, any bill date. Was --active until
+#                                                2026-09-25 - a bill entered on a Closed job (CP786,
+#                                                entered 09/03) never reached the ledger. The
+#                                                window already bounds the pull; the job filter only
+#                                                decided which lines were KEPT.)
+#   - load_invoices (no --no-qbo)              (billed history + the tracker's gaps, both read from the
+#                                                QBO mirror. --no-qbo skipped them, so the P&L's billed
+#                                                froze at the last hand run (09/08) and lost every paid
+#                                                invoice that aged out of the tracker, or was created and
+#                                                paid between two syncs - audit 2026-09-25.)
 #   - load_payments --months 12                 (rolling year; load_payments DELETE+reloads its
 #                                                window, so the window IS the Payments history depth)
 # For a fuller/shorter view run either loader by hand with a different window. Continues past a single
@@ -46,9 +56,9 @@ run() {
 }
 run "WIP master -> ledger"    "$ACB_PY" ledger/load_wip_master.py
 run "Bills -> ledger"         "$ACB_PY" ledger/load_bill_tracker.py
-run "Invoices -> ledger"      "$ACB_PY" ledger/load_invoices.py --no-qbo
+run "Invoices -> ledger"      "$ACB_PY" ledger/load_invoices.py
 run "Customers -> ledger"     "$ACB_PY" ledger/load_customers.py
-run "Costs -> ledger"         "$ACB_PY" ledger/load_costs.py --active --changed-since "$since"
+run "Costs -> ledger"         "$ACB_PY" ledger/load_costs.py --changed-since "$since"
 run "Payments -> ledger"      "$ACB_PY" ledger/load_payments.py --months 12
 run "Bill payments -> ledger" "$ACB_PY" ledger/load_bill_payments.py
 run "Sub LOC -> ledger"       "$ACB_PY" ledger/load_sub_loc.py
