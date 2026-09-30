@@ -1,7 +1,6 @@
-# Synology check-up - LOOK ONLY, change nothing
+# Synology check-up - what to look at on the box
 
-Step 0 of the runbook (`README.md`). Write down what you find for each item (a screenshot is fine) and send it to the
-owner. Nothing is changed until the owner has seen it; the lock-down is built from these results.
+Step 0 of the setup (`README.md`): a list of what to check before the office server goes on. Fix what needs fixing.
 
 Remote workers reach the Synology through the **Fortinet VPN** - that is the approved way in and it stays.
 

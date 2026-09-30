@@ -17,18 +17,17 @@ The plan this follows: the owner's one-page "Office server move" (09/30/2026) an
 
 ---
 
-## Runbook - for the developer (and the developer's Claude session)
+## Setup - for the developer (and the developer's Claude session)
 
-Do the steps **in order**. Each **STOP** means: report to the owner and wait for a yes before going on. Never paste a
-key, token or password into chat, email, a commit or this repo - keys are typed in on the Synology only.
+The steps in order. Two rules that are not optional: the server gets its **own** Intuit app (step 3), and keys are
+typed in on the Synology only - never in chat, email, a commit or this repo.
 
-### 0. Preconditions - STOP if any is not true
+### 0. The box
 
-- [ ] The Synology **check-up** (`CHECKUP.md`, look only) is done and the owner has seen the results.
-- [ ] The **lock-down** built from it is done: from outside, the only way in is the Fortinet VPN (no QuickConnect, no
-      port forwards); two-step login on admin accounts; the default `admin` account off; the clock synced (NTP);
-      locked snapshots + one backup off the Synology.
-- [ ] Container Manager is installed; a plain, non-admin **automation user** exists.
+Before anything goes on it: from outside, the only way in is the Fortinet VPN (no QuickConnect, no port forwards);
+two-step login on admin accounts; the default `admin` account off; the clock synced (NTP); locked snapshots + one
+backup off the Synology. `CHECKUP.md` is a handy list of what to look at. Install Container Manager and create a plain,
+non-admin **automation user**.
 
 ### 1. Folders on the Synology
 
@@ -48,15 +47,15 @@ The owner keeps using the PO tracker on OneDrive (`Proficient Office - Purchase 
 Microsoft 365 / OneDrive for Business connection > that ONE folder > local path `/volume1/docker/automation/po-tracker`
 > **Sync direction: download remote changes only**. The server reads the copy; it never writes back.
 
-### 3. QuickBooks - the server's OWN app. STOP before connecting.
+### 3. QuickBooks auth - the server's OWN app
 
 1. In the Intuit developer workspace (the same team workspace as the developer's own app), create a **new app**, e.g.
    "Office Server", scope Accounting, production keys.
 2. **Never** use the owner's app or the developer's "EC-Data Export" app - a second connection on an app+company cuts
    off the first (the owner's Mac or the developer's clone stops working).
-3. Connecting the app to the company needs a **QuickBooks admin** of the company to approve. If the developer is not
-   one, send the owner the Connect link (the Intuit OAuth Playground with the new app's keys works) - the owner clicks
-   Approve. Take the **refresh token** from that flow.
+3. Connect it to the company (the Intuit OAuth Playground with the new app's production keys, scope Accounting) and
+   take the **refresh token**. The approval must come from a **QuickBooks admin** of the company - if that is not the
+   developer, send the owner the connect link to approve.
 4. Type the four QBO values into `/volume1/automation-keys/secrets.env` (from `secrets.env.example`), mode 600.
 
 ### 4. The other keys
@@ -86,22 +85,22 @@ Settings > Deploy keys; never a personal token). Test week: the `dev` branch is 
 
 The first mirror refresh seeds the whole mirror (~20 min, ~300k records) - expected.
 
-### 7. The test week - STOP each day with the results
+### 7. The test week
 
 In test mode the server writes ONLY `Accounting/_server-test/` (its own Bill Tracker + Invoice Tracker, seeded from
 copies of the live ones), runs AR as a dry run (Notion and Teams untouched) and never touches the live files.
 
-Each day, report to the owner:
-- `/volume1/docker/automation/data/status/status.json` - every job ok? any alerts in Teams?
+What to watch:
+- `/volume1/docker/automation/data/status/status.json` - every job ok; alerts land in Teams;
 - the test Bill Tracker / Invoice Tracker vs the Mac's live ones, sheet by sheet (the same rows and totals);
-- **open-file test**: open the test trackers in Excel on a Mac over the share and leave them open; the server's next
-  runs must still land and a reopen shows the new data.
+- open the test trackers in Excel on a Mac over the share and leave them open - the server's next runs must still land
+  and a reopen shows the new data.
 
 ### 8. Going live - NOT YET
 
 Live needs these first (tracked in `docker/STATUS.md`): the Notion "only update when changed" fix, the Mac honoring the
-writer file (sync-all stands down), the Bill Tracker Inputs split, the nightly mirror cross-check. Then, with the
-owner's go: `ACB_SERVER_MODE=live`, create `Accounting/_automation/writer.json` = `{"writer": "server"}`, restart.
+writer file (sync-all stands down), the Bill Tracker Inputs split, the nightly mirror cross-check. Then:
+`ACB_SERVER_MODE=live`, create `Accounting/_automation/writer.json` = `{"writer": "server"}`, restart.
 
 **Rollback** at any time: set the writer file to `{"writer": "mac"}`. The server stands down at its next run and the
 owner's `sync-all` runs AP/AR as before.
@@ -119,4 +118,4 @@ owner's `sync-all` runs AP/AR as before.
 | `server.env.example` | paths + ids (no secrets) |
 | `secrets.env.example` | the keys' names (values typed on the Synology only) |
 | `push_registers.sh` | Mac side: sends the owner's rule files to the server share (never cost_code_history.json) |
-| `CHECKUP.md` | step 0: the look-only Synology check-up |
+| `CHECKUP.md` | a list of what to look at on the box (step 0) |

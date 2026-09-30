@@ -3,6 +3,7 @@
 Progression record for the office server package. Update in the SAME commit as any change to this folder (repo rule).
 
 ## DONE / FINALIZED
+- 2026-09-30 · The runbook is plain setup instructions (owner: the developer is capable - no approval stops); the two hard rules stay (the server's own Intuit app; keys typed on the Synology only).
 - 2026-09-30 · **The office server package** (replaces the retired invoice-sync-only container). `scheduler.py` (mirror
   every 3 min, AP then AR every 15 min, nightly count check, status.json + Teams alerts, test vs live, the writer file
   fails closed), `Dockerfile` (base pinned by digest, packages by sha256, a read-only allow-list), `.dockerignore`
@@ -13,7 +14,7 @@ Progression record for the office server package. Update in the SAME commit as a
   builds on the Synology.
 
 ## IN PROGRESS
-- The developer: Synology check-up and lock-down, then the runbook (steps 1-7, test mode).
+- The developer: the setup in README.md (the box, folders, QBO auth, keys, build, test mode).
 
 ## TO DO (before live)
 - Notion: only update an invoice when a field changed (today every run rewrites every open invoice).
