@@ -1,8 +1,9 @@
 # ledger/ - how the Project Ledger works
 
-Last changed: 09/30/2026 - WIP Review shows a fourth result, **Held** (QuickBooks not trusted for
-the job, from `shared/qbo_trust`): never approvable, never written. The Duplicate customers page
-now reads `qbo_trust.duplicate_groups`, the same code the WIP gate holds on.
+Last changed: 09/30/2026 - after **Pay in QuickBooks** the follow-up refresh runs `billpay` (mirror +
+bill payments + open AP) instead of `billsync`: the Bill Tracker.xlsx rebuild left the payment path, so a
+workbook open in Excel can no longer fail a payment's follow-up. Before that, same day: WIP Review's **Held**
+result (`shared/qbo_trust`) and the Duplicate customers page on `qbo_trust.duplicate_groups`.
 
 Update this chart - and the line above - in the same commit as any change to `ledger/`
 (`.github/flow_guard.sh` fails the push otherwise). The full system map is `docs/ARCHITECTURE.md`.
@@ -80,5 +81,6 @@ flowchart TD
     CO --> RA
     VD --> PB
     RA & PB --> PR
+    PB -->|"then the billpay refresh: mirror + bill payments + open AP"| RM
     PR -->|"dry run, then Are you sure"| QBO
 ```

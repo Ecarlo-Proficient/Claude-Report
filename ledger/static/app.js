@@ -3220,14 +3220,16 @@ async function payQboWrite(btn) {
     say(`${r.vendor}: ${r.to_print ? "check queued to print" : "payment " + (r.ref || r.payment_id)} · ${r.bills} bill${r.bills !== 1 ? "s" : ""}${r.credits ? ` + ${r.credits} credit${r.credits !== 1 ? "s" : ""}` : ""} · ${qaCents(r.total)} · `
       + (r.to_print ? "waits in Pushed payments until printed in QuickBooks" : st.filed ? "stub filed" : `stub NOT filed (${st.error || "?"}) - print it from the vendor's Payments`), st.filed || r.to_print ? "ok" : "warn");
   }
-  // the paid bills leave the run now; the Bill Tracker catches up through the vendor refresh chain
+  // the paid bills leave the run now. Only the ledger's own QuickBooks read runs here (mirror + bill payments + open
+  // AP) - never the Bill Tracker.xlsx rebuild (owner 2026-09-29: "the bill tracker will pick up after updating.
+  // remove from project ledger"): someone having the workbook open must never fail a payment's follow-up.
   const prog = document.createElement("div"); prog.className = "sync-progress"; const bar = document.createElement("div"); bar.className = "sync-bar";
   const fill = document.createElement("div"); fill.className = "sync-bar-fill"; bar.appendChild(fill); const step = document.createElement("div"); step.className = "sync-step";
   prog.appendChild(bar); prog.appendChild(step); act.appendChild(prog);
   await load(true); renderPayBills(); loadPayQueued();
-  runPipeline("billsync", null, { prog, fill, step, after: async (ok) => {
-    if (!ok) step.textContent += " - the payments are in QuickBooks; if it stopped at Sync bills, Bill Tracker.xlsx is open in Excel: close it and refresh.";
-    await load(true); renderPayBills(); } });
+  runPipeline("billpay", null, { prog, fill, step, after: async (ok) => {
+    if (!ok) step.textContent += " - the payments are in QuickBooks; refresh from QuickBooks to see them here.";
+    await load(true); renderPayBills(); loadPayQueued(); } });
 }
 function closePayQbo() { const w = $("#payQboWidget"); if (w) w.hidden = true; PQ = null; }
 // ── Pushed payments (owner 2026-09-28): every payment pushed from here waits in this queue until it MATCHES - QuickBooks

@@ -39,6 +39,7 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   remembered per page (localStorage). Dates: QBO's change time; the check change time; the check date; the bill date.
   Fixed on the way: a check's own "what changed" line ended its fold, so the bills it reopened no longer folded under
   it (GRP sib `skip`); vendor-page payment folds stop at a band; Bills to fix Amount column widened for cents.
+- 2026-09-29 · **Pay in QuickBooks no longer rebuilds Bill Tracker.xlsx.** Its follow-up runs `billpay` (mirror + bill payments + open AP) instead of `billsync`: a workbook someone has open in Excel can no longer fail a payment's follow-up. The Bill Tracker catches up on its own next run (owner: "the bill tracker will pick up after updating").
 - 2026-09-29 · **Pay bills short pay + paste-to-tick; ref # search app-wide; cents on bills / invoices** (owner: "need the
   ability to short pay a bill ... paste a excel copy of the ref # and it just select automatically ... cmd+f goes to
   find in page ... search bar should only be for ref # ... project # needs to be a different toggle. this is database
