@@ -1111,6 +1111,8 @@ def _iter_jobs(div_dir: Path, prefix: str):
                 for k in kids:
                     if k.is_dir() and _JOB_RE.match(k.name):
                         out.append((k / pnl_paths.CP_PNL_SUBDIR, status))
+                    elif status == "Completed" and k.is_dir() and re.fullmatch(r"(19|20)\d\d", k.name):
+                        _walk(k, status)          # 'Completed Projects/2025/CP610 - .../' (filed by year, 2026-09-30)
             _walk(base, "Active")
             for k in sorted(base.iterdir()):
                 if k.is_dir() and k.name.lower().startswith(pnl_paths.ARCHIVE_PREFIXES):

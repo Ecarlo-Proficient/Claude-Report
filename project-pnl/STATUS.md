@@ -7,6 +7,8 @@ manual close), RP (no draws — expenses → invoice → profit).
 ---
 
 ## DONE / FINALIZED
+- 2026-09-30 · **CP Overview reads year-filed finished jobs** - `Completed Projects/<year>/<job>/Profit and Loss/`
+  (CP610 is filed under 2025); the walk descends into 4-digit year folders under an archive folder.
 - 2026-09-30 · **CP Overview lives in the Active Awarded Projects folder on Common** (owner: "cp overview should live in the
   active awarded projects folder in common", after `✗ CP Overview not rebuilt: CP has no home mapped beyond the retired
   Automations- folder`). `shared/pnl_paths.overview_dir()` - CP = `/Volumes/Common/CURRENT PROJECTS/Awarded Projects
