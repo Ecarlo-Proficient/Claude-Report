@@ -1,10 +1,14 @@
 # ledger/ - how the Project Ledger works
 
-Last changed: 09/30/2026 - the reload (`reload_ledger.sh`) keeps billed history and Closed-job costs
-current: `load_invoices` runs with the QuickBooks history + gap fill (no `--no-qbo`), and `load_costs
---changed-since` covers every job, Active or Closed (the 09/25 sync-all audit). Earlier the same day: the
-Pay in QuickBooks follow-up runs `billpay`; WIP Review's **Held** result; Duplicate customers on
-`qbo_trust.duplicate_groups`.
+Last changed: 09/30/2026 - the project page's draw table is the **Draw overview** (was "How we get funded"): invoice
+side (Invoice status, net billed, retained) | actuals (billed gross, costs, gross profit, margin, overhead with its %, net,
+net margin), an fx bar shows how a worked-out cell is computed; the bill list's section / vendor / bill rows sit on
+dark grey / light grey / white; the P&Ls read like Excel; the Draw overview shows 5 draws and scrolls. `?job=<#>`
+opens a job's page. No funding helpers on the project page or the Company strip. Headers pin as you scroll (section
+title, the draw you are on, Materials / Labor - each hands over to the next). `ledgerEdgeCheck()` (or `?qc=edges`)
+flags text within 8px of its card's edge and boxes that touch.
+Earlier the same day: the reload keeps billed history and Closed-job costs current; Pay in QuickBooks runs `billpay`;
+WIP Review's **Held** result; Duplicate customers on `qbo_trust.duplicate_groups`.
 
 Update this chart - and the line above - in the same commit as any change to `ledger/`
 (`.github/flow_guard.sh` fails the push otherwise). The full system map is `docs/ARCHITECTURE.md`.
@@ -56,7 +60,7 @@ flowchart TD
     QA & CD & SH & DC --> SRV
 
     subgraph UI["static/ - four views + the gear"]
-        PJ["Projects<br/>the WIP as the page + project page"]:::ui
+        PJ["Projects<br/>the WIP as the page + project page<br/>(P&L, Draw overview + fx bar, bills)"]:::ui
         VD["Vendors<br/>Vendor Center · Bill Tracker · Pay bills"]:::ui
         CU["Customers<br/>Invoices · Customer Center · Payments · Sales"]:::ui
         CO["Company<br/>Money · Bills to fix · QBO changes ·<br/>Checks QBO changed · Uncleared · Duplicate customers"]:::ui

@@ -4,6 +4,30 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-30 · **Draw overview + bill list as a table + edge check** (owner review of the project page). "How we get
+  funded" is now **Draw overview** (RP: Scope overview) - it is an overview of transactions per draw. Columns: Period ·
+  Draw · **Invoice status** (was GC, moved before Invoice) · Invoice (a run of invoices shows as 34417–34419) · Date ·
+  **Net billed** · **Retained** | a divider | **Billed (gross)** · Costs · Gross profit · Margin · **Overhead with its %**
+  (9% MFD / 10%) · Net · **Net margin**; Stage removed (the not-yet-drawn costs note sits under the table). Net stays
+  gross billed - costs - overhead. A click on Gross profit / Margin / Overhead / Net / Net margin shows its formula in
+  an Excel-style **fx bar** above the table. Server: each draw's `pl` carries `oh_rate`. Bill list: section (Materials /
+  Labor) on dark grey, vendors on light grey, bills on white, indented, same size. Cost mix bar + legend restored (its
+  CSS was lost in ed083f4). NEW `ledgerEdgeCheck(min=8)` in app.js (`?qc=edges` outlines offenders): every visible
+  text line must sit 8px+ inside its card - part of the visual QC before any ledger UI ships; the Projects legend
+  got its side padding. Second pass ("keep it like a table, info and then data"): the header is a grid (title + stats
+  left, toolbar right - no gap under the title); the P&L and a draw's P&L read like Excel (grey bold header, a line
+  between columns, labels tight to their numbers); the Draw overview shows 5 draws with the rest on a scroll wheel
+  (pinned header + total) and an Excel header; `?job=<#>` opens a job's page (a link to one job, and the QC
+  screenshot handle). Third pass: **every funding helper removed** (the Next-money-in box + its Show button, GC owes
+  in the section title, the next-draw highlight, Mark blockers, the pay-list export's unlock footer, and the Company
+  strip's Draws to collect tile); Invoice status = Paid / **Unpaid** (red) / **Short $X** (red, the GC paid part);
+  the Draw overview's dates without the extra zeros (7/1/26); the P&L Difference is three plain columns (Difference $,
+  Diff %, What it means) - the bars are gone. **Pinned headers** (freeze panes, the owner's ask): the section title,
+  a new draw bar (`_ppDrawBar`: the draw you are on, its invoices, period, status, bill count) and Materials / Labor
+  pin in a stack under the top bar and hand over as you scroll (the Labor row pushes Materials out - a scroll handler,
+  since a pinned table row belongs to the whole table); `_ppSetPins` keeps the stack heights true; `.ip-sec` /
+  `.pp-detail` use `overflow: clip` so sticky works; the Draw overview freezes its Period + Draw columns sideways.
+  `ledgerEdgeCheck` also flags boxes that touch (under 6px apart).
 - 2026-09-30 · **WIP Review: Held** (owner: "we need to first have a ci check that qbo is good to trust"). The
   QuickBooks changes table gains a fourth gate, **■ Held** (sorted first, counted in the header): a cell the review
   JSON marks `held` (wip_review_common + `shared/qbo_trust`) - checkbox disabled, `wrIsBlocked` treats it like a drop

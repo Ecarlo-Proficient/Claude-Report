@@ -2493,7 +2493,7 @@ def _draws_by_invoice(con, pn: str, division, raw: list, scopes: bool) -> list:
 
 def _fetch_project_page(con, pn: str) -> dict:
     """The PROJECT page (owner 2026-09-02): everything about one job in one place. Section 1 = how
-    it's doing (`_project_pnl`); section 2 = how we get funded - the job's draws in order, each with
+    it's doing (`_project_pnl`); section 2 = the draw overview - the job's draws in order, each with
     GC-paid state, vendors paid x/y, waivers, and the funding-chain math: the next draw the GC still
     owes is unlocked by paying the unpaid bills on the draws BEFORE it (their unconditional waivers
     gate the release). Pay-to-unlock checkboxes ride the existing pay run (pay_mark) - local intent
@@ -2605,9 +2605,10 @@ def _fetch_project_page(con, pn: str) -> dict:
         income = gross_billed if gross_billed is not None else net_billed
         costs = round(float(d.get("gate_amt") or 0) + d["subs_amt"], 2)
         gross = round(income - costs, 2)
-        overhead = round((_OVERHEAD_MFD_COST if is_mfd else _OVERHEAD_REV) * income, 2)   # the draw's slice of the contract
+        oh_rate = _OVERHEAD_MFD_COST if is_mfd else _OVERHEAD_REV
+        overhead = round(oh_rate * income, 2)   # the draw's slice of the contract
         d["pl"] = {"income": income, "net_billed": round(net_billed, 2), "retainage": round(income - net_billed, 2), "costs": costs, "bills": len(d["bills"]) + len(d["sub_bills"]), "gross": gross,
-                   "margin_pct": (gross / income) if income else None, "overhead": overhead,
+                   "margin_pct": (gross / income) if income else None, "overhead": overhead, "oh_rate": oh_rate,   # shown + the fx bar's formula
                    "overhead_basis": "9% of gross billed (MFD)" if is_mfd else "10% of gross billed",
                    "net": round(gross - overhead, 2), "net_pct": ((gross - overhead) / income) if income else None,
                    "materials": round(float(d.get("gate_amt") or 0), 2), "labor": d["subs_amt"],
@@ -3652,7 +3653,7 @@ class Handler(BaseHTTPRequestHandler):
             self._invoices_all()
         elif path == "/api/invoice/notion":  # on-demand: the invoice's whole Notion page (properties + body + comments), 60 s cache
             self._json(notion_page.fetch(self._query().get("url", "")))
-        elif path == "/api/project/page":    # on-demand: the project page - how it's doing + how we get funded (draws, blockers, pay-to-unlock)
+        elif path == "/api/project/page":    # on-demand: the project page - how it's doing + the draw overview (draws, blockers, pay-to-unlock)
             con = _connect(self.db_path)
             try:
                 self._json(_fetch_project_page(con, self._query().get("no", "")))
