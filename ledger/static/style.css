@@ -2162,3 +2162,43 @@ tr.wr-qbo-blocked td { background: color-mix(in srgb, var(--neg) 6%, transparent
 .aud-groupby-wrap { display: inline-flex; align-items: center; gap: 6px; }
 .aud-groupby-wrap .seg-lbl { color: var(--text-dim); font-size: .85em; }
 tr.dt-group.dt-recent .bg-key { color: var(--accent-text); }
+
+/* ══ Project page polish (owner 2026-09-30: "too amateurish or not right about it") ══
+   1. a real header: the job name, ONE line of the numbers that matter, ONE toolbar
+   2. ONE table style on the page - the P&L table's: small grey caps headers, hairline rows, no fills, no gridlines
+   3. ONE heading style - sentence case, no tiny all-caps labels
+   4. every action in the header toolbar, nothing floating between sections */
+.record-head { align-items: flex-start; flex-wrap: wrap; }
+.record-head-txt { flex: 1 1 420px; }
+.rv-project .record-title { font-size: 1.55em; font-weight: 700; letter-spacing: -.02em; line-height: 1.2; }
+.rv-project .record-sub { margin-top: 3px; }
+.record-stats { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 6px 34px; margin: 4px 0 0 79px; font-variant-numeric: tabular-nums; }
+.rs-item { display: inline-flex; align-items: baseline; gap: 7px; white-space: nowrap; }
+.rs-lab { color: var(--text-dim); font-size: .82em; }
+.rs-val { font-weight: 650; font-size: 1.06em; }
+.rs-val.neg { color: var(--neg-text); }
+.rs-sub { color: var(--text-dim); font-size: .82em; }
+.record-tools { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: flex-end; margin-left: auto; max-width: 620px; padding-top: 2px; }
+.record-tools .rt-group { display: inline-flex; align-items: center; gap: 6px; padding-left: 10px; margin-left: 4px; border-left: 1px solid var(--border); }
+.record-tools .rt-lab { color: var(--text-dim); font-size: .82em; }
+.record-tools .rt-stamp { color: var(--text-dim); font-size: .78em; white-space: nowrap; }
+.record-tools .rt-msg { flex-basis: 100%; text-align: right; color: var(--text-dim); font-size: .82em; }
+.record-tools .rt-msg:empty { display: none; }
+
+/* 2. the draws (Coverage) table - the P&L table's look instead of a gridded sheet (was: owner 2026-09-16 "proper sheet") */
+.rv-project table.pp-cov { border: 0; border-collapse: collapse; }
+.rv-project table.pp-cov th, .rv-project table.pp-cov td { border: 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }
+.rv-project table.pp-cov thead th, html[data-theme="dark"] .rv-project table.pp-cov thead th { background: transparent; color: var(--text-dim); font-weight: 600;
+  font-size: .76em; text-transform: uppercase; letter-spacing: .05em; border-bottom: 1px solid var(--border); }
+.rv-project table.pp-cov tr.pp-cov-total > td { background: transparent; font-weight: 700; border-top: 1px solid var(--text); border-bottom: 0; }
+.rv-project table.pp-cov.all-sel tr.pp-cov-row > td { background: transparent; }
+.rv-project table.pp-cov tr.pp-cov-row.sel > td { background: color-mix(in srgb, var(--accent) 9%, var(--surface)); }
+/* the bills list: the same hairlines and weights - no 3px rules, no double lines, no extra-bold names */
+.rv-project tr.pp-sect > td { border-top: 1px solid var(--border); padding-top: 16px; }
+.rv-project tr.pp-sect .pp-sect-lab { text-transform: none; letter-spacing: 0; font-size: 1em; font-weight: 700; color: var(--text); }
+.rv-project tr.pp-vendor > td { border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }
+.rv-project tr.pp-vendor .sg-key { font-weight: 600; }
+.rv-project table.pp-bills tr.pp-tot > td { border-top: 1px solid var(--border); border-bottom: 0; font-weight: 650; }
+.rv-project table.pp-bills tr.pp-grand > td { border-top: 1px solid var(--text); font-size: 1em; font-weight: 700; }
+/* 3. one heading style: the P&L folds' labels in sentence case like every section title */
+.rv-project .pnl-cap { text-transform: none; letter-spacing: 0; font-size: .92em; font-weight: 600; color: var(--text); }

@@ -4035,9 +4035,7 @@ async function openProjectPage(pn) {
       + (x.source ? ` · ${_ge(x.source)}` : "") + (x.on ? ` · ruled ${_ge(fmtDate(x.on))}` : "") + `</div>`).join("");
     s1.appendChild(rb);
   }
-  const acts1 = document.createElement("div"); acts1.className = "ip-actions";
-  if (r0.project_no) { const dr = document.createElement("button"); dr.className = "btn small"; dr.textContent = "WIP row detail"; dr.onclick = () => openDetail(r0); acts1.appendChild(dr); }
-  s1.appendChild(acts1);
+  _ppHeader(pn, r0, d, p);   // the title's stat line + the one toolbar (owner 2026-09-30: "too amateurish")
   const plWrap = document.createElement("div"); plWrap.className = "ip-top pp-pnl"; plWrap.appendChild(buildPnlGroup(pn)); s1.appendChild(plWrap);   // 3 columns (owner: save vertical space)
   // ── 2. how we get funded ──
   const F = d.funding || {}, nx = F.next_draw;
@@ -4118,15 +4116,37 @@ async function openProjectPage(pn) {
   // ── 4. bills + links ──
   { const sL = sec("Change log · contract, COs, ETC, billed, costs", "every change the WIP writer made, with its source, plus the review answers"); sL.classList.add("fold-sec");   // folded (owner 2026-09-23)
     const box = document.createElement("div"); box.className = "ip-audit"; sL.appendChild(box); fillAuditInto(box, pn); }
-  const s3 = sec("Bills and links", "");
-  const acts3 = document.createElement("div"); acts3.className = "ip-actions";
-  const bb = document.createElement("button"); bb.className = "btn small"; bb.textContent = "Bills on this job"; bb.title = "The Bill Tracker filtered to this project";
-  bb.onclick = () => { if (typeof billMSel === "object") { for (const c of BILL_MSEL) billMSel[c.id] = new Set(); billMSel["bfProject"] = new Set([pn]); } activeBillView = "all"; setTab("bills"); if (typeof buildBillFilters === "function") buildBillFilters(); renderBills(); };
-  acts3.appendChild(bb);
-  const ib = document.createElement("button"); ib.className = "btn small"; ib.textContent = "Invoices on this job"; ib.onclick = () => { invMSel["ifProj"] = new Set([pn]); _invMSelSig = null; setTab("invoices"); renderOpenInvoices(); }; acts3.appendChild(ib);
+}
+// The project page header (owner 2026-09-30: "something too amateurish ... not right about it"): the job name, ONE
+// line of the numbers that matter (text, never tiles), and ONE toolbar - every action that used to float between the
+// sections (WIP row detail, Open job folder, Open Excel / Generate, Bills / Invoices on this job, QuickBooks).
+function _ppHeader(pn, r0, d, p) {
+  const rv = $("#recordView"); if (rv) rv.classList.add("rv-project");
+  const stats = $("#recordStats"), tools = $("#recordTools"); if (!stats || !tools) return;
+  const contract = num(p.contract || r0.total_contract_price), etc = num(r0.estimated_total_costs), billed = num(p.billed_gross), cost = num(p.cost);
+  const owes = (d.draws || []).reduce((s0, x) => s0 + num(x.ar_open), 0);
+  const items = [["Contract", money(contract), ""], ["Billed", money(billed), contract ? `${Math.round(billed / contract * 100)}% of contract` : ""],
+    ["Costs", money(cost), etc ? `${Math.round(cost / etc * 100)}% of ETC` : ""],
+    ["Net profit", money(p.net), p.net_pct != null ? `${(p.net_pct * 100).toFixed(1)}%` : "", num(p.net) < 0 ? "neg" : ""],
+    ["GC owes", money(owes), ""]];
+  stats.innerHTML = "";
+  for (const [l, v, sub, cls] of items) {
+    const it = document.createElement("span"); it.className = "rs-item";
+    const a = document.createElement("span"); a.className = "rs-lab"; a.textContent = l;
+    const b = document.createElement("span"); b.className = "rs-val" + (cls ? " " + cls : ""); b.textContent = v;
+    it.append(a, b); if (sub) { const c = document.createElement("span"); c.className = "rs-sub"; c.textContent = sub; it.appendChild(c); }
+    stats.appendChild(it);
+  }
+  stats.hidden = false;
+  tools.innerHTML = "";
+  const btn = (label, title, fn, href) => { const b = document.createElement(href ? "a" : "button"); b.className = "btn small"; b.textContent = label; b.title = title;
+    if (href) { b.href = href; b.target = "_blank"; b.rel = "noopener"; } else { b.type = "button"; b.onclick = fn; } tools.appendChild(b); return b; };
+  if (r0.project_no) btn("WIP detail", "This job's row on the WIP master", () => openDetail(r0));
+  btn("Bills", "The Bill Tracker filtered to this project", () => { if (typeof billMSel === "object") { for (const c of BILL_MSEL) billMSel[c.id] = new Set(); billMSel["bfProject"] = new Set([pn]); } activeBillView = "all"; setTab("bills"); if (typeof buildBillFilters === "function") buildBillFilters(); renderBills(); });
+  btn("Invoices", "The Invoice Tracker filtered to this project", () => { invMSel["ifProj"] = new Set([pn]); _invMSelSig = null; setTab("invoices"); renderOpenInvoices(); });
   const cid = (COST.by_project && COST.by_project[pn] && COST.by_project[pn].customer_id) || ((invData().invoices || []).find(i => i.project_no === pn) || {}).cust_id;
-  const qurl = qboCustomerUrl(cid); if (qurl) { const a = document.createElement("a"); a.className = "btn small"; a.href = qurl; a.target = "_blank"; a.rel = "noopener"; a.textContent = "Project in QuickBooks ↗"; acts3.appendChild(a); }
-  s3.appendChild(acts3);
+  const qurl = qboCustomerUrl(cid); if (qurl) btn("QuickBooks ↗", "The project in QuickBooks", null, qurl);
+  tools.hidden = false;   // buildPnlGroup adds Job folder (first) and the P&L workbook group (last)
 }
 // What we projected (the WIP master: contract, ETC) next to what actually happened (QuickBooks: billed, costs), row by
 // row, the big numbers first (owner 2026-09-16: "remove the big blocks ... make the numbers that are important jump
@@ -6626,29 +6646,38 @@ function buildPnlGroup(proj) {
   }).catch(() => { pl.textContent = "P&L unavailable."; });
 
   // ── source job folder (Synology CP/RP · OneDrive MFD) - the owner's "source link" ──
+  // On the project page these controls live in the header toolbar, not loose under the P&L (owner 2026-09-30)
+  const tb = onPage ? $("#recordTools") : null;
   const src = document.createElement("div"); src.className = "pnl-actions";
   const jobBtn = document.createElement("button"); jobBtn.className = "btn small"; jobBtn.textContent = "Open job folder ↗";
   jobBtn.title = "Open this job's folder on the file server (docs · takeoffs · photos)";
   jobBtn.onclick = () => fetch(`/api/job/open?proj=${encodeURIComponent(proj)}`, { method: "POST" })
     .then(r => r.json()).then(x => toast(x.error ? x.error : "Opening job folder…"));
-  src.appendChild(jobBtn); g.appendChild(src);
+  if (tb) { jobBtn.textContent = "Job folder ↗"; tb.prepend(jobBtn); } else { src.appendChild(jobBtn); g.appendChild(src); }
 
   // ── detailed export (project-pnl Excel) - open / generate ──
-  const cap2 = document.createElement("div"); cap2.className = "pnl-cap"; cap2.textContent = "Detailed export (project-pnl)"; g.appendChild(cap2);
+  const cap2 = document.createElement("div"); cap2.className = "pnl-cap"; cap2.textContent = "Detailed export (project-pnl)";
   const row = document.createElement("div"); row.className = "drow pnl-pulled";   // the stamp sits in its own box right next to its label (owner 2026-09-08)
   const dk = document.createElement("span"); dk.className = "dk"; dk.textContent = "Last pulled";
   const dv = document.createElement("span"); dv.className = "dv pnl-stamp"; dv.textContent = "checking…";
-  row.appendChild(dk); row.appendChild(dv); g.appendChild(row);
+  row.appendChild(dk); row.appendChild(dv);
   const acts = document.createElement("div"); acts.className = "pnl-actions";
   const openBtn = document.createElement("button"); openBtn.className = "btn small"; openBtn.textContent = "Open Excel"; openBtn.disabled = true;
   const genBtn = document.createElement("button"); genBtn.className = "btn small"; genBtn.textContent = "Generate / Refresh";
-  acts.appendChild(openBtn); acts.appendChild(genBtn); g.appendChild(acts);
-  const msg = document.createElement("div"); msg.className = "pnl-msg"; g.appendChild(msg);
+  const msg = document.createElement("div"); msg.className = "pnl-msg";
+  if (tb) {   // header: "P&L workbook  [Open] [Refresh]  updated 10m ago"
+    const grp = document.createElement("span"); grp.className = "rt-group"; grp.title = "The job's P&L workbook (project-pnl)";
+    const lab = document.createElement("span"); lab.className = "rt-lab"; lab.textContent = "P&L workbook";
+    openBtn.textContent = "Open"; genBtn.textContent = "Refresh"; dv.className = "rt-stamp";
+    grp.append(lab, openBtn, genBtn, dv); tb.appendChild(grp);
+    msg.classList.add("rt-msg"); tb.appendChild(msg);
+  } else { g.appendChild(cap2); g.appendChild(row); acts.appendChild(openBtn); acts.appendChild(genBtn); g.appendChild(acts); g.appendChild(msg); }
+  const _genLabel = tb ? "Refresh" : "Generate / Refresh";
 
   const refresh = () => fetch(`/api/pnl?proj=${encodeURIComponent(proj)}`).then(r => r.json()).then(d => {
     if (d.error) { dv.textContent = "–"; return; }
     if (d.exists) {
-      dv.textContent = `${timeAgo(d.mtime)} · ${fmtDate(d.mtime, true)}`;
+      dv.textContent = tb ? `updated ${timeAgo(d.mtime)}` : `${timeAgo(d.mtime)} · ${fmtDate(d.mtime, true)}`; if (tb) dv.title = fmtDate(d.mtime, true);
       openBtn.disabled = false;
       openBtn.onclick = () => fetch(`/api/pnl/open?proj=${encodeURIComponent(proj)}`, { method: "POST" })
         .then(r => r.json()).then(x => toast(x.error ? x.error : "Opening P&L…"));
@@ -6664,16 +6693,16 @@ function buildPnlGroup(proj) {
     msg.textContent = "Running project-pnl - watch for the Touch ID prompt on this Mac.";
     fetch(`/api/pnl/generate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ proj, confirm: true }) })
       .then(r => r.json()).then(d => {
-        if (d.error) { msg.textContent = "Error: " + d.error; genBtn.disabled = false; genBtn.textContent = "Generate / Refresh"; return; }
-        pollPnl(proj, genBtn, msg, refresh);
-      }).catch(e => { msg.textContent = "Error: " + e; genBtn.disabled = false; genBtn.textContent = "Generate / Refresh"; });
+        if (d.error) { msg.textContent = "Error: " + d.error; genBtn.disabled = false; genBtn.textContent = _genLabel; return; }
+        pollPnl(proj, genBtn, msg, refresh, _genLabel);
+      }).catch(e => { msg.textContent = "Error: " + e; genBtn.disabled = false; genBtn.textContent = _genLabel; });
   };
   refresh();
   return g;
 }
 
-function pollPnl(proj, genBtn, msg, refresh) {
-  const finish = (t) => { msg.textContent = t; genBtn.disabled = false; genBtn.textContent = "Generate / Refresh"; refresh(); };
+function pollPnl(proj, genBtn, msg, refresh, label = "Generate / Refresh") {
+  const finish = (t) => { msg.textContent = t; genBtn.disabled = false; genBtn.textContent = label; refresh(); };
   const tick = () => fetch(`/api/pnl/status?proj=${encodeURIComponent(proj)}`).then(r => r.json()).then(s => {
     if (s.state === "running") {
       const where = s.status ? " · " + s.status : " · Touch ID may be waiting";
@@ -6682,7 +6711,7 @@ function pollPnl(proj, genBtn, msg, refresh) {
       setTimeout(tick, 1500);
     }
     else if (s.state === "done") { finish("Done - P&L refreshed."); }
-    else if (s.state === "error") { msg.textContent = "Failed: " + (s.detail || "see the log"); genBtn.disabled = false; genBtn.textContent = "Generate / Refresh"; }
+    else if (s.state === "error") { msg.textContent = "Failed: " + (s.detail || "see the log"); genBtn.disabled = false; genBtn.textContent = label; }
     else { finish(""); }
   }).catch(() => setTimeout(tick, 3000));
   setTimeout(tick, 1500);
@@ -6847,6 +6876,8 @@ function openRecord(title, sub) {
   $("#recordView").hidden = false;
   $("#recordTitle").textContent = title || "";
   $("#recordSub").textContent = sub || "";
+  for (const id of ["#recordStats", "#recordTools"]) { const el = $(id); if (el) { el.innerHTML = ""; el.hidden = true; } }   // a page fills its own
+  $("#recordView").classList.remove("rv-project");
   window.scrollTo(0, 0);
 }
 function closeRecord() {
