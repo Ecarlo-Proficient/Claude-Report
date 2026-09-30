@@ -89,6 +89,7 @@ office server; everything in the blue box stays on the Mac.</p>
 <defs>
 <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="mh" d="M0,0 L10,5 L0,10 z"/></marker>
 <marker id="ahw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="mhw" d="M0,0 L10,5 L0,10 z"/></marker>
+<marker id="ahs2" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="mhs" d="M10,0 L0,5 L10,10 z"/></marker>
 <marker id="ahs" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="mhs" d="M0,0 L10,5 L0,10 z"/></marker>
 </defs>
 <rect class="zone srvz" x="260" y="30" width="690" height="300" rx="12"/>
@@ -127,10 +128,11 @@ office server; everything in the blue box stays on the Mac.</p>
 <text class="bt" x="740" y="84">qbo_mirror.sqlite3</text>
 <text class="bl" x="740" y="101">every QBO record + change log</text>
 <text class="bl" x="740" y="115">encrypted history</text>
-<rect class="b data" x="505" y="155" width="200" height="66" rx="7"/>
-<text class="bt" x="515" y="174">Read-only mirror copy</text>
-<text class="bl" x="515" y="191">the Mac pulls it when it needs it</text>
-<text class="bl" x="515" y="205">never opened over the share</text>
+<rect class="b srv" x="505" y="155" width="200" height="80" rx="7"/>
+<text class="bt" x="515" y="174">Status + alerts</text>
+<text class="bl" x="515" y="191">every run writes its status</text>
+<text class="bl" x="515" y="205">Teams: a failed run, or</text>
+<text class="bl" x="515" y="219">one quiet hour</text>
 <rect class="b srv" x="730" y="155" width="200" height="102" rx="7"/>
 <text class="bt" x="740" y="174">AP/AR sync</text>
 <text class="bl" x="740" y="191">one job, every 15 minutes</text>
@@ -141,12 +143,12 @@ office server; everything in the blue box stays on the Mac.</p>
 <text class="note" x="284" y="175">Locked first (Phase 0):</text>
 <text class="notel" x="284" y="193">· two-factor, no default admin</text>
 <text class="notel" x="284" y="208">· in from outside: Fortinet VPN only</text>
-<text class="notel" x="284" y="223">· locked, undeletable backups</text>
+<text class="notel" x="284" y="223">· clock synced · locked backups</text>
 <text class="notel" x="284" y="238">· keys readable by one user</text>
 <rect class="b data" x="280" y="395" width="200" height="66" rx="7"/>
-<text class="bt" x="290" y="414">Mirror copy</text>
-<text class="bl" x="290" y="431">read-only · every tool reads it</text>
-<text class="bl" x="290" y="445">MIRROR_KEY opens the history</text>
+<text class="bt" x="290" y="414">The Mac&#x27;s own mirror</text>
+<text class="bl" x="290" y="431">refreshed when you work</text>
+<text class="bl" x="290" y="445">2nd copy, off the Synology</text>
 <rect class="b mac" x="505" y="395" width="200" height="66" rx="7"/>
 <text class="bt" x="515" y="414">Key Helper</text>
 <text class="bl" x="515" y="431">the Mac&#x27;s QuickBooks login</text>
@@ -154,7 +156,7 @@ office server; everything in the blue box stays on the Mac.</p>
 <rect class="b info" x="730" y="395" width="200" height="66" rx="7"/>
 <text class="bt" x="740" y="414">shared/</text>
 <text class="bl" x="740" y="431">the ONE copy of every rule</text>
-<text class="bl" x="740" y="445">imported by every tool</text>
+<text class="bl" x="740" y="445">server gets read code only</text>
 <rect class="b mac" x="280" y="485" width="200" height="66" rx="7"/>
 <text class="bt" x="290" y="504">Ledger loaders</text>
 <text class="bl" x="290" y="521">mirror · both trackers (share)</text>
@@ -194,8 +196,8 @@ office server; everything in the blue box stays on the Mac.</p>
 <text class="bt" x="740" y="774">Vendor statements</text>
 <text class="bl" x="740" y="791">statement-reconciler/</text>
 <text class="bl" x="740" y="805">statement PDFs vs open bills</text>
-<text class="note" x="284" y="777">Final phase: the server keeps the keys and Key Helper</text>
-<text class="note" x="284" y="793">asks it for passes; then decide on the ledger.</text>
+<text class="note" x="284" y="777">Later: decide whether any read-only ledger views</text>
+<text class="note" x="284" y="793">move. Key Helper stays on the Mac either way.</text>
 <rect class="b out" x="980" y="110" width="200" height="66" rx="7"/>
 <text class="bt" x="990" y="129">Bill Tracker.xlsx</text>
 <text class="bl" x="990" y="146">Accounting / Accounts Payable</text>
@@ -226,8 +228,8 @@ office server; everything in the blue box stays on the Mac.</p>
 <polyline class="ar a" points="705,98 728,98" marker-end="url(#ah)"/>
 <polyline class="ar a" points="830,131 830,153" marker-end="url(#ah)"/>
 <polyline class="ar a" points="605,131 605,153" marker-end="url(#ah)"/>
-<polyline class="ar s" points="605,221 605,345 380,345 380,393" marker-end="url(#ahs)"/>
-<text class="al" x="392" y="340">the Mac pulls a copy</text>
+<polyline class="ar s" points="380,393 380,345 718,345 718,120 728,120" stroke-dasharray="5 4" marker-start="url(#ahs2)" marker-end="url(#ahs)"/>
+<text class="al" x="392" y="340">nightly cross-check: the two mirrors must agree</text>
 <polyline class="ar" points="930,206 955,206"/><polyline class="ar" points="955,143 955,306"/>
 <polyline class="ar a" points="955,143 978,143" marker-end="url(#ah)"/>
 <polyline class="ar a" points="955,228 978,228" marker-end="url(#ah)"/>
@@ -249,10 +251,10 @@ office server; everything in the blue box stays on the Mac.</p>
 <h2>What runs where</h2>
 <div class="tablewrap"><table>
 <tr><th>Tool</th><th>Today</th><th>After Phase 2</th><th>Final</th></tr>
-<tr><td class="">QBO mirror refresh</td><td class="">Mac (sync-all step 0)</td><td class="srvc">Synology</td><td class="srvc">Synology</td></tr>
+<tr><td class="">QBO mirror</td><td class="">Mac (sync-all step 0)</td><td class="">Both: server every 2-5 min, Mac when you work</td><td class="">Both, checked against each other nightly</td></tr>
 <tr><td class="">AP/AR sync (Bill Tracker, Invoice Tracker, Notion, Teams)</td><td class="">Mac, by hand (sync-all)</td><td class="srvc">Synology, every 15 minutes</td><td class="srvc">Synology</td></tr>
-<tr><td class="">QuickBooks login (the key keeper)</td><td class="">Key Helper, Mac</td><td class="">Mac + the server&#x27;s own app</td><td class="srvc">Synology; Key Helper asks it</td></tr>
-<tr><td class="">Ledger loaders + dashboard</td><td class="">Mac</td><td class="">Mac (reads the mirror copy)</td><td class="">Decide then</td></tr>
+<tr><td class="">QuickBooks login</td><td class="">Key Helper, Mac</td><td class="">Both, each its own Intuit app</td><td class="">Both</td></tr>
+<tr><td class="">Ledger loaders + dashboard</td><td class="">Mac</td><td class="">Mac (its own mirror)</td><td class="">Mac; read-only views may move later</td></tr>
 <tr><td class="">WIP readers + WIP Review</td><td class="">Mac</td><td class="">Mac</td><td class="">Mac</td></tr>
 <tr><td class="">Project P&amp;Ls</td><td class="">Mac</td><td class="">Mac</td><td class="">Mac</td></tr>
 <tr><td class="">Statement reconciler · debt schedule · QBO export · one-offs</td><td class="">Mac</td><td class="">Mac</td><td class="">Mac</td></tr>
@@ -262,8 +264,8 @@ office server; everything in the blue box stays on the Mac.</p>
 <h2>Rules the map depends on</h2>
 <ul>
 <li><b>One QuickBooks renewer per app.</b> The server gets its own Intuit app; it never re-authorizes the Mac's app.</li>
-<li><b>One mirror writer.</b> The day the server takes the refresh, the Mac's refresh is turned off. The Mac reads a finished copy, never the live file over the share.</li>
-<li><b>One writer per file.</b> The day the AP/AR sync moves, the Mac stops running it. Both trackers live on the Accounting share, so no OneDrive bridge is needed.</li>
+<li><b>Two mirrors, never shared.</b> Each machine keeps its own mirror with its own QuickBooks login, so the server never waits on the Mac and the Mac never opens a file over the share. They are compared nightly; the QBO Audit reads the Mac's change log.</li>
+<li><b>One writer per file.</b> Only the machine named as the writer may write the trackers (a lock file on the share); the day the AP/AR sync moves, the Mac stops running it and can take it back by flipping that setting. Both trackers live on the Accounting share, so no OneDrive bridge is needed.</li>
 <li><b>Tools never import tools.</b> Everything common lives in <code>shared/</code>, so a tool moves with <code>shared/</code> and nothing else.</li>
 <li><b>Who writes to QuickBooks:</b> Pay in QuickBooks and Re-apply (ledger), the recode <code>--commit</code>, bulk close (never MFD), and the loans-to-subs reclass. All gated, all on the Mac.</li>
 </ul>
