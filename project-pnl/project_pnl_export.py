@@ -7477,8 +7477,12 @@ def generate_project_pnl(
             month = (dt.date(_ym[0], _ym[1], 1) if _ym
                      else income_groups[lbl]["period"][1]).strftime("%B %Y")
             name = f"Draw – {month}"
-            ui_warn(f"no draw # in memo for {lbl} - labeled '{name}' by "
-                    f"{'the memo' if _ym else 'date'}")
+            # A memo that names its month ("September Draw 2026") is the MFD
+            # convention, not a problem - only warn when the memo names neither
+            # a number nor a month and the label had to come from the date.
+            if not _ym:
+                ui_warn(f"no draw # or month in memo for {lbl} - labeled "
+                        f"'{name}' by the period end date")
         draw_rows.append((name, lbl, net, costs, held, billed))
         cov_s = f"{net / costs * 100:.0f}%" if costs else "—"
         ui_event(f"{name}  {_DIM}{lbl}{_RESET}  billed ${net:,.0f} · "

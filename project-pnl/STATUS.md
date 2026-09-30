@@ -7,6 +7,9 @@ manual close), RP (no draws — expenses → invoice → profit).
 ---
 
 ## DONE / FINALIZED
+- 2026-09-30 · **No false "no draw #" warning on month-named draws** - a memo like "September Draw 2026 (Period: …)"
+  already names the sheet by its month and the period drives the window; the yellow warning now fires only when the memo
+  names neither a draw number nor a month.
 - 2026-09-30 · **CP Overview reads year-filed finished jobs** - `Completed Projects/<year>/<job>/Profit and Loss/`
   (CP610 is filed under 2025); the walk descends into 4-digit year folders under an archive folder.
 - 2026-09-30 · **CP Overview lives in the Active Awarded Projects folder on Common** (owner: "cp overview should live in the
