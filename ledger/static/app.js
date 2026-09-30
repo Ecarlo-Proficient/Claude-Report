@@ -921,8 +921,22 @@ async function _bvRender() {
     const kv = document.createElement("table"); kv.className = "bv-kv";
     const add = (k, v, cls) => { if (v == null || v === "") return; const r = document.createElement("tr"); const a = document.createElement("th"); a.textContent = k; const c = document.createElement("td"); if (cls) c.className = cls; if (v instanceof Node) c.appendChild(v); else c.textContent = v; r.appendChild(a); r.appendChild(c); kv.appendChild(r); };
     add("Vendor", b.vendor); add("Bill #", b.bill_ref); add("Date", b.date ? fmtDate(b.date) : null);
-    if (b.open != null) add("Open", moneyC(b.open), num(b.open) > 0.005 ? "neg" : "pos");
-    add("Paid", b.pay_date ? "Paid " + fmtDate(b.pay_date) : (b.pay_status || (b.is_sub ? "see QuickBooks (sub bill)" : null)));
+    // how the bill stands with the vendor - QuickBooks' own balance and payments (the mirror), every bill incl. subs
+    // (owner 2026-09-30: "see why this doesn't show the pay status? also account for short pays")
+    const P = b.pay;
+    const payWord = (x) => `${fmtDate(x.date)} · ${x.kind === "credit" ? "credit" : x.kind === "expense" ? "expense" : x.kind === "queued" ? "check queued" : x.kind === "card" ? "card" : "check"}${x.ref ? " " + x.ref : ""} · ${moneyC(x.amount)}`;
+    if (P) {
+      add("Open", moneyC(P.balance), P.balance > 0.005 ? "neg" : "pos");
+      const last = P.payments.filter(x => x.kind !== "credit" && x.kind !== "queued").slice(-1)[0];
+      if (P.state === "paid") add("Paid", last ? `Paid ${fmtDate(last.date)}${last.ref ? " · check " + last.ref : ""}` : (P.credits > 0.005 ? "Closed by vendor credit" : "Paid"), "pos");
+      else if (P.state === "short") add("Paid", `Short paid · ${moneyC(P.paid + P.credits)} of ${moneyC(P.total)} · ${moneyC(P.balance)} still open`, "neg");
+      else if (P.state === "queued") add("Paid", `Check queued, not printed yet · ${moneyC(P.queued)} - nothing has gone to the vendor`, "warn");
+      else add("Paid", `Unpaid · ${moneyC(P.balance)} open`, "neg");
+      if (P.payments.length > 1 || P.credits > 0.005 || P.state === "short") { const ul = document.createElement("div"); ul.className = "bv-pays"; for (const x of P.payments) { const li = document.createElement("div"); li.textContent = payWord(x); ul.appendChild(li); } if (P.payments.length) add("Payments", ul); }
+    } else {
+      if (b.open != null) add("Open", moneyC(b.open), num(b.open) > 0.005 ? "neg" : "pos");
+      add("Paid", b.pay_date ? "Paid " + fmtDate(b.pay_date) : (b.pay_status || (b.is_sub ? "see QuickBooks (sub bill)" : null)));
+    }
     if (b.invoice_no) { const s = document.createElement("span"); s.textContent = `Invoice ${b.invoice_no}`; if (b.invoice) { const paid = (b.invoice.balance || 0) <= 0.005; s.appendChild(document.createTextNode(" · ")); s.appendChild(stText(paid ? "GC paid" : "GC owes " + moneyC(b.invoice.balance), paid ? "st-ok" : "st-warn")); } add("On invoice", s); }
     if (b.invoice_status) add("Tracker", b.invoice_status);
     if (b.approved) add("Approved", b.approved === "approved" ? "Yes" : b.approved);
@@ -946,7 +960,8 @@ async function _bvRender() {
     for (const ln of mineL) { const tr = document.createElement("tr");
       tr.appendChild(rightText(moneyC(ln.amount)));
       { const td = document.createElement("td"); td.className = "left bv-lmemo"; const d = document.createElement("div");
-        const txt = pj ? String(ln.description || "").replace(new RegExp("^\\s*" + pj.replace(/[-]/g, "\\-") + "\\s*[-–:]\\s*", "i"), "") : (ln.description || "");   // the job # at the front is known here
+        const jn = pj || ln.project_no;   // the job # at the front is known (the page's job, or the Project column)
+        const txt = jn ? String(ln.description || "").replace(new RegExp("^\\s*" + jn.replace(/[-]/g, "\\-") + "\\s*[-–:]\\s*", "i"), "") : (ln.description || "");
         d.textContent = txt || "–"; td.title = ln.description || ""; td.appendChild(d); tr.appendChild(td); }
       { const cc = document.createElement("td"); cc.className = "left"; if (ln.cost_code) { const ch = document.createElement("span"); ch.className = "codechip"; ch.textContent = ln.cost_code; cc.appendChild(ch); } else { cc.textContent = ln.account ? ln.account.split(":").pop().trim() : "–"; cc.classList.add("dim"); } tr.appendChild(cc); }
       if (!pj) tr.appendChild(leftText(ln.project_no || "–"));

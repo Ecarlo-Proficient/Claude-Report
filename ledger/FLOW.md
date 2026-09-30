@@ -1,9 +1,8 @@
 # ledger/ - how the Project Ledger works
 
-Last changed: 09/30/2026 - the bill viewer opened from a project page shows the bill as an Excel grid, then
-Bill total - other jobs = that job's costs, and only its lines (Amount · Memo · Cost code); the scan zooms (click 25%,
-wheel, drag) and goes full screen inside the viewer with ← Back. Earlier the same day: the Draw overview, pinned
-headers and no funding helpers (see STATUS).
+Last changed: 09/30/2026 - the bill viewer's pay status comes from the QBO mirror for every bill (subs included):
+Paid · Short paid (paid of total, still open) · Unpaid · Check queued; the Bill Tracker is only the fallback. Earlier
+the same day: the viewer's job share + zoomable scan, the Draw overview, pinned headers, no funding helpers.
 
 Update this chart - and the line above - in the same commit as any change to `ledger/`
 (`.github/flow_guard.sh` fails the push otherwise). The full system map is `docs/ARCHITECTURE.md`.

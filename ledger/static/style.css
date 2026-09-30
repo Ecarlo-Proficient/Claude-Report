@@ -2363,3 +2363,6 @@ html:has(.xdlg-ov) { overflow: hidden; }
 .bv-lines td.bv-lmemo > div { max-height: 5.2em; }
 .att-tools .btn { white-space: nowrap; flex: none; }
 .att-tools b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; word-break: normal; }
+.bv-kv td.warn { color: var(--warn-text); }
+.bv-pays { font-weight: 500; font-variant-numeric: tabular-nums; line-height: 1.45; }
+.bv-lines th:nth-child(4), .bv-lines td:nth-child(4) { width: 78px; }

@@ -4,6 +4,13 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-30 · **Bill viewer: pay status for every bill, short pays included** (owner: "see why this doesn't show the
+  pay status? also account for short pays"). Sub bills showed "see QuickBooks (sub bill)" because the viewer read pay
+  status from the Bill Tracker, which leaves subs out. `_bill_pay_state` now reads QBO's own balance and every bill
+  payment / vendor credit applied to the bill from the mirror: **Paid <date> · check #**, **Short paid · $paid of $total
+  · $open still open** (red) with each payment listed, **Unpaid · $open** (red), or **Check queued, not printed yet**
+  (a To-print check zeroes QBO's balance but has paid no one). Falls back to the tracker when the mirror is missing.
+  No separate sub bill tracker needed - the mirror already holds every bill. Line memos drop the job # at the front.
 - 2026-09-30 · **Bill viewer: the job's share + zoomable scan** (owner review, example JMP Concrete 3066MFD on MFD192).
   Opened from a project page (the job rides on each viewer item as `project`): no Project / Client rows, the bill
   details as an Excel grid (label beside value, lines between cells; the bill memo scrolls only when long), then

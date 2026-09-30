@@ -3387,6 +3387,66 @@ class Handler(BaseHTTPRequestHandler):
     def _query(self) -> dict:
         return {k: v[0] for k, v in parse_qs(urlparse(self.path).query).items()}
 
+    @staticmethod
+    def _bill_pay_state(bid: str, total) -> "dict | None":
+        """How a bill stands with the vendor, straight from the QBO mirror - every bill, subs included (the Bill Tracker
+        leaves subs out; owner 2026-09-30: "see why this doesn't show the pay status? also account for short pays").
+        Balance is QBO's own; each bill payment / vendor credit applied to THIS bill is listed with its date, check # and
+        amount. A check still waiting to print zeroes the balance in QBO but has not paid anyone - reported as queued."""
+        try:
+            from shared import qbo_mirror
+            if not qbo_mirror.db_path().exists():
+                return None
+            mcon = qbo_mirror.connect()
+        except Exception:                                   # noqa: BLE001 - no mirror = the tracker's word stands
+            return None
+        try:
+            rec = qbo_mirror.get("Bill", bid, con=mcon) or qbo_mirror.get("Purchase", bid, con=mcon)
+            if not rec:
+                return None
+            tot = float(rec.get("TotalAmt") if rec.get("TotalAmt") is not None else (total or 0))
+            if "Balance" not in rec:                        # a Purchase (expense) is paid when it is entered
+                return {"state": "paid", "total": tot, "balance": 0.0, "paid": tot, "credits": 0.0, "queued": 0.0,
+                        "payments": [{"date": rec.get("TxnDate"), "amount": tot, "ref": rec.get("DocNumber"), "kind": "expense"}]}
+            bal = float(rec.get("Balance") or 0)
+            pays, paid, credits, queued = [], 0.0, 0.0, 0.0
+            for lt in rec.get("LinkedTxn") or []:
+                tt, tid = str(lt.get("TxnType") or ""), str(lt.get("TxnId") or "")
+                ent = "BillPayment" if tt.startswith("BillPayment") else ("VendorCredit" if tt == "VendorCredit" else None)
+                if not ent or not tid:
+                    continue
+                pr = qbo_mirror.get(ent, tid, con=mcon)
+                if not pr:
+                    continue
+                amt = sum(float(ln.get("Amount") or 0) for ln in pr.get("Line") or []
+                          if any(str(x.get("TxnId")) == bid for x in ln.get("LinkedTxn") or []))
+                if ent == "VendorCredit":
+                    credits += amt
+                    kind = "credit"
+                else:
+                    q_ = str((pr.get("CheckPayment") or {}).get("PrintStatus") or "") == "NeedToPrint"
+                    kind = "queued" if q_ else ("check" if pr.get("PayType") == "Check" else "card")
+                    if q_:
+                        queued += amt
+                    else:
+                        paid += amt
+                pays.append({"date": pr.get("TxnDate"), "amount": round(amt, 2), "ref": pr.get("DocNumber"), "kind": kind})
+            pays.sort(key=lambda x: x.get("date") or "")
+            if queued > 0.005 and bal <= 0.005 and paid + credits < tot - 0.005:
+                state = "queued"
+            elif bal <= 0.005:
+                state = "paid"
+            elif paid + credits > 0.005:
+                state = "short"                              # part paid, the rest still open
+            else:
+                state = "unpaid"
+            return {"state": state, "total": round(tot, 2), "balance": round(bal, 2), "paid": round(paid, 2),
+                    "credits": round(credits, 2), "queued": round(queued, 2), "payments": pays}
+        except Exception:                                   # noqa: BLE001
+            return None
+        finally:
+            mcon.close()
+
     def _bill_info(self, q: dict) -> None:
         """Everything the ledger holds on one bill, for the viewer beside its scan (owner 2026-09-16: "a bigger
         version of the bill info so we see all and can flip through multiple bills"): the header from cost_line
@@ -3434,6 +3494,7 @@ class Handler(BaseHTTPRequestHandler):
                     "invoice_no": t0.get("invoice_no"), "gc_paid_date": t0.get("gc_paid_date"), "invoice": inv,
                     "projects": projects, "clients": sorted({proj_customer[p] for p in projects if proj_customer.get(p)}),
                     "is_sub": bool(any(ln.get("is_sub") for ln in lines)),
+                    "pay": self._bill_pay_state(bid, h.get("bill_total") if h.get("bill_total") is not None else t0.get("bill_total")),
                     "lines": [{"description": ln.get("description"), "cost_code": ln.get("cost_code"), "account": ln.get("account"),
                                "project_no": ln.get("project_no"), "amount": ln.get("amount")} for ln in lines]})
 
