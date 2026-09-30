@@ -2605,6 +2605,7 @@ def _cov(net: float, costs: float, overhead_pct: float):
 def build_sheet_transactions(
     wb: Workbook, proj: str, cust_info: dict, wip_info: dict,
     tx: dict, as_of: str, realm: str = "", paid_map: Optional[dict] = None,
+    att_links: Optional[Dict[str, dict]] = None,
 ) -> Dict[str, str]:
     """
     TRANSACTIONS sheet — every invoice + bill behind the P&L (the user 2026-06-22:
@@ -2627,6 +2628,12 @@ def build_sheet_transactions(
         "COGS are SUM links to the totals on this sheet — click a P&L number to "
         "trace it here."))
     leg.font = Font(italic=True, size=BASE_SIZE - 2, color="595959")
+    if att_links:
+        # the job's whole scan library, beside this workbook (stored relative
+        # link, same as the per-bill ones)
+        fl = ws.cell(row=r, column=7, value="Open scans folder")
+        fl.hyperlink = "attachments"
+        fl.font = Font(size=BASE_SIZE - 1, color="0563C1", underline="single")
     r += 2
 
     def cell(rr, c, v, *, bold=False, fmt=None, color="000000", fill=None,
@@ -2823,6 +2830,16 @@ def build_sheet_transactions(
                     _lbl, _col = _pay_state(_pd[0], _pd[1])
                     if _lbl:
                         cell(r, 6, _lbl, bold=True, color=_col)
+            # The uploaded bill scan beside the QBO link (the user 2026-09-30:
+            # every P&L, not only jobs with a coded takeoff). Same stored
+            # relative link as the Labor/Concrete sheets; several scans open
+            # that bill's own folder under attachments/.
+            _att = (att_links or {}).get(ln.get("txn_id"))
+            if _att:
+                sc = cell(r, 7, "Open scan" if _att["n"] == 1
+                          else f"Open folder ({_att['n']} files)", color=LINK)
+                sc.hyperlink = _att["link"]
+                sc.font = Font(size=SZ, color=LINK, underline="single")
             ws.row_dimensions[r].outline_level = 1   # collapsible, open default
             r += 1
         vt = ws.cell(row=vrow, column=5,
@@ -2845,11 +2862,11 @@ def build_sheet_transactions(
         nonlocal r
         cell(r, 1, title, bold=True, size=BASE_SIZE, color="FFFFFF",
              fill=SECTION_HDR)
-        for c in range(2, 7):                       # bills use cols A–F
+        for c in range(2, 8):                       # bills use cols A–G
             ws.cell(row=r, column=c).fill = SECTION_HDR
         r += 1
         for c, h in ((1, "Ref #"), (2, "Date"), (3, "Memo"),
-                     (4, "Account"), (5, "Amount"), (6, "Paid?")):
+                     (4, "Account"), (5, "Amount"), (6, "Paid?"), (7, "Scan")):
             hc = cell(r, c, h, bold=True, color=NAVY); hc.border = BOTTOM_BORDER
         r += 1
         anchor_rows = []    # rows whose E cells the TOTAL row sums
@@ -7563,9 +7580,23 @@ def generate_project_pnl(
         _ni = sum(len(x["docs"]) for x in tx["income"] if x.get("docs"))
         ui_event(f"income combined per draw (standing ruling): {_ni} invoices -> "
                  f"{_nd} draws", icon="⚑", color=_YEL)
+    # Every bill and expense on the Transactions sheet gets its scan (the user
+    # 2026-09-30 - CP610 has no coded takeoff, so the Labor/Concrete sheets that
+    # used to carry the only scan links were never built). Idempotent: a file
+    # already in attachments/ is not downloaded again.
+    _tx_seen = set()
+    _tx_txns = []
+    for _grp in (tx["cogs"], tx["exp"]):
+        for _lines in _grp.values():
+            for _l in _lines:
+                if _l.get("txn_id") and _l["txn_id"] not in _tx_seen:
+                    _tx_seen.add(_l["txn_id"])
+                    _tx_txns.append((_l["txn_id"], _l["tx_type"], _l.get("ref")))
+    _tx_atts = fetch_txn_attachments(access, company_id, _tx_txns,
+                                     proj_dir / "attachments")
     tx_refs = build_sheet_transactions(wb, proj, cust_info, wip_info, tx, as_of,
                                        paid_map=paid_map,
-                                       realm=company_id)
+                                       realm=company_id, att_links=_tx_atts)
     # Second view of the same lines, pivoted account → vendor, so a P&L figure
     # can be clicked straight through to what makes it up (the user 2026-08-27).
     acct_anchors = build_sheet_by_account(wb, proj, cust_info, wip_info, tx,

@@ -2,7 +2,8 @@
 
 Last changed: 09/30/2026 - NEW `qbo_trust.py`, the QuickBooks trust gate every WIP write passes
 (duplicate customers, name typos, costs with no project, flatwork on the slab, a stale copy). It
-also owns `duplicate_groups`, which the ledger's Duplicate customers page reads.
+also owns `duplicate_groups`, which the ledger's Duplicate customers page reads. Same day: `pnl_paths`
+finds a finished CP job's folder under `Completed Projects/<year>/` (active awarded folders first).
 
 `shared/` is the ONLY importable common code (repo rule): a tool imports from here, never from
 another tool. Update this chart - and the line above - in the same commit as any change to
@@ -75,7 +76,7 @@ flowchart LR
     subgraph SAFE["Every Excel file"]
         XG["xlsx_guard.py<br/>outside text never a formula"]:::mod
         XV["xlsx_verify.py<br/>assert_clean - no repair prompt"]:::mod
-        PATHS["paths.py · pnl_paths.py<br/>per-machine paths, CompanyHealth layout"]:::mod
+        PATHS["paths.py · pnl_paths.py<br/>per-machine paths, CompanyHealth layout,<br/>CP job folders incl. Completed Projects"]:::mod
     end
 
     WIPT["wip/<br/>the WIP update"]:::use

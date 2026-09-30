@@ -387,9 +387,31 @@ def overview_dir(div: str, bypass: bool = False) -> Path:
     return division_dir(div, bypass=bypass)
 
 
+CP_COMPLETED_SUBDIR = "Completed Projects"
+
+
+def _completed_cp_dirs(base: Path):
+    """Where FINISHED CP jobs are filed: `<base>/Completed Projects/` itself and
+    its year folders (`2025/`), newest year first. CP610 lives in
+    `Completed Projects/2025/`, and the lookup used to stop at the top level, so a
+    finished job lost its takeoff, pay app, scans and home (the user 2026-09-30)."""
+    done = base / CP_COMPLETED_SUBDIR
+    try:
+        if not done.is_dir():
+            return []
+        years = sorted((d for d in done.iterdir()
+                        if d.is_dir() and re.fullmatch(r"\d{4}", d.name)),
+                       key=lambda d: d.name, reverse=True)
+    except OSError:
+        return []
+    return [done] + years
+
+
 def _find_awarded_cp_folder(base: Path, proj: str):
     """Awarded-project folder for a CP job, matched by project # (full match wins,
-    bare-number match on a digit boundary as fallback). None if base unreachable."""
+    bare-number match on a digit boundary as fallback). Active jobs at the top
+    level first, then the Completed Projects archive - full match ONLY there, so a
+    bare number can never pick an old job. None if base unreachable."""
     try:
         if not base.is_dir():
             return None
@@ -406,7 +428,18 @@ def _find_awarded_cp_folder(base: Path, proj: str):
             return child
         if num and numbered is None and re.search(rf"(?<!\d){num}(?!\d)", child.name):
             numbered = child               # weaker: bare-number match, keep first
-    return numbered
+    if numbered is not None:
+        return numbered
+    strong = re.compile(re.escape(pu) + r"(?!\d)")   # CP592 never matches CP5921
+    for where in _completed_cp_dirs(base):
+        try:
+            children = sorted(where.iterdir())
+        except OSError:
+            continue
+        for child in children:
+            if child.is_dir() and strong.search(re.sub(r"[\s\-_]+", "", child.name.upper())):
+                return child
+    return None
 
 
 def resolve_project_out_dir(proj: str, out_dir: "Path | None" = None,
