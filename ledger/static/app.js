@@ -112,9 +112,10 @@ function applySettings() {
 // toggle (an `onclick` of their own) are left alone. Kinds and their default state:
 const GRP_KINDS = [
   { sel: "tr.bill-group.pq-band", kind: "band", open: true },   // Pay in QuickBooks review: a vendor's payment (approval work - open; before bill-group so it wins)
+  { sel: "tr.bill-group.dt-group", kind: "band", open: true },   // audit pages: Recent / a day / a month (owner 2026-09-30) - open, like Notion's groups
   { sel: "tr.bill-group", kind: "band", open: false },        // vendor / client / division bands in tables
-  { sel: "tr.vp-pay", kind: "sib", open: false, until: "tr.vp-pay" },   // vendor page Payments: a payment over the bills it paid (owner 2026-09-22)
-  { sel: "tr.qa-pay", kind: "sib", open: false, until: "tr:not(.qa-child)" },   // QBO changes: a check over the bills it lost (owner 2026-09-24: "it's just too much")
+  { sel: "tr.vp-pay", kind: "sib", open: false, until: "tr.vp-pay, tr.bill-group" },   // vendor page Payments: a payment over the bills it paid (owner 2026-09-22)
+  { sel: "tr.qa-pay", kind: "sib", open: false, until: "tr:not(.qa-child)", skip: "tr.qa-detail:not(.qa-child)" },   // skip = the check's own "what changed" line stays visible   // QBO changes: a check over the bills it lost (owner 2026-09-24: "it's just too much")
   { sel: "tr.sys-group", kind: "band", open: false },         // Systems: a domain
   { sel: "tr.tr-msum", kind: "band", open: false },           // the money trail: a month
   { sel: ".pnl-codegrp", kind: "sib", open: false, until: ".pnl-codegrp" },   // P&L: a job type over its cost codes
@@ -132,7 +133,8 @@ let _grpState = (() => { try { return JSON.parse(localStorage.getItem(GRP_LS)) |
 const GRP_HEADER_TR = "tr.bill-group, tr.sys-group, tr.tr-msum, tr.tr-total, tr.pp-sect, tr.bill-subgroup, tr.inv-client, tr.sumRow";
 function _grpChildren(h, def) {
   if (def.kind === "band") { const out = []; let e = h.nextElementSibling; while (e && !e.matches(GRP_HEADER_TR)) { out.push(e); e = e.nextElementSibling; } return out; }
-  if (def.kind === "sib") { const out = []; let e = h.nextElementSibling; while (e && !e.matches(def.until)) { out.push(e); e = e.nextElementSibling; } return out; }
+  if (def.kind === "sib") { const out = []; let e = h.nextElementSibling; while (e && def.skip && e.matches(def.skip)) e = e.nextElementSibling;
+    while (e && !e.matches(def.until)) { out.push(e); e = e.nextElementSibling; } return out; }
   return [...h.parentElement.children].filter(c => c !== h);   // parent: everything in the card but the head
 }
 function _grpKeyOf(h, def) {   // keyed on the NAME (not the caret, not the amounts that change every sync) so the choice sticks
@@ -8557,6 +8559,39 @@ async function qaSetOk(c, ok) {   // a ledger write (qbo_change_ok) - never Quic
     const y = window.scrollY; renderQboAudit(); window.scrollTo(0, y);
   } catch (e) { toast ? toast("Could not save: " + e.message) : alert("Could not save: " + e.message); }
 }
+// ── Audit pages: the most recent on top + Notion-style Group by (owner 2026-09-30: "i need to see the most recent changes
+// ... ability to do a filter like notion where i can group by date/month then the regular how it is. the default should
+// be the way it is but now put the most recent changes on top as a reminder"). QBO changes · Checks QBO changed ·
+// Uncleared checks · Bills to fix. None (default) = the page as it was, with the last AUD_RECENT_DAYS pulled into a
+// Recent band on top; Day / Month = every row in date bands, newest first. The choice is remembered per page.
+const AUD_RECENT_DAYS = 7, _AUD_LS = "proficient-ledger-audit-groupby-v1";
+function audGroupBy(page) { try { return (JSON.parse(localStorage.getItem(_AUD_LS)) || {})[page] || "none"; } catch { return "none"; } }
+function audSetGroupBy(page, v) { try { const o = JSON.parse(localStorage.getItem(_AUD_LS)) || {}; o[page] = v; localStorage.setItem(_AUD_LS, JSON.stringify(o)); } catch {} }
+const audDay = v => { const m = String(v || "").match(/^(\d{4})-(\d{2})-(\d{2})/); if (m) return m[0];
+  const d = v ? new Date(v) : null; return d && !isNaN(d) ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}` : ""; };
+function audBuckets(rows, dayOf, mode) {
+  if (mode === "day" || mode === "month") {
+    const by = new Map();
+    for (const r of rows) { const d = audDay(dayOf(r)); const k = d ? (mode === "month" ? d.slice(0, 7) : d) : ""; if (!by.has(k)) by.set(k, []); by.get(k).push(r); }
+    return [...by.entries()].sort((a, b) => (b[0] || "0").localeCompare(a[0] || "0")).map(([k, list]) => ({ key: k || "nodate", rows: list,
+      label: !k ? "(no date)" : mode === "month" ? new Date(+k.slice(0, 4), +k.slice(5, 7) - 1, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" })
+        : new Date(+k.slice(0, 4), +k.slice(5, 7) - 1, +k.slice(8, 10)).toLocaleDateString(undefined, { weekday: "short" }) + " " + fmtDateShort(k) }));
+  }
+  const cut = new Date(); cut.setDate(cut.getDate() - AUD_RECENT_DAYS); const c = audDay(cut.toISOString());
+  const recent = rows.filter(r => audDay(dayOf(r)) >= c);
+  if (!recent.length) return [{ key: "", label: "", rows }];            // nothing recent: exactly the page as it was
+  const rs = new Set(recent);
+  return [{ key: "recent", label: `Recent · last ${AUD_RECENT_DAYS} days`, rows: recent, recent: true }, { key: "rest", label: "Earlier", rows: rows.filter(r => !rs.has(r)) }];
+}
+function audBand(page, g, colSpan) {
+  const tr = document.createElement("tr"); tr.className = "bill-group dt-group" + (g.recent ? " dt-recent" : ""); tr.dataset.grpkey = `${page}|${audGroupBy(page)}|${g.key}`;
+  const td = document.createElement("td"); td.colSpan = colSpan; td.className = "left";
+  const cell = document.createElement("div"); cell.className = "bg-cell";
+  const k = document.createElement("span"); k.className = "bg-key"; k.textContent = g.label; cell.appendChild(k);
+  const n = document.createElement("span"); n.className = "acct-band-n"; n.textContent = `${g.rows.length}`; cell.appendChild(n);
+  td.appendChild(cell); tr.appendChild(td); return tr;
+}
+
 // One value, or "before → after" when this change moved it (owner 2026-09-29: "Class Before = x > Class after = y").
 // Two+ values show the first two and "+N" (all of them in the tooltip).
 function qaMoved(b, a, what) {
@@ -8674,10 +8709,15 @@ function renderQboAudit() {
     if (c.detail.length > shown.length) { const d = document.createElement("div"); d.className = "dim"; d.textContent = `…and ${c.detail.length - shown.length} more`; td.appendChild(d); }
     tr.appendChild(td); return tr;
   };
-  for (const c of rows.slice(0, 600)) {
-    frag.appendChild(qaRow(c, false));
-    { const d = qaDetail(c, false); if (d) frag.appendChild(d); }
-    for (const k of kids[c.id] || []) { frag.appendChild(qaRow(k, true)); const d = qaDetail(k, true); if (d) frag.appendChild(d); }
+  const shown = new Set(rows.slice(0, 600));
+  for (const g of audBuckets(rows, c => c.changed_at, audGroupBy("qboaudit"))) {
+    const gr = g.rows.filter(c => shown.has(c)); if (!gr.length) continue;
+    if (g.label) frag.appendChild(audBand("qboaudit", { ...g, rows: gr }, cols.length));
+    for (const c of gr) {
+      frag.appendChild(qaRow(c, false));
+      { const d = qaDetail(c, false); if (d) frag.appendChild(d); }
+      for (const k of kids[c.id] || []) { frag.appendChild(qaRow(k, true)); const d = qaDetail(k, true); if (d) frag.appendChild(d); }
+    }
   }
   tbody.appendChild(frag);
   if (rows.length > 600) { const tr = document.createElement("tr"); const td = document.createElement("td"); td.colSpan = cols.length; td.className = "left dim"; td.style.padding = "10px 14px"; td.textContent = `${rows.length - 600} more - narrow the search`; tr.appendChild(td); tbody.appendChild(tr); }
@@ -8773,7 +8813,9 @@ function renderCheckDrift() {
   if (!rows.length) { tbody.innerHTML = `<tr><td colspan="${cols.length}" class="left" style="padding:14px;color:var(--text-dim)">${all.length ? "Nothing matches." : "No check QuickBooks changed - every paid check still sits on its bills."}</td></tr>`; return; }
   const frag = document.createDocumentFragment();
   const billTxt = b => `#${b.doc_number} ${fmtDateShort(b.txn_date)} ${qaCents(b.balance)}` + (b.exact ? "" : " (possible)");
-  for (const r of rows) {
+  for (const g of audBuckets(rows, r => r.changed_local || r.last_changed, audGroupBy("checkdrift"))) {
+  if (g.label) frag.appendChild(audBand("checkdrift", g, cols.length));
+  for (const r of g.rows) {
     const tr = document.createElement("tr"); tr.className = "vp-pay";
     { const td = document.createElement("td"); td.className = "left"; const sp = document.createElement("span");
       if (typeof openVendorPage === "function") { const a = document.createElement("a"); a.href = "#"; a.textContent = r.vendor || "–"; a.title = "Open the vendor page"; a.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openVendorPage(r.vendor); }; sp.appendChild(a); }
@@ -8800,6 +8842,7 @@ function renderCheckDrift() {
     tr.appendChild(leftText(r.changed_local ? fmtDate(r.changed_local, true) : "–"));   // Central, not QBO's Pacific stamp
     frag.appendChild(tr);
     frag.appendChild(cdFixRow(r, cols.length));
+  }
   }
   tbody.appendChild(frag);
 }
@@ -8989,7 +9032,9 @@ function renderUncleared() {
   tbody.innerHTML = "";
   if (!rows.length) { tbody.innerHTML = `<tr><td colspan="${cols.length}" class="left" style="padding:14px;color:var(--text-dim)">${all.length ? "Nothing matches." : "No uncleared checks."}</td></tr>`; return; }
   const frag = document.createDocumentFragment();
-  for (const c of rows.slice(0, 1500)) {
+  for (const g of audBuckets(rows.slice(0, 1500), c => c.txn_date, audGroupBy("uncleared"))) {
+  if (g.label) frag.appendChild(audBand("uncleared", g, cols.length));
+  for (const c of g.rows) {
     const tr = document.createElement("tr");
     tr.appendChild(qboLinkCell(c.check_no || "–", qboUrl(c.txn_type === "Check" ? "check" : "billpayment", c.qbo_txn_id), "Open in QuickBooks"));
     tr.appendChild(leftText(c.txn_date ? fmtDateShort(c.txn_date) : "–"));
@@ -9002,6 +9047,7 @@ function renderUncleared() {
     { const td = document.createElement("td"); td.className = "right" + (c.feed_matched && c.days > 30 ? " neg" : ""); td.textContent = c.days == null ? "–" : String(c.days); tr.appendChild(td); }
     tr.appendChild(leftText(c.txn_type === "Check" ? "Check" : "Bill payment"));
     frag.appendChild(tr);
+  }
   }
   tbody.appendChild(frag);
 }
@@ -9135,7 +9181,7 @@ function renderAccounting() {
   // fixed meta widths (px) so one long outlier can't blow a column wide (the old wasted
   // space); the two text columns (null width) share the rest and wrap - nothing truncates.
   const cols = [["Vendor", "left audit-soft", 160], ["Bill #", "left", 118],
-    ["📎", "left", 44], ["Date", "left", 112], ["Project", "left", 140], ["Class (QuickBooks)", "left", 124], ["Cost", "left", 64], ["Amount", "right", 92],
+    ["📎", "left", 44], ["Date", "left", 112], ["Project", "left", 140], ["Class (QuickBooks)", "left", 124], ["Cost", "left", 64], ["Amount", "right", 118],   // 118: cents (09-30)
     ["Line memo", "left audit-soft", null], ["Why flagged", "left audit-soft", null]];
   thead.innerHTML = ""; const htr = document.createElement("tr");
   const chTh = document.createElement("th"); chTh.className = "left acct-check"; chTh.style.width = "32px";
@@ -9165,13 +9211,21 @@ function renderAccounting() {
   const frag = document.createDocumentFragment();
   // one collapsible band per issue (GRP_KINDS tr.bill-group), its bills under it - the issue is said ONCE, not squeezed into every row
   // every issue gets its band; the render cap applies PER issue (a total cap hid whole issues past the first 250 rows)
-  const byIssue = new Map();
-  for (const f of rows) { if (!byIssue.has(f.issue)) byIssue.set(f.issue, []); byIssue.get(f.issue).push(f); }
-  const allByIssue = {}; for (const [iss, l] of byIssue) allByIssue[iss] = l.length;
-  const bands = [...byIssue.entries()].sort((a, b) => b[1].length - a[1].length);
+  // Recent / Day / Month (owner 2026-09-30): date bands; inside the date bands a row names its issue (no issue band there)
+  const _ag = audGroupBy("billaudit"), dateGroups = audBuckets(rows, f => f.date, _ag);
+  const byIssue = new Map(), issueTag = new Set();
+  for (const g of dateGroups) {
+    if (!g.label || g.key === "rest") continue;
+    byIssue.set(" " + g.key, g.rows); for (const f of g.rows) issueTag.add(f);
+  }
+  const rest = _ag === "none" ? (dateGroups.find(g => g.key === "rest" || !g.label) || { rows: [] }).rows : [];
+  const issueBands = new Map(); for (const f of rest) { if (!issueBands.has(f.issue)) issueBands.set(f.issue, []); issueBands.get(f.issue).push(f); }
+  const allByIssue = {}; for (const [iss, l] of issueBands) allByIssue[iss] = l.length;
+  const bands = [...byIssue.entries(), ...[...issueBands.entries()].sort((a, b) => b[1].length - a[1].length)];
   for (const [iss, full] of bands) {
   const list = full.slice(0, ACCT_CAP);
-  { const hr = document.createElement("tr"); hr.className = "bill-group acct-band"; hr.dataset.grpkey = "acct:" + iss;
+  if (iss.startsWith(" ")) { const g = dateGroups.find(x => " " + x.key === iss); frag.appendChild(audBand("billaudit", g, cols.length + 1)); }
+  else { const hr = document.createElement("tr"); hr.className = "bill-group acct-band"; hr.dataset.grpkey = "acct:" + iss;
     const td = document.createElement("td"); td.colSpan = cols.length + 1; td.className = "left";
     const k = document.createElement("span"); k.className = "bg-key"; k.textContent = iss; td.appendChild(k);
     const n = document.createElement("span"); n.className = "acct-band-n"; n.textContent = `${allByIssue[iss]} bill${allByIssue[iss] === 1 ? "" : "s"}`; td.appendChild(n);
@@ -9201,7 +9255,9 @@ function renderAccounting() {
     tr.appendChild(leftText(f.cost_code || "–"));
     tr.appendChild(rightText(f.amount != null ? moneyC(f.amount) : ""));
     const mc = document.createElement("td"); mc.className = "left audit-soft"; mc.textContent = f.memo || "–"; if (!f.memo) mc.classList.add("audit-dim"); tr.appendChild(mc);
-    const dc = document.createElement("td"); dc.className = "left audit-soft"; dc.textContent = f.detail || ""; tr.appendChild(dc);
+    const dc = document.createElement("td"); dc.className = "left audit-soft";
+    if (issueTag.has(f)) { const t = document.createElement("span"); t.className = "qa-flag warn"; t.textContent = f.issue; dc.append(t, " "); }   // no issue band above it
+    dc.append(f.detail || ""); tr.appendChild(dc);
     frag.appendChild(tr);
   }
   if (full.length > ACCT_CAP) {
@@ -9504,6 +9560,13 @@ function init() {
       "Pull QBO health metrics now?\n\nOne loader: bank balances, P&L blocks, 13 weeks of cash flow, and the recurring-obligations register - read-only against QuickBooks, Touch ID on this Mac, under a minute. Everything else on the Health tab is already live from the ledger.",
       { btn: el, prog: $("#healthProg"), fill: $("#healthFill"), step: $("#healthStep") }); }
   { const el = $("#btnAcctReload"); if (el) el.onclick = () => loadAccounting(true); }
+  // Group by (audit pages): None / Day / Month, remembered per page
+  { const RR = { qboaudit: () => renderQboAudit(), checkdrift: () => renderCheckDrift(), uncleared: () => renderUncleared(), billaudit: () => { if (ACCT && ACCT.ok) renderAccounting(); } };
+    for (const seg of document.querySelectorAll(".aud-groupby")) {
+      const pg = seg.dataset.page, paint = () => seg.querySelectorAll(".seg-btn").forEach(b => b.classList.toggle("on", b.dataset.g === audGroupBy(pg)));
+      paint();
+      seg.querySelectorAll(".seg-btn").forEach(b => b.onclick = () => { audSetGroupBy(pg, b.dataset.g); paint(); const y = window.scrollY; RR[pg](); window.scrollTo(0, y); });
+    } }
   { const el = $("#qaSearch"); if (el) { el.addEventListener("input", renderQboAudit); el.addEventListener("keydown", e => { if (e.key === "Escape") { el.value = ""; renderQboAudit(); } }); } }
   { const el = $("#qaFlaggedOnly"); if (el) el.onchange = renderQboAudit; }
   $$("#qaDays .seg-btn").forEach(b => { b.onclick = () => { qaDays = Number(b.dataset.days); loadQboAudit(true); }; });

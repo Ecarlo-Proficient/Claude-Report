@@ -208,6 +208,9 @@ component below; never rebuild one from scratch, and add to this list when a new
   those are their own filters (a Project # filter sits beside every ref box). ⌘F / Ctrl+F lands in the page's box on
   every page, Esc clears. Paste a column from Excel: one ref per line, a row matching ANY shows (`refHit`,
   `input.ref-search`); on Pay bills the pasted bill #s are ticked onto the run.
+- **Audit pages: Recent on top + Group by None / Day / Month** (owner 2026-09-30) - `audBuckets` / `audBand`; None
+  = the page as it is with the last 7 days in a Recent band on top; Day / Month = date bands newest first. Any new
+  audit page gets the same control.
 - **Bills, invoices, payments and checks show cents** (`moneyC` / `moneyCellC`, owner 2026-09-29: "never round for
   bills/invoices"); WIP / P&L / project / company figures stay whole dollars (`money`).
 - **Payments are groups**: collapsed = ref, date, type, client, amount, stub; the bills paid are the expansion;

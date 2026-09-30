@@ -2157,3 +2157,8 @@ input.ref-search { min-width: 260px; }
 tr.wr-qbo-blocked td { background: color-mix(in srgb, var(--neg) 6%, transparent); }
 .wr-legend { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 4px var(--pad-x) 12px; font-size: .88em; color: var(--text-dim); }
 .wr-legend > span:nth-child(odd) { font-weight: 600; color: var(--text); }
+
+/* Audit pages: Group by (None / Day / Month) + the Recent band (owner 2026-09-30) */
+.aud-groupby-wrap { display: inline-flex; align-items: center; gap: 6px; }
+.aud-groupby-wrap .seg-lbl { color: var(--text-dim); font-size: .85em; }
+tr.dt-group.dt-recent .bg-key { color: var(--accent-text); }

@@ -4,6 +4,15 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-30 · **Audit pages: the most recent on top + Group by None / Day / Month** (owner: "for checks changed or audits
+  in general ... i need to see the most recent changes ... group by date/month then the regular how it is. the default
+  should be the way it is but now put the most recent changes on top as a reminder"). QBO changes, Checks QBO changed,
+  Uncleared checks, Bills to fix: `audBuckets` / `audBand` - None (default) = the page as it was with the last 7 days
+  (`AUD_RECENT_DAYS`) pulled into an open **Recent** band on top (Bills to fix: a Recent band above the issue bands,
+  each recent row naming its issue); Day / Month = date bands newest first, open (GRP_KINDS `tr.bill-group.dt-group`),
+  remembered per page (localStorage). Dates: QBO's change time; the check change time; the check date; the bill date.
+  Fixed on the way: a check's own "what changed" line ended its fold, so the bills it reopened no longer folded under
+  it (GRP sib `skip`); vendor-page payment folds stop at a band; Bills to fix Amount column widened for cents.
 - 2026-09-29 · **Pay bills short pay + paste-to-tick; ref # search app-wide; cents on bills / invoices** (owner: "need the
   ability to short pay a bill ... paste a excel copy of the ref # and it just select automatically ... cmd+f goes to
   find in page ... search bar should only be for ref # ... project # needs to be a different toggle. this is database
