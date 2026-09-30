@@ -4,6 +4,15 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-30 · **Duplicate customers audit page** (owner, after the sync printed "duplicate customers for RP2583 ...":
+  "make a new audit for this in project ledger"). Company > Duplicate customers: `ledger/dup_customers.py` reads the
+  mirror - active customers grouped by project # (`extract_proj`), the one the tools use (`pick_customer`, the same
+  rule as `build_project_customer_map`), every invoice / payment / estimate and bill / expense / JE / vendor credit line
+  on each. Status per project, worst first: Both have invoices · Money on duplicate · Name typo (`RP7340 -FTW`) ·
+  Separate job? (`RP7152-1`) · Empty duplicate. One open band per project (GRP_KINDS `tr.bill-group.dc-band`), chips
+  with counts, ref # search (invoice / bill #), Project # + Status funnels, Group by None / Day / Month on the customer's
+  created date, Refresh from QuickBooks = the `mirror` pipeline. The used customer shows a bill COUNT, the skipped one
+  every bill # (what has to move). Cached per mirror stamp (~6 s cold). First run: 7 project #s.
 - 2026-09-30 · **Project page polish** (owner: "something too amateurish or not right about it" -> "do 1-4", then "do the
   changes and do 5-7"; and "color helps to distinguish different data in a compartmentalized way" - colour is WELCOME
   in the ledger, plain is for files leaving). (1) A real header: the job name, ONE stat line (Contract · Billed % of

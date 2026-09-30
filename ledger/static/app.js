@@ -113,6 +113,7 @@ function applySettings() {
 const GRP_KINDS = [
   { sel: "tr.bill-group.pq-band", kind: "band", open: true },   // Pay in QuickBooks review: a vendor's payment (approval work - open; before bill-group so it wins)
   { sel: "tr.bill-group.dt-group", kind: "band", open: true },   // audit pages: Recent / a day / a month (owner 2026-09-30) - open, like Notion's groups
+  { sel: "tr.bill-group.dc-band", kind: "band", open: true },   // Duplicate customers: a project # over its customers (fix work - open)
   { sel: "tr.bill-group", kind: "band", open: false },        // vendor / client / division bands in tables
   { sel: "tr.vp-pay", kind: "sib", open: false, until: "tr.vp-pay, tr.bill-group" },   // vendor page Payments: a payment over the bills it paid (owner 2026-09-22)
   { sel: "tr.qa-pay", kind: "sib", open: false, until: "tr:not(.qa-child)", skip: "tr.qa-detail:not(.qa-child)" },   // skip = the check's own "what changed" line stays visible   // QBO changes: a check over the bills it lost (owner 2026-09-24: "it's just too much")
@@ -267,12 +268,12 @@ const NAV_GROUPS = [
   { id: "projects",  label: "Projects",  tabs: ["projects"] },
   { id: "vendors",   label: "Vendors",   tabs: ["vendorcenter", "bills", "paybills"] },   // Vendor Center first (owner 2026-09-28); Pay bills its own sub-tab (owner 2026-09-29: "a dedicated sub menu under vendors")
   { id: "customers", label: "Customers", tabs: ["invoices", "customercenter", "payments", "sales"] },
-  { id: "company",   label: "Company",   tabs: ["money", "billaudit", "qboaudit", "checkdrift", "uncleared"] },   // each audit is its own page (owner 2026-09-23 / 09-24)
+  { id: "company",   label: "Company",   tabs: ["money", "billaudit", "qboaudit", "checkdrift", "uncleared", "dupcustomers"] },   // each audit is its own page (owner 2026-09-23 / 09-24 / 09-30)
   { id: "tools",     label: "Tools",     tabs: ["wipreview", "review", "console", "systems"], hidden: true },   // from the gear, not the bar
 ];
 const TAB_LABELS = {
   projects: "Projects", bills: "Bill Tracker", vendorcenter: "Vendor Center", invoices: "Invoice Tracker", customercenter: "Customer Center",
-  payments: "Payments received", sales: "Sales pipeline", money: "Money", billaudit: "Bills to fix", qboaudit: "QBO changes", checkdrift: "Checks QBO changed", uncleared: "Uncleared checks",
+  payments: "Payments received", sales: "Sales pipeline", money: "Money", billaudit: "Bills to fix", qboaudit: "QBO changes", checkdrift: "Checks QBO changed", uncleared: "Uncleared checks", dupcustomers: "Duplicate customers",
   wipreview: "WIP Review", review: "WIP review", console: "Console", systems: "Systems", paybills: "Pay bills", liens: "Lien register",
 };
 const HIDDEN_TAB_GROUP = { liens: "vendors" };   // pages without a sub-tab (opened from the Bill Tracker): the Vendors group stays lit
@@ -323,6 +324,7 @@ function setTab(t) {
   if (t === "qboaudit") loadQboAudit();
   if (t === "checkdrift") loadCheckDrift();
   if (t === "uncleared") loadUncleared();
+  if (t === "dupcustomers") loadDupCustomers();
   if (t === "money") { loadHealth(); renderPnl(); }
   if (t === "wipreview") loadWipReview();
   if (t === "review") loadReview();
@@ -1643,6 +1645,8 @@ const HF_BILL_COLS = {                              // colKey -> [getter, label 
   qaparty: [c => c.ref_name || "", v => v || "(none)"],
   qaproj:  [c => [...new Set([...(c.jobs_before || []), ...(c.jobs_after || [])])], v => v || "(no project)"],
   qaclass: [c => [...new Set([...(c.classes_before || []), ...(c.classes_after || [])])], v => v || "(no class)"],
+  dcproj:  [r => r.project || "", v => v || "(none)"],       // Duplicate customers
+  dcstat:  [r => r.status || "", v => v || "(none)"],
 };
 const _hfVals = v => Array.isArray(v) ? (v.length ? v : [""]) : [v];
 function hfState(tableKey) { return _hf[tableKey] || (_hf[tableKey] = {}); }
@@ -9095,6 +9099,100 @@ function renderUncleared() {
   tbody.appendChild(frag);
 }
 
+// ── Duplicate customers (owner 2026-09-30: "make a new audit for this in project ledger" - the sync's "duplicate customers
+// for RP…" lines). /api/dupcustomers = ledger/dup_customers.py on the QBO mirror: a project # carried by two ACTIVE QuickBooks
+// customers. The tools use one (Used); whatever sits on the other is left out of the P&L, the WIP and the ledger. A project
+// leaves the page once its extra customer is made inactive. One band per project, its customers under it. Read-only.
+let DC = null, dcFilter = "all";
+const DC_BAD = new Set(["Both have invoices", "Money on duplicate"]);
+const DC_KIND = { Bill: "bill", Purchase: "expense", JournalEntry: "journal", VendorCredit: "vendorcredit", Invoice: "invoice" };
+async function loadDupCustomers(force) {
+  const note = $("#dcNote"), table = $("#dcTable"); if (!table) return;
+  if (DC && DC.ok && !force) { renderDupCustomers(); return; }
+  if (note) note.textContent = "loading…";
+  skeletonInto(table.tBodies[0] || table, 6);
+  try { DC = await (await fetch("/api/dupcustomers")).json(); } catch (e) { DC = { ok: false, error: String(e) }; }
+  renderDupCustomers();
+}
+function dcDocsCell(docs, kindOf) {   // several ref #s in one cell, each opening its record in QuickBooks; the rest behind "+N"
+  const td = document.createElement("td"); td.className = "left";
+  if (!docs.length) { td.textContent = "–"; td.classList.add("dim"); return td; }
+  docs.slice(0, 4).forEach((d, i) => {
+    if (i) td.append(", ");
+    const lbl = (d.type && d.type !== "Bill" ? (d.type === "Purchase" ? "Exp " : d.type === "JournalEntry" ? "JE " : "VC ") : "") + (d.doc || d.id);
+    const a = document.createElement("a"); a.href = qboUrl(kindOf(d), d.id) || "#"; a.target = "_blank"; a.rel = "noopener"; a.textContent = lbl;
+    a.title = [d.date ? fmtDateShort(d.date) : "", d.vendor || "", d.amount != null ? moneyC(d.amount) : ""].filter(Boolean).join(" · ") + " - open in QuickBooks";
+    td.appendChild(a);
+  });
+  if (docs.length > 4) { const m = document.createElement("span"); m.className = "dim"; m.textContent = ` +${docs.length - 4}`; m.title = docs.slice(4).map(d => d.doc || d.id).join(", "); td.appendChild(m); }
+  return td;
+}
+function renderDupCustomers() {
+  const note = $("#dcNote"), filt = $("#dcFilters"), table = $("#dcTable"); if (!table) return;
+  const thead = table.querySelector("thead"), tbody = table.querySelector("tbody");
+  if (!DC || !DC.ok) {
+    if (note) note.textContent = ""; filt.innerHTML = ""; thead.innerHTML = "";
+    tbody.innerHTML = `<tr><td class="left" style="padding:14px;color:var(--text-dim)">${_ge((DC && DC.error) || "")}</td></tr>`;
+    return;
+  }
+  const groups = DC.groups || [];
+  if (note) note.textContent = `refreshed ${DC.loaded_at ? fmtDate(DC.loaded_at, true) : "never"}`;
+  filt.innerHTML = "";
+  for (const [key, label] of [["all", "All"], ...(DC.statuses || []).map(x => [x, x])]) {
+    const n = key === "all" ? groups.length : groups.filter(g => g.status === key).length;
+    if (key !== "all" && !n) continue;
+    const b = document.createElement("button"); b.className = "acct-chip" + (dcFilter === key ? " active" : "");
+    b.innerHTML = `${_ge(label)} <span class="ac-n">${n}</span>`;
+    b.onclick = () => { dcFilter = key; const y = window.scrollY; renderDupCustomers(); window.scrollTo(0, y); }; filt.appendChild(b);
+  }
+  const q = (($("#dcSearch") || {}).value || "");
+  const shown = groups.filter(g => (dcFilter === "all" || g.status === dcFilter)
+    && refHit(q, g.customers.flatMap(c => [...c.invoices, ...c.bills].map(d => d.doc))));   // ref # only; a hit keeps the whole pair
+  const base = shown.flatMap(g => g.customers.map(c => ({ ...c, project: g.project, group: g })));
+  const rows = hfSorted("dupcustomers", base.filter(r => hfPasses("dupcustomers", r)));
+  const cols = [["Project #", "left", "dcproj"], ["QuickBooks customer", "left"], ["Used", "left"], ["Status", "left", "dcstat"], ["Invoice #s", "left"], ["Invoices", "right"],
+    ["Bill #s", "left"], ["Bills", "right"], ["Created", "left"]];
+  thead.innerHTML = "";
+  { const tr = document.createElement("tr");
+    for (const [c, al, hk] of cols) { const th = document.createElement("th"); th.className = al; th.textContent = c;
+      if (hk) hfDecorate(th, "dupcustomers", hk, () => base.filter(r => hfPasses("dupcustomers", r, hk)), renderDupCustomers); tr.appendChild(th); }
+    thead.appendChild(tr); }
+  tbody.innerHTML = "";
+  if (!rows.length) { tbody.innerHTML = `<tr><td colspan="${cols.length}" class="left" style="padding:14px;color:var(--text-dim)">${groups.length ? "Nothing matches." : "No duplicate customers - every project # has one QuickBooks customer."}</td></tr>`; return; }
+  const frag = document.createDocumentFragment();
+  const row = (r, inBand) => {   // under its project band the # is already said once
+    const tr = document.createElement("tr");
+    tr.appendChild(leftText(inBand ? "" : r.project));
+    { const td = leftText(r.name || "–"); td.title = `QuickBooks customer Id ${r.id}`; tr.appendChild(td); }
+    { const td = leftText(r.used ? "Used" : "–"); if (!r.used) td.classList.add("dim"); td.title = r.used ? "The customer the tools read for this project #" : "The tools skip this customer"; tr.appendChild(td); }
+    { const td = leftText(r.status); if (DC_BAD.has(r.status)) td.classList.add("neg"); else if (r.status === "Empty duplicate" || r.status === "Real") td.classList.add("dim"); tr.appendChild(td); }
+    tr.appendChild(dcDocsCell(r.invoices, () => "invoice"));
+    { const td = document.createElement("td"); td.className = "right"; if (r.invoice_total) td.appendChild(moneyCellC(r.invoice_total)); else { td.textContent = "–"; td.classList.add("dim"); } tr.appendChild(td); }
+    if (r.used && r.bills.length) { const td = leftText(`${r.bills.length} bill${r.bills.length === 1 ? "" : "s"}`); td.classList.add("dim"); td.title = "Already on the customer the tools read - nothing to move"; tr.appendChild(td); }
+    else tr.appendChild(dcDocsCell(r.bills, d => DC_KIND[d.type] || "bill"));   // the skipped customer: every bill # (these are what has to move)
+    { const td = document.createElement("td"); td.className = "right"; if (r.bill_total) td.appendChild(moneyCellC(r.bill_total)); else { td.textContent = "–"; td.classList.add("dim"); } tr.appendChild(td); }
+    tr.appendChild(leftText(r.created ? fmtDateShort(r.created) : "–"));
+    return tr;
+  };
+  for (const g of audBuckets(rows, r => r.created, audGroupBy("dupcustomers"))) {
+    if (g.label) { frag.appendChild(audBand("dupcustomers", g, cols.length)); for (const r of g.rows) frag.appendChild(row(r)); continue; }
+    const byProj = new Map(); for (const r of g.rows) { if (!byProj.has(r.project)) byProj.set(r.project, []); byProj.get(r.project).push(r); }
+    for (const [p, list] of byProj) {   // one band per project #: its status once, its customers under it
+      const hr = document.createElement("tr"); hr.className = "bill-group dc-band"; hr.dataset.grpkey = "dc:" + p;
+      const td = document.createElement("td"); td.colSpan = cols.length; td.className = "left";
+      const cell = document.createElement("div"); cell.className = "bg-cell";
+      const k = document.createElement("span"); k.className = "bg-key"; k.textContent = p; cell.appendChild(k);
+      const st = list[0].group.status, n = document.createElement("span"); n.className = "acct-band-n" + (DC_BAD.has(st) ? " neg" : ""); n.textContent = st;
+      cell.appendChild(n);
+      const m = list[0].group.money_on_duplicates;
+      if (m) { const x = document.createElement("span"); x.className = "acct-band-n"; x.textContent = `${moneyC(m)} on the skipped customer`; cell.appendChild(x); }
+      td.appendChild(cell); hr.appendChild(td); frag.appendChild(hr);
+      for (const r of list) frag.appendChild(row(r, true));
+    }
+  }
+  tbody.appendChild(frag);
+}
+
 // ── Accounting fixes: the Bill Tracker audits, filterable by audit type ───────
 let ACCT = null;            // cached /api/accounting payload
 let acctIssue = null;       // the audit-type filter currently active (null = all)
@@ -9504,7 +9602,7 @@ function init() {
     if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "f" || e.altKey) return;
     if (document.querySelector(".panel:not([hidden])")) return;
     const vis = x => !!(x && x.offsetParent);
-    const el = ["#vpSearch", "#bfQuick", "#ifQuick", "#pfSearch", "#qaSearch", "#cdSearch", "#ucSearch", "#acctSearch"].map(id => $(id)).find(vis)
+    const el = ["#vpSearch", "#bfQuick", "#ifQuick", "#pfSearch", "#qaSearch", "#cdSearch", "#ucSearch", "#dcSearch", "#acctSearch"].map(id => $(id)).find(vis)
       || [...document.querySelectorAll('.tab-page:not([hidden]) input[type="search"]')].find(vis);
     if (!el) return;
     e.preventDefault(); el.focus(); el.select();
@@ -9604,7 +9702,7 @@ function init() {
       { btn: el, prog: $("#healthProg"), fill: $("#healthFill"), step: $("#healthStep") }); }
   { const el = $("#btnAcctReload"); if (el) el.onclick = () => loadAccounting(true); }
   // Group by (audit pages): None / Day / Month, remembered per page
-  { const RR = { qboaudit: () => renderQboAudit(), checkdrift: () => renderCheckDrift(), uncleared: () => renderUncleared(), billaudit: () => { if (ACCT && ACCT.ok) renderAccounting(); } };
+  { const RR = { qboaudit: () => renderQboAudit(), checkdrift: () => renderCheckDrift(), uncleared: () => renderUncleared(), dupcustomers: () => renderDupCustomers(), billaudit: () => { if (ACCT && ACCT.ok) renderAccounting(); } };
     for (const seg of document.querySelectorAll(".aud-groupby")) {
       const pg = seg.dataset.page, paint = () => seg.querySelectorAll(".seg-btn").forEach(b => b.classList.toggle("on", b.dataset.g === audGroupBy(pg)));
       paint();
@@ -9617,6 +9715,8 @@ function init() {
   { const el = $("#btnCdReload"); if (el) el.onclick = () => loadCheckDrift(true); }
   { const el = $("#btnUcRefresh"); if (el) el.onclick = () => runPipeline("uncleared", null, { btn: el, prog: $("#ucProg"), fill: $("#ucFill"), step: $("#ucStep"), after: () => loadUncleared(true) }); }
   { const el = $("#ucSearch"); if (el) { el.addEventListener("input", renderUncleared); el.addEventListener("keydown", e => { if (e.key === "Escape") { el.value = ""; renderUncleared(); } }); } }
+  { const el = $("#btnDcRefresh"); if (el) el.onclick = () => runPipeline("mirror", null, { btn: el, prog: $("#dcProg"), fill: $("#dcFill"), step: $("#dcStep"), after: () => loadDupCustomers(true) }); }
+  { const el = $("#dcSearch"); if (el) { el.addEventListener("input", renderDupCustomers); el.addEventListener("keydown", e => { if (e.key === "Escape") { el.value = ""; renderDupCustomers(); } }); } }
   { const el = $("#btnCdRefresh"); if (el) el.onclick = () => runPipeline("mirror", null, { btn: el, prog: $("#cdProg"), fill: $("#cdFill"), step: $("#cdStep"), after: () => loadCheckDrift(true) }); }
   { const el = $("#cdSearch"); if (el) { el.addEventListener("input", renderCheckDrift); el.addEventListener("keydown", e => { if (e.key === "Escape") { el.value = ""; renderCheckDrift(); } }); } }
   { const el = $("#btnQaRefresh"); if (el) el.onclick = () => runPipeline("mirror", null, { btn: el, prog: $("#qaProg"), fill: $("#qaFill"), step: $("#qaStep"), after: () => loadQboAudit(true) }); }

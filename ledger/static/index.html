@@ -428,6 +428,33 @@
     </section><!-- /sec: uncleared -->
     </div><!-- /tab: uncleared -->
 
+    <!-- Duplicate customers: one project # set up as two QuickBooks customers (owner 2026-09-30) -->
+    <div class="tab-page" data-tab="dupcustomers" hidden>
+    <section class="subpage" data-sec="dupcustomers" id="sec-dupcustomers">
+      <section class="widget">
+        <div class="widget-head">
+          <h2>Duplicate customers - one project # on two QuickBooks customers <button type="button" class="help-i" title="How this page works" aria-expanded="false">ⓘ</button> <span class="count" id="dcNote"></span></h2>
+          <span class="wh-right">
+            <button class="btn small" id="btnDcRefresh" title="Refresh the mirror from QuickBooks (the change feed - seconds, Touch ID) and re-run the audit">⟳&nbsp;Refresh from QuickBooks</button>
+          </span>
+        </div>
+        <div class="sync-progress" id="dcProg" hidden>
+          <div class="sync-bar"><div class="sync-bar-fill" id="dcFill"></div></div>
+          <div class="sync-step" id="dcStep"></div>
+        </div>
+        <p class="hint help-pop" hidden>Every tool finds a job by its project #, and can use only <b>one</b> QuickBooks customer per number. When two active customers carry the same project #, the tools keep one (<b>Used</b>) - an exact name first, then the one with the most invoices, then the older - and anything posted to the other is left out of the P&amp;L, the WIP and the ledger. <b>Both have invoices</b>: pick the right builder and move the other invoice onto it. <b>Money on duplicate</b>: move its bills / invoices onto the used customer. <b>Name typo</b>: a space hides the job's own suffix (<i>RP7340 -FTW</i>) - rename it, it is its own job. <b>Separate job?</b>: a suffix the tools do not read (<i>RP7152-1</i>). <b>Empty duplicate</b>: nothing on it - make it inactive. A project leaves this page once the extra customer is inactive in QuickBooks. Nothing here writes to QuickBooks.</p>
+        <div class="acct-filters" id="dcFilters"></div>
+        <div class="filters">
+          <input type="search" id="dcSearch" class="ref-search" placeholder="⌘F - invoice # or bill #; paste a column for many" autocomplete="off">
+          <span class="aud-groupby-wrap" title="Group by - None keeps the page as it is, with the last 7 days on top"><span class="seg-lbl">Group by</span><span class="seg aud-groupby" data-page="dupcustomers"><button type="button" class="seg-btn" data-g="none">None</button><button type="button" class="seg-btn" data-g="day">Day</button><button type="button" class="seg-btn" data-g="month">Month</button></span></span>
+        </div>
+        <div class="table-scroll">
+          <table class="grid" id="dcTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </section><!-- /sec: dupcustomers -->
+    </div><!-- /tab: dupcustomers -->
+
     <!-- Bills to fix: its own page (owner 2026-09-23: "i have to scroll past the deleted section just to get to the bill audit") -->
     <div class="tab-page" data-tab="billaudit" hidden>
     <section class="subpage" data-sec="accounting" id="sec-accounting">

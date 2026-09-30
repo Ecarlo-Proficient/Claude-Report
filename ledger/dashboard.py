@@ -57,6 +57,7 @@ import notion_page    # noqa: E402  (local: one Notion page, whole, for the invo
 import table_export   # noqa: E402  (local: a filtered table -> grouped Excel report in ~/Downloads, POST /api/export/xlsx)
 import bill_payment_stub  # noqa: E402  (local: the check / bill-payment stub - print from the mirror into the vendor folder + the print history)
 import check_drift        # noqa: E402  (local: checks QBO rewrote after they were paid - the Checks QBO changed audit, /api/checkdrift)
+import dup_customers      # noqa: E402  (local: one project # on two QBO customers - the Duplicate customers audit, /api/dupcustomers)
 import reapply_check      # noqa: E402  (local: put a stripped check back on its bills - an owner-confirmed QBO write)
 import pay_bills          # noqa: E402  (local: pay the saved pay run in QBO - one bill payment per vendor, owner-confirmed)
 import strip_history      # noqa: E402  (local: every stripped check kept for good + the QBO support PDF, /api/checkstrips)
@@ -3584,6 +3585,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(_fetch_uncleared(con))
             finally:
                 con.close()
+        elif path == "/api/dupcustomers":  # Duplicate customers: one project # on two QBO customers - the tools see only one (owner 2026-09-30)
+            try:
+                self._json(dup_customers.audit())
+            except Exception as e:         # noqa: BLE001
+                self._json({"ok": False, "groups": [], "error": f"duplicate customer audit failed: {e}"})
         elif path == "/api/pay-bills/plan":   # dry run of the saved pay run (live QBO read, no write)
             try:
                 self._json(pay_bills.plan())

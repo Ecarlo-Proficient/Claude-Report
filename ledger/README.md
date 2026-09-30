@@ -264,6 +264,12 @@ on the network). What it shows:
 - **Uncleared checks** (Company) - every check QuickBooks still shows as uncleared (not matched = not deposited),
   from QBO's TransactionList `cleared=Uncleared` filter via `ledger/load_uncleared_checks.py`; each bank account's
   matched-through date; accounts never matched to a bank feed (Joint Checks) kept apart. `/api/uncleared`.
+- **Duplicate customers** (Company) - a project # carried by two ACTIVE QuickBooks customers (sync-all's "duplicate
+  customers for ..." lines). Every tool uses one customer per project # (`shared/qbo_api.pick_customer`: exact name,
+  most invoices, oldest) and misses whatever sits on the other. One band per project: its status (Both have invoices ·
+  Money on duplicate · Name typo · Separate job? · Empty duplicate), the customer the tools use, every invoice # and
+  bill # on the skipped one. A project leaves once the extra customer is inactive and the mirror refreshed.
+  `ledger/dup_customers.py` over the mirror (`/api/dupcustomers`; run it alone to print the list). Read-only.
 - **Checks QBO changed** (Company) - checks QuickBooks rewrote on its own after they were paid (edit or delete a
   paid bill and QBO takes the check off it without a warning): money floating, the paid bill or its re-entered copy
   reading as owed again, the freed loan credit, floating money put on a later bill. Every year on file, subs first,
