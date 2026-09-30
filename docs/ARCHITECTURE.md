@@ -284,9 +284,9 @@ flowchart LR
     POT -- "Unused PO reconcile" --> BT
     QBO --> SR
     NAS --> SR -- "tie-out gate: lines must sum to Amount Due,\nelse banded + source held in Inbox" --> RX
-    SR -- "every run + --refresh: merge QBO with the clerk's ticks" --> NB
-    SR -- "1 digest (shared/teams_notify)" --> TEAMS
-    NB -. "--sync-done: Done -> rename '<MM-YYYY> DONE'" .-> RX
+    SR -- "every run + --refresh: one page per vendor,\nis every statement bill entered in QBO?" --> NB
+    SR -- "1 digest: vendors not ready to pay (shared/teams_notify)" --> TEAMS
+    NB -. "clean or ticked month -> folder '<MM-YYYY> DONE'" .-> RX
     MBX --> PS -. "was each statement invoice ever printed?" .-> SR
 ```
 

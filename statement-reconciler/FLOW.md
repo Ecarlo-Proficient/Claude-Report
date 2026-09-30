@@ -1,8 +1,8 @@
 # statement-reconciler/ - how the vendor statement reconciler works
 
-Last changed: 09/30/2026 - follow-up moved from a Teams card per vendor-month to the Notion
-"Vendor Statements" board: one live checklist page per vendor-month, rewritten every run, and
-one Teams digest per run.
+Last changed: 09/30/2026 (evening) - the Notion "Vendor Statements" board is now ONE page per
+VENDOR, coloured by the pay-run question "is every statement bill entered in QBO?"; months nest
+inside the page and file themselves DONE when clean; `--refresh --dry-run` previews the board.
 
 Update this chart - and the line above - in the same commit as any change to
 `statement-reconciler/` (`.github/flow_guard.sh`).
@@ -24,12 +24,16 @@ flowchart LR
     REC["reconcile_iter<br/>matched · missing in QBO · amount mismatch ·<br/>tax 8.25% · vendor lag · not on statement"]:::tool
     PS["print_status.py<br/>opt-in PRINT_STATUS=1"]:::tool
     ITEMS["_board_items<br/>one item per bill: enter · approve · check QBO ·<br/>amount · tax · print"]:::tool
-    NB["notion_board.py<br/>merge with the clerk's ticks:<br/>fixed in QBO -> Cleared · ticked but still open -> unticked ·<br/>check QBO ticks kept"]:::tool
+    GRP["group_results<br/>one record per VENDOR (its folder);<br/>unreadable files mark their month"]:::tool
+    NB["notion_board.py<br/>merge with the clerk's ticks, each bill once (newest statement);<br/>fixed in QBO -> Cleared · clean / ticked month -> History"]:::tool
+    PREV{"--dry-run?"}:::gate
 
     XLSX[("Excel + source statement<br/>filed under Vendor / MM-YYYY")]:::out
     HELD[("tie-out failed:<br/>Excel banded, source stays in Inbox")]:::out
-    PAGE[("Notion Vendor Statements<br/>1 page per vendor-month<br/>Open · In progress · Clean · Done")]:::out
-    TEAMS[("Teams<br/>1 digest card per run")]:::out
+    PAGE[("Notion Vendor Statements · 1 page per vendor<br/>All entered · Not entered · Unreadable · No statement (60+ days)")]:::out
+    DONE[("month folder renamed<br/>'MM-YYYY DONE'")]:::out
+    TEAMS[("Teams<br/>1 digest: vendors not ready to pay")]:::out
+    PRINT[("terminal: one line per vendor<br/>+ folders that would be filed")]:::out
 
     INBOX --> PARSE --> VEND --> REC
     QBO --> VEND
@@ -39,8 +43,10 @@ flowchart LR
     TIE -- no --> HELD
     REC --> XLSX
     MBX --> PS --> ITEMS
-    REC --> ITEMS --> NB --> PAGE
+    REC --> ITEMS --> GRP --> PREV
+    PREV -- yes --> PRINT
+    PREV -- no --> NB --> PAGE
+    NB --> DONE
     NB --> TEAMS
-    PAGE -. "--sync-done: Done -> folder '<MM-YYYY> DONE'<br/>folder DONE -> page Done" .-> XLSX
     XLSX -. "--refresh re-checks every open month in place" .-> PARSE
 ```

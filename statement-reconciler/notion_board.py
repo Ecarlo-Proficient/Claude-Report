@@ -1,28 +1,33 @@
 """notion_board.py - the Notion "Vendor Statements" board (tool-local).
 
-ONE Notion page per vendor-month that the reconciler keeps rewriting until the
-month is done - the live record of that statement, replacing the stack of Teams
-cards (owner 2026-09-29: "one card that keeps a live record of that statement
-and goes through work until it's shown as done").
+ONE Notion page per VENDOR (owner 09/30/2026). The row answers the one question
+the clerk has before a pay run: is every bill on the vendor's statements entered
+in QBO? Approvals, amount / tax fixes and printing are follow-ups that can wait
+until after the payment, so they never change the row's colour.
 
-Page properties: Status · Open items · Statement date · First seen · Last checked
-· QBO vendor · Folder · Key (Days open is a Notion formula). Page body - one
-collapsible heading per kind of work, one to-do per bill (ref linked to QBO,
-date, $, job):
+Row (properties): Status (colour) · Standing ("All entered as of 10/02/2026",
+"30 not entered (oldest 06-2026)", ...) · Not entered · Follow-ups · Last
+statement · Last checked · QBO vendor · Key (the vendor's folder name).
 
-  To enter in QBO · Not approved - chase PM · Amount mismatch · Tax charged ·
-  Not printed · Approval pending? check QBO · Cleared (what got fixed, dated)
+  All entered   every statement bill is in QBO            -> safe to pay
+  Not entered   the statement lists bills QBO lacks       -> enter them first
+  Unreadable    a statement did not tie out / parse       -> check the PDF
+  No statement  none in 60+ days                          -> ask the vendor
 
-Every run re-derives the list from QBO and MERGES it with what the clerk ticked:
-  * an item QBO no longer shows          -> moves to Cleared (ticked, dated)
-  * a VERIFIABLE item she ticked that QBO still shows
-                                          -> unticked, noted "still open in QBO"
-  * an item the script cannot verify (approval pending in QBO's workflow)
-                                          -> her tick is kept
-Status is computed (Open / In progress / Clean / Tie-out failed); Done is the
-human's call and is never overwritten. `sync_done` mirrors Done both ways with
-the month folder on the Accounting share (`<MM-YYYY> DONE`). Anything else she
-writes on the page is left alone - only the headings above are rewritten.
+Page body, rewritten each run (anything else the clerk writes is left alone):
+  Pay-run check callout · one heading per OPEN month, newest first (a "Month
+  done" tick, then To enter in QBO, then the follow-ups, one to-do per bill) ·
+  Cleared (what got fixed, dated) · History (months closed, dated).
+
+Merge rules, per bill (key kind|ref, one line per vendor - a running-balance
+statement repeats unpaid bills, so a bill sits under the NEWEST statement that
+shows it):
+  * gone from QBO's list                    -> Cleared (dated)
+  * a verifiable item ticked but still open -> unticked, "still open in QBO"
+  * unverifiable (approval pending) ticks   -> kept
+A month closes (folder renamed '<MM-YYYY> DONE', month -> History) when it ties
+out with nothing left, when the clerk ticks "Month done", or when someone
+already renamed its folder DONE.
 
 Setup: ACB_STATEMENTS_DS_ID (the data-source id) in machine.env, the database
 shared with the Notion integration. No id -> the board is skipped with one line.
@@ -39,7 +44,8 @@ from shared.notion_client import NotionClient, NotionError
 
 QBO_BILL_URL = "https://qbo.intuit.com/app/bill?txnId={bill_id}"
 QBO_VENDOR_URL = "https://qbo.intuit.com/app/vendordetail?nameId={vendor_id}"
-ITEMS_PER_SECTION = 99                    # Notion: 100 children per append
+MAX_CHILDREN = 100                        # Notion: 100 children per block
+STALE_DAYS = 60                           # no statement this long -> "No statement"
 
 # kind -> (section heading, short label on Cleared lines,
 #          verifiable: QBO can tell when it is fixed)
@@ -51,8 +57,17 @@ KINDS: Dict[str, Tuple[str, str, bool]] = {
     "print":    ("Not printed",                    "Print",   True),
     "checkqbo": ("Approval pending? check QBO",    "Check",   False),
 }
-H_CLEARED = "Cleared"
 _LABEL_TO_KIND = {v[1]: k for k, v in KINDS.items()}
+H_CLEARED, H_HISTORY = "Cleared", "History"
+CHECK_PREFIX = "Pay-run check"
+DONE_TICK = "Month done"
+UNREADABLE = "statement unreadable - check the PDF"
+
+# Status -> colour of the Standing text and the pay-run callout
+STATUS_COLOR = {"All entered": "green", "Not entered": "red",
+                "Unreadable": "purple", "No statement": "gray"}
+
+_MONTH_RE = re.compile(r"^(\d\d-\d{4})\b")
 
 
 # ─────────────────────────── helpers ───────────────────────────
@@ -65,6 +80,17 @@ def _us(iso: str) -> str:
 
 def _today() -> str:
     return dt.date.today().strftime("%m/%d/%Y")
+
+
+def _month_sort(month: str) -> Tuple[str, str]:
+    """'08-2026' -> ('2026', '08') so months sort in time order."""
+    mm, _, yyyy = month.partition("-")
+    return (yyyy, mm)
+
+
+def _us_sort(us: str) -> str:
+    """'10/02/2026' -> '2026/10/02' for sorting only."""
+    return us[-4:] + us[:5] if len(us) == 10 else us
 
 
 def _rt(text: str, url: str = "", **ann) -> dict:
@@ -81,8 +107,21 @@ def _plain(block: dict) -> str:
     return "".join(r.get("plain_text", "") for r in body.get("rich_text", []))
 
 
+def _first_link(block: dict) -> str:
+    body = block.get(block.get("type", ""), {}) or {}
+    for r in body.get("rich_text", []):
+        url = r.get("href") or ((r.get("text") or {}).get("link") or {}).get("url")
+        if url:
+            return url
+    return ""
+
+
 def _item_key(kind: str, ref: str) -> str:
     return f"{kind}|{(ref or '').strip().upper()}"
+
+
+def _row_key(row: tuple) -> str:
+    return _item_key(row[0]["kind"], row[0].get("ref", ""))
 
 
 def _item_line(it: dict) -> str:
@@ -97,11 +136,15 @@ def _item_line(it: dict) -> str:
 
 def _todo(it: dict, checked: bool, note: str = "") -> dict:
     ref = it.get("ref") or "(no #)"
-    url = QBO_BILL_URL.format(bill_id=it["bill_id"]) if it.get("bill_id") else ""
+    url = it.get("url") or (QBO_BILL_URL.format(bill_id=it["bill_id"]) if it.get("bill_id") else "")
     rich = [_rt(ref, url), _rt(_item_line(it)[len(ref):])]
     if note:
         rich.append(_rt(f"  {note}", italic=True, color="gray"))
     return {"type": "to_do", "to_do": {"rich_text": rich, "checked": checked}}
+
+
+def _para(text: str, **ann) -> dict:
+    return {"type": "paragraph", "paragraph": {"rich_text": [_rt(text, **ann)]}}
 
 
 def _toggle(title: str, children: list) -> dict:
@@ -109,17 +152,185 @@ def _toggle(title: str, children: list) -> dict:
         "rich_text": [_rt(title)], "is_toggleable": True, "children": children}}
 
 
+def _cap(kids: list) -> list:
+    if len(kids) <= MAX_CHILDREN:
+        return kids
+    more = len(kids) - MAX_CHILDREN + 1
+    return kids[:MAX_CHILDREN - 1] + [_para(f"… {more} more - see the reconciliation Excel",
+                                            italic=True, color="gray")]
+
+
 def _heading_kind(text: str) -> Optional[str]:
-    """Which managed section a heading's text belongs to (None = not ours)."""
+    """Which follow-up section a bold line inside a month belongs to."""
     base = re.sub(r"\s*\(\d+\)\s*$", "", text).strip()
     for k, v in KINDS.items():
         if base == v[0]:
             return k
-    return "_cleared" if base == H_CLEARED else None
+    return None
+
+
+def _top_heading(text: str) -> Optional[str]:
+    """Which managed top-level heading this is: 'MM-YYYY', '_cleared', '_history'."""
+    m = _MONTH_RE.match(text)
+    if m:
+        return m.group(1)
+    base = re.sub(r"\s*\(\d+\)\s*$", "", text).strip()
+    return {H_CLEARED: "_cleared", H_HISTORY: "_history"}.get(base)
 
 
 def _parse_ref(text: str) -> str:
     return text.split(" · ", 1)[0].strip()
+
+
+def _stale(last_iso: str, today: dt.date) -> bool:
+    try:
+        return (today - dt.date.fromisoformat(last_iso[:10])).days > STALE_DAYS
+    except ValueError:
+        return False
+
+
+def _open_enter(rows: list) -> int:
+    return sum(1 for it, chk, _n in rows if it["kind"] == "enter" and not chk)
+
+
+# ─────────────────────────── the pure merge ───────────────────────────
+
+def merge(run_months: Dict[str, dict], prior: dict, unchecked_kinds: frozenset = frozenset(),
+          folder_done: frozenset = frozenset(), keep_open: frozenset = frozenset(),
+          today: Optional[str] = None) -> dict:
+    """Merge this run's reconcile with the vendor page as last written. Pure.
+
+    run_months: {month: {items, tieout, parsed}} - the months reconciled this run
+                (parsed False = no statement in that month could be read).
+    prior:      the page read back - {months: {month: {items: {key: {kind, ref,
+                line, url, checked}}, done_tick, tieout}}, cleared, history}.
+    unchecked_kinds: kinds this run did not evaluate (print status off) - carried.
+    folder_done: months whose folder someone already renamed DONE.
+    keep_open:  months to keep open even if they would close (a failed rename).
+    Returns {months, cleared, history, closing, not_entered, followups,
+             unreadable, oldest_open}; months = {month: {rows, done_tick,
+             tieout, ran}} with rows = [(item, checked, note)]."""
+    today = today or _today()
+    pm = prior.get("months", {})
+    cleared = dict(prior.get("cleared", {}))
+    history = dict(prior.get("history", {}))
+    fresh = {mo for mo, r in run_months.items() if r.get("parsed", True)}
+    months: Dict[str, dict] = {}
+
+    # 1. carry the months this run did not re-derive (not run, or unreadable)
+    for mo, st in pm.items():
+        if mo in fresh:
+            continue
+        months[mo] = {"rows": [(dict(it), bool(it.get("checked")), "")
+                               for it in st.get("items", {}).values()],
+                      "done_tick": st.get("done_tick", False),
+                      "tieout": (False if mo in run_months else st.get("tieout", True)),
+                      "ran": mo in run_months}
+    for mo in run_months:
+        if mo not in fresh and mo not in months:
+            months[mo] = {"rows": [], "done_tick": False, "tieout": False, "ran": True}
+
+    # 2. fresh items: each bill once, under the newest month that shows it
+    prior_checked: Dict[str, dict] = {}
+    for mo in fresh & set(pm):
+        for key, it in pm[mo].get("items", {}).items():
+            prior_checked[key] = dict(it, month=mo)
+    seen: Dict[str, str] = {}
+    for mo in sorted(fresh, key=_month_sort, reverse=True):
+        rows = []
+        for it in run_months[mo].get("items", []):
+            key = _item_key(it["kind"], it.get("ref", ""))
+            if it["kind"] not in KINDS or key in seen:
+                continue
+            seen[key] = mo
+            was = prior_checked.get(key)
+            if was is None:
+                rows.append((it, False, "back open" if key in cleared else ""))
+            elif was.get("checked") and KINDS[it["kind"]][2]:
+                rows.append((it, False, f"still open in QBO {today}"))
+            else:
+                rows.append((it, bool(was.get("checked")), ""))
+            cleared.pop(key, None)
+        months[mo] = {"rows": rows, "done_tick": pm.get(mo, {}).get("done_tick", False),
+                      "tieout": bool(run_months[mo].get("tieout", True)), "ran": True}
+    for mo, st in months.items():             # a fresh bill supersedes a carried copy
+        if mo not in fresh:
+            st["rows"] = [r for r in st["rows"] if _row_key(r) not in seen]
+
+    # 3. prior bills of re-derived months that QBO no longer shows
+    for key, prev in prior_checked.items():
+        if key in seen:
+            continue
+        if prev["kind"] in unchecked_kinds:
+            months[prev["month"]]["rows"].append((prev, bool(prev.get("checked")), ""))
+            seen[key] = prev["month"]
+        elif key not in cleared:
+            cleared[key] = {"kind": prev["kind"], "month": prev["month"], "ref": prev.get("ref", ""),
+                            "line": prev.get("line") or prev.get("ref", ""), "on": today}
+
+    # 4. which months close
+    closing: Dict[str, str] = {}
+    for mo, st in months.items():
+        if mo in keep_open:
+            continue
+        left = sum(1 for _it, chk, _n in st["rows"] if not chk)
+        if mo in folder_done:
+            closing[mo] = "folder marked DONE"
+        elif st["done_tick"]:
+            closing[mo] = "ticked done" + (f" · {left} left open" if left else "")
+        elif st["ran"] and st["tieout"] and not st["rows"]:
+            closing[mo] = "clean"
+    for mo, how in closing.items():
+        months.pop(mo)
+        history[mo] = {"on": today, "how": how}
+
+    enter_months = [mo for mo, st in months.items() if _open_enter(st["rows"])]
+    return {"months": months, "cleared": cleared, "history": history, "closing": closing,
+            "not_entered": sum(_open_enter(st["rows"]) for st in months.values()),
+            "followups": sum(1 for st in months.values() for it, chk, _n in st["rows"]
+                             if it["kind"] != "enter" and not chk),
+            "unreadable": sorted((mo for mo, st in months.items() if not st["tieout"]),
+                                 key=_month_sort),
+            "oldest_open": min(enter_months, key=_month_sort) if enter_months else ""}
+
+
+def status(m: dict, last_statement: str, today: Optional[dt.date] = None) -> Tuple[str, str]:
+    """(Status, Standing text) for the row. Only 'is everything entered' colours it."""
+    today = today or dt.date.today()
+    if m["unreadable"]:
+        extra = f" · {m['not_entered']} not entered" if m["not_entered"] else ""
+        return "Unreadable", f"{m['unreadable'][-1]} statement unreadable{extra}"
+    if m["not_entered"]:
+        return "Not entered", f"{m['not_entered']} not entered (oldest {m['oldest_open']})"
+    if last_statement and _stale(last_statement, today):
+        return "No statement", f"No statement since {_us(last_statement)}"
+    return "All entered", f"All entered as of {today.strftime('%m/%d/%Y')}"
+
+
+def _month_folder_done(root: Optional[Path], vend: str, month: str) -> bool:
+    if root is None or not vend:
+        return False
+    vdir = root / vend
+    return vdir.is_dir() and any(
+        d.is_dir() and d.name.split(maxsplit=1)[0] == month and re.search(r"\bDONE\b", d.name, re.I)
+        for d in vdir.iterdir())
+
+
+def _rename_month_done(root: Optional[Path], vend: str, month: str, log=print) -> bool:
+    """'<Vendor>/<MM-YYYY>' -> '<MM-YYYY> DONE'. False (month stays open) on any trouble."""
+    if root is None or not vend:
+        return True                            # no share on this run - nothing to rename
+    src = root / vend / month
+    if not src.is_dir():
+        return True
+    dst = root / vend / f"{month} DONE"
+    try:
+        src.rename(dst)
+        log(f"  filed {vend}/{month} -> {dst.name}")
+        return True
+    except OSError as e:
+        log(f"  could not rename {vend}/{month} ({e}) - month stays open")
+        return False
 
 
 # ─────────────────────────── board ───────────────────────────
@@ -147,207 +358,204 @@ class Board:
 
     # ── page body read-back ──
     def _read_body(self, page_id: str) -> dict:
-        """Our headings on the page and the state inside them."""
-        out: dict = {"managed": [], "checked": {}, "cleared": {}}
+        """Our blocks on the page and the state inside them."""
+        out: dict = {"managed": [], "months": {}, "cleared": {}, "history": {}}
         for b in self.nc.block_children(page_id):
+            text = _plain(b)
+            if b.get("type") == "callout" and text.startswith(CHECK_PREFIX):
+                out["managed"].append(b["id"])
+                continue
             if b.get("type") != "heading_3":
                 continue
-            kind = _heading_kind(_plain(b))
-            if kind is None:
+            which = _top_heading(text)
+            if which is None:
                 continue
             out["managed"].append(b["id"])
-            if not b.get("has_children"):
-                continue
-            for c in self.nc.block_children(b["id"]):
-                if c.get("type") != "to_do":
-                    continue
-                text = _plain(c)
-                if kind == "_cleared":
-                    m = re.match(r"(\w+):\s*(.*)$", text)
+            kids = list(self.nc.block_children(b["id"])) if b.get("has_children") else []
+            if which == "_cleared":
+                for c in kids:
+                    m = re.match(r"(\w+) (\d\d-\d{4}):\s*(.*)$", _plain(c))
                     if not m or m.group(1) not in _LABEL_TO_KIND:
                         continue
-                    k2 = _LABEL_TO_KIND[m.group(1)]
-                    d = re.search(r"cleared (\d\d/\d\d/\d{4})", text)
-                    ref = _parse_ref(m.group(2))
-                    out["cleared"][_item_key(k2, ref)] = {
-                        "kind": k2, "ref": ref, "on": d.group(1) if d else "",
-                        "line": m.group(2).split("  cleared")[0].strip()}
-                else:
-                    out["checked"][_item_key(kind, _parse_ref(text))] = {
-                        "checked": bool(c.get("to_do", {}).get("checked")),
-                        "line": text.split("  ", 1)[0].strip()}
-        return out
-
-    # ── merge ──
-    @staticmethod
-    def merge(items: List[dict], prior_checked: Dict[str, dict],
-              prior_cleared: Dict[str, dict], unchecked_kinds: frozenset = frozenset()) -> dict:
-        """Merge the fresh QBO list with last run's page. Pure (unit-tested).
-        prior_checked: {item key: {checked, line}} read off the page's sections.
-        unchecked_kinds: kinds this run did NOT evaluate (print status off) - their
-        items are carried forward as they were, never "cleared" by absence."""
-        today = _today()
-        now_keys: Dict[str, dict] = {}
-        sections: Dict[str, list] = {k: [] for k in KINDS}
-        new = 0
-        for it in items:
-            key = _item_key(it["kind"], it.get("ref", ""))
-            if it["kind"] not in KINDS or key in now_keys:
-                continue                       # unknown kind / same bill on two statements
-            now_keys[key] = it
-            was = prior_checked[key]["checked"] if key in prior_checked else None
-            if was is None:
-                new += 1
-                sections[it["kind"]].append((it, False, "back open" if key in prior_cleared else ""))
-            elif was and KINDS[it["kind"]][2]:
-                sections[it["kind"]].append((it, False, f"still open in QBO {today}"))
+                    kind = _LABEL_TO_KIND[m.group(1)]
+                    d = re.search(r"cleared (\d\d/\d\d/\d{4})", m.group(3))
+                    line = m.group(3).split("  cleared")[0].strip()
+                    out["cleared"][_item_key(kind, _parse_ref(line))] = {
+                        "kind": kind, "month": m.group(2), "ref": _parse_ref(line),
+                        "line": line, "on": d.group(1) if d else ""}
+            elif which == "_history":
+                for c in kids:
+                    m = re.match(r"(\d\d-\d{4}) · done (\S+)(?: · (.*))?$", _plain(c))
+                    if m:
+                        out["history"][m.group(1)] = {"on": m.group(2), "how": m.group(3) or ""}
             else:
-                sections[it["kind"]].append((it, bool(was), ""))
-        for key, prev in prior_checked.items():
-            kind, ref = key.split("|", 1)
-            if kind in unchecked_kinds and key not in now_keys:
-                now_keys[key] = {"kind": kind, "ref": ref, "line": prev.get("line", ref)}
-                sections[kind].append((now_keys[key], bool(prev.get("checked")), ""))
-        cleared = {k: v for k, v in prior_cleared.items() if k not in now_keys}
-        cleared_now = 0
-        for key, prev in prior_checked.items():
-            if key not in now_keys and key not in cleared:
-                kind, ref = key.split("|", 1)
-                cleared[key] = {"kind": kind, "ref": ref, "line": prev.get("line") or ref, "on": today}
-                cleared_now += 1
-        open_n = sum(1 for rows in sections.values() for _it, chk, _n in rows if not chk)
-        ticked = sum(1 for rows in sections.values() for _it, chk, _n in rows if chk)
-        return {"sections": sections, "cleared": cleared, "new": new,
-                "cleared_now": cleared_now, "open": open_n, "ticked": ticked}
-
-    @staticmethod
-    def status(prev: str, m: dict, tieout: bool) -> str:
-        if prev == "Done":
-            return "Done"                      # the human's call - never overwritten
-        if not tieout:
-            return "Tie-out failed"
-        if m["open"] == 0:
-            return "Clean"
-        return "In progress" if (m["cleared"] or m["ticked"]) else "Open"
+                st = {"items": {}, "done_tick": False, "tieout": UNREADABLE not in text}
+                kind = None
+                for c in kids:
+                    ct = _plain(c)
+                    if c.get("type") == "paragraph":
+                        kind = _heading_kind(ct) or kind
+                    elif c.get("type") == "to_do":
+                        chk = bool(c.get("to_do", {}).get("checked"))
+                        if ct.startswith(DONE_TICK):
+                            st["done_tick"] = chk
+                        elif kind:
+                            line = ct.split("  ", 1)[0].strip()
+                            ref = _parse_ref(line)
+                            st["items"][_item_key(kind, ref)] = {
+                                "kind": kind, "ref": ref, "line": line,
+                                "url": _first_link(c), "checked": chk}
+                out["months"][which] = st
+        return out
 
     # ── page body write ──
     @staticmethod
-    def _body_blocks(m: dict) -> list:
-        blocks = []
-        for kind, rows in m["sections"].items():
-            if not rows:
-                continue
-            kids = [_todo(it, chk, note) for it, chk, note in rows[:ITEMS_PER_SECTION]]
-            if len(rows) > ITEMS_PER_SECTION:
-                kids.append({"type": "paragraph", "paragraph": {"rich_text": [
-                    _rt(f"… {len(rows) - ITEMS_PER_SECTION} more - see the reconciliation Excel",
-                        italic=True, color="gray")]}})
-            n_open = sum(1 for _it, chk, _n in rows if not chk)
-            blocks.append(_toggle(f"{KINDS[kind][0]} ({n_open})", kids))
+    def _check_text(m: dict, st_name: str, standing: str) -> str:
+        if st_name == "All entered":
+            return f"{CHECK_PREFIX}: every statement bill is entered in QBO - {standing.lower()}."
+        if st_name == "Not entered":
+            by_mo = ", ".join(f"{mo}: {_open_enter(st['rows'])}" for mo, st in
+                              sorted(m["months"].items(), key=lambda kv: _month_sort(kv[0]),
+                                     reverse=True) if _open_enter(st["rows"]))
+            n = m["not_entered"]
+            return (f"{CHECK_PREFIX}: {n} bill{'s' if n != 1 else ''} not entered in QBO - "
+                    f"enter them before the pay run ({by_mo}).")
+        if st_name == "Unreadable":
+            return f"{CHECK_PREFIX}: can't confirm - {standing}. Check the statement PDF by hand."
+        return f"{CHECK_PREFIX}: can't confirm - {standing[0].lower()}{standing[1:]}. Ask the vendor for one."
+
+    @classmethod
+    def _body_blocks(cls, m: dict, st_name: str, standing: str) -> list:
+        blocks = [{"type": "callout", "callout": {
+            "rich_text": [_rt(cls._check_text(m, st_name, standing))],
+            "color": f"{STATUS_COLOR.get(st_name, 'gray')}_background",
+            "icon": {"type": "emoji", "emoji": "✅" if st_name == "All entered" else "⚠️"}}}]
+        for mo, st in sorted(m["months"].items(), key=lambda kv: _month_sort(kv[0]), reverse=True):
+            left = sum(1 for _it, chk, _n in st["rows"] if not chk)
+            title = f"{mo} · {left} open" + ("" if st["tieout"] else f" · {UNREADABLE}")
+            kids = [{"type": "to_do", "to_do": {"checked": False, "rich_text": [
+                _rt(DONE_TICK, bold=True),
+                _rt(" - tick when finished; the next run files the folder DONE",
+                    italic=True, color="gray")]}}]
+            for kind in KINDS:
+                rows = [r for r in st["rows"] if r[0]["kind"] == kind]
+                if not rows:
+                    continue
+                n_open = sum(1 for _it, chk, _n in rows if not chk)
+                kids.append(_para(f"{KINDS[kind][0]} ({n_open})", bold=True))
+                kids += [_todo(it, chk, note) for it, chk, note in rows]
+            blocks.append(_toggle(title, _cap(kids)))
         if m["cleared"]:
             kids = []
-            for c in sorted(m["cleared"].values(), key=lambda c: c.get("on", ""), reverse=True):
+            for c in sorted(m["cleared"].values(), key=lambda c: _us_sort(c.get("on", "")),
+                            reverse=True):
                 label = KINDS.get(c["kind"], ("", c["kind"]))[1]
                 kids.append({"type": "to_do", "to_do": {"checked": True, "rich_text": [
-                    _rt(f"{label}: {c.get('line') or c['ref']}", strikethrough=True, color="gray"),
+                    _rt(f"{label} {c.get('month', '')}: {c.get('line') or c['ref']}",
+                        strikethrough=True, color="gray"),
                     _rt(f"  cleared {c.get('on') or _today()}", italic=True, color="gray")]}})
-            blocks.append(_toggle(f"{H_CLEARED} ({len(m['cleared'])})", kids[:ITEMS_PER_SECTION]))
+            blocks.append(_toggle(f"{H_CLEARED} ({len(m['cleared'])})", kids[:MAX_CHILDREN]))
+        if m["history"]:
+            kids = [_para(f"{mo} · done {h['on']}" + (f" · {h['how']}" if h.get("how") else ""),
+                          color="gray")
+                    for mo, h in sorted(m["history"].items(), key=lambda kv: _month_sort(kv[0]),
+                                        reverse=True)]
+            blocks.append(_toggle(f"{H_HISTORY} ({len(m['history'])})", kids[:MAX_CHILDREN]))
         return blocks
 
     @staticmethod
-    def _props(rec: dict, m: dict, status: str, prev_props: dict) -> dict:
+    def _props(rec: dict, m: dict, st_name: str, standing: str, last_statement: str) -> dict:
         props = {
-            "Name": {"title": [_rt(f"{rec['vendor']} · {rec['month']}")]},
+            "Name": {"title": [_rt(rec["vendor"])]},
             "Key": {"rich_text": [_rt(rec["key"])]},
-            "Status": {"select": {"name": status}},
-            "Open items": {"number": m["open"]},
+            "Status": {"select": {"name": st_name}},
+            "Standing": {"rich_text": [_rt(standing, color=STATUS_COLOR.get(st_name, "default"),
+                                           bold=st_name != "All entered")]},
+            "Not entered": {"number": m["not_entered"]},
+            "Follow-ups": {"number": m["followups"]},
             "Last checked": {"date": {"start": dt.datetime.now().astimezone().isoformat(timespec="minutes")}},
-            "Folder": {"rich_text": [_rt(rec.get("folder", ""))]},
         }
-        if rec.get("stmt_date"):
-            props["Statement date"] = {"date": {"start": rec["stmt_date"]}}
+        if last_statement:
+            props["Last statement"] = {"date": {"start": last_statement}}
         if rec.get("vendor_id"):
             props["QBO vendor"] = {"url": QBO_VENDOR_URL.format(vendor_id=rec["vendor_id"])}
-        if not (prev_props.get("First seen") or {}).get("date"):
-            props["First seen"] = {"date": {"start": dt.date.today().isoformat()}}
         return props
 
-    # ── one vendor-month ──
-    def sync(self, rec: dict) -> dict:
-        """Create or rewrite the page for one vendor-month. `rec` = {key, vendor,
-        month, items, tieout, stmt_date, vendor_id, folder, unchecked_kinds}.
-        Returns {status, open, new, cleared_now, url, name}."""
+    # ── one vendor ──
+    def _plan(self, rec: dict, root: Optional[Path]) -> tuple:
+        """Read the page (if any) and merge - reads only."""
         page = self.nc.query_by_property(self.ds, "Key", "rich_text", rec["key"])
-        prev_props = (page or {}).get("properties", {})
-        prev_status = ((prev_props.get("Status") or {}).get("select") or {}).get("name", "")
-        body = self._read_body(page["id"]) if page else {"managed": [], "checked": {}, "cleared": {}}
-        m = self.merge(rec.get("items", []), body["checked"], body["cleared"],
-                       frozenset(rec.get("unchecked_kinds", ())))
-        status = self.status(prev_status, m, rec.get("tieout", True))
-        props = self._props(rec, m, status, prev_props)
-        blocks = self._body_blocks(m)
+        prior = self._read_body(page["id"]) if page else {"managed": [], "months": {},
+                                                          "cleared": {}, "history": {}}
+        folder_done = frozenset(mo for mo in set(prior["months"]) | set(rec["months"])
+                                if _month_folder_done(root, rec.get("folder", ""), mo))
+        m = merge(rec["months"], prior, frozenset(rec.get("unchecked_kinds", ())), folder_done)
+        prev_last = ((((page or {}).get("properties", {}).get("Last statement") or {})
+                      .get("date") or {}).get("start") or "")
+        last = max([prev_last] + [r.get("stmt_date", "") for r in rec["months"].values()])
+        st_name, standing = status(m, last)
+        return page, prior, m, st_name, standing, last, folder_done
+
+    def preview(self, rec: dict, root: Optional[Path] = None) -> dict:
+        """What sync() would do for one vendor, writing nothing (--dry-run)."""
+        page, _prior, m, st_name, standing, _last, folder_done = self._plan(rec, root)
+        return {"name": rec["vendor"], "action": "UPDATE" if page else "NEW PAGE",
+                "status": st_name, "standing": standing, "not_entered": m["not_entered"],
+                "followups": m["followups"], "open_months": sorted(m["months"], key=_month_sort),
+                "closing": {mo: how for mo, how in m["closing"].items() if mo not in folder_done}}
+
+    def sync(self, rec: dict, root: Optional[Path] = None, log=print) -> dict:
+        """Create or rewrite the page for one vendor, and rename the folders of the
+        months that close. `rec` = {key, vendor, vendor_id, folder, months:
+        {month: {items, tieout, parsed, stmt_date}}, unchecked_kinds}."""
+        page, prior, m, st_name, standing, last, folder_done = self._plan(rec, root)
+        failed = {mo for mo in m["closing"] if mo not in folder_done
+                  and not _rename_month_done(root, rec.get("folder", ""), mo, log)}
+        if failed:                             # a folder we could not rename stays open
+            m = merge(rec["months"], prior, frozenset(rec.get("unchecked_kinds", ())),
+                      folder_done, frozenset(failed))
+            st_name, standing = status(m, last)
+        props = self._props(rec, m, st_name, standing, last)
+        blocks = self._body_blocks(m, st_name, standing)
         if page is None:
             page = self.nc.create_page(self.ds, props, children=blocks)
         else:
             self.nc.update_page(page["id"], props)
-            for bid in body["managed"]:
+            for bid in prior["managed"]:
                 self.nc.delete_block(bid)
-            if blocks:
-                self.nc.append_children(page["id"], blocks)
-        return {"status": status, "open": m["open"], "new": m["new"],
-                "cleared_now": m["cleared_now"], "url": page.get("url", ""),
-                "name": f"{rec['vendor']} · {rec['month']}"}
-
-    # ── Done <-> month folder ──
-    def sync_done(self, root: Path, apply: bool, log=print) -> List[str]:
-        """Mirror Done both ways with the month folder on the share:
-          Notion Done, folder open   -> rename the folder '<MM-YYYY> DONE'
-          folder DONE, Notion not    -> set the page Done
-        Nothing changes without apply. Returns the actions (done or proposed)."""
-        acts: List[str] = []
-        for page in self.nc.query_data_source(self.ds):
-            props = page.get("properties", {})
-            status = ((props.get("Status") or {}).get("select") or {}).get("name", "")
-            folder = "".join(r.get("plain_text", "") for r in
-                             (props.get("Folder") or {}).get("rich_text", []))
-            if "/" not in folder:
-                continue
-            vend, month = folder.rsplit("/", 1)
-            vdir = root / vend
-            if not vdir.is_dir():
-                continue
-            done_dir = next((d for d in vdir.iterdir() if d.is_dir()
-                             and d.name.split(maxsplit=1)[0] == month
-                             and re.search(r"\bDONE\b", d.name, re.I)), None)
-            open_dir = vdir / month
-            if status == "Done" and done_dir is None and open_dir.is_dir():
-                acts.append(f"rename folder {vend}/{month} -> {month} DONE")
-                if apply:
-                    open_dir.rename(vdir / f"{month} DONE")
-            elif status != "Done" and done_dir is not None:
-                acts.append(f"mark {vend} · {month} Done in Notion (folder is DONE)")
-                if apply:
-                    self.nc.update_page(page["id"], {"Status": {"select": {"name": "Done"}}})
-        for a in acts:
-            log(("  " if apply else "  would ") + a)
-        return acts
+            self.nc.append_children(page["id"], blocks)
+        return {"name": rec["vendor"], "status": st_name, "standing": standing,
+                "not_entered": m["not_entered"], "followups": m["followups"],
+                "url": page.get("url", ""), "closed": dict(m["closing"])}
 
 
 def group_results(results: List[dict]) -> List[dict]:
-    """Per-file reconcile results -> one record per vendor-month (two statements
-    in a month become one page; items concatenate, tie-out must hold for both)."""
+    """Per-file reconcile results -> one record per VENDOR (keyed by its folder on
+    the share). Two statements in one month merge; tie-out must hold for both. A
+    file that could not be read at all ('unreadable', vendor known from its
+    folder) makes its month unreadable."""
     groups: Dict[str, dict] = {}
     for res in results:
-        if res.get("action") not in ("filed", "held") or not res.get("vendor"):
+        if res.get("action") not in ("filed", "held", "preview", "unreadable"):
             continue
-        key = f"{res['vendor']}|{res.get('month', '')}".upper()
-        g = groups.setdefault(key, {
-            "key": key, "vendor": res["vendor"], "month": res.get("month", ""),
-            "items": [], "tieout": True, "stmt_date": res.get("stmt_date", ""),
-            "vendor_id": res.get("vendor_id", ""), "folder": res.get("folder", ""),
-            "unchecked_kinds": set()})
-        g["items"] += res.get("items") or []
-        g["tieout"] = g["tieout"] and bool(res.get("tieout", True))
-        g["stmt_date"] = max(g["stmt_date"], res.get("stmt_date", ""))
+        folder = res.get("vendor_folder") or res.get("vendor") or ""
+        mo = res.get("month", "")
+        if not folder or not mo:
+            continue
+        key = folder.upper()
+        g = groups.setdefault(key, {"key": key, "vendor": folder, "vendor_id": "",
+                                    "folder": folder, "months": {}, "unchecked_kinds": set()})
+        mm = g["months"].setdefault(mo, {"items": [], "tieout": True, "parsed": False,
+                                         "stmt_date": ""})
+        if res["action"] == "unreadable":
+            mm["tieout"] = False
+            continue
+        if res.get("vendor"):
+            g["vendor"] = res["vendor"]
+        g["vendor_id"] = g["vendor_id"] or res.get("vendor_id", "")
+        mm["parsed"] = True
+        mm["items"] += res.get("items") or []
+        mm["tieout"] = mm["tieout"] and bool(res.get("tieout", True))
+        mm["stmt_date"] = max(mm["stmt_date"], res.get("stmt_date", ""))
         g["unchecked_kinds"].update(res.get("unchecked_kinds") or ())
     return list(groups.values())

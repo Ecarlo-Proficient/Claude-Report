@@ -5,7 +5,32 @@ to this tool. Tool-only scope: no business/owner analyses or dollar-exposure
 findings here — those live in the owner's vault.
 
 ## DONE / FINALIZED
-- 2026-09-29 · **Notion Vendor Statements board replaces the Teams card per vendor (owner: "one card that keeps a live record of that statement").**
+- 2026-09-30 · **Notion board rebuilt as ONE page per VENDOR and run live for the first time (owner).**
+  The owner's question for the board is the pay-run check: "are all the bills from the statement ENTERED" - the clerk
+  confirms it before sending the pay run to the manager; approvals, amount/tax fixes and printing are follow-ups done
+  after paying, so they never change the colour.
+  - Row = vendor (key = its folder name on the share, so an unreadable statement still lands on the right vendor).
+    Status (colour) + Standing text: **All entered as of mm/dd/yyyy** (the last check) · **N not entered (oldest MM-YYYY)**
+    · **Unreadable** (tie-out failed or the parser could not read a statement in its folder) · **No statement** (none in
+    60+ days). Columns: Not entered · Follow-ups · Last statement · Last checked · QBO vendor.
+  - Page = a Pay-run check callout, then one heading per OPEN month (newest first; a "Month done" tick, To enter in QBO,
+    then the follow-ups), Cleared and History. Each bill is listed once per vendor, under the newest statement that shows
+    it (running-balance statements repeat unpaid bills every month).
+  - A month closes itself when it ties out with nothing left (owner: yes, auto-done), when the clerk ticks "Month done", or
+    when its folder was already renamed DONE; closing renames the folder `<MM-YYYY> DONE` and moves it to History. A
+    rename that fails keeps the month open. `--sync-done` is retired (closing happens in the run).
+  - `--refresh --dry-run` now reads QBO + Notion and prints one line per vendor + the folders it would file (writes no
+    Excel, nothing to Notion, never posts to Teams). New `--no-teams` switch. Teams digest lists only vendors not ready
+    to pay.
+  - Notion schema reshaped to match (database was empty). Views: "Pay-run check" (blocked vendors first), "Not ready to
+    pay", "Board" by colour.
+  - First live run 09/30/2026 (`--refresh --yes --no-teams`): 17 vendor pages, 20 clean month folders filed DONE, no
+    Notion or rename errors; verified in Notion (rows, colours, a page body with QBO links). Run log in
+    ~/Library/Logs/Proficient/.
+  - Refresh is MANUAL before each pay run for now; a weekday-morning schedule comes with the Synology migration.
+  - Tests: `tests/test_statement_board.py` (21: merge, month closing, one-bill-once, unreadable months, 60-day stale,
+    grouping, the digest, a fake-Notion round trip + a read-only preview that fails on any write).
+- 2026-09-29 · **(Replaced 09/30 by the one-page-per-vendor board above.) Notion Vendor Statements board replaces the Teams card per vendor (owner: "one card that keeps a live record of that statement").**
   The Teams Workflows webhook is post-only - it can't read a ✅ reaction or edit a card - so the live record moved to Notion.
   - `notion_board.py`: ONE page per vendor-month in the "Vendor Statements" database (`ACB_STATEMENTS_DS_ID` in machine.env; the database must be shared with the Notion integration). Body = one collapsible heading per kind of work (To enter · Not approved · Amount mismatch · Tax charged · Not printed · Approval pending? check QBO), one to-do per bill: ref linked to QBO, date mm/dd/yyyy, $, job. Plus a Cleared section.
   - Every run (inbox, single file, `--refresh`) rewrites the page and merges it with the clerk's ticks: gone from QBO -> Cleared (dated); ticked but QBO still shows it -> unticked "still open in QBO"; unverifiable (approval pending in QBO's workflow, bills entered since 09/16) -> her tick is kept. Print items are carried forward when print status didn't run. Her own notes on the page are left alone.
@@ -190,7 +215,8 @@ findings here — those live in the owner's vault.
     the older single-line CowTown layout.
 
 ## OPEN ISSUES
-- **Notion board live write untested until the database is shared with the Notion integration** (Vendor Statements -> ⋯ -> Connections). The code is proven against a fake Notion and a live QBO read.
+- **Statements the board cannot place:** a statement filed in a folder not named `MM-YYYY` (e.g. `Core Concrete Pumping/SEPT 2026/`) gets no vendor row - rename the folder to `09-2026`. Unsupported layouts (Core Pumping, Sunbelt past-due / due-notice PDFs) show their vendor as Unreadable until a parser exists.
+- **Teams digest** posts only if `TEAMS_STMT_WEBHOOK` is set; first live run used `--no-teams` while the owner decides its use.
 - **Print Status is opt-in (`PRINT_STATUS=1`) pending a test-and-see on 1–2
   vendors** (the owner 2026-09-14). Flip the default on once proven.
 - **"Who's done" workflow script HELD (the owner 2026-09-14, "hold - don't build

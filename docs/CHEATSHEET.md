@@ -70,10 +70,11 @@ After the clerk fixes bills, re-check every open month (rewrites each Notion boa
 python3 statement-reconciler/statement_reconciler.py --refresh
 ```
 
-Months the clerk set Done in Notion get their folder renamed `<MM-YYYY> DONE` (shows the list, asks first):
+Preview the Notion board first (reads QBO + Notion, writes nothing): one line per vendor and the
+month folders that would be filed DONE. `--no-teams` skips the Teams digest on a real run.
 
 ```bash
-python3 statement-reconciler/statement_reconciler.py --sync-done
+python3 statement-reconciler/statement_reconciler.py --refresh --dry-run
 ```
 
 ---

@@ -48,25 +48,24 @@ def post(webhook_url: str, payload: dict) -> bool:
 
 
 def post_statement_digest(webhook_url: str, entries: List[dict], board_url: str = "") -> bool:
-    """ONE compact card per run: a line per vendor-month (linked to its Notion page
-    when there is one) and a button to the board. The work itself - ticking bills
-    off - happens on the Notion page, which the next run rewrites in place, so
-    Teams is only the nudge. entries = [{name, status, open, url}]."""
+    """ONE compact card per run: the vendors NOT ready for a pay run (a line each,
+    linked to its Notion page) and a count of the ones whose statement bills are
+    all entered, plus a button to the board. The work happens on the Notion page;
+    Teams is only the nudge. entries = [{name, status, standing, url}]."""
     if not entries:
         return False
-    open_rows = [e for e in entries if e.get("status") not in ("Clean", "Done")]
-    clean = [e for e in entries if e.get("status") == "Clean"]
-    total = sum(int(e.get("open") or 0) for e in open_rows)
+    blocked = [e for e in entries if e.get("status") != "All entered"]
+    ready = len(entries) - len(blocked)
 
     def _name(e: dict) -> str:
         return f"[{e['name']}]({e['url']})" if e.get("url") else e["name"]
 
-    lines = [f"{_name(e)} · {e.get('open', 0)} open" + (" · tie-out failed"
-             if e.get("status") == "Tie-out failed" else "") for e in open_rows]
-    lines += [f"✅ {_name(e)} is clean - set it Done" for e in clean]
+    lines = [f"{_name(e)} · {e.get('standing', e.get('status', ''))}" for e in blocked]
+    if ready:
+        lines.append(f"✅ {ready} vendor(s): every statement bill entered")
     body = [{"type": "TextBlock", "weight": "Bolder", "wrap": True,
-             "text": (f"Vendor statements · {len(open_rows)} open · {total} items"
-                      if open_rows else "Vendor statements · all clean")},
+             "text": (f"Vendor statements · {len(blocked)} not ready to pay"
+                      if blocked else "Vendor statements · every bill entered")},
             {"type": "TextBlock", "wrap": True, "spacing": "Small",
              "text": "\n\n".join(lines)}]
     payload = _envelope(body)

@@ -3257,7 +3257,52 @@ def process_pdf(pdf_path: Path, args: argparse.Namespace,
         print(_Term.color(color, line) if n > 0 else _Term.color(_Term.DIM, line))
     _hr()
 
+    # Per-vendor actionable summary for the Teams task card (run_inbox posts one
+    # card per vendor-month). The clerk's fix-list: bills to enter, approvals to
+    # chase, amount/tax mismatches, and - if print-status ran - unprinted bills.
+    not_approved = sum(1 for r in rows
+                       if r.category == "MATCHED" and not _is_approved(r.qbo_memo))
+    open_items = {
+        "To enter (missing in QBO)": counts.get("MISSING_IN_QBO", 0),
+        "Not approved (chase PM)": not_approved,
+        "Amount mismatch": counts.get("CLERK_AMOUNT_MISMATCH", 0),
+        "Tax violation (8.25%)": counts.get("VENDOR_TAX_VIOLATION", 0),
+    }
+    unprinted: list = []
+    if os.environ.get("PRINT_STATUS", "").strip().lower() in ("1", "true", "yes", "on") and lines:
+        try:
+            import print_status as _ps
+            _idx = _ps.printed_index()
+            if _idx is not None:
+                _qref = {r.stmt_ref for r in rows
+                         if r.category in ("MATCHED", "VENDOR_TAX_VIOLATION",
+                                           "CLERK_AMOUNT_MISMATCH", "LIKELY_VENDOR_LAG")
+                         and r.stmt_ref}
+                _pc = _ps.classify_print_rows(
+                    _ps.build_print_rows(lines, _idx,
+                                         search_fn=_ps.live_search_printed, qbo_refs=_qref))
+                open_items["Unprinted"] = len(_pc["genuine"]) + len(_pc["suspect"])
+                unprinted = _pc["genuine"] + _pc["suspect"]
+        except Exception:
+            pass
+    result["vendor"] = vendor_name
+    result["vendor_folder"] = _vendor_folder(vendor_name)
+    result["month"] = _month_folder(stmt_date)
+    # The Notion board's checklist: one item per bill, with the ref numbers the
+    # clerk needs (bill #, date, $, job, QBO link).
+    result["items"] = _board_items(rows, bills, unprinted)
+    if "Unprinted" not in open_items:
+        result["unchecked_kinds"] = ["print"]     # print status didn't run - keep last run's
+    result.update({
+        "vendor_id": vendor_id, "stmt_date": stmt_date, "tieout": bool(sum_matches),
+        "folder": (f"{_vendor_folder(vendor_name)}/{_month_folder(stmt_date)}"
+                   if _base_dir else ""),
+    })
+    result["open_items"] = {k: v for k, v in open_items.items() if v}
+    result["clean"] = (not result["open_items"]) and sum_matches
+
     if args.dry_run:
+        result["action"] = "preview"          # the Notion board preview (no writes)
         print(_Term.color(_Term.DIM, "--dry-run set; no Excel written."))
         return True, counts, sum_matches
 
@@ -3294,49 +3339,6 @@ def process_pdf(pdf_path: Path, args: argparse.Namespace,
                       f"{_Term.color(_Term.C, str(out.parent))}")
             except Exception as e:
                 _warn(f"reconciled but couldn't move the source statement: {e}")
-
-    # Per-vendor actionable summary for the Teams task card (run_inbox posts one
-    # card per vendor-month). The clerk's fix-list: bills to enter, approvals to
-    # chase, amount/tax mismatches, and - if print-status ran - unprinted bills.
-    not_approved = sum(1 for r in rows
-                       if r.category == "MATCHED" and not _is_approved(r.qbo_memo))
-    open_items = {
-        "To enter (missing in QBO)": counts.get("MISSING_IN_QBO", 0),
-        "Not approved (chase PM)": not_approved,
-        "Amount mismatch": counts.get("CLERK_AMOUNT_MISMATCH", 0),
-        "Tax violation (8.25%)": counts.get("VENDOR_TAX_VIOLATION", 0),
-    }
-    unprinted: list = []
-    if os.environ.get("PRINT_STATUS", "").strip().lower() in ("1", "true", "yes", "on") and lines:
-        try:
-            import print_status as _ps
-            _idx = _ps.printed_index()
-            if _idx is not None:
-                _qref = {r.stmt_ref for r in rows
-                         if r.category in ("MATCHED", "VENDOR_TAX_VIOLATION",
-                                           "CLERK_AMOUNT_MISMATCH", "LIKELY_VENDOR_LAG")
-                         and r.stmt_ref}
-                _pc = _ps.classify_print_rows(
-                    _ps.build_print_rows(lines, _idx,
-                                         search_fn=_ps.live_search_printed, qbo_refs=_qref))
-                open_items["Unprinted"] = len(_pc["genuine"]) + len(_pc["suspect"])
-                unprinted = _pc["genuine"] + _pc["suspect"]
-        except Exception:
-            pass
-    result["vendor"] = vendor_name
-    result["month"] = _month_folder(stmt_date)
-    # The Notion board's checklist: one item per bill, with the ref numbers the
-    # clerk needs (bill #, date, $, job, QBO link).
-    result["items"] = _board_items(rows, bills, unprinted)
-    if "Unprinted" not in open_items:
-        result["unchecked_kinds"] = ["print"]     # print status didn't run - keep last run's
-    result.update({
-        "vendor_id": vendor_id, "stmt_date": stmt_date, "tieout": bool(sum_matches),
-        "folder": (f"{_vendor_folder(vendor_name)}/{_month_folder(stmt_date)}"
-                   if _base_dir else ""),
-    })
-    result["open_items"] = {k: v for k, v in open_items.items() if v}
-    result["clean"] = (not result["open_items"]) and sum_matches
 
     # ── clerk performance log (append one row) ──────────────
     t0 = _phase("Appending clerk-performance history")
@@ -3508,10 +3510,47 @@ def _board_items(rows: List["ReconRow"], bills: List["QboBill"], unprinted: list
     return out
 
 
+def _preview_board(nb, recs: List[dict], root: Optional[Path]) -> None:
+    """--dry-run: one line per vendor page this run would create or update, plus
+    the month folders that would be filed DONE. Reads the board (NEW PAGE vs
+    UPDATE, the clerk's ticks) but writes nothing to Notion, the share, or Teams."""
+    try:
+        board = nb.Board.from_env()
+    except Exception as e:
+        _warn(f"Notion preview skipped: {e}")
+        return
+    if board is None:
+        print(_Term.color(_Term.DIM, "  (Notion board off: set ACB_STATEMENTS_DS_ID in machine.env)"))
+        return
+    rows: List[dict] = []
+    for rec in recs:
+        try:
+            rows.append(board.preview(rec, root))
+        except Exception as e:
+            _warn(f"Notion preview: {rec['vendor']}: {e}")
+    new = sum(1 for r in rows if r["action"] == "NEW PAGE")
+    order = {"Unreadable": 0, "Not entered": 1, "No statement": 2, "All entered": 3}
+    print()
+    print(_Term.color(_Term.BOLD, f"  NOTION BOARD PREVIEW  ·  {len(rows)} vendor(s): "
+                                  f"{new} new, {len(rows) - new} updated"))
+    w = max((len(r["name"]) for r in rows), default=0)
+    for r in sorted(rows, key=lambda r: (order.get(r["status"], 9), r["name"].upper())):
+        print(f"    {r['name']:<{w}}  {r['action']:<8}  {r['standing']:<42}  "
+              f"{r['followups']:>3} follow-ups · {len(r['open_months'])} open month(s)")
+    closing = [(r["name"], mo, how) for r in rows for mo, how in sorted(r["closing"].items())]
+    if closing:
+        print(_Term.color(_Term.DIM, f"  Month folders that would be filed DONE ({len(closing)}):"))
+        for name, mo, how in closing:
+            print(_Term.color(_Term.DIM, f"    {name} · {mo} ({how})"))
+    print(_Term.color(_Term.DIM, "  Teams digest: would post 1 card."))
+    print(_Term.color(_Term.DIM, "  (preview: nothing written. Run without --dry-run to publish.)"))
+
+
 def _publish(results: List[dict], args: argparse.Namespace, root: Optional[Path]) -> None:
-    """Push this run to the Notion board (one live page per vendor-month) and post
-    ONE short Teams digest linking to it. Best-effort: no board id / no token /
-    no webhook each skip with one line; nothing here can fail the run."""
+    """Push this run to the Notion board (one live page per vendor), file the
+    months that closed, and post ONE short Teams digest linking to it.
+    Best-effort: no board id / no token / no webhook each skip with one line;
+    nothing here can fail the run."""
     recs = []
     try:
         import notion_board as nb
@@ -3521,41 +3560,54 @@ def _publish(results: List[dict], args: argparse.Namespace, root: Optional[Path]
         return
     if not recs:
         return
+    if getattr(args, "dry_run", False):
+        _preview_board(nb, recs, root)
+        return
+    if getattr(args, "no_notion", False):
+        return
     synced: List[dict] = []
-    board = None
-    if not getattr(args, "no_notion", False):
+    try:
+        board = nb.Board.from_env()
+    except Exception as e:
+        _warn(f"Notion board skipped: {e}")
+        return
+    if board is None:
+        print(_Term.color(_Term.DIM, "  (Notion board off: set ACB_STATEMENTS_DS_ID in machine.env)"))
+        return
+    t0 = _phase(f"Updating the Notion board ({len(recs)} vendor(s))")
+    for rec in recs:
         try:
-            board = nb.Board.from_env()
+            synced.append(board.sync(rec, root, log=lambda m: print(_Term.color(_Term.DIM, m))))
         except Exception as e:
-            _warn(f"Notion board skipped: {e}")
-        if board is None:
-            print(_Term.color(_Term.DIM, "  (Notion board off: set ACB_STATEMENTS_DS_ID in machine.env)"))
-        else:
-            t0 = _phase(f"Updating the Notion board ({len(recs)} vendor-month(s))")
-            for rec in recs:
-                try:
-                    synced.append(board.sync(rec))
-                except Exception as e:
-                    _warn(f"Notion: {rec['vendor']} {rec['month']}: {e}")
-            _done(t0, "  ·  ".join(f"{s['name']}: {s['status']} ({s['open']} open)"
-                                   for s in synced) or "nothing written")
-            if root is not None:
-                try:
-                    board.sync_done(root, apply=False, log=lambda m: print(_Term.color(_Term.DIM, m)))
-                except Exception as e:
-                    _warn(f"Notion Done check skipped: {e}")
+            _warn(f"Notion: {rec['vendor']}: {e}")
+    _done(t0, f"{len(synced)} vendor page(s) written")
+    for s in synced:
+        print(f"    {s['name']}: {s['standing']}")
+    if getattr(args, "no_teams", False):
+        return
     try:
         webhook = kc.get_secret("TEAMS_STMT_WEBHOOK") or ""
     except Exception:
         webhook = ""
-    if not webhook:
+    if not webhook or not synced:
         return
     from shared import teams_notify
-    entries = synced or [{"name": f"{r['vendor']} · {r['month']}", "url": "",
-                          "open": len(r["items"]),
-                          "status": "Open"} for r in recs]
-    if teams_notify.post_statement_digest(webhook, entries, board.url() if board else ""):
+    if teams_notify.post_statement_digest(webhook, synced, board.url()):
         print(_Term.color(_Term.DIM, "  (posted the Teams digest)"))
+
+
+def _unreadable_result(f: Path, base: Optional[Path], inbox: Optional[Path]) -> dict:
+    """A filed statement that could not be read: its vendor and month come from
+    its folder (<root>/<Vendor>/<MM-YYYY>/), so the board can show the vendor as
+    'can't confirm'. Inbox files have no folder yet - nothing to attribute."""
+    try:
+        rel = f.resolve().relative_to(base.resolve()) if base else None
+    except ValueError:
+        rel = None
+    if (rel is None or len(rel.parts) != 3 or (inbox and inbox.resolve() in f.resolve().parents)
+            or not re.match(r"^\d\d-\d{4}$", rel.parts[1])):
+        return {}
+    return {"action": "unreadable", "vendor_folder": rel.parts[0], "month": rel.parts[1]}
 
 
 def run_inbox(args: argparse.Namespace, access: str, cid: str,
@@ -3589,6 +3641,7 @@ def run_inbox(args: argparse.Namespace, access: str, cid: str,
         except Exception as e:
             _fail(f"{f.name}: {e}")
             failed.append((f.name, str(e)))
+            results.append(_unreadable_result(f, base, inbox))
             continue
         results.append(result)
         action = result.get("action")
@@ -3596,6 +3649,7 @@ def run_inbox(args: argparse.Namespace, access: str, cid: str,
             skipped.append(f.name)
         elif not ok:
             failed.append((f.name, "skipped (see message above)"))
+            results.append(_unreadable_result(f, base, inbox))
         elif not tieout_ok or action == "held":
             held.append(f.name)
         else:
@@ -3607,7 +3661,9 @@ def run_inbox(args: argparse.Namespace, access: str, cid: str,
     _hr()
     print(_Term.color(_Term.BOLD, "  INBOX SUMMARY"))
     _hr()
-    if filed:
+    if filed and getattr(args, "dry_run", False):
+        print(_Term.color(_Term.G, f"  Reconciled (dry-run, nothing filed):  {len(filed)}"))
+    elif filed:
         print(_Term.color(_Term.G, f"  Reconciled + filed to Vendor/Month:  {len(filed)}"))
     if skipped:
         print(_Term.color(_Term.DIM, f"  Already final (DONE), left as-is:    {len(skipped)}"))
@@ -3664,13 +3720,12 @@ def main() -> int:
     p.add_argument("--refresh", action="store_true",
                    help="Re-reconcile every OPEN (non-DONE) vendor-month in place (after the clerk "
                         "fixes bills / prints), rewriting each Excel and its Notion board page. "
-                        "Nothing to move; DONE months are skipped.")
+                        "Nothing to move; DONE months are skipped. With --dry-run: reads QBO + "
+                        "Notion and prints one line per board page it would create/update.")
     p.add_argument("--no-notion", action="store_true",
                    help="Do not update the Notion Vendor Statements board this run.")
-    p.add_argument("--sync-done", action="store_true",
-                   help="No QBO: mirror Done between the Notion board and the month folders "
-                        "(Notion Done -> rename '<MM-YYYY> DONE'; folder DONE -> Notion Done). "
-                        "Shows the list, then asks before changing anything (--yes skips the ask).")
+    p.add_argument("--no-teams", action="store_true",
+                   help="Do not post the Teams digest this run (the Notion board still updates).")
     args = p.parse_args()
 
     if args.no_color:
@@ -3708,24 +3763,6 @@ def main() -> int:
         import print_status as _ps
         return _ps.audit_print_status(pdfs)
 
-    # ── Done sync: Notion board <-> month folders (no QBO) ──
-    if args.sync_done:
-        import notion_board as nb
-        board = nb.Board.from_env()
-        if board is None:
-            sys.exit("Set ACB_STATEMENTS_DS_ID (the Vendor Statements data-source id) in machine.env first.")
-        base = args.inbox_root or INBOX_ROOT
-        _inbox, root = _resolve_workflow_dirs(base)
-        acts = board.sync_done(root, apply=False)
-        if not acts:
-            print("  Notion and the month folders already agree.")
-            return 0
-        if args.dry_run or not _confirm(f"Apply these {len(acts)} change(s)?", default_yes=False,
-                                        skip=args.yes):
-            return 0
-        board.sync_done(root, apply=True)
-        return 0
-
     # ── refresh mode: re-check every OPEN (non-DONE) month in place ──
     if args.refresh:
         base = args.inbox_root or INBOX_ROOT
@@ -3741,7 +3778,8 @@ def main() -> int:
         if args.dry_run:
             for f in files:
                 print(_Term.color(_Term.DIM, f"  DRY-RUN would re-reconcile: {f.relative_to(root)}"))
-            return 0
+            print(_Term.color(_Term.DIM, "\n  (dry-run: reads QBO + Notion to preview the board; "
+                                         "writes no Excel, nothing to Notion or Teams.)\n"))
         t0 = _phase("Authenticating to QBO (Touch ID may prompt)")
         access, cid = load_credentials()
         _done(t0, "Authenticated")
