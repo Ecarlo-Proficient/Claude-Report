@@ -7,6 +7,11 @@ manual close), RP (no draws — expenses → invoice → profit).
 ---
 
 ## DONE / FINALIZED
+- 2026-09-30 · **CP Overview lives in the Active Awarded Projects folder on Common** (owner: "cp overview should live in the
+  active awarded projects folder in common", after `✗ CP Overview not rebuilt: CP has no home mapped beyond the retired
+  Automations- folder`). `shared/pnl_paths.overview_dir()` - CP = `/Volumes/Common/CURRENT PROJECTS/Awarded Projects
+  Commercial projects` (top level), not mounted = HomeNotMounted unless `--to-automations`; MFD / RP unchanged.
+  `completed_pnl.rebuild_overview` / the CLI write there; the job links are relative (`<job>/Profit and Loss/...`).
 - 2026-09-28 · **CompanyHealth is organized, not a dump** (owner: "a more organized automated folder system rather than a dump"). Every read/write there goes through a named folder in `shared/paths.py`: `register_file()` -> `Registers/` (the JSON rules), `reports_dir()` -> `Reports/` (every generated report), `analysis_dir(topic)` -> `Analysis/<topic> (mm-dd-yyyy)/` (session one-offs). `tests/test_companyhealth_layout.py` fails any module that joins a file onto `companyhealth_dir()`; `python3 shared/paths.py --organize [--apply]` sorts a root that filled up anyway. This tool: job rulings / draw moves / biz-dev cut read from `Registers/`; the director's cut workbook writes to `Reports/`.
 - **Runs on python-env (2026-09-24).** `run_pnl.sh` now starts through `python-env/python.sh` (`"$ACB_PY"`, Python 3.14, every package pinned), never a bare `python3` - a `brew install ffmpeg` on 09/23 swapped `python3` and broke every sync step. Missing-package hints now say `bash python-env/setup.sh`. Verified by a dry run on 3.14. See `python-env/STATUS.md`.
 

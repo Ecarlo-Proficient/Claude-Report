@@ -1060,6 +1060,13 @@ def _find_workbook(folder: Path, proj: str) -> Optional[Path]:
     return loose[0] if len(loose) == 1 else None
 
 
+def _same(a: Path, b: Path) -> bool:
+    try:
+        return Path(a).resolve() == Path(b).resolve()
+    except OSError:
+        return False
+
+
 def _iter_jobs(div_dir: Path, prefix: str):
     """(project #, workbook, status) for every job under a division.
 
@@ -1067,7 +1074,8 @@ def _iter_jobs(div_dir: Path, prefix: str):
     filed inside an archive subfolder ("completed mfd project p&l")."""
     out = []
     try:
-        children = sorted(div_dir.iterdir())
+        # the CP Overview now lives IN the awarded folder: its job folders are read by the CP walk below
+        children = [] if prefix.upper() == "CP" and _same(div_dir, pnl_paths.CP_AWARDED_BASE) else sorted(div_dir.iterdir())
     except OSError:
         return out
     for child in children:
@@ -1202,7 +1210,7 @@ def rebuild_overview(division: str, div_dir: "Path | None" = None,
     describing a P&L that has since moved."""
     div = DIVISIONS[division]
     div_dir = (Path(div_dir).expanduser() if div_dir
-               else pnl_paths.division_dir(div["prefix"], bypass=to_automations))
+               else pnl_paths.overview_dir(div["prefix"], bypass=to_automations))
     year = resolve_year(div, year)
     loaded, _ = load_division(_iter_jobs(div_dir, div["prefix"]), div_dir, year)
     if not loaded:
@@ -1237,7 +1245,7 @@ def main() -> int:
     # covers live and finished jobs alike, so filing it under "completed" put
     # it somewhere it did not belong (the user 2026-08-31).
     div_dir = (Path(a.folder).expanduser() if a.folder
-               else pnl_paths.division_dir(div["prefix"], bypass=a.to_automations))
+               else pnl_paths.overview_dir(div["prefix"], bypass=a.to_automations))
     year = resolve_year(div, a.year if a.year is not None else _DEFAULT_YEAR)
 
     found = _iter_jobs(div_dir, div["prefix"])

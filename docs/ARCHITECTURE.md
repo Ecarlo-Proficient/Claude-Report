@@ -1001,6 +1001,9 @@ written to for months. No Graph API, no new key. Resolution order: an explicit `
 `ACB_PNL_DIR_<DIV>` · the synced channel · the OneDrive division folder. It is a **move**,
 not a mirror — two copies of `MFD Overview.xlsx` would drift. When the channel is not synced
 the run falls back to OneDrive and **says so in its note** rather than pretending it routed.
+**The CP Overview lives on the Common drive** (owner 2026-09-30): `pnl_paths.overview_dir("CP")` = the top of
+`CURRENT PROJECTS/Awarded Projects Commercial projects`, beside the job folders its rows link into
+(`<job>/Profit and Loss/`); not mounted = STOP (or `--to-automations`). MFD / RP Overviews keep their division folder.
 
 **`one-offs/job_vendor_report.py`** (read-only QBO) — job cost for a date window grouped
 by vendor, in the shape a PM's "Transaction List by Vendor" takes but complete. `--compare`

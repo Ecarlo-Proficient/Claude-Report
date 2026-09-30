@@ -371,6 +371,22 @@ def division_dir_note(proj: str, out_dir: "Path | None" = None,
                               f"Automations- folder", bypass)
 
 
+def overview_dir(div: str, bypass: bool = False) -> Path:
+    """Where `<DIV> Overview.xlsx` lives. CP: the top of the Active Awarded Projects folder on the Common
+    drive, beside the job folders its rows link into (the owner 2026-09-30: "cp overview should live in the
+    active awarded projects folder in common"). Not mounted = HomeNotMounted, or the old division folder
+    only when the run says --to-automations. MFD / RP: their division folder, as before."""
+    if division_of(div) == "CP":
+        try:
+            if CP_AWARDED_BASE.is_dir():
+                return CP_AWARDED_BASE
+        except OSError:
+            pass
+        if not bypass:
+            raise HomeNotMounted(f"the Common drive's '{CP_AWARDED_BASE}' is not mounted; {AUTOMATIONS_RULE}")
+    return division_dir(div, bypass=bypass)
+
+
 def _find_awarded_cp_folder(base: Path, proj: str):
     """Awarded-project folder for a CP job, matched by project # (full match wins,
     bare-number match on a digit boundary as fallback). None if base unreachable."""
