@@ -2321,3 +2321,45 @@ table.pp-cov td.pp-fx-on { outline: 2px solid var(--accent); outline-offset: -2p
 /* the bill list's own column titles stay in place on the project page - the pinned stack above replaces them (they were
    pinned at the window top, under the top bar, and bled through the Materials band) */
 .rv-project table.pp-bills thead th { position: static; }
+/* the bill viewer as Excel blocks (owner 2026-09-30): label beside value with lines between cells, the bill's share of
+   the job worked out underneath, line items Amount · Memo · Cost code; only a long memo scrolls */
+.bv-kv { width: 100%; border-collapse: collapse; border: 1px solid color-mix(in srgb, var(--text) 20%, var(--border)); font-size: .92em; }
+.bv-kv th, .bv-kv td { padding: 5px 10px; border: 1px solid color-mix(in srgb, var(--text) 16%, var(--border)); text-align: left; vertical-align: top; }
+.bv-kv th { width: 1%; white-space: nowrap; font-weight: 600; color: var(--text-dim); background: color-mix(in srgb, var(--text) 5%, var(--surface)); }
+.bv-kv td { font-weight: 600; }
+.bv-kv td.neg { color: var(--neg-text); } .bv-kv td.pos { color: var(--pos); }
+.bv-memo { max-height: 3.9em; overflow: auto; font-weight: 500; line-height: 1.3; }
+.bv-eq { width: 100%; border-collapse: collapse; margin: 10px 0 0; border: 1px solid color-mix(in srgb, var(--text) 20%, var(--border)); }
+.bv-eq th, .bv-eq td { padding: 6px 10px; border: 1px solid color-mix(in srgb, var(--text) 16%, var(--border)); }
+.bv-eq th { text-align: left; font-weight: 600; }
+.bv-eq td { text-align: right; width: 1%; white-space: nowrap; font-weight: 700; font-variant-numeric: tabular-nums; }
+.bv-eq tr.bv-eq-other th, .bv-eq tr.bv-eq-other td { color: var(--text-dim); font-weight: 500; }
+.bv-eq tr.bv-eq-total th, .bv-eq tr.bv-eq-total td { background: color-mix(in srgb, var(--text) 8%, var(--surface)); font-weight: 800; font-size: 1.08em; border-top: 2px solid var(--text); }
+.bv-lines { border-collapse: collapse; border: 1px solid color-mix(in srgb, var(--text) 20%, var(--border)); table-layout: fixed; }
+.bv-lines th, .bv-lines td { border: 1px solid color-mix(in srgb, var(--text) 16%, var(--border)); padding: 5px 8px; }
+.bv-lines thead th { background: color-mix(in srgb, var(--text) 12%, var(--surface)); color: var(--text); font-weight: 700; position: static; }
+.bv-lines th:nth-child(1), .bv-lines td:nth-child(1) { width: 92px; }
+.bv-lines th:nth-child(3), .bv-lines td:nth-child(3) { width: 84px; }
+.bv-lines td.bv-lmemo > div { white-space: normal; line-height: 1.3; max-height: 2.6em; overflow-y: auto; scrollbar-width: thin; }
+/* the scan zoom + full screen (owner 2026-09-30) */
+.att-zoom { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 8px; background: color-mix(in srgb, var(--text) 4%, var(--surface)); cursor: zoom-in; display: flex; align-items: center; justify-content: center; }
+.att-zoom.zoomed { cursor: grab; }
+.att-zoom .att-img { border: 0; border-radius: 0; transform-origin: 0 0; max-width: 100%; max-height: 100%; user-select: none; transition: transform .12s ease-out; }
+.att-zoom.zoomed .att-img { transition: none; }
+.att-zctl { position: absolute; right: 12px; bottom: 12px; display: flex; align-items: center; gap: 2px; padding: 4px; border-radius: 999px; background: color-mix(in srgb, var(--surface) 88%, transparent); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); box-shadow: 0 2px 10px rgba(0, 0, 0, .18); opacity: 0; transition: opacity .15s; }
+.att-zoom:hover .att-zctl { opacity: 1; }
+.att-zctl button { font: inherit; min-width: 30px; height: 28px; border: 0; border-radius: 999px; background: transparent; color: var(--text); cursor: pointer; font-weight: 700; }
+.att-zctl button:hover { background: color-mix(in srgb, var(--text) 10%, transparent); }
+.att-zpct { min-width: 46px; text-align: center; font-variant-numeric: tabular-nums; font-size: .88em; color: var(--text-dim); }
+.xdlg.att-full .bv-body { grid-template-columns: 1fr; }
+.xdlg.att-full .bv-info, .xdlg.att-full .att-head #bvPrev, .xdlg.att-full .att-head #bvNext, .xdlg.att-full .att-head .bv-pos { display: none; }
+.att-fullbtn.att-back { font-weight: 700; border-color: var(--accent); color: var(--accent-text); }
+/* while any dialog is open (the bill viewer, a scan, a confirm) the page behind it does not scroll (owner 2026-09-30:
+   "if I scroll as that page is up it keeps the scroll for the project page"); scrolling inside the dialog stays in it */
+html:has(.xdlg-ov) { overflow: hidden; }
+.xdlg-ov, .xdlg-ov * { overscroll-behavior: contain; }
+/* more room for the bill side so memos read in full; a memo scrolls only past four lines */
+.bv-body { grid-template-columns: minmax(440px, 40%) 1fr; }
+.bv-lines td.bv-lmemo > div { max-height: 5.2em; }
+.att-tools .btn { white-space: nowrap; flex: none; }
+.att-tools b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; word-break: normal; }

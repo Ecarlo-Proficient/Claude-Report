@@ -862,8 +862,40 @@ async function openBillViewer(items, index) {
   _bv = { items, i: Math.max(0, Math.min(index || 0, items.length - 1)) };
   let ov = $("#attViewer");
   if (!ov) { ov = document.createElement("div"); ov.id = "attViewer"; ov.className = "xdlg-ov"; document.body.appendChild(ov); ov.onclick = (e) => { if (e.target === ov) { ov.remove(); _bv = null; } }; }
-  if (!window.__bvKeys) { window.__bvKeys = true; document.addEventListener("keydown", (e) => { if (!_bv || !$("#attViewer")) return; if (e.key === "ArrowRight") _bvGo(1); else if (e.key === "ArrowLeft") _bvGo(-1); else if (e.key === "Escape") { $("#attViewer").remove(); _bv = null; } else return; e.preventDefault(); }); }
+  if (!window.__bvKeys) { window.__bvKeys = true; document.addEventListener("keydown", (e) => { if (!_bv || !$("#attViewer")) return; if (e.key === "ArrowRight") _bvGo(1); else if (e.key === "ArrowLeft") _bvGo(-1); else if (e.key === "Escape") { const dl = document.querySelector("#attViewer .xdlg.att-full"); if (dl) { dl.classList.remove("att-full"); _attFullSync(dl); } else { $("#attViewer").remove(); _bv = null; } } else return; e.preventDefault(); }); }
   _bvRender();
+}
+// The scan, zoomable (owner 2026-09-30: "zoom by hovering ... zooming in maybe 25% to where i clicked and a zoom wheel
+// on hover; a full screen mode that takes over the window it's in with a clear Back button"). A click zooms in 25% at
+// that spot; the mouse wheel / a trackpad pinch zooms toward the pointer; drag pans once zoomed; the hover control has
+// − · % · + · reset. Full screen fills the viewer (not the ledger) and shows ← Back; Esc goes back too.
+function _attZoomable(view) {
+  const tools = view.querySelector(".att-tools"), dlg = view.closest(".xdlg");
+  if (tools && dlg) { const fb = document.createElement("button"); fb.type = "button"; fb.className = "btn small att-fullbtn";
+    fb.onclick = () => { dlg.classList.toggle("att-full"); _attFullSync(dlg); }; tools.insertBefore(fb, tools.firstChild); _attFullSync(dlg); }
+  const img = view.querySelector("img.att-img"); if (!img) return;
+  const box = document.createElement("div"); box.className = "att-zoom"; img.replaceWith(box); box.appendChild(img);
+  const ctl = document.createElement("div"); ctl.className = "att-zctl";
+  ctl.innerHTML = `<button type="button" data-z="out" title="Zoom out">−</button><span class="att-zpct">100%</span><button type="button" data-z="in" title="Zoom in 25%">+</button><button type="button" data-z="reset" title="Fit the page">Fit</button>`;
+  box.appendChild(ctl);
+  let z = 1, tx = 0, ty = 0, drag = null, moved = false;
+  const paint = () => { img.style.transform = `translate(${tx}px, ${ty}px) scale(${z})`; ctl.querySelector(".att-zpct").textContent = Math.round(z * 100) + "%"; box.classList.toggle("zoomed", z > 1.001); };
+  const zoomAt = (f, px, py) => { const z2 = Math.min(8, Math.max(1, z * f)); if (z2 === 1) { z = 1; tx = 0; ty = 0; return paint(); }
+    tx = px - (px - tx) * (z2 / z); ty = py - (py - ty) * (z2 / z); z = z2; paint(); };
+  const at = (e) => { const r = box.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+  const mid = () => { const r = box.getBoundingClientRect(); return [r.width / 2, r.height / 2]; };
+  img.draggable = false;
+  box.addEventListener("pointerdown", (e) => { if (e.target.closest(".att-zctl")) return; drag = { x: e.clientX, y: e.clientY, tx, ty }; moved = false; box.setPointerCapture(e.pointerId); e.preventDefault(); });
+  box.addEventListener("pointermove", (e) => { if (!drag) return; const dx = e.clientX - drag.x, dy = e.clientY - drag.y; if (Math.abs(dx) + Math.abs(dy) > 4) moved = true; if (moved && z > 1) { tx = drag.tx + dx; ty = drag.ty + dy; paint(); } });
+  box.addEventListener("pointerup", (e) => { if (!drag) return; drag = null; if (!moved) { const [px, py] = at(e); zoomAt(e.altKey ? 1 / 1.25 : 1.25, px, py); } });   // a click (no drag) = zoom in 25% there; Option-click zooms out
+  box.addEventListener("wheel", (e) => { e.preventDefault(); const [px, py] = at(e); zoomAt(e.deltaY < 0 ? 1.1 : 1 / 1.1, px, py); }, { passive: false });
+  ctl.onclick = (e) => { const k = e.target.dataset && e.target.dataset.z; if (!k) return; e.stopPropagation(); const [px, py] = mid();
+    if (k === "in") zoomAt(1.25, px, py); else if (k === "out") zoomAt(1 / 1.25, px, py); else { z = 1; tx = 0; ty = 0; paint(); } };
+  paint();
+}
+function _attFullSync(dlg) {
+  const full = dlg.classList.contains("att-full");
+  for (const fb of dlg.querySelectorAll(".att-fullbtn")) { fb.textContent = full ? "← Back" : "Full screen"; fb.classList.toggle("att-back", full); fb.title = full ? "Back to the bill (Esc)" : "Fill this window with the scan"; }
 }
 function _bvGo(step) { if (!_bv) return; const n = _bv.i + step; if (n < 0 || n >= _bv.items.length) return; _bv.i = n; _bvRender(); }
 async function _bvRender() {
@@ -882,28 +914,44 @@ async function _bvRender() {
     const host = $("#bvInfo"); if (!host) return; host.innerHTML = "";
     if (!b || !b.ok) { host.innerHTML = `<div class="tr-note">${_ge((b && b.error) || "no bill info")}</div>`; return; }
     $("#bvTitle").textContent = `${b.vendor || ""} · bill ${b.bill_ref || it.id}`;
-    const kv = document.createElement("div"); kv.className = "bv-kv";
-    const add = (k, v, cls) => { if (v == null || v === "") return; const r = document.createElement("div"); r.className = "drow"; const a = document.createElement("span"); a.className = "dk"; a.textContent = k; const c = document.createElement("span"); c.className = "dv" + (cls ? " " + cls : ""); if (v instanceof Node) c.appendChild(v); else c.textContent = v; r.appendChild(a); r.appendChild(c); kv.appendChild(r); };
-    add("Vendor", b.vendor); add("Bill #", b.bill_ref); add("Date", b.date ? fmtDate(b.date) : null); add("Amount", moneyC(b.total), "bv-big");
+    // Owner 2026-09-30: the bill as an Excel block - label beside its value, lines between cells; on a project page no
+    // Project / Client rows (we know them) and the bill "= this job's costs"; line items Amount · Memo · Cost code, and
+    // only a long memo scrolls.
+    const pj = it.project || null;
+    const kv = document.createElement("table"); kv.className = "bv-kv";
+    const add = (k, v, cls) => { if (v == null || v === "") return; const r = document.createElement("tr"); const a = document.createElement("th"); a.textContent = k; const c = document.createElement("td"); if (cls) c.className = cls; if (v instanceof Node) c.appendChild(v); else c.textContent = v; r.appendChild(a); r.appendChild(c); kv.appendChild(r); };
+    add("Vendor", b.vendor); add("Bill #", b.bill_ref); add("Date", b.date ? fmtDate(b.date) : null);
     if (b.open != null) add("Open", moneyC(b.open), num(b.open) > 0.005 ? "neg" : "pos");
     add("Paid", b.pay_date ? "Paid " + fmtDate(b.pay_date) : (b.pay_status || (b.is_sub ? "see QuickBooks (sub bill)" : null)));
     if (b.invoice_no) { const s = document.createElement("span"); s.textContent = `Invoice ${b.invoice_no}`; if (b.invoice) { const paid = (b.invoice.balance || 0) <= 0.005; s.appendChild(document.createTextNode(" · ")); s.appendChild(stText(paid ? "GC paid" : "GC owes " + moneyC(b.invoice.balance), paid ? "st-ok" : "st-warn")); } add("On invoice", s); }
     if (b.invoice_status) add("Tracker", b.invoice_status);
     if (b.approved) add("Approved", b.approved === "approved" ? "Yes" : b.approved);
     if (b.lien_status) add("Lien", b.lien_status);
-    add("Project", (b.projects || []).join(", ") || null); add("Client", (b.clients || []).join(", ") || null);
-    if (b.memo) add("Memo", b.memo);
+    if (!pj) { add("Project", (b.projects || []).join(", ") || null); add("Client", (b.clients || []).join(", ") || null); }
+    if (b.memo) { const m = document.createElement("div"); m.className = "bv-memo"; m.textContent = b.memo; add("Memo", m); }
     host.appendChild(kv);
+    const lines = b.lines || [], mineL = pj ? lines.filter(l => (l.project_no || "") === pj) : lines, other = pj ? lines.filter(l => (l.project_no || "") !== pj) : [];
+    const sum = (xs) => xs.reduce((s2, l) => s2 + num(l.amount), 0);
+    { // the bill = this job's costs, worked out like a cell
+      const eq = document.createElement("table"); eq.className = "bv-eq";
+      const r = (lab, v, cls) => { const tr = document.createElement("tr"); if (cls) tr.className = cls; const a = document.createElement("th"); a.textContent = lab; const c = document.createElement("td"); c.textContent = v; tr.appendChild(a); tr.appendChild(c); eq.appendChild(tr); };
+      r("Bill total", moneyC(b.total));
+      if (pj && other.length) { const jobs = [...new Set(other.map(l => l.project_no || "no project"))]; r(`− other jobs (${jobs.join(", ")})`, "(" + moneyC(sum(other)) + ")", "bv-eq-other"); }
+      if (pj) r(`= ${pj} costs`, moneyC(sum(mineL)), "bv-eq-total");
+      host.appendChild(eq);
+    }
     const t = document.createElement("table"); t.className = "grid bv-lines";
-    t.innerHTML = "<thead><tr><th class='left'>Line item</th><th class='left'>Cost code</th><th class='left'>Project</th><th class='right'>Amount</th></tr></thead>";
+    t.innerHTML = `<thead><tr><th class='right'>Amount</th><th class='left'>Memo</th><th class='left'>Cost code</th>${pj ? "" : "<th class='left'>Project</th>"}</tr></thead>`;
     const tb = document.createElement("tbody");
-    for (const ln of (b.lines || [])) { const tr = document.createElement("tr");
-      tr.appendChild(leftText(ln.description || "–"));
-      { const cc = document.createElement("td"); cc.className = "left"; if (ln.cost_code) { const ch = document.createElement("span"); ch.className = "codechip"; ch.textContent = ln.cost_code; cc.appendChild(ch); } else { cc.textContent = ln.account ? ln.account.split(":").pop().trim() : "–"; cc.classList.add("dim"); } tr.appendChild(cc); }
-      tr.appendChild(leftText(ln.project_no || "–"));
+    for (const ln of mineL) { const tr = document.createElement("tr");
       tr.appendChild(rightText(moneyC(ln.amount)));
+      { const td = document.createElement("td"); td.className = "left bv-lmemo"; const d = document.createElement("div");
+        const txt = pj ? String(ln.description || "").replace(new RegExp("^\\s*" + pj.replace(/[-]/g, "\\-") + "\\s*[-–:]\\s*", "i"), "") : (ln.description || "");   // the job # at the front is known here
+        d.textContent = txt || "–"; td.title = ln.description || ""; td.appendChild(d); tr.appendChild(td); }
+      { const cc = document.createElement("td"); cc.className = "left"; if (ln.cost_code) { const ch = document.createElement("span"); ch.className = "codechip"; ch.textContent = ln.cost_code; cc.appendChild(ch); } else { cc.textContent = ln.account ? ln.account.split(":").pop().trim() : "–"; cc.classList.add("dim"); } tr.appendChild(cc); }
+      if (!pj) tr.appendChild(leftText(ln.project_no || "–"));
       tb.appendChild(tr); }
-    const tot = document.createElement("tr"); tot.className = "bv-tot"; tot.innerHTML = `<td class="left" colspan="3">${(b.lines || []).length} line${(b.lines || []).length === 1 ? "" : "s"}</td><td class="right">${_ge(moneyC((b.lines || []).reduce((s, l) => s + num(l.amount), 0)))}</td>`; tb.appendChild(tot);
+    const tot = document.createElement("tr"); tot.className = "bv-tot"; tot.innerHTML = `<td class="right">${_ge(moneyC(sum(mineL)))}</td><td class="left" colspan="${pj ? 2 : 3}">${mineL.length} line${mineL.length === 1 ? "" : "s"}${pj ? " on " + _ge(pj) : ""}</td>`; tb.appendChild(tot);
     t.appendChild(tb); host.appendChild(t);
     const a = document.createElement("a"); a.className = "btn small"; a.href = qboUrl(b.txn_type === "Expense" ? "expense" : "bill", it.id); a.target = "_blank"; a.rel = "noopener"; a.textContent = "Open in QuickBooks ↗"; host.appendChild(a);
   }).catch(() => { const host = $("#bvInfo"); if (host) host.innerHTML = `<div class="tr-note">could not load the bill</div>`; });
@@ -918,7 +966,7 @@ async function _bvRender() {
   const show = (f, btn) => { list.querySelectorAll(".att-file").forEach(x => x.classList.toggle("on", x === btn));
     const isImg = /\.(png|jpe?g|gif|webp|heic)(\?|$)/i.test(f.name || ""); const isPdf = /\.pdf(\?|$)/i.test(f.name || "");
     view.innerHTML = `<div class="att-tools"><b>${_ge(f.name || "attachment")}</b><a class="btn small" href="${_ge(f.url)}" target="_blank" rel="noopener">Open in a new tab ↗</a><a class="btn small" href="${_ge(f.url)}" download>Download</a></div>`
-      + (isImg ? `<img class="att-img" src="${_ge(f.url)}" alt="">` : `<iframe class="att-frame" src="${_ge(f.url)}${isPdf ? "#toolbar=1" : ""}" title="attachment"></iframe>`); };
+      + (isImg ? `<img class="att-img" src="${_ge(f.url)}" alt="">` : `<iframe class="att-frame" src="${_ge(f.url)}${isPdf ? "#toolbar=1" : ""}" title="attachment"></iframe>`); _attZoomable(view); };
   files.forEach((f, k) => { const b = document.createElement("button"); b.type = "button"; b.className = "att-file"; b.textContent = f.name || ("file " + (k + 1)); b.onclick = () => show(f, b); list.appendChild(b); if (k === 0) show(f, b); });
   list.hidden = files.length < 2;
 }
@@ -938,7 +986,7 @@ async function openAttachmentViewer(type, id, title, expected) {
   const show = (f, btn) => { list.querySelectorAll(".att-file").forEach(x => x.classList.toggle("on", x === btn));
     const isImg = /\.(png|jpe?g|gif|webp|heic)(\?|$)/i.test(f.name || ""); const isPdf = /\.pdf(\?|$)/i.test(f.name || "");
     view.innerHTML = `<div class="att-tools"><b>${_ge(f.name || "attachment")}</b><a class="btn small" href="${_ge(f.url)}" target="_blank" rel="noopener">Open in a new tab ↗</a><a class="btn small" href="${_ge(f.url)}" download>Download</a></div>`
-      + (isImg ? `<img class="att-img" src="${_ge(f.url)}" alt="">` : `<iframe class="att-frame" src="${_ge(f.url)}${isPdf ? "#toolbar=1" : ""}" title="attachment"></iframe>`); };
+      + (isImg ? `<img class="att-img" src="${_ge(f.url)}" alt="">` : `<iframe class="att-frame" src="${_ge(f.url)}${isPdf ? "#toolbar=1" : ""}" title="attachment"></iframe>`); _attZoomable(view); };
   files.forEach((f, k) => { const b = document.createElement("button"); b.type = "button"; b.className = "att-file"; b.textContent = f.name || ("file " + (k + 1)); b.onclick = () => show(f, b); list.appendChild(b); if (k === 0) show(f, b); });
 }
 function qboLinkCell(text, url, title) {
@@ -4552,6 +4600,7 @@ function _ppBillsTable(cur) {
       while (link.firstChild) vb.appendChild(link.firstChild);
       if (b.bill_id) {   // the viewer flips through this vendor's bills in the view you are looking at (owner 2026-09-16)
         const same = rows.filter(y => (y.b.vendor || "") === (b.vendor || "") && y.b.bill_id).map(y => ({ type: y.isSub && y.b.txn_type === "Expense" ? "Purchase" : "Bill", id: String(y.b.bill_id), n: y.b.att || 0, title: `${y.b.vendor || ""} · bill ${y.b.bill_ref || ""}` }));
+        for (const y of same) y.project = _pp.pn;   // the viewer shows THIS job's share of each bill (owner 2026-09-30)
         const ab = attBtn(isSub && b.txn_type === "Expense" ? "Purchase" : "Bill", b.bill_id, b.att, `${b.vendor || ""} · bill ${b.bill_ref || ""}`, { items: same, index: Math.max(0, same.findIndex(y => y.id === String(b.bill_id))) });
         ab.style.marginLeft = "6px"; vb.appendChild(ab); }
       if (!pay && !b.gates) { const s = document.createElement("span"); s.className = "vg-tag"; s.textContent = "GC pays"; s.title = "Concrete pumping - paid by the GC directly"; s.style.marginLeft = "6px"; vb.appendChild(s); }

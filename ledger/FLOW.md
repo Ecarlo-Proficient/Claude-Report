@@ -1,14 +1,9 @@
 # ledger/ - how the Project Ledger works
 
-Last changed: 09/30/2026 - the project page's draw table is the **Draw overview** (was "How we get funded"): invoice
-side (Invoice status, net billed, retained) | actuals (billed gross, costs, gross profit, margin, overhead with its %, net,
-net margin), an fx bar shows how a worked-out cell is computed; the bill list's section / vendor / bill rows sit on
-dark grey / light grey / white; the P&Ls read like Excel; the Draw overview shows 5 draws and scrolls. `?job=<#>`
-opens a job's page. No funding helpers on the project page or the Company strip. Headers pin as you scroll (section
-title, the draw you are on, Materials / Labor - each hands over to the next). `ledgerEdgeCheck()` (or `?qc=edges`)
-flags text within 8px of its card's edge and boxes that touch.
-Earlier the same day: the reload keeps billed history and Closed-job costs current; Pay in QuickBooks runs `billpay`;
-WIP Review's **Held** result; Duplicate customers on `qbo_trust.duplicate_groups`.
+Last changed: 09/30/2026 - the bill viewer opened from a project page shows the bill as an Excel grid, then
+Bill total - other jobs = that job's costs, and only its lines (Amount · Memo · Cost code); the scan zooms (click 25%,
+wheel, drag) and goes full screen inside the viewer with ← Back. Earlier the same day: the Draw overview, pinned
+headers and no funding helpers (see STATUS).
 
 Update this chart - and the line above - in the same commit as any change to `ledger/`
 (`.github/flow_guard.sh` fails the push otherwise). The full system map is `docs/ARCHITECTURE.md`.

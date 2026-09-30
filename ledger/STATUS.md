@@ -4,6 +4,14 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-30 · **Bill viewer: the job's share + zoomable scan** (owner review, example JMP Concrete 3066MFD on MFD192).
+  Opened from a project page (the job rides on each viewer item as `project`): no Project / Client rows, the bill
+  details as an Excel grid (label beside value, lines between cells; the bill memo scrolls only when long), then
+  **Bill total − other jobs = <job> costs**, and only that job's lines as Amount · Memo · Cost code (memos wrap to two
+  lines). From anywhere else the Project / Client rows and a Project column stay. The scan (`_attZoomable`, both
+  viewers): a click zooms 25% at that spot (Option-click out), wheel / pinch zooms toward the pointer, drag pans, a
+  hover control − · % · + · Fit; **Full screen** fills the viewer (not the ledger) with a clear ← Back, Esc goes back.
+  While any dialog is open the page behind it no longer scrolls (`html:has(.xdlg-ov)`; scrolling stays inside it).
 - 2026-09-30 · **Draw overview + bill list as a table + edge check** (owner review of the project page). "How we get
   funded" is now **Draw overview** (RP: Scope overview) - it is an overview of transactions per draw. Columns: Period ·
   Draw · **Invoice status** (was GC, moved before Invoice) · Invoice (a run of invoices shows as 34417–34419) · Date ·
