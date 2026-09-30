@@ -62,6 +62,8 @@ synology/synology_audit.md
 !bill-tracker/vendor_aliases.json
 # ledger dashboard front-end is SOURCE, not a generated *.html report:
 !ledger/static/*.html
+# the designed tools map ARCHITECTURE.md points to (docs, not a report):
+!docs/architecture.html
 .preview/
 .claude/launch.json
 
