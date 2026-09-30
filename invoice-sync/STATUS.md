@@ -6,6 +6,7 @@ mirror. Update this in the SAME commit as any change to this tool.
 ---
 
 ## DONE / FINALIZED
+- 2026-09-30 · `preview_export.py` takes `PREVIEW_EXPORT_PATH` (the office server's test week rebuilds the Invoice Tracker read-only into `_server-test/`).
 - 2026-09-29 · **Formula-injection guard (security review).** Outside text (vendor / QBO / Notion / email) this tool writes goes through `shared/xlsx_guard` - stored as text, never a live formula (the invoice export rows); every workbook save also passes the shared guard, and `xlsx_verify` fails a risky formula.
 - 2026-09-29 · **Notion token + Teams webhook read from the key library** (`shared/qbo_vault.get_secret`:
   env var, then Key Helper) - no longer the older `proficient-automation-worker` store. `setup_keychain.py`

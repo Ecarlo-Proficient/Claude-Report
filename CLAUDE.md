@@ -153,8 +153,8 @@ restate them here. Business/strategic context lives in session memory, not in th
   exist but are .disabled). Its config/clients (`config.py`, `qbo_client.py`, `notion_client.py`,
   `teams_notify.py`, `logger.py`, `state.py`, `version.py`, `sync_view.py`, `doctor.py`,
   `setup_keychain.py`) are tool-local — nothing else may import them. `.env` + `state/` live here
-  (legacy fallback reads `../automation-worker/` until old clones move them). Dockerized at
-  **v1.1.0** for Synology (`SKIP_EXCEL_EXPORT=1` so the Mac keeps the Excel mirror). Keychain
+  (legacy fallback reads `../automation-worker/` until old clones move them). Runs on the office
+  server as part of `docker/` (the AP/AR job). Keychain
   service (`proficient-automation-worker`) and log dir (`~/Library/Logs/Proficient/automation-worker/`)
   keep their historical names on purpose.
 - **bill-tracker/** — AP bills → matched to the GC invoice that authorizes payment → Excel
@@ -229,8 +229,13 @@ restate them here. Business/strategic context lives in session memory, not in th
   `--apply` then `--apply --commit`; only `Approved=Y` rows; exact-spelling + stale-SyncToken +
   closed-period guards; `get_auth()` still an env stub).
 - **synology/** — file-tree audit. **Always pass `--exclude /Volumes/Proinfo/Items/`** (sensitive).
-- **docker/** — the invoice-sync container package (build context = repo root; copies `shared/`
-  + `invoice-sync/`).
+- **docker/** - the OFFICE SERVER package (Synology, 09/30/2026; replaced the invoice-sync-only container):
+  `scheduler.py` runs the QBO mirror every 3 min, AP then AR every 15 min and a nightly count check, with
+  test vs live mode and a writer file on the Accounting share that decides who writes (fails closed; flip it
+  to "mac" = rollback). The image copies a read-only allow-list (`tests/test_office_server_image.py` fails a
+  QuickBooks writer); the server has its OWN Intuit app and its own mirror; keys live in an encrypted
+  Synology shared folder. `push_registers.sh` sends the owner's CompanyHealth rule files to the server one
+  way. The runbook for the developer is `docker/README.md`.
 - **docs/** — Notion architecture, the Invoice Tracker system reference, `ARCHITECTURE.md`
   (the living diagram).
 

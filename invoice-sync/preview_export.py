@@ -15,6 +15,7 @@ and prints the path. Nothing in OneDrive or Notion is modified.
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 from pathlib import Path
 
@@ -24,11 +25,11 @@ from export_invoices_xlsx import export_open_invoices_xlsx, DEFAULT_EXPORT_PATH
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
-OUT = (
+OUT = Path(os.getenv("PREVIEW_EXPORT_PATH") or (   # PREVIEW_EXPORT_PATH: the office server's test week writes here
     Path.home()
     / "Library" / "Logs" / "Proficient" / "collections-notes-backup"
     / "PREVIEW_Open_Invoices.xlsx"
-)
+))
 
 
 def main() -> int:

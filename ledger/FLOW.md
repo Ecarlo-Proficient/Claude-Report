@@ -1,8 +1,7 @@
 # ledger/ - how the Project Ledger works
 
-Last changed: 09/30/2026 - the bill viewer's pay status comes from the QBO mirror for every bill (subs included):
-Paid · Short paid (paid of total, still open) · Unpaid · Check queued; the Bill Tracker is only the fallback. Earlier
-the same day: the viewer's job share + zoomable scan, the Draw overview, pinned headers, no funding helpers.
+Last changed: 09/30/2026 - `refresh_mirror.py` also runs on the office server (docker/), where there is no Pay run to
+watch. Earlier the same day: the bill viewer's pay status from the mirror; the viewer's job share + zoomable scan.
 
 Update this chart - and the line above - in the same commit as any change to `ledger/`
 (`.github/flow_guard.sh` fails the push otherwise). The full system map is `docs/ARCHITECTURE.md`.

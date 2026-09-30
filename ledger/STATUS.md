@@ -4,6 +4,7 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-09-30 · `refresh_mirror.py` skips the Pay-run watch quietly when `pay_bills` is not there (the office server image carries no QuickBooks writer).
 - 2026-09-30 · **Bill viewer: pay status for every bill, short pays included** (owner: "see why this doesn't show the
   pay status? also account for short pays"). Sub bills showed "see QuickBooks (sub bill)" because the viewer read pay
   status from the Bill Tracker, which leaves subs out. `_bill_pay_state` now reads QBO's own balance and every bill
