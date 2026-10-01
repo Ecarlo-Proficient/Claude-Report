@@ -6,6 +6,15 @@ mirror. Update this in the SAME commit as any change to this tool.
 ---
 
 ## DONE / FINALIZED
+- 10/01/2026 · **Open_Invoices.xlsx layout + Lease Invoices tab (the user).** Every aging tab: Open Balance and
+  Total Amount right after Due Date, the five Current / 1-30 / ... / 90+ money columns collapsed into ONE `Aging`
+  column (tinted green->red, filterable), the lien columns last, and per-bucket totals in a BY AGE block under
+  TOTAL. Grouping is client -> invoices (no project rows - the Project # column filters); JPI on the MFD tab keeps
+  its project rows (`aging_sheet.PROJECT_SPLIT_CLIENTS`). New **`Lease Invoices`** tab: every open QBO invoice
+  with no project # (equipment lease, pump / truck principal, interest, late fees), read
+  from the QBO mirror, same look, `Item` in place of Project #, no lien / draw / notes columns; its cell Notes are
+  always carried over. The export now ends with `xlsx_verify.assert_clean`. Code is ready; the live file is
+  rebuilt by the next `sync-ar` once it is closed. `tests/test_open_invoices_layout.py`.
 - 2026-09-30 · `preview_export.py` takes `PREVIEW_EXPORT_PATH` (the office server's test week rebuilds the Invoice Tracker read-only into `_server-test/`).
 - 2026-09-29 · **Formula-injection guard (security review).** Outside text (vendor / QBO / Notion / email) this tool writes goes through `shared/xlsx_guard` - stored as text, never a live formula (the invoice export rows); every workbook save also passes the shared guard, and `xlsx_verify` fails a risky formula.
 - 2026-09-29 · **Notion token + Teams webhook read from the key library** (`shared/qbo_vault.get_secret`:

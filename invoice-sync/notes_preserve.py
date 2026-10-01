@@ -44,8 +44,9 @@ log = logging.getLogger("automation_worker.notes_preserve")
 # Column C (=3) is the invoice number on every aging tab; column A (=1) is the
 # client name on summary rows. The "Open Invoices" flat tab carries the invoice
 # number in column E (=5) and has no client-summary rows.
-_AGING_SHEETS = ("CP Aging", "MFD Aging", "RP Aging")
-_SHEET_INV_COL = {"CP Aging": 3, "MFD Aging": 3, "RP Aging": 3, "Open Invoices": 5}
+_AGING_SHEETS = ("CP Aging", "MFD Aging", "RP Aging", "Lease Invoices")
+_SHEET_INV_COL = {"CP Aging": 3, "MFD Aging": 3, "RP Aging": 3, "Lease Invoices": 3,
+                  "Open Invoices": 5}
 _LABEL_COL = 1
 
 # A client summary row's Invoice # cell reads like "4 inv" (see aging_sheet).

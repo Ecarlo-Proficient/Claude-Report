@@ -16,11 +16,18 @@ Why this exists:
 
 Tabs:
   1. "Open Invoices" — the flat row-per-invoice list (the original sheet).
+     FROZEN: it is copied into Outlook for clients (the user 2026-10-01 - "make
+     sure not to change the first sheet"); tests/test_open_invoices_layout.py
+     pins its columns. Changes to it need the owner's say-so first.
   2. "CP Aging" / "MFD Aging" / "RP Aging" — QBO-style aging buckets rolled up
      by parent client, one tab per division (the user 2026-08-10), each with the
      lien-notice clock and the collections clerk's notes. CP and MFD also carry
      the previous-draw block; RP drops it (RP doesn't bill in draws). There is
      no Division column — the tab IS the division. See aging_sheet.py.
+  3. "Lease Invoices" - every open QBO invoice with NO project # (equipment
+     leases, pump/truck principal payments, interest and late fees: the
+     non-construction items). They never reach Notion (invoice_sync can't route
+     them), so this tab reads them from the QBO mirror (the user 2026-10-01).
 
 Run via run_invoice_sync.py after the main sync completes. Errors here
 don't affect the QBO→Notion sync (caught and logged separately).
@@ -29,6 +36,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import re
 from collections import defaultdict
 import sys
 from pathlib import Path
@@ -39,13 +47,23 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from notion_client import NotionClient
+import qbo_client
+from invoice_sync import PROJECT_NUM_RE
 from draw_chain import DrawChains
 from notes_preserve import read_notes, reapply_notes, absorb_into_records, PreservedNotes
 from cash_flow import build_cash_flow_sheets
 from aging_sheet import (
+    C_ACTION,
+    C_LIEN,
+    C_LIENSTATUS,
+    C_NOTES,
+    C_PROJ,
+    C_THIS,
     DIVISION_TABS,
     DRAW_DIVISIONS,
+    PROJECT_SPLIT_CLIENTS,
     RP_DROP_COLUMNS,
+    VENDOR_COLS,
     load_vendor_bill_map,
     vendor_cells,
     build_aging_sheet,
@@ -57,6 +75,8 @@ from shared.xlsx_guard import put as xl_text  # noqa: E402  (outside text never 
 from shared import lien_clock
 from shared import lien_status as liens
 from shared import notion_customers as customers
+from shared import qbo_mirror
+from shared import xlsx_verify
 
 # The Notion Lien Tracker feeds the "Lien status" column so the Excel matches the
 # dashboard's Open Invoices Lien column (same source, never disconnected). An add-on:
@@ -271,6 +291,94 @@ def _aging_record(
         "vendor_amount": vendor_amount,
         "this_draw_amount": this_amount,
     }
+
+
+LEASE_SHEET = "Lease Invoices"
+
+# The lease tab keeps who / which invoice / when / money / age only: no draws, no
+# Notion notes, and no lien columns - no lien rights ride on lease or note billing
+# (shared/lien_clock.is_lease_text). The project # column carries the QBO item.
+LEASE_DROP_COLUMNS = tuple(VENDOR_COLS) + (C_THIS, C_NOTES, C_ACTION, C_LIEN, C_LIENSTATUS)
+
+_COMPANY_IN_LINK = re.compile(r"deeplinkcompanyid=(\d+)")
+
+
+def _company_id_from_pages(pages: List[dict]) -> str:
+    """The QBO company id, read off a synced invoice's QBO Link (the sync writes it
+    from the live creds), so the lease rows can deep-link the same way without
+    this export holding QBO keys. Used in memory only - never printed or logged."""
+    for page in pages:
+        m = _COMPANY_IN_LINK.search(_url((page.get("properties") or {}).get("QBO Link")))
+        if m:
+            return m.group(1)
+    return ""
+
+
+def _lease_records(today: dt.date, company_id: str) -> Optional[List[dict]]:
+    """Every open QBO invoice that carries NO project # - the same test invoice_sync
+    uses to route (CustomerRef name, then PrivateNote), so this tab and the Notion
+    trackers split QBO's open AR between them with nothing in both or neither.
+
+    Read from the QBO mirror (shared/qbo_mirror), never QBO live. Returns None when
+    the mirror isn't seeded on this machine, so the caller can say so instead of
+    showing an empty tab as "nothing owed"."""
+    if not qbo_mirror.serves("Invoice"):
+        log.warning("QBO mirror not available here - %s tab skipped. "
+                    "Run ledger/refresh_mirror.py, then re-run.", LEASE_SHEET)
+        return None
+    invoices = qbo_mirror.query("Invoice", "Balance > '0'")
+    # {id -> (name, parent id)} over EVERY customer, inactive ones included, so a
+    # sub-customer resolves to its top parent the way the trackers group by GC.
+    cust = {
+        str(c.get("Id")): (c.get("DisplayName") or "", str((c.get("ParentRef") or {}).get("value") or ""))
+        for c in qbo_mirror.load("Customer")
+    }
+
+    def root(cid: str) -> str:
+        seen = set()
+        while cid in cust and cust[cid][1] in cust and cid not in seen:
+            seen.add(cid)
+            cid = cust[cid][1]
+        return cust.get(cid, ("", ""))[0]
+
+    out: List[dict] = []
+    for inv in invoices:
+        ref = inv.get("CustomerRef") or {}
+        note = inv.get("PrivateNote") or ""
+        if PROJECT_NUM_RE.search(ref.get("name") or "") or PROJECT_NUM_RE.search(note):
+            continue                                   # a construction invoice: Notion's
+        lines = [ln for ln in inv.get("Line") or [] if ln.get("DetailType") == "SalesItemLineDetail"]
+        items = []
+        for ln in lines:
+            name = (((ln.get("SalesItemLineDetail") or {}).get("ItemRef") or {}).get("name") or "").strip()
+            # "Other Charges:Equipment Lease" -> "Equipment Lease": the leaf reads in a column.
+            name = name.split(":")[-1].strip()
+            if name and name not in items:
+                items.append(name)
+        desc = next((ln.get("Description") for ln in lines if (ln.get("Description") or "").strip()), "")
+        due = _parse_day(inv.get("DueDate"))
+        balance = float(inv.get("Balance") or 0.0)
+        out.append({
+            "parent": root(str(ref.get("value") or "")) or ref.get("name") or "",
+            "division": "LEASE",
+            "project_num": ", ".join(items),
+            "invoice_num": str(inv.get("DocNumber") or inv.get("Id")),
+            "invoice_date": _parse_day(inv.get("TxnDate")),
+            "due_date": due,
+            "days_past_due": (today - due).days if due else None,
+            "open_balance": balance,
+            "total_amount": float(inv.get("TotalAmt") or 0.0) or balance,
+            "memo": note or desc or (inv.get("CustomerMemo") or {}).get("value") or "",
+            "qbo_link": qbo_client.invoice_deep_link(company_id, str(inv.get("Id"))) if company_id else "",
+        })
+    return out
+
+
+def _parse_day(v: Optional[str]) -> Optional[dt.date]:
+    try:
+        return dt.date.fromisoformat(str(v)[:10]) if v else None
+    except ValueError:
+        return None
 
 
 def _is_litigation(page: dict) -> bool:
@@ -572,8 +680,34 @@ def export_open_invoices_xlsx(
             # there rather than rendered as a column of grey "n/a".
             drop_columns=RP_DROP_COLUMNS if division not in DRAW_DIVISIONS else (),
             title=sheet_title,
+            # Client -> invoices everywhere; JPI on MFD keeps its project rows.
+            split_clients=PROJECT_SPLIT_CLIENTS.get(division),
         )
         counts.append(f"{sheet_name} {len(rows)}")
+
+    # ── Lease Invoices (the user 2026-10-01) ── the open AR that is NOT
+    # construction: no project #, a non-construction item. Same look as the
+    # aging tabs so it reads the same way.
+    lease = _lease_records(today, _company_id_from_pages(res_com_all + mfd_all))
+    if lease is not None:
+        stamp = qbo_mirror.stamp()
+        build_aging_sheet(
+            wb.create_sheet(LEASE_SHEET),
+            lease,
+            today=today,
+            litigation_excluded=None,
+            drop_columns=LEASE_DROP_COLUMNS,
+            title="LEASE & OTHER OPEN INVOICES",
+            header_overrides={C_PROJ: "Item"},
+            footnotes=[
+                "Every open QuickBooks invoice with no project #: equipment leases, pump / truck "
+                "principal payments, interest and late fees. Construction invoices are on the division tabs.",
+                "Aged by due date. Invoice # links to the invoice in QBO."
+                + (f" QuickBooks as of {stamp.astimezone().strftime('%m/%d/%Y %I:%M %p')}." if stamp else ""),
+                "No lien column: no lien rights ride on lease or note billing.",
+            ],
+        )
+        counts.append(f"{LEASE_SHEET} {len(lease)}")
     log.info(
         "Aging tabs: %s (%d litigation excluded)",
         " · ".join(counts), sum(litigation_excluded.values()),
@@ -589,6 +723,14 @@ def export_open_invoices_xlsx(
     #             absorbed Notes have become the Notes column value and are dropped.
     #   PRESERVE → every cell Note, so nothing typed in Excel is lost on regen.
     if absorb_notes:
+        # Lease rows have no Notion page to absorb a Note into, so their cell
+        # Notes are always carried over as Notes - never dropped.
+        for (sheet, inv), saved in preserved.per_invoice.items():
+            if sheet == LEASE_SHEET:
+                keep.per_invoice[(sheet, inv)] = saved
+        for (sheet, client), saved in preserved.per_client.items():
+            if sheet == LEASE_SHEET:
+                keep.per_client[(sheet, client)] = saved
         if keep.total():
             log.warning(
                 "%d note(s) could not push to Notion this run and were kept as cell "
@@ -601,5 +743,7 @@ def export_open_invoices_xlsx(
     # Write
     target.parent.mkdir(parents=True, exist_ok=True)
     wb.save(target)
+    # Repo rule 5b: no workbook reaches the user without passing the verifier.
+    xlsx_verify.assert_clean(target)
     log.info("Exported %d invoices → %s", row_num - 2, target)
     return target

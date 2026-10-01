@@ -148,7 +148,8 @@ flowchart LR
     TEAMS[("Teams\nMFD paid / short-pay cards")]:::out
     XL["export_invoices_xlsx.py\n+ aging_sheet.py\n+ notes_preserve.py\n+ cash_flow.py\n+ draw_chain.py\n+ shared/lien_clock.py"]:::tool
     BTX[("Bill Tracker.xlsx\nOneDrive · READ-ONLY")]:::src
-    OD[("OneDrive\nOpen_Invoices.xlsx\nOpen Invoices\nCP · MFD · RP Aging\nCash Flow · Pay Calendar")]:::out
+    OD[("OneDrive\nOpen_Invoices.xlsx\nOpen Invoices\nCP · MFD · RP Aging\nLease Invoices\nCash Flow · Pay Calendar")]:::out
+    MIR[("QBO mirror\nopen invoices with no project #")]:::src
 
     QBO --> SYNC
     SYNC -- "route by project-# prefix" --> MFD
@@ -157,6 +158,7 @@ flowchart LR
     SYNC --> TEAMS
     SYNC --> XL --> OD
     BTX -- "MFD/CP vendor unpaid-bill status" --> XL
+    MIR -- "lease / note / interest AR" --> XL
 ```
 
 Support cast (same folder): `doctor.py` diagnostics · `verify_invoices.py` /
@@ -164,8 +166,10 @@ Support cast (same folder): `doctor.py` diagnostics · `verify_invoices.py` /
 `setup_keychain.py` Notion/Teams secrets.
 
 **The aging tabs** (`aging_sheet.py`, added 2026-08-05; split per division
-2026-08-10) are the owner's at-a-glance collections view: QBO-style Current /
-1-30 / 31-60 / 61-90 / 90+ buckets aged by due date, **one tab per division
+2026-08-10) are the owner's at-a-glance collections view: ONE `Aging` column
+(Current / 1-30 / 31-60 / 61-90 / 90+, aged by due date - five money columns until
+10/01/2026) with Open Balance + Total Amount right after Due Date and the lien
+columns last, client -> invoice with no project rows (JPI on MFD keeps them), **one tab per division
 (`CP Aging` · `MFD Aging` · `RP Aging`, no Division column)**, invoices grouped
 under the parent client and collapsed by default, the invoice number linked into
 QBO, the collections clerk's Notion `Quick Status` note carried across, a
@@ -174,7 +178,9 @@ Amount`** pair where Open Balance is amber-flagged when it differs from the tota
 (a partly-paid invoice), a stepped slate client→project→invoice hierarchy sorted
 alphabetically with a bottom TOTAL, and litigation invoices excluded. It **reads**
 `Bill Tracker.xlsx` (the AP tool's output file, never its code — repo rule 3) for
-what is still owed to vendors.
+what is still owed to vendors. **`Lease Invoices`** (10/01/2026) is the AR the
+trackers never hold - open QBO invoices with no project # (equipment lease, pump
+principal, interest, late fees) - read from the QBO mirror, same layout, no lien.
 
 **QBO deep links are company-scoped** (`qbo_client.invoice_deep_link`, fixed
 2026-08-11): Intuit's `/app/login?pagereq=invoice…&deeplinkcompanyid=<realm>`
