@@ -2379,3 +2379,29 @@ th.col-drop-l { box-shadow: inset 3px 0 0 var(--accent); }
 th.col-drop-r { box-shadow: inset -3px 0 0 var(--accent); }
 td.bill-due { white-space: nowrap; font-variant-numeric: tabular-nums; }
 td.bill-due.past-due { color: var(--neg-text); font-weight: 600; }
+/* Vendor page, 2026-10-01 round 2 (owner: totals under Amount / Open, tick to copy, payments as a lined table with the
+   bills tucked under their payment, the stub viewed in the ledger) */
+.vp-grid .vp-ck { width: 26px; padding-right: 0; }
+.vp-grid .vp-ck input { vertical-align: middle; cursor: pointer; }
+.vp-grid tbody tr.vp-picked > td { background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+.vp-grid tfoot tr.vp-total > td { font-weight: 800; border-top: 2px solid var(--text); background: color-mix(in srgb, var(--text) 5%, var(--surface)); }
+.vp-grid tfoot td.vp-total-lab { white-space: nowrap; }
+.sumbar.vp-selbar { bottom: 20px; }
+.sumbar:not([hidden]) ~ .sumbar.vp-selbar:not([hidden]) { bottom: 72px; }
+/* payments: Excel-style lines, tighter rows, each payment's bills indented under it on a tinted band */
+.vp-paytable { border-collapse: collapse; border: 1px solid color-mix(in srgb, var(--text) 18%, var(--border)); }
+table.grid.vp-paytable th, table.grid.vp-paytable td { border: 1px solid color-mix(in srgb, var(--text) 12%, var(--border)); padding: 4px 8px; }
+.vp-paytable thead th { background: color-mix(in srgb, var(--text) 8%, var(--surface)); }
+.vp-paytable tr.vp-pay > td { border-top: 2px solid color-mix(in srgb, var(--text) 30%, var(--border)); font-weight: 600; }
+.vp-paytable tr.vp-bill > td { background: color-mix(in srgb, var(--accent) 4%, var(--surface)); color: var(--text); padding-top: 3px; padding-bottom: 3px; }
+.vp-paytable tr.vp-bill > td:nth-child(2) { padding-left: 30px; position: relative; }
+.vp-paytable tr.vp-bill > td:nth-child(2)::before { content: "└"; position: absolute; left: 12px; color: var(--text-dim); }
+.vp-paytable tr.vp-bill > td:first-child { border-right-color: transparent; }
+/* the stub viewer (openStubViewer) fills its dialog; Full screen = the whole window */
+.att-dlg > .stub-view { flex: 1 1 auto; min-height: 0; }
+.xdlg.att-dlg.att-full:not(.bv-dlg) { width: 99vw; height: 97vh; }
+.vp-paytable td.vp-stub { white-space: nowrap; }
+.vp-paytable td.vp-stub > .btn, .vp-paytable td.vp-stub > .stub-hist { display: inline-flex; align-items: center; vertical-align: middle; gap: 6px; margin-right: 6px; }
+.vp-paytable td.vp-stub .stub-histline { display: inline-flex; align-items: center; gap: 6px; }
+.vp-paytable td.vp-stub .stub-hist > div[hidden] { display: none; }
+.vp-paytable td.vp-stub .stub-hist > div:not(.stub-histline):not([hidden]) { display: flex; flex-direction: column; }

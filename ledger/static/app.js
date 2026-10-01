@@ -937,7 +937,7 @@ async function _bvRender() {
       if (b.open != null) add("Open", moneyC(b.open), num(b.open) > 0.005 ? "neg" : "pos");
       add("Paid", b.pay_date ? "Paid " + fmtDate(b.pay_date) : (b.pay_status || (b.is_sub ? "see QuickBooks (sub bill)" : null)));
     }
-    if (b.invoice_no) { const s = document.createElement("span"); s.textContent = `Invoice ${b.invoice_no}`; if (b.invoice) { const paid = (b.invoice.balance || 0) <= 0.005; s.appendChild(document.createTextNode(" · ")); s.appendChild(stText(paid ? "GC paid" : "GC owes " + moneyC(b.invoice.balance), paid ? "st-ok" : "st-warn")); } add("On invoice", s); }
+    if (b.invoice_no) { const s = document.createElement("span"); s.textContent = `Invoice ${b.invoice_no}`; if (b.invoice) { s.appendChild(document.createTextNode(" · ")); s.appendChild(arPayText(b.invoice.amount, b.invoice.balance, b.invoice.status)); } add("On invoice", s); }
     if (b.invoice_status) add("Tracker", b.invoice_status);
     if (b.approved) add("Approved", b.approved === "approved" ? "Yes" : b.approved);
     if (b.lien_status) add("Lien", b.lien_status);
@@ -1662,6 +1662,15 @@ function billView() { return BILL_VIEWS.find(v => v.id === activeBillView) || BI
 function divClass(d) { const s = String(d || "").toUpperCase(); return s === "RP" ? "rp" : s === "CP" ? "cp" : s === "MFD" ? "mfd" : ""; }
 
 // Compact colored status TEXT (Excel-legible, single line) - a <span> or null.
+// An invoice's pay state in one word (owner 2026-10-01: "remove GC from GC Paid everywhere, sometimes they are not GC so
+// it should just show Paid or Unpaid or Partial, partial hover for amount left open").
+function arPayWord(amount, balance, status) {
+  const bal = balance == null ? null : num(balance), amt = amount == null ? null : num(amount);
+  if (status === "Paid" || (bal != null && bal <= 0.005)) return { text: "Paid", cls: "st-ok", tip: "This invoice is paid in full" };
+  if (bal != null && amt != null && bal < amt - 0.005) return { text: "Partial", cls: "st-warn", tip: `${moneyC(bal)} left open of ${moneyC(amt)}` };
+  return { text: "Unpaid", cls: "st-warn", tip: bal != null ? `${moneyC(bal)} open - nothing paid on it yet` : "Not paid yet" };
+}
+function arPayText(amount, balance, status) { const w = arPayWord(amount, balance, status); return stText(w.text, w.cls, w.tip); }
 function stText(text, cls, title) { const s = document.createElement("span"); s.className = "st " + (cls || ""); s.textContent = text; if (title) s.title = title; return s; }
 function payText(b) { const v = b.pay_status || ""; if (!v) return null;
   if (/unpaid/i.test(v)) return stText("Unpaid", "st-warn");
@@ -2109,7 +2118,7 @@ function renderBills() {
   thead.hidden = false; tbody.innerHTML = "";
   const cols = [["Vendor", "left", ""], ["Project", "left", ""], ["Bill #", "left", "Bill number - opens the bill in QuickBooks"],
                 ["Memo", "left", "The bill's memo in QuickBooks (project, address, client - what AP typed)"],
-                ["Invoice #", "left", "The draw (AR invoice) this bill is matched to - opens the invoice page; GC paid / GC owes is the live QuickBooks state of that invoice"],
+                ["Invoice #", "left", "The draw (AR invoice) this bill is matched to - opens the invoice page; Paid / Partial / Unpaid is the live QuickBooks state of that invoice"],
                 ["Date", "left", "Bill date - the funnel filters by month"], ["Amount", "right", "Bill amount"], ["Open", "right", "Open balance we still owe"],
                 ["Paid", "left", "Did we pay the vendor?"], ["Invoice", "left", "Was the AR invoice (draw) paid by the GC?"],
                 ["Lien", "left", "Texas lien-notice clock"], ["Appr", "left", "Approved for payment?"]];
@@ -2256,7 +2265,7 @@ function billRow(b) {
   tr.appendChild(statusCell(apprText(b)));
   return tr;
 }
-// The invoice a bill is matched to (the draw) + the live AR state of that invoice: "GC paid" or "GC owes $X" (owner
+// The invoice a bill is matched to (the draw) + the live AR state of that invoice: Paid / Partial / Unpaid (owner
 // 2026-09-16: "i need to see the invoice it's associated to and if it's been paid"). The number opens the invoice page.
 function _billInvCell(b) {
   const td = document.createElement("td"); td.className = "left bill-inv";
@@ -2265,9 +2274,7 @@ function _billInvCell(b) {
   link.onclick = (e) => { e.stopPropagation(); openInvoicePage({ doc_number: b.invoice_no, customer: b.inv_customer || b.client, project_no: b.project_no, division: b.division, qbo_txn_id: b.inv_qbo_id }); };
   td.appendChild(link);
   if (b.inv_ar_status != null || b.inv_balance != null) {
-    const paid = b.inv_ar_status === "Paid" || num(b.inv_balance) <= 0.005;
-    td.appendChild(stText(paid ? "GC paid" : "GC owes " + moneyC(b.inv_balance), paid ? "st-ok" : "st-warn",
-      paid ? "The GC has paid this invoice" + (b.inv_date ? " (invoiced " + fmtDateShort(b.inv_date) + ")" : "") : `Invoice ${b.invoice_no} is still open in QuickBooks - ${moneyC(b.inv_balance)} of ${moneyC(b.inv_amount)}`));
+    td.appendChild(arPayText(b.inv_amount, b.inv_balance, b.inv_ar_status));
   }
   return td;
 }
@@ -2314,9 +2321,9 @@ function _billDueCell(b) {
 const COL_ORDER_LS = "ledger.colOrder.";
 function colOrderSaved(key) { try { const v = JSON.parse(localStorage.getItem(COL_ORDER_LS + key)); return Array.isArray(v) && v.length ? v : null; } catch { return null; } }
 function colOrderReset(key) { try { localStorage.removeItem(COL_ORDER_LS + key); } catch { /* ignore */ } }
-function colOrderable(table, key, names, rerender) {
+function colOrderable(table, key, names, rerender, defaults) {   // defaults = the standard order (Reset goes back to it); else `names`
   const saved = colOrderSaved(key) || [];
-  const order = saved.filter(n => names.includes(n));
+  const order = (saved.length ? saved : (defaults || [])).filter(n => names.includes(n));
   names.forEach((n, i) => { if (order.includes(n)) return; let at = 0;
     for (let j = i - 1; j >= 0; j--) { const k = order.indexOf(names[j]); if (k >= 0) { at = k + 1; break; } }
     order.splice(at, 0, n); });
@@ -2344,12 +2351,76 @@ function colOrderable(table, key, names, rerender) {
   });
 }
 
+// The vendor page's standard column order (owner 2026-10-01, the order he dragged: "new default format").
+const VP_BILL_ORDER = ["Bill #", "Paid", "Appr", "Date", "Amount", "Open", "Due", "Project", "Memo", "Invoice #", "Lien"];
+const _vpKey = b => String(b.bill_id || `${b.bill_ref}|${b.bill_date}|${b.project_no}`);
+// Tick bills on the vendor page: a checkbox column (Shift-click = a range, the header box = every bill shown) and a bar in
+// the bottom-right corner with the count, the open and billed totals, and Copy table - the ticked rows in the columns'
+// current order, pasteable into Excel or an email (owner 2026-10-01: "need a select so i can copy and paste table. If i
+// select i want to know the count and the open amount totaling up in the bottom corner").
+function _vpSelColumn(table, rows) {
+  const head = table.tHead.rows[0];
+  const th = document.createElement("th"); th.className = "vp-ck"; const all = document.createElement("input"); all.type = "checkbox"; all.title = "Tick every bill shown";
+  all.checked = rows.length > 0 && rows.every(b => _vpSel.has(_vpKey(b))); all.indeterminate = !all.checked && rows.some(b => _vpSel.has(_vpKey(b)));
+  all.onchange = () => { for (const b of rows) { if (all.checked) _vpSel.add(_vpKey(b)); else _vpSel.delete(_vpKey(b)); } paint(); };
+  th.appendChild(all); head.insertBefore(th, head.firstChild);
+  const trs = [...table.tBodies[0].rows];
+  const paint = () => { trs.forEach(tr => { const on = _vpSel.has(tr.dataset.k); tr.classList.toggle("vp-picked", on); const cb = tr.querySelector("td.vp-ck input"); if (cb) cb.checked = on; });
+    all.checked = rows.length > 0 && rows.every(b => _vpSel.has(_vpKey(b))); all.indeterminate = !all.checked && rows.some(b => _vpSel.has(_vpKey(b))); _vpSelBar(rows); };
+  trs.forEach((tr, i) => { const td = document.createElement("td"); td.className = "vp-ck"; const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = _vpSel.has(tr.dataset.k);
+    cb.onclick = (e) => { e.stopPropagation();
+      if (e.shiftKey && _vpSelLast >= 0) { const [a, z] = [Math.min(_vpSelLast, i), Math.max(_vpSelLast, i)]; for (let j = a; j <= z; j++) { if (cb.checked) _vpSel.add(trs[j].dataset.k); else _vpSel.delete(trs[j].dataset.k); } }
+      else if (cb.checked) _vpSel.add(tr.dataset.k); else _vpSel.delete(tr.dataset.k);
+      _vpSelLast = i; paint(); };
+    td.onclick = (e) => e.stopPropagation(); td.appendChild(cb); tr.insertBefore(td, tr.firstChild); });
+  { const ft = table.tFoot && table.tFoot.rows[0]; if (ft) ft.insertBefore(document.createElement("td"), ft.firstChild); }
+  paint();
+}
+function _vpSelBar(rows) {
+  let bar = $("#vpSelBar");
+  if (!bar) { bar = document.createElement("div"); bar.id = "vpSelBar"; bar.className = "sumbar vp-selbar"; bar.hidden = true;
+    bar.innerHTML = '<span class="sb-label">✓</span><span class="sb-sum"></span><span class="sb-meta"></span><button class="sb-copy" title="Copy the ticked bills as a table - paste into Excel or an email">Copy table</button><button class="sb-x" title="Untick all">✕</button>';
+    document.body.appendChild(bar); }
+  const picked = rows.filter(b => _vpSel.has(_vpKey(b)));
+  const showing = !!(_vendorData && _vendorView === "bills" && $("#recordView") && !$("#recordView").hidden);
+  bar.hidden = !picked.length || !showing; if (bar.hidden) return;
+  bar.querySelector(".sb-sum").textContent = `${moneyC(picked.reduce((t, b) => t + bOpen(b), 0))} open`;
+  bar.querySelector(".sb-meta").textContent = `${picked.length} bill${picked.length === 1 ? "" : "s"} · ${moneyC(picked.reduce((t, b) => t + num(b.line_amount), 0))} billed`;
+  bar.querySelector(".sb-x").onclick = () => { _vpSel.clear(); renderVendorPage(); };
+  bar.querySelector(".sb-copy").onclick = () => _vpCopyTable(picked);
+}
+async function _vpCopyTable(picked) {
+  const heads = [...document.querySelectorAll(".vp-grid thead th")].filter(th => !th.classList.contains("vp-ck")).map(th => th.firstChild && th.firstChild.nodeType === 3 ? th.firstChild.textContent : th.textContent.trim());
+  const val = {
+    "Bill #": b => b.bill_ref || "", "Paid": b => b.pay_status || "", "Appr": b => b.approved === "approved" ? "Yes" : b.approved === "not approved" ? "No" : (b.approved || ""), "Date": b => fmtDateShort(b.bill_date),
+    "Due": b => b.due_date ? fmtDateShort(b.due_date) : "", "Amount": b => num(b.line_amount), "Open": b => bOpen(b),
+    "Project": b => [b.project_no, b.client].filter(Boolean).join(" · "), "Memo": b => b.memo || "",
+    "Invoice #": b => b.invoice_no ? b.invoice_no + (b.inv_ar_status != null || b.inv_balance != null ? " · " + arPayWord(b.inv_amount, b.inv_balance, b.inv_ar_status).text : "") : "",
+    "Lien": b => b.lien_status ? (LIEN_SHORT[b.lien_status] || b.lien_status) : "" };
+  const cols = heads.filter(h => val[h]), isMoney = h => h === "Amount" || h === "Open";
+  const clean = v => String(v == null ? "" : v).replace(/[\t\r\n]+/g, " ").trim();
+  const tsv = [cols.join("\t"), ...picked.map(b => cols.map(h => isMoney(h) ? val[h](b).toFixed(2) : clean(val[h](b))).join("\t"))];
+  const tot = h => picked.reduce((t, b) => t + val[h](b), 0);
+  tsv.push(cols.map((h, i) => isMoney(h) ? tot(h).toFixed(2) : (i === 0 ? "Total" : "")).join("\t"));
+  let html = '<table border="1" cellspacing="0" cellpadding="5" style="border-collapse:collapse;font-family:Arial,Helvetica,sans-serif;font-size:13px"><thead><tr>'
+    + cols.map(h => `<th style="text-align:${isMoney(h) ? "right" : "left"};background:#f2f2f2">${_ge(h)}</th>`).join("") + "</tr></thead><tbody>";
+  for (const b of picked) html += "<tr>" + cols.map(h => `<td style="text-align:${isMoney(h) ? "right" : "left"}">${_ge(isMoney(h) ? moneyC(val[h](b)) : clean(val[h](b)))}</td>`).join("") + "</tr>";
+  html += "<tr>" + cols.map((h, i) => `<td style="font-weight:bold;text-align:${isMoney(h) ? "right" : "left"}">${isMoney(h) ? _ge(moneyC(tot(h))) : (i === 0 ? "Total" : "")}</td>`).join("") + "</tr></tbody></table>";
+  try {
+    if (navigator.clipboard && window.ClipboardItem) await navigator.clipboard.write([new ClipboardItem({ "text/html": new Blob([html], { type: "text/html" }), "text/plain": new Blob([tsv.join("\n")], { type: "text/plain" }) })]);
+    else throw new Error("no ClipboardItem");
+  } catch { copy(tsv.join("\n")); }
+  toast(`Copied ${picked.length} bill${picked.length === 1 ? "" : "s"} - paste into Excel or an email`);
+}
+
 // Vendor page (QBO-style, ON DEMAND) - one vendor's bills, fetched per vendor via /api/vendor (never
 // in the bulk load). Each bill shows its project, or "multiple" -> click the bill to see every line
 // item + project #. Filter by pay status. Owner 2026-08-28: "vendor center open into its own vendor
 // page like qbo ... see the bill its paying and the project ... if multiple say multiple, click for lines".
 let _vendorData = null, _vendorType = "open", _vendorView = "bills";   // bills | payments
-let _vendorInv = "any";   // the vendor page's invoice filter (any | gcpaid | gcowes | none)
+let _vendorInv = "any";   // the vendor page's invoice filter (any | gcpaid | gcowes | none) - shown as Invoice Paid / Invoice Unpaid
+const _vpSel = new Set();   // bills ticked on the vendor page (bill id) - the bottom-right bar counts / totals / copies them (owner 2026-10-01)
+let _vpSelLast = -1;        // the last ticked row, for Shift-click ranges
 let _vendorQ = "";   // the vendor page search - one box, filters whichever view is up (owner 2026-09-22: "need ability to search on both pages")
 let _vendorDate = null;   // the vendor page Date filter (Month | Date from-to), same component as the Bill Tracker's; state survives re-renders
 let _vendorProjOpen = false, _vendorProjIdx = -1;   // the Project box's suggestion list: open? which row is highlighted (ArrowDown / ArrowUp, Enter picks)
@@ -2372,7 +2443,7 @@ async function openVendorPage(vendor) {
   openRecord(vendor, "loading…"); skeletonInto($("#recordBody"), 6);
   _recSave({ k: "vendor", id: vendor, view: "bills" });
   const body = $("#recordBody");
-  _vendorData = null; _vendorType = "open"; _vendorView = "bills"; _vendorInv = "any"; _vendorQ = ""; _vendorProj = ""; _vendorDate = null; _vendorBillOpen.clear();   // Unpaid by default (owner 2026-09-28)
+  _vendorData = null; _vendorType = "open"; _vendorView = "bills"; _vendorInv = "any"; _vendorQ = ""; _vendorProj = ""; _vendorDate = null; _vendorBillOpen.clear(); _vpSel.clear();   // Unpaid by default (owner 2026-09-28)
   hfClear("vendorBills"); _stubSel.clear(); _vendorProjOpen = false; _vendorProjIdx = -1;   // nothing carries over from the last vendor
   let data;
   try { data = await (await fetch("/api/vendor?v=" + encodeURIComponent(vendor))).json(); }
@@ -2399,7 +2470,6 @@ function renderVendorPage() {
   }
   { const wrap = document.createElement("span"); wrap.className = "vp-projwrap";
     const pj = document.createElement("input"); pj.type = "search"; pj.id = "vpProj"; pj.className = "msel-search vendor-proj"; pj.value = _vendorProj; pj.placeholder = "Project #"; pj.autocomplete = "off";
-    pj.title = "Narrow to a project # - type, then ArrowDown and Enter to pick one of this vendor's projects; both views";
     // this vendor's projects (bills + payments), the list the box suggests from
     const projs = new Map();
     for (const b of (BILLS || []).filter(b => (b.vendor || "") === d.vendor)) if (b.project_no) projs.set(b.project_no, b.client || nameOf(b.project_no) || "");
@@ -2438,6 +2508,7 @@ function renderVendorPage() {
     _vendorDate = dateFilter("vpDate", dates, renderVendorPage, _vendorDate); _vendorDate.build();   // after the bar is in the document - the control binds to #vpDate
     if (_dateMenuWasOpen) { const m = $("#vpDateMenu"), b = $("#vpDateBtn"); if (m && b) { m.hidden = false; _placeMenu(b, m); } } }
   if (_vendorView === "payments") {
+    { const sb = $("#vpSelBar"); if (sb) sb.hidden = true; }
     $("#recordSub").textContent = `${d.pay_count || 0} payments · ${moneyC(d.pay_total || 0)} paid out this year`;
     return _renderVendorPayments(d, body, seq);
   }
@@ -2454,13 +2525,13 @@ function renderVendorPage() {
   const invState = b => !b.invoice_no ? "none" : (b.inv_ar_status === "Paid" || (b.inv_balance != null && num(b.inv_balance) <= 0.005)) ? "gcpaid" : "gcowes";
   const tools = document.createElement("div"); tools.className = "cp-tools";
   const seg = document.createElement("div"); seg.className = "seg big";
-  for (const [k, lbl] of [["all", `All bills · ${rowsAll.length}`], ["open", `Unpaid · ${rowsAll.filter(b => !isPaid(b)).length}`], ["paid", `Paid · ${rowsAll.filter(isPaid).length}`]]) {
+  for (const [k, lbl] of [["open", `Unpaid · ${rowsAll.filter(b => !isPaid(b)).length}`], ["paid", `Paid · ${rowsAll.filter(isPaid).length}`], ["all", `All bills · ${rowsAll.length}`]]) {   // Unpaid first - the default
     const b = document.createElement("button"); b.type = "button"; b.className = "seg-btn" + (_vendorType === k ? " on" : ""); b.textContent = lbl;
     b.onclick = () => { _vendorType = k; renderVendorPage(); }; seg.appendChild(b);
   }
   tools.appendChild(seg);
   const iseg = document.createElement("div"); iseg.className = "seg"; iseg.title = "The invoice (draw) each bill is matched to, and whether the GC has paid it";
-  for (const [k, lbl] of [["any", "Any invoice"], ["gcpaid", "GC paid"], ["gcowes", "GC owes"], ["none", "No invoice yet"]]) {
+  for (const [k, lbl] of [["any", "Any invoice"], ["gcpaid", "Invoice Paid"], ["gcowes", "Invoice Unpaid"], ["none", "No invoice yet"]]) {
     const b = document.createElement("button"); b.type = "button"; b.className = "seg-btn" + (_vendorInv === k ? " on" : ""); b.textContent = lbl;
     b.onclick = () => { _vendorInv = k; renderVendorPage(); }; iseg.appendChild(b);
   }
@@ -2480,14 +2551,16 @@ function renderVendorPage() {
   rows.sort((a, b) => _isoDay(a.bill_date).localeCompare(_isoDay(b.bill_date)) || String(a.bill_ref || "").localeCompare(String(b.bill_ref || "")));   // oldest to newest (owner 2026-09-28)
   const baseRows = rows;                                   // before the header filters - what each funnel lists
   rows = hfSorted("vendorBills", rows.filter(b => hfPasses("vendorBills", b)));
+  { const vis = new Set(rows.map(_vpKey)); for (const k of [..._vpSel]) if (!vis.has(k)) _vpSel.delete(k); }   // a tick you can't see is not a tick
+  _vpSelBar(rows);
   if (!rows.length) { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = rowsAll.length ? (_vendorQ.trim() ? `No bills match "${_vendorQ.trim()}".` : "No bills match this filter.") : "No Bill Tracker rows for this vendor."; body.appendChild(p); return; }
   const scroll = document.createElement("div"); scroll.className = "table-scroll";
   const table = document.createElement("table"); table.className = "grid vp-grid"; const thead = document.createElement("thead"), tbody = document.createElement("tbody");
   const cols = [["Project", "left", "Project + client - the client opens the client's page"], ["Bill #", "left", "Bill number - opens the bill in QuickBooks"],
                 ["Memo", "left", "The bill's memo in QuickBooks"],
-                ["Invoice #", "left", "The draw (AR invoice) this bill is matched to - opens the invoice page; GC paid / GC owes is the live QuickBooks state of that invoice"],
+                ["Invoice #", "left", "The draw (AR invoice) this bill is matched to - opens the invoice page; Paid / Partial / Unpaid is the live QuickBooks state of that invoice"],
                 ["Date", "left", "Bill date - the funnel filters by month"], ["Amount", "right", "Bill amount"], ["Open", "right", "Open balance we still owe"],
-                ["Paid", "left", "Did we pay the vendor?"], ["Invoice", "left", "The Bill Tracker's invoice pipeline status"], ["Lien", "left", "Texas lien-notice clock"], ["Appr", "left", "Approved for payment?"]];
+                ["Paid", "left", "Did we pay the vendor?"], ["Lien", "left", "Texas lien-notice clock"], ["Appr", "left", "Approved for payment?"]];   // no Invoice status column - the Invoice # carries Paid / Partial / Unpaid (owner 2026-10-01)
   // Due date on the Unpaid view only (owner 2026-10-01: "i need due date in vendor center unpaid bills only") - QuickBooks' DueDate from the mirror
   const showDue = _vendorType === "open";
   if (showDue) cols.splice(cols.findIndex(c => c[0] === "Date") + 1, 0, ["Due", "left", "Due date in QuickBooks - red once it has passed"]);
@@ -2498,14 +2571,25 @@ function renderVendorPage() {
       htr.appendChild(th); }
     thead.appendChild(htr); }
   const row = b => { const tr = billRow(b); tr.removeChild(tr.firstElementChild);   // the tracker's row without the vendor column - it is the vendor's page
+    tr.removeChild(tr.children[8]);   // ... and without the Invoice status cell (Project · Bill # · Memo · Invoice # · Date · Amount · Open · Paid · [Invoice] · Lien · Appr)
     if (showDue) tr.insertBefore(_billDueCell(b), tr.children[cols.findIndex(c => c[0] === "Due")] || null);
     return tr; };
   // a flat list like the Excel (owner 2026-09-22: "i don't want to see it grouped by anything") - the funnels do the narrowing
-  for (const b of rows) tbody.appendChild(row(b));
-  table.appendChild(thead); table.appendChild(tbody); colOrderable(table, "vendorBills", cols.map(c => c[0]), renderVendorPage); scroll.appendChild(table); body.appendChild(scroll);
-  const cap = document.createElement("div"); cap.className = "bills-cap";
-  cap.textContent = `${rows.length} bill${rows.length === 1 ? "" : "s"} · ${moneyC(rows.reduce((t, b) => t + num(b.line_amount), 0))} billed · ${moneyC(rows.reduce((t, b) => t + bOpen(b), 0))} open · Invoice # = the draw the Bill Tracker matched the bill to; GC paid / GC owes = that invoice's live QuickBooks balance · click a row for the bill's detail, the invoice # for the invoice page, the client for the client's page.`;
-  body.appendChild(cap);
+  for (const b of rows) { const tr = row(b); tr.dataset.k = _vpKey(b); tbody.appendChild(tr); }
+  // the totals under Amount and Open (owner 2026-10-01)
+  const tfoot = document.createElement("tfoot"); { const ft = document.createElement("tr"); ft.className = "vp-total";
+    for (const [c] of cols) { const td = document.createElement("td");
+      if (c === "Amount") td.appendChild(moneyCellC(rows.reduce((t, b) => t + num(b.line_amount), 0)));
+      else if (c === "Open") td.appendChild(moneyCellC(rows.reduce((t, b) => t + bOpen(b), 0)));
+      else td.className = "left";
+      ft.appendChild(td); }
+    tfoot.appendChild(ft); }
+  table.appendChild(thead); table.appendChild(tbody); table.appendChild(tfoot);
+  colOrderable(table, "vendorBills", cols.map(c => c[0]), renderVendorPage, VP_BILL_ORDER);
+  { const ft = tfoot.rows[0]; let lab = null; for (const td of ft.cells) { if (td.querySelector(".cell")) break; lab = td; } if (lab) { lab.textContent = `Total · ${rows.length} bill${rows.length === 1 ? "" : "s"}`; lab.classList.add("vp-total-lab"); } }
+  _vpSelColumn(table, rows);
+  scroll.appendChild(table); body.appendChild(scroll);
+  // no caption under the table (owner 2026-10-01: "remove") - the totals row says it
 }
 // A vendor with no Bill Tracker rows (a sub, or a vendor the tracker doesn't carry): its bills straight
 // from the QBO cost lines already in the ledger - date, bill #, project(s), memo, amount, qb link.
@@ -2584,9 +2668,23 @@ function _stubPill(status) {
     unchecked: "No QuickBooks mirror on this machine, so this print could not be compared to QuickBooks" }[status] || "";
   return s;
 }
-function _stubLink(h) {   // one printed stub: opens the PDF as it went out
-  const a = document.createElement("a"); a.className = "stub-link"; a.target = "_blank"; a.rel = "noopener";
+// A printed stub opens INSIDE the ledger (owner 2026-10-01: "open the bill payment stub inside of the ledger so i can see
+// without it taking me out to the accounting") - the same viewer as a bill's scan, with Full screen and a new-tab link.
+function openStubViewer(histId, title) {
+  let ov = $("#attViewer"); if (ov) ov.remove();
+  ov = document.createElement("div"); ov.id = "attViewer"; ov.className = "xdlg-ov"; document.body.appendChild(ov);
+  const url = "/api/bill-payment/stub/file?id=" + encodeURIComponent(histId);
+  ov.innerHTML = `<div class="xdlg att-dlg" role="dialog"><div class="att-head"><h3>${_ge(title || "Bill payment stub")}</h3><button class="btn small" id="attClose">Close</button></div>
+    <div class="att-view stub-view"><div class="att-tools"><b></b><a class="btn small" href="${_ge(url)}" target="_blank" rel="noopener">Open in a new tab ↗</a><a class="btn small" href="${_ge(url)}" download>Download</a></div><iframe class="att-frame" src="${_ge(url)}#toolbar=1&view=FitH" title="stub"></iframe></div></div>`;
+  const close = () => { ov.remove(); document.removeEventListener("keydown", esc, true); };
+  const esc = (e) => { if (e.key === "Escape") { e.stopPropagation(); close(); } };
+  ov.onclick = (e) => { if (e.target === ov) close(); }; $("#attClose").onclick = close; document.addEventListener("keydown", esc, true);
+  _attZoomable(ov.querySelector(".att-view"));
+}
+function _stubLink(h) {   // one printed stub: opens the PDF as it went out, in the ledger's viewer
+  const a = document.createElement("a"); a.className = "stub-link";
   a.href = "/api/bill-payment/stub/file?id=" + encodeURIComponent(h.id);
+  a.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openStubViewer(h.id, `Stub printed ${fmtDate(h.printed_at, true)}`); };
   a.textContent = fmtDate(h.printed_at, true); a.title = h.file_path || "";
   if (h.file_exists === false) { a.classList.add("dim"); a.title = "PDF not on disk (Accounting share unmounted?) - " + (h.file_path || ""); }
   return a;
@@ -2599,7 +2697,7 @@ async function _printStub(paymentId, btn) {
     const j = await res.json();
     if (!j.ok) throw new Error(j.error || "print failed");
     toast("Stub printed - " + (j.file || "").split("/").pop());
-    window.open("/api/bill-payment/stub/file?id=" + encodeURIComponent(j.id), "_blank", "noopener");
+    openStubViewer(j.id, "Bill payment stub - " + (j.file || "").split("/").pop());   // in the ledger, not a new tab
     const d = _vendorData; await _loadStubHistory(_stubHist.vendor); if (_vendorPageShowing(d)) renderVendorPage();   // never paint over a page the owner opened meanwhile
   } catch (e) { toast("Could not print the stub: " + e.message); btn.disabled = false; btn.textContent = was; }
 }
@@ -2731,7 +2829,7 @@ async function _renderVendorPayments(d, body, seq) {
         b.onclick = (e) => { e.stopPropagation(); _stubPrintMenu(b, "Print stub", () => _printStub(pid, b)); }; sc.appendChild(b); }
       if (hist.length) { const hl = document.createElement("div"); hl.className = "stub-hist";
         const lines = hist.map(h => { const ln = document.createElement("div"); ln.className = "stub-histline"; ln.appendChild(_stubLink(h)); ln.appendChild(_stubPill(h.status)); return ln; });
-        _vpCapped(hl, lines, 3, "prints"); sc.appendChild(hl); }
+        _vpCapped(hl, lines, 1, "prints"); sc.appendChild(hl); }   // the latest print on the button's line; older ones behind "+N more" (one-line rows, owner 2026-10-01)
       tr.appendChild(sc); }
     tbody.appendChild(tr);
     // the expansion: one row per bill this payment paid (bill # -> QuickBooks, its project, its client, the amount applied)
@@ -2740,7 +2838,10 @@ async function _renderVendorPayments(d, body, seq) {
     for (const b of bl) {
       const br = document.createElement("tr"); br.className = "vp-bill";
       br.appendChild(document.createElement("td"));
-      { const td = document.createElement("td"); td.className = "left"; const a = document.createElement("a"); a.href = qboUrl("bill", b.bill_id); a.target = "_blank"; a.rel = "noopener"; a.className = "qbo-link"; a.textContent = b.bill_ref || ("bill " + b.bill_id); a.title = "Open this bill in QuickBooks"; td.appendChild(a); br.appendChild(td); }
+      { const td = document.createElement("td"); td.className = "left"; const a = document.createElement("a"); a.href = qboUrl("bill", b.bill_id); a.target = "_blank"; a.rel = "noopener"; a.className = "qbo-link"; a.textContent = b.bill_ref || ("bill " + b.bill_id); a.title = "Open this bill in QuickBooks"; td.appendChild(a);
+        { const items = bl.map(y => ({ type: "Bill", id: String(y.bill_id), n: y.att || 0, title: `${d.vendor} · bill ${y.bill_ref || y.bill_id}` }));   // ← → flips through this payment's bills
+          const ab = attBtn("Bill", b.bill_id, b.att || 0, `${d.vendor} · bill ${b.bill_ref || ""}`, { items, index: bl.indexOf(b) }); ab.style.marginLeft = "6px"; td.appendChild(ab); }
+        br.appendChild(td); }
       { const dc = leftText(b.bill_date ? fmtDateShort(b.bill_date) : "–"); dc.title = "Bill date"; if (!b.bill_date) dc.classList.add("dim"); br.appendChild(dc); }   // the bill's own date (owner 2026-09-23)
       br.appendChild(_vpProjCell(b.projects || []));
       { const cl = b.clients || []; const cc = leftText(cl.join(", ") || "–"); if (!cl.length) cc.classList.add("dim"); br.appendChild(cc); }
@@ -3560,10 +3661,10 @@ function openBillDetail(b) {
   const drawMemo = (b.matched_invoice || "").split("\n")[0].trim();
   row(gi, "Draw", drawMemo || b.matched_invoice);
   row(gi, "Invoice status", b.invoice_status);
-  if (b.inv_ar_status) row(gi, "GC paid the invoice?", b.inv_ar_status,
+  if (b.inv_ar_status) row(gi, "Invoice paid?", b.inv_ar_status,
     /paid/i.test(b.inv_ar_status) && !/unpaid|partial/i.test(b.inv_ar_status) ? "pos" : "neg");
   if (b.inv_amount != null) row(gi, "Invoice amount", moneyC(b.inv_amount));
-  if (b.inv_balance != null) row(gi, "GC still owes", moneyC(b.inv_balance), (b.inv_balance || 0) > 0.005 ? "neg" : "pos");
+  if (b.inv_balance != null) row(gi, "Invoice still open", moneyC(b.inv_balance), (b.inv_balance || 0) > 0.005 ? "neg" : "pos");
   if (b.gc_paid_date) row(gi, "GC funded", fmtDate(b.gc_paid_date));
   { const acts = document.createElement("div"); acts.className = "pnl-actions";
     if (b.inv_qbo_id) acts.appendChild(linkBtn("Open invoice in QuickBooks ↗", qboInvoiceUrl(b.inv_qbo_id)));
@@ -4229,7 +4330,7 @@ function _ppHeader(pn, r0, d, p) {
   const items = [["Contract", money(contract), ""], ["Billed", money(billed), contract ? `${Math.round(billed / contract * 100)}% of contract` : ""],
     ["Costs", money(cost), etc ? `${Math.round(cost / etc * 100)}% of ETC` : ""],
     ["Net profit", money(p.net), p.net_pct != null ? `${(p.net_pct * 100).toFixed(1)}%` : "", num(p.net) < 0 ? "neg" : ""],
-    ["GC owes", money(owes), ""]];
+    ["Owed to us", money(owes), ""]];
   stats.innerHTML = "";
   for (const [l, v, sub, cls] of items) {
     const it = document.createElement("span"); it.className = "rs-item";
@@ -4633,7 +4734,7 @@ function _ppDrawIncome(dr) {
   const pct = (v) => gross ? ` (${(v / gross * 100).toFixed(1)}%)` : "";
   r("Gross billed", money(gross), { tip: "the draw's invoices before retainage" });
   r("Retained", ret ? "(" + money(ret) + ")" : money(0), { note: ret ? "held by the GC until release" : "" });
-  r("Net billed", money(netB), { note: dr.gc_paid ? "GC paid" : (num(dr.ar_open) > 0.005 ? `GC owes ${money(dr.ar_open)}` : "") });
+  r("Net billed", money(netB), { note: dr.gc_paid ? "Paid" : (num(dr.ar_open) > 0.005 ? `Unpaid · ${money(dr.ar_open)} open` : "") });
   r("Costs", "(" + money(costs) + ")", { note: `materials ${money(p.materials)} · labor ${money(p.labor)}` });
   r("Gross profit", money(gp) + pct(gp), { neg: gp < 0 });
   r(`Overhead · ${p.overhead_basis || ""}`, "(" + money(oh) + ")");
@@ -4795,7 +4896,7 @@ function _copyIpBills() {
   const { d } = _ip, i = d.invoice;
   const vendors = (d.vendors || []).map(v => ({ ...v, bills: v.bills.filter(_ipBillPasses) })).filter(v => v.bills.length);
   const lines = [`Invoice ${i.doc_number} · ${i.customer || ""} · ${i.project_no || ""} ${nameOf(i.project_no) || ""} · ${_ip.filter === "all" ? "all bills" : _ip.filter + " bills"} · as of ${fmtDate(new Date().toISOString().slice(0, 10))}`,
-                 ["Vendor", "Bill date", "Bill #", "Amount", "Open", "Pay status", "Approved", "Lien", "GC paid us"].join("\t")];
+                 ["Vendor", "Bill date", "Bill #", "Amount", "Open", "Pay status", "Approved", "Lien", "Invoice paid"].join("\t")];
   let tAmt = 0, tOpen = 0;
   for (const v of vendors) {
     let vAmt = 0, vOpen = 0;
@@ -4820,7 +4921,7 @@ function _renderIpBills() {
     const scroll = document.createElement("div"); scroll.className = "table-scroll";
     const table = document.createElement("table"); table.className = "grid"; const thead = document.createElement("thead"), tbody = document.createElement("tbody");
     const htr = document.createElement("tr");
-    for (const [c, al] of [["Vendor / bill", "left"], ["Date", "left"], ["Bill #", "left"], ["Amount", "right"], ["Open", "right"], ["Pay status", "left"], ["Approved", "left"], ["Lien", "left"], ["GC paid us", "left"]]) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
+    for (const [c, al] of [["Vendor / bill", "left"], ["Date", "left"], ["Bill #", "left"], ["Amount", "right"], ["Open", "right"], ["Pay status", "left"], ["Approved", "left"], ["Lien", "left"], ["Invoice paid", "left"]]) { const th = document.createElement("th"); if (al === "left") th.className = "left"; th.textContent = c; htr.appendChild(th); }
     thead.appendChild(htr);
     thead.hidden = !vendors.some(v => _ip.open.has("v:" + v.vendor));   // headers only once a group is open
     for (const v of vendors) {
@@ -6791,7 +6892,7 @@ function buildPnlGroup(proj) {
         const paid = num(iv.balance) <= 0;
         const st = document.createElement("span"); st.className = "pi-st";
         st.appendChild(stText(paid ? "Paid" + (iv.paid_date ? " " + fmtDateShort(iv.paid_date) : "") : "Open", paid ? "st-ok" : "st-warn",
-          paid ? (iv.paid_date ? "GC paid " + fmtDateShort(iv.paid_date) : "GC paid (no payment date on file)") : ("Open AR balance " + money(iv.balance))));
+          paid ? (iv.paid_date ? "Paid " + fmtDateShort(iv.paid_date) : "Paid (no payment date on file)") : ("Open AR balance " + money(iv.balance))));
         r.appendChild(dt); r.appendChild(no); r.appendChild(memo); r.appendChild(am); r.appendChild(st); tbl.appendChild(r);
       }
       _foldCol.appendChild(tbl);
@@ -7049,6 +7150,7 @@ async function _recRestore(r) {
 
 function openRecord(title, sub) {
   if (typeof _ppLeaveBlocked === "function" && _ppLeaveBlocked()) return false;   // an unsaved pay run never walks away with you
+  { const sb = document.getElementById("vpSelBar"); if (sb) sb.hidden = true; }   // the vendor page's tick bar belongs to that page only
   if (!($("#recordView") && !$("#recordView").hidden)) _pushView({ v: "record" });   // one entry per open, not per re-render
   $$(".tab-page").forEach(p => { p.hidden = true; });
   $("#recordView").hidden = false;
@@ -7060,6 +7162,7 @@ function openRecord(title, sub) {
 }
 function closeRecord() {
   if (typeof _ppLeaveBlocked === "function" && _ppLeaveBlocked()) return;
+  { const sb = document.getElementById("vpSelBar"); if (sb) sb.hidden = true; }
   _recSave(null);
   const rv = $("#recordView"); if (rv) rv.hidden = true;
   $$(".tab-page").forEach(p => { p.hidden = p.dataset.tab !== activeTab; });
@@ -7097,7 +7200,7 @@ function _csvTable() {
       ["Vendor", b => b.vendor], ["Project", b => b.project_no], ["Division", b => b.division], ["Bill #", b => b.bill_ref],
       ["Bill date", b => b.bill_date], ["This line", b => num(b.line_amount)], ["Bill total", b => num(b.bill_total)],
       ["Open balance", b => num(b.open_balance)], ["Pay status", b => b.pay_status], ["Paid", b => b.pay_date],
-      ["Invoice", b => b.invoice_no], ["Invoice status", b => b.invoice_status], ["GC paid", b => b.gc_paid_date],
+      ["Invoice", b => b.invoice_no], ["Invoice status", b => b.invoice_status], ["Invoice paid", b => b.gc_paid_date],
       ["Approved", b => b.approved], ["Lien", b => b.lien_status], ["Description", b => b.description]].map(([l, g]) => [l, r => nz(g(r))]) };
   }
   _projDerived();

@@ -205,6 +205,8 @@ component below; never rebuild one from scratch, and add to this list when a new
 - **Columns drag = `colOrderable(table, key, names, rerender)`** (owner 2026-10-01): drag a header to move its
   column; the order is remembered per table on that Mac, a column the saved order never saw keeps its usual slot,
   and a **Reset column order** button shows once moved. Vendor page bills first; any table can take it.
+- **An invoice's pay state is one word - `arPayWord()`: Paid / Partial / Unpaid** (owner 2026-10-01: never "GC paid",
+  the client is not always a GC); Partial's hover says the amount left open.
 - **Bill tables are flat lists like the Excel** (Group by = None); the funnels and the search do the narrowing.
 - **Search = REF # ONLY, on every transaction list** (owner 2026-09-29, superseding the 09-22 broad box): the box
   matches the record's own numbers - bill #, invoice #, check # - never project, vendor, client, memo or amount;

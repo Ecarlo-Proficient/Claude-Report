@@ -2200,7 +2200,8 @@ def _fetch_vendor(con, vendor: str) -> dict:
             lines_by_pay.setdefault(r["payment_id"], []).append({
                 "bill_id": r["bill_id"], "bill_ref": m.get("bill_ref"), "bill_date": m.get("bill_date"), "projects": projs,
                 "clients": sorted({proj_customer[p] for p in projs if proj_customer.get(p)}), "amount": r["amount"],
-                "invoice_no": iv.get("invoice_no"), "invoice_state": inv_state, "invoice_paid_on": inv_paid_on})
+                "invoice_no": iv.get("invoice_no"), "invoice_state": inv_state, "invoice_paid_on": inv_paid_on,
+                "att": _att_counts(con).get(("Bill", str(r["bill_id"])), 0)})   # the bill's scans (📎 beside its ref, owner 2026-10-01)
         for p in payments:
             p["bills"] = lines_by_pay.get(p["qbo_txn_id"], [])
             p["projects"] = sorted({x for b in p["bills"] for x in b["projects"]})

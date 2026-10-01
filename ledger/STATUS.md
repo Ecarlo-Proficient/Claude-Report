@@ -4,6 +4,17 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-10-01 · **Vendor page round 2** (owner, with screenshots). Bills: his dragged order is the standard
+  (`VP_BILL_ORDER`: Bill # · Paid · Appr · Date · Amount · Open · Due · Project · Memo · Invoice # · Lien; Reset goes
+  back to it); a totals row under Amount / Open; Unpaid first and the default; the caption under the table removed; the
+  Invoice status column removed (Invoice # carries the state); tick boxes (Shift = range, header = all shown) with a
+  bottom-right bar - count, open and billed totals, **Copy table** (ticked rows in the on-screen column order + a
+  total, Excel / email paste); the Project # box's tooltip removed (it covered the list). "GC paid / GC owes" is gone
+  ledger-wide: `arPayWord()` = **Paid / Partial / Unpaid**, Partial's hover = the amount left open; the invoice
+  filter reads Invoice Paid / Invoice Unpaid / No invoice yet. Payments: Excel lines, one-line rows (the latest stub
+  print beside the button, older behind "+N more"), each payment's bills indented under it with a 📎 (scan count
+  from `/api/vendor`; the viewer flips through that payment's bills); a printed stub opens in the ledger
+  (`openStubViewer`), never a new tab.
 - 2026-10-01 · **Vendor Center: scan fills the viewer, Due on Unpaid, draggable columns** (owner: "if i open an
   attachment it is cropped ... i need due date in vendor center unpaid bills only ... column order give me ability to
   just drag and for it to save where i leave it"). The bill viewer's scan now takes the pane's full height and width
