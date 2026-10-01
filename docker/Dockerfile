@@ -28,7 +28,8 @@ RUN apt-get update \
 # a plain user; IT may set these to the Synology automation user's ids at build time
 ARG APP_UID=1000
 ARG APP_GID=1000
-RUN groupadd --gid ${APP_GID} app \
+# Synology users sit in the "users" group, GID 100, which Debian already has - reuse an existing group, don't recreate it
+RUN (getent group ${APP_GID} >/dev/null || groupadd --gid ${APP_GID} app) \
  && useradd --uid ${APP_UID} --gid ${APP_GID} --shell /usr/sbin/nologin --create-home app
 
 WORKDIR /app
@@ -43,7 +44,7 @@ COPY ledger/refresh_mirror.py /app/ledger/refresh_mirror.py
 COPY docker/scheduler.py      /app/docker/scheduler.py
 # ────────────────────────────────────────────────────────────────────────────
 
-RUN mkdir -p /data && chown -R app:app /data
+RUN mkdir -p /data && chown -R ${APP_UID}:${APP_GID} /data
 USER app
 
 ENTRYPOINT ["python", "/app/docker/scheduler.py"]

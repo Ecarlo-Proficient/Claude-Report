@@ -1,7 +1,7 @@
 # docker/ - how the office server works
 
-Last changed: 09/30/2026 - the README is plain setup instructions for the developer (no approval stops). Earlier
-the same day: NEW, the office server package (replaced the retired invoice-sync-only container).
+Last changed: 10/01/2026 - first build: the Dockerfile reuses GID 100 (Synology's users group); the server's QBO
+login check needs only the four QBO keys. The flow itself is unchanged.
 
 Update this chart - and the line above - in the same commit as any change to `docker/`
 (`.github/flow_guard.sh` fails the push otherwise).

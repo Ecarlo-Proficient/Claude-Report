@@ -3,6 +3,7 @@
 Progression record for the office server package. Update in the SAME commit as any change to this folder (repo rule).
 
 ## DONE / FINALIZED
+- 2026-10-01 · First build + smoke run (test mode, dummy keys). Two fixes: the Dockerfile reuses GID 100 (Synology's "users" group already exists in Debian - `groupadd` failed the build); `qbo_vault.has_credentials()` on Linux checks only the four QBO keys (it required JT_GRANT_KEY too, so every QBO call on the server failed with "No QBO credentials in Keychain"). The image builds, all five jobs import, the scheduler starts, status.json + alerts work.
 - 2026-09-30 · The runbook is plain setup instructions (owner: the developer is capable - no approval stops); the two hard rules stay (the server's own Intuit app; keys typed on the Synology only).
 - 2026-09-30 · **The office server package** (replaces the retired invoice-sync-only container). `scheduler.py` (mirror
   every 3 min, AP then AR every 15 min, nightly count check, status.json + Teams alerts, test vs live, the writer file
@@ -25,4 +26,4 @@ Progression record for the office server package. Update in the SAME commit as a
 - Live runs `main` only - a release PR before the switch.
 
 ## OPEN ISSUES
-- The image has never been built; the first build on the Synology may surface a missing OS package.
+- The image has been built and smoke-run off-box (10/01/2026), not yet on the Synology itself.

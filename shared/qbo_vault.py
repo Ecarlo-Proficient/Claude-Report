@@ -80,6 +80,9 @@ KNOWN_KEYS: List[str] = [
     "JT_GRANT_KEY",       # JobTread Pave API grant key (read-only grant)
 ]
 
+# The four keys a QuickBooks login needs (JT_GRANT_KEY above is optional).
+QBO_REQUIRED: List[str] = ["QBO_CLIENT_ID", "QBO_CLIENT_SECRET", "QBO_COMPANY_ID", "QBO_REFRESH_TOKEN"]
+
 # Platform routing. Mac uses Keychain; Linux uses env vars + file persistence.
 _IS_MAC = sys.platform == "darwin"
 
@@ -289,9 +292,10 @@ def has_credentials() -> bool:
     if _IS_MAC:
         r = _sec("find-generic-password", "-a", ACCOUNT, "-s", SERVICE, "-l", LABEL)   # attributes only
         return r.returncode == 0
-    # Linux: have creds if env vars OR persisted file provide all required keys.
+    # Linux: have creds if env vars OR persisted file provide the four QuickBooks keys. Not every KNOWN_KEY -
+    # JT_GRANT_KEY (JobTread) is optional, and the office server (docker/) has none, so requiring it failed every run.
     blob = _read_blob_linux()
-    return all(blob.get(k) for k in KNOWN_KEYS)
+    return all(blob.get(k) for k in QBO_REQUIRED)
 
 
 def list_stored() -> List[str]:
