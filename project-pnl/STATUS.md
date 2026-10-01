@@ -7,6 +7,10 @@ manual close), RP (no draws — expenses → invoice → profit).
 ---
 
 ## DONE / FINALIZED
+- 2026-10-01 · **Draw coverage runs on GROSS billed (CP + MFD)** - the P&L sheet's draw table now shows Gross Billed,
+  Retained and Net Billed side by side (the retainage columns were collapsed and hidden), and Gross Profit, Net Profit,
+  Coverage %, Net Cov % and % Compl all run off gross. Overhead per draw = rate x the draw's gross billed (was
+  contract x costs / ETC, which overcharged a job running past its ETC) - the ledger's draw basis since 09/23.
 - 2026-09-30 · **No false "no draw #" warning on month-named draws** - a memo like "September Draw 2026 (Period: …)"
   already names the sheet by its month and the period drives the window; the yellow warning now fires only when the memo
   names neither a draw number nor a month.

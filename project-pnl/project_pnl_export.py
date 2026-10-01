@@ -377,6 +377,7 @@ THIN_BORDER = Border(
     bottom=Side(style="thin", color="BFBFBF"),
 )
 CURR_FMT = '#,##0.00;[Red]-#,##0.00'
+RET_FMT = '#,##0.00;-#,##0.00'   # Retained: a release is a minus, never red
 # Accounting dollars for the Labor/Concrete sheets (the user 2026-08-04:
 # "make all $ a number $$$ format") — $ pinned left, zeros as "-", red parens.
 ACC_FMT = '_("$"* #,##0.00_);[Red]_("$"* (#,##0.00)_);_("$"* "-"_);_(@_)'
@@ -2584,7 +2585,8 @@ SECT_FILL = PatternFill("solid", fgColor="E7E6E6")     # gray   — other sectio
 
 
 def _cov(net: float, costs: float, overhead_pct: float):
-    """Return coverage / profit metrics for a draw.
+    """Return coverage / profit metrics for a draw. `net` is the draw's GROSS
+    billed (retainage included) since 2026-10-01 - the name is historical.
       gross_profit   = Billed − Costs
       cost_pct       = Billed ÷ Costs              (Coverage %)
       net_profit     = Billed − Costs − overhead   (overhead = oh% × Billed)
@@ -3517,7 +3519,6 @@ def build_sheet_pl(
         income_row = row("Income", income, bold=True, fill=INCOME_FILL)
         _qbo_link(income_row, _cust_url)
         wip_contract_cell = None
-        wip_etc_cell = None
     else:
         Binc = f"{tx_refs['billed']}-{tx_refs['withheld']}+{tx_refs['billed_ret']}"
         Wcell = tx_refs['withheld']
@@ -3765,7 +3766,6 @@ def build_sheet_pl(
                 CellIsRule(operator="greaterThan", formula=["1"],
                            font=Font(bold=True, color="C00000")))
         wip_contract_cell = c_ref
-        wip_etc_cell = e_ref
         r += 1
         # The owner's standing rulings on this job (known loss / accepted
         # overrun) sit between the projection and the totals they explain.
@@ -3925,12 +3925,16 @@ def build_sheet_pl(
         r += 1
 
     # ── RIGHT SIDE: DRAW COVERAGE table (D onward) ──
-    #   D Draw | E Period | F Draw Total | G Retained | H Net Billed |
+    #   D Draw | E Period | F Gross Billed | G Retained | H Net Billed |
     #   I Costs | J Gross Profit | K Coverage % | then per overhead VIEW:
     #   OH $ | Net Profit | Net Cov % (MFD: 9% then 10%; CP: 10%) | % Compl
-    #   Draw Total (F) + Retained (G) are COLLAPSED by default (the user 2026-06-09)
-    #   — click the [+] above to expand. Vertical rule on the right of Net
-    #   Billed (H) separates the BILLED side from the COSTS side.
+    #   GROSS billed is the income (the owner 2026-10-01, "it should not be net
+    #   billed but gross billed"): Gross Profit, Net Profit, both coverages and
+    #   % Compl all run off F; Retained and Net Billed show what was held back
+    #   and what reaches AR. All three are visible - the old collapsed
+    #   Draw Total / Retained group hid the retainage. Same basis as the
+    #   ledger's draw strip (ledger/dashboard.py, 2026-09-23). Vertical rule
+    #   on the right of Net Billed (H) separates the BILLED side from COSTS.
     #   ACCUMULATING COSTS moved to the Next Draw sheet (the user 2026-09-03).
     _views = ([(_alt, _aoh), (overhead_pct, oh)] if show_mfd
               else [(overhead_pct, oh)])
@@ -3944,14 +3948,6 @@ def build_sheet_pl(
         ws.column_dimensions[get_column_letter(_nc)].width = 15
         ws.column_dimensions[get_column_letter(_cc)].width = 13
     ws.column_dimensions[get_column_letter(_pc_col)].width = 11 if wip_contract_cell else 2
-    # collapse the two retainage-detail columns (Draw Total, Retained) by
-    # default — outline level 1 + hidden on BOTH so they form one collapsed
-    # group; the [+] control sits to the right (over Net Billed). group()
-    # alone only tags the first column, so set each explicitly.
-    for _cl in ("F", "G"):
-        ws.column_dimensions[_cl].outline_level = 1
-        ws.column_dimensions[_cl].hidden = True
-    ws.column_dimensions["H"].collapsed = True
     ws.sheet_properties.outlinePr.summaryRight = True
     # the invoice group's [+] sits on the Income row ABOVE its detail
     ws.sheet_properties.outlinePr.summaryBelow = False
@@ -3978,16 +3974,19 @@ def build_sheet_pl(
         # OVERHEAD ON COMPLETION (the user 2026-09-03: "show how much overhead
         # total $ is, not just the net, and after 9% do the 10% to have both
         # ... this is based on completion, use the real metrics"): a draw's
-        # overhead is its share of the contract's overhead by the WORK it
-        # carried - rate x contract x (this draw's costs / ETC) - real costs
-        # against the ETC, not what the draw happened to bill. The shares sum
-        # to rate x contract x % complete over the job. MFD shows the 9% view
+        # overhead was its share by costs / ETC until 2026-10-01; the owner
+        # questioned it ("the oh per draw idk if that is right") and it is now
+        # rate x the draw's GROSS billed, the ledger's draw basis. The cost
+        # share charged MORE than rate x contract whenever a job ran past its
+        # ETC and loaded the overhead onto the draws that carried the
+        # overrun; rate x gross sums to rate x total billed, which is
+        # rate x contract once the job is billed out. MFD shows the 9% view
         # then the 10%; CP the 10% alone.
         _blocks = [(10, 11, "GROSS")]
         for (_rate, _frac), (_oc, _nc, _cc) in zip(_views, _view_cols):
-            _blocks.append((_oc, _cc, f"AFTER OVERHEAD — {_rate:.0f}% of contract"
+            _blocks.append((_oc, _cc, f"AFTER OVERHEAD - {_rate:.0f}% of gross billed"
                                       f"{' (MFD)' if show_mfd and _frac == _aoh and len(_views) > 1 else ''}"
-                                      f" × draw % complete"))
+                                      ))
         for c0, c1, txt in _blocks:
             gb = ws.cell(row=rc, column=c0, value=txt)
             gb.font = Font(bold=True, size=BASE_SIZE - 1, color=NAVY)
@@ -3999,7 +3998,7 @@ def build_sheet_pl(
         rc += 1
         # cols: 4 Draw 5 Period | 6 Draw Total 7 Retained | 8 Net Billed |
         #       9 Costs 10 Gross Profit 11 Coverage % 12 Net Profit 13 Net Cov %
-        _heads = ["Draw", "Period", "Draw Total", "Retained", "Net Billed",
+        _heads = ["Draw", "Period", "Gross Billed", "Retained", "Net Billed",
                   "Costs", "Gross Profit", "Coverage %"]
         for _rate, _frac in _views:
             _heads += [f"{_rate:.0f}% OH $", "Net Profit", "Net Cov %"]
@@ -4013,7 +4012,8 @@ def build_sheet_pl(
         rc += 1
         first_draw_row = rc
         for name, lbl, net, costs, held, billed in draw_rows:
-            m = _cov(net, costs, overhead_pct)
+            gross_b = net + held - billed   # invoice work lines, retainage out
+            m = _cov(gross_b, costs, overhead_pct)
             pc, po = m["cost_pct"], m["oh_pct"]
             c = _write_cell(ws, rc, 4, name)
             if draw_anchors and name in draw_anchors:
@@ -4025,14 +4025,15 @@ def build_sheet_pl(
                 c.font = Font(size=BASE_SIZE - 1)
             _write_cell(ws, rc, 5, lbl).alignment = Alignment(horizontal="center")
             ws.cell(row=rc, column=5).font = Font(size=BASE_SIZE - 1)
-            # Draw Total (6) = Net Billed + retainage HELD (gross of withholding).
-            # Retained (7) shows retainage on the draw — HELD (black) or, when the
-            # GC PAID retainage back, BILLED (green). NEVER red (the user 2026-06-09).
-            retained = held + billed
+            # Gross Billed (6) = the invoice work lines (retainage lines out) =
+            # the income. Retained (7) = held back on the draw, less any
+            # retainage the GC was billed for (a release shows as a green
+            # minus, NEVER red - the user 2026-06-09), so 6 - 7 = Net Billed (8).
+            retained = held - billed
             ret_clr = GREEN if billed > 0.005 else "000000"
-            dt_ = _write_cell(ws, rc, 6, net + held); dt_.number_format = CURR_FMT
+            dt_ = _write_cell(ws, rc, 6, gross_b); dt_.number_format = CURR_FMT
             dt_.font = Font(size=BASE_SIZE - 1)
-            rt = _write_cell(ws, rc, 7, retained); rt.number_format = CURR_FMT
+            rt = _write_cell(ws, rc, 7, retained); rt.number_format = RET_FMT
             rt.font = Font(size=BASE_SIZE - 1, color=ret_clr)
             nb = _write_cell(ws, rc, 8, net); nb.number_format = CURR_FMT
             nb.font = Font(size=BASE_SIZE - 1)
@@ -4042,18 +4043,15 @@ def build_sheet_pl(
             # completion), Net Profit, Net Coverage %. Sign colours on the
             # overhead columns are CONDITIONAL - the value is only known to Excel.
             fmls = [
-                (10, f"=H{rc}-I{rc}", CURR_FMT, _clr(pc)),
-                (11, f'=IF(I{rc}=0,"",H{rc}/I{rc})', '0.0%', _clr(pc)),
+                (10, f"=F{rc}-I{rc}", CURR_FMT, _clr(pc)),
+                (11, f'=IF(I{rc}=0,"",F{rc}/I{rc})', '0.0%', _clr(pc)),
             ]
             for (_rate, _frac), (_oc, _nc, _cc) in zip(_views, _view_cols):
                 _OC = get_column_letter(_oc)
-                _oh_f = (f"=IF({wip_etc_cell}=0,H{rc}*{_frac},"
-                         f"{wip_contract_cell}*I{rc}/{wip_etc_cell}*{_frac})"
-                         if wip_contract_cell else f"=H{rc}*{_frac}")
                 fmls += [
-                    (_oc, _oh_f, CURR_FMT, "595959"),
-                    (_nc, f"=H{rc}-I{rc}-{_OC}{rc}", CURR_FMT, "000000"),
-                    (_cc, f'=IF(I{rc}+{_OC}{rc}=0,"",H{rc}/(I{rc}+{_OC}{rc}))',
+                    (_oc, f"=F{rc}*{_frac}", CURR_FMT, "595959"),
+                    (_nc, f"=F{rc}-I{rc}-{_OC}{rc}", CURR_FMT, "000000"),
+                    (_cc, f'=IF(I{rc}+{_OC}{rc}=0,"",F{rc}/(I{rc}+{_OC}{rc}))',
                      '0.0%', "000000"),
                 ]
             for col, f, nf, clr in fmls:
@@ -4065,7 +4063,7 @@ def build_sheet_pl(
             if wip_contract_cell:   # cumulative billed ÷ contract through this draw
                 pcc = ws.cell(row=rc, column=_pc_col,
                               value=f'=IF({wip_contract_cell}=0,"",'
-                                    f'SUM(H{first_draw_row}:H{rc})/{wip_contract_cell})')
+                                    f'SUM(F{first_draw_row}:F{rc})/{wip_contract_cell})')
                 pcc.number_format = "0.0%"
                 pcc.font = Font(size=BASE_SIZE - 1)
                 pcc.alignment = Alignment(horizontal="center")
@@ -4076,17 +4074,17 @@ def build_sheet_pl(
         tc.border = TOP_BORDER
         for col, f, nf, clr in (
                 (6, f"=SUM(F{first_draw_row}:F{last_draw_row})", CURR_FMT, "000000"),
-                (7, f"=SUM(G{first_draw_row}:G{last_draw_row})", CURR_FMT, "000000"),
+                (7, f"=SUM(G{first_draw_row}:G{last_draw_row})", RET_FMT, "000000"),
                 (8, f"=SUM(H{first_draw_row}:H{last_draw_row})", CURR_FMT, "000000"),
                 (9, f"=SUM(I{first_draw_row}:I{last_draw_row})", CURR_FMT, COST_TXT),
-                (10, f"=H{rc}-I{rc}", CURR_FMT, "000000"),
-                (11, f'=IF(I{rc}=0,"",H{rc}/I{rc})', '0.0%', "000000"),
+                (10, f"=F{rc}-I{rc}", CURR_FMT, "000000"),
+                (11, f'=IF(I{rc}=0,"",F{rc}/I{rc})', '0.0%', "000000"),
                 *[x for (_oc, _nc, _cc) in _view_cols for x in (
                     (_oc, f"=SUM({get_column_letter(_oc)}{first_draw_row}:"
                           f"{get_column_letter(_oc)}{last_draw_row})", CURR_FMT, "595959"),
-                    (_nc, f"=H{rc}-I{rc}-{get_column_letter(_oc)}{rc}", CURR_FMT, "000000"),
+                    (_nc, f"=F{rc}-I{rc}-{get_column_letter(_oc)}{rc}", CURR_FMT, "000000"),
                     (_cc, f'=IF(I{rc}+{get_column_letter(_oc)}{rc}=0,"",'
-                          f'H{rc}/(I{rc}+{get_column_letter(_oc)}{rc}))', '0.0%', "000000"))]):
+                          f'F{rc}/(I{rc}+{get_column_letter(_oc)}{rc}))', '0.0%', "000000"))]):
             cell = ws.cell(row=rc, column=col, value=f)
             cell.number_format = nf
             cell.font = Font(bold=True, size=BASE_SIZE - 1, color=clr)
@@ -4109,7 +4107,7 @@ def build_sheet_pl(
                 operator="greaterThanOrEqual", formula=["1"], font=Font(color=GREEN)))
         if wip_contract_cell:   # overall % complete = total billed ÷ contract
             tpc = ws.cell(row=rc, column=_pc_col,
-                          value=f'=IF({wip_contract_cell}=0,"",H{rc}/{wip_contract_cell})')
+                          value=f'=IF({wip_contract_cell}=0,"",F{rc}/{wip_contract_cell})')
             tpc.number_format = "0.0%"
             tpc.font = Font(bold=True, size=BASE_SIZE - 1)
             tpc.border = TOP_BORDER
@@ -7501,8 +7499,9 @@ def generate_project_pnl(
                 ui_warn(f"no draw # or month in memo for {lbl} - labeled "
                         f"'{name}' by the period end date")
         draw_rows.append((name, lbl, net, costs, held, billed))
-        cov_s = f"{net / costs * 100:.0f}%" if costs else "—"
-        ui_event(f"{name}  {_DIM}{lbl}{_RESET}  billed ${net:,.0f} · "
+        _gb = net + held - billed
+        cov_s = f"{_gb / costs * 100:.0f}%" if costs else "—"
+        ui_event(f"{name}  {_DIM}{lbl}{_RESET}  gross billed ${_gb:,.0f} · "
                  f"costs ${costs:,.0f} · coverage {cov_s}", icon="•", color=_CYAN)
 
     # PM draw-report CAPTURE INDEX (the user 2026-06-26): pool every report for this
