@@ -908,24 +908,23 @@ tr.ag-total > td.ag0, tr.ag-total > td.ag1, tr.ag-total > td.ag2, tr.ag-total > 
 .sys-dot.red    { background: var(--neg); }
 .sys-dot.none   { background: transparent; border: 1.5px solid var(--border); }
 
-/* Fixed layout so nine prose columns always fit the pane - the registry is a
+/* Fixed layout so the prose columns always fit the pane - the registry is a
    thing you READ, so it must never need horizontal scrolling to follow a row. */
 #sysTable { table-layout: fixed; width: 100%; }
 #sysTable th, #sysTable td { vertical-align: top; white-space: normal; overflow-wrap: break-word; }
 #sysTable td.left span { white-space: normal; }
 #sysTable tbody tr:not(.sys-group) td:first-child { text-align: center; padding-right: 0; }
 #sysTable th:nth-child(1), #sysTable td:nth-child(1) { width: 28px; }
-#sysTable th:nth-child(2) { width: 6%; }
-#sysTable th:nth-child(3) { width: 24%; }
-#sysTable th:nth-child(4) { width: 11%; }
-#sysTable th:nth-child(5) { width: 14%; }
-#sysTable th:nth-child(6) { width: 12%; }
-#sysTable th:nth-child(7) { width: 13%; }
-#sysTable th:nth-child(8) { width: 7%; }
-#sysTable th:nth-child(9) { width: 10%; }
+#sysTable th:nth-child(2) { width: 34%; }
+#sysTable th:nth-child(3) { width: 11%; }
+#sysTable th:nth-child(4) { width: 14%; }
+#sysTable th:nth-child(5) { width: 13%; }
+#sysTable th:nth-child(6) { width: 13%; }
+#sysTable th:nth-child(7) { width: 8%; }
+#sysTable th:nth-child(8) { width: 64px; }
 
-.sys-id { font-family: var(--font-mono); font-size: .86em; color: var(--text-dim); white-space: nowrap; }
 .sys-process { font-weight: 550; }
+.sys-how { color: var(--text-dim); font-size: .9em; margin-top: 2px; max-width: 60ch; }
 
 /* Domain section header inside the one table - a full-width rule, not a cell. */
 tr.sys-group td {

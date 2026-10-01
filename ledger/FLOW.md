@@ -1,6 +1,7 @@
 # ledger/ - how the Project Ledger works
 
-Last changed: 09/30/2026 - `refresh_mirror.py` also runs on the office server (docker/), where there is no Pay run to
+Last changed: 10/01/2026 - the process registry moved out of the gear: Company -> **Processes**, grouped by area
+(Accounts Payable, ...), plain process names, no registry codes. Earlier, 09/30/2026 - `refresh_mirror.py` also runs on the office server (docker/), where there is no Pay run to
 watch. Earlier the same day: the bill viewer's pay status from the mirror; the viewer's job share + zoomable scan.
 
 Update this chart - and the line above - in the same commit as any change to `ledger/`
@@ -56,11 +57,11 @@ flowchart TD
         PJ["Projects<br/>the WIP as the page + project page<br/>(P&L, Draw overview + fx bar, bills)"]:::ui
         VD["Vendors<br/>Vendor Center · Bill Tracker · Pay bills"]:::ui
         CU["Customers<br/>Invoices · Customer Center · Payments · Sales"]:::ui
-        CO["Company<br/>Money · Bills to fix · QBO changes ·<br/>Checks QBO changed · Uncleared · Duplicate customers"]:::ui
-        GR["Gear<br/>sync · WIP Review · Console · Systems"]:::ui
+        CO["Company<br/>Money · Bills to fix · QBO changes ·<br/>Checks QBO changed · Uncleared · Duplicate customers ·<br/>Processes"]:::ui
+        GR["Gear<br/>sync · WIP Review · Console"]:::ui
     end
     SRV --> PJ & VD & CU & CO & GR
-    VAULT -->|"registry_view.py · vault_graph.py"| GR
+    VAULT -->|"registry_view.py · vault_graph.py"| CO
 
     subgraph WR["WIP Review - subprocess + JSON, never an import"]
         EM["wip tools --emit-review<br/>diff, no write"]:::tool

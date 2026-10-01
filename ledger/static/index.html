@@ -21,7 +21,7 @@
       <div class="topbar-actions">
         <button class="btn" id="btnExport" title="Export the table you are looking at to CSV, as filtered">Export CSV</button>
         <button class="sync-pill" id="syncPill" title="Last sync per feed - click for the sync panel"><span class="dot"></span><span id="syncPillText">…</span></button>
-        <button class="btn icon" id="btnSettings" title="Sync, WIP update, Console, Systems, appearance">⚙</button>
+        <button class="btn icon" id="btnSettings" title="Sync, WIP update, Console, appearance">⚙</button>
       </div>
     </div>
     <nav class="subtabs" id="subtabbar" hidden></nav>
@@ -775,17 +775,16 @@
       </section>
     </div><!-- /tab: liens -->
 
-    <!-- ══════════════ TAB: SYSTEMS (the process registry, read live from the vault) ══════════════ -->
-    <div class="tab-page" data-tab="systems" hidden>
+    <!-- ══════════════ TAB: PROCESSES (Company; the process registry, read live from the vault) ══════════════ -->
+    <div class="tab-page" data-tab="processes" hidden>
       <section class="widget">
         <div class="widget-head">
-          <h2>Systems &amp; processes <span class="count" id="sysNote"></span></h2>
+          <h2>Processes <span class="count" id="sysNote"></span></h2>
           <button class="btn small" id="btnSysReload" title="Re-read the registry files from the vault">Reload</button>
         </div>
-        <p class="hint">Every process the business runs, one row each, read live from the vault
-          registry. <b>Health</b> is how it runs · <b>State</b> is how sure the description is ·
-          <b>Life</b> is whether it runs at all. Read-only here - the vault markdown stays the
-          source of truth, so edit there and hit Reload.</p>
+        <p class="hint">Every process the business runs, grouped by area - open an area to see its
+          processes. The dot is how it runs (green running, amber fragile, red broken). Read-only here -
+          the vault stays the source of truth, so edit there and hit Reload.</p>
         <div class="kpi-row" id="sysStats"></div>
         <div class="sys-filters" id="sysDomains"></div>
         <div class="filters">
@@ -818,7 +817,7 @@
           <table class="grid" id="sysTable"><thead></thead><tbody></tbody></table>
         </div>
       </section>
-    </div><!-- /tab: systems -->
+    </div><!-- /tab: processes -->
 
     <!-- ══════════════ TAB: CONSOLE (control plane - run the pipelines) ══════════════ -->
     <div class="tab-page" data-tab="console" hidden>
@@ -1002,12 +1001,6 @@
           <button class="btn small" id="btnGearConsole" title="Run the pipelines: AP + AR sync, full refresh, P&amp;L workbooks">Console</button>
         </div>
         <p class="set-hint">WIP Review and the pipelines are actions you start, not places you visit.</p>
-      </div>
-      <div class="set-group">
-        <h3>Reference</h3>
-        <div class="set-actions">
-          <button class="btn small" id="btnGearSystems" title="The systems &amp; process registry, live from the vault">Systems &amp; processes</button>
-        </div>
       </div>
       <div class="set-group">
         <h3>Appearance</h3>

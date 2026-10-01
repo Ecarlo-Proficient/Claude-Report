@@ -296,8 +296,9 @@ on the network). What it shows:
   browser; **Set as default** snapshots the current view as the baseline that Reset (and a fresh
   browser) restores to.
 
-- **Systems** (the systems & process registry, read-only from the vault) — every process the
-  business runs, one row each, read **live** from `AI Brain_Vault/02_processes/*.md`. Three axes are
+- **Processes** (Company -> Processes since 10/01/2026; was Systems in the gear - the systems & process
+  registry, read-only from the vault) - every process the business runs, grouped by area (Accounts Payable, ...),
+  one row each by its plain name (no registry codes on the page), read **live** from `AI Brain_Vault/02_processes/*.md`. Three axes are
   kept separate because the registry keeps them separate: a **health dot** (running / fragile /
   broken / nothing to fail yet), a **state pill** (how sure the description is — confirmed ·
   inferred · proposed), and a **life tag** shown only when a row is not live (idea · agreed ·

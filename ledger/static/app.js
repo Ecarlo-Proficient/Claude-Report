@@ -117,7 +117,7 @@ const GRP_KINDS = [
   { sel: "tr.bill-group", kind: "band", open: false },        // vendor / client / division bands in tables
   { sel: "tr.vp-pay", kind: "sib", open: false, until: "tr.vp-pay, tr.bill-group" },   // vendor page Payments: a payment over the bills it paid (owner 2026-09-22)
   { sel: "tr.qa-pay", kind: "sib", open: false, until: "tr:not(.qa-child)", skip: "tr.qa-detail:not(.qa-child)" },   // skip = the check's own "what changed" line stays visible   // QBO changes: a check over the bills it lost (owner 2026-09-24: "it's just too much")
-  { sel: "tr.sys-group", kind: "band", open: false },         // Systems: a domain
+  { sel: "tr.sys-group", kind: "band", open: false },         // Processes: an area (Accounts Payable, ...)
   { sel: "tr.tr-msum", kind: "band", open: false },           // the money trail: a month
   { sel: ".pnl-codegrp", kind: "sib", open: false, until: ".pnl-codegrp" },   // P&L: a job type over its cost codes
   { sel: ".pnl-invcap", kind: "sib", open: false, until: ".pnl-cap" },
@@ -261,26 +261,26 @@ const WAIVERS_ENABLED = false;
 
 // ── Nav (owner 2026-09-23: "remove Vendors and Customers from Company and reinstate them as their own"):
 // Projects = the WIP as the page · Vendors = Bill Tracker / Vendor Center · Customers = Invoice Tracker / Customer
-// Center / Payments received / Sales pipeline · Company = Money / QBO Audit · a tools group only the gear reaches.
+// Center / Payments received / Sales pipeline · Company = Money / the audits / Processes · a tools group only the gear reaches.
 // Every old tab name is an alias that lands on its page (and scrolls to its section where it became one), so every
 // deep link in the app still works.
 const NAV_GROUPS = [
   { id: "projects",  label: "Projects",  tabs: ["projects"] },
   { id: "vendors",   label: "Vendors",   tabs: ["vendorcenter", "bills", "paybills"] },   // Vendor Center first (owner 2026-09-28); Pay bills its own sub-tab (owner 2026-09-29: "a dedicated sub menu under vendors")
   { id: "customers", label: "Customers", tabs: ["invoices", "customercenter", "payments", "sales"] },
-  { id: "company",   label: "Company",   tabs: ["money", "billaudit", "qboaudit", "checkdrift", "uncleared", "dupcustomers"] },   // each audit is its own page (owner 2026-09-23 / 09-24 / 09-30)
-  { id: "tools",     label: "Tools",     tabs: ["wipreview", "review", "console", "systems"], hidden: true },   // from the gear, not the bar
+  { id: "company",   label: "Company",   tabs: ["money", "billaudit", "qboaudit", "checkdrift", "uncleared", "dupcustomers", "processes"] },   // each audit is its own page (owner 2026-09-23 / 09-24 / 09-30); Processes out of the gear (owner 2026-10-01: "should not be hidden in settings")
+  { id: "tools",     label: "Tools",     tabs: ["wipreview", "review", "console"], hidden: true },   // from the gear, not the bar
 ];
 const TAB_LABELS = {
   projects: "Projects", bills: "Bill Tracker", vendorcenter: "Vendor Center", invoices: "Invoice Tracker", customercenter: "Customer Center",
   payments: "Payments received", sales: "Sales pipeline", money: "Money", billaudit: "Bills to fix", qboaudit: "QBO changes", checkdrift: "Checks QBO changed", uncleared: "Uncleared checks", dupcustomers: "Duplicate customers",
-  wipreview: "WIP Review", review: "WIP review", console: "Console", systems: "Systems", paybills: "Pay bills", liens: "Lien register",
+  wipreview: "WIP Review", review: "WIP review", console: "Console", processes: "Processes", paybills: "Pay bills", liens: "Lien register",
 };
 const HIDDEN_TAB_GROUP = { liens: "vendors" };   // pages without a sub-tab (opened from the Bill Tracker): the Vendors group stays lit
 // old tab -> the page it lives on now (where the old tab became a section, its id is the old name and setTab scrolls to it)
 const TAB_ALIAS = { overview: "projects", home: "projects", wip: "projects", pnl: "projects", draws: "projects",
                     clients: "invoices", customers: "customercenter", vendors: "vendorcenter", accounting: "billaudit",
-                    health: "money", subloc: "money", costs: "money", graph: "systems",
+                    health: "money", subloc: "money", costs: "money", graph: "processes", systems: "processes",
                     rpreview: "review" };   // the RP review became the per-division WIP review (2026-09-15)
 const KNOWN_TABS = new Set([...NAV_GROUPS.flatMap(g => g.tabs), ...Object.keys(HIDDEN_TAB_GROUP)]);
 const groupOf = t => NAV_GROUPS.find(g => g.tabs.includes(t)) || NAV_GROUPS.find(g => g.id === HIDDEN_TAB_GROUP[t]) || NAV_GROUPS[0];
@@ -329,7 +329,7 @@ function setTab(t) {
   if (t === "wipreview") loadWipReview();
   if (t === "review") loadReview();
   if (t === "console") renderConsole();
-  if (t === "systems") loadSystems();
+  if (t === "processes") loadSystems();
   if (t === "paybills") { renderPayBills(); loadPayQueued(); }
   if (typeof _csClear === "function") _csClear();   // drop any cell selection when the tab changes
   window.scrollTo(0, 0);
@@ -7246,7 +7246,8 @@ function initCellSelect() {
 // The registry lives in the vault as markdown (02_processes/*.md); the server
 // parses it per request, so this is a live view of those files, not a copy.
 // Read-only by design - the vault owns the truth, we only render it.
-// Replaced the daily markdown digest (the owner, 2026-08-19).
+// Replaced the daily markdown digest (the owner, 2026-08-19). Company -> Processes since 2026-10-01: grouped by
+// area (Accounts Payable, ...), each process by its plain name - no registry codes on the page.
 let REG = null;             // cached /api/processes payload
 let sysDomain = null;       // domain code currently filtered to (null = all)
 
@@ -7445,7 +7446,7 @@ function sysFiltered() {
   const showRetired = $("#sysRetired") ? $("#sysRetired").checked : false;
   return rows.filter(r => {
     if (r.retired && !showRetired) return false;
-    if (sysDomain && r.domain_code !== sysDomain) return false;
+    if (sysDomain && r.domain !== sysDomain) return false;
     if (owner && r.owner !== owner) return false;
     if (health && r.health_key !== health) return false;
     if (state && r.state_kind !== state) return false;
@@ -7458,6 +7459,8 @@ function sysFiltered() {
     return true;
   });
 }
+
+const sysArea = t => String(t || "").replace(/ And /g, " and ");   // "Accounting And Close" (from the file name) -> "Accounting and Close"
 
 function renderSystems() {
   const note = $("#sysNote"), tb = $("#sysTable tbody"), th = $("#sysTable thead");
@@ -7519,7 +7522,7 @@ function renderSystems() {
   const live = (REG.rows || []).filter(r => !r.retired);
   mk(null, "All", live.length);
   for (const d of (REG.domains || [])) {
-    mk(d.code, d.code || d.title, d.rows.filter(r => !r.retired).length);
+    mk(d.title, sysArea(d.title), d.rows.filter(r => !r.retired).length);
   }
 
   const rows = sysFiltered();
@@ -7527,7 +7530,7 @@ function renderSystems() {
   const universe = ($("#sysRetired") && $("#sysRetired").checked) ? (c.total || 0) : (c.active || 0);
   note.textContent = `(${rows.length} of ${universe}${REG.source ? " · live from the vault" : ""})`;
 
-  const cols = ["", "ID", "Process", "Owner", "Also touches", "Record", "Automation", "Cadence", "State"];
+  const cols = ["", "Process", "Owner", "Also touches", "Where it is kept", "Runs in", "How often", ""];
   th.innerHTML = ""; tb.innerHTML = "";
   const htr = document.createElement("tr");
   for (const c2 of cols) {
@@ -7548,7 +7551,8 @@ function renderSystems() {
       lastDomain = r.domain;
       const gr = document.createElement("tr"); gr.className = "sys-group";
       const gd = document.createElement("td"); gd.className = "left"; gd.colSpan = cols.length;
-      gd.textContent = `${r.domain_code} · ${r.domain}`;
+      const n = rows.filter(x => x.domain === r.domain).length;
+      gd.textContent = `${sysArea(r.domain)} (${n})`;
       gr.appendChild(gd); tb.appendChild(gr);
     }
     const tr = document.createElement("tr");
@@ -7560,28 +7564,17 @@ function renderSystems() {
     dot.title = HEALTH_LABEL[r.health_key] || "";
     hd.appendChild(dot); tr.appendChild(hd);
 
-    const idc = document.createElement("td"); idc.className = "left sys-id";
-    idc.textContent = r.id;
-    // The one-page guide for this process (vault assets/processes) sits under the ID, the same
-    // spot on every row - trailing the process text it was lost at the end of a long cell.
-    if (r.guide && r.guide.length) {
-      const g = document.createElement("a");
-      g.className = "sys-guide"; g.textContent = "Guide";
-      g.href = "/api/process-guide?id=" + encodeURIComponent(r.id) + "&fmt=" + r.guide[0];
-      g.target = "_blank"; g.rel = "noopener";
-      g.title = "Open the one-page guide for " + r.id;
-      idc.appendChild(g);
-    }
-    tr.appendChild(idc);
-
-    const pc = document.createElement("td"); pc.className = "left sys-process";
-    pc.textContent = r.process;
+    // The plain name is the text before the first dash; the rest is the how, shown dim beneath it.
+    const pc = document.createElement("td"); pc.className = "left";
+    const m = String(r.process || "").match(/^(.*?)\s[\u2014\u2013-]\s(.*)$/);
+    pc.appendChild(el2("div", "sys-process", m ? m[1] : r.process));
+    if (m) pc.appendChild(el2("div", "sys-how", m[2]));
     if (r.life_key && r.life_key !== "live" && !r.retired) {
       const tag = document.createElement("span");
       tag.className = "sys-life " + r.life_key;
       tag.textContent = r.life_key;
       tag.title = "Decided, but not running yet";
-      pc.appendChild(tag);
+      pc.firstChild.appendChild(tag);
     }
     tr.appendChild(pc);
 
@@ -7589,13 +7582,17 @@ function renderSystems() {
       tr.appendChild(leftText(r[k] || ""));
     }
 
-    const sc = document.createElement("td"); sc.className = "left";
-    const pill = document.createElement("span");
-    pill.className = "sys-state " + (r.state_kind || "unknown");
-    pill.textContent = r.state_kind === "confirmed" && r.confirmed_on
-      ? `confirmed ${fmtDateShort(r.confirmed_on)}` : (r.state_kind || "");
-    if (r.confirmed_on) pill.title = "Confirmed by the owner on " + fmtDate(r.confirmed_on);
-    sc.appendChild(pill); tr.appendChild(sc);
+    // The one-page guide for this process (vault assets/processes), the same spot on every row.
+    const gc = document.createElement("td"); gc.className = "left";
+    if (r.guide && r.guide.length) {
+      const g = document.createElement("a");
+      g.className = "sys-guide"; g.textContent = "Guide";
+      g.href = "/api/process-guide?id=" + encodeURIComponent(r.id) + "&fmt=" + r.guide[0];
+      g.target = "_blank"; g.rel = "noopener";
+      g.title = "Open the one-page guide";
+      gc.appendChild(g);
+    }
+    tr.appendChild(gc);
 
     tb.appendChild(tr);
   }
@@ -9784,7 +9781,6 @@ function init() {
   { const el = $("#btnGearWip"); if (el) el.onclick = () => { closePanels(); setTab("wipreview"); }; }
   { const el = $("#btnGearRp"); if (el) el.onclick = () => { closePanels(); setTab("review"); }; }
   { const el = $("#btnGearConsole"); if (el) el.onclick = () => { closePanels(); setTab("console"); }; }
-  { const el = $("#btnGearSystems"); if (el) el.onclick = () => { closePanels(); setTab("systems"); }; }
   setInterval(renderSyncPill, 5000);   // reflects "Syncing…" while a run is in flight and the age as time passes
   // Bills: the secondary filters live behind "More filters" (owner 2026-09-01: "10 dropdowns + 8 pills
   // above the fold"); remembered per person, and forced open while one of them is active.
@@ -9862,7 +9858,7 @@ function init() {
   const bootRec = _recLoad();   // read BEFORE the first setTab (which clears it)
   let savedTab = "projects";
   try { savedTab = localStorage.getItem("proficient-ledger-tab") || "projects"; } catch { /* ignore */ }
-  if (["wipreview", "rpreview", "review", "console", "systems"].includes(savedTab)) savedTab = "projects";   // tool pages never reopen on their own
+  if (["wipreview", "rpreview", "review", "console"].includes(savedTab)) savedTab = "projects";   // tool pages never reopen on their own
   setTab(TAB_ALIAS[savedTab] || savedTab);
   initCellSelect();   // Excel-style click/drag cell selection + running-sum bar
   setInterval(() => { if (!syncing && !pendingBillMarks.size && !payDraft.size) load(true); }, 90000);   // soft auto-refresh (paused during a resync or while lien / pay-run marks are unsaved)
