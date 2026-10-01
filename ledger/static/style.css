@@ -2365,3 +2365,17 @@ html:has(.xdlg-ov) { overflow: hidden; }
 .bv-kv td.warn { color: var(--warn-text); }
 .bv-pays { font-weight: 500; font-variant-numeric: tabular-nums; line-height: 1.45; }
 .bv-lines th:nth-child(4), .bv-lines td:nth-child(4) { width: 78px; }
+/* The scan fills its pane (owner 2026-10-01: "if i open an attachment it is cropped"). With one file the file list is
+   hidden, so the view used to land in the grid's auto row and a PDF showed as a 150px strip; and the pane's min width
+   followed its content, pushing the scan off the dialog's right edge. The view now always takes the 1fr row. */
+.bv-scan { grid-template-rows: auto minmax(0, 1fr); min-width: 0; }
+.bv-scan .att-list { grid-row: 1; }
+.bv-scan .att-view { grid-row: 2; min-width: 0; min-height: 0; }
+.att-view .att-frame { min-height: 0; }
+/* Draggable column headers (colOrderable) + the bill due date */
+th.col-drag { cursor: grab; }
+th.col-dragging { opacity: .45; }
+th.col-drop-l { box-shadow: inset 3px 0 0 var(--accent); }
+th.col-drop-r { box-shadow: inset -3px 0 0 var(--accent); }
+td.bill-due { white-space: nowrap; font-variant-numeric: tabular-nums; }
+td.bill-due.past-due { color: var(--neg-text); font-weight: 600; }

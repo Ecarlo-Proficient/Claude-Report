@@ -1,6 +1,8 @@
 # ledger/ - how the Project Ledger works
 
-Last changed: 10/01/2026 - the process registry moved out of the gear: Company -> **Processes**, grouped by area
+Last changed: 10/01/2026 - every bill row carries its QuickBooks memo AND due date from the copy (`MIR -> SRV`); the
+Vendor Center's Unpaid view shows Due; its columns drag to a remembered order; the bill viewer's scan fills its pane.
+Earlier the same day: the process registry moved out of the gear: Company -> **Processes**, grouped by area
 (Accounts Payable, ...), plain process names, no registry codes. Earlier, 09/30/2026 - `refresh_mirror.py` also runs on the office server (docker/), where there is no Pay run to
 watch. Earlier the same day: the bill viewer's pay status from the mirror; the viewer's job share + zoomable scan.
 
@@ -51,6 +53,7 @@ flowchart TD
         DC["dup_customers.py<br/>Duplicate customers"]:::tool
     end
     MIR --> QA & CD & SH & DC
+    MIR -->|"bill memo + due date"| SRV
     QA & CD & SH & DC --> SRV
 
     subgraph UI["static/ - four views + the gear"]

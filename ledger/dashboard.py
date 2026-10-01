@@ -730,11 +730,11 @@ def _project_customer_map(con) -> dict:
     return out
 
 
-_MEMO_CACHE: dict = {"stamp": None, "memos": {}}   # bill id -> memo, per mirror refresh stamp (re-read only when the mirror moved)
+_MEMO_CACHE: dict = {"stamp": None, "memos": {}}   # bill id -> (memo, due date), per mirror refresh stamp (re-read only when the mirror moved)
 
 
 def _bill_memos(bills: list) -> None:
-    """Put each bill's QuickBooks memo (PrivateNote) on its row, from the mirror (the Bill Tracker workbook
+    """Put each bill's QuickBooks memo (PrivateNote) and due date (DueDate) on its row, from the mirror (the Bill Tracker workbook
     never carried it; cost_line has it for half the bills only). Cached per mirror stamp, so the 90 s
     refresh costs nothing until the mirror actually changes; a failed read is said once on stderr."""
     ids = {str(b["bill_id"]) for b in bills if b.get("bill_id")}
@@ -750,7 +750,7 @@ def _bill_memos(bills: list) -> None:
                     try:
                         for bid in missing:
                             rec = qbo_mirror.get("Bill", bid, con=mcon)
-                            memos[bid] = str((rec or {}).get("PrivateNote") or "")
+                            memos[bid] = (str((rec or {}).get("PrivateNote") or ""), str((rec or {}).get("DueDate") or "")[:10])
                     finally:
                         mcon.close()
                     _MEMO_CACHE["stamp"] = stamp
@@ -759,7 +759,9 @@ def _bill_memos(bills: list) -> None:
                 print(f"[memo] bill memos unavailable from the mirror: {e}", file=sys.stderr)
                 _MEMO_CACHE["warned"] = True
     for b in bills:
-        b["memo"] = memos.get(str(b.get("bill_id") or ""), "")
+        memo, due = memos.get(str(b.get("bill_id") or ""), ("", ""))
+        b["memo"] = memo
+        b["due_date"] = due or None                     # QuickBooks' due date - the vendor page's Unpaid view (owner 2026-10-01)
 
 
 def _fetch_ap(con) -> dict:

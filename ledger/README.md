@@ -202,6 +202,9 @@ component below; never rebuild one from scratch, and add to this list when a new
   Close on an outside click or Esc, never on a tick.
 - **Column filters = `hfDecorate()`**: an Excel-style funnel in each header - distinct values with counts over
   what the other columns leave, a value search, Select all / None / Clear. New tables get these, not bands.
+- **Columns drag = `colOrderable(table, key, names, rerender)`** (owner 2026-10-01): drag a header to move its
+  column; the order is remembered per table on that Mac, a column the saved order never saw keeps its usual slot,
+  and a **Reset column order** button shows once moved. Vendor page bills first; any table can take it.
 - **Bill tables are flat lists like the Excel** (Group by = None); the funnels and the search do the narrowing.
 - **Search = REF # ONLY, on every transaction list** (owner 2026-09-29, superseding the 09-22 broad box): the box
   matches the record's own numbers - bill #, invoice #, check # - never project, vendor, client, memo or amount;

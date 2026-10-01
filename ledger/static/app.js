@@ -981,7 +981,7 @@ async function _bvRender() {
   const show = (f, btn) => { list.querySelectorAll(".att-file").forEach(x => x.classList.toggle("on", x === btn));
     const isImg = /\.(png|jpe?g|gif|webp|heic)(\?|$)/i.test(f.name || ""); const isPdf = /\.pdf(\?|$)/i.test(f.name || "");
     view.innerHTML = `<div class="att-tools"><b>${_ge(f.name || "attachment")}</b><a class="btn small" href="${_ge(f.url)}" target="_blank" rel="noopener">Open in a new tab ↗</a><a class="btn small" href="${_ge(f.url)}" download>Download</a></div>`
-      + (isImg ? `<img class="att-img" src="${_ge(f.url)}" alt="">` : `<iframe class="att-frame" src="${_ge(f.url)}${isPdf ? "#toolbar=1" : ""}" title="attachment"></iframe>`); _attZoomable(view); };
+      + (isImg ? `<img class="att-img" src="${_ge(f.url)}" alt="">` : `<iframe class="att-frame" src="${_ge(f.url)}${isPdf ? "#toolbar=1&view=FitH" : ""}" title="attachment"></iframe>`); _attZoomable(view); };
   files.forEach((f, k) => { const b = document.createElement("button"); b.type = "button"; b.className = "att-file"; b.textContent = f.name || ("file " + (k + 1)); b.onclick = () => show(f, b); list.appendChild(b); if (k === 0) show(f, b); });
   list.hidden = files.length < 2;
 }
@@ -1001,7 +1001,7 @@ async function openAttachmentViewer(type, id, title, expected) {
   const show = (f, btn) => { list.querySelectorAll(".att-file").forEach(x => x.classList.toggle("on", x === btn));
     const isImg = /\.(png|jpe?g|gif|webp|heic)(\?|$)/i.test(f.name || ""); const isPdf = /\.pdf(\?|$)/i.test(f.name || "");
     view.innerHTML = `<div class="att-tools"><b>${_ge(f.name || "attachment")}</b><a class="btn small" href="${_ge(f.url)}" target="_blank" rel="noopener">Open in a new tab ↗</a><a class="btn small" href="${_ge(f.url)}" download>Download</a></div>`
-      + (isImg ? `<img class="att-img" src="${_ge(f.url)}" alt="">` : `<iframe class="att-frame" src="${_ge(f.url)}${isPdf ? "#toolbar=1" : ""}" title="attachment"></iframe>`); _attZoomable(view); };
+      + (isImg ? `<img class="att-img" src="${_ge(f.url)}" alt="">` : `<iframe class="att-frame" src="${_ge(f.url)}${isPdf ? "#toolbar=1&view=FitH" : ""}" title="attachment"></iframe>`); _attZoomable(view); };
   files.forEach((f, k) => { const b = document.createElement("button"); b.type = "button"; b.className = "att-file"; b.textContent = f.name || ("file " + (k + 1)); b.onclick = () => show(f, b); list.appendChild(b); if (k === 0) show(f, b); });
 }
 function qboLinkCell(text, url, title) {
@@ -1697,6 +1697,7 @@ const HF_BILL_COLS = {                              // colKey -> [getter, label 
   bill:    [b => b.bill_ref || "", v => v || "(no bill #)"],
   invoice: [b => b.invoice_no || "", v => v || "(no invoice)"],
   date:    [b => _ym(b.bill_date), v => v ? v.slice(5, 7) + "/" + v.slice(0, 4) : "(no date)"],
+  due:     [b => _ym(b.due_date), v => v ? v.slice(5, 7) + "/" + v.slice(0, 4) : "(no due date)"],
   open:    [b => (bOpen(b) > 0.005 ? "Open" : "Paid off"), v => v],
   pay:     [b => b.pay_status || "", v => v || "(none)"],
   inv:     [b => b.invoice_status || "", v => v || "(none)"],
@@ -1725,7 +1726,7 @@ function hfSorted(tableKey, rows) {
   const s = _hfSort[tableKey]; if (!s || !HF_BILL_COLS[s.col]) return rows;
   const [get, lbl] = HF_BILL_COLS[s.col];
   // dates sort by the FULL date (owner 2026-09-28: "it goes only to the month but not the date") - the funnel's value is the month
-  const key = s.col === "date" ? (r => _isoDay(r.bill_date)) : (r => _hfVals(get(r)).map(lbl).join(", "));
+  const key = s.col === "date" ? (r => _isoDay(r.bill_date)) : s.col === "due" ? (r => _isoDay(r.due_date) || "9999") : (r => _hfVals(get(r)).map(lbl).join(", "));
   return [...rows].sort((a, b) => s.dir * String(key(a)).localeCompare(String(key(b)), undefined, { numeric: true, sensitivity: "base" }));
 }
 function hfActive(tableKey) { const st = hfState(tableKey); return Object.keys(st).some(k => st[k].size); }
@@ -1760,7 +1761,7 @@ function hfDecorate(th, tableKey, colKey, rowsFn, rerender) {   // rowsFn() = th
     const rows = rowsFn();
     const counts = new Map(); for (const b of rows) for (const v of _hfVals(get(b))) counts.set(v, (counts.get(v) || 0) + 1);
     for (const v of [...sel]) if (!counts.has(v)) counts.set(v, 0);   // a picked value that no longer appears still shows, so it can be unpicked
-    const vals = [...counts.keys()].sort((a, b) => colKey === "date" ? b.localeCompare(a) : lbl(a).localeCompare(lbl(b), undefined, { numeric: true }));
+    const vals = [...counts.keys()].sort((a, b) => (colKey === "date" || colKey === "due") ? b.localeCompare(a) : lbl(a).localeCompare(lbl(b), undefined, { numeric: true }));
     const menu = document.createElement("div"); menu.className = "msel-menu hf-menu wide"; menu._for = btn;
     const q = document.createElement("input"); q.type = "search"; q.className = "msel-search"; q.placeholder = "Search values";
     q.oninput = () => { const t = q.value.toLowerCase(); for (const lab of menu.querySelectorAll(".msel-opt")) lab.hidden = t && !lab.textContent.toLowerCase().includes(t); }; menu.appendChild(q);
@@ -1772,7 +1773,7 @@ function hfDecorate(th, tableKey, colKey, rowsFn, rerender) {   // rowsFn() = th
     const cnt = document.createElement("span"); cnt.className = "msel-count"; cnt.textContent = `${vals.length} value${vals.length === 1 ? "" : "s"}`;
     tools.appendChild(all); tools.appendChild(none); tools.appendChild(clr); tools.appendChild(cnt); menu.appendChild(tools);
     { const srt = document.createElement("div"); srt.className = "msel-tools hf-sort"; const cur = _hfSort[tableKey];
-      const lab2 = colKey === "date" ? ["Oldest first", "Newest first"] : ["Sort A → Z", "Sort Z → A"];
+      const lab2 = (colKey === "date" || colKey === "due") ? ["Oldest first", "Newest first"] : ["Sort A → Z", "Sort Z → A"];
       [[1, lab2[0]], [-1, lab2[1]]].forEach(([dir, text]) => {
         const x = document.createElement("button"); x.type = "button"; x.className = "msel-tool" + (cur && cur.col === colKey && cur.dir === dir ? " on" : "");
         x.textContent = text; x.title = "Sort the table by this column (click again to undo)";
@@ -2296,6 +2297,53 @@ function findBillForLien(r) {
 }
 // From the Vendors spend tab → the Bills tab, pre-filtered to that vendor (all their bills).
 
+// A bill's due date cell (QuickBooks' DueDate): red with the days late once it has passed and the bill is still open.
+function _billDueCell(b) {
+  const td = document.createElement("td"); td.className = "left bill-due";
+  const due = _isoDay(b.due_date); if (!due) { td.appendChild(dimDash()); td.title = "No due date in QuickBooks"; return td; }
+  td.textContent = fmtDateShort(due); td.title = "Due " + fmtDate(due);
+  const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  if (due < today && bOpen(b) > 0.005) { const late = Math.round((Date.parse(today) - Date.parse(due)) / 86400000);
+    td.classList.add("past-due"); td.title += ` · ${late} day${late === 1 ? "" : "s"} past due`; }
+  return td;
+}
+// Drag a column header to move the column; the order is remembered per table on this Mac (owner 2026-10-01: "column
+// order give me ability to just drag and for it to save where i leave it"). `names` = the header labels in the
+// table's built order. A column the saved order never saw (e.g. Due, only on Unpaid) keeps its place after its
+// usual left neighbour. Call after the rows are in; it moves the cells, so the table's builder stays as it is.
+const COL_ORDER_LS = "ledger.colOrder.";
+function colOrderSaved(key) { try { const v = JSON.parse(localStorage.getItem(COL_ORDER_LS + key)); return Array.isArray(v) && v.length ? v : null; } catch { return null; } }
+function colOrderReset(key) { try { localStorage.removeItem(COL_ORDER_LS + key); } catch { /* ignore */ } }
+function colOrderable(table, key, names, rerender) {
+  const saved = colOrderSaved(key) || [];
+  const order = saved.filter(n => names.includes(n));
+  names.forEach((n, i) => { if (order.includes(n)) return; let at = 0;
+    for (let j = i - 1; j >= 0; j--) { const k = order.indexOf(names[j]); if (k >= 0) { at = k + 1; break; } }
+    order.splice(at, 0, n); });
+  const idx = order.map(n => names.indexOf(n));
+  if (idx.some((v, i) => v !== i)) for (const tr of table.rows) {
+    if (tr.cells.length !== names.length) continue;   // a total / caption row spanning columns stays as built
+    const cells = [...tr.cells]; for (const i of idx) tr.appendChild(cells[i]); }
+  const head = table.tHead && table.tHead.rows[0]; if (!head) return;
+  let from = null;
+  const clear = () => head.querySelectorAll(".col-drop-l, .col-drop-r").forEach(x => x.classList.remove("col-drop-l", "col-drop-r"));
+  [...head.cells].forEach((th, pos) => {
+    th.draggable = true; th.classList.add("col-drag"); th.title = (th.title ? th.title + " · " : "") + "drag to move this column";
+    th.addEventListener("dragstart", (e) => { from = pos; th.classList.add("col-dragging"); e.dataTransfer.effectAllowed = "move"; try { e.dataTransfer.setData("text/plain", order[pos]); } catch { /* ignore */ } });
+    th.addEventListener("dragend", () => { from = null; th.classList.remove("col-dragging"); clear(); });
+    th.addEventListener("dragover", (e) => { if (from == null) return; e.preventDefault(); e.dataTransfer.dropEffect = "move"; clear();
+      const r = th.getBoundingClientRect(); th.classList.add(e.clientX < r.left + r.width / 2 ? "col-drop-l" : "col-drop-r"); });
+    th.addEventListener("dragleave", () => th.classList.remove("col-drop-l", "col-drop-r"));
+    th.addEventListener("drop", (e) => { if (from == null) return; e.preventDefault();
+      const r = th.getBoundingClientRect(); let to = pos + (e.clientX < r.left + r.width / 2 ? 0 : 1);
+      const next = order.slice(); const [moved] = next.splice(from, 1); if (to > from) to--; next.splice(to, 0, moved); from = null; clear();
+      if (next.join("\u0001") === order.join("\u0001")) return;
+      const keep = saved.filter(n => !next.includes(n));   // columns not on screen now (Due off Unpaid) keep their remembered slot
+      try { localStorage.setItem(COL_ORDER_LS + key, JSON.stringify([...next, ...keep])); } catch { /* ignore */ }
+      rerender(); });
+  });
+}
+
 // Vendor page (QBO-style, ON DEMAND) - one vendor's bills, fetched per vendor via /api/vendor (never
 // in the bulk load). Each bill shows its project, or "multiple" -> click the bill to see every line
 // item + project #. Filter by pay status. Owner 2026-08-28: "vendor center open into its own vendor
@@ -2418,6 +2466,7 @@ function renderVendorPage() {
   }
   tools.appendChild(iseg);
   { const hc = document.createElement("button"); hc.type = "button"; hc.className = "btn small"; hc.textContent = "Clear column filters"; hc.hidden = !hfActive("vendorBills"); hc.onclick = () => { hfClear("vendorBills"); renderVendorPage(); }; tools.appendChild(hc); }
+  { const rc = document.createElement("button"); rc.type = "button"; rc.className = "btn small"; rc.textContent = "Reset column order"; rc.title = "Put the columns back in their standard order"; rc.hidden = !colOrderSaved("vendorBills"); rc.onclick = () => { colOrderReset("vendorBills"); renderVendorPage(); }; tools.appendChild(rc); }
   const bt = document.createElement("button"); bt.type = "button"; bt.className = "btn small"; bt.textContent = "Open in Bill Tracker"; bt.title = "The Bill Tracker with its vendor filter set to this vendor - every other filter is there";
   bt.onclick = () => { if (_ppLeaveBlocked()) return; billVendorHidden = new Set(_billVendors().filter(v => v !== d.vendor)); activeBillView = "all"; closeRecord(); setTab("bills"); buildBillVendorFilter(); renderBills(); };
   tools.appendChild(bt);
@@ -2439,16 +2488,21 @@ function renderVendorPage() {
                 ["Invoice #", "left", "The draw (AR invoice) this bill is matched to - opens the invoice page; GC paid / GC owes is the live QuickBooks state of that invoice"],
                 ["Date", "left", "Bill date - the funnel filters by month"], ["Amount", "right", "Bill amount"], ["Open", "right", "Open balance we still owe"],
                 ["Paid", "left", "Did we pay the vendor?"], ["Invoice", "left", "The Bill Tracker's invoice pipeline status"], ["Lien", "left", "Texas lien-notice clock"], ["Appr", "left", "Approved for payment?"]];
-  { const HF_KEYS = { "Project": "project", "Bill #": "bill", "Invoice #": "invoice", "Date": "date", "Open": "open", "Paid": "pay", "Invoice": "inv", "Lien": "lien", "Appr": "appr" };
+  // Due date on the Unpaid view only (owner 2026-10-01: "i need due date in vendor center unpaid bills only") - QuickBooks' DueDate from the mirror
+  const showDue = _vendorType === "open";
+  if (showDue) cols.splice(cols.findIndex(c => c[0] === "Date") + 1, 0, ["Due", "left", "Due date in QuickBooks - red once it has passed"]);
+  { const HF_KEYS = { "Project": "project", "Bill #": "bill", "Invoice #": "invoice", "Date": "date", "Due": "due", "Open": "open", "Paid": "pay", "Invoice": "inv", "Lien": "lien", "Appr": "appr" };
     const htr = document.createElement("tr");
     for (const [c, al, tip] of cols) { const th = document.createElement("th"); th.className = al; th.title = tip; th.textContent = c;
       if (HF_KEYS[c]) hfDecorate(th, "vendorBills", HF_KEYS[c], () => baseRows.filter(b => hfPasses("vendorBills", b, HF_KEYS[c])), renderVendorPage);
       htr.appendChild(th); }
     thead.appendChild(htr); }
-  const row = b => { const tr = billRow(b); tr.removeChild(tr.firstElementChild); return tr; };   // the tracker's row without the vendor column - it is the vendor's page
+  const row = b => { const tr = billRow(b); tr.removeChild(tr.firstElementChild);   // the tracker's row without the vendor column - it is the vendor's page
+    if (showDue) tr.insertBefore(_billDueCell(b), tr.children[cols.findIndex(c => c[0] === "Due")] || null);
+    return tr; };
   // a flat list like the Excel (owner 2026-09-22: "i don't want to see it grouped by anything") - the funnels do the narrowing
   for (const b of rows) tbody.appendChild(row(b));
-  table.appendChild(thead); table.appendChild(tbody); scroll.appendChild(table); body.appendChild(scroll);
+  table.appendChild(thead); table.appendChild(tbody); colOrderable(table, "vendorBills", cols.map(c => c[0]), renderVendorPage); scroll.appendChild(table); body.appendChild(scroll);
   const cap = document.createElement("div"); cap.className = "bills-cap";
   cap.textContent = `${rows.length} bill${rows.length === 1 ? "" : "s"} · ${moneyC(rows.reduce((t, b) => t + num(b.line_amount), 0))} billed · ${moneyC(rows.reduce((t, b) => t + bOpen(b), 0))} open · Invoice # = the draw the Bill Tracker matched the bill to; GC paid / GC owes = that invoice's live QuickBooks balance · click a row for the bill's detail, the invoice # for the invoice page, the client for the client's page.`;
   body.appendChild(cap);

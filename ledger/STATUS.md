@@ -4,6 +4,14 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-10-01 · **Vendor Center: scan fills the viewer, Due on Unpaid, draggable columns** (owner: "if i open an
+  attachment it is cropped ... i need due date in vendor center unpaid bills only ... column order give me ability to
+  just drag and for it to save where i leave it"). The bill viewer's scan now takes the pane's full height and width
+  (with one file the view landed in the grid's auto row - a PDF showed as a 150px strip - and the pane's min width
+  pushed it off the dialog); PDFs open fit to width. Every bill row carries QuickBooks' `due_date` from the mirror
+  (`_bill_memos`, same cache as the memo); the vendor page shows a **Due** column on Unpaid only, red once passed,
+  with a funnel + sort. `colOrderable()` = drag a header to move the column, remembered per table on this Mac
+  (`localStorage ledger.colOrder.<table>`), **Reset column order** beside Clear column filters; on the vendor page now.
 - 2026-10-01 · **Processes moved to Company** (owner: "this should not be hidden in settings ... it should be in the
   company as a sub menu. Our processes grouped by bigger databases"). The registry page is now Company -> **Processes**
   (tab `processes`; `systems` and `graph` stay aliases, the gear's Reference button is gone). Grouped by area
