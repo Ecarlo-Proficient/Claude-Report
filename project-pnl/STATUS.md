@@ -7,6 +7,10 @@ manual close), RP (no draws — expenses → invoice → profit).
 ---
 
 ## DONE / FINALIZED
+- 2026-10-02 · **IN REVIEW, round 18** (owner: "divider needs to be a bit longer"; "the lines around gross and net
+  ... need to be more pronounced"). The divider runs A to one column past the coverage table (A:N on CP). Coverage:
+  GROSS and AFTER-OVERHEAD groups framed in medium black, a thin black rule after Gross Billed, and Gross Profit
+  boxed like Net Profit. Ties unchanged. Copy: round 18.
 - 2026-10-02 · **IN REVIEW, round 17** (owner, on a screenshot: "make the divider start from 1 column"; "i clicked
   draw 5 and it put it there it should be on the top"; "you remove the vertical lines from the draw coverage on gross and
   net with oh"). The divider rule now runs from column A. Coverage links reach 120 VISIBLE rows past the band (collapsed

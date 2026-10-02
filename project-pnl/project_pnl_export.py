@@ -5166,14 +5166,21 @@ def build_sheet_draws(wb, proj, cust_info, wip_info, draw_rows, income_groups,
     # vertical rules between the groups, full table height (the user
     # 2026-06-19; dropped in the 10/02 rebuild and the owner missed them):
     # after Gross Billed, after Costs, after Coverage %, between OH views
-    vrule = Side(style="thin", color="808080")
-    for col in [K(5), K(6), K(8)] + [cc_ for _o, _n, cc_ in view_cols[:-1]]:
+    # The GROSS and AFTER-OVERHEAD groups are framed in medium black (the
+    # owner 2026-10-02: "the lines around gross and net ... need to be more
+    # pronounced"); a thin black rule after Gross Billed.
+    vrule = Side(style="thin", color="000000")
+    frame = Side(style="medium", color="000000")
+    rules = [(K(5), vrule), (K(6), frame), (K(8), frame)]
+    rules += [(cc_, frame) for _o, _n, cc_ in view_cols]
+    for col, side in rules:
         for gr in range(cov_top + 1, rc + 1):
             cur = ws.cell(row=gr, column=col).border
-            ws.cell(row=gr, column=col).border = Border(left=cur.left, right=vrule,
+            ws.cell(row=gr, column=col).border = Border(left=cur.left, right=side,
                                                         top=cur.top, bottom=cur.bottom)
-    for _o, nc, _c in view_cols:                    # Net Profit: the thick box
-        _box_range(ws, hdr_row, rc, nc, nc)
+    # Gross Profit and Net Profit: the same box, header to TOTAL
+    for col in [K(7)] + [nc for _o, nc, _c in view_cols]:
+        _box_range(ws, hdr_row, rc, col, col)
     _box_range(ws, cov_top, rc, K(1), last_c, thin)
     r = rc + 1
 
@@ -5197,7 +5204,9 @@ def build_sheet_draws(wb, proj, cust_info, wip_info, draw_rows, income_groups,
         # dividers"): white space, a thick navy rule the width of the
         # sheet from column A (the owner 2026-10-02: "make the divider start
         # from 1 column"), white space - then the draw's band
-        for cc in range(1, 11):
+        # the full width of the coverage table, past the section's own edge
+        # (the owner 2026-10-02: "a bit longer ... to create more divide")
+        for cc in range(1, max(last_c, 10) + 2):
             ws.cell(row=r, column=cc).border = Border(bottom=Side(style="thick", color=NAVY))
         ws.row_dimensions[r].height = 18
         ws.row_dimensions[r + 1].height = 18
