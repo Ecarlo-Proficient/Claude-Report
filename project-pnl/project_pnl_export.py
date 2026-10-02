@@ -5163,25 +5163,16 @@ def build_sheet_draws(wb, proj, cust_info, wip_info, draw_rows, income_groups,
             operator="greaterThanOrEqual", formula=["0"],
             fill=PatternFill("solid", fgColor="C6EFCE"), font=Font(bold=True, color="006100")))
     _grid_lines(ws, hdr_row + 1, rc, K(1), last_c)
-    # vertical rules between the groups, full table height (the user
-    # 2026-06-19; dropped in the 10/02 rebuild and the owner missed them):
-    # after Gross Billed, after Costs, after Coverage %, between OH views
-    # The GROSS and AFTER-OVERHEAD groups are framed in medium black (the
-    # owner 2026-10-02: "the lines around gross and net ... need to be more
-    # pronounced"); a thin black rule after Gross Billed.
-    vrule = Side(style="thin", color="000000")
-    frame = Side(style="medium", color="000000")
-    rules = [(K(5), vrule), (K(6), frame), (K(8), frame)]
-    rules += [(cc_, frame) for _o, _n, cc_ in view_cols]
-    for col, side in rules:
-        for gr in range(cov_top + 1, rc + 1):
-            cur = ws.cell(row=gr, column=col).border
-            ws.cell(row=gr, column=col).border = Border(left=cur.left, right=side,
-                                                        top=cur.top, bottom=cur.bottom)
-    # Gross Profit and Net Profit: the same box, header to TOTAL
-    for col in [K(7)] + [nc for _o, nc, _c in view_cols]:
-        _box_range(ws, hdr_row, rc, col, col)
     _box_range(ws, cov_top, rc, K(1), last_c, thin)
+    # ONE box per group, group band to TOTAL (the owner 2026-10-02: "gross
+    # one box, after one box, billed and costs one box"): BILLED + COSTS,
+    # GROSS, each AFTER-OVERHEAD view; Net Profit keeps its own box inside.
+    frame = Side(style="medium", color="000000")
+    groups = [(K(3), K(6)), (K(7), K(8))] + [(oc, cc_) for oc, _n, cc_ in view_cols]
+    for c0, c1 in groups:
+        _box_range(ws, cov_top + 1, rc, c0, c1, frame)
+    for _o, nc, _c in view_cols:                    # Net Profit: the thick box
+        _box_range(ws, hdr_row, rc, nc, nc)
     r = rc + 1
 
     # ── one SECTION per draw, next draw first, newest to oldest, a navy

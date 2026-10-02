@@ -7,6 +7,9 @@ manual close), RP (no draws — expenses → invoice → profit).
 ---
 
 ## DONE / FINALIZED
+- 2026-10-02 · **IN REVIEW, round 19** (owner: "it was better before ... gross one box, after one box, billed and
+  costs one box"). Coverage: the round-18 per-column rules and the Gross Profit box are gone; ONE medium black box per
+  group from its band to TOTAL - BILLED + COSTS, GROSS, AFTER OVERHEAD - with Net Profit's own box kept. Copy: round 19.
 - 2026-10-02 · **IN REVIEW, round 18** (owner: "divider needs to be a bit longer"; "the lines around gross and net
   ... need to be more pronounced"). The divider runs A to one column past the coverage table (A:N on CP). Coverage:
   GROSS and AFTER-OVERHEAD groups framed in medium black, a thin black rule after Gross Billed, and Gross Profit
