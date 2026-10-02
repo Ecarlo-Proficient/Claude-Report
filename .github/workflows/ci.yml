@@ -6,17 +6,49 @@ on:
   push:
     branches: [dev]
 
+# Least privilege: the test job only reads the repo (security review 09/29/2026).
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 - pinned by commit (security review 09/29/2026)
         with:
-          python-version: '3.11'
-      - name: Install dependencies
-        run: pip install -r requirements.txt pytest
+          fetch-depth: 0   # the flow-chart guard reads every commit in the push
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6 - pinned by commit
+        with:
+          # The SAME version and package list the Mac runs (python-env/).
+          python-version-file: python-env/PYTHON_VERSION
+      - name: Install dependencies (every package fingerprint-checked)
+        # The lock is generated from requirements.txt by python-env/lock.py: every package, dependencies
+        # included, exact version + sha256. A file that does not match its hash fails the install.
+        run: pip install --require-hashes -r python-env/requirements.lock
+      - name: Syntax check (every .py file must parse)
+        run: python -m compileall -q -x '/(\.venv|venv|env|node_modules|\.git)(/|$)' .
+      - name: Critical lint (undefined names, unreachable code, bad comparisons)
+        run: ruff check --select E9,F63,F7,F82 .
+      - name: Data-leak guard (real dollars / FEIN / street addresses)
+        # The patterns and exclusions live in .github/leak_guard.sh - the ONE
+        # copy, shared with the local pre-push gate (.github/preflight.sh) so
+        # CI and the hook can never drift. Edit the script, never inline a
+        # regex here.
+        run: bash .github/leak_guard.sh
+      - name: Interpreter guard (no bare python3 in any entry point)
+        # One copy of the rules, shared with .github/preflight.sh.
+        run: bash .github/interpreter_guard.sh
+      - name: Flow charts (a commit that changes a tool changes its FLOW.md)
+        # One copy of the rule, shared with .github/preflight.sh.
+        env:
+          BEFORE: ${{ github.event.before }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -n "$BASE" ]; then range="$BASE..$GITHUB_SHA"
+          elif [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then range="$BEFORE..$GITHUB_SHA"
+          else range="$GITHUB_SHA~1..$GITHUB_SHA"; fi
+          bash .github/flow_guard.sh "$range"
       - name: Run tests
         run: |
           if [ -d tests ] && find tests -name 'test_*.py' -o -name '*_test.py' | grep -q .; then

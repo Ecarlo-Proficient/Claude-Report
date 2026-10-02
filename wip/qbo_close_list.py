@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """
-qbo_close_list.py — Diff Ted's "really open" project list vs QBO's active customers.
+qbo_close_list.py - Diff the user's "really open" project list vs QBO's active customers.
 
 Outputs three sections:
 
-  CLOSE THESE        — active in QBO, NOT in Ted's open list. Mark inactive in QBO.
-                       MFD projects are EXCLUDED from this list — Ted handles MFD
+  CLOSE THESE        - active in QBO, NOT in the user's open list. Mark inactive in QBO.
+                       MFD projects are EXCLUDED from this list - the user handles MFD
                        closures manually. They appear in MFD ACTIVE instead.
-  MFD ACTIVE         — every active MFD customer in QBO (manual review).
-  KEEP ACTIVE        — exact matches between Ted's list and QBO.
-  QUESTIONS          — in Ted's open list but NOT found as active in QBO.
+  MFD ACTIVE         - every active MFD customer in QBO (manual review).
+  KEEP ACTIVE        - exact matches between the user's list and QBO.
+  QUESTIONS          - in the user's open list but NOT found as active in QBO.
                        Either inactive (needs reactivation) or never project-tagged,
                        OR base name like "CP861" when QBO only has "CP861-7E" / "CP861-BP".
 
-Matching is **strict** — exact project # only. -FTW is a separate project,
+Matching is **strict** - exact project # only. -FTW is a separate project,
 not a variant of the base. So if you want both `RP7186` and `RP7186-FTW` open,
 both must be in your list explicitly.
 
@@ -36,7 +36,8 @@ from typing import Dict, List, Optional, Set, Tuple
 import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-import qbo_vault as kc
+from shared import qbo_vault as kc
+from shared import qbo_api  # noqa: E402  (the one QuickBooks login)
 
 API_BASE = "https://quickbooks.api.intuit.com"
 
@@ -47,7 +48,7 @@ _PROJ_RE = re.compile(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Ted's open list — the source of truth.
+# The user's open list - the source of truth.
 # ──────────────────────────────────────────────────────────────────────────────
 TED_OPEN_PROJECTS = """
 MFD133
@@ -180,29 +181,10 @@ def extract_project(text: str) -> Optional[str]:
 # QBO auth + customer fetch
 # ──────────────────────────────────────────────────────────────────────────────
 def load_credentials() -> Tuple[str, str]:
-    if not kc.has_credentials():
-        print("[ERR] No QBO credentials in Keychain")
-        sys.exit(1)
-    creds = kc.get_all()
-    basic = base64.b64encode(
-        f"{creds['QBO_CLIENT_ID']}:{creds['QBO_CLIENT_SECRET']}".encode()
-    ).decode()
-    r = requests.post(
-        "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
-        headers={
-            "Authorization": f"Basic {basic}",
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Accept": "application/json",
-        },
-        data={"grant_type": "refresh_token", "refresh_token": creds["QBO_REFRESH_TOKEN"]},
-        timeout=30,
-    )
-    r.raise_for_status()
-    body = r.json()
-    new_rt = body.get("refresh_token")
-    if new_rt and new_rt != creds["QBO_REFRESH_TOKEN"]:
-        kc.put("QBO_REFRESH_TOKEN", new_rt)
-    return body["access_token"], creds["QBO_COMPANY_ID"]
+    """(access token, company id) from THE shared QuickBooks login (shared/qbo_api), which asks Key Helper
+    once the key library is adopted. This tool's own copy of the refresh-token exchange was retired
+    09/29/2026 (security review): one login path, and no tool ever holds the refresh token."""
+    return qbo_api.load_credentials()
 
 
 def query_all(access: str, company_id: str, entity: str, where: str = "") -> List[dict]:
@@ -234,12 +216,12 @@ def query_all(access: str, company_id: str, entity: str, where: str = "") -> Lis
 # Diff
 # ──────────────────────────────────────────────────────────────────────────────
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Diff Ted's open list vs QBO active (strict matching)")
+    ap = argparse.ArgumentParser(description="Diff the user's open list vs QBO active (strict matching)")
     ap.add_argument("--json", default=None, help="Optional JSON output path")
     args = ap.parse_args()
 
     open_list = parse_open_list()
-    print(f"[info] Ted's open list: {len(open_list)} projects (strict matching)")
+    print(f"[info] the user's open list: {len(open_list)} projects (strict matching)")
 
     print("[info] Authenticating to QBO (Touch ID)...")
     access, company_id = load_credentials()
@@ -270,13 +252,13 @@ def main() -> int:
     print(f"[info] active project-tagged: {len(active_by_proj)} unique project numbers")
     print(f"[info] inactive project-tagged: {len(inactive_by_proj)} unique project numbers")
 
-    # Strict matching — exact project # only. -FTW is a separate project.
+    # Strict matching - exact project # only. -FTW is a separate project.
     def is_open(qbo_proj: str) -> bool:
         return qbo_proj in open_list
 
-    close_these: List[Tuple[str, str, str]] = []   # (proj, cust_id, name) — to auto-close (NO MFDs)
+    close_these: List[Tuple[str, str, str]] = []   # (proj, cust_id, name) - to auto-close (NO MFDs)
     keep_active: List[Tuple[str, str, str]] = []
-    mfd_active: List[Tuple[str, str, str]] = []    # ALL active MFDs — Ted handles manually
+    mfd_active: List[Tuple[str, str, str]] = []    # ALL active MFDs - the user handles manually
 
     for proj, customers in sorted(active_by_proj.items()):
         is_mfd = proj.upper().startswith("MFD")
@@ -290,7 +272,7 @@ def main() -> int:
             else:
                 close_these.append((proj, cust_id, name))
 
-    # In Ted's list but not active in QBO (strict only — exact match)
+    # In the user's list but not active in QBO (strict only - exact match)
     qbo_active_set = set(active_by_proj.keys())
     qbo_inactive_set = set(inactive_by_proj.keys())
     questions: List[Tuple[str, str]] = []
@@ -303,7 +285,7 @@ def main() -> int:
 
     # ── Output ────────────────────────────────────────────────────────────────
     print("\n" + "=" * 70)
-    print(f"  CLOSE THESE — {len(close_these)} active QBO customers to auto-close (NO MFDs)")
+    print(f"  CLOSE THESE - {len(close_these)} active QBO customers to auto-close (NO MFDs)")
     print("=" * 70)
     print(f"  {'Project #':<16} {'Customer ID':<10}  Display Name")
     print(f"  {'-'*16} {'-'*10}  {'-'*40}")
@@ -311,7 +293,7 @@ def main() -> int:
         print(f"  {proj:<16} {cust_id:<10}  {name}")
 
     print("\n" + "=" * 70)
-    print(f"  MFD ACTIVE — {len(mfd_active)} active MFD customers (your manual review)")
+    print(f"  MFD ACTIVE - {len(mfd_active)} active MFD customers (your manual review)")
     print("=" * 70)
     print(f"  {'Project #':<16} {'Customer ID':<10}  Display Name")
     print(f"  {'-'*16} {'-'*10}  {'-'*40}")
@@ -319,7 +301,7 @@ def main() -> int:
         print(f"  {proj:<16} {cust_id:<10}  {name}")
 
     print("\n" + "=" * 70)
-    print(f"  KEEP ACTIVE — {len(keep_active)} customers matched (exact) to your open list")
+    print(f"  KEEP ACTIVE - {len(keep_active)} customers matched (exact) to your open list")
     print("=" * 70)
     print(f"  {'Project #':<16} {'Customer ID':<10}  Display Name")
     print(f"  {'-'*16} {'-'*10}  {'-'*40}")
@@ -327,16 +309,16 @@ def main() -> int:
         print(f"  {proj:<16} {cust_id:<10}  {name}")
 
     print("\n" + "=" * 70)
-    print(f"  QUESTIONS — {len(questions)} projects in your list NOT exact-matched in QBO")
+    print(f"  QUESTIONS - {len(questions)} projects in your list NOT exact-matched in QBO")
     print("=" * 70)
-    print(f"  (e.g. 'CP861' here means QBO has CP861-7E and CP861-BP — list those instead)")
+    print(f"  (e.g. 'CP861' here means QBO has CP861-7E and CP861-BP - list those instead)")
     for proj, status in questions:
         print(f"  {proj:<16}  {status}")
 
     print("\n" + "=" * 70)
     print(f"  SUMMARY")
     print("=" * 70)
-    print(f"  Ted's open list:     {len(open_list)}")
+    print(f"  the user's open list:     {len(open_list)}")
     print(f"  QBO active:          {len(active_customers)}")
     print(f"  QBO active w/ proj#: {sum(len(v) for v in active_by_proj.values())}")
     print(f"  → Auto-close (no MFD): {len(close_these)}")
