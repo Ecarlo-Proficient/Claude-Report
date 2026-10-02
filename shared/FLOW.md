@@ -1,6 +1,7 @@
 # shared/ - how the common package works
 
-Last changed: 10/02/2026 - `xlsx_verify` accepts a freeze on BOTH rows and columns when it is written the way Excel
+Last changed: 10/02/2026 - `qbo_vault` on Linux also reads MIRROR_KEY from the environment (the office server's mirror
+failed without it). Same day: `xlsx_verify` accepts a freeze on BOTH rows and columns when it is written the way Excel
 saves it (three selections, the main one inside the scrolling pane); openpyxl's bare default is still rejected
 (`tests/test_xlsx_verify.py`). Earlier the same day - `pnl_paths._find_awarded_cp_folder` matches a finished job's folder on its name as
 written ("CP656 - 77 PAUL WILSON" was lost when the spaces were squeezed out and the street number glued onto the

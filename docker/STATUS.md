@@ -3,6 +3,7 @@
 Progression record for the office server package. Update in the SAME commit as any change to this folder (repo rule).
 
 ## DONE / FINALIZED
+- 2026-10-02 · First run on the Synology: the mirror failed "MIRROR_KEY is not in the Keychain library" - on Linux qbo_vault read only KNOWN_KEYS from the env. It now also reads MIRROR_KEY (`LINUX_EXTRA_KEYS`); tests/test_qbo_vault_linux.py pins it.
 - 2026-10-02 · compose.yml APP_UID 1026 -> 1027: the office Synology's svc-automation user is uid 1027 (gid 100 users). The owned folders (data is 700) need the container to run as that uid.
 - 2026-10-01 · First build + smoke run (test mode, dummy keys). Two fixes: the Dockerfile reuses GID 100 (Synology's "users" group already exists in Debian - `groupadd` failed the build); `qbo_vault.has_credentials()` on Linux checks only the four QBO keys (it required JT_GRANT_KEY too, so every QBO call on the server failed with "No QBO credentials in Keychain"). The image builds, all five jobs import, the scheduler starts, status.json + alerts work.
 - 2026-09-30 · The runbook is plain setup instructions (owner: the developer is capable - no approval stops); the two hard rules stay (the server's own Intuit app; keys typed on the Synology only).

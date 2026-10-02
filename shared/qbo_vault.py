@@ -80,6 +80,9 @@ KNOWN_KEYS: List[str] = [
     "JT_GRANT_KEY",       # JobTread Pave API grant key (read-only grant)
 ]
 
+# Linux (Docker) only: other library keys the container takes from its environment (docker/secrets.env).
+LINUX_EXTRA_KEYS: List[str] = ["MIRROR_KEY"]
+
 # The four keys a QuickBooks login needs (JT_GRANT_KEY above is optional).
 QBO_REQUIRED: List[str] = ["QBO_CLIENT_ID", "QBO_CLIENT_SECRET", "QBO_COMPANY_ID", "QBO_REFRESH_TOKEN"]
 
@@ -172,7 +175,9 @@ def _read_blob_linux() -> Dict[str, str]:
             raise SecretsError(f"{_SECRETS_FILE} is corrupt JSON: {e}")
 
     data: Dict[str, str] = {}
-    for key in KNOWN_KEYS:
+    # KNOWN_KEYS plus LINUX_EXTRA_KEYS: the office server (docker/) reads MIRROR_KEY from its env too - it
+    # was missing here, so the mirror failed with "MIRROR_KEY is not in the Keychain library" (10/02/2026).
+    for key in KNOWN_KEYS + LINUX_EXTRA_KEYS:
         # File first, env second — rotated tokens override initial bootstrap.
         val = file_data.get(key) or os.getenv(key) or ""
         if val:
