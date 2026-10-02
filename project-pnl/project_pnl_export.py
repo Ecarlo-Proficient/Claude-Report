@@ -1213,8 +1213,13 @@ def group_invoices_by_draw(invoices: List[dict],
                 ret_billed_block["retainage_billed"] += (retainage_billed or total)
                 ret_billed_block["net_billed"] += total
                 ret_billed_block["invoice_count"] += 1
+                # id + balance ride along like any draw invoice: without the
+                # balance a release read as PAID while QBO still had it open
+                # (CP582 #34351, CP689 #34259, CP786 #34258 - 2026-10-02)
                 ret_billed_block["invoices"].append({
-                    "doc_num": _xml_clean(ref), "date": inv.get("TxnDate", ""),
+                    "doc_num": _xml_clean(ref), "id": inv.get("Id", ""),
+                    "balance": float(inv.get("Balance", 0) or 0),
+                    "date": inv.get("TxnDate", ""),
                     "memo": _xml_clean(pn), "amount": total,
                     "gross": 0.0, "retainage": 0.0,
                     "retainage_billed": retainage_billed or total})

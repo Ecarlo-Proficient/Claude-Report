@@ -7,6 +7,8 @@ manual close), RP (no draws — expenses → invoice → profit).
 ---
 
 ## DONE / FINALIZED
+- 2026-10-02 · **Retainage release invoices carry their QBO balance and id** - they read PAID while QBO still had them
+  open (CP582, CP689, CP786) and had no QBO link.
 - 2026-10-02 · **Retainage releases are not billing; Net Profit header colour fixed** - Billed to Date = gross invoice
   lines + any not-billed retainage still unplaced; a release (positive retainage line) is no longer added on top (CP585
   read 139,293 on a 126,630 contract; CP672 +30,870, CP861 +65,761) - same rule as the CP Overview and the ledger
