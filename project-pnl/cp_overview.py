@@ -267,11 +267,12 @@ def read_draw_invoices(wb, draw: str) -> List[dict]:
 def read_next_draw(wb) -> List[dict]:
     """Every bill on the 'Next Draw' sheet: Job Type › cost code › vendor › bill,
     told apart by their indent."""
-    if "Next Draw" not in wb.sheetnames:
-        # since 2026-10-02 the next draw is a section of the Draws sheet; its
-        # bills sit on Draw Data under "Next draw (forming)"
-        return [dict(l) for k, v in read_draw_lines(wb).items()
-                if k.lower().startswith("next draw") for l in v]
+    # since 2026-10-02 the next draw's bills sit on Draw Data under "Next
+    # draw (forming)" (its sheet, when there is one, is in the draw format)
+    nl = [dict(l) for k, v in read_draw_lines(wb).items()
+          if k.lower().startswith("next draw") for l in v]
+    if nl or "Next Draw" not in wb.sheetnames:
+        return nl
     ws = wb["Next Draw"]
     out: List[dict] = []
     code = vendor = ""
@@ -319,6 +320,8 @@ def read_extra(path: Path) -> dict:
             if m:
                 rnb = m.group(1)
                 break
+        # the coverage sat on a Draws sheet for a day (2026-10-02); it is on
+        # the P&L again
         draws, acc = read_coverage(wb["Draws"] if "Draws" in wb.sheetnames else ws)
         lines = read_draw_lines(wb)
         for d in draws:

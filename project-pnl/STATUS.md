@@ -7,6 +7,15 @@ manual close), RP (no draws — expenses → invoice → profit).
 ---
 
 ## DONE / FINALIZED
+- 2026-10-02 · **IN REVIEW, round 22** (owner: "move checks to reconciliations and combine that info together";
+  "move back draw coverage to P&L and put back the individual draw sheets but keep the new format"; "divider between the
+  P&L and draw coverage"). The Draws sheet is gone: DRAW COVERAGE sits on the P&L under ① / ② behind a divider (white
+  space, thick navy rule from column A - the gutter pass now carries an empty thick rule into the gutter), each name
+  linking to its own sheet. One sheet per draw again - Next Draw, Draw 10 ... Draw 1, at the END before Draw Data - each
+  in the section format with "↑ Draw coverage" on its band (write_draw_coverage / build_sheets_draws / set_back_links).
+  The P&L CHECKS moved into the Reconciliations table under its QuickBooks tie-out ("P&L ties to its support"), the
+  status line covers both, ✓/✗ coloured alike; Reconciliations is built after the P&L now. cp_overview reads the same
+  (10 draws, 791,905.60, 726,547.23, awaiting 52,171.76, 16 next lines, 10 invoices, 347 bills). Copy: round 22.
 - 2026-10-02 · **IN REVIEW, round 21** (owner: "last fix, just do costs by cost type, and just put Costs"). Each
   draw section has ONE cost block, titled "COSTS (n bills)", grouped by cost type; the by-vendor cut is gone (CP and PM
   branches). Every section's COSTS total = its coverage Costs (11/11). Copy: round 21.
