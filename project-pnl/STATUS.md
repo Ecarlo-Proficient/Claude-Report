@@ -7,6 +7,10 @@ manual close), RP (no draws — expenses → invoice → profit).
 ---
 
 ## DONE / FINALIZED
+- 2026-10-02 · **IN REVIEW, round 20** (owner: "put the draw # first, put Paid or Unpaid on the end"; "remove the
+  individual big lines vertical in after 10% overhead, the big box is covering the three columns"). Draws bands read
+  "Draw 5   ·   04/01/26–04/30/26   ·   PAID" (cp_overview's band regex still matches; invoices read back per draw).
+  Coverage: Net Profit's inner box removed - only the three group boxes. Copy: round 20.
 - 2026-10-02 · **IN REVIEW, round 19** (owner: "it was better before ... gross one box, after one box, billed and
   costs one box"). Coverage: the round-18 per-column rules and the Gross Profit box are gone; ONE medium black box per
   group from its band to TOTAL - BILLED + COSTS, GROSS, AFTER OVERHEAD - with Net Profit's own box kept. Copy: round 19.

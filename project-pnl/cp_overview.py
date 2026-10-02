@@ -222,7 +222,7 @@ def read_draw_lines(wb) -> Dict[str, List[dict]]:
 def read_draw_invoices(wb, draw: str) -> List[dict]:
     """The invoice block of one draw: its own 'Draw N' sheet, or - since
     2026-10-02 - its SECTION on the one 'Draws' sheet (the section band reads
-    "<PAID|UNPAID>  <draw>   ·   <period>")."""
+    "<draw>   ·   <period>   ·   <PAID|UNPAID>")."""
     hdr = None
     if draw in wb.sheetnames:
         ws = wb[draw]

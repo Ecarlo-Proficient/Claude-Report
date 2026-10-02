@@ -4420,8 +4420,10 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
         float(i.get("balance", 0) or 0) <= 0.005 for i in invoices)
     if section:
         r = start_row
-        _state = ("" if not invoices else ("PAID  " if _inv_paid else "UNPAID  "))
-        band(r, 2, 10, f"{_state}{name}   ·   {lbl}")
+        # the draw # leads, PAID / UNPAID closes the band (the owner
+        # 2026-10-02: "put the draw # first, put Paid or Unpaid on the end")
+        _state = ("" if not invoices else ("   ·   PAID" if _inv_paid else "   ·   UNPAID"))
+        band(r, 2, 10, f"{name}   ·   {lbl}{_state}")
         ws.cell(row=r, column=2).font = _font(True, "FFFFFF", BASE_SIZE + 2)
         ws.row_dimensions[r].height = 22
         if top_link:
@@ -5166,13 +5168,12 @@ def build_sheet_draws(wb, proj, cust_info, wip_info, draw_rows, income_groups,
     _box_range(ws, cov_top, rc, K(1), last_c, thin)
     # ONE box per group, group band to TOTAL (the owner 2026-10-02: "gross
     # one box, after one box, billed and costs one box"): BILLED + COSTS,
-    # GROSS, each AFTER-OVERHEAD view; Net Profit keeps its own box inside.
+    # GROSS, each AFTER-OVERHEAD view - no inner box (the owner 2026-10-02:
+    # "the big box is covering the three columns").
     frame = Side(style="medium", color="000000")
     groups = [(K(3), K(6)), (K(7), K(8))] + [(oc, cc_) for oc, _n, cc_ in view_cols]
     for c0, c1 in groups:
         _box_range(ws, cov_top + 1, rc, c0, c1, frame)
-    for _o, nc, _c in view_cols:                    # Net Profit: the thick box
-        _box_range(ws, hdr_row, rc, nc, nc)
     r = rc + 1
 
     # ── one SECTION per draw, next draw first, newest to oldest, a navy
