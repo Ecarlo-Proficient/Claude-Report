@@ -1797,6 +1797,38 @@ def _uncoded_job_cost(r: dict) -> Optional[Tuple[str, str]]:
     return reason, (class_div or "(none)")
 
 
+_JOB_IN_TEXT = re.compile(r"\b(MFD|CP|RP)\s?-?(\d{3,5})(-FTW)?(?=\b|-)", re.IGNORECASE)
+
+
+def _named_jobs(text: str) -> set:
+    """Job numbers written in a memo / line ('CP745', 'CP790-9001 LANDMARK' -> CP790,
+    'RP7186-FTW'). Dates never match (they carry no MFD/CP/RP prefix)."""
+    out = set()
+    for m in _JOB_IN_TEXT.finditer(text or ""):
+        out.add(f"{m.group(1).upper()}{m.group(2)}{(m.group(3) or '').upper()}")
+    return out
+
+
+def _wrong_job(r: dict) -> Optional[str]:
+    """'memo says CP745, coded CP961' when a line is coded to a project while the
+    bill memo or its own text names exactly one OTHER job; None otherwise. A memo
+    naming several jobs is a multi-job bill split by line - not a finding."""
+    proj = (r.get("project_num") or "").strip().upper()
+    if not proj:
+        return None                      # no project at all = Missing Project / Sub No Project
+    named = _named_jobs(r.get("line_desc") or "") or _named_jobs(r.get("bill_memo") or "")
+    if len(named) != 1:
+        return None
+    other = next(iter(named))
+    # a job and its -FTW twin are one family here: RP bills name the house in the
+    # memo and code the flatwork to RP####-FTW (3,688 such lines in 2026 - the
+    # normal entry, not a finding). Flatwork on the wrong half is FW Misplaced.
+    if other.split("-")[0] == proj.split("-")[0]:
+        return None
+    where = "line" if _named_jobs(r.get("line_desc") or "") else "memo"
+    return f"{where} says {other}, coded to {proj} - confirm which job"
+
+
 def _fw_cost_code(cost_code: str) -> bool:
     """True if a cost code (raw QBO Item name) is an FW / flatwork code. Takes
     the leaf after the last ':' so a hierarchical item name still matches."""
@@ -2245,7 +2277,8 @@ def build_audits(wb, all_rows: List[dict],
                  vendor_root: Optional[Dict[str, str]] = None,
                  vendor_map: Optional[Dict[str, str]] = None,
                  audit_marks: Optional[Dict[str, str]] = None,
-                 history_path: Optional[Path] = None) -> int:
+                 history_path: Optional[Path] = None,
+                 closed_through: Optional[dt.date] = None) -> int:
     """THREE themed audit sheets (the user 2026-08-25 — de-bloat from 9 tabs). Each
     is one filterable Excel Table with an 'Issue' column so a single sheet covers a
     family of checks:
@@ -2254,6 +2287,15 @@ def build_audits(wb, all_rows: List[dict],
       Audit - Bills  : Not Approved · Revised · Duplicates
     All the finding logic is unchanged — only the rendering is consolidated."""
     today = dt.date.today()
+    # A bill on or before the QBO CLOSING DATE is locked - nobody can fix it, so it
+    # is never a coding finding (the owner 10/02/2026: "those bills are in 2025 ...
+    # clerk can't change since it is locked by admin closing date").
+    if closed_through:
+        def _open(r):
+            d = r.get("bill_date")
+            d = d.date() if isinstance(d, dt.datetime) else d
+            return not isinstance(d, dt.date) or d > closed_through
+        all_rows = [r for r in all_rows if _open(r)]
     display_rows = [r for r in all_rows if not r.get("is_sub")]
     sub_rows = [r for r in all_rows if r.get("is_sub")]
     mp_excl = _load_audit_exclusions().get("missing_project", {})
@@ -2312,6 +2354,22 @@ def build_audits(wb, all_rows: List[dict],
                            r.get("bill_date"), "(none)",
                            (r.get("cost_code", "") or "").split(":")[-1].strip(),
                            r.get("line_amount") or 0.0, r.get("line_desc", "") or "",
+                           _bill_url(r.get("bill_id", "")), r.get("bill_id", "")])
+    # WRONG JOB? (the owner 10/02/2026: "why is not the bill audit catching these"):
+    # a line coded to one job while the bill memo or the line names exactly ONE
+    # other job. Subs included - a sub bill coded to one CP job with another in its memo, and
+    # Escobar #1159 (coded CP821, memo CP790) were sub bills, which the line-desc
+    # check above never looked at; the RCI bills named the job only in the memo.
+    for r in all_rows:
+        if _skip(r):
+            continue
+        reason = _wrong_job(r)
+        if reason:
+            coding.append(["Wrong Job?", r.get("vendor", ""), r.get("bill_doc", ""),
+                           r.get("bill_date"), r.get("project_num", ""),
+                           (r.get("cost_code", "") or "").split(":")[-1].strip(),
+                           r.get("line_amount") or 0.0,
+                           ("SUB · " if r.get("is_sub") else "") + reason,
                            _bill_url(r.get("bill_id", "")), r.get("bill_id", "")])
     cc_rows, vtype, cc_flags = _cost_code_findings(all_rows, po_index, tracker_by_po)
     coding.extend(cc_rows)
@@ -2456,6 +2514,16 @@ def main() -> int:
     print("→ authenticating to QBO (Touch ID) …")
     qbo_access, qbo_cid = load_credentials()
     print("  ok.")   # never echo the company_id / realm (consistent with sync-ar)
+    # the books' closing date: a bill on or before it is locked, never an audit finding
+    closed_through = None
+    try:
+        _pref = query_all(qbo_access, qbo_cid, "Preferences")
+        _bc = ((_pref[0].get("AccountingInfoPrefs") or {}).get("BookCloseDate") if _pref else None)
+        closed_through = dt.date.fromisoformat(_bc) if _bc else None
+    except Exception as e:                    # the audit still runs, just unfiltered
+        print(f"  ⚠ closing date unreadable ({type(e).__name__}) - audit shows locked bills too")
+    if closed_through:
+        print(f"  books closed through {closed_through:%m/%d/%Y} - locked bills left off the audit")
 
     print("→ fetching vendors …")
     vendors = query_all(qbo_access, qbo_cid, "Vendor")
@@ -2568,6 +2636,17 @@ def main() -> int:
         display_rows = [r for r in all_rows if not r["is_sub"]]
 
     if args.dry_run:
+        # preview the Wrong Job? findings the audit would show (open period only)
+        _wj = [(r, _wrong_job(r)) for r in all_rows
+               if not closed_through or not isinstance(r.get("bill_date"), dt.date)
+               or (r["bill_date"].date() if isinstance(r["bill_date"], dt.datetime)
+                   else r["bill_date"]) > closed_through]
+        _wj = [(r, w) for r, w in _wj if w and abs(float(r.get("line_amount") or 0)) >= 0.005]
+        print(f"→ audit preview - Wrong Job?: {len(_wj)} line(s)")
+        for r, w in sorted(_wj, key=lambda x: -abs(float(x[0].get("line_amount") or 0))):
+            print(f"    {str(r.get('vendor'))[:26]:<26} #{str(r.get('bill_doc')):<14} "
+                  f"{r.get('bill_date'):%m/%d/%Y}  {float(r.get('line_amount') or 0):>11,.2f}  "
+                  f"{'SUB · ' if r.get('is_sub') else ''}{w}")
         elapsed = (dt.datetime.now() - started).total_seconds()
         print(f"\n✓ dry run complete in {elapsed:.1f}s — workbook NOT written")
         return 0
@@ -2667,7 +2746,7 @@ def main() -> int:
     n_audit = build_audits(wb, all_rows, po_index=po_index,
                            tracker_by_po=tracker_by_po, tracker_meta=tracker_meta,
                            vendor_root=vendor_root, vendor_map=vendor_map,
-                           audit_marks=audit_marks)
+                           audit_marks=audit_marks, closed_through=closed_through)
 
     print(f"  Bills: {n_bills} bills (open + paid since {PAID_CUTOFF_DATE})")
     print(f"  Liens: live view  ·  Inventory: {n_inv} lines  ·  Audit: {n_audit} rows "
