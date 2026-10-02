@@ -7,6 +7,12 @@ manual close), RP (no draws — expenses → invoice → profit).
 ---
 
 ## DONE / FINALIZED
+- 2026-10-02 · **CP Overview: releases were taken out of billed twice** - `completed_pnl._totals` stopped adding
+  retainage releases to billed (3c1fe63) but `cp_overview` still subtracted them when it balanced each job sheet, so
+  CP585 / CP672 / CP861 read short by exactly their releases. Fixed in cp_overview (`want_b`); after the CP
+  regeneration `one-offs/cp_overview_reconcile.py` = 0 problems (1,511 formulas, 91 links) and
+  `one-offs/cp_overview_verify.py` ties billed and costs on all 17 active jobs, the only gap CP790's known double
+  count removed on purpose.
 - 2026-10-02 · **APPROVED, round 23 - landed** (owner: "make sure to put $ formatting where applicable. commit push";
   "update all cp project"). Every dollar format carries the $ (CURR_FMT, RET_FMT, OVER_FMT, pnl_style.MONEY, the "off
   by" / "after X expenses" / "takeoff X under ETC" texts); `safe_save` widens each $ column by 1.5 (`_widen_for_dollar`)

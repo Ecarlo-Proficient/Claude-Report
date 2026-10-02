@@ -929,7 +929,11 @@ def _job_sheet(wb, job, src, t, ex, div) -> dict:
                for sec in src["sections"] for a in sec["accounts"] for v in a["vendors"]
                for ln in v["lines"] if _before(ln["date"], start)
                or (start is None and str(ln["doc"]) not in seen_b)]
-    want_b = (t["billed"] - (released - counted) - sum(dd["amt"] for dd in dup if dd["amt"] >= 1)
+    # t["billed"] already leaves the releases out (completed_pnl._totals since
+    # 3c1fe63) - taking them out again here read CP585 / CP672 / CP861 short by
+    # exactly their releases (12,663 / 30,870 / 65,760.60, caught 10/02 by
+    # one-offs/cp_overview_verify.py)
+    want_b = (t["billed"] - sum(dd["amt"] for dd in dup if dd["amt"] >= 1)
               - sum(d["gross"] for d in draws))
     want_c = t["cost"] - sum(d["cost"] for d in draws) - ex["awaiting"]
     gap_b = want_b - sum(x["billed"] for x in o_inv)
