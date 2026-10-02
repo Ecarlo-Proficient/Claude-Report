@@ -9,7 +9,7 @@ services:
       context: ..                      # the repo root; .dockerignore lets in only the allow-list
       dockerfile: docker/Dockerfile
       args:
-        APP_UID: 1026                  # the Synology automation user's uid/gid (Control Panel > User; `id` over SSH)
+        APP_UID: 1027                  # the Synology automation user's uid/gid (Control Panel > User; `id` over SSH)
         APP_GID: 100
     image: office-server:1
     restart: unless-stopped

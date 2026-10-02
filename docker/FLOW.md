@@ -1,6 +1,6 @@
 # docker/ - how the office server works
 
-Last changed: 10/01/2026 - first build: the Dockerfile reuses GID 100 (Synology's users group); the server's QBO
+Last changed: 10/02/2026 - compose.yml builds as uid 1027 (the Synology's svc-automation user). Earlier, 10/01/2026: first build: the Dockerfile reuses GID 100 (Synology's users group); the server's QBO
 login check needs only the four QBO keys. The flow itself is unchanged.
 
 Update this chart - and the line above - in the same commit as any change to `docker/`
