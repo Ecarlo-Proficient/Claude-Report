@@ -110,3 +110,33 @@ def test_dollar_columns_widen_for_the_sign():
     pnl._widen_for_dollar(wb)
     assert ws.column_dimensions["B"].width == 13.5
     assert pnl.CURR_FMT.startswith('"$"') and pnl.RET_FMT.startswith('"$"')
+
+
+def test_billing_outside_the_draws_joins_the_checks():
+    # CP585's shape: three untagged pre-period invoices, a release outside every
+    # draw window, and not-billed retainage that was never placed on a draw
+    groups = {"__untagged": {"net_billed": 96777.0, "retainage_held": 0.0,
+                             "retainage_billed": 0.0},
+              "__retainage_billed": {"net_billed": 12663.0, "retainage_held": 0.0,
+                                     "retainage_billed": 12663.0},
+              "__retainage": {"total": 10753.0}}
+    out = pnl._outside_draws(groups)
+    assert out == {"gross": 107530.0, "ret": -1910.0}
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "P&L"
+    cov = _coverage(ws)
+    refs = {"billed": "C5", "costs": "C6", "ret": "I8", "oh_billed": "R6",
+            "outside": out, "oh_rate": 0.10,
+            **{k: v for k, v in cov.items() if k.startswith("cov_")}}
+    by = {c[0].split(" = ")[0]: c for c in pnl._wire_pl_support(wb, None, DRAWS, {}, refs)}
+    assert by["Draws gross billed + 107,530.00 outside the draws"][2] == cov["cov_gross_tot"] + "+107530.0"
+    assert by["Draws retained - 1,910.00 outside the draws"][2] == cov["cov_ret_tot"] + "-1910.0"
+    assert by["② overhead (on billed)"][2] == cov["cov_oh_tot"] + "+10753.0"
+
+
+def test_only_untagged_invoices_after_the_first_draw_are_forming():
+    groups = {"__untagged": {"invoices": [{"date": "2025-01-20", "doc_num": "old"},
+                                          {"date": "2026-09-25", "doc_num": "new"}]}}
+    costs = {"__disregarded": {"anchor": "2026-04-20"}}
+    assert [i["doc_num"] for i in pnl._forming_invoices(groups, costs)] == ["new"]

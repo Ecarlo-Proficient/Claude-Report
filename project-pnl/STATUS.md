@@ -7,6 +7,13 @@ manual close), RP (no draws — expenses → invoice → profit).
 ---
 
 ## DONE / FINALIZED
+- 2026-10-02 · **P&L checks count the billing outside the draw table** - the redesign's draw checks (billed,
+  retained, overhead) only summed the draw rows, so every job with untagged pre-period invoices, a release outside the
+  draw windows or unplaced not-billed retainage read ✗ (CP585 / 672 / 765 / 803 / 861 / 961, MFD177 / 295).
+  `_outside_draws` adds those groups, named in the check label ("+ X outside the draws"); `_forming_invoices` keeps
+  pre-period untagged invoices off the Next Draw sheet (MFD295 listed nine 2024-25 invoices as next-draw income). CP +
+  MFD regenerated: every P&L check ties on all 23 workbooks; the ✗ left are QuickBooks-vs-Transactions gaps only.
+  Overviews rebuilt (MFD after a OneDrive "not a zip file" read on the first try).
 - 2026-10-02 · **CP Overview: releases were taken out of billed twice** - `completed_pnl._totals` stopped adding
   retainage releases to billed (3c1fe63) but `cp_overview` still subtracted them when it balanced each job sheet, so
   CP585 / CP672 / CP861 read short by exactly their releases. Fixed in cp_overview (`want_b`); after the CP

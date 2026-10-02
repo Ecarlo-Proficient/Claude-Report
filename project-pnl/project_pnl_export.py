@@ -5048,6 +5048,39 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
 NEXT_DRAW_SHEET = "Next Draw"
 
 
+def _forming_invoices(income_groups: dict, draw_costs: dict) -> list:
+    """The untagged invoices that belong to the draw now FORMING: those dated
+    on or after the first draw window. Older untagged invoices are the
+    pre-period-tagging era (MFD295: nine 2024-25 invoices, ~$1.7M) - history,
+    never the next draw's billing (the old Next Draw sheet split them the same
+    way, 2026-07-16)."""
+    untag = (income_groups.get("__untagged") or {}).get("invoices") or []
+    anchor = _parse_date((draw_costs.get("__disregarded") or {}).get("anchor") or "")
+    if not anchor:
+        return list(untag)
+    return [i for i in untag
+            if (_parse_date(i.get("date", "")) or dt.date.max) >= anchor]
+
+
+def _outside_draws(income_groups: dict) -> dict:
+    """Billing the draw table does not hold, from the special income groups:
+    untagged invoices (the forming draw's and the pre-period history), release
+    invoices outside every draw window, and not-billed retainage that was
+    never placed on a draw. gross / retained follow the coverage's own rule
+    (gross = net + held - released). The P&L checks add these, so a job
+    whose draws start late (CP585, MFD295) or whose release sits outside
+    the windows (MFD177) ties instead of reading off by its history."""
+    gross = ret = 0.0
+    for k in ("__untagged", "__retainage_billed"):
+        g = income_groups.get(k) or {}
+        held = float(g.get("retainage_held", 0.0) or 0.0)
+        rel = float(g.get("retainage_billed", 0.0) or 0.0)
+        gross += float(g.get("net_billed", 0.0) or 0.0) + held - rel
+        ret += held - rel
+    nb = float((income_groups.get("__retainage") or {}).get("total", 0.0) or 0.0)
+    return {"gross": round(gross + nb, 2), "ret": round(ret + nb, 2)}
+
+
 def write_draw_coverage(ws, top, x0, draw_rows, income_groups, draw_costs, accum,
                         *, overhead_pct=10.0, alt_overhead_pct=None,
                         contract_ref=None, sheet_links=None) -> dict:
@@ -5080,7 +5113,7 @@ def write_draw_coverage(ws, top, x0, draw_rows, income_groups, draw_costs, accum
             cell.hyperlink = f"#'{sn}'!B2"
 
     outside = draw_costs.get("__outside") or {}
-    untag = (income_groups.get("__untagged") or {}).get("invoices") or []
+    untag = _forming_invoices(income_groups, draw_costs)
     has_next = bool(outside.get("total") or outside.get("groups") or untag)
 
     rc = top
@@ -5243,7 +5276,7 @@ def build_sheets_draws(wb, proj, cust_info, wip_info, draw_rows, income_groups,
     row is known (set_back_links). Returns {key: sheet name} plus the PM
     underbilling totals."""
     outside = draw_costs.get("__outside") or {}
-    untag = (income_groups.get("__untagged") or {}).get("invoices") or []
+    untag = _forming_invoices(income_groups, draw_costs)
     secs = []
     if outside.get("total") or outside.get("groups") or untag:
         secs.append(("__next", NEXT_DRAW_SHEET, "Next draw (forming)",
@@ -6965,9 +6998,14 @@ def _wire_pl_support(wb, bva: Optional[dict], draw_rows, draw_costs,
         checks.append(("Budget vs Actual total = Costs to Date", P(refs["costs"]),
                        f"'Budget vs Actual'!{bva['total_cell']}",
                        f"#'Budget vs Actual'!B{bva['total_row']}"))
+    out = refs.get("outside") or {}
+    og, oret = float(out.get("gross", 0.0) or 0.0), float(out.get("ret", 0.0) or 0.0)
+    plus = lambda v: (("+" if v > 0 else "") + f"{v}") if abs(v) >= 0.005 else ""   # noqa: E731
+    said = lambda v: (f" {'+' if v > 0 else '-'} {abs(v):,.2f} outside the draws"     # noqa: E731
+                      if abs(v) >= 0.005 else "")
     if refs.get("cov_gross_tot"):
-        checks.append(("Draws gross billed = Billed to Date", P(refs["billed"]),
-                       refs["cov_gross_tot"], None))
+        checks.append((f"Draws gross billed{said(og)} = Billed to Date", P(refs["billed"]),
+                       refs["cov_gross_tot"] + plus(og), None))
         _sup = (refs["cov_costs_tot"]
                 + (f"+{refs['cov_next_costs']}" if refs.get("cov_next_costs") else "")
                 + (f"+{before}" if before else ""))
@@ -6977,11 +7015,12 @@ def _wire_pl_support(wb, bva: Optional[dict], draw_rows, draw_costs,
                        + " = Costs to Date + office accounts",
                        P(refs["costs"]) + (f"+{P(_opex)}" if _opex else ""), _sup, None))
         if refs.get("ret"):
-            checks.append(("Draws retained = retainage still owed",
-                           P(refs["ret"]), refs["cov_ret_tot"], None))
+            checks.append((f"Draws retained{said(oret)} = retainage still owed",
+                           P(refs["ret"]), refs["cov_ret_tot"] + plus(oret), None))
         if refs.get("oh_billed") and refs.get("cov_oh_tot"):
-            checks.append(("② overhead (on billed) = draws overhead",
-                           f"-{P(refs['oh_billed'])}", refs["cov_oh_tot"], None))
+            oh_out = round(og * float(refs.get("oh_rate", 0.0) or 0.0), 2)
+            checks.append((f"② overhead (on billed) = draws overhead{said(oh_out)}",
+                           f"-{P(refs['oh_billed'])}", refs["cov_oh_tot"] + plus(oh_out), None))
     return checks
 
 
@@ -8969,6 +9008,8 @@ def generate_project_pnl(
         set_back_links(wb, _draws["bands"], f"'P&L'!B{_cov['top']}")
         _pl_refs = dict(_pl_refs or {}, **{k: v for k, v in _cov.items()
                                            if k.startswith("cov_")})
+        _pl_refs["outside"] = _outside_draws(income_groups)
+        _pl_refs["oh_rate"] = overhead_pct / 100.0
     _checks = _wire_pl_support(wb, _bva, draw_rows, draw_costs, _pl_refs)
     build_sheet_reconciliations(**_recon_args, pl_checks=_checks)
     if _checks:

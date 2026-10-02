@@ -1,6 +1,6 @@
 # project-pnl/ - how a job's P&L workbook is built
 
-Last changed: 10/02/2026 - the CP Overview no longer takes retainage releases out of billed a second time (CP585 / CP672 / CP861 read short by their releases; verified against QuickBooks after). Earlier the same day: the workbook redesigned with the owner (rounds 1-23): the P&L sheet is ① Profit &
+Last changed: 10/02/2026 - the P&L checks add the billing OUTSIDE the draw table (untagged and pre-period invoices, releases outside every window, unplaced not-billed retainage), and Next Draw shows only untagged invoices dated after the first draw window. Earlier the same day: the CP Overview no longer takes retainage releases out of billed a second time (CP585 / CP672 / CP861 read short by their releases; verified against QuickBooks after). Earlier the same day: the workbook redesigned with the owner (rounds 1-23): the P&L sheet is ① Profit &
 Loss beside ② P&L by account (current), then the draw coverage behind a divider; one sheet per draw in the
 section format; the P&L checks joined to the Reconciliations tie-out; $ on every dollar figure. Billed is
 GROSS (retainage included) and every to-date overhead is rate x billed - only the projection uses the contract
