@@ -49,6 +49,10 @@ manual close), RP (no draws — expenses → invoice → profit).
   all 17 active jobs; the only gap is CP790's 5,401.82 double count, removed on purpose.
   TO DO: the Completed workbook (CP582, CP656, CP689, CP697, CP714, CP742, CP786 regenerated; CP510 is not a QBO
   customer); CP783 / CP885 have no costs yet so are not on the Overview.
+  Round 5 - **the owner's own layout, copied from the file he edited on Common**: no ACTIVE band (jobs start under the
+  headers), one total row ("Subtotal · N job(s)", no ALL row when there is one group), the coverage legend under
+  PROGRESS & COVERAGE on two rows, freeze at C6 (headers + job column), ETC / projected GP / costs / GP / % complete /
+  coverage / net vs plan at width 13. Values matched his file cell for cell before the live copy was rewritten.
 - 2026-10-02 · **Layout round 2 (the owner's 7 items on the CP790 review copy)** - ④ shows child account names only
   (full name kept when two parents share one); the P&L label column is sized to its widest visible label;
   draw-coverage Net Profit in a thick black box with a green/red header off the TOTAL; Transactions section bars

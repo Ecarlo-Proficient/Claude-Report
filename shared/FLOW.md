@@ -1,6 +1,8 @@
 # shared/ - how the common package works
 
-Last changed: 10/02/2026 - `pnl_paths._find_awarded_cp_folder` matches a finished job's folder on its name as
+Last changed: 10/02/2026 - `xlsx_verify` accepts a freeze on BOTH rows and columns when it is written the way Excel
+saves it (three selections, the main one inside the scrolling pane); openpyxl's bare default is still rejected
+(`tests/test_xlsx_verify.py`). Earlier the same day - `pnl_paths._find_awarded_cp_folder` matches a finished job's folder on its name as
 written ("CP656 - 77 PAUL WILSON" was lost when the spaces were squeezed out and the street number glued onto the
 job #). Earlier, 10/01/2026 - `qbo_vault.has_credentials()` on Linux checks only the four QBO keys (JT_GRANT_KEY is
 optional; the office server has none). Earlier, 09/30/2026: NEW `qbo_trust.py`, the QuickBooks trust gate every WIP write passes

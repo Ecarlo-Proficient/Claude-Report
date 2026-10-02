@@ -13,7 +13,13 @@ Vectors (each has bitten us at least once):
   · Table columns: no blank, no duplicate names.
   · Inline rich text (multi-run `<is>`) — Mac Excel 'String properties', 2026-07-21.
   · Frozen-pane sheet view: exactly one selection, no stray `topRight` — the
-    'Repaired Records: View' bug, 2026-08-07.
+    'Repaired Records: View' bug, 2026-08-07. ONE exception: a freeze on BOTH
+    rows and columns, written the way Excel itself saves it (the owner's CP
+    Overview, 10/02/2026) - pane xSplit + ySplit, activePane bottomRight, and
+    exactly three selections topRight / bottomLeft / bottomRight, each with
+    an activeCell, the bottomRight one inside the frozen corner's pane.
+    openpyxl's default leaves the first two bare and puts the active cell at A1
+    (outside the pane) - still rejected.
   · Overlapping merged cells.
   · Style / dxf indices in range.
   · A table column NAME that disagrees with the header cell under it — an
@@ -179,7 +185,7 @@ def verify_xlsx(path) -> list:
             x = z.read(n).decode("utf-8", "replace")
             if any(si.count("<r>") > 1 for si in re.findall(r"<is>(.*?)</is>", x, re.S)):
                 issues.append(f"{n}: inline rich-text runs (Mac Excel rejects these)")
-            if "<pane " in x:
+            if "<pane " in x and not _two_way_freeze_ok(x):
                 sels = re.findall(r"<selection[^>]*/>", x)
                 if len(sels) > 1 or "topRight" in x:
                     issues.append(f"{n}: invalid frozen-pane sheet view "
@@ -302,6 +308,30 @@ def verify_xlsx(path) -> list:
                         f"rows — stale table range after a row edit (fix the table "
                         f"ref, or drop the table)")
     return issues
+
+
+def _two_way_freeze_ok(x: str) -> bool:
+    """True for a both-axes freeze in Excel's own form (see the header)."""
+    try:
+        from openpyxl.utils.cell import coordinate_from_string, column_index_from_string
+    except ImportError:
+        return False
+    pane = re.search(r"<pane ([^>]*)/>", x)
+    if not pane or 'state="frozen"' not in pane.group(1):
+        return False
+    attrs = dict(re.findall(r'(\w+)="([^"]*)"', pane.group(1)))
+    if not (attrs.get("xSplit") and attrs.get("ySplit") and attrs.get("activePane") == "bottomRight"
+            and attrs.get("topLeftCell")):
+        return False
+    sels = [dict(re.findall(r'(\w+)="([^"]*)"', m)) for m in re.findall(r"<selection ([^>]*)/>", x)]
+    if [sel.get("pane") for sel in sels] != ["topRight", "bottomLeft", "bottomRight"]:
+        return False
+    if not all(sel.get("activeCell") and sel.get("sqref") for sel in sels):
+        return False
+    tl_col, tl_row = coordinate_from_string(attrs["topLeftCell"])
+    br_col, br_row = coordinate_from_string(sels[2]["activeCell"])
+    return (column_index_from_string(br_col) >= column_index_from_string(tl_col)
+            and br_row >= tl_row)
 
 
 def assert_clean(path) -> None:

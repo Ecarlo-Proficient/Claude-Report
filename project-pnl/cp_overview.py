@@ -310,23 +310,23 @@ def read_extra(path: Path) -> dict:
 # Overview columns: (header, key, format, width, group)
 OV_COLS = [
     ("Contract", "contract", MONEY, 15, "proj"),
-    ("Est. cost (ETC)", "etc", MONEY, 15, "proj"),
-    ("Proj. gross profit", "pp", MONEY, 15, "proj"),
+    ("Est. cost (ETC)", "etc", MONEY, 13, "proj"),
+    ("Proj. gross profit", "pp", MONEY, 13, "proj"),
     ("Proj. gross %", "ppm", PCT, 10, "proj"),
     (f"{OVERHEAD_PCT:.0%} OH (of contract)", "poh", MONEY, 14, "proj"),
     (f"Proj. net ({OVERHEAD_PCT:.0%} OH)", "pn", MONEY, 15, "proj"),
     ("Proj. net %", "pnm", PCT, 10, "proj"),
     ("Billed", "billed", MONEY, 15, "act"),
-    ("Costs", "cost", MONEY, 15, "act"),
-    ("Gross profit", "gp", MONEY, 15, "act"),
+    ("Costs", "cost", MONEY, 13, "act"),
+    ("Gross profit", "gp", MONEY, 13, "act"),
     ("Gross %", "gpm", PCT, 10, "act"),
     (f"{OVERHEAD_PCT:.0%} OH (of billed)", "oh", MONEY, 14, "act"),
     (f"Net profit ({OVERHEAD_PCT:.0%} OH)", "net", MONEY, 15, "act"),
     ("Net %", "netm", PCT, 10, "act"),
-    ("Net vs plan", "drift", PTS, 10, "act"),
+    ("Net vs plan", "drift", PTS, 13, "act"),
     ("% billed", "pbill", PCT, 11, "prog"),
-    ("% complete", "pcomp", PCT, 11, "prog"),
-    ("Coverage", "cov", PCT, 11, "prog"),
+    ("% complete", "pcomp", PCT, 13, "prog"),
+    ("Coverage", "cov", PCT, 13, "prog"),
     ("Awaiting draw", "await", MONEY, 14, "prog"),
 ]
 GROUP_TITLE = {"proj": "PROJECTION", "act": "ACTUAL TO DATE", "prog": "PROGRESS & COVERAGE"}
@@ -378,21 +378,38 @@ def _sign_rules(ws, rng: str, first: str) -> None:
 
 
 def _legend(ws, r: int, c: int) -> None:
+    """Label on row r, the three bands on row r + 1, from column c (the owner
+    placed it under PROGRESS & COVERAGE, 10/02)."""
     _cell(ws, r, c, "Coverage = billed ÷ costs:", size=SZ_SMALL, color=GREY)
+    r += 1
     for i, (txt, fill, col) in enumerate((
             ("under 100%  draws don't cover costs", F_BAD, RED_T),
             (f"100-{COVER_OH:.0%}  covers costs, not overhead", F_WARN, AMBER_T),
             (f"{COVER_OH:.0%}+  covers costs + 10% overhead", F_GOOD, GREEN_T))):
-        cc = c + 2 + i * 3
+        cc = c + i * 3
         _cell(ws, r, cc, txt, size=SZ_SMALL, color=col, fill=fill, bold=True, indent=1)
         ws.merge_cells(start_row=r, start_column=cc, end_row=r, end_column=cc + 2)
+
+
+def _excel_selections(ws) -> None:
+    """A both-axes freeze saved the way Excel saves it: one selection per pane,
+    each with an active cell, the main one inside the scrolling pane.
+    openpyxl's default leaves two bare and parks the cursor at A1, outside
+    the pane - the 'Repaired Records: View' shape xlsx_verify rejects."""
+    from openpyxl.worksheet.views import Selection
+    tl = ws.freeze_panes
+    col = re.match(r"[A-Z]+", tl).group(0)
+    row = re.search(r"\d+", tl).group(0)
+    ws.sheet_view.selection = [Selection(pane="topRight", activeCell=f"{col}1", sqref=f"{col}1"),
+                               Selection(pane="bottomLeft", activeCell=f"A{row}", sqref=f"A{row}"),
+                               Selection(pane="bottomRight", activeCell=tl, sqref=tl)]
 
 
 def _sheet_name(job: str) -> str:
     return job[:31]
 
 
-def build(jobs: List[tuple], out: Path, div: dict) -> None:
+def build(jobs: List[tuple], out: Path, div: dict, sections=None, title=None) -> None:
     """jobs = [(job, src, totals, extra)]: src/totals from completed_pnl,
     extra from read_extra."""
     wb = Workbook()
@@ -412,7 +429,7 @@ def build(jobs: List[tuple], out: Path, div: dict) -> None:
         refs[job] = _job_sheet(wb, job, src, t, ex, div)
 
     now = dt.datetime.now()
-    _cell(ov, 1, C0, "COMMERCIAL OVERVIEW  ·  PROJECTIONS VS ACTUALS", size=SZ_TITLE,
+    _cell(ov, 1, C0, title or "COMMERCIAL OVERVIEW  ·  PROJECTIONS VS ACTUALS", size=SZ_TITLE,
           bold=True, color=NAVY)
     _cell(ov, 1, LCOL, f"Generated {now:%m/%d/%Y %I:%M %p}", size=SZ_SMALL, color=GREY,
           align="right")
@@ -488,12 +505,13 @@ def build(jobs: List[tuple], out: Path, div: dict) -> None:
         nonlocal r
         if not sel:
             return
-        _cell(ov, r, C0, title, bold=True, color=NAVY, fill=F_SECTION, indent=1)
-        _cell(ov, r, C0 + 1, note, size=SZ_SMALL, color=GREY, fill=F_SECTION, italic=True)
-        for c in range(C0 + 2, LCOL + 1):
-            ov.cell(r, c).fill = F_SECTION
-        ov.row_dimensions[r].height = 22
-        r += 1
+        if title:                       # one group = no band (the owner's layout 10/02)
+            _cell(ov, r, C0, title, bold=True, color=NAVY, fill=F_SECTION, indent=1)
+            _cell(ov, r, C0 + 1, note, size=SZ_SMALL, color=GREY, fill=F_SECTION, italic=True)
+            for c in range(C0 + 2, LCOL + 1):
+                ov.cell(r, c).fill = F_SECTION
+            ov.row_dimensions[r].height = 22
+            r += 1
         first = r
         for job, src, _t, _ex in sorted(sel, key=lambda x: -x[2]["billed"]):
             _row(r, job, src)
@@ -534,14 +552,16 @@ def build(jobs: List[tuple], out: Path, div: dict) -> None:
             ov.cell(rr, c).border = Border(top=rule)
         ov.row_dimensions[rr].height = 22
 
-    act = [j for j in jobs if j[1].get("status") == "Active"]
-    done = [j for j in jobs if j[1].get("status") != "Active"]
-    _section("ACTIVE", act, "")
-    _section("COMPLETED", done, "")
-    all_r = r
-    _total(all_r, f"ALL CP · {len(jobs)} jobs", sec_rows, rule=RULE)
+    groups = sections or [(None, "", lambda _j: True)]
+    for title, note, keep in groups:
+        _section(title, [j for j in jobs if keep(j)], note)
+    if len(sec_rows) > 1:               # several groups: a grand total under them
+        all_r = r
+        _total(all_r, f"ALL CP · {len(jobs)} jobs", sec_rows, rule=RULE)
+    else:                               # one group: its subtotal IS the total
+        all_r = r - 2
     first_job = hdr_r + 2
-    _legend(ov, all_r + 2, C0)
+    _legend(ov, all_r + 3, C0 + 1 + [k for _h, k, *_x in OV_COLS].index("pbill"))
 
     # conditional colour on the job and total rows
     rows = f"{first_job}:{all_r}"
@@ -571,7 +591,10 @@ def build(jobs: List[tuple], out: Path, div: dict) -> None:
     for i, (_h, _k, _f, w, _g) in enumerate(OV_COLS):
         ov.column_dimensions[get_column_letter(C0 + 1 + i)].width = w
     ov.column_dimensions[get_column_letter(LCOL)].width = 11
-    ov.freeze_panes = f"A{hdr_r + 2}"          # rows only: one pane, no topRight
+    # headers AND the job column stay put (the owner's freeze, 10/02); one
+    # top-left pane, which xlsx_verify accepts
+    ov.freeze_panes = f"{get_column_letter(C0 + 1)}{hdr_r + 2}"
+    _excel_selections(ov)
 
     for ws in wb.worksheets:
         ws.page_setup.orientation = "landscape"
