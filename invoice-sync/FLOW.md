@@ -1,8 +1,7 @@
 # invoice-sync/ - how the AR invoice sync and its Excel mirror work
 
-Last changed: 10/01/2026 - the aging tabs show Open Balance + Total Amount after Due Date, ONE Aging
-column and the lien columns last, client -> invoices (JPI on MFD keeps project rows); new Lease
-Invoices tab from the QBO mirror (open invoices with no project #).
+Last changed: 10/02/2026 - All Open tab (default; litigation + lease, Division / Litigation filters); aging
+tabs show litigation flagged, client totals at the bottom (SUBTOTAL), no draw block; Open Invoices moved after Lease.
 
 Update this chart - and the line above - in the same commit as any change to `invoice-sync/`
 (`.github/flow_guard.sh`).
@@ -25,7 +24,8 @@ flowchart LR
     LOCK{"Excel open?<br/>~$ lock file"}:::gate
     EXP["export_invoices_xlsx.py<br/>pull both trackers (all statuses)"]:::tool
     CHAIN["draw_chain.py<br/>previous draw per MFD/CP invoice"]:::tool
-    AGE["aging_sheet.py<br/>client -> invoices (JPI on MFD: + project rows)<br/>Open Bal · Total · Aging · draws · Notes · Lien last"]:::tool
+    AGE["aging_sheet.py<br/>client name -> invoices -> Total client (JPI on MFD: + project rows)<br/>Open Bal · Total · Due · Aging · Notion Notes · Lien · Litigation"]:::tool
+    ALL["All Open<br/>every division + litigation + lease, Division filter"]:::tool
     LEASE["_lease_records<br/>open invoices with no project #"]:::tool
     NOTES["notes_preserve.py<br/>absorb Note -> Quick Status, or re-attach"]:::tool
     VER{"xlsx_verify.assert_clean"}:::gate
@@ -33,7 +33,7 @@ flowchart LR
     MFD[("Notion<br/>MFD Invoice Tracker")]:::out
     RES[("Notion<br/>Res/Com Invoice Tracker")]:::out
     TEAMS[("Teams<br/>MFD paid / short-pay")]:::out
-    OD[("Open_Invoices.xlsx<br/>Open Invoices · CP / MFD / RP Aging ·<br/>Lease Invoices · Cash Flow · Pay Calendar")]:::out
+    OD[("Invoice Tracker.xlsx<br/>All Open · CP / MFD / RP Aging · Lease Invoices ·<br/>Open Invoices · Cash Flow · Pay Calendar")]:::out
     HOLD[("skipped this run<br/>close the file, re-run sync-ar")]:::out
 
     QBO --> SYNC --> ROUTE
@@ -50,5 +50,6 @@ flowchart LR
     BTX --> AGE
     MIR --> LEASE --> AGE
     NOTES --> AGE
-    AGE --> VER --> OD
+    AGE --> ALL --> VER --> OD
+    AGE --> VER
 ```

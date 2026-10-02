@@ -148,7 +148,7 @@ flowchart LR
     TEAMS[("Teams\nMFD paid / short-pay cards")]:::out
     XL["export_invoices_xlsx.py\n+ aging_sheet.py\n+ notes_preserve.py\n+ cash_flow.py\n+ draw_chain.py\n+ shared/lien_clock.py"]:::tool
     BTX[("Bill Tracker.xlsx\nOneDrive · READ-ONLY")]:::src
-    OD[("OneDrive\nOpen_Invoices.xlsx\nOpen Invoices\nCP · MFD · RP Aging\nLease Invoices\nCash Flow · Pay Calendar")]:::out
+    OD[("OneDrive\nOpen_Invoices.xlsx\nAll Open · CP · MFD · RP Aging\nLease Invoices · Open Invoices\nCash Flow · Pay Calendar")]:::out
     MIR[("QBO mirror\nopen invoices with no project #")]:::src
 
     QBO --> SYNC
@@ -181,6 +181,9 @@ alphabetically with a bottom TOTAL, and litigation invoices excluded. It **reads
 what is still owed to vendors. **`Lease Invoices`** (10/01/2026) is the AR the
 trackers never hold - open QBO invoices with no project # (equipment lease, pump
 principal, interest, late fees) - read from the QBO mirror, same layout, no lien.
+**`All Open`** (10/02/2026, the tab the file opens on) lists every open invoice - all
+divisions, litigation flagged, lease - grouped by client, filtered by Division / Litigation;
+client totals sit at the bottom of each client as SUBTOTALs so they follow the filter.
 
 **QBO deep links are company-scoped** (`qbo_client.invoice_deep_link`, fixed
 2026-08-11): Intuit's `/app/login?pagereq=invoice…&deeplinkcompanyid=<realm>`

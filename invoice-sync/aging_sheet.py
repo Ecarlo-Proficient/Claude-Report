@@ -33,13 +33,17 @@ What this tab shows that QBO's own aging does NOT:
        `This Draw $ Open` keeps the older same-draw figure alongside it.
 
 Rules baked in:
-    - **Litigation invoices are excluded** (the `Litigation` checkbox in both
-      Notion trackers). They are not collections work anymore; they are legal
-      work, and leaving them in the aging inflates every bucket.
+    - Litigation invoices (the `Litigation` checkbox in both Notion trackers)
+      were excluded until 2026-10-02; now they are shown and flagged - see below.
     - Aging is by DUE DATE, matching QBO's default AR aging and the
       `Aging Bucket` select that invoice_sync already writes to Notion.
-    - Parent-client groups are **collapsed by default** - the owner opens the
-      client they care about instead of scrolling 60 invoice rows.
+    - Parent-client groups open **expanded** (the user 2026-10-02; collapsed
+      from 2026-08-05) - the outline toggles still collapse a client.
+    - **Litigation invoices are ON the tabs** since 2026-10-02, flagged in a
+      `Litigation` column at the end to filter them out; client and total rows
+      are SUBTOTALs, so they follow that filter.
+    - **Every row the same height, no wrapping** (the user 2026-10-02): a long
+      memo or note is cut off at the cell edge.
     - **Client, then invoices - no project layer** (the user 2026-10-01: "we
       already see the project in the column which we can filter"). The one
       exception is JPI on the MFD tab, which keeps a project sub-group per job
@@ -47,8 +51,10 @@ Rules baked in:
     - **Age is ONE column** (`Aging` = Current / 1-30 / 31-60 / 61-90 / 90+),
       filterable like a property, instead of five money columns (the user
       2026-10-01). Open Balance and Total Amount sit right after Due Date; the
-      lien columns sit last. The per-bucket totals moved to a BY AGE block
-      under the TOTAL row.
+      lien columns sit last.
+    - **A tight top** (the user 2026-10-02): row 1 = title in A + the one-line
+      summary beside it in B, row 2 = the column headers. No KEY / BY AGE /
+      footnote block under the TOTAL row any more.
 
 This module only builds the worksheet; `export_invoices_xlsx.py` owns the
 workbook and the Notion pull.
@@ -94,13 +100,24 @@ PROJECT_SPLIT_CLIENTS: Dict[str, "re.Pattern[str]"] = {
 
 # Type sizes (the user 2026-08-05 — "make the font 12 to see it a bit bigger",
 # client rows 13). Client rows carry a point more because the sheet is read
-# COLLAPSED: the client name is the line that has to land first.
-BODY_PT = 12
-CLIENT_PT = 13
-TITLE_PT = 14
+# by client: the client name is the line that has to land first.
+BODY_PT = 13          # bumped from 12 with the taller rows (the user 2026-10-02)
+CLIENT_PT = 14
+TITLE_PT = 15
+# Fixed row heights (points): every row the same height, text never wraps - a long
+# memo or note is cut off at the cell edge instead of stretching its row (the user
+# 2026-10-02). Slightly taller than Excel's default for readability.
+ROW_PT = 21
+CLIENT_ROW_PT = 23
 # Widths are in characters of the default 11pt font; _autofit scales for 12pt.
 # The cap stops a long memo or note from creating a column you have to scroll.
 MAX_COL_WIDTH = 62
+# The Client / Invoice column stops here: memos are cut off at the edge anyway,
+# and a wider column pushes the money off the screen (2026-10-02).
+MAX_LABEL_WIDTH = 46
+# Default zoom on every aging tab: the 13pt font and taller rows read too large
+# at 100% (the user 2026-10-02: "zoom it out a little by default").
+ZOOM_PCT = 85
 
 # The bill-tracker's Excel output, via the ONE shared resolver so the path can't
 # drift between writer and reader. We read the FILE, not the bill-tracker's code
@@ -142,30 +159,33 @@ DRAW_DIVISIONS = ("MFD", "CP")
 # (header, width, number_format)
 # No Division column: each tab IS one division (the user 2026-08-10), so it
 # would repeat the tab name on every row.
-# Order (the user 2026-10-01): who / which invoice / when, then the money (Open
-# Balance and Total Amount right after Due Date), then its age as ONE column,
-# then the draw block and notes, and the lien columns LAST.
+# Order (the user 2026-10-01 / 10-02): who / which invoice / when, the money
+# (Open Balance, Total Amount), THEN Due Date and its age (Aging), the Project #,
+# the draw block and notes, the lien columns, and Division / Litigation LAST so
+# they filter. Division shows only on the All Open tab (the division tabs ARE
+# their division). The "Prev Draw" invoice # column was removed 2026-10-02.
 COLUMNS: List[Tuple[str, int, Optional[str]]] = [
     ("Client / Invoice", 34, None),
-    ("Project #",        13, None),
-    ("Invoice #",        11, None),     # stays column C: notes_preserve anchors on it
+    ("Invoice #",        11, None),     # notes_preserve finds this column by its header
     ("Date",             11, "mm/dd/yyyy"),
-    ("Due Date",         11, "mm/dd/yyyy"),
     # Open Balance first, then the invoice's original Total Amount, so the pair
-    # reads open->total left-to-right (the user 2026-08-11). Open Balance is
-    # amber-flagged when it differs from Total Amount, i.e. the invoice is partly
-    # paid (the user 2026-08-14, replacing an earlier data bar that hurt legibility).
-    ("Open Balance",     15, '"$"#,##0.00'),
-    ("Total Amount",     15, '"$"#,##0.00'),
+    # reads open->total left-to-right (the user 2026-08-11). Both bold and framed
+    # (the user 2026-10-02: "more pronounced"). Open Balance is amber-flagged when
+    # it differs from Total Amount, i.e. the invoice is partly paid (2026-08-14).
+    ("Open Balance",     16, '"$"#,##0.00'),
+    ("Total Amount",     16, '"$"#,##0.00'),
+    ("Due Date",         11, "mm/dd/yyyy"),
     # The five bucket columns collapsed into one filterable value (the user
     # 2026-10-01). The cell keeps its green->red tint, so colour still reads age.
     ("Aging",            10, None),
-    ("Prev Draw",        11, None),
+    ("Project #",        13, None),
     ("Prev Draw Status", 19, None),
     ("Prev Bills Open",   9, "0"),
     ("Prev $ Open",      15, '"$"#,##0.00'),
     ("This Draw $ Open", 15, '"$"#,##0.00'),
-    ("Notes",            46, None),
+    # "Notion Notes": the collections clerk's Quick Status from Notion - named so it
+    # is never confused with an Excel cell Note (the user 2026-10-02).
+    ("Notion Notes",     16, None),
     ("Last Action",      12, "mm/dd/yyyy"),
     # Replaced Days Past Due (the user 2026-08-10): the date a notice must be
     # MAILED by - the one deadline that expires.
@@ -174,24 +194,52 @@ COLUMNS: List[Tuple[str, int, Optional[str]]] = [
     # dashboard's Open Invoices Lien column shows, kept beside the deadline clock so the
     # workbook and the site never disconnect (the user 2026-08-18). Blank = no lien linked.
     ("Lien status",      18, None),
+    ("Division",         10, None),
+    # Litigation invoices are ON the tabs since 2026-10-02 (the user: "i want
+    # litigation not excluded ... add column at end to filter out"). Yes / No.
+    ("Litigation",       11, None),
 ]
 
 # 0-based positions used when writing rows (kept in sync with COLUMNS above).
 # C_TOTAL = Open Balance, C_INVTOTAL = the invoice's original Total Amount.
-C_LABEL, C_PROJ, C_INV, C_DATE, C_DUE, C_TOTAL, C_INVTOTAL, C_AGING = range(8)
-C_PREV, C_VSTATUS, C_VBILLS, C_VAMT, C_THIS, C_NOTES, C_ACTION = range(8, 15)
-C_LIEN, C_LIENSTATUS = range(15, 17)
+C_LABEL, C_INV, C_DATE, C_TOTAL, C_INVTOTAL, C_DUE, C_AGING, C_PROJ = range(8)
+C_VSTATUS, C_VBILLS, C_VAMT, C_THIS, C_NOTES, C_ACTION = range(8, 14)
+C_LIEN, C_LIENSTATUS, C_DIV, C_LITIG = range(14, 18)
+
+# Width caps for free-text columns: past this the text is cut off at the cell
+# edge rather than spreading the sheet out (the user 2026-10-02: "always check
+# width to not spread info out").
+COL_CAPS = {C_LABEL: MAX_LABEL_WIDTH, C_PROJ: 24, C_NOTES: 40, C_LIEN: 28, C_LIENSTATUS: 18}
+
+# Row 1 = title + summary, row 2 = column headers, data from row 3.
+HEADER_ROW = 2
+
+# Short codes and dates read best centred; everything is vertically centred
+# (the user's screenshot 2026-10-02: "2 inv" and totals sat low in taller rows).
+CENTERED_COLS = (C_INV, C_DATE, C_DUE, C_AGING, C_ACTION, C_DIV, C_LITIG)
+
+# Roll-up columns: on client / total rows these are SUBTOTAL(9, ...) formulas,
+# so they follow a filter (untick Litigation "Yes" and every total drops it) yet
+# still count rows hidden by collapsing a group (function 9, not 109).
+SUM_COLS = (C_TOTAL, C_INVTOTAL, C_VBILLS, C_VAMT, C_THIS)
 
 # The values the Aging column takes, youngest first (index = bucket_index()).
 AGING_LABELS = ("Current", "1-30", "31-60", "61-90", "90+")
 
 # The previous-draw block - greyed out wherever there is no chain to read.
-VENDOR_COLS = (C_PREV, C_VSTATUS, C_VBILLS, C_VAMT)
+VENDOR_COLS = (C_VSTATUS, C_VBILLS, C_VAMT)
 
 # Columns the RP tab omits: the whole previous-draw block plus the same-draw
 # figure. RP doesn't bill in draws, so on the combined tab these are 34 rows of
 # grey "n/a". (the user 2026-08-05)
-RP_DROP_COLUMNS = (C_PREV, C_VSTATUS, C_VBILLS, C_VAMT, C_THIS)
+RP_DROP_COLUMNS = (C_VSTATUS, C_VBILLS, C_VAMT, C_THIS, C_DIV)
+# The CP / MFD tabs drop only the Division column (the tab IS the division).
+# The draw block was taken off every tab 2026-10-02 (the user: "remove prev draw
+# from cp and mfd columns ... i meant the whole block"), so the CP / MFD tabs now
+# drop the same columns RP always did. The block's code stays for a revival.
+DIVISION_TAB_DROP = RP_DROP_COLUMNS
+# Display order of divisions on the All Open tab.
+DIVISION_ORDER = {"CP": 0, "MFD": 1, "RP": 2, "Lease": 3}
 
 _THIN = Side(style="thin", color="000000")
 _MEDIUM = Side(style="medium", color="000000")
@@ -466,7 +514,7 @@ class _Grid:
 
 
 def _autofit(ws: Worksheet, grid: _Grid, last_row: int,
-             headers: Optional[Dict[int, str]] = None) -> None:
+             headers: Optional[Dict[int, str]] = None, uncapped: Tuple[int, ...] = ()) -> None:
     """Size every column to its widest cell, in the sheet's own font.
 
     openpyxl has no real autofit — Excel computes widths at render time and
@@ -478,11 +526,17 @@ def _autofit(ws: Worksheet, grid: _Grid, last_row: int,
         name, floor_width, number_format = COLUMNS[logical]
         name = (headers or {}).get(logical, name)
         letter = get_column_letter(grid.col(logical))
-        widest = len(name) + 3  # header text + room for the autofilter arrow
-        for row in range(5, last_row + 1):
+        # The header is bold, LEFT-aligned and carries a filter arrow: ~1.3 width
+        # units per character plus ~3 for the arrow. (Centred, the name ran into
+        # the arrow - the user's screenshot 2026-10-02: "Due Date", "Aging".)
+        header_need = len(name) * 1.3 + 3
+        widest = 0
+        for row in range(HEADER_ROW + 1, last_row + 1):
             value = ws.cell(row=row, column=grid.col(logical)).value
             if value is None:
                 continue
+            if isinstance(value, str) and value.startswith("="):
+                continue                           # a SUBTOTAL formula, not its shown width
             if isinstance(value, dt.date):
                 rendered = 10                      # mm/dd/yyyy
             elif isinstance(value, float) and number_format and "$" in number_format:
@@ -490,8 +544,9 @@ def _autofit(ws: Worksheet, grid: _Grid, last_row: int,
             else:
                 rendered = len(str(value))
             widest = max(widest, rendered)
-        width = max(floor_width, widest * BODY_PT / 11.0 + 1.5)
-        ws.column_dimensions[letter].width = min(width, MAX_COL_WIDTH)
+        width = max(floor_width, header_need, widest * BODY_PT / 11.0 + 1.5)
+        cap = MAX_COL_WIDTH if logical in uncapped else COL_CAPS.get(logical, MAX_COL_WIDTH)
+        ws.column_dimensions[letter].width = min(width, cap)
 
 
 def _write_row(
@@ -511,11 +566,12 @@ def _write_row(
         if number_format:
             cell.number_format = number_format
         cell.font = Font(bold=bold, size=size, color=color)
+        cell.alignment = Alignment(
+            horizontal="center" if logical in CENTERED_COLS else None,
+            vertical="center", wrap_text=False,
+        )
         if fill:
             cell.fill = fill
-    notes = grid.cell(ws, row_num, C_NOTES)
-    if notes is not None:
-        notes.alignment = Alignment(horizontal="left", vertical="top", wrap_text=True)
 
 
 def _flag_partial(cell, open_v, total_v, *, bold: bool, size: float) -> None:
@@ -549,7 +605,34 @@ def _grey_out_vendor_block(ws: Worksheet, grid: _Grid, row_num: int) -> None:
         cell.number_format = "General"  # else "n/a" fights the $ / 0 formats
         cell.fill = _NA_FILL
         cell.font = Font(color=_NA_COLOR, italic=True, size=BODY_PT)
-        cell.alignment = Alignment(horizontal="center")
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+
+
+def _subtotal(ws: Worksheet, grid: "_Grid", row: int, first: int, last: int) -> None:
+    """Turn a roll-up row's money cells into SUBTOTAL(9, ...) over the rows under it.
+    SUBTOTAL skips nested SUBTOTALs (project rows inside a client) and filtered-out
+    rows, but keeps rows hidden by collapsing a group."""
+    if last < first:
+        return
+    for logical in SUM_COLS:
+        cell = grid.cell(ws, row, logical)
+        if cell is None:
+            continue
+        letter = get_column_letter(grid.col(logical))
+        cell.value = f"=SUBTOTAL(9,{letter}{first}:{letter}{last})"
+
+
+def _frame_money(ws: Worksheet, grid: "_Grid", first: int, last: int) -> None:
+    """A thin rule either side of the Open Balance / Total Amount pair, so the two
+    money columns read as one block (the user 2026-10-02: "more pronounced")."""
+    left, right = grid.col(C_TOTAL), grid.col(C_INVTOTAL)
+    for r in range(first, last + 1):
+        for col, side in ((left, "left"), (right, "right")):
+            cell = ws.cell(row=r, column=col)
+            b = cell.border
+            kw = {"left": b.left, "right": b.right, "top": b.top, "bottom": b.bottom}
+            kw[side] = _THIN
+            cell.border = Border(**kw)
 
 
 def build_aging_sheet(
@@ -564,7 +647,8 @@ def build_aging_sheet(
     scope_note: str = "",
     split_clients: Optional["re.Pattern[str]"] = None,
     header_overrides: Optional[Dict[int, str]] = None,
-    footnotes: Optional[List[str]] = None,
+    group_by_division: bool = False,
+    uncapped: Tuple[int, ...] = (),
 ) -> None:
     """Write an aging tab.
 
@@ -572,8 +656,8 @@ def build_aging_sheet(
     _lease_record) so this module stays free of Notion and QBO plumbing.
 
     Layout: a header, an always-visible ALL CLIENTS total, then one bold summary
-    row per parent client with its invoices underneath and COLLAPSED (the owner's
-    ask - Notion-style one-page scanning, drill in on demand). Client -> invoice,
+    row per parent client with its invoices underneath, expanded (the user
+    2026-10-02), with outline toggles to collapse a client. Client -> invoice,
     no project layer (the user 2026-10-01); a client matching `split_clients`
     keeps a project sub-group (JPI on MFD). Summary-above-detail requires
     outlinePr.summaryBelow = False; without it Excel puts the collapse toggle on
@@ -582,8 +666,7 @@ def build_aging_sheet(
     `drop_columns` hides logical columns entirely - the RP tab passes the whole
     previous-draw block, which has no meaning for a division that doesn't bill
     in draws. `header_overrides` renames a column on this tab only (the lease tab
-    shows its QBO item where the project # would be). `footnotes` replaces the
-    default notes under the KEY. `litigation_excluded=None` omits that count.
+    shows its QBO item where the project # would be). `litigation_excluded=None` omits that count.
     """
     grid = _Grid(drop_columns)
     shows_vendor_block = C_VSTATUS in grid
@@ -593,14 +676,18 @@ def build_aging_sheet(
 
     # Group by parent client. Unresolved relations fall back to a stable label
     # rather than being dropped - an invoice with no parent is still money owed.
-    by_parent: Dict[str, List[dict]] = defaultdict(list)
+    # On All Open (`group_by_division`) a client is grouped within its division,
+    # so every client row carries ONE Division value and a Division filter keeps
+    # whole groups (header, invoices, total) together.
+    by_parent: Dict[Tuple[str, str], List[dict]] = defaultdict(list)
     for rec in invoices:
-        by_parent[rec["parent"] or "(no client on file)"].append(rec)
+        div = rec["division"] if group_by_division else ""
+        by_parent[(div, rec["parent"] or "(no client on file)")].append(rec)
 
     # ── title block ──
     ws.cell(
         row=1, column=1,
-        value=f"{title} - as of {today.strftime('%b %d, %Y').upper()}",
+        value=f"{title} - as of {today.strftime('%m/%d/%Y')}",
     ).font = Font(bold=True, size=TITLE_PT)
 
     parts = [f"{len(invoices)} open invoices"]
@@ -625,19 +712,24 @@ def build_aging_sheet(
             parts.append(
                 f"Vendor bill status current as of {vendor_as_of.strftime('%m/%d, %I:%M %p')}"
             )
-    subtitle_cell = ws.cell(row=2, column=1, value=" · ".join(parts))
+    # Title in A1, its one-line summary right beside it in B1 (the user's mockup
+    # 2026-10-02: "new top header for all pages like this. keep it tight").
+    subtitle_cell = ws.cell(row=1, column=2, value=" · ".join(parts))
+    subtitle_cell.alignment = Alignment(vertical="center")
+    ws.cell(row=1, column=1).alignment = Alignment(vertical="center")
+    ws.row_dimensions[1].height = 26
     subtitle_cell.font = (
         Font(bold=True, color="C00000", size=BODY_PT)
         if (shows_vendor_block and stale)
         else Font(size=BODY_PT)
     )
 
-    header_row = 4
+    header_row = HEADER_ROW
     for logical in grid.visible:
         cell = ws.cell(row=header_row, column=grid.col(logical), value=headers[logical])
         cell.font = Font(bold=True, color="FFFFFF", size=BODY_PT)
         cell.fill = _HEADER_FILL
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=False)
         cell.border = Border(bottom=_MEDIUM)
     ws.row_dimensions[header_row].height = 30
     ws.freeze_panes = ws.cell(row=header_row + 1, column=1)
@@ -669,37 +761,51 @@ def build_aging_sheet(
         row[C_THIS] = this_sum or None
         return row
 
-    # The grand total rolls up from the same per-invoice values the client rows
-    # use, so the top row always ties to the sum of the groups below it.
-    grand_ages = _sums(invoices)[0]
-
     # ── grand total (always visible, never grouped) ──
     row_num = header_row + 1
-    _write_row(ws, grid, row_num, _rollup(f"ALL CLIENTS ({len(by_parent)})", "", invoices),
+    _write_row(ws, grid, row_num, _rollup(f"ALL CLIENTS ({len({k[1] for k in by_parent})})", "", invoices),
                bold=True, size=CLIENT_PT, fill=_GRAND_FILL, color=_ON_DARK)
     for logical in grid.visible:
         ws.cell(row=row_num, column=grid.col(logical)).border = Border(bottom=_HAIR)
-    ws.row_dimensions[row_num].height = 20
+    ws.row_dimensions[row_num].height = CLIENT_ROW_PT
+    grand_row = row_num
     row_num += 1
 
-    def write_summary(label, records, *, fill, size, level, color) -> None:
-        """A roll-up row (client at level 0, project sub-group at level 1)."""
+    def write_header(label, records, *, fill, size, level, color, division) -> None:
+        """A group's NAME row on top (client at level 0, project at level 1): the
+        name and its invoice count. Its totals sit on the group's total row at the
+        bottom (the user 2026-10-02), QuickBooks-report style."""
         nonlocal row_num
-        _write_row(ws, grid, row_num, _rollup(label, f"{len(records)} inv", records),
-                   bold=True, size=size, fill=fill, color=color)
-        # Real indentation carries the hierarchy: client 0, project 1.
+        head: List[Any] = [""] * len(COLUMNS)
+        head[C_LABEL] = label
+        head[C_INV] = f"{len(records)} inv"
+        head[C_DIV] = division
+        _write_row(ws, grid, row_num, head, bold=True, size=size, fill=fill, color=color)
+        grid.cell(ws, row_num, C_LABEL).alignment = Alignment(indent=level, vertical="center")
+        if level > 0:
+            ws.row_dimensions[row_num].outlineLevel = level
+        ws.row_dimensions[row_num].height = CLIENT_ROW_PT if level == 0 else ROW_PT
+        row_num += 1
+
+    def write_total(label, records, first: int, *, level, division) -> None:
+        """A group's TOTAL row under its invoices: SUBTOTALs over rows first..here-1,
+        so it follows filters and skips nested project totals."""
+        nonlocal row_num
+        total = _rollup(f"Total {label}", "", records)
+        total[C_DIV] = division
+        _write_row(ws, grid, row_num, total, bold=True, size=BODY_PT if level else CLIENT_PT - 1,
+                   fill=_PROJECT_FILL, color=_ON_LIGHT)
         grid.cell(ws, row_num, C_LABEL).alignment = Alignment(indent=level, vertical="center")
         for logical in grid.visible:
-            ws.cell(row=row_num, column=grid.col(logical)).border = Border(bottom=_HAIR)
+            ws.cell(row=row_num, column=grid.col(logical)).border = Border(top=_HAIR, bottom=_THIN)
         # A group with no MFD/CP work has no vendor answer either - grey the
         # block, or an all-RP group reads as "clear".
         if shows_vendor_block and not any(r["division"] in DRAW_DIVISIONS for r in records):
             _grey_out_vendor_block(ws, grid, row_num)
+        _subtotal(ws, grid, row_num, first, row_num - 1)
         if level > 0:
             ws.row_dimensions[row_num].outlineLevel = level
-            ws.row_dimensions[row_num].hidden = True  # collapsed by default
-        else:
-            ws.row_dimensions[row_num].height = 20  # client header stands taller (the user 2026-08-14)
+        ws.row_dimensions[row_num].height = ROW_PT if level else CLIENT_ROW_PT
         row_num += 1
 
     def write_detail(rec, level) -> None:
@@ -718,16 +824,17 @@ def build_aging_sheet(
         detail[C_TOTAL] = rec["open_balance"]
         detail[C_INVTOTAL] = rec["total_amount"]
         detail[C_AGING] = AGING_LABELS[slot]
-        detail[C_PREV] = rec.get("prev_draw")
         detail[C_VSTATUS] = rec.get("vendor_status")
         detail[C_VBILLS] = rec.get("vendor_bills")
         detail[C_VAMT] = rec.get("vendor_amount")
         detail[C_THIS] = rec.get("this_draw_amount")
         detail[C_NOTES] = rec.get("notes")
         detail[C_ACTION] = rec.get("last_action")
-        if shows_lien:
+        if shows_lien and rec.get("lien") is not None:       # lease rows carry no lien clock
             detail[C_LIEN] = rec["lien"].label
             detail[C_LIENSTATUS] = rec.get("lien_status") or ""
+        detail[C_DIV] = rec["division"]
+        detail[C_LITIG] = "Yes" if rec.get("litigation") else "No"
         _write_row(ws, grid, row_num, detail, bold=False, color=_ROW_TEXT)
         # Indent matches the outline depth: 2 under a project, 1 under a client.
         # Memo reads as secondary (lighter grey).
@@ -749,13 +856,13 @@ def build_aging_sheet(
         aging_cell = grid.cell(ws, row_num, C_AGING)
         if aging_cell is not None:
             aging_cell.fill = BUCKET_CELL_FILLS[slot]
-            aging_cell.alignment = Alignment(horizontal="center")
+            aging_cell.alignment = Alignment(horizontal="center", vertical="center")
 
         # The lien cell carries the only hard expiry on this sheet, so it gets
         # the strongest cue: a missed or imminent notice deadline is a right
         # that disappears, not just money that is late.
         lien_cell = grid.cell(ws, row_num, C_LIEN)
-        if lien_cell is not None:
+        if lien_cell is not None and rec.get("lien") is not None:
             state = rec["lien"].state
             if state == lien_clock.STATE_PAST:
                 lien_cell.font = Font(bold=True, color="FFFFFF", size=BODY_PT)
@@ -785,25 +892,38 @@ def build_aging_sheet(
                 elif verdict == PREV_CLEAR:
                     status_cell.font = Font(color="2E7D32", size=BODY_PT)
 
+        # Open Balance + Total Amount carry the row: bold (the user 2026-10-02).
+        for logical in SUM_COLS:
+            money = grid.cell(ws, row_num, logical)
+            if money is not None:
+                money.font = Font(bold=True, size=BODY_PT, color="000000")
         # Amber-flag the Open Balance when the invoice is only partly paid.
         _flag_partial(grid.cell(ws, row_num, C_TOTAL),
-                      rec["open_balance"], rec["total_amount"], bold=False, size=BODY_PT)
+                      rec["open_balance"], rec["total_amount"], bold=True, size=BODY_PT)
+        if rec.get("litigation"):
+            lit = grid.cell(ws, row_num, C_LITIG)
+            if lit is not None:
+                lit.font = Font(bold=True, color="922B21", size=BODY_PT)
+                lit.fill = _LIEN_URGENT_FILL
 
+        for logical in grid.visible:                   # a quiet rule between invoices
+            ws.cell(row=row_num, column=grid.col(logical)).border = Border(bottom=_HAIR)
         ws.row_dimensions[row_num].outlineLevel = level
-        ws.row_dimensions[row_num].hidden = True  # collapsed by default
+        ws.row_dimensions[row_num].height = ROW_PT   # expanded by default (the user 2026-10-02)
         row_num += 1
 
-    def _by_project_then_due(r: dict):
-        return ((r["project_num"] or "").upper(), r["due_date"] or dt.date.max, r["invoice_num"])
+    def _oldest_first(r: dict):
+        return (r["invoice_date"] or dt.date.max, r["due_date"] or dt.date.max, str(r["invoice_num"]))
 
     # Alphabetical by client (the user 2026-08-14) - a predictable order to scan,
-    # not biggest-balance-first. Inside a client: project #, then due date, so one
-    # job's invoices sit together even without a project row.
-    for parent in sorted(by_parent, key=lambda p: (p or "").upper()):
-        records = sorted(by_parent[parent], key=_by_project_then_due)
-        # Client summary row (level 0, always visible) - the client name is the
-        # line that has to carry when the sheet is read collapsed.
-        write_summary(parent, records, fill=_PARENT_FILL, size=CLIENT_PT, level=0, color=_ON_DARK)
+    # not biggest-balance-first (All Open: by division first). Inside a client:
+    # invoice date, OLDEST first (the user 2026-10-02) - the Project # column
+    # filters a single job.
+    for div, parent in sorted(by_parent, key=lambda k: (DIVISION_ORDER.get(k[0], 9), (k[1] or "").upper())):
+        records = sorted(by_parent[(div, parent)], key=_oldest_first)
+        write_header(parent, records, fill=_PARENT_FILL, size=CLIENT_PT, level=0, color=_ON_DARK,
+                     division=div)
+        first = row_num
 
         by_project: Dict[str, List[dict]] = defaultdict(list)
         for rec in records:
@@ -811,18 +931,22 @@ def build_aging_sheet(
 
         # Client -> invoice (the user 2026-10-01). Only a client named in
         # PROJECT_SPLIT_CLIENTS (JPI on MFD) keeps the project layer between them:
-        # client 0 -> project 1 -> invoice 2.
+        # client 0 -> project 1 -> invoice 2, each project with its own total.
         if split_clients is not None and split_clients.search(parent) and len(by_project) > 1:
             for proj in sorted(by_project, key=lambda p: (p or "").upper()):
-                write_summary(proj, by_project[proj],
-                              fill=_PROJECT_FILL, size=BODY_PT, level=1, color=_ON_LIGHT)
+                write_header(proj, by_project[proj], fill=_PROJECT_FILL, size=BODY_PT, level=1,
+                             color=_ON_LIGHT, division=div)
+                proj_first = row_num
                 for rec in by_project[proj]:
                     write_detail(rec, level=2)
+                write_total(proj, by_project[proj], proj_first, level=1, division=div)
         else:
             for rec in records:
                 write_detail(rec, level=1)
+        write_total(parent, records, first, level=0, division=div)
 
     last_data_row = row_num - 1
+    _subtotal(ws, grid, grand_row, grand_row + 1, last_data_row)
 
     # Bottom total (the user 2026-08-14 - "need a sum"): a footer that mirrors the
     # ALL CLIENTS roll-up, so the number is there at the end of a long scroll too.
@@ -832,76 +956,26 @@ def build_aging_sheet(
                fill=_GRAND_FILL, color=_ON_DARK)
     for logical in grid.visible:
         ws.cell(row=row_num, column=grid.col(logical)).border = Border(top=_MEDIUM)
-    ws.row_dimensions[row_num].height = 20
-    row_num += 2
-
-    # BY AGE: the per-bucket totals the five bucket columns used to give on the
-    # total row. Label and amount on the same row; the label carries the same
-    # tint as the Aging cells above it.
-    ws.cell(row=row_num, column=1, value="BY AGE").font = Font(bold=True, size=BODY_PT)
+    ws.row_dimensions[row_num].height = CLIENT_ROW_PT
+    _subtotal(ws, grid, row_num, grand_row + 1, last_data_row)
     row_num += 1
-    for slot, label in enumerate(AGING_LABELS):
-        label_cell = ws.cell(row=row_num, column=1, value=label)
-        label_cell.fill = BUCKET_CELL_FILLS[slot]
-        label_cell.font = Font(size=BODY_PT)
-        amount_cell = ws.cell(row=row_num, column=grid.col(C_TOTAL), value=grand_ages[slot])
-        amount_cell.number_format = COLUMNS[C_TOTAL][2]
-        amount_cell.font = Font(size=BODY_PT)
-        row_num += 1
-
-    # Legend, below the data so it never pushes the numbers down. Colour that
-    # needs explaining is colour that failed, but the grey block is a deliberate
-    # "don't read this" and that one is worth spelling out.
-    legend_row = row_num + 1
-    ws.cell(row=legend_row, column=1, value="KEY").font = Font(bold=True, size=BODY_PT)
-
-    lien_legend = grid.cell(ws, legend_row, C_LIEN)
-    if lien_legend is not None:
-        lien_legend.value = "PAST DUE"
-        lien_legend.fill = _LIEN_PAST_FILL
-        lien_legend.font = Font(bold=True, color="FFFFFF", size=BODY_PT)
-        lien_legend.alignment = Alignment(horizontal="center")
-
-    notes: List[str] = ["Aged by due date. Invoice # links to the invoice in QBO."]
-    if shows_lien:
-        notes += [
-            "Lien = the date a notice must be MAILED by (Tex. Prop. Code Ch. 53, first-tier sub): "
-            "CP/MFD the 15th of the 3rd month after the work month, RP the 15th of the 2nd; "
-            "rolled BACK off weekends. Work month = invoice month. Retainage (marked RET) is due 30 days after the invoice date.",
-            "The lien column is a deadline watchlist, not legal advice; confirm project type, parcel and owning entity before sending anything.",
-        ]
-    if shows_vendor_block:
-        blocked_cell = grid.cell(ws, legend_row, C_VSTATUS)
-        blocked_cell.value = PREV_BLOCKED
-        blocked_cell.fill = _BLOCKED_FILL
-        blocked_cell.font = Font(bold=True, color="C00000", size=BODY_PT)
-        na_cell = grid.cell(ws, legend_row, C_VBILLS)
-        na_cell.value = VENDOR_NA
-        na_cell.fill = _NA_FILL
-        na_cell.font = Font(color=_NA_COLOR, italic=True, size=BODY_PT)
-        na_cell.alignment = Alignment(horizontal="center")
-        notes += [
-            f"'{PREV_BLOCKED}' = the previous draw was funded but our vendors on it are still owed - no unconditional waivers, so the GC won't release this draw. That one is ours to fix.",
-            f"'{PREV_WAITING_GC}' = the previous draw hasn't been funded either, so the hold-up is upstream of us.  ·  '{PREV_CLEAR}' = previous draw funded and its vendors paid.",
-            f"'{PREV_MULTI}' = the project runs parallel contracts and bills carry a project #, not a contract, so the previous draw can't be identified yet.  ·  'n/a' = RP, which doesn't bill in draws.",
-        ]
-    elif shows_lien:
-        notes.append(
-            "RP doesn't bill in draws, so the previous-draw and vendor-bill columns are omitted here. "
-            "See the CP and MFD tabs."
-        )
-    if footnotes is not None:
-        notes = footnotes
-    for offset, text in enumerate(notes):
-        ws.cell(row=legend_row + 1 + offset, column=1, value=text).font = Font(
-            italic=True, color=_NA_COLOR, size=BODY_PT
-        )
 
     ws.sheet_properties.outlinePr.summaryBelow = False
     ws.sheet_properties.outlinePr.applyStyles = False
-    # Filter spans the header + data only - never the totals or legend below it.
+    # Filter spans the header + data only - never the TOTAL row below it.
     ws.auto_filter.ref = (
         f"A{header_row}:{get_column_letter(grid.width)}{last_data_row}"
     )
-    _autofit(ws, grid, last_data_row, headers)
+    _frame_money(ws, grid, header_row, last_data_row + 1)
+    _autofit(ws, grid, last_data_row, headers, uncapped)
     ws.sheet_view.showGridLines = False  # designed look; structure carried by fills/rules
+    ws.sheet_view.zoomScale = ZOOM_PCT
+    # Printing: landscape, every column on one page width, the header row repeated
+    # on each page, narrow margins - so a printed aging reads like the screen.
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.print_title_rows = f"{header_row}:{header_row}"
+    ws.page_margins.left = ws.page_margins.right = 0.3
+    ws.page_margins.top = ws.page_margins.bottom = 0.5

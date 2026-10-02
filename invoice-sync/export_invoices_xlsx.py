@@ -15,7 +15,8 @@ Why this exists:
   source of truth and the working surface for all human notes / status.
 
 Tabs:
-  1. "Open Invoices" — the flat row-per-invoice list (the original sheet).
+  1. "Open Invoices" - the flat row-per-invoice list (the original sheet). Sits
+     after Lease Invoices since 2026-10-02; the file opens on All Open.
      FROZEN: it is copied into Outlook for clients (the user 2026-10-01 - "make
      sure not to change the first sheet"); tests/test_open_invoices_layout.py
      pins its columns. Changes to it need the owner's say-so first.
@@ -28,6 +29,11 @@ Tabs:
      leases, pump/truck principal payments, interest and late fees: the
      non-construction items). They never reach Notion (invoice_sync can't route
      them), so this tab reads them from the QBO mirror (the user 2026-10-01).
+  4. "All Open" (second tab) - every open invoice in ONE Excel Table: CP, MFD,
+     RP, litigation (flagged) and lease, filtered by Division / Litigation, with
+     a total that follows the filter (the user 2026-10-02). Same client grouping
+     as the division tabs (aging_sheet, group_by_division), Division + Litigation
+     columns at the end to filter.
 
 Run via run_invoice_sync.py after the main sync completes. Errors here
 don't affect the QBO→Notion sync (caught and logged separately).
@@ -56,9 +62,12 @@ from aging_sheet import (
     C_ACTION,
     C_LIEN,
     C_LIENSTATUS,
+    C_DIV,
+    C_LITIG,
     C_NOTES,
     C_PROJ,
     C_THIS,
+    DIVISION_TAB_DROP,
     DIVISION_TABS,
     DRAW_DIVISIONS,
     PROJECT_SPLIT_CLIENTS,
@@ -298,7 +307,11 @@ LEASE_SHEET = "Lease Invoices"
 # The lease tab keeps who / which invoice / when / money / age only: no draws, no
 # Notion notes, and no lien columns - no lien rights ride on lease or note billing
 # (shared/lien_clock.is_lease_text). The project # column carries the QBO item.
-LEASE_DROP_COLUMNS = tuple(VENDOR_COLS) + (C_THIS, C_NOTES, C_ACTION, C_LIEN, C_LIENSTATUS)
+LEASE_DROP_COLUMNS = tuple(VENDOR_COLS) + (C_THIS, C_NOTES, C_ACTION, C_LIEN, C_LIENSTATUS, C_DIV, C_LITIG)
+
+ALL_OPEN_SHEET = "All Open"
+# All Open mixes divisions, so the MFD/CP draw block is left to the division tabs.
+ALL_OPEN_DROP_COLUMNS = tuple(VENDOR_COLS) + (C_THIS,)
 
 _COMPANY_IN_LINK = re.compile(r"deeplinkcompanyid=(\d+)")
 
@@ -379,6 +392,24 @@ def _parse_day(v: Optional[str]) -> Optional[dt.date]:
         return dt.date.fromisoformat(str(v)[:10]) if v else None
     except ValueError:
         return None
+
+
+def _arrange_tabs(wb: Workbook) -> None:
+    """Open Invoices right after Lease Invoices (else after the last aging tab),
+    All Open first and the one selected tab."""
+    names = wb.sheetnames
+    if ALL_OPEN_SHEET in names:
+        wb.move_sheet(ALL_OPEN_SHEET, offset=-wb.sheetnames.index(ALL_OPEN_SHEET))
+    anchor = next((n for n in (LEASE_SHEET, "RP Aging", "MFD Aging", "CP Aging") if n in wb.sheetnames), None)
+    if anchor and "Open Invoices" in wb.sheetnames:
+        offset = wb.sheetnames.index(anchor) - wb.sheetnames.index("Open Invoices")
+        if offset > 0:
+            wb.move_sheet("Open Invoices", offset=offset)
+    for ws in wb.worksheets:
+        ws.sheet_view.tabSelected = False
+    first = wb.worksheets[0]
+    first.sheet_view.tabSelected = True
+    wb.active = 0
 
 
 def _is_litigation(page: dict) -> bool:
@@ -615,7 +646,10 @@ def export_open_invoices_xlsx(
     lien_index = _load_lien_index(notion)
 
     aging_records: List[dict] = []
-    litigation_excluded: Dict[str, int] = defaultdict(int)
+    # Litigation invoices are ON every tab, flagged (the user 2026-10-02 - they
+    # were excluded before). Counted per division for the tab subtitle.
+    litigation_count: Dict[str, int] = defaultdict(int)
+    skipped_templates = 0
     for pages, label, cache in (
         (res_com_pages, "RP/CP", res_com_titles),
         (mfd_pages, "MFD", mfd_titles),
@@ -623,14 +657,17 @@ def export_open_invoices_xlsx(
         for page in pages:
             # Litigation invoices are legal work, not collections work — leaving
             # them in would inflate every aging bucket the owner reads. (the user)
-            if _is_litigation(page):
-                litigation_excluded[
-                    _select_name((page.get("properties") or {}).get("Division")) or label
-                ] += 1
+            rec = _aging_record(page, label, cache, today, vendor_map, chains, lien_index)
+            # A Notion template page ("Default invoice template") is not an
+            # invoice: no number, no money. It stays off the aging tabs (the
+            # first sheet mirrors Notion as-is and is left alone).
+            if not re.search(r"\d", str(rec["invoice_num"] or "")):
+                skipped_templates += 1
                 continue
-            aging_records.append(
-                _aging_record(page, label, cache, today, vendor_map, chains, lien_index)
-            )
+            rec["litigation"] = _is_litigation(page)
+            if rec["litigation"]:
+                litigation_count[rec["division"]] += 1
+            aging_records.append(rec)
 
     # ── Notes: absorb the clerk's cell Notes as the new status, or preserve them ──
     # Absorb rewrites the Notes column HERE (before the sheets are built) for the
@@ -674,11 +711,13 @@ def export_open_invoices_xlsx(
             wb.create_sheet(sheet_name),
             rows,
             today=today,
-            litigation_excluded=litigation_excluded.get(division, 0),
+            litigation_excluded=None,
+            scope_note=(f"{litigation_count[division]} in litigation - filter the Litigation column"
+                        if litigation_count.get(division) else ""),
             vendor_as_of=vendor_as_of,
             # RP doesn't bill in draws, so the previous-draw block is dropped
             # there rather than rendered as a column of grey "n/a".
-            drop_columns=RP_DROP_COLUMNS if division not in DRAW_DIVISIONS else (),
+            drop_columns=RP_DROP_COLUMNS if division not in DRAW_DIVISIONS else DIVISION_TAB_DROP,
             title=sheet_title,
             # Client -> invoices everywhere; JPI on MFD keeps its project rows.
             split_clients=PROJECT_SPLIT_CLIENTS.get(division),
@@ -697,26 +736,42 @@ def export_open_invoices_xlsx(
             today=today,
             litigation_excluded=None,
             drop_columns=LEASE_DROP_COLUMNS,
-            title="LEASE & OTHER OPEN INVOICES",
+            title="LEASE",
             header_overrides={C_PROJ: "Item"},
-            footnotes=[
-                "Every open QuickBooks invoice with no project #: equipment leases, pump / truck "
-                "principal payments, interest and late fees. Construction invoices are on the division tabs.",
-                "Aged by due date. Invoice # links to the invoice in QBO."
-                + (f" QuickBooks as of {stamp.astimezone().strftime('%m/%d/%Y %I:%M %p')}." if stamp else ""),
-                "No lien column: no lien rights ride on lease or note billing.",
-            ],
+            scope_note=("QuickBooks as of " + stamp.astimezone().strftime("%m/%d/%Y %I:%M %p")) if stamp else "",
+            # The lease Item column fits its full text (the user 2026-10-02).
+            uncapped=(C_PROJ,),
         )
         counts.append(f"{LEASE_SHEET} {len(lease)}")
+
+    # ── All Open (the user 2026-10-02) ── every open invoice, grouped by client
+    # like the division tabs, placed second so the first sheet (copied to
+    # Outlook) stays first.
+    all_open = aging_records + [dict(r, division="Lease") for r in (lease or [])]
+    build_aging_sheet(
+        wb.create_sheet(ALL_OPEN_SHEET, 1),
+        all_open,
+        today=today,
+        litigation_excluded=None,
+        drop_columns=ALL_OPEN_DROP_COLUMNS,
+        title="ALL OPEN",
+        scope_note="CP, MFD, RP, litigation and lease - filter the Division and Litigation columns; totals follow the filter",
+        split_clients=PROJECT_SPLIT_CLIENTS.get("MFD"),
+        group_by_division=True,
+    )
+    counts.append(f"{ALL_OPEN_SHEET} {len(all_open)}")
+    if skipped_templates:
+        log.info("Skipped %d Notion page(s) with no invoice # (templates).", skipped_templates)
     log.info(
-        "Aging tabs: %s (%d litigation excluded)",
-        " · ".join(counts), sum(litigation_excluded.values()),
+        "Aging tabs: %s (%d in litigation, shown and flagged)",
+        " · ".join(counts), sum(litigation_count.values()),
     )
 
     # ── Cash-flow forecast (the user 2026-08-12) ── built from the SAME notes the
     # aging tabs carry, so absorb/preserve both feed it. Two tabs: a weekly list
     # and a month calendar grid; only clear dated promises land on them.
-    build_cash_flow_sheets(wb, aging_records, today)
+    # Litigation stays OFF the forecast: a promise in a lawsuit is not cash timing.
+    build_cash_flow_sheets(wb, [r for r in aging_records if not r.get("litigation")], today)
 
     # Re-attach cell Notes:
     #   ABSORB  → only those whose Notion push FAILED (kept so they're not lost);
@@ -739,6 +794,12 @@ def export_open_invoices_xlsx(
             reapply_notes(wb, keep)
     elif preserved.total():
         reapply_notes(wb, preserved)
+
+    # Tab order + default tab (the user 2026-10-02): the file opens on All Open;
+    # Open Invoices (the Outlook copy-paste sheet, content unchanged) sits after
+    # Lease Invoices. Exactly one tab may be selected, or Excel opens the file
+    # with several sheets grouped and an edit lands on all of them.
+    _arrange_tabs(wb)
 
     # Write
     target.parent.mkdir(parents=True, exist_ok=True)

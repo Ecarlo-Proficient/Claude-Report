@@ -69,7 +69,7 @@ def _load_excel(path: Path) -> List[dict]:
     if not path.exists():
         raise FileNotFoundError(f"Excel file not found: {path}")
     wb = load_workbook(path, data_only=True, read_only=True)
-    ws = wb.active
+    ws = wb["Open Invoices"]   # by name: the file opens on All Open since 2026-10-02
     rows = []
     for row in ws.iter_rows(min_row=2, values_only=True):
         if not row or row[COL_INVOICE_NUM - 1] in (None, ""):

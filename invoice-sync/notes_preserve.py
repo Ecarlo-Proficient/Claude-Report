@@ -45,8 +45,22 @@ log = logging.getLogger("automation_worker.notes_preserve")
 # client name on summary rows. The "Open Invoices" flat tab carries the invoice
 # number in column E (=5) and has no client-summary rows.
 _AGING_SHEETS = ("CP Aging", "MFD Aging", "RP Aging", "Lease Invoices")
+# Fallbacks only: the aging tabs are searched for their "Invoice #" header first
+# (`_inv_col`), because that column moved from C to B on 2026-10-02 and an old
+# file must still be read where its own header says.
 _SHEET_INV_COL = {"CP Aging": 3, "MFD Aging": 3, "RP Aging": 3, "Lease Invoices": 3,
                   "Open Invoices": 5}
+
+
+def _inv_col(ws, sheet_name: str) -> Optional[int]:
+    """1-based column of 'Invoice #' in the sheet's header (rows 1-5), else the fallback."""
+    if sheet_name not in _SHEET_INV_COL:
+        return None
+    for row in ws.iter_rows(min_row=1, max_row=5):
+        for cell in row:
+            if isinstance(cell.value, str) and cell.value.strip() == "Invoice #":
+                return cell.column
+    return _SHEET_INV_COL[sheet_name]
 _LABEL_COL = 1
 
 # A client summary row's Invoice # cell reads like "4 inv" (see aging_sheet).
@@ -117,10 +131,10 @@ def read_notes(path: Path) -> PreservedNotes:
 
     try:
         for sheet_name in wb.sheetnames:
-            inv_col = _SHEET_INV_COL.get(sheet_name)
-            if inv_col is None:
+            if sheet_name not in _SHEET_INV_COL:
                 continue
             ws = wb[sheet_name]
+            inv_col = _inv_col(ws, sheet_name)
             for row in ws.iter_rows():
                 for cell in row:
                     if cell.comment is None:
@@ -246,10 +260,10 @@ def reapply_notes(wb: Workbook, notes: PreservedNotes) -> Tuple[int, List[str]]:
     matched_client: set = set()
 
     for sheet_name in wb.sheetnames:
-        inv_col = _SHEET_INV_COL.get(sheet_name)
-        if inv_col is None:
+        if sheet_name not in _SHEET_INV_COL:
             continue
         ws = wb[sheet_name]
+        inv_col = _inv_col(ws, sheet_name)
         for row in ws.iter_rows():
             r = row[0].row
             inv_val = ws.cell(row=r, column=inv_col).value

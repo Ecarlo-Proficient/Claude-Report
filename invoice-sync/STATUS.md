@@ -6,6 +6,13 @@ mirror. Update this in the SAME commit as any change to this tool.
 ---
 
 ## DONE / FINALIZED
+- 10/02/2026 · **Invoice Tracker layout round 2 (the user's mockups).** New `All Open` tab (default tab): every open invoice
+  incl. litigation and lease, grouped by client within division, Division / Litigation filter columns. Aging tabs: litigation
+  shown + flagged (Litigation column last), client name on top and `Total <client>` SUBTOTAL row at the bottom (totals follow
+  filters), expanded, oldest first, Due Date after Total Amount, Project # after Aging, draw block removed, "Notion Notes",
+  fixed row height / no wrap / 13pt / 85% zoom, headers left-aligned with room for the filter arrow, capped text columns, tight
+  two-row top, no KEY / BY AGE block. `Open Invoices` (content frozen, pinned by a test) moved after `Lease Invoices`.
+  `verify_excel_export.py` reads `Open Invoices` by name. `notes_preserve` finds `Invoice #` by header.
 - 10/01/2026 · **Open_Invoices.xlsx layout + Lease Invoices tab (the user).** Every aging tab: Open Balance and
   Total Amount right after Due Date, the five Current / 1-30 / ... / 90+ money columns collapsed into ONE `Aging`
   column (tinted green->red, filterable), the lien columns last, and per-bucket totals in a BY AGE block under
