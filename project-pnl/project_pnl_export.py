@@ -4424,7 +4424,7 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
             _t.hyperlink = top_link
             _t.font = _font(True, "FFFFFF", BASE_SIZE, True)
             _t.alignment = Alignment(horizontal="right")
-        r += 2
+        r += 1                      # no blank row under the band (owner 10/02)
     else:
         r = _write_meta_block(ws, proj, cust_info, wip_info, as_of, compact=True)
         wc(r, 1, f"{'PAID' if _inv_paid else 'UNPAID'} {name}  -  {lbl}",
@@ -4654,7 +4654,9 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
     # summary BLOCK is ten rows tall, so it scrolls with the rest.
     if not section:
         ws.freeze_panes = ws.cell(row=r if DRAW_SUMMARY == "strip" else 3, column=1)
-    r += 2
+    # a section packs its blocks together (the owner 2026-10-02: "put costs
+    # together meaning no extra space") - the dividers sit BETWEEN draws
+    r += 0 if section else 2
 
     # the next draw has no invoices yet - its section skips the block
     _hdr_rows: List[int] = []
@@ -4708,7 +4710,7 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
             tc.border = TOP_BORDER
         _grid_lines(ws, _inv_band + 1, r, 2, 10)
         _box_range(ws, _inv_band, r, 2, 10, _draw_side())
-        r += 2
+        r += 1 if section else 2
         for _inc, _ret, _ohc in _tile_cells:
             ws[_inc].value = f"=D{_inv_tot}+F{_inv_tot}"       # gross billed + retainage billed back
             ws[_ret].value = f"=-E{_inv_tot}"                    # what the GC holds back
@@ -4917,7 +4919,8 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
                 _rd = ws.row_dimensions[_rr]
                 _rd.outline_level = min((_rd.outline_level or 0) + 1, 7)
                 _rd.hidden = True
-        r += 1
+        if not section:
+            r += 1
 
     if has_pm:
         if matched:
@@ -4930,21 +4933,22 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
             detail(f"PM ONLY - on the PM report, not in QBO this draw  ({len(pm_only)})",
                    pm_only, "BF8F00", "pm")
         if qbo_bills:
+            detail(f"BY VENDOR  ({len(qbo_bills)} bills)",
+                   qbo_bills, "000000", "qbo", costs=True)
             detail(f"BY COST TYPE  ({len(qbo_bills)} bills)",
                    qbo_bills, "000000", "qbo", levels="type", costs=True)
-            detail(f"BY COST CODE  ({len(qbo_bills)} bills)",
-                   qbo_bills, "000000", "qbo", levels="code", costs=True)
     elif qbo_bills:
         # CP / no PM reports. Three cuts of the same bills, and all three OPEN
         # THE SAME WAY - band, header, group totals and TOTAL showing, bills on
         # the [+] (the owner 2026-10-02: "the bottom two don't expand the same
         # way the first one does as default grouping"; they used to fold whole).
-        detail(f"BY COST TYPE  ({len(qbo_bills)} bills)",
-               qbo_bills, "000000", "plain", levels="type", costs=True)
+        # BY VENDOR first, BY COST TYPE second; no cost-code cut (the owner
+        # 2026-10-02: "remove by cost code and make by vendor first and by
+        # cost type 2nd") - Budget vs Actual is the by-code view.
         detail(f"BY VENDOR  ({len(qbo_bills)} bills)",
                qbo_bills, "000000", "plain", costs=True)
-        detail(f"BY COST CODE  ({len(qbo_bills)} bills)",
-               qbo_bills, "000000", "plain", levels="code", costs=True)
+        detail(f"BY COST TYPE  ({len(qbo_bills)} bills)",
+               qbo_bills, "000000", "plain", levels="type", costs=True)
 
     if section:                       # the Draws sheet fits its columns once
         if fit is not None:
@@ -5029,8 +5033,8 @@ def build_sheet_draws(wb, proj, cust_info, wip_info, draw_rows, income_groups,
     untag = (income_groups.get("__untagged") or {}).get("invoices") or []
     has_next = bool(outside.get("total") or outside.get("groups") or untag)
 
-    # ── DRAW COVERAGE ──
-    rc = 3
+    # ── DRAW COVERAGE, straight under the title (no blank row 2) ──
+    rc = 2
     cov_top = rc
     t = ws.cell(row=rc, column=K(1), value="DRAW COVERAGE")
     t.font = Font(bold=True, size=BASE_SIZE + 1, color="FFFFFF")
@@ -5157,9 +5161,10 @@ def build_sheet_draws(wb, proj, cust_info, wip_info, draw_rows, income_groups,
         _box_range(ws, hdr_row, rc, nc, nc)
     _grid_lines(ws, hdr_row + 1, rc, K(1), last_c)
     _box_range(ws, cov_top, rc, K(1), last_c, thin)
-    r = rc + 3
+    r = rc + 1
 
-    # ── one SECTION per draw, next draw first, newest to oldest ──
+    # ── one SECTION per draw, next draw first, newest to oldest, a navy
+    #    divider above each (the owner 2026-10-02: "put dividers") ──
     fit: list = []
     starts = {}
     under_tot, under_n = 0.0, 0
@@ -5174,6 +5179,10 @@ def build_sheet_draws(wb, proj, cust_info, wip_info, draw_rows, income_groups,
                      (income_groups.get(lbl) or {}).get("invoices") or [],
                      draw_costs.get(lbl) or {}, (income_groups.get(lbl) or {}).get("period")))
     for key, name, lbl, net, costs, held, billed, invs, dc, period in secs:
+        for cc in range(K(1), max(10, last_c) + 1):
+            ws.cell(row=r, column=cc).border = Border(bottom=Side(style="thick", color=NAVY))
+        ws.row_dimensions[r].height = 8
+        r += 1
         starts[key] = r
         r, m_tot, m_cnt = build_sheet_one_draw(
             wb, "Draws", proj, cust_info, wip_info, name, lbl, net, costs, held, billed,
@@ -5181,10 +5190,9 @@ def build_sheet_draws(wb, proj, cust_info, wip_info, draw_rows, income_groups,
             report_index or {}, qbo_loc or {}, period, as_of,
             overhead_pct=overhead_pct, realm=realm, alt_overhead_pct=alt_overhead_pct,
             reports_relpath=reports_relpath, paid_map=paid_map,
-            ws=ws, start_row=r, top_link=top_link, office=office, fit=fit)
+            ws=ws, start_row=r, top_link=None, office=office, fit=fit)
         under_tot += m_tot
         under_n += m_cnt
-        r += 2
     # the coverage names link down to their sections
     for key, row_ in link_rows.items():
         if key in starts:
@@ -5211,7 +5219,13 @@ def build_sheet_draws(wb, proj, cust_info, wip_info, draw_rows, income_groups,
         d = ws.column_dimensions[get_column_letter(col)]
         d.width = max(d.width or 0, 13.0)
     ws.column_dimensions["C"].width = max(ws.column_dimensions["C"].width or 0, 18.0)
-    ws.freeze_panes = "A3"                          # the title stays; the rest scrolls
+    # ONE "↑ Top" in the frozen title row, always in reach (the owner
+    # 2026-10-02: "the top button should live on row 1")
+    _tp = ws.cell(row=1, column=last_c, value="↑ Top")
+    _tp.hyperlink = top_link
+    _tp.font = Font(bold=True, size=BASE_SIZE + 1, color=LINK, underline="single")
+    _tp.alignment = Alignment(horizontal="right")
+    ws.freeze_panes = "A2"                          # the title row stays; the rest scrolls
     _setup_print(ws, max(10, last_c))
     return {"sheet": ws.title,
             "cov_gross_tot": f"{Q}{GB}{tot}", "cov_costs_tot": f"{Q}{CT}{tot}",
@@ -6486,9 +6500,10 @@ def build_sheet_budget_vs_actual(wb, proj, cust_info, wip_info,
     tie-out; the P&L cells are filled in by `_wire_pl_support` once the P&L
     sheet exists.
 
-    Tax and fuel come out of the comparison - the takeoff budget is pre-tax
-    (the user 2026-07-29) - but stay on the sheet as their own column, so
-    Total cost = Actual + Tax & fuel is the P&L's Costs to Date to the cent.
+    Actual is the TOTAL cost, tax and fuel included, so it is the P&L's
+    Costs to Date to the cent (the owner 2026-10-02, option 1 - superseding
+    the 07-29 pre-tax comparison here); a note gives the tax & fuel inside it,
+    and the line-level tax / fuel detail is on the Labor and Concrete sheets.
     Office accounts (operating expenses) are not job cost and sit in their own
     block under the total, the way the P&L keeps them out of COGS.
 
@@ -6515,7 +6530,11 @@ def build_sheet_budget_vs_actual(wb, proj, cust_info, wip_info,
     exp_cls = _expected_class(proj)
 
     # ── columns ──
-    LBL, BUD, ACT, VAR, USED, TAX, TOT = 1, 2, 3, 4, 5, 6, 7
+    # ONE actual: the total cost, tax and fuel included (the owner
+    # 2026-10-02, option 1: "total cost with the note") - it equals the P&L;
+    # the tax / fuel detail lives on the Labor and Concrete sheets
+    LBL, BUD, ACT, VAR, USED = 1, 2, 3, 4, 5
+    END = USED
     draws_on = layout == "draws"
     dkeys: List[Tuple[str, str]] = []
     if draws_on:
@@ -6525,8 +6544,8 @@ def build_sheet_budget_vs_actual(wb, proj, cust_info, wip_info,
         dkeys += [(lb, (h or lb).split("\n")[0]) for lb, h in (dcols or [])]
         if _AFTER_KEY in _seen:
             dkeys.append((_AFTER_KEY, "Next draw\n(forming)"))
-    DCOL = {k: TOT + 1 + i for i, (k, _h) in enumerate(dkeys)}
-    D0 = TOT + 1 + len(dkeys)               # bill detail columns
+    DCOL = {k: END + 1 + i for i, (k, _h) in enumerate(dkeys)}
+    D0 = END + 1 + len(dkeys)               # bill detail columns
     compact = BVA_DETAIL == "compact"
     if compact:          # Class, then ONE Description column (# · date · text) that runs free
         CLS_C, DESC_C = D0, D0 + 1
@@ -6535,7 +6554,7 @@ def build_sheet_budget_vs_actual(wb, proj, cust_info, wip_info,
         DATE_C, REF_C, DESC_C, CLS_C = D0, D0 + 1, D0 + 2, D0 + 3
     LAST = max(CLS_C, DESC_C)
     _edge = (Side(style="thin", color="808080") if BVA_FRAME == "thin" else st.EDGE)
-    widths = {LBL: 40, BUD: 15, ACT: 15, VAR: 15, USED: 10, TAX: 13, TOT: 15,
+    widths = {LBL: 40, BUD: 15, ACT: 15, VAR: 15, USED: 10,
               DESC_C: 40 if compact else 44, CLS_C: 15}
     if not compact:
         widths.update({DATE_C: 12, REF_C: 14})
@@ -6597,9 +6616,10 @@ def build_sheet_budget_vs_actual(wb, proj, cust_info, wip_info,
     # ── header + tie-out ──
     r = _write_meta_block(ws, proj, cust_info, wip_info, as_of)
     r += 1
-    st.bar(ws, r, LBL, TOT, "BUDGET vs ACTUAL")
+    TIE_END = D0                            # the tie-out note runs into the Class column
+    st.bar(ws, r, LBL, TIE_END, "BUDGET vs ACTUAL")
     r += 1
-    st.header(ws, r, ["Tie-out", "P&L", "This sheet", "Difference", "", "", ""])
+    st.header(ws, r, ["Tie-out", "P&L", "This sheet", "Difference", ""] + [""] * (TIE_END - END))
     r += 1
     pl_cells = {}
     tie_rows = []
@@ -6617,14 +6637,14 @@ def build_sheet_budget_vs_actual(wb, proj, cust_info, wip_info,
     ws.cell(row=costs_row, column=USED,
             value=st.tie_formula(f"{get_column_letter(VAR)}{costs_row}",
                                  ok="✓ ties to the P&L", bad="✗ off - check"))
-    ws.merge_cells(start_row=costs_row, start_column=USED, end_row=costs_row, end_column=TOT)
+    ws.merge_cells(start_row=costs_row, start_column=USED, end_row=costs_row, end_column=TIE_END)
     st.tie_colours(ws, f"{get_column_letter(USED)}{costs_row}")
     note = ws.cell(row=etc_row, column=USED, value=(
         f'=IF(ABS({get_column_letter(VAR)}{etc_row})<0.5,"✓ same",'
-        f'"takeoff is "&TEXT(-{get_column_letter(VAR)}{etc_row},"#,##0")&" under the ETC")'))
+        f'"takeoff "&TEXT(-{get_column_letter(VAR)}{etc_row},"#,##0")&" under ETC")'))
     note.fill = st.INFO
     note.font = st.font(color="7F6000")
-    ws.merge_cells(start_row=etc_row, start_column=USED, end_row=etc_row, end_column=TOT)
+    ws.merge_cells(start_row=etc_row, start_column=USED, end_row=etc_row, end_column=TIE_END)
     tie_top = tie_rows[0] - 1
     n_class = len({ln["txn_id"] for g in cc.values() for ln in g.get("lines", [])
                    if ln.get("txn_id") in classes
@@ -6632,6 +6652,12 @@ def build_sheet_budget_vs_actual(wb, proj, cust_info, wip_info,
     flags = []
     if budget_source:
         flags.append(f"Budget = {budget_source} (pre-tax)")
+    _taxfuel = round(sum(float(ln.get("amount", 0) or 0)
+                         for k, g in cc.items() if k not in office
+                         for ln in g.get("lines", []) if ln.get("is_tax") or ln.get("is_fuel")), 2)
+    if _taxfuel:
+        flags.append(f"Actual = total cost, incl. {_taxfuel:,.2f} tax & fuel "
+                     f"- the detail is on the Labor and Concrete sheets")
     if n_class:
         flags.append(f"⚑ {n_class} bill(s) not classed '{exp_cls}' - flagged in the Class column")
     if co_flag:
@@ -6640,16 +6666,16 @@ def build_sheet_budget_vs_actual(wb, proj, cust_info, wip_info,
         c = ws.cell(row=r, column=LBL, value=fl)
         c.font = st.font(size=st.SIZE - 1, color="7F6000" if fl.startswith("⚑") else "595959",
                          bold=fl.startswith("⚑"))
-        ws.merge_cells(start_row=r, start_column=LBL, end_row=r, end_column=TOT)
+        ws.merge_cells(start_row=r, start_column=LBL, end_row=r, end_column=TIE_END)
         r += 1
-    st.grid(ws, tie_top + 1, r - 1, LBL, TOT)
-    st.box(ws, tie_top, r - 1, LBL, TOT, side=_edge)
+    st.grid(ws, tie_top + 1, r - 1, LBL, TIE_END)
+    st.box(ws, tie_top, r - 1, LBL, TIE_END, side=_edge)
     r += 1
 
     # ── the table ──
     hdr = [("Cost type  >  code  >  bill" if layout == "costtype"
-            else "Job type  >  code  >  bill"), "Budget", "Actual\n(pre-tax)", "Variance",
-           "Used", "Tax &\nfuel", "Total cost"]
+            else "Job type  >  code  >  bill"), "Budget", "Actual\n(total cost)", "Variance",
+           "Used"]
     hdr += [h for _k, h in dkeys] + (["Class", "Bill  ·  date  ·  description"] if compact
                                      else ["Date", "Bill #", "Description", "Class"])
     st.header(ws, r, hdr)
@@ -6668,10 +6694,9 @@ def build_sheet_budget_vs_actual(wb, proj, cust_info, wip_info,
         ws.cell(row=rr, column=USED,
                 value=(f'=IF({L(BUD)}{rr}="","no budget",IF({L(BUD)}{rr}=0,"",'
                        f'{L(ACT)}{rr}/{L(BUD)}{rr}))'))
-        ws.cell(row=rr, column=TOT, value=f"={L(ACT)}{rr}+{L(TAX)}{rr}")
 
     def _style_num_row(rr, bold, fill=None):
-        for c in list(range(BUD, TOT + 1)) + list(DCOL.values()):
+        for c in list(range(BUD, END + 1)) + list(DCOL.values()):
             cell = ws.cell(row=rr, column=c)
             if c == USED:
                 cell.number_format = st.PCT
@@ -6681,11 +6706,11 @@ def build_sheet_budget_vs_actual(wb, proj, cust_info, wip_info,
                     cell.fill = fill
             else:
                 st.money(cell, bold=bold, fill=fill)
-        if fill is not None:                 # the band stops at Total cost
+        if fill is not None:                 # the band stops at the numbers
             ws.cell(row=rr, column=LBL).fill = fill
 
     group_rows = []
-    sumcols = [BUD, ACT, TAX] + list(DCOL.values())
+    sumcols = [BUD, ACT] + list(DCOL.values())
     for (_o, gname), gcodes in sorted(groups.items()):
         g_row = r
         group_rows.append(g_row)
@@ -6710,12 +6735,11 @@ def build_sheet_budget_vs_actual(wb, proj, cust_info, wip_info,
                 ws.row_dimensions[r].hidden = True
                 ws.cell(row=r, column=LBL, value="        " + _xml_clean(bl["vendor"])).font = \
                     st.font(color="404040")
-                st.money(ws.cell(row=r, column=ACT, value=round(bl["act"], 2)))
-                st.money(ws.cell(row=r, column=TAX, value=round(bl["tax"], 2) or None))
-                st.money(ws.cell(row=r, column=TOT, value=f"={L(ACT)}{r}+{L(TAX)}{r}"))
+                st.money(ws.cell(row=r, column=ACT, value=round(bl["act"] + bl["tax"], 2)))
+
                 if bl["draw"] in DCOL:
                     st.money(ws.cell(row=r, column=DCOL[bl["draw"]],
-                                     value=f"={L(TOT)}{r}"))
+                                     value=f"={L(ACT)}{r}"))
                 dv = _parse_date(bl["date"])
                 url = _qbo_txn_url(bl["tx_type"], bl["txn_id"], realm)
                 desc = bl["desc"] + (f"  (+{bl['n'] - 1} lines)" if bl["n"] > 1 else "")
@@ -6744,7 +6768,7 @@ def build_sheet_budget_vs_actual(wb, proj, cust_info, wip_info,
             last_bill = r - 1
             if BVA_FOLD == "groups":         # codes fold under their job type
                 ws.row_dimensions[c_row].hidden = True
-            for c in [ACT, TAX] + list(DCOL.values()):
+            for c in [ACT] + list(DCOL.values()):
                 ws.cell(row=c_row, column=c,
                         value=(f"=SUM({L(c)}{first_bill}:{L(c)}{last_bill})"
                                if bills else 0))
@@ -6771,26 +6795,24 @@ def build_sheet_budget_vs_actual(wb, proj, cust_info, wip_info,
     off_row = None
     if off_codes:
         ws.cell(row=r, column=LBL, value="Office accounts (not job cost)").font = st.font(bold=True)
-        for c in range(LBL, TOT + 1):
+        for c in range(LBL, END + 1):
             ws.cell(row=r, column=c).fill = st.SUB
         r += 1
         o_rows = []
         for code in off_codes:
             o_rows.append(r)
             ws.cell(row=r, column=LBL, value="    " + _xml_clean(code))
-            for c in [ACT, TAX] + list(DCOL.values()):
+            for c in [ACT] + list(DCOL.values()):
                 ws.cell(row=r, column=c, value=0)
             for bl in _bills(code):
-                ws.cell(row=r, column=ACT).value += round(bl["act"], 2)
-                ws.cell(row=r, column=TAX).value += round(bl["tax"], 2)
+                ws.cell(row=r, column=ACT).value += round(bl["act"] + bl["tax"], 2)
                 if bl["draw"] in DCOL:
                     ws.cell(row=r, column=DCOL[bl["draw"]]).value += round(bl["act"] + bl["tax"], 2)
-            ws.cell(row=r, column=TOT, value=f"={L(ACT)}{r}+{L(TAX)}{r}")
             _style_num_row(r, bold=False)
             r += 1
         off_row = r
         ws.cell(row=r, column=LBL, value="Total office accounts").font = st.font(bold=True)
-        for c in [ACT, TAX, TOT] + list(DCOL.values()):
+        for c in [ACT] + list(DCOL.values()):
             ws.cell(row=r, column=c, value="=SUM(" + ",".join(f"{L(c)}{x}" for x in o_rows) + ")")
         _style_num_row(r, bold=True)
         r += 1
@@ -6800,7 +6822,7 @@ def build_sheet_budget_vs_actual(wb, proj, cust_info, wip_info,
         r += 1
         all_row = r
         ws.cell(row=r, column=LBL, value="All costs by draw (job + office)").font = st.font(bold=True)
-        for c in [TOT] + list(DCOL.values()):
+        for c in [ACT] + list(DCOL.values()):
             ws.cell(row=r, column=c, value=f"={L(c)}{tot_row}" + (f"+{L(c)}{off_row}" if off_row else ""))
         _style_num_row(r, bold=True, fill=st.TOTAL)
         r += 1
@@ -6815,16 +6837,16 @@ def build_sheet_budget_vs_actual(wb, proj, cust_info, wip_info,
                 f"{L(c)}{all_row}-{L(c)}{r - 1}", ok="✓", bad="✗"))
             ws.cell(row=r, column=c).alignment = Alignment(horizontal="center")
         st.tie_colours(ws, f"{L(min(DCOL.values()))}{r}:{L(max(DCOL.values()))}{r}")
-        st.grid(ws, all_row, r, LBL, TOT + len(DCOL))
+        st.grid(ws, all_row, r, LBL, END + len(DCOL))
         r += 1
 
     # this sheet's side of the tie-out
-    ws.cell(row=costs_row, column=ACT, value=f"={L(TOT)}{tot_row}")
+    ws.cell(row=costs_row, column=ACT, value=f"={L(ACT)}{tot_row}")
     ws.cell(row=etc_row, column=ACT, value=f"={L(BUD)}{tot_row}")
 
     st.grid(ws, head_row + 1, tot_row - 1, LBL, LAST)
     st.box(ws, head_row, tot_row, BUD, BUD, side=_edge)
-    st.box(ws, head_row, tot_row, TOT, TOT, side=_edge)
+    st.box(ws, head_row, tot_row, ACT, ACT, side=_edge)
     _u = f"{L(USED)}{head_row + 1}"
     # over budget = red; a code the takeoff never priced = amber ("no budget"
     # is text, and Excel ranks text above any number, so test ISNUMBER first)
@@ -6835,7 +6857,7 @@ def build_sheet_budget_vs_actual(wb, proj, cust_info, wip_info,
     ws.freeze_panes = f"A{head_row + 1}"     # rows only: a 4-pane split trips xlsx_verify
     _setup_print(ws, LAST)
     return {"sheet": ws.title, "pl_cells": pl_cells,
-            "total_cell": f"{L(TOT)}{tot_row}", "budget_cell": f"{L(BUD)}{tot_row}",
+            "total_cell": f"{L(ACT)}{tot_row}", "budget_cell": f"{L(BUD)}{tot_row}",
             "total_row": tot_row, "draw_cells": draw_cells}
 
 
@@ -6876,7 +6898,7 @@ def _wire_pl_support(wb, bva: Optional[dict], draw_rows, draw_costs,
                        f"#'Budget vs Actual'!B{bva['total_row']}"))
     if refs.get("cov_gross_tot"):
         checks.append(("Draws gross billed = Billed to Date", refs["billed"],
-                       refs["cov_gross_tot"], "#'Draws'!B3"))
+                       refs["cov_gross_tot"], "#'Draws'!B2"))
         _sup = (refs["cov_costs_tot"]
                 + (f"+{refs['cov_next_costs']}" if refs.get("cov_next_costs") else "")
                 + (f"+{before}" if before else ""))

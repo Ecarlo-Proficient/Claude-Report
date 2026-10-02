@@ -7,6 +7,15 @@ manual close), RP (no draws — expenses → invoice → profit).
 ---
 
 ## DONE / FINALIZED
+- 2026-10-02 · **IN REVIEW, round 15** (owner: "option 1, total cost with the note"; "draws put dividers, put costs
+  together meaning no extra space, remove by cost code and make by vendor first and by cost type 2nd. the top button
+  should live on row 1, remove row 2 that's extra space"). Budget vs Actual = Budget | Actual (total cost, tax and fuel
+  in - it IS the P&L) | Variance | Used, the note "Actual = total cost, incl. 13,680.16 tax & fuel - the detail is on
+  the Labor and Concrete sheets" (supersedes the 07-29 pre-tax comparison on this sheet). Draws: one "↑ Top" in the
+  frozen title row (freeze A2), coverage from row 2, a navy divider row above every section, no blank rows inside a
+  section, cuts BY VENDOR then BY COST TYPE (cost-code cut removed - Budget vs Actual is the by-code view). Rebased on
+  dev 3c1fe63: ① actuals overhead on billed for MFD too (10% and 9%). Ties: P&L 5, every section (11), BvA; 0 cut.
+  Copy: round 15.
 - 2026-10-02 · **IN REVIEW, round 14 - ONE Draws sheet** (owner: "the draws consolidate into one sheet like it was
   originally. move the coverage to draws so it will be the table with hyperlink to the section. freeze pane and have
   arrow up with 'top' ... make it a P&L style with income, retained, cogs, expenses, gross and net profit for each
