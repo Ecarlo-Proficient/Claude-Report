@@ -7,6 +7,12 @@ manual close), RP (no draws — expenses → invoice → profit).
 ---
 
 ## DONE / FINALIZED
+- 2026-10-02 · **Retainage releases are not billing; Net Profit header colour fixed** - Billed to Date = gross invoice
+  lines + any not-billed retainage still unplaced; a release (positive retainage line) is no longer added on top (CP585
+  read 139,293 on a 126,630 contract; CP672 +30,870, CP861 +65,761) - same rule as the CP Overview and the ledger
+  (owner 2026-09-23). Billing & retainage now reads held back / Net Billed / released / still receivable; the
+  Reconciliations income check leaves releases out too, as QBO does. `_apply_left_gutter` now shifts conditional-format
+  FORMULAS as well as ranges - the draw table's Net Profit header was keyed to the overhead column (always green).
 - 2026-10-02 · **CP Overview = projections vs actuals, a draw-coverage sheet per job** (owner: "a cp overview to review
   projects projections and their actuals with the draw coverage in separate sheets ... simple, good colour"; then "the
   project sheets ... just give us the raw data with color well put"). New `cp_overview.py`, routed from

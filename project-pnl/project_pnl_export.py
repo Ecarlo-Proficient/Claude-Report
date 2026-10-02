@@ -2006,6 +2006,12 @@ def _apply_left_gutter(wb: Workbook, n: int = 1, width: float = GUTTER_W) -> Non
             ws.conditional_formatting = ConditionalFormattingList()
             for sqref, rules in cfs:
                 for rule in rules:
+                    # the rule's own FORMULA moves too, not only its range: a
+                    # header keyed to "$N$15<0" kept pointing at N after N
+                    # became O, and coloured off the overhead column (found
+                    # 2026-10-02 - the Net Profit header was always green)
+                    if rule.formula:
+                        rule.formula = [_shift_a1(str(f), n) for f in rule.formula]
                     ws.conditional_formatting.add(_shift_a1(sqref, n), rule)
         if p_area:
             # keep the LEFT edge at A: the title now lives there, and a print
@@ -3278,7 +3284,10 @@ def build_sheet_reconciliations(
     # (incl. retainage)" = Btot): QBO income picks up the "retainage not billed"
     # JE invoice, so the Transactions side must include it too or it falsely
     # flags off by the not-billed retainage (the user 2026-07-17).
-    _tx_income = f"{tx_refs['billed']}+{tx_refs['billed_ret']}"
+    # A retainage RELEASE is collecting, not billing (owner rule 2026-09-23):
+    # it is a positive line on the retainage item, which QBO does not book as
+    # income, so it stays out of this side too.
+    _tx_income = f"{tx_refs['billed']}"
     if tx_refs.get("not_billed_ret"):
         _tx_income += f"+{tx_refs['not_billed_ret']}"
     inc_row = recon("Income (incl. retainage)", qbo_income, f"={_tx_income}")
@@ -3312,7 +3321,6 @@ def build_sheet_reconciliations(
     #    2026-06-26: "I don't know why it's off by that amount — find it fast"). ──
     if tx_totals:
         tx_income = ((tx_totals.get("billed", 0.0) or 0.0)
-                     + (tx_totals.get("billed_ret", 0.0) or 0.0)
                      + (tx_totals.get("not_billed_ret", 0.0) or 0.0))
         gaps = [("Income (incl. retainage)", round(tx_income - (qbo_income or 0.0), 2)),
                 ("Cost of Goods Sold", round((tx_totals.get("cogs", 0.0) or 0.0) - (qbo_cogs or 0.0), 2)),
@@ -3630,7 +3638,11 @@ def build_sheet_pl(
         wip_contract_cell = None
     else:
         Wcell = tx_refs['withheld']
-        Bgross = f"{tx_refs['billed']}+{tx_refs['billed_ret']}"
+        # GROSS = the invoice work lines (retainage already inside them). A
+        # retainage RELEASE is NOT added: it collects retainage the gross
+        # already counted (the owner 2026-10-02, "fix both" - CP585 read
+        # 139,293 billed on a 126,630 contract; CP672 +30,870, CP861 +65,761).
+        Bgross = f"{tx_refs['billed']}"
         # retainage moved to receivable by JE — not billed income, but retainage
         # OWED; folds into the retainage snapshots/total only (the user 2026-07-02).
         NBcell = tx_refs.get("not_billed_ret")
@@ -3914,7 +3926,6 @@ def build_sheet_pl(
         # billed + retainage billed back, or the retainage moved by JE.
         def _inv_amt(iv):
             return (float(iv.get("billed", 0) or 0)
-                    + float(iv.get("billed_ret", 0) or 0)
                     + float(iv.get("not_billed_ret", 0) or 0))
 
         def _inv_label(iv):
@@ -4023,14 +4034,15 @@ def build_sheet_pl(
         # moved-to-receivable-by-JE are the same money owed to us — two booking
         # styles, one bucket).
         _rec = f"{Wcell}+{NBcell}" if NBcell else Wcell
-        rec_row = row("less: Retainage receivable",
+        rec_row = row("less: Retainage held back",
                       formula=f"=-({_rec})", indent=1, color="C0504D")
         row("Net Billed (to AR)", formula=f"=B{gb_row}+B{rec_row}", indent=1,
             bold=True, border=TOP_BORDER)
-        row("Retainage returned by GC", formula=f"={tx_refs['billed_ret']}",
+        row("Retainage released (billed back)", formula=f"={tx_refs['billed_ret']}",
             indent=1, color=GREEN)
-        row("Total retainage (all-time)",
-            formula=f"=({_rec})+{tx_refs['billed_ret']}", indent=1,
+        # held back, less what has been billed back = what is still owed to us
+        row("Retainage still receivable",
+            formula=f"=({_rec})-{tx_refs['billed_ret']}", indent=1,
             bold=True, border=TOP_BORDER, color=NAVY)
         # THE QUICKBOOKS FIX NOTE (the owner 2026-10-02: "make a note in this
         # p&l project to do this retainage fix on the back end"). A not-billed
