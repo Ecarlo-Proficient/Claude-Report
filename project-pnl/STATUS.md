@@ -55,6 +55,19 @@ manual close), RP (no draws — expenses → invoice → profit).
   headers), one total row ("Subtotal · N job(s)", no ALL row when there is one group), the coverage legend under
   PROGRESS & COVERAGE on two rows, freeze at C6 (headers + job column), ETC / projected GP / costs / GP / % complete /
   coverage / net vs plan at width 13. Values matched his file cell for cell before the live copy was rewritten.
+  Round 6 - **CP Completed workbook** (`cp_completed.py`, owner: "work on completed excel separately" / "be wary of
+  projects not being done"): `Completed Projects/CP Completed <year>.xlsx`, the finished jobs of the year with no
+  projection (contract / ETC on a finished job came from an old WIP report). Each job is sorted by what QBO still
+  has open: PAID IN FULL · RETAINAGE STILL OWED (only retainage-release invoices open) · CHECK - MAY NOT BE DONE
+  (a short-paid regular draw, or costs > 30 days after the last invoice). The finished jobs' P&Ls are built
+  `--legacy` - before project coding, their costs sit on lines that only NAME the job (CP582 +138K, CP697 +126K,
+  CP714 +118K, CP786 +66K, CP689 +38K) and CP714's Draw #1 was invoiced on the GC. A retainage release counts as
+  billing only past the retainage already booked (CP697 booked none: its 21,674.27 release is its only record of
+  that billing; CP786 released 258.95 more than booked). Retainage-not-billed is cleared as a possible double count
+  when no invoice carries a retainage line, or the GC released everything booked. `cp_overview_verify.py --legacy`
+  checks the book against QBO with the same attribution. CP510 is not a QBO project customer (named
+  "CP510-GRACE CHAPEL - PROSPER") - not in the book. CP Overview build takes a column set (`COMPLETED_COLS`);
+  `read_coverage` searches rows 1-200 (the new P&L layout moves the draw table down).
 - 2026-10-02 · **Layout round 2 (the owner's 7 items on the CP790 review copy)** - ④ shows child account names only
   (full name kept when two parents share one); the P&L label column is sized to its widest visible label;
   draw-coverage Net Profit in a thick black box with a green/red header off the TOTAL; Transactions section bars

@@ -62,6 +62,8 @@ GROUPS = {                      # band (white text) / header tint / card tint
     "proj": ("2F5D8A", "DCE7F3", "F2F6FB"),
     "act": ("2E7D5B", "DCEFE4", "F1F8F4"),
     "prog": ("A86A12", "F6E7CC", "FCF6EC"),
+    "fin": ("2E7D5B", "DCEFE4", "F1F8F4"),
+    "close": ("A86A12", "F6E7CC", "FCF6EC"),
 }
 F_SECTION = PatternFill("solid", fgColor="EEF1F5")
 F_BAND = PatternFill("solid", fgColor="F8FAFC")
@@ -147,7 +149,8 @@ def read_projection(ws) -> dict:
 def read_coverage(ws) -> tuple:
     """([draw rows], accumulating cost) off the P&L's DRAW COVERAGE table."""
     hdr = None
-    for r in range(1, 12):
+    # the owner's new P&L layout moves the table down to ~row 25 from column A
+    for r in range(1, 200):
         for c in range(1, 12):
             if str(ws.cell(r, c).value or "").strip() == "Draw":
                 hdr = (r, c)
@@ -329,32 +332,52 @@ OV_COLS = [
     ("Coverage", "cov", PCT, 13, "prog"),
     ("Awaiting draw", "await", MONEY, 14, "prog"),
 ]
-GROUP_TITLE = {"proj": "PROJECTION", "act": "ACTUAL TO DATE", "prog": "PROGRESS & COVERAGE"}
+GROUP_TITLE = {"proj": "PROJECTION", "act": "ACTUAL TO DATE", "prog": "PROGRESS & COVERAGE",
+               "fin": "RESULT", "close": "COVERAGE & CLOSE-OUT"}
+
+# The COMPLETED book: a finished job's actuals ARE its result - no projection
+# (its P&L falls back to an old WIP report for contract / ETC, unconfirmed;
+# owner 10/02), no progress; coverage, what is still owed and why instead.
+COMPLETED_COLS = [
+    ("Billed", "billed", MONEY, 15, "fin"),
+    ("Costs", "cost", MONEY, 15, "fin"),
+    ("Gross profit", "gp", MONEY, 15, "fin"),
+    ("Gross %", "gpm", PCT, 10, "fin"),
+    (f"{OVERHEAD_PCT:.0%} OH (of billed)", "oh", MONEY, 14, "fin"),
+    (f"Net profit ({OVERHEAD_PCT:.0%} OH)", "net", MONEY, 15, "fin"),
+    ("Net %", "netm", PCT, 10, "fin"),
+    ("Coverage", "cov", PCT, 11, "close"),
+    ("Still owed", "ar", MONEY, 14, "close"),
+    ("Close-out (QuickBooks)", "closeout", None, 52, "close"),
+]
 
 
 def _derived(k: str, L: dict, r: int) -> Optional[str]:
     """The formula for a derived Overview / card column on row r."""
     c = lambda key: f"{L[key]}{r}"  # noqa: E731
-    return {
-        "pp": f'=IF(OR({c("contract")}=0,{c("etc")}=0),"",{c("contract")}-{c("etc")})',
+    # LAZY: a column set without a contract (the Completed book) must not
+    # build the projection formulas it does not have
+    f = {
+        "pp": lambda: f'=IF(OR({c("contract")}=0,{c("etc")}=0),"",{c("contract")}-{c("etc")})',
         # PROJECTED overhead = the rate x the CONTRACT (owner 2026-09-03)
-        "poh": f'=IF({c("pp")}="","",{c("contract")}*{OVERHEAD_PCT})',
-        "pn": f'=IF({c("pp")}="","",{c("pp")}-{c("poh")})',
-        "ppm": f'=IF({c("pp")}="","",{c("pp")}/{c("contract")})',
-        "pnm": f'=IF({c("pn")}="","",{c("pn")}/{c("contract")})',
-        "gp": f"={c('billed')}-{c('cost')}",
-        "gpm": f'=IF({c("billed")}=0,"",{c("gp")}/{c("billed")})',
+        "poh": lambda: f'=IF({c("pp")}="","",{c("contract")}*{OVERHEAD_PCT})',
+        "pn": lambda: f'=IF({c("pp")}="","",{c("pp")}-{c("poh")})',
+        "ppm": lambda: f'=IF({c("pp")}="","",{c("pp")}/{c("contract")})',
+        "pnm": lambda: f'=IF({c("pn")}="","",{c("pn")}/{c("contract")})',
+        "gp": lambda: f"={c('billed')}-{c('cost')}",
+        "gpm": lambda: f'=IF({c("billed")}=0,"",{c("gp")}/{c("billed")})',
         # overhead TO DATE = the rate x GROSS BILLED - the sum of the per-draw
         # overhead on the P&L's draw table (owner 2026-09-23 / 10-01); at
         # completion billed = contract, so it lands on the projected figure
-        "oh": f"={c('billed')}*{OVERHEAD_PCT}",
-        "net": f"={c('gp')}-{c('oh')}",
-        "netm": f'=IF({c("billed")}=0,"",{c("net")}/{c("billed")})',
-        "drift": f'=IF(OR({c("pnm")}="",{c("netm")}=""),"",{c("netm")}-{c("pnm")})',
-        "pbill": f'=IF({c("contract")}=0,"",{c("billed")}/{c("contract")})',
-        "pcomp": f'=IF({c("etc")}=0,"",{c("cost")}/{c("etc")})',
-        "cov": f'=IF({c("cost")}=0,"",{c("billed")}/{c("cost")})',
+        "oh": lambda: f"={c('billed')}*{OVERHEAD_PCT}",
+        "net": lambda: f"={c('gp')}-{c('oh')}",
+        "netm": lambda: f'=IF({c("billed")}=0,"",{c("net")}/{c("billed")})',
+        "drift": lambda: f'=IF(OR({c("pnm")}="",{c("netm")}=""),"",{c("netm")}-{c("pnm")})',
+        "pbill": lambda: f'=IF({c("contract")}=0,"",{c("billed")}/{c("contract")})',
+        "pcomp": lambda: f'=IF({c("etc")}=0,"",{c("cost")}/{c("etc")})',
+        "cov": lambda: f'=IF({c("cost")}=0,"",{c("billed")}/{c("cost")})',
     }.get(k)
+    return f() if f else None
 
 
 def _coverage_rules(ws, rng: str, first: str) -> None:
@@ -409,7 +432,8 @@ def _sheet_name(job: str) -> str:
     return job[:31]
 
 
-def build(jobs: List[tuple], out: Path, div: dict, sections=None, title=None) -> None:
+def build(jobs: List[tuple], out: Path, div: dict, sections=None, title=None,
+          cols=None) -> None:
     """jobs = [(job, src, totals, extra)]: src/totals from completed_pnl,
     extra from read_extra."""
     wb = Workbook()
@@ -418,8 +442,9 @@ def build(jobs: List[tuple], out: Path, div: dict, sections=None, title=None) ->
     ov.sheet_view.showGridLines = False
     ov.sheet_view.zoomScale = 110
     C0 = 2
-    LCOL = C0 + len(OV_COLS) + 1                     # the "open" link column
-    L = {k: get_column_letter(C0 + 1 + i) for i, (_h, k, _f, _w, _g) in enumerate(OV_COLS)}
+    OV = cols or OV_COLS
+    LCOL = C0 + len(OV) + 1                     # the "open" link column
+    L = {k: get_column_letter(C0 + 1 + i) for i, (_h, k, _f, _w, _g) in enumerate(OV)}
 
     # job sheets FIRST (the Overview's cells point at their totals)
     refs: Dict[str, dict] = {}
@@ -454,7 +479,7 @@ def build(jobs: List[tuple], out: Path, div: dict, sections=None, title=None) ->
     _cell(ov, hdr_r + 1, C0, "Job", size=SZ_SMALL, bold=True, color="FFFFFF",
           fill=PatternFill("solid", fgColor=NAVY), indent=1)
     gstart: Dict[str, int] = {}
-    for i, (h, k, _f, _w, g) in enumerate(OV_COLS):
+    for i, (h, k, _f, _w, g) in enumerate(OV):
         c = C0 + 1 + i
         gstart.setdefault(g, c)
         band, tint, _card = GROUPS[g]
@@ -462,7 +487,7 @@ def build(jobs: List[tuple], out: Path, div: dict, sections=None, title=None) ->
         _cell(ov, hdr_r + 1, c, h, size=SZ_SMALL, bold=True, color=INK,
               fill=PatternFill("solid", fgColor=tint), align="right", wrap=True)
     for g, c in gstart.items():
-        last = max(C0 + 1 + i for i, x in enumerate(OV_COLS) if x[4] == g)
+        last = max(C0 + 1 + i for i, x in enumerate(OV) if x[4] == g)
         _cell(ov, hdr_r, c, GROUP_TITLE[g], size=SZ_SMALL, bold=True, color="FFFFFF",
               fill=PatternFill("solid", fgColor=GROUPS[g][0]), align="center")
         ov.merge_cells(start_row=hdr_r, start_column=c, end_row=hdr_r, end_column=last)
@@ -482,7 +507,7 @@ def build(jobs: List[tuple], out: Path, div: dict, sections=None, title=None) ->
         sn = _sheet_name(job)
         nm = _cell(ov, rr, C0, job_label(job, src.get("title", "")), indent=1)
         _link(nm, f"#'{sn}'!A1", bold=True)
-        for i, (_h, k, fmt, _w, _g) in enumerate(OV_COLS):
+        for i, (_h, k, fmt, _w, _g) in enumerate(OV):
             c = C0 + 1 + i
             done = src.get("status") != "Active"
             if done and k in ("contract", "etc", "await"):
@@ -492,11 +517,14 @@ def build(jobs: List[tuple], out: Path, div: dict, sections=None, title=None) ->
                 v = None
             elif k in ("contract", "etc"):                 # the P&L's projection
                 v = jobs_ex[job][k] or None
+            elif k in jobs_ex[job].get("static", {}):      # a figure the caller supplies
+                v = jobs_ex[job]["static"][k]
             elif k in ref:                                 # the job sheet's own cell
                 v = f"='{sn}'!{ref[k]}"
             else:
                 v = _derived(k, L, rr)
-            _cell(ov, rr, c, v, fmt=fmt, align="right", bold=k in ("pn", "net"))
+            _cell(ov, rr, c, v, fmt=fmt, align="right" if fmt else "left",
+                  size=SZ if fmt else SZ_SMALL, bold=k in ("pn", "net"), indent=0 if fmt else 1)
         lk = _cell(ov, rr, LCOL, "Draws  ›", align="center", size=SZ_SMALL)
         _link(lk, f"#'{sn}'!{ref['cov_anchor']}", size=SZ_SMALL)
         ov.row_dimensions[rr].height = 21
@@ -534,9 +562,11 @@ def build(jobs: List[tuple], out: Path, div: dict, sections=None, title=None) ->
             return "+".join(f"SUMPRODUCT(({L[cond_k]}{a}:{L[cond_k]}{b}<>0)*"
                             f"({L['contract']}{a}:{L['contract']}{b}<>0)*"
                             f"{L[k]}{a}:{L[k]}{b})" for a, b in ranges)
-        for i, (_h, k, fmt, _w, _g) in enumerate(OV_COLS):
+        for i, (_h, k, fmt, _w, _g) in enumerate(OV):
             c = C0 + 1 + i
-            if k in ("contract", "etc", "billed", "cost", "await", "pp", "poh", "pn"):
+            if not fmt:                                    # a text column has no total
+                v = None
+            elif k in ("contract", "etc", "billed", "cost", "await", "pp", "poh", "pn", "ar"):
                 v = "=" + tot(k)
             elif k in ("pnm", "ppm"):
                 num = L["pn" if k == "pnm" else "pp"]
@@ -561,25 +591,32 @@ def build(jobs: List[tuple], out: Path, div: dict, sections=None, title=None) ->
     else:                               # one group: its subtotal IS the total
         all_r = r - 2
     first_job = hdr_r + 2
-    _legend(ov, all_r + 3, C0 + 1 + [k for _h, k, *_x in OV_COLS].index("pbill"))
+    cov_group = next(x[4] for x in OV if x[1] == "cov")
+    _legend(ov, all_r + 3, gstart[cov_group])
 
     # conditional colour on the job and total rows
     rows = f"{first_job}:{all_r}"
     a, b = rows.split(":")
     _coverage_rules(ov, f"{L['cov']}{a}:{L['cov']}{b}", f"{L['cov']}{a}")
     for k in ("drift", "pp", "pn", "gp", "net"):
-        _sign_rules(ov, f"{L[k]}{a}:{L[k]}{b}", f"{L[k]}{a}")
-    ov.conditional_formatting.add(f"{L['pcomp']}{a}:{L['pcomp']}{b}", FormulaRule(
-        formula=[f'AND(ISNUMBER({L["pcomp"]}{a}),{L["pcomp"]}{a}>1)'],
-        font=Font(name=FONT, color=RED_T, bold=True), fill=F_BAD))
-    for k in ("pbill", "pcomp"):
+        if k in L:
+            _sign_rules(ov, f"{L[k]}{a}:{L[k]}{b}", f"{L[k]}{a}")
+    if "pcomp" in L:
+        ov.conditional_formatting.add(f"{L['pcomp']}{a}:{L['pcomp']}{b}", FormulaRule(
+            formula=[f'AND(ISNUMBER({L["pcomp"]}{a}),{L["pcomp"]}{a}>1)'],
+            font=Font(name=FONT, color=RED_T, bold=True), fill=F_BAD))
+    if "ar" in L:                                  # money still owed: red when there is any
+        ov.conditional_formatting.add(f"{L['ar']}{a}:{L['ar']}{b}", FormulaRule(
+            formula=[f'AND(ISNUMBER({L["ar"]}{a}),{L["ar"]}{a}>0)'],
+            font=Font(name=FONT, color=RED_T, bold=True)))
+    for k in [x for x in ("pbill", "pcomp") if x in L]:
         ov.conditional_formatting.add(f"{L[k]}{a}:{L[k]}{b}", DataBarRule(
             start_type="num", start_value=0, end_type="num", end_value=1,
             color="9DB8D9" if k == "pbill" else "E5B66B", showValue=True))
 
     # dividers: a heavy rule where each group starts, and between GROSS and NET
     # inside the projection and the actuals (the owner 10/02)
-    div_cols = sorted(set(gstart.values()) | {C0 + 1 + i for i, x in enumerate(OV_COLS)
+    div_cols = sorted(set(gstart.values()) | {C0 + 1 + i for i, x in enumerate(OV)
                                               if x[1] in ("poh", "oh")} | {LCOL})
     for c in div_cols:
         for rr in range(hdr_r + 1, all_r + 1):
@@ -588,7 +625,7 @@ def build(jobs: List[tuple], out: Path, div: dict, sections=None, title=None) ->
                                            top=cur.top, bottom=cur.bottom)
     ov.column_dimensions["A"].width = 2
     ov.column_dimensions[get_column_letter(C0)].width = 36
-    for i, (_h, _k, _f, w, _g) in enumerate(OV_COLS):
+    for i, (_h, _k, _f, w, _g) in enumerate(OV):
         ov.column_dimensions[get_column_letter(C0 + 1 + i)].width = w
     ov.column_dimensions[get_column_letter(LCOL)].width = 11
     # headers AND the job column stay put (the owner's freeze, 10/02); one
@@ -795,12 +832,40 @@ def _job_sheet(wb, job, src, t, ex, div) -> dict:
         r += 1
 
     dup = _spread_retainage(job, dict(src, rnb_doc=ex.get("rnb_doc")), draws)
+    # A retainage RELEASE collects retainage that was already BOOKED as income
+    # (a retainage line on an invoice, or the retainage-not-billed amount), so
+    # up to that much it is not billing. Past it, the retainage was never
+    # booked in QBO (CP697: early draws entered net, no not-billed invoice) and
+    # the release is the only place that money shows as billed - it counts.
+    booked = sum(i["withheld"] for i in src["invoices"]) + (src.get("not_billed") or 0)
+    budget = booked
+    extra: Dict[str, float] = {}                 # doc -> part of the release that is billing
+    for i in sorted(src["invoices"], key=lambda x: str(x["date"])):
+        if i["ret_billed"]:
+            take = min(i["ret_billed"], max(budget, 0))
+            budget -= take
+            if i["ret_billed"] - take > 0.5:
+                extra[str(i["doc"])] = round(i["ret_billed"] - take, 2)
+    released = round(sum(i["ret_billed"] for i in src["invoices"]), 2)
+    counted = round(sum(extra.values()), 2)
+    if released:
+        tie = ("= the retainage booked" if abs(released - booked) < 1 else
+               f"vs {booked:,.2f} booked - {counted:,.2f} never booked, counted as billing"
+               if counted else f"vs {booked:,.2f} booked - {booked - released:,.2f} still held")
+        print(f"    · {job}: releases {released:,.2f} {tie}; {released - counted:,.2f} left out "
+              f"of billed (already in gross)")
     # the P&L's draw table counts a release inside the draw's gross billed; take
     # it back out so a draw's billed is new billing only
     for d in draws:
         rel = sum(x.get("release", 0) for x in d["invoices"])
         if rel and abs(sum(x["billed"] for x in d["invoices"]) + rel - d["gross"]) < 1:
             d["gross"] = round(d["gross"] - rel, 2)
+        for x in d["invoices"]:
+            add = extra.get(str(x["doc"]), 0)
+            if add:
+                x["billed"] = round(x["billed"] + add, 2)
+                x["release"] = round(x["release"] - add, 2)
+                d["gross"] = round(d["gross"] + add, 2)
 
     nxt = ex["next_lines"]
     if nxt or ex["awaiting"]:
@@ -818,8 +883,9 @@ def _job_sheet(wb, job, src, t, ex, div) -> dict:
     # doc match double-lists them. The P&L's draws start at its first period;
     # every bill before it is the history the draw table leaves out.
     start = _period_start(draws[0]["period"]) if draws else None
-    o_inv = [{"doc": i["doc"], "date": i["date"], "billed": i["gross"],
-              "release": i["ret_billed"],
+    o_inv = [{"doc": i["doc"], "date": i["date"],
+              "billed": round(i["gross"] + extra.get(str(i["doc"]), 0), 2),
+              "release": round(i["ret_billed"] - extra.get(str(i["doc"]), 0), 2),
               "paid": i.get("paid") or "", "memo": str(i.get("memo") or "")}
              for i in src["invoices"] if str(i["doc"]) not in seen_i]
     o_inv = [x for x in o_inv if not any(not dd["je"] and str(dd["doc"]) == str(x["doc"])
@@ -838,11 +904,7 @@ def _job_sheet(wb, job, src, t, ex, div) -> dict:
                for sec in src["sections"] for a in sec["accounts"] for v in a["vendors"]
                for ln in v["lines"] if _before(ln["date"], start)
                or (start is None and str(ln["doc"]) not in seen_b)]
-    released = sum(i["ret_billed"] for i in src["invoices"])
-    if released:
-        print(f"    ⚑ {job}: {released:,.2f} of retainage releases left out of billed "
-              f"(already in gross)")
-    want_b = (t["billed"] - released - sum(dd["amt"] for dd in dup if dd["amt"] >= 1)
+    want_b = (t["billed"] - (released - counted) - sum(dd["amt"] for dd in dup if dd["amt"] >= 1)
               - sum(d["gross"] for d in draws))
     want_c = t["cost"] - sum(d["cost"] for d in draws) - ex["awaiting"]
     gap_b = want_b - sum(x["billed"] for x in o_inv)
@@ -954,6 +1016,22 @@ def _job_sheet(wb, job, src, t, ex, div) -> dict:
     return ref
 
 
+def _no_overlap(src: dict, amt: float) -> str:
+    """Why a retainage-not-billed amount cannot be a double count, or '' when
+    nothing proves it: no invoice carries its own retainage line (nothing to
+    overlap), or the GC released exactly what was booked."""
+    withheld = sum(i["withheld"] for i in src["invoices"])
+    released = sum(i["ret_billed"] for i in src["invoices"])
+    if withheld < 1:
+        return "no invoice carries its own retainage line, nothing to overlap"
+    # a double count books MORE retainage than the GC owes, so it pays back
+    # less; a release that covers everything booked rules one out
+    if released and released >= withheld + amt - 1:
+        return (f"the GC released {released:,.2f}, all of the {withheld + amt:,.2f} booked "
+                f"- no double count")
+    return ""
+
+
 _RNB = re.compile(r"retainage\s+not\s+billed", re.I)
 
 
@@ -990,11 +1068,11 @@ def _spread_retainage(job: str, src: dict, draws: List[dict]) -> List[dict]:
             # amount stays as its own line, tested against those invoices
             pre = sum(i["gross"] for i in src["invoices"]
                       if not i["withheld"] and i["gross"] and str(i["doc"]) not in in_draws)
-            ok = pre and abs(pre / 9 - amt) < 1
-            print(f"    {'·' if ok else '⚑'} {job}: retainage not billed {amt:,.2f} kept as its own "
-                  f"line - {'= ' if ok else 'vs '}net invoices before the draw table "
-                  f"{pre:,.2f} / 9 = {pre / 9 if pre else 0:,.2f}"
-                  f"{'' if ok else ' - DOES NOT TIE, check the pay app'}")
+            ties = bool(pre and abs(pre / 9 - amt) < 1)
+            why = ("= net invoices before the draw table " f"{pre:,.2f} / 9" if ties
+                   else _no_overlap(src, amt))
+            print(f"    {'·' if why else '⚑'} {job}: retainage not billed {amt:,.2f} kept as its own "
+                  f"line - {why or f'vs net invoices before the draw table {pre:,.2f} / 9 = {pre / 9 if pre else 0:,.2f} - DOES NOT TIE, check the pay app'}")
             continue
         dup_on, run = None, 0.0
         if rest >= 1:
@@ -1007,8 +1085,10 @@ def _spread_retainage(job: str, src: dict, draws: List[dict]) -> List[dict]:
             else:
                 dup_on = None
             if dup_on is None or abs(run - rest) >= 1:
-                print(f"    ⚑ {job}: retainage not billed {amt:,.2f} left outside the draws - "
-                      f"{rest:,.2f} after the spread matches no draw's retainage; check it by hand")
+                ok = _no_overlap(src, amt)
+                print(f"    {'·' if ok else '⚑'} {job}: retainage not billed {amt:,.2f} kept as its own "
+                      f"line - {rest:,.2f} after the spread matches no draw's retainage"
+                      f"{'; ' + ok if ok else '; check it by hand'}")
                 continue                          # unexplained remainder: leave it whole
         for d in early:
             a = alloc[d["name"]]

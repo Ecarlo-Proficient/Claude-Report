@@ -11,7 +11,8 @@ A gap is printed per job; a known one (a retainage double count the Overview
 removes on purpose) is explained by its ⚑ line from the build.
 
 USAGE
-  python3 one-offs/cp_overview_verify.py
+  python3 one-offs/cp_overview_verify.py                       # the active CP Overview
+  python3 one-offs/cp_overview_verify.py "<CP Completed 2026.xlsx>" --legacy
 """
 import re
 import sys
@@ -22,8 +23,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from openpyxl import load_workbook
 
 from shared import qbo_api, qbo_costs as qc
+from shared.job_lines import JobMatcher
 
-OV = "/Volumes/Common/CURRENT PROJECTS/Awarded Projects Commercial projects/CP Overview.xlsx"
+LEGACY = "--legacy" in sys.argv          # the COMPLETED book: pre-2026 jobs, P&Ls built --legacy
+_args = [a for a in sys.argv[1:] if a != "--legacy"]
+OV = (_args[0] if _args else
+      "/Volumes/Common/CURRENT PROJECTS/Awarded Projects Commercial projects/CP Overview.xlsx")
 PAY = re.compile(r"payroll|wages|salar|employee benefit|workers.?comp", re.I)
 
 wb = load_workbook(OV)
@@ -80,12 +85,40 @@ for ln in qc.iter_cost_lines(access, cid, acct, c2p, since="2020-01-01"):
     for n in {f"CP{x}" for x in named} & set(jobs):
         loose[n].append((ln, coded))
 
+matchers = {}
+if LEGACY:
+    # the same rule the --legacy P&L uses: project, OR the line text names the
+    # job, OR the bill memo names it and only it. The job's CLASS is NOT used -
+    # the P&L adds class lines only with +class, and they are mixed (CP697
+    # #11012 sits on its class with a memo naming RP6906)
+    bills, purchases = qc.pull_expense_txns(access, cid, "2020-01-01")
+    for j in jobs:
+        if j not in pmap:
+            continue
+        m = JobMatcher(pmap[j]["id"], j, [], legacy=True, text_rules=True)
+        matchers[j] = m
+        cost[j] = 0.0
+        for t in bills + purchases:
+            for ln in t.get("Line") or []:
+                det = ln.get("AccountBasedExpenseLineDetail") or ln.get("ItemBasedExpenseLineDetail")
+                if not det or not m(det, ln, t):
+                    continue
+                if PAY.search(qc.cost_leaf(det, acct, fallback="")):
+                    continue
+                cost[j] += float(ln.get("Amount") or 0)
+
 print(f"{'JOB':<7}{'QBO billed':>14}{'workbook':>14}{'diff':>11}  |{'QBO cost':>14}{'workbook':>14}{'diff':>11}")
 bad = 0
 for j, (wb_b, wb_c) in sorted(jobs.items()):
     info = pmap.get(j)
     gross = 0.0
-    for inv in qbo_api.query_all(access, cid, "Invoice", f"CustomerRef = '{info['id']}'"):
+    invs = qbo_api.query_all(access, cid, "Invoice", f"CustomerRef = '{info['id']}'")
+    if LEGACY and info.get("parent_id"):          # older jobs invoiced on the GC
+        have = {i["Id"] for i in invs}
+        invs += [i for i in qbo_api.query_all(access, cid, "Invoice",
+                                               f"CustomerRef = '{info['parent_id']}'")
+                 if i["Id"] not in have and matchers[j].invoice_belongs(i)]
+    for inv in invs:
         for ln in inv.get("Line", []):
             if ln.get("DetailType") != "SalesItemLineDetail":
                 continue

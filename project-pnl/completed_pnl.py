@@ -1235,6 +1235,8 @@ def rebuild_overview(division: str, div_dir: "Path | None" = None,
         return None
     out = div_dir / f"{div['label']} Overview.xlsx"
     _build(division, loaded, out, dict(div, scope=(f"{year} only" if year else "")))
+    if division == "cp":                     # the CP book carries active jobs only
+        loaded = [x for x in loaded if x[1].get("status") == "Active"]
     return {"path": out, "jobs": len(loaded),
             "billed": sum(t["billed"] for _, _, t, _ in loaded),
             "cost": sum(t["cost"] for _, _, t, _ in loaded)}
@@ -1282,6 +1284,8 @@ def main() -> int:
         return 1
     out = div_dir / f"{div['label']} Overview.xlsx"
     _build(a.division, loaded, out, dict(div, scope=(f"{year} only" if year else "")))
+    if a.division == "cp":                   # report what the book carries: active only
+        loaded = [x for x in loaded if x[1].get("status") == "Active"]
     tb = sum(t["billed"] for _, _, t, _ in loaded)
     tc = sum(t["cost"] for _, _, t, _ in loaded)
     print(f"  {len(loaded)} jobs   billed ${tb:,.0f}   cost ${tc:,.0f}   "
