@@ -424,9 +424,9 @@ def build(jobs: List[tuple], cut_lines: List[dict], out: Path, div: dict) -> dic
     cols = [("CONTRACT", "contract", MONEY, 18),
             ("BILLED", "billed", MONEY, 18), ("COST", "cost", MONEY, 18),
             ("GROSS PROFIT", "gp", MONEY, 18), ("GP %", "gpm", PCT, 11),
-            (f"{OVERHEAD_PCT:.0%} OH", "oh", MONEY, 16),
+            (f"{OVERHEAD_PCT:.0%} OH (of billed)", "oh", MONEY, 16),
             (f"FINAL NET  ({OVERHEAD_PCT:.0%} OH)", "net", MONEY, 20),
-            (f"{MFD_OVERHEAD_PCT:.0%} OH", "moh", MONEY, 16),
+            (f"{MFD_OVERHEAD_PCT:.0%} OH (of billed)", "moh", MONEY, 16),
             (f"FINAL NET  ({MFD_OVERHEAD_PCT:.0%} OH)", "mnet", MONEY, 20),
             (dlabel, "cut", MONEY, 17),
             ("CUT % OF BILLED", "cutm", PCT, 11),
@@ -447,12 +447,13 @@ def build(jobs: List[tuple], cut_lines: List[dict], out: Path, div: dict) -> dic
             return f"={L['billed']}{rr}-{L['cost']}{rr}"
         if k == "gpm":
             return f'=IF({L["billed"]}{rr}=0,"",{L["gp"]}{rr}/{L["billed"]}{rr})'
+        # ACTUAL overhead = rate x BILLED; the contract is the projection's base
         if k == "oh":
-            return f"={L['contract']}{rr}*{OVERHEAD_PCT}"
+            return f"={L['billed']}{rr}*{OVERHEAD_PCT}"
         if k == "net":
             return f"={L['gp']}{rr}-{L['oh']}{rr}"
         if k == "moh":
-            return f"={L['contract']}{rr}*{MFD_OVERHEAD_PCT}"
+            return f"={L['billed']}{rr}*{MFD_OVERHEAD_PCT}"
         if k == "mnet":
             return f"={L['gp']}{rr}-{L['moh']}{rr}"
         if k == "cutm":
@@ -574,8 +575,9 @@ def build(jobs: List[tuple], cut_lines: List[dict], out: Path, div: dict) -> dic
     judged = [j for j in jobs if fig[j[0]]["cut"] != 0]
     active = [j for j in judged if j[1].get("status") == "Active"]
     done = [j for j in judged if j[1].get("status") != "Active"]
-    _section("ACTIVE - in progress", active, "costs to date only - not finished")
-    _section("COMPLETED", done)
+    _section("ACTIVE - actuals to date, NOT final", active,
+             "billed and costs so far, overhead on billed so far")
+    _section("COMPLETED - final", done, "the finished result")
     tot = _sum(judged)
     _t(sm, r, C0, f"ALL {label} WITH HIS CUT - {len(judged)} JOBS", size=SZ, bold=True,
        color=NAVY)
@@ -932,9 +934,10 @@ def main(argv=None) -> int:
         if removed:
             print(f"  {job}: {removed:,.2f} of a registered cut was inside job cost - taken out")
         src["rel"] = cp._link_target(src_path, out.parent)
-        # the director's cut keeps its old basis (contract overhead, releases in
-        # billed) until the owner rules on it - completed_pnl._totals(legacy)
-        jobs.append((job, src, cp._totals(src, legacy=True), src_path))
+        # ACTUALS, the same basis as every other page (the owner 10/02/2026: "don't
+        # confuse actual with projected vs completed oh"): overhead on what has
+        # been BILLED, a retainage release not counted twice
+        jobs.append((job, src, cp._totals(src), src_path))
     print("pulling the cut from QuickBooks")
     lines, _realm = pull_cut_lines(div["prefix"])
     res = build(jobs, lines, out, div)

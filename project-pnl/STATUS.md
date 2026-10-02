@@ -17,8 +17,10 @@ manual close), RP (no draws — expenses → invoice → profit).
   P&L actuals (10% and 9%), the RP "True Net Profit", and the MFD / RP division Overviews (`completed_pnl._totals`,
   formulas, overhead tiles) take overhead on billed. `_totals` also stops adding retainage RELEASES to billed (they
   collect retainage already in gross) except past the retainage booked - MFD177 now ties to QBO income to the cent
-  (was +63,739.33). The director's cut page is pinned to the old basis (`_totals(legacy=True)`) until the owner
-  confirms "completed projects only, on actuals".
+  (was +63,739.33). The director's cut page follows (owner: "director's cut page fix ... don't confuse actual
+  with projected vs completed oh"): overhead on billed, releases not counted twice, ACTIVE labelled "actuals to
+  date, NOT final" and COMPLETED "final". MFD real net 10% moves -52,291 -> -127,081 before his cut (the cut paid
+  is unchanged, 1,065,072.54 on these jobs).
 - 2026-10-02 · **Retainage release invoices carry their QBO balance and id** - they read PAID while QBO still had them
   open (CP582, CP689, CP786) and had no QBO link.
 - 2026-10-02 · **Retainage releases are not billing; Net Profit header colour fixed** - Billed to Date = gross invoice

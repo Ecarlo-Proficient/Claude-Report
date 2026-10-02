@@ -454,8 +454,8 @@ def _totals(src: dict, legacy: bool = False) -> dict:
     the projections"), and a retainage RELEASE is not billing - it collects
     retainage already in gross - except past the retainage booked (a job whose
     early draws were entered net with nothing booked; CP697). `legacy=True`
-    keeps the old figures (contract overhead, releases added) for the director's
-    cut page until the owner rules on it."""
+    returns the old figures (contract overhead, releases added) - kept only to
+    compare against; every page uses the default."""
     released = sum(i["ret_billed"] for i in src["invoices"])
     booked = sum(i.get("withheld", 0.0) for i in src["invoices"]) + src["not_billed"]
     billed = sum(i["gross"] for i in src["invoices"]) + src["not_billed"]
