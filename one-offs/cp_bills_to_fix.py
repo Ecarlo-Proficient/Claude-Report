@@ -19,6 +19,10 @@ On an ACTIVE job these lines are missing from the P&L today. On a FINISHED job
 the P&L is built --legacy and already counts the memo-named ones; coding the
 project in QBO makes that permanent.
 
+Only bills AFTER the QBO closing date - a closed-period bill is locked. The
+Bill Tracker's Audit - Coding sheet is the clerk's standing list (it now carries
+Wrong Job? too); this is the CP-only cut of it.
+
 USAGE
   python3 one-offs/cp_bills_to_fix.py                 # -> CompanyHealth/Analysis/CP bills to fix (date)/
 """
@@ -38,9 +42,18 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side  # noqa: 
 
 import completed_pnl as cp  # noqa: E402
 from shared import paths, pnl_paths, qbo_api, qbo_costs as qc  # noqa: E402
-from shared.job_lines import discover_job_classes, jobs_named_in  # noqa: E402
+from shared.job_lines import discover_job_classes  # noqa: E402
 from shared.xlsx_guard import put  # noqa: E402
 from shared.xlsx_verify import assert_clean  # noqa: E402
+
+# job numbers as the clerk writes them - 'CP745', 'CP790-9001 LANDMARK' (the
+# same pattern the bill audit's Wrong Job? check uses; tools never import tools)
+_JOB = re.compile(r"\b(MFD|CP|RP)\s?-?(\d{3,5})(-FTW)?(?=\b|-)", re.IGNORECASE)
+
+
+def _named(text: str) -> set:
+    return {f"{m.group(1).upper()}{m.group(2)}{(m.group(3) or '').upper()}" for m in _JOB.finditer(text or "")}
+
 
 PAY = re.compile(r"payroll|wages|salar|employee benefit|workers.?comp", re.I)
 OVERHEAD = re.compile(r"admin contract labor|takeoff|estimat", re.I)
@@ -68,7 +81,12 @@ def main() -> int:
     for j in jobs:
         for k in discover_job_classes(classes, j):
             cls_of[str(k)] = j
-    bills, purchases = qc.pull_expense_txns(access, cid, "2020-01-01")
+    # OPEN PERIOD ONLY (the owner 10/02: "those bills are in 2025 ... locked by admin
+    # closing date"): nothing on or before the QBO closing date - nobody can fix it
+    pref = qbo_api.query_all(access, cid, "Preferences")
+    closed = ((pref[0].get("AccountingInfoPrefs") or {}).get("BookCloseDate") if pref else None)
+    since = (dt.date.fromisoformat(closed) + dt.timedelta(days=1)).isoformat() if closed else "2026-01-01"
+    bills, purchases = qc.pull_expense_txns(access, cid, since)
 
     rows = defaultdict(lambda: {"amt": 0.0, "n": 0})
     for kind, txns in (("Bill", bills), ("Expense", purchases)):
@@ -84,12 +102,14 @@ def main() -> int:
                 if not amt or PAY.search(leaf):
                     continue
                 coded = c2p.get((det.get("CustomerRef") or {}).get("value"))
-                named = jobs_named_in(memo + " " + str(ln.get("Description") or ""))
+                named = _named(memo + " " + str(ln.get("Description") or ""))
                 cls = str(((det.get("ClassRef") or ln.get("ClassRef") or t.get("ClassRef")) or {}).get("value") or "")
                 on_class = cls_of.get(cls)
                 job = action = None
-                if len(named) == 1 and next(iter(named)) in jobs and coded != next(iter(named)):
-                    job = next(iter(named))
+                one = next(iter(named)) if len(named) == 1 else ""
+                # a job and its -FTW twin are one family (same rule as the bill audit)
+                if one and one in jobs and coded != one and (coded or "").split("-")[0] != one.split("-")[0]:
+                    job = one
                     action = ("ADD PROJECT" if not coded else "CHECK CODING")
                 elif on_class and not coded and not named:
                     job, action = on_class, "ON JOB CLASS"
