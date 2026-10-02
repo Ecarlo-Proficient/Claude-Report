@@ -4032,6 +4032,11 @@ def build_sheet_pl(
                           color="595959")
         rnp_row = cmp_row("Net Profit", None if _np else f"=B{gpa_row}+B{aoh_row}",
                           f"=C{gpa_row}+C{aoh_row}", bold=True, border=TOP_BORDER)
+        # the eye goes HERE (the owner 2026-10-02, on a screenshot: "make it
+        # like this to bring eyes here") - the row yellow, the actual boxed
+        for _c in range(1, PC + 1):
+            ws.cell(row=rnp_row, column=_c).fill = PatternFill("solid", fgColor="FFFF00")
+        _box_range(ws, rnp_row, rnp_row, AC, AC, Side(style="medium", color="000000"))
         cmp_row("Net Profit %",
                 None if _np else f'=IF(B{bd_row}=0,"",B{rnp_row}/B{bd_row})',
                 f'=IF(C{bd_row}=0,"",C{rnp_row}/C{bd_row})',
@@ -5179,10 +5184,14 @@ def build_sheet_draws(wb, proj, cust_info, wip_info, draw_rows, income_groups,
                      (income_groups.get(lbl) or {}).get("invoices") or [],
                      draw_costs.get(lbl) or {}, (income_groups.get(lbl) or {}).get("period")))
     for key, name, lbl, net, costs, held, billed, invs, dc, period in secs:
-        for cc in range(K(1), max(10, last_c) + 1):
+        # a REAL divider (the owner 2026-10-02: "there's still no real
+        # dividers"): white space, a thick navy rule the width of the
+        # section (B..J), white space - then the draw's band
+        for cc in range(2, 11):
             ws.cell(row=r, column=cc).border = Border(bottom=Side(style="thick", color=NAVY))
-        ws.row_dimensions[r].height = 8
-        r += 1
+        ws.row_dimensions[r].height = 18
+        ws.row_dimensions[r + 1].height = 18
+        r += 2
         starts[key] = r
         r, m_tot, m_cnt = build_sheet_one_draw(
             wb, "Draws", proj, cust_info, wip_info, name, lbl, net, costs, held, billed,
@@ -5194,9 +5203,14 @@ def build_sheet_draws(wb, proj, cust_info, wip_info, draw_rows, income_groups,
         under_tot += m_tot
         under_n += m_cnt
     # the coverage names link down to their sections
+    # A link to ONE cell scrolls only until that cell shows - the band landed
+    # at the BOTTOM of the window (the owner 2026-10-02: "it should take me
+    # to top of it"). A link to a tall range makes Excel bring the range's
+    # first row to the top.
     for key, row_ in link_rows.items():
         if key in starts:
-            ws.cell(row=row_, column=K(1)).hyperlink = f"#'Draws'!B{starts[key]}"
+            ws.cell(row=row_, column=K(1)).hyperlink = (
+                f"#'Draws'!B{starts[key]}:B{starts[key] + 60}")
 
     # ── fit the columns once, across every section ──
     hdrs = [h for hs, _rng in fit for h in hs]
@@ -8917,10 +8931,10 @@ def generate_project_pnl(
     # old draw. Cash Flow used to trail and was the last thing left buried.
     # Next Draw sits RIGHT BEFORE the newest draw tab (the user 2026-09-03):
     # it is the draw that is forming, so it reads as the head of the run.
-    _order_sheets(wb, ["P&L", "Transactions", "By Account",
-                       "Labor", "Concrete", "Budget vs Actual",
-                       "POs", "Reconciliations", "Cash Flow",
-                       *(["Draws"] if _draws else []),
+    # the owner's order, 2026-10-02
+    _order_sheets(wb, ["P&L", *(["Draws"] if _draws else []), "Budget vs Actual",
+                       "Transactions", "By Account", "Labor", "Concrete",
+                       "Cash Flow", "POs", "Reconciliations",
                        # the flat pivot table goes LAST, after the draws
                        # (the owner 2026-10-02)
                        *([_draw_data_tab] if _draw_data_tab else [])])

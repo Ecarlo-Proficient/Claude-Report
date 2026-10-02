@@ -7,6 +7,13 @@ manual close), RP (no draws — expenses → invoice → profit).
 ---
 
 ## DONE / FINALIZED
+- 2026-10-02 · **IN REVIEW, round 16** (owner, on screenshots: "there's still no real dividers for the draws"; "when
+  i click a draw in coverage it puts the location so the draw row is in the bottom, it should take me to top of it";
+  new tab order; the ① Net Profit row "make it like this to bring eyes here"). Draws: between sections an 18-px gap, a
+  thick navy rule the section's width (B..J), an 18-px gap; each coverage link targets B<band>:B<band+60> so Excel
+  scrolls the band to the TOP (a one-cell link only scrolls it into view, at the bottom). Tabs: P&L, Draws, Budget vs
+  Actual, Transactions, By Account, Labor, Concrete, Cash Flow, POs, Reconciliations, Draw Data. ① Net Profit row:
+  bright yellow across A:E, the Actual figure in a medium black box. Ties unchanged. Copy: round 16.
 - 2026-10-02 · **IN REVIEW, round 15** (owner: "option 1, total cost with the note"; "draws put dividers, put costs
   together meaning no extra space, remove by cost code and make by vendor first and by cost type 2nd. the top button
   should live on row 1, remove row 2 that's extra space"). Budget vs Actual = Budget | Actual (total cost, tax and fuel
