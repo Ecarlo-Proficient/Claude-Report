@@ -68,6 +68,11 @@ manual close), RP (no draws — expenses → invoice → profit).
   checks the book against QBO with the same attribution. CP510 is not a QBO project customer (named
   "CP510-GRACE CHAPEL - PROSPER") - not in the book. CP Overview build takes a column set (`COMPLETED_COLS`);
   `read_coverage` searches rows 1-200 (the new P&L layout moves the draw table down).
+  Checks (owner: "verify the overviews reconcile and are correct", 10/02): `one-offs/cp_overview_verify.py` ties
+  billed / costs to QBO (refresh the mirror first - `ledger/refresh_mirror.py`; on 10/02 three jobs had bills
+  entered after the morning pull), `one-offs/cp_overview_reconcile.py` proves the workbook adds up inside
+  (1,402 + 676 formulas, 0 problems). CP831's contract carries a 33,361 CO from the Draw #2 G702 that the WIP
+  master does not have yet.
 - 2026-10-02 · **Layout round 2 (the owner's 7 items on the CP790 review copy)** - ④ shows child account names only
   (full name kept when two parents share one); the P&L label column is sized to its widest visible label;
   draw-coverage Net Profit in a thick black box with a green/red header off the TOTAL; Transactions section bars
