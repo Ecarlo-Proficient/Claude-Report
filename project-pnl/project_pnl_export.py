@@ -5162,9 +5162,18 @@ def build_sheet_draws(wb, proj, cust_info, wip_info, draw_rows, income_groups,
         ws.conditional_formatting.add(ref, CellIsRule(
             operator="greaterThanOrEqual", formula=["0"],
             fill=PatternFill("solid", fgColor="C6EFCE"), font=Font(bold=True, color="006100")))
+    _grid_lines(ws, hdr_row + 1, rc, K(1), last_c)
+    # vertical rules between the groups, full table height (the user
+    # 2026-06-19; dropped in the 10/02 rebuild and the owner missed them):
+    # after Gross Billed, after Costs, after Coverage %, between OH views
+    vrule = Side(style="thin", color="808080")
+    for col in [K(5), K(6), K(8)] + [cc_ for _o, _n, cc_ in view_cols[:-1]]:
+        for gr in range(cov_top + 1, rc + 1):
+            cur = ws.cell(row=gr, column=col).border
+            ws.cell(row=gr, column=col).border = Border(left=cur.left, right=vrule,
+                                                        top=cur.top, bottom=cur.bottom)
     for _o, nc, _c in view_cols:                    # Net Profit: the thick box
         _box_range(ws, hdr_row, rc, nc, nc)
-    _grid_lines(ws, hdr_row + 1, rc, K(1), last_c)
     _box_range(ws, cov_top, rc, K(1), last_c, thin)
     r = rc + 1
 
@@ -5186,8 +5195,9 @@ def build_sheet_draws(wb, proj, cust_info, wip_info, draw_rows, income_groups,
     for key, name, lbl, net, costs, held, billed, invs, dc, period in secs:
         # a REAL divider (the owner 2026-10-02: "there's still no real
         # dividers"): white space, a thick navy rule the width of the
-        # section (B..J), white space - then the draw's band
-        for cc in range(2, 11):
+        # sheet from column A (the owner 2026-10-02: "make the divider start
+        # from 1 column"), white space - then the draw's band
+        for cc in range(1, 11):
             ws.cell(row=r, column=cc).border = Border(bottom=Side(style="thick", color=NAVY))
         ws.row_dimensions[r].height = 18
         ws.row_dimensions[r + 1].height = 18
@@ -5205,12 +5215,21 @@ def build_sheet_draws(wb, proj, cust_info, wip_info, draw_rows, income_groups,
     # the coverage names link down to their sections
     # A link to ONE cell scrolls only until that cell shows - the band landed
     # at the BOTTOM of the window (the owner 2026-10-02: "it should take me
-    # to top of it"). A link to a tall range makes Excel bring the range's
-    # first row to the top.
+    # to top of it"). A link to a range TALLER than the window makes Excel
+    # bring the range's first row to the top. Collapsed detail rows take no
+    # height, so a fixed 60 rows was too short (Draw 5 still landed low):
+    # the range runs until 120 VISIBLE rows are covered.
+    def _tall_end(r0):
+        seen, rr = 0, r0
+        while seen < 120:
+            if not ws.row_dimensions[rr].hidden:
+                seen += 1
+            rr += 1
+        return rr - 1
     for key, row_ in link_rows.items():
         if key in starts:
             ws.cell(row=row_, column=K(1)).hyperlink = (
-                f"#'Draws'!B{starts[key]}:B{starts[key] + 60}")
+                f"#'Draws'!B{starts[key]}:B{_tall_end(starts[key])}")
 
     # ── fit the columns once, across every section ──
     hdrs = [h for hs, _rng in fit for h in hs]

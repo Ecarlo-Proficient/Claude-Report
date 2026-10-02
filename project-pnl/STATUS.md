@@ -7,6 +7,12 @@ manual close), RP (no draws — expenses → invoice → profit).
 ---
 
 ## DONE / FINALIZED
+- 2026-10-02 · **IN REVIEW, round 17** (owner, on a screenshot: "make the divider start from 1 column"; "i clicked
+  draw 5 and it put it there it should be on the top"; "you remove the vertical lines from the draw coverage on gross and
+  net with oh"). The divider rule now runs from column A. Coverage links reach 120 VISIBLE rows past the band (collapsed
+  detail rows take no height, so the fixed 60-row range was shorter than the window and Excel left the band low). The
+  coverage table's vertical rules are back (after Gross Billed, Costs, Coverage %, between OH views). Ties unchanged.
+  Copy: round 17.
 - 2026-10-02 · **IN REVIEW, round 16** (owner, on screenshots: "there's still no real dividers for the draws"; "when
   i click a draw in coverage it puts the location so the draw row is in the bottom, it should take me to top of it";
   new tab order; the ① Net Profit row "make it like this to bring eyes here"). Draws: between sections an 18-px gap, a
