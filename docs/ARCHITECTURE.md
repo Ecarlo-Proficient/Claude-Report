@@ -78,7 +78,7 @@ bill-tracker/          AP bills (FULL pull incl. subs) → Excel tracker + 3 the
 statement-reconciler/  vendor statement PDFs ↔ QBO open bills
 wip/                   ALL WIP tooling: wip_writer.py (shared engine) + CP/RP readers + close scripts
 ledger/                canonical project DB: schema.sql spine + loaders (WIP · Bill Tracker · costs · AR invoices · customers) + dashboard; Health tab folds in the CompanyHealth concrete-waste workbooks (Concrete_Waste_2026 RP / _MFD_2026, read-only, _concrete_waste 2026-09-17)
-project-pnl/           per-project P&L workbooks → OneDrive (+ completed_pnl Overview; bizdev_cut_view = the owner's local cut page)
+project-pnl/           per-project P&L workbooks → OneDrive (+ completed_pnl Overview, CP via cp_overview; bizdev_cut_view = the owner's local cut page)
 debt-schedule/         equipment debt workbook + loan_sync (writes beside itself)
 health-dashboard/      local company-health xlsx (private, chmod 600)
 qbo-export/            one-row-per-line-item txn export → OneDrive inbox
@@ -998,6 +998,15 @@ no QBO call. `shared/pnl_paths._archive_dirs()` is
 the shared notion of "filed": `find_pnl` looks inside those folders and project-pnl
 regenerates a filed job back into its archive folder — including the archive that
 travelled with a division into a Teams channel (below).
+
+**`project-pnl/cp_overview.py`** (read-only, no QBO, 10/02/2026) - the CP shape of that
+Overview, called by `completed_pnl.rebuild_overview("cp")` / `--division cp`: an Overview
+sheet of PROJECTION (contract, ETC from the P&L's ① block) against ACTUAL TO DATE (billed /
+cost from `read_source`, net after 10% OH: projected on the contract, to date on gross billed) and PROGRESS (% billed, % complete, coverage = billed / costs,
+costs awaiting the next draw), each job linked to its own sheet: the DRAW COVERAGE table
+(from the P&L's draw table) and every transaction by draw (`Draw Data`, `Draw N`,
+`Next Draw`, and the pre-period history from Transactions), every draw figure a SUM of its
+lines and the table's total tied to the job's billed / cost. MFD and RP keep `build_bundle`.
 
 **RETIRED 2026-09-03 — one job, one P&L.** A finished MFD job folder had grown THREE
 workbooks of the same numbers: `Project_PnL_<job>.xlsx`, `<job> Job Result.xlsx`

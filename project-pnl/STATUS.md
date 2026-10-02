@@ -7,6 +7,30 @@ manual close), RP (no draws — expenses → invoice → profit).
 ---
 
 ## DONE / FINALIZED
+- 2026-10-02 · **CP Overview = projections vs actuals, a draw-coverage sheet per job** (owner: "a cp overview to review
+  projects projections and their actuals with the draw coverage in separate sheets ... simple, good colour"; then "the
+  project sheets ... just give us the raw data with color well put"). New `cp_overview.py`, routed from
+  `completed_pnl._build` for CP only. Overview: Projection (blue) / Actual (green) / Progress (amber) column groups, a
+  KPI strip off the ALL row, coverage traffic-lit (under 100% red, to 111% amber = covers cost not 10% OH, past it
+  green), % complete red past 100%. Job sheet: no cards or notes - the coverage table (each draw links to its lines)
+  and the transactions by draw, newest first; bills outside the draw windows are matched by date (the draw sheets join
+  split bill #s), and a "difference to the P&L total" line appears only if the lines do not tie (none on the 17
+  jobs built 10/02). MFD / RP Overviews unchanged.
+  Same day (owner: "group the project vendor costs by vendor. remove the big kpi strip ... and you forgot net with
+  oh %"): KPI strip gone (the ALL row carries the totals); bills inside each draw grouped under a vendor subtotal
+  row; NET added with the rate in every label - projected net = contract - ETC - 10% of CONTRACT, net to date =
+  billed - costs - 10% of GROSS BILLED (the per-draw overhead of the P&L's draw table, 10/01), and each draw row on
+  the job sheet carries its own 10% OH and net. Net vs plan compares net % to projected net %.
+  Round 3 (owner: gross % + a divider between gross and net, $ formats, outline level 2 by default, a thick black box
+  per draw, "verify cp790 ... not reconciled right with the retainage"): projected gross % added; a navy rule splits
+  gross from net in both groups; money is `$` with a minus sign on negatives (Excel's accessibility check flagged
+  colour-only negatives and the light grey text - grey is now 4B5563); bill lines start folded (vendor totals show);
+  each draw sits in a thick black box whose bottom edge is the spacer row's top, so it closes when folded.
+  **Retainage not billed is spread, not parked** (`_spread_retainage`): the "Retainage not Billed" invoice / its
+  journal-entry retainage goes back onto the early NET-entered draws at net / 9; a remainder equal to a later draw's
+  own retainage line is a QBO double count and is NOT counted. CP790: 22,720.10 -> Draw 1 3,243.38 + Draw 2
+  14,074.90, 5,401.82 = Draw 3's retainage (not counted); billed 791,905.60, retainage to date 79,190.56 = 10% of
+  it exactly. The P&L workbook itself still carries 797,307.42 - a project_pnl_export fix, not this file's.
 - 2026-10-01 · **Draw coverage runs on GROSS billed (CP + MFD)** - the P&L sheet's draw table now shows Gross Billed,
   Retained and Net Billed side by side (the retainage columns were collapsed and hidden), and Gross Profit, Net Profit,
   Coverage %, Net Cov % and % Compl all run off gross. Overhead per draw = rate x the draw's gross billed (was

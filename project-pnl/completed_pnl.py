@@ -1200,6 +1200,18 @@ def load_division(found, div_dir: Path, year):
     return loaded, skipped
 
 
+def _build(division: str, loaded, out: Path, div: dict) -> None:
+    """CP gets the projections-vs-actuals Overview with a draw-coverage sheet
+    per job (`cp_overview.py`, the owner 2026-10-02); MFD and RP keep the
+    P&L-and-transactions bundle."""
+    if division == "cp":
+        import cp_overview                       # same tool folder; lazy - it imports us
+        cp_overview.build([(j, s, t, cp_overview.read_extra(p)) for j, s, t, p in loaded],
+                          out, div)
+        return
+    build_bundle([(j, s, t) for j, s, t, _ in loaded], out, div)
+
+
 def rebuild_overview(division: str, div_dir: "Path | None" = None,
                      year=_DEFAULT_YEAR, to_automations: bool = False) -> "dict | None":
     """Rebuild `<DIV> Overview.xlsx` from the workbooks on disk. Returns
@@ -1218,8 +1230,7 @@ def rebuild_overview(division: str, div_dir: "Path | None" = None,
     if not loaded:
         return None
     out = div_dir / f"{div['label']} Overview.xlsx"
-    build_bundle([(j, s, t) for j, s, t, _ in loaded], out,
-                 dict(div, scope=(f"{year} only" if year else "")))
+    _build(division, loaded, out, dict(div, scope=(f"{year} only" if year else "")))
     return {"path": out, "jobs": len(loaded),
             "billed": sum(t["billed"] for _, _, t, _ in loaded),
             "cost": sum(t["cost"] for _, _, t, _ in loaded)}
@@ -1266,8 +1277,7 @@ def main() -> int:
         print("✗  nothing to build")
         return 1
     out = div_dir / f"{div['label']} Overview.xlsx"
-    build_bundle([(j, s, t) for j, s, t, _ in loaded], out,
-                 dict(div, scope=(f"{year} only" if year else "")))
+    _build(a.division, loaded, out, dict(div, scope=(f"{year} only" if year else "")))
     tb = sum(t["billed"] for _, _, t, _ in loaded)
     tc = sum(t["cost"] for _, _, t, _ in loaded)
     print(f"  {len(loaded)} jobs   billed ${tb:,.0f}   cost ${tc:,.0f}   "
