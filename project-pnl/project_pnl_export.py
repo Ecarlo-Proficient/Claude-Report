@@ -3857,18 +3857,12 @@ def build_sheet_pl(
         # contract - never mixed (the owner 10/02/2026: "make sure you are getting
         # the oh% of the actual based on the current billing and not overstating
         # the oh amount with using the contract oh total. we still need that in
-        # the projections"). Supersedes the 09-03 contract basis above for CP; on
+        # the projections"). Supersedes the 09-03 contract basis above; on
         # CP790 the contract basis charged 97,701 against 79,191 on 791,906 billed.
-        # MFD keeps the contract basis until the owner rules on it.
-        if not show_mfd:
-            aoh_row = row(f"less: Overhead ({overhead_pct:.0f}% of billed to date)",
-                          formula=f"=-{oh}*B{bd_row}", indent=1, color="595959")
-        else:
-            aoh_row = row(f"less: Overhead ({overhead_pct:.0f}% of contract)"
-                          if not _no_projection else
-                          f"less: Overhead ({overhead_pct:.0f}% of total billed — "
-                          f"no contract on any WIP report)",
-                          formula=f"=-{oh}*{c_ref}", indent=1, color="595959")
+        # MFD follows (the owner 10/02: "yes the actual should also follow to
+        # mfd and rp, it only makes sense") - both its 10% and its 9% view.
+        aoh_row = row(f"less: Overhead ({overhead_pct:.0f}% of billed to date)",
+                      formula=f"=-{oh}*B{bd_row}", indent=1, color="595959")
         # "don't say real just put the net profit" (the owner 2026-09-10) - there
         # is one overhead rate now, so there is nothing for REAL to distinguish.
         rnp_row = row("Net Profit",
@@ -3880,8 +3874,8 @@ def build_sheet_pl(
         # MFD keeps its 9% view (it lived in the removed Snapshot): the same
         # gross profit less the MFD rate of the contract.
         if show_mfd:
-            mfd_oh_row = row(f"less: Overhead ({_alt:.0f}% of contract, MFD)",
-                             formula=f"=-{_aoh}*{c_ref}", indent=1, color="595959")
+            mfd_oh_row = row(f"less: Overhead ({_alt:.0f}% of billed to date, MFD)",
+                             formula=f"=-{_aoh}*B{bd_row}", indent=1, color="595959")
             mfd_np_row = row(f"Net Profit (MFD {_alt:.0f}%)",
                              formula=f"=B{gpa_row}+B{mfd_oh_row}", bold=True)
             row(f"Net Profit % (MFD {_alt:.0f}%)",
@@ -7172,7 +7166,7 @@ def build_sheet_job_rp(
     gp_vc, gp_pr = profit_line("Gross Profit", fill=GP_FILL)
     margin_vc, _ = profit_line("Margin % (of billed)", fill=GP_FILL)
     markup_vc, _ = profit_line("Markup % (of cost)", fill=GP_FILL)
-    ohx_vc, ohx_pr = profit_line(f"less: Overhead ({overhead_pct:.0f}% of contract)",
+    ohx_vc, ohx_pr = profit_line(f"less: Overhead ({overhead_pct:.0f}% of billed)",
                                  color="C0504D", fill=SECT_FILL)
     tnp_vc, tnp_pr = profit_line("TRUE NET PROFIT", hero=True)
     tnppct_vc, _ = profit_line("True Net Profit %", hero=True)
@@ -7332,7 +7326,9 @@ def build_sheet_job_rp(
     markup_vc.number_format = "0.0%"
     # % of the CONTRACT (the bid), never of billed (the user 2026-09-03); no
     # bid on file => total billed stands in, same as the CP/MFD template.
-    ohx_vc.value = f"=-{oh}*IF(B{bid_row}=0,B{billed_pr},B{bid_row})"
+    # the actual net takes overhead on what has been BILLED (owner 10/02/2026);
+    # the bid / contract basis belongs to the projection only
+    ohx_vc.value = f"=-{oh}*B{billed_pr}"
     ohx_vc.number_format = CURR_FMT
     tnp_vc.value = f"=B{gp_pr}+B{ohx_pr}"
     tnp_vc.number_format = CURR_FMT

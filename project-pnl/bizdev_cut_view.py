@@ -932,7 +932,9 @@ def main(argv=None) -> int:
         if removed:
             print(f"  {job}: {removed:,.2f} of a registered cut was inside job cost - taken out")
         src["rel"] = cp._link_target(src_path, out.parent)
-        jobs.append((job, src, cp._totals(src), src_path))
+        # the director's cut keeps its old basis (contract overhead, releases in
+        # billed) until the owner rules on it - completed_pnl._totals(legacy)
+        jobs.append((job, src, cp._totals(src, legacy=True), src_path))
     print("pulling the cut from QuickBooks")
     lines, _realm = pull_cut_lines(div["prefix"])
     res = build(jobs, lines, out, div)

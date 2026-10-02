@@ -445,8 +445,21 @@ def job_label(job: str, title: str) -> str:
     return f"{job} — {name}" if name else job
 
 
-def _totals(src: dict) -> dict:
-    billed = sum(i["gross"] + i["ret_billed"] for i in src["invoices"]) + src["not_billed"]
+def _totals(src: dict, legacy: bool = False) -> dict:
+    """Billed / cost / profit for one job.
+
+    Since 10/02/2026 (the owner): overhead on the ACTUALS is the rate x what has
+    been BILLED, never the contract's whole overhead ("make sure you are getting
+    the oh% of the actual based on the current billing ... we still need that in
+    the projections"), and a retainage RELEASE is not billing - it collects
+    retainage already in gross - except past the retainage booked (a job whose
+    early draws were entered net with nothing booked; CP697). `legacy=True`
+    keeps the old figures (contract overhead, releases added) for the director's
+    cut page until the owner rules on it."""
+    released = sum(i["ret_billed"] for i in src["invoices"])
+    booked = sum(i.get("withheld", 0.0) for i in src["invoices"]) + src["not_billed"]
+    billed = sum(i["gross"] for i in src["invoices"]) + src["not_billed"]
+    billed += released if legacy else max(0.0, released - booked)
     cogs = next((x["total"] for x in src["sections"] if x["name"].startswith("COST")), 0.0)
     opex = next((x["total"] for x in src["sections"] if x["name"].startswith("OPERATING")), 0.0)
     cost = cogs + opex
@@ -454,8 +467,9 @@ def _totals(src: dict) -> dict:
     # the contract on file, else what the job billed (a finished job's
     # contract IS its total billed - the user 2026-09-03)
     contract = float(src.get("contract") or 0.0) or billed
-    oh = contract * OVERHEAD_PCT
-    moh = contract * MFD_OVERHEAD_PCT
+    base = contract if legacy else billed
+    oh = base * OVERHEAD_PCT
+    moh = base * MFD_OVERHEAD_PCT
     return {"contract": contract, "billed": billed, "cogs": cogs, "opex": opex,
             "cost": cost,
             "gp": gp, "oh": oh, "net": gp - oh,
@@ -498,7 +512,7 @@ def _kpi_strip(ws, r: int, t: dict, spans, alt=None, refs=None) -> int:
     """Metrics ACROSS, exactly 4 cells wide so the strip lines up with the
     table beneath it instead of running off to column N (the user 2026-08-27).
     The OVERHEAD views get their own boxed block below. MFD carries TWO - the
-    company's 10% and its own 9%, both of the CONTRACT - and the MFD one must
+    company's 10% and its own 9%, both of what has been BILLED (owner 10/02) - and the MFD one must
     not get lost among the others; CP and RP have only the company view.
 
     `refs` = {"contract", "billed", "cost"} cell references. When given, every
@@ -540,8 +554,8 @@ def _kpi_strip(ws, r: int, t: dict, spans, alt=None, refs=None) -> int:
         ws.merge_cells(start_row=rr, start_column=lab, end_row=rr, end_column=spans[0][1])
         _t(ws, rr, lab, lbl, size=SZ, bold=(i == len(views) - 1 and len(views) > 1),
            color=INK, indent=1)
-        if refs:                    # overhead = rate x CONTRACT, net = GP - OH
-            oh_v = f"=-{refs['contract']}*{rate}"
+        if refs:                    # overhead = rate x BILLED (owner 10/02), net = GP - OH
+            oh_v = f"=-{refs['billed']}*{rate}"
             net_v = f"={gp_ref}+{_a(oh_c, rr)}"
             pct_v = f'=IF({bt_ref}=0,"",{_a(net_c, rr)}/{bt_ref})'
         else:
@@ -603,10 +617,10 @@ def build_bundle(jobs: List[tuple], out: Path, div: dict) -> None:
     cols = [("CONTRACT", "contract", MONEY, 18),
             ("BILLED", "billed", MONEY, 18), ("COST", "cost", MONEY, 18),
             ("GROSS PROFIT", "gp", MONEY, 18), ("GP %", "gpm", PCT, 11),
-            (f"{OVERHEAD_PCT:.0%} OH", "oh", MONEY, 16),
+            (f"{OVERHEAD_PCT:.0%} OH (of billed)", "oh", MONEY, 16),
             (f"FINAL NET  ({OVERHEAD_PCT:.0%} OH)", "net", MONEY, 20)]
     if alt:
-        cols += [(f"{MFD_OVERHEAD_PCT:.0%} OH", "moh", MONEY, 16),
+        cols += [(f"{MFD_OVERHEAD_PCT:.0%} OH (of billed)", "moh", MONEY, 16),
                  (alt["short"], "mnet", MONEY, 20)]
     L = {k: get_column_letter(C0 + 1 + i) for i, (_h, k, _f, _w) in enumerate(cols)}
 
@@ -626,12 +640,13 @@ def build_bundle(jobs: List[tuple], out: Path, div: dict) -> None:
             return f"={L['billed']}{rr}-{L['cost']}{rr}"
         if k == "gpm":
             return f'=IF({L["billed"]}{rr}=0,"",{L["gp"]}{rr}/{L["billed"]}{rr})'
+        # ACTUAL overhead = rate x BILLED (owner 10/02/2026), not the contract
         if k == "oh":
-            return f"={L['contract']}{rr}*{OVERHEAD_PCT}"
+            return f"={L['billed']}{rr}*{OVERHEAD_PCT}"
         if k == "net":
             return f"={L['gp']}{rr}-{L['oh']}{rr}"
         if k == "moh":
-            return f"={L['contract']}{rr}*{MFD_OVERHEAD_PCT}"
+            return f"={L['billed']}{rr}*{MFD_OVERHEAD_PCT}"
         if k == "mnet":
             return f"={L['gp']}{rr}-{L['moh']}{rr}"
         raise KeyError(k)
