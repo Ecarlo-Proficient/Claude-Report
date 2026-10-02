@@ -1,6 +1,6 @@
 # wip/ - how the WIP update works
 
-Last changed: 09/30/2026 - the **QuickBooks trust gate**: before any costs / billed number is
+Last changed: 10/02/2026 - the CP reader falls back to the signed pay app (shared.draws.read_pay_app, .xls included) when a job has no .xlsx draw workbook; CP831's Draw #2 change order (33,361) now reaches the WIP Review. Earlier: 09/30/2026 - the **QuickBooks trust gate**: before any costs / billed number is
 overwritten, `shared/qbo_trust` checks the job is booked cleanly in QuickBooks; a job that is not
 is HELD (the tab keeps its number, a new job is not added) until the reason is fixed.
 

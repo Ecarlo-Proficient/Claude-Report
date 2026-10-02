@@ -64,6 +64,7 @@ from shared.draws import (                                    # noqa: E402
     G702_SHEET,
     coerce_float as _coerce_float,
     find_latest_draw,
+    read_pay_app,
     read_draw_g702,
 )
 
@@ -502,7 +503,12 @@ def parse_draw(project_folder: Path, row: CpRow) -> bool:
     when there's no draw yet (caller falls back to the takeoff proposal)."""
     found = find_latest_draw(project_folder)
     if not found:
-        return False
+        # No .xlsx draw workbook - the draws may be old-style .xls pay apps
+        # (CP831, 10/02/2026: Draw #2 carried a 33,361 approved CO the WIP never
+        # saw, so the tab fell back to the proposal). The P&L reads the same
+        # signed pay app through shared.draws.read_pay_app, so the WIP and the
+        # P&L now agree on contract + COs.
+        return _parse_pay_app(project_folder, row)
     draw_num, draw_file = found
     row.draw_num = draw_num
     row.draw_path = draw_file
@@ -531,6 +537,31 @@ def parse_draw(project_folder: Path, row: CpRow) -> bool:
         f"Draw #{draw_num}: billed ${data['billed']:,.0f} (gross), "
         f"retainage ${(data['retainage'] or 0):,.0f}, "
         f"contract ${(data['contract_to_date'] or 0):,.0f}")
+    return True
+
+
+def _parse_pay_app(project_folder: Path, row: CpRow) -> bool:
+    """The signed pay app (.xls / .xlsx, G702 lines 1-4 + 6) when there is no
+    draw workbook. False when there is none, or it carries no contract."""
+    pa = read_pay_app(project_folder)
+    if not pa or pa.get("error") or pa.get("original_contract") is None \
+            or pa.get("completed_to_date") is None:
+        if pa.get("error"):
+            row.status_flags.append(f"Pay app {pa.get('source')}: {pa['error']}")
+        return False
+    path = Path(pa["path"])
+    row.draw_num = pa.get("draw_no")
+    row.draw_path = path
+    row.base_contract = pa["original_contract"]
+    row.co_revenue = pa.get("co_net") or 0.0
+    row.billed_to_date = pa["completed_to_date"]
+    row.retainage_held = (pa["completed_to_date"] - pa["earned_to_date"]
+                          if pa.get("earned_to_date") is not None else pa.get("retainage"))
+    src = f"Draw #{pa.get('draw_no')} pay app G702 · {path.name}"
+    for key in ("orig_contract", "approved_cos", "billed", "retainage"):
+        WR.set_source(row, key, src, path)
+    row.notes.append(f"Draw #{pa.get('draw_no')} pay app: billed ${pa['completed_to_date']:,.0f} (gross), "
+                     f"contract ${(pa.get('contract_to_date') or 0):,.0f}")
     return True
 
 
