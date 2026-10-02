@@ -1011,7 +1011,9 @@ lines and the table's total tied to the job's billed / cost. MFD and RP keep `bu
 billed (income lines, retainage releases out) and cost (lines coded to the project) from QBO and diffs the workbook;
 `one-offs/cp_overview_reconcile.py` (read-only, no QBO, no Excel) evaluates every formula with a built-in evaluator
 and proves the workbook adds up inside: totals = rows, each job sheet TOTAL = its draws = its lines, every derived
-figure recomputed, every link lands. **`project-pnl/cp_completed.py`** (read-only on QBO) - `Completed Projects/CP Completed <year>.xlsx`: the
+figure recomputed, every link lands. `one-offs/cp_bills_to_fix.py` (read-only on QBO) lists the bills to fix so
+every CP job carries its own cost (no project but the memo names the job / on the job's class / coded to another
+job while the memo names only this one) -> `CompanyHealth/Analysis/CP bills to fix (date)/`. **`project-pnl/cp_completed.py`** (read-only on QBO) - `Completed Projects/CP Completed <year>.xlsx`: the
 year's finished CP jobs through the same builder with an actuals-only column set, each sorted by what QBO still has
 open (paid in full / retainage owed / check); reads the jobs' `--legacy` P&Ls plus open balances straight from QBO.
 
