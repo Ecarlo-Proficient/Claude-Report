@@ -31,6 +31,26 @@ manual close), RP (no draws — expenses → invoice → profit).
   own retainage line is a QBO double count and is NOT counted. CP790: 22,720.10 -> Draw 1 3,243.38 + Draw 2
   14,074.90, 5,401.82 = Draw 3's retainage (not counted); billed 791,905.60, retainage to date 79,190.56 = 10% of
   it exactly. The P&L workbook itself still carries 797,307.42 - a project_pnl_export fix, not this file's.
+- 2026-10-02 · **Layout round 2 (the owner's 7 items on the CP790 review copy)** - ④ shows child account names only
+  (full name kept when two parents share one); the P&L label column is sized to its widest visible label;
+  draw-coverage Net Profit in a thick black box with a green/red header off the TOTAL; Transactions section bars
+  merged + centered and long labels merged instead of wrapped (`_merge_label_rows`); Budget vs Actual headers
+  Cost code / Budget / Actuals / Variance / Used % with Budget and Actuals each boxed; Draw Data is the last tab;
+  draw sheets boxed B..J with row rules, bill # under its vendor, amount beside each group, TOTAL row per costs
+  section, no "in this draw" filler on CP, tighter tiles. The not-billed retainage header now says it is placed back
+  on the draws (it is in income).
+- 2026-10-02 · **Layout pass (the owner's picks from four mocked variations)** - P&L sheet: sections number themselves
+  and are merged + centered; ① Projections / WIP, ② Actuals - QBO to date (its own GREEN bar), ③ Progress,
+  ④ P&L by account, ⑤ Billing & retainage; the ③ Snapshot is gone (MFD keeps its 9% net profit inside Actuals). Draw
+  coverage: Net Billed | Retained | Gross Billed | Costs, coloured group bands, Gross Profit / Net Profit highlighted on
+  the TOTAL row only. Labor/Concrete ledger: no VENDOR column (the vendor is the group row; the PM-mark read-back takes
+  it from there), AMOUNT under ACTUAL, bare cost codes. Draw pages: tiles coloured by section, green invoices band,
+  orange costs band with light grey sub-headers, by cost type open and the other cuts folded. Label wrap now
+  estimates rendered width (`_text_units`) - the blank line under Billed to Date is gone.
+- 2026-10-02 · **"Retainage not billed" invoices go back on their draws** (`_spread_not_billed_retainage`): placed
+  oldest-first on the draws entered net, at net/9 each; a leftover equal to a retainage line already on another
+  invoice is a duplicate - flagged on the Transactions sheet and in ⑤ as "⚑ QuickBooks fix pending", never counted;
+  any other leftover still counts. P&L and draw table now agree. `tests/test_pnl_retainage_spread.py`.
 - 2026-10-01 · **Draw coverage runs on GROSS billed (CP + MFD)** - the P&L sheet's draw table now shows Gross Billed,
   Retained and Net Billed side by side (the retainage columns were collapsed and hidden), and Gross Profit, Net Profit,
   Coverage %, Net Cov % and % Compl all run off gross. Overhead per draw = rate x the draw's gross billed (was
@@ -1181,6 +1201,10 @@ manual close), RP (no draws — expenses → invoice → profit).
 - CO costs are still a manual yellow input (no CO cost template in QBO yet).
 
 ## TO DO
+
+- **CP790 retainage, back end (the owner 2026-10-02):** the owner is correcting the duplicated retainage in
+  QuickBooks. After that, regenerate CP790 and confirm the "⚑ QuickBooks fix pending" row is gone and Billed to Date
+  did not move. If QBO is fixed by shrinking the not-billed invoice, the spread places it all and nothing changes.
 
 - Extend the Labor/Concrete sheets to RP and MFD if the PMs want them there.
 - Roll the G702 contract source into the WIP readers so the master and the

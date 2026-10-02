@@ -80,7 +80,7 @@ try:
     from openpyxl import Workbook
     from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
     from openpyxl.utils import get_column_letter, column_index_from_string
-    from openpyxl.formatting.rule import CellIsRule
+    from openpyxl.formatting.rule import CellIsRule, FormulaRule
     # NOTE: no rich-text imports on purpose — multi-run inline strings are what
     # make Mac Excel offer to "repair" the file (shared/xlsx_verify.py). Style
     # the cell, never runs inside it.
@@ -488,6 +488,36 @@ def _cost_code_sort_key(name):
                     _JOB_PREFIX_ORDER.get((pfx or "").upper(), 99),
                     _COST_NUM_ORDER.get(num, 99))
     return (1, 99, 99, str(name).lower())
+
+
+_THICK_SIDE = Side(style="medium", color="000000")
+_SECTION_SIDE = Side(style="medium", color="404040")
+_GRID_SIDE = Side(style="thin", color="D9D9D9")
+
+
+def _grid_lines(ws, r0: int, r1: int, c0: int, c1: int) -> None:
+    """A light rule under every row of a table, so a long listing reads as
+    rows instead of floating text. Keeps any heavier bottom already there."""
+    for rr in range(r0, r1 + 1):
+        for cc in range(c0, c1 + 1):
+            cell = ws.cell(row=rr, column=cc)
+            b = cell.border
+            if b.bottom is None or b.bottom.style is None:
+                cell.border = Border(left=b.left, right=b.right, top=b.top, bottom=_GRID_SIDE)
+
+
+def _box_range(ws, r0: int, r1: int, c0: int, c1: int, side: Side = _THICK_SIDE) -> None:
+    """Draw a box around rows r0..r1 x cols c0..c1, keeping each cell's other
+    borders. One helper for every boxed block (BvA columns, the draw table's
+    Net Profit, the draw sheets' sections)."""
+    for rr in range(r0, r1 + 1):
+        for cc in range(c0, c1 + 1):
+            cell = ws.cell(row=rr, column=cc)
+            b = cell.border
+            cell.border = Border(left=side if cc == c0 else b.left,
+                                 right=side if cc == c1 else b.right,
+                                 top=side if rr == r0 else b.top,
+                                 bottom=side if rr == r1 else b.bottom)
 
 
 def _cost_code_label(name):
@@ -1174,7 +1204,8 @@ def group_invoices_by_draw(invoices: List[dict],
         if is_ret_inv:
             if NOT_BILLED_RE.search(full_text):       # NOT BILLED → excluded
                 retainage_block["invoices"].append({
-                    "doc_num": _xml_clean(ref), "date": inv.get("TxnDate", ""),
+                    "doc_num": _xml_clean(ref), "id": inv.get("Id", ""),
+                    "date": inv.get("TxnDate", ""),
                     "memo": _xml_clean(pn), "amount": total,
                     "lines": line_items or [{"desc": "Retainage", "amt": total}]})
                 retainage_block["total"] += total
@@ -1241,7 +1272,69 @@ def group_invoices_by_draw(invoices: List[dict],
         sorted_groups["__untagged"] = untagged
     if retainage_block["invoices"]:
         sorted_groups["__retainage"] = retainage_block
+        _spread_not_billed_retainage(sorted_groups)
     return sorted_groups
+
+
+# A "Retainage not billed" invoice is the pay app's TOTAL RETAINAGE TO DATE for
+# the early draws that were entered in QBO at the NET amount the GC paid (no
+# retainage line). CP790 #33659 (the owner 2026-10-02): 22,720.10 = the Draw 3
+# G702 line 5 = 10% of Draws 1-3, where Draws 1-2 were entered net and Draw 3
+# already carried its own 5,401.82 line - so the P&L counted 5,401.82 twice and
+# the draw table never saw the 17,318.28 that belongs to Draws 1-2.
+NOT_BILLED_RATE = 0.10        # cap per net-entered invoice: net x 10/90
+
+
+def _spread_not_billed_retainage(groups: Dict[str, dict]) -> None:
+    """Put the not-billed retainage back on the draws it was held from.
+
+    Oldest net-entered invoice first (no retainage line, positive work), each
+    taking at most net x rate/(1-rate), until the pool runs out. Its gross and
+    retainage grow by that slice; its net (what the GC paid) does not move. A
+    leftover that equals (within $1) a retainage line already on one invoice is
+    a DUPLICATE - counted twice in QBO - and is flagged, never counted. Any
+    other leftover keeps counting as before ("not tied to a draw").
+    Mutates `groups`; the __retainage block carries placed / duplicate / total."""
+    blk = groups.get("__retainage")
+    if not blk:
+        return
+    pool = round(sum(float(i.get("amount", 0) or 0) for i in blk["invoices"]), 2)
+    blk["pool"] = pool
+    blk["placed"], blk["placed_on"] = 0.0, []
+    blk["duplicate"], blk["dup_doc"] = 0.0, ""
+    if pool <= 0.005:
+        return
+    cands, lined = [], []
+    for k, g in groups.items():
+        if k.startswith("__"):
+            continue
+        for inv in g["invoices"]:
+            if float(inv.get("retainage", 0) or 0) > 0.005:
+                lined.append(inv)
+            elif float(inv.get("gross", 0) or 0) > 0.005 and float(inv.get("amount", 0) or 0) > 0.005:
+                cands.append((g, inv))
+    cands.sort(key=lambda gi: _parse_date(gi[1].get("date", "")) or dt.date.min)
+    left = pool
+    _src = ", ".join("#" + str(i.get("doc_num", "")) for i in blk["invoices"])
+    for g, inv in cands:
+        if left <= 0.005:
+            break
+        add = round(min(left, float(inv["amount"]) * NOT_BILLED_RATE / (1 - NOT_BILLED_RATE)), 2)
+        inv["gross"] = round(inv["gross"] + add, 2)
+        inv["retainage"] = round(inv["retainage"] + add, 2)
+        inv["ret_from"] = _src
+        g["gross_income"] += add
+        g["retainage_held"] += add
+        left = round(left - add, 2)
+        blk["placed"] = round(blk["placed"] + add, 2)
+        blk["placed_on"].append(str(inv.get("doc_num", "")))
+    if left > 0.005:
+        for inv in lined:
+            if abs(float(inv["retainage"]) - left) <= 1.0:
+                blk["duplicate"], blk["dup_doc"] = left, str(inv.get("doc_num", ""))
+                left = 0.0
+                break
+    blk["total"] = round(left, 2)          # what still counts, unplaced
 
 
 # ────────────────────────── retainage from Balance Sheet ──────────────────────────
@@ -1510,11 +1603,19 @@ def read_back_ledger_marks(path: Path,
         if not cols:
             continue
         marks: Dict[tuple, str] = {}
-        for row in ws.iter_rows(min_col=1, max_col=max(cols.values())):
+        _grp_vendor = ""            # no VENDOR column since 2026-10-02: the group row names it
+        for row in ws.iter_rows(min_col=1, max_col=max(v for v in cols.values() if v)):
             a = row[cols["qbo"] - 1]
             b = row[cols["date"] - 1]
-            c = row[cols["vend"] - 1]
             f = row[cols["amt"] - 1]
+            if cols["vend"]:
+                _vend = str(row[cols["vend"] - 1].value or "").strip()
+            else:
+                _gm = (re.match(r"^(.*?)\s+\(\d+\)\s*$", str(a.value or ""))
+                       if a.value and not b.value else None)
+                if _gm:
+                    _grp_vendor = _gm.group(1).strip()
+                _vend = _grp_vendor
             # Only LEDGER BILL rows: the DATE cell must be an actual date.
             # Scoreboard code rows carry band fills by design — without this
             # check they'd read as phantom marks.
@@ -1538,7 +1639,7 @@ def read_back_ledger_marks(path: Path,
             except (TypeError, ValueError):
                 continue
             key = (_MARK_SUFFIX_RE.sub("", str(a.value)).strip(),
-                   str(b.value).strip(), str(c.value or "").strip(), amt)
+                   str(b.value).strip(), _vend, amt)
             marks[key] = argb
         if marks:
             out[nm] = marks
@@ -1757,6 +1858,24 @@ def _apply_zoom(wb: Workbook, zoom: int = 110) -> None:
         ws.sheet_view.zoomScaleNormal = zoom
 
 
+_NARROW_CH = set(" ilIjt.,;:'|!()[]-/·")
+_WIDE_CH = set("mwMW@%")
+_SEMI_CH = set("frJ")
+
+
+def _text_units(s: str, size: float = BASE_SIZE) -> float:
+    """Rendered width of `s` in Excel column units, estimated per character.
+    Calibri is proportional: a space or a bracket is half a unit, a capital
+    more than one. Counting characters wrapped labels that fit (the owner
+    2026-10-02: a blank line under "Billed to Date" that was only Excel
+    reserving a second line for a label that never needed one)."""
+    u = 0.0
+    for ch in s:
+        u += (0.5 if ch in _NARROW_CH else 1.45 if ch in _WIDE_CH
+              else 0.65 if ch in _SEMI_CH else 1.15 if ch.isupper() else 1.0)
+    return u * size / 11.0
+
+
 def _wrap_long_labels(wb: Workbook, col: int = 1, slack: float = 1.0,
                       min_width: float = 20.0) -> None:
     """Wrap a label instead of widening the column for it.
@@ -1787,7 +1906,8 @@ def _wrap_long_labels(wb: Workbook, col: int = 1, slack: float = 1.0,
         limit = d.width - slack
         for row in ws.iter_rows(min_col=col, max_col=col):
             c = row[0]
-            if c.row == 1 or not isinstance(c.value, str) or len(c.value) <= limit:
+            if (c.row == 1 or not isinstance(c.value, str)
+                    or _text_units(c.value, (c.font and c.font.sz) or BASE_SIZE) <= limit):
                 continue
             if (c.row, c.column) in merged or ws.row_dimensions[c.row].height:
                 continue
@@ -2020,6 +2140,23 @@ def gather_transactions(
                                "memo": inv.get("memo", ""), "billed": 0.0,
                                "withheld": 0.0, "billed_ret": 0.0,
                                "not_billed_ret": amt})
+            # the spread (2026-10-02, _spread_not_billed_retainage): what moved
+            # onto the draws and what is a duplicate come OFF this block, so
+            # its total is only the retainage still not tied to a draw.
+            if grp.get("placed"):
+                income.append({"doc": "", "id": "", "date": "",
+                               "memo": "less: placed on #" + ", #".join(grp["placed_on"])
+                                       + " (entered net)",
+                               "billed": 0.0, "withheld": 0.0, "billed_ret": 0.0,
+                               "not_billed_ret": -grp["placed"]})
+            if grp.get("duplicate"):
+                income.append({"doc": "", "id": "", "date": "",
+                               "memo": f"less: ⚑ duplicate of #{grp['dup_doc']} retainage",
+                               "billed": 0.0, "withheld": 0.0, "billed_ret": 0.0,
+                               "not_billed_ret": -grp["duplicate"], "dup": True,
+                               "dup_doc": grp["dup_doc"],
+                               "src": ", ".join("#" + str(i.get("doc_num", ""))
+                                                for i in grp.get("invoices", []))})
             continue
         recs = []
         for inv in grp.get("invoices", []):
@@ -2582,26 +2719,12 @@ INCOME_FILL = PatternFill("solid", fgColor="C6E0B4")   # green  — income
 COGS_FILL = PatternFill("solid", fgColor="FCE4D6")     # tan    — COGS
 GP_FILL = PatternFill("solid", fgColor="FFF2CC")       # yellow — gross profit
 SECT_FILL = PatternFill("solid", fgColor="E7E6E6")     # gray   — other sections
-
-
-def _cov(net: float, costs: float, overhead_pct: float):
-    """Return coverage / profit metrics for a draw. `net` is the draw's GROSS
-    billed (retainage included) since 2026-10-01 - the name is historical.
-      gross_profit   = Billed − Costs
-      cost_pct       = Billed ÷ Costs              (Coverage %)
-      net_profit     = Billed − Costs − overhead   (overhead = oh% × Billed)
-      oh_pct         = Billed ÷ break-even         (Net Coverage %); break-even
-                       = Costs ÷ (1 − oh%); net_profit ≥ 0 ⟺ oh_pct ≥ 100%.
-    """
-    needed = costs / (1 - overhead_pct / 100.0) if (costs and overhead_pct < 100) else costs
-    return {
-        "cost_dollar": net - costs,                       # Gross Profit
-        "cost_pct": (net / costs) if costs else None,     # Coverage %
-        "net_profit": net * (1 - overhead_pct / 100.0) - costs,  # Net Profit
-        "oh_dollar": net - needed,
-        "oh_pct": (net / needed) if needed else None,     # Net Coverage %
-        "needed": needed,
-    }
+# the Actuals bar on the P&L sheet - green so QBO-to-date reads apart from the
+# navy Projections above it (the owner 2026-10-02)
+ACTUALS_FILL = PatternFill("solid", fgColor="2E7D32")
+# the Gross Billed column of the draw coverage table, and its total
+GROSS_COL_FILL = PatternFill("solid", fgColor="E2EFDA")
+GROSS_TOT_FILL = PatternFill("solid", fgColor="C6E0B4")
 
 
 def build_sheet_transactions(
@@ -2772,7 +2895,10 @@ def build_sheet_transactions(
     # Retainage Receivable, not a draw (the user 2026-07-02). Rolled into Total
     # Retainage on the P&L via refs["not_billed_ret"].
     if nb_rows:
-        cell(r, 1, "RETAINAGE MOVED TO RECEIVABLE  (not billed — excluded from income)",
+        # Since 2026-10-02 this money IS in income: it is placed back on the
+        # draws it was held from (_spread_not_billed_retainage). Only a leftover
+        # no draw explains still counts from here, and a duplicate never counts.
+        cell(r, 1, "RETAINAGE NOT BILLED  (placed back on the draws it was held from)",
              bold=True, size=SZ, color="FFFFFF", fill=SECTION_HDR)
         for c in range(2, 8):
             ws.cell(row=r, column=c).fill = SECTION_HDR
@@ -2925,8 +3051,37 @@ def build_sheet_transactions(
     refs["cogs_accts"] = list(tx.get("cogs_accounts", {}).keys())
     refs["exp_accts"] = list(tx.get("exp_accounts", {}).keys())
 
+    _merge_label_rows(ws, 8)
     _setup_print(ws, 6)
     return refs
+
+
+def _merge_label_rows(ws, last_col: int, first_row: int = 3) -> None:
+    """Give a long label the empty cells beside it instead of wrapping it into
+    a tall row (the owner 2026-10-02, the Transactions sheet: "wasted space on
+    this row, you can literally merge and center"). A section BAR (a filled
+    row with nothing else on it) merges across the table and centers; any
+    other label too wide for its column merges left-aligned up to the first
+    cell that holds something. Runs before the gutter insert and before the
+    wrap pass, which leaves merged cells alone."""
+    from openpyxl.utils import get_column_letter
+    w1 = ws.column_dimensions[get_column_letter(1)].width or 13.0
+    taken = {rc for m in ws.merged_cells.ranges for rc in m.cells}
+    for r in range(first_row, ws.max_row + 1):
+        c = ws.cell(row=r, column=1)
+        if not isinstance(c.value, str) or (r, 1) in taken:
+            continue
+        nxt = next((j for j in range(2, last_col + 1)
+                    if ws.cell(row=r, column=j).value not in (None, "")), last_col + 1)
+        is_bar = (nxt > last_col and c.fill is not None and c.fill.fill_type == "solid"
+                  and c.font is not None and c.font.color is not None
+                  and str(c.font.color.rgb).upper().endswith("FFFFFF"))
+        if is_bar:
+            ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=last_col)
+            c.alignment = Alignment(horizontal="center", vertical="center")
+        elif nxt - 1 > 1 and _text_units(c.value, (c.font and c.font.sz) or BASE_SIZE) > w1 - 1:
+            ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=nxt - 1)
+            c.alignment = Alignment(horizontal="left", vertical="center", indent=c.alignment.indent)
 
 
 def build_sheet_by_account(wb: Workbook, proj: str, cust_info: dict,
@@ -3384,7 +3539,6 @@ def build_sheet_pl(
     #  (MFD vs Company) → ④ Billing & Retainage. Draw coverage table right.
     # ════════════════════════════════════════════════════════════════════
     ws.column_dimensions["C"].width = 3   # thin gap before the coverage table
-    grp_fill = PatternFill("solid", fgColor="DDEBF7")
     YEL = PatternFill("solid", fgColor="FFE699")
     _THK = Side(style="medium", color=NAVY)
     # MFD gets the dual overhead view (MFD % on costs + Company % on revenue).
@@ -3420,12 +3574,21 @@ def build_sheet_pl(
                     top=_THK if rr == top_row else cur.top,
                     bottom=_THK if rr == bot_row else cur.bottom)
 
-    def sect_title(txt):
+    # Sections number themselves in the order they are written, so a finished
+    # job with no projection still reads ① ② ③ (the owner 2026-10-02).
+    _sec_nums = iter("①②③④⑤⑥⑦⑧")
+
+    def sect_title(txt, fill=None):
+        """A section bar, MERGED and CENTERED across label + value (the owner
+        2026-10-02). `fill` defaults to navy; Actuals passes green."""
         nonlocal r
-        c = _write_cell(ws, r, 1, txt)
+        f = fill or hero_fill
+        c = _write_cell(ws, r, 1, f"{next(_sec_nums)} {txt}")
         c.font = Font(bold=True, size=BASE_SIZE + 1, color="FFFFFF")
-        c.fill = hero_fill
-        ws.cell(row=r, column=2).fill = hero_fill
+        c.alignment = Alignment(horizontal="center", vertical="center")
+        c.fill = f
+        ws.cell(row=r, column=2).fill = f
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=2)
         used = r
         r += 1
         return used
@@ -3438,9 +3601,15 @@ def build_sheet_pl(
         nonlocal r
         hdr_row = row(header, None, bold=True, color=NAVY, fill=fill)
         rows_ = []
+        # THE CHILD ACCOUNT ONLY (the owner 2026-10-02: "instead of
+        # Subcontractors Expense: Labor just Labor") - unless two parents
+        # share a child name, where the full name is the only way to tell them
+        # apart. The SUMIF still matches the full name.
+        _leaf = {nm: str(nm).split(":")[-1].strip() for nm in names}
+        _dupe = {v for v in _leaf.values() if list(_leaf.values()).count(v) > 1}
         for nm in names:
             esc = str(nm).replace('"', '""')
-            _rr = row(nm, formula=f'=SUMIF({tx_refs["acct_col"]},"{esc}",{tx_refs["amt_col"]})', indent=1)
+            _rr = row(_leaf[nm] if _leaf[nm] not in _dupe else nm, formula=f'=SUMIF({tx_refs["acct_col"]},"{esc}",{tx_refs["amt_col"]})', indent=1)
             rows_.append(_rr)
             # click the account name → the lines that add up to it
             _a = (acct_anchors or {}).get(nm)
@@ -3455,72 +3624,11 @@ def build_sheet_pl(
         tc.fill = fill
         return hdr_row
 
-    def snapshot(title, basis_label, inc_expr, gp_expr, costs, opex, ctr):
-        nonlocal r
-        # SINGLE COLUMN (the user 2026-06-22): shared facts once, then MFD block, then
-        # COMPANY block STACKED below it — no separate column C (kills the empty
-        # space). Only Overhead / Net Profit / Profit % differ between the two.
-        t0 = sect_title(title)
-        _write_cell(ws, r, 1, basis_label).font = Font(italic=True, size=BASE_SIZE - 2, color="595959")
-        r += 1
-
-        def line(label, f, pct=False, hero=False, fill=None):
-            nonlocal r
-            lc = _write_cell(ws, r, 1, label)
-            b = ws.cell(row=r, column=2, value=f)
-            b.number_format = PCT_FMT if pct else CURR_FMT
-            if hero:
-                lc.font = Font(bold=True, size=BASE_SIZE, color="FFFFFF"); lc.fill = hero_fill
-                b.font = Font(bold=True, size=BASE_SIZE, color="C6EFCE"); b.fill = hero_fill
-            else:
-                lc.font = Font(bold=True, size=BASE_SIZE)
-                b.font = Font(bold=True, size=BASE_SIZE)
-                if fill is not None:
-                    lc.fill = fill; b.fill = fill
-            b.alignment = Alignment(horizontal="right")
-            r += 1
-
-        def subhdr(txt):
-            nonlocal r
-            hc = _write_cell(ws, r, 1, txt)
-            hc.font = Font(bold=True, size=BASE_SIZE, color=NAVY)
-            ws.cell(row=r, column=1).fill = grp_fill
-            ws.cell(row=r, column=2).fill = grp_fill
-            r += 1
-
-        line("Income", f"={inc_expr}")
-        line("Costs (COGS)", f"={costs}")
-        line("Gross Profit", f"={gp_expr}")
-        line("Markup on costs %", f'=IF({costs}=0,"",({gp_expr})/{costs})', pct=True)
-        # OVERHEAD IS A % OF THE CONTRACT (the user 2026-09-03: "it's contract
-        # 10%" / "take 10% or 9% of the total contract") - never of the income
-        # billed so far and never of costs. `ctr` is the Revised Contract
-        # cell, which itself stands in total billed on a job with no contract
-        # on file (a finished job's contract IS what it billed). Both views
-        # share the base; only the rate differs.
-        co_np = f"({gp_expr})-{opex}-{oh}*{ctr}"
-        if show_mfd:
-            mfd_np = f"({gp_expr})-{_aoh}*{ctr}"
-            subhdr(f"MFD — {_alt:.0f}% of contract")
-            line(f"less: Overhead ({_alt:.0f}% of contract)", f"=-{_aoh}*{ctr}")
-            line("NET PROFIT", f"={mfd_np}", hero=True)
-            line("Profit %", f'=IF(({inc_expr})=0,"",({mfd_np})/({inc_expr}))', pct=True, hero=True)
-            subhdr(f"COMPANY — {overhead_pct:.0f}% of contract")
-        # % spelled out on the row itself (the user 2026-07-16: "so we can see
-        # what % we're working with")
-        line(f"less: Overhead ({overhead_pct:.0f}% of contract + direct opex)",
-             f"=-{opex}-{oh}*{ctr}")
-        line("NET PROFIT", f"={co_np}", hero=True)
-        line("Profit %", f'=IF(({inc_expr})=0,"",({co_np})/({inc_expr}))', pct=True, hero=True)
-        box(t0, r - 1)
-        r += 1
-
     if not tx_refs:
         income_row = row("Income", income, bold=True, fill=INCOME_FILL)
         _qbo_link(income_row, _cust_url)
         wip_contract_cell = None
     else:
-        Binc = f"{tx_refs['billed']}-{tx_refs['withheld']}+{tx_refs['billed_ret']}"
         Wcell = tx_refs['withheld']
         Bgross = f"{tx_refs['billed']}+{tx_refs['billed_ret']}"
         # retainage moved to receivable by JE — not billed income, but retainage
@@ -3598,7 +3706,7 @@ def build_sheet_pl(
             if _no_projection:
                 return None
             if wtop is None:
-                wtop = sect_title("① WIP / PROJECTION   (yellow = your input)")
+                wtop = sect_title("PROJECTIONS / WIP   (yellow = your input)")
             return row(*a, **k)
 
         def _mismatch(typed, wip):
@@ -3616,7 +3724,7 @@ def build_sheet_pl(
         elif _mismatch(_typed_ctr, _wip_ctr):
             _prow(f"⚑ typed — differs from WIP master (${_wip_ctr:,.0f})", None,
                   indent=1, size=BASE_SIZE - 2, color="9C5700")
-        etc_in = _prow("Original ETC (Estimated Total Cost)", _etc, bold=True)
+        etc_in = _prow("Original ETC (est. total cost)", _etc, bold=True)
         if _mismatch(_typed_etc, _wip_etc):
             _prow(f"⚑ typed — differs from WIP master (${_wip_etc:,.0f})", None,
                   indent=1, size=BASE_SIZE - 2, color="9C5700")
@@ -3692,9 +3800,14 @@ def build_sheet_pl(
                 fmt=PCT_FMT, indent=1, bold=True, color=GREEN)
 
         # ── ACTUALS — QBO to date: billed first, then costs, then overhead
-        #    sitting on top of the REAL profit ($ and %) — the user 2026-07-16 ──
-        row("ACTUALS — QBO to date", None, bold=True, color="FFFFFF",
-            fill=hero_fill)
+        #    sitting on top of the REAL profit ($ and %) — the user 2026-07-16.
+        #    Its OWN numbered section with a GREEN bar since 2026-10-02 (the
+        #    owner: "make it green header to show a diff between projections
+        #    and actuals"); the old ③ Snapshot repeated it and is gone. ──
+        if wtop is not None:
+            box(wtop, r - 1)
+            r += 1
+        atop = sect_title("ACTUALS - QBO TO DATE", fill=ACTUALS_FILL)
         bd_row = row("Billed to Date (incl. retainage)", formula=f"={Btot}", bold=True)
         _qbo_link(bd_row, _cust_url)
         ctd_row = row("Costs to Date", None)
@@ -3736,6 +3849,18 @@ def build_sheet_pl(
         row("Net Profit %",
             formula=f'=IF(B{bd_row}=0,"",B{rnp_row}/B{bd_row})',
             fmt=PCT_FMT, bold=True)
+        # MFD keeps its 9% view (it lived in the removed Snapshot): the same
+        # gross profit less the MFD rate of the contract.
+        if show_mfd:
+            mfd_oh_row = row(f"less: Overhead ({_alt:.0f}% of contract, MFD)",
+                             formula=f"=-{_aoh}*{c_ref}", indent=1, color="595959")
+            mfd_np_row = row(f"Net Profit (MFD {_alt:.0f}%)",
+                             formula=f"=B{gpa_row}+B{mfd_oh_row}", bold=True)
+            row(f"Net Profit % (MFD {_alt:.0f}%)",
+                formula=f'=IF(B{bd_row}=0,"",B{mfd_np_row}/B{bd_row})',
+                fmt=PCT_FMT, bold=True)
+        box(atop, r - 1)
+        r += 1
         # Two progress metrics (the user 2026-07-16): cost-based drives Earned
         # Revenue and reads >100% when costs blow past ETC (red = over budget,
         # never capped — the overage IS the signal); % Billed is billing
@@ -3743,7 +3868,9 @@ def build_sheet_pl(
         # These five are all measured AGAINST the contract and the ETC, so on
         # a job that has neither they would read a trivial 100% / 0 while
         # implying a contract exists (the owner 2026-09-04: just the actuals).
+        ptop = None
         if not _no_projection:
+            ptop = sect_title("PROGRESS")
             pc_row = row("% Complete (cost ÷ ETC)", None, fmt=PCT_FMT, bold=True, color=NAVY)
             row("% Billed (billed ÷ contract)",
                 formula=f'=IF({c_ref}=0,"",({Btot})/{c_ref})',
@@ -3757,8 +3884,8 @@ def build_sheet_pl(
         if wip_closed:
             row("closed per WIP master — % complete forced to 100%", None,
                 size=BASE_SIZE - 2, color="595959")
-        if wtop is not None:
-            box(wtop, r - 1)
+        if ptop is not None:
+            box(ptop, r - 1)
         # over-budget flag: cost-based % complete turns red past 100%
         if pc_row:
             ws.conditional_formatting.add(
@@ -3776,7 +3903,7 @@ def build_sheet_pl(
         #    user 2026-07-16): income = gross work billed + retainage billed
         #    back + retainage receivable (JE) = the same Btot as ① Billed to
         #    Date. The realized/net view lives in ③.
-        ftop = sect_title("② PROFIT & LOSS TOTALS")
+        ftop = sect_title("P&L BY ACCOUNT")
         income_row = row("Income (incl. retainage)", formula=f"={Btot}",
                          bold=True, size=BASE_SIZE + 1, color="375623", fill=INCOME_FILL)
         _qbo_link(income_row, _cust_url)
@@ -3798,6 +3925,8 @@ def build_sheet_pl(
             _raw = DRAW_PERIOD_RE.sub("", str(iv.get("memo") or ""))
             _raw = re.sub(r"\s+", " ", _raw).strip(" -–·")
             _memo = _clean_cost_text(_raw, _project_name_words(cust_info.get("name", "")))
+            if not _doc:                 # a spread / duplicate line - no invoice of its own
+                return _memo
             return f"#{_doc} — {_memo}" if _memo else f"#{_doc}"
 
         def _inv_link(rr, iv):
@@ -3883,36 +4012,41 @@ def build_sheet_pl(
         if rev_etc_row:
             ws.cell(row=rev_etc_row, column=2).value = f"=B{etc_in}+B{coc_row}"
 
-        costs = f"B{cogs_row}"
-        opex = f"B{exp_row}"
-
-        # ── ③ SNAPSHOT — REALIZED (net billed) — the cash-billed view, less
-        #    retainage (the user 2026-07-16: ② is the true totals WITH
-        #    retainage; ③ answers "what did we bill in cash"). The old
-        #    with-retainage snapshot is gone — ② already answers it.
-        _snap3 = ("③ SNAPSHOT — MFD vs COMPANY (realized, net billed)" if show_mfd
-                  else "③ SNAPSHOT — REALIZED (net billed, less retainage)")
-        snapshot(_snap3, "Realized — billed in cash, less retainage",
-                 f"{Binc}", f"({Binc})-{costs}", costs, opex, c_ref)
-
-        # ── ④ BILLING & RETAINAGE (to date) ──
-        btop = sect_title("④ BILLING & RETAINAGE (to date)")
-        gb_row = row("Billed to Date (gross, incl. retainage)", formula=f"={Btot}",
+        # ── BILLING & RETAINAGE (to date). The realized / net-billed Snapshot
+        #    that sat above it is gone (the owner 2026-10-02: "that is the
+        #    same info that is in actuals"); Net Billed lives here. ──
+        btop = sect_title("BILLING & RETAINAGE (to date)")
+        gb_row = row("Billed to Date (gross)", formula=f"={Btot}",
                      indent=1)
         _qbo_link(gb_row, _cust_url)
         # ONE receivable row (the user 2026-07-16: withheld-on-draws and
         # moved-to-receivable-by-JE are the same money owed to us — two booking
         # styles, one bucket).
         _rec = f"{Wcell}+{NBcell}" if NBcell else Wcell
-        rec_row = row("less: Retainage receivable (withheld + not billed)",
+        rec_row = row("less: Retainage receivable",
                       formula=f"=-({_rec})", indent=1, color="C0504D")
         row("Net Billed (to AR)", formula=f"=B{gb_row}+B{rec_row}", indent=1,
             bold=True, border=TOP_BORDER)
-        row("Retainage billed (returned by GC)", formula=f"={tx_refs['billed_ret']}",
+        row("Retainage returned by GC", formula=f"={tx_refs['billed_ret']}",
             indent=1, color=GREEN)
         row("Total retainage (all-time)",
             formula=f"=({_rec})+{tx_refs['billed_ret']}", indent=1,
             bold=True, border=TOP_BORDER, color=NAVY)
+        # THE QUICKBOOKS FIX NOTE (the owner 2026-10-02: "make a note in this
+        # p&l project to do this retainage fix on the back end"). A not-billed
+        # retainage invoice that repeats a retainage line already on a draw
+        # invoice is left out of every total above; this row says so until the
+        # books are corrected, and disappears by itself once they are.
+        for _dup in [i for i in (income_rows or []) if i.get("dup")]:
+            row("⚑ QuickBooks fix pending", -float(_dup.get("not_billed_ret") or 0),
+                indent=1, bold=True, border=TOP_BORDER, color=RED)
+            _dn = row(f"#{_dup.get('dup_doc')} retainage repeated in {_dup.get('src')}",
+                      None, indent=2)
+            _dn2 = row("left out of every total", None, indent=2)
+            ws.cell(row=_dn2, column=1).font = Font(italic=True, size=BASE_SIZE - 2,
+                                                    color="595959")
+            ws.cell(row=_dn, column=1).font = Font(italic=True, size=BASE_SIZE - 2,
+                                                   color="595959")
         if underbill_total > 0:
             ur = row(f"⚠ Underbilling risk — bills missed by PM "
                      f"({underbill_count} bill{'s' if underbill_count != 1 else ''})",
@@ -3955,9 +4089,6 @@ def build_sheet_pl(
     COST_TXT = "C55A11"   # Costs column text — distinct color for visual flair
     _vrule = Side(style="thin", color="808080")
 
-    def _clr(pct):
-        return "000000" if pct is None else (GREEN if pct >= 1.0 else RED)
-
     # DRAW COVERAGE and ACCUMULATING COSTS both answer "what do we bill
     # next", which is settled on a finished job — `simple` drops both (the
     # user 2026-08-27: "these are completed projects, a more streamlined what
@@ -3982,23 +4113,29 @@ def build_sheet_pl(
         # overrun; rate x gross sums to rate x total billed, which is
         # rate x contract once the job is billed out. MFD shows the 9% view
         # then the 10%; CP the 10% alone.
-        _blocks = [(10, 11, "GROSS")]
+        # COLOURED GROUP BANDS (the owner 2026-10-02, mock B): Billed green,
+        # Costs orange, Gross navy, After overhead grey - white bold text.
+        _blocks = [(6, 8, "BILLED", "2E7D32"), (9, 9, "COSTS", COST_TXT),
+                   (10, 11, "GROSS", NAVY)]
         for (_rate, _frac), (_oc, _nc, _cc) in zip(_views, _view_cols):
             _blocks.append((_oc, _cc, f"AFTER OVERHEAD - {_rate:.0f}% of gross billed"
-                                      f"{' (MFD)' if show_mfd and _frac == _aoh and len(_views) > 1 else ''}"
-                                      ))
-        for c0, c1, txt in _blocks:
+                                      f"{' (MFD)' if show_mfd and _frac == _aoh and len(_views) > 1 else ''}",
+                            "595959"))
+        for c0, c1, txt, bg in _blocks:
             gb = ws.cell(row=rc, column=c0, value=txt)
-            gb.font = Font(bold=True, size=BASE_SIZE - 1, color=NAVY)
+            gb.font = Font(bold=True, size=BASE_SIZE - 1, color="FFFFFF")
             gb.alignment = Alignment(horizontal="center")
             for cc in range(c0, c1 + 1):
-                ws.cell(row=rc, column=cc).fill = ACCENT_FILL
+                ws.cell(row=rc, column=cc).fill = PatternFill("solid", fgColor=bg)
                 ws.cell(row=rc, column=cc).border = BOTTOM_BORDER
-            ws.merge_cells(start_row=rc, start_column=c0, end_row=rc, end_column=c1)
+            if c1 > c0:
+                ws.merge_cells(start_row=rc, start_column=c0, end_row=rc, end_column=c1)
         rc += 1
-        # cols: 4 Draw 5 Period | 6 Draw Total 7 Retained | 8 Net Billed |
-        #       9 Costs 10 Gross Profit 11 Coverage % 12 Net Profit 13 Net Cov %
-        _heads = ["Draw", "Period", "Gross Billed", "Retained", "Net Billed",
+        # cols: 4 Draw 5 Period | 6 Net Billed 7 Retained 8 Gross Billed |
+        #       9 Costs | 10 Gross Profit 11 Coverage % | per view OH / Net / Net Cov
+        # Gross Billed sits NEXT TO Costs (the owner 2026-10-02: "i want gross
+        # next to costs") - the two numbers every profit column is built from.
+        _heads = ["Draw", "Period", "Net Billed", "Retained", "Gross Billed",
                   "Costs", "Gross Profit", "Coverage %"]
         for _rate, _frac in _views:
             _heads += [f"{_rate:.0f}% OH $", "Net Profit", "Net Cov %"]
@@ -4013,8 +4150,6 @@ def build_sheet_pl(
         first_draw_row = rc
         for name, lbl, net, costs, held, billed in draw_rows:
             gross_b = net + held - billed   # invoice work lines, retainage out
-            m = _cov(gross_b, costs, overhead_pct)
-            pc, po = m["cost_pct"], m["oh_pct"]
             c = _write_cell(ws, rc, 4, name)
             if draw_anchors and name in draw_anchors:
                 # draw_anchors now maps draw name → its own SHEET (the user 2026-06-26,
@@ -4031,27 +4166,28 @@ def build_sheet_pl(
             # minus, NEVER red - the user 2026-06-09), so 6 - 7 = Net Billed (8).
             retained = held - billed
             ret_clr = GREEN if billed > 0.005 else "000000"
-            dt_ = _write_cell(ws, rc, 6, gross_b); dt_.number_format = CURR_FMT
-            dt_.font = Font(size=BASE_SIZE - 1)
+            nb = _write_cell(ws, rc, 6, net); nb.number_format = CURR_FMT
+            nb.font = Font(size=BASE_SIZE - 1)
             rt = _write_cell(ws, rc, 7, retained); rt.number_format = RET_FMT
             rt.font = Font(size=BASE_SIZE - 1, color=ret_clr)
-            nb = _write_cell(ws, rc, 8, net); nb.number_format = CURR_FMT
-            nb.font = Font(size=BASE_SIZE - 1)
+            dt_ = _write_cell(ws, rc, 8, gross_b); dt_.number_format = CURR_FMT
+            dt_.font = Font(size=BASE_SIZE - 1)
+            dt_.fill = GROSS_COL_FILL
             ct = _write_cell(ws, rc, 9, costs); ct.number_format = CURR_FMT
             ct.font = Font(size=BASE_SIZE - 1, color=COST_TXT)
             # formulas: Gross Profit, Coverage %, then per view OH $ (on
             # completion), Net Profit, Net Coverage %. Sign colours on the
             # overhead columns are CONDITIONAL - the value is only known to Excel.
             fmls = [
-                (10, f"=F{rc}-I{rc}", CURR_FMT, _clr(pc)),
-                (11, f'=IF(I{rc}=0,"",F{rc}/I{rc})', '0.0%', _clr(pc)),
+                (10, f"=H{rc}-I{rc}", CURR_FMT, "000000"),
+                (11, f'=IF(I{rc}=0,"",H{rc}/I{rc})', '0.0%', "000000"),
             ]
             for (_rate, _frac), (_oc, _nc, _cc) in zip(_views, _view_cols):
                 _OC = get_column_letter(_oc)
                 fmls += [
-                    (_oc, f"=F{rc}*{_frac}", CURR_FMT, "595959"),
-                    (_nc, f"=F{rc}-I{rc}-{_OC}{rc}", CURR_FMT, "000000"),
-                    (_cc, f'=IF(I{rc}+{_OC}{rc}=0,"",F{rc}/(I{rc}+{_OC}{rc}))',
+                    (_oc, f"=H{rc}*{_frac}", CURR_FMT, "595959"),
+                    (_nc, f"=H{rc}-I{rc}-{_OC}{rc}", CURR_FMT, "000000"),
+                    (_cc, f'=IF(I{rc}+{_OC}{rc}=0,"",H{rc}/(I{rc}+{_OC}{rc}))',
                      '0.0%', "000000"),
                 ]
             for col, f, nf, clr in fmls:
@@ -4063,7 +4199,7 @@ def build_sheet_pl(
             if wip_contract_cell:   # cumulative billed ÷ contract through this draw
                 pcc = ws.cell(row=rc, column=_pc_col,
                               value=f'=IF({wip_contract_cell}=0,"",'
-                                    f'SUM(F{first_draw_row}:F{rc})/{wip_contract_cell})')
+                                    f'SUM(H{first_draw_row}:H{rc})/{wip_contract_cell})')
                 pcc.number_format = "0.0%"
                 pcc.font = Font(size=BASE_SIZE - 1)
                 pcc.alignment = Alignment(horizontal="center")
@@ -4076,38 +4212,38 @@ def build_sheet_pl(
                 (6, f"=SUM(F{first_draw_row}:F{last_draw_row})", CURR_FMT, "000000"),
                 (7, f"=SUM(G{first_draw_row}:G{last_draw_row})", RET_FMT, "000000"),
                 (8, f"=SUM(H{first_draw_row}:H{last_draw_row})", CURR_FMT, "000000"),
+                # the Gross Billed total keeps its column tint, one step darker
                 (9, f"=SUM(I{first_draw_row}:I{last_draw_row})", CURR_FMT, COST_TXT),
-                (10, f"=F{rc}-I{rc}", CURR_FMT, "000000"),
-                (11, f'=IF(I{rc}=0,"",F{rc}/I{rc})', '0.0%', "000000"),
+                (10, f"=H{rc}-I{rc}", CURR_FMT, "000000"),
+                (11, f'=IF(I{rc}=0,"",H{rc}/I{rc})', '0.0%', "000000"),
                 *[x for (_oc, _nc, _cc) in _view_cols for x in (
                     (_oc, f"=SUM({get_column_letter(_oc)}{first_draw_row}:"
                           f"{get_column_letter(_oc)}{last_draw_row})", CURR_FMT, "595959"),
-                    (_nc, f"=F{rc}-I{rc}-{get_column_letter(_oc)}{rc}", CURR_FMT, "000000"),
+                    (_nc, f"=H{rc}-I{rc}-{get_column_letter(_oc)}{rc}", CURR_FMT, "000000"),
                     (_cc, f'=IF(I{rc}+{get_column_letter(_oc)}{rc}=0,"",'
-                          f'F{rc}/(I{rc}+{get_column_letter(_oc)}{rc}))', '0.0%', "000000"))]):
+                          f'H{rc}/(I{rc}+{get_column_letter(_oc)}{rc}))', '0.0%', "000000"))]):
             cell = ws.cell(row=rc, column=col, value=f)
             cell.number_format = nf
             cell.font = Font(bold=True, size=BASE_SIZE - 1, color=clr)
             cell.border = TOP_BORDER
             if col == 11 or col in [_cc for _o, _n, _cc in _view_cols]:
                 cell.alignment = Alignment(horizontal="center")
-        # sign colours for the overhead views, decided by Excel from the value
-        for _oc, _nc, _cc in _view_cols:
-            _rng = (f"{get_column_letter(_nc)}{first_draw_row}:"
-                    f"{get_column_letter(_nc)}{rc}")
-            ws.conditional_formatting.add(_rng, CellIsRule(
-                operator="lessThan", formula=["0"], font=Font(color=RED)))
-            ws.conditional_formatting.add(_rng, CellIsRule(
-                operator="greaterThanOrEqual", formula=["0"], font=Font(color=GREEN)))
-            _rng = (f"{get_column_letter(_cc)}{first_draw_row}:"
-                    f"{get_column_letter(_cc)}{rc}")
-            ws.conditional_formatting.add(_rng, CellIsRule(
-                operator="lessThan", formula=["1"], font=Font(color=RED)))
-            ws.conditional_formatting.add(_rng, CellIsRule(
-                operator="greaterThanOrEqual", formula=["1"], font=Font(color=GREEN)))
+        ws.cell(row=rc, column=8).fill = GROSS_TOT_FILL
+        # PROFIT STANDS OUT ON THE TOTAL ROW ONLY (the owner 2026-10-02: "make
+        # gross and net profit stand out only in the totals"): the draw rows are
+        # plain black; the TOTAL Gross Profit and each Net Profit get a green
+        # fill when >= 0, red when < 0 - decided by Excel from the value.
+        for _col in [10] + [_nc for _o, _nc, _c in _view_cols]:
+            _ref = f"{get_column_letter(_col)}{rc}"
+            ws.conditional_formatting.add(_ref, CellIsRule(
+                operator="lessThan", formula=["0"],
+                fill=PatternFill("solid", fgColor="FFC7CE"), font=Font(bold=True, color="9C0006")))
+            ws.conditional_formatting.add(_ref, CellIsRule(
+                operator="greaterThanOrEqual", formula=["0"],
+                fill=PatternFill("solid", fgColor="C6EFCE"), font=Font(bold=True, color="006100")))
         if wip_contract_cell:   # overall % complete = total billed ÷ contract
             tpc = ws.cell(row=rc, column=_pc_col,
-                          value=f'=IF({wip_contract_cell}=0,"",F{rc}/{wip_contract_cell})')
+                          value=f'=IF({wip_contract_cell}=0,"",H{rc}/{wip_contract_cell})')
             tpc.number_format = "0.0%"
             tpc.font = Font(bold=True, size=BASE_SIZE - 1)
             tpc.border = TOP_BORDER
@@ -4115,12 +4251,25 @@ def build_sheet_pl(
 
         # ── vertical rules: after Costs (col 9) and between Coverage % and
         #    Net Profit (after col 11), full table height (the user 2026-06-19) ──
-        _rules = [9, 11] + [_cc for _o, _n, _cc in _view_cols[:-1]]
+        _rules = [8, 9, 11] + [_cc for _o, _n, _cc in _view_cols[:-1]]
         for gr in range(cov_top, rc + 1):
             for col in _rules:
                 cur = ws.cell(row=gr, column=col).border
                 ws.cell(row=gr, column=col).border = Border(
                     left=cur.left, right=_vrule, top=cur.top, bottom=cur.bottom)
+        # NET PROFIT draws the eye (the owner 2026-10-02): a thick black box
+        # down the column, header to TOTAL, and the header itself turns light
+        # green or light red with the sign of the TOTAL.
+        for _o, _nc, _c in _view_cols:
+            _box_range(ws, first_draw_row - 1, rc, _nc, _nc)
+            _NL = get_column_letter(_nc)
+            _h = f"{_NL}{first_draw_row - 1}"
+            ws.conditional_formatting.add(_h, FormulaRule(
+                formula=[f"${_NL}${rc}<0"],
+                fill=PatternFill("solid", fgColor="FFC7CE"), font=Font(bold=True, color="9C0006")))
+            ws.conditional_formatting.add(_h, FormulaRule(
+                formula=[f"${_NL}${rc}>=0"],
+                fill=PatternFill("solid", fgColor="C6EFCE"), font=Font(bold=True, color="006100")))
 
     if accum and not simple and (draw_anchors or {}).get("__outside"):
         # The ACCUMULATING COSTS block moved to the Next Draw sheet (the user
@@ -4134,6 +4283,21 @@ def build_sheet_pl(
         _am = ws.cell(row=_nr, column=9, value=accum["total"])
         _am.number_format = CURR_FMT
         _am.font = Font(bold=True, size=BASE_SIZE - 1, color=COST_TXT)
+
+    # THE LABEL COLUMN IS AS TIGHT AS ITS VISIBLE LABELS (the owner 2026-10-02:
+    # "make sure column b is as tight as it can be without cutting off
+    # words"): the widest label a reader sees on open, measured as rendered.
+    # Merged section bars span two columns and collapsed detail rows wrap, so
+    # neither sets it; the cap keeps one long note from re-widening the sheet.
+    _merged = {rc_ for m in ws.merged_cells.ranges for rc_ in m.cells}
+    _need = [_text_units(str(c.value), (c.font and c.font.sz) or BASE_SIZE)
+             for (c,) in ws.iter_rows(min_row=3, min_col=1, max_col=1)
+             if isinstance(c.value, str) and (c.row, c.column) not in _merged
+             and not ws.row_dimensions[c.row].hidden]
+    if _need:
+        # +10% and 2: the estimate runs a little narrow of real Calibri, and a
+        # cut-off word is worse than a sliver of white space
+        ws.column_dimensions["A"].width = round(min(max(max(_need) * 1.1 + 2.0, 24.0), 46.0), 1)
 
 
 def _draw_flat_bills(draw_cost: dict) -> list:
@@ -4295,6 +4459,14 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
     # draw (the user 2026-09-03). MFD's 9% used to ride costs here.
     _oh_pct = alt_overhead_pct if alt_overhead_pct is not None else overhead_pct
     _oh_label = f"OVERHEAD\n{_oh_pct:.0f}% of income"
+    # COLOUR BY SECTION (the owner 2026-10-02: "the draw pages we need color"):
+    # each tile is (label fill, value tint) - income green, retainage amber,
+    # costs orange, profit navy, overhead grey. The same hues band the
+    # invoices (green) and the costs (orange) below, so a tile reads as the
+    # total of the section of its colour.
+    _TILE_COLORS = [("2E7D32", "E2EFDA"), ("BF8F00", "FFF2CC"), ("548235", "E2EFDA"),
+                    ("C55A11", "FCE4D6"), ("1F3A5F", "DDEBF7"), ("1F3A5F", "DDEBF7"),
+                    ("595959", "EDEDED"), ("1F3A5F", "DDEBF7"), ("1F3A5F", "DDEBF7")]
 
     def kpi_strip(title, costs_val, n_bills, periodtxt):
         """One perspective as a label row + a value row. Returns the next row."""
@@ -4315,14 +4487,16 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
         band(r, KPI_COLS[0], KPI_COLS[-1] + KPI_SPAN - 1,
              f"{title}   ·   {periodtxt}")
         r += 1
-        for col, (label, _v, _f, _s) in zip(KPI_COLS, cells):
+        for col, (label, _v, _f, _s), (_dk, _lt) in zip(KPI_COLS, cells, _TILE_COLORS):
             c = ws.cell(row=r, column=col, value=label)
-            c.font = Font(bold=True, size=BASE_SIZE, color="FFFFFF")
-            c.fill = PatternFill("solid", fgColor="44546A")
+            c.font = Font(bold=True, size=BASE_SIZE - 2, color="FFFFFF")
+            c.fill = PatternFill("solid", fgColor=_dk)
             c.alignment = Alignment(horizontal="center", vertical="center",
                                     wrap_text=True)
             c.border = THIN_BORDER
-        ws.row_dimensions[r].height = 48
+        # TIGHT TILES (the owner 2026-10-02: "too big, looks like big lego
+        # blocks, keep it tight"): two short label lines, a modest number.
+        ws.row_dimensions[r].height = 28
         r += 1
         # The derived figures are FORMULAS so the derivation is visible -
         # gross profit is income − costs, NOT net draw − costs (the user
@@ -4340,29 +4514,31 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
             _NM:  f'=IF({_INC}{r}=0,"",{_NP}{r}/{_INC}{r})',
         }
         signed = []
-        for col, (_l, value, fmt, sign) in zip(KPI_COLS, cells):
+        for col, (_l, value, fmt, sign), (_dk, _tint) in zip(KPI_COLS, cells, _TILE_COLORS):
             _lt = get_column_letter(col)
             c = ws.cell(row=r, column=col, value=_formula.get(_lt, value))
             c.number_format = fmt
-            c.font = Font(bold=True, size=BASE_SIZE + 4)
+            c.font = Font(bold=True, size=BASE_SIZE + 1, color=_dk)
             c.alignment = Alignment(horizontal="center", vertical="center")
             c.border = THIN_BORDER
+            if not sign:             # the signed tiles are coloured by Excel below
+                c.fill = PatternFill("solid", fgColor=_tint)
             if sign:
                 signed.append(_lt + str(r))
         _tile_cells.append((f"{_INC}{r}", f"{_RET}{r}", f"{_OH}{r}"))
-        ws.row_dimensions[r].height = 26
+        ws.row_dimensions[r].height = 20
         if signed:
             ref = " ".join(signed)
             ws.conditional_formatting.add(ref, CellIsRule(
                 operator="lessThan", formula=["0"],
                 fill=PatternFill(start_color="FFC7CE", end_color="FFC7CE",
                                  fill_type="solid"),
-                font=Font(color="9C0006", bold=True, size=BASE_SIZE + 4)))
+                font=Font(color="9C0006", bold=True, size=BASE_SIZE + 1)))
             ws.conditional_formatting.add(ref, CellIsRule(
                 operator="greaterThanOrEqual", formula=["0"],
                 fill=PatternFill(start_color="C6EFCE", end_color="C6EFCE",
                                  fill_type="solid"),
-                font=Font(color="006100", bold=True, size=BASE_SIZE + 4)))
+                font=Font(color="006100", bold=True, size=BASE_SIZE + 1)))
         r += 1
 
     qbo_periodtxt = (f"{period[0]:%m/%d/%y}–{period[1]:%m/%d/%y}" if period else lbl)
@@ -4402,14 +4578,17 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
     # FORMULAS off the total row, so the strip traces to the invoices.
     _hdr_rows: List[int] = []
     _inv_band = r
+    # GREEN = income (the owner 2026-10-02: "the invoices section need the
+    # green header to show distinction"), against the orange costs below.
     band(r, 2, 10, f"INVOICES THIS DRAW  -  what INCOME adds up  ({len(invoices or [])})",
-         fill=SUBHDR_FILL)
-    ws.cell(row=r, column=2).font = _font(bold=True, color=NAVY)
+         fill=PatternFill("solid", fgColor="2E7D32"))
     r += 1
+    for c in range(2, 11):
+        ws.cell(row=r, column=c).fill = PatternFill("solid", fgColor="E2EFDA")
     for c, h in ((2, "Invoice #"), (3, "Date"), (4, "Gross billed"),
                  (5, "Retainage withheld"), (6, "Retainage billed"),
-                 (7, "Net (cash)"), (8, "Paid?"), (10, "Memo")):
-        wc(r, c, h, bold=True, color=NAVY).border = BOTTOM_BORDER
+                 (7, "Net (cash)"), (8, "Paid?"), (9, "Memo")):
+        wc(r, c, h, bold=True, color="375623").border = BOTTOM_BORDER
     _hdr_rows.append(r)
     r += 1
     _inv_first = r
@@ -4426,7 +4605,11 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
         if _pl:
             wc(r, 8, _pl, bold=True, color=_pc)
         _memo = re.sub(r"\s+", " ", DRAW_PERIOD_RE.sub("", str(inv.get("memo") or ""))).strip(" -–·")
-        wc(r, 10, _clean_cost_text(_memo, _known_words), color="595959")
+        _memo = _clean_cost_text(_memo, _known_words)
+        if inv.get("ret_from"):
+            # entered net in QBO; its retainage came off the not-billed invoice
+            _memo = f"{_memo}  ·  retainage from {inv['ret_from']}".strip(" ·")
+        wc(r, 9, _memo, color="595959")
         r += 1
     _inv_tot = r
     wc(r, 2, "TOTAL  -  the INCOME / RETAINAGE / NET DRAW tiles above", bold=True)
@@ -4435,6 +4618,8 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
         tc = wc(r, c, f"=SUM({_Lc}{_inv_first}:{_Lc}{r - 1})" if r > _inv_first else 0,
                 fmt=CURR_FMT, bold=True)
         tc.border = TOP_BORDER
+    _grid_lines(ws, _inv_band + 1, r, 2, 10)
+    _box_range(ws, _inv_band, r, 2, 10, _SECTION_SIDE)
     r += 2
     for _inc, _ret, _ohc in _tile_cells:
         ws[_inc].value = f"=D{_inv_tot}+F{_inv_tot}"       # gross billed + retainage billed back
@@ -4450,8 +4635,14 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
     # a PivotTable, so each cut is written out here; the Draw Data sheet stays
     # the flat table for a pivot of your own. Every bill row carries its cost
     # code and cost type, whichever cut it sits in.
-    (COL_GROUP, COL_NUM, COL_CODE, COL_TYPE, COL_AMT, COL_DATE,
-     COL_NOTE, COL_PAID, COL_DESC) = range(2, 11)
+    # STRUCTURE (the owner 2026-10-02: "wasted floating spaces and text, it
+    # needs structure, lines, boxes"): the bill # sits in the first column
+    # under its vendor (no empty cells left of it), every group's amount sits
+    # right beside its name, Paid? before the note, the description last and
+    # INSIDE the box (B..J, the same edges as the tiles).
+    (COL_GROUP, COL_AMT, COL_CODE, COL_TYPE, COL_DATE,
+     COL_PAID, COL_NOTE, COL_DESC) = range(2, 10)
+    COL_EDGE = 10
 
     def _vendor(i):
         return i.get("vendor") or "(no vendor)"
@@ -4480,23 +4671,35 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
     GROUP_HEAD = {"vendor": "Vendor", "code": "Cost code  >  vendor",
                   "type": "Cost type  >  vendor"}
 
-    def detail(title, items, color, kind, levels="vendor"):
+    def detail(title, items, color, kind, levels="vendor", costs=False, collapsed=False):
         """kind: 'qbo' rows are QBO bills, 'pm' rows are report lines, 'plain'
         is a job with no PM reports. Every bill links (QBO deep-link for QBO
-        rows, the source PM report for PM rows)."""
+        rows, the source PM report for PM rows). `costs` = the draw's own bill
+        listing: an ORANGE band (white text) with light GREY group rows (the
+        owner 2026-10-02). `collapsed` = the whole section folds under its band
+        - the same bills cut another way, one click away."""
         nonlocal r
         tot = round(sum(i["amount"] for i in items), 2)
-        band(r, COL_GROUP, COL_DESC, f"{title}",
-             fill=(WARN_FILL if color == RED else SUBHDR_FILL))
-        ws.cell(row=r, column=COL_GROUP).font = _font(bold=True, color=(RED if color == RED else NAVY))
-        tc = ws.cell(row=r, column=COL_AMT, value=tot)
-        tc.number_format = CURR_FMT
-        tc.font = _font(bold=True, color=(RED if color == RED else NAVY))
+        _band_row = r
+        if costs:
+            band(r, COL_GROUP, COL_EDGE, f"{'[+]  ' if collapsed else ''}{title}",
+                 fill=PatternFill("solid", fgColor="C55A11"))
+            tc = ws.cell(row=r, column=COL_AMT, value=tot)
+            tc.number_format = CURR_FMT
+            tc.font = _font(bold=True, color="FFFFFF")
+        else:
+            band(r, COL_GROUP, COL_EDGE, f"{title}",
+                 fill=(WARN_FILL if color == RED else SUBHDR_FILL))
+            ws.cell(row=r, column=COL_GROUP).font = _font(bold=True, color=(RED if color == RED else NAVY))
+            tc = ws.cell(row=r, column=COL_AMT, value=tot)
+            tc.number_format = CURR_FMT
+            tc.font = _font(bold=True, color=(RED if color == RED else NAVY))
         r += 1
-        for c, h in ((COL_GROUP, GROUP_HEAD[levels]), (COL_NUM, "Bill #"),
+        for c, h in ((COL_GROUP, GROUP_HEAD[levels] + "  >  bill #"),
                      (COL_CODE, "Cost code"), (COL_TYPE, "Cost type"),
                      (COL_AMT, "Amount"), (COL_DATE, "Date"),
-                     (COL_NOTE, "Where / status"), (COL_PAID, "Paid?"),
+                     (COL_NOTE, "Where / status" if kind != "plain" else "Note"),
+                     (COL_PAID, "Paid?"),
                      (COL_DESC, "Description")):
             wc(r, c, h, bold=True, color=NAVY).border = BOTTOM_BORDER
         _hdr_rows.append(r)
@@ -4508,7 +4711,9 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
             nonlocal r
             if kind == "plain":                      # no PM reports (CP): neutral
                 blink = _qbo_txn_url(i.get("tx_type", ""), i.get("txn_id", ""), realm)
-                note, ncol, nlink = ("in this draw", "595959", None)
+                # every bill on the sheet is in this draw - saying so on each
+                # row was noise; the column speaks only when there is a note
+                note, ncol, nlink = ("", "595959", None)
             elif kind == "qbo":
                 blink = _qbo_txn_url(i.get("tx_type", ""), i.get("txn_id", ""), realm)
                 other = sorted(report_index.get(keyb(i), set())
@@ -4533,16 +4738,17 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
             if kind != "pm" and i.get("pushed"):
                 # the supplier agreed to carry it into this draw - say so
                 # on the row; the bill keeps its own date beside it
-                note = (i["pushed"] if note == "in this draw"
+                note = (i["pushed"] if note in ("", "in this draw")
                         else f"{i['pushed']} · {note}")
                 ncol, nlink = "BF8F00", None
-            idc(r, COL_NUM, i.get("num", ""), indent=1, link=blink)
+            idc(r, COL_GROUP, i.get("num", ""), indent=lvl + 1, link=blink)
             if i.get("code"):
                 wc(r, COL_CODE, _ccode(i))
                 wc(r, COL_TYPE, _ctype(i))
             wc(r, COL_AMT, i["amount"], fmt=CURR_FMT, color=color)
             wdate(r, COL_DATE, i.get("date", ""))
-            wc(r, COL_NOTE, note, color=ncol, link=nlink)
+            if note:
+                wc(r, COL_NOTE, note, color=ncol, link=nlink)
             wc(r, COL_DESC, _clean_cost_text(i.get("desc", ""), _known_words))
             # AP payment state (the user 2026-08-05); PM report lines have
             # no QBO bill to check.
@@ -4587,6 +4793,9 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
                 wc(r, COL_GROUP, f"{g['label']}  ({len(g['items'])})",
                    bold=True, color=color, indent=d)
                 wc(r, COL_AMT, g["total"], fmt=CURR_FMT, bold=True, color=color)
+                if costs and d == 0:     # the sub-header rows: light grey, not orange
+                    for _c in range(COL_GROUP, COL_EDGE + 1):
+                        ws.cell(row=r, column=_c).fill = SECT_FILL
                 if d:
                     ws.row_dimensions[r].outline_level = d
                     ws.row_dimensions[r].hidden = True
@@ -4594,6 +4803,22 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
                 _write(g["items"], d + 1, g["label"])
 
         _write(items, 0)
+        if not collapsed:
+            # a visible TOTAL closes the box, whatever is folded above it
+            wc(r, COL_GROUP, f"TOTAL  ({len(items)} bills)", bold=True)
+            wc(r, COL_AMT, tot, fmt=CURR_FMT, bold=True)
+            for _c in range(COL_GROUP, COL_EDGE + 1):
+                ws.cell(row=r, column=_c).border = TOP_BORDER
+            r += 1
+        _grid_lines(ws, _band_row + 1, r - 1, COL_GROUP, COL_EDGE)
+        _box_range(ws, _band_row, (_band_row if collapsed else r - 1), COL_GROUP, COL_EDGE,
+                   _SECTION_SIDE)
+        if collapsed:
+            # one more outline level under the band, all of it hidden
+            for _rr in range(_band_row + 1, r):
+                _rd = ws.row_dimensions[_rr]
+                _rd.outline_level = min((_rd.outline_level or 0) + 1, 7)
+                _rd.hidden = True
         r += 1
 
     if has_pm:
@@ -4607,17 +4832,19 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
             detail(f"PM ONLY - on the PM report, not in QBO this draw  ({len(pm_only)})",
                    pm_only, "BF8F00", "pm")
         if qbo_bills:
-            detail(f"ALL QBO BILLS THIS DRAW  -  by cost code, then vendor  ({len(qbo_bills)})",
-                   qbo_bills, NAVY, "qbo", levels="code")
-            detail(f"ALL QBO BILLS THIS DRAW  -  by cost type (concrete · materials · labor), "
-                   f"then vendor  ({len(qbo_bills)})", qbo_bills, NAVY, "qbo", levels="type")
-    elif qbo_bills:                                   # CP / no PM reports: the draw's bills, three cuts
-        detail(f"BILLS THIS DRAW  -  by vendor  ({len(qbo_bills)})",
-               qbo_bills, NAVY, "plain")
-        detail(f"BILLS THIS DRAW  -  by cost code, then vendor  ({len(qbo_bills)})",
-               qbo_bills, NAVY, "plain", levels="code")
-        detail(f"BILLS THIS DRAW  -  by cost type (concrete · materials · labor), "
-               f"then vendor  ({len(qbo_bills)})", qbo_bills, NAVY, "plain", levels="type")
+            detail(f"COSTS THIS DRAW  -  by cost type  ({len(qbo_bills)} bills)",
+                   qbo_bills, "000000", "qbo", levels="type", costs=True)
+            detail(f"Same bills by cost code, then vendor  ({len(qbo_bills)})",
+                   qbo_bills, "000000", "qbo", levels="code", costs=True, collapsed=True)
+    elif qbo_bills:
+        # CP / no PM reports. COST TYPE FIRST and open; the vendor and cost-code
+        # cuts fold under their own bands (the owner 2026-10-02, mock A).
+        detail(f"COSTS THIS DRAW  -  by cost type  ({len(qbo_bills)} bills)",
+               qbo_bills, "000000", "plain", levels="type", costs=True)
+        detail(f"Same bills by vendor  ({len(qbo_bills)})",
+               qbo_bills, "000000", "plain", costs=True, collapsed=True)
+        detail(f"Same bills by cost code, then vendor  ({len(qbo_bills)})",
+               qbo_bills, "000000", "plain", levels="code", costs=True, collapsed=True)
 
     # A = gutter for the outline +/-; the table is CONTIGUOUS B..J, DESCRIPTION
     # LAST so it spills right over the empty columns (the user 2026-08-31).
@@ -4627,8 +4854,10 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
     # the floor for B..J; the table rows set anything wider; J (Description)
     # stays at the floor and spills.
     ws.column_dimensions["A"].width = 3
-    _autofit(ws, 2, 9, _hdr_rows, [(_inv_band, r)], min_w=16.0, max_w=40.0)
-    ws.column_dimensions["J"].width = 16
+    _autofit(ws, 2, 8, _hdr_rows, [(_inv_band, r)], min_w=16.0, max_w=40.0)
+    # I + J hold the description / memo inside the box
+    ws.column_dimensions["I"].width = 30
+    ws.column_dimensions["J"].width = 24
     ws.sheet_properties.outlinePr.summaryBelow = False
     _setup_print(ws, 10)
     return r, missed_total, len(missed)
@@ -5469,10 +5698,14 @@ def build_sheet_labor_concrete(
     # Col 1 is the QBO-page arrow (the user 2026-08-10: the bill # opens the
     # SCAN, so the direct QBO link needed its own little column up front).
     L_ARROW = 1
-    L_QBO, L_DATE, L_VEND, L_QTY, L_RATE, L_AMT = 2, 3, 4, 5, 6, 7
-    L_TAX = 8 if has_tax else 0
-    L_FUEL = (9 if has_tax else 8) if has_fuel else 0
-    L_DRAW = max(L_AMT, L_TAX, L_FUEL) + 1
+    # NO VENDOR COLUMN (the owner 2026-10-02): the ledger is grouped by
+    # vendor, so the vendor is already its group row - the column only
+    # repeated it and its width blew out the ACTUAL column above. AMOUNT now
+    # sits in column D, right under the scoreboard's ACTUAL.
+    L_QBO, L_DATE, L_AMT, L_QTY, L_RATE = 2, 3, 4, 5, 6
+    L_TAX = 7 if has_tax else 0
+    L_FUEL = (8 if has_tax else 7) if has_fuel else 0
+    L_DRAW = max(L_RATE, L_TAX, L_FUEL) + 1
     # COST CODE is its own COLUMN now, not a grouping row: the ledger groups by
     # VENDOR (the user 2026-09-02), so the code has to be filterable instead.
     L_CODE = L_DRAW + 1
@@ -5625,8 +5858,7 @@ def build_sheet_labor_concrete(
     lh.font = Font(bold=True, size=SZ, color="1F3A5F")
     r += 1
     led_heads = [("↗", L_ARROW), ("QBO #", L_QBO), ("DATE", L_DATE),
-                 ("VENDOR", L_VEND),
-                 ("QTY", L_QTY), ("RATE", L_RATE), ("AMOUNT", L_AMT)]
+                 ("AMOUNT", L_AMT), ("QTY", L_QTY), ("RATE", L_RATE)]
     if L_TAX:
         led_heads.append(("SALES TAX", L_TAX))
     if L_FUEL:
@@ -5719,9 +5951,10 @@ def build_sheet_labor_concrete(
             else:
                 idc.font = Font(size=SZ)
             ws.cell(row=r, column=L_DATE, value=ln["date"]).font = Font(size=SZ)
-            ws.cell(row=r, column=L_VEND, value=ln["vendor"]).font = Font(size=SZ)
-            # the cost code on the LINE, so the filter can cut by it
-            _cc = ws.cell(row=r, column=L_CODE, value=_cost_code_label(code))
+            # the cost code on the LINE, so the filter can cut by it - the bare
+            # code (SL6); the scoreboard above spells each one out, and the
+            # long name widened a draw column of the scoreboard (2026-10-02)
+            _cc = ws.cell(row=r, column=L_CODE, value=code)
             _cc.font = Font(size=SZ)
             _cc.alignment = Alignment(horizontal="center")
             dc = ws.cell(row=r, column=L_DESC,
@@ -5918,8 +6151,12 @@ def build_sheet_budget_vs_actual(wb, proj, cust_info, wip_info,
     for cc in range(1, 6):
         ws.cell(row=r, column=cc).fill = PatternFill("solid", fgColor=NAVY)
     r += 1
-    for c, h in ((1, "Cost Code  /  transaction"), (2, "Budget  /  date"),
-                 (3, "Actual (QBO)  /  amount"), (4, "Variance  /  link"),
+    # Short headers that fit (the owner 2026-10-02: "how am i supposed to know
+    # which is budget and which is actual, the header is cut") - the
+    # transaction rows under each code read as date / amount / link on their own.
+    bva_hdr = r
+    for c, h in ((1, "Cost code"), (2, "Budget"),
+                 (3, "Actuals"), (4, "Variance"),
                  (5, "Used %")):
         hc = ws.cell(row=r, column=c, value=h)
         hc.font = Font(bold=True, size=BASE_SIZE - 1, color=NAVY)
@@ -6028,6 +6265,10 @@ def build_sheet_budget_vs_actual(wb, proj, cust_info, wip_info,
         tc.border = TOP_BORDER
         if c == 5:
             tc.alignment = Alignment(horizontal="center")
+    # Budget and Actuals each in their own thick box, header to TOTAL (the
+    # owner 2026-10-02: "put both in 2 boxes to draw our eyes to it")
+    for _c in (2, 3):
+        _box_range(ws, bva_hdr, r, _c, _c)
     # over-budget flag: Used % turns red past 100% (only the code rows carry E)
     if code_rows:
         ws.conditional_formatting.add(
@@ -7836,9 +8077,11 @@ def generate_project_pnl(
     _order_sheets(wb, ["P&L", "Transactions", "By Account",
                        "Labor", "Concrete", "Budget vs Actual",
                        "POs", "Reconciliations", "Cash Flow",
-                       *([_draw_data_tab] if _draw_data_tab else []),
                        *(["Next Draw"] if leftover is not None else []),
-                       *draw_sheet_order])
+                       *draw_sheet_order,
+                       # the flat pivot table goes LAST, after every draw
+                       # (the owner 2026-10-02)
+                       *([_draw_data_tab] if _draw_data_tab else [])])
 
     # Color-code the tabs for navigation (the user 2026-06-26).
     _tabcolors = {"P&L": "1F3A5F", "By Account": "375623", "Cash Flow": "C55A11",
