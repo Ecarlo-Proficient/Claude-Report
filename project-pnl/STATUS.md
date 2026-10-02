@@ -7,6 +7,9 @@ manual close), RP (no draws — expenses → invoice → profit).
 ---
 
 ## DONE / FINALIZED
+- 2026-10-02 · **IN REVIEW, round 21** (owner: "last fix, just do costs by cost type, and just put Costs"). Each
+  draw section has ONE cost block, titled "COSTS (n bills)", grouped by cost type; the by-vendor cut is gone (CP and PM
+  branches). Every section's COSTS total = its coverage Costs (11/11). Copy: round 21.
 - 2026-10-02 · **IN REVIEW, round 20** (owner: "put the draw # first, put Paid or Unpaid on the end"; "remove the
   individual big lines vertical in after 10% overhead, the big box is covering the three columns"). Draws bands read
   "Draw 5   ·   04/01/26–04/30/26   ·   PAID" (cp_overview's band regex still matches; invoices read back per draw).

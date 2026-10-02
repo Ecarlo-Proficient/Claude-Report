@@ -4940,21 +4940,15 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
             detail(f"PM ONLY - on the PM report, not in QBO this draw  ({len(pm_only)})",
                    pm_only, "BF8F00", "pm")
         if qbo_bills:
-            detail(f"BY VENDOR  ({len(qbo_bills)} bills)",
-                   qbo_bills, "000000", "qbo", costs=True)
-            detail(f"BY COST TYPE  ({len(qbo_bills)} bills)",
+            detail(f"COSTS  ({len(qbo_bills)} bills)",
                    qbo_bills, "000000", "qbo", levels="type", costs=True)
     elif qbo_bills:
-        # CP / no PM reports. Three cuts of the same bills, and all three OPEN
-        # THE SAME WAY - band, header, group totals and TOTAL showing, bills on
-        # the [+] (the owner 2026-10-02: "the bottom two don't expand the same
-        # way the first one does as default grouping"; they used to fold whole).
-        # BY VENDOR first, BY COST TYPE second; no cost-code cut (the owner
-        # 2026-10-02: "remove by cost code and make by vendor first and by
-        # cost type 2nd") - Budget vs Actual is the by-code view.
-        detail(f"BY VENDOR  ({len(qbo_bills)} bills)",
-               qbo_bills, "000000", "plain", costs=True)
-        detail(f"BY COST TYPE  ({len(qbo_bills)} bills)",
+        # CP / no PM reports. ONE cut of the bills, by cost type, titled
+        # COSTS (the owner 2026-10-02: "just do costs by cost type, and just
+        # put Costs") - band, header, group totals and TOTAL showing, bills on
+        # the [+]. Budget vs Actual is the by-code view; Draw Data re-cuts by
+        # vendor.
+        detail(f"COSTS  ({len(qbo_bills)} bills)",
                qbo_bills, "000000", "plain", levels="type", costs=True)
 
     if section:                       # the Draws sheet fits its columns once
