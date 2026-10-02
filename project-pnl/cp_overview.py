@@ -147,7 +147,9 @@ def read_projection(ws) -> dict:
 
 
 def read_coverage(ws) -> tuple:
-    """([draw rows], accumulating cost) off the P&L's DRAW COVERAGE table."""
+    """([draw rows], accumulating cost) off the P&L's DRAW COVERAGE table.
+    The table sat at the top right until 2026-10-02; it now sits under the
+    projection / actual blocks, so look down the sheet, not just its top."""
     hdr = None
     # the owner's new P&L layout moves the table down to ~row 25 from column A
     for r in range(1, 200):
@@ -165,7 +167,12 @@ def read_coverage(ws) -> tuple:
     acc = 0.0
     for r in range(hr + 1, hr + 80):
         name = str(ws.cell(r, hc).value or "").strip()
-        if name == "TOTAL":
+        # since 2026-10-02 the table sits on the Draws sheet, the next draw
+        # (costs so far) is its first row and the total reads "TOTAL  (draws)"
+        if name.lower().startswith("next draw"):
+            acc = _num(ws.cell(r, col.get("costs", hc + 5)).value)
+            continue
+        if name.startswith("TOTAL"):
             for rr in range(r + 1, r + 5):
                 if str(ws.cell(rr, hc).value or "").lower().startswith("accumulating"):
                     acc = _num(ws.cell(rr, col.get("costs", hc + 5)).value)
@@ -213,12 +220,24 @@ def read_draw_lines(wb) -> Dict[str, List[dict]]:
 
 
 def read_draw_invoices(wb, draw: str) -> List[dict]:
-    """The invoice block of one 'Draw N' sheet."""
-    if draw not in wb.sheetnames:
-        return []
-    ws = wb[draw]
+    """The invoice block of one draw: its own 'Draw N' sheet, or - since
+    2026-10-02 - its SECTION on the one 'Draws' sheet (the section band reads
+    "<PAID|UNPAID>  <draw>   ·   <period>")."""
     hdr = None
-    for r in range(1, 30):
+    if draw in wb.sheetnames:
+        ws = wb[draw]
+        start, stop = 1, 30
+    elif "Draws" in wb.sheetnames:
+        ws = wb["Draws"]
+        band = re.compile(r"(^|\s)" + re.escape(draw) + r"\s+·")
+        start = next((r for r in range(1, ws.max_row + 1)
+                      if band.search(str(ws.cell(r, 2).value or ""))), None)
+        if start is None:
+            return []
+        stop = start + 30
+    else:
+        return []
+    for r in range(start, stop):
         for c in range(1, 4):
             if str(ws.cell(r, c).value or "").strip() == "Invoice #":
                 hdr = (r, c)
@@ -249,7 +268,10 @@ def read_next_draw(wb) -> List[dict]:
     """Every bill on the 'Next Draw' sheet: Job Type › cost code › vendor › bill,
     told apart by their indent."""
     if "Next Draw" not in wb.sheetnames:
-        return []
+        # since 2026-10-02 the next draw is a section of the Draws sheet; its
+        # bills sit on Draw Data under "Next draw (forming)"
+        return [dict(l) for k, v in read_draw_lines(wb).items()
+                if k.lower().startswith("next draw") for l in v]
     ws = wb["Next Draw"]
     out: List[dict] = []
     code = vendor = ""
@@ -297,7 +319,7 @@ def read_extra(path: Path) -> dict:
             if m:
                 rnb = m.group(1)
                 break
-        draws, acc = read_coverage(ws)
+        draws, acc = read_coverage(wb["Draws"] if "Draws" in wb.sheetnames else ws)
         lines = read_draw_lines(wb)
         for d in draws:
             d["invoices"] = read_draw_invoices(wb, d["name"])

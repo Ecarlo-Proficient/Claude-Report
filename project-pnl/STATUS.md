@@ -7,6 +7,141 @@ manual close), RP (no draws — expenses → invoice → profit).
 ---
 
 ## DONE / FINALIZED
+- 2026-10-02 · **IN REVIEW, round 14 - ONE Draws sheet** (owner: "the draws consolidate into one sheet like it was
+  originally. move the coverage to draws so it will be the table with hyperlink to the section. freeze pane and have
+  arrow up with 'top' ... make it a P&L style with income, retained, cogs, expenses, gross and net profit for each
+  draw with next draw first before the latest draw, new to old"). `build_sheet_draws`: DRAW COVERAGE on top (Next draw
+  (forming) row = costs so far, then Draw 10 .. Draw 1, TOTAL (draws), % Billed cumulative from the oldest), every
+  name a link to its section; one section per draw via build_sheet_one_draw(ws=..., start_row=...) - band with
+  "↑ Top", P&L-style summary (Income gross, Retained by the GC, less COGS, less Expenses, Gross profit, less OH 10% of
+  income, Net profit, Net %), invoices (skipped when none), the three cuts; columns fitted once; frozen under the
+  title. The Next Draw sheet and the per-draw tabs are gone; the coverage left the P&L (its checks read
+  'Draws'!...); Draw Data carries the next draw's bills. Gutter pass: `_shift_a1_aware` moves a reference only when
+  the sheet it points at moves (the Draws sheet keeps its own gutter) - and a name clash (`shifted` reused by the
+  print-area step) was caught on the way. cp_overview readers take the Draws sheet (coverage, section invoices,
+  next-draw lines from Draw Data) and still read the old layout: identical reads on CP790 old vs new. Ties: every
+  section's COGS + expenses = its coverage costs = its three cut TOTALs, income = coverage gross (11/11); P&L 5 ties.
+  OPEN: Budget vs Actual on total cost only (owner asked my take). Copy: round 14.
+- 2026-10-02 · **IN REVIEW, round 13** (owner: "yes, move ① actual overhead to billed too"; "budget vs actuals,
+  reverse the grouping, do the costs first then the phases as the sub grouping"; "do the variations for the actual
+  draw sheets and see which one scores the highest for visibility, professional and usability ... numbers are
+  floating ... remove the cell colors from the top strips where the numbers are, not the headers"). ① Actual overhead
+  = rate x billed (CP790 -79,190.56; Net Profit -65,821.83), projection stays on the contract, label "less: Overhead
+  10% (contract | billed)"; ② now differs from ① only by the office expenses. BVA_LAYOUT costtype (Concrete, Labor ...
+  then SL1 Slab ...). Draw sheets: scorecard `score_draw.py` (floating numbers, coloured number cells, grey on EMPTY
+  cells, width, rows, cut, heavy); 6 variants; winner V5 = DRAW_SUMMARY block (the nine figures as one label | value
+  column, number cells uncoloured, sign by font colour), DRAW_LEAN (no Cost type / Note columns on CP, group rows grey
+  only on label + amount): width 200 -> 167, grey-on-empty 115-213 -> 31, nothing cut. Draws: summary costs = the
+  three cut TOTALs = the P&L draw row, 10/10. Copy: round 13.
+- 2026-10-02 · **IN REVIEW, round 12** (owner: "where are the horizontal lines??? i need to separate the text from
+  the numbers on the top"; "P&L by account renamed to P&L by account (current)"). The row rules were Excel "hair"
+  (near-invisible) - now thin grey (BFBFBF) under every row of ① and the ② groups, and the yellow input cells too; a
+  thin rule parts labels from numbers down ① (right of the label column) and inside each ② group (left of its
+  value column); banner "② P&L BY ACCOUNT (CURRENT)". Scores: 0 cut, 5 ties. Copy: round 12.
+- 2026-10-02 · **IN REVIEW, round 11 - ② overhead is on BILLED** (owner: "why are you taking off the full oh% on the by
+  account if it's based on what we billed so far? ... overstating the loss ... do P&L by account (current)"). ② is a
+  to-date view, so − OH = rate x income billed (CP790 79,190.56, was 97,701.06 of the contract; NET -66,153.95, was
+  -84,664.45) - the draw table's basis, and a new check ties the two. The note right of GROSS / NET names only the
+  reasons that apply ("after 332.12 expenses; OH on billed, ① on contract"). Audit of every figure on the sheet for
+  basis: the coverage "% Compl" was billed ÷ contract - renamed "% Billed" (% complete is costs ÷ ETC). OPEN: the ①
+  ACTUAL column still charges 10% of the contract (09-03 ruling) - asked the owner. Copy: round 11.
+- 2026-10-02 · **IN REVIEW, round 10** (owner, on screenshots: "move the note to the right ... right borders for all
+  the tops, need to divide"). The "after 332.12 expenses" note is now a formula in the column right of the = NET group
+  (22 wide), on the GROSS and NET rows; every ② group closes with a thin right border on all its rows, header
+  included; the ① header cells are divided by a white rule. Scores unchanged: 0 cut, all ties. Copy: round 10.
+- 2026-10-02 · **IN REVIEW, round 9 - draw sheets scored; ② notes the expense gap** (owner: "the draw sheets do that
+  after too ... the bottom two don't expand the same way the first one does as default grouping"; "if gross doesn't
+  match add a note that it's taking off expenses next to it" - so BOTH bases stay: ① stops at COGS, ② also takes off
+  the office expenses, and a formula note "after 332.12 expenses" sits under ② GROSS and NET whenever they differ
+  from ①). Draw sheets: the by-vendor and by-cost-code cuts open like the by-cost-type one (band, header, group
+  totals, TOTAL; bills on [+]) instead of folding whole; titles BY COST TYPE / BY VENDOR / BY COST CODE (the long
+  ones were cut); section frames thin (`DRAW_FRAME`, medium -> thin: heavy cells 66-132 -> 0 per sheet); the label
+  column fits its longest group label (cap 52; long vendor names were cut when opened); invoice block "INVOICES THIS
+  DRAW (n)" / "TOTAL". Every draw: the three cut TOTALs = the COSTS tile = the P&L draw-table Costs (10/10). Scores,
+  folded and fully opened: P&L 0 cut, BvA 0 cut, all 10 draws 0 cut / 0 heavy. Copy: round 9.
+- 2026-10-02 · **IN REVIEW, round 8 - true net on ②, Budget vs Actual scored** (owner: "add the OH% after net profit to
+  show that final true net and rename that first net as Gross, now do the same scoring for budget vs actual"). ② ends
+  = GROSS (income - COGS - expenses), Gross %, − OH 10% (of contract), = NET, Net %. CP790: Gross 13,036.61, Net
+  -84,664.45 - NOTE ① Net Profit is -84,332.33 because ① subtracts COGS only and ② also the 332.12 office expenses
+  (asked the owner which basis). Budget vs Actual scorecard (`score_bva.py`, folded AND fully opened): 5 variants;
+  heavy borders 129 -> 7 (the TOTAL double rule), width 210 -> 181, rows on open 64 -> 25. Defaults now
+  BVA_FRAME thin, BVA_DETAIL compact (Class, then one "#bill · date · description" column that runs free - beside a
+  Class flag it was cut), BVA_FOLD groups (job types open, codes on [+]); office block heading short; group bands
+  stop at Total cost; text headers left. Copy: round 8.
+- 2026-10-02 · **IN REVIEW, round 7 - scored, not eyeballed** (owner: "too many thick boxes in the top ... keep redoing
+  the whole thing and finding the best scorecard"). A scorecard over the built file (scratch `score.py`): every check
+  green, heavy-border cells in the top, cut-off text (the whole P&L; bold counted wider), fill count, font sizes, top
+  width. Four framings built and scored (`PL_TOP_STYLE`): A boxed 101 heavy cells; B/C/D thin 17 (the one divider);
+  D (thin outline + a hairline under each row) won on row tracking and is the default. Then: Variance / % headers
+  navy like the rest (fills 9 -> 7); ② columns 15 -> 11 and the coverage grid matched to them (top ~2,200 px -> fits
+  a 1920 screen at 110%); group headers in the owner's words INCOME | − COGS | − EXPENSES | = NET (the long ones
+  were cut); "AFTER 10% OVERHEAD" band; account names un-indented (an indent pushed two past their cell); checks box
+  thin. CP, MFD 9%, no-projection and finished builds all score 0 cut / all ties. Copy: round 7.
+- 2026-10-02 · **IN REVIEW, round 6 - page-by-page refine** (owner: "go through each page and see what can be fixed
+  and refined"; mid-way: "by account ... flow horizontal better with an equals to the net, so income > cogs > expense
+  > net"). P&L: ② P&L BY ACCOUNT reads INCOME | − COST OF GOODS SOLD | − OPERATING EXPENSES | = NET OPERATING INCOME
+  (Net %, Gross Profit, GP% under it); block labels are forced to text (a label starting "=" had become a formula,
+  #REF!). Every tab: the long instruction sentences cut to one short line (Transactions, By Account, Labor, Concrete,
+  POs, Reconciliations, Cash Flow, Next Draw); `_tidy_text` turns every em dash into a hyphen before save, except the
+  "PROJECT P&L — <job>" title three readers parse; Next Draw's pre-period note was year-first, now mm/dd/yyyy.
+  Reconciliations compared QuickBooks THROUGH THE LAST DRAW END with Transactions TO TODAY, so every later bill read
+  as an error (CP790 "off by 36,571.61"); both sides now stop at the same date (`_after_cut`), later lines listed
+  under the table. CP790 left: income -5,401.82 (the known #33995 duplicate) and COGS 295.30 (no single line equals
+  it - needs a QuickBooks look). Copy: round 6.
+- 2026-10-02 · **IN REVIEW, round 5 - P&L by account beside ①, coverage under both** (owner: "merge 3 and 4, billed
+  gross, retained, net billed, retained still owed can all be under income; 2 progress, put it in 1 without distorting
+  what's there; move P&L by account to the right of 1 and make it horizontal ... then move the draw coverage underneath
+  those blocks with a divider"). ① PROFIT & LOSS (A:E) gains a grey "Progress" divider row + Earned Revenue / Over-
+  (Under) Billing / Cost to Complete in the ACTUAL column. ② P&L BY ACCOUNT (F:N) = three side-by-side groups, label
+  over 2 merged columns + value: INCOME (billed gross, retainage held, net billed, released, still owed, QBO-fix
+  note), COST OF GOODS SOLD (header carries the total, child accounts link to By Account), OPERATING EXPENSES + Gross
+  Profit / GP% / Net Operating Income. The invoice-by-invoice list left the P&L (a row outline cannot fold one
+  group without its neighbours) - it is on Transactions. A thick navy divider, then DRAW COVERAGE from column A,
+  then the rulings, then CHECKS. Root-cause read PINNED -> vault tasks/2026-10-02_pnl-one-engine.md. Copy: round 5.
+- 2026-10-02 · **IN REVIEW, round 4 - linear again, draw coverage on the right** (owner: "make projects and actuals
+  next to each other and go back to original formatting of having it linear, with draw coverage to the right; remove
+  2 from actual, now it's just one box; the yellow your input remove and rename that block ... and put the 1 there").
+  Left, down A:E/A:B: ① PROFIT & LOSS (PROJECTION | ACTUAL | VARIANCE | ACTUAL % OF PROJ., one box, actuals on the
+  contract/ETC rows), ② PROGRESS (Earned Revenue, Over/(Under) Billing, Cost to Complete), ③ BILLING & RETAINAGE,
+  ④ P&L BY ACCOUNT, CHECKS last. Right, from G at the top: DRAW COVERAGE (`_write_coverage(x0=7)`, F a gap). Branches
+  CP / MFD 9% / no projection / finished all build; CP Overview reads the same draws and projection. Copy: round 4.
+- 2026-10-02 · **IN REVIEW, round 3 - one band across the top, coverage under it** (owner marked up round 2: delete
+  the Contract / Billed and ETC / Costs rows - the actuals go on the Original Contract / Original ETC rows - "move it
+  horizontal ... and put draw coverage below ... redo the whole P&L ... simplified, easy to read"). Band: A:E
+  ① PROJECTION | ② ACTUAL | VARIANCE | ACTUAL % OF PROJ. (actual billed on the contract row, costs on the ETC row - the
+  Revised rows when a job has COs; % column = % billed / % of ETC spent, red past 100%), F:H ③ PROGRESS (Earned
+  Revenue, Over/(Under) Billing, Cost to Complete - the two %s are not repeated), I:K ④ BILLING & RETAINAGE (short
+  labels). Then ⑤ DRAW COVERAGE, ⑥ P&L BY ACCOUNT, CHECKS. Subtitle no longer says "P&L through <last draw end>"
+  (the sheet runs to today). Fixed: `read_back_inputs` looked for its labels in column A only, so since the 08/31
+  gutter a typed contract / ETC was NOT carried into the next run (and the ETC label had drifted); it reads A or B now.
+  Not changed (other readers parse them): the em dash in the "PROJECT P&L — ..." title, the year-first "Generated"
+  stamp. Review copy "Project_PnL_CP790 - round 3.xlsx".
+- 2026-10-02 · **IN REVIEW, round 2 - the P&L is four blocks then coverage** (owner on round 1: "i dont see any changes
+  between the three. i dont want to see checks there put it in the bottom. make a projections and actuals side by
+  side with variance the other 2 below that and then the coverage below those 4 blocks"). Top: one table, label ·
+  ① PROJECTION · ② ACTUAL - QBO TO DATE · VARIANCE (actual - projection) · ACTUAL AS % OF PROJECTION, rows Contract /
+  Billed to Date, ETC / Costs to Date, Gross Profit (+%), less Overhead (10% of contract both sides), Net Profit (+%),
+  MFD's 9% rows when MFD; the yellow inputs (Original Contract, Original ETC, COs) sit above it in the projection
+  column. Then ③ PROGRESS (A:B) beside ④ BILLING & RETAINAGE (C:E), rulings, ⑤ DRAW COVERAGE across the sheet from
+  column A (was top right from D), ⑥ P&L BY ACCOUNT, and the CHECKS at the very bottom (no ✓ marks up top).
+  `build_sheet_pl` returns the cells the checks need; `_wire_pl_support` writes them. `cp_overview.read_coverage`
+  looks down the sheet for the table (verified: same draws / totals / projection off old and new layouts). Branches
+  run: CP, MFD 9% view, no projection on file, finished job (`simple`). Review copy: "Project_PnL_CP790 - round 2.xlsx".
+- 2026-10-02 · **IN REVIEW (branch wt/pnl-redesign, not landed) - P&L + Budget vs Actual tie to each other.** The
+  owner: the workbook is "disconnected and untrustworthy"; scope (relayed 10-02): the P&L and Budget vs Actual only,
+  draw sheets untouched, CP only, MFD waits. Built so far: `pnl_style.py` (one bar / band / grid / money / tie-out
+  look for rebuilt sheets); Budget vs Actual rebuilt for CP/MFD (RP keeps the old one as
+  `build_sheet_budget_vs_actual_rp`): opens with "② Costs to Date - P&L vs this sheet - ✓ ties" and "① ETC vs takeoff
+  budget"; job type (or cost type) > code > bill, bills folded, one row per bill per code; Actual is pre-tax against
+  the pre-tax takeoff, Tax & fuel its own column, Total cost = the P&L to the cent; office accounts in their own block
+  under the total; a code the takeoff never priced says "no budget". The P&L gets ✓ marks beside Billed / Costs to
+  Date with the labels linking down, and/or a CHECKS box under the draw table (BvA = Costs to Date; draw gross =
+  Billed; draws + next draw + pre-Draw-1 = costs + office; draw retained = retainage receivable) - `_wire_pl_support`,
+  run after the P&L, finds its rows by label.
+  Review copies: Analysis/P&L layout review (10-02-2026)/Project_PnL_CP790 - round 1 A/B/C.xlsx (A = job type +
+  inline ✓; B = cost type + checks box; C = job type with a column per draw tying to the draw table + both).
+  Built from one captured QBO pull (scratch replay), all tie-outs green, assert_clean green. Pending: the owner's
+  picks, then drop the unpicked layouts, a test, ARCHITECTURE/FLOW, land, `active cp`.
 - 2026-10-02 · **CP actuals charge overhead on billed to date, projections on the contract - never mixed** (owner:
   "make sure you are getting the oh% of the actual based on the current billing and not overstating the oh amount
   with using the contract oh total. we still need that in the projections"). ② Actuals on the CP P&L:
