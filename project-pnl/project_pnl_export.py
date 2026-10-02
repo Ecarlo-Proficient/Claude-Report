@@ -3853,11 +3853,22 @@ def build_sheet_pl(
         # Say what the % is actually taken OF. With no contract on any report
         # the base is total billed - true on a finished job, but the row must
         # not claim a contract that does not exist (the owner 2026-09-04).
-        aoh_row = row(f"less: Overhead ({overhead_pct:.0f}% of contract)"
-                      if not _no_projection else
-                      f"less: Overhead ({overhead_pct:.0f}% of total billed — "
-                      f"no contract on any WIP report)",
-                      formula=f"=-{oh}*{c_ref}", indent=1, color="595959")
+        # ACTUALS CHARGE OVERHEAD ON WHAT HAS BEEN BILLED, the projection on the
+        # contract - never mixed (the owner 10/02/2026: "make sure you are getting
+        # the oh% of the actual based on the current billing and not overstating
+        # the oh amount with using the contract oh total. we still need that in
+        # the projections"). Supersedes the 09-03 contract basis above for CP; on
+        # CP790 the contract basis charged 97,701 against 79,191 on 791,906 billed.
+        # MFD keeps the contract basis until the owner rules on it.
+        if not show_mfd:
+            aoh_row = row(f"less: Overhead ({overhead_pct:.0f}% of billed to date)",
+                          formula=f"=-{oh}*B{bd_row}", indent=1, color="595959")
+        else:
+            aoh_row = row(f"less: Overhead ({overhead_pct:.0f}% of contract)"
+                          if not _no_projection else
+                          f"less: Overhead ({overhead_pct:.0f}% of total billed — "
+                          f"no contract on any WIP report)",
+                          formula=f"=-{oh}*{c_ref}", indent=1, color="595959")
         # "don't say real just put the net profit" (the owner 2026-09-10) - there
         # is one overhead rate now, so there is nothing for REAL to distinguish.
         rnp_row = row("Net Profit",

@@ -7,6 +7,14 @@ manual close), RP (no draws — expenses → invoice → profit).
 ---
 
 ## DONE / FINALIZED
+- 2026-10-02 · **CP actuals charge overhead on billed to date, projections on the contract - never mixed** (owner:
+  "make sure you are getting the oh% of the actual based on the current billing and not overstating the oh amount
+  with using the contract oh total. we still need that in the projections"). ② Actuals on the CP P&L:
+  "less: Overhead (10% of billed to date)" = rate x Billed to Date (was rate x contract - CP790 97,701 vs 79,191);
+  ① Projection keeps rate x contract; the draw table was already per-draw billed. The CP Overview / Completed were
+  already split (projection OH on contract, actual OH on billed). OPEN for the owner: MFD P&L actuals (10% and 9%),
+  the RP P&L "True Net Profit", the MFD / RP division Overviews and the director's cut page still take overhead on
+  the contract.
 - 2026-10-02 · **Retainage release invoices carry their QBO balance and id** - they read PAID while QBO still had them
   open (CP582, CP689, CP786) and had no QBO link.
 - 2026-10-02 · **Retainage releases are not billing; Net Profit header colour fixed** - Billed to Date = gross invoice
