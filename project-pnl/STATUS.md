@@ -31,6 +31,18 @@ manual close), RP (no draws — expenses → invoice → profit).
   own retainage line is a QBO double count and is NOT counted. CP790: 22,720.10 -> Draw 1 3,243.38 + Draw 2
   14,074.90, 5,401.82 = Draw 3's retainage (not counted); billed 791,905.60, retainage to date 79,190.56 = 10% of
   it exactly. The P&L workbook itself still carries 797,307.42 - a project_pnl_export fix, not this file's.
+  Round 4 (owner: "pull info from qbo to update these projects", "the completed needs a full run", "show me active
+  excel and work on completed excel separately so it's two excels", "verify ... each number"): every CP P&L
+  regenerated from QBO 10/02; `CP Overview.xlsx` = ACTIVE jobs only, finished jobs get their own workbook after a
+  full run confirms they are done (their P&Ls fall back to the 12-31-25 WIP report for contract / ETC - unconfirmed,
+  so projections are blank on finished rows). A **retainage RELEASE is not billing** (owner 09/23 rule): the release
+  invoice is listed at $0 with its amount in the description - CP585 / CP672 / CP861 were over by 12,663 / 30,870 /
+  65,760.60. Retainage-not-billed older than the draw table stays its own line, tested against the net invoices / 9
+  (CP861 ties to its pay apps instead: 38,940 + 2,200). QBO data stamp on the title line of every sheet. Verified by
+  `one-offs/cp_overview_verify.py`: billed and costs re-derived from QBO (strict: lines CODED to the project) tie on
+  all 17 active jobs; the only gap is CP790's 5,401.82 double count, removed on purpose.
+  TO DO: the Completed workbook (CP582, CP656, CP689, CP697, CP714, CP742, CP786 regenerated; CP510 is not a QBO
+  customer); CP783 / CP885 have no costs yet so are not on the Overview.
 - 2026-10-02 · **Layout round 2 (the owner's 7 items on the CP790 review copy)** - ④ shows child account names only
   (full name kept when two parents share one); the P&L label column is sized to its widest visible label;
   draw-coverage Net Profit in a thick black box with a green/red header off the TOTAL; Transactions section bars

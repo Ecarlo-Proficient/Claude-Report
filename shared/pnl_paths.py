@@ -430,14 +430,18 @@ def _find_awarded_cp_folder(base: Path, proj: str):
             numbered = child               # weaker: bare-number match, keep first
     if numbered is not None:
         return numbered
-    strong = re.compile(re.escape(pu) + r"(?!\d)")   # CP592 never matches CP5921
+    # matched on the folder name AS WRITTEN, separators allowed between the
+    # prefix and the number: squeezing the spaces out first glued the number
+    # to an address ("CP656 - 77 PAUL WILSON" -> "CP65677...") and lost the job
+    pfx, n = re.match(r"([A-Z]+)(\d+)", pu).groups() if re.match(r"[A-Z]+\d+", pu) else (pu, "")
+    strong = re.compile(rf"(?<![A-Z0-9]){re.escape(pfx)}[\s\-_]*{n}(?!\d)")   # CP592 never matches CP5921
     for where in _completed_cp_dirs(base):
         try:
             children = sorted(where.iterdir())
         except OSError:
             continue
         for child in children:
-            if child.is_dir() and strong.search(re.sub(r"[\s\-_]+", "", child.name.upper())):
+            if child.is_dir() and strong.search(child.name.upper()):
                 return child
     return None
 

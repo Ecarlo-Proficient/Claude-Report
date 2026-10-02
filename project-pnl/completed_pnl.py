@@ -1206,7 +1206,11 @@ def _build(division: str, loaded, out: Path, div: dict) -> None:
     P&L-and-transactions bundle."""
     if division == "cp":
         import cp_overview                       # same tool folder; lazy - it imports us
-        cp_overview.build([(j, s, t, cp_overview.read_extra(p)) for j, s, t, p in loaded],
+        # ACTIVE jobs only (owner 10/02: "show me active excel and work on
+        # completed excel separately so it's two excels"). Finished jobs get
+        # their own workbook once a full run confirms they really are done.
+        active = [x for x in loaded if x[1].get("status") == "Active"]
+        cp_overview.build([(j, s, t, cp_overview.read_extra(p)) for j, s, t, p in active],
                           out, div)
         return
     build_bundle([(j, s, t) for j, s, t, _ in loaded], out, div)

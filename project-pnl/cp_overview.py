@@ -232,8 +232,11 @@ def read_draw_invoices(wb, draw: str) -> List[dict]:
         if doc is None or str(doc).startswith("TOTAL"):
             break
         out.append({"doc": doc, "date": ws.cell(r, col.get("date", hc + 1)).value,
-                    "billed": _num(ws.cell(r, col.get("gross billed", hc + 2)).value)
-                    + _num(ws.cell(r, col.get("retainage billed", hc + 4)).value),
+                    # a retainage RELEASE collects retainage already billed in
+                    # gross - not income (owner 09/23: gross = invoice lines
+                    # except the retainage item); listed, never added
+                    "billed": _num(ws.cell(r, col.get("gross billed", hc + 2)).value),
+                    "release": _num(ws.cell(r, col.get("retainage billed", hc + 4)).value),
                     "paid": str(ws.cell(r, col.get("paid?", hc + 6)).value or ""),
                     "memo": str(ws.cell(r, col.get("memo", hc + 8)).value or "")})
     return out
@@ -278,6 +281,13 @@ def read_extra(path: Path) -> dict:
         ws = wb["P&L"] if "P&L" in wb.sheetnames else wb.worksheets[0]
         proj = read_projection(ws)
         rnb = None
+        # when the P&L pulled QBO: its "Generated <date time>" stamp
+        pulled = None
+        for row in ws.iter_rows(min_row=1, max_row=3, values_only=True):
+            for v in row:
+                m = re.search(r"Generated (\d{4}-\d{2}-\d{2} \d{1,2}:\d{2} [AP]M)", str(v or ""))
+                if m and pulled is None:
+                    pulled = dt.datetime.strptime(m.group(1), "%Y-%m-%d %I:%M %p")
         for row in ws.iter_rows(min_row=1, max_row=120, max_col=3, values_only=True):
             m = next((x for x in (re.match(r"\s*#(\d+)\s.*retainage\s+not\s+billed",
                                            str(v), re.I) for v in row if v) if x), None)
@@ -290,7 +300,7 @@ def read_extra(path: Path) -> dict:
             d["invoices"] = read_draw_invoices(wb, d["name"])
             d["bills"] = lines.get(d["name"], [])
         return dict(proj, draws=draws, awaiting=acc, next_lines=read_next_draw(wb),
-                    rnb_doc=rnb)
+                    rnb_doc=rnb, pulled=pulled)
     finally:
         wb.close()
 
@@ -408,7 +418,14 @@ def build(jobs: List[tuple], out: Path, div: dict) -> None:
           align="right")
     n_act = sum(1 for j in jobs if j[1].get("status") == "Active")
     scope = f" · {div['scope']}" if div.get("scope") else ""
-    _cell(ov, 2, C0, f"{n_act} active · {len(jobs) - n_act} completed{scope}",
+    stamps = sorted(ex["pulled"] for *_x, ex in jobs if ex.get("pulled"))
+    qbo = ""
+    if stamps:
+        lo, hi = stamps[0], stamps[-1]
+        qbo = (f" · QBO data {lo:%m/%d/%Y %I:%M %p}" if lo.date() == hi.date() and
+               (hi - lo).total_seconds() < 3600 else
+               f" · QBO data {lo:%m/%d/%Y %I:%M %p} to {hi:%m/%d/%Y %I:%M %p}")
+    _cell(ov, 2, C0, f"{n_act} active · {len(jobs) - n_act} completed{scope}{qbo}",
           size=SZ_SMALL, color=GREY)
     for c in range(C0, LCOL + 1):
         ov.cell(2, c).border = Border(bottom=HAIR)
@@ -450,7 +467,13 @@ def build(jobs: List[tuple], out: Path, div: dict) -> None:
         _link(nm, f"#'{sn}'!A1", bold=True)
         for i, (_h, k, fmt, _w, _g) in enumerate(OV_COLS):
             c = C0 + 1 + i
-            if k in ("contract", "etc"):                   # the P&L's projection
+            done = src.get("status") != "Active"
+            if done and k in ("contract", "etc", "await"):
+                # a FINISHED job is off the WIP master, so its P&L falls back
+                # to an old WIP report for contract / ETC - unconfirmed (owner
+                # 10/02). Its actuals ARE the result: projection left blank.
+                v = None
+            elif k in ("contract", "etc"):                 # the P&L's projection
                 v = jobs_ex[job][k] or None
             elif k in ref:                                 # the job sheet's own cell
                 v = f"='{sn}'!{ref[k]}"
@@ -583,6 +606,9 @@ def _job_sheet(wb, job, src, t, ex, div) -> dict:
     if src.get("rel"):
         _link(_cell(ws, 1, LAST - 1, "P&L  ↗", align="right", size=SZ_SMALL),
               src["rel"], size=SZ_SMALL)
+    if ex.get("pulled"):
+        _cell(ws, 1, LAST - 3, f"QBO data {ex['pulled']:%m/%d/%Y %I:%M %p}", align="right",
+              size=SZ_SMALL, color=GREY)
     _link(_cell(ws, 1, LAST, "‹ Overview", align="right", size=SZ_SMALL),
           "#'Overview'!A1", size=SZ_SMALL)
     ws.row_dimensions[1].height = 24
@@ -672,13 +698,19 @@ def _job_sheet(wb, job, src, t, ex, div) -> dict:
             dc.number_format = "0"
             if url:
                 _link(dc, url, bold=True)
-            _cell(ws, r, 4, inv.get("kind", "Invoice"), bold=True, color=GREEN_T)
+            kind = inv.get("kind") or ("Ret. release" if inv.get("release") and not inv["billed"]
+                                       else "Invoice")
+            _cell(ws, r, 4, kind, bold=True, color=GREEN_T if kind != "Ret. release" else GREY)
             _cell(ws, r, 5, "")
             _cell(ws, r, 6, inv["billed"], fmt=MONEY_C, align="right", color=GREEN_T,
                   bold=True)
             _cell(ws, r, 8, _paid(paid), align="center", size=SZ_SMALL,
                   color=GREY if _paid(paid) == "PAID" else RED_T, bold=True)
-            _cell(ws, r, 9, inv["memo"][:120], size=SZ_SMALL, color=GREY)
+            memo = inv["memo"]
+            if inv.get("release"):
+                memo = (f"retainage release ${inv['release']:,.2f} - collects retainage already "
+                        f"billed, not counted again · " + memo)
+            _cell(ws, r, 9, memo[:160], size=SZ_SMALL, color=GREY)
             ws.row_dimensions[r].outline_level = 1
             r += 1
         by_vendor: Dict[str, list] = {}
@@ -740,6 +772,12 @@ def _job_sheet(wb, job, src, t, ex, div) -> dict:
         r += 1
 
     dup = _spread_retainage(job, dict(src, rnb_doc=ex.get("rnb_doc")), draws)
+    # the P&L's draw table counts a release inside the draw's gross billed; take
+    # it back out so a draw's billed is new billing only
+    for d in draws:
+        rel = sum(x.get("release", 0) for x in d["invoices"])
+        if rel and abs(sum(x["billed"] for x in d["invoices"]) + rel - d["gross"]) < 1:
+            d["gross"] = round(d["gross"] - rel, 2)
 
     nxt = ex["next_lines"]
     if nxt or ex["awaiting"]:
@@ -757,7 +795,8 @@ def _job_sheet(wb, job, src, t, ex, div) -> dict:
     # doc match double-lists them. The P&L's draws start at its first period;
     # every bill before it is the history the draw table leaves out.
     start = _period_start(draws[0]["period"]) if draws else None
-    o_inv = [{"doc": i["doc"], "date": i["date"], "billed": i["gross"] + i["ret_billed"],
+    o_inv = [{"doc": i["doc"], "date": i["date"], "billed": i["gross"],
+              "release": i["ret_billed"],
               "paid": i.get("paid") or "", "memo": str(i.get("memo") or "")}
              for i in src["invoices"] if str(i["doc"]) not in seen_i]
     o_inv = [x for x in o_inv if not any(not dd["je"] and str(dd["doc"]) == str(x["doc"])
@@ -776,7 +815,11 @@ def _job_sheet(wb, job, src, t, ex, div) -> dict:
                for sec in src["sections"] for a in sec["accounts"] for v in a["vendors"]
                for ln in v["lines"] if _before(ln["date"], start)
                or (start is None and str(ln["doc"]) not in seen_b)]
-    want_b = (t["billed"] - sum(dd["amt"] for dd in dup if dd["amt"] >= 1)
+    released = sum(i["ret_billed"] for i in src["invoices"])
+    if released:
+        print(f"    ⚑ {job}: {released:,.2f} of retainage releases left out of billed "
+              f"(already in gross)")
+    want_b = (t["billed"] - released - sum(dd["amt"] for dd in dup if dd["amt"] >= 1)
               - sum(d["gross"] for d in draws))
     want_c = t["cost"] - sum(d["cost"] for d in draws) - ex["awaiting"]
     gap_b = want_b - sum(x["billed"] for x in o_inv)
@@ -920,6 +963,15 @@ def _spread_retainage(job: str, src: dict, draws: List[dict]) -> List[dict]:
         alloc = {d["name"]: round(d["gross"] / 9, 2) for d in early}
         rest = round(amt - sum(alloc.values()), 2)
         if not early or rest < -1:
+            # the net-entered draws are older than the P&L's draw table: the
+            # amount stays as its own line, tested against those invoices
+            pre = sum(i["gross"] for i in src["invoices"]
+                      if not i["withheld"] and i["gross"] and str(i["doc"]) not in in_draws)
+            ok = pre and abs(pre / 9 - amt) < 1
+            print(f"    {'·' if ok else '⚑'} {job}: retainage not billed {amt:,.2f} kept as its own "
+                  f"line - {'= ' if ok else 'vs '}net invoices before the draw table "
+                  f"{pre:,.2f} / 9 = {pre / 9 if pre else 0:,.2f}"
+                  f"{'' if ok else ' - DOES NOT TIE, check the pay app'}")
             continue
         dup_on, run = None, 0.0
         if rest >= 1:
@@ -932,6 +984,8 @@ def _spread_retainage(job: str, src: dict, draws: List[dict]) -> List[dict]:
             else:
                 dup_on = None
             if dup_on is None or abs(run - rest) >= 1:
+                print(f"    ⚑ {job}: retainage not billed {amt:,.2f} left outside the draws - "
+                      f"{rest:,.2f} after the spread matches no draw's retainage; check it by hand")
                 continue                          # unexplained remainder: leave it whole
         for d in early:
             a = alloc[d["name"]]

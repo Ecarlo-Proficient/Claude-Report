@@ -37,3 +37,9 @@ def test_archive_needs_full_match(tmp_path):
 
 def test_missing_base(tmp_path):
     assert _find_awarded_cp_folder(tmp_path / "nope", "CP610") is None
+
+
+def test_completed_name_with_street_number(tmp_path):
+    # "CP656 - 77 PAUL WILSON": the address digits must not be glued onto the job #
+    base = _tree(tmp_path, "Completed Projects/CP656 - 77 PAUL WILSON")
+    assert _find_awarded_cp_folder(base, "CP656").name == "CP656 - 77 PAUL WILSON"

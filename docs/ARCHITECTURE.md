@@ -1006,7 +1006,9 @@ cost from `read_source`, net after 10% OH: projected on the contract, to date on
 costs awaiting the next draw), each job linked to its own sheet: the DRAW COVERAGE table
 (from the P&L's draw table) and every transaction by draw (`Draw Data`, `Draw N`,
 `Next Draw`, and the pre-period history from Transactions), every draw figure a SUM of its
-lines and the table's total tied to the job's billed / cost. MFD and RP keep `build_bundle`.
+lines and the table's total tied to the job's billed / cost. MFD and RP keep `build_bundle`. Active jobs only
+(finished jobs: a separate workbook, pending). `one-offs/cp_overview_verify.py` (read-only) re-derives every job's
+billed (income lines, retainage releases out) and cost (lines coded to the project) from QBO and diffs the workbook.
 
 **RETIRED 2026-09-03 — one job, one P&L.** A finished MFD job folder had grown THREE
 workbooks of the same numbers: `Project_PnL_<job>.xlsx`, `<job> Job Result.xlsx`
