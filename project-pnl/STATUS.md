@@ -7,6 +7,15 @@ manual close), RP (no draws — expenses → invoice → profit).
 ---
 
 ## DONE / FINALIZED
+- 2026-10-02 · **APPROVED, round 23 - landed** (owner: "make sure to put $ formatting where applicable. commit push";
+  "update all cp project"). Every dollar format carries the $ (CURR_FMT, RET_FMT, OVER_FMT, pnl_style.MONEY, the "off
+  by" / "after X expenses" / "takeoff X under ETC" texts); `safe_save` widens each $ column by 1.5 (`_widen_for_dollar`)
+  and the draw sheets' figure columns start at 13. The corrections this review made, all kept: billed is GROSS
+  (retainage included); ② P&L by account took the overhead on the full CONTRACT and overstated the loss - every to-date
+  overhead (① Actual, ② by account, every draw) is now rate x billed, only the projection uses the contract; ② Net
+  ties to the draws' overhead; Reconciliations compares QuickBooks and Transactions through the same date; the
+  gutter pass shifts only references into sheets that move (CF formulas too). Pinned by tests/test_pnl_layout_rules.py;
+  project-pnl/FLOW.md added; docs/ARCHITECTURE.md updated. Copy: round 23. CP regenerated; MFD waits.
 - 2026-10-02 · **IN REVIEW, round 22** (owner: "move checks to reconciliations and combine that info together";
   "move back draw coverage to P&L and put back the individual draw sheets but keep the new format"; "divider between the
   P&L and draw coverage"). The Draws sheet is gone: DRAW COVERAGE sits on the P&L under ① / ② behind a divider (white

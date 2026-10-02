@@ -376,8 +376,8 @@ THIN_BORDER = Border(
     top=Side(style="thin", color="BFBFBF"),
     bottom=Side(style="thin", color="BFBFBF"),
 )
-CURR_FMT = '#,##0.00;[Red]-#,##0.00'
-RET_FMT = '#,##0.00;-#,##0.00'   # Retained: a release is a minus, never red
+CURR_FMT = '"$"#,##0.00;[Red]-"$"#,##0.00'   # dollars carry the $ (owner 10/02)
+RET_FMT = '"$"#,##0.00;-"$"#,##0.00'   # Retained: a release is a minus, never red
 # Accounting dollars for the Labor/Concrete sheets (the user 2026-08-04:
 # "make all $ a number $$$ format") — $ pinned left, zeros as "-", red parens.
 ACC_FMT = '_("$"* #,##0.00_);[Red]_("$"* (#,##0.00)_);_("$"* "-"_);_(@_)'
@@ -2107,6 +2107,19 @@ def _tidy_text(wb) -> int:
     return n
 
 
+def _widen_for_dollar(wb, extra: float = 1.5) -> None:
+    """Every dollar figure carries a $ (the owner 2026-10-02: "put $
+    formatting where applicable"). The widths were fitted to the bare
+    figures, so each column that holds a $-formatted cell gains room for the
+    sign - once, here, rather than in each of the ~40 width rules."""
+    for ws in wb.worksheets:
+        cols = {c.column for row in ws.iter_rows() for c in row
+                if c.value is not None and '"$"' in (c.number_format or "")}
+        for col in cols:
+            d = ws.column_dimensions[get_column_letter(col)]
+            d.width = round((d.width or 8.43) + extra, 1)
+
+
 def safe_save(wb: Workbook, out_path: Path) -> Optional[Path]:
     """Write atomically and NEVER clobber a workbook that's open in Excel.
     Excel drops a `~$<name>` owner-lock file next to an open workbook; if that
@@ -2118,6 +2131,7 @@ def safe_save(wb: Workbook, out_path: Path) -> Optional[Path]:
               f"overwriting it. Close it and re-run.")
         return None
     _normalise_body_font(wb)
+    _widen_for_dollar(wb)
     _wrap_long_labels(wb)     # before the gutter: the label column is still A
     _apply_left_gutter(wb)
     _apply_zoom(wb)
@@ -3377,7 +3391,7 @@ def build_sheet_reconciliations(
         d = ws.cell(row=r, column=4, value=f"=C{r}-B{r}")
         d.number_format = CURR_FMT; d.font = Font(size=SZ)
         e = ws.cell(row=r, column=5,
-                    value=f'=IF(ABS(D{r})<1,"✓ ties","✗ off by "&TEXT(D{r},"#,##0.00"))')
+                    value=f'=IF(ABS(D{r})<1,"✓ ties","✗ off by "&TEXT(D{r},"$#,##0.00"))')
         e.font = Font(size=SZ, bold=True)
         rr = r
         r += 1
@@ -3439,7 +3453,7 @@ def build_sheet_reconciliations(
                 x.number_format = CURR_FMT
                 x.font = Font(size=SZ, bold=(col == 3))
             e = ws.cell(row=r, column=5, value=(
-                f'=IF(ABS(D{r})<0.005,"✓ ties","✗ off by "&TEXT(D{r},"#,##0.00"))'))
+                f'=IF(ABS(D{r})<0.005,"✓ ties","✗ off by "&TEXT(D{r},"$#,##0.00"))'))
             e.font = Font(size=SZ, bold=True)
             chk_rows.append(r)
             r += 1
@@ -4038,7 +4052,7 @@ def build_sheet_pl(
 
         _np = _no_projection
         PTS_FMT = '+0.0%;[Red]-0.0%;0.0%'
-        OVER_FMT = '[Red]+#,##0.00;-#,##0.00;0.00'    # costs past the ETC read red
+        OVER_FMT = '[Red]+"$"#,##0.00;-"$"#,##0.00;"$"0.00'    # costs past the ETC read red
         if _np:
             bd_row = cmp_row("Billed to Date", None, f"={Btot}", bold=True)
             ctd_row = cmp_row("Costs to Date", None, None, bold=True)
@@ -4286,7 +4300,7 @@ def build_sheet_pl(
         # (② takes them off, ① does not) and the overhead basis (② on billed,
         # ① on the contract) - so it reads true whichever basis ① ends on.
         _ohA, _ohB = f"C{aoh_row}", V(X4, g_net["oh"])
-        _exp_txt = f'IF({exp_cell}<>0,"after "&TEXT({exp_cell},"#,##0.00")&" expenses","")'
+        _exp_txt = f'IF({exp_cell}<>0,"after "&TEXT({exp_cell},"$#,##0.00")&" expenses","")'
         _oh_txt = f'IF(ABS({_ohB}-{_ohA})<0.005,"","OH on billed, ① on contract")'
         for _k, _ref1, _why in (("gross", f"C{gpa_row}", _exp_txt),
                                 ("net", f"C{rnp_row}",
@@ -5263,7 +5277,9 @@ def build_sheets_draws(wb, proj, cust_info, wip_info, draw_rows, income_groups,
         # spills right (it made a figure column 46 wide)
         _autofit(ws, 2, _desc_col - 1, [h for hs, _rng in fit for h in hs],
                  [rng for _hs, rng in fit],
-                 min_w=(16.0 if DRAW_SUMMARY == "strip" else 11.0), max_w=46.0)
+                 # 13: a bold six-figure summary total (~$140k) is
+                 # a formula the fit cannot measure
+                 min_w=(16.0 if DRAW_SUMMARY == "strip" else 13.0), max_w=46.0)
         ws.column_dimensions[get_column_letter(_desc_col)].width = 14.0
         _merged = {rc_ for m in ws.merged_cells.ranges for rc_ in m.cells}
         _need_b = max([_text_units(str(c.value), (c.font and c.font.sz) or BASE_SIZE)
@@ -6696,7 +6712,7 @@ def build_sheet_budget_vs_actual(wb, proj, cust_info, wip_info,
     st.tie_colours(ws, f"{get_column_letter(USED)}{costs_row}")
     note = ws.cell(row=etc_row, column=USED, value=(
         f'=IF(ABS({get_column_letter(VAR)}{etc_row})<0.5,"✓ same",'
-        f'"takeoff "&TEXT(-{get_column_letter(VAR)}{etc_row},"#,##0")&" under ETC")'))
+        f'"takeoff "&TEXT(-{get_column_letter(VAR)}{etc_row},"$#,##0")&" under ETC")'))
     note.fill = st.INFO
     note.font = st.font(color="7F6000")
     ws.merge_cells(start_row=etc_row, start_column=USED, end_row=etc_row, end_column=TIE_END)

@@ -27,7 +27,7 @@ INFO = PatternFill("solid", fgColor="FFF2CC")
 OK = PatternFill("solid", fgColor="C6EFCE")
 BAD = PatternFill("solid", fgColor="FFC7CE")
 
-MONEY = '#,##0.00;[Red]-#,##0.00;"-"'      # zero reads as a dash
+MONEY = '"$"#,##0.00;[Red]-"$"#,##0.00;"-"'      # dollars carry the $; zero reads as a dash
 PCT = '0%'
 DATE = 'mm/dd/yyyy'
 
