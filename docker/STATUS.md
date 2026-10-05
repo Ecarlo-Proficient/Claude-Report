@@ -17,7 +17,10 @@ Progression record for the office server package. Update in the SAME commit as a
   builds on the Synology.
 
 ## IN PROGRESS
-- The developer: the setup in README.md (the box, folders, QBO auth, keys, build, test mode).
+- 2026-10-05 · The test week is running on the office Synology (test mode). Every job ok since the first full mirror
+  (mirror every 3 min, AP + AR + AR export every 15 min, reconcile counts QBO = mirror). First side-by-side vs the
+  Mac's live trackers: Invoice Tracker - every open invoice and balance matches (layout differs only because the
+  server runs the newer aging code); Bill Tracker - Inventory / Liens identical, Bills differ on payments (side note below).
 
 ## TO DO (before live)
 - Notion: only update an invoice when a field changed (today every run rewrites every open invoice).
@@ -28,4 +31,14 @@ Progression record for the office server package. Update in the SAME commit as a
 - Live runs `main` only - a release PR before the switch.
 
 ## OPEN ISSUES
-- The image has been built and smoke-run off-box (10/01/2026), not yet on the Synology itself.
+- Side note (2026-10-05) - **the server's Bill Tracker can't be opened by anyone.** `excel_bill_sync.py` chmods the
+  output 600; on the Mac that is the owner's own account, on the server it is svc-automation, so no person (or Excel
+  over the share) can read `_server-test/Bill Tracker.xlsx` - a sudo copy was needed to compare it. Live would lock
+  the real one the same way. Fix before live: readable by the share's users on the server (group-read, or skip the
+  chmod when `ACB_SERVER_MODE` is set). The Invoice Tracker is not affected.
+- Side note (2026-10-05) - **payments: 126 bill lines are paid on the Mac, Unpaid/Partial on the server.** Same bills,
+  same lines; only Open Bal / Pay Status / Pay Ref-Date-Method / Lien differ, always paid -> unpaid. All of them trace
+  to three check payments on the Mac's side - one of them (check #25510, April 2026) pays 109 bills by itself. Either
+  the server's mirror is missing those BillPayments (suspect: very large payments) or QBO changed them between the
+  two runs (Mac 08:09, server 11:50). Not yet settled: open check #25510 in QBO, or compare a same-hour pair of files.
+  Probably the same cause: 6 extra bills only on the server (Unpaid) and 3 Bill List rows "approved" -> "check QBO".
