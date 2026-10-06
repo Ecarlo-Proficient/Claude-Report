@@ -182,15 +182,20 @@ def _read_invoices(ws, c0: int) -> tuple:
     def _lvl(rr):
         return int(ws.row_dimensions[rr].outline_level or 0) if rr in ws.row_dimensions else 0
 
-    draw = None
+    # Since 10/06/2026 every invoice row sits one outline level in (the
+    # invoice list collapses under INCOME), so a draw head is "the next row
+    # is one level DEEPER", not "level 0" - reading level 0 counted MFD192's
+    # combined draws twice (7.07M for 3.53M).
+    draw, head_lvl = None, -1
     for r in range(hdr + 1, end):
         lvl = _lvl(r)
-        if lvl == 0 and r + 1 < end and _lvl(r + 1) >= 1:
+        if r + 1 < end and _lvl(r + 1) > lvl:
             memo = str(ws.cell(r, MEMO).value or "")
             draw = (re.sub(r"\s*·\s*\d+\s+invoices? combined\s*$", "", memo).strip()
                     or str(ws.cell(r, DOC).value or "draw"))
+            head_lvl = lvl
             continue                                   # the head: its invoices follow
-        if lvl == 0:
+        if draw is not None and lvl <= head_lvl:
             draw = None
         inv.append({"doc": ws.cell(r, DOC).value, "date": ws.cell(r, DATE).value,
                     "memo": ws.cell(r, MEMO).value or "",
@@ -380,8 +385,10 @@ def read_source(path: Path) -> dict:
 
         pl = next((n for n in ("P&L", "Job P&L") if n in wb.sheetnames), None)
         title = str(wb[pl].cell(1, 1).value or "") if pl else ""
+        _dn = wb.defined_names.get("RetainageIncomeDocs")
+        ret_income = (str(_dn.attr_text).strip('"').split(",") if _dn is not None else [])
         return {"invoices": inv, "not_billed": not_billed, "payroll": round(payroll, 2),
-                "sections": sections, "title": title,
+                "sections": sections, "title": title, "ret_income_docs": ret_income,
                 "contract": _read_contract(wb),
                 "status": "Completed", "rel": None}
     finally:
@@ -451,8 +458,13 @@ def retainage_booked(src: dict) -> float:
     10/06/2026 and misfired on ordinary draws whose memo mentions retainage -
     MFD231 / MFD183 - so a re-billed release is still caught only when it
     exceeds what is held + not billed.)"""
+    # + retainage the generator recorded as BILLED AS INCOME (a PC00 retainage
+    # invoice - the workbook's RetainageIncomeDocs name, 10/06/2026): a later
+    # release of it is collecting, not billing twice (CP610 / CP595)
+    docs = set(src.get("ret_income_docs") or ())
     return (sum(i.get("withheld", 0.0) for i in src["invoices"])
-            + (src.get("not_billed") or 0.0))
+            + (src.get("not_billed") or 0.0)
+            + sum(i["gross"] for i in src["invoices"] if str(i.get("doc") or "") in docs))
 
 
 def _totals(src: dict, legacy: bool = False) -> dict:

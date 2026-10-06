@@ -173,8 +173,9 @@ def read_coverage(ws) -> tuple:
             acc = _num(ws.cell(r, col.get("costs", hc + 5)).value)
             continue
         if name.startswith("TOTAL"):
-            for rr in range(r + 1, r + 5):
-                if str(ws.cell(rr, hc).value or "").lower().startswith("accumulating"):
+            # since 10/06/2026 the next draw sits UNDER the total
+            for rr in range(r + 1, r + 6):
+                if str(ws.cell(rr, hc).value or "").lower().startswith(("accumulating", "next draw")):
                     acc = _num(ws.cell(rr, col.get("costs", hc + 5)).value)
             break
         if not name:

@@ -7,6 +7,16 @@ manual close), RP (no draws — expenses → invoice → profit).
 ---
 
 ## DONE / FINALIZED
+- 2026-10-06 · **To date row, expenses only when real, Progress out, re-bill guard** (owner: "remove Progress";
+  "there should be no expenses ... show if there are so we can remove ... no expenses = that block removed entirely";
+  next draw under the total, "a blank thicker line ... remove the income there since it's not known yet"). Coverage:
+  TOTAL, a thick rule, Next draw (forming) - costs only - and To date (draws + next draw + outside the windows - office
+  expenses), both yellow italic; To date gross profit = D6 on all 21 jobs with draws. ② drops the EXPENSES group when
+  a job has none (11 jobs) and GROSS / NET move left. Progress (earned revenue, over / under billing, cost to complete)
+  removed - E5's variance already says cost to complete. A PC00 retainage invoice is written to the workbook name
+  RetainageIncomeDocs; completed_pnl.retainage_booked counts it, so CP610 / CP595's re-bill releases do not bill twice.
+  completed_pnl reads a combined draw by outline DEPTH (the invoices now fold one level in; MFD192 read double for a
+  moment). Overviews: CP 6,955,359 (reconciled, 0 problems; QBO ties but CP790's known duplicate); MFD 54,879,453.
 - 2026-10-06 · **Transactions sheet: wrapped invoice memos, collapsible invoices, stronger cost dividers** (owner:
   "wrap texts for transactions invoices but only that part, make it groupable"; "keep the costs collapsed, but the
   header/dividers are not pronounced enough"). Invoice memos wrap; every invoice folds under the INCOME header (a

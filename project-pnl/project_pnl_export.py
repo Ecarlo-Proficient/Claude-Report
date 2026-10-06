@@ -1125,6 +1125,23 @@ def draw_label(period: Tuple[dt.date, dt.date]) -> str:
     return f"{s.strftime('%m/%d/%y')}–{e.strftime('%m/%d/%y')}"
 
 
+# The invoices that billed RETAINAGE AS INCOME (a PC00 "Retainage" invoice),
+# kept as a workbook-level defined name - invisible on every sheet - so the
+# division Overview counts that retainage as already booked and a later
+# release of it on the Retainage Receivable item is never billed twice
+# (CP610 #32656 / #32960, CP595 - the owner 2026-10-06). Value: "doc,doc".
+RET_INCOME_NAME = "RetainageIncomeDocs"
+
+
+def mark_retainage_income(wb, income_groups: dict) -> None:
+    docs = sorted({str(i.get("doc_num") or "") for g in (income_groups or {}).values()
+                   for i in (g.get("invoices") or []) if i.get("ret_income")} - {""})
+    if docs:
+        from openpyxl.workbook.defined_name import DefinedName
+        wb.defined_names[RET_INCOME_NAME] = DefinedName(
+            RET_INCOME_NAME, attr_text='"' + ",".join(docs) + '"')
+
+
 # Item ids whose sales post to Retainage Receivable (an Other Current Asset -
 # "99 – Retainage", item 1812). A line on one of these is retainage moving,
 # never billing: negative = withheld, positive = released. Every other line is
@@ -1248,8 +1265,10 @@ def group_invoices_by_draw(invoices: List[dict],
                            or RETAINAGE_RE.search(full_text)))
         # a retainage invoice on an INCOME item (PC00 "Retainage") that is not
         # a "not billed" one is real billing - it falls through as an invoice
+        ret_income = False
         if is_ret_inv and abs(gross) > 0.005 and not NOT_BILLED_RE.search(full_text):
             is_ret_inv = False
+            ret_income = True      # retainage BILLED AS INCOME (PC00) - see RET_INCOME_NAME
         if is_ret_inv:
             if NOT_BILLED_RE.search(full_text):       # NOT BILLED → excluded
                 retainage_block["invoices"].append({
@@ -1289,6 +1308,7 @@ def group_invoices_by_draw(invoices: List[dict],
             "gross": gross,
             "retainage": retainage,
             "retainage_billed": retainage_billed,
+            "ret_income": ret_income,
         }
 
         if period is None:
@@ -4192,27 +4212,11 @@ def build_sheet_pl(
                     None if _np else f'=IF(B{bd_row}=0,"",B{mfd_np_row}/B{bd_row})',
                     f'=IF(C{bd_row}=0,"",C{mfd_np_row}/C{bd_row})',
                     fmt=PCT_FMT, var_fmt=PTS_FMT)
-        # ── PROGRESS lives INSIDE ① (the owner 2026-10-02, round 5: "put it in
-        #    1 without distorting what's already there"): a light grey divider
-        #    row, then three rows whose figure sits in the ACTUAL column.
-        #    % complete and % billed are already the % column above. ──
+        # Progress (earned revenue, over / under billing, cost to complete)
+        # REMOVED (the owner 2026-10-06: "remove Progress, we have cost to
+        # complete in cell e5 ... earned revenue and over/under billing we
+        # don't know how to use here"); the WIP report keeps them for the bank
         earn_row = ctc_row = None
-        if not _np:
-            for _c in range(1, PC + 1):
-                _sc = ws.cell(row=r, column=_c)
-                _sc.fill = SECT_FILL
-                _sc.border = TOP_BORDER
-            ws.cell(row=r, column=1, value="Progress").font = Font(
-                bold=True, size=BASE_SIZE - 1, color="404040")
-            r += 1
-            earn_row = cmp_row("Earned Revenue", None, None, var=False)
-            cmp_row("Over / (Under) Billing", None,
-                    f'=IF({e_ref}=0,"",({Btot})-C{earn_row})', var=False,
-                    bold=True, color="C0504D")
-            ctc_row = cmp_row("Cost to Complete", None, None, var=False)
-            if wip_closed:
-                row("closed per WIP master - % complete forced to 100%", None,
-                    size=BASE_SIZE - 2, color="595959")
         tbl_end = r
         refs.update(billed=f"C{bd_row}", costs=f"C{ctd_row}",
                     etc=None if _np else f"B{ctd_row}")
@@ -4234,8 +4238,14 @@ def build_sheet_pl(
         # horizontal better with an equals to the net, so income > cogs >
         # expense > net"): INCOME - COGS - OPERATING EXPENSES = NET, the sign
         # on each group's header, its total beside it.
-        X1, X2, X3, X4 = PC + 1, PC + 4, PC + 7, PC + 10     # F, I, L, O
-        LAST_ACC = X4 + 2                                    # Q
+        # a job with NO office expenses has no EXPENSES group at all - GROSS
+        # / NET move up beside COGS (the owner 2026-10-06: "it should have it
+        # removed entirely that block"); one with any shows them, to be fixed
+        _exp_names = tx_refs.get("exp_accts") or []
+        has_exp = bool(_exp_names)
+        X1, X2 = PC + 1, PC + 4                              # F, I
+        X3, X4 = (PC + 7, PC + 10) if has_exp else (None, PC + 7)
+        LAST_ACC = X4 + 2
         _ban = ws.cell(row=cmp_top, column=X1, value=f"{next(_sec_nums)} P&L BY ACCOUNT (CURRENT)")
         _ban.font = Font(bold=True, size=BASE_SIZE + 1, color="FFFFFF")
         _ban.alignment = Alignment(horizontal="center", vertical="center")
@@ -4342,13 +4352,12 @@ def build_sheet_pl(
         ws[cogs_cell] = ("=" + "+".join(_ac)) if _ac else "=0"
 
         # OPERATING EXPENSES, then the bottom line of the account view
-        _exp_names = tx_refs.get("exp_accts") or []
-        _ex = [("exp", "−  EXPENSES",
-                None if _exp_names else f"={tx_refs['exp']}",
-                dict(bold=True, fill=SECT_FILL))] + _acct_lines(_exp_names)
-        g_ex, e_ex = ablock(X3, _ex)
-        exp_cell = V(X3, g_ex["exp"])
-        if _exp_names:
+        exp_cell, e_ex = None, cmp_top + 1
+        if has_exp:
+            _ex = [("exp", "−  EXPENSES", None,
+                    dict(bold=True, fill=SECT_FILL))] + _acct_lines(_exp_names)
+            g_ex, e_ex = ablock(X3, _ex)
+            exp_cell = V(X3, g_ex["exp"])
             ws[exp_cell] = "=" + "+".join(V(X3, g_ex[f"a{i}"]) for i in range(len(_exp_names)))
         refs["opex"] = exp_cell
         # = GROSS, then the overhead, then the TRUE NET (the owner 2026-10-02:
@@ -4368,7 +4377,8 @@ def build_sheet_pl(
             ("netp", "Net %", None, dict(fmt=PCT_FMT, bold=True))])
         gross_cell, net_cell = V(X4, g_net["gross"]), V(X4, g_net["net"])
         refs["oh_billed"] = V(X4, g_net["oh"])
-        ws[gross_cell] = f"={inc_cell}-{cogs_cell}-{exp_cell}"
+        ws[gross_cell] = (f"={inc_cell}-{cogs_cell}-{exp_cell}" if exp_cell
+                          else f"={inc_cell}-{cogs_cell}")
         ws[V(X4, g_net["grossp"])] = f'=IF({inc_cell}=0,"",{gross_cell}/{inc_cell})'
         ws[net_cell] = f"={gross_cell}+{V(X4, g_net['oh'])}"
         ws[V(X4, g_net["netp"])] = f'=IF({inc_cell}=0,"",{net_cell}/{inc_cell})'
@@ -4382,11 +4392,13 @@ def build_sheet_pl(
         # (② takes them off, ① does not) and the overhead basis (② on billed,
         # ① on the contract) - so it reads true whichever basis ① ends on.
         _ohA, _ohB = f"C{aoh_row}", V(X4, g_net["oh"])
-        _exp_txt = f'IF({exp_cell}<>0,"after "&TEXT({exp_cell},"$#,##0.00")&" expenses","")'
+        _exp_txt = (f'IF({exp_cell}<>0,"after "&TEXT({exp_cell},"$#,##0.00")&" expenses","")'
+                    if exp_cell else '""')
         _oh_txt = f'IF(ABS({_ohB}-{_ohA})<0.005,"","OH on billed, ① on contract")'
         for _k, _ref1, _why in (("gross", f"C{gpa_row}", _exp_txt),
                                 ("net", f"C{rnp_row}",
-                                 f'{_exp_txt}&IF(AND({exp_cell}<>0,ABS({_ohB}-{_ohA})>=0.005),"; ","")&{_oh_txt}')):
+                                 (f'{_exp_txt}&IF(AND({exp_cell}<>0,ABS({_ohB}-{_ohA})>=0.005),"; ","")&{_oh_txt}'
+                                  if exp_cell else _oh_txt))):
             _nc = ws.cell(row=g_net[_k], column=X4 + 3, value=(
                 f'=IF(ABS({V(X4, g_net[_k])}-{_ref1})<0.005,"",{_why})'))
             _nc.font = Font(size=BASE_SIZE - 1, color="595959")
@@ -5165,7 +5177,7 @@ def _outside_draws(income_groups: dict) -> dict:
 
 def write_draw_coverage(ws, top, x0, draw_rows, income_groups, draw_costs, accum,
                         *, overhead_pct=10.0, alt_overhead_pct=None,
-                        contract_ref=None, sheet_links=None) -> dict:
+                        contract_ref=None, sheet_links=None, to_date=None) -> dict:
     """The DRAW COVERAGE table, written on `ws` from row `top`, column `x0`
     (pre-gutter coordinates on the P&L - the owner 2026-10-02: "move back draw
     coverage to P&L"). The next draw (costs so far) first, then every draw
@@ -5237,17 +5249,6 @@ def write_draw_coverage(ws, top, x0, draw_rows, income_groups, draw_costs, accum
     rc += 1
     link_rows = {}                                  # draw label -> coverage row
     next_row = None
-    if has_next:
-        next_row = rc
-        c = _write_cell(ws, rc, K(1), "Next draw (forming)")
-        c.font = F(bold=True, color=LINK, underline="single")
-        link(c, "__next")
-        _thr = f"through {accum['through']}" if accum else "after the last draw"
-        _write_cell(ws, rc, K(2), _thr).font = F(italic=True, color="595959")
-        ct = _write_cell(ws, rc, K(6), round(float(outside.get("total") or 0), 2))
-        ct.number_format = CURR_FMT
-        ct.font = F(bold=True, color=COST_TXT)
-        rc += 1
     first_draw_row = rc
     for name, lbl, net, costs, held, billed in reversed(draw_rows or []):   # newest first
         link_rows[lbl] = rc
@@ -5322,7 +5323,53 @@ def write_draw_coverage(ws, top, x0, draw_rows, income_groups, draw_costs, accum
             operator="greaterThanOrEqual", formula=["0"],
             fill=PatternFill("solid", fgColor="C6EFCE"), font=Font(bold=True, color="006100")))
     _grid_lines(ws, hdr_row + 1, rc, K(1), last_c)
-    _box_range(ws, cov_top, rc, K(1), last_c, thin)
+    # UNDER the total (the owner 2026-10-06): a blank row closed by a thick
+    # rule, then the NEXT DRAW forming (its costs only - its billing is not
+    # known yet) and TO DATE = the draws + the next draw + what sits outside
+    # the draw windows, so its gross profit is the P&L's actual Gross Profit
+    # (job costs only - office expenses are listed on ② to be cleared).
+    # Both rows yellow and italic.
+    end = rc
+    YEL = PatternFill("solid", fgColor="FFF2CC")
+    if has_next or to_date:
+        sep = rc + 1
+        for cc in range(K(1), last_c + 1):
+            ws.cell(row=sep, column=cc).border = Border(
+                bottom=Side(style="thick", color=NAVY))
+        ws.row_dimensions[sep].height = 8
+        end = sep
+    if has_next:
+        next_row = end + 1
+        c = _write_cell(ws, next_row, K(1), "Next draw (forming)")
+        c.font = F(italic=True, bold=True, color=LINK, underline="single")
+        link(c, "__next")
+        _thr = f"through {accum['through']}" if accum else "after the last draw"
+        _write_cell(ws, next_row, K(2), _thr).font = F(italic=True, color="595959")
+        ct = _write_cell(ws, next_row, K(6), round(float(outside.get("total") or 0), 2))
+        ct.number_format = CURR_FMT
+        ct.font = F(italic=True, bold=True, color=COST_TXT)
+        for cc in range(K(1), last_c + 1):
+            ws.cell(row=next_row, column=cc).fill = YEL
+        end = next_row
+    if to_date:
+        td = end + 1
+        _write_cell(ws, td, K(1), "To date").font = F(italic=True, bold=True)
+        og = float(to_date.get("outside_gross") or 0.0)
+        before = float(to_date.get("before") or 0.0)
+        opex = to_date.get("opex_ref")
+        gb = f"={GB}{tot}" + (f"+{og}" if abs(og) >= 0.005 else "")
+        ct_f = (f"={CT}{tot}" + (f"+{CT}{next_row}" if next_row else "")
+                + (f"+{before}" if abs(before) >= 0.005 else "")
+                + (f"-{opex}" if opex else ""))
+        for col, f in ((K(5), gb), (K(6), ct_f), (K(7), f"={GB}{td}-{CT}{td}")):
+            x = ws.cell(row=td, column=col, value=f)
+            x.number_format = CURR_FMT
+            x.font = F(italic=True, bold=True,
+                       color=COST_TXT if col == K(6) else "000000")
+        for cc in range(K(1), last_c + 1):
+            ws.cell(row=td, column=cc).fill = YEL
+        end = td
+    _box_range(ws, cov_top, end, K(1), last_c, thin)
     # ONE box per group, group band to TOTAL (the owner 2026-10-02: "gross
     # one box, after one box, billed and costs one box"): BILLED + COSTS,
     # GROSS, each AFTER-OVERHEAD view - no inner box (the owner 2026-10-02:
@@ -5335,7 +5382,7 @@ def write_draw_coverage(ws, top, x0, draw_rows, income_groups, draw_costs, accum
     for col in range(K(2), last_c + 1):
         d = ws.column_dimensions[get_column_letter(col)]
         d.width = max(d.width or 0, 18.0 if col == K(2) else 13.0)
-    return {"top": cov_top, "end": rc, "last_c": last_c,
+    return {"top": cov_top, "end": end, "last_c": last_c,
             "cov_gross_tot": f"{Q}{GB}{tot}", "cov_costs_tot": f"{Q}{CT}{tot}",
             "cov_ret_tot": f"{Q}{RT}{tot}",
             "cov_oh_tot": f"{Q}{get_column_letter(view_cols[-1][0])}{tot}",
@@ -9085,7 +9132,11 @@ def generate_project_pnl(
             _pws, _dv + 2, 1, draw_rows, income_groups, draw_costs, accum,
             overhead_pct=overhead_pct, alt_overhead_pct=_alt_oh,
             contract_ref=(_pl_refs or {}).get("contract_cell"),
-            sheet_links=_draws["sheets"])
+            sheet_links=_draws["sheets"],
+            to_date={"outside_gross": _outside_draws(income_groups)["gross"],
+                     "before": round((draw_costs.get("__disregarded") or {})
+                                     .get("total", 0.0), 2),
+                     "opex_ref": (_pl_refs or {}).get("opex")})
         for _c in range(1, _cov["last_c"] + 2):
             _pws.cell(row=_dv, column=_c).border = Border(
                 bottom=Side(style="thick", color=NAVY))
@@ -9141,6 +9192,7 @@ def generate_project_pnl(
     # live (the owner 2026-09-04). One workbook per job, either way.
     out_path = proj_dir / pnl_paths.pnl_filename(
         proj, pnl_paths.is_archived_dir(proj_dir))
+    mark_retainage_income(wb, income_groups)
     _tidy_text(wb)
     saved = safe_save(wb, out_path)
     if saved:

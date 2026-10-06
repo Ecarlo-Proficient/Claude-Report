@@ -61,7 +61,8 @@ def test_coverage_is_newest_first_and_links_to_each_draw_sheet():
     ws.title = "P&L"
     _coverage(ws, contract="'P&L'!B4")
     nxt, d2, d1 = (_row_of(ws, t) for t in ("Next draw (forming)", "Draw 2", "Draw 1"))
-    assert nxt < d2 < d1
+    tot = _row_of(ws, "TOTAL  (draws)")
+    assert d2 < d1 < tot < nxt          # the next draw sits UNDER the total (10/06)
     assert ws.cell(d2, 1).hyperlink.target == "#'Draw 2'!B2"
     assert ws.cell(nxt, 1).hyperlink.target == "#'Next Draw'!B2"
     # % Billed: this draw and every older one, over the contract
@@ -201,5 +202,37 @@ def test_retainage_lines_are_told_apart_by_the_item_account():
                      if k != "__retainage")
         assert billed == 130.0
         assert g["__retainage_billed"]["retainage_billed"] == 10.0
+    finally:
+        pnl._RET_ITEMS.clear()
+
+
+def test_a_pc00_retainage_invoice_is_booked_so_its_release_is_not_billed_twice():
+    sys.path.insert(0, str(ROOT / "project-pnl"))
+    import completed_pnl as cp
+    # CP610's shape after the re-bill: #32656 billed retainage AS INCOME on
+    # PC00 (gross), later released on the Retainage Receivable item
+    src = {"invoices": [{"doc": "100", "gross": 200.0, "withheld": 0.0, "ret_billed": 0.0},
+                        {"doc": "32656", "gross": 23256.0, "withheld": 0.0, "ret_billed": 0.0},
+                        {"doc": "40000", "gross": 0.0, "withheld": 0.0, "ret_billed": 23256.0}],
+           "not_billed": 0.0, "sections": [], "ret_income_docs": ["32656"]}
+    assert cp._totals(src)["billed"] == 23456.0
+    src["ret_income_docs"] = []                        # without the mark it double counts
+    assert cp._totals(src)["billed"] == 46712.0
+
+
+def test_the_pc00_retainage_invoice_is_marked_on_the_workbook():
+    pnl.set_retainage_items([{"Id": "1812", "IncomeAccountRef": {"value": "a"}},
+                             {"Id": "PC00", "IncomeAccountRef": {"value": "i"}}],
+                            [{"Id": "a", "AccountType": "Other Current Asset"},
+                             {"Id": "i", "AccountType": "Income"}])
+    try:
+        inv = {"Id": "b", "DocNumber": "32656", "TxnDate": "2026-04-10", "TotalAmt": 30.0,
+               "PrivateNote": "Retainage", "Line": [{"Amount": 30.0, "Description": "Retainage",
+                                                     "DetailType": "SalesItemLineDetail",
+                                                     "SalesItemLineDetail": {"ItemRef": {"value": "PC00"}}}]}
+        g = pnl.group_invoices_by_draw([inv])
+        wb = Workbook()
+        pnl.mark_retainage_income(wb, g)
+        assert wb.defined_names[pnl.RET_INCOME_NAME].attr_text == '"32656"'
     finally:
         pnl._RET_ITEMS.clear()
