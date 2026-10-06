@@ -4,7 +4,7 @@ The owner's 10/2026 schedule (one row per job, the stage typed on a Mon-Sat
 calendar) gets, on a COPY, never the original:
 
   1. Two Excel tables on 'Main Schedule' - Flatwork and Foundation - each with
-     a # column (the phase's place in the legend; Data -> Reapply sorts by it)
+     a HIDDEN # column (the phase's place in the legend; Data -> Reapply sorts by it)
      and its own PHASE dropdown fed by the legend. (A CHECK column that flagged
      rows in the wrong table was tried and dropped: the owner found it noise.)
   2. The legend phases become two tables (Phases_Foundation, Phases_Flatwork);
@@ -92,7 +92,7 @@ def in_fnd(c: str) -> str:
 def num_formula(r: int) -> str:
     g = f"G{r}"
     return (f"=IF({g}=\"\",\"\",IFERROR(MATCH({g},IF({in_flat(g)},list_Flat,"
-            f"list_Fnd),0),99))")
+            f"list_Fnd),0),\"\"))")  # off-legend: blank, sorts after every number
 
 
 # ---------------------------------------------------------------- layout
@@ -178,6 +178,8 @@ def insert_columns(ws) -> None:
         n = i + (i >= 6)
         ws.column_dimensions[L(n)].width = w
     ws.column_dimensions[L(COL_NUM)].width = 5
+    # hidden: it only feeds Data -> Reapply (the owner 2026-10-06: "it's noise")
+    ws.column_dimensions[L(COL_NUM)].hidden = True
     for r in range(1, ws.max_row + 1):
         copy_style(ws.cell(r, 5), ws.cell(r, COL_NUM))
     for m in merges:  # only A:H banners exist; widen them over the new columns
