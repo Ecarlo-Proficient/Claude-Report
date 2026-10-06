@@ -2989,7 +2989,9 @@ def build_sheet_transactions(
             ic.font = Font(size=SZ, bold=True)
         ddate(rr, 2, inv.get("date", ""))
         grey = "595959" if sub else "000000"
-        cell(rr, 3, inv.get("memo", ""), bold=head, color=grey)
+        # the memo wraps, in the invoice block only (the owner 2026-10-06)
+        mc = cell(rr, 3, inv.get("memo", ""), bold=head, color=grey)
+        mc.alignment = Alignment(horizontal="left", vertical="top", wrap_text=True)
         cell(rr, 4, float(inv.get("billed", 0) or 0), fmt=CURR_FMT, bold=head, color=grey)
         cell(rr, 5, float(inv.get("withheld", 0) or 0), fmt=CURR_FMT, bold=head, color="C0504D")
         cell(rr, 6, f"=D{rr}-E{rr}+G{rr}", bold=True, fmt=CURR_FMT, color=grey)   # NET = TotalAmt
@@ -3010,12 +3012,15 @@ def build_sheet_transactions(
         # for the draw, its invoices collapsed under it on the [+].
         subs = inv.get("docs") or []
         _income_row(r, inv, head=bool(subs))
+        # every invoice folds under the INCOME band on its [-] (the owner
+        # 2026-10-06: "make it groupable so we can collapse"); open by default
+        ws.row_dimensions[r].outline_level = 1
         top_rows.append(r)
         r += 1
         for sub in subs:
             any_draw = True
             _income_row(r, sub, sub=True)
-            ws.row_dimensions[r].outline_level = 1
+            ws.row_dimensions[r].outline_level = 2
             ws.row_dimensions[r].hidden = True
             r += 1
     cell(r, 1, "TOTAL INCOME", bold=True, border=TOP_BORDER)
@@ -3110,7 +3115,10 @@ def build_sheet_transactions(
                           else f"Open folder ({_att['n']} files)", color=LINK)
                 sc.hyperlink = _att["link"]
                 sc.font = Font(size=SZ, color=LINK, underline="single")
-            ws.row_dimensions[r].outline_level = 1   # collapsible, open default
+            # folded under the vendor by default (the owner 2026-10-06: "keep
+            # the costs collapsed"); the vendor's [+] opens its bills
+            ws.row_dimensions[r].outline_level = 1
+            ws.row_dimensions[r].hidden = True
             r += 1
         vt = ws.cell(row=vrow, column=5,
                      value=f"=SUM(E{lstart}:E{r-1})" if r > lstart else 0)
@@ -3149,12 +3157,20 @@ def build_sheet_transactions(
                 for ln in combine_bill_lines(lines):
                     by_cat.setdefault(line_category(ln.get("account")), {}) \
                           .setdefault(vendor, []).append(ln)
+            # each category reads as its own block (the owner 2026-10-06: "the
+            # header/dividers are not pronounced enough and blend in"): a
+            # tinted band with a thick navy rule above it, across the table
+            band_top = Side(style="thick", color=NAVY)
+            band_bot = Side(style="thin", color=NAVY)
             for cat in sorted(by_cat, key=lambda c_: CATEGORY_ORDER.get(c_, 99)):
                 cfill = CAT_FILLS.get(cat)
                 cell(r, 1, CAT_LABELS.get(cat, cat.upper()), bold=True,
-                     color=NAVY, fill=cfill)
-                for c in range(2, 6):
-                    ws.cell(row=r, column=c).fill = cfill
+                     color=NAVY, fill=cfill, size=BASE_SIZE + 1)
+                for c in range(1, 8):
+                    x = ws.cell(row=r, column=c)
+                    x.fill = cfill
+                    x.border = Border(top=band_top, bottom=band_bot)
+                ws.row_dimensions[r].height = 22
                 r += 1
                 vmap = by_cat[cat]
                 vend_rows = [
@@ -3162,11 +3178,19 @@ def build_sheet_transactions(
                     for v in sorted(vmap, key=lambda v: -sum(
                         float(x.get("amount", 0) or 0) for x in vmap[v]))
                 ]
-                cell(r, 1, f"Subtotal — {cat}", bold=True, border=TOP_BORDER)
+                # the subtotal closes the block: grey, a rule above and a
+                # medium one below, then a blank row before the next band
+                sub_fill = PatternFill("solid", fgColor="D9D9D9")
+                cell(r, 1, f"Subtotal — {cat}", bold=True)
                 cell(r, 5, "=" + "+".join(f"E{v}" for v in vend_rows),
-                     bold=True, fmt=CURR_FMT, border=TOP_BORDER)
+                     bold=True, fmt=CURR_FMT)
+                for c in range(1, 8):
+                    x = ws.cell(row=r, column=c)
+                    x.fill = sub_fill
+                    x.border = Border(top=Side(style="thin", color="000000"),
+                                      bottom=Side(style="medium", color="000000"))
                 anchor_rows.append(r)
-                r += 1
+                r += 2
         else:
             for vendor, lines in groups.items():
                 anchor_rows.append(_vendor_lines(vendor, combine_bill_lines(lines)))

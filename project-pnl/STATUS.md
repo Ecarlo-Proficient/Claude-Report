@@ -7,6 +7,12 @@ manual close), RP (no draws — expenses → invoice → profit).
 ---
 
 ## DONE / FINALIZED
+- 2026-10-06 · **Transactions sheet: wrapped invoice memos, collapsible invoices, stronger cost dividers** (owner:
+  "wrap texts for transactions invoices but only that part, make it groupable"; "keep the costs collapsed, but the
+  header/dividers are not pronounced enough"). Invoice memos wrap; every invoice folds under the INCOME header (a
+  combined draw's invoices one level deeper); cost lines open folded under their vendor; each cost category is a
+  tinted band with a thick navy rule above it, closed by a grey subtotal with a medium rule and a blank row. CP785
+  rebuilt and opened in real Excel by script (clean, memo rows auto-sized).
 - 2026-10-06 · **Credits reduce job cost; retainage told apart by item account; MFD192 cut fixed** (owner: "credits
   reduce job cost, but don't add a credits line - keep it in the totals and show it in the transaction crediting it").
   `shared/qbo_costs.with_credits`: vendor credits pulled, card credits negated - each a negative transaction under its
