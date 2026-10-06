@@ -4,14 +4,9 @@ The owner's 10/2026 schedule (one row per job, the stage typed on a Mon-Sat
 calendar) gets, on a COPY, never the original:
 
   1. Two Excel tables on 'Main Schedule' - Flatwork and Foundation - each with
-     a # column (the phase's place in the legend, for sorting) and a CHECK
-     column. The PHASE dropdown and CHECK ask Excel which table the cell is in
-     (ISREF of the cell intersected with each table's PHASE column), never a
-     row number, so a row cut and inserted anywhere gets the right list:
-       blank          right table, phase on that table's list
-       WRONG TABLE    a flatwork phase in Foundation, or the other way round
-       UNKNOWN PHASE  not on either legend list (renamed phase, typo)
-       NOT IN A TABLE the row was pasted outside every table
+     a # column (the phase's place in the legend; Data -> Reapply sorts by it)
+     and its own PHASE dropdown fed by the legend. (A CHECK column that flagged
+     rows in the wrong table was tried and dropped: the owner found it noise.)
   2. The legend phases become two tables (Phases_Foundation, Phases_Flatwork);
      # renumbers itself from position, the dropdowns read them live. The four
      legend colours become workbook cell styles in the calendar's font.
@@ -48,14 +43,16 @@ from openpyxl.utils import get_column_letter as L  # noqa: E402
 
 from shared.xlsx_verify import assert_clean  # noqa: E402
 
+GRID = Border(left=Side(style="thin"), right=Side(style="thin"), top=Side(style="thin"),
+              bottom=Side(style="thin"))
 MAIN, DONE, LEGEND = "Main Schedule", "Completed", "Legend"
 MONTHS = ["JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE", "JULY",
           "AUGUST", "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER"]
 DAY_FMT = "dddd d"
-# new column layout: # goes in front of PHASE, CHECK in front of the calendar
-COL_NUM, COL_PHASE, COL_DATE, COL_CREW, COL_CHECK, CAL0 = 6, 7, 8, 9, 10, 11
+# new column layout: # goes in front of PHASE; the calendar starts at J
+COL_NUM, COL_PHASE, COL_DATE, COL_CREW, CAL0 = 6, 7, 8, 9, 10
 HEADERS = ["SUPERINTENDENT", "PROJECT", "ADDRESS", "CITY", "BUILDER", "#",
-           "PHASE", "DATE READY", "CREW", "CHECK"]
+           "PHASE", "DATE READY", "CREW"]
 TABLES = {  # table -> (sheet, banner text, phase list name)
     "Flatwork": (MAIN, "FLATWORK", "list_Flat"),
     "Foundation": (MAIN, "FOUNDATION", "list_Fnd"),
@@ -90,17 +87,6 @@ def in_flat(c: str) -> str:
 
 def in_fnd(c: str) -> str:
     return f"OR(ISREF({c} col_Fnd),ISREF({c} col_DoneFnd))"
-
-
-def check_formula(r: int) -> str:
-    g, any_ = f"G{r}", f"COUNTA(A{r}:E{r})+COUNTA(G{r})"
-    judge = ("IF({g}=\"\",\"NO PHASE\",IF(COUNTIF({own},{g}),\"\","
-             "IF(COUNTIF({other},{g}),\"WRONG TABLE\",\"UNKNOWN PHASE\")))")
-    return (f"=IF({any_}=0,\"\",IF({in_flat(g)},"
-            + judge.format(g=g, own="list_Flat", other="list_Fnd") + ","
-            f"IF({in_fnd(g)},"
-            + judge.format(g=g, own="list_Fnd", other="list_Flat")
-            + ",\"NOT IN A TABLE\")))")
 
 
 def num_formula(r: int) -> str:
@@ -172,29 +158,33 @@ def calendar_days(ws) -> list:
 
 
 def insert_columns(ws) -> None:
-    """# before PHASE (old F) and CHECK before the calendar (old I)."""
+    """# in front of PHASE (old F)."""
     merges = [str(m) for m in ws.merged_cells.ranges]
     for m in merges:
         ws.unmerge_cells(m)
-    widths = {k: v.width for k, v in ws.column_dimensions.items()}
-    ws.insert_cols(6)
-    ws.insert_cols(10)
-    ws.column_dimensions.clear() if hasattr(ws.column_dimensions, "clear") else None
+    # a width record can cover a RANGE of columns (min..max: v2 keeps I:K as one, N:AF as
+    # another) - expand it to every column, or all but the first fall back to Excel's
+    # narrow default and the dates show ######## (the first v3, 2026-10-06)
     from openpyxl.utils import column_index_from_string as ci
+    widths = {}
+    for k, v in ws.column_dimensions.items():
+        lo, hi = (v.min or ci(k)), (v.max or ci(k))
+        for i in range(lo, hi + 1):
+            widths[L(i)] = v.width
+    ws.insert_cols(6)
+    ws.column_dimensions.clear()
     for k, w in widths.items():
         i = ci(k)
-        n = i + (i >= 6) + (i >= 9)
+        n = i + (i >= 6)
         ws.column_dimensions[L(n)].width = w
     ws.column_dimensions[L(COL_NUM)].width = 5
-    ws.column_dimensions[L(COL_CHECK)].width = 16
     for r in range(1, ws.max_row + 1):
         copy_style(ws.cell(r, 5), ws.cell(r, COL_NUM))
-        copy_style(ws.cell(r, COL_CREW), ws.cell(r, COL_CHECK))
     for m in merges:  # only A:H banners exist; widen them over the new columns
         a, b = m.split(":")
         rr = re.sub(r"\D", "", a)
         if a.startswith("A") and b.startswith("H"):
-            ws.merge_cells(f"A{rr}:J{rr}")
+            ws.merge_cells(f"A{rr}:I{rr}")
         else:
             die(f"unexpected merged range {m}")
 
@@ -263,18 +253,21 @@ def sort_rows(ws, r0: int, r1: int, key) -> None:
 def make_table(ws, name: str, hdr: int, end: int, last_col: int) -> None:
     for i, h in enumerate(HEADERS, start=1):
         ws.cell(hdr, i).value = h
-    for c in range(CAL0, last_col + 1):
-        d = ws.cell(2, c).value
-        ws.cell(hdr, c).value = f"{d:%m/%d}"
-        ws.cell(hdr, c).number_format = "@"
+    for c in range(CAL0, last_col + 1):  # Excel needs a name per table column; the band
+        d = ws.cell(2, c).value          # stays visually blank like v2 (text = fill colour)
+        cell = ws.cell(hdr, c)
+        cell.value = f"{d:%m/%d}"
+        cell.number_format = "@"
+        f = copy.copy(cell.font)
+        f.color = copy.copy(cell.fill.fgColor) if cell.fill.fill_type else Color(rgb="FFFFFFFF")
+        cell.font = f
     ref = f"A{hdr}:{L(last_col)}{end}"
     t = Table(displayName=name, ref=ref)
     t._initialise_columns()
     for col, h in zip(t.tableColumns, [ws.cell(hdr, c).value for c in range(1, last_col + 1)]):
         col.name = str(h)
-    # calculated columns: Excel fills # and CHECK into every row added to the table
+    # calculated column: Excel fills # into every row added to the table
     t.tableColumns[COL_NUM - 1].calculatedColumnFormula = TableFormula(attr_text=num_formula(hdr + 1)[1:])
-    t.tableColumns[COL_CHECK - 1].calculatedColumnFormula = TableFormula(attr_text=check_formula(hdr + 1)[1:])
     t.autoFilter = AutoFilter(ref=ref)
     t.sortState = SortState(ref=f"A{hdr + 1}:{L(last_col)}{end}", sortCondition=[
         SortCondition(ref=f"{L(COL_NUM)}{hdr + 1}:{L(COL_NUM)}{end}"),
@@ -283,8 +276,8 @@ def make_table(ws, name: str, hdr: int, end: int, last_col: int) -> None:
     for r in range(hdr + 1, end + 1):
         ws.cell(r, COL_NUM).value = num_formula(r)
         ws.cell(r, COL_NUM).alignment = Alignment(horizontal="center")
-        ws.cell(r, COL_CHECK).value = check_formula(r)
-        ws.cell(r, COL_CHECK).font = Font(name="Arial", sz=8, b=True, color="FFC00000")
+        for c in range(1, last_col + 1):  # one even grid (v2 had rows with no borders)
+            ws.cell(r, c).border = GRID
 
 
 # ---------------------------------------------------------------- legend
@@ -444,17 +437,24 @@ def build(src: Path, out: Path, fake: bool = False) -> None:
                 c.comment = None
     d_rows = find_layout(done)
     for k in ("flat", "fnd"):
-        done.merge_cells(f"A{d_rows[k]}:J{d_rows[k]}")
+        done.merge_cells(f"A{d_rows[k]}:I{d_rows[k]}")
         hdr = d_rows[k] + 1
-        for c in range(1, last_col + 1):
+        for c in range(1, last_col + 1):  # the kept row is a blank slot: no value, no status fill
             done.cell(hdr + 1, c).value = None
-    for r in range(d_rows["punch"], done.max_row + 1):  # empty punch lists, keep headers + bands
+            done.cell(hdr + 1, c).fill = PatternFill(fill_type=None)
+    for r in list(range(d_rows["flat"] + 3, d_rows["fnd"])) + list(range(d_rows["fnd"] + 3, d_rows["punch"])):
+        for c in range(1, last_col + 1):  # gap rows between the tables: nothing on them
+            done.cell(r, c).value = None
+            done.cell(r, c).fill = PatternFill(fill_type=None)
+    for r in range(d_rows["punch"], done.max_row + 1):  # empty punch lists, keep headers + day bands
+        band = isinstance(done.cell(r, CAL0).value, dt.datetime)
         for c in range(1, last_col + 1):
             v = clean(done.cell(r, c).value)
             if v and not ("PUNCH LIST" in v or v in ("NAME", "ADDRESS", "CITY", "BUILDER", "DESCRIPTION",
                                                     "DATE", "CREW", "PROJECT", "SUPERINTENDENT")) \
-                    and not isinstance(done.cell(r, c).value, dt.datetime):
+                    and not (band and c >= CAL0):
                 done.cell(r, c).value = None
+                done.cell(r, c).fill = PatternFill(fill_type=None)
     done.freeze_panes = f"{L(CAL0)}4"
 
     dmap = {"flat": "Done_Flatwork", "fnd": "Done_Foundation"}
@@ -469,8 +469,7 @@ def build(src: Path, out: Path, fake: bool = False) -> None:
 
     # each table owns its dropdown (Excel bans "which table am I in" tests inside a
     # dropdown rule); the list travels with a row cut into the matching Completed
-    # table, and a row moved into the WRONG table keeps its old list while CHECK
-    # (a cell formula, where that test IS allowed) says WRONG TABLE.
+    # table; a row moved into the wrong table keeps its old list.
     for sh, name in ((ws, "Flatwork"), (ws, "Foundation"), (done, "Done_Flatwork"), (done, "Done_Foundation")):
         t = sh.tables[name]
         r0, r1 = int(re.search(r"(\d+):", t.ref).group(1)) + 1, int(re.search(r"(\d+)$", t.ref).group(1))
