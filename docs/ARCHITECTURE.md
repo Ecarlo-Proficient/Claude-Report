@@ -1028,7 +1028,7 @@ costs awaiting the next draw), each job linked to its own sheet: the DRAW COVERA
 lines and the table's total tied to the job's billed / cost. MFD and RP keep `build_bundle`. Active jobs only
 (finished jobs: a separate workbook, pending). `one-offs/cp_overview_verify.py` (read-only) re-derives every job's
 billed (income lines, retainage releases out) and cost (lines coded to the project) from QBO and diffs the workbook;
-`one-offs/cp_overview_reconcile.py` (read-only, no QBO, no Excel) evaluates every formula with a built-in evaluator
+`one-offs/pnl_qbo_gap_trace.py` (read-only, 10/06/2026) traces a job workbook's Reconciliations gap to its documents: QuickBooks' ProfitAndLossDetail for the job's customer vs the Transactions sheet, summed per document. `one-offs/cp_overview_reconcile.py` (read-only, no QBO, no Excel) evaluates every formula with a built-in evaluator
 and proves the workbook adds up inside: totals = rows, each job sheet TOTAL = its draws = its lines, every derived
 figure recomputed, every link lands. `one-offs/cp_bills_to_fix.py` (read-only on QBO) lists the bills to fix so
 every CP job carries its own cost (no project but the memo names the job / on the job's class / coded to another

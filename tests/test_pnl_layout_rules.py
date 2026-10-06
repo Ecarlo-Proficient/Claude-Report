@@ -140,3 +140,13 @@ def test_only_untagged_invoices_after_the_first_draw_are_forming():
                                           {"date": "2026-09-25", "doc_num": "new"}]}}
     costs = {"__disregarded": {"anchor": "2026-04-20"}}
     assert [i["doc_num"] for i in pnl._forming_invoices(groups, costs)] == ["new"]
+
+
+def test_legacy_quickbooks_income_is_gross_through_the_pl_end():
+    # MFD295's shape: invoices at their total with the retainage held added
+    # back, a release at its total, and nothing after the P&L's end date
+    groups = {"d1": {"invoices": [{"date": "2025-03-20", "amount": 90.0, "retainage": 10.0}]},
+              "__retainage_billed": {"invoices": [{"date": "2024-12-31", "amount": 6.0}]},
+              "d9": {"invoices": [{"date": "2026-09-25", "amount": 50.0, "retainage": 5.0}]}}
+    t = pnl._synth_pl_totals([], [], groups, "1", {}, {}, "2026-09-20")
+    assert t["income"] == 106.0

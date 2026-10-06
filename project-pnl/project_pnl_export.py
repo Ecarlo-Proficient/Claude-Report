@@ -808,8 +808,13 @@ def _synth_pl_totals(bills: List[dict], purchases: List[dict],
                 cogs += amt
             else:
                 exp += amt
-    income = sum(g.get("net_billed", 0.0) for k, g in income_groups.items()
-                 if k != "__retainage")
+    # what QuickBooks books as income: every invoice dated through the P&L's
+    # end, at its total plus the retainage held back on it - net billed with
+    # no date cut made MFD295's Reconciliations read 100,793.53 off when the
+    # real difference was one 6,363.00 retainage release (10/06/2026)
+    income = sum(float(i.get("amount", 0) or 0) + float(i.get("retainage", 0) or 0)
+                 for g in income_groups.values() for i in (g.get("invoices") or [])
+                 if str(i.get("date") or "")[:10] <= pl_end)
     gp = income - cogs
     return {"income": round(income, 2), "cogs": round(cogs, 2),
             "gross_profit": round(gp, 2), "expenses": round(exp, 2),

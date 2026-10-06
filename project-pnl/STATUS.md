@@ -7,6 +7,13 @@ manual close), RP (no draws — expenses → invoice → profit).
 ---
 
 ## DONE / FINALIZED
+- 2026-10-06 · **The 8 Reconciliations gaps traced** (`one-offs/pnl_qbo_gap_trace.py`, read-only: QuickBooks'
+  ProfitAndLossDetail vs the Transactions sheet, per document). Vendor credits are not pulled (bills + expenses only):
+  CP785 1,483.03, MFD325 1,540.79, MFD177 1,097.26 + a Home Depot card credit 143.14, CP790 295.30 (net of an AA
+  Rental expense 235.50 the sheet misses); CP961 56.28 = one AA Rental expense with a credit line. MFD192 23,181.91 =
+  "99 - Retainage" lines counted twice (the retainage audit session's fix, waiting on the owner). MFD295: the legacy
+  "QuickBooks" income was net billed with no date cut - fixed; the real gap is release #32575 (6,363.00) that
+  QuickBooks books as income and the release rule leaves out. CP790 -5,401.82 = the known #33995 duplicate.
 - 2026-10-02 · **P&L checks count the billing outside the draw table** - the redesign's draw checks (billed,
   retained, overhead) only summed the draw rows, so every job with untagged pre-period invoices, a release outside the
   draw windows or unplaced not-billed retainage read ✗ (CP585 / 672 / 765 / 803 / 861 / 961, MFD177 / 295).
