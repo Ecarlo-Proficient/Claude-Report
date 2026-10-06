@@ -126,8 +126,19 @@ def main() -> int:
             invs += [i for i in qbo_api.query_all(access, cid, "Invoice",
                                                    f"CustomerRef = '{info['parent_id']}'")
                      if i["Id"] not in have and m.invoice_belongs(i)]
-        co = closeout(job, src, invs) if info else {"bucket": "check", "owed": None,
-                                                      "text": "not a QBO project - check by hand"}
+        if not info:
+            # NOT a QBO project (CP610: invoiced on the GC, costs on a deleted
+            # class): its workbook links every invoice by QBO id - read those
+            # back, so what is still open shows instead of a blank (10/06/2026)
+            ids = sorted({m.group(1) for i in src["invoices"]
+                          for m in [re.search(r"txnId(?:%3D|=)(\d+)", str(i.get("url") or ""))] if m})
+            invs = (qbo_api.query_all(access, cid, "Invoice",
+                                      "Id IN (" + ", ".join(f"'{x}'" for x in ids) + ")")
+                    if ids else [])
+        co = (closeout(job, src, invs) if (info or invs) else
+              {"bucket": "check", "owed": None, "text": "not a QBO project - check by hand"})
+        if not info and invs:
+            co["text"] = "not a QBO project (invoices from its workbook) · " + co["text"]
         ex = cp_overview.read_extra(path)
         ex.setdefault("static", {}).update({"ar": co["owed"] or None, "closeout": co["text"]})
         ex["bucket"] = co["bucket"]

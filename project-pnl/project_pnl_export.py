@@ -281,6 +281,9 @@ def extract_draw_number(memo: str) -> Optional[int]:
     return int(m.group(1)) if m else None
 # Retainage detection: any of retainage/retainaged/retention (substring).
 RETAINAGE_RE = re.compile(r"retainag|retention", re.IGNORECASE)
+# the same word with the typos the bookkeeping actually has ("REITANAGE",
+# "RETAINGE") - used ONLY to mark retainage booked as income, never to move money
+_RET_LOOSE_RE = re.compile(r"retainag|retention|reitan|retaing|retanag", re.IGNORECASE)
 # The ONLY discriminator (the user 2026-06-19): a retainage invoice is NOT BILLED iff
 # "not billed" appears ANYWHERE in its memo or any line description; otherwise
 # it's a real (billed) retainage draw — "City" or anything else is irrelevant.
@@ -1283,6 +1286,7 @@ def group_invoices_by_draw(invoices: List[dict],
         text_gross = 0.0         # the old text rule's work, for the standalone test
         line_items = []          # for the not-billed display breakdown
         text_parts = [pn]
+        _line_texts = []         # each income line's own text, for ret_income
         for ln in inv.get("Line") or []:
             if ln.get("DetailType") in ("SubTotalLineDetail",):
                 continue
@@ -1291,6 +1295,8 @@ def group_invoices_by_draw(invoices: List[dict],
             item_name = ((ln.get("SalesItemLineDetail") or {})
                          .get("ItemRef", {}).get("name") or "")
             text_parts.append(desc); text_parts.append(item_name)
+            if amt > 0.005:
+                _line_texts.append(f"{desc} {item_name}")
             text_ret = bool(RETAINAGE_RE.search(desc) or RETAINAGE_RE.search(item_name))
             if not text_ret:
                 text_gross += amt
@@ -1322,6 +1328,13 @@ def group_invoices_by_draw(invoices: List[dict],
         if is_ret_inv and abs(gross) > 0.005 and not NOT_BILLED_RE.search(full_text):
             is_ret_inv = False
             ret_income = True      # retainage BILLED AS INCOME (PC00) - see RET_INCOME_NAME
+        # an income invoice whose every line is retainage by its own text, typos
+        # included (CP610 #32960 reads "REITANAGE"), is retainage booked as
+        # income too - judged on the LINES, never the memo (an ordinary draw's
+        # memo can mention retainage: MFD231 / MFD183)
+        if (not is_ret_inv and gross > 0.005 and _line_texts
+                and all(_RET_LOOSE_RE.search(t) for t in _line_texts)):
+            ret_income = True
         if is_ret_inv:
             if NOT_BILLED_RE.search(full_text):       # NOT BILLED → excluded
                 retainage_block["invoices"].append({

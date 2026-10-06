@@ -7,6 +7,12 @@ manual close), RP (no draws — expenses → invoice → profit).
 ---
 
 ## DONE / FINALIZED
+- 2026-10-06 · **CP610 on CP Completed: billed +1,316 and Still owed blank - fixed** (found by the retainage audit
+  session). #32960 (PC00, line "REITANAGE", memo "not billed") is retainage booked as income but the typo kept it off
+  RetainageIncomeDocs, so the release counted 1,316.00 as billing (247,036 for 245,720): an invoice whose every LINE
+  reads retainage, typos included (`_RET_LOOSE_RE`, lines only - never the memo), is now marked. cp_completed: a job
+  that is not a QBO project reads its open invoices by the QBO ids its own workbook links (CP610: #31882 10,422.00 +
+  #33221 2,124.00 + #34729 24,572.00 = 37,118.00 open). Takes effect when CP610 is rebuilt.
 - 2026-10-06 · **Retainage still owed = unpaid; new Retainage not billed yet** (owner: "A" - cash not received; and
   "retainage not billed yet ... so we know where it stands"). Still owed = MAX(0, held - released) + what is still
   open on the release invoices (CP610 -24,572 -> 24,572, #34729 open). Not billed yet (`_retainage_state`): a job

@@ -263,3 +263,25 @@ def test_retainage_still_owed_and_not_billed_yet():
                                    "retainage_billed": 0.0, "balance": 0.0}]}}
     st = pnl._retainage_state(groups, [{"withheld": 79190.56, "billed_ret": 0.0}], None)
     assert st["still_owed"] == 79190.56 and st["not_billed_yet"] == 79190.56 and not st["net_draws"]
+
+
+def test_a_misspelled_retainage_line_is_still_marked_as_booked():
+    # CP610 #32960: PC00, its line reads "REITANAGE", the memo says "not billed"
+    pnl.set_retainage_items([{"Id": "PC00", "IncomeAccountRef": {"value": "i"}}],
+                            [{"Id": "i", "AccountType": "Income"}])
+    try:
+        inv = {"Id": "x", "DocNumber": "32960", "TxnDate": "2025-06-01", "TotalAmt": 1316.0,
+               "PrivateNote": "Draw #4 - Retainage not billed",
+               "Line": [{"Amount": 1316.0, "Description": "REITANAGE",
+                         "DetailType": "SalesItemLineDetail",
+                         "SalesItemLineDetail": {"ItemRef": {"value": "PC00"}}}]}
+        draw = {"Id": "y", "DocNumber": "100", "TxnDate": "2025-06-01", "TotalAmt": 500.0,
+                "PrivateNote": "Draw #4 - retainage held per contract",
+                "Line": [{"Amount": 500.0, "Description": "Foundation",
+                          "DetailType": "SalesItemLineDetail",
+                          "SalesItemLineDetail": {"ItemRef": {"value": "PC00"}}}]}
+        g = pnl.group_invoices_by_draw([inv, draw])
+        marked = {i["doc_num"] for x in g.values() for i in x.get("invoices", []) if i.get("ret_income")}
+        assert marked == {"32960"}         # the draw whose MEMO mentions retainage is not
+    finally:
+        pnl._RET_ITEMS.clear()
