@@ -150,3 +150,56 @@ def test_legacy_quickbooks_income_is_gross_through_the_pl_end():
               "d9": {"invoices": [{"date": "2026-09-25", "amount": 50.0, "retainage": 5.0}]}}
     t = pnl._synth_pl_totals([], [], groups, "1", {}, {}, "2026-09-20")
     assert t["income"] == 106.0
+
+
+def test_credits_net_into_cost_as_their_own_transactions():
+    from shared import qbo_costs as qc
+    card = {"Id": "1", "Credit": True, "TotalAmt": 71.57,
+            "Line": [{"Amount": 71.57, "AccountBasedExpenseLineDetail": {}}]}
+    charge = {"Id": "2", "TotalAmt": 150.0,
+              "Line": [{"Amount": 150.0, "AccountBasedExpenseLineDetail": {}}]}
+    vc = {"Id": "3", "TotalAmt": 940.0, "VendorRef": {"value": "9", "name": "White Cap"},
+          "Line": [{"Amount": 940.0, "ItemBasedExpenseLineDetail": {}}]}
+    out = qc.with_credits([card, charge], [vc])
+    assert [round(sum(l["Amount"] for l in t["Line"]), 2) for t in out] == [-71.57, 150.0, -940.0]
+    assert out[2]["_tx_type"] == "VendorCredit" and out[2]["EntityRef"]["name"] == "White Cap"
+    assert card["Line"][0]["Amount"] == 71.57          # the pulled record is not changed
+    assert pnl._pay_state(0.0, -940.0)[0] == "CREDIT"
+    assert "vendorcredit%3FtxnId%3D3" in pnl._qbo_txn_url("VendorCredit", "3", "1")
+
+
+def test_a_combined_draw_is_cut_by_each_invoice_date():
+    tx = {"income": [{"date": "2026-09-01", "billed": 70.0,
+                      "docs": [{"date": "2026-09-01", "billed": 50.0},
+                               {"date": "2026-09-07", "billed": 20.0}]}]}
+    assert pnl._after_cut(tx, "2026-09-01")["income"] == 20.0
+
+
+def test_retainage_lines_are_told_apart_by_the_item_account():
+    pnl.set_retainage_items([{"Id": "1812", "IncomeAccountRef": {"value": "a"}},
+                             {"Id": "PC00", "IncomeAccountRef": {"value": "i"}}],
+                            [{"Id": "a", "AccountType": "Other Current Asset"},
+                             {"Id": "i", "AccountType": "Income"}])
+    try:
+        line = lambda item, amt, d="": {"Amount": amt, "Description": d,   # noqa: E731
+                                        "DetailType": "SalesItemLineDetail",
+                                        "SalesItemLineDetail": {"ItemRef": {"value": item}}}
+        invs = [
+            # a draw: work + 10% held on the receivable item
+            {"Id": "a", "DocNumber": "1", "TxnDate": "2026-03-10", "TotalAmt": 90.0,
+             "PrivateNote": "Period: 03/01/2026 - 03/31/2026",
+             "Line": [line("PC00", 100.0), line("1812", -10.0, "Retainage")]},
+            # a PC00 "Retainage" invoice = real income in QuickBooks
+            {"Id": "b", "DocNumber": "2", "TxnDate": "2026-04-10", "TotalAmt": 30.0,
+             "PrivateNote": "Retainage", "Line": [line("PC00", 30.0, "Retainage")]},
+            # a release on the receivable item = collecting, never billing
+            {"Id": "c", "DocNumber": "3", "TxnDate": "2026-05-10", "TotalAmt": 10.0,
+             "PrivateNote": "Retainage release", "Line": [line("1812", 10.0, "Retainage")]},
+        ]
+        g = pnl.group_invoices_by_draw(invs)
+        billed = sum(i["gross"] for k, x in g.items() for i in x.get("invoices", [])
+                     if k != "__retainage")
+        assert billed == 130.0
+        assert g["__retainage_billed"]["retainage_billed"] == 10.0
+    finally:
+        pnl._RET_ITEMS.clear()

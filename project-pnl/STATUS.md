@@ -7,6 +7,16 @@ manual close), RP (no draws — expenses → invoice → profit).
 ---
 
 ## DONE / FINALIZED
+- 2026-10-06 · **Credits reduce job cost; retainage told apart by item account; MFD192 cut fixed** (owner: "credits
+  reduce job cost, but don't add a credits line - keep it in the totals and show it in the transaction crediting it").
+  `shared/qbo_costs.with_credits`: vendor credits pulled, card credits negated - each a negative transaction under its
+  vendor / account, Paid? = CREDIT, QBO link to the credit; the P&L, Overview and ledger cost pull all use it. Invoice
+  lines: an item posting to Retainage Receivable (99 - Retainage) is withheld / released, never billed; every other
+  line is billed even when its text says retainage (PC00) - P&L and ledger. MFD192's 23,181.91 was the Reconciliations
+  date cut reading a combined draw by its first invoice (#34638, 09/07); fixed. Regenerated CP + MFD: CP785, CP961,
+  MFD177, MFD192, MFD325 tie to QuickBooks per document (pnl_qbo_gap_trace.py). CP790 skipped (open in Excel). MFD
+  Overview billed +6,363 (MFD295 #32575 now income, as QuickBooks books it). Open: a future re-billed release on the
+  receivable item (CP610 / CP595) still counts past held + not billed - needs the item on the workbook.
 - 2026-10-06 · **The 8 Reconciliations gaps traced** (`one-offs/pnl_qbo_gap_trace.py`, read-only: QuickBooks'
   ProfitAndLossDetail vs the Transactions sheet, per document). Vendor credits are not pulled (bills + expenses only):
   CP785 1,483.03, MFD325 1,540.79, MFD177 1,097.26 + a Home Depot card credit 143.14, CP790 295.30 (net of an AA

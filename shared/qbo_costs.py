@@ -117,6 +117,37 @@ def build_account_map(access: str, company_id: str) -> Dict[str, str]:
     return out
 
 
+def as_cost_txn(txn: dict, tx_type: str) -> dict:
+    """A credit as a COST transaction (the owner 2026-10-06: "credits reduce job
+    cost ... keep it in the totals and show it in the transaction crediting it"):
+    a copy whose line amounts and total are NEGATIVE, so every total that sums
+    cost lines nets it - no separate credits line - and the credit is listed as
+    its own transaction under its vendor and account. `_tx_type` names the QBO
+    page it opens (VendorCredit) or keeps it an Expense (a card credit is a
+    Purchase). A VendorCredit's vendor rides as EntityRef like a Purchase's."""
+    import copy as _copy
+    t = _copy.deepcopy(txn)
+    for ln in t.get("Line") or []:
+        if ln.get("Amount") not in (None, ""):
+            ln["Amount"] = -abs(float(ln["Amount"]))
+    if t.get("TotalAmt") not in (None, ""):
+        t["TotalAmt"] = -abs(float(t["TotalAmt"]))
+    if "EntityRef" not in t and t.get("VendorRef"):
+        t["EntityRef"] = t["VendorRef"]
+    t["_tx_type"] = tx_type
+    return t
+
+
+def with_credits(purchases: List[dict], vendor_credits: List[dict]) -> List[dict]:
+    """Purchases with every card credit (Credit = true) turned negative, plus
+    every vendor credit as a negative cost transaction. Before 10/06/2026 a card
+    credit counted as a CHARGE (CP961 #03120G, MFD177 #366530) and vendor
+    credits were never pulled (CP785 / MFD177 / MFD325 / CP790 read high)."""
+    out = [as_cost_txn(p, "Expense") if p.get("Credit") else p for p in purchases or []]
+    out += [as_cost_txn(v, "VendorCredit") for v in vendor_credits or []]
+    return out
+
+
 def pull_expense_txns(access: str, company_id: str, since: Optional[str] = None,
                       changed_since: Optional[str] = None) -> Tuple[List[dict], List[dict]]:
     """Fetch (bills, purchases). `since` is an inclusive ISO date on TxnDate; `changed_since`
@@ -126,8 +157,11 @@ def pull_expense_txns(access: str, company_id: str, since: Optional[str] = None,
     TxnDate window."""
     where = (f"MetaData.LastUpdatedTime >= '{changed_since}'" if changed_since
              else f"TxnDate >= '{since}'" if since else "")
+    # purchases come back WITH the credits (card credits negative, vendor
+    # credits as negative cost transactions) - see with_credits
     return (query_all(access, company_id, "Bill", where),
-            query_all(access, company_id, "Purchase", where))
+            with_credits(query_all(access, company_id, "Purchase", where),
+                         query_all(access, company_id, "VendorCredit", where)))
 
 
 def _line_class_id(det: dict, ln: dict, txn: dict) -> str:
@@ -239,7 +273,7 @@ def cost_lines_from_txns(
             yield {
                 "qbo_txn_id": txn_id,
                 "qbo_line_id": str(ln.get("Id") or idx),
-                "txn_type": tx_type,
+                "txn_type": t.get("_tx_type") or tx_type,
                 "project_no": proj,
                 "customer_id": cust_id,
                 "cost_code": cost_code,

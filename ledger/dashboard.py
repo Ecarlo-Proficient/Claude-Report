@@ -2286,6 +2286,18 @@ _RET_ITEM = re.compile(r"retainage", re.I)
 _RET_RECORD = re.compile(r"retainage\s+not\s+billed", re.I)
 
 
+def _receivable_items(mcon) -> dict:
+    """{item id: posts to Retainage Receivable (an Other Current Asset)} from the mirror's Item + Account, cached per stamp."""
+    from shared import qbo_mirror
+    if "items" not in _INV_GROSS or _INV_GROSS.get("items_stamp") != _INV_GROSS["stamp"]:
+        cls = {a.get("Id"): (a.get("AccountType") or "") for a in qbo_mirror.load("Account", con=mcon)}
+        _INV_GROSS["items"] = {str(it["Id"]): cls.get((it.get("IncomeAccountRef") or {}).get("value")) == "Other Current Asset"
+                               for it in qbo_mirror.load("Item", con=mcon)
+                               if it.get("Id") and (it.get("IncomeAccountRef") or {}).get("value")}
+        _INV_GROSS["items_stamp"] = _INV_GROSS["stamp"]
+    return _INV_GROSS["items"]
+
+
 def _invoices_split(invs: list):
     """(gross, net) of a set of invoices, read from the QBO mirror (fresh - the ledger's billing_event can lag an edit):
       gross = every line EXCEPT the retainage item ('99 - Retainage'): QuickBooks' INCOME, the Excel job P&L's
@@ -2310,11 +2322,17 @@ def _invoices_split(invs: list):
                         cache[iid] = None
                         continue
                     g = 0.0
+                    recv = _receivable_items(mcon)
                     for ln in rec.get("Line") or []:
                         if ln.get("DetailType") != "SalesItemLineDetail":
                             continue
-                        item = str(((ln.get("SalesItemLineDetail") or {}).get("ItemRef") or {}).get("name") or "")
-                        if not _RET_ITEM.search(item):
+                        iref = (ln.get("SalesItemLineDetail") or {}).get("ItemRef") or {}
+                        item = str(iref.get("name") or "")
+                        # by the account the item posts to (99 - Retainage -> Retainage Receivable) when known,
+                        # else by name: a PC00 "Retainage" line is real income (the P&L's rule, 10/06/2026)
+                        iid = str(iref.get("value") or "")
+                        is_ret = recv[iid] if iid in recv else bool(_RET_ITEM.search(item))
+                        if not is_ret:
                             g += float(ln.get("Amount") or 0)
                     record = bool(_RET_RECORD.search(str(rec.get("PrivateNote") or "") + " " + str(rec.get("CustomerMemo", {}).get("value") if isinstance(rec.get("CustomerMemo"), dict) else "")))
                     cache[iid] = (round(g, 2), 0.0 if record else round(float(rec.get("TotalAmt") or 0), 2))

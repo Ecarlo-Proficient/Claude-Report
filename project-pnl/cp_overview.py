@@ -858,11 +858,12 @@ def _job_sheet(wb, job, src, t, ex, div) -> dict:
 
     dup = _spread_retainage(job, dict(src, rnb_doc=ex.get("rnb_doc")), draws)
     # A retainage RELEASE collects retainage that was already BOOKED as income
-    # (a retainage line on an invoice, or the retainage-not-billed amount), so
-    # up to that much it is not billing. Past it, the retainage was never
-    # booked in QBO (CP697: early draws entered net, no not-billed invoice) and
-    # the release is the only place that money shows as billed - it counts.
-    booked = sum(i["withheld"] for i in src["invoices"]) + (src.get("not_billed") or 0)
+    # (held on an invoice, the not-billed record, or a PC00 retainage invoice -
+    # completed_pnl.retainage_booked), so up to that much it is not billing.
+    # Past it, the retainage was never booked (CP697: early draws entered net)
+    # and the release is the only place that money shows as billed - it counts.
+    from completed_pnl import retainage_booked
+    booked = retainage_booked(src)
     budget = booked
     extra: Dict[str, float] = {}                 # doc -> part of the release that is billing
     for i in sorted(src["invoices"], key=lambda x: str(x["date"])):

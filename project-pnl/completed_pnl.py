@@ -445,6 +445,16 @@ def job_label(job: str, title: str) -> str:
     return f"{job} — {name}" if name else job
 
 
+def retainage_booked(src: dict) -> float:
+    """Retainage already in income: held back on the invoices plus the "not
+    billed" record. (A memo-text test for PC00 retainage invoices was tried on
+    10/06/2026 and misfired on ordinary draws whose memo mentions retainage -
+    MFD231 / MFD183 - so a re-billed release is still caught only when it
+    exceeds what is held + not billed.)"""
+    return (sum(i.get("withheld", 0.0) for i in src["invoices"])
+            + (src.get("not_billed") or 0.0))
+
+
 def _totals(src: dict, legacy: bool = False) -> dict:
     """Billed / cost / profit for one job.
 
@@ -457,8 +467,10 @@ def _totals(src: dict, legacy: bool = False) -> dict:
     returns the old figures (contract overhead, releases added) - kept only to
     compare against; every page uses the default."""
     released = sum(i["ret_billed"] for i in src["invoices"])
-    booked = sum(i.get("withheld", 0.0) for i in src["invoices"]) + src["not_billed"]
+    booked = retainage_booked(src)
     billed = sum(i["gross"] for i in src["invoices"]) + src["not_billed"]
+    # a release collects retainage already booked as income; only past that
+    # was it never booked (CP697: early draws entered net) and counts
     billed += released if legacy else max(0.0, released - booked)
     cogs = next((x["total"] for x in src["sections"] if x["name"].startswith("COST")), 0.0)
     opex = next((x["total"] for x in src["sections"] if x["name"].startswith("OPERATING")), 0.0)

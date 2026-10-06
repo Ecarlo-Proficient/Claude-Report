@@ -108,6 +108,7 @@ from shared.cost_lines import line_category, combine_bill_lines, CATEGORY_ORDER
 # cost_leaf moved to shared/ (2026-08-08) — the ledger's load_costs.py needs the
 # SAME resolver, so it can never drift from this tool's cost buckets.
 from shared.qbo_costs import cost_leaf
+from shared import qbo_costs as qc
 from shared.job_lines import JobMatcher, discover_job_classes
 from shared.xlsx_verify import assert_clean
 
@@ -760,7 +761,12 @@ def fetch_customer_bills_and_purchases(
 
     bills = [b for b in _txn_pull(access, company_id, "Bill", start_date, end_date)
              if has_customer_line(b)]
-    purchases = [p for p in _txn_pull(access, company_id, "Purchase", start_date, end_date)
+    # card credits negative, vendor credits as negative cost transactions -
+    # they net into every cost total and list as their own transaction
+    # (shared/qbo_costs.with_credits, the owner 2026-10-06)
+    purchases = [p for p in qc.with_credits(
+                     _txn_pull(access, company_id, "Purchase", start_date, end_date),
+                     _txn_pull(access, company_id, "VendorCredit", start_date, end_date))
                  if has_customer_line(p)]
     return bills, purchases
 
@@ -834,6 +840,11 @@ def _pay_state(balance, total=None):
         b = float(balance or 0)
     except (TypeError, ValueError):
         return None, None
+    try:
+        if total is not None and float(total) < -0.005:
+            return "CREDIT", "595959"      # a vendor / card credit (10/06/2026)
+    except (TypeError, ValueError):
+        pass
     if b <= 0.005:
         return "PAID", "008000"
     try:
@@ -1114,6 +1125,28 @@ def draw_label(period: Tuple[dt.date, dt.date]) -> str:
     return f"{s.strftime('%m/%d/%y')}–{e.strftime('%m/%d/%y')}"
 
 
+# Item ids whose sales post to Retainage Receivable (an Other Current Asset -
+# "99 – Retainage", item 1812). A line on one of these is retainage moving,
+# never billing: negative = withheld, positive = released. Every other line is
+# billed at its amount even when its text says "retainage" (a PC00 retainage
+# invoice is real income in QuickBooks). Set per run by set_retainage_items();
+# empty = the old text rule (the retainage audit, the owner 2026-10-06).
+_RET_ITEMS: Dict[str, bool] = {}
+
+
+def set_retainage_items(items: List[dict], accounts: List[dict]) -> None:
+    """{item id: posts to Retainage Receivable} for every item, from QBO's
+    Item and Account lists."""
+    # Retainage Receivable is an Other Current Asset; an item posting to a
+    # vehicle / equipment / expense account is not retainage either way
+    typ = {a.get("Id"): (a.get("AccountType") or "") for a in accounts or []}
+    _RET_ITEMS.clear()
+    for it in items or []:
+        acc = (it.get("IncomeAccountRef") or {}).get("value")
+        if it.get("Id") and acc:
+            _RET_ITEMS[str(it["Id"])] = typ.get(acc) == "Other Current Asset"
+
+
 def group_invoices_by_draw(invoices: List[dict],
                            interactive: bool = False) -> Dict[str, dict]:
     """
@@ -1176,7 +1209,8 @@ def group_invoices_by_draw(invoices: List[dict],
         #   NEGATIVE retainage line = withheld (held back); POSITIVE = billed.
         gross = 0.0
         retainage = 0.0          # withheld (held back), positive
-        retainage_billed = 0.0   # billed retainage, positive
+        retainage_billed = 0.0   # released retainage (a 99 - Retainage line), positive
+        text_gross = 0.0         # the old text rule's work, for the standalone test
         line_items = []          # for the not-billed display breakdown
         text_parts = [pn]
         for ln in inv.get("Line") or []:
@@ -1187,7 +1221,13 @@ def group_invoices_by_draw(invoices: List[dict],
             item_name = ((ln.get("SalesItemLineDetail") or {})
                          .get("ItemRef", {}).get("name") or "")
             text_parts.append(desc); text_parts.append(item_name)
-            is_ret = bool(RETAINAGE_RE.search(desc) or RETAINAGE_RE.search(item_name))
+            text_ret = bool(RETAINAGE_RE.search(desc) or RETAINAGE_RE.search(item_name))
+            if not text_ret:
+                text_gross += amt
+            item_id = str(((ln.get("SalesItemLineDetail") or {}).get("ItemRef") or {})
+                          .get("value") or "")
+            # by the account the item posts to when it is known, else by text
+            is_ret = _RET_ITEMS[item_id] if item_id in _RET_ITEMS else text_ret
             if is_ret and amt < 0:
                 retainage += -amt
             elif is_ret and amt > 0:
@@ -1203,9 +1243,13 @@ def group_invoices_by_draw(invoices: List[dict],
         #   The ONLY thing that decides billed vs not-billed is whether
         #   "not billed" appears ANYWHERE in the memo/descriptions (the user
         #   2026-06-19) — "City" or any other text is irrelevant.
-        is_ret_inv = (abs(gross) <= 0.005 and total != 0
+        is_ret_inv = (abs(text_gross) <= 0.005 and total != 0
                       and (retainage > 0.005 or retainage_billed > 0.005
                            or RETAINAGE_RE.search(full_text)))
+        # a retainage invoice on an INCOME item (PC00 "Retainage") that is not
+        # a "not billed" one is real billing - it falls through as an invoice
+        if is_ret_inv and abs(gross) > 0.005 and not NOT_BILLED_RE.search(full_text):
+            is_ret_inv = False
         if is_ret_inv:
             if NOT_BILLED_RE.search(full_text):       # NOT BILLED → excluded
                 retainage_block["invoices"].append({
@@ -2359,7 +2403,7 @@ def gather_transactions(
     for b in bills:
         take(b, "Bill", "VendorRef")
     for p in purchases:
-        take(p, "Expense", "EntityRef")
+        take(p, p.get("_tx_type", "Expense"), "EntityRef")
 
     def vsort(d):  # vendor groups; lines newest→old, same-bill lines kept together
         out = {}
@@ -2516,7 +2560,7 @@ def bucket_costs_by_draw_window(
     for b in bills:
         assign(b, "Bill", "VendorRef")
     for p in purchases:
-        assign(p, "Expense", "EntityRef")
+        assign(p, p.get("_tx_type", "Expense"), "EntityRef")
 
     for bucket in list(out.values()) + [outside]:
         for key in ("pushed_in", "pushed_out"):
@@ -2641,7 +2685,7 @@ def gather_rp_costs(
     for b in bills:
         handle(b, "Bill", "VendorRef")
     for p in purchases:
-        handle(p, "Expense", "EntityRef")
+        handle(p, p.get("_tx_type", "Expense"), "EntityRef")
 
     dup_flags: List[dict] = []
     for ref, ids in ref_ids.items():
@@ -3330,9 +3374,18 @@ def _after_cut(tx: dict, cutoff: Optional[str]) -> dict:
     def _after(d):
         x = _parse_date(str(d or ""))
         return bool(x and x > cd)
+    # a combined draw (MFD192's `draws` ruling) is dated by its EARLIEST
+    # invoice, so judge each invoice folded under it by its own date - the
+    # September draw's 09/07 invoice read as before a 09/01 cut (23,181.91)
+    def _leaves(rows):
+        for i in rows or []:
+            if i.get("docs"):
+                yield from i["docs"]
+            else:
+                yield i
     return {"date": cd.strftime("%m/%d/%Y"),
             "income": round(sum(float(i.get("billed") or 0) + float(i.get("not_billed_ret") or 0)
-                                for i in tx.get("income") or [] if _after(i.get("date"))), 2),
+                                for i in _leaves(tx.get("income")) if _after(i.get("date"))), 2),
             "cogs": round(sum(r["amount"] for v in (tx.get("cogs") or {}).values()
                               for r in v if _after(r.get("date"))), 2),
             "exp": round(sum(r["amount"] for v in (tx.get("exp") or {}).values()
@@ -5879,7 +5932,7 @@ def costs_by_code(bills: List[dict], purchases: List[dict], customer_id: str,
     account_names = account_names or {}
     out: Dict[str, dict] = {}
     sources = ([(b, "Bill", "VendorRef") for b in bills]
-               + [(p, "Expense", "EntityRef") for p in purchases])
+               + [(p, p.get("_tx_type", "Expense"), "EntityRef") for p in purchases])
     for txn, tx_type, vfield in sources:
         vendor = _xml_clean(((txn.get(vfield) or {}).get("name") or "(no vendor)").strip())
         ref = _xml_clean(str(txn.get("DocNumber") or txn.get("Id") or ""))
@@ -5957,7 +6010,7 @@ def code_costs_by_draw(
 
     out: Dict[str, dict] = {}
     sources = ([(b, "Bill", "VendorRef") for b in bills]
-               + [(p, "Expense", "EntityRef") for p in purchases])
+               + [(p, p.get("_tx_type", "Expense"), "EntityRef") for p in purchases])
     for txn, tx_type, vfield in sources:
         vendor = _xml_clean(((txn.get(vfield) or {}).get("name") or "(no vendor)").strip())
         date = txn.get("TxnDate", "")
@@ -7557,7 +7610,7 @@ def fetch_txn_attachments(access: str, company_id: str,
     out: Dict[str, dict] = {}
     n_dl = 0
     for txn_id, tx_type, doc in txns:
-        etype = "Purchase" if tx_type == "Expense" else "Bill"
+        etype = {"Expense": "Purchase", "VendorCredit": "VendorCredit"}.get(tx_type, "Bill")
         attachables = by_key.get((etype, txn_id), [])
         multi = len(attachables) > 1
         prefix = _FNAME_SAFE_RE.sub("_", str(doc or txn_id)).strip()
@@ -7619,7 +7672,7 @@ def _qbo_txn_url(tx_type: str, txn_id: str, realm: str) -> Optional[str]:
         return None
     from urllib.parse import quote
     t = (tx_type or "").lower()
-    page = {"bill": "bill", "invoice": "invoice",
+    page = {"bill": "bill", "invoice": "invoice", "vendorcredit": "vendorcredit",
             "purchaseorder": "purchaseorder", "po": "purchaseorder"}.get(t, "expense")
     return (f"https://qbo.intuit.com/app/login?pagereq="
             f"{quote(f'{page}?txnId={txn_id}')}&deeplinkcompanyid={realm}")
@@ -8449,6 +8502,9 @@ def generate_project_pnl(
                      f"from {_shape['n']} tagged: day {_shape['start_day']} of "
                      f"the prior month → day {_shape['end_day']}",
                      icon="⚑", color=_YEL)
+    # retainage lines are told apart by the account their item posts to
+    set_retainage_items(_list_pull(access, company_id, "Item"),
+                        _list_pull(access, company_id, "Account"))
     income_groups = group_invoices_by_draw(invoices, interactive=interactive)
     # AR/AP payment state (the user 2026-08-05): invoice/bill Balance == 0 is
     # PAID. Purchases (checks/CC) are paid by nature.
@@ -8528,7 +8584,9 @@ def generate_project_pnl(
     # {txn id: (balance, total)} — the balance is what makes PARTIAL possible.
     paid_map = {b.get("Id"): (float(b.get("Balance", 0) or 0),
                               float(b.get("TotalAmt", 0) or 0)) for b in bills}
-    paid_map.update({pch.get("Id"): (0.0, 0.0) for pch in purchases})
+    # a credit (negative total) reads CREDIT, not PAID (_pay_state)
+    paid_map.update({pch.get("Id"): (0.0, min(0.0, float(pch.get("TotalAmt") or 0)))
+                     for pch in purchases})
     if _LEGACY_MATCH is not None:
         pl_totals = _synth_pl_totals(bills, purchases, income_groups,
                                      cust_info["id"], acct_type, item_account,
@@ -9169,7 +9227,9 @@ def generate_project_pnl_rp(
     # {txn id: (balance, total)} — the balance is what makes PARTIAL possible.
     paid_map = {b.get("Id"): (float(b.get("Balance", 0) or 0),
                               float(b.get("TotalAmt", 0) or 0)) for b in bills}
-    paid_map.update({pch.get("Id"): (0.0, 0.0) for pch in purchases})
+    # a credit (negative total) reads CREDIT, not PAID (_pay_state)
+    paid_map.update({pch.get("Id"): (0.0, min(0.0, float(pch.get("TotalAmt") or 0)))
+                     for pch in purchases})
     ui_event(f"{len(bills)} bills · {len(purchases)} purchases  "
              f"{_DIM}(from {bill_start}){_RESET}")
 
@@ -9586,7 +9646,7 @@ def _qbo_lines_from_fetched(bills, purchases, customer_id, anames, item_acct,
     for b in bills:
         take(b, "Bill", "VendorRef")
     for p in purchases:
-        take(p, "Expense", "EntityRef")
+        take(p, p.get("_tx_type", "Expense"), "EntityRef")
     return out
 
 
@@ -9597,7 +9657,9 @@ def _qbo_project_cost_lines(access, company_id, customer_id, start, end) -> list
     # {txn id: (balance, total)} — the balance is what makes PARTIAL possible.
     paid_map = {b.get("Id"): (float(b.get("Balance", 0) or 0),
                               float(b.get("TotalAmt", 0) or 0)) for b in bills}
-    paid_map.update({pch.get("Id"): (0.0, 0.0) for pch in purchases})
+    # a credit (negative total) reads CREDIT, not PAID (_pay_state)
+    paid_map.update({pch.get("Id"): (0.0, min(0.0, float(pch.get("TotalAmt") or 0)))
+                     for pch in purchases})
     accounts = _list_pull(access, company_id, "Account")
     anames = {a.get("Id"): a.get("Name") for a in accounts if a.get("Id")}
     items = _list_pull(access, company_id, "Item")

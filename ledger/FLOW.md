@@ -1,6 +1,6 @@
 # ledger/ - how the Project Ledger works
 
-Last changed: 10/01/2026 - vendor page round 2: payment bills carry their scan count (📎); stubs open in the
+Last changed: 10/06/2026 - gross billed tells retainage lines by the account the item posts to (Retainage Receivable), so a PC00 'Retainage' invoice is income, as in the project P&L. Earlier: 10/01/2026 - vendor page round 2: payment bills carry their scan count (📎); stubs open in the
 ledger; bills tick to copy. Earlier the same day: every bill row carries its QuickBooks memo AND due date from the copy (`MIR -> SRV`); the
 Vendor Center's Unpaid view shows Due; its columns drag to a remembered order; the bill viewer's scan fills its pane.
 Earlier the same day: the process registry moved out of the gear: Company -> **Processes**, grouped by area
