@@ -2768,10 +2768,15 @@ def main() -> int:
         return 2
     print(f"  ✓ saved {OUTPUT_PATH}")
 
-    try:
-        os.chmod(OUTPUT_PATH, stat.S_IRUSR | stat.S_IWUSR)
-    except Exception as e:
-        print(f"  ⚠ chmod 600 failed: {e}")
+    # 600 on the owner's Mac (his own account). On the office server the file
+    # belongs to the automation user, and 600 locked every person out of the
+    # live tracker (docker/STATUS 10/05) - there the share's own permissions
+    # decide who reads it.
+    if not os.getenv("ACB_SERVER_MODE"):
+        try:
+            os.chmod(OUTPUT_PATH, stat.S_IRUSR | stat.S_IWUSR)
+        except Exception as e:
+            print(f"  ⚠ chmod 600 failed: {e}")
 
     elapsed = (dt.datetime.now() - started).total_seconds()
     print(f"\n✓ done in {elapsed:.1f}s")

@@ -24,7 +24,7 @@ Progression record for the office server package. Update in the SAME commit as a
 
 ## TO DO (before live)
 - Notion: only update an invoice when a field changed (today every run rewrites every open invoice).
-- The Mac honors the writer file: sync-all stands down on AP/AR while it says "server" (and runs push_registers.sh).
+- DONE 10/06 - The Mac honors the writer file: sync-all stands down on AP/AR while it says "server" (push_registers.sh still run by hand after a rule change).
 - Bill Tracker Inputs split: Lien / Notes / coding Status move to `Bill Tracker Inputs.xlsx`, the tracker read-only.
 - The nightly cross-check between the server's mirror and the Mac's.
 - The ledger shows the server's last good run (reads `Accounting/_automation/server-status.json`).
@@ -35,9 +35,12 @@ Progression record for the office server package. Update in the SAME commit as a
   output 600; on the Mac that is the owner's own account, on the server it is svc-automation, so no person (or Excel
   over the share) can read `_server-test/Bill Tracker.xlsx` - a sudo copy was needed to compare it. Live would lock
   the real one the same way. Fix before live: readable by the share's users on the server (group-read, or skip the
-  chmod when `ACB_SERVER_MODE` is set). The Invoice Tracker is not affected.
+  chmod when `ACB_SERVER_MODE` is set). The Invoice Tracker is not affected. FIXED 10/06: excel_bill_sync skips the
+  chmod when ACB_SERVER_MODE is set (the share's permissions decide).
 - Side note (2026-10-05) - **payments: 126 bill lines are paid on the Mac, Unpaid/Partial on the server.** Same bills,
-  same lines; only Open Bal / Pay Status / Pay Ref-Date-Method / Lien differ, always paid -> unpaid. All of them trace
+  same lines; only Open Bal / Pay Status / Pay Ref-Date-Method / Lien differ, always paid -> unpaid. UPDATE 10/06: check
+  #25510 is whole again on the Mac's mirror (115 bills, last changed in QBO 10/06 - the ledger's Clear copy re-apply);
+  most likely QBO stripped it between the two 10/05 runs. Re-compare the two trackers once before going live. All of them trace
   to three check payments on the Mac's side - one of them (check #25510, April 2026) pays 109 bills by itself. Either
   the server's mirror is missing those BillPayments (suspect: very large payments) or QBO changed them between the
   two runs (Mac 08:09, server 11:50). Not yet settled: open check #25510 in QBO, or compare a same-hour pair of files.

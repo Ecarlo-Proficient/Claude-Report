@@ -32,11 +32,26 @@ c "0/4  QBO mirror - refresh (the one read of QBO)"
 recon=""; [[ "$(date +%u)" == "7" ]] && recon="--reconcile"
 "$ACB_PY" ledger/sync_view.py mirror $recon; mir=$?
 
-c "1/4  AP - bill tracker (must precede AR)"
-bash "$base/bill-tracker/run_tracker.sh" "$@"; ap=$?
+# The office server owns AP/AR once the writer file on the Accounting share
+# says {"writer": "server"} (docker/README) - the Mac then stands down on
+# both so the two never write the trackers / Notion at once; the mirror and
+# the ledger reload stay here (the ledger lives on this Mac).
+writer="$("$ACB_PY" -c 'import json
+from pathlib import Path
+p = Path("/Volumes/Accounting/_automation/writer.json")
+try: print(str(json.loads(p.read_text()).get("writer") or "").strip().lower())
+except Exception: print("")' 2>/dev/null)"
+if [[ "$writer" == "server" ]]; then
+  c "1-2/4  AP + AR - the office server runs these (writer file says server)"
+  echo "  skipped here - Accounting/_automation/server-status.json has its last run"
+  ap=0; ar=0
+else
+  c "1/4  AP - bill tracker (must precede AR)"
+  bash "$base/bill-tracker/run_tracker.sh" "$@"; ap=$?
 
-c "2/4  AR - invoice sync + AR Aging"
-bash "$base/invoice-sync/run_invoice_sync.sh" "$@"; ar=$?
+  c "2/4  AR - invoice sync + AR Aging"
+  bash "$base/invoice-sync/run_invoice_sync.sh" "$@"; ar=$?
+fi
 
 c "3/4  Ledger - reload the spine (so the dashboard matches)"
 if [[ "$*" == *dry-run* ]]; then
