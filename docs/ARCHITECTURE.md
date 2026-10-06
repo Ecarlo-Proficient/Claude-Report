@@ -858,6 +858,7 @@ flowchart LR
     HEALTH["health-dashboard/\nqbo_health.py"]:::tool
     EXP["qbo-export/\nqbo_export.py"]:::tool
     RECODE["one-offs/\nqbo_recode_review.py"]:::tool
+    MOVEP["one-offs/\nmove_project_lines.py"]:::tool
     LOANS["one-offs/\nloans_to_subs_audit.py"]:::tool
     CCAUD["one-offs/\nconcrete_cost_code_audit.py"]:::tool
 
@@ -877,6 +878,7 @@ flowchart LR
     QBO --> HEALTH --> P3
     QBO --> EXP --> P4
     QBO --> RECODE --> P5
+    QBO -->|"mirror scan · live re-read"| MOVEP -->|"line CustomerRef + ProjectRef\n(+ --recode cost code) · --commit"| P5
     QBO --> LOANS --> P7
     QBO --> CCAUD --> P8
 ```
@@ -1293,6 +1295,7 @@ flowchart LR
 | Script | What it writes | Gate |
 |---|---|---|
 | `one-offs/qbo_recode_review.py --apply` | line Customer:Project + Class on job-cost lines | xlsx audit, `Approved=Y` rows only, then `--commit` |
+| `one-offs/move_project_lines.py FROM TO --commit` | every Bill/Purchase/VendorCredit LINE on project FROM -> TO (line `CustomerRef` + the Projects tag `Line.ProjectRef`, which QBO otherwise resets it to); `--recode OLD=NEW` swaps the line's cost-code item | dry run by default; exact project #; closed period skipped; each document re-read live + backed up to `~/Library/Logs/Proficient/move-project-lines/`; stops if a line does not land on TO or any amount / total / balance moves; journal entries listed, never written |
 | `one-offs/loans_to_subs_audit.py --apply` | line `AccountRef` (parent `Loans to Sub-Contractors` → per-sub sub-account) on Bill/Purchase/VendorCredit | xlsx audit, `Confirm Sub-Account` filled, then `--commit`; skips stale-SyncToken / closed-period / not-still-on-parent |
 | `ledger/reapply_check.py <check#>` + the ledger's **Re-apply in QuickBooks** | a stripped BillPayment's `Line` list, restored from the mirror change log's before copy | dry run by default; `--commit` (CLI) or the page's "Are you sure?" (server refuses unless the plan is unchanged) writes; each bill re-read live (exists, same vendor, open balance covers the amount), never over the check total, fresh SyncToken, live check backed up to `~/Library/Logs/Proficient/reapply-check/` first |
 | `ledger/reapply_check.py --clear` + the ledger's **Clear copy** bulk fix (Checks QBO changed) | the same `Line` restore, many checks at once | only a PROVEN copy: whole pre-strip check, every copy agrees, check untouched, nothing new on it, bills / credits only, every bill / credit back on its exact prior open balance (short pays keep theirs; a credit used since blocks); live dry run first; one Touch ID for the batch; each check re-proven live and matched to the confirmed SyncToken / lines / amount right before its own write, backed up first; a changed check is skipped |
