@@ -879,6 +879,13 @@ flowchart LR
     QBO --> CCAUD --> P8
 ```
 
+**`one-offs/schedule_v3_build.py`** (read-only on its source) - rebuilds the owner's horizontal RP
+schedule workbook (one row per job, stages on a Mon-Sat calendar) as a new file: Flatwork / Foundation
+tables on Main and an empty twin on Completed, per-table phase dropdowns fed by the Legend's phase tables,
+a CHECK column that asks Excel which table the row is in, the legend colours as cell styles, real dates
+to 12/31. Ends with `shared/xlsx_verify.assert_clean`. Not yet read by `shared/schedule.py` (that still
+reads the daily `Schedule M-D-YY.xlsx` files).
+
 **`one-offs/schedule_report.py`** (read-only) — standalone weekly crew-schedule stage
 Gantt. The model logic lives in **`shared/schedule.py`** (current-week discovery/parse,
 address→pricing match, job×day×stage model, stage→colour) — shared with company_tracker,

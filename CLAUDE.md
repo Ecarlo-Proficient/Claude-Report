@@ -60,6 +60,10 @@ restate them here. Business/strategic context lives in session memory, not in th
    NOT copy tables — so after any row surgery, reset every table's `ref` to its new data range (or drop the
    table), fix merges/formulas by hand, then let `assert_clean` catch what you missed. Kill rich-text/multi-run
    cells too. A repair prompt reaching the user is a defect, not a warning.
+   **The full list of what Excel accepts, rejects and can't do lives in the AI vault's
+   `04_integrations/excel.md`** (outside this repo) - read it before building a workbook, open the file
+   in real Excel before handing it over (`assert_clean` passed the schedule v3 dropdowns that Excel
+   still stripped, 2026-10-06), and add new findings there.
 5c. **Outside text never becomes a formula (security review 09/29/2026).** Vendor / QBO / Notion / email text
    is written with `shared/xlsx_guard.put(ws, row, col, value)` (text, never a formula) and CSV cells with
    `csv_cell()`. Every workbook saved by a process that imports `shared` passes the save guard (a formula that

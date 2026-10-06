@@ -240,6 +240,30 @@ def verify_xlsx(path) -> list:
                                   "(outside text written as a formula - see shared/xlsx_guard)")
                     break
 
+            # ── dropdown (data validation) formulas: Excel bans reference operators (an
+            #    intersection space, a union comma outside a function) and structured
+            #    refs like Table[Col] there, and caps them at 255 characters. Any of
+            #    these and Excel strips EVERY validation on the sheet behind a repair
+            #    prompt - the schedule v3 build, 2026-10-06. ──
+            for dv in re.finditer(r"<dataValidation\b([^>]*)>(.*?)</dataValidation>", x, re.S):
+                sq = re.search(r'sqref="([^"]*)"', dv.group(1))
+                for f in re.findall(r"<formula[12]>(.*?)</formula[12]>", dv.group(2), re.S):
+                    f = html.unescape(f)
+                    bare = re.sub(r'"[^"]*"', '""', f)
+                    flat = bare
+                    while re.search(r"\([^()]*\)", flat):
+                        flat = re.sub(r"\([^()]*\)", "", flat)
+                    why = ("is over 255 characters" if len(f) > 255
+                           else "uses a structured reference (Table[Col]) - wrap it in a defined name"
+                           if re.search(r"\w\[", bare)
+                           else "uses the intersection operator (a space between references)"
+                           if re.search(r"[\w$)]\s+[\w$(]", bare.strip())
+                           else "uses a union (a comma outside a function)" if "," in flat
+                           else None)
+                    if why:
+                        issues.append(f"{n}: dropdown on {sq.group(1) if sq else '?'} {why} "
+                                      "- Excel removes it with a repair prompt")
+
         # ── table range must stay WITHIN its sheet's used rows. A stale table
         #    ref after a row insert/delete (ref points past the last row) is the
         #    top "we found a problem with some content" cause — the 12-31 build
