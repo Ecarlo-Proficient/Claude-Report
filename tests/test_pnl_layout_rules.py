@@ -80,7 +80,7 @@ def test_checks_are_sheet_qualified_and_compare_overhead_on_billed():
     by = {c[0]: c for c in checks}
     assert by["Draws gross billed = Billed to Date"][1] == "'P&L'!C5"
     assert by["② overhead (on billed) = draws overhead"][1:3] == ("-'P&L'!R6", cov["cov_oh_tot"])
-    assert by["Draws retained = retainage still owed"][1] == "'P&L'!I8"
+    assert by["Draws retained = retainage held net of releases"][1] == "'P&L'!I8"
     for _label, plf, supf, _link in checks:
         assert "'P&L'!" in plf and "!" in supf
 
@@ -236,3 +236,30 @@ def test_the_pc00_retainage_invoice_is_marked_on_the_workbook():
         assert wb.defined_names[pnl.RET_INCOME_NAME].attr_text == '"32656"'
     finally:
         pnl._RET_ITEMS.clear()
+
+
+def test_retainage_still_owed_and_not_billed_yet():
+    # CP610: draws entered NET, retainage invoiced on PC00 (#32656) + a
+    # not-billed record (#32960), then re-billed on 99 - Retainage (#34729, open)
+    groups = {"d4": {"invoices": [{"gross": 100.0, "retainage": 0.0, "retainage_billed": 0.0,
+                                   "balance": 0.0}]},
+              "__untagged": {"invoices": [{"gross": 23256.0, "retainage": 0.0, "retainage_billed": 0.0,
+                                           "balance": 0.0, "ret_income": True}]},
+              "__retainage_billed": {"invoices": [{"gross": 0.0, "retainage": 0.0,
+                                                   "retainage_billed": 24572.0, "balance": 24572.0}]},
+              "__retainage": {"pool": 1316.0}}
+    rows = [{"withheld": 0.0, "billed_ret": 24572.0}, {"not_billed_ret": 1316.0}]
+    st = pnl._retainage_state(groups, rows, 24572.0)
+    assert st["still_owed"] == 24572.0 and st["not_billed_yet"] == 0.0 and st["net_draws"]
+    # CP595 before the owner's invoices: pay app 21,185.17, 17,730.00 invoiced
+    groups = {"d3": {"invoices": [{"gross": 100.0, "retainage": 0.0, "retainage_billed": 0.0,
+                                   "balance": 0.0}]},
+              "__untagged": {"invoices": [{"gross": 17730.0, "retainage": 0.0, "retainage_billed": 0.0,
+                                           "balance": 0.0, "ret_income": True}]}}
+    st = pnl._retainage_state(groups, [{"withheld": 0.0, "billed_ret": 0.0}], 21185.17)
+    assert st["not_billed_yet"] == 3455.17
+    # a job that withholds on its draws: held 79,190.56, nothing released
+    groups = {"d1": {"invoices": [{"gross": 791905.6, "retainage": 79190.56,
+                                   "retainage_billed": 0.0, "balance": 0.0}]}}
+    st = pnl._retainage_state(groups, [{"withheld": 79190.56, "billed_ret": 0.0}], None)
+    assert st["still_owed"] == 79190.56 and st["not_billed_yet"] == 79190.56 and not st["net_draws"]

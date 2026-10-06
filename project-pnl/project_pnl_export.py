@@ -1145,6 +1145,47 @@ def draw_label(period: Tuple[dt.date, dt.date]) -> str:
 RET_INCOME_NAME = "RetainageIncomeDocs"
 
 
+def _retainage_state(income_groups: dict, income_rows, g702_retainage) -> dict:
+    """Where a job's retainage stands (the owner 2026-10-06):
+      open_release   still open on the release invoices (positive 99 - Retainage
+                     lines, re-bills included) - owed, not yet paid
+      pc00           retainage invoiced AS INCOME (PC00 "Retainage" invoices)
+      nb_records     the "retainage not billed" record invoices (JE moves)
+      net_draws      the draws were entered NET (no withheld line on any draw)
+                     and a signed pay app gives the retainage to date
+      g702_ret       the latest pay app's retainage (G702 line 5)
+      still_owed / not_billed_yet  the two figures, for the Overview
+    Not billed yet: a net-draw job = pay-app retainage - everything invoiced for
+    it (PC00 + the not-billed records; a re-bill on 99 - Retainage moves money
+    already invoiced, so it is not new billing); a withholding job = held -
+    released - PC00. Never below 0. CP610 -> 0.00, CP595 -> 3,455.17 before
+    the owner's two invoices."""
+    invs = [i for k, g in (income_groups or {}).items() if k != "__retainage"
+            for i in (g.get("invoices") or [])]
+    open_rel = sum(min(max(float(i.get("balance", 0) or 0), 0.0),
+                       float(i.get("retainage_billed", 0) or 0))
+                   for i in invs if float(i.get("retainage_billed", 0) or 0) > 0.005)
+    pc00 = sum(float(i.get("gross", 0) or 0) for i in invs if i.get("ret_income"))
+    nb = float((income_groups.get("__retainage") or {}).get("pool", 0.0) or 0.0)
+    withheld_lines = sum(float(i.get("retainage", 0) or 0) for i in invs)
+    g702 = float(g702_retainage) if g702_retainage not in (None, "") else None
+    net_draws = withheld_lines < 0.005 and g702 is not None and g702 > 0.005
+    rows = [r for r in (income_rows or [])]
+    W = sum(float(r.get("withheld", 0) or 0) for r in rows if not r.get("not_billed_ret"))
+    NB = sum(float(r.get("not_billed_ret", 0) or 0) for r in rows)
+    R = sum(float(r.get("billed_ret", 0) or 0) for r in rows)
+    held = W + NB - R
+    still = max(0.0, held) + open_rel
+    nby = max(0.0, g702 - pc00 - nb) if net_draws else max(0.0, held - pc00)
+    return {"open_release": round(open_rel, 2), "pc00": round(pc00, 2),
+            "nb_records": round(nb, 2), "net_draws": net_draws,
+            "g702_ret": round(g702, 2) if g702 is not None else None,
+            "still_owed": round(still, 2), "not_billed_yet": round(nby, 2)}
+
+
+RET_STATE_NAMES = {"still_owed": "RetainageStillOwed", "not_billed_yet": "RetainageNotBilledYet"}
+
+
 def mark_retainage_income(wb, income_groups: dict) -> None:
     docs = sorted({str(i.get("doc_num") or "") for g in (income_groups or {}).values()
                    for i in (g.get("invoices") or []) if i.get("ret_income")} - {""})
@@ -4314,13 +4355,32 @@ def build_sheet_pl(
 
         # INCOME (gross billed, retainage included - the owner 2026-10-01)
         _rec = f"{Wcell}+{NBcell}" if NBcell else Wcell
+        _rs = wip_info.get("retainage_state") or {}
+        if _rs:
+            _rs = dict(_rs)
+            if _rs.get("net_draws"):
+                _rs["not_billed_yet_f"] = (f"=MAX(0,{_rs['g702_ret']}-{_rs['pc00']}"
+                                           f"-{_rs['nb_records']})")
+            else:
+                _rs["not_billed_yet_f"] = (f"=MAX(0,({_rec})-{tx_refs['billed_ret']}"
+                                           + (f"-{_rs['pc00']}" if _rs.get("pc00") else "") + ")")
         _inc = [("inc", "INCOME  (gross)", f"={Btot}",
                  dict(bold=True, color="375623", fill=INCOME_FILL, url=_cust_url)),
                 ("rh", "less: Retainage held", f"=-({_rec})", dict(color="C0504D")),
                 ("nb", "Net Billed (to AR)", None, dict(bold=True, border=TOP_BORDER)),
                 ("rr", "Retainage released", f"={tx_refs['billed_ret']}", dict(color=GREEN)),
-                ("ro", "Retainage still owed", f"=({_rec})-{tx_refs['billed_ret']}",
-                 dict(bold=True, color=NAVY, border=TOP_BORDER))]
+                # STILL OWED = retainage the GC has not PAID us yet (the owner
+                # 2026-10-06, "A"): held and not yet released, never below 0,
+                # plus what is still open on the release invoices. CP610 (draws
+                # entered net, the re-bill #34729 open) read -24,572 before.
+                ("ro", "Retainage still owed",
+                 f"=MAX(0,({_rec})-{tx_refs['billed_ret']})"
+                 + (f"+{_rs['open_release']}" if _rs.get("open_release") else ""),
+                 dict(bold=True, color=NAVY, border=TOP_BORDER)),
+                # NOT BILLED YET = retainage earned but not invoiced (the owner
+                # 2026-10-06, "so we know where it stands") - see _retainage_state
+                ("rnb", "Retainage not billed yet", _rs.get("not_billed_yet_f", 0.0),
+                 dict(color="BF8F00"))]
         # THE QUICKBOOKS FIX NOTE (the owner 2026-10-02): a not-billed
         # retainage invoice repeating a retainage line already on a draw
         # invoice is left out of every total until the books are corrected.
@@ -4338,6 +4398,9 @@ def build_sheet_pl(
         ws[V(X1, g_inc["nb"])] = f"={V(X1, g_inc['inc'])}+{V(X1, g_inc['rh'])}"
         inc_cell = V(X1, g_inc["inc"])
         refs["ret"] = V(X1, g_inc["ro"])
+        # the draws carry held - released; the check compares THAT, not the
+        # unpaid figure above (an open release is owed, not held)
+        refs["ret_expr"] = f"({_rec})-{tx_refs['billed_ret']}"
 
         def _acct_lines(names):
             """The child account only (the owner 2026-10-02) unless two parents
@@ -7156,8 +7219,9 @@ def _wire_pl_support(wb, bva: Optional[dict], draw_rows, draw_costs,
                        + " = Costs to Date + office accounts",
                        P(refs["costs"]) + (f"+{P(_opex)}" if _opex else ""), _sup, None))
         if refs.get("ret"):
-            checks.append((f"Draws retained{said(oret)} = retainage still owed",
-                           P(refs["ret"]), refs["cov_ret_tot"] + plus(oret), None))
+            checks.append((f"Draws retained{said(oret)} = retainage held net of releases",
+                           refs.get("ret_expr") or P(refs["ret"]),
+                           refs["cov_ret_tot"] + plus(oret), None))
         if refs.get("oh_billed") and refs.get("cov_oh_tot"):
             oh_out = round(og * float(refs.get("oh_rate", 0.0) or 0.0), 2)
             checks.append((f"② overhead (on billed) = draws overhead{said(oh_out)}",
@@ -9097,6 +9161,7 @@ def generate_project_pnl(
     # not from the draw invoices and not from a hand-typed cell (the user
     # 2026-07-29) — the G702 is the document the GC certifies. The WIP master
     # stays the fallback for jobs with no pay app on the drive yet.
+    _g702: dict = {}
     if not is_mfd:
         _g702 = load_g702(proj)
         if _g702.get("error"):
@@ -9119,6 +9184,9 @@ def generate_project_pnl(
                      + (f"  ⚑ overrode typed ${_typed:,.0f}"
                         if wip_info.get("contract_g702_typed") else ""),
                      icon="§", color=_CYAN)
+    wip_info["retainage_state"] = _retainage_state(
+        income_groups, tx.get("income"),
+        (_g702 or {}).get("retainage") if not is_mfd else None)
     _pl_refs = build_sheet_pl(
         wb, proj, cust_info, wip_info, pl_data, pl_totals,
         net_billed, ret_withheld_total, as_of, overhead_pct=overhead_pct,
@@ -9205,6 +9273,11 @@ def generate_project_pnl(
     out_path = proj_dir / pnl_paths.pnl_filename(
         proj, pnl_paths.is_archived_dir(proj_dir))
     mark_retainage_income(wb, income_groups)
+    _rst = wip_info.get("retainage_state") or {}
+    if _rst:
+        from openpyxl.workbook.defined_name import DefinedName
+        for _k, _nm in RET_STATE_NAMES.items():
+            wb.defined_names[_nm] = DefinedName(_nm, attr_text=str(_rst.get(_k, 0.0)))
     _tidy_text(wb)
     saved = safe_save(wb, out_path)
     if saved:

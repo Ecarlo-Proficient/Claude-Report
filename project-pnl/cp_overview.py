@@ -328,7 +328,13 @@ def read_extra(path: Path) -> dict:
         for d in draws:
             d["invoices"] = read_draw_invoices(wb, d["name"])
             d["bills"] = lines.get(d["name"], [])
+        _rn = wb.defined_names.get("RetainageNotBilledYet")
+        try:
+            _rnby = float(_rn.attr_text) if _rn is not None else None
+        except (TypeError, ValueError):
+            _rnby = None
         return dict(proj, draws=draws, awaiting=acc, next_lines=read_next_draw(wb),
+                    static={"rnby": _rnby},
                     rnb_doc=rnb, pulled=pulled)
     finally:
         wb.close()
@@ -357,6 +363,7 @@ OV_COLS = [
     ("% complete", "pcomp", PCT, 13, "prog"),
     ("Coverage", "cov", PCT, 13, "prog"),
     ("Awaiting draw", "await", MONEY, 14, "prog"),
+    ("Retainage not billed yet", "rnby", MONEY, 14, "prog"),
 ]
 GROUP_TITLE = {"proj": "PROJECTION", "act": "ACTUAL TO DATE", "prog": "PROGRESS & COVERAGE",
                "fin": "RESULT", "close": "COVERAGE & CLOSE-OUT"}
@@ -374,6 +381,7 @@ COMPLETED_COLS = [
     ("Net %", "netm", PCT, 10, "fin"),
     ("Coverage", "cov", PCT, 11, "close"),
     ("Still owed", "ar", MONEY, 14, "close"),
+    ("Retainage not billed yet", "rnby", MONEY, 14, "close"),
     ("Close-out (QuickBooks)", "closeout", None, 52, "close"),
 ]
 
@@ -592,7 +600,7 @@ def build(jobs: List[tuple], out: Path, div: dict, sections=None, title=None,
             c = C0 + 1 + i
             if not fmt:                                    # a text column has no total
                 v = None
-            elif k in ("contract", "etc", "billed", "cost", "await", "pp", "poh", "pn", "ar"):
+            elif k in ("contract", "etc", "billed", "cost", "await", "pp", "poh", "pn", "ar", "rnby"):
                 v = "=" + tot(k)
             elif k in ("pnm", "ppm"):
                 num = L["pn" if k == "pnm" else "pp"]

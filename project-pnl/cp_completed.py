@@ -129,7 +129,7 @@ def main() -> int:
         co = closeout(job, src, invs) if info else {"bucket": "check", "owed": None,
                                                       "text": "not a QBO project - check by hand"}
         ex = cp_overview.read_extra(path)
-        ex["static"] = {"ar": co["owed"] or None, "closeout": co["text"]}
+        ex.setdefault("static", {}).update({"ar": co["owed"] or None, "closeout": co["text"]})
         ex["bucket"] = co["bucket"]
         jobs.append((job, src, t, ex))
         print(f"  {job:<7} {co['bucket']:<10} {co['text']}")

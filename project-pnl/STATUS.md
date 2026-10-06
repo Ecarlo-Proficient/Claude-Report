@@ -7,6 +7,15 @@ manual close), RP (no draws — expenses → invoice → profit).
 ---
 
 ## DONE / FINALIZED
+- 2026-10-06 · **Retainage still owed = unpaid; new Retainage not billed yet** (owner: "A" - cash not received; and
+  "retainage not billed yet ... so we know where it stands"). Still owed = MAX(0, held - released) + what is still
+  open on the release invoices (CP610 -24,572 -> 24,572, #34729 open). Not billed yet (`_retainage_state`): a job
+  entered NET with a pay app = G702 retainage - (PC00 retainage invoices + not-billed records), a withholding job =
+  held - released - PC00, never below 0 (CP610 0.00; CP595 3,455.17 before its two invoices). The draw check now
+  compares the draws' retained with held net of releases. Both figures ride as hidden workbook names for the
+  Overviews' new column (CP active, CP Completed, MFD). Rebuilt CP + MFD actives: every P&L check ties; CP Overview
+  reconciled (0 problems). MFD177 shows a new gap: bill #3099994 (Badger, 08/14/2026, 4,961.43) coded to Suspense -
+  a QuickBooks recode. The MFD Overview could not rebuild: OneDrive would not release MFD295 FINAL.xlsx.
 - 2026-10-06 · **CP610 FINAL rebuilt after the re-bill (#34729, two 99 - Retainage lines, 24,572.00)** - by the
   retainage audit session. Billed to Date 245,720.00 = the pay app. RECIPE (CP610 is not a QBO project - invoices on
   the GC, costs on its deleted class): from the repo root, `import project_pnl_export as P`, wrap

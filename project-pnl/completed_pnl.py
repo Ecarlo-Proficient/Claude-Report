@@ -387,8 +387,16 @@ def read_source(path: Path) -> dict:
         title = str(wb[pl].cell(1, 1).value or "") if pl else ""
         _dn = wb.defined_names.get("RetainageIncomeDocs")
         ret_income = (str(_dn.attr_text).strip('"').split(",") if _dn is not None else [])
+        # retainage earned but not invoiced (the P&L's hidden name, 10/06/2026);
+        # None on a workbook built before it
+        _rn = wb.defined_names.get("RetainageNotBilledYet")
+        try:
+            rnby = float(_rn.attr_text) if _rn is not None else None
+        except (TypeError, ValueError):
+            rnby = None
         return {"invoices": inv, "not_billed": not_billed, "payroll": round(payroll, 2),
                 "sections": sections, "title": title, "ret_income_docs": ret_income,
+                "rnby": rnby,
                 "contract": _read_contract(wb),
                 "status": "Completed", "rel": None}
     finally:
@@ -500,7 +508,8 @@ def _totals(src: dict, legacy: bool = False) -> dict:
             "gpm": gp / billed if billed else 0.0,
             "netm": (gp - oh) / billed if billed else 0.0,
             "moh": moh, "mnet": gp - moh,
-            "mnetm": (gp - moh) / billed if billed else 0.0}
+            "mnetm": (gp - moh) / billed if billed else 0.0,
+            "rnby": float(src.get("rnby") or 0.0)}
 
 
 def _tiles(ws, r: int, items, spans) -> None:
@@ -646,13 +655,15 @@ def build_bundle(jobs: List[tuple], out: Path, div: dict) -> None:
     if alt:
         cols += [(f"{MFD_OVERHEAD_PCT:.0%} OH (of billed)", "moh", MONEY, 16),
                  (alt["short"], "mnet", MONEY, 20)]
+    # retainage earned but not invoiced yet (the owner 2026-10-06)
+    cols += [("RETAINAGE NOT BILLED YET", "rnby", MONEY, 18)]
     L = {k: get_column_letter(C0 + 1 + i) for i, (_h, k, _f, _w) in enumerate(cols)}
 
     def _formula(k, rr, ranges=None):
         """The cell formula for column `k` on row `rr`. Source columns
         (contract / billed / cost) are values on a job row and SUMs over the
         job rows (`ranges` = [(first, last), ...]) on a subtotal / total row."""
-        if k in ("contract", "billed", "cost"):
+        if k in ("contract", "billed", "cost", "rnby"):
             if not ranges:
                 return None
             return "=" + "+".join(f"SUM({L[k]}{a}:{L[k]}{b})" for a, b in ranges)
@@ -704,7 +715,7 @@ def build_bundle(jobs: List[tuple], out: Path, div: dict) -> None:
 
     def _sum(sel):
         d = {k: sum(t[k] for _, _, t in sel)
-             for k in ("contract", "billed", "cost", "gp", "oh", "net", "moh", "mnet")}
+             for k in ("contract", "billed", "cost", "gp", "oh", "net", "moh", "mnet", "rnby")}
         for a, b in (("gpm", "gp"), ("netm", "net"), ("mnetm", "mnet")):
             d[a] = d[b] / d["billed"] if d["billed"] else 0
         return d
