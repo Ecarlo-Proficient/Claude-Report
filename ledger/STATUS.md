@@ -16,7 +16,9 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   proven again live before the list (`bulk_dry_run`, `/api/checkdrift/bulk`) and again right before each write
   (`bulk_commit`, `/api/checkdrift/bulk/commit`: same SyncToken / lines / amount, backup per check, a changed check
   is skipped, never forced). A check that fails says why on its card ("Not a clear copy: ..."). CLI:
-  `reapply_check.py --clear [--commit]`. First run: 26 of 40 floating checks (~$545k), all 26 proved live;
+  `reapply_check.py --clear [--commit]`. Round 2 (same day, owner: "make sure i can select ... two categories"): the
+  dry-run table has tick boxes (all ticked; header = all / none; Write shows the ticked count + total), and the chips
+  split the floating checks into **Clear copy (mirror)** and **Hunt down** (everything else - its card says why). First run: 26 of 40 floating checks (~$545k), all 26 proved live;
   25730 rightly out (re-applied by hand with a different bill on 09/23, then stripped again). The pre-log
   ledger-snapshot evidence never counts as a clear copy. Pinned by `tests/test_reapply_clear_copy.py` (17).
 - 2026-10-01 · **Vendor page round 2** (owner, with screenshots). Bills: his dragged order is the standard

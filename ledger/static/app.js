@@ -9059,8 +9059,12 @@ const cdKindFn = () => (CD_KINDS.find(k => k[0] === cdKind) || CD_KINDS[0])[2];
 // Clear copy (owner 2026-10-06: "a filter that the script can 100% GUARANTEE that it has a copy of the check prior to qbo
 // changing it ... be careful with credits and shortpays"): reapply_check.annotate proves it on the mirror; the bulk run
 // proves every check again live before it writes (reapply_check.bulk_dry_run / bulk_commit).
+// Two piles (owner 2026-10-06: "one that is an obvious fix that can be backed up with the mirror and the other that was
+// done prior to the mirror so i have to hunt down"): Clear copy = bulk; Hunt down = every other floating check, its card
+// says why (no copy - stripped before 09/23 - or a copy that does not prove).
 const cdClear = r => cdOpen(r) && r.clear_copy && r.clear_copy.ok;
-const CD_FILTERS = [["fix", "To fix", cdOpen], ["clear", "Clear copy", cdClear], ["unapplied", "Unapplied", r => cdOpen(r) && r.floating > 1],
+const cdHunt = r => cdOpen(r) && r.floating > 1 && !cdClear(r);
+const CD_FILTERS = [["fix", "To fix", cdOpen], ["clear", "Clear copy (mirror)", cdClear], ["hunt", "Hunt down", cdHunt], ["unapplied", "Unapplied", r => cdOpen(r) && r.floating > 1],
   ["moved", "Moved to a newer bill", r => cdOpen(r) && r.late.length], ["credit", "Credit", r => r.mark && r.mark.kind === "credit"],
   ["resolved", "Resolved", r => r.mark && r.mark.kind === "resolved"], ["history", "History", null]];
 // Priority (owner 2026-09-25: "don't hide it but make a toggle or status of Urgent and Low"): what is at stake on the
@@ -9222,7 +9226,7 @@ function cdFixRow(r, span) {
   for (const step of steps) { const li = document.createElement("li"); li.textContent = step; ol.appendChild(li); }
   card.appendChild(ol);
   if (cdOpen(r) && r.clear_copy && !r.clear_copy.ok) { const x = document.createElement("div"); x.className = "cd-ra-line warn";
-    x.textContent = "Not a clear copy: " + r.clear_copy.why.join("; "); card.appendChild(x); }
+    x.textContent = "Hunt down - " + r.clear_copy.why.join("; "); card.appendChild(x); }
   const t = document.createElement("table"); t.className = "qa-repair-tbl";
   t.innerHTML = `<thead><tr><th class="left">What</th><th class="left">No.</th><th class="left">Date</th><th class="right">Amount</th><th class="left"></th></tr></thead>`;
   const tb = document.createElement("tbody");
@@ -9343,9 +9347,14 @@ async function cdBulkDry(rows, btn) {
   const ready = d.checks.filter(c => c.ok), not = d.checks.filter(c => !c.ok);
   p(`Dry run, live from QuickBooks - nothing written. ${ready.length} of ${d.checks.length} prove exactly: ${qaCents(d.ready_amt)} back on their bills.`, not.length ? "warn" : "ok");
   const t = document.createElement("table"); t.className = "qa-repair-tbl";
-  t.innerHTML = `<thead><tr><th class="left">Check #</th><th class="left">Vendor</th><th class="left">Check date</th><th class="right">Check total</th><th class="right">Lines back on</th><th class="left">Short pays (stay open)</th><th class="left">Credits back on</th><th class="left">Status</th></tr></thead>`;
+  t.innerHTML = `<thead><tr><th class="left"><input type="checkbox" class="cd-sel-all" title="All ready checks" checked></th><th class="left">Check #</th><th class="left">Vendor</th><th class="left">Check date</th><th class="right">Check total</th><th class="right">Lines back on</th><th class="left">Short pays (stay open)</th><th class="left">Credits back on</th><th class="left">Status</th></tr></thead>`;
   const tb = document.createElement("tbody");
+  const picked = new Set(ready.map(c => c.payment_id));
   for (const c of [...ready, ...not]) { const tr = document.createElement("tr");
+    { const td = document.createElement("td"); td.className = "left";
+      if (c.ok) { const cb = document.createElement("input"); cb.type = "checkbox"; cb.className = "cd-sel"; cb.checked = true;
+        cb.onchange = () => { cb.checked ? picked.add(c.payment_id) : picked.delete(c.payment_id); syncW(); }; td.appendChild(cb); }
+      tr.appendChild(td); }
     tr.appendChild(qboLinkCell(c.check || "–", qboUrl("billpayment", c.payment_id), "Open the check in QuickBooks"));
     tr.appendChild(leftText(c.vendor || "–")); tr.appendChild(leftText(c.txn_date ? fmtDateShort(c.txn_date) : "–"));
     for (const v of [qaCents(c.total), c.n ?? "–"]) { const td = document.createElement("td"); td.className = "right"; td.textContent = v; tr.appendChild(td); }
@@ -9358,9 +9367,15 @@ async function cdBulkDry(rows, btn) {
     tb.appendChild(tr); }
   t.appendChild(tb); box.appendChild(t);
   const act = document.createElement("div"); act.className = "qa-repair-act";
-  const w = document.createElement("button"); w.type = "button"; w.className = "btn small primary"; w.disabled = !ready.length;
-  w.textContent = `Write ${ready.length} checks to QuickBooks…`;
-  w.onclick = (e) => { e.stopPropagation(); cdBulkWrite(ready, d.ready_amt, w, box); };
+  const w = document.createElement("button"); w.type = "button"; w.className = "btn small primary";
+  const sel = () => ready.filter(c => picked.has(c.payment_id));
+  function syncW() { const s = sel(); w.disabled = !s.length;
+    w.textContent = `Write ${s.length} check${s.length === 1 ? "" : "s"} to QuickBooks · ${qaCents(s.reduce((t, c) => t + c.amount, 0))}…`;
+    const all = t.querySelector(".cd-sel-all"); all.checked = s.length === ready.length; all.indeterminate = s.length > 0 && s.length < ready.length; }
+  t.querySelector(".cd-sel-all").onchange = (e) => { for (const c of ready) e.target.checked ? picked.add(c.payment_id) : picked.delete(c.payment_id);
+    t.querySelectorAll(".cd-sel").forEach(cb => { cb.checked = e.target.checked; }); syncW(); };
+  syncW();
+  w.onclick = (e) => { e.stopPropagation(); const s = sel(); if (s.length) cdBulkWrite(s, Math.round(s.reduce((t, c) => t + c.amount, 0) * 100) / 100, w, box); };
   act.appendChild(w); box.appendChild(act);
   cdBulkBar();
 }
@@ -9376,7 +9391,7 @@ async function cdBulkWrite(ready, amt, btn, box) {
     body: JSON.stringify({ confirm: true, checks: ready.map(c => ({ payment_id: c.payment_id, check: c.check, sync_token: c.sync_token, n: c.n, amount: c.amount })) }) })).json(); }
   catch (e) { res = { ok: false, error: String(e) }; }
   const p = (text, cls) => { const x = document.createElement("div"); x.className = "cd-ra-line" + (cls ? " " + cls : ""); x.textContent = text; box.appendChild(x); };
-  if (!res.ok) { p(`Not written: ${res.error || "failed"}`, "neg"); btn.disabled = false; btn.textContent = `Write ${ready.length} checks to QuickBooks…`; return; }
+  if (!res.ok) { p(`Not written: ${res.error || "failed"}`, "neg"); btn.disabled = false; btn.textContent = `Write ${ready.length} checks to QuickBooks · ${qaCents(amt)}…`; return; }
   const bad = res.results.filter(r => !r.ok);
   p(`Written: ${res.written} of ${res.results.length} checks.` + (res.mirror_refreshed === false ? " Refresh from QuickBooks to update this page." : ""), bad.length ? "warn" : "ok");
   for (const r of bad) p(`Check #${r.check || r.payment_id} not written: ${r.error}`, "neg");
