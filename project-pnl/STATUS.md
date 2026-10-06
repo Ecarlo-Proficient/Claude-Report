@@ -7,6 +7,17 @@ manual close), RP (no draws — expenses → invoice → profit).
 ---
 
 ## DONE / FINALIZED
+- 2026-10-06 · **CP610 FINAL rebuilt after the re-bill (#34729, two 99 - Retainage lines, 24,572.00)** - by the
+  retainage audit session. Billed to Date 245,720.00 = the pay app. RECIPE (CP610 is not a QBO project - invoices on
+  the GC, costs on its deleted class): from the repo root, `import project_pnl_export as P`, wrap
+  `P.build_project_customer_map` to add `cust_map["CP610"] = {"id": "0", "name": "RA Ramos General Contractors,
+  Inc.:CP610 - Sauce & Vine - 201 E. Greenhill Lane", "fully_qualified_name": <same>, "balance": 0.0,
+  "parent_id": "24922"}`, run `CP610 --legacy --no-prompt --no-overview`. id "0" keeps the GC's own lines out (with
+  24922, CP595's concrete bill #34088 2,360.00 landed in CP610 - the 09/30 FINAL had that error); the parent sweep keeps
+  CP610's 8 invoices. Then repoint the 5 customer=0 links to customer 24922. OPEN (the P&L's code): ② "Retainage
+  still owed" = withheld + not billed - released reads -24,572.00 on CP610 - its draws were entered NET, the
+  retainage was booked as PC00 income (#32656 23,256; #32960 1,316 - its line reads "REITANAGE" and its memo "not
+  billed", so it is not in RetainageIncomeDocs), and the re-bill lands as released. Same shape will hit CP595.
 - 2026-10-06 · **To date row, expenses only when real, Progress out, re-bill guard** (owner: "remove Progress";
   "there should be no expenses ... show if there are so we can remove ... no expenses = that block removed entirely";
   next draw under the total, "a blank thicker line ... remove the income there since it's not known yet"). Coverage:
