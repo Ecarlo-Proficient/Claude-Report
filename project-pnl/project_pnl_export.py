@@ -100,7 +100,7 @@ from shared import rp_invoicing  # one-invoice vs scope-based RP job, off the in
 from shared.qbo_api import (
     API_BASE, MINOR_VERSION, PROJ_RE,
     load_credentials, _api_get, query_all, report,
-    extract_proj, build_project_customer_map,
+    extract_proj, build_project_customer_map, customer_ids, report_customers,
     fetch_project_pl, _walk_pl_rows, extract_pl_totals,
     fetch_customer_invoices, project_of_invoice,
 )
@@ -680,10 +680,22 @@ def _set_legacy_matcher(proj: str, customer_id: str, legacy: bool,
                      if legacy else None)
 
 
+# Split billing (shared/job_rulings `customers: all`, RP7401-FTW): the job is EVERY
+# customer carrying its number. {main customer id -> all its ids}; set per job by main().
+_JOB_IDS: Dict[str, frozenset] = {}
+
+
+def _is_job(value, customer_id: str) -> bool:
+    """Does this CustomerRef value belong to the job whose main customer is customer_id?"""
+    return value == customer_id or value in _JOB_IDS.get(customer_id, ())
+
+
 def _line_belongs(det: dict, ln: dict, txn: dict, customer_id: str) -> bool:
+    if _is_job((det.get("CustomerRef") or {}).get("value"), customer_id):
+        return True
     if _LEGACY_MATCH is not None and _LEGACY_MATCH.customer_id == customer_id:
         return _LEGACY_MATCH(det, ln, txn)
-    return (det.get("CustomerRef") or {}).get("value") == customer_id
+    return False
 
 
 # ── THE RUN-LEVEL TRANSACTION CACHE ──────────────────────────────────────────
@@ -957,7 +969,7 @@ def fetch_customer_purchase_orders(
         for ln in txn.get("Line") or []:
             det = (ln.get("ItemBasedExpenseLineDetail")
                    or ln.get("AccountBasedExpenseLineDetail") or {})
-            if (det.get("CustomerRef") or {}).get("value") == customer_id:
+            if _is_job((det.get("CustomerRef") or {}).get("value"), customer_id):
                 return True
         return False
 
@@ -2638,7 +2650,7 @@ def gather_rp_costs(
         for ln in txn.get("Line") or []:
             det = (ln.get("AccountBasedExpenseLineDetail")
                    or ln.get("ItemBasedExpenseLineDetail") or {})
-            if (det.get("CustomerRef") or {}).get("value") != customer_id:
+            if not _is_job((det.get("CustomerRef") or {}).get("value"), customer_id):
                 continue
             amt = float(ln.get("Amount", 0) or 0)
             desc = _xml_clean((ln.get("Description") or memo or "").strip())
@@ -2745,7 +2757,7 @@ def inject_pending_pos(
         for ln in po.get("Line") or []:
             det = (ln.get("ItemBasedExpenseLineDetail")
                    or ln.get("AccountBasedExpenseLineDetail") or {})
-            if (det.get("CustomerRef") or {}).get("value") != customer_id:
+            if not _is_job((det.get("CustomerRef") or {}).get("value"), customer_id):
                 continue
             amt = float(ln.get("Amount", 0) or 0)
             if amt == 0:
@@ -8540,7 +8552,7 @@ def generate_project_pnl(
         if is_mfd:
             rd_dir.mkdir(parents=True, exist_ok=True)
 
-    invoices = fetch_customer_invoices(access, company_id, cust_info["id"])
+    invoices = fetch_customer_invoices(access, company_id, report_customers(cust_info))
     # An older job invoices on the PARENT customer, not the project (the user
     # 2026-08-24) — without this its billed-to-date reads as zero. Pull the
     # parent's too and let the memo decide which ones are this job's.
@@ -8607,7 +8619,7 @@ def generate_project_pnl(
     if _LEGACY_MATCH is not None:
         pl_data, pl_totals = {}, {}
     else:
-        pl_data = fetch_project_pl(access, company_id, cust_info["id"],
+        pl_data = fetch_project_pl(access, company_id, report_customers(cust_info),
                                    start_date, pl_end)
         pl_totals = extract_pl_totals(pl_data)
         ui_event(f"P&L through {pl_end}  ·  income ${pl_totals['income']:,.0f} · "
@@ -8631,7 +8643,7 @@ def generate_project_pnl(
     ui_event(f"{len(accounts)} accounts · {len(items)} items")
 
     retainage_bs = fetch_retainage_held(
-        access, company_id, cust_info["id"], end_date, accounts=accounts,
+        access, company_id, report_customers(cust_info), end_date, accounts=accounts,
     )
 
     # Narrow the company-wide Bill/Purchase pull to this project's actual
@@ -9221,7 +9233,7 @@ def generate_project_pnl_rp(
     vendor → bills), Cash Flow, Transactions, Pending Review, POs, Reconciliations.
     """
     ui_event("Residential Job P&L template", color=_DIM)
-    invoices = fetch_customer_invoices(access, company_id, cust_info["id"])
+    invoices = fetch_customer_invoices(access, company_id, report_customers(cust_info))
     # An invoice billed to the PARENT builder with the job in its memo is still
     # this job's invoice (RP6586's lot-prep invoice, 2026-09-08: on the parent,
     # 27.5k the P&L and the WIP both missed). Sweep the parent's invoices and
@@ -10079,6 +10091,11 @@ def main() -> int:
             if not _cls:
                 ui_warn(f"{proj}: no class names this job — continuing without "
                         f"the class rule")
+        _JOB_IDS.clear()
+        if len(customer_ids(cust_map[proj])) > 1:
+            _JOB_IDS[cust_map[proj]["id"]] = frozenset(customer_ids(cust_map[proj]))
+            ui_event(f"split billing (job ruling): {len(_JOB_IDS[cust_map[proj]['id']])} QuickBooks "
+                     f"customers counted as this one job", icon="⚑", color=_YEL)
         try:
             _set_legacy_matcher(
                 proj, cust_map[proj]["id"],

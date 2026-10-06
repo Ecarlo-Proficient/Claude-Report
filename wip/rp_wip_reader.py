@@ -935,7 +935,7 @@ def enrich_with_qbo(pairs) -> None:
         row.qbo_customer_id = cust["id"]
         try:
             totals = qbo_api.extract_pl_totals(
-                qbo_api.fetch_project_pl(access, company_id, cust["id"], start, end))
+                qbo_api.fetch_project_pl(access, company_id, qbo_api.report_customers(cust), start, end))
             row.billed_to_date = float(totals.get("income", 0.0) or 0.0)
             row.costs_to_date = ((totals.get("cogs", 0.0) or 0.0)
                                  + (totals.get("expenses", 0.0) or 0.0))

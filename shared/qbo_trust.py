@@ -43,6 +43,7 @@ from typing import Dict, Iterable, List, Optional
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from shared import job_rulings                                       # noqa: E402
 from shared import qbo_mirror as mirror                              # noqa: E402
 from shared.qbo_api import PROJ_RE, extract_proj, pick_customer      # noqa: E402
 
@@ -123,7 +124,10 @@ def duplicate_groups(con) -> List[dict]:
         p = extract_proj(c.get("DisplayName") or c.get("CompanyName") or "")
         if p:
             groups[p].append(c)
-    dups = {p: cs for p, cs in groups.items() if len(cs) > 1}
+    # A job the owner ruled split billing (shared/job_rulings `customers: all`, RP7401-FTW)
+    # is not a duplicate: every reader counts all its customers, so it neither holds the
+    # WIP nor shows on the ledger's Duplicate customers page.
+    dups = {p: cs for p, cs in groups.items() if len(cs) > 1 and not job_rulings.all_customers(p)}
     ids = {c["Id"] for cs in dups.values() for c in cs}
     sales: dict = defaultdict(lambda: defaultdict(list))
     costs: dict = defaultdict(dict)

@@ -1,6 +1,11 @@
 # wip/ - how the WIP update works
 
 Last changed: 10/02/2026 - the CP reader falls back to the signed pay app (shared.draws.read_pay_app, .xls included) when a job has no .xlsx draw workbook; CP831's Draw #2 change order (33,361) now reaches the WIP Review. Earlier: 09/30/2026 - the **QuickBooks trust gate**: before any costs / billed number is
+Also, 10/01/2026 - **split billing**: a job the owner ruled is invoiced to two builders on purpose
+(job rulings `customers: all`, RP7401-FTW) reads costs + billed from ALL its customers in one report
+(`qbo_api.report_customers`) and is no longer held as a duplicate.
+
+Earlier: 09/30/2026 - the **QuickBooks trust gate**: before any costs / billed number is
 overwritten, `shared/qbo_trust` checks the job is booked cleanly in QuickBooks; a job that is not
 is HELD (the tab keeps its number, a new job is not added) until the reason is fixed.
 
@@ -17,7 +22,7 @@ flowchart TD
 
     SRC[("1 · Documents<br/>CP draws + takeoffs · RP WIP file + takeoffs · WIP Master sheet (MFD)")]:::src
     READ["2 · The readers<br/>cp_wip_reader · rp_wip_reader · master_wip_test · mfd_wip_test<br/>contract, COs, ETC per job"]:::tool
-    PULL["3 · QuickBooks numbers<br/>build_project_customer_map picks ONE customer per project #<br/>costs + billed + retainage from that customer's report"]:::tool
+    PULL["3 · QuickBooks numbers<br/>build_project_customer_map picks ONE customer per project #<br/>(ALL of them on a split-billing ruling)<br/>costs + billed + retainage from that report"]:::tool
     SRC --> READ --> PULL
 
     subgraph GATE["4 · QuickBooks trust gate - shared/qbo_trust.assess"]

@@ -8,6 +8,11 @@ Last updated: 2026-09-08
 
 ## DONE / FINALIZED
 - 2026-10-02 · **CP reader reads .xls pay apps** - with no .xlsx draw workbook it falls back to `shared.draws.read_pay_app` (the reader the P&L uses), so contract + approved COs + billed + retainage come from the signed G702. CP831: Draw #2's 33,361 CO was missing from the WIP (tab fell back to the proposal); the review now proposes it. NOTE: an --apply-review writes only the jobs the reader finds - 14 old jobs on 'Test - CP' (CP519, CP591 ...) show as REMOVED and would drop off; the owner decides before any write.
+- 2026-10-01 · **Split billing counts every customer** (owner: "the split billing is correct, count both
+  RP7401-FTW invoices"). A `customers: all` job ruling (`shared/job_rulings`, register `Registers/job_rulings.json`)
+  makes the CP / RP / MFD readers pull costs + billed from ALL the job's QBO customers in one report
+  (`qbo_api.report_customers`); the trust gate no longer holds it as a duplicate. RP7401-FTW: billed 7,981.50 ->
+  19,381.00 (invoices 34134 + 34135).
 - 2026-09-30 · **QuickBooks trust gate** (owner: "we need to first have a ci check that qbo is good to trust ... that
   way we can trust that when we overwrite the costs/billed we can be certain these are real projects booked in
   qbo"). `shared/qbo_trust.assess(project_nums)` over the mirror, before any costs / billed is overwritten: a stale

@@ -763,7 +763,7 @@ def enrich_with_qbo(rows: List[CpRow]) -> None:
 
         try:
             report_data = pnl.fetch_project_pl(
-                access, company_id, cust["id"], start_date, end_date
+                access, company_id, qbo_api.report_customers(cust), start_date, end_date
             )
             totals = pnl.extract_pl_totals(report_data)
             # Billed to Date + Retainage Held come from the DRAW when the
@@ -778,7 +778,7 @@ def enrich_with_qbo(rows: List[CpRow]) -> None:
                 # Billed' memo invoices; Retainage Held = gross − net.
                 gross_billed = float(totals.get("income", 0.0) or 0.0)
                 net_collectible = _fetch_billed_ex_retainage(
-                    pnl, access, company_id, cust["id"]
+                    pnl, access, company_id, qbo_api.report_customers(cust)
                 )
                 row.billed_to_date = gross_billed
                 row.retainage_held = max(gross_billed - net_collectible, 0.0)

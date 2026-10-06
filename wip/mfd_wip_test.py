@@ -630,7 +630,7 @@ def fetch_qbo(jobs: List[str]) -> Dict[str, dict]:
             continue
         try:
             totals = qbo_api.extract_pl_totals(
-                qbo_api.fetch_project_pl(access, company_id, cust["id"], start, end))
+                qbo_api.fetch_project_pl(access, company_id, qbo_api.report_customers(cust), start, end))
         except Exception as e:
             print(f"  {job}: P&L failed ({type(e).__name__}) - skipped")
             continue

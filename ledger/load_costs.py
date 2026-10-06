@@ -334,7 +334,7 @@ def run(db_path: Path, division, active, projects, since, dry_run, show, changed
           f"{' entered or changed since ' + changed_since if changed_since else ''}")
 
     print("Authenticating to QBO (Touch ID)…")
-    from shared.qbo_api import load_credentials, build_project_customer_map
+    from shared.qbo_api import load_credentials, build_project_customer_map, customer_ids
     access, company_id = load_credentials()
     print("  authenticated.")  # never echo the realm/company id (owner 2026-08-06)
     if not dry_run:            # stash the realm so the dashboard can build COMPANY-SCOPED
@@ -346,7 +346,7 @@ def run(db_path: Path, division, active, projects, since, dry_run, show, changed
 
     account_names = qc.build_account_map(access, company_id)
     proj_map = build_project_customer_map(access, company_id)
-    customer_to_project = {v["id"]: p for p, v in proj_map.items()}
+    customer_to_project = {i: p for p, v in proj_map.items() for i in customer_ids(v)}   # all ids on a split-billing ruling
     print(f"  {len(account_names)} accounts · {len(customer_to_project)} project customers")
 
     from shared import job_rulings

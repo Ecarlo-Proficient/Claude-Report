@@ -322,9 +322,11 @@ def build_project_customer_map(access: str, company_id: str) -> Dict[str, dict]:
         proj = extract_proj(name)
         if proj:
             cands.setdefault(proj, []).append(c)
+    from shared import job_rulings        # local: keeps this module import-light
     by_proj: Dict[str, dict] = {}
     for proj, cs in cands.items():
         c = cs[0]
+        split = len(cs) > 1 and job_rulings.all_customers(proj)
         if len(cs) > 1:
             # Eight project #s carry TWO QBO customers (2026-09-17 audit). The
             # old first-wins took whichever QBO listed first - an arbitrary order
@@ -334,7 +336,7 @@ def build_project_customer_map(access: str, company_id: str) -> Dict[str, dict]:
             inv = {x["Id"]: len(query_all(access, company_id, "Invoice",
                                            f"CustomerRef = '{x['Id']}'")) for x in cs}
             c = pick_customer(proj, cs, inv)
-            print(f"      duplicate customers for {proj}: "
+            print(f"      {'split billing (ruling) for' if split else 'duplicate customers for'} {proj}: "
                   + ", ".join(f"{x.get('FullyQualifiedName') or x.get('DisplayName')} ({inv[x['Id']]} inv)" for x in cs)
                   + f" -> using {c['Id']}")
         name = c.get("DisplayName") or c.get("CompanyName") or ""
@@ -345,7 +347,23 @@ def build_project_customer_map(access: str, company_id: str) -> Dict[str, dict]:
             "balance": float(c.get("Balance", 0) or 0),
             "parent_id": (c.get("ParentRef") or {}).get("value"),
         }
+        if split:
+            # Split billing the owner confirmed (shared/job_rulings `customers: all`):
+            # the job is every customer carrying its number. `id` stays the main one
+            # (links, line matching); `ids` is what the P&L / invoice pulls read.
+            by_proj[proj]["ids"] = [c["Id"]] + [x["Id"] for x in cs if x["Id"] != c["Id"]]
     return by_proj
+
+
+def customer_ids(cust: dict) -> List[str]:
+    """Every QBO customer id that IS this job - one, or several on a split-billing ruling."""
+    return [str(i) for i in (cust.get("ids") or [cust["id"]])]
+
+
+def report_customers(cust: dict) -> str:
+    """The `customer` filter for a QBO report (P&L, Balance Sheet): QBO takes a
+    comma-separated id list, so a split-billed job reports as ONE job."""
+    return ",".join(customer_ids(cust))
 
 
 def pick_customer(proj: str, cs: List[dict], invoices_by_id: Dict[str, int]) -> dict:
@@ -463,6 +481,12 @@ def extract_pl_totals(report_data: dict) -> Dict[str, float]:
 # ────────────────────────── invoice pulls ──────────────────────────
 
 def fetch_customer_invoices(access: str, company_id: str, customer_id: str) -> List[dict]:
+    """Invoices on one customer - or on several when given report_customers()'s
+    comma list (a split-billed job)."""
+    ids = [i.strip() for i in str(customer_id).split(",") if i.strip()]
+    if len(ids) > 1:
+        return query_all(access, company_id, "Invoice",
+                         where="CustomerRef IN (" + ", ".join(f"'{i}'" for i in ids) + ")")
     return query_all(
         access, company_id, "Invoice",
         where=f"CustomerRef = '{customer_id}'",

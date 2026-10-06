@@ -38,7 +38,7 @@ Register format:
   ]
 }
   on      the date the ruling was made (YYYY-MM-DD)
-  kind    loss | overrun | scope | note | draws | costs
+  kind    loss | overrun | scope | note | draws | costs | customers
           (loss = money we will not get back; draws = how the job BILLS, not a
            finding - it never prints as KNOWN:, see NON_FINDING_KINDS)
   combine (draws only) "month": every invoice dated to the same draw month is
@@ -51,6 +51,12 @@ Register format:
           class `Elite Construction:MFD295` with no project) - the owner 2026-09-23:
           "why aren't you combining all the real costs?". Read by the WIP readers,
           the ledger cost pull and project-pnl (class/project lookup switched on).
+  rule    (customers only) "all": the job is EVERY active QBO customer carrying its exact
+          project # - split billing, one job invoiced to two builders on purpose.
+          RP7401-FTW: invoice 34134 to Faulkner Perrin + 34135 to Ira Kravitz (the owner
+          2026-10-01: "the split billing is correct, count both"). shared/qbo_api's
+          customer map then carries every id (`ids`), the P&L / invoice pulls cover all
+          of them, and the trust gate stops holding the job as a duplicate.
   amount  optional $ the ruling concerns (the bid line, the write-down ...)
   line    the bid / draw line it concerns, as written on the document
   source  the document (proposal date, draw #, CO #)
@@ -135,7 +141,7 @@ def known_losses(proj, path: Optional[Path] = None) -> List[dict]:
 # income line. Nothing went wrong on the job, so it never prints as a KNOWN:
 # note on the WIP tabs, in the Excel P&L's rulings block, or in the page's
 # Known block - those read findings(), not for_job().
-NON_FINDING_KINDS = frozenset({"draws", "costs"})
+NON_FINDING_KINDS = frozenset({"draws", "costs", "customers"})
 
 
 def findings(proj, path: Optional[Path] = None) -> List[dict]:
@@ -158,6 +164,13 @@ def cost_rule(proj, path: Optional[Path] = None) -> Optional[dict]:
         if str(x.get("kind", "")).lower() == "costs":
             return x
     return None
+
+
+def all_customers(proj, path: Optional[Path] = None) -> bool:
+    """True when this job is every QBO customer carrying its number (a `customers`
+    ruling with rule "all") - split billing the owner confirmed."""
+    return any(str(x.get("kind", "")).lower() == "customers"
+               and str(x.get("rule", "")).lower() == "all" for x in for_job(proj, path))
 
 
 def class_rule_jobs(path: Optional[Path] = None) -> List[str]:

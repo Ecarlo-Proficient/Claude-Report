@@ -346,6 +346,9 @@ manual close), RP (no draws — expenses → invoice → profit).
   Retained and Net Billed side by side (the retainage columns were collapsed and hidden), and Gross Profit, Net Profit,
   Coverage %, Net Cov % and % Compl all run off gross. Overhead per draw = rate x the draw's gross billed (was
   contract x costs / ETC, which overcharged a job running past its ETC) - the ledger's draw basis since 09/23.
+- 2026-10-01 · **Split billing**: a job with a `customers: all` ruling (RP7401-FTW, two builders) builds its P&L from
+  every one of its QBO customers - P&L report, invoices, retainage balance sheet and cost lines (`_JOB_IDS` /
+  `_is_job`).
 - 2026-09-30 · **No false "no draw #" warning on month-named draws** - a memo like "September Draw 2026 (Period: …)"
   already names the sheet by its month and the period drives the window; the yellow warning now fires only when the memo
   names neither a draw number nor a month.

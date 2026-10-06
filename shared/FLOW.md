@@ -7,6 +7,12 @@ saves it (three selections, the main one inside the scrolling pane); openpyxl's 
 written ("CP656 - 77 PAUL WILSON" was lost when the spaces were squeezed out and the street number glued onto the
 job #). Earlier, 10/01/2026 - `qbo_vault.has_credentials()` on Linux checks only the four QBO keys (JT_GRANT_KEY is
 optional; the office server has none). Earlier, 09/30/2026: NEW `qbo_trust.py`, the QuickBooks trust gate every WIP write passes
+Also, 10/01/2026 - **split billing**: a `customers: all` job ruling (`job_rulings.all_customers`, first case
+RP7401-FTW, invoiced to two builders on purpose) makes `build_project_customer_map` carry every customer id
+(`ids`); `customer_ids` / `report_customers` give the readers all of them (QBO reports take a comma list,
+`fetch_customer_invoices` an `IN`), and `qbo_trust.duplicate_groups` drops the job - it is not a duplicate.
+
+Earlier: 09/30/2026 - NEW `qbo_trust.py`, the QuickBooks trust gate every WIP write passes
 (duplicate customers, name typos, costs with no project, flatwork on the slab, a stale copy). It
 also owns `duplicate_groups`, which the ledger's Duplicate customers page reads. Same day: `pnl_paths`
 finds a finished CP job's folder under `Completed Projects/<year>/` (active awarded folders first). Same day: `notion_client.py` keeps only the block edits the statement reconciler's Notion board uses (append / delete children, read a data source); `teams_notify.py` posts ONE statement digest card per run - since the evening of 09/30 it lists only the vendors NOT ready for a pay run (a line each + a count of the ready ones).
@@ -30,7 +36,7 @@ flowchart LR
     subgraph KEYS["Keys and QuickBooks access"]
         KB["key_broker.py<br/>one-hour QBO pass"]:::mod
         VAULT["qbo_vault.py<br/>the key library"]:::mod
-        API["qbo_api.py<br/>auth, retrying GET, query_all,<br/>report walkers, PROJ_RE,<br/>build_project_customer_map"]:::mod
+        API["qbo_api.py<br/>auth, retrying GET, query_all,<br/>report walkers, PROJ_RE,<br/>build_project_customer_map<br/>(+ every id on a split-billing ruling)"]:::mod
         SETUP["setup_qbo.py<br/>--status / --rotate"]:::mod
     end
     KH --> KB --> API
