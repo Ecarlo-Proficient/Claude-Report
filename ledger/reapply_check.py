@@ -22,6 +22,25 @@ Guards (a line is restored only when ALL hold, live from QBO at run time):
   - the restored total never exceeds the check amount
   - the check is re-read right before the write (fresh SyncToken)
 The live check is saved to ~/Library/Logs/Proficient/reapply-check/ before any write.
+
+CLEAR COPY - the bulk fix (owner 2026-10-06: "a filter that the script can 100% GUARANTEE that it has a copy
+of the check prior to qbo changing it ... be careful with credits and shortpays"). A check is a clear copy
+only when every one of these is proven, from QuickBooks' own records, to the cent:
+  - the change log holds the check as QuickBooks had it before the strip, and that copy is WHOLE: its bills
+    less its credits add up to the check amount (nothing was floating even then)
+  - every copy of the check on file agrees line for line (no hand re-apply in between that differs)
+  - the check itself is untouched: same amount, date, vendor, bank account, pay type
+  - nothing new is on the check now (QuickBooks did not drop its money on a later bill)
+  - only bills and vendor credits - a journal entry line is fixed by hand
+  - every bill / credit has its own copy from while this check was on it, the same total today, and after
+    the fix its open balance lands EXACTLY where that copy had it. A short pay keeps the same open amount it
+    had before; a credit goes back to the same balance (so it was not used on another check since)
+  - after the fix the check is applied to the cent, nothing floating
+The page filter (`annotate`) reads the mirror; the bulk dry run and the bulk write re-prove every check
+LIVE from QuickBooks (`bulk_dry_run` / `bulk_commit`), one check at a time, and skip any that no longer prove.
+
+    ledger/reapply_check.py --clear             every clear copy, dry run, live
+    ledger/reapply_check.py --clear --commit    write every one that still proves
 """
 from __future__ import annotations
 
@@ -134,8 +153,8 @@ def _get_payment(access: str, cid: str, pid: str) -> dict:
     return qbo_api._api_get(f"/v3/company/{cid}/billpayment/{pid}", access)["BillPayment"]
 
 
-def plan(access: str, cid: str, pid: str, before: dict) -> dict:
-    live = _get_payment(access, cid, pid)
+def plan(access: str, cid: str, pid: str, before: dict, live: dict | None = None) -> dict:
+    live = live or _get_payment(access, cid, pid)
     vendor = str((live.get("VendorRef") or {}).get("value") or "")
     total = round(float(live.get("TotalAmt") or 0), 2)
     now = {(t, i): a for t, i, a in _links(live)}
@@ -168,8 +187,9 @@ def plan(access: str, cid: str, pid: str, before: dict) -> dict:
         if bal < need - EPS:
             skipped.append((typ, doc, amt, f"open balance {_money(bal)} < {_money(need)} (paid elsewhere since?)"))
             continue
-        restore.append({"type": typ, "id": tid, "doc": doc, "date": r.get("TxnDate"), "amount": amt,
-                        "balance": bal, "memo": (r.get("PrivateNote") or "").split("\n")[0][:60]})
+        restore.append({"type": typ, "id": tid, "doc": doc, "date": r.get("TxnDate"), "amount": amt, "need": need,
+                        "balance": bal, "doc_total": round(float(r.get("TotalAmt") or 0), 2),
+                        "memo": (r.get("PrivateNote") or "").split("\n")[0][:60]})
 
     lines = [dict(ln) for ln in live.get("Line") or []]
     have = {(t, i) for t, i, _ in _links(live)}
@@ -261,14 +281,324 @@ def commit(payment_id: str, sync_token: str, n: int, amount: float) -> dict:
             "lines": len(lk), "total": p["total"], "backup": str(backup)}
 
 
+# ── Clear copy (the bulk fix) ──────────────────────────────────────────────────────────────────────────────
+
+FIXABLE = ("Bill", "VendorCredit")
+CREDIT_WINDOW = 1800          # seconds: a credit freed by the strip shows its own change within 30 minutes of it
+
+
+def _net(links: list) -> float:
+    return round(sum(a for t, _, a in links if t != "VendorCredit") - sum(a for t, _, a in links if t == "VendorCredit"), 2)
+
+
+def _sig(rec: dict) -> tuple:
+    return tuple(sorted(_links(rec)))
+
+
+def _same_check(a: dict, b: dict) -> list:
+    """What differs on the check itself between two copies (empty = the same check)."""
+    def acct(r):
+        return str(((r.get("CheckPayment") or r.get("CreditCardPayment") or {}).get("BankAccountRef")
+                    or (r.get("CreditCardPayment") or {}).get("CCAccountRef") or {}).get("value") or "")
+    out = []
+    if abs(float(a.get("TotalAmt") or 0) - float(b.get("TotalAmt") or 0)) > EPS:
+        out.append("amount")
+    if str(a.get("TxnDate")) != str(b.get("TxnDate")):
+        out.append("date")
+    if str((a.get("VendorRef") or {}).get("value")) != str((b.get("VendorRef") or {}).get("value")):
+        out.append("vendor")
+    if acct(a) != acct(b):
+        out.append("bank account")
+    if str(a.get("PayType") or "") != str(b.get("PayType") or ""):
+        out.append("pay type")
+    return out
+
+
+def _lists_payment(rec: dict, pid: str) -> bool:
+    return any("BillPayment" in str(lt.get("TxnType")) and str(lt.get("TxnId")) == pid for lt in rec.get("LinkedTxn") or [])
+
+
+class _Index:
+    """The change log, read once per run (a bulk pass looks at every check)."""
+
+    def __init__(self, con):
+        self.con = con
+        self.by = {}
+        for ent in ("BillPayment",) + FIXABLE:
+            d = {}
+            for c in mirror.changes(con, entity=ent, limit=1_000_000):
+                if c.get("has_before"):
+                    d.setdefault(c["rec_id"], []).append(c)
+            self.by[ent] = d
+        self._before = {}
+
+    def before(self, change_id: int) -> dict:
+        if change_id not in self._before:
+            self._before[change_id] = mirror.change_before(self.con, change_id) or {}
+        return self._before[change_id]
+
+    def rows(self, ent: str, rec_id: str) -> list:
+        return self.by.get(ent, {}).get(str(rec_id), [])
+
+
+def evidence(ix: _Index, pid: str, live: dict) -> dict:
+    """The proof that the copy on file is the check exactly as it was, checked against `live` (the check as it
+    is now - the mirror's for the page filter, QuickBooks' own for the bulk run). Reads the change log only.
+    {"why": [] when proven, "before": the check copy, "change": its log row, "pre": {(type, id): copy facts}}"""
+    pid = str(pid)
+    out = {"why": [], "before": None, "change": None, "pre": {}}
+    why = out["why"]
+    rows = sorted(ix.rows("BillPayment", pid), key=lambda c: (c["changed_at"], c["id"]))
+    if not rows:
+        why.append("no copy of the check from before QuickBooks changed it (the change log started 09/23/2026)")
+        return out
+    whole = []
+    for c in rows:
+        b = ix.before(c["id"])
+        if b and _links(b) and abs(_net(_links(b)) - round(float(b.get("TotalAmt") or 0), 2)) < EPS:
+            whole.append((c, b))
+    if not whole:
+        why.append("the copy on file is not the whole check (it was not fully applied even then)")
+        return out
+    if len({_sig(b) for _, b in whole}) > 1:
+        why.append("two different copies of the check on file - it was re-applied differently in between")
+        return out
+    ch, before = whole[-1]
+    out["before"], out["change"] = before, ch
+    diff = _same_check(before, live)
+    if diff:
+        why.append("the check itself was changed since (" + ", ".join(diff) + ")")
+    want = {(t, i): a for t, i, a in _links(before)}
+    for t, i, a in _links(live):
+        if (t, i) not in want or a > want[(t, i)] + EPS:
+            why.append(f"QuickBooks put part of it on another {'credit' if t == 'VendorCredit' else 'bill'} - take that off by hand first")
+            break
+    odd = sorted({t for t, _, _ in _links(before) if t not in FIXABLE})
+    if odd:
+        why.append(f"has a {', '.join(odd)} line - fix by hand")
+    strip_at = mirror.parse_iso(ch["changed_at"])
+    for t, i, a in _links(before):
+        if t not in FIXABLE:
+            continue
+        cands = [c for c in ix.rows(t, i) if _lists_payment(ix.before(c["id"]), pid)]
+        if not cands and t == "VendorCredit":    # a credit may not name the check: its own release, minutes from the strip, by this amount
+            for c in ix.rows(t, i):
+                try:
+                    near = abs((mirror.parse_iso(c["changed_at"]) - strip_at).total_seconds()) <= CREDIT_WINDOW
+                except (TypeError, ValueError):
+                    near = False
+                if near and c.get("balance_before") is not None and c.get("balance_after") is not None \
+                        and abs(round(c["balance_after"] - c["balance_before"], 2) - a) < EPS:
+                    cands.append(c)
+        if not cands:
+            why.append(f"no copy of {'credit' if t == 'VendorCredit' else 'bill'} {i} from while this check was on it")
+            continue
+        c = max(cands, key=lambda c: (c["changed_at"], c["id"]))
+        b = ix.before(c["id"])
+        out["pre"][(t, i)] = {"balance": round(float(b.get("Balance") or 0), 2),
+                              "total": round(float(b.get("TotalAmt") or 0), 2),
+                              "vendor": str((b.get("VendorRef") or {}).get("value") or ""), "doc": b.get("DocNumber") or i}
+    return out
+
+
+def _bal_proof(ev: dict, typ: str, tid: str, total_now: float, bal_now: float, need: float, vendor: str) -> str | None:
+    """Why this bill/credit does NOT land exactly where it was, or None when it does."""
+    pre = ev["pre"].get((typ, tid))
+    word = "credit" if typ == "VendorCredit" else "bill"
+    if not pre:
+        return None                               # already reported by evidence()
+    doc = pre["doc"]
+    if abs(total_now - pre["total"]) > EPS:
+        return f"{word} {doc} total changed {_money(pre['total'])} -> {_money(total_now)} since the check paid it"
+    if pre["vendor"] and vendor and pre["vendor"] != vendor:
+        return f"{word} {doc} is on a different vendor now"
+    after = round(bal_now - need, 2)
+    if abs(after - pre["balance"]) > EPS:
+        return (f"{word} {doc} would end at {_money(after)} open, it was {_money(pre['balance'])} before - "
+                f"{'used' if typ == 'VendorCredit' else 'paid'} or changed since")
+    return None
+
+
+def _proved(ev: dict, p: dict) -> list:
+    """Live proof: the plan puts back EXACTLY the copy on file and every bill / credit lands where it was."""
+    why = list(ev["why"])
+    if why:
+        return why
+    before, live = ev["before"], p["live"]
+    if p["skipped"]:
+        why += [f"{d} {_money(a)} cannot go back ({w})" for _, d, a, w in p["skipped"]]
+    if p["applied_after"] > p["total"] + EPS:
+        why.append("would apply more than the check amount")
+    if abs(p["applied_after"] - p["total"]) > EPS:
+        why.append(f"would leave {_money(p['total'] - p['applied_after'])} floating")
+    after = {}
+    for ln in p["lines"]:
+        for lt in (ln.get("LinkedTxn") or [])[:1]:
+            after[(lt.get("TxnType"), str(lt.get("TxnId")))] = round(float(ln.get("Amount") or 0), 2)
+    if after != {(t, i): a for t, i, a in _links(before)}:
+        why.append("the check after the fix would not match the copy line for line")
+    vendor = str((live.get("VendorRef") or {}).get("value") or "")
+    for x in p["restore"]:
+        w = _bal_proof(ev, x["type"], x["id"], x["doc_total"], x["balance"], x["need"], vendor)
+        if w:
+            why.append(w)
+    return why
+
+
+def annotate(rows: list) -> None:
+    """The page filter: r["clear_copy"] on every floating check, proven against the MIRROR (QuickBooks as of the
+    last 3-minute refresh). The bulk run proves each one again, live, before it writes."""
+    todo = [r for r in rows if (r.get("floating") or 0) > 1]
+    if not todo:
+        return
+    con = mirror.connect()
+    try:
+        ix = _Index(con)
+        pays = {str(p["Id"]): p for p in mirror.load("BillPayment", con=con)}
+        recs = {}
+        for typ in FIXABLE:
+            ids = sorted({i for r in todo for c in ix.rows("BillPayment", r["payment_id"])
+                          for t, i, _ in _links(ix.before(c["id"])) if t == typ})
+            for k in range(0, len(ids), 500):
+                chunk = ids[k:k + 500]
+                for rec in mirror.load(typ, where_sql=f"id IN ({','.join('?' * len(chunk))})", params=chunk, con=con):
+                    recs[(typ, str(rec["Id"]))] = rec
+        for r in todo:
+            pid = str(r["payment_id"])
+            live = pays.get(pid)
+            if not live:
+                r["clear_copy"] = {"ok": False, "why": ["the check is not in the mirror"]}
+                continue
+            ev = evidence(ix, pid, live)
+            why = list(ev["why"])
+            short = credits = 0
+            if not why:
+                now = {(t, i): a for t, i, a in _links(live)}
+                for t, i, a in _links(ev["before"]):
+                    need = round(a - now.get((t, i), 0), 2)
+                    if need <= EPS:
+                        continue
+                    rec = recs.get((t, i))
+                    if not rec:
+                        why.append(f"{'credit' if t == 'VendorCredit' else 'bill'} {i} was deleted")
+                        continue
+                    w = _bal_proof(ev, t, i, round(float(rec.get("TotalAmt") or 0), 2),
+                                   round(float(rec.get("Balance") or 0), 2), need,
+                                   str((rec.get("VendorRef") or {}).get("value") or ""))
+                    if w:
+                        why.append(w)
+                    if t == "VendorCredit":
+                        credits += 1
+                    elif ev["pre"].get((t, i), {}).get("balance", 0) > EPS:
+                        short += 1
+            r["clear_copy"] = {"ok": not why, "why": why[:6], "short_pays": short, "credits": credits,
+                               "copy_from": ev["change"]["changed_at"] if ev["change"] else None}
+    finally:
+        con.close()
+
+
+def _check_json(pid: str, ev: dict, p: dict, why: list) -> dict:
+    live = p["live"]
+    short, credits = [], []
+    for x in p["restore"]:
+        pre = ev["pre"].get((x["type"], x["id"])) or {}
+        if x["type"] == "VendorCredit":
+            credits.append({"doc": x["doc"], "id": x["id"], "amount": x["amount"], "balance_after": pre.get("balance")})
+        elif (pre.get("balance") or 0) > EPS:
+            short.append({"doc": x["doc"], "id": x["id"], "amount": x["amount"], "bill_total": x["doc_total"],
+                          "stays_open": pre.get("balance")})
+    return {"payment_id": pid, "check": live.get("DocNumber") or "", "vendor": (live.get("VendorRef") or {}).get("name") or "",
+            "txn_date": live.get("TxnDate"), "total": p["total"], "applied_now": p["applied_now"],
+            "applied_after": p["applied_after"], "sync_token": live.get("SyncToken"),
+            "n": len(p["restore"]), "amount": round(sum(x["amount"] for x in p["restore"]), 2),
+            "bills": sum(1 for x in p["restore"] if x["type"] == "Bill"), "short_pays": short, "credits": credits,
+            "copy_from": (ev.get("change") or {}).get("changed_at"), "ok": not why, "why": why}
+
+
+def bulk_dry_run(payment_ids: list) -> dict:
+    """Every check proven again LIVE from QuickBooks. Writes nothing."""
+    con = mirror.connect()
+    try:
+        ix = _Index(con)
+        access, cid = qbo_api.load_credentials()
+        out = []
+        for pid in dict.fromkeys(str(x) for x in payment_ids if str(x).isdigit()):
+            try:
+                live = _get_payment(access, cid, pid)          # live check first; the copy is proven against it
+                ev = evidence(ix, pid, live)
+                p = plan(access, cid, pid, ev["before"] or {"Line": []}, live)
+                out.append(_check_json(pid, ev, p, _proved(ev, p)))
+            except Exception as e:                        # noqa: BLE001 - one bad check never sinks the run
+                out.append({"payment_id": pid, "ok": False, "why": [f"could not read it: {e}"]})
+    finally:
+        con.close()
+    ok = [c for c in out if c["ok"]]
+    return {"ok": True, "checks": out, "ready": len(ok), "ready_amt": round(sum(c["amount"] for c in ok), 2)}
+
+
+def bulk_commit(items: list) -> dict:
+    """Write each confirmed check, but only one that STILL proves live and is still exactly what the dry run showed
+    (same check version, same number of lines, same amount). Each is backed up first; a check that no longer
+    proves is skipped and listed, never forced. One Touch ID for the batch, naming the count and the total."""
+    items = [i for i in items if isinstance(i, dict)]
+    if not items:
+        return {"ok": False, "error": "nothing to write"}
+    import presence                                       # noqa: PLC0415  (ledger-local: macOS' own Touch ID dialog)
+    total = round(sum(float(i.get("amount") or 0) for i in items), 2)
+    ok, why = presence.confirm(f"put {len(items)} stripped checks back on their bills in QuickBooks ({_money(total)})")
+    if not ok:
+        return {"ok": False, "error": f"not confirmed on this Mac ({why}) - nothing was written"}
+    con = mirror.connect()
+    try:
+        ix = _Index(con)
+        access, cid = qbo_api.load_credentials()
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+        results = []
+        for it in items:
+            pid = str(it.get("payment_id") or "")
+            res = {"payment_id": pid, "check": it.get("check") or "", "ok": False}
+            try:
+                live = _get_payment(access, cid, pid)
+                ev = evidence(ix, pid, live)
+                if not ev["before"]:
+                    raise ValueError("; ".join(ev["why"]))
+                p = plan(access, cid, pid, ev["before"], live)
+                why = _proved(ev, p)
+                amt = round(sum(x["amount"] for x in p["restore"]), 2)
+                if why:
+                    raise ValueError("no longer proves: " + "; ".join(why))
+                if p["live"].get("SyncToken") != str(it.get("sync_token")) or len(p["restore"]) != int(it.get("n")) \
+                        or abs(amt - float(it.get("amount"))) > EPS:
+                    raise ValueError("changed in QuickBooks since the dry run")
+                backup = LOG_DIR / f"{pid}-{stamp}-bulk.json"
+                backup.write_text(json.dumps({"live_before": p["live"], "before_copy": ev["before"], "change": ev["change"],
+                                              "restore": p["restore"], "proof": {f"{t}:{i}": v for (t, i), v in ev["pre"].items()}},
+                                             indent=1, default=str))
+                done = post(access, cid, p["live"], p["lines"])
+                res.update(ok=True, check=p["live"].get("DocNumber") or "", applied=_net(_links(done)),
+                           total=p["total"], lines=len(_links(done)), backup=str(backup))
+            except Exception as e:                        # noqa: BLE001
+                res["error"] = str(e)
+            results.append(res)
+    finally:
+        con.close()
+    return {"ok": True, "results": results, "written": sum(1 for r in results if r["ok"])}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("check", help="check number (the payment's DocNumber), e.g. 25745")
+    ap.add_argument("check", nargs="?", help="check number (the payment's DocNumber), e.g. 25745")
+    ap.add_argument("--clear", action="store_true", help="every clear-copy check (the bulk fix), proven live")
     ap.add_argument("--payment-id", help="QBO BillPayment Id, when two payments share the check number")
     ap.add_argument("--change-id", type=int, help="use this change-log entry's before copy (default: the fullest one)")
     ap.add_argument("--list", action="store_true", help="print every bill that goes back on, not just the totals")
     ap.add_argument("--commit", action="store_true", help="write to QBO (default is a dry run)")
     a = ap.parse_args()
+    if a.clear:
+        return _main_clear(a.commit)
+    if not a.check:
+        ap.error("a check number, or --clear")
 
     con = mirror.connect()
     try:
@@ -321,6 +651,32 @@ def main() -> int:
     print(f"\nwritten. QBO now shows {_money(applied)} applied on check {a.check} "
           f"({len(_links(done))} lines). Backup: {backup}")
     print("Refresh the mirror (ledger gear > sync, or ledger/refresh_mirror.py) so the ledger clears it.")
+    return 0
+
+
+def _main_clear(commit: bool) -> int:
+    import check_drift                                     # local: the floating checks, read off the mirror
+    rows = [r for r in check_drift.audit()["rows"] if r["floating"] > 1]
+    annotate(rows)
+    pids = [r["payment_id"] for r in rows if (r.get("clear_copy") or {}).get("ok")]
+    print(f"{len(rows)} floating checks, {len(pids)} clear copies on the mirror - proving each live ...")
+    d = bulk_dry_run(pids)
+    for c in d["checks"]:
+        tag = "READY" if c["ok"] else "SKIP "
+        print(f"  {tag} {c.get('check', ''):<10} {_fmt(c.get('txn_date')):<10} {str(c.get('vendor', ''))[:28]:<28} "
+              f"{_money(c.get('total') or 0):>12}  {c.get('n', 0)} lines"
+              + (f"  short pays {len(c['short_pays'])}" if c.get("short_pays") else "")
+              + (f"  credits {len(c['credits'])}" if c.get("credits") else "")
+              + ("" if c["ok"] else "  - " + "; ".join(c["why"])))
+    print(f"ready: {d['ready']} checks, {_money(d['ready_amt'])}")
+    if not commit:
+        print("\ndry run - nothing written. Add --commit to write every READY check to QBO.")
+        return 0
+    res = bulk_commit([c for c in d["checks"] if c["ok"]])
+    for r in res["results"]:
+        print(f"  {'written' if r['ok'] else 'NOT written'} {r['check']}: "
+              + (f"{_money(r['applied'])} applied, backup {r['backup']}" if r["ok"] else r.get("error", "")))
+    print(f"{res['written']} written. Refresh the mirror (ledger/refresh_mirror.py) so the ledger clears them.")
     return 0
 
 

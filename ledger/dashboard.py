@@ -3694,6 +3694,10 @@ class Handler(BaseHTTPRequestHandler):
                 marks = _check_drift_marks(self.db_path)
                 for r in res.get("rows") or []:
                     r["mark"] = marks.get(str(r.get("payment_id")))
+                try:                       # Clear copy: the bulk-fix filter, proven on the mirror (owner 2026-10-06)
+                    reapply_check.annotate([r for r in res.get("rows") or [] if not r.get("mark")])
+                except Exception as e:     # noqa: BLE001 - the page still loads; no row is offered for bulk
+                    res["clear_copy_error"] = str(e)
                 self._json(res)
             except Exception as e:         # noqa: BLE001
                 self._json({"ok": False, "rows": [], "error": f"check audit failed: {e}"})
@@ -3772,6 +3776,10 @@ class Handler(BaseHTTPRequestHandler):
             self._pay_bills("mark")
         elif p == "/api/checkdrift/reapply":  # THE QBO WRITE: re-apply a stripped check, only the plan the owner confirmed
             self._check_reapply()
+        elif p == "/api/checkdrift/bulk":     # Clear copy, step 1: prove every listed check again LIVE (no write)
+            self._check_bulk(False)
+        elif p == "/api/checkdrift/bulk/commit":  # THE QBO WRITE: every confirmed clear copy that still proves
+            self._check_bulk(True)
         elif p == "/api/checkdrift/mark":  # a ledger write - the owner's ruling on a check (e.g. kept as credit); never QuickBooks
             self._check_drift_mark()
         elif p == "/api/qboaudit/ok":     # a ledger write - the owner's "that's OK" on a QBO change (hides it next run)
@@ -4443,6 +4451,33 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:             # noqa: BLE001
             return self._json({"ok": False, "error": str(e)})
         if res.get("ok"):
+            r = subprocess.run([sys.executable, str(HERE / "refresh_mirror.py")], capture_output=True, text=True, timeout=600)
+            res["mirror_refreshed"] = r.returncode == 0
+        self._json(res)
+
+    def _check_bulk(self, commit: bool):
+        """Clear copy (owner 2026-10-06). Dry run: {payment_ids: [...]} -> each check proven again live from
+        QuickBooks. Commit: {checks: [{payment_id, check, sync_token, n, amount}], confirm: true} -> the checks the
+        owner confirmed, each re-proven right before its write; then the mirror refresh."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+            if not isinstance(body, dict):
+                raise ValueError
+        except (ValueError, json.JSONDecodeError):
+            return self._json({"ok": False, "error": "bad request"}, 400)
+        try:
+            if not commit:
+                return self._json(reapply_check.bulk_dry_run(list(body.get("payment_ids") or [])[:500]))
+            items = body.get("checks") or []
+            if body.get("confirm") is not True or not isinstance(items, list) or not items or not all(
+                    isinstance(i, dict) and str(i.get("payment_id") or "").isdigit() and i.get("sync_token") is not None
+                    for i in items):
+                return self._json({"ok": False, "error": "not confirmed"}, 400)
+            res = reapply_check.bulk_commit(items)
+        except Exception as e:             # noqa: BLE001
+            return self._json({"ok": False, "error": str(e)})
+        if res.get("written"):
             r = subprocess.run([sys.executable, str(HERE / "refresh_mirror.py")], capture_output=True, text=True, timeout=600)
             res["mirror_refreshed"] = r.returncode == 0
         self._json(res)

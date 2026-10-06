@@ -1,6 +1,6 @@
 # ledger/ - how the Project Ledger works
 
-Last changed: 10/06/2026 - gross billed tells retainage lines by the account the item posts to (Retainage Receivable), so a PC00 'Retainage' invoice is income, as in the project P&L. Earlier: 10/01/2026 - vendor page round 2: payment bills carry their scan count (📎); stubs open in the
+Last changed: 10/06/2026 - Checks QBO changed gains **Clear copy**: the checks with a proven copy from before QuickBooks stripped them, fixed in bulk (`reapply_check.annotate` / `bulk_dry_run` / `bulk_commit`, one Touch ID per batch). Earlier the same day: gross billed tells retainage lines by the account the item posts to (Retainage Receivable), so a PC00 'Retainage' invoice is income, as in the project P&L. Earlier: 10/01/2026 - vendor page round 2: payment bills carry their scan count (📎); stubs open in the
 ledger; bills tick to copy. Earlier the same day: every bill row carries its QuickBooks memo AND due date from the copy (`MIR -> SRV`); the
 Vendor Center's Unpaid view shows Due; its columns drag to a remembered order; the bill viewer's scan fills its pane.
 Earlier the same day: the process registry moved out of the gear: Company -> **Processes**, grouped by area
@@ -76,7 +76,7 @@ flowchart TD
 
     subgraph WRITES["The only writes"]
         MK["owner marks<br/>waiver · lien · pay run · notes"]:::write
-        RA["reapply_check.py<br/>Re-apply in QuickBooks"]:::write
+        RA["reapply_check.py<br/>Re-apply in QuickBooks<br/>+ Clear copy bulk fix: proven copy only"]:::write
         PB["pay_bills.py<br/>Pay in QuickBooks"]:::write
         PR["presence.py<br/>Touch ID every write"]:::write
     end

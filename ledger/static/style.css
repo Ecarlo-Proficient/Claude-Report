@@ -2405,3 +2405,4 @@ table.grid.vp-paytable th, table.grid.vp-paytable td { border: 1px solid color-m
 .vp-paytable td.vp-stub .stub-histline { display: inline-flex; align-items: center; gap: 6px; }
 .vp-paytable td.vp-stub .stub-hist > div[hidden] { display: none; }
 .vp-paytable td.vp-stub .stub-hist > div:not(.stub-histline):not([hidden]) { display: flex; flex-direction: column; }
+.cd-bulk { margin: 8px 0 4px; }

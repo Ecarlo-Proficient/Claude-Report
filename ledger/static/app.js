@@ -9056,7 +9056,11 @@ const cdOpen = r => !r.mark;
 let cdKind = "all";                   // vendor type: all / subs / suppliers (owner 2026-09-25) - narrows every chip
 const CD_KINDS = [["all", "All vendors", () => true], ["subs", "Subs", r => r.sub], ["suppliers", "Suppliers", r => !r.sub]];
 const cdKindFn = () => (CD_KINDS.find(k => k[0] === cdKind) || CD_KINDS[0])[2];
-const CD_FILTERS = [["fix", "To fix", cdOpen], ["unapplied", "Unapplied", r => cdOpen(r) && r.floating > 1],
+// Clear copy (owner 2026-10-06: "a filter that the script can 100% GUARANTEE that it has a copy of the check prior to qbo
+// changing it ... be careful with credits and shortpays"): reapply_check.annotate proves it on the mirror; the bulk run
+// proves every check again live before it writes (reapply_check.bulk_dry_run / bulk_commit).
+const cdClear = r => cdOpen(r) && r.clear_copy && r.clear_copy.ok;
+const CD_FILTERS = [["fix", "To fix", cdOpen], ["clear", "Clear copy", cdClear], ["unapplied", "Unapplied", r => cdOpen(r) && r.floating > 1],
   ["moved", "Moved to a newer bill", r => cdOpen(r) && r.late.length], ["credit", "Credit", r => r.mark && r.mark.kind === "credit"],
   ["resolved", "Resolved", r => r.mark && r.mark.kind === "resolved"], ["history", "History", null]];
 // Priority (owner 2026-09-25: "don't hide it but make a toggle or status of Urgent and Low"): what is at stake on the
@@ -9111,6 +9115,7 @@ function renderCheckDrift() {
     for (const [k, label] of CD_KINDS) { const b = document.createElement("button"); b.className = "acct-chip" + (cdKind === k ? " active" : "");
       b.textContent = label; b.onclick = () => { cdKind = k; const y = window.scrollY; renderCheckDrift(); window.scrollTo(0, y); }; seg.appendChild(b); }
     filt.appendChild(seg); }
+  cdBulkBar();
   if (cdFilter === "history") { renderStripHistory(thead, tbody); return; }
   const fn0 = (CD_FILTERS.find(f => f[0] === cdFilter) || CD_FILTERS[0])[2];
   const fn = r => fn0(r) && cdKindFn()(r);
@@ -9155,7 +9160,9 @@ function renderCheckDrift() {
       if (!owed.length) td.classList.add("dim");
       tr.appendChild(td); }
     { const td = leftText(r.late.length ? r.late.map(b => `#${b.doc_number} ${qaCents(b.amount)}`).join(" · ") : "–"); if (!r.late.length) td.classList.add("dim"); tr.appendChild(td); }
-    { const td = document.createElement("td"); td.className = "left"; const s = document.createElement("span"); s.className = "qa-flag " + (CD_PAT_CLS[r.pattern] || "st-dim"); s.textContent = r.pattern; td.appendChild(s); tr.appendChild(td); }
+    { const td = document.createElement("td"); td.className = "left"; const s = document.createElement("span"); s.className = "qa-flag " + (CD_PAT_CLS[r.pattern] || "st-dim"); s.textContent = r.pattern; td.appendChild(s);
+      if (cdClear(r)) { const c = document.createElement("span"); c.className = "qa-flag ok"; c.textContent = "Clear copy"; c.title = `Proven copy of the check from ${fmtDate(r.clear_copy.copy_from, true)}`; td.appendChild(c); }
+      tr.appendChild(td); }
     tr.appendChild(leftText(r.changed_local ? fmtDate(r.changed_local, true) : "–"));   // Central, not QBO's Pacific stamp
     frag.appendChild(tr);
     frag.appendChild(cdFixRow(r, cols.length));
@@ -9214,6 +9221,8 @@ function cdFixRow(r, span) {
   const steps = canSee && !r.reopened.length ? ["Press See bills to re-apply to list the bills this check paid (nothing is written), then Write to QuickBooks to put them back."] : resolved ? [`Resolved (marked ${fmtDate(r.mark.marked_at)}${r.mark.note ? " - " + r.mark.note : ""}).`] : credit ? [`Kept as a credit with ${r.vendor} (marked ${fmtDate(r.mark.marked_at)}${r.mark.note ? " - " + r.mark.note : ""}). In QuickBooks, apply this check's ${qaCents(r.floating)} to their next bill instead of paying that bill again.`] : r.todo;
   for (const step of steps) { const li = document.createElement("li"); li.textContent = step; ol.appendChild(li); }
   card.appendChild(ol);
+  if (cdOpen(r) && r.clear_copy && !r.clear_copy.ok) { const x = document.createElement("div"); x.className = "cd-ra-line warn";
+    x.textContent = "Not a clear copy: " + r.clear_copy.why.join("; "); card.appendChild(x); }
   const t = document.createElement("table"); t.className = "qa-repair-tbl";
   t.innerHTML = `<thead><tr><th class="left">What</th><th class="left">No.</th><th class="left">Date</th><th class="right">Amount</th><th class="left"></th></tr></thead>`;
   const tb = document.createElement("tbody");
@@ -9301,6 +9310,78 @@ async function cdReapplyWrite(d, btn, box) {
   if (!res.ok) { btn.disabled = false; btn.textContent = "Write to QuickBooks…"; return; }
   btn.textContent = "Written";
   setTimeout(() => { const y = window.scrollY; loadCheckDrift(true).then(() => window.scrollTo(0, y)); }, 2500);
+}
+
+// Clear copy bulk fix: the bar under the chips. Step 1 proves every listed check again LIVE from QuickBooks (no
+// write) and lists each with its short pays and credits; step 2 writes only the ones that proved, after "Are you
+// sure?" - the server re-proves each one right before its own write and skips any that changed.
+let cdBulkRes = null;
+function cdBulkRows() { const q = (($("#cdSearch") || {}).value || "").trim();
+  return ((CD && CD.rows) || []).filter(r => cdClear(r) && cdKindFn()(r) && refHit(q, [r.check, ...r.reopened.map(b => b.doc_number)])); }
+function cdBulkBar() {
+  const bar = $("#cdBulk"); if (!bar) return;
+  if (cdFilter !== "clear") { bar.hidden = true; bar.innerHTML = ""; return; }
+  bar.hidden = false; bar.innerHTML = "";
+  if (CD && CD.clear_copy_error) { const x = document.createElement("div"); x.className = "cd-ra-line neg"; x.textContent = "Clear copy unavailable: " + CD.clear_copy_error; bar.appendChild(x); return; }
+  const rows = cdBulkRows();
+  const act = document.createElement("div"); act.className = "qa-repair-act";
+  const b = document.createElement("button"); b.type = "button"; b.className = "btn small"; b.disabled = !rows.length;
+  b.textContent = `Check all ${rows.length} live · ${qaCents(rows.reduce((t, r) => t + num(r.floating), 0))}…`;
+  b.onclick = () => cdBulkDry(rows, b); act.appendChild(b); bar.appendChild(act);
+  if (cdBulkRes) bar.appendChild(cdBulkRes);
+}
+async function cdBulkDry(rows, btn) {
+  btn.disabled = true; btn.textContent = `Proving ${rows.length} checks live from QuickBooks…`;
+  let d;
+  try { d = await (await fetch("/api/checkdrift/bulk", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ payment_ids: rows.map(r => r.payment_id) }) })).json(); }
+  catch (e) { d = { ok: false, error: String(e) }; }
+  const box = document.createElement("div"); box.className = "cd-reapply";
+  const p = (text, cls) => { const x = document.createElement("div"); x.className = "cd-ra-line" + (cls ? " " + cls : ""); x.textContent = text; box.appendChild(x); return x; };
+  cdBulkRes = box;
+  if (!d.ok) { p(`Dry run: ${d.error || "failed"}`, "neg"); cdBulkBar(); return; }
+  const ready = d.checks.filter(c => c.ok), not = d.checks.filter(c => !c.ok);
+  p(`Dry run, live from QuickBooks - nothing written. ${ready.length} of ${d.checks.length} prove exactly: ${qaCents(d.ready_amt)} back on their bills.`, not.length ? "warn" : "ok");
+  const t = document.createElement("table"); t.className = "qa-repair-tbl";
+  t.innerHTML = `<thead><tr><th class="left">Check #</th><th class="left">Vendor</th><th class="left">Check date</th><th class="right">Check total</th><th class="right">Lines back on</th><th class="left">Short pays (stay open)</th><th class="left">Credits back on</th><th class="left">Status</th></tr></thead>`;
+  const tb = document.createElement("tbody");
+  for (const c of [...ready, ...not]) { const tr = document.createElement("tr");
+    tr.appendChild(qboLinkCell(c.check || "–", qboUrl("billpayment", c.payment_id), "Open the check in QuickBooks"));
+    tr.appendChild(leftText(c.vendor || "–")); tr.appendChild(leftText(c.txn_date ? fmtDateShort(c.txn_date) : "–"));
+    for (const v of [qaCents(c.total), c.n ?? "–"]) { const td = document.createElement("td"); td.className = "right"; td.textContent = v; tr.appendChild(td); }
+    tr.appendChild(leftText((c.short_pays || []).map(s => `#${s.doc} ${qaCents(s.amount)} of ${qaCents(s.bill_total)}, ${qaCents(s.stays_open)} stays open`).join(" · ") || "–"));
+    tr.appendChild(leftText((c.credits || []).map(s => `#${s.doc} ${qaCents(s.amount)}`).join(" · ") || "–"));
+    { const td = document.createElement("td"); td.className = "left"; const s = document.createElement("span");
+      s.className = "qa-flag " + (c.ok ? "ok" : "neg"); s.textContent = c.ok ? "Ready" : "Skip"; td.appendChild(s);
+      if (!c.ok) { const w = document.createElement("span"); w.className = "dim"; w.style.marginLeft = "6px"; w.textContent = c.why.join("; "); td.appendChild(w); }
+      tr.appendChild(td); }
+    tb.appendChild(tr); }
+  t.appendChild(tb); box.appendChild(t);
+  const act = document.createElement("div"); act.className = "qa-repair-act";
+  const w = document.createElement("button"); w.type = "button"; w.className = "btn small primary"; w.disabled = !ready.length;
+  w.textContent = `Write ${ready.length} checks to QuickBooks…`;
+  w.onclick = (e) => { e.stopPropagation(); cdBulkWrite(ready, d.ready_amt, w, box); };
+  act.appendChild(w); box.appendChild(act);
+  cdBulkBar();
+}
+async function cdBulkWrite(ready, amt, btn, box) {
+  const shorts = ready.reduce((t, c) => t + c.short_pays.length, 0), credits = ready.reduce((t, c) => t + c.credits.length, 0);
+  const msg = `Are you sure?\n\nThis writes to QuickBooks: ${ready.length} checks get their bills back on, ${qaCents(amt)} applied.\n`
+    + (shorts ? `${shorts} short pay(s) keep the same open amount they had.\n` : "") + (credits ? `${credits} credit(s) go back on their check.\n` : "")
+    + `\nEach check is proven again right before its write and backed up first; one that changed is skipped.`;
+  if (!confirm(msg)) return;
+  btn.disabled = true; btn.textContent = `Writing ${ready.length} checks…`;
+  let res;
+  try { res = await (await fetch("/api/checkdrift/bulk/commit", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ confirm: true, checks: ready.map(c => ({ payment_id: c.payment_id, check: c.check, sync_token: c.sync_token, n: c.n, amount: c.amount })) }) })).json(); }
+  catch (e) { res = { ok: false, error: String(e) }; }
+  const p = (text, cls) => { const x = document.createElement("div"); x.className = "cd-ra-line" + (cls ? " " + cls : ""); x.textContent = text; box.appendChild(x); };
+  if (!res.ok) { p(`Not written: ${res.error || "failed"}`, "neg"); btn.disabled = false; btn.textContent = `Write ${ready.length} checks to QuickBooks…`; return; }
+  const bad = res.results.filter(r => !r.ok);
+  p(`Written: ${res.written} of ${res.results.length} checks.` + (res.mirror_refreshed === false ? " Refresh from QuickBooks to update this page." : ""), bad.length ? "warn" : "ok");
+  for (const r of bad) p(`Check #${r.check || r.payment_id} not written: ${r.error}`, "neg");
+  btn.textContent = "Written";
+  setTimeout(() => { cdBulkRes = null; const y = window.scrollY; loadCheckDrift(true).then(() => window.scrollTo(0, y)); }, 3000);
 }
 
 // ── Uncleared checks (owner 2026-09-24: "a list of all unmatched checks and/or any checks that haven't been deposited").

@@ -4,6 +4,21 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-10-06 · **Checks QBO changed: Clear copy - the bulk fix** (owner: "a filter that the script can 100% GUARANTEE
+  that it has a copy of the check prior to qbo changing it ... be careful with credits and shortpays"). New chip
+  **Clear copy** + "Check all N live" -> one table (lines back on, short pays and what stays open, credits, Ready/Skip
+  + why) -> "Write N checks to QuickBooks" -> Are you sure + ONE Touch ID for the batch. A check counts only when it
+  is PROVEN, to the cent: the change log's copy is the whole check (bills - credits = amount); every copy on file
+  agrees line for line; the check itself is untouched (amount, date, vendor, bank, pay type); nothing new on it
+  (no money on a later bill); bills / credits only; every bill and credit has its own copy from while the check was
+  on it, the same total today, and lands back on EXACTLY that open balance (a short pay keeps its open amount; a
+  credit used elsewhere since blocks). Annotated on the mirror (`reapply_check.annotate`, on `/api/checkdrift`),
+  proven again live before the list (`bulk_dry_run`, `/api/checkdrift/bulk`) and again right before each write
+  (`bulk_commit`, `/api/checkdrift/bulk/commit`: same SyncToken / lines / amount, backup per check, a changed check
+  is skipped, never forced). A check that fails says why on its card ("Not a clear copy: ..."). CLI:
+  `reapply_check.py --clear [--commit]`. First run: 26 of 40 floating checks (~$545k), all 26 proved live;
+  25730 rightly out (re-applied by hand with a different bill on 09/23, then stripped again). The pre-log
+  ledger-snapshot evidence never counts as a clear copy. Pinned by `tests/test_reapply_clear_copy.py` (17).
 - 2026-10-01 · **Vendor page round 2** (owner, with screenshots). Bills: his dragged order is the standard
   (`VP_BILL_ORDER`: Bill # · Paid · Appr · Date · Amount · Open · Due · Project · Memo · Invoice # · Lien; Reset goes
   back to it); a totals row under Amount / Open; Unpaid first and the default; the caption under the table removed; the
