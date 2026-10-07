@@ -13,6 +13,7 @@ services:
         APP_GID: 100
     image: office-server:1
     restart: unless-stopped
+    stop_grace_period: 120s            # a restart lets the step in progress finish (AP / AR write the trackers)
     env_file:
       - /volume1/docker/automation/server.env    # paths + ids, no secrets (from docker/server.env.example)
       - /volume1/automation-keys/secrets.env           # the keys - an ENCRYPTED shared folder, 600, never in git

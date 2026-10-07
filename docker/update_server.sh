@@ -1,25 +1,44 @@
 #!/bin/bash
-# update_server.sh - bring the office server up to date WITHOUT a terminal (owner 2026-10-07: "why the dev? we can't do it?").
+# update_server.sh - bring the office server up to date from DSM, no terminal (owner 2026-10-07).
 #
-# Run as root from DSM: Control Panel > Task Scheduler > Create > Scheduled Task > User-defined script, user root,
-# script:  bash /volume1/docker/automation/update_server.sh   -> save, select it, Run.
-# It: pulls the branch the checkout is on (read-only deploy key), rebuilds + restarts the container (the mode in
-# server.env is unchanged - test stays test), and puts the share's inherited permissions back on the test trackers
-# (files an older build locked to its own account). Everything it does is appended to
-# /volume1/docker/automation/update_server.log, readable from the Mac over the docker share.
-set -u
-LOG=/volume1/docker/automation/update_server.log
-exec >>"$LOG" 2>&1
+# SECURITY: this runs as root. Keep its text PASTED in the DSM task (Control Panel > Task Scheduler > User-defined
+# script, user root) - only DSM admins can edit that. NEVER point the task at a file inside the checkout: anyone who
+# can push to the repo would then run code as root on the Synology. When this file changes, re-paste it.
+#
+# What it does: pulls the checkout's branch (read-only deploy key, GitHub's host key PINNED), rebuilds + restarts the
+# container (the mode in server.env is untouched), puts the share's inherited permissions back on the test trackers,
+# and appends everything - including every commit pulled - to /volume1/docker/automation/update_server.log.
+# It refuses: a live server not on main, a checkout with local edits, a second run at the same time.
+set -uo pipefail
+export PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin:/usr/syno/bin:/usr/syno/sbin
+BASE=/volume1/docker/automation
+SRC="$BASE/src"
+exec >>"$BASE/update_server.log" 2>&1
 echo
 echo "===== $(date '+%m/%d/%Y %H:%M:%S') update_server"
-SRC=/volume1/docker/automation/src
-cd "$SRC" || { echo "no checkout at $SRC"; exit 1; }
+if command -v flock >/dev/null 2>&1; then
+  exec 9>/tmp/update_server.lock
+  flock -n 9 || { echo "another update is running - nothing changed"; exit 1; }
+fi
+command -v git >/dev/null 2>&1 || { echo "git not found - nothing changed"; exit 1; }
+cd "$SRC" || { echo "no checkout at $SRC - nothing changed"; exit 1; }
 G() { git -c safe.directory="$SRC" "$@"; }
-export GIT_SSH_COMMAND="ssh -i /volume1/automation-keys/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+owner="$(stat -c %u:%g "$SRC")"
+KH="$(mktemp)"; trap 'rm -f "$KH"' EXIT
+# GitHub's published ed25519 host key (api.github.com/meta; SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU)
+echo "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" > "$KH"
+export GIT_SSH_COMMAND="ssh -i /volume1/automation-keys/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$KH"
 branch="$(G rev-parse --abbrev-ref HEAD)"
-echo "before: $(G log --oneline -1) [$branch]"
-G fetch origin "$branch" && G merge --ff-only "origin/$branch" || { echo "PULL FAILED - nothing rebuilt"; exit 1; }
-echo "after:  $(G log --oneline -1)"
+mode="$(sed -n 's/^ACB_SERVER_MODE=//p' "$BASE/server.env" | tr -d '[:space:]')"
+echo "mode ${mode:-?}, branch $branch, before $(G log --oneline -1)"
+if [ "$mode" = "live" ] && [ "$branch" != "main" ]; then echo "a LIVE server runs main only - nothing changed"; exit 1; fi
+if [ -n "$(G status --porcelain --untracked-files=no)" ]; then echo "the checkout has local edits - nothing changed"; G status --short; exit 1; fi
+before="$(G rev-parse HEAD)"
+if ! { G fetch origin "$branch" && G merge --ff-only "origin/$branch"; }; then
+  chown -R "$owner" "$SRC"; echo "PULL FAILED - nothing rebuilt, the server keeps running"; exit 1
+fi
+chown -R "$owner" "$SRC"
+echo "commits pulled:"; G log --oneline "$before..HEAD"
 if docker compose version >/dev/null 2>&1; then DC="docker compose"; else DC="docker-compose"; fi
 $DC -f docker/compose.yml up -d --build || { echo "BUILD FAILED - the old container keeps running"; exit 1; }
 for f in "/volume1/Accounting/_server-test/Bill Tracker.xlsx" "/volume1/Accounting/_server-test/Bill Tracker - compare copy.xlsx"; do

@@ -3,6 +3,9 @@
 Progression record for the office server package. Update in the SAME commit as any change to this folder (repo rule).
 
 ## DONE / FINALIZED
+- 2026-10-07 · **update_server.sh security review** - pasted in DSM only (a root task must never run repo files), GitHub
+  host key pinned (checked against api.github.com/meta), live runs main only, refuses local edits and a second run,
+  checkout ownership restored, every pulled commit logged; compose stop_grace_period 120s. Tested on a stand-in server.
 - 2026-10-07 · `update_server.sh` (README 7b): one DSM Task Scheduler run as root pulls, rebuilds, restarts and resets the
   test trackers' permissions (`synoacltool -enforce-inherit`), logging to `/volume1/docker/automation/update_server.log`.
   The server was found on bdcb5e5 (10/02), before the 10/06 permissions fix.

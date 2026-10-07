@@ -107,9 +107,11 @@ What to watch:
 
 `docker/update_server.sh` pulls the checkout's branch, rebuilds + restarts (the mode stays as server.env says) and puts
 the share's inherited permissions back on the test trackers. In DSM: Control Panel > Task Scheduler > Create > Scheduled
-Task > User-defined script, user **root**, no schedule needed. **First time** (the checkout is older than the script): paste
-the script's whole text into the Run command box. **After that**, the box holds one line:
-`bash /volume1/docker/automation/src/docker/update_server.sh`. Select the task and **Run**. The result
+Task > User-defined script, user **root**, not enabled (run on demand). Paste the script's whole text into the Run
+command box, select the task and **Run**. **Security: keep the text pasted in DSM - never point the task at a file in the
+checkout** (anyone who can push to the repo would then run code as root on the Synology); when the script changes,
+re-paste it. It pins GitHub's host key, refuses a live server that is not on `main`, a checkout with local edits and a
+second run at once, hands the checkout back to its owner, and logs every commit it pulled. The result
 is appended to `/volume1/docker/automation/update_server.log` (readable from the Mac at `/Volumes/docker/automation/`).
 
 ### 8. Going live - NOT YET
