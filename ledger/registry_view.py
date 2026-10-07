@@ -202,6 +202,47 @@ def guide_path(proc_id: str, fmt: str = "pdf", root: Path | None = None) -> Path
     return (base / name) if name else None
 
 
+# A guide's name slot: <span class="ln" data-role="the payroll manager"></span>. The guide on disk
+# never holds a name (roles only); the ledger fills the slot from the gitignored roster when it
+# serves the page, so the owner changes a name in ROSTER.md and every guide follows.
+_NAME_SLOT = re.compile(r'(<span\b[^>]*\bdata-role="([^"]+)"[^>]*>)(</span>)')
+_ROSTER_ROW = re.compile(r"^\|\s*([^|]*?)\s*\|\s*[^|]*\|\s*`([^`]+)`")
+
+
+def roster_names(path: Path | None = None) -> dict[str, str]:
+    """{handle -> name} from the vault's 01_company/ROSTER.md (gitignored - read at serve time,
+    never stored or copied). A handle several people share (a role class such as `the super on
+    the job`) or a blank name is left out, so its slot stays a blank line."""
+    p = Path(path) if path else paths.vault_dir() / "01_company" / "ROSTER.md"
+    seen: dict[str, list[str]] = {}
+    try:
+        lines = p.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return {}
+    for line in lines:
+        m = _ROSTER_ROW.match(line)
+        if m and m.group(1).strip() and not set(m.group(1).strip()) <= {"-", " "}:
+            seen.setdefault(m.group(2).strip().lower(), []).append(m.group(1).strip())
+    return {h: n[0] for h, n in seen.items() if len(n) == 1}
+
+
+def fill_names(html: str, names: dict[str, str]) -> str:
+    """Write each slot's person into the guide being served (HTML-escaped); unknown roles stay blank."""
+    import html as _html
+
+    def one(m: re.Match) -> str:
+        name = names.get(m.group(2).strip().lower())
+        return m.group(1) + _html.escape(name) + m.group(3) if name else m.group(0)
+    return _NAME_SLOT.sub(one, html)
+
+
+def has_name_slots(path: Path) -> bool:
+    try:
+        return "data-role=" in path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return False
+
+
 def load_registry(root: Path | None = None) -> dict:
     """Parse every domain file. Always returns a dict; missing vault -> ok=False."""
     base = Path(root) if root else paths.process_registry_dir()
@@ -219,11 +260,15 @@ def load_registry(root: Path | None = None) -> dict:
         domains.append(parsed)
         rows.extend(parsed["rows"])
 
-    # Hang each row's one-page guide on it (the formats that exist, pdf first).
+    # Hang each row's one-page guide on it (the formats that exist, pdf first - html first when the
+    # guide has name slots, so the Guide link opens the page with the names filled in).
     have = guides()
     for r in rows:
         fmts = have.get(r["id"].strip().upper(), {})
-        r["guide"] = [f for f in ("pdf", "html") if f in fmts]
+        order = ("pdf", "html")
+        if "html" in fmts and has_name_slots(paths.process_guides_dir() / fmts["html"]):
+            order = ("html", "pdf")
+        r["guide"] = [f for f in order if f in fmts]
 
     domains.sort(key=lambda d: (d["num"] or 99, d["title"]))
     return {"ok": True, "source": str(base), "domains": domains, "rows": rows,

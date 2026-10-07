@@ -4,6 +4,10 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 10/07/2026 · **Process guides show names, read live from the roster (the user).** A guide marks a name slot with
+  `data-role="<handle>"`; `/api/process-guide?fmt=html` fills it from the vault's gitignored `01_company/ROSTER.md` (Name
+  column) at serve time - never stored, never in a file. A handle several people share, or a blank name, stays a blank line.
+  The Guide link opens the html first when it has slots. First guide: AR-10 payment intake. `tests/test_guide_names.py`.
 - 2026-10-07 · **Company -> Reclassify transactions** (owner: "add this tool as reclassify transactions in the
   ledger"). `ledger/reclassify.py` (graduated from one-offs/move_project_lines.py, first used 10/06 for RP7242-FTW ->
   RP7242): From / To project pickers -> Preview (mirror, no write) lists every Bill / Expense / Vendor credit LINE on
