@@ -17,7 +17,8 @@ Progression record for the office server package. Update in the SAME commit as a
   builds on the Synology.
 
 ## IN PROGRESS
-- 2026-10-07 · **QuickBooks payment cards - server test before the team uses them (the owner).** Test mode runs
+- 2026-10-07 · **ON HOLD (owner): prove the base AP/AR run on the server first, then turn this on with `PAYMENTS_TEST=1`.**
+  **QuickBooks payment cards - server test before the team uses them (the owner).** Test mode runs
   `payments-test` after AR (`qbo_payment_notify.py --test`): TEST cards to `TEAMS_WEBHOOK_PAYMENTS_TEST`, own posted record,
   dry-run log while that key is blank. To do: rebuild the image, add the Payments channel webhook to secrets.env, watch a
   week of cards against QuickBooks (README step 7). Mac: keep `TEAMS_WEBHOOK_PAYMENTS` unset during the test so only

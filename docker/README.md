@@ -97,7 +97,7 @@ What to watch:
 - the test Bill Tracker / Invoice Tracker vs the Mac's live ones, sheet by sheet (the same rows and totals);
 - open the test trackers in Excel on a Mac over the share and leave them open - the server's next runs must still land
   and a reopen shows the new data.
-- **QuickBooks payment cards** (`payments-test` in status.json, log `payments-test.log`): every payment a client makes
+- **QuickBooks payment cards - only after the AP/AR checks above are clean; set `PAYMENTS_TEST=1` in server.env** (`payments-test` in status.json, log `payments-test.log`): every payment a client makes
   through the QuickBooks invoice link posts ONE "TEST - QuickBooks payment received" card to the Payments channel within
   ~15 minutes (the first run only records what is already there). Check each card against QuickBooks (client, project,
   amount, invoice #, paid in full / still open) and that a typed-in check never posts. No test webhook yet = the log

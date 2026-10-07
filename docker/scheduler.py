@@ -193,8 +193,10 @@ def _apar() -> None:
         _run("ar", [PY, "invoice-sync/run_invoice_sync.py", "--dry-run"], quiet)
         _run("ar-export", [PY, "invoice-sync/preview_export.py"], dict(quiet, PREVIEW_EXPORT_PATH=str(TEST_DIR / "Invoice Tracker.xlsx")))
         # the QuickBooks payment cards' test (owner 2026-10-07): "TEST" cards to TEAMS_WEBHOOK_PAYMENTS_TEST, or a dry run
-        # listing what would post while that is blank. Live, the AR run posts them itself.
-        _run("payments-test", [PY, "invoice-sync/qbo_payment_notify.py", "--test"])
+        # listing what would post while that is blank. OFF until the base AP/AR run is proven on the server (owner, same
+        # day: "have that part working BEFORE we start adding more") - turn on with PAYMENTS_TEST=1 in server.env.
+        if os.getenv("PAYMENTS_TEST", "").strip() == "1":
+            _run("payments-test", [PY, "invoice-sync/qbo_payment_notify.py", "--test"])
 
 
 def _stop_handler(*_a) -> None:
