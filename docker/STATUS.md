@@ -37,6 +37,13 @@ Progression record for the office server package. Update in the SAME commit as a
 - Live runs `main` only - a release PR before the switch.
 
 ## OPEN ISSUES
+- 2026-10-07 · **Server check before adding anything (owner).** All jobs exit 0 (mirror 3 min, reconcile counts equal,
+  AP 36s, AR dry run, AR export). Invoice Tracker: the server's test copy = a Mac preview built the same minute, every
+  tab, every cell (only the "as of" stamp differs). Found: (1) FIXED in code - test-mode AR read the Mac's LIVE Bill
+  Tracker, not the server's (needs the image rebuilt). (2) The server's test Bill Tracker is still unreadable over the
+  share (Permission denied) - the 10/06 no-chmod fix is not on the server yet: rebuild the image AND chmod the existing
+  `_server-test/Bill Tracker.xlsx` (+ compare copy) once so the share's users can read it. Then re-compare the Bill
+  Tracker against a Mac build of the same minute (the 126 paid-vs-unpaid lines of 10/05 still unsettled).
 - Side note (2026-10-05) - **the server's Bill Tracker can't be opened by anyone.** `excel_bill_sync.py` chmods the
   output 600; on the Mac that is the owner's own account, on the server it is svc-automation, so no person (or Excel
   over the share) can read `_server-test/Bill Tracker.xlsx` - a sudo copy was needed to compare it. Live would lock

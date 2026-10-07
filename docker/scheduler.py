@@ -188,8 +188,11 @@ def _apar() -> None:
         _run("ar", [PY, "invoice-sync/run_invoice_sync.py"])
     else:
         _seed_test_copies()
-        _run("ap", [PY, "bill-tracker/excel_bill_sync.py"], {"ACB_BILL_TRACKER_XLSX": str(TEST_DIR / "Bill Tracker.xlsx")})
-        quiet = {"TEAMS_WEBHOOK_MFD_PAID": "", "TEAMS_WEBHOOK_PAYMENTS": "", "ABSORB_NOTES": "0"}   # test: no cards, no notes to Notion
+        test_bt = {"ACB_BILL_TRACKER_XLSX": str(TEST_DIR / "Bill Tracker.xlsx")}
+        _run("ap", [PY, "bill-tracker/excel_bill_sync.py"], test_bt)
+        # AR reads the Bill Tracker AP just wrote (the AR Aging vendor column) - in test, the server's OWN copy, so the
+        # test proves the AP -> AR hand-off (found 10/07/2026: it read the Mac's live tracker, "as of 08:41")
+        quiet = dict(test_bt, TEAMS_WEBHOOK_MFD_PAID="", TEAMS_WEBHOOK_PAYMENTS="", ABSORB_NOTES="0")   # no cards, no notes
         _run("ar", [PY, "invoice-sync/run_invoice_sync.py", "--dry-run"], quiet)
         _run("ar-export", [PY, "invoice-sync/preview_export.py"], dict(quiet, PREVIEW_EXPORT_PATH=str(TEST_DIR / "Invoice Tracker.xlsx")))
         # the QuickBooks payment cards' test (owner 2026-10-07): "TEST" cards to TEAMS_WEBHOOK_PAYMENTS_TEST, or a dry run
