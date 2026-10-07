@@ -3,6 +3,9 @@
 Progression record for the office server package. Update in the SAME commit as any change to this folder (repo rule).
 
 ## DONE / FINALIZED
+- 2026-10-07 · `update_server.sh` (README 7b): one DSM Task Scheduler run as root pulls, rebuilds, restarts and resets the
+  test trackers' permissions (`synoacltool -enforce-inherit`), logging to `/volume1/docker/automation/update_server.log`.
+  The server was found on bdcb5e5 (10/02), before the 10/06 permissions fix.
 - 2026-10-02 · First run on the Synology: the mirror failed "MIRROR_KEY is not in the Keychain library" - on Linux qbo_vault read only KNOWN_KEYS from the env. It now also reads MIRROR_KEY (`LINUX_EXTRA_KEYS`); tests/test_qbo_vault_linux.py pins it.
 - 2026-10-02 · compose.yml APP_UID 1026 -> 1027: the office Synology's svc-automation user is uid 1027 (gid 100 users). The owned folders (data is 700) need the container to run as that uid.
 - 2026-10-01 · First build + smoke run (test mode, dummy keys). Two fixes: the Dockerfile reuses GID 100 (Synology's "users" group already exists in Debian - `groupadd` failed the build); `qbo_vault.has_credentials()` on Linux checks only the four QBO keys (it required JT_GRANT_KEY too, so every QBO call on the server failed with "No QBO credentials in Keychain"). The image builds, all five jobs import, the scheduler starts, status.json + alerts work.

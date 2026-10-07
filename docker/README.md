@@ -103,6 +103,14 @@ What to watch:
   amount, invoice #, paid in full / still open) and that a typed-in check never posts. No test webhook yet = the log
   lists what would post. Go-live: move the URL to `TEAMS_WEBHOOK_PAYMENTS`, blank the TEST line, restart.
 
+### 7b. Updating the server - no terminal needed
+
+`docker/update_server.sh` pulls the checkout's branch, rebuilds + restarts (the mode stays as server.env says) and puts
+the share's inherited permissions back on the test trackers. Copy it once to `/volume1/docker/automation/update_server.sh`
+(the `docker` share), then in DSM: Control Panel > Task Scheduler > Create > Scheduled Task > User-defined script, user
+**root**, script `bash /volume1/docker/automation/update_server.sh`, no schedule needed - select it and **Run**. The result
+is appended to `/volume1/docker/automation/update_server.log` (readable from the Mac at `/Volumes/docker/automation/`).
+
 ### 8. Going live - NOT YET
 
 Live needs these first (tracked in `docker/STATUS.md`): the Notion "only update when changed" fix, the Mac honoring the
