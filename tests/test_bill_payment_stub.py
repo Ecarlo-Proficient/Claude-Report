@@ -22,6 +22,6 @@ def test_money_and_dates():
 
 
 def test_columns_registry_toggles():
-    assert bps.resolve_columns(drop=["type", "open_balance"]) == ["date", "number", "memo", "amount"]
+    assert bps.resolve_columns(drop=["type", "open_balance"]) == ["date", "number", "memo", "balance_before", "amount"]
     assert bps.resolve_columns(add=["project"])[-1] == "project"
     assert set(bps.DEFAULT_COLUMNS) <= set(bps.COLUMNS)

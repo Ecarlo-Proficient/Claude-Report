@@ -134,17 +134,15 @@ COLUMNS: Dict[str, Tuple[str, str, Callable[[Row], str]]] = {
     "project":      ("Project",            "left",  lambda r: str(r["project"] or "")),
     "due_date":     ("Due date",           "left",  lambda r: mdy(r["due_date"])),
     "bill_total":   ("Bill amount",        "right", lambda r: money(r["bill_total"])),
-    "amount":       ("Amount",             "right", lambda r: money(r["paid"])),
-    "open_balance": ("Open balance",       "right", lambda r: money(r["open_balance"])),
-}
-# the internal stub's money columns: Open balance - Paid = New balance, all as of THIS payment
-INTERNAL_COLUMNS: Dict[str, Tuple[str, str, Callable[[Row], str]]] = {
-    "balance_before": ("Open balance", "right", lambda r: "" if r.get("balance_before") is None else money(r["balance_before"])),
-    "amount":         ("Paid",         "right", lambda r: money(r["paid"])),
-    "open_balance":   ("New balance",  "right", lambda r: "" if r.get("balance_after") is None else money(r["balance_after"])),
+    # the money as of THIS payment: Open balance - Paid = New balance (owner 2026-10-07; the picker shows these
+    # same labels, so what is ticked is what prints - the keys stay for saved picks and the print history)
+    "balance_before": ("Open balance",     "right", lambda r: "" if r.get("balance_before") is None else money(r["balance_before"])),
+    "amount":       ("Paid",               "right", lambda r: money(r["paid"])),
+    "open_balance": ("New balance",        "right", lambda r: "" if r.get("balance_after") is None else money(r["balance_after"])),
 }
 KINDS = ("vendor", "internal")
-DEFAULT_COLUMNS: Tuple[str, ...] = ("date", "type", "number", "memo", "amount", "open_balance")
+MONEY_ORDER = ("bill_total", "balance_before", "amount", "open_balance")   # always on the right, in this order
+DEFAULT_COLUMNS: Tuple[str, ...] = ("date", "type", "number", "memo", "balance_before", "amount", "open_balance")
 WIDTHS = {"date": 64, "type": 88, "number": 100, "project": 90, "due_date": 64, "bill_total": 74, "amount": 74,
           "open_balance": 80, "balance_before": 80}   # px on a 7.3in Letter page; memo takes what is left
 MONEY_COLUMNS = {"bill_total", "balance_before", "amount", "open_balance"}   # get a total on the last row
@@ -159,7 +157,7 @@ def resolve_columns(columns: Optional[Sequence[str]] = None,
         if k not in base:
             base.append(k)
     base = [k for k in base if k not in set(drop)]
-    bad = [k for k in base if k not in COLUMNS and k not in INTERNAL_COLUMNS]
+    bad = [k for k in base if k not in COLUMNS]
     if bad:
         raise ValueError(f"unknown column(s): {', '.join(bad)} - known: {', '.join(COLUMNS)}")
     if not base:
@@ -168,15 +166,16 @@ def resolve_columns(columns: Optional[Sequence[str]] = None,
 
 
 def columns_for(kind: str, columns: Optional[Sequence[str]] = None) -> List[str]:
-    """The columns a print of this kind gets: the pick, its money read Open balance - Paid = New balance on the
-    right (a partial shows in the numbers, never as a sentence). The internal print also drops Transaction type
-    (always "Bill"; its width goes to the memo) and puts Project after the memo. Idempotent."""
+    """The columns a print of this kind gets. Vendor: exactly the pick (owner 2026-10-07: "columns not matching
+    stub"), the money ones moved to the right in MONEY_ORDER. Internal: the pick without Transaction type (always
+    "Bill"; its width goes to the memo), Project after the memo, and always Open balance - Paid = New balance.
+    Idempotent."""
     if kind not in KINDS:
         raise ValueError(f"unknown stub kind {kind!r} - {', '.join(KINDS)}")
     cols = resolve_columns(columns)
-    tail = ["balance_before", "amount", "open_balance"]
     if kind == "vendor":
-        return [k for k in cols if k not in tail] + tail
+        return [k for k in cols if k not in MONEY_ORDER] + [k for k in MONEY_ORDER if k in cols]
+    tail = ["balance_before", "amount", "open_balance"]
     cols = [k for k in cols if k != "type"] or cols
     cols = [k for k in cols if k not in tail] + tail
     if "project" not in cols:
@@ -731,7 +730,7 @@ def _internal_table(s: dict, cols: Sequence[str]) -> str:
     """Internal stub body (owner 2026-10-07: "invoice one row, total of that, ___ then the bills it was applied to"):
     the client invoice(s) this payment came from, one row each with what it took from it, and their total; a rule;
     then the bills it paid, each ONCE, as Open balance - Paid = New balance, and their total."""
-    spec = {**COLUMNS, **INTERNAL_COLUMNS}
+    spec = COLUMNS
     word = "check" if s["method"] == "Check" else "payment"
     out = ["<table class='invs'><thead><tr><th>Client invoice</th><th>Invoice date</th><th>Project</th><th>Draw</th>"
            "<th class='r'>Invoice amount</th><th class='r'>Applied</th></tr></thead><tbody>"]
@@ -812,7 +811,7 @@ def stub_html(stubs: Sequence[dict], columns: Optional[Sequence[str]] = None,
             parts.append("</section>")
             continue
         # the bills table
-        spec = {**COLUMNS, **INTERNAL_COLUMNS}            # money as Open balance - Paid = New balance
+        spec = COLUMNS
         parts.append("<table><thead><tr>")
         for k in cols:
             label, align, _ = spec[k]
@@ -966,7 +965,7 @@ def _selftest() -> int:
     assert s["pay_to"] == "TEST VENDOR INC" and s["address"][-1] == "FORT WORTH TX 76100"
     assert s["method"] == "Check" and s["ref"] == "25760" and s["account"] == "Test Bank ****0000"
     assert resolve_columns() == list(DEFAULT_COLUMNS)
-    assert resolve_columns(add=["bill_total"], drop=["type"]) == ["date", "number", "memo", "amount", "open_balance", "bill_total"]
+    assert resolve_columns(add=["bill_total"], drop=["type"]) == ["date", "number", "memo", "balance_before", "amount", "open_balance", "bill_total"]
     assert resolve_columns(["memo", "amount"]) == ["memo", "amount"]
     for bad in ({"add": ["nope"]}, {"columns": ["memo", "typo"]}):
         try:
@@ -980,7 +979,7 @@ def _selftest() -> int:
         assert needle in page, needle
     assert "2026-09-21" not in page.replace("Bill Payment Stub", "")   # never year-first on the page
     nomemo = stub_html([s], columns=["date", "number", "amount"])       # memo unticked at print time
-    assert "Memo/Description" not in nomemo and "New balance" in nomemo      # the partial still reads in the numbers
+    assert "Memo/Description" not in nomemo and "Paid" in nomemo and "New balance" not in nomemo   # exactly the pick
     assert "partial payment" not in page and "Transaction type" in page       # columns, never a sentence
     assert ">500.00</td><td class='r'>300.00</td><td class='r'>200.00<" in page, "partial bill = 500 - 300 = 200"
     tot = "".join(f"<td class='r'>${money(x)}</td>" for x in (1500, 1300, 200))
@@ -1031,7 +1030,9 @@ def _selftest() -> int:
         con.close()
         assert [c["key"] for c in columns_registry() if c["default"]] == list(DEFAULT_COLUMNS)
     # the internal stub: invoice on top, bills below, Open balance - Paid = New balance; joint check from the client's Payment
-    assert columns_for("vendor") == ["date", "type", "number", "memo", "balance_before", "amount", "open_balance"]
+    assert columns_for("vendor") == list(DEFAULT_COLUMNS)
+    assert columns_for("vendor", ["open_balance", "date", "amount", "number"]) == ["date", "number", "amount", "open_balance"]
+    assert [c["label"] for c in columns_registry()][-3:] == ["Open balance", "Paid", "New balance"]   # picker = stub
     assert columns_for("vendor", columns_for("vendor")) == columns_for("vendor")
     assert columns_for("internal") == ["date", "number", "memo", "project", "balance_before", "amount", "open_balance"]
     bills["b2"]["LinkedTxn"] = [{"TxnId": "p0", "TxnType": "BillPaymentCheck"}, {"TxnId": "pj", "TxnType": "BillPaymentCheck"}]

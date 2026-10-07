@@ -4,6 +4,10 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-10-07 · **Stub column picker = the stub** (owner: "columns not matching stub"). The picker lists the stub's own
+  money labels - **Open balance** (before this payment, new `balance_before` choice), **Paid** (`amount`), **New balance**
+  (`open_balance`) - and the vendor stub prints exactly what is ticked (money columns kept on the right). A pick saved
+  before this gets Open balance added once (`ledger.stubColumns.v2`). The internal stub still always shows all three.
 - 2026-10-07 · **Bill payment stub: vendor + internal** (owner: "print bill stub not working, tried it for 2613/2612 ...
   a vendor stub and a internal stub that shows the inv it is tied to"). The print menu's footer is **Vendor stub** /
   **Internal stub** (single and multi-print). The vendor stub's money columns now read **Open balance - Paid = New

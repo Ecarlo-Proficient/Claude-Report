@@ -2653,7 +2653,11 @@ function _vendorLines(b) {
 // every stub as printed, judged against QBO now (current / changed / voided / deleted), so a payment
 // QuickBooks no longer shows keeps its stubs. History + registry come from /api/bill-payment/stubs.
 const STUB_COLS_LS = "ledger.stubColumns";
-let _stubCols = (() => { try { return JSON.parse(localStorage.getItem(STUB_COLS_LS)) || null; } catch { return null; } })();
+// a pick saved before the stub read Open balance - Paid = New balance (owner 2026-10-07) gets Open balance added once
+let _stubCols = (() => { try { const c = JSON.parse(localStorage.getItem(STUB_COLS_LS)) || null;
+  if (c && !localStorage.getItem(STUB_COLS_LS + ".v2")) { if (c.includes("amount") && !c.includes("balance_before")) c.splice(c.indexOf("amount"), 0, "balance_before");
+    localStorage.setItem(STUB_COLS_LS, JSON.stringify(c)); localStorage.setItem(STUB_COLS_LS + ".v2", "1"); }
+  return c; } catch { return null; } })();
 let _stubHist = { vendor: null, prints: [], columns: [] };
 async function _loadStubHistory(vendor) {
   try { const j = await (await fetch("/api/bill-payment/stubs?vendor=" + encodeURIComponent(vendor))).json();
