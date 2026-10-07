@@ -4033,8 +4033,8 @@ class Handler(BaseHTTPRequestHandler):
         except OSError:
             self._send(404, b"guide could not be read", "text/plain; charset=utf-8")
             return
-        if fmt == "html":   # name slots filled from the gitignored roster, at serve time only
-            body = registry_view.fill_names(body.decode("utf-8"), registry_view.roster_names()).encode("utf-8")
+        if fmt == "html":   # people's names from the guides' gitignored names.js, inlined at serve time
+            body = registry_view.inline_names(body.decode("utf-8")).encode("utf-8")
         self._send(200, body, ctype)
 
     def _graph(self):

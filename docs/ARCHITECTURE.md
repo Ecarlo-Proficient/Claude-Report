@@ -555,8 +555,8 @@ flowchart LR
 
     REG --> REGVIEW --> DASH
     GUIDES --> REGVIEW
-    ROSTERN[("01_company/ROSTER.md (gitignored)\nnames by role")]:::src
-    ROSTERN -- "guide name slots, filled at serve time" --> REGVIEW
+    NAMESJS[("assets/processes/names.js (gitignored)\nnames by role")]:::src
+    NAMESJS -- "guide names, inlined at serve time" --> REGVIEW
     REG --> VGRAPH --> DASH
     TEST --> LOADER
     BT --> APLOAD

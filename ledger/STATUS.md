@@ -24,10 +24,11 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   `kind` (ALTER on first open), listed as "· internal". Every print runs `refresh_mirror.py` first (multi-print: once);
   a payment still missing from the mirror also runs `load_bill_payments.py` and retries once. The owner's original
   failure on 2612/2613 was not reproduced (both print from the page; no history row or server log of the failed try).
-- 10/07/2026 · **Process guides show names, read live from the roster (the user).** A guide marks a name slot with
-  `data-role="<handle>"`; `/api/process-guide?fmt=html` fills it from the vault's gitignored `01_company/ROSTER.md` (Name
-  column) at serve time - never stored, never in a file. A handle several people share, or a blank name, stays a blank line.
-  The Guide link opens the html first when it has slots. First guide: AR-10 payment intake. `tests/test_guide_names.py`.
+- 10/07/2026 · **Process guides show names (the user).** A guide marks each role with `data-role="<role>"` and loads
+  `names.js` beside it (vault `assets/processes/names.js`, gitignored, typed by the owner: `window.GUIDE_NAMES = {role: name}`);
+  the page's own script puts the name everywhere that role appears. `/api/process-guide?fmt=html` inlines names.js
+  (`registry_view.inline_names`) since the relative path does not resolve under /api/. The Guide link opens the html first
+  when it has slots. First guide: AR-10 payment intake (3 pages). `tests/test_guide_names.py`.
 - 2026-10-07 · **Company -> Reclassify transactions** (owner: "add this tool as reclassify transactions in the
   ledger"). `ledger/reclassify.py` (graduated from one-offs/move_project_lines.py, first used 10/06 for RP7242-FTW ->
   RP7242): From / To project pickers -> Preview (mirror, no write) lists every Bill / Expense / Vendor credit LINE on

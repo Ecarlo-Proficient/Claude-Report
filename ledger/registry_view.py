@@ -202,38 +202,22 @@ def guide_path(proc_id: str, fmt: str = "pdf", root: Path | None = None) -> Path
     return (base / name) if name else None
 
 
-# A guide's name slot: <span class="ln" data-role="the payroll manager"></span>. The guide on disk
-# never holds a name (roles only); the ledger fills the slot from the gitignored roster when it
-# serves the page, so the owner changes a name in ROSTER.md and every guide follows.
-_NAME_SLOT = re.compile(r'(<span\b[^>]*\bdata-role="([^"]+)"[^>]*>)(</span>)')
-_ROSTER_ROW = re.compile(r"^\|\s*([^|]*?)\s*\|\s*[^|]*\|\s*`([^`]+)`")
+# A guide shows people's names from `names.js` beside it (window.GUIDE_NAMES = {role: name}),
+# a file the owner types the names into and git ignores - the guide itself holds roles only.
+# Opened from disk the browser loads it; served by the ledger it is inlined, because the page's
+# relative `names.js` would otherwise resolve under /api/. Never cached, never copied.
+_NAMES_TAG = re.compile(r'<script\s+src="names\.js"\s*>\s*</script>', re.I)
 
 
-def roster_names(path: Path | None = None) -> dict[str, str]:
-    """{handle -> name} from the vault's 01_company/ROSTER.md (gitignored - read at serve time,
-    never stored or copied). A handle several people share (a role class such as `the super on
-    the job`) or a blank name is left out, so its slot stays a blank line."""
-    p = Path(path) if path else paths.vault_dir() / "01_company" / "ROSTER.md"
-    seen: dict[str, list[str]] = {}
+def inline_names(html: str, root: Path | None = None) -> str:
+    """The guide with its names.js inlined (no file or no tag = the guide unchanged)."""
+    base = Path(root) if root else paths.process_guides_dir()
     try:
-        lines = p.read_text(encoding="utf-8").splitlines()
+        js = (base / "names.js").read_text(encoding="utf-8")
     except OSError:
-        return {}
-    for line in lines:
-        m = _ROSTER_ROW.match(line)
-        if m and m.group(1).strip() and not set(m.group(1).strip()) <= {"-", " "}:
-            seen.setdefault(m.group(2).strip().lower(), []).append(m.group(1).strip())
-    return {h: n[0] for h, n in seen.items() if len(n) == 1}
-
-
-def fill_names(html: str, names: dict[str, str]) -> str:
-    """Write each slot's person into the guide being served (HTML-escaped); unknown roles stay blank."""
-    import html as _html
-
-    def one(m: re.Match) -> str:
-        name = names.get(m.group(2).strip().lower())
-        return m.group(1) + _html.escape(name) + m.group(3) if name else m.group(0)
-    return _NAME_SLOT.sub(one, html)
+        return html
+    js = js.replace("</", "<\\/")   # a name can never close the script tag
+    return _NAMES_TAG.sub(lambda m: "<script>\n" + js + "\n</script>", html, count=1)
 
 
 def has_name_slots(path: Path) -> bool:
