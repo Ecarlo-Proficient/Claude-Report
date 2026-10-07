@@ -4,6 +4,20 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-10-07 · **Bill payment stub: vendor + internal** (owner: "print bill stub not working, tried it for 2613/2612 ...
+  a vendor stub and a internal stub that shows the inv it is tied to"). The print menu's footer is **Vendor stub** /
+  **Internal stub** (single and multi-print). The vendor stub's money columns now read **Open balance - Paid = New
+  balance** too (owner the same day: "fix the partials ... use columns") - the italic "partial payment" sentence is gone. The internal stub (owner-shaped the same
+  day, internal only): header adds Client (the GC, one per check) and a divider over a full-size Amount; payment type
+  reads **Joint check** for a check drawn on the Joint Checks account; on top the client invoice(s) the money came from
+  (invoice #, date, project, draw name, invoice amount, applied) and their total; below, the bills it paid, each once,
+  as **Open balance - Paid = New balance** (balance just before THIS payment, from the bill's LinkedTxn) - no partial
+  text, no Transaction type. Joint check -> invoices: the client's Payment with the same date + amount (check # as its
+  ref breaks a tie, `find_joint_payment`); other payments: the Bill Tracker invoice per bill (`_fetch_vendor`), a bill
+  with none under "No client invoice yet". Files `... INTERNAL.pdf` under `<vendor>/Internal/`; history rows carry
+  `kind` (ALTER on first open), listed as "· internal". Every print runs `refresh_mirror.py` first (multi-print: once);
+  a payment still missing from the mirror also runs `load_bill_payments.py` and retries once. The owner's original
+  failure on 2612/2613 was not reproduced (both print from the page; no history row or server log of the failed try).
 - 10/07/2026 · **Process guides show names, read live from the roster (the user).** A guide marks a name slot with
   `data-role="<handle>"`; `/api/process-guide?fmt=html` fills it from the vault's gitignored `01_company/ROSTER.md` (Name
   column) at serve time - never stored, never in a file. A handle several people share, or a blank name, stays a blank line.

@@ -2685,20 +2685,22 @@ function openStubViewer(histId, title) {
 function _stubLink(h) {   // one printed stub: opens the PDF as it went out, in the ledger's viewer
   const a = document.createElement("a"); a.className = "stub-link";
   a.href = "/api/bill-payment/stub/file?id=" + encodeURIComponent(h.id);
-  a.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openStubViewer(h.id, `Stub printed ${fmtDate(h.printed_at, true)}`); };
-  a.textContent = fmtDate(h.printed_at, true); a.title = h.file_path || "";
+  a.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openStubViewer(h.id, `${h.kind === "internal" ? "Internal stub" : "Stub"} printed ${fmtDate(h.printed_at, true)}`); };
+  a.textContent = fmtDate(h.printed_at, true) + (h.kind === "internal" ? " · internal" : ""); a.title = h.file_path || "";
   if (h.file_exists === false) { a.classList.add("dim"); a.title = "PDF not on disk (Accounting share unmounted?) - " + (h.file_path || ""); }
   return a;
 }
-async function _printStub(paymentId, btn) {
+// kind = "vendor" (mailed with the check) or "internal" (owner 2026-10-07: "a vendor stub and a internal stub that shows
+// the inv it is tied to") - the internal one adds each bill's client invoice + paid state and files under <vendor>/Internal/.
+async function _printStub(paymentId, btn, kind = "vendor") {
   const was = btn.textContent; btn.disabled = true; btn.textContent = "Printing…";
   try {
     const res = await fetch("/api/bill-payment/stub", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ payment_id: paymentId, columns: _stubCols || undefined }) });
+      body: JSON.stringify({ payment_id: paymentId, columns: _stubCols || undefined, kind }) });
     const j = await res.json();
     if (!j.ok) throw new Error(j.error || "print failed");
-    toast("Stub printed - " + (j.file || "").split("/").pop());
-    openStubViewer(j.id, "Bill payment stub - " + (j.file || "").split("/").pop());   // in the ledger, not a new tab
+    toast((kind === "internal" ? "Internal stub printed - " : "Stub printed - ") + (j.file || "").split("/").pop());
+    openStubViewer(j.id, (kind === "internal" ? "Internal stub - " : "Bill payment stub - ") + (j.file || "").split("/").pop());   // in the ledger, not a new tab
     const d = _vendorData; await _loadStubHistory(_stubHist.vendor); if (_vendorPageShowing(d)) renderVendorPage();   // never paint over a page the owner opened meanwhile
   } catch (e) { toast("Could not print the stub: " + e.message); btn.disabled = false; btn.textContent = was; }
 }
@@ -2707,32 +2709,35 @@ async function _printStub(paymentId, btn) {
 // (localStorage) and comes back ticked next time. Print runs the stub(s) with exactly the ticked columns.
 function _stubPrintMenu(btn, what, onPrint) {
   document.querySelectorAll(".stub-print-menu").forEach(m => m.remove());
-  const cols = _stubHist.columns; if (!cols.length) return onPrint();   // no registry (older server): print as before
+  const cols = _stubHist.columns; if (!cols.length) return onPrint("vendor");   // no registry (older server): print as before
   let pick = new Set(_stubCols || cols.filter(c => c.default).map(c => c.key));
   const menu = document.createElement("div"); menu.className = "msel-menu stub-print-menu"; menu.hidden = false;
   const h = document.createElement("div"); h.className = "spm-h"; h.textContent = "Columns on the stub"; menu.appendChild(h);
   const boxes = [];
   for (const c of cols) {
     const lab = document.createElement("label"); lab.className = "spm-opt"; const cb = document.createElement("input"); cb.type = "checkbox";
-    cb.checked = pick.has(c.key); cb.onchange = () => { if (cb.checked) pick.add(c.key); else pick.delete(c.key); go.disabled = !pick.size; };
+    cb.checked = pick.has(c.key); cb.onchange = () => { if (cb.checked) pick.add(c.key); else pick.delete(c.key); go.disabled = goInt.disabled = !pick.size; };
     boxes.push([c, cb]); lab.appendChild(cb); lab.appendChild(document.createTextNode(" " + c.label)); menu.appendChild(lab);
   }
   const foot = document.createElement("div"); foot.className = "spm-foot";
   const reset = document.createElement("button"); reset.type = "button"; reset.className = "btn tiny subtle"; reset.textContent = "QuickBooks default";
-  reset.onclick = () => { pick = new Set(cols.filter(c => c.default).map(c => c.key)); for (const [c, cb] of boxes) cb.checked = pick.has(c.key); go.disabled = false; };
+  reset.onclick = () => { pick = new Set(cols.filter(c => c.default).map(c => c.key)); for (const [c, cb] of boxes) cb.checked = pick.has(c.key); go.disabled = goInt.disabled = false; };
   const cancel = document.createElement("button"); cancel.type = "button"; cancel.className = "btn tiny subtle"; cancel.textContent = "Cancel";
-  const go = document.createElement("button"); go.type = "button"; go.className = "btn tiny"; go.textContent = what;
+  const go = document.createElement("button"); go.type = "button"; go.className = "btn tiny"; go.textContent = "Vendor stub"; go.title = what + " - the one mailed with the check";
+  const goInt = document.createElement("button"); goInt.type = "button"; goInt.className = "btn tiny"; goInt.textContent = "Internal stub";
+  goInt.title = what + " - adds the project, client and the client invoice each bill is paid from (not for the vendor)";
   const close = () => { menu.remove(); document.removeEventListener("mousedown", outside, true); document.removeEventListener("keydown", esc, true); };
   const outside = (e) => { if (!menu.contains(e.target) && e.target !== btn) close(); };
   const esc = (e) => { if (e.key === "Escape") { e.stopPropagation(); close(); } };
   cancel.onclick = close;
-  go.onclick = () => { _stubCols = cols.map(c => c.key).filter(k => pick.has(k)); try { localStorage.setItem(STUB_COLS_LS, JSON.stringify(_stubCols)); } catch {} close(); onPrint(); };
-  foot.appendChild(reset); foot.appendChild(cancel); foot.appendChild(go); menu.appendChild(foot);
+  const run = (kind) => { _stubCols = cols.map(c => c.key).filter(k => pick.has(k)); try { localStorage.setItem(STUB_COLS_LS, JSON.stringify(_stubCols)); } catch {} close(); onPrint(kind); };
+  go.onclick = () => run("vendor"); goInt.onclick = () => run("internal");
+  foot.appendChild(reset); foot.appendChild(cancel); foot.appendChild(go); foot.appendChild(goInt); menu.appendChild(foot);
   document.body.appendChild(menu); _placeMenu(btn, menu);
   setTimeout(() => { document.addEventListener("mousedown", outside, true); document.addEventListener("keydown", esc, true); }, 0);
 }
 let _stubSel = new Set();   // payment ids ticked for a multi-print (owner 2026-09-22: "a box to check in case I want to select multiple payments")
-async function _printStubsSelected(btn) {
+async function _printStubsSelected(btn, kind = "vendor") {
   const ids = [..._stubSel]; if (!ids.length) return;
   btn.disabled = true; const was = btn.textContent;
   let done = 0, failed = [];
@@ -2740,12 +2745,12 @@ async function _printStubsSelected(btn) {
     btn.textContent = `Printing ${done + 1} of ${ids.length}…`;
     try {
       const res = await fetch("/api/bill-payment/stub", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ payment_id: pid, columns: _stubCols || undefined }) });
+        body: JSON.stringify({ payment_id: pid, columns: _stubCols || undefined, kind, refresh: done + failed.length === 0 }) });   // QuickBooks pulled once, on the first
       const j = await res.json(); if (!j.ok) throw new Error(j.error || "print failed");
       done++;
     } catch (e) { failed.push(pid + ": " + e.message); }
   }
-  toast(`${done} stub${done === 1 ? "" : "s"} printed to the vendor folder` + (failed.length ? ` · ${failed.length} failed` : ""), 5000);
+  toast(`${done} ${kind === "internal" ? "internal " : ""}stub${done === 1 ? "" : "s"} printed to the vendor folder` + (failed.length ? ` · ${failed.length} failed` : ""), 5000);
   if (failed.length) console.warn("stub prints failed", failed);
   _stubSel.clear(); btn.textContent = was;
   const d = _vendorData; await _loadStubHistory(_stubHist.vendor); if (_vendorPageShowing(d)) renderVendorPage();
@@ -2791,7 +2796,7 @@ async function _renderVendorPayments(d, body, seq) {
   const bar = document.createElement("div"); bar.className = "stub-bar";
   const selBtn = document.createElement("button"); selBtn.type = "button"; selBtn.className = "btn small stub-sel-btn";
   const selLabel = () => { const n = _stubSel.size; selBtn.textContent = n ? `Print ${n} stub${n === 1 ? "" : "s"}` : "Print stubs for selected"; selBtn.disabled = !n; };
-  selLabel(); selBtn.onclick = () => _stubPrintMenu(selBtn, `Print ${_stubSel.size} stub${_stubSel.size === 1 ? "" : "s"}`, () => _printStubsSelected(selBtn));
+  selLabel(); selBtn.onclick = () => _stubPrintMenu(selBtn, `Print ${_stubSel.size} stub${_stubSel.size === 1 ? "" : "s"}`, (kind) => _printStubsSelected(selBtn, kind));
   { const right = document.createElement("span"); right.className = "stub-bar-right"; _vpRefresh.attach(right, body); right.appendChild(selBtn); bar.appendChild(right); }
   body.insertBefore(bar, _vpRefresh.prog);
   if (!pays.length) { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = (d.payments || []).length ? (_vendorQ.trim() ? `No payments match "${_vendorQ.trim()}".` : "No payments match these filters.") : "No bill payments recorded this year - Refresh from QuickBooks to pull the latest."; body.appendChild(p); _renderStubOrphans(body, d.payments || [], byPay); return; }
@@ -2827,7 +2832,7 @@ async function _renderVendorPayments(d, body, seq) {
     { const sc = document.createElement("td"); sc.className = "left vp-stub"; const hist = byPay.get(pid) || [];
       if (!p.voided) { const b = document.createElement("button"); b.type = "button"; b.className = "btn tiny"; b.textContent = hist.length ? "Print again" : "Print stub";
         b.title = "Payment on top, the bills it paid below - the PDF lands in this vendor's folder under Accounting / Accounts Payable / Bill Payment Stubs";
-        b.onclick = (e) => { e.stopPropagation(); _stubPrintMenu(b, "Print stub", () => _printStub(pid, b)); }; sc.appendChild(b); }
+        b.onclick = (e) => { e.stopPropagation(); _stubPrintMenu(b, "Print stub", (kind) => _printStub(pid, b, kind)); }; sc.appendChild(b); }
       if (hist.length) { const hl = document.createElement("div"); hl.className = "stub-hist";
         const lines = hist.map(h => { const ln = document.createElement("div"); ln.className = "stub-histline"; ln.appendChild(_stubLink(h)); ln.appendChild(_stubPill(h.status)); return ln; });
         _vpCapped(hl, lines, 1, "prints"); sc.appendChild(hl); }   // the latest print on the button's line; older ones behind "+N more" (one-line rows, owner 2026-10-01)
@@ -2922,7 +2927,7 @@ function _renderStubOrphans(body, pays, byPay) {
       const lines = hist.map(h => { const ln = document.createElement("div"); ln.className = "stub-histline"; ln.appendChild(_stubLink(h)); return ln; });
       _vpCapped(hl, lines, 3, "prints"); td.appendChild(hl);
       const b = document.createElement("button"); b.type = "button"; b.className = "btn tiny subtle"; b.textContent = "Print again"; b.title = "Re-print from the mirror's copy of the payment (kept even after a QuickBooks delete)";
-      b.onclick = (e) => { e.stopPropagation(); _stubPrintMenu(b, "Print again", () => _printStub(pid, b)); }; td.appendChild(b);
+      b.onclick = (e) => { e.stopPropagation(); _stubPrintMenu(b, "Print again", (kind) => _printStub(pid, b, kind)); }; td.appendChild(b);
       tr.appendChild(td); }
     tbody.appendChild(tr);
   }

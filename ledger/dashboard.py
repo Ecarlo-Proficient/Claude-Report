@@ -3932,8 +3932,19 @@ class Handler(BaseHTTPRequestHandler):
         cols = body.get("columns") or None
         if cols is not None and not (isinstance(cols, list) and all(isinstance(c, str) for c in cols)):
             return self._json({"ok": False, "error": "columns must be a list of column keys"}, 400)
+        kind = str(body.get("kind") or "vendor")
+        if kind not in bill_payment_stub.KINDS:
+            return self._json({"ok": False, "error": "kind must be vendor or internal"}, 400)
+        # QuickBooks first (owner 2026-10-07, checks 2612/2613 entered minutes before the print): the stub reads the
+        # mirror, so bring it current - a just-entered or just-edited payment prints as QuickBooks has it now. A
+        # failed refresh still prints from the copy held. refresh=false skips it (a multi-print refreshes once).
+        if body.get("refresh", True) is not False:
+            self._refresh_for_stub(with_payments=False)
         try:
-            res = bill_payment_stub.print_stub(pid, cols, paths.get("ACB_COMPANY_NAME", ""), self.db_path)
+            res = self._print_stub_once(pid, cols, kind)
+            if not res.get("ok") and res.get("missing"):
+                self._refresh_for_stub(with_payments=True)
+                res = self._print_stub_once(pid, cols, kind)
         except (ValueError, FileNotFoundError) as e:
             return self._json({"ok": False, "error": str(e)}, 400)
         except Exception as e:                            # noqa: BLE001 - locked DB, missing mirror key, a hung Chrome: still an answer
@@ -3941,6 +3952,40 @@ class Handler(BaseHTTPRequestHandler):
         if res.get("ok"):
             res.pop("stub", None)
         self._json(res, 200 if res.get("ok") else 500)
+
+    def _refresh_for_stub(self, with_payments: bool) -> bool:
+        """The mirror's change feed (seconds); with_payments also reloads this year's bill payments, so a
+        payment the ledger has never seen gets its bills and their client invoices."""
+        steps = ["refresh_mirror.py"] + (["load_bill_payments.py"] if with_payments else [])
+        ok = True
+        for step in steps:
+            try:
+                r = subprocess.run([sys.executable, str(HERE / step)], capture_output=True, text=True, timeout=600)  # noqa: S603 - our own script
+                ok = ok and r.returncode == 0
+            except (OSError, subprocess.TimeoutExpired):
+                ok = False
+        return ok
+
+    def _print_stub_once(self, pid: str, cols, kind: str) -> dict:
+        invoice_of = self._stub_invoice_map(pid) if kind == "internal" else None
+        return bill_payment_stub.print_stub(pid, cols, paths.get("ACB_COMPANY_NAME", ""), self.db_path,
+                                            kind=kind, invoice_of=invoice_of)
+
+    def _stub_invoice_map(self, pid: str) -> dict:
+        """bill id -> the client invoice it is billed through, exactly as the vendor page shows it (the same
+        _fetch_vendor record: Bill Tracker draw #, live QuickBooks paid state)."""
+        con = _connect(self.db_path)
+        try:
+            r = con.execute("SELECT vendor FROM bill_payment WHERE qbo_txn_id = ?", (str(pid),)).fetchone()
+            if not r:
+                return {}
+            data = _fetch_vendor(con, r["vendor"])
+        except sqlite3.OperationalError:
+            return {}
+        finally:
+            con.close()
+        pay = next((p for p in data.get("payments") or [] if str(p.get("qbo_txn_id")) == str(pid)), None)
+        return {str(b["bill_id"]): b for b in (pay or {}).get("bills") or [] if b.get("bill_id")}
 
     def _pnl_portfolio(self):
         con = _connect(self.db_path)
