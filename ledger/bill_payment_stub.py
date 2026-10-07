@@ -799,7 +799,7 @@ def stub_html(stubs: Sequence[dict], columns: Optional[Sequence[str]] = None,
             if not val:
                 continue
             cls = "v amt" if lbl == "Amount" else "v"
-            if internal and lbl == "Amount":              # owner 2026-10-07: a divider above Amount, its label as big as the $
+            if lbl == "Amount":                           # owner 2026-10-07: a divider above Amount, its label as big as the $ (both stubs)
                 parts.append("<div class='kvrule'></div>")
                 parts.append(f"<div class='lbl amtl'>{_esc(lbl)}</div><div class='{cls}'>{_esc(val)}</div>")
                 continue

@@ -5,6 +5,7 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
 
 ## DONE / FINALIZED
 - 2026-10-07 · **Stub header: no date under the title** (owner) - Payment date already sits top right; the page starts a line higher.
+  The vendor stub also gets the internal stub's divider above Amount, the label as big as the $.
 - 2026-10-07 · **Stub column picker = the stub** (owner: "columns not matching stub"). The picker lists the stub's own
   money labels - **Open balance** (before this payment, new `balance_before` choice), **Paid** (`amount`), **New balance**
   (`open_balance`) - and the vendor stub prints exactly what is ticked (money columns kept on the right). A pick saved
