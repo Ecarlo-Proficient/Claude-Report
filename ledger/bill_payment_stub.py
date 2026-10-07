@@ -696,7 +696,6 @@ body { margin: 0; font-family: Helvetica, Arial, -apple-system, sans-serif; font
 .hdr { text-align: center; margin: 0 0 18px; }
 .hdr .co { font-size: 20px; font-weight: 700; margin: 0; }
 .hdr .rpt { font-size: 14px; margin: 3px 0 0; }
-.hdr .asof { font-size: 12px; margin: 2px 0 0; }
 .pay { display: flex; justify-content: space-between; align-items: flex-start; border-top: 1px solid #333;
        border-bottom: 1px solid #333; padding: 9px 4px; margin-bottom: 14px; }
 .pay .to { max-width: 55%; }
@@ -779,7 +778,7 @@ def stub_html(stubs: Sequence[dict], columns: Optional[Sequence[str]] = None,
             parts.append(f"<p class='co'>{_esc(company)}</p>")
         internal = s.get("kind") == "internal"
         parts.append(f"<p class='rpt'>Bill Payment Stub{' - Internal' if internal else ''}</p>")
-        parts.append(f"<p class='asof'>{_esc(mdy(s['txn_date']))}</p>")
+        # no date under the title (owner 2026-10-07): Payment date sits on the right; the page moves up a line
         if internal:
             parts.append("<div class='internal'>INTERNAL - NOT FOR THE VENDOR</div>")
         parts.append("</div>")
