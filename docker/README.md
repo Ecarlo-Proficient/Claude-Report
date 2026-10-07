@@ -106,9 +106,10 @@ What to watch:
 ### 7b. Updating the server - no terminal needed
 
 `docker/update_server.sh` pulls the checkout's branch, rebuilds + restarts (the mode stays as server.env says) and puts
-the share's inherited permissions back on the test trackers. Copy it once to `/volume1/docker/automation/update_server.sh`
-(the `docker` share), then in DSM: Control Panel > Task Scheduler > Create > Scheduled Task > User-defined script, user
-**root**, script `bash /volume1/docker/automation/update_server.sh`, no schedule needed - select it and **Run**. The result
+the share's inherited permissions back on the test trackers. In DSM: Control Panel > Task Scheduler > Create > Scheduled
+Task > User-defined script, user **root**, no schedule needed. **First time** (the checkout is older than the script): paste
+the script's whole text into the Run command box. **After that**, the box holds one line:
+`bash /volume1/docker/automation/src/docker/update_server.sh`. Select the task and **Run**. The result
 is appended to `/volume1/docker/automation/update_server.log` (readable from the Mac at `/Volumes/docker/automation/`).
 
 ### 8. Going live - NOT YET
