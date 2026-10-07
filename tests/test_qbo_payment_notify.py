@@ -73,3 +73,21 @@ def test_no_webhook_is_off(monkeypatch, tmp_path):
     _mirror(monkeypatch, [_pay("1", 1)])
     assert q.run("", tmp_path, now=NOW) == {"posted": 0, "failed": 0, "would_post": 0, "seeded": 0}
     assert not (tmp_path / q.STATE_FILE).exists()
+
+
+def test_dry_run_with_no_record_lists_the_window(monkeypatch, tmp_path):
+    _mirror(monkeypatch, [_pay("1", 1), _pay("2", 200)])
+    assert q.run("", tmp_path, dry_run=True, now=NOW)["would_post"] == 1      # only the one inside 72h
+    assert not (tmp_path / q.STATE_FILE).exists()
+
+
+def test_server_test_mode_keeps_its_own_record_and_says_test(monkeypatch, tmp_path):
+    sent = []
+    monkeypatch.setattr(q.teams, "post", lambda hook, payload: sent.append(payload) or True)
+    _mirror(monkeypatch, [_pay("1", 1)])
+    q.run("hook", tmp_path, now=NOW, test=True)                              # first run seeds the TEST record
+    _mirror(monkeypatch, [_pay("1", 1), _pay("2", 1)])
+    assert q.run("hook", tmp_path, now=NOW, test=True)["posted"] == 1
+    assert (tmp_path / q.TEST_STATE_FILE).exists() and not (tmp_path / q.STATE_FILE).exists()
+    title = sent[0]["attachments"][0]["content"]["body"][0]["text"]
+    assert title == "TEST - QuickBooks payment received"

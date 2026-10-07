@@ -18,6 +18,11 @@ Rules:
     file or the writer moving to the office server never replays old payments.
   * No webhook (TEAMS_WEBHOOK_PAYMENTS) = off. Dry run = log what would post, state untouched.
   * A failed post is not marked seen; the next run tries again.
+
+The office server's test (the user 2026-10-07: test it on the server BEFORE the team relies on it): in test mode
+docker/scheduler.py runs `qbo_payment_notify.py --test` every AP/AR cycle - cards titled "TEST - ..." to
+TEAMS_WEBHOOK_PAYMENTS_TEST, posted ids kept apart (qbo_payments_posted.test.json); with no test webhook it runs as a
+dry run, so its log lists every payment it would post. Live, the AR run posts (run_invoice_sync.py).
 """
 from __future__ import annotations
 
@@ -35,6 +40,7 @@ from shared import teams_notify as teams  # noqa: E402
 log = logging.getLogger(__name__)
 
 STATE_FILE = "qbo_payments_posted.json"
+TEST_STATE_FILE = "qbo_payments_posted.test.json"
 LOOKBACK_HOURS = 72
 KEEP_DAYS = 30
 ONLINE_SOURCES = {"EINVOICE", "INTUITMASPAYMENT"}
@@ -78,7 +84,7 @@ def _client(cust_id: str, customers: Dict[str, dict]) -> str:
     return name
 
 
-def card(pay: dict, method: str, client: str, project: str, invoices: List[dict]) -> dict:
+def card(pay: dict, method: str, client: str, project: str, invoices: List[dict], test: bool = False) -> dict:
     """The Teams card: who paid, how much, which invoice(s) and what is still open on each."""
     inv_lines = []
     for inv in invoices:
@@ -95,7 +101,7 @@ def card(pay: dict, method: str, client: str, project: str, invoices: List[dict]
     ]
     body = [
         {"type": "TextBlock", "size": "Medium", "weight": "Bolder", "color": "Good", "wrap": True,
-         "text": "QuickBooks payment received"},
+         "text": ("TEST - " if test else "") + "QuickBooks payment received"},
         {"type": "FactSet", "facts": facts},
         {"type": "ActionSet", "actions": [
             {"type": "Action.OpenUrl", "title": "Open in QuickBooks", "url": QBO_LINK.format(pay.get("Id"))}]},
@@ -121,7 +127,7 @@ def _save_state(path: Path, state: dict, now: dt.datetime) -> None:
 
 
 def run(webhook: str, state_dir: Path, dry_run: bool = False,
-        now: Optional[dt.datetime] = None) -> dict:
+        now: Optional[dt.datetime] = None, test: bool = False) -> dict:
     """Post every new online payment once. Returns counts for the run log; never raises on a post."""
     now = now or dt.datetime.now(dt.timezone.utc)
     out = {"posted": 0, "failed": 0, "would_post": 0, "seeded": 0}
@@ -133,12 +139,12 @@ def run(webhook: str, state_dir: Path, dry_run: bool = False,
     methods = {r["Id"]: r.get("Name") or "" for r in qbo_mirror.load("PaymentMethod")}
     online = [p for p in qbo_mirror.load("Payment") if is_online(p, methods)]
 
-    path = Path(state_dir) / STATE_FILE
+    path = Path(state_dir) / (TEST_STATE_FILE if test else STATE_FILE)
     state = _load_state(path)
-    if state is None:
-        if dry_run:
-            log.info("qbo payments (dry run): first run would mark %d payments seen, post none", len(online))
-            return out
+    if state is None and dry_run:                 # nothing seen yet: list what the lookback window holds
+        log.info("qbo payments (dry run): no posted record yet - listing the last %dh", LOOKBACK_HOURS)
+        state = {"posted": {}}
+    elif state is None:
         state = {"seeded": now.isoformat(), "posted": {p["Id"]: now.isoformat() for p in online}}
         _save_state(path, state, now)
         out["seeded"] = len(online)
@@ -158,7 +164,7 @@ def run(webhook: str, state_dir: Path, dry_run: bool = False,
                    if lt.get("TxnType") == "Invoice"]
         invoices = [i for i in (qbo_mirror.get("Invoice", x) for x in inv_ids) if i]
         method = methods.get(str((p.get("PaymentMethodRef") or {}).get("value") or ""), "")
-        payload = card(p, method, _client(cust_id, customers), project, invoices)
+        payload = card(p, method, _client(cust_id, customers), project, invoices, test=test)
         label = f"payment {p['Id']} {_money(p.get('TotalAmt'))} invoice(s) {[i.get('DocNumber') for i in invoices]}"
         if dry_run:
             out["would_post"] += 1
@@ -174,3 +180,33 @@ def run(webhook: str, state_dir: Path, dry_run: bool = False,
     if not dry_run:
         _save_state(path, state, now)
     return out
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    """Standalone run (the office server's test step). Webhook: TEAMS_WEBHOOK_PAYMENTS[_TEST] from the environment
+    or the key library; posted ids in STATE_DIR (default invoice-sync/state)."""
+    import argparse
+    from shared import qbo_vault
+    ap = argparse.ArgumentParser(description="QuickBooks payment received cards")
+    ap.add_argument("--test", action="store_true", help="TEST cards to TEAMS_WEBHOOK_PAYMENTS_TEST, own posted record")
+    ap.add_argument("--dry-run", action="store_true", help="log what would post, post nothing, record nothing")
+    a = ap.parse_args(argv)
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    name = "TEAMS_WEBHOOK_PAYMENTS_TEST" if a.test else "TEAMS_WEBHOOK_PAYMENTS"
+    try:
+        hook = qbo_vault.get_secret(name)
+    except qbo_vault.SecretsError:
+        hook = ""
+    dry = a.dry_run or not hook
+    if not hook and not a.dry_run:
+        log.info("qbo payments: %s not set - dry run", name)
+    import os
+    state_dir = Path(os.getenv("STATE_DIR") or Path(__file__).resolve().parent / "state")
+    state_dir.mkdir(parents=True, exist_ok=True)
+    res = run(hook, state_dir, dry_run=dry, test=a.test)
+    print(json.dumps(res))
+    return 1 if res["failed"] else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

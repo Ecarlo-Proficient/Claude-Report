@@ -9,6 +9,7 @@ What it runs (the owner's plan, Office server move 09/30/2026):
   AP/AR      every APAR_EVERY_SECONDS (900), AP first then AR, as ONE job:
                AP  bill-tracker/excel_bill_sync.py   -> Bill Tracker.xlsx (Accounting share)
                AR  invoice-sync/run_invoice_sync.py  -> Notion + Teams + Invoice Tracker.xlsx
+               (test mode adds payments-test: invoice-sync/qbo_payment_notify.py --test - TEST QuickBooks payment cards)
              AR still runs when AP fails, so Notion stays current.
 
 Two modes (ACB_SERVER_MODE):
@@ -56,7 +57,7 @@ SHARE_STATUS = os.getenv("SHARE_STATUS_FILE", "").strip()
 WRITER_FILE = os.getenv("WRITER_FILE", "").strip()
 TEST_DIR = Path(os.getenv("TEST_DIR", "/mnt/accounting/_server-test"))
 HOST = os.getenv("ACB_HOST_NAME", "office-server")
-TIMEOUTS = {"mirror": 2700, "reconcile": 3600, "ap": 1800, "ar": 1200, "ar-export": 900}
+TIMEOUTS = {"mirror": 2700, "reconcile": 3600, "ap": 1800, "ar": 1200, "ar-export": 900, "payments-test": 300}
 
 _stop = False
 _state: dict = {"mode": MODE, "host": HOST, "jobs": {}}
@@ -188,9 +189,12 @@ def _apar() -> None:
     else:
         _seed_test_copies()
         _run("ap", [PY, "bill-tracker/excel_bill_sync.py"], {"ACB_BILL_TRACKER_XLSX": str(TEST_DIR / "Bill Tracker.xlsx")})
-        quiet = {"TEAMS_WEBHOOK_MFD_PAID": "", "ABSORB_NOTES": "0"}   # test: no cards, no notes pushed to Notion
+        quiet = {"TEAMS_WEBHOOK_MFD_PAID": "", "TEAMS_WEBHOOK_PAYMENTS": "", "ABSORB_NOTES": "0"}   # test: no cards, no notes to Notion
         _run("ar", [PY, "invoice-sync/run_invoice_sync.py", "--dry-run"], quiet)
         _run("ar-export", [PY, "invoice-sync/preview_export.py"], dict(quiet, PREVIEW_EXPORT_PATH=str(TEST_DIR / "Invoice Tracker.xlsx")))
+        # the QuickBooks payment cards' test (owner 2026-10-07): "TEST" cards to TEAMS_WEBHOOK_PAYMENTS_TEST, or a dry run
+        # listing what would post while that is blank. Live, the AR run posts them itself.
+        _run("payments-test", [PY, "invoice-sync/qbo_payment_notify.py", "--test"])
 
 
 def _stop_handler(*_a) -> None:

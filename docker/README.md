@@ -64,6 +64,8 @@ In the same `secrets.env`:
 - `MIRROR_KEY` - the server's own mirror key. Generate ON the Synology and paste straight into the file:
   `python3 -c "import os,base64;print(base64.b64encode(os.urandom(32)).decode())"`
 - `NOTION_SECRET`, `TEAMS_WEBHOOK_MFD_PAID`, `TEAMS_WEBHOOK_ALERTS` - the owner provides them on the Synology.
+- `TEAMS_WEBHOOK_PAYMENTS_TEST` - the Payments channel's Workflows webhook, for the QuickBooks payment card test (step 7).
+  Leave `TEAMS_WEBHOOK_PAYMENTS` blank until go-live.
 
 ### 5. Paths and ids
 
@@ -95,6 +97,11 @@ What to watch:
 - the test Bill Tracker / Invoice Tracker vs the Mac's live ones, sheet by sheet (the same rows and totals);
 - open the test trackers in Excel on a Mac over the share and leave them open - the server's next runs must still land
   and a reopen shows the new data.
+- **QuickBooks payment cards** (`payments-test` in status.json, log `payments-test.log`): every payment a client makes
+  through the QuickBooks invoice link posts ONE "TEST - QuickBooks payment received" card to the Payments channel within
+  ~15 minutes (the first run only records what is already there). Check each card against QuickBooks (client, project,
+  amount, invoice #, paid in full / still open) and that a typed-in check never posts. No test webhook yet = the log
+  lists what would post. Go-live: move the URL to `TEAMS_WEBHOOK_PAYMENTS`, blank the TEST line, restart.
 
 ### 8. Going live - NOT YET
 

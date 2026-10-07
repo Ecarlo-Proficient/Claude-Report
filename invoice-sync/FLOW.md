@@ -1,6 +1,6 @@
 # invoice-sync/ - how the AR invoice sync and its Excel mirror work
 
-Last changed: 10/07/2026 - QuickBooks payment received card: every payment a client makes through the
+Last changed: 10/07/2026 - `qbo_payment_notify.py` runs standalone too (`--test` = "TEST" cards to TEAMS_WEBHOOK_PAYMENTS_TEST with their own posted record - the office server's test step; a dry run with no record lists the last 72h). Earlier the same day: QuickBooks payment received card: every payment a client makes through the
 e-invoice link (bank / card), once, to the payments channel - read from the mirror, first run seeds.
 
 Update this chart - and the line above - in the same commit as any change to `invoice-sync/`
@@ -33,7 +33,7 @@ flowchart LR
     MFD[("Notion<br/>MFD Invoice Tracker")]:::out
     RES[("Notion<br/>Res/Com Invoice Tracker")]:::out
     TEAMS[("Teams<br/>MFD paid / short-pay")]:::out
-    PAYN["qbo_payment_notify.py<br/>QuickBooks Payments only, not seen before, under 72h"]:::tool
+    PAYN["qbo_payment_notify.py<br/>QuickBooks Payments only, not seen before, under 72h<br/>(--test on the office server: TEST cards)"]:::tool
     TPAY[("Teams payments channel<br/>QuickBooks payment received")]:::out
     OD[("Invoice Tracker.xlsx<br/>All Open · CP / MFD / RP Aging · Lease Invoices ·<br/>Open Invoices · Cash Flow · Pay Calendar")]:::out
     HOLD[("skipped this run<br/>close the file, re-run sync-ar")]:::out

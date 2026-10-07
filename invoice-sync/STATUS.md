@@ -6,6 +6,10 @@ mirror. Update this in the SAME commit as any change to this tool.
 ---
 
 ## DONE / FINALIZED
+- 10/07/2026 · **Payment cards: server test mode.** `qbo_payment_notify.py` runs standalone (`--test`, `--dry-run`):
+  test = "TEST - QuickBooks payment received" to `TEAMS_WEBHOOK_PAYMENTS_TEST`, posted ids in
+  `qbo_payments_posted.test.json`; a dry run with no record now lists the last 72h (it used to list nothing). The office
+  server runs it every AP/AR cycle in test mode (docker/). Dry run on the live mirror: invoice 34558's 5,000 of 10/07.
 - 10/07/2026 · **QuickBooks payment received cards (the user, payment intake process).** `qbo_payment_notify.py`, run by
   `run_invoice_sync.py` after the Notion sync: every Payment with TxnSource EInvoice / INTUITMASPAYMENT or method
   "QuickBooks Payments-..." (checks / ACH / wires typed in never match) posts ONE card - client, project, amount, invoice #

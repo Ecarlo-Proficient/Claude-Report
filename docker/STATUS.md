@@ -17,6 +17,11 @@ Progression record for the office server package. Update in the SAME commit as a
   builds on the Synology.
 
 ## IN PROGRESS
+- 2026-10-07 · **QuickBooks payment cards - server test before the team uses them (the owner).** Test mode runs
+  `payments-test` after AR (`qbo_payment_notify.py --test`): TEST cards to `TEAMS_WEBHOOK_PAYMENTS_TEST`, own posted record,
+  dry-run log while that key is blank. To do: rebuild the image, add the Payments channel webhook to secrets.env, watch a
+  week of cards against QuickBooks (README step 7). Mac: keep `TEAMS_WEBHOOK_PAYMENTS` unset during the test so only
+  the server posts.
 - 2026-10-05 · The test week is running on the office Synology (test mode). Every job ok since the first full mirror
   (mirror every 3 min, AP + AR + AR export every 15 min, reconcile counts QBO = mirror). First side-by-side vs the
   Mac's live trackers: Invoice Tracker - every open invoice and balance matches (layout differs only because the
