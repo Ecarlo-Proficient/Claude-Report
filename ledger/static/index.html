@@ -456,6 +456,38 @@
     </section><!-- /sec: dupcustomers -->
     </div><!-- /tab: dupcustomers -->
 
+    <!-- Reclassify transactions (owner 2026-10-07): cost lines from one project to another, line level - ledger/reclassify.py -->
+    <div class="tab-page" data-tab="reclassify" hidden>
+    <section class="subpage" data-sec="reclassify" id="sec-reclassify">
+      <section class="widget">
+        <div class="widget-head">
+          <h2>Reclassify transactions <span class="count" id="rcNote"></span></h2>
+          <span class="wh-right">
+            <button class="btn small" id="btnRcRefresh" title="Refresh the mirror from QuickBooks (the change feed - seconds, Touch ID), then preview again">⟳&nbsp;Refresh from QuickBooks</button>
+          </span>
+        </div>
+        <div class="sync-progress" id="rcProg" hidden>
+          <div class="sync-bar"><div class="sync-bar-fill" id="rcFill"></div></div>
+          <div class="sync-step" id="rcStep"></div>
+        </div>
+        <div class="filters rc-pick">
+          <label class="rc-lbl">From <input type="search" id="rcFrom" list="rcProjects" placeholder="project #" autocomplete="off" spellcheck="false"></label>
+          <span class="dim">→</span>
+          <label class="rc-lbl">To <input type="search" id="rcTo" list="rcProjects" placeholder="project #" autocomplete="off" spellcheck="false"></label>
+          <button type="button" class="btn small" id="btnRcPreview">Preview</button>
+          <datalist id="rcProjects"></datalist><datalist id="rcCodes"></datalist>
+        </div>
+        <div class="rc-codes" id="rcCodesBar" hidden></div>
+        <div id="rcMsg"></div>
+        <div class="table-scroll">
+          <table class="grid" id="rcTable"><thead></thead><tbody></tbody></table>
+        </div>
+        <div class="qa-repair-act" id="rcAct" hidden></div>
+        <div id="rcResult"></div>
+      </section>
+    </section><!-- /sec: reclassify -->
+    </div><!-- /tab: reclassify -->
+
     <!-- Bills to fix: its own page (owner 2026-09-23: "i have to scroll past the deleted section just to get to the bill audit") -->
     <div class="tab-page" data-tab="billaudit" hidden>
     <section class="subpage" data-sec="accounting" id="sec-accounting">

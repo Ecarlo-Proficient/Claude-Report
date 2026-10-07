@@ -268,12 +268,12 @@ const NAV_GROUPS = [
   { id: "projects",  label: "Projects",  tabs: ["projects"] },
   { id: "vendors",   label: "Vendors",   tabs: ["vendorcenter", "bills", "paybills"] },   // Vendor Center first (owner 2026-09-28); Pay bills its own sub-tab (owner 2026-09-29: "a dedicated sub menu under vendors")
   { id: "customers", label: "Customers", tabs: ["invoices", "customercenter", "payments", "sales"] },
-  { id: "company",   label: "Company",   tabs: ["money", "billaudit", "qboaudit", "checkdrift", "uncleared", "dupcustomers", "processes"] },   // each audit is its own page (owner 2026-09-23 / 09-24 / 09-30); Processes out of the gear (owner 2026-10-01: "should not be hidden in settings")
+  { id: "company",   label: "Company",   tabs: ["money", "billaudit", "qboaudit", "checkdrift", "uncleared", "dupcustomers", "reclassify", "processes"] },   // each audit is its own page (owner 2026-09-23 / 09-24 / 09-30); Processes out of the gear (owner 2026-10-01: "should not be hidden in settings")
   { id: "tools",     label: "Tools",     tabs: ["wipreview", "review", "console"], hidden: true },   // from the gear, not the bar
 ];
 const TAB_LABELS = {
   projects: "Projects", bills: "Bill Tracker", vendorcenter: "Vendor Center", invoices: "Invoice Tracker", customercenter: "Customer Center",
-  payments: "Payments received", sales: "Sales pipeline", money: "Money", billaudit: "Bills to fix", qboaudit: "QBO changes", checkdrift: "Checks QBO changed", uncleared: "Uncleared checks", dupcustomers: "Duplicate customers",
+  payments: "Payments received", sales: "Sales pipeline", money: "Money", billaudit: "Bills to fix", qboaudit: "QBO changes", checkdrift: "Checks QBO changed", uncleared: "Uncleared checks", dupcustomers: "Duplicate customers", reclassify: "Reclassify transactions",
   wipreview: "WIP Review", review: "WIP review", console: "Console", processes: "Processes", paybills: "Pay bills", liens: "Lien register",
 };
 const HIDDEN_TAB_GROUP = { liens: "vendors" };   // pages without a sub-tab (opened from the Bill Tracker): the Vendors group stays lit
@@ -325,6 +325,7 @@ function setTab(t) {
   if (t === "checkdrift") loadCheckDrift();
   if (t === "uncleared") loadUncleared();
   if (t === "dupcustomers") loadDupCustomers();
+  if (t === "reclassify") loadReclassify();
   if (t === "money") { loadHealth(); renderPnl(); }
   if (t === "wipreview") loadWipReview();
   if (t === "review") loadReview();
@@ -9472,6 +9473,117 @@ function renderUncleared() {
 let DC = null, dcFilter = "all";
 const DC_BAD = new Set(["Both have invoices", "Money on duplicate"]);
 const DC_KIND = { Bill: "bill", Purchase: "expense", JournalEntry: "journal", VendorCredit: "vendorcredit", Invoice: "invoice" };
+// ── Reclassify transactions (owner 2026-10-07: "add this tool as reclassify transactions in the ledger") ──
+// Cost LINES from one project to another, line level: a multi-job sub bill keeps its other lines. Preview reads the
+// mirror (/api/reclassify/plan, no write); every line is ticked except closed-period ones (closing password - by hand);
+// an optional cost-code swap per code on FROM. The write runs only after "Are you sure?", and the server refuses unless
+// the ticked lines are still exactly the preview; each document is re-read live, backed up, and proven after the write.
+let RC = null, RC_OPT = null, rcTick = new Set();
+const rcKind = e => e === "Purchase" ? "expense" : e === "VendorCredit" ? "vendorcredit" : "bill";
+const rcType = e => e === "Purchase" ? "Expense" : e === "VendorCredit" ? "Vendor credit" : "Bill";
+async function loadReclassify() {
+  if (RC_OPT && RC_OPT.ok) return;
+  try { RC_OPT = await (await fetch("/api/reclassify/options")).json(); } catch (e) { RC_OPT = { ok: false, error: String(e) }; }
+  const pl = $("#rcProjects"), cl = $("#rcCodes"); if (!pl || !RC_OPT.ok) return;
+  pl.innerHTML = ""; cl.innerHTML = "";
+  for (const p of RC_OPT.projects) { const o = document.createElement("option"); o.value = p.proj; o.label = p.name; pl.appendChild(o); }
+  for (const c of RC_OPT.codes) { const o = document.createElement("option"); o.value = c; cl.appendChild(o); }
+}
+function rcRecode() {
+  return $$("#rcCodesBar input[data-code]").map(i => [i.dataset.code, i.value.trim().toUpperCase()])
+    .filter(([o, n]) => n && n !== o).map(([o, n]) => `${o}=${n}`).join(",");
+}
+async function rcPreview() {
+  const from = ($("#rcFrom").value || "").trim().toUpperCase(), to = ($("#rcTo").value || "").trim().toUpperCase();
+  const msg = $("#rcMsg"); msg.innerHTML = ""; $("#rcResult").innerHTML = "";
+  if (!from || !to) { rcLine(msg, "Pick both projects.", "neg"); return; }
+  const keep = RC && RC.ok && RC.from === from ? rcRecode() : "";
+  const btn = $("#btnRcPreview"); btn.disabled = true; btn.textContent = "Reading…";
+  skeletonInto($("#rcTable").tBodies[0] || $("#rcTable"), 6);
+  try { RC = await (await fetch(`/api/reclassify/plan?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&recode=${encodeURIComponent(keep)}`)).json(); }
+  catch (e) { RC = { ok: false, error: String(e) }; }
+  btn.disabled = false; btn.textContent = "Preview";
+  rcTick = new Set(RC.ok ? RC.rows.filter(r => !r.closed).map(r => r.key) : []);
+  renderReclassify();
+}
+function rcLine(host, text, cls) { const x = document.createElement("div"); x.className = "cd-ra-line" + (cls ? " " + cls : ""); x.textContent = text; host.appendChild(x); return x; }
+function renderReclassify() {
+  const table = $("#rcTable"), thead = table.querySelector("thead"), tbody = table.querySelector("tbody");
+  const msg = $("#rcMsg"), bar = $("#rcCodesBar"), act = $("#rcAct"), note = $("#rcNote");
+  msg.innerHTML = ""; thead.innerHTML = ""; tbody.innerHTML = ""; act.hidden = true; act.innerHTML = "";
+  if (!RC || !RC.ok) { bar.hidden = true; note.textContent = ""; if (RC) rcLine(msg, RC.error || "failed", "neg"); return; }
+  note.textContent = `${RC.from_name} → ${RC.to_name}`;
+  bar.hidden = !RC.codes_on_from.length; bar.innerHTML = "";
+  if (RC.codes_on_from.length) {
+    const lab = document.createElement("span"); lab.className = "seg-lbl"; lab.textContent = "Cost code"; bar.appendChild(lab);
+    for (const c of RC.codes_on_from) {
+      const w = document.createElement("label"); w.className = "rc-code"; w.append(c + " → ");
+      const i = document.createElement("input"); i.type = "search"; i.dataset.code = c; i.setAttribute("list", "rcCodes"); i.placeholder = "same";
+      i.value = RC.recode[c.toUpperCase()] || ""; i.onchange = rcPreview; w.appendChild(i); bar.appendChild(w);
+    }
+  }
+  if (!RC.rows.length) rcLine(msg, `No bills, expenses or vendor credits on ${RC.from}.`);
+  for (const j of RC.je) rcLine(msg, `Journal entry ${j.doc || j.id} · ${fmtDateShort(j.date)} · ${qaCents(j.amount)} on ${RC.from} - not moved here.`, "warn");
+  if (!RC.rows.length) return;
+  const open = RC.rows.filter(r => !r.closed);
+  const trh = document.createElement("tr");
+  const thc = document.createElement("th"); const all = document.createElement("input"); all.type = "checkbox";
+  all.checked = open.length && open.every(r => rcTick.has(r.key)); all.title = "Tick / untick every line";
+  all.onchange = () => { rcTick = new Set(all.checked ? open.map(r => r.key) : []); renderReclassify(); };
+  thc.appendChild(all); trh.appendChild(thc);
+  for (const [h, c] of [["Type", "left"], ["Doc #", "left"], ["Date", "left"], ["Vendor", "left"], ["Cost code", "left"], ["Amount", "right"], ["Lines on doc", "right"], ["Description", "left"]]) {
+    const th = document.createElement("th"); th.className = c; th.textContent = h; trh.appendChild(th); }
+  thead.appendChild(trh);
+  for (const r of RC.rows) {
+    const tr = document.createElement("tr"); if (r.closed) tr.className = "dim";
+    const td = document.createElement("td"); const cb = document.createElement("input"); cb.type = "checkbox";
+    cb.checked = rcTick.has(r.key); cb.disabled = r.closed; if (r.closed) cb.title = `Dated on or before the books-closed date (${fmtDateShort(RC.closed_date)}) - move it in QuickBooks with the closing password`;
+    cb.onchange = () => { cb.checked ? rcTick.add(r.key) : rcTick.delete(r.key); rcActions(); };
+    td.appendChild(cb); tr.appendChild(td);
+    tr.appendChild(leftText(rcType(r.entity) + (r.closed ? " · closed" : "")));
+    tr.appendChild(qboLinkCell(r.doc || r.id, qboUrl(rcKind(r.entity), r.id), "Open in QuickBooks"));
+    tr.appendChild(leftText(fmtDateShort(r.date))); tr.appendChild(leftText(r.vendor));
+    tr.appendChild(leftText(r.new_code ? `${r.code} → ${r.new_code}` : r.code));
+    for (const v of [qaCents(r.signed), String(r.doc_lines)]) { const c = document.createElement("td"); c.className = "right"; c.textContent = v; tr.appendChild(c); }
+    tr.appendChild(leftText(r.desc)); tbody.appendChild(tr);
+  }
+  rcActions();
+}
+function rcPicked() { return RC.rows.filter(r => !r.closed && rcTick.has(r.key)); }
+function rcActions() {
+  const act = $("#rcAct"); act.hidden = false; act.innerHTML = "";
+  const pick = rcPicked(), amt = Math.round(pick.reduce((s, r) => s + r.signed, 0) * 100) / 100;
+  const s = document.createElement("span"); s.className = "dim"; s.textContent = `${pick.length} line${pick.length !== 1 ? "s" : ""} · ${qaCents(amt)}  `; act.appendChild(s);
+  const w = document.createElement("button"); w.type = "button"; w.className = "btn small primary"; w.textContent = "Reclassify in QuickBooks…";
+  w.disabled = !pick.length; w.onclick = () => rcWrite(pick, amt, w); act.appendChild(w);
+}
+async function rcWrite(pick, amt, btn) {
+  const docs = new Set(pick.map(r => r.entity + r.id)).size;
+  const swaps = Object.entries(RC.recode).map(([o, n]) => `${o} → ${n}`).join(", ");
+  if (!confirm(`Are you sure?\n\nThis writes to QuickBooks: ${pick.length} line${pick.length !== 1 ? "s" : ""} on ${docs} document${docs !== 1 ? "s" : ""}, ${qaCents(amt)},\nmove from ${RC.from} to ${RC.to}.`
+    + (swaps ? `\nCost code on those lines: ${swaps}.` : "") + `\n\nOnly those lines change. Each document is backed up first.`)) return;
+  btn.disabled = true; btn.textContent = "Writing…";
+  let res;
+  try { res = await (await fetch("/api/reclassify/commit", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ from: RC.from, to: RC.to, recode: Object.entries(RC.recode).map(([o, n]) => `${o}=${n}`).join(","),
+                           keys: pick.map(r => r.key), n: pick.length, amount: amt, confirm: true }) })).json(); }
+  catch (e) { res = { ok: false, error: String(e) }; }
+  const out = $("#rcResult"); out.innerHTML = "";
+  if (res.results && res.results.length) {
+    const t = document.createElement("table"); t.className = "qa-repair-tbl";
+    t.innerHTML = `<thead><tr><th class="left">Doc #</th><th class="left">Result</th><th class="left"></th></tr></thead>`;
+    const tb = document.createElement("tbody");
+    for (const x of res.results) { const tr = document.createElement("tr");
+      tr.appendChild(qboLinkCell(x.doc, qboUrl(rcKind(x.entity), x.id), "Open in QuickBooks"));
+      tr.appendChild(leftText(x.result)); tr.appendChild(leftText(x.detail)); tb.appendChild(tr); }
+    t.appendChild(tb); out.appendChild(t);
+  }
+  rcLine(out, res.ok ? `Done: ${res.moved_lines} line${res.moved_lines !== 1 ? "s" : ""} on ${res.moved_docs} document${res.moved_docs !== 1 ? "s" : ""} now on ${RC.to}.`
+    + (res.mirror_refreshed === false ? " Refresh from QuickBooks to update this page." : "") : `Stopped: ${res.error || "failed"}`, res.ok ? "ok" : "neg");
+  btn.textContent = "Reclassify in QuickBooks…"; btn.disabled = false;
+  if (res.moved_docs) { const keep = out.innerHTML; await rcPreview(); $("#rcResult").innerHTML = keep; }
+}
+
 async function loadDupCustomers(force) {
   const note = $("#dcNote"), table = $("#dcTable"); if (!table) return;
   if (DC && DC.ok && !force) { renderDupCustomers(); return; }
@@ -10080,6 +10192,9 @@ function init() {
   { const el = $("#btnCdReload"); if (el) el.onclick = () => loadCheckDrift(true); }
   { const el = $("#btnUcRefresh"); if (el) el.onclick = () => runPipeline("uncleared", null, { btn: el, prog: $("#ucProg"), fill: $("#ucFill"), step: $("#ucStep"), after: () => loadUncleared(true) }); }
   { const el = $("#ucSearch"); if (el) { el.addEventListener("input", renderUncleared); el.addEventListener("keydown", e => { if (e.key === "Escape") { el.value = ""; renderUncleared(); } }); } }
+  { const el = $("#btnRcPreview"); if (el) el.onclick = rcPreview;
+    for (const id of ["#rcFrom", "#rcTo"]) { const i = $(id); if (i) i.onkeydown = (e) => { if (e.key === "Enter") rcPreview(); }; } }
+  { const el = $("#btnRcRefresh"); if (el) el.onclick = () => runPipeline("mirror", null, { btn: el, prog: $("#rcProg"), fill: $("#rcFill"), step: $("#rcStep"), after: () => { RC_OPT = null; loadReclassify(); if (RC && RC.ok) rcPreview(); } }); }
   { const el = $("#btnDcRefresh"); if (el) el.onclick = () => runPipeline("mirror", null, { btn: el, prog: $("#dcProg"), fill: $("#dcFill"), step: $("#dcStep"), after: () => loadDupCustomers(true) }); }
   { const el = $("#dcSearch"); if (el) { el.addEventListener("input", renderDupCustomers); el.addEventListener("keydown", e => { if (e.key === "Escape") { el.value = ""; renderDupCustomers(); } }); } }
   { const el = $("#btnCdRefresh"); if (el) el.onclick = () => runPipeline("mirror", null, { btn: el, prog: $("#cdProg"), fill: $("#cdFill"), step: $("#cdStep"), after: () => loadCheckDrift(true) }); }

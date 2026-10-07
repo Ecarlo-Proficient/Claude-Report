@@ -2406,3 +2406,13 @@ table.grid.vp-paytable th, table.grid.vp-paytable td { border: 1px solid color-m
 .vp-paytable td.vp-stub .stub-hist > div[hidden] { display: none; }
 .vp-paytable td.vp-stub .stub-hist > div:not(.stub-histline):not([hidden]) { display: flex; flex-direction: column; }
 .cd-bulk { margin: 8px 0 4px; }
+
+/* Reclassify transactions */
+.filters.rc-pick { align-items: center; gap: 10px; }
+.rc-lbl { display: inline-flex; align-items: center; gap: 6px; }
+.filters.rc-pick input[type="search"] { flex: 0 0 150px; min-width: 0; width: 150px; }
+.rc-codes { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 0 var(--pad-x) 12px; }
+.rc-code { display: inline-flex; align-items: center; gap: 4px; }
+.rc-code input { font: inherit; font-size: .9em; width: 96px; padding: 4px 8px; border-radius: 8px; }
+#rcMsg, #rcResult, #rcAct { margin-left: var(--pad-x); margin-right: var(--pad-x); }
+#rcAct { margin-bottom: 14px; }

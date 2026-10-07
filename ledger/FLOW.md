@@ -1,6 +1,6 @@
 # ledger/ - how the Project Ledger works
 
-Last changed: 10/06/2026 - sync-all stands down on AP + AR when Accounting/_automation/writer.json says "server" (the office server then owns them); the mirror refresh and the ledger reload still run here. Earlier: 10/06/2026 - Checks QBO changed splits floating checks into **Clear copy (mirror)** (tick and write in bulk) and **Hunt down**. **Clear copy**: the checks with a proven copy from before QuickBooks stripped them, fixed in bulk (`reapply_check.annotate` / `bulk_dry_run` / `bulk_commit`, one Touch ID per batch). Earlier the same day: gross billed tells retainage lines by the account the item posts to (Retainage Receivable), so a PC00 'Retainage' invoice is income, as in the project P&L. Earlier: 10/01/2026 - vendor page round 2: payment bills carry their scan count (📎); stubs open in the
+Last changed: 10/07/2026 - Company -> **Reclassify transactions** (`reclassify.py`, was one-offs/move_project_lines.py): preview every cost line on a project, tick lines, optional cost-code swap, Are you sure + Touch ID, then line-level writes (customer + the line's Projects tag), each document re-read live, backed up and proven after the write. Earlier: 10/06/2026 - sync-all stands down on AP + AR when Accounting/_automation/writer.json says "server" (the office server then owns them); the mirror refresh and the ledger reload still run here. Earlier: 10/06/2026 - Checks QBO changed splits floating checks into **Clear copy (mirror)** (tick and write in bulk) and **Hunt down**. **Clear copy**: the checks with a proven copy from before QuickBooks stripped them, fixed in bulk (`reapply_check.annotate` / `bulk_dry_run` / `bulk_commit`, one Touch ID per batch). Earlier the same day: gross billed tells retainage lines by the account the item posts to (Retainage Receivable), so a PC00 'Retainage' invoice is income, as in the project P&L. Earlier: 10/01/2026 - vendor page round 2: payment bills carry their scan count (📎); stubs open in the
 Also, 10/01/2026 - `load_costs.py` maps every QuickBooks customer of a split-billed job (job rulings
 `customers: all`, RP7401-FTW) to that one job; the Duplicate customers page no longer lists it.
 Earlier the same day: vendor page round 2: payment bills carry their scan count (📎); stubs open in the
@@ -81,12 +81,14 @@ flowchart TD
         MK["owner marks<br/>waiver · lien · pay run · notes"]:::write
         RA["reapply_check.py<br/>Re-apply in QuickBooks<br/>+ Clear copy bulk fix: proven copy only"]:::write
         PB["pay_bills.py<br/>Pay in QuickBooks"]:::write
+        RC["reclassify.py<br/>Reclassify transactions<br/>cost lines project -> project, line level"]:::write
         PR["presence.py<br/>Touch ID every write"]:::write
     end
     PJ & VD --> MK --> DB
     CO --> RA
+    CO --> RC
     VD --> PB
-    RA & PB --> PR
+    RA & PB & RC --> PR
     PB -->|"then the billpay refresh: mirror + bill payments + open AP"| RM
     PR -->|"dry run, then Are you sure"| QBO
 ```

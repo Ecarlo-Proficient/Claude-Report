@@ -59,6 +59,7 @@ import bill_payment_stub  # noqa: E402  (local: the check / bill-payment stub - 
 import check_drift        # noqa: E402  (local: checks QBO rewrote after they were paid - the Checks QBO changed audit, /api/checkdrift)
 import dup_customers      # noqa: E402  (local: one project # on two QBO customers - the Duplicate customers audit, /api/dupcustomers)
 import reapply_check      # noqa: E402  (local: put a stripped check back on its bills - an owner-confirmed QBO write)
+import reclassify         # noqa: E402  (local: Reclassify transactions - cost lines from one project to another, owner-confirmed QBO write)
 import pay_bills          # noqa: E402  (local: pay the saved pay run in QBO - one bill payment per vendor, owner-confirmed)
 import strip_history      # noqa: E402  (local: every stripped check kept for good + the QBO support PDF, /api/checkstrips)
 
@@ -3683,6 +3684,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(pay_bills.queue(self._query().get("show") or "active"))
             except Exception as e:         # noqa: BLE001
                 self._json({"ok": False, "error": str(e)})
+        elif path == "/api/reclassify/options":   # Reclassify transactions: the project + cost-code pickers (mirror)
+            try:
+                self._json(reclassify.options())
+            except Exception as e:         # noqa: BLE001
+                self._json({"ok": False, "error": str(e)})
+        elif path == "/api/reclassify/plan":      # preview: every cost line on FROM (mirror read, no write)
+            q = self._query()
+            try:
+                self._json(reclassify.plan(q.get("from") or "", q.get("to") or "", q.get("recode") or ""))
+            except Exception as e:         # noqa: BLE001
+                self._json({"ok": False, "error": str(e)})
         elif path == "/api/checkdrift/reapply":   # dry run: what re-applying a stripped check would write (live QBO read, no write)
             try:
                 self._json(reapply_check.dry_run(self._query().get("payment_id") or ""))
@@ -3776,6 +3788,8 @@ class Handler(BaseHTTPRequestHandler):
             self._pay_bills("mark")
         elif p == "/api/checkdrift/reapply":  # THE QBO WRITE: re-apply a stripped check, only the plan the owner confirmed
             self._check_reapply()
+        elif p == "/api/reclassify/commit":   # THE QBO WRITE: move the ticked lines, only the preview the owner confirmed
+            self._reclassify_commit()
         elif p == "/api/checkdrift/bulk":     # Clear copy, step 1: prove every listed check again LIVE (no write)
             self._check_bulk(False)
         elif p == "/api/checkdrift/bulk/commit":  # THE QBO WRITE: every confirmed clear copy that still proves
@@ -4451,6 +4465,28 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:             # noqa: BLE001
             return self._json({"ok": False, "error": str(e)})
         if res.get("ok"):
+            r = subprocess.run([sys.executable, str(HERE / "refresh_mirror.py")], capture_output=True, text=True, timeout=600)
+            res["mirror_refreshed"] = r.returncode == 0
+        self._json(res)
+
+    def _reclassify_commit(self):
+        """{from, to, recode, keys, n, amount, confirm: true} -> move the ticked lines the owner confirmed
+        ("Are you sure?"); refused unless they are still exactly the preview. Then the mirror refresh."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+            keys = [str(k) for k in body.get("keys") or []][:2000]
+            n, amount = int(body.get("n")), float(body.get("amount"))
+        except (ValueError, TypeError, AttributeError, json.JSONDecodeError):
+            return self._json({"ok": False, "error": "bad request"}, 400)
+        if body.get("confirm") is not True or not keys:
+            return self._json({"ok": False, "error": "not confirmed"}, 400)
+        try:
+            res = reclassify.commit(str(body.get("from") or ""), str(body.get("to") or ""),
+                                    str(body.get("recode") or ""), keys, n, amount)
+        except Exception as e:             # noqa: BLE001
+            return self._json({"ok": False, "error": str(e)})
+        if res.get("moved_docs"):
             r = subprocess.run([sys.executable, str(HERE / "refresh_mirror.py")], capture_output=True, text=True, timeout=600)
             res["mirror_refreshed"] = r.returncode == 0
         self._json(res)

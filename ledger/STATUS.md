@@ -4,6 +4,15 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-10-07 · **Company -> Reclassify transactions** (owner: "add this tool as reclassify transactions in the
+  ledger"). `ledger/reclassify.py` (graduated from one-offs/move_project_lines.py, first used 10/06 for RP7242-FTW ->
+  RP7242): From / To project pickers -> Preview (mirror, no write) lists every Bill / Expense / Vendor credit LINE on
+  From, all ticked except closed-period ones (closing password - by hand); journal entries listed, never moved;
+  optional cost-code swap per code. "Reclassify in QuickBooks..." -> Are you sure -> Touch ID -> the server refuses
+  unless the ticked lines are still the preview, re-reads each document live, moves the line's customer AND its
+  Projects tag (`Line.ProjectRef` - QBO silently undoes a customer-only edit), backs it up to
+  `~/Library/Logs/Proficient/move-project-lines/`, and stops if a line does not land or any amount / total / balance
+  moved; then the mirror refresh. `/api/reclassify/options`, `/api/reclassify/plan`, POST `/api/reclassify/commit`.
 - 2026-10-06 · **Checks QBO changed: Clear copy - the bulk fix** (owner: "a filter that the script can 100% GUARANTEE
   that it has a copy of the check prior to qbo changing it ... be careful with credits and shortpays"). New chip
   **Clear copy** + "Check all N live" -> one table (lines back on, short pays and what stays open, credits, Ready/Skip
