@@ -87,6 +87,10 @@ class Config:
     # warnings (esp. for the unattended Docker container). Optional.
     teams_webhook_alerts: str = ""
 
+    # Teams payments-channel webhook - one card per QuickBooks Payments (e-invoice link) payment
+    # (qbo_payment_notify.py, the user 2026-10-07). Optional: empty disables the cards.
+    teams_webhook_payments: str = ""
+
     # Notion API
     notion_api_base: str = "https://api.notion.com/v1"
     # 2025-09-03+ required for /data_sources/{id}/query endpoint (multi-source DBs).
@@ -179,4 +183,5 @@ def load_config() -> Config:
         log_dir=log_dir,
         teams_webhook_mfd_paid=_get_teams_webhook(),
         teams_webhook_alerts=_get_teams_alert_webhook(),
+        teams_webhook_payments=_get_optional_webhook("TEAMS_WEBHOOK_PAYMENTS"),
     )

@@ -1,6 +1,6 @@
 # shared/ - how the common package works
 
-Last changed: 10/06/2026 - qbo_costs pulls vendor credits and negates card credits (with_credits); each is a negative cost transaction, so every cost total nets it. Earlier: 10/06/2026 - `xlsx_verify` fails a dropdown (data validation) rule Excel would strip behind a repair prompt: an intersection space, a union comma, a `Table[Col]` reference or over 255 characters (`tests/test_xlsx_verify.py`). 10/02/2026 - `qbo_vault` on Linux also reads MIRROR_KEY from the environment (the office server's mirror
+Last changed: 10/07/2026 - `setup_qbo.py --rotate TEAMS_WEBHOOK_PAYMENTS` stores the payments channel webhook (QuickBooks payment received cards, invoice-sync). Earlier: 10/06/2026 - qbo_costs pulls vendor credits and negates card credits (with_credits); each is a negative cost transaction, so every cost total nets it. Earlier: 10/06/2026 - `xlsx_verify` fails a dropdown (data validation) rule Excel would strip behind a repair prompt: an intersection space, a union comma, a `Table[Col]` reference or over 255 characters (`tests/test_xlsx_verify.py`). 10/02/2026 - `qbo_vault` on Linux also reads MIRROR_KEY from the environment (the office server's mirror
 failed without it). Same day: `xlsx_verify` accepts a freeze on BOTH rows and columns when it is written the way Excel
 saves it (three selections, the main one inside the scrolling pane); openpyxl's bare default is still rejected
 (`tests/test_xlsx_verify.py`). Earlier the same day - `pnl_paths._find_awarded_cp_folder` matches a finished job's folder on its name as
@@ -37,7 +37,7 @@ flowchart LR
         KB["key_broker.py<br/>one-hour QBO pass"]:::mod
         VAULT["qbo_vault.py<br/>the key library"]:::mod
         API["qbo_api.py<br/>auth, retrying GET, query_all,<br/>report walkers, PROJ_RE,<br/>build_project_customer_map<br/>(+ every id on a split-billing ruling)"]:::mod
-        SETUP["setup_qbo.py<br/>--status / --rotate"]:::mod
+        SETUP["setup_qbo.py<br/>--status / --rotate (QBO + Teams webhooks)"]:::mod
     end
     KH --> KB --> API
     KH --> VAULT

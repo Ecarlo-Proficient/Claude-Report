@@ -152,6 +152,14 @@ SPECS = [
         "an https Power Automate / Workflows URL",
         20, 2000, _is_https_url, required=False,
     ),
+    # Teams payments channel: one card per QuickBooks Payments payment (invoice-sync/qbo_payment_notify.py).
+    KeySpec(
+        "TEAMS_WEBHOOK_PAYMENTS",
+        "Teams payments channel > ⋯ > Workflows > 'Post to a channel when a webhook request "
+        "is received' > the URL it gives back",
+        "an https Power Automate / Workflows URL",
+        20, 2000, _is_https_url, required=False,
+    ),
 ]
 
 

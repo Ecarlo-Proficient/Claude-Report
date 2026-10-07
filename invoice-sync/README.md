@@ -26,7 +26,9 @@ It pulls **open invoices from QuickBooks Online**, mirrors them into **two Notio
 databases** (one for **MFD / Multifamily**, one for **RP/CP — Residential +
 Commercial**), marks invoices **Paid** when QBO says they're paid, **removes**
 invoices that were deleted in QBO, writes a read-only **Excel** copy for the
-collections clerk, and posts a card to **Teams** when an MFD invoice gets paid.
+collections clerk, posts a card to **Teams** when an MFD invoice gets paid, and posts a
+**QuickBooks payment received** card to the payments channel for every payment a client makes
+through the e-invoice link (`qbo_payment_notify.py`, webhook `TEAMS_WEBHOOK_PAYMENTS`).
 
 Notion is the team's working view of who owes what; QuickBooks is the source of
 truth. This sync keeps Notion matching QuickBooks, every run.
@@ -128,6 +130,7 @@ you never run directly.** Only a handful are meant to be executed.
 | `state.py` | Tiny JSON store for "last run" watermarks (used by the CDC pass). |
 | `version.py` | Version identity (Docker v1.0.0 / Mac mvN). |
 | `teams_notify.py` | Builds + posts Teams cards: MFD payments **and** failure alerts. |
+| `qbo_payment_notify.py` | One card per QuickBooks Payments payment (bank / card via the e-invoice link), read from the QBO mirror; posted ids in `STATE_DIR/qbo_payments_posted.json`; first run seeds, never replays older than 72h. |
 | `export_invoices_xlsx.py` | Writes the read-only `Open_Invoices.xlsx` mirror (4 tabs). |
 | `aging_sheet.py` | Builds the per-division **aging** tabs of that workbook — see below. |
 | `draw_chain.py` | Orders each project's draws so "the previous draw" is answerable. |
@@ -143,7 +146,8 @@ you never run directly.** Only a handful are meant to be executed.
 5. **Flip / delete sweep** — invoices no longer open in QBO get marked **Paid**; ones deleted while still open get **archived**.
 6. **CDC deletion pass** — asks QBO what was deleted since last run and archives those Notion rows (catches invoices deleted *after* they were marked Paid). Watermark in `state/invoice_cdc_state.json`.
 7. **Archive** paid invoices older than 12 months.
-8. **Excel export** (`export_invoices_xlsx`) — unless `SKIP_EXCEL_EXPORT=1`.
+8. **QuickBooks payment cards** (`qbo_payment_notify`) - every new e-invoice payment, once, to the payments channel. Off without `TEAMS_WEBHOOK_PAYMENTS`; dry run only logs.
+8b. **Excel export** (`export_invoices_xlsx`) — unless `SKIP_EXCEL_EXPORT=1`.
 9. **Teams** — MFD paid/short-pay cards during the run; a failure/error alert at the end if anything went wrong.
 
 A full diagram of this flow lives at the bottom of

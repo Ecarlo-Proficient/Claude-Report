@@ -151,6 +151,8 @@ flowchart LR
     BTX[("Bill Tracker.xlsx\nOneDrive · READ-ONLY")]:::src
     OD[("OneDrive\nOpen_Invoices.xlsx\nAll Open · CP · MFD · RP Aging\nLease Invoices · Open Invoices\nCash Flow · Pay Calendar")]:::out
     MIR[("QBO mirror\nopen invoices with no project #")]:::src
+    PAYN["qbo_payment_notify.py\nonline payments only, once each"]:::tool
+    TPAY[("Teams payments channel\nQuickBooks payment received")]:::out
 
     QBO --> SYNC
     SYNC -- "route by project-# prefix" --> MFD
@@ -160,6 +162,7 @@ flowchart LR
     SYNC --> XL --> OD
     BTX -- "MFD/CP vendor unpaid-bill status" --> XL
     MIR -- "lease / note / interest AR" --> XL
+    MIR -- "QuickBooks Payments (e-invoice link)" --> PAYN --> TPAY
 ```
 
 Support cast (same folder): `doctor.py` diagnostics · `verify_invoices.py` /

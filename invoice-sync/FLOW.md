@@ -1,7 +1,7 @@
 # invoice-sync/ - how the AR invoice sync and its Excel mirror work
 
-Last changed: 10/02/2026 - All Open tab (default; litigation + lease, Division / Litigation filters); aging
-tabs show litigation flagged, client totals at the bottom (SUBTOTAL), no draw block; Open Invoices moved after Lease.
+Last changed: 10/07/2026 - QuickBooks payment received card: every payment a client makes through the
+e-invoice link (bank / card), once, to the payments channel - read from the mirror, first run seeds.
 
 Update this chart - and the line above - in the same commit as any change to `invoice-sync/`
 (`.github/flow_guard.sh`).
@@ -33,6 +33,8 @@ flowchart LR
     MFD[("Notion<br/>MFD Invoice Tracker")]:::out
     RES[("Notion<br/>Res/Com Invoice Tracker")]:::out
     TEAMS[("Teams<br/>MFD paid / short-pay")]:::out
+    PAYN["qbo_payment_notify.py<br/>QuickBooks Payments only, not seen before, under 72h"]:::tool
+    TPAY[("Teams payments channel<br/>QuickBooks payment received")]:::out
     OD[("Invoice Tracker.xlsx<br/>All Open · CP / MFD / RP Aging · Lease Invoices ·<br/>Open Invoices · Cash Flow · Pay Calendar")]:::out
     HOLD[("skipped this run<br/>close the file, re-run sync-ar")]:::out
 
@@ -49,6 +51,7 @@ flowchart LR
     EXP --> CHAIN --> AGE
     BTX --> AGE
     MIR --> LEASE --> AGE
+    MIR --> PAYN --> TPAY
     NOTES --> AGE
     AGE --> ALL --> VER --> OD
     AGE --> VER

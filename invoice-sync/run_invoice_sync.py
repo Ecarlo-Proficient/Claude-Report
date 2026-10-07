@@ -30,6 +30,7 @@ from invoice_sync import (
 )
 from export_invoices_xlsx import export_open_invoices_xlsx
 from teams_notify import notify_sync_alert
+import qbo_payment_notify
 from version import runtime_label
 
 
@@ -103,6 +104,14 @@ def main() -> int:
     log.info("MFD summary: %s", mfd_summary.as_dict())
     if mfd_summary.error_examples:
         log.warning("MFD error examples: %s", mfd_summary.error_examples)
+
+    # QuickBooks Payments cards (the payments channel) - best-effort, never fails the run.
+    try:
+        log.info("---- Flow: qbo_payment_notify ----")
+        log.info("qbo payments: %s", qbo_payment_notify.run(
+            config.teams_webhook_payments, config.state_dir, dry_run=args.dry_run))
+    except Exception as e:
+        log.exception("QuickBooks payment cards failed (non-fatal): %s", e)
 
     # Excel export — runs even on partial failure (best-effort).
     # Skipped in dry-run since dry-run doesn't actually update Notion.

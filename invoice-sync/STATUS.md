@@ -6,6 +6,13 @@ mirror. Update this in the SAME commit as any change to this tool.
 ---
 
 ## DONE / FINALIZED
+- 10/07/2026 · **QuickBooks payment received cards (the user, payment intake process).** `qbo_payment_notify.py`, run by
+  `run_invoice_sync.py` after the Notion sync: every Payment with TxnSource EInvoice / INTUITMASPAYMENT or method
+  "QuickBooks Payments-..." (checks / ACH / wires typed in never match) posts ONE card - client, project, amount, invoice #
+  + paid in full / still open, bank or card, date, Open in QuickBooks. Reads the mirror; posted ids in
+  `STATE_DIR/qbo_payments_posted.json`; first run seeds without posting; nothing older than 72h ever posts, so the writer
+  moving to the office server cannot replay. Dry-run checked on the live mirror: picked exactly invoice 34558's 5,000
+  payment of 10/07. `tests/test_qbo_payment_notify.py`.
 - 10/02/2026 · **Invoice Tracker layout round 2 (the user's mockups).** New `All Open` tab (default tab): every open invoice
   incl. litigation and lease, grouped by client within division, Division / Litigation filter columns. Aging tabs: litigation
   shown + flagged (Litigation column last), client name on top and `Total <client>` SUBTOTAL row at the bottom (totals follow
@@ -238,6 +245,9 @@ mirror. Update this in the SAME commit as any change to this tool.
   `ABSORB_NOTES=0 sync-ar` falls back to preserve mode if needed.
 
 ## TO DO
+- Payments channel webhook: create it in the Teams payments channel (Workflows -> post to a channel when a webhook
+  request is received), store it as `TEAMS_WEBHOOK_PAYMENTS` (Mac: `shared/setup_qbo.py --rotate TEAMS_WEBHOOK_PAYMENTS`;
+  office server: its secrets.env before go-live). Until then the cards are off.
 
 - Collection Log lines append oldest-first (Notion has no prepend). If the owner
   wants newest-first, that needs a read-reorder-rewrite of the page body.
