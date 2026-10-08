@@ -49,6 +49,13 @@ Progression record for the office server package. Update in the SAME commit as a
 - Live runs `main` only - a release PR before the switch.
 
 ## OPEN ISSUES
+- 2026-10-08 · **Bill Tracker side-by-side (server 13:29 vs a Mac build 13:33): the base AP run matches.** Bills (3,448
+  rows), Bill List, Liens, Inventory, Audit - Coding, Audit - Bills: every cell identical (the 10/05 126 paid-vs-unpaid
+  lines are gone). Two expected differences: **Audit - PO** - the SERVER is right: its Cloud Sync copy of the PO tracker
+  runs through 10/08, the Mac's OneDrive copy stopped syncing on 09/26 (a Mac OneDrive issue, not code). **Audit -
+  History** - each side keeps its own history record (server since 10/05: 17 rows, Mac: 31); at go-live the Mac's
+  history file must be carried to the server or the server's audit history restarts. Next: payment cards
+  (`PAYMENTS_TEST=1`) once the owner says go.
 - 2026-10-07 · **Server check before adding anything (owner).** All jobs exit 0 (mirror 3 min, reconcile counts equal,
   AP 36s, AR dry run, AR export). Invoice Tracker: the server's test copy = a Mac preview built the same minute, every
   tab, every cell (only the "as of" stamp differs). Found: (1) FIXED in code - test-mode AR read the Mac's LIVE Bill
