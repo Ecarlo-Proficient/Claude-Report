@@ -7,6 +7,11 @@ manual close), RP (no draws — expenses → invoice → profit).
 ---
 
 ## DONE / FINALIZED
+- 2026-10-08 · **Joint check not paid out yet** (owner: "see how this will work when there is no # like Van Brunt
+  how we are waiting to get copies of the joint check"). A payment deposited to the Joint Checks account with no
+  payment out reads `Joint check · not paid out yet · <AR's memo>` in red, not "To us" (CP785 Draw #2: Van Brunt
+  16,469.62, memo "Joint check to RCI Ready Cable & Proficient 09/24/2026"). Once AP enters RCI's payment it pairs
+  by check # / date / amount alone and reads `Joint check · RCI READY CABLE` (`(amount only)` when that is how).
 - 2026-10-08 · **Payments on every draw sheet** (owner: "the P&L is missing the payments ... I was trying to see all
   the payments made for that draw"). Under INVOICES THIS DRAW: PAYMENTS RECEIVED - check # (QBO link), date, the
   amount applied to that draw's invoice, invoice #, Paid to = `To us` or `Joint check · <supplier>` (the supplier

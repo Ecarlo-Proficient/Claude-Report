@@ -97,7 +97,8 @@ from shared import draws
 from shared import job_rulings   # standing per-job rulings -> KNOWN LOSSES / RULINGS block
 from shared import bizdev_cut   # the ONE test for a business-development cut
 from shared import rp_invoicing  # one-invoice vs scope-based RP job, off the invoices
-from shared.joint_checks import joint_vendor_by_payment  # the ONE joint-check rule
+from shared.joint_checks import (pair_joint_checks, joint_account_ids, is_joint_deposit,  # the ONE joint-check rule
+                                 memo_of as jc_memo_of)
 from shared.qbo_api import (
     API_BASE, MINOR_VERSION, PROJ_RE,
     load_credentials, _api_get, query_all, report,
@@ -920,12 +921,28 @@ def payments_by_invoice(customer_payments: list, bill_payments: list) -> Dict[st
     PAYMENTS RECEIVED block (the owner 10/08/2026: "the P&L is missing the
     payments ... I was trying to see all the payments made for that draw").
     Each row: date, check #, the slice applied to THAT invoice, the payment's
-    QBO id and - for a joint check - the supplier it paid (shared/joint_checks:
-    the BillPayment out of the Joint Checks account, same day + amount)."""
-    joint = joint_vendor_by_payment(customer_payments or [], bill_payments or [])
+    QBO id and `paid_to`: "To us"; "Joint check · <supplier>" when the joint
+    check out is entered (shared/joint_checks: check #, then date, then the
+    amount alone - "amount only" is said so); or, for a deposit to the Joint
+    Checks account with no payment out yet (no copy of the check, Van Brunt
+    10/07/2026), "Joint check · not paid out yet" plus AR's memo naming who."""
+    pairs = pair_joint_checks(customer_payments or [], bill_payments or [])
+    joint_ids = joint_account_ids(bill_payments or [])
     out: Dict[str, list] = {}
     for pm in customer_payments or []:
         pid = str(pm.get("Id") or "")
+        hit = pairs.get(pid)
+        if hit:
+            paid_to = "Joint check  ·  " + _xml_clean(str((hit["bp"].get("VendorRef") or {}).get("name") or ""))
+            if hit["how"] == "amount only":
+                paid_to += "  (amount only)"
+            kind = "joint"
+        elif is_joint_deposit(pm, joint_ids):
+            memo = _xml_clean(jc_memo_of(pm))
+            paid_to = "Joint check  ·  not paid out yet" + (f"  ·  {memo}" if memo else "")
+            kind = "open"
+        else:
+            paid_to, kind = "To us", "us"
         for ln in pm.get("Line") or []:
             for lt in ln.get("LinkedTxn") or []:
                 if lt.get("TxnType") != "Invoice":
@@ -936,7 +953,7 @@ def payments_by_invoice(customer_payments: list, bill_payments: list) -> Dict[st
                 out.setdefault(str(lt.get("TxnId")), []).append({
                     "date": pm.get("TxnDate", ""), "ref": _xml_clean(str(pm.get("PaymentRefNum") or "")),
                     "amount": amt, "total": round(float(pm.get("TotalAmt", 0) or 0), 2),
-                    "id": pid, "joint": _xml_clean(joint.get(pid, ""))})
+                    "id": pid, "paid_to": paid_to, "kind": kind})
     return out
 
 
@@ -5032,10 +5049,7 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
                 wdate(r, 3, p["date"])
                 wc(r, 4, p["amount"], fmt=CURR_FMT)
                 idc(r, 5, inv.get("doc_num", ""))
-                if p["joint"]:
-                    wc(r, 6, f"Joint check  ·  {p['joint']}", color="C55A11")
-                else:
-                    wc(r, 6, "To us", color=GREEN)
+                wc(r, 6, p["paid_to"], color={"joint": "C55A11", "open": RED}.get(p["kind"], GREEN))
                 r += 1
             wc(r, 2, "TOTAL RECEIVED", bold=True)
             wc(r, 4, f"=SUM(D{_pay_first}:D{r - 1})" if r > _pay_first else 0,

@@ -643,7 +643,12 @@ def print_stub(payment_id: str, columns: Optional[Sequence[str]] = None, company
                     name = c.get("DisplayName") or name
                     cust_id = str((c.get("ParentRef") or {}).get("value") or "")
                 return name
-            joint = find_joint_payment(raw, lambda d: mirror.load("Payment", "txn_date = ?", (d,), con=mcon))
+            # every Payment and BillPayment of the same amount: the pair is found by check #, then date,
+            # then the amount alone (shared/joint_checks - in and out are entered up to 23 days apart)
+            _amt = round(float(raw.get("TotalAmt") or 0), 2)
+            joint = find_joint_payment(
+                raw, mirror.load("Payment", "round(total, 2) = ?", (_amt,), con=mcon),
+                mirror.load("BillPayment", "round(total, 2) = ?", (_amt,), con=mcon))
             apply_internal(stub, joint, get, invoice_by_doc, client_of, invoice_of)
     finally:
         mcon.close()
@@ -1027,8 +1032,9 @@ def _selftest() -> int:
     assert sj["method"] == "Check" and [r["balance_before"] for r in sj["rows"]] == [1000.0, 400.0]   # b2: 500 less p0's 100 earlier
     cpay = {"Id": "c1", "TxnDate": bp["TxnDate"], "TotalAmt": 1300.0, "PaymentRefNum": "25760", "CustomerRef": {"value": "proj"},
             "Line": [{"Amount": 600.0, "LinkedTxn": [{"TxnType": "Invoice", "TxnId": "i1"}]}, {"Amount": 700.0, "LinkedTxn": [{"TxnType": "Invoice", "TxnId": "i2"}]}]}
-    assert find_joint_payment(bpj, lambda d: [cpay, dict(cpay, Id="c2", TotalAmt=5.0)]) is cpay
-    assert find_joint_payment(bp, lambda d: [cpay]) is None                       # not on the joint account
+    assert find_joint_payment(bpj, [cpay, dict(cpay, Id="c2", TotalAmt=5.0)]) is cpay
+    assert find_joint_payment(bpj, [dict(cpay, TxnDate="2026-07-30")]) is not None   # entered on another day, same check #
+    assert find_joint_payment(bp, [cpay]) is None                                  # not on the joint account
     apply_internal(sj, cpay, getj, lambda d: None, lambda c: "GC ONE")
     assert sj["joint"] and sj["client"] == "GC ONE"
     assert [(g["invoice_no"], g["label"], g["paid"]) for g in sj["groups"]] == [("34457", "May Draw 2026", 600.0), ("34458", "June Draw 2026", 700.0)]
