@@ -1,10 +1,9 @@
 # statement-reconciler/ - how the vendor statement reconciler works
 
-Last changed: 10/08/2026 - four new statement layouts (Abatix online, Croell AR balance, Quikrete,
-QuickBooks "Invoices for" list), only OUR section of a vendor's all-customer report, safety nets
-(misdated / undated statements never used, no guessing between vendors), `--audit-parsing`.
-10/07: ONE running record per vendor, no months; `<Vendor>/Current` + `History`; Clerk notes kept
-by bill id; Notion counts every bucket; `--only <vendor>`.
+Last changed: 10/08/2026 (afternoon) - every Excel gets a 2nd sheet "Statement (marked)": each bill
+row on the statement banded in its bucket colour, rows that look like a bill but were not read outlined red
+(also Notion "Not read"); scanned statements read with OCR; VoidForm layout; Discount rows.
+Earlier 10/08: four new layouts, safety nets, `--audit-parsing`. 10/07: one running record per vendor.
 
 Update this chart - and the line above - in the same commit as any change to
 `statement-reconciler/` (`.github/flow_guard.sh`).
@@ -28,11 +27,12 @@ flowchart LR
     MERGED["ONE open list as of the newest date<br/>+ 'statements disagree by $X' when the<br/>vendor's own documents differ"]:::tool
     NOTES["clerk notes<br/>read from the Excel before rewriting,<br/>kept by bill id in .reconciler.json"]:::tool
     REC["reconcile_vendor<br/>matched · missing in QBO · amount mismatch ·<br/>tax 8.25% · paid but vendor shows open · not on statement"]:::tool
+    MARK["statement_markup<br/>find every line on its page (PDF words / OCR),<br/>band it in its bucket colour;<br/>a bill-looking row with no band = NOT READ"]:::tool
     PS["print_status.py<br/>opt-in PRINT_STATUS=1"]:::tool
     NB["notion_board.py<br/>merge with the clerk's ticks; a count per bucket;<br/>fixed -> Cleared"]:::tool
     PREV{"--dry-run?"}:::gate
 
-    XLSX[("&lt;Vendor&gt;/Current: statement(s) in use + ONE Excel<br/>Summary (Clerk notes col) · Statements · Changes")]:::out
+    XLSX[("&lt;Vendor&gt;/Current: statement(s) in use + ONE Excel<br/>Summary (Clerk notes col) · Statement (marked) · Statements · Changes")]:::out
     HIST[("&lt;Vendor&gt;/History<br/>'mm-dd-yyyy DONE / Replaced / Duplicate - file'")]:::out
     HELD[("unreadable statement:<br/>stays in the Inbox / Current")]:::out
     PAGE[("Notion · 1 page per vendor<br/>All entered as of &lt;date&gt; · Not entered · Unreadable · No statement<br/>To do · Changed since · Statements · Cleared")]:::out
@@ -49,7 +49,7 @@ flowchart LR
     QBO --> REC
     FILED --> NOTES --> REC
     MBX --> PS --> REC
-    REC --> PREV
+    REC --> MARK --> PREV
     PREV -- yes --> PRINT
     PREV -- no --> XLSX
     PREV -- no --> HIST

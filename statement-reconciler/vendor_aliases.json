@@ -89,6 +89,12 @@
     "qbo_name": "COWTOWN REDI MIX CONCRETE",
     "saved": "2026-07-09"
   },
+  "cri - dfw": {
+    "pdf_name": "CRI - DFW",
+    "qbo_id": "25521",
+    "qbo_name": "CONSOLIDATED REINFORCEMENT",
+    "saved": "2026-10-08"
+  },
   "croell inc": {
     "pdf_name": "Croell Inc",
     "qbo_id": "30692",
@@ -136,6 +142,12 @@
     "qbo_id": "27541",
     "qbo_name": "Preferred Materials LLC",
     "saved": "2026-06-02"
+  },
+  "quikrete ready mix": {
+    "pdf_name": "Quikrete Ready Mix",
+    "qbo_id": "30834",
+    "qbo_name": "Quikrete",
+    "saved": "2026-10-08"
   },
   "ready cable, inc": {
     "pdf_name": "Ready Cable, Inc",

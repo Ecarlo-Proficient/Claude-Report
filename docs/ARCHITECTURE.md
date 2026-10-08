@@ -284,10 +284,11 @@ flowchart LR
     JCA["job_coding_audit.py\non-demand per-job drill"]:::tool
     SR["statement_reconciler.py"]:::tool
     SS["statement_set.py\nper vendor: full list / past-due letter / activity\nmerged into ONE open list; duplicates + replaced -> History"]:::tool
+    SM["statement_markup.py\nmarked copy of each statement in the Excel:\nbill rows banded by bucket, unread rows outlined"]:::tool
     PS["print_status.py\ninvoice # from subject/full body/attachment name\n+ $search backup reads INSIDE bundled PDFs\n+ QBO-agreement gate · index-health · --audit-print-status\ndisk-cached, incremental by lastModifiedDateTime"]:::tool
     BX[("Bill Tracker.xlsx\nAccounting share / Accounts Payable\n(paths.bill_tracker_xlsx)\ndisplay = non-sub · audit = incl. subs")]:::out
     CCH[("cost_code_history.json\nCompanyHealth · cost-code miscode log")]:::out
-    RX[("<Vendor>/Current: the statement(s) in use + ONE Excel\n(Clerk notes column kept by bill id; Statements + Changes sheets)\n<Vendor>/History: 'mm-dd-yyyy DONE|Replaced|Duplicate - file'\n+ Print Status = 1st Summary section (opt-in PRINT_STATUS=1)")]:::out
+    RX[("<Vendor>/Current: the statement(s) in use + ONE Excel\n(Clerk notes column kept by bill id; Statement (marked) + Statements + Changes sheets)\n<Vendor>/History: 'mm-dd-yyyy DONE|Replaced|Duplicate - file'\n+ Print Status = 1st Summary section (opt-in PRINT_STATUS=1)")]:::out
     NB[("Notion · Vendor Statements board\n1 running page / vendor (notion_board.py)\nall entered AS OF the statement date · a count per bucket\nTo do · Changed since · Statements · Cleared")]:::out
     TEAMS[("Teams channel\n1 digest card / run\nlinks to the board")]:::out
 
@@ -297,6 +298,7 @@ flowchart LR
     GL -- "RP draw matching" --> BT
     POT -- "Unused PO reconcile" --> BT
     QBO --> SR
+    SS --> SM --> RX
     NAS --> SR --> SS -- "tie-out gate per statement: lines must sum to its Amount Due,\nelse unreadable + left where it is" --> RX
     SR -- "every run + --refresh: one page per vendor,\nis every statement bill entered in QBO?" --> NB
     SR -- "1 digest: vendors not ready to pay (shared/teams_notify)" --> TEAMS

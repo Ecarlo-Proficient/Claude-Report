@@ -5,6 +5,34 @@ to this tool. Tool-only scope: no business/owner analyses or dollar-exposure
 findings here — those live in the owner's vault.
 
 ## DONE / FINALIZED
+- 2026-10-08 (afternoon) · **Marked-up statement in every Excel + the whole Inbox run live (owner: "highlight each bill row with the color of its bucket so the clerk can verify you grabbed everything").**
+  - `statement_markup.py` (new): every page of each current statement rendered; every line the parser read is found
+    on its page and its row banded in its bucket colour (matched / not approved / amount / tax / paid-vendor-shows-open
+    / not in QBO / payment-credit / another customer's). The check runs both ways: a line read but not found on the
+    page, and a row on the page that looks like a bill (date + amount) with no band - outlined red. The statement
+    file is only read. Text PDFs use their own word boxes; scanned pages / images use OCR.
+  - Excel: a 2nd sheet **Statement (marked)** (legend, "N of N lines found on the page", the misses, the pages; prints
+    one page wide - a named print area, Excel clips pictures outside the cells that hold values). Pages as 64-colour
+    PNGs (RCI 6 pages: 3.5 MB -> 0.9 MB). Notion: misses become "unread" to-dos + a **Not read** column.
+  - Trained on every statement on the share (97 PDFs) and the page images inside 69 old reconciliation Excels.
+    Fixes learned: a bill printed twice (tear-off stub) banded twice; $0 rows are not bills (2+ amounts: the last is
+    the running balance); exact refs placed first, OCR look-alikes (O/0, S/5, one lost/extra char, an amount off one
+    digit) ranked globally so a sequential neighbour never takes a row; no single OCR setting reads every page - four
+    readings tried, the one placing the most lines kept; transparent screenshots flattened on white, small ones
+    enlarged. Result: PDFs 96/97 clean, old-Excel images 65/69 (the rest: no source PDF, one line OCR can't see, and
+    CMC 08-03 - a real miss the check catches every time).
+  - Parser fixes found by the markup: Cowtown "Discount -0.01" rows (DISC lines) - the 07-02 statement was off 0.13.
+    New layout: VoidForm customer statement. Scanned statements (no text in the PDF) are read with OCR and still must
+    tie out; the Amount Due box unreadable -> the last running balance (Power Jack 07-28 now reads).
+  - Fixes: a History twin no longer knocks out the live statement (RCI refresh read 'no readable statement'); the
+    clerk's own notes column ('<name>'S NOTES', column M, pre-10/07 workbooks) is picked up.
+  - Live 10/08: `--inbox --yes` - 18 vendors, 17 Inbox statements, all lines found on their pages; Inbox empty; all 20
+    vendor Excels opened clean in real Excel. New vendors confirmed by their QBO bill numbers (Quikrete, CONSOLIDATED
+    REINFORCEMENT) and cached.
+  - Not migrated yet (no Inbox statement this run; `--refresh` picks them up): Void Forms, Power Jack, Post-Tension.
+    Not statements, left unread on purpose: Bobcat 06 payment receipt, Texas Materials invoice, Sunbelt / Core Supply
+    printed lien-notice emails.
+  - Tests: +6 (VoidForm, scanned fallback, markup: printed twice, look-alike ranking, $0 / total rows); 42 in all.
 - 2026-10-08 · **Inbox sweep: every statement on the share read through the parser, misses fixed, safety nets added (owner: "make sure it catches all and has safety nets so we know it didn't read it right").**
   - New layouts: Abatix online statement (`vendor_abatix_online`), Croell "AR Customer Balance" (`vendor_croell_ar` -
     the 7-digit invoice # runs into the PO in the text), Quikrete Ready Mix account statement (`vendor_quikrete`),

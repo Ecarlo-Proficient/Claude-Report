@@ -146,3 +146,11 @@ def test_the_clerks_note_survives_a_rerun_and_follows_the_bill(tmp_path):
             ws.cell(r, 13).value = None
     wb.save(out)
     assert "ref:N9" not in ss.fold_notes(notes, ss.harvest_notes(out), "10/08/2026")
+
+
+def test_a_history_twin_never_knocks_out_the_live_statement():
+    live = _doc("RCI.pdf", "2026-09-30", [L("2026-09-01", "X", 5)], sha="same", origin="current")
+    twin = _doc("09-30-2026 Duplicate - RCI copy.pdf", "2026-09-30", [], sha="same", origin="history")
+    again = _doc("RCI again.pdf", "2026-09-30", [L("2026-09-01", "X", 5)], sha="same", origin="inbox")
+    m, _ = ss.plan([twin, again, live])
+    assert live.status == "current" and again.status == "duplicate" and m.lines

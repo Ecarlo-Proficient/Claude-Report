@@ -196,7 +196,10 @@ def merge_docs(docs: List[Doc]) -> Merged:
 def plan(docs: List[Doc]) -> Tuple[Merged, List[Doc]]:
     """Duplicates out, unreadable out, merge the rest; label every doc. Docs
     already filed win a duplicate tie (the Inbox copy is the extra one)."""
-    rank = {"history": 0, "legacy_done": 1, "current": 2, "legacy": 3, "inbox": 4}
+    # Who keeps the file when two are the same: the one in Current, then the old
+    # month folders, then History (a History twin only catches a NEW copy - it
+    # must never knock out the live one: RCI refresh 10/08), then the Inbox.
+    rank = {"current": 0, "legacy": 1, "legacy_done": 2, "history": 3, "inbox": 4, "manual": 5}
     seen: Dict[str, Doc] = {}
     for d in sorted(docs, key=lambda d: (rank.get(d.origin, 9), d.path.name)):
         if d.origin == "history":
@@ -350,8 +353,10 @@ def harvest_notes(xlsx: Path) -> Dict[str, Optional[str]]:
     for row in ws.iter_rows(min_row=1, max_row=ws.max_row):
         b = row[1].value if len(row) > 1 else None
         if b == "Stmt Ref #":
-            heads = [c.value for c in row]
-            col = 13 if len(heads) >= 13 and heads[12] == "Clerk notes" else 12
+            # Her column: ours is 'Clerk notes'; before 10/07 she added her own
+            # ('<name>'S NOTES') in column M - any header saying NOTES counts.
+            heads = [str(c.value or "") for c in row]
+            col = 13 if len(heads) >= 13 and "NOTES" in heads[12].upper() else 12
             continue
         if col is None or len(row) < col:
             continue

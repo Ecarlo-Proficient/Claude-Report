@@ -212,3 +212,68 @@ def test_vendor_folder_matches_without_a_legal_suffix(tmp_path):
     assert sr._vendor_dir(tmp_path, "Core Concrete Pumping LLC").name == "Core Concrete Pumping"
     assert sr._vendor_dir(tmp_path, "CROELL, INC").name == "Croell, Inc"
     assert sr._vendor_dir(tmp_path, "New Vendor LLC").name == "New Vendor LLC"
+
+
+def test_voidform_customer_statement():
+    t = """Customer Statement
+Date: 8/31/2026
+Date Due Date Doc. Type Ref. Nbr. Ext. Ref. Nbr. Orig. Amount Amount Due Balance
+7/29/2026 8/28/2026 Invoice AR-0325087 OM7391 916.03 916.03 916.03
+3724 Job St
+8/20/2026 9/19/2026 Invoice AR-0325801 OM7660 332.17 332.17 1,248.20
+8231 Other St
+Current 1 - 30 Days Past Due 31 - 60 Days Past Due 61 - 90 Days Past Due Over 90 Days Past Due Amount Due
+332.17 916.03 0.00 0.00 0.00 1,248.20"""
+    assert sr.detect_template(t) == "vendor_voidform"
+    v, d, due, lines = sr.parse_statement_voidform(t)
+    assert d == "2026-08-31" and due == 1248.20
+    assert [(x.ref, x.po, x.address) for x in lines] == [("AR-0325087", "OM7391", "3724 Job St"),
+                                                        ("AR-0325801", "OM7660", "8231 Other St")]
+
+
+def test_scanned_statement_amount_due_falls_back_to_the_running_balance():
+    t = """VENDOR FOUNDATION
+7/28/2026
+[Amount Due [__AmountEne._}
+04/24/2026 INV #6171. Due 04/24/2026. PO #7014. Orig. 404.00 404.00
+05/20/2026 INV #6187. Due 05/20/2026. PO #4509. Orig. Amount 250.00 654.00
+"""
+    v, d, due, lines = sr.parse_statement_qbo_statement(t)
+    assert due == 654.00 and _ties(due, lines)
+
+
+# ── the marked-up statement (statement_markup.locate) ──
+
+def _page(*texts, ocr=False):
+    import statement_markup as sm
+    rows = []
+    for i, t in enumerate(texts):
+        words = [sm.Word(w, x * 50, x * 50 + 40, i * 20, i * 20 + 12) for x, w in enumerate(t.split())]
+        rows.append(sm.Row(i * 20, i * 20 + 12, words))
+    return sm.Page(None, rows, "ocr" if ocr else "text")
+
+
+class _L:
+    def __init__(self, ref, amount, date=""):
+        self.ref, self.amount, self.date = ref, amount, date
+
+
+def test_markup_bands_every_printed_copy_of_one_invoice():
+    import statement_markup as sm
+    pg = _page("09/16/2026 4282533059 $ 48.71", "header", "09/16/2026 10/10/2026 4282533059 $ 48.71")
+    where = sm.locate([pg], [_L("4282533059", 48.71)])
+    assert where == [(0, 0)] and sm._EXTRA == {0: [(0, 2)]}
+
+
+def test_markup_lookalike_refs_never_take_a_neighbours_row():
+    import statement_markup as sm
+    pg = _page("09/18/2024 CM_SUNO0232 976.80", "09/18/2024 CM_SUNO0233 250.80", ocr=True)
+    where = sm.locate([pg], [_L("CM_SUN00233", -250.80), _L("CM_SUN00232", -976.80)])
+    assert where == [(0, 1), (0, 0)]
+
+
+def test_markup_zero_rows_and_totals_are_not_bills():
+    import statement_markup as sm
+    pg = _page("01/01/2020 Balance Forward 0.00 0.00", "07/16/2026 Discount 0.00 685,810.67",
+               "Total 06/30/2026 1,000.00", "07/17/2026 147780 08/16/2026 792.07 792.07")
+    assert [sm._bill_like(r) for r in pg.rows] == [False, False, False, True]

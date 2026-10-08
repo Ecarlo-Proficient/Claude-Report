@@ -104,6 +104,7 @@ from shared import paths
 from shared.xlsx_guard import csv_cell, put as xl_text  # noqa: E402  (outside text never runs in Excel)
 from shared import xlsx_verify
 import statement_set as ss  # noqa: E402  (tool-local: one vendor = one running record)
+import statement_markup as sm  # noqa: E402  (tool-local: the marked-up copy of the statement)
 
 # ───────────────────────── constants ─────────────────────────
 
@@ -196,7 +197,7 @@ STMT_DATE_PATTERNS = [
 # Amount Due: allow up to 80 chars (incl. newlines + "Amount Enc." label) between
 # the "Amount Due" text and the dollar amount.
 PMT_NO_REF_RE = re.compile(
-    r"^\s*(\d{1,2}/\d{1,2}/\d{2,4})\s+PMT\s+(\(?-[\d,]+\.\d{2}\)?)\s+\(?-?[\d,]+\.\d{2}\)?\s*$",
+    r"^\s*(\d{1,2}/\d{1,2}/\d{2,4})\s+(PMT|Discount)\s+(\(?-[\d,]+\.\d{2}\)?)\s+\(?-?[\d,]+\.\d{2}\)?\s*$",
     re.MULTILINE)
 AMT_DUE_RE = re.compile(r"Amount\s+Due[\s\S]{0,80}?\$\s*([\d,]+\.\d{2})", re.IGNORECASE)
 
@@ -520,7 +521,30 @@ def _pdf_text(pdf_path: Path) -> str:
     with pdfplumber.open(pdf_path) as pdf:
         for page in pdf.pages:
             parts.append(page.extract_text() or "")
-    return "\n".join(parts)
+    text = "\n".join(parts)
+    if len(text.strip()) < 40:
+        # A scanned statement (a picture in a PDF - Power Jack, Bobcat 06/2026) has no
+        # text: read it with OCR. It still has to tie out to be used (10/08/2026).
+        try:
+            text = _scanned_pdf_text(pdf_path) or text
+        except Exception:
+            pass
+    return text
+
+
+def _scanned_pdf_text(pdf_path: Path, max_pages: int = 10) -> str:
+    import pypdfium2 as pdfium
+    import pytesseract
+    pdf = pdfium.PdfDocument(str(pdf_path))
+    try:
+        pages = []
+        for i in range(min(len(pdf), max_pages)):
+            img = pdf[i].render(scale=300 / 72).to_pil().convert("L")
+            pages.append(pytesseract.image_to_string(img, config="--psm 6"))
+        # OCR reads table rules as '|' between columns ('8,404.00 | 8,404.00').
+        return re.sub(r"\s*\|\s*", " ", "\n".join(pages))
+    finally:
+        pdf.close()
 
 
 def _image_to_text(img_path: Path) -> str:
@@ -588,6 +612,7 @@ TEMPLATE_LABELS = {
     "vendor_croell_ar":          "Vendor Statement, Croell AR Customer Balance (PDF — Invoice # | PO# | Invoice Date | Disc Date | Type | ... | Current Due Less Discounts)",
     "vendor_quikrete":           "Vendor Statement, Quikrete Ready Mix account statement (PDF — Invoice No. | Invoice Date | Due Date | Remark | Cust P.O. | Invoice Amount | Balance Due)",
     "qbo_invoice_list":          "QuickBooks 'Invoices for <customer>' list (PDF — Num | Date | Name | Amount | Open Balance)",
+    "vendor_voidform":           "Vendor Statement, VoidForm (PDF — Date | Due Date | Doc. Type | Ref. Nbr. | Ext. Ref. Nbr. | Orig. Amount | Amount Due | Balance)",
 }
 
 
@@ -604,6 +629,8 @@ def detect_template(text: str) -> str:
         return "vendor_quikrete"
     if QBO_INVOICE_LIST_SIG.search(text):
         return "qbo_invoice_list"
+    if VOIDFORM_SIG.search(text):
+        return "vendor_voidform"
     # QBO Statement: "INV #N. Due N" line anchor
     if QBO_STATEMENT_SIG.search(text):
         return "qbo_statement"
@@ -891,6 +918,7 @@ def _qbo_open_invoices_sections(full_text: str) -> Optional[Tuple[List[StmtLine]
         _warn(f"this report covers {len(sections)} customers - only "
               f"{', '.join(ours) or 'none of them is ours'} counted.")
     lines = [ln for k in ours for ln in sections[k]]
+    _LAST_SKIPPED.extend(ln for k in sections if k not in ours for ln in sections[k])
     return lines, round(sum(totals.get(k, 0.0) for k in ours), 2)
 
 
@@ -913,6 +941,7 @@ ABATIX_ONLINE_SIG = re.compile(r"Summary of Invoice Age for", re.I)
 CROELL_AR_SIG = re.compile(r"AR Customer Balance[\s\S]{0,600}?Balance After Disc", re.I)
 QUIKRETE_SIG = re.compile(r"INVOICE NO\.\s+INVOICE DATE\s+DUE DATE\s+REMARK", re.I)
 QBO_INVOICE_LIST_SIG = re.compile(r"Num\s+Date\s+Name\s+Amount\s+Open Balance", re.I)
+VOIDFORM_SIG = re.compile(r"Doc\.\s*Type\s+Ref\.\s*Nbr\.\s+Ext\.\s*Ref\.\s*Nbr\.", re.I)
 
 # ── Template: Croell Inc statement (added 2026-08-12) ─────────────────
 # pdfplumber merges the left register and the right remittance stub onto one
@@ -1140,6 +1169,34 @@ def parse_statement_qbo_invoice_list(full_text: str) -> Tuple[str, str, float, L
     return vendor, stmt_date, amt_due, lines
 
 
+def parse_statement_voidform(full_text: str) -> Tuple[str, str, float, List[StmtLine]]:
+    """VoidForm Products 'Customer Statement' (Acumatica-style): Date | Due Date |
+    Doc. Type | Ref. Nbr. | Ext. Ref. Nbr. (our PO) | Orig. Amount | Amount Due |
+    Balance; the job address prints on the next line. Amount Due = the open amount."""
+    stmt_date = _norm_date(_grab(r"\bDate:\s*(\d{1,2}/\d{1,2}/\d{4})", full_text))
+    amt = r"\(?-?[\d,]+\.\d{2}\)?"
+    m = re.search(rf"Over 90 Days Past Due\s+Amount Due\s*\n(?:\s*{amt}){{5}}\s+({amt})", full_text)
+    amt_due = _paren_amount(m.group(1)) if m else 0.0
+    rx = re.compile(rf"^(?P<d>\d{{1,2}}/\d{{1,2}}/\d{{4}})\s+\d{{1,2}}/\d{{1,2}}/\d{{4}}\s+"
+                    rf"(?P<typ>Invoice|Credit Memo|Payment|Debit Memo|Prepayment)\s+(?P<ref>\S+)\s+"
+                    rf"(?:(?P<po>\S+)\s+)?(?P<orig>{amt})\s+(?P<due>{amt})\s+(?P<bal>{amt})\s*$")
+    lines: List[StmtLine] = []
+    rows = full_text.splitlines()
+    for i, ln in enumerate(rows):
+        m2 = rx.match(ln.strip())
+        if not m2:
+            continue
+        a = _paren_amount(m2["due"])
+        if m2["typ"] in ("Credit Memo", "Payment", "Prepayment") and a > 0:
+            a = -a
+        nxt = rows[i + 1].strip() if i + 1 < len(rows) else ""
+        lines.append(StmtLine(date=_norm_date(m2["d"]), ref=m2["ref"], amount=a, po=m2["po"] or "",
+                              address="" if re.match(r"\d{1,2}/\d{1,2}/\d{4}|Current", nxt) else nxt[:50]))
+    if not amt_due:
+        amt_due = round(sum(x.amount for x in lines), 2)
+    return "VoidForm Products, LLC", stmt_date, amt_due, lines
+
+
 def parse_statement_cowtown(full_text: str) -> Tuple[str, str, float, List[StmtLine]]:
     stmt_date = ""
     m = re.search(r"([A-Z][a-z]+ \d{1,2}, \d{4})", full_text)
@@ -1263,6 +1320,14 @@ def _staple_vendor_override(full_text: str) -> str:
 
 
 _LAST_TEMPLATE = ""
+_LAST_SKIPPED: List["StmtLine"] = []
+
+
+def last_skipped() -> List["StmtLine"]:
+    """Rows the last parse left out ON PURPOSE (another customer's section of a
+    vendor's all-customer report) - the marked statement greys them instead of
+    flagging them as missed."""
+    return list(_LAST_SKIPPED)
 
 
 def parse_statement_ex(path: Path) -> Tuple[str, str, float, List[StmtLine], str]:
@@ -1270,6 +1335,7 @@ def parse_statement_ex(path: Path) -> Tuple[str, str, float, List[StmtLine], str
     statement_set uses it to tell a past-due letter from a full open list."""
     global _LAST_TEMPLATE
     _LAST_TEMPLATE = ""
+    _LAST_SKIPPED.clear()
     vendor, stmt_date, amt_due, lines = parse_statement(path)
     return vendor, stmt_date, amt_due, lines, _LAST_TEMPLATE
 
@@ -1334,6 +1400,8 @@ def parse_statement(path: Path) -> Tuple[str, str, float, List[StmtLine]]:
         result = parse_statement_quikrete(full_text)
     elif template == "qbo_invoice_list":
         result = parse_statement_qbo_invoice_list(full_text)
+    elif template == "vendor_voidform":
+        result = parse_statement_voidform(full_text)
     else:
         # No supported template detected — return empty so the caller surfaces
         # the unsupported-template error with the full list of supported formats.
@@ -1970,7 +2038,9 @@ def parse_statement_qbo_statement(full_text: str) -> Tuple[str, str, float, List
 
     # Lines — match against full text (multiline)
     lines: List[StmtLine] = []
+    last_balance = None
     for m in STMT_LINE_RE.finditer(full_text):
+        last_balance = _paren_amount(m.group("balance"))
         date = _norm_date(m.group("date"))
         ref = m.group("ref")
         amount = _paren_amount(m.group("amount"))   # signed: credits/payments net out
@@ -2021,9 +2091,12 @@ def parse_statement_qbo_statement(full_text: str) -> Tuple[str, str, float, List
     # A payment row with NO check number ("09/21/2026  PMT  -3,210.00  806,994.22",
     # CowTown 10-02) has no ref for STMT_LINE_RE to anchor on - read it here or the
     # statement never ties out. Ref = 'PMT' (payments are never matched to bills).
+    # Same for a 'Discount -0.01' row (CowTown 07-02: six of them, why it was 0.13 off -
+    # caught by the marked-up statement, 10/08/2026).
     for m in PMT_NO_REF_RE.finditer(full_text):
-        lines.append(StmtLine(date=_norm_date(m.group(1)), ref="PMT",
-                              amount=_paren_amount(m.group(2))))
+        lines.append(StmtLine(date=_norm_date(m.group(1)),
+                              ref="PMT" if m.group(2) == "PMT" else "DISC",
+                              amount=_paren_amount(m.group(3))))
 
     # The statement date sits in the header (right column, under "Date"), sometimes
     # too far from its label for STMT_DATE_PATTERNS - which then grab the FIRST
@@ -2037,6 +2110,12 @@ def parse_statement_qbo_statement(full_text: str) -> Tuple[str, str, float, List
                        if d and d >= newest)
         if cands:
             stmt_date = cands[-1]
+
+    # Amount Due box unreadable (a scanned statement, Power Jack 07-28): the running
+    # balance of the last row is the same figure. The tie-out still has to hold, so
+    # the two columns check each other.
+    if not amt_due and last_balance:
+        amt_due = last_balance
 
     # A "Balance forward" row rolls all prior-period open items into one opening
     # amount. It has no invoice ref and no running-balance pair, so STMT_LINE_RE
@@ -2637,7 +2716,8 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
                 notes: Optional[dict] = None,
                 statements: Optional[list] = None,
                 changes: Optional[dict] = None,
-                disagree: bool = False) -> None:
+                disagree: bool = False,
+                markups: Optional[list] = None) -> None:
     """The vendor's ONE reconciliation workbook. `notes` = the clerk's saved notes
     (statement_set.note_key -> {note}); written into her own 'Clerk notes' column so
     a re-run never loses them. `statements` / `changes` add the Statements and
@@ -3082,6 +3162,12 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
         _write_statements_sheet(wb, statements, stmt_total, line_sum, disagree)
     if changes:
         _write_changes_sheet(wb, changes)
+    marked_dir = None
+    if markups:
+        try:
+            marked_dir = _write_marked_sheet(wb, markups)
+        except Exception as e:
+            _warn(f"could not add the marked statement ({e}); Excel saved without it.")
 
     # Embed the source statement as a self-contained "Statement" tab so the
     # workbook carries the original inside it — no external link to break when
@@ -3097,9 +3183,76 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
     wb.save(out_path)
     if cleanup_dir:
         shutil.rmtree(cleanup_dir, ignore_errors=True)
+    if marked_dir:
+        shutil.rmtree(marked_dir, ignore_errors=True)
     # Binding guard (repo rule 5b): never hand over an xlsx that would trip
     # Excel's "we found a problem with some content" repair prompt.
     xlsx_verify.assert_clean(out_path)
+
+MARKED_WIDTH = 1000          # px on the sheet per statement page
+
+
+def _write_marked_sheet(wb, markups: list) -> Optional[Path]:
+    """'Statement (marked)', the 2nd sheet: a colour legend, one line per statement
+    (lines found on the page · rows on the page the tool did NOT read), the misses
+    listed, then every page with each bill row banded in its bucket's colour. The
+    statement file itself is only read. Returns the temp dir to clean after save."""
+    from openpyxl.drawing.image import Image as XLImage
+    ws = wb.create_sheet("Statement (marked)", 1)
+    ws.sheet_view.showGridLines = False
+    ws.column_dimensions["A"].width = 4
+    for col in "BCDEFGHIJKLMN":               # 13 x ~75px = the 1000px page picture
+        ws.column_dimensions[col].width = 10
+    # Prints one page wide (the pages are pictures; a column-split print is useless).
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    ws.page_setup.orientation = "portrait"
+    ws["A1"] = "Statement - each bill row coloured by what the check found"
+    ws["A1"].font = Font(bold=True, name="Arial", size=12)
+    r = 3
+    for key, (label, rgb) in sm.BUCKETS.items():
+        ws.cell(row=r, column=1).fill = PatternFill("solid", start_color="%02X%02X%02X" % rgb)
+        ws.cell(row=r, column=2, value=label).font = BODY_FONT
+        r += 1
+    c = ws.cell(row=r, column=1)
+    c.border = Border(*(Side(style="medium", color="C62828"),) * 4)
+    ws.cell(row=r, column=2, value="Outlined in red: looks like a bill on the statement, NOT read by the "
+                                    "tool - check it by hand").font = Font(bold=True, name="Arial", size=10, color="C62828")
+    r += 2
+    tmp = Path(tempfile.mkdtemp(prefix="stmt_marked_"))
+    for k, (name, res) in enumerate(markups):
+        ok = res.located == res.total and not res.unread_rows
+        msg = (f"{name}: {res.located} of {res.total} lines found on the page"
+               + (f" · {len(res.unread_rows)} row(s) on the page NOT read" if res.unread_rows else "")
+               + (" · all accounted for" if ok else ""))
+        xl_text(ws, r, 1, msg).font = Font(bold=True, name="Arial", size=11,
+                                           color="2E7D32" if ok else "C62828")
+        r += 1
+        for t in res.not_found:
+            xl_text(ws, r, 2, f"read but not found on the page: {t}").font = Font(name="Arial", size=10, color="C62828")
+            r += 1
+        for t in res.unread_rows:
+            xl_text(ws, r, 2, f"on the page, not read: {t}").font = Font(name="Arial", size=10, color="C62828")
+            r += 1
+        r += 1
+        for i, im in enumerate(res.pages):
+            w, h = im.size
+            if w > MARKED_WIDTH:
+                im = im.resize((MARKED_WIDTH, int(h * MARKED_WIDTH / w)))
+            f = tmp / f"doc{k}_p{i + 1}.png"
+            # 64-colour palette: a statement page is text + a few band colours; keeps
+            # the workbook small on the share (RCI 6 pages: 3.5 MB full colour).
+            im.convert("P", palette=1, colors=64).save(f, optimize=True)
+            img = XLImage(str(f))
+            ws.add_image(img, f"A{r}")
+            r += int(img.height / 20) + 2
+        r += 1
+    # Excel prints the range of cells that hold values and clips pictures outside it -
+    # name the print area so every page picture prints (10/08/2026, seen in Excel's PDF).
+    ws.print_area = f"A1:N{r}"
+    return tmp
+
 
 def _plain_sheet_header(ws, row: int, headers: List[str]) -> None:
     for i, h in enumerate(headers, 1):
@@ -3464,6 +3617,39 @@ def identify_file(pdf_path: Path, args: argparse.Namespace, access: str, cid: st
             "amt_due": amt_due, "lines": lines, "template": template, "ties_out": sum_matches}
 
 
+def _mark_statements(sources: list, rows: List["ReconRow"], result: dict) -> list:
+    """The marked-up copy of each current statement (statement_markup): every line
+    found on its page and banded in its bucket's colour. Rows on the page that look
+    like a bill but were not read become 'unread' items on the Notion board - the
+    'did it grab everything' check. Read-only on the statement files."""
+    cat = {}
+    for r in rows:
+        if r.stmt_ref:
+            cat[r.stmt_ref.strip().upper()] = sm.bucket_for(r.category, _is_approved(r.qbo_memo))
+    out = []
+    for path, lines in sources:
+        t0 = _phase(f"Marking up {path.name}")
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                parse_statement_ex(path)                 # for rows left out on purpose
+            skipped = last_skipped()
+            res = sm.mark(sm.load_pages(path), lines,
+                          lambda ln: cat.get((ln.ref or "").strip().upper(), "other"), skipped)
+        except Exception as e:
+            _warn(f"could not mark up {path.name}: {e}")
+            continue
+        out.append((path.name, res))
+        missed = len(res.not_found) + len(res.unread_rows)
+        _done(t0, f"{res.located}/{res.total} lines found on the page"
+                  + (_Term.color(_Term.R, f" · {missed} to check by hand") if missed else " · all accounted for"))
+        for t in res.not_found + res.unread_rows:
+            print(_Term.color(_Term.R, f"    · {t}"))
+            result.setdefault("items", []).append(
+                {"kind": "unread", "ref": t[:80], "line": f"{path.name}: {t}"[:180],
+                 "date": "", "amount": 0.0, "bill_id": "", "job": ""})
+    return out
+
+
 def reconcile_vendor(args: argparse.Namespace, access: str, cid: str, result: dict, *,
                      vendor_id: str, vendor_name: str, stmt_date: str, amt_due: float,
                      lines: List[StmtLine], out: Optional[Path], extras: dict
@@ -3620,6 +3806,8 @@ def reconcile_vendor(args: argparse.Namespace, access: str, cid: str, result: di
     result["open_items"] = {k: v for k, v in open_items.items() if v}
     result["clean"] = (not result["open_items"]) and sum_matches
 
+    markups = _mark_statements(extras.get("sources") or [], rows, result)
+
     if args.dry_run:
         result["action"] = "preview"          # the Notion board preview (no writes)
         print(_Term.color(_Term.DIM, "--dry-run set; no Excel written."))
@@ -3630,7 +3818,8 @@ def reconcile_vendor(args: argparse.Namespace, access: str, cid: str, result: di
                 statement_src=None, line_sum=line_sum, tieout_ok=sum_matches,
                 bf_amount=bf_amount, payments_total=payments_total, stmt_lines=lines,
                 notes=extras.get("notes"), statements=extras.get("statements"),
-                changes=extras.get("changes"), disagree=bool(extras.get("disagree")))
+                changes=extras.get("changes"), disagree=bool(extras.get("disagree")),
+                markups=markups)
     _done(t0, f"Saved to {_Term.color(_Term.C, str(out))}")
     result["action"] = "filed" if result["tieout"] else "held"
     t0 = _phase("Appending clerk-performance history")
@@ -4025,7 +4214,8 @@ def run_vendors(args: argparse.Namespace, access: str, cid: str,
         ok, counts, _tie = reconcile_vendor(
             args, access, cid, result, vendor_id=vendor_id, vendor_name=vendor_name,
             stmt_date=merged.as_of, amt_due=merged.amount_due, lines=merged.lines, out=out,
-            extras={"notes": notes, "statements": stmts, "changes": changes, "disagree": disagree})
+            extras={"notes": notes, "statements": stmts, "changes": changes, "disagree": disagree,
+                    "sources": [(d.path, d.lines) for d in cur_docs]})
         result["vendor_folder"] = folder
         if any(d.status == "unreadable" and d.origin in ("inbox", "manual", "current")
                and (not d.as_of or d.as_of >= merged.as_of) for d in live):

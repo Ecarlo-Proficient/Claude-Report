@@ -60,6 +60,7 @@ KINDS: Dict[str, Tuple[str, str, bool]] = {
     "lag":      ("Paid in QBO, vendor still shows it open",          "Paid",     True),
     "unlisted": ("Open in QBO, not on the statement",                "Unlisted", True),
     "print":    ("Not printed",                                      "Print",    True),
+    "unread":   ("On the statement, not read by the tool - check by hand", "Unread", True),
     "checkqbo": ("Approval pending? check QBO",                      "Check",    False),
 }
 _LABEL_TO_KIND = {v[1]: k for k, v in KINDS.items()}
@@ -67,7 +68,7 @@ _LABEL_TO_KIND = {v[1]: k for k, v in KINDS.items()}
 BUCKET_PROPS: List[Tuple[str, str]] = [
     ("Not entered", "enter"), ("Not approved", "approve"), ("Amount mismatch", "mismatch"),
     ("Tax charged", "tax"), ("Paid, vendor shows open", "lag"), ("Not on statement", "unlisted"),
-    ("Not printed", "print"), ("Check QBO", "checkqbo")]
+    ("Not printed", "print"), ("Check QBO", "checkqbo"), ("Not read", "unread")]
 PROP_DESCRIPTIONS = {
     "Last checked": "When the last run pulled QuickBooks. Each run re-reads the vendor's current "
                     "statement(s) and compares every invoice # with QuickBooks open and recently "
@@ -75,6 +76,8 @@ PROP_DESCRIPTIONS = {
     "Checked against": "Which statement(s) and which QuickBooks pull the counts on this row come from.",
     "Last statement": "The as-of date printed on the newest current statement.",
     "Matched": "Statement invoices found in QuickBooks at the same amount.",
+    "Not read": "Rows on the statement that look like a bill but the tool did not read - "
+                "outlined in red on the Excel's 'Statement (marked)' sheet.",
 }
 H_TODO, H_CHANGES, H_STATEMENTS, H_CLEARED = "To do", "Changed since", "Statements", "Cleared"
 CHECK_PREFIX = "Pay-run check"
