@@ -1,8 +1,10 @@
 # statement-reconciler/ - how the vendor statement reconciler works
 
-Last changed: 09/30/2026 (evening) - the Notion "Vendor Statements" board is now ONE page per
-VENDOR, coloured by the pay-run question "is every statement bill entered in QBO?"; months nest
-inside the page and file themselves DONE when clean; `--refresh --dry-run` previews the board.
+Last changed: 10/08/2026 - four new statement layouts (Abatix online, Croell AR balance, Quikrete,
+QuickBooks "Invoices for" list), only OUR section of a vendor's all-customer report, safety nets
+(misdated / undated statements never used, no guessing between vendors), `--audit-parsing`.
+10/07: ONE running record per vendor, no months; `<Vendor>/Current` + `History`; Clerk notes kept
+by bill id; Notion counts every bucket; `--only <vendor>`.
 
 Update this chart - and the line above - in the same commit as any change to
 `statement-reconciler/` (`.github/flow_guard.sh`).
@@ -14,39 +16,44 @@ flowchart LR
     classDef gate fill:#fff3e0,stroke:#d9822b,color:#111
     classDef out fill:#eaf7ea,stroke:#3c8d40,color:#111
 
-    INBOX[("Accounting share<br/>Vendor Statements / Statement Inbox<br/>PDF · Excel · image")]:::src
+    INBOX[("Statement Inbox<br/>PDF · Excel · image, any order")]:::src
+    FILED[("&lt;Vendor&gt;/Current + History<br/>(old MM-YYYY folders folded in)")]:::src
     QBO[("QuickBooks<br/>open + recently paid bills")]:::src
     MBX[("billings mailbox<br/>printed bills")]:::src
 
-    PARSE["parse_statement<br/>~8 vendor templates + OCR"]:::tool
-    VEND["find_vendor_id<br/>alias cache, then QBO search"]:::tool
-    TIE{"tie-out<br/>lines sum to Amount Due?"}:::gate
-    REC["reconcile_iter<br/>matched · missing in QBO · amount mismatch ·<br/>tax 8.25% · vendor lag · not on statement"]:::tool
+    ID["identify_file<br/>parse (~16 layouts + OCR) + vendor<br/>(alias cache, then QBO search;<br/>several matches = refuse, never guess)"]:::tool
+    TIE{"safety nets per statement<br/>lines sum to its Amount Due?<br/>dated, not before its own invoices?"}:::gate
+    AUD["--audit-parsing<br/>every statement on the share,<br/>read-only, after any parser change"]:::tool
+    SET["statement_set.plan<br/>duplicate (same file) · unreadable ·<br/>merge by invoice-date range:<br/>full list / past-due letter / activity"]:::tool
+    MERGED["ONE open list as of the newest date<br/>+ 'statements disagree by $X' when the<br/>vendor's own documents differ"]:::tool
+    NOTES["clerk notes<br/>read from the Excel before rewriting,<br/>kept by bill id in .reconciler.json"]:::tool
+    REC["reconcile_vendor<br/>matched · missing in QBO · amount mismatch ·<br/>tax 8.25% · paid but vendor shows open · not on statement"]:::tool
     PS["print_status.py<br/>opt-in PRINT_STATUS=1"]:::tool
-    ITEMS["_board_items<br/>one item per bill: enter · approve · check QBO ·<br/>amount · tax · print"]:::tool
-    GRP["group_results<br/>one record per VENDOR (its folder);<br/>unreadable files mark their month"]:::tool
-    NB["notion_board.py<br/>merge with the clerk's ticks, each bill once (newest statement);<br/>fixed in QBO -> Cleared · clean / ticked month -> History"]:::tool
+    NB["notion_board.py<br/>merge with the clerk's ticks; a count per bucket;<br/>fixed -> Cleared"]:::tool
     PREV{"--dry-run?"}:::gate
 
-    XLSX[("Excel + source statement<br/>filed under Vendor / MM-YYYY")]:::out
-    HELD[("tie-out failed:<br/>Excel banded, source stays in Inbox")]:::out
-    PAGE[("Notion Vendor Statements · 1 page per vendor<br/>All entered · Not entered · Unreadable · No statement (60+ days)")]:::out
-    DONE[("month folder renamed<br/>'MM-YYYY DONE'")]:::out
+    XLSX[("&lt;Vendor&gt;/Current: statement(s) in use + ONE Excel<br/>Summary (Clerk notes col) · Statements · Changes")]:::out
+    HIST[("&lt;Vendor&gt;/History<br/>'mm-dd-yyyy DONE / Replaced / Duplicate - file'")]:::out
+    HELD[("unreadable statement:<br/>stays in the Inbox / Current")]:::out
+    PAGE[("Notion · 1 page per vendor<br/>All entered as of &lt;date&gt; · Not entered · Unreadable · No statement<br/>To do · Changed since · Statements · Cleared")]:::out
     TEAMS[("Teams<br/>1 digest: vendors not ready to pay")]:::out
-    PRINT[("terminal: one line per vendor<br/>+ folders that would be filed")]:::out
+    PRINT[("terminal: the plan per vendor<br/>+ what would be filed + board preview")]:::out
 
-    INBOX --> PARSE --> VEND --> REC
-    QBO --> VEND
-    QBO --> REC
-    PARSE --> TIE
-    TIE -- yes --> XLSX
+    INBOX --> ID --> TIE
+    FILED --> TIE
+    QBO --> ID
+    TIE -- yes --> SET
     TIE -- no --> HELD
-    REC --> XLSX
-    MBX --> PS --> ITEMS
-    REC --> ITEMS --> GRP --> PREV
+    FILED -.-> AUD
+    SET --> MERGED --> REC
+    QBO --> REC
+    FILED --> NOTES --> REC
+    MBX --> PS --> REC
+    REC --> PREV
     PREV -- yes --> PRINT
+    PREV -- no --> XLSX
+    PREV -- no --> HIST
     PREV -- no --> NB --> PAGE
-    NB --> DONE
     NB --> TEAMS
-    XLSX -. "--refresh re-checks every open month in place" .-> PARSE
+    XLSX -. "--refresh re-checks every vendor's current statement(s)" .-> TIE
 ```

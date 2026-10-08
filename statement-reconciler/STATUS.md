@@ -5,6 +5,59 @@ to this tool. Tool-only scope: no business/owner analyses or dollar-exposure
 findings here — those live in the owner's vault.
 
 ## DONE / FINALIZED
+- 2026-10-08 · **Inbox sweep: every statement on the share read through the parser, misses fixed, safety nets added (owner: "make sure it catches all and has safety nets so we know it didn't read it right").**
+  - New layouts: Abatix online statement (`vendor_abatix_online`), Croell "AR Customer Balance" (`vendor_croell_ar` -
+    the 7-digit invoice # runs into the PO in the text), Quikrete Ready Mix account statement (`vendor_quikrete`),
+    a vendor's QuickBooks "Invoices for <us>" list (`qbo_invoice_list`, CRI-DFW; only open lines count).
+  - Fixes: a QBO Open Invoices report covering ALL the vendor's customers (Core Concrete Pumping) - only our section
+    counts, a page header mid-section never splits it; QBO statement invoice # with a letter (`INV #R16738`, a revised
+    invoice); the statement date when its "Date" label is far from the value (Carder read the first invoice date);
+    vendor pinned by its own statement text for Gonzalez Brothers and Core Concrete Pumping (+ Core alias); the
+    "paid in QBO" note now says the BILL's date (it never was the payment date).
+  - Safety nets: a statement dated before its own newest invoice, or in the future, or with no date, is never used
+    (`Doc.problem`, shown in the run); an undated Excel/image statement takes the date in its file name, never today;
+    a vendor name search with several QBO matches refuses instead of taking the first (Gonzalez matched seven, the
+    first a person); a vendor folder differing only by LLC / Inc / LP is the same folder; an activity statement's
+    balance forward is itemized only by a statement of the SAME batch (within 7 days) - a month-old list is stale
+    (Preferred 09/01 vs 10/05); old unreadable files from month folders go to History as "Not read" (printed emails,
+    scanned pages), a NEW one stays in front of a person and the vendor shows Unreadable.
+  - `--audit-parsing` (new): every statement on the share through the parser + safety nets, read-only, no QBO; lists
+    the ones that can't be trusted (new ones first) and a count per layout. Run it after any parser change.
+  - Known, left on purpose: CMC 08-03 (a watermark printed across one row) and scanned / unsupported vendor files
+    (Void Forms, Texas Materials, Power Jack, Core Supply, Bobcat 06) - the tie-out flags them; they are not used.
+  - Tests: `tests/test_statement_parsers.py` (12 - one sample of the text the parser sees per layout learned, plus the
+    safety nets). Rule: a new or fixed layout adds its sample there.
+- 2026-10-07 · **One running record per vendor - no more months (owner: "all entered AS OF the last date the statement shows").**
+  The clerk dumps statements in any order; a vendor often sends two close together (Cowtown: a past-due letter
+  10/01 + its monthly activity statement 10/02) or the same file twice (RCI 10/07 x2), and month folders put a
+  statement dropped on the 30th in the wrong month.
+  - `statement_set.py` (new): each statement covers a RANGE of invoice dates - a full open list = everything up to
+    its as-of date; Cowtown's past-due letter = up to the month of its newest invoice; an activity statement
+    (balance forward) = only the invoices after the forward. Walked oldest first, a statement wipes its range and adds
+    its lines; the rest is the vendor's ONE open list, as of the newest date. Same file twice (checksum) = Duplicate;
+    a statement that does not tie out on its own is kept out (Unreadable). When the vendor's own documents disagree
+    (Cowtown 10/01 vs 10/02) the page says so instead of calling the parse broken.
+  - Folders: `<Vendor>/Current` (statements in use + ONE Excel `Reconciliation - <Vendor> - as of mm-dd-yyyy.xlsx`),
+    `<Vendor>/History` (`mm-dd-yyyy DONE|Replaced|Duplicate - <file>`), `<Vendor>/.reconciler.json` (last as-of,
+    clean flag, changes, notes). Old `MM-YYYY` / `MM-YYYY DONE` folders are folded in on a vendor's first run.
+  - Clerk notes (her complaint: a re-run wiped her notes): Excel column M "Clerk notes" (yellow). Every run reads her
+    notes out of the Excel before rewriting it and keeps them by QBO bill id (else invoice #), so a note follows its
+    bill when rows move. Her note also shows on the bill's line in Notion. An Excel left open (a `~$` lock file) skips
+    that vendor - nothing written over her work. No pre-10/07 workbook had notes left to carry.
+  - Notion: a count column per bucket (Not entered, Not approved, Amount mismatch, Tax charged, Paid vendor shows open,
+    Not on statement, Not printed, Check QBO, Matched), "Checked against" (which statements vs which QBO pull), column
+    descriptions (added on the first live run). Page: Pay-run check · To do (as of) · Changed since <prev> (new / gone /
+    amount changed) · Statements (every one, newest first) · Cleared. Pre-10/07 pages (month headings) are read as one
+    bucket so the clerk's ticks carry. The "Month done" tick and `--sync-done` are gone (nothing to close).
+  - CLI: `--only cowtown,rci` limits any run to those vendors; `--inbox --dry-run` now reads QBO + Notion and prints
+    the full plan (it used to stop before QBO). `--refresh` re-checks every vendor with a current statement.
+  - Parser fixes found on the way: Cowtown past-due letter invoice numbers with a letter suffix (`399238R`); Cowtown
+    activity statement payments with no check # (`PMT -3,210.00`) - the 10-02 statement now ties out alone; QBO open
+    balance "Credit M..." truncation (RCI 08/31 did not tie out).
+  - First live run 10/07 (`--inbox --only cowtown,rci --yes --no-teams`): Cowtown 2 Current / 4 DONE / 1 Replaced,
+    RCI 1 Current / 2 DONE / 1 Duplicate / 3 Replaced; both Excels opened clean in real Excel; Notion pages verified.
+  - Tests: `tests/test_statement_set.py` (merge kinds, duplicates, unreadable, changes, notes surviving a re-run in a real
+    workbook), `tests/test_statement_board.py` rewritten for the vendor page (15).
 - 2026-09-30 · **Notion board rebuilt as ONE page per VENDOR and run live for the first time (owner).**
   The owner's question for the board is the pay-run check: "are all the bills from the statement ENTERED" - the clerk
   confirms it before sending the pay run to the manager; approvals, amount/tax fixes and printing are follow-ups done
