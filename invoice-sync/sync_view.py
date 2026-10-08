@@ -133,14 +133,14 @@ class View:
 
     def footer_summary(self, label: str, d: dict):
         self._end_bar()
-        upd = d.get("updated", 0); new = d.get("created", 0)
+        upd = d.get("updated", 0); new = d.get("created", 0); same = d.get("unchanged", 0)
         deld = d.get("archived_deleted", 0); old = d.get("archived_paid_old", 0)
         flip = d.get("flipped_to_paid", 0); err = d.get("errors", 0)
         unm = d.get("customer_unmatched", 0)
         errc = RED if err else GREEN
         self._w(
             f"  {BOLD}{label:<8}{RESET} "
-            f"{upd} upd · {new} new · {flip} paid · "
+            f"{upd} upd · {DIM}{same} same{RESET} · {new} new · {flip} paid · "
             f"{YELLOW}{deld} del{RESET} · {old} aged · "
             f"{errc}{err} err{RESET}"
             + (f" · {DIM}{unm} unmatched{RESET}" if unm else "")

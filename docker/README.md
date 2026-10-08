@@ -116,9 +116,14 @@ is appended to `/volume1/docker/automation/update_server.log` (readable from the
 
 ### 8. Going live - NOT YET
 
-Live needs these first (tracked in `docker/STATUS.md`): the Notion "only update when changed" fix, the Mac honoring the
-writer file (sync-all stands down), the Bill Tracker Inputs split, the nightly mirror cross-check. Then:
-`ACB_SERVER_MODE=live`, create `Accounting/_automation/writer.json` = `{"writer": "server"}`, restart.
+Done before live (tracked in `docker/STATUS.md`): Notion writes only what changed, the Mac honors the writer file
+(sync-all stands down), the Bill Tracker open-in-Excel guard. Left: the release to `main` (live runs `main` only). Then,
+on switch day, in this order:
+
+1. On the Mac, carry the miscode history (dry run first, then write):
+   `~/.venvs/proficient/bin/python docker/carry_history.py` then `... docker/carry_history.py --commit`
+2. `ACB_SERVER_MODE=live` in `server.env`, create `Accounting/_automation/writer.json` = `{"writer": "server"}`, restart.
+3. Watch the ledger's Data status: the "Office server" block drops "(test)" and its times keep moving.
 
 **Rollback** at any time: set the writer file to `{"writer": "mac"}`. The server stands down at its next run and the
 owner's `sync-all` runs AP/AR as before.

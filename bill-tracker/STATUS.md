@@ -4,6 +4,11 @@ Shared progression record (the user's sessions ↔ the developer's). Tool scope 
 no business findings, dollar exposures, or owner analyses (those live in the owner's vault).
 
 ## DONE / FINALIZED
+- 10/08/2026 · **Open-in-Excel guard.** `excel_bill_sync` writes nothing while the tracker is open in Excel (`~$Bill
+  Tracker.xlsx`, or the 2-character-short lock name, beside it): checked before the Lien/Notes read and again right
+  before the save (opened mid-build). Skip = exit 0 (the next run catches up); a lock over `STALE_LOCK_HOURS` (12) =
+  exit 3 so the office server alerts. Proven on a real build against a locked scratch copy (skipped, file untouched).
+  Synology only - on SharePoint co-authoring leaves no lock file. `tests/test_bill_tracker_open_guard.py`.
 - 2026-10-08 · **The approval rule moved to `shared/bill_approval.py`** (the statement reconciler needs the same three
   states - tools never import tools). `bill_rows.is_approved` / `approval_state` and the `APPROVAL_*` names now come
   from there; the Bill List output is unchanged (same rule, verified on the six edge cases).

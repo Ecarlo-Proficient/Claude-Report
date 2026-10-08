@@ -105,6 +105,44 @@ from shared.cost_code_audit import (
 OUTPUT_PATH = paths.bill_tracker_xlsx()   # Accounting share > Accounts Payable/
 BACKUP_RETENTION_DAYS = 14
 
+# A lock file older than this is probably left behind by a crashed Excel, not a person working: the run still
+# skips (never guess), but exits EXIT_STALE_LOCK so the office server raises its once-an-hour alert.
+STALE_LOCK_HOURS = 12
+EXIT_STALE_LOCK = 3
+
+
+def open_in_excel(path: Path) -> Optional[Path]:
+    """The Office lock file beside `path` while someone has it open in Excel, else None.
+
+    Excel writes a hidden `~$<name>` next to a workbook it has open (Word-style lock names drop the first two
+    characters, so both spellings are checked). Writing the tracker while it is open loses work both ways: the
+    person's Lien / Notes typing is not in the file we read, and their next save puts the old copy back over ours.
+    This only works on a file share (the Synology). On SharePoint several people co-author one workbook and no lock
+    file appears, so this guard does not carry over - the typed columns must leave the workbook before it moves."""
+    for name in (f"~${path.name}", f"~${path.name[2:]}"):
+        lock = path.parent / name
+        if lock.exists():
+            return lock
+    return None
+
+
+def _skip_if_open(path: Path, when: str) -> Optional[int]:
+    """Exit code to stop with when the tracker is open in Excel (0 = skipped, the next run catches up), else None."""
+    lock = open_in_excel(path)
+    if not lock:
+        return None
+    try:
+        age_h = (dt.datetime.now().timestamp() - lock.stat().st_mtime) / 3600
+    except OSError:
+        age_h = 0.0
+    print(f"\n⚠ {path.name} is OPEN in Excel ({lock.name}, {age_h:.1f}h old) - skipped {when}; "
+          f"nothing written. The next run catches up once it is closed.")
+    if age_h >= STALE_LOCK_HOURS:
+        print(f"  the lock is over {STALE_LOCK_HOURS}h old - if nobody has the file open, Excel crashed and left it "
+              f"behind: delete {lock.name} from {path.parent}")
+        return EXIT_STALE_LOCK
+    return 0
+
 # Paid bills lookback. Per the user 2026-05-27: trailing 12mo was too much; use
 # fixed YTD start date instead. Adjust here when crossing a fiscal year.
 PAID_CUTOFF_DATE = "2026-01-01"
@@ -2651,6 +2689,10 @@ def main() -> int:
         print(f"\n✓ dry run complete in {elapsed:.1f}s — workbook NOT written")
         return 0
 
+    skip = _skip_if_open(OUTPUT_PATH, "this run")
+    if skip is not None:
+        return skip
+
     # Read existing workbook's Bills sheet for Lien/Notes preservation
     print("→ reading existing workbook for Lien/Notes preservation …")
     edits = preserve_edits(OUTPUT_PATH)
@@ -2752,6 +2794,11 @@ def main() -> int:
     print(f"  Liens: live view  ·  Inventory: {n_inv} lines  ·  Audit: {n_audit} rows "
           f"across 3 themed sheets + cost-code History log")
 
+    # Opened while we were building (the read above was before it): their copy does not have this run, and
+    # they may be typing - save nothing and let the next run catch up.
+    skip = _skip_if_open(OUTPUT_PATH, "the save (opened during the build)")
+    if skip is not None:
+        return skip
     wb.save(OUTPUT_PATH)
     post_process_xlsx(OUTPUT_PATH)
 

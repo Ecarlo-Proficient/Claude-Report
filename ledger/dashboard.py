@@ -1213,7 +1213,10 @@ def _freshness(con) -> dict:
     # the old Open_Invoices.xlsx is now backup_dont_use). Resolve that first (configurable), then
     # the invoice-sync default (INVOICE_EXPORT_PATH / repo root) and legacy OneDrive names, so the
     # AR card shows a real "last ran" - not blank - which was the "AP showed, AR didn't" bug.
-    for cand in (paths.get_path("ACB_INVOICE_TRACKER_XLSX", ob / "Collections/Invoice Tracker.xlsx"),
+    # Its home since the move to the Synology is the Accounting share's Accounts Receivable/ (invoice-sync's own
+    # .env names it; the ledger never loads that file, so it showed "never" - 10/08/2026).
+    for cand in (paths.get_path("ACB_INVOICE_TRACKER_XLSX", paths.accounting_base() / "Accounts Receivable/Invoice Tracker.xlsx"),
+                 ob / "Collections/Invoice Tracker.xlsx",
                  paths.get_path("INVOICE_EXPORT_PATH", PROJECT_ROOT / "Open_Invoices.xlsx"),
                  ob / "Collections/Open_Invoices.xlsx", ob / "Automations-/Open_Invoices.xlsx",
                  ob / "Open_Invoices.xlsx"):
@@ -1229,6 +1232,18 @@ def _freshness(con) -> dict:
             if st:
                 out["sources"]["QBO mirror"] = _dt.datetime.fromtimestamp(st.timestamp()).isoformat(timespec="minutes")
     except Exception:                                  # noqa: BLE001 - no mirror = no line
+        pass
+    # the office server's last GOOD run per job (it writes Accounting/_automation/server-status.json every step);
+    # a job whose latest run failed shows no time, so its dot goes grey instead of looking current
+    try:
+        st = json.loads((paths.accounting_base() / "_automation" / "server-status.json").read_text())
+        out["server_mode"] = st.get("mode")
+        for job, key in (("mirror", "server mirror"), ("ap", "server ap"), ("ar", "server ar")):
+            j = (st.get("jobs") or {}).get(job) or {}
+            ok = j.get("last_ok")
+            out["sources"][key] = (_dt.datetime.fromisoformat(ok).replace(tzinfo=None).isoformat(timespec="minutes")
+                                   if ok and j.get("exit") == 0 else None)
+    except (OSError, ValueError, TypeError):           # share not mounted / no server yet = no lines
         pass
     return out
 

@@ -6,6 +6,12 @@ mirror. Update this in the SAME commit as any change to this tool.
 ---
 
 ## DONE / FINALIZED
+- 10/08/2026 · **Notion: only write an invoice that changed.** The invoice cache keeps each page's properties as read; an
+  existing page is written only when a QBO field differs (`_changed_fields`, read and write shapes reduced alike by
+  `_plain`; an unknown shape always counts as changed) or the page was not stamped Last Synced today - so an unchanged
+  invoice is written at most once a day instead of every 15-minute run. New `unchanged` count in the summary; a dry run
+  logs the changed fields. Live dry run 10/08: 111 of 114 open invoices unchanged, 2 new, 1 update (34351, edited in QBO
+  that afternoon). `tests/test_invoice_skip_unchanged.py`.
 - 10/07/2026 · **Payment cards: server test mode.** `qbo_payment_notify.py` runs standalone (`--test`, `--dry-run`):
   test = "TEST - QuickBooks payment received" to `TEAMS_WEBHOOK_PAYMENTS_TEST`, posted ids in
   `qbo_payments_posted.test.json`; a dry run with no record now lists the last 72h (it used to list nothing). The office

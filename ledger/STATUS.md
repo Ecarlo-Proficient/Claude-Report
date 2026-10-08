@@ -4,6 +4,12 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 10/08/2026 · **Data status: the office server.** `_freshness` reads `Accounting/_automation/server-status.json`: the
+  last GOOD run of the server's mirror, Bill Tracker and Invoice sync (a failed latest run shows no time, so the dot goes
+  grey) + `server_mode`; the Data status pop-up gains an "Office server" block, "(test - practice copies)" in test mode,
+  hidden when the share or the server is absent. Same pass: the Invoice file line read "never" - the ledger never loads
+  invoice-sync's `.env`, so it now looks at the Accounting share's `Accounts Receivable/Invoice Tracker.xlsx` first.
+  Checked in the preview (light, the pill went from 2 stale to 1).
 - 2026-10-08 · **Internal stub matches a joint check by check #** (owner: "fix the ledger stub to match by check #").
   `find_joint_payment` now takes every Payment and BillPayment of the same amount from the mirror and pairs by
   check # (any date), then date, then the amount alone within 45 days when unique (a client check with no # -

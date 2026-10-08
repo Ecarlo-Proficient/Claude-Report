@@ -745,6 +745,8 @@ const SYNC_GROUPS = [
   ["Invoice Tracker (AR)", [["Invoice file", "S", "sync-ar"]]],
   ["WIP", [["WIP master file", "S", "WIP master"], ["Loaded into the ledger", "L", "WIP"]]],
   ["Notion", [["Customer List (CRM)", "L", "CRM (customers)"]]],
+  ["Office server", [["QuickBooks copy", "S", "server mirror"], ["Bill Tracker run", "S", "server ap"],
+                     ["Invoice sync run", "S", "server ar"]]],
 ];
 function toggleSyncPop() {
   let pop = $("#syncPop");
@@ -756,7 +758,8 @@ function toggleSyncPop() {
   const at = w => { if (!w) return null; const t = Date.parse(w.length <= 16 ? w + ":00" : w); return isNaN(t) ? null : t; };
   let html = `<div class="sp-head"><b>Data status</b><span>green = current · amber = over 2 business days</span></div>`;
   for (const [sys, feeds] of SYNC_GROUPS) {
-    html += `<div class="sp-sys">${_ge(sys)}</div>`;
+    if (sys === "Office server" && !fr.server_mode) continue;   // share not mounted / no server: no block
+    html += `<div class="sp-sys">${_ge(sys === "Office server" && fr.server_mode === "test" ? sys + " (test - practice copies)" : sys)}</div>`;
     for (const [lbl, kind, key] of feeds) {
       const w = (kind === "S" ? S : L)[key], t = at(w);
       const cls = !t ? "none" : businessHoursSince(t, Date.now()) > STALE_BUSINESS_H ? "stale" : "ok";

@@ -147,6 +147,7 @@ class InvoiceSyncSummary:
     invoices_seen: int = 0
     created: int = 0
     updated: int = 0
+    unchanged: int = 0             # page already matched QBO and was synced today - no write
     flipped_to_paid: int = 0       # Notion was open, QBO no longer reports it open
     skipped_no_project: int = 0
     customer_match_failures: int = 0
@@ -165,6 +166,7 @@ class InvoiceSyncSummary:
             "seen": self.invoices_seen,
             "created": self.created,
             "updated": self.updated,
+            "unchanged": self.unchanged,
             "flipped_to_paid": self.flipped_to_paid,
             "skipped_no_project": self.skipped_no_project,
             "customer_unmatched": self.customer_match_failures,
@@ -777,6 +779,51 @@ def _build_synced_properties(
     return props
 
 
+def _plain(prop: Any) -> Any:
+    """One Notion property (as read back OR as written) -> a plain comparable value.
+
+    Both shapes reduce the same way, so "what Notion holds" and "what we would write" compare
+    directly. A shape we don't know returns a unique object, which never compares equal - so an
+    unknown property always counts as changed and gets written (the old behaviour), never skipped."""
+    if not isinstance(prop, dict):
+        return object()
+    if "title" in prop or "rich_text" in prop:
+        parts = prop.get("title") if "title" in prop else prop.get("rich_text")
+        text = "".join((p.get("plain_text") if "plain_text" in p else (p.get("text") or {}).get("content")) or ""
+                       for p in (parts or []))
+        return text.replace("\r\n", "\n").strip()
+    if "date" in prop:
+        return ((prop.get("date") or {}).get("start") or "")[:10] or None
+    if "number" in prop:
+        n = prop.get("number")
+        return None if n is None else round(float(n), 2)
+    if "select" in prop:
+        return ((prop.get("select") or {}).get("name") or "").strip() or None
+    if "url" in prop:
+        return prop.get("url") or None
+    if "relation" in prop:
+        return tuple(sorted((r.get("id") or "").replace("-", "") for r in (prop.get("relation") or [])))
+    return object()
+
+
+def _changed_fields(props: Dict[str, Any], current: Dict[str, Any], today_iso: str) -> List[str]:
+    """The properties that make the page need a write: a QBO field that differs from what Notion
+    holds, or "Last Synced" when the page has not been stamped today. Empty = skip the page. So an
+    unchanged invoice is written at most once a day (Last Synced keeps meaning "QBO checked it
+    today") instead of on every 15-minute run."""
+    if not current:
+        return ["(new page)"]
+    changed = [name for name, value in props.items()
+               if name != "Last Synced" and _plain(value) != _plain(current.get(name))]
+    if _plain(current.get("Last Synced")) != today_iso:
+        changed.append("Last Synced")
+    return changed
+
+
+def _needs_write(props: Dict[str, Any], current: Dict[str, Any], today_iso: str) -> bool:
+    return bool(_changed_fields(props, current, today_iso))
+
+
 # ───────────────── invoice page cache ─────────────────
 
 @dataclass
@@ -791,6 +838,7 @@ class InvoiceCacheEntry:
     prior_status: str         # "" for new invoices not yet in Notion
     prior_open_balance: float
     invoice_num: str = ""     # human DocNumber (e.g. "34075") for readable logs
+    current: Dict[str, Any] = field(default_factory=dict)  # the page's properties as read - skip unchanged
 
 
 def _build_invoice_cache(
@@ -828,6 +876,7 @@ def _build_invoice_cache(
             prior_status=prior_status,
             prior_open_balance=prior_open_balance,
             invoice_num=invoice_num,
+            current=props,
         )
     return cache
 
@@ -853,12 +902,18 @@ def _upsert_one(
     prior_open_balance = entry.prior_open_balance if entry else 0.0
 
     if existing_page_id:
-        if dry_run:
-            log.info("[dry-run] UPDATE %s/%s → page=%s",
-                     rec.division, rec.invoice_num, existing_page_id)
+        today_iso = (props.get("Last Synced") or {}).get("date", {}).get("start") or dt.date.today().isoformat()
+        changed = _changed_fields(props, entry.current, today_iso)
+        if not changed:
+            summary.unchanged += 1
+        elif dry_run:
+            log.info("[dry-run] UPDATE %s/%s → page=%s (%s)",
+                     rec.division, rec.invoice_num, existing_page_id, ", ".join(changed))
+            summary.updated += 1
         else:
+            log.debug("UPDATE %s/%s (%s)", rec.division, rec.invoice_num, ", ".join(changed))
             notion.update_page(existing_page_id, props)
-        summary.updated += 1
+            summary.updated += 1
     else:
         if dry_run:
             log.info("[dry-run] CREATE %s/%s", rec.division, rec.invoice_num)

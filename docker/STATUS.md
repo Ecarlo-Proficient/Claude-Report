@@ -3,6 +3,10 @@
 Progression record for the office server package. Update in the SAME commit as any change to this folder (repo rule).
 
 ## DONE / FINALIZED
+- 2026-10-08 · **Switch-over prep, one landing:** Bill Tracker open-in-Excel guard (bill-tracker), Notion writes only what
+  changed (invoice-sync), `carry_history.py` (switch-day history carry), the ledger's server status lines. The 10/05
+  paid-vs-unpaid open issue is SETTLED: a same-moment pair (server 14:35, Mac mirror 14:40) matched on all 3,451 Bills
+  lines, every field; the earlier gaps were QuickBooks edits between the two runs.
 - 2026-10-08 · **Server updated bdcb5e5 -> 6a417f0** via the DSM `update_server` task (2nd run): pull ok on the ed25519 pin,
   build reused every cached layer (code only), container recreated, both test Bill Trackers' permissions reset. Now on
   the 10/06 permissions fix + the AR-reads-the-test-Bill-Tracker fix; mode test, PAYMENTS_TEST unset.
@@ -41,12 +45,24 @@ Progression record for the office server package. Update in the SAME commit as a
   server runs the newer aging code); Bill Tracker - Inventory / Liens identical, Bills differ on payments (side note below).
 
 ## TO DO (before live)
-- Notion: only update an invoice when a field changed (today every run rewrites every open invoice).
+- DONE 10/08 - Notion: an invoice is written only when a field changed (invoice-sync; 111 of 114 skipped on the live dry run).
 - DONE 10/06 - The Mac honors the writer file: sync-all stands down on AP/AR while it says "server" (push_registers.sh still run by hand after a rule change).
-- Bill Tracker Inputs split: Lien / Notes / coding Status move to `Bill Tracker Inputs.xlsx`, the tracker read-only.
-- The nightly cross-check between the server's mirror and the Mac's.
-- The ledger shows the server's last good run (reads `Accounting/_automation/server-status.json`).
+- DONE 10/08 - Bill Tracker "open in Excel" guard: the AP run skips (writes nothing) while `~$Bill Tracker.xlsx` sits
+  beside the tracker, checked before the read AND again right before the save; a lock over 12h still skips but exits 3
+  so the server alerts (a crashed Excel left it). Replaces the Inputs split as the switch-over requirement (owner
+  10/08): people type only a few Lien tags / Notes a week (11 since 09/24), and the guard keeps them.
+- DONE 10/08 - `docker/carry_history.py`: the switch-day carry of the Mac's cost-code miscode history to the server
+  (dry run by default, `--commit` backs up and writes; refuses mid-AP-run). README step 8.
+- DONE 10/08 - The ledger's Data status shows the server's last good run per job (mirror / Bill Tracker / Invoice
+  sync), from `Accounting/_automation/server-status.json`; "(test - practice copies)" while in test mode.
 - Live runs `main` only - a release PR before the switch.
+
+## LATER (not needed for the switch, owner 10/08)
+- Bill Tracker Inputs split - the typed Lien tags / Notes leave the workbook (a small inputs file, or the ledger's lien
+  marks). **Required before the Bill Tracker moves to SharePoint:** there several people co-author one workbook and no
+  `~$` lock file appears, so the open-in-Excel guard cannot work.
+- The nightly cross-check between the server's mirror and the Mac's - the server's own nightly count check against
+  QuickBooks + the 10/08 cell-for-cell Bill Tracker match cover the switch.
 
 ## OPEN ISSUES
 - 2026-10-08 · **Bill Tracker side-by-side (server 13:29 vs a Mac build 13:33): the base AP run matches.** Bills (3,448
