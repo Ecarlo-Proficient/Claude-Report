@@ -137,6 +137,12 @@
     "qbo_name": "POST-TENSION SERVICES OF TEXAS",
     "saved": "2026-05-21"
   },
+  "power jack": {
+    "pdf_name": "Power Jack",
+    "qbo_id": "25995",
+    "qbo_name": "POWER JACK FOUNDATION REPAIR",
+    "saved": "2026-10-08"
+  },
   "preferred materials, llc": {
     "pdf_name": "Preferred Materials, LLC",
     "qbo_id": "27541",
@@ -172,6 +178,12 @@
     "qbo_id": "28285",
     "qbo_name": "SUNRISE REDI MIX",
     "saved": "2026-06-22"
+  },
+  "voidform products, llc": {
+    "pdf_name": "VoidForm Products, LLC",
+    "qbo_id": "25354",
+    "qbo_name": "VOID FORM PRODUCTS",
+    "saved": "2026-10-08"
   },
   "white cap, l.p": {
     "pdf_name": "White Cap, L.P.",

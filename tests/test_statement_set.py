@@ -117,9 +117,7 @@ def test_the_clerks_note_survives_a_rerun_and_follows_the_bill(tmp_path):
                         "ENTER BILL IN QBO", stmt_ref="N9", stmt_date="2026-09-02")]
     out = tmp_path / "r.xlsx"
     lines = [L("2026-09-01", "C1", 100.0), L("2026-09-02", "N9", 5.0)]
-    sr.write_excel(out, "V", "2026-09-30", 105.0, bills, rows, line_sum=105.0, stmt_lines=lines,
-                   statements=[{"as_of": "2026-09-30", "label": "Current", "kind": "open list",
-                                "amount": 105.0, "name": "s.pdf"}])
+    sr.write_excel(out, "V", "2026-09-30", 105.0, bills, rows, line_sum=105.0, stmt_lines=lines)
     from openpyxl import load_workbook
     wb = load_workbook(out)
     ws = wb["Summary"]
@@ -154,3 +152,20 @@ def test_a_history_twin_never_knocks_out_the_live_statement():
     again = _doc("RCI again.pdf", "2026-09-30", [L("2026-09-01", "X", 5)], sha="same", origin="inbox")
     m, _ = ss.plan([twin, again, live])
     assert live.status == "current" and again.status == "duplicate" and m.lines
+
+
+def test_excel_layout_owner_10_08(tmp_path):
+    """No blank row 3 under the frozen title, her column is 'Notes', the tool's is
+    'Finding', no Statements / Changes sheets."""
+    import statement_reconciler as sr
+    from openpyxl import load_workbook
+    rows = [sr.ReconRow("MISSING_IN_QBO", "2026-09-02", "N9", 5.0, 0.0, "", "", "ENTER BILL IN QBO",
+                        stmt_ref="N9", stmt_date="2026-09-02")]
+    out = tmp_path / "r.xlsx"
+    sr.write_excel(out, "V", "2026-09-30", 5.0, [], rows, line_sum=5.0, stmt_lines=[L("2026-09-02", "N9", 5.0)])
+    wb = load_workbook(out)
+    assert wb.sheetnames == ["Summary"]
+    ws = wb["Summary"]
+    assert ws["A3"].value == "TIE-OUT" and ws.freeze_panes == "A3"
+    head = next(r for r in ws.iter_rows(values_only=True) if r[1] == "Stmt Ref #")
+    assert head[11] == "Finding" and head[12] == "Notes"

@@ -353,8 +353,8 @@ def harvest_notes(xlsx: Path) -> Dict[str, Optional[str]]:
     for row in ws.iter_rows(min_row=1, max_row=ws.max_row):
         b = row[1].value if len(row) > 1 else None
         if b == "Stmt Ref #":
-            # Her column: ours is 'Clerk notes'; before 10/07 she added her own
-            # ('<name>'S NOTES') in column M - any header saying NOTES counts.
+            # Her column: ours is 'Notes' (was 'Clerk notes' 10/07); before that she
+            # added her own ('<name>'S NOTES') in column M - any header saying NOTES counts.
             heads = [str(c.value or "") for c in row]
             col = 13 if len(heads) >= 13 and "NOTES" in heads[12].upper() else 12
             continue

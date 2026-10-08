@@ -5,6 +5,18 @@ to this tool. Tool-only scope: no business/owner analyses or dollar-exposure
 findings here — those live in the owner's vault.
 
 ## DONE / FINALIZED
+- 2026-10-08 (evening) · **Excel layout per the owner's spot-check + the last three vendors refreshed.**
+  - Marked sheet: the colour key moved to the RIGHT of the statement (column P, from the first page's row - the
+    pages fill A:N); payment / credit / balance forward is purple, "another customer's line" is grey (the two
+    greys were confused); prints landscape, one page wide.
+  - No Statements or Changes sheets - the Notion page shows both. The workbook is Summary + Statement (marked).
+  - Columns: the tool's "Note" is now **Finding**, the clerk's "Clerk notes" is now **Notes** (her notes are still
+    read from any column M header that says NOTES).
+  - Summary: no blank row 3 under the frozen title (it showed as a white band) - the tie-out starts on row 3,
+    frozen at A3. Em dashes removed from everything the tool prints or writes (owner rule).
+  - Void Forms, Power Jack, Post-Tension refreshed live - QBO vendors confirmed by their bill numbers (VOID FORM
+    PRODUCTS, POWER JACK FOUNDATION REPAIR; Post-Tension already cached); Power Jack pinned by its statement text.
+    Every vendor Excel rebuilt in the new layout; Cowtown skipped while its Excel was open (re-run after closing).
 - 2026-10-08 (afternoon) · **Marked-up statement in every Excel + the whole Inbox run live (owner: "highlight each bill row with the color of its bucket so the clerk can verify you grabbed everything").**
   - `statement_markup.py` (new): every page of each current statement rendered; every line the parser read is found
     on its page and its row banded in its bucket colour (matched / not approved / amount / tax / paid-vendor-shows-open

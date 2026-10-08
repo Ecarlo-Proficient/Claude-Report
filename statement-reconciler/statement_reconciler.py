@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 """
-statement_reconciler.py — Vendor Statement vs QBO Reconciler
+statement_reconciler.py - Vendor Statement vs QBO Reconciler
 
 Takes a vendor statement PDF, identifies the vendor, pulls every open
 Bill in QBO for that vendor, and reconciles the two side-by-side.
 
 Categorizes each statement line into one of four buckets:
-  ✓ MATCHED              — same Ref#, same amount (clerk OK)
-  ⚠ VENDOR_TAX_VIOLATION — same Ref#, amount diff is exactly 8.25% (TX
+  ✓ MATCHED              - same Ref#, same amount (clerk OK)
+  ⚠ VENDOR_TAX_VIOLATION - same Ref#, amount diff is exactly 8.25% (TX
                             sales tax) of the QBO amount → vendor billed
                             tax in violation of Proficient/vendor no-tax
                             agreement. Vendor action, not clerk action.
-  ✗ CLERK_AMOUNT_MISMATCH— same Ref#, amount diff is some other value
+  ✗ CLERK_AMOUNT_MISMATCH- same Ref#, amount diff is some other value
                             → clerk entered wrong amount in QBO.
-  ✗ MISSING_IN_QBO       — on statement, no Bill in QBO with that Ref#
+  ✗ MISSING_IN_QBO       - on statement, no Bill in QBO with that Ref#
                             → clerk has not entered the bill yet.
-  ✗ MISSING_ON_STATEMENT — Bill exists open in QBO, but vendor doesn't
+  ✗ MISSING_ON_STATEMENT - Bill exists open in QBO, but vendor doesn't
                             show it on the statement → stale unpaid bill
                             vendor may have credited / already received
                             payment for; needs the user's eyes.
@@ -30,11 +30,11 @@ the Synology share isn't mounted, output falls back to OUTDIR_DEFAULT (below)
 and no file is moved. (--out is accepted but ignored in this mode.)
 
 SUPPORTED PDF TEMPLATES (auto-detected by report-type signature, never by vendor name)
-  • QuickBooks Statement                 — vendor-issued statement with "INV #<num>. Due <date>" lines
-  • QuickBooks Customer Open Balance     — QBO Customer Open Balance report, columnar
-  • QuickBooks Open Invoices             — QBO Open Invoices report, columnar (4-col)
+  • QuickBooks Statement                 - vendor-issued statement with "INV #<num>. Due <date>" lines
+  • QuickBooks Customer Open Balance     - QBO Customer Open Balance report, columnar
+  • QuickBooks Open Invoices             - QBO Open Invoices report, columnar (4-col)
   • Plus per-vendor layouts (White Cap, Bobcat, Bodin, BURNCO, Cintas, Cow Town,
-    Sunbelt, Croell) and generic tabular/columnar — see TEMPLATE_LABELS.
+    Sunbelt, Croell) and generic tabular/columnar - see TEMPLATE_LABELS.
 
 USAGE
   python3 statement_reconciler.py /path/to/statement.pdf            # inbox-style: Excel → Reconciliations, source → DONE if in inbox
@@ -111,8 +111,8 @@ import statement_markup as sm  # noqa: E402  (tool-local: the marked-up copy of 
 API_BASE = "https://quickbooks.api.intuit.com"
 MINOR_VERSION = "70"
 TX_SALES_TAX = 0.0825
-TAX_TOLERANCE = 1.00  # dollars — accept within $1 of exact 8.25% match
-EXACT_TOLERANCE = 0.01  # dollars — bill amount equality
+TAX_TOLERANCE = 1.00  # dollars - accept within $1 of exact 8.25% match
+EXACT_TOLERANCE = 0.01  # dollars - bill amount equality
 LAG_LOOKBACK_DAYS = 60  # FLOOR for paid-bill lookback (days before stmt date)
 LAG_LOOKBACK_STMT_PADDING_DAYS = 7  # extra padding before the statement's oldest line
 # Effective cutoff = min(oldest_stmt_line_date - PADDING, stmt_date - LAG_LOOKBACK_DAYS)
@@ -151,7 +151,7 @@ QBO_BILL_URL_TEMPLATE = "https://qbo.intuit.com/app/bill?txnId={bill_id}"
 INBOX_ROOT = Path("/Volumes/Accounting/Accounts Payable/Vendor Statements")
 INBOX_SUPPORTED_EXTS = {".pdf", ".png", ".jpg", ".jpeg", ".heic", ".heif", ".xlsx", ".xls"}
 STATEMENT_EMBED_MAX_PAGES = 20   # cap embedded statement pages to keep xlsx size sane
-STATEMENT_EMBED_MAX_WIDTH = 900  # px — target on-sheet width per embedded page
+STATEMENT_EMBED_MAX_WIDTH = 900  # px - target on-sheet width per embedded page
 
 # ── Template: QuickBooks Statement (vendor-issued) ─────────────
 # Layout: a leading date + a transaction-type marker anchor every row.
@@ -163,7 +163,7 @@ QBO_STATEMENT_SIG = re.compile(r"INV\s*\#\d+\.\s*Due\s+\d", re.I)
 # Match EVERY transaction row, not just invoices. Summing only INV rows drops
 # credits/payments, so the line total comes out too HIGH by the credit and the
 # tie-out to "Amount Due" falsely fails. This mirrors the 2026-08-12 fix to the
-# Customer Open Balance parser (QBO_CUSTOMER_OPEN_BAL_LINE_RE) — the twin
+# Customer Open Balance parser (QBO_CUSTOMER_OPEN_BAL_LINE_RE) - the twin
 # QBO-Statement parser never received it, so a Bee Line statement carrying a
 # -38.49 payment tripped it (2026-09-10). The type token is generic so any QBO
 # abbreviation (INV/PMT/CM/FC/…) is caught; amount and balance accept a sign or
@@ -185,13 +185,13 @@ STMT_LINE_RE = re.compile(
 
 PO_RE = re.compile(r"PO\s*\#?\s*([^.]+?)\.", re.IGNORECASE)
 ORIG_AMT_RE = re.compile(r"Orig\.\s*Amount\s*\$?([\d,]+\.\d{2})", re.IGNORECASE)
-# Tried in order — first one with a hit wins. Most-specific label first.
+# Tried in order - first one with a hit wins. Most-specific label first.
 STMT_DATE_PATTERNS = [
     # "Statement Date" / "Stmt Date" / "Statement Dt" label, then up to 40 chars to the date
     re.compile(r"(?:Statement|Stmt|Stat)\s*Da?te?[:\s][\s\S]{0,40}?(\d{1,2}/\d{1,2}/\d{2,4})", re.I),
     # Bare "Date" label, then up to 40 chars (vendor statement header noise between label and value)
     re.compile(r"\bDate\b[:\s][\s\S]{0,40}?(\d{1,2}/\d{1,2}/\d{2,4})", re.I),
-    # Fallback: first standalone date on its own line — only used if labels missing
+    # Fallback: first standalone date on its own line - only used if labels missing
     re.compile(r"(?:^|\n)\s*(\d{1,2}/\d{1,2}/\d{4})\s*(?:\n|$)"),
 ]
 # Amount Due: allow up to 80 chars (incl. newlines + "Amount Enc." label) between
@@ -229,7 +229,7 @@ QBO_AS_OF_RE = re.compile(
     r"As\s+of\s+([A-Za-z]+\s+\d{1,2},?\s+\d{4})", re.I)
 # Matches EVERY transaction row in a Customer Open Balance report, not just
 # invoices. Credit Memos and Payments carry NEGATIVE amounts (leading "-" or
-# parentheses) and Payments have no due-date column — both must be parsed so
+# parentheses) and Payments have no due-date column - both must be parsed so
 # the line-sum ties to the report's grand total. (Before 2026-08-12 only
 # "Invoice" rows matched, so credits/payments were dropped, the line-sum came
 # out too HIGH by the credit total, and every statement carrying a credit
@@ -264,7 +264,7 @@ QBO_SUBCUST_RE = re.compile(
 
 # ── Template: QuickBooks Open Invoices ─────────────────────────
 # Vendor runs an "Open Invoices" report for Proficient Concrete from their
-# own QBO. Layout (extracted text order — vendor appears at bottom because
+# own QBO. Layout (extracted text order - vendor appears at bottom because
 # pdfplumber reads the header columns first):
 #   Date Num Due Date Open Balance            ← column header
 #   Proficient Concrete                        ← bill-to header
@@ -287,7 +287,7 @@ QBO_OPEN_INV_LINE_RE = re.compile(
     (?P<amount>[\d,]+\.\d{2})\s*$""",
     re.VERBOSE | re.MULTILINE,
 )
-# Timestamp pattern shared by both QBO report templates — used by the
+# Timestamp pattern shared by both QBO report templates - used by the
 # generic vendor finder.
 QBO_TIMESTAMP_RE = re.compile(
     r"^\s*(?P<time>\d{1,2}:\d{2}\s*(?:AM|PM))\s*(?P<rest>.*)$", re.I)
@@ -315,7 +315,7 @@ VENDOR_STMT_TABULAR_LINE_RE = re.compile(
 # CMC sub-customer header lines (skip these)
 VENDOR_STMT_SHIPTO_RE = re.compile(r"^\s*SHIP[- ]TO\b", re.I)
 
-# ── Template: Vendor Statement (columnar — Preferred Materials / Sunrise) ──
+# ── Template: Vendor Statement (columnar - Preferred Materials / Sunrise) ──
 # These statements have a visible table grid in the PDF, but pdfplumber's
 # default text extraction returns each COLUMN as a vertical stack of values
 # (Date column, Description column, Charge column, Balance column each as
@@ -333,7 +333,7 @@ VENDOR_STMT_COLUMNAR_SIG = re.compile(
 # Transaction No., T (type code), Original Transaction, Balance Due.
 # Type codes: I=Invoice, C=Credit Memo, R=Rental, D=Debit Memo,
 # U=Unapplied Payment, *=In Review. pdfplumber.extract_tables() returns
-# all rows of the data table as ONE cell of newline-separated lines —
+# all rows of the data table as ONE cell of newline-separated lines -
 # easy to split and parse line-by-line.
 VENDOR_STMT_WHITECAP_SIG = re.compile(
     r"(?=[\s\S]*?White\s+Cap)"
@@ -343,7 +343,7 @@ VENDOR_STMT_WHITECAP_SIG = re.compile(
 )
 # Line format in pdfplumber's text extraction:
 #   <date> <ref> <type> <original> <balance>  [<ref-dup> <po> <balance-dup>]
-# The right-side remittance copy gets merged onto the same line — we capture
+# The right-side remittance copy gets merged onto the same line - we capture
 # only the first 5 fields and ignore the rest.
 WHITECAP_ROW_RE = re.compile(
     r"""^\s*
@@ -580,7 +580,7 @@ def _image_to_text(img_path: Path) -> str:
     try:
         img = Image.open(img_path)
         # --psm 6: assume a single uniform block of text. Critical for
-        # statement tables — keeps each invoice row as a single line of OCR
+        # statement tables - keeps each invoice row as a single line of OCR
         # output (default mode breaks columns into separate vertical stacks
         # which destroys the date-ref-amount alignment our parsers need).
         # preserve_interword_spaces=1 keeps wide-spaced columns readable.
@@ -594,25 +594,25 @@ def _image_to_text(img_path: Path) -> str:
 
 TEMPLATE_LABELS = {
     "qbo_statement":             "QuickBooks Statement (PDF)",
-    "qbo_customer_open_balance": "QuickBooks Customer Open Balance / Statement (PDF — Type Date Num Memo Due Date Open Balance header)",
+    "qbo_customer_open_balance": "QuickBooks Customer Open Balance / Statement (PDF - Type Date Num Memo Due Date Open Balance header)",
     "qbo_open_invoices":         "QuickBooks Open Invoices (PDF)",
-    "vendor_stmt_tabular":       "Vendor Statement, tabular (PDF — Date Invoice Due Date Amount ... Balance header, e.g. CMC)",
-    "vendor_stmt_columnar":      "Vendor Statement, columnar (PDF — Date Description Charge Payment Balance grid, e.g. Preferred Materials / Sunrise)",
-    "vendor_stmt_whitecap":      "Vendor Statement, White Cap / Billtrust (PDF — Transaction Date | Transaction No. | T | Original | Balance Due with I/C/R/D/U type codes)",
-    "excel_columnar":            "Excel statement (.xlsx or .xls — columns: Inv Date | Invoice # | Original Invoice Amount | Balance | Due Date)",
-    "vendor_bobcat":             "Vendor Statement, Bobcat/equipment (PDF — Invoice Number | Invoice Date | Due Date | Purchase Order | Balance)",
-    "vendor_bodin":              "Vendor Statement, Bodin/concrete (PDF — Invoice | Date | Type | Reference | Yardage | Credit/Debit | Balance)",
-    "vendor_burnco":             "Vendor Statement, BURNCO (PDF — Date | Number | Delivery Address | PO | Type | Original | Balance Due)",
-    "vendor_cintas":             "Vendor Statement, Cintas (PDF — Date | Sold-To | Reference | Amount Due | Due Date)",
-    "vendor_cowtown":            "Vendor Statement, past-due letter (PDF — Job | Inv. No. | Inv. Date | Due Date | Inv. Amount | Balance)",
-    "vendor_sunbelt":            "Vendor Statement, Sunbelt Rentals (PDF — Date | Invoice | Job Description | Amount Due)",
-    "vendor_croell":             "Vendor Statement, Croell Inc (PDF — Date | Cd | Invoice | Description | Amount | Balance doubled register/remittance layout)",
-    "vendor_abatix":             "Vendor Statement, Abatix Corp (PDF — Invoice Date | Due Date | Invoice No | PO | Amount Due | Enclosed No)",
-    "vendor_abatix_online":      "Vendor Statement, Abatix online (PDF — Invoice Number | Date | Due Date | PO | Original | Amount Due + 'Summary of Invoice Age')",
-    "vendor_croell_ar":          "Vendor Statement, Croell AR Customer Balance (PDF — Invoice # | PO# | Invoice Date | Disc Date | Type | ... | Current Due Less Discounts)",
-    "vendor_quikrete":           "Vendor Statement, Quikrete Ready Mix account statement (PDF — Invoice No. | Invoice Date | Due Date | Remark | Cust P.O. | Invoice Amount | Balance Due)",
-    "qbo_invoice_list":          "QuickBooks 'Invoices for <customer>' list (PDF — Num | Date | Name | Amount | Open Balance)",
-    "vendor_voidform":           "Vendor Statement, VoidForm (PDF — Date | Due Date | Doc. Type | Ref. Nbr. | Ext. Ref. Nbr. | Orig. Amount | Amount Due | Balance)",
+    "vendor_stmt_tabular":       "Vendor Statement, tabular (PDF - Date Invoice Due Date Amount ... Balance header, e.g. CMC)",
+    "vendor_stmt_columnar":      "Vendor Statement, columnar (PDF - Date Description Charge Payment Balance grid, e.g. Preferred Materials / Sunrise)",
+    "vendor_stmt_whitecap":      "Vendor Statement, White Cap / Billtrust (PDF - Transaction Date | Transaction No. | T | Original | Balance Due with I/C/R/D/U type codes)",
+    "excel_columnar":            "Excel statement (.xlsx or .xls - columns: Inv Date | Invoice # | Original Invoice Amount | Balance | Due Date)",
+    "vendor_bobcat":             "Vendor Statement, Bobcat/equipment (PDF - Invoice Number | Invoice Date | Due Date | Purchase Order | Balance)",
+    "vendor_bodin":              "Vendor Statement, Bodin/concrete (PDF - Invoice | Date | Type | Reference | Yardage | Credit/Debit | Balance)",
+    "vendor_burnco":             "Vendor Statement, BURNCO (PDF - Date | Number | Delivery Address | PO | Type | Original | Balance Due)",
+    "vendor_cintas":             "Vendor Statement, Cintas (PDF - Date | Sold-To | Reference | Amount Due | Due Date)",
+    "vendor_cowtown":            "Vendor Statement, past-due letter (PDF - Job | Inv. No. | Inv. Date | Due Date | Inv. Amount | Balance)",
+    "vendor_sunbelt":            "Vendor Statement, Sunbelt Rentals (PDF - Date | Invoice | Job Description | Amount Due)",
+    "vendor_croell":             "Vendor Statement, Croell Inc (PDF - Date | Cd | Invoice | Description | Amount | Balance doubled register/remittance layout)",
+    "vendor_abatix":             "Vendor Statement, Abatix Corp (PDF - Invoice Date | Due Date | Invoice No | PO | Amount Due | Enclosed No)",
+    "vendor_abatix_online":      "Vendor Statement, Abatix online (PDF - Invoice Number | Date | Due Date | PO | Original | Amount Due + 'Summary of Invoice Age')",
+    "vendor_croell_ar":          "Vendor Statement, Croell AR Customer Balance (PDF - Invoice # | PO# | Invoice Date | Disc Date | Type | ... | Current Due Less Discounts)",
+    "vendor_quikrete":           "Vendor Statement, Quikrete Ready Mix account statement (PDF - Invoice No. | Invoice Date | Due Date | Remark | Cust P.O. | Invoice Amount | Balance Due)",
+    "qbo_invoice_list":          "QuickBooks 'Invoices for <customer>' list (PDF - Num | Date | Name | Amount | Open Balance)",
+    "vendor_voidform":           "Vendor Statement, VoidForm (PDF - Date | Due Date | Doc. Type | Ref. Nbr. | Ext. Ref. Nbr. | Orig. Amount | Amount Due | Balance)",
 }
 
 
@@ -640,11 +640,11 @@ def detect_template(text: str) -> str:
     # QBO Open Invoices
     if QBO_OPEN_INVOICES_SIG.search(text):
         return "qbo_open_invoices"
-    # White Cap / Billtrust — check BEFORE the more-generic columnar/tabular
+    # White Cap / Billtrust - check BEFORE the more-generic columnar/tabular
     # signatures since they could partially match a White Cap layout
     if VENDOR_STMT_WHITECAP_SIG.search(text):
         return "vendor_stmt_whitecap"
-    # Specific vendor-statement layouts (2026-07-01 batch) — checked before the
+    # Specific vendor-statement layouts (2026-07-01 batch) - checked before the
     # generic tabular/columnar signatures so their distinct headers win.
     if BOBCAT_SIG.search(text):
         return "vendor_bobcat"
@@ -658,7 +658,7 @@ def detect_template(text: str) -> str:
         return "vendor_cowtown"
     if SUNBELT_SIG.search(text):
         return "vendor_sunbelt"
-    # Croell Inc — doubled register/remittance header; must beat the generic
+    # Croell Inc - doubled register/remittance header; must beat the generic
     # tabular/columnar sigs (its "Finance Charge" wording trips columnar).
     if CROELL_SIG.search(text):
         return "vendor_croell"
@@ -685,14 +685,14 @@ def _is_vendor_noise(s: str) -> bool:
     if _VENDOR_NOISE_RE.match(s):
         return True   # known title / header keyword
     if "PROFICIENT" in s.upper():
-        return True   # our own company — never the vendor we're reconciling against
+        return True   # our own company - never the vendor we're reconciling against
     return False
 
 
 def _find_qbo_report_vendor(text: str) -> str:
     """Extract vendor name from a QBO report (Customer Open Balance, Open
     Invoices, or any future QBO report). The vendor is paired with a HH:MM
-    AM/PM timestamp the report-runner's QBO prints — either on the SAME line
+    AM/PM timestamp the report-runner's QBO prints - either on the SAME line
     after the timestamp, or on the line IMMEDIATELY BEFORE it. Handles both
     layouts observed in pdfplumber-extracted text order."""
     lines = text.splitlines()
@@ -744,7 +744,7 @@ def parse_statement_qbo_customer_open_balance(full_text: str) -> Tuple[str, str,
     """Parse a QuickBooks Customer Open Balance report into the common shape."""
     vendor = _find_qbo_report_vendor(full_text)
 
-    # Statement date — "As of <Month DD, YYYY>"
+    # Statement date - "As of <Month DD, YYYY>"
     stmt_date = ""
     m = QBO_AS_OF_RE.search(full_text)
     if m:
@@ -764,7 +764,7 @@ def parse_statement_qbo_customer_open_balance(full_text: str) -> Tuple[str, str,
         if m:
             stmt_date = _norm_date(m.group(1))
 
-    # Grand total — "TOTAL <amount>" at end (not "Total <name> <amount>" — must be standalone TOTAL)
+    # Grand total - "TOTAL <amount>" at end (not "Total <name> <amount>" - must be standalone TOTAL)
     amt_due = 0.0
     m = QBO_GRAND_TOTAL_RE.search(full_text)
     if m:
@@ -773,7 +773,7 @@ def parse_statement_qbo_customer_open_balance(full_text: str) -> Tuple[str, str,
         except ValueError:
             pass
 
-    # Line items — walk lines, tracking the current sub-customer for PO/job tagging
+    # Line items - walk lines, tracking the current sub-customer for PO/job tagging
     lines: List[StmtLine] = []
     current_subcust = ""
     text_lines = full_text.splitlines()
@@ -818,7 +818,7 @@ def parse_statement_qbo_open_invoices(full_text: str) -> Tuple[str, str, float, 
     sub-customer under the bill-to header ("Proficient Concrete")."""
     vendor = _find_qbo_report_vendor(full_text)
 
-    # Statement date — "As of <Month DD, YYYY>" (same convention as Customer Open Balance)
+    # Statement date - "As of <Month DD, YYYY>" (same convention as Customer Open Balance)
     stmt_date = ""
     m = QBO_AS_OF_RE.search(full_text)
     if m:
@@ -933,7 +933,7 @@ BURNCO_SIG  = re.compile(r"Delivery Address\s+PO Number\s+Type", re.I)
 CINTAS_SIG  = re.compile(r"DATE\s+SOLD-TO\s+DESCRIPTION\s+REFERENCE\s+AMOUNT DUE\s+DUE DATE", re.I)
 COWTOWN_SIG = re.compile(r"Inv\.\s*No\.\s+Inv\.\s*Date\s+Due Date", re.I)
 SUNBELT_SIG = re.compile(r"DATE\s+INVOICE\s+JOB\s+DESCRIPTION\s+AMOUNT\s+DUE", re.I)
-# Abatix Corp — columnar statement, distinctive doubled "Invoice Amount" header
+# Abatix Corp - columnar statement, distinctive doubled "Invoice Amount" header
 # (Invoice Date | Due Date | Invoice No | PO | Amount Due | Enclosed #).
 ABATIX_SIG = re.compile(r"Invoice\s+Due\s+Invoice\s+Amount\s+Invoice\s+Amount", re.I)
 # Layouts first seen in the 10/07/2026 Inbox sweep.
@@ -1250,7 +1250,7 @@ def parse_statement_croell(full_text: str) -> Tuple[str, str, float, List[StmtLi
     stmt_date = _norm_date(
         _grab(r"Statement\s+Date[^\n]*\n\s*(\d{1,2}/\d{1,2}/\d{4})", full_text))
 
-    # Balance Due = rightmost value on the aging footer — the last line that is
+    # Balance Due = rightmost value on the aging footer - the last line that is
     # nothing but money tokens (Current / 1-30 / 31-60 / Over 60 / Bal Due).
     amt_due = 0.0
     money_line = re.compile(r"^\s*(?:\(?-?[\d,]+\.\d{2}\)?\s+){2,}\(?-?[\d,]+\.\d{2}\)?\s*$")
@@ -1306,6 +1306,8 @@ _STAPLE_VENDORS: List[Tuple[str, List[str]]] = [
     # Sends its whole receivables report (all its customers) - the title line is
     # the only place its own name appears.
     ("Core Concrete Pumping LLC", ["core concrete pumping llc"]),
+    # A scanned statement (read by OCR) - its name only shows in the web address.
+    ("POWER JACK FOUNDATION REPAIR", ["powerjacktexas", "power jack foundation"]),
 ]
 
 
@@ -1346,11 +1348,11 @@ def parse_statement(path: Path) -> Tuple[str, str, float, List[StmtLine]]:
       • .xlsx/.xls/.xlsm → Excel parser
       • .png/.jpg/.jpeg/.tiff/.bmp/.heic → OCR to text, then run through PDF template detection
       • everything else → PDF text extraction + template detection
-    For Excel/Image: vendor and stmt date may come back empty — caller fills
+    For Excel/Image: vendor and stmt date may come back empty - caller fills
     them from --vendor / --stmt-date or the fallback chain in process_pdf.
 
     On the text path, a known staple-vendor marker (see _STAPLE_VENDORS)
-    overrides whatever vendor the template parser extracted — the staple's exact
+    overrides whatever vendor the template parser extracted - the staple's exact
     QBO name is more reliable than generic body/filename extraction."""
     ext = path.suffix.lower()
     if ext in (".xlsx", ".xls", ".xlsm"):
@@ -1403,7 +1405,7 @@ def parse_statement(path: Path) -> Tuple[str, str, float, List[StmtLine]]:
     elif template == "vendor_voidform":
         result = parse_statement_voidform(full_text)
     else:
-        # No supported template detected — return empty so the caller surfaces
+        # No supported template detected - return empty so the caller surfaces
         # the unsupported-template error with the full list of supported formats.
         return "", "", 0.0, []
     # Staple-vendor identity wins over the parser's extracted vendor.
@@ -1545,7 +1547,7 @@ def _xls_to_xlsx_temp(xls_path: Path) -> Path:
         for c in range(sheet.ncols):
             cell = sheet.cell(r, c)
             v = cell.value
-            # xlrd encodes dates as floats — convert back to datetime
+            # xlrd encodes dates as floats - convert back to datetime
             if cell.ctype == xlrd.XL_CELL_DATE:
                 try:
                     v = xlrd.xldate.xldate_as_datetime(v, xls.datemode)
@@ -1579,7 +1581,7 @@ def _find_excel_as_of_date(ws) -> str:
 
 def _find_excel_grand_total(ws) -> float:
     """Look for a 'Total ...' row (e.g., 'Total - Cust00000058 ...') and grab
-    its rightmost positive numeric — that's the grand total for tie-out.
+    its rightmost positive numeric - that's the grand total for tie-out.
     Uses the LAST matching 'total' row: on a multi-customer A/R aging export
     the per-customer subtotals are also labeled 'Total ...' and appear first,
     so taking the first one would return a subtotal. The grand total is last.
@@ -1657,7 +1659,7 @@ def _parse_excel_content_pattern(ws) -> Tuple[List["StmtLine"], float]:
     Identifies an invoice row by content alone:
       • at least one date cell (datetime or MM/DD/YY-style string)
       • at least one ref-like token (letters + digits like INV38014 / CV6415,
-        or pure digits ≥3 chars) — taken from the FIRST whitespace-delimited
+        or pure digits ≥3 chars) - taken from the FIRST whitespace-delimited
         token of any text cell
       • a rightmost positive numeric cell → treated as the amount
 
@@ -1709,9 +1711,9 @@ def _parse_excel_content_pattern(ws) -> Tuple[List["StmtLine"], float]:
 
 def parse_statement_excel(xlsx_path: Path) -> Tuple[str, str, float, List[StmtLine]]:
     """Parse an Excel statement. Two-pass detection:
-       1. Header-based — looks for 'Invoice #' + 'Original Invoice Amount' (or
+       1. Header-based - looks for 'Invoice #' + 'Original Invoice Amount' (or
           similar) on a header row, then reads data rows by column position.
-       2. Content-pattern (fallback) — header-less layouts like A/R Aging
+       2. Content-pattern (fallback) - header-less layouts like A/R Aging
           Detail reports. Detects invoice rows by content (date + ref# +
           rightmost numeric).
 
@@ -1722,7 +1724,7 @@ def parse_statement_excel(xlsx_path: Path) -> Tuple[str, str, float, List[StmtLi
     in the top rows. Grand total is taken from a 'Total ...' row when found,
     otherwise it's the sum of parsed line amounts.
 
-    Vendor name is NOT extracted here — that's handled by the chain in
+    Vendor name is NOT extracted here - that's handled by the chain in
     process_pdf (--vendor flag → cached alias → Excel cell scan → cleaned
     filename → interactive prompt)."""
     # Legacy .xls → convert to temp .xlsx first so the rest of the code can
@@ -1742,7 +1744,7 @@ def parse_statement_excel(xlsx_path: Path) -> Tuple[str, str, float, List[StmtLi
     if not lines:
         lines, total = _parse_excel_content_pattern(ws)
 
-    # Prefer the "Total ..." row's amount if found — that's the report's own
+    # Prefer the "Total ..." row's amount if found - that's the report's own
     # grand total (more reliable than summing if any line was missed).
     grand_total = _find_excel_grand_total(ws)
     if grand_total > 0:
@@ -1755,7 +1757,7 @@ def parse_statement_vendor_tabular(full_text: str) -> Tuple[str, str, float, Lis
     """Parse a tabular vendor statement (CMC-style). One line per invoice:
        <date> <ref> <due-date> <amount> [optional payment fields] <balance>
     Sub-customer headers (SHIP TO XYZ) and aging rows are skipped."""
-    # Vendor — first non-empty line at the top usually has the company name.
+    # Vendor - first non-empty line at the top usually has the company name.
     # CMC-style PDFs concatenate vendor name + "STATEMENT" on one line
     # ("CMC Construction Services STATEMENT"); strip the trailing word.
     vendor = ""
@@ -1763,7 +1765,7 @@ def parse_statement_vendor_tabular(full_text: str) -> Tuple[str, str, float, Lis
         cand = line.strip()
         if not cand:
             continue
-        # Strip trailing "STATEMENT" (case-insensitive) — common artifact
+        # Strip trailing "STATEMENT" (case-insensitive) - common artifact
         cand = re.sub(r"\s+STATEMENT\s*$", "", cand, flags=re.I).strip()
         if not cand:
             continue
@@ -1775,7 +1777,7 @@ def parse_statement_vendor_tabular(full_text: str) -> Tuple[str, str, float, Lis
         vendor = cand
         break
 
-    # Statement date — try labeled patterns first
+    # Statement date - try labeled patterns first
     stmt_date = ""
     for pat in STMT_DATE_PATTERNS:
         m = pat.search(full_text)
@@ -1784,7 +1786,7 @@ def parse_statement_vendor_tabular(full_text: str) -> Tuple[str, str, float, Lis
             if stmt_date:
                 break
 
-    # Amount due — look for "Total Due" label, then take the LAST dollar value
+    # Amount due - look for "Total Due" label, then take the LAST dollar value
     # within the next ~200 chars (aging row format: labels on one line, totals
     # on next line; Total Due is the rightmost column).
     amt_due = 0.0
@@ -1833,7 +1835,7 @@ def parse_statement_vendor_tabular(full_text: str) -> Tuple[str, str, float, Lis
             balance = float(m.group("balance").replace(",", ""))
         except (ValueError, TypeError):
             continue
-        # Use BALANCE as the open amount (more accurate than original amount —
+        # Use BALANCE as the open amount (more accurate than original amount -
         # accounts for partial payments). For unpaid bills balance == amount.
         # Skip zero-balance rows (fully paid).
         if balance <= 0:
@@ -1852,7 +1854,7 @@ def parse_statement_vendor_columnar(pdf_path: Path) -> Tuple[str, str, float, Li
     """Parse a columnar vendor statement (Preferred Materials / Sunrise style).
     These have a visible table grid but pdfplumber's default extraction
     flattens each column into a vertical stack. We re-extract with positional
-    coordinates and group words by Y (row) — then map by X (column header)."""
+    coordinates and group words by Y (row) - then map by X (column header)."""
     import pdfplumber
     lines: List[StmtLine] = []
     vendor = ""
@@ -1882,7 +1884,7 @@ def parse_statement_vendor_columnar(pdf_path: Path) -> Tuple[str, str, float, Li
             if cand and not _is_vendor_noise(cand) and len(cand) > 3:
                 vendor = cand
                 break
-        # Statement date — usually "Date MM/DD/YYYY"
+        # Statement date - usually "Date MM/DD/YYYY"
         m = re.search(r"\bDate\s+(\d{1,2}/\d{1,2}/\d{2,4})", page1_text)
         if m:
             stmt_date = _norm_date(m.group(1))
@@ -1969,7 +1971,7 @@ def parse_statement_vendor_whitecap(full_text: str) -> Tuple[str, str, float, Li
     Uses BALANCE DUE as the amount (already accounts for partial payments)."""
     vendor = "White Cap, L.P."
 
-    # Statement date — "CLOSING DATE" label, then date on a nearby line
+    # Statement date - "CLOSING DATE" label, then date on a nearby line
     stmt_date = ""
     m = re.search(r"CLOSING\s+DATE[\s\S]{0,40}?(\d{1,2}/\d{1,2}/\d{2,4})",
                   full_text, re.I)
@@ -2018,7 +2020,7 @@ def parse_statement_qbo_statement(full_text: str) -> Tuple[str, str, float, List
     """Parse a QuickBooks Statement (vendor-issued statement with INV #N. Due N lines)."""
     vendor = _find_qbo_statement_vendor(full_text)
 
-    # Statement date — try labeled patterns first, then standalone fallback
+    # Statement date - try labeled patterns first, then standalone fallback
     stmt_date = ""
     for pat in STMT_DATE_PATTERNS:
         m = pat.search(full_text)
@@ -2027,7 +2029,7 @@ def parse_statement_qbo_statement(full_text: str) -> Tuple[str, str, float, List
             if stmt_date:
                 break
 
-    # Amount due — first match after "Amount Due" label
+    # Amount due - first match after "Amount Due" label
     amt_due = 0.0
     m = AMT_DUE_RE.search(full_text)
     if m:
@@ -2036,7 +2038,7 @@ def parse_statement_qbo_statement(full_text: str) -> Tuple[str, str, float, List
         except ValueError:
             pass
 
-    # Lines — match against full text (multiline)
+    # Lines - match against full text (multiline)
     lines: List[StmtLine] = []
     last_balance = None
     for m in STMT_LINE_RE.finditer(full_text):
@@ -2044,7 +2046,7 @@ def parse_statement_qbo_statement(full_text: str) -> Tuple[str, str, float, List
         date = _norm_date(m.group("date"))
         ref = m.group("ref")
         amount = _paren_amount(m.group("amount"))   # signed: credits/payments net out
-        # Pull PO and address from the matched line+surrounding chars — invoice
+        # Pull PO and address from the matched line+surrounding chars - invoice
         # rows only. The 200-char look-ahead (needed for addresses that wrap
         # across rows) would otherwise bleed the NEXT invoice's PO/address onto
         # a credit/payment row, which carries neither.
@@ -2053,13 +2055,13 @@ def parse_statement_qbo_statement(full_text: str) -> Tuple[str, str, float, List
         po = po_m.group(1).strip() if po_m else ""
         # Address: text between "Orig. Amount $X.XX." and the start of the
         # NEXT line (or end of table). PDF tables interject the line $amount
-        # and running balance, and wrap long addresses across rows — both
+        # and running balance, and wrap long addresses across rows - both
         # need stripping.
         addr = ""
         orig_m = ORIG_AMT_RE.search(line_blob)
         if orig_m:
             tail = line_blob[orig_m.end():]
-            # Cut at the next line boundary — whichever comes first:
+            # Cut at the next line boundary - whichever comes first:
             #   • next date (MM/DD/YYYY)
             #   • next "INV #..." marker
             #   • aging-bucket footer strings ("DAYS PAST", "CURRENT", "Amount Due")
@@ -2082,7 +2084,7 @@ def parse_statement_qbo_statement(full_text: str) -> Tuple[str, str, float, List
             tail = re.sub(r"^[\s.]+", "", tail)
             # Collapse newlines + multi-space to single space
             tail = re.sub(r"\s+", " ", tail).strip()
-            # Truncate cleanly — first 50 chars, cut at last word boundary
+            # Truncate cleanly - first 50 chars, cut at last word boundary
             if len(tail) > 50:
                 tail = tail[:50].rsplit(" ", 1)[0]
             addr = tail
@@ -2256,7 +2258,7 @@ def find_alias_by_filename(filename: str) -> Optional[Tuple[str, dict, int, str]
     where we can't pick safely).
 
     Scoring: each alias-name token (>=3 chars) found in the normalized
-    filename = +1. The first token (usually most distinctive — vendor's
+    filename = +1. The first token (usually most distinctive - vendor's
     primary surname) earns a +1 bonus. A "clear winner" is the highest score
     AND strictly above the runner-up; otherwise we abstain."""
     aliases = load_aliases()
@@ -2332,7 +2334,7 @@ def find_vendor_id_cached(access: str, cid: str, pdf_vendor: str,
         current_name = validate_cached_vendor(access, cid, cached_id)
         if current_name:
             return cached_id, current_name, True
-        _warn(f"cached vendor id {cached_id} ({cached.get('qbo_name')}) no longer in QBO — re-resolving.")
+        _warn(f"cached vendor id {cached_id} ({cached.get('qbo_name')}) no longer in QBO - re-resolving.")
     return (*find_vendor_id(access, cid, pdf_vendor, strict=strict), False)
 
 
@@ -2345,10 +2347,10 @@ def find_vendor_id(access: str, cid: str, vendor_name_hint: str,
     message for interactive single-file use.
     Tries progressively-relaxed LIKE searches against QBO Vendor.DisplayName:
       1. first 2 whitespace tokens with internal punctuation preserved
-         ('Post-Tension Services' — handles hyphens/ampersands cleanly)
+         ('Post-Tension Services' - handles hyphens/ampersands cleanly)
       2. first 1 token (handles vendors whose PDF shows only one word)
       3. hyphen-stripped variants of #1 and #2 (handles QBO names spelled
-         without the hyphen — e.g., PDF 'Post-Tension' vs QBO 'Post Tension')
+         without the hyphen - e.g., PDF 'Post-Tension' vs QBO 'Post Tension')
     Trailing punctuation like commas/periods is stripped from each token
     so 'Ready Cable, Inc' → tokens ['Ready', 'Cable', 'Inc']."""
     if not vendor_name_hint:
@@ -2371,7 +2373,7 @@ def find_vendor_id(access: str, cid: str, vendor_name_hint: str,
             attempts.append((label, n))
             seen.add(n)
 
-    # Full precise name first — a parser that identifies the exact entity
+    # Full precise name first - a parser that identifies the exact entity
     # (e.g. 'Bobcat of North Texas') must beat the first-2-words reduction,
     # since 'Bobcat of' alone collides with 'Bobcat of Midland'. Only worth a
     # distinct attempt at 3+ tokens; at 1-2 tokens it equals the reductions
@@ -2381,7 +2383,7 @@ def find_vendor_id(access: str, cid: str, vendor_name_hint: str,
     if len(tokens) >= 2:
         _add("first 2 words", f"{tokens[0]} {tokens[1]}")
     _add("first word", tokens[0])
-    # Hyphen-stripped fallbacks — only if there's actually a hyphen
+    # Hyphen-stripped fallbacks - only if there's actually a hyphen
     if any("-" in t for t in tokens[:2]):
         if len(tokens) >= 2:
             _add("first 2 words (no hyphens)",
@@ -2428,7 +2430,7 @@ def _bills_to_objs(raw: List[dict]) -> List[QboBill]:
     out: List[QboBill] = []
     for b in raw:
         # QBO UI "Memo" on a Bill maps to API `PrivateNote`. A few bills
-        # have a top-level `Memo` instead — accept either, prefer PrivateNote.
+        # have a top-level `Memo` instead - accept either, prefer PrivateNote.
         memo_value = (str(b.get("PrivateNote") or "").strip()
                       or str(b.get("Memo") or "").strip())
         out.append(QboBill(
@@ -2531,9 +2533,9 @@ def reconcile_iter(lines: List[StmtLine],
         seen_docs[b.doc_number] = seen_docs.get(b.doc_number, 0) + 1
     dup_qbo = [d for d, n in seen_docs.items() if n > 1]
     if dup_qbo:
-        _warn(f"QBO has duplicate DocNumber(s): {dup_qbo} — last-wins; review manually.")
+        _warn(f"QBO has duplicate DocNumber(s): {dup_qbo} - last-wins; review manually.")
     if no_doc_bills:
-        _warn(f"{len(no_doc_bills)} open QBO bill(s) have empty DocNumber — cannot match by Ref#.")
+        _warn(f"{len(no_doc_bills)} open QBO bill(s) have empty DocNumber - cannot match by Ref#.")
 
     # Non-invoice statement rows are NOT bills to match against QBO: a Balance
     # forward (ref == "") lumps prior-period open items into one opening amount,
@@ -2544,14 +2546,14 @@ def reconcile_iter(lines: List[StmtLine],
     # reconciled line-by-line here. Only real invoice rows are matched.
     invoice_lines = [l for l in lines if l.ref and l.amount >= 0]
 
-    # Detect duplicate Ref# on the statement (invoice rows only — the shared
+    # Detect duplicate Ref# on the statement (invoice rows only - the shared
     # payment check-# would otherwise false-trigger this warning).
     seen_stmt: Dict[str, int] = {}
     for l in invoice_lines:
         seen_stmt[l.ref] = seen_stmt.get(l.ref, 0) + 1
     dup_stmt = [r for r, n in seen_stmt.items() if n > 1]
     if dup_stmt:
-        _warn(f"Statement has duplicate Ref#(s): {dup_stmt} — both lines will match the same QBO bill.")
+        _warn(f"Statement has duplicate Ref#(s): {dup_stmt} - both lines will match the same QBO bill.")
 
     by_doc = {b.doc_number: b for b in bills if b.doc_number}
     paid_by_doc = {b.doc_number: b for b in (paid_bills or []) if b.doc_number}
@@ -2589,11 +2591,11 @@ def reconcile_iter(lines: List[StmtLine],
         missing_on_stmt.append(b)
     if post_stmt_excluded:
         _warn(f"excluded {post_stmt_excluded} QBO bill(s) dated AFTER stmt {stmt_date} "
-              "from MISSING_ON_STATEMENT (can't be missing — statement is older).")
+              "from MISSING_ON_STATEMENT (can't be missing - statement is older).")
     if bf_covered:
         _warn(f"{len(bf_covered)} QBO bill(s) dated on/before the balance-forward date "
               f"{bf_date} (${sum(b.open_balance for b in bf_covered):,.2f}) are covered by "
-              "the balance forward — excluded from MISSING_ON_STATEMENT.")
+              "the balance forward - excluded from MISSING_ON_STATEMENT.")
 
     no_doc_bills_filtered = [b for b in no_doc_bills
                              if _on_or_before_stmt(b) and not _covered_by_forward(b)]
@@ -2622,7 +2624,7 @@ def reconcile_iter(lines: List[StmtLine],
         yield idx, total, ReconRow(
             "MISSING_ON_STATEMENT", b.txn_date, f"(no Ref#, BillId={b.bill_id})",
             0.0, b.open_balance, "", "",
-            "QBO bill has no DocNumber — cannot match by Ref#. Add Ref # in QBO.",
+            "QBO bill has no DocNumber - cannot match by Ref#. Add Ref # in QBO.",
             stmt_ref="", qbo_ref=f"(no Ref#, BillId={b.bill_id})",
             stmt_date="", qbo_date=b.txn_date,
             qbo_memo=b.memo, qbo_bill_id=b.bill_id,
@@ -2688,7 +2690,7 @@ def _embed_statement_tab(wb, src: Path) -> Optional[Path]:
     ws.sheet_view.showGridLines = False
     ws["A1"] = f"Source statement: {src.name}"
     ws["A1"].font = LABEL_FONT
-    ws["A2"] = "Embedded image — travels inside this workbook."
+    ws["A2"] = "Embedded image - travels inside this workbook."
     ws["A2"].font = Font(italic=True, name="Arial", size=10, color="808080")
     anchor_row = 4
     for p in pages:
@@ -2714,14 +2716,14 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
                 payments_total: float = 0.0,
                 stmt_lines: Optional[list] = None,
                 notes: Optional[dict] = None,
-                statements: Optional[list] = None,
-                changes: Optional[dict] = None,
                 disagree: bool = False,
                 markups: Optional[list] = None) -> None:
     """The vendor's ONE reconciliation workbook. `notes` = the clerk's saved notes
-    (statement_set.note_key -> {note}); written into her own 'Clerk notes' column so
-    a re-run never loses them. `statements` / `changes` add the Statements and
-    Changes sheets; `disagree` = the parse is fine, the vendor's statements differ."""
+    (statement_set.note_key -> {note}); written into her own 'Notes' column so a
+    re-run never loses them. `disagree` = the parse is fine, the vendor's statements
+    differ. `markups` add the 'Statement (marked)' sheet. Which statements were
+    used and what changed since the last one live on the Notion page (owner 10/08:
+    no Statements / Changes sheets)."""
     notes = notes or {}
     # QBO open as-of stmt_date: exclude post-statement bills from the displayed
     # total so the reconciliation math lines up with the statement snapshot.
@@ -2732,7 +2734,7 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
     qbo_total = round(sum(b.open_balance for b in qbo_bills_asof), 2)
     post_stmt_total = round(sum(b.open_balance for b in post_stmt_bills), 2)
     # Split MATCHED by approval status so unapproved-but-matched bills don't
-    # hide inside the "clean" pile — they still need PM signoff before payment.
+    # hide inside the "clean" pile - they still need PM signoff before payment.
     cats = {
         "MATCHED_APPROVED":      [r for r in rows if r.category == "MATCHED" and _is_approved(r.qbo_memo)],
         "MATCHED_NOT_APPROVED":  [r for r in rows if r.category == "MATCHED" and not _is_approved(r.qbo_memo)],
@@ -2749,7 +2751,7 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
     s = wb.active
     s.title = "Summary"
     s.sheet_view.showGridLines = False
-    s["A1"] = f"Statement Reconciliation — {vendor}"
+    s["A1"] = f"Statement Reconciliation - {vendor}"
     s["A1"].font = TITLE_FONT
     s["A1"].alignment = Alignment(horizontal="left", vertical="center", wrap_text=False)
     s.merge_cells("A1:M1")
@@ -2763,7 +2765,7 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
 
     # Tie-out: label in merged A:C, dollar value in D. Wider label area so
     # "QBO open as of YYYY-MM-DD (NN bills)" fits without truncation.
-    r = 4
+    r = 3                       # no blank row 3 - it showed as a white band under the frozen title
     s.cell(row=r, column=1, value="TIE-OUT").font = HEADER_FONT
     s.cell(row=r, column=1).fill = HEADER_FILL
     s.cell(row=r, column=1).alignment = Alignment(horizontal="left", vertical="center")
@@ -2786,7 +2788,7 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
     # Parse completeness: the sum of the statement lines we actually parsed must
     # equal the statement's own Amount Due. When it doesn't, the parse dropped or
     # duplicated lines (e.g. an unsupported multi-page layout) and the whole
-    # reconciliation is unreliable — surface the gap here and banner it below.
+    # reconciliation is unreliable - surface the gap here and banner it below.
     if line_sum is not None:
         ls_row = r
         _tieout_row(r, "Sum of parsed lines", round(line_sum, 2), BODY_FONT); r += 1
@@ -2815,10 +2817,9 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
     # reliable, and the caller keeps the source out of DONE.
     if not tieout_ok and disagree:
         gap = round((line_sum or 0.0) - stmt_total, 2)
-        msg = (f"⚠ THE VENDOR'S STATEMENTS DISAGREE — their open invoices add to "
+        msg = (f"⚠ THE VENDOR'S STATEMENTS DISAGREE - their open invoices add to "
                f"${(line_sum or 0.0):,.2f} but the newest Amount Due is ${stmt_total:,.2f} "
-               f"(${gap:,.2f} apart). Each statement ties out on its own; see the "
-               f"Statements sheet.")
+               f"(${gap:,.2f} apart). Each statement ties out on its own.")
         c = s.cell(row=r, column=1, value=msg)
         c.font = Font(bold=True, name="Arial", size=12, color="7A4A00")
         c.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
@@ -2828,10 +2829,10 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
         r += 1
     elif not tieout_ok:
         gap = round((line_sum or 0.0) - stmt_total, 2)
-        msg = (f"⚠ TIE-OUT FAILED — parse incomplete: parsed lines total "
+        msg = (f"⚠ TIE-OUT FAILED - parse incomplete: parsed lines total "
                f"${(line_sum or 0.0):,.2f} but the statement's Amount Due is "
                f"${stmt_total:,.2f} (gap ${gap:,.2f}). This reconciliation is NOT "
-               f"reliable — do not action it until the statement is re-parsed.")
+               f"reliable - do not action it until the statement is re-parsed.")
         c = s.cell(row=r, column=1, value=msg)
         c.font = Font(bold=True, name="Arial", size=12, color="FFFFFF")
         c.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
@@ -2845,7 +2846,7 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
         n = len(post_stmt_bills)
         info = (f"({n} QBO bill{'s' if n!=1 else ''} dated after {stmt_date}, "
                 f"totaling ${post_stmt_total:,.2f}, "
-                f"{'are' if n!=1 else 'is'} excluded from this tie-out — "
+                f"{'are' if n!=1 else 'is'} excluded from this tie-out - "
                 f"{'they' if n!=1 else 'it'} couldn't have been on this statement.)")
         s.cell(row=r, column=1, value=info).font = Font(italic=True, name="Arial", size=10, color="808080")
         s.cell(row=r, column=1).alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
@@ -2853,12 +2854,12 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
         s.row_dimensions[r].height = 32
         r += 1
 
-    # Bills pending approval in QBO — counted from in-scope (as-of) bills only
+    # Bills pending approval in QBO - counted from in-scope (as-of) bills only
     unapproved = [b for b in qbo_bills_asof if not b.is_approved]
     if unapproved:
         unapproved_amt = round(sum(b.open_balance for b in unapproved), 2)
         msg = (f"⚠ Bills pending approval in QBO: {len(unapproved)}  "
-               f"(${unapproved_amt:,.2f}) — see 'Approved?' column below "
+               f"(${unapproved_amt:,.2f}) - see 'Approved?' column below "
                f"(red cells = needs PM signoff)")
         c = s.cell(row=r, column=1, value=msg)
         c.font = Font(bold=True, name="Arial", size=11, color="C62828")
@@ -2883,7 +2884,7 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
     LAG_FILL = PatternFill("solid", start_color="DDEBF7")
     CHECK_OK = "✓"
     CHECK_NO = "✗"
-    CHECK_NA = "—"
+    CHECK_NA = "-"
 
     GREEN_FONT = Font(bold=True, name="Arial", size=10, color="2E7D32")
     RED_FONT   = Font(bold=True, name="Arial", size=10, color="C62828")
@@ -2891,8 +2892,8 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
     LINK_FONT  = Font(bold=True, name="Arial", size=11, color="0563C1", underline="single")
 
     CAT_DEFS = [
-        ("MATCHED_APPROVED",      "✓ MATCHED — APPROVED",                       OK_FILL,   True),   # collapse by default (boring/clean)
-        ("MATCHED_NOT_APPROVED",  "⚠ MATCHED but NOT APPROVED (chase PM)",      WARN_FILL, False),  # surface — needs PM signoff
+        ("MATCHED_APPROVED",      "✓ MATCHED - APPROVED",                       OK_FILL,   True),   # collapse by default (boring/clean)
+        ("MATCHED_NOT_APPROVED",  "⚠ MATCHED but NOT APPROVED (chase PM)",      WARN_FILL, False),  # surface - needs PM signoff
         ("VENDOR_TAX_VIOLATION",  "⚠ VENDOR TAX VIOLATION (8.25%)",             WARN_FILL, False),
         ("CLERK_AMOUNT_MISMATCH", "⚠ CLERK AMOUNT MISMATCH",                    WARN_FILL, False),
         ("LIKELY_VENDOR_LAG",     "⊙ LIKELY VENDOR LAG (paid in QBO)",          LAG_FILL,  False),
@@ -2905,15 +2906,15 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
     def _section_header_text(label: str, count: int, stmt_sum: float, qbo_sum: float) -> str:
         diff = round(stmt_sum - qbo_sum, 2)
         if count == 0:
-            return f"{label}  —  0 bills"
+            return f"{label}  -  0 bills"
         if "TAX" in label or "MISMATCH" in label:
-            return (f"{label}  —  {count} bill{'s' if count!=1 else ''}  ·  "
+            return (f"{label}  -  {count} bill{'s' if count!=1 else ''}  ·  "
                     f"stmt ${stmt_sum:,.2f}  vs  QBO ${qbo_sum:,.2f}  (diff ${diff:,.2f})")
         if "MISSING ON STATEMENT" in label:
-            return f"{label}  —  {count} bill{'s' if count!=1 else ''}  ·  ${qbo_sum:,.2f} open in QBO"
+            return f"{label}  -  {count} bill{'s' if count!=1 else ''}  ·  ${qbo_sum:,.2f} open in QBO"
         if "VENDOR LAG" in label:
-            return f"{label}  —  {count} bill{'s' if count!=1 else ''}  ·  ${stmt_sum:,.2f} on stmt"
-        return f"{label}  —  {count} bill{'s' if count!=1 else ''}  ·  ${stmt_sum:,.2f}"
+            return f"{label}  -  {count} bill{'s' if count!=1 else ''}  ·  ${stmt_sum:,.2f} on stmt"
+        return f"{label}  -  {count} bill{'s' if count!=1 else ''}  ·  ${stmt_sum:,.2f}"
 
     def _write_section_header_row(row_idx: int, text: str, fill) -> None:
         s.cell(row=row_idx, column=1, value=text).font = LABEL_FONT
@@ -2925,7 +2926,7 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
 
     def _write_subhead_row(row_idx: int) -> None:
         headers = ["Bill", "Stmt Ref #", "QBO Ref #", "✓", "Stmt $", "QBO $", "✓",
-                   "Stmt Date", "QBO Date", "✓", "Approved?", "Note", "Clerk notes"]
+                   "Stmt Date", "QBO Date", "✓", "Approved?", "Finding", "Notes"]
         for i, h in enumerate(headers, 1):
             c = s.cell(row=row_idx, column=i, value=h)
             c.font = Font(bold=True, name="Arial", size=10, color="404040")
@@ -2956,7 +2957,7 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
                       else CHECK_NO)
         # Approval state: only meaningful when there's a QBO bill (MISSING_IN_QBO has none)
         if rr.category == "MISSING_IN_QBO":
-            approved_text = "—"
+            approved_text = "-"
             approved_font = DIM_FONT
             approved_fill = None
         else:
@@ -3000,7 +3001,7 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
             # Highlight unapproved cell (Approved? column, now col 11) with red fill
             if i == 11 and approved_fill is not None:
                 c.fill = approved_fill
-        # Column 13: the clerk's own notes - saved by bill id (else invoice #) and
+        # Column 13 'Notes': the clerk's own - saved by bill id (else invoice #) and
         # written back on every run, so a re-run never wipes what she typed.
         nc = xl_text(s, row_idx, 13, ss.note_for(notes, rr.qbo_bill_id, rr.stmt_ref or rr.qbo_ref))
         nc.font = BODY_FONT
@@ -3037,7 +3038,7 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
             _printed, _to_print = _pc["printed"], (_pc["genuine"] + _pc["suspect"] + _pc["unverified"])
 
             _write_section_header_row(
-                r, f"PRINT STATUS  —  {len(_prows)} invoices  ·  {len(_printed)} printed  "
+                r, f"PRINT STATUS  -  {len(_prows)} invoices  ·  {len(_printed)} printed  "
                    f"·  {len(_to_print)} to check", HEADER_FILL)
             r += 1
 
@@ -3060,7 +3061,7 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
                 r += 1
 
             # Group 1: Printed bills check (collapsed by default - the boring pile)
-            _write_section_header_row(r, f"✓ Printed bills check  —  {len(_printed)}", OK_FILL)
+            _write_section_header_row(r, f"✓ Printed bills check  -  {len(_printed)}", OK_FILL)
             r += 1
             if _printed:
                 _ph = ["", "Date", "Invoice #", "", "Amount", "", "", "Email date",
@@ -3088,7 +3089,7 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
 
             # Group 2: Unprinted bills (OPEN by default; a box she marks once printed)
             _write_section_header_row(
-                r, f"✗ Unprinted bills  —  {len(_to_print)}  ·  print, then mark the box", BAD_FILL)
+                r, f"✗ Unprinted bills  -  {len(_to_print)}  ·  print, then mark the box", BAD_FILL)
             r += 1
             if _to_print:
                 _uh = ["", "Date", "Invoice #", "", "Amount", "", "In QBO?", "Printed ✓",
@@ -3107,7 +3108,7 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
                     xl_text(s, r, 3, pr.ref).font = BODY_FONT   # from an email subject: text only
                     cc = s.cell(row=r, column=5, value=pr.amount or None)
                     cc.number_format = MONEY; cc.alignment = RIGHT; cc.font = BODY_FONT
-                    inq = "Yes" if pr.in_qbo else ("No" if pr.in_qbo is False else "—")
+                    inq = "Yes" if pr.in_qbo else ("No" if pr.in_qbo is False else "-")
                     s.cell(row=r, column=7, value=inq).alignment = CENTER
                     s.cell(row=r, column=7).font = BODY_FONT
                     box = s.cell(row=r, column=8, value=""); box.fill = _INPUT_FILL; box.alignment = CENTER
@@ -3131,7 +3132,7 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
         _write_section_header_row(r, _section_header_text(label, n, stmt_sum, qbo_sum), fill)
         r += 1
 
-        # Sub-header and data rows — all at outline_level=1, grouped under the header
+        # Sub-header and data rows - all at outline_level=1, grouped under the header
         sub_head_row = r
         _write_subhead_row(sub_head_row)
         s.row_dimensions[sub_head_row].outline_level = 1
@@ -3156,12 +3157,8 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
     # Freeze the top rows (title + tie-out) so per-bill rows stay scrollable
     # under a fixed header. Freeze at row 4 + col A leaves the table header
     # area visible at all times.
-    s.freeze_panes = "A4"
+    s.freeze_panes = "A3"
 
-    if statements:
-        _write_statements_sheet(wb, statements, stmt_total, line_sum, disagree)
-    if changes:
-        _write_changes_sheet(wb, changes)
     marked_dir = None
     if markups:
         try:
@@ -3170,7 +3167,7 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
             _warn(f"could not add the marked statement ({e}); Excel saved without it.")
 
     # Embed the source statement as a self-contained "Statement" tab so the
-    # workbook carries the original inside it — no external link to break when
+    # workbook carries the original inside it - no external link to break when
     # the file is moved (Inbox → Reconciliations → Old-Done).
     cleanup_dir = None
     if statement_src is not None:
@@ -3192,35 +3189,33 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
 MARKED_WIDTH = 1000          # px on the sheet per statement page
 
 
+LEGEND_COL = 16              # P - the page pictures fill A:N (4 + 13 x 10 wide = 1000px), O is a gutter
+
+
 def _write_marked_sheet(wb, markups: list) -> Optional[Path]:
-    """'Statement (marked)', the 2nd sheet: a colour legend, one line per statement
-    (lines found on the page · rows on the page the tool did NOT read), the misses
-    listed, then every page with each bill row banded in its bucket's colour. The
-    statement file itself is only read. Returns the temp dir to clean after save."""
+    """'Statement (marked)', the 2nd sheet: one line per statement (lines found on
+    the page · rows on the page the tool did NOT read), the misses listed, then every
+    page with each bill row banded in its bucket's colour; the colour legend sits to
+    the RIGHT of the first page (column P). The statement file is only read. Returns
+    the temp dir to clean after save."""
     from openpyxl.drawing.image import Image as XLImage
     ws = wb.create_sheet("Statement (marked)", 1)
     ws.sheet_view.showGridLines = False
     ws.column_dimensions["A"].width = 4
     for col in "BCDEFGHIJKLMN":               # 13 x ~75px = the 1000px page picture
         ws.column_dimensions[col].width = 10
+    ws.column_dimensions["O"].width = 3
+    ws.column_dimensions["P"].width = 5
     # Prints one page wide (the pages are pictures; a column-split print is useless).
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     ws.page_setup.fitToWidth = 1
     ws.page_setup.fitToHeight = 0
-    ws.page_setup.orientation = "portrait"
+    ws.page_setup.orientation = "landscape"
     ws["A1"] = "Statement - each bill row coloured by what the check found"
     ws["A1"].font = Font(bold=True, name="Arial", size=12)
     r = 3
-    for key, (label, rgb) in sm.BUCKETS.items():
-        ws.cell(row=r, column=1).fill = PatternFill("solid", start_color="%02X%02X%02X" % rgb)
-        ws.cell(row=r, column=2, value=label).font = BODY_FONT
-        r += 1
-    c = ws.cell(row=r, column=1)
-    c.border = Border(*(Side(style="medium", color="C62828"),) * 4)
-    ws.cell(row=r, column=2, value="Outlined in red: looks like a bill on the statement, NOT read by the "
-                                    "tool - check it by hand").font = Font(bold=True, name="Arial", size=10, color="C62828")
-    r += 2
     tmp = Path(tempfile.mkdtemp(prefix="stmt_marked_"))
+    legend_row = None
     for k, (name, res) in enumerate(markups):
         ok = res.located == res.total and not res.unread_rows
         msg = (f"{name}: {res.located} of {res.total} lines found on the page"
@@ -3245,12 +3240,24 @@ def _write_marked_sheet(wb, markups: list) -> Optional[Path]:
             # the workbook small on the share (RCI 6 pages: 3.5 MB full colour).
             im.convert("P", palette=1, colors=64).save(f, optimize=True)
             img = XLImage(str(f))
+            legend_row = legend_row or r
             ws.add_image(img, f"A{r}")
             r += int(img.height / 20) + 2
         r += 1
+    lr = legend_row or 3
+    ws.cell(row=lr, column=LEGEND_COL, value="Colour key").font = Font(bold=True, name="Arial", size=11)
+    for key, (label, rgb) in sm.BUCKETS.items():
+        lr += 1
+        ws.cell(row=lr, column=LEGEND_COL).fill = PatternFill("solid", start_color="%02X%02X%02X" % rgb)
+        ws.cell(row=lr, column=LEGEND_COL + 1, value=label).font = BODY_FONT
+    lr += 1
+    ws.cell(row=lr, column=LEGEND_COL).border = Border(*(Side(style="medium", color="C62828"),) * 4)
+    ws.cell(row=lr, column=LEGEND_COL + 1, value="Outlined in red: looks like a bill on the statement, "
+                                                  "NOT read by the tool - check it by hand"
+            ).font = Font(bold=True, name="Arial", size=10, color="C62828")
     # Excel prints the range of cells that hold values and clips pictures outside it -
     # name the print area so every page picture prints (10/08/2026, seen in Excel's PDF).
-    ws.print_area = f"A1:N{r}"
+    ws.print_area = f"A1:Z{r}"
     return tmp
 
 
@@ -3260,83 +3267,6 @@ def _plain_sheet_header(ws, row: int, headers: List[str]) -> None:
         c.font = Font(bold=True, name="Arial", size=10)
         c.border = BORDER
         c.alignment = CENTER
-
-
-def _write_statements_sheet(wb, statements: list, amount_due: float,
-                            line_sum: Optional[float], disagree: bool) -> None:
-    """Every statement the vendor sent, newest first: which ones this report is
-    built from (Current) and what happened to the rest. Plain sheet."""
-    ws = wb.create_sheet("Statements")
-    ws.sheet_view.showGridLines = False
-    ws["A1"] = "Statements received"
-    ws["A1"].font = Font(bold=True, name="Arial", size=12)
-    r = 3
-    if disagree and line_sum is not None:
-        rows = [("Open invoices on the current statements", line_sum),
-                ("Newest statement's Amount Due", amount_due),
-                ("Apart", round(line_sum - amount_due, 2))]
-        for label, val in rows:
-            ws.cell(row=r, column=1, value=label).font = BODY_FONT
-            c = ws.cell(row=r, column=4, value=val)
-            c.number_format = MONEY
-            c.font = BODY_FONT
-            r += 1
-        r += 1
-    _plain_sheet_header(ws, r, ["As of", "Status", "Kind", "Amount due", "File"])
-    r += 1
-    for st in statements:
-        ws.cell(row=r, column=1, value=ss.us_date(st.get("as_of", "")) or "undated").font = BODY_FONT
-        ws.cell(row=r, column=2, value=st["label"]).font = BODY_FONT
-        ws.cell(row=r, column=3, value=st.get("kind") or "").font = BODY_FONT
-        c = ws.cell(row=r, column=4, value=st.get("amount"))
-        c.number_format = MONEY
-        c.font = BODY_FONT
-        xl_text(ws, r, 5, st["name"]).font = BODY_FONT
-        for col in range(1, 6):
-            ws.cell(row=r, column=col).border = BORDER
-        r += 1
-    for col, w in {"A": 12, "B": 22, "C": 20, "D": 16, "E": 60}.items():
-        ws.column_dimensions[col].width = w
-
-
-def _write_changes_sheet(wb, ch: dict) -> None:
-    """What changed since the vendor's previous statement: new invoices, invoices
-    gone (paid or credited in between) and amounts the vendor changed. Plain."""
-    ws = wb.create_sheet("Changes")
-    ws.sheet_view.showGridLines = False
-    ws["A1"] = (f"Changes since the statement as of {ss.us_date(ch.get('frm', ''))} "
-                f"(now as of {ss.us_date(ch.get('to', ''))})")
-    ws["A1"].font = Font(bold=True, name="Arial", size=12)
-    r = 3
-    for title, key in (("Amount changed by the vendor", "changed"), ("New on the statement", "new"),
-                       ("Gone - paid or credited in between", "gone")):
-        rows = ch.get(key) or []
-        ws.cell(row=r, column=1, value=f"{title} ({len(rows)})").font = Font(bold=True, name="Arial", size=11)
-        r += 1
-        if not rows:
-            r += 1
-            continue
-        heads = ["Invoice #", "Date", "Amount", "Was", "Job"] if key == "changed" else \
-                ["Invoice #", "Date", "Amount", "", "Job"]
-        _plain_sheet_header(ws, r, heads)
-        r += 1
-        for row in rows:
-            xl_text(ws, r, 1, row["ref"]).font = BODY_FONT
-            ws.cell(row=r, column=2, value=ss.us_date(row.get("date", ""))).font = BODY_FONT
-            c = ws.cell(row=r, column=3, value=row["amount"])
-            c.number_format = MONEY
-            c.font = BODY_FONT
-            if key == "changed":
-                c = ws.cell(row=r, column=4, value=row.get("was"))
-                c.number_format = MONEY
-                c.font = BODY_FONT
-            xl_text(ws, r, 5, row.get("where") or "").font = BODY_FONT
-            for col in range(1, 6):
-                ws.cell(row=r, column=col).border = BORDER
-            r += 1
-        r += 1
-    for col, w in {"A": 16, "B": 12, "C": 14, "D": 14, "E": 44}.items():
-        ws.column_dimensions[col].width = w
 
 
 # ───────────────────────── interactive helpers ─────────────────────────
@@ -3365,7 +3295,7 @@ def _hr():
 
 
 def _open_file(path: Path) -> None:
-    """Open a file with the OS default app (macOS only — `open`)."""
+    """Open a file with the OS default app (macOS only - `open`)."""
     try:
         subprocess.run(["/usr/bin/open", str(path)], check=False)
     except Exception as e:
@@ -3385,7 +3315,7 @@ def _term_link(label: str, path: Path) -> str:
 
 def append_clerk_perf(rows: List["ReconRow"], vendor_name: str, stmt_date: str,
                       stmt_total: float) -> Optional[Path]:
-    """Append one row to clerk_performance.csv. Focused on clerk-action metrics —
+    """Append one row to clerk_performance.csv. Focused on clerk-action metrics -
     vendor-side issues (tax violations) are EXCLUDED since the user reads those from QBO."""
     import csv as _csv
 
@@ -3466,7 +3396,7 @@ def identify_file(pdf_path: Path, args: argparse.Namespace, access: str, cid: st
         _fail(f"could not read {pdf_path.name}: {e}")
         return None
 
-    # Vendor fallback chain — runs for ALL file types (PDF, Excel, Image).
+    # Vendor fallback chain - runs for ALL file types (PDF, Excel, Image).
     # Step 2 (file body extraction) wins for PDFs where the vendor is in the
     # header/body. For Excel and OCR'd images where body extraction often
     # comes up empty, the chain falls through to filename / cell scan / prompt.
@@ -3475,10 +3405,10 @@ def identify_file(pdf_path: Path, args: argparse.Namespace, access: str, cid: st
     # beat incidental file body data. Excel cells in particular often contain
     # OUR OWN company name as bill-to ("Proficient Concrete LLC") and the
     # vendor's full legal name with corp suffixes that fuzz the QBO LIKE
-    # search — so filename (user-curated) beats cell scan (incidental).
+    # search - so filename (user-curated) beats cell scan (incidental).
     vendor_source = ""
     if args.vendor:
-        # 1. Explicit --vendor flag — overrides everything
+        # 1. Explicit --vendor flag - overrides everything
         vendor_guess = args.vendor
         vendor_source = "from --vendor flag"
     elif vendor_guess:
@@ -3494,21 +3424,21 @@ def identify_file(pdf_path: Path, args: argparse.Namespace, access: str, cid: st
             vendor_guess = data.get("qbo_name", "")
             vendor_source = f"from cached alias (filename tokens: {matched_tokens})"
 
-    # 4. Cleaned filename (user-curated signal — trust it before incidental file body)
+    # 4. Cleaned filename (user-curated signal - trust it before incidental file body)
     if not vendor_guess:
         cleaned = _vendor_from_filename(pdf_path)
         if cleaned and len(cleaned) >= 3:
             vendor_guess = cleaned
             vendor_source = "from filename"
 
-    # 5. Scan Excel cells (Excel only — last automated step before prompt)
+    # 5. Scan Excel cells (Excel only - last automated step before prompt)
     if not vendor_guess and is_excel:
         scanned = _scan_excel_for_vendor(pdf_path)
         if scanned:
             vendor_guess = scanned
             vendor_source = "from Excel cell"
 
-    # 6. Interactive prompt — last resort, works for any file type
+    # 6. Interactive prompt - last resort, works for any file type
     if not vendor_guess:
         print()
         print(_Term.color(_Term.Y, "  ⚠ Couldn't auto-detect vendor (no flag, no cached alias, "
@@ -3518,11 +3448,11 @@ def identify_file(pdf_path: Path, args: argparse.Namespace, access: str, cid: st
             vendor_source = "user-entered"
         except (EOFError, KeyboardInterrupt):
             print()
-            _fail("vendor input required — aborted.")
+            _fail("vendor input required - aborted.")
             return None
 
     if not vendor_guess:
-        _fail("no vendor identified — aborted.")
+        _fail("no vendor identified - aborted.")
         return None
 
     # Always log which source the vendor came from (helps debug surprises)
@@ -3530,17 +3460,17 @@ def identify_file(pdf_path: Path, args: argparse.Namespace, access: str, cid: st
           f"{_Term.color(_Term.C, vendor_guess)}  "
           f"{_Term.color(_Term.DIM, f'({vendor_source})')}")
 
-    # Excel/Image — default stmt_date to today if the file didn't provide one
+    # Excel/Image - default stmt_date to today if the file didn't provide one
     if not stmt_date:
         if args.stmt_date:
             stmt_date = args.stmt_date
         elif is_excel or is_image:
             stmt_date = ss.date_from_name(pdf_path.name, pdf_path.stat().st_mtime)
             if stmt_date:
-                _warn(f"No statement date in {file_kind} — using the date in its file name "
+                _warn(f"No statement date in {file_kind} - using the date in its file name "
                       f"({ss.us_date(stmt_date)}).")
             else:
-                _warn(f"No statement date in {file_kind} or its file name — left for a human "
+                _warn(f"No statement date in {file_kind} or its file name - left for a human "
                       f"(rename it with the date, e.g. '... 09-30-2026', or pass --stmt-date).")
 
     vendor_hint = vendor_guess
@@ -3580,7 +3510,7 @@ def identify_file(pdf_path: Path, args: argparse.Namespace, access: str, cid: st
         vendor_id, vendor_name, from_cache = find_vendor_id_cached(
             access, cid, vendor_hint, override=args.vendor, strict=False)
     if not vendor_id:
-        _fail(f"no QBO vendor match for '{vendor_hint}' — skipped (add an alias or pass "
+        _fail(f"no QBO vendor match for '{vendor_hint}' - skipped (add an alias or pass "
               "--vendor with the exact QBO display name). Left in place.")
         return None
     cache_marker = _Term.color(_Term.Y, " ★ from saved alias") if from_cache else ""
@@ -3588,16 +3518,16 @@ def identify_file(pdf_path: Path, args: argparse.Namespace, access: str, cid: st
 
     # Unattended inbox mode: only auto-process vendors already confirmed in the
     # alias cache. A first-time vendor is left in the inbox so a human runs it
-    # once (which caches it) — avoids reconciling against a wrong fuzzy match
+    # once (which caches it) - avoids reconciling against a wrong fuzzy match
     # with nobody watching.
     if getattr(args, "inbox_cached_only", False) and not from_cache and not args.vendor:
-        _fail(f"vendor '{vendor_name}' is not in the alias cache yet — skipping in unattended "
+        _fail(f"vendor '{vendor_name}' is not in the alias cache yet - skipping in unattended "
               "inbox mode. Run it once manually (statement-reconcile <file>) to confirm + cache it.")
         return None
 
-    # ── confirm #2: vendor match — skipped on cache hit ─────
+    # ── confirm #2: vendor match - skipped on cache hit ─────
     if from_cache:
-        print(f"  {_Term.color(_Term.DIM, '(skipping vendor confirmation — cached.)')}")
+        print(f"  {_Term.color(_Term.DIM, '(skipping vendor confirmation - cached.)')}")
     else:
         print()
         _hr()
@@ -3611,7 +3541,7 @@ def identify_file(pdf_path: Path, args: argparse.Namespace, access: str, cid: st
             return None
         if not args.no_cache:
             remember_vendor(vendor_hint, vendor_id, vendor_name)
-            print(f"  {_Term.color(_Term.DIM, '(remembered this vendor — future statements will skip this step)')}")
+            print(f"  {_Term.color(_Term.DIM, '(remembered this vendor - future statements will skip this step)')}")
 
     return {"vendor_id": vendor_id, "vendor_name": vendor_name, "stmt_date": stmt_date,
             "amt_due": amt_due, "lines": lines, "template": template, "ties_out": sum_matches}
@@ -3683,7 +3613,7 @@ def reconcile_vendor(args: argparse.Namespace, access: str, cid: str, result: di
 
     if abs(len(bills_asof) - len(lines)) > max(5, len(lines) // 2):
         _warn(f"As-of bill counts differ a lot: stmt has {len(lines)}, QBO has {len(bills_asof)}. "
-              "Could be normal (missing entries) or wrong vendor — verify before continuing.")
+              "Could be normal (missing entries) or wrong vendor - verify before continuing.")
 
     # ── recently-paid bills (vendor-lag check) ──────────────
     # Data-driven lookback: extend far enough back to cover the OLDEST stmt
@@ -3748,7 +3678,7 @@ def reconcile_vendor(args: argparse.Namespace, access: str, cid: str, result: di
     print(f"  Reconciling diff:          {_Term.color(diff_color, f'${diff:,.2f}')}")
     if bills_post:
         post_total = sum(b.open_balance for b in bills_post)
-        print(f"  {_Term.color(_Term.DIM, f'(plus {len(bills_post)} QBO bill(s) dated after {stmt_date} totaling ${post_total:,.2f} — excluded from tie-out)')}")
+        print(f"  {_Term.color(_Term.DIM, f'(plus {len(bills_post)} QBO bill(s) dated after {stmt_date} totaling ${post_total:,.2f} - excluded from tie-out)')}")
     print()
     pretty: List[Tuple[str, str, str]] = [
         ("MATCHED",               "✓ Matched",                       _Term.G),
@@ -3817,8 +3747,7 @@ def reconcile_vendor(args: argparse.Namespace, access: str, cid: str, result: di
     write_excel(out, vendor_name, stmt_date, amt_due, bills, rows,
                 statement_src=None, line_sum=line_sum, tieout_ok=sum_matches,
                 bf_amount=bf_amount, payments_total=payments_total, stmt_lines=lines,
-                notes=extras.get("notes"), statements=extras.get("statements"),
-                changes=extras.get("changes"), disagree=bool(extras.get("disagree")),
+                notes=extras.get("notes"), disagree=bool(extras.get("disagree")),
                 markups=markups)
     _done(t0, f"Saved to {_Term.color(_Term.C, str(out))}")
     result["action"] = "filed" if result["tieout"] else "held"
@@ -4262,7 +4191,7 @@ def run_vendors(args: argparse.Namespace, access: str, cid: str,
     if failed:
         print(_Term.color(_Term.R, f"  Left for a human: {len(failed)}"))
         for name, why in failed:
-            print(_Term.color(_Term.DIM, f"    · {name} — {why}"))
+            print(_Term.color(_Term.DIM, f"    · {name} - {why}"))
     print(f"\n  {_Term.color(_Term.BOLD, 'Vendor folders:')} {_term_link(str(root), root)}")
     _hr()
     return 0 if not failed else 1
@@ -4374,11 +4303,11 @@ def _publish(results: List[dict], args: argparse.Namespace) -> None:
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("pdf", type=Path, nargs="*",
-                   help="Path(s) to statement file(s) — accepts .pdf, .xlsx, .xls, or .png/.jpg "
+                   help="Path(s) to statement file(s) - accepts .pdf, .xlsx, .xls, or .png/.jpg "
                         "(images go through Tesseract OCR; .xls files auto-converted via xlrd)")
     p.add_argument("--vendor", default="",
                    help="Override vendor name. REQUIRED for .xlsx files (Excel has no vendor in body). "
-                        "Otherwise guessed from PDF. In batch mode applies to ALL files — use with care.")
+                        "Otherwise guessed from PDF. In batch mode applies to ALL files - use with care.")
     p.add_argument("--stmt-date", default="", metavar="YYYY-MM-DD",
                    help="Statement as-of date. REQUIRED for .xlsx files if you want anything other "
                         "than today's date. PDFs read this from the body automatically. Format: YYYY-MM-DD.")
@@ -4501,7 +4430,7 @@ def main() -> int:
         return run_vendors(args, access, cid, inbox, root, files, only=only)
 
     if not args.pdf:
-        p.error("Statement file path required (.pdf / .xlsx / .png) — or use --inbox / --refresh.")
+        p.error("Statement file path required (.pdf / .xlsx / .png) - or use --inbox / --refresh.")
 
     pdf_paths: List[Path] = [Path(x) for x in args.pdf]
     for pp in pdf_paths:

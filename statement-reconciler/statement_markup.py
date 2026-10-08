@@ -34,8 +34,8 @@ BUCKETS: Dict[str, Tuple[str, Tuple[int, int, int]]] = {
     "tax":      ("Sales tax added",                           (255, 112, 67)),
     "lag":      ("Paid in QBO, vendor still shows it open",   (66, 165, 245)),
     "enter":    ("Not in QBO - enter it",                     (229, 57, 53)),
-    "other":    ("Payment / credit / balance forward",        (158, 158, 158)),
-    "skipped":  ("Another customer's line - left out on purpose", (176, 190, 197)),
+    "other":    ("Payment / credit / balance forward",        (149, 117, 205)),
+    "skipped":  ("Another customer's line - left out on purpose", (158, 158, 158)),
 }
 MISSED_RGB = (198, 40, 40)
 

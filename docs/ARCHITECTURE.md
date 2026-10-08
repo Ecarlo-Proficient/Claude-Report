@@ -288,7 +288,7 @@ flowchart LR
     PS["print_status.py\ninvoice # from subject/full body/attachment name\n+ $search backup reads INSIDE bundled PDFs\n+ QBO-agreement gate · index-health · --audit-print-status\ndisk-cached, incremental by lastModifiedDateTime"]:::tool
     BX[("Bill Tracker.xlsx\nAccounting share / Accounts Payable\n(paths.bill_tracker_xlsx)\ndisplay = non-sub · audit = incl. subs")]:::out
     CCH[("cost_code_history.json\nCompanyHealth · cost-code miscode log")]:::out
-    RX[("<Vendor>/Current: the statement(s) in use + ONE Excel\n(Clerk notes column kept by bill id; Statement (marked) + Statements + Changes sheets)\n<Vendor>/History: 'mm-dd-yyyy DONE|Replaced|Duplicate - file'\n+ Print Status = 1st Summary section (opt-in PRINT_STATUS=1)")]:::out
+    RX[("<Vendor>/Current: the statement(s) in use + ONE Excel\n(Notes column kept by bill id; Statement (marked) sheet)\n<Vendor>/History: 'mm-dd-yyyy DONE|Replaced|Duplicate - file'\n+ Print Status = 1st Summary section (opt-in PRINT_STATUS=1)")]:::out
     NB[("Notion · Vendor Statements board\n1 running page / vendor (notion_board.py)\nall entered AS OF the statement date · a count per bucket\nTo do · Changed since · Statements · Cleared")]:::out
     TEAMS[("Teams channel\n1 digest card / run\nlinks to the board")]:::out
 

@@ -1,9 +1,9 @@
 # statement-reconciler/ - how the vendor statement reconciler works
 
-Last changed: 10/08/2026 (afternoon) - every Excel gets a 2nd sheet "Statement (marked)": each bill
-row on the statement banded in its bucket colour, rows that look like a bill but were not read outlined red
-(also Notion "Not read"); scanned statements read with OCR; VoidForm layout; Discount rows.
-Earlier 10/08: four new layouts, safety nets, `--audit-parsing`. 10/07: one running record per vendor.
+Last changed: 10/08/2026 (evening) - the workbook is Summary + Statement (marked) only (Statements /
+Changes live on Notion); colour key to the right of the pages; columns Finding / Notes.
+Earlier 10/08: marked-up statement, OCR for scanned statements, new layouts, safety nets, `--audit-parsing`.
+10/07: one running record per vendor.
 
 Update this chart - and the line above - in the same commit as any change to
 `statement-reconciler/` (`.github/flow_guard.sh`).
@@ -32,7 +32,7 @@ flowchart LR
     NB["notion_board.py<br/>merge with the clerk's ticks; a count per bucket;<br/>fixed -> Cleared"]:::tool
     PREV{"--dry-run?"}:::gate
 
-    XLSX[("&lt;Vendor&gt;/Current: statement(s) in use + ONE Excel<br/>Summary (Clerk notes col) · Statement (marked) · Statements · Changes")]:::out
+    XLSX[("&lt;Vendor&gt;/Current: statement(s) in use + ONE Excel<br/>Summary (Notes col) · Statement (marked)")]:::out
     HIST[("&lt;Vendor&gt;/History<br/>'mm-dd-yyyy DONE / Replaced / Duplicate - file'")]:::out
     HELD[("unreadable statement:<br/>stays in the Inbox / Current")]:::out
     PAGE[("Notion · 1 page per vendor<br/>All entered as of &lt;date&gt; · Not entered · Unreadable · No statement<br/>To do · Changed since · Statements · Cleared")]:::out
