@@ -8,7 +8,10 @@
 # What it does: pulls the checkout's branch (read-only deploy key, GitHub's host key PINNED), rebuilds + restarts the
 # container (the mode in server.env is untouched), puts the share's inherited permissions back on the test trackers,
 # and appends everything - including every commit pulled - to /volume1/docker/automation/update_server.log.
-# It refuses: a live server not on main, a checkout with local edits, a second run at the same time.
+# A live server runs main only: in live mode it moves a checkout on another branch onto main itself.
+# It refuses: a checkout with local edits, a second run at the same time.
+# The DSM task runs it every night (03:00) and on demand: with no new commits it rebuilds nothing (it only applies a
+# changed server.env), so once live, whatever is merged to main reaches the server by the next morning, hands-free.
 set -uo pipefail
 export PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin:/usr/syno/bin:/usr/syno/sbin
 BASE=/volume1/docker/automation
@@ -32,15 +35,30 @@ export GIT_SSH_COMMAND="ssh -i /volume1/automation-keys/deploy_key -o Identities
 branch="$(G rev-parse --abbrev-ref HEAD)"
 mode="$(sed -n 's/^ACB_SERVER_MODE=//p' "$BASE/server.env" | tr -d '[:space:]')"
 echo "mode ${mode:-?}, branch $branch, before $(G log --oneline -1)"
-if [ "$mode" = "live" ] && [ "$branch" != "main" ]; then echo "a LIVE server runs main only - nothing changed"; exit 1; fi
 if [ -n "$(G status --porcelain --untracked-files=no)" ]; then echo "the checkout has local edits - nothing changed"; G status --short; exit 1; fi
 before="$(G rev-parse HEAD)"
+if [ "$mode" = "live" ] && [ "$branch" != "main" ]; then
+  # going live: a LIVE server runs main only, so move the checkout onto the reviewed main (same key, same pin)
+  if ! { G fetch origin main && G checkout -B main origin/main; }; then
+    chown -R "$owner" "$SRC"; echo "could not switch to main - nothing rebuilt, the server keeps running"; exit 1
+  fi
+  echo "switched $branch -> main (live runs main only)"
+  branch=main
+fi
 if ! { G fetch origin "$branch" && G merge --ff-only "origin/$branch"; }; then
   chown -R "$owner" "$SRC"; echo "PULL FAILED - nothing rebuilt, the server keeps running"; exit 1
 fi
 chown -R "$owner" "$SRC"
-echo "commits pulled:"; G log --oneline "$before..HEAD"
 if docker compose version >/dev/null 2>&1; then DC="docker compose"; else DC="docker-compose"; fi
+if [ "$(G rev-parse HEAD)" = "$before" ]; then
+  # the nightly run, most nights: no new code - no rebuild. `up -d` still applies a changed server.env (going live,
+  # a new setting) and is a no-op otherwise, so the running step is never interrupted for nothing.
+  echo "no new commits - nothing rebuilt"
+  $DC -f docker/compose.yml up -d || { echo "RESTART FAILED - the old container keeps running"; exit 1; }
+  $DC -f docker/compose.yml ps
+  echo "done"; exit 0
+fi
+echo "commits pulled:"; G log --oneline "$before..HEAD"
 $DC -f docker/compose.yml up -d --build || { echo "BUILD FAILED - the old container keeps running"; exit 1; }
 for f in "/volume1/Accounting/_server-test/Bill Tracker.xlsx" "/volume1/Accounting/_server-test/Bill Tracker - compare copy.xlsx"; do
   [ -f "$f" ] || continue

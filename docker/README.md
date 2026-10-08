@@ -107,23 +107,38 @@ What to watch:
 
 `docker/update_server.sh` pulls the checkout's branch, rebuilds + restarts (the mode stays as server.env says) and puts
 the share's inherited permissions back on the test trackers. In DSM: Control Panel > Task Scheduler > Create > Scheduled
-Task > User-defined script, user **root**, not enabled (run on demand). Paste the script's whole text into the Run
-command box, select the task and **Run**. **Security: keep the text pasted in DSM - never point the task at a file in the
+Task > User-defined script, user **root**, **schedule: daily at 03:00** (after the 02:30 count check). Paste the script's
+whole text into the Run command box. It also runs on demand: select the task and **Run**. A night with no new commits
+rebuilds nothing (it only applies a changed `server.env`), so once live, what is merged to `main` reaches the server by
+the next morning with nobody updating it. **Security: keep the text pasted in DSM - never point the task at a file in the
 checkout** (anyone who can push to the repo would then run code as root on the Synology); when the script changes,
-re-paste it. It pins GitHub's host key, refuses a live server that is not on `main`, a checkout with local edits and a
+re-paste it. It pins GitHub's host key, moves a live server onto `main` (live runs `main` only), refuses a checkout with local edits and a
 second run at once, hands the checkout back to its owner, and logs every commit it pulled. The result
 is appended to `/volume1/docker/automation/update_server.log` (readable from the Mac at `/Volumes/docker/automation/`).
 
-### 8. Going live - NOT YET
+### 8. Going live - the checklist (in this order)
 
-Done before live (tracked in `docker/STATUS.md`): Notion writes only what changed, the Mac honors the writer file
-(sync-all stands down), the Bill Tracker open-in-Excel guard. Left: the release to `main` (live runs `main` only). Then,
-on switch day, in this order:
+Everything the switch needs is built and tested (`docker/STATUS.md`): Notion writes only what changed, the Bill
+Tracker skips a run while it is open in Excel, the Mac's sync-all stands down while the writer file says server, the
+server's Bill Tracker matched a Mac build on every line (10/08). Left is this list - about 20 minutes.
 
-1. On the Mac, carry the miscode history (dry run first, then write):
-   `~/.venvs/proficient/bin/python docker/carry_history.py` then `... docker/carry_history.py --commit`
-2. `ACB_SERVER_MODE=live` in `server.env`, create `Accounting/_automation/writer.json` = `{"writer": "server"}`, restart.
-3. Watch the ledger's Data status: the "Office server" block drops "(test)" and its times keep moving.
+1. **Release:** approve the `dev -> main` release PR; it merges itself once CI is green.
+2. **DSM, the update task:** re-paste `docker/update_server.sh` (it changed 10/08) and set its schedule to daily
+   03:00 (step 7b).
+3. **On the owner's Mac** (the Accounting share mounted): run `sync-all` one last time so the live trackers and Notion
+   are current, then carry the miscode history - dry run, then write:
+   `~/.venvs/proficient/bin/python docker/carry_history.py` and `~/.venvs/proficient/bin/python docker/carry_history.py --commit`
+4. **`server.env`:** `ACB_SERVER_MODE=live`. In `secrets.env` leave `TEAMS_WEBHOOK_PAYMENTS` blank (the payment cards
+   stay off until the owner turns them on); `TEAMS_WEBHOOK_MFD_PAID` + `TEAMS_WEBHOOK_ALERTS` filled.
+5. **The writer file:** create `Accounting/_automation/writer.json` containing `{"writer": "server"}`.
+6. **Run the update task** once from DSM: in live mode it moves the checkout onto `main` itself, pulls, rebuilds,
+   and starts the server live.
+7. **Check within 20 minutes:** the ledger's Data status shows "Office server" without "(test)" and its times moving;
+   `Accounts Payable/Bill Tracker.xlsx` and `Accounts Receivable/Invoice Tracker.xlsx` carry a new time; the AR summary
+   in `status.json` shows most invoices as `unchanged` and `errors: 0`.
+
+After that nobody updates anything: the server writes every 15 minutes, the nightly task deploys whatever reaches
+`main`, and alerts go to Teams. The `_server-test/` folder can be deleted after a week.
 
 **Rollback** at any time: set the writer file to `{"writer": "mac"}`. The server stands down at its next run and the
 owner's `sync-all` runs AP/AR as before.

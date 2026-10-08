@@ -3,6 +3,11 @@
 Progression record for the office server package. Update in the SAME commit as any change to this folder (repo rule).
 
 ## DONE / FINALIZED
+- 2026-10-08 · **Hands-free after go-live.** `update_server.sh`: no new commits = no rebuild (`up -d` still applies a
+  changed server.env), so the DSM task can run nightly at 03:00 and deploy whatever reaches main; in live mode it moves a
+  checkout on another branch onto main itself (same deploy key + host-key pin) - no SSH step at go-live. Tested on a
+  stand-in (bare remote, stub docker): nothing new / new commits / live on dev -> main / live nothing new / local edit
+  refused. README step 8 rewritten as the ordered go-live checklist (7 steps).
 - 2026-10-08 · **Switch-over prep, one landing:** Bill Tracker open-in-Excel guard (bill-tracker), Notion writes only what
   changed (invoice-sync), `carry_history.py` (switch-day history carry), the ledger's server status lines. The 10/05
   paid-vs-unpaid open issue is SETTLED: a same-moment pair (server 14:35, Mac mirror 14:40) matched on all 3,451 Bills
@@ -55,7 +60,7 @@ Progression record for the office server package. Update in the SAME commit as a
   (dry run by default, `--commit` backs up and writes; refuses mid-AP-run). README step 8.
 - DONE 10/08 - The ledger's Data status shows the server's last good run per job (mirror / Bill Tracker / Invoice
   sync), from `Accounting/_automation/server-status.json`; "(test - practice copies)" while in test mode.
-- Live runs `main` only - a release PR before the switch.
+- Live runs `main` only - release PR #22 (dev -> main), auto-merge on once approved. Then README step 8.
 
 ## LATER (not needed for the switch, owner 10/08)
 - Bill Tracker Inputs split - the typed Lien tags / Notes leave the workbook (a small inputs file, or the ledger's lien
