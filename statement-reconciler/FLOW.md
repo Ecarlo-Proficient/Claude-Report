@@ -1,6 +1,7 @@
 # statement-reconciler/ - how the vendor statement reconciler works
 
-Last changed: 10/08/2026 (evening) - the workbook is Summary + Statement (marked) only (Statements /
+Last changed: 10/08/2026 (night) - bill approval in three states from `shared/bill_approval` (NOT APPROVED memo · check QBO for bills entered since 09/16 and unpaid · approved) in the Excel, the marked statement and Notion.
+Earlier 10/08 (evening): the workbook is Summary + Statement (marked) only (Statements /
 Changes live on Notion); colour key to the right of the pages; columns Finding / Notes.
 Earlier 10/08: marked-up statement, OCR for scanned statements, new layouts, safety nets, `--audit-parsing`.
 10/07: one running record per vendor.

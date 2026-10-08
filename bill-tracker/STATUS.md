@@ -4,6 +4,9 @@ Shared progression record (the user's sessions ↔ the developer's). Tool scope 
 no business findings, dollar exposures, or owner analyses (those live in the owner's vault).
 
 ## DONE / FINALIZED
+- 2026-10-08 · **The approval rule moved to `shared/bill_approval.py`** (the statement reconciler needs the same three
+  states - tools never import tools). `bill_rows.is_approved` / `approval_state` and the `APPROVAL_*` names now come
+  from there; the Bill List output is unchanged (same rule, verified on the six edge cases).
 - 2026-10-02 · **Audit - Coding: Wrong Job? + closing date** (owner: "what is the real 2026 errors and why is not the bill audit catching these?"). The Data Entry check compared the project only to the LINE description and never ran on sub bills, so a large sub bill coded to the wrong CP job and the RCI bills that name the job only in the memo were invisible. New issue `Wrong Job?` (`_wrong_job`): coded project vs the one job the line or bill memo names; subs included; RP####/-FTW twins treated as one family (3,688 normal RP lines otherwise). 77 lines in 2026 on the first preview. Bills on or before the QBO BookCloseDate (12/31/2025) are left off every coding check - locked. `--dry-run` prints the Wrong Job? preview. `tests/test_bill_audit_wrong_job.py`.
 - 2026-09-29 · **Formula-injection guard (security review).** Outside text (vendor / QBO / Notion / email) this tool writes goes through `shared/xlsx_guard` - stored as text, never a live formula (Bills + audit sheets; the Open link column stays a formula); every workbook save also passes the shared guard, and `xlsx_verify` fails a risky formula.
 - 2026-09-29 · **QuickBooks login moved to the shared one (security review).** This tool's own copy of the refresh-token exchange is retired; its login is `shared/qbo_api` (`load_credentials` / `get_pass`), which asks Key Helper (`keyhelper/`) once the key library is adopted - the tool never holds the refresh token.

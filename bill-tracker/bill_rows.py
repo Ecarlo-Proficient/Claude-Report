@@ -46,6 +46,7 @@ from qbo_bill_tracker import (
     STATUS_UNPAID,
 )
 from shared import draw_moves   # the push: a bill carried into a later draw by agreement
+from shared import bill_approval   # the ONE approval rule, shared with the statement reconciler
 
 
 # ─────────────────────── approval flag ───────────────────────
@@ -75,20 +76,15 @@ def is_approved(bill: dict) -> bool:
     Per Proficient workflow: AP review tags un-approved bills by prefixing
     the memo. Untagged bills are assumed approved.
     """
-    memo = (bill.get("PrivateNote") or "").lstrip()
-    return not memo.upper().startswith("NOT APPROVED")
+    return bill_approval.memo_approved(bill.get("PrivateNote"))
 
 
-# Bill approval moved into QBO's approval Workflow on this date (the user
-# 2026-09-17). From here on AP no longer types NOT APPROVED at entry, and QBO's
-# API does NOT return a bill's approval status (checked 2026-09-18 at minor
-# versions 70 and 75 on a bill sitting in the approval queue: no such field).
-# So for an unpaid bill entered on/after this date the memo says nothing and
-# only QBO knows - the honest answer is "check QBO", never a guessed "approved".
-APPROVAL_WORKFLOW_START = dt.date(2026, 9, 16)
-APPROVAL_NO = "not approved"
-APPROVAL_CHECK = "check QBO"
-APPROVAL_YES = "approved"
+# Bill approval moved into QBO's approval Workflow on 09/16/2026 - the rule and why
+# live in shared/bill_approval.py (shared with the statement reconciler, 10/08/2026).
+APPROVAL_WORKFLOW_START = bill_approval.APPROVAL_WORKFLOW_START
+APPROVAL_NO = bill_approval.APPROVAL_NO
+APPROVAL_CHECK = bill_approval.APPROVAL_CHECK
+APPROVAL_YES = bill_approval.APPROVAL_YES
 
 
 def bill_created(bill: dict) -> Optional[dt.date]:
@@ -97,26 +93,8 @@ def bill_created(bill: dict) -> Optional[dt.date]:
 
 
 def approval_state(bill: dict) -> str:
-    """Three states for the Bill List's Approved column.
-
-      not approved  the memo starts NOT APPROVED (the paper-era tag; still live
-                    until every bill entered before the workflow is cleared)
-      check QBO     entered on/after APPROVAL_WORKFLOW_START and still unpaid -
-                    its approval lives in QBO Tasks and the API cannot say
-      approved      everything else: an old-process bill with no tag, or a
-                    new-process bill that has been paid (QBO will not release a
-                    payment on a bill that is pending approval)
-    """
-    if not is_approved(bill):
-        return APPROVAL_NO
-    created = bill_created(bill)
-    try:
-        balance = float(bill.get("Balance") or 0)
-    except (TypeError, ValueError):
-        balance = 0.0
-    if created and created >= APPROVAL_WORKFLOW_START and balance > 0:
-        return APPROVAL_CHECK
-    return APPROVAL_YES
+    """Three states for the Bill List's Approved column - see shared/bill_approval."""
+    return bill_approval.approval_state(bill.get("PrivateNote"), bill_created(bill), bill.get("Balance"))
 
 
 def revised_reason(memo: str, allow_first_line: bool = False) -> str:

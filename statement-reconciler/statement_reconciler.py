@@ -118,18 +118,24 @@ LAG_LOOKBACK_STMT_PADDING_DAYS = 7  # extra padding before the statement's oldes
 # Effective cutoff = min(oldest_stmt_line_date - PADDING, stmt_date - LAG_LOOKBACK_DAYS)
 # So statements with old bills extend the lookback as needed, but every run
 # still pulls AT LEAST 60 days of paid history.
-# The day bill approval moved into QBO's own workflow and AP stopped typing
-# NOT APPROVED (same date as bill-tracker/bill_rows.APPROVAL_WORKFLOW_START).
-APPROVAL_WORKFLOW_START = "2026-09-16"
-UNAPPROVED_TAG = "not approved"  # case-insensitive substring in QBO Bill Memo flags unapproved
+# Bill approval: the ONE rule lives in shared/bill_approval (shared with the Bill
+# Tracker, 10/08/2026) - paper-era NOT APPROVED memo tag, or, for a bill entered
+# since 09/16/2026 and still unpaid, "check QBO" (its approval queue is invisible
+# to the API).
+from shared import bill_approval  # noqa: E402
+APPROVAL_WORKFLOW_START = bill_approval.APPROVAL_WORKFLOW_START.isoformat()
 
 
 def _is_approved(memo: str) -> bool:
-    """Return False iff Memo STARTS WITH 'Not Approved' (case-insensitive,
-    after stripping leading whitespace). Checks the beginning only so a
-    memo like 'Approved 5/1 (was Not Approved prior)' is correctly treated
-    as approved. Empty/missing memo → approved (default)."""
-    return not (memo or "").lstrip().lower().startswith(UNAPPROVED_TAG)
+    """False only when the memo starts with NOT APPROVED (the paper-era tag)."""
+    return bill_approval.memo_approved(memo)
+
+
+def _approval(r: "ReconRow", by_id: Dict[str, "QboBill"]) -> str:
+    """bill_approval state of a statement row's QBO bill: not approved / check QBO /
+    approved."""
+    b = by_id.get(r.qbo_bill_id)
+    return bill_approval.approval_state(r.qbo_memo, b.created if b else "", b.open_balance if b else 0)
 
 OUTDIR_DEFAULT = paths.get_path(
     "ACB_RECON_OUT_DIR",
@@ -2735,9 +2741,12 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
     post_stmt_total = round(sum(b.open_balance for b in post_stmt_bills), 2)
     # Split MATCHED by approval status so unapproved-but-matched bills don't
     # hide inside the "clean" pile - they still need PM signoff before payment.
+    by_id = {b.bill_id: b for b in qbo_bills}
+    state = {id(r): _approval(r, by_id) for r in rows if r.category == "MATCHED"}
     cats = {
-        "MATCHED_APPROVED":      [r for r in rows if r.category == "MATCHED" and _is_approved(r.qbo_memo)],
-        "MATCHED_NOT_APPROVED":  [r for r in rows if r.category == "MATCHED" and not _is_approved(r.qbo_memo)],
+        "MATCHED_APPROVED":      [r for r in rows if state.get(id(r)) == bill_approval.APPROVAL_YES],
+        "MATCHED_CHECK_QBO":     [r for r in rows if state.get(id(r)) == bill_approval.APPROVAL_CHECK],
+        "MATCHED_NOT_APPROVED":  [r for r in rows if state.get(id(r)) == bill_approval.APPROVAL_NO],
         "VENDOR_TAX_VIOLATION":  [r for r in rows if r.category == "VENDOR_TAX_VIOLATION"],
         "CLERK_AMOUNT_MISMATCH": [r for r in rows if r.category == "CLERK_AMOUNT_MISMATCH"],
         "LIKELY_VENDOR_LAG":     [r for r in rows if r.category == "LIKELY_VENDOR_LAG"],
@@ -2856,17 +2865,23 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
 
     # Bills pending approval in QBO - counted from in-scope (as-of) bills only
     unapproved = [b for b in qbo_bills_asof if not b.is_approved]
-    if unapproved:
-        unapproved_amt = round(sum(b.open_balance for b in unapproved), 2)
-        msg = (f"⚠ Bills pending approval in QBO: {len(unapproved)}  "
-               f"(${unapproved_amt:,.2f}) - see 'Approved?' column below "
-               f"(red cells = needs PM signoff)")
+    pending = [b for b in qbo_bills_asof if b.is_approved and bill_approval.approval_state(
+        b.memo, b.created, b.open_balance) == bill_approval.APPROVAL_CHECK]
+    if unapproved or pending:
+        parts = []
+        if unapproved:
+            parts.append(f"{len(unapproved)} NOT APPROVED by memo "
+                         f"(${round(sum(b.open_balance for b in unapproved), 2):,.2f}) - chase the PM")
+        if pending:
+            parts.append(f"{len(pending)} entered since 09/16 and unpaid "
+                         f"(${round(sum(b.open_balance for b in pending), 2):,.2f}) - their approval is in QBO, check there")
+        msg = "⚠ Approval: " + " · ".join(parts) + "  (see the 'Approved?' column)"
         c = s.cell(row=r, column=1, value=msg)
         c.font = Font(bold=True, name="Arial", size=11, color="C62828")
         c.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
         c.fill = PatternFill("solid", start_color="FFE5E5")
         s.merge_cells(start_row=r, start_column=1, end_row=r, end_column=12)
-        s.row_dimensions[r].height = 24
+        s.row_dimensions[r].height = 30
         r += 1
     r += 1
 
@@ -2894,6 +2909,8 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
     CAT_DEFS = [
         ("MATCHED_APPROVED",      "✓ MATCHED - APPROVED",                       OK_FILL,   True),   # collapse by default (boring/clean)
         ("MATCHED_NOT_APPROVED",  "⚠ MATCHED but NOT APPROVED (chase PM)",      WARN_FILL, False),  # surface - needs PM signoff
+        ("MATCHED_CHECK_QBO",     "? MATCHED - approval is in QBO (entered since 09/16, unpaid): check its approval there",
+                                  PatternFill("solid", start_color="D9F2F7"), False),
         ("VENDOR_TAX_VIOLATION",  "⚠ VENDOR TAX VIOLATION (8.25%)",             WARN_FILL, False),
         ("CLERK_AMOUNT_MISMATCH", "⚠ CLERK AMOUNT MISMATCH",                    WARN_FILL, False),
         ("LIKELY_VENDOR_LAG",     "⊙ LIKELY VENDOR LAG (paid in QBO)",          LAG_FILL,  False),
@@ -2961,10 +2978,14 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
             approved_font = DIM_FONT
             approved_fill = None
         else:
-            is_app = _is_approved(rr.qbo_memo)
-            approved_text = "Yes" if is_app else "Not Approved"
-            approved_font = APPROVED_FONT if is_app else UNAPPROVED_FONT
-            approved_fill = None if is_app else UNAPPROVED_FILL
+            st = _approval(rr, by_id)
+            is_app = st == bill_approval.APPROVAL_YES
+            approved_text = {bill_approval.APPROVAL_YES: "Yes", bill_approval.APPROVAL_NO: "Not Approved",
+                             bill_approval.APPROVAL_CHECK: "Check QBO"}[st]
+            approved_font = APPROVED_FONT if is_app else (
+                UNAPPROVED_FONT if st == bill_approval.APPROVAL_NO else Font(bold=True, name="Arial", size=10, color="00838F"))
+            approved_fill = None if is_app else (
+                UNAPPROVED_FILL if st == bill_approval.APPROVAL_NO else PatternFill("solid", start_color="D9F2F7"))
 
         # Column 1: ↗ deep-link that opens this Bill in QBO. Blank when there is
         # no QBO bill for the row (MISSING_IN_QBO). Ref# text stays non-clickable.
@@ -3029,7 +3050,7 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
         if _ps is not None and _idx is None:
             _warn(f"Print Status skipped: {_ps._INDEX_CACHE.get('err', 'index unavailable')}")
         elif _idx is not None:
-            _qbo_present = ("MATCHED_APPROVED", "MATCHED_NOT_APPROVED", "VENDOR_TAX_VIOLATION",
+            _qbo_present = ("MATCHED_APPROVED", "MATCHED_CHECK_QBO", "MATCHED_NOT_APPROVED", "VENDOR_TAX_VIOLATION",
                            "CLERK_AMOUNT_MISMATCH", "LIKELY_VENDOR_LAG")
             _qbo_refs = {rr.stmt_ref for k in _qbo_present for rr in cats[k] if rr.stmt_ref}
             _prows = _ps.build_print_rows(stmt_lines, _idx,
@@ -3552,10 +3573,11 @@ def _mark_statements(sources: list, rows: List["ReconRow"], result: dict) -> lis
     found on its page and banded in its bucket's colour. Rows on the page that look
     like a bill but were not read become 'unread' items on the Notion board - the
     'did it grab everything' check. Read-only on the statement files."""
+    by_id = {b.bill_id: b for b in result.get("_bills", [])}
     cat = {}
     for r in rows:
         if r.stmt_ref:
-            cat[r.stmt_ref.strip().upper()] = sm.bucket_for(r.category, _is_approved(r.qbo_memo))
+            cat[r.stmt_ref.strip().upper()] = sm.bucket_for(r.category, _approval(r, by_id))
     out = []
     for path, lines in sources:
         t0 = _phase(f"Marking up {path.name}")
@@ -3698,11 +3720,12 @@ def reconcile_vendor(args: argparse.Namespace, access: str, cid: str, result: di
     # Per-vendor actionable summary for the Teams task card (run_inbox posts one
     # card per vendor-month). The clerk's fix-list: bills to enter, approvals to
     # chase, amount/tax mismatches, and - if print-status ran - unprinted bills.
-    not_approved = sum(1 for r in rows
-                       if r.category == "MATCHED" and not _is_approved(r.qbo_memo))
+    _by_id = {b.bill_id: b for b in bills}
+    _states = [_approval(r, _by_id) for r in rows if r.category == "MATCHED"]
     open_items = {
         "To enter (missing in QBO)": counts.get("MISSING_IN_QBO", 0),
-        "Not approved (chase PM)": not_approved,
+        "Not approved (chase PM)": _states.count(bill_approval.APPROVAL_NO),
+        "Approval in QBO (check)": _states.count(bill_approval.APPROVAL_CHECK),
         "Amount mismatch": counts.get("CLERK_AMOUNT_MISMATCH", 0),
         "Tax violation (8.25%)": counts.get("VENDOR_TAX_VIOLATION", 0),
     }
@@ -3736,7 +3759,9 @@ def reconcile_vendor(args: argparse.Namespace, access: str, cid: str, result: di
     result["open_items"] = {k: v for k, v in open_items.items() if v}
     result["clean"] = (not result["open_items"]) and sum_matches
 
+    result["_bills"] = bills
     markups = _mark_statements(extras.get("sources") or [], rows, result)
+    result.pop("_bills", None)
 
     if args.dry_run:
         result["action"] = "preview"          # the Notion board preview (no writes)
@@ -3869,11 +3894,8 @@ def _board_items(rows: List["ReconRow"], bills: List["QboBill"], unprinted: list
     for r in rows:
         kind = kind_of.get(r.category)
         if r.category == "MATCHED":
-            b = by_id.get(r.qbo_bill_id)
-            if not _is_approved(r.qbo_memo):
-                kind = "approve"
-            elif b and b.created and b.created >= APPROVAL_WORKFLOW_START and b.open_balance > 0:
-                kind = "checkqbo"
+            kind = {bill_approval.APPROVAL_NO: "approve",
+                    bill_approval.APPROVAL_CHECK: "checkqbo"}.get(_approval(r, by_id))
         if not kind:
             continue
         m = qbo_api.PROJ_RE.search(f"{r.qbo_memo} {r.po} {r.address}")

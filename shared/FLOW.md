@@ -1,6 +1,6 @@
 # shared/ - how the common package works
 
-Last changed: 10/08/2026 - `qbo_api` masks the QuickBooks company (realm) id in every error `_api_get` raises (`mask_realm`: the `company/<id>` path, a requests URL, a fault body; status + QuickBooks message kept), and `setup_qbo --test` masks it in the company-probe failure (`tests/test_qbo_realm_masked.py`). Earlier: 10/07/2026 - `setup_qbo.py --rotate TEAMS_WEBHOOK_PAYMENTS` stores the payments channel webhook (QuickBooks payment received cards, invoice-sync). Earlier: 10/06/2026 - qbo_costs pulls vendor credits and negates card credits (with_credits); each is a negative cost transaction, so every cost total nets it. Earlier: 10/06/2026 - `xlsx_verify` fails a dropdown (data validation) rule Excel would strip behind a repair prompt: an intersection space, a union comma, a `Table[Col]` reference or over 255 characters (`tests/test_xlsx_verify.py`). 10/02/2026 - `qbo_vault` on Linux also reads MIRROR_KEY from the environment (the office server's mirror
+Last changed: 10/08/2026 - NEW `bill_approval.py`, the ONE bill-approval rule (paper-era NOT APPROVED memo tag; a bill entered since 09/16/2026 and unpaid = "check QBO", its approval queue is invisible to the API; else approved), moved out of bill-tracker/bill_rows.py when the statement reconciler needed it. Earlier the same day: `qbo_api` masks the QuickBooks company (realm) id in every error `_api_get` raises (`mask_realm`: the `company/<id>` path, a requests URL, a fault body; status + QuickBooks message kept), and `setup_qbo --test` masks it in the company-probe failure (`tests/test_qbo_realm_masked.py`). Earlier: 10/07/2026 - `setup_qbo.py --rotate TEAMS_WEBHOOK_PAYMENTS` stores the payments channel webhook (QuickBooks payment received cards, invoice-sync). Earlier: 10/06/2026 - qbo_costs pulls vendor credits and negates card credits (with_credits); each is a negative cost transaction, so every cost total nets it. Earlier: 10/06/2026 - `xlsx_verify` fails a dropdown (data validation) rule Excel would strip behind a repair prompt: an intersection space, a union comma, a `Table[Col]` reference or over 255 characters (`tests/test_xlsx_verify.py`). 10/02/2026 - `qbo_vault` on Linux also reads MIRROR_KEY from the environment (the office server's mirror
 failed without it). Same day: `xlsx_verify` accepts a freeze on BOTH rows and columns when it is written the way Excel
 saves it (three selections, the main one inside the scrolling pane); openpyxl's bare default is still rejected
 (`tests/test_xlsx_verify.py`). Earlier the same day - `pnl_paths._find_awarded_cp_folder` matches a finished job's folder on its name as
@@ -75,7 +75,7 @@ flowchart LR
     FILES --> WC & RPP
 
     subgraph LIEN["AP / AR helpers"]
-        LC["lien_clock.py · lien_status.py<br/>bill_marks.py · sub_loc.py"]:::mod
+        LC["lien_clock.py · lien_status.py<br/>bill_marks.py · sub_loc.py<br/>bill_approval.py (not approved · check QBO · approved)"]:::mod
         NC["notion_client.py · notion_customers.py<br/>pages, block edits"]:::mod
         TN["teams_notify.py<br/>statement digest: vendors not ready to pay"]:::mod
     end

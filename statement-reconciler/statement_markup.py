@@ -29,7 +29,8 @@ SCALE = DPI / 72
 # bucket key -> (label, RGB). Colour encodes the bucket only.
 BUCKETS: Dict[str, Tuple[str, Tuple[int, int, int]]] = {
     "matched":  ("Matched - in QBO, same amount",            (76, 175, 80)),
-    "approve":  ("Matched, not approved yet",                 (205, 220, 57)),
+    "approve":  ("Matched, NOT APPROVED (memo) - chase the PM", (205, 220, 57)),
+    "checkqbo": ("Matched, approval is in QBO - check there",  (0, 172, 193)),
     "mismatch": ("Amount differs from QBO",                   (255, 152, 0)),
     "tax":      ("Sales tax added",                           (255, 112, 67)),
     "lag":      ("Paid in QBO, vendor still shows it open",   (66, 165, 245)),
@@ -418,8 +419,9 @@ def _table_start(pg: Page, page_bands: list) -> float:
     return min((r.top for r, _k in page_bands), default=0.0)
 
 
-def bucket_for(category: str, approved: bool = True) -> str:
-    """ReconRow.category -> bucket key."""
-    return {"MATCHED": "matched" if approved else "approve", "CLERK_AMOUNT_MISMATCH": "mismatch",
+def bucket_for(category: str, approval: str = "approved") -> str:
+    """ReconRow.category (+ shared/bill_approval state for a matched bill) -> bucket."""
+    matched = {"not approved": "approve", "check QBO": "checkqbo"}.get(approval, "matched")
+    return {"MATCHED": matched, "CLERK_AMOUNT_MISMATCH": "mismatch",
             "VENDOR_TAX_VIOLATION": "tax", "LIKELY_VENDOR_LAG": "lag",
             "MISSING_IN_QBO": "enter"}.get(category, "other")

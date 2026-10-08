@@ -5,6 +5,13 @@ to this tool. Tool-only scope: no business/owner analyses or dollar-exposure
 findings here — those live in the owner's vault.
 
 ## DONE / FINALIZED
+- 2026-10-08 (night) · **New approval process in the reconciler (owner: "bills are approved in QBO now, but there are
+  still some that use NOT APPROVED").** The same three states as the Bill Tracker, from `shared/bill_approval`: NOT
+  APPROVED memo (paper era - chase the PM) · **check QBO** (entered since 09/16 and unpaid - its approval is in QBO's
+  queue, which the API can't see) · approved. Excel: a "MATCHED - approval is in QBO" section, the Approved? column
+  says Check QBO (teal), the banner counts both kinds. Marked statement: a teal "approval is in QBO" colour. Notion /
+  Teams: the same states (the board's check-QBO item already existed; now from the shared rule).
+  `tests/test_bill_approval.py`.
 - 2026-10-08 (evening) · **Excel layout per the owner's spot-check + the last three vendors refreshed.**
   - Marked sheet: the colour key moved to the RIGHT of the statement (column P, from the first page's row - the
     pages fill A:N); payment / credit / balance forward is purple, "another customer's line" is grey (the two
