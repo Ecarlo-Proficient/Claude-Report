@@ -3,6 +3,9 @@
 Progression record for the office server package. Update in the SAME commit as any change to this folder (repo rule).
 
 ## DONE / FINALIZED
+- 2026-10-08 · **Server updated bdcb5e5 -> 6a417f0** via the DSM `update_server` task (2nd run): pull ok on the ed25519 pin,
+  build reused every cached layer (code only), container recreated, both test Bill Trackers' permissions reset. Now on
+  the 10/06 permissions fix + the AR-reads-the-test-Bill-Tracker fix; mode test, PAYMENTS_TEST unset.
 - 2026-10-08 · First real DSM run of `update_server.sh` stopped at the GitHub pin: DSM's ssh asked for the ECDSA host key
   (GitHub's genuine one, fingerprint checked against api.github.com/meta), which failed the ed25519 pin - nothing
   changed. The script now asks for ed25519 only (`HostKeyAlgorithms=ssh-ed25519`); re-paste it into the DSM task.
