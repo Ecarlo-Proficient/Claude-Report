@@ -4,6 +4,8 @@ Progression record for the canonical project database. Update in the SAME commit
 change to this tool (repo rule). Tool-scope only — business/dollar analyses live in the vault.
 
 ## DONE / FINALIZED
+- 2026-10-08 · `bill_payment_stub.py` imports the joint-check rule from `shared/joint_checks.py` (moved there for the
+  project P&L's draw payments); selftest unchanged and passing.
 - 2026-10-07 · **Stub header: no date under the title** (owner) - Payment date already sits top right; the page starts a line higher.
   The vendor stub also gets the internal stub's divider above Amount, the label as big as the $.
 - 2026-10-07 · **Stub column picker = the stub** (owner: "columns not matching stub"). The picker lists the stub's own
@@ -2794,6 +2796,10 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   unknown `pnl-<x>` resolve to zero steps and are rejected by `_sync_start`.
 
 ## OPEN ISSUES / NOTES
+- 2026-10-08 · The internal stub still finds a joint check's client Payment by the SAME DATE only
+  (`find_joint_payment`), but in 2026 the client Payment and the supplier BillPayment are entered up to 23 days
+  apart under the same check #. `shared/joint_checks.pair_joint_checks` matches by check # first; the stub should
+  use it (look the Payment up by check # + amount) so a late-entered joint check still shows its client invoices.
 - MFD rows come from `Test-Master`, which has **no STATUS column** → MFD `status` loads as NULL
   (MFD closures are manual anyway). RP/CP status comes from their own tabs.
 - `wip_snapshot` stores the master's already-computed figures verbatim (source of truth = the

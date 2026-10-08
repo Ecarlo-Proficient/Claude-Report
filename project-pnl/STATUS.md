@@ -7,6 +7,13 @@ manual close), RP (no draws — expenses → invoice → profit).
 ---
 
 ## DONE / FINALIZED
+- 2026-10-08 · **Payments on every draw sheet** (owner: "the P&L is missing the payments ... I was trying to see all
+  the payments made for that draw"). Under INVOICES THIS DRAW: PAYMENTS RECEIVED - check # (QBO link), date, the
+  amount applied to that draw's invoice, invoice #, Paid to = `To us` or `Joint check · <supplier>` (the supplier
+  from `shared/joint_checks`: the Joint Checks BillPayment with the same check # + amount, else date + amount),
+  then TOTAL RECEIVED and STILL OPEN (= net billed - received). Both tables carry a full light grid (owner: "add
+  grid lines for these two tables, do not make the text float"). Built from the customer payments + bill payments
+  the cash-flow sheet already pulls - no new QBO call.
 - 2026-10-06 · **CP610 on CP Completed: billed +1,316 and Still owed blank - fixed** (found by the retainage audit
   session). #32960 (PC00, line "REITANAGE", memo "not billed") is retainage booked as income but the typo kept it off
   RetainageIncomeDocs, so the release counted 1,316.00 as billing (247,036 for 245,720): an invoice whose every LINE

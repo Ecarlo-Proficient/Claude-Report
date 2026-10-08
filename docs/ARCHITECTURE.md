@@ -64,6 +64,7 @@ shared/                the ONLY importable common code
 ├─ cost_lines.py       cost-line category (Concrete/Labor/Materials) + bill-line combine
 ├─ draws.py            CP draw (AIA G702/G703) discovery + parsing + THE period-tag parser (wip ↔ health ↔ bill-tracker ↔ project-pnl)
 ├─ draw_moves.py       the PUSH: a bill carried into a later draw by agreement — <CompanyHealth>/Registers/draw_moves.json (project-pnl ↔ bill-tracker ↔ ledger)
+├─ joint_checks.py     the ONE joint-check rule: client Payment (Joint Checks acct) <-> supplier BillPayment by check # + amount (project-pnl draw sheets ↔ ledger stubs)
 ├─ rp_invoicing.py     one-invoice vs scope-based RP job, off the invoice memos (project-pnl ↔ one-offs/rp_stage_scan)
 ├─ schedule_index.py   job # -> last day on a daily crew schedule, every 'Main Schedule' parsed once into a JSON cache (Test - RP CATEGORY; 2026-09-09)
 ├─ job_rulings.py      the RULINGS: a known loss / accepted overrun the owner settled once — <CompanyHealth>/Registers/job_rulings.json (wip readers KNOWN: note ↔ wip_qc auto sign-off ↔ project-pnl block ↔ ledger over-budget rule + project page) · kind `draws` = how a job BILLS, not a finding (MFD192: 2-3 invoices per draw) → project-pnl writes ONE income line per draw; findings() keeps it out of every KNOWN: note

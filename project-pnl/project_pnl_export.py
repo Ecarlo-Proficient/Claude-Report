@@ -97,6 +97,7 @@ from shared import draws
 from shared import job_rulings   # standing per-job rulings -> KNOWN LOSSES / RULINGS block
 from shared import bizdev_cut   # the ONE test for a business-development cut
 from shared import rp_invoicing  # one-invoice vs scope-based RP job, off the invoices
+from shared.joint_checks import joint_vendor_by_payment  # the ONE joint-check rule
 from shared.qbo_api import (
     API_BASE, MINOR_VERSION, PROJ_RE,
     load_credentials, _api_get, query_all, report,
@@ -510,6 +511,21 @@ def _grid_lines(ws, r0: int, r1: int, c0: int, c1: int) -> None:
                 cell.border = Border(left=b.left, right=b.right, top=b.top, bottom=_GRID_SIDE)
 
 
+def _full_grid(ws, r0: int, r1: int, c0: int, c1: int) -> None:
+    """Every cell boxed by a light line on all four sides (the owner
+    10/08/2026 on the draw's invoices + payments: "add grid lines for these
+    two tables, do not make the text float"). Keeps any heavier line already
+    on a side (the header's bottom rule, the total's top rule)."""
+    def keep(s):
+        return s if (s is not None and s.style not in (None, "hair")) else _GRID_SIDE
+    for rr in range(r0, r1 + 1):
+        for cc in range(c0, c1 + 1):
+            cell = ws.cell(row=rr, column=cc)
+            b = cell.border
+            cell.border = Border(left=keep(b.left), right=keep(b.right),
+                                 top=keep(b.top), bottom=keep(b.bottom))
+
+
 def _box_range(ws, r0: int, r1: int, c0: int, c1: int, side: Side = _THICK_SIDE) -> None:
     """Draw a box around rows r0..r1 x cols c0..c1, keeping each cell's other
     borders. One helper for every boxed block (BvA columns, the draw table's
@@ -897,6 +913,31 @@ def fetch_customer_payments(access: str, company_id: str,
     not the invoice date). Each links to the Invoice(s) it paid."""
     where = f"TxnDate >= '{start_date}' AND TxnDate <= '{end_date}'"
     return query_all(access, company_id, "Payment", where=where)
+
+
+def payments_by_invoice(customer_payments: list, bill_payments: list) -> Dict[str, list]:
+    """{invoice Id -> every client payment applied to it} for the draw sheets'
+    PAYMENTS RECEIVED block (the owner 10/08/2026: "the P&L is missing the
+    payments ... I was trying to see all the payments made for that draw").
+    Each row: date, check #, the slice applied to THAT invoice, the payment's
+    QBO id and - for a joint check - the supplier it paid (shared/joint_checks:
+    the BillPayment out of the Joint Checks account, same day + amount)."""
+    joint = joint_vendor_by_payment(customer_payments or [], bill_payments or [])
+    out: Dict[str, list] = {}
+    for pm in customer_payments or []:
+        pid = str(pm.get("Id") or "")
+        for ln in pm.get("Line") or []:
+            for lt in ln.get("LinkedTxn") or []:
+                if lt.get("TxnType") != "Invoice":
+                    continue
+                amt = round(float(ln.get("Amount", 0) or 0), 2)
+                if abs(amt) < 0.005:
+                    continue
+                out.setdefault(str(lt.get("TxnId")), []).append({
+                    "date": pm.get("TxnDate", ""), "ref": _xml_clean(str(pm.get("PaymentRefNum") or "")),
+                    "amount": amt, "total": round(float(pm.get("TotalAmt", 0) or 0), 2),
+                    "id": pid, "joint": _xml_clean(joint.get(pid, ""))})
+    return out
 
 
 def build_cashflow_events(bills: list, invoices: list, bill_payments: list,
@@ -4574,7 +4615,8 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
                          matched_report, report_index, qbo_loc, period,
                          as_of, overhead_pct=10.0, realm="", alt_overhead_pct=None,
                          reports_relpath="rd-reports", paid_map=None,
-                         ws=None, start_row=None, top_link=None, office=(), fit=None):
+                         ws=None, start_row=None, top_link=None, office=(), fit=None,
+                         pay_map=None):
     """`ws` given = write this draw as a SECTION of the one Draws sheet from
     `start_row` (the owner 2026-10-02: "the draws consolidate into one sheet
     like it was originally"): a title band with an "↑ Top" link back to the
@@ -4955,13 +4997,56 @@ def build_sheet_one_draw(wb, sheet_name, proj, cust_info, wip_info, name, lbl,
             tc = wc(r, c, f"=SUM({_Lc}{_inv_first}:{_Lc}{r - 1})" if r > _inv_first else 0,
                     fmt=CURR_FMT, bold=True)
             tc.border = TOP_BORDER
-        _grid_lines(ws, _inv_band + 1, r, 2, 10)
+        _full_grid(ws, _inv_band + 1, r, 2, 10)
         _box_range(ws, _inv_band, r, 2, 10, _draw_side())
         r += 1 if section else 2
         for _inc, _ret, _ohc in _tile_cells:
             ws[_inc].value = f"=D{_inv_tot}+F{_inv_tot}"       # gross billed + retainage billed back
             ws[_ret].value = f"=-E{_inv_tot}"                    # what the GC holds back
             ws[_ohc].value = f"=-{_inc}*{_oh_pct / 100.0}"       # % of that income
+
+        # ── PAYMENTS RECEIVED ── every client payment applied to this draw's
+        # invoices (the owner 10/08/2026: "the P&L is missing the payments ...
+        # I was trying to see all the payments made for that draw"). A joint
+        # check names the supplier it paid, so a draw settled by joint checks
+        # reads as who got the money; Still open = net billed - received.
+        _pays = sorted(((inv, p) for inv in (invoices or [])
+                        for p in (pay_map or {}).get(str(inv.get("id") or ""), [])),
+                       key=lambda t: (str(t[1]["date"]), str(t[1]["ref"])))
+        if invoices and pay_map is not None:
+            _pay_band = r
+            band(r, 2, 10, f"PAYMENTS RECEIVED  ({len(_pays)})",
+                 fill=PatternFill("solid", fgColor="1F6F8B"))
+            r += 1
+            for c in range(2, 11):
+                ws.cell(row=r, column=c).fill = PatternFill("solid", fgColor="DDEBF7")
+            for c, h in ((2, "Check #"), (3, "Date"), (4, "Received"),
+                         (5, "Invoice #"), (6, "Paid to")):
+                wc(r, c, h, bold=True, color="1F4E79").border = BOTTOM_BORDER
+            _hdr_rows.append(r)
+            r += 1
+            _pay_first = r
+            for inv, p in _pays:
+                idc(r, 2, p["ref"] or "(no #)",
+                    link=_qbo_txn_url("payment", p["id"], realm))
+                wdate(r, 3, p["date"])
+                wc(r, 4, p["amount"], fmt=CURR_FMT)
+                idc(r, 5, inv.get("doc_num", ""))
+                if p["joint"]:
+                    wc(r, 6, f"Joint check  ·  {p['joint']}", color="C55A11")
+                else:
+                    wc(r, 6, "To us", color=GREEN)
+                r += 1
+            wc(r, 2, "TOTAL RECEIVED", bold=True)
+            wc(r, 4, f"=SUM(D{_pay_first}:D{r - 1})" if r > _pay_first else 0,
+               fmt=CURR_FMT, bold=True).border = TOP_BORDER
+            _rcv = r
+            r += 1
+            wc(r, 2, "STILL OPEN", bold=True, color=RED)
+            wc(r, 4, f"=G{_inv_tot}-D{_rcv}", fmt=CURR_FMT, bold=True, color=RED)
+            _full_grid(ws, _pay_band + 1, r, 2, 10)
+            _box_range(ws, _pay_band, r, 2, 10, _draw_side())
+            r += 1 if section else 2
 
     # ── BILLS ── every listing is an OUTLINE: the top group rows show, all
     # under them opens on the [+]. `levels` is the cut, outermost first:
@@ -5482,7 +5567,7 @@ def build_sheets_draws(wb, proj, cust_info, wip_info, draw_rows, income_groups,
                        draw_costs, accum, as_of, *, overhead_pct=10.0,
                        alt_overhead_pct=None, realm="", paid_map=None,
                        report_index=None, qbo_loc=None, match_report=None,
-                       reports_relpath="rd-reports", office=()) -> dict:
+                       reports_relpath="rd-reports", office=(), pay_map=None) -> dict:
     """ONE SHEET PER DRAW again (the owner 2026-10-02: "put back the individual
     draw sheets but keep the new format, it's way better"): "Next Draw" first
     when costs are forming, then every draw, each written by
@@ -5520,7 +5605,7 @@ def build_sheets_draws(wb, proj, cust_info, wip_info, draw_rows, income_groups,
             report_index or {}, qbo_loc or {}, period, as_of,
             overhead_pct=overhead_pct, realm=realm, alt_overhead_pct=alt_overhead_pct,
             reports_relpath=reports_relpath, paid_map=paid_map,
-            ws=ws, start_row=r0, top_link=None, office=office, fit=fit)
+            ws=ws, start_row=r0, top_link=None, office=office, fit=fit, pay_map=pay_map)
         under_tot += m_tot
         under_n += m_cnt
         # fit the columns up to the one BEFORE the bill description, which
@@ -7833,7 +7918,8 @@ def _qbo_txn_url(tx_type: str, txn_id: str, realm: str) -> Optional[str]:
     from urllib.parse import quote
     t = (tx_type or "").lower()
     page = {"bill": "bill", "invoice": "invoice", "vendorcredit": "vendorcredit",
-            "purchaseorder": "purchaseorder", "po": "purchaseorder"}.get(t, "expense")
+            "purchaseorder": "purchaseorder", "po": "purchaseorder",
+            "payment": "recvpayment"}.get(t, "expense")
     return (f"https://qbo.intuit.com/app/login?pagereq="
             f"{quote(f'{page}?txnId={txn_id}')}&deeplinkcompanyid={realm}")
 
@@ -9063,7 +9149,8 @@ def generate_project_pnl(
             accum, as_of, overhead_pct=overhead_pct, alt_overhead_pct=_alt_oh,
             realm=company_id, paid_map=paid_map,
             report_index=report_index, qbo_loc=qbo_loc, match_report=_match_report,
-            reports_relpath=DRAW_REPORTS_SUBDIR, office=tx.get("exp_accounts") or {})
+            reports_relpath=DRAW_REPORTS_SUBDIR, office=tx.get("exp_accounts") or {},
+            pay_map=payments_by_invoice(cust_pmts, bill_pmts))
         underbill_total = _draws["underbill_total"]
         underbill_count = _draws["underbill_count"]
     _draw_data_tab = (build_sheet_draw_data(wb, draw_costs, draw_rows,

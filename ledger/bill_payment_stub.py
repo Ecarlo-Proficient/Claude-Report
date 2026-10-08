@@ -68,6 +68,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 from shared import paths            # noqa: E402
 from shared.qbo_api import PROJ_RE  # noqa: E402
+from shared.joint_checks import find_joint_payment, is_joint_account  # noqa: E402,F401  the ONE joint-check rule
 
 CHROME_CANDIDATES = (
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -284,19 +285,6 @@ def apply_internal(stub: dict, joint_payment: Optional[dict], txn_of: Callable[[
     return stub
 
 
-def find_joint_payment(bp: dict, payments_on: Callable[[str], List[dict]]) -> Optional[dict]:
-    """The client's Payment behind a joint check: same date, same amount; the check # as its ref breaks a tie.
-    None when the check is not on the Joint Checks account or no single payment matches."""
-    method, ref, acct = _pay_method(bp)
-    if method != "Check" or not is_joint_account(acct):
-        return None
-    total = _num(bp.get("TotalAmt"))
-    hits = [p for p in payments_on(str(bp.get("TxnDate") or "")) if abs(_num(p.get("TotalAmt")) - total) < 0.005]
-    if len(hits) > 1 and ref:
-        hits = [p for p in hits if str(p.get("PaymentRefNum") or "") == str(ref)] or hits
-    return hits[0] if len(hits) == 1 else None
-
-
 # ───────────────────────── the data (mirror -> stub records) ─────────────────────────
 
 def _pay_method(bp: dict) -> Tuple[str, str, str]:
@@ -310,11 +298,6 @@ def _pay_method(bp: dict) -> Tuple[str, str, str]:
         acct = ((bp.get("CreditCardPayment") or {}).get("CCAccountRef") or {}).get("name") or ""
         return "Credit card", ref, acct
     return ptype or "Payment", ref, ""
-
-
-def is_joint_account(acct_name: str) -> bool:
-    """A check written from the Joint Checks account is a joint check (the client's check to us + the vendor)."""
-    return "joint" in str(acct_name or "").lower()
 
 
 CHECK_METHODS = ("Check", "Joint check")
