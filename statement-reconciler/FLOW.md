@@ -1,6 +1,7 @@
 # statement-reconciler/ - how the vendor statement reconciler works
 
-Last changed: 10/08/2026 (night) - bill approval in three states from `shared/bill_approval` (NOT APPROVED memo · check QBO for bills entered since 09/16 and unpaid · approved) in the Excel, the marked statement and Notion.
+Last changed: 10/08/2026 (late) - notes typed on Notion under the bill (read back each run, shown read-only in the Excel); Notion "Re-check" box -> `--from-notion` poller (run_recheck.sh, launchd every 5 min); "Excel" link to the vendor folder (File Station - TRANSITION to SharePoint).
+Earlier 10/08 (night): bill approval in three states from `shared/bill_approval` (NOT APPROVED memo · check QBO for bills entered since 09/16 and unpaid · approved) in the Excel, the marked statement and Notion.
 Earlier 10/08 (evening): the workbook is Summary + Statement (marked) only (Statements /
 Changes live on Notion); colour key to the right of the pages; columns Finding / Notes.
 Earlier 10/08: marked-up statement, OCR for scanned statements, new layouts, safety nets, `--audit-parsing`.
@@ -56,5 +57,8 @@ flowchart LR
     PREV -- no --> HIST
     PREV -- no --> NB --> PAGE
     NB --> TEAMS
+    RECHECK{"Notion 'Re-check' ticked?<br/>run_recheck.sh every 5 min<br/>(silent when locked / nothing ticked)"}:::gate
+    PAGE -. "clerk ticks Re-check · types notes under bills" .-> RECHECK
+    RECHECK -- yes --> TIE
     XLSX -. "--refresh re-checks every vendor's current statement(s)" .-> TIE
 ```

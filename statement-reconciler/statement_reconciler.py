@@ -2918,7 +2918,6 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
         ("MISSING_ON_STATEMENT",  "✗ MISSING ON STATEMENT",                     BAD_FILL,  False),
     ]
     SUMMARY_NCOLS = 13
-    NOTE_FILL = PatternFill("solid", start_color="FFF9C4")   # her column: an input cell
 
     def _section_header_text(label: str, count: int, stmt_sum: float, qbo_sum: float) -> str:
         diff = round(stmt_sum - qbo_sum, 2)
@@ -3022,12 +3021,11 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
             # Highlight unapproved cell (Approved? column, now col 11) with red fill
             if i == 11 and approved_fill is not None:
                 c.fill = approved_fill
-        # Column 13 'Notes': the clerk's own - saved by bill id (else invoice #) and
+        # Column 13 'Notes': the clerk's own, typed on Notion (since 10/08) - saved by bill id (else invoice #) and
         # written back on every run, so a re-run never wipes what she typed.
         nc = xl_text(s, row_idx, 13, ss.note_for(notes, rr.qbo_bill_id, rr.stmt_ref or rr.qbo_ref))
-        nc.font = BODY_FONT
+        nc.font = Font(italic=True, name="Arial", size=10, color="595959")   # shown here, typed on Notion
         nc.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
-        nc.fill = NOTE_FILL
         nc.border = BORDER
 
     # ── PRINT STATUS (first section) ──────────────────────────────────────
@@ -4069,7 +4067,8 @@ def _resolve_filed_vendor(access: str, cid: str, folder: str, guesses: List[str]
 
 def run_vendors(args: argparse.Namespace, access: str, cid: str,
                 inbox: Optional[Path], root: Path, new_files: List[Path],
-                refresh_all: bool = False, only: Optional[List[str]] = None) -> int:
+                refresh_all: bool = False, only: Optional[List[str]] = None,
+                folders: Optional[set] = None) -> int:
     """The run. Identify each new file's vendor, then per vendor: gather what is
     already filed, merge every statement into one open list (statement_set),
     reconcile it against QBO once, write ONE Excel in <Vendor>/Current, and file
@@ -4096,13 +4095,19 @@ def run_vendors(args: argparse.Namespace, access: str, cid: str,
         for vdir in sorted(root.iterdir()):
             if (not vdir.is_dir() or vdir.name.startswith(("-", ".", "~"))
                     or (inbox and vdir.resolve() == inbox.resolve())
-                    or not _only_match(vdir.name, only)):
+                    or not _only_match(vdir.name, only)
+                    or (folders is not None and vdir.name.upper() not in folders)):
                 continue
             groups.setdefault(vdir.name.upper(), {"folder": vdir.name, "vendor_id": "",
                                                   "vendor_name": "", "docs": []})
 
     results: List[dict] = []
     summary: List[str] = []
+    try:
+        import notion_board as _nb
+        board = _nb.Board.from_env()
+    except Exception:
+        board = None
     for key in sorted(groups):
         g = groups[key]
         vdir = _vendor_dir(root, g["folder"])
@@ -4148,11 +4153,28 @@ def run_vendors(args: argparse.Namespace, access: str, cid: str,
         if disagree:
             _warn(f"the current statements disagree by ${merged.gap:,.2f}: open invoices "
                   f"${merged.line_sum:,.2f} vs the newest Amount Due ${merged.amount_due:,.2f}.")
-        # The clerk's notes: read them out of every Excel she may have typed in, first.
+        # The clerk's notes live on Notion (owner 10/08): a line indented under a bill.
+        # Read them first; the Excel only shows them. Once, before the move, pick up
+        # anything typed in the Excel's Notes column so nothing is lost.
+        today = dt.date.today().strftime("%m/%d/%Y")
         notes = dict(state.get("notes") or {})
-        for f, origin in filed["reports"]:
-            if origin != "legacy_done":
-                notes = ss.fold_notes(notes, ss.harvest_notes(f), dt.date.today().strftime("%m/%d/%Y"))
+        if not state.get("notes_on_notion"):
+            for f, origin in filed["reports"]:
+                if origin != "legacy_done":
+                    notes = ss.fold_notes(notes, ss.harvest_notes(f), today)
+        if board is not None:
+            try:
+                for it in board.notes(folder.upper()).values():
+                    k = ss.note_key(it["bill_id"], it["ref"])
+                    if not k:
+                        continue
+                    if it["note"]:
+                        if (notes.get(k) or {}).get("note") != it["note"]:
+                            notes[k] = {"note": it["note"], "on": today}
+                    elif state.get("notes_on_notion"):
+                        notes.pop(k, None)            # she cleared it on Notion
+            except Exception as e:
+                _warn(f"could not read the notes on Notion ({e}) - using the last saved ones")
         changes = ss.changes_for(docs, merged, state)
         when = dt.datetime.now().strftime("%m/%d/%Y %I:%M %p")
         dates = ", ".join(sorted({ss.us_date(d.as_of) for d in cur_docs}))
@@ -4160,7 +4182,8 @@ def run_vendors(args: argparse.Namespace, access: str, cid: str,
             "gap": merged.gap if disagree else 0.0, "merged_total": merged.line_sum,
             "amount_due": merged.amount_due, "changes": changes,
             "checked_against": (f"{len(cur_docs)} statement{'s' if len(cur_docs) != 1 else ''} "
-                                f"as of {dates} vs QuickBooks open + paid bills pulled {when}")})
+                                f"as of {dates} vs QuickBooks open + paid bills pulled {when}"),
+            "excel_url": ss.folder_link(vdir / ss.CURRENT)})
         out = vdir / ss.CURRENT / ss.report_name(folder, merged.as_of)
         ok, counts, _tie = reconcile_vendor(
             args, access, cid, result, vendor_id=vendor_id, vendor_name=vendor_name,
@@ -4190,6 +4213,7 @@ def run_vendors(args: argparse.Namespace, access: str, cid: str,
                     shutil.rmtree(md, ignore_errors=True)
             ss.save_state(vdir, {
                 "as_of": merged.as_of, "checked": when, "changes": changes, "notes": notes,
+                "notes_on_notion": board is not None,
                 "clean": bool(result.get("tieout")) and not counts.get("MISSING_IN_QBO", 0)})
         kinds = Counter("Current" if d.status == "current" else
                         ("Not read" if d.origin in ("legacy", "legacy_done") else "Can't read")
@@ -4217,6 +4241,46 @@ def run_vendors(args: argparse.Namespace, access: str, cid: str,
     print(f"\n  {_Term.color(_Term.BOLD, 'Vendor folders:')} {_term_link(str(root), root)}")
     _hr()
     return 0 if not failed else 1
+
+
+def run_from_notion(args: argparse.Namespace, base: Path) -> int:
+    """--from-notion: the Notion 'Re-check' box asks for a fresh run of a vendor. Polled
+    every few minutes; silent and free when there is nothing to do. Never prompts:
+    a locked Key Helper or an unmounted share just waits for the next poll."""
+    from shared import key_broker
+    stamp = dt.datetime.now().strftime("%m/%d/%Y %I:%M %p")
+    if key_broker.active():
+        try:
+            if not key_broker.status().get("unlocked"):
+                print(f"{stamp} Key Helper is locked - skipped (next poll retries)")
+                return 0
+        except Exception as e:
+            print(f"{stamp} Key Helper not answering ({e}) - skipped")
+            return 0
+    if not base.exists():
+        print(f"{stamp} the Accounting share is not mounted - skipped")
+        return 0
+    import notion_board as nb
+    board = nb.Board.from_env()
+    if board is None:
+        print(f"{stamp} no Notion board configured")
+        return 0
+    keys = {k.upper() for k in board.recheck_keys()}
+    if not keys:
+        return 0
+    print(f"{stamp} Re-check asked for: {', '.join(sorted(keys))}")
+    inbox, root = _resolve_workflow_dirs(base)
+    args.yes = True
+    args.no_teams = True
+    args.dry_run = False
+    access, cid = load_credentials()
+    rc = run_vendors(args, access, cid, inbox, root, [], refresh_all=True, folders=keys)
+    for k in keys:                          # a vendor with nothing to check still gets unticked
+        try:
+            board.untick(k)
+        except Exception:
+            pass
+    return rc
 
 
 def audit_parsing(root: Path, only: Optional[List[str]] = None) -> int:
@@ -4368,6 +4432,10 @@ def main() -> int:
     p.add_argument("--refresh", action="store_true",
                    help="Re-check every vendor's current statement(s) against QBO (after the clerk "
                         "fixes bills), rewriting each vendor's Excel and Notion page.")
+    p.add_argument("--from-notion", action="store_true",
+                   help="Re-check the vendors whose 'Re-check' box is ticked on the Notion board, then untick "
+                        "them. Run every few minutes by the Mac's scheduler; does nothing (no QBO login, no "
+                        "Touch ID prompt) when nothing is ticked or Key Helper is locked.")
     p.add_argument("--no-notion", action="store_true",
                    help="Do not update the Notion Vendor Statements board this run.")
     p.add_argument("--no-teams", action="store_true",
@@ -4415,6 +4483,9 @@ def main() -> int:
     if args.audit_parsing:
         _inbox, root = _resolve_workflow_dirs(base)
         return audit_parsing(root, only)
+
+    if args.from_notion:
+        return run_from_notion(args, base)
 
     # ── refresh: re-check every vendor's current statement(s) ──
     if args.refresh:

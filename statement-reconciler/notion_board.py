@@ -23,6 +23,14 @@ Page body, rewritten each run (anything else the clerk writes is left alone):
   statement · Statements (every one received, newest first: Current / DONE /
   Replaced / Duplicate) · Cleared (what got fixed, dated).
 
+The clerk's notes live HERE (owner 10/08: Notion is where she works, the Excel is
+the evidence): a line typed indented under a bill's to-do is that bill's note. Each
+run reads the notes back first (keyed by the QBO bill, so a note follows the bill)
+and writes them under the bill again; the Excel shows them read-only.
+"Re-check" (a checkbox on the row) asks for a fresh run of that vendor -
+`statement_reconciler.py --from-notion`, polled from the Mac; the run unticks it.
+"Excel" opens the vendor's Current folder (Synology File Station - SharePoint later).
+
 Merge rules, per bill (key kind|ref):
   * gone from this run's buckets              -> Cleared (dated)
   * a verifiable item ticked but still open   -> unticked, "still open in QBO"
@@ -78,6 +86,10 @@ PROP_DESCRIPTIONS = {
     "Matched": "Statement invoices found in QuickBooks at the same amount.",
     "Not read": "Rows on the statement that look like a bill but the tool did not read - "
                 "outlined in red on the Excel's 'Statement (marked)' sheet.",
+    "Re-check": "Tick to have the statement checked again against QuickBooks (within a few minutes, "
+                "while the office Mac is unlocked). The run unticks it.",
+    "Excel": "Opens the vendor's folder (statement + reconciliation Excel) in the Synology's File "
+             "Station - works on Windows and Mac, on the office network or VPN.",
 }
 H_TODO, H_CHANGES, H_STATEMENTS, H_CLEARED = "To do", "Changed since", "Statements", "Cleared"
 CHECK_PREFIX = "Pay-run check"
@@ -157,8 +169,6 @@ def _todo(it: dict, checked: bool, note: str = "") -> dict:
     rich = [_rt(ref, url), _rt(_item_line(it)[len(ref):])]
     if note:
         rich.append(_rt(f"  {note}", italic=True, color="gray"))
-    if it.get("clerk_note"):                  # her note from the Excel, follows the bill
-        rich.append(_rt(f"  Note: {it['clerk_note']}", italic=True, color="brown"))
     return {"type": "to_do", "to_do": {"rich_text": rich, "checked": checked}}
 
 
@@ -324,6 +334,8 @@ class Board:
             return
         want: Dict[str, dict] = {name: {"number": {}} for name, _k in BUCKET_PROPS + [("Matched", "")]}
         want["Checked against"] = {"rich_text": {}}
+        want["Re-check"] = {"checkbox": {}}
+        want["Excel"] = {"url": {}}
         add = {n: v for n, v in want.items() if n not in have}
         desc = {n: d for n, d in PROP_DESCRIPTIONS.items()
                 if (have.get(n) or {}).get("description") != d}
@@ -386,9 +398,45 @@ class Board:
                     if key in out["items"]:     # same bill under two old months: a tick wins
                         out["items"][key]["checked"] = out["items"][key]["checked"] or chk
                         continue
+                    note = ""
+                    if c.get("has_children"):     # her note: lines indented under the bill
+                        note = "\n".join(t for t in (_plain(k).strip() for k in
+                                                       self.nc.block_children(c["id"])) if t)
                     out["items"][key] = {"kind": kind, "ref": ref, "line": line,
-                                         "url": _first_link(c), "checked": chk}
+                                         "url": _first_link(c), "checked": chk, "note": note}
         return out
+
+    def notes(self, key: str) -> Dict[str, dict]:
+        """The clerk's notes on a vendor's page: {item key: {ref, bill_id, note}} for
+        every bill line on it ('' = no note - she cleared it). Read-only."""
+        page = self.nc.query_by_property(self.ds, "Key", "rich_text", key)
+        if not page:
+            return {}
+        out = {}
+        for k, it in self._read_body(page["id"])["items"].items():
+            m = re.search(r"txnId=(\w+)", it.get("url") or "")
+            out[k] = {"ref": it.get("ref", ""), "bill_id": m.group(1) if m else "", "note": it.get("note", "")}
+        return out
+
+    def recheck_keys(self) -> List[str]:
+        """Keys (vendor folders) of the rows whose Re-check box is ticked."""
+        out = []
+        try:
+            pages = self.nc.query_data_source(self.ds, filter_body={"property": "Re-check",
+                                                                    "checkbox": {"equals": True}})
+            for pg in pages:
+                rt = (pg.get("properties", {}).get("Key") or {}).get("rich_text") or []
+                k = "".join(r.get("plain_text", "") for r in rt).strip()
+                if k:
+                    out.append(k)
+        except NotionError:
+            return []
+        return out
+
+    def untick(self, key: str) -> None:
+        page = self.nc.query_by_property(self.ds, "Key", "rich_text", key)
+        if page:
+            self.nc.update_page(page["id"], {"Re-check": {"checkbox": False}})
 
     # ── page body write ──
     @staticmethod
@@ -492,6 +540,9 @@ class Board:
             props["Last statement"] = {"date": {"start": rec["as_of"]}}
         if rec.get("vendor_id"):
             props["QBO vendor"] = {"url": QBO_VENDOR_URL.format(vendor_id=rec["vendor_id"])}
+        if rec.get("excel_url"):
+            props["Excel"] = {"url": rec["excel_url"]}
+        props["Re-check"] = {"checkbox": False}       # this run IS the re-check
         return props
 
     # ── one vendor ──
@@ -506,6 +557,25 @@ class Board:
                                        or {}).get("date") or {}).get("start") or "")
         st_name, standing = status(m, as_of, rec.get("gap", 0.0))
         return page, prior, m, st_name, standing
+
+    def _write_notes(self, page_id: str, rows: list) -> None:
+        """Put each bill's note back as a line indented under its to-do (Notion takes
+        only two levels per request, so this is a second pass, one call per note)."""
+        want = {_row_key(r): r[0].get("clerk_note") for r in rows if r[0].get("clerk_note")}
+        if not want:
+            return
+        todo = next((b for b in self.nc.block_children(page_id)
+                     if b.get("type") == "heading_3" and _plain(b).startswith(H_TODO)), None)
+        if not todo:
+            return
+        kind = None
+        for c in self.nc.block_children(todo["id"]):
+            if c.get("type") == "paragraph":
+                kind = _heading_kind(_plain(c)) or kind
+            elif c.get("type") == "to_do" and kind:
+                note = want.get(_item_key(kind, _parse_ref(_plain(c).split("  ", 1)[0])))
+                if note:
+                    self.nc.append_children(c["id"], [_para(line) for line in note.splitlines() if line.strip()])
 
     def preview(self, rec: dict) -> dict:
         """What sync() would do for one vendor, writing nothing (--dry-run)."""
@@ -529,6 +599,7 @@ class Board:
             for bid in prior["managed"]:
                 self.nc.delete_block(bid)
             self.nc.append_children(page["id"], blocks)
+        self._write_notes(page["id"], m["rows"])
         return {"name": rec["vendor"], "status": st_name, "standing": standing,
                 "not_entered": m["not_entered"], "followups": m["followups"],
                 "url": page.get("url", "")}
@@ -554,7 +625,7 @@ def group_results(results: List[dict]) -> List[dict]:
             rec["as_of"] = rec["as_of"] or res.get("as_of", "")
             continue
         for k in ("vendor", "vendor_id", "as_of", "gap", "merged_total", "amount_due", "matched",
-                  "statements", "changes", "checked_against"):
+                  "statements", "changes", "checked_against", "excel_url"):
             if res.get(k) not in (None, ""):
                 rec[k] = res[k]
         rec["parsed"] = True

@@ -156,6 +156,8 @@ class FakeNotion:
             if grand:
                 self._store(c["id"], grand)
         self.kids.setdefault(parent, []).extend(c["id"] for c in out)
+        if parent in self.blocks and out:
+            self.blocks[parent]["has_children"] = True
         return {"results": out}
 
     def query_by_property(self, ds, prop, kind, value):
@@ -244,7 +246,10 @@ def test_vendor_page_round_trip():
                          "Statements (1)"]
     todo = fake.block_children(fake.kids[pid][1])
     assert nb._plain(todo[0]) == "To enter in QBO (1)"
-    assert nb._plain(todo[1]).endswith("Note: called RCI") and nb._first_link(todo[1]).endswith("txnId=77")
+    assert nb._first_link(todo[1]).endswith("txnId=77")
+    assert [nb._plain(b) for b in fake.block_children(todo[1]["id"])] == ["called RCI"]   # the note, under the bill
+    assert board.notes("RCI READY CABLE")["enter|A1"] == {"ref": "A1", "bill_id": "77", "note": "called RCI"}
+    assert fake.pages[pid]["properties"]["Re-check"] == {"checkbox": False}
 
     # the clerk enters A1 and writes on the page; the preview must not write
     fake.append_children(pid, [{"type": "paragraph", "paragraph": {"rich_text": [
@@ -278,3 +283,15 @@ def test_a_page_written_with_months_carries_its_ticks():
     todo = fake.block_children([b for b in fake.kids[pid]
                                 if nb._plain(fake.blocks[b]).startswith("To do")][0])
     assert todo[1]["to_do"]["checked"] is False       # verifiable + still open -> unticked
+
+
+def test_a_note_typed_under_a_bill_on_notion_is_read_back():
+    fake = FakeNotion()
+    fake.retrieve_data_source = lambda ds: {"properties": {}}
+    fake._request = lambda *a: None
+    board = nb.Board("ds", client=fake)
+    board.sync(_rec([_it("tax", "T2", bill_id="9")]), log=lambda m: None)
+    pid = next(iter(fake.pages))
+    todo = fake.block_children(fake.kids[pid][1])[1]
+    fake.append_children(todo["id"], [nb._para("asked for a credit 10/08")])      # she types it
+    assert board.notes("RCI READY CABLE")["tax|T2"]["note"] == "asked for a credit 10/08"

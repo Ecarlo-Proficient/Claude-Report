@@ -4,7 +4,26 @@ Shared progression record (repo rule 7). Update in the SAME commit as any change
 to this tool. Tool-only scope: no business/owner analyses or dollar-exposure
 findings here — those live in the owner's vault.
 
+## TRANSITION - Synology -> SharePoint (owner 10/08/2026)
+The vendor folders (Inbox, `<Vendor>/Current`, `History`) live on the Synology Accounting share today and move to
+SharePoint later. When they do, everything that points at them changes in two places only:
+`statement_set.folder_link()` (the Notion "Excel" link - today a Synology File Station link, built from the share's
+`mount`) and `INBOX_ROOT` in `statement_reconciler.py`. The Re-check poller (`run_recheck.sh`, Mac launchd) also moves
+to the office server's scheduler when that is live.
+
 ## DONE / FINALIZED
+- 2026-10-08 (late) · **Notion is where the clerk works; the Excel is the evidence (owner: "using two systems might get
+  confusing").**
+  - Notes moved to Notion: a line typed indented under a bill's to-do is that bill's note. Each run reads them first
+    (`Board.notes`, keyed by the QBO bill id from the bill's link, else the invoice #), saves them, and writes them
+    back under the bill; the Excel's Notes column only SHOWS them (grey italic, no input fill). Anything typed in an
+    Excel before the move was picked up once (`notes_on_notion` in `.reconciler.json`).
+  - Each vendor row has an **Excel** link (the vendor's Current folder in the Synology's File Station - opens in a
+    browser on Windows or Mac, office network / VPN) and a **Re-check** box.
+  - `--from-notion`: re-checks the vendors whose Re-check box is ticked and unticks them; no QBO login and no Touch ID
+    prompt when nothing is ticked, Key Helper is locked or the share is not mounted. `run_recheck.sh` +
+    `launchd/com.proficient.statement-recheck.plist` (every 5 minutes) - the template; installing it is the owner's
+    call. Tested live 10/08: tick on Cintas -> re-checked within the poll -> unticked.
 - 2026-10-08 (night) · **New approval process in the reconciler (owner: "bills are approved in QBO now, but there are
   still some that use NOT APPROVED").** The same three states as the Bill Tracker, from `shared/bill_approval`: NOT
   APPROVED memo (paper era - chase the PM) · **check QBO** (entered since 09/16 and unpaid - its approval is in QBO's

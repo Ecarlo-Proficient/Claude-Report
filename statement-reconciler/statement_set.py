@@ -389,3 +389,46 @@ def fold_notes(notes: dict, harvested: Dict[str, Optional[str]], today: str) -> 
         elif v and (out.get(k) or {}).get("note") != v:
             out[k] = {"note": v, "on": today}
     return out
+
+
+# ─────────────────────────── where the files are (TRANSITION) ───────────────────────────
+# TRANSITION (owner 10/08/2026): the vendor folders live on the Synology Accounting
+# share today and move to SharePoint later. EVERY link the tool hands out to a person
+# (the Notion "Excel" column) is built HERE - at the SharePoint move, change this one
+# function (and INBOX_ROOT in statement_reconciler.py) and nothing else.
+
+FILESTATION_PORT = 5001
+
+
+def _share_host(path: Path) -> Tuple[str, str]:
+    """(host, share) of the SMB mount a path sits on - read from `mount`, never
+    hard-coded (the repo holds no addresses). ('', '') when not on a share."""
+    import subprocess
+    try:
+        out = subprocess.run(["mount"], capture_output=True, text=True, timeout=5).stdout
+    except Exception:
+        return "", ""
+    best = ("", "", "")
+    for line in out.splitlines():
+        m = re.match(r"//(?:[^@/]*@)?([^/]+)/(\S+) on (.+?) \(smbfs", line)
+        if m and str(path).startswith(m.group(3)) and len(m.group(3)) > len(best[2]):
+            best = (m.group(1), m.group(2), m.group(3))
+    return best[0], best[1]
+
+
+def folder_link(folder: Path) -> str:
+    """A link that opens `folder` for anyone on the office network or VPN, on Windows
+    or Mac: the Synology's File Station in the browser (a file-share link is smb:// on
+    a Mac but \\\\server\\share on Windows - no one link opens both). '' if unknown."""
+    import os
+    from urllib.parse import quote
+    base = (os.environ.get("ACB_FILESTATION_URL") or "").rstrip("/")
+    host, share = _share_host(folder)
+    if not host:
+        return ""
+    base = base or f"https://{host}:{FILESTATION_PORT}"
+    root = next((p for p in [folder, *folder.parents] if os.path.ismount(str(p))), None)
+    rel = folder.relative_to(root).as_posix() if root else ""
+    inner = f"/{share}/{rel}".rstrip("/")
+    param = quote("openfile=" + quote(inner, safe=""), safe="")
+    return f"{base}/?launchApp=SYNO.SDS.App.FileStation3.Instance&launchParam={param}"
