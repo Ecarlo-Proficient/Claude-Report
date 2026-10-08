@@ -240,14 +240,18 @@ def run_test() -> int:
 
     # Company probe confirms Company ID matches this app's authorized realm
     print(f"  → probing company info...")
-    info = requests.get(
-        f"{API_BASE}/v3/company/{cmp_id}/companyinfo/{cmp_id}",
-        headers={"Authorization": f"Bearer {access}", "Accept": "application/json"},
-        params={"minorversion": "70"},
-        timeout=30,
-    )
+    try:
+        info = requests.get(
+            f"{API_BASE}/v3/company/{cmp_id}/companyinfo/{cmp_id}",
+            headers={"Authorization": f"Bearer {access}", "Accept": "application/json"},
+            params={"minorversion": "70"},
+            timeout=30,
+        )
+    except requests.exceptions.RequestException as e:
+        print(f"  ✗ company probe failed  {qbo_api.mask_realm(str(e), cmp_id)}")
+        return 1
     if info.status_code != 200:
-        body = (info.text or "")[:300]
+        body = qbo_api.mask_realm((info.text or "")[:300], cmp_id)
         print(f"  ✗ company probe failed  status={info.status_code}")
         print(f"    body: {body}")
         print()

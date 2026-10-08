@@ -189,6 +189,33 @@ def refresh_access() -> str:
 
 # ────────────────────────── api helpers ──────────────────────────
 
+_COMPANY_SEG = re.compile(r"(company/)[^/?&#\s]+", re.IGNORECASE)
+_COMPANY_ID_PARAM = re.compile(r"((?:deeplink)?companyid=)[^&\s]+", re.IGNORECASE)
+
+
+def mask_realm(text: str, realm: str = "") -> str:
+    """`text` with the QuickBooks company (realm) id taken out - never echo the realm to stdout or logs (owner
+    2026-08-06). Masks every `company/<id>` URL segment and `companyid=<id>` parameter, plus any bare copy of
+    `realm` when the caller knows it (a requests exception repeats the URL; a QBO fault body may repeat the id).
+    The HTTP status and the QuickBooks message are left alone - they are what the debugging needs."""
+    out = _COMPANY_ID_PARAM.sub(r"\1<company>", _COMPANY_SEG.sub(r"\1<company>", str(text)))
+    realm = str(realm or "").strip()
+    if len(realm) >= 4:
+        out = out.replace(realm, "<company>")
+    return out
+
+
+def _realm_of(path: str) -> str:
+    m = _COMPANY_SEG.search(path or "")
+    return m.group(0).split("/", 1)[1] if m else ""
+
+
+def _api_error(path: str, detail: str) -> RuntimeError:
+    """The RuntimeError _api_get raises, realm masked out of both the path and the detail."""
+    realm = _realm_of(path)
+    return RuntimeError(f"{mask_realm(path, realm)} → {mask_realm(detail, realm)}")
+
+
 def _api_get(path: str, access: str, params: Optional[dict] = None) -> dict:
     """GET with patient retry on read/connect timeouts and transient QBO
     5xx/429 (incl. Intuit's 503 SystemFailureError, code 10000, which is a
@@ -219,8 +246,7 @@ def _api_get(path: str, access: str, params: Optional[dict] = None) -> dict:
                 requests.exceptions.ConnectTimeout,
                 requests.exceptions.ConnectionError) as e:
             if last:
-                raise RuntimeError(f"{path} → network error after "
-                                   f"{MAX_ATTEMPTS} tries: {e}")
+                raise _api_error(path, f"network error after {MAX_ATTEMPTS} tries: {e}") from None
             _sleep(attempt)
             continue
         if r.status_code == 200:
@@ -235,15 +261,15 @@ def _api_get(path: str, access: str, params: Optional[dict] = None) -> dict:
             except SystemExit:
                 raise
             except Exception as e:                     # noqa: BLE001
-                raise RuntimeError(f"{path} → 401 and token refresh failed: {e}")
+                raise _api_error(path, f"401 and token refresh failed: {e}") from None
             continue
         if r.status_code in (429, 500, 502, 503, 504) and not last:
             print(f"      QBO {r.status_code} (transient) — retry "
                   f"{attempt + 1}/{MAX_ATTEMPTS - 1}...")
             _sleep(attempt)
             continue
-        raise RuntimeError(f"{path} → {r.status_code}: {r.text[:300]}")
-    raise RuntimeError(f"{path} → unreachable")
+        raise _api_error(path, f"{r.status_code}: {r.text[:300]}")
+    raise _api_error(path, "unreachable")
 
 
 def _is_mirror_company(company_id: str) -> bool:
