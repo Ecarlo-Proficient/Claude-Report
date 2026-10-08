@@ -26,8 +26,9 @@ G() { git -c safe.directory="$SRC" "$@"; }
 owner="$(stat -c %u:%g "$SRC")"
 KH="$(mktemp)"; trap 'rm -f "$KH"' EXIT
 # GitHub's published ed25519 host key (api.github.com/meta; SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU)
+# HostKeyAlgorithms=ssh-ed25519: DSM's ssh asks for ECDSA first, which then fails against this pin (10/08 first run).
 echo "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" > "$KH"
-export GIT_SSH_COMMAND="ssh -i /volume1/automation-keys/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$KH"
+export GIT_SSH_COMMAND="ssh -i /volume1/automation-keys/deploy_key -o IdentitiesOnly=yes -o HostKeyAlgorithms=ssh-ed25519 -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$KH"
 branch="$(G rev-parse --abbrev-ref HEAD)"
 mode="$(sed -n 's/^ACB_SERVER_MODE=//p' "$BASE/server.env" | tr -d '[:space:]')"
 echo "mode ${mode:-?}, branch $branch, before $(G log --oneline -1)"

@@ -3,6 +3,9 @@
 Progression record for the office server package. Update in the SAME commit as any change to this folder (repo rule).
 
 ## DONE / FINALIZED
+- 2026-10-08 · First real DSM run of `update_server.sh` stopped at the GitHub pin: DSM's ssh asked for the ECDSA host key
+  (GitHub's genuine one, fingerprint checked against api.github.com/meta), which failed the ed25519 pin - nothing
+  changed. The script now asks for ed25519 only (`HostKeyAlgorithms=ssh-ed25519`); re-paste it into the DSM task.
 - 2026-10-07 · **update_server.sh security review** - pasted in DSM only (a root task must never run repo files), GitHub
   host key pinned (checked against api.github.com/meta), live runs main only, refuses local edits and a second run,
   checkout ownership restored, every pulled commit logged; compose stop_grace_period 120s. Tested on a stand-in server.
