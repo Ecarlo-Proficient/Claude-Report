@@ -13,7 +13,7 @@ bill's own total is the optional `bill_total` column. Both stubs read each bill 
 balance (owner 2026-10-07: "shown on amount paid - open balance = new total"; the vendor stub too the same day:
 "fix the partials ... use columns", no partial sentence): the balance just before THIS payment (the bill total
 less every earlier payment on it, from the bill's own LinkedTxn), what it applied and what is left. On the internal
-stub a check drawn on the Joint Checks account shows its type as "Joint check".
+stub a check drawn on the Joint Checks account shows its type as "Joint check" (both stubs, owner 2026-10-09).
 
 Reads the raw QBO mirror only (shared/qbo_mirror: BillPayment -> Line[].LinkedTxn -> Bill; Vendor
 for the print name and address). Read-only everywhere; writes just the HTML/PDF it was asked for.
@@ -394,6 +394,7 @@ def build_stub(bp: dict, txn_of: Callable[[str, str], Optional[dict]],
         "method": method,
         "ref": ref,
         "account": acct,
+        "joint": method == "Check" and is_joint_account(acct),   # paid out of the Joint Checks account, both stubs
         "total": _num(bp.get("TotalAmt")),
         "rows": rows,
         "rows_total": total_paid,
@@ -778,7 +779,7 @@ def stub_html(stubs: Sequence[dict], columns: Optional[Sequence[str]] = None,
         parts.append("</div><div class='kv'>")
         # no Account line - the owner's own stub does not show it (2026-09-22); the value stays in the record
         kv = [("Payment date", mdy(s["txn_date"])),
-              ("Payment type", "Joint check" if internal and s.get("joint") else s["method"]),
+              ("Payment type", "Joint check" if s.get("joint") else s["method"]),
               ("Check number" if s["method"] == "Check" else "Reference", s["ref"])]
         if internal:
             kv.append(("Client", s.get("client") or ""))
@@ -1035,6 +1036,8 @@ def _selftest() -> int:
     assert find_joint_payment(bpj, [cpay, dict(cpay, Id="c2", TotalAmt=5.0)]) is cpay
     assert find_joint_payment(bpj, [dict(cpay, TxnDate="2026-07-30")]) is not None   # entered on another day, same check #
     assert find_joint_payment(bp, [cpay]) is None                                  # not on the joint account
+    assert sj["joint"] and not build_stub(bp, getj, vendor)["joint"]               # the account decides, before apply_internal
+    assert "Joint check" not in stub_html([build_stub(bp, getj, vendor)])
     apply_internal(sj, cpay, getj, lambda d: None, lambda c: "GC ONE")
     assert sj["joint"] and sj["client"] == "GC ONE"
     assert [(g["invoice_no"], g["label"], g["paid"]) for g in sj["groups"]] == [("34457", "May Draw 2026", 600.0), ("34458", "June Draw 2026", 700.0)]
@@ -1046,7 +1049,7 @@ def _selftest() -> int:
         assert needle in ip, needle
     assert "partial payment" not in ip and "Transaction type" not in ip
     vp = stub_html([dict(sj, kind="vendor")])                                      # the vendor stub: no client, no invoices
-    assert "Joint check" not in vp and "partial payment" not in vp and "New balance" in vp and "INTERNAL" not in vp
+    assert "Joint check" in vp and "partial payment" not in vp and "New balance" in vp and "INTERNAL" not in vp
     assert "Client invoice" not in vp
     sn = apply_internal(dict(build_stub(bp, getj, vendor), kind="internal"), None, getj, lambda d: invs["i2"] if d == "34458" else None,
                         lambda c: "", {"b1": {"invoice_no": "34458", "clients": ["GC ONE"]}})
