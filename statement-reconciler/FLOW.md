@@ -1,6 +1,7 @@
 # statement-reconciler/ - how the vendor statement reconciler works
 
-Last changed: 10/09/2026 - statement invoice # pairs with the QBO Ref # ignoring case and spacing, then a clerk's suffix ('401417-CC FEE') when exactly one bill carries it.
+Last changed: 10/09/2026 (later) - the Notion board writes only the columns it has (a column deleted on Notion, Follow-ups, is skipped and logged, never a failed page; never re-created).
+Earlier 10/09: statement invoice # pairs with the QBO Ref # ignoring case and spacing, then a clerk's suffix ('401417-CC FEE') when exactly one bill carries it.
 Earlier 10/08 (late) - notes typed on Notion under the bill (read back each run, shown read-only in the Excel); Notion "Re-check" box -> `--from-notion` poller (run_recheck.sh, launchd every 5 min); "Excel" link to the vendor folder (File Station - TRANSITION to SharePoint).
 Earlier 10/08 (night): bill approval in three states from `shared/bill_approval` (NOT APPROVED memo · check QBO for bills entered since 09/16 and unpaid · approved) in the Excel, the marked statement and Notion.
 Earlier 10/08 (evening): the workbook is Summary + Statement (marked) only (Statements /

@@ -12,6 +12,11 @@ SharePoint later. When they do, everything that points at them changes in two pl
 to the office server's scheduler when that is live.
 
 ## DONE / FINALIZED
+- 2026-10-09 (later) · **A column deleted on the Notion board no longer fails the page.** "Follow-ups" was removed from
+  the board after the 10/08 run; the CMC / Cowtown re-run then failed both pages with a Notion 400. `Board` now reads
+  the board's columns once per run (`ensure_schema`) and writes only those, logging any it skips; it never re-creates a
+  column it does not own. Live re-run 10/09: CMC 2 not entered, Cowtown All entered - both rows read back from Notion,
+  both Excels `assert_clean`. Test: `test_a_column_removed_on_notion_is_skipped_not_a_failed_page`.
 - 2026-10-09 · **Ref # pairing no longer exact text (found re-checking every vendor against QBO).** The owner asked to
   double-check the 10/08 run instead of trusting it: every "not entered" line (54) was searched across all of QBO.
   Two were entered and paid: QBO `16018k` vs the statement's `16018K` (CMC) and the clerk's `401417-CC FEE` for the
