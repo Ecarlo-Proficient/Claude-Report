@@ -2509,6 +2509,26 @@ def _build_row(sl: StmtLine, bill: Optional[QboBill],
                     notes=f"Diff = ${diff:,.2f}. Investigate.", **common)
 
 
+def _ref_key(ref: str) -> str:
+    """A Ref # as compared: case and spacing never decide a match (QBO '16018k' is the
+    statement's '16018K', CMC 10/09)."""
+    return re.sub(r"\s+", "", ref or "").upper()
+
+
+def _suffixed_bill(ref: str, pool: List[QboBill], taken: set) -> Optional[QboBill]:
+    """The ONE bill whose Ref # is the statement's number plus a clerk's suffix after a
+    separator ('401417-CC FEE' for statement 401417, Cowtown 10/09). None when no bill or
+    several carry it, when the number is too short to trust, or when the suffixed Ref # is
+    itself a line on the statement (`taken`)."""
+    key = _ref_key(ref)
+    if len(key) < 4:
+        return None
+    pat = re.compile(re.escape(key) + r"[\s\-_/#(.]")
+    hits = [b for b in pool if b.doc_number and _ref_key(b.doc_number) not in taken
+            and _ref_key(b.doc_number) != key and pat.match(b.doc_number.strip().upper())]
+    return hits[0] if len(hits) == 1 else None
+
+
 def reconcile_iter(lines: List[StmtLine],
                    bills: List[QboBill],
                    paid_bills: Optional[List[QboBill]] = None,
@@ -2536,7 +2556,8 @@ def reconcile_iter(lines: List[StmtLine],
         if not b.doc_number:
             no_doc_bills.append(b)
             continue
-        seen_docs[b.doc_number] = seen_docs.get(b.doc_number, 0) + 1
+        k = _ref_key(b.doc_number)
+        seen_docs[k] = seen_docs.get(k, 0) + 1
     dup_qbo = [d for d, n in seen_docs.items() if n > 1]
     if dup_qbo:
         _warn(f"QBO has duplicate DocNumber(s): {dup_qbo} - last-wins; review manually.")
@@ -2561,9 +2582,23 @@ def reconcile_iter(lines: List[StmtLine],
     if dup_stmt:
         _warn(f"Statement has duplicate Ref#(s): {dup_stmt} - both lines will match the same QBO bill.")
 
-    by_doc = {b.doc_number: b for b in bills if b.doc_number}
-    paid_by_doc = {b.doc_number: b for b in (paid_bills or []) if b.doc_number}
-    stmt_refs = {l.ref for l in invoice_lines}
+    by_doc = {_ref_key(b.doc_number): b for b in bills if b.doc_number}
+    paid_by_doc = {_ref_key(b.doc_number): b for b in (paid_bills or []) if b.doc_number}
+    stmt_refs = {_ref_key(l.ref) for l in invoice_lines}
+
+    # Pair every statement line first (exact Ref #, then a unique clerk-suffixed one) so
+    # a suffix-paired open bill is not also reported missing from the statement.
+    pairs: List[Tuple[StmtLine, Optional[QboBill], Optional[QboBill]]] = []
+    for sl in invoice_lines:
+        k = _ref_key(sl.ref)
+        open_match = by_doc.get(k)
+        paid_match = paid_by_doc.get(k) if open_match is None else None
+        if open_match is None and paid_match is None:
+            open_match = _suffixed_bill(sl.ref, bills, stmt_refs)
+            if open_match is None:
+                paid_match = _suffixed_bill(sl.ref, paid_bills or [], stmt_refs)
+        pairs.append((sl, open_match, paid_match))
+    paired_ids = {id(o) for _, o, _p in pairs if o is not None}
 
     # Balance-forward date: QBO bills dated on/before it are folded into the
     # forward lump, so they are covered by the statement, not "missing" from it.
@@ -2586,7 +2621,7 @@ def reconcile_iter(lines: List[StmtLine],
     post_stmt_excluded = 0
     bf_covered: List[QboBill] = []
     for b in bills:
-        if not b.doc_number or b.doc_number in stmt_refs:
+        if not b.doc_number or _ref_key(b.doc_number) in stmt_refs or id(b) in paired_ids:
             continue
         if not _on_or_before_stmt(b):
             post_stmt_excluded += 1
@@ -2608,10 +2643,8 @@ def reconcile_iter(lines: List[StmtLine],
     total = len(invoice_lines) + len(missing_on_stmt) + len(no_doc_bills_filtered)
 
     idx = 0
-    for sl in invoice_lines:
+    for sl, open_match, paid_match in pairs:
         idx += 1
-        open_match = by_doc.get(sl.ref)
-        paid_match = paid_by_doc.get(sl.ref) if open_match is None else None
         yield idx, total, _build_row(sl, open_match, paid_match)
 
     # MISSING_ON_STATEMENT
@@ -2958,7 +2991,7 @@ def write_excel(out_path: Path, vendor: str, stmt_date: str, stmt_total: float,
     def _write_compare_row(row_idx: int, rr: ReconRow) -> None:
         # Ref check
         stmt_ref, qbo_ref = rr.stmt_ref, rr.qbo_ref
-        ref_check = (CHECK_OK if (stmt_ref and qbo_ref and stmt_ref == qbo_ref)
+        ref_check = (CHECK_OK if (stmt_ref and qbo_ref and _ref_key(stmt_ref) == _ref_key(qbo_ref))
                      else CHECK_NA if (not stmt_ref or not qbo_ref)
                      else CHECK_NO)
         # Amount check (within tolerance)

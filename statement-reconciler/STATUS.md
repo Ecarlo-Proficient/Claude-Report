@@ -12,6 +12,14 @@ SharePoint later. When they do, everything that points at them changes in two pl
 to the office server's scheduler when that is live.
 
 ## DONE / FINALIZED
+- 2026-10-09 · **Ref # pairing no longer exact text (found re-checking every vendor against QBO).** The owner asked to
+  double-check the 10/08 run instead of trusting it: every "not entered" line (54) was searched across all of QBO.
+  Two were entered and paid: QBO `16018k` vs the statement's `16018K` (CMC) and the clerk's `401417-CC FEE` for the
+  statement's `401417` (Cowtown). Now: case and spacing never decide a match (`_ref_key`, also the Excel's Ref check),
+  then a clerk's suffix after a separator pairs when exactly ONE bill carries it, the number is 4+ characters and the
+  suffixed Ref # is not itself a statement line (`_suffixed_bill`); a suffix-paired open bill is not also "not on
+  statement". Full `--refresh --dry-run` before/after: only CMC (3 -> 2 not entered) and Cowtown (1 -> all entered)
+  moved. `--audit-parsing`: 107 statements, 0 new problems. Tests: `tests/test_statement_match.py` (5).
 - 2026-10-08 (late) · **Notion is where the clerk works; the Excel is the evidence (owner: "using two systems might get
   confusing").**
   - Notes moved to Notion: a line typed indented under a bill's to-do is that bill's note. Each run reads them first

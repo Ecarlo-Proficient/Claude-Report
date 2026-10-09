@@ -1,6 +1,7 @@
 # statement-reconciler/ - how the vendor statement reconciler works
 
-Last changed: 10/08/2026 (late) - notes typed on Notion under the bill (read back each run, shown read-only in the Excel); Notion "Re-check" box -> `--from-notion` poller (run_recheck.sh, launchd every 5 min); "Excel" link to the vendor folder (File Station - TRANSITION to SharePoint).
+Last changed: 10/09/2026 - statement invoice # pairs with the QBO Ref # ignoring case and spacing, then a clerk's suffix ('401417-CC FEE') when exactly one bill carries it.
+Earlier 10/08 (late) - notes typed on Notion under the bill (read back each run, shown read-only in the Excel); Notion "Re-check" box -> `--from-notion` poller (run_recheck.sh, launchd every 5 min); "Excel" link to the vendor folder (File Station - TRANSITION to SharePoint).
 Earlier 10/08 (night): bill approval in three states from `shared/bill_approval` (NOT APPROVED memo · check QBO for bills entered since 09/16 and unpaid · approved) in the Excel, the marked statement and Notion.
 Earlier 10/08 (evening): the workbook is Summary + Statement (marked) only (Statements /
 Changes live on Notion); colour key to the right of the pages; columns Finding / Notes.
@@ -28,7 +29,7 @@ flowchart LR
     SET["statement_set.plan<br/>duplicate (same file) · unreadable ·<br/>merge by invoice-date range:<br/>full list / past-due letter / activity"]:::tool
     MERGED["ONE open list as of the newest date<br/>+ 'statements disagree by $X' when the<br/>vendor's own documents differ"]:::tool
     NOTES["clerk notes<br/>read from the Excel before rewriting,<br/>kept by bill id in .reconciler.json"]:::tool
-    REC["reconcile_vendor<br/>matched · missing in QBO · amount mismatch ·<br/>tax 8.25% · paid but vendor shows open · not on statement"]:::tool
+    REC["reconcile_vendor<br/>pair by Ref # (case/spacing ignored,<br/>then a unique clerk suffix)<br/>matched · missing in QBO · amount mismatch ·<br/>tax 8.25% · paid but vendor shows open · not on statement"]:::tool
     MARK["statement_markup<br/>find every line on its page (PDF words / OCR),<br/>band it in its bucket colour;<br/>a bill-looking row with no band = NOT READ"]:::tool
     PS["print_status.py<br/>opt-in PRINT_STATUS=1"]:::tool
     NB["notion_board.py<br/>merge with the clerk's ticks; a count per bucket;<br/>fixed -> Cleared"]:::tool
