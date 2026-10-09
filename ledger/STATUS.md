@@ -10,6 +10,7 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   hidden when the share or the server is absent. Same pass: the Invoice file line read "never" - the ledger never loads
   invoice-sync's `.env`, so it now looks at the Accounting share's `Accounts Receivable/Invoice Tracker.xlsx` first.
   Checked in the preview (light, the pill went from 2 stale to 1).
+- 2026-10-09 · **"Print N stubs" menu opens again** (owner: "doesn't work anymore ... i have to print it from the row"). The multi-print button let its click reach the page's menu closer, which hid the Vendor / Internal menu at once; it now stops the click like the row button. Checked in the preview.
 - 2026-10-09 · **Vendor stub shows "Joint check" too** (owner: a bill payment out of the Joint Checks account is type Joint check). `build_stub` sets `joint` from the bank account, so both stubs print it; RCI check 20098 reprinted.
 - 2026-10-08 · **Internal stub matches a joint check by check #** (owner: "fix the ledger stub to match by check #").
   `find_joint_payment` now takes every Payment and BillPayment of the same amount from the mirror and pairs by

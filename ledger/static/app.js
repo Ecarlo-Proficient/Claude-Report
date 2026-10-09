@@ -2803,7 +2803,7 @@ async function _renderVendorPayments(d, body, seq) {
   const bar = document.createElement("div"); bar.className = "stub-bar";
   const selBtn = document.createElement("button"); selBtn.type = "button"; selBtn.className = "btn small stub-sel-btn";
   const selLabel = () => { const n = _stubSel.size; selBtn.textContent = n ? `Print ${n} stub${n === 1 ? "" : "s"}` : "Print stubs for selected"; selBtn.disabled = !n; };
-  selLabel(); selBtn.onclick = () => _stubPrintMenu(selBtn, `Print ${_stubSel.size} stub${_stubSel.size === 1 ? "" : "s"}`, (kind) => _printStubsSelected(selBtn, kind));
+  selLabel(); selBtn.onclick = (e) => { e.stopPropagation(); _stubPrintMenu(selBtn, `Print ${_stubSel.size} stub${_stubSel.size === 1 ? "" : "s"}`, (kind) => _printStubsSelected(selBtn, kind)); };   // stop the click: the page's menu closer would hide it at once
   { const right = document.createElement("span"); right.className = "stub-bar-right"; _vpRefresh.attach(right, body); right.appendChild(selBtn); bar.appendChild(right); }
   body.insertBefore(bar, _vpRefresh.prog);
   if (!pays.length) { const p = document.createElement("div"); p.className = "bills-cap"; p.textContent = (d.payments || []).length ? (_vendorQ.trim() ? `No payments match "${_vendorQ.trim()}".` : "No payments match these filters.") : "No bill payments recorded this year - Refresh from QuickBooks to pull the latest."; body.appendChild(p); _renderStubOrphans(body, d.payments || [], byPay); return; }
