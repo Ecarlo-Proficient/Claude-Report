@@ -1,0 +1,100 @@
+# docker/ - STATUS
+
+Progression record for the office server package. Update in the SAME commit as any change to this folder (repo rule).
+
+## DONE / FINALIZED
+- 2026-10-08 · **Hands-free after go-live.** `update_server.sh`: no new commits = no rebuild (`up -d` still applies a
+  changed server.env), so the DSM task can run nightly at 03:00 and deploy whatever reaches main; in live mode it moves a
+  checkout on another branch onto main itself (same deploy key + host-key pin) - no SSH step at go-live. Tested on a
+  stand-in (bare remote, stub docker): nothing new / new commits / live on dev -> main / live nothing new / local edit
+  refused. README step 8 rewritten as the ordered go-live checklist (7 steps).
+- 2026-10-08 · **Switch-over prep, one landing:** Bill Tracker open-in-Excel guard (bill-tracker), Notion writes only what
+  changed (invoice-sync), `carry_history.py` (switch-day history carry), the ledger's server status lines. The 10/05
+  paid-vs-unpaid open issue is SETTLED: a same-moment pair (server 14:35, Mac mirror 14:40) matched on all 3,451 Bills
+  lines, every field; the earlier gaps were QuickBooks edits between the two runs.
+- 2026-10-08 · **Server updated bdcb5e5 -> 6a417f0** via the DSM `update_server` task (2nd run): pull ok on the ed25519 pin,
+  build reused every cached layer (code only), container recreated, both test Bill Trackers' permissions reset. Now on
+  the 10/06 permissions fix + the AR-reads-the-test-Bill-Tracker fix; mode test, PAYMENTS_TEST unset.
+- 2026-10-08 · First real DSM run of `update_server.sh` stopped at the GitHub pin: DSM's ssh asked for the ECDSA host key
+  (GitHub's genuine one, fingerprint checked against api.github.com/meta), which failed the ed25519 pin - nothing
+  changed. The script now asks for ed25519 only (`HostKeyAlgorithms=ssh-ed25519`); re-paste it into the DSM task.
+- 2026-10-07 · **update_server.sh security review** - pasted in DSM only (a root task must never run repo files), GitHub
+  host key pinned (checked against api.github.com/meta), live runs main only, refuses local edits and a second run,
+  checkout ownership restored, every pulled commit logged; compose stop_grace_period 120s. Tested on a stand-in server.
+- 2026-10-07 · `update_server.sh` (README 7b): one DSM Task Scheduler run as root pulls, rebuilds, restarts and resets the
+  test trackers' permissions (`synoacltool -enforce-inherit`), logging to `/volume1/docker/automation/update_server.log`.
+  The server was found on bdcb5e5 (10/02), before the 10/06 permissions fix.
+- 2026-10-02 · First run on the Synology: the mirror failed "MIRROR_KEY is not in the Keychain library" - on Linux qbo_vault read only KNOWN_KEYS from the env. It now also reads MIRROR_KEY (`LINUX_EXTRA_KEYS`); tests/test_qbo_vault_linux.py pins it.
+- 2026-10-02 · compose.yml APP_UID 1026 -> 1027: the office Synology's svc-automation user is uid 1027 (gid 100 users). The owned folders (data is 700) need the container to run as that uid.
+- 2026-10-01 · First build + smoke run (test mode, dummy keys). Two fixes: the Dockerfile reuses GID 100 (Synology's "users" group already exists in Debian - `groupadd` failed the build); `qbo_vault.has_credentials()` on Linux checks only the four QBO keys (it required JT_GRANT_KEY too, so every QBO call on the server failed with "No QBO credentials in Keychain"). The image builds, all five jobs import, the scheduler starts, status.json + alerts work.
+- 2026-09-30 · The runbook is plain setup instructions (owner: the developer is capable - no approval stops); the two hard rules stay (the server's own Intuit app; keys typed on the Synology only).
+- 2026-09-30 · **The office server package** (replaces the retired invoice-sync-only container). `scheduler.py` (mirror
+  every 3 min, AP then AR every 15 min, nightly count check, status.json + Teams alerts, test vs live, the writer file
+  fails closed), `Dockerfile` (base pinned by digest, packages by sha256, a read-only allow-list), `.dockerignore`
+  (only the allow-list gets in), `compose.yml` (Synology mounts, keys in an encrypted shared folder, no ports),
+  `server.env.example` / `secrets.env.example`, `push_registers.sh` (Mac -> server rule files, one way), `CHECKUP.md` (step 0, look only), the runbook
+  in `README.md`. `tests/test_office_server_image.py` fails the build if a QuickBooks writer is copied in (proven
+  against pay_bills / reapply_check). Not built or run yet - there is no Docker on the owner's Mac; the developer
+  builds on the Synology.
+
+## IN PROGRESS
+- 2026-10-07 · **ON HOLD (owner): prove the base AP/AR run on the server first, then turn this on with `PAYMENTS_TEST=1`.**
+  **QuickBooks payment cards - server test before the team uses them (the owner).** Test mode runs
+  `payments-test` after AR (`qbo_payment_notify.py --test`): TEST cards to `TEAMS_WEBHOOK_PAYMENTS_TEST`, own posted record,
+  dry-run log while that key is blank. To do: rebuild the image, add the Payments channel webhook to secrets.env, watch a
+  week of cards against QuickBooks (README step 7). Mac: keep `TEAMS_WEBHOOK_PAYMENTS` unset during the test so only
+  the server posts.
+- 2026-10-05 · The test week is running on the office Synology (test mode). Every job ok since the first full mirror
+  (mirror every 3 min, AP + AR + AR export every 15 min, reconcile counts QBO = mirror). First side-by-side vs the
+  Mac's live trackers: Invoice Tracker - every open invoice and balance matches (layout differs only because the
+  server runs the newer aging code); Bill Tracker - Inventory / Liens identical, Bills differ on payments (side note below).
+
+## TO DO (before live)
+- DONE 10/08 - Notion: an invoice is written only when a field changed (invoice-sync; 111 of 114 skipped on the live dry run).
+- DONE 10/06 - The Mac honors the writer file: sync-all stands down on AP/AR while it says "server" (push_registers.sh still run by hand after a rule change).
+- DONE 10/08 - Bill Tracker "open in Excel" guard: the AP run skips (writes nothing) while `~$Bill Tracker.xlsx` sits
+  beside the tracker, checked before the read AND again right before the save; a lock over 12h still skips but exits 3
+  so the server alerts (a crashed Excel left it). Replaces the Inputs split as the switch-over requirement (owner
+  10/08): people type only a few Lien tags / Notes a week (11 since 09/24), and the guard keeps them.
+- DONE 10/08 - `docker/carry_history.py`: the switch-day carry of the Mac's cost-code miscode history to the server
+  (dry run by default, `--commit` backs up and writes; refuses mid-AP-run). README step 8.
+- DONE 10/08 - The ledger's Data status shows the server's last good run per job (mirror / Bill Tracker / Invoice
+  sync), from `Accounting/_automation/server-status.json`; "(test - practice copies)" while in test mode.
+- Live runs `main` only - release PR #22 (dev -> main), auto-merge on once approved. Then README step 8.
+
+## LATER (not needed for the switch, owner 10/08)
+- Bill Tracker Inputs split - the typed Lien tags / Notes leave the workbook (a small inputs file, or the ledger's lien
+  marks). **Required before the Bill Tracker moves to SharePoint:** there several people co-author one workbook and no
+  `~$` lock file appears, so the open-in-Excel guard cannot work.
+- The nightly cross-check between the server's mirror and the Mac's - the server's own nightly count check against
+  QuickBooks + the 10/08 cell-for-cell Bill Tracker match cover the switch.
+
+## OPEN ISSUES
+- 2026-10-08 · **Bill Tracker side-by-side (server 13:29 vs a Mac build 13:33): the base AP run matches.** Bills (3,448
+  rows), Bill List, Liens, Inventory, Audit - Coding, Audit - Bills: every cell identical (the 10/05 126 paid-vs-unpaid
+  lines are gone). Two expected differences: **Audit - PO** - the SERVER is right: its Cloud Sync copy of the PO tracker
+  runs through 10/08, the Mac's OneDrive copy stopped syncing on 09/26 (a Mac OneDrive issue, not code). **Audit -
+  History** - each side keeps its own history record (server since 10/05: 17 rows, Mac: 31); at go-live the Mac's
+  history file must be carried to the server or the server's audit history restarts. Next: payment cards
+  (`PAYMENTS_TEST=1`) once the owner says go.
+- 2026-10-07 · **Server check before adding anything (owner).** All jobs exit 0 (mirror 3 min, reconcile counts equal,
+  AP 36s, AR dry run, AR export). Invoice Tracker: the server's test copy = a Mac preview built the same minute, every
+  tab, every cell (only the "as of" stamp differs). Found: (1) FIXED in code - test-mode AR read the Mac's LIVE Bill
+  Tracker, not the server's (needs the image rebuilt). (2) The server's test Bill Tracker is still unreadable over the
+  share (Permission denied) - the 10/06 no-chmod fix is not on the server yet: rebuild the image AND chmod the existing
+  `_server-test/Bill Tracker.xlsx` (+ compare copy) once so the share's users can read it. Then re-compare the Bill
+  Tracker against a Mac build of the same minute (the 126 paid-vs-unpaid lines of 10/05 still unsettled).
+- Side note (2026-10-05) - **the server's Bill Tracker can't be opened by anyone.** `excel_bill_sync.py` chmods the
+  output 600; on the Mac that is the owner's own account, on the server it is svc-automation, so no person (or Excel
+  over the share) can read `_server-test/Bill Tracker.xlsx` - a sudo copy was needed to compare it. Live would lock
+  the real one the same way. Fix before live: readable by the share's users on the server (group-read, or skip the
+  chmod when `ACB_SERVER_MODE` is set). The Invoice Tracker is not affected. FIXED 10/06: excel_bill_sync skips the
+  chmod when ACB_SERVER_MODE is set (the share's permissions decide).
+- Side note (2026-10-05) - **payments: 126 bill lines are paid on the Mac, Unpaid/Partial on the server.** Same bills,
+  same lines; only Open Bal / Pay Status / Pay Ref-Date-Method / Lien differ, always paid -> unpaid. UPDATE 10/06: check
+  #25510 is whole again on the Mac's mirror (115 bills, last changed in QBO 10/06 - the ledger's Clear copy re-apply);
+  most likely QBO stripped it between the two 10/05 runs. Re-compare the two trackers once before going live. All of them trace
+  to three check payments on the Mac's side - one of them (check #25510, April 2026) pays 109 bills by itself. Either
+  the server's mirror is missing those BillPayments (suspect: very large payments) or QBO changed them between the
+  two runs (Mac 08:09, server 11:50). Not yet settled: open check #25510 in QBO, or compare a same-hour pair of files.
+  Probably the same cause: 6 extra bills only on the server (Unpaid) and 3 Bill List rows "approved" -> "check QBO".

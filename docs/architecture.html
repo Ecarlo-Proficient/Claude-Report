@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tools Map</title>
+<style>
+  :root {
+    --bg: #F4F3EF; --surface: #FCFBF9; --ink: #26251F; --muted: #6E6B60; --line: #DCD9D0;
+    --srv: #2E7D52; --srv-soft: #E3EFE7; --mac: #2F66B3; --mac-soft: #E3EAF5;
+    --data: #7A5BA8; --data-soft: #EEE8F5; --write: #C0392B; --write-soft: #F7E1DE;
+    --ext: #8A857A; --ext-soft: #ECEAE3; --arrow: #7C786E; --code-bg: #ECEAE3;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #1C1B18; --surface: #26241F; --ink: #E9E6DD; --muted: #A29E91; --line: #3A3830;
+      --srv: #6FBF8E; --srv-soft: #1F3027; --mac: #7FA8E0; --mac-soft: #1E2735;
+      --data: #B79BE0; --data-soft: #2A2335; --write: #E9786B; --write-soft: #3A2320;
+      --ext: #A29E91; --ext-soft: #2C2A25; --arrow: #A29E91; --code-bg: #22211C;
+    }
+  }
+  :root[data-theme="dark"] {
+      --bg: #1C1B18; --surface: #26241F; --ink: #E9E6DD; --muted: #A29E91; --line: #3A3830;
+      --srv: #6FBF8E; --srv-soft: #1F3027; --mac: #7FA8E0; --mac-soft: #1E2735;
+      --data: #B79BE0; --data-soft: #2A2335; --write: #E9786B; --write-soft: #3A2320;
+      --ext: #A29E91; --ext-soft: #2C2A25; --arrow: #A29E91; --code-bg: #22211C;
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 15px;
+         line-height: 1.55; margin: 0; }
+  .wrap { max-width: 1240px; margin: 0 auto; padding: 36px 16px 80px; }
+  .eyebrow { font-family: var(--mono); font-size: 11px; letter-spacing: .14em; text-transform: uppercase;
+             color: var(--muted); margin-bottom: 8px; }
+  h1 { font-size: clamp(24px, 4vw, 32px); margin: 0 0 8px; letter-spacing: -.01em; }
+  h2 { font-size: 18px; margin: 40px 0 6px; }
+  .lede, .sub { max-width: 80ch; margin: 0 0 12px; }
+  .sub { color: var(--muted); font-size: 14px; }
+  code { font-family: var(--mono); font-size: .86em; background: var(--code-bg); border-radius: 3px; padding: 1px 5px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 16px; margin: 10px 0 12px; font-size: 13px; color: var(--muted); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .chip { width: 16px; height: 11px; border-radius: 3px; display: inline-block; border: 1.5px solid; }
+  .diagram { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; overflow-x: auto; padding: 8px; }
+  .diagram svg { display: block; min-width: 1100px; width: 100%; height: auto; }
+  .zone { stroke-width: 1.5; }
+  .srvz { fill: var(--srv-soft); stroke: var(--srv); }
+  .macz { fill: var(--mac-soft); stroke: var(--mac); }
+  .zl { font: 700 12px var(--mono); letter-spacing: .08em; }
+  .srvt { fill: var(--srv); } .mact { fill: var(--mac); }
+  .cl { font: 700 11px var(--mono); letter-spacing: .12em; fill: var(--muted); }
+  .b { fill: var(--surface); stroke-width: 1.5; }
+  .b.srv { stroke: var(--srv); } .b.mac { stroke: var(--mac); } .b.data { stroke: var(--data); fill: var(--data-soft); }
+  .b.write { stroke: var(--write); fill: var(--write-soft); stroke-width: 2; }
+  .b.ext { stroke: var(--ext); fill: var(--ext-soft); } .b.out { stroke: var(--ext); }
+  .b.info { stroke: var(--mac); stroke-dasharray: 3 3; }
+  .bt { font: 700 13px var(--sans); fill: var(--ink); }
+  .bl { font: 11.5px var(--sans); fill: var(--muted); }
+  .tag { fill: var(--srv); } .tagt { font: 700 10px var(--sans); fill: #fff; }
+  .ar { fill: none; stroke: var(--arrow); stroke-width: 1.6; }
+  .ar.w { stroke: var(--write); stroke-width: 2; } .ar.s { stroke: var(--data); stroke-width: 2; }
+  .mh { fill: var(--arrow); } .mhw { fill: var(--write); } .mhs { fill: var(--data); }
+  .al { font: 600 11px var(--sans); fill: var(--muted); }
+  .note { font: 700 12px var(--sans); fill: var(--ink); } .notel { font: 12px var(--sans); fill: var(--muted); }
+  .tablewrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--line);
+          font-size: 13.5px; }
+  th { font: 700 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; text-align: left;
+       color: var(--muted); padding: 9px 12px; border-bottom: 1px solid var(--line); background: var(--code-bg); }
+  td { padding: 8px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  td.srvc { color: var(--srv); font-weight: 600; }
+  ul { padding-left: 20px; margin: 6px 0; }
+</style>
+</head>
+<body><div class="wrap">
+<div class="eyebrow">Tools map · updated 09/30/2026 · source of truth: docs/ARCHITECTURE.md</div>
+<h1>How the tools connect, and what moves to the Synology</h1>
+<p class="lede">QuickBooks is the one source. The QBO mirror is the one read of it: every tool reads the mirror,
+and only the writers and the live QuickBooks reports talk to QuickBooks directly. After Phase 2 the green box runs on the
+office server; everything in the blue box stays on the Mac.</p>
+<div class="legend">
+<span><i class="chip" style="border-color:var(--srv)"></i>runs on the Synology</span>
+<span><i class="chip" style="border-color:var(--mac)"></i>stays on the Mac</span>
+<span><i class="chip" style="border-color:var(--data);background:var(--data-soft)"></i>data file</span>
+<span><i class="chip" style="border-color:var(--write);background:var(--write-soft)"></i>writes to QuickBooks</span>
+<span><i class="chip" style="border-color:var(--ext);background:var(--ext-soft)"></i>outside system</span>
+</div>
+<div class="diagram"><svg viewBox="0 0 1200 860" width="1200" role="img" aria-label="Tools map">
+<defs>
+<marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="mh" d="M0,0 L10,5 L0,10 z"/></marker>
+<marker id="ahw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="mhw" d="M0,0 L10,5 L0,10 z"/></marker>
+<marker id="ahs2" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="mhs" d="M10,0 L0,5 L10,10 z"/></marker>
+<marker id="ahs" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="mhs" d="M0,0 L10,5 L0,10 z"/></marker>
+</defs>
+<rect class="zone srvz" x="260" y="30" width="690" height="300" rx="12"/>
+<text class="zl srvt" x="276" y="52">SYNOLOGY - the office server (after Phase 2)</text>
+<rect class="zone macz" x="260" y="360" width="690" height="480" rx="12"/>
+<text class="zl mact" x="276" y="828">MAC - stays here (writers never leave)</text>
+<text class="cl" x="20" y="22">READ FROM</text>
+<text class="cl" x="980" y="22">WRITTEN TO</text>
+<rect class="b ext" x="20" y="290" width="200" height="110" rx="7"/>
+<text class="bt" x="30" y="309">QuickBooks Online</text>
+<text class="bl" x="30" y="326">production only</text>
+<text class="bl" x="30" y="340">the source of truth</text>
+<rect class="b ext" x="20" y="470" width="200" height="66" rx="7"/>
+<text class="bt" x="30" y="489">Synology file shares</text>
+<text class="bl" x="30" y="506">takeoffs · draws · schedules</text>
+<text class="bl" x="30" y="520">vendor statement PDFs</text>
+<rect class="b ext" x="20" y="555" width="200" height="60" rx="7"/>
+<text class="bt" x="30" y="574">Notion</text>
+<text class="bl" x="30" y="591">Customer List · Lien Tracker</text>
+<text class="bl" x="30" y="605">AR invoice databases</text>
+<rect class="b ext" x="20" y="635" width="200" height="50" rx="7"/>
+<text class="bt" x="30" y="654">JobTread</text>
+<text class="bl" x="30" y="671">RP prices</text>
+<rect class="b ext" x="20" y="715" width="200" height="56" rx="7"/>
+<text class="bt" x="30" y="734">AI Brain_Vault</text>
+<text class="bl" x="30" y="751">process registry · local git</text>
+<rect class="b srv" x="280" y="65" width="200" height="66" rx="7"/>
+<text class="bt" x="290" y="84">QuickBooks login</text>
+<text class="bl" x="290" y="101">the server&#x27;s own Intuit app</text>
+<text class="bl" x="290" y="115">renews itself</text>
+<rect class="b srv" x="505" y="65" width="200" height="66" rx="7"/>
+<text class="bt" x="515" y="84">Mirror refresh</text>
+<text class="bl" x="515" y="101">every 2-5 minutes: what changed</text>
+<text class="bl" x="515" y="115">nightly: full count check</text>
+<rect class="b data" x="730" y="65" width="200" height="66" rx="7"/>
+<text class="bt" x="740" y="84">qbo_mirror.sqlite3</text>
+<text class="bl" x="740" y="101">every QBO record + change log</text>
+<text class="bl" x="740" y="115">encrypted history</text>
+<rect class="b srv" x="505" y="155" width="200" height="80" rx="7"/>
+<text class="bt" x="515" y="174">Status + alerts</text>
+<text class="bl" x="515" y="191">every run writes its status</text>
+<text class="bl" x="515" y="205">Teams: a failed run, or</text>
+<text class="bl" x="515" y="219">one quiet hour</text>
+<rect class="b srv" x="730" y="155" width="200" height="102" rx="7"/>
+<text class="bt" x="740" y="174">AP/AR sync</text>
+<text class="bl" x="740" y="191">one job, every 15 minutes</text>
+<text class="bl" x="740" y="205">step 1: AP  ·  step 2: AR</text>
+<text class="bl" x="740" y="219">reads the mirror</text>
+<text class="bl" x="740" y="233">a file open in Excel waits</text>
+<text class="bl" x="740" y="247">for the next run</text>
+<text class="note" x="284" y="175">Locked first (Phase 0):</text>
+<text class="notel" x="284" y="193">· two-factor, no default admin</text>
+<text class="notel" x="284" y="208">· in from outside: Fortinet VPN only</text>
+<text class="notel" x="284" y="223">· clock synced · locked backups</text>
+<text class="notel" x="284" y="238">· keys readable by one user</text>
+<rect class="b data" x="280" y="395" width="200" height="66" rx="7"/>
+<text class="bt" x="290" y="414">The Mac&#x27;s own mirror</text>
+<text class="bl" x="290" y="431">refreshed when you work</text>
+<text class="bl" x="290" y="445">2nd copy, off the Synology</text>
+<rect class="b mac" x="505" y="395" width="200" height="66" rx="7"/>
+<text class="bt" x="515" y="414">Key Helper</text>
+<text class="bl" x="515" y="431">the Mac&#x27;s QuickBooks login</text>
+<text class="bl" x="515" y="445">live reports + the writers</text>
+<rect class="b info" x="730" y="395" width="200" height="66" rx="7"/>
+<text class="bt" x="740" y="414">shared/</text>
+<text class="bl" x="740" y="431">the ONE copy of every rule</text>
+<text class="bl" x="740" y="445">server gets read code only</text>
+<rect class="b mac" x="280" y="485" width="200" height="66" rx="7"/>
+<text class="bt" x="290" y="504">Ledger loaders</text>
+<text class="bl" x="290" y="521">mirror · both trackers (share)</text>
+<text class="bl" x="290" y="535">WIP master · Notion</text>
+<rect class="b data" x="505" y="485" width="200" height="66" rx="7"/>
+<text class="bt" x="515" y="504">ledger.sqlite3</text>
+<text class="bl" x="515" y="521">the project database</text>
+<rect class="b mac" x="730" y="485" width="200" height="66" rx="7"/>
+<text class="bt" x="740" y="504">Project ledger</text>
+<text class="bl" x="740" y="521">dashboard · this Mac only</text>
+<text class="bl" x="740" y="535">Projects·Vendors·Customers·Co.</text>
+<rect class="b write" x="280" y="575" width="200" height="66" rx="7"/>
+<text class="bt" x="290" y="594">QuickBooks writers</text>
+<text class="bl" x="290" y="611">Pay · Re-apply · recode · close</text>
+<text class="bl" x="290" y="625">dry run, then Touch ID</text>
+<rect class="b mac" x="505" y="575" width="200" height="66" rx="7"/>
+<text class="bt" x="515" y="594">Debt schedule · QBO export</text>
+<text class="bl" x="515" y="611">run by hand</text>
+<text class="bl" x="515" y="625">workbooks on OneDrive</text>
+<rect class="b mac" x="730" y="575" width="200" height="66" rx="7"/>
+<text class="bt" x="740" y="594">WIP readers</text>
+<text class="bl" x="740" y="611">wip/  CP · RP · MFD</text>
+<text class="bl" x="740" y="625">mirror + takeoffs + draws</text>
+<rect class="b mac" x="280" y="665" width="200" height="66" rx="7"/>
+<text class="bt" x="290" y="684">Systems + Graph</text>
+<text class="bl" x="290" y="701">the vault, read live</text>
+<text class="bl" x="290" y="715">never written</text>
+<rect class="b mac" x="505" y="665" width="200" height="66" rx="7"/>
+<text class="bt" x="515" y="684">One-offs · audits</text>
+<text class="bl" x="515" y="701">one-offs/ · job-auditor/</text>
+<text class="bl" x="515" y="715">run when needed</text>
+<rect class="b mac" x="730" y="665" width="200" height="66" rx="7"/>
+<text class="bt" x="740" y="684">Project P&amp;Ls</text>
+<text class="bl" x="740" y="701">project-pnl/</text>
+<text class="bl" x="740" y="715">mirror + live QBO reports</text>
+<rect class="b mac" x="730" y="755" width="200" height="66" rx="7"/>
+<text class="bt" x="740" y="774">Vendor statements</text>
+<text class="bl" x="740" y="791">statement-reconciler/</text>
+<text class="bl" x="740" y="805">statement PDFs vs open bills</text>
+<text class="note" x="284" y="777">Later: decide whether any read-only ledger views</text>
+<text class="note" x="284" y="793">move. Key Helper stays on the Mac either way.</text>
+<rect class="b out" x="980" y="110" width="200" height="66" rx="7"/>
+<text class="bt" x="990" y="129">Bill Tracker.xlsx</text>
+<text class="bl" x="990" y="146">Accounting / Accounts Payable</text>
+<text class="bl" x="990" y="160">(on the Synology itself)</text>
+<rect class="b out" x="980" y="195" width="200" height="66" rx="7"/>
+<text class="bt" x="990" y="214">Invoice Tracker.xlsx</text>
+<text class="bl" x="990" y="231">Accounting / Accounts Receivable</text>
+<text class="bl" x="990" y="245">(on the Synology itself)</text>
+<rect class="b out" x="980" y="280" width="200" height="52" rx="7"/>
+<text class="bt" x="990" y="299">Notion AR + Teams</text>
+<text class="bl" x="990" y="316">invoice DBs · paid cards</text>
+<rect class="b out" x="980" y="575" width="200" height="66" rx="7"/>
+<text class="bt" x="990" y="594">WIP - MASTER.xlsx</text>
+<text class="bl" x="990" y="611">SharePoint · frozen format</text>
+<rect class="b out" x="980" y="665" width="200" height="66" rx="7"/>
+<text class="bt" x="990" y="684">Project P&amp;Ls</text>
+<text class="bl" x="990" y="701">Common job folders</text>
+<text class="bl" x="990" y="715">OneDrive (MFD)</text>
+<rect class="b out" x="980" y="755" width="200" height="66" rx="7"/>
+<text class="bt" x="990" y="774">Notion Vendor Statements</text>
+<text class="bl" x="990" y="791">+ one Teams digest</text>
+<polyline class="ar a" points="220,320 250,320 250,98 278,98" marker-end="url(#ah)"/>
+<polyline class="ar a" points="220,360 250,360 250,378 605,378 605,393" marker-end="url(#ah)"/>
+<text class="al" x="615" y="375">passes</text>
+<polyline class="ar w" points="280,608 238,608 238,392 222,392" marker-end="url(#ahw)"/>
+<text class="al" x="184" y="426">writes</text>
+<polyline class="ar a" points="480,98 503,98" marker-end="url(#ah)"/>
+<polyline class="ar a" points="705,98 728,98" marker-end="url(#ah)"/>
+<polyline class="ar a" points="830,131 830,153" marker-end="url(#ah)"/>
+<polyline class="ar a" points="605,131 605,153" marker-end="url(#ah)"/>
+<polyline class="ar s" points="380,393 380,345 718,345 718,120 728,120" stroke-dasharray="5 4" marker-start="url(#ahs2)" marker-end="url(#ahs)"/>
+<text class="al" x="392" y="340">nightly cross-check: the two mirrors must agree</text>
+<polyline class="ar" points="930,206 955,206"/><polyline class="ar" points="955,143 955,306"/>
+<polyline class="ar a" points="955,143 978,143" marker-end="url(#ah)"/>
+<polyline class="ar a" points="955,228 978,228" marker-end="url(#ah)"/>
+<polyline class="ar a" points="955,306 978,306" marker-end="url(#ah)"/>
+<polyline class="ar a" points="380,461 380,483" marker-end="url(#ah)"/>
+<polyline class="ar a" points="480,518 503,518" marker-end="url(#ah)"/>
+<polyline class="ar a" points="705,518 728,518" marker-end="url(#ah)"/>
+<polyline class="ar a" points="830,551 830,573" marker-end="url(#ah)"/>
+<text class="al" x="838" y="567">WIP Review</text>
+<polyline class="ar a" points="930,608 978,608" marker-end="url(#ah)"/>
+<polyline class="ar a" points="930,698 978,698" marker-end="url(#ah)"/>
+<polyline class="ar a" points="930,788 978,788" marker-end="url(#ah)"/>
+<polyline class="ar a" points="220,505 258,505" marker-end="url(#ah)"/>
+<polyline class="ar a" points="220,585 258,585" marker-end="url(#ah)"/>
+<polyline class="ar a" points="220,660 258,660" marker-end="url(#ah)"/>
+<polyline class="ar a" points="220,743 250,743 250,698 278,698" marker-end="url(#ah)"/>
+</svg></div>
+
+<h2>What runs where</h2>
+<div class="tablewrap"><table>
+<tr><th>Tool</th><th>Today</th><th>After Phase 2</th><th>Final</th></tr>
+<tr><td class="">QBO mirror</td><td class="">Mac (sync-all step 0)</td><td class="">Both: server every 2-5 min, Mac when you work</td><td class="">Both, checked against each other nightly</td></tr>
+<tr><td class="">AP/AR sync (Bill Tracker, Invoice Tracker, Notion, Teams)</td><td class="">Mac, by hand (sync-all)</td><td class="srvc">Synology, every 15 minutes</td><td class="srvc">Synology</td></tr>
+<tr><td class="">QuickBooks login</td><td class="">Key Helper, Mac</td><td class="">Both, each its own Intuit app</td><td class="">Both</td></tr>
+<tr><td class="">Ledger loaders + dashboard</td><td class="">Mac</td><td class="">Mac (its own mirror)</td><td class="">Mac; read-only views may move later</td></tr>
+<tr><td class="">WIP readers + WIP Review</td><td class="">Mac</td><td class="">Mac</td><td class="">Mac</td></tr>
+<tr><td class="">Project P&amp;Ls</td><td class="">Mac</td><td class="">Mac</td><td class="">Mac</td></tr>
+<tr><td class="">Statement reconciler · debt schedule · QBO export · one-offs</td><td class="">Mac</td><td class="">Mac</td><td class="">Mac</td></tr>
+<tr><td class="">QuickBooks writers (pay, re-apply, recode, close, reclass)</td><td class="">Mac</td><td class="">Mac</td><td class="">Mac - never the server</td></tr>
+</table></div>
+
+<h2>Rules the map depends on</h2>
+<ul>
+<li><b>One QuickBooks renewer per app.</b> The server gets its own Intuit app; it never re-authorizes the Mac's app.</li>
+<li><b>Two mirrors, never shared.</b> Each machine keeps its own mirror with its own QuickBooks login, so the server never waits on the Mac and the Mac never opens a file over the share. They are compared nightly; the QBO Audit reads the Mac's change log.</li>
+<li><b>One writer per file.</b> Only the machine named as the writer may write the trackers (a lock file on the share); the day the AP/AR sync moves, the Mac stops running it and can take it back by flipping that setting. Both trackers live on the Accounting share, so no OneDrive bridge is needed.</li>
+<li><b>Tools never import tools.</b> Everything common lives in <code>shared/</code>, so a tool moves with <code>shared/</code> and nothing else.</li>
+<li><b>Who writes to QuickBooks:</b> Pay in QuickBooks and Re-apply (ledger), the recode <code>--commit</code>, bulk close (never MFD), and the loans-to-subs reclass. All gated, all on the Mac.</li>
+</ul>
+</div></body></html>

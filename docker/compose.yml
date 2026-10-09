@@ -1,0 +1,36 @@
+# compose.yml - the office server on the Synology (Container Manager > Project, or `docker compose up -d --build`
+# from the repo root: `docker compose -f docker/compose.yml up -d --build`). See docker/README.md first.
+#
+# Paths on the LEFT are the Synology's; change them to match the check-up. The right side never changes.
+services:
+  office-server:
+    container_name: office-server
+    build:
+      context: ..                      # the repo root; .dockerignore lets in only the allow-list
+      dockerfile: docker/Dockerfile
+      args:
+        APP_UID: 1027                  # the Synology automation user's uid/gid (Control Panel > User; `id` over SSH)
+        APP_GID: 100
+    image: office-server:1
+    restart: unless-stopped
+    stop_grace_period: 120s            # a restart lets the step in progress finish (AP / AR write the trackers)
+    env_file:
+      - /volume1/docker/automation/server.env    # paths + ids, no secrets (from docker/server.env.example)
+      - /volume1/automation-keys/secrets.env           # the keys - an ENCRYPTED shared folder, 600, never in git
+    volumes:
+      - /volume1/docker/automation/data:/data                          # the server's mirror, status, logs, state
+      - /volume1/automation-keys:/data/keys                            # the encrypted shared folder: secrets + the renewed QBO token
+      - /volume1/Accounting:/mnt/accounting                            # Bill Tracker + Invoice Tracker (read + write)
+      - "/volume1/Common/OPERATIONS/GENERAL LIST:/mnt/general-list:ro" # read only
+      - /volume1/docker/automation/po-tracker:/mnt/po-tracker:ro       # Cloud Sync copy of the OneDrive PO folder, read only
+      - /volume1/Accounting/_automation/registers:/data/companyhealth/Registers  # the owner's rule files, pushed from the Mac (push_registers.sh)
+    # no ports: nothing can reach into this container
+    deploy:
+      resources:
+        limits:
+          memory: 1536M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"

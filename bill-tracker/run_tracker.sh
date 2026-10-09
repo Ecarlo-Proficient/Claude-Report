@@ -7,10 +7,10 @@
 #
 # Used by:
 #   - manual runs from terminal (also via the `sync-ap` alias)
-#   - launchd schedule (com.proficient.billtracker.plist)
+#     (there is no scheduler — the launchd auto-run was scrapped)
 #
 # Output workbook:
-#   /Users/sebas/Library/CloudStorage/OneDrive-ProficientConcrete,LLC/Automations-/Bill Tracker.xlsx
+#   /Volumes/Accounting/Accounts Payable/Bill Tracker.xlsx (the Accounting share - since 2026-09-16)
 #
 # Logs live OUTSIDE the project folder (sync_view.py owns run.log):
 #   ~/Library/Logs/Proficient/bill-tracker/
@@ -21,8 +21,13 @@
 #   2026-06-18 — visual viewer (sync_view.py) added; logging moved into it.
 
 set -u
-DIR="/Users/sebas/Documents/Claude/Projects/Automate Concrete Business/bill-tracker"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # self-locating — works from any clone, any user
 cd "$DIR"
 
+base="$(cd "$DIR/.." && pwd)"
+. "$base/python-env/python.sh"   # THE interpreter -> $ACB_PY (never a bare python3)
+# A missing drive PAUSES before any work: reconnect, Enter to retry, q to close (owner 2026-09-23)
+"$ACB_PY" "$base/shared/paths.py" --require accounting --for "sync-ap (the Bill Tracker)" || exit 2
+
 # exec so the viewer's exit code propagates straight through to the caller.
-exec /usr/bin/env python3 "$DIR/sync_view.py" "$@"
+exec "$ACB_PY" "$DIR/sync_view.py" "$@"

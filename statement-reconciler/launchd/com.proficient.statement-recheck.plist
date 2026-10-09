@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- TEMPLATE - launchd cannot expand variables. Install with the real
+         paths for this machine (run from the repo root):
+           sed -e "s|/ABSOLUTE/PATH/TO/Automate Concrete Business|$PWD|g" \
+               -e "s|/ABSOLUTE/PATH/TO/HOME|$HOME|g" \
+               statement-reconciler/launchd/com.proficient.statement-recheck.plist \
+               > ~/Library/LaunchAgents/com.proficient.statement-recheck.plist
+         then: launchctl load ~/Library/LaunchAgents/com.proficient.statement-recheck.plist
+         The Notion "Re-check" box -> statement_reconciler.py --from-notion. Moves to the office
+         server's scheduler once that is live (TRANSITION).
+    -->
+    <key>Label</key>
+    <string>com.proficient.statement-recheck</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/ABSOLUTE/PATH/TO/Automate Concrete Business/statement-reconciler/run_recheck.sh</string>
+    </array>
+
+    <!-- Every 5 minutes (300 seconds) -->
+    <key>StartInterval</key>
+    <integer>300</integer>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/ABSOLUTE/PATH/TO/HOME/Library/Logs/Proficient/statement-reconciler/recheck.launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/ABSOLUTE/PATH/TO/HOME/Library/Logs/Proficient/statement-reconciler/recheck.launchd.err</string>
+</dict>
+</plist>

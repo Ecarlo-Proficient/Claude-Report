@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "SendUserFile",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ". \"$CLAUDE_PROJECT_DIR/python-env/python.sh\" >&2 && \"$ACB_PY\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/xlsx_send_guard.py\"",
+            "timeout": 90,
+            "statusMessage": "Verifying Excel integrity…"
+          }
+        ]
+      }
+    ]
+  }
+}
