@@ -456,7 +456,7 @@
     </section><!-- /sec: dupcustomers -->
     </div><!-- /tab: dupcustomers -->
 
-    <!-- Reclassify transactions (owner 2026-10-07): cost lines from one project to another, line level - ledger/reclassify.py -->
+    <!-- Reclassify transactions (owner 2026-10-07, full suite 10-09): find lines, bulk-change account / item / class / project / memo, line level - ledger/reclassify.py -->
     <div class="tab-page" data-tab="reclassify" hidden>
     <section class="subpage" data-sec="reclassify" id="sec-reclassify">
       <section class="widget">
@@ -470,14 +470,29 @@
           <div class="sync-bar"><div class="sync-bar-fill" id="rcFill"></div></div>
           <div class="sync-step" id="rcStep"></div>
         </div>
-        <div class="filters rc-pick">
-          <label class="rc-lbl">From <input type="search" id="rcFrom" list="rcProjects" placeholder="project #" autocomplete="off" spellcheck="false"></label>
-          <span class="dim">→</span>
-          <label class="rc-lbl">To <input type="search" id="rcTo" list="rcProjects" placeholder="project #" autocomplete="off" spellcheck="false"></label>
-          <button type="button" class="btn small" id="btnRcPreview">Preview</button>
-          <datalist id="rcProjects"></datalist><datalist id="rcCodes"></datalist>
+        <div class="filters rc-pick" id="rcFilters">
+          <label class="rc-lbl">From <input type="date" id="rcD1"></label>
+          <label class="rc-lbl">To <input type="date" id="rcD2"></label>
+          <label class="rc-lbl">Type <select id="rcTypes">
+            <option value="">All</option>
+            <option value="Bill,Purchase,VendorCredit">Bills · expenses · vendor credits</option>
+            <option value="JournalEntry">Journal entries</option>
+            <option value="Invoice,CreditMemo,SalesReceipt">Invoices · credit memos</option>
+          </select></label>
+          <label class="rc-lbl">Account <input type="search" id="rcFAccount" list="rcAccounts" autocomplete="off" spellcheck="false"></label>
+          <label class="rc-lbl">Item <input type="search" id="rcFItem" list="rcItems" autocomplete="off" spellcheck="false"></label>
+          <label class="rc-lbl">Class <input type="search" id="rcFClass" list="rcClassesF" autocomplete="off" spellcheck="false"></label>
+          <label class="rc-lbl">Project <input type="search" id="rcFProject" list="rcProjectsF" autocomplete="off" spellcheck="false"></label>
+          <label class="rc-lbl">Name <input type="search" id="rcFName" autocomplete="off" spellcheck="false"></label>
+          <label class="rc-lbl">Memo <input type="search" id="rcFMemo" autocomplete="off" spellcheck="false"></label>
+          <label class="rc-lbl">Doc # <input type="search" id="rcFDoc" autocomplete="off" spellcheck="false"></label>
+          <button type="button" class="btn small primary" id="btnRcPreview">Find lines</button>
+          <button type="button" class="btn small" id="btnRcPnl">P&amp;L</button>
+          <datalist id="rcAccounts"></datalist><datalist id="rcItems"></datalist>
+          <datalist id="rcClasses"></datalist><datalist id="rcProjects"></datalist>
+          <datalist id="rcClassesF"></datalist><datalist id="rcProjectsF"></datalist>
         </div>
-        <div class="rc-codes" id="rcCodesBar" hidden></div>
+        <div class="rc-change" id="rcChange" hidden></div>
         <div id="rcMsg"></div>
         <div class="table-scroll">
           <table class="grid" id="rcTable"><thead></thead><tbody></tbody></table>

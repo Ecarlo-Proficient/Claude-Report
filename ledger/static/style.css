@@ -2408,11 +2408,27 @@ table.grid.vp-paytable th, table.grid.vp-paytable td { border: 1px solid color-m
 .cd-bulk { margin: 8px 0 4px; }
 
 /* Reclassify transactions */
-.filters.rc-pick { align-items: center; gap: 10px; }
+.filters.rc-pick { align-items: center; gap: 8px 12px; }
 .rc-lbl { display: inline-flex; align-items: center; gap: 6px; }
 .filters.rc-pick input[type="search"] { flex: 0 0 150px; min-width: 0; width: 150px; }
-.rc-codes { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 0 var(--pad-x) 12px; }
+.filters.rc-pick input[type="date"] { width: 140px; }
+.rc-change { margin: 0 var(--pad-x) 12px; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); display: flex; flex-direction: column; gap: 8px; }
+.rc-ch-head { display: flex; align-items: center; gap: 12px; font-weight: 600; }
+.rc-ch-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.rc-ch-lbl { width: 120px; color: var(--text-dim); }
+.rc-ch-row input, .rc-ch-row select, .rc-code input { font: inherit; font-size: .9em; padding: 4px 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
+.rc-ch-row input[type="search"] { width: 240px; }
+.rc-ch-row input.rc-ch-text { width: 320px; max-width: 100%; }
+.rc-ch-map { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-left: 130px; }
 .rc-code { display: inline-flex; align-items: center; gap: 4px; }
-.rc-code input { font: inherit; font-size: .9em; width: 96px; padding: 4px 8px; border-radius: 8px; }
+.rc-code input { width: 160px; }
+input.rc-bad { border-color: var(--neg); color: var(--neg-text); }
+#rcTable .rc-new { color: var(--accent-text); font-weight: 600; }
+#rcTable td.rc-memo { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#rcTable tr.rc-pl-row { cursor: pointer; }
+#rcTable tr.rc-pl-row:hover { background: var(--row-hover); }
+#rcTable tr.rc-pl-group td { font-weight: 600; color: var(--text-dim); background: var(--surface-2); }
 #rcMsg, #rcResult, #rcAct { margin-left: var(--pad-x); margin-right: var(--pad-x); }
 #rcAct { margin-bottom: 14px; }
+@media (max-width: 700px) { .rc-ch-map { margin-left: 0; } .rc-ch-lbl { width: auto; } .rc-ch-row input[type="search"] { width: 100%; } }
+#rcTable td.rc-memo:has(.rc-new) { white-space: normal; max-width: 420px; }

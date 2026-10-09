@@ -59,7 +59,7 @@ import bill_payment_stub  # noqa: E402  (local: the check / bill-payment stub - 
 import check_drift        # noqa: E402  (local: checks QBO rewrote after they were paid - the Checks QBO changed audit, /api/checkdrift)
 import dup_customers      # noqa: E402  (local: one project # on two QBO customers - the Duplicate customers audit, /api/dupcustomers)
 import reapply_check      # noqa: E402  (local: put a stripped check back on its bills - an owner-confirmed QBO write)
-import reclassify         # noqa: E402  (local: Reclassify transactions - cost lines from one project to another, owner-confirmed QBO write)
+import reclassify         # noqa: E402  (local: Reclassify transactions - bulk line edits: account / item / class / project / memo, owner-confirmed QBO write)
 import pay_bills          # noqa: E402  (local: pay the saved pay run in QBO - one bill payment per vendor, owner-confirmed)
 import strip_history      # noqa: E402  (local: every stripped check kept for good + the QBO support PDF, /api/checkstrips)
 
@@ -547,6 +547,8 @@ def _pipelines():
         ]},
         {"key": "uncleared", "label": "Uncleared checks (QBO)", "steps": [
             # QBO's TransactionList `cleared=Uncleared` filter -> uncleared_check + bank_match (owner 2026-09-24)
+            # mirror first: the loader drops voided ($0) and "to print" checks by the mirror's copy (owner 2026-10-09)
+            {"label": "Refresh the mirror (QBO change feed, Touch ID)", "script": "ledger/refresh_mirror.py", "args": []},
             {"label": "Pull uncleared checks (Touch ID)", "script": "ledger/load_uncleared_checks.py", "args": []},
         ]},
         {"key": "healthpull", "label": "Health metrics (QBO)", "steps": [
@@ -3704,10 +3706,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(reclassify.options())
             except Exception as e:         # noqa: BLE001
                 self._json({"ok": False, "error": str(e)})
-        elif path == "/api/reclassify/plan":      # preview: every cost line on FROM (mirror read, no write)
+        elif path == "/api/reclassify/plan":      # find: the lines matching the filters, or the P&L by account (mirror read, no write)
             q = self._query()
             try:
-                self._json(reclassify.plan(q.get("from") or "", q.get("to") or "", q.get("recode") or ""))
+                self._json(reclassify.plan({k: q.get(k) or "" for k in
+                                            ("mode", "d1", "d2", "types", "account", "item", "class", "project", "name", "memo", "doc")}))
             except Exception as e:         # noqa: BLE001
                 self._json({"ok": False, "error": str(e)})
         elif path == "/api/checkdrift/reapply":   # dry run: what re-applying a stripped check would write (live QBO read, no write)
@@ -4532,20 +4535,20 @@ class Handler(BaseHTTPRequestHandler):
         self._json(res)
 
     def _reclassify_commit(self):
-        """{from, to, recode, keys, n, amount, confirm: true} -> move the ticked lines the owner confirmed
-        ("Are you sure?"); refused unless they are still exactly the preview. Then the mirror refresh."""
+        """{keys, sigs, changes, n, amount, confirm: true} -> change the ticked lines the owner confirmed
+        ("Are you sure?"); refused unless each is still exactly the preview. Then the mirror refresh."""
         try:
             length = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(length) or b"{}")
-            keys = [str(k) for k in body.get("keys") or []][:2000]
+            keys = [str(k) for k in body.get("keys") or []][:5000]
+            sigs = {str(k): str(v) for k, v in (body.get("sigs") or {}).items()}
             n, amount = int(body.get("n")), float(body.get("amount"))
         except (ValueError, TypeError, AttributeError, json.JSONDecodeError):
             return self._json({"ok": False, "error": "bad request"}, 400)
         if body.get("confirm") is not True or not keys:
             return self._json({"ok": False, "error": "not confirmed"}, 400)
         try:
-            res = reclassify.commit(str(body.get("from") or ""), str(body.get("to") or ""),
-                                    str(body.get("recode") or ""), keys, n, amount)
+            res = reclassify.commit(keys, sigs, body.get("changes") or {}, n, amount)
         except Exception as e:             # noqa: BLE001
             return self._json({"ok": False, "error": str(e)})
         if res.get("moved_docs"):

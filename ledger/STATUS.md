@@ -42,6 +42,19 @@ change to this tool (repo rule). Tool-scope only — business/dollar analyses li
   the page's own script puts the name everywhere that role appears. `/api/process-guide?fmt=html` inlines names.js
   (`registry_view.inline_names`) since the relative path does not resolve under /api/. The Guide link opens the html first
   when it has slots. First guide: AR-10 payment intake (3 pages). `tests/test_guide_names.py`.
+- 2026-10-09 · **Uncleared checks cleaned** (owner: "refresh it and clean the list"). `load_uncleared_checks.clean`
+  leaves off voided ($0) checks and checks QuickBooks still holds "To print" (queued, never written), read from the
+  mirror's copy; the page's Refresh now runs the mirror refresh first. `tests/test_uncleared_clean.py`.
+- 2026-10-09 · **Reclassify transactions = the full suite** (owner: "you look at it from a P&L, you click the account
+  and select the transactions to move ... for line items ... reclassify all, item or category, memo, class, project ...
+  bulk edit all of these things"). Find lines by date / type / account (+ sub-accounts) / item / class / project / name /
+  memo / doc #, or the **P&L** by account for a date range (click an account = its lines). Change panel: account, item,
+  class, project, line memo, document memo (set / find & replace), one value or **Map each**; old -> new in every cell.
+  Now covers journal entries (account / class / customer / memo - written now, were listed only), invoices, credit
+  memos, sales receipts (item / class / memo). Commit: per-line signature (refused if the line moved since the preview),
+  live re-read refuses a document edited in QuickBooks since, read-back of every changed field, same money guards.
+  `/api/reclassify/plan` takes filters (`mode=pnl|lines`); POST `/api/reclassify/commit` takes `{keys, sigs, changes}`.
+  A category line stays a category line (no item <-> category conversion - line ids could change).
 - 2026-10-07 · **Company -> Reclassify transactions** (owner: "add this tool as reclassify transactions in the
   ledger"). `ledger/reclassify.py` (graduated from one-offs/move_project_lines.py, first used 10/06 for RP7242-FTW ->
   RP7242): From / To project pickers -> Preview (mirror, no write) lists every Bill / Expense / Vendor credit LINE on

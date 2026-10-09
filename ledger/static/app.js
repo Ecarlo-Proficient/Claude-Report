@@ -9485,115 +9485,248 @@ function renderUncleared() {
 let DC = null, dcFilter = "all";
 const DC_BAD = new Set(["Both have invoices", "Money on duplicate"]);
 const DC_KIND = { Bill: "bill", Purchase: "expense", JournalEntry: "journal", VendorCredit: "vendorcredit", Invoice: "invoice" };
-// ── Reclassify transactions (owner 2026-10-07: "add this tool as reclassify transactions in the ledger") ──
-// Cost LINES from one project to another, line level: a multi-job sub bill keeps its other lines. Preview reads the
-// mirror (/api/reclassify/plan, no write); every line is ticked except closed-period ones (closing password - by hand);
-// an optional cost-code swap per code on FROM. The write runs only after "Are you sure?", and the server refuses unless
-// the ticked lines are still exactly the preview; each document is re-read live, backed up, and proven after the write.
-let RC = null, RC_OPT = null, rcTick = new Set();
-const rcKind = e => e === "Purchase" ? "expense" : e === "VendorCredit" ? "vendorcredit" : "bill";
-const rcType = e => e === "Purchase" ? "Expense" : e === "VendorCredit" ? "Vendor credit" : "Bill";
+// ── Reclassify transactions (owner 2026-10-07; full suite 10-09: "you look at it from a P&L, you click the account and
+// select the transactions to move ... for line items ... reclassify all, item or category, memo, class, project ... bulk
+// edit"). Find lines (/api/reclassify/plan, mirror, no write) by date / type / account (+ its sub-accounts) / item / class /
+// project / name / memo / doc #, or open the P&L by account and click one. Tick lines; the change panel offers each field
+// the ticked lines can carry (all -> one value, or Map each current value); every changed cell shows old → new. The
+// write runs only after "Are you sure?" + Touch ID, and the server refuses unless each line is still the preview.
+let RC = null, RC_OPT = null, rcTick = new Set(), rcLook = null;
+let rcChg = null;
+const RC_REF = [["account", "Account", "rcAccounts"], ["item", "Item", "rcItems"], ["class", "Class", "rcClasses"], ["project", "Project", "rcProjects"]];
+const RC_TEXT = [["memo", "Line memo"], ["docmemo", "Document memo"]];
+const RC_KIND = { Bill: "bill", Purchase: "expense", VendorCredit: "vendorcredit", JournalEntry: "journal", Invoice: "invoice", CreditMemo: "creditmemo", SalesReceipt: "salesreceipt" };
+const RC_TYPE = { Bill: "Bill", Purchase: "Expense", VendorCredit: "Vendor credit", JournalEntry: "Journal entry", Invoice: "Invoice", CreditMemo: "Credit memo", SalesReceipt: "Sales receipt" };
+function rcReset() { rcChg = { account: { all: "", each: {}, open: false }, item: { all: "", each: {}, open: false }, class: { all: "", each: {}, open: false },
+  project: { all: "", each: {}, open: false }, memo: { mode: "", find: "", text: "" }, docmemo: { mode: "", find: "", text: "" } }; }
+rcReset();
 async function loadReclassify() {
   if (RC_OPT && RC_OPT.ok) return;
   try { RC_OPT = await (await fetch("/api/reclassify/options")).json(); } catch (e) { RC_OPT = { ok: false, error: String(e) }; }
-  const pl = $("#rcProjects"), cl = $("#rcCodes"); if (!pl || !RC_OPT.ok) return;
-  pl.innerHTML = ""; cl.innerHTML = "";
-  for (const p of RC_OPT.projects) { const o = document.createElement("option"); o.value = p.proj; o.label = p.name; pl.appendChild(o); }
-  for (const c of RC_OPT.codes) { const o = document.createElement("option"); o.value = c; cl.appendChild(o); }
+  if (!RC_OPT.ok) { const m = $("#rcMsg"); if (m) { m.innerHTML = ""; rcLine(m, RC_OPT.error || "failed", "neg"); } return; }
+  const fill = (id, vals, none) => { const dl = $("#" + id); if (!dl) return; dl.innerHTML = "";
+    if (none) { const o = document.createElement("option"); o.value = "(none)"; dl.appendChild(o); }
+    for (const [v, l] of vals) { const o = document.createElement("option"); o.value = v; if (l) o.label = l; dl.appendChild(o); } };
+  const projVals = RC_OPT.projects.map(p => [p.proj || p.name, p.proj ? p.name : ""]);
+  fill("rcAccounts", RC_OPT.accounts.map(a => [a.name, a.type])); fill("rcItems", RC_OPT.items.map(i => [i.name, ""]));
+  fill("rcClasses", RC_OPT.classes.map(c => [c.name, ""])); fill("rcProjects", projVals);
+  fill("rcClassesF", RC_OPT.classes.map(c => [c.name, ""]), true); fill("rcProjectsF", projVals, true);
+  rcLook = {};
+  const add = (f, k, id) => { const m = rcLook[f] || (rcLook[f] = {}); k = String(k || "").trim().toLowerCase(); if (!k) return; m[k] = m[k] && m[k] !== id ? "?" : id; };
+  for (const a of RC_OPT.accounts) { add("account", a.name, a.id); add("account", a.name.split(":").pop(), a.id); }
+  for (const i of RC_OPT.items) add("item", i.name, i.id);
+  for (const c of RC_OPT.classes) { add("class", c.name, c.id); add("class", c.name.split(":").pop(), c.id); }
+  for (const p of RC_OPT.projects) { add("project", p.name, p.id); if (p.proj) add("project", p.proj, p.id); }
+  rcLook.names = {};
+  for (const [f, list] of [["account", RC_OPT.accounts], ["item", RC_OPT.items], ["class", RC_OPT.classes], ["project", RC_OPT.projects]])
+    rcLook.names[f] = Object.fromEntries(list.map(x => [x.id, f === "project" && x.proj ? x.proj : x.name]));
 }
-function rcRecode() {
-  return $$("#rcCodesBar input[data-code]").map(i => [i.dataset.code, i.value.trim().toUpperCase()])
-    .filter(([o, n]) => n && n !== o).map(([o, n]) => `${o}=${n}`).join(",");
+function rcId(f, text) {   // typed name -> QuickBooks id ("" = blank, null = not one record)
+  const t = String(text || "").trim(); if (!t) return "";
+  if (!rcLook || !rcLook[f]) return null;
+  const id = rcLook[f][t.toLowerCase()]; return id && id !== "?" ? id : null;
 }
-async function rcPreview() {
-  const from = ($("#rcFrom").value || "").trim().toUpperCase(), to = ($("#rcTo").value || "").trim().toUpperCase();
+function rcFilters(mode) {
+  const q = { mode: mode || "lines", d1: $("#rcD1").value, d2: $("#rcD2").value, types: $("#rcTypes").value,
+              name: $("#rcFName").value.trim(), memo: $("#rcFMemo").value.trim(), doc: $("#rcFDoc").value.trim() };
+  for (const [f, id] of [["account", "#rcFAccount"], ["item", "#rcFItem"], ["class", "#rcFClass"], ["project", "#rcFProject"]]) {
+    const v = $(id).value.trim(); if (!v) continue;
+    if ((f === "class" || f === "project") && v.toLowerCase() === "(none)") { q[f] = "none"; continue; }
+    const got = rcId(f, v); if (got === null) return { error: `No single QuickBooks ${f} named "${v}".` };
+    q[f] = got;
+  }
+  return q;
+}
+async function rcPreview(mode) {
+  if (typeof mode !== "string") mode = "lines";
+  await loadReclassify();
   const msg = $("#rcMsg"); msg.innerHTML = ""; $("#rcResult").innerHTML = "";
-  if (!from || !to) { rcLine(msg, "Pick both projects.", "neg"); return; }
-  const keep = RC && RC.ok && RC.from === from ? rcRecode() : "";
-  const btn = $("#btnRcPreview"); btn.disabled = true; btn.textContent = "Reading…";
+  if (mode === "pnl" && !$("#rcD1").value && !$("#rcD2").value) { const y = new Date().getFullYear(); $("#rcD1").value = `${y}-01-01`; }
+  const q = rcFilters(mode);
+  if (q.error) { rcLine(msg, q.error, "neg"); return; }
+  const btn = mode === "pnl" ? $("#btnRcPnl") : $("#btnRcPreview"), label = btn.textContent;
+  btn.disabled = true; btn.textContent = "Reading…";
   skeletonInto($("#rcTable").tBodies[0] || $("#rcTable"), 6);
-  try { RC = await (await fetch(`/api/reclassify/plan?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&recode=${encodeURIComponent(keep)}`)).json(); }
+  try { RC = await (await fetch("/api/reclassify/plan?" + new URLSearchParams(q).toString())).json(); }
   catch (e) { RC = { ok: false, error: String(e) }; }
-  btn.disabled = false; btn.textContent = "Preview";
-  rcTick = new Set(RC.ok ? RC.rows.filter(r => !r.closed).map(r => r.key) : []);
+  btn.disabled = false; btn.textContent = label;
+  rcTick = new Set(RC.ok && RC.rows ? RC.rows.filter(r => !r.closed).map(r => r.key) : []);
   renderReclassify();
 }
 function rcLine(host, text, cls) { const x = document.createElement("div"); x.className = "cd-ra-line" + (cls ? " " + cls : ""); x.textContent = text; host.appendChild(x); return x; }
+function rcNew(r, f) {   // the new value a ticked line gets for one field, or undefined
+  if (!r.edit.includes(f)) return undefined;
+  if (RC_TEXT.some(([k]) => k === f)) {
+    const s = rcChg[f]; if (!s.mode) return undefined;
+    const nv = s.mode === "set" ? s.text : (s.find ? r[f].split(s.find).join(s.text) : r[f]);
+    return nv !== r[f] ? nv : undefined;
+  }
+  const c = rcChg[f], typed = (c.open && c.each[r[f]]) || c.all;
+  const id = rcId(f, typed); return id && id !== r[f] ? id : undefined;
+}
+function rcRowChanges(r) { const out = {}; for (const f of [...RC_REF.map(x => x[0]), ...RC_TEXT.map(x => x[0])]) { const v = rcNew(r, f); if (v !== undefined) out[f] = v; } return out; }
+function rcLabel(f, id) { return (rcLook && rcLook.names[f] && rcLook.names[f][id]) || id; }
 function renderReclassify() {
   const table = $("#rcTable"), thead = table.querySelector("thead"), tbody = table.querySelector("tbody");
-  const msg = $("#rcMsg"), bar = $("#rcCodesBar"), act = $("#rcAct"), note = $("#rcNote");
-  msg.innerHTML = ""; thead.innerHTML = ""; tbody.innerHTML = ""; act.hidden = true; act.innerHTML = "";
-  if (!RC || !RC.ok) { bar.hidden = true; note.textContent = ""; if (RC) rcLine(msg, RC.error || "failed", "neg"); return; }
-  note.textContent = `${RC.from_name} → ${RC.to_name}`;
-  bar.hidden = !RC.codes_on_from.length; bar.innerHTML = "";
-  if (RC.codes_on_from.length) {
-    const lab = document.createElement("span"); lab.className = "seg-lbl"; lab.textContent = "Cost code"; bar.appendChild(lab);
-    for (const c of RC.codes_on_from) {
-      const w = document.createElement("label"); w.className = "rc-code"; w.append(c + " → ");
-      const i = document.createElement("input"); i.type = "search"; i.dataset.code = c; i.setAttribute("list", "rcCodes"); i.placeholder = "same";
-      i.value = RC.recode[c.toUpperCase()] || ""; i.onchange = rcPreview; w.appendChild(i); bar.appendChild(w);
-    }
-  }
-  if (!RC.rows.length) rcLine(msg, `No bills, expenses or vendor credits on ${RC.from}.`);
-  for (const j of RC.je) rcLine(msg, `Journal entry ${j.doc || j.id} · ${fmtDateShort(j.date)} · ${qaCents(j.amount)} on ${RC.from} - not moved here.`, "warn");
-  if (!RC.rows.length) return;
+  const msg = $("#rcMsg"), act = $("#rcAct"), note = $("#rcNote"), panel = $("#rcChange");
+  msg.innerHTML = ""; thead.innerHTML = ""; tbody.innerHTML = ""; act.hidden = true; act.innerHTML = ""; panel.hidden = true;
+  if (!RC || !RC.ok) { note.textContent = ""; if (RC) rcLine(msg, RC.error || "failed", "neg"); return; }
+  if (RC.mode === "pnl") return renderRcPnl();
+  note.textContent = `${RC.total.toLocaleString()} line${RC.total !== 1 ? "s" : ""} · ${qaCents(RC.amount)}`;
+  if (RC.truncated) rcLine(msg, `Showing the first ${RC.rows.length.toLocaleString()} - narrow the filters to see the rest.`, "warn");
+  if (!RC.rows.length) { rcLine(msg, "No lines match."); return; }
   const open = RC.rows.filter(r => !r.closed);
   const trh = document.createElement("tr");
   const thc = document.createElement("th"); const all = document.createElement("input"); all.type = "checkbox";
   all.checked = open.length && open.every(r => rcTick.has(r.key)); all.title = "Tick / untick every line";
   all.onchange = () => { rcTick = new Set(all.checked ? open.map(r => r.key) : []); renderReclassify(); };
   thc.appendChild(all); trh.appendChild(thc);
-  for (const [h, c] of [["Type", "left"], ["Doc #", "left"], ["Date", "left"], ["Vendor", "left"], ["Cost code", "left"], ["Amount", "right"], ["Lines on doc", "right"], ["Description", "left"]]) {
+  for (const [h, c] of [["Type", "left"], ["Doc #", "left"], ["Date", "left"], ["Name", "left"], ["Account", "left"], ["Item", "left"], ["Class", "left"], ["Project", "left"], ["Memo", "left"], ["Amount", "right"]]) {
     const th = document.createElement("th"); th.className = c; th.textContent = h; trh.appendChild(th); }
   thead.appendChild(trh);
   for (const r of RC.rows) {
+    const ch = rcTick.has(r.key) ? rcRowChanges(r) : {};
     const tr = document.createElement("tr"); if (r.closed) tr.className = "dim";
     const td = document.createElement("td"); const cb = document.createElement("input"); cb.type = "checkbox";
-    cb.checked = rcTick.has(r.key); cb.disabled = r.closed; if (r.closed) cb.title = `Dated on or before the books-closed date (${fmtDateShort(RC.closed_date)}) - move it in QuickBooks with the closing password`;
-    cb.onchange = () => { cb.checked ? rcTick.add(r.key) : rcTick.delete(r.key); rcActions(); };
+    cb.checked = rcTick.has(r.key); cb.disabled = r.closed; if (r.closed) cb.title = `Dated on or before the books-closed date (${fmtDateShort(RC.closed_date)}) - change it in QuickBooks with the closing password`;
+    cb.onchange = () => { cb.checked ? rcTick.add(r.key) : rcTick.delete(r.key); renderReclassify(); };
     td.appendChild(cb); tr.appendChild(td);
-    tr.appendChild(leftText(rcType(r.entity) + (r.closed ? " · closed" : "")));
-    tr.appendChild(qboLinkCell(r.doc || r.id, qboUrl(rcKind(r.entity), r.id), "Open in QuickBooks"));
-    tr.appendChild(leftText(fmtDateShort(r.date))); tr.appendChild(leftText(r.vendor));
-    tr.appendChild(leftText(r.new_code ? `${r.code} → ${r.new_code}` : r.code));
-    for (const v of [qaCents(r.signed), String(r.doc_lines)]) { const c = document.createElement("td"); c.className = "right"; c.textContent = v; tr.appendChild(c); }
-    tr.appendChild(leftText(r.desc)); tbody.appendChild(tr);
+    tr.appendChild(leftText(RC_TYPE[r.entity] + (r.kind === "item" ? " · item" : "") + (r.closed ? " · closed" : "")));
+    tr.appendChild(qboLinkCell(r.doc || r.id, qboUrl(RC_KIND[r.entity], r.id), "Open in QuickBooks"));
+    tr.appendChild(leftText(fmtDateShort(r.date))); tr.appendChild(leftText(r.name));
+    const cell = (f, now) => { const c = leftText(now || ""); if (f === "account" && (r.kind === "item" || r.kind === "sales")) c.classList.add("dim");
+      if (ch[f] !== undefined) { c.innerHTML = ""; const o = document.createElement("s"); o.className = "dim"; o.textContent = now || "–";
+        const n = document.createElement("b"); n.className = "rc-new"; n.textContent = RC_TEXT.some(([k]) => k === f) ? (ch[f] || "(blank)") : rcLabel(f, ch[f]);
+        c.append(o, " → ", n); }
+      return c; };
+    tr.appendChild(cell("account", r.account_name)); tr.appendChild(cell("item", r.item_name));
+    tr.appendChild(cell("class", r.class_name)); tr.appendChild(cell("project", r.proj || r.project_name));
+    const mc = cell(ch.docmemo !== undefined && ch.memo === undefined ? "docmemo" : "memo", ch.docmemo !== undefined && ch.memo === undefined ? r.docmemo : r.memo);
+    mc.classList.add("rc-memo"); mc.title = [r.memo, r.docmemo && r.docmemo !== r.memo ? "Document memo: " + r.docmemo : ""].filter(Boolean).join("\n");
+    tr.appendChild(mc);
+    const a = document.createElement("td"); a.className = "right"; a.textContent = qaCents(r.signed); tr.appendChild(a);
+    tbody.appendChild(tr);
   }
-  rcActions();
+  renderRcChange(); rcActions();
 }
-function rcPicked() { return RC.rows.filter(r => !r.closed && rcTick.has(r.key)); }
+function renderRcPnl() {
+  const table = $("#rcTable"), thead = table.querySelector("thead"), tbody = table.querySelector("tbody");
+  $("#rcNote").textContent = `P&L · ${RC.d1 ? fmtDateShort(RC.d1) : "start"} – ${RC.d2 ? fmtDateShort(RC.d2) : "today"}`;
+  if (!RC.accounts.length) { rcLine($("#rcMsg"), "Nothing posted in that range."); return; }
+  thead.innerHTML = `<tr><th class="left">Account</th><th class="left">Type</th><th class="right">Lines</th><th class="right">Amount</th></tr>`;
+  let last = "";
+  for (const a of RC.accounts) {
+    if (a.cls !== last) { last = a.cls; const g = document.createElement("tr"); g.className = "rc-pl-group";
+      const t = document.createElement("td"); t.colSpan = 4; t.textContent = a.cls === "Revenue" ? "Income" : "Costs and expenses"; g.appendChild(t); tbody.appendChild(g); }
+    const tr = document.createElement("tr"); tr.className = "rc-pl-row"; tr.tabIndex = 0; tr.title = "Show these lines";
+    tr.appendChild(leftText(a.name)); tr.appendChild(leftText(a.type));
+    for (const v of [a.lines.toLocaleString(), qaCents(a.amount)]) { const c = document.createElement("td"); c.className = "right"; c.textContent = v; tr.appendChild(c); }
+    const go = () => { $("#rcFAccount").value = a.name; rcPreview("lines"); };
+    tr.onclick = go; tr.onkeydown = e => { if (e.key === "Enter") go(); };
+    tbody.appendChild(tr);
+  }
+}
+function renderRcChange() {
+  const panel = $("#rcChange"); panel.innerHTML = "";
+  const ticked = RC.rows.filter(r => !r.closed && rcTick.has(r.key));
+  if (!ticked.length) return;
+  panel.hidden = false;
+  const head = document.createElement("div"); head.className = "rc-ch-head"; head.textContent = `Change the ${ticked.length.toLocaleString()} ticked line${ticked.length !== 1 ? "s" : ""}`;
+  const clr = document.createElement("button"); clr.type = "button"; clr.className = "btn small"; clr.textContent = "Clear changes";
+  clr.onclick = () => { rcReset(); renderReclassify(); }; head.appendChild(clr); panel.appendChild(head);
+  const redraw = () => { const keep = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.rcf : null;
+    renderReclassify(); if (keep) { const el = panel.querySelector(`[data-rcf="${keep}"]`); if (el) { el.focus(); const n = el.value.length; try { el.setSelectionRange(n, n); } catch (e) { /* select */ } } } };
+  for (const [f, label, list] of RC_REF) {
+    const can = ticked.filter(r => r.edit.includes(f));
+    if (!can.length) continue;
+    const c = rcChg[f], row = document.createElement("div"); row.className = "rc-ch-row";
+    const l = document.createElement("span"); l.className = "rc-ch-lbl"; l.textContent = label; row.appendChild(l);
+    const inp = document.createElement("input"); inp.type = "search"; inp.setAttribute("list", list); inp.autocomplete = "off"; inp.spellcheck = false;
+    inp.placeholder = c.open ? "every other value →" : "keep"; inp.value = c.all; inp.dataset.rcf = f + ":all";
+    if (c.all && rcId(f, c.all) === null) inp.classList.add("rc-bad");
+    inp.onchange = () => { c.all = inp.value.trim(); redraw(); };
+    row.appendChild(inp);
+    const olds = [...new Map(can.map(r => [r[f], r])).values()];
+    if (olds.length > 1 || c.open) {
+      const t = document.createElement("button"); t.type = "button"; t.className = "btn small"; t.textContent = c.open ? "One value" : `Map each (${olds.length})`;
+      t.onclick = () => { c.open = !c.open; renderReclassify(); }; row.appendChild(t);
+    }
+    if (f !== "account" && can.length < ticked.length) { const s = document.createElement("span"); s.className = "dim"; s.textContent = `${can.length} of ${ticked.length} lines can carry it`; row.appendChild(s); }
+    panel.appendChild(row);
+    if (c.open) {
+      const box = document.createElement("div"); box.className = "rc-ch-map";
+      for (const r of olds.slice(0, 40)) {
+        const w = document.createElement("label"); w.className = "rc-code";
+        const nm = f === "account" ? r.account_name : f === "item" ? r.item_name : f === "class" ? r.class_name : (r.proj || r.project_name);
+        w.append((nm || "(blank)") + " → ");
+        const i = document.createElement("input"); i.type = "search"; i.setAttribute("list", list); i.autocomplete = "off"; i.spellcheck = false;
+        i.placeholder = c.all || "keep"; i.value = c.each[r[f]] || ""; i.dataset.rcf = `${f}:${r[f]}`;
+        if (i.value && rcId(f, i.value) === null) i.classList.add("rc-bad");
+        i.onchange = () => { c.each[r[f]] = i.value.trim(); redraw(); };
+        w.appendChild(i); box.appendChild(w);
+      }
+      panel.appendChild(box);
+    }
+  }
+  for (const [f, label] of RC_TEXT) {
+    const s = rcChg[f], row = document.createElement("div"); row.className = "rc-ch-row";
+    const l = document.createElement("span"); l.className = "rc-ch-lbl"; l.textContent = label; row.appendChild(l);
+    const sel = document.createElement("select");
+    for (const [v, t] of [["", "keep"], ["replace", "find & replace"], ["set", "set to"]]) { const o = document.createElement("option"); o.value = v; o.textContent = t; sel.appendChild(o); }
+    sel.value = s.mode; sel.onchange = () => { s.mode = sel.value; renderReclassify(); }; row.appendChild(sel);
+    if (s.mode === "replace") { const fi = document.createElement("input"); fi.type = "text"; fi.placeholder = "find"; fi.value = s.find; fi.dataset.rcf = f + ":find";
+      fi.onchange = () => { s.find = fi.value; redraw(); }; row.appendChild(fi); }
+    if (s.mode) { const ti = document.createElement("input"); ti.type = "text"; ti.placeholder = s.mode === "replace" ? "replace with" : "new memo"; ti.value = s.text; ti.dataset.rcf = f + ":text";
+      ti.className = "rc-ch-text"; ti.onchange = () => { s.text = ti.value; redraw(); }; row.appendChild(ti); }
+    panel.appendChild(row);
+  }
+}
+function rcPicked() { return RC.rows.filter(r => !r.closed && rcTick.has(r.key)).map(r => [r, rcRowChanges(r)]).filter(([, ch]) => Object.keys(ch).length); }
 function rcActions() {
   const act = $("#rcAct"); act.hidden = false; act.innerHTML = "";
-  const pick = rcPicked(), amt = Math.round(pick.reduce((s, r) => s + r.signed, 0) * 100) / 100;
-  const s = document.createElement("span"); s.className = "dim"; s.textContent = `${pick.length} line${pick.length !== 1 ? "s" : ""} · ${qaCents(amt)}  `; act.appendChild(s);
+  const ticked = RC.rows.filter(r => !r.closed && rcTick.has(r.key)).length;
+  const pick = rcPicked(), amt = Math.round(pick.reduce((s, [r]) => s + r.signed, 0) * 100) / 100;
+  const s = document.createElement("span"); s.className = "dim";
+  s.textContent = `${pick.length} line${pick.length !== 1 ? "s" : ""} change · ${qaCents(amt)}` + (ticked > pick.length ? ` · ${ticked - pick.length} ticked line${ticked - pick.length !== 1 ? "s" : ""} unchanged` : "") + "  ";
+  act.appendChild(s);
   const w = document.createElement("button"); w.type = "button"; w.className = "btn small primary"; w.textContent = "Reclassify in QuickBooks…";
   w.disabled = !pick.length; w.onclick = () => rcWrite(pick, amt, w); act.appendChild(w);
 }
+function rcPayload(pick) {
+  const changes = {};
+  for (const [r, ch] of pick) for (const [f] of RC_REF) if (ch[f] !== undefined) (changes[f] || (changes[f] = {}))[r[f]] = ch[f];
+  for (const [f] of RC_TEXT) if (pick.some(([, ch]) => ch[f] !== undefined)) changes[f] = { mode: rcChg[f].mode, find: rcChg[f].find, text: rcChg[f].text };
+  return changes;
+}
 async function rcWrite(pick, amt, btn) {
-  const docs = new Set(pick.map(r => r.entity + r.id)).size;
-  const swaps = Object.entries(RC.recode).map(([o, n]) => `${o} → ${n}`).join(", ");
-  if (!confirm(`Are you sure?\n\nThis writes to QuickBooks: ${pick.length} line${pick.length !== 1 ? "s" : ""} on ${docs} document${docs !== 1 ? "s" : ""}, ${qaCents(amt)},\nmove from ${RC.from} to ${RC.to}.`
-    + (swaps ? `\nCost code on those lines: ${swaps}.` : "") + `\n\nOnly those lines change. Each document is backed up first.`)) return;
+  const docs = new Set(pick.map(([r]) => r.entity + r.id)).size, changes = rcPayload(pick);
+  const lines = [];
+  for (const [f, label] of RC_REF) if (changes[f]) {
+    const pairs = Object.entries(changes[f]).map(([o, n]) => `${o ? rcLabel(f, o) : "(blank)"} → ${rcLabel(f, n)}`);
+    lines.push(`${label}: ${pairs.slice(0, 6).join(", ")}${pairs.length > 6 ? ` … (+${pairs.length - 6})` : ""}`); }
+  for (const [f, label] of RC_TEXT) if (changes[f]) lines.push(changes[f].mode === "set" ? `${label}: set to "${changes[f].text}"` : `${label}: "${changes[f].find}" → "${changes[f].text}"`);
+  if (!confirm(`Are you sure?\n\nThis writes to QuickBooks: ${pick.length} line${pick.length !== 1 ? "s" : ""} on ${docs} document${docs !== 1 ? "s" : ""}, ${qaCents(amt)}.\n\n${lines.join("\n")}`
+    + `\n\nOnly those lines change; amounts stay. Each document is backed up first.`)) return;
   btn.disabled = true; btn.textContent = "Writing…";
   let res;
   try { res = await (await fetch("/api/reclassify/commit", { method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ from: RC.from, to: RC.to, recode: Object.entries(RC.recode).map(([o, n]) => `${o}=${n}`).join(","),
-                           keys: pick.map(r => r.key), n: pick.length, amount: amt, confirm: true }) })).json(); }
+    body: JSON.stringify({ keys: pick.map(([r]) => r.key), sigs: Object.fromEntries(pick.map(([r]) => [r.key, r.sig])), changes,
+                           n: pick.length, amount: amt, confirm: true }) })).json(); }
   catch (e) { res = { ok: false, error: String(e) }; }
   const out = $("#rcResult"); out.innerHTML = "";
   if (res.results && res.results.length) {
     const t = document.createElement("table"); t.className = "qa-repair-tbl";
-    t.innerHTML = `<thead><tr><th class="left">Doc #</th><th class="left">Result</th><th class="left"></th></tr></thead>`;
+    t.innerHTML = `<thead><tr><th class="left">Doc #</th><th class="left">Type</th><th class="left">Result</th><th class="left"></th></tr></thead>`;
     const tb = document.createElement("tbody");
     for (const x of res.results) { const tr = document.createElement("tr");
-      tr.appendChild(qboLinkCell(x.doc, qboUrl(rcKind(x.entity), x.id), "Open in QuickBooks"));
-      tr.appendChild(leftText(x.result)); tr.appendChild(leftText(x.detail)); tb.appendChild(tr); }
+      tr.appendChild(qboLinkCell(x.doc, qboUrl(RC_KIND[x.entity], x.id), "Open in QuickBooks"));
+      tr.appendChild(leftText(RC_TYPE[x.entity] || x.entity)); tr.appendChild(leftText(x.result)); tr.appendChild(leftText(x.detail)); tb.appendChild(tr); }
     t.appendChild(tb); out.appendChild(t);
   }
-  rcLine(out, res.ok ? `Done: ${res.moved_lines} line${res.moved_lines !== 1 ? "s" : ""} on ${res.moved_docs} document${res.moved_docs !== 1 ? "s" : ""} now on ${RC.to}.`
+  rcLine(out, res.ok ? `Done: ${res.moved_lines} line${res.moved_lines !== 1 ? "s" : ""} on ${res.moved_docs} document${res.moved_docs !== 1 ? "s" : ""} changed.`
     + (res.mirror_refreshed === false ? " Refresh from QuickBooks to update this page." : "") : `Stopped: ${res.error || "failed"}`, res.ok ? "ok" : "neg");
   btn.textContent = "Reclassify in QuickBooks…"; btn.disabled = false;
-  if (res.moved_docs) { const keep = out.innerHTML; await rcPreview(); $("#rcResult").innerHTML = keep; }
+  if (res.moved_docs) { const keep = out.innerHTML; rcReset(); await rcPreview("lines"); $("#rcResult").innerHTML = keep; }
 }
 
 async function loadDupCustomers(force) {
@@ -10204,9 +10337,10 @@ function init() {
   { const el = $("#btnCdReload"); if (el) el.onclick = () => loadCheckDrift(true); }
   { const el = $("#btnUcRefresh"); if (el) el.onclick = () => runPipeline("uncleared", null, { btn: el, prog: $("#ucProg"), fill: $("#ucFill"), step: $("#ucStep"), after: () => loadUncleared(true) }); }
   { const el = $("#ucSearch"); if (el) { el.addEventListener("input", renderUncleared); el.addEventListener("keydown", e => { if (e.key === "Escape") { el.value = ""; renderUncleared(); } }); } }
-  { const el = $("#btnRcPreview"); if (el) el.onclick = rcPreview;
-    for (const id of ["#rcFrom", "#rcTo"]) { const i = $(id); if (i) i.onkeydown = (e) => { if (e.key === "Enter") rcPreview(); }; } }
-  { const el = $("#btnRcRefresh"); if (el) el.onclick = () => runPipeline("mirror", null, { btn: el, prog: $("#rcProg"), fill: $("#rcFill"), step: $("#rcStep"), after: () => { RC_OPT = null; loadReclassify(); if (RC && RC.ok) rcPreview(); } }); }
+  { const el = $("#btnRcPreview"); if (el) el.onclick = () => rcPreview("lines");
+    const pl = $("#btnRcPnl"); if (pl) pl.onclick = () => rcPreview("pnl");
+    $$("#rcFilters input").forEach(i => { i.onkeydown = (e) => { if (e.key === "Enter") rcPreview("lines"); }; }); }
+  { const el = $("#btnRcRefresh"); if (el) el.onclick = () => runPipeline("mirror", null, { btn: el, prog: $("#rcProg"), fill: $("#rcFill"), step: $("#rcStep"), after: () => { RC_OPT = null; loadReclassify().then(() => { if (RC && RC.ok) rcPreview(RC.mode === "pnl" ? "pnl" : "lines"); }); } }); }
   { const el = $("#btnDcRefresh"); if (el) el.onclick = () => runPipeline("mirror", null, { btn: el, prog: $("#dcProg"), fill: $("#dcFill"), step: $("#dcStep"), after: () => loadDupCustomers(true) }); }
   { const el = $("#dcSearch"); if (el) { el.addEventListener("input", renderDupCustomers); el.addEventListener("keydown", e => { if (e.key === "Escape") { el.value = ""; renderDupCustomers(); } }); } }
   { const el = $("#btnCdRefresh"); if (el) el.onclick = () => runPipeline("mirror", null, { btn: el, prog: $("#cdProg"), fill: $("#cdFill"), step: $("#cdStep"), after: () => loadCheckDrift(true) }); }

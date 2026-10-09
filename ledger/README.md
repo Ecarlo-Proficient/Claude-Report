@@ -289,11 +289,17 @@ on the network). What it shows:
   check backed up to `~/Library/Logs/Proficient/reapply-check/` first. `/api/checkdrift/reapply` (GET = dry run, POST =
   write); CLI `python ledger/reapply_check.py <check#> [--list] [--commit]`. **Mark resolved** = a local mark (settled
   outside the ledger, e.g. the vendor applied it to another bill).
-- **Reclassify transactions** (Company): move cost LINES from one project to another - the ledger's version of
-  QuickBooks' reclassify. Preview (mirror) -> tick lines (closed-period ones locked) -> optional cost-code swap ->
-  "Are you sure?" -> Touch ID -> `ledger/reclassify.py` writes only the ticked lines, each document re-read live,
-  backed up, and proven after the write (every line on To, no amount moved). Moves the line's Projects tag
-  (`ProjectRef`) with its customer. CLI `python ledger/reclassify.py FROM TO [--recode FW2=SL2] [--commit]`.
+- **Reclassify transactions** (Company): QuickBooks' reclassify at LINE level, bulk. Find lines (mirror) by date,
+  type, account (+ its sub-accounts), item, class, project, name, memo, doc # - or open the **P&L** by account for a
+  date range and click one. Tick lines (closed-period ones locked); the change panel offers each field the ticked lines
+  can carry - **account** (category + journal lines), **item** (item + sales lines), **class**, **project** (expense +
+  customer journal lines; an invoice's customer is the whole document's), **line memo**, **document memo** (set or
+  find & replace) - one value for all, or **Map each** current value. Every changed cell shows old -> new. "Are you
+  sure?" -> Touch ID -> `ledger/reclassify.py` writes only the ticked lines, each refused unless still the preview
+  (per-line signature), each document re-read live, backed up, and proven after the write (every field reads back as
+  asked, no amount / total / balance moved). A project move carries the line's Projects tag (`ProjectRef`). Bills,
+  expenses, vendor credits, journal entries, invoices, credit memos, sales receipts. CLI (project move):
+  `python ledger/reclassify.py FROM TO [--recode FW2=SL2] [--commit]`.
   **History** keeps every check QuickBooks left with no bills, fixed or not: when, the trigger (a paid bill deleted /
   check saved with no bill edited / before the change log), bills before, saves, status with the re-applied date, and
   any bill paid a second time. **QBO report (PDF)** rebuilds the support report from it on every click, into

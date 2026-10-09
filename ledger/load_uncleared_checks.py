@@ -11,6 +11,10 @@ matching has got. An uncleared check older than that date was not cashed, or was
 matched. An account with no cleared transaction in a year (Joint Checks Account) is marked
 feed_matched=0 - its checks never clear, and the page keeps them apart.
 
+Cleaned (the owner 2026-10-09: "clean the list"): a voided check ($0) and a check still "To print" in QuickBooks (queued,
+never written - see the AP "to print" rule) are left off; both are read from the QBO mirror's copy of the payment, so
+the ledger's Refresh runs the mirror refresh first.
+
 Read-only on QBO (report calls). Never echoes the realm. Reloads both tables whole.
 
     python3 ledger/load_uncleared_checks.py
@@ -81,6 +85,23 @@ def pull(access: str, cid: str, bank_ids: list, today: dt.date) -> tuple:
     return checks, thru
 
 
+def clean(checks: list, get) -> tuple:
+    """(kept, voided, to_print): drop a $0 / voided check and one QuickBooks still has queued "To print".
+    `get(entity, id)` = the mirror's record (None when the mirror lacks it - kept)."""
+    kept, voided, to_print = [], [], []
+    for c in checks:
+        ent = "Purchase" if c.get("Transaction Type") == "Check" else "BillPayment"
+        rec = get(ent, c.get("_id")) or {}
+        status = rec.get("PrintStatus") if ent == "Purchase" else (rec.get("CheckPayment") or {}).get("PrintStatus")
+        if abs(float(c.get("Amount") or 0)) < 0.005 or (rec and abs(float(rec.get("TotalAmt") or 0)) < 0.005):
+            voided.append(c)
+        elif status == "NeedToPrint":
+            to_print.append(c)
+        else:
+            kept.append(c)
+    return kept, voided, to_print
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--db", type=Path, default=DEFAULT_DB)
@@ -95,6 +116,12 @@ def main() -> int:
         mcon.close()
     today = dt.date.today()
     checks, thru = pull(access, cid, list(banks), today)
+    mcon = mirror.connect()
+    try:
+        checks, voided, to_print = clean(checks, lambda e, i: mirror.get(e, i, con=mcon) if i else None)
+    finally:
+        mcon.close()
+    print(f"left off: {len(voided)} voided ($0) · {len(to_print)} still 'To print' in QuickBooks")
     accounts = sorted({c.get("Account") or "" for c in checks} | set(thru))
     total = sum(-float(c.get("Amount") or 0) for c in checks)
     print(f"uncleared checks: {len(checks)} · ${total:,.2f}")
